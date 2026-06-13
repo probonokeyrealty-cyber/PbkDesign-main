@@ -143,9 +143,19 @@ import {
   buildSourceTruthLabel,
   summarizeSourceTruthLabels,
 } from './system-source-health.mjs';
+import {
+  buildAgentCapabilityReadiness,
+  buildBridgeConnectionStatus,
+  buildProductionTruthGate,
+  createIdempotencyStore,
+  createProductionReadinessMonitor,
+} from './production-readiness-command-layer.mjs';
 const { Pool: PgPool } = pg;
 
 void initializeObservability({ serviceName: 'pbk-openclaw-bridge' });
+
+const productionReadinessMonitor = createProductionReadinessMonitor();
+const productionIdempotencyStore = createIdempotencyStore();
 
 const OUTBOUND_MAX_SOCKETS = Math.max(20, Number(process.env.PBK_BRIDGE_OUTBOUND_MAX_SOCKETS || 160));
 const OUTBOUND_MAX_FREE_SOCKETS = Math.max(8, Math.min(64, Number(process.env.PBK_BRIDGE_OUTBOUND_MAX_FREE_SOCKETS || Math.ceil(OUTBOUND_MAX_SOCKETS / 3))));
@@ -2257,6 +2267,149 @@ async function buildCommandCenterHealthSnapshot(runtimeMeta = getRuntimeMeta()) 
     components,
     agentOrchestration,
     summary,
+  };
+}
+
+function buildProductionToolCatalog() {
+  return Object.fromEntries(
+    Object.keys(toolHandlers || {}).map((toolName) => [toolName, true])
+  );
+}
+
+function buildProductionLastAgentActions() {
+  const actions = {};
+  const completedTasks = [
+    ...(Array.isArray(state.agentTasks) ? state.agentTasks : []),
+    ...(Array.isArray(state.rexDecisions) ? state.rexDecisions : []),
+    ...(Array.isArray(state.agentDecisions) ? state.agentDecisions : []),
+  ];
+  for (const item of completedTasks) {
+    const agentId = normalizeAgentRosterId(
+      item.agentId ||
+        item.agent_id ||
+        item.toAgent ||
+        item.to_agent ||
+        item.fromAgent ||
+        item.from_agent ||
+        item.agentName ||
+        item.agent_name ||
+        item.agent ||
+        ''
+    );
+    if (!agentId) continue;
+    const status = /fail|error|reject|denied|blocked/i.test(String(item.status || item.result || ''))
+      ? 'failure'
+      : 'success';
+    const at = getItemTimestamp(item) || item.completedAt || item.updatedAt || item.createdAt || isoNow();
+    const existing = actions[agentId];
+    if (!existing || String(at).localeCompare(String(existing.at || '')) > 0) {
+      actions[agentId] = { status, at };
+    }
+  }
+  return actions;
+}
+
+function buildProductionAgentLatencySamples() {
+  const samples = {};
+  for (const record of Array.isArray(state.agentDecisions) ? state.agentDecisions : []) {
+    const agentId = normalizeAgentRosterId(record.agentId || record.agent || record.agentName || '');
+    const latency = Number(record.latencyMs || record.latency_ms || record.durationMs || record.duration_ms);
+    if (!agentId || !Number.isFinite(latency)) continue;
+    if (!samples[agentId]) samples[agentId] = [];
+    samples[agentId].push(latency);
+  }
+  return samples;
+}
+
+function buildProductionTruthGateFromRuntime({
+  runtimeMeta = getRuntimeMeta(),
+  actionType = 'status',
+  identity = null,
+  conversation = null,
+  senderIdentity = null,
+  requireConversation = false,
+  requireSkills = false,
+  requireTurnContract = false,
+} = {}) {
+  const latestContext = state.status?.pbkIntelligenceContext || {};
+  const lead =
+    identity ||
+    latestContext.identity ||
+    (Array.isArray(state.leads) ? state.leads[0] : null) ||
+    {};
+  return buildProductionTruthGate({
+    runtimeMeta,
+    identity: lead,
+    conversation: conversation || latestContext.conversation || {},
+    memory: latestContext.memory || { ready: Boolean(state.status?.memoryReady) },
+    skills: latestContext.skills || { ready: Boolean(state.status?.skillsReady) },
+    turnContract: latestContext.turnContract || { ok: true },
+    senderIdentity,
+    providers: runtimeMeta.providers || {},
+    actionType,
+    requireConversation,
+    requireSkills,
+    requireTurnContract,
+  });
+}
+
+async function buildProductionReadinessSnapshot({
+  runtimeMeta = getRuntimeMeta(),
+  health = null,
+  actionType = 'status',
+} = {}) {
+  ensureAgentFleetCollections();
+  const commandCenterHealth = health || (await buildCommandCenterHealthSnapshot(runtimeMeta));
+  const intelligenceContext = state.status?.pbkIntelligenceContext || {
+    memory: { ready: Boolean(state.status?.pbkIntelligenceReadiness?.required?.memory) },
+    skills: { ready: Boolean(state.status?.pbkIntelligenceReadiness?.required?.skills) },
+    dataFreshness: { ready: Boolean(state.status?.pbkIntelligenceReadiness?.required?.dataFreshness) },
+    fleetReadiness: { ready: Boolean(state.status?.pbkIntelligenceReadiness?.ready) },
+  };
+  const capabilityReadiness = buildAgentCapabilityReadiness({
+    agents: state.agents || [],
+    toolCatalog: buildProductionToolCatalog(),
+    intelligenceContext,
+    latencySamples: buildProductionAgentLatencySamples(),
+    lastActions: buildProductionLastAgentActions(),
+  });
+  const bridgeConnection = buildBridgeConnectionStatus({
+    runtimeMeta,
+    health: commandCenterHealth,
+  });
+  const truthGate = buildProductionTruthGateFromRuntime({
+    runtimeMeta,
+    actionType,
+    requireConversation: false,
+    requireSkills: false,
+    requireTurnContract: false,
+  });
+  const slo = productionReadinessMonitor.getSloStatus();
+  return {
+    ok: true,
+    result:
+      bridgeConnection.ready && capabilityReadiness.ready && truthGate.ready
+        ? 'production_readiness_ready'
+        : 'production_readiness_review',
+    checkedAt: isoNow(),
+    bridgeConnection,
+    truthGate,
+    slo,
+    idempotency: productionIdempotencyStore.status(),
+    agentCapabilityReadiness: capabilityReadiness,
+    summary: {
+      ready:
+        bridgeConnection.ready &&
+        truthGate.ready &&
+        capabilityReadiness.ready &&
+        slo.burned.length === 0,
+      blockers: [
+        ...bridgeConnection.blockers.map((item) => `bridge:${item}`),
+        ...truthGate.blockers.map((item) => `truth:${item}`),
+        ...capabilityReadiness.degraded.map((item) => `agent:${item.id}:${item.blockedReasons[0] || 'degraded'}`),
+        ...slo.burned.map((item) => `slo:${item}`),
+      ],
+    },
   };
 }
 
@@ -37875,8 +38028,13 @@ async function invokeToolWithOperatingGuard(toolName, params = {}) {
 }
 
 async function executeRouteToolHandler(toolName, params = {}, source = 'http-route') {
+  const startedAt = Date.now();
   const guarded = await enforceOperatingModeForTool(toolName, params);
   if (guarded) {
+    if (guarded.ok === false) {
+      productionReadinessMonitor.recordFailure(toolName, guarded.result || guarded.reason || 'guarded');
+    }
+    productionReadinessMonitor.recordLatency(toolName, Date.now() - startedAt);
     return {
       result: guarded,
       guarded,
@@ -37892,7 +38050,15 @@ async function executeRouteToolHandler(toolName, params = {}, source = 'http-rou
       safetyValidation: null,
     };
   }
-  return executeToolHandlerWithQa(toolName, params, source);
+  const result = await executeToolHandlerWithQa(toolName, params, source);
+  const failed =
+    result?.result?.ok === false ||
+    result?.qaValidation?.ok === false ||
+    result?.qaValidation?.qa?.ok === false;
+  if (failed) productionReadinessMonitor.recordFailure(toolName, result?.result?.result || 'route_tool_failed');
+  else productionReadinessMonitor.recordSuccess(toolName);
+  productionReadinessMonitor.recordLatency(toolName, Date.now() - startedAt);
+  return result;
 }
 
 function getRouteToolStatusCode({ result = {}, guarded = null, qaValidation = null } = {}, { failureStatus = 400, successStatus = 200 } = {}) {
@@ -61421,6 +61587,10 @@ const server = createServer(async (request, response) => {
     if (request.method === 'GET' && matchesPath(pathname, ['/', '/health', '/status', '/api/health', '/api/status'])) {
       const runtimeMeta = getRuntimeMeta();
       const commandCenterHealth = await buildCommandCenterHealthSnapshot(runtimeMeta);
+      const productionReadiness = await buildProductionReadinessSnapshot({
+        runtimeMeta,
+        health: commandCenterHealth,
+      });
       json(response, 200, {
         ok: true,
         status: commandCenterHealth.status,
@@ -61431,6 +61601,12 @@ const server = createServer(async (request, response) => {
         checkedAt: commandCenterHealth.checkedAt,
         components: commandCenterHealth.components,
         componentSummary: commandCenterHealth.summary,
+        productionReadiness: {
+          result: productionReadiness.result,
+          ready: productionReadiness.summary.ready,
+          blockers: productionReadiness.summary.blockers,
+          sloBurned: productionReadiness.slo.burned,
+        },
         agentOrchestration: commandCenterHealth.agentOrchestration,
         tools: state.status.tools,
         toolUsage: state.status.toolUsage,
@@ -61481,6 +61657,54 @@ const server = createServer(async (request, response) => {
         warnings: runtimeMeta.warnings,
         lastUpdatedAt: state.status.lastUpdatedAt,
       });
+      return;
+    }
+
+    if (request.method === 'GET' && matchesPath(pathname, ['/api/production/readiness', '/api/readiness/production'])) {
+      const runtimeMeta = getRuntimeMeta();
+      const commandCenterHealth = await buildCommandCenterHealthSnapshot(runtimeMeta);
+      const readiness = await buildProductionReadinessSnapshot({
+        runtimeMeta,
+        health: commandCenterHealth,
+        actionType: url.searchParams.get('actionType') || 'status',
+      });
+      json(response, readiness.summary.ready ? 200 : 202, readiness);
+      return;
+    }
+
+    if (request.method === 'GET' && matchesPath(pathname, ['/api/slo/status', '/api/error-budgets/status'])) {
+      const slo = productionReadinessMonitor.getSloStatus();
+      json(response, 200, slo);
+      return;
+    }
+
+    if (request.method === 'GET' && matchesPath(pathname, ['/api/truth/status', '/api/production/truth'])) {
+      const runtimeMeta = getRuntimeMeta();
+      const truthGate = buildProductionTruthGateFromRuntime({
+        runtimeMeta,
+        actionType: url.searchParams.get('actionType') || 'status',
+        requireConversation: /^(1|true|yes)$/i.test(
+          String(url.searchParams.get('requireConversation') || '').trim()
+        ),
+        requireSkills: /^(1|true|yes)$/i.test(
+          String(url.searchParams.get('requireSkills') || '').trim()
+        ),
+        requireTurnContract: /^(1|true|yes)$/i.test(
+          String(url.searchParams.get('requireTurnContract') || '').trim()
+        ),
+      });
+      json(response, truthGate.ready ? 200 : 202, truthGate);
+      return;
+    }
+
+    if (request.method === 'GET' && matchesPath(pathname, ['/api/bridge/connection', '/api/production/bridge-connection'])) {
+      const runtimeMeta = getRuntimeMeta();
+      const commandCenterHealth = await buildCommandCenterHealthSnapshot(runtimeMeta);
+      const bridgeConnection = buildBridgeConnectionStatus({
+        runtimeMeta,
+        health: commandCenterHealth,
+      });
+      json(response, bridgeConnection.ready ? 200 : 202, bridgeConnection);
       return;
     }
 
@@ -63783,10 +64007,26 @@ const server = createServer(async (request, response) => {
 
     if (request.method === 'GET' && matchesPath(pathname, ['/api/agents/fleet', '/api/agents'])) {
       ensureAgentFleetCollections();
+      const intelligenceContext = state.status?.pbkIntelligenceContext || {
+        memory: { ready: Boolean(state.status?.pbkIntelligenceReadiness?.required?.memory) },
+        skills: { ready: Boolean(state.status?.pbkIntelligenceReadiness?.required?.skills) },
+        dataFreshness: {
+          ready: Boolean(state.status?.pbkIntelligenceReadiness?.required?.dataFreshness),
+        },
+        fleetReadiness: { ready: Boolean(state.status?.pbkIntelligenceReadiness?.ready) },
+      };
+      const capabilityReadiness = buildAgentCapabilityReadiness({
+        agents: state.agents,
+        toolCatalog: buildProductionToolCatalog(),
+        intelligenceContext,
+        latencySamples: buildProductionAgentLatencySamples(),
+        lastActions: buildProductionLastAgentActions(),
+      });
       json(response, 200, {
         ok: true,
         result: 'live',
-        agents: state.agents,
+        agents: capabilityReadiness.agents,
+        capabilityReadiness,
         transfers: state.agentSkillTransfers,
         experiments: state.agentSkillExperiments,
         status: state.status,

@@ -113,6 +113,7 @@ COPY scripts/context-aware-script-rotator.mjs ./scripts/context-aware-script-rot
 COPY scripts/ava-governed-skill-router.mjs ./scripts/ava-governed-skill-router.mjs
 COPY scripts/ava-live-skill-fallback.mjs ./scripts/ava-live-skill-fallback.mjs
 COPY scripts/ava-live-turn-contract.mjs ./scripts/ava-live-turn-contract.mjs
+COPY scripts/pbk-intelligence-context.mjs ./scripts/pbk-intelligence-context.mjs
 COPY scripts/safety-validator.mjs ./scripts/safety-validator.mjs
 COPY scripts/ava-eval-suite.mjs ./scripts/ava-eval-suite.mjs
 COPY scripts/observability.mjs ./scripts/observability.mjs

@@ -36,6 +36,10 @@ import {
   isAvaLiveReplyAlignedWithContract,
   renderAvaLiveContractReply,
 } from './ava-live-turn-contract.mjs';
+import {
+  buildPBKIntelligenceContext,
+  mergePBKIntelligenceContextOutcome,
+} from './pbk-intelligence-context.mjs';
 import { validateProviderActionSafety as validateProviderActionSafetyCore } from './safety-validator.mjs';
 import { runAvaCanonicalEvalSuite as runAvaCanonicalEvalSuiteCore } from './ava-eval-suite.mjs';
 import { buildCoworkerHeartbeatPlan, summarizeHeartbeatPlan } from './coworker-heartbeat.mjs';
@@ -1096,6 +1100,8 @@ function buildSharedTelnyxSessionState(session = {}, status = 'active') {
     avaTurnLockReason: session.avaTurnLockReason || '',
     avaReplySuppressed: Boolean(session.avaReplySuppressed),
     replyLatencySamples: (session.replyLatencySamples || []).slice(0, 5),
+    pbkIntelligenceContext: summarizeRuntimePBKIntelligenceContext(session.pbkIntelligenceContext),
+    pbkIntelligenceReadiness: session.pbkIntelligenceReadiness || session.pbkIntelligenceContext?.fleetReadiness || null,
     avaLiveCockpit:
       session.avaLiveCockpit ||
       buildAvaLiveCockpitSnapshot({
@@ -1203,6 +1209,8 @@ function buildTelnyxMediaSessionDiagnostics(session = {}, contextCall = null, op
     avaTurnLockReason: session.avaTurnLockReason || '',
     avaReplySuppressed: Boolean(session.avaReplySuppressed),
     replyLatencySamples: (session.replyLatencySamples || []).slice(0, 5),
+    pbkIntelligenceContext: summarizeRuntimePBKIntelligenceContext(session.pbkIntelligenceContext),
+    pbkIntelligenceReadiness: session.pbkIntelligenceReadiness || session.pbkIntelligenceContext?.fleetReadiness || null,
     lastAvaReplyMode: session.lastAvaReplyMode || '',
     avaLiveCockpit:
       session.avaLiveCockpit ||
@@ -20538,6 +20546,118 @@ function buildAvaScriptRotationSnapshot(params = {}) {
   };
 }
 
+function buildRuntimePBKIntelligenceContext(params = {}) {
+  ensureAgentFleetCollections();
+  const session = params.session || {};
+  const contextCall = params.contextCall || params.call || {};
+  const architecture = params.architecture || {};
+  const transcript = String(params.transcript || params.query || params.text || '').trim();
+  const scripts =
+    params.scripts ||
+    architecture.scripts ||
+    buildAvaScriptRotationSnapshot({
+      ...params,
+      session,
+      contextCall,
+      query: transcript,
+      pathDecision: params.pathDecision || architecture.pathDecision || session.pathDecision || {},
+    });
+  const activeMemories = Array.isArray(scripts.activeMemories) ? scripts.activeMemories : [];
+  const longHorizonMemory = architecture.memory?.longHorizon || architecture.longHorizonMemory?.compactState || null;
+  const recentOutcomes = sortNewest(state.skillOutcomes || [])
+    .filter((outcome) => {
+      const leadId = String(contextCall.leadId || session.leadId || '').trim();
+      const callId = String(contextCall.id || contextCall.callId || session.callId || '').trim();
+      return (
+        (!leadId || !outcome.leadId || outcome.leadId === leadId) &&
+        (!callId || !outcome.callId || outcome.callId === callId)
+      );
+    })
+    .slice(0, 8);
+  return buildPBKIntelligenceContext({
+    workspaceId: params.workspaceId || params.workspace_id || 'pbk',
+    lead: {
+      id: contextCall.leadId || session.leadId || params.leadId || '',
+      leadId: contextCall.leadId || session.leadId || params.leadId || '',
+      leadName: contextCall.leadName || session.leadName || params.leadName || '',
+      name: contextCall.leadName || session.leadName || params.leadName || '',
+      address: contextCall.address || session.address || params.address || '',
+      phone: contextCall.phone || contextCall.from || session.phone || params.phone || '',
+      email: contextCall.email || session.email || params.email || '',
+    },
+    call: {
+      ...contextCall,
+      id: contextCall.id || contextCall.callId || session.callId || params.callId || '',
+      callId: contextCall.callId || contextCall.id || session.callId || params.callId || '',
+      leadId: contextCall.leadId || session.leadId || params.leadId || '',
+      phone: contextCall.phone || contextCall.from || session.phone || params.phone || '',
+      transcript: Array.isArray(session.transcript) ? session.transcript.slice(-12) : contextCall.transcript || [],
+      status: contextCall.status || session.status || 'active',
+    },
+    transcript,
+    memory: {
+      coaching: activeMemories,
+      episodic: longHorizonMemory ? [longHorizonMemory] : [],
+      recent: Array.isArray(session.liveKnowledge) ? session.liveKnowledge.slice(0, 5) : [],
+      lastRecallAt: activeMemories.length || longHorizonMemory ? isoNow() : null,
+      stale: Boolean(params.memoryStale || session.memoryStale),
+    },
+    skills: {
+      active: Array.isArray(scripts.selectedSkills) ? scripts.selectedSkills : [],
+      recentOutcomes,
+      stale: Boolean(params.skillsStale || session.skillsStale),
+    },
+    turnContract: params.turnContract || session.avaLiveTurnContract || null,
+    agents: state.agents || buildDefaultAgentFleet(),
+    sentiment: session.sentiment?.pbkScore ?? params.sentiment ?? contextCall.sentiment ?? null,
+    leadStale: Boolean(params.leadStale),
+    lastSyncAt: session.lastRedisSyncResult || contextCall.updatedAt || session.updatedAt || isoNow(),
+  });
+}
+
+function applyRuntimePBKIntelligenceContextToSession(session = {}, context = {}) {
+  if (!context || typeof context !== 'object') return session;
+  session.pbkIntelligenceContext = context;
+  session.pbkIntelligenceReadiness = context.fleetReadiness || null;
+  session.pbkIntelligenceContextUpdatedAt = context.generatedAt || isoNow();
+  if (state && typeof state === 'object') {
+    if (!state.status || typeof state.status !== 'object') state.status = {};
+    state.status.pbkIntelligenceContext = summarizeRuntimePBKIntelligenceContext(context);
+    state.status.pbkIntelligenceReadiness = context.fleetReadiness || null;
+    state.status.lastPBKIntelligenceContextAt = context.generatedAt || isoNow();
+  }
+  return session;
+}
+
+function summarizeRuntimePBKIntelligenceContext(context = {}) {
+  if (!context || typeof context !== 'object') return null;
+  return {
+    revision: context.revision || '',
+    contextId: context.contextId || '',
+    generatedAt: context.generatedAt || '',
+    identity: {
+      leadId: context.identity?.leadId || '',
+      callId: context.identity?.callId || '',
+      normalizedPhone: context.identity?.normalizedPhone || '',
+      normalizedEmail: context.identity?.normalizedEmail || '',
+      ready: Boolean(context.identity?.ready),
+      duplicateIds: context.identity?.duplicateIds || [],
+    },
+    readiness: context.fleetReadiness || null,
+    memoryReady: Boolean(context.memory?.ready),
+    skillsReady: Boolean(context.skills?.ready),
+    dataFreshnessReady: Boolean(context.dataFreshness?.ready),
+    activeSkill: context.turnContract?.activeSkill || null,
+    intent: context.turnContract?.intent || '',
+    objection: context.turnContract?.objection || '',
+    phase: context.turnContract?.phase || '',
+    missingFacts: context.turnContract?.missingFacts || [],
+    forbiddenRepeats: context.turnContract?.forbiddenRepeats || [],
+    agentHandoffs: context.agentHandoffs || [],
+    outcome: context.outcome || null,
+  };
+}
+
 function buildContextAwareScriptLibrary(params = {}) {
   const workspaceId = getContextAwareScriptWorkspaceId(params);
   const catalog = getContextAwareScriptCatalog(workspaceId);
@@ -21408,6 +21528,23 @@ function buildAvaCallArchitectureContext(params = {}) {
     emotionRequired: true,
     env: process.env,
   });
+  const pbkIntelligenceContext = buildRuntimePBKIntelligenceContext({
+    ...params,
+    session,
+    contextCall,
+    transcript: rawTranscript,
+    scripts,
+    turnContract: params.turnContract || session.avaLiveTurnContract || null,
+    architecture: {
+      scripts,
+      memory: {
+        longHorizon: longHorizonMemory?.compactState || null,
+      },
+      longHorizonMemory,
+    },
+    sentiment: params.sentiment ?? contextCall.sentiment ?? session.sentiment?.pbkScore ?? null,
+  });
+  applyRuntimePBKIntelligenceContextToSession(session, pbkIntelligenceContext);
   return {
     schemaVersion: 'pbk-ava-call-intelligence-v1',
     enabled: getAvaCallIntelligenceSettings().enabled,
@@ -21433,6 +21570,8 @@ function buildAvaCallArchitectureContext(params = {}) {
     fullIntelligence,
     scripts,
     longHorizonMemory,
+    pbkIntelligenceContext: summarizeRuntimePBKIntelligenceContext(pbkIntelligenceContext),
+    pbkIntelligenceReadiness: pbkIntelligenceContext.fleetReadiness || null,
     memory: {
       longHorizon: longHorizonMemory?.compactState || null,
       mem1: longHorizonMemory?.model || null,
@@ -38428,6 +38567,13 @@ function buildAgentOrchestrationSnapshot() {
     generatedAt: isoNow(),
     supervisor,
     workers,
+    intelligenceContext: {
+      ready: Boolean(state.status?.pbkIntelligenceReadiness?.ready),
+      latest: state.status?.pbkIntelligenceContext || null,
+      readiness: state.status?.pbkIntelligenceReadiness || null,
+      lastUpdatedAt: state.status?.lastPBKIntelligenceContextAt || '',
+      source: state.status?.pbkIntelligenceContext ? 'pbk_intelligence_context' : 'not_observed_yet',
+    },
     registry: {
       ready: registryReady && registryStatus.ok,
       inventoryReady: registryReady,
@@ -58163,6 +58309,7 @@ function recordAvaLiveTurnDecision(session = {}, details = {}) {
     stateFlags: details.stateFlags || buildAvaLiveTurnStateSnapshot(session, details.contextCall || null),
     resolvedAction: details.resolvedAction || {},
     turnContract: details.turnContract || session.avaLiveTurnContract || null,
+    pbkIntelligenceContext: summarizeRuntimePBKIntelligenceContext(details.pbkIntelligenceContext || session.pbkIntelligenceContext),
     avaLiveCockpit: details.avaLiveCockpit || session.avaLiveCockpit || null,
     ttsPayload: details.ttsPayload || {},
     note: details.note || '',
@@ -58789,6 +58936,17 @@ async function buildTelnyxLiveAvaReplyInsight({ session = {}, transcript = '', c
       callerRoleDecision: callerRole,
     });
   const activeTurnContract = turnContract || session.avaLiveTurnContract || null;
+  const activePBKIntelligenceContext = buildRuntimePBKIntelligenceContext({
+    session,
+    contextCall,
+    transcript,
+    architecture,
+    turnContract: activeTurnContract,
+    sentiment: session.sentiment?.pbkScore ?? contextCall?.sentiment ?? null,
+  });
+  applyRuntimePBKIntelligenceContextToSession(session, activePBKIntelligenceContext);
+  architecture.pbkIntelligenceContext = summarizeRuntimePBKIntelligenceContext(activePBKIntelligenceContext);
+  architecture.pbkIntelligenceReadiness = activePBKIntelligenceContext.fleetReadiness || null;
   try {
     const activeListening =
       architecture.activeListening ||
@@ -58853,6 +59011,7 @@ async function buildTelnyxLiveAvaReplyInsight({ session = {}, transcript = '', c
         activatedArchitecture: architecture,
         resolvedCallContext,
         turnContract: activeTurnContract,
+        pbkIntelligenceContext: summarizeRuntimePBKIntelligenceContext(activePBKIntelligenceContext),
       },
     });
     const script = strategist?.strategy?.immediateScript || strategist?.strategy?.returnToBusiness || '';
@@ -58884,6 +59043,7 @@ async function buildTelnyxLiveAvaReplyInsight({ session = {}, transcript = '', c
       architecture,
       resolvedCallContext,
       turnContract: activeTurnContract,
+      pbkIntelligenceContext: activePBKIntelligenceContext,
       turnContractEnforced: !contractAligned,
     };
   } catch (error) {
@@ -58935,6 +59095,7 @@ async function buildTelnyxLiveAvaReplyInsight({ session = {}, transcript = '', c
       conversation,
       architecture,
       turnContract: activeTurnContract,
+      pbkIntelligenceContext: activePBKIntelligenceContext,
       turnContractEnforced: Boolean(contractReply),
       strategist: {
         ok: false,
@@ -60017,6 +60178,22 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
       });
       return;
     }
+    const replyPBKIntelligenceContext =
+      reply.pbkIntelligenceContext ||
+      buildRuntimePBKIntelligenceContext({
+        session,
+        contextCall,
+        transcript: item.transcript,
+        architecture: reply.architecture || {},
+        turnContract: reply.turnContract || session.avaLiveTurnContract || null,
+        sentiment: session.sentiment?.pbkScore ?? contextCall?.sentiment ?? null,
+      });
+    reply.pbkIntelligenceContext = replyPBKIntelligenceContext;
+    applyRuntimePBKIntelligenceContextToSession(session, replyPBKIntelligenceContext);
+    if (reply.architecture && typeof reply.architecture === 'object') {
+      reply.architecture.pbkIntelligenceContext = summarizeRuntimePBKIntelligenceContext(replyPBKIntelligenceContext);
+      reply.architecture.pbkIntelligenceReadiness = replyPBKIntelligenceContext.fleetReadiness || null;
+    }
     const guardedReplyText = stripUnconfirmedAvaLiveLeadName(
       enforceAvaOwnerSafeReply(reply.text || '', {
         session,
@@ -60082,6 +60259,18 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
       reply: spoken,
       replyMode: reply.replyMode || 'live',
     });
+    const outcomeMergedPBKIntelligenceContext = mergePBKIntelligenceContextOutcome(
+      session.pbkIntelligenceContext || reply.pbkIntelligenceContext || {},
+      {
+        actionTaken: `ava_live_reply:${reply.replyMode || 'live'}`,
+        sellerReaction: item.transcript || transcriptForReply,
+        followUpScheduled: false,
+        contractSent: false,
+        agents: state.agents || buildDefaultAgentFleet(),
+      }
+    );
+    reply.pbkIntelligenceContext = outcomeMergedPBKIntelligenceContext;
+    applyRuntimePBKIntelligenceContextToSession(session, outcomeMergedPBKIntelligenceContext);
     recordAvaLiveTurnDecision(session, {
       phase: 'resolved',
       result: 'reply_resolved_before_tts',
@@ -60105,6 +60294,7 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
         skillOutcomeDraft: session.lastAvaLiveSkillOutcomeDraft?.ok ? session.lastAvaLiveSkillOutcomeDraft : null,
       },
       turnContract: activeTurnContract,
+      pbkIntelligenceContext: session.pbkIntelligenceContext,
       avaLiveCockpit: session.avaLiveCockpit,
       stage: 'maybeSpeakTelnyxAvaReply.resolved',
     });
@@ -60176,6 +60366,7 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
         turnContractEnforced: Boolean(reply.turnContractEnforced),
       },
       turnContract: activeTurnContract,
+      pbkIntelligenceContext: session.pbkIntelligenceContext,
       avaLiveCockpit: session.avaLiveCockpit,
       ttsPayload: {
         provider: speakResult.provider || '',
@@ -60250,6 +60441,7 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
             speechFinalToReplyStartMs,
             antiRepeat: reply.antiRepeat || null,
             avaLiveCockpit: session.avaLiveCockpit || null,
+            pbkIntelligenceContext: summarizeRuntimePBKIntelligenceContext(session.pbkIntelligenceContext),
             turnContract: activeTurnContract
               ? {
                   revision: activeTurnContract.revision,

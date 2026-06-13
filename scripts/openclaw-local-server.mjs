@@ -58788,9 +58788,9 @@ async function buildTelnyxLiveAvaReply({ session = {}, transcript = '', contextC
   }
 
   const nonRepeatingFallback = avoidRepeatedAvaLiveReply(session, normalizedFallback, normalizedFallback);
-  return {
+  const fastLocalReply = {
     text: nonRepeatingFallback.text,
-    replyMode: session.lastFastLocalReplyMode || 'fast_local',
+    replyMode: 'fast_local',
     architecture: buildAvaCallArchitectureContext({
       session,
       contextCall,
@@ -58804,6 +58804,8 @@ async function buildTelnyxLiveAvaReply({ session = {}, transcript = '', contextC
       result: mode === 'off' ? 'strategist_disabled' : 'strategist_background',
     },
   };
+  if (session.lastFastLocalReplyMode) fastLocalReply.replyMode = session.lastFastLocalReplyMode;
+  return fastLocalReply;
 }
 
 function buildOperatorWhisperRecord(reply = {}, fallbackText = '') {

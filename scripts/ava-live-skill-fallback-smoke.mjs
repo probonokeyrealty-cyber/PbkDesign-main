@@ -60,7 +60,8 @@ assert(
 );
 assert(
   bridge.includes("session.lastFastLocalReplyMode = 'fast_local_governed_skill'") &&
-    bridge.includes("replyMode: session.lastFastLocalReplyMode || 'fast_local'"),
+    bridge.includes("replyMode: 'fast_local'") &&
+    bridge.includes('fastLocalReply.replyMode = session.lastFastLocalReplyMode'),
   'Fast local live-call path must expose a governed-skill reply mode for traceability.'
 );
 assert(

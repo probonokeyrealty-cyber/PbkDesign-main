@@ -46,4 +46,19 @@ assert.match(
   'Known seller target prices must dominate the offer-request reply instead of generic priority probes.'
 );
 
+assert.ok(
+  bridge.includes('function rememberAvaLiveSellerMoney') &&
+    bridge.includes('function isAvaLiveSellerMoneyContext') &&
+    bridge.includes('rememberAvaLiveSellerMoney(session, transcript, supportTranscript);'),
+  'Live calls must remember seller-stated target money without confusing plain street numbers for offers.'
+);
+
+assert.ok(
+  bridge.includes('function isAvaLiveUrgentSalesIntent') &&
+    bridge.includes("session.lastFastLocalReplyMode = 'fast_local_sales_intent'") &&
+    bridge.indexOf('if (salesNextMove && isAvaLiveUrgentSalesIntent(sellerIntent))') <
+      bridge.indexOf('if (governedSkillReply)'),
+  'Urgent live seller facts must beat generic governed-skill phrasing before Ava speaks.'
+);
+
 console.log('ava-live-turn-completion smoke passed');

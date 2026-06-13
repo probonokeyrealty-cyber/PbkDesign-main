@@ -21069,11 +21069,44 @@ function isAvaLiveRepeatComplaint(transcript = '') {
   return /\b(i already told you|already told you|i told you|told you that|said this already|you just said that|you already said that|you asked that already|you said the same thing|same thing|he said the same thing|she said the same thing|repeating yourself|stop repeating|gave you the address)\b/i.test(clean);
 }
 
+function isAvaLiveSellerMoneyContext(transcript = '') {
+  const clean = normalizeTelnyxRepairTranscript(transcript);
+  if (!clean || !extractAvaLiveMoneyAmount(clean)) return false;
+  const hasMoneyLanguage =
+    isAvaLiveNetNumberAnswer(clean) ||
+    isAvaLiveOfferRequest(clean) ||
+    /\b(asking|ask|price|offer|pay|paid|cash|net|walk away|need|want|looking for|hoping for|take|accept|worth|owed|payoff|mortgage|loan balance|bottom line|target)\b/i.test(clean);
+  if (hasMoneyLanguage) return true;
+  if (/\b(street|st|drive|dr|road|rd|avenue|ave|lane|ln|boulevard|blvd|court|ct|circle|cir|way|zip|postal|phone|number is)\b/i.test(clean)) {
+    return false;
+  }
+  return /\b\d{2,3}\s*(k|thousand|grand|m|million)\b/i.test(clean);
+}
+
+function rememberAvaLiveSellerMoney(session = {}, transcript = '', supportTranscript = '') {
+  if (!session || typeof session !== 'object') return '';
+  if (!session.bant || typeof session.bant !== 'object') session.bant = {};
+  const current = normalizeTelnyxRepairTranscript(transcript);
+  const support = normalizeTelnyxRepairTranscript(supportTranscript);
+  const combined = [current, support].filter(Boolean).join(' ');
+  const money = isAvaLiveSellerMoneyContext(current)
+    ? extractAvaLiveMoneyAmount(current)
+    : isAvaLiveSellerMoneyContext(combined)
+      ? extractAvaLiveMoneyAmount(combined)
+      : '';
+  if (!money) return '';
+  session.sellerAskingPrice = money;
+  session.desiredNet = session.desiredNet || money;
+  if (!normalizeBantValue(session.bant.budget)) session.bant.budget = money;
+  return money;
+}
+
 function applyAvaLiveTurnFacts(session = {}, transcript = '', supportTranscript = '') {
   if (!session || typeof session !== 'object') return;
   const clean = normalizeTelnyxRepairTranscript(transcript);
   const combined = [clean, normalizeTelnyxRepairTranscript(supportTranscript)].filter(Boolean).join(' ');
   if (!session.bant || typeof session.bant !== 'object') session.bant = {};
+  rememberAvaLiveSellerMoney(session, transcript, supportTranscript);
   if (PBK_AGENT_ROLE_RE.test(transcript)) {
     applyAvaCallerRoleToSession(session, {
       revision: PBK_CALLER_ROLE_REVISION,
@@ -57898,6 +57931,22 @@ function classifyAvaLiveSellerIntent(transcript = '', session = {}) {
   return { intent, signals, normalized: clean, money };
 }
 
+function isAvaLiveUrgentSalesIntent(intent = {}) {
+  const type = String(intent?.intent || '').trim();
+  return Boolean(
+    intent?.money ||
+      [
+        'address_question',
+        'price_already_given',
+        'repeat_complaint',
+        'deal_momentum',
+        'offer_request',
+        'timeline_or_speed',
+        'net_number_priority',
+      ].includes(type)
+  );
+}
+
 function buildAvaLiveSalesNextMove({ session = {}, contextCall = null, transcript = '', intent = {}, opener = '' } = {}) {
   const clean = normalizeTelnyxRepairTranscript(transcript);
   const fullAddressKnown = Boolean(String(contextCall?.address || session.address || '').trim());
@@ -58365,6 +58414,7 @@ function buildFastTelnyxLiveAvaReplyText({ session = {}, transcript = '', contex
   const fullAddressKnown = Boolean(String(contextCall?.address || session.address || '').trim());
   const sellerIntent = classifyAvaLiveSellerIntent(latestTranscript, session);
   if (sellerIntent.money) {
+    if (!session.bant || typeof session.bant !== 'object') session.bant = {};
     session.sellerAskingPrice = sellerIntent.money;
     session.desiredNet = session.desiredNet || sellerIntent.money;
     if (!normalizeBantValue(session.bant?.budget)) session.bant.budget = sellerIntent.money;
@@ -58379,6 +58429,13 @@ function buildFastTelnyxLiveAvaReplyText({ session = {}, transcript = '', contex
       updatedAt: isoNow(),
     };
   }
+  const salesNextMove = buildAvaLiveSalesNextMove({
+    session,
+    contextCall,
+    transcript: latestTranscript,
+    intent: sellerIntent,
+    opener,
+  });
 
   if (/\b(hear me|can you hear|you hear|hello\??|are you there)\b/i.test(lower)) {
     return withSafeActiveHook(`${opener}yes, I can hear you clearly. Thanks for staying with me. Let me pull this up the right way: what property address should I use today?`);
@@ -58403,17 +58460,14 @@ function buildFastTelnyxLiveAvaReplyText({ session = {}, transcript = '', contex
       fallback: 'Perfect, thanks. What is the full property address, and what net number would make this worth saying yes today?',
     });
   }
+  if (salesNextMove && isAvaLiveUrgentSalesIntent(sellerIntent)) {
+    session.lastFastLocalReplyMode = 'fast_local_sales_intent';
+    return withSafeActiveHook(salesNextMove, { fallback: salesNextMove });
+  }
   if (governedSkillReply) {
     session.lastFastLocalReplyMode = 'fast_local_governed_skill';
     return withSafeActiveHook(`${opener}${governedSkillReply}`, { fallback: governedSkillReply });
   }
-  const salesNextMove = buildAvaLiveSalesNextMove({
-    session,
-    contextCall,
-    transcript: latestTranscript,
-    intent: sellerIntent,
-    opener,
-  });
   if (salesNextMove) {
     return withSafeActiveHook(salesNextMove, { fallback: salesNextMove });
   }

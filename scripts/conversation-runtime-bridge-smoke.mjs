@@ -196,6 +196,12 @@ assert(
   /requestedBy\?: string/.test(sendHelperSource),
   'Conversation send helper must expose the server requestedBy field.'
 );
+assert(
+  /source\?: string/.test(sendHelperSource) &&
+    /manual\?: boolean/.test(sendHelperSource) &&
+    /manualSend\?: boolean/.test(sendHelperSource),
+  'Conversation send helper must expose manual operator send metadata.'
+);
 for (const responseField of [
   'scheduled?: boolean',
   'message?: MessageRecord',

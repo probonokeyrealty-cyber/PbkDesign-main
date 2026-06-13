@@ -192,6 +192,12 @@ assert(
   'Composer must expose an accessible SMS/email segmented control.'
 );
 assert(
+  /sendConversationMessageRequest\(thread\.id,\s*\{[\s\S]*senderIdentityId,[\s\S]*requestedBy:\s*'unified-inbox-manual'[\s\S]*source:\s*'unified_inbox_manual'[\s\S]*manual:\s*true[\s\S]*manualSend:\s*true/.test(
+    composer
+  ),
+  'Manual unified inbox sends must carry explicit source/manual metadata through the bridge contract.'
+);
+assert(
   composer.includes('pbk-composer-draft-shell') &&
     composer.includes('pbk-composer-mobile-tools-toggle') &&
     composer.includes('pbk-composer-send-button'),

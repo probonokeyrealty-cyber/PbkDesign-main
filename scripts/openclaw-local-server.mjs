@@ -40,6 +40,7 @@ import {
   buildPBKIntelligenceContext,
   mergePBKIntelligenceContextOutcome,
 } from './pbk-intelligence-context.mjs';
+import { withPBKIntelligenceContext } from './pbk-intelligence-context-runtime.mjs';
 import { validateProviderActionSafety as validateProviderActionSafetyCore } from './safety-validator.mjs';
 import { runAvaCanonicalEvalSuite as runAvaCanonicalEvalSuiteCore } from './ava-eval-suite.mjs';
 import { buildCoworkerHeartbeatPlan, summarizeHeartbeatPlan } from './coworker-heartbeat.mjs';
@@ -11464,7 +11465,12 @@ function normalizeLocalCommandAction(params = {}) {
   const command = String(params.command || params.text || params.transcript || '').trim().toLowerCase();
   if (raw && raw !== 'operator_command') return raw;
   const conversationalIntent = classifyAvaConversationalIntent(command, params);
-  if (conversationalIntent.matched && conversationalIntent.action) return conversationalIntent.action;
+  if (conversationalIntent.matched && conversationalIntent.action) {
+    if (['chat', 'research', 'draft_email', 'draft_sms'].includes(conversationalIntent.action)) {
+      return 'llm_query';
+    }
+    return conversationalIntent.action;
+  }
   if (raw) return raw;
   if (/^clickui[:\s]/.test(command)) return 'clickui';
   if (/^openclaw[:\s]/.test(command)) return 'operator_command';
@@ -11492,7 +11498,7 @@ function normalizeLocalCommandRiskLevel(value = '') {
 
 function classifyLocalCommandRisk(action = '') {
   const normalized = String(action || '').trim().toLowerCase();
-  const lowRiskActions = ['ping', 'status', 'search_leads', 'analyze_deal'];
+  const lowRiskActions = ['ping', 'status', 'chat', 'research', 'draft_email', 'draft_sms', 'llm_query', 'search_leads', 'analyze_deal'];
   if (lowRiskActions.includes(normalized)) return 'low';
   if (['type_text', 'clickui', 'send_email', 'send_sms', 'execute_safe_script'].includes(normalized)) return 'high';
   if (['screenshot', 'screenshot_ocr', 'read_file', 'list_dir', 'watch_folder'].includes(normalized)) {
@@ -11503,6 +11509,9 @@ function classifyLocalCommandRisk(action = '') {
 
 function getLocalCommandRiskReason(action = '', riskLevel = 'medium') {
   const normalized = String(action || '').trim().toLowerCase();
+  if (['chat', 'research', 'draft_email', 'draft_sms', 'llm_query'].includes(normalized)) {
+    return 'Conversational, research, or drafting request; no local computer control or provider write is executed.';
+  }
   if (riskLevel === 'low') return 'Read-only health check allowed for automatic sidecar dispatch.';
   if (normalized === 'type_text') return 'Keyboard input can mutate applications and must be operator-approved.';
   if (normalized === 'clickui') return 'GUI automation may click or inspect sensitive desktop state.';
@@ -11519,6 +11528,30 @@ function getLocalCommandRiskReason(action = '', riskLevel = 'medium') {
     return 'Filesystem reads can expose sensitive local data and require approval.';
   }
   return 'Local desktop command requires approval unless explicitly classified as a health check.';
+}
+
+function normalizeManualProviderSendSource(value = '') {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, '_')
+    .replace(/^_+|_+$/g, '');
+}
+
+function isTrustedManualProviderSendCommand(params = {}, action = '') {
+  const normalizedAction = String(action || '').trim().toLowerCase();
+  if (!['send_email', 'send_sms'].includes(normalizedAction)) return false;
+  const source = normalizeManualProviderSendSource(params.source || params.requestSource || params.request_source || params.origin);
+  const nestedParams = params.params && typeof params.params === 'object' ? params.params : {};
+  return Boolean(
+    params.manual === true ||
+      params.manualSend === true ||
+      params.manual_send === true ||
+      nestedParams.manual === true ||
+      nestedParams.manualSend === true ||
+      nestedParams.manual_send === true ||
+      ['manual', 'command_center_manual', 'unified_inbox_manual', 'lead_portal_manual', 'ava_chat_manual'].includes(source)
+  );
 }
 
 function stableLocalCommandJson(value) {
@@ -11547,7 +11580,8 @@ function buildLocalCommandRecord(params = {}) {
   const action = normalizeLocalCommandAction(params);
   const riskLevel = classifyLocalCommandRisk(action);
   const lowRisk = riskLevel === 'low';
-  const requiresApproval = params.requiresApproval === false && lowRisk ? false : true;
+  const manualProviderSend = isTrustedManualProviderSendCommand(params, action);
+  const requiresApproval = manualProviderSend ? false : params.requiresApproval === false && lowRisk ? false : true;
   const now = isoNow();
   const id = String(params.id || params.commandId || `local-command-${Date.now()}-${randomUUID().slice(0, 8)}`).trim();
   const sidecarParams = params.params && typeof params.params === 'object' ? params.params : {};
@@ -11567,7 +11601,7 @@ function buildLocalCommandRecord(params = {}) {
     status: requiresApproval ? 'pending_approval' : 'approved',
     requiresApproval,
     riskLevel,
-    riskReason: String(params.riskReason || params.risk_reason || getLocalCommandRiskReason(action, riskLevel)).trim(),
+    riskReason: String(params.riskReason || params.risk_reason || (manualProviderSend ? 'manual_provider_send' : getLocalCommandRiskReason(action, riskLevel))).trim(),
     classificationVersion: String(params.classificationVersion || params.classification_version || LOCAL_COMMAND_RISK_CLASSIFICATION_VERSION).trim(),
     approvalId: String(params.approvalId || params.approval_id || '').trim(),
     approvalDigest: String(params.approvalDigest || params.approval_digest || '').trim(),
@@ -20627,6 +20661,130 @@ function applyRuntimePBKIntelligenceContextToSession(session = {}, context = {})
     state.status.lastPBKIntelligenceContextAt = context.generatedAt || isoNow();
   }
   return session;
+}
+
+function getAgentActionContextIds(params = {}, context = {}) {
+  return {
+    leadId: String(params.leadId || params.lead_id || context.leadId || context.id || '').trim(),
+    callId: String(params.callId || params.call_id || params.call?.id || params.call?.callId || context.callId || '').trim(),
+  };
+}
+
+function buildAgentActionPBKIntelligenceContextInput(params = {}, command = '', context = {}) {
+  const ids = getAgentActionContextIds(params, context);
+  return buildRuntimePBKIntelligenceContext({
+    ...params,
+    query: command,
+    text: command,
+    leadId: ids.leadId,
+    callId: ids.callId,
+    leadName: context.leadName || context.name || params.leadName || params.name || '',
+    address: context.address || params.address || '',
+    phone: context.phone || params.phone || '',
+    email: context.email || params.email || '',
+    turnContract: params.turnContract || params.pbkIntelligenceContext?.turnContract || null,
+    contextCall: {
+      ...(params.call && typeof params.call === 'object' ? params.call : {}),
+      id: ids.callId,
+      callId: ids.callId,
+      leadId: ids.leadId,
+      leadName: context.leadName || context.name || params.leadName || params.name || '',
+      address: context.address || params.address || '',
+      phone: context.phone || params.phone || '',
+      email: context.email || params.email || '',
+      transcript: params.transcript || params.messages || [],
+      status: params.status || 'agent_action',
+    },
+  });
+}
+
+function isFullAgentActionPBKIntelligenceContext(context = {}) {
+  return Boolean(
+    context &&
+      typeof context === 'object' &&
+      context.identity &&
+      context.turnContract &&
+      context.memory &&
+      context.skills
+  );
+}
+
+function publishAgentActionPBKIntelligenceContext(context = {}) {
+  if (!context || typeof context !== 'object') return null;
+  if (!state.status || typeof state.status !== 'object') state.status = {};
+  state.status.pbkIntelligenceContext = summarizeRuntimePBKIntelligenceContext(context);
+  state.status.pbkIntelligenceReadiness = context.fleetReadiness || null;
+  state.status.lastPBKIntelligenceContextAt = context.savedAt || context.generatedAt || isoNow();
+  return state.status.pbkIntelligenceContext;
+}
+
+async function prepareAgentActionPBKIntelligenceContext(params = {}, command = '', context = {}) {
+  const ids = getAgentActionContextIds(params, context);
+  const input =
+    isFullAgentActionPBKIntelligenceContext(params.pbkIntelligenceContext)
+      ? params.pbkIntelligenceContext
+      : buildAgentActionPBKIntelligenceContextInput(params, command, context);
+  const result = await withPBKIntelligenceContext(
+    {
+      leadId: ids.leadId,
+      callId: ids.callId,
+      input,
+      agents: state.agents || buildDefaultAgentFleet(),
+      source: 'agent-action',
+    },
+    async (agentContext) => {
+      const outcome = {
+        ...(agentContext.outcome || {}),
+        actionTaken: 'agent_action.received',
+        sellerReaction: 'routing_started',
+      };
+      return {
+        ok: true,
+        source: 'agent-action',
+        outcome,
+        pbkIntelligenceContext: agentContext,
+      };
+    }
+  );
+  const agentContext = result?.pbkIntelligenceContext || input;
+  publishAgentActionPBKIntelligenceContext(agentContext);
+  return agentContext;
+}
+
+async function finalizeAgentActionPBKIntelligenceContext(params = {}, command = '', context = {}, routedTo = '', response = null, agentContext = null) {
+  const ids = getAgentActionContextIds(params, context);
+  const input =
+    agentContext ||
+    (isFullAgentActionPBKIntelligenceContext(params.pbkIntelligenceContext)
+      ? params.pbkIntelligenceContext
+      : buildAgentActionPBKIntelligenceContextInput(params, command, context));
+  const result = await withPBKIntelligenceContext(
+    {
+      leadId: ids.leadId,
+      callId: ids.callId,
+      input,
+      agents: state.agents || buildDefaultAgentFleet(),
+      source: 'agent-action',
+    },
+    async (agentContext) => {
+      const outcome = {
+        ...(agentContext.outcome || {}),
+        actionTaken: routedTo || 'runAgentCommand',
+        sellerReaction: response?.ok === false ? 'failed' : 'completed',
+        appointmentSet: Boolean(response?.appointment || response?.scheduled || response?.result === 'appointment_scheduled'),
+        contractSent: Boolean(response?.envelopeId || response?.contractSent || response?.result === 'docusign_sent'),
+      };
+      return {
+        ok: true,
+        source: 'agent-action',
+        outcome,
+        pbkIntelligenceContext: agentContext,
+      };
+    }
+  );
+  const nextContext = result?.pbkIntelligenceContext || input;
+  publishAgentActionPBKIntelligenceContext(nextContext);
+  return nextContext;
 }
 
 function summarizeRuntimePBKIntelligenceContext(context = {}) {
@@ -37277,6 +37435,29 @@ function hasExplicitSellerBinding(params = {}) {
   });
 }
 
+function isTrustedManualConversationProviderSend(toolName = '', params = {}) {
+  if (!['telnyx_sms', 'sendColdEmail'].includes(toolName)) return false;
+  if (params.manual !== true || params.manualSend !== true) return false;
+  const source = String(params.source || params.requestSource || params.request_source || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, '_')
+    .replace(/^_+|_+$/g, '');
+  const requestedBy = String(params.requestedBy || params.requested_by || params.actor || '')
+    .trim()
+    .toLowerCase();
+  return (
+    [
+      'manual',
+      'command_center_manual',
+      'unified_inbox_manual',
+      'unified_conversation_manual',
+      'lead_portal_manual',
+    ].includes(source) ||
+    /operator|manual|unified-inbox|command center|lead portal/.test(requestedBy)
+  );
+}
+
 async function enforceOperatingModeForTool(toolName, params = {}) {
   if (!OPERATING_MODE_GATED_TOOLS.has(toolName)) return null;
   if (isDirectProtectedEnvUpdate(toolName, params)) return null;
@@ -37341,6 +37522,13 @@ async function enforceOperatingModeForTool(toolName, params = {}) {
       Array.isArray(safetyValidation?.warnings) &&
       safetyValidation.warnings.length > 0
   );
+  if (
+    isTrustedManualConversationProviderSend(toolName, params) &&
+    !forceApproval &&
+    !safetyReviewRequired
+  ) {
+    return null;
+  }
   if (mode === 'autopilot' && !forceApproval && !safetyReviewRequired) return null;
 
   if (mode === 'manual') {
@@ -39331,15 +39519,37 @@ async function invokeAgentFromRegistry(params = {}) {
     };
   }
   try {
-    const output = await invokeRegisteredAgent(agent, params.payload || params, {
+    const payload = params.payload && typeof params.payload === 'object' ? params.payload : params;
+    const command = String(payload.command || payload.query || payload.prompt || capability || requestedId || '').trim();
+    let agentContext = await prepareAgentActionPBKIntelligenceContext(payload, command, payload.context || payload);
+    const payloadWithContext = {
+      ...payload,
+      pbkIntelligenceContext: agentContext,
+      context:
+        payload.context && typeof payload.context === 'object'
+          ? { ...payload.context, pbkIntelligenceContext: agentContext }
+          : { pbkIntelligenceContext: agentContext },
+    };
+    const output = await invokeRegisteredAgent(agent, payloadWithContext, {
       localHandlers: getLocalAgentRegistryHandlers(),
       timeoutMs: params.timeoutMs || params.timeout_ms || 5000,
     });
+    const routedTo = `invokeRegisteredAgent:${agent.id}`;
+    agentContext = await finalizeAgentActionPBKIntelligenceContext(
+      payloadWithContext,
+      command,
+      payloadWithContext.context,
+      routedTo,
+      output,
+      agentContext
+    );
     return {
       ok: true,
       result: 'agent_invoked',
+      routedTo: `invokeRegisteredAgent:${agent.id}`,
       agent,
       output,
+      pbkIntelligenceContext: summarizeRuntimePBKIntelligenceContext(agentContext),
     };
   } catch (error) {
     return {
@@ -46213,7 +46423,12 @@ const toolHandlers = {
 
   async runAgentTeam(params = {}) {
     recordToolUse('runAgentTeam');
-    return runAgentTeamWorkflow(params, {
+    const command = String(params.goal || params.query || params.command || params.prompt || '').trim();
+    let agentContext = await prepareAgentActionPBKIntelligenceContext(params, command, params.context || params);
+    const result = await runAgentTeamWorkflow({
+      ...params,
+      pbkIntelligenceContext: agentContext,
+    }, {
       strategist: async ({ role, prompt }) =>
         askStrategistRecord({
           situation: prompt,
@@ -46224,6 +46439,21 @@ const toolHandlers = {
           source: 'agent-team-workflow',
         }),
     });
+    agentContext = await finalizeAgentActionPBKIntelligenceContext(
+      {
+        ...params,
+        pbkIntelligenceContext: agentContext,
+      },
+      command,
+      params.context || params,
+      'runAgentTeam',
+      result,
+      agentContext
+    );
+    return {
+      ...(result && typeof result === 'object' ? result : { result }),
+      pbkIntelligenceContext: summarizeRuntimePBKIntelligenceContext(agentContext),
+    };
   },
 
   async runTeamWorkflow(params = {}) {
@@ -51400,6 +51630,9 @@ const toolHandlers = {
           ...parsedContext,
           ...params,
         });
+    let agentContext = await prepareAgentActionPBKIntelligenceContext(params, command, context);
+    context.pbkIntelligenceContext = agentContext;
+    params.pbkIntelligenceContext = agentContext;
 
     addActivity(
       state,
@@ -51669,12 +51902,17 @@ const toolHandlers = {
       })
     );
 
+    agentContext = await finalizeAgentActionPBKIntelligenceContext(params, command, context, routedTo, response, agentContext);
+    context.pbkIntelligenceContext = agentContext;
+    params.pbkIntelligenceContext = agentContext;
+
     await persistState(state);
     return {
       ok: true,
       command,
       routedTo,
       response,
+      pbkIntelligenceContext: summarizeRuntimePBKIntelligenceContext(agentContext),
     };
   },
 };
@@ -55821,6 +56059,9 @@ function parseConversationSendBody(body) {
       'sendAt',
       'actor',
       'requestedBy',
+      'source',
+      'manual',
+      'manualSend',
     ]),
     'conversation send'
   );
@@ -55879,13 +56120,22 @@ function parseConversationSendBody(body) {
       });
     }
   }
-  for (const field of ['actor', 'requestedBy']) {
+  for (const field of ['actor', 'requestedBy', 'source']) {
     if (Object.hasOwn(body, field) && typeof body[field] !== 'string') {
       throw Object.assign(new Error(`${field} must be a string when provided.`), {
         statusCode: 400,
       });
     }
   }
+  for (const field of ['manual', 'manualSend']) {
+    if (Object.hasOwn(body, field) && typeof body[field] !== 'boolean') {
+      throw Object.assign(new Error(`${field} must be a boolean when provided.`), {
+        statusCode: 400,
+      });
+    }
+  }
+  const manualSend = body.manual === true || body.manualSend === true;
+  const source = String(body.source || (manualSend ? 'manual' : '')).trim().slice(0, 120);
   return {
     channel,
     senderIdentityId,
@@ -55893,6 +56143,10 @@ function parseConversationSendBody(body) {
     subject,
     scheduledFor,
     actor: String(body.actor || body.requestedBy || '').trim().slice(0, 200),
+    requestedBy: String(body.requestedBy || '').trim().slice(0, 120),
+    source,
+    manual: manualSend,
+    manualSend,
   };
 }
 
@@ -56184,6 +56438,10 @@ function buildConversationSendEventPayload({
   senderIdentity,
   recipient,
   reason,
+  source,
+  manual,
+  manualSend,
+  requestedBy,
 }) {
   return {
     requestId,
@@ -56198,6 +56456,10 @@ function buildConversationSendEventPayload({
     senderAddress: senderIdentity?.address || '',
     recipient,
     reason: reason || result?.reason || result?.error || result?.message || '',
+    source: source || result?.source || '',
+    manual: manual === true || result?.manual === true,
+    manualSend: manualSend === true || result?.manualSend === true,
+    requestedBy: requestedBy || result?.requestedBy || '',
   };
 }
 
@@ -56317,6 +56579,10 @@ async function projectConversationSendOutcome(
     sourceId = '',
     actor = 'operator',
     reason = '',
+    source = '',
+    manual = false,
+    manualSend = false,
+    requestedBy = '',
   }
 ) {
   return store.upsertEvent({
@@ -56344,6 +56610,10 @@ async function projectConversationSendOutcome(
       senderIdentity,
       recipient,
       reason,
+      source,
+      manual,
+      manualSend,
+      requestedBy,
     }),
   });
 }
@@ -56371,6 +56641,10 @@ async function updateScheduledConversationEvent(
     senderIdentity,
     recipient,
     reason: result?.reason || result?.error || '',
+    source: scheduledMessage.payload?.source || scheduledMessage.payload?.requestedFrom || '',
+    manual: scheduledMessage.payload?.manual === true,
+    manualSend: scheduledMessage.payload?.manualSend === true,
+    requestedBy: scheduledMessage.payload?.requestedBy || scheduledMessage.payload?.actor || '',
   });
   if (scheduledMessage.conversationEventId) {
     return store.updateEventOutcome(scheduledMessage.conversationEventId, {
@@ -56396,6 +56670,10 @@ async function updateScheduledConversationEvent(
     sourceTable: 'unified_messages',
     sourceId: scheduledMessage.id,
     actor,
+    source: scheduledMessage.payload?.source || scheduledMessage.payload?.requestedFrom || '',
+    manual: scheduledMessage.payload?.manual === true,
+    manualSend: scheduledMessage.payload?.manualSend === true,
+    requestedBy: scheduledMessage.payload?.requestedBy || scheduledMessage.payload?.actor || '',
   });
 }
 
@@ -65543,6 +65821,10 @@ const server = createServer(async (request, response) => {
             scheduledFor: parsed.scheduledFor,
             actor,
             reason: providerResult.reason,
+            source: parsed.source,
+            manual: parsed.manual,
+            manualSend: parsed.manualSend,
+            requestedBy: parsed.requestedBy,
           });
           json(response, 409, {
             ok: false,
@@ -65583,6 +65865,10 @@ const server = createServer(async (request, response) => {
             scheduledFor: parsed.scheduledFor,
             actor,
             reason,
+            source: parsed.source,
+            manual: parsed.manual,
+            manualSend: parsed.manualSend,
+            requestedBy: parsed.requestedBy,
           });
           json(response, 409, {
             ...providerResult,
@@ -65610,10 +65896,16 @@ const server = createServer(async (request, response) => {
           message: parsed.body,
           subject: parsed.subject,
           actor,
-          requestedBy: actor,
+          requestedBy: parsed.requestedBy || actor,
+          source: parsed.source || (parsed.manualSend ? 'unified_conversation_manual' : 'unified_conversation'),
+          manual: parsed.manual,
+          manualSend: parsed.manualSend,
           senderIdentityId: senderIdentity.id,
           metadata: {
             conversationSendBinding,
+            source: parsed.source || (parsed.manualSend ? 'unified_conversation_manual' : 'unified_conversation'),
+            manual: parsed.manual,
+            manualSend: parsed.manualSend,
           },
           ...(parsed.channel === 'sms'
             ? {
@@ -65659,6 +65951,10 @@ const server = createServer(async (request, response) => {
               result: guarded,
               scheduledFor: parsed.scheduledFor,
               actor,
+              source: parsed.source,
+              manual: parsed.manual,
+              manualSend: parsed.manualSend,
+              requestedBy: parsed.requestedBy,
             });
             event = await bindConversationApprovalToEvent(store, {
               providerResult: guarded,
@@ -65710,7 +66006,11 @@ const server = createServer(async (request, response) => {
               actor,
               conversationThreadId: thread.id,
               conversationSendBinding,
-              requestedFrom: 'unified-conversation',
+              requestedFrom: parsed.source || 'unified-conversation',
+              manual: parsed.manual,
+              manualSend: parsed.manualSend,
+              source: parsed.source,
+              requestedBy: parsed.requestedBy,
             },
           });
           message.scheduledFor = parsed.scheduledFor;
@@ -65737,6 +66037,10 @@ const server = createServer(async (request, response) => {
               result: failedResult,
               scheduledFor: parsed.scheduledFor,
               actor,
+              source: parsed.source,
+              manual: parsed.manual,
+              manualSend: parsed.manualSend,
+              requestedBy: parsed.requestedBy,
             });
             json(response, 503, { ...failedResult, event });
             return;
@@ -65762,6 +66066,10 @@ const server = createServer(async (request, response) => {
             sourceTable: 'unified_messages',
             sourceId: message.id,
             actor,
+            source: parsed.source,
+            manual: parsed.manual,
+            manualSend: parsed.manualSend,
+            requestedBy: parsed.requestedBy,
           });
           message.payload = {
             ...(message.payload || {}),
@@ -65817,6 +66125,10 @@ const server = createServer(async (request, response) => {
           status: classification.status,
           result: providerResult,
           actor,
+          source: parsed.source,
+          manual: parsed.manual,
+          manualSend: parsed.manualSend,
+          requestedBy: parsed.requestedBy,
         });
         if (classification.status === 'approval_required') {
           event = await bindConversationApprovalToEvent(store, {

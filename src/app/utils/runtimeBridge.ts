@@ -2727,6 +2727,9 @@ export async function sendConversationMessageRequest(
     scheduledFor?: string;
     actor?: string;
     requestedBy?: string;
+    source?: string;
+    manual?: boolean;
+    manualSend?: boolean;
   }
 ) {
   return bridgeRequest<{

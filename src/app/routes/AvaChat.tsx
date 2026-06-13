@@ -251,6 +251,28 @@ function classifyConversationalCommand(command: string, selectedAction: AvaComma
   }> = [
     {
       pattern:
+        /^(?:hi|hello|hey|yo|yes|yeah|yep|no|nah|why|ok|okay|thanks|thank you|good morning|good afternoon|good evening|how are you|what'?s up)[\s.!?]*$/i,
+      action: 'llm_query',
+      requiresApproval: false,
+    },
+    {
+      pattern:
+        /\b(?:research|search(?![^.!?\n]{0,32}\b(?:lead|seller|contact|property|record)s?\b)|find(?![^.!?\n]{0,32}\b(?:lead|seller|contact|property|record)s?\b)|look up(?![^.!?\n]{0,32}\b(?:lead|seller|contact|property|record)s?\b)|what is|what are|how does|how do|tell me about|explain|teach me|summarize)\b/i,
+      action: 'llm_query',
+      requiresApproval: false,
+    },
+    {
+      pattern: /\b(?:draft|compose|write|prepare).{0,32}(?:email|mail)\b/i,
+      action: 'llm_query',
+      requiresApproval: false,
+    },
+    {
+      pattern: /\b(?:draft|compose|write|prepare).{0,32}(?:text|sms|message)\b/i,
+      action: 'llm_query',
+      requiresApproval: false,
+    },
+    {
+      pattern:
         /\b(?:take|grab|capture|get|snap).{0,24}(?:screenshot|screen shot|screen capture|desktop)\b|\bwhat(?:'s| is).{0,24}(?:on|shown on).{0,12}(?:my )?screen\b/i,
       action: 'screenshot',
       requiresApproval: true,
@@ -268,12 +290,12 @@ function classifyConversationalCommand(command: string, selectedAction: AvaComma
       requiresApproval: true,
     },
     {
-      pattern: /\b(?:send|draft|write).{0,32}(?:email|mail)\b|\bemail\s+(?:to|the)\b/i,
+      pattern: /\b(?:send).{0,32}(?:email|mail)\b|\bemail\s+(?:to|the)\b/i,
       action: 'send_email',
       requiresApproval: true,
     },
     {
-      pattern: /\b(?:send|draft|write).{0,32}(?:text|sms|message)\b|\b(?:text|sms)\s+(?:to|the)\b/i,
+      pattern: /\b(?:send).{0,32}(?:text|sms|message)\b|\b(?:text|sms)\s+(?:to|the)\b/i,
       action: 'send_sms',
       requiresApproval: true,
     },

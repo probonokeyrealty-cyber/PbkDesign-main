@@ -26,7 +26,7 @@ const migrations = fs
 
 assert(
   pkg.scripts?.['test:ava-chat-local-command'] ===
-    'node ./scripts/ava-chat-local-command-smoke.mjs',
+    'npm run test:ava-intent-router && node ./scripts/ava-chat-local-command-smoke.mjs',
   'package.json must expose test:ava-chat-local-command.'
 );
 
@@ -103,6 +103,7 @@ assert(
 assert(
   /classifyConversationalCommand[\s\S]*send_email[\s\S]*requiresApproval:\s*true/.test(avaChat) &&
     /classifyConversationalCommand[\s\S]*send_sms[\s\S]*requiresApproval:\s*true/.test(avaChat) &&
+    /classifyConversationalCommand[\s\S]*llm_query[\s\S]*requiresApproval:\s*false/.test(avaChat) &&
     /classifyConversationalCommand[\s\S]*status[\s\S]*requiresApproval:\s*false/.test(avaChat),
   'Ava Chat must deterministically route common natural-language commands into the right approval lane.'
 );
@@ -194,8 +195,10 @@ assert(
   /export const AVA_INTENT_ROUTER_VERSION/.test(avaIntentRouter) &&
     /send_email[\s\S]*needsApproval:\s*true/.test(avaIntentRouter) &&
     /send_sms[\s\S]*needsApproval:\s*true/.test(avaIntentRouter) &&
+    /chat[\s\S]*needsApproval:\s*false/.test(avaIntentRouter) &&
+    /research[\s\S]*needsApproval:\s*false/.test(avaIntentRouter) &&
     /check_status[\s\S]*needsApproval:\s*false/.test(avaIntentRouter),
-  'Ava deterministic intent router must classify status as read-only and provider sends as approval-gated.'
+  'Ava deterministic intent router must classify chat/research/status as read-only and provider sends as approval-gated unless trusted manual.'
 );
 assert(
   /classifyAvaConversationalIntent\(command,\s*params\)/.test(bridge) ||
@@ -203,7 +206,7 @@ assert(
   'The bridge must classify local command transcripts with the deterministic Ava intent router.'
 );
 assert(
-  /function classifyLocalCommandRisk[\s\S]*\['ping', 'status', 'search_leads', 'analyze_deal'\]/.test(bridge),
+  /function classifyLocalCommandRisk[\s\S]*\['ping', 'status', 'chat', 'research', 'draft_email', 'draft_sms', 'llm_query', 'search_leads', 'analyze_deal'\]/.test(bridge),
   'The bridge must own a narrow read-only low-risk action allowlist.'
 );
 assert(

@@ -495,7 +495,10 @@ export function ConversationComposer({
         subject: channel === 'email' ? submittedSubject : undefined,
         scheduledFor: sendLater ? new Date(scheduledFor).toISOString() : undefined,
         actor: 'PBK operator',
-        requestedBy: 'unified-inbox',
+        requestedBy: 'unified-inbox-manual',
+        source: 'unified_inbox_manual',
+        manual: true,
+        manualSend: true,
       });
       const approvalRequired = isConversationApprovalRequired(response);
       setSendOutcome({

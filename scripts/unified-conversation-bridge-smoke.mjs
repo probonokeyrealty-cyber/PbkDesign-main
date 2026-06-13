@@ -704,12 +704,55 @@ assert(
 
 assert(
   /new Set\(\[[\s\S]*'requestedBy'[\s\S]*\]\)/.test(bridge) &&
+    /new Set\(\[[\s\S]*'source'[\s\S]*'manual'[\s\S]*'manualSend'[\s\S]*\]\)/.test(
+      bridge
+    ) &&
     !/new Set\(\[[\s\S]{0,300}'approvalId'[\s\S]{0,300}\]\),\s*'conversation send'/.test(
       bridge
     ) &&
     !/approvalId:\s*String\(body\.approvalId/.test(bridge) &&
-    !/approvalId:\s*parsed\.approvalId/.test(conversationRoutes),
+    !/approvalId:\s*parsed\.approvalId/.test(conversationRoutes) &&
+    /manualSend = body\.manual === true \|\| body\.manualSend === true/.test(bridge) &&
+    /source = String\(body\.source \|\| \(manualSend \? 'manual' : ''\)\)/.test(
+      bridge
+    ) &&
+    /manual:\s*manualSend/.test(bridge),
   'Public conversation sends must not accept or forward an arbitrary approvalId.'
+);
+
+assert(
+  /requestedBy:\s*parsed\.requestedBy \|\| actor/.test(conversationRoutes) &&
+    /source:\s*parsed\.source \|\| \(parsed\.manualSend \? 'unified_conversation_manual' : 'unified_conversation'\)/.test(
+      conversationRoutes
+    ) &&
+    /manual:\s*parsed\.manual/.test(conversationRoutes) &&
+    /manualSend:\s*parsed\.manualSend/.test(conversationRoutes),
+  'Manual conversation sends must pass explicit source/manual metadata into provider execution.'
+);
+
+assert(
+  /function isTrustedManualConversationProviderSend\(toolName = '', params = \{\}\)/.test(
+    bridge
+  ) &&
+    /\['telnyx_sms', 'sendColdEmail'\]\.includes\(toolName\)/.test(bridge) &&
+    /params\.manual !== true \|\| params\.manualSend !== true/.test(bridge) &&
+    /'unified_inbox_manual'/.test(bridge) &&
+    /'unified_conversation_manual'/.test(bridge) &&
+    /isTrustedManualConversationProviderSend\(toolName, params\)[\s\S]*!forceApproval[\s\S]*!safetyReviewRequired[\s\S]*return null/.test(
+      bridge
+    ),
+  'Only trusted manual SMS/email conversation sends may bypass operating-mode approval after safety validation.'
+);
+
+assert(
+  /function buildConversationSendEventPayload\(\{[\s\S]*source,[\s\S]*manual,[\s\S]*manualSend,[\s\S]*requestedBy/.test(
+    bridge
+  ) &&
+    /source:\s*source \|\| result\?\.source \|\| ''/.test(bridge) &&
+    /manual:\s*manual === true \|\| result\?\.manual === true/.test(bridge) &&
+    /manualSend:\s*manualSend === true \|\| result\?\.manualSend === true/.test(bridge) &&
+    /requestedBy:\s*requestedBy \|\| result\?\.requestedBy \|\| ''/.test(bridge),
+  'Conversation timeline events must preserve manual send source metadata.'
 );
 
 assert(

@@ -2372,6 +2372,7 @@ async function buildProductionReadinessSnapshot({
     intelligenceContext,
     latencySamples: buildProductionAgentLatencySamples(),
     lastActions: buildProductionLastAgentActions(),
+    requireIntelligenceContext: false,
   });
   const bridgeConnection = buildBridgeConnectionStatus({
     runtimeMeta,

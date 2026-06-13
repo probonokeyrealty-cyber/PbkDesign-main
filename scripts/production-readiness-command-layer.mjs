@@ -342,6 +342,20 @@ function actionRequiresConversation(actionType = '') {
   );
 }
 
+function actionRequiresIdentity(actionType = '') {
+  return [
+    'send_sms',
+    'send_email',
+    'start_call',
+    'telnyx_call',
+    'send_contract',
+    'send_docusign',
+    'prepare_and_send_contract',
+    'analyze_deal',
+    'update_lead',
+  ].includes(normalizeActionType(actionType));
+}
+
 function actionRequiresSender(actionType = '') {
   return ['send_sms', 'send_email'].includes(normalizeActionType(actionType));
 }
@@ -388,6 +402,7 @@ export function buildProductionTruthGate({
   senderIdentity = null,
   providers = {},
   actionType = '',
+  requireIdentity = null,
   requireMemory = false,
   requireSkills = true,
   requireTurnContract = true,
@@ -403,7 +418,8 @@ export function buildProductionTruthGate({
   if (runtimeMeta.productionReady === false) {
     warnings.push('runtime_not_marked_production_ready');
   }
-  if (!hasLeadIdentity(identity)) {
+  const needsIdentity = typeof requireIdentity === 'boolean' ? requireIdentity : actionRequiresIdentity(action);
+  if (needsIdentity && !hasLeadIdentity(identity)) {
     blockers.push('lead_identity_missing');
   }
   const needsConversation =
@@ -443,6 +459,7 @@ export function buildProductionTruthGate({
     warnings: unique(warnings),
     facts: {
       leadIdentity: hasLeadIdentity(identity),
+      leadIdentityRequired: needsIdentity,
       conversationThread: Boolean(clean(conversation.threadId || conversation.thread_id || conversation.id)),
       memoryReady: Boolean(memory.ready),
       skillsReady: Boolean(skills.ready || asArray(skills.active).length),
@@ -466,6 +483,7 @@ export function buildAgentCapabilityReadiness({
   intelligenceContext = {},
   latencySamples = {},
   lastActions = {},
+  requireIntelligenceContext = true,
 } = {}) {
   const catalog = normalizeToolCatalog(toolCatalog);
   const normalizedAgents = asArray(agents).map((agent) => {
@@ -480,10 +498,16 @@ export function buildAgentCapabilityReadiness({
       dataFreshness: Boolean(intelligenceContext.dataFreshness?.ready),
       fleet: Boolean(intelligenceContext.fleetReadiness?.ready),
     };
+    const contextKnown = {
+      memory: intelligenceContext.memory?.ready !== undefined,
+      skills: intelligenceContext.skills?.ready !== undefined,
+      dataFreshness: intelligenceContext.dataFreshness?.ready !== undefined,
+      fleet: intelligenceContext.fleetReadiness?.ready !== undefined,
+    };
     const blockedReasons = [
       ...missingTools.map((tool) => `missing_tool:${tool}`),
       ...Object.entries(contextReady)
-        .filter(([, ready]) => !ready)
+        .filter(([key, ready]) => requireIntelligenceContext && contextKnown[key] && !ready)
         .map(([key]) => `${key}_not_ready`),
     ];
     const ready = blockedReasons.length === 0;
@@ -496,6 +520,7 @@ export function buildAgentCapabilityReadiness({
         requiredTools,
         missingTools,
         contextReady,
+        contextKnown,
         latencyP95Ms: percentile(samples, 0.95),
         lastSuccess: lastAction?.status === 'success' ? lastAction.at || lastAction.completedAt || '' : '',
         lastFailure: lastAction?.status === 'failure' ? lastAction.at || lastAction.completedAt || '' : '',

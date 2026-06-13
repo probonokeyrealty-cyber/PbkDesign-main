@@ -72,6 +72,29 @@ const freshTruth = buildProductionTruthGate({
 assert.equal(freshTruth.ready, true, 'Fresh truth should allow normal manual SMS action.');
 assert.deepEqual(freshTruth.blockers, [], 'Fresh truth should not produce blockers.');
 
+const bridgeStatusTruth = buildProductionTruthGate({
+  runtimeMeta: {
+    hosted: true,
+    stateBackend: 'postgres',
+    productionReady: true,
+  },
+  identity: {},
+  memory: { ready: false },
+  skills: { ready: false, active: [] },
+  turnContract: { ok: false },
+  providers: {},
+  actionType: 'status',
+  requireSkills: false,
+  requireTurnContract: false,
+});
+
+assert.equal(bridgeStatusTruth.ready, true, 'Bridge status checks should not require seller identity.');
+assert.equal(
+  bridgeStatusTruth.facts.leadIdentityRequired,
+  false,
+  'Bridge status truth should mark lead identity as optional.'
+);
+
 const staleTruth = buildProductionTruthGate({
   runtimeMeta: {
     hosted: true,
@@ -187,6 +210,24 @@ const agentReadiness = buildAgentCapabilityReadiness({
 });
 assert.equal(agentReadiness.ready, true, 'Agent capability readiness should pass with tools, memory, skills, and freshness.');
 assert.equal(agentReadiness.agents.find((agent) => agent.id === 'ava').capability.latencyP95Ms, 1600);
+
+const bridgeOnlyAgentReadiness = buildAgentCapabilityReadiness({
+  agents: [
+    {
+      id: 'ava',
+      name: 'Ava',
+      requiredTools: ['telnyx_sms'],
+    },
+  ],
+  toolCatalog: { telnyx_sms: true },
+  intelligenceContext: {},
+  requireIntelligenceContext: false,
+});
+assert.equal(
+  bridgeOnlyAgentReadiness.ready,
+  true,
+  'Bridge-level readiness should not fail when no per-call intelligence context is active.'
+);
 
 const bridgeConnection = buildBridgeConnectionStatus({
   runtimeMeta: {

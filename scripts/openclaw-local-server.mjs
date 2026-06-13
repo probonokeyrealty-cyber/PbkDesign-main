@@ -27,6 +27,15 @@ import {
   buildAvaLiveGovernedSkillReply,
   shouldPreferAvaLiveGovernedSkillReply,
 } from './ava-live-skill-fallback.mjs';
+import {
+  applyAvaLiveTurnContractToSession,
+  buildAvaLiveCockpitSnapshot,
+  buildAvaLiveSkillOutcomeDraft,
+  buildAvaLiveTurnContract,
+  compileAvaLiveSkillAction,
+  isAvaLiveReplyAlignedWithContract,
+  renderAvaLiveContractReply,
+} from './ava-live-turn-contract.mjs';
 import { validateProviderActionSafety as validateProviderActionSafetyCore } from './safety-validator.mjs';
 import { runAvaCanonicalEvalSuite as runAvaCanonicalEvalSuiteCore } from './ava-eval-suite.mjs';
 import { buildCoworkerHeartbeatPlan, summarizeHeartbeatPlan } from './coworker-heartbeat.mjs';
@@ -1087,6 +1096,17 @@ function buildSharedTelnyxSessionState(session = {}, status = 'active') {
     avaTurnLockReason: session.avaTurnLockReason || '',
     avaReplySuppressed: Boolean(session.avaReplySuppressed),
     replyLatencySamples: (session.replyLatencySamples || []).slice(0, 5),
+    avaLiveCockpit:
+      session.avaLiveCockpit ||
+      buildAvaLiveCockpitSnapshot({
+        contract: session.avaLiveTurnContract || {},
+        replyMode: session.lastAvaReplyMode || '',
+        latencyMs: session.replyLatencySamples?.[0]?.latencyMs ?? null,
+        turnContractEnforced: Boolean(session.lastTurnContractEnforced),
+        replyPreview: lastAvaSpoken || lastAvaPreview,
+      }),
+    avaLiveTurnContract: session.avaLiveTurnContract || null,
+    avaLiveTurnHistory: Array.isArray(session.avaLiveTurnHistory) ? session.avaLiveTurnHistory.slice(0, 8) : [],
     finalized: Boolean(session.finalized),
     finalizeReason: session.finalizeReason || '',
     endedAt: session.endedAt || '',
@@ -1184,6 +1204,17 @@ function buildTelnyxMediaSessionDiagnostics(session = {}, contextCall = null, op
     avaReplySuppressed: Boolean(session.avaReplySuppressed),
     replyLatencySamples: (session.replyLatencySamples || []).slice(0, 5),
     lastAvaReplyMode: session.lastAvaReplyMode || '',
+    avaLiveCockpit:
+      session.avaLiveCockpit ||
+      buildAvaLiveCockpitSnapshot({
+        contract: session.avaLiveTurnContract || {},
+        replyMode: session.lastAvaReplyMode || '',
+        latencyMs: session.replyLatencySamples?.[0]?.latencyMs ?? null,
+        turnContractEnforced: Boolean(session.lastTurnContractEnforced),
+        replyPreview: lastAvaSpoken || lastAvaPreview,
+      }),
+    avaLiveTurnContract: session.avaLiveTurnContract || null,
+    avaLiveTurnHistory: Array.isArray(session.avaLiveTurnHistory) ? session.avaLiveTurnHistory.slice(0, 8) : [],
     lastRedisSyncResult: session.lastRedisSyncResult || '',
     lastRedisSyncError: session.lastRedisSyncError || '',
     startedAt: session.startedAt || '',
@@ -22707,6 +22738,47 @@ async function recordPostCallLearningFromTranscript({ session = {}, contextCall 
         ok: false,
         error: error?.message || String(error),
         skillName: `${selectedPath} path qualification`,
+      }))
+    );
+  }
+
+  const turnContractSkillTurns = Array.from(
+    new Map(
+      (Array.isArray(session.avaLiveTurnHistory) ? session.avaLiveTurnHistory : [])
+        .filter((turn) => turn?.activeSkill?.id || turn?.activeSkill?.name)
+        .map((turn) => [turn.activeSkill.id || turn.activeSkill.name, turn])
+    ).values()
+  ).slice(0, 5);
+  for (const turn of turnContractSkillTurns) {
+    outcomes.push(
+      await recordSkillOutcomeRecord({
+        skillId: turn.activeSkill?.id || '',
+        skillName: turn.activeSkill?.name || turn.activeSkill?.id || 'Ava live turn contract skill',
+        agentName: 'Ava',
+        callId,
+        leadId,
+        success: repeatedAuthorityAfterConfirmation ? false : inferredOutcome.success,
+        outcomeLabel: repeatedAuthorityAfterConfirmation
+          ? 'turn contract skill degraded by repeated authority probe'
+          : inferredOutcome.outcomeLabel,
+        transcript,
+        metadata: {
+          source: 'post_call_turn_contract_learning',
+          revision: turn.revision || '',
+          intent: turn.intent || 'unknown',
+          objection: turn.objection || '',
+          phase: turn.phase || '',
+          nextQuestionCategory: turn.nextBestQuestionCategory || '',
+          knownFacts: turn.knownFacts || {},
+          missingFacts: Array.isArray(turn.missingFacts) ? turn.missingFacts : [],
+          handoffNeeded: Boolean(turn.handoffNeeded),
+          confidence: inferredOutcome.success === true ? 0.74 : inferredOutcome.success === false ? 0.42 : 0.58,
+        },
+        autopilot: true,
+      }).catch((error) => ({
+        ok: false,
+        error: error?.message || String(error),
+        skillName: turn.activeSkill?.name || turn.activeSkill?.id || 'Ava live turn contract skill',
       }))
     );
   }
@@ -57159,13 +57231,25 @@ function buildBrowserVoiceReplayChunks(firstAudioChunk = null, recentAudioChunks
 }
 
 async function buildBrowserVoiceConversationalReply({ pipeline = {}, transcript = '', session = {} } = {}) {
+  const voiceContextCall = {
+    leadId: session.leadId || pipeline?.lead?.leadId || '',
+    leadName: session.leadName || pipeline?.lead?.leadName || '',
+    address: session.address || pipeline?.lead?.address || '',
+  };
+  const turnContract = buildAvaLiveTurnContract({
+    transcript,
+    session,
+    contextCall: voiceContextCall,
+  });
+  applyAvaLiveTurnContractToSession(session, turnContract);
+  const contractReply = renderAvaLiveContractReply(turnContract);
   let conversation = null;
   try {
     conversation = await buildAvaConversationIntelligence({
       tenantId: 'pbk',
-      leadId: session.leadId || pipeline?.lead?.leadId || '',
-      leadName: session.leadName || pipeline?.lead?.leadName || '',
-      address: session.address || pipeline?.lead?.address || '',
+      leadId: voiceContextCall.leadId,
+      leadName: voiceContextCall.leadName,
+      address: voiceContextCall.address,
       query: transcript,
       transcript,
       source: 'browser-voice',
@@ -57175,7 +57259,7 @@ async function buildBrowserVoiceConversationalReply({ pipeline = {}, transcript 
   } catch {
     conversation = null;
   }
-  const fallback = conversation?.nextBestPhrase || conversation?.answer || buildBrowserVoiceReply(pipeline, transcript);
+  const fallback = contractReply || conversation?.nextBestPhrase || conversation?.answer || buildBrowserVoiceReply(pipeline, transcript);
   try {
     const pathDecision = conversation?.pathDecision || {};
     const contextSummary = buildAvaCallStateSummary({
@@ -57188,13 +57272,13 @@ async function buildBrowserVoiceConversationalReply({ pipeline = {}, transcript 
     });
     const strategist = await askStrategistRecord({
       tenantId: 'pbk',
-      leadId: session.leadId || pipeline?.lead?.leadId || '',
-      leadName: session.leadName || pipeline?.lead?.leadName || '',
-      address: session.address || pipeline?.lead?.address || '',
-      situation: ['Browser microphone voice turn for Ava.', 'Ava must respond like a senior wholesale acquisition specialist, not like a query result.', 'Use emotional intelligence and BANT+ probing; do not execute provider writes.', pathDecision.selectedPath ? `Deal path state: ${pathDecision.pathLocked ? 'locked' : 'probing'} ${pathDecision.selectedPathLabel} (${Math.round((pathDecision.confidence || 0) * 100)}%).` : '', pathDecision.nextProbeQuestion ? `If still probing, ask this path question: ${pathDecision.nextProbeQuestion}` : '', pathDecision.scriptTrigger ? `If path is locked, use this path trigger naturally: ${pathDecision.scriptTrigger}` : ''].join(' '),
+      leadId: voiceContextCall.leadId,
+      leadName: voiceContextCall.leadName,
+      address: voiceContextCall.address,
+      situation: ['Browser microphone voice turn for Ava.', 'Ava must respond like a senior wholesale acquisition specialist, not like a query result.', 'Use emotional intelligence and BANT+ probing; do not execute provider writes.', turnContract?.ok ? `Mandatory turn contract: intent=${turnContract.intent}; objection=${turnContract.objection || 'none'}; phase=${turnContract.phase}; known=${JSON.stringify(turnContract.knownFacts || {})}; missing=${(turnContract.missingFacts || []).join(',')}; nextQuestion=${turnContract.nextBestQuestion}; forbiddenRepeats=${(turnContract.forbiddenRepeats || []).join(',')}. Phrase this contract only; do not choose a different next move.` : '', pathDecision.selectedPath ? `Deal path state: ${pathDecision.pathLocked ? 'locked' : 'probing'} ${pathDecision.selectedPathLabel} (${Math.round((pathDecision.confidence || 0) * 100)}%).` : '', pathDecision.nextProbeQuestion ? `If still probing, ask this path question: ${pathDecision.nextProbeQuestion}` : '', pathDecision.scriptTrigger ? `If path is locked, use this path trigger naturally: ${pathDecision.scriptTrigger}` : ''].join(' '),
       transcript,
       contextSummary,
-      attemptedActions: ['captured-live-browser-speech', `intent:${pipeline?.intent?.intent || 'unknown'}`, `next:${pipeline?.nextAgent || 'ava'}:${pipeline?.action || 'qualify'}`, `path:${pathDecision.selectedPath || 'unknown'}:${pathDecision.pathLocked ? 'locked' : 'probing'}`],
+      attemptedActions: ['captured-live-browser-speech', `intent:${pipeline?.intent?.intent || 'unknown'}`, turnContract?.ok ? `turn_contract:${turnContract.intent}:${turnContract.nextBestQuestionCategory}` : 'turn_contract:none', `next:${pipeline?.nextAgent || 'ava'}:${pipeline?.action || 'qualify'}`, `path:${pathDecision.selectedPath || 'unknown'}:${pathDecision.pathLocked ? 'locked' : 'probing'}`],
       confidence: 0.84,
       temperature: 0.68,
       maxTokens: 900,
@@ -57204,18 +57288,28 @@ async function buildBrowserVoiceConversationalReply({ pipeline = {}, transcript 
         source: 'browser-voice',
         browserVoiceSessionId: session.id || '',
         approvalGated: true,
+        turnContract,
       },
     });
     const script = strategist?.strategy?.immediateScript || strategist?.strategy?.returnToBusiness || '';
+    const normalizedScript = normalizeAvaVoiceReplyText(script, fallback);
+    const contractAligned = isAvaLiveReplyAlignedWithContract(normalizedScript, turnContract);
+    const selectedText = contractAligned ? normalizedScript : normalizeAvaVoiceReplyText(contractReply, fallback);
+    if (turnContract?.ok) applyAvaLiveTurnContractToSession(session, turnContract, { recordQuestion: true });
     return {
-      text: normalizeAvaVoiceReplyText(script, fallback),
+      text: selectedText,
       strategist,
       conversation,
+      turnContract,
+      turnContractEnforced: !contractAligned,
     };
   } catch (error) {
+    if (turnContract?.ok) applyAvaLiveTurnContractToSession(session, turnContract, { recordQuestion: true });
     return {
-      text: normalizeAvaVoiceReplyText(fallback),
+      text: normalizeAvaVoiceReplyText(contractReply, fallback),
       conversation,
+      turnContract,
+      turnContractEnforced: true,
       strategist: {
         ok: false,
         result: 'voice_reply_fallback',
@@ -58068,6 +58162,8 @@ function recordAvaLiveTurnDecision(session = {}, details = {}) {
     classifiedIntent: details.classifiedIntent || {},
     stateFlags: details.stateFlags || buildAvaLiveTurnStateSnapshot(session, details.contextCall || null),
     resolvedAction: details.resolvedAction || {},
+    turnContract: details.turnContract || session.avaLiveTurnContract || null,
+    avaLiveCockpit: details.avaLiveCockpit || session.avaLiveCockpit || null,
     ttsPayload: details.ttsPayload || {},
     note: details.note || '',
   });
@@ -58481,6 +58577,34 @@ function buildFastTelnyxLiveAvaReplyText({ session = {}, transcript = '', contex
     intent: sellerIntent,
     opener,
   });
+  const turnContract = buildAvaLiveTurnContract({
+    transcript: latestTranscript,
+    session,
+    contextCall,
+    phase: activeListening.callFlow?.nextStepId || '',
+    activeSkill: scripts.governedSkillSelection?.selectedSkill || null,
+    governedSkillSelection: scripts.governedSkillSelection,
+    allowedTools: scripts.governedSkillSelection?.selectedSkill?.toolAllowlist || [],
+  });
+  applyAvaLiveTurnContractToSession(session, turnContract);
+  const contractAction = compileAvaLiveSkillAction(turnContract);
+  const contractReply = renderAvaLiveContractReply(turnContract);
+  const contractCanOwnTurn = Boolean(
+    contractReply &&
+      [
+        'already_gave_price',
+        'repeat_complaint',
+        'make_offer',
+        'price_too_low',
+        'competing_offer',
+        'need_to_think',
+        'spouse_partner',
+        'trust_scam',
+        'probate_legal',
+        'seller_wants_speed',
+        'seller_wants_max_net',
+      ].includes(turnContract.intent)
+  );
 
   if (/\b(hear me|can you hear|you hear|hello\??|are you there)\b/i.test(lower)) {
     return withSafeActiveHook(`${opener}yes, I can hear you clearly. Thanks for staying with me. Let me pull this up the right way: what property address should I use today?`);
@@ -58504,6 +58628,13 @@ function buildFastTelnyxLiveAvaReplyText({ session = {}, transcript = '', contex
     return withSafeActiveHook(`${opener}Perfect, thanks. What is the full property address, and what net number would make this worth saying yes today?`, {
       fallback: 'Perfect, thanks. What is the full property address, and what net number would make this worth saying yes today?',
     });
+  }
+  if (contractCanOwnTurn) {
+    session.lastFastLocalReplyMode = contractAction.skillId
+      ? 'fast_local_turn_contract_skill'
+      : 'fast_local_turn_contract';
+    applyAvaLiveTurnContractToSession(session, turnContract, { recordQuestion: true });
+    return withSafeActiveHook(`${opener}${contractReply}`, { fallback: contractReply });
   }
   if (salesNextMove && isAvaLiveUrgentSalesIntent(sellerIntent)) {
     session.lastFastLocalReplyMode = 'fast_local_sales_intent';
@@ -58588,7 +58719,7 @@ function buildFastTelnyxLiveAvaReplyText({ session = {}, transcript = '', contex
   return withSafeActiveHook(`${opener}I hear you. Let me slow this down and make sure I help the right way. What matters most right now: speed, certainty, or price?`);
 }
 
-async function buildTelnyxLiveAvaReplyInsight({ session = {}, transcript = '', contextCall = null } = {}) {
+async function buildTelnyxLiveAvaReplyInsight({ session = {}, transcript = '', contextCall = null, turnContract = null } = {}) {
   const leadId = contextCall?.leadId || session.leadId || '';
   const leadName = getSpokenLeadName(contextCall?.leadName || session.leadName || '');
   const address = contextCall?.address || session.address || '';
@@ -58657,6 +58788,7 @@ async function buildTelnyxLiveAvaReplyInsight({ session = {}, transcript = '', c
       pathDecision: architecture.pathDecision,
       callerRoleDecision: callerRole,
     });
+  const activeTurnContract = turnContract || session.avaLiveTurnContract || null;
   try {
     const activeListening =
       architecture.activeListening ||
@@ -58699,12 +58831,12 @@ async function buildTelnyxLiveAvaReplyInsight({ session = {}, transcript = '', c
       leadId,
       leadName,
       address,
-      situation: ['Live Telnyx inbound call turn for Ava.', 'Ava must sound conversational, emotionally intelligent, and concise.', 'Ask one useful BANT+ or property-situation question. Do not give legal advice or seller-facing numbers yet.', `Caller role: ${callerRole.role || 'unknown'} (${Math.round(toNumber(callerRole.confidence, 0) * 100)}%). ${callerRole.needsClarification ? 'Clarify whether this is owner, agent, or decision-maker/helper before pitching.' : 'Role is clear enough for this turn.'}`, masterProbe.question ? `Master probing instruction: ${masterProbe.question} Reason: ${masterProbe.reason}` : '', 'Audience guard: Creative Finance and Multi-Family are agent-only. If caller is not an agent, do not mention CF, seller finance, carrying a note, MF, or multi-family path language.', `Activated architecture: scripts=${architecture.scripts.activeSkillCount}, BANT=${architecture.bant.complete ? 'complete' : `missing ${architecture.bant.missing.join(', ')}`}, prosody=${architecture.prosody.activeModel ? 'learned+rules' : 'rules+logging'}, Rex=${architecture.rexOversight.recentCallAnalyses.length} recent analyses.`, `Deal path: ${architecture.pathDecision.pathLocked ? 'LOCKED' : 'probing'} ${architecture.pathDecision.selectedPathLabel} (${Math.round((architecture.pathDecision.confidence || 0) * 100)}%). ${architecture.pathDecision.rule}`, architecture.warManual?.revision ? `War manual active: ${architecture.warManual.pathPicker?.name || '7-second path picker'}, path=${architecture.warManual.path?.label || 'diagnosing'}, emotional=${architecture.warManual.emotionalState?.label || 'unknown'}, motivator=${architecture.warManual.hiddenMotivator?.id || 'unknown'}, objection=${architecture.warManual.objection?.tag || 'none'}, tone=${architecture.warManual.toneMode?.label || 'Calm Authority'}, move=${architecture.warManual.psychologyMove?.label || 'Permission Frame'}.` : '', activeListening?.revision ? `Active listening active: mode=${activeListening.mode}, Seller just said "${activeListening.lastSellerWords || transcript}", mirror="${activeListening.mirroredPhrase || 'seller words'}", callFlow=${activeListening.callFlow?.nextStepId || 'listen.mirror_label'}, responseRequired=${activeListening.responseRequired !== false}, strategicPauseMs=${activeListening.strategicPauseMs || 0}. End with a hook: ${activeListening.callFlow?.recommendedHook || 'ask one response-required question'}.` : '', architecture.warManual?.listenProbe?.question ? `L.I.S.T.E.N. next: ${architecture.warManual.listenProbe.question}` : '', architecture.warManual?.objection?.response ? `Objection decoder response if relevant: ${architecture.warManual.objection.response}` : '', architecture.pathDecision.nextProbeQuestion ? `Next path probe: ${architecture.pathDecision.nextProbeQuestion}` : '', architecture.pathDecision.scriptTrigger ? `Path trigger to use when appropriate: ${architecture.pathDecision.scriptTrigger}` : '', architecture.rexOversight.dailyRevenueFocus ? `Rex daily focus: ${architecture.rexOversight.dailyRevenueFocus}` : '', resolvedCallContext?.exactNextMove?.text ? `Context resolver exact next move: ${resolvedCallContext.exactNextMove.text}` : ''].join(' '),
+      situation: ['Live Telnyx inbound call turn for Ava.', 'Ava must sound conversational, emotionally intelligent, and concise.', 'Ask one useful BANT+ or property-situation question. Do not give legal advice or seller-facing numbers yet.', activeTurnContract?.ok ? `Mandatory turn contract: intent=${activeTurnContract.intent}; objection=${activeTurnContract.objection || 'none'}; phase=${activeTurnContract.phase}; known=${JSON.stringify(activeTurnContract.knownFacts || {})}; missing=${(activeTurnContract.missingFacts || []).join(',')}; activeSkill=${activeTurnContract.activeSkill?.name || 'none'}; nextQuestion=${activeTurnContract.nextBestQuestion}; forbiddenRepeats=${(activeTurnContract.forbiddenRepeats || []).join(',')}. Phrase this contract only; do not choose a different next move.` : '', `Caller role: ${callerRole.role || 'unknown'} (${Math.round(toNumber(callerRole.confidence, 0) * 100)}%). ${callerRole.needsClarification ? 'Clarify whether this is owner, agent, or decision-maker/helper before pitching.' : 'Role is clear enough for this turn.'}`, masterProbe.question ? `Master probing instruction: ${masterProbe.question} Reason: ${masterProbe.reason}` : '', 'Audience guard: Creative Finance and Multi-Family are agent-only. If caller is not an agent, do not mention CF, seller finance, carrying a note, MF, or multi-family path language.', `Activated architecture: scripts=${architecture.scripts.activeSkillCount}, BANT=${architecture.bant.complete ? 'complete' : `missing ${architecture.bant.missing.join(', ')}`}, prosody=${architecture.prosody.activeModel ? 'learned+rules' : 'rules+logging'}, Rex=${architecture.rexOversight.recentCallAnalyses.length} recent analyses.`, `Deal path: ${architecture.pathDecision.pathLocked ? 'LOCKED' : 'probing'} ${architecture.pathDecision.selectedPathLabel} (${Math.round((architecture.pathDecision.confidence || 0) * 100)}%). ${architecture.pathDecision.rule}`, architecture.warManual?.revision ? `War manual active: ${architecture.warManual.pathPicker?.name || '7-second path picker'}, path=${architecture.warManual.path?.label || 'diagnosing'}, emotional=${architecture.warManual.emotionalState?.label || 'unknown'}, motivator=${architecture.warManual.hiddenMotivator?.id || 'unknown'}, objection=${architecture.warManual.objection?.tag || 'none'}, tone=${architecture.warManual.toneMode?.label || 'Calm Authority'}, move=${architecture.warManual.psychologyMove?.label || 'Permission Frame'}.` : '', activeListening?.revision ? `Active listening active: mode=${activeListening.mode}, Seller just said "${activeListening.lastSellerWords || transcript}", mirror="${activeListening.mirroredPhrase || 'seller words'}", callFlow=${activeListening.callFlow?.nextStepId || 'listen.mirror_label'}, responseRequired=${activeListening.responseRequired !== false}, strategicPauseMs=${activeListening.strategicPauseMs || 0}. End with a hook: ${activeListening.callFlow?.recommendedHook || 'ask one response-required question'}.` : '', architecture.warManual?.listenProbe?.question ? `L.I.S.T.E.N. next: ${architecture.warManual.listenProbe.question}` : '', architecture.warManual?.objection?.response ? `Objection decoder response if relevant: ${architecture.warManual.objection.response}` : '', architecture.pathDecision.nextProbeQuestion ? `Next path probe: ${architecture.pathDecision.nextProbeQuestion}` : '', architecture.pathDecision.scriptTrigger ? `Path trigger to use when appropriate: ${architecture.pathDecision.scriptTrigger}` : '', architecture.rexOversight.dailyRevenueFocus ? `Rex daily focus: ${architecture.rexOversight.dailyRevenueFocus}` : '', resolvedCallContext?.exactNextMove?.text ? `Context resolver exact next move: ${resolvedCallContext.exactNextMove.text}` : ''].join(' '),
       transcript,
       contextSummary,
       resolvedCallContext,
       phrasingEnginePrompt,
-      attemptedActions: ['captured-live-telnyx-speech', `call:${session.callId || 'unknown'}`, `intent:${pipeline?.intent?.intent || 'unknown'}`, `reaction:${conversation?.reaction?.trigger || 'none'}`, `objection:${conversation?.objectionType || 'unknown'}`, `path:${architecture.pathDecision.selectedPath || 'unknown'}:${architecture.pathDecision.pathLocked ? 'locked' : 'probing'}`, `war_manual:${architecture.warManual?.path?.key || 'unknown'}:${architecture.warManual?.objection?.tag || 'none'}`, `active_listening:${activeListening.callFlow?.nextStepId || 'listen.mirror_label'}:${activeListening.responseRequired !== false ? 'response_required' : 'no_response_required'}`, `next_bant:${architecture.bant.missing[0] || 'complete'}`, `context_resolver:${resolvedCallContext?.exactNextMove?.type || 'fallback'}:${resolvedCallContext?.ok ? 'ok' : 'fallback'}`],
+      attemptedActions: ['captured-live-telnyx-speech', `call:${session.callId || 'unknown'}`, `intent:${pipeline?.intent?.intent || 'unknown'}`, activeTurnContract?.ok ? `turn_contract:${activeTurnContract.intent}:${activeTurnContract.nextBestQuestionCategory}` : 'turn_contract:none', `reaction:${conversation?.reaction?.trigger || 'none'}`, `objection:${conversation?.objectionType || 'unknown'}`, `path:${architecture.pathDecision.selectedPath || 'unknown'}:${architecture.pathDecision.pathLocked ? 'locked' : 'probing'}`, `war_manual:${architecture.warManual?.path?.key || 'unknown'}:${architecture.warManual?.objection?.tag || 'none'}`, `active_listening:${activeListening.callFlow?.nextStepId || 'listen.mirror_label'}:${activeListening.responseRequired !== false ? 'response_required' : 'no_response_required'}`, `next_bant:${architecture.bant.missing[0] || 'complete'}`, `context_resolver:${resolvedCallContext?.exactNextMove?.type || 'fallback'}:${resolvedCallContext?.ok ? 'ok' : 'fallback'}`],
       confidence: 0.82,
       model: DEEPSEEK_LIVE_MODEL,
       responseFormat: 'text',
@@ -58720,10 +58852,12 @@ async function buildTelnyxLiveAvaReplyInsight({ session = {}, transcript = '', c
         conversationIntelligence: conversation,
         activatedArchitecture: architecture,
         resolvedCallContext,
+        turnContract: activeTurnContract,
       },
     });
     const script = strategist?.strategy?.immediateScript || strategist?.strategy?.returnToBusiness || '';
     const fallback = resolvedCallContext?.exactNextMove?.text || conversation?.nextBestPhrase || buildBrowserVoiceReply(pipeline, transcript);
+    const contractReply = activeTurnContract?.ok ? renderAvaLiveContractReply(activeTurnContract) : '';
     const hookedScript = ensureAvaSellerReplyHook(script, {
       hook: activeListening.callFlow?.recommendedHook,
       nextQuestion: activeListening.callFlow?.recommendedHook || strategist?.strategy?.nextQuestion || '',
@@ -58737,13 +58871,20 @@ async function buildTelnyxLiveAvaReplyInsight({ session = {}, transcript = '', c
       callerRoleDecision: callerRole,
       masterProbe,
     });
+    const contractAligned = !activeTurnContract?.ok || isAvaLiveReplyAlignedWithContract(guardedScript, activeTurnContract);
+    const selectedScript = contractAligned ? guardedScript : contractReply;
+    if (activeTurnContract?.ok) {
+      applyAvaLiveTurnContractToSession(session, activeTurnContract, { recordQuestion: true });
+    }
     return {
-      text: normalizeAvaVoiceReplyText(guardedScript, fallback),
+      text: normalizeAvaVoiceReplyText(selectedScript, contractReply || fallback),
       pipeline,
       conversation,
       strategist,
       architecture,
       resolvedCallContext,
+      turnContract: activeTurnContract,
+      turnContractEnforced: !contractAligned,
     };
   } catch (error) {
     const activeListening = buildAvaActiveListeningContext({
@@ -58769,6 +58910,7 @@ async function buildTelnyxLiveAvaReplyInsight({ session = {}, transcript = '', c
         pathDecision: architecture.pathDecision,
         callerRoleDecision: callerRole,
       });
+    const contractReply = activeTurnContract?.ok ? renderAvaLiveContractReply(activeTurnContract) : '';
     const fallbackText = enforceAvaOwnerSafeReply(
       ensureAvaSellerReplyHook(conversation?.nextBestPhrase || '', {
         hook: activeListening.callFlow?.recommendedHook,
@@ -58784,11 +58926,16 @@ async function buildTelnyxLiveAvaReplyInsight({ session = {}, transcript = '', c
         masterProbe,
       }
     );
+    if (activeTurnContract?.ok) {
+      applyAvaLiveTurnContractToSession(session, activeTurnContract, { recordQuestion: true });
+    }
     return {
-      text: normalizeAvaVoiceReplyText(fallbackText, 'I hear you. Let me slow this down so I can help the right way. What is the property address, and what has you thinking about selling now?'),
+      text: normalizeAvaVoiceReplyText(contractReply || fallbackText, 'I hear you. Let me slow this down so I can help the right way. What is the property address, and what has you thinking about selling now?'),
       pipeline,
       conversation,
       architecture,
+      turnContract: activeTurnContract,
+      turnContractEnforced: Boolean(contractReply),
       strategist: {
         ok: false,
         result: 'telnyx_live_reply_fallback',
@@ -58855,6 +59002,7 @@ async function buildTelnyxLiveAvaReply({ session = {}, transcript = '', contextC
       session,
       transcript,
       contextCall,
+      turnContract: session.avaLiveTurnContract || null,
     }).catch((error) => ({
       text: '',
       strategist: {
@@ -58876,7 +59024,12 @@ async function buildTelnyxLiveAvaReply({ session = {}, transcript = '', contextC
     }
     void insightPromise;
   } else if (mode !== 'off') {
-    void buildTelnyxLiveAvaReplyInsight({ session, transcript, contextCall }).catch((error) => {
+    void buildTelnyxLiveAvaReplyInsight({
+      session,
+      transcript,
+      contextCall,
+      turnContract: session.avaLiveTurnContract || null,
+    }).catch((error) => {
       addActivity(
         state,
         makeActivity({
@@ -58915,6 +59068,7 @@ async function buildTelnyxLiveAvaReply({ session = {}, transcript = '', contextC
 function buildOperatorWhisperRecord(reply = {}, fallbackText = '') {
   const move = reply.resolvedCallContext?.exactNextMove || {};
   const strategy = reply.strategist?.strategy || {};
+  const contract = reply.turnContract || {};
   const calibration =
     reply.conversation?.confidenceCalibration ||
     reply.conversation?.doctrine?.confidence ||
@@ -58925,6 +59079,7 @@ function buildOperatorWhisperRecord(reply = {}, fallbackText = '') {
       move.exactNextMove ||
       strategy.nextQuestion ||
       strategy.immediateScript ||
+      contract.nextBestQuestion ||
       reply.architecture?.pathDecision?.nextProbeQuestion ||
       fallbackText
   ).slice(0, 360);
@@ -58932,12 +59087,15 @@ function buildOperatorWhisperRecord(reply = {}, fallbackText = '') {
   return {
     text,
     reason: String(
-      move.reason ||
+        move.reason ||
+        (contract.ok
+          ? `Turn contract ${contract.intent || 'unknown'}${contract.activeSkill?.name ? ` using ${contract.activeSkill.name}` : ''}`
+          : '') ||
         strategy.rule ||
         reply.architecture?.pathDecision?.rule ||
         'PBK live-call context resolver'
     ).slice(0, 240),
-    source: move.source || 'ava-context-resolver',
+    source: move.source || (contract.ok ? 'ava-live-turn-contract' : 'ava-context-resolver'),
     confidence: Math.max(
       0,
       Math.min(
@@ -58952,9 +59110,16 @@ function buildOperatorWhisperRecord(reply = {}, fallbackText = '') {
       )
     ),
     confidenceBand: calibration.band || '',
-    responseMode: calibration.responseMode || '',
+    responseMode: calibration.responseMode || reply.replyMode || '',
     checking: calibration.shouldVerify === true,
     approvalNeeded: Boolean(strategy.approvalNeeded),
+    intent: contract.intent || '',
+    objection: contract.objection || '',
+    activeSkill: contract.activeSkill || {},
+    knownFacts: contract.knownFacts || {},
+    missingFacts: Array.isArray(contract.missingFacts) ? contract.missingFacts : [],
+    nextBestQuestionCategory: contract.nextBestQuestionCategory || '',
+    turnContractEnforced: Boolean(reply.turnContractEnforced),
     updatedAt: isoNow(),
   };
 }
@@ -59900,6 +60065,23 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
     rememberAvaSellerTurnFingerprint(session, item.transcript || transcriptForReply, session.lastAvaReplyAt);
     delete session.pendingAvaReplyTranscript;
     delete session.pendingAvaReplyTurnVersion;
+    const activeTurnContract = reply.turnContract || session.avaLiveTurnContract || null;
+    session.lastTurnContractEnforced = Boolean(reply.turnContractEnforced);
+    session.avaLiveCockpit = buildAvaLiveCockpitSnapshot({
+      contract: activeTurnContract || {},
+      replyMode: reply.replyMode || 'live',
+      latencyMs: null,
+      turnContractEnforced: Boolean(reply.turnContractEnforced),
+      replyPreview: spoken,
+    });
+    session.lastAvaLiveSkillOutcomeDraft = buildAvaLiveSkillOutcomeDraft({
+      contract: activeTurnContract || {},
+      callId: session.callId || '',
+      leadId: session.leadId || contextCall?.leadId || '',
+      transcript: item.transcript || transcriptForReply,
+      reply: spoken,
+      replyMode: reply.replyMode || 'live',
+    });
     recordAvaLiveTurnDecision(session, {
       phase: 'resolved',
       result: 'reply_resolved_before_tts',
@@ -59919,7 +60101,11 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
         antiRepeat: reply.antiRepeat || null,
         exactNextMove: reply.resolvedCallContext?.exactNextMove || null,
         pathDecision: reply.architecture?.pathDecision || session.pathDecision || {},
+        turnContractEnforced: Boolean(reply.turnContractEnforced),
+        skillOutcomeDraft: session.lastAvaLiveSkillOutcomeDraft?.ok ? session.lastAvaLiveSkillOutcomeDraft : null,
       },
+      turnContract: activeTurnContract,
+      avaLiveCockpit: session.avaLiveCockpit,
       stage: 'maybeSpeakTelnyxAvaReply.resolved',
     });
     const latestCall = getCallById(session.callId);
@@ -59941,6 +60127,13 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
       latencyMs: speechFinalToReplyStartMs,
     });
     session.replyLatencySamples = session.replyLatencySamples.slice(0, 12);
+    session.avaLiveCockpit = buildAvaLiveCockpitSnapshot({
+      contract: activeTurnContract || {},
+      replyMode: reply.replyMode || 'live',
+      latencyMs: speechFinalToReplyStartMs,
+      turnContractEnforced: Boolean(reply.turnContractEnforced),
+      replyPreview: spoken,
+    });
     const speakResult = await sendAvaPhoneReplyAudio(session, spoken);
     const turnCompletionMs = Math.max(0, Date.now() - speechFinalAt);
     recordLatencyMetric('speech_final_to_reply_start_ms', speechFinalToReplyStartMs, {
@@ -59980,7 +60173,10 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
       resolvedAction: {
         replyMode: reply.replyMode || 'live',
         replyPreview: spoken.slice(0, 500),
+        turnContractEnforced: Boolean(reply.turnContractEnforced),
       },
+      turnContract: activeTurnContract,
+      avaLiveCockpit: session.avaLiveCockpit,
       ttsPayload: {
         provider: speakResult.provider || '',
         ok: Boolean(speakResult.ok),
@@ -60053,6 +60249,20 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
             replyMode: reply.replyMode || 'live',
             speechFinalToReplyStartMs,
             antiRepeat: reply.antiRepeat || null,
+            avaLiveCockpit: session.avaLiveCockpit || null,
+            turnContract: activeTurnContract
+              ? {
+                  revision: activeTurnContract.revision,
+                  intent: activeTurnContract.intent,
+                  objection: activeTurnContract.objection,
+                  phase: activeTurnContract.phase,
+                  activeSkill: activeTurnContract.activeSkill,
+                  knownFacts: activeTurnContract.knownFacts,
+                  missingFacts: activeTurnContract.missingFacts,
+                  nextBestQuestionCategory: activeTurnContract.nextBestQuestionCategory,
+                  handoffNeeded: activeTurnContract.handoffNeeded,
+                }
+              : null,
             architecture: reply.architecture
               ? {
                   bant: reply.architecture.bant,

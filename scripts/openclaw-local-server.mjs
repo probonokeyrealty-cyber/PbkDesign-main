@@ -23,6 +23,10 @@ import {
   isGovernedSkillToolAllowed,
   selectGovernedAvaSkill,
 } from './ava-governed-skill-router.mjs';
+import {
+  buildAvaLiveGovernedSkillReply,
+  shouldPreferAvaLiveGovernedSkillReply,
+} from './ava-live-skill-fallback.mjs';
 import { validateProviderActionSafety as validateProviderActionSafetyCore } from './safety-validator.mjs';
 import { runAvaCanonicalEvalSuite as runAvaCanonicalEvalSuiteCore } from './ava-eval-suite.mjs';
 import { buildCoworkerHeartbeatPlan, summarizeHeartbeatPlan } from './coworker-heartbeat.mjs';
@@ -26579,7 +26583,12 @@ function buildAvaResolvedNextMove(params = {}) {
     type = governedNextMove.type;
     source = governedNextMove.source;
     reason = governedNextMove.reason;
-    text = sanitizeAvaSpokenOutput(governedNextMove.text).slice(0, 420);
+    text = sanitizeAvaSpokenOutput(
+      buildAvaLiveGovernedSkillReply(governedNextMove, {
+        transcript,
+        fallbackQuestion: activeListening.callFlow?.recommendedHook || nextProbe || fallback,
+      }) || governedNextMove.text
+    ).slice(0, 420);
   } else if (salesMove && !['unknown', 'empty', 'greeting', 'audio_check', 'acknowledgement'].includes(sellerIntent.intent)) {
     type = 'sales_progression';
     source = 'live_sales_wholesale_intelligence';
@@ -58206,6 +58215,7 @@ function applyAvaPathDecisionToSession(session = {}, pathDecision = {}) {
 }
 
 function buildFastTelnyxLiveAvaReplyText({ session = {}, transcript = '', contextCall = null } = {}) {
+  delete session.lastFastLocalReplyMode;
   const currentRaw = String(transcript || '')
     .replace(/\s+/g, ' ')
     .trim();
@@ -58294,6 +58304,36 @@ function buildFastTelnyxLiveAvaReplyText({ session = {}, transcript = '', contex
   session.activeListening = activeListening;
   session.currentCallFlowStepId = activeListening.callFlow?.nextStepId || session.currentCallFlowStepId || '';
   session.responseRequired = activeListening.responseRequired !== false;
+  const scripts = buildAvaScriptRotationSnapshot({
+    session,
+    contextCall,
+    transcript: latestTranscript,
+    query: intelligenceTranscript,
+    pathDecision,
+    pathKey: pathDecision.selectedPath,
+    selectedPath: pathDecision.selectedPath,
+    callerRole: callerRole.role,
+    lastObjection: warManual.objection?.tag || '',
+    warManual,
+  });
+  if (scripts.governedSkillSelection?.action === 'clear') {
+    delete session.activeGovernedSkillId;
+    session.governedSkillSelection = scripts.governedSkillSelection;
+  } else if (scripts.governedSkillSelection?.selectedSkill?.id) {
+    session.activeGovernedSkillId = scripts.governedSkillSelection.selectedSkill.id;
+    session.governedSkillSelection = scripts.governedSkillSelection;
+  }
+  const governedNextMove = buildGovernedSkillNextMove(scripts.governedSkillSelection);
+  const governedSkillReply = shouldPreferAvaLiveGovernedSkillReply(governedNextMove)
+    ? buildAvaLiveGovernedSkillReply(governedNextMove, {
+        transcript: intelligenceTranscript || latestTranscript,
+        fallbackQuestion:
+          activeListening.callFlow?.recommendedHook ||
+          pathDecision.nextProbeQuestion ||
+          warManual.listenProbe?.question ||
+          '',
+      })
+    : '';
   const withActiveHook = (text = '', options = {}) =>
     ensureAvaSellerReplyHook(text, {
       hook: activeListening.callFlow?.recommendedHook,
@@ -58357,6 +58397,10 @@ function buildFastTelnyxLiveAvaReplyText({ session = {}, transcript = '', contex
     return withSafeActiveHook(`${opener}Perfect, thanks. What is the full property address, and what net number would make this worth saying yes today?`, {
       fallback: 'Perfect, thanks. What is the full property address, and what net number would make this worth saying yes today?',
     });
+  }
+  if (governedSkillReply) {
+    session.lastFastLocalReplyMode = 'fast_local_governed_skill';
+    return withSafeActiveHook(`${opener}${governedSkillReply}`, { fallback: governedSkillReply });
   }
   const salesNextMove = buildAvaLiveSalesNextMove({
     session,
@@ -58746,7 +58790,7 @@ async function buildTelnyxLiveAvaReply({ session = {}, transcript = '', contextC
   const nonRepeatingFallback = avoidRepeatedAvaLiveReply(session, normalizedFallback, normalizedFallback);
   return {
     text: nonRepeatingFallback.text,
-    replyMode: 'fast_local',
+    replyMode: session.lastFastLocalReplyMode || 'fast_local',
     architecture: buildAvaCallArchitectureContext({
       session,
       contextCall,

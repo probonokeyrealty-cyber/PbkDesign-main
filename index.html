@@ -16482,18 +16482,58 @@ Authority close: "What matters most to your seller: number, timeline, or certain
   async function syncAnalyzerDealPathToLead(deal = {}) {
     const leadId = deal.leadId || getLeadRuntimeId(getActiveRuntimeLead?.() || {});
     if (!leadId || !PBK.openclaw.isConfigured()) return null;
+    const selectedPath = deal.selectedPath || getActiveAnalyzerDealPath();
+    const arv = Number(deal.arv || deal.ARV || 0) || 0;
+    const mao = Number(deal.mao || deal.mao60 || deal.walkAway || 0) || 0;
+    const maoRbp = Number(deal.maoRBP || deal.maoRbp || 0) || 0;
+    const estimatedRepairs = Number(deal.repairsMid || deal.repairs || deal.estimatedRepairs || 0) || 0;
+    const targetOffer = Number(deal.offer || deal.targetOffer || deal.anchor || deal.agreedPrice || 0) || 0;
+    const askingPrice = Number(deal.price || deal.askingPrice || deal.listPrice || 0) || 0;
+    const propertyPatch = {
+      address: deal.address || undefined,
+      propertyType: deal.type || deal.propertyType || undefined,
+      type: deal.type || deal.propertyType || undefined,
+      askingPrice: askingPrice || undefined,
+      arv: arv || undefined,
+      mao: mao || undefined,
+      estimatedRepairs: estimatedRepairs || undefined
+    };
+    const callContextPatch = {
+      source: 'deal-analyzer',
+      selectedPath,
+      selected_path: selectedPath,
+      selectedPathLabel: DEAL_PATH_LABELS[selectedPath] || selectedPath,
+      arv,
+      mao,
+      mao60: Number(deal.mao60 || mao) || 0,
+      maoRBP: maoRbp,
+      estimatedRepairs,
+      repairsMid: estimatedRepairs,
+      targetOffer,
+      lastOffer: targetOffer || deal.agreedPrice || '',
+      last_offer: targetOffer || deal.agreedPrice || '',
+      askingPrice,
+      analyzedAt: new Date().toISOString()
+    };
     try {
       const response = await requestOpenClawApi(`/api/leads/${encodeURIComponent(leadId)}`, {
         method: 'PATCH',
         body: {
           actor: 'Analyzer',
-          selectedPath: deal.selectedPath || getActiveAnalyzerDealPath(),
-          selected_path: deal.selectedPath || getActiveAnalyzerDealPath(),
+          selectedPath,
+          selected_path: selectedPath,
           address: deal.address,
           propertyType: deal.type,
-          lastOffer: deal.offer || deal.agreedPrice || '',
-          last_offer: deal.offer || deal.agreedPrice || '',
-          summary: `Analyzer synced ${DEAL_PATH_LABELS[deal.selectedPath] || deal.selectedPath || 'cash'} path with MAO ${fmt(deal.mao60 || 0)}.`,
+          askingPrice: askingPrice || undefined,
+          arv: arv || undefined,
+          mao: mao || undefined,
+          estimatedRepairs: estimatedRepairs || undefined,
+          lastOffer: targetOffer || deal.agreedPrice || '',
+          last_offer: targetOffer || deal.agreedPrice || '',
+          property: propertyPatch,
+          callContext: callContextPatch,
+          call_context: callContextPatch,
+          summary: `Analyzer synced ${DEAL_PATH_LABELS[selectedPath] || selectedPath || 'cash'} path with ARV ${fmt(arv || 0)}, repairs ${fmt(estimatedRepairs || 0)}, and MAO ${fmt(mao || 0)}.`,
         },
         timeout: 9000
       });
@@ -26248,8 +26288,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       ? snapshot.campaignExecutions.map(normalizeCampaignFromExecution)
       : [];
     const seenIds = new Set(persisted.map((item) => item.id));
-    const bridgeHasCampaignCollections = Array.isArray(snapshot?.campaigns);
-    const fallback = bridgeHasCampaignCollections ? [] : CAMPAIGN_SEED.filter((item) => !seenIds.has(item.id));
+    const fallback = [];
     return [...persisted, ...runtime.filter((item) => !seenIds.has(item.id)), ...fallback].map(enrichCampaignWithStoredLeads);
   }
 
@@ -26563,7 +26602,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
   function getCampaignForEventTarget(target) {
     const holder = target.closest('[data-campaign-id]');
     const id = holder?.dataset.campaignId || campaignUiState.selectedId;
-    return getCampaignRecords().find((item) => item.id === id) || CAMPAIGN_SEED[0];
+    return getCampaignRecords().find((item) => item.id === id) || null;
   }
 
   function getActuallySelectedLeadRows() {
@@ -27369,6 +27408,14 @@ Authority close: "What matters most to your seller: number, timeline, or certain
 
   function handleCampaignAction(action, campaign) {
     const normalized = normalizeControlText(action);
+    if (!campaign?.id) {
+      toastOutcome({
+        outcome: 'unavailable',
+        title: 'Campaign unavailable',
+        desc: 'No live campaign record is selected. Refresh bridge data or create a new campaign draft.'
+      });
+      return;
+    }
     if (normalized === 'view' || normalized === 'review') {
       campaignUiState.selectedId = campaign.id;
       renderCampaignDetail(campaign.id);
@@ -27457,6 +27504,14 @@ Authority close: "What matters most to your seller: number, timeline, or certain
         }
         if (card) {
           const campaign = getCampaignForEventTarget(card);
+          if (!campaign?.id) {
+            toastOutcome({
+              outcome: 'unavailable',
+              title: 'Campaign unavailable',
+              desc: 'No live campaign record is available for this row.'
+            });
+            return;
+          }
           campaignUiState.selectedId = campaign.id;
           renderCampaignDetail(campaign.id);
           showPage('campaign-detail');
@@ -27479,10 +27534,18 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       detail.addEventListener('click', (event) => {
         const action = event.target.closest('[data-campaign-detail-action]');
         if (!action) return;
-        const campaign = getCampaignRecords().find((item) => item.id === campaignUiState.selectedId) || CAMPAIGN_SEED[0];
+        const campaign = getCampaignRecords().find((item) => item.id === campaignUiState.selectedId) || null;
         const value = action.dataset.campaignDetailAction;
         if (value === 'back') {
           showPage('campaigns');
+          return;
+        }
+        if (!campaign?.id) {
+          toastOutcome({
+            outcome: 'unavailable',
+            title: 'Campaign unavailable',
+            desc: 'No live campaign record is selected. Refresh bridge data or create a new campaign draft.'
+          });
           return;
         }
         if (value === 'remove-lead') {

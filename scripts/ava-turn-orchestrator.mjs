@@ -98,7 +98,12 @@ export function buildAvaIntelligenceUnisonStatus(input = {}, result = {}) {
         Number.isFinite(Number(input.mao ?? input.lead?.mao ?? input.context?.mao))
     ),
     emotion: Boolean(input.emotion || input.sellerEmotion || input.sentiment || input.emotionPolicy),
-    memory: Boolean(result.workingMemory?.brief && (result.memory?.episodicMatches ?? 0) >= 0),
+    memory: Boolean(
+      result.workingMemory?.brief &&
+        ((result.memory?.episodicMatches ?? 0) > 0 ||
+          hasItems(input.memories) ||
+          hasObject(input.memory))
+    ),
     tools: Boolean(
       hasItems(input.availableTools) ||
         hasObject(input.toolResults) ||
@@ -106,7 +111,11 @@ export function buildAvaIntelligenceUnisonStatus(input = {}, result = {}) {
         hasItems(result.activeSkill?.toolAllowlist)
     ),
     compliance: Boolean(result.guard?.result && result.confidence?.providerWrites === 'approval_gated'),
-    skills: Boolean(result.activeSkill?.id || result.skillSelection?.ok),
+    skills: Boolean(
+      result.activeSkill?.id &&
+        (result.skillSelection?.result === 'governed_skill_selected' ||
+          Boolean(result.skillSelection?.selectedSkill))
+    ),
     coaching: Boolean(
       hasItems(input.coachingMemories) ||
         hasItems(input.skillOutcomes) ||

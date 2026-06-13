@@ -61,4 +61,18 @@ assert.ok(
   'Urgent live seller facts must beat generic governed-skill phrasing before Ava speaks.'
 );
 
+assert.ok(
+  bridge.includes('function getAvaSellerTurnFingerprint') &&
+    bridge.includes('function hasRecentAvaSellerTurnFingerprint') &&
+    bridge.includes('duplicate_seller_turn_revision') &&
+    bridge.includes('rememberAvaSellerTurnFingerprint(session, item.transcript || transcriptForReply, session.lastAvaReplyAt)'),
+  'Near-duplicate Deepgram seller turn revisions must not trigger repeated Ava answers.'
+);
+
+assert.ok(
+  bridge.indexOf('applyAvaLiveTurnFacts(session, item.transcript || transcriptForReply);') <
+    bridge.indexOf('duplicate_seller_turn_revision'),
+  'Duplicate seller-turn skips must still update live call facts before skipping speech.'
+);
+
 console.log('ava-live-turn-completion smoke passed');

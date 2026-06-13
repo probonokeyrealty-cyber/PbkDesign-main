@@ -17,6 +17,7 @@ const campaigns = read('src/app/routes/Campaigns.tsx');
 const memory = read('src/app/routes/MemoryAnalytics.tsx');
 const memoryLogic = read('src/app/routes/memoryAnalyticsRuntimeLogic.js');
 const leads = read('src/app/routes/Leads.tsx');
+const legacyShell = read('index.html');
 const server = read('scripts/openclaw-local-server.mjs');
 const css = read('src/styles/pbk-components.css');
 const pkg = JSON.parse(read('package.json'));
@@ -100,6 +101,16 @@ assert(
     leads
   ),
   'Leads source rail should identify POST /api/leads as the canonical seller portal.'
+);
+
+assert(
+  /async function syncAnalyzerDealPathToLead/.test(legacyShell) &&
+    /property: propertyPatch/.test(legacyShell) &&
+    /callContext: callContextPatch/.test(legacyShell) &&
+    /arv: arv \|\| undefined/.test(legacyShell) &&
+    /mao: mao \|\| undefined/.test(legacyShell) &&
+    /estimatedRepairs: estimatedRepairs \|\| undefined/.test(legacyShell),
+  'Legacy analyzer sync should write ARV, MAO, repair math, and call context into the canonical lead portal.'
 );
 
 assert(

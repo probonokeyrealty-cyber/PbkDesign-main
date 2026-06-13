@@ -496,6 +496,14 @@ const checks = [
       /action === 'remove_lead'/.test(bridge),
   },
   {
+    name: 'Legacy campaigns never surface seeded records as production truth',
+    ok:
+      /const fallback = \[\];/.test(index) &&
+      !/CAMPAIGN_SEED\.filter/.test(index) &&
+      !/\|\|\s*CAMPAIGN_SEED\[0\]/.test(index) &&
+      /No live campaign record is selected/.test(index),
+  },
+  {
     name: 'Brain library, market pulse, and reading suggestions render from runtime state',
     ok:
       /function\s+renderBrainLibrary/.test(index) &&

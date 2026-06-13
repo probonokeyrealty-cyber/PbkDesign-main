@@ -57863,6 +57863,51 @@ function hasAvaRepeatedLiveReply(session = {}, text = '') {
   return Boolean(intent && (session.recentAvaReplyIntents || []).includes(intent));
 }
 
+function getAvaSellerTurnFingerprint(transcript = '') {
+  const clean = normalizeTelnyxRepairTranscript(transcript)
+    .replace(/\b(?:um|uh|umm|uhh|like|you know|i mean|actually|basically|just|kind of|sort of)\b/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!clean) return '';
+  const words = clean
+    .split(/\s+/)
+    .filter(Boolean)
+    .filter((word) => word.length > 1 || /\d/.test(word));
+  return words.slice(0, 22).join(' ');
+}
+
+function pruneAvaSellerTurnFingerprints(session = {}, nowMs = Date.now(), ttlMs = 12_000) {
+  if (!Array.isArray(session.recentSellerTurnFingerprints)) {
+    session.recentSellerTurnFingerprints = [];
+    return [];
+  }
+  session.recentSellerTurnFingerprints = session.recentSellerTurnFingerprints.filter(
+    (item) => item?.fingerprint && nowMs - Number(item.atMs || 0) <= ttlMs
+  );
+  return session.recentSellerTurnFingerprints;
+}
+
+function hasRecentAvaSellerTurnFingerprint(session = {}, transcript = '', nowMs = Date.now()) {
+  const fingerprint = getAvaSellerTurnFingerprint(transcript);
+  if (!fingerprint) return { duplicate: false, fingerprint: '' };
+  const recent = pruneAvaSellerTurnFingerprints(session, nowMs);
+  return {
+    duplicate: recent.some((item) => item.fingerprint === fingerprint),
+    fingerprint,
+  };
+}
+
+function rememberAvaSellerTurnFingerprint(session = {}, transcript = '', nowMs = Date.now()) {
+  const fingerprint = getAvaSellerTurnFingerprint(transcript);
+  if (!fingerprint) return '';
+  const recent = pruneAvaSellerTurnFingerprints(session, nowMs).filter(
+    (item) => item.fingerprint !== fingerprint
+  );
+  recent.unshift({ fingerprint, atMs: nowMs });
+  session.recentSellerTurnFingerprints = recent.slice(0, 10);
+  return fingerprint;
+}
+
 function getReplyIntentFingerprint(text = '') {
   const clean = normalizeTelnyxRepairTranscript(text);
   if (!clean) return '';
@@ -59667,6 +59712,7 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
       .toLowerCase();
     if (!transcriptForReply || transcriptForReply === session.lastAvaReplyTranscript) return;
     const inputIntent = classifyAvaLiveSellerIntent(item.transcript || transcriptForReply, session);
+    applyAvaLiveTurnFacts(session, item.transcript || transcriptForReply);
     recordAvaLiveTurnDecision(session, {
       phase: 'input_received',
       result: 'seller_turn_received',
@@ -59765,6 +59811,23 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
       return;
     }
     if (now - Number(session.lastAvaReplyAt || 0) < TELNYX_BRIDGE_AVA_REPLY_MIN_MS) return;
+    const duplicateSellerTurn = hasRecentAvaSellerTurnFingerprint(
+      session,
+      item.transcript || transcriptForReply,
+      now
+    );
+    if (duplicateSellerTurn.duplicate) {
+      session.lastAvaReplyTranscript = transcriptForReply;
+      recordCallTrace('ava_phone_reply_skipped', {
+        ...session,
+        status: 'skipped',
+        result: 'duplicate_seller_turn_revision',
+        transcript: item.transcript,
+        sellerTurnFingerprint: duplicateSellerTurn.fingerprint,
+        stage: 'maybeSpeakTelnyxAvaReply',
+      });
+      return;
+    }
     session.pendingAvaReplyTranscript = transcriptForReply;
     session.pendingAvaReplyTurnVersion = replyTurnVersion;
     const contextCall = getCallById(session.callId);
@@ -59834,6 +59897,7 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
     if (!spoken) return;
     session.lastAvaReplyAt = Date.now();
     session.lastAvaReplyTranscript = transcriptForReply;
+    rememberAvaSellerTurnFingerprint(session, item.transcript || transcriptForReply, session.lastAvaReplyAt);
     delete session.pendingAvaReplyTranscript;
     delete session.pendingAvaReplyTurnVersion;
     recordAvaLiveTurnDecision(session, {

@@ -150,6 +150,59 @@ assert(unsafeCall.violations.some((violation) => violation.code === 'dnc_block')
 assert(unsafeCall.violations.some((violation) => violation.code === 'tcpa_consent_missing'));
 assert(unsafeCall.violations.some((violation) => violation.code === 'outside_calling_hours'));
 
+const missingEvidenceTurn = orchestrateAvaTurn({
+  candidateAnswer: 'I can help with that. What is the property address?',
+  transcript: 'How much can you pay?',
+  phase: 'discovery',
+  path: 'cash',
+  sellerPersona: 'absentee_owner',
+  emotion: 'neutral',
+  callId: 'call-unison-no-skill',
+  lead: {
+    id: 'lead-unison-no-skill',
+    name: 'Taylor Reed',
+    address: '',
+    mao: 0,
+  },
+  propertyAnalysis: {
+    arv: 0,
+    repairs: 0,
+    mao: 0,
+  },
+  negotiation: {
+    path: 'cash',
+  },
+  compliance: {
+    dncChecked: true,
+    approvalGated: true,
+  },
+  operator: {
+    approvalQueueAvailable: true,
+  },
+  voice: {
+    channel: 'telnyx',
+    liveTranscript: true,
+  },
+  availableTools: ['analyzeDeal'],
+  skills: [],
+  memories: [],
+  coachingMemories: [],
+  confidenceInput: {
+    pathConfidence: 0.7,
+    goalConfidence: 0.6,
+    closingConfidence: 0.6,
+    transcriptConfidence: 0.9,
+    evidenceCount: 1,
+  },
+});
+
+assert.equal(missingEvidenceTurn.skillSelection.result, 'no_governed_skill_triggered');
+assert.equal(missingEvidenceTurn.unison.layers.skills, false);
+assert.equal(missingEvidenceTurn.unison.layers.memory, false);
+assert.equal(missingEvidenceTurn.unison.ready, false);
+assert(missingEvidenceTurn.unison.missingLayers.includes('skills'));
+assert(missingEvidenceTurn.unison.missingLayers.includes('memory'));
+
 console.log(
   JSON.stringify(
     {

@@ -255,6 +255,7 @@ const PBK_TELNYX_BRIDGE_AVA_REPLY_ENABLED = !/^(0|false|no|off)$/i.test(String(p
 const PBK_TELNYX_ALLOW_HOSTED_AI_ASSISTANT_WITH_BRIDGE = /^(1|true|yes)$/i.test(String(process.env.PBK_TELNYX_ALLOW_HOSTED_AI_ASSISTANT_WITH_BRIDGE || '').trim());
 const PBK_TELNYX_BRIDGE_AVA_REPLY_FORCE = /^(1|true|yes)$/i.test(String(process.env.PBK_TELNYX_BRIDGE_AVA_REPLY_FORCE || '').trim());
 const TELNYX_BRIDGE_AVA_REPLY_MIN_MS = Math.max(600, Math.min(6000, Number(process.env.PBK_TELNYX_BRIDGE_AVA_REPLY_MIN_MS || 1800)));
+const TELNYX_BRIDGE_AVA_FINAL_ONLY_REPLY_DELAY_MS = Math.max(450, Math.min(2500, Number(process.env.PBK_TELNYX_BRIDGE_AVA_FINAL_ONLY_REPLY_DELAY_MS || 950)));
 const TELNYX_BRIDGE_AVA_TURN_LOCK_MIN_MS = Math.max(1800, Math.min(12000, Number(process.env.PBK_TELNYX_BRIDGE_AVA_TURN_LOCK_MIN_MS || 2800)));
 const TELNYX_BRIDGE_AVA_TURN_LOCK_MAX_MS = Math.max(TELNYX_BRIDGE_AVA_TURN_LOCK_MIN_MS, Math.min(30000, Number(process.env.PBK_TELNYX_BRIDGE_AVA_TURN_LOCK_MAX_MS || 9000)));
 const TELNYX_BRIDGE_AVA_CALLER_FLOOR_MS = Math.max(5000, Math.min(30000, Number(process.env.PBK_TELNYX_BRIDGE_AVA_CALLER_FLOOR_MS || 12000)));
@@ -57843,7 +57844,7 @@ function getReplyIntentFingerprint(text = '') {
 function isAvaLiveOfferRequest(transcript = '') {
   const clean = normalizeTelnyxRepairTranscript(transcript);
   if (!clean) return false;
-  return /\b(what'?s\s+(?:the\s+)?offer|what\s+is\s+(?:the\s+)?offer|how\s+much\s+(?:can|would|will)\s+you\s+(?:offer|pay)|how\s+far\s+(?:can|would|will)\s+you\s+(?:offer|go)|cash\s+offer|good\s+offer|want\s+(?:a\s+)?(?:good\s+)?offer|i\s+(?:want|wanna)\s+see\s+how\s+far|i'?d\s+like\s+(?:to\s+)?(?:see\s+)?(?:an?\s+)?offer|can\s+you\s+make\s+an?\s+offer|give\s+me\s+(?:a\s+)?number|tell\s+me\s+(?:the\s+)?number|what\s+can\s+you\s+pay)\b/i.test(clean);
+  return /\b(what'?s\s+(?:the\s+)?offer|what\s+is\s+(?:the\s+)?offer|how\s+much\??$|how\s+much\s+(?:is\s+it|would\s+it\s+be|can|would|will)\s*(?:you\s+)?(?:offer|pay|do|go)?|how\s+far\s+(?:can|would|will)\s+you\s+(?:offer|go)|cash\s+offer|good\s+offer|want\s+(?:a\s+)?(?:good\s+)?offer|i\s+(?:want|wanna)\s+see\s+how\s+far|i'?d\s+like\s+(?:to\s+)?(?:see\s+)?(?:an?\s+)?offer|can\s+you\s+make\s+an?\s+offer|give\s+me\s+(?:a\s+)?number|tell\s+me\s+(?:the\s+)?number|what\s+can\s+you\s+pay)\b/i.test(clean);
 }
 
 function isAvaLiveDealMomentumRequest(transcript = '') {
@@ -57924,6 +57925,10 @@ function buildAvaLiveSalesNextMove({ session = {}, contextCall = null, transcrip
     return `${prefix}Yes, let us get a real deal going.${regionLine} ${fullAddressKnown && conditionKnown ? 'Give me the net number you need, and I will tell you straight if the cash lane can work.' : fullAddressKnown ? 'Walk me through condition: roof, HVAC, foundation, and anything a buyer would complain about.' : 'First give me the full street address, then I can run condition and numbers instead of circling.'}`;
   }
   if (intent.intent === 'offer_request') {
+    const sellerTarget = session.sellerAskingPrice || session.desiredNet || session.bant?.budget || '';
+    if (sellerTarget) {
+      return `${prefix}I have your target around ${sellerTarget}, and I am not ignoring it. I cannot responsibly promise that number until I verify the exact property and condition.${regionLine} ${fullAddressKnown ? 'Walk me through the major repairs or anything a buyer would complain about, then I can tell you if the cash lane can get close.' : 'Give me the full street address once, then I can price whether that target is realistic instead of guessing.'}`;
+    }
     return `${prefix}I can get you to a real cash number, but I will not fake one without the facts.${regionLine} ${fullAddressKnown && conditionKnown ? 'What number would make this worth saying yes today?' : fullAddressKnown ? 'What condition should I price in: roof, HVAC, foundation, tenants, and major repairs?' : 'What is the full street address?'}`;
   }
   if (intent.intent === 'timeline_or_speed') {
@@ -59177,6 +59182,8 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
   let liveTelnyxMessageHandler = null;
   let deepgramKeepAliveTimer = null;
   let noTranscriptFallbackTimer = null;
+  let telnyxFinalOnlyReplyTimer = null;
+  let telnyxPendingFinalReplyItem = null;
   let suppressNextDeepgramCloseWarning = false;
 
   socket.on('message', (raw) => {
@@ -59203,6 +59210,11 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
     if (deepgramKeepAliveTimer) {
       clearInterval(deepgramKeepAliveTimer);
       deepgramKeepAliveTimer = null;
+    }
+    if (telnyxFinalOnlyReplyTimer) {
+      clearTimeout(telnyxFinalOnlyReplyTimer);
+      telnyxFinalOnlyReplyTimer = null;
+      telnyxPendingFinalReplyItem = null;
     }
     const ownsCurrentCallSlot = Boolean(session.callId && telnyxMediaSessionsByCallId.get(session.callId) === session);
     if (ownsCurrentCallSlot) telnyxMediaSessionsByCallId.delete(session.callId);
@@ -59525,6 +59537,54 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
 
   const sendTelnyxFrameToDeepgram = (frame) => sendDeepgramAudio(deepgramConnection, prepareTelnyxFrameForDeepgram(frame));
 
+  const clearPendingTelnyxFinalOnlyReply = () => {
+    if (telnyxFinalOnlyReplyTimer) {
+      clearTimeout(telnyxFinalOnlyReplyTimer);
+      telnyxFinalOnlyReplyTimer = null;
+    }
+    telnyxPendingFinalReplyItem = null;
+  };
+
+  const markTelnyxSellerTranscriptVersion = () => {
+    session.sellerTranscriptVersion = Math.max(0, Number(session.sellerTranscriptVersion || 0)) + 1;
+    session.lastSellerTranscriptVersionAt = isoNow();
+    return session.sellerTranscriptVersion;
+  };
+
+  const scheduleTelnyxAvaReplyForTranscript = (item = {}) => {
+    if (!item?.transcript) return;
+    if (item.speechFinal) {
+      clearPendingTelnyxFinalOnlyReply();
+      void maybeSpeakTelnyxAvaReply(item);
+      return;
+    }
+    if (!item.isFinal) return;
+    telnyxPendingFinalReplyItem = {
+      ...item,
+      finalOnlyFallback: true,
+    };
+    if (telnyxFinalOnlyReplyTimer) clearTimeout(telnyxFinalOnlyReplyTimer);
+    telnyxFinalOnlyReplyTimer = setTimeout(() => {
+      const pending = telnyxPendingFinalReplyItem;
+      telnyxFinalOnlyReplyTimer = null;
+      telnyxPendingFinalReplyItem = null;
+      if (!pending?.transcript || finalized) return;
+      if (Number(pending.turnVersion || 0) !== Number(session.sellerTranscriptVersion || 0)) {
+        recordCallTrace('ava_phone_reply_skipped', {
+          ...session,
+          status: 'skipped',
+          result: 'final_only_turn_superseded',
+          transcript: pending.transcript,
+          pendingTurnVersion: pending.turnVersion,
+          currentTurnVersion: session.sellerTranscriptVersion || 0,
+          stage: 'scheduleTelnyxAvaReplyForTranscript',
+        });
+        return;
+      }
+      void maybeSpeakTelnyxAvaReply(pending);
+    }, TELNYX_BRIDGE_AVA_FINAL_ONLY_REPLY_DELAY_MS);
+  };
+
   const maybeSpeakTelnyxAvaReply = async (item) => {
     if (!PBK_TELNYX_BRIDGE_AVA_REPLY_ENABLED) return;
     if (session.telnyxAiAssistantStarted && !PBK_TELNYX_BRIDGE_AVA_REPLY_FORCE) return;
@@ -59537,7 +59597,8 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
       });
       return;
     }
-    if (!session.callId || !(item.isFinal || item.speechFinal)) return;
+    if (!session.callId || !(item.speechFinal || item.finalOnlyFallback)) return;
+    const replyTurnVersion = Number(item.turnVersion || session.sellerTranscriptVersion || 0);
     const expandedOptionAnswer = expandAvaLiveOptionLetterAnswer(session, item.transcript || '');
     if (expandedOptionAnswer) {
       item = {
@@ -59563,6 +59624,8 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
         expandedOptionAnswer: expandedOptionAnswer || '',
         isFinal: Boolean(item.isFinal),
         speechFinal: Boolean(item.speechFinal),
+        finalOnlyFallback: Boolean(item.finalOnlyFallback),
+        turnVersion: replyTurnVersion,
       }),
       stage: 'maybeSpeakTelnyxAvaReply.input',
     });
@@ -59648,8 +59711,8 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
       return;
     }
     if (now - Number(session.lastAvaReplyAt || 0) < TELNYX_BRIDGE_AVA_REPLY_MIN_MS) return;
-    session.lastAvaReplyAt = now;
-    session.lastAvaReplyTranscript = transcriptForReply;
+    session.pendingAvaReplyTranscript = transcriptForReply;
+    session.pendingAvaReplyTurnVersion = replyTurnVersion;
     const contextCall = getCallById(session.callId);
     if (!isTelnyxCallStillSpeakable(contextCall)) return;
     const reply = await buildTelnyxLiveAvaReply({
@@ -59657,6 +59720,21 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
       transcript: item.transcript,
       contextCall,
     });
+    if (Number(session.sellerTranscriptVersion || 0) !== replyTurnVersion) {
+      delete session.pendingAvaReplyTranscript;
+      delete session.pendingAvaReplyTurnVersion;
+      recordCallTrace('ava_phone_reply_skipped', {
+        ...session,
+        status: 'skipped',
+        result: 'stale_seller_turn_superseded',
+        transcript: item.transcript,
+        replyPreview: String(reply?.text || '').slice(0, 260),
+        pendingTurnVersion: replyTurnVersion,
+        currentTurnVersion: session.sellerTranscriptVersion || 0,
+        stage: 'maybeSpeakTelnyxAvaReply',
+      });
+      return;
+    }
     const guardedReplyText = stripUnconfirmedAvaLiveLeadName(
       enforceAvaOwnerSafeReply(reply.text || '', {
         session,
@@ -59671,6 +59749,21 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
       { session, contextCall }
     );
     const spoken = sanitizeAvaSpokenOutput(guardedReplyText, 'I hear you. Let me slow this down so I can help the right way. What matters most right now: speed, certainty, or price?');
+    if (Number(session.sellerTranscriptVersion || 0) !== replyTurnVersion) {
+      delete session.pendingAvaReplyTranscript;
+      delete session.pendingAvaReplyTurnVersion;
+      recordCallTrace('ava_phone_reply_skipped', {
+        ...session,
+        status: 'skipped',
+        result: 'stale_seller_turn_before_tts',
+        transcript: item.transcript,
+        replyPreview: spoken.slice(0, 260),
+        pendingTurnVersion: replyTurnVersion,
+        currentTurnVersion: session.sellerTranscriptVersion || 0,
+        stage: 'maybeSpeakTelnyxAvaReply',
+      });
+      return;
+    }
     session.operatorWhisper =
       buildOperatorWhisperRecord(reply, spoken) ||
       session.operatorWhisper ||
@@ -59685,6 +59778,10 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
     session.prosody = reply.architecture?.prosody || reply.conversation?.prosody || session.prosody || {};
     session.activeListening = reply.architecture?.activeListening || reply.conversation?.activeListening || session.activeListening || {};
     if (!spoken) return;
+    session.lastAvaReplyAt = Date.now();
+    session.lastAvaReplyTranscript = transcriptForReply;
+    delete session.pendingAvaReplyTranscript;
+    delete session.pendingAvaReplyTurnVersion;
     recordAvaLiveTurnDecision(session, {
       phase: 'resolved',
       result: 'reply_resolved_before_tts',
@@ -59900,6 +59997,8 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
       console.log(`[AudioPath] Deepgram ${session.lastDeepgramEvent} for ${session.callId || session.streamId || session.id}: "${transcript}"`);
     }
     clearNoTranscriptFallbackTimer();
+    const turnVersion = markTelnyxSellerTranscriptVersion();
+    if (normalized.speechFinal) clearPendingTelnyxFinalOnlyReply();
     const sentiment = normalizeDeepgramLiveSentiment(data);
     if (sentiment.pbkScore !== null) session.sentiment = sentiment;
     const item = {
@@ -59907,6 +60006,7 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
       confidence: normalized.confidence,
       isFinal: normalized.isFinal,
       speechFinal: normalized.speechFinal,
+      turnVersion,
       start: data.start ?? null,
       duration: data.duration ?? null,
       sentiment,
@@ -60014,7 +60114,7 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
         stage: 'handleTelnyxDeepgramMessage',
       });
     }
-    void maybeSpeakTelnyxAvaReply(item);
+    scheduleTelnyxAvaReplyForTranscript(item);
   };
 
   const flushPendingTelnyxMediaFrames = () => {

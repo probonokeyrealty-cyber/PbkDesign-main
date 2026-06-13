@@ -166,7 +166,7 @@
     "test:event-bus": "node ./scripts/event-bus-smoke.mjs",
     "test:rex-autonomy": "node ./scripts/rex-autonomy-smoke.mjs",
     "test:script-rotator": "node ./scripts/context-aware-script-rotator-smoke.mjs",
-    "test:ava-governed-skill-router": "node ./scripts/ava-governed-skill-router-smoke.mjs && node ./scripts/ava-live-skill-fallback-smoke.mjs",
+    "test:ava-governed-skill-router": "node ./scripts/ava-governed-skill-router-smoke.mjs && node ./scripts/ava-live-skill-fallback-smoke.mjs && node ./scripts/ava-live-turn-completion-smoke.mjs",
     "test:analytics-live-data": "node ./scripts/analytics-live-data-smoke.mjs",
     "test:ava-turn-orchestrator": "node ./scripts/ava-turn-orchestrator-smoke.mjs",
     "test:ava-intelligence-unison": "node ./scripts/ava-intelligence-unison-smoke.mjs",

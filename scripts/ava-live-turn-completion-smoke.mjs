@@ -70,6 +70,14 @@ assert.ok(
 );
 
 assert.ok(
+  bridge.includes('function hasPendingAvaSellerTurnFingerprint') &&
+    bridge.includes('function rememberPendingAvaSellerTurnFingerprint') &&
+    bridge.includes('duplicate_seller_turn_pending') &&
+    bridge.includes('session.pendingAvaReplySellerTurnFingerprint'),
+  'Duplicate seller turns must be suppressed while the first strategist/TTS reply is still pending.'
+);
+
+assert.ok(
   bridge.indexOf('applyAvaLiveTurnFacts(session, item.transcript || transcriptForReply);') <
     bridge.indexOf('duplicate_seller_turn_revision'),
   'Duplicate seller-turn skips must still update live call facts before skipping speech.'

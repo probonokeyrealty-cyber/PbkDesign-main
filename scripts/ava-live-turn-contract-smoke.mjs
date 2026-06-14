@@ -216,6 +216,13 @@ assert(
     bridge.includes('deepseek-v4-flash'),
   'Ava strategist activity must expose the attempted DeepSeek live model/results before contract fallback.'
 );
+assert(
+  bridge.includes('isRetryableDeepSeekResult') &&
+    bridge.includes('retryAttempts') &&
+    bridge.includes('attemptTimeoutMs') &&
+    bridge.includes('provider_retry'),
+  'DeepSeek live strategist calls must have bounded retry/backoff support before contract fallback.'
+);
 
 const renderBlueprint = readFileSync('render.yaml', 'utf8');
 assert.match(
@@ -230,8 +237,18 @@ assert.match(
 );
 assert.match(
   renderBlueprint,
-  /key:\s*PBK_TELNYX_LIVE_REPLY_STRATEGIST_TIMEOUT_MS[\s\S]*?value:\s*1800/,
-  'Render must give V4 Flash enough live-call budget before deterministic contract fallback.'
+  /key:\s*PBK_TELNYX_LIVE_REPLY_STRATEGIST_TIMEOUT_MS[\s\S]*?value:\s*3000/,
+  'Render must give V4 Flash enough total live-call budget before deterministic contract fallback.'
+);
+assert.match(
+  renderBlueprint,
+  /key:\s*PBK_DEEPSEEK_LIVE_ATTEMPT_TIMEOUT_MS[\s\S]*?value:\s*1400/,
+  'Render must keep each live DeepSeek attempt short enough for phone latency.'
+);
+assert.match(
+  renderBlueprint,
+  /key:\s*PBK_DEEPSEEK_LIVE_RETRY_ATTEMPTS[\s\S]*?value:\s*1/,
+  'Render must allow one fast V4 Flash retry before falling back to the turn contract.'
 );
 
 console.log(

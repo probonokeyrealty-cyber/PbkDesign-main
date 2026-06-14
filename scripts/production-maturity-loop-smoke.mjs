@@ -195,7 +195,9 @@ assert(
 );
 assert(
   bridgeSource.includes('/api/runtime/events/status') &&
+    bridgeSource.includes('/api/runtime/archive') &&
     bridgeSource.includes('/api/provider-circuits/status') &&
+    bridgeSource.includes('/api/circuit/status') &&
     bridgeSource.includes('/api/production/maturity'),
   'Bridge must expose production maturity, runtime event archive, and provider circuit status endpoints.'
 );

@@ -62369,13 +62369,13 @@ const server = createServer(async (request, response) => {
       return;
     }
 
-    if (request.method === 'GET' && matchesPath(pathname, ['/api/runtime/events/status', '/api/observability/runtime-events/status'])) {
+    if (request.method === 'GET' && matchesPath(pathname, ['/api/runtime/events/status', '/api/runtime/archive', '/api/runtime/archive/status', '/api/observability/runtime-events/status'])) {
       const archive = getRuntimeEventArchiveStatus();
       json(response, archive.ready ? 200 : 202, archive);
       return;
     }
 
-    if (request.method === 'POST' && matchesPath(pathname, ['/api/runtime/events', '/api/observability/runtime-events'])) {
+    if (request.method === 'POST' && matchesPath(pathname, ['/api/runtime/events', '/api/runtime/archive', '/api/observability/runtime-events'])) {
       const body = await readBody(request);
       const archived = await recordProductionRuntimeEvent({
         eventType: body.eventType || body.event_type || body.type || 'operator_event',
@@ -62389,7 +62389,7 @@ const server = createServer(async (request, response) => {
       return;
     }
 
-    if (request.method === 'GET' && matchesPath(pathname, ['/api/provider-circuits/status', '/api/providers/circuits/status'])) {
+    if (request.method === 'GET' && matchesPath(pathname, ['/api/provider-circuits/status', '/api/providers/circuits/status', '/api/circuit/status'])) {
       const circuits = getProviderCircuitStatus();
       json(response, circuits.ready ? 200 : 202, circuits);
       return;

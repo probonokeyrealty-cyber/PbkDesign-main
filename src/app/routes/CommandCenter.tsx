@@ -13,10 +13,12 @@ import {
   fetchLeadsRequest,
   fetchFounderWorkQueueRequest,
   fetchIntelligenceStreamRequest,
+  fetchProductionGapsRequest,
   fetchSystemSourceLabelsRequest,
   fetchWebSearchStatusRequest,
   type FounderWorkQueueItem,
   type IntelligenceStreamItem,
+  type ProductionGapLabel,
   updateRuntimeSettingsRequest,
   type RuntimeSnapshot,
   type SystemSourceLabel,
@@ -796,6 +798,100 @@ function SourceConfidenceRail({ items, source }: { items: SystemSourceLabel[]; s
   );
 }
 
+function ProductionGapsRail({
+  gaps,
+  source,
+  loading,
+}: {
+  gaps: ProductionGapLabel[];
+  source: string;
+  loading: boolean;
+}) {
+  const visibleGaps = gaps.slice(0, 6);
+  const blockingCount = gaps.filter((gap) => gap.blocking).length;
+  const optionalCount = gaps.filter((gap) => gap.optional).length;
+  const severityTone = (severity?: string) => {
+    if (severity === 'critical' || severity === 'high') {
+      return 'border-rose-400/30 bg-rose-500/10 text-rose-100';
+    }
+    if (severity === 'medium') return 'border-amber-400/30 bg-amber-500/10 text-amber-100';
+    if (severity === 'low') return 'border-sky-400/25 bg-sky-500/10 text-sky-100';
+    return 'border-slate-700 bg-slate-900 text-slate-300';
+  };
+
+  return (
+    <PbkPanel className="pbk-command-production-gaps space-y-3">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <div className="pbk-eyebrow">Production gaps</div>
+          <h2 className="text-base font-semibold text-[var(--text-primary)]">
+            Controls not live or needing setup
+          </h2>
+          <p className="mt-1 max-w-3xl text-xs text-slate-500">
+            This rail merges release readiness, provider health, source truth, and tooling status so
+            a staged capability cannot look silently live.
+          </p>
+        </div>
+        <DataSourceCaption endpoint="GET /api/production/gaps" note={source} />
+      </div>
+      <div className="flex flex-wrap gap-2 text-[11px] uppercase tracking-[0.14em]">
+        <span className="rounded-full border border-slate-700 bg-slate-900 px-2.5 py-1 text-slate-300">
+          {gaps.length} labeled
+        </span>
+        <span
+          className={[
+            'rounded-full border px-2.5 py-1',
+            blockingCount
+              ? 'border-rose-400/30 bg-rose-500/10 text-rose-200'
+              : 'border-emerald-400/25 bg-emerald-500/10 text-emerald-200',
+          ].join(' ')}
+        >
+          {blockingCount} blocking
+        </span>
+        <span className="rounded-full border border-sky-400/25 bg-sky-500/10 px-2.5 py-1 text-sky-200">
+          {optionalCount} optional
+        </span>
+      </div>
+      {loading ? (
+        <div className="rounded-xl border border-slate-800 bg-slate-900 px-3 py-4 text-xs text-slate-500">
+          Checking production controls...
+        </div>
+      ) : visibleGaps.length ? (
+        <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-3">
+          {visibleGaps.map((gap) => (
+            <div
+              key={gap.id}
+              className={`min-w-0 rounded-lg border p-3 ${severityTone(gap.severity)}`}
+              title={[gap.endpoint, gap.detail, gap.operatorAction].filter(Boolean).join(' - ')}
+            >
+              <div className="flex items-center justify-between gap-2 text-[10px] uppercase opacity-75">
+                <span className="truncate font-semibold">{gap.severity || 'info'}</span>
+                <span className="truncate">{gap.optional ? 'optional' : 'required'}</span>
+              </div>
+              <div className="mt-1 truncate text-sm font-semibold text-current">{gap.label}</div>
+              <div className="mt-1 truncate text-[11px] opacity-75">
+                {gap.category || 'production'} / {gap.status || 'not live'}
+              </div>
+              <div className="mt-2 line-clamp-2 text-[11px] opacity-85">
+                {gap.detail || 'No detail reported.'}
+              </div>
+              {gap.operatorAction && (
+                <div className="mt-2 line-clamp-2 text-[11px] opacity-75">
+                  Next: {gap.operatorAction}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div className="rounded-xl border border-emerald-400/20 bg-emerald-500/10 px-3 py-4 text-xs text-emerald-100">
+          No production gaps reported by the bridge.
+        </div>
+      )}
+    </PbkPanel>
+  );
+}
+
 function StatSpark({ tone }: { tone: string }) {
   const stroke = tone === 'lime' ? 'var(--lime)' : tone === 'warn' ? 'var(--amber)' : 'var(--sky)';
   return (
@@ -961,6 +1057,9 @@ export function CommandCenter() {
     null
   );
   const [sourceConfidenceSource, setSourceConfidenceSource] = useState('client source fallback');
+  const [productionGaps, setProductionGaps] = useState<ProductionGapLabel[]>([]);
+  const [productionGapsSource, setProductionGapsSource] = useState('GET /api/production/gaps');
+  const [productionGapsLoading, setProductionGapsLoading] = useState(false);
   const [qualityReviewCall, setQualityReviewCall] = useState<Record<string, unknown> | null>(null);
   const [bridgeLeadRoster, setBridgeLeadRoster] = useState<RuntimeRecord[]>([]);
   const [leadRosterSource, setLeadRosterSource] = useState('GET /api/leads pending');
@@ -1155,6 +1254,53 @@ export function CommandCenter() {
     };
     refreshSourceLabels();
     const refreshTimer = window.setInterval(refreshSourceLabels, 30_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(refreshTimer);
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    const refreshProductionGaps = () => {
+      setProductionGapsLoading(true);
+      fetchProductionGapsRequest()
+        .then((response) => {
+          if (cancelled) return;
+          setProductionGaps(Array.isArray(response.gaps) ? response.gaps : []);
+          setProductionGapsSource(response.result || 'bridge production gap labels');
+        })
+        .catch((gapError) => {
+          if (cancelled) return;
+          const detail =
+            gapError instanceof Error
+              ? gapError.message
+              : 'Production gap report could not be loaded.';
+          setProductionGaps([
+            {
+              id: 'production-gap-report-unavailable',
+              label: 'Production gap report',
+              category: 'control_plane',
+              severity: 'high',
+              status: 'unavailable',
+              source: 'GET /api/production/gaps',
+              endpoint: 'GET /api/production/gaps',
+              detail,
+              operatorAction:
+                'Check bridge auth, route wiring, and hosted deploy revision before trusting launch controls.',
+              optional: false,
+              blocking: true,
+              controlLive: false,
+            },
+          ]);
+          setProductionGapsSource(`fallback: ${detail}`);
+        })
+        .finally(() => {
+          if (!cancelled) setProductionGapsLoading(false);
+        });
+    };
+    refreshProductionGaps();
+    const refreshTimer = window.setInterval(refreshProductionGaps, 30_000);
     return () => {
       cancelled = true;
       window.clearInterval(refreshTimer);
@@ -1512,6 +1658,12 @@ export function CommandCenter() {
         <SourceConfidenceRail
           items={displayedSourceConfidenceItems}
           source={sourceConfidenceSource}
+        />
+
+        <ProductionGapsRail
+          gaps={productionGaps}
+          source={productionGapsSource}
+          loading={productionGapsLoading}
         />
 
         {actionStatus && (

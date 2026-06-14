@@ -150,6 +150,7 @@ import {
   createIdempotencyStore,
   createProductionReadinessMonitor,
 } from './production-readiness-command-layer.mjs';
+import { buildProductionGapLabelsReport } from './production-gap-labels.mjs';
 const { Pool: PgPool } = pg;
 
 void initializeObservability({ serviceName: 'pbk-openclaw-bridge' });
@@ -42096,6 +42097,20 @@ function buildReleaseStatusSnapshot() {
   };
 }
 
+async function buildProductionGapsSnapshot() {
+  const [sourceLabels, toolingStatus] = await Promise.all([
+    buildSystemSourceLabelsSnapshot(),
+    buildToolingStatus(),
+  ]);
+  return buildProductionGapLabelsReport({
+    sourceLabels: sourceLabels.items || [],
+    releaseStatus: buildReleaseStatusSnapshot(),
+    toolingStatus,
+    runtimeMeta: getRuntimeMeta(),
+    checkedAt: isoNow(),
+  });
+}
+
 function buildAgentStatusBundle() {
   updateDerivedStatus(state);
   const today = isoNow().slice(0, 10);
@@ -62951,6 +62966,14 @@ const server = createServer(async (request, response) => {
       matchesPath(pathname, ['/api/release/status', '/api/v1/release/status'])
     ) {
       json(response, 200, buildReleaseStatusSnapshot());
+      return;
+    }
+
+    if (
+      request.method === 'GET' &&
+      matchesPath(pathname, ['/api/production/gaps', '/api/v1/production/gaps'])
+    ) {
+      json(response, 200, await buildProductionGapsSnapshot());
       return;
     }
 

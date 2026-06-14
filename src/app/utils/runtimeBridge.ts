@@ -270,6 +270,7 @@ export type RuntimeQuotas = {
 export type RuntimeToolingStatus = {
   metaAgent?: Record<string, unknown>;
   browserOs?: Record<string, unknown>;
+  agentReach?: Record<string, unknown>;
   browserResearch?: Record<string, unknown>;
   context7?: Record<string, unknown>;
   workflowOps?: Record<string, unknown>;
@@ -519,6 +520,37 @@ export type ReleaseStatusResponse = {
   summary?: Record<string, unknown>;
   components?: ReleaseStatusComponent[];
   warnings?: string[];
+};
+
+export type ProductionGapLabel = {
+  id: string;
+  label: string;
+  category?: string;
+  severity?: 'critical' | 'high' | 'medium' | 'low' | 'info';
+  status?: string;
+  source?: string;
+  endpoint?: string;
+  detail?: string;
+  operatorAction?: string;
+  optional?: boolean;
+  blocking?: boolean;
+  controlLive?: boolean;
+  metadata?: Record<string, unknown>;
+};
+
+export type ProductionGapsResponse = {
+  ok: boolean;
+  result?: string;
+  generatedAt?: string;
+  summary?: {
+    total?: number;
+    blocking?: number;
+    notLive?: number;
+    optional?: number;
+    bySeverity?: Record<string, number>;
+    byCategory?: Record<string, number>;
+  };
+  gaps?: ProductionGapLabel[];
 };
 
 export type VectorCapacityTable = {
@@ -1735,6 +1767,12 @@ export async function fetchSystemSourceLabelsRequest() {
 export async function fetchReleaseStatusRequest() {
   return bridgeRequest<ReleaseStatusResponse>({
     path: '/api/release/status',
+  });
+}
+
+export async function fetchProductionGapsRequest() {
+  return bridgeRequest<ProductionGapsResponse>({
+    path: '/api/production/gaps',
   });
 }
 

@@ -13,6 +13,7 @@ import {
 
 const root = process.cwd();
 const packageJson = JSON.parse(readFileSync(resolve(root, 'package.json'), 'utf8'));
+const bridgeSource = readFileSync(resolve(root, 'scripts/openclaw-local-server.mjs'), 'utf8');
 
 let currentTime = new Date('2026-06-13T21:00:00.000Z').getTime();
 const now = () => currentTime;
@@ -185,6 +186,18 @@ assert.equal(
 assert(
   packageJson.scripts?.['test:production-hardening']?.includes('test:production-maturity-loop'),
   'Production hardening must include the production maturity loop smoke.'
+);
+assert(
+  bridgeSource.includes('createRuntimeEventArchive') &&
+    bridgeSource.includes('createProviderCircuitBreaker') &&
+    bridgeSource.includes('buildCanaryPromotionGate'),
+  'Bridge must wire runtime archive, provider circuit breakers, and canary promotion gates.'
+);
+assert(
+  bridgeSource.includes('/api/runtime/events/status') &&
+    bridgeSource.includes('/api/provider-circuits/status') &&
+    bridgeSource.includes('/api/production/maturity'),
+  'Bridge must expose production maturity, runtime event archive, and provider circuit status endpoints.'
 );
 
 console.log('production-maturity-loop-smoke: ok');

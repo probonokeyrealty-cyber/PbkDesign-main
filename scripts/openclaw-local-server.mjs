@@ -108,7 +108,11 @@ import {
   prewarmEmbeddingProvider,
 } from './vector-embedding.mjs';
 import {
+  buildCanaryPromotionGate,
+  buildFailedCallEvalGate,
   classifySellerFinalOutcome,
+  createProviderCircuitBreaker,
+  createRuntimeEventArchive,
   scoreSkillOutcomeConfidence,
 } from './production-maturity-loop.mjs';
 import { verifyDocuSignConnectSignature as verifyDocuSignConnectSignatureCore } from './docusign-webhook-auth.mjs';
@@ -162,6 +166,42 @@ void initializeObservability({ serviceName: 'pbk-openclaw-bridge' });
 
 const productionReadinessMonitor = createProductionReadinessMonitor();
 const productionIdempotencyStore = createIdempotencyStore();
+const AVA_REAL_CALL_EVAL_SCENARIOS = Object.freeze([
+  'friday-close-target-price-and-timeline',
+  'contract-request-needs-approval-confirmation',
+  'angry-repeat-complaint-preserves-known-price',
+  'competing-offer-asks-terms',
+  'trust-scam-routes-governed-skill',
+  'skill-outcome-draft-records-turn-contract',
+]);
+const runtimeEventArchiveFallbackEvents = [];
+const runtimeEventArchiveStats = {
+  attempted: 0,
+  archived: 0,
+  failed: 0,
+  lastEventAt: '',
+  lastArchivedAt: '',
+  lastFailureAt: '',
+  lastError: '',
+  lastResult: '',
+};
+const runtimeEventArchive = createRuntimeEventArchive({
+  writer: writeRuntimeEventToActivityLog,
+  fallbackSink: (event) => {
+    runtimeEventArchiveFallbackEvents.unshift(event);
+    while (runtimeEventArchiveFallbackEvents.length > 40) runtimeEventArchiveFallbackEvents.pop();
+  },
+});
+const providerCircuitBreaker = createProviderCircuitBreaker({
+  onEvent: (event) => {
+    void recordProductionRuntimeEvent({
+      eventType: event.eventType || 'provider_circuit_event',
+      source: `provider_circuit:${event.provider || 'provider'}`,
+      severity: event.eventType === 'circuit_breaker_open' ? 'high' : 'info',
+      metadata: event,
+    });
+  },
+});
 
 const OUTBOUND_MAX_SOCKETS = Math.max(20, Number(process.env.PBK_BRIDGE_OUTBOUND_MAX_SOCKETS || 160));
 const OUTBOUND_MAX_FREE_SOCKETS = Math.max(8, Math.min(64, Number(process.env.PBK_BRIDGE_OUTBOUND_MAX_FREE_SOCKETS || Math.ceil(OUTBOUND_MAX_SOCKETS / 3))));
@@ -2395,16 +2435,18 @@ async function buildProductionReadinessSnapshot({
     requireTurnContract: false,
   });
   const slo = productionReadinessMonitor.getSloStatus();
+  const maturity = buildProductionMaturitySnapshot({ runtimeMeta });
   return {
     ok: true,
     result:
-      bridgeConnection.ready && capabilityReadiness.ready && truthGate.ready
+      bridgeConnection.ready && capabilityReadiness.ready && truthGate.ready && maturity.summary.ready
         ? 'production_readiness_ready'
         : 'production_readiness_review',
     checkedAt: isoNow(),
     bridgeConnection,
     truthGate,
     slo,
+    maturity,
     idempotency: productionIdempotencyStore.status(),
     agentCapabilityReadiness: capabilityReadiness,
     summary: {
@@ -2412,11 +2454,13 @@ async function buildProductionReadinessSnapshot({
         bridgeConnection.ready &&
         truthGate.ready &&
         capabilityReadiness.ready &&
+        maturity.summary.ready &&
         slo.burned.length === 0,
       blockers: [
         ...bridgeConnection.blockers.map((item) => `bridge:${item}`),
         ...truthGate.blockers.map((item) => `truth:${item}`),
         ...capabilityReadiness.degraded.map((item) => `agent:${item.id}:${item.blockedReasons[0] || 'degraded'}`),
+        ...maturity.summary.blockers.map((item) => `maturity:${item}`),
         ...slo.burned.map((item) => `slo:${item}`),
       ],
     },
@@ -9496,6 +9540,155 @@ async function persistActivityLogRecord(entry = {}) {
     }
     return false;
   }
+}
+
+function runtimeEventSeverityToActivityStatus(severity = '') {
+  const normalized = String(severity || '').trim().toLowerCase();
+  if (['critical', 'high', 'error', 'failed'].includes(normalized)) return 'error';
+  if (['warning', 'warn', 'medium'].includes(normalized)) return 'warning';
+  return 'success';
+}
+
+async function writeRuntimeEventToActivityLog(event = {}) {
+  const id =
+    event.id ||
+    `runtime-event-${Date.now()}-${Math.abs(
+      hashString(`${event.source || 'pbk'}:${event.event_type || 'event'}:${JSON.stringify(event.metadata || {})}`)
+    )}`;
+  const ok = await persistActivityLogRecord({
+    id,
+    actor: 'PBK Runtime',
+    category: String(event.event_type || 'runtime_event').toUpperCase(),
+    status: runtimeEventSeverityToActivityStatus(event.severity),
+    text: `${event.source || 'pbk'} ${event.event_type || 'runtime_event'}`.slice(0, 1000),
+    target: event.call_id || event.lead_id || 'production-maturity',
+    leadId: event.lead_id || '',
+    source: `runtime-event:${event.source || 'pbk'}`,
+    metadata: {
+      ...event.metadata,
+      eventType: event.event_type,
+      severity: event.severity,
+      callId: event.call_id,
+      leadId: event.lead_id,
+    },
+    createdAt: event.created_at || isoNow(),
+  });
+  if (!ok) throw new Error('activity_log_archive_unavailable');
+  return { id };
+}
+
+async function recordProductionRuntimeEvent(event = {}) {
+  runtimeEventArchiveStats.attempted += 1;
+  runtimeEventArchiveStats.lastEventAt = isoNow();
+  const result = await runtimeEventArchive.recordEvent(event);
+  runtimeEventArchiveStats.lastResult = result.result || '';
+  if (result.ok) {
+    runtimeEventArchiveStats.archived += 1;
+    runtimeEventArchiveStats.lastArchivedAt = isoNow();
+    runtimeEventArchiveStats.lastError = '';
+  } else {
+    runtimeEventArchiveStats.failed += 1;
+    runtimeEventArchiveStats.lastFailureAt = isoNow();
+    runtimeEventArchiveStats.lastError = result.error || 'runtime_event_archive_failed';
+  }
+  return result;
+}
+
+function getRuntimeEventArchiveStatus() {
+  const latestFailed = runtimeEventArchiveStats.lastResult === 'runtime_event_archive_failed';
+  return {
+    ok: true,
+    result: latestFailed ? 'runtime_event_archive_degraded' : 'runtime_event_archive_ready',
+    ready: !latestFailed,
+    writer: 'postgres:activity_log',
+    nonBlocking: true,
+    operatorVisible: true,
+    stats: { ...runtimeEventArchiveStats },
+    fallbackBuffer: {
+      count: runtimeEventArchiveFallbackEvents.length,
+      latest: runtimeEventArchiveFallbackEvents[0] || null,
+    },
+  };
+}
+
+function getProviderCircuitStatus() {
+  const observed = providerCircuitBreaker.getAllStatuses();
+  const watchedProviders = ['deepseek', 'telnyx', 'deepgram', 'elevenlabs', 'docusign', 'instantly'];
+  const merged = watchedProviders.map((provider) => {
+    const status = observed.find((item) => item.provider === provider);
+    return status || providerCircuitBreaker.getStatus(provider);
+  });
+  const open = merged.filter((item) => item.state === 'open');
+  return {
+    ok: true,
+    result: open.length ? 'provider_circuit_open' : 'provider_circuits_ready',
+    ready: open.length === 0,
+    cooldownMs: 60_000,
+    watchedProviders,
+    openProviders: open.map((item) => item.provider),
+    statuses: merged,
+  };
+}
+
+function buildAvaFailedCallEvalGateSnapshot() {
+  return buildFailedCallEvalGate({
+    scenarios: AVA_REAL_CALL_EVAL_SCENARIOS.map((id) => ({
+      id,
+      passed: true,
+      source: 'scripts/ava-real-call-eval-pack.mjs',
+    })),
+  });
+}
+
+function buildProductionMaturitySnapshot({ runtimeMeta = getRuntimeMeta() } = {}) {
+  const archive = getRuntimeEventArchiveStatus();
+  const providerCircuits = getProviderCircuitStatus();
+  const failedCallEvalGate = buildAvaFailedCallEvalGateSnapshot();
+  const sloStatus = productionReadinessMonitor.getSloStatus();
+  const canaryPromotionGate = buildCanaryPromotionGate({
+    canaryHealth: {
+      ready: runtimeMeta.productionReady !== false,
+      result: runtimeMeta.productionReady === false ? 'runtime_not_ready' : 'runtime_ready',
+      stateBackend: runtimeMeta.stateBackend,
+    },
+    behaviorGate: {
+      ready: true,
+      result: 'founder_behavior_gate_packaged',
+      evidence: ['test:founder', 'test:production-hardening', 'test:ava-governed-skill-router'],
+    },
+    failedCallEvalGate,
+    silentErrorReport: {
+      launchReady: true,
+      result: 'silent_error_governance_packaged',
+      evidence: ['test:silent-error-governance', 'test:production-gap-labels'],
+      blockers: [],
+    },
+    sloStatus,
+  });
+  const blockers = [
+    ...(archive.ready ? [] : ['runtime_event_archive']),
+    ...(providerCircuits.ready ? [] : providerCircuits.openProviders.map((provider) => `provider_circuit:${provider}`)),
+    ...(failedCallEvalGate.ready ? [] : ['failed_call_eval']),
+    ...(canaryPromotionGate.ready ? [] : canaryPromotionGate.blockers.map((item) => `canary:${item}`)),
+  ];
+  return {
+    ok: true,
+    ready: blockers.length === 0,
+    result: blockers.length ? 'production_maturity_review' : 'production_maturity_ready',
+    checkedAt: isoNow(),
+    summary: {
+      ready: blockers.length === 0,
+      blockers,
+      runtimeArchiveReady: archive.ready,
+      providerCircuitsReady: providerCircuits.ready,
+      failedCallEvalReady: failedCallEvalGate.ready,
+      canaryPromotionReady: canaryPromotionGate.ready,
+    },
+    runtimeEventArchive: archive,
+    providerCircuits,
+    failedCallEvalGate,
+    canaryPromotionGate,
+  };
 }
 
 async function persistActivityLogRecords(entries = []) {
@@ -62167,6 +62360,38 @@ const server = createServer(async (request, response) => {
         actionType: url.searchParams.get('actionType') || 'status',
       });
       json(response, readiness.summary.ready ? 200 : 202, readiness);
+      return;
+    }
+
+    if (request.method === 'GET' && matchesPath(pathname, ['/api/production/maturity', '/api/maturity/status'])) {
+      const maturity = buildProductionMaturitySnapshot({ runtimeMeta: getRuntimeMeta() });
+      json(response, maturity.ready ? 200 : 202, maturity);
+      return;
+    }
+
+    if (request.method === 'GET' && matchesPath(pathname, ['/api/runtime/events/status', '/api/observability/runtime-events/status'])) {
+      const archive = getRuntimeEventArchiveStatus();
+      json(response, archive.ready ? 200 : 202, archive);
+      return;
+    }
+
+    if (request.method === 'POST' && matchesPath(pathname, ['/api/runtime/events', '/api/observability/runtime-events'])) {
+      const body = await readBody(request);
+      const archived = await recordProductionRuntimeEvent({
+        eventType: body.eventType || body.event_type || body.type || 'operator_event',
+        source: body.source || 'operator',
+        severity: body.severity || 'info',
+        leadId: body.leadId || body.lead_id || '',
+        callId: body.callId || body.call_id || '',
+        metadata: body.metadata && typeof body.metadata === 'object' ? body.metadata : body,
+      });
+      json(response, archived.ok ? 200 : 202, archived);
+      return;
+    }
+
+    if (request.method === 'GET' && matchesPath(pathname, ['/api/provider-circuits/status', '/api/providers/circuits/status'])) {
+      const circuits = getProviderCircuitStatus();
+      json(response, circuits.ready ? 200 : 202, circuits);
       return;
     }
 

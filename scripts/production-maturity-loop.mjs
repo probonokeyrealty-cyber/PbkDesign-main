@@ -4,13 +4,18 @@ export const PRODUCTION_MATURITY_LOOP_REVISION =
 const WIN_OUTCOMES = new Set([
   'appointment',
   'appointment_set',
+  'callback',
+  'callback_scheduled',
   'booked',
   'contract',
   'contract_signed',
+  'followup',
+  'follow_up',
   'signed',
   'closed',
   'won',
   'offer_accepted',
+  'positive',
 ]);
 
 const RISK_OUTCOMES = {
@@ -37,6 +42,77 @@ function clamp(value, min = 0, max = 100) {
 
 function isoFromNow(now = () => Date.now()) {
   return new Date(now()).toISOString();
+}
+
+export function classifySellerFinalOutcome(input = {}) {
+  const explicit = normalizeCode(input.finalOutcome || input.final_outcome || '');
+  const explicitKnown = new Set([
+    ...WIN_OUTCOMES,
+    ...Object.keys(RISK_OUTCOMES),
+    'lost',
+    'rejected',
+    'engagement',
+    'unknown',
+  ]);
+  if (explicit && explicitKnown.has(explicit)) {
+    return {
+      finalOutcome: explicit === 'follow_up' ? 'followup' : explicit,
+      source: 'explicit',
+      confidence: 1,
+    };
+  }
+
+  const text = [
+    input.outcomeLabel,
+    input.outcome_label,
+    input.outcome,
+    input.status,
+    input.disposition,
+    input.result,
+    input.transcript,
+    input.text,
+    input.metadata?.finalOutcome,
+    input.metadata?.outcomeLabel,
+    input.metadata?.sellerReaction,
+  ]
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase();
+
+  if (/\b(do not call|dnc|stop calling|remove me|unsubscribe)\b/i.test(text)) {
+    return { finalOutcome: 'dnc', source: 'classified', confidence: 0.98 };
+  }
+  if (/\b(complaint|complained|reported|lawsuit|attorney general|harassment|pressure tactic)\b/i.test(text)) {
+    return { finalOutcome: 'complaint', source: 'classified', confidence: 0.94 };
+  }
+  if (/\b(ghosted|no[- ]?show|no response|stopped responding|unresponsive|never answered|did not answer)\b/i.test(text)) {
+    return { finalOutcome: 'ghosted', source: 'classified', confidence: 0.86 };
+  }
+  if (/\b(cancelled|canceled|rescinded|backed out|terminated)\b/i.test(text)) {
+    return { finalOutcome: 'cancelled', source: 'classified', confidence: 0.88 };
+  }
+  if (/\b(contract signed|signed contract|docusign completed|seller signed|closed deal|deal closed|won deal)\b/i.test(text)) {
+    return { finalOutcome: 'contract', source: 'classified', confidence: 0.96 };
+  }
+  if (/\b(appointment scheduled|appointment set|booked appointment|qualified appointment|meeting booked)\b/i.test(text)) {
+    return { finalOutcome: 'appointment', source: 'classified', confidence: 0.93 };
+  }
+  if (/\b(callback scheduled|follow[- ]?up scheduled|call back|called back|specific callback|next call)\b/i.test(text)) {
+    return { finalOutcome: 'followup', source: 'classified', confidence: 0.86 };
+  }
+  if (/\b(offer accepted|verbal yes|moving forward|contract sent|send the contract|send paperwork)\b/i.test(text)) {
+    return { finalOutcome: 'contract', source: 'classified', confidence: 0.86 };
+  }
+  if (/\b(not interested|rejected|too low|walked away|hung up|hang up|lost)\b/i.test(text)) {
+    return { finalOutcome: 'lost', source: 'classified', confidence: 0.78 };
+  }
+  if (input.dealClosed === true || input.deal_closed === true || input.success === true) {
+    return { finalOutcome: 'positive', source: 'success_flag', confidence: 0.72 };
+  }
+  if (input.success === false) {
+    return { finalOutcome: 'lost', source: 'success_flag', confidence: 0.72 };
+  }
+  return { finalOutcome: 'engagement', source: 'default', confidence: 0.52 };
 }
 
 function normalizeRuntimeEvent(event = {}, now = () => Date.now()) {
@@ -244,7 +320,7 @@ export function scoreSkillOutcomeConfidence({
   let wins = 0;
   let penalty = 0;
   for (const row of rows) {
-    const outcome = normalizeCode(row.finalOutcome || row.final_outcome || row.outcome || row.outcomeLabel);
+    const outcome = classifySellerFinalOutcome(row).finalOutcome;
     if (WIN_OUTCOMES.has(outcome)) wins += 1;
     penalty += RISK_OUTCOMES[outcome] || 0;
   }
@@ -264,7 +340,7 @@ export function scoreSkillOutcomeConfidence({
     risks: rows.filter((row) =>
       Object.prototype.hasOwnProperty.call(
         RISK_OUTCOMES,
-        normalizeCode(row.finalOutcome || row.final_outcome || row.outcome || row.outcomeLabel)
+        classifySellerFinalOutcome(row).finalOutcome
       )
     ).length,
     shouldPromote: newConfidence >= 85 && wins >= Math.ceil(sampleSize * 0.6),

@@ -48,6 +48,14 @@ assert(
   'Call finalization must create coaching and close selected-script outcomes.'
 );
 assert(
+  /classifySellerFinalOutcome/.test(bridge) &&
+    /updateMeasuredSkillConfidenceFromOutcome/.test(bridge) &&
+    /scoreSkillOutcomeConfidence/.test(bridge) &&
+    /finalOutcome/.test(bridge) &&
+    /confidenceLearning/.test(bridge),
+  'Skill outcomes must classify final seller outcome and update measured skill confidence from real deal results.'
+);
+assert(
   /source:\s*['"]post-call-coaching['"]/.test(bridge) &&
     /projector:\s*projectActivityEvent/.test(bridge) &&
     /conversationProjection/.test(bridge),

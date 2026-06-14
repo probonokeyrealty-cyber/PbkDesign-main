@@ -107,6 +107,10 @@ import {
   getEmbeddingProviderConfig,
   prewarmEmbeddingProvider,
 } from './vector-embedding.mjs';
+import {
+  classifySellerFinalOutcome,
+  scoreSkillOutcomeConfidence,
+} from './production-maturity-loop.mjs';
 import { verifyDocuSignConnectSignature as verifyDocuSignConnectSignatureCore } from './docusign-webhook-auth.mjs';
 import {
   COMMAND_INTENT_ROUTER_VERSION,
@@ -22789,7 +22793,7 @@ async function ensureSkillRecordForUsage(record = {}) {
 
 async function persistSkillUsageToPg(record = {}) {
   const skillName = String(record.skillName || '').trim();
-  if (!skillName) return false;
+  if (!skillName) return { ok: false, skillId: '', result: 'missing_skill_name' };
   const agentId = normalizeAgentId(record.agentName || 'ava') || 'ava';
   const skillId = String(record.skillId || record.skill_id || (await ensureSkillRecordForUsage(record)) || '').trim();
   const result = await queryPgRows(
@@ -22826,7 +22830,166 @@ async function persistSkillUsageToPg(record = {}) {
       record.createdAt || isoNow(),
     ]
   );
-  return result.ok;
+  return {
+    ok: result.ok,
+    skillId,
+    result: result.ok ? 'skill_usage_persisted' : 'skill_usage_persist_failed',
+    error: result.error || '',
+  };
+}
+
+function normalizeMeasuredSkillConfidence(value = 50) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return 50;
+  if (number > 0 && number <= 1.5) return Math.max(0, Math.min(100, number * 100));
+  return Math.max(0, Math.min(100, number));
+}
+
+function buildLocalSkillUsageRowsForConfidence(record = {}, skillId = '') {
+  const normalizedSkill = String(record.skillName || '').trim().toLowerCase();
+  const normalizedAgent = normalizeAgentId(record.agentName || 'ava') || 'ava';
+  return (state.skillOutcomes || [])
+    .filter((item) => {
+      const itemSkill = String(item.skillName || '').trim().toLowerCase();
+      const itemAgent = normalizeAgentId(item.agentName || 'ava') || 'ava';
+      if (skillId && String(item.skillId || item.skill_id || '') === skillId) return true;
+      return Boolean(normalizedSkill && itemSkill === normalizedSkill && itemAgent === normalizedAgent);
+    })
+    .slice(0, 80)
+    .map((item) => ({
+      finalOutcome: item.finalOutcome || item.final_outcome || item.metadata?.finalOutcome || '',
+      outcomeLabel: item.outcomeLabel || item.outcome_label || item.outcome || '',
+      outcome: item.outcomeLabel || item.outcome_label || item.outcome || '',
+      success: item.success,
+      metadata: item.metadata || {},
+    }));
+}
+
+async function fetchSkillUsageRowsForConfidence({ skillId = '', skillName = '', agentId = '', limit = 80 } = {}) {
+  const safeLimit = Math.max(3, Math.min(200, Number(limit || 80)));
+  const result = await queryPgRows(
+    `SELECT outcome, success, metadata, used_at
+     FROM public.skill_usage
+     WHERE workspace_id = 'pbk'
+       AND (
+         ($1 <> '' AND skill_id = $1)
+         OR ($2 <> '' AND LOWER(skill_name) = LOWER($2) AND LOWER(COALESCE(agent_id, '')) = LOWER($3))
+       )
+     ORDER BY used_at DESC
+     LIMIT ${safeLimit}`,
+    [skillId, skillName, agentId]
+  );
+  if (!result.ok) {
+    return { ok: false, rows: [], error: result.error || '' };
+  }
+  return {
+    ok: true,
+    rows: (result.rows || []).map((row) => ({
+      finalOutcome: row.metadata?.finalOutcome || row.metadata?.final_outcome || '',
+      outcomeLabel: row.metadata?.outcomeLabel || row.outcome || '',
+      outcome: row.outcome || '',
+      success: row.success,
+      metadata: row.metadata || {},
+    })),
+  };
+}
+
+async function updateMeasuredSkillConfidenceFromOutcome(record = {}, usageResult = {}) {
+  const skillName = String(record.skillName || '').trim();
+  if (!skillName) return { ok: false, result: 'missing_skill_name' };
+  const agentId = normalizeAgentId(record.agentName || 'ava') || 'ava';
+  const skillId = String(usageResult.skillId || record.skillId || record.skill_id || '').trim();
+  const skillLookup = await queryPgRows(
+    `SELECT id, confidence, metadata
+     FROM public.skills
+     WHERE workspace_id = 'pbk'
+       AND (
+         ($1 <> '' AND id = $1)
+         OR (LOWER(name) = LOWER($2) AND LOWER(COALESCE(agent_id, '')) = LOWER($3))
+       )
+     ORDER BY updated_at DESC NULLS LAST, created_at DESC NULLS LAST
+     LIMIT 1`,
+    [skillId, skillName, agentId]
+  );
+  const resolvedSkillId = String(skillLookup.rows?.[0]?.id || skillId || '').trim();
+  const previousConfidence = normalizeMeasuredSkillConfidence(skillLookup.rows?.[0]?.confidence ?? record.metadata?.confidence ?? 50);
+  const pgRows = resolvedSkillId
+    ? await fetchSkillUsageRowsForConfidence({
+        skillId: resolvedSkillId,
+        skillName,
+        agentId,
+        limit: 80,
+      })
+    : { ok: false, rows: [] };
+  const usageRows = pgRows.ok && pgRows.rows.length
+    ? pgRows.rows
+    : buildLocalSkillUsageRowsForConfidence(record, resolvedSkillId);
+  const score = scoreSkillOutcomeConfidence({
+    previousConfidence,
+    minSamples: Math.max(3, Math.min(25, Number(record.metadata?.confidenceMinSamples || 5))),
+    usages: usageRows,
+  });
+  const learning = {
+    ...score,
+    skillId: resolvedSkillId,
+    skillName,
+    agentId,
+    finalOutcome: record.metadata?.finalOutcome || '',
+    updatedAt: isoNow(),
+    source: pgRows.ok ? 'render-postgres-skill-usage' : 'bridge-state-skill-outcomes',
+  };
+  if (!resolvedSkillId || score.policy !== 'measured_outcome_update') {
+    return {
+      ok: true,
+      result: score.policy || 'confidence_learning_observed',
+      confidenceLearning: learning,
+    };
+  }
+  const update = await queryPgRows(
+    `UPDATE public.skills
+     SET confidence = $2,
+         metadata = COALESCE(metadata, '{}'::jsonb) || $3::jsonb,
+         evidence = CASE
+           WHEN COALESCE(evidence, '') = '' THEN $4
+           ELSE evidence
+         END,
+         updated_at = NOW()
+     WHERE workspace_id = 'pbk' AND id = $1`,
+    [
+      resolvedSkillId,
+      score.newConfidence,
+      JSON.stringify({
+        outcomeLearning: learning,
+        lastFinalOutcome: learning.finalOutcome,
+        confidencePolicy: score.policy,
+      }),
+      `Measured from ${score.sampleSize} seller outcomes (${score.wins} win signals, ${score.risks} risk signals).`,
+    ]
+  );
+  if (update.ok) {
+    const agent = findAgentRecord(agentId);
+    if (agent && Array.isArray(agent.skills)) {
+      agent.skills = agent.skills.map((skill) => {
+        const sameSkill =
+          (resolvedSkillId && String(skill.id || '') === resolvedSkillId) ||
+          String(skill.name || '').trim().toLowerCase() === skillName.toLowerCase();
+        return sameSkill
+          ? {
+              ...skill,
+              confidence: score.newConfidence,
+              confidenceLearning: learning,
+              updatedAt: isoNow(),
+            }
+          : skill;
+      });
+    }
+  }
+  return {
+    ok: update.ok,
+    result: update.ok ? 'skill_confidence_updated_from_outcomes' : 'skill_confidence_update_failed',
+    error: update.error || '',
+    confidenceLearning: learning,
+  };
 }
 
 function summarizeSkillOutcomes(skillName = '', version = '') {
@@ -22946,6 +23109,18 @@ async function recordSkillOutcomeRecord(params = {}) {
   const outcomeLabel = String(params.outcomeLabel || params.outcome_label || params.outcome || '').trim();
   const explicitSuccess = typeof params.success === 'boolean' ? params.success : null;
   const success = explicitSuccess ?? (params.dealClosed === true || /\b(won|closed|signed|accepted|appointment|verbal yes|positive|contract sent)\b/i.test(outcomeLabel) || (Number.isFinite(Number(sentimentBefore)) && Number.isFinite(Number(sentimentAfter)) && Number(sentimentAfter) - Number(sentimentBefore) >= 0.12) ? true : /\b(lost|rejected|dnc|angry|negative|walked|hung up)\b/i.test(outcomeLabel) ? false : null);
+  const finalOutcome = classifySellerFinalOutcome({
+    finalOutcome: params.finalOutcome || params.final_outcome || params.metadata?.finalOutcome,
+    outcomeLabel,
+    outcome: params.outcome,
+    status: params.status,
+    disposition: params.disposition,
+    result: params.result,
+    transcript: params.transcript || params.text || '',
+    metadata: params.metadata || {},
+    dealClosed: params.dealClosed || params.deal_closed,
+    success,
+  });
   const record = {
     id: params.id || `skill-outcome-${slugify(skillName)}-${Date.now()}-${randomUUID().slice(0, 8)}`,
     tenantId: normalizeTenantId(params.tenantId || params.tenant_id || 'pbk'),
@@ -22959,8 +23134,12 @@ async function recordSkillOutcomeRecord(params = {}) {
     sentimentAfter: sentimentAfter === null || sentimentAfter === undefined || sentimentAfter === '' ? null : Number(sentimentAfter),
     dealClosed: Boolean(params.dealClosed || params.deal_closed),
     outcomeLabel,
+    finalOutcome: finalOutcome.finalOutcome,
     metadata: {
       ...(params.metadata && typeof params.metadata === 'object' ? params.metadata : {}),
+      finalOutcome: finalOutcome.finalOutcome,
+      finalOutcomeSource: finalOutcome.source,
+      finalOutcomeConfidence: finalOutcome.confidence,
       address: context.address,
       leadName: context.leadName,
       transcriptSnippet: String(params.transcript || params.text || '').slice(0, 1000),
@@ -22975,6 +23154,11 @@ async function recordSkillOutcomeRecord(params = {}) {
     skillId: params.skillId || params.skill_id || '',
   };
   const usage = await persistSkillUsageToPg(usageRecord);
+  const confidenceLearning = await updateMeasuredSkillConfidenceFromOutcome(record, usage).catch((error) => ({
+    ok: false,
+    result: 'skill_confidence_update_failed',
+    error: error?.message || String(error),
+  }));
   let scriptTest = null;
   if (params.testId && record.version) {
     scriptTest = await scriptTestRecord({
@@ -22996,6 +23180,7 @@ async function recordSkillOutcomeRecord(params = {}) {
           skillName,
           version: record.version,
           agent: record.agentName,
+          finalOutcome: record.finalOutcome,
         });
   addActivity(
     state,
@@ -23005,6 +23190,10 @@ async function recordSkillOutcomeRecord(params = {}) {
       status: record.success === false ? 'warning' : 'success',
       text: `Recorded skill outcome for ${skillName}: ${record.success === true ? 'success' : record.success === false ? 'miss' : 'observed'}.`,
       target: context.leadName || context.address || record.callId || skillName,
+      metadata: {
+        finalOutcome: record.finalOutcome,
+        confidenceLearning: confidenceLearning?.confidenceLearning || null,
+      },
     })
   );
   await persistState(state);
@@ -23013,13 +23202,15 @@ async function recordSkillOutcomeRecord(params = {}) {
     result: 'skill_outcome_recorded',
     outcome: record,
     summary: summarizeSkillOutcomes(skillName, record.version),
+    confidenceLearning,
     autopilot,
     scriptTest,
     storage: {
       localState: true,
       postgres,
-      skillUsage: usage,
-      failClosed: !usage,
+      skillUsage: Boolean(usage?.ok),
+      skillUsageDetail: usage,
+      failClosed: !usage?.ok,
       fallbackWrites: 'disabled',
     },
   };
@@ -23072,6 +23263,15 @@ function inferContextAwareCallOutcome({
     /\b(appointment scheduled|callback scheduled|contract sent|contract signed|signed contract|offer accepted|accepted offer|qualified lead|moving forward with the offer)\b/i.test(
       outcomeText
     );
+  const finalOutcome = classifySellerFinalOutcome({
+    outcomeLabel: outcomeText,
+    outcome: contextCall?.outcome,
+    status: contextCall?.status,
+    disposition: contextCall?.disposition,
+    result: contextCall?.result,
+    transcript,
+    success: positive ? true : negative ? false : null,
+  });
   const pathLocked = Boolean(session.pathLocked || contextCall?.pathLocked);
   const transcriptLength = String(transcript || '').length;
   const success = negative ? false : positive ? true : null;
@@ -23087,6 +23287,9 @@ function inferContextAwareCallOutcome({
             : 0.05;
   return {
     success,
+    finalOutcome: finalOutcome.finalOutcome,
+    finalOutcomeSource: finalOutcome.source,
+    finalOutcomeConfidence: finalOutcome.confidence,
     reward,
     outcomeLabel: negative
       ? 'negative call outcome'
@@ -23130,9 +23333,10 @@ async function recordPostCallLearningFromTranscript({ session = {}, contextCall 
     outcome: {
       callbackScheduled: inferredOutcome.callbackScheduled,
       success: inferredOutcome.success,
-      reward: inferredOutcome.reward,
-      label: inferredOutcome.outcomeLabel,
-    },
+        reward: inferredOutcome.reward,
+        finalOutcome: inferredOutcome.finalOutcome,
+        label: inferredOutcome.outcomeLabel,
+      },
     metadata: {
       reason,
       streamId: session.streamId || '',
@@ -23153,6 +23357,7 @@ async function recordPostCallLearningFromTranscript({ session = {}, contextCall 
         callId,
         leadId,
         success: repeatedAuthorityAfterConfirmation ? false : authorityConfirmed,
+        finalOutcome: repeatedAuthorityAfterConfirmation ? 'lost' : inferredOutcome.finalOutcome,
         outcomeLabel: repeatedAuthorityAfterConfirmation ? 'repeated authority probe after seller confirmed decision authority' : authorityConfirmed ? 'authority confirmed and advanced' : 'authority probe observed',
         transcript,
         metadata: {
@@ -23180,6 +23385,7 @@ async function recordPostCallLearningFromTranscript({ session = {}, contextCall 
         callId,
         leadId,
         success: repeatedAuthorityAfterConfirmation ? false : transcript.length >= 250 ? true : null,
+        finalOutcome: repeatedAuthorityAfterConfirmation ? 'lost' : inferredOutcome.finalOutcome,
         outcomeLabel: repeatedAuthorityAfterConfirmation ? 'path lock degraded by repeated authority probe' : transcript.length >= 250 ? 'path selected with enough transcript context' : 'path selected with short transcript',
         transcript,
         metadata: {
@@ -23214,6 +23420,7 @@ async function recordPostCallLearningFromTranscript({ session = {}, contextCall 
         callId,
         leadId,
         success: repeatedAuthorityAfterConfirmation ? false : inferredOutcome.success,
+        finalOutcome: repeatedAuthorityAfterConfirmation ? 'lost' : inferredOutcome.finalOutcome,
         outcomeLabel: repeatedAuthorityAfterConfirmation
           ? 'turn contract skill degraded by repeated authority probe'
           : inferredOutcome.outcomeLabel,
@@ -23270,6 +23477,7 @@ async function recordPostCallLearningFromTranscript({ session = {}, contextCall 
         leadId,
         outcomeLabel: inferredOutcome.outcomeLabel,
         success: inferredOutcome.success,
+        finalOutcome: inferredOutcome.finalOutcome,
         reward: inferredOutcome.reward,
         reasonCodes: selection.reasonCodes || [],
         source: 'telnyx-post-call-learning',
@@ -23297,6 +23505,8 @@ async function recordPostCallLearningFromTranscript({ session = {}, contextCall 
     authorityProbeCount,
     authorityConfirmed,
     repeatedAuthorityAfterConfirmation,
+    finalOutcome: inferredOutcome.finalOutcome,
+    finalOutcomeSource: inferredOutcome.finalOutcomeSource,
     coachingGrade: coaching?.report?.grade || '',
     scriptOutcomes: scriptOutcomes.map((item) => ({
       ok: item?.ok,
@@ -23309,6 +23519,8 @@ async function recordPostCallLearningFromTranscript({ session = {}, contextCall 
       result: item?.result || item?.error || '',
       skillName: item?.outcome?.skillName || item?.skillName || '',
       success: item?.outcome?.success,
+      finalOutcome: item?.outcome?.finalOutcome || item?.outcome?.metadata?.finalOutcome || '',
+      confidenceLearning: item?.confidenceLearning?.result || item?.confidenceLearning?.confidenceLearning?.policy || '',
     })),
   });
   return {

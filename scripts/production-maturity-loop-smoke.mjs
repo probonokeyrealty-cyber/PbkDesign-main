@@ -5,6 +5,7 @@ import { resolve } from 'node:path';
 import {
   buildCanaryPromotionGate,
   buildFailedCallEvalGate,
+  classifySellerFinalOutcome,
   createProviderCircuitBreaker,
   createRuntimeEventArchive,
   scoreSkillOutcomeConfidence,
@@ -96,6 +97,32 @@ const halfOpenResult = await breaker.execute('telnyx', async () => ({
 }));
 assert.equal(halfOpenResult.ok, true, 'Circuit should allow half-open success after cooldown.');
 assert.equal(breaker.getStatus('telnyx').state, 'closed', 'Successful half-open probe should close the circuit.');
+
+assert.equal(
+  classifySellerFinalOutcome({ outcomeLabel: 'Seller signed contract and DocuSign completed.' }).finalOutcome,
+  'contract',
+  'Contract/signature events should be classified as contract outcomes.'
+);
+assert.equal(
+  classifySellerFinalOutcome({ outcomeLabel: 'Callback scheduled for Thursday at 3pm.' }).finalOutcome,
+  'followup',
+  'Specific callbacks and scheduled follow-ups should train as followup outcomes.'
+);
+assert.equal(
+  classifySellerFinalOutcome({ outcomeLabel: 'Seller requested do not call / DNC.' }).finalOutcome,
+  'dnc',
+  'DNC requests must be treated as high-risk final outcomes.'
+);
+assert.equal(
+  classifySellerFinalOutcome({ outcomeLabel: 'Seller ghosted after offer.' }).finalOutcome,
+  'ghosted',
+  'Ghosting must be measured separately from generic loss.'
+);
+assert.equal(
+  classifySellerFinalOutcome({ outcomeLabel: 'Seller complaint about pressure.' }).finalOutcome,
+  'complaint',
+  'Seller complaints must be measured separately from generic loss.'
+);
 
 const confidence = scoreSkillOutcomeConfidence({
   previousConfidence: 62,

@@ -126,8 +126,16 @@ services:
         value: deepseek-v4-pro
       - key: PBK_DEEPSEEK_FALLBACK_MODEL
         value: deepseek-v4-flash
+      - key: PBK_DEEPSEEK_LIVE_MODEL
+        value: deepseek-v4-flash
+      - key: PBK_DEEPSEEK_LIVE_RETRY_MODELS
+        value: deepseek-v4-flash,deepseek-v4-pro
       - key: PBK_STRATEGIST_PROVIDER
         value: deepseek
+      - key: PBK_TELNYX_LIVE_REPLY_STRATEGIST_MODE
+        value: inline
+      - key: PBK_TELNYX_LIVE_REPLY_STRATEGIST_TIMEOUT_MS
+        value: 1800
 
       # DeepSeek remains Ava/Rex's strategist, but its public API does not
       # expose a supported embeddings model. Use a quota-independent local

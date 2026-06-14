@@ -193,6 +193,46 @@ assert(
     bridge.includes('session.avaLiveTurnContract'),
   'Live bridge must compute and persist an Ava turn contract before speaking.'
 );
+const genericCoachedAvaPattern = new RegExp(['Coached', 'Ava:'].join(' '));
+assert.doesNotMatch(
+  bridge,
+  genericCoachedAvaPattern,
+  'Bridge must not emit the generic Coached Ava fallback; fallback replies must come from the live turn contract.'
+);
+assert(
+  bridge.includes('buildAvaStrategistActivityText') &&
+    bridge.includes('renderAvaLiveContractReply'),
+  'Strategist activity text must prefer the deterministic turn contract over a canned coaching label.'
+);
+assert(
+  bridge.includes('local_contract_fallback') &&
+    bridge.includes('PBK Live Turn Contract') &&
+    bridge.includes('buildAvaContractStrategistResponse'),
+  'Local strategist fallback must become a deterministic live-turn-contract fallback when a contract exists.'
+);
+assert(
+  bridge.includes('buildAvaStrategistAttemptSummary') &&
+    bridge.includes('fallbackChain') &&
+    bridge.includes('deepseek-v4-flash'),
+  'Ava strategist activity must expose the attempted DeepSeek live model/results before contract fallback.'
+);
+
+const renderBlueprint = readFileSync('render.yaml', 'utf8');
+assert.match(
+  renderBlueprint,
+  /key:\s*PBK_DEEPSEEK_LIVE_MODEL[\s\S]*?value:\s*deepseek-v4-flash/,
+  'Render must explicitly pin Ava live calls to DeepSeek V4 Flash instead of relying on fallback resolution.'
+);
+assert.match(
+  renderBlueprint,
+  /key:\s*PBK_DEEPSEEK_LIVE_RETRY_MODELS[\s\S]*?value:\s*deepseek-v4-flash,deepseek-v4-pro/,
+  'Render must explicitly keep V4 Flash first and V4 Pro as the live-call retry model.'
+);
+assert.match(
+  renderBlueprint,
+  /key:\s*PBK_TELNYX_LIVE_REPLY_STRATEGIST_TIMEOUT_MS[\s\S]*?value:\s*1800/,
+  'Render must give V4 Flash enough live-call budget before deterministic contract fallback.'
+);
 
 console.log(
   JSON.stringify(

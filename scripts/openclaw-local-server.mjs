@@ -251,7 +251,7 @@ function hydrateWindowsUserEnv(keys = []) {
   }
 }
 
-hydrateWindowsUserEnv(['PBK_DOCUSIGN_INTEGRATION_KEY', 'PBK_DOCUSIGN_USER_ID', 'PBK_DOCUSIGN_ACCOUNT_ID', 'PBK_DOCUSIGN_AUTH_HOST', 'PBK_DOCUSIGN_REST_BASE', 'PBK_DOCUSIGN_PRIVATE_KEY', 'PBK_DOCUSIGN_CONNECT_HMAC_SECRET', 'PBK_SUPABASE_URL', 'PBK_SUPABASE_SERVICE_ROLE_KEY', 'PBK_N8N_API_BASE_URL', 'PBK_N8N_API_KEY', 'PBK_SUPERMEMORY_API_KEY', 'PBK_SUPERMEMORY_API_URL', 'PBK_SUPERMEMORY_SYNC', 'PBK_DEEPGRAM_API_KEY', 'DEEPGRAM_API_KEY', 'PBK_HUMAN_AGENT_PHONE', 'PBK_UNDERWRITING_AGENT_PHONE', 'PBK_INBOUND_QUALIFY_BEFORE_TRANSFER', 'PBK_INBOUND_AFTER_HOURS_VOICEMAIL_ENABLED', 'PBK_INBOUND_AFTER_HOURS_START', 'PBK_INBOUND_AFTER_HOURS_END', 'PBK_INBOUND_TIMEZONE', 'PBK_TELNYX_AI_ASSISTANT_ID', 'TELNYX_AI_ASSISTANT_ID', 'PBK_AVA_MEMORY_DAILY_MINUTES', 'PBK_BROWSER_VOICE_ENABLED', 'PBK_ELEVENLABS_TTS_ENABLED', 'PBK_ELEVENLABS_API_KEY', 'ELEVENLABS_API_KEY', 'PBK_PROTECTED_OPS_PASSCODE', 'PBK_TEAM_PASSCODE', 'PBK_OPERATOR_PHONE', 'PBK_TOTP_REQUIRED', 'PBK_TOTP_SECRET', 'PBK_VOICE_PREWARM_ENABLED', 'PBK_REDIS_URL', 'REDIS_URL', 'PBK_REDIS_ENABLED', 'PBK_REDIS_NAMESPACE', 'PBK_SLACK_UPDATES_CHANNEL_ID', 'PBK_SLACK_UPDATES_CHANNEL', 'SLACK_UPDATES_CHANNEL_ID', 'PBK_OPENAI_API_KEY', 'OPENAI_API_KEY', 'PBK_OPENAI_WEB_SEARCH_ENABLED', 'PBK_OPENAI_WEB_SEARCH_MODEL', 'PBK_OPENAI_BASE_URL', 'PBK_DEEPSEEK_API_KEY', 'DEEPSEEK_API_KEY', 'PBK_DEEPSEEK_BASE_URL', 'PBK_DEEPSEEK_MODEL', 'PBK_DEEPSEEK_FALLBACK_MODEL', 'PBK_STRATEGIST_PROVIDER', 'PBK_TAVILY_API_KEY', 'TAVILY_API_KEY', 'PBK_EMOTION_WORLD_MODEL_ENDPOINT', 'PBK_EMOTION_WORLD_MODEL_API_KEY', 'PBK_EMOTION_WORLD_MODEL_TIMEOUT_MS', 'PBK_HERMES_ENABLED', 'PBK_HERMES_GATEWAY_URL', 'PBK_HERMES_API_KEY', 'PBK_HERMES_WEBHOOK_URL', 'PBK_HERMES_SLACK_CHANNEL', 'PBK_HERMES_SUGGEST_ONLY', 'PBK_HERMES_TIMEOUT_MS']);
+hydrateWindowsUserEnv(['PBK_DOCUSIGN_INTEGRATION_KEY', 'PBK_DOCUSIGN_USER_ID', 'PBK_DOCUSIGN_ACCOUNT_ID', 'PBK_DOCUSIGN_AUTH_HOST', 'PBK_DOCUSIGN_REST_BASE', 'PBK_DOCUSIGN_PRIVATE_KEY', 'PBK_DOCUSIGN_CONNECT_HMAC_SECRET', 'PBK_SUPABASE_URL', 'PBK_SUPABASE_SERVICE_ROLE_KEY', 'PBK_N8N_API_BASE_URL', 'PBK_N8N_API_KEY', 'PBK_SUPERMEMORY_API_KEY', 'PBK_SUPERMEMORY_API_URL', 'PBK_SUPERMEMORY_SYNC', 'PBK_DEEPGRAM_API_KEY', 'DEEPGRAM_API_KEY', 'PBK_HUMAN_AGENT_PHONE', 'PBK_UNDERWRITING_AGENT_PHONE', 'PBK_INBOUND_QUALIFY_BEFORE_TRANSFER', 'PBK_INBOUND_AFTER_HOURS_VOICEMAIL_ENABLED', 'PBK_INBOUND_AFTER_HOURS_START', 'PBK_INBOUND_AFTER_HOURS_END', 'PBK_INBOUND_TIMEZONE', 'PBK_TELNYX_AI_ASSISTANT_ID', 'TELNYX_AI_ASSISTANT_ID', 'PBK_AVA_MEMORY_DAILY_MINUTES', 'PBK_BROWSER_VOICE_ENABLED', 'PBK_ELEVENLABS_TTS_ENABLED', 'PBK_ELEVENLABS_API_KEY', 'ELEVENLABS_API_KEY', 'PBK_PROTECTED_OPS_PASSCODE', 'PBK_TEAM_PASSCODE', 'PBK_OPERATOR_PHONE', 'PBK_TOTP_REQUIRED', 'PBK_TOTP_SECRET', 'PBK_VOICE_PREWARM_ENABLED', 'PBK_REDIS_URL', 'REDIS_URL', 'PBK_REDIS_ENABLED', 'PBK_REDIS_NAMESPACE', 'PBK_SLACK_UPDATES_CHANNEL_ID', 'PBK_SLACK_UPDATES_CHANNEL', 'SLACK_UPDATES_CHANNEL_ID', 'PBK_OPENAI_API_KEY', 'OPENAI_API_KEY', 'PBK_OPENAI_WEB_SEARCH_ENABLED', 'PBK_OPENAI_WEB_SEARCH_MODEL', 'PBK_OPENAI_BASE_URL', 'PBK_DEEPSEEK_API_KEY', 'DEEPSEEK_API_KEY', 'PBK_DEEPSEEK_BASE_URL', 'PBK_DEEPSEEK_MODEL', 'PBK_DEEPSEEK_FALLBACK_MODEL', 'PBK_DEEPSEEK_LIVE_MODEL', 'PBK_DEEPSEEK_LIVE_RETRY_MODELS', 'PBK_STRATEGIST_PROVIDER', 'PBK_TELNYX_LIVE_REPLY_STRATEGIST_MODE', 'PBK_TELNYX_LIVE_REPLY_STRATEGIST_TIMEOUT_MS', 'PBK_TAVILY_API_KEY', 'TAVILY_API_KEY', 'PBK_EMOTION_WORLD_MODEL_ENDPOINT', 'PBK_EMOTION_WORLD_MODEL_API_KEY', 'PBK_EMOTION_WORLD_MODEL_TIMEOUT_MS', 'PBK_HERMES_ENABLED', 'PBK_HERMES_GATEWAY_URL', 'PBK_HERMES_API_KEY', 'PBK_HERMES_WEBHOOK_URL', 'PBK_HERMES_SLACK_CHANNEL', 'PBK_HERMES_SUGGEST_ONLY', 'PBK_HERMES_TIMEOUT_MS']);
 
 const APPROVAL_WEBHOOK_URL = String(process.env.PBK_N8N_APPROVAL_WEBHOOK || '').trim();
 const LEAD_WEBHOOK_URL = String(process.env.PBK_N8N_LEAD_WEBHOOK || '').trim();
@@ -26766,7 +26766,96 @@ function normalizeStrategistResponse(raw = {}, fallbackText = '') {
   };
 }
 
+function getAvaLiveTurnContractFromStrategistParams(params = {}) {
+  const candidates = [
+    params.turnContract,
+    params.avaLiveTurnContract,
+    params.metadata?.turnContract,
+    params.metadata?.avaLiveTurnContract,
+    params.resolvedCallContext?.turnContract,
+    params.resolved_call_context?.turnContract,
+  ];
+  return candidates.find((candidate) => candidate?.ok) || null;
+}
+
+function buildAvaContractStrategistResponse(contract = {}) {
+  if (!contract?.ok) return null;
+  const contractReply = normalizeAvaSpokenScript(renderAvaLiveContractReply(contract));
+  if (!contractReply) return null;
+  const skill = contract.activeSkill || {};
+  const category = String(contract.nextBestQuestionCategory || 'seller_priority').trim();
+  return {
+    immediateScript: contractReply,
+    strategy: [
+      'Use the deterministic Ava live turn contract as the fallback brain.',
+      `Intent=${contract.intent || 'unknown'}.`,
+      `Phase=${contract.phase || 'unknown'}.`,
+      skill.id ? `Active governed skill=${skill.name || skill.id}.` : '',
+      'DeepSeek may phrase only; it must not choose a different next move.',
+    ]
+      .filter(Boolean)
+      .join(' '),
+    risk: 'Do not substitute a generic coaching prompt when the live turn contract has a seller-ready next question.',
+    rule: `When DeepSeek is unavailable or misaligned, Ava must say the contract reply for ${category} and ask one question.`,
+    nextQuestion: contract.nextBestQuestion || contractReply,
+    returnToBusiness: contractReply,
+    approvalNeeded: Boolean(contract.handoffNeeded),
+    confidence: 0.9,
+  };
+}
+
+function buildAvaStrategistAttemptSummary(fallbackChain = []) {
+  const attempts = Array.isArray(fallbackChain) ? fallbackChain : [];
+  const deepSeekAttempts = attempts
+    .filter((attempt) => String(attempt.provider || '').toLowerCase() === 'deepseek')
+    .map((attempt) => {
+      const model = String(attempt.model || 'deepseek').trim();
+      const result = attempt.ok ? 'ok' : String(attempt.result || attempt.error || 'failed').trim();
+      return `${model}:${result}`.slice(0, 80);
+    })
+    .filter(Boolean);
+  if (!deepSeekAttempts.length) return '';
+  return `DeepSeek ${deepSeekAttempts.slice(0, 3).join(' -> ')}`;
+}
+
+function buildAvaStrategistActivityText({ request = {}, strategist = {}, params = {} } = {}) {
+  const contract =
+    getAvaLiveTurnContractFromStrategistParams({ ...params, metadata: request.metadata || params.metadata }) ||
+    null;
+  const contractReply = contract?.ok ? normalizeAvaSpokenScript(renderAvaLiveContractReply(contract)) : '';
+  const immediateScript = normalizeAvaSpokenScript(strategist.response?.immediateScript || '');
+  const nextQuestion = normalizeAvaSpokenScript(strategist.response?.nextQuestion || '');
+  const shouldPreferContract =
+    contractReply &&
+    (strategist.result === 'local_fallback' ||
+      !immediateScript ||
+      !isAvaLiveReplyAlignedWithContract(immediateScript, contract));
+  const selected = shouldPreferContract
+    ? contractReply
+    : immediateScript || nextQuestion || String(request.situation || '').slice(0, 180);
+  const attemptSummary = buildAvaStrategistAttemptSummary(request.fallbackChain || []);
+  const prefix = contractReply ? 'Ava turn contract' : 'Ava strategist';
+  const trace = attemptSummary ? ` (${attemptSummary})` : '';
+  return `${prefix}${trace}: ${selected || 'seller-ready next move unavailable'}`.slice(0, 320);
+}
+
 function buildLocalStrategistFallback(params = {}) {
+  const turnContract = getAvaLiveTurnContractFromStrategistParams(params);
+  const contractResponse = buildAvaContractStrategistResponse(turnContract);
+  if (contractResponse) {
+    return {
+      ok: true,
+      result: 'local_contract_fallback',
+      provider: {
+        provider: 'PBK Live Turn Contract',
+        mode: 'deterministic-contract',
+        ready: true,
+        configured: true,
+      },
+      response: contractResponse,
+      rawAnswer: contractResponse.immediateScript,
+    };
+  }
   const situation = String(params.situation || params.prompt || params.query || '').trim();
   const transcript = String(params.transcript || params.text || '').trim();
   const combined = `${situation}\n${transcript}`.toLowerCase();
@@ -27749,8 +27838,8 @@ async function askStrategistRecord(params = {}) {
     strategist = buildLocalStrategistFallback(params);
     fallbackChain.push({
       provider: 'local-pbk-brain',
-      model: 'deterministic-playbook',
-      result: 'local_fallback',
+      model: strategist.provider?.mode || 'deterministic-playbook',
+      result: strategist.result || 'local_fallback',
       ok: true,
       error: '',
     });
@@ -27818,8 +27907,8 @@ async function askStrategistRecord(params = {}) {
     makeActivity({
       actor: 'Ava Strategist',
       category: 'BRAIN',
-      status: strategist.result === 'local_fallback' ? 'fallback' : 'success',
-      text: `Coached Ava: ${String(request.situation || strategist.response?.nextQuestion || 'live uncertainty').slice(0, 140)}`,
+      status: strategist.result === 'local_contract_fallback' ? 'contract-fallback' : strategist.result === 'local_fallback' ? 'fallback' : 'success',
+      text: buildAvaStrategistActivityText({ request, strategist, params }),
       target: request.leadName || request.address || request.leadId || 'Ava',
     })
   );
@@ -37487,7 +37576,7 @@ const APPROVAL_REPLAYABLE_PROVIDER_TOOLS = new Set(['sendColdEmail', 'telnyx_cal
 
 const SELLER_BOUND_PROVIDER_TOOLS = new Set(['sendColdEmail', 'telnyx_call', 'telnyx_sms', 'send_verification_sms', 'sendDocuSign', 'sendContract', 'prepare_and_send_contract', 'sendSellerDocs', 'skipTrace', 'startNurtureSequence', 'scheduleAppointment', 'updateCRM']);
 
-const DIRECT_ENV_UPDATE_ALLOWLIST = new Set(['PBK_TAVILY_API_KEY', 'TAVILY_API_KEY', 'PBK_DEEPSEEK_API_KEY', 'DEEPSEEK_API_KEY', 'PBK_DEEPSEEK_BASE_URL', 'PBK_DEEPSEEK_MODEL', 'PBK_DEEPSEEK_FALLBACK_MODEL', 'PBK_STRATEGIST_PROVIDER', 'PBK_HERMES_ENABLED', 'PBK_HERMES_GATEWAY_URL', 'PBK_HERMES_API_KEY', 'PBK_HERMES_WEBHOOK_URL', 'PBK_HERMES_SLACK_CHANNEL', 'PBK_HERMES_SUGGEST_ONLY', 'PBK_TOTP_SECRET', 'PBK_TOTP_REQUIRED', 'PBK_TOTP_WINDOW']);
+const DIRECT_ENV_UPDATE_ALLOWLIST = new Set(['PBK_TAVILY_API_KEY', 'TAVILY_API_KEY', 'PBK_DEEPSEEK_API_KEY', 'DEEPSEEK_API_KEY', 'PBK_DEEPSEEK_BASE_URL', 'PBK_DEEPSEEK_MODEL', 'PBK_DEEPSEEK_FALLBACK_MODEL', 'PBK_DEEPSEEK_LIVE_MODEL', 'PBK_DEEPSEEK_LIVE_RETRY_MODELS', 'PBK_TELNYX_LIVE_REPLY_STRATEGIST_MODE', 'PBK_TELNYX_LIVE_REPLY_STRATEGIST_TIMEOUT_MS', 'PBK_STRATEGIST_PROVIDER', 'PBK_HERMES_ENABLED', 'PBK_HERMES_GATEWAY_URL', 'PBK_HERMES_API_KEY', 'PBK_HERMES_WEBHOOK_URL', 'PBK_HERMES_SLACK_CHANNEL', 'PBK_HERMES_SUGGEST_ONLY', 'PBK_TOTP_SECRET', 'PBK_TOTP_REQUIRED', 'PBK_TOTP_WINDOW']);
 
 function getEnvUpdateKeys(params = {}) {
   if (Array.isArray(params.envVars)) {

@@ -21,6 +21,7 @@ emotion, how she remembers facts, and how performance is scored.
 
 - [charter.md](./charter.md): mission, metrics, and boundaries
 - [conversation-state-machine.md](./conversation-state-machine.md): phase rules
+- [turn-contract.md](./turn-contract.md): deterministic live-turn decision
 - [seller-model.md](./seller-model.md): wholesaling seller playbooks
 - [negotiation-policy.md](./negotiation-policy.md): BATNA, ZOPA, anchors, RBP
 - [emotion-policy.md](./emotion-policy.md): emotion-specific response policy
@@ -31,6 +32,15 @@ emotion, how she remembers facts, and how performance is scored.
 - [compliance.md](./compliance.md): hard guardrails
 - [evaluation-scorecard.md](./evaluation-scorecard.md): closer scorecard
 - [call-examples.md](./call-examples.md): gold-standard examples
+
+## Runtime intelligence contract
+
+Before Ava speaks or drafts a seller-facing message, the live path should build
+a turn contract. The contract owns intent, objection, known facts, missing
+facts, forbidden repeats, selected skill, next best question, handoff state, and
+allowed tools. DeepSeek may phrase the answer, but the contract decides the
+meaning. If DeepSeek is slow or empty, the contract fallback is the expected
+production behavior.
 
 ## Safety principle
 

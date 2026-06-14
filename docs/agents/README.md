@@ -15,22 +15,29 @@ source of truth instead of assuming that a locally defined card is callable.
 - `active` and `standby` agents are routable. Degraded or inactive agents are not.
 - Provider actions such as calls, contracts, email, and nurture sends remain
   approval and compliance gated even when an agent recommends them.
+- Agent actions should receive the shared
+  [PBK Intelligence Context](./pbk-intelligence-context.md) before acting.
+- Agent readiness is capability-based, not only online/offline. See
+  [agent-fleet-readiness.md](./agent-fleet-readiness.md).
+- Skill confidence and rollout decisions should be informed by
+  [skill-outcome-learning.md](./skill-outcome-learning.md).
+- Cross-agent delegation should follow [agent-handoff.md](./agent-handoff.md).
 
 ## Registered agents
 
-| Agent                  | Supervisor | Runtime role                                     | Primary tools or modules                                                                                    |
-| ---------------------- | ---------- | ------------------------------------------------ | ----------------------------------------------------------------------------------------------------------- |
-| [Ava](./ava/README.md) | -          | Acquisition closer and turn supervisor           | `getAvaConversationIntelligence`, `retrieveClosingIntelligence`, `selectContextAwareScript`, `humanHandoff` |
-| Max                    | Ava        | Offer recap and contract handoff                 | `prepare_and_send_contract`, `sendDocuSign`, `sendContract`, `sendSellerDocs`                               |
-| Rex                    | Ava        | Strategy, research, goals, and revenue alignment | `runRexSkillAutopilot`, `runAutonomousRexGoalDiscovery`, `webSearch`, `recordMarketIntel`                   |
-| Hermes                 | Ava        | Suggest-only transcript and pattern analysis     | `pbk_outcome_analyzer`, `pbk_suggestion_engine`, `runSystemAudit`                                           |
-| Call Analyzer          | Rex        | Post-call scoring and coaching                   | `scoreCallQuality`, `upsertCallEmbeddingFromTranscript`, conversation projector                             |
-| Prosody Tuner          | Rex        | Voice and emotion guidance                       | `getProsodyAdvice`, `detectYelling`, `trainEmotionWorldModel`                                               |
-| Script Rotator         | Ava        | Context-aware script selection                   | `selectContextAwareScript`, `recordContextAwareScriptOutcome`                                               |
-| BANT Enforcer          | Ava        | Qualification and goal completeness              | `classifyParticipant`, `getParticipantProfile`, `detectPbkIntent`                                           |
-| QA Agent               | Rex        | Provider proof and result validation             | `validateProviderActionSafety`, QA validators and audit records                                             |
-| Nurture Agent          | Ava        | Approval-gated follow-up sequences               | `consultNurtureAgent`, `startNurtureSequence`, `processDueNurtureSteps`                                     |
-| Research Orchestrator  | Rex        | Research planning and guarded desktop work       | `webSearch`, `launchBrowserResearch`, `runAgentCommand`, `executeLocalCommand`                              |
+| Agent                                               | Supervisor | Runtime role                                     | Primary tools or modules                                                                                    |
+| --------------------------------------------------- | ---------- | ------------------------------------------------ | ----------------------------------------------------------------------------------------------------------- |
+| [Ava](./ava/README.md)                              | -          | Acquisition closer and turn supervisor           | `getAvaConversationIntelligence`, `retrieveClosingIntelligence`, `selectContextAwareScript`, `humanHandoff` |
+| [Max](./max.md)                                     | Ava        | Offer recap and contract handoff                 | `prepare_and_send_contract`, `sendDocuSign`, `sendContract`, `sendSellerDocs`                               |
+| [Rex](./rex.md)                                     | Ava        | Strategy, research, goals, and revenue alignment | `runRexSkillAutopilot`, `runAutonomousRexGoalDiscovery`, `webSearch`, `recordMarketIntel`                   |
+| [Hermes](./hermes.md)                               | Ava        | Suggest-only transcript and pattern analysis     | `pbk_outcome_analyzer`, `pbk_suggestion_engine`, `runSystemAudit`                                           |
+| [Call Analyzer](./call-analyzer.md)                 | Rex        | Post-call scoring and coaching                   | `scoreCallQuality`, `upsertCallEmbeddingFromTranscript`, conversation projector                             |
+| [Prosody Tuner](./prosody-tuner.md)                 | Rex        | Voice and emotion guidance                       | `getProsodyAdvice`, `detectYelling`, `trainEmotionWorldModel`                                               |
+| [Script Rotator](./script-rotator.md)               | Ava        | Context-aware script selection                   | `selectContextAwareScript`, `recordContextAwareScriptOutcome`                                               |
+| [BANT Enforcer](./bant-enforcer.md)                 | Ava        | Qualification and goal completeness              | `classifyParticipant`, `getParticipantProfile`, `detectPbkIntent`                                           |
+| [QA Agent](./qa-agent.md)                           | Rex        | Provider proof and result validation             | `validateProviderActionSafety`, QA validators and audit records                                             |
+| [Nurture Agent](./nurture-agent.md)                 | Ava        | Approval-gated follow-up sequences               | `consultNurtureAgent`, `startNurtureSequence`, `processDueNurtureSteps`                                     |
+| [Research Orchestrator](./research-orchestrator.md) | Rex        | Research planning and guarded desktop work       | `webSearch`, `launchBrowserResearch`, `runAgentCommand`, `executeLocalCommand`                              |
 
 Property analysis and offer generation are currently bridge capabilities, not
 independently routable agents. See
@@ -38,9 +45,10 @@ independently routable agents. See
 [offer-generation.md](./offer-generation.md).
 
 Ava's deeper seven-figure closer doctrine lives in [ava/](./ava/). It includes
-the state machine, seller models, negotiation policy, RBP path, emotion policy,
-memory governance, tool contracts, compliance, evaluation scorecard, and call
-examples. Keep that doctrine aligned with the bridge modules in `scripts/`.
+the state machine, turn contract, seller models, negotiation policy, RBP path,
+emotion policy, memory governance, tool contracts, compliance, evaluation
+scorecard, and call examples. Keep that doctrine aligned with the bridge modules
+in `scripts/`.
 
 ## Operational checks
 
@@ -50,3 +58,10 @@ examples. Keep that doctrine aligned with the bridge modules in `scripts/`.
 4. Confirm the resulting provider proof or timeline event before showing success.
 5. Keep remote endpoints unset until the remote service has authentication,
    health checks, timeouts, and an owned deployment.
+
+## Verification
+
+- `npm run test:agent-fleet`
+- `npm run test:agent-registry`
+- `npm run test:agent-context-safety`
+- `npm run test:ava-intelligence-unison`

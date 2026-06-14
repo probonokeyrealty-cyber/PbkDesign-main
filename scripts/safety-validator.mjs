@@ -160,6 +160,46 @@ function hasAffirmativeConsent(params = {}) {
   return bool(value) || /^(consented|opted[_ -]?in|yes|valid|verified)$/i.test(String(value || '').trim());
 }
 
+function normalizeConsentStatus(value = '') {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[\s-]+/g, '_');
+}
+
+function hasReviewableConsentStatus(value = '') {
+  return ['unknown', 'needs_review', 'pending', 'not_verified', 'unverified'].includes(
+    normalizeConsentStatus(value || 'unknown') || 'unknown'
+  );
+}
+
+function normalizeManualSource(value = '') {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, '_')
+    .replace(/^_+|_+$/g, '');
+}
+
+function isManualOneToOneMessage(tool = '', params = {}) {
+  if (tool !== 'telnyx_sms') return false;
+  if (params.manual !== true || params.manualSend !== true) return false;
+  const source = normalizeManualSource(params.source || params.requestSource || params.request_source);
+  const requestedBy = String(params.requestedBy || params.requested_by || params.actor || '')
+    .trim()
+    .toLowerCase();
+  return (
+    [
+      'manual',
+      'command_center_manual',
+      'unified_inbox_manual',
+      'unified_conversation_manual',
+      'lead_portal_manual',
+    ].includes(source) ||
+    /operator|manual|unified-inbox|command center|lead portal/.test(requestedBy)
+  );
+}
+
 function pushIssue(list, code, message, severity = 'high', evidence = {}) {
   list.push({ code, message, severity, evidence });
 }
@@ -312,7 +352,16 @@ export function validateProviderActionSafety(toolName, params = {}, options = {}
     if (hasDncFlag(params)) {
       pushIssue(violations, 'dnc_block', 'Lead is marked DNC; provider outreach is blocked.', 'critical');
     }
-    if (hasKnownMissingConsent(params) || (requiresTcpaConsent(params, options) && !hasAffirmativeConsent(params))) {
+    const manualOneToOneReviewableConsent =
+      MESSAGE_TOOLS.has(tool) &&
+      isManualOneToOneMessage(tool, params) &&
+      hasReviewableConsentStatus(getConsentValue(params));
+    if (
+      (hasKnownMissingConsent(params) && !manualOneToOneReviewableConsent) ||
+      (requiresTcpaConsent(params, options) &&
+        !hasAffirmativeConsent(params) &&
+        !manualOneToOneReviewableConsent)
+    ) {
       pushIssue(
         violations,
         'tcpa_consent_missing',

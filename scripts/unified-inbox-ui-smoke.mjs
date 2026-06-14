@@ -237,8 +237,11 @@ assert(
 );
 assert(
   newConversation.includes('Add contact info in Lead Portal') &&
-    newConversation.includes('Create a new lead'),
-  'New message must provide direct repair paths for missing canonical contact data.'
+    newConversation.includes('Create a new lead') &&
+    newConversation.includes('createLeadRequest') &&
+    newConversation.includes('pbk-new-conversation-quick-create') &&
+    newConversation.includes('Create lead and open composer'),
+  'New message must provide direct repair paths and an inline mobile quick-create for missing canonical contact data.'
 );
 for (const requiredCopy of [
   'From',

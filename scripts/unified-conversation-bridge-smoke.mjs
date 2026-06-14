@@ -770,10 +770,19 @@ assert(
   /const sendCompliance = evaluateConversationSenderRecommendationCompliance\(\{[\s\S]*channel:\s*parsed\.channel[\s\S]*consentStatus/.test(
     conversationRoutes
   ) &&
+    /const manualOneToOneSend = parsed\.manual === true && parsed\.manualSend === true/.test(
+      conversationRoutes
+    ) &&
+    /const reviewableSmsConsent = \(sendCompliance\.reasonCodes \|\| \[\]\)\.includes\('approval_required'\)/.test(
+      conversationRoutes
+    ) &&
     /if \(!sendCompliance\.allowed\)/.test(conversationRoutes) &&
     /result:\s*'sms_consent_blocked'/.test(conversationRoutes) &&
-    /status:\s*'blocked'/.test(conversationRoutes),
-  'Conversation sends must hard-block denied or revoked SMS consent before provider dispatch.'
+    /status:\s*'blocked'/.test(conversationRoutes) &&
+    /parsed\.channel === 'sms'[\s\S]*reviewableSmsConsent[\s\S]*!manualOneToOneSend[\s\S]*forceApproval:\s*true/.test(
+      conversationRoutes
+    ),
+  'Conversation sends must hard-block denied consent, but manual one-to-one SMS may bypass reviewable-consent approval.'
 );
 
 assert(

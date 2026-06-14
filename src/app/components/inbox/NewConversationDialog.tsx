@@ -7,11 +7,13 @@ import {
   Mail,
   MessageSquare,
   Search,
+  UserPlus,
   UserRoundSearch,
   X,
 } from 'lucide-react';
 import { PbkDataSource } from '../../../components/pbk/index';
 import {
+  createLeadRequest,
   resolveConversationThreadRequest,
   searchLeadsRequest,
   type ConversationThread,
@@ -24,6 +26,20 @@ type NewConversationDialogProps = {
   open: boolean;
   onClose: () => void;
   onResolved: (thread: ConversationThread, channel: MessageChannel) => void;
+};
+
+type QuickLeadDraft = {
+  name: string;
+  phone: string;
+  email: string;
+  address: string;
+};
+
+const emptyQuickLeadDraft: QuickLeadDraft = {
+  name: '',
+  phone: '',
+  email: '',
+  address: '',
 };
 
 function record(value: unknown) {
@@ -60,11 +76,56 @@ function getChannelRecipient(lead: LeadImport, channel: MessageChannel) {
   return channel === 'sms' ? getLeadPhone(lead) : getLeadEmail(lead);
 }
 
+function unwrapCreatedLeadId(response: Record<string, unknown>) {
+  const lead = record(response.lead || response.leadImport || response.lead_import || response);
+  return text(lead.leadId || lead.id);
+}
+
+function buildQuickLeadPayload(draft: QuickLeadDraft, channel: MessageChannel) {
+  const leadSource = 'unified-inbox-quick-create';
+  const seller = {
+    name: draft.name.trim(),
+    phone: draft.phone.trim(),
+    email: draft.email.trim(),
+    preferredChannel: channel,
+  };
+  const property = {
+    address: draft.address.trim(),
+  };
+  const compliance = {
+    consentStatus: 'unknown',
+    tcpaConsent: 'unknown',
+    dncStatus: 'needs_review',
+  };
+  return {
+    source: leadSource,
+    leadSource,
+    stage: 'new',
+    status: 'new',
+    seller,
+    property,
+    compliance,
+    assignment: {
+      assignedAgent: 'Ava',
+      campaign: leadSource,
+    },
+    motivation: {
+      summary: 'Created from unified inbox quick lead capture.',
+      timeline: 'unknown',
+    },
+    tags: ['unified-inbox', 'quick-create', channel],
+    notes: 'Created from the unified inbox so the seller can receive a manual one-to-one message.',
+    actor: 'Unified Inbox',
+  };
+}
+
 export function NewConversationDialog({ open, onClose, onResolved }: NewConversationDialogProps) {
   const [channel, setChannel] = useState<MessageChannel>('sms');
   const [query, setQuery] = useState('');
   const [matches, setMatches] = useState<LeadImport[]>([]);
   const [selectedLead, setSelectedLead] = useState<LeadImport | null>(null);
+  const [showQuickCreate, setShowQuickCreate] = useState(false);
+  const [quickLeadDraft, setQuickLeadDraft] = useState<QuickLeadDraft>(emptyQuickLeadDraft);
   const [searching, setSearching] = useState(false);
   const [opening, setOpening] = useState(false);
   const [error, setError] = useState('');
@@ -91,6 +152,8 @@ export function NewConversationDialog({ open, onClose, onResolved }: NewConversa
     setQuery('');
     setMatches([]);
     setSelectedLead(null);
+    setShowQuickCreate(false);
+    setQuickLeadDraft(emptyQuickLeadDraft);
     setSearching(false);
     setOpening(false);
     setError('');
@@ -172,6 +235,53 @@ export function NewConversationDialog({ open, onClose, onResolved }: NewConversa
         resolveError instanceof Error
           ? resolveError.message
           : 'Unable to open the seller conversation.'
+      );
+    } finally {
+      setOpening(false);
+    }
+  };
+
+  const startQuickCreate = () => {
+    setSelectedLead(null);
+    setShowQuickCreate(true);
+    setError('');
+    setQuickLeadDraft((current) => ({
+      ...current,
+      name: current.name || query.trim(),
+    }));
+  };
+
+  const createLeadAndOpenComposer = async () => {
+    const requiredRecipient =
+      channel === 'sms' ? quickLeadDraft.phone.trim() : quickLeadDraft.email.trim();
+    if (!quickLeadDraft.name.trim()) {
+      setError('Seller name is required before PBK can create a canonical lead.');
+      return;
+    }
+    if (!requiredRecipient) {
+      setError(
+        channel === 'sms'
+          ? 'Add a mobile phone number before opening the SMS composer.'
+          : 'Add an email address before opening the email composer.'
+      );
+      return;
+    }
+    setOpening(true);
+    setError('');
+    try {
+      const created = await createLeadRequest(buildQuickLeadPayload(quickLeadDraft, channel));
+      const leadId = unwrapCreatedLeadId(created);
+      if (!leadId) throw new Error('The bridge created a lead but did not return a lead id.');
+      const response = await resolveConversationThreadRequest(leadId);
+      if (!response.thread) {
+        throw new Error('The bridge did not return a conversation thread for the new lead.');
+      }
+      onResolved(response.thread, channel);
+    } catch (createError) {
+      setError(
+        createError instanceof Error
+          ? createError.message
+          : 'Unable to create the seller and open the composer.'
       );
     } finally {
       setOpening(false);
@@ -294,8 +404,11 @@ export function NewConversationDialog({ open, onClose, onResolved }: NewConversa
           {!searching && query.trim().length >= 2 && !matches.length && !error && (
             <div className="pbk-new-conversation-empty">
               <p>No matching PBK leads found.</p>
-              <Link to="/leads?new=1" onClick={onClose}>
+              <button type="button" onClick={startQuickCreate}>
                 Create a new lead
+              </button>
+              <Link to="/leads?new=1" onClick={onClose}>
+                Full lead portal
               </Link>
             </div>
           )}
@@ -303,6 +416,72 @@ export function NewConversationDialog({ open, onClose, onResolved }: NewConversa
             <div className="pbk-new-conversation-hint">
               <Search size={17} aria-hidden="true" />
               Search the live lead portal to start a seller conversation.
+            </div>
+          )}
+        </div>
+
+        <div className="pbk-new-conversation-quick-create">
+          <button type="button" onClick={startQuickCreate} aria-expanded={showQuickCreate}>
+            <UserPlus size={15} aria-hidden="true" />
+            Create a new lead
+          </button>
+          {showQuickCreate && (
+            <div className="pbk-new-conversation-quick-create-form">
+              <label>
+                <span>Seller name</span>
+                <input
+                  value={quickLeadDraft.name}
+                  onChange={(event) =>
+                    setQuickLeadDraft((current) => ({ ...current, name: event.target.value }))
+                  }
+                  placeholder="Seller name"
+                />
+              </label>
+              <label>
+                <span>Mobile phone</span>
+                <input
+                  type="tel"
+                  inputMode="tel"
+                  value={quickLeadDraft.phone}
+                  onChange={(event) =>
+                    setQuickLeadDraft((current) => ({ ...current, phone: event.target.value }))
+                  }
+                  placeholder="+1 614 555 0142"
+                />
+              </label>
+              <label>
+                <span>Email</span>
+                <input
+                  type="email"
+                  value={quickLeadDraft.email}
+                  onChange={(event) =>
+                    setQuickLeadDraft((current) => ({ ...current, email: event.target.value }))
+                  }
+                  placeholder="seller@example.com"
+                />
+              </label>
+              <label>
+                <span>Property address</span>
+                <input
+                  value={quickLeadDraft.address}
+                  onChange={(event) =>
+                    setQuickLeadDraft((current) => ({ ...current, address: event.target.value }))
+                  }
+                  placeholder="Optional for first message"
+                />
+              </label>
+              <button
+                type="button"
+                onClick={() => void createLeadAndOpenComposer()}
+                disabled={opening}
+              >
+                {opening ? (
+                  <Loader2 size={15} className="animate-spin" />
+                ) : (
+                  <ArrowRight size={15} />
+                )}
+                Create lead and open composer
+              </button>
             </div>
           )}
         </div>

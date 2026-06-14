@@ -66084,6 +66084,8 @@ const server = createServer(async (request, response) => {
           dncBlocked: false,
           consentStatus,
         });
+        const manualOneToOneSend = parsed.manual === true && parsed.manualSend === true;
+        const reviewableSmsConsent = (sendCompliance.reasonCodes || []).includes('approval_required');
         if (!sendCompliance.allowed) {
           const reason = `SMS consent is ${consentStatus.replace(/_/g, ' ')}. Update the lead compliance record before messaging.`;
           const providerResult = {
@@ -66147,6 +66149,8 @@ const server = createServer(async (request, response) => {
             source: parsed.source || (parsed.manualSend ? 'unified_conversation_manual' : 'unified_conversation'),
             manual: parsed.manual,
             manualSend: parsed.manualSend,
+            manualOneToOneSend,
+            leadConsentStatus: consentStatus,
           },
           ...(parsed.channel === 'sms'
             ? {
@@ -66170,9 +66174,8 @@ const server = createServer(async (request, response) => {
 
         if (
           parsed.channel === 'sms' &&
-          !['true', 'yes', 'valid', 'granted', 'consented', 'opted_in', 'verified'].includes(
-            providerParams.consentStatus
-          )
+          reviewableSmsConsent &&
+          !manualOneToOneSend
         ) {
           const guarded = await enforceOperatingModeForTool('telnyx_sms', {
             ...providerParams,

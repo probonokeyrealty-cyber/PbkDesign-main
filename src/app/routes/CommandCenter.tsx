@@ -18,6 +18,7 @@ import {
   fetchWebSearchStatusRequest,
   type FounderWorkQueueItem,
   type IntelligenceStreamItem,
+  type PrimaryPathReliabilityReport,
   type ProductionGapLabel,
   updateRuntimeSettingsRequest,
   type RuntimeSnapshot,
@@ -802,14 +803,18 @@ function ProductionGapsRail({
   gaps,
   source,
   loading,
+  primaryPath,
 }: {
   gaps: ProductionGapLabel[];
   source: string;
   loading: boolean;
+  primaryPath?: PrimaryPathReliabilityReport | null;
 }) {
   const visibleGaps = gaps.slice(0, 6);
+  const visiblePrimaryControls = (primaryPath?.controls || []).slice(0, 3);
   const blockingCount = gaps.filter((gap) => gap.blocking).length;
   const optionalCount = gaps.filter((gap) => gap.optional).length;
+  const primaryAllowed = primaryPath?.summary?.primaryAllowed !== false;
   const severityTone = (severity?: string) => {
     if (severity === 'critical' || severity === 'high') {
       return 'border-rose-400/30 bg-rose-500/10 text-rose-100';
@@ -851,7 +856,98 @@ function ProductionGapsRail({
         <span className="rounded-full border border-sky-400/25 bg-sky-500/10 px-2.5 py-1 text-sky-200">
           {optionalCount} optional
         </span>
+        <span
+          className={[
+            'rounded-full border px-2.5 py-1',
+            primaryAllowed
+              ? 'border-emerald-400/25 bg-emerald-500/10 text-emerald-200'
+              : 'border-rose-400/30 bg-rose-500/10 text-rose-200',
+          ].join(' ')}
+        >
+          Primary path {primaryAllowed ? 'allowed' : 'gated'}
+        </span>
+        {primaryPath?.summary && (
+          <span className="rounded-full border border-amber-400/25 bg-amber-500/10 px-2.5 py-1 text-amber-100">
+            {primaryPath.summary.retryBeforeFallback || 0} retry-gated
+          </span>
+        )}
       </div>
+      {primaryPath?.summary && (
+        <div className="grid gap-2 md:grid-cols-3">
+          <div className="rounded-lg border border-slate-800 bg-slate-950/80 p-3">
+            <div className="text-[10px] uppercase tracking-[0.14em] text-slate-500">
+              First attempt
+            </div>
+            <div
+              className={[
+                'mt-1 text-sm font-semibold',
+                primaryAllowed ? 'text-emerald-200' : 'text-rose-200',
+              ].join(' ')}
+            >
+              {primaryPath.result ||
+                (primaryAllowed ? 'primary_path_attempts_allowed' : 'primary_path_gated')}
+            </div>
+            <div className="mt-1 text-[11px] text-slate-500">
+              Target fallback rate: {primaryPath.fallbackSloTargetPercent ?? 0.1}% or less.
+            </div>
+          </div>
+          <div className="rounded-lg border border-slate-800 bg-slate-950/80 p-3">
+            <div className="text-[10px] uppercase tracking-[0.14em] text-slate-500">
+              Active gates
+            </div>
+            <div className="mt-1 text-sm font-semibold text-slate-100">
+              {primaryPath.summary.blocking || 0} blockers /{' '}
+              {primaryPath.summary.disabledOptional || 0} disabled optional
+            </div>
+            <div className="mt-1 text-[11px] text-slate-500">
+              {primaryPath.summary.timeoutEventsRequired || 0} timeout events required before
+              fallback.
+            </div>
+          </div>
+          <div className="rounded-lg border border-slate-800 bg-slate-950/80 p-3">
+            <div className="text-[10px] uppercase tracking-[0.14em] text-slate-500">
+              Provider policy
+            </div>
+            <div className="mt-1 text-sm font-semibold text-slate-100">
+              {primaryPath.summary.providerPolicies || 0} providers classified
+            </div>
+            <div className="mt-1 text-[11px] text-slate-500">
+              Preflight, timeout, retry, then labeled fallback.
+            </div>
+          </div>
+        </div>
+      )}
+      {visiblePrimaryControls.length > 0 && (
+        <div className="grid gap-2 md:grid-cols-3">
+          {visiblePrimaryControls.map((control) => (
+            <div
+              key={control.id}
+              className={[
+                'rounded-lg border p-3',
+                control.blocking
+                  ? 'border-rose-400/30 bg-rose-500/10 text-rose-100'
+                  : control.optional
+                    ? 'border-sky-400/25 bg-sky-500/10 text-sky-100'
+                    : 'border-amber-400/25 bg-amber-500/10 text-amber-100',
+              ].join(' ')}
+              title={[control.reason, control.operatorAction].filter(Boolean).join(' - ')}
+            >
+              <div className="flex items-center justify-between gap-2 text-[10px] uppercase opacity-75">
+                <span className="truncate">{control.primaryAttempt || 'primary_allowed'}</span>
+                <span>{control.retryBeforeFallback || 0} retry</span>
+              </div>
+              <div className="mt-1 truncate text-sm font-semibold">{control.label}</div>
+              <div className="mt-1 truncate text-[11px] opacity-75">
+                {control.fallbackPolicy || 'retry_then_label_fallback'} /{' '}
+                {control.timeoutMs || 5000}ms
+              </div>
+              <div className="mt-2 line-clamp-2 text-[11px] opacity-85">
+                {control.reason || 'Primary path classified.'}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
       {loading ? (
         <div className="rounded-xl border border-slate-800 bg-slate-900 px-3 py-4 text-xs text-slate-500">
           Checking production controls...
@@ -1058,6 +1154,8 @@ export function CommandCenter() {
   );
   const [sourceConfidenceSource, setSourceConfidenceSource] = useState('client source fallback');
   const [productionGaps, setProductionGaps] = useState<ProductionGapLabel[]>([]);
+  const [primaryPathReliability, setPrimaryPathReliability] =
+    useState<PrimaryPathReliabilityReport | null>(null);
   const [productionGapsSource, setProductionGapsSource] = useState('GET /api/production/gaps');
   const [productionGapsLoading, setProductionGapsLoading] = useState(false);
   const [qualityReviewCall, setQualityReviewCall] = useState<Record<string, unknown> | null>(null);
@@ -1268,6 +1366,7 @@ export function CommandCenter() {
         .then((response) => {
           if (cancelled) return;
           setProductionGaps(Array.isArray(response.gaps) ? response.gaps : []);
+          setPrimaryPathReliability(response.primaryPath || null);
           setProductionGapsSource(response.result || 'bridge production gap labels');
         })
         .catch((gapError) => {
@@ -1293,6 +1392,40 @@ export function CommandCenter() {
               controlLive: false,
             },
           ]);
+          setPrimaryPathReliability({
+            ok: false,
+            result: 'primary_path_report_unavailable',
+            fallbackSloTargetPercent: 0.1,
+            summary: {
+              primaryAllowed: false,
+              totalControls: 1,
+              allowedPrimary: 0,
+              blocking: 1,
+              disabledOptional: 0,
+              retryBeforeFallback: 0,
+              timeoutEventsRequired: 1,
+              providerPolicies: 0,
+            },
+            controls: [
+              {
+                id: 'primary-production-gap-report-unavailable',
+                label: 'Production gap report',
+                category: 'control_plane',
+                status: 'unavailable',
+                primaryAttempt: 'blocked_until_ready',
+                allowPrimaryAttempt: false,
+                blocking: true,
+                optional: false,
+                retryBeforeFallback: 0,
+                timeoutMs: 5000,
+                timeoutEventRequired: true,
+                fallbackPolicy: 'no_fallback_hide_blocker',
+                reason: detail,
+                operatorAction:
+                  'Restore GET /api/production/gaps before trusting first-attempt launch readiness.',
+              },
+            ],
+          });
           setProductionGapsSource(`fallback: ${detail}`);
         })
         .finally(() => {
@@ -1664,6 +1797,7 @@ export function CommandCenter() {
           gaps={productionGaps}
           source={productionGapsSource}
           loading={productionGapsLoading}
+          primaryPath={primaryPathReliability}
         />
 
         {actionStatus && (

@@ -538,6 +538,47 @@ export type ProductionGapLabel = {
   metadata?: Record<string, unknown>;
 };
 
+export type PrimaryPathControl = {
+  id: string;
+  label: string;
+  category?: string;
+  status?: string;
+  severity?: string;
+  primaryAttempt?: string;
+  allowPrimaryAttempt?: boolean;
+  blocking?: boolean;
+  optional?: boolean;
+  preflightRequired?: boolean;
+  retryBeforeFallback?: number;
+  retryBackoffMs?: number;
+  timeoutMs?: number;
+  timeoutEventRequired?: boolean;
+  fallbackPolicy?: string;
+  reason?: string;
+  operatorAction?: string;
+};
+
+export type PrimaryPathReliabilityReport = {
+  ok: boolean;
+  result?: string;
+  revision?: string;
+  generatedAt?: string;
+  fallbackSloTargetPercent?: number;
+  summary?: {
+    primaryAllowed?: boolean;
+    totalControls?: number;
+    allowedPrimary?: number;
+    blocking?: number;
+    disabledOptional?: number;
+    retryBeforeFallback?: number;
+    timeoutEventsRequired?: number;
+    providerPolicies?: number;
+  };
+  controls?: PrimaryPathControl[];
+  providerRetryPolicies?: Array<Record<string, unknown>>;
+  nextActions?: Array<Record<string, unknown>>;
+};
+
 export type ProductionGapsResponse = {
   ok: boolean;
   result?: string;
@@ -551,6 +592,7 @@ export type ProductionGapsResponse = {
     byCategory?: Record<string, number>;
   };
   gaps?: ProductionGapLabel[];
+  primaryPath?: PrimaryPathReliabilityReport;
 };
 
 export type VectorCapacityTable = {

@@ -151,6 +151,7 @@ import {
   createProductionReadinessMonitor,
 } from './production-readiness-command-layer.mjs';
 import { buildProductionGapLabelsReport } from './production-gap-labels.mjs';
+import { buildPrimaryPathReliabilityReport } from './primary-path-reliability.mjs';
 const { Pool: PgPool } = pg;
 
 void initializeObservability({ serviceName: 'pbk-openclaw-bridge' });
@@ -42102,13 +42103,35 @@ async function buildProductionGapsSnapshot() {
     buildSystemSourceLabelsSnapshot(),
     buildToolingStatus(),
   ]);
-  return buildProductionGapLabelsReport({
+  const runtimeMeta = getRuntimeMeta();
+  const checkedAt = isoNow();
+  const gapReport = buildProductionGapLabelsReport({
     sourceLabels: sourceLabels.items || [],
     releaseStatus: buildReleaseStatusSnapshot(),
     toolingStatus,
-    runtimeMeta: getRuntimeMeta(),
-    checkedAt: isoNow(),
+    runtimeMeta,
+    checkedAt,
   });
+  return {
+    ...gapReport,
+    primaryPath: buildPrimaryPathReliabilityReport({
+      gapReport,
+      runtimeMeta,
+      checkedAt,
+    }),
+  };
+}
+
+async function buildPrimaryPathReliabilitySnapshot() {
+  const gapReport = await buildProductionGapsSnapshot();
+  return (
+    gapReport.primaryPath ||
+    buildPrimaryPathReliabilityReport({
+      gapReport,
+      runtimeMeta: getRuntimeMeta(),
+      checkedAt: isoNow(),
+    })
+  );
 }
 
 function buildAgentStatusBundle() {
@@ -62974,6 +62997,14 @@ const server = createServer(async (request, response) => {
       matchesPath(pathname, ['/api/production/gaps', '/api/v1/production/gaps'])
     ) {
       json(response, 200, await buildProductionGapsSnapshot());
+      return;
+    }
+
+    if (
+      request.method === 'GET' &&
+      matchesPath(pathname, ['/api/production/primary-path', '/api/v1/production/primary-path'])
+    ) {
+      json(response, 200, await buildPrimaryPathReliabilitySnapshot());
       return;
     }
 

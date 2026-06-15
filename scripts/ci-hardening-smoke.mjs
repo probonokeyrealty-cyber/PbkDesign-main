@@ -161,14 +161,14 @@ test('CI workflows use current Node 24 action majors and valid YAML', () => {
   }
 });
 
-test('Founder Verify retries only transient ECONNRESET npm installs and preserves final failures', () => {
+test('Founder Verify retries transient npm network installs and preserves final failures', () => {
   const installStep = getFounderInstallStep();
 
   assert.ok(installStep, 'Founder Verify must define one reusable dependency install step');
   assert.equal(installStep.shell, 'bash');
   assert.equal(Number(installStep.env.NPM_INSTALL_ATTEMPTS), 3);
   assert.match(installStep.run, /npm_ci_with_retry\(\)/);
-  assert.match(installStep.run, /grep -qi ['"]ECONNRESET['"]/);
+  assert.match(installStep.run, /grep -Eqi ['"][^'"]*ECONNRESET[^'"]*ETIMEDOUT[^'"]*ENETUNREACH[^'"]*['"]/);
   assert.match(installStep.run, /return "\$status"/);
   assert.match(installStep.run, /npm_ci_with_retry ['"]root dependencies['"] npm ci/);
   assert.match(installStep.run, /npm_ci_with_retry ['"]MCP server dependencies['"] npm ci --prefix \.\/mcp-server/);
@@ -182,12 +182,12 @@ test('Founder Verify retry shell logic succeeds transiently and fails bounded pe
     3,
     `${transient.stdout}\n${transient.stderr}`,
   );
-  assert.match(transient.stdout, /root dependencies hit ECONNRESET; retrying/);
+  assert.match(transient.stdout, /root dependencies hit a transient npm network error; retrying/);
 
   const persistent = runFounderInstallScript('persistent-reset');
   assert.equal(persistent.status, 43, persistent.stderr);
   assert.equal((persistent.stdout.match(/fake npm call/g) || []).length, 3);
-  assert.match(persistent.stdout, /failed after 3 ECONNRESET attempts/);
+  assert.match(persistent.stdout, /failed after 3 transient network attempts/);
 
   const nonTransient = runFounderInstallScript('non-transient');
   assert.equal(nonTransient.status, 42, nonTransient.stderr);

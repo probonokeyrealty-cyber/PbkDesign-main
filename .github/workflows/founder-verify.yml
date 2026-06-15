@@ -57,17 +57,17 @@ jobs:
                 return 0
               fi
 
-              if ! grep -qi 'ECONNRESET' <<< "$output"; then
+              if ! grep -Eqi 'ECONNRESET|ETIMEDOUT|ENETUNREACH|ECONNREFUSED|EAI_AGAIN|socket hang up|network timeout' <<< "$output"; then
                 echo "::error::${label} failed with a non-transient npm error; not retrying."
                 return "$status"
               fi
 
               if [ "$attempt" -eq "$NPM_INSTALL_ATTEMPTS" ]; then
-                echo "::error::${label} failed after ${NPM_INSTALL_ATTEMPTS} ECONNRESET attempts."
+                echo "::error::${label} failed after ${NPM_INSTALL_ATTEMPTS} transient network attempts."
                 return "$status"
               fi
 
-              echo "::warning::${label} hit ECONNRESET; retrying in ${NPM_INSTALL_RETRY_SECONDS}s."
+              echo "::warning::${label} hit a transient npm network error; retrying in ${NPM_INSTALL_RETRY_SECONDS}s."
               sleep "$NPM_INSTALL_RETRY_SECONDS"
             done
           }

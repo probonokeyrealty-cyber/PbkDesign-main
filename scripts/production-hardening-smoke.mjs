@@ -152,6 +152,12 @@ assert(
     /connectionTimeoutMillis: PG_CONNECTION_TIMEOUT_MS/.test(bridge),
   'Render Postgres transient connection refusals must be retried at the pool boundary.'
 );
+assert(
+  /function isPotentiallyStaleRenderDatabaseHost/.test(bridge) &&
+    /staleRenderHost = isPotentiallyStaleRenderDatabaseHost\(host\)/.test(bridge) &&
+    !/staleRenderHost = \/[^\n]+dpg-/.test(bridge),
+  'Render Postgres stale-host warnings must detect raw IP pins instead of hard-coded DNS hostnames.'
+);
 
 const docusignSecret = 'pbk-docusign-test-secret';
 const docusignPayload = Buffer.from(

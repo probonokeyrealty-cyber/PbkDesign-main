@@ -5444,9 +5444,17 @@ function markPostgresHealth(ok, error = '') {
   return postgresHealth;
 }
 
+function isPotentiallyStaleRenderDatabaseHost(host = '') {
+  const normalized = String(host || '').trim().toLowerCase();
+  if (!normalized) return false;
+  // Render internal database URLs should use DNS hostnames. A raw IP can go stale
+  // when Render rotates private addresses or the database is recreated.
+  return /^\d{1,3}(?:\.\d{1,3}){3}$/.test(normalized);
+}
+
 function getPostgresHealthMeta() {
   const host = getDatabaseUrlHost();
-  const staleRenderHost = /^dpg-d7ncn8navr4c73fh3ba0-a(?:\.|$)/i.test(host);
+  const staleRenderHost = isPotentiallyStaleRenderDatabaseHost(host);
   return {
     configured: Boolean(DATABASE_URL),
     ready: DATABASE_URL ? postgresHealth.ready === true : false,

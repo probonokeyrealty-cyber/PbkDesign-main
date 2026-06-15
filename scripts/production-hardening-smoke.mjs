@@ -160,7 +160,8 @@ assert(
   /transientGraceActive/.test(bridge) &&
     /PG_TRANSIENT_GRACE_MS/.test(bridge) &&
     /consecutiveFailures/.test(bridge) &&
-    /lastTransientErrorAt/.test(bridge),
+    /lastTransientErrorAt/.test(bridge) &&
+    /poolMax: postgresHealth\.poolMax/.test(bridge),
   'Render Postgres health must expose transient recovery state without hiding persistent failures.'
 );
 assert(

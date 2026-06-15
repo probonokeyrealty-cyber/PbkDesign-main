@@ -30,7 +30,18 @@ function createPool(options = {}) {
   const connectionString = options.connectionString || assertSkillLearnerDatabaseConfigured(env);
   return new Pool({
     connectionString,
-    max: 2,
+    max: Math.max(1, Math.min(4, Number(env.PBK_PG_POOL_MAX || 1))),
+    connectionTimeoutMillis: Math.max(
+      1000,
+      Math.min(15000, Number(env.PBK_PG_CONNECTION_TIMEOUT_MS || 8000))
+    ),
+    idleTimeoutMillis: Math.max(5000, Math.min(60000, Number(env.PBK_PG_IDLE_TIMEOUT_MS || 10000))),
+    maxLifetimeSeconds: Math.max(
+      60,
+      Math.min(1800, Number(env.PBK_PG_MAX_LIFETIME_SECONDS || 300))
+    ),
+    keepAlive: true,
+    keepAliveInitialDelayMillis: 1000,
     ssl: /(localhost|127\.0\.0\.1)/.test(connectionString) ? false : { rejectUnauthorized: false },
   });
 }

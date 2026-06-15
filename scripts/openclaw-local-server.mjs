@@ -5385,9 +5385,17 @@ let postgresHealth = {
   checkedAt: null,
   lastOkAt: null,
   lastErrorAt: null,
+  lastRecoveryAt: null,
+  lastTransientErrorAt: null,
+  transientFailures: 0,
+  consecutiveFailures: 0,
   error: '',
 };
 
+const PG_POOL_MAX = Math.max(
+  1,
+  Math.min(12, Number(process.env.PBK_PG_POOL_MAX || (IS_HOSTED ? 4 : 10)))
+);
 const PG_QUERY_RETRY_ATTEMPTS = Math.max(
   0,
   Math.min(3, Number(process.env.PBK_PG_QUERY_RETRY_ATTEMPTS || 2))
@@ -5399,6 +5407,18 @@ const PG_QUERY_RETRY_BASE_DELAY_MS = Math.max(
 const PG_CONNECTION_TIMEOUT_MS = Math.max(
   1000,
   Math.min(15000, Number(process.env.PBK_PG_CONNECTION_TIMEOUT_MS || 8000))
+);
+const PG_IDLE_TIMEOUT_MS = Math.max(
+  5000,
+  Math.min(60000, Number(process.env.PBK_PG_IDLE_TIMEOUT_MS || 10000))
+);
+const PG_MAX_LIFETIME_SECONDS = Math.max(
+  60,
+  Math.min(1800, Number(process.env.PBK_PG_MAX_LIFETIME_SECONDS || 300))
+);
+const PG_TRANSIENT_GRACE_MS = Math.max(
+  0,
+  Math.min(120000, Number(process.env.PBK_PG_TRANSIENT_GRACE_MS || 30000))
 );
 let skillGovernanceHealth = {
   schemaReady: false,
@@ -5418,27 +5438,40 @@ function getDatabaseUrlHost() {
   }
 }
 
-function markPostgresHealth(ok, error = '') {
+function markPostgresHealth(ok, error = '', options = {}) {
+  const now = isoNow();
   if (!DATABASE_URL) {
     postgresHealth = {
       configured: false,
       ready: false,
       status: 'file_mode',
-      checkedAt: isoNow(),
+      checkedAt: now,
       lastOkAt: null,
       lastErrorAt: null,
+      lastRecoveryAt: null,
+      lastTransientErrorAt: null,
+      transientFailures: 0,
+      consecutiveFailures: 0,
       error: '',
     };
     return postgresHealth;
   }
+  const wasReady = postgresHealth.ready === true;
+  const transient = Boolean(options.transient);
   postgresHealth = {
     ...postgresHealth,
     configured: true,
     ready: Boolean(ok),
     status: ok ? 'up' : 'postgres_unavailable',
-    checkedAt: isoNow(),
-    lastOkAt: ok ? isoNow() : postgresHealth.lastOkAt,
-    lastErrorAt: ok ? postgresHealth.lastErrorAt : isoNow(),
+    checkedAt: now,
+    lastOkAt: ok ? now : postgresHealth.lastOkAt,
+    lastErrorAt: ok ? postgresHealth.lastErrorAt : now,
+    lastRecoveryAt: ok && !wasReady ? now : postgresHealth.lastRecoveryAt,
+    lastTransientErrorAt: transient ? now : postgresHealth.lastTransientErrorAt,
+    transientFailures: transient
+      ? Number(postgresHealth.transientFailures || 0) + 1
+      : Number(postgresHealth.transientFailures || 0),
+    consecutiveFailures: ok ? 0 : Number(postgresHealth.consecutiveFailures || 0) + 1,
     error: ok ? '' : String(error || 'Postgres connection failed.').slice(0, 500),
   };
   return postgresHealth;
@@ -5455,18 +5488,49 @@ function isPotentiallyStaleRenderDatabaseHost(host = '') {
 function getPostgresHealthMeta() {
   const host = getDatabaseUrlHost();
   const staleRenderHost = isPotentiallyStaleRenderDatabaseHost(host);
+  const lastOkAtMs = postgresHealth.lastOkAt ? Date.parse(postgresHealth.lastOkAt) : 0;
+  const lastErrorAtMs = postgresHealth.lastErrorAt ? Date.parse(postgresHealth.lastErrorAt) : 0;
+  const transientGraceActive = Boolean(
+    DATABASE_URL &&
+      postgresHealth.ready !== true &&
+      lastOkAtMs &&
+      lastErrorAtMs &&
+      lastErrorAtMs >= lastOkAtMs &&
+      Date.now() - lastOkAtMs <= PG_TRANSIENT_GRACE_MS &&
+      Number(postgresHealth.consecutiveFailures || 0) <= PG_QUERY_RETRY_ATTEMPTS + 1
+  );
+  const ready = DATABASE_URL ? postgresHealth.ready === true || transientGraceActive : false;
   return {
     configured: Boolean(DATABASE_URL),
-    ready: DATABASE_URL ? postgresHealth.ready === true : false,
-    status: DATABASE_URL ? postgresHealth.status || 'unknown' : 'file_mode',
-    stateBackend: DATABASE_URL ? (postgresHealth.ready === true ? 'postgres' : 'postgres_unavailable') : 'file',
+    ready,
+    status: DATABASE_URL
+      ? transientGraceActive
+        ? 'transient_postgres_recovering'
+        : postgresHealth.status || 'unknown'
+      : 'file_mode',
+    stateBackend: DATABASE_URL ? (ready ? 'postgres' : 'postgres_unavailable') : 'file',
     host,
     staleRenderHost,
+    poolMax: PG_POOL_MAX,
+    connectionTimeoutMs: PG_CONNECTION_TIMEOUT_MS,
+    idleTimeoutMs: PG_IDLE_TIMEOUT_MS,
+    maxLifetimeSeconds: PG_MAX_LIFETIME_SECONDS,
+    transientGraceActive,
+    transientFailures: Number(postgresHealth.transientFailures || 0),
+    consecutiveFailures: Number(postgresHealth.consecutiveFailures || 0),
     checkedAt: postgresHealth.checkedAt,
     lastOkAt: postgresHealth.lastOkAt,
     lastErrorAt: postgresHealth.lastErrorAt,
+    lastRecoveryAt: postgresHealth.lastRecoveryAt,
+    lastTransientErrorAt: postgresHealth.lastTransientErrorAt,
     error: postgresHealth.error,
-    note: DATABASE_URL ? (postgresHealth.ready === true ? 'Direct Postgres state backend is reachable.' : 'Direct Postgres is configured but unreachable; runtime falls back where supported and durable feature tables may be degraded.') : 'PBK_DATABASE_URL is not configured; runtime is file-backed.',
+    note: DATABASE_URL
+      ? postgresHealth.ready === true
+        ? 'Direct Postgres state backend is reachable.'
+        : transientGraceActive
+          ? 'Direct Postgres had a transient refusal after a recent healthy check; bridge is treating this as recoverable while retry/backoff protects durable paths.'
+          : 'Direct Postgres is configured but unreachable; runtime falls back where supported and durable feature tables may be degraded.'
+      : 'PBK_DATABASE_URL is not configured; runtime is file-backed.',
   };
 }
 
@@ -5493,7 +5557,7 @@ async function withPostgresConnectionRetry(operation, label = 'postgres') {
     } catch (error) {
       lastError = error;
       const transient = isTransientPostgresConnectionError(error);
-      markPostgresHealth(false, error?.message || error);
+      markPostgresHealth(false, error?.message || error, { transient });
       if (!transient || attempt >= PG_QUERY_RETRY_ATTEMPTS) throw error;
       const delayMs = PG_QUERY_RETRY_BASE_DELAY_MS * (attempt + 1);
       console.warn(
@@ -5511,8 +5575,12 @@ function getPgPool() {
   if (!DATABASE_URL) return null;
   __pgPool = new PgPool({
     connectionString: DATABASE_URL,
-    max: Math.max(2, Math.min(20, Number(process.env.PBK_PG_POOL_MAX || 10))),
+    max: PG_POOL_MAX,
     connectionTimeoutMillis: PG_CONNECTION_TIMEOUT_MS,
+    idleTimeoutMillis: PG_IDLE_TIMEOUT_MS,
+    maxLifetimeSeconds: PG_MAX_LIFETIME_SECONDS,
+    keepAlive: true,
+    keepAliveInitialDelayMillis: 1000,
     // Render Postgres requires TLS but uses a self-signed cert chain.
     // Disable cert validation for managed-DB hostnames; keep it on for localhost.
     ssl: /(localhost|127\.0\.0\.1)/.test(DATABASE_URL) ? false : { rejectUnauthorized: false },

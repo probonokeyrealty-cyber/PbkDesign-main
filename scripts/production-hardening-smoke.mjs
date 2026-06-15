@@ -149,8 +149,19 @@ assert(
   /function isTransientPostgresConnectionError/.test(bridge) &&
     /withPostgresConnectionRetry/.test(bridge) &&
     /__pgPool\.query = \(\.\.\.args\) => withPostgresConnectionRetry/.test(bridge) &&
-    /connectionTimeoutMillis: PG_CONNECTION_TIMEOUT_MS/.test(bridge),
+    /connectionTimeoutMillis: PG_CONNECTION_TIMEOUT_MS/.test(bridge) &&
+    /max: PG_POOL_MAX/.test(bridge) &&
+    /idleTimeoutMillis: PG_IDLE_TIMEOUT_MS/.test(bridge) &&
+    /maxLifetimeSeconds: PG_MAX_LIFETIME_SECONDS/.test(bridge) &&
+    /keepAlive: true/.test(bridge),
   'Render Postgres transient connection refusals must be retried at the pool boundary.'
+);
+assert(
+  /transientGraceActive/.test(bridge) &&
+    /PG_TRANSIENT_GRACE_MS/.test(bridge) &&
+    /consecutiveFailures/.test(bridge) &&
+    /lastTransientErrorAt/.test(bridge),
+  'Render Postgres health must expose transient recovery state without hiding persistent failures.'
 );
 assert(
   /function isPotentiallyStaleRenderDatabaseHost/.test(bridge) &&

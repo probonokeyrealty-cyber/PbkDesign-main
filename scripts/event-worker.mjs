@@ -24,6 +24,19 @@ const configuredBridgeTimeoutMs = Number(process.env.PBK_EVENT_WORKER_BRIDGE_TIM
 const BRIDGE_TIMEOUT_MS = Number.isFinite(configuredBridgeTimeoutMs)
   ? Math.max(5_000, Math.min(120_000, configuredBridgeTimeoutMs))
   : 30_000;
+const PG_POOL_MAX = Math.max(1, Math.min(4, Number(process.env.PBK_PG_POOL_MAX || 1)));
+const PG_CONNECTION_TIMEOUT_MS = Math.max(
+  1000,
+  Math.min(15000, Number(process.env.PBK_PG_CONNECTION_TIMEOUT_MS || 8000))
+);
+const PG_IDLE_TIMEOUT_MS = Math.max(
+  5000,
+  Math.min(60000, Number(process.env.PBK_PG_IDLE_TIMEOUT_MS || 10000))
+);
+const PG_MAX_LIFETIME_SECONDS = Math.max(
+  60,
+  Math.min(1800, Number(process.env.PBK_PG_MAX_LIFETIME_SECONDS || 300))
+);
 
 let pool = null;
 
@@ -32,7 +45,12 @@ function getPool() {
   if (!pool) {
     pool = new Pool({
       connectionString: DATABASE_URL,
-      max: 2,
+      max: PG_POOL_MAX,
+      connectionTimeoutMillis: PG_CONNECTION_TIMEOUT_MS,
+      idleTimeoutMillis: PG_IDLE_TIMEOUT_MS,
+      maxLifetimeSeconds: PG_MAX_LIFETIME_SECONDS,
+      keepAlive: true,
+      keepAliveInitialDelayMillis: 1000,
       ssl: /(localhost|127\.0\.0\.1)/.test(DATABASE_URL) ? false : { rejectUnauthorized: false },
     });
     pool.on('error', (error) => {

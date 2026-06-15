@@ -31,6 +31,20 @@ services:
         fromDatabase:
           name: pbk-openclaw-db
           property: connectionString
+      - key: PBK_PG_POOL_MAX
+        value: "4"
+      - key: PBK_PG_QUERY_RETRY_ATTEMPTS
+        value: "3"
+      - key: PBK_PG_QUERY_RETRY_BASE_DELAY_MS
+        value: "250"
+      - key: PBK_PG_CONNECTION_TIMEOUT_MS
+        value: "10000"
+      - key: PBK_PG_IDLE_TIMEOUT_MS
+        value: "10000"
+      - key: PBK_PG_MAX_LIFETIME_SECONDS
+        value: "300"
+      - key: PBK_PG_TRANSIENT_GRACE_MS
+        value: "30000"
       # Public base URL of THIS service. Used to build provider webhook URLs
       # (Telnyx call events, DocuSign envelope status, etc.) that point back here.
       - key: PBK_PUBLIC_BASE_URL
@@ -384,6 +398,14 @@ services:
         fromDatabase:
           name: pbk-openclaw-db
           property: connectionString
+      - key: PBK_PG_POOL_MAX
+        value: "1"
+      - key: PBK_PG_CONNECTION_TIMEOUT_MS
+        value: "10000"
+      - key: PBK_PG_IDLE_TIMEOUT_MS
+        value: "10000"
+      - key: PBK_PG_MAX_LIFETIME_SECONDS
+        value: "300"
       - key: PBK_PUBLIC_BASE_URL
         value: https://pbk-openclaw-bridge.onrender.com
       - key: PBK_EVENT_WORKER_BRIDGE_URL
@@ -453,6 +475,14 @@ services:
         fromDatabase:
           name: pbk-openclaw-db
           property: connectionString
+      - key: PBK_PG_POOL_MAX
+        value: "1"
+      - key: PBK_PG_CONNECTION_TIMEOUT_MS
+        value: "10000"
+      - key: PBK_PG_IDLE_TIMEOUT_MS
+        value: "10000"
+      - key: PBK_PG_MAX_LIFETIME_SECONDS
+        value: "300"
       - key: PBK_PUBLIC_BASE_URL
         value: https://pbk-openclaw-bridge.onrender.com
       - key: PBK_BRIDGE_API_KEY

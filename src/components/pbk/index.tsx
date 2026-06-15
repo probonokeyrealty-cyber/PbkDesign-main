@@ -213,16 +213,19 @@ PbkInput.displayName = 'PbkInput';
 // ============================================================
 interface PbkFieldProps {
   label: string;
+  htmlFor?: string;
   required?: boolean;
   help?: string;
   error?: string;
   children: ReactNode;
 }
 
-export function PbkField({ label, required, help, error, children }: PbkFieldProps) {
+export function PbkField({ label, htmlFor, required, help, error, children }: PbkFieldProps) {
   return (
     <div className="pbk-field">
-      <label className={`pbk-label ${required ? 'pbk-label-required' : ''}`}>{label}</label>
+      <label className={`pbk-label ${required ? 'pbk-label-required' : ''}`} htmlFor={htmlFor}>
+        {label}
+      </label>
       {children}
       {error && <div className="pbk-error-msg">{error}</div>}
       {!error && help && <div className="pbk-help">{help}</div>}

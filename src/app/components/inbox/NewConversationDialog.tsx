@@ -346,6 +346,8 @@ export function NewConversationDialog({ open, onClose, onResolved }: NewConversa
           <Search size={15} aria-hidden="true" />
           <span className="sr-only">Search existing PBK leads</span>
           <input
+            id="new-conversation-lead-search"
+            name="leadSearch"
             value={query}
             onChange={(event) => {
               requestSequence.current += 1;
@@ -354,6 +356,7 @@ export function NewConversationDialog({ open, onClose, onResolved }: NewConversa
               setError('');
             }}
             placeholder="Seller, address, phone, email..."
+            autoComplete="off"
             autoFocus
           />
           <span className="pbk-new-conversation-search-state" aria-live="polite">
@@ -430,16 +433,21 @@ export function NewConversationDialog({ open, onClose, onResolved }: NewConversa
               <label>
                 <span>Seller name</span>
                 <input
+                  id="new-conversation-quick-name"
+                  name="sellerName"
                   value={quickLeadDraft.name}
                   onChange={(event) =>
                     setQuickLeadDraft((current) => ({ ...current, name: event.target.value }))
                   }
                   placeholder="Seller name"
+                  autoComplete="name"
                 />
               </label>
               <label>
                 <span>Mobile phone</span>
                 <input
+                  id="new-conversation-quick-phone"
+                  name="sellerPhone"
                   type="tel"
                   inputMode="tel"
                   value={quickLeadDraft.phone}
@@ -447,27 +455,34 @@ export function NewConversationDialog({ open, onClose, onResolved }: NewConversa
                     setQuickLeadDraft((current) => ({ ...current, phone: event.target.value }))
                   }
                   placeholder="+1 614 555 0142"
+                  autoComplete="tel"
                 />
               </label>
               <label>
                 <span>Email</span>
                 <input
+                  id="new-conversation-quick-email"
+                  name="sellerEmail"
                   type="email"
                   value={quickLeadDraft.email}
                   onChange={(event) =>
                     setQuickLeadDraft((current) => ({ ...current, email: event.target.value }))
                   }
                   placeholder="seller@example.com"
+                  autoComplete="email"
                 />
               </label>
               <label>
                 <span>Property address</span>
                 <input
+                  id="new-conversation-quick-address"
+                  name="propertyAddress"
                   value={quickLeadDraft.address}
                   onChange={(event) =>
                     setQuickLeadDraft((current) => ({ ...current, address: event.target.value }))
                   }
                   placeholder="Optional for first message"
+                  autoComplete="street-address"
                 />
               </label>
               <button

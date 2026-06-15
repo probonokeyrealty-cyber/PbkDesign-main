@@ -240,7 +240,12 @@ assert(
     newConversation.includes('Create a new lead') &&
     newConversation.includes('createLeadRequest') &&
     newConversation.includes('pbk-new-conversation-quick-create') &&
-    newConversation.includes('Create lead and open composer'),
+    newConversation.includes('Create lead and open composer') &&
+    newConversation.includes('name="leadSearch"') &&
+    newConversation.includes('name="sellerName"') &&
+    newConversation.includes('name="sellerPhone"') &&
+    newConversation.includes('name="sellerEmail"') &&
+    newConversation.includes('name="propertyAddress"'),
   'New message must provide direct repair paths and an inline mobile quick-create for missing canonical contact data.'
 );
 for (const requiredCopy of [

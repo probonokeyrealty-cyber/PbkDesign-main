@@ -46,6 +46,24 @@ assert(/'\/campaigns'/.test(layout), 'ParadiseLayout saved-route validation must
 assert(/CAMPAIGN_WIZARD_DRAFT_KEY/.test(campaigns), 'Campaign wizard must autosave draft state.');
 assert(/fetchCampaignsRequest/.test(campaigns), 'Campaigns page must read live campaign data from the bridge.');
 assert(/createCampaignRequest/.test(campaigns), 'Campaign wizard must create campaigns through the bridge.');
+assert(
+  campaigns.includes('name="campaignsSearch"') &&
+    campaigns.includes('name="campaignsStatusFilter"') &&
+    campaigns.includes('name="campaignTemplateId"') &&
+    campaigns.includes('name="campaignFirstMessage"') &&
+    campaigns.includes('name="campaignFollowUpMessage"') &&
+    campaigns.includes('name="campaignName"') &&
+    campaigns.includes('name="campaignScheduledFor"') &&
+    campaigns.includes('name="campaignDailyCap"') &&
+    campaigns.includes('name="campaignOperatorNotes"'),
+  'Campaigns toolbar and wizard controls must have stable browser field names.'
+);
+assert(
+  campaigns.includes('htmlFor="campaign-template-id"') &&
+    campaigns.includes('htmlFor="campaign-first-message"') &&
+    campaigns.includes('htmlFor="campaign-follow-up-message"'),
+  'Campaign wizard PbkField labels must connect to their inputs.'
+);
 assert(/requestCampaignApprovalRequest/.test(campaigns), 'Campaign launch must request bridge approval.');
 assert(
   /const closeWizard = useCallback\(\(\) => setWizardOpen\(false\), \[\]\)/.test(campaigns) &&

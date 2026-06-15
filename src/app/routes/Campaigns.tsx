@@ -1233,22 +1233,29 @@ function CampaignWizard({
             />
 
             <div className="mt-4 grid gap-4">
-              <PbkField label="Template ID">
+              <PbkField label="Template ID" htmlFor="campaign-template-id">
                 <PbkInput
+                  id="campaign-template-id"
+                  name="campaignTemplateId"
                   value={draft.templateId}
                   onChange={(event) => update({ templateId: event.target.value })}
+                  autoComplete="off"
                 />
               </PbkField>
-              <PbkField label="First touch copy" required>
+              <PbkField label="First touch copy" htmlFor="campaign-first-message" required>
                 <textarea
+                  id="campaign-first-message"
+                  name="campaignFirstMessage"
                   className="pbk-input min-h-32"
                   value={draft.firstMessage}
                   onChange={(event) => update({ firstMessage: event.target.value })}
                   placeholder="Write the first seller-facing message Ava should send after approval."
                 />
               </PbkField>
-              <PbkField label="Follow-up copy">
+              <PbkField label="Follow-up copy" htmlFor="campaign-follow-up-message">
                 <textarea
+                  id="campaign-follow-up-message"
+                  name="campaignFollowUpMessage"
                   className="pbk-input min-h-24"
                   value={draft.followUpMessage}
                   onChange={(event) => update({ followUpMessage: event.target.value })}
@@ -1267,14 +1274,19 @@ function CampaignWizard({
               <label className="pbk-schedule-row">
                 <span className="label">Campaign name</span>
                 <PbkInput
+                  id="campaign-schedule-name"
+                  name="campaignName"
                   value={draft.name}
                   onChange={(event) => update({ name: event.target.value })}
                   placeholder="June probate seller reactivation"
+                  autoComplete="off"
                 />
               </label>
               <label className="pbk-schedule-row">
                 <span className="label">First send</span>
                 <PbkInput
+                  id="campaign-schedule-first-send"
+                  name="campaignScheduledFor"
                   type="datetime-local"
                   value={draft.scheduledFor}
                   onChange={(event) => update({ scheduledFor: event.target.value })}
@@ -1283,6 +1295,8 @@ function CampaignWizard({
               <label className="pbk-schedule-row">
                 <span className="label">Daily cap</span>
                 <PbkInput
+                  id="campaign-schedule-daily-cap"
+                  name="campaignDailyCap"
                   type="number"
                   min={1}
                   max={1000}
@@ -1293,6 +1307,8 @@ function CampaignWizard({
               <label className="pbk-schedule-row">
                 <span className="label">Operator notes</span>
                 <textarea
+                  id="campaign-schedule-notes"
+                  name="campaignOperatorNotes"
                   className="pbk-input min-h-24"
                   value={draft.notes}
                   onChange={(event) => update({ notes: event.target.value })}
@@ -1698,10 +1714,13 @@ export function Campaigns() {
           <div className="pbk-camp-search">
             <Search size={15} />
             <PbkInput
+              id="campaigns-search"
+              name="campaignsSearch"
               value={search}
               onChange={(event) => setSearch(event.target.value)}
               placeholder="Search campaign name, provider, template, notes..."
               aria-label="Search campaigns"
+              autoComplete="off"
             />
           </div>
 
@@ -1712,6 +1731,8 @@ export function Campaigns() {
           />
 
           <select
+            id="campaigns-status-filter"
+            name="campaignsStatusFilter"
             className="pbk-input pbk-camp-select"
             value={statusFilter}
             onChange={(event) => setStatusFilter(event.target.value)}

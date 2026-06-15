@@ -30,6 +30,11 @@ assert(/pendingApprovals/.test(sidebar) && /showBadge/.test(sidebar), 'Sidebar s
 assert(/VALID_SHELL_PATHS/.test(paradiseLayout), 'ParadiseLayout should validate saved lastPage routes before navigating.');
 assert(/isValidShellPath/.test(paradiseLayout), 'ParadiseLayout should guard deleted or renamed saved routes.');
 assert(/lastPageRestoredRef/.test(paradiseLayout), 'ParadiseLayout should restore lastPage only once on shell mount.');
+assert(
+  /location\.pathname === '\/agent'/.test(paradiseLayout) &&
+    /location\.pathname === '\/agent-console'/.test(paradiseLayout),
+  'ParadiseLayout should give agent live/chat surfaces the same full-height shell treatment as Ava Chat.'
+);
 assert(/dispatchShortcutEvent/.test(paradiseLayout), 'ParadiseLayout shortcuts should report unhandled events.');
 assert(/showUiToast/.test(paradiseLayout), 'ParadiseLayout should show a toast when a shortcut fires into no listener.');
 

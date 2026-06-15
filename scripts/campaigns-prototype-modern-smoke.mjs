@@ -93,6 +93,16 @@ assert(
   'Campaign reply and connect rates must use contacted leads rather than all loaded leads.'
 );
 assert(
+  /function canRequestCampaignApproval\(campaign: CampaignRecord\)/.test(campaigns) &&
+    /const canRequestApproval = canRequestCampaignApproval\(campaign\)/.test(campaigns) &&
+    /const approvalAllowed = canRequestCampaignApproval\(campaign\)/.test(campaigns),
+  'Campaign card and table approval controls must share one status/pending-action predicate.'
+);
+assert(
+  /disabled=\{busyCampaignId === campaign\.id \|\| !approvalAllowed\}/.test(campaigns),
+  'Campaign table Approval must be disabled for pending, active, approved, cancelled, or already-queued campaigns.'
+);
+assert(
   /const sentRows = rows\.filter\(\(row\) => row\.sent\)[\s\S]*repliedRows\.length \/ sentRows\.length[\s\S]*connectedRows\.length \/ sentRows\.length/.test(
     bridge
   ),

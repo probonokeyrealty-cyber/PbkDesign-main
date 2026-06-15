@@ -57,6 +57,20 @@ assert(
   /data-source="build env"/.test(sidebar),
   'Sidebar must annotate release metadata as build env.'
 );
+assert(
+  /function isHostedShell/.test(sidebar) &&
+    /pbkcommandcenter/.test(sidebar) &&
+    /netlify\.app/.test(sidebar) &&
+    /hosted build/.test(sidebar),
+  'Hosted Netlify shell must label missing release env as hosted production, not dev/local build.'
+);
+assert(
+  /useState\('Device prefs'\)/.test(layout) &&
+    /themeDataSource = 'Device prefs'/.test(topbar) &&
+    /prefsSource = 'Device prefs'/.test(sidebar) &&
+    /useState\('Device prefs'\)/.test(favorites),
+  'Shell preference labels should default to Device prefs instead of a false local fallback warning.'
+);
 
 assert(
   !/Probono Key Realty|probonokeyrealty@gmail\.com|v0\.1|UI-only|SAMPLE_SHELL|MOCK_SHELL/.test(

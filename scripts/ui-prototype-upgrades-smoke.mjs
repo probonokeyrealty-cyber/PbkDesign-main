@@ -58,6 +58,21 @@ expectMatches(
   'Command Center live-call status mapping must match backend active statuses'
 );
 expectContains(
+  commandCenter,
+  'buildLiveCallCallerContext(call)',
+  'Command Center must build live-call caller context through a sanitizer'
+);
+expectMatches(
+  commandCenter,
+  /inbound call mode\|bant\\\+ status\|negotiation guidance/,
+  'Live-call caller context sanitizer must reject internal Ava prompt/script text'
+);
+expectMatches(
+  commandCenter,
+  /context:\s*buildLiveCallCallerContext\(call\)/,
+  'Live-call caller context must not render raw call.script prompt text'
+);
+expectContains(
   runtimeSnapshotHook,
   'createRuntimeStateStreamSessionRequest',
   'Runtime snapshot hook must create a secured state-stream session'

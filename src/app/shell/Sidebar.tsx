@@ -30,6 +30,12 @@ export const SHELL_NAV_ITEMS: Array<{ to: string; label: string; icon: typeof La
   { to: '/settings', label: 'Settings', icon: SettingsIcon },
 ];
 
+function isHostedShell() {
+  if (typeof window === 'undefined') return false;
+  const host = String(window.location.hostname || '').toLowerCase();
+  return host.includes('pbkcommandcenter') || host.endsWith('.netlify.app');
+}
+
 function buildReleaseLabel(collapsed: boolean) {
   const commit = String(
     import.meta.env.VITE_COMMIT_SHA || import.meta.env.VITE_GIT_SHA || ''
@@ -39,13 +45,15 @@ function buildReleaseLabel(collapsed: boolean) {
       import.meta.env.VITE_APP_VERSION ||
       import.meta.env.VITE_RELEASE_ID ||
       commit ||
-      'dev'
+      (isHostedShell() ? 'production' : 'dev')
   );
   const buildDate = String(
     import.meta.env.VITE_BUILD_DATE || import.meta.env.VITE_BUILD_TIME || ''
   ).trim();
   if (collapsed) return release;
-  return [release, buildDate || 'local build'].filter(Boolean).join(' shell - ');
+  return [release, buildDate || (isHostedShell() ? 'hosted build' : 'local build')]
+    .filter(Boolean)
+    .join(' shell - ');
 }
 
 interface SidebarProps {
@@ -58,7 +66,7 @@ interface SidebarProps {
 export function Sidebar({
   collapsed,
   pendingApprovals = 0,
-  prefsSource = 'Local fallback',
+  prefsSource = 'Device prefs',
   onToggleRail,
 }: SidebarProps) {
   return (

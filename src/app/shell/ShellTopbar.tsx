@@ -104,7 +104,7 @@ function initials(label: string) {
 
 export function ShellTopbar({
   theme,
-  themeDataSource = 'Local fallback',
+  themeDataSource = 'Device prefs',
   onToggleTheme,
 }: ShellTopbarProps) {
   const navigate = useNavigate();

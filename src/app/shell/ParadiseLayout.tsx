@@ -1,5 +1,5 @@
 import { Suspense, useCallback, useEffect, useRef, useState } from 'react';
-import { Outlet, useLocation } from 'react-router';
+import { Outlet, useLocation, useNavigate } from 'react-router';
 import { ErrorBoundary } from '../components/ErrorBoundary';
 import { SessionTimeoutWarning } from '../components/SessionTimeoutWarning';
 import { ShortcutCheatSheet } from '../components/ShortcutCheatSheet';
@@ -27,10 +27,16 @@ const VALID_SHELL_PATHS = new Set([
   '/dashboard',
   '/leads',
   '/deal',
+  '/deals',
+  '/deals/analyzer',
+  '/analyzer',
   '/inbox',
   '/inbox/conversations',
   '/fleet',
+  '/agent-fleet',
   '/agents',
+  '/agent',
+  '/agent-console',
   '/memory',
   '/skills',
   '/skill-studio',
@@ -96,12 +102,14 @@ function dispatchShortcutEvent(eventName: string, label: string) {
  */
 export function ParadiseLayout() {
   const location = useLocation();
+  const navigate = useNavigate();
   const [prefs, setPrefs] = useState(() => readPbkPrefs());
   const [systemTheme, setSystemTheme] = useState(() => getSystemPbkTheme());
-  const [prefsSource, setPrefsSource] = useState('Local fallback');
+  const [prefsSource, setPrefsSource] = useState('Device prefs');
   const [shortcutOpen, setShortcutOpen] = useState(false);
   const [skeletonOn, setSkeletonOn] = useState(false);
   const bridgePrefsHydratedRef = useRef(false);
+  const lastPageRestoredRef = useRef(false);
   const { snapshot, refresh } = useRuntimeSnapshot(10000);
   const pendingApprovalCount = getPendingApprovalCount(snapshot || {});
 
@@ -117,7 +125,7 @@ export function ParadiseLayout() {
         setPrefsSource('Bridge settings');
         await refresh();
       } catch (error) {
-        setPrefsSource('Local fallback');
+        setPrefsSource('Device prefs');
         showUiToast({
           tone: 'warning',
           title: 'Shell preference saved locally',
@@ -171,6 +179,15 @@ export function ParadiseLayout() {
     media.addEventListener('change', onChange);
     return () => media.removeEventListener('change', onChange);
   }, []);
+
+  useEffect(() => {
+    if (lastPageRestoredRef.current) return;
+    lastPageRestoredRef.current = true;
+    if (location.pathname !== '/') return;
+    const savedPath = readPbkPrefs().lastPage;
+    if (!savedPath || savedPath === '/' || !isValidShellPath(savedPath)) return;
+    navigate(savedPath, { replace: true });
+  }, [location.pathname, navigate]);
 
   useEffect(() => {
     const path = `${location.pathname}${location.search || ''}`;
@@ -274,7 +291,10 @@ export function ParadiseLayout() {
   };
 
   const isFullHeightChatRoute =
-    location.pathname === '/inbox/conversations' || location.pathname === '/ava-chat';
+    location.pathname === '/inbox/conversations' ||
+    location.pathname === '/ava-chat' ||
+    location.pathname === '/agent' ||
+    location.pathname === '/agent-console';
 
   return (
     <TeamAccessGate

@@ -10,9 +10,17 @@ const PAGE_LABELS: Record<string, string> = {
   '/': 'Command Center',
   '/leads': 'Leads',
   '/deal': 'Deal',
+  '/deals': 'Deals',
+  '/analyzer': 'Analyzer',
   '/inbox': 'Inbox',
   '/fleet': 'Agent Fleet',
+  '/agent-fleet': 'Agent Fleet',
+  '/agent': 'Ava Agent',
+  '/agent-console': 'Agent Console',
   '/memory': 'Memory',
+  '/skills': 'Skills',
+  '/skill-studio': 'Skill Studio',
+  '/ava-chat': 'Ava Chat',
   '/analytics': 'Analytics',
   '/campaigns': 'Campaigns',
   '/settings': 'Settings',
@@ -50,7 +58,10 @@ function saveLocalFavorites(next: string[]) {
 
 function normalizePath(pathname: string) {
   if (pathname.startsWith('/deal')) return '/deal';
-  return PAGE_LABELS[pathname] ? pathname : '/';
+  if (pathname.startsWith('/leads/')) return '/leads';
+  if (pathname.startsWith('/skills/')) return '/skills';
+  if (pathname.startsWith('/skill-studio/')) return '/skill-studio';
+  return PAGE_LABELS[pathname] ? pathname : '';
 }
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -71,10 +82,10 @@ type FavoritesBarProps = {
 export function FavoritesBar({ snapshot, refresh }: FavoritesBarProps = {}) {
   const location = useLocation();
   const [favorites, setFavorites] = useState(() => readFavorites());
-  const [favoriteSource, setFavoriteSource] = useState('Local fallback');
+  const [favoriteSource, setFavoriteSource] = useState('Device prefs');
   const [favoritePending, setFavoritePending] = useState(false);
   const currentPath = normalizePath(location.pathname);
-  const currentPinned = favorites.includes(currentPath);
+  const currentPinned = Boolean(currentPath) && favorites.includes(currentPath);
 
   useEffect(() => {
     setFavorites((current) => current.filter((path) => PAGE_LABELS[path]));
@@ -104,7 +115,7 @@ export function FavoritesBar({ snapshot, refresh }: FavoritesBarProps = {}) {
       setFavoriteSource('Bridge settings');
       await refresh?.();
     } catch (error) {
-      setFavoriteSource('Local fallback');
+      setFavoriteSource('Device prefs');
       showUiToast({
         tone: 'warning',
         title: 'Favorites saved locally',
@@ -119,6 +130,14 @@ export function FavoritesBar({ snapshot, refresh }: FavoritesBarProps = {}) {
   };
 
   const toggleCurrent = () => {
+    if (!currentPath) {
+      showUiToast({
+        tone: 'info',
+        title: 'Page cannot be pinned',
+        desc: 'This route is not part of the production shell navigation yet.',
+      });
+      return;
+    }
     const next = currentPinned
       ? favorites.filter((path) => path !== currentPath)
       : [currentPath, ...favorites]
@@ -152,7 +171,8 @@ export function FavoritesBar({ snapshot, refresh }: FavoritesBarProps = {}) {
         type="button"
         className="pbk-shell-favorite-pin favorite-pin"
         onClick={toggleCurrent}
-        disabled={favoritePending}
+        disabled={favoritePending || !currentPath}
+        title={currentPath ? undefined : 'This route is not pinnable yet'}
       >
         <Star size={13} fill={currentPinned ? 'currentColor' : 'none'} />
         {favoritePending ? 'Saving' : currentPinned ? 'Pinned' : 'Pin page'}

@@ -83,6 +83,12 @@ assert(
   'Inbox Open lead action should deep-link to the canonical bridge-backed lead portal.'
 );
 assert(
+  /onNavigate=\{navigate\}/.test(inbox) &&
+    /onNavigate\(`\/leads\/\$\{encodeURIComponent\(leadId\)\}`\)/.test(inbox) &&
+    !/window\.location\.assign\(`\/leads/.test(inbox),
+  'Inbox Open lead action must use SPA navigation instead of reloading the shell.'
+);
+assert(
   /getApprovalRisk/.test(inbox) &&
     /getApprovalTitle/.test(inbox) &&
     /getApprovalReason/.test(inbox) &&

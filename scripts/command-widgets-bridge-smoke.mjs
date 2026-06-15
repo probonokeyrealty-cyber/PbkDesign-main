@@ -39,13 +39,19 @@ assert(
 
 assert(
   /data-fallback="localStorage:pbk:command-center:widgets"/.test(commandCenter) &&
-    /Local fallback|Bridge settings|bridge unavailable/i.test(commandCenter),
-  'Widget controls must retain and label the localStorage fallback.'
+    /Device prefs|Bridge settings|bridge unavailable/i.test(commandCenter),
+  'Widget controls must retain and honestly label device/localStorage preferences.'
 );
 
 assert(
   /Personalise this dashboard across operators/.test(commandCenter),
   'Widget controls copy must no longer describe personalization as local-only.'
+);
+
+assert(
+  /GET \/api\/brain\/web-search\/status/.test(commandCenter) &&
+    !/GET \/api\/web-search\/status/.test(commandCenter),
+  'Command Center must label the shipped web-search status endpoint, not the removed legacy path.'
 );
 
 assert(

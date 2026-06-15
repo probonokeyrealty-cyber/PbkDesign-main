@@ -34,8 +34,21 @@ assert(
 );
 
 assert(
-  /localStorage:pbk:favorites:v1/.test(favorites) && /Local fallback|bridge unavailable/i.test(favorites),
-  'FavoritesBar must retain and label localStorage fallback.'
+  /localStorage:pbk:favorites:v1/.test(favorites) &&
+    /Device prefs|bridge unavailable/i.test(favorites),
+  'FavoritesBar must retain and honestly label device/localStorage preferences.'
+);
+
+assert(
+  /'\/skill-studio': 'Skill Studio'/.test(favorites) &&
+    /'\/ava-chat': 'Ava Chat'/.test(favorites) &&
+    /'\/agent-console': 'Agent Console'/.test(favorites),
+  'FavoritesBar must recognize production shell routes instead of normalizing them away.'
+);
+
+assert(
+  /return PAGE_LABELS\[pathname\] \? pathname : '';/.test(favorites),
+  'FavoritesBar must not normalize unknown routes to Command Center.'
 );
 
 assert(

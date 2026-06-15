@@ -637,10 +637,12 @@ function InboxMessageRow({
   message,
   onReply,
   onArchive,
+  onNavigate,
 }: {
   message: Record<string, unknown>;
   onReply: (message: Record<string, unknown>) => void;
   onArchive: (message: Record<string, unknown>) => void;
+  onNavigate: (path: string) => void;
 }) {
   const unread = isUnreadMessage(message);
   const timestamp = getMessageTimestamp(message);
@@ -648,10 +650,10 @@ function InboxMessageRow({
   const leadId = getMessageLeadId(message);
   const openLeadPortal = () => {
     if (leadId) {
-      window.location.assign(`/leads/${encodeURIComponent(leadId)}`);
+      onNavigate(`/leads/${encodeURIComponent(leadId)}`);
       return;
     }
-    window.location.assign(`/leads?search=${encodeURIComponent(title)}`);
+    onNavigate(`/leads?search=${encodeURIComponent(title)}`);
   };
 
   return (
@@ -1601,6 +1603,7 @@ export function Inbox() {
                   message={message}
                   onReply={openReply}
                   onArchive={archiveMessage}
+                  onNavigate={navigate}
                 />
               ))}
               {!visibleMessages.length && (

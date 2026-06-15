@@ -69,6 +69,8 @@ assert(/to\s*=\s*"\/index\.shell\.html"/.test(netlifyConfig), 'Netlify must rout
 });
 
 assert(/src\/main\.shell\.tsx/.test(shellHtml), 'index.shell.html must mount the React shell entry.');
+assert(/<title>PBK Command Center<\/title>/.test(shellHtml), 'index.shell.html must expose a production Command Center title.');
+assert(!/Shell Preview/.test(shellHtml), 'index.shell.html must not expose preview copy in production.');
 assert(/PBK Wholesale Paradise/.test(legacyHtml), 'legacy index.html must remain available as the fallback dashboard artifact.');
 assert(!/Production deploy continues to use `index\.html`/.test(mainShell), 'main.shell.tsx comments must not describe the legacy dashboard as the production default.');
 

@@ -120,6 +120,22 @@ function statusClass(status = '') {
   return 'draft';
 }
 
+function canRequestCampaignApproval(campaign: CampaignRecord) {
+  const status = String(campaign.status || 'draft').toLowerCase();
+  if (campaign.pendingAction) return false;
+  return ![
+    'pending',
+    'queued',
+    'approval_required',
+    'approved',
+    'active',
+    'running',
+    'cancelled',
+    'failed',
+    'rejected',
+  ].includes(status);
+}
+
 function campaignChannel(campaign: CampaignRecord | Pick<CampaignWizardDraft, 'channel'>) {
   const channel = String(campaign.channel || 'email').toLowerCase();
   if (channel.includes('sms')) return 'sms';
@@ -610,9 +626,7 @@ function CampaignCard({
   const status = String(campaign.status || 'draft');
   const normalizedChannel = campaignChannel(campaign);
   const progress = getCampaignProgress(campaign);
-  const canRequestApproval = !['pending', 'active', 'running', 'cancelled'].includes(
-    status.toLowerCase()
-  );
+  const canRequestApproval = canRequestCampaignApproval(campaign);
   const nextHoldStatus = status.toLowerCase() === 'paused' ? 'draft' : 'paused';
   const sentLabel =
     normalizedChannel === 'call' ? 'Dialed' : normalizedChannel === 'sms' ? 'Sent' : 'Sent';
@@ -891,6 +905,7 @@ function CampaignsTableView({
         const status = String(campaign.status || 'draft');
         const progress = getCampaignProgress(campaign);
         const nextHoldStatus = status.toLowerCase() === 'paused' ? 'draft' : 'paused';
+        const approvalAllowed = canRequestCampaignApproval(campaign);
         return (
           <div className="pbk-camp-table-row" role="row" key={campaign.id}>
             <div className="name">
@@ -912,8 +927,13 @@ function CampaignsTableView({
               <button
                 type="button"
                 className="chip-btn"
-                disabled={busyCampaignId === campaign.id}
+                disabled={busyCampaignId === campaign.id || !approvalAllowed}
                 onClick={() => onRequestApproval(campaign)}
+                title={
+                  approvalAllowed
+                    ? undefined
+                    : 'Campaign already has approval or cannot be started.'
+                }
               >
                 Approval
               </button>

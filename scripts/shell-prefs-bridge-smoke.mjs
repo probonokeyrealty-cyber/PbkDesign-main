@@ -46,8 +46,8 @@ assert(
 
 assert(
   /localStorage:pbk:prefs:v1/.test(layout + topbar + sidebar) &&
-    /Local fallback|bridge unavailable/i.test(layout + topbar + sidebar),
-  'Shell prefs must retain and label localStorage fallback.'
+    /Device prefs|Local fallback|bridge unavailable/i.test(layout + topbar + sidebar),
+  'Shell prefs must retain and label device/localStorage fallback.'
 );
 
 assert(

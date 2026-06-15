@@ -99,6 +99,45 @@ function mapTranscriptLine(line: unknown, index: number): TranscriptLine | null 
   };
 }
 
+function cleanLiveCallContextValue(value: unknown) {
+  const text = String(value || '').trim();
+  if (!text) return '';
+  if (
+    /^#+\s/.test(text) ||
+    /\b(you are ava|inbound call mode|bant\+ status|negotiation guidance|core rules|pbk core path library|recent self-learned memories)\b/i.test(
+      text
+    )
+  ) {
+    return '';
+  }
+  return text.replace(/_/g, ' ');
+}
+
+function nestedText(record: Record<string, unknown>, key: string) {
+  const value = record[key];
+  return value && typeof value === 'object' ? (value as Record<string, unknown>) : {};
+}
+
+function buildLiveCallCallerContext(call: Record<string, unknown>) {
+  const property = nestedText(call, 'property');
+  const lead = nestedText(call, 'lead');
+  const address = [
+    call.address,
+    call.propertyAddress,
+    call.property_address,
+    lead.address,
+    property.address,
+  ]
+    .map(cleanLiveCallContextValue)
+    .find(Boolean);
+  const status = [call.stage, call.callStage, call.status]
+    .map(cleanLiveCallContextValue)
+    .find(
+      (value) => value && !/^(active|connected|dialing|queued|ended|completed|failed)$/i.test(value)
+    );
+  return [address, status].filter(Boolean).join(' / ') || undefined;
+}
+
 function mapRuntimeCall(call: Record<string, unknown> | undefined): LiveCallState | undefined {
   if (!call) return undefined;
   const rawSentiment = toNumber(call.sentiment);
@@ -121,7 +160,7 @@ function mapRuntimeCall(call: Record<string, unknown> | undefined): LiveCallStat
     caller: {
       name: call.leadName ? String(call.leadName) : null,
       phone: call.phone ? String(call.phone) : null,
-      context: [call.address, call.script].filter(Boolean).map(String).join(' / ') || undefined,
+      context: buildLiveCallCallerContext(call),
     },
     startedAt: call.startedAt ? String(call.startedAt) : null,
     sentiment,
@@ -1137,7 +1176,7 @@ export function CommandCenter() {
   );
   const [activityLimit, setActivityLimit] = useState(8);
   const [widgetPrefs, setWidgetPrefs] = useState(() => readCommandWidgetPrefs());
-  const [widgetPrefsSource, setWidgetPrefsSource] = useState('Local fallback');
+  const [widgetPrefsSource, setWidgetPrefsSource] = useState('Device prefs');
   const [bridgeBattlefieldItems, setBridgeBattlefieldItems] = useState<BattlefieldItem[] | null>(
     null
   );
@@ -1270,7 +1309,7 @@ export function CommandCenter() {
         return refresh();
       })
       .catch((nextError) => {
-        setWidgetPrefsSource('Local fallback');
+        setWidgetPrefsSource('Device prefs');
         showUiToast({
           tone: 'warning',
           title: 'Widget layout saved locally',
@@ -2099,7 +2138,7 @@ export function CommandCenter() {
                     </div>
                   )}
                 </div>
-                <DataSourceCaption endpoint="GET /api/web-search/status" />
+                <DataSourceCaption endpoint="GET /api/brain/web-search/status" />
               </section>
             )}
 

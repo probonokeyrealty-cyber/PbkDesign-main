@@ -5387,6 +5387,19 @@ let postgresHealth = {
   lastErrorAt: null,
   error: '',
 };
+
+const PG_QUERY_RETRY_ATTEMPTS = Math.max(
+  0,
+  Math.min(3, Number(process.env.PBK_PG_QUERY_RETRY_ATTEMPTS || 2))
+);
+const PG_QUERY_RETRY_BASE_DELAY_MS = Math.max(
+  50,
+  Math.min(1000, Number(process.env.PBK_PG_QUERY_RETRY_BASE_DELAY_MS || 200))
+);
+const PG_CONNECTION_TIMEOUT_MS = Math.max(
+  1000,
+  Math.min(15000, Number(process.env.PBK_PG_CONNECTION_TIMEOUT_MS || 8000))
+);
 let skillGovernanceHealth = {
   schemaReady: false,
   migrationReady: false,
@@ -5449,16 +5462,58 @@ function getPostgresHealthMeta() {
   };
 }
 
+function isTransientPostgresConnectionError(error) {
+  const code = String(error?.code || '').trim().toUpperCase();
+  const message = String(error?.message || error || '').toLowerCase();
+  return (
+    ['ECONNREFUSED', 'ECONNRESET', 'ETIMEDOUT', 'EPIPE', 'ENETUNREACH', 'ENOTFOUND'].includes(
+      code
+    ) ||
+    /connect econnrefused|connection refused|connection terminated|terminating connection|timeout|database system is starting up|remaining connection slots|too many clients|server closed the connection/.test(
+      message
+    )
+  );
+}
+
+async function withPostgresConnectionRetry(operation, label = 'postgres') {
+  let lastError = null;
+  for (let attempt = 0; attempt <= PG_QUERY_RETRY_ATTEMPTS; attempt += 1) {
+    try {
+      const result = await operation();
+      if (attempt > 0) markPostgresHealth(true);
+      return result;
+    } catch (error) {
+      lastError = error;
+      const transient = isTransientPostgresConnectionError(error);
+      markPostgresHealth(false, error?.message || error);
+      if (!transient || attempt >= PG_QUERY_RETRY_ATTEMPTS) throw error;
+      const delayMs = PG_QUERY_RETRY_BASE_DELAY_MS * (attempt + 1);
+      console.warn(
+        `[pbk-local-openclaw] ${label} transient connection failure; retrying in ${delayMs}ms:`,
+        error?.message || error
+      );
+      await sleep(delayMs);
+    }
+  }
+  throw lastError;
+}
+
 function getPgPool() {
   if (__pgPool) return __pgPool;
   if (!DATABASE_URL) return null;
   __pgPool = new PgPool({
     connectionString: DATABASE_URL,
     max: Math.max(2, Math.min(20, Number(process.env.PBK_PG_POOL_MAX || 10))),
+    connectionTimeoutMillis: PG_CONNECTION_TIMEOUT_MS,
     // Render Postgres requires TLS but uses a self-signed cert chain.
     // Disable cert validation for managed-DB hostnames; keep it on for localhost.
     ssl: /(localhost|127\.0\.0\.1)/.test(DATABASE_URL) ? false : { rejectUnauthorized: false },
   });
+  const rawQuery = __pgPool.query.bind(__pgPool);
+  const rawConnect = __pgPool.connect.bind(__pgPool);
+  __pgPool.query = (...args) => withPostgresConnectionRetry(() => rawQuery(...args), 'pg query');
+  __pgPool.connect = (...args) =>
+    withPostgresConnectionRetry(() => rawConnect(...args), 'pg connect');
   __pgPool.on('error', (err) => {
     console.error('[pbk-local-openclaw] pg pool error:', err && err.message ? err.message : err);
     markPostgresHealth(false, err?.message || err);
@@ -31275,6 +31330,65 @@ function detectAgentReachStatus({ force = false } = {}) {
     };
     __agentReachStatusCache = { checkedAtMs: now, status };
     return status;
+  }
+}
+
+function runAgentReachDoctor({ timeoutMs = 10000 } = {}) {
+  const status = detectAgentReachStatus({ force: true });
+  const parsed = parseAgentReachCommand(AGENT_REACH_COMMAND);
+  if (!status.installed) {
+    return {
+      ok: false,
+      result: status.status || 'not_installed',
+      status,
+      doctor: null,
+      error: status.error || 'Agent Reach CLI is not installed or not reachable.',
+    };
+  }
+
+  try {
+    const jsonOutput = execFileSync(parsed.file, [...parsed.args, 'doctor', '--json'], {
+      encoding: 'utf8',
+      timeout: Math.max(1000, Math.min(30000, Number(timeoutMs) || 10000)),
+      windowsHide: true,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let parsedDoctor = null;
+    try {
+      parsedDoctor = JSON.parse(jsonOutput);
+    } catch {}
+    return {
+      ok: true,
+      result: 'agent_reach_doctor_ready',
+      status,
+      doctor: parsedDoctor,
+      output: parsedDoctor ? '' : String(jsonOutput || '').slice(0, 12000),
+    };
+  } catch (jsonError) {
+    try {
+      const textOutput = execFileSync(parsed.file, [...parsed.args, 'doctor'], {
+        encoding: 'utf8',
+        timeout: Math.max(1000, Math.min(30000, Number(timeoutMs) || 10000)),
+        windowsHide: true,
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      return {
+        ok: true,
+        result: 'agent_reach_doctor_ready',
+        status,
+        doctor: null,
+        output: String(textOutput || '').slice(0, 12000),
+      };
+    } catch (textError) {
+      return {
+        ok: false,
+        result: 'agent_reach_doctor_failed',
+        status,
+        doctor: null,
+        output: '',
+        error: String(textError?.message || jsonError?.message || 'Agent Reach doctor failed.').slice(0, 1000),
+      };
+    }
   }
 }
 
@@ -65098,6 +65212,30 @@ const server = createServer(async (request, response) => {
       return;
     }
 
+    if (
+      request.method === 'GET' &&
+      matchesPath(pathname, ['/api/diagnostic/agent-reach', '/api/diagnostics/agent-reach'])
+    ) {
+      const diagnostic = runAgentReachDoctor({
+        timeoutMs: url.searchParams.get('timeoutMs') || 10000,
+      });
+      json(response, 200, {
+        ok: true,
+        result: 'agent_reach_diagnostic',
+        installed: Boolean(diagnostic.status?.installed),
+        ready: Boolean(diagnostic.status?.ready && diagnostic.ok),
+        command: diagnostic.status?.command || AGENT_REACH_COMMAND,
+        status: diagnostic.status,
+        doctor: diagnostic.doctor,
+        output: diagnostic.output || '',
+        error: diagnostic.error || '',
+        note: diagnostic.ok
+          ? 'Agent Reach doctor completed. Use this for read-only research readiness only.'
+          : 'Agent Reach is optional; BrowserOS, Tavily, OpenAI Web Search, Deepgram media URL, and manual transcript fallback remain active.',
+      });
+      return;
+    }
+
     if (request.method === 'POST' && pathname === '/api/auth/team/verify') {
       const teamAuth = getTeamAuthMeta(request);
       if (!teamAuth.ok) {
@@ -70529,7 +70667,7 @@ const server = createServer(async (request, response) => {
     json(response, 404, {
       ok: false,
       error: `No route for ${request.method} ${pathname}`,
-      available: ['GET /health', 'GET /state', 'GET /api/tools', 'GET /api/quotas', 'GET/POST /api/settings', 'GET /api/analytics', 'GET /api/analytics/campaign-drilldown', 'GET /api/memory/analytics', 'GET /api/memory/stats', 'GET /api/memory/events', 'GET /api/agent/history', 'GET /api/intelligence/capabilities', 'GET /api/revenue/engine/status', 'POST /api/revenue/engine/propose', 'POST /api/emotion/ser/predict', 'POST /api/emotion/infer-tags', 'POST /api/emotion/learning/interactions', 'POST /api/emotion/learning/improve', 'POST /api/outreach/automations/propose', 'POST /api/self-improvement/evaluate', 'POST /api/voice/emotion-prosody', 'POST /api/interruption/classify', 'POST /api/skills/transfer/recommend', 'POST /api/post-call/coach', 'POST /api/goals/decompose', 'GET/POST /api/agent-decisions', 'POST /api/emotions/call', 'POST /api/emotion/predict', 'GET/POST /api/emotion/policies/experiments', 'POST /api/emotion/policies/assign', 'POST /api/emotion/policies/outcome', 'GET /api/leads/:id/emotional-state', 'GET /api/skills/outcomes', 'GET /api/fleet/outcomes', 'GET /api/objection/playbooks', 'GET/POST /api/lead-scoring/weights', 'GET/POST /api/rex/decisions', 'POST /api/rex/strategist/proposals', 'GET/POST /api/ava/active-memory', 'POST /api/ava/learning/run', 'POST /api/ava/inbound/route', 'POST /api/campaigns/:id/script', 'POST /api/campaigns/:id/sequence', 'POST /api/slack/interactions', 'POST /api/slack/commands', 'POST /api/slack/events', 'GET /api/deepgram/health', 'GET /api/desktop-sidecar/status', 'POST /api/desktop-sidecar/command', 'GET/POST /api/local/commands', 'GET /api/local/commands/pending', 'POST /api/local/commands/:id/result', 'WS /ws/sidecar', 'GET /api/voice/browser/health', 'POST /api/ws/browser/session', 'POST /api/voice/browser/session', 'WS /api/voice/browser/stream', 'WS /ws/browser', 'WS /api/ws/browser', 'POST /api/voice/tts', 'POST /api/voice/tts/stream', 'POST /api/deepgram/transcribe-url', 'GET /api/tooling/status', 'GET /api/vector/capacity', 'POST /api/brain/vector/backfill', 'POST /api/brain/vector/canary', 'GET/POST /api/workflows', 'GET/POST /api/property-data', 'GET /api/brain/email-context', 'POST /brain/ingest', 'POST /api/training/youtube', 'POST /api/evals/youtube-training/run', 'GET/POST /brain/query', 'GET /api/participants/profile', 'GET /api/crm/streak/status', 'GET /api/crm/streak/bootstrap-plan', 'GET /metrics', 'GET /api/contracts/templates', 'GET /api/contracts/paths', 'POST /api/contracts/reload', 'GET/POST /api/appointments', 'GET /api/replies/templates', 'GET /api/lead-transitions', 'POST /api/participants/classify', 'POST /api/documents/pdf', 'POST /api/v1/documents/pdf', 'POST /api/analyzeDeal', 'POST /api/v1/analyzeDeal', 'POST /api/cold-email/send', 'POST /api/replies/handle', 'POST /api/crm/streak/bootstrap', 'POST /api/send-seller-docs', 'POST /api/browser-research/launch', 'GET/POST /api/browser-research/jobs/:jobId', 'POST /api/browser-research/complete', 'GET /api/telnyx/numbers', 'GET /api/telnyx/voice-routing', 'GET /api/instantly/senders', 'GET/POST/PATCH /api/campaigns', 'GET /api/campaigns/lead-sources', 'GET /api/campaigns/templates/ranked', 'POST /api/campaigns/:campaignId/approval', 'POST /api/campaigns/:campaignId/actions', 'POST /api/campaigns/:campaignId/events', 'POST /api/campaigns/run-due', 'POST /invoke', 'POST /events', 'GET/POST /api/admin/tasks', 'GET /api/admin/audit', 'GET /api/admin/persistence', 'GET/POST /api/admin/schema/ensure', 'GET /api/admin/docusign/status', 'POST /api/admin/route', 'POST /api/admin/request', 'GET/POST /api/approvals', 'POST /api/approvals/:id/approve', 'POST /api/approvals/:id/deny', 'GET/POST/DELETE /api/dnc', 'GET/POST /api/calls', 'POST /api/operator/call', 'POST /api/operator/update', 'POST /api/safety/kill-switch', 'POST /api/calls/:id/action', 'GET/POST/PATCH/DELETE /api/messages', 'PATCH /api/messages/:id/archive', 'GET/DELETE /api/recordings/:messageId', 'GET /api/storage/s3/status', 'POST /api/recordings/fixture', 'POST /api/recordings', 'GET/POST /api/contracts', 'POST /api/contracts/draft', 'POST /api/contracts/prepare', 'POST /api/contracts/lawyer-review', 'POST /api/contract/send', 'POST /api/contracts/:id/send', 'POST /api/contracts/:id/remind', 'POST /api/contracts/:id/void', 'GET /api/contracts/:id/pdf', 'POST /api/underwriting/sign', 'GET /api/leads/:id/full', 'PATCH /api/leads/:id', 'GET /api/leads/:id/last-call', 'GET/POST /api/leads/import', 'POST /api/webhooks/booking', 'POST /api/webhooks/external-events', 'POST /api/v1/webhooks/external-events', 'POST /api/webhooks/instantly', 'POST /api/webhooks/email', 'POST /api/webhooks/telnyx', 'POST /api/webhooks/telnyx/inbound', 'WS /api/webhooks/telnyx/media', 'POST /webhooks/telnyx/recording', 'POST /api/webhooks/docusign', 'POST /api/docusign/callback'],
+      available: ['GET /health', 'GET /state', 'GET /api/tools', 'GET /api/quotas', 'GET/POST /api/settings', 'GET /api/analytics', 'GET /api/analytics/campaign-drilldown', 'GET /api/memory/analytics', 'GET /api/memory/stats', 'GET /api/memory/events', 'GET /api/agent/history', 'GET /api/intelligence/capabilities', 'GET /api/revenue/engine/status', 'POST /api/revenue/engine/propose', 'POST /api/emotion/ser/predict', 'POST /api/emotion/infer-tags', 'POST /api/emotion/learning/interactions', 'POST /api/emotion/learning/improve', 'POST /api/outreach/automations/propose', 'POST /api/self-improvement/evaluate', 'POST /api/voice/emotion-prosody', 'POST /api/interruption/classify', 'POST /api/skills/transfer/recommend', 'POST /api/post-call/coach', 'POST /api/goals/decompose', 'GET/POST /api/agent-decisions', 'POST /api/emotions/call', 'POST /api/emotion/predict', 'GET/POST /api/emotion/policies/experiments', 'POST /api/emotion/policies/assign', 'POST /api/emotion/policies/outcome', 'GET /api/leads/:id/emotional-state', 'GET /api/skills/outcomes', 'GET /api/fleet/outcomes', 'GET /api/objection/playbooks', 'GET/POST /api/lead-scoring/weights', 'GET/POST /api/rex/decisions', 'POST /api/rex/strategist/proposals', 'GET/POST /api/ava/active-memory', 'POST /api/ava/learning/run', 'POST /api/ava/inbound/route', 'POST /api/campaigns/:id/script', 'POST /api/campaigns/:id/sequence', 'POST /api/slack/interactions', 'POST /api/slack/commands', 'POST /api/slack/events', 'GET /api/deepgram/health', 'GET /api/desktop-sidecar/status', 'POST /api/desktop-sidecar/command', 'GET/POST /api/local/commands', 'GET /api/local/commands/pending', 'POST /api/local/commands/:id/result', 'WS /ws/sidecar', 'GET /api/voice/browser/health', 'POST /api/ws/browser/session', 'POST /api/voice/browser/session', 'WS /api/voice/browser/stream', 'WS /ws/browser', 'WS /api/ws/browser', 'POST /api/voice/tts', 'POST /api/voice/tts/stream', 'POST /api/deepgram/transcribe-url', 'GET /api/tooling/status', 'GET /api/diagnostics/agent-reach', 'GET /api/vector/capacity', 'POST /api/brain/vector/backfill', 'POST /api/brain/vector/canary', 'GET/POST /api/workflows', 'GET/POST /api/property-data', 'GET /api/brain/email-context', 'POST /brain/ingest', 'POST /api/training/youtube', 'POST /api/evals/youtube-training/run', 'GET/POST /brain/query', 'GET /api/participants/profile', 'GET /api/crm/streak/status', 'GET /api/crm/streak/bootstrap-plan', 'GET /metrics', 'GET /api/contracts/templates', 'GET /api/contracts/paths', 'POST /api/contracts/reload', 'GET/POST /api/appointments', 'GET /api/replies/templates', 'GET /api/lead-transitions', 'POST /api/participants/classify', 'POST /api/documents/pdf', 'POST /api/v1/documents/pdf', 'POST /api/analyzeDeal', 'POST /api/v1/analyzeDeal', 'POST /api/cold-email/send', 'POST /api/replies/handle', 'POST /api/crm/streak/bootstrap', 'POST /api/send-seller-docs', 'POST /api/browser-research/launch', 'GET/POST /api/browser-research/jobs/:jobId', 'POST /api/browser-research/complete', 'GET /api/telnyx/numbers', 'GET /api/telnyx/voice-routing', 'GET /api/instantly/senders', 'GET/POST/PATCH /api/campaigns', 'GET /api/campaigns/lead-sources', 'GET /api/campaigns/templates/ranked', 'POST /api/campaigns/:campaignId/approval', 'POST /api/campaigns/:campaignId/actions', 'POST /api/campaigns/:campaignId/events', 'POST /api/campaigns/run-due', 'POST /invoke', 'POST /events', 'GET/POST /api/admin/tasks', 'GET /api/admin/audit', 'GET /api/admin/persistence', 'GET/POST /api/admin/schema/ensure', 'GET /api/admin/docusign/status', 'POST /api/admin/route', 'POST /api/admin/request', 'GET/POST /api/approvals', 'POST /api/approvals/:id/approve', 'POST /api/approvals/:id/deny', 'GET/POST/DELETE /api/dnc', 'GET/POST /api/calls', 'POST /api/operator/call', 'POST /api/operator/update', 'POST /api/safety/kill-switch', 'POST /api/calls/:id/action', 'GET/POST/PATCH/DELETE /api/messages', 'PATCH /api/messages/:id/archive', 'GET/DELETE /api/recordings/:messageId', 'GET /api/storage/s3/status', 'POST /api/recordings/fixture', 'POST /api/recordings', 'GET/POST /api/contracts', 'POST /api/contracts/draft', 'POST /api/contracts/prepare', 'POST /api/contracts/lawyer-review', 'POST /api/contract/send', 'POST /api/contracts/:id/send', 'POST /api/contracts/:id/remind', 'POST /api/contracts/:id/void', 'GET /api/contracts/:id/pdf', 'POST /api/underwriting/sign', 'GET /api/leads/:id/full', 'PATCH /api/leads/:id', 'GET /api/leads/:id/last-call', 'GET/POST /api/leads/import', 'POST /api/webhooks/booking', 'POST /api/webhooks/external-events', 'POST /api/v1/webhooks/external-events', 'POST /api/webhooks/instantly', 'POST /api/webhooks/email', 'POST /api/webhooks/telnyx', 'POST /api/webhooks/telnyx/inbound', 'WS /api/webhooks/telnyx/media', 'POST /webhooks/telnyx/recording', 'POST /api/webhooks/docusign', 'POST /api/docusign/callback'],
     });
   } catch (error) {
     const statusCode = Number.isInteger(error?.statusCode)

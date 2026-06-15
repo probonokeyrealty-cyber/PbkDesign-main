@@ -16,6 +16,13 @@ silent-error controls agree that PBK can safely operate.
 | `GET /api/agents/health`        | Agent readiness overlay.                                   |
 | `GET /api/system/source-labels` | Data freshness and source truth labels.                    |
 
+## Architecture Map
+
+Use [production-architecture.md](./production-architecture.md) to separate
+required production dependencies from optional future providers. Solid-line
+dependencies must be healthy or honestly degraded before launch; dotted optional
+providers are never launch blockers.
+
 ## Required Readiness
 
 Production is ready only when:
@@ -91,4 +98,5 @@ Related files:
 - `scripts/production-maturity-loop.mjs`
 - `scripts/production-maturity-loop-smoke.mjs`
 - `scripts/silent-error-governance.mjs`
+- `docs/operations/production-architecture.md`
 - `docs/operations/runbook.md`

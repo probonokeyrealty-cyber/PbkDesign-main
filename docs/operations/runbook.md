@@ -3,6 +3,10 @@
 Use this runbook when any Command Center control, live call, provider action, or
 agent response feels stale, silent, duplicated, or incorrect.
 
+Use [production-architecture.md](./production-architecture.md) first when you
+need to decide whether a failure is in the required core path or an optional
+provider slot.
+
 ## Fast Debug Order
 
 1. Check bridge health: `GET /health`.
@@ -93,4 +97,5 @@ Related files:
 - `PBK_HEALTH_MONITORING_RUNBOOK.md`
 - `TROUBLESHOOTING.md`
 - `RELEASE_CHECKLIST.md`
+- `docs/operations/production-architecture.md`
 - `docs/operations/production-readiness.md`

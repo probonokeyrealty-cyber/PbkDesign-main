@@ -145,6 +145,13 @@ assert(
   /result: 'skill_authority_unavailable'[\s\S]*failClosed: true/.test(bridge),
   'Skill runtime authority failure must be explicit and fail closed.'
 );
+assert(
+  /function isTransientPostgresConnectionError/.test(bridge) &&
+    /withPostgresConnectionRetry/.test(bridge) &&
+    /__pgPool\.query = \(\.\.\.args\) => withPostgresConnectionRetry/.test(bridge) &&
+    /connectionTimeoutMillis: PG_CONNECTION_TIMEOUT_MS/.test(bridge),
+  'Render Postgres transient connection refusals must be retried at the pool boundary.'
+);
 
 const docusignSecret = 'pbk-docusign-test-secret';
 const docusignPayload = Buffer.from(

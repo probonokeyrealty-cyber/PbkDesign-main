@@ -4,6 +4,10 @@ This folder documents the agent and capability boundaries that are live in PBK. 
 canonical runtime catalog is `GET /api/agents/registry`; health is reported by
 `GET /api/agents/health`. Agent Fleet should treat those bridge responses as the
 source of truth instead of assuming that a locally defined card is callable.
+The production dependency map is documented in
+[production-architecture.md](../operations/production-architecture.md); every
+agent action should flow through the Render OpenClaw Bridge before it reaches a
+provider, memory, or durable state.
 
 ## Invocation contract
 

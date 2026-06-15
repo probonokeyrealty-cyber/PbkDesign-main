@@ -49,6 +49,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       libxrender1 \
       libxss1 \
       libxtst6 \
+      bash \
+      curl \
+      ffmpeg \
+      git \
       make \
       g++ \
       python3 \
@@ -102,7 +106,14 @@ RUN python3 -m venv /app/.venv \
   && /app/.venv/bin/python -m pip install --no-cache-dir \
       homeharvest==0.8.18 \
       'scrapling[fetchers]==0.4.7' \
-  && /app/.venv/bin/scrapling install
+      yt-dlp==2026.6.9 \
+      'https://github.com/Panniantong/agent-reach/archive/refs/tags/v1.5.0.zip' \
+  && /app/.venv/bin/scrapling install \
+  && (timeout 90s /app/.venv/bin/agent-reach install --env=auto || true)
+
+# Make Python-based operational tools discoverable by the Node bridge. This is
+# what lets PBK_AGENT_REACH_COMMAND default to "agent-reach" in hosted Render.
+ENV PATH="/app/.venv/bin:${PATH}"
 
 # Copy the bridge source last so dependency installation caches across rebuilds.
 COPY scripts/pbk-deepgram-client.mjs ./scripts/pbk-deepgram-client.mjs

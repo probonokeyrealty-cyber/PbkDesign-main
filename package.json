@@ -95,7 +95,7 @@
     "test:emotion": "node ./scripts/emotion-pipeline-smoke.mjs && node ./scripts/emotion-world-model-smoke.mjs && node ./scripts/emotion-world-model-training-smoke.mjs && npm run test:emotional-learning-loop",
     "test:emotional-learning-loop": "node ./scripts/emotional-learning-loop-smoke.mjs",
     "test:live-data-audit": "node ./scripts/live-data-audit.mjs",
-    "test:ui-actions": "node ./scripts/ui-action-wiring-audit.mjs && node ./scripts/ui-loading-feedback-smoke.mjs",
+    "test:ui-actions": "node ./scripts/ui-action-wiring-audit.mjs && node ./scripts/ui-loading-feedback-smoke.mjs && node ./scripts/runtime-bridge-error-smoke.mjs",
     "test:intelligence-scorecard": "node ./scripts/intelligence-scorecard-smoke.mjs",
     "test:ui-error-loading-validation": "node ./scripts/ui-error-loading-validation-smoke.mjs",
     "test:ui-feedback-truncation-responsive": "node ./scripts/ui-feedback-truncation-responsive-smoke.mjs",

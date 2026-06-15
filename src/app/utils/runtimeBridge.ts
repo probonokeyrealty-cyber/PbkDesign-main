@@ -1322,6 +1322,77 @@ export function buildRuntimeUrl(path: string) {
   return buildUrl(path);
 }
 
+function bridgeErrorValue(value: unknown) {
+  if (value === undefined || value === null) return '';
+  if (typeof value === 'string') return value.trim();
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+  return '';
+}
+
+function humanizeBridgeCode(value = '') {
+  return String(value || '')
+    .trim()
+    .replace(/[_-]+/g, ' ')
+    .replace(/\s+/g, ' ');
+}
+
+function extractBridgeErrorMessage(parsed: unknown, status: number) {
+  const fallback = `Bridge request failed (${status})`;
+  if (!parsed || typeof parsed !== 'object') {
+    const text = bridgeErrorValue(parsed);
+    return text || fallback;
+  }
+
+  const record = parsed as Record<string, unknown>;
+  const providerResult =
+    record.providerResult && typeof record.providerResult === 'object'
+      ? (record.providerResult as Record<string, unknown>)
+      : {};
+  const safetyValidation =
+    record.safetyValidation && typeof record.safetyValidation === 'object'
+      ? (record.safetyValidation as Record<string, unknown>)
+      : {};
+  const qaValidation =
+    record.qaValidation && typeof record.qaValidation === 'object'
+      ? (record.qaValidation as Record<string, unknown>)
+      : {};
+  const event =
+    record.event && typeof record.event === 'object'
+      ? (record.event as Record<string, unknown>)
+      : {};
+  const eventPayload =
+    event.payload && typeof event.payload === 'object'
+      ? (event.payload as Record<string, unknown>)
+      : {};
+
+  const result = bridgeErrorValue(record.result || providerResult.result || record.outcome);
+  const reason = bridgeErrorValue(
+    record.error ||
+      record.message ||
+      record.reason ||
+      record.verbiage ||
+      providerResult.error ||
+      providerResult.message ||
+      providerResult.reason ||
+      safetyValidation.error ||
+      safetyValidation.message ||
+      qaValidation.error ||
+      qaValidation.message ||
+      eventPayload.reason ||
+      eventPayload.result
+  );
+
+  if (result === 'provider_delivery_unknown' || result === 'reconciliation_required') {
+    return reason
+      ? `${reason} Verify provider delivery before retrying.`
+      : 'Provider delivery is unknown. Verify Telnyx/Instantly delivery before retrying.';
+  }
+
+  if (reason) return reason;
+  if (result) return `${fallback}: ${humanizeBridgeCode(result)}.`;
+  return fallback;
+}
+
 export async function bridgeBlobRequest({
   method = 'GET',
   path,
@@ -1351,7 +1422,7 @@ export async function bridgeBlobRequest({
       let message = `Bridge request failed (${response.status})`;
       try {
         const payload = text ? JSON.parse(text) : null;
-        message = payload?.message || payload?.error || message;
+        message = extractBridgeErrorMessage(payload, response.status);
       } catch {
         if (text) message = text;
       }
@@ -1415,11 +1486,7 @@ export async function bridgeRequest<T = unknown>({
   }
 
   if (!response.ok) {
-    throw new Error(
-      typeof parsed === 'object' && parsed && 'error' in (parsed as Record<string, unknown>)
-        ? String((parsed as Record<string, unknown>).error)
-        : `Bridge request failed (${response.status})`
-    );
+    throw new Error(extractBridgeErrorMessage(parsed, response.status));
   }
 
   return parsed as T;

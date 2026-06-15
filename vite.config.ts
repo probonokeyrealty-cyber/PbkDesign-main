@@ -168,6 +168,26 @@ export default defineConfig({
         analyzer: path.resolve(__dirname, 'analyzer.html'),
         shell: path.resolve(__dirname, 'index.shell.html'),
       },
+      output: {
+        manualChunks(id) {
+          if (!id.includes('node_modules')) return undefined
+          if (/[\\/]node_modules[\\/](react|react-dom|react-router)[\\/]/.test(id)) {
+            return 'vendor-react'
+          }
+          if (
+            /[\\/]node_modules[\\/](@mui|@emotion|@radix-ui|lucide-react|cmdk|vaul|sonner)[\\/]/.test(id)
+          ) {
+            return 'vendor-ui'
+          }
+          if (/[\\/]node_modules[\\/](recharts|react-slick|embla-carousel-react)[\\/]/.test(id)) {
+            return 'vendor-charts'
+          }
+          if (/[\\/]node_modules[\\/](@huggingface|onnxruntime-node|@langchain)[\\/]/.test(id)) {
+            return 'vendor-ai'
+          }
+          return undefined
+        },
+      },
     },
   },
 })

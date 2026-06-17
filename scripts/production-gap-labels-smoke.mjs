@@ -20,6 +20,18 @@ const report = buildProductionGapLabelsReport({
       recordCount: 3,
     },
     {
+      id: 'founder-work-queue',
+      label: 'Founder work queue',
+      endpoint: 'GET /api/founder/work-queue',
+      status: 'live',
+      readiness: 'ready',
+      source: 'render-postgres',
+      dataState: 'stale',
+      stalenessMs: 48 * 60 * 60 * 1000,
+      recordCount: 2,
+      note: 'Queue is live but no new operator work arrived during the recency window.',
+    },
+    {
       id: 'campaigns',
       label: 'Campaigns',
       endpoint: 'GET /api/campaigns',
@@ -87,6 +99,10 @@ assert.equal(report.ok, true, 'Production gap report should be ok.');
 assert.equal(report.summary.blocking, 0, 'Fixture should have no launch blockers.');
 assert(report.gaps.some((gap) => gap.id === 'release-netlify'), 'Netlify metadata gap should be labeled.');
 assert(report.gaps.some((gap) => gap.id === 'source-campaigns'), 'Live-but-empty campaign data should be labeled.');
+const staleLiveGap = report.gaps.find((gap) => gap.id === 'source-founder-work-queue');
+assert(staleLiveGap, 'Live-ready stale source should still be labeled.');
+assert.equal(staleLiveGap.controlLive, true, 'Live-ready stale source should keep controlLive=true.');
+assert.equal(staleLiveGap.blocking, false, 'Live-ready stale source should not be a false launch blocker.');
 assert(report.gaps.some((gap) => gap.id === 'tooling-agentreach'), 'Agent Reach not-live state should be labeled.');
 assert(report.gaps.some((gap) => gap.id === 'tooling-voicefallback'), 'Voice fallback not-live state should be labeled.');
 assert(report.gaps.some((gap) => gap.id === 'provider-batchdata'), 'BatchData optional provider gap should be labeled.');

@@ -102,6 +102,7 @@ function sourceGap(item = {}) {
   const isDegraded = readiness === 'degraded';
   const isStale = dataState === 'stale';
   const isEmpty = dataState === 'empty';
+  const isLiveReady = status === 'live' && readiness === 'ready';
   if (!isFallback && !isOffline && !isDegraded && !isStale && !isEmpty) return null;
   return buildGap({
     id: `source-${item.id || endpoint}`,
@@ -124,12 +125,16 @@ function sourceGap(item = {}) {
       degradedReason ||
       (isEmpty
         ? 'Endpoint is live, but no records exist yet.'
+        : isStale && isLiveReady
+          ? 'Endpoint is live and reachable, but its latest business record is older than the freshness window.'
         : item.note || 'Source needs operator attention.'),
     operatorAction: isEmpty
       ? 'No code action required. Create or ingest records when this surface is ready for real data.'
+      : isStale && isLiveReady
+        ? 'No wiring fix required. Create or receive a fresh event if the launch checklist needs recency proof for this surface.'
       : 'Fix the canonical endpoint or data source before relying on this control.',
     optional: isEmpty,
-    blocking: isOffline || isFallback || isStale,
+    blocking: isOffline || isFallback || (isStale && !isLiveReady),
     controlLive: status === 'live' && readiness === 'ready',
     metadata: item,
   });

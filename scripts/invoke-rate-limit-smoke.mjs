@@ -119,6 +119,13 @@ assert(
     /team_auth_rate_limited/.test(bridge),
   'Team passcode verification must have a dedicated rate limit.'
 );
+const teamAuthLimiterBlock =
+  bridge.match(/const teamAuthRateLimiter = createInvokeRateLimiter\(\{[\s\S]*?\n\}\);/)?.[0] || '';
+assert(
+  teamAuthLimiterBlock &&
+    !/failClosedOnRedisError:\s*true/.test(teamAuthLimiterBlock),
+  'Team passcode login must use bounded memory fallback when Redis is unavailable so operators are not locked out.'
+);
 assert(
   /function hasTeamAuthCredentials/.test(bridge) &&
     (bridge.match(/const teamAuthPresented = hasTeamAuthCredentials\(request, body\);/g) || []).length >= 2 &&

@@ -747,6 +747,12 @@ const PUBLIC_PATHS = new Set([
   // lead capture. It never invokes provider-write or admin tools.
   '/api/public/ava-chat',
   '/public/ava-chat',
+  // The hosted Command Center shell exchanges the team passcode for a short
+  // session token here. These endpoints must reach their own passcode/session
+  // validators without exposing the raw bridge bearer key to the browser.
+  '/api/auth/team/status',
+  '/api/auth/team',
+  '/api/auth/team/verify',
 ]);
 
 const PUBLIC_READ_PATHS = new Set([
@@ -16533,9 +16539,9 @@ function inferAvaDealPathDecision(params = {}) {
   const best = ranked[0] || { path: 'cash', label: 'Cash Offer', score: 0, evidence: [] };
   const pathLockEvidence = hasAvaLivePathLockEvidence(text, bant, best);
   const pathLockBlocked = isAvaLivePathLockBlockedTranscript(text);
-  const forcedDefault = !pathLockedAlready && !pathLockBlocked && pathLockEvidence && probeTurnCount >= PBK_DEAL_PATH_PROBE_MAX_TURNS && best.score >= 0.4 && best.score < PBK_DEAL_PATH_LOCK_CONFIDENCE;
-  const selectedPath = pathLockedAlready && lockedPath ? lockedPath : forcedDefault ? 'cash' : best.path;
-  const confidence = pathLockedAlready && lockedPath ? 0.98 : forcedDefault ? 0.46 : best.score;
+  const maxProbeReachedWithoutLock = !pathLockedAlready && !pathLockBlocked && pathLockEvidence && probeTurnCount >= PBK_DEAL_PATH_PROBE_MAX_TURNS && best.score >= 0.4 && best.score < PBK_DEAL_PATH_LOCK_CONFIDENCE;
+  const selectedPath = pathLockedAlready && lockedPath ? lockedPath : best.path;
+  const confidence = pathLockedAlready && lockedPath ? 0.98 : best.score;
   const pathLocked = pathLockedAlready || (!pathLockBlocked && pathLockEvidence && confidence >= PBK_DEAL_PATH_LOCK_CONFIDENCE);
   const closePath = pathLocked && selectedPath;
   const nextProbeQuestion = closePath ? '' : getAvaPathProbeQuestion(selectedPath || best.path || 'cash');
@@ -16553,9 +16559,10 @@ function inferAvaDealPathDecision(params = {}) {
     rankedPaths: ranked.slice(0, 5),
     nextProbeQuestion,
     scriptTrigger,
-    rule: closePath ? 'Path locked: stop broad probing, keep the script lane clean, and move through that path toward the next safe close.' : pathLockBlocked ? 'Path not locked: seller turn was setup, acknowledgement, repeat complaint, or address meta. Answer the immediate context issue before routing.' : 'Probe one missing fact, then re-score. Do not present a path trigger until confidence and real seller motivation or deal facts lock the path.',
+    rule: closePath ? 'Path locked: stop broad probing, keep the script lane clean, and move through that path toward the next safe close.' : pathLockBlocked ? 'Path not locked: seller turn was setup, acknowledgement, repeat complaint, or address meta. Answer the immediate context issue before routing.' : maxProbeReachedWithoutLock ? 'Probe limit reached but confidence is below lock threshold: preserve the best-scored path for the next question without defaulting to cash or presenting a path trigger.' : 'Probe one missing fact, then re-score. Do not present a path trigger until confidence and real seller motivation or deal facts lock the path.',
     pathLockEvidence,
     pathLockBlocked,
+    maxProbeReachedWithoutLock,
   };
   const guarded = guardAvaAgentOnlyPathDecision(decision, {
     ...params,
@@ -38362,7 +38369,7 @@ function hasExplicitSellerBinding(params = {}) {
 }
 
 function isTrustedManualConversationProviderSend(toolName = '', params = {}) {
-  if (!['telnyx_sms', 'sendColdEmail'].includes(toolName)) return false;
+  if (!['telnyx_sms', 'sendColdEmail', 'telnyx_call'].includes(toolName)) return false;
   if (params.manual !== true || params.manualSend !== true) return false;
   const source = String(params.source || params.requestSource || params.request_source || '')
     .trim()
@@ -38379,6 +38386,8 @@ function isTrustedManualConversationProviderSend(toolName = '', params = {}) {
       'unified_inbox_manual',
       'unified_conversation_manual',
       'lead_portal_manual',
+      'leads_page_manual',
+      'call_floor_manual',
     ].includes(source) ||
     /operator|manual|unified-inbox|command center|lead portal/.test(requestedBy)
   );
@@ -55345,7 +55354,6 @@ const teamAuthRateLimiter = createInvokeRateLimiter({
   windowMs: TEAM_AUTH_RATE_LIMIT_WINDOW_MS,
   getRedisClient: getSharedRedisClient,
   makeRedisKey: (identity) => redisKey('rate-limit', 'team-auth', identity),
-  failClosedOnRedisError: true,
 });
 
 async function checkInvokeRateLimit(request) {
@@ -59514,6 +59522,107 @@ function isAvaLiveUrgentSalesIntent(intent = {}) {
   );
 }
 
+function getAvaLivePathKey(session = {}, contextCall = null) {
+  const ledger =
+    session?.avaLiveFactLedger && typeof session.avaLiveFactLedger === 'object'
+      ? session.avaLiveFactLedger
+      : {};
+  const pathDecision = session?.pathDecision && typeof session.pathDecision === 'object' ? session.pathDecision : {};
+  const rawPath = [
+    session?.selectedPath,
+    session?.selected_path,
+    session?.identifiedPath,
+    session?.identified_path,
+    session?.preferredPath,
+    session?.preferred_path,
+    session?.sellerPreferredPath,
+    session?.seller_preferred_path,
+    pathDecision.selectedPath,
+    pathDecision.selected_path,
+    pathDecision.path,
+    pathDecision.selectedPathLabel,
+    contextCall?.selectedPath,
+    contextCall?.selected_path,
+    contextCall?.identifiedPath,
+    contextCall?.path,
+    contextCall?.dealPath,
+    contextCall?.preferredPath,
+    contextCall?.preferred_path,
+    ledger.preferredPath,
+    ledger.preferred_path,
+  ].find((value) => String(value || '').trim());
+  return normalizePbkDealPath(rawPath || '', '');
+}
+
+function buildAvaLivePathLanguage(session = {}, contextCall = null) {
+  const path = getAvaLivePathKey(session, contextCall);
+  const neutral = {
+    path,
+    number: 'real number',
+    canMeet: 'the right deal path can meet it',
+    canWork: 'the right deal path can work',
+    getClose: 'the right deal path can get close',
+    runCorrectly: 'price the right deal path correctly',
+    isReal: 'the right deal path is realistic',
+  };
+  if (path === 'rbp') {
+    return {
+      path,
+      number: 'retail-buyer number',
+      canMeet: 'the Retail Buyer Program can meet it',
+      canWork: 'the Retail Buyer Program can work',
+      getClose: 'the Retail Buyer Program can get close',
+      runCorrectly: 'price the Retail Buyer Program correctly',
+      isReal: 'the Retail Buyer Program is realistic',
+    };
+  }
+  if (path === 'cf') {
+    return {
+      path,
+      number: 'terms-based number',
+      canMeet: 'the creative finance path can meet it',
+      canWork: 'creative finance can work',
+      getClose: 'creative finance can get close',
+      runCorrectly: 'structure the creative finance path correctly',
+      isReal: 'the creative finance path is realistic',
+    };
+  }
+  if (path === 'mt') {
+    return {
+      path,
+      number: 'payment-and-equity structure',
+      canMeet: 'the mortgage takeover path can meet it',
+      canWork: 'the mortgage takeover path can work',
+      getClose: 'the mortgage takeover path can get close',
+      runCorrectly: 'price the mortgage takeover path correctly',
+      isReal: 'the mortgage takeover path is realistic',
+    };
+  }
+  if (path === 'land') {
+    return {
+      path,
+      number: 'builder-backed land number',
+      canMeet: 'the land path can meet it',
+      canWork: 'the land path can work',
+      getClose: 'the land path can get close',
+      runCorrectly: 'price the land path correctly',
+      isReal: 'the land path is realistic',
+    };
+  }
+  if (path === 'cash') {
+    return {
+      path,
+      number: 'cash-offer number',
+      canMeet: 'the cash offer can meet it',
+      canWork: 'the cash offer can work',
+      getClose: 'the cash offer can get close',
+      runCorrectly: 'price the cash offer correctly',
+      isReal: 'the cash offer is realistic',
+    };
+  }
+  return neutral;
+}
+
 function buildAvaLiveSalesNextMove({ session = {}, contextCall = null, transcript = '', intent = {}, opener = '' } = {}) {
   const clean = normalizeTelnyxRepairTranscript(transcript);
   const fullAddressKnown = Boolean(String(contextCall?.address || session.address || '').trim());
@@ -59521,6 +59630,7 @@ function buildAvaLiveSalesNextMove({ session = {}, contextCall = null, transcrip
   const desiredNetKnown = Boolean(session.sellerAskingPrice || session.desiredNet || session.bant?.budget || intent.money);
   const regionLine = session.partialAddress ? ` I have ${session.partialAddress}.` : '';
   const prefix = opener || '';
+  const pathLanguage = buildAvaLivePathLanguage(session, contextCall);
   if (intent.money) {
     session.sellerAskingPrice = intent.money;
     session.desiredNet = session.desiredNet || intent.money;
@@ -59532,20 +59642,20 @@ function buildAvaLiveSalesNextMove({ session = {}, contextCall = null, transcrip
     return `${prefix}I do not have the full address safely enough to price it yet, and I do not want to pull the wrong property. Read me the street address once, then I can move straight to condition and the net number.`;
   }
   if (intent.intent === 'price_already_given') {
-    return `${prefix}You are right, and I am not going to make you repeat the whole story.${desiredNetKnown ? ` I have your number around ${session.sellerAskingPrice || session.desiredNet}.` : ' I heard that price matters, but I do not have the actual number clearly.'} ${fullAddressKnown ? 'Tell me the current condition so I can see if our cash number can meet it.' : 'What is the full street address so I can price it correctly?'}`;
+    return `${prefix}You are right, and I am not going to make you repeat the whole story.${desiredNetKnown ? ` I have your number around ${session.sellerAskingPrice || session.desiredNet}.` : ' I heard that price matters, but I do not have the actual number clearly.'} ${fullAddressKnown ? `Tell me the current condition so I can see if ${pathLanguage.canMeet}.` : 'What is the full street address so I can price it correctly?'}`;
   }
   if (intent.intent === 'repeat_complaint') {
-    return `${prefix}You are right, I repeated myself. Let us move forward.${regionLine} ${fullAddressKnown ? 'What number are you trying to walk away with, and what condition should I price in?' : 'What is the full street address so I can run the cash lane correctly?'}`;
+    return `${prefix}You are right, I repeated myself. Let us move forward.${regionLine} ${fullAddressKnown ? 'What number are you trying to walk away with, and what condition should I price in?' : `What is the full street address so I can ${pathLanguage.runCorrectly}?`}`;
   }
   if (intent.intent === 'deal_momentum') {
-    return `${prefix}Yes, let us get a real deal going.${regionLine} ${fullAddressKnown && conditionKnown ? 'Give me the net number you need, and I will tell you straight if the cash lane can work.' : fullAddressKnown ? 'Walk me through condition: roof, HVAC, foundation, and anything a buyer would complain about.' : 'First give me the full street address, then I can run condition and numbers instead of circling.'}`;
+    return `${prefix}Yes, let us get a real deal going.${regionLine} ${fullAddressKnown && conditionKnown ? `Give me the net number you need, and I will tell you straight if ${pathLanguage.canWork}.` : fullAddressKnown ? 'Walk me through condition: roof, HVAC, foundation, and anything a buyer would complain about.' : 'First give me the full street address, then I can run condition and numbers instead of circling.'}`;
   }
   if (intent.intent === 'offer_request') {
     const sellerTarget = session.sellerAskingPrice || session.desiredNet || session.bant?.budget || '';
     if (sellerTarget) {
-      return `${prefix}I have your target around ${sellerTarget}, and I am not ignoring it. I cannot responsibly promise that number until I verify the exact property and condition.${regionLine} ${fullAddressKnown ? 'Walk me through the major repairs or anything a buyer would complain about, then I can tell you if the cash lane can get close.' : 'Give me the full street address once, then I can price whether that target is realistic instead of guessing.'}`;
+      return `${prefix}I have your target around ${sellerTarget}, and I am not ignoring it. I cannot responsibly promise that number until I verify the exact property and condition.${regionLine} ${fullAddressKnown ? `Walk me through the major repairs or anything a buyer would complain about, then I can tell you if ${pathLanguage.getClose}.` : 'Give me the full street address once, then I can price whether that target is realistic instead of guessing.'}`;
     }
-    return `${prefix}I can get you to a real cash number, but I will not fake one without the facts.${regionLine} ${fullAddressKnown && conditionKnown ? 'What number would make this worth saying yes today?' : fullAddressKnown ? 'What condition should I price in: roof, HVAC, foundation, tenants, and major repairs?' : 'What is the full street address?'}`;
+    return `${prefix}I can get you to a ${pathLanguage.number}, but I will not fake one without the facts.${regionLine} ${fullAddressKnown && conditionKnown ? 'What number would make this worth saying yes today?' : fullAddressKnown ? 'What condition should I price in: roof, HVAC, foundation, tenants, and major repairs?' : 'What is the full street address?'}`;
   }
   if (intent.intent === 'timeline_or_speed') {
     session.sellerPriority = 'speed';
@@ -59555,7 +59665,7 @@ function buildAvaLiveSalesNextMove({ session = {}, contextCall = null, transcrip
   }
   if (/\b(all of them|all three|all four|everything|all that)\b/i.test(clean)) {
     session.sellerPriority = 'balanced';
-    return `${prefix}That makes sense: price, speed, and certainty all matter.${regionLine} ${fullAddressKnown ? 'Give me the condition and the number you need, and I will tell you if the cash lane is real.' : 'What is the full street address so I can stop guessing and price the cash lane correctly?'}`;
+    return `${prefix}That makes sense: price, speed, and certainty all matter.${regionLine} ${fullAddressKnown ? `Give me the condition and the number you need, and I will tell you if ${pathLanguage.isReal}.` : `What is the full street address so I can stop guessing and ${pathLanguage.runCorrectly}?`}`;
   }
   return '';
 }
@@ -59801,7 +59911,7 @@ function buildRotatedBantPhrase(field = '', opener = '') {
 
 function avoidRepeatedAvaLiveReply(session = {}, proposed = '', fallback = '') {
   const cleanProposed = normalizeAvaVoiceReplyText(proposed, fallback || proposed);
-  if (/\b(you'?re right,? i repeated myself|let us get a real deal going|i can get you to a real cash number|i will not fake one without the facts|what is the full street address|what number would make this worth saying yes|what condition should i price in)\b/i.test(cleanProposed)) {
+  if (/\b(you'?re right,? i repeated myself|let us get a real deal going|i can get you to a (?:real number|cash-offer number|retail-buyer number|terms-based number|payment-and-equity structure|builder-backed land number)|i will not fake one without the facts|what is the full street address|what number would make this worth saying yes|what condition should i price in)\b/i.test(cleanProposed)) {
     return { text: cleanProposed, adjusted: false, reason: 'sales_progression_protected' };
   }
   if (!hasAvaRepeatedLiveReply(session, cleanProposed)) {
@@ -59812,7 +59922,7 @@ function avoidRepeatedAvaLiveReply(session = {}, proposed = '', fallback = '') {
     return { text: cleanFallback, adjusted: true, reason: 'fallback_not_repeated' };
   }
   const role = normalizeAvaCallerRole(session.callerRole || session.pathDecision?.callerRole?.role || '');
-  const path = normalizePbkDealPath(session.selectedPath || session.pathDecision?.selectedPath || session.identifiedPath || '', 'cash');
+  const path = getAvaLivePathKey(session, null);
   const intent = getReplyIntentFingerprint(cleanProposed || cleanFallback);
   const authorityKnown = Boolean(session.authorityConfirmed || session.decisionMakerConfirmed || session.isOwnerCaller || normalizeAvaCallerRole(session.callerRole || '') === PBK_CALLER_ROLES.OWNER);
   const variants = intent === 'role_probe' && authorityKnown ? ['I have you as the owner. What is the full street address so I can price this correctly?', 'Perfect, I have you as the decision maker. What number are you trying to walk away with?'] : intent === 'role_probe' ? ['I may have asked that clumsily. Are you the owner, the agent, or helping the owner make the decision?', 'No worries. I can keep this simple: are you able to make decisions on the property today?'] : intent === 'condition_timeline_number_probe' ? ['I got it: the number is the issue. What number would make this worth your time today?', 'Instead of me asking the same thing again, give me the number you need and I will tell you straight if the math can work.'] : role === PBK_CALLER_ROLES.AGENT ? ['That helps. Is the bigger issue days on market, condition, seller timeline, or the number they need?', 'Let me narrow it down for you: is this a listing problem, a condition problem, or a seller-expectation problem?'] : path === 'land' ? ['That helps. Is the main unknown access, utilities, zoning, or your timeline?', 'Let me narrow this down: is the land buildable as-is, or is there a zoning or utility issue?'] : ['That helps. What is the biggest thing I need to solve for you: repairs, timeline, payoff, or net number?', 'Let me get out of the loop. What would make this feel simple enough to keep talking: speed, certainty, or price?'];
@@ -62985,6 +63095,7 @@ const server = createServer(async (request, response) => {
       json(response, 200, {
         ok: true,
         configured: Boolean(TEAM_PASSCODE),
+        authRequired: Boolean(TEAM_PASSCODE),
         permissions: getTeamPermissions(),
         sessionTtlMs: TEAM_SESSION_TTL_MS,
       });
@@ -68674,7 +68785,14 @@ const server = createServer(async (request, response) => {
 
     if (request.method === 'POST' && pathname === '/api/calls') {
       const body = await readBody(request);
-      const routeTool = await executeRouteToolHandler('telnyx_call', body, 'calls-route');
+      const manualCallBody = {
+        ...body,
+        manual: body.manual === false ? false : true,
+        manualSend: body.manualSend === false ? false : true,
+        requestedBy: body.requestedBy || body.requested_by || body.actor || 'PBK operator',
+        source: body.source || 'command_center_manual',
+      };
+      const routeTool = await executeRouteToolHandler('telnyx_call', manualCallBody, 'calls-route');
       json(response, getRouteToolStatusCode(routeTool, { failureStatus: 409 }), buildRouteToolResponse(routeTool));
       return;
     }
@@ -70225,6 +70343,13 @@ const server = createServer(async (request, response) => {
 
     if (request.method === 'POST' && pathname === '/api/lead/send-message') {
       const body = await readBody(request);
+      const manualBody = {
+        ...body,
+        manual: body.manual === false ? false : true,
+        manualSend: body.manualSend === false ? false : true,
+        requestedBy: body.requestedBy || body.requested_by || body.actor || 'PBK operator',
+        source: body.source || 'lead_portal_manual',
+      };
       const context = findLeadContext(body);
       const channel =
         String(body.channel || 'sms')
@@ -70239,7 +70364,7 @@ const server = createServer(async (request, response) => {
       }
       if (channel === 'sms') {
         const routeTool = await executeRouteToolHandler('telnyx_sms', {
-          ...body,
+          ...manualBody,
           ...context,
           body: messageBody,
         }, 'lead-send-message');
@@ -70257,7 +70382,7 @@ const server = createServer(async (request, response) => {
       const cleanText = messageBody.replace(/^subject:\s*.+\r?\n*/i, '').trim();
       const recipient = body.email || context.email || inferSkipTraceContact(context).email;
       const routeTool = await executeRouteToolHandler('sendColdEmail', {
-        ...body,
+        ...manualBody,
         ...context,
         email: recipient,
         subject,

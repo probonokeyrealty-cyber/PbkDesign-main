@@ -1161,7 +1161,7 @@ function saveRuntimeTeamSession(session: RuntimeTeamSession) {
 }
 
 export function isRuntimeTeamAuthRequired() {
-  return isNetlifyHostedRuntimeShell();
+  return isHostedRuntimeShell();
 }
 
 export function getRuntimeConfig(): RuntimeConfig {
@@ -1174,10 +1174,10 @@ export function getRuntimeConfig(): RuntimeConfig {
 
   if (fromHost?.endpoint) return fromHost;
 
-  if (isNetlifyHostedRuntimeShell()) {
-    // Production and deploy previews should always use the same-origin Netlify
-    // proxy first. It keeps the bridge API key server-side and avoids mobile
-    // browsers getting stuck on stale localhost/LAN/direct-Render settings.
+  if (isHostedRuntimeShell()) {
+    // Production and deploy previews should always use the same-origin
+    // bridge/proxy first. It keeps the bridge API key server-side and avoids
+    // mobile browsers getting stuck on stale localhost/LAN/direct settings.
     return { endpoint: window.location.origin };
   }
 
@@ -1232,7 +1232,7 @@ function isAuthOptionalRuntimePath(path = '') {
 
 function hasServerSideRuntimeAuth() {
   if (typeof window === 'undefined') return false;
-  if (!isNetlifyHostedRuntimeShell()) return false;
+  if (!isHostedRuntimeShell()) return false;
   const config = getRuntimeConfig();
   const endpoint = String(config.endpoint || '').replace(/\/+$/g, '');
   const origin = String(window.location.origin || '').replace(/\/+$/g, '');
@@ -1515,6 +1515,16 @@ function isNetlifyHostedRuntimeShell() {
   return host.includes('pbkcommandcenter') || host.endsWith('.netlify.app');
 }
 
+function isBridgeHostedRuntimeShell() {
+  if (typeof window === 'undefined') return false;
+  const host = String(window.location.hostname || '').toLowerCase();
+  return host.includes('pbk-openclaw-bridge') || host.endsWith('.onrender.com');
+}
+
+function isHostedRuntimeShell() {
+  return isNetlifyHostedRuntimeShell() || isBridgeHostedRuntimeShell();
+}
+
 function buildHostedRuntimeFallbackUrl(url = '') {
   if (!isNetlifyHostedRuntimeShell()) return '';
   try {
@@ -1544,6 +1554,7 @@ export async function fetchTeamAuthStatusRequest() {
   return bridgeRequest<{
     ok: boolean;
     configured: boolean;
+    authRequired?: boolean;
     sessionTtlMs?: number;
     permissions?: Record<string, unknown>;
   }>({
@@ -1629,7 +1640,10 @@ export async function invokeRuntimeTool<T = unknown>(
 export async function startLeadCallRequest(body: Record<string, unknown>) {
   return invokeRuntimeTool<Record<string, unknown>>('telnyx_call', {
     ...body,
-    source: body.source || 'command-center-ui',
+    manual: body.manual === false ? false : true,
+    manualSend: body.manualSend === false ? false : true,
+    requestedBy: body.requestedBy || body.requested_by || body.actor || 'PBK operator',
+    source: body.source || 'command_center_manual',
   });
 }
 
@@ -2331,7 +2345,13 @@ export async function sendMessageRequest(body: Record<string, unknown>) {
   return bridgeRequest<Record<string, unknown>>({
     method: 'POST',
     path: '/api/lead/send-message',
-    body,
+    body: {
+      ...body,
+      manual: body.manual === false ? false : true,
+      manualSend: body.manualSend === false ? false : true,
+      requestedBy: body.requestedBy || body.requested_by || body.actor || 'PBK operator',
+      source: body.source || 'lead_portal_manual',
+    },
   });
 }
 

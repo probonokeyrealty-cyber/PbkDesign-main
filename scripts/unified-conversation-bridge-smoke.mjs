@@ -734,14 +734,14 @@ assert(
   /function isTrustedManualConversationProviderSend\(toolName = '', params = \{\}\)/.test(
     bridge
   ) &&
-    /\['telnyx_sms', 'sendColdEmail'\]\.includes\(toolName\)/.test(bridge) &&
+    /\['telnyx_sms', 'sendColdEmail', 'telnyx_call'\]\.includes\(toolName\)/.test(bridge) &&
     /params\.manual !== true \|\| params\.manualSend !== true/.test(bridge) &&
     /'unified_inbox_manual'/.test(bridge) &&
     /'unified_conversation_manual'/.test(bridge) &&
     /isTrustedManualConversationProviderSend\(toolName, params\)[\s\S]*!forceApproval[\s\S]*!safetyReviewRequired[\s\S]*return null/.test(
       bridge
     ),
-  'Only trusted manual SMS/email conversation sends may bypass operating-mode approval after safety validation.'
+  'Only trusted manual SMS/email/call operator actions may bypass operating-mode approval after safety validation.'
 );
 
 assert(

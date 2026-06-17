@@ -207,11 +207,15 @@ function testManualMessageBridgeContract() {
       'manual: parsed.manual',
       'manualSend: parsed.manualSend',
       'function isTrustedManualConversationProviderSend',
-      "['telnyx_sms', 'sendColdEmail'].includes(toolName)",
+      "['telnyx_sms', 'sendColdEmail', 'telnyx_call'].includes(toolName)",
       'isTrustedManualConversationProviderSend(toolName, params)',
+      "manual: body.manual === false ? false : true",
+      "manualSend: body.manualSend === false ? false : true",
+      "source: body.source || 'lead_portal_manual'",
+      "source: body.source || 'command_center_manual'",
       'buildConversationSendEventPayload',
     ],
-    'Manual SMS/email bridge path'
+    'Manual SMS/email/call bridge path'
   );
 
   assert(

@@ -283,27 +283,53 @@ async function main() {
       },
       body: JSON.stringify(approvalDecisionPayload),
     }).then((response) => response.json());
-    const queuedProviderCall = await fetch(`${BASE_URL}/api/calls`, {
+    const manualProviderCall = await fetch(`${BASE_URL}/api/calls`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${API_KEY}`,
       },
       body: JSON.stringify({
-        leadId: 'smoke-provider-action-lead',
-        leadName: 'Smoke Provider Action Seller',
-        address: '909 Provider Action Ave, Columbus OH',
+        leadId: 'smoke-manual-provider-action-lead',
+        leadName: 'Smoke Manual Provider Action Seller',
+        address: '909 Manual Provider Action Ave, Columbus OH',
         phone: '+1 (614) 555-0123',
-        script: 'Smoke provider-action approval should replay telnyx_call after approval.',
+        script: 'Smoke manual operator call should not queue behind approval mode.',
         actor: 'smoke-test',
         nowLocalHour: 12,
       }),
     }).then((response) => response.json());
-    const providerActionApprovalId = queuedProviderCall?.approval?.approval?.id
-      || queuedProviderCall?.approval?.id;
     assert(
-      queuedProviderCall?.result === 'queued_for_approval' && providerActionApprovalId,
-      'Provider-action call did not queue behind approval mode.',
+      manualProviderCall?.result !== 'queued_for_approval' &&
+        !manualProviderCall?.approval?.id &&
+        !manualProviderCall?.approval?.approval?.id,
+      'Manual /api/calls route should not queue behind approval mode.',
+    );
+    const queuedProviderCall = await fetch(`${BASE_URL}/invoke`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${API_KEY}`,
+      },
+      body: JSON.stringify({
+        toolName: 'telnyx_call',
+        params: {
+          leadId: 'smoke-provider-action-lead',
+          leadName: 'Smoke Provider Action Seller',
+          address: '909 Provider Action Ave, Columbus OH',
+          phone: '+1 (614) 555-0123',
+          script: 'Smoke provider-action approval should replay telnyx_call after approval.',
+          actor: 'smoke-test',
+          nowLocalHour: 12,
+        },
+      }),
+    }).then((response) => response.json());
+    const queuedProviderAction = queuedProviderCall?.result || queuedProviderCall;
+    const providerActionApprovalId = queuedProviderAction?.approval?.approval?.id
+      || queuedProviderAction?.approval?.id;
+    assert(
+      queuedProviderAction?.result === 'queued_for_approval' && providerActionApprovalId,
+      'Autonomous provider-action call did not queue behind approval mode.',
     );
     const providerActionApproval = await fetch(`${BASE_URL}/api/approvals/${encodeURIComponent(providerActionApprovalId)}/approve`, {
       method: 'POST',

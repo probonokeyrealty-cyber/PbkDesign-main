@@ -38,6 +38,25 @@ const afterHoursCall = validateProviderActionSafety('telnyx_call', {
 assert.equal(afterHoursCall.blocked, true, 'After-hours calls must be blocked.');
 assert(afterHoursCall.violations.some((item) => item.code === 'outside_calling_hours'), 'Calling-hours violation should be explicit.');
 
+const manualAfterHoursCall = validateProviderActionSafety('telnyx_call', {
+  phone: '+15555550123',
+  dnc: false,
+  manual: true,
+  manualSend: true,
+  source: 'lead_portal_manual',
+  requestedBy: 'PBK operator',
+}, { nowLocalHour: 22 });
+
+assert.equal(
+  manualAfterHoursCall.blocked,
+  false,
+  'Manual operator calls must not be blocked by automated calling-hour gates.'
+);
+assert(
+  !manualAfterHoursCall.violations.some((item) => item.code === 'outside_calling_hours'),
+  'Manual operator calls must not carry the automated outside-calling-hours violation.'
+);
+
 const missingConsentCall = validateProviderActionSafety('telnyx_call', {
   phone: '+15555550123',
   dnc: false,
@@ -138,6 +157,7 @@ console.log('safety-validator smoke passed', {
   highOffer: highOffer.result,
   dncCall: dncCall.result,
   afterHoursCall: afterHoursCall.result,
+  manualAfterHoursCall: manualAfterHoursCall.result,
   missingConsentCall: missingConsentCall.result,
   distressedSellerOffer: distressedSellerOffer.result,
   missingBantOffer: missingBantOffer.result,

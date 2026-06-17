@@ -223,6 +223,21 @@ assert(
     bridge.includes('provider_retry'),
   'DeepSeek live strategist calls must have bounded retry/backoff support before contract fallback.'
 );
+assert(
+  bridge.includes('buildAvaLivePathLanguage') &&
+    bridge.includes('getAvaLivePathKey'),
+  'Live sales fallback must use path-aware deal language instead of hardcoded cash-lane wording.'
+);
+assert.doesNotMatch(
+  bridge,
+  /\b(cash lane can work|cash lane can get close|cash lane is real|run the cash lane|real cash number|cash number can meet)\b/i,
+  'Live call fallback must not force cash-lane language before the path is explicitly locked.'
+);
+assert.doesNotMatch(
+  bridge,
+  /forcedDefault\s*\?\s*'cash'\s*:/,
+  'Ava path scoring must not collapse uncertain best-path evidence into cash after max probe turns.'
+);
 
 const renderBlueprint = readFileSync('render.yaml', 'utf8');
 assert.match(

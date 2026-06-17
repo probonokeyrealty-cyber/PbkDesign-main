@@ -4,10 +4,29 @@ import { resolve } from 'node:path';
 
 const root = process.cwd();
 const source = readFileSync(resolve(root, 'src/app/utils/runtimeBridge.ts'), 'utf8');
+const bridge = readFileSync(resolve(root, 'scripts/openclaw-local-server.mjs'), 'utf8');
 
 assert(
   /function\s+isNetlifyHostedRuntimeShell\(\)/.test(source),
   'runtimeBridge must be able to identify Netlify-hosted production shells.',
+);
+
+assert(
+  /function\s+isBridgeHostedRuntimeShell\(\)/.test(source) &&
+    /function\s+isHostedRuntimeShell\(\)/.test(source),
+  'runtimeBridge must also identify direct OpenClaw/Render-hosted shells for team login.',
+);
+
+assert(
+  /host\.endsWith\('\.onrender\.com'\)/.test(source),
+  'Direct Render-hosted OpenClaw shells must be treated as hosted production shells.',
+);
+
+assert(
+  /export function isRuntimeTeamAuthRequired\(\) \{\s*return isHostedRuntimeShell\(\);/s.test(
+    source,
+  ),
+  'Team login must be required for every hosted production shell, not only Netlify.',
 );
 
 const getRuntimeConfigStart = source.indexOf('export function getRuntimeConfig()');
@@ -16,17 +35,17 @@ const getRuntimeConfigBody =
   getRuntimeConfigStart >= 0 && getRuntimeConfigEnd > getRuntimeConfigStart
     ? source.slice(getRuntimeConfigStart, getRuntimeConfigEnd)
     : '';
-const hostedProxyIndex = getRuntimeConfigBody.indexOf('if (isNetlifyHostedRuntimeShell())');
+const hostedProxyIndex = getRuntimeConfigBody.indexOf('if (isHostedRuntimeShell())');
 const storageIndex = getRuntimeConfigBody.indexOf('readRuntimeConfigFromStorage()');
 const sameOriginReturnIndex = getRuntimeConfigBody.indexOf('return { endpoint: window.location.origin }');
 assert(
   hostedProxyIndex >= 0 && sameOriginReturnIndex > hostedProxyIndex,
-  'Netlify-hosted shell must default runtime calls to the same-origin bridge proxy.',
+  'Hosted shells must default runtime calls to their same-origin bridge/proxy.',
 );
 
 assert(
   hostedProxyIndex >= 0 && storageIndex >= 0 && hostedProxyIndex < storageIndex,
-  'Netlify-hosted shell must prefer the mobile-safe same-origin proxy before stale browser storage.',
+  'Hosted shells must prefer the mobile-safe same-origin path before stale browser storage.',
 );
 
 assert(
@@ -36,7 +55,7 @@ assert(
 
 assert(
   /function\s+hasServerSideRuntimeAuth\(\)/.test(source),
-  'runtimeBridge must recognize authenticated Netlify same-origin sessions.',
+  'runtimeBridge must recognize authenticated hosted same-origin sessions.',
 );
 
 assert(
@@ -54,6 +73,22 @@ assert(
 assert(
   /if \(!isAuthOptionalRuntimePath\(path\)\) return false/.test(source),
   'Protected requests must never retry directly against Render without server-side bearer auth.',
+);
+
+const publicPathBlock =
+  bridge.match(/const PUBLIC_PATHS = new Set\(\[([\s\S]*?)\]\);/)?.[1] || '';
+for (const endpoint of ['/api/auth/team/status', '/api/auth/team', '/api/auth/team/verify']) {
+  assert(
+    publicPathBlock.includes(`'${endpoint}'`),
+    `Bridge must let ${endpoint} reach its own passcode/session validator without requiring PBK_BRIDGE_API_KEY.`,
+  );
+}
+
+assert(
+  /pathname === '\/api\/auth\/team\/status'[\s\S]*?authRequired: Boolean\(TEAM_PASSCODE\)/.test(
+    bridge,
+  ),
+  'Team auth status must report whether the hosted passcode gate is configured and required.',
 );
 
 assert(

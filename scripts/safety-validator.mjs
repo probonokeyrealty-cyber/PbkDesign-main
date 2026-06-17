@@ -182,7 +182,7 @@ function normalizeManualSource(value = '') {
 }
 
 function isManualOneToOneMessage(tool = '', params = {}) {
-  if (tool !== 'telnyx_sms') return false;
+  if (!['telnyx_sms', 'sendColdEmail', 'telnyx_call'].includes(tool)) return false;
   if (params.manual !== true || params.manualSend !== true) return false;
   const source = normalizeManualSource(params.source || params.requestSource || params.request_source);
   const requestedBy = String(params.requestedBy || params.requested_by || params.actor || '')
@@ -353,7 +353,7 @@ export function validateProviderActionSafety(toolName, params = {}, options = {}
       pushIssue(violations, 'dnc_block', 'Lead is marked DNC; provider outreach is blocked.', 'critical');
     }
     const manualOneToOneReviewableConsent =
-      MESSAGE_TOOLS.has(tool) &&
+      (MESSAGE_TOOLS.has(tool) || CALL_TOOLS.has(tool)) &&
       isManualOneToOneMessage(tool, params) &&
       hasReviewableConsentStatus(getConsentValue(params));
     if (
@@ -372,7 +372,7 @@ export function validateProviderActionSafety(toolName, params = {}, options = {}
     }
   }
 
-  if (CALL_TOOLS.has(tool)) {
+  if (CALL_TOOLS.has(tool) && !isManualOneToOneMessage(tool, params)) {
     const hour = getCallingHour(options);
     const startHour = numberOr(options.callStartHour ?? options.call_start_hour ?? params.callStartHour ?? params.call_start_hour, 8);
     const endHour = numberOr(options.callEndHour ?? options.call_end_hour ?? params.callEndHour ?? params.call_end_hour, 20);

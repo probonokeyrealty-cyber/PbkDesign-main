@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { Link } from 'react-router';
 import {
   AlertCircle,
   Bot,
@@ -19,7 +20,9 @@ import {
   StickyNote,
   Copy,
   Flag,
+  LineChart,
   Trash2,
+  UserRound,
 } from 'lucide-react';
 import {
   patchConversationEventRequest,
@@ -50,6 +53,7 @@ import {
 
 type ConversationTimelineProps = {
   thread?: ConversationThread | null;
+  recipientSummary?: { phone?: string; email?: string } | null;
   events: ConversationEvent[];
   loading: boolean;
   loadingMore: boolean;
@@ -58,6 +62,7 @@ type ConversationTimelineProps = {
   onRetry: () => void;
   onLoadMore: () => void;
   onOpenProfile: () => void;
+  onComposeChannel?: (channel: 'sms' | 'email') => void;
   onLatestSeen: () => void;
   onEventChanged: () => void;
 };
@@ -76,6 +81,24 @@ function formatTime(value: string) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return '';
   return date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+}
+
+function threadContactValue(
+  thread: ConversationThread | null | undefined,
+  recipientSummary: { phone?: string; email?: string } | null | undefined,
+  kind: 'phone' | 'email'
+) {
+  const identity = thread?.identities?.find((candidate) => candidate.identityType === kind);
+  const seller = record(thread?.seller);
+  const metadata = record(thread?.metadata);
+  return text(
+    identity?.displayValue ||
+      identity?.normalizedValue ||
+      identity?.value ||
+      recipientSummary?.[kind] ||
+      seller[kind] ||
+      metadata[kind]
+  );
 }
 
 function eventKind(event: ConversationEvent) {
@@ -528,6 +551,7 @@ function ConversationEventRow({
 
 export function ConversationTimeline({
   thread,
+  recipientSummary,
   events,
   loading,
   loadingMore,
@@ -536,6 +560,7 @@ export function ConversationTimeline({
   onRetry,
   onLoadMore,
   onOpenProfile,
+  onComposeChannel,
   onLatestSeen,
   onEventChanged,
 }: ConversationTimelineProps) {
@@ -559,6 +584,13 @@ export function ConversationTimeline({
     }
     return latest?.id || '';
   }, [events]);
+  const leadId = text(thread?.leadId);
+  const phone = threadContactValue(thread, recipientSummary, 'phone');
+  const email = threadContactValue(thread, recipientSummary, 'email');
+  const property = record(thread?.property);
+  const propertyAddress = text(property.address || property.propertyAddress || property.line1);
+  const contactLine = [phone, email, propertyAddress].filter(Boolean).join(' · ');
+  const analyzeHref = leadId ? `/deal/${encodeURIComponent(leadId)}` : '/analyzer';
 
   useEffect(() => {
     if (!thread?.id || !latestEventId || !scrollRef.current) return undefined;
@@ -578,9 +610,14 @@ export function ConversationTimeline({
   return (
     <section className="pbk-conversation-timeline" aria-label="Conversation timeline">
       <header className="pbk-conversation-timeline-head">
-        <div>
+        <div className="pbk-conversation-title-block">
           <div className="pbk-eyebrow">Unified seller timeline</div>
           <h2>{thread?.title || 'Choose a conversation'}</h2>
+          {thread && (
+            <p className="pbk-conversation-contact-line">
+              {contactLine || 'No canonical phone or email on this seller yet'}
+            </p>
+          )}
           <p>
             {thread
               ? `${thread.unreadCount || 0} unread · ${thread.status || 'open'}`
@@ -588,13 +625,80 @@ export function ConversationTimeline({
           </p>
         </div>
         {thread && (
-          <button
-            type="button"
-            className="pbk-btn pbk-btn-ghost pbk-btn-sm"
-            onClick={onOpenProfile}
-          >
-            Open seller profile
-          </button>
+          <div className="pbk-conversation-quick-actions" aria-label="Seller quick actions">
+            {phone ? (
+              <a
+                className="pbk-conversation-quick-action"
+                data-thread-action="call"
+                href={`tel:${phone}`}
+                aria-label={`Call ${thread.title || phone}`}
+              >
+                <Phone size={14} />
+                <span>Call</span>
+              </a>
+            ) : (
+              <button
+                type="button"
+                className="pbk-conversation-quick-action"
+                data-thread-action="call"
+                disabled
+                title="Add a phone number before calling"
+              >
+                <Phone size={14} />
+                <span>Call</span>
+              </button>
+            )}
+            <button
+              type="button"
+              className="pbk-conversation-quick-action"
+              data-thread-action="sms"
+              disabled={!phone}
+              onClick={() => onComposeChannel?.('sms')}
+              title={phone ? 'Write an SMS to this seller' : 'Add a phone number before texting'}
+            >
+              <MessageSquare size={14} />
+              <span>SMS</span>
+            </button>
+            <button
+              type="button"
+              className="pbk-conversation-quick-action"
+              data-thread-action="email"
+              disabled={!email}
+              onClick={() => onComposeChannel?.('email')}
+              title={email ? 'Write an email to this seller' : 'Add an email before sending'}
+            >
+              <Mail size={14} />
+              <span>Email</span>
+            </button>
+            {leadId ? (
+              <Link
+                className="pbk-conversation-quick-action"
+                data-thread-action="lead"
+                to={`/leads/${encodeURIComponent(leadId)}`}
+              >
+                <UserRound size={14} />
+                <span>Lead</span>
+              </Link>
+            ) : (
+              <button
+                type="button"
+                className="pbk-conversation-quick-action"
+                data-thread-action="lead"
+                onClick={onOpenProfile}
+              >
+                <UserRound size={14} />
+                <span>Lead</span>
+              </button>
+            )}
+            <Link
+              className="pbk-conversation-quick-action"
+              data-thread-action="analyze"
+              to={analyzeHref}
+            >
+              <LineChart size={14} />
+              <span>Analyze</span>
+            </Link>
+          </div>
         )}
       </header>
 

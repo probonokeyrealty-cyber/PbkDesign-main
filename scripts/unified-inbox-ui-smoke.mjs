@@ -186,6 +186,22 @@ assert(
   'Unified inbox calls must show compact duration, sentiment, summary, and coaching cards.'
 );
 assert(
+  timeline.includes('pbk-conversation-quick-actions') &&
+    timeline.includes('data-thread-action="call"') &&
+    timeline.includes('data-thread-action="sms"') &&
+    timeline.includes('data-thread-action="email"') &&
+    timeline.includes('data-thread-action="lead"') &&
+    timeline.includes('data-thread-action="analyze"') &&
+    /onComposeChannel\?: \(channel: 'sms' \| 'email'\) => void/.test(timeline),
+  'Fixed seller header must expose Call, SMS, Email, Lead, and Analyze quick actions wired to the canonical thread.'
+);
+assert(
+  timeline.includes('pbk-conversation-contact-line') &&
+    timeline.includes('threadContactValue') &&
+    timeline.includes('recipientSummary'),
+  'Fixed seller header must keep the seller phone/email identity visible under the contact name.'
+);
+assert(
   /aria-label="Message channel"/.test(composer) &&
     /aria-pressed=\{channel === 'sms'\}/.test(composer) &&
     /aria-pressed=\{channel === 'email'\}/.test(composer),
@@ -196,6 +212,20 @@ assert(
     composer
   ),
   'Manual unified inbox sends must carry explicit source/manual metadata through the bridge contract.'
+);
+assert(
+  composer.includes('Manual send is direct') &&
+    composer.includes('Provider sent') &&
+    composer.includes('Send failed') &&
+    composer.includes('Retry send') &&
+    !composer.includes('Ava/Rex approval is required before the provider sends this message.'),
+  'Manual send states must be direct, retryable, and free of AI approval-gate copy.'
+);
+assert(
+  /focusToken\?: number/.test(composer) &&
+    /composerTextareaRef/.test(composer) &&
+    /focusToken/.test(unifiedInbox),
+  'Quick SMS/email actions must focus the sticky composer without moving the whole inbox page.'
 );
 assert(
   composer.includes('pbk-composer-draft-shell') &&

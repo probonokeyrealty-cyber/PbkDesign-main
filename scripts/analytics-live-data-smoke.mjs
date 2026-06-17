@@ -96,4 +96,28 @@ assert.equal(normalizedMemory.skills[0].name, 'Live Skill');
 assert.deepEqual(normalizedMemory.skills[0].trend, [70, 75, 80]);
 assert.equal(normalizedMemory.experiments.length, 0);
 
+const partialMemory = memoryLogic.buildMemoryAnalyticsViewModel({
+  outcomesResponse: {
+    warning: 'Skill outcomes source stale',
+    skills: [{ id: 'skill-partial', name: 'Partial Skill', uses: 3, wins: 1, confidence: 42 }],
+  },
+  trendsBySkillId: {
+    'skill-partial': { warning: 'Trend feed timeout' },
+  },
+  experimentsResponse: { warning: 'Experiment feed unavailable', experiments: [] },
+  memoryEventsResponse: { warning: 'Memory event feed degraded', events: [] },
+});
+
+for (const expectedWarning of [
+  'Skill outcomes source stale',
+  'Trend feed timeout',
+  'Experiment feed unavailable',
+  'Memory event feed degraded',
+]) {
+  assert(
+    partialMemory.warning.includes(expectedWarning),
+    `Memory Analytics warning should include ${expectedWarning}.`
+  );
+}
+
 console.log(JSON.stringify({ ok: true, result: 'analytics_live_data_smoke_ready' }, null, 2));

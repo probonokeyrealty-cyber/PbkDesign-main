@@ -284,6 +284,12 @@ function MemoryExperimentEmpty() {
 
 const EMPTY_MEMORY = buildMemoryAnalyticsViewModel();
 
+function loadWarning(label: string, loadError: unknown) {
+  const message =
+    loadError instanceof Error ? loadError.message : String(loadError || 'unknown error');
+  return `${label} unavailable: ${message}`;
+}
+
 export function MemoryAnalytics() {
   const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading');
   const [error, setError] = useState('');
@@ -307,19 +313,42 @@ export function MemoryAnalytics() {
     try {
       const outcomesResponse = await fetchSkillOutcomesRequest();
       const skills = outcomesResponse.skills || [];
+      const trendWarnings: string[] = [];
       const trendPairs = await Promise.all(
         skills.slice(0, 12).map(async (skill) => {
           const skillId = String(skill.id || skill.skillId || skill.skill_id || '').trim();
           const skillName = String(skill.name || skill.skillName || skill.skill_name || '').trim();
-          const trends = await fetchSkillTrendsRequest({ skillId, skillName, days: 30 });
-          return [skillId || skillName, trends] as const;
+          const trendKey = skillId || skillName;
+          try {
+            const trends = await fetchSkillTrendsRequest({ skillId, skillName, days: 30 });
+            return [trendKey, trends] as const;
+          } catch (trendError) {
+            if (trendKey) {
+              trendWarnings.push(loadWarning(`Trend feed for ${skillName || skillId}`, trendError));
+            }
+            return [trendKey, { warning: loadWarning('Skill trend feed', trendError) }] as const;
+          }
         })
       );
       const trendsBySkillId = Object.fromEntries(trendPairs.filter(([key]) => Boolean(key)));
-      const [experimentsResponse, memoryEventsResponse] = await Promise.all([
+      if (trendWarnings.length) {
+        trendsBySkillId.__memoryAnalyticsTrends = { warning: trendWarnings.join(' ') };
+      }
+      const [experimentsResult, memoryEventsResult] = await Promise.allSettled([
         fetchActiveExperimentsRequest(),
         fetchMemoryEventsRequest({ limit: 24 }),
       ]);
+      const experimentsResponse =
+        experimentsResult.status === 'fulfilled'
+          ? experimentsResult.value
+          : {
+              warning: loadWarning('Active experiment feed', experimentsResult.reason),
+              experiments: [],
+            };
+      const memoryEventsResponse =
+        memoryEventsResult.status === 'fulfilled'
+          ? memoryEventsResult.value
+          : { warning: loadWarning('Memory event feed', memoryEventsResult.reason), events: [] };
       setModel(
         buildMemoryAnalyticsViewModel({
           outcomesResponse,

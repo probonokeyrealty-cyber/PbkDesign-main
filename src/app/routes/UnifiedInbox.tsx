@@ -124,6 +124,7 @@ export function UnifiedInbox() {
   const [newConversationOpen, setNewConversationOpen] = useState(
     () => searchParams.get('compose') === '1'
   );
+  const [composerFocusToken, setComposerFocusToken] = useState(0);
 
   const [matchThread, setMatchThread] = useState<ConversationThread | null>(null);
   const [leadQuery, setLeadQuery] = useState('');
@@ -197,6 +198,19 @@ export function UnifiedInbox() {
       setSearchParams(next, { replace: true });
     },
     [searchParams, setSearchParams]
+  );
+
+  const focusComposerChannel = useCallback(
+    (channel: 'sms' | 'email') => {
+      const next = new URLSearchParams(searchParams);
+      if (selectedThreadId) next.set('thread', selectedThreadId);
+      next.set('channel', channel);
+      next.delete('lead');
+      next.delete('compose');
+      setSearchParams(next, { replace: true });
+      setComposerFocusToken((token) => token + 1);
+    },
+    [searchParams, selectedThreadId, setSearchParams]
   );
 
   useEffect(() => {
@@ -654,6 +668,7 @@ export function UnifiedInbox() {
           </div>
           <ConversationTimeline
             thread={selectedThread}
+            recipientSummary={recipientSummary}
             events={timeline}
             loading={timelineLoading}
             loadingMore={timelineLoadingMore}
@@ -662,6 +677,7 @@ export function UnifiedInbox() {
             onRetry={() => void loadSelectedThread()}
             onLoadMore={() => void loadEarlierTimeline()}
             onOpenProfile={() => setProfileOpen(true)}
+            onComposeChannel={focusComposerChannel}
             onLatestSeen={() => void markSelectedThreadRead()}
             onEventChanged={() => void loadSelectedThread()}
           />
@@ -673,6 +689,7 @@ export function UnifiedInbox() {
               recipientSummary={recipientSummary}
               events={timeline}
               initialChannel={requestedChannel}
+              focusToken={composerFocusToken}
               onSent={() => void loadSelectedThread({ quiet: true })}
             />
           )}

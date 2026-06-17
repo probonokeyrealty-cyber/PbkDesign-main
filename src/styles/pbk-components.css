@@ -5164,6 +5164,51 @@
   font-size: 9px;
   text-transform: uppercase;
 }
+.pbk-conversation-title-block {
+  min-width: 0;
+}
+.pbk-conversation-contact-line {
+  max-width: min(58vw, 520px);
+  overflow: hidden;
+  color: var(--text-secondary) !important;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-transform: none !important;
+}
+.pbk-conversation-quick-actions {
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+}
+.pbk-conversation-quick-action {
+  display: inline-flex;
+  min-height: 34px;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-panel-elevated);
+  color: var(--text-secondary);
+  padding: 6px 9px;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  text-decoration: none;
+  text-transform: uppercase;
+}
+.pbk-conversation-quick-action:hover {
+  border-color: var(--border-bright);
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+.pbk-conversation-quick-action:disabled,
+.pbk-conversation-quick-action[aria-disabled='true'] {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
 .pbk-conversation-timeline-scroll {
   min-height: 0;
   overflow-y: auto;
@@ -6974,10 +7019,14 @@
     display: grid;
   }
   .pbk-conversation-timeline-head {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 6px;
     min-height: 70px;
     padding: 10px 112px 10px 14px;
   }
   .pbk-conversation-timeline-head > div {
+    width: 100%;
     min-width: 0;
   }
   .pbk-conversation-timeline-head .pbk-eyebrow {
@@ -6988,6 +7037,36 @@
     margin-top: 0;
     font-size: 18px;
     text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .pbk-conversation-contact-line {
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .pbk-conversation-quick-actions {
+    width: 100%;
+    max-width: 100%;
+    flex-wrap: nowrap;
+    gap: 4px;
+    justify-content: flex-start;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .pbk-conversation-quick-action {
+    width: 34px;
+    min-width: 34px;
+    height: 34px;
+    min-height: 34px;
+    padding: 0;
+  }
+  .pbk-conversation-quick-action > span {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
     white-space: nowrap;
   }
   .pbk-conversation-timeline-head .pbk-btn {

@@ -19,6 +19,25 @@ function normalizeTrend(response = {}, fallbackRate = 0) {
   return points.length ? points : [percentValue(fallbackRate, 1)];
 }
 
+function warningText(value) {
+  if (typeof value === 'string') return value.trim();
+  if (value instanceof Error) return value.message.trim();
+  return '';
+}
+
+function collectWarnings(...values) {
+  const seen = new Set();
+  return values
+    .flat()
+    .map(warningText)
+    .filter((warning) => {
+      if (!warning || seen.has(warning)) return false;
+      seen.add(warning);
+      return true;
+    })
+    .join(' ');
+}
+
 export function normalizeSkillMetric(skill = {}, trendResponse = {}) {
   const uses = Math.max(0, Math.round(numberOr(skill.uses ?? skill.usage ?? skill.attempts, 0)));
   const wins = Math.max(0, Math.round(numberOr(skill.wins ?? skill.successes, 0)));
@@ -56,6 +75,9 @@ export function buildMemoryAnalyticsViewModel({
     const trend = trendsBySkillId[id] || trendsBySkillId[skill.name] || {};
     return normalizeSkillMetric(skill, trend);
   });
+  const trendWarnings = Object.values(trendsBySkillId || {}).map((trend) =>
+    trend && typeof trend === 'object' ? trend.warning : ''
+  );
   const events = arrayOr(memoryEventsResponse.events).map((event) => ({
     id: String(
       event.id || event.eventId || event.event_id || event.createdAt || event.created_at || ''
@@ -81,7 +103,12 @@ export function buildMemoryAnalyticsViewModel({
   return {
     source: outcomesResponse.source || 'runtime',
     generatedAt: outcomesResponse.generatedAt || '',
-    warning: outcomesResponse.warning || memoryEventsResponse.warning || '',
+    warning: collectWarnings(
+      outcomesResponse.warning,
+      memoryEventsResponse.warning,
+      experimentsResponse.warning,
+      trendWarnings
+    ),
     skills,
     events,
     experiments: arrayOr(experimentsResponse.experiments || experimentsResponse.tests).map(

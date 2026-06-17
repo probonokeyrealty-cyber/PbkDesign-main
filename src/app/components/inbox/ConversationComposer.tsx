@@ -43,6 +43,7 @@ type ConversationComposerProps = {
   recipientSummary?: { phone?: string; email?: string } | null;
   events: ConversationEvent[];
   initialChannel?: Channel;
+  focusToken?: number;
   onSent: () => void;
 };
 
@@ -68,6 +69,7 @@ type ComposerOutcome = {
   tone: 'success' | 'warning' | 'error';
   title: string;
   detail: string;
+  actionLabel?: string;
 };
 
 function speechRecognitionConstructor(): SpeechRecognitionConstructor | null {
@@ -161,10 +163,12 @@ function ComposerOutcomeBanner({
   outcome,
   label,
   onDismiss,
+  onAction,
 }: {
   outcome: ComposerOutcome;
   label: string;
   onDismiss: () => void;
+  onAction?: () => void;
 }) {
   const OutcomeIcon = outcome.tone === 'success' ? CheckCircle2 : AlertTriangle;
   return (
@@ -177,6 +181,11 @@ function ComposerOutcomeBanner({
         <strong>{outcome.title}</strong>
         <small>{outcome.detail}</small>
       </span>
+      {outcome.actionLabel && onAction && (
+        <button type="button" onClick={onAction}>
+          {outcome.actionLabel}
+        </button>
+      )}
       <button type="button" onClick={onDismiss} aria-label={`Dismiss ${label}`}>
         Dismiss
       </button>
@@ -190,6 +199,7 @@ export function ConversationComposer({
   recipientSummary,
   events,
   initialChannel = 'sms',
+  focusToken = 0,
   onSent,
 }: ConversationComposerProps) {
   const [channel, setChannel] = useState<Channel>(initialChannel);
@@ -215,6 +225,7 @@ export function ConversationComposer({
   const senderRequestSequence = useRef(0);
   const senderSyncAttempted = useRef(false);
   const templateRequestSequence = useRef(0);
+  const composerTextareaRef = useRef<HTMLTextAreaElement | null>(null);
   const bodyRef = useRef(body);
   const subjectRef = useRef(subject);
   const channelRef = useRef(channel);
@@ -396,6 +407,14 @@ export function ConversationComposer({
     []
   );
 
+  useEffect(() => {
+    if (!focusToken) return;
+    const node = composerTextareaRef.current;
+    if (!node) return;
+    node.focus({ preventScroll: true });
+    node.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  }, [focusToken]);
+
   const startListening = () => {
     if (listening) {
       recognitionRef.current?.stop();
@@ -504,15 +523,15 @@ export function ConversationComposer({
       setSendOutcome({
         tone: approvalRequired || response.scheduled ? 'warning' : 'success',
         title: approvalRequired
-          ? 'Queued for approval'
+          ? 'Manual send held by bridge'
           : response.scheduled
             ? 'Message scheduled'
-            : 'Message accepted',
+            : 'Provider sent',
         detail: approvalRequired
-          ? 'Ava/Rex approval is required before the provider sends this message.'
+          ? 'Manual send is direct when the bridge returns a provider-send result. This hold came back from the bridge/provider policy, so the draft stays intact for retry or review.'
           : response.scheduled
             ? `Scheduled for ${new Date(response.scheduledFor || scheduledFor).toLocaleString()}.`
-            : `Provider result: ${response.result || 'accepted'}.`,
+            : `Manual send is direct. Provider result: ${response.result || 'accepted'}.`,
       });
       if (approvalRequired || response.scheduled) {
         setSubmittedFingerprint(submittedSendFingerprint);
@@ -528,8 +547,9 @@ export function ConversationComposer({
     } catch (error) {
       setSendOutcome({
         tone: 'error',
-        title: 'Message not sent',
+        title: 'Send failed',
         detail: error instanceof Error ? error.message : 'The bridge rejected the message.',
+        actionLabel: 'Retry send',
       });
     } finally {
       setSending(false);
@@ -701,6 +721,7 @@ export function ConversationComposer({
             outcome={sendOutcome}
             label="send result"
             onDismiss={() => setSendOutcome(null)}
+            onAction={sendOutcome.actionLabel ? () => void sendMessage() : undefined}
           />
         )}
       </div>
@@ -720,6 +741,7 @@ export function ConversationComposer({
           <label className="pbk-composer-body">
             <span className="sr-only">Message body</span>
             <textarea
+              ref={composerTextareaRef}
               id="conversation-message-body"
               name="body"
               value={body}

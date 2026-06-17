@@ -46500,10 +46500,15 @@ async function syncCrmTransition(payload = {}) {
 }
 
 function getBatchDataProviderMeta() {
+  const configured = Boolean(BATCHDATA_API_KEY);
   return {
-    configured: Boolean(BATCHDATA_API_KEY),
-    ready: Boolean(BATCHDATA_API_KEY),
-    missing: BATCHDATA_API_KEY ? [] : ['PBK_BATCHDATA_API_KEY'],
+    label: 'BatchData skip trace',
+    configured,
+    ready: configured,
+    optional: true,
+    status: configured ? 'up' : 'optional_missing',
+    missing: configured ? [] : ['PBK_BATCHDATA_API_KEY'],
+    note: 'Optional lead enrichment provider; missing key does not block core launch.',
   };
 }
 

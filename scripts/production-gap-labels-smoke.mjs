@@ -90,6 +90,10 @@ assert(report.gaps.some((gap) => gap.id === 'source-campaigns'), 'Live-but-empty
 assert(report.gaps.some((gap) => gap.id === 'tooling-agentreach'), 'Agent Reach not-live state should be labeled.');
 assert(report.gaps.some((gap) => gap.id === 'tooling-voicefallback'), 'Voice fallback not-live state should be labeled.');
 assert(report.gaps.some((gap) => gap.id === 'provider-batchdata'), 'BatchData optional provider gap should be labeled.');
+const batchDataGap = report.gaps.find((gap) => gap.id === 'provider-batchdata');
+assert.equal(batchDataGap.optional, true, 'BatchData must remain explicitly optional.');
+assert.equal(batchDataGap.blocking, false, 'Optional BatchData must not block production launch.');
+assert.equal(batchDataGap.severity, 'low', 'Optional BatchData must not be labeled critical.');
 assert(report.gaps.every((gap) => gap.detail), 'Every gap must carry an operator-facing detail.');
 assert(report.gaps.every((gap) => gap.operatorAction), 'Every gap must carry an operator action.');
 

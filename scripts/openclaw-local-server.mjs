@@ -11567,6 +11567,7 @@ function compactAgentOpsPayload(value, maxChars = 8000) {
 }
 
 async function recordAgentOps(params = {}) {
+  mirrorAgentOpsMeasurementToState(params);
   const pool = getPgPool();
   if (!pool) return { ok: false, reason: 'postgres_unavailable' };
   try {
@@ -11583,6 +11584,50 @@ async function recordAgentOps(params = {}) {
     console.warn('[pbk-local-openclaw] AgentOps persistence skipped:', error?.message || error);
     return { ok: false, error: error?.message || String(error) };
   }
+}
+
+function mirrorAgentOpsMeasurementToState(params = {}) {
+  ensureAgentFleetCollections();
+  const createdAt = params.createdAt || params.created_at || isoNow();
+  const agentName = normalizeAgentName(params.agentName || params.agent_name || params.agent || 'PBK');
+  const agentId = normalizeAgentRosterId(agentName) || normalizeAgentRosterId(params.agentName || params.agent || '');
+  const latencyMs = Math.max(0, Math.round(toNumber(params.latencyMs ?? params.latency_ms, 0)));
+  const success = params.success !== false && !params.error;
+  const toolName = String(params.toolName || params.tool_name || '').trim();
+  const sessionId = String(
+    params.sessionId || params.session_id || params.callId || params.call_id || params.leadId || params.lead_id || ''
+  ).slice(0, 160);
+  const idBase = params.id || `${agentId || slugify(agentName) || 'agent'}-${toolName || 'tool'}-${sessionId || createdAt}`;
+  const record = {
+    id: `agent-ops-measure-${Math.abs(hashString(String(idBase)))}`,
+    tenantId: normalizeTenantId(params.tenantId || params.tenant_id || 'pbk'),
+    agentId,
+    agentName,
+    fromAgent: agentName,
+    toAgent: agentName,
+    taskType: 'agent_ops_measurement',
+    status: success ? 'complete' : 'failed',
+    summary: `${agentName} ${toolName || 'tool'} measurement ${success ? 'completed' : 'failed'}.`,
+    correlationId: sessionId,
+    providerWrites: 'blocked',
+    latencyMs,
+    durationMs: latencyMs,
+    completedAt: createdAt,
+    metadata: {
+      source: 'agent_ops',
+      toolName,
+      latencyMs,
+      durationMs: latencyMs,
+      success,
+      error: String(params.error || '').slice(0, 500),
+    },
+    createdAt,
+    updatedAt: createdAt,
+  };
+  upsertById(state, 'agentTasks', record);
+  state.agentTasks = sortNewest(state.agentTasks).slice(0, LIMITS.agentTasks);
+  state.status.agentTasks = state.agentTasks.length;
+  void persistState(state);
 }
 
 async function recordPbkQaAudit(record = {}) {

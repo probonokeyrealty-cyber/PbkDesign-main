@@ -64,13 +64,16 @@ assert(
   'The appointments HTTP route must use the shared approval and QA guard.'
 );
 
+assert(
+  /async function executeManualProviderRouteWithOutbox[\s\S]*providerCircuitBreaker\.execute[\s\S]*executeRouteToolHandler\(\s*toolName[\s\S]*buildRouteToolResponse\(routeTool\)/.test(bridge),
+  'Manual provider outbox wrapper must delegate to the shared approval, safety, QA, and response guard.'
+);
+
 for (const [toolName, routeName] of [
-  ['telnyx_call', 'calls-route'],
   ['telnyx_sms', 'messages-route'],
   ['sendSellerDocs', 'seller-docs-route'],
   ['prepare_and_send_contract', 'contract-send-route'],
   ['sendColdEmail', 'cold-email-route'],
-  ['sendColdEmail', 'lead-send-message'],
 ]) {
   assert(
     bridge.includes(`executeRouteToolHandler('${toolName}'`) && bridge.includes(routeName),
@@ -78,13 +81,31 @@ for (const [toolName, routeName] of [
   );
 }
 
+for (const [toolName, routeName] of [
+  ['telnyx_call', 'calls-route'],
+  ['telnyx_sms', 'lead-send-message'],
+  ['sendColdEmail', 'lead-send-message'],
+]) {
+  assert(
+    new RegExp(
+      `executeManualProviderRouteWithOutbox\\(\\{[\\s\\S]*toolName:\\s*['"]${toolName}['"][\\s\\S]*source:\\s*['"]${routeName}['"]`
+    ).test(bridge),
+    `${toolName} ${routeName} path must use the manual provider outbox wrapper.`
+  );
+}
+
+assert(
+  /executeManualProviderRouteWithOutbox\(\{[\s\S]*toolName:\s*parsed\.channel === 'sms'\s*\?\s*'telnyx_sms'\s*:\s*'sendColdEmail'[\s\S]*source:\s*'unified-conversation-send'/.test(bridge),
+  'Unified conversation sends must route SMS and email through the manual provider outbox wrapper.'
+);
+
 assert(
   /pathname === '\/api\/cold-email\/send'[\s\S]*const routeTool = await executeRouteToolHandler\('sendColdEmail'[\s\S]*buildRouteToolResponse\(routeTool\)/.test(bridge),
   'Cold email route must preserve QA and safety metadata in the HTTP response.'
 );
 
 assert(
-  /pathname === '\/api\/lead\/send-message'[\s\S]*const routeTool = await executeRouteToolHandler\('telnyx_sms'[\s\S]*buildRouteToolResponse\(routeTool\)[\s\S]*const routeTool = await executeRouteToolHandler\('sendColdEmail'[\s\S]*buildRouteToolResponse\(routeTool\)/.test(bridge),
+  /pathname === '\/api\/lead\/send-message'[\s\S]*executeManualProviderRouteWithOutbox\(\{[\s\S]*toolName:\s*'telnyx_sms'[\s\S]*\.\.\.send\.response[\s\S]*executeManualProviderRouteWithOutbox\(\{[\s\S]*toolName:\s*'sendColdEmail'[\s\S]*\.\.\.send\.response/.test(bridge),
   'Lead send-message route must preserve QA and safety metadata for SMS and email branches.'
 );
 

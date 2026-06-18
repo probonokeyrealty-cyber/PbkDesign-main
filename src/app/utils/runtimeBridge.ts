@@ -2360,6 +2360,20 @@ export async function sendMessageRequest(body: Record<string, unknown>) {
   });
 }
 
+export async function planLeadNurtureRequest(body: Record<string, unknown>) {
+  return bridgeRequest<Record<string, unknown>>({
+    method: 'POST',
+    path: '/api/leads/nurture',
+    body: {
+      ...body,
+      requestedBy: body.requestedBy || body.requested_by || body.actor || 'PBK operator',
+      source: body.source || 'leads_page_manual',
+      manual: body.manual === false ? false : true,
+      manualSend: body.manualSend === false ? false : true,
+    },
+  });
+}
+
 export async function fetchCurrentScriptRequest(body: Record<string, unknown>) {
   return bridgeRequest<CurrentScriptResponse>({
     method: 'POST',

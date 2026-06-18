@@ -692,6 +692,44 @@ html[data-theme='light'] .pbk-leads-surface .border-slate-700 {
   padding: 1rem;
 }
 
+.pbk-lead-quick-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.pbk-lead-quick-actions.compact {
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.pbk-lead-quick-actions button {
+  display: inline-flex;
+  min-height: 32px;
+  align-items: center;
+  justify-content: center;
+  gap: 0.3rem;
+  border: 1px solid rgba(56, 189, 248, 0.28);
+  border-radius: 999px;
+  background: rgba(14, 165, 233, 0.1);
+  color: #bae6fd;
+  padding: 0.35rem 0.55rem;
+  font-size: 0.66rem;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.pbk-lead-quick-actions button:disabled {
+  cursor: not-allowed;
+  filter: grayscale(0.35);
+  opacity: 0.48;
+}
+
+.pbk-lead-quick-actions.compact button {
+  min-width: 86px;
+  min-height: 34px;
+}
+
 .lead-score {
   display: grid;
   width: 44px;

@@ -85,8 +85,26 @@ assert(
 assert(
   runtimeBridge.includes('/api/leads/') &&
     runtimeBridge.includes('/api/contract/send') &&
-    runtimeBridge.includes('telnyx_call'),
-  'runtimeBridge must contain lead detail, contract, and call helpers.'
+    runtimeBridge.includes('telnyx_call') &&
+    runtimeBridge.includes('planLeadNurtureRequest') &&
+    runtimeBridge.includes('/api/lead/send-message'),
+  'runtimeBridge must contain lead detail, contract, call, SMS, and nurture helpers.'
+);
+assert(
+  leads.includes('startQuickLeadCall') &&
+    leads.includes('openQuickSms') &&
+    leads.includes('sendQuickSms') &&
+    leads.includes('addLeadToNurture') &&
+    leads.includes('leads_page_manual') &&
+    leads.includes('manualSend: true') &&
+    leads.includes('pbk-lead-quick-actions'),
+  'Leads must expose direct manual Call, SMS, and Nurture quick actions with trusted bridge metadata.'
+);
+assert(
+  leads.includes('Manual SMS') &&
+    leads.includes('Send SMS') &&
+    leads.includes('Human-sent SMS uses the manual bridge lane'),
+  'Lead SMS quick action must open an editable manual compose dialog with visible send behavior.'
 );
 assert(
   dataMap.includes('GET /api/leads/:id/full') &&
@@ -103,5 +121,12 @@ assert(
 ].forEach((selector) => {
   assert(pbkCss.includes(selector), `PBK CSS should include ${selector}.`);
 });
+
+const indexCss = read('src/styles/index.css');
+assert(
+  indexCss.includes('.pbk-lead-quick-actions') &&
+    indexCss.includes('.pbk-lead-quick-actions.compact'),
+  'Lead quick actions must have compact mobile and desktop list styling.'
+);
 
 console.log('leads-prototype-modern-smoke: ok');

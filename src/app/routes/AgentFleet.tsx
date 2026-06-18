@@ -36,6 +36,19 @@ type FleetAgent = RegistryAgent & {
   registrySource?: string;
   healthCheckedAt?: string;
   lastError?: string;
+  capability?: {
+    ready?: boolean;
+    result?: string;
+    requiredTools?: string[];
+    missingTools?: string[];
+    contextReady?: Record<string, boolean>;
+    contextKnown?: Record<string, boolean>;
+    latencyP95Ms?: number;
+    lastSuccess?: string;
+    lastFailure?: string;
+    blockedReason?: string;
+    blockedReasons?: string[];
+  };
 };
 
 type PendingTransfer = {
@@ -635,6 +648,87 @@ function getAgentSummary(agent: FleetAgent, lastOutcome: string, bridgeWorker?: 
   return agent.description;
 }
 
+function formatAgentHealthTimestamp(value?: string) {
+  if (!value) return 'No live record yet';
+  const timestamp = new Date(value).getTime();
+  if (!Number.isFinite(timestamp)) return value;
+  const seconds = Math.max(0, Math.round((Date.now() - timestamp) / 1000));
+  if (seconds < 60) return `${seconds}s ago`;
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 36) return `${hours}h ago`;
+  return new Date(value).toLocaleDateString();
+}
+
+function formatAgentLatency(value?: number) {
+  if (!Number.isFinite(Number(value)) || Number(value) <= 0) return 'Not sampled';
+  const latency = Math.round(Number(value));
+  return latency >= 1000 ? `${(latency / 1000).toFixed(1)}s p95` : `${latency}ms p95`;
+}
+
+function getAgentCapabilityLabel(agent: FleetAgent, healthProbe?: AgentHealthProbe) {
+  if (agent.capability?.ready) return 'Ready to help';
+  if (agent.capability?.blockedReason) {
+    return agent.capability.blockedReason.replace(/[:_]/g, ' ');
+  }
+  if (healthProbe?.ready) return 'Tools and health clear';
+  if (agent.lastError) return agent.lastError;
+  return isRegistryBackedSource(agent.registrySource) ? 'Capability pending proof' : 'Catalog only';
+}
+
+function getAgentHealthFacts({
+  agent,
+  healthProbe,
+  bridgeWorker,
+  lastOutcome,
+}: {
+  agent: FleetAgent;
+  healthProbe?: AgentHealthProbe;
+  bridgeWorker?: BridgeSnnWorker;
+  lastOutcome: string;
+}) {
+  const capability = agent.capability || {};
+  const latency =
+    capability.latencyP95Ms ||
+    Number(
+      (healthProbe as AgentHealthProbe & { latencyMs?: number; latencyP95Ms?: number })
+        ?.latencyP95Ms
+    ) ||
+    Number(
+      (healthProbe as AgentHealthProbe & { latencyMs?: number; latencyP95Ms?: number })?.latencyMs
+    ) ||
+    0;
+  const lastSuccess =
+    capability.lastSuccess ||
+    (bridgeWorker?.lastActive && (bridgeWorker.ready || bridgeWorker.status === 'ready')
+      ? bridgeWorker.lastActive
+      : '') ||
+    healthProbe?.lastSeen ||
+    agent.healthCheckedAt;
+  const lastFailure =
+    capability.lastFailure ||
+    (agent.lastError ? agent.healthCheckedAt || healthProbe?.lastSeen || '' : '');
+  const missingTools = capability.missingTools?.length
+    ? capability.missingTools
+    : Array.isArray(healthProbe?.missingTools)
+      ? healthProbe.missingTools
+      : [];
+  return {
+    capabilityLabel: getAgentCapabilityLabel(agent, healthProbe),
+    latencyLabel: formatAgentLatency(latency),
+    lastSuccessLabel: formatAgentHealthTimestamp(lastSuccess),
+    lastFailureLabel: lastFailure ? formatAgentHealthTimestamp(lastFailure) : 'None reported',
+    missingTools,
+    readinessDetail:
+      capability.blockedReasons?.[0]?.replace(/[:_]/g, ' ') ||
+      (missingTools.length
+        ? `${missingTools.length} tool gap${missingTools.length === 1 ? '' : 's'}`
+        : '') ||
+      (lastOutcome && lastOutcome !== 'No call outcome yet' ? lastOutcome : ''),
+  };
+}
+
 function countSkills(agents: FleetAgent[]) {
   return agents.reduce((total, agent) => total + agent.skills.length, 0);
 }
@@ -822,6 +916,7 @@ function AgentFleetCard({
     ? healthProbe.healthProbe || healthProbe.source || 'GET /api/agents/health'
     : agent.registryEndpoint || agent.registrySource || 'local registry';
   const healthLastSeen = healthProbe?.lastSeen || agent.healthCheckedAt;
+  const healthFacts = getAgentHealthFacts({ agent, healthProbe, bridgeWorker, lastOutcome });
   const topSkills = agent.skills.slice(0, 3);
   return (
     <article className={`pbk-agent-card ${selected ? 'selected' : ''}`.trim()}>
@@ -884,6 +979,34 @@ function AgentFleetCard({
             {healthSource}
           </span>
           {healthLastSeen && <span title={healthProbe?.lastSeen}>seen {healthLastSeen}</span>}
+        </span>
+
+        <span
+          className={`pbk-agent-capability-strip ${
+            agent.capability?.ready || healthReady
+              ? 'ready'
+              : healthState === 'degraded'
+                ? 'degraded'
+                : 'pending'
+          }`.trim()}
+          aria-label={`${agent.name} capability readiness`}
+        >
+          <span>
+            <small>Last success</small>
+            <strong>{healthFacts.lastSuccessLabel}</strong>
+          </span>
+          <span>
+            <small>Last failure</small>
+            <strong>{healthFacts.lastFailureLabel}</strong>
+          </span>
+          <span>
+            <small>Latency</small>
+            <strong>{healthFacts.latencyLabel}</strong>
+          </span>
+          <span title={healthFacts.readinessDetail || healthFacts.capabilityLabel}>
+            <small>Capability</small>
+            <strong>{healthFacts.capabilityLabel}</strong>
+          </span>
         </span>
 
         <span className="pbk-agent-skill-chips">

@@ -116,6 +116,7 @@ assert(report.gaps.every((gap) => gap.operatorAction), 'Every gap must carry an 
 const bridge = readFileSync(path.join(ROOT, 'scripts', 'openclaw-local-server.mjs'), 'utf8');
 const runtimeBridge = readFileSync(path.join(ROOT, 'src', 'app', 'utils', 'runtimeBridge.ts'), 'utf8');
 const commandCenter = readFileSync(path.join(ROOT, 'src', 'app', 'routes', 'CommandCenter.tsx'), 'utf8');
+const pbkComponents = readFileSync(path.join(ROOT, 'src', 'styles', 'pbk-components.css'), 'utf8');
 
 assert(
   /buildProductionGapsSnapshot/.test(bridge) && /\/api\/production\/gaps/.test(bridge),
@@ -128,6 +129,20 @@ assert(
 assert(
   /ProductionGapsRail/.test(commandCenter) && /GET \/api\/production\/gaps/.test(commandCenter),
   'Command Center must render the production gaps rail.'
+);
+assert(
+  /pbk-production-gaps-head/.test(commandCenter) &&
+    /pbk-production-speed-strip/.test(commandCenter) &&
+    /pbk-production-compact-row/.test(commandCenter) &&
+    /pbk-production-compact-details/.test(commandCenter),
+  'Command Center production gaps rail must use the compact readiness layout.'
+);
+assert(
+  /\.pbk-command-production-gaps/.test(pbkComponents) &&
+    /\.pbk-production-compact-row/.test(pbkComponents) &&
+    /\.pbk-production-compact-details/.test(pbkComponents) &&
+    /grid-template-columns: minmax\(78px, 0\.22fr\) minmax\(0, 1fr\)/.test(pbkComponents),
+  'Production gap compact layout must keep setup controls dense and scannable.'
 );
 
 console.log('production-gap-labels-smoke: ok');

@@ -46,6 +46,22 @@ for (const helper of [
 for (const label of ['Manual', 'YouTube', 'Learn from YouTube', 'Analyze video']) {
   assert(route.includes(label), `Skill candidate intake must expose ${label}.`);
 }
+for (const label of [
+  'SKILL_WIZARD_STEPS',
+  'Price objection',
+  'Response',
+  'Next question',
+  'Preview skill',
+  'triggerPolicy',
+]) {
+  assert(route.includes(label), `Guided Skill Studio wizard must expose ${label}.`);
+}
+assert(
+  styles.includes('.pbk-skill-wizard-steps') &&
+    styles.includes('.pbk-skill-wizard-preview') &&
+    styles.includes('.pbk-skill-dialog-footer-left'),
+  'Skill Studio guided creation wizard must include step, preview, and mobile footer styles.'
+);
 assert(
   route.includes("sourceType: 'youtube'") &&
     route.includes('maxCandidates') &&

@@ -5,8 +5,10 @@ import {
   CheckCircle2,
   Edit3,
   FileSignature,
+  HeartHandshake,
   Loader2,
   Mail,
+  MessageSquare,
   Phone,
   Plus,
   RefreshCw,
@@ -24,7 +26,9 @@ import {
   fetchLeadLastCallRequest,
   fetchLeadsRequest,
   patchLeadRequest,
+  planLeadNurtureRequest,
   sendLeadContractRequest,
+  sendMessageRequest,
   startLeadCallRequest,
 } from '../utils/runtimeBridge';
 import { showUiToast } from '../utils/uiFeedback';
@@ -111,6 +115,14 @@ type LeadCallConfirmDraft = {
   sellerName: string;
   phone: string;
   address: string;
+};
+
+type QuickSmsDraft = {
+  lead: BridgeRecord;
+  leadId: string;
+  sellerName: string;
+  phone: string;
+  body: string;
 };
 
 type DetailStatus = {
@@ -922,6 +934,7 @@ export function Leads() {
   const [newLeadStatus, setNewLeadStatus] = useState<DetailStatus | null>(null);
   const [contractOpen, setContractOpen] = useState(false);
   const [contractConfirmOpen, setContractConfirmOpen] = useState(false);
+  const [quickSmsDraft, setQuickSmsDraft] = useState<QuickSmsDraft | null>(null);
   const [leadCallConfirmDraft, setLeadCallConfirmDraft] = useState<LeadCallConfirmDraft | null>(
     null
   );
@@ -1288,19 +1301,165 @@ export function Leads() {
     }
   };
 
-  const startLeadCall = (lead: BridgeRecord) => {
+  const startQuickLeadCall = async (lead: BridgeRecord) => {
     const validation = validateLeadForCall(lead);
+    const leadId = getLeadId(lead);
     if (validation) {
       showUiToast({ tone: 'error', title: 'Call blocked', desc: validation });
       return;
     }
-    setLeadCallConfirmDraft({
+    if (!beginLeadAction(`call:${leadId}`)) return;
+    try {
+      const response = await startLeadCallRequest({
+        leadId,
+        leadName: getSellerName(lead),
+        phone: getLeadPhone(lead),
+        email: getLeadEmail(lead),
+        address: getLeadAddress(lead),
+        actor: 'PBK operator',
+        requestedBy: 'PBK operator',
+        source: 'leads_page_manual',
+        manual: true,
+        manualSend: true,
+      });
+      const status = String(
+        response.status || response.result || response.outcome || response.action || ''
+      ).toLowerCase();
+      const approvalQueued =
+        status.includes('approval') || Boolean(response.approvalId || response.approval_id);
+      showUiToast({
+        tone: approvalQueued ? 'info' : 'success',
+        title: approvalQueued ? 'Call held by bridge' : 'Calling seller',
+        desc: approvalQueued
+          ? `${getSellerName(lead)} returned an approval hold from the bridge/provider policy.`
+          : `${getSellerName(lead)} was sent to Telnyx from the manual lead quick action.`,
+      });
+      await Promise.all([refresh().catch(() => null), loadLeadRoster()]);
+    } catch (nextError) {
+      showUiToast({
+        tone: 'error',
+        title: 'Call request failed',
+        desc:
+          nextError instanceof Error
+            ? nextError.message
+            : 'The bridge did not accept the manual call request.',
+        critical: true,
+      });
+    } finally {
+      endLeadAction();
+    }
+  };
+
+  const openQuickSms = (lead: BridgeRecord) => {
+    const phone = getLeadPhone(lead);
+    if (!isCallablePhone(phone)) {
+      showUiToast({
+        tone: 'error',
+        title: 'SMS unavailable',
+        desc: 'Add a canonical phone number before texting this seller.',
+      });
+      return;
+    }
+    setQuickSmsDraft({
       lead,
       leadId: getLeadId(lead),
       sellerName: getSellerName(lead),
-      phone: getLeadPhone(lead),
-      address: getLeadAddress(lead),
+      phone,
+      body: `Hi ${getSellerName(lead).split(' ')[0] || 'there'}, this is Probono Key Realty following up about ${getLeadAddress(lead) || 'your property'}. Is now still a good time to talk?`,
     });
+  };
+
+  const sendQuickSms = async () => {
+    if (!quickSmsDraft || !quickSmsDraft.body.trim()) return;
+    const { lead, leadId } = quickSmsDraft;
+    if (!beginLeadAction(`sms:${leadId}`)) return;
+    try {
+      const response = await sendMessageRequest({
+        leadId,
+        leadName: getSellerName(lead),
+        phone: getLeadPhone(lead),
+        email: getLeadEmail(lead),
+        address: getLeadAddress(lead),
+        channel: 'sms',
+        message: quickSmsDraft.body.trim(),
+        body: quickSmsDraft.body.trim(),
+        actor: 'PBK operator',
+        requestedBy: 'PBK operator',
+        source: 'leads_page_manual',
+        manual: true,
+        manualSend: true,
+      });
+      const result = String(response.result || response.status || '').toLowerCase();
+      const ok = response.ok !== false && !/failed|error|blocked/.test(result);
+      showUiToast({
+        tone: ok ? 'success' : 'warning',
+        title: ok ? 'SMS sent' : 'SMS recorded with warning',
+        desc: text(
+          response.verbiage || response.message || response.error,
+          'Manual SMS route returned.'
+        ),
+      });
+      setQuickSmsDraft(null);
+      await Promise.all([
+        reloadLeadDetailNow().catch(() => null),
+        refresh().catch(() => null),
+        loadLeadRoster(),
+      ]);
+    } catch (nextError) {
+      showUiToast({
+        tone: 'error',
+        title: 'SMS failed',
+        desc:
+          nextError instanceof Error
+            ? nextError.message
+            : 'The bridge did not accept the manual SMS.',
+        critical: true,
+      });
+    } finally {
+      endLeadAction();
+    }
+  };
+
+  const addLeadToNurture = async (lead: BridgeRecord) => {
+    const leadId = getLeadId(lead);
+    if (!beginLeadAction(`nurture:${leadId}`)) return;
+    try {
+      const response = await planLeadNurtureRequest({
+        leadId,
+        leadName: getSellerName(lead),
+        phone: getLeadPhone(lead),
+        email: getLeadEmail(lead),
+        address: getLeadAddress(lead),
+        channels: ['sms', 'email', 'voice'],
+        actor: 'PBK operator',
+        requestedBy: 'PBK operator',
+        source: 'leads_page_manual',
+        manual: true,
+        manualSend: true,
+      });
+      const plan =
+        response.plan && typeof response.plan === 'object' ? (response.plan as BridgeRecord) : {};
+      showUiToast({
+        tone: response.ok === false ? 'error' : 'success',
+        title: response.ok === false ? 'Nurture not started' : 'Nurture added',
+        desc:
+          text(response.error || response.message) ||
+          `${getSellerName(lead)} is queued in the nurture lane${plan.approvalId ? ` (${plan.approvalId})` : ''}.`,
+      });
+      await Promise.all([refresh().catch(() => null), loadLeadRoster()]);
+    } catch (nextError) {
+      showUiToast({
+        tone: 'error',
+        title: 'Nurture failed',
+        desc:
+          nextError instanceof Error
+            ? nextError.message
+            : 'The bridge did not accept the nurture request.',
+        critical: true,
+      });
+    } finally {
+      endLeadAction();
+    }
   };
 
   const executeLeadCall = async () => {
@@ -1316,7 +1475,9 @@ export function Leads() {
         phone: getLeadPhone(lead),
         email: getLeadEmail(lead),
         address: getLeadAddress(lead),
-        source: 'leads-page',
+        source: 'leads_page_manual',
+        manual: true,
+        manualSend: true,
       });
       const status = String(
         response.status || response.result || response.outcome || response.action || ''
@@ -1606,18 +1767,55 @@ export function Leads() {
                     <span className="grid h-8 w-8 place-items-center rounded-full bg-slate-800 text-xs font-semibold text-sky-200">
                       {sellerName.charAt(0).toUpperCase()}
                     </span>
-                    <button
-                      type="button"
-                      aria-label={`Call ${sellerName}`}
-                      disabled={isLeadActionBusy || !isCallablePhone(getLeadPhone(lead))}
-                      className="rounded-full bg-sky-400 px-3 py-2 text-xs font-bold text-slate-950 disabled:cursor-not-allowed disabled:opacity-50"
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        void startLeadCall(lead);
-                      }}
+                    <span
+                      className="pbk-lead-quick-actions compact"
+                      aria-label="Lead quick actions"
                     >
-                      {leadActionPending === `call:${id}` ? 'Calling...' : 'Call'}
-                    </button>
+                      <button
+                        type="button"
+                        aria-label={`Call ${sellerName}`}
+                        disabled={isLeadActionBusy || !isCallablePhone(getLeadPhone(lead))}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          void startQuickLeadCall(lead);
+                        }}
+                      >
+                        {leadActionPending === `call:${id}` ? (
+                          <Loader2 size={13} className="animate-spin" />
+                        ) : (
+                          <Phone size={13} />
+                        )}
+                        <span>Call</span>
+                      </button>
+                      <button
+                        type="button"
+                        aria-label={`Text ${sellerName}`}
+                        disabled={isLeadActionBusy || !isCallablePhone(getLeadPhone(lead))}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          openQuickSms(lead);
+                        }}
+                      >
+                        <MessageSquare size={13} />
+                        <span>SMS</span>
+                      </button>
+                      <button
+                        type="button"
+                        aria-label={`Add ${sellerName} to nurture`}
+                        disabled={isLeadActionBusy}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          void addLeadToNurture(lead);
+                        }}
+                      >
+                        {leadActionPending === `nurture:${id}` ? (
+                          <Loader2 size={13} className="animate-spin" />
+                        ) : (
+                          <HeartHandshake size={13} />
+                        )}
+                        <span>Nurture</span>
+                      </button>
+                    </span>
                   </span>
                 </div>
               );
@@ -1629,24 +1827,27 @@ export function Leads() {
               const id = getLeadId(lead);
               const isSelected = id === activeLeadId;
               const path = normalizePath(lead.selected_path || lead.selectedPath, lead);
+              const sellerName = getSellerName(lead);
               return (
-                <button
+                <div
                   key={id}
-                  type="button"
-                  aria-label={`Open lead ${getSellerName(lead)} at ${getLeadAddress(lead)}`}
                   aria-selected={isSelected}
-                  onClick={() => setSelectedLeadId(id)}
                   className={[
-                    'grid w-full grid-cols-1 gap-2 px-4 py-4 text-left transition md:grid-cols-[1fr_auto]',
+                    'grid w-full grid-cols-1 gap-2 px-4 py-4 text-left transition md:grid-cols-[minmax(0,1fr)_auto]',
                     isSelected ? 'bg-sky-500/10' : 'hover:bg-slate-900',
                   ].join(' ')}
                 >
-                  <span className="min-w-0">
+                  <button
+                    type="button"
+                    aria-label={`Open lead ${sellerName} at ${getLeadAddress(lead)}`}
+                    onClick={() => setSelectedLeadId(id)}
+                    className="min-w-0 text-left"
+                  >
                     <span
                       className="block truncate text-sm font-semibold text-slate-100"
-                      title={getSellerName(lead)}
+                      title={sellerName}
                     >
-                      {getSellerName(lead)}
+                      {sellerName}
                     </span>
                     <span
                       className="mt-1 block truncate text-xs text-slate-400"
@@ -1660,16 +1861,56 @@ export function Leads() {
                       </span>
                       <span>Source: {text(lead.source, 'manual')}</span>
                     </span>
-                  </span>
-                  <span className="flex items-center gap-2 md:justify-end">
+                  </button>
+                  <span className="flex flex-wrap items-center gap-2 md:justify-end">
                     <span className="rounded-full border border-slate-700 bg-slate-900 px-2.5 py-1 text-[10px] uppercase tracking-[0.14em] text-slate-300">
                       {PATH_LABELS[path]}
                     </span>
                     <span className="text-[11px] text-slate-500">
                       {formatDate(lead.updatedAt || lead.createdAt)}
                     </span>
+                    <span
+                      className="pbk-lead-quick-actions"
+                      aria-label={`Quick actions for ${sellerName}`}
+                    >
+                      <button
+                        type="button"
+                        aria-label={`Call ${sellerName}`}
+                        disabled={isLeadActionBusy || !isCallablePhone(getLeadPhone(lead))}
+                        onClick={() => void startQuickLeadCall(lead)}
+                      >
+                        {leadActionPending === `call:${id}` ? (
+                          <Loader2 size={13} className="animate-spin" />
+                        ) : (
+                          <Phone size={13} />
+                        )}
+                        <span>Call</span>
+                      </button>
+                      <button
+                        type="button"
+                        aria-label={`Text ${sellerName}`}
+                        disabled={isLeadActionBusy || !isCallablePhone(getLeadPhone(lead))}
+                        onClick={() => openQuickSms(lead)}
+                      >
+                        <MessageSquare size={13} />
+                        <span>SMS</span>
+                      </button>
+                      <button
+                        type="button"
+                        aria-label={`Add ${sellerName} to nurture`}
+                        disabled={isLeadActionBusy}
+                        onClick={() => void addLeadToNurture(lead)}
+                      >
+                        {leadActionPending === `nurture:${id}` ? (
+                          <Loader2 size={13} className="animate-spin" />
+                        ) : (
+                          <HeartHandshake size={13} />
+                        )}
+                        <span>Nurture</span>
+                      </button>
+                    </span>
                   </span>
-                </button>
+                </div>
               );
             })}
             {!filteredLeads.length && (
@@ -1713,6 +1954,40 @@ export function Leads() {
                   </div>
                 </div>
                 <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={() => void startQuickLeadCall(activeLead)}
+                    disabled={isLeadActionBusy || !isCallablePhone(getLeadPhone(activeLead))}
+                    className="inline-flex items-center gap-2 rounded-full bg-sky-400 px-3 py-2 text-xs font-bold text-slate-950 transition hover:bg-sky-300 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {leadActionPending === `call:${activeLeadId}` ? (
+                      <Loader2 size={14} className="animate-spin" />
+                    ) : (
+                      <Phone size={14} />
+                    )}
+                    Call
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => openQuickSms(activeLead)}
+                    disabled={isLeadActionBusy || !isCallablePhone(getLeadPhone(activeLead))}
+                    className="inline-flex items-center gap-2 rounded-full border border-sky-400/40 bg-sky-400/10 px-3 py-2 text-xs font-semibold text-sky-200 transition hover:border-sky-300 hover:bg-sky-400/15 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    <MessageSquare size={14} /> SMS
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void addLeadToNurture(activeLead)}
+                    disabled={isLeadActionBusy}
+                    className="inline-flex items-center gap-2 rounded-full border border-emerald-400/30 bg-emerald-400/10 px-3 py-2 text-xs font-semibold text-emerald-200 transition hover:border-emerald-300 hover:bg-emerald-400/15 disabled:cursor-wait disabled:opacity-60"
+                  >
+                    {leadActionPending === `nurture:${activeLeadId}` ? (
+                      <Loader2 size={14} className="animate-spin" />
+                    ) : (
+                      <HeartHandshake size={14} />
+                    )}
+                    Nurture
+                  </button>
                   <button
                     type="button"
                     onClick={() => navigate(`/leads/${encodeURIComponent(activeLeadId)}`)}
@@ -2853,6 +3128,78 @@ export function Leads() {
                   <Send size={15} />
                 )}
                 Send via DocuSign
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {quickSmsDraft && (
+        <div className="fixed inset-0 z-[60] grid place-items-center bg-slate-950/85 p-4 backdrop-blur-sm">
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="lead-quick-sms-title"
+            className={`${softPanelClass} w-full max-w-lg overflow-hidden`}
+          >
+            <div className="flex items-start justify-between gap-4 border-b border-slate-800 px-5 py-4">
+              <div>
+                <div className="text-[11px] uppercase tracking-[0.16em] text-sky-300">
+                  Manual SMS
+                </div>
+                <h3 id="lead-quick-sms-title" className="mt-2 text-lg font-semibold text-slate-100">
+                  Text {quickSmsDraft.sellerName}
+                </h3>
+                <p className="mt-1 text-xs text-slate-400">{quickSmsDraft.phone}</p>
+              </div>
+              <button
+                type="button"
+                className="grid h-10 w-10 place-items-center rounded-full border border-slate-700 text-slate-300"
+                onClick={() => setQuickSmsDraft(null)}
+                aria-label="Close SMS composer"
+              >
+                <X size={16} />
+              </button>
+            </div>
+            <div className="px-5 py-4">
+              <label className="grid gap-2 text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">
+                Message
+                <textarea
+                  className={`${inputClass} min-h-32 resize-y normal-case tracking-normal`}
+                  value={quickSmsDraft.body}
+                  onChange={(event) =>
+                    setQuickSmsDraft((current) =>
+                      current ? { ...current, body: event.target.value } : current
+                    )
+                  }
+                  autoFocus
+                />
+              </label>
+              <p className="mt-2 text-xs text-slate-500">
+                Human-sent SMS uses the manual bridge lane. Provider failures are shown immediately
+                and can be retried without hiding the outcome.
+              </p>
+            </div>
+            <div className="flex flex-col gap-2 border-t border-slate-800 px-5 py-4 sm:flex-row sm:justify-end">
+              <button
+                type="button"
+                onClick={() => setQuickSmsDraft(null)}
+                className="rounded-full border border-slate-700 px-4 py-2 text-sm font-semibold text-slate-300 transition hover:border-slate-500"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={isLeadActionBusy || !quickSmsDraft.body.trim()}
+                onClick={() => void sendQuickSms()}
+                className="inline-flex items-center justify-center gap-2 rounded-full bg-sky-400 px-4 py-2 text-sm font-bold text-slate-950 transition hover:bg-sky-300 disabled:cursor-wait disabled:opacity-60"
+              >
+                {leadActionPending === `sms:${quickSmsDraft.leadId}` ? (
+                  <Loader2 size={14} className="animate-spin" />
+                ) : (
+                  <Send size={15} />
+                )}
+                Send SMS
               </button>
             </div>
           </div>

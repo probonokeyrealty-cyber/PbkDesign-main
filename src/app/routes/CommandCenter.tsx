@@ -849,8 +849,13 @@ function ProductionGapsRail({
   loading: boolean;
   primaryPath?: PrimaryPathReliabilityReport | null;
 }) {
-  const visibleGaps = gaps.slice(0, 6);
+  const visibleGaps = gaps.slice(0, 4);
   const visiblePrimaryControls = (primaryPath?.controls || []).slice(0, 3);
+  const hiddenGapsCount = Math.max(0, gaps.length - visibleGaps.length);
+  const hiddenControlCount = Math.max(
+    0,
+    (primaryPath?.controls || []).length - visiblePrimaryControls.length
+  );
   const blockingCount = gaps.filter((gap) => gap.blocking).length;
   const optionalCount = gaps.filter((gap) => gap.optional).length;
   const primaryAllowed = primaryPath?.summary?.primaryAllowed !== false;
@@ -864,162 +869,131 @@ function ProductionGapsRail({
   };
 
   return (
-    <PbkPanel className="pbk-command-production-gaps space-y-3">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
+    <PbkPanel className="pbk-command-production-gaps">
+      <div className="pbk-production-gaps-head">
+        <div className="min-w-0">
           <div className="pbk-eyebrow">Production gaps</div>
-          <h2 className="text-base font-semibold text-[var(--text-primary)]">
-            Controls not live or needing setup
-          </h2>
-          <p className="mt-1 max-w-3xl text-xs text-slate-500">
-            This rail merges release readiness, provider health, source truth, and tooling status so
-            a staged capability cannot look silently live.
-          </p>
+          <h2>Controls needing setup</h2>
+        </div>
+        <div className="pbk-production-gaps-chips" aria-label="Production readiness summary">
+          <span className="pbk-production-chip neutral">{gaps.length} labeled</span>
+          <span className={`pbk-production-chip ${blockingCount ? 'danger' : 'good'}`.trim()}>
+            {blockingCount} blocking
+          </span>
+          <span className="pbk-production-chip info">{optionalCount} optional</span>
+          <span className={`pbk-production-chip ${primaryAllowed ? 'good' : 'danger'}`.trim()}>
+            Primary path {primaryAllowed ? 'allowed' : 'gated'}
+          </span>
+          {primaryPath?.summary && (
+            <span className="pbk-production-chip warn">
+              {primaryPath.summary.retryBeforeFallback || 0} retry-gated
+            </span>
+          )}
         </div>
         <DataSourceCaption endpoint="GET /api/production/gaps" note={source} />
       </div>
-      <div className="flex flex-wrap gap-2 text-[11px] uppercase tracking-[0.14em]">
-        <span className="rounded-full border border-slate-700 bg-slate-900 px-2.5 py-1 text-slate-300">
-          {gaps.length} labeled
-        </span>
-        <span
-          className={[
-            'rounded-full border px-2.5 py-1',
-            blockingCount
-              ? 'border-rose-400/30 bg-rose-500/10 text-rose-200'
-              : 'border-emerald-400/25 bg-emerald-500/10 text-emerald-200',
-          ].join(' ')}
-        >
-          {blockingCount} blocking
-        </span>
-        <span className="rounded-full border border-sky-400/25 bg-sky-500/10 px-2.5 py-1 text-sky-200">
-          {optionalCount} optional
-        </span>
-        <span
-          className={[
-            'rounded-full border px-2.5 py-1',
-            primaryAllowed
-              ? 'border-emerald-400/25 bg-emerald-500/10 text-emerald-200'
-              : 'border-rose-400/30 bg-rose-500/10 text-rose-200',
-          ].join(' ')}
-        >
-          Primary path {primaryAllowed ? 'allowed' : 'gated'}
-        </span>
-        {primaryPath?.summary && (
-          <span className="rounded-full border border-amber-400/25 bg-amber-500/10 px-2.5 py-1 text-amber-100">
-            {primaryPath.summary.retryBeforeFallback || 0} retry-gated
-          </span>
-        )}
-      </div>
       {primaryPath?.summary && (
-        <div className="grid gap-2 md:grid-cols-3">
-          <div className="rounded-lg border border-slate-800 bg-slate-950/80 p-3">
-            <div className="text-[10px] uppercase tracking-[0.14em] text-slate-500">
-              First attempt
-            </div>
-            <div
-              className={[
-                'mt-1 text-sm font-semibold',
-                primaryAllowed ? 'text-emerald-200' : 'text-rose-200',
-              ].join(' ')}
-            >
+        <div className="pbk-production-speed-strip">
+          <span>
+            <small>First attempt</small>
+            <strong className={primaryAllowed ? 'text-emerald-200' : 'text-rose-200'}>
               {primaryPath.result ||
                 (primaryAllowed ? 'primary_path_attempts_allowed' : 'primary_path_gated')}
-            </div>
-            <div className="mt-1 text-[11px] text-slate-500">
-              Target fallback rate: {primaryPath.fallbackSloTargetPercent ?? 0.1}% or less.
-            </div>
-          </div>
-          <div className="rounded-lg border border-slate-800 bg-slate-950/80 p-3">
-            <div className="text-[10px] uppercase tracking-[0.14em] text-slate-500">
-              Active gates
-            </div>
-            <div className="mt-1 text-sm font-semibold text-slate-100">
+            </strong>
+            <em>fallback SLO {primaryPath.fallbackSloTargetPercent ?? 0.1}%</em>
+          </span>
+          <span>
+            <small>Active gates</small>
+            <strong>
               {primaryPath.summary.blocking || 0} blockers /{' '}
               {primaryPath.summary.disabledOptional || 0} disabled optional
-            </div>
-            <div className="mt-1 text-[11px] text-slate-500">
-              {primaryPath.summary.timeoutEventsRequired || 0} timeout events required before
-              fallback.
-            </div>
-          </div>
-          <div className="rounded-lg border border-slate-800 bg-slate-950/80 p-3">
-            <div className="text-[10px] uppercase tracking-[0.14em] text-slate-500">
-              Provider policy
-            </div>
-            <div className="mt-1 text-sm font-semibold text-slate-100">
-              {primaryPath.summary.providerPolicies || 0} providers classified
-            </div>
-            <div className="mt-1 text-[11px] text-slate-500">
-              Preflight, timeout, retry, then labeled fallback.
-            </div>
-          </div>
+            </strong>
+            <em>{primaryPath.summary.timeoutEventsRequired || 0} timeout events before fallback</em>
+          </span>
+          <span>
+            <small>Provider policy</small>
+            <strong>{primaryPath.summary.providerPolicies || 0} providers classified</strong>
+            <em>preflight / timeout / retry / label</em>
+          </span>
         </div>
       )}
       {visiblePrimaryControls.length > 0 && (
-        <div className="grid gap-2 md:grid-cols-3">
-          {visiblePrimaryControls.map((control) => (
-            <div
-              key={control.id}
-              className={[
-                'rounded-lg border p-3',
-                control.blocking
-                  ? 'border-rose-400/30 bg-rose-500/10 text-rose-100'
-                  : control.optional
-                    ? 'border-sky-400/25 bg-sky-500/10 text-sky-100'
-                    : 'border-amber-400/25 bg-amber-500/10 text-amber-100',
-              ].join(' ')}
-              title={[control.reason, control.operatorAction].filter(Boolean).join(' - ')}
-            >
-              <div className="flex items-center justify-between gap-2 text-[10px] uppercase opacity-75">
-                <span className="truncate">{control.primaryAttempt || 'primary_allowed'}</span>
-                <span>{control.retryBeforeFallback || 0} retry</span>
+        <details className="pbk-production-compact-details">
+          <summary>
+            <span>Primary controls</span>
+            <small>
+              {visiblePrimaryControls.length}
+              {hiddenControlCount ? ` + ${hiddenControlCount}` : ''} tracked
+            </small>
+          </summary>
+          <div className="pbk-production-compact-list" aria-label="Primary path controls">
+            {visiblePrimaryControls.map((control) => (
+              <div
+                key={control.id}
+                className={[
+                  'pbk-production-compact-row',
+                  control.blocking ? 'danger' : control.optional ? 'info' : 'warn',
+                ].join(' ')}
+                title={[control.reason, control.operatorAction].filter(Boolean).join(' - ')}
+              >
+                <span className="pbk-production-row-status">
+                  {control.retryBeforeFallback || 0} retry
+                </span>
+                <div className="min-w-0">
+                  <strong>{control.label}</strong>
+                  <small>
+                    {control.fallbackPolicy || 'retry_then_label_fallback'} /{' '}
+                    {control.timeoutMs || 5000}ms
+                  </small>
+                  <em>{control.reason || control.primaryAttempt || 'Primary path classified.'}</em>
+                </div>
               </div>
-              <div className="mt-1 truncate text-sm font-semibold">{control.label}</div>
-              <div className="mt-1 truncate text-[11px] opacity-75">
-                {control.fallbackPolicy || 'retry_then_label_fallback'} /{' '}
-                {control.timeoutMs || 5000}ms
+            ))}
+            {hiddenControlCount > 0 && (
+              <div className="pbk-production-more-row">
+                +{hiddenControlCount} more controls tracked
               </div>
-              <div className="mt-2 line-clamp-2 text-[11px] opacity-85">
-                {control.reason || 'Primary path classified.'}
-              </div>
-            </div>
-          ))}
-        </div>
+            )}
+          </div>
+        </details>
       )}
       {loading ? (
-        <div className="rounded-xl border border-slate-800 bg-slate-900 px-3 py-4 text-xs text-slate-500">
-          Checking production controls...
-        </div>
+        <div className="pbk-production-empty-row">Checking production controls...</div>
       ) : visibleGaps.length ? (
-        <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-3">
-          {visibleGaps.map((gap) => (
-            <div
-              key={gap.id}
-              className={`min-w-0 rounded-lg border p-3 ${severityTone(gap.severity)}`}
-              title={[gap.endpoint, gap.detail, gap.operatorAction].filter(Boolean).join(' - ')}
-            >
-              <div className="flex items-center justify-between gap-2 text-[10px] uppercase opacity-75">
-                <span className="truncate font-semibold">{gap.severity || 'info'}</span>
-                <span className="truncate">{gap.optional ? 'optional' : 'required'}</span>
-              </div>
-              <div className="mt-1 truncate text-sm font-semibold text-current">{gap.label}</div>
-              <div className="mt-1 truncate text-[11px] opacity-75">
-                {gap.category || 'production'} / {gap.status || 'not live'}
-              </div>
-              <div className="mt-2 line-clamp-2 text-[11px] opacity-85">
-                {gap.detail || 'No detail reported.'}
-              </div>
-              {gap.operatorAction && (
-                <div className="mt-2 line-clamp-2 text-[11px] opacity-75">
-                  Next: {gap.operatorAction}
+        <details className="pbk-production-compact-details">
+          <summary>
+            <span>Setup gaps</span>
+            <small>
+              {visibleGaps.length}
+              {hiddenGapsCount ? ` + ${hiddenGapsCount}` : ''} labeled
+            </small>
+          </summary>
+          <div className="pbk-production-compact-list" aria-label="Production gaps">
+            {visibleGaps.map((gap) => (
+              <div
+                key={gap.id}
+                className={`pbk-production-compact-row ${severityTone(gap.severity)}`}
+                title={[gap.endpoint, gap.detail, gap.operatorAction].filter(Boolean).join(' - ')}
+              >
+                <span className="pbk-production-row-status">
+                  {gap.optional ? 'optional' : gap.severity || 'required'}
+                </span>
+                <div className="min-w-0">
+                  <strong>{gap.label}</strong>
+                  <small>
+                    {gap.category || 'production'} / {gap.status || 'not live'}
+                  </small>
+                  <em>{gap.operatorAction || gap.detail || 'No detail reported.'}</em>
                 </div>
-              )}
-            </div>
-          ))}
-        </div>
+              </div>
+            ))}
+            {hiddenGapsCount > 0 && (
+              <div className="pbk-production-more-row">+{hiddenGapsCount} more gaps tracked</div>
+            )}
+          </div>
+        </details>
       ) : (
-        <div className="rounded-xl border border-emerald-400/20 bg-emerald-500/10 px-3 py-4 text-xs text-emerald-100">
+        <div className="pbk-production-empty-row ready">
           No production gaps reported by the bridge.
         </div>
       )}

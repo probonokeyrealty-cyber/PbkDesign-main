@@ -2,6 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import {
   AlertTriangle,
   BrainCircuit,
+  Bot,
+  CalendarClock,
   Camera,
   CheckCircle2,
   ChevronDown,
@@ -9,11 +11,15 @@ import {
   Clock3,
   Cpu,
   Filter,
+  FileText,
   Keyboard,
   Loader2,
+  Mail,
+  MessageSquare,
   Mic,
   MonitorUp,
   MousePointer2,
+  Phone,
   Radio,
   RefreshCw,
   RotateCcw,
@@ -72,6 +78,135 @@ type SubmitLane = 'rest' | 'invoke';
 type HistoryFilter = 'all' | 'active' | 'completed' | 'failed';
 type ConnectionState = 'checking' | 'connected' | 'degraded';
 type CommandRiskLevel = 'low' | 'medium' | 'high';
+type CompanionActionState = 'Ready' | 'Sending' | 'Sent' | 'Failed' | 'Retry';
+
+type CompanionAction = {
+  id: string;
+  label: string;
+  description: string;
+  prompt: string;
+  action: AvaCommandAction;
+  icon: typeof Terminal;
+  requiresApproval: boolean;
+};
+
+type OperatorMemory = {
+  draft: string;
+  action: AvaCommandAction;
+  updatedAt: string;
+};
+
+const AVA_OPERATOR_MEMORY_KEY = 'pbk:ava-chat:operator-memory';
+
+const AVA_MODE_ITEMS = [
+  { id: 'chat', label: 'Chat', description: 'Ask Ava and keep the thread moving.' },
+  { id: 'voice', label: 'Voice', description: 'Speak naturally into the composer.' },
+  { id: 'command', label: 'Command', description: 'Run PBK actions through the bridge.' },
+  { id: 'live', label: 'Live Assist', description: 'Use call context and active skills.' },
+] as const;
+
+const PBK_COMPANION_ACTIONS: CompanionAction[] = [
+  {
+    id: 'send-sms',
+    label: 'Send SMS',
+    description: 'Draft a seller text with the current lead context.',
+    prompt: 'Draft a concise SMS to this seller using the current PBK context.',
+    action: 'send_sms',
+    icon: MessageSquare,
+    requiresApproval: true,
+  },
+  {
+    id: 'send-email',
+    label: 'Send Email',
+    description: 'Prepare a seller email from the right sender identity.',
+    prompt: 'Draft a seller email using the current PBK context and keep it ready to review.',
+    action: 'send_email',
+    icon: Mail,
+    requiresApproval: true,
+  },
+  {
+    id: 'call-seller',
+    label: 'Call Seller',
+    description: 'Prepare the call lane and keep provider safety visible.',
+    prompt: 'Prepare a call to this seller and show the best opening line before dialing.',
+    action: 'operator_command',
+    icon: Phone,
+    requiresApproval: true,
+  },
+  {
+    id: 'open-lead',
+    label: 'Open Lead',
+    description: 'Find the seller record, timeline, and latest context.',
+    prompt: 'Open the current seller lead and summarize the latest timeline context.',
+    action: 'search_leads',
+    icon: Search,
+    requiresApproval: false,
+  },
+  {
+    id: 'analyze-deal',
+    label: 'Analyze Deal',
+    description: 'Hydrate ARV, repairs, MAO, path, and next script.',
+    prompt: 'Analyze this deal and tell me the MAO, offer path, and next seller question.',
+    action: 'analyze_deal',
+    icon: Sparkles,
+    requiresApproval: false,
+  },
+  {
+    id: 'generate-offer',
+    label: 'Generate Offer',
+    description: 'Build a grounded offer from analyzer and seller facts.',
+    prompt: 'Generate a seller-safe offer recommendation from analyzer, repairs, and motivation.',
+    action: 'analyze_deal',
+    icon: FileText,
+    requiresApproval: false,
+  },
+  {
+    id: 'prepare-contract',
+    label: 'Prepare Contract',
+    description: 'Queue the contract package without sending it yet.',
+    prompt: 'Prepare the right contract package for this deal but do not send it yet.',
+    action: 'operator_command',
+    icon: FileText,
+    requiresApproval: true,
+  },
+  {
+    id: 'schedule-follow-up',
+    label: 'Schedule Follow-up',
+    description: 'Turn the next step into a seller timeline event.',
+    prompt: 'Schedule the next follow-up for this seller and explain the recommended timing.',
+    action: 'operator_command',
+    icon: CalendarClock,
+    requiresApproval: true,
+  },
+  {
+    id: 'ask-rex',
+    label: 'Ask Rex',
+    description: 'Delegate research without leaving the conversation.',
+    prompt: 'Ask Rex to research the missing context for this seller and return the key findings.',
+    action: 'llm_query',
+    icon: BrainCircuit,
+    requiresApproval: false,
+  },
+  {
+    id: 'review-with-qa',
+    label: 'Review with QA',
+    description: 'Inspect a bad call, missed objection, or stale control.',
+    prompt:
+      'Ask QA to review the latest seller interaction for missed context, repetition, and next fix.',
+    action: 'operator_command',
+    icon: Bot,
+    requiresApproval: false,
+  },
+  {
+    id: 'add-memory',
+    label: 'Add Memory',
+    description: 'Capture a seller fact, operator note, or coaching lesson.',
+    prompt: 'Add this as a PBK memory and connect it to the current seller timeline.',
+    action: 'operator_command',
+    icon: FileText,
+    requiresApproval: false,
+  },
+];
 
 const ACTIONS: Array<{
   id: AvaCommandAction;
@@ -460,6 +595,29 @@ function isActiveCommand(command?: LocalCommandRecord) {
   return Boolean(command && ACTIVE_STATUSES.has(String(command.status || '').toLowerCase()));
 }
 
+function getCompanionActionState(
+  item: CompanionAction,
+  commands: LocalCommandRecord[],
+  submitting: boolean,
+  selectedAction: AvaCommandAction
+): CompanionActionState {
+  if (submitting && selectedAction === item.action) return 'Sending';
+  const latest = commands.find((command) => normalizeAction(command.action) === item.action);
+  if (!latest) return 'Ready';
+  const status = String(latest.status || '').toLowerCase();
+  if (FAILED_STATUSES.has(status)) return 'Retry';
+  if (status === 'completed') return 'Sent';
+  if (ACTIVE_STATUSES.has(status)) return 'Sending';
+  return 'Ready';
+}
+
+function getCompanionStateClass(state: CompanionActionState) {
+  if (state === 'Sent') return 'is-sent';
+  if (state === 'Retry' || state === 'Failed') return 'is-failed';
+  if (state === 'Sending') return 'is-sending';
+  return 'is-ready';
+}
+
 export function AvaChat() {
   const { snapshot, refresh } = useRuntimeSnapshot(30000);
   const [draft, setDraft] = useState('');
@@ -479,6 +637,7 @@ export function AvaChat() {
   const [submitError, setSubmitError] = useState('');
   const [contextOpen, setContextOpen] = useState(false);
   const [decidingApprovalId, setDecidingApprovalId] = useState('');
+  const [operatorMemory, setOperatorMemory] = useState<OperatorMemory | null>(null);
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
   const timelineRef = useRef<HTMLDivElement | null>(null);
@@ -584,6 +743,32 @@ export function AvaChat() {
   useEffect(() => {
     return () => recognitionRef.current?.stop();
   }, []);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      const raw = window.localStorage.getItem(AVA_OPERATOR_MEMORY_KEY);
+      if (!raw) return;
+      const parsed = JSON.parse(raw) as OperatorMemory;
+      if (!parsed?.draft || !ACTIONS.some((item) => item.id === parsed.action)) return;
+      setOperatorMemory(parsed);
+    } catch {
+      window.localStorage.removeItem(AVA_OPERATOR_MEMORY_KEY);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const trimmedDraft = draft.trim();
+    if (!trimmedDraft) return;
+    const nextMemory: OperatorMemory = {
+      draft: trimmedDraft.slice(0, 280),
+      action,
+      updatedAt: new Date().toISOString(),
+    };
+    setOperatorMemory(nextMemory);
+    window.localStorage.setItem(AVA_OPERATOR_MEMORY_KEY, JSON.stringify(nextMemory));
+  }, [action, draft]);
 
   useEffect(() => {
     const timeline = timelineRef.current;
@@ -746,6 +931,20 @@ export function AvaChat() {
     });
   };
 
+  const selectCompanionAction = (item: CompanionAction) => {
+    setAction(item.action);
+    setRequiresApproval(item.requiresApproval);
+    setDraft(item.prompt);
+    window.requestAnimationFrame(() => composerRef.current?.focus());
+  };
+
+  const resumeOperatorMemory = () => {
+    if (!operatorMemory) return;
+    setAction(operatorMemory.action);
+    setDraft(operatorMemory.draft);
+    window.requestAnimationFrame(() => composerRef.current?.focus());
+  };
+
   return (
     <section className="pbk-ava-chat-surface h-full max-h-full min-h-0 min-w-0 overflow-hidden bg-[var(--ava-bg)] text-[var(--ava-text)]">
       <div className="grid h-full min-h-0 grid-rows-[auto_minmax(0,1fr)]">
@@ -760,7 +959,7 @@ export function AvaChat() {
         />
 
         <div className="grid min-h-0 xl:grid-cols-[minmax(0,1fr)_340px]">
-          <main className="grid min-h-0 grid-rows-[auto_minmax(0,1fr)_auto] border-r border-[var(--ava-border)] xl:grid-rows-[auto_minmax(260px,1fr)_auto]">
+          <main className="pbk-ava-chat-main grid min-h-0 grid-rows-[auto_minmax(0,1fr)_auto] border-r border-[var(--ava-border)] xl:grid-rows-[auto_minmax(260px,1fr)_auto]">
             <ConversationToolbar
               query={searchQuery}
               onQueryChange={setSearchQuery}
@@ -770,7 +969,7 @@ export function AvaChat() {
 
             <div
               ref={timelineRef}
-              className="min-h-0 overflow-y-auto overscroll-contain px-3 py-5 sm:px-6 lg:px-8"
+              className="pbk-ava-chat-thread min-h-0 overflow-y-auto overscroll-contain px-3 py-5 sm:px-6 lg:px-8"
               aria-label="Ava command conversation"
             >
               <div className="mx-auto w-full max-w-4xl">
@@ -811,7 +1010,18 @@ export function AvaChat() {
                     description="Clear the search or choose another status to restore the conversation."
                   />
                 ) : (
-                  <WelcomeState onSelectQuickCommand={selectQuickCommand} />
+                  <WelcomeState
+                    commands={commands}
+                    selectedAction={action}
+                    submitting={submitting}
+                    operatorMemory={operatorMemory}
+                    onSelectCompanionAction={selectCompanionAction}
+                    onResumeOperatorMemory={resumeOperatorMemory}
+                  />
+                )}
+
+                {submitting && (
+                  <AvaThinkingBubble submitLane={submitLane} actionLabel={selectedAction.label} />
                 )}
               </div>
             </div>
@@ -834,7 +1044,8 @@ export function AvaChat() {
               onStartListening={startListening}
               onStopListening={stopListening}
               onSubmit={() => void submitCommand()}
-              onSelectQuickCommand={selectQuickCommand}
+              commands={commands}
+              onSelectCompanionAction={selectCompanionAction}
             />
           </main>
 
@@ -848,6 +1059,9 @@ export function AvaChat() {
             connectionState={connectionState}
             commands={commands}
             onSelectQuickCommand={selectQuickCommand}
+            onSelectCompanionAction={selectCompanionAction}
+            operatorMemory={operatorMemory}
+            onResumeOperatorMemory={resumeOperatorMemory}
             className="hidden xl:block"
           />
         </div>
@@ -889,6 +1103,15 @@ export function AvaChat() {
               commands={commands}
               onSelectQuickCommand={(item) => {
                 selectQuickCommand(item);
+                setContextOpen(false);
+              }}
+              onSelectCompanionAction={(item) => {
+                selectCompanionAction(item);
+                setContextOpen(false);
+              }}
+              operatorMemory={operatorMemory}
+              onResumeOperatorMemory={() => {
+                resumeOperatorMemory();
                 setContextOpen(false);
               }}
             />
@@ -934,6 +1157,7 @@ function AvaIdentityBar({
             <PbkPulseDot color={state === 'offline' ? 'amber' : 'lime'} />
           </div>
           <p className="mt-1 truncate text-xs text-[var(--ava-text-muted)]">{stateLabel}</p>
+          <AvaModeStrip activeState={state} />
         </div>
       </div>
 
@@ -976,6 +1200,40 @@ function AvaIdentityBar({
         </button>
       </div>
     </header>
+  );
+}
+
+function AvaModeStrip({
+  activeState,
+}: {
+  activeState: 'ready' | 'listening' | 'thinking' | 'working' | 'offline';
+}) {
+  const activeMode =
+    activeState === 'listening'
+      ? 'voice'
+      : activeState === 'working'
+        ? 'command'
+        : activeState === 'thinking'
+          ? 'chat'
+          : 'chat';
+
+  return (
+    <div className="pbk-ava-mode-strip mt-2 hidden flex-wrap items-center gap-1.5 lg:flex">
+      {AVA_MODE_ITEMS.map((item) => (
+        <span
+          key={item.id}
+          title={item.description}
+          className={[
+            'rounded-full border px-2 py-0.5 text-[10px] font-bold uppercase',
+            item.id === activeMode
+              ? 'border-[var(--ava-sky)] bg-[var(--ava-sky-soft)] text-[var(--ava-sky)]'
+              : 'border-[var(--ava-border)] text-[var(--ava-text-faint)]',
+          ].join(' ')}
+        >
+          {item.label}
+        </span>
+      ))}
+    </div>
   );
 }
 
@@ -1072,6 +1330,35 @@ function ConversationToolbar({
   );
 }
 
+function AvaThinkingBubble({
+  submitLane,
+  actionLabel,
+}: {
+  submitLane: SubmitLane;
+  actionLabel: string;
+}) {
+  return (
+    <div className="mt-6 flex items-start gap-3" aria-live="polite" role="status">
+      <AvaPresenceOrb state="thinking" compact />
+      <div className="min-w-0 max-w-[88%] sm:max-w-[76%]">
+        <div className="mb-1.5 flex items-center gap-2 text-xs">
+          <span className="font-semibold">Ava</span>
+          <span className="text-[var(--ava-text-faint)]">thinking</span>
+        </div>
+        <div className="pbk-ava-thinking-bubble rounded-[4px_16px_16px_16px] border border-[var(--ava-border)] bg-[var(--ava-panel)] px-4 py-3 text-sm shadow-sm">
+          <span>Ava is preparing the {actionLabel.toLowerCase()} response</span>
+          <span className="pbk-ava-thinking-dots" aria-hidden="true">
+            <i />
+            <i />
+            <i />
+          </span>
+          <small>{submitLane === 'invoke' ? 'Invoke tool lane' : 'Bridge queue lane'}</small>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function CommandExchange({
   command,
   onReplay,
@@ -1136,11 +1423,16 @@ function CommandExchange({
             <p className="whitespace-pre-wrap break-words">{getAssistantMessage(command)}</p>
             <CommandResultPreview command={command} />
             {awaitingApproval && (
-              <div className="mt-3 rounded-xl border border-[var(--ava-warning-border)] bg-[var(--ava-warning-soft)] p-2">
-                <div className="mb-2 flex items-center gap-2 px-1 text-[11px] font-semibold text-[var(--ava-warning)]">
-                  <ShieldCheck size={14} />
+              <div className="pbk-ava-inline-approval mt-3 rounded-xl border border-[var(--ava-warning-border)] bg-[var(--ava-warning-soft)] p-3">
+                <div className="mb-2 flex items-center gap-2 text-[11px] font-semibold text-[var(--ava-warning)]">
+                  <ShieldCheck size={15} />
                   Approval required before Ava continues
                 </div>
+                <p className="mb-3 text-xs leading-5 text-[var(--ava-text-muted)]">
+                  Inline approval request: Ava is paused on this guarded action. Human-sent calls,
+                  SMS, and emails stay in their manual lanes; this approval is only for the
+                  requested automated command.
+                </p>
                 <div className="grid grid-cols-2 gap-2">
                   <PbkButton
                     type="button"
@@ -1328,7 +1620,8 @@ function AvaComposer({
   onStartListening,
   onStopListening,
   onSubmit,
-  onSelectQuickCommand,
+  commands,
+  onSelectCompanionAction,
 }: {
   draft: string;
   setDraft: (value: string) => void;
@@ -1347,7 +1640,8 @@ function AvaComposer({
   onStartListening: () => void;
   onStopListening: () => void;
   onSubmit: () => void;
-  onSelectQuickCommand: (item: (typeof QUICK_COMMANDS)[number]) => void;
+  commands: LocalCommandRecord[];
+  onSelectCompanionAction: (item: CompanionAction) => void;
 }) {
   const actionConfig = ACTIONS.find((item) => item.id === action) || ACTIONS[0];
   const ActionIcon = actionConfig.icon;
@@ -1356,17 +1650,23 @@ function AvaComposer({
     <div className="pbk-ava-chat-composer border-t border-[var(--ava-border)] bg-[var(--ava-bg)] px-2 pt-2 sm:px-5 sm:pb-4 sm:pt-3">
       <div className="mx-auto w-full max-w-4xl">
         <div className="pbk-ava-chat-quick-strip mb-2 flex gap-2 overflow-x-auto pb-1 [scrollbar-width:none]">
-          {QUICK_COMMANDS.map((item) => {
+          {PBK_COMPANION_ACTIONS.slice(0, 6).map((item) => {
             const Icon = item.icon;
+            const state = getCompanionActionState(item, commands, submitting, action);
             return (
               <button
-                key={item.command}
+                key={item.id}
                 type="button"
-                onClick={() => onSelectQuickCommand(item)}
+                onClick={() => onSelectCompanionAction(item)}
                 className="inline-flex min-h-10 shrink-0 items-center gap-2 rounded-lg border border-[var(--ava-border)] bg-[var(--ava-panel)] px-3 text-xs text-[var(--ava-text-muted)] transition hover:border-[var(--ava-sky)] hover:text-[var(--ava-text)]"
               >
                 <Icon size={15} />
                 {item.label}
+                <span
+                  className={`pbk-ava-action-state ${getCompanionStateClass(state)} hidden sm:inline`}
+                >
+                  {state}
+                </span>
               </button>
             );
           })}
@@ -1613,6 +1913,9 @@ function AvaContextRail({
   connectionState,
   commands,
   onSelectQuickCommand,
+  onSelectCompanionAction,
+  operatorMemory,
+  onResumeOperatorMemory,
   className = '',
 }: {
   action: (typeof ACTIONS)[number];
@@ -1624,6 +1927,9 @@ function AvaContextRail({
   connectionState: ConnectionState;
   commands: LocalCommandRecord[];
   onSelectQuickCommand: (item: (typeof QUICK_COMMANDS)[number]) => void;
+  onSelectCompanionAction: (item: CompanionAction) => void;
+  operatorMemory: OperatorMemory | null;
+  onResumeOperatorMemory: () => void;
   className?: string;
 }) {
   const completedCount = commands.filter(
@@ -1633,27 +1939,24 @@ function AvaContextRail({
   return (
     <aside className={`min-h-0 overflow-y-auto bg-[var(--ava-bg)] p-4 ${className}`}>
       <div className="space-y-3">
-        <ContextPanel title="Now" icon={<Sparkles size={16} />}>
-          <ContextRow label="Selected action">
-            <span className="inline-flex items-center gap-2 font-semibold">
-              {actionIcon}
-              {action.label}
-            </span>
-          </ContextRow>
-          <ContextRow label="Execution lane">
-            <span>
-              {submitLane === 'rest' ? 'Conversational bridge queue' : 'Direct invoke lane'}
-            </span>
-          </ContextRow>
-          <ContextRow label="Safety">
-            <span
-              className={
-                requiresApproval ? 'text-[var(--ava-warning)]' : 'text-[var(--ava-success)]'
-              }
+        <ContextPanel title="Operator memory" icon={<Clock3 size={16} />}>
+          {operatorMemory ? (
+            <button
+              type="button"
+              className="w-full rounded-lg border border-[var(--ava-border)] bg-[var(--ava-bg)] p-3 text-left text-xs text-[var(--ava-text-muted)] transition hover:border-[var(--ava-sky)] hover:text-[var(--ava-text)]"
+              onClick={onResumeOperatorMemory}
             >
-              {requiresApproval ? 'Approval requested' : 'Low-risk request'}
-            </span>
-          </ContextRow>
+              <span className="block font-semibold text-[var(--ava-text)]">Resume last ask</span>
+              <span className="mt-1 block truncate">{operatorMemory.draft}</span>
+              <span className="mt-1 block text-[10px] uppercase text-[var(--ava-text-faint)]">
+                {formatRelative(operatorMemory.updatedAt)}
+              </span>
+            </button>
+          ) : (
+            <p className="text-xs leading-5 text-[var(--ava-text-muted)]">
+              Ava will remember the latest unsent operator ask on this device.
+            </p>
+          )}
           {pendingApprovals > 0 && (
             <div className="rounded-lg border border-[var(--ava-warning-border)] bg-[var(--ava-warning-soft)] p-3 text-xs">
               <div className="font-semibold text-[var(--ava-warning)]">
@@ -1666,61 +1969,105 @@ function AvaContextRail({
           )}
         </ContextPanel>
 
-        <ContextPanel title="Quick actions" icon={<MonitorUp size={16} />}>
-          <div className="space-y-1.5">
-            {QUICK_COMMANDS.map((item) => {
-              const Icon = item.icon;
-              return (
-                <button
-                  key={item.command}
-                  type="button"
-                  onClick={() => onSelectQuickCommand(item)}
-                  className="flex min-h-11 w-full items-center gap-2 rounded-lg border border-[var(--ava-border)] px-3 text-left text-xs text-[var(--ava-text-muted)] transition hover:border-[var(--ava-sky)] hover:text-[var(--ava-text)]"
+        <ContextPanel title="PBK actions" icon={<Sparkles size={16} />}>
+          <CompanionActionCards
+            compact
+            commands={commands}
+            selectedAction={action.id}
+            submitting={false}
+            onSelectAction={onSelectCompanionAction}
+          />
+        </ContextPanel>
+
+        <details className="pbk-ava-system-drawer group rounded-lg border border-[var(--ava-border)] bg-[var(--ava-panel)]">
+          <summary className="flex min-h-12 cursor-pointer list-none items-center justify-between gap-3 px-3 text-sm font-semibold">
+            <span className="inline-flex min-w-0 items-center gap-2">
+              <Settings2 size={16} className="text-[var(--ava-sky)]" />
+              <span>System drawer</span>
+            </span>
+            <ChevronDown size={15} className="transition group-open:rotate-180" />
+          </summary>
+          <div className="space-y-3 border-t border-[var(--ava-border)] p-3">
+            <ContextPanel title="Now" icon={<Sparkles size={16} />}>
+              <ContextRow label="Selected action">
+                <span className="inline-flex items-center gap-2 font-semibold">
+                  {actionIcon}
+                  {action.label}
+                </span>
+              </ContextRow>
+              <ContextRow label="Execution lane">
+                <span>
+                  {submitLane === 'rest' ? 'Conversational bridge queue' : 'Direct invoke lane'}
+                </span>
+              </ContextRow>
+              <ContextRow label="Safety">
+                <span
+                  className={
+                    requiresApproval ? 'text-[var(--ava-warning)]' : 'text-[var(--ava-success)]'
+                  }
                 >
-                  <Icon size={15} />
-                  {item.label}
-                </button>
-              );
-            })}
+                  {requiresApproval ? 'Approval requested' : 'Low-risk request'}
+                </span>
+              </ContextRow>
+            </ContextPanel>
+
+            <ContextPanel title="System tools" icon={<MonitorUp size={16} />}>
+              <div className="space-y-1.5">
+                {QUICK_COMMANDS.map((item) => {
+                  const Icon = item.icon;
+                  return (
+                    <button
+                      key={item.command}
+                      type="button"
+                      onClick={() => onSelectQuickCommand(item)}
+                      className="flex min-h-11 w-full items-center gap-2 rounded-lg border border-[var(--ava-border)] px-3 text-left text-xs text-[var(--ava-text-muted)] transition hover:border-[var(--ava-sky)] hover:text-[var(--ava-text)]"
+                    >
+                      <Icon size={15} />
+                      {item.label}
+                    </button>
+                  );
+                })}
+              </div>
+            </ContextPanel>
+
+            <ContextPanel title="Local system" icon={<Cpu size={16} />}>
+              <SystemHealthRow
+                label="PBK bridge"
+                value={connectionState === 'connected' ? 'Healthy' : 'Degraded'}
+                healthy={connectionState === 'connected'}
+              />
+              <SystemHealthRow
+                label="OpenClaw sidecar"
+                value={status?.connected ? `${status.connectedCount || 1} connected` : 'Waiting'}
+                healthy={Boolean(status?.connected)}
+              />
+              <SystemHealthRow
+                label="Recent commands"
+                value={`${commands.length} loaded`}
+                healthy={commands.length > 0}
+              />
+              <SystemHealthRow
+                label="Completed"
+                value={`${completedCount}`}
+                healthy={completedCount > 0}
+              />
+            </ContextPanel>
+
+            <ContextPanel title="Debug log" icon={<Terminal size={16} />}>
+              <details className="group rounded-lg border border-[var(--ava-border)] bg-[var(--ava-bg)]">
+                <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-2 px-3 text-xs font-semibold text-[var(--ava-text-muted)]">
+                  <span>Transport sources</span>
+                  <ChevronDown size={14} className="transition group-open:rotate-180" />
+                </summary>
+                <div className="space-y-2 border-t border-[var(--ava-border)] p-3">
+                  <PbkDataSource endpoint="POST /api/local/commands" status="ships" />
+                  <PbkDataSource endpoint="GET /api/desktop-sidecar/status" status="ships" />
+                  <PbkDataSource endpoint="POST /invoke executeLocalCommand" status="ships" />
+                </div>
+              </details>
+            </ContextPanel>
           </div>
-        </ContextPanel>
-
-        <ContextPanel title="Local system" icon={<Cpu size={16} />}>
-          <SystemHealthRow
-            label="PBK bridge"
-            value={connectionState === 'connected' ? 'Healthy' : 'Degraded'}
-            healthy={connectionState === 'connected'}
-          />
-          <SystemHealthRow
-            label="OpenClaw sidecar"
-            value={status?.connected ? `${status.connectedCount || 1} connected` : 'Waiting'}
-            healthy={Boolean(status?.connected)}
-          />
-          <SystemHealthRow
-            label="Recent commands"
-            value={`${commands.length} loaded`}
-            healthy={commands.length > 0}
-          />
-          <SystemHealthRow
-            label="Completed"
-            value={`${completedCount}`}
-            healthy={completedCount > 0}
-          />
-        </ContextPanel>
-
-        <ContextPanel title="Debug log" icon={<Terminal size={16} />}>
-          <details className="group">
-            <summary className="flex cursor-pointer list-none items-center justify-between gap-2 rounded-lg border border-[var(--ava-border)] px-3 py-2 text-xs font-semibold text-[var(--ava-text-muted)]">
-              Source and transport details
-              <ChevronDown size={14} className="transition group-open:rotate-180" />
-            </summary>
-            <div className="mt-2 space-y-2">
-              <PbkDataSource endpoint="POST /api/local/commands" status="ships" />
-              <PbkDataSource endpoint="GET /api/desktop-sidecar/status" status="ships" />
-              <PbkDataSource endpoint="POST /invoke executeLocalCommand" status="ships" />
-            </div>
-          </details>
-        </ContextPanel>
+        </details>
       </div>
     </aside>
   );
@@ -1807,41 +2154,118 @@ function AvaPresenceOrb({
 }
 
 function WelcomeState({
-  onSelectQuickCommand,
+  commands,
+  selectedAction,
+  submitting,
+  operatorMemory,
+  onSelectCompanionAction,
+  onResumeOperatorMemory,
 }: {
-  onSelectQuickCommand: (item: (typeof QUICK_COMMANDS)[number]) => void;
+  commands: LocalCommandRecord[];
+  selectedAction: AvaCommandAction;
+  submitting: boolean;
+  operatorMemory: OperatorMemory | null;
+  onSelectCompanionAction: (item: CompanionAction) => void;
+  onResumeOperatorMemory: () => void;
 }) {
   return (
     <div className="grid min-h-[340px] place-items-center py-8 text-center">
-      <div className="max-w-xl">
+      <div className="max-w-3xl">
         <div className="mx-auto mb-5 w-fit">
           <AvaPresenceOrb state="ready" />
         </div>
-        <div className="pbk-eyebrow">Senior acquisition operator</div>
+        <div className="pbk-eyebrow">PBK command companion</div>
         <h2 className="mt-2 font-[var(--font-display)] text-3xl font-semibold">
           What should we handle next?
         </h2>
         <p className="mx-auto mt-3 max-w-md text-sm leading-6 text-[var(--ava-text-muted)]">
-          Ask Ava to inspect the local desktop, check system health, prepare a safe action, or send
-          work to OpenClaw. Risky commands remain approval-gated by the bridge.
+          Ask Ava like a teammate: text a seller, open a lead, analyze a deal, prepare a contract,
+          or hand a rough call to QA. System controls stay in the drawer.
         </p>
-        <div className="mt-6 grid gap-2 sm:grid-cols-2">
-          {QUICK_COMMANDS.slice(0, 4).map((item) => {
-            const Icon = item.icon;
-            return (
-              <button
-                key={item.command}
-                type="button"
-                onClick={() => onSelectQuickCommand(item)}
-                className="flex min-h-12 items-center gap-3 rounded-lg border border-[var(--ava-border)] bg-[var(--ava-panel)] px-3 text-left text-xs text-[var(--ava-text-muted)] transition hover:border-[var(--ava-sky)] hover:text-[var(--ava-text)]"
-              >
-                <Icon size={17} className="shrink-0 text-[var(--ava-sky)]" />
-                {item.label}
-              </button>
-            );
-          })}
-        </div>
+        {operatorMemory && (
+          <button
+            type="button"
+            className="mx-auto mt-5 flex max-w-md items-start gap-3 rounded-xl border border-[var(--ava-border)] bg-[var(--ava-panel)] p-3 text-left text-xs text-[var(--ava-text-muted)] transition hover:border-[var(--ava-sky)] hover:text-[var(--ava-text)]"
+            onClick={onResumeOperatorMemory}
+          >
+            <Clock3 size={16} className="mt-0.5 shrink-0 text-[var(--ava-sky)]" />
+            <span className="min-w-0">
+              <span className="block font-semibold text-[var(--ava-text)]">Operator memory</span>
+              <span className="mt-1 block truncate">{operatorMemory.draft}</span>
+              <span className="mt-1 block text-[10px] uppercase text-[var(--ava-text-faint)]">
+                {formatRelative(operatorMemory.updatedAt)}
+              </span>
+            </span>
+          </button>
+        )}
+        <CompanionActionCards
+          commands={commands}
+          selectedAction={selectedAction}
+          submitting={submitting}
+          onSelectAction={onSelectCompanionAction}
+          className="mt-6"
+        />
       </div>
+    </div>
+  );
+}
+
+function CompanionActionCards({
+  commands,
+  selectedAction,
+  submitting,
+  onSelectAction,
+  className = '',
+  compact = false,
+}: {
+  commands: LocalCommandRecord[];
+  selectedAction: AvaCommandAction;
+  submitting: boolean;
+  onSelectAction: (item: CompanionAction) => void;
+  className?: string;
+  compact?: boolean;
+}) {
+  const actions = compact ? PBK_COMPANION_ACTIONS.slice(0, 6) : PBK_COMPANION_ACTIONS;
+
+  return (
+    <div
+      className={[
+        'pbk-ava-companion-actions grid gap-2 text-left',
+        compact ? 'grid-cols-1' : 'sm:grid-cols-2 lg:grid-cols-3',
+        className,
+      ].join(' ')}
+    >
+      {actions.map((item) => {
+        const Icon = item.icon;
+        const state = getCompanionActionState(item, commands, submitting, selectedAction);
+        return (
+          <button
+            key={item.id}
+            type="button"
+            onClick={() => onSelectAction(item)}
+            className="pbk-ava-companion-card group min-w-0 rounded-xl border border-[var(--ava-border)] bg-[var(--ava-panel)] p-3 text-left transition hover:border-[var(--ava-sky)] hover:bg-[var(--ava-hover)]"
+          >
+            <span className="flex items-start gap-3">
+              <span className="grid size-9 shrink-0 place-items-center rounded-lg bg-[var(--ava-sky-soft)] text-[var(--ava-sky)]">
+                <Icon size={17} />
+              </span>
+              <span className="min-w-0 flex-1">
+                <span className="flex items-center justify-between gap-2">
+                  <span className="truncate text-sm font-semibold text-[var(--ava-text)]">
+                    {item.label}
+                  </span>
+                  <span className={`pbk-ava-action-state ${getCompanionStateClass(state)}`}>
+                    {state}
+                  </span>
+                </span>
+                <span className="mt-1 line-clamp-2 block text-xs leading-5 text-[var(--ava-text-muted)]">
+                  {item.description}
+                </span>
+              </span>
+            </span>
+          </button>
+        );
+      })}
     </div>
   );
 }

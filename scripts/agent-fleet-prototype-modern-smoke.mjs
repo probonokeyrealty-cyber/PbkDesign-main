@@ -34,6 +34,7 @@ assert(
   'pbk-agent-grid',
   'pbk-agent-card',
   'pbk-agent-activity',
+  'pbk-agent-capability-strip',
   'pbk-agent-detail-panel',
   'pbk-dp-head',
   'pbk-skill-row',
@@ -91,5 +92,21 @@ assert(
 ].forEach((selector) => {
   assert(pbkCss.includes(selector), `PBK CSS should include ${selector}.`);
 });
+
+[
+  'Last success',
+  'Last failure',
+  'Latency',
+  'Capability',
+  'latencyP95Ms',
+].forEach((copy) => {
+  assert(agentFleet.includes(copy), `Agent Fleet health dashboard must surface "${copy}".`);
+});
+assert(
+  pbkCss.includes('.pbk-agent-capability-strip') &&
+    pbkCss.includes('.pbk-agent-capability-strip.ready') &&
+    pbkCss.includes('.pbk-agent-capability-strip.degraded'),
+  'Agent Fleet must style per-agent capability readiness beyond the online dot.'
+);
 
 console.log('agent-fleet-prototype-modern-smoke: ok');

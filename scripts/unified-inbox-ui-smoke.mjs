@@ -445,6 +445,11 @@ assert(
   'Conversation identity controls and Send must remain fixed around the scrolling timeline.'
 );
 assert(
+  /\.pbk-conversation-composer\s*\{[\s\S]*?position:\s*sticky[\s\S]*?bottom:\s*0/.test(css) &&
+    /\.pbk-conversation-timeline-scroll\s*\{[\s\S]*?scroll-padding-bottom:\s*180px/.test(css),
+  'Mobile composer must stay pinned while only the message timeline scrolls.'
+);
+assert(
   unifiedInbox.includes('useRuntimeSnapshot') &&
     /calls=\{snapshot\?\.calls \|\| \[\]\}/.test(unifiedInbox) &&
     unifiedInbox.includes('<LiveCallPip'),

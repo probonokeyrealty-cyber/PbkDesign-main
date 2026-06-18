@@ -74,6 +74,23 @@ const STATE_STEP: Record<string, number> = {
   retired: 6,
 };
 
+const SKILL_WIZARD_STEPS = ['Trigger', 'Response', 'Next question', 'Preview'] as const;
+
+const SKILL_TRIGGER_OPTIONS = [
+  { value: 'price_objection', label: 'Price objection' },
+  { value: 'probate', label: 'Probate or inherited property' },
+  { value: 'need_to_think', label: 'Need to think' },
+  { value: 'trust_concern', label: 'Trust or scam concern' },
+  { value: 'spouse_partner', label: 'Spouse or partner approval' },
+  { value: 'timeline_mismatch', label: 'Timeline mismatch' },
+  { value: 'repair_overwhelm', label: 'Repair overwhelm' },
+  { value: 'seller_target_price', label: 'Seller gives target price' },
+] as const;
+
+function getSkillTriggerLabel(value: string) {
+  return SKILL_TRIGGER_OPTIONS.find((option) => option.value === value)?.label || value;
+}
+
 function displayDate(value?: string | null) {
   if (!value) return 'Not recorded';
   return new Intl.DateTimeFormat('en-US', {
@@ -124,8 +141,11 @@ function CreateCandidateDialog({
   }) => Promise<void>;
 }) {
   const [mode, setMode] = useState<'manual' | 'youtube'>('manual');
+  const [wizardStep, setWizardStep] = useState(0);
   const [name, setName] = useState('');
+  const [triggerType, setTriggerType] = useState<string>(SKILL_TRIGGER_OPTIONS[0].value);
   const [instructions, setInstructions] = useState('');
+  const [nextQuestion, setNextQuestion] = useState('');
   const [riskClass, setRiskClass] = useState('medium');
   const [agentId, setAgentId] = useState('ava');
   const [sourceNote, setSourceNote] = useState('');
@@ -134,6 +154,24 @@ function CreateCandidateDialog({
   const [audioTranscriptUrl, setAudioTranscriptUrl] = useState('');
   const [maxCandidates, setMaxCandidates] = useState(5);
   if (!open) return null;
+  const triggerLabel = getSkillTriggerLabel(triggerType);
+  const compiledManualInstructions = [
+    `Trigger: ${triggerLabel}.`,
+    `Response: ${instructions.trim()}`,
+    `Next question: ${nextQuestion.trim()}`,
+    'Runtime rule: acknowledge the seller context first, avoid repeating answered facts, ask only this one next question unless the turn contract blocks it, and keep the skill review-only until governed activation.',
+  ]
+    .filter(Boolean)
+    .join('\n\n');
+  const manualStepReady =
+    wizardStep === 0
+      ? Boolean(name.trim() && triggerType && agentId)
+      : wizardStep === 1
+        ? Boolean(instructions.trim())
+        : wizardStep === 2
+          ? Boolean(nextQuestion.trim())
+          : Boolean(name.trim() && instructions.trim() && nextQuestion.trim());
+  const manualCanSave = Boolean(name.trim() && instructions.trim() && nextQuestion.trim());
   return (
     <div
       className="pbk-skill-dialog-backdrop"
@@ -165,7 +203,10 @@ function CreateCandidateDialog({
               role="tab"
               aria-selected={mode === 'manual'}
               className={mode === 'manual' ? 'active' : ''}
-              onClick={() => setMode('manual')}
+              onClick={() => {
+                setMode('manual');
+                setWizardStep(0);
+              }}
             >
               <Plus size={15} />
               Manual
@@ -188,52 +229,134 @@ function CreateCandidateDialog({
           </p>
           {mode === 'manual' ? (
             <>
-              <label>
-                Skill name
-                <input
-                  value={name}
-                  onChange={(event) => setName(event.target.value)}
-                  placeholder="Price-gap discovery"
-                  autoFocus
-                />
-              </label>
-              <label>
-                Instructions
-                <textarea
-                  value={instructions}
-                  onChange={(event) => setInstructions(event.target.value)}
-                  placeholder="Describe the behavior, trigger, limits, and expected operator outcome."
-                  rows={7}
-                />
-              </label>
-              <div className="pbk-skill-dialog-grid">
-                <label>
-                  Risk class
-                  <select value={riskClass} onChange={(event) => setRiskClass(event.target.value)}>
-                    <option value="low">Low</option>
-                    <option value="medium">Medium</option>
-                    <option value="high">High</option>
-                    <option value="critical">Critical</option>
-                  </select>
-                </label>
-                <label>
-                  Suggested agent
-                  <select value={agentId} onChange={(event) => setAgentId(event.target.value)}>
-                    <option value="ava">Ava</option>
-                    <option value="rex">Rex</option>
-                    <option value="nurture">Nurture</option>
-                    <option value="max">Max</option>
-                  </select>
-                </label>
+              <div className="pbk-skill-wizard-steps" aria-label="Manual skill creation steps">
+                {SKILL_WIZARD_STEPS.map((step, index) => (
+                  <button
+                    key={step}
+                    type="button"
+                    className={index === wizardStep ? 'active' : index < wizardStep ? 'done' : ''}
+                    onClick={() => setWizardStep(index)}
+                    aria-current={index === wizardStep ? 'step' : undefined}
+                  >
+                    <span>{index + 1}</span>
+                    {step}
+                  </button>
+                ))}
               </div>
-              <label>
-                Provenance note
-                <input
-                  value={sourceNote}
-                  onChange={(event) => setSourceNote(event.target.value)}
-                  placeholder="Operator doctrine, call review, training source..."
-                />
-              </label>
+
+              {wizardStep === 0 && (
+                <div className="pbk-skill-wizard-panel">
+                  <label>
+                    Skill name
+                    <input
+                      value={name}
+                      onChange={(event) => setName(event.target.value)}
+                      placeholder="Price-gap discovery"
+                      autoFocus
+                    />
+                  </label>
+                  <label>
+                    Trigger
+                    <select
+                      value={triggerType}
+                      onChange={(event) => setTriggerType(event.target.value)}
+                    >
+                      {SKILL_TRIGGER_OPTIONS.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <div className="pbk-skill-dialog-grid">
+                    <label>
+                      Risk class
+                      <select
+                        value={riskClass}
+                        onChange={(event) => setRiskClass(event.target.value)}
+                      >
+                        <option value="low">Low</option>
+                        <option value="medium">Medium</option>
+                        <option value="high">High</option>
+                        <option value="critical">Critical</option>
+                      </select>
+                    </label>
+                    <label>
+                      Suggested agent
+                      <select value={agentId} onChange={(event) => setAgentId(event.target.value)}>
+                        <option value="ava">Ava</option>
+                        <option value="rex">Rex</option>
+                        <option value="nurture-agent">Nurture</option>
+                        <option value="max">Max</option>
+                      </select>
+                    </label>
+                  </div>
+                </div>
+              )}
+
+              {wizardStep === 1 && (
+                <div className="pbk-skill-wizard-panel">
+                  <label>
+                    Response
+                    <textarea
+                      value={instructions}
+                      onChange={(event) => setInstructions(event.target.value)}
+                      placeholder="Write what Ava or the selected agent should say or do when this trigger appears."
+                      rows={7}
+                      autoFocus
+                    />
+                  </label>
+                </div>
+              )}
+
+              {wizardStep === 2 && (
+                <div className="pbk-skill-wizard-panel">
+                  <label>
+                    Next question
+                    <textarea
+                      value={nextQuestion}
+                      onChange={(event) => setNextQuestion(event.target.value)}
+                      placeholder="Ask one sharp follow-up question that advances the deal without repeating known facts."
+                      rows={4}
+                      autoFocus
+                    />
+                  </label>
+                  <label>
+                    Provenance note
+                    <input
+                      value={sourceNote}
+                      onChange={(event) => setSourceNote(event.target.value)}
+                      placeholder="Operator doctrine, call review, training source..."
+                    />
+                  </label>
+                </div>
+              )}
+
+              {wizardStep === 3 && (
+                <div className="pbk-skill-wizard-panel">
+                  <div className="pbk-skill-wizard-preview">
+                    <dl>
+                      <div>
+                        <dt>Candidate</dt>
+                        <dd>{name.trim() || 'Untitled skill'}</dd>
+                      </div>
+                      <div>
+                        <dt>Trigger</dt>
+                        <dd>{triggerLabel}</dd>
+                      </div>
+                      <div>
+                        <dt>Agent</dt>
+                        <dd>{agentId}</dd>
+                      </div>
+                      <div>
+                        <dt>Risk</dt>
+                        <dd>{riskClass}</dd>
+                      </div>
+                    </dl>
+                    <pre>{compiledManualInstructions}</pre>
+                  </div>
+                </div>
+              )}
             </>
           ) : (
             <>
@@ -316,19 +439,36 @@ function CreateCandidateDialog({
           )}
         </div>
         <footer>
-          <button type="button" className="pbk-btn pbk-btn-ghost" onClick={onClose}>
-            Cancel
-          </button>
+          <div className="pbk-skill-dialog-footer-left">
+            {mode === 'manual' && wizardStep > 0 && (
+              <button
+                type="button"
+                className="pbk-btn pbk-btn-ghost"
+                onClick={() => setWizardStep((current) => Math.max(0, current - 1))}
+              >
+                Back
+              </button>
+            )}
+            <button type="button" className="pbk-btn pbk-btn-ghost" onClick={onClose}>
+              Cancel
+            </button>
+          </div>
           <button
             type="button"
             className="pbk-btn pbk-btn-primary"
             disabled={
               busy ||
               (mode === 'manual'
-                ? !name.trim() || !instructions.trim()
+                ? wizardStep === SKILL_WIZARD_STEPS.length - 1
+                  ? !manualCanSave
+                  : !manualStepReady
                 : !/^https?:\/\/(?:www\.)?(?:youtube\.com|youtu\.be)\//i.test(youtubeUrl.trim()))
             }
             onClick={() => {
+              if (mode === 'manual' && wizardStep < SKILL_WIZARD_STEPS.length - 1) {
+                setWizardStep((current) => Math.min(SKILL_WIZARD_STEPS.length - 1, current + 1));
+                return;
+              }
               if (mode === 'youtube') {
                 void onIngest({
                   sourceType: 'youtube',
@@ -342,11 +482,18 @@ function CreateCandidateDialog({
               }
               void onCreate({
                 displayName: name.trim(),
-                instructions: instructions.trim(),
+                instructions: compiledManualInstructions,
                 riskClass,
                 agentId,
                 source: 'operator',
-                sourceNote: sourceNote.trim() || 'Created in PBK Skill Studio.',
+                triggerPolicy: {
+                  triggerType,
+                  triggerLabel,
+                  nextQuestion: nextQuestion.trim(),
+                },
+                sourceNote:
+                  sourceNote.trim() ||
+                  `Created in PBK Skill Studio guided wizard for ${triggerLabel}.`,
               });
             }}
           >
@@ -357,7 +504,11 @@ function CreateCandidateDialog({
                 : 'Creating'
               : mode === 'youtube'
                 ? 'Analyze video'
-                : 'Create candidate'}
+                : wizardStep === SKILL_WIZARD_STEPS.length - 1
+                  ? 'Create candidate'
+                  : wizardStep === SKILL_WIZARD_STEPS.length - 2
+                    ? 'Preview skill'
+                    : 'Next'}
           </button>
         </footer>
       </section>

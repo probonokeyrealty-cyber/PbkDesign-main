@@ -8,6 +8,7 @@ import {
   REQUIRED_PROVIDER_CIRCUITS,
   REQUIRED_POSTGRES_HOT_INDEXES,
   buildLoadScenarioPlan,
+  buildLiveCallSpeedBudget,
   buildManualSendOutboxEnvelope,
   buildPostgresPerformanceReadiness,
   buildProviderCircuitCoverage,
@@ -122,6 +123,25 @@ for (const pathName of ['/health', '/api/conversations?limit=5', '/api/leads/sea
   );
 }
 
+const liveCallSpeedReady = buildLiveCallSpeedBudget({
+  contractTargetMs: 100,
+  strategistAttemptBudgetMs: 1400,
+  strategistTotalBudgetMs: 3000,
+  duplicateSuppression: true,
+  cacheAtCallStart: true,
+});
+assert.equal(liveCallSpeedReady.ready, true);
+
+const liveCallSpeedMissingCache = buildLiveCallSpeedBudget({
+  contractTargetMs: 100,
+  strategistAttemptBudgetMs: 1400,
+  strategistTotalBudgetMs: 3000,
+  duplicateSuppression: true,
+  cacheAtCallStart: false,
+});
+assert.equal(liveCallSpeedMissingCache.ready, false);
+assert.ok(liveCallSpeedMissingCache.blockers.includes('call_start_cache_missing'));
+
 const bridgeSource = readFileSync(path.join(rootDir, 'scripts', 'openclaw-local-server.mjs'), 'utf8');
 assert.ok(
   bridgeSource.includes("from './production-performance-hardening.mjs'"),
@@ -139,6 +159,23 @@ assert.ok(
   bridgeSource.includes('fuzzyLeadLookupCache') &&
     bridgeSource.includes("stateOmitted: true"),
   'lead search must use burst caching and omit full state snapshots'
+);
+assert.ok(
+  bridgeSource.includes('buildAvaLiveCallStartCache'),
+  'live calls must build a call-start cache for lead profile, facts, skills, memory summary, and BANT state'
+);
+assert.ok(
+  bridgeSource.includes('refreshAvaLiveCallStartCache(session, contextCall'),
+  'live reply path must refresh the call-start cache before strategist phrasing'
+);
+assert.ok(
+  bridgeSource.includes('getAvaLiveCallSpeedReadiness()'),
+  'performance readiness must inspect live-call cache/dedupe/prewarm markers instead of assuming readiness'
+);
+assert.doesNotMatch(
+  bridgeSource,
+  /cacheAtCallStart:\s*true/,
+  'live call speed readiness must not hardcode cacheAtCallStart true'
 );
 
 console.log(

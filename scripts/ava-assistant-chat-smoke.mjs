@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 
 import {
   appendAssistantMessage,
@@ -7,6 +9,10 @@ import {
   detectAssistantIntent,
   planAssistantIntent,
 } from './ava-assistant-chat.mjs';
+
+const root = process.cwd();
+const avaChatRoute = readFileSync(resolve(root, 'src/app/routes/AvaChat.tsx'), 'utf8');
+const pbkCss = readFileSync(resolve(root, 'src/styles/pbk-components.css'), 'utf8');
 
 const sessionId = createAssistantSessionId();
 assert.match(sessionId, /^ava_chat_[0-9a-f]{12}$/i, 'Assistant session id should be stable, short, and namespaced.');
@@ -168,5 +174,50 @@ const prompt = buildAssistantPrompt({
 });
 assert.match(prompt, /Previous conversation:/, 'Assistant prompt should include recent session context.');
 assert.match(prompt, /123 Cedar St/, 'Assistant prompt should include prior user turns.');
+
+assert(
+  avaChatRoute.includes('AvaThinkingBubble') &&
+    avaChatRoute.includes('pbk-ava-inline-approval') &&
+    avaChatRoute.includes('Inline approval request') &&
+    avaChatRoute.includes('Speak to Ava'),
+  'Ava Chat route must expose thinking, voice input, and inline approval states.'
+);
+assert(
+  avaChatRoute.includes('PBK_COMPANION_ACTIONS') &&
+    avaChatRoute.includes('CompanionActionCards') &&
+    avaChatRoute.includes('AvaModeStrip') &&
+    avaChatRoute.includes('Send SMS') &&
+    avaChatRoute.includes('Prepare Contract') &&
+    avaChatRoute.includes('Review with QA') &&
+    avaChatRoute.includes('Schedule Follow-up'),
+  'Ava Chat must expose PBK command-companion action bubbles instead of only technical command controls.'
+);
+assert(
+  avaChatRoute.includes('AVA_OPERATOR_MEMORY_KEY') &&
+    avaChatRoute.includes('window.localStorage.setItem') &&
+    avaChatRoute.includes('window.localStorage.getItem') &&
+    avaChatRoute.includes('Operator memory'),
+  'Ava Chat must persist lightweight operator memory so it can stay in the conversation across pages.'
+);
+assert(
+  avaChatRoute.includes('pbk-ava-system-drawer') &&
+    avaChatRoute.includes('pbk-ava-chat-thread') &&
+    avaChatRoute.includes('pbk-ava-companion-actions') &&
+    avaChatRoute.includes('pbk-ava-mode-strip'),
+  'Ava Chat must separate the main messaging surface from system/debug controls and mobile thread layout.'
+);
+assert(
+  /ContextPanel title="Debug log"[\s\S]*<details/.test(avaChatRoute),
+  'Ava Chat technical support details should live behind the collapsible Debug log drawer.'
+);
+assert(
+  pbkCss.includes('.pbk-ava-thinking-bubble') &&
+    pbkCss.includes('.pbk-ava-thinking-dots') &&
+    pbkCss.includes('.pbk-ava-inline-approval') &&
+    pbkCss.includes('.pbk-ava-companion-actions') &&
+    pbkCss.includes('.pbk-ava-system-drawer') &&
+    pbkCss.includes('.pbk-ava-mode-strip'),
+  'Ava Chat must style thinking animation, inline approval, action bubbles, and system drawer boundaries.'
+);
 
 console.log('[ava-assistant-chat-smoke] ok');

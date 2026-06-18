@@ -135,6 +135,11 @@ assert.ok(
   bridgeSource.includes('buildManualSendOutboxEnvelope'),
   'manual send path must expose outbox envelopes'
 );
+assert.ok(
+  bridgeSource.includes('fuzzyLeadLookupCache') &&
+    bridgeSource.includes("stateOmitted: true"),
+  'lead search must use burst caching and omit full state snapshots'
+);
 
 console.log(
   JSON.stringify(

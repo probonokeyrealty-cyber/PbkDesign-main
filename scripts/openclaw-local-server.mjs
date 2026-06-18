@@ -13618,6 +13618,35 @@ function searchLeadImports(params = {}) {
   };
 }
 
+const FUZZY_LEAD_LOOKUP_CACHE_TTL_MS = 30_000;
+const FUZZY_LEAD_LOOKUP_ERROR_TTL_MS = 5_000;
+const FUZZY_LEAD_LOOKUP_CACHE_MAX = 100;
+const fuzzyLeadLookupCache = new Map();
+
+function getFuzzyLeadLookupCacheKey({ query = '', threshold = 0.3, limit = 8 } = {}) {
+  return JSON.stringify([
+    String(query || '').trim().toLowerCase(),
+    Number(threshold || 0.3).toFixed(3),
+    Number(limit || 8),
+  ]);
+}
+
+function cloneFuzzyLeadLookupResult(result = {}, cacheStatus = '') {
+  return {
+    ...result,
+    cache: cacheStatus || result.cache || 'miss',
+    cached: cacheStatus === 'hit',
+  };
+}
+
+function trimFuzzyLeadLookupCache() {
+  while (fuzzyLeadLookupCache.size > FUZZY_LEAD_LOOKUP_CACHE_MAX) {
+    const oldestKey = fuzzyLeadLookupCache.keys().next().value;
+    if (!oldestKey) break;
+    fuzzyLeadLookupCache.delete(oldestKey);
+  }
+}
+
 function normalizeFuzzyLeadRow(row = {}) {
   const leadId = String(row.lead_id || row.leadId || '').trim();
   const leadName = String(row.lead_name || row.leadName || '').trim();
@@ -13675,23 +13704,67 @@ async function runFuzzyLeadLookupFromDb(params = {}) {
       leads: [],
     };
   }
+  const cacheKey = getFuzzyLeadLookupCacheKey({ query, threshold, limit });
+  const cached = fuzzyLeadLookupCache.get(cacheKey);
+  const now = Date.now();
+  if (cached && cached.expiresAt > now) {
+    if (cached.promise) {
+      const shared = await cached.promise;
+      return cloneFuzzyLeadLookupResult(shared, 'shared_inflight');
+    }
+    if (cached.result) {
+      return cloneFuzzyLeadLookupResult(cached.result, 'hit');
+    }
+  }
+
+  const lookupPromise = (async () => {
+    try {
+      const db = await pool.query(
+        'SELECT * FROM public.pbk_fuzzy_lead_lookup($1::text, $2::double precision, $3::integer)',
+        [query, threshold, limit]
+      );
+      markPostgresHealth(true);
+      const leads = (db.rows || []).map(normalizeFuzzyLeadRow);
+      return {
+        ok: true,
+        result: 'postgres_fuzzy_lookup',
+        query,
+        threshold,
+        count: leads.length,
+        leads,
+      };
+    } catch (error) {
+      markPostgresHealth(false, error?.message || error);
+      return {
+        ok: false,
+        result: 'postgres_fuzzy_lookup_failed',
+        reason: 'postgres_fuzzy_lookup_failed',
+        query,
+        threshold,
+        count: 0,
+        leads: [],
+        error: error?.message || String(error),
+      };
+    }
+  })();
+  fuzzyLeadLookupCache.set(cacheKey, {
+    expiresAt: now + FUZZY_LEAD_LOOKUP_CACHE_TTL_MS,
+    promise: lookupPromise,
+  });
+  trimFuzzyLeadLookupCache();
+
   try {
-    const db = await pool.query(
-      'SELECT * FROM public.pbk_fuzzy_lead_lookup($1::text, $2::double precision, $3::integer)',
-      [query, threshold, limit]
-    );
-    markPostgresHealth(true);
-    const leads = (db.rows || []).map(normalizeFuzzyLeadRow);
-    return {
-      ok: true,
-      result: 'postgres_fuzzy_lookup',
-      query,
-      threshold,
-      count: leads.length,
-      leads,
-    };
+    const result = await lookupPromise;
+    fuzzyLeadLookupCache.set(cacheKey, {
+      expiresAt:
+        Date.now() +
+        (result.ok ? FUZZY_LEAD_LOOKUP_CACHE_TTL_MS : FUZZY_LEAD_LOOKUP_ERROR_TTL_MS),
+      result,
+    });
+    trimFuzzyLeadLookupCache();
+    return cloneFuzzyLeadLookupResult(result, 'miss');
   } catch (error) {
-    markPostgresHealth(false, error?.message || error);
+    fuzzyLeadLookupCache.delete(cacheKey);
     return {
       ok: false,
       result: 'postgres_fuzzy_lookup_failed',
@@ -70567,7 +70640,7 @@ const server = createServer(async (request, response) => {
       if (postgresLookup.ok) {
         json(response, 200, {
           ...postgresLookup,
-          state: buildStateSnapshot(),
+          stateOmitted: true,
         });
         return;
       }
@@ -70580,7 +70653,7 @@ const server = createServer(async (request, response) => {
           reason: postgresLookup.reason || postgresLookup.result || 'postgres_unavailable',
           error: postgresLookup.error || '',
         },
-        state: buildStateSnapshot(),
+        stateOmitted: true,
       });
       return;
     }

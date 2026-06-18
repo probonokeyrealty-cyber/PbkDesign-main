@@ -1360,6 +1360,10 @@ function extractBridgeErrorMessage(parsed: unknown, status: number) {
     record.event && typeof record.event === 'object'
       ? (record.event as Record<string, unknown>)
       : {};
+  const outbox =
+    record.outbox && typeof record.outbox === 'object'
+      ? (record.outbox as Record<string, unknown>)
+      : {};
   const eventPayload =
     event.payload && typeof event.payload === 'object'
       ? (event.payload as Record<string, unknown>)
@@ -1371,6 +1375,7 @@ function extractBridgeErrorMessage(parsed: unknown, status: number) {
       record.message ||
       record.reason ||
       record.verbiage ||
+      outbox.error ||
       providerResult.error ||
       providerResult.message ||
       providerResult.reason ||
@@ -2763,6 +2768,24 @@ export type ConversationTimelineResponse = {
   error?: string;
 };
 
+export type ManualSendOutbox = {
+  ok?: boolean;
+  result?: string;
+  channel?: 'sms' | 'email' | 'call' | string;
+  provider?: string;
+  status?: 'queued' | 'sending' | 'sent' | 'failed' | string;
+  timelineStatus?: string;
+  idempotencyKey?: string;
+  leadId?: string;
+  recipient?: string;
+  retryable?: boolean;
+  retryAfterMs?: number;
+  operatorVisible?: boolean;
+  error?: string;
+  queuedAt?: string;
+  sentAt?: string;
+};
+
 export type SenderIdentityListResponse = {
   ok: boolean;
   result?: string;
@@ -2913,6 +2936,9 @@ export async function sendConversationMessageRequest(
       requiresApproval?: boolean;
       result?: string;
     };
+    outbox?: ManualSendOutbox;
+    idempotencyKey?: string;
+    retryable?: boolean;
     qaValidation?: Record<string, unknown> | null;
     safetyValidation?: Record<string, unknown> | null;
     error?: string;

@@ -687,13 +687,14 @@ assert(
 );
 
 assert(
-  /executeRouteToolHandler\(\s*'telnyx_sms'/.test(conversationRoutes) &&
+  /executeManualProviderRouteWithOutbox\(\{[\s\S]*toolName:\s*parsed\.channel === 'sms' \? 'telnyx_sms' : 'sendColdEmail'/.test(conversationRoutes) &&
     /from:\s*senderIdentity\.address/.test(conversationRoutes) &&
     /fromNumber:\s*senderIdentity\.address/.test(conversationRoutes) &&
-    /executeRouteToolHandler\(\s*'sendColdEmail'/.test(conversationRoutes) &&
     /fromEmail:\s*senderIdentity\.address/.test(conversationRoutes) &&
-    /senderEmail:\s*senderIdentity\.address/.test(conversationRoutes),
-  'Conversation sends must reuse provider tools and propagate the explicitly selected sender.'
+    /senderEmail:\s*senderIdentity\.address/.test(conversationRoutes) &&
+    /outbox:\s*send\.outbox/.test(conversationRoutes) &&
+    /idempotencyKey:\s*send\.idempotencyKey/.test(conversationRoutes),
+  'Conversation sends must reuse provider tools through the outbox wrapper and propagate the explicitly selected sender.'
 );
 assert(
   /result:\s*classification\.result,[\s\S]*approval:\s*providerResult\?\.approval \|\| null,[\s\S]*providerResult/.test(

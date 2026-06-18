@@ -105,9 +105,23 @@ export const CONVERSATION_SCHEMA_SQL = `
     ON public.conversation_events (thread_id, occurred_at DESC, id DESC);
   CREATE INDEX IF NOT EXISTS conversation_threads_activity_idx
     ON public.conversation_threads (workspace_id, archived_at, last_event_at DESC);
+  CREATE INDEX IF NOT EXISTS conversation_threads_lead_activity_idx
+    ON public.conversation_threads (lead_id, last_event_at DESC)
+    WHERE lead_id IS NOT NULL AND merged_into_thread_id IS NULL;
   CREATE INDEX IF NOT EXISTS conversation_identity_lookup_idx
     ON public.conversation_thread_identities
       (workspace_id, identity_type, normalized_value);
+  CREATE INDEX IF NOT EXISTS conversation_identity_lead_lookup_idx
+    ON public.conversation_thread_identities (lead_id, identity_type, normalized_value)
+    WHERE lead_id IS NOT NULL;
+  CREATE INDEX IF NOT EXISTS conversation_events_lead_occurred_idx
+    ON public.conversation_events (lead_id, occurred_at DESC, id DESC)
+    WHERE lead_id IS NOT NULL;
+  CREATE INDEX IF NOT EXISTS conversation_events_workspace_channel_occurred_idx
+    ON public.conversation_events (workspace_id, channel, occurred_at DESC, id DESC);
+  CREATE INDEX IF NOT EXISTS sender_identity_channel_status_idx
+    ON public.communication_sender_identities
+      (workspace_id, channel, lifecycle_status, health_status, updated_at DESC);
 
   ALTER TABLE public.conversation_threads ENABLE ROW LEVEL SECURITY;
   ALTER TABLE public.conversation_thread_identities ENABLE ROW LEVEL SECURITY;

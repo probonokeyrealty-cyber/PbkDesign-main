@@ -158,6 +158,18 @@ import {
   createIdempotencyStore,
   createProductionReadinessMonitor,
 } from './production-readiness-command-layer.mjs';
+import {
+  REQUIRED_POSTGRES_HOT_INDEXES,
+  REQUIRED_POSTGRES_TABLES,
+  REQUIRED_PROVIDER_CIRCUITS,
+  buildLoadScenarioPlan,
+  buildLiveCallSpeedBudget,
+  buildManualSendOutboxEnvelope,
+  buildPerformanceStatusSnapshot,
+  buildPostgresPerformanceReadiness,
+  buildProviderCircuitCoverage,
+  deriveManualSendIdempotencyKey,
+} from './production-performance-hardening.mjs';
 import { buildProductionGapLabelsReport } from './production-gap-labels.mjs';
 import { buildPrimaryPathReliabilityReport } from './primary-path-reliability.mjs';
 const { Pool: PgPool } = pg;
@@ -9759,21 +9771,109 @@ function getRuntimeEventArchiveStatus() {
 
 function getProviderCircuitStatus() {
   const observed = providerCircuitBreaker.getAllStatuses();
-  const watchedProviders = ['deepseek', 'telnyx', 'deepgram', 'elevenlabs', 'docusign', 'instantly'];
+  const watchedProviders = [...REQUIRED_PROVIDER_CIRCUITS];
   const merged = watchedProviders.map((provider) => {
     const status = observed.find((item) => item.provider === provider);
     return status || providerCircuitBreaker.getStatus(provider);
   });
   const open = merged.filter((item) => item.state === 'open');
+  const coverage = buildProviderCircuitCoverage({
+    circuitStatus: { statuses: merged },
+    requiredProviders: watchedProviders,
+  });
   return {
     ok: true,
-    result: open.length ? 'provider_circuit_open' : 'provider_circuits_ready',
-    ready: open.length === 0,
+    result: coverage.ready ? 'provider_circuits_ready' : 'provider_circuit_open',
+    ready: coverage.ready,
     cooldownMs: 60_000,
     watchedProviders,
     openProviders: open.map((item) => item.provider),
     statuses: merged,
+    coverage,
   };
+}
+
+async function buildPostgresPerformanceReadinessSnapshot() {
+  const postgresMeta = getPostgresHealthMeta();
+  const pool = getPgPool();
+  const tableRows = REQUIRED_POSTGRES_TABLES.map((tableName) => ({
+    table_name: tableName,
+    exists: false,
+  }));
+  let indexRows = [];
+  if (pool) {
+    try {
+      const [tablesResult, indexesResult] = await Promise.all([
+        pool.query(
+          `SELECT required.table_name,
+                  to_regclass(format('public.%I', required.table_name)) IS NOT NULL AS exists
+             FROM unnest($1::text[]) AS required(table_name)`,
+          [[...REQUIRED_POSTGRES_TABLES]]
+        ),
+        pool.query(
+          `SELECT indexname AS index_name
+             FROM pg_indexes
+            WHERE schemaname = 'public'
+              AND indexname = ANY($1::text[])`,
+          [[...REQUIRED_POSTGRES_HOT_INDEXES]]
+        ),
+      ]);
+      tableRows.splice(0, tableRows.length, ...(tablesResult.rows || []));
+      indexRows = indexesResult.rows || [];
+    } catch (error) {
+      return buildPostgresPerformanceReadiness({
+        connection: {
+          ...postgresMeta,
+          ok: false,
+          ready: false,
+          error: error?.message || String(error),
+        },
+        requiredTables: REQUIRED_POSTGRES_TABLES,
+        requiredIndexes: REQUIRED_POSTGRES_HOT_INDEXES,
+        tableRows,
+        indexRows,
+      });
+    }
+  }
+
+  return buildPostgresPerformanceReadiness({
+    connection: {
+      ...postgresMeta,
+      ok: postgresMeta.ready === true,
+      databaseUrl: DATABASE_URL,
+    },
+    requiredTables: REQUIRED_POSTGRES_TABLES,
+    requiredIndexes: REQUIRED_POSTGRES_HOT_INDEXES,
+    tableRows,
+    indexRows,
+  });
+}
+
+async function buildProductionPerformanceStatusSnapshot() {
+  const providerCircuits = getProviderCircuitStatus();
+  const postgres = await buildPostgresPerformanceReadinessSnapshot();
+  const loadPlan = buildLoadScenarioPlan({
+    baseUrl: process.env.PBK_HOSTED_BRIDGE_URL || process.env.PBK_LOAD_TARGET || 'https://pbk-openclaw-bridge.onrender.com',
+    concurrency: Number(process.env.PBK_LOAD_CONCURRENCY || 50),
+  });
+  const liveCallSpeed = buildLiveCallSpeedBudget({
+    contractTargetMs: Number(process.env.PBK_AVA_TURN_CONTRACT_TARGET_MS || 100),
+    strategistAttemptBudgetMs: Number(process.env.PBK_DEEPSEEK_LIVE_TIMEOUT_MS || 1800),
+    strategistTotalBudgetMs: Number(process.env.PBK_DEEPSEEK_LIVE_TOTAL_TIMEOUT_MS || 3000),
+    duplicateSuppression: true,
+    cacheAtCallStart: true,
+  });
+  return buildPerformanceStatusSnapshot({
+    postgres,
+    providerCircuits: providerCircuits.coverage || providerCircuits,
+    loadPlan,
+    liveCallSpeed,
+    outboxPolicy: {
+      ready: true,
+      surface: 'manual_send_outbox_envelope',
+      idempotency: productionIdempotencyStore.status(),
+    },
+  });
 }
 
 function buildAvaFailedCallEvalGateSnapshot() {
@@ -38859,6 +38959,170 @@ function buildRouteToolResponse(payload = {}) {
   };
 }
 
+function isManualProviderDeliveryLive(toolName = '', routeResponse = {}) {
+  if (toolName === 'telnyx_sms') {
+    return Boolean(routeResponse.telnyx?.live || routeResponse.sms?.live || routeResponse.result === 'live');
+  }
+  if (toolName === 'sendColdEmail') {
+    return Boolean(
+      routeResponse.delivery?.live ||
+        routeResponse.delivery?.ok ||
+        routeResponse.email?.live ||
+        routeResponse.result === 'live'
+    );
+  }
+  if (toolName === 'telnyx_call') {
+    return Boolean(
+      routeResponse.call?.live ||
+        routeResponse.telnyx?.live ||
+        routeResponse.result === 'live' ||
+        ['queued', 'initiated', 'ringing'].includes(String(routeResponse.status || '').toLowerCase())
+    );
+  }
+  return routeResponse.ok !== false;
+}
+
+function getManualProviderError(routeResponse = {}, statusCode = 409) {
+  return (
+    routeResponse.error ||
+    routeResponse.reason ||
+    routeResponse.verbiage ||
+    routeResponse.result ||
+    routeResponse.delivery?.error ||
+    routeResponse.telnyx?.error ||
+    `Provider returned ${statusCode}`
+  );
+}
+
+async function executeManualProviderRouteWithOutbox({
+  toolName,
+  provider,
+  channel,
+  params = {},
+  source = 'manual-provider-route',
+  leadId = '',
+  recipient = '',
+  messageBody = '',
+  subject = '',
+  requestedBy = '',
+} = {}) {
+  const idempotencyKey = String(
+    params.idempotencyKey ||
+      params.idempotency_key ||
+      deriveManualSendIdempotencyKey({
+        channel,
+        leadId,
+        recipient,
+        body: messageBody,
+        subject,
+        requestedBy,
+      })
+  ).trim();
+  const replay = idempotencyKey ? productionIdempotencyStore.get(idempotencyKey) : null;
+  if (replay) {
+    return {
+      ...replay,
+      idempotentReplay: true,
+    };
+  }
+
+  const queuedAt = isoNow();
+  const queuedOutbox = buildManualSendOutboxEnvelope({
+    channel,
+    provider,
+    status: 'sending',
+    idempotencyKey,
+    leadId,
+    recipient,
+    queuedAt,
+  });
+
+  const circuit = await providerCircuitBreaker.execute(
+    provider,
+    () =>
+      executeRouteToolHandler(
+        toolName,
+        {
+          ...params,
+          idempotencyKey,
+          outboxId: idempotencyKey,
+          manualSendOutbox: queuedOutbox,
+        },
+        source
+      ),
+    () => queuedOutbox
+  );
+
+  if (circuit.ok === false && !circuit.providerAttempted) {
+    const outbox = buildManualSendOutboxEnvelope({
+      channel,
+      provider,
+      status: 'failed',
+      idempotencyKey,
+      leadId,
+      recipient,
+      queuedAt,
+      error: circuit.error || 'Provider circuit is open.',
+      providerResult: circuit,
+    });
+    return {
+      ok: false,
+      statusCode: 409,
+      response: {
+        ok: false,
+        result: 'provider_circuit_open',
+        error: outbox.error,
+        outbox,
+        idempotencyKey,
+        retryable: true,
+        providerCircuit: circuit,
+        state: buildStateSnapshot(),
+      },
+      outbox,
+      idempotencyKey,
+      idempotentReplay: false,
+    };
+  }
+
+  const routeTool = circuit.result && typeof circuit.result === 'object' ? circuit.result : {};
+  const routeResponse = buildRouteToolResponse(routeTool);
+  const statusCode = getRouteToolStatusCode(routeTool, { failureStatus: 409 });
+  const deliveryLive = statusCode < 400 && isManualProviderDeliveryLive(toolName, routeResponse);
+  const error = deliveryLive ? '' : getManualProviderError(routeResponse, statusCode);
+  if (deliveryLive) providerCircuitBreaker.recordSuccess(provider);
+  else providerCircuitBreaker.recordFailure(provider, error);
+
+  const outbox = buildManualSendOutboxEnvelope({
+    channel,
+    provider,
+    status: deliveryLive ? 'sent' : 'failed',
+    idempotencyKey,
+    leadId,
+    recipient,
+    queuedAt,
+    sentAt: deliveryLive ? isoNow() : '',
+    error,
+    providerResult: routeResponse,
+  });
+  const responsePayload = {
+    ...routeResponse,
+    outbox,
+    idempotencyKey,
+    idempotentReplay: false,
+    retryable: outbox.retryable,
+  };
+  const envelope = {
+    ok: deliveryLive,
+    statusCode: deliveryLive ? statusCode : Math.max(statusCode, 409),
+    response: responsePayload,
+    outbox,
+    idempotencyKey,
+    idempotentReplay: false,
+  };
+  if (deliveryLive && idempotencyKey) productionIdempotencyStore.set(idempotencyKey, envelope);
+  return envelope;
+}
+
 async function personalizeNurtureMessageWithStrategist({ draft = '', lead = {}, channel = '', step = null } = {}) {
   const result = await askStrategistRecord({
     agentName: 'Nurture Agent',
@@ -62683,6 +62947,12 @@ const server = createServer(async (request, response) => {
       return;
     }
 
+    if (request.method === 'GET' && matchesPath(pathname, ['/api/performance/status', '/api/production/performance', '/api/performance/readiness'])) {
+      const performance = await buildProductionPerformanceStatusSnapshot();
+      json(response, performance.ready ? 200 : 202, performance);
+      return;
+    }
+
     if (request.method === 'GET' && matchesPath(pathname, ['/api/runtime/events/status', '/api/runtime/archive', '/api/runtime/archive/status', '/api/observability/runtime-events/status'])) {
       const archive = getRuntimeEventArchiveStatus();
       json(response, archive.ready ? 200 : 202, archive);
@@ -67405,32 +67675,33 @@ const server = createServer(async (request, response) => {
           return;
         }
 
-        const execution =
-          parsed.channel === 'sms'
-            ? await executeRouteToolHandler(
-                'telnyx_sms',
-                {
+        const send = await executeManualProviderRouteWithOutbox({
+          toolName: parsed.channel === 'sms' ? 'telnyx_sms' : 'sendColdEmail',
+          provider: parsed.channel === 'sms' ? 'telnyx' : 'instantly',
+          channel: parsed.channel,
+          params:
+            parsed.channel === 'sms'
+              ? {
                   ...providerParams,
                   from: senderIdentity.address,
                   fromNumber: senderIdentity.address,
-                },
-                'unified-conversation-send'
-              )
-            : await executeRouteToolHandler(
-                'sendColdEmail',
-                {
+                }
+              : {
                   ...providerParams,
                   fromEmail: senderIdentity.address,
                   senderEmail: senderIdentity.address,
                   requireSelectedProvider: true,
                 },
-                'unified-conversation-send'
-              );
-        const {
-          result: providerResult,
-          qaValidation,
-          safetyValidation,
-        } = execution;
+          source: 'unified-conversation-send',
+          leadId: thread.leadId || '',
+          recipient,
+          messageBody: parsed.body,
+          subject: parsed.subject,
+          requestedBy: parsed.requestedBy || actor,
+        });
+        const providerResult = send.response || {};
+        const qaValidation = providerResult.qaValidation || providerResult.qa || null;
+        const safetyValidation = providerResult.safetyValidation || providerResult.safety || null;
         const classification = classifyConversationSendResult(
           parsed.channel,
           providerResult
@@ -67465,6 +67736,9 @@ const server = createServer(async (request, response) => {
           providerResult,
           qaValidation,
           safetyValidation,
+          outbox: send.outbox,
+          idempotencyKey: send.idempotencyKey,
+          retryable: send.outbox?.retryable === true,
           event,
         });
       } catch (error) {
@@ -68797,8 +69071,18 @@ const server = createServer(async (request, response) => {
         requestedBy: body.requestedBy || body.requested_by || body.actor || 'PBK operator',
         source: body.source || 'command_center_manual',
       };
-      const routeTool = await executeRouteToolHandler('telnyx_call', manualCallBody, 'calls-route');
-      json(response, getRouteToolStatusCode(routeTool, { failureStatus: 409 }), buildRouteToolResponse(routeTool));
+      const call = await executeManualProviderRouteWithOutbox({
+        toolName: 'telnyx_call',
+        provider: 'telnyx',
+        channel: 'call',
+        params: manualCallBody,
+        source: 'calls-route',
+        leadId: body.leadId || body.lead_id || body.id || '',
+        recipient: body.phone || body.to || body.number || '',
+        messageBody: body.reason || body.notes || 'manual call',
+        requestedBy: manualCallBody.requestedBy,
+      });
+      json(response, call.statusCode, call.response);
       return;
     }
 
@@ -70368,16 +70652,28 @@ const server = createServer(async (request, response) => {
         return;
       }
       if (channel === 'sms') {
-        const routeTool = await executeRouteToolHandler('telnyx_sms', {
-          ...manualBody,
-          ...context,
-          body: messageBody,
-        }, 'lead-send-message');
-        const result = routeTool.result || {};
-        json(response, getRouteToolStatusCode(routeTool, { failureStatus: 409 }), {
-          ...buildRouteToolResponse(routeTool),
-          result: result.telnyx?.live ? 'live' : result.result || 'provider_missing',
-          verbiage: result.telnyx?.live ? 'SMS sent or queued through Telnyx.' : 'SMS was recorded without claiming carrier delivery.',
+        const send = await executeManualProviderRouteWithOutbox({
+          toolName: 'telnyx_sms',
+          provider: 'telnyx',
+          channel: 'sms',
+          params: {
+            ...manualBody,
+            ...context,
+            body: messageBody,
+          },
+          source: 'lead-send-message',
+          leadId: context.leadId,
+          recipient: body.phone || context.phone || '',
+          messageBody,
+          requestedBy: manualBody.requestedBy,
+        });
+        json(response, send.statusCode, {
+          ...send.response,
+          result: send.outbox.status === 'sent' ? 'live' : send.response.result || 'provider_missing',
+          verbiage:
+            send.outbox.status === 'sent'
+              ? 'SMS sent or queued through Telnyx.'
+              : send.outbox.error || 'SMS was recorded without claiming carrier delivery.',
         });
         return;
       }
@@ -70386,20 +70682,33 @@ const server = createServer(async (request, response) => {
       const subject = body.subject || explicitSubjectMatch?.[1]?.trim() || `Message from Probono Key Realty`;
       const cleanText = messageBody.replace(/^subject:\s*.+\r?\n*/i, '').trim();
       const recipient = body.email || context.email || inferSkipTraceContact(context).email;
-      const routeTool = await executeRouteToolHandler('sendColdEmail', {
-        ...manualBody,
-        ...context,
-        email: recipient,
+      const send = await executeManualProviderRouteWithOutbox({
+        toolName: 'sendColdEmail',
+        provider: 'instantly',
+        channel: 'email',
+        params: {
+          ...manualBody,
+          ...context,
+          email: recipient,
+          subject,
+          body: cleanText,
+          customBody: cleanText,
+          templateId: body.templateId || 'custom',
+        },
+        source: 'lead-send-message',
+        leadId: context.leadId,
+        recipient,
+        messageBody: cleanText,
         subject,
-        body: cleanText,
-        customBody: cleanText,
-        templateId: body.templateId || 'custom',
-      }, 'lead-send-message');
-      const result = routeTool.result || {};
-      json(response, getRouteToolStatusCode(routeTool, { failureStatus: 409 }), {
-        ...buildRouteToolResponse(routeTool),
-        result: result.delivery?.live ? 'live' : result.result || 'provider_missing',
-        verbiage: result.delivery?.ok ? 'Email sent or prepared.' : result.verbiage || result.delivery?.error || 'Provider key missing.',
+        requestedBy: manualBody.requestedBy,
+      });
+      json(response, send.statusCode, {
+        ...send.response,
+        result: send.outbox.status === 'sent' ? 'live' : send.response.result || 'provider_missing',
+        verbiage:
+          send.outbox.status === 'sent'
+            ? 'Email sent or prepared.'
+            : send.outbox.error || 'Provider key missing.',
       });
       return;
     }

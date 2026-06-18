@@ -294,6 +294,16 @@ export function createProviderCircuitBreaker({
     getAllStatuses() {
       return [...states.values()].map((state) => ({ ...state }));
     },
+    recordFailure(provider, error) {
+      const state = getMutable(provider);
+      fail(state, error);
+      return { ...state };
+    },
+    recordSuccess(provider) {
+      const state = getMutable(provider);
+      close(state);
+      return { ...state };
+    },
   };
 }
 

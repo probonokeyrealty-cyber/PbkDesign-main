@@ -26,6 +26,7 @@ import {
   type CommunicationSenderIdentity,
   type ConversationEvent,
   type ConversationThread,
+  type ManualSendOutbox,
   type ReplyTemplateRecord,
 } from '../../utils/runtimeBridge';
 import { showUiToast } from '../../utils/uiFeedback';
@@ -71,6 +72,45 @@ type ComposerOutcome = {
   detail: string;
   actionLabel?: string;
 };
+
+function getOutboxSendTone(outbox?: ManualSendOutbox): ComposerOutcome['tone'] | null {
+  if (!outbox) return null;
+  const status = String(outbox.status || outbox.timelineStatus || '').toLowerCase();
+  if (status === 'sent') return 'success';
+  if (status === 'failed') return 'error';
+  if (outbox.retryable) return 'warning';
+  return null;
+}
+
+function buildOutboxSendOutcome({
+  outbox,
+  channel,
+  fallbackResult = '',
+}: {
+  outbox?: ManualSendOutbox;
+  channel: Channel;
+  fallbackResult?: string;
+}): ComposerOutcome | null {
+  const tone = getOutboxSendTone(outbox);
+  if (!tone || !outbox) return null;
+  const provider = outbox.provider ? `${outbox.provider} ` : '';
+  if (tone === 'success') {
+    return {
+      tone,
+      title: channel === 'sms' ? 'SMS sent' : 'Email sent',
+      detail: `${provider}accepted the manual send. Idempotency: ${
+        outbox.idempotencyKey || 'recorded'
+      }.`,
+    };
+  }
+  const reason = outbox.error || fallbackResult || 'Provider did not confirm delivery.';
+  return {
+    tone,
+    title: outbox.retryable ? 'Send failed, retry available' : 'Send failed',
+    detail: `${reason}${outbox.retryable ? ' You can retry this exact draft without double-sending confirmed deliveries.' : ''}`,
+    actionLabel: outbox.retryable ? 'Retry send' : undefined,
+  };
+}
 
 function speechRecognitionConstructor(): SpeechRecognitionConstructor | null {
   if (typeof window === 'undefined') return null;
@@ -520,20 +560,36 @@ export function ConversationComposer({
         manualSend: true,
       });
       const approvalRequired = isConversationApprovalRequired(response);
-      setSendOutcome({
-        tone: approvalRequired || response.scheduled ? 'warning' : 'success',
-        title: approvalRequired
-          ? 'Manual send held by bridge'
-          : response.scheduled
-            ? 'Message scheduled'
-            : 'Provider sent',
-        detail: approvalRequired
-          ? 'Manual send is direct when the bridge returns a provider-send result. This hold came back from the bridge/provider policy, so the draft stays intact for retry or review.'
-          : response.scheduled
-            ? `Scheduled for ${new Date(response.scheduledFor || scheduledFor).toLocaleString()}.`
-            : `Manual send is direct. Provider result: ${response.result || 'accepted'}.`,
+      const outboxOutcome = buildOutboxSendOutcome({
+        outbox: response.outbox,
+        channel: submittedChannel,
+        fallbackResult: String(response.error || response.result || ''),
       });
-      if (approvalRequired || response.scheduled) {
+      const heldForRetry =
+        approvalRequired ||
+        response.scheduled ||
+        outboxOutcome?.tone === 'error' ||
+        outboxOutcome?.tone === 'warning';
+      setSendOutcome({
+        tone:
+          outboxOutcome?.tone || (approvalRequired || response.scheduled ? 'warning' : 'success'),
+        title:
+          outboxOutcome?.title ||
+          (approvalRequired
+            ? 'Manual send held by bridge'
+            : response.scheduled
+              ? 'Message scheduled'
+              : 'Provider sent'),
+        detail:
+          outboxOutcome?.detail ||
+          (approvalRequired
+            ? 'Manual send is direct when the bridge returns a provider-send result. This hold came back from the bridge/provider policy, so the draft stays intact for retry or review.'
+            : response.scheduled
+              ? `Scheduled for ${new Date(response.scheduledFor || scheduledFor).toLocaleString()}.`
+              : `Manual send is direct. Provider result: ${response.result || 'accepted'}.`),
+        actionLabel: outboxOutcome?.actionLabel,
+      });
+      if (heldForRetry) {
         setSubmittedFingerprint(submittedSendFingerprint);
       } else if (
         channelRef.current === submittedChannel &&

@@ -132,6 +132,7 @@ COPY scripts/observability.mjs ./scripts/observability.mjs
 COPY scripts/system-source-health.mjs ./scripts/system-source-health.mjs
 COPY scripts/production-readiness-command-layer.mjs ./scripts/production-readiness-command-layer.mjs
 COPY scripts/production-maturity-loop.mjs ./scripts/production-maturity-loop.mjs
+COPY scripts/production-performance-hardening.mjs ./scripts/production-performance-hardening.mjs
 COPY scripts/production-gap-labels.mjs ./scripts/production-gap-labels.mjs
 COPY scripts/primary-path-reliability.mjs ./scripts/primary-path-reliability.mjs
 COPY scripts/ava-latency-status.mjs ./scripts/ava-latency-status.mjs

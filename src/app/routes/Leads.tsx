@@ -1967,6 +1967,17 @@ export function Leads() {
                     )}
                     Call
                   </button>
+                  {!isCallablePhone(getLeadPhone(activeLead)) && (
+                    <button
+                      type="button"
+                      onClick={openEditModal}
+                      disabled={isLeadActionBusy}
+                      className="inline-flex items-center gap-2 rounded-full border border-amber-300/40 bg-amber-300/10 px-3 py-2 text-xs font-semibold text-amber-100 transition hover:border-amber-200 hover:bg-amber-300/15 disabled:cursor-wait disabled:opacity-60"
+                    >
+                      <Plus size={14} />
+                      Add canonical phone
+                    </button>
+                  )}
                   <button
                     type="button"
                     onClick={() => openQuickSms(activeLead)}
@@ -2208,14 +2219,14 @@ export function Leads() {
       </div>
 
       {newLeadOpen && (
-        <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/80 p-3 backdrop-blur-sm sm:p-4">
+        <div className="pbk-new-lead-modal-backdrop fixed inset-0 z-50 grid place-items-center bg-slate-950/80 p-3 backdrop-blur-sm sm:p-4">
           <div
-            className={`${softPanelClass} flex max-h-[92vh] w-full max-w-6xl flex-col overflow-hidden`}
+            className={`${softPanelClass} pbk-new-lead-modal flex max-h-[92vh] w-full max-w-6xl flex-col overflow-hidden`}
             role="dialog"
             aria-modal="true"
             aria-labelledby="new-pbk-lead-title"
           >
-            <div className="flex items-start justify-between gap-3 border-b border-slate-800 px-4 py-4">
+            <div className="pbk-new-lead-modal-header flex items-start justify-between gap-3 border-b border-slate-800 px-4 py-4">
               <div className="min-w-0">
                 <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-sky-300">
                   New PBK lead
@@ -2238,7 +2249,7 @@ export function Leads() {
               </button>
             </div>
 
-            <div className="overflow-y-auto px-4 py-4">
+            <div className="pbk-new-lead-modal-body overflow-y-auto px-4 py-4">
               <div className="mb-4 flex flex-wrap gap-2">
                 <PbkDataSource
                   endpoint="POST /api/leads"
@@ -2640,11 +2651,11 @@ export function Leads() {
               </div>
             </div>
 
-            <div className="flex flex-col gap-2 border-t border-slate-800 px-4 py-4 sm:flex-row sm:items-center sm:justify-between">
+            <div className="pbk-new-lead-modal-footer flex flex-col gap-2 border-t border-slate-800 px-4 py-4 sm:flex-row sm:items-center sm:justify-between">
               <div className="text-[11px] text-slate-500">
                 Source: Deal Analyzer seed + operator edits to bridge lead portal.
               </div>
-              <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
+              <div className="pbk-new-lead-modal-actions flex flex-col gap-2 sm:flex-row sm:justify-end">
                 <button
                   type="button"
                   onClick={() => setNewLeadOpen(false)}

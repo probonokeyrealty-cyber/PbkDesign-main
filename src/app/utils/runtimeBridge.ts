@@ -294,7 +294,21 @@ export type AgentHealthProbe = {
   missingTools?: string[];
   healthProbe?: string;
   lastSeen?: string;
+  latencyP95Ms?: number;
+  lastSuccess?: string;
+  lastFailure?: string;
   source?: string;
+};
+
+export type AgentFleetMeasurement = {
+  ready?: boolean;
+  result?: string;
+  measurementVersion?: string;
+  requiredIds?: string[];
+  total?: number;
+  measuredCount?: number;
+  blockers?: string[];
+  agents?: Array<Record<string, unknown>>;
 };
 
 export type AgentHealthResponse = {
@@ -302,6 +316,7 @@ export type AgentHealthResponse = {
   result?: string;
   agents?: AgentHealthProbe[];
   registry?: Record<string, unknown>;
+  measurement?: AgentFleetMeasurement;
   agentRegistry?: Record<string, unknown>;
   mcp?: Record<string, unknown>;
   safety?: Record<string, unknown>;

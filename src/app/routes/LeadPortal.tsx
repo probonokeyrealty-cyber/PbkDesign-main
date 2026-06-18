@@ -621,6 +621,7 @@ export function LeadPortal() {
         onBack={() => navigate('/leads')}
         onRefresh={() => void loadPortal()}
         onEdit={startEdit}
+        onAddPhone={startEdit}
         onMessage={() =>
           thread && navigate(`/inbox/conversations?thread=${encodeURIComponent(thread.id)}`)
         }

@@ -44,6 +44,37 @@ function isoFromNow(now = () => Date.now()) {
   return new Date(now()).toISOString();
 }
 
+function isCircuitEligibleProviderFailure(result = {}) {
+  if (!result || typeof result !== 'object') return false;
+  if (result.ok !== false) return false;
+  if (result.skipped === true) return false;
+  const code = normalizeCode(result.result || result.code || '');
+  if (
+    [
+      'provider_missing',
+      'local_only',
+      'disabled',
+      'empty_text',
+      'missing_recipient',
+      'missing_recipient_email',
+      'sender_identity_store_unavailable',
+      'sender_identity_not_found',
+      'sender_identity_channel_mismatch',
+      'sender_identity_ineligible',
+    ].includes(code)
+  ) {
+    return false;
+  }
+  return true;
+}
+
+function describeReturnedProviderFailure(result = {}) {
+  return (
+    clean(result.error || result.message || result.result || result.code) ||
+    (result.status ? `Provider returned ${result.status}` : 'Provider returned a failed result.')
+  );
+}
+
 export function classifySellerFinalOutcome(input = {}) {
   const explicit = normalizeCode(input.finalOutcome || input.final_outcome || '');
   const explicitKnown = new Set([
@@ -265,6 +296,21 @@ export function createProviderCircuitBreaker({
       if (state.state === 'open') state.state = 'half_open';
       try {
         const result = await fn();
+        if (isCircuitEligibleProviderFailure(result)) {
+          const error = new Error(describeReturnedProviderFailure(result));
+          fail(state, error);
+          return {
+            ok: false,
+            result,
+            revision: PRODUCTION_MATURITY_LOOP_REVISION,
+            provider: state.provider,
+            providerAttempted: true,
+            retryable: true,
+            circuitState: state.state,
+            failures: state.failures,
+            error: error.message,
+          };
+        }
         close(state);
         return {
           ok: result?.ok !== false,
@@ -404,6 +450,80 @@ export function buildCanaryPromotionGate({
       failedCallEvalGate,
       silentErrorReport,
       sloStatus,
+    },
+  };
+}
+
+function metricNumber(source = {}, key = '', fallback = null) {
+  const value = Number(source?.[key]);
+  return Number.isFinite(value) ? value : fallback;
+}
+
+function pctRegression(candidate = 0, baseline = 0) {
+  if (!Number.isFinite(candidate) || !Number.isFinite(baseline)) return 0;
+  if (baseline <= 0) return candidate > 0 ? 100 : 0;
+  return ((candidate - baseline) / baseline) * 100;
+}
+
+export function buildShadowCanaryComparison({
+  baseline = {},
+  candidate = {},
+  thresholds = {},
+} = {}) {
+  const minBehaviorPassRate = Number(thresholds.minBehaviorPassRate ?? 0.98);
+  const maxLatencyRegressionPct = Number(thresholds.maxLatencyRegressionPct ?? 20);
+  const maxErrorRateRegressionPct = Number(thresholds.maxErrorRateRegressionPct ?? 15);
+  const maxFallbackRateRegressionPct = Number(thresholds.maxFallbackRateRegressionPct ?? 20);
+  const blockers = [];
+  const baselineMetrics = {
+    behaviorPassRate: metricNumber(baseline, 'behaviorPassRate', null),
+    p95LatencyMs: metricNumber(baseline, 'p95LatencyMs', null),
+    errorRate: metricNumber(baseline, 'errorRate', null),
+    fallbackRate: metricNumber(baseline, 'fallbackRate', null),
+  };
+  const candidateMetrics = {
+    behaviorPassRate: metricNumber(candidate, 'behaviorPassRate', null),
+    p95LatencyMs: metricNumber(candidate, 'p95LatencyMs', null),
+    errorRate: metricNumber(candidate, 'errorRate', null),
+    fallbackRate: metricNumber(candidate, 'fallbackRate', null),
+  };
+  for (const [key, value] of Object.entries(candidateMetrics)) {
+    if (value === null) blockers.push(`candidate_metric_missing:${key}`);
+  }
+  for (const [key, value] of Object.entries(baselineMetrics)) {
+    if (value === null) blockers.push(`baseline_metric_missing:${key}`);
+  }
+  if (candidateMetrics.behaviorPassRate !== null && candidateMetrics.behaviorPassRate < minBehaviorPassRate) {
+    blockers.push('behavior_pass_rate_below_threshold');
+  }
+  const latencyRegressionPct = pctRegression(candidateMetrics.p95LatencyMs, baselineMetrics.p95LatencyMs);
+  if (latencyRegressionPct > maxLatencyRegressionPct) blockers.push('p95_latency_regression');
+  const errorRateRegressionPct = pctRegression(candidateMetrics.errorRate, baselineMetrics.errorRate);
+  if (errorRateRegressionPct > maxErrorRateRegressionPct) blockers.push('error_rate_regression');
+  const fallbackRateRegressionPct = pctRegression(candidateMetrics.fallbackRate, baselineMetrics.fallbackRate);
+  if (fallbackRateRegressionPct > maxFallbackRateRegressionPct) blockers.push('fallback_rate_regression');
+  return {
+    ok: true,
+    ready: blockers.length === 0,
+    result: blockers.length ? 'shadow_canary_comparison_blocked' : 'shadow_canary_comparison_ready',
+    revision: PRODUCTION_MATURITY_LOOP_REVISION,
+    baselineVersion: clean(baseline.version || baseline.commit || 'current'),
+    candidateVersion: clean(candidate.version || candidate.commit || 'candidate'),
+    blockers,
+    regressions: {
+      latencyRegressionPct: Number(latencyRegressionPct.toFixed(2)),
+      errorRateRegressionPct: Number(errorRateRegressionPct.toFixed(2)),
+      fallbackRateRegressionPct: Number(fallbackRateRegressionPct.toFixed(2)),
+    },
+    thresholds: {
+      minBehaviorPassRate,
+      maxLatencyRegressionPct,
+      maxErrorRateRegressionPct,
+      maxFallbackRateRegressionPct,
+    },
+    metrics: {
+      baseline: baselineMetrics,
+      candidate: candidateMetrics,
     },
   };
 }

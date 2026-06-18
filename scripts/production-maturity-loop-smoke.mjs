@@ -5,6 +5,7 @@ import { resolve } from 'node:path';
 import {
   buildCanaryPromotionGate,
   buildFailedCallEvalGate,
+  buildShadowCanaryComparison,
   classifySellerFinalOutcome,
   createProviderCircuitBreaker,
   createRuntimeEventArchive,
@@ -99,6 +100,50 @@ const halfOpenResult = await breaker.execute('telnyx', async () => ({
 assert.equal(halfOpenResult.ok, true, 'Circuit should allow half-open success after cooldown.');
 assert.equal(breaker.getStatus('telnyx').state, 'closed', 'Successful half-open probe should close the circuit.');
 
+const returnedFailureBreaker = createProviderCircuitBreaker({
+  now,
+  failureThreshold: 2,
+  cooldownMs: 60_000,
+});
+await returnedFailureBreaker.execute('instantly', async () => ({
+  ok: false,
+  result: 'provider_error',
+  status: 502,
+  error: 'Instantly returned 502',
+}));
+assert.equal(
+  returnedFailureBreaker.getStatus('instantly').state,
+  'closed',
+  'A single returned provider failure should not open the circuit yet.'
+);
+await returnedFailureBreaker.execute('instantly', async () => ({
+  ok: false,
+  result: 'provider_error',
+  status: 502,
+  error: 'Instantly returned 502 again',
+}));
+assert.equal(
+  returnedFailureBreaker.getStatus('instantly').state,
+  'open',
+  'Repeated returned provider failures should open the circuit.'
+);
+const missingConfigBreaker = createProviderCircuitBreaker({
+  now,
+  failureThreshold: 1,
+  cooldownMs: 60_000,
+});
+await missingConfigBreaker.execute('slack', async () => ({
+  ok: false,
+  skipped: true,
+  result: 'provider_missing',
+  error: 'Slack is not configured.',
+}));
+assert.equal(
+  missingConfigBreaker.getStatus('slack').state,
+  'closed',
+  'Skipped provider-missing results should not open a circuit.'
+);
+
 assert.equal(
   classifySellerFinalOutcome({ outcomeLabel: 'Seller signed contract and DocuSign completed.' }).finalOutcome,
   'contract',
@@ -178,6 +223,46 @@ assert(blockedPromotion.blockers.includes('failed_call_eval'), 'Promotion should
 assert(blockedPromotion.blockers.includes('silent_error_blockers'), 'Promotion should include silent-error blocker.');
 assert(blockedPromotion.blockers.includes('slo_budget_burned:manualsend'), 'Promotion should include SLO blocker.');
 
+const shadowReady = buildShadowCanaryComparison({
+  baseline: {
+    version: 'current',
+    behaviorPassRate: 0.99,
+    p95LatencyMs: 820,
+    errorRate: 0.01,
+    fallbackRate: 0.08,
+  },
+  candidate: {
+    version: 'candidate',
+    behaviorPassRate: 0.99,
+    p95LatencyMs: 880,
+    errorRate: 0.01,
+    fallbackRate: 0.085,
+  },
+});
+assert.equal(shadowReady.ready, true, 'Shadow canary comparison should pass when behavior and regressions are within budget.');
+
+const shadowBlocked = buildShadowCanaryComparison({
+  baseline: {
+    version: 'current',
+    behaviorPassRate: 0.99,
+    p95LatencyMs: 800,
+    errorRate: 0.01,
+    fallbackRate: 0.08,
+  },
+  candidate: {
+    version: 'candidate',
+    behaviorPassRate: 0.9,
+    p95LatencyMs: 1200,
+    errorRate: 0.03,
+    fallbackRate: 0.14,
+  },
+});
+assert.equal(shadowBlocked.ready, false, 'Shadow canary comparison should block unsafe candidates.');
+assert(shadowBlocked.blockers.includes('behavior_pass_rate_below_threshold'), 'Shadow blocker should include behavior regression.');
+assert(shadowBlocked.blockers.includes('p95_latency_regression'), 'Shadow blocker should include latency regression.');
+assert(shadowBlocked.blockers.includes('error_rate_regression'), 'Shadow blocker should include error-rate regression.');
+assert(shadowBlocked.blockers.includes('fallback_rate_regression'), 'Shadow blocker should include fallback-rate regression.');
+
 assert.equal(
   packageJson.scripts?.['test:production-maturity-loop'],
   'node ./scripts/production-maturity-loop-smoke.mjs',
@@ -190,8 +275,9 @@ assert(
 assert(
   bridgeSource.includes('createRuntimeEventArchive') &&
     bridgeSource.includes('createProviderCircuitBreaker') &&
-    bridgeSource.includes('buildCanaryPromotionGate'),
-  'Bridge must wire runtime archive, provider circuit breakers, and canary promotion gates.'
+    bridgeSource.includes('buildCanaryPromotionGate') &&
+    bridgeSource.includes('buildShadowCanaryComparison'),
+  'Bridge must wire runtime archive, provider circuit breakers, canary promotion gates, and shadow comparisons.'
 );
 assert(
   bridgeSource.includes('/api/runtime/events/status') &&

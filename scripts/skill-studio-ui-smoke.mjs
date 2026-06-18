@@ -125,5 +125,15 @@ assert(
     ),
   'Skill candidate actions must remain visible above mobile safe areas.'
 );
+assert(
+  /\.pbk-skill-dialog-backdrop\s*\{[\s\S]*?z-index:\s*130/.test(styles) &&
+    /@media \(max-width: 760px\)[\s\S]*?\.pbk-skill-dialog-body[\s\S]*?padding:\s*0\s+14px\s+88px/.test(
+      styles
+    ) &&
+    /@media \(max-width: 760px\)[\s\S]*?\.pbk-skill-dialog footer[\s\S]*?calc\(16px \+ env\(safe-area-inset-bottom\)\)/.test(
+      styles
+    ),
+  'Skill candidate mobile sheet must sit above shell nav and keep the governed-skill button tappable.'
+);
 
 console.log('skill-studio-ui-smoke: ok');

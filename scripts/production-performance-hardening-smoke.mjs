@@ -156,6 +156,16 @@ assert.ok(
   'manual send path must expose outbox envelopes'
 );
 assert.ok(
+  bridgeSource.includes('async function executeProviderCircuitGuard'),
+  'bridge must expose a shared provider circuit guard for direct provider helpers'
+);
+for (const provider of ['telnyx', 'instantly', 'slack', 'deepseek', 'elevenlabs', 'deepgram', 'docusign']) {
+  assert.ok(
+    new RegExp(`executeProviderCircuitGuard\\(\\s*['"]${provider}['"]`).test(bridgeSource),
+    `bridge direct provider helpers must enforce the ${provider} circuit`
+  );
+}
+assert.ok(
   bridgeSource.includes('fuzzyLeadLookupCache') &&
     bridgeSource.includes("stateOmitted: true"),
   'lead search must use burst caching and omit full state snapshots'
@@ -171,6 +181,44 @@ assert.ok(
 assert.ok(
   bridgeSource.includes('getAvaLiveCallSpeedReadiness()'),
   'performance readiness must inspect live-call cache/dedupe/prewarm markers instead of assuming readiness'
+);
+assert.ok(
+  bridgeSource.includes('BRIDGE_READ_CACHE_TTL_MS') &&
+    bridgeSource.includes('async function getCachedReadResponse') &&
+    bridgeSource.includes('clearBridgeReadCache('),
+  'bridge must provide a short read-through cache for high-traffic status/config endpoints'
+);
+assert.ok(
+  bridgeSource.includes('sharedRedisClient?.isOpen') &&
+    bridgeSource.includes('redisGetCachedReadResponseIfOpen') &&
+    bridgeSource.includes('redisSetCachedReadResponseIfOpen'),
+  'read endpoint cache must use Redis only when the shared client is already open so cold requests do not block on Redis'
+);
+assert.ok(
+  /persistState\(nextState\)[\s\S]*clearBridgeReadCache\(['"]persist_state['"]\)/.test(bridgeSource),
+  'state persistence must invalidate cached status/config responses'
+);
+for (const cacheMarker of [
+  "getCachedReadResponse('production-maturity'",
+  "getCachedReadResponse('performance-status'",
+  "getCachedReadResponse('agent-orchestration'",
+  "getCachedReadResponse('agent-registry'",
+  "getCachedReadResponse('agent-measurement'",
+  "getCachedReadResponse('agent-health'",
+  "getCachedReadResponse('agent-fleet'",
+  "getCachedReadResponse('communication-identities'",
+  "getCachedReadResponse('system-source-labels'",
+  "getCachedReadResponse('production-gaps'",
+  "getCachedReadResponse('production-primary-path'",
+]) {
+  assert.ok(bridgeSource.includes(cacheMarker), `bridge must cache ${cacheMarker}`);
+}
+assert.ok(
+  bridgeSource.includes('normalizeTelnyxMediaCodec') &&
+    bridgeSource.includes('session.telnyxMediaCodec') &&
+    bridgeSource.includes('decodeG711FrameToLinear16(') &&
+    bridgeSource.includes('session.telnyxMediaCodec || DEEPGRAM_STREAM_CODEC'),
+  'live-call STT fallback must decode replayed Telnyx frames using the actual media codec from the stream.'
 );
 assert.doesNotMatch(
   bridgeSource,

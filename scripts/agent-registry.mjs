@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+
 const REQUIRED_AGENT_IDS = [
   'ava',
   'max',
@@ -65,6 +67,52 @@ export function normalizeAgentRegistryId(value = '') {
     .toLowerCase()
     .replace(/[^a-z0-9_-]+/g, '-')
     .replace(/^-+|-+$/g, '');
+}
+
+function stableJson(value) {
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`;
+  if (value && typeof value === 'object') {
+    return `{${Object.keys(value)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${stableJson(value[key])}`)
+      .join(',')}}`;
+  }
+  return JSON.stringify(value);
+}
+
+function percentile(values = [], percentileValue = 0.95) {
+  const numeric = (Array.isArray(values) ? values : [values])
+    .map((value) => Number(value))
+    .filter(Number.isFinite)
+    .sort((left, right) => left - right);
+  if (!numeric.length) return 0;
+  const index = Math.min(
+    numeric.length - 1,
+    Math.max(0, Math.ceil(numeric.length * percentileValue) - 1)
+  );
+  return numeric[index];
+}
+
+function normalizeToolCatalog(toolCatalog = {}) {
+  if (Array.isArray(toolCatalog)) {
+    return Object.fromEntries(uniqueStrings(toolCatalog).map((tool) => [tool, true]));
+  }
+  return toolCatalog && typeof toolCatalog === 'object' ? toolCatalog : {};
+}
+
+function checksumAgentSnapshotPayload(snapshot = {}) {
+  return createHash('sha256')
+    .update(
+      stableJson({
+        schemaVersion: Number(snapshot.schemaVersion || 1),
+        workspaceId: snapshot.workspaceId || 'pbk',
+        environment: snapshot.environment || 'production',
+        authority: snapshot.authority || 'pbk-agent-registry',
+        agents: Array.isArray(snapshot.agents) ? snapshot.agents : [],
+        requiredIds: Array.isArray(snapshot.requiredIds) ? snapshot.requiredIds : [],
+      })
+    )
+    .digest('hex');
 }
 
 function buildExternalAgentEnvKeys(agent = {}) {
@@ -496,6 +544,335 @@ export function buildAgentRegistrySnapshot(
       lastError: agent.lastError || agent.last_error || '',
     })),
     agents,
+  };
+}
+
+function getMeasurementProbeForAgent(healthProbes = [], agent = {}) {
+  const agentId = normalizeAgentRegistryId(agent.id || agent.agentId || agent.name);
+  const agentName = normalizeAgentRegistryId(agent.name || '');
+  return (Array.isArray(healthProbes) ? healthProbes : []).find((probe = {}) => {
+    const probeId = normalizeAgentRegistryId(probe.id || probe.agentId || probe.agent_id || probe.name);
+    const probeName = normalizeAgentRegistryId(probe.name || '');
+    return probeId === agentId || probeName === agentId || (agentName && probeId === agentName);
+  }) || null;
+}
+
+function getMeasurementLastAction(lastActions = {}, agent = {}) {
+  const agentId = normalizeAgentRegistryId(agent.id || agent.agentId || agent.name);
+  if (Array.isArray(lastActions)) {
+    return (
+      lastActions.find(
+        (action = {}) =>
+          normalizeAgentRegistryId(
+            action.agentId ||
+              action.agent_id ||
+              action.toAgent ||
+              action.to_agent ||
+              action.fromAgent ||
+              action.from_agent ||
+              action.agent ||
+              action.name
+          ) === agentId
+      ) || null
+    );
+  }
+  return lastActions && typeof lastActions === 'object' ? lastActions[agentId] || null : null;
+}
+
+function getMeasurementLatencySamples(latencySamples = {}, healthProbe = {}, agent = {}) {
+  const agentId = normalizeAgentRegistryId(agent.id || agent.agentId || agent.name);
+  const direct = latencySamples && typeof latencySamples === 'object' ? latencySamples[agentId] : [];
+  const values = Array.isArray(direct) ? direct : [direct];
+  for (const key of ['latencyP95Ms', 'latencyMs', 'probeLatencyMs']) {
+    if (Number.isFinite(Number(healthProbe?.[key]))) values.push(Number(healthProbe[key]));
+  }
+  return values.map(Number).filter(Number.isFinite);
+}
+
+function getMeasurementLastSuccessAt(agent = {}, probe = {}, action = null) {
+  const actionStatus = String(action?.status || action?.result || '').toLowerCase();
+  if (action && !/fail|error|reject|denied|blocked/.test(actionStatus)) {
+    return action.at || action.completedAt || action.completed_at || action.updatedAt || action.createdAt || '';
+  }
+  if (probe?.ready) return probe.lastSeen || probe.last_seen || probe.checkedAt || probe.checked_at || '';
+  return agent.healthCheckedAt || agent.health_checked_at || '';
+}
+
+function getMeasurementLastFailureAt(agent = {}, probe = {}, action = null) {
+  const actionStatus = String(action?.status || action?.result || '').toLowerCase();
+  if (action && /fail|error|reject|denied|blocked/.test(actionStatus)) {
+    return action.at || action.completedAt || action.completed_at || action.updatedAt || action.createdAt || '';
+  }
+  if (agent.lastError || agent.last_error || probe?.lastError || probe?.last_error) {
+    return agent.healthCheckedAt || agent.health_checked_at || probe.lastSeen || probe.last_seen || '';
+  }
+  return '';
+}
+
+export function buildStableAgentFleetMeasurement(registry = [], options = {}) {
+  const requiredIds = uniqueStrings(options.requiredIds || REQUIRED_AGENT_IDS);
+  const normalizedRegistry = mergeAgentRegistryRecords(registry, buildDefaultAgentRegistry({ env: options.env || {} }));
+  const byId = new Map(normalizedRegistry.map((agent) => [agent.id, agent]));
+  const catalog = normalizeToolCatalog(options.toolCatalog || {});
+  const maxLatencyP95Ms = Number(options.maxLatencyP95Ms || 2500);
+  const minLatencySamples = Math.max(0, Number(options.minLatencySamples ?? 1));
+  const context = options.intelligenceContext && typeof options.intelligenceContext === 'object' ? options.intelligenceContext : {};
+  const generatedAt = new Date(typeof options.now === 'function' ? options.now() : options.now || Date.now()).toISOString();
+  const agents = requiredIds.map((agentId) => {
+    const agent = byId.get(agentId) || normalizeAgentRegistryRecord({ id: agentId, name: agentId, status: 'missing' });
+    const probe = getMeasurementProbeForAgent(options.healthProbes || [], agent);
+    const action = getMeasurementLastAction(options.lastActions || {}, agent);
+    const requiredTools = uniqueStrings(agent.metadata?.requiredTools || agent.requiredTools || []);
+    const missingTools = requiredTools.filter((tool) => !catalog[tool]);
+    const samples = getMeasurementLatencySamples(options.latencySamples || {}, probe || {}, agent);
+    const lastSuccessAt = getMeasurementLastSuccessAt(agent, probe || {}, action);
+    const lastFailureAt = getMeasurementLastFailureAt(agent, probe || {}, action);
+    const status = String(agent.status || '').toLowerCase();
+    const blockers = [];
+    if (!byId.has(agentId)) blockers.push('agent_missing');
+    if (!agent.version) blockers.push('version_missing');
+    if (!agent.capabilities?.length) blockers.push('capabilities_missing');
+    if (!['active', 'standby'].includes(status)) blockers.push(`registry_status_${status || 'missing'}`);
+    if (!probe) blockers.push('health_probe_missing');
+    else if (probe.ready === false || probe.present === false) blockers.push('health_probe_not_ready');
+    blockers.push(...missingTools.map((tool) => `missing_tool:${tool}`));
+    if (samples.length < minLatencySamples) blockers.push('latency_not_sampled');
+    if (samples.length && percentile(samples, 0.95) > maxLatencyP95Ms) blockers.push('latency_p95_above_budget');
+    if (!lastSuccessAt) blockers.push('last_success_missing');
+    for (const key of ['memory', 'skills', 'dataFreshness', 'fleetReadiness']) {
+      if (context[key]?.ready === false) blockers.push(`${key}_not_ready`);
+    }
+    const measured = blockers.length === 0;
+    return {
+      id: agentId,
+      name: agent.name || agentId,
+      version: agent.version || '',
+      status: agent.status || 'missing',
+      measured,
+      ready: measured,
+      result: measured ? 'agent_fully_measured' : 'agent_measurement_gap',
+      blockers,
+      measurement: {
+        inventory: byId.has(agentId),
+        healthProbe: Boolean(probe),
+        healthReady: Boolean(probe?.ready !== false && probe?.present !== false && probe),
+        toolsMeasured: requiredTools.length > 0,
+        toolsReady: missingTools.length === 0,
+        latencyMeasured: samples.length >= minLatencySamples,
+        latencyWithinBudget: !samples.length || percentile(samples, 0.95) <= maxLatencyP95Ms,
+        lastSuccessObserved: Boolean(lastSuccessAt),
+        lastFailureObserved: Boolean(lastFailureAt),
+        contextKnown: {
+          memory: context.memory?.ready !== undefined,
+          skills: context.skills?.ready !== undefined,
+          dataFreshness: context.dataFreshness?.ready !== undefined,
+          fleetReadiness: context.fleetReadiness?.ready !== undefined,
+        },
+      },
+      metrics: {
+        latencyP95Ms: percentile(samples, 0.95),
+        latencySamples: samples.length,
+        lastSuccessAt,
+        lastFailureAt,
+        maxLatencyP95Ms,
+      },
+      requiredTools,
+      missingTools,
+    };
+  });
+  const measured = agents.filter((agent) => agent.measured);
+  const blockers = agents
+    .filter((agent) => !agent.measured)
+    .map((agent) => `agent_measurement_gap:${agent.id}`);
+  return {
+    ok: true,
+    ready: blockers.length === 0,
+    result: blockers.length
+      ? 'stable_agent_fleet_measurement_gaps'
+      : 'stable_agent_fleet_fully_measured',
+    authority: 'pbk-agent-registry',
+    measurementVersion: 'stable-11-agent-measurement-v1',
+    generatedAt,
+    requiredIds,
+    total: agents.length,
+    measuredCount: measured.length,
+    blockers,
+    agents,
+  };
+}
+
+function normalizeAgentVersionSnapshotRecord(agent = {}) {
+  const normalized = normalizeAgentRegistryRecord(agent);
+  const metadata = normalized.metadata && typeof normalized.metadata === 'object' ? normalized.metadata : {};
+  return {
+    id: normalized.id,
+    name: normalized.name || normalized.id,
+    description: normalized.description || '',
+    capabilities: uniqueStrings(normalized.capabilities || []).sort(),
+    status: normalized.status || 'standby',
+    endpoint: normalized.endpoint || LOCAL_BRIDGE_INVOKE_ENDPOINT,
+    version: normalized.version || metadata.version || 'v1.0',
+    metadata,
+  };
+}
+
+export function buildAgentVersionSnapshot(registry = [], options = {}) {
+  const requiredIds = uniqueStrings(options.requiredIds || REQUIRED_AGENT_IDS);
+  const agents = mergeAgentRegistryRecords(registry, buildDefaultAgentRegistry({ env: options.env || {} }))
+    .map(normalizeAgentVersionSnapshotRecord)
+    .filter((agent) => agent.id)
+    .sort((left, right) => left.id.localeCompare(right.id));
+  const snapshot = {
+    schemaVersion: 1,
+    id: options.id || options.snapshotId || `agent-version-snapshot-${Date.now()}`,
+    workspaceId: options.workspaceId || 'pbk',
+    environment: options.environment || 'production',
+    authority: 'pbk-agent-registry',
+    generatedAt: options.generatedAt || new Date(options.now || Date.now()).toISOString(),
+    createdBy: options.createdBy || options.actor || 'PBK Command Center',
+    requiredIds,
+    agents,
+  };
+  snapshot.checksum = checksumAgentSnapshotPayload(snapshot);
+  return snapshot;
+}
+
+export function validateAgentVersionSnapshot(snapshot = {}, options = {}) {
+  if (!snapshot || typeof snapshot !== 'object') {
+    return { ok: false, ready: false, result: 'agent_version_snapshot_invalid', reason: 'snapshot_missing' };
+  }
+  if (snapshot.authority !== 'pbk-agent-registry') {
+    return { ok: false, ready: false, result: 'agent_version_snapshot_invalid', reason: 'invalid_authority' };
+  }
+  const expectedChecksum = checksumAgentSnapshotPayload(snapshot);
+  if (!snapshot.checksum || snapshot.checksum !== expectedChecksum) {
+    return { ok: false, ready: false, result: 'agent_version_snapshot_invalid', reason: 'checksum_invalid' };
+  }
+  const requiredIds = uniqueStrings(options.requiredIds || snapshot.requiredIds || REQUIRED_AGENT_IDS);
+  const agents = (Array.isArray(snapshot.agents) ? snapshot.agents : []).map(normalizeAgentVersionSnapshotRecord);
+  const ids = new Set(agents.map((agent) => agent.id));
+  const missing = requiredIds.filter((id) => !ids.has(id));
+  const malformed = agents.filter((agent) => !agent.id || !agent.name || !agent.version || !agent.endpoint);
+  const ready = missing.length === 0 && malformed.length === 0;
+  return {
+    ok: ready,
+    ready,
+    result: ready ? 'agent_version_snapshot_ready' : 'agent_version_snapshot_incomplete',
+    reason: ready ? '' : missing.length ? 'required_agent_missing' : 'malformed_agent_record',
+    checksum: snapshot.checksum,
+    requiredIds,
+    missing,
+    malformed: malformed.map((agent) => agent.id || '(missing-id)'),
+    agents,
+    snapshot: {
+      ...snapshot,
+      agents,
+    },
+  };
+}
+
+export function buildAgentRollbackPlan({ currentRegistry = [], snapshot = {}, agentIds = [], reason = '', actor = '', now = Date.now() } = {}) {
+  const validation = validateAgentVersionSnapshot(snapshot);
+  if (!validation.ok) {
+    return {
+      ok: false,
+      ready: false,
+      result: 'agent_rollback_blocked',
+      reason: validation.reason,
+      validation,
+    };
+  }
+  const rollbackReason = String(reason || '').trim();
+  if (!rollbackReason) {
+    return {
+      ok: false,
+      ready: false,
+      result: 'agent_rollback_reason_required',
+      reason: 'rollback_reason_required',
+      validation,
+    };
+  }
+  const current = mergeAgentRegistryRecords(currentRegistry, buildDefaultAgentRegistry()).map(normalizeAgentVersionSnapshotRecord);
+  const currentById = new Map(current.map((agent) => [agent.id, agent]));
+  const snapshotById = new Map(validation.agents.map((agent) => [agent.id, agent]));
+  const targets = uniqueStrings(agentIds.length ? agentIds : validation.agents.map((agent) => agent.id));
+  const missingTargets = targets.filter((id) => !snapshotById.has(id));
+  if (missingTargets.length) {
+    return {
+      ok: false,
+      ready: false,
+      result: 'agent_rollback_blocked',
+      reason: 'rollback_target_missing_from_snapshot',
+      missingTargets,
+      validation,
+    };
+  }
+  const rolledBackAt = new Date(now).toISOString();
+  const nextById = new Map(currentById);
+  const changes = targets.map((id) => {
+    const from = currentById.get(id) || null;
+    const toSnapshot = snapshotById.get(id);
+    const to = {
+      ...toSnapshot,
+      metadata: {
+        ...(toSnapshot.metadata || {}),
+        rollback: {
+          reason: rollbackReason,
+          actor: actor || 'PBK Command Center',
+          snapshotId: snapshot.id || '',
+          checksum: snapshot.checksum || '',
+          rolledBackAt,
+          previousVersion: from?.version || '',
+          previousStatus: from?.status || '',
+        },
+      },
+      healthCheckedAt: '',
+      health_checked_at: '',
+      lastError: '',
+      last_error: '',
+    };
+    nextById.set(id, to);
+    return {
+      agentId: id,
+      from: from
+        ? {
+            version: from.version,
+            status: from.status,
+            endpoint: from.endpoint,
+            capabilities: from.capabilities,
+          }
+        : null,
+      to: {
+        version: to.version,
+        status: to.status,
+        endpoint: to.endpoint,
+        capabilities: to.capabilities,
+      },
+    };
+  });
+  return {
+    ok: true,
+    ready: true,
+    result: 'agent_rollback_plan_ready',
+    actor: actor || 'PBK Command Center',
+    reason: rollbackReason,
+    snapshotId: snapshot.id || '',
+    checksum: snapshot.checksum || '',
+    generatedAt: rolledBackAt,
+    targets,
+    changes,
+    nextRegistry: [...nextById.values()].sort((left, right) => left.id.localeCompare(right.id)),
+  };
+}
+
+export function applyAgentVersionRollback(params = {}) {
+  const plan = buildAgentRollbackPlan(params);
+  if (!plan.ok) return plan;
+  return {
+    ...plan,
+    applied: true,
+    result: 'agent_version_rollback_applied',
+    registry: plan.nextRegistry,
   };
 }
 

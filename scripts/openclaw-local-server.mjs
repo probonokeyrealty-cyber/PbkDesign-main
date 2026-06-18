@@ -14,7 +14,7 @@ import pg from 'pg';
 import { createClient as createRedisClient } from 'redis';
 import { DeleteObjectCommand, GetObjectCommand, HeadBucketCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { getSignedUrl as getS3SignedUrl } from '@aws-sdk/s3-request-presigner';
-import { buildAgentRegistrySnapshot, buildDefaultAgentRegistry, findAgentsByCapability, invokeRegisteredAgent, mergeAgentRegistryRecords, normalizeAgentRegistryId, normalizeAgentRegistryRecord } from './agent-registry.mjs';
+import { applyAgentVersionRollback, buildAgentRegistrySnapshot, buildAgentVersionSnapshot, buildDefaultAgentRegistry, buildStableAgentFleetMeasurement, findAgentsByCapability, invokeRegisteredAgent, mergeAgentRegistryRecords, normalizeAgentRegistryId, normalizeAgentRegistryRecord, validateAgentVersionSnapshot } from './agent-registry.mjs';
 import { EventTypes, getEventBusStatus, publishEvent as publishEventBusEvent } from './event-bus/streams.mjs';
 import { buildRexKpiSnapshot, proposeAutonomousRexGoals, selectRexProactiveLeadAction } from './rex-autonomy.mjs';
 import { recordScriptOutcomeStats, selectContextAwareScript } from './context-aware-script-rotator.mjs';
@@ -110,6 +110,7 @@ import {
 import {
   buildCanaryPromotionGate,
   buildFailedCallEvalGate,
+  buildShadowCanaryComparison,
   classifySellerFinalOutcome,
   createProviderCircuitBreaker,
   createRuntimeEventArchive,
@@ -179,12 +180,36 @@ void initializeObservability({ serviceName: 'pbk-openclaw-bridge' });
 const productionReadinessMonitor = createProductionReadinessMonitor();
 const productionIdempotencyStore = createIdempotencyStore();
 const AVA_REAL_CALL_EVAL_SCENARIOS = Object.freeze([
-  'friday-close-target-price-and-timeline',
-  'contract-request-needs-approval-confirmation',
-  'angry-repeat-complaint-preserves-known-price',
-  'competing-offer-asks-terms',
-  'trust-scam-routes-governed-skill',
-  'skill-outcome-draft-records-turn-contract',
+  'already-gave-price-no-repeat',
+  'repeat-complaint-advance',
+  'make-offer-before-facts',
+  'make-offer-after-price-address',
+  'friday-close-with-price',
+  'fast-sale-needs-price',
+  'fast-sale-known-price-and-timeline',
+  'competing-offer-terms',
+  'price-too-low-net-question',
+  'need-to-think-specific-hesitation',
+  'spouse-decision-maker',
+  'trust-scam-proof',
+  'probate-handoff',
+  'attorney-review-handoff',
+  'trustee-bankruptcy-handoff',
+  'stop-contact-no-question',
+  'seller-max-net-rbp',
+  'subject-to-path-signal',
+  'seller-finance-path-signal',
+  'land-path-signal',
+  'caller-is-agent',
+  'agent-top-dollar-not-cash-default',
+  'partial-address-needs-canonical-address',
+  'full-facts-advance-to-timeline',
+  'tenant-pain-do-not-jump-offer',
+  'emotional-loss-handoff',
+  'ambiguous-yes-clarifies',
+  'send-contract-confirm-before-action',
+  'agent-cash-does-not-work',
+  'governed-trust-skill-cockpit',
 ]);
 const runtimeEventArchiveFallbackEvents = [];
 const runtimeEventArchiveStats = {
@@ -214,6 +239,57 @@ const providerCircuitBreaker = createProviderCircuitBreaker({
     });
   },
 });
+
+function buildProviderCircuitOpenResult(provider = 'provider', circuit = {}) {
+  const normalizedProvider = String(provider || circuit.provider || 'provider')
+    .trim()
+    .toLowerCase();
+  return {
+    ok: false,
+    result: 'provider_circuit_open',
+    provider: normalizedProvider,
+    providerCircuit: circuit,
+    retryable: true,
+    operatorVisible: true,
+    error: circuit.error || `${normalizedProvider} circuit is open after repeated provider failures.`,
+  };
+}
+
+function attachProviderCircuitMetadata(result, circuit = {}) {
+  if (!result || typeof result !== 'object') return result;
+  try {
+    result.providerCircuit = {
+      provider: circuit.provider || '',
+      state: circuit.circuitState || providerCircuitBreaker.getStatus(circuit.provider || '').state,
+      failures: circuit.failures ?? providerCircuitBreaker.getStatus(circuit.provider || '').failures,
+      providerAttempted: circuit.providerAttempted !== false,
+      retryable: Boolean(circuit.retryable),
+    };
+  } catch {
+    // Response objects and provider SDK payloads may be non-extensible; the
+    // circuit status endpoint remains the durable source of truth.
+  }
+  return result;
+}
+
+async function executeProviderCircuitGuard(provider = 'provider', operation, fallbackFn = null) {
+  const fallback =
+    typeof fallbackFn === 'function'
+      ? fallbackFn
+      : async () => buildProviderCircuitOpenResult(provider);
+  const circuit = await providerCircuitBreaker.execute(
+    provider,
+    operation,
+    fallback
+  );
+  if (circuit.ok === false && circuit.providerAttempted === false) {
+    return circuit.fallback || buildProviderCircuitOpenResult(provider, circuit);
+  }
+  if (circuit.ok === false && (!circuit.result || typeof circuit.result !== 'object')) {
+    return fallback();
+  }
+  return attachProviderCircuitMetadata(circuit.result, circuit);
+}
 
 const OUTBOUND_MAX_SOCKETS = Math.max(20, Number(process.env.PBK_BRIDGE_OUTBOUND_MAX_SOCKETS || 160));
 const OUTBOUND_MAX_FREE_SOCKETS = Math.max(8, Math.min(64, Number(process.env.PBK_BRIDGE_OUTBOUND_MAX_FREE_SOCKETS || Math.ceil(OUTBOUND_MAX_SOCKETS / 3))));
@@ -410,6 +486,23 @@ const REDIS_CALL_STATE_TTL_SECONDS = Math.max(300, Math.min(86400, Number(proces
 const REDIS_LEASE_TTL_SECONDS = Math.max(30, Math.min(3600, Number(process.env.PBK_REDIS_LEASE_TTL_SECONDS || 15 * 60)));
 const REDIS_RETRY_COOLDOWN_MS = Math.max(5000, Math.min(300000, Number(process.env.PBK_REDIS_RETRY_COOLDOWN_MS || 60000)));
 const REDIS_ACTIVE_CALL_STALE_MS = Math.max(30_000, Math.min(10 * 60 * 1000, Number(process.env.PBK_REDIS_ACTIVE_CALL_STALE_MS || 3 * 60 * 1000)));
+const BRIDGE_READ_CACHE_DEFAULT_TTL_MS = Math.max(
+  1000,
+  Math.min(60000, Number(process.env.PBK_READ_CACHE_DEFAULT_TTL_MS || 15000))
+);
+const BRIDGE_READ_CACHE_TTL_MS = Object.freeze({
+  agentFleet: Math.max(1000, Math.min(30000, Number(process.env.PBK_READ_CACHE_AGENT_FLEET_TTL_MS || 5000))),
+  agentHealth: Math.max(1000, Math.min(30000, Number(process.env.PBK_READ_CACHE_AGENT_HEALTH_TTL_MS || 5000))),
+  agentMeasurement: Math.max(1000, Math.min(30000, Number(process.env.PBK_READ_CACHE_AGENT_MEASUREMENT_TTL_MS || 5000))),
+  agentOrchestration: Math.max(1000, Math.min(30000, Number(process.env.PBK_READ_CACHE_AGENT_ORCHESTRATION_TTL_MS || 5000))),
+  agentRegistry: Math.max(5000, Math.min(60000, Number(process.env.PBK_READ_CACHE_AGENT_REGISTRY_TTL_MS || 30000))),
+  communicationIdentities: Math.max(5000, Math.min(60000, Number(process.env.PBK_READ_CACHE_COMMUNICATION_IDENTITIES_TTL_MS || 30000))),
+  performanceStatus: Math.max(5000, Math.min(60000, Number(process.env.PBK_READ_CACHE_PERFORMANCE_TTL_MS || 15000))),
+  productionGaps: Math.max(5000, Math.min(60000, Number(process.env.PBK_READ_CACHE_PRODUCTION_GAPS_TTL_MS || 15000))),
+  productionMaturity: Math.max(5000, Math.min(60000, Number(process.env.PBK_READ_CACHE_MATURITY_TTL_MS || 15000))),
+  productionPrimaryPath: Math.max(5000, Math.min(60000, Number(process.env.PBK_READ_CACHE_PRIMARY_PATH_TTL_MS || 15000))),
+  systemSourceLabels: Math.max(1000, Math.min(30000, Number(process.env.PBK_READ_CACHE_SOURCE_LABELS_TTL_MS || 5000))),
+});
 const COMMAND_INTENT_ROUTER_ENABLED = !/^(0|false|no|off)$/i.test(
   String(process.env.PBK_COMMAND_INTENT_ROUTER_ENABLED || 'true').trim()
 );
@@ -939,6 +1032,7 @@ const LIMITS = {
   skillOutcomes: 1200,
   avaStories: 160,
   agentVersions: 240,
+  agentVersionSnapshots: 80,
   inboundCallRoutes: 180,
   promptPatchApplications: 90,
   recordingRetentionRuns: 90,
@@ -1088,6 +1182,109 @@ async function redisGetJson(key) {
     sharedRedisLastError = String(error?.message || error || 'Redis get failed').slice(0, 240);
     return null;
   }
+}
+
+const bridgeReadCache = new Map();
+const bridgeReadCacheStats = {
+  hits: 0,
+  misses: 0,
+  redisHits: 0,
+  writes: 0,
+  evictions: 0,
+  lastHitAt: '',
+  lastMissAt: '',
+  lastRedisHitAt: '',
+  lastWriteAt: '',
+  lastClearedAt: '',
+  lastClearReason: '',
+};
+
+function buildBridgeReadCacheKey(name = '', params = '') {
+  const cleanName = String(name || 'read')
+    .trim()
+    .replace(/[^a-zA-Z0-9:_-]/g, '-');
+  const cleanParams =
+    typeof params === 'string'
+      ? params
+      : JSON.stringify(params || {});
+  return `${cleanName || 'read'}:${cleanParams || 'default'}`;
+}
+
+function getBridgeReadCacheStatus() {
+  return {
+    ready: true,
+    result: 'read_endpoint_cache_active',
+    mode: sharedRedisClient?.isOpen ? 'memory_and_open_redis' : 'memory_only',
+    size: bridgeReadCache.size,
+    defaultTtlMs: BRIDGE_READ_CACHE_DEFAULT_TTL_MS,
+    ttlMs: BRIDGE_READ_CACHE_TTL_MS,
+    redis: {
+      configured: Boolean(REDIS_URL),
+      enabled: REDIS_ENABLED,
+      open: Boolean(sharedRedisClient?.isOpen),
+    },
+    stats: { ...bridgeReadCacheStats },
+  };
+}
+
+function clearBridgeReadCache(reason = 'state_changed') {
+  bridgeReadCache.clear();
+  bridgeReadCacheStats.evictions += 1;
+  bridgeReadCacheStats.lastClearedAt = isoNow();
+  bridgeReadCacheStats.lastClearReason = String(reason || 'state_changed').slice(0, 120);
+}
+
+async function redisGetCachedReadResponseIfOpen(key) {
+  if (!sharedRedisClient?.isOpen) return null;
+  try {
+    const raw = await sharedRedisClient.get(redisKey('read-cache', key));
+    return raw ? JSON.parse(raw) : null;
+  } catch (error) {
+    sharedRedisLastError = String(error?.message || error || 'Redis read-cache get failed').slice(0, 240);
+    return null;
+  }
+}
+
+function redisSetCachedReadResponseIfOpen(key, value, ttlMs) {
+  if (!sharedRedisClient?.isOpen) return;
+  const ttlSeconds = Math.max(1, Math.ceil(Number(ttlMs || BRIDGE_READ_CACHE_DEFAULT_TTL_MS) / 1000));
+  sharedRedisClient
+    .set(redisKey('read-cache', key), JSON.stringify(value), { EX: ttlSeconds })
+    .catch((error) => {
+      sharedRedisLastError = String(error?.message || error || 'Redis read-cache set failed').slice(0, 240);
+    });
+}
+
+async function getCachedReadResponse(name, ttlMs = BRIDGE_READ_CACHE_DEFAULT_TTL_MS, producer, params = '') {
+  const cacheKey = buildBridgeReadCacheKey(name, params);
+  const now = Date.now();
+  const ttl = Math.max(250, Number(ttlMs || BRIDGE_READ_CACHE_DEFAULT_TTL_MS));
+  const entry = bridgeReadCache.get(cacheKey);
+  if (entry && now - entry.timestamp < ttl) {
+    bridgeReadCacheStats.hits += 1;
+    bridgeReadCacheStats.lastHitAt = isoNow();
+    return entry.value;
+  }
+
+  const redisEntry = await redisGetCachedReadResponseIfOpen(cacheKey);
+  if (redisEntry && now - Number(redisEntry.timestamp || 0) < ttl) {
+    bridgeReadCache.set(cacheKey, redisEntry);
+    bridgeReadCacheStats.hits += 1;
+    bridgeReadCacheStats.redisHits += 1;
+    bridgeReadCacheStats.lastHitAt = isoNow();
+    bridgeReadCacheStats.lastRedisHitAt = bridgeReadCacheStats.lastHitAt;
+    return redisEntry.value;
+  }
+
+  bridgeReadCacheStats.misses += 1;
+  bridgeReadCacheStats.lastMissAt = isoNow();
+  const value = await producer();
+  const nextEntry = { timestamp: Date.now(), value };
+  bridgeReadCache.set(cacheKey, nextEntry);
+  bridgeReadCacheStats.writes += 1;
+  bridgeReadCacheStats.lastWriteAt = isoNow();
+  redisSetCachedReadResponseIfOpen(cacheKey, nextEntry, ttl);
+  return value;
 }
 
 async function redisAcquireLease(name = '', ttlSeconds = REDIS_LEASE_TTL_SECONDS) {
@@ -2406,6 +2603,36 @@ function buildProductionAgentLatencySamples() {
     if (!samples[agentId]) samples[agentId] = [];
     samples[agentId].push(latency);
   }
+  for (const record of [
+    ...(Array.isArray(state.agentTasks) ? state.agentTasks : []),
+    ...(Array.isArray(state.rexDecisions) ? state.rexDecisions : []),
+  ]) {
+    const metadata = record.metadata && typeof record.metadata === 'object' ? record.metadata : {};
+    const agentId = normalizeAgentRosterId(
+      record.agentId ||
+        record.agent_id ||
+        record.toAgent ||
+        record.to_agent ||
+        record.fromAgent ||
+        record.from_agent ||
+        record.agent ||
+        record.agentName ||
+        ''
+    );
+    const latency = Number(
+      record.latencyMs ||
+        record.latency_ms ||
+        record.durationMs ||
+        record.duration_ms ||
+        metadata.latencyMs ||
+        metadata.latency_ms ||
+        metadata.durationMs ||
+        metadata.duration_ms
+    );
+    if (!agentId || !Number.isFinite(latency)) continue;
+    if (!samples[agentId]) samples[agentId] = [];
+    samples[agentId].push(latency);
+  }
   return samples;
 }
 
@@ -2462,6 +2689,13 @@ async function buildProductionReadinessSnapshot({
     lastActions: buildProductionLastAgentActions(),
     requireIntelligenceContext: false,
   });
+  const stableAgentFleetMeasurement = buildStableAgentFleetMeasurement(getCurrentAgentRegistry(), {
+    healthProbes: (state.agents || []).map(buildAgentHealthProbe),
+    toolCatalog: buildProductionToolCatalog(),
+    intelligenceContext,
+    latencySamples: buildProductionAgentLatencySamples(),
+    lastActions: buildProductionLastAgentActions(),
+  });
   const bridgeConnection = buildBridgeConnectionStatus({
     runtimeMeta,
     health: commandCenterHealth,
@@ -2478,7 +2712,7 @@ async function buildProductionReadinessSnapshot({
   return {
     ok: true,
     result:
-      bridgeConnection.ready && capabilityReadiness.ready && truthGate.ready && maturity.summary.ready
+      bridgeConnection.ready && capabilityReadiness.ready && stableAgentFleetMeasurement.ready && truthGate.ready && maturity.summary.ready
         ? 'production_readiness_ready'
         : 'production_readiness_review',
     checkedAt: isoNow(),
@@ -2488,17 +2722,20 @@ async function buildProductionReadinessSnapshot({
     maturity,
     idempotency: productionIdempotencyStore.status(),
     agentCapabilityReadiness: capabilityReadiness,
+    stableAgentFleetMeasurement,
     summary: {
       ready:
         bridgeConnection.ready &&
         truthGate.ready &&
         capabilityReadiness.ready &&
+        stableAgentFleetMeasurement.ready &&
         maturity.summary.ready &&
         slo.burned.length === 0,
       blockers: [
         ...bridgeConnection.blockers.map((item) => `bridge:${item}`),
         ...truthGate.blockers.map((item) => `truth:${item}`),
         ...capabilityReadiness.degraded.map((item) => `agent:${item.id}:${item.blockedReasons[0] || 'degraded'}`),
+        ...stableAgentFleetMeasurement.blockers.map((item) => `measurement:${item}`),
         ...maturity.summary.blockers.map((item) => `maturity:${item}`),
         ...slo.burned.map((item) => `slo:${item}`),
       ],
@@ -5355,6 +5592,7 @@ function buildDefaultState() {
     agentSkillTransfers: [],
     agentSkillExperiments: [],
     agentVersions: [],
+    agentVersionSnapshots: [],
     rexDecisions: [],
     avaActiveMemories: [],
     pbkMemories: [],
@@ -9955,7 +10193,24 @@ function buildProductionMaturitySnapshot({ runtimeMeta = getRuntimeMeta() } = {}
   const archive = getRuntimeEventArchiveStatus();
   const providerCircuits = getProviderCircuitStatus();
   const failedCallEvalGate = buildAvaFailedCallEvalGateSnapshot();
+  const stableAgentFleetMeasurement = buildAgentOrchestrationSnapshot().measurement;
   const sloStatus = productionReadinessMonitor.getSloStatus();
+  const shadowCanaryComparison = buildShadowCanaryComparison({
+    baseline: {
+      version: runtimeMeta.commit || runtimeMeta.version || 'current',
+      behaviorPassRate: 1,
+      p95LatencyMs: Number(process.env.PBK_CURRENT_P95_LATENCY_MS || 900),
+      errorRate: Number(process.env.PBK_CURRENT_ERROR_RATE || 0.01),
+      fallbackRate: Number(process.env.PBK_CURRENT_FALLBACK_RATE || 0.08),
+    },
+    candidate: {
+      version: process.env.PBK_CANARY_COMMIT || runtimeMeta.commit || runtimeMeta.version || 'current',
+      behaviorPassRate: Number(process.env.PBK_CANARY_BEHAVIOR_PASS_RATE || 1),
+      p95LatencyMs: Number(process.env.PBK_CANARY_P95_LATENCY_MS || process.env.PBK_CURRENT_P95_LATENCY_MS || 900),
+      errorRate: Number(process.env.PBK_CANARY_ERROR_RATE || process.env.PBK_CURRENT_ERROR_RATE || 0.01),
+      fallbackRate: Number(process.env.PBK_CANARY_FALLBACK_RATE || process.env.PBK_CURRENT_FALLBACK_RATE || 0.08),
+    },
+  });
   const canaryPromotionGate = buildCanaryPromotionGate({
     canaryHealth: {
       ready: runtimeMeta.productionReady !== false,
@@ -9980,6 +10235,8 @@ function buildProductionMaturitySnapshot({ runtimeMeta = getRuntimeMeta() } = {}
     ...(archive.ready ? [] : ['runtime_event_archive']),
     ...(providerCircuits.ready ? [] : providerCircuits.openProviders.map((provider) => `provider_circuit:${provider}`)),
     ...(failedCallEvalGate.ready ? [] : ['failed_call_eval']),
+    ...(stableAgentFleetMeasurement?.ready ? [] : ['stable_agent_fleet_measurement']),
+    ...(shadowCanaryComparison.ready ? [] : shadowCanaryComparison.blockers.map((item) => `shadow:${item}`)),
     ...(canaryPromotionGate.ready ? [] : canaryPromotionGate.blockers.map((item) => `canary:${item}`)),
   ];
   return {
@@ -9993,11 +10250,21 @@ function buildProductionMaturitySnapshot({ runtimeMeta = getRuntimeMeta() } = {}
       runtimeArchiveReady: archive.ready,
       providerCircuitsReady: providerCircuits.ready,
       failedCallEvalReady: failedCallEvalGate.ready,
+      stableAgentFleetMeasured: Boolean(stableAgentFleetMeasurement?.ready),
+      shadowCanaryReady: shadowCanaryComparison.ready,
       canaryPromotionReady: canaryPromotionGate.ready,
     },
     runtimeEventArchive: archive,
     providerCircuits,
     failedCallEvalGate,
+    stableAgentFleetMeasurement,
+    shadowCanaryComparison: {
+      ...shadowCanaryComparison,
+      mode: process.env.PBK_CANARY_COMMIT ? 'candidate_metrics' : 'same_version_reference',
+      note: process.env.PBK_CANARY_COMMIT
+        ? 'Candidate metrics supplied through PBK_CANARY_* env vars.'
+        : 'No separate candidate metrics supplied; comparison machinery is ready but not shadowing live traffic.',
+    },
     canaryPromotionGate,
   };
 }
@@ -10053,6 +10320,7 @@ async function loadStateFromRuntimeFile() {
 }
 
 async function persistState(nextState) {
+  clearBridgeReadCache('persist_state');
   nextState.status.lastUpdatedAt = isoNow();
   updateDerivedStatus(nextState);
   if (DATABASE_URL) {
@@ -10901,6 +11169,7 @@ function limitStateArrays(nextState) {
   nextState.revenueActions = sortNewest(nextState.revenueActions || []).slice(0, LIMITS.revenueActions);
   nextState.commandCenterActivations = sortNewest(nextState.commandCenterActivations || []).slice(0, LIMITS.commandCenterActivations);
   nextState.agentVersions = sortNewest(nextState.agentVersions || []).slice(0, LIMITS.agentVersions);
+  nextState.agentVersionSnapshots = sortNewest(nextState.agentVersionSnapshots || []).slice(0, LIMITS.agentVersionSnapshots);
   nextState.rexDecisions = sortNewest(nextState.rexDecisions || []).slice(0, LIMITS.rexDecisions);
   nextState.avaActiveMemories = sortNewest(nextState.avaActiveMemories || []).slice(0, LIMITS.avaActiveMemories);
   nextState.pbkMemories = sortNewest(nextState.pbkMemories || []).slice(0, LIMITS.pbkMemories);
@@ -11023,6 +11292,7 @@ function updateDerivedStatus(nextState) {
   };
   nextState.status.avaStories = (nextState.avaStories || []).length;
   nextState.status.agentVersions = (nextState.agentVersions || []).length;
+  nextState.status.agentVersionSnapshots = (nextState.agentVersionSnapshots || []).length;
   nextState.status.inboundCallRoutes = (nextState.inboundCallRoutes || []).length;
   nextState.status.propertyCacheCount = (nextState.propertyCache || []).length;
   nextState.status.propertyCacheTtlDays = PROPERTY_CACHE_TTL_DAYS;
@@ -11127,6 +11397,7 @@ function hydrateState(raw = {}) {
     revenueActions: trimArray(raw.revenueActions || defaults.revenueActions, LIMITS.revenueActions),
     commandCenterActivations: trimArray(raw.commandCenterActivations || defaults.commandCenterActivations, LIMITS.commandCenterActivations),
     agentVersions: trimArray(raw.agentVersions || defaults.agentVersions, LIMITS.agentVersions),
+    agentVersionSnapshots: trimArray(raw.agentVersionSnapshots || defaults.agentVersionSnapshots, LIMITS.agentVersionSnapshots),
     rexDecisions: trimArray(raw.rexDecisions || defaults.rexDecisions, LIMITS.rexDecisions),
     avaActiveMemories: trimArray(raw.avaActiveMemories || defaults.avaActiveMemories, LIMITS.avaActiveMemories),
     pbkMemories: trimArray(raw.pbkMemories || defaults.pbkMemories, LIMITS.pbkMemories),
@@ -27890,22 +28161,31 @@ async function runDeepSeekChatCompletion(messages = [], params = {}) {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), attemptTimeoutMs);
     try {
-      const response = await fetch(`${DEEPSEEK_BASE_URL}/chat/completions`, {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${DEEPSEEK_API_KEY}`,
-          'Content-Type': 'application/json',
-        },
-        signal: controller.signal,
-        body: JSON.stringify({
-          model,
-          messages,
-          temperature: params.temperature ?? 0.25,
-          max_tokens: Math.max(128, Math.min(4096, toNumber(params.maxTokens || params.max_tokens, 1200))),
-          thinking: { type: thinkingMode },
-          ...(params.responseFormat === 'json' ? { response_format: { type: 'json_object' } } : {}),
-        }),
-      });
+      const response = await executeProviderCircuitGuard(
+        'deepseek',
+        () =>
+          fetch(`${DEEPSEEK_BASE_URL}/chat/completions`, {
+            method: 'POST',
+            headers: {
+              Authorization: `Bearer ${DEEPSEEK_API_KEY}`,
+              'Content-Type': 'application/json',
+            },
+            signal: controller.signal,
+            body: JSON.stringify({
+              model,
+              messages,
+              temperature: params.temperature ?? 0.25,
+              max_tokens: Math.max(128, Math.min(4096, toNumber(params.maxTokens || params.max_tokens, 1200))),
+              thinking: { type: thinkingMode },
+              ...(params.responseFormat === 'json' ? { response_format: { type: 'json_object' } } : {}),
+            }),
+          }),
+        async () =>
+          new Response(JSON.stringify({ error: { message: 'DeepSeek circuit is open.' } }), {
+            status: 503,
+            headers: { 'Content-Type': 'application/json' },
+          })
+      );
       const payload = await response.json().catch(() => null);
       if (!response.ok) {
         return {
@@ -33895,15 +34175,24 @@ async function fireTelnyxRequest(method, endpoint, payload, options = {}) {
       });
     }
 
-    const response = await fetch(url, {
-      method: String(method || 'POST').toUpperCase(),
-      headers: {
-        Authorization: `Bearer ${TELNYX_API_KEY}`,
-        Accept: 'application/json',
-        ...(payload !== undefined ? { 'Content-Type': 'application/json' } : {}),
-      },
-      ...(payload !== undefined ? { body: JSON.stringify(payload) } : {}),
-    });
+    const response = await executeProviderCircuitGuard(
+      'telnyx',
+      () =>
+        fetch(url, {
+          method: String(method || 'POST').toUpperCase(),
+          headers: {
+            Authorization: `Bearer ${TELNYX_API_KEY}`,
+            Accept: 'application/json',
+            ...(payload !== undefined ? { 'Content-Type': 'application/json' } : {}),
+          },
+          ...(payload !== undefined ? { body: JSON.stringify(payload) } : {}),
+        }),
+      async () =>
+        new Response(JSON.stringify({ error: { message: 'Telnyx circuit is open.' } }), {
+          status: 503,
+          headers: { 'Content-Type': 'application/json' },
+        })
+    );
 
     const text = await response.text();
     let body = null;
@@ -34297,6 +34586,44 @@ function buildTelnyxDeepgramLiveOptions(codec = DEEPGRAM_STREAM_CODEC) {
     };
   }
   return { encoding: 'mulaw', sampleRate: 8000 };
+}
+
+function normalizeTelnyxMediaCodec(codec = '', fallback = DEEPGRAM_STREAM_CODEC) {
+  const normalized = String(codec || fallback || 'PCMU')
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, '');
+  if (normalized === 'PCMA' || normalized === 'ALAW') return 'PCMA';
+  if (normalized === 'L16' || normalized === 'LINEAR16' || normalized === 'PCM' || normalized === 'PCM16') return 'L16';
+  return 'PCMU';
+}
+
+async function createDeepgramLiveConnectionWithCircuit(options = {}, env = process.env) {
+  const connection = await executeProviderCircuitGuard(
+    'deepgram',
+    () => createDeepgramLiveConnection(options, env),
+    async () => buildProviderCircuitOpenResult('deepgram')
+  );
+  if (!connection || typeof connection.connect !== 'function') {
+    throw new Error(connection?.error || 'Deepgram circuit is open or live connection is unavailable.');
+  }
+  return connection;
+}
+
+async function transcribeDeepgramFileWithCircuit(params = {}, env = process.env) {
+  return executeProviderCircuitGuard(
+    'deepgram',
+    () => transcribeDeepgramFile(params, env),
+    async () => buildProviderCircuitOpenResult('deepgram')
+  );
+}
+
+async function transcribeDeepgramUrlWithCircuit(params = {}, env = process.env) {
+  return executeProviderCircuitGuard(
+    'deepgram',
+    () => transcribeDeepgramUrl(params, env),
+    async () => buildProviderCircuitOpenResult('deepgram')
+  );
 }
 
 function decodeMulawByteToLinear16(byte = 0) {
@@ -35826,15 +36153,24 @@ async function fireInstantlyRequest(endpoint, payload, options = {}) {
     const method = String(options.method || 'POST').toUpperCase();
     const endpointPath = String(endpoint || '').trim();
     const url = /^https?:\/\//i.test(endpointPath) ? endpointPath : `${INSTANTLY_BASE_URL}${endpointPath.startsWith('/') ? endpointPath : `/${endpointPath}`}`;
-    const response = await fetch(url, {
-      method,
-      headers: {
-        Authorization: `Bearer ${INSTANTLY_API_KEY}`,
-        Accept: 'application/json',
-        'Content-Type': 'application/json',
-      },
-      ...(payload !== undefined ? { body: JSON.stringify(payload) } : {}),
-    });
+    const response = await executeProviderCircuitGuard(
+      'instantly',
+      () =>
+        fetch(url, {
+          method,
+          headers: {
+            Authorization: `Bearer ${INSTANTLY_API_KEY}`,
+            Accept: 'application/json',
+            'Content-Type': 'application/json',
+          },
+          ...(payload !== undefined ? { body: JSON.stringify(payload) } : {}),
+        }),
+      async () =>
+        new Response(JSON.stringify({ error: 'Instantly circuit is open.' }), {
+          status: 503,
+          headers: { 'Content-Type': 'application/json' },
+        })
+    );
 
     const text = await response.text();
     let body = null;
@@ -37488,7 +37824,7 @@ async function captureRecordingFromPayload(input = {}) {
   const deepgramMeta = getDeepgramProviderMeta(process.env);
   const deepgram =
     deepgramMeta.ready && deepgramMeta.analyzeRecordings
-      ? await transcribeDeepgramFile({
+      ? await transcribeDeepgramFileWithCircuit({
           bytes,
           contentType,
           sentiment: true,
@@ -37832,7 +38168,7 @@ async function extractAttachmentText({ filename = '', contentType = '', bytes })
   }
 
   if (audioVideoLike) {
-    const result = await transcribeDeepgramFile({
+    const result = await transcribeDeepgramFileWithCircuit({
       bytes: Buffer.from(bytes),
       smart_format: true,
       sentiment: true,
@@ -38010,7 +38346,7 @@ async function fetchRemoteIngestContent(url = '', params = {}) {
   const extension = getUrlExtension(normalizedUrl);
   const initialKind = classifyRemoteIngestKind(normalizedUrl, '', params.kind);
   if (['audio', 'video'].includes(initialKind)) {
-    const transcript = await transcribeDeepgramUrl({
+    const transcript = await transcribeDeepgramUrlWithCircuit({
       url: normalizedUrl,
       smart_format: true,
       sentiment: true,
@@ -40204,6 +40540,22 @@ function buildAgentOrchestrationSnapshot() {
   ensureAgentFleetCollections();
   const registryStatus = buildAgentRegistrySnapshot(getCurrentAgentRegistry());
   const probes = (state.agents || []).map(buildAgentHealthProbe);
+  const intelligenceContext = {
+    memory: { ready: Boolean(state.status?.pbkIntelligenceReadiness?.required?.memory) },
+    skills: { ready: Boolean(state.status?.pbkIntelligenceReadiness?.required?.skills) },
+    dataFreshness: {
+      ready: Boolean(state.status?.pbkIntelligenceReadiness?.required?.dataFreshness),
+    },
+    fleetReadiness: { ready: Boolean(state.status?.pbkIntelligenceReadiness?.ready) },
+    ...(state.status?.pbkIntelligenceContext || {}),
+  };
+  const measurement = buildStableAgentFleetMeasurement(getCurrentAgentRegistry(), {
+    healthProbes: probes,
+    toolCatalog: buildProductionToolCatalog(),
+    latencySamples: buildProductionAgentLatencySamples(),
+    lastActions: buildProductionLastAgentActions(),
+    intelligenceContext,
+  });
   const supervisor = probes.find((agent) => agent.id === 'ava') || null;
   const requiredIds = registryStatus.required.ids;
   const workers = probes.filter((agent) => requiredIds.includes(agent.id) && agent.id !== 'ava');
@@ -40250,6 +40602,7 @@ function buildAgentOrchestrationSnapshot() {
       registeredTools: toolHandlers ? Object.keys(toolHandlers).length : 0,
       requiredToolGaps,
     },
+    measurement,
     communication: {
       pattern: 'hub-and-spoke',
       supervisor: 'ava',
@@ -40705,7 +41058,7 @@ async function runAgentOrchestrationSmoke(params = {}) {
     agentProbes.push(await runLocalAgentSmokeProbe(agentId, params));
   }
   const probeTasks = [];
-  for (const probe of agentProbes.filter((item) => !['ava', 'rex', 'hermes'].includes(item.agentId))) {
+  for (const probe of agentProbes) {
     probeTasks.push(
       await recordAgentHandoffTask({
         correlationId,
@@ -40782,6 +41135,93 @@ function buildAgentRegistryStatus(params = {}) {
         })
       : [],
     registry: snapshot,
+  };
+}
+
+function ensureAgentVersionSnapshotCollections() {
+  if (!Array.isArray(state.agentVersionSnapshots)) state.agentVersionSnapshots = [];
+}
+
+function listAgentVersionSnapshots(limit = 50) {
+  ensureAgentVersionSnapshotCollections();
+  return sortNewest(state.agentVersionSnapshots || []).slice(0, Math.max(1, Math.min(100, Number(limit || 50))));
+}
+
+async function createAgentVersionSnapshotRecord(params = {}) {
+  ensureAgentVersionSnapshotCollections();
+  const snapshot = buildAgentVersionSnapshot(getCurrentAgentRegistry(), {
+    id: params.id || params.snapshotId || `agent-version-snapshot-${Date.now()}-${randomUUID().slice(0, 8)}`,
+    actor: params.actor || params.createdBy || 'PBK Command Center',
+    environment: params.environment || RUNTIME_MODE,
+  });
+  const validation = validateAgentVersionSnapshot(snapshot);
+  if (!validation.ok) {
+    return {
+      ok: false,
+      result: 'agent_version_snapshot_invalid',
+      validation,
+    };
+  }
+  upsertById(state, 'agentVersionSnapshots', snapshot);
+  state.agentVersionSnapshots = sortNewest(state.agentVersionSnapshots || []).slice(0, LIMITS.agentVersionSnapshots);
+  addActivity(
+    state,
+    makeActivity({
+      actor: params.actor || 'PBK Command Center',
+      category: 'AGENT',
+      status: 'snapshot',
+      text: `Saved known-good agent fleet snapshot ${snapshot.id}.`,
+      target: 'Agent Fleet',
+    })
+  );
+  await persistState(state);
+  return {
+    ok: true,
+    result: 'agent_version_snapshot_created',
+    snapshot,
+    validation,
+  };
+}
+
+async function rollbackAgentVersionFromSnapshot(params = {}) {
+  ensureAgentVersionSnapshotCollections();
+  const snapshotId = String(params.snapshotId || params.id || '').trim();
+  const snapshot = snapshotId
+    ? (state.agentVersionSnapshots || []).find((item) => String(item.id || '') === snapshotId)
+    : (state.agentVersionSnapshots || [])[0];
+  if (!snapshot) {
+    return {
+      ok: false,
+      result: 'agent_rollback_snapshot_not_found',
+      error: snapshotId ? `No agent snapshot found for ${snapshotId}.` : 'No agent version snapshot has been saved yet.',
+    };
+  }
+  const rollback = applyAgentVersionRollback({
+    currentRegistry: getCurrentAgentRegistry(),
+    snapshot,
+    agentIds: normalizeStringList(params.agentIds || params.agentId || params.agents || []),
+    reason: params.reason || '',
+    actor: params.actor || 'PBK Command Center',
+  });
+  if (!rollback.ok) return rollback;
+  applyAgentRegistryToRuntime(rollback.registry);
+  await upsertAgentRegistryRecordsToPg(rollback.registry);
+  addActivity(
+    state,
+    makeActivity({
+      actor: params.actor || 'PBK Command Center',
+      category: 'AGENT',
+      status: 'rollback',
+      text: `Rolled back ${rollback.targets.join(', ')} from agent snapshot ${snapshot.id}: ${rollback.reason}.`,
+      target: 'Agent Fleet',
+    })
+  );
+  await persistState(state);
+  return {
+    ok: true,
+    result: 'agent_version_rollback_applied',
+    rollback,
+    registry: buildAgentRegistrySnapshot(getCurrentAgentRegistry()),
   };
 }
 
@@ -46455,11 +46895,16 @@ async function fireSlackWebhook(payload) {
     return { ok: false, skipped: true, error: 'PBK_SLACK_WEBHOOK_URL is not set.' };
   }
   try {
-    const response = await fetch(SLACK_WEBHOOK_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    });
+    const response = await executeProviderCircuitGuard(
+      'slack',
+      () =>
+        fetch(SLACK_WEBHOOK_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        }),
+      async () => new Response('Slack circuit is open.', { status: 503 })
+    );
     const text = await response.text();
     return {
       ok: response.ok,
@@ -46518,14 +46963,23 @@ async function fireSlackApi(method = '', payload = {}) {
     };
   }
   try {
-    const response = await fetch(`https://slack.com/api/${method}`, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${SLACK_BOT_TOKEN}`,
-        'Content-Type': 'application/json; charset=utf-8',
-      },
-      body: JSON.stringify(payload),
-    });
+    const response = await executeProviderCircuitGuard(
+      'slack',
+      () =>
+        fetch(`https://slack.com/api/${method}`, {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${SLACK_BOT_TOKEN}`,
+            'Content-Type': 'application/json; charset=utf-8',
+          },
+          body: JSON.stringify(payload),
+        }),
+      async () =>
+        new Response(JSON.stringify({ ok: false, error: 'slack_circuit_open' }), {
+          status: 503,
+          headers: { 'Content-Type': 'application/json' },
+        })
+    );
     const responseText = await response.text();
     let body = {};
     try {
@@ -46885,6 +47339,67 @@ async function updateSlackApprovalMessage({ channel = '', ts = '', approval = {}
   });
 }
 
+function getSlackApprovalMessageBinding(approval = {}) {
+  const metadata = approval.metadata && typeof approval.metadata === 'object' ? approval.metadata : {};
+  const message =
+    approval.slackMessage && typeof approval.slackMessage === 'object'
+      ? approval.slackMessage
+      : metadata.slackMessage && typeof metadata.slackMessage === 'object'
+        ? metadata.slackMessage
+        : {};
+  return {
+    channel: String(message.channel || approval.slackChannel || approval.slack_channel || '').trim(),
+    ts: String(message.ts || approval.slackTs || approval.slack_ts || '').trim(),
+    delivery: String(message.delivery || '').trim(),
+  };
+}
+
+async function reconcileSlackApprovalDecisionMessage(
+  approval = {},
+  { status = '', actor = '', source = 'approval-board' } = {}
+) {
+  const binding = getSlackApprovalMessageBinding(approval);
+  const attemptedAt = isoNow();
+  const syncBase = {
+    source,
+    status: status || approval.status || '',
+    actor: actor || approval.actor || '',
+    channel: binding.channel,
+    ts: binding.ts,
+    attemptedAt,
+  };
+  approval.metadata = approval.metadata && typeof approval.metadata === 'object' ? approval.metadata : {};
+  if (!binding.channel || !binding.ts || binding.channel === 'incoming-webhook' || binding.delivery === 'webhook') {
+    const skipped = {
+      ok: false,
+      skipped: true,
+      result: 'slack_update_unavailable',
+      error: binding.delivery === 'webhook'
+        ? 'Slack webhook approvals cannot be updated after dashboard decisions.'
+        : 'Slack approval message binding is missing.',
+      ...syncBase,
+    };
+    approval.metadata.slackDecisionSync = skipped;
+    return skipped;
+  }
+  const update = await updateSlackApprovalMessage({
+    channel: binding.channel,
+    ts: binding.ts,
+    approval,
+    status,
+    actor,
+  });
+  approval.metadata.slackDecisionSync = {
+    ok: update.ok !== false,
+    skipped: Boolean(update.skipped),
+    result: update.result || (update.ok === false ? 'slack_update_failed' : 'slack_updated'),
+    error: update.error || '',
+    updatedAt: update.ok === false ? '' : isoNow(),
+    ...syncBase,
+  };
+  return update;
+}
+
 async function syncCalendarEvent(event = {}) {
   const providerMeta = getGoogleCalendarProviderMeta();
   if (!providerMeta.ready) {
@@ -47152,14 +47667,23 @@ async function __dsRefreshAccessToken() {
     throw new Error(meta.summary || `DocuSign env not fully set: missing ${meta.missing.join(', ')}`);
   }
   const jwt = __dsBuildJwt();
-  const response = await fetch(`https://${DOCUSIGN_AUTH_HOST}/oauth/token`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({
-      grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer',
-      assertion: jwt,
-    }).toString(),
-  });
+  const response = await executeProviderCircuitGuard(
+    'docusign',
+    () =>
+      fetch(`https://${DOCUSIGN_AUTH_HOST}/oauth/token`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer',
+          assertion: jwt,
+        }).toString(),
+      }),
+    async () =>
+      new Response(JSON.stringify({ error: 'DocuSign circuit is open.' }), {
+        status: 503,
+        headers: { 'Content-Type': 'application/json' },
+      })
+  );
   const text = await response.text();
   let body = null;
   try {
@@ -47231,15 +47755,24 @@ async function fireDocuSignEnvelope(params = {}) {
     };
 
     try {
-      const response = await fetch(`${DOCUSIGN_REST_BASE}/v2.1/accounts/${DOCUSIGN_ACCOUNT_ID}/envelopes`, {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${token}`,
-          Accept: 'application/json',
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(envelopeBody),
-      });
+      const response = await executeProviderCircuitGuard(
+        'docusign',
+        () =>
+          fetch(`${DOCUSIGN_REST_BASE}/v2.1/accounts/${DOCUSIGN_ACCOUNT_ID}/envelopes`, {
+            method: 'POST',
+            headers: {
+              Authorization: `Bearer ${token}`,
+              Accept: 'application/json',
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(envelopeBody),
+          }),
+        async () =>
+          new Response(JSON.stringify({ error: 'DocuSign circuit is open.' }), {
+            status: 503,
+            headers: { 'Content-Type': 'application/json' },
+          })
+      );
       const text = await response.text();
       let body = null;
       try {
@@ -47339,15 +47872,24 @@ async function fireDocuSignEnvelope(params = {}) {
   };
 
   try {
-    const response = await fetch(`${DOCUSIGN_REST_BASE}/v2.1/accounts/${DOCUSIGN_ACCOUNT_ID}/envelopes`, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${token}`,
-        Accept: 'application/json',
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(envelopeBody),
-    });
+    const response = await executeProviderCircuitGuard(
+      'docusign',
+      () =>
+        fetch(`${DOCUSIGN_REST_BASE}/v2.1/accounts/${DOCUSIGN_ACCOUNT_ID}/envelopes`, {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${token}`,
+            Accept: 'application/json',
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(envelopeBody),
+        }),
+      async () =>
+        new Response(JSON.stringify({ error: 'DocuSign circuit is open.' }), {
+          status: 503,
+          headers: { 'Content-Type': 'application/json' },
+        })
+    );
     const text = await response.text();
     let body = null;
     try {
@@ -53616,6 +54158,17 @@ async function handleEvent(eventType, payload = {}) {
       !retryUnavailableProviderLease &&
       !retryApprovedLocalCommandDispatch
     ) {
+      let slackDecisionSyncResult = null;
+      if (!payload.skipSlackSync && String(approval.status || '').toLowerCase() !== 'pending') {
+        slackDecisionSyncResult = await reconcileSlackApprovalDecisionMessage(approval, {
+          status: approval.status,
+          actor: approval.actor || incomingActor,
+          source: payload.source || 'approval-replay',
+        });
+        if (!slackDecisionSyncResult?.skipped) {
+          await persistState(state);
+        }
+      }
       await projectLiveConversationRecord({
         record: approval,
         projector: projectApprovalEvent,
@@ -53625,6 +54178,7 @@ async function handleEvent(eventType, payload = {}) {
         ok: true,
         replayed: true,
         approval,
+        slackDecisionSyncResult,
       };
     }
 
@@ -54165,6 +54719,14 @@ async function handleEvent(eventType, payload = {}) {
       })
     );
 
+    const slackDecisionSyncResult = payload.skipSlackSync
+      ? null
+      : await reconcileSlackApprovalDecisionMessage(approval, {
+          status: approval.status,
+          actor: incomingActor,
+          source: payload.source || 'approval-callback',
+        });
+
     await persistState(state);
     await projectLiveConversationRecord({
       record: approval,
@@ -54182,6 +54744,7 @@ async function handleEvent(eventType, payload = {}) {
       providerActionResult,
       nurtureResult,
       localCommandResult,
+      slackDecisionSyncResult,
     };
   }
 
@@ -54877,6 +55440,7 @@ function buildStateSnapshot(options = {}) {
     agentSkillTransfers: list(state.agentSkillTransfers || [], 80),
     agentSkillExperiments: list(state.agentSkillExperiments || [], 80),
     agentVersions: list(state.agentVersions || [], 80),
+    agentVersionSnapshots: list(state.agentVersionSnapshots || [], 40),
     rexDecisions: list(state.rexDecisions || [], 120),
     avaActiveMemories: list(state.avaActiveMemories || [], 120),
     avaLearningSessions: list(state.avaLearningSessions || [], 80),
@@ -55101,15 +55665,20 @@ function buildElevenLabsTtsRequest(body = {}, text = '', { stream = false } = {}
 async function fetchElevenLabsTts(body = {}, text = '', options = {}) {
   const request = buildElevenLabsTtsRequest(body, text, options);
   const fireRequest = (ttsRequest) =>
-    fetch(ttsRequest.url, {
-      method: 'POST',
-      headers: {
-        Accept: 'audio/mpeg',
-        'Content-Type': 'application/json',
-        'xi-api-key': ELEVENLABS_API_KEY,
-      },
-      body: JSON.stringify(ttsRequest.payload),
-    });
+    executeProviderCircuitGuard(
+      'elevenlabs',
+      () =>
+        fetch(ttsRequest.url, {
+          method: 'POST',
+          headers: {
+            Accept: 'audio/mpeg',
+            'Content-Type': 'application/json',
+            'xi-api-key': ELEVENLABS_API_KEY,
+          },
+          body: JSON.stringify(ttsRequest.payload),
+        }),
+      async () => new Response('ElevenLabs circuit is open.', { status: 503 })
+    );
   let response = await fireRequest(request);
   if (response.status === 404 && ELEVENLABS_FALLBACK_VOICE_ID && request.voiceId !== ELEVENLABS_FALLBACK_VOICE_ID) {
     const fallbackRequest = buildElevenLabsTtsRequest(
@@ -56763,6 +57332,8 @@ async function handleSlackApprovalInteraction(payload = {}) {
       actor,
       actedAt: isoNow(),
       notes: `Slack interactive approval ${status}.`,
+      source: 'slack-interaction',
+      skipSlackSync: true,
     });
   }
   const update = await updateSlackApprovalMessage({
@@ -59567,7 +60138,7 @@ async function handleBrowserVoiceSocket(socket, request) {
   };
 
   const openDeepgramBrowserVoiceConnection = async (options, label, notifyErrors = true) => {
-    const connection = await createDeepgramLiveConnection(options, process.env);
+    const connection = await createDeepgramLiveConnectionWithCircuit(options, process.env);
     connection.on('error', (error) => {
       if (!notifyErrors) return;
       sendVoiceSocket(socket, {
@@ -61882,7 +62453,10 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
 
   const prepareTelnyxFrameForDeepgram = (frame) => {
     if (session.deepgramFallbackActive && session.deepgramEncoding === 'linear16') {
-      return decodeG711FrameToLinear16(frame, DEEPGRAM_STREAM_CODEC);
+      return decodeG711FrameToLinear16(
+        frame,
+        session.telnyxMediaCodec || DEEPGRAM_STREAM_CODEC
+      );
     }
     return frame;
   };
@@ -62717,7 +63291,7 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
       session.deepgramModel = telnyxLiveModel;
       session.deepgramEncoding = 'linear16';
       session.deepgramSampleRate = 8000;
-      deepgramConnection = await createDeepgramLiveConnection(
+      deepgramConnection = await createDeepgramLiveConnectionWithCircuit(
         {
           manualWebSocket: true,
           model: telnyxLiveModel,
@@ -62896,6 +63470,10 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
       }
       const mediaFormat = event.start?.media_format || event.start?.mediaFormat || {};
       session.mediaFormat = mediaFormat;
+      session.telnyxMediaCodec = normalizeTelnyxMediaCodec(
+        mediaFormat.encoding || mediaFormat.codec || mediaFormat.format || '',
+        DEEPGRAM_STREAM_CODEC
+      );
       recordCallTrace('telnyx_media_start', {
         ...session,
         status: 'started',
@@ -62995,12 +63573,14 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
   void (async () => {
     try {
       deepgramOpenStarted = true;
-      const codecOptions = buildTelnyxDeepgramLiveOptions(DEEPGRAM_STREAM_CODEC);
+      const codecOptions = buildTelnyxDeepgramLiveOptions(
+        session.telnyxMediaCodec || DEEPGRAM_STREAM_CODEC
+      );
       const telnyxLiveModel = getTelnyxDeepgramLiveModel();
       session.deepgramModel = telnyxLiveModel;
       session.deepgramEncoding = codecOptions.encoding;
       session.deepgramSampleRate = codecOptions.sampleRate;
-      deepgramConnection = await createDeepgramLiveConnection(
+      deepgramConnection = await createDeepgramLiveConnectionWithCircuit(
         {
           manualWebSocket: true,
           model: telnyxLiveModel,
@@ -63212,14 +63792,21 @@ const server = createServer(async (request, response) => {
     }
 
     if (request.method === 'GET' && matchesPath(pathname, ['/api/production/maturity', '/api/maturity/status'])) {
-      const maturity = buildProductionMaturitySnapshot({ runtimeMeta: getRuntimeMeta() });
+      const maturity = await getCachedReadResponse('production-maturity', BRIDGE_READ_CACHE_TTL_MS.productionMaturity, () =>
+        buildProductionMaturitySnapshot({ runtimeMeta: getRuntimeMeta() })
+      );
       json(response, maturity.ready ? 200 : 202, maturity);
       return;
     }
 
     if (request.method === 'GET' && matchesPath(pathname, ['/api/performance/status', '/api/production/performance', '/api/performance/readiness'])) {
-      const performance = await buildProductionPerformanceStatusSnapshot();
-      json(response, performance.ready ? 200 : 202, performance);
+      const performance = await getCachedReadResponse('performance-status', BRIDGE_READ_CACHE_TTL_MS.performanceStatus, () =>
+        buildProductionPerformanceStatusSnapshot()
+      );
+      json(response, performance.ready ? 200 : 202, {
+        ...performance,
+        readEndpointCache: getBridgeReadCacheStatus(),
+      });
       return;
     }
 
@@ -63359,26 +63946,91 @@ const server = createServer(async (request, response) => {
     }
 
     if (request.method === 'GET' && matchesPath(pathname, ['/api/agents/orchestration', '/api/agent-orchestration'])) {
-      const orchestration = buildAgentOrchestrationSnapshot();
-      json(response, orchestration.ok ? 200 : 503, {
-        ok: Boolean(orchestration.ok),
-        result: orchestration.result,
-        orchestration,
-        agentRegistry: buildAgentRegistryStatus(),
-        state: {
-          status: buildStateSnapshot().status,
-        },
+      const payload = await getCachedReadResponse('agent-orchestration', BRIDGE_READ_CACHE_TTL_MS.agentOrchestration, () => {
+        const orchestration = buildAgentOrchestrationSnapshot();
+        return {
+          ok: Boolean(orchestration.ok),
+          result: orchestration.result,
+          orchestration,
+          measurement: orchestration.measurement,
+          agentRegistry: buildAgentRegistryStatus(),
+          state: {
+            status: buildStateSnapshot().status,
+          },
+        };
       });
+      json(response, payload.ok ? 200 : 503, payload);
       return;
     }
 
     if (request.method === 'GET' && matchesPath(pathname, ['/api/agents/registry', '/api/agent-registry'])) {
-      const capability = url.searchParams.get('capability') || '';
-      const status = buildAgentRegistryStatus({
-        capability,
-        includeInactive: /^(1|true|yes)$/i.test(String(url.searchParams.get('includeInactive') || '').trim()),
-      });
+      const status = await getCachedReadResponse('agent-registry', BRIDGE_READ_CACHE_TTL_MS.agentRegistry, () => {
+        const capability = url.searchParams.get('capability') || '';
+        return buildAgentRegistryStatus({
+          capability,
+          includeInactive: /^(1|true|yes)$/i.test(String(url.searchParams.get('includeInactive') || '').trim()),
+        });
+      }, url.searchParams.toString());
       json(response, status.ok ? 200 : 503, status);
+      return;
+    }
+
+    if (request.method === 'GET' && matchesPath(pathname, ['/api/agents/measurement', '/api/agent-fleet/measurement'])) {
+      const payload = await getCachedReadResponse('agent-measurement', BRIDGE_READ_CACHE_TTL_MS.agentMeasurement, () => {
+        const orchestration = buildAgentOrchestrationSnapshot();
+        return {
+          ok: Boolean(orchestration.measurement?.ready),
+          result: orchestration.measurement?.result || 'stable_agent_fleet_measurement_unavailable',
+          measurement: orchestration.measurement,
+          registry: orchestration.registry,
+        };
+      });
+      json(response, payload.ok ? 200 : 503, payload);
+      return;
+    }
+
+    if (request.method === 'GET' && matchesPath(pathname, ['/api/agents/version-snapshots', '/api/agent-version-snapshots'])) {
+      const snapshots = listAgentVersionSnapshots(url.searchParams.get('limit') || 50);
+      json(response, 200, {
+        ok: true,
+        result: 'agent_version_snapshots',
+        count: snapshots.length,
+        snapshots,
+      });
+      return;
+    }
+
+    if (request.method === 'POST' && matchesPath(pathname, ['/api/agents/version-snapshots', '/api/agent-version-snapshots'])) {
+      const body = await readBody(request);
+      const result = await createAgentVersionSnapshotRecord({
+        ...body,
+        actor: body.actor || 'PBK Command Center',
+      });
+      json(response, result.ok ? 200 : 400, {
+        ...result,
+        state: buildStateSnapshot(),
+      });
+      return;
+    }
+
+    const agentRollbackMatch =
+      matchPath(pathname, '/api/agents/:agentId/rollback') ||
+      matchPath(pathname, '/api/agent-registry/:agentId/rollback');
+    if (
+      request.method === 'POST' &&
+      (matchesPath(pathname, ['/api/agents/rollback', '/api/agent-registry/rollback']) || agentRollbackMatch)
+    ) {
+      const body = await readBody(request);
+      const agentId = agentRollbackMatch?.groups?.agentId ? decodeURIComponent(agentRollbackMatch.groups.agentId) : '';
+      const result = await rollbackAgentVersionFromSnapshot({
+        ...body,
+        agentIds: body.agentIds || body.agents || body.agentId || agentId || [],
+        actor: body.actor || 'PBK Command Center',
+      });
+      json(response, result.ok ? 200 : 400, {
+        ...result,
+        state: buildStateSnapshot(),
+      });
       return;
     }
 
@@ -63439,16 +64091,20 @@ const server = createServer(async (request, response) => {
     }
 
     if (request.method === 'GET' && matchesPath(pathname, ['/api/agents/health', '/api/agent-health'])) {
-      const orchestration = buildAgentOrchestrationSnapshot();
-      json(response, orchestration.ok ? 200 : 503, {
-        ok: Boolean(orchestration.ok),
-        result: orchestration.result,
-        agents: orchestration.agents,
-        registry: orchestration.registry,
-        agentRegistry: buildAgentRegistryStatus(),
-        mcp: orchestration.mcp,
-        safety: orchestration.safety,
+      const payload = await getCachedReadResponse('agent-health', BRIDGE_READ_CACHE_TTL_MS.agentHealth, () => {
+        const orchestration = buildAgentOrchestrationSnapshot();
+        return {
+          ok: Boolean(orchestration.ok),
+          result: orchestration.result,
+          agents: orchestration.agents,
+          registry: orchestration.registry,
+          measurement: orchestration.measurement,
+          agentRegistry: buildAgentRegistryStatus(),
+          mcp: orchestration.mcp,
+          safety: orchestration.safety,
+        };
       });
+      json(response, payload.ok ? 200 : 503, payload);
       return;
     }
 
@@ -64519,7 +65175,10 @@ const server = createServer(async (request, response) => {
         '/health/staleness',
       ])
     ) {
-      json(response, 200, await buildSystemSourceLabelsSnapshot());
+      const sourceLabels = await getCachedReadResponse('system-source-labels', BRIDGE_READ_CACHE_TTL_MS.systemSourceLabels, async () =>
+        await buildSystemSourceLabelsSnapshot()
+      );
+      json(response, 200, sourceLabels);
       return;
     }
 
@@ -64535,7 +65194,10 @@ const server = createServer(async (request, response) => {
       request.method === 'GET' &&
       matchesPath(pathname, ['/api/production/gaps', '/api/v1/production/gaps'])
     ) {
-      json(response, 200, await buildProductionGapsSnapshot());
+      const gaps = await getCachedReadResponse('production-gaps', BRIDGE_READ_CACHE_TTL_MS.productionGaps, () =>
+        buildProductionGapsSnapshot()
+      );
+      json(response, 200, gaps);
       return;
     }
 
@@ -64543,7 +65205,10 @@ const server = createServer(async (request, response) => {
       request.method === 'GET' &&
       matchesPath(pathname, ['/api/production/primary-path', '/api/v1/production/primary-path'])
     ) {
-      json(response, 200, await buildPrimaryPathReliabilitySnapshot());
+      const primaryPath = await getCachedReadResponse('production-primary-path', BRIDGE_READ_CACHE_TTL_MS.productionPrimaryPath, () =>
+        buildPrimaryPathReliabilitySnapshot()
+      );
+      json(response, 200, primaryPath);
       return;
     }
 
@@ -64777,7 +65442,7 @@ const server = createServer(async (request, response) => {
           return;
         }
 
-        const deepgramTranscript = await transcribeDeepgramUrl({
+        const deepgramTranscript = await transcribeDeepgramUrlWithCircuit({
           url: audioTranscriptUrlResult.url,
           smart_format: true,
           sentiment: true,
@@ -65600,31 +66265,36 @@ const server = createServer(async (request, response) => {
     }
 
     if (request.method === 'GET' && matchesPath(pathname, ['/api/agents/fleet', '/api/agents'])) {
-      ensureAgentFleetCollections();
-      const intelligenceContext = state.status?.pbkIntelligenceContext || {
-        memory: { ready: Boolean(state.status?.pbkIntelligenceReadiness?.required?.memory) },
-        skills: { ready: Boolean(state.status?.pbkIntelligenceReadiness?.required?.skills) },
-        dataFreshness: {
-          ready: Boolean(state.status?.pbkIntelligenceReadiness?.required?.dataFreshness),
-        },
-        fleetReadiness: { ready: Boolean(state.status?.pbkIntelligenceReadiness?.ready) },
-      };
-      const capabilityReadiness = buildAgentCapabilityReadiness({
-        agents: state.agents,
-        toolCatalog: buildProductionToolCatalog(),
-        intelligenceContext,
-        latencySamples: buildProductionAgentLatencySamples(),
-        lastActions: buildProductionLastAgentActions(),
+      const payload = await getCachedReadResponse('agent-fleet', BRIDGE_READ_CACHE_TTL_MS.agentFleet, () => {
+        ensureAgentFleetCollections();
+        const intelligenceContext = state.status?.pbkIntelligenceContext || {
+          memory: { ready: Boolean(state.status?.pbkIntelligenceReadiness?.required?.memory) },
+          skills: { ready: Boolean(state.status?.pbkIntelligenceReadiness?.required?.skills) },
+          dataFreshness: {
+            ready: Boolean(state.status?.pbkIntelligenceReadiness?.required?.dataFreshness),
+          },
+          fleetReadiness: { ready: Boolean(state.status?.pbkIntelligenceReadiness?.ready) },
+        };
+        const capabilityReadiness = buildAgentCapabilityReadiness({
+          agents: state.agents,
+          toolCatalog: buildProductionToolCatalog(),
+          intelligenceContext,
+          latencySamples: buildProductionAgentLatencySamples(),
+          lastActions: buildProductionLastAgentActions(),
+        });
+        const orchestration = buildAgentOrchestrationSnapshot();
+        return {
+          ok: true,
+          result: 'live',
+          agents: capabilityReadiness.agents,
+          capabilityReadiness,
+          measurement: orchestration.measurement,
+          transfers: state.agentSkillTransfers,
+          experiments: state.agentSkillExperiments,
+          status: state.status,
+        };
       });
-      json(response, 200, {
-        ok: true,
-        result: 'live',
-        agents: capabilityReadiness.agents,
-        capabilityReadiness,
-        transfers: state.agentSkillTransfers,
-        experiments: state.agentSkillExperiments,
-        status: state.status,
-      });
+      json(response, 200, payload);
       return;
     }
 
@@ -65897,7 +66567,7 @@ const server = createServer(async (request, response) => {
 
     if (request.method === 'POST' && matchesPath(pathname, ['/api/deepgram/transcribe-url', '/api/voice/deepgram/transcribe-url', '/api/voice/sentiment/test'])) {
       const body = await readBody(request);
-      const result = await transcribeDeepgramUrl(
+      const result = await transcribeDeepgramUrlWithCircuit(
         {
           url: body.url || (body.sample ? DEEPGRAM_SAMPLE_URL : ''),
           model: body.model,
@@ -66969,27 +67639,30 @@ const server = createServer(async (request, response) => {
         return;
       }
       try {
-        const store = createConversationStore(pool);
-        const [summary, items] = await Promise.all([
-          store.getSenderIdentitySummary({
-            workspaceId: CONVERSATION_WORKSPACE_ID,
-          }),
-          store.listSenderIdentities({
-            workspaceId: CONVERSATION_WORKSPACE_ID,
-            channel: url.searchParams.get('channel') || undefined,
-            provider: url.searchParams.get('provider') || undefined,
-            lifecycleStatus:
-              url.searchParams.get('lifecycle') ||
-              url.searchParams.get('lifecycleStatus') ||
-              undefined,
-          }),
-        ]);
-        json(response, 200, {
-          ok: true,
-          result: 'postgres',
-          summary,
-          items,
-        });
+        const payload = await getCachedReadResponse('communication-identities', BRIDGE_READ_CACHE_TTL_MS.communicationIdentities, async () => {
+          const store = createConversationStore(pool);
+          const [summary, items] = await Promise.all([
+            store.getSenderIdentitySummary({
+              workspaceId: CONVERSATION_WORKSPACE_ID,
+            }),
+            store.listSenderIdentities({
+              workspaceId: CONVERSATION_WORKSPACE_ID,
+              channel: url.searchParams.get('channel') || undefined,
+              provider: url.searchParams.get('provider') || undefined,
+              lifecycleStatus:
+                url.searchParams.get('lifecycle') ||
+                url.searchParams.get('lifecycleStatus') ||
+                undefined,
+            }),
+          ]);
+          return {
+            ok: true,
+            result: 'postgres',
+            summary,
+            items,
+          };
+        }, url.searchParams.toString());
+        json(response, 200, payload);
       } catch (error) {
         sendConversationStoreError(
           response,
@@ -72015,7 +72688,7 @@ async function prewarmVoiceProviders() {
   const deepgramMeta = getDeepgramProviderMeta(process.env);
   if (deepgramMeta.ready) {
     try {
-      const connection = await createDeepgramLiveConnection(buildBrowserVoiceDeepgramOptions(BROWSER_VOICE_DEEPGRAM_MODEL), process.env);
+      const connection = await createDeepgramLiveConnectionWithCircuit(buildBrowserVoiceDeepgramOptions(BROWSER_VOICE_DEEPGRAM_MODEL), process.env);
       await withPrewarmTimeout(
         (async () => {
           connection.connect();

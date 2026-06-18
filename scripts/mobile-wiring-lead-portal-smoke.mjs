@@ -17,6 +17,8 @@ const campaigns = read('src/app/routes/Campaigns.tsx');
 const memory = read('src/app/routes/MemoryAnalytics.tsx');
 const memoryLogic = read('src/app/routes/memoryAnalyticsRuntimeLogic.js');
 const leads = read('src/app/routes/Leads.tsx');
+const leadPortal = read('src/app/routes/LeadPortal.tsx');
+const leadPortalHeader = read('src/app/components/leads/LeadPortalHeader.tsx');
 const legacyShell = read('index.html');
 const server = read('scripts/openclaw-local-server.mjs');
 const css = read('src/styles/pbk-components.css');
@@ -101,6 +103,12 @@ assert(
     leads
   ),
   'Leads source rail should identify POST /api/leads as the canonical seller portal.'
+);
+assert(
+  /Add phone/.test(leadPortalHeader) &&
+    /onAddPhone=\{startEdit\}/.test(leadPortal) &&
+    /lead\.phone\.replace\(\/\\D\/g, ''\)\.length >= 10/.test(leadPortalHeader),
+  'Seller portal should expose a direct canonical phone repair action when the lead has no callable number.'
 );
 
 assert(

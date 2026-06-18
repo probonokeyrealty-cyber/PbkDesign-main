@@ -786,6 +786,11 @@ function AgentFleetSourceRail() {
       <PbkDataSource endpoint="GET /api/agents/registry" status="ships" />
       <PbkDataSource endpoint="GET /api/tooling/status" status="ships" />
       <PbkDataSource endpoint="GET /api/agents/health" status="ships" />
+      <PbkDataSource
+        endpoint="GET /api/agents/measurement"
+        status="ships"
+        note="stable 11-agent proof"
+      />
       <PbkDataSource endpoint="GET /api/leads" status="ships" note="lead context picker" />
       <PbkDataSource endpoint="GET /state" status="ships" note="snapshot fallback and calls" />
       <PbkDataSource endpoint="POST /invoke: previewAgentDealContext" status="ships" />

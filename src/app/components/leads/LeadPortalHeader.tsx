@@ -5,6 +5,7 @@ import {
   FileSignature,
   MessageSquare,
   Phone,
+  Plus,
   RefreshCw,
   StickyNote,
   Trash2,
@@ -19,6 +20,7 @@ type LeadPortalHeaderProps = {
   onBack: () => void;
   onRefresh: () => void;
   onEdit: () => void;
+  onAddPhone?: () => void;
   onMessage: () => void;
   onCall: () => void;
   onNote: () => void;
@@ -35,6 +37,7 @@ export function LeadPortalHeader({
   onBack,
   onRefresh,
   onEdit,
+  onAddPhone,
   onMessage,
   onCall,
   onNote,
@@ -42,6 +45,8 @@ export function LeadPortalHeader({
   onAnalyze,
   onDelete,
 }: LeadPortalHeaderProps) {
+  const hasCallablePhone = lead.phone.replace(/\D/g, '').length >= 10;
+
   return (
     <header className="pbk-lead-portal-header">
       <div className="pbk-lead-portal-heading">
@@ -75,6 +80,12 @@ export function LeadPortalHeader({
           <Edit3 size={16} />
           Edit
         </button>
+        {!hasCallablePhone && (
+          <button type="button" className="primary" onClick={onAddPhone || onEdit}>
+            <Plus size={16} />
+            Add phone
+          </button>
+        )}
         <button
           type="button"
           onClick={onMessage}

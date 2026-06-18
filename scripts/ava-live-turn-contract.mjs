@@ -62,15 +62,24 @@ function extractMoney(text = '') {
       value
     );
   if (!moneyContext && !/\b\d{2,3}\s*(?:k|thousand|grand|m|million)\b/i.test(value)) return '';
-  if (/\b(street|st|drive|dr|road|rd|avenue|ave|lane|ln|boulevard|blvd|court|ct|circle|cir|way|zip|postal|phone|number is)\b/i.test(value)) {
-    return '';
+  const pattern = /\$?\s?(\d{2,3}(?:,\d{3})+|\d+(?:\.\d+)?)\s*(k|thousand|grand|m|million)?\b/gi;
+  for (const match of value.matchAll(pattern)) {
+    const suffix = lower(match[2] || '');
+    const number = String(match[1] || '').replace(/\s+/g, '');
+    const matchedText = String(match[0] || '');
+    const after = value.slice((match.index || 0) + matchedText.length, (match.index || 0) + matchedText.length + 36);
+    const before = value.slice(Math.max(0, (match.index || 0) - 36), match.index || 0);
+    const looksLikeAddressNumber =
+      !suffix &&
+      /\b(?:street|st|drive|dr|road|rd|avenue|ave|lane|ln|boulevard|blvd|court|ct|circle|cir|way|place|pl)\b/i.test(after);
+    const looksLikePhoneOrZip =
+      !suffix &&
+      (/\b(?:phone|number is|zip|postal)\b/i.test(before) || /\b(?:zip|postal)\b/i.test(after));
+    if (looksLikeAddressNumber || looksLikePhoneOrZip) continue;
+    if (['k', 'm'].includes(suffix)) return `${number}${suffix}`;
+    return `${number}${suffix ? ` ${suffix}` : ''}`.trim();
   }
-  const match = value.match(/\$?\s?(\d{2,3}(?:,\d{3})+|\d+(?:\.\d+)?)\s*(k|thousand|grand|m|million)?\b/i);
-  if (!match) return '';
-  const suffix = lower(match[2] || '');
-  const number = String(match[1] || '').replace(/\s+/g, '');
-  if (['k', 'm'].includes(suffix)) return `${number}${suffix}`;
-  return `${number}${suffix ? ` ${suffix}` : ''}`.trim();
+  return '';
 }
 
 function extractFullAddress(text = '') {
@@ -129,8 +138,8 @@ function extractPain(text = '') {
 
 function inferAuthority(text = '') {
   const value = lower(text);
-  if (/\b(i am|i'm|im|i own|my house|my property|owner|seller)\b/.test(value)) return 'owner';
   if (/\b(agent|realtor|broker|representing|my client)\b/.test(value)) return 'agent';
+  if (/\b(i am|i'm|im)\s+(?:the\s+)?(?:owner|seller)\b|\bi own\b|\bmy (?:house|property)\b|\bowner\b|\bseller\b/.test(value)) return 'owner';
   if (/\b(spouse|wife|husband|partner|executor|attorney|lawyer|trustee|heir)\b/.test(value)) return 'helper_or_stakeholder';
   return '';
 }
@@ -183,10 +192,21 @@ export function classifyAvaLiveObjectionV2(transcript = '', context = {}) {
   else if (/\b(stop calling|do not call|don't call|remove me|unsubscribe)\b/.test(text)) {
     intent = 'stop_contact';
     objection = 'stop_contact';
+  } else if (/^(?:yes|yeah|yep|sure|ok|okay|correct|right)\b[.! ]*$/.test(text)) {
+    intent = 'ambiguous_yes';
+  } else if (/\b(attorney|lawyer|trustee)\b/.test(text) && /\b(review|sign|contract|paperwork|approve|bankruptcy|chapter 13|probate)\b/.test(text)) {
+    intent = 'legal_review';
+    objection = 'legal_review';
   } else if (/\b(send|email|prepare|write|draft)\b.{0,24}\b(contract|agreement|paperwork|docusign|docu sign)\b|\b(i will|i'll|ready to)\b.{0,24}\b(sign|move forward|do it)\b/.test(text)) {
     intent = 'contract_request';
     objection = '';
-  } else if (/\b(i already told you (?:the )?price|i told you (?:the )?price|gave you (?:the )?price|you have (?:the )?price)\b/.test(text)) {
+  } else if (/\b(you asked that already|you keep asking|keep asking|asked that|repeating|stop repeating|same thing)\b/.test(text)) {
+    intent = 'repeat_complaint';
+    objection = 'repeat_complaint';
+  } else if (
+    /\b(i already told you (?:the )?price|i told you (?:the )?price|gave you (?:the )?price|you have (?:the )?price)\b/.test(text) ||
+    /\b(i already told you|already told you|i told you)\b.{0,40}\b(?:want|need|take|accept|asking|price|number)\b/.test(text)
+  ) {
     intent = 'already_gave_price';
     objection = 'already_gave_price';
   } else if (/\b(i already told you|already told you|you asked that already|you keep asking|keep asking|asked that|repeating|stop repeating|same thing)\b/.test(text)) {
@@ -276,13 +296,16 @@ function chooseNextQuestionCategory({ intent = '', missingFacts = [], forbiddenR
     categories.find((category) => !forbidden.has(category)) ||
     categories[0] ||
     'seller_priority';
+  if (intent === 'stop_contact') return 'contact_stop_confirmation';
+  if (intent === 'ambiguous_yes') return 'yes_clarification';
+  if (intent === 'legal_review') return 'legal_review_contact';
   if (intent === 'trust_scam') return 'trust_proof';
   if (intent === 'contract_request') return 'approval_confirmation';
   if (intent === 'repeat_complaint') return firstAvailable(['condition', 'pain', 'authority', 'seller_priority']);
   if (intent === 'need_to_think') return 'specific_hesitation';
   if (intent === 'spouse_partner') return 'decision_maker';
   if (intent === 'competing_offer') return 'competing_offer_terms';
-  if (intent === 'seller_wants_speed') return firstAvailable(['timeline', 'target_price', 'condition', 'pain', 'authority']);
+  if (intent === 'seller_wants_speed') return firstAvailable(['timeline', 'target_price', 'condition', 'authority', 'pain']);
   if (intent === 'seller_wants_max_net') return 'net_comparison';
   const priority = ['full_address', 'condition', 'target_price', 'timeline', 'authority', 'pain'];
   return (
@@ -303,7 +326,9 @@ function buildQuestion(category = '', knownFacts = {}) {
     case 'target_price':
       return 'What number would make this worth saying yes today?';
     case 'timeline':
-      return 'Are you trying to close in days, a few weeks, or are you flexible if the number is right?';
+      return knownFacts.sellerTargetPrice
+        ? 'Are you trying to close in days, a few weeks, or is timing flexible?'
+        : 'Are you trying to close in days, a few weeks, or are you flexible if the number is right?';
     case 'authority':
       return 'Are you the owner or the person helping make the decision on this property?';
     case 'pain':
@@ -320,6 +345,12 @@ function buildQuestion(category = '', knownFacts = {}) {
       return 'Is the highest net more important than speed, or do you need both to work?';
     case 'approval_confirmation':
       return 'Before I send contract paperwork, let me confirm: are you comfortable with the price, property, and closing timeline we just discussed?';
+    case 'contact_stop_confirmation':
+      return 'I will mark this number do-not-contact now.';
+    case 'yes_clarification':
+      return 'When you say yes, which part are you confirming: price, timing, repairs, or decision authority?';
+    case 'legal_review_contact':
+      return 'Who should review the paperwork, and what do they need from us before anything is sent?';
     default:
       return 'What is the one thing I need to solve for you first: price, timing, repairs, or certainty?';
   }
@@ -394,7 +425,7 @@ export function buildAvaLiveTurnContract(params = {}) {
     nextBestQuestion,
     nextBestQuestionCategory,
     forbiddenRepeats,
-    handoffNeeded: ['stop_contact', 'probate_legal', 'contract_request'].includes(classification.intent),
+    handoffNeeded: ['stop_contact', 'probate_legal', 'contract_request', 'legal_review'].includes(classification.intent),
     allowedTools,
     responseRules: {
       acknowledgeSellerWords: true,
@@ -431,6 +462,8 @@ function buildAcknowledgement(contract = {}) {
       return 'Of course.';
     case 'spouse_partner':
       return 'That makes sense.';
+    case 'legal_review':
+      return 'That is the right thing to slow down for.';
     case 'trust_scam':
       return 'That is a fair concern. I would be careful too.';
     case 'probate_legal':
@@ -439,6 +472,10 @@ function buildAcknowledgement(contract = {}) {
       return 'Timeline matters. Got it.';
     case 'seller_wants_max_net':
       return 'Highest net matters. Got it.';
+    case 'ambiguous_yes':
+      return 'Got it, I want to make sure I am tracking the right yes.';
+    case 'stop_contact':
+      return 'Understood.';
     default:
       return 'I hear you.';
   }
@@ -471,6 +508,9 @@ export function renderAvaLiveContractReply(contract = {}) {
 
 function textAsksQuestionCategory(text = '', category = '') {
   const value = lower(text);
+  if (normalizeQuestionCategory(category) === 'contact_stop_confirmation') {
+    return /\b(mark|remove|stop|do[- ]?not[- ]?contact|dnc|no more)\b/.test(value);
+  }
   const questions = (value.match(/[^.?!]*[?]/g) || []).join(' ');
   const imperatives = (value.match(/\b(?:tell me|give me|walk me through|send me|share|confirm|clarify|explain)\b[^.?!]*(?:[.?!]|$)/g) || []).join(' ');
   const askText = [questions, imperatives].filter(Boolean).join(' ');
@@ -479,7 +519,10 @@ function textAsksQuestionCategory(text = '', category = '') {
     case 'full_address':
       return /\b(full )?(street )?address|what property|where is (?:it|the property)|pull (?:it|this) up\b/.test(askText);
     case 'authority':
-      return /\b(are you|who is|person|owner|agent|decision|authority|authorized|sign|executor|spouse|partner)\b/.test(askText);
+      return (
+        /\b(owner|agent|decision|authority|authorized|sign|executor|spouse|partner|person helping)\b/.test(askText) &&
+        /\b(are you|who is|person|owner|agent|decision|authority|authorized|sign|executor|spouse|partner)\b/.test(askText)
+      );
     case 'target_price':
       return /\b(what number|number (?:do|would|are)|net number|walk away|what price|asking price|what can you take|worth saying yes)\b/.test(askText);
     case 'condition':
@@ -490,12 +533,20 @@ function textAsksQuestionCategory(text = '', category = '') {
       return /\b(why|reason|motivated|selling|considering|making you)\b/.test(askText);
     case 'trust_proof':
       return /\b(proof|trust|comfortable|legit|verify)\b/.test(askText);
+    case 'specific_hesitation':
+      return /\b(what specifically|think through|number|timing|confidence|process)\b/.test(askText);
     case 'decision_maker':
       return /\b(decision maker|need to hear|spouse|partner|wife|husband|co-owner|co owner)\b/.test(askText);
     case 'competing_offer_terms':
       return /\b(other offer|headline number|repairs|fees|closing date|guaranteed)\b/.test(askText);
     case 'net_comparison':
       return /\b(highest net|speed|both|net more important)\b/.test(askText);
+    case 'yes_clarification':
+      return /\b(which part|confirming|price|timing|repairs|decision authority)\b/.test(askText);
+    case 'legal_review_contact':
+      return /\b(who should review|paperwork|what do they need|before anything is sent|attorney|lawyer|trustee)\b/.test(askText);
+    case 'approval_confirmation':
+      return /\b(before i send|confirm|contract|paperwork|price|property|closing timeline|comfortable)\b/.test(askText);
     default:
       return false;
   }
@@ -510,6 +561,8 @@ export function isAvaLiveReplyAlignedWithContract(reply = '', contract = {}) {
   for (const forbidden of contract.forbiddenRepeats || []) {
     const forbiddenCategory = normalizeQuestionCategory(forbidden);
     if (!forbiddenCategory || forbiddenCategory === category) continue;
+    if (category === 'decision_maker' && forbiddenCategory === 'authority') continue;
+    if (category === 'approval_confirmation' && ['target_price', 'full_address', 'timeline'].includes(forbiddenCategory)) continue;
     if (textAsksQuestionCategory(text, forbiddenCategory)) return false;
   }
   if (contract.intent === 'already_gave_price' && contract.knownFacts?.sellerTargetPrice) {

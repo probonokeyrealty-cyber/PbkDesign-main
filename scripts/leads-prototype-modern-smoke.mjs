@@ -107,6 +107,14 @@ assert(
   'Lead SMS quick action must open an editable manual compose dialog with visible send behavior.'
 );
 assert(
+  leads.includes('Add canonical phone') &&
+    leads.includes('pbk-new-lead-modal-backdrop') &&
+    leads.includes('pbk-new-lead-modal-footer') &&
+    pbkCss.includes('.pbk-new-lead-modal-footer') &&
+    pbkCss.includes('calc(16px + env(safe-area-inset-bottom))'),
+  'Leads must expose a canonical phone repair action and keep new-lead submit controls tappable on mobile.'
+);
+assert(
   dataMap.includes('GET /api/leads/:id/full') &&
     dataMap.includes('POST /api/contract/send') &&
     dataMap.includes('GET /api/leads'),

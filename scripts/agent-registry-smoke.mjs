@@ -1,12 +1,18 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import {
+  applyAgentVersionRollback,
   applyExternalAgentEndpointOverrides,
+  buildStableAgentFleetMeasurement,
+  buildAgentRollbackPlan,
   buildAgentRegistrySnapshot,
+  buildAgentVersionSnapshot,
   buildDefaultAgentRegistry,
   findAgentsByCapability,
   invokeRegisteredAgent,
   mergeAgentRegistryRecords,
   normalizeAgentRegistryId,
+  validateAgentVersionSnapshot,
 } from './agent-registry.mjs';
 
 async function main() {
@@ -226,6 +232,144 @@ async function main() {
   );
   assert.equal(checkedSnapshot.ok, true, 'health-checked registry should be ready.');
   assert.equal(checkedSnapshot.required.pendingHealth.length, 0, 'health-checked registry should have no pending health.');
+
+  const toolCatalog = Object.fromEntries(
+    registry.flatMap((agent) => (agent.metadata.requiredTools || []).map((tool) => [tool, true]))
+  );
+  const incompleteMeasurement = buildStableAgentFleetMeasurement(registry, {
+    toolCatalog,
+    healthProbes: [],
+    latencySamples: {},
+    lastActions: {},
+    now: () => 1780000000000,
+  });
+  assert.equal(
+    incompleteMeasurement.ready,
+    false,
+    'Stable fleet measurement must fail closed when probe/action evidence is missing.'
+  );
+  assert(incompleteMeasurement.blockers.includes('agent_measurement_gap:ava'));
+
+  const measuredRegistry = registry.map((agent) => ({
+    ...agent,
+    status: 'active',
+    healthCheckedAt: '2026-06-12T00:00:00.000Z',
+    health_checked_at: '2026-06-12T00:00:00.000Z',
+  }));
+  const measuredHealthProbes = measuredRegistry.map((agent) => ({
+    id: agent.id,
+    name: agent.name,
+    ready: true,
+    present: true,
+    missingTools: [],
+    lastSeen: '2026-06-12T00:00:00.000Z',
+  }));
+  const measuredLatencySamples = Object.fromEntries(
+    measuredRegistry.map((agent, index) => [agent.id, [60 + index, 80 + index, 100 + index]])
+  );
+  const measuredLastActions = Object.fromEntries(
+    measuredRegistry.map((agent) => [
+      agent.id,
+      { status: 'success', at: '2026-06-12T00:00:01.000Z' },
+    ])
+  );
+  const stableMeasurement = buildStableAgentFleetMeasurement(measuredRegistry, {
+    toolCatalog,
+    healthProbes: measuredHealthProbes,
+    latencySamples: measuredLatencySamples,
+    lastActions: measuredLastActions,
+    intelligenceContext: {
+      memory: { ready: true },
+      skills: { ready: true },
+      dataFreshness: { ready: true },
+      fleetReadiness: { ready: true },
+    },
+    now: () => 1780000000000,
+  });
+  assert.equal(stableMeasurement.ready, true, 'The stable 11-agent fleet should be fully measured when every agent has evidence.');
+  assert.equal(stableMeasurement.result, 'stable_agent_fleet_fully_measured');
+  assert.equal(stableMeasurement.total, registry.length);
+  assert.equal(stableMeasurement.measuredCount, registry.length);
+  assert.equal(stableMeasurement.requiredIds.length, registry.length);
+  assert.equal(stableMeasurement.agents.find((agent) => agent.id === 'ava').metrics.latencySamples, 3);
+  assert.equal(stableMeasurement.agents.find((agent) => agent.id === 'ava').measurement.lastFailureObserved, false);
+
+  const knownGoodSnapshot = buildAgentVersionSnapshot(registry, {
+    id: 'agent-snapshot-known-good',
+    now: 1780000000000,
+    actor: 'Registry Smoke',
+    env: {},
+  });
+  const snapshotValidation = validateAgentVersionSnapshot(knownGoodSnapshot);
+  assert.equal(snapshotValidation.ok, true, 'known-good agent version snapshot should validate.');
+  assert.equal(snapshotValidation.missing.length, 0, 'known-good snapshot should include every required agent.');
+  assert.equal(snapshotValidation.agents.length, registry.length, 'snapshot should preserve the complete 11-agent fleet.');
+
+  const tamperedSnapshot = {
+    ...knownGoodSnapshot,
+    agents: knownGoodSnapshot.agents.map((agent) =>
+      agent.id === 'ava' ? { ...agent, version: 'tampered-v999' } : agent
+    ),
+  };
+  assert.equal(
+    validateAgentVersionSnapshot(tamperedSnapshot).reason,
+    'checksum_invalid',
+    'tampered agent snapshots must fail closed.'
+  );
+
+  const mutatedRegistry = registry.map((agent) =>
+    agent.id === 'ava'
+      ? {
+          ...agent,
+          version: 'v-bad-live',
+          status: 'degraded',
+          capabilities: [...agent.capabilities, 'bad_live_experiment'],
+        }
+      : agent
+  );
+  const missingReasonPlan = buildAgentRollbackPlan({
+    currentRegistry: mutatedRegistry,
+    snapshot: knownGoodSnapshot,
+    agentIds: ['ava'],
+  });
+  assert.equal(missingReasonPlan.result, 'agent_rollback_reason_required');
+
+  const rollback = applyAgentVersionRollback({
+    currentRegistry: mutatedRegistry,
+    snapshot: knownGoodSnapshot,
+    agentIds: ['ava'],
+    reason: 'bad_live_experiment',
+    actor: 'QA Agent',
+    now: 1780000000100,
+  });
+  assert.equal(rollback.ok, true, 'selected agent rollback should apply from a valid snapshot.');
+  assert.equal(rollback.applied, true, 'rollback should report applied=true.');
+  assert.equal(rollback.changes.length, 1, 'selected rollback should only change requested agents.');
+  assert.equal(rollback.changes[0].agentId, 'ava');
+  assert.equal(rollback.changes[0].from.version, 'v-bad-live');
+  assert.equal(rollback.changes[0].to.version, 'v2.1');
+  const rolledBackAva = rollback.registry.find((agent) => agent.id === 'ava');
+  const untouchedRex = rollback.registry.find((agent) => agent.id === 'rex');
+  assert.equal(rolledBackAva.version, 'v2.1');
+  assert.equal(rolledBackAva.metadata.rollback.reason, 'bad_live_experiment');
+  assert.equal(untouchedRex.version, 'v3.0', 'rollback should not mutate unselected agents.');
+
+  const bridgeSource = readFileSync('scripts/openclaw-local-server.mjs', 'utf8');
+  assert.match(
+    bridgeSource,
+    /\/api\/agents\/version-snapshots/,
+    'bridge must expose agent version snapshot endpoints.'
+  );
+  assert.match(
+    bridgeSource,
+    /rollbackAgentVersionFromSnapshot/,
+    'bridge must expose agent rollback through validated snapshots.'
+  );
+  assert.match(
+    bridgeSource,
+    /agentVersionSnapshots/,
+    'bridge state snapshot must include bounded agent version snapshots.'
+  );
 
   console.log('Agent registry smoke passed.');
 }

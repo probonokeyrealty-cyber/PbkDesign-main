@@ -53,6 +53,7 @@ assert.doesNotMatch(
 const requiredBridgeRoutes = [
   '/api/agents/registry',
   '/api/agents/health',
+  '/api/agents/measurement',
   '/api/agents/snn-status',
   '/api/qa/audit/latest',
   '/api/agents/deploy',

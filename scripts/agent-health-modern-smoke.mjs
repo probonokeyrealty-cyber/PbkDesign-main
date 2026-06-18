@@ -25,6 +25,11 @@ assert(
 );
 
 assert(
+  /AgentFleetMeasurement/.test(runtimeBridge) && /measurement\?: AgentFleetMeasurement/.test(runtimeBridge),
+  'runtimeBridge must type stable Agent Fleet measurement evidence.'
+);
+
+assert(
   /fetchAgentHealthRequest/.test(agentFleet),
   'AgentFleet must call fetchAgentHealthRequest.'
 );
@@ -39,6 +44,11 @@ assert(
 assert(
   /GET \/api\/agents\/health[\s\S]*status="ships"/.test(agentFleet),
   'Agent Fleet source rail must mark GET /api/agents/health as shipped.'
+);
+
+assert(
+  /GET \/api\/agents\/measurement[\s\S]*status="ships"/.test(agentFleet),
+  'Agent Fleet source rail must mark GET /api/agents/measurement as shipped.'
 );
 
 assert(

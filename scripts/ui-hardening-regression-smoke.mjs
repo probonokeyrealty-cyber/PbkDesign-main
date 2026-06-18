@@ -77,6 +77,13 @@ assert(
     /executeApprovedNurtureSequenceCore[\s\S]*approvalAction[\s\S]*send_nurture/.test(openclaw),
   'Approval callback should execute explicit send_nurture approvals through the nurture agent.'
 );
+assert(
+  /async function reconcileSlackApprovalDecisionMessage/.test(openclaw) &&
+    /slackDecisionSync/.test(openclaw) &&
+    /await reconcileSlackApprovalDecisionMessage\(approval/.test(openclaw) &&
+    /skipSlackSync:\s*true/.test(openclaw),
+  'Dashboard approval decisions must reconcile the original Slack approval message without double-updating Slack interactions.'
+);
 
 assert(
   pkg.scripts?.['test:ui-hardening-regression'] ===

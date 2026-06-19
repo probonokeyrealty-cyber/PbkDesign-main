@@ -500,6 +500,7 @@ const BRIDGE_READ_CACHE_TTL_MS = Object.freeze({
   agentMeasurement: Math.max(1000, Math.min(30000, Number(process.env.PBK_READ_CACHE_AGENT_MEASUREMENT_TTL_MS || 5000))),
   agentOrchestration: Math.max(1000, Math.min(30000, Number(process.env.PBK_READ_CACHE_AGENT_ORCHESTRATION_TTL_MS || 5000))),
   agentRegistry: Math.max(5000, Math.min(60000, Number(process.env.PBK_READ_CACHE_AGENT_REGISTRY_TTL_MS || 60000))),
+  compactState: Math.max(500, Math.min(5000, Number(process.env.PBK_READ_CACHE_COMPACT_STATE_TTL_MS || 1500))),
   communicationIdentities: Math.max(5000, Math.min(60000, Number(process.env.PBK_READ_CACHE_COMMUNICATION_IDENTITIES_TTL_MS || 60000))),
   performanceStatus: Math.max(5000, Math.min(60000, Number(process.env.PBK_READ_CACHE_PERFORMANCE_TTL_MS || 15000))),
   productionGaps: Math.max(5000, Math.min(60000, Number(process.env.PBK_READ_CACHE_PRODUCTION_GAPS_TTL_MS || 15000))),
@@ -64552,7 +64553,15 @@ const server = createServer(async (request, response) => {
 
     if (request.method === 'GET' && matchesPath(pathname, ['/state', '/api/state'])) {
       const compact = /^(1|true|yes)$/i.test(String(url.searchParams.get('compact') || '').trim());
-      json(response, 200, buildStateSnapshot({ compact }));
+      const payload = compact
+        ? await getCachedReadResponse(
+            'compact-state',
+            BRIDGE_READ_CACHE_TTL_MS.compactState,
+            () => buildStateSnapshot({ compact: true }),
+            url.searchParams.toString()
+          )
+        : buildStateSnapshot({ compact });
+      json(response, 200, payload);
       return;
     }
 

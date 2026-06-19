@@ -44,6 +44,12 @@ const LOAD_SCENARIOS = Object.freeze([
     category: 'bridge',
   },
   {
+    id: 'compact-state',
+    path: '/state?compact=1',
+    auth: true,
+    category: 'state',
+  },
+  {
     id: 'conversation-inbox',
     path: '/api/conversations?limit=5',
     auth: true,
@@ -58,6 +64,12 @@ const LOAD_SCENARIOS = Object.freeze([
   {
     id: 'provider-circuits',
     path: '/api/circuit/status',
+    auth: true,
+    category: 'observability',
+  },
+  {
+    id: 'connection-health',
+    path: '/api/connection-health',
     auth: true,
     category: 'observability',
   },

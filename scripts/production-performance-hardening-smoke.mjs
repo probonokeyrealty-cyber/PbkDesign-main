@@ -116,12 +116,27 @@ const plan = buildLoadScenarioPlan({
 });
 assert.equal(plan.ready, true);
 assert.equal(plan.concurrency, 50);
-for (const pathName of ['/health', '/api/conversations?limit=5', '/api/leads/search?q=test&limit=5', '/api/circuit/status']) {
+for (const pathName of [
+  '/health',
+  '/state?compact=1',
+  '/api/conversations?limit=5',
+  '/api/leads/search?q=test&limit=5',
+  '/api/circuit/status',
+  '/api/connection-health',
+]) {
   assert.ok(
     plan.scenarios.some((scenario) => scenario.path === pathName),
     `missing load scenario ${pathName}`
   );
 }
+
+const loadSmokeSource = readFileSync(path.join(rootDir, 'scripts', 'load-bridge-smoke.mjs'), 'utf8');
+assert.ok(
+  loadSmokeSource.includes('PBK_LOAD_TEAM_PASSCODE') &&
+    loadSmokeSource.includes('X-PBK-Team-Token') &&
+    loadSmokeSource.includes('/api/auth/team'),
+  'load smoke must support short-lived PBK team token auth for protected hosted read scenarios.'
+);
 
 const liveCallSpeedReady = buildLiveCallSpeedBudget({
   contractTargetMs: 100,
@@ -198,6 +213,15 @@ assert.ok(
     bridgeSource.includes('async function getCachedReadResponse') &&
     bridgeSource.includes('clearBridgeReadCache('),
   'bridge must provide a short read-through cache for high-traffic status/config endpoints'
+);
+assert.ok(
+  /compactState:\s*Math\.max\(500,\s*Math\.min\(5000,\s*Number\(process\.env\.PBK_READ_CACHE_COMPACT_STATE_TTL_MS\s*\|\|\s*1500\)\)\)/.test(
+    bridgeSource
+  ) &&
+    /getCachedReadResponse\(\s*['"]compact-state['"][\s\S]*?buildStateSnapshot\(\{ compact: true \}\)/.test(
+      bridgeSource
+    ),
+  'compact /state reads must use a very short burst cache that is invalidated on state persistence.'
 );
 for (const ttlMarker of [
   /agentRegistry:\s*Math\.max\(5000,\s*Math\.min\(60000,\s*Number\(process\.env\.PBK_READ_CACHE_AGENT_REGISTRY_TTL_MS\s*\|\|\s*60000\)\)\)/,

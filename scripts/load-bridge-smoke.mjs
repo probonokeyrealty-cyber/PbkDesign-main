@@ -4,10 +4,13 @@ const BASE_URL = String(process.env.PBK_LOAD_TARGET || process.env.PBK_HOSTED_BR
   .trim()
   .replace(/\/+$/g, '');
 const API_KEY = String(process.env.PBK_BRIDGE_API_KEY || '').trim();
+const TEAM_PASSCODE = String(process.env.PBK_LOAD_TEAM_PASSCODE || '').trim();
+const TEAM_ACTOR = String(process.env.PBK_LOAD_TEAM_ACTOR || 'PBK load smoke').trim();
 const CONCURRENCY = Math.max(1, Math.min(250, Number(process.env.PBK_LOAD_CONCURRENCY || process.argv.find((arg) => arg.startsWith('--concurrency='))?.split('=')[1] || 50)));
 const PATHNAME = String(process.env.PBK_LOAD_PATH || process.argv.find((arg) => arg.startsWith('--path='))?.split('=')[1] || '/health').trim() || '/health';
 const PATHS_ARG = String(process.env.PBK_LOAD_PATHS || process.argv.find((arg) => arg.startsWith('--paths='))?.split('=')[1] || '').trim();
 const SCENARIO_MODE = /^(1|true|yes)$/i.test(String(process.env.PBK_LOAD_SCENARIOS || '').trim()) || PATHS_ARG.length > 0;
+let teamToken = '';
 
 function percentile(values, pct) {
   if (!values.length) return 0;
@@ -16,10 +19,34 @@ function percentile(values, pct) {
   return sorted[index];
 }
 
+async function getTeamToken() {
+  if (API_KEY || !TEAM_PASSCODE) return '';
+  const started = performance.now();
+  const response = await fetch(`${BASE_URL}/api/auth/team`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ passcode: TEAM_PASSCODE, actor: TEAM_ACTOR }),
+  });
+  const text = await response.text();
+  let payload = {};
+  try {
+    payload = text ? JSON.parse(text) : {};
+  } catch {
+    payload = {};
+  }
+  if (!response.ok || !payload?.token) {
+    throw new Error(
+      `PBK load team token unavailable (${response.status}) after ${Math.round(performance.now() - started)}ms.`
+    );
+  }
+  return String(payload.token || '');
+}
+
 async function hit(index, pathName, auth = true) {
   const started = performance.now();
   const headers = {};
   if (API_KEY && auth && pathName !== '/health') headers.Authorization = `Bearer ${API_KEY}`;
+  if (!API_KEY && teamToken && auth && pathName !== '/health') headers['X-PBK-Team-Token'] = teamToken;
   try {
     const response = await fetch(`${BASE_URL}${pathName}`, { headers });
     await response.arrayBuffer();
@@ -39,6 +66,8 @@ async function hit(index, pathName, auth = true) {
     };
   }
 }
+
+teamToken = await getTeamToken();
 
 async function runPath(pathName, auth = true) {
   const started = performance.now();

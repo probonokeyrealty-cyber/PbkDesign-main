@@ -227,9 +227,12 @@ assert.ok(
 );
 assert.ok(
   bridgeSource.includes('COMPACT_STATE_ARRAY_LIMIT') &&
-    /return compact \? items\.slice\(0, Math\.min\(limit, COMPACT_STATE_ARRAY_LIMIT\)\) : items/.test(bridgeSource) &&
+    bridgeSource.includes('COMPACT_STATE_RECORD_BYTES') &&
+    bridgeSource.includes('function compactSnapshotRecord') &&
+    bridgeSource.includes('compact_state_record_limit') &&
+    /items\.slice\(0, Math\.min\(limit, COMPACT_STATE_ARRAY_LIMIT\)\)\.map\(\(item\) => compactSnapshotRecord\(item\)\)/.test(bridgeSource) &&
     bridgeSource.includes('response.pbkCompactJson = compact'),
-  'compact /state reads must cap array payloads and skip pretty JSON serialization.'
+  'compact /state reads must cap array payloads, summarize oversized records, and skip pretty JSON serialization.'
 );
 for (const ttlMarker of [
   /agentRegistry:\s*Math\.max\(5000,\s*Math\.min\(60000,\s*Number\(process\.env\.PBK_READ_CACHE_AGENT_REGISTRY_TTL_MS\s*\|\|\s*60000\)\)\)/,

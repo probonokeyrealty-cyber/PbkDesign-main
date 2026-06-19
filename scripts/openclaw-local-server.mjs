@@ -512,6 +512,14 @@ const COMPACT_STATE_ARRAY_LIMIT = Math.max(
   5,
   Math.min(80, Number(process.env.PBK_COMPACT_STATE_ARRAY_LIMIT || 24))
 );
+const COMPACT_STATE_RECORD_BYTES = Math.max(
+  1000,
+  Math.min(20000, Number(process.env.PBK_COMPACT_STATE_RECORD_BYTES || 6000))
+);
+const COMPACT_STATE_NESTED_BYTES = Math.max(
+  500,
+  Math.min(8000, Number(process.env.PBK_COMPACT_STATE_NESTED_BYTES || 2500))
+);
 const COMMAND_INTENT_ROUTER_ENABLED = !/^(0|false|no|off)$/i.test(
   String(process.env.PBK_COMMAND_INTENT_ROUTER_ENABLED || 'true').trim()
 );
@@ -55509,9 +55517,92 @@ async function handleEvent(eventType, payload = {}) {
   };
 }
 
+function estimateSnapshotBytes(value) {
+  try {
+    return Buffer.byteLength(JSON.stringify(value ?? null));
+  } catch {
+    return Number.POSITIVE_INFINITY;
+  }
+}
+
+function compactSnapshotText(value = '', maxLength = 800) {
+  const text = String(value || '');
+  if (text.length <= maxLength) return text;
+  return `${text.slice(0, maxLength)}...`;
+}
+
+function compactSnapshotNestedValue(value, depth = 0) {
+  if (value == null || typeof value === 'number' || typeof value === 'boolean') return value;
+  if (typeof value === 'string') return compactSnapshotText(value, depth > 0 ? 360 : 800);
+  const bytes = estimateSnapshotBytes(value);
+  if (bytes <= COMPACT_STATE_NESTED_BYTES) return value;
+  if (Array.isArray(value)) {
+    return {
+      _compact: true,
+      count: value.length,
+      bytes,
+      preview: value.slice(0, 3).map((item) => compactSnapshotNestedValue(item, depth + 1)),
+    };
+  }
+  if (typeof value === 'object') {
+    const summary = {
+      _compact: true,
+      bytes,
+      keys: Object.keys(value).slice(0, 16),
+    };
+    for (const key of [
+      'id',
+      'ok',
+      'ready',
+      'status',
+      'result',
+      'source',
+      'provider',
+      'mode',
+      'error',
+      'createdAt',
+      'updatedAt',
+      'generatedAt',
+      'latencyMs',
+      'confidence',
+    ]) {
+      const nested = value?.[key];
+      if (nested == null || ['string', 'number', 'boolean'].includes(typeof nested)) {
+        if (nested != null) summary[key] = compactSnapshotNestedValue(nested, depth + 1);
+      }
+    }
+    return summary;
+  }
+  return value;
+}
+
+function compactSnapshotRecord(item) {
+  if (!item || typeof item !== 'object') return item;
+  const bytes = estimateSnapshotBytes(item);
+  if (bytes <= COMPACT_STATE_RECORD_BYTES) return item;
+  if (Array.isArray(item)) return compactSnapshotNestedValue(item);
+  const compacted = {
+    _compact: {
+      originalBytes: bytes,
+      reason: 'compact_state_record_limit',
+    },
+  };
+  for (const [key, value] of Object.entries(item)) {
+    if (value == null || ['number', 'boolean'].includes(typeof value)) {
+      compacted[key] = value;
+    } else if (typeof value === 'string') {
+      compacted[key] = compactSnapshotText(value);
+    } else {
+      compacted[key] = compactSnapshotNestedValue(value);
+    }
+  }
+  return compacted;
+}
+
 function limitSnapshotArray(items, limit, compact = false) {
   if (!Array.isArray(items)) return [];
-  return compact ? items.slice(0, Math.min(limit, COMPACT_STATE_ARRAY_LIMIT)) : items;
+  if (!compact) return items;
+  return items.slice(0, Math.min(limit, COMPACT_STATE_ARRAY_LIMIT)).map((item) => compactSnapshotRecord(item));
 }
 
 function buildStateSnapshot(options = {}) {

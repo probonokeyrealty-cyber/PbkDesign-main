@@ -228,7 +228,7 @@
     "desktop:pack": "npm --prefix ./electron-desktop run pack",
     "desktop:dist": "npm --prefix ./electron-desktop run dist",
     "skills:auto-learn": "node ./scripts/auto-skill-learner.mjs",
-    "lint": "eslint \"src/app/**/*.{ts,tsx}\" \"scripts/{agent-registry,ava-assistant-chat,ava-intent-router,ava-governed-skill-router,ava-emotional-script-library,ava-live-skill-fallback,ava-live-turn-contract,pbk-intelligence-context,pbk-intelligence-context-runtime,nurture-agent,agent-teams,auto-skill-learner,research-additives}.mjs\" \"scripts/tool-handlers/**/*.mjs\" --max-warnings=0 --cache",
+    "lint": "eslint \"src/app/**/*.{ts,tsx}\" \"scripts/agent-registry.mjs\" \"scripts/ava-assistant-chat.mjs\" \"scripts/ava-intent-router.mjs\" \"scripts/ava-governed-skill-router.mjs\" \"scripts/ava-emotional-script-library.mjs\" \"scripts/ava-live-skill-fallback.mjs\" \"scripts/ava-live-turn-contract.mjs\" \"scripts/pbk-intelligence-context.mjs\" \"scripts/pbk-intelligence-context-runtime.mjs\" \"scripts/nurture-agent.mjs\" \"scripts/agent-teams.mjs\" \"scripts/auto-skill-learner.mjs\" \"scripts/research-additives.mjs\" \"scripts/tool-handlers/**/*.mjs\" --max-warnings=0 --cache",
     "format": "prettier --write \"**/*.{js,mjs,ts,tsx,json,md,css}\"",
     "format:check": "prettier --check \"**/*.{js,mjs,ts,tsx,json,md,css}\"",
     "test:unit": "node --experimental-vm-modules ./node_modules/jest/bin/jest.js --config ./jest.config.mjs",

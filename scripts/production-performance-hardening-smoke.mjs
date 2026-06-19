@@ -225,6 +225,12 @@ assert.ok(
     ),
   'compact /state reads must use a very short burst cache that is invalidated on state persistence.'
 );
+assert.ok(
+  bridgeSource.includes('COMPACT_STATE_ARRAY_LIMIT') &&
+    /return compact \? items\.slice\(0, Math\.min\(limit, COMPACT_STATE_ARRAY_LIMIT\)\) : items/.test(bridgeSource) &&
+    bridgeSource.includes('response.pbkCompactJson = compact'),
+  'compact /state reads must cap array payloads and skip pretty JSON serialization.'
+);
 for (const ttlMarker of [
   /agentRegistry:\s*Math\.max\(5000,\s*Math\.min\(60000,\s*Number\(process\.env\.PBK_READ_CACHE_AGENT_REGISTRY_TTL_MS\s*\|\|\s*60000\)\)\)/,
   /communicationIdentities:\s*Math\.max\(5000,\s*Math\.min\(60000,\s*Number\(process\.env\.PBK_READ_CACHE_COMMUNICATION_IDENTITIES_TTL_MS\s*\|\|\s*60000\)\)\)/,

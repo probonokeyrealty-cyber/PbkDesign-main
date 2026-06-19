@@ -508,6 +508,10 @@ const BRIDGE_READ_CACHE_TTL_MS = Object.freeze({
   productionPrimaryPath: Math.max(5000, Math.min(60000, Number(process.env.PBK_READ_CACHE_PRIMARY_PATH_TTL_MS || 15000))),
   systemSourceLabels: Math.max(1000, Math.min(30000, Number(process.env.PBK_READ_CACHE_SOURCE_LABELS_TTL_MS || 5000))),
 });
+const COMPACT_STATE_ARRAY_LIMIT = Math.max(
+  5,
+  Math.min(80, Number(process.env.PBK_COMPACT_STATE_ARRAY_LIMIT || 24))
+);
 const COMMAND_INTENT_ROUTER_ENABLED = !/^(0|false|no|off)$/i.test(
   String(process.env.PBK_COMMAND_INTENT_ROUTER_ENABLED || 'true').trim()
 );
@@ -55507,7 +55511,7 @@ async function handleEvent(eventType, payload = {}) {
 
 function limitSnapshotArray(items, limit, compact = false) {
   if (!Array.isArray(items)) return [];
-  return compact ? items.slice(0, limit) : items;
+  return compact ? items.slice(0, Math.min(limit, COMPACT_STATE_ARRAY_LIMIT)) : items;
 }
 
 function buildStateSnapshot(options = {}) {
@@ -55652,7 +55656,7 @@ function buildStateSnapshot(options = {}) {
 }
 
 function json(response, statusCode, payload) {
-  const body = Buffer.from(JSON.stringify(payload, null, 2));
+  const body = Buffer.from(JSON.stringify(payload, null, response?.pbkCompactJson ? 0 : 2));
   const headers = {
     ...getResponseCorsHeaders(response),
     'Content-Type': 'application/json; charset=utf-8',
@@ -64593,6 +64597,7 @@ const server = createServer(async (request, response) => {
             url.searchParams.toString()
           )
         : buildStateSnapshot({ compact });
+      response.pbkCompactJson = compact;
       json(response, 200, payload);
       return;
     }

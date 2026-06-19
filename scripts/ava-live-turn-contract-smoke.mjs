@@ -224,6 +224,16 @@ assert(
   'DeepSeek live strategist calls must have bounded retry/backoff support before contract fallback.'
 );
 assert(
+  /async function buildBrowserVoiceConversationalReply[\s\S]*buildAvaScriptRotationSnapshot\(\{[\s\S]*activeSkill:\s*scripts\.governedSkillSelection\?\.selectedSkill/.test(
+    bridge
+  ) &&
+    /source:\s*'browser-voice'[\s\S]*governedSkillSelection:\s*scripts\.governedSkillSelection/.test(
+      bridge
+    ) &&
+    /emotionalPhase:\s*scripts\.emotionalPhase/.test(bridge),
+  'Browser voice replies must consume governed skills and emotional scripts through the same turn contract as Telnyx live calls.'
+);
+assert(
   bridge.includes('buildAvaLivePathLanguage') &&
     bridge.includes('getAvaLivePathKey'),
   'Live sales fallback must use path-aware deal language instead of hardcoded cash-lane wording.'

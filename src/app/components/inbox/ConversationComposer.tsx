@@ -331,6 +331,14 @@ export function ConversationComposer({
     !scheduleInvalid &&
     !exactMessageAlreadyQueued &&
     !sending;
+  const canRetrySend =
+    Boolean(recipient && body.trim() && senderIdentityId && senderMatchesChannel) &&
+    !senderLoading &&
+    !senderRestriction &&
+    !blockedByDnc &&
+    !recommendationGuard &&
+    !scheduleInvalid &&
+    !sending;
   const showSendGuard = Boolean(
     blockedByDnc ||
     recommendationGuard ||
@@ -538,8 +546,8 @@ export function ConversationComposer({
     }
   };
 
-  const sendMessage = async () => {
-    if (!canSend) return;
+  const sendMessage = async (options: { retry?: boolean } = {}) => {
+    if (options.retry ? !canRetrySend : !canSend) return;
     const submittedChannel = channel;
     const submittedBody = body.trim();
     const submittedSubject = channel === 'email' ? subject.trim() : '';
@@ -589,13 +597,16 @@ export function ConversationComposer({
               : `Manual send is direct. Provider result: ${response.result || 'accepted'}.`),
         actionLabel: outboxOutcome?.actionLabel,
       });
-      if (heldForRetry) {
+      if (approvalRequired || response.scheduled) {
         setSubmittedFingerprint(submittedSendFingerprint);
+      } else if (heldForRetry) {
+        setSubmittedFingerprint('');
       } else if (
         channelRef.current === submittedChannel &&
         bodyRef.current.trim() === submittedBody &&
         (submittedChannel !== 'email' || subjectRef.current.trim() === submittedSubject)
       ) {
+        setSubmittedFingerprint('');
         setBody('');
         if (submittedChannel === 'email') setSubject('');
       }
@@ -777,7 +788,7 @@ export function ConversationComposer({
             outcome={sendOutcome}
             label="send result"
             onDismiss={() => setSendOutcome(null)}
-            onAction={sendOutcome.actionLabel ? () => void sendMessage() : undefined}
+            onAction={sendOutcome.actionLabel ? () => void sendMessage({ retry: true }) : undefined}
           />
         )}
       </div>

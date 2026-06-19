@@ -344,9 +344,11 @@ async function main() {
       }),
     }).then((response) => response.json());
     assert(
-      providerActionApproval?.providerActionResult?.ok === true
-        && providerActionApproval?.providerActionResult?.call?.phone === '+16145550123',
-      'Approved provider-action telnyx_call did not replay into a call record.',
+      providerActionApproval?.providerActionResult?.ok === false
+        && providerActionApproval?.providerActionResult?.result === 'provider_missing'
+        && providerActionApproval?.providerActionResult?.call?.phone === '+16145550123'
+        && providerActionApproval?.providerActionResult?.call?.status === 'provider_missing',
+      'Approved provider-action telnyx_call must replay into an explicit provider-missing call record.',
     );
     const unsafeOfferInvoke = await fetch(`${BASE_URL}/invoke`, {
       method: 'POST',

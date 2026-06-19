@@ -28,6 +28,9 @@ function skillHaystack(move = {}, context = {}) {
     move.reason,
     move.governedSkill?.name,
     move.governedSkill?.id,
+    move.governedSkill?.category,
+    move.governedSkill?.response,
+    move.governedSkill?.nextQuestion,
     ...(Array.isArray(move.governedSkill?.reasonCodes) ? move.governedSkill.reasonCodes : []),
     context.transcript,
   ].filter(Boolean).join(' '));
@@ -51,6 +54,17 @@ export function buildAvaLiveGovernedSkillReply(move = {}, context = {}) {
   const haystack = skillHaystack(move, context);
   const transcript = lower(context.transcript || '');
   const fallbackQuestion = clean(context.fallbackQuestion || context.fallback || '');
+  const emotionalScript =
+    move.governedSkill?.emotionalScript === true ||
+    /\b(ava[-_ ]?emotional|seller[_ -]?engagement|empathetic|memory connection|emotional discovery|comfort framing|trust process|consultative commitment)\b/.test(
+      haystack
+    );
+
+  if (emotionalScript) {
+    const response = clean(move.governedSkill?.response || '');
+    const nextQuestion = clean(move.governedSkill?.nextQuestion || fallbackQuestion);
+    return ensureQuestion(response || move.text || move.exactNextMove, nextQuestion);
+  }
 
   if (/\b(scams?|legit|trust|proof|credible|credibility|distrust|validate|validate_the_concern)\b/.test(haystack)) {
     return ensureQuestion(

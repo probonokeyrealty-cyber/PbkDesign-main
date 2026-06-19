@@ -288,7 +288,7 @@ html[data-theme='light'] .pbk-leads-surface .border-slate-700 {
 .drill-backdrop {
   position: fixed;
   inset: 0;
-  z-index: 60;
+  z-index: 120;
   background: rgba(2, 6, 23, 0.78);
   backdrop-filter: blur(10px);
 }

@@ -260,6 +260,7 @@ export function buildPBKIntelligenceFleetReadiness({ context = {}, agents = [] }
     skills: Boolean(context.skills?.ready),
     turnContract: Boolean(context.turnContract?.ok && context.turnContract?.intent),
     dataFreshness: Boolean(context.dataFreshness?.ready),
+    agentCoverage: !agentIds.size || missingAgents.length === 0,
   };
   const ready = Object.values(required).every(Boolean);
   return {

@@ -88,9 +88,29 @@ const readiness = buildPBKIntelligenceFleetReadiness({
   ],
 });
 
-assert.equal(readiness.ready, true);
+assert.equal(readiness.ready, false);
 assert.equal(readiness.required.memory, true);
 assert.equal(readiness.required.skills, true);
 assert.equal(readiness.required.leadIdentity, true);
+assert.equal(readiness.required.agentCoverage, false);
+assert(readiness.missingAgents.includes('rex'));
+assert(readiness.missingAgents.includes('qa-agent'));
+
+const fullFleetReadiness = buildPBKIntelligenceFleetReadiness({
+  context,
+  agents: [
+    { id: 'ava', status: 'active' },
+    { id: 'rex', status: 'active' },
+    { id: 'qa-agent', status: 'active' },
+    { id: 'script-rotator', status: 'active' },
+    { id: 'prosody-tuner', status: 'active' },
+    { id: 'nurture-agent', status: 'active' },
+    { id: 'call-analyzer', status: 'active' },
+  ],
+});
+
+assert.equal(fullFleetReadiness.ready, true);
+assert.equal(fullFleetReadiness.required.agentCoverage, true);
+assert.deepEqual(fullFleetReadiness.missingAgents, []);
 
 console.log('pbk-intelligence-context-smoke: ok');

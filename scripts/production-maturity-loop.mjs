@@ -45,10 +45,11 @@ function isoFromNow(now = () => Date.now()) {
 }
 
 function isCircuitEligibleProviderFailure(result = {}) {
-  if (!result || typeof result !== 'object') return false;
-  if (result.ok !== false) return false;
-  if (result.skipped === true) return false;
-  const code = normalizeCode(result.result || result.code || '');
+  const failure = extractProviderFailureCandidate(result);
+  if (!failure || typeof failure !== 'object') return false;
+  if (failure.ok !== false) return false;
+  if (failure.skipped === true) return false;
+  const code = normalizeCode(failure.result || failure.code || '');
   if (
     [
       'provider_missing',
@@ -69,10 +70,55 @@ function isCircuitEligibleProviderFailure(result = {}) {
 }
 
 function describeReturnedProviderFailure(result = {}) {
+  const failure = extractProviderFailureCandidate(result) || result;
   return (
-    clean(result.error || result.message || result.result || result.code) ||
-    (result.status ? `Provider returned ${result.status}` : 'Provider returned a failed result.')
+    clean(failure.error || failure.message || failure.result || failure.code) ||
+    (failure.status ? `Provider returned ${failure.status}` : 'Provider returned a failed result.')
   );
+}
+
+function extractProviderFailureCandidate(result = {}) {
+  if (!result || typeof result !== 'object') return null;
+  if (result.ok === false) return result;
+
+  const nestedCandidates = [
+    result.result,
+    result.response,
+    result.providerResult,
+    result.delivery,
+    result.telnyx,
+    result.sms,
+    result.email,
+    result.call,
+  ];
+
+  for (const candidate of nestedCandidates) {
+    if (!candidate || typeof candidate !== 'object') continue;
+    const nested = extractProviderFailureCandidate(candidate);
+    if (nested) return nested;
+  }
+
+  if (Number(result.statusCode || 0) >= 400) {
+    return {
+      ...result,
+      ok: false,
+      status: result.status || result.statusCode,
+      result: result.result || 'provider_error',
+    };
+  }
+
+  if (String(result.outbox?.status || '').toLowerCase() === 'failed') {
+    return {
+      ...(result.outbox.providerResult && typeof result.outbox.providerResult === 'object'
+        ? result.outbox.providerResult
+        : {}),
+      ok: false,
+      result: result.outbox.providerResult?.result || result.outbox.result || 'provider_error',
+      error: result.outbox.error || result.error || '',
+    };
+  }
+
+  return null;
 }
 
 export function classifySellerFinalOutcome(input = {}) {

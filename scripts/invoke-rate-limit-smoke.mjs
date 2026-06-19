@@ -129,8 +129,12 @@ assert(
 assert(
   /function hasTeamAuthCredentials/.test(bridge) &&
     (bridge.match(/const teamAuthPresented = hasTeamAuthCredentials\(request, body\);/g) || []).length >= 2 &&
-    /contract\|docusign\|provider\|admin\|kill\|delete\|campaign\|outbound\|prompt\|rex-decision\|nurture\|sms\|email\|call\|send/.test(bridge),
-  'Team-session approval decisions must automatically enforce downstream action restrictions.'
+    /canApproveProviderActions/.test(bridge) &&
+    /canPlaceCalls/.test(bridge) &&
+    /canSendSms/.test(bridge) &&
+    /canSendEmail/.test(bridge) &&
+    /contract\|docusign\|admin\|kill\|delete\|campaign\|prompt\|rex-decision\|nurture/.test(bridge),
+  'Team-session approval decisions must enforce explicit communication permissions while keeping admin/contract/campaign actions restricted.'
 );
 
 const packageJson = JSON.parse(

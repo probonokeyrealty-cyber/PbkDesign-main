@@ -127,6 +127,34 @@ assert.equal(
   'open',
   'Repeated returned provider failures should open the circuit.'
 );
+
+const wrappedRouteFailureBreaker = createProviderCircuitBreaker({
+  now,
+  failureThreshold: 2,
+  cooldownMs: 60_000,
+});
+for (let attempt = 1; attempt <= 2; attempt += 1) {
+  await wrappedRouteFailureBreaker.execute('telnyx', async () => ({
+    result: {
+      result: {
+        ok: false,
+        result: 'provider_error',
+        status: 409,
+        error: `Telnyx wrapper failure ${attempt}`,
+      },
+      qaValidation: {
+        ok: true,
+        skipped: true,
+      },
+    },
+  }));
+}
+assert.equal(
+  wrappedRouteFailureBreaker.getStatus('telnyx').state,
+  'open',
+  'Provider circuits must inspect nested route-wrapper failures, not only top-level ok:false.'
+);
+
 const missingConfigBreaker = createProviderCircuitBreaker({
   now,
   failureThreshold: 1,

@@ -1739,22 +1739,21 @@ function AvaComposer({
                 </div>
               </details>
 
-              <button
-                type="button"
-                className={[
-                  'grid size-11 place-items-center rounded-lg border sm:hidden',
-                  requiresApproval
-                    ? 'border-[var(--ava-warning-border)] bg-[var(--ava-warning-soft)] text-[var(--ava-warning)]'
-                    : 'border-[var(--ava-border)] text-[var(--ava-text-muted)]',
-                ].join(' ')}
-                onClick={() => setRequiresApproval(!requiresApproval)}
-                aria-label={
-                  requiresApproval ? 'Disable requested approval' : 'Request approval for command'
-                }
-                aria-pressed={requiresApproval}
-              >
-                <ShieldCheck size={17} />
-              </button>
+              <details className="group relative sm:hidden">
+                <summary className="grid size-11 cursor-pointer list-none place-items-center rounded-lg border border-[var(--ava-border)] text-[var(--ava-text-muted)]">
+                  <Settings2 size={17} />
+                  <span className="sr-only">Mobile command settings</span>
+                </summary>
+                <div className="pbk-ava-mobile-settings-popover absolute bottom-[calc(100%+8px)] right-0 z-30 w-[min(340px,calc(100vw-32px))] rounded-xl border border-[var(--ava-border)] bg-[var(--ava-panel-elevated)] p-3 shadow-2xl">
+                  <AdvancedSettings
+                    compact
+                    requiresApproval={requiresApproval}
+                    setRequiresApproval={setRequiresApproval}
+                    submitLane={submitLane}
+                    setSubmitLane={setSubmitLane}
+                  />
+                </div>
+              </details>
 
               <PbkButton
                 type="button"
@@ -1812,13 +1811,19 @@ function AdvancedSettings({
   compact?: boolean;
 }) {
   return (
-    <div className={compact ? 'flex flex-wrap items-center justify-between gap-2' : 'space-y-4'}>
-      <div>
+    <div
+      className={
+        compact
+          ? 'pbk-ava-advanced-settings is-compact flex flex-wrap items-center justify-between gap-2'
+          : 'pbk-ava-advanced-settings space-y-4'
+      }
+    >
+      <div className="min-w-0">
         {!compact && <div className="pbk-label mb-2">Execution lane</div>}
         <div
           role="radiogroup"
           aria-label="Execution lane"
-          className="flex rounded-lg bg-[var(--ava-bg)] p-1"
+          className="pbk-ava-lane-toggle flex rounded-lg bg-[var(--ava-bg)] p-1"
         >
           {(['rest', 'invoke'] as const).map((lane) => (
             <button

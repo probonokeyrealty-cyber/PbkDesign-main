@@ -12,24 +12,18 @@
       "name": "Approval Request Webhook",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2,
-      "position": [
-        -820,
-        -180
-      ]
+      "position": [-820, -180]
     },
     {
       "parameters": {
         "mode": "runOnceForAllItems",
-        "jsCode": "const input = $input.first().json;\nconst source = input.body ?? input;\nconst id = source.id || `approval-${Date.now()}`;\nconst headers = input.headers || {};\nconst forwardedProto = headers['x-forwarded-proto'] || headers['X-Forwarded-Proto'] || 'https';\nconst forwardedHost = headers['x-forwarded-host'] || headers['X-Forwarded-Host'] || headers.host || headers.Host || '127.0.0.1:5678';\nconst baseUrl = `${forwardedProto}://${forwardedHost}`.replace(/\\/+$/g, '');\nconst decisionPath = '/webhook/pbkApprovalFanoutWorkflow/approval%2520decision%2520webhook/pbk-approval-decision';\nreturn [{\n  json: {\n    id,\n    leadId: source.leadId || '',\n    leadName: source.leadName || source.name || 'Unknown seller',\n    address: source.address || '',\n    offerPrice: source.offerPrice || 0,\n    mao: source.mao || 0,\n    notes: source.notes || '',\n    createdAt: source.createdAt || new Date().toISOString(),\n    approveUrl: `${baseUrl}${decisionPath}?id=${id}&status=approved`,\n    rejectUrl: `${baseUrl}${decisionPath}?id=${id}&status=rejected`,\n    notifyPayload: {\n      eventType: 'approval-notify',\n      payload: {\n        actor: 'n8n',\n        category: 'APPROVAL',\n        status: 'fanned-out',\n        text: `Approval request ready for ${source.leadName || source.name || 'Unknown seller'} at ${source.address || ''}`,\n        target: source.address || '',\n        id,\n        leadName: source.leadName || source.name || 'Unknown seller',\n        address: source.address || '',\n        offerPrice: source.offerPrice || 0,\n        mao: source.mao || 0,\n        notes: source.notes || '',\n        approveUrl: `${baseUrl}${decisionPath}?id=${id}&status=approved`,\n        rejectUrl: `${baseUrl}${decisionPath}?id=${id}&status=rejected`\n      }\n    }\n  }\n}];"
+        "jsCode": "const input = $input.first().json;\nconst source = input.body ?? input;\nconst id = source.id || `approval-${Date.now()}`;\nconst headers = input.headers || {};\nconst forwardedProto = headers['x-forwarded-proto'] || headers['X-Forwarded-Proto'] || 'https';\nconst forwardedHost = headers['x-forwarded-host'] || headers['X-Forwarded-Host'] || headers.host || headers.Host || '127.0.0.1:5678';\nconst baseUrl = `${forwardedProto}://${forwardedHost}`.replace(/\\/+$/g, '');\nconst decisionPath = '/webhook/pbk-approval-decision';\nreturn [{\n  json: {\n    id,\n    leadId: source.leadId || '',\n    leadName: source.leadName || source.name || 'Unknown seller',\n    address: source.address || '',\n    offerPrice: source.offerPrice || 0,\n    mao: source.mao || 0,\n    notes: source.notes || '',\n    createdAt: source.createdAt || new Date().toISOString(),\n    approveUrl: `${baseUrl}${decisionPath}?id=${id}&status=approved`,\n    rejectUrl: `${baseUrl}${decisionPath}?id=${id}&status=rejected`,\n    notifyPayload: {\n      eventType: 'approval-notify',\n      payload: {\n        actor: 'n8n',\n        category: 'APPROVAL',\n        status: 'fanned-out',\n        text: `Approval request ready for ${source.leadName || source.name || 'Unknown seller'} at ${source.address || ''}`,\n        target: source.address || '',\n        id,\n        leadName: source.leadName || source.name || 'Unknown seller',\n        address: source.address || '',\n        offerPrice: source.offerPrice || 0,\n        mao: source.mao || 0,\n        notes: source.notes || '',\n        approveUrl: `${baseUrl}${decisionPath}?id=${id}&status=approved`,\n        rejectUrl: `${baseUrl}${decisionPath}?id=${id}&status=rejected`\n      }\n    }\n  }\n}];"
       },
       "id": "CodeNormalizeApproval",
       "name": "Normalize Approval Request",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [
-        -560,
-        -180
-      ]
+      "position": [-560, -180]
     },
     {
       "parameters": {
@@ -47,10 +41,7 @@
       "name": "Notify Approval Channel",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [
-        -280,
-        -180
-      ]
+      "position": [-280, -180]
     },
     {
       "parameters": {
@@ -61,10 +52,7 @@
       "name": "Respond To Approval Request",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
-      "position": [
-        0,
-        -180
-      ]
+      "position": [0, -180]
     },
     {
       "parameters": {
@@ -77,10 +65,7 @@
       "name": "Approval Decision Webhook",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2,
-      "position": [
-        -820,
-        140
-      ]
+      "position": [-820, 140]
     },
     {
       "parameters": {
@@ -91,10 +76,7 @@
       "name": "Normalize Approval Decision",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [
-        -560,
-        140
-      ]
+      "position": [-560, 140]
     },
     {
       "parameters": {
@@ -112,10 +94,7 @@
       "name": "Post Decision To OpenClaw",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [
-        -280,
-        140
-      ]
+      "position": [-280, 140]
     },
     {
       "parameters": {
@@ -126,10 +105,7 @@
       "name": "Respond To Approval Decision",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
-      "position": [
-        0,
-        140
-      ]
+      "position": [0, 140]
     }
   ],
   "connections": {

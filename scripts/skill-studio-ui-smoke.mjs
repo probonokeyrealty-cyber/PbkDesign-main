@@ -168,5 +168,10 @@ assert(
     ),
   'Skill candidate mobile sheet must sit above shell nav and keep the governed-skill button tappable.'
 );
+assert(
+  route.includes("selected.lifecycleState === 'ready_for_approval'") &&
+    !route.includes("if (compactViewport) setSelectedId('')"),
+  'Skill Studio must only approve ready-for-approval versions and must preserve selected skills across mobile viewport changes.'
+);
 
 console.log('skill-studio-ui-smoke: ok');

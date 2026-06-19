@@ -14,6 +14,10 @@ const workflow = readFileSync(
   resolve(root, '.github/workflows/tooling-verify.yml'),
   'utf8'
 );
+const approvalFanoutWorkflow = readFileSync(
+  resolve(root, 'n8n-lite/pbk-approval-fanout.workflow.json'),
+  'utf8'
+);
 const skillGovernanceStore = readFileSync(
   resolve(root, 'scripts/skill-governance-store.mjs'),
   'utf8'
@@ -169,6 +173,38 @@ assert(
     /staleRenderHost = isPotentiallyStaleRenderDatabaseHost\(host\)/.test(bridge) &&
     !/staleRenderHost = \/[^\n]+dpg-/.test(bridge),
   'Render Postgres stale-host warnings must detect raw IP pins instead of hard-coded DNS hostnames.'
+);
+assert(
+  /function normalizeApprovalCreationResult/.test(bridge) &&
+    /const approvalResult = await toolHandlers\.createApproval/.test(bridge) &&
+    /const \{ approval, fanout, slack \} = normalizeApprovalCreationResult\(approvalResult\)/.test(bridge) &&
+    /approvalFanout: fanout/.test(bridge),
+  'Approval guard results must expose approval.id directly while keeping fanout metadata separate.'
+);
+assert(
+  /canPlaceCalls/.test(bridge) &&
+    /canSendSms/.test(bridge) &&
+    /canSendEmail/.test(bridge) &&
+    /canApproveProviderActions/.test(bridge) &&
+    /return deny\('canSendSms', 'send SMS messages'\)/.test(bridge) &&
+    /return deny\('canSendEmail', 'send emails'\)/.test(bridge) &&
+    /return deny\('canPlaceCalls', 'place calls'\)/.test(bridge),
+  'Team-auth bridge access must model explicit call/SMS/email permissions for manual operator actions.'
+);
+assert(
+  /status:\s*delivery\?\.ok \? 'sent' : delivery\?\.result === 'provider_missing' \|\| !delivery \? 'provider_missing' : 'failed'/.test(
+    bridge
+  ) &&
+    /status:\s*telnyxMeta\.voiceReady && fromNumber \? 'local_preview' : 'provider_missing'/.test(
+      bridge
+    ) &&
+    /Telnyx voice provider missing - no live call was placed/.test(bridge),
+  'Provider-missing manual call/email artifacts must not be labeled queued or live.'
+);
+assert(
+  approvalFanoutWorkflow.includes("const decisionPath = '/webhook/pbk-approval-decision'") &&
+    !approvalFanoutWorkflow.includes('approval%2520decision%2520webhook'),
+  'n8n approval fanout links must use the canonical decision webhook path without double encoding.'
 );
 
 const docusignSecret = 'pbk-docusign-test-secret';

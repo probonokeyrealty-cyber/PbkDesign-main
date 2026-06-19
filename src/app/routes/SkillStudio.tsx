@@ -754,7 +754,6 @@ export function SkillStudio() {
   const [createOpen, setCreateOpen] = useState(searchParams.get('create') === '1');
   const [agentId, setAgentId] = useState('ava');
   const [rolloutPercent, setRolloutPercent] = useState(10);
-  const [compactViewport, setCompactViewport] = useState(false);
 
   const selected = useMemo(
     () => items.find((item) => item.versionId === selectedId) || null,
@@ -824,28 +823,14 @@ export function SkillStudio() {
       setSelectedId((current) =>
         nextItems.some((item) => item.versionId === current)
           ? current
-          : compactViewport
-            ? ''
-            : nextItems[0]?.versionId || ''
+          : nextItems[0]?.versionId || ''
       );
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : String(loadError));
     } finally {
       setLoading(false);
     }
-  }, [compactViewport, lifecycleFilter, search]);
-
-  useEffect(() => {
-    const media = window.matchMedia('(max-width: 760px)');
-    const update = () => setCompactViewport(media.matches);
-    update();
-    media.addEventListener('change', update);
-    return () => media.removeEventListener('change', update);
-  }, []);
-
-  useEffect(() => {
-    if (compactViewport) setSelectedId('');
-  }, [compactViewport]);
+  }, [lifecycleFilter, search]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => void load(), 180);
@@ -883,14 +868,7 @@ export function SkillStudio() {
 
   const primaryAction = !selected
     ? null
-    : [
-          'candidate',
-          'needs_review',
-          'test_ready',
-          'testing',
-          'failed',
-          'ready_for_approval',
-        ].includes(selected.lifecycleState)
+    : selected.lifecycleState === 'ready_for_approval'
       ? {
           label: 'Approve exact version',
           icon: FileCheck2,

@@ -9727,6 +9727,20 @@ html[data-theme='light'] .pbk-ava-chat-surface {
   min-width: 0;
 }
 
+.pbk-ava-advanced-settings {
+  min-width: 0;
+}
+
+.pbk-ava-lane-toggle {
+  max-width: 100%;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.pbk-ava-lane-toggle button {
+  min-width: 0;
+}
+
 .pbk-ava-chat-action-rail {
   display: flex;
   gap: 6px;
@@ -9774,6 +9788,17 @@ html[data-theme='light'] .pbk-ava-chat-surface {
 }
 
 @media (max-width: 640px) {
+  .pbk-ava-chat-action-rail {
+    flex-wrap: wrap;
+    overflow-x: visible;
+  }
+
+  .pbk-ava-chat-action-rail button {
+    flex: 1 1 calc(50% - 6px);
+    justify-content: center;
+    min-width: 0;
+  }
+
   .pbk-ava-chat-toolbar {
     display: grid !important;
     grid-template-columns: minmax(0, 1fr) 44px;
@@ -9840,6 +9865,33 @@ html[data-theme='light'] .pbk-ava-chat-surface {
     min-width: 0;
     padding-right: 8px;
     padding-left: 8px;
+  }
+
+  .pbk-ava-mobile-settings-popover {
+    right: -50px;
+  }
+
+  .pbk-ava-advanced-settings.is-compact {
+    width: 100%;
+    overflow: hidden;
+  }
+
+  .pbk-ava-advanced-settings.is-compact > div {
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  .pbk-ava-advanced-settings.is-compact .pbk-ava-lane-toggle {
+    width: 100%;
+  }
+
+  .pbk-ava-advanced-settings.is-compact .pbk-ava-lane-toggle button {
+    flex: 1 1 0;
+    padding-right: 8px;
+    padding-left: 8px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 }
 

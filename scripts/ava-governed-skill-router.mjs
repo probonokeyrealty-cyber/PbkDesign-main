@@ -187,12 +187,50 @@ function scoreSkill(skill = {}, context = {}) {
   const transcript = String(context.transcript || context.query || context.text || '');
   const lastObjection = normalize(context.lastObjection || context.objection || '');
   const emotion = normalize(context.emotion || context.sellerEmotion || '');
+  const emotionalPhase = normalize(context.emotionalPhase || context.emotionPhase || '');
   const stage = normalize(context.stage || context.leadStage || '');
   const path = normalize(context.path || context.pathKey || context.selectedPath || '');
   const intent = normalize(context.intent || context.sellerIntent || '');
   const reasons = [];
   const matchedTriggers = [];
   let score = 0;
+
+  const blockedEmotions = policyValues(policy, [
+    'blockedEmotions',
+    'blockedSellerEmotions',
+    'doNotUseEmotions',
+  ]);
+  const blockedIntents = policyValues(policy, [
+    'blockedIntents',
+    'blockedSellerIntents',
+    'doNotUseIntents',
+  ]);
+  const blockedObjections = policyValues(policy, [
+    'blockedObjections',
+    'blockedObjectionTags',
+    'doNotUseObjections',
+  ]);
+  const blockedPhases = policyValues(policy, [
+    'blockedEmotionalPhases',
+    'blockedEmotionPhases',
+    'doNotUseEmotionalPhases',
+  ]);
+  if (
+    (emotion && blockedEmotions.includes(emotion)) ||
+    (intent && blockedIntents.includes(intent)) ||
+    (lastObjection && blockedObjections.includes(lastObjection)) ||
+    (emotionalPhase && blockedPhases.includes(emotionalPhase))
+  ) {
+    return {
+      id: String(skill.id || skill.versionId || skill.name || ''),
+      versionId: String(skill.versionId || ''),
+      name: String(skill.name || ''),
+      score: 0,
+      reasons: ['guardrail_blocked'],
+      matchedTriggers: [],
+      skill,
+    };
+  }
 
   const objections = policyValues(policy, ['objections', 'objectionTags', 'lastObjections']);
   if (lastObjection && objections.includes(lastObjection)) {
@@ -214,6 +252,13 @@ function scoreSkill(skill = {}, context = {}) {
     score += 34;
     reasons.push('emotion_match');
     matchedTriggers.push(emotion);
+  }
+
+  const emotionalPhases = policyValues(policy, ['emotionalPhases', 'emotionPhases']);
+  if (emotionalPhase && emotionalPhases.includes(emotionalPhase)) {
+    score += 42;
+    reasons.push('emotional_phase_match');
+    matchedTriggers.push(emotionalPhase);
   }
 
   const stages = policyValues(policy, ['stages', 'leadStages']);
@@ -310,6 +355,11 @@ export function buildGovernedSkillNextMove(selection = {}) {
       id: skill.id || '',
       versionId: skill.versionId || '',
       name: skill.name || '',
+      category: skill.category || skill.triggerPolicy?.category || '',
+      emotionalScript: skill.emotionalScript === true,
+      risk: skill.risk || '',
+      response: skill.response || '',
+      nextQuestion: skill.nextQuestion || '',
       action,
       reasonCodes: Array.isArray(selection.reasonCodes) ? selection.reasonCodes : [],
       toolAllowlist: Array.isArray(skill.toolAllowlist) ? skill.toolAllowlist : [],

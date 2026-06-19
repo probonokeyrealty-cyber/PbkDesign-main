@@ -1,3 +1,5 @@
+import { detectAvaEmotionalPhase } from './ava-emotional-script-library.mjs';
+
 export const AVA_LIVE_TURN_CONTRACT_REVISION = '2026-06-13-a-plus-turn-contract-v1';
 
 function clean(value = '') {
@@ -367,12 +369,31 @@ function inferPhase(knownFacts = {}, objection = '', intent = '') {
 
 function normalizeActiveSkill(params = {}) {
   const skill = params.activeSkill || params.governedSkillSelection?.selectedSkill || null;
-  if (!skill) return { id: '', name: '', action: 'none', instructions: '', reasonCodes: [], matchedTriggers: [], toolAllowlist: [] };
+  if (!skill)
+    return {
+      id: '',
+      name: '',
+      action: 'none',
+      instructions: '',
+      response: '',
+      nextQuestion: '',
+      category: '',
+      emotionalScript: false,
+      risk: '',
+      reasonCodes: [],
+      matchedTriggers: [],
+      toolAllowlist: [],
+    };
   return {
     id: clean(skill.id || skill.versionId || ''),
     name: clean(skill.name || ''),
     action: clean(params.governedSkillSelection?.action || skill.action || 'cue') || 'cue',
     instructions: clean(skill.instructions || skill.evidence || ''),
+    response: clean(skill.response || skill.metadata?.response || ''),
+    nextQuestion: clean(skill.nextQuestion || skill.next_question || skill.metadata?.nextQuestion || ''),
+    category: clean(skill.category || skill.metadata?.category || ''),
+    emotionalScript: Boolean(skill.emotionalScript || skill.metadata?.emotionalScript),
+    risk: clean(skill.risk || skill.metadata?.risk || ''),
     reasonCodes: Array.isArray(params.governedSkillSelection?.reasonCodes)
       ? params.governedSkillSelection.reasonCodes
       : [],
@@ -405,6 +426,15 @@ export function buildAvaLiveTurnContract(params = {}) {
   );
   const nextBestQuestion = buildQuestion(nextBestQuestionCategory, knownFacts);
   const phase = params.phase || inferPhase(knownFacts, classification.objection, classification.intent);
+  const emotionalPhase =
+    params.emotionalPhase ||
+    detectAvaEmotionalPhase({
+      transcript: params.transcript || params.query || '',
+      emotion: params.emotion || params.sellerEmotion || '',
+      intent: classification.intent,
+      objection: classification.objection,
+      phase,
+    });
   const allowedTools = unique([
     ...(activeSkill.toolAllowlist || []),
     ...(Array.isArray(params.allowedTools) ? params.allowedTools : []),
@@ -418,6 +448,7 @@ export function buildAvaLiveTurnContract(params = {}) {
     objection: classification.objection || '',
     signals: classification.signals,
     phase,
+    emotionalPhase,
     knownFacts,
     missingFacts,
     factLedger: ledger,
@@ -481,6 +512,19 @@ function buildAcknowledgement(contract = {}) {
   }
 }
 
+function renderEmotionalSkillReply(contract = {}) {
+  const skill = contract.activeSkill || {};
+  const isEmotional =
+    skill.emotionalScript ||
+    skill.category === 'seller_engagement_scripts' ||
+    /^ava-emotional-/i.test(skill.id || '');
+  if (!isEmotional) return '';
+  const response = clean(skill.response || skill.instructions);
+  const question = clean(skill.nextQuestion || contract.nextBestQuestion);
+  if (!response) return '';
+  return [response, question].filter(Boolean).join(' ').replace(/\s+/g, ' ').trim();
+}
+
 export function compileAvaLiveSkillAction(contract = {}) {
   const activeSkill = contract.activeSkill || {};
   const acknowledgement = buildAcknowledgement(contract);
@@ -500,6 +544,8 @@ export function compileAvaLiveSkillAction(contract = {}) {
 }
 
 export function renderAvaLiveContractReply(contract = {}) {
+  const emotionalReply = renderEmotionalSkillReply(contract);
+  if (emotionalReply) return emotionalReply;
   const acknowledgement = buildAcknowledgement(contract);
   const question = clean(contract.nextBestQuestion);
   const text = [acknowledgement, question].filter(Boolean).join(' ');
@@ -585,6 +631,7 @@ export function applyAvaLiveTurnContractToSession(session = {}, contract = {}, o
     intent: contract.intent || 'unknown',
     objection: contract.objection || '',
     phase: contract.phase || '',
+    emotionalPhase: contract.emotionalPhase || '',
     activeSkill: contract.activeSkill || {},
     knownFacts: contract.knownFacts || {},
     missingFacts: Array.isArray(contract.missingFacts) ? contract.missingFacts : [],
@@ -627,10 +674,13 @@ export function buildAvaLiveCockpitSnapshot({
     intent: contract.intent || 'unknown',
     objection: contract.objection || '',
     phase: contract.phase || '',
+    emotionalPhase: contract.emotionalPhase || '',
     activeSkill: {
       id: activeSkill.id || '',
       name: activeSkill.name || '',
       action: activeSkill.action || 'none',
+      category: activeSkill.category || '',
+      emotionalScript: Boolean(activeSkill.emotionalScript),
       reasonCodes: Array.isArray(activeSkill.reasonCodes) ? activeSkill.reasonCodes : [],
       matchedTriggers: Array.isArray(activeSkill.matchedTriggers) ? activeSkill.matchedTriggers : [],
     },

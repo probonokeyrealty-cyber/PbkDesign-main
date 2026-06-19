@@ -24,6 +24,10 @@ import {
   selectGovernedAvaSkill,
 } from './ava-governed-skill-router.mjs';
 import {
+  detectAvaEmotionalPhase,
+  listAvaBuiltInEmotionalScriptSkills,
+} from './ava-emotional-script-library.mjs';
+import {
   buildAvaLiveGovernedSkillReply,
   shouldPreferAvaLiveGovernedSkillReply,
 } from './ava-live-skill-fallback.mjs';
@@ -3422,7 +3426,11 @@ function getTeamPermissions() {
     canViewLeads: true,
     canCreateCampaignDrafts: true,
     canApproveRoutineOffers: true,
+    canApproveProviderActions: !/^(0|false|no|off)$/i.test(String(process.env.PBK_TEAM_CAN_APPROVE_PROVIDER_ACTIONS || 'true').trim()),
     canApproveOfferUpTo: TEAM_APPROVAL_LIMIT,
+    canPlaceCalls: !/^(0|false|no|off)$/i.test(String(process.env.PBK_TEAM_CAN_PLACE_CALLS || 'true').trim()),
+    canSendSms: !/^(0|false|no|off)$/i.test(String(process.env.PBK_TEAM_CAN_SEND_SMS || 'true').trim()),
+    canSendEmail: !/^(0|false|no|off)$/i.test(String(process.env.PBK_TEAM_CAN_SEND_EMAIL || 'true').trim()),
     canSendContracts: false,
     canDeleteData: false,
     canChangeGuardrails: false,
@@ -3464,6 +3472,32 @@ function authorizeDirectTeamBridgeRequest({
     return deny('canSendContracts', 'send or modify contracts');
   }
 
+  const smsTool = /^(?:telnyx_sms|send_verification_sms)$/i.test(toolName);
+  const smsRoute =
+    normalizedMethod !== 'GET' &&
+    /(?:\/api\/messages|\/api\/conversation|\/api\/conversations|\/api\/sms|\/api\/inbox)/.test(normalizedPath) &&
+    /sms|message|conversation|inbox/.test(normalizedPath);
+  if ((smsTool || smsRoute) && permissions.canSendSms !== true) {
+    return deny('canSendSms', 'send SMS messages');
+  }
+
+  const emailTool = /^(?:sendcoldemail|pbk_send_update)$/i.test(toolName);
+  const emailRoute =
+    normalizedMethod !== 'GET' &&
+    /(?:\/api\/cold-email|\/api\/messages|\/api\/conversation|\/api\/conversations|\/api\/email|\/api\/inbox)/.test(normalizedPath) &&
+    /email|message|conversation|inbox/.test(normalizedPath);
+  if ((emailTool || emailRoute) && permissions.canSendEmail !== true) {
+    return deny('canSendEmail', 'send emails');
+  }
+
+  const callTool = /^(?:telnyx_call|pbk_call_operator)$/i.test(toolName);
+  const callRoute =
+    normalizedMethod !== 'GET' &&
+    /(?:\/api\/calls|\/api\/operator\/call|\/api\/call)/.test(normalizedPath);
+  if ((callTool || callRoute) && permissions.canPlaceCalls !== true) {
+    return deny('canPlaceCalls', 'place calls');
+  }
+
   const killSwitchTool = /^(?:pbk_kill_switch|killswitch|togglekillswitch)$/i.test(toolName);
   const killSwitchRoute =
     normalizedMethod !== 'GET' && /(?:kill-switch|killswitch)/.test(normalizedPath);
@@ -3484,7 +3518,7 @@ function authorizeDirectTeamBridgeRequest({
   return { ok: true, statusCode: 200 };
 }
 
-function getTeamApprovalRestriction(approval = {}, status = '') {
+function getTeamApprovalRestriction(approval = {}, status = '', permissions = getTeamPermissions()) {
   const normalizedStatus = String(status || '')
     .toLowerCase()
     .replace(/-/g, '_');
@@ -3495,8 +3529,14 @@ function getTeamApprovalRestriction(approval = {}, status = '') {
   if (amount > TEAM_APPROVAL_LIMIT) {
     return `Offer is ${currency(amount)}, above the team limit of ${currency(TEAM_APPROVAL_LIMIT)}. Admin approval required.`;
   }
-  if (/(contract|docusign|provider|admin|kill|delete|campaign|outbound|prompt|rex-decision|nurture|sms|email|call|send|local_command|executelocalcommand|desktop|sidecar|automation)/i.test(`${type} ${action}`)) {
+  if (/(contract|docusign|admin|kill|delete|campaign|prompt|rex-decision|nurture|local_command|executelocalcommand|desktop|sidecar|automation)/i.test(`${type} ${action}`)) {
     return 'This approval can trigger a contract, provider write, admin change, campaign, or prompt application. Admin approval required.';
+  }
+  if (
+    /(provider|outbound|sms|email|call|send)/i.test(`${type} ${action}`) &&
+    permissions.canApproveProviderActions !== true
+  ) {
+    return 'This approval can trigger a provider write. Admin approval required.';
   }
   return null;
 }
@@ -21655,24 +21695,66 @@ function buildAvaScriptRotationSnapshot(params = {}) {
     explorationRate: params.explorationRate ?? params.exploration_rate ?? 0.06,
   });
   const ava = findAgentRecord('ava') || {};
-  const bridgeSkills = (ava.skills || [])
+  const emotionalPhase = detectAvaEmotionalPhase({
+    transcript: query,
+    emotion:
+      params.emotion ||
+      params.sellerEmotion ||
+      params.warManual?.emotionalState?.id ||
+      params.warManual?.emotionalState?.label ||
+      '',
+    intent: params.intent || params.sellerIntent || '',
+    objection:
+      params.lastObjection ||
+      params.last_objection ||
+      params.objectionTag ||
+      params.objection_tag ||
+      params.warManual?.objection?.tag ||
+      '',
+    phase: params.stage || params.leadStage || params.session?.stage || '',
+  });
+  const builtInEmotionalSkills = listAvaBuiltInEmotionalScriptSkills();
+  const registrySkills = Array.isArray(ava.skills) ? ava.skills : [];
+  const registrySkillIds = new Set(
+    registrySkills.flatMap((skill) =>
+      [skill.id, skill.versionId, skill.activationId].filter(Boolean).map(String)
+    )
+  );
+  const mergedAvaSkills = [
+    ...registrySkills,
+    ...builtInEmotionalSkills.filter(
+      (skill) =>
+        !registrySkillIds.has(String(skill.id || '')) &&
+        !registrySkillIds.has(String(skill.versionId || '')) &&
+        !registrySkillIds.has(String(skill.activationId || ''))
+    ),
+  ];
+  const bridgeSkills = mergedAvaSkills
     .map((skill) => ({
       id: skill.id || skill.versionId || '',
       versionId: skill.versionId || '',
       activationId: skill.activationId || '',
       name: skill.name || '',
+      category: skill.category || skill.triggerPolicy?.category || '',
+      emotionalScript: skill.emotionalScript === true,
+      risk: skill.risk || '',
       confidence: Number(skill.confidence || 0),
       level: skill.level || '',
       status: skill.status || '',
       priority: Number(skill.priority || 100),
       evidence: skill.evidence || '',
       instructions: skill.instructions || skill.evidence || '',
+      response: skill.response || '',
+      nextQuestion: skill.nextQuestion || '',
       triggerPolicy: skill.triggerPolicy || {},
       toolAllowlist: Array.isArray(skill.toolAllowlist) ? skill.toolAllowlist : [],
       scope: skill.scope || {},
       rolloutMode: skill.rolloutMode || '',
       rolloutPercent: skill.rolloutPercent,
       source: skill.source || '',
+      targetAgents: Array.isArray(skill.targetAgents) ? skill.targetAgents : [],
+      builtIn: skill.builtIn === true,
+      revision: skill.revision || '',
     }))
     .filter((skill) => skill.name)
     .sort((left, right) => Number(right.confidence || 0) - Number(left.confidence || 0));
@@ -21691,6 +21773,7 @@ function buildAvaScriptRotationSnapshot(params = {}) {
       params.warManual?.emotionalState?.id ||
       params.warManual?.emotionalState?.label ||
       '',
+    emotionalPhase,
     stage: params.stage || params.leadStage || params.session?.stage || '',
     path:
       params.pathKey ||
@@ -21723,6 +21806,8 @@ function buildAvaScriptRotationSnapshot(params = {}) {
     }));
   return {
     activeSkillCount: bridgeSkills.length || Number(ava.skillsTotal || 0),
+    emotionalPhase,
+    builtInEmotionalSkillCount: builtInEmotionalSkills.length,
     selectedSkills: [
       ...(governedSkillSelection.selectedSkill ? [governedSkillSelection.selectedSkill] : []),
       ...bridgeSkills.filter(
@@ -39259,6 +39344,23 @@ function isTrustedManualConversationProviderSend(toolName = '', params = {}) {
   );
 }
 
+function normalizeApprovalCreationResult(result = {}) {
+  if (result?.approval && typeof result.approval === 'object') {
+    return {
+      approval: result.approval,
+      fanout: result.fanout || null,
+      slack: result.slack || null,
+      raw: result,
+    };
+  }
+  return {
+    approval: result && typeof result === 'object' ? result : {},
+    fanout: result?.fanout || null,
+    slack: result?.slack || null,
+    raw: result,
+  };
+}
+
 async function enforceOperatingModeForTool(toolName, params = {}) {
   if (!OPERATING_MODE_GATED_TOOLS.has(toolName)) return null;
   if (isDirectProtectedEnvUpdate(toolName, params)) return null;
@@ -39369,7 +39471,7 @@ async function enforceOperatingModeForTool(toolName, params = {}) {
       payload: redactApprovalParamPreview(params || {}),
     }) || `Approval required before PBK runs ${label}.`;
 
-  const approval = await toolHandlers.createApproval({
+  const approvalResult = await toolHandlers.createApproval({
     type: 'provider-action',
     leadName: params.leadName || params.name || params.sellerName || label,
     leadId: params.leadId || params.id || '',
@@ -39389,6 +39491,7 @@ async function enforceOperatingModeForTool(toolName, params = {}) {
       executionParams: buildProviderActionReplayParams(params || {}),
     },
   });
+  const { approval, fanout, slack } = normalizeApprovalCreationResult(approvalResult);
   await recordQaPreviewAudit({
     toolName,
     params,
@@ -39418,6 +39521,8 @@ async function enforceOperatingModeForTool(toolName, params = {}) {
     mode,
     toolName,
     approval,
+    approvalFanout: fanout,
+    approvalSlack: slack,
     safety: safetyValidation,
     message: safetyReviewRequired
       ? `${label} was queued for safety review before execution.`
@@ -39856,7 +39961,9 @@ async function executeManualProviderRouteWithOutbox({
   const deliveryLive = statusCode < 400 && isManualProviderDeliveryLive(toolName, routeResponse);
   const error = deliveryLive ? '' : getManualProviderError(routeResponse, statusCode);
   if (deliveryLive) providerCircuitBreaker.recordSuccess(provider);
-  else providerCircuitBreaker.recordFailure(provider, error);
+  else if (!(circuit.ok === false && circuit.providerAttempted === true && Number.isFinite(Number(circuit.failures)))) {
+    providerCircuitBreaker.recordFailure(provider, error);
+  }
 
   const outbox = buildManualSendOutboxEnvelope({
     channel,
@@ -52542,7 +52649,7 @@ const toolHandlers = {
       direction: 'outbound',
       subject: content.subject,
       body: content.text,
-      status: delivery?.ok ? 'sent' : 'queued',
+      status: delivery?.ok ? 'sent' : delivery?.result === 'provider_missing' || !delivery ? 'provider_missing' : 'failed',
       provider,
     });
     upsertMessage(state, message);
@@ -52772,7 +52879,7 @@ const toolHandlers = {
       leadName: context.leadName,
       address: context.address,
       phone,
-      status: 'live',
+      status: telnyxMeta.voiceReady && fromNumber ? 'local_preview' : 'provider_missing',
       provider: 'Simulated',
       from: fromNumber,
       script: params.script || callStrategy.script,
@@ -52787,14 +52894,16 @@ const toolHandlers = {
       makeActivity({
         actor: 'Ava',
         category: 'CALL',
-        status: 'live',
-        text: `Outbound call started to ${context.leadName} using ${callStrategy.script}${telnyxMeta.voiceReady ? '' : ' (simulated - add Telnyx voice keys to go live)'}`,
+        status: telnyxMeta.voiceReady && fromNumber ? 'simulated' : 'warning',
+        text: `Outbound call previewed for ${context.leadName} using ${callStrategy.script}${telnyxMeta.voiceReady && fromNumber ? '' : ' (Telnyx voice provider missing - no live call was placed)'}`,
         target: context.address || phone,
       })
     );
     await persistState(state);
     return {
-      ok: true,
+      ok: false,
+      result: 'provider_missing',
+      error: telnyxMeta.voiceReady && !fromNumber ? 'Telnyx from number is missing.' : 'Telnyx voice provider is not configured.',
       call,
       participantProfile,
       callStrategy,
@@ -60043,10 +60152,34 @@ async function buildBrowserVoiceConversationalReply({ pipeline = {}, transcript 
     leadName: session.leadName || pipeline?.lead?.leadName || '',
     address: session.address || pipeline?.lead?.address || '',
   };
+  const scripts = buildAvaScriptRotationSnapshot({
+    session,
+    contextCall: voiceContextCall,
+    transcript,
+    query: transcript,
+    intent: pipeline?.intent?.intent || pipeline?.intent || '',
+    pathDecision: session.pathDecision || pipeline?.pathDecision || {},
+    selectedPath:
+      session.pathDecision?.selectedPath ||
+      pipeline?.pathDecision?.selectedPath ||
+      pipeline?.selectedPath ||
+      '',
+  });
+  if (scripts.governedSkillSelection?.action === 'clear') {
+    delete session.activeGovernedSkillId;
+    session.governedSkillSelection = scripts.governedSkillSelection;
+  } else if (scripts.governedSkillSelection?.selectedSkill?.id) {
+    session.activeGovernedSkillId = scripts.governedSkillSelection.selectedSkill.id;
+    session.governedSkillSelection = scripts.governedSkillSelection;
+  }
   const turnContract = buildAvaLiveTurnContract({
     transcript,
     session,
     contextCall: voiceContextCall,
+    emotionalPhase: scripts.emotionalPhase || '',
+    activeSkill: scripts.governedSkillSelection?.selectedSkill || null,
+    governedSkillSelection: scripts.governedSkillSelection,
+    allowedTools: scripts.governedSkillSelection?.selectedSkill?.toolAllowlist || [],
   });
   applyAvaLiveTurnContractToSession(session, turnContract);
   const contractReply = renderAvaLiveContractReply(turnContract);
@@ -60085,7 +60218,7 @@ async function buildBrowserVoiceConversationalReply({ pipeline = {}, transcript 
       situation: ['Browser microphone voice turn for Ava.', 'Ava must respond like a senior wholesale acquisition specialist, not like a query result.', 'Use emotional intelligence and BANT+ probing; do not execute provider writes.', turnContract?.ok ? `Mandatory turn contract: intent=${turnContract.intent}; objection=${turnContract.objection || 'none'}; phase=${turnContract.phase}; known=${JSON.stringify(turnContract.knownFacts || {})}; missing=${(turnContract.missingFacts || []).join(',')}; nextQuestion=${turnContract.nextBestQuestion}; forbiddenRepeats=${(turnContract.forbiddenRepeats || []).join(',')}. Phrase this contract only; do not choose a different next move.` : '', pathDecision.selectedPath ? `Deal path state: ${pathDecision.pathLocked ? 'locked' : 'probing'} ${pathDecision.selectedPathLabel} (${Math.round((pathDecision.confidence || 0) * 100)}%).` : '', pathDecision.nextProbeQuestion ? `If still probing, ask this path question: ${pathDecision.nextProbeQuestion}` : '', pathDecision.scriptTrigger ? `If path is locked, use this path trigger naturally: ${pathDecision.scriptTrigger}` : ''].join(' '),
       transcript,
       contextSummary,
-      attemptedActions: ['captured-live-browser-speech', `intent:${pipeline?.intent?.intent || 'unknown'}`, turnContract?.ok ? `turn_contract:${turnContract.intent}:${turnContract.nextBestQuestionCategory}` : 'turn_contract:none', `next:${pipeline?.nextAgent || 'ava'}:${pipeline?.action || 'qualify'}`, `path:${pathDecision.selectedPath || 'unknown'}:${pathDecision.pathLocked ? 'locked' : 'probing'}`],
+      attemptedActions: ['captured-live-browser-speech', `intent:${pipeline?.intent?.intent || 'unknown'}`, turnContract?.ok ? `turn_contract:${turnContract.intent}:${turnContract.nextBestQuestionCategory}` : 'turn_contract:none', scripts.governedSkillSelection?.selectedSkill?.id ? `skill:${scripts.governedSkillSelection.selectedSkill.id}` : 'skill:none', scripts.emotionalPhase ? `emotion:${scripts.emotionalPhase}` : 'emotion:unknown', `next:${pipeline?.nextAgent || 'ava'}:${pipeline?.action || 'qualify'}`, `path:${pathDecision.selectedPath || 'unknown'}:${pathDecision.pathLocked ? 'locked' : 'probing'}`],
       confidence: 0.84,
       temperature: 0.68,
       maxTokens: 900,
@@ -60096,6 +60229,8 @@ async function buildBrowserVoiceConversationalReply({ pipeline = {}, transcript 
         browserVoiceSessionId: session.id || '',
         approvalGated: true,
         turnContract,
+        governedSkillSelection: scripts.governedSkillSelection || null,
+        emotionalPhase: scripts.emotionalPhase || '',
       },
     });
     const script = strategist?.strategy?.immediateScript || strategist?.strategy?.returnToBusiness || '';
@@ -60108,6 +60243,8 @@ async function buildBrowserVoiceConversationalReply({ pipeline = {}, transcript 
       strategist,
       conversation,
       turnContract,
+      governedSkillSelection: scripts.governedSkillSelection || null,
+      emotionalPhase: scripts.emotionalPhase || '',
       turnContractEnforced: !contractAligned,
     };
   } catch (error) {
@@ -60116,6 +60253,8 @@ async function buildBrowserVoiceConversationalReply({ pipeline = {}, transcript 
       text: normalizeAvaVoiceReplyText(contractReply, fallback),
       conversation,
       turnContract,
+      governedSkillSelection: scripts.governedSkillSelection || null,
+      emotionalPhase: scripts.emotionalPhase || '',
       turnContractEnforced: true,
       strategist: {
         ok: false,
@@ -61521,6 +61660,13 @@ function buildFastTelnyxLiveAvaReplyText({ session = {}, transcript = '', contex
     session,
     contextCall,
     phase: activeListening.callFlow?.nextStepId || '',
+    emotionalPhase: scripts.emotionalPhase || '',
+    emotion:
+      warManual?.emotionalState?.id ||
+      warManual?.emotionalState?.label ||
+      session.sentiment?.dominantEmotion ||
+      session.sentiment?.label ||
+      '',
     activeSkill: scripts.governedSkillSelection?.selectedSkill || null,
     governedSkillSelection: scripts.governedSkillSelection,
     allowedTools: scripts.governedSkillSelection?.selectedSkill?.toolAllowlist || [],
@@ -61530,7 +61676,7 @@ function buildFastTelnyxLiveAvaReplyText({ session = {}, transcript = '', contex
   const contractReply = renderAvaLiveContractReply(turnContract);
   const contractCanOwnTurn = Boolean(
     contractReply &&
-      [
+      ([
         'already_gave_price',
         'repeat_complaint',
         'make_offer',
@@ -61542,7 +61688,8 @@ function buildFastTelnyxLiveAvaReplyText({ session = {}, transcript = '', contex
         'probate_legal',
         'seller_wants_speed',
         'seller_wants_max_net',
-      ].includes(turnContract.intent)
+      ].includes(turnContract.intent) ||
+        turnContract.activeSkill?.emotionalScript === true)
   );
 
   if (/\b(hear me|can you hear|you hear|hello\??|are you there)\b/i.test(lower)) {
@@ -70416,7 +70563,7 @@ const server = createServer(async (request, response) => {
           });
           return;
         }
-        const restriction = getTeamApprovalRestriction(approval || {}, status);
+        const restriction = getTeamApprovalRestriction(approval || {}, status, getTeamPermissions());
         if (restriction) {
           json(response, 403, {
             ok: false,
@@ -70468,7 +70615,7 @@ const server = createServer(async (request, response) => {
           });
           return;
         }
-        const restriction = getTeamApprovalRestriction(approval || {}, requestedStatus);
+        const restriction = getTeamApprovalRestriction(approval || {}, requestedStatus, getTeamPermissions());
         if (restriction) {
           json(response, 403, {
             ok: false,

@@ -2233,11 +2233,15 @@ export function Leads() {
 
       {newLeadOpen && (
         <div className="pbk-new-lead-modal-backdrop fixed inset-0 z-50 grid place-items-center bg-slate-950/80 p-3 backdrop-blur-sm sm:p-4">
-          <div
+          <form
             className={`${softPanelClass} pbk-new-lead-modal flex max-h-[92vh] w-full max-w-6xl flex-col overflow-hidden`}
             role="dialog"
             aria-modal="true"
             aria-labelledby="new-pbk-lead-title"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void createLead();
+            }}
           >
             <div className="pbk-new-lead-modal-header flex items-start justify-between gap-3 border-b border-slate-800 px-4 py-4">
               <div className="min-w-0">
@@ -2677,9 +2681,8 @@ export function Leads() {
                   Cancel
                 </button>
                 <button
-                  type="button"
+                  type="submit"
                   disabled={isLeadActionBusy}
-                  onClick={createLead}
                   className="inline-flex items-center justify-center gap-2 rounded-full bg-sky-400 px-4 py-2 text-sm font-bold text-slate-950 transition hover:bg-sky-300 disabled:cursor-wait disabled:opacity-60"
                 >
                   {isLeadActionBusy ? (
@@ -2691,7 +2694,7 @@ export function Leads() {
                 </button>
               </div>
             </div>
-          </div>
+          </form>
         </div>
       )}
 

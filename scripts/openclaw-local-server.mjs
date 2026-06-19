@@ -1191,16 +1191,22 @@ async function redisGetJson(key) {
 }
 
 const bridgeReadCache = new Map();
+const bridgeReadCacheInflight = new Map();
+let bridgeReadCacheGeneration = 0;
 const bridgeReadCacheStats = {
   hits: 0,
   misses: 0,
+  coalesced: 0,
   redisHits: 0,
   writes: 0,
+  skippedWrites: 0,
   evictions: 0,
   lastHitAt: '',
   lastMissAt: '',
+  lastCoalescedAt: '',
   lastRedisHitAt: '',
   lastWriteAt: '',
+  lastSkippedWriteAt: '',
   lastClearedAt: '',
   lastClearReason: '',
 };
@@ -1222,6 +1228,8 @@ function getBridgeReadCacheStatus() {
     result: 'read_endpoint_cache_active',
     mode: sharedRedisClient?.isOpen ? 'memory_and_open_redis' : 'memory_only',
     size: bridgeReadCache.size,
+    inflight: bridgeReadCacheInflight.size,
+    generation: bridgeReadCacheGeneration,
     defaultTtlMs: BRIDGE_READ_CACHE_DEFAULT_TTL_MS,
     ttlMs: BRIDGE_READ_CACHE_TTL_MS,
     redis: {
@@ -1235,6 +1243,7 @@ function getBridgeReadCacheStatus() {
 
 function clearBridgeReadCache(reason = 'state_changed') {
   bridgeReadCache.clear();
+  bridgeReadCacheGeneration += 1;
   bridgeReadCacheStats.evictions += 1;
   bridgeReadCacheStats.lastClearedAt = isoNow();
   bridgeReadCacheStats.lastClearReason = String(reason || 'state_changed').slice(0, 120);
@@ -1265,6 +1274,7 @@ async function getCachedReadResponse(name, ttlMs = BRIDGE_READ_CACHE_DEFAULT_TTL
   const cacheKey = buildBridgeReadCacheKey(name, params);
   const now = Date.now();
   const ttl = Math.max(250, Number(ttlMs || BRIDGE_READ_CACHE_DEFAULT_TTL_MS));
+  const generation = bridgeReadCacheGeneration;
   const entry = bridgeReadCache.get(cacheKey);
   if (entry && now - entry.timestamp < ttl) {
     bridgeReadCacheStats.hits += 1;
@@ -1282,15 +1292,37 @@ async function getCachedReadResponse(name, ttlMs = BRIDGE_READ_CACHE_DEFAULT_TTL
     return redisEntry.value;
   }
 
+  const inflightEntry = bridgeReadCacheInflight.get(cacheKey);
+  if (inflightEntry?.generation === generation && inflightEntry.promise) {
+    bridgeReadCacheStats.coalesced += 1;
+    bridgeReadCacheStats.lastCoalescedAt = isoNow();
+    return inflightEntry.promise;
+  }
+
   bridgeReadCacheStats.misses += 1;
   bridgeReadCacheStats.lastMissAt = isoNow();
-  const value = await producer();
-  const nextEntry = { timestamp: Date.now(), value };
-  bridgeReadCache.set(cacheKey, nextEntry);
-  bridgeReadCacheStats.writes += 1;
-  bridgeReadCacheStats.lastWriteAt = isoNow();
-  redisSetCachedReadResponseIfOpen(cacheKey, nextEntry, ttl);
-  return value;
+  let promise;
+  promise = (async () => {
+    const value = await producer();
+    const nextEntry = { timestamp: Date.now(), value };
+    if (bridgeReadCacheGeneration === generation) {
+      bridgeReadCache.set(cacheKey, nextEntry);
+      bridgeReadCacheStats.writes += 1;
+      bridgeReadCacheStats.lastWriteAt = isoNow();
+      redisSetCachedReadResponseIfOpen(cacheKey, nextEntry, ttl);
+    } else {
+      bridgeReadCacheStats.skippedWrites += 1;
+      bridgeReadCacheStats.lastSkippedWriteAt = isoNow();
+    }
+    return value;
+  })();
+  bridgeReadCacheInflight.set(cacheKey, { generation, promise, startedAt: now });
+  try {
+    return await promise;
+  } finally {
+    const current = bridgeReadCacheInflight.get(cacheKey);
+    if (current?.promise === promise) bridgeReadCacheInflight.delete(cacheKey);
+  }
 }
 
 async function redisAcquireLease(name = '', ttlSeconds = REDIS_LEASE_TTL_SECONDS) {

@@ -211,8 +211,10 @@ assert.ok(
 assert.ok(
   bridgeSource.includes('BRIDGE_READ_CACHE_TTL_MS') &&
     bridgeSource.includes('async function getCachedReadResponse') &&
-    bridgeSource.includes('clearBridgeReadCache('),
-  'bridge must provide a short read-through cache for high-traffic status/config endpoints'
+    bridgeSource.includes('clearBridgeReadCache(') &&
+    bridgeSource.includes('bridgeReadCacheInflight') &&
+    bridgeSource.includes('bridgeReadCacheGeneration'),
+  'bridge must provide a short coalesced read-through cache for high-traffic status/config endpoints'
 );
 assert.ok(
   /compactState:\s*Math\.max\(500,\s*Math\.min\(5000,\s*Number\(process\.env\.PBK_READ_CACHE_COMPACT_STATE_TTL_MS\s*\|\|\s*1500\)\)\)/.test(

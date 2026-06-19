@@ -1560,7 +1560,8 @@ function buildHostedRuntimeFallbackUrl(url = '') {
 }
 
 async function shouldRetryRuntimeViaHosted(response: Response, url = '', path = '') {
-  if (!isAuthOptionalRuntimePath(path)) return false;
+  const canRetryProtectedWithTeamToken = Boolean(getRuntimeTeamSession()?.token);
+  if (!isAuthOptionalRuntimePath(path) && !canRetryProtectedWithTeamToken) return false;
   if (!buildHostedRuntimeFallbackUrl(url)) return false;
   if (response.status !== 503) return false;
   const text = await response

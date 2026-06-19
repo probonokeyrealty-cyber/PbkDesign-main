@@ -71,8 +71,9 @@ assert(
 );
 
 assert(
-  /if \(!isAuthOptionalRuntimePath\(path\)\) return false/.test(source),
-  'Protected requests must never retry directly against Render without server-side bearer auth.',
+  /const canRetryProtectedWithTeamToken = Boolean\(getRuntimeTeamSession\(\)\?\.token\)/.test(source) &&
+    /if \(!isAuthOptionalRuntimePath\(path\) && !canRetryProtectedWithTeamToken\) return false/.test(source),
+  'Protected requests may retry directly against Render only when an unexpired PBK team token is available.',
 );
 
 const publicPathBlock =
@@ -83,6 +84,22 @@ for (const endpoint of ['/api/auth/team/status', '/api/auth/team', '/api/auth/te
     `Bridge must let ${endpoint} reach its own passcode/session validator without requiring PBK_BRIDGE_API_KEY.`,
   );
 }
+
+assert(
+  /function authorizeDirectTeamBridgeRequest/.test(bridge) &&
+    /team_permission_denied/.test(bridge) &&
+    /canDeleteData/.test(bridge) &&
+    /canSendContracts/.test(bridge) &&
+    /canToggleKillSwitch/.test(bridge) &&
+    /canChangeGuardrails/.test(bridge),
+  'Direct Render fallback must enforce the same team permission boundary as the Netlify bridge proxy.',
+);
+
+assert(
+  /request\.pbkDirectTeamAuth = true/.test(bridge) &&
+    /X-PBK-Team-Token/.test(source),
+  'Direct Render fallback must use a signed PBK team token instead of exposing PBK_BRIDGE_API_KEY.',
+);
 
 assert(
   /pathname === '\/api\/auth\/team\/status'[\s\S]*?authRequired: Boolean\(TEAM_PASSCODE\)/.test(

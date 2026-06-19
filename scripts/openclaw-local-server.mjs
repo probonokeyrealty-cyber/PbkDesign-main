@@ -777,6 +777,7 @@ const MAX_REQUEST_BODY_BYTES = Math.max(
   64 * 1024,
   Number.isFinite(configuredMaxRequestBodyBytes) ? configuredMaxRequestBodyBytes : 6 * 1024 * 1024
 );
+const RAW_BODY_BUFFER_SYMBOL = Symbol.for('pbk.rawBodyBuffer');
 const EXTERNAL_WEBHOOK_SECRET = String(process.env.PBK_EXTERNAL_WEBHOOK_SECRET || '').trim();
 const LOCAL_CALLBACK_URL = String(process.env.PBK_LOCAL_CALLBACK_URL || '').trim().replace(/\/+$/g, '');
 const LOCAL_CALLBACK_TOKEN = String(process.env.PBK_LOCAL_CALLBACK_TOKEN || '').trim();
@@ -3382,6 +3383,60 @@ function getTeamPermissions() {
     canChangeGuardrails: false,
     canToggleKillSwitch: false,
   };
+}
+
+function authorizeDirectTeamBridgeRequest({
+  method = 'GET',
+  pathname = '',
+  body = {},
+  permissions = {},
+} = {}) {
+  const normalizedMethod = String(method || 'GET').toUpperCase();
+  const normalizedPath = String(pathname || '').toLowerCase();
+  const toolName = String(body.toolName || body.tool || body.name || '').trim();
+  const normalizedToolName = toolName.toLowerCase();
+
+  const deny = (permission, action) => ({
+    ok: false,
+    statusCode: 403,
+    error: `This PBK team session is not permitted to ${action}.`,
+    code: 'team_permission_denied',
+    permission,
+  });
+
+  if (normalizedMethod === 'DELETE' && permissions.canDeleteData !== true) {
+    return deny('canDeleteData', 'delete PBK data');
+  }
+
+  const contractTool = /^(?:sendcontract|senddocusign|prepare_and_send_contract|preparecontract|sendnegotiationapproval)$/i.test(toolName);
+  const contractRoute =
+    normalizedMethod !== 'GET' &&
+    (
+      /(?:contract|docusign|document-deliver)/.test(normalizedPath) ||
+      normalizedPath === '/api/underwriting/sign'
+    );
+  if ((contractTool || contractRoute) && permissions.canSendContracts !== true) {
+    return deny('canSendContracts', 'send or modify contracts');
+  }
+
+  const killSwitchTool = /^(?:pbk_kill_switch|killswitch|togglekillswitch)$/i.test(toolName);
+  const killSwitchRoute =
+    normalizedMethod !== 'GET' && /(?:kill-switch|killswitch)/.test(normalizedPath);
+  if ((killSwitchTool || killSwitchRoute) && permissions.canToggleKillSwitch !== true) {
+    return deny('canToggleKillSwitch', 'change the PBK kill switch');
+  }
+
+  const guardrailTool =
+    /^(?:admin_update_env_var|admin_restart_openclaw|admin_run_away_worker|routeadmincommand|requestadminaction)$/i.test(toolName) ||
+    /^admin_/.test(normalizedToolName);
+  const guardrailRoute =
+    normalizedMethod !== 'GET' &&
+    /(?:\/api\/admin(?:\/|$)|\/api\/auth\/totp|\/api\/settings(?:\/|$)|\/api\/guardrails|\/api\/desktop-sidecar\/command)/.test(normalizedPath);
+  if ((guardrailTool || guardrailRoute) && permissions.canChangeGuardrails !== true) {
+    return deny('canChangeGuardrails', 'change infrastructure or security guardrails');
+  }
+
+  return { ok: true, statusCode: 200 };
 }
 
 function getTeamApprovalRestriction(approval = {}, status = '') {
@@ -56086,6 +56141,7 @@ async function sendElevenLabsTtsStream(response, body = {}, text = '') {
 }
 
 async function readRawBodyBuffer(request) {
+  if (request?.[RAW_BODY_BUFFER_SYMBOL]) return request[RAW_BODY_BUFFER_SYMBOL];
   const declaredLength = Number(request.headers?.['content-length'] || 0);
   if (declaredLength > MAX_REQUEST_BODY_BYTES) {
     throw Object.assign(
@@ -56116,7 +56172,9 @@ async function readRawBodyBuffer(request) {
     }
     chunks.push(buffer);
   }
-  return chunks.length ? Buffer.concat(chunks) : Buffer.alloc(0);
+  const buffer = chunks.length ? Buffer.concat(chunks) : Buffer.alloc(0);
+  if (request) request[RAW_BODY_BUFFER_SYMBOL] = buffer;
+  return buffer;
 }
 
 async function readBody(request) {
@@ -63776,12 +63834,46 @@ const server = createServer(async (request, response) => {
     const header = String(request.headers.authorization || '').trim();
     const expected = `Bearer ${BRIDGE_API_KEY}`;
     if (header !== expected) {
-      json(response, 401, {
-        ok: false,
-        error: 'Unauthorized',
-        hint: 'Send Authorization: Bearer <PBK_BRIDGE_API_KEY> on POST endpoints.',
-      });
-      return;
+      let authBody = {};
+      try {
+        authBody = ['GET', 'HEAD'].includes(String(request.method || 'GET').toUpperCase())
+          ? {}
+          : await readBody(request);
+      } catch (error) {
+        json(response, Number(error?.statusCode || 400), {
+          ok: false,
+          error: error?.message || 'Request body could not be read for bridge authorization.',
+          code: error?.code || 'bridge_auth_body_unreadable',
+        });
+        return;
+      }
+      const teamAuth = getTeamAuthMeta(request, authBody);
+      if (teamAuth.ok) {
+        const authorization = authorizeDirectTeamBridgeRequest({
+          method: request.method,
+          pathname,
+          body: authBody,
+          permissions: getTeamPermissions(),
+        });
+        if (!authorization.ok) {
+          json(response, authorization.statusCode || 403, {
+            ok: false,
+            error: authorization.error,
+            code: authorization.code,
+            permission: authorization.permission,
+          });
+          return;
+        }
+        request.pbkTeamAuth = teamAuth;
+        request.pbkDirectTeamAuth = true;
+      } else {
+        json(response, 401, {
+          ok: false,
+          error: 'Unauthorized',
+          hint: 'Send Authorization: Bearer <PBK_BRIDGE_API_KEY> or a valid X-PBK-Team-Token for permitted team actions.',
+        });
+        return;
+      }
     }
   }
 

@@ -116,6 +116,7 @@ import {
   createRuntimeEventArchive,
   scoreSkillOutcomeConfidence,
 } from './production-maturity-loop.mjs';
+import { runConnectionHealthCheck } from './connection-strength-check.mjs';
 import { verifyDocuSignConnectSignature as verifyDocuSignConnectSignatureCore } from './docusign-webhook-auth.mjs';
 import {
   COMMAND_INTENT_ROUTER_VERSION,
@@ -2435,8 +2436,10 @@ async function buildCommandCenterHealthSnapshot(runtimeMeta = getRuntimeMeta()) 
       host: postgresHealth.host || '',
       staleRenderHost: Boolean(postgresHealth.staleRenderHost),
       poolMax: postgresHealth.poolMax || null,
+      poolMin: postgresHealth.poolMin || null,
       connectionTimeoutMs: postgresHealth.connectionTimeoutMs || null,
       idleTimeoutMs: postgresHealth.idleTimeoutMs || null,
+      keepAliveInitialDelayMs: postgresHealth.keepAliveInitialDelayMs || null,
       maxLifetimeSeconds: postgresHealth.maxLifetimeSeconds || null,
       transientGraceActive: Boolean(postgresHealth.transientGraceActive),
       transientFailures: Number(postgresHealth.transientFailures || 0),
@@ -5674,7 +5677,11 @@ let postgresHealth = {
 
 const PG_POOL_MAX = Math.max(
   1,
-  Math.min(12, Number(process.env.PBK_PG_POOL_MAX || (IS_HOSTED ? 4 : 10)))
+  Math.min(20, Number(process.env.PBK_PG_POOL_MAX || (IS_HOSTED ? 20 : 10)))
+);
+const PG_POOL_MIN = Math.max(
+  0,
+  Math.min(PG_POOL_MAX, Number(process.env.PBK_PG_POOL_MIN || (IS_HOSTED ? 4 : 0)))
 );
 const PG_QUERY_RETRY_ATTEMPTS = Math.max(
   0,
@@ -5686,11 +5693,15 @@ const PG_QUERY_RETRY_BASE_DELAY_MS = Math.max(
 );
 const PG_CONNECTION_TIMEOUT_MS = Math.max(
   1000,
-  Math.min(15000, Number(process.env.PBK_PG_CONNECTION_TIMEOUT_MS || 8000))
+  Math.min(15000, Number(process.env.PBK_PG_CONNECTION_TIMEOUT_MS || 5000))
 );
 const PG_IDLE_TIMEOUT_MS = Math.max(
   5000,
-  Math.min(60000, Number(process.env.PBK_PG_IDLE_TIMEOUT_MS || 10000))
+  Math.min(60000, Number(process.env.PBK_PG_IDLE_TIMEOUT_MS || 30000))
+);
+const PG_KEEPALIVE_INITIAL_DELAY_MS = Math.max(
+  1000,
+  Math.min(60000, Number(process.env.PBK_PG_KEEPALIVE_INITIAL_DELAY_MS || 10000))
 );
 const PG_MAX_LIFETIME_SECONDS = Math.max(
   60,
@@ -5792,8 +5803,10 @@ function getPostgresHealthMeta() {
     host,
     staleRenderHost,
     poolMax: PG_POOL_MAX,
+    poolMin: PG_POOL_MIN,
     connectionTimeoutMs: PG_CONNECTION_TIMEOUT_MS,
     idleTimeoutMs: PG_IDLE_TIMEOUT_MS,
+    keepAliveInitialDelayMs: PG_KEEPALIVE_INITIAL_DELAY_MS,
     maxLifetimeSeconds: PG_MAX_LIFETIME_SECONDS,
     transientGraceActive,
     transientFailures: Number(postgresHealth.transientFailures || 0),
@@ -5856,11 +5869,12 @@ function getPgPool() {
   __pgPool = new PgPool({
     connectionString: DATABASE_URL,
     max: PG_POOL_MAX,
+    min: PG_POOL_MIN,
     connectionTimeoutMillis: PG_CONNECTION_TIMEOUT_MS,
     idleTimeoutMillis: PG_IDLE_TIMEOUT_MS,
     maxLifetimeSeconds: PG_MAX_LIFETIME_SECONDS,
     keepAlive: true,
-    keepAliveInitialDelayMillis: 1000,
+    keepAliveInitialDelayMillis: PG_KEEPALIVE_INITIAL_DELAY_MS,
     // Render Postgres requires TLS but uses a self-signed cert chain.
     // Disable cert validation for managed-DB hostnames; keep it on for localhost.
     ssl: /(localhost|127\.0\.0\.1)/.test(DATABASE_URL) ? false : { rejectUnauthorized: false },
@@ -63942,6 +63956,28 @@ const server = createServer(async (request, response) => {
         health: commandCenterHealth,
       });
       json(response, bridgeConnection.ready ? 200 : 202, bridgeConnection);
+      return;
+    }
+
+    if (request.method === 'GET' && matchesPath(pathname, ['/api/connection-health', '/api/production/connection-health', '/api/bridge/connection-health'])) {
+      const connectionHealth = await runConnectionHealthCheck({
+        pool: getPgPool(),
+        postgresMeta: getPostgresHealthMeta(),
+        redisClientFactory: getSharedRedisClient,
+        redisMeta: getRedisProviderMeta(),
+        providers: {
+          telnyx: getTelnyxProviderMeta(),
+          deepgram: getDeepgramProviderMeta(process.env),
+          elevenLabs: getElevenLabsProviderMeta(),
+          deepSeek: getDeepSeekProviderMeta(),
+          instantly: getInstantlyProviderMeta(),
+          docusign: getDocuSignProviderMeta(),
+          slack: getSlackProviderMeta(),
+        },
+        requiredProviders: ['telnyx', 'deepgram', 'elevenLabs', 'deepSeek'],
+        timeoutMs: Math.max(1000, Math.min(5000, Number(url.searchParams.get('timeoutMs') || 2500))),
+      });
+      json(response, connectionHealth.ready ? 200 : 202, connectionHealth);
       return;
     }
 

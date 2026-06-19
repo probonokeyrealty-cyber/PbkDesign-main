@@ -1796,6 +1796,46 @@
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
   gap: var(--s-3);
 }
+.pbk-campaign-sender-panel {
+  display: grid;
+  grid-template-columns: minmax(0, 0.74fr) minmax(320px, 1.26fr);
+  gap: var(--s-3);
+  align-items: center;
+  margin-top: var(--s-4);
+  border: 1px solid var(--border-dim);
+  border-radius: var(--radius-lg);
+  background: color-mix(in srgb, var(--bg-panel) 90%, transparent);
+  padding: var(--s-3);
+}
+.pbk-campaign-sender-copy {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+.pbk-campaign-sender-copy strong {
+  color: var(--text-primary);
+  font-family: var(--font-ui);
+  font-size: 13px;
+}
+.pbk-campaign-sender-copy span {
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.45;
+}
+.pbk-campaign-sender-panel .pbk-sender-select {
+  margin-top: 0;
+}
+.pbk-campaign-sender-actions {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-2);
+  align-items: center;
+  justify-content: space-between;
+}
+.pbk-campaign-sender-actions .pbk-data-source {
+  margin: 0;
+}
 .pbk-channel-opt,
 .pbk-tpl-opt,
 .pbk-source-opt,
@@ -2013,6 +2053,9 @@
   .pbk-wiz-step {
     justify-content: flex-start;
   }
+  .pbk-campaign-sender-panel {
+    grid-template-columns: 1fr;
+  }
   .pbk-camp-card-stats {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -2079,6 +2122,17 @@
   .pbk-wiz-pane > p {
     margin-bottom: 14px;
     font-size: 13px;
+  }
+  .pbk-campaign-sender-panel {
+    margin-top: 12px;
+    padding: 10px;
+  }
+  .pbk-campaign-sender-actions {
+    align-items: stretch;
+  }
+  .pbk-campaign-sender-actions .pbk-btn {
+    width: 100%;
+    justify-content: center;
   }
   .pbk-wiz-foot {
     position: sticky;

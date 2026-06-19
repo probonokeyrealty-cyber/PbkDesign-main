@@ -45018,9 +45018,25 @@ function getCampaignProviderConfig(input = {}) {
   const scheduleConfig = input.schedule?.providerConfig || input.schedule?.provider_config || {};
   const telnyxConfig = providerConfig.telnyx || sequenceConfig.telnyx || scheduleConfig.telnyx || {};
   const instantlyConfig = providerConfig.instantly || sequenceConfig.instantly || scheduleConfig.instantly || {};
+  const senderIdentity = providerConfig.senderIdentity || providerConfig.sender_identity || sequenceConfig.senderIdentity || sequenceConfig.sender_identity || scheduleConfig.senderIdentity || scheduleConfig.sender_identity || {};
+  const senderIdentityId = String(input.senderIdentityId || input.sender_identity_id || providerConfig.senderIdentityId || providerConfig.sender_identity_id || sequenceConfig.senderIdentityId || sequenceConfig.sender_identity_id || scheduleConfig.senderIdentityId || scheduleConfig.sender_identity_id || senderIdentity.id || '').trim();
   const selectedFromNumber = normalizePhone(input.selectedFromNumber || input.selected_from_number || input.telnyxNumber || input.fromNumber || input.from || providerConfig.selectedFromNumber || providerConfig.fromNumber || sequenceConfig.selectedFromNumber || scheduleConfig.selectedFromNumber || telnyxConfig.selectedFromNumber || telnyxConfig.fromNumber || '');
   const fromEmail = String(input.fromEmail || input.from_email || input.instantlySender || input.senderEmail || providerConfig.fromEmail || providerConfig.from_email || sequenceConfig.fromEmail || scheduleConfig.fromEmail || instantlyConfig.fromEmail || instantlyConfig.from_email || '').trim();
+  const safeSenderIdentity = senderIdentity && typeof senderIdentity === 'object'
+    ? {
+        id: senderIdentityId || String(senderIdentity.id || '').trim(),
+        provider: String(senderIdentity.provider || '').trim(),
+        channel: String(senderIdentity.channel || '').trim(),
+        address: String(senderIdentity.address || '').trim(),
+        label: String(senderIdentity.label || '').trim(),
+        lifecycleStatus: String(senderIdentity.lifecycleStatus || senderIdentity.lifecycle_status || '').trim(),
+        healthStatus: String(senderIdentity.healthStatus || senderIdentity.health_status || '').trim(),
+      }
+    : null;
   return {
+    senderIdentityId,
+    sender_identity_id: senderIdentityId,
+    senderIdentity: safeSenderIdentity,
     selectedFromNumber,
     fromNumber: selectedFromNumber,
     fromEmail,
@@ -45299,6 +45315,9 @@ function buildCampaignFromPayload(payload = {}) {
       providerConfig,
     },
     providerConfig,
+    senderIdentityId: providerConfig.senderIdentityId,
+    sender_identity_id: providerConfig.sender_identity_id,
+    senderIdentity: providerConfig.senderIdentity,
     selectedFromNumber: providerConfig.selectedFromNumber,
     fromNumber: providerConfig.fromNumber,
     fromEmail: providerConfig.fromEmail,
@@ -45697,6 +45716,9 @@ async function requestCampaignApproval(campaignId = '', params = {}) {
       schedule: campaign.schedule || {},
       sequence: campaign.sequence || {},
       providerConfig,
+      senderIdentityId: providerConfig.senderIdentityId,
+      sender_identity_id: providerConfig.sender_identity_id,
+      senderIdentity: providerConfig.senderIdentity,
       selectedFromNumber: providerConfig.selectedFromNumber,
       fromNumber: providerConfig.fromNumber,
       fromEmail: providerConfig.fromEmail,
@@ -46149,6 +46171,7 @@ async function processCampaignLeadStep(campaign = {}, lead = {}, options = {}) {
       phone: lead.phone,
       campaignId: campaign.id,
       templateId: campaign.templateId,
+      senderIdentityId: providerConfig.senderIdentityId,
       fromEmail: providerConfig.fromEmail,
       from_email: providerConfig.fromEmail,
       body: buildCampaignOutboundText(campaign, lead, channel),
@@ -46165,6 +46188,7 @@ async function processCampaignLeadStep(campaign = {}, lead = {}, options = {}) {
       leadName: lead.leadName,
       address: lead.address,
       phone: lead.phone,
+      senderIdentityId: providerConfig.senderIdentityId,
       from: providerConfig.selectedFromNumber,
       fromNumber: providerConfig.selectedFromNumber,
       body: buildCampaignOutboundText(campaign, lead, channel),
@@ -46182,6 +46206,7 @@ async function processCampaignLeadStep(campaign = {}, lead = {}, options = {}) {
       leadName: lead.leadName,
       address: lead.address,
       phone: lead.phone,
+      senderIdentityId: providerConfig.senderIdentityId,
       from: providerConfig.selectedFromNumber,
       fromNumber: providerConfig.selectedFromNumber,
       script: buildCampaignOutboundText(campaign, lead, channel),

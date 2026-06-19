@@ -38,6 +38,7 @@ export const PbkButton = forwardRef<HTMLButtonElement, PbkButtonProps>(
     return (
       <button
         ref={ref}
+        type="button"
         className={`pbk-btn ${variantClass} ${sizeClass} ${className}`.trim()}
         {...props}
       >

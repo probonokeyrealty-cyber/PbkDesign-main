@@ -24,6 +24,7 @@ import {
   PbkPanel,
   PbkSkeleton,
 } from '../../components/pbk/index';
+import { SenderIdentitySelect } from '../components/inbox/SenderIdentitySelect';
 import {
   createCampaignRequest,
   fetchCampaignDrilldownRequest,
@@ -31,13 +32,16 @@ import {
   fetchCampaignRankedTemplatesRequest,
   fetchCampaignsRequest,
   fetchReplyTemplatesRequest,
+  fetchSenderIdentitiesRequest,
   patchCampaignRequest,
   requestCampaignApprovalRequest,
   runCampaignActionRequest,
+  syncSenderIdentitiesRequest,
   type CampaignDrilldownResponse,
   type CampaignDrilldownRow,
   type CampaignLeadSource,
   type CampaignRecord,
+  type CommunicationSenderIdentity,
   type ReplyTemplateRecord,
 } from '../utils/runtimeBridge';
 import { showUiToast } from '../utils/uiFeedback';
@@ -59,6 +63,7 @@ type CampaignWizardDraft = {
   firstMessage: string;
   followUpMessage: string;
   notes: string;
+  senderIdentityId: string;
 };
 
 const DEFAULT_DRAFT: CampaignWizardDraft = {
@@ -71,6 +76,7 @@ const DEFAULT_DRAFT: CampaignWizardDraft = {
   firstMessage: '',
   followUpMessage: '',
   notes: '',
+  senderIdentityId: '',
 };
 
 const STATUS_FILTERS = ['all', 'draft', 'pending', 'active', 'paused', 'cancelled'];
@@ -155,6 +161,24 @@ function channelProvider(channel = 'email') {
   if (channel === 'sms' || channel === 'call') return 'Telnyx';
   if (channel === 'mixed') return 'Telnyx + Instantly';
   return 'Instantly';
+}
+
+function campaignSenderQuery(channel = 'email') {
+  const normalized = campaignChannel({ channel });
+  if (normalized === 'email') {
+    return {
+      channel: 'email',
+      provider: 'instantly',
+      presentationChannel: 'email' as const,
+      label: 'Instantly email account',
+    };
+  }
+  return {
+    channel: 'sms',
+    provider: 'telnyx',
+    presentationChannel: normalized === 'call' ? ('call' as const) : ('sms' as const),
+    label: normalized === 'call' ? 'Telnyx calling number' : 'Telnyx SMS number',
+  };
 }
 
 function readDraft() {
@@ -421,21 +445,66 @@ function normalizeTemplateOptions(templates: Record<string, ReplyTemplateRecord>
   }));
 }
 
-function buildCampaignPayload(draft: CampaignWizardDraft, status = 'draft') {
+function buildCampaignPayload(
+  draft: CampaignWizardDraft,
+  selectedSender: CommunicationSenderIdentity | null,
+  status = 'draft'
+) {
+  const normalizedChannel = campaignChannel(draft);
+  const senderAddress = String(selectedSender?.address || '').trim();
+  const isEmail = normalizedChannel === 'email';
+  const selectedFromNumber = !isEmail ? senderAddress : '';
+  const fromEmail = isEmail ? senderAddress : '';
+  const providerConfig = {
+    senderIdentityId: draft.senderIdentityId || '',
+    senderIdentity: selectedSender
+      ? {
+          id: selectedSender.id,
+          provider: selectedSender.provider,
+          channel: selectedSender.channel,
+          address: selectedSender.address,
+          label: selectedSender.label || '',
+          healthStatus: selectedSender.healthStatus || '',
+          lifecycleStatus: selectedSender.lifecycleStatus || '',
+        }
+      : null,
+    selectedFromNumber,
+    fromNumber: selectedFromNumber,
+    fromEmail,
+    from_email: fromEmail,
+    telnyx: {
+      selectedFromNumber,
+      fromNumber: selectedFromNumber,
+    },
+    instantly: {
+      fromEmail,
+      from_email: fromEmail,
+    },
+  };
   return {
     name: draft.name.trim(),
     channel: draft.channel,
     leadSource: draft.leadSource,
     templateId: draft.templateId.trim(),
     status,
+    senderIdentityId: draft.senderIdentityId || '',
+    sender_identity_id: draft.senderIdentityId || '',
+    selectedFromNumber,
+    fromNumber: selectedFromNumber,
+    fromEmail,
+    from_email: fromEmail,
+    senderEmail: fromEmail,
+    providerConfig,
     schedule: {
       firstSendAt: draft.scheduledFor || null,
       dailyCap: Number(draft.dailyCap || 50),
       window: '9-5-est',
+      providerConfig,
     },
     sequence: {
       subject: draft.templateId.trim() || draft.name.trim(),
       script: draft.firstMessage.trim(),
+      providerConfig,
       steps: [
         {
           step: 1,
@@ -997,9 +1066,13 @@ function CampaignWizard({
   templates,
   templateStatus,
   draft,
+  senderIdentities,
+  senderLoading,
+  senderError,
   saving,
   onChange,
   onRefreshTemplates,
+  onRefreshSenders,
   onClose,
   onSubmit,
 }: {
@@ -1008,9 +1081,13 @@ function CampaignWizard({
   templates: Record<string, ReplyTemplateRecord> | null;
   templateStatus: TemplateStatus;
   draft: CampaignWizardDraft;
+  senderIdentities: CommunicationSenderIdentity[];
+  senderLoading: boolean;
+  senderError: string;
   saving: WizardMode | null;
   onChange: (draft: CampaignWizardDraft) => void;
   onRefreshTemplates: () => void;
+  onRefreshSenders: () => void;
   onClose: () => void;
   onSubmit: (mode: WizardMode) => void;
 }) {
@@ -1036,11 +1113,17 @@ function CampaignWizard({
   };
   const source = sources.find((item) => item.id === draft.leadSource);
   const templateOptions = normalizeTemplateOptions(templates);
+  const senderQuery = campaignSenderQuery(draft.channel);
+  const selectedSender =
+    senderIdentities.find((identity) => identity.id === draft.senderIdentityId) || null;
   const canSubmit = Boolean(draft.name.trim()) && Boolean(draft.firstMessage.trim());
   const estimatedCost = asNumber(source?.count, 0) * (draft.channel === 'email' ? 0.002 : 0.03);
   const validateStep = () => {
     if (step === 1 && !['email', 'call', 'sms'].includes(draft.channel)) {
       return 'Choose Email, Calls, or SMS before continuing.';
+    }
+    if (step === 1 && !draft.senderIdentityId.trim()) {
+      return `Choose a connected ${senderQuery.label} before continuing.`;
     }
     if (step === 2 && !draft.leadSource.trim()) {
       return 'Choose a lead source before continuing.';
@@ -1130,7 +1213,7 @@ function CampaignWizard({
                     key={channel}
                     type="button"
                     className={`pbk-channel-opt ${draft.channel === channel ? 'selected' : ''}`.trim()}
-                    onClick={() => update({ channel })}
+                    onClick={() => update({ channel, senderIdentityId: '' })}
                     aria-pressed={draft.channel === channel}
                   >
                     <span className="icon">
@@ -1141,6 +1224,52 @@ function CampaignWizard({
                   </button>
                 );
               })}
+            </div>
+            <div className="pbk-campaign-sender-panel">
+              <div className="pbk-campaign-sender-copy">
+                <strong>Choose the live From identity</strong>
+                <span>
+                  PBK will save this exact {senderQuery.label} into the bridge campaign and approval
+                  packet.
+                </span>
+              </div>
+              <SenderIdentitySelect
+                identities={senderIdentities}
+                selectedId={draft.senderIdentityId}
+                recommendedId={
+                  senderIdentities.find((identity) => identity.isWorkspaceDefault)?.id || ''
+                }
+                presentationChannel={senderQuery.presentationChannel}
+                loading={senderLoading}
+                disabled={Boolean(saving)}
+                onChange={(identityId) => update({ senderIdentityId: identityId })}
+              />
+              <div className="pbk-campaign-sender-actions">
+                <PbkDataSource
+                  endpoint={`GET /api/communication-identities?provider=${senderQuery.provider}&channel=${senderQuery.channel}`}
+                  status={senderError ? 'needs-wiring' : 'ships'}
+                  note={
+                    senderError ||
+                    `${senderIdentities.length} ${senderQuery.label}${
+                      senderIdentities.length === 1 ? '' : 's'
+                    } available`
+                  }
+                />
+                <PbkButton
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  disabled={senderLoading}
+                  onClick={onRefreshSenders}
+                >
+                  {senderLoading ? (
+                    <RefreshCw size={13} className="animate-spin" />
+                  ) : (
+                    <RefreshCw size={13} />
+                  )}
+                  Refresh senders
+                </PbkButton>
+              </div>
             </div>
           </CampaignWizardPane>
 
@@ -1338,6 +1467,12 @@ function CampaignWizard({
                   <span className="l">Approval</span>
                   <span className="v">operator gated</span>
                 </div>
+                <div className="row">
+                  <span className="l">From</span>
+                  <span className="v">
+                    {selectedSender?.label || selectedSender?.address || 'not selected'}
+                  </span>
+                </div>
               </div>
               <div className="pbk-review-card">
                 <h5>Audience</h5>
@@ -1438,11 +1573,18 @@ export function Campaigns() {
   const [draft, setDraft] = useState<CampaignWizardDraft>(() => readDraft());
   const [templates, setTemplates] = useState<Record<string, ReplyTemplateRecord> | null>(null);
   const [templateStatus, setTemplateStatus] = useState<TemplateStatus>('idle');
+  const [senderIdentities, setSenderIdentities] = useState<CommunicationSenderIdentity[]>([]);
+  const [senderLoading, setSenderLoading] = useState(false);
+  const [senderError, setSenderError] = useState('');
   const [saving, setSaving] = useState<WizardMode | null>(null);
   const [busyCampaignId, setBusyCampaignId] = useState('');
   const [drilldown, setDrilldown] = useState<CampaignDrilldownResponse | null>(null);
   const [campaignRuntimeSource, setCampaignRuntimeSource] = useState('Loading campaign source');
   const [campaignRuntimeFallbackReason, setCampaignRuntimeFallbackReason] = useState('');
+  const selectedCampaignSender = useMemo(
+    () => senderIdentities.find((identity) => identity.id === draft.senderIdentityId) || null,
+    [draft.senderIdentityId, senderIdentities]
+  );
 
   const loadCampaigns = useCallback(async () => {
     setStatus('loading');
@@ -1510,6 +1652,62 @@ export function Campaigns() {
     [draft.channel, draft.leadSource]
   );
 
+  const loadSenderIdentities = useCallback(
+    async (syncFirst = false) => {
+      const query = campaignSenderQuery(draft.channel);
+      setSenderLoading(true);
+      setSenderError('');
+      try {
+        if (syncFirst) await syncSenderIdentitiesRequest();
+        let inventory = await fetchSenderIdentitiesRequest({
+          channel: query.channel,
+          provider: query.provider,
+        });
+        if (!(inventory.items || []).length && !syncFirst) {
+          await syncSenderIdentitiesRequest();
+          inventory = await fetchSenderIdentitiesRequest({
+            channel: query.channel,
+            provider: query.provider,
+          });
+        }
+        const identities = inventory.items || [];
+        setSenderIdentities(identities);
+        setDraft((current) => {
+          const currentStillValid = identities.some(
+            (identity) => identity.id === current.senderIdentityId
+          );
+          if (
+            currentStillValid &&
+            campaignChannel(current) === campaignChannel({ channel: draft.channel })
+          ) {
+            return current;
+          }
+          const preferred =
+            identities.find(
+              (identity) =>
+                identity.isWorkspaceDefault &&
+                String(identity.lifecycleStatus || '').toLowerCase() === 'active'
+            ) ||
+            identities.find(
+              (identity) => String(identity.lifecycleStatus || '').toLowerCase() === 'active'
+            ) ||
+            identities[0] ||
+            null;
+          return { ...current, senderIdentityId: preferred?.id || '' };
+        });
+      } catch (error) {
+        setSenderIdentities([]);
+        setDraft((current) => ({ ...current, senderIdentityId: '' }));
+        setSenderError(
+          error instanceof Error ? error.message : 'Connected sender inventory did not load.'
+        );
+      } finally {
+        setSenderLoading(false);
+      }
+    },
+    [draft.channel]
+  );
+
   useEffect(() => {
     void loadCampaigns();
   }, [loadCampaigns]);
@@ -1518,6 +1716,11 @@ export function Campaigns() {
     if (!wizardOpen) return;
     void loadTemplates(draft.channel);
   }, [draft.channel, draft.leadSource, loadTemplates, wizardOpen]);
+
+  useEffect(() => {
+    if (!wizardOpen) return;
+    void loadSenderIdentities();
+  }, [draft.channel, loadSenderIdentities, wizardOpen]);
 
   useEffect(() => {
     if (!wizardOpen || typeof window === 'undefined') return;
@@ -1570,7 +1773,9 @@ export function Campaigns() {
   const handleWizardSubmit = async (mode: WizardMode) => {
     setSaving(mode);
     try {
-      const response = await createCampaignRequest(buildCampaignPayload(draft));
+      const response = await createCampaignRequest(
+        buildCampaignPayload(draft, selectedCampaignSender)
+      );
       if (!response.ok || !response.campaign?.id) {
         throw new Error(response.error || response.verbiage || 'Campaign save failed.');
       }
@@ -1865,9 +2070,13 @@ export function Campaigns() {
         templates={templates}
         templateStatus={templateStatus}
         draft={draft}
+        senderIdentities={senderIdentities}
+        senderLoading={senderLoading}
+        senderError={senderError}
         saving={saving}
         onChange={setDraft}
         onRefreshTemplates={() => void loadTemplates(draft.channel)}
+        onRefreshSenders={() => void loadSenderIdentities(true)}
         onClose={closeWizard}
         onSubmit={(mode) => void handleWizardSubmit(mode)}
       />

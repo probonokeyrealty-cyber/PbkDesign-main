@@ -1,4 +1,12 @@
-import { Check, ChevronDown, Mail, MessageSquare, ShieldAlert, Sparkles } from 'lucide-react';
+import {
+  Check,
+  ChevronDown,
+  Mail,
+  MessageSquare,
+  Phone,
+  ShieldAlert,
+  Sparkles,
+} from 'lucide-react';
 import type { CommunicationSenderIdentity } from '../../utils/runtimeBridge';
 import { getSenderRestrictionReason } from '../../routes/conversationRuntimeLogic.js';
 
@@ -6,6 +14,7 @@ type SenderIdentitySelectProps = {
   identities: CommunicationSenderIdentity[];
   selectedId: string;
   recommendedId?: string;
+  presentationChannel?: 'sms' | 'email' | 'call';
   loading?: boolean;
   disabled?: boolean;
   onChange: (identityId: string) => void;
@@ -22,6 +31,7 @@ export function SenderIdentitySelect({
   identities,
   selectedId,
   recommendedId = '',
+  presentationChannel,
   loading = false,
   disabled = false,
   onChange,
@@ -40,7 +50,13 @@ export function SenderIdentitySelect({
         title={selectedRestriction || senderLabel}
       >
         <span className="pbk-sender-provider-icon" aria-hidden="true">
-          {selected?.channel === 'email' ? <Mail size={14} /> : <MessageSquare size={14} />}
+          {(presentationChannel || selected?.channel) === 'call' ? (
+            <Phone size={14} />
+          ) : (presentationChannel || selected?.channel) === 'email' ? (
+            <Mail size={14} />
+          ) : (
+            <MessageSquare size={14} />
+          )}
         </span>
         <span className="pbk-sender-select-copy">
           <strong>

@@ -10,6 +10,7 @@ const runtimeBridge = readFileSync(resolve(root, 'src/app/utils/runtimeBridge.ts
 const campaigns = readFileSync(resolve(root, 'src/app/routes/Campaigns.tsx'), 'utf8');
 const styles = readFileSync(resolve(root, 'src/styles/pbk-components.css'), 'utf8');
 const dataMap = readFileSync(resolve(root, 'docs/modern-shell-bridge-data-map.md'), 'utf8');
+const bridge = readFileSync(resolve(root, 'scripts/openclaw-local-server.mjs'), 'utf8');
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
@@ -24,6 +25,8 @@ assert(/'\/campaigns'/.test(layout), 'ParadiseLayout saved-route validation must
 [
   'fetchCampaignsRequest',
   'fetchCampaignLeadSourcesRequest',
+  'fetchSenderIdentitiesRequest',
+  'syncSenderIdentitiesRequest',
   'createCampaignRequest',
   'patchCampaignRequest',
   'requestCampaignApprovalRequest',
@@ -46,6 +49,23 @@ assert(/'\/campaigns'/.test(layout), 'ParadiseLayout saved-route validation must
 assert(/CAMPAIGN_WIZARD_DRAFT_KEY/.test(campaigns), 'Campaign wizard must autosave draft state.');
 assert(/fetchCampaignsRequest/.test(campaigns), 'Campaigns page must read live campaign data from the bridge.');
 assert(/createCampaignRequest/.test(campaigns), 'Campaign wizard must create campaigns through the bridge.');
+assert(
+  /SenderIdentitySelect/.test(campaigns) &&
+    /campaignSenderQuery/.test(campaigns) &&
+    /senderIdentityId/.test(campaigns) &&
+    /fetchSenderIdentitiesRequest/.test(campaigns) &&
+    /syncSenderIdentitiesRequest/.test(campaigns),
+  'Campaign wizard must expose connected Telnyx/Instantly sender identity selection.'
+);
+assert(
+  /buildCampaignPayload\(\s*draft:\s*CampaignWizardDraft,\s*selectedSender:\s*CommunicationSenderIdentity \| null/.test(
+    campaigns
+  ) &&
+    /providerConfig/.test(campaigns) &&
+    /selectedFromNumber/.test(campaigns) &&
+    /fromEmail/.test(campaigns),
+  'Campaign save payload must carry selected sender identity, Telnyx number, or Instantly email.'
+);
 assert(
   campaigns.includes('name="campaignsSearch"') &&
     campaigns.includes('name="campaignsStatusFilter"') &&
@@ -80,6 +100,26 @@ assert(
     styles
   ),
   'Campaign wizard actions must stay fully visible and touch-sized on narrow mobile screens.'
+);
+assert(
+  styles.includes('.pbk-campaign-sender-panel') &&
+    /@media \(max-width: 900px\)[\s\S]*?\.pbk-campaign-sender-panel[\s\S]*?grid-template-columns:\s*1fr/.test(
+      styles
+    ),
+  'Campaign sender selector must compact cleanly on tablet and mobile viewports.'
+);
+assert(
+  /function getCampaignProviderConfig\([\s\S]*senderIdentityId[\s\S]*safeSenderIdentity/.test(
+    bridge
+  ) &&
+    /senderIdentityId:\s*providerConfig\.senderIdentityId/.test(bridge) &&
+    /executeToolHandlerWithQa\('telnyx_sms'[\s\S]*senderIdentityId:\s*providerConfig\.senderIdentityId/.test(
+      bridge
+    ) &&
+    /executeToolHandlerWithQa\('sendColdEmail'[\s\S]*senderIdentityId:\s*providerConfig\.senderIdentityId/.test(
+      bridge
+    ),
+  'Bridge campaign records and worker sends must preserve the selected sender identity.'
 );
 
 console.log('campaigns-shell-smoke: ok');

@@ -34244,6 +34244,8 @@ function buildPrometheusMetrics() {
 
 async function fireWebhook(url, payload) {
   if (!url) return { ok: false, skipped: true };
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 2500);
   try {
     const response = await fetch(url, {
       method: 'POST',
@@ -34251,6 +34253,7 @@ async function fireWebhook(url, payload) {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify(payload),
+      signal: controller.signal,
     });
     return {
       ok: response.ok,
@@ -34259,8 +34262,15 @@ async function fireWebhook(url, payload) {
   } catch (error) {
     return {
       ok: false,
-      error: error instanceof Error ? error.message : 'Webhook request failed',
+      error:
+        error?.name === 'AbortError'
+          ? 'Webhook request timed out after 2500ms'
+          : error instanceof Error
+            ? error.message
+            : 'Webhook request failed',
     };
+  } finally {
+    clearTimeout(timeout);
   }
 }
 
@@ -51614,7 +51624,24 @@ const toolHandlers = {
       projector: projectApprovalEvent,
       source: 'approval-created',
     });
-    const fanout = await fireWebhook(APPROVAL_WEBHOOK_URL, approval);
+    const [fanout, slack] = await Promise.all([
+      withTimeout(
+        fireWebhook(APPROVAL_WEBHOOK_URL, approval),
+        3000,
+        'approval webhook fanout'
+      ).catch((error) => ({
+        ok: false,
+        timedOut: true,
+        error: error?.message || 'Approval webhook fanout timed out.',
+      })),
+      withTimeout(postSlackApproval(approval), 3500, 'approval Slack fanout').catch((error) => ({
+        ok: false,
+        timedOut: true,
+        result: 'slack_fanout_timeout',
+        error: error?.message || 'Approval Slack fanout timed out.',
+      })),
+    ]);
+    let approvalFanoutActivityRecorded = false;
     if (fanout.ok) {
       addActivity(
         state,
@@ -51626,9 +51653,8 @@ const toolHandlers = {
           target: approval.id,
         })
       );
-      await persistState(state);
+      approvalFanoutActivityRecorded = true;
     }
-    const slack = await postSlackApproval(approval);
     if (slack.ok) {
       addActivity(
         state,
@@ -51640,6 +51666,9 @@ const toolHandlers = {
           target: approval.id,
         })
       );
+      approvalFanoutActivityRecorded = true;
+    }
+    if (approvalFanoutActivityRecorded || approval.slackMessage) {
       await persistState(state);
     }
     return { ok: true, result: 'queued_for_approval', approval, fanout, slack };

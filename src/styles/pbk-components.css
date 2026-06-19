@@ -7133,7 +7133,11 @@
   color: var(--text-primary);
   font-size: 12px;
   font-weight: 600;
-  overflow-wrap: anywhere;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  overflow-wrap: normal;
+  word-break: normal;
 }
 .pbk-lead-context-money {
   display: grid;

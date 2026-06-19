@@ -105,29 +105,29 @@ const PBK_COMPANION_ACTIONS: CompanionAction[] = [
   {
     id: 'send-sms',
     label: 'Send SMS',
-    description: 'Draft a seller text with the current lead context.',
+    description: 'Draft a seller text for the manual SMS lane.',
     prompt: 'Draft a concise SMS to this seller using the current PBK context.',
     action: 'send_sms',
     icon: MessageSquare,
-    requiresApproval: true,
+    requiresApproval: false,
   },
   {
     id: 'send-email',
     label: 'Send Email',
-    description: 'Prepare a seller email from the right sender identity.',
+    description: 'Draft a seller email for the manual email lane.',
     prompt: 'Draft a seller email using the current PBK context and keep it ready to review.',
     action: 'send_email',
     icon: Mail,
-    requiresApproval: true,
+    requiresApproval: false,
   },
   {
     id: 'call-seller',
     label: 'Call Seller',
-    description: 'Prepare the call lane and keep provider safety visible.',
+    description: 'Prepare the manual call lane and best opener.',
     prompt: 'Prepare a call to this seller and show the best opening line before dialing.',
     action: 'operator_command',
     icon: Phone,
-    requiresApproval: true,
+    requiresApproval: false,
   },
   {
     id: 'open-lead',
@@ -249,13 +249,13 @@ const ACTIONS: Array<{
   {
     id: 'send_email',
     label: 'Email',
-    description: 'Draft seller email and keep sending behind approval.',
+    description: 'Draft seller email for manual review and send.',
     icon: Send,
   },
   {
     id: 'send_sms',
     label: 'SMS',
-    description: 'Draft seller text and keep sending behind approval.',
+    description: 'Draft seller text for manual review and send.',
     icon: Send,
   },
   {
@@ -386,12 +386,12 @@ function classifyConversationalCommand(command: string, selectedAction: AvaComma
     {
       pattern: /\b(?:send).{0,32}(?:email|mail)\b|\bemail\s+(?:to|the)\b/i,
       action: 'send_email',
-      requiresApproval: true,
+      requiresApproval: false,
     },
     {
       pattern: /\b(?:send).{0,32}(?:text|sms|message)\b|\b(?:text|sms)\s+(?:to|the)\b/i,
       action: 'send_sms',
-      requiresApproval: true,
+      requiresApproval: false,
     },
     {
       pattern: /\b(?:health|status|ready|online|offline|sidecar|bridge|openclaw|connection)\b/i,
@@ -1791,7 +1791,7 @@ function AvaComposer({
           </div>
         </div>
         <p className="pbk-ava-chat-mobile-note mt-1.5 text-center text-[10px] text-[var(--ava-text-faint)]">
-          Ava can make mistakes. Review important actions before approval.
+          Ava can make mistakes. Review important actions before sending.
         </p>
       </div>
     </div>

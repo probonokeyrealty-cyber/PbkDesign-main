@@ -102,8 +102,11 @@ assert(
   'Ava Chat must expose conversational actions for provider drafts, scripts, search, and deal analysis.'
 );
 assert(
-  /classifyConversationalCommand[\s\S]*send_email[\s\S]*requiresApproval:\s*true/.test(avaChat) &&
-    /classifyConversationalCommand[\s\S]*send_sms[\s\S]*requiresApproval:\s*true/.test(avaChat) &&
+  /classifyConversationalCommand[\s\S]*send_email[\s\S]*requiresApproval:\s*false/.test(avaChat) &&
+    /classifyConversationalCommand[\s\S]*send_sms[\s\S]*requiresApproval:\s*false/.test(avaChat) &&
+    /classifyConversationalCommand[\s\S]*execute_safe_script[\s\S]*requiresApproval:\s*true/.test(
+      avaChat
+    ) &&
     /classifyConversationalCommand[\s\S]*llm_query[\s\S]*requiresApproval:\s*false/.test(avaChat) &&
     /classifyConversationalCommand[\s\S]*status[\s\S]*requiresApproval:\s*false/.test(avaChat),
   'Ava Chat must deterministically route common natural-language commands into the right approval lane.'

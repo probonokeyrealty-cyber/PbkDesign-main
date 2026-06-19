@@ -5,6 +5,7 @@ import {
 } from './pbk-intelligence-context.mjs';
 
 const DEFAULT_CONTEXT_TTL_MS = 30 * 60 * 1000;
+const DEFAULT_CONTEXT_FRESHNESS_MS = 60 * 1000;
 const contextSessions = new Map();
 
 function clean(value = '') {
@@ -31,6 +32,59 @@ function looksLikePBKIntelligenceContext(value = {}) {
       value.memory &&
       value.skills
   );
+}
+
+function parseTimeMs(value) {
+  const parsed = Date.parse(String(value || ''));
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function contextAgeMs(context = {}, now = Date.now()) {
+  const lastSyncAt =
+    context.dataFreshness?.lastSyncAt ||
+    context.lastSyncAt ||
+    context.updatedAt ||
+    context.generatedAt ||
+    context.savedAt;
+  const lastSyncMs = parseTimeMs(lastSyncAt);
+  return lastSyncMs ? Math.max(0, now - lastSyncMs) : Number.POSITIVE_INFINITY;
+}
+
+function buildRefreshInput(context = {}, options = {}) {
+  const input = options.input && typeof options.input === 'object' ? options.input : {};
+  const identity = context.identity && typeof context.identity === 'object' ? context.identity : {};
+  const callState = context.callState && typeof context.callState === 'object' ? context.callState : {};
+  return {
+    leadId: options.leadId || input.leadId || input.lead_id || identity.leadId,
+    callId: options.callId || input.callId || input.call_id || identity.callId || callState.callId,
+    lead:
+      input.lead ||
+      input.leadRecord ||
+      identity.leadRecord || {
+        id: identity.leadId,
+        leadName: identity.name,
+        phone: identity.phone,
+        email: identity.email,
+      },
+    call:
+      input.call ||
+      input.contextCall || {
+        id: identity.callId || callState.callId,
+        leadId: identity.leadId,
+        status: callState.live ? 'active' : '',
+        phase: callState.phase,
+        transcript: callState.transcriptHistory,
+      },
+    transcript: input.transcript || input.query || input.text || callState.sellerUtterance,
+    memory: input.memory || context.memory,
+    skills: input.skills || context.skills,
+    turnContract: input.turnContract || context.turnContract,
+    agents: input.agents || options.agents || context.agents || [],
+    outcome: context.outcome,
+    lastSyncAt: new Date().toISOString(),
+    workspaceId: input.workspaceId || input.workspace_id || context.workspaceId,
+    contextId: context.contextId,
+  };
 }
 
 function getContextKey({ leadId = '', callId = '', input = {}, context = {} } = {}) {
@@ -125,11 +179,45 @@ export async function savePBKIntelligenceContextToSession(context = {}, options 
   return normalized;
 }
 
+export async function ensureFreshPBKIntelligenceContext(context = {}, options = {}) {
+  if (!looksLikePBKIntelligenceContext(context)) return context;
+  const maxAgeMs = Math.max(
+    1000,
+    Number(options.maxAgeMs || options.freshnessTtlMs || options.freshness_ttl_ms || DEFAULT_CONTEXT_FRESHNESS_MS)
+  );
+  if (contextAgeMs(context) <= maxAgeMs) return context;
+
+  const rebuilt = buildPBKIntelligenceContext(buildRefreshInput(context, options));
+  const refreshed = {
+    ...rebuilt,
+    outcome: {
+      ...(rebuilt.outcome && typeof rebuilt.outcome === 'object' ? rebuilt.outcome : {}),
+      ...(context.outcome && typeof context.outcome === 'object' ? context.outcome : {}),
+    },
+    auditTrail: [
+      ...(Array.isArray(context.auditTrail) ? context.auditTrail : []),
+      ...(Array.isArray(rebuilt.auditTrail) ? rebuilt.auditTrail : []),
+      {
+        event: 'pbk_intelligence_context_refreshed',
+        at: new Date().toISOString(),
+        previousLastSyncAt: context.dataFreshness?.lastSyncAt || context.lastSyncAt || '',
+        maxAgeMs,
+      },
+    ],
+  };
+  refreshed.fleetReadiness = buildPBKIntelligenceFleetReadiness({
+    context: refreshed,
+    agents: options.agents || options.input?.agents || refreshed.agents || [],
+  });
+  return refreshed;
+}
+
 export async function withPBKIntelligenceContext(options = {}, handler) {
   if (typeof handler !== 'function') {
     throw new TypeError('withPBKIntelligenceContext requires a handler function.');
   }
-  const context = await loadPBKIntelligenceContextFromSession(options);
+  const loadedContext = await loadPBKIntelligenceContextFromSession(options);
+  const context = await ensureFreshPBKIntelligenceContext(loadedContext, options);
   let result;
   try {
     result = await handler(context);

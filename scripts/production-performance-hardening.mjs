@@ -299,7 +299,7 @@ export function buildLoadScenarioPlan({
 export function buildLiveCallSpeedBudget({
   contractTargetMs = 100,
   strategistAttemptBudgetMs = 1800,
-  strategistTotalBudgetMs = 3000,
+  strategistTotalBudgetMs = 2500,
   duplicateSuppression = true,
   cacheAtCallStart = true,
 } = {}) {
@@ -308,7 +308,7 @@ export function buildLiveCallSpeedBudget({
   const blockers = [
     ...(Number(contractTargetMs || 0) > 100 ? ['turn_contract_over_100ms'] : []),
     ...(attempt > 2200 ? ['strategist_attempt_budget_too_high'] : []),
-    ...(total > 4500 ? ['strategist_total_budget_too_high'] : []),
+    ...(total > 3000 ? ['strategist_total_budget_too_high'] : []),
     ...(duplicateSuppression ? [] : ['transcript_deduplication_missing']),
     ...(cacheAtCallStart ? [] : ['call_start_cache_missing']),
   ];

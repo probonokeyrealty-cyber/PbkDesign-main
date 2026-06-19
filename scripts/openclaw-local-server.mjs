@@ -423,7 +423,7 @@ const TELNYX_BRIDGE_AVA_CALLER_FLOOR_MS = Math.max(5000, Math.min(30000, Number(
 const TELNYX_LIVE_REPLY_STRATEGIST_MODE = String(process.env.PBK_TELNYX_LIVE_REPLY_STRATEGIST_MODE || 'inline')
   .trim()
   .toLowerCase();
-const TELNYX_LIVE_REPLY_STRATEGIST_TIMEOUT_MS = Math.max(0, Math.min(4000, Number(process.env.PBK_TELNYX_LIVE_REPLY_STRATEGIST_TIMEOUT_MS || 3000)));
+const TELNYX_LIVE_REPLY_STRATEGIST_TIMEOUT_MS = Math.max(0, Math.min(4000, Number(process.env.PBK_TELNYX_LIVE_REPLY_STRATEGIST_TIMEOUT_MS || 2500)));
 const PBK_TELNYX_ELEVENLABS_MEDIA_REPLY_ENABLED = !/^(0|false|no|off)$/i.test(String(process.env.PBK_TELNYX_ELEVENLABS_MEDIA_REPLY_ENABLED || 'true').trim());
 const PBK_AVA_INBOUND_CALL_CONTROL_GREETING_ENABLED = /^(1|true|yes)$/i.test(String(process.env.PBK_AVA_INBOUND_CALL_CONTROL_GREETING_ENABLED || '').trim());
 const TELNYX_BIDIRECTIONAL_MEDIA_MODE = String(process.env.PBK_TELNYX_BIDIRECTIONAL_MEDIA_MODE || 'mp3')
@@ -65444,9 +65444,10 @@ const server = createServer(async (request, response) => {
       return;
     }
 
-    if (request.method === 'POST' && pathname === '/api/skills/ingest') {
+    if (request.method === 'POST' && matchesPath(pathname, ['/api/skills/ingest', '/api/skills/import-from-article'])) {
       const body = await readBody(request);
-      const sourceType = String(body.sourceType || '').trim().toLowerCase();
+      const isArticleImportPath = pathname === '/api/skills/import-from-article';
+      const sourceType = String(body.sourceType || (isArticleImportPath ? 'article' : '')).trim().toLowerCase();
       const sourceUrl = String(body.source || body.sourceUrl || '').trim();
       const rawAgentId = String(body.agentId || 'ava').trim().toLowerCase();
       const agentId = rawAgentId === 'nurture' ? 'nurture-agent' : rawAgentId;

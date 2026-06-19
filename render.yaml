@@ -161,7 +161,7 @@ services:
       - key: PBK_TELNYX_LIVE_REPLY_STRATEGIST_MODE
         value: inline
       - key: PBK_TELNYX_LIVE_REPLY_STRATEGIST_TIMEOUT_MS
-        value: 3000
+        value: 2500
 
       # DeepSeek remains Ava/Rex's strategist, but its public API does not
       # expose a supported embeddings model. Use a quota-independent local

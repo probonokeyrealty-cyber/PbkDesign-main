@@ -252,8 +252,8 @@ assert.match(
 );
 assert.match(
   renderBlueprint,
-  /key:\s*PBK_TELNYX_LIVE_REPLY_STRATEGIST_TIMEOUT_MS[\s\S]*?value:\s*3000/,
-  'Render must give V4 Flash enough total live-call budget before deterministic contract fallback.'
+  /key:\s*PBK_TELNYX_LIVE_REPLY_STRATEGIST_TIMEOUT_MS[\s\S]*?value:\s*2500/,
+  'Render must keep V4 Flash inside the live phone budget before deterministic contract fallback.'
 );
 assert.match(
   renderBlueprint,

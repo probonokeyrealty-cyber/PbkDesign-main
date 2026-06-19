@@ -12,6 +12,7 @@ for (const contract of [
   '/api/skills/governance/repository',
   '/api/skills/candidates',
   '/api/skills/ingest',
+  '/api/skills/import-from-article',
   '/api/skills/versions/:versionId/approve',
   '/api/skills/versions/:versionId/activate',
   '/api/skills/activations/:activationId/rollback',
@@ -75,6 +76,12 @@ assert(
       bridge
     ),
   'Article ingestion must fetch or accept article/OCR text, extract candidates, and route through governance authority.'
+);
+assert(
+  /isArticleImportPath[\s\S]*sourceType = String\(body\.sourceType \|\| \(isArticleImportPath \? 'article' : ''\)/.test(
+    bridge
+  ),
+  'Article import must expose an explicit endpoint that defaults to sourceType=article.'
 );
 assert(
   /article_skill_candidates_created/.test(bridge) &&

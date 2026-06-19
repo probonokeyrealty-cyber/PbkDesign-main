@@ -126,7 +126,7 @@ for (const pathName of ['/health', '/api/conversations?limit=5', '/api/leads/sea
 const liveCallSpeedReady = buildLiveCallSpeedBudget({
   contractTargetMs: 100,
   strategistAttemptBudgetMs: 1400,
-  strategistTotalBudgetMs: 3000,
+  strategistTotalBudgetMs: 2500,
   duplicateSuppression: true,
   cacheAtCallStart: true,
 });
@@ -135,12 +135,22 @@ assert.equal(liveCallSpeedReady.ready, true);
 const liveCallSpeedMissingCache = buildLiveCallSpeedBudget({
   contractTargetMs: 100,
   strategistAttemptBudgetMs: 1400,
-  strategistTotalBudgetMs: 3000,
+  strategistTotalBudgetMs: 2500,
   duplicateSuppression: true,
   cacheAtCallStart: false,
 });
 assert.equal(liveCallSpeedMissingCache.ready, false);
 assert.ok(liveCallSpeedMissingCache.blockers.includes('call_start_cache_missing'));
+
+const liveCallSpeedSlowTotal = buildLiveCallSpeedBudget({
+  contractTargetMs: 100,
+  strategistAttemptBudgetMs: 1400,
+  strategistTotalBudgetMs: 3500,
+  duplicateSuppression: true,
+  cacheAtCallStart: true,
+});
+assert.equal(liveCallSpeedSlowTotal.ready, false);
+assert.ok(liveCallSpeedSlowTotal.blockers.includes('strategist_total_budget_too_high'));
 
 const bridgeSource = readFileSync(path.join(rootDir, 'scripts', 'openclaw-local-server.mjs'), 'utf8');
 const renderYaml = readFileSync(path.join(rootDir, 'render.yaml'), 'utf8');

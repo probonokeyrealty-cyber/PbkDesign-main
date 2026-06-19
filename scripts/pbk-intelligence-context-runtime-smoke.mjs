@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 
 import {
   clearPBKIntelligenceContextSessions,
+  ensureFreshPBKIntelligenceContext,
   getPBKIntelligenceContextSessionStatus,
   loadPBKIntelligenceContextFromSession,
   savePBKIntelligenceContextToSession,
@@ -124,6 +125,35 @@ const finalContext = await loadPBKIntelligenceContextFromSession({
 });
 assert.equal(finalContext.outcome.contractSent, true);
 assert.equal(getPBKIntelligenceContextSessionStatus().count, 1);
+
+const staleContext = {
+  ...finalContext,
+  dataFreshness: {
+    ...finalContext.dataFreshness,
+    lastSyncAt: '2020-01-01T00:00:00.000Z',
+  },
+};
+const refreshedContext = await ensureFreshPBKIntelligenceContext(staleContext, {
+  input: {
+    ...baseInput,
+    memory: {
+      coaching: [
+        {
+          tag: 'fresh_price_gap',
+          phrase: 'Use the seller target price and move to condition.',
+        },
+      ],
+    },
+  },
+  maxAgeMs: 60_000,
+});
+assert.equal(refreshedContext.dataFreshness.ready, true);
+assert.notEqual(refreshedContext.dataFreshness.lastSyncAt, '2020-01-01T00:00:00.000Z');
+assert.equal(refreshedContext.memory.coaching[0].tag, 'fresh_price_gap');
+assert(
+  refreshedContext.auditTrail.some((event) => event.event === 'pbk_intelligence_context_refreshed'),
+  'Stale intelligence context should leave an audit trail when refreshed.'
+);
 
 const bridgeSource = readFileSync(new URL('./openclaw-local-server.mjs', import.meta.url), 'utf8');
 assert.match(bridgeSource, /withPBKIntelligenceContext/);

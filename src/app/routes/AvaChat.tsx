@@ -1606,6 +1606,23 @@ function AvaComposer({
           <label className="sr-only" htmlFor="ava-command-input">
             Ask Ava to run a local command
           </label>
+          <div className="pbk-ava-chat-action-rail" aria-label="Suggested Ava actions">
+            {PBK_COMPANION_ACTIONS.slice(0, 5).map((item) => {
+              const QuickIcon = item.icon;
+              return (
+                <button
+                  key={item.id}
+                  type="button"
+                  onClick={() => onSelectCompanionAction(item)}
+                  className={action === item.action ? 'active' : ''}
+                  aria-pressed={action === item.action}
+                >
+                  <QuickIcon size={14} />
+                  <span>{item.label}</span>
+                </button>
+              );
+            })}
+          </div>
           <textarea
             id="ava-command-input"
             ref={textareaRef}

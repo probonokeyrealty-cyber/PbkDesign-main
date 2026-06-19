@@ -119,12 +119,13 @@ assert(
   avaChat.includes('pbk-ava-chat-composer') &&
     avaChat.includes('pbk-ava-chat-controls') &&
     avaChat.includes('min-w-0') &&
-    avaChat.includes('h-full max-h-full') &&
+  avaChat.includes('h-full max-h-full') &&
     !avaChat.includes('h-[calc(100dvh-188px)]') &&
     avaChat.includes('pbk-ava-chat-toolbar') &&
-    avaChat.includes('pbk-ava-chat-quick-strip') &&
+    avaChat.includes('pbk-ava-chat-action-rail') &&
     avaChat.includes('grid-rows-[auto_minmax(0,1fr)_auto]') &&
     /\.pbk-ava-chat-composer\s*\{[\s\S]*?padding-bottom:\s*max\(/.test(css) &&
+    /\.pbk-ava-chat-action-rail\s*\{[\s\S]*?overflow-x:\s*auto/.test(css) &&
     /@media \(max-width: 640px\)[\s\S]*?\.pbk-ava-chat-toolbar\s*\{[\s\S]*?grid-template-columns:\s*minmax\(0,\s*1fr\)\s+44px/.test(
       css
     ) &&

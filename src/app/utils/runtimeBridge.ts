@@ -2053,7 +2053,7 @@ export async function createSkillCandidateRequest(body: Record<string, unknown>)
 export type SkillIngestResponse = {
   ok: boolean;
   result: string;
-  sourceType?: 'youtube';
+  sourceType?: 'youtube' | 'article' | 'text';
   sourceUrl?: string;
   agentId?: string;
   createdCount?: number;
@@ -2074,6 +2074,13 @@ export type SkillIngestResponse = {
     source?: string;
     fallbackUsed?: boolean;
   };
+  article?: {
+    title?: string;
+    chars?: number;
+    source?: string;
+    parser?: string;
+    metadata?: Record<string, unknown>;
+  };
   reason?: string;
   retryable?: boolean;
   fallback?: {
@@ -2085,12 +2092,15 @@ export type SkillIngestResponse = {
 };
 
 export async function ingestSkillCandidatesRequest(body: {
-  sourceType: 'youtube';
+  sourceType: 'youtube' | 'article' | 'text';
   source: string;
   agentId: string;
   maxCandidates?: number;
   manualTranscript?: string;
   audioTranscriptUrl?: string;
+  text?: string;
+  content?: string;
+  title?: string;
 }) {
   return bridgeRequest<SkillIngestResponse>({
     method: 'POST',

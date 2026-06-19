@@ -143,6 +143,7 @@ assert.equal(liveCallSpeedMissingCache.ready, false);
 assert.ok(liveCallSpeedMissingCache.blockers.includes('call_start_cache_missing'));
 
 const bridgeSource = readFileSync(path.join(rootDir, 'scripts', 'openclaw-local-server.mjs'), 'utf8');
+const renderYaml = readFileSync(path.join(rootDir, 'render.yaml'), 'utf8');
 assert.ok(
   bridgeSource.includes("from './production-performance-hardening.mjs'"),
   'bridge must import production performance hardening helpers'
@@ -187,6 +188,35 @@ assert.ok(
     bridgeSource.includes('async function getCachedReadResponse') &&
     bridgeSource.includes('clearBridgeReadCache('),
   'bridge must provide a short read-through cache for high-traffic status/config endpoints'
+);
+for (const ttlMarker of [
+  /agentRegistry:\s*Math\.max\(5000,\s*Math\.min\(60000,\s*Number\(process\.env\.PBK_READ_CACHE_AGENT_REGISTRY_TTL_MS\s*\|\|\s*60000\)\)\)/,
+  /communicationIdentities:\s*Math\.max\(5000,\s*Math\.min\(60000,\s*Number\(process\.env\.PBK_READ_CACHE_COMMUNICATION_IDENTITIES_TTL_MS\s*\|\|\s*60000\)\)\)/,
+  /productionMaturity:\s*Math\.max\(5000,\s*Math\.min\(60000,\s*Number\(process\.env\.PBK_READ_CACHE_MATURITY_TTL_MS\s*\|\|\s*60000\)\)\)/,
+]) {
+  assert.match(bridgeSource, ttlMarker, 'hot read endpoints must default to a 60s cache window.');
+}
+for (const renderMarker of [
+  /PBK_READ_CACHE_AGENT_REGISTRY_TTL_MS[\s\S]*value:\s*"60000"/,
+  /PBK_READ_CACHE_COMMUNICATION_IDENTITIES_TTL_MS[\s\S]*value:\s*"60000"/,
+  /PBK_READ_CACHE_MATURITY_TTL_MS[\s\S]*value:\s*"60000"/,
+]) {
+  assert.match(renderYaml, renderMarker, 'Render blueprint must pin hot read cache TTLs to 60s.');
+}
+assert.match(
+  bridgeSource,
+  /strategistAttemptBudgetMs:\s*DEEPSEEK_LIVE_ATTEMPT_TIMEOUT_MS/,
+  'performance status must report the active DeepSeek live attempt timeout constant.'
+);
+assert.match(
+  bridgeSource,
+  /strategistTotalBudgetMs:\s*TELNYX_LIVE_REPLY_STRATEGIST_TIMEOUT_MS/,
+  'performance status must report the active live strategist total timeout constant.'
+);
+assert.doesNotMatch(
+  bridgeSource,
+  /strategistAttemptBudgetMs:\s*Number\(process\.env\.PBK_DEEPSEEK_LIVE_TIMEOUT_MS/,
+  'performance status must not read the retired DeepSeek live timeout env name.'
 );
 assert.ok(
   bridgeSource.includes('sharedRedisClient?.isOpen') &&

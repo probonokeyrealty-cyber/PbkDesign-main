@@ -72,6 +72,39 @@ assert.equal(price.action, 'jump');
 assert(price.reasonCodes.includes('skill_switch'));
 assert.equal(price.previousSkillId, 'skill-trust');
 
+const synonymPrice = selectGovernedAvaSkill({
+  skills,
+  transcript: 'That number feels like a lowball. I need something closer to retail.',
+});
+assert.equal(synonymPrice.selectedSkill?.id, 'skill-price');
+assert(synonymPrice.reasonCodes.includes('semantic_trigger_match'));
+
+const outcomeRanked = selectGovernedAvaSkill({
+  skills: [
+    {
+      ...skills[1],
+      id: 'a-stale-price-script',
+      versionId: 'a-stale-price-script-v1',
+      name: 'A stale price script',
+      confidence: 0.3,
+      usageCount: 4,
+      successRate: 0.25,
+    },
+    {
+      ...skills[1],
+      id: 'z-proven-price-script',
+      versionId: 'z-proven-price-script-v1',
+      name: 'Z proven price script',
+      confidence: 0.88,
+      usageCount: 38,
+      successRate: 0.74,
+    },
+  ],
+  transcript: 'Your offer is too low. I need more money.',
+});
+assert.equal(outcomeRanked.selectedSkill?.id, 'z-proven-price-script');
+assert(outcomeRanked.reasonCodes.includes('outcome_confidence_rank'));
+
 const cleared = selectGovernedAvaSkill({
   skills,
   transcript: 'Okay, I understand.',

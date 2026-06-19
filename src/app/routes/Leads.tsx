@@ -234,6 +234,37 @@ function getSellerName(lead: BridgeRecord) {
   return text(lead.name || seller.name || lead.leadName, 'Unknown seller');
 }
 
+function getSellerInitial(name: string) {
+  return (
+    text(name, 'U')
+      .match(/[A-Za-z0-9]/)?.[0]
+      ?.toUpperCase() || 'U'
+  );
+}
+
+function SellerRosterIdentity({
+  name,
+  address,
+  variant = 'desktop',
+}: {
+  name: string;
+  address: string;
+  variant?: 'desktop' | 'mobile';
+}) {
+  return (
+    <span
+      className={['pbk-lead-roster-identity', variant === 'mobile' ? 'is-mobile' : ''].join(' ')}
+    >
+      <span className="pbk-lead-roster-name" title={name}>
+        {name}
+      </span>
+      <span className="pbk-lead-roster-address" title={address}>
+        {address}
+      </span>
+    </span>
+  );
+}
+
 function getLeadEmail(lead: BridgeRecord) {
   const seller = getSeller(lead);
   return text(lead.email || seller.email);
@@ -1726,18 +1757,11 @@ export function Leads() {
                 >
                   <span className={['lead-score', scoreTone(score)].join(' ')}>{score}</span>
                   <span className="min-w-0 flex-1">
-                    <span
-                      className="block truncate text-base font-semibold text-slate-100"
-                      title={sellerName}
-                    >
-                      {sellerName}
-                    </span>
-                    <span
-                      className="mt-1 block truncate text-xs text-slate-400"
-                      title={getLeadAddress(lead)}
-                    >
-                      {getLeadAddress(lead)}
-                    </span>
+                    <SellerRosterIdentity
+                      name={sellerName}
+                      address={getLeadAddress(lead)}
+                      variant="mobile"
+                    />
                     <span className="mt-3 grid grid-cols-2 gap-2 text-[11px] text-slate-400">
                       <span>
                         ARV{' '}
@@ -1765,7 +1789,7 @@ export function Leads() {
                   </span>
                   <span className="flex flex-col items-end gap-2">
                     <span className="grid h-8 w-8 place-items-center rounded-full bg-slate-800 text-xs font-semibold text-sky-200">
-                      {sellerName.charAt(0).toUpperCase()}
+                      {getSellerInitial(sellerName)}
                     </span>
                     <span
                       className="pbk-lead-quick-actions compact"
@@ -1843,18 +1867,7 @@ export function Leads() {
                     onClick={() => setSelectedLeadId(id)}
                     className="min-w-0 text-left"
                   >
-                    <span
-                      className="block truncate text-sm font-semibold text-slate-100"
-                      title={sellerName}
-                    >
-                      {sellerName}
-                    </span>
-                    <span
-                      className="mt-1 block truncate text-xs text-slate-400"
-                      title={getLeadAddress(lead)}
-                    >
-                      {getLeadAddress(lead)}
-                    </span>
+                    <SellerRosterIdentity name={sellerName} address={getLeadAddress(lead)} />
                     <span className="mt-1 flex flex-wrap gap-2 text-[11px] text-slate-500">
                       <span>
                         {getLeadPhone(lead) || getLeadEmail(lead) || 'No contact captured'}

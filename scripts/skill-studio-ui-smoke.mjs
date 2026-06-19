@@ -43,7 +43,14 @@ for (const helper of [
   assert(route.includes(helper), `Skill Studio must use ${helper}.`);
 }
 
-for (const label of ['Manual', 'YouTube', 'Learn from YouTube', 'Analyze video']) {
+for (const label of [
+  'Manual',
+  'YouTube',
+  'Article',
+  'Learn from YouTube',
+  'Analyze video',
+  'Analyze article',
+]) {
   assert(route.includes(label), `Skill candidate intake must expose ${label}.`);
 }
 for (const label of [
@@ -70,6 +77,22 @@ assert(
   'Skill Studio must submit bounded YouTube ingestion requests with transcript and direct media fallbacks.'
 );
 assert(
+  route.includes("sourceType: 'article'") &&
+    route.includes('articleText') &&
+    route.includes('articleTitle') &&
+    route.includes('Article text, screenshot OCR, or detailed notes'),
+  'Skill Studio must submit review-only article/OCR ingestion requests.'
+);
+assert(
+  route.includes('getSkillPerformance') &&
+    route.includes('performanceFilter') &&
+    route.includes('agentFilter') &&
+    route.includes('riskFilter') &&
+    route.includes('pbk-skill-performance-dashboard') &&
+    route.includes('pbk-skill-card-metrics'),
+  'Skill Studio repository must expose performance-aware governance filters and metrics.'
+);
+assert(
   route.includes('Paste transcript or detailed notes') &&
     route.includes('Direct audio/video transcript URL') &&
     route.includes('pbk-skill-youtube-fallback') &&
@@ -78,10 +101,20 @@ assert(
 );
 assert(
   styles.includes('.pbk-skill-intake-mode') &&
+    styles.includes('grid-template-columns: repeat(3, minmax(0, 1fr))') &&
     styles.includes('.pbk-skill-youtube-note') &&
     styles.includes('.pbk-skill-youtube-fallback') &&
-    styles.includes('.pbk-skill-audio-fallback'),
-  'Skill Studio must style the YouTube intake mode and fallback transcript block.'
+    styles.includes('.pbk-skill-audio-fallback') &&
+    styles.includes('.pbk-skill-source-input') &&
+    styles.includes('.pbk-skill-article-text'),
+  'Skill Studio must style the YouTube and article intake modes and fallback transcript blocks.'
+);
+assert(
+  styles.includes('.pbk-skill-filter-grid') &&
+    styles.includes('.pbk-skill-card-metrics') &&
+    styles.includes('.pbk-skill-card-badges') &&
+    styles.includes('.pbk-skill-performance-dashboard'),
+  'Skill Studio must style compact repository filters, skill metrics, and the performance dashboard.'
 );
 assert(
   legacyShell.includes('name="audioTranscriptUrl"') &&

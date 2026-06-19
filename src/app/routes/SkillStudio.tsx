@@ -9,6 +9,7 @@ import {
   CircleDot,
   Database,
   FileCheck2,
+  FileText,
   Filter,
   GitBranch,
   History,
@@ -105,6 +106,114 @@ function shortenHash(value = '') {
   return value ? `${value.slice(0, 10)}...${value.slice(-6)}` : 'No hash';
 }
 
+function readNumber(value: unknown) {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : null;
+}
+
+function readRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
+function firstNumber(...values: unknown[]) {
+  for (const value of values) {
+    const numeric = readNumber(value);
+    if (numeric !== null) return numeric;
+  }
+  return null;
+}
+
+function firstText(...values: unknown[]) {
+  for (const value of values) {
+    const textValue = String(value || '').trim();
+    if (textValue) return textValue;
+  }
+  return '';
+}
+
+function percentLabel(value: number | null) {
+  if (value === null) return 'N/A';
+  const normalized = value <= 1 ? value * 100 : value;
+  return `${Math.max(0, Math.min(100, normalized)).toFixed(0)}%`;
+}
+
+function signedPercentLabel(value: number | null) {
+  if (value === null) return 'No delta';
+  const normalized = value <= 1 && value >= -1 ? value * 100 : value;
+  const clamped = Math.max(-100, Math.min(100, normalized));
+  return `${clamped > 0 ? '+' : ''}${clamped.toFixed(0)}% wk`;
+}
+
+function getSkillPerformance(item: SkillGovernanceItem) {
+  const raw = item as SkillGovernanceItem & Record<string, unknown>;
+  const outcomes = readRecord(raw.outcomes || raw.outcomeStats || raw.performance);
+  const metrics = readRecord(raw.metrics || raw.analytics || raw.skillMetrics);
+  const usageCount =
+    firstNumber(
+      raw.usageCount,
+      raw.usage_count,
+      raw.uses,
+      raw.totalUses,
+      outcomes.usageCount,
+      outcomes.uses,
+      metrics.usageCount,
+      metrics.uses
+    ) || 0;
+  const wins =
+    firstNumber(raw.wins, raw.successes, outcomes.wins, outcomes.successes, metrics.wins) || 0;
+  const losses =
+    firstNumber(raw.losses, raw.failures, outcomes.losses, outcomes.failures, metrics.losses) || 0;
+  const derivedRate = usageCount > 0 ? wins / Math.max(1, wins + losses || usageCount) : null;
+  const successRate = firstNumber(
+    raw.successRate,
+    raw.success_rate,
+    outcomes.successRate,
+    outcomes.success_rate,
+    metrics.successRate,
+    derivedRate
+  );
+  const confidence = firstNumber(
+    raw.confidence,
+    raw.confidenceScore,
+    raw.confidence_score,
+    outcomes.confidence,
+    metrics.confidence
+  );
+  const confidenceDelta = firstNumber(
+    raw.confidenceDelta,
+    raw.confidence_delta,
+    raw.weeklyDelta,
+    raw.weekly_delta,
+    outcomes.confidenceDelta,
+    metrics.confidenceDelta
+  );
+  const lastTriggeredAt = firstText(
+    raw.lastTriggeredAt,
+    raw.last_triggered_at,
+    raw.lastUsedAt,
+    raw.last_used_at,
+    outcomes.lastTriggeredAt,
+    metrics.lastTriggeredAt
+  );
+  return {
+    usageCount,
+    successRate,
+    confidence,
+    confidenceDelta,
+    lastTriggeredAt,
+    trendTone:
+      confidenceDelta === null
+        ? 'neutral'
+        : confidenceDelta > 0
+          ? 'up'
+          : confidenceDelta < 0
+            ? 'down'
+            : 'neutral',
+  };
+}
+
 function JsonSummary({ value }: { value?: Record<string, unknown> }) {
   const entries = Object.entries(value || {});
   if (!entries.length) return <span className="pbk-skill-muted">None recorded</span>;
@@ -132,15 +241,17 @@ function CreateCandidateDialog({
   onClose: () => void;
   onCreate: (payload: Record<string, unknown>) => Promise<void>;
   onIngest: (payload: {
-    sourceType: 'youtube';
+    sourceType: 'youtube' | 'article' | 'text';
     source: string;
     agentId: string;
     maxCandidates: number;
     manualTranscript?: string;
     audioTranscriptUrl?: string;
+    text?: string;
+    title?: string;
   }) => Promise<void>;
 }) {
-  const [mode, setMode] = useState<'manual' | 'youtube'>('manual');
+  const [mode, setMode] = useState<'manual' | 'youtube' | 'article'>('manual');
   const [wizardStep, setWizardStep] = useState(0);
   const [name, setName] = useState('');
   const [triggerType, setTriggerType] = useState<string>(SKILL_TRIGGER_OPTIONS[0].value);
@@ -152,6 +263,9 @@ function CreateCandidateDialog({
   const [youtubeUrl, setYoutubeUrl] = useState('');
   const [manualTranscript, setManualTranscript] = useState('');
   const [audioTranscriptUrl, setAudioTranscriptUrl] = useState('');
+  const [articleUrl, setArticleUrl] = useState('');
+  const [articleTitle, setArticleTitle] = useState('');
+  const [articleText, setArticleText] = useState('');
   const [maxCandidates, setMaxCandidates] = useState(5);
   if (!open) return null;
   const triggerLabel = getSkillTriggerLabel(triggerType);
@@ -221,11 +335,23 @@ function CreateCandidateDialog({
               <Youtube size={16} />
               YouTube
             </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={mode === 'article'}
+              className={mode === 'article' ? 'active' : ''}
+              onClick={() => setMode('article')}
+            >
+              <FileText size={16} />
+              Article
+            </button>
           </div>
           <p>
             {mode === 'manual'
               ? 'New skills enter review only. They cannot execute until an operator approves the exact hash and activates a rollout.'
-              : 'Learn from YouTube without bypassing governance. Captions are used when available; disabled-caption videos can use pasted notes or a direct media URL for Deepgram transcription.'}
+              : mode === 'youtube'
+                ? 'Learn from YouTube without bypassing governance. Captions are used when available; disabled-caption videos can use pasted notes or a direct media URL for Deepgram transcription.'
+                : 'Break an article, pasted notes, or screenshot OCR text into governed skill candidates. Every result still enters review only.'}
           </p>
           {mode === 'manual' ? (
             <>
@@ -358,7 +484,7 @@ function CreateCandidateDialog({
                 </div>
               )}
             </>
-          ) : (
+          ) : mode === 'youtube' ? (
             <>
               <label>
                 YouTube URL
@@ -381,7 +507,7 @@ function CreateCandidateDialog({
                   <select value={agentId} onChange={(event) => setAgentId(event.target.value)}>
                     <option value="ava">Ava</option>
                     <option value="rex">Rex</option>
-                    <option value="nurture">Nurture</option>
+                    <option value="nurture-agent">Nurture</option>
                     <option value="max">Max</option>
                   </select>
                 </label>
@@ -436,6 +562,77 @@ function CreateCandidateDialog({
                 </small>
               </label>
             </>
+          ) : (
+            <>
+              <label>
+                Article title
+                <input
+                  value={articleTitle}
+                  onChange={(event) => setArticleTitle(event.target.value)}
+                  placeholder="Negotiation article, screenshot notes, or training doctrine"
+                  autoFocus
+                />
+              </label>
+              <label>
+                Article URL
+                <div className="pbk-skill-source-input">
+                  <FileText size={17} aria-hidden="true" />
+                  <input
+                    value={articleUrl}
+                    onChange={(event) => setArticleUrl(event.target.value)}
+                    placeholder="https://example.com/article"
+                    inputMode="url"
+                    autoCapitalize="none"
+                    autoCorrect="off"
+                  />
+                </div>
+              </label>
+              <div className="pbk-skill-dialog-grid">
+                <label>
+                  Suggested agent
+                  <select value={agentId} onChange={(event) => setAgentId(event.target.value)}>
+                    <option value="ava">Ava</option>
+                    <option value="rex">Rex</option>
+                    <option value="nurture-agent">Nurture</option>
+                    <option value="max">Max</option>
+                  </select>
+                </label>
+                <label>
+                  Candidate limit
+                  <select
+                    value={maxCandidates}
+                    onChange={(event) => setMaxCandidates(Number(event.target.value))}
+                  >
+                    <option value={3}>3 focused skills</option>
+                    <option value={5}>5 balanced skills</option>
+                    <option value={8}>8 broad skills</option>
+                  </select>
+                </label>
+              </div>
+              <div className="pbk-skill-youtube-note">
+                <ShieldCheck size={18} />
+                <div>
+                  <strong>Article import is review-only</strong>
+                  <span>
+                    Pasted article text, OCR from screenshots, and reachable URLs create inactive
+                    candidates. Operators still approve exact hashes before rollout.
+                  </span>
+                </div>
+              </div>
+              <label className="pbk-skill-article-text">
+                Article text, screenshot OCR, or detailed notes
+                <textarea
+                  value={articleText}
+                  onChange={(event) => setArticleText(event.target.value)}
+                  placeholder="Paste the article body, OCR text from a screenshot, or detailed notes. PBK will extract trigger, response, next question, risk, and target-agent candidates."
+                  rows={8}
+                />
+                <small>
+                  Use this for screenshots: run OCR or copy the visible article text here. A URL can
+                  be used when the bridge can fetch the page directly.
+                </small>
+              </label>
+            </>
           )}
         </div>
         <footer>
@@ -462,7 +659,9 @@ function CreateCandidateDialog({
                 ? wizardStep === SKILL_WIZARD_STEPS.length - 1
                   ? !manualCanSave
                   : !manualStepReady
-                : !/^https?:\/\/(?:www\.)?(?:youtube\.com|youtu\.be)\//i.test(youtubeUrl.trim()))
+                : mode === 'youtube'
+                  ? !/^https?:\/\/(?:www\.)?(?:youtube\.com|youtu\.be)\//i.test(youtubeUrl.trim())
+                  : !(articleText.trim().length >= 400 || /^https?:\/\//i.test(articleUrl.trim())))
             }
             onClick={() => {
               if (mode === 'manual' && wizardStep < SKILL_WIZARD_STEPS.length - 1) {
@@ -477,6 +676,17 @@ function CreateCandidateDialog({
                   maxCandidates,
                   manualTranscript: manualTranscript.trim(),
                   audioTranscriptUrl: audioTranscriptUrl.trim(),
+                });
+                return;
+              }
+              if (mode === 'article') {
+                void onIngest({
+                  sourceType: 'article',
+                  source: articleUrl.trim(),
+                  agentId,
+                  maxCandidates,
+                  text: articleText.trim(),
+                  title: articleTitle.trim(),
                 });
                 return;
               }
@@ -497,18 +707,28 @@ function CreateCandidateDialog({
               });
             }}
           >
-            {mode === 'youtube' ? <Youtube size={17} /> : <Plus size={16} />}
+            {mode === 'youtube' ? (
+              <Youtube size={17} />
+            ) : mode === 'article' ? (
+              <FileText size={17} />
+            ) : (
+              <Plus size={16} />
+            )}
             {busy
               ? mode === 'youtube'
                 ? 'Analyzing video'
-                : 'Creating'
+                : mode === 'article'
+                  ? 'Analyzing article'
+                  : 'Creating'
               : mode === 'youtube'
                 ? 'Analyze video'
-                : wizardStep === SKILL_WIZARD_STEPS.length - 1
-                  ? 'Create candidate'
-                  : wizardStep === SKILL_WIZARD_STEPS.length - 2
-                    ? 'Preview skill'
-                    : 'Next'}
+                : mode === 'article'
+                  ? 'Analyze article'
+                  : wizardStep === SKILL_WIZARD_STEPS.length - 1
+                    ? 'Create candidate'
+                    : wizardStep === SKILL_WIZARD_STEPS.length - 2
+                      ? 'Preview skill'
+                      : 'Next'}
           </button>
         </footer>
       </section>
@@ -523,6 +743,9 @@ export function SkillStudio() {
   const [selectedId, setSelectedId] = useState('');
   const [search, setSearch] = useState('');
   const [lifecycleFilter, setLifecycleFilter] = useState('');
+  const [agentFilter, setAgentFilter] = useState('');
+  const [riskFilter, setRiskFilter] = useState('');
+  const [performanceFilter, setPerformanceFilter] = useState('');
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -538,6 +761,50 @@ export function SkillStudio() {
     [items, selectedId]
   );
   const currentStep = STATE_STEP[selected?.lifecycleState || 'candidate'] || 0;
+  const selectedPerformance = selected ? getSkillPerformance(selected) : null;
+
+  const visibleItems = useMemo(() => {
+    const normalizedAgent = agentFilter.trim().toLowerCase();
+    const normalizedRisk = riskFilter.trim().toLowerCase();
+    const filtered = items.filter((item) => {
+      if (normalizedAgent && String(item.agentId || '').toLowerCase() !== normalizedAgent) {
+        return false;
+      }
+      if (normalizedRisk && String(item.riskClass || '').toLowerCase() !== normalizedRisk) {
+        return false;
+      }
+      if (performanceFilter === 'needs_outcomes') {
+        const metrics = getSkillPerformance(item);
+        return metrics.usageCount <= 0 || metrics.successRate === null;
+      }
+      return true;
+    });
+    return [...filtered].sort((left, right) => {
+      if (performanceFilter === 'top') {
+        const leftMetrics = getSkillPerformance(left);
+        const rightMetrics = getSkillPerformance(right);
+        return (
+          (rightMetrics.successRate ?? rightMetrics.confidence ?? -1) -
+          (leftMetrics.successRate ?? leftMetrics.confidence ?? -1)
+        );
+      }
+      if (performanceFilter === 'worst') {
+        const leftMetrics = getSkillPerformance(left);
+        const rightMetrics = getSkillPerformance(right);
+        return (
+          (leftMetrics.successRate ?? leftMetrics.confidence ?? 101) -
+          (rightMetrics.successRate ?? rightMetrics.confidence ?? 101)
+        );
+      }
+      if (performanceFilter === 'recent') {
+        return (
+          new Date(getSkillPerformance(right).lastTriggeredAt || 0).getTime() -
+          new Date(getSkillPerformance(left).lastTriggeredAt || 0).getTime()
+        );
+      }
+      return 0;
+    });
+  }, [agentFilter, items, performanceFilter, riskFilter]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -750,7 +1017,9 @@ export function SkillStudio() {
           <div className="pbk-skill-pane-head">
             <div>
               <span>Repository</span>
-              <strong>{items.length} exact versions</strong>
+              <strong>
+                {visibleItems.length} of {items.length} exact versions
+              </strong>
             </div>
             <Database size={17} />
           </div>
@@ -763,45 +1032,108 @@ export function SkillStudio() {
               aria-label="Search skill repository"
             />
           </div>
-          <label className="pbk-skill-filter">
-            <Filter size={15} />
-            <select
-              value={lifecycleFilter}
-              onChange={(event) => setLifecycleFilter(event.target.value)}
-              aria-label="Filter by lifecycle state"
-            >
-              <option value="">All lifecycle states</option>
-              {Object.entries(STATE_LABELS).map(([value, label]) => (
-                <option key={value} value={value}>
-                  {label}
-                </option>
-              ))}
-            </select>
-          </label>
+          <div className="pbk-skill-filter-grid">
+            <label className="pbk-skill-filter">
+              <Filter size={15} />
+              <select
+                value={lifecycleFilter}
+                onChange={(event) => setLifecycleFilter(event.target.value)}
+                aria-label="Filter by lifecycle state"
+              >
+                <option value="">All lifecycle states</option>
+                {Object.entries(STATE_LABELS).map(([value, label]) => (
+                  <option key={value} value={value}>
+                    {label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="pbk-skill-filter">
+              <Bot size={15} />
+              <select
+                value={agentFilter}
+                onChange={(event) => setAgentFilter(event.target.value)}
+                aria-label="Filter by agent"
+              >
+                <option value="">All agents</option>
+                <option value="ava">Ava</option>
+                <option value="rex">Rex</option>
+                <option value="nurture-agent">Nurture</option>
+                <option value="max">Max</option>
+              </select>
+            </label>
+            <label className="pbk-skill-filter">
+              <ShieldCheck size={15} />
+              <select
+                value={riskFilter}
+                onChange={(event) => setRiskFilter(event.target.value)}
+                aria-label="Filter by risk"
+              >
+                <option value="">All risk</option>
+                <option value="low">Low risk</option>
+                <option value="medium">Medium risk</option>
+                <option value="high">High risk</option>
+                <option value="critical">Critical risk</option>
+              </select>
+            </label>
+            <label className="pbk-skill-filter">
+              <Activity size={15} />
+              <select
+                value={performanceFilter}
+                onChange={(event) => setPerformanceFilter(event.target.value)}
+                aria-label="Sort by performance"
+              >
+                <option value="">All performance</option>
+                <option value="top">Top outcomes</option>
+                <option value="worst">Needs coaching</option>
+                <option value="recent">Recently triggered</option>
+                <option value="needs_outcomes">Needs outcome data</option>
+              </select>
+            </label>
+          </div>
           <div className="pbk-skill-list">
             {loading && !items.length ? (
               <div className="pbk-skill-empty">
                 <RefreshCw className="animate-spin" />
                 Loading authority...
               </div>
-            ) : items.length ? (
-              items.map((item) => (
-                <button
-                  type="button"
-                  key={item.versionId}
-                  className={`pbk-skill-list-item ${selected?.versionId === item.versionId ? 'selected' : ''}`}
-                  onClick={() => setSelectedId(item.versionId)}
-                >
-                  <span className={`pbk-skill-state state-${item.lifecycleState}`}>
-                    {STATE_LABELS[item.lifecycleState] || item.lifecycleState}
-                  </span>
-                  <strong>{item.name}</strong>
-                  <small>
-                    v{item.versionNumber || 1} - {item.agentId || 'Unassigned'} -{' '}
-                    {item.riskClass || 'medium'} risk
-                  </small>
-                </button>
-              ))
+            ) : visibleItems.length ? (
+              visibleItems.map((item) => {
+                const metrics = getSkillPerformance(item);
+                return (
+                  <button
+                    type="button"
+                    key={item.versionId}
+                    className={`pbk-skill-list-item ${selected?.versionId === item.versionId ? 'selected' : ''}`}
+                    onClick={() => setSelectedId(item.versionId)}
+                  >
+                    <span className={`pbk-skill-state state-${item.lifecycleState}`}>
+                      {STATE_LABELS[item.lifecycleState] || item.lifecycleState}
+                    </span>
+                    <strong>{item.name}</strong>
+                    <span className="pbk-skill-card-badges">
+                      <span>v{item.versionNumber || 1}</span>
+                      <span>{item.agentId || 'Unassigned'}</span>
+                      <span>{item.riskClass || 'medium'} risk</span>
+                    </span>
+                    <span className="pbk-skill-card-metrics">
+                      <span>
+                        <strong>{metrics.usageCount}</strong>
+                        <small>uses</small>
+                      </span>
+                      <span>
+                        <strong>{percentLabel(metrics.successRate)}</strong>
+                        <small>success</small>
+                      </span>
+                      <span className={`trend-${metrics.trendTone}`}>
+                        <strong>{percentLabel(metrics.confidence)}</strong>
+                        <small>{signedPercentLabel(metrics.confidenceDelta)}</small>
+                      </span>
+                    </span>
+                    <small>Last triggered: {displayDate(metrics.lastTriggeredAt)}</small>
+                  </button>
+                );
+              })
             ) : (
               <div className="pbk-skill-empty">
                 <Search size={18} />
@@ -852,6 +1184,40 @@ export function SkillStudio() {
                   </li>
                 ))}
               </ol>
+
+              <section
+                className="pbk-skill-performance-dashboard"
+                aria-label="Skill performance dashboard"
+              >
+                <header>
+                  <Activity size={17} />
+                  <div>
+                    <span>Outcome intelligence</span>
+                    <h3>Skill performance</h3>
+                  </div>
+                </header>
+                <div>
+                  <article>
+                    <span>30d uses</span>
+                    <strong>{selectedPerformance?.usageCount || 0}</strong>
+                  </article>
+                  <article>
+                    <span>Success rate</span>
+                    <strong>{percentLabel(selectedPerformance?.successRate ?? null)}</strong>
+                  </article>
+                  <article className={`trend-${selectedPerformance?.trendTone || 'neutral'}`}>
+                    <span>Confidence</span>
+                    <strong>{percentLabel(selectedPerformance?.confidence ?? null)}</strong>
+                    <small>
+                      {signedPercentLabel(selectedPerformance?.confidenceDelta ?? null)}
+                    </small>
+                  </article>
+                  <article>
+                    <span>Last triggered</span>
+                    <strong>{displayDate(selectedPerformance?.lastTriggeredAt)}</strong>
+                  </article>
+                </div>
+              </section>
 
               <section className="pbk-skill-stage">
                 <header>
@@ -915,7 +1281,7 @@ export function SkillStudio() {
                       <select value={agentId} onChange={(event) => setAgentId(event.target.value)}>
                         <option value="ava">Ava</option>
                         <option value="rex">Rex</option>
-                        <option value="nurture">Nurture</option>
+                        <option value="nurture-agent">Nurture</option>
                         <option value="max">Max</option>
                       </select>
                     </label>
@@ -1106,7 +1472,11 @@ export function SkillStudio() {
             (response) =>
               `${response.createdCount || 0} governed candidate${
                 response.createdCount === 1 ? '' : 's'
-              } created from YouTube. Review is required before activation.`
+              } created from ${
+                response.sourceType === 'article' || payload.sourceType === 'article'
+                  ? 'article/OCR text'
+                  : 'YouTube'
+              }. Review is required before activation.`
           );
           if (result) closeCreate();
         }}

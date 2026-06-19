@@ -52,8 +52,13 @@ assert.match(bridge, /\/api\/leads\/search/, 'Bridge should expose an HTTP lead 
 assert.match(bridge, /async function executeRouteToolHandler/, 'Bridge should expose a traced route tool helper for direct HTTP routes.');
 assert.match(
   bridge,
-  /executeRouteToolHandler\('telnyx_sms'[\s\S]*executeRouteToolHandler\('sendColdEmail'/,
-  'Lead message send route should use traced tool execution for SMS and email sends.'
+  /executeRouteToolHandler\('telnyx_sms'/,
+  'Lead SMS send route should use traced tool execution.'
+);
+assert.match(
+  bridge,
+  /executeRouteToolHandler\('sendColdEmail'/,
+  'Lead email send route should use traced tool execution.'
 );
 
 const assistant = read('scripts/ava-assistant-chat.mjs');

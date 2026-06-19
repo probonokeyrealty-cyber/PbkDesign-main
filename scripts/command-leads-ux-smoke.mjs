@@ -7,6 +7,7 @@ const leads = readFileSync(resolve(root, 'src/app/routes/Leads.tsx'), 'utf8');
 const callFloor = readFileSync(resolve(root, 'src/app/components/CallFloorPanel.tsx'), 'utf8');
 const runtimeBridge = readFileSync(resolve(root, 'src/app/utils/runtimeBridge.ts'), 'utf8');
 const runtimeSnapshot = readFileSync(resolve(root, 'src/app/hooks/useRuntimeSnapshot.ts'), 'utf8');
+const css = readFileSync(resolve(root, 'src/styles/index.css'), 'utf8');
 const pkg = JSON.parse(readFileSync(resolve(root, 'package.json'), 'utf8'));
 
 function assert(condition, message) {
@@ -44,6 +45,14 @@ assert(/validateContractBeforeSend/.test(leads), 'Leads should validate contract
 assert(/contractConfirmOpen/.test(leads), 'Contract send should require an irreversible-action confirmation.');
 assert(/leadActionPending/.test(leads), 'Leads should use one action mutex for save/call/contract races.');
 assert(/reloadTimerRef/.test(leads) && /reloadInFlightRef/.test(leads), 'Lead detail refresh should debounce and dedupe requests.');
+assert(/function SellerRosterIdentity/.test(leads), 'Leads should render seller roster names through one shared identity component.');
+assert(/getSellerInitial/.test(leads), 'Lead roster avatars should derive initials through a safe helper.');
+assert(
+  /grid-template-columns:\s*auto minmax\(0, 1fr\) auto/.test(css) &&
+    /pbk-lead-roster-name[\s\S]*-webkit-line-clamp:\s*2/.test(css) &&
+    /overflow-wrap:\s*anywhere/.test(css),
+  'Lead roster CSS should keep long seller names readable without crowding quick actions.',
+);
 
 assert(
   pkg.scripts?.['test:command-leads-ux'] === 'node ./scripts/command-leads-ux-smoke.mjs',

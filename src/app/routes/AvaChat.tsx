@@ -17,7 +17,6 @@ import {
   Mail,
   MessageSquare,
   Mic,
-  MonitorUp,
   MousePointer2,
   Phone,
   Radio,
@@ -77,9 +76,13 @@ type AvaCommandAction =
 type SubmitLane = 'rest' | 'invoke';
 type HistoryFilter = 'all' | 'active' | 'completed' | 'failed';
 type ConnectionState = 'checking' | 'connected' | 'degraded';
+type AvaSystemStatus = {
+  visible: boolean;
+  tone: 'warning' | 'danger';
+  label: string;
+  reasons: string[];
+};
 type CommandRiskLevel = 'low' | 'medium' | 'high';
-type CompanionActionState = 'Ready' | 'Sending' | 'Sent' | 'Failed' | 'Retry';
-
 type CompanionAction = {
   id: string;
   label: string;
@@ -97,13 +100,6 @@ type OperatorMemory = {
 };
 
 const AVA_OPERATOR_MEMORY_KEY = 'pbk:ava-chat:operator-memory';
-
-const AVA_MODE_ITEMS = [
-  { id: 'chat', label: 'Chat', description: 'Ask Ava and keep the thread moving.' },
-  { id: 'voice', label: 'Voice', description: 'Speak naturally into the composer.' },
-  { id: 'command', label: 'Command', description: 'Run PBK actions through the bridge.' },
-  { id: 'live', label: 'Live Assist', description: 'Use call context and active skills.' },
-] as const;
 
 const PBK_COMPANION_ACTIONS: CompanionAction[] = [
   {
@@ -279,43 +275,6 @@ const ACTIONS: Array<{
     label: 'Analyze',
     description: 'Prepare deal analysis context.',
     icon: Sparkles,
-  },
-];
-
-const QUICK_COMMANDS: Array<{
-  command: string;
-  action: AvaCommandAction;
-  label: string;
-  icon: typeof Terminal;
-  requiresApproval: boolean;
-}> = [
-  {
-    command: 'Check OpenClaw sidecar status',
-    action: 'status',
-    label: 'Check system health',
-    icon: Radio,
-    requiresApproval: false,
-  },
-  {
-    command: 'Take a screenshot of the current desktop',
-    action: 'screenshot',
-    label: 'Capture desktop',
-    icon: Camera,
-    requiresApproval: true,
-  },
-  {
-    command: 'ClickUI: inspect the active window and report visible buttons',
-    action: 'clickui',
-    label: 'Inspect active window',
-    icon: MousePointer2,
-    requiresApproval: true,
-  },
-  {
-    command: 'OpenClaw: prepare the next safe PBK script run',
-    action: 'operator_command',
-    label: 'Prepare safe script',
-    icon: Terminal,
-    requiresApproval: true,
   },
 ];
 
@@ -595,27 +554,50 @@ function isActiveCommand(command?: LocalCommandRecord) {
   return Boolean(command && ACTIVE_STATUSES.has(String(command.status || '').toLowerCase()));
 }
 
-function getCompanionActionState(
-  item: CompanionAction,
-  commands: LocalCommandRecord[],
-  submitting: boolean,
-  selectedAction: AvaCommandAction
-): CompanionActionState {
-  if (submitting && selectedAction === item.action) return 'Sending';
-  const latest = commands.find((command) => normalizeAction(command.action) === item.action);
-  if (!latest) return 'Ready';
-  const status = String(latest.status || '').toLowerCase();
-  if (FAILED_STATUSES.has(status)) return 'Retry';
-  if (status === 'completed') return 'Sent';
-  if (ACTIVE_STATUSES.has(status)) return 'Sending';
-  return 'Ready';
-}
+function getAvaSystemStatus({
+  connectionState,
+  connectionError,
+  submitError,
+  pendingApprovals,
+  commands,
+}: {
+  connectionState: ConnectionState;
+  connectionError: string;
+  submitError: string;
+  pendingApprovals: number;
+  commands: LocalCommandRecord[];
+}): AvaSystemStatus {
+  const reasons: string[] = [];
+  let hasFailure = false;
 
-function getCompanionStateClass(state: CompanionActionState) {
-  if (state === 'Sent') return 'is-sent';
-  if (state === 'Retry' || state === 'Failed') return 'is-failed';
-  if (state === 'Sending') return 'is-sending';
-  return 'is-ready';
+  if (connectionState === 'degraded' || connectionError) {
+    hasFailure = true;
+    reasons.push('Bridge or sidecar context is degraded.');
+  }
+
+  if (submitError) {
+    hasFailure = true;
+    reasons.push('The last Ava command needs attention.');
+  }
+
+  const failedCommands = commands.filter((command) =>
+    FAILED_STATUSES.has(String(command.status || '').toLowerCase())
+  ).length;
+  if (failedCommands > 0) {
+    hasFailure = true;
+    reasons.push(`${failedCommands} command${failedCommands === 1 ? '' : 's'} failed.`);
+  }
+
+  if (pendingApprovals > 0) {
+    reasons.push(`${pendingApprovals} approval${pendingApprovals === 1 ? '' : 's'} waiting.`);
+  }
+
+  return {
+    visible: reasons.length > 0,
+    tone: hasFailure ? 'danger' : 'warning',
+    label: reasons[0] || 'System healthy',
+    reasons,
+  };
 }
 
 export function AvaChat() {
@@ -667,6 +649,18 @@ export function AvaChat() {
         : connectionState === 'degraded'
           ? 'offline'
           : 'ready';
+
+  const systemStatus = useMemo(
+    () =>
+      getAvaSystemStatus({
+        connectionState,
+        connectionError,
+        submitError,
+        pendingApprovals,
+        commands,
+      }),
+    [commands, connectionError, connectionState, pendingApprovals, submitError]
+  );
 
   const filteredCommands = useMemo(() => {
     const query = searchQuery.trim().toLowerCase();
@@ -775,6 +769,10 @@ export function AvaChat() {
     if (!timeline || searchQuery || historyFilter !== 'all') return;
     timeline.scrollTop = timeline.scrollHeight;
   }, [commands.length, historyFilter, searchQuery]);
+
+  useEffect(() => {
+    if (!systemStatus.visible && contextOpen) setContextOpen(false);
+  }, [contextOpen, systemStatus.visible]);
 
   const stopListening = () => {
     recognitionRef.current?.stop();
@@ -914,13 +912,6 @@ export function AvaChat() {
     recognition.start();
   };
 
-  const selectQuickCommand = (item: (typeof QUICK_COMMANDS)[number]) => {
-    setAction(item.action);
-    setRequiresApproval(item.requiresApproval);
-    setDraft(item.command);
-    window.requestAnimationFrame(() => composerRef.current?.focus());
-  };
-
   const replayCommand = (command: LocalCommandRecord) => {
     setAction(normalizeAction(command.action));
     setRequiresApproval(command.requiresApproval !== false);
@@ -954,12 +945,13 @@ export function AvaChat() {
           sidecarConnected={Boolean(status?.connected)}
           pendingApprovals={pendingApprovals}
           loading={loading}
+          systemStatus={systemStatus}
           onRefresh={() => void load()}
           onOpenContext={() => setContextOpen(true)}
         />
 
-        <div className="grid min-h-0 xl:grid-cols-[minmax(0,1fr)_340px]">
-          <main className="pbk-ava-chat-main grid min-h-0 grid-rows-[auto_minmax(0,1fr)_auto] border-r border-[var(--ava-border)] xl:grid-rows-[auto_minmax(260px,1fr)_auto]">
+        <div className="grid min-h-0">
+          <main className="pbk-ava-chat-main grid min-h-0 grid-rows-[auto_minmax(0,1fr)_auto]">
             <ConversationToolbar
               query={searchQuery}
               onQueryChange={setSearchQuery}
@@ -1011,11 +1003,7 @@ export function AvaChat() {
                   />
                 ) : (
                   <WelcomeState
-                    commands={commands}
-                    selectedAction={action}
-                    submitting={submitting}
                     operatorMemory={operatorMemory}
-                    onSelectCompanionAction={selectCompanionAction}
                     onResumeOperatorMemory={resumeOperatorMemory}
                   />
                 )}
@@ -1044,32 +1032,15 @@ export function AvaChat() {
               onStartListening={startListening}
               onStopListening={stopListening}
               onSubmit={() => void submitCommand()}
-              commands={commands}
               onSelectCompanionAction={selectCompanionAction}
             />
           </main>
-
-          <AvaContextRail
-            action={selectedAction}
-            actionIcon={<SelectedActionIcon size={17} />}
-            submitLane={submitLane}
-            requiresApproval={requiresApproval}
-            pendingApprovals={pendingApprovals}
-            status={status}
-            connectionState={connectionState}
-            commands={commands}
-            onSelectQuickCommand={selectQuickCommand}
-            onSelectCompanionAction={selectCompanionAction}
-            operatorMemory={operatorMemory}
-            onResumeOperatorMemory={resumeOperatorMemory}
-            className="hidden xl:block"
-          />
         </div>
       </div>
 
       {contextOpen && (
         <div
-          className="fixed inset-0 z-50 flex items-end bg-black/55 xl:hidden"
+          className="fixed inset-0 z-50 flex items-end bg-black/55"
           role="dialog"
           aria-modal="true"
           aria-label="Ava context"
@@ -1101,14 +1072,6 @@ export function AvaChat() {
               status={status}
               connectionState={connectionState}
               commands={commands}
-              onSelectQuickCommand={(item) => {
-                selectQuickCommand(item);
-                setContextOpen(false);
-              }}
-              onSelectCompanionAction={(item) => {
-                selectCompanionAction(item);
-                setContextOpen(false);
-              }}
               operatorMemory={operatorMemory}
               onResumeOperatorMemory={() => {
                 resumeOperatorMemory();
@@ -1128,6 +1091,7 @@ function AvaIdentityBar({
   sidecarConnected,
   pendingApprovals,
   loading,
+  systemStatus,
   onRefresh,
   onOpenContext,
 }: {
@@ -1136,6 +1100,7 @@ function AvaIdentityBar({
   sidecarConnected: boolean;
   pendingApprovals: number;
   loading: boolean;
+  systemStatus: AvaSystemStatus;
   onRefresh: () => void;
   onOpenContext: () => void;
 }) {
@@ -1157,7 +1122,6 @@ function AvaIdentityBar({
             <PbkPulseDot color={state === 'offline' ? 'amber' : 'lime'} />
           </div>
           <p className="mt-1 truncate text-xs text-[var(--ava-text-muted)]">{stateLabel}</p>
-          <AvaModeStrip activeState={state} />
         </div>
       </div>
 
@@ -1181,14 +1145,20 @@ function AvaIdentityBar({
       </div>
 
       <div className="flex items-center gap-2">
-        <button
-          type="button"
-          className="grid size-11 place-items-center rounded-lg border border-[var(--ava-border)] bg-[var(--ava-panel-elevated)] text-[var(--ava-text-muted)] transition hover:text-[var(--ava-text)] xl:hidden"
-          onClick={onOpenContext}
-          aria-label="Open Ava context"
-        >
-          <Settings2 size={18} />
-        </button>
+        {systemStatus.visible && (
+          <button
+            type="button"
+            className={[
+              'pbk-ava-system-indicator grid size-11 place-items-center rounded-lg border bg-[var(--ava-panel-elevated)] transition',
+              systemStatus.tone === 'danger' ? 'is-danger' : 'is-warning',
+            ].join(' ')}
+            onClick={onOpenContext}
+            aria-label={`Open Ava system details: ${systemStatus.label}`}
+            title={systemStatus.reasons.join('\n')}
+          >
+            <Settings2 size={18} />
+          </button>
+        )}
         <button
           type="button"
           className="grid size-11 place-items-center rounded-lg border border-[var(--ava-border)] bg-[var(--ava-panel-elevated)] text-[var(--ava-text-muted)] transition hover:text-[var(--ava-text)]"
@@ -1200,40 +1170,6 @@ function AvaIdentityBar({
         </button>
       </div>
     </header>
-  );
-}
-
-function AvaModeStrip({
-  activeState,
-}: {
-  activeState: 'ready' | 'listening' | 'thinking' | 'working' | 'offline';
-}) {
-  const activeMode =
-    activeState === 'listening'
-      ? 'voice'
-      : activeState === 'working'
-        ? 'command'
-        : activeState === 'thinking'
-          ? 'chat'
-          : 'chat';
-
-  return (
-    <div className="pbk-ava-mode-strip mt-2 hidden flex-wrap items-center gap-1.5 lg:flex">
-      {AVA_MODE_ITEMS.map((item) => (
-        <span
-          key={item.id}
-          title={item.description}
-          className={[
-            'rounded-full border px-2 py-0.5 text-[10px] font-bold uppercase',
-            item.id === activeMode
-              ? 'border-[var(--ava-sky)] bg-[var(--ava-sky-soft)] text-[var(--ava-sky)]'
-              : 'border-[var(--ava-border)] text-[var(--ava-text-faint)]',
-          ].join(' ')}
-        >
-          {item.label}
-        </span>
-      ))}
-    </div>
   );
 }
 
@@ -1288,6 +1224,8 @@ function ConversationToolbar({
           className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[var(--ava-text-faint)]"
         />
         <input
+          id="ava-history-search"
+          name="avaHistorySearch"
           type="search"
           value={query}
           onChange={(event) => onQueryChange(event.target.value)}
@@ -1312,6 +1250,8 @@ function ConversationToolbar({
           className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[var(--ava-text-faint)]"
         />
         <select
+          id="ava-history-filter"
+          name="avaHistoryFilter"
           value={filter}
           onChange={(event) => onFilterChange(event.target.value as HistoryFilter)}
           className="h-11 w-full min-w-40 appearance-none rounded-lg border border-[var(--ava-border)] bg-[var(--ava-panel)] pl-9 pr-9 text-sm text-[var(--ava-text)] outline-none focus:border-[var(--ava-sky)] sm:w-auto"
@@ -1392,9 +1332,8 @@ function CommandExchange({
           <div className="rounded-[16px_16px_4px_16px] border border-[var(--ava-user-border)] bg-[var(--ava-user-bubble)] px-4 py-3 text-sm leading-6 shadow-sm">
             <p className="break-words">{command.command || 'Local command'}</p>
           </div>
-          <div className="mt-1.5 flex items-center justify-end gap-2 font-mono text-[10px] uppercase text-[var(--ava-text-faint)]">
-            <ActionIcon size={12} />
-            <span>{actionConfig.label}</span>
+          <div className="mt-1.5 flex items-center justify-end gap-2 text-[11px] text-[var(--ava-text-faint)]">
+            <span>You</span>
             <span>{formatRelative(command.createdAt)}</span>
           </div>
         </div>
@@ -1463,21 +1402,6 @@ function CommandExchange({
           </div>
           <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-2 text-xs">
             <CommandStatus command={command} />
-            <span
-              className={[
-                'rounded-full border px-2 py-0.5 text-[10px] font-bold uppercase',
-                riskLevel === 'low'
-                  ? 'border-[var(--ava-success-border)] bg-[var(--ava-success-soft)] text-[var(--ava-success)]'
-                  : riskLevel === 'high'
-                    ? 'border-[var(--ava-danger-border)] bg-[var(--ava-danger-soft)] text-[var(--ava-danger)]'
-                    : 'border-[var(--ava-warning-border)] bg-[var(--ava-warning-soft)] text-[var(--ava-warning)]',
-              ].join(' ')}
-            >
-              {riskLevel} risk
-            </span>
-            <span className="text-[var(--ava-text-faint)]">
-              {command.requiresApproval ? 'Approval gated' : 'Trusted read-only auto-run'}
-            </span>
             <button
               type="button"
               className="inline-flex min-h-8 items-center gap-1.5 rounded-md px-2 font-semibold text-[var(--ava-sky)] transition hover:bg-[var(--ava-sky-soft)]"
@@ -1486,6 +1410,17 @@ function CommandExchange({
               <RotateCcw size={14} />
               Replay
             </button>
+            <details className="pbk-ava-bubble-system">
+              <summary>Details</summary>
+              <div>
+                <span className="inline-flex items-center gap-1.5">
+                  <ActionIcon size={13} />
+                  {actionConfig.label}
+                </span>
+                <span>{riskLevel} risk</span>
+                <span>{command.requiresApproval ? 'Approval guarded' : 'Trusted read-only'}</span>
+              </div>
+            </details>
           </div>
         </div>
       </div>
@@ -1620,7 +1555,6 @@ function AvaComposer({
   onStartListening,
   onStopListening,
   onSubmit,
-  commands,
   onSelectCompanionAction,
 }: {
   draft: string;
@@ -1640,38 +1574,24 @@ function AvaComposer({
   onStartListening: () => void;
   onStopListening: () => void;
   onSubmit: () => void;
-  commands: LocalCommandRecord[];
   onSelectCompanionAction: (item: CompanionAction) => void;
 }) {
   const actionConfig = ACTIONS.find((item) => item.id === action) || ACTIONS[0];
   const ActionIcon = actionConfig.icon;
+  const slashQuery = draft.trimStart().startsWith('/')
+    ? draft.trimStart().slice(1).toLowerCase()
+    : '';
+  const slashCommandsVisible = draft.trimStart().startsWith('/');
+  const slashMatches = PBK_COMPANION_ACTIONS.filter((item) => {
+    if (!slashQuery) return true;
+    return [item.id, item.label, item.description].some((value) =>
+      value.toLowerCase().includes(slashQuery)
+    );
+  }).slice(0, 6);
 
   return (
     <div className="pbk-ava-chat-composer border-t border-[var(--ava-border)] bg-[var(--ava-bg)] px-2 pt-2 sm:px-5 sm:pb-4 sm:pt-3">
       <div className="mx-auto w-full max-w-4xl">
-        <div className="pbk-ava-chat-quick-strip mb-2 flex gap-2 overflow-x-auto pb-1 [scrollbar-width:none]">
-          {PBK_COMPANION_ACTIONS.slice(0, 6).map((item) => {
-            const Icon = item.icon;
-            const state = getCompanionActionState(item, commands, submitting, action);
-            return (
-              <button
-                key={item.id}
-                type="button"
-                onClick={() => onSelectCompanionAction(item)}
-                className="inline-flex min-h-10 shrink-0 items-center gap-2 rounded-lg border border-[var(--ava-border)] bg-[var(--ava-panel)] px-3 text-xs text-[var(--ava-text-muted)] transition hover:border-[var(--ava-sky)] hover:text-[var(--ava-text)]"
-              >
-                <Icon size={15} />
-                {item.label}
-                <span
-                  className={`pbk-ava-action-state ${getCompanionStateClass(state)} hidden sm:inline`}
-                >
-                  {state}
-                </span>
-              </button>
-            );
-          })}
-        </div>
-
         <div className="rounded-2xl border border-[var(--ava-border-bright)] bg-[var(--ava-panel-elevated)] p-2 shadow-[0_16px_50px_rgba(0,0,0,0.18)]">
           {submitError && (
             <div
@@ -1699,8 +1619,34 @@ function AvaComposer({
             }}
             rows={2}
             className="max-h-36 min-h-14 w-full resize-y bg-transparent px-3 py-2 text-[16px] leading-6 text-[var(--ava-text)] outline-none placeholder:text-[var(--ava-text-faint)] sm:text-sm"
-            placeholder="Ask Ava to inspect, prepare, check, or run something..."
+            placeholder="Ask Ava anything..."
           />
+          {slashCommandsVisible && (
+            <div className="pbk-ava-slash-panel" role="listbox" aria-label="PBK slash commands">
+              {slashMatches.length ? (
+                slashMatches.map((item) => {
+                  const Icon = item.icon;
+                  return (
+                    <button
+                      key={item.id}
+                      type="button"
+                      role="option"
+                      aria-selected={action === item.action}
+                      onClick={() => onSelectCompanionAction(item)}
+                    >
+                      <Icon size={16} />
+                      <span>
+                        <strong>/{item.id.replace(/-/g, '')}</strong>
+                        <small>{item.description}</small>
+                      </span>
+                    </button>
+                  );
+                })
+              ) : (
+                <div className="pbk-ava-slash-empty">No PBK command matches that shortcut.</div>
+              )}
+            </div>
+          )}
 
           <div className="flex min-w-0 flex-wrap items-center justify-between gap-2 border-t border-[var(--ava-border)] px-1 pt-2">
             <div className="pbk-ava-chat-controls flex w-full min-w-0 flex-nowrap items-center gap-2 sm:w-auto sm:flex-wrap">
@@ -1892,6 +1838,7 @@ function AdvancedSettings({
           </span>
         )}
         <input
+          name="avaRequireApproval"
           type="checkbox"
           checked={requiresApproval}
           onChange={(event) => setRequiresApproval(event.target.checked)}
@@ -1912,8 +1859,6 @@ function AvaContextRail({
   status,
   connectionState,
   commands,
-  onSelectQuickCommand,
-  onSelectCompanionAction,
   operatorMemory,
   onResumeOperatorMemory,
   className = '',
@@ -1926,8 +1871,6 @@ function AvaContextRail({
   status: DesktopSidecarStatusResponse | null;
   connectionState: ConnectionState;
   commands: LocalCommandRecord[];
-  onSelectQuickCommand: (item: (typeof QUICK_COMMANDS)[number]) => void;
-  onSelectCompanionAction: (item: CompanionAction) => void;
   operatorMemory: OperatorMemory | null;
   onResumeOperatorMemory: () => void;
   className?: string;
@@ -1969,16 +1912,6 @@ function AvaContextRail({
           )}
         </ContextPanel>
 
-        <ContextPanel title="PBK actions" icon={<Sparkles size={16} />}>
-          <CompanionActionCards
-            compact
-            commands={commands}
-            selectedAction={action.id}
-            submitting={false}
-            onSelectAction={onSelectCompanionAction}
-          />
-        </ContextPanel>
-
         <details className="pbk-ava-system-drawer group rounded-lg border border-[var(--ava-border)] bg-[var(--ava-panel)]">
           <summary className="flex min-h-12 cursor-pointer list-none items-center justify-between gap-3 px-3 text-sm font-semibold">
             <span className="inline-flex min-w-0 items-center gap-2">
@@ -2009,25 +1942,6 @@ function AvaContextRail({
                   {requiresApproval ? 'Approval requested' : 'Low-risk request'}
                 </span>
               </ContextRow>
-            </ContextPanel>
-
-            <ContextPanel title="System tools" icon={<MonitorUp size={16} />}>
-              <div className="space-y-1.5">
-                {QUICK_COMMANDS.map((item) => {
-                  const Icon = item.icon;
-                  return (
-                    <button
-                      key={item.command}
-                      type="button"
-                      onClick={() => onSelectQuickCommand(item)}
-                      className="flex min-h-11 w-full items-center gap-2 rounded-lg border border-[var(--ava-border)] px-3 text-left text-xs text-[var(--ava-text-muted)] transition hover:border-[var(--ava-sky)] hover:text-[var(--ava-text)]"
-                    >
-                      <Icon size={15} />
-                      {item.label}
-                    </button>
-                  );
-                })}
-              </div>
             </ContextPanel>
 
             <ContextPanel title="Local system" icon={<Cpu size={16} />}>
@@ -2154,38 +2068,34 @@ function AvaPresenceOrb({
 }
 
 function WelcomeState({
-  commands,
-  selectedAction,
-  submitting,
   operatorMemory,
-  onSelectCompanionAction,
   onResumeOperatorMemory,
 }: {
-  commands: LocalCommandRecord[];
-  selectedAction: AvaCommandAction;
-  submitting: boolean;
   operatorMemory: OperatorMemory | null;
-  onSelectCompanionAction: (item: CompanionAction) => void;
   onResumeOperatorMemory: () => void;
 }) {
   return (
-    <div className="grid min-h-[340px] place-items-center py-8 text-center">
-      <div className="max-w-3xl">
-        <div className="mx-auto mb-5 w-fit">
-          <AvaPresenceOrb state="ready" />
+    <div className="flex min-h-[340px] items-end py-8">
+      <div className="max-w-2xl">
+        <div className="flex items-start gap-3">
+          <AvaPresenceOrb state="ready" compact />
+          <div className="rounded-[4px_18px_18px_18px] border border-[var(--ava-border)] bg-[var(--ava-panel)] p-4 text-left shadow-sm">
+            <div className="mb-1 flex items-center gap-2 text-xs font-semibold text-[var(--ava-text)]">
+              <span>Ava</span>
+              <span className="text-[var(--ava-text-faint)]">PBK helpmate</span>
+            </div>
+            <p className="text-sm leading-6 text-[var(--ava-text-muted)]">
+              Tell me what you want to do in plain English: text a seller, open a lead, analyze a
+              deal, prep a contract, schedule a follow-up, or review a call. Use the mic when you
+              want to talk, or type <span className="font-mono text-[var(--ava-text)]">/</span> for
+              shortcuts.
+            </p>
+          </div>
         </div>
-        <div className="pbk-eyebrow">PBK command companion</div>
-        <h2 className="mt-2 font-[var(--font-display)] text-3xl font-semibold">
-          What should we handle next?
-        </h2>
-        <p className="mx-auto mt-3 max-w-md text-sm leading-6 text-[var(--ava-text-muted)]">
-          Ask Ava like a teammate: text a seller, open a lead, analyze a deal, prepare a contract,
-          or hand a rough call to QA. System controls stay in the drawer.
-        </p>
         {operatorMemory && (
           <button
             type="button"
-            className="mx-auto mt-5 flex max-w-md items-start gap-3 rounded-xl border border-[var(--ava-border)] bg-[var(--ava-panel)] p-3 text-left text-xs text-[var(--ava-text-muted)] transition hover:border-[var(--ava-sky)] hover:text-[var(--ava-text)]"
+            className="ml-[52px] mt-4 flex max-w-md items-start gap-3 rounded-xl border border-[var(--ava-border)] bg-[var(--ava-panel)] p-3 text-left text-xs text-[var(--ava-text-muted)] transition hover:border-[var(--ava-sky)] hover:text-[var(--ava-text)]"
             onClick={onResumeOperatorMemory}
           >
             <Clock3 size={16} className="mt-0.5 shrink-0 text-[var(--ava-sky)]" />
@@ -2198,74 +2108,7 @@ function WelcomeState({
             </span>
           </button>
         )}
-        <CompanionActionCards
-          commands={commands}
-          selectedAction={selectedAction}
-          submitting={submitting}
-          onSelectAction={onSelectCompanionAction}
-          className="mt-6"
-        />
       </div>
-    </div>
-  );
-}
-
-function CompanionActionCards({
-  commands,
-  selectedAction,
-  submitting,
-  onSelectAction,
-  className = '',
-  compact = false,
-}: {
-  commands: LocalCommandRecord[];
-  selectedAction: AvaCommandAction;
-  submitting: boolean;
-  onSelectAction: (item: CompanionAction) => void;
-  className?: string;
-  compact?: boolean;
-}) {
-  const actions = compact ? PBK_COMPANION_ACTIONS.slice(0, 6) : PBK_COMPANION_ACTIONS;
-
-  return (
-    <div
-      className={[
-        'pbk-ava-companion-actions grid gap-2 text-left',
-        compact ? 'grid-cols-1' : 'sm:grid-cols-2 lg:grid-cols-3',
-        className,
-      ].join(' ')}
-    >
-      {actions.map((item) => {
-        const Icon = item.icon;
-        const state = getCompanionActionState(item, commands, submitting, selectedAction);
-        return (
-          <button
-            key={item.id}
-            type="button"
-            onClick={() => onSelectAction(item)}
-            className="pbk-ava-companion-card group min-w-0 rounded-xl border border-[var(--ava-border)] bg-[var(--ava-panel)] p-3 text-left transition hover:border-[var(--ava-sky)] hover:bg-[var(--ava-hover)]"
-          >
-            <span className="flex items-start gap-3">
-              <span className="grid size-9 shrink-0 place-items-center rounded-lg bg-[var(--ava-sky-soft)] text-[var(--ava-sky)]">
-                <Icon size={17} />
-              </span>
-              <span className="min-w-0 flex-1">
-                <span className="flex items-center justify-between gap-2">
-                  <span className="truncate text-sm font-semibold text-[var(--ava-text)]">
-                    {item.label}
-                  </span>
-                  <span className={`pbk-ava-action-state ${getCompanionStateClass(state)}`}>
-                    {state}
-                  </span>
-                </span>
-                <span className="mt-1 line-clamp-2 block text-xs leading-5 text-[var(--ava-text-muted)]">
-                  {item.description}
-                </span>
-              </span>
-            </span>
-          </button>
-        );
-      })}
     </div>
   );
 }

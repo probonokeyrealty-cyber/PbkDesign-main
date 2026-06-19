@@ -184,13 +184,22 @@ assert(
 );
 assert(
   avaChatRoute.includes('PBK_COMPANION_ACTIONS') &&
-    avaChatRoute.includes('CompanionActionCards') &&
-    avaChatRoute.includes('AvaModeStrip') &&
+    avaChatRoute.includes('pbk-ava-slash-panel') &&
+    avaChatRoute.includes('pbk-ava-bubble-system') &&
+    avaChatRoute.includes('Tell me what you want to do in plain English') &&
     avaChatRoute.includes('Send SMS') &&
     avaChatRoute.includes('Prepare Contract') &&
     avaChatRoute.includes('Review with QA') &&
     avaChatRoute.includes('Schedule Follow-up'),
-  'Ava Chat must expose PBK command-companion action bubbles instead of only technical command controls.'
+  'Ava Chat must keep PBK command intelligence available through natural language and slash commands.'
+);
+assert(
+  !avaChatRoute.includes('CompanionActionCards') &&
+    !avaChatRoute.includes('AvaComposerModePicker') &&
+    !avaChatRoute.includes('pbk-ava-chat-quick-strip') &&
+    !avaChatRoute.includes('pbk-ava-composer-modes') &&
+    !avaChatRoute.includes('pbk-ava-companion-actions'),
+  'Ava Chat must not render the old menu-style companion action grid or mode picker.'
 );
 assert(
   avaChatRoute.includes('AVA_OPERATOR_MEMORY_KEY') &&
@@ -200,24 +209,29 @@ assert(
   'Ava Chat must persist lightweight operator memory so it can stay in the conversation across pages.'
 );
 assert(
-  avaChatRoute.includes('pbk-ava-system-drawer') &&
+    avaChatRoute.includes('pbk-ava-system-drawer') &&
+    avaChatRoute.includes('getAvaSystemStatus') &&
+    avaChatRoute.includes('systemStatus.visible &&') &&
+    avaChatRoute.includes('Open Ava system details:') &&
     avaChatRoute.includes('pbk-ava-chat-thread') &&
-    avaChatRoute.includes('pbk-ava-companion-actions') &&
-    avaChatRoute.includes('pbk-ava-mode-strip'),
-  'Ava Chat must separate the main messaging surface from system/debug controls and mobile thread layout.'
+    avaChatRoute.includes('pbk-ava-chat-composer'),
+  'Ava Chat must keep system/debug controls out of the default chat unless system status has a warning.'
 );
 assert(
   /ContextPanel title="Debug log"[\s\S]*<details/.test(avaChatRoute),
   'Ava Chat technical support details should live behind the collapsible Debug log drawer.'
 );
 assert(
-  pbkCss.includes('.pbk-ava-thinking-bubble') &&
+    pbkCss.includes('.pbk-ava-thinking-bubble') &&
     pbkCss.includes('.pbk-ava-thinking-dots') &&
     pbkCss.includes('.pbk-ava-inline-approval') &&
-    pbkCss.includes('.pbk-ava-companion-actions') &&
+    pbkCss.includes('.pbk-ava-system-indicator') &&
     pbkCss.includes('.pbk-ava-system-drawer') &&
-    pbkCss.includes('.pbk-ava-mode-strip'),
-  'Ava Chat must style thinking animation, inline approval, action bubbles, and system drawer boundaries.'
+    pbkCss.includes('.pbk-ava-slash-panel') &&
+    pbkCss.includes('.pbk-ava-bubble-system') &&
+    !pbkCss.includes('.pbk-ava-companion-actions') &&
+    !pbkCss.includes('.pbk-ava-composer-modes'),
+  'Ava Chat must style thinking animation, inline approval, slash commands, and system drawer boundaries without the old menu CSS.'
 );
 
 console.log('[ava-assistant-chat-smoke] ok');

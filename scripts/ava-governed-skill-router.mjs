@@ -17,6 +17,36 @@ function list(value) {
   return [];
 }
 
+function boundedNumber(value, fallback = 0, max = 1) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return fallback;
+  const normalized = max === 1 && numeric > 1 ? numeric / 100 : numeric;
+  return Math.max(0, Math.min(max, normalized));
+}
+
+const TRIGGER_SYNONYMS = Object.freeze({
+  price_too_low: [
+    'lowball',
+    'low ball',
+    'too low',
+    'not enough',
+    'need more money',
+    'more money',
+    'closer to retail',
+    'retail number',
+    'better offer',
+    'bad offer',
+  ],
+  make_me_an_offer: ['how much', 'what can you pay', 'make an offer', 'give me a number'],
+  need_to_think: ['think about it', 'sleep on it', 'not sure', 'let me decide'],
+  spouse_partner: ['wife', 'husband', 'spouse', 'partner', 'decision maker'],
+  trust_issue: ['scam', 'legit', 'trust', 'proof', 'real company', 'how do i know'],
+  competitor_offer: ['another offer', 'other buyer', 'someone offered', 'competitor'],
+  probate_legal: ['probate', 'executor', 'heir', 'estate', 'attorney', 'lawyer'],
+  condition_repairs: ['repairs', 'condition', 'foundation', 'roof', 'as is'],
+  timeline: ['fast', 'quickly', 'soon', 'timeline', 'close date', 'move out'],
+});
+
 function stableBucket(value = '') {
   let hash = 2166136261;
   for (const character of String(value || '')) {
@@ -120,6 +150,37 @@ function textIncludes(haystack = '', value = '') {
   return Boolean(normalizedValue && normalizedHaystack.includes(normalizedValue));
 }
 
+function semanticTriggerMatches(transcript = '', trigger = '') {
+  const normalizedTrigger = normalize(trigger);
+  if (!normalizedTrigger) return false;
+  const phrases = TRIGGER_SYNONYMS[normalizedTrigger] || [];
+  return phrases.some((phrase) => textIncludes(transcript, phrase));
+}
+
+function outcomeConfidenceBoost(skill = {}) {
+  const confidence = boundedNumber(
+    skill.outcomeConfidence ?? skill.confidence ?? skill.confidenceScore ?? skill.activationConfidence
+  );
+  const successRate = boundedNumber(
+    skill.successRate ?? skill.outcomeSuccessRate ?? skill.winRate ?? skill.effectiveness
+  );
+  const uses = Math.max(
+    0,
+    Number(
+      skill.usageCount ??
+        skill.uses ??
+        skill.totalUses ??
+        skill.outcomeCount ??
+        skill.performance?.uses ??
+        0
+    ) || 0
+  );
+  const confidenceBoost = confidence * 8;
+  const successBoost = successRate * 8;
+  const usageBoost = Math.min(6, Math.log1p(uses) * 1.4);
+  return Number((confidenceBoost + successBoost + usageBoost).toFixed(3));
+}
+
 function scoreSkill(skill = {}, context = {}) {
   const policy =
     skill.triggerPolicy && typeof skill.triggerPolicy === 'object' ? skill.triggerPolicy : {};
@@ -138,6 +199,14 @@ function scoreSkill(skill = {}, context = {}) {
     score += 48;
     reasons.push('objection_match');
     matchedTriggers.push(lastObjection);
+  }
+  const semanticObjections = objections.filter((objection) =>
+    semanticTriggerMatches(transcript, objection)
+  );
+  if (semanticObjections.length) {
+    score += Math.min(42, 24 + semanticObjections.length * 6);
+    reasons.push('semantic_trigger_match');
+    matchedTriggers.push(...semanticObjections);
   }
 
   const emotions = policyValues(policy, ['emotions', 'sellerEmotions']);
@@ -192,6 +261,14 @@ function scoreSkill(skill = {}, context = {}) {
       score += Math.min(18, overlap.length * 4);
       reasons.push('instruction_overlap');
       matchedTriggers.push(...overlap);
+    }
+  }
+
+  if (reasons.length) {
+    const boost = outcomeConfidenceBoost(skill);
+    if (boost > 0) {
+      score += boost;
+      reasons.push('outcome_confidence_rank');
     }
   }
 

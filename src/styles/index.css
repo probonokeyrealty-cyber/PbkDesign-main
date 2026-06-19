@@ -684,12 +684,47 @@ html[data-theme='light'] .pbk-leads-surface .border-slate-700 {
 
 .lead-mobile-card {
   display: grid;
-  grid-template-columns: auto 1fr auto;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: flex-start;
   gap: 0.85rem;
   border: 1px solid rgba(148, 163, 184, 0.16);
   border-radius: 22px;
   background: rgba(15, 23, 42, 0.72);
   padding: 1rem;
+}
+
+.pbk-lead-roster-identity {
+  display: block;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.pbk-lead-roster-name {
+  display: -webkit-box;
+  overflow: hidden;
+  color: #f8fafc;
+  font-size: 0.875rem;
+  font-weight: 700;
+  line-height: 1.22;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.pbk-lead-roster-identity.is-mobile .pbk-lead-roster-name {
+  font-size: 1rem;
+}
+
+.pbk-lead-roster-address {
+  display: block;
+  min-width: 0;
+  margin-top: 0.25rem;
+  overflow: hidden;
+  color: #94a3b8;
+  font-size: 0.75rem;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .pbk-lead-quick-actions {
@@ -1244,6 +1279,17 @@ html[data-theme='light'] .pbk-leads-surface .border-slate-700 {
     display: grid;
     gap: 1rem;
     padding: 1rem;
+  }
+
+  .lead-mobile-card {
+    gap: 0.65rem;
+    padding: 0.875rem;
+  }
+
+  .pbk-lead-quick-actions.compact button {
+    min-width: 72px;
+    padding-right: 0.45rem;
+    padding-left: 0.45rem;
   }
 
   .modal {

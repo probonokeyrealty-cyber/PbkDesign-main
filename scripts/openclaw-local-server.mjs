@@ -139,9 +139,12 @@ import {
 } from './skill-governance-store.mjs';
 import { createSkillRuntimeSnapshotCache } from './skill-runtime-snapshot.mjs';
 import {
+  buildArticleSkillExtractionPrompt,
+  buildArticleSkillProvenance,
   buildYouTubeSkillExtractionPrompt,
   buildYouTubeSkillProvenance,
   classifyYouTubeTranscriptFailure,
+  normalizeArticleSkillText,
   normalizeManualYouTubeTranscript,
   normalizeSkillAudioTranscriptUrl,
   parseYouTubeSkillProposals,
@@ -495,11 +498,11 @@ const BRIDGE_READ_CACHE_TTL_MS = Object.freeze({
   agentHealth: Math.max(1000, Math.min(30000, Number(process.env.PBK_READ_CACHE_AGENT_HEALTH_TTL_MS || 5000))),
   agentMeasurement: Math.max(1000, Math.min(30000, Number(process.env.PBK_READ_CACHE_AGENT_MEASUREMENT_TTL_MS || 5000))),
   agentOrchestration: Math.max(1000, Math.min(30000, Number(process.env.PBK_READ_CACHE_AGENT_ORCHESTRATION_TTL_MS || 5000))),
-  agentRegistry: Math.max(5000, Math.min(60000, Number(process.env.PBK_READ_CACHE_AGENT_REGISTRY_TTL_MS || 30000))),
-  communicationIdentities: Math.max(5000, Math.min(60000, Number(process.env.PBK_READ_CACHE_COMMUNICATION_IDENTITIES_TTL_MS || 30000))),
+  agentRegistry: Math.max(5000, Math.min(60000, Number(process.env.PBK_READ_CACHE_AGENT_REGISTRY_TTL_MS || 60000))),
+  communicationIdentities: Math.max(5000, Math.min(60000, Number(process.env.PBK_READ_CACHE_COMMUNICATION_IDENTITIES_TTL_MS || 60000))),
   performanceStatus: Math.max(5000, Math.min(60000, Number(process.env.PBK_READ_CACHE_PERFORMANCE_TTL_MS || 15000))),
   productionGaps: Math.max(5000, Math.min(60000, Number(process.env.PBK_READ_CACHE_PRODUCTION_GAPS_TTL_MS || 15000))),
-  productionMaturity: Math.max(5000, Math.min(60000, Number(process.env.PBK_READ_CACHE_MATURITY_TTL_MS || 15000))),
+  productionMaturity: Math.max(5000, Math.min(60000, Number(process.env.PBK_READ_CACHE_MATURITY_TTL_MS || 60000))),
   productionPrimaryPath: Math.max(5000, Math.min(60000, Number(process.env.PBK_READ_CACHE_PRIMARY_PATH_TTL_MS || 15000))),
   systemSourceLabels: Math.max(1000, Math.min(30000, Number(process.env.PBK_READ_CACHE_SOURCE_LABELS_TTL_MS || 5000))),
 });
@@ -10160,8 +10163,8 @@ async function buildProductionPerformanceStatusSnapshot() {
   const liveSpeedReadiness = getAvaLiveCallSpeedReadiness();
   const liveCallSpeed = buildLiveCallSpeedBudget({
     contractTargetMs: Number(process.env.PBK_AVA_TURN_CONTRACT_TARGET_MS || 100),
-    strategistAttemptBudgetMs: Number(process.env.PBK_DEEPSEEK_LIVE_TIMEOUT_MS || 1800),
-    strategistTotalBudgetMs: Number(process.env.PBK_DEEPSEEK_LIVE_TOTAL_TIMEOUT_MS || 3000),
+    strategistAttemptBudgetMs: DEEPSEEK_LIVE_ATTEMPT_TIMEOUT_MS,
+    strategistTotalBudgetMs: TELNYX_LIVE_REPLY_STRATEGIST_TIMEOUT_MS,
     duplicateSuppression: liveSpeedReadiness.duplicateSuppression,
     cacheAtCallStart: liveSpeedReadiness.cacheAtCallStart,
   });
@@ -65457,19 +65460,218 @@ const server = createServer(async (request, response) => {
       ).trim();
       const audioTranscriptUrlResult = normalizeSkillAudioTranscriptUrl(audioTranscriptUrl);
       const allowedSkillAgents = new Set(['ava', 'rex', 'nurture-agent', 'max']);
+      if (!allowedSkillAgents.has(agentId)) {
+        json(response, 400, {
+          ok: false,
+          result: 'skill_ingest_agent_invalid',
+          error: 'agentId must be one of ava, rex, nurture-agent, or max.',
+        });
+        return;
+      }
+
+      if (sourceType === 'article' || sourceType === 'text') {
+        const articleTitle = String(body.title || body.name || '').trim();
+        let articleResult = normalizeArticleSkillText(manualTranscript);
+        let articleSourceUrl = isHttpUrl(sourceUrl) ? sourceUrl : '';
+        let articleTextSource = articleResult.source;
+        let articleParser = sourceType === 'text' ? 'operator-pasted-text' : 'operator-pasted-article';
+        let articleMetadata = {};
+        let title = articleTitle || (sourceType === 'text' ? 'Pasted training notes' : 'Article import');
+
+        if (!articleResult.ok && articleSourceUrl) {
+          try {
+            const fetched = await fetchRemoteIngestContent(articleSourceUrl, {
+              kind: 'article',
+              title: articleTitle,
+            });
+            if (fetched.ok && fetched.text) {
+              articleResult = normalizeArticleSkillText(fetched.text);
+              articleTextSource = fetched.parser || 'url-fetch';
+              articleParser = fetched.parser || 'url-fetch';
+              articleMetadata = fetched.metadata || {};
+              title = articleTitle || fetched.title || articleSourceUrl;
+            } else {
+              articleMetadata = {
+                extraction: {
+                  ok: false,
+                  parser: fetched.parser || 'url-fetch',
+                  error: fetched.error || 'content unavailable',
+                },
+              };
+            }
+          } catch (error) {
+            articleMetadata = {
+              extraction: {
+                ok: false,
+                parser: 'url-fetch',
+                error: error?.message || 'unknown fetch error',
+              },
+            };
+          }
+        }
+
+        if (!articleResult.ok) {
+          json(response, 422, {
+            ok: false,
+            result: 'article_skill_text_unavailable',
+            error: articleResult.message,
+            reason: articleResult.reason,
+            retryable: false,
+            fallback: {
+              type: articleSourceUrl ? 'operator_pasted_article_or_reachable_url' : 'operator_pasted_article',
+              field: 'text|content|manualTranscript|source',
+              minChars: articleResult.minChars || 400,
+              available: true,
+            },
+            article: {
+              title,
+              sourceUrl: articleSourceUrl,
+              source: articleTextSource,
+              chars: articleResult.chars || 0,
+              metadata: articleMetadata,
+            },
+          });
+          return;
+        }
+
+        const extraction = await runDeepSeekChatCompletion(
+          [
+            {
+              role: 'system',
+              content:
+                'Extract governed PBK skill candidates from article or OCR text. Return valid JSON only and never imply approval or activation.',
+            },
+            {
+              role: 'user',
+              content: buildArticleSkillExtractionPrompt({
+                title,
+                text: articleResult.text,
+                sourceUrl: articleSourceUrl,
+                agentId,
+                maxCandidates,
+              }),
+            },
+          ],
+          {
+            source: 'skill-article-ingest',
+            responseFormat: 'json',
+            temperature: 0.15,
+            maxTokens: 3000,
+          }
+        );
+        if (!extraction.ok) {
+          json(response, extraction.result === 'provider_missing' ? 503 : 502, {
+            ok: false,
+            result: 'article_skill_extraction_failed',
+            error: extraction.error || 'DeepSeek could not extract governed skill candidates.',
+            provider: extraction.provider || null,
+          });
+          return;
+        }
+
+        const proposals = parseYouTubeSkillProposals(extraction.answer, { maxCandidates });
+        if (!proposals.length) {
+          json(response, 422, {
+            ok: false,
+            result: 'article_skill_candidates_empty',
+            error: 'The article did not produce any complete, reviewable skill candidates.',
+          });
+          return;
+        }
+
+        try {
+          const actor = getConversationRequestActor(request);
+          const candidates = [];
+          for (const proposal of proposals) {
+            const slug =
+              proposal.name
+                .toLowerCase()
+                .replace(/[^a-z0-9]+/g, '-')
+                .replace(/^-+|-+$/g, '')
+                .slice(0, 80) || `article-skill-${Date.now()}`;
+            const provenance = buildArticleSkillProvenance({
+              sourceUrl: articleSourceUrl,
+              title,
+              text: articleResult.text,
+              textSource: articleTextSource,
+              parser: articleParser,
+              model: extraction.provider?.model || DEEPSEEK_MODEL,
+              agentId,
+              proposal,
+              metadata: articleMetadata,
+            });
+            const candidate = await createSkillCandidate(getPgPool(), {
+              workspaceId: 'pbk',
+              slug,
+              displayName: proposal.name,
+              instructions: proposal.instructions,
+              riskClass: proposal.riskClass,
+              source: 'article',
+              triggerPolicy: proposal.triggerPolicy,
+              inputSchema: {},
+              outputSchema: {},
+              toolAllowlist: [],
+              sourceProvenance: {
+                ...provenance,
+                sourceType: 'article',
+                textHash: provenance.textHash,
+              },
+              safetyScan: {
+                status: 'pending_review',
+                createdInSkillStudio: true,
+                importedFromArticle: true,
+                toolAccessGranted: false,
+              },
+              agentId,
+              createdBy: actor,
+            });
+            candidates.push({
+              name: proposal.name,
+              riskClass: proposal.riskClass,
+              confidence: proposal.confidence,
+              definitionId: candidate.definition?.id || '',
+              versionId: candidate.version?.id || '',
+              contentHash: candidate.version?.content_hash || '',
+              lifecycleState: candidate.version?.lifecycle_state || 'candidate',
+            });
+          }
+
+          json(response, 201, {
+            ok: true,
+            result: 'article_skill_candidates_created',
+            sourceType: 'article',
+            sourceUrl: articleSourceUrl,
+            agentId,
+            createdCount: candidates.length,
+            candidates,
+            article: {
+              title,
+              chars: articleResult.text.length,
+              source: articleTextSource,
+              parser: articleParser,
+              metadata: articleMetadata,
+            },
+            governance: {
+              lifecycleState: 'candidate',
+              approvalRequired: true,
+              activationRequired: true,
+            },
+          });
+        } catch (error) {
+          json(response, getSkillGovernanceErrorStatus(error), {
+            ok: false,
+            result: 'article_skill_candidate_creation_failed',
+            error: error?.message || String(error),
+          });
+        }
+        return;
+      }
+
       if (sourceType !== 'youtube' || !extractYouTubeVideoId(sourceUrl)) {
         json(response, 400, {
           ok: false,
           result: 'youtube_skill_source_required',
-          error: 'A valid YouTube URL and sourceType "youtube" are required.',
-        });
-        return;
-      }
-      if (!allowedSkillAgents.has(agentId)) {
-        json(response, 400, {
-          ok: false,
-          result: 'youtube_skill_agent_invalid',
-          error: 'agentId must be one of ava, rex, nurture-agent, or max.',
+          error: 'A valid YouTube URL and sourceType "youtube" are required, or use sourceType "article" with pasted article/OCR text.',
         });
         return;
       }

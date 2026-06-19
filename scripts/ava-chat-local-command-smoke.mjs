@@ -60,12 +60,23 @@ const avaChat = read('src/app/routes/AvaChat.tsx');
   'role="radiogroup"',
   'text-[16px]',
   'h-full max-h-full',
-  'pbk-ava-chat-quick-strip',
-  'Open Ava context',
+  'pbk-ava-slash-panel',
+  'pbk-ava-bubble-system',
+  'Tell me what you want to do in plain English',
+  'Open Ava system details:',
   'Approval required before Ava continues',
   'onApprovalDecision',
 ].forEach((token) => {
   assert(avaChat.includes(token), `AvaChat.tsx must include ${token}.`);
+});
+[
+  'pbk-ava-chat-quick-strip',
+  'AvaComposerModePicker',
+  'pbk-ava-composer-modes',
+  'pbk-ava-companion-actions',
+  'CompanionActionCards',
+].forEach((token) => {
+  assert(!avaChat.includes(token), `AvaChat.tsx must not include menu-style ${token}.`);
 });
 assert(
   !avaChat.includes('h-[calc(100dvh-188px)]') && !avaChat.includes('md:h-[calc(100dvh-96px)]'),
@@ -73,24 +84,14 @@ assert(
 );
 
 assert(
-  /command: 'Check OpenClaw sidecar status',[\s\S]*action: 'status'/.test(avaChat),
-  'Status quick prompt must select the status action instead of leaving operator_command active.'
-);
-assert(
-  /command: 'Take a screenshot of the current desktop',[\s\S]*action: 'screenshot'/.test(avaChat),
-  'Screenshot quick prompt must select the screenshot action.'
-);
-assert(
-  /command: 'Check OpenClaw sidecar status',[\s\S]*requiresApproval: false/.test(avaChat) &&
-    /command: 'Take a screenshot of the current desktop',[\s\S]*requiresApproval: true/.test(
-      avaChat
-    ) &&
-    /command: 'ClickUI: inspect the active window[\s\S]*requiresApproval: true/.test(avaChat),
-  'Quick commands must auto-run health checks while keeping screen capture and automation approval-gated.'
+  !avaChat.includes('Check OpenClaw sidecar status') &&
+    !avaChat.includes('Take a screenshot of the current desktop') &&
+    !avaChat.includes('ClickUI: inspect the active window'),
+  'Ava Chat must remove old quick prompt menus from the primary surface.'
 );
 assert(
   /setRequiresApproval\(item\.requiresApproval\)/.test(avaChat),
-  'Selecting a quick command must update the composer approval mode.'
+  'Selecting a slash-command action must update the composer approval mode.'
 );
 assert(
   /send_email/.test(avaChat) &&
@@ -240,6 +241,12 @@ assert(
   /local_command_waiting_for_local_agent/.test(bridge) &&
     /unsupported_sidecar_action/.test(bridge),
   'Unsupported desktop actions must remain queued for the allowlisted local agent instead of executing unsafely.'
+);
+assert(
+  /getAvaSystemStatus/.test(avaChat) &&
+    /pendingApprovals > 0/.test(avaChat) &&
+    /systemStatus\.visible &&/.test(avaChat),
+  'Ava Chat must only surface the system drawer indicator for real warnings such as waiting approvals.'
 );
 assert(
   /UPDATE public\.pbk_local_commands[\s\S]*status = 'dispatched'[\s\S]*status = 'approved'[\s\S]*RETURNING \*/.test(

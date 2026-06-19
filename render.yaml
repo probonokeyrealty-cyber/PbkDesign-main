@@ -79,6 +79,12 @@ services:
         value: "true"
       - key: PBK_COMMAND_INTENT_CACHE_MAX_TTL_SECONDS
         value: "30"
+      - key: PBK_READ_CACHE_AGENT_REGISTRY_TTL_MS
+        value: "60000"
+      - key: PBK_READ_CACHE_COMMUNICATION_IDENTITIES_TTL_MS
+        value: "60000"
+      - key: PBK_READ_CACHE_MATURITY_TTL_MS
+        value: "60000"
 
       # OpenTelemetry/Grafana observability. Keep OTLP endpoint/headers secret
       # in Render; bridge runs fail-open if not configured.

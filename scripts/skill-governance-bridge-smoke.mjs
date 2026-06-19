@@ -69,5 +69,22 @@ assert(
   /classifyYouTubeTranscriptFailure[\s\S]*youtubeTranscriptFailure/.test(bridge),
   'YouTube ingestion must classify transcript provider failures before returning them to Skill Studio.'
 );
+assert(
+  /sourceType === 'article' \|\| sourceType === 'text'/.test(bridge) &&
+    /fetchRemoteIngestContent[\s\S]*buildArticleSkillExtractionPrompt[\s\S]*createSkillCandidate/.test(
+      bridge
+    ),
+  'Article ingestion must fetch or accept article/OCR text, extract candidates, and route through governance authority.'
+);
+assert(
+  /article_skill_candidates_created/.test(bridge) &&
+    /importedFromArticle:\s*true/.test(bridge) &&
+    /toolAccessGranted:\s*false/.test(bridge),
+  'Article ingestion must create review-only candidates without granting tool access or activation.'
+);
+assert(
+  /article_skill_text_unavailable[\s\S]*minChars:[\s\S]*400/.test(bridge),
+  'Article ingestion must fail clearly when URL/text content is unavailable or too short.'
+);
 
 console.log('skill-governance-bridge-smoke: ok');

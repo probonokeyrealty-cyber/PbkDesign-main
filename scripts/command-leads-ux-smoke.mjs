@@ -47,8 +47,30 @@ assert(/leadActionPending/.test(leads), 'Leads should use one action mutex for s
 assert(/reloadTimerRef/.test(leads) && /reloadInFlightRef/.test(leads), 'Lead detail refresh should debounce and dedupe requests.');
 assert(/function SellerRosterIdentity/.test(leads), 'Leads should render seller roster names through one shared identity component.');
 assert(
-  /lead\.sellerName/.test(leads) && /lead\.seller_name/.test(leads) && /lead\.lead_name/.test(leads),
+  /record\.sellerName/.test(leads) && /record\.seller_name/.test(leads) && /record\.lead_name/.test(leads),
   'Lead roster names should read canonical bridge aliases so newly created sellers do not render blank.',
+);
+assert(
+  /const\s+next\s*=\s*String\(value \?\? ''\)\.trim\(\)[\s\S]*return next \|\| fallback/.test(leads),
+  'Text fallbacks should apply after trimming so whitespace names cannot render as invisible roster labels.',
+);
+assert(
+  /function pickFirstText/.test(leads) &&
+    /response\.leadImport/.test(leads) &&
+    /typeof record\.seller === 'string'/.test(leads),
+  'Lead roster identity should normalize wrapped rows and string seller names before rendering.',
+);
+assert(
+  /function leadAddressMatchKey/.test(leads) && /unknown property/.test(leads),
+  'Lead roster dedupe should not merge unrelated rows only because both have placeholder property text.',
+);
+assert(
+  /setLeadRoster\(\(current\) => mergeVisibleLeadDetail\(current, lead\)\)/.test(leads),
+  'Full lead detail refresh should merge enriched seller identity back into the visible roster.',
+);
+assert(
+  !leads.includes('md:grid-cols-[minmax(0,1fr)_auto]'),
+  'Lead roster rows should not use a two-column rail layout that can shrink the seller name to 0px.',
 );
 assert(/getSellerInitial/.test(leads), 'Lead roster avatars should derive initials through a safe helper.');
 assert(

@@ -164,7 +164,16 @@ const PROPERTY_TYPES = [
 ];
 
 function text(value: unknown, fallback = '') {
-  return String(value ?? fallback).trim();
+  const next = String(value ?? '').trim();
+  return next || fallback;
+}
+
+function pickFirstText(...values: unknown[]) {
+  for (const value of values) {
+    const next = text(value);
+    if (next) return next;
+  }
+  return '';
 }
 
 function numberText(value: unknown) {
@@ -210,49 +219,61 @@ function formatDate(value: unknown) {
 }
 
 function getLeadId(lead: BridgeRecord) {
-  const property = getProperty(lead);
-  return text(lead.leadId || lead.id || lead.externalId || property.address, 'unsaved-lead');
+  const record = unwrapLeadResponse(lead);
+  const property = getProperty(record);
+  return (
+    pickFirstText(record.leadId, record.id, record.externalId, property.address) || 'unsaved-lead'
+  );
 }
 
 function getSeller(lead: BridgeRecord): BridgeRecord {
-  return (lead.seller && typeof lead.seller === 'object' ? lead.seller : {}) as BridgeRecord;
+  const record = unwrapLeadResponse(lead);
+  if (typeof record.seller === 'string') return { name: record.seller };
+  return (record.seller && typeof record.seller === 'object' ? record.seller : {}) as BridgeRecord;
 }
 
 function getProperty(lead: BridgeRecord): BridgeRecord {
-  return (lead.property && typeof lead.property === 'object' ? lead.property : {}) as BridgeRecord;
+  const record = unwrapLeadResponse(lead);
+  return (
+    record.property && typeof record.property === 'object' ? record.property : {}
+  ) as BridgeRecord;
 }
 
 function getCallContext(lead: BridgeRecord): BridgeRecord {
-  const primary = lead.callContext && typeof lead.callContext === 'object' ? lead.callContext : {};
+  const record = unwrapLeadResponse(lead);
+  const primary =
+    record.callContext && typeof record.callContext === 'object' ? record.callContext : {};
   const fallback =
-    lead.call_context && typeof lead.call_context === 'object' ? lead.call_context : {};
+    record.call_context && typeof record.call_context === 'object' ? record.call_context : {};
   return { ...(fallback as BridgeRecord), ...(primary as BridgeRecord) };
 }
 
 function getSellerName(lead: BridgeRecord) {
-  const seller = getSeller(lead);
-  const leadProfile = asBridgeRecord(lead.leadProfile || lead.lead_profile);
+  const record = unwrapLeadResponse(lead);
+  const seller = getSeller(record);
+  const leadProfile = asBridgeRecord(record.leadProfile || record.lead_profile);
   const profileSeller = asBridgeRecord(leadProfile.seller);
-  const portalRecord = asBridgeRecord(lead.portalRecord || lead.portal_record);
+  const portalRecord = asBridgeRecord(record.portalRecord || record.portal_record);
   const portalLeadProfile = asBridgeRecord(portalRecord.leadProfile || portalRecord.lead_profile);
   const portalSeller = asBridgeRecord(portalLeadProfile.seller);
-  const raw = asBridgeRecord(lead.raw);
+  const raw = asBridgeRecord(record.raw);
   const rawSeller = asBridgeRecord(raw.seller);
-  return text(
-    lead.name ||
-      seller.name ||
-      lead.leadName ||
-      lead.sellerName ||
-      lead.seller_name ||
-      lead.lead_name ||
-      lead.ownerName ||
-      lead.owner_name ||
-      profileSeller.name ||
-      portalSeller.name ||
-      rawSeller.name ||
-      raw.leadName ||
-      raw.lead_name,
-    'Unknown seller'
+  return (
+    pickFirstText(
+      record.name,
+      seller.name,
+      record.leadName,
+      record.sellerName,
+      record.seller_name,
+      record.lead_name,
+      record.ownerName,
+      record.owner_name,
+      profileSeller.name,
+      portalSeller.name,
+      rawSeller.name,
+      raw.leadName,
+      raw.lead_name
+    ) || 'Unknown seller'
   );
 }
 
@@ -288,13 +309,15 @@ function SellerRosterIdentity({
 }
 
 function getLeadEmail(lead: BridgeRecord) {
-  const seller = getSeller(lead);
-  return text(lead.email || seller.email);
+  const record = unwrapLeadResponse(lead);
+  const seller = getSeller(record);
+  return pickFirstText(record.email, seller.email);
 }
 
 function getLeadPhone(lead: BridgeRecord) {
-  const seller = getSeller(lead);
-  return text(lead.phone || seller.phone);
+  const record = unwrapLeadResponse(lead);
+  const seller = getSeller(record);
+  return pickFirstText(record.phone, seller.phone);
 }
 
 function normalizePhone(value: unknown) {
@@ -311,8 +334,24 @@ function isValidEmail(value: unknown) {
 }
 
 function getLeadAddress(lead: BridgeRecord) {
-  const property = getProperty(lead);
-  return text(lead.address || property.address, 'No property');
+  const record = unwrapLeadResponse(lead);
+  const property = getProperty(record);
+  return (
+    pickFirstText(
+      record.address,
+      property.address,
+      record.propertyAddress,
+      record.property_address
+    ) || 'No property'
+  );
+}
+
+function leadAddressMatchKey(lead: BridgeRecord) {
+  const address = getLeadAddress(lead).toLowerCase();
+  if (!address || /^(no property|unknown property|not captured|unknown|n\/a|-)$/.test(address)) {
+    return '';
+  }
+  return address;
 }
 
 function validateLeadForCall(lead: BridgeRecord) {
@@ -767,18 +806,51 @@ function unwrapLeadResponse(response: BridgeRecord): BridgeRecord {
   ) as BridgeRecord;
 }
 
-function upsertVisibleLead(current: BridgeRecord[], lead: BridgeRecord): BridgeRecord[] {
-  const nextLeadId = getLeadId(lead);
-  const nextPhone = normalizePhone(getLeadPhone(lead));
-  const nextEmail = getLeadEmail(lead).toLowerCase();
-  const nextAddress = getLeadAddress(lead).toLowerCase();
-  const matchesCreatedLead = (item: BridgeRecord) => {
-    if (getLeadId(item) === nextLeadId) return true;
-    if (nextPhone && normalizePhone(getLeadPhone(item)) === nextPhone) return true;
-    if (nextEmail && getLeadEmail(item).toLowerCase() === nextEmail) return true;
-    return Boolean(nextAddress && getLeadAddress(item).toLowerCase() === nextAddress);
+function sameLeadRecord(left: BridgeRecord, right: BridgeRecord) {
+  const leftLeadId = getLeadId(left);
+  const rightLeadId = getLeadId(right);
+  const leftPhone = normalizePhone(getLeadPhone(left));
+  const rightPhone = normalizePhone(getLeadPhone(right));
+  const leftEmail = getLeadEmail(left).toLowerCase();
+  const rightEmail = getLeadEmail(right).toLowerCase();
+  const leftAddress = leadAddressMatchKey(left);
+  const rightAddress = leadAddressMatchKey(right);
+  if (leftLeadId && rightLeadId && leftLeadId === rightLeadId) return true;
+  if (leftPhone && rightPhone && leftPhone === rightPhone) return true;
+  if (leftEmail && rightEmail && leftEmail === rightEmail) return true;
+  return Boolean(leftAddress && rightAddress && leftAddress === rightAddress);
+}
+
+function mergeLeadRecord(base: BridgeRecord, enriched: BridgeRecord): BridgeRecord {
+  const baseSeller = asBridgeRecord(base.seller);
+  const enrichedSeller =
+    typeof enriched.seller === 'string'
+      ? { name: enriched.seller }
+      : asBridgeRecord(enriched.seller);
+  const baseProperty = asBridgeRecord(base.property);
+  const enrichedProperty = asBridgeRecord(enriched.property);
+  return {
+    ...base,
+    ...enriched,
+    seller: { ...baseSeller, ...enrichedSeller },
+    property: { ...baseProperty, ...enrichedProperty },
   };
-  return [lead, ...current.filter((item) => !matchesCreatedLead(item))];
+}
+
+function upsertVisibleLead(current: BridgeRecord[], lead: BridgeRecord): BridgeRecord[] {
+  const record = unwrapLeadResponse(lead);
+  return [record, ...current.filter((item) => !sameLeadRecord(item, record))];
+}
+
+function mergeVisibleLeadDetail(current: BridgeRecord[], lead: BridgeRecord): BridgeRecord[] {
+  const record = unwrapLeadResponse(lead);
+  let matched = false;
+  const next = current.map((item) => {
+    if (!sameLeadRecord(item, record)) return item;
+    matched = true;
+    return mergeLeadRecord(item, record);
+  });
+  return matched ? next : [record, ...next];
 }
 
 function Field({ label, children }: { label: string; children: ReactNode }) {
@@ -1127,7 +1199,11 @@ export function Leads() {
     setLeadRosterError('');
     try {
       const roster = await fetchLeadsRequest();
-      setLeadRoster(Array.isArray(roster) ? (roster as BridgeRecord[]) : []);
+      setLeadRoster(
+        Array.isArray(roster)
+          ? (roster as BridgeRecord[]).map((lead) => unwrapLeadResponse(lead))
+          : []
+      );
       setLeadRosterStatus('ready');
     } catch (nextError) {
       setLeadRoster([]);
@@ -1192,6 +1268,7 @@ export function Leads() {
         if (cancelled) return;
         const lead = unwrapLeadResponse(fullResponse);
         setLeadDetail(lead);
+        setLeadRoster((current) => mergeVisibleLeadDetail(current, lead));
         setLastCall(callResponse as BridgeRecord | null);
         setDetailStatus({ tone: 'success', text: 'Lead synced from bridge.' });
       } catch (nextError) {
@@ -1227,7 +1304,9 @@ export function Leads() {
         fetchLeadFullRequest(selectedLeadId),
         fetchLeadLastCallRequest(selectedLeadId).catch(() => null),
       ]);
-      setLeadDetail(unwrapLeadResponse(fullResponse));
+      const lead = unwrapLeadResponse(fullResponse);
+      setLeadDetail(lead);
+      setLeadRoster((current) => mergeVisibleLeadDetail(current, lead));
       setLastCall(callResponse as BridgeRecord | null);
       setDetailStatus({ tone: 'success', text: 'Lead refreshed.' });
       await Promise.all([refresh().catch(() => null), loadLeadRoster()]);
@@ -1901,7 +1980,7 @@ export function Leads() {
                   key={id}
                   aria-selected={isSelected}
                   className={[
-                    'grid w-full grid-cols-1 gap-2 px-4 py-4 text-left transition md:grid-cols-[minmax(0,1fr)_auto]',
+                    'grid w-full grid-cols-1 gap-3 px-4 py-4 text-left transition',
                     isSelected ? 'bg-sky-500/10' : 'hover:bg-slate-900',
                   ].join(' ')}
                 >
@@ -1919,7 +1998,7 @@ export function Leads() {
                       <span>Source: {text(lead.source, 'manual')}</span>
                     </span>
                   </button>
-                  <span className="flex flex-wrap items-center gap-2 md:justify-end">
+                  <span className="flex flex-wrap items-center gap-2">
                     <span className="rounded-full border border-slate-700 bg-slate-900 px-2.5 py-1 text-[10px] uppercase tracking-[0.14em] text-slate-300">
                       {PATH_LABELS[path]}
                     </span>

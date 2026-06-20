@@ -1093,6 +1093,7 @@ export function Leads() {
   const reloadTimerRef = useRef<number | null>(null);
   const reloadInFlightRef = useRef(false);
   const leadActionLockRef = useRef(false);
+  const selectedLeadRef = useRef<BridgeRecord | null>(null);
   const isLeadActionBusy = saving || Boolean(leadActionPending);
   const leads = useMemo(
     () => (leadRoster.length ? leadRoster : snapshotLeads),
@@ -1103,6 +1104,9 @@ export function Leads() {
     () => leads.find((lead) => getLeadId(lead) === selectedLeadId) || leads[0] || null,
     [leads, selectedLeadId]
   );
+  useEffect(() => {
+    selectedLeadRef.current = selectedLead || null;
+  }, [selectedLead]);
   const filteredLeads = useMemo(() => {
     const needle = leadQuery.trim().toLowerCase();
     return leads.filter((lead) => {
@@ -1133,7 +1137,8 @@ export function Leads() {
     [displayLimit, filteredLeads]
   );
   const leadsStats = useMemo(() => buildLeadsStats(leads), [leads]);
-  const activeLead = leadDetail || selectedLead;
+  const activeLead =
+    leadDetail && getLeadId(leadDetail) === selectedLeadId ? leadDetail : selectedLead;
   const activeLeadId = activeLead ? getLeadId(activeLead) : '';
   const seller1EmailError = useMemo(() => getSeller1EmailError(contractForm), [contractForm]);
   const contractLiveValidation = useMemo(
@@ -1258,6 +1263,12 @@ export function Leads() {
     if (!selectedLeadId) return;
     let cancelled = false;
     const loadDetail = async () => {
+      const fallbackLead = selectedLeadRef.current;
+      if (fallbackLead && getLeadId(fallbackLead) === selectedLeadId) {
+        setLeadDetail((current) =>
+          current && getLeadId(current) === selectedLeadId ? current : fallbackLead
+        );
+      }
       setLeadDetailLoading(true);
       setDetailStatus({ tone: 'info', text: 'Loading lead detail...' });
       try {
@@ -1273,7 +1284,10 @@ export function Leads() {
         setDetailStatus({ tone: 'success', text: 'Lead synced from bridge.' });
       } catch (nextError) {
         if (cancelled) return;
-        setLeadDetail(selectedLead || null);
+        const fallbackLead = selectedLeadRef.current;
+        setLeadDetail(
+          fallbackLead && getLeadId(fallbackLead) === selectedLeadId ? fallbackLead : null
+        );
         setLastCall(null);
         setDetailStatus({
           tone: 'error',
@@ -1291,7 +1305,7 @@ export function Leads() {
     return () => {
       cancelled = true;
     };
-  }, [selectedLead, selectedLeadId]);
+  }, [selectedLeadId]);
 
   const reloadLeadDetailNow = useCallback(async () => {
     if (!selectedLeadId) return;
@@ -2207,7 +2221,7 @@ export function Leads() {
                 </div>
               )}
 
-              {leadDetailLoading ? (
+              {leadDetailLoading && !activeLead ? (
                 <LeadDetailSkeleton />
               ) : (
                 <>

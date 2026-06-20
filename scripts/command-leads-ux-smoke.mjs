@@ -69,6 +69,18 @@ assert(
   'Full lead detail refresh should merge enriched seller identity back into the visible roster.',
 );
 assert(
+  /selectedLeadRef/.test(leads) && /selectedLeadRef\.current/.test(leads),
+  'Lead detail loading should use a stable selected lead ref so roster object churn cannot restart the loader.',
+);
+assert(
+  !/\}, \[selectedLead, selectedLeadId\]\);/.test(leads),
+  'Lead detail loading effect should not depend on selectedLead object identity.',
+);
+assert(
+  /leadDetailLoading && !activeLead/.test(leads),
+  'Lead detail skeleton should only block the pane when no selected or loaded lead is available.',
+);
+assert(
   !leads.includes('md:grid-cols-[minmax(0,1fr)_auto]'),
   'Lead roster rows should not use a two-column rail layout that can shrink the seller name to 0px.',
 );

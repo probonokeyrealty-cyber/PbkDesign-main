@@ -124,9 +124,12 @@ assert(
 
 assert(
   /runtimeStateProvenance/.test(bridge) &&
-    /runtime-file-fallback/.test(bridge) &&
-    /fallbackReason/.test(bridge),
-  'Bridge must record actual Postgres/file/default runtime-state provenance.'
+    /render-postgres-unavailable/.test(bridge) &&
+    /render-postgres-initialized/.test(bridge) &&
+    /local-bridge-state/.test(bridge) &&
+    /fallbackReason/.test(bridge) &&
+    !/runtime-file-fallback/.test(bridge),
+  'Bridge must record fail-closed Postgres provenance without hosted runtime-file fallbacks.'
 );
 
 assert(

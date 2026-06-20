@@ -126,6 +126,12 @@ assert(
   'Unified inbox must load the canonical conversation timeline through runtimeBridge.'
 );
 assert(
+  unifiedInbox.includes('Unified Inbox is blocked until the') &&
+    !unifiedInbox.includes('showing only confirmed bridge') &&
+    !unifiedInbox.includes('confirmed bridge results'),
+  'Conversation Postgres outage copy must fail closed instead of implying fallback timeline data is acceptable.'
+);
+assert(
   !timeline.includes('GET /api/conversations/:threadId/timeline') &&
     !senderSelect.includes('GET /api/communication-identities'),
   'Operator-facing conversation chrome must not expose endpoint debugging copy.'

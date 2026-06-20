@@ -601,8 +601,8 @@ export function UnifiedInbox() {
         <div className="pbk-conversation-degraded" role="status">
           <AlertTriangle size={15} />
           <span>
-            Conversation Postgres is unavailable or degraded. PBK is showing only confirmed bridge
-            results: {degradedReason}
+            Conversation Postgres is unavailable or degraded. Unified Inbox is blocked until the
+            conversation database is healthy: {degradedReason}
           </span>
         </div>
       )}

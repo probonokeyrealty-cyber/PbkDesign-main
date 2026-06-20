@@ -5847,10 +5847,12 @@ const PG_MAX_LIFETIME_SECONDS = Math.max(
   60,
   Math.min(1800, Number(process.env.PBK_PG_MAX_LIFETIME_SECONDS || 300))
 );
-const PG_TRANSIENT_GRACE_MS = Math.max(
-  0,
-  Math.min(120000, Number(process.env.PBK_PG_TRANSIENT_GRACE_MS || 30000))
+const PG_TRANSIENT_GRACE_MS = 0;
+const PG_KEEPALIVE_INTERVAL_MS = Math.max(
+  5000,
+  Math.min(120000, Number(process.env.PBK_PG_KEEPALIVE_INTERVAL_MS || 30000))
 );
+let postgresKeepAliveTimer = null;
 let skillGovernanceHealth = {
   schemaReady: false,
   migrationReady: false,
@@ -5919,26 +5921,12 @@ function isPotentiallyStaleRenderDatabaseHost(host = '') {
 function getPostgresHealthMeta() {
   const host = getDatabaseUrlHost();
   const staleRenderHost = isPotentiallyStaleRenderDatabaseHost(host);
-  const lastOkAtMs = postgresHealth.lastOkAt ? Date.parse(postgresHealth.lastOkAt) : 0;
-  const lastErrorAtMs = postgresHealth.lastErrorAt ? Date.parse(postgresHealth.lastErrorAt) : 0;
-  const transientGraceActive = Boolean(
-    DATABASE_URL &&
-      postgresHealth.ready !== true &&
-      lastOkAtMs &&
-      lastErrorAtMs &&
-      lastErrorAtMs >= lastOkAtMs &&
-      Date.now() - lastOkAtMs <= PG_TRANSIENT_GRACE_MS &&
-      Number(postgresHealth.consecutiveFailures || 0) <= PG_QUERY_RETRY_ATTEMPTS + 1
-  );
-  const ready = DATABASE_URL ? postgresHealth.ready === true || transientGraceActive : false;
+  const transientGraceActive = false;
+  const ready = DATABASE_URL ? postgresHealth.ready === true : false;
   return {
     configured: Boolean(DATABASE_URL),
     ready,
-    status: DATABASE_URL
-      ? transientGraceActive
-        ? 'transient_postgres_recovering'
-        : postgresHealth.status || 'unknown'
-      : 'file_mode',
+    status: DATABASE_URL ? postgresHealth.status || 'unknown' : 'file_mode',
     stateBackend: DATABASE_URL ? (ready ? 'postgres' : 'postgres_unavailable') : 'file',
     host,
     staleRenderHost,
@@ -5947,6 +5935,7 @@ function getPostgresHealthMeta() {
     connectionTimeoutMs: PG_CONNECTION_TIMEOUT_MS,
     idleTimeoutMs: PG_IDLE_TIMEOUT_MS,
     keepAliveInitialDelayMs: PG_KEEPALIVE_INITIAL_DELAY_MS,
+    keepAliveIntervalMs: PG_KEEPALIVE_INTERVAL_MS,
     maxLifetimeSeconds: PG_MAX_LIFETIME_SECONDS,
     transientGraceActive,
     transientFailures: Number(postgresHealth.transientFailures || 0),
@@ -5960,9 +5949,7 @@ function getPostgresHealthMeta() {
     note: DATABASE_URL
       ? postgresHealth.ready === true
         ? 'Direct Postgres state backend is reachable.'
-        : transientGraceActive
-          ? 'Direct Postgres had a transient refusal after a recent healthy check; bridge is treating this as recoverable while retry/backoff protects durable paths.'
-          : 'Direct Postgres is configured but unreachable; runtime falls back where supported and durable feature tables may be degraded.'
+        : 'Direct Postgres is configured but unreachable; hosted runtime is blocked until the database connection recovers.'
       : 'PBK_DATABASE_URL is not configured; runtime is file-backed.',
   };
 }
@@ -6029,6 +6016,31 @@ function getPgPool() {
     markPostgresHealth(false, err?.message || err);
   });
   return __pgPool;
+}
+
+function startPostgresKeepAlive() {
+  if (!DATABASE_URL || postgresKeepAliveTimer) return;
+  const run = async () => {
+    const pool = getPgPool();
+    if (!pool) {
+      markPostgresHealth(false, 'PBK_DATABASE_URL is not configured.');
+      return;
+    }
+    try {
+      await pool.query('SELECT 1 AS ok');
+      markPostgresHealth(true);
+    } catch (error) {
+      markPostgresHealth(false, error?.message || error, {
+        transient: isTransientPostgresConnectionError(error),
+      });
+      console.warn('[pbk-local-openclaw] Postgres keepalive failed:', error?.message || error);
+    }
+  };
+  void run();
+  postgresKeepAliveTimer = setInterval(() => {
+    void run();
+  }, PG_KEEPALIVE_INTERVAL_MS);
+  postgresKeepAliveTimer.unref?.();
 }
 
 function executeProviderActionWithSharedLease(options) {
@@ -8841,21 +8853,11 @@ async function ensurePgSchema() {
     return true;
   } catch (error) {
     markPostgresHealth(false, error?.message || error);
-    const embeddingsReady = await ensureCallEmbeddingsSchema(pool).catch((schemaError) => {
-      callEmbeddingsSchemaLastError = schemaError?.message || String(schemaError);
-      return false;
-    });
-    const warManualReady = await ensureAvaWarManualRuntimeSchema(pool)
-      .then((schemaReady) => seedAvaWarManualRuntimeKnowledgeToPg(pool).then((seeded) => schemaReady && seeded))
-      .catch((schemaError) => {
-        console.warn('[pbk-local-openclaw] war manual runtime seed skipped:', schemaError?.message || schemaError);
-        return false;
-      });
     if (!pgSchemaPersistenceWarned) {
-      console.warn('[pbk-local-openclaw] postgres schema unavailable; continuing with runtime fallback:', error?.message || error);
+      console.warn('[pbk-local-openclaw] postgres schema unavailable; hosted runtime requires Postgres:', error?.message || error);
       pgSchemaPersistenceWarned = true;
     }
-    return embeddingsReady || warManualReady;
+    return false;
   }
 }
 
@@ -10021,7 +10023,7 @@ async function loadStateFromDb() {
       error: error?.message || String(error || 'postgres state load failed'),
     };
     if (!stateDbLoadWarned) {
-      console.warn('[pbk-local-openclaw] postgres state load unavailable; using runtime fallback:', error?.message || error);
+      console.warn('[pbk-local-openclaw] postgres state load unavailable; hosted state requires Postgres:', error?.message || error);
       stateDbLoadWarned = true;
     }
     return null;
@@ -10456,7 +10458,7 @@ async function persistStateToDb(nextState) {
   } catch (error) {
     markPostgresHealth(false, error?.message || error);
     if (!stateDbPersistWarned) {
-      console.warn('[pbk-local-openclaw] postgres state persist unavailable; writing runtime fallback:', error?.message || error);
+      console.warn('[pbk-local-openclaw] postgres state persist unavailable; hosted state requires Postgres:', error?.message || error);
       stateDbPersistWarned = true;
     }
     return false;
@@ -10486,18 +10488,33 @@ async function persistState(nextState) {
       scheduleRuntimeStateBroadcast('persist');
       return;
     }
+    runtimeStateProvenance.source = 'render-postgres-unavailable';
+    runtimeStateProvenance.fallbackReason =
+      getPostgresHealthMeta().error ||
+      lastStateDbLoad.error ||
+      'Render Postgres state persistence is required and unavailable.';
+    runtimeStateProvenance.lastPersistAt = isoNow();
+    const error = new Error('postgres_state_persist_required');
+    error.code = 'postgres_state_persist_required';
+    error.details = runtimeStateProvenance.fallbackReason;
+    throw error;
   }
   await ensureRuntimeDir();
   await writeFile(STATE_FILE, jsonStringify(nextState), 'utf8');
-  runtimeStateProvenance.source = DATABASE_URL ? 'runtime-file-fallback' : 'local-bridge-state';
+  runtimeStateProvenance.source = 'local-bridge-state';
   runtimeStateProvenance.loadedFrom ||= runtimeStateProvenance.source;
-  runtimeStateProvenance.fallbackReason = DATABASE_URL
-    ? getPostgresHealthMeta().error ||
-      lastStateDbLoad.error ||
-      'Render Postgres state persistence was unavailable; serving the runtime file.'
-    : '';
+  runtimeStateProvenance.fallbackReason = '';
   runtimeStateProvenance.lastPersistAt = isoNow();
   scheduleRuntimeStateBroadcast('persist');
+}
+
+function persistStateInBackground(context = 'background') {
+  void persistState(state).catch((error) => {
+    console.warn(
+      `[pbk-local-openclaw] ${context} state persist failed:`,
+      error?.message || error
+    );
+  });
 }
 
 async function persistCampaignRecord(campaign = {}) {
@@ -11600,7 +11617,15 @@ function hydrateState(raw = {}) {
 
 async function loadState() {
   if (DATABASE_URL) {
-    await ensurePgSchema();
+    const schemaReady = await ensurePgSchema();
+    if (!schemaReady) {
+      const error = new Error('postgres_schema_required');
+      error.code = 'postgres_schema_required';
+      error.details =
+        getPostgresHealthMeta().error ||
+        'Render Postgres schema is required and unavailable.';
+      throw error;
+    }
   } else {
     await ensureRuntimeDir();
   }
@@ -11620,23 +11645,22 @@ async function loadState() {
       runtimeStateProvenance.lastLoadAt = isoNow();
       return hydrateState(dbState);
     }
-    const runtimeState = await loadStateFromRuntimeFile();
-    if (runtimeState) {
-      runtimeStateProvenance.source = 'runtime-file-fallback';
-      runtimeStateProvenance.loadedFrom = 'runtime-file';
-      runtimeStateProvenance.fallbackReason = lastStateDbLoad.ok
-        ? 'Render Postgres bridge_state was empty; loaded the runtime file.'
-        : `Render Postgres load failed; loaded the runtime file: ${lastStateDbLoad.error}`;
+    if (!lastStateDbLoad.ok) {
+      runtimeStateProvenance.source = 'render-postgres-unavailable';
+      runtimeStateProvenance.loadedFrom = 'none';
+      runtimeStateProvenance.fallbackReason =
+        lastStateDbLoad.error || 'Render Postgres state load is required and unavailable.';
       runtimeStateProvenance.lastLoadAt = isoNow();
-      return runtimeState;
+      const error = new Error('postgres_state_load_required');
+      error.code = 'postgres_state_load_required';
+      error.details = runtimeStateProvenance.fallbackReason;
+      throw error;
     }
     const fresh = buildDefaultState();
     ensureImmutablePbkKnowledge(fresh);
-    runtimeStateProvenance.source = 'runtime-default-fallback';
-    runtimeStateProvenance.loadedFrom = 'default-state';
-    runtimeStateProvenance.fallbackReason = lastStateDbLoad.ok
-      ? 'Render Postgres bridge_state was empty and no runtime file existed; initialized default state.'
-      : `Render Postgres load failed and no runtime file existed; initialized default state: ${lastStateDbLoad.error}`;
+    runtimeStateProvenance.source = 'render-postgres-initialized';
+    runtimeStateProvenance.loadedFrom = 'postgres-empty-default';
+    runtimeStateProvenance.fallbackReason = '';
     runtimeStateProvenance.lastLoadAt = isoNow();
     await persistState(fresh);
     return fresh;
@@ -11784,7 +11808,7 @@ function mirrorAgentOpsMeasurementToState(params = {}) {
   upsertById(state, 'agentTasks', record);
   state.agentTasks = sortNewest(state.agentTasks).slice(0, LIMITS.agentTasks);
   state.status.agentTasks = state.agentTasks.length;
-  void persistState(state);
+  persistStateInBackground('agent ops measurement');
 }
 
 async function recordPbkQaAudit(record = {}) {
@@ -62148,7 +62172,7 @@ async function buildTelnyxLiveAvaReply({ session = {}, transcript = '', contextC
           target: session.callId || session.streamId || contextCall?.id || 'telnyx-live-call',
         })
       );
-      void persistState(state);
+      persistStateInBackground('Ava strategist warning');
     });
   }
 
@@ -62541,7 +62565,7 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
       target: request.url || '/api/webhooks/telnyx/media',
     })
   );
-  void persistState(state);
+  persistStateInBackground('Telnyx media connected');
 
   let deepgramConnection = null;
   let deepgramReady = false;
@@ -62863,7 +62887,7 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
             target: session.callId || session.streamId || session.id,
           })
         );
-        void persistState(state);
+        persistStateInBackground('Deepgram keepalive warning');
       }
     }, TELNYX_DEEPGRAM_KEEPALIVE_MS);
   };
@@ -63509,7 +63533,7 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
               target: session.callId || session.streamId || session.id,
             })
           );
-          void persistState(state);
+          persistStateInBackground('Deepgram no-transcript diagnostic');
         }
       }
       return;
@@ -63681,7 +63705,7 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
           target: session.callId || session.streamId || session.id,
         })
       );
-      void persistState(state);
+      persistStateInBackground('Deepgram socket error');
     });
     connection.on('close', (event = {}) => {
       if (finalized) return;
@@ -63711,7 +63735,7 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
           target: session.callId || session.streamId || session.id,
         })
       );
-      void persistState(state);
+      persistStateInBackground('Deepgram socket close');
     });
   };
 
@@ -63851,7 +63875,7 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
           target: session.callId || session.streamId || session.id,
         })
       );
-      void persistState(state);
+      persistStateInBackground('Telnyx media error');
       return;
     }
 
@@ -63942,7 +63966,7 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
           target: session.callId || session.streamId || session.id,
         })
       );
-      void persistState(state);
+      persistStateInBackground('Telnyx media start');
       return;
     }
 
@@ -63991,7 +64015,7 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
             target: session.callId || session.streamId || session.id,
           })
         );
-        void persistState(state);
+        persistStateInBackground('Telnyx first audio frame');
       } else if (session.frameCount % 100 === 0) {
         addActivity(
           state,
@@ -64003,7 +64027,7 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
             target: session.callId || session.streamId || session.id,
           })
         );
-        void persistState(state);
+        persistStateInBackground('Telnyx audio heartbeat');
       }
       sendOrBufferTelnyxMediaFrame(frame);
       scheduleNoTranscriptFallback();
@@ -73559,6 +73583,7 @@ function startAgentRegistryHealthScheduler() {
 }
 
 server.listen(PORT, HOST, () => {
+  startPostgresKeepAlive();
   startContractTemplateWatcher();
   refreshContextAwareScriptCatalog()
     .then((result) => {

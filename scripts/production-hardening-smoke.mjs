@@ -161,12 +161,16 @@ assert(
   'Render Postgres transient connection refusals must be retried at the pool boundary.'
 );
 assert(
-  /transientGraceActive/.test(bridge) &&
+  /const PG_TRANSIENT_GRACE_MS = 0;/.test(bridge) &&
+    /const ready = DATABASE_URL \? postgresHealth\.ready === true : false;/.test(bridge) &&
+    /const PG_KEEPALIVE_INTERVAL_MS/.test(bridge) &&
+    /function startPostgresKeepAlive/.test(bridge) &&
+    /startPostgresKeepAlive\(\);/.test(bridge) &&
     /PG_TRANSIENT_GRACE_MS/.test(bridge) &&
     /consecutiveFailures/.test(bridge) &&
     /lastTransientErrorAt/.test(bridge) &&
     /poolMax: postgresHealth\.poolMax/.test(bridge),
-  'Render Postgres health must expose transient recovery state without hiding persistent failures.'
+  'Render Postgres health must use keepalive and fail closed without transient readiness grace.'
 );
 assert(
   /function isPotentiallyStaleRenderDatabaseHost/.test(bridge) &&

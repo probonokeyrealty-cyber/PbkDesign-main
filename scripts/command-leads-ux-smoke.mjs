@@ -46,6 +46,10 @@ assert(/contractConfirmOpen/.test(leads), 'Contract send should require an irrev
 assert(/leadActionPending/.test(leads), 'Leads should use one action mutex for save/call/contract races.');
 assert(/reloadTimerRef/.test(leads) && /reloadInFlightRef/.test(leads), 'Lead detail refresh should debounce and dedupe requests.');
 assert(/function SellerRosterIdentity/.test(leads), 'Leads should render seller roster names through one shared identity component.');
+assert(
+  /lead\.sellerName/.test(leads) && /lead\.seller_name/.test(leads) && /lead\.lead_name/.test(leads),
+  'Lead roster names should read canonical bridge aliases so newly created sellers do not render blank.',
+);
 assert(/getSellerInitial/.test(leads), 'Lead roster avatars should derive initials through a safe helper.');
 assert(
   /grid-template-columns:\s*auto minmax\(0, 1fr\) auto/.test(css) &&

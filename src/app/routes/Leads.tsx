@@ -231,7 +231,29 @@ function getCallContext(lead: BridgeRecord): BridgeRecord {
 
 function getSellerName(lead: BridgeRecord) {
   const seller = getSeller(lead);
-  return text(lead.name || seller.name || lead.leadName, 'Unknown seller');
+  const leadProfile = asBridgeRecord(lead.leadProfile || lead.lead_profile);
+  const profileSeller = asBridgeRecord(leadProfile.seller);
+  const portalRecord = asBridgeRecord(lead.portalRecord || lead.portal_record);
+  const portalLeadProfile = asBridgeRecord(portalRecord.leadProfile || portalRecord.lead_profile);
+  const portalSeller = asBridgeRecord(portalLeadProfile.seller);
+  const raw = asBridgeRecord(lead.raw);
+  const rawSeller = asBridgeRecord(raw.seller);
+  return text(
+    lead.name ||
+      seller.name ||
+      lead.leadName ||
+      lead.sellerName ||
+      lead.seller_name ||
+      lead.lead_name ||
+      lead.ownerName ||
+      lead.owner_name ||
+      profileSeller.name ||
+      portalSeller.name ||
+      rawSeller.name ||
+      raw.leadName ||
+      raw.lead_name,
+    'Unknown seller'
+  );
 }
 
 function getSellerInitial(name: string) {
@@ -737,8 +759,26 @@ function contractFormFromLead(
 
 function unwrapLeadResponse(response: BridgeRecord): BridgeRecord {
   return (
-    response.lead && typeof response.lead === 'object' ? response.lead : response
+    response.lead && typeof response.lead === 'object'
+      ? response.lead
+      : response.leadImport && typeof response.leadImport === 'object'
+        ? response.leadImport
+        : response
   ) as BridgeRecord;
+}
+
+function upsertVisibleLead(current: BridgeRecord[], lead: BridgeRecord): BridgeRecord[] {
+  const nextLeadId = getLeadId(lead);
+  const nextPhone = normalizePhone(getLeadPhone(lead));
+  const nextEmail = getLeadEmail(lead).toLowerCase();
+  const nextAddress = getLeadAddress(lead).toLowerCase();
+  const matchesCreatedLead = (item: BridgeRecord) => {
+    if (getLeadId(item) === nextLeadId) return true;
+    if (nextPhone && normalizePhone(getLeadPhone(item)) === nextPhone) return true;
+    if (nextEmail && getLeadEmail(item).toLowerCase() === nextEmail) return true;
+    return Boolean(nextAddress && getLeadAddress(item).toLowerCase() === nextAddress);
+  };
+  return [lead, ...current.filter((item) => !matchesCreatedLead(item))];
 }
 
 function Field({ label, children }: { label: string; children: ReactNode }) {
@@ -1304,8 +1344,12 @@ export function Leads() {
       const response = await createLeadRequest(buildNewLeadPayload(newLeadForm));
       const lead = unwrapLeadResponse(response);
       const nextLeadId = getLeadId(lead);
+      setLeadRoster((current) => upsertVisibleLead(current, lead));
       setLeadDetail(lead);
       setSelectedLeadId(nextLeadId);
+      setLeadQuery('');
+      setLeadFilter('all');
+      setDisplayLimit((current) => Math.max(current, 40));
       setNewLeadOpen(false);
       setNewLeadStatus(null);
       setDetailStatus({ tone: 'success', text: 'New PBK lead created on the bridge.' });

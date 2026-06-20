@@ -27,6 +27,14 @@ assert(
 assert(/type NewLeadFormState/.test(leads), 'Leads should define a dedicated new lead form state.');
 assert(/New PBK lead/.test(leads), 'Leads should render the New PBK lead portal.');
 assert(/createLeadRequest/.test(leads), 'Leads page should submit new leads through createLeadRequest.');
+assert(
+  /response\.leadImport/.test(leads),
+  'Leads page must unwrap POST /api/leads leadImport responses before selecting or rendering the new lead.',
+);
+assert(
+  /setLeadRoster\(\(current\) => upsertVisibleLead\(current, lead\)\)/.test(leads),
+  'Newly created leads must be optimistically inserted into the visible roster before the bridge roster refresh returns.',
+);
 assert(/seedNewLeadFromAnalyzer/.test(leads), 'New lead portal should seed from current analyzer state.');
 assert(/ANALYZER_CURRENT_DEAL_KEY/.test(leads), 'New lead portal should read analyzer storage for deal/path sync.');
 assert(/useSearchParams/.test(leads), 'Lead portal should support deep-linking from the analyzer with search params.');

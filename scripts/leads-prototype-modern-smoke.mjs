@@ -136,5 +136,23 @@ assert(
     indexCss.includes('.pbk-lead-quick-actions.compact'),
   'Lead quick actions must have compact mobile and desktop list styling.'
 );
+assert(
+  /@media \(max-width: 720px\)[\s\S]*\.pbk-leads-source-rail\s*{\s*display:\s*none;[\s\S]*\.pbk-leads-pipeline-rail \.pipeline-head \.pbk-data-source\s*{\s*display:\s*none;/.test(
+    pbkCss
+  ),
+  'Mobile Leads should hide source-debug rails so Pipeline leads/Seller roster is not buried below setup metadata.'
+);
+assert(
+  /@media \(max-width: 720px\)[\s\S]*\.lead-mobile-card\s*{[\s\S]*grid-template-columns:\s*auto minmax\(0, 1fr\);[\s\S]*\.lead-mobile-card > span:last-child\s*{[\s\S]*grid-column:\s*1 \/ -1;/.test(
+    indexCss
+  ),
+  'Mobile seller roster cards should give seller identity full width and move quick actions below the card body.'
+);
+assert(
+  /@media \(max-width: 720px\)[\s\S]*\.leads-mobile-cards\s*{[\s\S]*padding-bottom:\s*calc\(96px \+ env\(safe-area-inset-bottom\)\);/.test(
+    indexCss
+  ),
+  'Mobile seller roster should reserve bottom safe-area padding so the fixed nav does not cover card actions.'
+);
 
 console.log('leads-prototype-modern-smoke: ok');

@@ -10925,6 +10925,83 @@ html[data-theme='light'] .pbk-new-lead-modal-footer {
   }
 }
 
+@media (max-width: 720px) {
+  .pbk-leads-hero {
+    padding: 12px;
+  }
+
+  .pbk-leads-hero-top {
+    gap: 10px;
+  }
+
+  .pbk-leads-hero h1 {
+    margin-top: 4px;
+    font-size: 28px;
+  }
+
+  .pbk-leads-hero p {
+    display: none;
+  }
+
+  .pbk-leads-hero-actions {
+    gap: 8px;
+  }
+
+  .pbk-leads-refresh,
+  .pbk-leads-create {
+    min-height: 34px;
+    padding: 0 10px;
+    font-size: 9px;
+  }
+
+  .pbk-leads-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+    margin-top: 12px;
+  }
+
+  .pbk-leads-stat {
+    min-height: 72px;
+    padding: 10px;
+  }
+
+  .pbk-leads-stat .v {
+    margin-top: 4px;
+    font-size: 26px;
+  }
+
+  .pbk-leads-stat .delta {
+    display: none;
+  }
+
+  .pbk-leads-source-rail {
+    display: none;
+  }
+
+  .pbk-leads-layout {
+    gap: 10px;
+    margin-top: 10px;
+  }
+
+  .pbk-leads-pipeline-rail .pipeline-head {
+    gap: 8px;
+    padding: 12px;
+  }
+
+  .pbk-leads-pipeline-rail .pipeline-head .pbk-data-source {
+    display: none;
+  }
+
+  .pbk-leads-pipeline-rail p {
+    display: none;
+  }
+
+  .pbk-leads-roster-tools {
+    gap: 8px;
+    padding: 10px;
+  }
+}
+
 @media (max-width: 560px) {
   .pbk-leads-surface {
     padding: 12px;

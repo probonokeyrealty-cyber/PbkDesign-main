@@ -33,6 +33,10 @@ services:
           property: connectionString
       - key: PBK_PG_POOL_MAX
         value: "4"
+      - key: PBK_PG_POOL_MIN
+        value: "0"
+      - key: PBK_PG_POOL_HARD_CAP
+        value: "4"
       - key: PBK_PG_QUERY_RETRY_ATTEMPTS
         value: "3"
       - key: PBK_PG_QUERY_RETRY_BASE_DELAY_MS
@@ -414,6 +418,10 @@ services:
           property: connectionString
       - key: PBK_PG_POOL_MAX
         value: "1"
+      - key: PBK_PG_POOL_MIN
+        value: "0"
+      - key: PBK_PG_POOL_HARD_CAP
+        value: "1"
       - key: PBK_PG_CONNECTION_TIMEOUT_MS
         value: "2500"
       - key: PBK_PG_QUERY_TIMEOUT_MS
@@ -498,6 +506,10 @@ services:
           name: pbk-openclaw-db
           property: connectionString
       - key: PBK_PG_POOL_MAX
+        value: "1"
+      - key: PBK_PG_POOL_MIN
+        value: "0"
+      - key: PBK_PG_POOL_HARD_CAP
         value: "1"
       - key: PBK_PG_CONNECTION_TIMEOUT_MS
         value: "2500"

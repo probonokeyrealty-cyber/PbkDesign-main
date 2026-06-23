@@ -5817,13 +5817,17 @@ let postgresHealth = {
   error: '',
 };
 
+const PG_POOL_HARD_CAP = Math.max(
+  1,
+  Math.min(20, Number(process.env.PBK_PG_POOL_HARD_CAP || (IS_HOSTED ? 4 : 20)))
+);
 const PG_POOL_MAX = Math.max(
   1,
-  Math.min(20, Number(process.env.PBK_PG_POOL_MAX || (IS_HOSTED ? 20 : 10)))
+  Math.min(PG_POOL_HARD_CAP, Number(process.env.PBK_PG_POOL_MAX || (IS_HOSTED ? 4 : 10)))
 );
 const PG_POOL_MIN = Math.max(
   0,
-  Math.min(PG_POOL_MAX, Number(process.env.PBK_PG_POOL_MIN || (IS_HOSTED ? 4 : 0)))
+  Math.min(PG_POOL_MAX, Number(process.env.PBK_PG_POOL_MIN || 0))
 );
 const PG_QUERY_RETRY_ATTEMPTS = Math.max(
   0,
@@ -5956,6 +5960,7 @@ function getPgPoolPressureSnapshot() {
     idleCount,
     waitingCount,
     max: PG_POOL_MAX,
+    hardCap: PG_POOL_HARD_CAP,
     saturated: Boolean(pool && (waitingCount > 0 || (totalCount >= PG_POOL_MAX && idleCount === 0))),
   };
 }
@@ -5974,6 +5979,7 @@ function getPostgresHealthMeta() {
     staleRenderHost,
     poolMax: PG_POOL_MAX,
     poolMin: PG_POOL_MIN,
+    poolHardCap: PG_POOL_HARD_CAP,
     connectionTimeoutMs: PG_CONNECTION_TIMEOUT_MS,
     queryTimeoutMs: PG_QUERY_TIMEOUT_MS,
     statementTimeoutMs: PG_STATEMENT_TIMEOUT_MS,

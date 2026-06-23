@@ -45,11 +45,23 @@ assert(
     /waitingCount/.test(bridge) &&
     /idleCount/.test(bridge) &&
     /totalCount/.test(bridge) &&
+    /hardCap: PG_POOL_HARD_CAP/.test(bridge) &&
+    /poolHardCap: PG_POOL_HARD_CAP/.test(bridge) &&
     /poolPressure: getPgPoolPressureSnapshot\(\)/.test(bridge),
   'Postgres health must expose pool pressure so connection exhaustion cannot hide behind generic timeouts.'
 );
 assert(
+  /const PG_POOL_HARD_CAP/.test(bridge) &&
+    /PBK_PG_POOL_HARD_CAP \|\| \(IS_HOSTED \? 4 : 20\)/.test(bridge) &&
+    /PBK_PG_POOL_MAX \|\| \(IS_HOSTED \? 4 : 10\)/.test(bridge) &&
+    /Number\(process\.env\.PBK_PG_POOL_MIN \|\| 0\)/.test(bridge),
+  'Hosted bridge must cap Postgres pools to protect small Render databases even when env vars are missing.'
+);
+assert(
   !/PBK_PG_CONNECTION_TIMEOUT_MS\s*\n\s*value:\s*"10000"/.test(renderYaml) &&
+    /PBK_PG_POOL_MAX\s*\n\s*value:\s*"4"/.test(renderYaml) &&
+    /PBK_PG_POOL_MIN\s*\n\s*value:\s*"0"/.test(renderYaml) &&
+    /PBK_PG_POOL_HARD_CAP\s*\n\s*value:\s*"4"/.test(renderYaml) &&
     /PBK_PG_CONNECTION_TIMEOUT_MS\s*\n\s*value:\s*"2500"/.test(renderYaml) &&
     /PBK_PG_QUERY_TIMEOUT_MS\s*\n\s*value:\s*"2500"/.test(renderYaml) &&
     /PBK_PG_STATEMENT_TIMEOUT_MS\s*\n\s*value:\s*"2500"/.test(renderYaml) &&

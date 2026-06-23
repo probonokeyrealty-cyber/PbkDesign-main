@@ -42,14 +42,18 @@ services:
       - key: PBK_PG_QUERY_RETRY_BASE_DELAY_MS
         value: "250"
       - key: PBK_PG_CONNECTION_TIMEOUT_MS
-        value: "2500"
+        value: "4000"
       - key: PBK_PG_QUERY_TIMEOUT_MS
-        value: "2500"
+        value: "4000"
       - key: PBK_PG_STATEMENT_TIMEOUT_MS
-        value: "2500"
+        value: "4000"
       - key: PBK_PG_LOCK_TIMEOUT_MS
         value: "1000"
       - key: PBK_PG_IDLE_IN_TRANSACTION_SESSION_TIMEOUT_MS
+        value: "10000"
+      - key: PBK_PG_KEEPALIVE_INITIAL_DELAY_MS
+        value: "2000"
+      - key: PBK_PG_KEEPALIVE_INTERVAL_MS
         value: "10000"
       - key: PBK_PG_IDLE_TIMEOUT_MS
         value: "10000"
@@ -423,14 +427,18 @@ services:
       - key: PBK_PG_POOL_HARD_CAP
         value: "1"
       - key: PBK_PG_CONNECTION_TIMEOUT_MS
-        value: "2500"
+        value: "4000"
       - key: PBK_PG_QUERY_TIMEOUT_MS
-        value: "2500"
+        value: "4000"
       - key: PBK_PG_STATEMENT_TIMEOUT_MS
-        value: "2500"
+        value: "4000"
       - key: PBK_PG_LOCK_TIMEOUT_MS
         value: "1000"
       - key: PBK_PG_IDLE_IN_TRANSACTION_SESSION_TIMEOUT_MS
+        value: "10000"
+      - key: PBK_PG_KEEPALIVE_INITIAL_DELAY_MS
+        value: "2000"
+      - key: PBK_PG_KEEPALIVE_INTERVAL_MS
         value: "10000"
       - key: PBK_PG_IDLE_TIMEOUT_MS
         value: "10000"
@@ -512,14 +520,18 @@ services:
       - key: PBK_PG_POOL_HARD_CAP
         value: "1"
       - key: PBK_PG_CONNECTION_TIMEOUT_MS
-        value: "2500"
+        value: "4000"
       - key: PBK_PG_QUERY_TIMEOUT_MS
-        value: "2500"
+        value: "4000"
       - key: PBK_PG_STATEMENT_TIMEOUT_MS
-        value: "2500"
+        value: "4000"
       - key: PBK_PG_LOCK_TIMEOUT_MS
         value: "1000"
       - key: PBK_PG_IDLE_IN_TRANSACTION_SESSION_TIMEOUT_MS
+        value: "10000"
+      - key: PBK_PG_KEEPALIVE_INITIAL_DELAY_MS
+        value: "2000"
+      - key: PBK_PG_KEEPALIVE_INTERVAL_MS
         value: "10000"
       - key: PBK_PG_IDLE_TIMEOUT_MS
         value: "10000"

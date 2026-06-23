@@ -5839,11 +5839,11 @@ const PG_QUERY_RETRY_BASE_DELAY_MS = Math.max(
 );
 const PG_CONNECTION_TIMEOUT_MS = Math.max(
   1000,
-  Math.min(15000, Number(process.env.PBK_PG_CONNECTION_TIMEOUT_MS || (IS_HOSTED ? 2500 : 5000)))
+  Math.min(15000, Number(process.env.PBK_PG_CONNECTION_TIMEOUT_MS || (IS_HOSTED ? 4000 : 5000)))
 );
 const PG_QUERY_TIMEOUT_MS = Math.max(
   750,
-  Math.min(15000, Number(process.env.PBK_PG_QUERY_TIMEOUT_MS || (IS_HOSTED ? 2500 : 5000)))
+  Math.min(15000, Number(process.env.PBK_PG_QUERY_TIMEOUT_MS || (IS_HOSTED ? 4000 : 5000)))
 );
 const PG_STATEMENT_TIMEOUT_MS = Math.max(
   750,
@@ -5866,7 +5866,7 @@ const PG_IDLE_TIMEOUT_MS = Math.max(
 );
 const PG_KEEPALIVE_INITIAL_DELAY_MS = Math.max(
   1000,
-  Math.min(60000, Number(process.env.PBK_PG_KEEPALIVE_INITIAL_DELAY_MS || 10000))
+  Math.min(60000, Number(process.env.PBK_PG_KEEPALIVE_INITIAL_DELAY_MS || (IS_HOSTED ? 2000 : 10000)))
 );
 const PG_MAX_LIFETIME_SECONDS = Math.max(
   60,
@@ -5875,7 +5875,7 @@ const PG_MAX_LIFETIME_SECONDS = Math.max(
 const PG_TRANSIENT_GRACE_MS = 0;
 const PG_KEEPALIVE_INTERVAL_MS = Math.max(
   5000,
-  Math.min(120000, Number(process.env.PBK_PG_KEEPALIVE_INTERVAL_MS || 30000))
+  Math.min(120000, Number(process.env.PBK_PG_KEEPALIVE_INTERVAL_MS || (IS_HOSTED ? 10000 : 30000)))
 );
 let postgresKeepAliveTimer = null;
 let skillGovernanceHealth = {

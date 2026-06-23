@@ -32,6 +32,8 @@ assert(
     /const PG_STATEMENT_TIMEOUT_MS/.test(bridge) &&
     /const PG_LOCK_TIMEOUT_MS/.test(bridge) &&
     /const PG_IDLE_IN_TRANSACTION_SESSION_TIMEOUT_MS/.test(bridge) &&
+    /PBK_PG_CONNECTION_TIMEOUT_MS \|\| \(IS_HOSTED \? 4000 : 5000\)/.test(bridge) &&
+    /PBK_PG_QUERY_TIMEOUT_MS \|\| \(IS_HOSTED \? 4000 : 5000\)/.test(bridge) &&
     /query_timeout:\s*PG_QUERY_TIMEOUT_MS/.test(bridge) &&
     /statement_timeout:\s*PG_STATEMENT_TIMEOUT_MS/.test(bridge) &&
     /lock_timeout:\s*PG_LOCK_TIMEOUT_MS/.test(bridge) &&
@@ -62,13 +64,15 @@ assert(
     /PBK_PG_POOL_MAX\s*\n\s*value:\s*"4"/.test(renderYaml) &&
     /PBK_PG_POOL_MIN\s*\n\s*value:\s*"0"/.test(renderYaml) &&
     /PBK_PG_POOL_HARD_CAP\s*\n\s*value:\s*"4"/.test(renderYaml) &&
-    /PBK_PG_CONNECTION_TIMEOUT_MS\s*\n\s*value:\s*"2500"/.test(renderYaml) &&
-    /PBK_PG_QUERY_TIMEOUT_MS\s*\n\s*value:\s*"2500"/.test(renderYaml) &&
-    /PBK_PG_STATEMENT_TIMEOUT_MS\s*\n\s*value:\s*"2500"/.test(renderYaml) &&
+    /PBK_PG_CONNECTION_TIMEOUT_MS\s*\n\s*value:\s*"4000"/.test(renderYaml) &&
+    /PBK_PG_QUERY_TIMEOUT_MS\s*\n\s*value:\s*"4000"/.test(renderYaml) &&
+    /PBK_PG_STATEMENT_TIMEOUT_MS\s*\n\s*value:\s*"4000"/.test(renderYaml) &&
     /PBK_PG_LOCK_TIMEOUT_MS\s*\n\s*value:\s*"1000"/.test(renderYaml) &&
     /PBK_PG_IDLE_IN_TRANSACTION_SESSION_TIMEOUT_MS\s*\n\s*value:\s*"10000"/.test(
       renderYaml
     ) &&
+    /PBK_PG_KEEPALIVE_INITIAL_DELAY_MS\s*\n\s*value:\s*"2000"/.test(renderYaml) &&
+    /PBK_PG_KEEPALIVE_INTERVAL_MS\s*\n\s*value:\s*"10000"/.test(renderYaml) &&
     /PBK_PG_TRANSIENT_GRACE_MS\s*\n\s*value:\s*"0"/.test(renderYaml),
   'Render Postgres env must use bounded fail-closed timeouts and no transient readiness grace.'
 );

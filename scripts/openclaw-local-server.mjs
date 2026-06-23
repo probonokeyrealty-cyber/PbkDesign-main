@@ -5810,7 +5810,9 @@ let postgresHealth = {
   lastErrorAt: null,
   lastRecoveryAt: null,
   lastTransientErrorAt: null,
+  lastTimeoutAt: null,
   transientFailures: 0,
+  timeoutFailures: 0,
   consecutiveFailures: 0,
   error: '',
 };
@@ -5833,7 +5835,26 @@ const PG_QUERY_RETRY_BASE_DELAY_MS = Math.max(
 );
 const PG_CONNECTION_TIMEOUT_MS = Math.max(
   1000,
-  Math.min(15000, Number(process.env.PBK_PG_CONNECTION_TIMEOUT_MS || 5000))
+  Math.min(15000, Number(process.env.PBK_PG_CONNECTION_TIMEOUT_MS || (IS_HOSTED ? 2500 : 5000)))
+);
+const PG_QUERY_TIMEOUT_MS = Math.max(
+  750,
+  Math.min(15000, Number(process.env.PBK_PG_QUERY_TIMEOUT_MS || (IS_HOSTED ? 2500 : 5000)))
+);
+const PG_STATEMENT_TIMEOUT_MS = Math.max(
+  750,
+  Math.min(15000, Number(process.env.PBK_PG_STATEMENT_TIMEOUT_MS || PG_QUERY_TIMEOUT_MS))
+);
+const PG_LOCK_TIMEOUT_MS = Math.max(
+  250,
+  Math.min(5000, Number(process.env.PBK_PG_LOCK_TIMEOUT_MS || (IS_HOSTED ? 1000 : 2000)))
+);
+const PG_IDLE_IN_TRANSACTION_SESSION_TIMEOUT_MS = Math.max(
+  1000,
+  Math.min(
+    30000,
+    Number(process.env.PBK_PG_IDLE_IN_TRANSACTION_SESSION_TIMEOUT_MS || 10000)
+  )
 );
 const PG_IDLE_TIMEOUT_MS = Math.max(
   5000,
@@ -5883,7 +5904,9 @@ function markPostgresHealth(ok, error = '', options = {}) {
       lastErrorAt: null,
       lastRecoveryAt: null,
       lastTransientErrorAt: null,
+      lastTimeoutAt: null,
       transientFailures: 0,
+      timeoutFailures: 0,
       consecutiveFailures: 0,
       error: '',
     };
@@ -5891,6 +5914,7 @@ function markPostgresHealth(ok, error = '', options = {}) {
   }
   const wasReady = postgresHealth.ready === true;
   const transient = Boolean(options.transient);
+  const timeout = Boolean(options.timeout);
   postgresHealth = {
     ...postgresHealth,
     configured: true,
@@ -5901,9 +5925,13 @@ function markPostgresHealth(ok, error = '', options = {}) {
     lastErrorAt: ok ? postgresHealth.lastErrorAt : now,
     lastRecoveryAt: ok && !wasReady ? now : postgresHealth.lastRecoveryAt,
     lastTransientErrorAt: transient ? now : postgresHealth.lastTransientErrorAt,
+    lastTimeoutAt: timeout ? now : postgresHealth.lastTimeoutAt,
     transientFailures: transient
       ? Number(postgresHealth.transientFailures || 0) + 1
       : Number(postgresHealth.transientFailures || 0),
+    timeoutFailures: timeout
+      ? Number(postgresHealth.timeoutFailures || 0) + 1
+      : Number(postgresHealth.timeoutFailures || 0),
     consecutiveFailures: ok ? 0 : Number(postgresHealth.consecutiveFailures || 0) + 1,
     error: ok ? '' : String(error || 'Postgres connection failed.').slice(0, 500),
   };
@@ -5916,6 +5944,20 @@ function isPotentiallyStaleRenderDatabaseHost(host = '') {
   // Render internal database URLs should use DNS hostnames. A raw IP can go stale
   // when Render rotates private addresses or the database is recreated.
   return /^\d{1,3}(?:\.\d{1,3}){3}$/.test(normalized);
+}
+
+function getPgPoolPressureSnapshot() {
+  const pool = __pgPool;
+  const totalCount = Number(pool?.totalCount || 0);
+  const idleCount = Number(pool?.idleCount || 0);
+  const waitingCount = Number(pool?.waitingCount || 0);
+  return {
+    totalCount,
+    idleCount,
+    waitingCount,
+    max: PG_POOL_MAX,
+    saturated: Boolean(pool && (waitingCount > 0 || (totalCount >= PG_POOL_MAX && idleCount === 0))),
+  };
 }
 
 function getPostgresHealthMeta() {
@@ -5933,18 +5975,25 @@ function getPostgresHealthMeta() {
     poolMax: PG_POOL_MAX,
     poolMin: PG_POOL_MIN,
     connectionTimeoutMs: PG_CONNECTION_TIMEOUT_MS,
+    queryTimeoutMs: PG_QUERY_TIMEOUT_MS,
+    statementTimeoutMs: PG_STATEMENT_TIMEOUT_MS,
+    lockTimeoutMs: PG_LOCK_TIMEOUT_MS,
+    idleInTransactionSessionTimeoutMs: PG_IDLE_IN_TRANSACTION_SESSION_TIMEOUT_MS,
     idleTimeoutMs: PG_IDLE_TIMEOUT_MS,
     keepAliveInitialDelayMs: PG_KEEPALIVE_INITIAL_DELAY_MS,
     keepAliveIntervalMs: PG_KEEPALIVE_INTERVAL_MS,
     maxLifetimeSeconds: PG_MAX_LIFETIME_SECONDS,
+    poolPressure: getPgPoolPressureSnapshot(),
     transientGraceActive,
     transientFailures: Number(postgresHealth.transientFailures || 0),
+    timeoutFailures: Number(postgresHealth.timeoutFailures || 0),
     consecutiveFailures: Number(postgresHealth.consecutiveFailures || 0),
     checkedAt: postgresHealth.checkedAt,
     lastOkAt: postgresHealth.lastOkAt,
     lastErrorAt: postgresHealth.lastErrorAt,
     lastRecoveryAt: postgresHealth.lastRecoveryAt,
     lastTransientErrorAt: postgresHealth.lastTransientErrorAt,
+    lastTimeoutAt: postgresHealth.lastTimeoutAt,
     error: postgresHealth.error,
     note: DATABASE_URL
       ? postgresHealth.ready === true
@@ -5954,7 +6003,20 @@ function getPostgresHealthMeta() {
   };
 }
 
+function isBoundedPostgresOperationTimeout(error) {
+  const code = String(error?.code || '').trim().toUpperCase();
+  const message = String(error?.message || error || '').toLowerCase();
+  return (
+    code === '57014' ||
+    code === '55P03' ||
+    /query read timeout|statement timeout|canceling statement due to statement timeout|lock timeout|idle[- ]in[- ]transaction session timeout/.test(
+      message
+    )
+  );
+}
+
 function isTransientPostgresConnectionError(error) {
+  if (isBoundedPostgresOperationTimeout(error)) return false;
   const code = String(error?.code || '').trim().toUpperCase();
   const message = String(error?.message || error || '').toLowerCase();
   return (
@@ -5976,8 +6038,9 @@ async function withPostgresConnectionRetry(operation, label = 'postgres') {
       return result;
     } catch (error) {
       lastError = error;
+      const timeout = isBoundedPostgresOperationTimeout(error);
       const transient = isTransientPostgresConnectionError(error);
-      markPostgresHealth(false, error?.message || error, { transient });
+      markPostgresHealth(false, error?.message || error, { transient, timeout });
       if (!transient || attempt >= PG_QUERY_RETRY_ATTEMPTS) throw error;
       const delayMs = PG_QUERY_RETRY_BASE_DELAY_MS * (attempt + 1);
       console.warn(
@@ -6002,6 +6065,11 @@ function getPgPool() {
     maxLifetimeSeconds: PG_MAX_LIFETIME_SECONDS,
     keepAlive: true,
     keepAliveInitialDelayMillis: PG_KEEPALIVE_INITIAL_DELAY_MS,
+    query_timeout: PG_QUERY_TIMEOUT_MS,
+    statement_timeout: PG_STATEMENT_TIMEOUT_MS,
+    lock_timeout: PG_LOCK_TIMEOUT_MS,
+    idle_in_transaction_session_timeout: PG_IDLE_IN_TRANSACTION_SESSION_TIMEOUT_MS,
+    application_name: `pbk-openclaw-${IS_HOSTED ? 'hosted' : 'local'}`,
     // Render Postgres requires TLS but uses a self-signed cert chain.
     // Disable cert validation for managed-DB hostnames; keep it on for localhost.
     ssl: /(localhost|127\.0\.0\.1)/.test(DATABASE_URL) ? false : { rejectUnauthorized: false },

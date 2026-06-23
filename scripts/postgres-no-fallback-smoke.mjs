@@ -26,6 +26,27 @@ assert(
     /startPostgresKeepAlive\(\);/.test(bridge),
   'The bridge must actively keep the Postgres pool warm and update health from a direct keepalive query.'
 );
+assert(
+  /const PG_QUERY_TIMEOUT_MS/.test(bridge) &&
+    /const PG_STATEMENT_TIMEOUT_MS/.test(bridge) &&
+    /const PG_LOCK_TIMEOUT_MS/.test(bridge) &&
+    /const PG_IDLE_IN_TRANSACTION_SESSION_TIMEOUT_MS/.test(bridge) &&
+    /query_timeout:\s*PG_QUERY_TIMEOUT_MS/.test(bridge) &&
+    /statement_timeout:\s*PG_STATEMENT_TIMEOUT_MS/.test(bridge) &&
+    /lock_timeout:\s*PG_LOCK_TIMEOUT_MS/.test(bridge) &&
+    /idle_in_transaction_session_timeout:\s*PG_IDLE_IN_TRANSACTION_SESSION_TIMEOUT_MS/.test(
+      bridge
+    ),
+  'Hosted Postgres operations must have bounded client, statement, lock, and idle-transaction timeouts.'
+);
+assert(
+  /function getPgPoolPressureSnapshot/.test(bridge) &&
+    /waitingCount/.test(bridge) &&
+    /idleCount/.test(bridge) &&
+    /totalCount/.test(bridge) &&
+    /poolPressure: getPgPoolPressureSnapshot\(\)/.test(bridge),
+  'Postgres health must expose pool pressure so connection exhaustion cannot hide behind generic timeouts.'
+);
 
 const ensurePgSchemaStart = bridge.indexOf('async function ensurePgSchema()');
 const ensurePgSchemaEnd = bridge.indexOf('async function ensureCallEmbeddingsSchema', ensurePgSchemaStart);

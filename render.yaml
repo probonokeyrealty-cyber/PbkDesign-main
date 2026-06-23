@@ -38,13 +38,21 @@ services:
       - key: PBK_PG_QUERY_RETRY_BASE_DELAY_MS
         value: "250"
       - key: PBK_PG_CONNECTION_TIMEOUT_MS
+        value: "2500"
+      - key: PBK_PG_QUERY_TIMEOUT_MS
+        value: "2500"
+      - key: PBK_PG_STATEMENT_TIMEOUT_MS
+        value: "2500"
+      - key: PBK_PG_LOCK_TIMEOUT_MS
+        value: "1000"
+      - key: PBK_PG_IDLE_IN_TRANSACTION_SESSION_TIMEOUT_MS
         value: "10000"
       - key: PBK_PG_IDLE_TIMEOUT_MS
         value: "10000"
       - key: PBK_PG_MAX_LIFETIME_SECONDS
         value: "300"
       - key: PBK_PG_TRANSIENT_GRACE_MS
-        value: "30000"
+        value: "0"
       # Public base URL of THIS service. Used to build provider webhook URLs
       # (Telnyx call events, DocuSign envelope status, etc.) that point back here.
       - key: PBK_PUBLIC_BASE_URL
@@ -407,6 +415,14 @@ services:
       - key: PBK_PG_POOL_MAX
         value: "1"
       - key: PBK_PG_CONNECTION_TIMEOUT_MS
+        value: "2500"
+      - key: PBK_PG_QUERY_TIMEOUT_MS
+        value: "2500"
+      - key: PBK_PG_STATEMENT_TIMEOUT_MS
+        value: "2500"
+      - key: PBK_PG_LOCK_TIMEOUT_MS
+        value: "1000"
+      - key: PBK_PG_IDLE_IN_TRANSACTION_SESSION_TIMEOUT_MS
         value: "10000"
       - key: PBK_PG_IDLE_TIMEOUT_MS
         value: "10000"
@@ -484,6 +500,14 @@ services:
       - key: PBK_PG_POOL_MAX
         value: "1"
       - key: PBK_PG_CONNECTION_TIMEOUT_MS
+        value: "2500"
+      - key: PBK_PG_QUERY_TIMEOUT_MS
+        value: "2500"
+      - key: PBK_PG_STATEMENT_TIMEOUT_MS
+        value: "2500"
+      - key: PBK_PG_LOCK_TIMEOUT_MS
+        value: "1000"
+      - key: PBK_PG_IDLE_IN_TRANSACTION_SESSION_TIMEOUT_MS
         value: "10000"
       - key: PBK_PG_IDLE_TIMEOUT_MS
         value: "10000"

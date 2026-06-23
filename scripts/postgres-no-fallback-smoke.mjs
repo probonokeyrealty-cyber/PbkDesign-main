@@ -4,6 +4,7 @@ import { resolve } from 'node:path';
 
 const root = process.cwd();
 const bridge = readFileSync(resolve(root, 'scripts/openclaw-local-server.mjs'), 'utf8');
+const renderYaml = readFileSync(resolve(root, 'render.yaml'), 'utf8');
 
 assert(
   /const PG_TRANSIENT_GRACE_MS = 0;/.test(bridge),
@@ -46,6 +47,18 @@ assert(
     /totalCount/.test(bridge) &&
     /poolPressure: getPgPoolPressureSnapshot\(\)/.test(bridge),
   'Postgres health must expose pool pressure so connection exhaustion cannot hide behind generic timeouts.'
+);
+assert(
+  !/PBK_PG_CONNECTION_TIMEOUT_MS\s*\n\s*value:\s*"10000"/.test(renderYaml) &&
+    /PBK_PG_CONNECTION_TIMEOUT_MS\s*\n\s*value:\s*"2500"/.test(renderYaml) &&
+    /PBK_PG_QUERY_TIMEOUT_MS\s*\n\s*value:\s*"2500"/.test(renderYaml) &&
+    /PBK_PG_STATEMENT_TIMEOUT_MS\s*\n\s*value:\s*"2500"/.test(renderYaml) &&
+    /PBK_PG_LOCK_TIMEOUT_MS\s*\n\s*value:\s*"1000"/.test(renderYaml) &&
+    /PBK_PG_IDLE_IN_TRANSACTION_SESSION_TIMEOUT_MS\s*\n\s*value:\s*"10000"/.test(
+      renderYaml
+    ) &&
+    /PBK_PG_TRANSIENT_GRACE_MS\s*\n\s*value:\s*"0"/.test(renderYaml),
+  'Render Postgres env must use bounded fail-closed timeouts and no transient readiness grace.'
 );
 
 const ensurePgSchemaStart = bridge.indexOf('async function ensurePgSchema()');

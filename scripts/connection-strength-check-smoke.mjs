@@ -78,14 +78,27 @@ assert(
   bridgeSource.includes('/api/connection-health') &&
     bridgeSource.includes('runConnectionHealthCheck') &&
     bridgeSource.includes('PBK_PG_POOL_MIN') &&
+    bridgeSource.includes('PBK_PG_OPERATION_TIMEOUT_MS') &&
+    bridgeSource.includes('withPostgresOperationDeadline(rawQuery') &&
+    bridgeSource.includes('withPostgresOperationDeadline(rawConnect') &&
     bridgeSource.includes('keepAliveInitialDelayMillis: PG_KEEPALIVE_INITIAL_DELAY_MS'),
-  'Bridge must expose connection health and use hardened pool warm/keepalive settings.'
+  'Bridge must expose connection health and use hardened pool warm/keepalive/deadline settings.'
 );
 
 assert.equal(
   packageJson.scripts?.['test:connection-strength'],
   'node ./scripts/connection-strength-check-smoke.mjs',
   'package.json must expose the connection strength smoke.'
+);
+assert.equal(
+  packageJson.scripts?.['render:doctor'],
+  'node ./scripts/render-cli-doctor.mjs',
+  'package.json must expose the Render CLI doctor for operator and subagent diagnostics.'
+);
+assert.equal(
+  packageJson.scripts?.['render:status'],
+  'node ./scripts/render-cli-doctor.mjs --status-only',
+  'package.json must expose the Render CLI status check.'
 );
 assert(
   packageJson.scripts?.['test:production-hardening']?.includes('test:connection-strength'),

@@ -355,8 +355,24 @@ function hydrateLocalRuntimeEnv() {
 
 hydrateLocalRuntimeEnv();
 
-const HOST = process.env.PBK_OPENCLAW_HOST || process.env.HOST || (IS_HOSTED || IS_LAN ? '0.0.0.0' : '127.0.0.1');
-const PORT = Number(process.env.PBK_OPENCLAW_PORT || process.env.PORT || 8788);
+function resolveRuntimeHost() {
+  if (IS_HOSTED) return '0.0.0.0';
+  return process.env.PBK_OPENCLAW_HOST || process.env.HOST || (IS_LAN ? '0.0.0.0' : '127.0.0.1');
+}
+
+function resolveRuntimePort() {
+  const candidates = IS_HOSTED
+    ? [process.env.PORT, process.env.PBK_OPENCLAW_PORT]
+    : [process.env.PBK_OPENCLAW_PORT, process.env.PORT];
+  for (const candidate of candidates) {
+    const port = Number(candidate);
+    if (Number.isInteger(port) && port > 0 && port < 65536) return port;
+  }
+  return 8788;
+}
+
+const HOST = resolveRuntimeHost();
+const PORT = resolveRuntimePort();
 
 function looksLikeTruncatedPemStub(value = '') {
   const normalized = String(value || '')
@@ -898,7 +914,7 @@ function isPublicBridgeRequest(method = 'GET', pathname = '') {
 // Postgres state backend. When PBK_DATABASE_URL is set the bridge persists
 // state to a 'bridge_state' table (single row, JSONB column) instead of the
 // .pbk-local/openclaw-state.json file. Survives Render free-tier cold starts.
-const DATABASE_URL = String(process.env.PBK_DATABASE_URL || '').trim();
+const DATABASE_URL = String(process.env.PBK_DATABASE_URL || process.env.DATABASE_URL || '').trim();
 const STATE_BACKEND = DATABASE_URL ? 'postgres' : 'file';
 const runtimeStateProvenance = {
   source: DATABASE_URL ? 'render-postgres-pending' : 'local-bridge-state',
@@ -906,6 +922,14 @@ const runtimeStateProvenance = {
   fallbackReason: '',
   lastLoadAt: '',
   lastPersistAt: '',
+};
+let runtimeStateBootstrap = {
+  ok: !DATABASE_URL,
+  ready: !DATABASE_URL,
+  status: DATABASE_URL ? 'pending' : 'ready',
+  code: '',
+  error: '',
+  checkedAt: '',
 };
 let lastStateDbLoad = {
   ok: !DATABASE_URL,
@@ -2033,11 +2057,17 @@ function getRuntimeWarnings() {
   if (IS_HOSTED && DATABASE_URL && pgHealth.ready !== true) {
     warnings.push(`PBK_DATABASE_URL is configured but unreachable: ${pgHealth.error || pgHealth.status}. Update the Render/Supabase Postgres connection string.`);
   }
+  if (IS_HOSTED && DATABASE_URL && runtimeStateBootstrap.ready !== true) {
+    warnings.push(`Postgres state bootstrap is not ready: ${runtimeStateBootstrap.error || runtimeStateBootstrap.status}.`);
+  }
   if (IS_HOSTED && !REDIS_ENABLED) {
     warnings.push('PBK_REDIS_URL is not active; hosted multi-instance call state will not be shared.');
   }
   if (IS_HOSTED && PUBLIC_AVA_CHAT_ENABLED && !PUBLIC_AVA_CHAT_ENABLED_CONFIGURED) {
     warnings.push('Public Ava chat is enabled on hosted without explicit PBK_PUBLIC_AVA_CHAT_ENABLED=true.');
+  }
+  if (IS_HOSTED && PUBLIC_AVA_CHAT_ENABLED && !PUBLIC_AVA_CHAT_KEY) {
+    warnings.push('Public Ava chat is enabled but PBK_PUBLIC_AVA_CHAT_KEY is missing; hosted public chat is fail-closed until the key is set.');
   }
   if (IS_HOSTED && !APPROVAL_WEBHOOK_URL) {
     warnings.push('PBK_N8N_APPROVAL_WEBHOOK is not set.');
@@ -2391,6 +2421,7 @@ function getRuntimeMeta() {
     stateBackend: postgresHealth.stateBackend || STATE_BACKEND,
     configuredStateBackend: STATE_BACKEND,
     postgresHealth,
+    stateBootstrap: { ...runtimeStateBootstrap },
     productionReady: !IS_HOSTED || warnings.length === 0,
     providers: {
       openclawGateway: getOpenClawGatewayHealthComponent(),
@@ -2605,6 +2636,118 @@ async function buildCommandCenterHealthSnapshot(runtimeMeta = getRuntimeMeta()) 
     revision: BUILD_REVISION,
     hosted: IS_HOSTED,
     stateBackend: STATE_BACKEND,
+    components,
+    agentOrchestration,
+    summary,
+  };
+}
+
+function buildLivenessHealthSnapshot(runtimeMeta = getRuntimeMeta()) {
+  const providers = runtimeMeta.providers || {};
+  const postgresHealth = runtimeMeta.postgresHealth || getPostgresHealthMeta();
+  const agentOrchestration = buildAgentOrchestrationSnapshot();
+  const components = {
+    bridge: {
+      label: 'PBK Bridge',
+      status: 'up',
+      ready: true,
+      configured: true,
+      optional: false,
+      revision: BUILD_REVISION,
+      note: `${runtimeMeta.mode} runtime listening on ${HOST}:${PORT}.`,
+    },
+    stateBootstrap: {
+      label: 'Runtime state bootstrap',
+      status: runtimeStateBootstrap.ready ? 'up' : runtimeStateBootstrap.status || 'degraded',
+      ready: Boolean(runtimeStateBootstrap.ready),
+      configured: Boolean(STATE_BACKEND),
+      optional: !IS_HOSTED,
+      code: runtimeStateBootstrap.code || '',
+      error: runtimeStateBootstrap.error || '',
+      note: runtimeStateBootstrap.ready
+        ? 'Runtime state loaded.'
+        : 'Liveness is up, but protected stateful routes are temporarily fail-closed.',
+    },
+    postgres: {
+      label: 'Postgres state backend',
+      status: postgresHealth.ready === true ? 'up' : postgresHealth.status || (STATE_BACKEND === 'postgres' ? 'postgres_unavailable' : 'file_mode'),
+      ready: postgresHealth.ready === true,
+      configured: Boolean(postgresHealth.configured),
+      optional: !IS_HOSTED,
+      note: postgresHealth.note || (STATE_BACKEND === 'postgres' ? 'Hosted bridge is configured for Postgres state.' : 'Local bridge is using file-backed state.'),
+      host: postgresHealth.host || '',
+      error: postgresHealth.error || '',
+    },
+    agentOrchestration: {
+      label: 'Agent orchestration',
+      status: agentOrchestration.ok ? 'up' : 'degraded',
+      ready: Boolean(agentOrchestration.ok),
+      configured: true,
+      optional: false,
+      topology: agentOrchestration.topology,
+      supervisor: agentOrchestration.supervisor?.id || 'ava',
+      workers: (agentOrchestration.workers || []).map((agent) => agent.id),
+      note: 'Ava, Rex, Hermes, and worker topology loaded from runtime state.',
+    },
+    telnyx: summarizeProviderComponent(providers.telnyx, {
+      label: 'Telnyx phone/SMS',
+      ready: (meta) => Boolean(meta.voiceReady && meta.messagingReady),
+      note: 'Voice and SMS provider health for approval-gated outbound actions.',
+    }),
+    deepgram: summarizeProviderComponent(providers.deepgram, {
+      label: 'Deepgram STT',
+      note: 'Speech-to-text readiness for browser and phone transcripts.',
+    }),
+    browserVoice: summarizeProviderComponent(providers.browserVoice, {
+      label: 'Browser mic sessions',
+      note: 'Dashboard microphone sessions are protected by the bridge API key.',
+    }),
+    elevenlabs: summarizeProviderComponent(providers.elevenLabs, {
+      label: 'ElevenLabs TTS',
+      note: 'Spoken Ava responses through the bridge TTS endpoint.',
+    }),
+    webSearch: summarizeProviderComponent(providers.webSearch, {
+      label: 'Ava/Rex web-search cognition',
+      ready: true,
+      configured: true,
+      note: providers.webSearch?.note || 'Web search lane is available.',
+    }),
+    deepSeek: summarizeProviderComponent(providers.deepSeek, {
+      label: 'DeepSeek strategist',
+      optional: true,
+      note: 'Ava/Rex coaching lane.',
+    }),
+    docusign: summarizeProviderComponent(providers.docusign, {
+      label: 'DocuSign envelopes',
+      note: 'Contract envelope provider readiness.',
+    }),
+    n8n: summarizeProviderComponent(providers.n8nWorkflows, {
+      label: 'n8n workflows',
+      note: 'Workflow activation surface.',
+    }),
+    slack: summarizeProviderComponent(providers.slack, {
+      label: 'Slack approvals',
+      note: 'Founder approvals and update notifications.',
+    }),
+    render: summarizeProviderComponent(providers.render, {
+      label: 'Render operations',
+      note: 'Render API readiness for safe deploy/restart operations.',
+    }),
+    redis: summarizeProviderComponent(providers.redis, {
+      label: 'Redis shared state',
+      optional: true,
+      note: 'Shared call state and singleton leases.',
+    }),
+  };
+  const summary = summarizeHealthComponents(components);
+  return {
+    status: runtimeStateBootstrap.ready ? summary.status : 'degraded',
+    ready: Boolean(runtimeStateBootstrap.ready && summary.ready),
+    checkedAt: isoNow(),
+    service: 'pbk-local-openclaw',
+    revision: BUILD_REVISION,
+    hosted: IS_HOSTED,
+    stateBackend: runtimeMeta.stateBackend,
     components,
     agentOrchestration,
     summary,
@@ -3849,10 +3992,16 @@ async function generatePdfDocument(payload = {}) {
       try {
         await page.goto(previewUrl, { waitUntil: 'networkidle2', timeout: 90000 });
       } catch (error) {
+        console.warn(
+          '[pbk-local-openclaw] PDF preview renderer unavailable; rendering clean fallback:',
+          error?.message || String(error || 'unknown error')
+        );
         await page.setContent(
           renderPdfFallbackHtml({
             ...payload,
-            content: `${payload.content || 'The live preview renderer needed more time than expected.'}\n\nRenderer fallback: ${error instanceof Error ? error.message : String(error)}`,
+            content:
+              payload.content ||
+              'The PBK deal package is ready for review. This printable packet was generated from the saved deal context.',
           }),
           { waitUntil: 'domcontentloaded', timeout: 90000 }
         );
@@ -5872,6 +6021,16 @@ const PG_MAX_LIFETIME_SECONDS = Math.max(
   60,
   Math.min(1800, Number(process.env.PBK_PG_MAX_LIFETIME_SECONDS || 300))
 );
+const PG_OPERATION_TIMEOUT_MS = Math.max(
+  1000,
+  Math.min(
+    20000,
+    Number(
+      process.env.PBK_PG_OPERATION_TIMEOUT_MS ||
+        Math.max(PG_CONNECTION_TIMEOUT_MS, PG_QUERY_TIMEOUT_MS) + (IS_HOSTED ? 750 : 1000)
+    )
+  )
+);
 const PG_TRANSIENT_GRACE_MS = 0;
 const PG_KEEPALIVE_INTERVAL_MS = Math.max(
   5000,
@@ -5982,6 +6141,7 @@ function getPostgresHealthMeta() {
     poolHardCap: PG_POOL_HARD_CAP,
     connectionTimeoutMs: PG_CONNECTION_TIMEOUT_MS,
     queryTimeoutMs: PG_QUERY_TIMEOUT_MS,
+    operationTimeoutMs: PG_OPERATION_TIMEOUT_MS,
     statementTimeoutMs: PG_STATEMENT_TIMEOUT_MS,
     lockTimeoutMs: PG_LOCK_TIMEOUT_MS,
     idleInTransactionSessionTimeoutMs: PG_IDLE_IN_TRANSACTION_SESSION_TIMEOUT_MS,
@@ -6013,16 +6173,23 @@ function isBoundedPostgresOperationTimeout(error) {
   const code = String(error?.code || '').trim().toUpperCase();
   const message = String(error?.message || error || '').toLowerCase();
   return (
+    code === 'PBK_POSTGRES_OPERATION_TIMEOUT' ||
     code === '57014' ||
     code === '55P03' ||
-    /query read timeout|statement timeout|canceling statement due to statement timeout|lock timeout|idle[- ]in[- ]transaction session timeout/.test(
+    /query read timeout|statement timeout|canceling statement due to statement timeout|lock timeout|idle[- ]in[- ]transaction session timeout|pg (?:query|connect) timed out after/.test(
       message
     )
   );
 }
 
+function isPostgresPoolPressureError(error) {
+  const message = String(error?.message || error || '').toLowerCase();
+  return /remaining connection slots|too many clients|pool saturated|connection pool exhausted/.test(message);
+}
+
 function isTransientPostgresConnectionError(error) {
   if (isBoundedPostgresOperationTimeout(error)) return false;
+  if (isPostgresPoolPressureError(error)) return false;
   const code = String(error?.code || '').trim().toUpperCase();
   const message = String(error?.message || error || '').toLowerCase();
   return (
@@ -6033,6 +6200,23 @@ function isTransientPostgresConnectionError(error) {
       message
     )
   );
+}
+
+function withPostgresOperationDeadline(promise, label = 'pg operation') {
+  let timer = null;
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => {
+      timer = setTimeout(() => {
+        const error = new Error(`${label} timed out after ${PG_OPERATION_TIMEOUT_MS}ms`);
+        error.code = 'PBK_POSTGRES_OPERATION_TIMEOUT';
+        error.timeout = true;
+        reject(error);
+      }, PG_OPERATION_TIMEOUT_MS);
+    }),
+  ]).finally(() => {
+    if (timer) clearTimeout(timer);
+  });
 }
 
 async function withPostgresConnectionRetry(operation, label = 'postgres') {
@@ -6082,9 +6266,16 @@ function getPgPool() {
   });
   const rawQuery = __pgPool.query.bind(__pgPool);
   const rawConnect = __pgPool.connect.bind(__pgPool);
-  __pgPool.query = (...args) => withPostgresConnectionRetry(() => rawQuery(...args), 'pg query');
+  __pgPool.query = (...args) =>
+    withPostgresConnectionRetry(
+      () => withPostgresOperationDeadline(rawQuery(...args), 'pg query'),
+      'pg query'
+    );
   __pgPool.connect = (...args) =>
-    withPostgresConnectionRetry(() => rawConnect(...args), 'pg connect');
+    withPostgresConnectionRetry(
+      () => withPostgresOperationDeadline(rawConnect(...args), 'pg connect'),
+      'pg connect'
+    );
   __pgPool.on('error', (err) => {
     console.error('[pbk-local-openclaw] pg pool error:', err && err.message ? err.message : err);
     markPostgresHealth(false, err?.message || err);
@@ -10504,12 +10695,77 @@ function buildProductionMaturitySnapshot({ runtimeMeta = getRuntimeMeta() } = {}
 
 async function persistActivityLogRecords(entries = []) {
   if (!Array.isArray(entries) || entries.length === 0) return false;
+  const pool = getPgPool();
+  if (!pool) return false;
   const seen = new Set();
-  const uniqueEntries = entries.filter((entry) => entry?.id && !seen.has(entry.id) && seen.add(entry.id)).slice(0, 100);
-  for (const entry of uniqueEntries) {
-    await persistActivityLogRecord(entry);
+  const activityLogBatchSize = Math.max(
+    1,
+    Math.min(50, Number(process.env.PBK_ACTIVITY_LOG_BATCH_SIZE || 25))
+  );
+  const uniqueEntries = entries
+    .filter((entry) => entry?.id && !seen.has(entry.id) && seen.add(entry.id))
+    .slice(0, activityLogBatchSize);
+  if (!uniqueEntries.length) return false;
+  const values = [];
+  const rows = uniqueEntries.map((entry, index) => {
+    const createdAt = entry.at || entry.createdAt || entry.created_at || isoNow();
+    const metadata = {
+      ...entry,
+      leadId: entry.leadId || entry.lead_id || '',
+      leadName: entry.leadName || entry.lead_name || '',
+      address: entry.address || '',
+      target: entry.target || '',
+    };
+    values.push(
+      entry.id,
+      entry.workspaceId || entry.workspace_id || 'pbk',
+      entry.leadId || entry.lead_id || null,
+      entry.leadName || entry.lead_name || '',
+      entry.address || '',
+      entry.actor || 'System',
+      entry.category || 'INFO',
+      entry.status || 'success',
+      entry.text || '',
+      entry.target || '',
+      entry.source || 'runtime',
+      JSON.stringify(metadata),
+      createdAt,
+      entry.updatedAt || entry.updated_at || isoNow()
+    );
+    const offset = index * 14;
+    return `($${offset + 1},$${offset + 2},$${offset + 3},$${offset + 4},$${offset + 5},$${offset + 6},$${offset + 7},$${offset + 8},$${offset + 9},$${offset + 10},$${offset + 11},$${offset + 12}::jsonb,$${offset + 13},$${offset + 14})`;
+  });
+  try {
+    await ensureActivityLogSchema(pool);
+    await pool.query(
+      `INSERT INTO public.activity_log (
+        id, workspace_id, lead_id, lead_name, address, actor, category, status,
+        text, target, source, metadata, created_at, updated_at
+      )
+      VALUES ${rows.join(',')}
+      ON CONFLICT (id) DO UPDATE SET
+        workspace_id = EXCLUDED.workspace_id,
+        lead_id = EXCLUDED.lead_id,
+        lead_name = EXCLUDED.lead_name,
+        address = EXCLUDED.address,
+        actor = EXCLUDED.actor,
+        category = EXCLUDED.category,
+        status = EXCLUDED.status,
+        text = EXCLUDED.text,
+        target = EXCLUDED.target,
+        source = EXCLUDED.source,
+        metadata = EXCLUDED.metadata,
+        updated_at = EXCLUDED.updated_at`,
+      values
+    );
+    return true;
+  } catch (error) {
+    if (!activityLogPersistenceWarned) {
+      console.warn('[pbk-local-openclaw] activity_log batch persistence skipped:', error?.message || error);
+      activityLogPersistenceWarned = true;
+    }
+    return false;
   }
-  return uniqueEntries.length > 0;
 }
 
 async function persistStateToDb(nextState) {
@@ -11756,6 +12012,41 @@ async function loadState() {
   runtimeStateProvenance.lastLoadAt = isoNow();
   await persistState(fresh);
   return fresh;
+}
+
+async function bootstrapRuntimeStateForLiveness() {
+  try {
+    const loadedState = await loadState();
+    runtimeStateBootstrap = {
+      ok: true,
+      ready: true,
+      status: 'ready',
+      code: '',
+      error: '',
+      checkedAt: isoNow(),
+    };
+    return loadedState;
+  } catch (error) {
+    const detail = String(error?.details || error?.message || error || 'state bootstrap failed');
+    runtimeStateBootstrap = {
+      ok: false,
+      ready: false,
+      status: 'state_bootstrap_unavailable',
+      code: String(error?.code || 'state_bootstrap_unavailable'),
+      error: detail,
+      checkedAt: isoNow(),
+    };
+    runtimeStateProvenance.source = DATABASE_URL ? 'render-postgres-unavailable' : 'local-state-unavailable';
+    runtimeStateProvenance.loadedFrom = 'bootstrap-fallback';
+    runtimeStateProvenance.fallbackReason = detail;
+    runtimeStateProvenance.lastLoadAt = isoNow();
+    if (DATABASE_URL) markPostgresHealth(false, detail);
+    console.error('[pbk-local-openclaw] state bootstrap failed; serving liveness-only mode:', detail);
+    const fallbackState = buildDefaultState();
+    ensureImmutablePbkKnowledge(fallbackState);
+    updateDerivedStatus(fallbackState);
+    return fallbackState;
+  }
 }
 
 async function recordPbkToolUsage(params = {}) {
@@ -39417,8 +39708,7 @@ function hasExplicitSellerBinding(params = {}) {
   });
 }
 
-function isTrustedManualConversationProviderSend(toolName = '', params = {}) {
-  if (!['telnyx_sms', 'sendColdEmail', 'telnyx_call'].includes(toolName)) return false;
+function isTrustedManualOperatorAction(params = {}) {
   if (params.manual !== true || params.manualSend !== true) return false;
   const source = String(params.source || params.requestSource || params.request_source || '')
     .trim()
@@ -39437,9 +39727,15 @@ function isTrustedManualConversationProviderSend(toolName = '', params = {}) {
       'lead_portal_manual',
       'leads_page_manual',
       'call_floor_manual',
+      'seller_docs_manual',
     ].includes(source) ||
     /operator|manual|unified-inbox|command center|lead portal/.test(requestedBy)
   );
+}
+
+function isTrustedManualConversationProviderSend(toolName = '', params = {}) {
+  if (!['telnyx_sms', 'sendColdEmail', 'telnyx_call', 'sendSellerDocs'].includes(toolName)) return false;
+  return isTrustedManualOperatorAction(params);
 }
 
 function normalizeApprovalCreationResult(result = {}) {
@@ -40055,8 +40351,9 @@ async function executeManualProviderRouteWithOutbox({
 
   const routeTool = circuit.result && typeof circuit.result === 'object' ? circuit.result : {};
   const routeResponse = buildRouteToolResponse(routeTool);
-  const statusCode = getRouteToolStatusCode(routeTool, { failureStatus: 409 });
-  const deliveryLive = statusCode < 400 && isManualProviderDeliveryLive(toolName, routeResponse);
+  const routeStatusCode = getRouteToolStatusCode(routeTool, { failureStatus: 409 });
+  const deliveryLive = routeStatusCode < 400 && isManualProviderDeliveryLive(toolName, routeResponse);
+  const statusCode = deliveryLive ? routeStatusCode : 409;
   const error = deliveryLive ? '' : getManualProviderError(routeResponse, statusCode);
   if (deliveryLive) providerCircuitBreaker.recordSuccess(provider);
   else if (!(circuit.ok === false && circuit.providerAttempted === true && Number.isFinite(Number(circuit.failures)))) {
@@ -48325,9 +48622,13 @@ async function fireDocuSignEnvelope(params = {}) {
   }
 }
 
-let state = await loadState();
-await syncAgentRegistryFromPg({ seed: true, persist: false });
-await seedMemoryAnalyticsStateToPg();
+let state = await bootstrapRuntimeStateForLiveness();
+await syncAgentRegistryFromPg({ seed: true, persist: false }).catch((error) => {
+  console.warn('[pbk-local-openclaw] agent registry bootstrap skipped:', error?.message || error);
+});
+await seedMemoryAnalyticsStateToPg().catch((error) => {
+  console.warn('[pbk-local-openclaw] memory analytics bootstrap skipped:', error?.message || error);
+});
 const analyzerResultCache = new Map();
 
 function buildAnalyzerCacheKey(params = {}) {
@@ -52176,6 +52477,67 @@ const toolHandlers = {
     recordToolUse('planLeadNurture');
     const context = findLeadContext(params);
     const leadId = params.leadId || context.leadId || `lead-${slugify(context.leadName || params.leadName || 'unknown')}`;
+    const manualNurture = isTrustedManualOperatorAction(params);
+    const cadenceDays = params.cadenceDays || [7, 14, 30];
+    const channels = normalizeStringList(params.channels || ['email', 'sms', 'voice']);
+    const baseSteps = params.steps || [
+      {
+        day: 7,
+        channel: 'email',
+        label: 'Market update follow-up',
+        status: manualNurture ? 'ready' : 'queued_for_approval',
+      },
+      { day: 14, channel: 'sms', label: 'Short seller check-in', status: manualNurture ? 'ready' : 'queued_for_approval' },
+      {
+        day: 30,
+        channel: 'task',
+        label: 'Archive or human handoff review',
+        status: manualNurture ? 'ready' : 'queued_for_approval',
+      },
+    ];
+    const normalizedSteps = baseSteps.map((step = {}) => ({
+      ...step,
+      status: manualNurture && /queued_for_approval|approval_required/i.test(String(step.status || ''))
+        ? 'ready'
+        : step.status || (manualNurture ? 'ready' : 'queued_for_approval'),
+    }));
+    if (manualNurture) {
+      const plan = {
+        id: params.id || `nurture-${leadId}-${Date.now()}`,
+        leadId,
+        leadName: context.leadName || params.leadName || 'Lead',
+        address: context.address || params.address || '',
+        status: 'manual_ready',
+        cadenceDays,
+        channels,
+        steps: normalizedSteps,
+        approvalId: '',
+        metadata: {
+          ...(params.metadata && typeof params.metadata === 'object' ? params.metadata : {}),
+          manual: true,
+          manualSend: true,
+          source: params.source || 'leads_page_manual',
+          requestedBy: params.requestedBy || params.requested_by || params.actor || 'PBK operator',
+          providerWritesRequireOperatorSend: true,
+        },
+        createdAt: isoNow(),
+        updatedAt: isoNow(),
+      };
+      upsertById(state, 'leadNurturePlans', plan);
+      await persistLeadNurturePlanRecord(plan);
+      addActivity(
+        state,
+        makeActivity({
+          actor: params.requestedBy || 'PBK operator',
+          category: 'NURTURE',
+          status: 'ready',
+          text: `Saved manual nurture plan for ${plan.leadName}. Provider sends stay in the operator lane.`,
+          target: plan.address || plan.leadName,
+        })
+      );
+      await persistState(state);
+      return { ok: true, result: 'manual_nurture_plan_saved', plan, approval: null, state: buildStateSnapshot() };
+    }
     const approval = await toolHandlers.createApproval({
       type: 'lead-nurture',
       leadId,
@@ -52201,23 +52563,9 @@ const toolHandlers = {
       leadName: context.leadName || params.leadName || 'Lead',
       address: context.address || params.address || '',
       status: 'approval_required',
-      cadenceDays: params.cadenceDays || [7, 14, 30],
-      channels: normalizeStringList(params.channels || ['email', 'sms', 'voice']),
-      steps: params.steps || [
-        {
-          day: 7,
-          channel: 'email',
-          label: 'Market update follow-up',
-          status: 'queued_for_approval',
-        },
-        { day: 14, channel: 'sms', label: 'Short seller check-in', status: 'queued_for_approval' },
-        {
-          day: 30,
-          channel: 'task',
-          label: 'Archive or human handoff review',
-          status: 'queued_for_approval',
-        },
-      ],
+      cadenceDays,
+      channels,
+      steps: normalizedSteps,
       approvalId: approval?.approval?.id || approval?.id || '',
       createdAt: isoNow(),
       updatedAt: isoNow(),
@@ -54392,6 +54740,129 @@ const toolHandlers = {
     };
   },
 };
+
+function findDuplicateLeadImport(leadImport = {}) {
+  const leadAddressKey = slugify(leadImport.property?.address || leadImport.address || '');
+  const leadPhoneKey = normalizePhone(leadImport.seller?.phone || leadImport.phone || '');
+  const leadEmailKey = String(leadImport.seller?.email || leadImport.email || '')
+    .trim()
+    .toLowerCase();
+  return (state.leadImports || []).find((item) => {
+    if (item.leadId === leadImport.leadId) return true;
+    const itemAddressKey = slugify(item?.property?.address || item?.address || '');
+    const itemPhoneKey = normalizePhone(item?.seller?.phone || item?.phone || '');
+    const itemEmailKey = String(item?.seller?.email || item?.email || '')
+      .trim()
+      .toLowerCase();
+    return (
+      Boolean(leadEmailKey && itemEmailKey === leadEmailKey) ||
+      Boolean(leadAddressKey && leadPhoneKey && itemAddressKey === leadAddressKey && itemPhoneKey === leadPhoneKey)
+    );
+  });
+}
+
+async function handleManualLeadCreate(payload = {}) {
+  const eventId = payload?.eventId || payload?.event_id || payload?.idempotencyKey || null;
+  if (eventId) {
+    const prior = (state.leadImports || []).find((item) => item && item.eventId === eventId);
+    if (prior) {
+      return {
+        ok: true,
+        replayed: true,
+        result: 'manual_lead_already_saved',
+        id: prior.id || prior.leadId,
+        leadId: prior.leadId || prior.id,
+        leadImport: prior,
+        lead: prior,
+        eventId,
+      };
+    }
+  }
+
+  const leadImport = normalizeLeadIntake({
+    ...payload,
+    source: payload.source || payload.leadSource || 'manual',
+    leadSource: payload.leadSource || payload.source || 'manual',
+    status: payload.status || payload.stage || 'new',
+    stage: payload.stage || payload.status || 'new',
+  });
+  if (eventId) leadImport.eventId = eventId;
+
+  const patched = patchLeadImport(
+    state,
+    {
+      leadId: leadImport.leadId,
+      email: leadImport.seller?.email || '',
+      phone: leadImport.seller?.phone || '',
+      address: leadImport.property?.address || '',
+      leadName: leadImport.seller?.name || '',
+    },
+    leadImport
+  );
+  const existingDuplicate = patched ? null : findDuplicateLeadImport(leadImport);
+  const duplicate = Boolean(patched || existingDuplicate);
+  const savedLead = patched || existingDuplicate || leadImport;
+  if (!patched && !existingDuplicate) addLeadImport(state, leadImport);
+
+  addActivity(
+    state,
+    makeActivity({
+      actor: payload.actor || payload.requestedBy || 'PBK operator',
+      category: 'IMPORT',
+      status: duplicate ? 'updated' : 'complete',
+      text: `${duplicate ? 'Manual lead refreshed' : 'Manual lead saved'} from ${leadImport.source}.`,
+      target: savedLead.seller?.name || savedLead.property?.address || savedLead.seller?.phone || 'manual lead',
+      leadId: savedLead.leadId,
+      leadName: savedLead.seller?.name || '',
+      phone: savedLead.seller?.phone || '',
+      email: savedLead.seller?.email || '',
+      source: 'manual-lead-create',
+    })
+  );
+
+  let queuedAnalyzer = null;
+  if (savedLead.property?.address) {
+    queuedAnalyzer = {
+      id: randomUUID(),
+      leadId: savedLead.leadId,
+      address: savedLead.property.address,
+      arv: 0,
+      repairsMid: 0,
+      mao: 0,
+      targetOffer: 0,
+      estProfit: 0,
+      status: 'queued',
+      createdAt: isoNow(),
+    };
+    addAnalyzerRun(state, queuedAnalyzer);
+  }
+
+  await persistState(state);
+
+  const profilePersistence = {
+    ok: true,
+    queued: true,
+    result: 'lead_profile_projection_queued',
+  };
+  void persistLeadProfileRowToDb(savedLead, 'manual-lead-create').catch((error) => {
+    console.warn(
+      '[pbk-local-openclaw] manual lead profile projection failed:',
+      error?.message || String(error || 'unknown error')
+    );
+  });
+
+  return {
+    ok: true,
+    result: 'manual_lead_saved',
+    id: savedLead.id || savedLead.leadId,
+    leadId: savedLead.leadId || savedLead.id,
+    leadImport: savedLead,
+    lead: savedLead,
+    duplicate,
+    queuedAnalyzer,
+    profilePersistence,
+  };
+}
 
 async function handleEvent(eventType, payload = {}) {
   const normalizedEvent = String(eventType || '')
@@ -57151,7 +57622,7 @@ function extractPublicAvaLead(body = {}, text = '') {
 }
 
 function isPublicAvaChatKeyValid(request, body = {}) {
-  if (!PUBLIC_AVA_CHAT_KEY) return true;
+  if (!PUBLIC_AVA_CHAT_KEY) return !IS_HOSTED;
   const provided = String(request.headers?.['x-public-ava-key'] || request.headers?.['x-public-key'] || body.publicKey || body.public_key || '').trim();
   if (!provided || provided.length !== PUBLIC_AVA_CHAT_KEY.length) return false;
   try {
@@ -57197,6 +57668,15 @@ async function handlePublicAvaChatRequest(request) {
       body: {
         ok: false,
         error: 'Public Ava chat is disabled.',
+      },
+    };
+  }
+  if (IS_HOSTED && !PUBLIC_AVA_CHAT_KEY) {
+    return {
+      statusCode: 503,
+      body: {
+        ok: false,
+        error: 'Public Ava chat requires PBK_PUBLIC_AVA_CHAT_KEY on hosted deployments.',
       },
     };
   }
@@ -58090,6 +58570,36 @@ async function readMultipartFormData(request) {
 
 function matchesPath(pathname, pathnames) {
   return pathnames.includes(pathname);
+}
+
+function isRuntimeStateBootstrapProbe(method = 'GET', pathname = '') {
+  return String(method || 'GET').toUpperCase() === 'GET' && matchesPath(pathname, [
+    '/',
+    '/health',
+    '/status',
+    '/api/health',
+    '/api/status',
+    '/api/production/readiness',
+    '/api/readiness/production',
+    '/api/production/maturity',
+    '/api/maturity/status',
+  ]);
+}
+
+function shouldBlockForRuntimeStateBootstrap(method = 'GET', pathname = '') {
+  return Boolean(IS_HOSTED && DATABASE_URL && runtimeStateBootstrap.ready !== true && !isRuntimeStateBootstrapProbe(method, pathname));
+}
+
+function sendRuntimeStateBootstrapUnavailable(response) {
+  json(response, 503, {
+    ok: false,
+    result: 'state_bootstrap_unavailable',
+    degraded: true,
+    error: runtimeStateBootstrap.error || 'Runtime state backend is not ready.',
+    code: runtimeStateBootstrap.code || 'state_bootstrap_unavailable',
+    stateBootstrap: { ...runtimeStateBootstrap },
+    stateBackend: getPostgresHealthMeta().stateBackend || STATE_BACKEND,
+  });
 }
 
 function matchPath(pathname, pattern) {
@@ -64282,15 +64792,16 @@ const server = createServer(async (request, response) => {
   if (enforceTotp(request, response, pathname)) return;
 
   try {
+    if (shouldBlockForRuntimeStateBootstrap(request.method, pathname)) {
+      sendRuntimeStateBootstrapUnavailable(response);
+      return;
+    }
+
     if (maybeServeRenderCommandCenter(request, response, pathname)) return;
 
     if (request.method === 'GET' && matchesPath(pathname, ['/', '/health', '/status', '/api/health', '/api/status'])) {
       const runtimeMeta = getRuntimeMeta();
-      const commandCenterHealth = await buildCommandCenterHealthSnapshot(runtimeMeta);
-      const productionReadiness = await buildProductionReadinessSnapshot({
-        runtimeMeta,
-        health: commandCenterHealth,
-      });
+      const commandCenterHealth = buildLivenessHealthSnapshot(runtimeMeta);
       json(response, 200, {
         ok: true,
         status: commandCenterHealth.status,
@@ -64302,10 +64813,10 @@ const server = createServer(async (request, response) => {
         components: commandCenterHealth.components,
         componentSummary: commandCenterHealth.summary,
         productionReadiness: {
-          result: productionReadiness.result,
-          ready: productionReadiness.summary.ready,
-          blockers: productionReadiness.summary.blockers,
-          sloBurned: productionReadiness.slo.burned,
+          result: commandCenterHealth.ready ? 'liveness_ready' : 'liveness_degraded',
+          ready: commandCenterHealth.ready,
+          blockers: commandCenterHealth.ready ? [] : [runtimeStateBootstrap.error || commandCenterHealth.status],
+          sloBurned: false,
         },
         agentOrchestration: commandCenterHealth.agentOrchestration,
         tools: state.status.tools,
@@ -68337,8 +68848,37 @@ const server = createServer(async (request, response) => {
 
     if (request.method === 'POST' && pathname === '/api/send-seller-docs') {
       const body = await readBody(request);
-      const routeTool = await executeRouteToolHandler('sendSellerDocs', body, 'seller-docs-route');
-      json(response, getRouteToolStatusCode(routeTool), buildRouteToolResponse(routeTool));
+      const context = findLeadContext(body);
+      const recipient = String(body.email || context.email || '').trim();
+      const manualBody = {
+        ...body,
+        ...context,
+        email: recipient,
+        manual: body.manual === false ? false : true,
+        manualSend: body.manualSend === false ? false : true,
+        requestedBy: body.requestedBy || body.requested_by || body.actor || 'PBK operator',
+        source: body.source || 'seller_docs_manual',
+      };
+      const send = await executeManualProviderRouteWithOutbox({
+        toolName: 'sendSellerDocs',
+        provider: 'resend',
+        channel: 'email',
+        params: manualBody,
+        source: 'seller-docs-route',
+        leadId: context.leadId,
+        recipient,
+        messageBody: String(body.message || body.body || body.notes || '').trim(),
+        subject: body.subject || '',
+        requestedBy: manualBody.requestedBy,
+      });
+      json(response, send.statusCode, {
+        ...send.response,
+        result: send.outbox.status === 'sent' ? 'live' : send.response.result || 'provider_missing',
+        verbiage:
+          send.outbox.status === 'sent'
+            ? 'Seller documents sent or prepared.'
+            : send.outbox.error || 'Seller document provider is not configured.',
+      });
       return;
     }
 
@@ -72572,10 +73112,10 @@ const server = createServer(async (request, response) => {
 
     if (request.method === 'POST' && matchesPath(pathname, ['/api/leads', '/api/leads/import'])) {
       const body = await readBody(request);
-      const result = await handleEvent('lead-intake', body);
+      const result = await handleManualLeadCreate(body);
       json(response, result.ok === false ? 404 : 200, {
         ...result,
-        outcome: result.forwarded ? 'queued_for_approval' : 'live',
+        outcome: 'live',
         state: buildStateSnapshot(),
       });
       return;

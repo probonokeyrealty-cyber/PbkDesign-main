@@ -13,6 +13,7 @@ function assert(condition, message) {
 
 const leads = read('src/app/routes/Leads.tsx');
 const bridge = read('src/app/utils/runtimeBridge.ts');
+const server = read('scripts/openclaw-local-server.mjs');
 const app = read('src/app/App.tsx');
 const topbar = read('src/app/shell/ShellTopbar.tsx');
 const prefs = read('src/app/utils/uiPrefs.ts');
@@ -35,6 +36,10 @@ assert(
   /setLeadRoster\(\(current\) => upsertVisibleLead\(current, lead\)\)/.test(leads),
   'Newly created leads must be optimistically inserted into the visible roster before the bridge roster refresh returns.',
 );
+assert(
+  !/catch \(nextError\) \{[\s\S]{0,180}setLeadRoster\(\[\]\);/.test(leads),
+  'Lead roster refresh failures must not clear already visible or newly-created manual leads.'
+);
 assert(/seedNewLeadFromAnalyzer/.test(leads), 'New lead portal should seed from current analyzer state.');
 assert(/ANALYZER_CURRENT_DEAL_KEY/.test(leads), 'New lead portal should read analyzer storage for deal/path sync.');
 assert(/useSearchParams/.test(leads), 'Lead portal should support deep-linking from the analyzer with search params.');
@@ -48,6 +53,32 @@ assert(/sellerNotes/.test(leads) && /internalNotes/.test(leads), 'New lead form 
 assert(/selected_path/.test(leads) && /callContext/.test(leads), 'New lead payload should include selected path and live call context.');
 assert(/window\.dispatchEvent\(new CustomEvent\('pbk:lead-created'/.test(leads), 'Creating a lead should notify the shell/runtime listeners.');
 assert(/PbkDataSource endpoint="POST \/api\/leads"/.test(leads), 'New lead portal should show its bridge endpoint source label.');
+assert(
+  /async function handleManualLeadCreate/.test(server),
+  'OpenClaw bridge must expose a direct manual lead-create path instead of routing operator saves through generic intake.'
+);
+const postLeadsRouteStart = server.indexOf(
+  "if (request.method === 'POST' && matchesPath(pathname, ['/api/leads', '/api/leads/import']))"
+);
+const postLeadsRouteEnd = server.indexOf(
+  "if (request.method === 'POST' && pathname === '/api/appointments')",
+  postLeadsRouteStart
+);
+assert(
+  postLeadsRouteStart >= 0 && postLeadsRouteEnd > postLeadsRouteStart,
+  'POST /api/leads route must be present.'
+);
+const postLeadsRoute = server.slice(postLeadsRouteStart, postLeadsRouteEnd);
+assert(
+  /handleManualLeadCreate/.test(postLeadsRoute) &&
+    !/handleEvent\('lead-intake'/.test(postLeadsRoute),
+  'Manual POST /api/leads must save immediately to bridge/Postgres and must not forward through lead-intake/n8n.'
+);
+assert(
+  /const profilePersistence = \{\s*ok:\s*true,\s*queued:\s*true/.test(server) &&
+    /void persistLeadProfileRowToDb\(savedLead, 'manual-lead-create'\)/.test(server),
+  'Manual lead creation must not block the operator save on secondary lead-profile projection.'
+);
 
 assert(
   !/localStorage\.setItem\('pbk-dark-mode'/.test(app),

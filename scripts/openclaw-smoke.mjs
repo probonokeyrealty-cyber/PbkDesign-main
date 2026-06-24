@@ -990,7 +990,7 @@ async function main() {
       },
     });
     const recordingLookup = await recordingLookupResponse.json();
-    const sellerDocs = await fetch(`${BASE_URL}/api/send-seller-docs`, {
+    const sellerDocsResponse = await fetch(`${BASE_URL}/api/send-seller-docs`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -1008,7 +1008,8 @@ async function main() {
           loi: 'Smoke letter of interest content.',
         },
       }),
-    }).then((response) => response.json());
+    });
+    const sellerDocs = await sellerDocsResponse.json();
     const browserResearch = await fetch(`${BASE_URL}/api/browser-research/launch`, {
       method: 'POST',
       headers: {
@@ -1494,7 +1495,17 @@ async function main() {
     assert(recordingSave?.ok === true, 'Recording metadata endpoint did not save.');
     assert([200, 501].includes(recordingLookupResponse.status), `Recording signed URL endpoint returned ${recordingLookupResponse.status}.`);
     assert(recordingLookup?.messageId === 'smoke-recording-msg-1', 'Recording signed URL endpoint did not echo the messageId.');
-    assert(sellerDocs?.ok === true, 'Seller document endpoint did not succeed.');
+    const sellerDocsManualProviderMissing =
+      sellerDocsResponse.status === 409 &&
+      sellerDocs?.retryable === true &&
+      sellerDocs?.outbox?.status === 'failed' &&
+      !sellerDocs?.approval;
+    assert(
+      sellerDocs?.ok === true || sellerDocsManualProviderMissing,
+      'Seller document endpoint must either send successfully or expose a retryable manual provider failure.'
+    );
+    assert(sellerDocsResponse.status !== 202, 'Manual seller document endpoint must not approval-gate.');
+    assert(sellerDocsResponse.status !== 502, 'Manual seller document endpoint must not surface provider failure as bridge 502.');
     assert(typeof browserResearch?.answer === 'string', 'Browser research endpoint did not return a response.');
     assert(adminRequest?.ok === true, 'Admin request endpoint did not succeed.');
     assert(adminApproval?.ok === true, 'Admin approval endpoint did not succeed.');

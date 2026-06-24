@@ -1211,7 +1211,6 @@ export function Leads() {
       );
       setLeadRosterStatus('ready');
     } catch (nextError) {
-      setLeadRoster([]);
       setLeadRosterStatus('error');
       setLeadRosterError(
         nextError instanceof Error ? nextError.message : 'GET /api/leads unavailable.'

@@ -55,6 +55,13 @@ assert(
   'Every bridge contract mutation must await canonical Postgres projection.'
 );
 assert(
+  /async function persistActivityLogRecords/.test(bridge) &&
+    /INSERT INTO public\.activity_log/.test(bridge) &&
+    /activityLogBatchSize/.test(bridge) &&
+    !/for \(const entry of uniqueEntries\) \{\s*await persistActivityLogRecord\(entry\);/.test(bridge),
+  'State persistence must batch activity_log writes instead of replaying sequential activity inserts on every mutation.'
+);
+assert(
   /master_package_query, pdf_generated_at/.test(bridge) &&
     /template_path, template_file, negotiation_file/.test(bridge) &&
     /negotiation_prompt = EXCLUDED\.negotiation_prompt/.test(bridge),
@@ -152,7 +159,10 @@ assert(
 assert(
   /function isTransientPostgresConnectionError/.test(bridge) &&
     /withPostgresConnectionRetry/.test(bridge) &&
-    /__pgPool\.query = \(\.\.\.args\) => withPostgresConnectionRetry/.test(bridge) &&
+    /withPostgresOperationDeadline/.test(bridge) &&
+    /PBK_PG_OPERATION_TIMEOUT_MS/.test(bridge) &&
+    /__pgPool\.query = \(\.\.\.args\) =>[\s\S]*withPostgresConnectionRetry/.test(bridge) &&
+    /__pgPool\.connect = \(\.\.\.args\) =>[\s\S]*withPostgresConnectionRetry/.test(bridge) &&
     /connectionTimeoutMillis: PG_CONNECTION_TIMEOUT_MS/.test(bridge) &&
     /max: PG_POOL_MAX/.test(bridge) &&
     /idleTimeoutMillis: PG_IDLE_TIMEOUT_MS/.test(bridge) &&

@@ -42,6 +42,7 @@ const avaChat = read('src/app/routes/AvaChat.tsx');
 const composer = read('src/app/components/inbox/ConversationComposer.tsx');
 const leads = read('src/app/routes/Leads.tsx');
 const bridge = read('scripts/openclaw-local-server.mjs');
+const runtimeBridge = read('src/app/utils/runtimeBridge.ts');
 const styles = read('src/styles/pbk-components.css');
 const shellStyles = read('src/styles/index.css');
 
@@ -122,6 +123,30 @@ assert(
     leads
   ),
   'New PBK Lead must be a real form so Enter and the submit button use the same validation path.'
+);
+assert(
+  /pathname === '\/api\/send-seller-docs'[\s\S]*executeManualProviderRouteWithOutbox\(\{[\s\S]*toolName:\s*'sendSellerDocs'[\s\S]*source:\s*'seller-docs-route'/.test(
+    bridge
+  ),
+  'Seller document sends must use the manual outbox route instead of an approval-only provider route.'
+);
+assert(
+  /export async function sendSellerDocsRequest[\s\S]*manual:\s*body\.manual === false \? false : true[\s\S]*manualSend:\s*body\.manualSend === false \? false : true[\s\S]*source:\s*body\.source \|\| 'seller_docs_manual'/.test(
+    runtimeBridge
+  ),
+  'Seller document sends from the UI must carry human/manual metadata.'
+);
+assert(
+  /export async function planLeadNurtureRequest[\s\S]*source:\s*body\.source \|\| 'leads_page_manual'[\s\S]*manual:\s*body\.manual === false \? false : true[\s\S]*manualSend:\s*body\.manualSend === false \? false : true/.test(
+    runtimeBridge
+  ),
+  'Lead nurture requests from the UI must carry human/manual metadata.'
+);
+assert(
+  /async planLeadNurture[\s\S]*isTrustedManualOperatorAction\(params\)[\s\S]*manual_nurture_plan_saved[\s\S]*queued_for_approval/.test(
+    bridge
+  ),
+  'Manual Add to Nurture must save an operator-owned plan without creating an approval.'
 );
 assert(
   /\.modal-backdrop,\s*\.drill-backdrop\s*\{[\s\S]*z-index:\s*120/.test(shellStyles),

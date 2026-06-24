@@ -32,6 +32,8 @@ tmp-*.png
 tmp-*.jpg
 tmp-*.jpeg
 tmp-*.webp
+.tmp-cdp-pages.json
+PBK_UNIFIED_PRODUCTION_PATCH_2026-05-23.patch
 
 .DS_Store
 Thumbs.db

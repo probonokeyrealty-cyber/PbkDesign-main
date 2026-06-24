@@ -71,7 +71,6 @@ assert(
 
 for (const [toolName, routeName] of [
   ['telnyx_sms', 'messages-route'],
-  ['sendSellerDocs', 'seller-docs-route'],
   ['prepare_and_send_contract', 'contract-send-route'],
   ['sendColdEmail', 'cold-email-route'],
 ]) {
@@ -85,6 +84,7 @@ for (const [toolName, routeName] of [
   ['telnyx_call', 'calls-route'],
   ['telnyx_sms', 'lead-send-message'],
   ['sendColdEmail', 'lead-send-message'],
+  ['sendSellerDocs', 'seller-docs-route'],
 ]) {
   assert(
     new RegExp(
@@ -113,6 +113,13 @@ assert(
   safetyValidator.includes("'updateCRM'"),
   'CRM writes must be classified as provider writes by the safety validator.'
 );
+
+for (const source of ['leads_page_manual', 'call_floor_manual', 'seller_docs_manual']) {
+  assert(
+    safetyValidator.includes(`'${source}'`),
+    `${source} must be recognized as a trusted human/manual source.`
+  );
+}
 
 assert(
   /QA validation failed closed[\s\S]*ok:\s*false[\s\S]*reason:\s*'qa_runtime_error'/.test(bridge),

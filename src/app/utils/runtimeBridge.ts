@@ -1422,21 +1422,27 @@ export async function bridgeBlobRequest({
 }: BridgeRequestOptions & { accept?: string; signal?: AbortSignal }): Promise<Blob> {
   assertRuntimeAuthConfigured(path);
   const serializedBody = body !== undefined && method !== 'GET' ? JSON.stringify(body) : undefined;
+  const requestUrl = buildUrl(path);
   const timeoutController = new AbortController();
   const onAbort = () => timeoutController.abort();
   signal?.addEventListener('abort', onAbort, { once: true });
   const timeoutId = setTimeout(() => timeoutController.abort(), 15_000);
+  const init = {
+    method,
+    headers: buildRuntimeHeaders({
+      json: body !== undefined && method !== 'GET',
+      accept,
+    }),
+    body: serializedBody,
+    signal: timeoutController.signal,
+  };
 
   try {
-    const response = await fetch(buildUrl(path), {
-      method,
-      headers: buildRuntimeHeaders({
-        json: body !== undefined && method !== 'GET',
-        accept,
-      }),
-      body: serializedBody,
-      signal: timeoutController.signal,
-    });
+    let response = await fetch(requestUrl, init);
+    if (await shouldRetryRuntimeViaHosted(response, requestUrl, path)) {
+      const fallbackUrl = buildHostedRuntimeFallbackUrl(requestUrl);
+      if (fallbackUrl) response = await fetch(fallbackUrl, init);
+    }
     if (!response.ok) {
       const text = await response.text();
       let message = `Bridge request failed (${response.status})`;
@@ -2589,7 +2595,13 @@ export async function sendSellerDocsRequest(body: Record<string, unknown>) {
   const response = await bridgeRequest<Record<string, unknown>>({
     method: 'POST',
     path: '/api/send-seller-docs',
-    body,
+    body: {
+      ...body,
+      manual: body.manual === false ? false : true,
+      manualSend: body.manualSend === false ? false : true,
+      source: body.source || 'seller_docs_manual',
+      requestedBy: body.requestedBy || 'PBK Operator',
+    },
   });
   return assertBridgeMutationSucceeded(response, 'Seller document send');
 }

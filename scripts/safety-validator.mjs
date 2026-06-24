@@ -195,6 +195,9 @@ function isManualOneToOneMessage(tool = '', params = {}) {
       'unified_inbox_manual',
       'unified_conversation_manual',
       'lead_portal_manual',
+      'leads_page_manual',
+      'call_floor_manual',
+      'seller_docs_manual',
     ].includes(source) ||
     /operator|manual|unified-inbox|command center|lead portal/.test(requestedBy)
   );

@@ -172,6 +172,21 @@ function canCancelCampaign(campaign: CampaignRecord) {
   return !['cancelled', 'failed', 'rejected', 'completed', 'complete', 'done'].includes(status);
 }
 
+function canCancelCampaignDirectly(campaign: CampaignRecord) {
+  const status = normalizedCampaignStatus(campaign);
+  return (
+    status === 'draft' &&
+    !campaign.approvalId &&
+    !campaign.pendingAction &&
+    !campaign.executionId &&
+    !campaign.providerCampaignId
+  );
+}
+
+function requiresCampaignCancelApproval(campaign: CampaignRecord) {
+  return canCancelCampaign(campaign) && !canCancelCampaignDirectly(campaign);
+}
+
 function getCampaignHoldAction(status = '') {
   const paused = status.toLowerCase() === 'paused';
   return {
@@ -1983,19 +1998,46 @@ export function Campaigns() {
 
   const cancelCampaign = async (campaign: CampaignRecord) => {
     if (!campaign.id) return;
-    const confirmed = window.confirm(`Cancel campaign "${campaign.name || campaign.id}"?`);
+    const approvalRequired = requiresCampaignCancelApproval(campaign);
+    const confirmed = window.confirm(
+      approvalRequired
+        ? `Request cancellation approval for "${campaign.name || campaign.id}"? This queues the campaign for review before any provider changes are made.`
+        : `Cancel draft campaign "${campaign.name || campaign.id}"?`
+    );
     if (!confirmed) return;
     setBusyCampaignId(campaign.id);
     try {
-      await runCampaignActionRequest(campaign.id, {
-        action: 'cancel_campaign',
-        actor: 'PBK React shell',
-      });
+      if (approvalRequired) {
+        const approvalResponse = await requestCampaignApprovalRequest(campaign.id, {
+          requestedAction: 'campaign_cancel',
+          actor: 'PBK React shell',
+          notes: 'Cancel this campaign after approval before changing provider state.',
+        });
+        if (!approvalResponse.ok) {
+          throw new Error(
+            approvalResponse.error ||
+              approvalResponse.verbiage ||
+              'Campaign cancellation approval failed.'
+          );
+        }
+      } else {
+        const cancelResponse = await runCampaignActionRequest(campaign.id, {
+          action: 'cancel_campaign',
+          actor: 'PBK React shell',
+        });
+        if (!cancelResponse.ok) {
+          throw new Error(
+            cancelResponse.error || cancelResponse.verbiage || 'Campaign cancel failed.'
+          );
+        }
+      }
       await loadCampaigns();
       showUiToast({
         tone: 'warning',
-        title: 'Campaign cancelled',
-        desc: campaign.name || campaign.id,
+        title: approvalRequired ? 'Cancellation approval requested' : 'Campaign cancelled',
+        desc: approvalRequired
+          ? `${campaign.name || campaign.id} is waiting in the approval queue.`
+          : campaign.name || campaign.id,
       });
     } catch (actionError) {
       showUiToast({

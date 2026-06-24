@@ -928,6 +928,9 @@ export type CampaignRecord = {
   approvalId?: string;
   approvalStatus?: string;
   pendingAction?: string;
+  pendingPreviousStatus?: string;
+  executionId?: string;
+  providerCampaignId?: string;
   leadCount?: number;
   eventCount?: number;
   conflictCount?: number;
@@ -1692,12 +1695,16 @@ export async function invokeRuntimeTool<T = unknown>(
 }
 
 export async function startLeadCallRequest(body: Record<string, unknown>) {
+  const manual = body.manual === false ? false : true;
+  const manualSend = body.manualSend === false ? false : true;
+  const manualOneToOne = manual && manualSend;
   return invokeRuntimeTool<Record<string, unknown>>('telnyx_call', {
     ...body,
-    manual: body.manual === false ? false : true,
-    manualSend: body.manualSend === false ? false : true,
-    forceApproval: body.forceApproval === false ? false : true,
-    requestApproval: body.requestApproval === false ? false : true,
+    manual,
+    manualSend,
+    forceApproval: typeof body.forceApproval === 'boolean' ? body.forceApproval : !manualOneToOne,
+    requestApproval:
+      typeof body.requestApproval === 'boolean' ? body.requestApproval : !manualOneToOne,
     requestedBy: body.requestedBy || body.requested_by || body.actor || 'PBK operator',
     source: body.source || 'command_center_manual',
   });

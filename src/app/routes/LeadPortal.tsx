@@ -407,7 +407,11 @@ export function LeadPortal() {
         phone: lead.phone,
         email: lead.email,
         address: lead.address,
-        source: 'canonical-lead-portal',
+        source: 'lead_portal_manual',
+        manual: true,
+        manualSend: true,
+        forceApproval: false,
+        requestApproval: false,
       });
       if (response.ok === false) {
         throw new Error(String(response.error || 'The bridge rejected the call request.'));

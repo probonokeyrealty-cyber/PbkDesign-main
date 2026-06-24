@@ -286,11 +286,11 @@ function getSellerInitial(name: string) {
 }
 
 function SellerRosterIdentity({
-  name,
+  sellerName,
   address,
   variant = 'desktop',
 }: {
-  name: string;
+  sellerName: string;
   address: string;
   variant?: 'desktop' | 'mobile';
 }) {
@@ -298,8 +298,8 @@ function SellerRosterIdentity({
     <span
       className={['pbk-lead-roster-identity', variant === 'mobile' ? 'is-mobile' : ''].join(' ')}
     >
-      <span className="pbk-lead-roster-name" title={name}>
-        {name}
+      <span className="pbk-lead-roster-name" title={sellerName}>
+        {sellerName}
       </span>
       <span className="pbk-lead-roster-address" title={address}>
         {address}
@@ -1894,7 +1894,7 @@ export function Leads() {
                   <span className={['lead-score', scoreTone(score)].join(' ')}>{score}</span>
                   <span className="min-w-0 flex-1">
                     <SellerRosterIdentity
-                      name={sellerName}
+                      sellerName={sellerName}
                       address={getLeadAddress(lead)}
                       variant="mobile"
                     />
@@ -2003,7 +2003,7 @@ export function Leads() {
                     onClick={() => setSelectedLeadId(id)}
                     className="min-w-0 text-left"
                   >
-                    <SellerRosterIdentity name={sellerName} address={getLeadAddress(lead)} />
+                    <SellerRosterIdentity sellerName={sellerName} address={getLeadAddress(lead)} />
                     <span className="mt-1 flex flex-wrap gap-2 text-[11px] text-slate-500">
                       <span>
                         {getLeadPhone(lead) || getLeadEmail(lead) || 'No contact captured'}

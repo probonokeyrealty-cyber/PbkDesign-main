@@ -110,8 +110,8 @@ assert.match(
 );
 assert.match(
   runtimeBridge,
-  /function startLeadCallRequest[\s\S]*forceApproval:\s*body\.forceApproval === false \? false : true[\s\S]*requestApproval:\s*body\.requestApproval === false \? false : true/,
-  'Agent Fleet call helper must force approval by default before Telnyx can dial.'
+  /function startLeadCallRequest[\s\S]*const manualOneToOne = manual && manualSend[\s\S]*forceApproval:\s*[\s\S]*typeof body\.forceApproval === 'boolean' \? body\.forceApproval : !manualOneToOne[\s\S]*requestApproval:\s*[\s\S]*typeof body\.requestApproval === 'boolean' \? body\.requestApproval : !manualOneToOne/,
+  'Manual one-to-one call helper defaults should bypass approval while non-manual calls still require approval.'
 );
 assert.match(
   agentFleet,

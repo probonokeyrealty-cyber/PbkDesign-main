@@ -3,8 +3,11 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 const root = process.cwd();
-const bridge = readFileSync(resolve(root, 'scripts/openclaw-local-server.mjs'), 'utf8');
-const renderYaml = readFileSync(resolve(root, 'render.yaml'), 'utf8');
+const bridge = readFileSync(resolve(root, 'scripts/openclaw-local-server.mjs'), 'utf8').replace(
+  /\r\n/g,
+  '\n'
+);
+const renderYaml = readFileSync(resolve(root, 'render.yaml'), 'utf8').replace(/\r\n/g, '\n');
 
 assert(
   /const PG_TRANSIENT_GRACE_MS = 0;/.test(bridge),

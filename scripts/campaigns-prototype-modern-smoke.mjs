@@ -149,8 +149,16 @@ assert(
 assert(
   /function canHoldCampaign/.test(campaigns) &&
     /function canCancelCampaign/.test(campaigns) &&
-    /runCampaignActionRequest\(campaign\.id,\s*\{\s*action/s.test(campaigns),
-  'Campaign hold/cancel controls must share eligibility predicates and route hold actions through the approval board.'
+    /function requiresCampaignCancelApproval/.test(campaigns) &&
+    /requestedAction:\s*'campaign_cancel'/.test(campaigns) &&
+    /runCampaignActionRequest\(campaign\.id,\s*\{\s*action:\s*'cancel_campaign'/s.test(campaigns),
+  'Campaign hold/cancel controls must share eligibility predicates, route protected cancels through approval, and only directly cancel draft campaigns.'
+);
+assert(
+  /function canCancelCampaignWithoutApproval/.test(bridge) &&
+    /requestedAction:\s*'campaign_cancel'/.test(bridge) &&
+    /draftOnly:\s*true/.test(bridge),
+  'Bridge direct campaign cancel must be limited to draft-only campaigns and route live/provider-bound cancels through approval.'
 );
 const executeApprovedCampaignStart = bridge.indexOf('async function executeApprovedCampaign');
 const executeApprovedCampaignEnd = bridge.indexOf('async function applyApprovedPromptPatch', executeApprovedCampaignStart);

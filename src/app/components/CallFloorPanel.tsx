@@ -238,7 +238,11 @@ export function CallFloorPanel({
           leadName: getLeadName(lead),
           phone: getLeadPhone(lead),
           address: getLeadAddress(lead),
-          source: 'call-floor-panel',
+          source: 'call_floor_manual',
+          manual: true,
+          manualSend: true,
+          forceApproval: false,
+          requestApproval: false,
         });
         const status = String(
           response.status || response.result || response.outcome || response.action || ''

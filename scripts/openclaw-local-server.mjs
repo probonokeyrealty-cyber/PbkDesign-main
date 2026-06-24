@@ -4655,9 +4655,11 @@ function extractBantFromTranscript(transcript = '', existing = {}) {
   const text = String(transcript || '').trim();
   const lower = text.toLowerCase();
   const extracted = normalizeBantInfo(existing);
-  const looseMoney = typeof extractAvaLiveMoneyAmount === 'function' ? extractAvaLiveMoneyAmount(text) : '';
-  const moneyMatch = text.match(/(?:\$|want|need|asking|happy with|walk away|take|number|price)\s*([0-9][0-9,]{3,}(?:\.\d+)?\s*(?:k|thousand|grand)?)/i);
-  if (!extracted.budget && (moneyMatch || looseMoney)) extracted.budget = (looseMoney || moneyMatch[0]).trim();
+  const moneyMatch = text.match(/\b(?:want|need|asking|happy with|walk away(?: with)?|take|number(?: is)?|price(?: is)?)\s*(?:around|about|roughly|at least|near)?\s*\$?\s*([0-9][0-9,]{3,}(?:\.\d+)?\s*(?:k|thousand|grand)?)/i);
+  const trailingIntentMoneyMatch = text.match(/\$\s*([0-9][0-9,]{3,}(?:\.\d+)?\s*(?:k|thousand|grand)?).{0,50}\b(?:would work|works|happy|take|asking|want|need|net)\b/i);
+  if (!extracted.budget && (moneyMatch || trailingIntentMoneyMatch)) {
+    extracted.budget = (moneyMatch?.[1] || trailingIntentMoneyMatch?.[1] || '').trim();
+  }
   if (!extracted.authority && (hasStrongAvaOwnerRoleAssertion(text) || /\b(wife|husband|spouse|partner|attorney|lawyer|executor|co-?owner|decision|my client|seller)\b/i.test(text))) {
     extracted.authority = text.match(/.{0,40}\b(owner|i own|my house|my home|wife|husband|spouse|partner|attorney|lawyer|executor|co-?owner|decision|my client|seller)\b.{0,60}/i)?.[0]?.trim() || 'decision authority mentioned';
   }
@@ -4680,6 +4682,147 @@ function extractBantFromTranscript(transcript = '', existing = {}) {
     extracted.urgency = 'seller wants price, speed, and certainty';
   }
   return extracted;
+}
+
+function hasMeaningfulLeadValue(value) {
+  const clean = normalizeBantValue(value).toLowerCase();
+  return Boolean(clean && !['0', '$0', 'unknown', 'unknown seller', 'unknown property', 'none', 'n/a', 'na', 'needs_review'].includes(clean));
+}
+
+function extractTranscriptSnippet(text = '', pattern, radius = 72) {
+  const source = String(text || '').replace(/\s+/g, ' ').trim();
+  if (!source || !pattern) return '';
+  const match = source.match(pattern);
+  if (!match) return '';
+  const index = Math.max(0, match.index || 0);
+  return source.slice(Math.max(0, index - radius), Math.min(source.length, index + String(match[0] || '').length + radius)).trim();
+}
+
+function inferVisibleLeadFactsFromTranscript(transcript = '', existingLead = {}, context = {}) {
+  const text = String(transcript || '').replace(/\s+/g, ' ').trim();
+  if (!text) {
+    return {
+      seller: {},
+      property: {},
+      motivation: {},
+      compliance: {},
+      callContext: {},
+      tags: [],
+      inferredFacts: {},
+    };
+  }
+
+  const seller = existingLead.seller || {};
+  const property = existingLead.property || {};
+  const motivation = existingLead.motivation || {};
+  const existingTags = normalizeLeadTags(existingLead.tags || []);
+  const bant = normalizeBantInfo(context.bant || {}, existingLead.bant || {}, existingLead.callContext?.bant || {});
+  const inferredFacts = {};
+  const sellerPatch = {};
+  const propertyPatch = {};
+  const motivationPatch = {};
+  const compliancePatch = {};
+  const tags = [];
+
+  const emailMatch = text.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i);
+  if (emailMatch && !hasMeaningfulLeadValue(seller.email || existingLead.email)) {
+    sellerPatch.email = emailMatch[0].toLowerCase();
+    inferredFacts.email = sellerPatch.email;
+  }
+
+  const phoneMatch = text.match(/(?:\+?1[\s.-]?)?(?:\(?\d{3}\)?[\s.-]?)\d{3}[\s.-]?\d{4}/);
+  const normalizedPhone = phoneMatch ? normalizePhone(phoneMatch[0]) : '';
+  if (normalizedPhone && !hasMeaningfulLeadValue(seller.phone || existingLead.phone)) {
+    sellerPatch.phone = normalizedPhone;
+    inferredFacts.phone = normalizedPhone;
+  }
+
+  const nameMatch = text.match(/\b(?:my name is|this is|i am|i'm)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,2})\b/);
+  const inferredName = String(nameMatch?.[1] || '').trim();
+  if (
+    inferredName &&
+    !/\b(calling|interested|owner|agent|seller|looking|trying|with|from)\b/i.test(inferredName) &&
+    !hasMeaningfulLeadValue(seller.name || existingLead.leadName || existingLead.name)
+  ) {
+    sellerPatch.name = inferredName;
+    inferredFacts.leadName = inferredName;
+  }
+
+  const addressMatch = text.match(
+    /\b(?:property|house|address|place|home)\s+(?:is|at|on|located at|over at)\s+([0-9]{2,6}\s+[A-Za-z0-9 .'-]{3,90}\b(?:street|st|avenue|ave|road|rd|drive|dr|lane|ln|court|ct|boulevard|blvd|way|terrace|trail|trl|place|pl)\b\.?(?:,\s*[A-Za-z .]+)?)/i
+  );
+  const inferredAddress = String(addressMatch?.[1] || '').replace(/\s+/g, ' ').trim();
+  if (inferredAddress && !hasMeaningfulLeadValue(property.address || existingLead.address || existingLead.propertyAddress)) {
+    propertyPatch.address = inferredAddress;
+    inferredFacts.address = inferredAddress;
+  }
+
+  const conditionSnippet = extractTranscriptSnippet(
+    text,
+    /\b(roof|foundation|hvac|plumbing|electrical|mold|water damage|fire damage|vacant|occupied|tenant|repairs?|as[-\s]?is|needs work|condition)\b/i
+  );
+  if (conditionSnippet && !hasMeaningfulLeadValue(property.condition || existingLead.condition)) {
+    propertyPatch.condition = conditionSnippet;
+    inferredFacts.condition = conditionSnippet;
+  }
+
+  const mortgageSnippet = extractTranscriptSnippet(text, /\b(payoff|mortgage|behind|arrears|loan balance|owe)\b/i);
+  if (mortgageSnippet) inferredFacts.mortgageContext = mortgageSnippet;
+
+  const motivationSummary =
+    normalizeBantValue(bant.need) ||
+    normalizeBantValue(bant.urgency) ||
+    extractTranscriptSnippet(text, /\b(probate|estate|divorce|relocat|foreclos|tax|vacant|repair|tenant|downsiz|behind|inherited|condition|stress|tired|need this done)\b/i);
+  if (motivationSummary && !hasMeaningfulLeadValue(motivation.summary || existingLead.motivationSummary || existingLead.motivation_summary)) {
+    motivationPatch.summary = motivationSummary;
+    inferredFacts.motivationSummary = motivationSummary;
+  }
+
+  if (normalizeBantValue(bant.timeline) && !hasMeaningfulLeadValue(motivation.timeline || existingLead.timeline)) {
+    motivationPatch.timeline = bant.timeline;
+    inferredFacts.timeline = bant.timeline;
+  }
+
+  const askingPrice = toMoneyNumber(bant.budget, 0);
+  if (askingPrice > 0 && !hasMeaningfulLeadValue(property.askingPrice || motivation.askingPrice || existingLead.askingPrice)) {
+    propertyPatch.askingPrice = askingPrice;
+    motivationPatch.askingPrice = askingPrice;
+    inferredFacts.askingPrice = askingPrice;
+  }
+
+  if (/\b(stop calling|do not call|don't call|remove me|unsubscribe)\b/i.test(text)) {
+    compliancePatch.dncStatus = 'requested';
+    inferredFacts.dncStatus = 'requested';
+    tags.push('dnc-requested');
+  }
+
+  const contractIntent = /\b(send|prepare|email).{0,30}\b(contract|agreement|docusign|paperwork)\b/i.test(text);
+  const callbackIntent = /\b(call me|call back|callback|appointment|schedule|tomorrow|next week|later today)\b/i.test(text);
+  if (contractIntent) {
+    inferredFacts.contractIntent = true;
+    tags.push('contract-intent');
+  }
+  if (callbackIntent) {
+    inferredFacts.callbackIntent = true;
+    tags.push('callback-intent');
+  }
+
+  if (Object.keys(inferredFacts).length) tags.push('ava-call-inferred');
+  return {
+    seller: sellerPatch,
+    property: propertyPatch,
+    motivation: motivationPatch,
+    compliance: compliancePatch,
+    callContext: Object.keys(inferredFacts).length
+      ? {
+          visibleLeadFacts: inferredFacts,
+          visibleLeadFactsSource: 'ava-call-transcript',
+          visibleLeadFactsUpdatedAt: isoNow(),
+        }
+      : {},
+    tags: tags.filter((tag) => !existingTags.includes(tag)),
+    inferredFacts,
+  };
 }
 
 const AVA_GOAL_INFERENCE_REVISION = 'pbk-good-lite-v1';
@@ -36596,18 +36739,78 @@ async function updateLeadBantContextFromTranscript(candidate = {}, sessionId = '
     ...(existingLead.bant || {}),
     ...bant,
   };
-  const localLead = patchLeadImport(
+  const visibleFacts = inferVisibleLeadFactsFromTranscript(transcript, existingLead, { bant: mergedBant });
+  const mergedTags = [
+    ...normalizeLeadTags(existingLead.tags || []),
+    ...normalizeLeadTags(visibleFacts.tags || []),
+  ];
+  const leadPatch = {
+    ...(Object.keys(visibleFacts.seller || {}).length
+      ? {
+          seller: {
+            ...(existingLead.seller || {}),
+            ...visibleFacts.seller,
+          },
+        }
+      : {}),
+    ...(Object.keys(visibleFacts.property || {}).length
+      ? {
+          property: {
+            ...(existingLead.property || {}),
+            ...visibleFacts.property,
+          },
+        }
+      : {}),
+    ...(Object.keys(visibleFacts.motivation || {}).length
+      ? {
+          motivation: {
+            ...(existingLead.motivation || {}),
+            ...visibleFacts.motivation,
+          },
+        }
+      : {}),
+    ...(Object.keys(visibleFacts.compliance || {}).length
+      ? {
+          compliance: {
+            ...(existingLead.compliance || {}),
+            ...visibleFacts.compliance,
+          },
+        }
+      : {}),
+    ...(mergedTags.length ? { tags: [...new Set(mergedTags)] } : {}),
+    bant: mergedBant,
+    callContext: {
+      ...(existingLead.callContext || {}),
+      ...callContext,
+      ...(visibleFacts.callContext || {}),
+      bant: mergedBant,
+    },
+  };
+  let localLead = patchLeadImport(
     state,
     { leadId },
-    {
-      bant: mergedBant,
-      callContext: {
-        ...(existingLead.callContext || {}),
-        ...callContext,
-        bant: mergedBant,
-      },
-    }
+    leadPatch
   );
+  if (!localLead && leadId) {
+    localLead = normalizeLeadIntake({
+      id: leadId,
+      leadId,
+      source: 'ava_call_transcript',
+      leadSource: 'ava_call_transcript',
+      status: 'working',
+      stage: 'qualified',
+      ...(leadPatch.seller ? { seller: leadPatch.seller } : {}),
+      ...(leadPatch.property ? { property: leadPatch.property } : {}),
+      ...(leadPatch.motivation ? { motivation: leadPatch.motivation } : {}),
+      ...(leadPatch.compliance ? { compliance: leadPatch.compliance } : {}),
+      tags: leadPatch.tags,
+      bant: mergedBant,
+      callContext: leadPatch.callContext,
+      updatedAt: isoNow(),
+    });
+    syncLeadCompatibilityAliases(localLead);
+    addLeadImport(state, localLead);
+  }
 
   await queryPgRows(
     `UPDATE public.lead_profiles
@@ -36615,7 +36818,7 @@ async function updateLeadBantContextFromTranscript(candidate = {}, sessionId = '
          call_context = COALESCE(call_context, '{}'::jsonb) || $3::jsonb,
          updated_at = NOW()
      WHERE id = $1`,
-    [leadId, JSON.stringify(bant), JSON.stringify({ ...callContext, bant: mergedBant })]
+    [leadId, JSON.stringify(bant), JSON.stringify({ ...callContext, ...(visibleFacts.callContext || {}), bant: mergedBant })]
   );
   await queryPgRows(
     `UPDATE public.leads
@@ -36623,15 +36826,25 @@ async function updateLeadBantContextFromTranscript(candidate = {}, sessionId = '
          call_context = COALESCE(call_context, '{}'::jsonb) || $3::jsonb,
          updated_at = NOW()
      WHERE id = $1`,
-    [leadId, JSON.stringify(bant), JSON.stringify({ ...callContext, bant: mergedBant })]
+    [leadId, JSON.stringify(bant), JSON.stringify({ ...callContext, ...(visibleFacts.callContext || {}), bant: mergedBant })]
   );
+  if (localLead) {
+    void persistLeadProfileRowToDb(localLead, 'ava-call-transcript-projection').catch((error) => {
+      console.warn(
+        '[pbk-local-openclaw] Ava visible lead fact projection failed:',
+        error?.message || String(error || 'unknown error')
+      );
+    });
+  }
 
   return {
     ok: true,
     result: DATABASE_URL ? 'live' : 'local_view_only',
     leadId,
     bant: mergedBant,
-    callContext: { ...callContext, bant: mergedBant },
+    callContext: { ...callContext, ...(visibleFacts.callContext || {}), bant: mergedBant },
+    visibleLeadFacts: visibleFacts.inferredFacts,
+    visibleLeadFieldsUpdated: Object.keys(visibleFacts.inferredFacts || {}),
     hasBant,
     localUpdated: Boolean(localLead),
   };
@@ -39735,22 +39948,16 @@ function isTrustedManualOperatorAction(params = {}) {
     .toLowerCase()
     .replace(/[^a-z0-9_-]+/g, '_')
     .replace(/^_+|_+$/g, '');
-  const requestedBy = String(params.requestedBy || params.requested_by || params.actor || '')
-    .trim()
-    .toLowerCase();
-  return (
-    [
-      'manual',
-      'command_center_manual',
-      'unified_inbox_manual',
-      'unified_conversation_manual',
-      'lead_portal_manual',
-      'leads_page_manual',
-      'call_floor_manual',
-      'seller_docs_manual',
-    ].includes(source) ||
-    /operator|manual|unified-inbox|command center|lead portal/.test(requestedBy)
-  );
+  return [
+    'manual',
+    'command_center_manual',
+    'unified_inbox_manual',
+    'unified_conversation_manual',
+    'lead_portal_manual',
+    'leads_page_manual',
+    'call_floor_manual',
+    'seller_docs_manual',
+  ].includes(source);
 }
 
 function isTrustedManualConversationProviderSend(toolName = '', params = {}) {
@@ -46451,6 +46658,17 @@ async function requestCampaignApproval(campaignId = '', params = {}) {
   };
 }
 
+function canCancelCampaignWithoutApproval(campaign = {}) {
+  const status = normalizeCampaignStatus(campaign.status || 'draft');
+  return (
+    status === 'draft' &&
+    !campaign.approvalId &&
+    !campaign.pendingAction &&
+    !campaign.executionId &&
+    !campaign.providerCampaignId
+  );
+}
+
 async function runCampaignAction(campaignId = '', payload = {}) {
   const action = String(payload.action || payload.requestedAction || '')
     .trim()
@@ -46475,6 +46693,15 @@ async function runCampaignAction(campaignId = '', payload = {}) {
         error: 'Campaign record not found.',
       };
     }
+    if (!canCancelCampaignWithoutApproval(campaign)) {
+      return requestCampaignApproval(campaignId, {
+        ...payload,
+        requestedAction: 'campaign_cancel',
+        notes:
+          payload.notes ||
+          'Cancel this campaign after approval before changing provider state.',
+      });
+    }
     const nextCampaign = {
       ...campaign,
       status: 'cancelled',
@@ -46495,6 +46722,7 @@ async function runCampaignAction(campaignId = '', payload = {}) {
         action,
         reason: payload.reason || payload.notes || 'Campaign cancelled from Command Center.',
         noApprovalRequired: true,
+        draftOnly: true,
       },
     });
     addActivity(
@@ -46503,7 +46731,7 @@ async function runCampaignAction(campaignId = '', payload = {}) {
         actor: nextCampaign.cancelledBy,
         category: 'CAMPAIGN',
         status: 'cancelled',
-        text: `Campaign "${campaign.name}" cancelled without creating a new approval task.`,
+        text: `Draft campaign "${campaign.name}" cancelled without creating a new approval task.`,
         target: campaign.id,
       })
     );
@@ -55215,11 +55443,26 @@ async function handleEvent(eventType, payload = {}) {
     }
 
     await persistState(state);
+    const profilePersistence = {
+      ok: true,
+      queued: true,
+      result: 'lead_profile_projection_queued',
+    };
+    void persistLeadProfileRowToDb(
+      leadImport,
+      fromN8nLeadIntake ? 'n8n-lead-intake' : 'lead-intake'
+    ).catch((error) => {
+      console.warn(
+        '[pbk-local-openclaw] lead intake profile projection failed:',
+        error?.message || String(error || 'unknown error')
+      );
+    });
     return {
       ok: true,
       leadImport: duplicate || leadImport,
       duplicate: Boolean(duplicate),
       queuedAnalyzer,
+      profilePersistence,
     };
   }
 
@@ -58255,9 +58498,9 @@ async function handleInternalAvaAssistantChatRequest(request) {
     const approvalId = toolResult?.approval?.id || toolResult?.approvalId || '';
     const queued = ['queued_for_approval', 'approval_required'].includes(String(toolResult?.result || toolResult?.outcome || '').toLowerCase());
     if (approvalToolName === 'startNurtureSequence') {
-      answer = queued ? `I prepared the nurture sequence for approval${approvalId ? ` (${approvalId})` : ''}. Nothing sends until it is approved.` : `I could not prepare that nurture sequence yet. ${toolResult?.message || ''}`.trim();
+      answer = queued ? `I prepared the approval-gated nurture sequence${approvalId ? ` (${approvalId})` : ''}. Nothing sends until it is approved.` : `I could not prepare that approval-gated nurture sequence yet. Nothing sends until it is approved. ${toolResult?.message || ''}`.trim();
     } else {
-      answer = queued ? `I prepared the call request for approval${approvalId ? ` (${approvalId})` : ''}. Ava will not dial until it is approved.` : `I could not prepare that call request yet. ${toolResult?.message || ''}`.trim();
+      answer = queued ? `I prepared the approval-gated call request${approvalId ? ` (${approvalId})` : ''}. Ava will not dial until it is approved.` : `I could not prepare that approval-gated call request yet. Ava will not dial until it is approved and inside the allowed calling window. ${toolResult?.message || ''}`.trim();
     }
   } else if (assistantPlan.action === 'tool_plan' && ['runUnifiedAdditiveIntelligence', 'runProviderAugmentedAdditiveIntelligence'].includes(assistantPlan.toolPlan?.toolName)) {
     const additiveToolName = assistantPlan.toolPlan.toolName;

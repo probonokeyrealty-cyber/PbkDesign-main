@@ -52,6 +52,23 @@ import {
   writeLegacyPbkDarkModePreference,
 } from './utils/uiPrefs';
 
+function isApprovalQueuedResponse(response: unknown) {
+  if (!response || typeof response !== 'object') return false;
+  const record = response as Record<string, unknown>;
+  const statusText = String(
+    record.result ||
+      record.status ||
+      record.outcome ||
+      record.approvalStatus ||
+      record.pendingAction ||
+      ''
+  ).toLowerCase();
+  return (
+    /\b(queued_for_approval|approval_required|pending_approval|pending)\b/.test(statusText) ||
+    Boolean(record.approval)
+  );
+}
+
 const ANALYSIS_IMPACT_FIELDS: Array<keyof DealData> = [
   'address',
   'type',
@@ -645,8 +662,12 @@ export default function App({ engineOnly = false }: AppProps) {
     }
 
     try {
-      await sendDealToAgent(activeDeal);
-      setAnalyzeStatus('Analyzer snapshot sent to Ava and the runtime CRM queue.');
+      const response = await sendDealToAgent(activeDeal);
+      setAnalyzeStatus(
+        isApprovalQueuedResponse(response)
+          ? 'Analyzer snapshot queued for approval. Ava has the context, and an operator must approve before CRM or provider changes run.'
+          : 'Analyzer snapshot shared with Ava and saved to the team record.'
+      );
     } catch (error) {
       setAnalyzeStatus(
         error instanceof Error
@@ -658,9 +679,11 @@ export default function App({ engineOnly = false }: AppProps) {
 
   const handlePushScriptToAgent = async (agentDealContext: AgentDealContext) => {
     try {
-      await sendDealToAgent(activeDeal, { agentDealContext });
+      const response = await sendDealToAgent(activeDeal, { agentDealContext });
       setAnalyzeStatus(
-        `${agentDealContext.scriptPath}/${agentDealContext.scriptVariant}/${agentDealContext.activeScriptTab} script pushed to Ava with analyzer numbers.`
+        isApprovalQueuedResponse(response)
+          ? `${agentDealContext.scriptPath}/${agentDealContext.scriptVariant}/${agentDealContext.activeScriptTab} script queued for approval with analyzer numbers.`
+          : `${agentDealContext.scriptPath}/${agentDealContext.scriptVariant}/${agentDealContext.activeScriptTab} script shared with Ava with analyzer numbers.`
       );
     } catch (error) {
       setAnalyzeStatus(
@@ -696,21 +719,25 @@ export default function App({ engineOnly = false }: AppProps) {
         type: 'note',
         content: `Analyzer deal saved with path ${getPathLabel(activeSelectedPath)}.`,
       });
-      setAnalyzeStatus(`${saved.address}: Saved locally / Bridge sync pending.`);
+      setAnalyzeStatus(`${saved.address}: Saved locally. Ava handoff pending.`);
       try {
-        await sendDealToAgent(activeDeal);
+        const response = await sendDealToAgent(activeDeal);
         appendSavedDealActivity(activeDeal, {
           type: 'note',
-          content: `Activity saved to team CRM for ${getPathLabel(activeSelectedPath)}.`,
+          content: isApprovalQueuedResponse(response)
+            ? `Ava approval queued for ${getPathLabel(activeSelectedPath)}.`
+            : `Activity saved to team CRM for ${getPathLabel(activeSelectedPath)}.`,
         });
         setAnalyzeStatus(
-          `${saved.address}: Saved locally / runtime CRM synced for ${getPathLabel(activeSelectedPath)}.`
+          isApprovalQueuedResponse(response)
+            ? `${saved.address}: Saved locally. Ava queued approval for ${getPathLabel(activeSelectedPath)}.`
+            : `${saved.address}: Saved locally. Team CRM synced for ${getPathLabel(activeSelectedPath)}.`
         );
       } catch (syncError) {
         setAnalyzeStatus(
           syncError instanceof Error
-            ? `${saved.address}: Saved locally / Bridge sync pending: ${syncError.message}`
-            : `${saved.address}: Saved locally / Bridge sync pending.`
+            ? `${saved.address}: Saved locally. Ava handoff pending: ${syncError.message}`
+            : `${saved.address}: Saved locally. Ava handoff pending.`
         );
       }
     } catch (error) {
@@ -1100,6 +1127,7 @@ export default function App({ engineOnly = false }: AppProps) {
           <DealAnalyzerMobileRail
             deal={activeDeal}
             selectedPath={activeSelectedPath}
+            analyzeStatus={analyzeStatus}
             onOpenSnapshot={() => setLeftPanelOpen(true)}
             onOpenWorkflow={handleOpenWorkflowDrawer}
             onAnalyze={() => void handleAnalyzeDeal()}

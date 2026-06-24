@@ -23,6 +23,17 @@ function firstText(...values: unknown[]) {
   return '';
 }
 
+function friendlyDealLoadError(error: unknown) {
+  const message = firstText(error instanceof Error ? error.message : error);
+  if (
+    !message ||
+    /\b(bridge|fetch|network|auth|token|unauthor|forbidden|timeout|502|500|404)\b/i.test(message)
+  ) {
+    return 'Ava could not reach the live seller record. Retry the load, or open the seller from Leads while Ava reconnects.';
+  }
+  return 'Ava could not load this seller into the analyzer yet. Retry the load, then use Leads if it repeats.';
+}
+
 function firstNumber(...values: unknown[]): number | undefined {
   for (const value of values) {
     const parsed =
@@ -230,6 +241,34 @@ export function buildAnalyzerDealFromLead(payload: BridgeRecord, requestedLeadId
   return deal;
 }
 
+function hasDealLeadPayload(payload: unknown) {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return false;
+  const root = record(payload);
+  const lead = record(root.lead || root.profile || root);
+  const property = record(lead.property || root.property);
+  const address = firstText(
+    lead.address,
+    lead.propertyAddress,
+    lead.property_address,
+    property.address,
+    property.fullAddress,
+    property.full_address
+  );
+  const seller = firstText(
+    lead.sellerName,
+    lead.seller_name,
+    lead.ownerName,
+    lead.owner_name,
+    record(lead.seller).name,
+    record(root.seller).name
+  );
+  return Boolean(
+    firstText(lead.id, lead.leadId, lead.lead_id, root.id, root.leadId, root.lead_id) ||
+    address ||
+    seller
+  );
+}
+
 function hydrateAnalyzerFromLead(payload: BridgeRecord, leadId: string) {
   const mappedDeal = buildAnalyzerDealFromLead(payload, leadId);
   const currentDeal =
@@ -248,7 +287,7 @@ function hydrateAnalyzerFromLead(payload: BridgeRecord, leadId: string) {
     window.PBKAnalyzer.setState({
       deal: mergedDeal,
       activeTab: 'analyzer',
-      analyzeStatus: 'Canonical lead loaded into analyzer',
+      analyzeStatus: 'Seller record loaded into Deal Analyzer',
       updatedAt: Date.now(),
     });
   } else {
@@ -277,15 +316,13 @@ class DealViewErrorBoundary extends Component<{ children: ReactNode }, DealViewE
         <div className="grid h-full place-items-center bg-slate-950 p-6 text-slate-100">
           <div className="max-w-md rounded-2xl border border-amber-500/30 bg-amber-500/10 p-5">
             <div className="text-[11px] uppercase tracking-[0.16em] text-amber-300">
-              Deal engine unavailable
+              Deal Analyzer paused
             </div>
-            <h2 className="mt-2 text-lg font-semibold">The analyzer failed to render.</h2>
+            <h2 className="mt-2 text-lg font-semibold">Ava could not open the analyzer view.</h2>
             <p className="mt-2 text-sm text-slate-300">
-              The shell is still running. Reload the Deal route after fixing the engine error.
+              Your leads, approvals, and campaign boards are still available. Retry the analyzer; if
+              it repeats, use the Leads page while the error is reviewed.
             </p>
-            <pre className="mt-3 max-h-28 overflow-auto rounded-xl bg-slate-950/70 p-3 text-xs text-amber-100">
-              {this.state.error.message}
-            </pre>
             <button
               type="button"
               className="mt-4 rounded-full bg-sky-400 px-4 py-2 text-sm font-bold text-slate-950"
@@ -314,16 +351,15 @@ export function DealView() {
     setError('');
     try {
       const response = await fetchLeadFullRequest(leadId);
-      if (response.ok === false) {
-        throw new Error(String(response.error || 'The bridge did not return this lead.'));
+      if (response.ok === false || !hasDealLeadPayload(response)) {
+        throw new Error(
+          firstText(response.error, response.message, response.verbiage) ||
+            'The live seller record is not ready yet.'
+        );
       }
       hydrateAnalyzerFromLead(response, leadId);
     } catch (nextError) {
-      setError(
-        nextError instanceof Error
-          ? nextError.message
-          : 'The canonical lead could not be fetched from the bridge.'
-      );
+      setError(friendlyDealLoadError(nextError));
     } finally {
       setLoading(false);
     }
@@ -355,7 +391,7 @@ export function DealView() {
           <div className="mx-auto h-8 w-8 animate-spin rounded-full border-2 border-sky-400 border-t-transparent" />
           <h2 className="mt-4 text-lg font-semibold">Loading seller deal</h2>
           <p className="mt-1 text-sm text-slate-400">
-            Pulling the canonical lead and underwriting context into the analyzer.
+            Pulling seller details and underwriting context into the analyzer.
           </p>
         </div>
       </div>
@@ -367,10 +403,10 @@ export function DealView() {
       <div className="grid h-full min-h-[680px] place-items-center bg-slate-950 p-6 text-slate-100">
         <div className="max-w-md rounded-lg border border-rose-500/30 bg-rose-500/10 p-5">
           <div className="text-[11px] uppercase tracking-[0.16em] text-rose-300">
-            Lead hydration failed
+            Seller record unavailable
           </div>
           <h2 className="mt-2 text-lg font-semibold">
-            Could not load this lead into the Deal Analyzer
+            Ava could not load this seller into Deal Analyzer
           </h2>
           <p className="mt-2 text-sm text-slate-300">{error}</p>
           <button

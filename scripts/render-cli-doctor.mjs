@@ -190,6 +190,36 @@ function collectRenderNames(value, names = new Set()) {
   return names;
 }
 
+function collectRenderLogRecords(value, records = []) {
+  if (!value || typeof value !== 'object') return records;
+  if (Array.isArray(value)) {
+    for (const item of value) collectRenderLogRecords(item, records);
+    return records;
+  }
+
+  const looksLikeLogRecord = ['message', 'text', 'log', 'level', 'timestamp', 'statusCode'].some(
+    (key) => Object.prototype.hasOwnProperty.call(value, key)
+  );
+  if (looksLikeLogRecord) {
+    records.push(value);
+    return records;
+  }
+
+  for (const nested of Object.values(value)) {
+    if (nested && typeof nested === 'object') collectRenderLogRecords(nested, records);
+  }
+  return records;
+}
+
+function summarizeRenderLogRecord(record = {}) {
+  return {
+    level: sanitize(record.level || record.severity || ''),
+    statusCode: sanitize(record.statusCode || record.status || ''),
+    message: sanitize(record.message || record.text || record.log || '').slice(0, 300),
+    timestamp: sanitize(record.timestamp || record.time || ''),
+  };
+}
+
 function getMissingExpected(renderNames, expectedNames = []) {
   const normalized = new Set([...renderNames].map((name) => String(name || '').toLowerCase()));
   return expectedNames.filter((name) => !normalized.has(String(name || '').toLowerCase()));
@@ -318,11 +348,22 @@ const errorLogs =
         { timeoutMs: 60000 }
       )
     : null;
+let renderErrorLogRecords = [];
 if (authenticated && SERVICE_ID && shouldCheckLogs && !errorLogs?.ok) {
   const message =
     'Render error-log query failed; verify PBK_RENDER_SERVICE_ID and workspace selection.';
   if (MODE === 'logs-errors') blockers.push('render_error_logs_unavailable');
   else warnings.push(message);
+} else if (authenticated && SERVICE_ID && shouldCheckLogs && errorLogs?.ok) {
+  renderErrorLogRecords = collectRenderLogRecords(parseJson(errorLogs.rawStdout));
+  if (renderErrorLogRecords.length) {
+    const message = `Render returned ${renderErrorLogRecords.length} recent error log record(s).`;
+    if (MODE === 'logs-errors') blockers.push('render_recent_error_logs_present');
+    else warnings.push(message);
+    nextSteps.push(
+      'Inspect Render error logs and clear the underlying runtime errors before treating the bridge as healthy.'
+    );
+  }
 }
 
 if ((MODE === 'logs-errors' || MODE === 'status') && !SERVICE_ID) {
@@ -384,6 +425,8 @@ const report = {
           errorLogs
         )
       : null,
+    errorLogCount: renderErrorLogRecords.length,
+    errorLogSample: renderErrorLogRecords.slice(0, 3).map(summarizeRenderLogRecord),
   },
   subagentConnection: {
     strengthenedBy: [

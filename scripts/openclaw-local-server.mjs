@@ -407,7 +407,7 @@ function hydrateWindowsUserEnv(keys = []) {
   }
 }
 
-hydrateWindowsUserEnv(['PBK_DOCUSIGN_INTEGRATION_KEY', 'PBK_DOCUSIGN_USER_ID', 'PBK_DOCUSIGN_ACCOUNT_ID', 'PBK_DOCUSIGN_AUTH_HOST', 'PBK_DOCUSIGN_REST_BASE', 'PBK_DOCUSIGN_PRIVATE_KEY', 'PBK_DOCUSIGN_CONNECT_HMAC_SECRET', 'PBK_SUPABASE_URL', 'PBK_SUPABASE_SERVICE_ROLE_KEY', 'PBK_N8N_API_BASE_URL', 'PBK_N8N_API_KEY', 'PBK_SUPERMEMORY_API_KEY', 'PBK_SUPERMEMORY_API_URL', 'PBK_SUPERMEMORY_SYNC', 'PBK_DEEPGRAM_API_KEY', 'DEEPGRAM_API_KEY', 'PBK_HUMAN_AGENT_PHONE', 'PBK_UNDERWRITING_AGENT_PHONE', 'PBK_INBOUND_QUALIFY_BEFORE_TRANSFER', 'PBK_INBOUND_AFTER_HOURS_VOICEMAIL_ENABLED', 'PBK_INBOUND_AFTER_HOURS_START', 'PBK_INBOUND_AFTER_HOURS_END', 'PBK_INBOUND_TIMEZONE', 'PBK_TELNYX_AI_ASSISTANT_ID', 'TELNYX_AI_ASSISTANT_ID', 'PBK_AVA_MEMORY_DAILY_MINUTES', 'PBK_BROWSER_VOICE_ENABLED', 'PBK_ELEVENLABS_TTS_ENABLED', 'PBK_ELEVENLABS_API_KEY', 'ELEVENLABS_API_KEY', 'PBK_PROTECTED_OPS_PASSCODE', 'PBK_TEAM_PASSCODE', 'PBK_OPERATOR_PHONE', 'PBK_TOTP_REQUIRED', 'PBK_TOTP_SECRET', 'PBK_VOICE_PREWARM_ENABLED', 'PBK_REDIS_URL', 'REDIS_URL', 'PBK_REDIS_ENABLED', 'PBK_REDIS_NAMESPACE', 'PBK_SLACK_UPDATES_CHANNEL_ID', 'PBK_SLACK_UPDATES_CHANNEL', 'SLACK_UPDATES_CHANNEL_ID', 'PBK_OPENAI_API_KEY', 'OPENAI_API_KEY', 'PBK_OPENAI_WEB_SEARCH_ENABLED', 'PBK_OPENAI_WEB_SEARCH_MODEL', 'PBK_OPENAI_BASE_URL', 'PBK_DEEPSEEK_API_KEY', 'DEEPSEEK_API_KEY', 'PBK_DEEPSEEK_BASE_URL', 'PBK_DEEPSEEK_MODEL', 'PBK_DEEPSEEK_FALLBACK_MODEL', 'PBK_DEEPSEEK_LIVE_MODEL', 'PBK_DEEPSEEK_LIVE_RETRY_MODELS', 'PBK_DEEPSEEK_LIVE_ATTEMPT_TIMEOUT_MS', 'PBK_DEEPSEEK_LIVE_RETRY_ATTEMPTS', 'PBK_DEEPSEEK_LIVE_RETRY_DELAY_MS', 'PBK_STRATEGIST_PROVIDER', 'PBK_TELNYX_LIVE_REPLY_STRATEGIST_MODE', 'PBK_TELNYX_LIVE_REPLY_STRATEGIST_TIMEOUT_MS', 'PBK_TAVILY_API_KEY', 'TAVILY_API_KEY', 'PBK_EMOTION_WORLD_MODEL_ENDPOINT', 'PBK_EMOTION_WORLD_MODEL_API_KEY', 'PBK_EMOTION_WORLD_MODEL_TIMEOUT_MS', 'PBK_HERMES_ENABLED', 'PBK_HERMES_GATEWAY_URL', 'PBK_HERMES_API_KEY', 'PBK_HERMES_WEBHOOK_URL', 'PBK_HERMES_SLACK_CHANNEL', 'PBK_HERMES_SUGGEST_ONLY', 'PBK_HERMES_TIMEOUT_MS']);
+hydrateWindowsUserEnv(['PBK_DOCUSIGN_INTEGRATION_KEY', 'PBK_DOCUSIGN_USER_ID', 'PBK_DOCUSIGN_ACCOUNT_ID', 'PBK_DOCUSIGN_AUTH_HOST', 'PBK_DOCUSIGN_REST_BASE', 'PBK_DOCUSIGN_PRIVATE_KEY', 'PBK_DOCUSIGN_CONNECT_HMAC_SECRET', 'PBK_SUPABASE_URL', 'PBK_SUPABASE_SERVICE_ROLE_KEY', 'PBK_N8N_API_BASE_URL', 'PBK_N8N_API_KEY', 'PBK_N8N_APPROVAL_WEBHOOK', 'PBK_N8N_LEAD_WEBHOOK', 'PBK_SUPERMEMORY_API_KEY', 'PBK_SUPERMEMORY_API_URL', 'PBK_SUPERMEMORY_SYNC', 'PBK_DEEPGRAM_API_KEY', 'DEEPGRAM_API_KEY', 'PBK_HUMAN_AGENT_PHONE', 'PBK_UNDERWRITING_AGENT_PHONE', 'PBK_INBOUND_QUALIFY_BEFORE_TRANSFER', 'PBK_INBOUND_AFTER_HOURS_VOICEMAIL_ENABLED', 'PBK_INBOUND_AFTER_HOURS_START', 'PBK_INBOUND_AFTER_HOURS_END', 'PBK_INBOUND_TIMEZONE', 'PBK_TELNYX_AI_ASSISTANT_ID', 'TELNYX_AI_ASSISTANT_ID', 'PBK_AVA_MEMORY_DAILY_MINUTES', 'PBK_BROWSER_VOICE_ENABLED', 'PBK_ELEVENLABS_TTS_ENABLED', 'PBK_ELEVENLABS_API_KEY', 'ELEVENLABS_API_KEY', 'PBK_PROTECTED_OPS_PASSCODE', 'PBK_TEAM_PASSCODE', 'PBK_OPERATOR_PHONE', 'PBK_TOTP_REQUIRED', 'PBK_TOTP_SECRET', 'PBK_VOICE_PREWARM_ENABLED', 'PBK_REDIS_URL', 'REDIS_URL', 'PBK_REDIS_ENABLED', 'PBK_REDIS_NAMESPACE', 'PBK_SLACK_UPDATES_CHANNEL_ID', 'PBK_SLACK_UPDATES_CHANNEL', 'SLACK_UPDATES_CHANNEL_ID', 'PBK_SLACK_WEBHOOK_URL', 'SLACK_WEBHOOK_URL', 'PBK_SLACK_BOT_TOKEN', 'SLACK_BOT_TOKEN', 'PBK_SLACK_APPROVAL_CHANNEL_ID', 'PBK_SLACK_APPROVAL_CHANNEL', 'SLACK_APPROVAL_CHANNEL_ID', 'PBK_SLACK_SIGNING_SECRET', 'SLACK_SIGNING_SECRET', 'PBK_OPENAI_API_KEY', 'OPENAI_API_KEY', 'PBK_OPENAI_WEB_SEARCH_ENABLED', 'PBK_OPENAI_WEB_SEARCH_MODEL', 'PBK_OPENAI_BASE_URL', 'PBK_DEEPSEEK_API_KEY', 'DEEPSEEK_API_KEY', 'PBK_DEEPSEEK_BASE_URL', 'PBK_DEEPSEEK_MODEL', 'PBK_DEEPSEEK_FALLBACK_MODEL', 'PBK_DEEPSEEK_LIVE_MODEL', 'PBK_DEEPSEEK_LIVE_RETRY_MODELS', 'PBK_DEEPSEEK_LIVE_ATTEMPT_TIMEOUT_MS', 'PBK_DEEPSEEK_LIVE_RETRY_ATTEMPTS', 'PBK_DEEPSEEK_LIVE_RETRY_DELAY_MS', 'PBK_STRATEGIST_PROVIDER', 'PBK_TELNYX_LIVE_REPLY_STRATEGIST_MODE', 'PBK_TELNYX_LIVE_REPLY_STRATEGIST_TIMEOUT_MS', 'PBK_TAVILY_API_KEY', 'TAVILY_API_KEY', 'PBK_EMOTION_WORLD_MODEL_ENDPOINT', 'PBK_EMOTION_WORLD_MODEL_API_KEY', 'PBK_EMOTION_WORLD_MODEL_TIMEOUT_MS', 'PBK_HERMES_ENABLED', 'PBK_HERMES_GATEWAY_URL', 'PBK_HERMES_API_KEY', 'PBK_HERMES_WEBHOOK_URL', 'PBK_HERMES_SLACK_CHANNEL', 'PBK_HERMES_SUGGEST_ONLY', 'PBK_HERMES_TIMEOUT_MS']);
 
 const APPROVAL_WEBHOOK_URL = String(process.env.PBK_N8N_APPROVAL_WEBHOOK || '').trim();
 const LEAD_WEBHOOK_URL = String(process.env.PBK_N8N_LEAD_WEBHOOK || '').trim();
@@ -840,6 +840,7 @@ const PUBLIC_PATHS = new Set([
   '/inbox',
   '/leads',
   '/pipeline',
+  '/deal',
   '/deals',
   '/deals/analyzer',
   '/analyzer',
@@ -867,6 +868,7 @@ const PUBLIC_PATHS = new Set([
   '/recordings',
   '/approvals',
   '/approval',
+  '/index.shell.html',
   '/analyzer.html',
   '/PBK_Master_Deal_Package.html',
   '/ava-chat-widget.js',
@@ -911,8 +913,22 @@ const PUBLIC_READ_PATHS = new Set([
   '/api/v1/skills/trends',
 ]);
 
+function isPublicCommandCenterAssetRequest(method = 'GET', pathname = '') {
+  const normalizedMethod = String(method || 'GET').toUpperCase();
+  if (!['GET', 'HEAD'].includes(normalizedMethod)) return false;
+  return (
+    isCommandCenterAppPath(pathname) ||
+    RENDER_PUBLIC_STATIC_FILES.has(pathname) ||
+    Boolean(getRenderStaticAsset(pathname))
+  );
+}
+
 function isPublicBridgeRequest(method = 'GET', pathname = '') {
-  return PUBLIC_PATHS.has(pathname) || (String(method || 'GET').toUpperCase() === 'GET' && PUBLIC_READ_PATHS.has(pathname));
+  return (
+    PUBLIC_PATHS.has(pathname) ||
+    isPublicCommandCenterAssetRequest(method, pathname) ||
+    (String(method || 'GET').toUpperCase() === 'GET' && PUBLIC_READ_PATHS.has(pathname))
+  );
 }
 
 // Postgres state backend. When PBK_DATABASE_URL is set the bridge persists
@@ -46940,6 +46956,19 @@ async function runCampaignScheduler(options = {}) {
       skipped.push({ campaignId: campaign.id, status, reason: 'Campaign is not active.' });
       continue;
     }
+    const approvalId = String(campaign.approvalId || campaign.approval_id || '').trim();
+    const approvalStatus = String(campaign.approvalStatus || campaign.approval_status || '')
+      .trim()
+      .toLowerCase();
+    if (!approvalId || approvalStatus !== 'approved') {
+      skipped.push({
+        campaignId: campaign.id,
+        status,
+        result: 'active_without_approval',
+        reason: 'Campaign is active but does not have approved operator approval.',
+      });
+      continue;
+    }
     const dailyCap = getCampaignDailyCap(campaign);
     const usedToday = countCampaignEventsToday(campaign.id, now);
     if (usedToday >= dailyCap) {
@@ -56541,9 +56570,26 @@ function getResponseCorsHeaders(response) {
   );
 }
 
-const COMMAND_CENTER_APP_PATHS = new Set(['/app', '/command-center', '/dashboard', '/settings', '/inbox', '/leads', '/pipeline', '/deals', '/deals/analyzer', '/analyzer', '/agents', '/agent', '/agent-console', '/fleet', '/agent-fleet', '/ava-chat', '/skills', '/skill-studio', '/calls', '/live-calls', '/contracts', '/automations', '/analytics', '/campaigns', '/campaign-detail', '/brain', '/research', '/memory', '/integrations', '/lead-detail', '/activity-log', '/recordings', '/approvals', '/approval']);
+const COMMAND_CENTER_APP_PATHS = new Set(['/app', '/command-center', '/dashboard', '/settings', '/inbox', '/leads', '/pipeline', '/deal', '/deals', '/deals/analyzer', '/analyzer', '/agents', '/agent', '/agent-console', '/fleet', '/agent-fleet', '/ava-chat', '/skills', '/skill-studio', '/calls', '/live-calls', '/contracts', '/automations', '/analytics', '/campaigns', '/campaign-detail', '/brain', '/research', '/memory', '/integrations', '/lead-detail', '/activity-log', '/recordings', '/approvals', '/approval']);
+const COMMAND_CENTER_APP_PREFIXES = ['/deal/', '/deals/', '/leads/', '/inbox/', '/skills/', '/skill-studio/', '/campaigns/'];
+const RENDER_STATIC_ASSET_PREFIXES = ['/assets/'];
+const RENDER_STATIC_CONTENT_TYPES = new Map([
+  ['.css', 'text/css; charset=utf-8'],
+  ['.js', 'application/javascript; charset=utf-8'],
+  ['.mjs', 'application/javascript; charset=utf-8'],
+  ['.json', 'application/json; charset=utf-8'],
+  ['.svg', 'image/svg+xml'],
+  ['.png', 'image/png'],
+  ['.jpg', 'image/jpeg'],
+  ['.jpeg', 'image/jpeg'],
+  ['.webp', 'image/webp'],
+  ['.ico', 'image/x-icon'],
+  ['.woff', 'font/woff'],
+  ['.woff2', 'font/woff2'],
+]);
 
 const RENDER_PUBLIC_STATIC_FILES = new Map([
+  ['/index.shell.html', { filePath: path.join(ROOT_DIR, 'index.shell.html'), contentType: 'text/html; charset=utf-8' }],
   ['/analyzer.html', { filePath: path.join(ROOT_DIR, 'analyzer.html'), contentType: 'text/html; charset=utf-8' }],
   [
     '/PBK_Master_Deal_Package.html',
@@ -56567,6 +56613,35 @@ const RENDER_PUBLIC_STATIC_FILES = new Map([
     },
   ],
 ]);
+
+function isCommandCenterAppPath(pathname) {
+  return COMMAND_CENTER_APP_PATHS.has(pathname) || COMMAND_CENTER_APP_PREFIXES.some((prefix) => pathname.startsWith(prefix));
+}
+
+function getRenderCommandCenterShellFilePath() {
+  const shellPath = path.join(ROOT_DIR, 'index.shell.html');
+  return existsSync(shellPath) ? shellPath : path.join(ROOT_DIR, 'index.html');
+}
+
+function getRenderStaticAsset(pathname) {
+  if (!RENDER_STATIC_ASSET_PREFIXES.some((prefix) => pathname.startsWith(prefix))) return null;
+  let decoded = '';
+  try {
+    decoded = decodeURIComponent(pathname);
+  } catch {
+    return null;
+  }
+  if (decoded.includes('..') || decoded.includes('\\')) return null;
+  const relativePath = decoded.replace(/^\/+/, '');
+  const filePath = path.join(ROOT_DIR, relativePath);
+  const relativeToRoot = path.relative(ROOT_DIR, filePath);
+  if (relativeToRoot.startsWith('..') || path.isAbsolute(relativeToRoot)) return null;
+  const extension = path.extname(filePath).toLowerCase();
+  return {
+    filePath,
+    contentType: RENDER_STATIC_CONTENT_TYPES.get(extension) || 'application/octet-stream',
+  };
+}
 
 function sendPublicStaticFile(response, filePath, contentType) {
   if (!existsSync(filePath)) {
@@ -56603,13 +56678,18 @@ function sendPublicStaticFile(response, filePath, contentType) {
 
 function maybeServeRenderCommandCenter(request, response, pathname) {
   if (request.method !== 'GET' && request.method !== 'HEAD') return false;
-  if (COMMAND_CENTER_APP_PATHS.has(pathname)) {
-    sendPublicStaticFile(response, path.join(ROOT_DIR, 'index.html'), 'text/html; charset=utf-8');
-    return true;
-  }
   const staticAsset = RENDER_PUBLIC_STATIC_FILES.get(pathname);
   if (staticAsset) {
     sendPublicStaticFile(response, staticAsset.filePath, staticAsset.contentType);
+    return true;
+  }
+  const builtAsset = getRenderStaticAsset(pathname);
+  if (builtAsset) {
+    sendPublicStaticFile(response, builtAsset.filePath, builtAsset.contentType);
+    return true;
+  }
+  if (isCommandCenterAppPath(pathname)) {
+    sendPublicStaticFile(response, getRenderCommandCenterShellFilePath(), 'text/html; charset=utf-8');
     return true;
   }
   return false;
@@ -58386,7 +58466,13 @@ async function handleSlackAppMention(payload = {}) {
     'slack-app-mention'
   ).catch(() => null);
 
-  const result = await handler(route.params || {});
+  const result = await handler({
+    ...(route.params || {}),
+    requiresApproval: Boolean(route.requiresApproval),
+    approvalRequired: Boolean(route.requiresApproval),
+    requestedApproval: Boolean(route.requiresApproval),
+    slackRouteIntent: route.intent || '',
+  });
   const ack = buildSlackMentionAck(route, result);
   const reply = await toolHandlers.pbk_send_slack_reply({
     ...ack,

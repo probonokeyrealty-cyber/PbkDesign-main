@@ -27,6 +27,14 @@ services:
       # credential.
       - key: PBK_BRIDGE_API_KEY
         sync: false
+      - key: PBK_RENDER_API_KEY
+        sync: false
+      - key: PBK_RENDER_SERVICE_ID
+        sync: false
+      - key: RENDER_API_KEY
+        sync: false
+      - key: RENDER_SERVICE_ID
+        sync: false
       # Dedicated outbound Desktop Sidecar WebSocket token. Use a separate
       # secret from PBK_BRIDGE_API_KEY so local desktop access can be rotated
       # without changing dashboard/API auth.
@@ -412,6 +420,10 @@ services:
       # ── Slack incoming webhook (direct from bridge) ─────────────────────
       # Channel is determined by the URL when the webhook is created in Slack.
       - key: PBK_SLACK_WEBHOOK_URL
+        sync: false
+      - key: PBK_SLACK_BOT_TOKEN
+        sync: false
+      - key: PBK_SLACK_APPROVAL_CHANNEL_ID
         sync: false
       - key: PBK_SLACK_SIGNING_SECRET
         sync: false

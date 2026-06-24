@@ -10252,7 +10252,7 @@ html[data-theme='light'] .pbk-ava-chat-surface {
   left: 12px;
   z-index: 35;
   display: none;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: 1fr;
   gap: 8px;
   border: 1px solid rgba(125, 211, 252, 0.22);
   border-radius: 20px;
@@ -10260,6 +10260,12 @@ html[data-theme='light'] .pbk-ava-chat-surface {
   box-shadow: 0 20px 70px rgba(0, 0, 0, 0.4);
   padding: 8px;
   backdrop-filter: blur(18px);
+}
+
+.pbk-analyzer-mobile-rail-actions {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
 }
 
 .pbk-analyzer-mobile-rail button {
@@ -10288,6 +10294,18 @@ html[data-theme='light'] .pbk-ava-chat-surface {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.pbk-analyzer-mobile-status {
+  display: none;
+  border: 1px solid rgba(251, 191, 36, 0.28);
+  border-radius: 12px;
+  background: rgba(120, 53, 15, 0.35);
+  color: #fde68a;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.45;
+  padding: 8px 10px;
 }
 
 html[data-theme='light'] .pbk-deal-surface {
@@ -10365,6 +10383,12 @@ html[data-theme='light'] .pbk-analyzer-mobile-rail {
 html[data-theme='light'] .pbk-analyzer-mobile-rail button {
   background: #f8fafc;
   color: #0f172a;
+}
+
+html[data-theme='light'] .pbk-analyzer-mobile-status {
+  border-color: rgba(217, 119, 6, 0.28);
+  background: #fffbeb;
+  color: #92400e;
 }
 
 html[data-theme='light'] .pbk-analyzer-mobile-toggle,
@@ -10516,6 +10540,10 @@ html[data-theme='light'] .pbk-analyzer-mobile-quick-actions .pbk-btn {
     margin: 0 12px 10px;
     border-radius: 16px;
     padding: 7px;
+  }
+
+  .pbk-analyzer-mobile-status {
+    display: block;
   }
 
   .pbk-deal-surface .pbk-analyzer-card {

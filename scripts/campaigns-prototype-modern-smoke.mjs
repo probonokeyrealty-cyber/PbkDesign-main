@@ -40,30 +40,61 @@ assert(
   'pbk-wiz-stepper',
   'pbk-wiz-pane',
 ].forEach((className) => {
-  assert(campaigns.includes(className) || pbkCss.includes(`.${className}`), `${className} must be implemented.`);
+  assert(
+    campaigns.includes(className) || pbkCss.includes(`.${className}`),
+    `${className} must be implemented.`
+  );
 });
 
-assert(/const\s+\[viewMode,\s*setViewMode\]/.test(campaigns), 'Campaigns should support card/table view mode.');
-assert(/fetchReplyTemplatesRequest/.test(campaigns), 'Campaign wizard template step must use the real reply-template endpoint helper.');
-assert(/fetchCampaignRankedTemplatesRequest/.test(campaigns), 'Campaign wizard template step must use the ranked campaign-template endpoint helper.');
+assert(
+  /const\s+\[viewMode,\s*setViewMode\]/.test(campaigns),
+  'Campaigns should support card/table view mode.'
+);
+assert(
+  /fetchReplyTemplatesRequest/.test(campaigns),
+  'Campaign wizard template step must use the real reply-template endpoint helper.'
+);
+assert(
+  /fetchCampaignRankedTemplatesRequest/.test(campaigns),
+  'Campaign wizard template step must use the ranked campaign-template endpoint helper.'
+);
 assert(
   /matchMedia\('\(min-width: 561px\)'\)/.test(campaigns),
   'Campaign wizard should not close from accidental mobile backdrop taps.'
 );
 assert(
-  /PbkDataSource[\s\S]*endpoint="GET \/api\/replies\/templates"[\s\S]*status="ships"/.test(campaigns),
+  /PbkDataSource[\s\S]*endpoint="GET \/api\/replies\/templates"[\s\S]*status="ships"/.test(
+    campaigns
+  ),
   'Campaign template step must mark GET /api/replies/templates as a shipped data source.'
 );
 assert(
-  /PbkDataSource[\s\S]*endpoint="GET \/api\/campaigns\/templates\/ranked"[\s\S]*status="ships"/.test(campaigns),
+  /PbkDataSource[\s\S]*endpoint="GET \/api\/campaigns\/templates\/ranked"[\s\S]*status="ships"/.test(
+    campaigns
+  ),
   'Campaign template step must mark ranked campaign-template wiring as shipped.'
 );
-assert(!/SAMPLE_CAMPAIGNS|MOCK_CAMPAIGNS|probate-warmup-q2|absentee-akron-batch/.test(campaigns), 'Campaigns page must not port prototype mock campaign rows.');
+assert(
+  !/SAMPLE_CAMPAIGNS|MOCK_CAMPAIGNS|probate-warmup-q2|absentee-akron-batch/.test(campaigns),
+  'Campaigns page must not port prototype mock campaign rows.'
+);
 
-assert(/export\s+async\s+function\s+fetchReplyTemplatesRequest/.test(runtimeBridge), 'runtimeBridge must expose fetchReplyTemplatesRequest.');
-assert(/export\s+async\s+function\s+fetchCampaignRankedTemplatesRequest/.test(runtimeBridge), 'runtimeBridge must expose fetchCampaignRankedTemplatesRequest.');
-assert(/\/api\/replies\/templates/.test(runtimeBridge), 'fetchReplyTemplatesRequest must target GET /api/replies/templates.');
-assert(dataMap.includes('/api/replies/templates'), 'Bridge data map must document the campaign wizard template source.');
+assert(
+  /export\s+async\s+function\s+fetchReplyTemplatesRequest/.test(runtimeBridge),
+  'runtimeBridge must expose fetchReplyTemplatesRequest.'
+);
+assert(
+  /export\s+async\s+function\s+fetchCampaignRankedTemplatesRequest/.test(runtimeBridge),
+  'runtimeBridge must expose fetchCampaignRankedTemplatesRequest.'
+);
+assert(
+  /\/api\/replies\/templates/.test(runtimeBridge),
+  'fetchReplyTemplatesRequest must target GET /api/replies/templates.'
+);
+assert(
+  dataMap.includes('/api/replies/templates'),
+  'Bridge data map must document the campaign wizard template source.'
+);
 assert(
   /export type CampaignsResponse[\s\S]*source\?: string[\s\S]*generatedAt\?: string[\s\S]*summary\?:/.test(
     runtimeBridge
@@ -99,6 +130,40 @@ assert(
   'Campaign card and table approval controls must share one status/pending-action predicate.'
 );
 assert(
+  /Campaign draft saved; approval still needed/.test(campaigns) &&
+    /Use Request approval from its card after the approval board is reachable/.test(campaigns),
+  'Campaign wizard must not tell users the save failed after a draft was created but approval queuing failed.'
+);
+assert(
+  /Request operator approval for/.test(campaigns) &&
+    /does not send outreach until it is approved/.test(campaigns),
+  'Existing campaigns should confirm approval requests with non-technical provider-send copy.'
+);
+assert(
+  /Request approval/.test(campaigns) &&
+    /Request pause/.test(campaigns) &&
+    /Request restart/.test(campaigns) &&
+    !/Campaign resumed/.test(campaigns),
+  'Campaign controls must use literal approval and hold labels instead of ambiguous launch/resume language.'
+);
+assert(
+  /function canHoldCampaign/.test(campaigns) &&
+    /function canCancelCampaign/.test(campaigns) &&
+    /runCampaignActionRequest\(campaign\.id,\s*\{\s*action/s.test(campaigns),
+  'Campaign hold/cancel controls must share eligibility predicates and route hold actions through the approval board.'
+);
+assert(
+  /\/active\|running\/i\.test\(String\(campaign\.status \|\| ''\)\)/.test(campaigns) &&
+    !/\/active\|running\|pending\/i\.test\(String\(campaign\.status \|\| ''\)\)/.test(campaigns),
+  'Campaign summary must not double-count pending approval campaigns as active.'
+);
+assert(
+  /leadSourcesFallback/.test(campaigns) &&
+    /No live lead group is loaded yet/.test(campaigns) &&
+    /Refresh lead groups/.test(campaigns),
+  'Campaign wizard must explain the no-lead-source state before an agent can request approval.'
+);
+assert(
   /disabled=\{busyCampaignId === campaign\.id \|\| !approvalAllowed\}/.test(campaigns),
   'Campaign table Approval must be disabled for pending, active, approved, cancelled, or already-queued campaigns.'
 );
@@ -127,9 +192,7 @@ assert(
   'Campaign wizard mobile footer must stay reachable at the bottom.'
 );
 assert(
-  /@media \(max-width: 560px\)[\s\S]*\.pbk-wiz-modal input,[\s\S]*font-size:\s*16px/.test(
-    pbkCss
-  ),
+  /@media \(max-width: 560px\)[\s\S]*\.pbk-wiz-modal input,[\s\S]*font-size:\s*16px/.test(pbkCss),
   'Campaign wizard mobile fields must use 16px text to avoid browser zoom while typing.'
 );
 

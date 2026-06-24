@@ -295,9 +295,9 @@ export function AnalyzerTab({
           </div>
         </div>
         <PbkDataSource
-          endpoint="POST /api/analyzeDeal + local analyzer formulas"
+          endpoint="Ava deal analysis"
           status="ships"
-          note="bridge sync with deterministic local fallback"
+          note="live analysis with local underwriting formulas"
         />
       </div>
 

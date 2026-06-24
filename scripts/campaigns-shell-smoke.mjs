@@ -16,11 +16,23 @@ function assert(condition, message) {
   if (!condition) throw new Error(message);
 }
 
-assert(packageJson.scripts?.['test:campaigns-shell'], 'package.json must expose test:campaigns-shell.');
-assert(/import\('\.\.\/routes\/Campaigns'\)/.test(router), 'Router must lazy-load the Campaigns route.');
+assert(
+  packageJson.scripts?.['test:campaigns-shell'],
+  'package.json must expose test:campaigns-shell.'
+);
+assert(
+  /import\('\.\.\/routes\/Campaigns'\)/.test(router),
+  'Router must lazy-load the Campaigns route.'
+);
 assert(/\{\s*path:\s*'campaigns'/.test(router), 'Router must expose /campaigns.');
-assert(/\/campaigns/.test(sidebar) && /Campaigns/.test(sidebar), 'Sidebar must include Campaigns navigation.');
-assert(/'\/campaigns'/.test(layout), 'ParadiseLayout saved-route validation must allow /campaigns.');
+assert(
+  /\/campaigns/.test(sidebar) && /Campaigns/.test(sidebar),
+  'Sidebar must include Campaigns navigation.'
+);
+assert(
+  /'\/campaigns'/.test(layout),
+  'ParadiseLayout saved-route validation must allow /campaigns.'
+);
 
 [
   'fetchCampaignsRequest',
@@ -33,7 +45,10 @@ assert(/'\/campaigns'/.test(layout), 'ParadiseLayout saved-route validation must
   'runCampaignActionRequest',
   'recordCampaignEventRequest',
 ].forEach((helper) => {
-  assert(new RegExp(`export\\s+async\\s+function\\s+${helper}`).test(runtimeBridge), `${helper} must exist in runtimeBridge.ts.`);
+  assert(
+    new RegExp(`export\\s+async\\s+function\\s+${helper}`).test(runtimeBridge),
+    `${helper} must exist in runtimeBridge.ts.`
+  );
 });
 
 [
@@ -47,8 +62,14 @@ assert(/'\/campaigns'/.test(layout), 'ParadiseLayout saved-route validation must
 });
 
 assert(/CAMPAIGN_WIZARD_DRAFT_KEY/.test(campaigns), 'Campaign wizard must autosave draft state.');
-assert(/fetchCampaignsRequest/.test(campaigns), 'Campaigns page must read live campaign data from the bridge.');
-assert(/createCampaignRequest/.test(campaigns), 'Campaign wizard must create campaigns through the bridge.');
+assert(
+  /fetchCampaignsRequest/.test(campaigns),
+  'Campaigns page must read live campaign data from the bridge.'
+);
+assert(
+  /createCampaignRequest/.test(campaigns),
+  'Campaign wizard must create campaigns through the bridge.'
+);
 assert(
   /SenderIdentitySelect/.test(campaigns) &&
     /campaignSenderQuery/.test(campaigns) &&
@@ -84,7 +105,10 @@ assert(
     campaigns.includes('htmlFor="campaign-follow-up-message"'),
   'Campaign wizard PbkField labels must connect to their inputs.'
 );
-assert(/requestCampaignApprovalRequest/.test(campaigns), 'Campaign launch must request bridge approval.');
+assert(
+  /requestCampaignApprovalRequest/.test(campaigns),
+  'Campaign launch must request bridge approval.'
+);
 assert(
   /const closeWizard = useCallback\(\(\) => setWizardOpen\(false\), \[\]\)/.test(campaigns) &&
     /onClose=\{closeWizard\}/.test(campaigns),
@@ -94,7 +118,10 @@ assert(
   /event\.target === event\.currentTarget/.test(campaigns),
   'Campaign wizard backdrop must close only on a deliberate backdrop press.'
 );
-assert(!/SAMPLE_CAMPAIGNS|MOCK_CAMPAIGNS|Diane Kowalski|Marco Hill|Lena Brooks/.test(campaigns), 'Campaigns page must not ship hardcoded seller/campaign mock data.');
+assert(
+  !/SAMPLE_CAMPAIGNS|MOCK_CAMPAIGNS|Diane Kowalski|Marco Hill|Lena Brooks/.test(campaigns),
+  'Campaigns page must not ship hardcoded seller/campaign mock data.'
+);
 assert(
   /@media \(max-width: 560px\)[\s\S]*?\.pbk-wiz-foot \.nav-btns[\s\S]*?grid-template-columns:\s*repeat\(3[\s\S]*?min-height: 44px/.test(
     styles
@@ -120,6 +147,12 @@ assert(
       bridge
     ),
   'Bridge campaign records and worker sends must preserve the selected sender identity.'
+);
+assert(
+  /active_without_approval/.test(bridge) &&
+    /approvalStatus[\s\S]*approved/.test(bridge) &&
+    /Campaign is active but does not have approved operator approval/.test(bridge),
+  'Campaign worker must re-check approved operator approval before provider writes.'
 );
 
 console.log('campaigns-shell-smoke: ok');

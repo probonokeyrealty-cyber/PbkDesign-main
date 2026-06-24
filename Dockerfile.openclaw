@@ -11,6 +11,29 @@
 # Alpine + glibc-built chromium do not mix; use the Debian slim base so the
 # Sparticuz Chromium binary can find its libc and X11 deps.
 
+FROM node:22-slim AS frontend
+
+WORKDIR /frontend
+
+ENV PUPPETEER_SKIP_DOWNLOAD=true
+ENV NPM_CONFIG_FETCH_RETRIES=5
+ENV NPM_CONFIG_FETCH_RETRY_MINTIMEOUT=20000
+ENV NPM_CONFIG_FETCH_RETRY_MAXTIMEOUT=120000
+
+COPY package*.json ./
+RUN if [ -f package-lock.json ]; then npm ci --legacy-peer-deps --no-audit --no-fund; else npm install --legacy-peer-deps --no-audit --no-fund; fi
+
+COPY index.html ./index.html
+COPY analyzer.html ./analyzer.html
+COPY index.shell.html ./index.shell.html
+COPY vite.config.ts ./vite.config.ts
+COPY tsconfig.json ./tsconfig.json
+COPY postcss.config.mjs ./postcss.config.mjs
+COPY tailwind.pbk.config.ts ./tailwind.pbk.config.ts
+COPY src ./src
+COPY public ./public
+RUN npm run build
+
 FROM node:22-slim
 
 # Runtime libraries Chrome needs. Sparticuz ships the binary, but the host
@@ -184,8 +207,10 @@ COPY scripts/invoke-rate-limit.mjs ./scripts/invoke-rate-limit.mjs
 COPY scripts/event-bus ./scripts/event-bus
 COPY scripts/property-data-adapter.mjs ./scripts/property-data-adapter.mjs
 COPY scripts/openclaw-local-server.mjs ./scripts/openclaw-local-server.mjs
-COPY index.html ./index.html
-COPY analyzer.html ./analyzer.html
+COPY --from=frontend /frontend/dist/index.html ./index.html
+COPY --from=frontend /frontend/dist/analyzer.html ./analyzer.html
+COPY --from=frontend /frontend/dist/index.shell.html ./index.shell.html
+COPY --from=frontend /frontend/dist/assets ./assets
 COPY public ./public
 COPY contracts ./contracts
 COPY wholesale.agent.md ./wholesale.agent.md

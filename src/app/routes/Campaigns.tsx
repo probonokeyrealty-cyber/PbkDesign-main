@@ -33,7 +33,6 @@ import {
   fetchCampaignsRequest,
   fetchReplyTemplatesRequest,
   fetchSenderIdentitiesRequest,
-  patchCampaignRequest,
   requestCampaignApprovalRequest,
   runCampaignActionRequest,
   syncSenderIdentitiesRequest,
@@ -126,8 +125,16 @@ function statusClass(status = '') {
   return 'draft';
 }
 
+function campaignActionError(error: unknown, fallback: string) {
+  return error instanceof Error && error.message ? error.message : fallback;
+}
+
+function normalizedCampaignStatus(campaign: CampaignRecord | { status?: string }) {
+  return String(campaign.status || 'draft').toLowerCase();
+}
+
 function canRequestCampaignApproval(campaign: CampaignRecord) {
-  const status = String(campaign.status || 'draft').toLowerCase();
+  const status = normalizedCampaignStatus(campaign);
   if (campaign.pendingAction) return false;
   return ![
     'pending',
@@ -140,6 +147,41 @@ function canRequestCampaignApproval(campaign: CampaignRecord) {
     'failed',
     'rejected',
   ].includes(status);
+}
+
+function canHoldCampaign(campaign: CampaignRecord) {
+  const status = normalizedCampaignStatus(campaign);
+  if (campaign.pendingAction) return false;
+  return ![
+    'pending',
+    'queued',
+    'approval_required',
+    'approved',
+    'completed',
+    'complete',
+    'done',
+    'cancelled',
+    'failed',
+    'rejected',
+  ].includes(status);
+}
+
+function canCancelCampaign(campaign: CampaignRecord) {
+  const status = normalizedCampaignStatus(campaign);
+  if (campaign.pendingAction) return false;
+  return !['cancelled', 'failed', 'rejected', 'completed', 'complete', 'done'].includes(status);
+}
+
+function getCampaignHoldAction(status = '') {
+  const paused = status.toLowerCase() === 'paused';
+  return {
+    action: paused ? 'campaign_resume' : 'campaign_pause',
+    label: paused ? 'Request restart' : 'Request pause',
+    toastTitle: paused ? 'Restart approval requested' : 'Pause approval requested',
+    toastDesc: paused
+      ? 'The approval board owns the restart before provider sends resume.'
+      : 'The approval board owns the pause request before provider state changes.',
+  };
 }
 
 function campaignChannel(campaign: CampaignRecord | Pick<CampaignWizardDraft, 'channel'>) {
@@ -696,7 +738,9 @@ function CampaignCard({
   const normalizedChannel = campaignChannel(campaign);
   const progress = getCampaignProgress(campaign);
   const canRequestApproval = canRequestCampaignApproval(campaign);
-  const nextHoldStatus = status.toLowerCase() === 'paused' ? 'draft' : 'paused';
+  const holdAllowed = canHoldCampaign(campaign);
+  const cancelAllowed = canCancelCampaign(campaign);
+  const holdAction = getCampaignHoldAction(status);
   const sentLabel =
     normalizedChannel === 'call' ? 'Dialed' : normalizedChannel === 'sms' ? 'Sent' : 'Sent';
   const replyLabel = normalizedChannel === 'call' ? 'Verbal' : 'Replies';
@@ -790,20 +834,20 @@ function CampaignCard({
           onClick={() => onRequestApproval(campaign)}
         >
           <ShieldCheck size={14} />
-          Approval
+          Request approval
         </PbkButton>
         <PbkButton
           size="sm"
           variant="ghost"
-          disabled={busy || status.toLowerCase() === 'cancelled'}
-          onClick={() => onPatchStatus(campaign, nextHoldStatus)}
+          disabled={busy || !holdAllowed}
+          onClick={() => onPatchStatus(campaign, holdAction.action)}
         >
-          {nextHoldStatus === 'paused' ? 'Pause' : 'Resume'}
+          {holdAction.label}
         </PbkButton>
         <PbkButton
           size="sm"
           variant="danger"
-          disabled={busy || status.toLowerCase() === 'cancelled'}
+          disabled={busy || !cancelAllowed}
           onClick={() => onCancel(campaign)}
           aria-label={`Cancel campaign ${campaign.name || campaign.id}`}
         >
@@ -973,8 +1017,10 @@ function CampaignsTableView({
       {campaigns.map((campaign) => {
         const status = String(campaign.status || 'draft');
         const progress = getCampaignProgress(campaign);
-        const nextHoldStatus = status.toLowerCase() === 'paused' ? 'draft' : 'paused';
+        const holdAction = getCampaignHoldAction(status);
         const approvalAllowed = canRequestCampaignApproval(campaign);
+        const holdAllowed = canHoldCampaign(campaign);
+        const cancelAllowed = canCancelCampaign(campaign);
         return (
           <div className="pbk-camp-table-row" role="row" key={campaign.id}>
             <div className="name">
@@ -1004,21 +1050,31 @@ function CampaignsTableView({
                     : 'Campaign already has approval or cannot be started.'
                 }
               >
-                Approval
+                Request approval
               </button>
               <button
                 type="button"
                 className="chip-btn"
-                disabled={busyCampaignId === campaign.id}
-                onClick={() => onPatchStatus(campaign, nextHoldStatus)}
+                disabled={busyCampaignId === campaign.id || !holdAllowed}
+                onClick={() => onPatchStatus(campaign, holdAction.action)}
+                title={
+                  holdAllowed
+                    ? undefined
+                    : 'Campaign has a pending approval, is complete, or cannot be changed.'
+                }
               >
-                {nextHoldStatus === 'paused' ? 'Pause' : 'Resume'}
+                {holdAction.label}
               </button>
               <button
                 type="button"
                 className="chip-btn"
-                disabled={busyCampaignId === campaign.id}
+                disabled={busyCampaignId === campaign.id || !cancelAllowed}
                 onClick={() => onCancel(campaign)}
+                title={
+                  cancelAllowed
+                    ? undefined
+                    : 'Campaign has a pending approval, is complete, or already stopped.'
+                }
               >
                 Cancel
               </button>
@@ -1063,6 +1119,7 @@ function CampaignWizardPane({ active, children }: { active: boolean; children: R
 function CampaignWizard({
   open,
   sources,
+  leadSourcesFallback,
   templates,
   templateStatus,
   draft,
@@ -1073,11 +1130,13 @@ function CampaignWizard({
   onChange,
   onRefreshTemplates,
   onRefreshSenders,
+  onRefreshSources,
   onClose,
   onSubmit,
 }: {
   open: boolean;
   sources: CampaignLeadSource[];
+  leadSourcesFallback: boolean;
   templates: Record<string, ReplyTemplateRecord> | null;
   templateStatus: TemplateStatus;
   draft: CampaignWizardDraft;
@@ -1088,6 +1147,7 @@ function CampaignWizard({
   onChange: (draft: CampaignWizardDraft) => void;
   onRefreshTemplates: () => void;
   onRefreshSenders: () => void;
+  onRefreshSources: () => void;
   onClose: () => void;
   onSubmit: (mode: WizardMode) => void;
 }) {
@@ -1127,6 +1187,9 @@ function CampaignWizard({
     }
     if (step === 2 && !draft.leadSource.trim()) {
       return 'Choose a lead source before continuing.';
+    }
+    if (step === 2 && leadSourcesFallback) {
+      return 'No live lead group is loaded yet. Save a draft for now, then request approval after leads sync.';
     }
     if (step === 3 && !draft.firstMessage.trim()) {
       return 'Add the first seller-facing message before continuing.';
@@ -1278,6 +1341,26 @@ function CampaignWizard({
               Choose <em>lead source</em>.
             </h3>
             <p>Lead groups come from the bridge, not from prototype samples.</p>
+            {leadSourcesFallback && (
+              <PbkPanel className="border-amber-400/30 bg-amber-950/20 p-4">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <span className="text-sm text-amber-100">
+                    No synced lead group is available yet. Save a draft, then request approval once
+                    the live lead list is loaded.
+                  </span>
+                  <PbkButton
+                    type="button"
+                    size="sm"
+                    variant="ghost"
+                    disabled={Boolean(saving)}
+                    onClick={onRefreshSources}
+                  >
+                    <RefreshCw size={13} />
+                    Refresh lead groups
+                  </PbkButton>
+                </div>
+              </PbkPanel>
+            )}
             <div className="pbk-source-list">
               {sources.map((item) => (
                 <button
@@ -1737,7 +1820,7 @@ export function Campaigns() {
 
   const summary = useMemo(() => {
     const active = campaigns.filter((campaign) =>
-      /active|running|pending/i.test(String(campaign.status || ''))
+      /active|running/i.test(String(campaign.status || ''))
     ).length;
     const draftCount = campaigns.filter((campaign) =>
       /draft/i.test(String(campaign.status || ''))
@@ -1780,15 +1863,32 @@ export function Campaigns() {
         throw new Error(response.error || response.verbiage || 'Campaign save failed.');
       }
       if (mode === 'approval') {
-        const approvalResponse = await requestCampaignApprovalRequest(response.campaign.id, {
-          requestedAction: 'start_campaign',
-          notes: draft.notes || `Start ${draft.name}`,
-          actor: 'PBK React shell',
-        });
-        if (!approvalResponse.ok) {
-          throw new Error(
-            approvalResponse.error || approvalResponse.verbiage || 'Approval request failed.'
-          );
+        try {
+          const approvalResponse = await requestCampaignApprovalRequest(response.campaign.id, {
+            requestedAction: 'start_campaign',
+            notes: draft.notes || `Start ${draft.name}`,
+            actor: 'PBK React shell',
+          });
+          if (!approvalResponse.ok) {
+            throw new Error(
+              approvalResponse.error || approvalResponse.verbiage || 'Approval request failed.'
+            );
+          }
+        } catch (approvalError) {
+          clearDraft();
+          setDraft(DEFAULT_DRAFT);
+          setWizardOpen(false);
+          await loadCampaigns();
+          showUiToast({
+            tone: 'warning',
+            critical: true,
+            title: 'Campaign draft saved; approval still needed',
+            desc: `${response.campaign.name || draft.name || 'Campaign'} is saved once. Use Request approval from its card after the approval board is reachable. ${campaignActionError(
+              approvalError,
+              'Approval request failed.'
+            )}`,
+          });
+          return;
         }
       }
       clearDraft();
@@ -1818,12 +1918,21 @@ export function Campaigns() {
 
   const requestApproval = async (campaign: CampaignRecord) => {
     if (!campaign.id) return;
+    const confirmed = window.confirm(
+      `Request operator approval for "${campaign.name || campaign.id}"? This queues the campaign for human review and does not send outreach until it is approved.`
+    );
+    if (!confirmed) return;
     setBusyCampaignId(campaign.id);
     try {
-      await requestCampaignApprovalRequest(campaign.id, {
+      const approvalResponse = await requestCampaignApprovalRequest(campaign.id, {
         requestedAction: 'start_campaign',
         actor: 'PBK React shell',
       });
+      if (!approvalResponse.ok) {
+        throw new Error(
+          approvalResponse.error || approvalResponse.verbiage || 'Approval request failed.'
+        );
+      }
       await loadCampaigns();
       showUiToast({
         tone: 'success',
@@ -1835,35 +1944,37 @@ export function Campaigns() {
         tone: 'error',
         critical: true,
         title: 'Approval request failed',
-        desc:
-          actionError instanceof Error ? actionError.message : 'The bridge rejected the request.',
+        desc: campaignActionError(actionError, 'The bridge rejected the request.'),
       });
     } finally {
       setBusyCampaignId('');
     }
   };
 
-  const patchStatus = async (campaign: CampaignRecord, nextStatus: string) => {
+  const patchStatus = async (campaign: CampaignRecord, action: string) => {
     if (!campaign.id) return;
+    const holdAction = getCampaignHoldAction(String(campaign.status || 'draft'));
     setBusyCampaignId(campaign.id);
     try {
-      await patchCampaignRequest(campaign.id, {
-        status: nextStatus,
+      const response = await runCampaignActionRequest(campaign.id, {
+        action,
         actor: 'PBK React shell',
       });
+      if (!response.ok) {
+        throw new Error(response.error || response.verbiage || 'Campaign action failed.');
+      }
       await loadCampaigns();
       showUiToast({
         tone: 'success',
-        title: nextStatus === 'paused' ? 'Campaign paused' : 'Campaign resumed',
-        desc: campaign.name || campaign.id,
+        title: holdAction.toastTitle,
+        desc: `${campaign.name || campaign.id}. ${holdAction.toastDesc}`,
       });
     } catch (actionError) {
       showUiToast({
         tone: 'error',
         critical: true,
-        title: 'Campaign update failed',
-        desc:
-          actionError instanceof Error ? actionError.message : 'The bridge rejected the update.',
+        title: 'Campaign approval action failed',
+        desc: campaignActionError(actionError, 'The bridge rejected the update.'),
       });
     } finally {
       setBusyCampaignId('');
@@ -1891,8 +2002,7 @@ export function Campaigns() {
         tone: 'error',
         critical: true,
         title: 'Campaign cancel failed',
-        desc:
-          actionError instanceof Error ? actionError.message : 'The bridge rejected the action.',
+        desc: campaignActionError(actionError, 'The bridge rejected the action.'),
       });
     } finally {
       setBusyCampaignId('');
@@ -2067,6 +2177,7 @@ export function Campaigns() {
         sources={
           sources.length ? sources : [{ id: 'all-imports', label: 'All imported leads', count: 0 }]
         }
+        leadSourcesFallback={!sources.length}
         templates={templates}
         templateStatus={templateStatus}
         draft={draft}
@@ -2077,6 +2188,7 @@ export function Campaigns() {
         onChange={setDraft}
         onRefreshTemplates={() => void loadTemplates(draft.channel)}
         onRefreshSenders={() => void loadSenderIdentities(true)}
+        onRefreshSources={() => void loadCampaigns()}
         onClose={closeWizard}
         onSubmit={(mode) => void handleWizardSubmit(mode)}
       />

@@ -264,32 +264,46 @@ export function DealAnalyzerCommandHeader({
 export function DealAnalyzerMobileRail({
   deal,
   selectedPath,
+  analyzeStatus,
   onOpenSnapshot,
   onOpenWorkflow,
   onAnalyze,
   onTabChange,
 }: Pick<
   DealAnalyzerChromeProps,
-  'deal' | 'selectedPath' | 'onOpenSnapshot' | 'onOpenWorkflow' | 'onAnalyze' | 'onTabChange'
+  | 'deal'
+  | 'selectedPath'
+  | 'analyzeStatus'
+  | 'onOpenSnapshot'
+  | 'onOpenWorkflow'
+  | 'onAnalyze'
+  | 'onTabChange'
 >) {
   return (
     <div className="pbk-analyzer-mobile-rail" aria-label="Deal analyzer mobile actions">
-      <button type="button" aria-label="Open analyzer snapshot" onClick={onOpenSnapshot}>
-        <PanelLeft size={16} />
-        <span>Snapshot</span>
-      </button>
-      <button type="button" aria-label="Analyze deal" className="is-primary" onClick={onAnalyze}>
-        <BarChart3 size={16} />
-        <span>{deal.isAnalyzed ? 'Refresh' : 'Analyze'}</span>
-      </button>
-      <button type="button" aria-label="Open Call Mode" onClick={() => onTabChange('callmode')}>
-        <PhoneCall size={16} />
-        <span>Call</span>
-      </button>
-      <button type="button" aria-label="Open analyzer workflow" onClick={onOpenWorkflow}>
-        <Workflow size={16} />
-        <span>{getPathLabel(selectedPath)}</span>
-      </button>
+      <div className="pbk-analyzer-mobile-rail-actions">
+        <button type="button" aria-label="Open analyzer snapshot" onClick={onOpenSnapshot}>
+          <PanelLeft size={16} />
+          <span>Snapshot</span>
+        </button>
+        <button type="button" aria-label="Analyze deal" className="is-primary" onClick={onAnalyze}>
+          <BarChart3 size={16} />
+          <span>{deal.isAnalyzed ? 'Refresh' : 'Analyze'}</span>
+        </button>
+        <button type="button" aria-label="Open Call Mode" onClick={() => onTabChange('callmode')}>
+          <PhoneCall size={16} />
+          <span>Call</span>
+        </button>
+        <button type="button" aria-label="Open analyzer workflow" onClick={onOpenWorkflow}>
+          <Workflow size={16} />
+          <span>{getPathLabel(selectedPath)}</span>
+        </button>
+      </div>
+      {analyzeStatus && (
+        <div className="pbk-analyzer-mobile-status" role="status">
+          {analyzeStatus}
+        </div>
+      )}
     </div>
   );
 }

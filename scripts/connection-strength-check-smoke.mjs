@@ -119,6 +119,12 @@ assert(
   renderDoctorSource.includes(".replace(/rnd_[A-Za-z0-9_-]+/g, 'rnd_[redacted]')"),
   'Render doctor must continue redacting Render API keys from diagnostic output.'
 );
+assert(
+  renderDoctorSource.includes('collectRenderLogRecords') &&
+    renderDoctorSource.includes('render_recent_error_logs_present') &&
+    renderDoctorSource.includes('errorLogCount'),
+  'Render doctor must fail or warn when a successful error-log query returns records.'
+);
 
 assert.equal(
   packageJson.scripts?.['test:connection-strength'],

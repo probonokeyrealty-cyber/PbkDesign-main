@@ -51,6 +51,13 @@ n8n-lite
 !contracts/**
 !index.html
 !analyzer.html
+!index.shell.html
+!vite.config.ts
+!tsconfig.json
+!postcss.config.mjs
+!tailwind.pbk.config.ts
+!src
+!src/**
 !public
 !public/**
 

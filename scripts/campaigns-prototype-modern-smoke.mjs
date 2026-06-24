@@ -152,6 +152,34 @@ assert(
     /runCampaignActionRequest\(campaign\.id,\s*\{\s*action/s.test(campaigns),
   'Campaign hold/cancel controls must share eligibility predicates and route hold actions through the approval board.'
 );
+const executeApprovedCampaignStart = bridge.indexOf('async function executeApprovedCampaign');
+const executeApprovedCampaignEnd = bridge.indexOf('async function applyApprovedPromptPatch', executeApprovedCampaignStart);
+const executeApprovedCampaignBody =
+  executeApprovedCampaignStart >= 0 && executeApprovedCampaignEnd > executeApprovedCampaignStart
+    ? bridge.slice(executeApprovedCampaignStart, executeApprovedCampaignEnd)
+    : '';
+assert(
+  /function normalizeCampaignApprovalAction/.test(bridge) &&
+    /async function applyApprovedCampaignLifecycleAction/.test(bridge),
+  'Bridge must normalize approved campaign actions before replaying approval cards.'
+);
+assert(
+  /previousCampaignStatus,/.test(bridge) &&
+    /pendingPreviousStatus:\s*previousCampaignStatus/.test(bridge),
+  'Campaign approvals must preserve the status they will return to after non-launch approval actions.'
+);
+assert(
+  executeApprovedCampaignBody.indexOf('applyApprovedCampaignLifecycleAction') >= 0 &&
+    executeApprovedCampaignBody.indexOf('applyApprovedCampaignLifecycleAction') <
+      executeApprovedCampaignBody.indexOf('state.campaignExecutions'),
+  'Campaign pause/resume approvals must be applied before provider launch/execution replay.'
+);
+assert(
+  /campaign_pause:[\s\S]*status:\s*'paused'/.test(bridge) &&
+    /campaign_resume:[\s\S]*status:\s*'active'/.test(bridge) &&
+    /providerAttempted:\s*false/.test(bridge),
+  'Approved pause/restart campaign actions must update campaign state without creating a provider execution.'
+);
 assert(
   /\/active\|running\/i\.test\(String\(campaign\.status \|\| ''\)\)/.test(campaigns) &&
     !/\/active\|running\|pending\/i\.test\(String\(campaign\.status \|\| ''\)\)/.test(campaigns),

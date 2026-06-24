@@ -37,6 +37,29 @@ assert.match(
   /prepare a proposal/i,
   'Router should preserve the operator command.'
 );
+assert.equal(
+  proposal.params.requiresApproval,
+  true,
+  'Classified business workflow params should carry approval awareness into direct tool calls.'
+);
+
+[
+  '<@UAVA123> launch probate campaign tomorrow',
+  '<@UAVA123> pause the probate campaign',
+  '<@UAVA123> start outreach to all imported leads',
+  '<@UAVA123> approve campaign batch',
+].forEach((text) => {
+  const route = classifySlackMentionIntent({
+    text,
+    user: 'UFOUNDER',
+    channel: 'CDEALS',
+    ts: '1717000000.000150',
+  });
+  assert.equal(route.toolName, 'routeAdminCommand', `${text} should route to the admin command router.`);
+  assert.equal(route.requiresApproval, true, `${text} should be approval-aware.`);
+  assert.equal(route.params.requiresApproval, true, `${text} should pass requiresApproval in params.`);
+  assert.equal(route.params.approvalRequired, true, `${text} should pass approvalRequired in params.`);
+});
 
 const status = classifySlackMentionIntent({
   text: '<@UAVA123> what needs my attention today?',

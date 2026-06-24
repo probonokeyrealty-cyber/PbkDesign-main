@@ -45652,6 +45652,30 @@ function normalizeCampaignStatus(value = 'draft') {
   return 'draft';
 }
 
+function normalizeCampaignApprovalAction(approval = {}) {
+  const metadata = approval.metadata && typeof approval.metadata === 'object' ? approval.metadata : {};
+  const raw = String(
+    approval.approvalAction ||
+      approval.action ||
+      metadata.requestedAction ||
+      metadata.action ||
+      metadata.approvalAction ||
+      ''
+  )
+    .trim()
+    .toLowerCase()
+    .replace(/[\s-]+/g, '_');
+  if (!raw || ['start', 'launch', 'activate', 'send', 'start_campaign', 'campaign_start', 'campaign_launch', 'launch_campaign', 'campaign_activate'].includes(raw)) return 'start_campaign';
+  if (['pause', 'hold', 'pause_campaign', 'campaign_pause'].includes(raw)) return 'campaign_pause';
+  if (['resume', 'restart', 'unpause', 'resume_campaign', 'campaign_resume', 'restart_campaign', 'campaign_restart'].includes(raw)) return 'campaign_resume';
+  if (['archive', 'archive_campaign', 'campaign_archive'].includes(raw)) return 'campaign_archive';
+  if (['cancel', 'cancel_campaign', 'campaign_cancel'].includes(raw)) return 'campaign_cancel';
+  if (['add_leads', 'add_lead', 'campaign_add_leads', 'campaign_add_lead'].includes(raw)) return 'campaign_add_leads';
+  if (['remove_lead', 'remove_leads', 'campaign_remove_lead', 'campaign_remove_leads'].includes(raw)) return 'campaign_remove_lead';
+  if (['edit_template', 'update_template', 'campaign_edit_template', 'campaign_update_template'].includes(raw)) return 'campaign_edit_template';
+  return raw.startsWith('campaign_') ? raw : `campaign_${raw}`;
+}
+
 function normalizeApprovalDecisionStatus(value = 'approved') {
   const raw = String(value || 'approved')
     .trim()
@@ -46352,6 +46376,7 @@ async function requestCampaignApproval(campaignId = '', params = {}) {
   }
   const selectedLeads = getCampaignLeads(campaignId).map(normalizeCampaignLead);
   const action = params.requestedAction || params.approvalAction || 'start_campaign';
+  const previousCampaignStatus = normalizeCampaignStatus(campaign.status || 'draft');
   const providerConfig = getCampaignProviderConfig({
     ...campaign,
     ...params,
@@ -46369,6 +46394,7 @@ async function requestCampaignApproval(campaignId = '', params = {}) {
       requestedAction: action,
       campaignId: campaign.id,
       campaignName: campaign.name,
+      previousCampaignStatus,
       campaignChannel: campaign.channel,
       campaignProvider: campaign.provider || getCampaignProvider(campaign.channel),
       templateId: campaign.templateId || '',
@@ -46392,6 +46418,7 @@ async function requestCampaignApproval(campaignId = '', params = {}) {
     approvalId: approval.id,
     approvalStatus: 'pending',
     pendingAction: action,
+    pendingPreviousStatus: previousCampaignStatus,
     updatedAt: isoNow(),
   };
   upsertById(state, 'campaigns', nextCampaign);
@@ -47240,6 +47267,177 @@ async function createInstantlyCampaignForApproval({ approval = {}, leads = [] } 
   };
 }
 
+async function applyApprovedCampaignLifecycleAction(approval = {}, options = {}) {
+  const action = normalizeCampaignApprovalAction(approval);
+  if (action === 'start_campaign') return null;
+  const supportedActions = new Set([
+    'campaign_pause',
+    'campaign_resume',
+    'campaign_archive',
+    'campaign_cancel',
+    'campaign_add_leads',
+    'campaign_remove_lead',
+    'campaign_edit_template',
+  ]);
+  if (!supportedActions.has(action)) return null;
+  const metadata = approval.metadata && typeof approval.metadata === 'object' ? approval.metadata : {};
+  const campaignId = String(metadata.campaignId || metadata.campaign_id || approval.campaignId || '').trim();
+  const campaign = campaignId ? (state.campaigns || []).find((item) => item.id === campaignId) : null;
+  if (!campaign) {
+    return {
+      ok: false,
+      result: 'campaign_not_found',
+      verbiage: 'Campaign approval could not be applied',
+      error: 'The approved campaign action no longer matches an existing campaign.',
+      action,
+    };
+  }
+
+  const previousStatus = normalizeCampaignStatus(
+    metadata.previousCampaignStatus ||
+      campaign.pendingPreviousStatus ||
+      campaign.status ||
+      'active'
+  );
+  const fallbackStatus = ['pending', 'queued', 'approval_required'].includes(previousStatus)
+    ? 'active'
+    : previousStatus;
+  const actionConfig = {
+    campaign_pause: {
+      status: 'paused',
+      result: 'campaign_paused',
+      verbiage: 'Campaign pause approved',
+      eventType: 'campaign_paused',
+      providerStatus: 'paused',
+      auditAction: 'campaign_pause',
+      activityStatus: 'paused',
+      activityText: `Campaign "${campaign.name}" paused after approval.`,
+    },
+    campaign_resume: {
+      status: 'active',
+      result: 'campaign_resumed',
+      verbiage: 'Campaign restart approved',
+      eventType: 'campaign_resumed',
+      providerStatus: 'active',
+      auditAction: 'campaign_resume',
+      activityStatus: 'active',
+      activityText: `Campaign "${campaign.name}" restarted after approval.`,
+    },
+    campaign_archive: {
+      status: 'archived',
+      result: 'campaign_archived',
+      verbiage: 'Campaign archive approved',
+      eventType: 'campaign_archived',
+      providerStatus: 'archived',
+      auditAction: 'campaign_archive',
+      activityStatus: 'archived',
+      activityText: `Campaign "${campaign.name}" archived after approval.`,
+    },
+    campaign_cancel: {
+      status: 'cancelled',
+      result: 'campaign_cancelled',
+      verbiage: 'Campaign cancellation approved',
+      eventType: 'campaign_cancelled',
+      providerStatus: 'cancelled',
+      auditAction: 'campaign_cancel',
+      activityStatus: 'cancelled',
+      activityText: `Campaign "${campaign.name}" cancelled after approval.`,
+    },
+    campaign_add_leads: {
+      status: fallbackStatus,
+      result: 'campaign_change_approved',
+      verbiage: 'Campaign lead changes approved',
+      eventType: 'campaign_leads_approved',
+      providerStatus: fallbackStatus,
+      auditAction: 'campaign_add_leads',
+      activityStatus: 'approved',
+      activityText: `Campaign "${campaign.name}" lead changes approved.`,
+    },
+    campaign_remove_lead: {
+      status: fallbackStatus,
+      result: 'campaign_change_approved',
+      verbiage: 'Campaign lead removal approved',
+      eventType: 'campaign_lead_removal_approved',
+      providerStatus: fallbackStatus,
+      auditAction: 'campaign_remove_lead',
+      activityStatus: 'approved',
+      activityText: `Campaign "${campaign.name}" lead removal approved.`,
+    },
+    campaign_edit_template: {
+      status: fallbackStatus,
+      result: 'campaign_change_approved',
+      verbiage: 'Campaign template changes approved',
+      eventType: 'campaign_template_approved',
+      providerStatus: fallbackStatus,
+      auditAction: 'campaign_edit_template',
+      activityStatus: 'approved',
+      activityText: `Campaign "${campaign.name}" template changes approved.`,
+    },
+  }[action];
+  const now = isoNow();
+  const nextCampaign = {
+    ...campaign,
+    status: actionConfig.status,
+    approvalId: approval.id || campaign.approvalId || '',
+    approvalStatus: 'approved',
+    pendingAction: '',
+    pendingPreviousStatus: '',
+    metrics: {
+      ...calculateCampaignMetrics(campaign),
+      ...(campaign.metrics || {}),
+    },
+    updatedAt: now,
+  };
+  if (action === 'campaign_archive') nextCampaign.archivedAt = now;
+  if (action === 'campaign_cancel') nextCampaign.cancelledAt = now;
+
+  upsertById(state, 'campaigns', nextCampaign);
+  recordCampaignEvent({
+    campaignId,
+    eventType: actionConfig.eventType,
+    channel: nextCampaign.channel,
+    provider: nextCampaign.provider || getCampaignProvider(nextCampaign.channel),
+    providerStatus: actionConfig.providerStatus,
+    payload: {
+      approvalId: approval.id || '',
+      action,
+      previousStatus,
+      nextStatus: actionConfig.status,
+      actor: options.actor || approval.actor || 'Approval worker',
+    },
+  });
+  addActivity(
+    state,
+    makeActivity({
+      actor: options.actor || approval.actor || 'Approval worker',
+      category: 'CAMPAIGN',
+      status: actionConfig.activityStatus,
+      text: actionConfig.activityText,
+      target: campaignId,
+    })
+  );
+  addAdminAudit(state, {
+    id: `audit-campaign-${action}-${approval.id || Date.now()}`,
+    action: actionConfig.auditAction,
+    provider: nextCampaign.provider || getCampaignProvider(nextCampaign.channel),
+    actor: options.actor || approval.actor || 'Approval worker',
+    status: 'complete',
+    summary: actionConfig.activityText,
+    createdAt: now,
+    updatedAt: now,
+  });
+  await persistState(state);
+  await persistCampaignRecord(nextCampaign);
+  return {
+    ok: true,
+    result: actionConfig.result,
+    verbiage: actionConfig.verbiage,
+    action,
+    campaign: nextCampaign,
+    providerAttempted: false,
+  };
+}
+
 async function executeApprovedCampaign(approval = {}, options = {}) {
   if (String(approval.status || '').toLowerCase() !== 'approved') {
     return {
@@ -47249,6 +47447,9 @@ async function executeApprovedCampaign(approval = {}, options = {}) {
       error: 'Campaign execution waits until the approval status is approved.',
     };
   }
+
+  const lifecycleResult = await applyApprovedCampaignLifecycleAction(approval, options);
+  if (lifecycleResult) return lifecycleResult;
 
   const existing = (state.campaignExecutions || []).find((item) => item.approvalId === approval.id);
   if (existing) {

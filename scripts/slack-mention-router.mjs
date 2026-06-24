@@ -86,13 +86,21 @@ export function classifySlackMentionIntent(event = {}) {
     };
   }
 
-  const likelyBusinessWorkflow = has(/\b(proposal|offer|contract|commission|report|send|call|sms|email|docusign|deal|lead|comps|app|tracker|build)\b/i, lower);
+  const likelyBusinessWorkflow = has(
+    /\b(proposal|offer|contract|commission|report|send|call|sms|email|docusign|deal|lead|comps|app|tracker|build|campaign|launch|pause|resume|restart|approve|approval|outreach|enroll|sequence|batch|blast)\b|start outreach/i,
+    lower
+  );
   return {
     ok: true,
     intent: likelyBusinessWorkflow ? 'delegated_workflow' : 'brain_command',
     toolName: 'routeAdminCommand',
     requiresApproval: likelyBusinessWorkflow,
-    params: common,
+    params: {
+      ...common,
+      requiresApproval: likelyBusinessWorkflow,
+      approvalRequired: likelyBusinessWorkflow,
+      requestedApproval: likelyBusinessWorkflow,
+    },
   };
 }
 

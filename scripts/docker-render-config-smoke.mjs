@@ -34,14 +34,14 @@ assert.match(
   /^FROM node:22-slim/m,
   'Docker image must use the Node 22 Debian slim base.'
 );
-expectIncludes(
+assert.match(
   dockerfile,
-  'RUN npm run build',
-  'Docker frontend stage must build Vite shell assets.'
+  /RUN npm run build --ignore-scripts/,
+  'Docker frontend stage must build Vite shell assets without running repo lifecycle hooks.'
 );
 expectIncludes(
   dockerfile,
-  '--ignore-scripts',
+  'npm ci --legacy-peer-deps --ignore-scripts',
   'Docker frontend dependency install must skip git-hook prepare scripts that are not copied into the image.'
 );
 expectIncludes(

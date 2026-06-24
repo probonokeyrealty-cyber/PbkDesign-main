@@ -57924,7 +57924,7 @@ async function handleInternalAvaAssistantChatRequest(request) {
         error: String(analyzeError.message || analyzeError),
         retryable: true,
       };
-      answer = `Analysis failed for ${assistantPlan.toolPlan.params.address}. Retry from the Command Center and I will run it again.`;
+      answer = `I could not finish the analysis for ${assistantPlan.toolPlan.params.address}. Retry it from this chat or the Command Center and I will run it again.`;
     } else {
       toolResult = execution.result;
       qa = execution.qaValidation?.qa || null;
@@ -57932,7 +57932,7 @@ async function handleInternalAvaAssistantChatRequest(request) {
       const arv = Number(toolResult?.analysis?.arv ?? toolResult?.arv ?? 0);
       const mao = Number(toolResult?.analysis?.mao ?? toolResult?.mao ?? 0);
       const profit = Number(toolResult?.analysis?.profit ?? toolResult?.profit ?? 0);
-      answer = [`For ${assistantPlan.toolPlan.params.address}, the analysis is ready.`, arv ? `ARV ${currency(arv)}.` : '', mao ? `MAO ${currency(mao)}.` : '', profit ? `Estimated profit ${currency(profit)}.` : ''].filter(Boolean).join(' ');
+      answer = [`I finished the deal math for ${assistantPlan.toolPlan.params.address}.`, arv ? `ARV ${currency(arv)}.` : '', mao ? `MAO ${currency(mao)}.` : '', profit ? `Estimated profit ${currency(profit)}.` : ''].filter(Boolean).join(' ');
     }
   } else if (assistantPlan.action === 'tool_plan' && assistantPlan.toolPlan?.toolName === 'getApprovals') {
     answer = buildInternalAssistantApprovalAnswer();
@@ -57947,7 +57947,7 @@ async function handleInternalAvaAssistantChatRequest(request) {
     qa = execution.qaValidation?.qa || null;
     safety = execution.safetyValidation || null;
     const recommendation = toolResult?.recommendation || {};
-    answer = [`Nurture Agent recommends ${recommendation.channel || 'sms'} ${recommendation.urgency || 'now'}.`, recommendation.reason ? `Reason: ${recommendation.reason}` : '', 'I can queue an approval-gated sequence when you confirm.'].filter(Boolean).join(' ');
+    answer = [`Best next touch: ${recommendation.channel || 'sms'} ${recommendation.urgency || 'now'}.`, recommendation.reason ? `Reason: ${recommendation.reason}` : '', 'Confirm when you want me to prepare the sequence for approval.'].filter(Boolean).join(' ');
   } else if (assistantPlan.action === 'approval_required' && ['telnyx_call', 'startNurtureSequence'].includes(assistantPlan.toolPlan?.toolName)) {
     const approvalToolName = assistantPlan.toolPlan.toolName;
     toolResult = await invokeToolWithOperatingGuard(approvalToolName, {
@@ -57959,9 +57959,9 @@ async function handleInternalAvaAssistantChatRequest(request) {
     const approvalId = toolResult?.approval?.id || toolResult?.approvalId || '';
     const queued = ['queued_for_approval', 'approval_required'].includes(String(toolResult?.result || toolResult?.outcome || '').toLowerCase());
     if (approvalToolName === 'startNurtureSequence') {
-      answer = queued ? `I queued the approval-gated nurture sequence${approvalId ? ` (${approvalId})` : ''}. Nothing will send until the approval path releases it.` : `I could not queue that approval-gated nurture sequence yet. ${toolResult?.message || ''}`.trim();
+      answer = queued ? `I prepared the nurture sequence for approval${approvalId ? ` (${approvalId})` : ''}. Nothing sends until it is approved.` : `I could not prepare that nurture sequence yet. ${toolResult?.message || ''}`.trim();
     } else {
-      answer = queued ? `I queued the approval-gated call request${approvalId ? ` (${approvalId})` : ''}. Ava will not dial until the approval path releases it.` : `I could not queue that approval-gated call request yet. ${toolResult?.message || ''}`.trim();
+      answer = queued ? `I prepared the call request for approval${approvalId ? ` (${approvalId})` : ''}. Ava will not dial until it is approved.` : `I could not prepare that call request yet. ${toolResult?.message || ''}`.trim();
     }
   } else if (assistantPlan.action === 'tool_plan' && ['runUnifiedAdditiveIntelligence', 'runProviderAugmentedAdditiveIntelligence'].includes(assistantPlan.toolPlan?.toolName)) {
     const additiveToolName = assistantPlan.toolPlan.toolName;
@@ -57982,10 +57982,10 @@ async function handleInternalAvaAssistantChatRequest(request) {
     const nextAction = toolResult?.nextAction || {};
     const coverage = toolResult?.coverage || {};
     const providerAugmentation = toolResult?.providerAugmentation || {};
-    answer = [`Unified intelligence is synced across ${coverage.used || 10}/${coverage.total || 10} additives.`, providerAugmentation.ready !== undefined ? `Provider check: ${providerAugmentation.ready || 0}/${providerAugmentation.configured || 0} configured external providers ready; PBK-native fallback is active.` : '', nextAction.action ? `Next action: ${String(nextAction.action).replace(/^consider_tool:/, 'consider ')}` : '', nextAction.reason ? `Why: ${String(nextAction.reason).slice(0, 260)}` : '', 'Provider writes, desktop actions, and contracts still stay approval-gated.'].filter(Boolean).join(' ');
+    answer = [`Full PBK intelligence check is synced across ${coverage.used || 10}/${coverage.total || 10} layers.`, providerAugmentation.ready !== undefined ? `Provider readiness: ${providerAugmentation.ready || 0}/${providerAugmentation.configured || 0} configured external providers ready; PBK fallback is active.` : '', nextAction.action ? `Next action: ${String(nextAction.action).replace(/^consider_tool:/, 'consider ')}` : '', nextAction.reason ? `Why: ${String(nextAction.reason).slice(0, 260)}` : '', 'Messages, desktop actions, and contracts still wait for approval before anything changes.'].filter(Boolean).join(' ');
   } else if (assistantPlan.toolPlan?.toolName === 'findLead') {
     const lead = findInternalAssistantLead(assistantPlan.toolPlan.params?.query || '');
-    answer = lead ? `Found ${lead.leadName || lead.name || 'lead'}${lead.address ? ` at ${lead.address}` : ''}.` : `I could not find a lead matching "${assistantPlan.toolPlan.params?.query || ''}" in the current runtime snapshot.`;
+    answer = lead ? `I found ${lead.leadName || lead.name || 'that lead'}${lead.address ? ` at ${lead.address}` : ''}.` : `I could not find a lead matching "${assistantPlan.toolPlan.params?.query || ''}" in the current Command Center snapshot.`;
     toolResult = {
       ok: Boolean(lead),
       result: lead ? 'lead_found' : 'lead_not_found',
@@ -57996,7 +57996,7 @@ async function handleInternalAvaAssistantChatRequest(request) {
     toolResult = { ok: true, result: 'runtime_summary' };
   } else if (assistantPlan.action === 'general' && !answer) {
     const brain = answerBrainQuery(state, text);
-    answer = isPublicAvaBrainAnswerSafe(brain?.answer) ? brain.answer : 'I can help with deal analysis, approvals, recent activity, lead lookup, and PBK workflow questions.';
+    answer = isPublicAvaBrainAnswerSafe(brain?.answer) ? brain.answer : 'Tell me the seller, address, or task you want handled and I will help with the next step.';
     toolResult = { ok: true, result: 'brain_answer', citations: brain?.citations || [] };
   }
   if (sanitizedInput.truncated) {

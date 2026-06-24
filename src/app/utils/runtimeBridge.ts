@@ -408,6 +408,24 @@ export type LocalCommandsResponse = {
   error?: string;
 };
 
+export type AvaAssistantChatResponse = {
+  ok: boolean;
+  mode?: string;
+  answer?: string;
+  result?: string;
+  suggestions?: string[];
+  sessionId?: string;
+  usedIntent?: string;
+  assistantAction?: string;
+  toolPlan?: Record<string, unknown> | null;
+  toolResult?: Record<string, unknown> | null;
+  additiveIntelligence?: Record<string, unknown> | null;
+  qa?: Record<string, unknown> | null;
+  safety?: Record<string, unknown> | null;
+  warning?: string;
+  error?: string;
+};
+
 export type GlobalSearchResult = {
   id?: string;
   recordId?: string;
@@ -1849,6 +1867,20 @@ export async function fetchLocalCommandsRequest({
   });
   return bridgeRequest<LocalCommandsResponse>({
     path: `/api/local/commands?${params.toString()}`,
+  });
+}
+
+export async function sendAvaAssistantChatRequest(body: {
+  message: string;
+  sessionId?: string;
+  source?: string;
+  leadId?: string;
+  messages?: Array<{ role?: string; content?: string }>;
+}) {
+  return bridgeRequest<AvaAssistantChatResponse>({
+    method: 'POST',
+    path: '/api/assistant/chat',
+    body,
   });
 }
 

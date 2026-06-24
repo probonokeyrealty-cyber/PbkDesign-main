@@ -108,6 +108,8 @@ const LOCAL_INTENT_EXAMPLES = [
     intent: 'help',
     examples: [
       'what can you do',
+      'what can you help with',
+      'what can you help my agents do',
       'show commands',
       'help me',
       'what are your capabilities',
@@ -117,8 +119,10 @@ const LOCAL_INTENT_EXAMPLES = [
 
 export const ASSISTANT_SYSTEM_PROMPT = `
 You are Ava, PBK Command Center's personal assistant.
-You are warm, concise, useful, and proactive.
+You are warm, concise, useful, and proactive. Speak like a capable operating partner for real estate agents, not a debug console.
 You can help analyze deals, summarize recent activity, find leads, explain PBK workflows, and prepare approval-gated actions.
+Keep internal labels out of normal replies: do not mention OpenClaw, bridge, sidecar, tool plan, provider write, local worker, or implementation details unless the operator explicitly asks for technical support.
+Prefer action-state replies: "I found...", "I queued...", "I'm missing...", "Here's the next clean move...".
 When an operator asks for follow-up by SMS, email, call, or nurture sequence, first consult the Nurture Agent for the best channel, timing, and sequence.
 When an authenticated operator asks about frontier additives, robustness, full-system sync, or "use all intelligence", use the Unified Additive Intelligence layer so stopping-agent, path-search, compact memory, workflow induction, tool discovery, state inference, GUI planning, mission planning, ACP routing, and safety transparency act together.
 Do not pretend to be human. Do not start calls, texts, emails, contracts, payments, or admin/provider writes unless the authenticated Command Center approval flow allows it.
@@ -412,7 +416,7 @@ export function detectAssistantIntent(message = '') {
   );
   if (localIntent) return localIntent;
 
-  if (/\b(what can you do|help|capabilities|commands?)\b/i.test(lower)) {
+  if (/\b(what can you (?:do|help(?:\s+(?:with|my team|my agents))?)|how can you help|help|capabilities|commands?)\b/i.test(lower)) {
     return { intent: 'help', message: text, classifierSource: 'regex' };
   }
 
@@ -495,18 +499,18 @@ export function buildAssistantSuggestions(intent = 'general', { publicMode = tru
     return ['Ask how PBK works', 'Share a property address', 'Request a callback'];
   }
 
-  if (intent === 'analyze_deal') return ['Run deal analysis', 'Check comps', 'Prepare approval'];
+  if (intent === 'analyze_deal') return ['Share the address', 'Run deal math', 'Draft seller question'];
   if (intent === 'approvals')
-    return ['View pending approvals', 'Run heartbeat', 'Open approval board'];
-  if (intent === 'call') return ['Create call approval', 'Check DNC first', 'Find lead'];
+    return ['Show what needs review', 'Summarize approvals', 'Find the related lead'];
+  if (intent === 'call') return ['Prepare call request', 'Find the lead first', 'Write an opener'];
   if (intent === 'nurture_consult')
-    return ['Consult Nurture Agent', 'Start approval-gated sequence', 'Find lead'];
+    return ['Recommend next touch', 'Find the lead', 'Draft the follow-up'];
   if (intent === 'nurture_start')
-    return ['Queue nurture approval', 'Consult timing first', 'Find lead'];
+    return ['Prepare nurture approval', 'Check best timing first', 'Find the lead'];
   if (intent === 'unified_additive_intelligence')
-    return ['Run unified intelligence', 'Check guardrails', 'Plan mission'];
-  if (intent === 'summary') return ['Summarize calls', 'Show hot leads', 'Run heartbeat'];
-  return ['Analyze a deal', 'Check approvals', 'Summarize recent calls'];
+    return ['Run full intelligence', 'Show safest next step', 'Check provider readiness'];
+  if (intent === 'summary') return ['Summarize calls', 'Show hot leads', 'What needs attention'];
+  return ['Find a lead', 'Analyze a deal', 'Draft a follow-up'];
 }
 
 export function planAssistantIntent(detected = {}, options = {}) {
@@ -541,7 +545,7 @@ export function planAssistantIntent(detected = {}, options = {}) {
     return {
       action: 'public_help',
       answer:
-        'I can answer PBK process questions or save property/contact details for the team. Calls, texts, emails, contracts, and private approval data stay inside the approval-gated Command Center.',
+        'Ask me about PBK, selling options, timelines, or what information the team needs. If you want a callback, share the property address and best contact info.',
       suggestions,
       toolPlan: null,
       usedIntent: intent,
@@ -583,8 +587,19 @@ export function planAssistantIntent(detected = {}, options = {}) {
     return {
       action: 'authentication_required',
       answer:
-        'Please authenticate in the PBK Command Center before I access private tools or deal data.',
+        'Sign in to the PBK Command Center first, then I can use private deal data and team tools for you.',
       suggestions: ['Sign in', 'Use public chat safely'],
+      toolPlan: null,
+      usedIntent: intent,
+    };
+  }
+
+  if (!publicMode && intent === 'help') {
+    return {
+      action: 'internal_help',
+      answer:
+        'Tell me what you need in plain English. I can find leads, pull seller context, run deal math, draft follow-ups, summarize calls, prepare approvals, and help decide the next clean seller move.',
+      suggestions,
       toolPlan: null,
       usedIntent: intent,
     };
@@ -594,7 +609,8 @@ export function planAssistantIntent(detected = {}, options = {}) {
     if (!detected.address) {
       return {
         action: 'missing_required_info',
-        answer: 'Send me the street address and I can prepare the deal analysis.',
+        answer:
+          "I'm missing the street address. Send it and I'll run ARV, repairs, MAO, and the next seller question.",
         suggestions,
         toolPlan: null,
         usedIntent: intent,
@@ -602,7 +618,7 @@ export function planAssistantIntent(detected = {}, options = {}) {
     }
     return {
       action: 'tool_plan',
-      answer: `I can analyze ${detected.address} now.`,
+      answer: `I'll run the deal math for ${detected.address} now.`,
       suggestions,
       toolPlan: {
         toolName: 'analyzeDeal',
@@ -618,7 +634,7 @@ export function planAssistantIntent(detected = {}, options = {}) {
   if (!publicMode && intent === 'approvals') {
     return {
       action: 'tool_plan',
-      answer: 'I can pull the current pending approval count for you.',
+      answer: 'I will pull what needs review now.',
       suggestions,
       toolPlan: {
         toolName: 'getApprovals',
@@ -632,7 +648,7 @@ export function planAssistantIntent(detected = {}, options = {}) {
   if (!publicMode && intent === 'call') {
     return {
       action: 'approval_required',
-      answer: `I can prepare a call request for ${detected.phone}, but the actual dial stays approval-gated.`,
+      answer: `I will prepare the call request for ${detected.phone}. Nothing dials until you approve it.`,
       suggestions,
       toolPlan: {
         toolName: 'telnyx_call',
@@ -659,7 +675,7 @@ export function planAssistantIntent(detected = {}, options = {}) {
       if (leadMatch) {
         return {
           action: 'lead_confirmation_required',
-          answer: `I found ${leadMatch.name || 'a likely lead'}${leadMatch.address ? ` at ${leadMatch.address}` : ''}. Confirm this is the lead before I ${intent === 'nurture_start' ? 'queue the nurture sequence for approval' : 'consult the Nurture Agent'}.`,
+          answer: `I found ${leadMatch.name || 'a likely lead'}${leadMatch.address ? ` at ${leadMatch.address}` : ''}. Confirm this is the right lead and I will ${intent === 'nurture_start' ? 'prepare the nurture sequence for approval' : 'recommend the next follow-up'}.`,
           suggestions,
           leadMatch,
           toolPlan: {
@@ -683,7 +699,7 @@ export function planAssistantIntent(detected = {}, options = {}) {
         return {
           action: 'lead_lookup_required',
           answer:
-            `I need to confirm the lead before any nurture action. I can search for "${leadQuery}" and ask you to confirm the best match.`,
+            `I need to confirm the lead first. I can search for "${leadQuery}" and let you pick the right match.`,
           suggestions,
           toolPlan: {
             toolName: 'findLead',
@@ -705,7 +721,7 @@ export function planAssistantIntent(detected = {}, options = {}) {
       return {
         action: 'missing_required_info',
         answer:
-          'Pick a lead first, then I can consult the Nurture Agent on whether SMS, email, or a call is best.',
+          'Pick a lead first, then I can recommend whether SMS, email, or a call is the best next touch.',
         suggestions,
         toolPlan: null,
         usedIntent: intent,
@@ -714,7 +730,8 @@ export function planAssistantIntent(detected = {}, options = {}) {
     if (intent === 'nurture_start') {
       return {
         action: 'approval_required',
-        answer: 'I can queue the nurture sequence for approval now. Provider sends still remain approval-gated.',
+        answer:
+          'I will prepare the nurture sequence for approval now. Nothing sends until the approval path releases it.',
         suggestions,
         toolPlan: {
           toolName: 'startNurtureSequence',
@@ -732,7 +749,7 @@ export function planAssistantIntent(detected = {}, options = {}) {
     }
     return {
       action: 'tool_plan',
-      answer: 'I can consult the Nurture Agent for the best follow-up channel and timing.',
+      answer: 'I will check the best follow-up channel, timing, and wording.',
       suggestions,
       toolPlan: {
         toolName: 'consultNurtureAgent',
@@ -750,7 +767,7 @@ export function planAssistantIntent(detected = {}, options = {}) {
   if (!publicMode && intent === 'lead_lookup') {
     return {
       action: 'tool_plan',
-      answer: `I can look for a lead matching "${detected.query}".`,
+      answer: `I will look for a lead matching "${detected.query}".`,
       suggestions,
       toolPlan: {
         toolName: 'findLead',
@@ -765,7 +782,7 @@ export function planAssistantIntent(detected = {}, options = {}) {
     return {
       action: 'summary_plan',
       answer:
-        'I can summarize recent calls, leads, and approvals from the Command Center snapshot.',
+        'I will summarize the recent calls, leads, and approvals that need attention.',
       suggestions,
       toolPlan: null,
       usedIntent: intent,
@@ -776,7 +793,7 @@ export function planAssistantIntent(detected = {}, options = {}) {
     return {
       action: 'tool_plan',
       answer:
-        'I can run the unified additive intelligence layer across PBK now and return the safest next action.',
+        'I will run the full PBK intelligence check and return the safest next action.',
       suggestions,
       toolPlan: {
         toolName: 'runUnifiedAdditiveIntelligence',

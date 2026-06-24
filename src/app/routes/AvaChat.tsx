@@ -34,11 +34,12 @@ import {
 import { PbkButton, PbkDataSource, PbkEmpty, PbkPulseDot } from '../../components/pbk/index';
 import { useRuntimeSnapshot } from '../hooks/useRuntimeSnapshot';
 import {
-  executeLocalCommandRequest,
   fetchDesktopSidecarStatusRequest,
   fetchLocalCommandsRequest,
   queueLocalCommandRequest,
+  sendAvaAssistantChatRequest,
   updateApprovalDecision,
+  type AvaAssistantChatResponse,
   type DesktopSidecarStatusResponse,
   type LocalCommandRecord,
 } from '../utils/runtimeBridge';
@@ -73,7 +74,6 @@ type AvaCommandAction =
   | 'execute_safe_script'
   | 'search_leads'
   | 'analyze_deal';
-type SubmitLane = 'rest' | 'invoke';
 type HistoryFilter = 'all' | 'active' | 'completed' | 'failed';
 type ConnectionState = 'checking' | 'connected' | 'degraded';
 type AvaSystemStatus = {
@@ -98,14 +98,35 @@ type OperatorMemory = {
   action: AvaCommandAction;
   updatedAt: string;
 };
+type AvaAssistantExchange = {
+  id: string;
+  request: string;
+  answer: string;
+  status: 'completed' | 'failed';
+  createdAt: string;
+  updatedAt: string;
+  suggestions: string[];
+  usedIntent?: string;
+  assistantAction?: string;
+  warning?: string;
+};
 
 const AVA_OPERATOR_MEMORY_KEY = 'pbk:ava-chat:operator-memory';
+const AVA_ASSISTANT_SESSION_KEY = 'pbk:ava-chat:assistant-session';
+const AVA_ASSISTANT_EXCHANGES_KEY = 'pbk:ava-chat:assistant-exchanges';
+const LOCAL_CONTROL_ACTIONS = new Set<AvaCommandAction>([
+  'clickui',
+  'status',
+  'screenshot',
+  'type_text',
+  'execute_safe_script',
+]);
 
 const PBK_COMPANION_ACTIONS: CompanionAction[] = [
   {
     id: 'send-sms',
-    label: 'Send SMS',
-    description: 'Draft a seller text for the manual SMS lane.',
+    label: 'Draft Text',
+    description: 'Write a seller text for review.',
     prompt: 'Draft a concise SMS to this seller using the current PBK context.',
     action: 'send_sms',
     icon: MessageSquare,
@@ -113,8 +134,8 @@ const PBK_COMPANION_ACTIONS: CompanionAction[] = [
   },
   {
     id: 'send-email',
-    label: 'Send Email',
-    description: 'Draft a seller email for the manual email lane.',
+    label: 'Draft Email',
+    description: 'Write a seller email for review.',
     prompt: 'Draft a seller email using the current PBK context and keep it ready to review.',
     action: 'send_email',
     icon: Mail,
@@ -122,8 +143,8 @@ const PBK_COMPANION_ACTIONS: CompanionAction[] = [
   },
   {
     id: 'call-seller',
-    label: 'Call Seller',
-    description: 'Prepare the manual call lane and best opener.',
+    label: 'Prep Call',
+    description: 'Prepare the call and best opener.',
     prompt: 'Prepare a call to this seller and show the best opening line before dialing.',
     action: 'operator_command',
     icon: Phone,
@@ -131,7 +152,7 @@ const PBK_COMPANION_ACTIONS: CompanionAction[] = [
   },
   {
     id: 'open-lead',
-    label: 'Open Lead',
+    label: 'Find Lead',
     description: 'Find the seller record, timeline, and latest context.',
     prompt: 'Open the current seller lead and summarize the latest timeline context.',
     action: 'search_leads',
@@ -149,7 +170,7 @@ const PBK_COMPANION_ACTIONS: CompanionAction[] = [
   },
   {
     id: 'generate-offer',
-    label: 'Generate Offer',
+    label: 'Price Offer',
     description: 'Build a grounded offer from analyzer and seller facts.',
     prompt: 'Generate a seller-safe offer recommendation from analyzer, repairs, and motivation.',
     action: 'analyze_deal',
@@ -176,26 +197,26 @@ const PBK_COMPANION_ACTIONS: CompanionAction[] = [
   },
   {
     id: 'ask-rex',
-    label: 'Ask Rex',
-    description: 'Delegate research without leaving the conversation.',
-    prompt: 'Ask Rex to research the missing context for this seller and return the key findings.',
+    label: 'Research',
+    description: 'Research missing context without leaving the conversation.',
+    prompt: 'Research the missing context for this seller and return the key findings.',
     action: 'llm_query',
     icon: BrainCircuit,
     requiresApproval: false,
   },
   {
     id: 'review-with-qa',
-    label: 'Review with QA',
+    label: 'Review Call',
     description: 'Inspect a bad call, missed objection, or stale control.',
     prompt:
-      'Ask QA to review the latest seller interaction for missed context, repetition, and next fix.',
+      'Review the latest seller interaction for missed context, repetition, and the next fix.',
     action: 'operator_command',
     icon: Bot,
     requiresApproval: false,
   },
   {
     id: 'add-memory',
-    label: 'Add Memory',
+    label: 'Remember Note',
     description: 'Capture a seller fact, operator note, or coaching lesson.',
     prompt: 'Add this as a PBK memory and connect it to the current seller timeline.',
     action: 'operator_command',
@@ -212,38 +233,38 @@ const ACTIONS: Array<{
 }> = [
   {
     id: 'operator_command',
-    label: 'OpenClaw',
-    description: 'Natural-language instruction for the connected local worker.',
+    label: 'Ask Ava',
+    description: 'Tell Ava what you need in plain English.',
     icon: Terminal,
   },
   {
     id: 'clickui',
-    label: 'ClickUI',
-    description: 'Observe and interact with the active desktop interface.',
+    label: 'Look at screen',
+    description: 'Let Ava review the active desktop view after approval.',
     icon: MousePointer2,
   },
   {
     id: 'status',
-    label: 'Status',
-    description: 'Read-only bridge and sidecar health check.',
+    label: 'Check connection',
+    description: 'Confirm Ava can reach the local desktop helper.',
     icon: Radio,
   },
   {
     id: 'screenshot',
-    label: 'Screenshot',
+    label: 'Read my screen',
     description: 'Capture the current desktop after approval.',
     icon: Camera,
   },
   {
     id: 'type_text',
     label: 'Type text',
-    description: 'Approval-gated keyboard automation.',
+    description: 'Prepare typing after approval.',
     icon: Keyboard,
   },
   {
     id: 'llm_query',
-    label: 'Local LLM',
-    description: 'Ask the configured local CPU model.',
+    label: 'Research',
+    description: 'Ask Ava to answer or summarize context.',
     icon: BrainCircuit,
   },
   {
@@ -260,8 +281,8 @@ const ACTIONS: Array<{
   },
   {
     id: 'execute_safe_script',
-    label: 'Script',
-    description: 'Prepare a local script request for approval.',
+    label: 'Approved task',
+    description: 'Prepare a machine task for approval.',
     icon: Terminal,
   },
   {
@@ -417,6 +438,57 @@ function classifyConversationalCommand(command: string, selectedAction: AvaComma
   return { ...match, matched: true };
 }
 
+function createAvaAssistantExchangeId() {
+  if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
+    return `ava-${crypto.randomUUID()}`;
+  }
+  return `ava-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function shouldUseAssistantChatRoute({
+  action,
+  selectedAction,
+  requiresApproval,
+}: {
+  action: AvaCommandAction;
+  selectedAction: AvaCommandAction;
+  requiresApproval: boolean;
+}) {
+  if (LOCAL_CONTROL_ACTIONS.has(action)) return false;
+  if (selectedAction === 'operator_command' && requiresApproval) return false;
+  return true;
+}
+
+function normalizeAssistantSuggestions(value: unknown) {
+  return Array.isArray(value)
+    ? value
+        .map((item) => String(item || '').trim())
+        .filter(Boolean)
+        .slice(0, 4)
+    : [];
+}
+
+function buildAssistantExchange(
+  request: string,
+  response: AvaAssistantChatResponse,
+  fallbackAnswer = ''
+): AvaAssistantExchange {
+  const now = new Date().toISOString();
+  const answer = String(response.answer || response.result || fallbackAnswer || '').trim();
+  return {
+    id: createAvaAssistantExchangeId(),
+    request,
+    answer: answer || 'Ava answered, but no readable message came back.',
+    status: response.ok === false ? 'failed' : 'completed',
+    createdAt: now,
+    updatedAt: now,
+    suggestions: normalizeAssistantSuggestions(response.suggestions),
+    usedIntent: response.usedIntent,
+    assistantAction: response.assistantAction,
+    warning: response.warning,
+  };
+}
+
 function getResultText(command: LocalCommandRecord) {
   if (command.error) return command.error;
   const result = command.result;
@@ -437,7 +509,7 @@ function getResultText(command: LocalCommandRecord) {
       const value = payload?.[key];
       if (typeof value === 'string' && value.trim()) return value.trim();
     }
-    return 'Command completed. Structured preview is below.';
+    return 'Done. The details are below.';
   }
   for (const key of ['message', 'summary', 'output', 'result']) {
     const value = result[key];
@@ -446,7 +518,7 @@ function getResultText(command: LocalCommandRecord) {
   try {
     return JSON.stringify(result, null, 2);
   } catch {
-    return 'Command completed and returned a result.';
+    return 'Done. Ava received a result.';
   }
 }
 
@@ -501,21 +573,21 @@ function getCommandRiskLevel(command: LocalCommandRecord): CommandRiskLevel {
 function getAssistantMessage(command: LocalCommandRecord) {
   const status = String(command.status || 'queued').toLowerCase();
   const result = getResultText(command);
-  if (status === 'completed') return result || 'Done. The local worker completed this command.';
+  if (status === 'completed') return result || 'Done. Ava finished that request.';
   if (status === 'rejected' || status === 'cancelled') {
-    return 'Denied. Ava left this command stopped.';
+    return 'Stopped. Ava will not continue that request.';
   }
   if (FAILED_STATUSES.has(status)) {
     const safeResult = getConversationalResultText(result);
     return safeResult
-      ? `The command did not complete. ${safeResult}`
-      : 'The command did not complete.';
+      ? `Ava could not finish that. ${safeResult}`
+      : 'Ava could not finish that request.';
   }
   if (status === 'approved' || status === 'dispatched' || status === 'running') {
-    return 'Approved. I am waiting for the local worker to finish and I will bring the result back here.';
+    return 'Approved. I am working on it and will bring the result back here.';
   }
   if (command.requiresApproval || status === 'pending_approval') {
-    return `I can do this, but it needs your approval first because ${getReadableRiskReason(command)}.`;
+    return `Review this before I continue because ${getReadableRiskReason(command)}.`;
   }
   return 'I am handling that now and will update this thread when the result is ready.';
 }
@@ -572,12 +644,12 @@ function getAvaSystemStatus({
 
   if (connectionState === 'degraded' || connectionError) {
     hasFailure = true;
-    reasons.push('Bridge or sidecar context is degraded.');
+    reasons.push("Ava's live connection is delayed.");
   }
 
   if (submitError) {
     hasFailure = true;
-    reasons.push('The last Ava command needs attention.');
+    reasons.push('The last Ava request needs attention.');
   }
 
   const failedCommands = commands.filter((command) =>
@@ -585,7 +657,7 @@ function getAvaSystemStatus({
   ).length;
   if (failedCommands > 0) {
     hasFailure = true;
-    reasons.push(`${failedCommands} command${failedCommands === 1 ? '' : 's'} failed.`);
+    reasons.push(`${failedCommands} request${failedCommands === 1 ? '' : 's'} need review.`);
   }
 
   if (pendingApprovals > 0) {
@@ -607,11 +679,12 @@ export function AvaChat() {
   const [listening, setListening] = useState(false);
   const [status, setStatus] = useState<DesktopSidecarStatusResponse | null>(null);
   const [commands, setCommands] = useState<LocalCommandRecord[]>([]);
+  const [assistantExchanges, setAssistantExchanges] = useState<AvaAssistantExchange[]>([]);
+  const [assistantSessionId, setAssistantSessionId] = useState('');
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [action, setAction] = useState<AvaCommandAction>('operator_command');
-  const [requiresApproval, setRequiresApproval] = useState(true);
-  const [submitLane, setSubmitLane] = useState<SubmitLane>('rest');
+  const [requiresApproval, setRequiresApproval] = useState(false);
   const [historyFilter, setHistoryFilter] = useState<HistoryFilter>('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [connectionState, setConnectionState] = useState<ConnectionState>('checking');
@@ -683,6 +756,48 @@ export function AvaChat() {
       .reverse();
   }, [commands, historyFilter, searchQuery]);
 
+  const filteredAssistantExchanges = useMemo(() => {
+    const query = searchQuery.trim().toLowerCase();
+    return assistantExchanges.filter((exchange) => {
+      if (historyFilter === 'active') return false;
+      if (historyFilter === 'failed' && exchange.status !== 'failed') return false;
+      if (historyFilter === 'completed' && exchange.status !== 'completed') return false;
+      if (!query) return true;
+      return [
+        exchange.request,
+        exchange.answer,
+        exchange.usedIntent,
+        exchange.assistantAction,
+        ...exchange.suggestions,
+      ].some((value) =>
+        String(value || '')
+          .toLowerCase()
+          .includes(query)
+      );
+    });
+  }, [assistantExchanges, historyFilter, searchQuery]);
+
+  const conversationItems = useMemo(
+    () =>
+      [
+        ...filteredAssistantExchanges.map((exchange) => ({
+          kind: 'assistant' as const,
+          id: exchange.id,
+          createdAt: exchange.createdAt,
+          exchange,
+        })),
+        ...filteredCommands.map((command) => ({
+          kind: 'command' as const,
+          id: command.id,
+          createdAt: command.createdAt || command.updatedAt || '',
+          command,
+        })),
+      ].sort((a, b) => new Date(a.createdAt || 0).getTime() - new Date(b.createdAt || 0).getTime()),
+    [filteredAssistantExchanges, filteredCommands]
+  );
+
+  const conversationCount = assistantExchanges.length + commands.length;
+
   const load = useCallback(async ({ silent = false }: { silent?: boolean } = {}) => {
     if (loadInFlightRef.current) return;
     loadInFlightRef.current = true;
@@ -702,7 +817,7 @@ export function AvaChat() {
         failures.push(
           sidecarResult.reason instanceof Error
             ? sidecarResult.reason.message
-            : 'Sidecar status is unavailable.'
+            : 'Ava desktop connection is unavailable.'
         );
       }
       if (historyResult.status === 'fulfilled') {
@@ -712,7 +827,7 @@ export function AvaChat() {
         failures.push(
           historyResult.reason instanceof Error
             ? historyResult.reason.message
-            : 'Command history is unavailable.'
+            : 'Ava history is unavailable.'
         );
       }
 
@@ -753,6 +868,52 @@ export function AvaChat() {
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
+    const storedSessionId = String(
+      window.localStorage.getItem(AVA_ASSISTANT_SESSION_KEY) || ''
+    ).trim();
+    if (storedSessionId) setAssistantSessionId(storedSessionId);
+    try {
+      const raw = window.localStorage.getItem(AVA_ASSISTANT_EXCHANGES_KEY);
+      if (!raw) return;
+      const parsed = JSON.parse(raw);
+      if (!Array.isArray(parsed)) return;
+      setAssistantExchanges(
+        parsed
+          .map((item) => ({
+            id: String(item?.id || createAvaAssistantExchangeId()),
+            request: String(item?.request || '').slice(0, 1200),
+            answer: String(item?.answer || '').slice(0, 4000),
+            status: item?.status === 'failed' ? 'failed' : 'completed',
+            createdAt: String(item?.createdAt || item?.updatedAt || new Date().toISOString()),
+            updatedAt: String(item?.updatedAt || item?.createdAt || new Date().toISOString()),
+            suggestions: normalizeAssistantSuggestions(item?.suggestions),
+            usedIntent: String(item?.usedIntent || ''),
+            assistantAction: String(item?.assistantAction || ''),
+            warning: String(item?.warning || ''),
+          }))
+          .filter((item) => item.request && item.answer)
+          .slice(-30)
+      );
+    } catch {
+      window.localStorage.removeItem(AVA_ASSISTANT_EXCHANGES_KEY);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || !assistantSessionId) return;
+    window.localStorage.setItem(AVA_ASSISTANT_SESSION_KEY, assistantSessionId);
+  }, [assistantSessionId]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    window.localStorage.setItem(
+      AVA_ASSISTANT_EXCHANGES_KEY,
+      JSON.stringify(assistantExchanges.slice(-30))
+    );
+  }, [assistantExchanges]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
     const trimmedDraft = draft.trim();
     if (!trimmedDraft) return;
     const nextMemory: OperatorMemory = {
@@ -768,7 +929,7 @@ export function AvaChat() {
     const timeline = timelineRef.current;
     if (!timeline || searchQuery || historyFilter !== 'all') return;
     timeline.scrollTop = timeline.scrollHeight;
-  }, [commands.length, historyFilter, searchQuery]);
+  }, [conversationCount, historyFilter, searchQuery]);
 
   useEffect(() => {
     if (!systemStatus.visible && contextOpen) setContextOpen(false);
@@ -788,11 +949,37 @@ export function AvaChat() {
       setSubmitError('');
 
       let result;
+      let useAssistantChat = false;
       try {
         const routed = classifyConversationalCommand(command, action);
         const nextAction = routed.action;
         const nextRequiresApproval =
           routed.requiresApproval === undefined ? requiresApproval : routed.requiresApproval;
+        useAssistantChat = shouldUseAssistantChatRoute({
+          action: nextAction,
+          selectedAction: action,
+          requiresApproval: nextRequiresApproval,
+        });
+        if (useAssistantChat) {
+          const response = await sendAvaAssistantChatRequest({
+            message: command,
+            sessionId: assistantSessionId || undefined,
+            source: 'ava-chat-page',
+          });
+          if (response.sessionId) setAssistantSessionId(response.sessionId);
+          setAssistantExchanges((current) =>
+            [...current, buildAssistantExchange(command, response)].slice(-30)
+          );
+          setDraft('');
+          setTranscript(command);
+          showUiToast({
+            tone: response.ok === false ? 'warning' : 'success',
+            title: response.ok === false ? 'Ava needs review' : 'Ava answered',
+            desc: response.warning || 'Ava replied in the chat.',
+          });
+          setSubmitting(false);
+          return;
+        }
         const payload = {
           command,
           action: nextAction,
@@ -804,16 +991,29 @@ export function AvaChat() {
           source: 'ava-chat',
           requiresApproval: nextRequiresApproval,
         };
-        result =
-          submitLane === 'invoke'
-            ? await executeLocalCommandRequest(payload)
-            : await queueLocalCommandRequest(payload);
+        result = await queueLocalCommandRequest(payload);
       } catch (err) {
-        const message = err instanceof Error ? err.message : 'Command queue failed.';
+        const message = err instanceof Error ? err.message : 'Ava could not start that request.';
         setSubmitError(message);
+        if (useAssistantChat) {
+          setAssistantExchanges((current) =>
+            [
+              ...current,
+              {
+                id: createAvaAssistantExchangeId(),
+                request: command,
+                answer: message,
+                status: 'failed',
+                createdAt: new Date().toISOString(),
+                updatedAt: new Date().toISOString(),
+                suggestions: ['Try again', 'Ask a simpler question'],
+              },
+            ].slice(-30)
+          );
+        }
         showUiToast({
           tone: 'error',
-          title: 'Ava command failed',
+          title: 'Ava could not start that',
           desc: message,
           critical: true,
         });
@@ -832,8 +1032,8 @@ export function AvaChat() {
       setTranscript(command);
       showUiToast({
         tone: 'success',
-        title: result.result === 'queued_for_approval' ? 'Queued for approval' : 'Command queued',
-        desc: result.message || `Ava handed ${command} to the local command queue.`,
+        title: result.result === 'queued_for_approval' ? 'Ready for your approval' : 'Ava is on it',
+        desc: result.message || 'Ava picked up your request.',
       });
       setSubmitting(false);
 
@@ -841,12 +1041,12 @@ export function AvaChat() {
       if (refreshResults.every((item) => item.status === 'rejected')) {
         showUiToast({
           tone: 'warning',
-          title: 'Command queued; refresh delayed',
-          desc: 'The bridge accepted the command, but its latest status is not available yet.',
+          title: 'Ava started; status is delayed',
+          desc: 'The request was accepted, but the latest update is not available yet.',
         });
       }
     },
-    [action, draft, load, refresh, requiresApproval, submitLane, submitting]
+    [action, assistantSessionId, draft, load, refresh, requiresApproval, submitting]
   );
 
   const handleApprovalDecision = useCallback(
@@ -862,8 +1062,8 @@ export function AvaChat() {
           title: decision === 'approved' ? 'Approved' : 'Denied',
           desc:
             decision === 'approved'
-              ? 'Ava will continue through the guarded local command path.'
-              : 'Ava will leave that command stopped.',
+              ? 'Ava will continue now that you approved it.'
+              : 'Ava will leave that request stopped.',
         });
         await Promise.allSettled([refresh(), load({ silent: true })]);
       } catch (err) {
@@ -952,17 +1152,19 @@ export function AvaChat() {
 
         <div className="grid min-h-0">
           <main className="pbk-ava-chat-main grid min-h-0 grid-rows-[auto_minmax(0,1fr)_auto]">
-            <ConversationToolbar
-              query={searchQuery}
-              onQueryChange={setSearchQuery}
-              filter={historyFilter}
-              onFilterChange={setHistoryFilter}
-            />
+            {conversationCount > 0 && (
+              <ConversationToolbar
+                query={searchQuery}
+                onQueryChange={setSearchQuery}
+                filter={historyFilter}
+                onFilterChange={setHistoryFilter}
+              />
+            )}
 
             <div
               ref={timelineRef}
               className="pbk-ava-chat-thread min-h-0 overflow-y-auto overscroll-contain px-3 py-5 sm:px-6 lg:px-8"
-              aria-label="Ava command conversation"
+              aria-label="Ava conversation"
             >
               <div className="mx-auto w-full max-w-4xl">
                 {connectionError && (
@@ -980,25 +1182,40 @@ export function AvaChat() {
                   </div>
                 )}
 
-                {loading && commands.length === 0 ? (
+                {loading && conversationCount === 0 ? (
                   <ConversationSkeleton />
-                ) : filteredCommands.length ? (
+                ) : conversationItems.length ? (
                   <div className="space-y-7">
-                    {filteredCommands.map((command) => (
-                      <CommandExchange
-                        key={command.id}
-                        command={command}
-                        onReplay={() => replayCommand(command)}
-                        onApprovalDecision={handleApprovalDecision}
-                        decidingApprovalId={decidingApprovalId}
-                      />
-                    ))}
+                    {conversationItems.map((item) =>
+                      item.kind === 'assistant' ? (
+                        <AssistantExchange
+                          key={item.id}
+                          exchange={item.exchange}
+                          onReplay={() => {
+                            setDraft(item.exchange.request);
+                            window.requestAnimationFrame(() => composerRef.current?.focus());
+                          }}
+                          onUseSuggestion={(suggestion) => {
+                            setDraft(suggestion);
+                            window.requestAnimationFrame(() => composerRef.current?.focus());
+                          }}
+                        />
+                      ) : (
+                        <CommandExchange
+                          key={item.id}
+                          command={item.command}
+                          onReplay={() => replayCommand(item.command)}
+                          onApprovalDecision={handleApprovalDecision}
+                          decidingApprovalId={decidingApprovalId}
+                        />
+                      )
+                    )}
                   </div>
-                ) : commands.length ? (
+                ) : conversationCount ? (
                   <PbkEmpty
                     variant="idle"
                     icon={<Search size={24} />}
-                    title="No matching commands"
+                    title="No matching chats"
                     description="Clear the search or choose another status to restore the conversation."
                   />
                 ) : (
@@ -1008,9 +1225,7 @@ export function AvaChat() {
                   />
                 )}
 
-                {submitting && (
-                  <AvaThinkingBubble submitLane={submitLane} actionLabel={selectedAction.label} />
-                )}
+                {submitting && <AvaThinkingBubble />}
               </div>
             </div>
 
@@ -1019,11 +1234,7 @@ export function AvaChat() {
               setDraft={setDraft}
               transcript={transcript}
               action={action}
-              setAction={setAction}
               requiresApproval={requiresApproval}
-              setRequiresApproval={setRequiresApproval}
-              submitLane={submitLane}
-              setSubmitLane={setSubmitLane}
               listening={listening}
               submitting={submitting}
               speechSupported={speechSupported}
@@ -1051,7 +1262,7 @@ export function AvaChat() {
           <div className="max-h-[82dvh] w-full overflow-y-auto rounded-t-2xl border border-[var(--ava-border)] bg-[var(--ava-panel)] shadow-2xl">
             <div className="sticky top-0 z-10 flex items-center justify-between border-b border-[var(--ava-border)] bg-[var(--ava-panel)] px-4 py-3">
               <div>
-                <div className="pbk-eyebrow">Live context</div>
+                <div className="pbk-eyebrow">Ava context</div>
                 <h2 className="font-semibold">What Ava will do next</h2>
               </div>
               <button
@@ -1066,7 +1277,6 @@ export function AvaChat() {
             <AvaContextRail
               action={selectedAction}
               actionIcon={<SelectedActionIcon size={17} />}
-              submitLane={submitLane}
               requiresApproval={requiresApproval}
               pendingApprovals={pendingApprovals}
               status={status}
@@ -1108,7 +1318,7 @@ function AvaIdentityBar({
     ready: 'Ready when you are',
     listening: 'Listening',
     thinking: 'Thinking',
-    working: 'Working with OpenClaw',
+    working: 'Working on your request',
     offline: 'Connection needs attention',
   }[state];
 
@@ -1127,12 +1337,12 @@ function AvaIdentityBar({
 
       <div className="hidden items-stretch divide-x divide-[var(--ava-border)] md:flex">
         <HeaderHealth
-          label="Bridge"
+          label="Ava"
           value={connectionState === 'connected' ? 'Connected' : connectionState}
           healthy={connectionState === 'connected'}
         />
         <HeaderHealth
-          label="Sidecar"
+          label="Desktop"
           value={sidecarConnected ? 'Connected' : 'Waiting'}
           healthy={sidecarConnected}
         />
@@ -1153,7 +1363,7 @@ function AvaIdentityBar({
               systemStatus.tone === 'danger' ? 'is-danger' : 'is-warning',
             ].join(' ')}
             onClick={onOpenContext}
-            aria-label={`Open Ava system details: ${systemStatus.label}`}
+            aria-label={`Open Ava support details: ${systemStatus.label}`}
             title={systemStatus.reasons.join('\n')}
           >
             <Settings2 size={18} />
@@ -1218,7 +1428,7 @@ function ConversationToolbar({
   return (
     <div className="pbk-ava-chat-toolbar flex flex-col gap-2 border-b border-[var(--ava-border)] bg-[var(--ava-bg)] px-3 py-3 sm:flex-row sm:px-5">
       <label className="relative min-w-0 flex-1">
-        <span className="sr-only">Search Ava history</span>
+        <span className="sr-only">Search past chats</span>
         <Search
           size={17}
           className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[var(--ava-text-faint)]"
@@ -1229,7 +1439,7 @@ function ConversationToolbar({
           type="search"
           value={query}
           onChange={(event) => onQueryChange(event.target.value)}
-          placeholder="Search command history"
+          placeholder="Search past chats"
           className="h-11 w-full rounded-lg border border-[var(--ava-border)] bg-[var(--ava-panel)] pl-10 pr-9 text-sm text-[var(--ava-text)] outline-none placeholder:text-[var(--ava-text-faint)] focus:border-[var(--ava-sky)]"
         />
         {query && (
@@ -1244,7 +1454,7 @@ function ConversationToolbar({
         )}
       </label>
       <label className="relative">
-        <span className="sr-only">Filter command history</span>
+        <span className="sr-only">Filter past chats</span>
         <Filter
           size={16}
           className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[var(--ava-text-faint)]"
@@ -1270,13 +1480,7 @@ function ConversationToolbar({
   );
 }
 
-function AvaThinkingBubble({
-  submitLane,
-  actionLabel,
-}: {
-  submitLane: SubmitLane;
-  actionLabel: string;
-}) {
+function AvaThinkingBubble() {
   return (
     <div className="mt-6 flex items-start gap-3" aria-live="polite" role="status">
       <AvaPresenceOrb state="thinking" compact />
@@ -1286,16 +1490,103 @@ function AvaThinkingBubble({
           <span className="text-[var(--ava-text-faint)]">thinking</span>
         </div>
         <div className="pbk-ava-thinking-bubble rounded-[4px_16px_16px_16px] border border-[var(--ava-border)] bg-[var(--ava-panel)] px-4 py-3 text-sm shadow-sm">
-          <span>Ava is preparing the {actionLabel.toLowerCase()} response</span>
+          <span>Ava is checking the next best step</span>
           <span className="pbk-ava-thinking-dots" aria-hidden="true">
             <i />
             <i />
             <i />
           </span>
-          <small>{submitLane === 'invoke' ? 'Invoke tool lane' : 'Bridge queue lane'}</small>
+          <small>Working in this chat</small>
         </div>
       </div>
     </div>
+  );
+}
+
+function AssistantExchange({
+  exchange,
+  onReplay,
+  onUseSuggestion,
+}: {
+  exchange: AvaAssistantExchange;
+  onReplay: () => void;
+  onUseSuggestion: (suggestion: string) => void;
+}) {
+  const failed = exchange.status === 'failed';
+  return (
+    <article className="space-y-3">
+      <div className="flex justify-end">
+        <div className="max-w-[88%] sm:max-w-[72%]">
+          <div className="rounded-[16px_16px_4px_16px] border border-[var(--ava-user-border)] bg-[var(--ava-user-bubble)] px-4 py-3 text-sm leading-6 shadow-sm">
+            <p className="break-words">{exchange.request}</p>
+          </div>
+          <div className="mt-1.5 flex items-center justify-end gap-2 text-[11px] text-[var(--ava-text-faint)]">
+            <span>You</span>
+            <span>{formatRelative(exchange.createdAt)}</span>
+          </div>
+        </div>
+      </div>
+
+      <div className="flex items-start gap-3">
+        <AvaPresenceOrb state={failed ? 'offline' : 'ready'} compact />
+        <div className="min-w-0 max-w-[88%] sm:max-w-[76%]">
+          <div className="mb-1.5 flex items-center gap-2 text-xs">
+            <span className="font-semibold">Ava</span>
+            <span className="text-[var(--ava-text-faint)]">
+              {formatRelative(exchange.updatedAt)}
+            </span>
+          </div>
+          <div
+            className={[
+              'rounded-[4px_16px_16px_16px] border px-4 py-3 text-sm leading-6 shadow-sm',
+              failed
+                ? 'border-[var(--ava-danger-border)] bg-[var(--ava-danger-soft)]'
+                : 'border-[var(--ava-border)] bg-[var(--ava-panel)]',
+            ].join(' ')}
+          >
+            {exchange.warning && (
+              <p className="mb-2 text-xs font-semibold text-[var(--ava-warning)]">
+                {exchange.warning}
+              </p>
+            )}
+            <p className="whitespace-pre-wrap break-words">{exchange.answer}</p>
+            {exchange.suggestions.length > 0 && (
+              <div className="mt-3 flex flex-wrap gap-2">
+                {exchange.suggestions.map((suggestion) => (
+                  <button
+                    key={`${exchange.id}-${suggestion}`}
+                    type="button"
+                    className="rounded-full border border-[var(--ava-border)] bg-[var(--ava-bg)] px-3 py-1.5 text-xs font-semibold text-[var(--ava-text-muted)] transition hover:border-[var(--ava-sky)] hover:text-[var(--ava-text)]"
+                    onClick={() => onUseSuggestion(suggestion)}
+                  >
+                    {suggestion}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+          <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-2 text-xs">
+            <span
+              className={[
+                'inline-flex items-center gap-1.5 font-semibold',
+                failed ? 'text-[var(--ava-danger)]' : 'text-[var(--ava-success)]',
+              ].join(' ')}
+            >
+              {failed ? <AlertTriangle size={14} /> : <CheckCircle2 size={14} />}
+              {failed ? 'Needs review' : 'Answered'}
+            </span>
+            <button
+              type="button"
+              className="inline-flex min-h-8 items-center gap-1.5 rounded-md px-2 font-semibold text-[var(--ava-sky)] transition hover:bg-[var(--ava-sky-soft)]"
+              onClick={onReplay}
+            >
+              <RotateCcw size={14} />
+              Ask again
+            </button>
+          </div>
+        </div>
+      </div>
+    </article>
   );
 }
 
@@ -1365,12 +1656,11 @@ function CommandExchange({
               <div className="pbk-ava-inline-approval mt-3 rounded-xl border border-[var(--ava-warning-border)] bg-[var(--ava-warning-soft)] p-3">
                 <div className="mb-2 flex items-center gap-2 text-[11px] font-semibold text-[var(--ava-warning)]">
                   <ShieldCheck size={15} />
-                  Approval required before Ava continues
+                  Review before Ava continues
                 </div>
                 <p className="mb-3 text-xs leading-5 text-[var(--ava-text-muted)]">
-                  Inline approval request: Ava is paused on this guarded action. Human-sent calls,
-                  SMS, and emails stay in their manual lanes; this approval is only for the
-                  requested automated command.
+                  Ava paused because this could send a message, read your screen, or change
+                  something important. Approve only when the next step looks right.
                 </p>
                 <div className="grid grid-cols-2 gap-2">
                   <PbkButton
@@ -1418,7 +1708,7 @@ function CommandExchange({
                   {actionConfig.label}
                 </span>
                 <span>{riskLevel} risk</span>
-                <span>{command.requiresApproval ? 'Approval guarded' : 'Trusted read-only'}</span>
+                <span>{command.requiresApproval ? 'Needs review' : 'Read-only'}</span>
               </div>
             </details>
           </div>
@@ -1542,11 +1832,7 @@ function AvaComposer({
   setDraft,
   transcript,
   action,
-  setAction,
   requiresApproval,
-  setRequiresApproval,
-  submitLane,
-  setSubmitLane,
   listening,
   submitting,
   speechSupported,
@@ -1561,11 +1847,7 @@ function AvaComposer({
   setDraft: (value: string) => void;
   transcript: string;
   action: AvaCommandAction;
-  setAction: (value: AvaCommandAction) => void;
   requiresApproval: boolean;
-  setRequiresApproval: (value: boolean) => void;
-  submitLane: SubmitLane;
-  setSubmitLane: (value: SubmitLane) => void;
   listening: boolean;
   submitting: boolean;
   speechSupported: boolean;
@@ -1577,7 +1859,6 @@ function AvaComposer({
   onSelectCompanionAction: (item: CompanionAction) => void;
 }) {
   const actionConfig = ACTIONS.find((item) => item.id === action) || ACTIONS[0];
-  const ActionIcon = actionConfig.icon;
   const slashQuery = draft.trimStart().startsWith('/')
     ? draft.trimStart().slice(1).toLowerCase()
     : '';
@@ -1604,19 +1885,13 @@ function AvaComposer({
             </div>
           )}
           <label className="sr-only" htmlFor="ava-command-input">
-            Ask Ava to run a local command
+            Ask Ava anything
           </label>
-          <div className="pbk-ava-chat-action-rail" aria-label="Suggested Ava actions">
-            {PBK_COMPANION_ACTIONS.slice(0, 5).map((item) => {
+          <div className="pbk-ava-chat-action-rail" aria-label="Ava starter prompts">
+            {PBK_COMPANION_ACTIONS.slice(0, 4).map((item) => {
               const QuickIcon = item.icon;
               return (
-                <button
-                  key={item.id}
-                  type="button"
-                  onClick={() => onSelectCompanionAction(item)}
-                  className={action === item.action ? 'active' : ''}
-                  aria-pressed={action === item.action}
-                >
+                <button key={item.id} type="button" onClick={() => onSelectCompanionAction(item)}>
                   <QuickIcon size={14} />
                   <span>{item.label}</span>
                 </button>
@@ -1639,7 +1914,7 @@ function AvaComposer({
             placeholder="Ask Ava anything..."
           />
           {slashCommandsVisible && (
-            <div className="pbk-ava-slash-panel" role="listbox" aria-label="PBK slash commands">
+            <div className="pbk-ava-slash-panel" role="listbox" aria-label="Ava shortcuts">
               {slashMatches.length ? (
                 slashMatches.map((item) => {
                   const Icon = item.icon;
@@ -1660,7 +1935,7 @@ function AvaComposer({
                   );
                 })
               ) : (
-                <div className="pbk-ava-slash-empty">No PBK command matches that shortcut.</div>
+                <div className="pbk-ava-slash-empty">No Ava shortcut matches that.</div>
               )}
             </div>
           )}
@@ -1683,97 +1958,21 @@ function AvaComposer({
                 {listening ? <Square size={17} /> : <Mic size={18} />}
               </button>
 
-              <details className="group relative min-w-0 flex-1 sm:flex-none">
-                <summary className="flex min-h-11 w-full cursor-pointer list-none items-center gap-2 rounded-lg border border-[var(--ava-border)] bg-[var(--ava-panel)] px-3 text-xs font-semibold">
-                  <ActionIcon size={16} />
-                  <span className="min-w-0 flex-1 truncate text-left">{actionConfig.label}</span>
-                  <ChevronDown size={14} className="shrink-0 transition group-open:rotate-180" />
-                </summary>
-                <div className="absolute bottom-[calc(100%+8px)] left-0 z-30 w-[min(320px,calc(100vw-32px))] rounded-xl border border-[var(--ava-border)] bg-[var(--ava-panel-elevated)] p-2 shadow-2xl">
-                  <div role="radiogroup" aria-label="Ava command action" className="grid gap-1">
-                    {ACTIONS.map((item) => {
-                      const Icon = item.icon;
-                      return (
-                        <button
-                          key={item.id}
-                          type="button"
-                          role="radio"
-                          aria-checked={action === item.id}
-                          onClick={(event) => {
-                            setAction(item.id);
-                            event.currentTarget.closest('details')?.removeAttribute('open');
-                          }}
-                          className={[
-                            'flex min-h-11 items-start gap-3 rounded-lg p-2 text-left transition',
-                            action === item.id
-                              ? 'bg-[var(--ava-sky-soft)] text-[var(--ava-text)]'
-                              : 'text-[var(--ava-text-muted)] hover:bg-[var(--ava-hover)]',
-                          ].join(' ')}
-                        >
-                          <Icon size={17} className="mt-0.5 shrink-0" />
-                          <span>
-                            <span className="block text-xs font-semibold">{item.label}</span>
-                            <span className="mt-0.5 block text-[11px] leading-4">
-                              {item.description}
-                            </span>
-                          </span>
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-              </details>
-
-              <details className="group relative hidden sm:block">
-                <summary className="grid size-11 cursor-pointer list-none place-items-center rounded-lg border border-[var(--ava-border)] text-[var(--ava-text-muted)]">
-                  <Settings2 size={17} />
-                  <span className="sr-only">Advanced command settings</span>
-                </summary>
-                <div className="absolute bottom-[calc(100%+8px)] left-0 z-30 w-72 rounded-xl border border-[var(--ava-border)] bg-[var(--ava-panel-elevated)] p-3 shadow-2xl">
-                  <AdvancedSettings
-                    requiresApproval={requiresApproval}
-                    setRequiresApproval={setRequiresApproval}
-                    submitLane={submitLane}
-                    setSubmitLane={setSubmitLane}
-                  />
-                </div>
-              </details>
-
-              <details className="group relative sm:hidden">
-                <summary className="grid size-11 cursor-pointer list-none place-items-center rounded-lg border border-[var(--ava-border)] text-[var(--ava-text-muted)]">
-                  <Settings2 size={17} />
-                  <span className="sr-only">Mobile command settings</span>
-                </summary>
-                <div className="pbk-ava-mobile-settings-popover absolute bottom-[calc(100%+8px)] right-0 z-30 w-[min(340px,calc(100vw-32px))] rounded-xl border border-[var(--ava-border)] bg-[var(--ava-panel-elevated)] p-3 shadow-2xl">
-                  <AdvancedSettings
-                    compact
-                    requiresApproval={requiresApproval}
-                    setRequiresApproval={setRequiresApproval}
-                    submitLane={submitLane}
-                    setSubmitLane={setSubmitLane}
-                  />
-                </div>
-              </details>
-
-              <PbkButton
-                type="button"
-                variant="sky-gradient"
-                className="min-h-11 min-w-11 shrink-0 justify-center p-0 sm:hidden"
-                disabled={!draft.trim() || submitting}
-                onClick={onSubmit}
-                aria-label="Send command to Ava"
-              >
-                {submitting ? <Loader2 className="animate-spin" size={17} /> : <Send size={17} />}
-              </PbkButton>
+              <div className="hidden min-h-11 min-w-0 flex-1 items-center gap-2 rounded-lg border border-[var(--ava-border)] bg-[var(--ava-panel)] px-3 text-xs font-semibold text-[var(--ava-text-muted)] sm:flex sm:flex-none">
+                <ShieldCheck size={15} className="text-[var(--ava-sky)]" />
+                <span className="truncate">
+                  {requiresApproval ? 'Ava will ask before protected actions' : actionConfig.label}
+                </span>
+              </div>
             </div>
 
-            <div className="hidden items-center gap-2 sm:flex">
+            <div className="flex w-full items-center justify-end gap-2 sm:w-auto">
               <span className="hidden max-w-48 truncate text-xs text-[var(--ava-text-faint)] lg:block">
                 {listening
                   ? transcript || 'Listening...'
                   : requiresApproval
-                    ? 'Approval protected'
-                    : 'Low-risk only'}
+                    ? 'Review before sending'
+                    : 'Ready'}
               </span>
               <PbkButton
                 type="button"
@@ -1781,7 +1980,7 @@ function AvaComposer({
                 className="min-h-11 min-w-11 justify-center px-3"
                 disabled={!draft.trim() || submitting}
                 onClick={onSubmit}
-                aria-label="Send command to Ava"
+                aria-label="Send to Ava"
               >
                 {submitting ? <Loader2 className="animate-spin" size={17} /> : <Send size={17} />}
                 <span className="hidden sm:inline">{submitting ? 'Sending' : 'Send'}</span>
@@ -1797,85 +1996,9 @@ function AvaComposer({
   );
 }
 
-function AdvancedSettings({
-  requiresApproval,
-  setRequiresApproval,
-  submitLane,
-  setSubmitLane,
-  compact = false,
-}: {
-  requiresApproval: boolean;
-  setRequiresApproval: (value: boolean) => void;
-  submitLane: SubmitLane;
-  setSubmitLane: (value: SubmitLane) => void;
-  compact?: boolean;
-}) {
-  return (
-    <div
-      className={
-        compact
-          ? 'pbk-ava-advanced-settings is-compact flex flex-wrap items-center justify-between gap-2'
-          : 'pbk-ava-advanced-settings space-y-4'
-      }
-    >
-      <div className="min-w-0">
-        {!compact && <div className="pbk-label mb-2">Execution lane</div>}
-        <div
-          role="radiogroup"
-          aria-label="Execution lane"
-          className="pbk-ava-lane-toggle flex rounded-lg bg-[var(--ava-bg)] p-1"
-        >
-          {(['rest', 'invoke'] as const).map((lane) => (
-            <button
-              key={lane}
-              type="button"
-              role="radio"
-              aria-checked={submitLane === lane}
-              onClick={() => setSubmitLane(lane)}
-              className={[
-                'min-h-9 rounded-md px-3 text-xs font-semibold transition',
-                submitLane === lane
-                  ? 'bg-[var(--ava-panel)] text-[var(--ava-text)] shadow-sm'
-                  : 'text-[var(--ava-text-faint)]',
-              ].join(' ')}
-            >
-              {lane === 'rest' ? 'Bridge queue' : 'Invoke tool'}
-            </button>
-          ))}
-        </div>
-      </div>
-      <label className="flex cursor-pointer items-center gap-3">
-        {!compact && (
-          <span>
-            <span className="block text-xs font-semibold">Require approval</span>
-            <span className="mt-0.5 block text-[11px] text-[var(--ava-text-faint)]">
-              The server still enforces risk policy.
-            </span>
-          </span>
-        )}
-        {compact && (
-          <span className="inline-flex items-center gap-1.5 text-[11px] text-[var(--ava-text-muted)]">
-            <ShieldCheck size={14} />
-            Approval
-          </span>
-        )}
-        <input
-          name="avaRequireApproval"
-          type="checkbox"
-          checked={requiresApproval}
-          onChange={(event) => setRequiresApproval(event.target.checked)}
-          className="peer sr-only"
-        />
-        <span className="relative h-6 w-11 rounded-full bg-[var(--ava-border-bright)] transition peer-checked:bg-[var(--ava-sky)] after:absolute after:left-1 after:top-1 after:size-4 after:rounded-full after:bg-white after:transition-transform peer-checked:after:translate-x-5" />
-      </label>
-    </div>
-  );
-}
-
 function AvaContextRail({
   action,
   actionIcon,
-  submitLane,
   requiresApproval,
   pendingApprovals,
   status,
@@ -1887,7 +2010,6 @@ function AvaContextRail({
 }: {
   action: (typeof ACTIONS)[number];
   actionIcon: ReactNode;
-  submitLane: SubmitLane;
   requiresApproval: boolean;
   pendingApprovals: number;
   status: DesktopSidecarStatusResponse | null;
@@ -1904,7 +2026,7 @@ function AvaContextRail({
   return (
     <aside className={`min-h-0 overflow-y-auto bg-[var(--ava-bg)] p-4 ${className}`}>
       <div className="space-y-3">
-        <ContextPanel title="Operator memory" icon={<Clock3 size={16} />}>
+        <ContextPanel title="Recent ask" icon={<Clock3 size={16} />}>
           {operatorMemory ? (
             <button
               type="button"
@@ -1919,7 +2041,7 @@ function AvaContextRail({
             </button>
           ) : (
             <p className="text-xs leading-5 text-[var(--ava-text-muted)]">
-              Ava will remember the latest unsent operator ask on this device.
+              Ava keeps your latest unsent ask on this device so you can pick it back up.
             </p>
           )}
           {pendingApprovals > 0 && (
@@ -1938,22 +2060,20 @@ function AvaContextRail({
           <summary className="flex min-h-12 cursor-pointer list-none items-center justify-between gap-3 px-3 text-sm font-semibold">
             <span className="inline-flex min-w-0 items-center gap-2">
               <Settings2 size={16} className="text-[var(--ava-sky)]" />
-              <span>System drawer</span>
+              <span>Support details</span>
             </span>
             <ChevronDown size={15} className="transition group-open:rotate-180" />
           </summary>
           <div className="space-y-3 border-t border-[var(--ava-border)] p-3">
             <ContextPanel title="Now" icon={<Sparkles size={16} />}>
-              <ContextRow label="Selected action">
+              <ContextRow label="Next step">
                 <span className="inline-flex items-center gap-2 font-semibold">
                   {actionIcon}
                   {action.label}
                 </span>
               </ContextRow>
-              <ContextRow label="Execution lane">
-                <span>
-                  {submitLane === 'rest' ? 'Conversational bridge queue' : 'Direct invoke lane'}
-                </span>
+              <ContextRow label="How Ava handles it">
+                <span>Chat workspace</span>
               </ContextRow>
               <ContextRow label="Safety">
                 <span
@@ -1966,19 +2086,19 @@ function AvaContextRail({
               </ContextRow>
             </ContextPanel>
 
-            <ContextPanel title="Local system" icon={<Cpu size={16} />}>
+            <ContextPanel title="Connections" icon={<Cpu size={16} />}>
               <SystemHealthRow
-                label="PBK bridge"
+                label="Ava service"
                 value={connectionState === 'connected' ? 'Healthy' : 'Degraded'}
                 healthy={connectionState === 'connected'}
               />
               <SystemHealthRow
-                label="OpenClaw sidecar"
+                label="Desktop helper"
                 value={status?.connected ? `${status.connectedCount || 1} connected` : 'Waiting'}
                 healthy={Boolean(status?.connected)}
               />
               <SystemHealthRow
-                label="Recent commands"
+                label="Recent chats"
                 value={`${commands.length} loaded`}
                 healthy={commands.length > 0}
               />
@@ -1989,10 +2109,10 @@ function AvaContextRail({
               />
             </ContextPanel>
 
-            <ContextPanel title="Debug log" icon={<Terminal size={16} />}>
+            <ContextPanel title="Support log" icon={<Terminal size={16} />}>
               <details className="group rounded-lg border border-[var(--ava-border)] bg-[var(--ava-bg)]">
                 <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-2 px-3 text-xs font-semibold text-[var(--ava-text-muted)]">
-                  <span>Transport sources</span>
+                  <span>Connection details</span>
                   <ChevronDown size={14} className="transition group-open:rotate-180" />
                 </summary>
                 <div className="space-y-2 border-t border-[var(--ava-border)] p-3">
@@ -2104,13 +2224,12 @@ function WelcomeState({
           <div className="rounded-[4px_18px_18px_18px] border border-[var(--ava-border)] bg-[var(--ava-panel)] p-4 text-left shadow-sm">
             <div className="mb-1 flex items-center gap-2 text-xs font-semibold text-[var(--ava-text)]">
               <span>Ava</span>
-              <span className="text-[var(--ava-text-faint)]">PBK helpmate</span>
+              <span className="text-[var(--ava-text-faint)]">PBK assistant</span>
             </div>
             <p className="text-sm leading-6 text-[var(--ava-text-muted)]">
-              Tell me what you want to do in plain English: text a seller, open a lead, analyze a
-              deal, prep a contract, schedule a follow-up, or review a call. Use the mic when you
-              want to talk, or type <span className="font-mono text-[var(--ava-text)]">/</span> for
-              shortcuts.
+              Tell me what you need in plain English. I can find seller context, analyze a deal,
+              draft a follow-up, prep approvals, summarize calls, or help you decide what to say
+              next.
             </p>
           </div>
         </div>
@@ -2122,7 +2241,7 @@ function WelcomeState({
           >
             <Clock3 size={16} className="mt-0.5 shrink-0 text-[var(--ava-sky)]" />
             <span className="min-w-0">
-              <span className="block font-semibold text-[var(--ava-text)]">Operator memory</span>
+              <span className="block font-semibold text-[var(--ava-text)]">Resume last ask</span>
               <span className="mt-1 block truncate">{operatorMemory.draft}</span>
               <span className="mt-1 block text-[10px] uppercase text-[var(--ava-text-faint)]">
                 {formatRelative(operatorMemory.updatedAt)}

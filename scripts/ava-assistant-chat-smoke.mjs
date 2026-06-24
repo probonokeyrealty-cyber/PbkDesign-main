@@ -77,6 +77,16 @@ assert.equal(publicApprovalPlan.action, 'blocked_public_private_data', 'Public a
 assert.match(publicApprovalPlan.answer, /command center/i, 'Public private-data block should point users to the Command Center.');
 assert.match(publicApprovalPlan.answer, /\/index\.shell\.html/i, 'Public private-data block should include a concrete Command Center link.');
 
+const internalHelpIntent = detectAssistantIntent('What can you help my agents do from this chat?');
+assert.equal(internalHelpIntent.intent, 'help', 'Assistant should treat agent capability questions as help intent.');
+const internalHelpPlan = planAssistantIntent(internalHelpIntent, {
+  publicMode: false,
+  authenticated: true,
+});
+assert.equal(internalHelpPlan.action, 'internal_help', 'Authenticated help should answer directly instead of falling into generic memory search.');
+assert.match(internalHelpPlan.answer, /find leads/i, 'Authenticated help should explain practical agent-facing capabilities.');
+assert.doesNotMatch(internalHelpPlan.answer, /bridge state|OpenClaw|sidecar|tool plan/i, 'Authenticated help should avoid internal technical terms.');
+
 const recallIntent = detectAssistantIntent('What did I just ask you?');
 assert.equal(recallIntent.intent, 'session_recall', 'Assistant should detect current-session recall requests.');
 const recallPlan = planAssistantIntent(recallIntent, {
@@ -177,21 +187,35 @@ assert.match(prompt, /123 Cedar St/, 'Assistant prompt should include prior user
 
 assert(
   avaChatRoute.includes('AvaThinkingBubble') &&
+    avaChatRoute.includes('AssistantExchange') &&
+    avaChatRoute.includes('sendAvaAssistantChatRequest') &&
+    avaChatRoute.includes('shouldUseAssistantChatRoute') &&
     avaChatRoute.includes('pbk-ava-inline-approval') &&
-    avaChatRoute.includes('Inline approval request') &&
+    avaChatRoute.includes('Review before Ava continues') &&
     avaChatRoute.includes('Speak to Ava'),
-  'Ava Chat route must expose thinking, voice input, and inline approval states.'
+  'Ava Chat route must expose direct assistant replies, thinking, voice input, and inline approval states.'
 );
 assert(
   avaChatRoute.includes('PBK_COMPANION_ACTIONS') &&
     avaChatRoute.includes('pbk-ava-slash-panel') &&
     avaChatRoute.includes('pbk-ava-bubble-system') &&
-    avaChatRoute.includes('Tell me what you want to do in plain English') &&
-    avaChatRoute.includes('Send SMS') &&
+    avaChatRoute.includes('Tell me what you need in plain English') &&
+    avaChatRoute.includes('Draft Text') &&
+    avaChatRoute.includes('Draft Email') &&
+    avaChatRoute.includes('Prep Call') &&
+    avaChatRoute.includes('Find Lead') &&
     avaChatRoute.includes('Prepare Contract') &&
-    avaChatRoute.includes('Review with QA') &&
+    avaChatRoute.includes('Review Call') &&
     avaChatRoute.includes('Schedule Follow-up'),
-  'Ava Chat must keep PBK command intelligence available through natural language and slash commands.'
+  'Ava Chat must keep PBK task intelligence available through natural language and plain shortcuts.'
+);
+assert(
+  !avaChatRoute.includes("label: 'OpenClaw'") &&
+    !avaChatRoute.includes("label: 'ClickUI'") &&
+    !avaChatRoute.includes("label: 'Local LLM'") &&
+    !avaChatRoute.includes('Bridge queue') &&
+    !avaChatRoute.includes('Invoke tool'),
+  'Ava Chat must not expose internal action-category labels in the primary chat UI.'
 );
 assert(
   !avaChatRoute.includes('CompanionActionCards') &&
@@ -203,23 +227,24 @@ assert(
 );
 assert(
   avaChatRoute.includes('AVA_OPERATOR_MEMORY_KEY') &&
+    avaChatRoute.includes('AVA_ASSISTANT_EXCHANGES_KEY') &&
     avaChatRoute.includes('window.localStorage.setItem') &&
     avaChatRoute.includes('window.localStorage.getItem') &&
-    avaChatRoute.includes('Operator memory'),
-  'Ava Chat must persist lightweight operator memory so it can stay in the conversation across pages.'
+    avaChatRoute.includes('Resume last ask'),
+  'Ava Chat must persist lightweight chat and draft memory so it can stay in the conversation across pages.'
 );
 assert(
     avaChatRoute.includes('pbk-ava-system-drawer') &&
     avaChatRoute.includes('getAvaSystemStatus') &&
     avaChatRoute.includes('systemStatus.visible &&') &&
-    avaChatRoute.includes('Open Ava system details:') &&
+    avaChatRoute.includes('Open Ava support details:') &&
     avaChatRoute.includes('pbk-ava-chat-thread') &&
     avaChatRoute.includes('pbk-ava-chat-composer'),
   'Ava Chat must keep system/debug controls out of the default chat unless system status has a warning.'
 );
 assert(
-  /ContextPanel title="Debug log"[\s\S]*<details/.test(avaChatRoute),
-  'Ava Chat technical support details should live behind the collapsible Debug log drawer.'
+  /ContextPanel title="Support log"[\s\S]*<details/.test(avaChatRoute),
+  'Ava Chat technical support details should live behind the collapsible Support log drawer.'
 );
 assert(
     pbkCss.includes('.pbk-ava-thinking-bubble') &&

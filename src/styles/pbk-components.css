@@ -9850,8 +9850,7 @@ html[data-theme='light'] .pbk-ava-chat-surface {
   }
 
   .pbk-ava-chat-controls {
-    display: grid !important;
-    grid-template-columns: 44px minmax(0, 1fr) 44px 44px;
+    display: flex !important;
     width: 100%;
     gap: 6px;
   }

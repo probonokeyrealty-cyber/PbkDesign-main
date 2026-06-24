@@ -42,29 +42,31 @@ const avaChat = read('src/app/routes/AvaChat.tsx');
   'queueLocalCommandRequest',
   'fetchLocalCommandsRequest',
   'fetchDesktopSidecarStatusRequest',
-  'executeLocalCommandRequest',
+  'sendAvaAssistantChatRequest',
   'updateApprovalDecision',
   'requiresApproval',
-  'Command history',
-  'OpenClaw',
-  'ClickUI',
   'Promise.allSettled',
-  'Search command history',
+  'Search past chats',
   'Replay',
+  'AssistantExchange',
+  'AVA_ASSISTANT_EXCHANGES_KEY',
+  'shouldUseAssistantChatRoute',
   'getResultText',
   'CommandResultPreview',
   'classifyConversationalCommand',
   'getConversationalResultText',
   'riskLevel',
   'role="alert"',
-  'role="radiogroup"',
   'text-[16px]',
   'h-full max-h-full',
   'pbk-ava-slash-panel',
   'pbk-ava-bubble-system',
-  'Tell me what you want to do in plain English',
-  'Open Ava system details:',
-  'Approval required before Ava continues',
+  'Tell me what you need in plain English',
+  'Ava starter prompts',
+  'Draft Text',
+  'Prep Call',
+  'Open Ava support details:',
+  'Review before Ava continues',
   'onApprovalDecision',
 ].forEach((token) => {
   assert(avaChat.includes(token), `AvaChat.tsx must include ${token}.`);
@@ -88,6 +90,14 @@ assert(
     !avaChat.includes('Take a screenshot of the current desktop') &&
     !avaChat.includes('ClickUI: inspect the active window'),
   'Ava Chat must remove old quick prompt menus from the primary surface.'
+);
+assert(
+  !avaChat.includes("label: 'OpenClaw'") &&
+    !avaChat.includes("label: 'ClickUI'") &&
+    !avaChat.includes("label: 'Local LLM'") &&
+    !avaChat.includes('Bridge queue') &&
+    !avaChat.includes('Invoke tool'),
+  'Ava Chat must not expose internal category labels or execution lanes in source-controlled UI copy.'
 );
 assert(
   /setRequiresApproval\(item\.requiresApproval\)/.test(avaChat),
@@ -118,9 +128,9 @@ assert(
   'Ava Chat must approve or deny guarded actions inline from the conversation bubble.'
 );
 assert(
-  /ContextPanel title="Debug log"[\s\S]*<details/.test(avaChat) &&
-    /Conversational bridge queue/.test(avaChat),
-  'Ava Chat must keep transport/source details in a debug disclosure instead of the primary conversation copy.'
+  /ContextPanel title="Support log"[\s\S]*<details/.test(avaChat) &&
+    /Chat workspace/.test(avaChat),
+  'Ava Chat must keep transport/source details in a support disclosure instead of the primary conversation copy.'
 );
 assert(
   /function CommandResultPreview[\s\S]*imageDataUrl[\s\S]*entries[\s\S]*sourceName/.test(avaChat),
@@ -174,6 +184,9 @@ assert(/from = "\/ava-chat"/.test(netlify), 'Netlify must rewrite /ava-chat to t
   '/api/desktop-sidecar/status',
   'executeLocalCommand',
   'updateApprovalDecision',
+  'AvaAssistantChatResponse',
+  'sendAvaAssistantChatRequest',
+  '/api/assistant/chat',
 ].forEach((token) => {
   assert(runtimeBridge.includes(token), `runtimeBridge.ts must include ${token}.`);
 });

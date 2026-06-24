@@ -50,6 +50,7 @@ const avaChat = read('src/app/routes/AvaChat.tsx');
   'Replay',
   'AssistantExchange',
   'AVA_ASSISTANT_EXCHANGES_KEY',
+  'DEFAULT_CHAT_COMMAND_MAX_AGE_MS',
   'shouldUseAssistantChatRoute',
   'shouldShowCommandInDefaultChat',
   'getResultText',

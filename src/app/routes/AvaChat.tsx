@@ -114,6 +114,7 @@ type AvaAssistantExchange = {
 const AVA_OPERATOR_MEMORY_KEY = 'pbk:ava-chat:operator-memory';
 const AVA_ASSISTANT_SESSION_KEY = 'pbk:ava-chat:assistant-session';
 const AVA_ASSISTANT_EXCHANGES_KEY = 'pbk:ava-chat:assistant-exchanges';
+const DEFAULT_CHAT_COMMAND_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 const LOCAL_CONTROL_ACTIONS = new Set<AvaCommandAction>([
   'clickui',
   'status',
@@ -628,7 +629,14 @@ function isActiveCommand(command?: LocalCommandRecord) {
 
 function shouldShowCommandInDefaultChat(command: LocalCommandRecord) {
   const status = String(command.status || 'queued').toLowerCase();
-  return ['queued', 'pending', 'pending_approval', 'dispatched', 'running'].includes(status);
+  if (!['queued', 'pending', 'pending_approval', 'dispatched', 'running'].includes(status)) {
+    return false;
+  }
+  const timestamp = Date.parse(
+    command.updatedAt || command.dispatchedAt || command.approvedAt || command.createdAt || ''
+  );
+  if (!Number.isFinite(timestamp)) return false;
+  return Date.now() - timestamp <= DEFAULT_CHAT_COMMAND_MAX_AGE_MS;
 }
 
 function getAvaSystemStatus({

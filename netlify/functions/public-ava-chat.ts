@@ -213,7 +213,7 @@ async function publicAvaChatHandler(request: Request, context: PublicAvaContext)
   const requestId = getRequestId(request, context);
 
   if (request.method === 'OPTIONS') {
-    return new Response('', {
+    return new Response(null, {
       status: 204,
       headers: {
         ...buildCorsHeaders(request),

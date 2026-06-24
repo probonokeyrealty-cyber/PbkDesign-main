@@ -16,6 +16,7 @@ assert(/DEFAULT_ALLOWED_ORIGINS\s*=\s*\[\]/.test(source), 'Default CORS origins 
 assert(/import type \{ Handler \}/.test(source), 'Public Ava Netlify function should use the same Handler runtime as the working proxy functions.');
 assert(/export\s+const\s+handler:\s*Handler/.test(source), 'Public Ava Netlify function must export a standard Netlify handler.');
 assert(/function buildRequestFromEvent/.test(source), 'Public Ava Netlify handler should adapt the event to the shared Request implementation.');
+assert(/new Response\(null,\s*\{\s*status:\s*204/.test(source), 'Public Ava OPTIONS responses must use a null 204 body.');
 
 const publicAvaRedirectIndex = netlifyConfig.indexOf('from = "/api/public/ava-chat"');
 const apiCatchallRedirectIndex = netlifyConfig.indexOf('from = "/api/*"');

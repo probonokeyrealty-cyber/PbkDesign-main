@@ -3095,7 +3095,7 @@ async function recordOpenClawGatewayHeartbeat(body = {}, request = null) {
       })
     );
   }
-  await persistState(state);
+  persistStateInBackground('openclaw-gateway-heartbeat');
   return heartbeat;
 }
 

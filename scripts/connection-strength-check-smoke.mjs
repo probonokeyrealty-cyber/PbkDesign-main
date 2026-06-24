@@ -104,6 +104,21 @@ assert(
     bridgeSource.includes('keepAliveInitialDelayMillis: PG_KEEPALIVE_INITIAL_DELAY_MS'),
   'Bridge must expose connection health and use hardened pool warm/keepalive/deadline settings.'
 );
+const gatewayHeartbeatStart = bridgeSource.indexOf(
+  'async function recordOpenClawGatewayHeartbeat'
+);
+const gatewayHeartbeatEnd = bridgeSource.indexOf('function redactGatewayUrl', gatewayHeartbeatStart);
+const gatewayHeartbeatBlock =
+  gatewayHeartbeatStart >= 0 && gatewayHeartbeatEnd > gatewayHeartbeatStart
+    ? bridgeSource.slice(gatewayHeartbeatStart, gatewayHeartbeatEnd)
+    : '';
+assert(
+  gatewayHeartbeatBlock &&
+    /state\.status\.openClawGatewayHeartbeat = heartbeat/.test(gatewayHeartbeatBlock) &&
+    /persistStateInBackground\('openclaw-gateway-heartbeat'\)/.test(gatewayHeartbeatBlock) &&
+    !/await persistState\(state\)/.test(gatewayHeartbeatBlock),
+  'OpenClaw gateway heartbeat must report liveness even when non-critical state persistence is temporarily unavailable.'
+);
 
 assert(
   renderDoctorSource.includes('readWindowsStoredEnv') &&

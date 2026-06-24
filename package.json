@@ -306,8 +306,10 @@
     "pdf-parse": "^2.4.5",
     "pg": "^8.13.1",
     "puppeteer-core": "^24.41.0",
+    "react": "18.3.1",
     "react-day-picker": "8.10.1",
     "react-dnd": "16.0.1",
+    "react-dom": "18.3.1",
     "react-dnd-html5-backend": "16.0.1",
     "react-hook-form": "7.55.0",
     "react-popper": "2.3.0",
@@ -342,18 +344,6 @@
     "prettier": "^3.8.3",
     "tailwindcss": "4.1.12",
     "vite": "^6.4.2"
-  },
-  "peerDependencies": {
-    "react": "18.3.1",
-    "react-dom": "18.3.1"
-  },
-  "peerDependenciesMeta": {
-    "react": {
-      "optional": true
-    },
-    "react-dom": {
-      "optional": true
-    }
   },
   "overrides": {
     "basic-ftp": "6.0.1",

@@ -6,6 +6,7 @@ const root = process.cwd();
 const dockerfile = readFileSync(resolve(root, 'Dockerfile.openclaw'), 'utf8');
 const dockerignore = readFileSync(resolve(root, '.dockerignore'), 'utf8');
 const renderYaml = readFileSync(resolve(root, 'render.yaml'), 'utf8');
+const packageJson = JSON.parse(readFileSync(resolve(root, 'package.json'), 'utf8'));
 
 function expectIncludes(source, needle, message) {
   assert(source.includes(needle), message);
@@ -43,6 +44,16 @@ expectIncludes(
   dockerfile,
   'npm ci --legacy-peer-deps --ignore-scripts',
   'Docker frontend dependency install must skip git-hook prepare scripts that are not copied into the image.'
+);
+assert.equal(
+  packageJson.dependencies?.react,
+  '18.3.1',
+  'React must be a production dependency so Docker clean installs include react/jsx-runtime.'
+);
+assert.equal(
+  packageJson.dependencies?.['react-dom'],
+  '18.3.1',
+  'React DOM must be a production dependency so Docker clean installs can build the shell.'
 );
 expectIncludes(
   dockerfile,

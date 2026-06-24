@@ -2,16 +2,24 @@ services:
   - type: web
     name: pbk-openclaw-bridge
     runtime: docker
-    plan: free
+    plan: standard
     region: ohio
     dockerfilePath: ./Dockerfile.openclaw
     dockerContext: .
+    dockerCommand: node ./scripts/openclaw-local-server.mjs --public
     healthCheckPath: /health
+    autoDeployTrigger: commit
     envVars:
       - key: NODE_ENV
         value: production
+      - key: PORT
+        value: "10000"
+      - key: PBK_OPENCLAW_PORT
+        value: "10000"
+      - key: PBK_OPENCLAW_HOST
+        value: 0.0.0.0
       - key: PBK_OPENCLAW_STATE_DIR
-        value: /app/.pbk-local
+        value: /data/openclaw
 
       # ── Core auth + state ───────────────────────────────────────────────
       # Bearer token required on POST endpoints. Same value goes into the PBK
@@ -31,6 +39,10 @@ services:
         fromDatabase:
           name: pbk-openclaw-db
           property: connectionString
+      - key: DATABASE_URL
+        fromDatabase:
+          name: pbk-openclaw-db
+          property: connectionString
       - key: PBK_PG_POOL_MAX
         value: "4"
       - key: PBK_PG_POOL_MIN
@@ -45,6 +57,8 @@ services:
         value: "4000"
       - key: PBK_PG_QUERY_TIMEOUT_MS
         value: "4000"
+      - key: PBK_PG_OPERATION_TIMEOUT_MS
+        value: "5000"
       - key: PBK_PG_STATEMENT_TIMEOUT_MS
         value: "4000"
       - key: PBK_PG_LOCK_TIMEOUT_MS
@@ -81,6 +95,13 @@ services:
           type: keyvalue
           name: pbk-openclaw-redis
           property: connectionString
+      - key: REDIS_URL
+        fromService:
+          type: keyvalue
+          name: pbk-openclaw-redis
+          property: connectionString
+      - key: PBK_REDIS_ENABLED
+        value: "true"
       - key: PBK_REDIS_NAMESPACE
         value: pbk-openclaw
       - key: PBK_REDIS_CALL_STATE_TTL_SECONDS
@@ -251,6 +272,8 @@ services:
         sync: false
       - key: PBK_TELNYX_MEDIA_STREAM_TOKEN
         sync: false
+      - key: PBK_TELNYX_PUBLIC_KEY
+        sync: false
       # Optional: override the default webhook URL Telnyx posts call/message
       # events to. Defaults to ${PBK_PUBLIC_BASE_URL}/api/webhooks/telnyx.
       - key: PBK_TELNYX_WEBHOOK_URL
@@ -390,11 +413,18 @@ services:
       # Channel is determined by the URL when the webhook is created in Slack.
       - key: PBK_SLACK_WEBHOOK_URL
         sync: false
+      - key: PBK_SLACK_SIGNING_SECRET
+        sync: false
+
+    disk:
+      name: openclaw-bridge-data
+      mountPath: /data
+      sizeGB: 2
 
   - type: worker
     name: pbk-event-worker
     runtime: node
-    plan: free
+    plan: starter
     region: ohio
     buildCommand: npm ci --omit=dev
     startCommand: npm run events:worker
@@ -402,6 +432,11 @@ services:
       - key: NODE_ENV
         value: production
       - key: PBK_REDIS_URL
+        fromService:
+          type: keyvalue
+          name: pbk-openclaw-redis
+          property: connectionString
+      - key: REDIS_URL
         fromService:
           type: keyvalue
           name: pbk-openclaw-redis
@@ -417,6 +452,10 @@ services:
       - key: PBK_EVENT_WORKER_BLOCK_MS
         value: "5000"
       - key: PBK_DATABASE_URL
+        fromDatabase:
+          name: pbk-openclaw-db
+          property: connectionString
+      - key: DATABASE_URL
         fromDatabase:
           name: pbk-openclaw-db
           property: connectionString
@@ -468,7 +507,7 @@ services:
   - type: worker
     name: pbk-coworker-heartbeat
     runtime: node
-    plan: free
+    plan: starter
     region: ohio
     buildCommand: npm ci --omit=dev
     startCommand: npm run coworker:heartbeat:loop
@@ -501,7 +540,7 @@ services:
   - type: cron
     name: pbk-nightly-learning
     runtime: node
-    plan: free
+    plan: starter
     region: ohio
     schedule: "0 8 * * *"
     buildCommand: npm ci --omit=dev
@@ -510,6 +549,10 @@ services:
       - key: NODE_ENV
         value: production
       - key: PBK_DATABASE_URL
+        fromDatabase:
+          name: pbk-openclaw-db
+          property: connectionString
+      - key: DATABASE_URL
         fromDatabase:
           name: pbk-openclaw-db
           property: connectionString
@@ -559,3 +602,20 @@ services:
         value: "true"
       - key: PBK_OBSERVABILITY_SLACK_WEBHOOK_URL
         sync: false
+
+  - type: keyvalue
+    name: pbk-openclaw-redis
+    plan: starter
+    region: ohio
+    maxmemoryPolicy: allkeys-lru
+    persistenceMode: journal-snapshot
+    ipAllowList: []
+
+databases:
+  - name: pbk-openclaw-db
+    databaseName: pbk_openclaw
+    user: pbk_openclaw_user
+    plan: basic-256mb
+    region: ohio
+    postgresMajorVersion: "18"
+    ipAllowList: []

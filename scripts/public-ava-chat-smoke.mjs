@@ -13,8 +13,9 @@ assert(/getRequiredEnv/.test(source), 'Public Ava Netlify function should valida
 assert(/MAX_REQUEST_BODY_BYTES/.test(source), 'Public Ava Netlify function should cap request body size before forwarding.');
 assert(/rate_limit_unavailable/.test(source), 'Public Ava rate limit failures should fail closed with a distinct reason.');
 assert(/DEFAULT_ALLOWED_ORIGINS\s*=\s*\[\]/.test(source), 'Default CORS origins should be empty unless PBK_ALLOWED_ORIGINS is set.');
-assert(/export\s+default\s+async/.test(source), 'Public Ava Netlify function should use modern default export syntax.');
-assert(/export\s+const\s+config/.test(source), 'Public Ava Netlify function should declare a Netlify function config.');
+assert(/import type \{ Handler \}/.test(source), 'Public Ava Netlify function should use the same Handler runtime as the working proxy functions.');
+assert(/export\s+const\s+handler:\s*Handler/.test(source), 'Public Ava Netlify function must export a standard Netlify handler.');
+assert(/function buildRequestFromEvent/.test(source), 'Public Ava Netlify handler should adapt the event to the shared Request implementation.');
 
 const publicAvaRedirectIndex = netlifyConfig.indexOf('from = "/api/public/ava-chat"');
 const apiCatchallRedirectIndex = netlifyConfig.indexOf('from = "/api/*"');

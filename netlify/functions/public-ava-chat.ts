@@ -1,4 +1,4 @@
-import type { Config, Context } from '@netlify/functions';
+import type { Handler } from '@netlify/functions';
 
 declare const Netlify:
   | {
@@ -22,6 +22,11 @@ type RateLimitResult = {
   retryAfterSeconds: number;
   resetAt: number;
   reason?: string;
+};
+
+type PublicAvaContext = {
+  requestId?: string;
+  ip?: string;
 };
 
 const rateBuckets = new Map<string, RateBucket>();
@@ -91,7 +96,7 @@ function jsonResponse(
   });
 }
 
-function getRequestId(request: Request, context: Context) {
+function getRequestId(request: Request, context: PublicAvaContext) {
   return (
     request.headers.get('x-request-id') ||
     context.requestId ||
@@ -99,7 +104,7 @@ function getRequestId(request: Request, context: Context) {
   );
 }
 
-function getClientKey(request: Request, context: Context) {
+function getClientKey(request: Request, context: PublicAvaContext) {
   const forwarded = request.headers.get('x-forwarded-for') || '';
   const ip =
     context.ip ||
@@ -110,7 +115,7 @@ function getClientKey(request: Request, context: Context) {
   return `ip:${ip}`;
 }
 
-function checkRateLimit(request: Request, context: Context): RateLimitResult {
+function checkRateLimit(request: Request, context: PublicAvaContext): RateLimitResult {
   try {
     const now = Date.now();
     const key = getClientKey(request, context);
@@ -204,7 +209,7 @@ async function fetchBridge(bridgeUrl: string, publicKey: string, requestId: stri
   }
 }
 
-export default async (request: Request, context: Context) => {
+async function publicAvaChatHandler(request: Request, context: PublicAvaContext) {
   const requestId = getRequestId(request, context);
 
   if (request.method === 'OPTIONS') {
@@ -308,8 +313,45 @@ export default async (request: Request, context: Context) => {
       sharedHeaders,
     );
   }
-};
+}
 
-export const config: Config = {
-  path: '/api/public/ava-chat',
+function getEventHeader(event: Parameters<Handler>[0], name: string) {
+  const wanted = name.toLowerCase();
+  for (const [key, value] of Object.entries(event.headers || {})) {
+    if (key.toLowerCase() === wanted) return String(value || '').trim();
+  }
+  return '';
+}
+
+function buildRequestFromEvent(event: Parameters<Handler>[0]) {
+  const host = getEventHeader(event, 'host') || 'pbkcommandcenter.netlify.app';
+  const query = event.rawQuery ? `?${event.rawQuery}` : '';
+  const url = event.rawUrl || `https://${host}${event.path || '/api/public/ava-chat'}${query}`;
+  const headers = new Headers();
+  for (const [key, value] of Object.entries(event.headers || {})) {
+    if (value != null) headers.set(key, String(value));
+  }
+  const method = event.httpMethod || 'GET';
+  const body = ['GET', 'HEAD'].includes(method.toUpperCase())
+    ? undefined
+    : event.isBase64Encoded
+      ? Buffer.from(event.body || '', 'base64')
+      : event.body || '';
+  return new Request(url, { method, headers, body });
+}
+
+export const handler: Handler = async (event, context) => {
+  const response = await publicAvaChatHandler(buildRequestFromEvent(event), {
+    requestId: context.awsRequestId,
+    ip: getEventHeader(event, 'x-nf-client-connection-ip'),
+  });
+  const headers: Record<string, string> = {};
+  response.headers.forEach((value, key) => {
+    headers[key] = value;
+  });
+  return {
+    statusCode: response.status,
+    headers,
+    body: await response.text(),
+  };
 };

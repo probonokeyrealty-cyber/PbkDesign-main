@@ -15,6 +15,19 @@ type TeamAccessGateProps = {
 
 type GateState = 'checking' | 'locked' | 'authorized';
 
+function getTeamAccessErrorMessage(error: unknown, fallback: string) {
+  const message = error instanceof Error ? error.message : String(error || '');
+  const trimmed = message.trim();
+  if (
+    !trimmed ||
+    trimmed.length > 220 ||
+    /<!doctype|<html|<head|<body|<style|@font-face|\.pbk-|\.vite|unexpected token/i.test(trimmed)
+  ) {
+    return fallback;
+  }
+  return trimmed;
+}
+
 export function TeamAccessGate({ children, onAuthenticated }: TeamAccessGateProps) {
   const required = isRuntimeTeamAuthRequired();
   const [gateState, setGateState] = useState<GateState>(required ? 'checking' : 'authorized');
@@ -45,7 +58,10 @@ export function TeamAccessGate({ children, onAuthenticated }: TeamAccessGateProp
       } catch (statusError) {
         if (!active) return;
         setError(
-          statusError instanceof Error ? statusError.message : 'PBK access status is unavailable.'
+          getTeamAccessErrorMessage(
+            statusError,
+            'PBK access status is unavailable. Try again in a moment.'
+          )
         );
       }
       if (active) setGateState('locked');
@@ -70,9 +86,7 @@ export function TeamAccessGate({ children, onAuthenticated }: TeamAccessGateProp
       setGateState('authorized');
       await onAuthenticated?.();
     } catch (authError) {
-      setError(
-        authError instanceof Error ? authError.message : 'The team passcode was not accepted.'
-      );
+      setError(getTeamAccessErrorMessage(authError, 'The team passcode was not accepted.'));
     } finally {
       setPending(false);
     }

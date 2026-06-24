@@ -1357,7 +1357,16 @@ export function buildRuntimeUrl(path: string) {
 
 function bridgeErrorValue(value: unknown) {
   if (value === undefined || value === null) return '';
-  if (typeof value === 'string') return value.trim();
+  if (typeof value === 'string') {
+    const text = value.trim();
+    if (
+      text.length > 240 &&
+      /<!doctype|<html|<head|<body|<style|@font-face|\.pbk-|\.vite|vite/i.test(text)
+    ) {
+      return '';
+    }
+    return text.length > 500 ? `${text.slice(0, 500)}...` : text;
+  }
   if (typeof value === 'number' || typeof value === 'boolean') return String(value);
   return '';
 }

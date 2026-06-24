@@ -19,7 +19,10 @@ const viteConfig = readFileSync(resolve(root, 'vite.config.ts'), 'utf8');
 assert(router.includes("path: 'skills'"), 'Router must expose /skills.');
 assert(sidebar.includes("to: '/skills'"), 'Sidebar must expose Skill Studio.');
 assert(layout.includes("'/skills'"), 'Shell route persistence must recognize /skills.');
-assert(memory.includes('Open Skill Studio'), 'Memory Analytics must link to Skill Studio.');
+assert(
+  memory.includes('Teach Ava'),
+  'Memory Analytics must link to Skill Studio in plain language.'
+);
 assert(memory.includes('Add Skill'), 'Memory Analytics must expose the candidate entry point.');
 assert(
   viteConfig.includes('const shellHistoryPaths = new Set') &&
@@ -44,10 +47,11 @@ for (const helper of [
 }
 
 for (const label of [
-  'Manual',
-  'YouTube',
+  'Type it',
+  'Video',
   'Article',
-  'Learn from YouTube',
+  'Teach Ava a new skill',
+  'Review stays mandatory',
   'Analyze video',
   'Analyze article',
 ]) {
@@ -55,6 +59,8 @@ for (const label of [
 }
 for (const label of [
   'SKILL_WIZARD_STEPS',
+  'Situation',
+  'Ava reply',
   'Price objection',
   'Response',
   'Next question',
@@ -80,8 +86,8 @@ assert(
   route.includes("sourceType: 'article'") &&
     route.includes('articleText') &&
     route.includes('articleTitle') &&
-    route.includes('Article text, screenshot OCR, or detailed notes'),
-  'Skill Studio must submit review-only article/OCR ingestion requests.'
+    route.includes('Article text, screenshot text, or detailed notes'),
+  'Skill Studio must submit review-only article ingestion requests.'
 );
 assert(
   route.includes('getSkillPerformance') &&
@@ -94,10 +100,19 @@ assert(
 );
 assert(
   route.includes('Paste transcript or detailed notes') &&
-    route.includes('Direct audio/video transcript URL') &&
+    route.includes('Advanced: direct media link') &&
     route.includes('pbk-skill-youtube-fallback') &&
     route.includes('pbk-skill-audio-fallback'),
   'Skill Studio must expose clear fallback inputs for disabled YouTube captions.'
+);
+assert(
+  route.includes('Human-approved learning') &&
+    route.includes('Learning sync') &&
+    route.includes('System of record') &&
+    !/Fail-closed governance|Render authority|Supabase analytics mirror|Deepgram|Article text, screenshot OCR/.test(
+      route
+    ),
+  'Skill Studio must keep operator-facing copy plain while preserving expandable details.'
 );
 assert(
   styles.includes('.pbk-skill-intake-mode') &&
@@ -126,15 +141,7 @@ assert(
   'Legacy SkillRepo fallback shell must preserve direct media and manual transcript evidence for disabled-caption videos.'
 );
 
-for (const label of [
-  'Review',
-  'Scenarios',
-  'Chain',
-  'Agents',
-  'Approval',
-  'Activate',
-  'Outcomes',
-]) {
+for (const label of ['Review', 'Practice', 'Fit', 'Agent', 'Approve', 'Start small', 'Outcomes']) {
   assert(route.includes(label), `Skill Studio lifecycle must include ${label}.`);
 }
 
@@ -145,8 +152,7 @@ assert(
   'Skill Studio must include responsive workspace and inspector styles.'
 );
 assert(
-  route.includes('pbk-skill-dialog-body') &&
-    /event\.target === event\.currentTarget/.test(route),
+  route.includes('pbk-skill-dialog-body') && /event\.target === event\.currentTarget/.test(route),
   'Skill candidate intake must have a dedicated scroll body and deliberate backdrop dismissal.'
 );
 assert(
@@ -170,8 +176,10 @@ assert(
 );
 assert(
   route.includes("selected.lifecycleState === 'ready_for_approval'") &&
+    route.includes('confirmingPrimaryAction') &&
+    route.includes('Confirm') &&
     !route.includes("if (compactViewport) setSelectedId('')"),
-  'Skill Studio must only approve ready-for-approval versions and must preserve selected skills across mobile viewport changes.'
+  'Skill Studio must only approve ready-for-approval versions, confirm high-impact actions, and preserve selected skills across mobile viewport changes.'
 );
 
 console.log('skill-studio-ui-smoke: ok');

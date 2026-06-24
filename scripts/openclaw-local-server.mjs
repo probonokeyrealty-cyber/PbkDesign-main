@@ -847,6 +847,10 @@ const PUBLIC_PATHS = new Set([
   '/agent',
   '/agent-console',
   '/fleet',
+  '/agent-fleet',
+  '/ava-chat',
+  '/skills',
+  '/skill-studio',
   '/calls',
   '/live-calls',
   '/contracts',
@@ -42646,7 +42650,18 @@ async function applyAgentSkillAction(tool = '', params = {}, options = {}) {
   }
 
   if (tool === 'transfer_skill') {
-    const target = findAgentRecord(params.targetAgentId || params.targetAgentName || '') || state.agents.find((agent) => agent.id !== source.id && agent.status !== 'on_call') || source;
+    const targetAgentKey = String(params.targetAgentId || params.targetAgentName || '').trim();
+    const target = targetAgentKey ? findAgentRecord(targetAgentKey) : null;
+    if (!target || target.id === source.id) {
+      return {
+        ok: false,
+        result: 'unavailable',
+        verbiage: 'Target agent not found',
+        error: targetAgentKey
+          ? `Requested transfer target '${targetAgentKey}' is not available.`
+          : 'A target agent is required before transferring a skill.',
+      };
+    }
     const transferredSkill = {
       ...existingSkill,
       level: existingSkill.level === 'proven' ? 'evolving' : existingSkill.level,
@@ -56526,7 +56541,7 @@ function getResponseCorsHeaders(response) {
   );
 }
 
-const COMMAND_CENTER_APP_PATHS = new Set(['/app', '/command-center', '/dashboard', '/settings', '/inbox', '/leads', '/pipeline', '/deals', '/deals/analyzer', '/analyzer', '/agents', '/agent', '/agent-console', '/fleet', '/calls', '/live-calls', '/contracts', '/automations', '/analytics', '/campaigns', '/campaign-detail', '/brain', '/research', '/memory', '/integrations', '/lead-detail', '/activity-log', '/recordings', '/approvals', '/approval']);
+const COMMAND_CENTER_APP_PATHS = new Set(['/app', '/command-center', '/dashboard', '/settings', '/inbox', '/leads', '/pipeline', '/deals', '/deals/analyzer', '/analyzer', '/agents', '/agent', '/agent-console', '/fleet', '/agent-fleet', '/ava-chat', '/skills', '/skill-studio', '/calls', '/live-calls', '/contracts', '/automations', '/analytics', '/campaigns', '/campaign-detail', '/brain', '/research', '/memory', '/integrations', '/lead-detail', '/activity-log', '/recordings', '/approvals', '/approval']);
 
 const RENDER_PUBLIC_STATIC_FILES = new Map([
   ['/analyzer.html', { filePath: path.join(ROOT_DIR, 'analyzer.html'), contentType: 'text/html; charset=utf-8' }],

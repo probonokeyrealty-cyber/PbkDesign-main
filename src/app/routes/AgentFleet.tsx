@@ -598,7 +598,7 @@ function assertBridgeTransferApplied(result: unknown, skillName = 'skill') {
       response.skill ||
       response.updatedAgents
     ) ||
-    /transferred|applied|copied|delivered|queued/.test(statusText);
+    /transferred|applied|copied|delivered/.test(statusText);
   if (!confirmed) {
     throw new Error(`Bridge did not confirm '${skillName}' was applied.`);
   }
@@ -643,8 +643,8 @@ function getAgentDeployClass(agent: FleetAgent) {
 function getAgentSummary(agent: FleetAgent, lastOutcome: string, bridgeWorker?: BridgeSnnWorker) {
   if (bridgeWorker?.currentTask) return bridgeWorker.currentTask;
   if (lastOutcome && lastOutcome !== 'No call outcome yet') return `Last call: ${lastOutcome}`;
-  if (agent.metadata.approvalGated) return 'Approval-gated provider actions available';
-  if (agent.metadata.suggestOnly) return 'Suggest-only analysis lane';
+  if (agent.metadata.approvalGated) return 'Can request approved actions';
+  if (agent.metadata.suggestOnly) return 'Can suggest next steps';
   return agent.description;
 }
 
@@ -782,26 +782,29 @@ async function flushTransferQueue(queue: PendingTransfer[], agents: FleetAgent[]
 
 function AgentFleetSourceRail() {
   return (
-    <div className="pbk-fleet-source-rail" aria-label="Agent Fleet data sources">
-      <PbkDataSource endpoint="GET /api/agents/registry" status="ships" />
-      <PbkDataSource endpoint="GET /api/tooling/status" status="ships" />
-      <PbkDataSource endpoint="GET /api/agents/health" status="ships" />
-      <PbkDataSource
-        endpoint="GET /api/agents/measurement"
-        status="ships"
-        note="stable 11-agent proof"
-      />
-      <PbkDataSource endpoint="GET /api/leads" status="ships" note="lead context picker" />
-      <PbkDataSource endpoint="GET /state" status="ships" note="snapshot fallback and calls" />
-      <PbkDataSource endpoint="POST /invoke: previewAgentDealContext" status="ships" />
-      <PbkDataSource endpoint="POST /invoke: pbk_transfer_agent_skill" status="ships" />
-      <PbkDataSource endpoint="POST /invoke: telnyx_call" status="ships" />
-      <PbkDataSource
-        endpoint="GET /api/agents/snn-status"
-        status="ships"
-        note="durable bridge cognition lane status"
-      />
-    </div>
+    <details className="pbk-source-disclosure">
+      <summary>System sources</summary>
+      <div className="pbk-fleet-source-rail" aria-label="Agent Fleet data sources">
+        <PbkDataSource endpoint="GET /api/agents/registry" status="ships" />
+        <PbkDataSource endpoint="GET /api/tooling/status" status="ships" />
+        <PbkDataSource endpoint="GET /api/agents/health" status="ships" />
+        <PbkDataSource
+          endpoint="GET /api/agents/measurement"
+          status="ships"
+          note="stable 11-agent proof"
+        />
+        <PbkDataSource endpoint="GET /api/leads" status="ships" note="lead context picker" />
+        <PbkDataSource endpoint="GET /state" status="ships" note="snapshot fallback and calls" />
+        <PbkDataSource endpoint="POST /invoke: previewAgentDealContext" status="ships" />
+        <PbkDataSource endpoint="POST /invoke: pbk_transfer_agent_skill" status="ships" />
+        <PbkDataSource endpoint="POST /invoke: telnyx_call" status="ships" />
+        <PbkDataSource
+          endpoint="GET /api/agents/snn-status"
+          status="ships"
+          note="durable bridge cognition lane status"
+        />
+      </div>
+    </details>
   );
 }
 
@@ -829,7 +832,11 @@ function AgentFleetHero({
     ? agents.filter((agent) => agent.status === 'inactive').length
     : 0;
   const bridgeLabel =
-    bridgeConnected === null ? 'Connecting' : bridgeConnected ? 'Bridge live' : 'Bridge offline';
+    bridgeConnected === null
+      ? 'Connecting'
+      : bridgeConnected
+        ? 'System connected'
+        : 'System offline';
 
   return (
     <section className="pbk-fleet-hero">
@@ -844,8 +851,8 @@ function AgentFleetHero({
             The <em>agent fleet</em>.
           </h1>
           <p>
-            Every PBK agent at a glance: bridge health, SNN readiness, live lead context, skill
-            transfer safety, and approval-gated provider actions in one command surface.
+            Pick an agent, preview how they would handle a lead, request approval for a call, and
+            move proven Ava skills between teammates from one command surface.
           </p>
         </div>
         <div className="pbk-fleet-bridge-card">
@@ -853,7 +860,7 @@ function AgentFleetHero({
           <strong>{bridgeLabel}</strong>
           <small>
             {pendingTransferCount
-              ? `${pendingTransferCount} queued transfer retries`
+              ? `${pendingTransferCount} learning transfer retries`
               : `${agentRegistrySource} roster`}
           </small>
         </div>
@@ -951,7 +958,7 @@ function AgentFleetCard({
         <span className={`pbk-agent-activity ${activityState}`}>
           <strong>{getAgentSummary(agent, lastOutcome, bridgeWorker)}</strong>
           <span>
-            {ready ? 'SNN ready' : 'SNN local status pending'} -{' '}
+            {ready ? 'Learning ready' : 'Learning status pending'} -{' '}
             {agent.metadata.orchestrationRole || 'worker'}
           </span>
           <span className="sentiment-line">
@@ -1398,6 +1405,7 @@ export function AgentFleet() {
   >({});
   const [pendingTransferCount, setPendingTransferCount] = useState(0);
   const pendingTransferQueueRef = useRef<PendingTransfer[]>([]);
+  const previewRequestIdRef = useRef(0);
   const transferFeedbackTimersRef = useRef<number[]>([]);
   const syncPendingTransferCount = useCallback(() => {
     setPendingTransferCount(pendingTransferQueueRef.current.length);
@@ -1558,6 +1566,29 @@ export function AgentFleet() {
     () => agents.find((a) => a.id === activeAgentId) ?? agents[0],
     [activeAgentId, agents]
   );
+
+  useEffect(() => {
+    if (!pendingTransferCount) return;
+    let cancelled = false;
+    const retryQueuedTransfers = () => {
+      if (cancelled || !pendingTransferQueueRef.current.length) return;
+      flushTransferQueue(pendingTransferQueueRef.current, agents)
+        .catch((error) => {
+          console.warn('[PBK AgentFleet] queued skill transfer retry loop failed', error);
+        })
+        .finally(() => {
+          if (!cancelled) syncPendingTransferCount();
+        });
+    };
+    const firstRetry = window.setTimeout(retryQueuedTransfers, 5000);
+    const retryInterval = window.setInterval(retryQueuedTransfers, 30000);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(firstRetry);
+      window.clearInterval(retryInterval);
+    };
+  }, [agents, pendingTransferCount, syncPendingTransferCount]);
+
   const lastCallOutcomeByAgentId = useMemo(() => {
     const ordered = [...runtimeCalls].sort(
       (left, right) => getCallTimestamp(right) - getCallTimestamp(left)
@@ -1584,6 +1615,7 @@ export function AgentFleet() {
   const latestQaAudit = qaAudits[0] || null;
 
   useEffect(() => {
+    previewRequestIdRef.current += 1;
     setDealPreview(null);
     setPreviewError('');
   }, [activeAgentId, selectedLeadId]);
@@ -1646,6 +1678,7 @@ export function AgentFleet() {
       });
       return;
     }
+    const requestId = ++previewRequestIdRef.current;
     setPreviewLoading(true);
     setPreviewError('');
     try {
@@ -1659,6 +1692,7 @@ export function AgentFleet() {
         email: selectedLead.email || selectedLead.seller?.email || '',
         selectedPath: selectedLead.selectedPath || selectedLead.selected_path || '',
       });
+      if (requestId !== previewRequestIdRef.current) return;
       setDealPreview(result);
       if (result.qaAudit?.record) {
         setQaAudits((current) =>
@@ -1679,6 +1713,7 @@ export function AgentFleet() {
         setQaAuditStatus(result.qaAudit.source || 'QA preview recorded');
       }
     } catch (error) {
+      if (requestId !== previewRequestIdRef.current) return;
       console.warn('[PBK AgentFleet] deal context preview failed', error);
       setPreviewError(
         error instanceof Error
@@ -1686,7 +1721,7 @@ export function AgentFleet() {
           : 'Agent deal context preview could not reach the bridge.'
       );
     } finally {
-      setPreviewLoading(false);
+      if (requestId === previewRequestIdRef.current) setPreviewLoading(false);
     }
   };
 
@@ -1734,7 +1769,9 @@ export function AgentFleet() {
         address: getLeadOptionAddress(selectedLead),
         agentId: activeAgent.id,
         agentName: activeAgent.name,
-        source: 'agent-fleet',
+        source: 'agent_fleet_approval',
+        forceApproval: true,
+        requestApproval: true,
       });
       const status = String(
         response.status || response.result || response.outcome || ''
@@ -1743,10 +1780,10 @@ export function AgentFleet() {
         status.includes('approval') || Boolean(response.approvalId || response.approval_id);
       showUiToast({
         tone: approvalQueued ? 'info' : 'success',
-        title: approvalQueued ? 'Call queued for approval' : 'Call request sent',
+        title: approvalQueued ? 'Call queued for approval' : 'Call approval requested',
         desc: approvalQueued
           ? `${getLeadOptionName(selectedLead)} needs approval before Telnyx dials.`
-          : `${getLeadOptionName(selectedLead)} was handed to the Telnyx call lane.`,
+          : `${getLeadOptionName(selectedLead)} is waiting for approval before Telnyx dials.`,
       });
     } catch (error) {
       showUiToast({
@@ -1961,7 +1998,7 @@ export function AgentFleet() {
                   </div>
                   <div className="pbk-dp-flags">
                     <span>{activeAgent.status}</span>
-                    {(activeLocalSnn || activeBridgeWorker?.ready) && <span>SNN ready</span>}
+                    {(activeLocalSnn || activeBridgeWorker?.ready) && <span>Learning ready</span>}
                   </div>
                 </div>
                 <p className="mt-2 text-xs text-slate-500 leading-relaxed">
@@ -2026,7 +2063,7 @@ export function AgentFleet() {
                       onClick={handleCallSelectedLead}
                       title={
                         activeAgentCanCall
-                          ? 'Start an approval-safe Telnyx call lane for this lead'
+                          ? 'Request approval before Telnyx dials this lead'
                           : 'Only Ava, Max, and Nurture Agent can initiate seller calls'
                       }
                     >
@@ -2035,7 +2072,7 @@ export function AgentFleet() {
                       ) : (
                         <Phone size={14} />
                       )}
-                      {callActionPending ? 'Calling...' : 'Call lead'}
+                      {callActionPending ? 'Requesting...' : 'Request call'}
                     </button>
                     <button
                       type="button"
@@ -2099,7 +2136,7 @@ export function AgentFleet() {
                     <div className="mt-3 grid gap-2 md:grid-cols-3">
                       <div className="rounded-xl bg-slate-950/70 px-3 py-2">
                         <div className="text-[10px] uppercase tracking-wide text-slate-500">
-                          BANT
+                          Lead qualification
                         </div>
                         <div className="text-xs text-slate-300">
                           {dealPreview.bant?.complete
@@ -2113,7 +2150,7 @@ export function AgentFleet() {
                         </div>
                         <div className="text-xs text-slate-300">
                           {dealPreview.analyzer?.found
-                            ? `MAO ${dealPreview.analyzer.mao || '-'}`
+                            ? `Max offer ${dealPreview.analyzer.mao || '-'}`
                             : 'Numbers not found'}
                         </div>
                       </div>
@@ -2123,7 +2160,7 @@ export function AgentFleet() {
                         </div>
                         <div className="text-xs text-slate-300">
                           {dealPreview.requiredApprovals?.length
-                            ? `Approval: ${dealPreview.requiredApprovals.join(', ')}`
+                            ? `Approval needed: ${dealPreview.requiredApprovals.join(', ')}`
                             : 'No provider write'}
                         </div>
                       </div>

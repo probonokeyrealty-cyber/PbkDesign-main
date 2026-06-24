@@ -37,11 +37,11 @@ import {
 
 const LIFECYCLE_STEPS = [
   'Review',
-  'Scenarios',
-  'Chain',
-  'Agents',
-  'Approval',
-  'Activate',
+  'Practice',
+  'Fit',
+  'Agent',
+  'Approve',
+  'Start small',
   'Outcomes',
 ];
 
@@ -52,9 +52,9 @@ const STATE_LABELS: Record<string, string> = {
   testing: 'Testing',
   failed: 'Failed',
   ready_for_approval: 'Ready for approval',
-  approved_inactive: 'Approved inactive',
-  canary: 'Canary',
-  active: 'Active',
+  approved_inactive: 'Ready to use',
+  canary: 'Small test',
+  active: 'Live',
   paused: 'Paused',
   rolled_back: 'Rolled back',
   retired: 'Retired',
@@ -75,7 +75,7 @@ const STATE_STEP: Record<string, number> = {
   retired: 6,
 };
 
-const SKILL_WIZARD_STEPS = ['Trigger', 'Response', 'Next question', 'Preview'] as const;
+const SKILL_WIZARD_STEPS = ['Situation', 'Ava reply', 'Next question', 'Preview'] as const;
 
 const SKILL_TRIGGER_OPTIONS = [
   { value: 'price_objection', label: 'Price objection' },
@@ -303,8 +303,8 @@ function CreateCandidateDialog({
       >
         <header>
           <div>
-            <span>Candidate intake</span>
-            <h2 id="skill-candidate-title">Add a governed skill</h2>
+            <span>Ava training</span>
+            <h2 id="skill-candidate-title">Teach Ava a new skill</h2>
           </div>
           <button type="button" onClick={onClose} aria-label="Close candidate form">
             <X size={18} />
@@ -323,7 +323,7 @@ function CreateCandidateDialog({
               }}
             >
               <Plus size={15} />
-              Manual
+              Type it
             </button>
             <button
               type="button"
@@ -333,7 +333,7 @@ function CreateCandidateDialog({
               onClick={() => setMode('youtube')}
             >
               <Youtube size={16} />
-              YouTube
+              Video
             </button>
             <button
               type="button"
@@ -348,10 +348,10 @@ function CreateCandidateDialog({
           </div>
           <p>
             {mode === 'manual'
-              ? 'New skills enter review only. They cannot execute until an operator approves the exact hash and activates a rollout.'
+              ? 'Write the situation, what Ava should say, and the next question. The draft waits for review before Ava can use it.'
               : mode === 'youtube'
-                ? 'Learn from YouTube without bypassing governance. Captions are used when available; disabled-caption videos can use pasted notes or a direct media URL for Deepgram transcription.'
-                : 'Break an article, pasted notes, or screenshot OCR text into governed skill candidates. Every result still enters review only.'}
+                ? 'Add a training video or pasted notes. Ava turns it into draft responses for review.'
+                : 'Paste an article, screenshot text, or coaching notes. Ava turns the useful parts into draft responses.'}
           </p>
           {mode === 'manual' ? (
             <>
@@ -382,7 +382,7 @@ function CreateCandidateDialog({
                     />
                   </label>
                   <label>
-                    Trigger
+                    Seller situation
                     <select
                       value={triggerType}
                       onChange={(event) => setTriggerType(event.target.value)}
@@ -394,9 +394,19 @@ function CreateCandidateDialog({
                       ))}
                     </select>
                   </label>
-                  <div className="pbk-skill-dialog-grid">
+                  <label>
+                    Who should use it?
+                    <select value={agentId} onChange={(event) => setAgentId(event.target.value)}>
+                      <option value="ava">Ava</option>
+                      <option value="rex">Rex</option>
+                      <option value="nurture-agent">Nurture</option>
+                      <option value="max">Max</option>
+                    </select>
+                  </label>
+                  <details className="pbk-skill-advanced">
+                    <summary>Advanced safety details</summary>
                     <label>
-                      Risk class
+                      Safety level
                       <select
                         value={riskClass}
                         onChange={(event) => setRiskClass(event.target.value)}
@@ -407,23 +417,14 @@ function CreateCandidateDialog({
                         <option value="critical">Critical</option>
                       </select>
                     </label>
-                    <label>
-                      Suggested agent
-                      <select value={agentId} onChange={(event) => setAgentId(event.target.value)}>
-                        <option value="ava">Ava</option>
-                        <option value="rex">Rex</option>
-                        <option value="nurture-agent">Nurture</option>
-                        <option value="max">Max</option>
-                      </select>
-                    </label>
-                  </div>
+                  </details>
                 </div>
               )}
 
               {wizardStep === 1 && (
                 <div className="pbk-skill-wizard-panel">
                   <label>
-                    Response
+                    What should Ava say?
                     <textarea
                       value={instructions}
                       onChange={(event) => setInstructions(event.target.value)}
@@ -438,7 +439,7 @@ function CreateCandidateDialog({
               {wizardStep === 2 && (
                 <div className="pbk-skill-wizard-panel">
                   <label>
-                    Next question
+                    What should Ava ask next?
                     <textarea
                       value={nextQuestion}
                       onChange={(event) => setNextQuestion(event.target.value)}
@@ -447,14 +448,17 @@ function CreateCandidateDialog({
                       autoFocus
                     />
                   </label>
-                  <label>
-                    Provenance note
-                    <input
-                      value={sourceNote}
-                      onChange={(event) => setSourceNote(event.target.value)}
-                      placeholder="Operator doctrine, call review, training source..."
-                    />
-                  </label>
+                  <details className="pbk-skill-advanced">
+                    <summary>Advanced source details</summary>
+                    <label>
+                      Where did this come from?
+                      <input
+                        value={sourceNote}
+                        onChange={(event) => setSourceNote(event.target.value)}
+                        placeholder="Call review, training source, coaching note..."
+                      />
+                    </label>
+                  </details>
                 </div>
               )}
 
@@ -503,7 +507,7 @@ function CreateCandidateDialog({
               </label>
               <div className="pbk-skill-dialog-grid">
                 <label>
-                  Suggested agent
+                  Who should learn it?
                   <select value={agentId} onChange={(event) => setAgentId(event.target.value)}>
                     <option value="ava">Ava</option>
                     <option value="rex">Rex</option>
@@ -512,7 +516,7 @@ function CreateCandidateDialog({
                   </select>
                 </label>
                 <label>
-                  Candidate limit
+                  How many drafts?
                   <select
                     value={maxCandidates}
                     onChange={(event) => setMaxCandidates(Number(event.target.value))}
@@ -528,13 +532,13 @@ function CreateCandidateDialog({
                 <div>
                   <strong>Review stays mandatory</strong>
                   <span>
-                    Captions, transcript paste, and audio fallback only create inactive candidates.
-                    No tool access, approval, or activation is granted during ingestion.
+                    Ava can draft from training material, but nothing goes live until a person
+                    reviews and approves it.
                   </span>
                 </div>
               </div>
               <label className="pbk-skill-audio-fallback">
-                Direct audio/video transcript URL
+                Advanced: direct media link
                 <input
                   value={audioTranscriptUrl}
                   onChange={(event) => setAudioTranscriptUrl(event.target.value)}
@@ -544,8 +548,8 @@ function CreateCandidateDialog({
                   autoCorrect="off"
                 />
                 <small>
-                  Optional. Use a public MP3, M4A, WAV, MP4, MOV, or WebM file when YouTube captions
-                  are disabled. A normal YouTube watch link is not a direct media file.
+                  Optional. Use a public MP3, M4A, WAV, MP4, MOV, or WebM file when the video cannot
+                  provide text. A normal YouTube watch link is not a direct media file.
                 </small>
               </label>
               <label className="pbk-skill-youtube-fallback">
@@ -557,8 +561,8 @@ function CreateCandidateDialog({
                   rows={5}
                 />
                 <small>
-                  Use this when YouTube captions are disabled. Ava still creates review-only
-                  candidates, never live skills.
+                  Use this when the video has no transcript. Ava still creates review-only drafts,
+                  never live skills.
                 </small>
               </label>
             </>
@@ -589,7 +593,7 @@ function CreateCandidateDialog({
               </label>
               <div className="pbk-skill-dialog-grid">
                 <label>
-                  Suggested agent
+                  Who should learn it?
                   <select value={agentId} onChange={(event) => setAgentId(event.target.value)}>
                     <option value="ava">Ava</option>
                     <option value="rex">Rex</option>
@@ -598,7 +602,7 @@ function CreateCandidateDialog({
                   </select>
                 </label>
                 <label>
-                  Candidate limit
+                  How many drafts?
                   <select
                     value={maxCandidates}
                     onChange={(event) => setMaxCandidates(Number(event.target.value))}
@@ -612,24 +616,24 @@ function CreateCandidateDialog({
               <div className="pbk-skill-youtube-note">
                 <ShieldCheck size={18} />
                 <div>
-                  <strong>Article import is review-only</strong>
+                  <strong>Review stays mandatory</strong>
                   <span>
-                    Pasted article text, OCR from screenshots, and reachable URLs create inactive
-                    candidates. Operators still approve exact hashes before rollout.
+                    Ava can draft from articles or notes, but nothing goes live until a person
+                    reviews and approves it.
                   </span>
                 </div>
               </div>
               <label className="pbk-skill-article-text">
-                Article text, screenshot OCR, or detailed notes
+                Article text, screenshot text, or detailed notes
                 <textarea
                   value={articleText}
                   onChange={(event) => setArticleText(event.target.value)}
-                  placeholder="Paste the article body, OCR text from a screenshot, or detailed notes. PBK will extract trigger, response, next question, risk, and target-agent candidates."
+                  placeholder="Paste the article body, screenshot text, or detailed notes. Ava will draft the situation, response, next question, safety level, and suggested owner."
                   rows={8}
                 />
                 <small>
-                  Use this for screenshots: run OCR or copy the visible article text here. A URL can
-                  be used when the bridge can fetch the page directly.
+                  For screenshots, copy the visible article text here. A URL can be used when the
+                  system can fetch the page directly.
                 </small>
               </label>
             </>
@@ -754,6 +758,7 @@ export function SkillStudio() {
   const [createOpen, setCreateOpen] = useState(searchParams.get('create') === '1');
   const [agentId, setAgentId] = useState('ava');
   const [rolloutPercent, setRolloutPercent] = useState(10);
+  const [confirmingPrimaryAction, setConfirmingPrimaryAction] = useState(false);
 
   const selected = useMemo(
     () => items.find((item) => item.versionId === selectedId) || null,
@@ -837,6 +842,10 @@ export function SkillStudio() {
     return () => window.clearTimeout(timer);
   }, [load]);
 
+  useEffect(() => {
+    setConfirmingPrimaryAction(false);
+  }, [selectedId]);
+
   const runAction = async <T,>(
     action: () => Promise<T>,
     success: string | ((result: T) => string)
@@ -870,7 +879,10 @@ export function SkillStudio() {
     ? null
     : selected.lifecycleState === 'ready_for_approval'
       ? {
-          label: 'Approve exact version',
+          label: 'Approve this Ava skill',
+          confirmTitle: 'Approve this skill for Ava?',
+          confirmCopy:
+            'This keeps the skill off until you choose a small test. Ava will not use it live yet.',
           icon: FileCheck2,
           run: () =>
             runAction(
@@ -889,7 +901,10 @@ export function SkillStudio() {
         }
       : selected.lifecycleState === 'approved_inactive'
         ? {
-            label: 'Activate canary',
+            label: 'Start a small test',
+            confirmTitle: `Start this skill for ${rolloutPercent}% of ${agentId.toUpperCase()}?`,
+            confirmCopy:
+              'Ava will only use this in the selected small rollout. If anything looks wrong, roll it back.',
             icon: Sparkles,
             run: () =>
               runAction(
@@ -910,7 +925,10 @@ export function SkillStudio() {
           }
         : selected.activationId && ['canary', 'active'].includes(selected.lifecycleState)
           ? {
-              label: 'Roll back',
+              label: 'Turn this skill off',
+              confirmTitle: 'Turn this skill off for new conversations?',
+              confirmCopy:
+                'This stops Ava from choosing this skill for new conversations. Past records stay saved.',
               icon: RotateCcw,
               danger: true,
               run: () =>
@@ -928,11 +946,13 @@ export function SkillStudio() {
     <div className="pbk-skill-studio">
       <header className="pbk-skill-studio-header">
         <div>
-          <span className="pbk-eyebrow">Render authority - approval-gated runtime</span>
+          <span className="pbk-eyebrow">Ava learning - human approved</span>
           <h1 className="pbk-display">
             Skill <em>Studio</em>
           </h1>
-          <p>Review exact versions, control rollout, and keep every agent skill auditable.</p>
+          <p>
+            Teach Ava what to say, review what is working, and turn stronger responses on carefully.
+          </p>
         </div>
         <div className="pbk-skill-studio-header-actions">
           <button
@@ -940,7 +960,7 @@ export function SkillStudio() {
             className="pbk-btn pbk-btn-ghost"
             onClick={() => void load()}
             disabled={loading}
-            title="Refresh governance authority"
+            title="Refresh Ava skill list"
           >
             <RefreshCw size={16} className={loading ? 'animate-spin' : ''} />
             Refresh
@@ -951,7 +971,7 @@ export function SkillStudio() {
             onClick={() => setCreateOpen(true)}
           >
             <Plus size={16} />
-            Add skill
+            Teach Ava
           </button>
         </div>
       </header>
@@ -962,21 +982,21 @@ export function SkillStudio() {
           <strong>{status?.candidates || 0}</strong>
         </div>
         <div>
-          <span>Approved inactive</span>
+          <span>Ready to test</span>
           <strong>{status?.approvedInactive || 0}</strong>
         </div>
         <div>
-          <span>Canary</span>
+          <span>Small test</span>
           <strong>{status?.canary || 0}</strong>
         </div>
         <div>
-          <span>Active</span>
+          <span>Live now</span>
           <strong>{status?.active || 0}</strong>
         </div>
         <div className={status?.outbox?.deadLettered ? 'warning' : ''}>
-          <span>Mirror queue</span>
+          <span>Sync health</span>
           <strong>{status?.outbox?.pending || 0}</strong>
-          <small>Supabase analytics mirror</small>
+          <small>learning records</small>
         </div>
       </section>
 
@@ -994,9 +1014,9 @@ export function SkillStudio() {
         <aside className="pbk-skill-repository">
           <div className="pbk-skill-pane-head">
             <div>
-              <span>Repository</span>
+              <span>Ava skills</span>
               <strong>
-                {visibleItems.length} of {items.length} exact versions
+                {visibleItems.length} of {items.length} draft and live skills
               </strong>
             </div>
             <Database size={17} />
@@ -1006,7 +1026,7 @@ export function SkillStudio() {
             <input
               value={search}
               onChange={(event) => setSearch(event.target.value)}
-              placeholder="Search skills or instructions"
+              placeholder="Search Ava skills or replies"
               aria-label="Search skill repository"
             />
           </div>
@@ -1304,16 +1324,50 @@ export function SkillStudio() {
                   <div>
                     <span>Next controlled action</span>
                     <strong>{primaryAction.label}</strong>
+                    {confirmingPrimaryAction && (
+                      <small>
+                        {primaryAction.confirmTitle} {primaryAction.confirmCopy}
+                      </small>
+                    )}
                   </div>
-                  <button
-                    type="button"
-                    className={`pbk-btn ${primaryAction.danger ? 'pbk-btn-danger' : 'pbk-btn-primary'}`}
-                    onClick={() => void primaryAction.run()}
-                    disabled={busy}
-                  >
-                    <primaryAction.icon size={16} />
-                    {busy ? 'Working' : primaryAction.label}
-                  </button>
+                  {confirmingPrimaryAction ? (
+                    <div className="pbk-skill-primary-confirm">
+                      <button
+                        type="button"
+                        className="pbk-btn pbk-btn-ghost"
+                        onClick={() => setConfirmingPrimaryAction(false)}
+                        disabled={busy}
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="button"
+                        className={`pbk-btn ${
+                          primaryAction.danger ? 'pbk-btn-danger' : 'pbk-btn-primary'
+                        }`}
+                        onClick={() => {
+                          setConfirmingPrimaryAction(false);
+                          void primaryAction.run();
+                        }}
+                        disabled={busy}
+                      >
+                        <primaryAction.icon size={16} />
+                        {busy ? 'Working' : 'Confirm'}
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      className={`pbk-btn ${
+                        primaryAction.danger ? 'pbk-btn-danger' : 'pbk-btn-primary'
+                      }`}
+                      onClick={() => setConfirmingPrimaryAction(true)}
+                      disabled={busy}
+                    >
+                      <primaryAction.icon size={16} />
+                      {busy ? 'Working' : primaryAction.label}
+                    </button>
+                  )}
                 </div>
               )}
             </>
@@ -1331,8 +1385,8 @@ export function SkillStudio() {
         <aside className={`pbk-skill-studio-inspector ${inspectorOpen ? 'open' : ''}`}>
           <div className="pbk-skill-pane-head">
             <div>
-              <span>Inspector</span>
-              <strong>{selected ? 'Authority record' : 'System posture'}</strong>
+              <span>Skill details</span>
+              <strong>{selected ? 'Skill record' : 'Ava learning health'}</strong>
             </div>
             <button
               type="button"
@@ -1406,18 +1460,18 @@ export function SkillStudio() {
           ) : (
             <section className="pbk-skill-inspector-empty">
               <ShieldCheck size={22} />
-              <strong>Fail-closed governance</strong>
-              <p>Select an exact version to inspect provenance, safety, approval, and rollout.</p>
+              <strong>Human-approved learning</strong>
+              <p>Select a skill to see where it came from, safety notes, and rollout status.</p>
             </section>
           )}
           <section>
             <h3>
               <Database size={15} />
-              Mirror health
+              Learning sync
             </h3>
             <dl className="pbk-skill-inspector-list">
               <div>
-                <dt>Authority</dt>
+                <dt>System of record</dt>
                 <dd>{status?.authority || 'Render Postgres'}</dd>
               </div>
               <div>
@@ -1425,7 +1479,7 @@ export function SkillStudio() {
                 <dd>{status?.snapshot?.available ? 'Validated' : 'Unavailable'}</dd>
               </div>
               <div>
-                <dt>Projection</dt>
+                <dt>Sync</dt>
                 <dd>{status?.outbox?.deadLettered ? 'Needs attention' : 'Healthy'}</dd>
               </div>
             </dl>
@@ -1452,7 +1506,7 @@ export function SkillStudio() {
                 response.createdCount === 1 ? '' : 's'
               } created from ${
                 response.sourceType === 'article' || payload.sourceType === 'article'
-                  ? 'article/OCR text'
+                  ? 'article text'
                   : 'YouTube'
               }. Review is required before activation.`
           );

@@ -80,20 +80,23 @@ function Sparkline({ values }: { values: number[] }) {
 
 function MemorySourceRail() {
   return (
-    <div className="pbk-memory-source-rail" aria-label="Memory Analytics data sources">
-      <PbkDataSource endpoint="GET /api/skills/outcomes" status="ships" />
-      <PbkDataSource endpoint="GET /api/skills/trends" status="ships" />
-      <PbkDataSource
-        endpoint="GET /api/memory/events"
-        status="ships"
-        note="premium memory timeline and agent learning events"
-      />
-      <PbkDataSource
-        endpoint="GET /api/emotion/policies/experiments"
-        status="ships"
-        note="active emotion-policy experiment rows"
-      />
-    </div>
+    <details className="pbk-source-disclosure">
+      <summary>System sources</summary>
+      <div className="pbk-memory-source-rail" aria-label="Memory Analytics data sources">
+        <PbkDataSource endpoint="GET /api/skills/outcomes" status="ships" />
+        <PbkDataSource endpoint="GET /api/skills/trends" status="ships" />
+        <PbkDataSource
+          endpoint="GET /api/memory/events"
+          status="ships"
+          note="premium memory timeline and agent learning events"
+        />
+        <PbkDataSource
+          endpoint="GET /api/emotion/policies/experiments"
+          status="ships"
+          note="active emotion-policy experiment rows"
+        />
+      </div>
+    </details>
   );
 }
 
@@ -108,21 +111,21 @@ function MemoryHero({
   stats: MemoryStats;
   onRefresh: () => void;
 }) {
-  const sourceLabel = model.source || 'runtime';
+  const sourceLabel = model.source && model.source !== 'runtime' ? model.source : 'live learning';
   return (
     <section className="pbk-memory-hero">
       <div className="pbk-memory-hero-top">
         <div>
           <div className="pbk-eyebrow">
-            Self-modifying memory - {stats.activeSkills} active skills - {sourceLabel}
+            Ava intelligence memory - {stats.activeSkills} active skills - {sourceLabel}
           </div>
           <h1 className="pbk-display pbk-h1">
-            Memory &amp; <em>analytics</em>.
+            What Ava is <em>learning</em>.
           </h1>
           <p>
-            Every skill outcome and confidence trend across the PBK fleet. Rex learns from call
-            outcomes, promotes what works, and keeps weak skills visible without inventing a fake
-            training story.
+            See which replies, questions, and follow-up moves are helping sellers move forward. Ava
+            uses this memory to answer better in chat, coach calls, and keep weak responses visible
+            until they improve.
           </p>
         </div>
         <div className="pbk-memory-hero-actions">
@@ -135,9 +138,13 @@ function MemoryHero({
             <RefreshCw size={15} className={status === 'loading' ? 'animate-spin' : ''} />
             {status === 'loading' ? 'Refreshing' : 'Refresh memory'}
           </button>
+          <Link className="pbk-btn pbk-btn-ghost" to="/ava-chat">
+            <Sparkles size={15} />
+            Ask Ava
+          </Link>
           <Link className="pbk-btn pbk-btn-ghost" to="/skills">
             <Sparkles size={15} />
-            Open Skill Studio
+            Teach Ava
           </Link>
           <Link className="pbk-btn pbk-btn-primary" to="/skills?create=1">
             <Plus size={15} />
@@ -163,19 +170,19 @@ function MemoryStatRibbon({ stats, generatedAt }: { stats: MemoryStats; generate
   return (
     <div className="pbk-memory-grid">
       <div className="pbk-memory-stat">
-        <div className="l">Active skills</div>
+        <div className="l">Ava skills</div>
         <div className="v sky">{formatNumber(stats.activeSkills)}</div>
-        <div className="delta">from skill outcomes</div>
+        <div className="delta">ready to review</div>
       </div>
       <div className="pbk-memory-stat">
-        <div className="l">Recorded uses</div>
+        <div className="l">Times used</div>
         <div className="v">{formatNumber(stats.totalUsage)}</div>
-        <div className="delta">wins, losses, attempts</div>
+        <div className="delta">calls, chats, follow-ups</div>
       </div>
       <div className="pbk-memory-stat">
         <div className="l">Avg confidence</div>
         <div className="v lime">{stats.averageConfidence}%</div>
-        <div className="delta">{stats.provenSkills} proven skills</div>
+        <div className="delta">{stats.provenSkills} proven responses</div>
       </div>
       <div className="pbk-memory-stat">
         <div className="l">Last refresh</div>
@@ -194,19 +201,22 @@ function MemorySkillRow({ skill }: { skill: SkillMetric }) {
       <div className="name">
         {skill.name}
         <span className="src">
-          {skill.agentName || skill.source || skill.status || 'PBK runtime'}
+          {skill.agentName || skill.source || skill.status || 'Ava learning'}
         </span>
       </div>
-      <div className="num">{formatNumber(Number(skill.usage || 0))}x</div>
+      <div className="num" data-label="Used">
+        {formatNumber(Number(skill.usage || 0))}x
+      </div>
       <div
+        data-label="Win rate"
         className={`num ${skill.successRate >= 60 ? 'good' : skill.successRate < 35 ? 'warn' : ''}`.trim()}
       >
         {skill.successRate}%
       </div>
-      <div className="spark-wrap">
+      <div className="spark-wrap" data-label="Trend">
         <Sparkline values={skill.trend} />
       </div>
-      <div className="bar">
+      <div className="bar" data-label={`Confidence ${confidence}%`}>
         <div
           className={`bar-fill ${tone}`.trim()}
           style={{ width: `${Math.max(0, Math.min(100, confidence))}%` }}
@@ -261,7 +271,7 @@ function MemoryExperimentCard({ experiment }: { experiment: ExperimentMetric }) 
         })}
       </div>
       <p className="ab-note">
-        {experiment.status || 'Experiment data came from the bridge outcome payload.'}
+        {experiment.status || 'Ava is comparing these responses from real outcomes.'}
       </p>
     </section>
   );
@@ -275,7 +285,8 @@ function MemoryExperimentEmpty() {
         <span className="lift muted">none active</span>
       </div>
       <p className="ab-note">
-        The bridge returned no active emotional policy experiments. No sample variants are rendered.
+        No active response tests are running. Add a skill or ask Ava to draft a better reply when a
+        seller objection keeps showing up.
       </p>
       <PbkDataSource endpoint="GET /api/emotion/policies/experiments" status="ships" />
     </section>
@@ -375,10 +386,17 @@ export function MemoryAnalytics() {
 
         {status === 'error' && (
           <section className="rounded-2xl border border-red-400/30 bg-red-500/10 p-4">
-            <h2 className="text-sm font-semibold text-red-100">
-              Memory analytics bridge unavailable
-            </h2>
-            <p className="mt-1 text-sm text-red-200/80">{error}</p>
+            <h2 className="text-sm font-semibold text-red-100">Ava could not refresh memory</h2>
+            <p className="mt-1 text-sm text-red-200/80">
+              Try again in a moment. If this keeps happening, the system sources panel has the
+              technical detail for an admin.
+            </p>
+            {error && (
+              <details className="mt-3 text-xs text-red-100/70">
+                <summary>Admin detail</summary>
+                {error}
+              </details>
+            )}
           </section>
         )}
 
@@ -410,8 +428,8 @@ export function MemoryAnalytics() {
                 <div className="pbk-memory-empty">
                   <Database size={18} />
                   {status === 'loading'
-                    ? 'Loading skills from the bridge...'
-                    : 'No skill outcome rows returned yet.'}
+                    ? 'Loading Ava memory...'
+                    : 'No learned skills yet. Add a skill or ask Ava to turn a strong reply into one.'}
                 </div>
               )}
             </div>
@@ -467,8 +485,8 @@ export function MemoryAnalytics() {
                 <div className="pbk-memory-empty">
                   <Database size={18} />
                   {status === 'loading'
-                    ? 'Loading memory timeline...'
-                    : 'No memory events returned by the bridge yet.'}
+                    ? 'Loading recent learning...'
+                    : 'No recent learning events yet. Ava will fill this as calls, chats, and skill reviews happen.'}
                 </div>
               )}
               <PbkDataSource endpoint="GET /api/memory/events" status="ships" />

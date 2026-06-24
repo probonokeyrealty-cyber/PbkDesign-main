@@ -1687,6 +1687,8 @@ export async function startLeadCallRequest(body: Record<string, unknown>) {
     ...body,
     manual: body.manual === false ? false : true,
     manualSend: body.manualSend === false ? false : true,
+    forceApproval: body.forceApproval === false ? false : true,
+    requestApproval: body.requestApproval === false ? false : true,
     requestedBy: body.requestedBy || body.requested_by || body.actor || 'PBK operator',
     source: body.source || 'command_center_manual',
   });

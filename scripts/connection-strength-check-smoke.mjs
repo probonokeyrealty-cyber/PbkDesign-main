@@ -6,6 +6,7 @@ import { runConnectionHealthCheck } from './connection-strength-check.mjs';
 
 const root = process.cwd();
 const bridgeSource = readFileSync(resolve(root, 'scripts/openclaw-local-server.mjs'), 'utf8');
+const renderDoctorSource = readFileSync(resolve(root, 'scripts/render-cli-doctor.mjs'), 'utf8');
 const packageJson = JSON.parse(readFileSync(resolve(root, 'package.json'), 'utf8'));
 
 const healthy = await runConnectionHealthCheck({
@@ -39,7 +40,11 @@ assert.equal(healthy.result, 'connection_health_ready');
 assert.equal(healthy.components.postgres.status, 'healthy');
 assert.equal(healthy.components.postgres.pool.totalCount, 4);
 assert.equal(healthy.components.redis.status, 'healthy');
-assert.equal(healthy.components.providers.slack.required, false, 'Optional providers should not block readiness.');
+assert.equal(
+  healthy.components.providers.slack.required,
+  false,
+  'Optional providers should not block readiness.'
+);
 assert.deepEqual(healthy.blockers, []);
 
 const degraded = await runConnectionHealthCheck({
@@ -56,7 +61,12 @@ const degraded = await runConnectionHealthCheck({
     enabled: false,
   },
   providers: {
-    telnyx: { ready: false, messagingReady: true, voiceReady: false, missing: ['PBK_TELNYX_CONNECTION_ID'] },
+    telnyx: {
+      ready: false,
+      messagingReady: true,
+      voiceReady: false,
+      missing: ['PBK_TELNYX_CONNECTION_ID'],
+    },
     deepgram: { ready: true },
     elevenLabs: { ready: true },
     deepSeek: { ready: true },
@@ -64,10 +74,20 @@ const degraded = await runConnectionHealthCheck({
   requiredProviders: ['telnyx', 'deepgram', 'elevenLabs', 'deepSeek'],
 });
 
-assert.equal(degraded.ok, false, 'Postgres and required provider failures should degrade readiness.');
+assert.equal(
+  degraded.ok,
+  false,
+  'Postgres and required provider failures should degrade readiness.'
+);
 assert.equal(degraded.result, 'connection_health_degraded');
-assert(degraded.blockers.includes('postgres_unhealthy'), 'Degraded check should name Postgres as a blocker.');
-assert(degraded.blockers.includes('provider_unready:telnyx'), 'Degraded check should name failed required providers.');
+assert(
+  degraded.blockers.includes('postgres_unhealthy'),
+  'Degraded check should name Postgres as a blocker.'
+);
+assert(
+  degraded.blockers.includes('provider_unready:telnyx'),
+  'Degraded check should name failed required providers.'
+);
 assert.equal(
   degraded.components.postgres.error.includes('10.0.0.1'),
   false,
@@ -83,6 +103,21 @@ assert(
     bridgeSource.includes('withPostgresOperationDeadline(rawConnect') &&
     bridgeSource.includes('keepAliveInitialDelayMillis: PG_KEEPALIVE_INITIAL_DELAY_MS'),
   'Bridge must expose connection health and use hardened pool warm/keepalive/deadline settings.'
+);
+
+assert(
+  renderDoctorSource.includes('readWindowsStoredEnv') &&
+    renderDoctorSource.includes("GetEnvironmentVariable('${escapedKey}','User')") &&
+    renderDoctorSource.includes("GetEnvironmentVariable('${escapedKey}','Machine')") &&
+    renderDoctorSource.includes('HYDRATED_RENDER_ENV') &&
+    renderDoctorSource.includes('env.RENDER_API_KEY = env.PBK_RENDER_API_KEY') &&
+    renderDoctorSource.includes('env.RENDER_SERVICE_ID = env.PBK_RENDER_SERVICE_ID') &&
+    renderDoctorSource.includes('env.RENDER_WORKSPACE_ID = env.PBK_RENDER_WORKSPACE_ID'),
+  'Render doctor must hydrate saved Windows Render env values for subagents and stale shells.'
+);
+assert(
+  renderDoctorSource.includes(".replace(/rnd_[A-Za-z0-9_-]+/g, 'rnd_[redacted]')"),
+  'Render doctor must continue redacting Render API keys from diagnostic output.'
 );
 
 assert.equal(

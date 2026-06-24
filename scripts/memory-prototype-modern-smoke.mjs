@@ -46,13 +46,11 @@ assert(
   );
 });
 
-[
-  'GET /api/skills/outcomes',
-  'GET /api/skills/trends',
-  'GET /api/memory/events',
-].forEach((endpoint) => {
-  assert(memory.includes(endpoint), `Memory Analytics should surface data source ${endpoint}.`);
-});
+['GET /api/skills/outcomes', 'GET /api/skills/trends', 'GET /api/memory/events'].forEach(
+  (endpoint) => {
+    assert(memory.includes(endpoint), `Memory Analytics should surface data source ${endpoint}.`);
+  }
+);
 
 assert(
   /PbkDataSource[\s\S]*endpoint="GET \/api\/skills\/outcomes"[\s\S]*status="ships"/.test(memory),
@@ -63,9 +61,7 @@ assert(
   'Memory Analytics must mark GET /api/skills/trends as a shipped data source.'
 );
 assert(
-  /PbkDataSource[\s\S]*endpoint="GET \/api\/memory\/events"[\s\S]*status="ships"/.test(
-    memory
-  ),
+  /PbkDataSource[\s\S]*endpoint="GET \/api\/memory\/events"[\s\S]*status="ships"/.test(memory),
   'Memory Analytics must mark the premium memory timeline as shipped once the bridge feed exists.'
 );
 assert(
@@ -103,12 +99,26 @@ assert(
 
 [
   '.pbk-memory-hero',
+  '.pbk-source-disclosure',
   '.pbk-memory-stat',
   '.pbk-memory-card',
   '.pbk-memory-perf-row',
   '.pbk-memory-ab-card',
 ].forEach((selector) => {
   assert(pbkCss.includes(selector), `PBK CSS should include ${selector}.`);
+});
+
+[
+  'Ava intelligence memory',
+  'What Ava is',
+  'Ask Ava',
+  'Teach Ava',
+  'data-label="Used"',
+  'data-label="Win rate"',
+  'data-label="Trend"',
+  'data-label={`Confidence ${confidence}%`}',
+].forEach((snippet) => {
+  assert(memory.includes(snippet), `Memory Analytics should expose agent-friendly ${snippet}.`);
 });
 
 console.log('memory-prototype-modern-smoke: ok');

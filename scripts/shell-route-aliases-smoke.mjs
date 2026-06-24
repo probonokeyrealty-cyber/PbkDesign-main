@@ -6,6 +6,7 @@ const router = readFileSync(resolve(root, 'src/app/shell/router.tsx'), 'utf8');
 const layout = readFileSync(resolve(root, 'src/app/shell/ParadiseLayout.tsx'), 'utf8');
 const topbar = readFileSync(resolve(root, 'src/app/shell/ShellTopbar.tsx'), 'utf8');
 const netlifyConfig = readFileSync(resolve(root, 'netlify.toml'), 'utf8');
+const bridge = readFileSync(resolve(root, 'scripts/openclaw-local-server.mjs'), 'utf8');
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
@@ -28,8 +29,14 @@ function redirectsToShell(path) {
   ).test(netlifyConfig);
 }
 
-assert(hasRouterAlias('command-center'), 'React router must accept /command-center as a Command Center alias.');
-assert(hasRouterAlias('dashboard'), 'React router must accept /dashboard as a Command Center alias.');
+assert(
+  hasRouterAlias('command-center'),
+  'React router must accept /command-center as a Command Center alias.'
+);
+assert(
+  hasRouterAlias('dashboard'),
+  'React router must accept /dashboard as a Command Center alias.'
+);
 assert(
   hasRouterElement('agents', 'AgentFleet'),
   'React router must accept /agents as an Agent Fleet alias.'
@@ -38,23 +45,56 @@ assert(
   hasRouterElement('agent-fleet', 'AgentFleet'),
   'React router must accept /agent-fleet as an Agent Fleet compatibility alias.'
 );
-assert(hasRouterElement('analyzer', 'DealView'), 'React router must accept /analyzer as a DealView alias.');
-assert(hasRouterElement('deals/analyzer', 'DealView'), 'React router must accept /deals/analyzer as a DealView alias.');
-assert(hasRouterElement('agent', 'AvaChat'), 'React router must accept /agent as an Ava Chat alias.');
-assert(hasRouterElement('agent-console', 'AvaChat'), 'React router must accept /agent-console as an Ava Chat alias.');
+assert(
+  hasRouterElement('analyzer', 'DealView'),
+  'React router must accept /analyzer as a DealView alias.'
+);
+assert(
+  hasRouterElement('deals/analyzer', 'DealView'),
+  'React router must accept /deals/analyzer as a DealView alias.'
+);
+assert(
+  hasRouterElement('agent', 'AvaChat'),
+  'React router must accept /agent as an Ava Chat alias.'
+);
+assert(
+  hasRouterElement('agent-console', 'AvaChat'),
+  'React router must accept /agent-console as an Ava Chat alias.'
+);
+assert(
+  hasRouterElement('ava-chat', 'AvaChat'),
+  'React router must accept /ava-chat as an Ava Chat alias.'
+);
+assert(
+  hasRouterElement('skills', 'SkillStudio'),
+  'React router must accept /skills as Skill Studio.'
+);
+assert(
+  hasRouterElement('skill-studio', 'SkillStudio'),
+  'React router must accept /skill-studio as a Skill Studio alias.'
+);
 assert(
   /path:\s*['"]\*['"][\s\S]*?<NotFound\s*\/>/.test(router),
   'React router must provide a branded catch-all route.'
 );
-assert(layout.includes("'/command-center'"), 'Saved shell route validation must allow /command-center.');
+assert(
+  layout.includes("'/command-center'"),
+  'Saved shell route validation must allow /command-center.'
+);
 assert(layout.includes("'/dashboard'"), 'Saved shell route validation must allow /dashboard.');
-assert(layout.includes("'/inbox/conversations'"), 'Saved route validation must allow the unified inbox.');
+assert(
+  layout.includes("'/inbox/conversations'"),
+  'Saved route validation must allow the unified inbox.'
+);
 assert(layout.includes("'/agents'"), 'Saved route validation must allow the Agent Fleet alias.');
 assert(
-  layout.includes("/^\\/leads\\/[^/]+$/.test(pathname)"),
+  layout.includes('/^\\/leads\\/[^/]+$/.test(pathname)'),
   'Saved route validation must allow lead portal paths.'
 );
-assert(topbar.includes('`/command-center?search='), 'Global search deep links should target /command-center.');
+assert(
+  topbar.includes('`/command-center?search='),
+  'Global search deep links should target /command-center.'
+);
 assert(redirectsToShell('/command-center'), 'Netlify must serve the shell for /command-center.');
 assert(redirectsToShell('/dashboard'), 'Netlify must serve the shell for /dashboard.');
 assert(redirectsToShell('/agents'), 'Netlify must serve the shell for /agents.');
@@ -63,5 +103,25 @@ assert(redirectsToShell('/analyzer'), 'Netlify must serve the shell for /analyze
 assert(redirectsToShell('/deals/*'), 'Netlify must serve the shell for /deals/*.');
 assert(redirectsToShell('/agent'), 'Netlify must serve the shell for /agent.');
 assert(redirectsToShell('/agent-console'), 'Netlify must serve the shell for /agent-console.');
+assert(redirectsToShell('/ava-chat'), 'Netlify must serve the shell for /ava-chat.');
+assert(redirectsToShell('/skills'), 'Netlify must serve the shell for /skills.');
+assert(redirectsToShell('/skill-studio'), 'Netlify must serve the shell for /skill-studio.');
+
+[
+  '/agent-fleet',
+  '/agents',
+  '/fleet',
+  '/skills',
+  '/skill-studio',
+  '/memory',
+  '/agent',
+  '/agent-console',
+  '/ava-chat',
+].forEach((path) => {
+  assert(
+    bridge.includes(`'${path}'`),
+    `OpenClaw Render fallback must treat ${path} as a public shell route.`
+  );
+});
 
 console.log('shell-route-aliases-smoke: ok');

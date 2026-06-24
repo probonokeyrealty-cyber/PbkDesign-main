@@ -40,7 +40,10 @@ const requiredAgentFleetControls = [
 ];
 
 for (const [handler, bridgeTool] of requiredAgentFleetControls) {
-  assert(agentFleet.includes(`const ${handler}`) || agentFleet.includes(`function ${handler}`), `AgentFleet must define ${handler}.`);
+  assert(
+    agentFleet.includes(`const ${handler}`) || agentFleet.includes(`function ${handler}`),
+    `AgentFleet must define ${handler}.`
+  );
   assert(agentFleet.includes(bridgeTool), `${handler} must fire ${bridgeTool}.`);
 }
 
@@ -87,13 +90,53 @@ assert.match(
 );
 assert.match(
   agentFleet,
+  /window\.setInterval\(retryQueuedTransfers,\s*30000\)/,
+  'Agent Fleet must retry queued skill transfers after failures, not only during initial load.'
+);
+assert.match(
+  agentFleet,
   /assertBridgeTransferApplied/,
   'Agent Fleet must verify bridge transfer confirmation before showing success.'
 );
 assert.match(
   agentFleet,
+  /previewRequestIdRef[\s\S]*setDealPreview\(null\)[\s\S]*requestId !== previewRequestIdRef\.current/,
+  'Agent Fleet previews must ignore stale responses after lead or agent changes.'
+);
+assert.match(
+  agentFleet,
   /showUiToast\(\{[\s\S]*title:\s*'Call request failed'[\s\S]*critical:\s*true/,
   'Agent Fleet call failures must surface as critical operator toasts.'
+);
+assert.match(
+  runtimeBridge,
+  /function startLeadCallRequest[\s\S]*forceApproval:\s*body\.forceApproval === false \? false : true[\s\S]*requestApproval:\s*body\.requestApproval === false \? false : true/,
+  'Agent Fleet call helper must force approval by default before Telnyx can dial.'
+);
+assert.match(
+  agentFleet,
+  /startLeadCallRequest\(\{[\s\S]*source:\s*'agent_fleet_approval'[\s\S]*forceApproval:\s*true[\s\S]*requestApproval:\s*true/,
+  'Agent Fleet call button must request approval, not bypass as a trusted manual send.'
+);
+assert.match(
+  agentFleet,
+  /Request call/,
+  'Agent Fleet call CTA must say it requests a call instead of implying immediate dialing.'
+);
+assert.match(
+  agentFleet,
+  /Learning ready/,
+  'Agent Fleet must present agent readiness in nontechnical language.'
+);
+assert.doesNotMatch(
+  agentFleet,
+  /transferred\|applied\|copied\|delivered\|queued/,
+  'Agent Fleet must not treat queued transfers as applied transfers.'
+);
+assert.match(
+  bridge,
+  /const targetAgentKey = String\(params\.targetAgentId \|\| params\.targetAgentName \|\| ''\)\.trim\(\);[\s\S]*if \(!target \|\| target\.id === source\.id\)/,
+  'Bridge skill transfer must fail when the requested target agent is missing or self-targeted.'
 );
 assert.match(
   agentFleet,
@@ -148,7 +191,7 @@ assert.match(
 );
 assert.match(
   bridge,
-  /snnAgentIds\.length > 0 && workers\.length === snnAgentIds\.length/,
+  /snnAgentIds\.length > 0\s*&&\s*workers\.length === snnAgentIds\.length/,
   'SNN worker status must not pass with an empty roster.'
 );
 assert.match(

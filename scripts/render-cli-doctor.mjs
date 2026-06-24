@@ -15,15 +15,63 @@ const MODE = process.argv.includes('--validate-only')
     : process.argv.includes('--logs-errors-only')
       ? 'logs-errors'
       : 'full';
+
+const RENDER_ENV_KEYS = [
+  'RENDER_API_KEY',
+  'PBK_RENDER_API_KEY',
+  'RENDER_SERVICE_ID',
+  'PBK_RENDER_SERVICE_ID',
+  'RENDER_WORKSPACE_ID',
+  'PBK_RENDER_WORKSPACE_ID',
+  'RENDER_CLI_BIN',
+  'RENDER_CLI_PATH',
+];
+
+function readWindowsStoredEnv(key) {
+  if (process.platform !== 'win32' || !key) return '';
+  const escapedKey = key.replace(/'/g, "''");
+  const result = spawnSync(
+    'powershell.exe',
+    [
+      '-NoProfile',
+      '-Command',
+      `$v=[Environment]::GetEnvironmentVariable('${escapedKey}','User'); if(-not $v){$v=[Environment]::GetEnvironmentVariable('${escapedKey}','Machine')}; [Console]::Out.Write($v)`,
+    ],
+    { cwd: ROOT, encoding: 'utf8', timeout: 5000, windowsHide: true }
+  );
+  return result.status === 0 ? String(result.stdout || '').trim() : '';
+}
+
+function buildRenderEnv() {
+  const env = {};
+  for (const key of RENDER_ENV_KEYS) {
+    const value = String(process.env[key] || readWindowsStoredEnv(key) || '').trim();
+    if (value) env[key] = value;
+  }
+  if (!env.RENDER_API_KEY && env.PBK_RENDER_API_KEY) {
+    env.RENDER_API_KEY = env.PBK_RENDER_API_KEY;
+  }
+  if (!env.RENDER_SERVICE_ID && env.PBK_RENDER_SERVICE_ID) {
+    env.RENDER_SERVICE_ID = env.PBK_RENDER_SERVICE_ID;
+  }
+  if (!env.RENDER_WORKSPACE_ID && env.PBK_RENDER_WORKSPACE_ID) {
+    env.RENDER_WORKSPACE_ID = env.PBK_RENDER_WORKSPACE_ID;
+  }
+  return env;
+}
+
+const HYDRATED_RENDER_ENV = buildRenderEnv();
 const WORKSPACE_ID = String(
-  process.env.PBK_RENDER_WORKSPACE_ID || process.env.RENDER_WORKSPACE_ID || ''
+  HYDRATED_RENDER_ENV.PBK_RENDER_WORKSPACE_ID || HYDRATED_RENDER_ENV.RENDER_WORKSPACE_ID || ''
 ).trim();
-const SERVICE_ID = String(process.env.PBK_RENDER_SERVICE_ID || process.env.RENDER_SERVICE_ID || '').trim();
+const SERVICE_ID = String(
+  HYDRATED_RENDER_ENV.PBK_RENDER_SERVICE_ID || HYDRATED_RENDER_ENV.RENDER_SERVICE_ID || ''
+).trim();
 
 function getRenderCommand() {
   const candidates = [
-    process.env.RENDER_CLI_BIN,
-    process.env.RENDER_CLI_PATH,
+    HYDRATED_RENDER_ENV.RENDER_CLI_BIN,
+    HYDRATED_RENDER_ENV.RENDER_CLI_PATH,
     process.env.USERPROFILE ? resolve(process.env.USERPROFILE, '.local/bin/render.exe') : '',
     process.env.USERPROFILE ? resolve(process.env.USERPROFILE, '.local/render-cli/render.exe') : '',
   ].filter(Boolean);
@@ -51,6 +99,7 @@ function runRender(args = [], options = {}) {
     encoding: 'utf8',
     env: {
       ...process.env,
+      ...HYDRATED_RENDER_ENV,
       RENDER_OUTPUT: 'json',
       ...(options.env || {}),
     },
@@ -83,11 +132,15 @@ function getBlueprintInventory() {
   const blueprint = parse(source);
   const services = Array.isArray(blueprint?.services) ? blueprint.services : [];
   const databases = Array.isArray(blueprint?.databases) ? blueprint.databases : [];
-  const webServices = services.filter((service) => service?.type === 'web').map((service) => service.name);
+  const webServices = services
+    .filter((service) => service?.type === 'web')
+    .map((service) => service.name);
   const workers = services
     .filter((service) => service?.type === 'worker' || service?.type === 'cron')
     .map((service) => service.name);
-  const keyvalues = services.filter((service) => service?.type === 'keyvalue').map((service) => service.name);
+  const keyvalues = services
+    .filter((service) => service?.type === 'keyvalue')
+    .map((service) => service.name);
 
   return {
     services: services.map((service) => ({
@@ -186,7 +239,9 @@ const whoami = versionCheck.ok ? runRender(['whoami', '--confirm', '-o', 'json']
 const authenticated = Boolean(whoami?.ok);
 if (versionCheck.ok && !authenticated) {
   blockers.push('render_cli_auth_missing');
-  nextSteps.push('Run render login, then render workspace set, or export RENDER_API_KEY for non-interactive use.');
+  nextSteps.push(
+    'Run render login, then render workspace set, or export RENDER_API_KEY for non-interactive use.'
+  );
 }
 
 const shouldValidateBlueprint = MODE === 'full' || MODE === 'validate';
@@ -201,13 +256,17 @@ const workspaceCurrent =
 const blueprintArgs = ['blueprints', 'validate', './render.yaml', '--confirm', '-o', 'json'];
 if (WORKSPACE_ID) blueprintArgs.push('--workspace', WORKSPACE_ID);
 const blueprintValidation =
-  versionCheck.ok && shouldValidateBlueprint ? runRender(blueprintArgs, { timeoutMs: 60000 }) : null;
+  versionCheck.ok && shouldValidateBlueprint
+    ? runRender(blueprintArgs, { timeoutMs: 60000 })
+    : null;
 if (versionCheck.ok && shouldValidateBlueprint && !blueprintValidation?.ok) {
   const needsWorkspace = /no workspace specified|no default workspace/i.test(
     `${blueprintValidation?.stdout || ''}\n${blueprintValidation?.stderr || ''}`
   );
   if (needsWorkspace) {
-    warnings.push('Blueprint validation needs a Render workspace. Set PBK_RENDER_WORKSPACE_ID or run render workspace set.');
+    warnings.push(
+      'Blueprint validation needs a Render workspace. Set PBK_RENDER_WORKSPACE_ID or run render workspace set.'
+    );
   } else {
     blockers.push('render_blueprint_validation_failed');
   }
@@ -225,7 +284,9 @@ if (services?.ok) {
   missingExpectedNames = getMissingExpected(renderNames, inventory.expectedNames);
   if (missingExpectedNames.length) {
     blockers.push('render_workspace_missing_blueprint_resources');
-    nextSteps.push(`Sync the Blueprint or verify workspace selection. Missing: ${missingExpectedNames.join(', ')}`);
+    nextSteps.push(
+      `Sync the Blueprint or verify workspace selection. Missing: ${missingExpectedNames.join(', ')}`
+    );
   }
 } else if (authenticated && shouldCheckWorkspace) {
   blockers.push('render_services_unavailable');
@@ -242,19 +303,33 @@ if (authenticated && SERVICE_ID && shouldCheckWorkspace && !deploys?.ok) {
 const errorLogs =
   authenticated && SERVICE_ID && shouldCheckLogs
     ? runRender(
-        ['logs', '--resources', SERVICE_ID, '--level', 'error', '--limit', '50', '--confirm', '-o', 'json'],
+        [
+          'logs',
+          '--resources',
+          SERVICE_ID,
+          '--level',
+          'error',
+          '--limit',
+          '50',
+          '--confirm',
+          '-o',
+          'json',
+        ],
         { timeoutMs: 60000 }
       )
     : null;
 if (authenticated && SERVICE_ID && shouldCheckLogs && !errorLogs?.ok) {
-  const message = 'Render error-log query failed; verify PBK_RENDER_SERVICE_ID and workspace selection.';
+  const message =
+    'Render error-log query failed; verify PBK_RENDER_SERVICE_ID and workspace selection.';
   if (MODE === 'logs-errors') blockers.push('render_error_logs_unavailable');
   else warnings.push(message);
 }
 
 if ((MODE === 'logs-errors' || MODE === 'status') && !SERVICE_ID) {
   blockers.push('render_service_id_missing');
-  nextSteps.push('Set PBK_RENDER_SERVICE_ID or RENDER_SERVICE_ID to query deploys/logs for the bridge service.');
+  nextSteps.push(
+    'Set PBK_RENDER_SERVICE_ID or RENDER_SERVICE_ID to query deploys/logs for the bridge service.'
+  );
 }
 
 for (const criticalName of inventory.criticalNames) {
@@ -300,7 +375,9 @@ const report = {
     discoveredNames: [...renderNames].sort(),
     missingExpectedNames,
     serviceIdConfigured: Boolean(SERVICE_ID),
-    deploys: deploys ? summarizeCommand(`render deploys list ${SERVICE_ID} --confirm -o json`, deploys) : null,
+    deploys: deploys
+      ? summarizeCommand(`render deploys list ${SERVICE_ID} --confirm -o json`, deploys)
+      : null,
     errorLogs: errorLogs
       ? summarizeCommand(
           `render logs --resources ${SERVICE_ID} --level error --limit 50 --confirm -o json`,

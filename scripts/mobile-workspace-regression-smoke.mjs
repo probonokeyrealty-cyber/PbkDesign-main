@@ -129,9 +129,12 @@ assert(
     /@media \(max-width: 640px\)[\s\S]*?\.pbk-ava-chat-toolbar\s*\{[\s\S]*?grid-template-columns:\s*minmax\(0,\s*1fr\)\s+44px/.test(
       css
     ) &&
-    /@media \(max-width: 420px\)[\s\S]*?\.pbk-ava-chat-controls[\s\S]*?grid-template-columns:\s*44px\s+minmax\(0,\s*1fr\)\s+44px\s+44px/.test(
+    /@media \(max-width: 420px\)[\s\S]*?\.pbk-ava-chat-controls\s*\{[\s\S]*?display:\s*flex[\s\S]*?width:\s*100%/.test(
       css
-    ),
+    ) &&
+    avaChat.includes('aria-label="Send to Ava"') &&
+    avaChat.includes('className="min-h-11 min-w-11 justify-center px-3"') &&
+    !avaChat.includes('pbk-ava-lane-toggle'),
   'Ava Chat composer controls must fit 320px mobile viewports with a reachable send button.'
 );
 

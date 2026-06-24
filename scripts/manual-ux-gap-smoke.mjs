@@ -66,12 +66,13 @@ assert(
   'Ava Chat must not show old manual-send approval-gate copy.'
 );
 assert(
-  /<AdvancedSettings[\s\S]*compact/.test(avaChat) &&
-    /Mobile command settings/.test(avaChat) &&
-    /pbk-ava-advanced-settings/.test(avaChat) &&
-    /pbk-ava-lane-toggle/.test(avaChat) &&
-    /pbk-ava-mobile-settings-popover/.test(avaChat),
-  'Ava Chat mobile mode must expose execution lane controls in a compact settings drawer.'
+  !/<AdvancedSettings/.test(avaChat) &&
+    !/Mobile command settings/.test(avaChat) &&
+    !/pbk-ava-lane-toggle/.test(avaChat) &&
+    /aria-label="Ava starter prompts"/.test(avaChat) &&
+    /Ask Ava anything/.test(avaChat) &&
+    /shouldShowCommandInDefaultChat/.test(avaChat),
+  'Ava Chat must keep technical execution lane controls out of the default agent chat.'
 );
 assert(
   /\.pbk-ava-chat-action-rail[\s\S]*flex-wrap:\s*wrap/.test(styles) &&
@@ -79,12 +80,10 @@ assert(
   'Ava Chat mobile quick actions must wrap instead of overflowing the viewport.'
 );
 assert(
-  /\.pbk-ava-advanced-settings\.is-compact[\s\S]*overflow:\s*hidden/.test(styles) &&
-    /\.pbk-ava-mobile-settings-popover[\s\S]*right:\s*-50px/.test(styles) &&
-    /\.pbk-ava-advanced-settings\.is-compact \.pbk-ava-lane-toggle button[\s\S]*text-overflow:\s*ellipsis/.test(
-      styles
-    ),
-  'Ava Chat compact command settings must not bleed segmented controls off mobile viewports.'
+  /\.pbk-ava-chat-controls[\s\S]*width:\s*100%/.test(styles) &&
+    /placeholder="Ask Ava anything\.\.\."/.test(avaChat) &&
+    /aria-label="Send to Ava"/.test(avaChat),
+  'Ava Chat composer controls must stay compact and readable on narrow mobile screens.'
 );
 
 const contextValueCss = extractCssBlock(styles, '.pbk-lead-context-row strong');

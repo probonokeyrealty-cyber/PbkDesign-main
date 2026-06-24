@@ -407,6 +407,12 @@ status = 200
 force = true
 
 [[redirects]]
+from = "/api/public/ava-chat"
+to = "/.netlify/functions/public-ava-chat"
+status = 200
+force = true
+
+[[redirects]]
 from = "/api/*"
 to = "/.netlify/functions/pbk-bridge-proxy?path=/api/:splat"
 status = 200

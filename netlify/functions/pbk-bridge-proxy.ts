@@ -139,6 +139,56 @@ function parseJsonBody(body?: Buffer) {
   }
 }
 
+function collectBodyText(body: Record<string, unknown>, keys: string[]) {
+  return keys
+    .map((key) => body[key])
+    .filter((value) => typeof value === 'string' && value.trim())
+    .join(' ')
+    .trim();
+}
+
+function getToolName(body: Record<string, unknown>) {
+  const params = body.params && typeof body.params === 'object'
+    ? body.params as Record<string, unknown>
+    : {};
+  return String(
+    body.toolName
+      || body.tool
+      || body.name
+      || params.toolName
+      || params.tool
+      || params.name
+      || '',
+  ).trim();
+}
+
+function isAssistantChatPath(path = '') {
+  return path === '/api/assistant/chat' || path === '/api/v1/assistant/chat';
+}
+
+function getAssistantChatText(path = '', body: Record<string, unknown>) {
+  if (!isAssistantChatPath(path)) return '';
+  return collectBodyText(body, [
+    'message',
+    'prompt',
+    'command',
+    'request',
+    'input',
+    'text',
+    'action',
+    'assistantAction',
+    'usedIntent',
+  ]).toLowerCase();
+}
+
+function isApprovalDecisionRequest(method = 'GET', path = '', body: Record<string, unknown>) {
+  const normalizedMethod = String(method || 'GET').toUpperCase();
+  if (!['POST', 'PUT', 'PATCH'].includes(normalizedMethod)) return false;
+  if (!/^\/api\/approvals\/[^/]+(?:\/[^/]+)?$/.test(path)) return false;
+  const decisionText = `${path} ${collectBodyText(body, ['status', 'action', 'decision'])}`.toLowerCase();
+  return /\b(?:approve|approved)\b/.test(decisionText);
+}
+
 function authorizeTeamRequest({
   method = 'GET',
   targetPath = '',
@@ -152,8 +202,9 @@ function authorizeTeamRequest({
 }) {
   const normalizedMethod = String(method || 'GET').toUpperCase();
   const normalizedPath = String(targetPath || '').toLowerCase();
-  const toolName = String(body.toolName || body.tool || body.name || '').trim();
+  const toolName = getToolName(body);
   const normalizedToolName = toolName.toLowerCase();
+  const assistantChatText = getAssistantChatText(normalizedPath, body);
 
   const deny = (permission: string, action: string) => ({
     ok: false,
@@ -176,6 +227,63 @@ function authorizeTeamRequest({
     );
   if ((contractTool || contractRoute) && permissions.canSendContracts !== true) {
     return deny('canSendContracts', 'send or modify contracts');
+  }
+
+  const smsTool = /^(?:telnyx_sms|send_verification_sms)$/i.test(toolName);
+  const smsRoute =
+    normalizedMethod !== 'GET'
+    && /(?:\/api\/messages|\/api\/conversation|\/api\/conversations|\/api\/sms|\/api\/inbox)/.test(normalizedPath)
+    && /sms|message|conversation|inbox/.test(normalizedPath);
+  const assistantSmsIntent = Boolean(
+    assistantChatText
+      && /\b(?:(?:send|draft|compose|write|prepare|queue).{0,48}(?:sms|text|message)|(?:sms|text)\s+(?:seller|owner|lead|to))\b/i.test(assistantChatText),
+  );
+  if ((smsTool || smsRoute || assistantSmsIntent) && permissions.canSendSms !== true) {
+    return deny('canSendSms', 'send SMS messages');
+  }
+
+  const emailTool = /^(?:sendcoldemail|pbk_send_update)$/i.test(toolName);
+  const emailRoute =
+    normalizedMethod !== 'GET'
+    && /(?:\/api\/cold-email|\/api\/messages|\/api\/conversation|\/api\/conversations|\/api\/email|\/api\/inbox)/.test(normalizedPath)
+    && /email|mail|message|conversation|inbox/.test(normalizedPath);
+  const assistantEmailIntent = Boolean(
+    assistantChatText
+      && /\b(?:(?:send|draft|compose|write|prepare|queue).{0,48}(?:email|mail)|email\s+(?:seller|owner|lead|to))\b/i.test(assistantChatText),
+  );
+  if ((emailTool || emailRoute || assistantEmailIntent) && permissions.canSendEmail !== true) {
+    return deny('canSendEmail', 'send emails');
+  }
+
+  const callTool = /^(?:telnyx_call|pbk_call_operator)$/i.test(toolName);
+  const callRoute =
+    normalizedMethod !== 'GET'
+    && /(?:\/api\/calls|\/api\/operator\/call|\/api\/call)/.test(normalizedPath);
+  const assistantCallIntent = Boolean(
+    assistantChatText
+      && !/\b(?:review|summarize|score|transcribe|transcript|recording|qa|quality).{0,32}call\b/i.test(assistantChatText)
+      && /\b(?:(?:place|make|start|launch|initiate|dial|ring|connect|prepare|queue|set up).{0,48}call|call.{0,48}(?:seller|owner|lead|prospect|now|for approval|request|before dialing|dial))\b/i.test(assistantChatText),
+  );
+  if ((callTool || callRoute || assistantCallIntent) && permissions.canPlaceCalls !== true) {
+    return deny('canPlaceCalls', 'place calls');
+  }
+
+  const providerApprovalTool = /^(?:startnurturesequence|processduenurturesteps|telnyx_call|telnyx_sms|sendcoldemail|pbk_send_update|send_verification_sms)$/i.test(toolName);
+  const providerApprovalRoute =
+    isApprovalDecisionRequest(normalizedMethod, normalizedPath, body)
+    || (
+      normalizedMethod !== 'GET'
+      && /(?:\/api\/provider-writes|\/api\/outbound|\/api\/nurture|\/api\/campaigns\/[^/]+\/approval)/.test(normalizedPath)
+    );
+  const assistantProviderApprovalIntent = Boolean(
+    assistantChatText
+      && /\b(?:nurture|sequence|provider|approval|approve|approved|launch campaign|start campaign)\b/i.test(assistantChatText),
+  );
+  if (
+    (providerApprovalTool || providerApprovalRoute || assistantProviderApprovalIntent)
+    && permissions.canApproveProviderActions !== true
+  ) {
+    return deny('canApproveProviderActions', 'approve provider actions');
   }
 
   const killSwitchTool = /^(?:pbk_kill_switch|killswitch|togglekillswitch)$/i.test(toolName);

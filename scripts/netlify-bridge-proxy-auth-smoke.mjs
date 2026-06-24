@@ -31,10 +31,23 @@ assert(
   /function authorizeTeamRequest/.test(source) &&
     /canDeleteData/.test(source) &&
     /canSendContracts/.test(source) &&
+    /canSendSms/.test(source) &&
+    /canSendEmail/.test(source) &&
+    /canPlaceCalls/.test(source) &&
+    /canApproveProviderActions/.test(source) &&
     /canToggleKillSwitch/.test(source) &&
     /canChangeGuardrails/.test(source) &&
     /team_permission_denied/.test(source),
   'Verified team permissions must be enforced before the bridge key is attached upstream.',
+);
+assert(
+  /getAssistantChatText/.test(source) &&
+    /\/api\/assistant\/chat/.test(source) &&
+    /return deny\('canSendSms', 'send SMS messages'\)/.test(source) &&
+    /return deny\('canSendEmail', 'send emails'\)/.test(source) &&
+    /return deny\('canPlaceCalls', 'place calls'\)/.test(source) &&
+    /return deny\('canApproveProviderActions', 'approve provider actions'\)/.test(source),
+  'Hosted Ava assistant proxy requests must enforce call, SMS, email, and provider-approval permissions before bridge authority is attached.',
 );
 assert(
   /normalizedPath === ['"]\/api\/underwriting\/sign['"]/.test(source),

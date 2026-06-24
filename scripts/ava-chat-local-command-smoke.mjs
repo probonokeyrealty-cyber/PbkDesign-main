@@ -51,6 +51,7 @@ const avaChat = read('src/app/routes/AvaChat.tsx');
   'AssistantExchange',
   'AVA_ASSISTANT_EXCHANGES_KEY',
   'shouldUseAssistantChatRoute',
+  'shouldShowCommandInDefaultChat',
   'getResultText',
   'CommandResultPreview',
   'classifyConversationalCommand',

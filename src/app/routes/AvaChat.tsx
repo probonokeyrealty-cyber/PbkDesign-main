@@ -626,6 +626,11 @@ function isActiveCommand(command?: LocalCommandRecord) {
   return Boolean(command && ACTIVE_STATUSES.has(String(command.status || '').toLowerCase()));
 }
 
+function shouldShowCommandInDefaultChat(command: LocalCommandRecord) {
+  const status = String(command.status || 'queued').toLowerCase();
+  return ['queued', 'pending', 'pending_approval', 'dispatched', 'running'].includes(status);
+}
+
 function getAvaSystemStatus({
   connectionState,
   connectionError,
@@ -737,7 +742,9 @@ export function AvaChat() {
 
   const filteredCommands = useMemo(() => {
     const query = searchQuery.trim().toLowerCase();
+    const defaultChatView = !query && historyFilter === 'all';
     return commands
+      .filter((command) => !defaultChatView || shouldShowCommandInDefaultChat(command))
       .filter((command) => matchesHistoryFilter(command, historyFilter))
       .filter((command) => {
         if (!query) return true;
@@ -797,6 +804,7 @@ export function AvaChat() {
   );
 
   const conversationCount = assistantExchanges.length + commands.length;
+  const defaultChatView = !searchQuery.trim() && historyFilter === 'all';
 
   const load = useCallback(async ({ silent = false }: { silent?: boolean } = {}) => {
     if (loadInFlightRef.current) return;
@@ -879,18 +887,20 @@ export function AvaChat() {
       if (!Array.isArray(parsed)) return;
       setAssistantExchanges(
         parsed
-          .map((item) => ({
-            id: String(item?.id || createAvaAssistantExchangeId()),
-            request: String(item?.request || '').slice(0, 1200),
-            answer: String(item?.answer || '').slice(0, 4000),
-            status: item?.status === 'failed' ? 'failed' : 'completed',
-            createdAt: String(item?.createdAt || item?.updatedAt || new Date().toISOString()),
-            updatedAt: String(item?.updatedAt || item?.createdAt || new Date().toISOString()),
-            suggestions: normalizeAssistantSuggestions(item?.suggestions),
-            usedIntent: String(item?.usedIntent || ''),
-            assistantAction: String(item?.assistantAction || ''),
-            warning: String(item?.warning || ''),
-          }))
+          .map(
+            (item): AvaAssistantExchange => ({
+              id: String(item?.id || createAvaAssistantExchangeId()),
+              request: String(item?.request || '').slice(0, 1200),
+              answer: String(item?.answer || '').slice(0, 4000),
+              status: item?.status === 'failed' ? 'failed' : 'completed',
+              createdAt: String(item?.createdAt || item?.updatedAt || new Date().toISOString()),
+              updatedAt: String(item?.updatedAt || item?.createdAt || new Date().toISOString()),
+              suggestions: normalizeAssistantSuggestions(item?.suggestions),
+              usedIntent: String(item?.usedIntent || ''),
+              assistantAction: String(item?.assistantAction || ''),
+              warning: String(item?.warning || ''),
+            })
+          )
           .filter((item) => item.request && item.answer)
           .slice(-30)
       );
@@ -1007,7 +1017,7 @@ export function AvaChat() {
                 createdAt: new Date().toISOString(),
                 updatedAt: new Date().toISOString(),
                 suggestions: ['Try again', 'Ask a simpler question'],
-              },
+              } satisfies AvaAssistantExchange,
             ].slice(-30)
           );
         }
@@ -1152,7 +1162,7 @@ export function AvaChat() {
 
         <div className="grid min-h-0">
           <main className="pbk-ava-chat-main grid min-h-0 grid-rows-[auto_minmax(0,1fr)_auto]">
-            {conversationCount > 0 && (
+            {(conversationItems.length > 0 || !defaultChatView) && (
               <ConversationToolbar
                 query={searchQuery}
                 onQueryChange={setSearchQuery}
@@ -1211,7 +1221,7 @@ export function AvaChat() {
                       )
                     )}
                   </div>
-                ) : conversationCount ? (
+                ) : conversationCount && !defaultChatView ? (
                   <PbkEmpty
                     variant="idle"
                     icon={<Search size={24} />}

@@ -58316,7 +58316,7 @@ async function handleInternalAvaAssistantChatRequest(request) {
       target: assistantIntent.address || assistantIntent.phone || assistantIntent.query || 'command center',
     })
   );
-  await persistState(state);
+  persistStateInBackground('ava-assistant-chat');
 
   return {
     statusCode: 200,

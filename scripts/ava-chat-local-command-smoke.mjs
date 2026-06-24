@@ -266,6 +266,19 @@ assert(
     /systemStatus\.visible &&/.test(avaChat),
   'Ava Chat must only surface the system drawer indicator for real warnings such as waiting approvals.'
 );
+const internalAvaChatStart = bridge.indexOf('async function handleInternalAvaAssistantChatRequest');
+const internalAvaChatEnd = bridge.indexOf('function createTelnyxPublicKeyObject', internalAvaChatStart);
+const internalAvaChatBlock =
+  internalAvaChatStart >= 0 && internalAvaChatEnd > internalAvaChatStart
+    ? bridge.slice(internalAvaChatStart, internalAvaChatEnd)
+    : '';
+assert(
+  internalAvaChatBlock &&
+    /await writePublicAvaAssistantSession/.test(internalAvaChatBlock) &&
+    /persistStateInBackground\('ava-assistant-chat'\)/.test(internalAvaChatBlock) &&
+    !/await persistState\(state\)/.test(internalAvaChatBlock),
+  'Internal Ava chat must return the answer even when non-critical activity persistence is temporarily unavailable.'
+);
 assert(
   /UPDATE public\.pbk_local_commands[\s\S]*status = 'dispatched'[\s\S]*status = 'approved'[\s\S]*RETURNING \*/.test(
     bridge

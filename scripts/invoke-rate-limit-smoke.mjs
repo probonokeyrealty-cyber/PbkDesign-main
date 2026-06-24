@@ -126,6 +126,24 @@ assert(
     !/failClosedOnRedisError:\s*true/.test(teamAuthLimiterBlock),
   'Team passcode login must use bounded memory fallback when Redis is unavailable so operators are not locked out.'
 );
+const teamAuthRouteStart = bridge.indexOf(
+  "if (request.method === 'POST' && pathname === '/api/auth/team')"
+);
+const teamAuthRouteEnd = bridge.indexOf(
+  "if (request.method === 'GET' && matchesPath(pathname, ['/state', '/api/state']))",
+  teamAuthRouteStart
+);
+const teamAuthRouteBlock =
+  teamAuthRouteStart >= 0 && teamAuthRouteEnd > teamAuthRouteStart
+    ? bridge.slice(teamAuthRouteStart, teamAuthRouteEnd)
+    : '';
+assert(
+  teamAuthRouteBlock &&
+    /createTeamSessionToken/.test(teamAuthRouteBlock) &&
+    /persistStateInBackground\('team-auth-session'\)/.test(teamAuthRouteBlock) &&
+    !/await persistState\(state\)/.test(teamAuthRouteBlock),
+  'Team passcode login must return the signed session even when non-critical activity persistence is temporarily unavailable.'
+);
 assert(
   /function hasTeamAuthCredentials/.test(bridge) &&
     (bridge.match(/const teamAuthPresented = hasTeamAuthCredentials\(request, body\);/g) || []).length >= 2 &&

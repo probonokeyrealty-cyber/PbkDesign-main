@@ -65754,7 +65754,7 @@ const server = createServer(async (request, response) => {
           target: 'team access',
         })
       );
-      await persistState(state);
+      persistStateInBackground('team-auth-session');
       json(response, 200, {
         ok: true,
         configured: true,

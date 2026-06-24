@@ -41,6 +41,11 @@ expectIncludes(
 );
 expectIncludes(
   dockerfile,
+  '--ignore-scripts',
+  'Docker frontend dependency install must skip git-hook prepare scripts that are not copied into the image.'
+);
+expectIncludes(
+  dockerfile,
   'ENV PUPPETEER_SKIP_DOWNLOAD=true',
   'Docker image must skip bundled Puppeteer browser downloads.'
 );

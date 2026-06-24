@@ -1553,7 +1553,9 @@ function assertBridgeMutationSucceeded<T>(response: T, action = 'Bridge mutation
   ).toLowerCase();
   const failed =
     record.ok === false ||
-    /\b(failed|error|rejected|denied|safety_blocked|missing_[a-z0-9_]*proof)\b/i.test(statusText);
+    /\b(failed|error|rejected|denied|provider_missing|safety_blocked|missing_[a-z0-9_]*proof)\b/i.test(
+      statusText
+    );
   if (!failed) return response;
   const message =
     String(record.error || record.message || record.verbiage || '').trim() || `${action} failed.`;

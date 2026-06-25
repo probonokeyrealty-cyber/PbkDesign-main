@@ -123,4 +123,24 @@ assert(
   'Hosted Postgres state persist must fail closed instead of writing a runtime-file fallback.'
 );
 
+const getBrainStateStart = bridge.indexOf('async getBrainState(params = {})');
+const getBrainStateEnd = bridge.indexOf('\n\n  async launchBrowserResearch', getBrainStateStart);
+assert(
+  getBrainStateStart >= 0 && getBrainStateEnd > getBrainStateStart,
+  'getBrainState handler must be present.'
+);
+const getBrainStateSource = bridge.slice(getBrainStateStart, getBrainStateEnd);
+assert(
+  /const isReadOnlyBrainQuery\s*=[\s\S]*isReadableSummaryIntent[\s\S]*params\.readOnly === true[\s\S]*params\.noProviderWrites === true[\s\S]*params\.providerWrites === false/.test(
+    getBrainStateSource
+  ) &&
+    /const persistBrainState = async \(\) => \{\s*if \(!isReadOnlyBrainQuery\) await persistState\(state\);\s*\};/.test(
+      getBrainStateSource
+    ) &&
+    /const storeBrainMemory = async \(result\) => \{[\s\S]*Read-only Brain request/.test(
+      getBrainStateSource
+    ),
+  'Hosted read-only Brain summaries must not persist full runtime state or create durable Rex memory.'
+);
+
 console.log('[postgres-no-fallback-smoke] ok');

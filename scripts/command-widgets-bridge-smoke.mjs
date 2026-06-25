@@ -45,7 +45,7 @@ assert(
 
 assert(
   /Customize this dashboard for the whole team/.test(commandCenter) &&
-    /every agent sees the same command center/.test(commandCenter),
+    /every agent sees the same command\s+center/.test(commandCenter),
   'Widget controls copy must describe shared team preferences instead of local-only personalization.'
 );
 

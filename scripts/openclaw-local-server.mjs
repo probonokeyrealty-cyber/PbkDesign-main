@@ -53186,12 +53186,34 @@ const toolHandlers = {
     const isOpenAiWebSearchIntent = !isReadableSummaryIntent && !isBrowserResearchIntent && !isTroubleshootingIntent && looksLikeOpenAiWebSearchIntent(query);
     const isAdminIntent = !isReadableSummaryIntent && !isBrowserResearchIntent && !isOpenAiWebSearchIntent && !isTroubleshootingIntent && looksLikeAdminIntent(query);
     const baseResponse = isAdminIntent || isBrowserResearchIntent || isReadableSummaryIntent || isOpenAiWebSearchIntent || isTroubleshootingIntent ? null : answerBrainQuery(state, query);
-    state.status.queryCountToday = toNumber(state.status.queryCountToday, 0) + 1;
+    const isReadOnlyBrainQuery =
+      isReadableSummaryIntent ||
+      params.readOnly === true ||
+      params.noProviderWrites === true ||
+      params.providerWrites === false ||
+      params.remember === false;
+    const recordBrainActivity = (activity) => {
+      if (!isReadOnlyBrainQuery) addActivity(state, activity);
+    };
+    const storeBrainMemory = async (result) => {
+      if (isReadOnlyBrainQuery) {
+        return {
+          stored: false,
+          supermemory: { skipped: true, reason: 'Read-only Brain request.' },
+        };
+      }
+      return storeRexConversationMemory(state, { ...params, query, messages }, result);
+    };
+    const persistBrainState = async () => {
+      if (!isReadOnlyBrainQuery) await persistState(state);
+    };
+    if (!isReadOnlyBrainQuery) {
+      state.status.queryCountToday = toNumber(state.status.queryCountToday, 0) + 1;
+    }
 
     if (isTroubleshootingIntent) {
       const diagnostic = buildRexTroubleshootingAnswer(state, query);
-      addActivity(
-        state,
+      recordBrainActivity(
         makeActivity({
           actor: 'Rex',
           category: 'DIAGNOSTIC',
@@ -53200,8 +53222,8 @@ const toolHandlers = {
           target: 'Troubleshooting',
         })
       );
-      diagnostic.memory = await storeRexConversationMemory(state, { ...params, query, messages }, diagnostic);
-      await persistState(state);
+      diagnostic.memory = await storeBrainMemory(diagnostic);
+      await persistBrainState();
       return {
         ...diagnostic,
         brainDocs: state.brainDocs.slice(0, 8),
@@ -53214,8 +53236,7 @@ const toolHandlers = {
       const summary = buildReadableOperatorSummary(state, {
         limit: params.limit || 10,
       });
-      addActivity(
-        state,
+      recordBrainActivity(
         makeActivity({
           actor: 'Rex',
           category: 'QUERY',
@@ -53233,8 +53254,8 @@ const toolHandlers = {
         brainBlogPosts: (state.brainBlogPosts || []).slice(0, 8),
         status: state.status,
       };
-      result.memory = await storeRexConversationMemory(state, { ...params, query, messages }, result);
-      await persistState(state);
+      result.memory = await storeBrainMemory(result);
+      await persistBrainState();
       result.brainDocs = state.brainDocs.slice(0, 8);
       return result;
     }
@@ -53246,8 +53267,7 @@ const toolHandlers = {
       });
       const providerKey = getWebSearchProviderKey(searchResult);
       const providerLabel = providerKey === 'deepseek' ? 'DeepSeek fallback' : providerKey === 'tavily' ? 'Tavily live search' : providerKey === 'openai' ? 'OpenAI web search' : 'PBK Brain fallback';
-      addActivity(
-        state,
+      recordBrainActivity(
         makeActivity({
           actor: 'Rex',
           category: 'RESEARCH',
@@ -53269,8 +53289,8 @@ const toolHandlers = {
         brainBlogPosts: (state.brainBlogPosts || []).slice(0, 8),
         status: state.status,
       };
-      result.memory = await storeRexConversationMemory(state, { ...params, query, messages }, result);
-      await persistState(state);
+      result.memory = await storeBrainMemory(result);
+      await persistBrainState();
       result.brainDocs = state.brainDocs.slice(0, 8);
       return result;
     }
@@ -53281,8 +53301,7 @@ const toolHandlers = {
         requestedBy: 'Rex',
         source: 'brain',
       });
-      addActivity(
-        state,
+      recordBrainActivity(
         makeActivity({
           actor: 'Rex',
           category: 'RESEARCH',
@@ -53300,8 +53319,8 @@ const toolHandlers = {
         brainBlogPosts: (state.brainBlogPosts || []).slice(0, 8),
         status: state.status,
       };
-      result.memory = await storeRexConversationMemory(state, { ...params, query, messages }, result);
-      await persistState(state);
+      result.memory = await storeBrainMemory(result);
+      await persistBrainState();
       result.brainDocs = state.brainDocs.slice(0, 8);
       return result;
     }
@@ -53312,8 +53331,7 @@ const toolHandlers = {
         requestedBy: 'Rex',
         source: 'brain',
       });
-      addActivity(
-        state,
+      recordBrainActivity(
         makeActivity({
           actor: 'Rex',
           category: 'ADMIN',
@@ -53331,14 +53349,13 @@ const toolHandlers = {
         brainBlogPosts: (state.brainBlogPosts || []).slice(0, 8),
         status: state.status,
       };
-      result.memory = await storeRexConversationMemory(state, { ...params, query, messages }, result);
-      await persistState(state);
+      result.memory = await storeBrainMemory(result);
+      await persistBrainState();
       result.brainDocs = state.brainDocs.slice(0, 8);
       return result;
     }
 
-    addActivity(
-      state,
+    recordBrainActivity(
       makeActivity({
         actor: 'Rex',
         category: 'QUERY',
@@ -53353,8 +53370,8 @@ const toolHandlers = {
       messages,
       baseResponse,
     });
-    const memory = await storeRexConversationMemory(state, { ...params, query, messages }, response);
-    await persistState(state);
+    const memory = await storeBrainMemory(response);
+    await persistBrainState();
     return {
       ...response,
       memory,

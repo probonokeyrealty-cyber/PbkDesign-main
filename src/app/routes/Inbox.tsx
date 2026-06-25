@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { type ReactNode, useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router';
 import {
   AlertCircle,
@@ -17,6 +17,7 @@ import {
   X,
 } from 'lucide-react';
 import { PbkDataSource } from '../../components/pbk/index';
+import { CompactPager, getPageSlice, OPERATOR_LIST_PAGE_SIZE } from '../components/CompactPager';
 import { InboxSignalLanes, type InboxSignalLane } from '../components/inbox/InboxSignalLanes';
 import { useRuntimeSnapshot } from '../hooks/useRuntimeSnapshot';
 import {
@@ -41,7 +42,7 @@ import {
 } from './inboxRuntimeLogic.js';
 
 const COMPOSE_DRAFT_KEY = 'pbk:compose:draft';
-const MESSAGE_PAGE_SIZE = 12;
+const MESSAGE_PAGE_SIZE = OPERATOR_LIST_PAGE_SIZE;
 
 type ComposeChannel = 'sms' | 'email';
 
@@ -140,7 +141,7 @@ function formatRuntimeStatus(status: unknown) {
   if (normalized === 'received' || normalized === 'unread' || normalized === 'new')
     return 'New reply';
   if (normalized === 'failed') return 'Delivery failed';
-  if (normalized === 'pending') return 'Waiting';
+  if (normalized === 'pending') return 'In progress';
   if (normalized === 'approved') return 'Approved';
   if (normalized === 'rejected') return 'Declined';
   if (normalized === 'needs-revision' || normalized === 'needs_revision') return 'Needs Revision';
@@ -221,10 +222,28 @@ function approvalRiskRank(approval: Record<string, unknown>) {
 function getApprovalTypeLabel(approval: Record<string, unknown>) {
   if (isLocalCommandApproval(approval)) return 'Desktop command';
   if (isContractApproval(approval)) return 'Contract';
-  const normalized = String(approval.type || 'approval')
+  const normalized = formatApprovalLabel(approval.type || 'approval')
     .replace(/[_-]+/g, ' ')
     .trim();
   return normalized || 'Approval';
+}
+
+function formatApprovalLabel(value: unknown, fallback = 'Review item') {
+  const raw = String(value || '').trim();
+  if (!raw) return fallback;
+  const known: Record<string, string> = {
+    updateCRM: 'Update lead details',
+    updatecrm: 'Update lead details',
+    'provider-action': 'Provider action',
+    provider_action: 'Provider action',
+    'lead-nurture': 'Lead nurture',
+    lead_nurture: 'Lead nurture',
+  };
+  if (known[raw] || known[raw.toLowerCase()]) return known[raw] || known[raw.toLowerCase()];
+  return raw
+    .replace(/([a-z])([A-Z])/g, '$1 $2')
+    .replace(/[_-]+/g, ' ')
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
 
 function getApprovalTitle(approval: Record<string, unknown>) {
@@ -236,7 +255,7 @@ function getApprovalTitle(approval: Record<string, unknown>) {
   if (isContractApproval(approval)) {
     return `Review contract for ${String(approval.leadName || 'this seller')}`;
   }
-  return String(
+  return formatApprovalLabel(
     approval.title ||
       approval.summary ||
       approval.leadName ||
@@ -373,7 +392,11 @@ function buildInboxStats({
 
 function InboxSourceRail() {
   return (
-    <div className="pbk-inbox-source-rail" aria-label="Inbox data sources">
+    <details
+      className="pbk-tech-details pbk-inbox-source-rail"
+      aria-label="Inbox technical details"
+    >
+      <summary>Technical details</summary>
       <PbkDataSource
         endpoint="GET /state"
         status="ships"
@@ -385,7 +408,7 @@ function InboxSourceRail() {
       <PbkDataSource
         endpoint="POST /api/lead/send-message"
         status="ships"
-        note="send now through bridge providers"
+        note="send seller messages"
       />
       <PbkDataSource endpoint="POST /api/messages" status="ships" note="send later queue" />
       <PbkDataSource
@@ -393,7 +416,16 @@ function InboxSourceRail() {
         status="ships"
         note="archive persistence through unified message records"
       />
-    </div>
+    </details>
+  );
+}
+
+function InboxDataSourceDetails({ children }: { children: ReactNode }) {
+  return (
+    <details className="pbk-tech-details">
+      <summary>Connection details</summary>
+      {children}
+    </details>
   );
 }
 
@@ -403,7 +435,7 @@ function InboxStatRibbon({ stats }: { stats: InboxStats }) {
       <div className="pbk-inbox-stat">
         <div className="l">Approval queue</div>
         <div className="v amber">{stats.pendingApprovals}</div>
-        <div className="delta">from runtime snapshot</div>
+        <div className="delta">ready for review</div>
       </div>
       <div className="pbk-inbox-stat">
         <div className="l">Unread replies</div>
@@ -413,7 +445,7 @@ function InboxStatRibbon({ stats }: { stats: InboxStats }) {
       <div className="pbk-inbox-stat">
         <div className="l">Scheduled sends</div>
         <div className="v lime">{stats.scheduledMessages}</div>
-        <div className="delta">bridge queued messages</div>
+        <div className="delta">planned follow-ups</div>
       </div>
       <div className="pbk-inbox-stat">
         <div className="l">Lead roster</div>
@@ -427,14 +459,12 @@ function InboxStatRibbon({ stats }: { stats: InboxStats }) {
 function InboxHero({
   loading,
   stats,
-  source,
   onCompose,
   onOpenInbox,
   onRefresh,
 }: {
   loading: boolean;
   stats: InboxStats;
-  source: string;
   onCompose: () => void;
   onOpenInbox: () => void;
   onRefresh: () => void;
@@ -450,14 +480,14 @@ function InboxHero({
             Inbox &amp; <em>approvals</em>.
           </h1>
           <p>
-            Seller replies, Ava/Rex approvals, scheduled outreach, and bridge-backed compose in one
-            operator cockpit. Archive actions persist through the unified message record.
+            Seller replies, Ava/Rex approvals, scheduled outreach, and new messages in one
+            workspace. Archive actions stay saved with the seller message record.
           </p>
         </div>
         <div className="pbk-inbox-hero-actions">
           <span className="pbk-inbox-sync">
             <Database size={13} />
-            {loading ? 'syncing' : source || 'runtime'}
+            {loading ? 'syncing' : 'workspace synced'}
           </span>
           <button
             type="button"
@@ -523,7 +553,9 @@ function InboxThreadRail({
         <div className="l">Lead lookup</div>
         <div className="v">{leadStatus || `${stats.composeLeadCount} leads ready for compose`}</div>
       </div>
-      <PbkDataSource endpoint="GET /api/leads" status="ships" note="live compose roster" />
+      <InboxDataSourceDetails>
+        <PbkDataSource endpoint="GET /api/leads" status="ships" note="live compose roster" />
+      </InboxDataSourceDetails>
     </aside>
   );
 }
@@ -577,7 +609,7 @@ function InboxApprovalCard({
       <div className="approval-preview">{getApprovalPreview(approval)}</div>
       {contract && (
         <div className="approval-warning">
-          Contract approval can release DocuSign. A confirmation step is required.
+          Approving may send the DocuSign packet. We will ask you to confirm first.
         </div>
       )}
       <div className="approval-actions">
@@ -603,7 +635,7 @@ function InboxApprovalCard({
           {pendingAction === `approval:${approvalId}:rejected` && (
             <Loader2 size={14} className="animate-spin" />
           )}
-          {pendingAction === `approval:${approvalId}:rejected` ? 'Sending' : 'Deny'}
+          {pendingAction === `approval:${approvalId}:rejected` ? 'Sending' : 'Do not send'}
         </button>
         {contract ? (
           <button
@@ -625,7 +657,7 @@ function InboxApprovalCard({
             onClick={() => onDefer(approval)}
             className="pbk-btn pbk-btn-ghost pbk-btn-sm"
           >
-            Ask later
+            Leave for later
           </button>
         )}
       </div>
@@ -865,8 +897,8 @@ function ComposeModal({
             ? 'SMS submitted'
             : 'Email submitted',
         desc: scheduled
-          ? `Queued in the bridge for ${formatDateTime(draft.sendAt)}.`
-          : String(response.verbiage || 'Provider request accepted by the bridge.'),
+          ? `Scheduled for ${formatDateTime(draft.sendAt)}.`
+          : String(response.verbiage || 'Message request accepted.'),
       });
       clearComposeDraft();
       setDraft(EMPTY_DRAFT);
@@ -898,8 +930,8 @@ function ComposeModal({
             <h3>Compose</h3>
             <p>
               {draft.sendLater
-                ? 'Queue a scheduled bridge message.'
-                : 'Send through the configured bridge providers.'}
+                ? 'Schedule a seller follow-up.'
+                : 'Send a seller message from this workspace.'}
             </p>
           </div>
           <button
@@ -920,7 +952,7 @@ function ComposeModal({
               className={draft.channel === channel ? 'is-active' : ''}
               onClick={() => setChannel(channel)}
             >
-              {channel === 'sms' ? 'SMS (Telnyx)' : 'Email (Instantly)'}
+              {channel === 'sms' ? 'SMS' : 'Email'}
             </button>
           ))}
         </div>
@@ -1119,7 +1151,7 @@ function ContractApprovalConfirm({
           <div>
             <div className="modal-kicker">DocuSign confirmation</div>
             <h3>Approve contract send?</h3>
-            <p>Review the payload before releasing this contract action.</p>
+            <p>Review the details before releasing this contract action.</p>
           </div>
           <button
             type="button"
@@ -1218,7 +1250,7 @@ function ApprovalDecisionConfirm({
         </div>
         <div className="modal-footer">
           <span className="text-xs text-slate-500">
-            The bridge receives this decision immediately.
+            This decision updates the approval board immediately.
           </span>
           <div className="flex gap-2">
             <button type="button" className="btn-secondary" onClick={onCancel}>
@@ -1247,7 +1279,9 @@ export function Inbox() {
   const [approvalDecisionDraft, setApprovalDecisionDraft] = useState<ApprovalDecisionDraft | null>(
     null
   );
-  const [messageLimit, setMessageLimit] = useState(MESSAGE_PAGE_SIZE);
+  const [approvalPage, setApprovalPage] = useState(0);
+  const [messagePage, setMessagePage] = useState(0);
+  const [resolvedApprovalIds, setResolvedApprovalIds] = useState<Set<string>>(() => new Set());
   const [liveMessages, setLiveMessages] = useState<Array<Record<string, unknown>>>([]);
   const [messageTotal, setMessageTotal] = useState(0);
   const [messageError, setMessageError] = useState('');
@@ -1256,18 +1290,24 @@ export function Inbox() {
 
   const approvals = useMemo(
     () =>
-      [...getPendingApprovals(snapshot?.approvals)].sort(
-        (left, right) => approvalRiskRank(right) - approvalRiskRank(left)
-      ),
-    [snapshot?.approvals]
+      [...getPendingApprovals(snapshot?.approvals)]
+        .filter((approval) => !resolvedApprovalIds.has(String(approval.id || '')))
+        .sort((left, right) => approvalRiskRank(right) - approvalRiskRank(left)),
+    [resolvedApprovalIds, snapshot?.approvals]
+  );
+  const visibleApprovals = useMemo(
+    () => getPageSlice(approvals, approvalPage, MESSAGE_PAGE_SIZE),
+    [approvalPage, approvals]
   );
   const fallbackMessages = useMemo(
     () => sortMessagesNewest(snapshot?.messages || []),
     [snapshot?.messages]
   );
   const allMessages = liveMessages.length ? liveMessages : fallbackMessages;
-  const visibleMessages = allMessages.slice(0, messageLimit);
-  const totalMessages = messageTotal || allMessages.length;
+  const visibleMessages = liveMessages.length
+    ? liveMessages
+    : getPageSlice(fallbackMessages, messagePage, MESSAGE_PAGE_SIZE);
+  const totalMessages = messageTotal || fallbackMessages.length || allMessages.length;
   const composeLeads = useMemo(() => {
     const snapshotLeads = normalizeComposeLeads(snapshot?.leadImports || []) as ComposeLead[];
     return liveLeads.length ? liveLeads : snapshotLeads;
@@ -1284,9 +1324,12 @@ export function Inbox() {
     [allMessages, approvals, composeLeads.length, totalMessages, visibleMessages]
   );
 
-  const loadMessages = useCallback(async (limit: number) => {
+  const loadMessages = useCallback(async (page: number) => {
     try {
-      const response = await fetchMessagesRequest({ limit, offset: 0 });
+      const response = await fetchMessagesRequest({
+        limit: MESSAGE_PAGE_SIZE,
+        offset: page * MESSAGE_PAGE_SIZE,
+      });
       setLiveMessages(
         sortMessagesNewest(response.messages || []) as Array<Record<string, unknown>>
       );
@@ -1303,9 +1346,7 @@ export function Inbox() {
       const leads = normalizeComposeLeads(await fetchLeadsRequest()) as ComposeLead[];
       setLiveLeads(leads);
       setLeadStatus(
-        leads.length
-          ? `${leads.length} live leads loaded.`
-          : 'No live leads returned by the bridge.'
+        leads.length ? `${leads.length} live leads loaded.` : 'No leads are ready for compose yet.'
       );
     } catch (nextError) {
       setLeadStatus(
@@ -1317,12 +1358,22 @@ export function Inbox() {
   }, []);
 
   const refreshInbox = useCallback(async () => {
-    await Promise.all([refresh().catch(() => null), loadMessages(messageLimit)]);
-  }, [loadMessages, messageLimit, refresh]);
+    await Promise.all([refresh().catch(() => null), loadMessages(messagePage)]);
+  }, [loadMessages, messagePage, refresh]);
 
   useEffect(() => {
-    void loadMessages(messageLimit);
-  }, [loadMessages, messageLimit]);
+    void loadMessages(messagePage);
+  }, [loadMessages, messagePage]);
+
+  useEffect(() => {
+    const pageCount = Math.max(1, Math.ceil(approvals.length / MESSAGE_PAGE_SIZE));
+    setApprovalPage((current) => Math.min(current, pageCount - 1));
+  }, [approvals.length]);
+
+  useEffect(() => {
+    const pageCount = Math.max(1, Math.ceil(totalMessages / MESSAGE_PAGE_SIZE));
+    setMessagePage((current) => Math.min(current, pageCount - 1));
+  }, [totalMessages]);
 
   useEffect(() => {
     if (composeOpen) void loadLeads();
@@ -1345,6 +1396,21 @@ export function Inbox() {
     return () => window.removeEventListener('pbk:open-compose', openCompose);
   }, []);
 
+  useEffect(() => {
+    const hideResolvedApproval = (event: Event) => {
+      const detail = (event as CustomEvent<{ approvalId?: string }>).detail;
+      const approvalId = String(detail?.approvalId || '').trim();
+      if (!approvalId) return;
+      setResolvedApprovalIds((current) => {
+        const next = new Set(current);
+        next.add(approvalId);
+        return next;
+      });
+    };
+    window.addEventListener('pbk:approval-decision', hideResolvedApproval);
+    return () => window.removeEventListener('pbk:approval-decision', hideResolvedApproval);
+  }, []);
+
   const decideApproval = async (approval: Record<string, unknown>, status: string) => {
     const approvalId = String(approval.id || '');
     if (!approvalId) return;
@@ -1353,6 +1419,11 @@ export function Inbox() {
     setActionStatus(null);
     try {
       await updateApprovalDecision(approvalId, status);
+      setResolvedApprovalIds((current) => {
+        const next = new Set(current);
+        next.add(approvalId);
+        return next;
+      });
       await refreshInbox();
       setActionStatus({
         tone: 'success',
@@ -1438,7 +1509,7 @@ export function Inbox() {
     if (!messageId) {
       setActionStatus({
         tone: 'error',
-        text: 'This message is missing an id, so the bridge cannot archive it.',
+        text: 'This message is missing an id, so it cannot be archived.',
       });
       return;
     }
@@ -1451,7 +1522,7 @@ export function Inbox() {
       showUiToast({
         tone: 'success',
         title: 'Inbox updated',
-        desc: 'Message archived in the bridge.',
+        desc: 'Message archived.',
       });
     } catch (nextError) {
       setActionStatus({
@@ -1467,10 +1538,6 @@ export function Inbox() {
     ? 'Loading inbox...'
     : `Showing ${visibleMessages.length} of ${totalMessages || visibleMessages.length} messages`;
   const bridgeError = error || messageError;
-  const snapshotSource =
-    snapshot && typeof snapshot === 'object'
-      ? String((snapshot as unknown as Record<string, unknown>).source || 'runtime')
-      : 'runtime';
   const selectSignalLane = useCallback((lane: InboxSignalLane) => {
     const sectionId = lane === 'approvals' ? 'inbox-approvals' : 'inbox-messages';
     document.getElementById(sectionId)?.scrollIntoView({
@@ -1485,7 +1552,6 @@ export function Inbox() {
         <InboxHero
           loading={loading}
           stats={inboxStats}
-          source={snapshotSource}
           onCompose={() => setComposeOpen(true)}
           onOpenInbox={() => navigate('/inbox/conversations')}
           onRefresh={() => void refreshInbox()}
@@ -1494,7 +1560,7 @@ export function Inbox() {
         {bridgeError && (
           <div className="flex flex-col gap-3 rounded-2xl border border-amber-400/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-50 sm:flex-row sm:items-center sm:justify-between">
             <div>
-              <div className="font-semibold">Bridge connection issue</div>
+              <div className="font-semibold">Connection issue</div>
               <div className="mt-1 text-xs text-amber-100/80">{bridgeError}</div>
             </div>
             <button
@@ -1548,13 +1614,13 @@ export function Inbox() {
           <section id="inbox-approvals" className="pbk-inbox-card">
             <div className="pbk-inbox-card-head">
               <div>
-                <h2>Approvals needed</h2>
-                <p>Actions Ava or Rex cannot complete without your decision.</p>
+                <h2>Needs your review</h2>
+                <p>Ava is ready to keep moving once you choose one of these.</p>
               </div>
               <span className="count">{approvals.length}</span>
             </div>
             <div className="pbk-inbox-approval-list">
-              {approvals.map((approval, index) => {
+              {visibleApprovals.map((approval, index) => {
                 const approvalId = String(approval.id || '');
                 return (
                   <InboxApprovalCard
@@ -1571,19 +1637,28 @@ export function Inbox() {
               {!approvals.length && (
                 <div className="pbk-inbox-empty">
                   <InboxIcon size={18} />
-                  <span>Nothing is waiting on human approval.</span>
+                  <span>Ava has nothing ready for review.</span>
                 </div>
               )}
             </div>
-            <PbkDataSource endpoint="GET /state" status="ships" note="snapshot.approvals" />
-            <PbkDataSource endpoint="PUT /api/approvals/:id" status="ships" />
+            <CompactPager
+              page={approvalPage}
+              total={approvals.length}
+              label="Approval board pages"
+              itemLabel="reviews"
+              onPageChange={setApprovalPage}
+            />
+            <InboxDataSourceDetails>
+              <PbkDataSource endpoint="GET /state" status="ships" note="snapshot.approvals" />
+              <PbkDataSource endpoint="PUT /api/approvals/:id" status="ships" />
+            </InboxDataSourceDetails>
           </section>
 
           <section id="inbox-messages" className="pbk-inbox-card pbk-inbox-message-card">
             <div className="pbk-inbox-card-head">
               <div>
                 <h2>Message stream</h2>
-                <p>Replies, scheduled sends, and provider status from the bridge.</p>
+                <p>Recent replies and sent messages from calls, SMS, and email.</p>
               </div>
               <span className="count">
                 {visibleMessages.length
@@ -1609,25 +1684,25 @@ export function Inbox() {
               {!visibleMessages.length && (
                 <div className="pbk-inbox-empty">
                   <MessageSquare size={18} />
-                  <span>No runtime messages yet.</span>
+                  <span>No messages are on this page yet.</span>
                 </div>
               )}
             </div>
-            {totalMessages > visibleMessages.length && (
-              <button
-                type="button"
-                onClick={() => setMessageLimit((current) => current + MESSAGE_PAGE_SIZE)}
-                className="pbk-inbox-load-more"
-              >
-                Load more messages
-              </button>
-            )}
-            <PbkDataSource endpoint="GET /api/messages" status="ships" note="paged bridge list" />
-            <PbkDataSource
-              endpoint="PATCH /api/messages/:id/archive"
-              status="ships"
-              note="archive/swipe action persists through the bridge"
+            <CompactPager
+              page={messagePage}
+              total={totalMessages}
+              label="Message stream pages"
+              itemLabel="messages"
+              onPageChange={setMessagePage}
             />
+            <InboxDataSourceDetails>
+              <PbkDataSource endpoint="GET /api/messages" status="ships" note="paged bridge list" />
+              <PbkDataSource
+                endpoint="PATCH /api/messages/:id/archive"
+                status="ships"
+                note="archive/swipe action persists through the bridge"
+              />
+            </InboxDataSourceDetails>
           </section>
         </section>
 

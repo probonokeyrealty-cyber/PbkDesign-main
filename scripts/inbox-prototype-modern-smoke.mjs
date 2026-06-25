@@ -96,7 +96,7 @@ assert(
   'Inbox approvals should use plain-English action copy with an explicit reason and risk.'
 );
 assert(
-  /Ask later/.test(inbox) &&
+  /Leave for later/.test(inbox) &&
     /Left pending\. Ava will wait for your decision\./.test(inbox),
   'Inbox approvals should let operators defer without rejecting the queued action.'
 );

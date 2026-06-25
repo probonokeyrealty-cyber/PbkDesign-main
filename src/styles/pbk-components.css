@@ -106,6 +106,105 @@
 }
 
 /* ============================================================
+   LIST PAGERS
+   Ten-at-a-time controls for operator lists.
+   ============================================================ */
+.pbk-list-pager {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 12px;
+  border: 1px solid rgba(148, 163, 184, 0.14);
+  border-radius: 8px;
+  padding: 8px;
+  background: rgba(2, 6, 23, 0.28);
+}
+
+.pbk-list-pager-status {
+  min-width: 0;
+  color: var(--text-tertiary);
+  font: 700 10px/1.3 var(--font-mono);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.pbk-list-pager-actions {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 6px;
+}
+
+.pbk-list-pager button {
+  display: inline-flex;
+  min-height: 30px;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  border-radius: 7px;
+  padding: 0 10px;
+  color: var(--text-secondary);
+  background: rgba(15, 23, 42, 0.66);
+  font: 700 11px/1 var(--font-ui);
+  cursor: pointer;
+  transition:
+    border-color var(--duration-fast),
+    color var(--duration-fast),
+    background var(--duration-fast);
+}
+
+.pbk-list-pager button:hover:not(:disabled) {
+  color: var(--text-primary);
+  border-color: var(--sky-dim);
+  background: rgba(14, 165, 233, 0.12);
+}
+
+.pbk-list-pager button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.pbk-tech-details {
+  margin-top: 8px;
+  color: var(--text-tertiary);
+}
+
+.pbk-tech-details > summary {
+  display: inline-flex;
+  cursor: pointer;
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  border-radius: 999px;
+  padding: 5px 9px;
+  background: rgba(15, 23, 42, 0.5);
+  color: var(--text-tertiary);
+  font: 700 10px/1 var(--font-mono);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.pbk-tech-details > summary:hover {
+  color: var(--text-secondary);
+  border-color: rgba(125, 211, 252, 0.28);
+}
+
+.pbk-tech-details .pbk-data-source {
+  margin-top: 6px;
+}
+
+@media (max-width: 560px) {
+  .pbk-list-pager {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .pbk-list-pager-actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+/* ============================================================
    CHIP BUTTONS (filter tabs)
    ============================================================ */
 .pbk-chip {
@@ -9852,6 +9951,11 @@ html[data-theme='light'] .pbk-ava-chat-surface {
   min-width: 0;
 }
 
+.pbk-ava-chat-submit-row,
+.pbk-ava-chat-submit-actions {
+  min-width: 0;
+}
+
 .pbk-ava-advanced-settings {
   min-width: 0;
 }
@@ -9966,6 +10070,30 @@ html[data-theme='light'] .pbk-ava-chat-surface {
     max-height: 104px;
     padding: 8px 10px;
   }
+
+  .pbk-ava-chat-submit-row {
+    display: grid !important;
+    grid-template-columns: 44px minmax(0, 1fr);
+    align-items: center;
+  }
+
+  .pbk-ava-chat-controls {
+    width: auto !important;
+  }
+
+  .pbk-ava-chat-submit-actions {
+    width: 100% !important;
+    justify-content: stretch !important;
+  }
+
+  .pbk-ava-chat-send-button {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .pbk-ava-chat-send-button span {
+    display: inline !important;
+  }
 }
 
 @media (max-width: 420px) {
@@ -9976,7 +10104,7 @@ html[data-theme='light'] .pbk-ava-chat-surface {
 
   .pbk-ava-chat-controls {
     display: flex !important;
-    width: 100%;
+    width: auto !important;
     gap: 6px;
   }
 

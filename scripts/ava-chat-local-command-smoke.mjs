@@ -19,6 +19,7 @@ const runtimeBridge = read('src/app/utils/runtimeBridge.ts');
 const bridge = read('scripts/openclaw-local-server.mjs');
 const avaIntentRouter = read('scripts/ava-intent-router.mjs');
 const netlify = read('netlify.toml');
+const pbkComponentsCss = read('src/styles/pbk-components.css');
 const migrations = fs
   .readdirSync(path.join(root, 'supabase/migrations'))
   .filter((name) => name.endsWith('.sql'))
@@ -151,6 +152,18 @@ assert(
 assert(
   !avaChat.includes('Supabase-backed command record'),
   'Ava Chat must not overstate the command store durability source.'
+);
+assert(
+  avaChat.includes('pbk-ava-chat-submit-row') &&
+    avaChat.includes('pbk-ava-chat-submit-actions'),
+  'Ava Chat composer must expose stable mobile layout hooks.'
+);
+assert(
+  /\.pbk-ava-chat-submit-row[\s\S]*grid-template-columns:\s*44px minmax\(0,\s*1fr\)/.test(
+    pbkComponentsCss
+  ) &&
+    /\.pbk-ava-chat-send-button[\s\S]*width:\s*100%/.test(pbkComponentsCss),
+  'Ava Chat mobile composer must keep Send as a full-width tappable control.'
 );
 
 assert(

@@ -13,7 +13,7 @@ const laneDefinitions = [
   {
     key: 'approvals',
     label: 'Approvals',
-    note: 'Ava/Rex waiting',
+    note: 'ready for review',
     tone: 'amber',
     Icon: ShieldCheck,
   },

@@ -12,6 +12,61 @@ function objectValue(value) {
   return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
 }
 
+function firstText(...values) {
+  return values.map((value) => text(value)).find(Boolean) || '';
+}
+
+function friendlyApprovalLabel(value) {
+  const raw = text(value);
+  if (!raw) return '';
+  return raw
+    .replace(/[_-]+/g, ' ')
+    .replace(/\bcrm\b/gi, 'CRM')
+    .replace(/\bdocusign\b/gi, 'DocuSign')
+    .replace(/\bsms\b/gi, 'SMS')
+    .replace(/\bemail\b/gi, 'email')
+    .replace(/\bupdate\b/gi, 'update')
+    .replace(/\bcreate\b/gi, 'create')
+    .trim();
+}
+
+function getApprovalFallbackSummary(approval, payload, metadata, contract) {
+  const action = friendlyApprovalLabel(
+    firstText(
+      approval.approvalAction,
+      approval.action,
+      approval.type,
+      payload.action,
+      payload.intent,
+      metadata.action
+    )
+  );
+  const seller = firstText(
+    approval.leadName,
+    approval.sellerName,
+    payload.leadName,
+    payload.sellerName,
+    objectValue(payload.seller).name,
+    metadata.leadName
+  );
+  const address = firstText(
+    approval.address,
+    approval.propertyAddress,
+    payload.address,
+    payload.propertyAddress,
+    objectValue(payload.property).address,
+    contract.address
+  );
+  const channel = friendlyApprovalLabel(firstText(payload.channel, metadata.channel));
+  const parts = [];
+  if (action) parts.push(`${action.charAt(0).toUpperCase()}${action.slice(1)}`);
+  if (seller) parts.push(`Seller: ${seller}`);
+  if (address) parts.push(`Property: ${address}`);
+  if (channel) parts.push(`Channel: ${channel}`);
+  if (parts.length) return parts.join(' · ');
+  return 'Ava has a workspace action ready for review.';
+}
+
 function gsmSeptetLength(message = '') {
   let units = 0;
   for (const char of String(message || '')) {
@@ -146,8 +201,10 @@ export function getApprovalPreview(approval = {}) {
   ];
   const preview = candidates.map((candidate) => text(candidate)).find(Boolean);
   if (preview) return preview;
-  if (Object.keys(payload).length) return JSON.stringify(payload, null, 2);
-  return 'No approval payload was attached by the runtime.';
+  if (Object.keys(payload).length || Object.keys(metadata).length || Object.keys(contract).length) {
+    return getApprovalFallbackSummary(approval, payload, metadata, contract);
+  }
+  return 'Ava has a workspace action ready for review.';
 }
 
 export function isContractApproval(approval = {}) {

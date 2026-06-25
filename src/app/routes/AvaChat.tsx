@@ -516,11 +516,7 @@ function getResultText(command: LocalCommandRecord) {
     const value = result[key];
     if (typeof value === 'string' && value.trim()) return value.trim();
   }
-  try {
-    return JSON.stringify(result, null, 2);
-  } catch {
-    return 'Done. Ava received a result.';
-  }
+  return 'Done. Ava received an update and saved the result.';
 }
 
 function getResultPayload(command: LocalCommandRecord) {
@@ -558,11 +554,12 @@ function formatStructuredResultItem(item: unknown) {
   if (typeof item === 'string') return item;
   if (!item || typeof item !== 'object') return String(item ?? '');
   const record = item as Record<string, unknown>;
-  return (
-    [record.name, record.label, record.title, record.type, record.status]
-      .filter((value) => typeof value === 'string' && value.trim())
-      .join(' · ') || JSON.stringify(record)
-  );
+  const readable = [record.name, record.label, record.title, record.type, record.status]
+    .filter((value) => typeof value === 'string' && value.trim())
+    .join(' · ');
+  if (readable) return readable;
+  const id = String(record.id || record.leadId || record.commandId || '').trim();
+  return id ? `Saved item ${id}` : 'Saved item';
 }
 
 function getCommandRiskLevel(command: LocalCommandRecord): CommandRiskLevel {
@@ -706,6 +703,7 @@ export function AvaChat() {
   const [contextOpen, setContextOpen] = useState(false);
   const [decidingApprovalId, setDecidingApprovalId] = useState('');
   const [operatorMemory, setOperatorMemory] = useState<OperatorMemory | null>(null);
+  const [resolvedApprovalIds, setResolvedApprovalIds] = useState<Set<string>>(() => new Set());
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
   const timelineRef = useRef<HTMLDivElement | null>(null);
@@ -713,13 +711,17 @@ export function AvaChat() {
 
   const pendingApprovals = useMemo(
     () =>
-      (snapshot?.approvals || []).filter(
-        (approval) =>
+      (snapshot?.approvals || []).filter((approval) => {
+        const approvalRecord = approval as Record<string, unknown>;
+        const approvalId = String(approval.id || approvalRecord.approvalId || '');
+        return (
           String(approval.status || '').toLowerCase() === 'pending' &&
+          !resolvedApprovalIds.has(approvalId) &&
           (String(approval.type || '').toLowerCase() === 'local_command' ||
             String(approval.approvalAction || '').toLowerCase() === 'executelocalcommand')
-      ).length,
-    [snapshot?.approvals]
+        );
+      }).length,
+    [resolvedApprovalIds, snapshot?.approvals]
   );
 
   const latestCommand = commands[0];
@@ -752,6 +754,7 @@ export function AvaChat() {
     const query = searchQuery.trim().toLowerCase();
     const defaultChatView = !query && historyFilter === 'all';
     return commands
+      .filter((command) => !resolvedApprovalIds.has(String(command.approvalId || '')))
       .filter((command) => !defaultChatView || shouldShowCommandInDefaultChat(command))
       .filter((command) => matchesHistoryFilter(command, historyFilter))
       .filter((command) => {
@@ -769,7 +772,7 @@ export function AvaChat() {
         );
       })
       .reverse();
-  }, [commands, historyFilter, searchQuery]);
+  }, [commands, historyFilter, resolvedApprovalIds, searchQuery]);
 
   const filteredAssistantExchanges = useMemo(() => {
     const query = searchQuery.trim().toLowerCase();
@@ -867,7 +870,17 @@ export function AvaChat() {
 
   useEffect(() => {
     if (typeof window === 'undefined') return undefined;
-    const reloadCommandsAfterApprovalDecision = () => {
+    const reloadCommandsAfterApprovalDecision = (event: Event) => {
+      const approvalId = String(
+        (event as CustomEvent<{ approvalId?: string }>).detail?.approvalId || ''
+      );
+      if (approvalId) {
+        setResolvedApprovalIds((current) => {
+          const next = new Set(current);
+          next.add(approvalId);
+          return next;
+        });
+      }
       void load({ silent: true });
     };
     window.addEventListener('pbk:approval-decision', reloadCommandsAfterApprovalDecision);
@@ -1085,6 +1098,11 @@ export function AvaChat() {
       setSubmitError('');
       try {
         await updateApprovalDecision(approvalId, decision);
+        setResolvedApprovalIds((current) => {
+          const next = new Set(current);
+          next.add(approvalId);
+          return next;
+        });
         showUiToast({
           tone: decision === 'approved' ? 'success' : 'info',
           title: decision === 'approved' ? 'Approved' : 'Denied',
@@ -1968,7 +1986,7 @@ function AvaComposer({
             </div>
           )}
 
-          <div className="flex min-w-0 flex-wrap items-center justify-between gap-2 border-t border-[var(--ava-border)] px-1 pt-2">
+          <div className="pbk-ava-chat-submit-row flex min-w-0 flex-wrap items-center justify-between gap-2 border-t border-[var(--ava-border)] px-1 pt-2">
             <div className="pbk-ava-chat-controls flex w-full min-w-0 flex-nowrap items-center gap-2 sm:w-auto sm:flex-wrap">
               <button
                 type="button"
@@ -1994,7 +2012,7 @@ function AvaComposer({
               </div>
             </div>
 
-            <div className="flex w-full items-center justify-end gap-2 sm:w-auto">
+            <div className="pbk-ava-chat-submit-actions flex w-full min-w-0 items-center justify-end gap-2 sm:w-auto">
               <span className="hidden max-w-48 truncate text-xs text-[var(--ava-text-faint)] lg:block">
                 {listening
                   ? transcript || 'Listening...'

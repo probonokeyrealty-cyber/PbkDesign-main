@@ -47,11 +47,11 @@ expectContains(callFloor, 'toastUndo(', 'Scheduled callback cancellation offers 
 
 expectContains(commandCenter, 'StatusColorLegend', 'Command Center includes the status color legend');
 expectContains(commandCenter, 'visibleActivity', 'Activity feed uses progressive visible items');
-expectContains(commandCenter, 'activityLimit', 'Activity feed tracks a load-more limit');
-expectContains(commandCenter, 'Load more activity', 'Activity feed exposes a load-more button');
+expectContains(commandCenter, 'activityPage', 'Activity feed tracks a ten-item page');
+expectContains(commandCenter, 'label="Activity feed pages"', 'Activity feed exposes page controls');
 expectContains(commandCenter, 'CallQualityReviewDialog', 'Ended calls surface a quality review popup');
 expectContains(commandCenter, 'pbk:command-center:widgets', 'Dashboard widget visibility is persisted locally');
-expectContains(commandCenter, 'Widget controls', 'Command Center exposes dashboard widget controls');
+expectContains(commandCenter, 'Dashboard sections', 'Command Center exposes dashboard section controls');
 expectMatches(
   commandCenter,
   /active\|connected\|in\[_ -\]\?progress\|live\|ringing\|transferring/,

@@ -38,7 +38,7 @@ expectMatches(
 );
 expectContains(
   commandCenter,
-  "title: 'Runtime action complete'",
+  "title: 'Ava updated the workspace'",
   'Runtime action success emits a toast, not only a status box'
 );
 expectContains(

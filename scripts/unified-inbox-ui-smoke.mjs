@@ -31,7 +31,7 @@ const inbox = readFileSync(inboxPath, 'utf8');
 
 for (const copy of [
   'Approvals',
-  'Ava/Rex waiting',
+  'ready for review',
   'Unread',
   'seller replies',
   'Scheduled',

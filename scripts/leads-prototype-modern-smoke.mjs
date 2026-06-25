@@ -103,7 +103,7 @@ assert(
 assert(
   leads.includes('Manual SMS') &&
     leads.includes('Send SMS') &&
-    leads.includes('Human-sent SMS uses the manual bridge lane'),
+    leads.includes('Ava will send this as a direct seller text'),
   'Lead SMS quick action must open an editable manual compose dialog with visible send behavior.'
 );
 assert(

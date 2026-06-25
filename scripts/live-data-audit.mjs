@@ -911,8 +911,8 @@ const checks = [
       /tavilySecretPresent/.test(bridge) &&
       /pbk-web-search-spikes-v1/.test(bridge) &&
       /fetchWebSearchStatusRequest/.test(runtimeBridge) &&
-      /Web Search Cognition/.test(commandCenter) &&
-      /Probe Status/.test(commandCenter) &&
+      /Market and web research/.test(commandCenter) &&
+      /Connection check/.test(commandCenter) &&
       /fetchWebSearchStatusRequest/.test(commandCenter),
   },
   {
@@ -1729,9 +1729,12 @@ const checks = [
     ok:
       /api\/public\/ava-chat/.test(bridge) &&
       /pbk-ava-public-chat/.test(widget) &&
-      /export\s+default\s+async/.test(netlifyPublicAvaFunction) &&
-      /export\s+const\s+config/.test(netlifyPublicAvaFunction) &&
-      /path\s*:\s*'\/api\/public\/ava-chat'/.test(netlifyPublicAvaFunction),
+      /import type \{ Handler \}/.test(netlifyPublicAvaFunction) &&
+      /export\s+const\s+handler:\s*Handler/.test(netlifyPublicAvaFunction) &&
+      /function buildRequestFromEvent/.test(netlifyPublicAvaFunction) &&
+      /from = "\/api\/public\/ava-chat"[\s\S]*to = "\/\.netlify\/functions\/public-ava-chat"/.test(
+        netlifyConfig
+      ),
   },
   {
     name: 'Public Ava chat keeps seller-facing replies separate from internal brain summaries',

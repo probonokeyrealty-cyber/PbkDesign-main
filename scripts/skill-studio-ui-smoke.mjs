@@ -108,7 +108,9 @@ assert(
 assert(
   route.includes('Human-approved learning') &&
     route.includes('Learning sync') &&
-    route.includes('System of record') &&
+    route.includes('Saved in') &&
+    route.includes('Ava access') &&
+    route.includes('Allowed actions') &&
     !/Fail-closed governance|Render authority|Supabase analytics mirror|Deepgram|Article text, screenshot OCR/.test(
       route
     ),

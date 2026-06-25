@@ -20,9 +20,10 @@
    
    <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,800&family=JetBrains+Mono:wght@400;500;600;700&family=Geist:wght@400;500;600;700&display=swap" rel="stylesheet">
 
-   If you prefer @import (slower but works in CSS files):
+   If you prefer @import, keep it in fonts.css so it is loaded before
+   Tailwind/theme/component rules. CSS @import cannot appear after other
+   statements once Vite/PostCSS combines the global stylesheets.
 */
-@import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,800&family=JetBrains+Mono:wght@400;500;600;700&family=Geist:wght@400;500;600;700&display=swap');
 
 :root {
   /* ---- BACKGROUNDS (darkest → lightest) ---- */

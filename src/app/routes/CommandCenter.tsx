@@ -3,6 +3,7 @@ import { AlertCircle, CheckCircle2, Loader2 } from 'lucide-react';
 import { useNavigate } from 'react-router';
 import { CallFloorPanel } from '../components/CallFloorPanel';
 import { CallQualityReviewDialog } from '../components/CallQualityReviewDialog';
+import { CompactPager, getPageSlice, OPERATOR_LIST_PAGE_SIZE } from '../components/CompactPager';
 import { StatusColorLegend } from '../components/StatusColorLegend';
 import { LiveCallWidget } from '../components/shell/LiveCallWidget';
 import type { LiveCallState, TranscriptLine } from '../components/shell/LiveCallWidget';
@@ -27,7 +28,7 @@ import {
   updateApprovalDecision,
 } from '../utils/runtimeBridge';
 import { showUiToast } from '../utils/uiFeedback';
-import { getApprovalPreview } from './inboxRuntimeLogic.js';
+import { getApprovalPreview, getPendingApprovals } from './inboxRuntimeLogic.js';
 
 function formatRelative(value?: string) {
   if (!value) return 'just now';
@@ -70,7 +71,7 @@ function formatRuntimeStatus(status: unknown) {
   if (normalized === 'provider_missing') return 'Provider key missing';
   if (normalized === 'queued') return 'Queued for worker';
   if (normalized === 'queued_for_approval') return 'Queued for approval';
-  if (normalized === 'pending') return 'Waiting';
+  if (normalized === 'pending') return 'In progress';
   if (normalized === 'approved') return 'Approved';
   if (normalized === 'rejected') return 'Declined';
   if (normalized === 'needs-revision') return 'Needs Revision';
@@ -206,12 +207,12 @@ const COMMAND_WIDGETS: Array<{ id: CommandWidgetId; label: string }> = [
   { id: 'kpis', label: 'KPI strip' },
   { id: 'liveCall', label: 'Live call' },
   { id: 'callFloor', label: 'Call floor' },
-  { id: 'adminActivity', label: 'Admin activity' },
-  { id: 'webSearch', label: 'Web search' },
+  { id: 'adminActivity', label: 'Workspace tasks' },
+  { id: 'webSearch', label: 'Market research' },
   { id: 'statusLegend', label: 'Status legend' },
-  { id: 'tooling', label: 'Tooling' },
+  { id: 'tooling', label: 'Support tools' },
   { id: 'activity', label: 'Activity feed' },
-  { id: 'approvals', label: 'Approvals' },
+  { id: 'approvals', label: 'Approval board' },
 ];
 const DEFAULT_COMMAND_WIDGETS = COMMAND_WIDGETS.reduce(
   (prefs, widget) => ({ ...prefs, [widget.id]: true }),
@@ -513,22 +514,23 @@ function buildBattlefieldItems(params: {
     .filter((approval) => String(approval.status || '').toLowerCase() === 'pending')
     .slice(0, 4)
     .forEach((approval, index) => {
-      const type = String(approval.type || 'Approval');
+      const rawType = String(approval.type || 'Approval');
+      const type = friendlyRuntimeLabel(rawType, 'Review');
       const amount = approval.offerPrice || approval.mao || approval.amount;
-      const isContract = type.toLowerCase().includes('contract');
+      const isContract = rawType.toLowerCase().includes('contract');
       items.push({
         id: `approval-${String(approval.id || index)}`,
         tag: type,
         body: `${amount ? `${formatCompactMoney(amount)} / ` : ''}${String(
-          approval.leadName || approval.address || 'approval needed'
+          friendlyRuntimeLabel(approval.leadName || approval.address || 'review item')
         )}`,
         when: formatRelative(getRuntimeDate(approval)),
         tone: isContract ? 'money' : 'hot',
         score: clampBattlefieldScore((isContract ? 91 : 84) + (toNumber(amount, 0) ? 4 : 0)),
         source: 'snapshot.approvals',
         reason: isContract
-          ? 'Contract approval can trigger DocuSign delivery.'
-          : 'Outbound agent action is waiting on approval.',
+          ? 'Review this before Ava sends the DocuSign packet.'
+          : 'Ava needs a quick yes or no before this step continues.',
         cta: 'Review approval',
         pulse: isContract ? 'lime' : undefined,
         targetPath: '#approvals',
@@ -569,7 +571,7 @@ function buildBattlefieldItems(params: {
         tone: 'warm',
         score: 72,
         source: 'snapshot.messages',
-        reason: 'Unread seller reply is waiting in Inbox.',
+        reason: 'Unread seller reply is ready in Inbox.',
         cta: 'Reply',
         pulse: 'amber',
         targetPath: '/inbox',
@@ -582,14 +584,16 @@ function buildBattlefieldItems(params: {
     .forEach((task, index) => {
       items.push({
         id: `admin-${String(task.id || index)}`,
-        tag: 'Admin',
-        body: `${String(task.provider || 'Rex')} / ${String(task.action || task.summary || 'decision')}`,
+        tag: 'Workspace task',
+        body: `${friendlyRuntimeLabel(task.provider || 'Ava')} / ${friendlyRuntimeLabel(
+          task.action || task.summary || 'decision'
+        )}`,
         when: formatRelative(getRuntimeDate(task)),
         tone: 'hot',
         score: 86,
         source: 'snapshot.adminTasks',
-        reason: 'Infrastructure/admin action is approval gated.',
-        cta: 'Review admin task',
+        reason: 'A workspace task needs a quick yes or no.',
+        cta: 'Review workspace task',
         targetPath: '#admin-activity',
       });
     });
@@ -613,7 +617,7 @@ function buildBattlefieldItems(params: {
       });
     });
 
-  return rankBattlefieldItems(items).slice(0, 8);
+  return rankBattlefieldItems(items).slice(0, OPERATOR_LIST_PAGE_SIZE);
 }
 
 function normalizeBridgeBattlefieldItem(
@@ -628,17 +632,59 @@ function normalizeBridgeBattlefieldItem(
     : undefined;
   return {
     id: String(item.id || `bridge-work-${index}`),
-    tag: String(item.tag || 'Work item'),
-    body: String(item.body || 'Bridge-ranked founder action'),
+    tag: friendlyRuntimeLabel(item.tag || 'Work item', 'Work item'),
+    body: friendlyRuntimeLabel(item.body || 'Recommended next step', 'Recommended next step'),
     when: String(item.when || 'now'),
     tone,
     score: clampBattlefieldScore(toNumber(item.score, 0) || 0),
     source: String(item.source || 'GET /api/founder/work-queue'),
-    reason: String(item.reason || 'Bridge ranked this item for operator attention.'),
+    reason: friendlyBattlefieldReason(item.reason),
     cta: String(item.cta || 'Open'),
     pulse,
     targetPath: String(item.targetPath || '/'),
   };
+}
+
+function friendlyBattlefieldReason(value: unknown) {
+  const text = String(value || '').trim();
+  if (!text) return 'Ava recommends reviewing this next.';
+  return text
+    .replace(
+      /outbound agent action is waiting on approval/gi,
+      'Ava has a seller follow-up ready for review'
+    )
+    .replace(
+      /outbound agent action is ready for review/gi,
+      'Ava has a seller follow-up ready for review'
+    )
+    .replace(
+      /infrastructure\/admin action is approval gated/gi,
+      'Workspace setup needs your review'
+    )
+    .replace(
+      /infrastructure\/workspace task is approval gated/gi,
+      'Workspace setup needs your review'
+    )
+    .replace(/approval gated/gi, 'ready for review')
+    .replace(/waiting on approval/gi, 'ready for review')
+    .replace(/operator attention/gi, 'your review')
+    .replace(/admin action/gi, 'workspace task')
+    .replace(/provider action/gi, 'workspace action');
+}
+
+function friendlyBattlefieldSource(value: unknown) {
+  const source = String(value || '')
+    .trim()
+    .toLowerCase();
+  if (!source) return 'Workspace';
+  if (source.includes('approval')) return 'Approval board';
+  if (source.includes('admin')) return 'Workspace tasks';
+  if (source.includes('message') || source.includes('inbox')) return 'Inbox';
+  if (source.includes('lead')) return 'Leads';
+  if (source.includes('call')) return 'Call floor';
+  if (source.includes('work-queue') || source.includes('founder')) return 'Next steps';
+  if (source.includes('state')) return 'Workspace';
+  return friendlyRuntimeLabel(value, 'Workspace');
 }
 
 function normalizeIntelligenceStreamItem(
@@ -759,11 +805,41 @@ function DataSourceCaption({
   status?: 'ships' | 'needs-wiring';
   note?: string;
 }) {
-  return <PbkDataSource endpoint={endpoint} status={status} note={note} />;
+  return (
+    <details className="pbk-tech-details">
+      <summary>Technical details</summary>
+      <PbkDataSource endpoint={endpoint} status={status} note={note} />
+    </details>
+  );
+}
+
+function friendlyRuntimeLabel(value: unknown, fallback = 'Ready') {
+  const raw = String(value || '').trim();
+  if (!raw) return fallback;
+  const known: Record<string, string> = {
+    primary_path_attempts_allowed: 'Ready for first try',
+    primary_path_gated: 'Needs review before first try',
+    primary_path_report_unavailable: 'Readiness check unavailable',
+    blocked_until_ready: 'Needs setup first',
+    retry_then_label_fallback: 'Retry, then mark for review',
+    no_fallback_hide_blocker: 'Needs setup before use',
+    admin: 'Workspace setup',
+    'lead-nurture': 'Lead nurture',
+    lead_nurture: 'Lead nurture',
+    'rex-decision': 'Rex decision',
+    rex_decision: 'Rex decision',
+  };
+  const normalized = raw.toLowerCase();
+  if (known[normalized]) return known[normalized];
+  return raw
+    .replace(/([a-z])([A-Z])/g, '$1 $2')
+    .replace(/^pbk[_-]/i, '')
+    .replace(/[_-]+/g, ' ')
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
 
 function SourceConfidenceRail({ items, source }: { items: SystemSourceLabel[]; source: string }) {
-  const visibleItems = items.slice(0, 6);
+  const visibleItems = items.slice(0, OPERATOR_LIST_PAGE_SIZE);
   const statusTone = (status?: string) => {
     if (status === 'live') return 'border-emerald-400/25 bg-emerald-500/10 text-emerald-100';
     if (status === 'fallback') return 'border-sky-400/25 bg-sky-500/10 text-sky-100';
@@ -795,10 +871,8 @@ function SourceConfidenceRail({ items, source }: { items: SystemSourceLabel[]; s
     <PbkPanel className="pbk-command-source-rail space-y-3">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <div className="pbk-eyebrow">Runtime data truth</div>
-          <h2 className="text-base font-semibold text-[var(--text-primary)]">
-            Live sources and data activity
-          </h2>
+          <div className="pbk-eyebrow">Workspace data health</div>
+          <h2 className="text-base font-semibold text-[var(--text-primary)]">Connected sources</h2>
         </div>
         <DataSourceCaption endpoint="GET /api/system/source-labels" note={source} />
       </div>
@@ -872,21 +946,21 @@ function ProductionGapsRail({
     <PbkPanel className="pbk-command-production-gaps">
       <div className="pbk-production-gaps-head">
         <div className="min-w-0">
-          <div className="pbk-eyebrow">Production gaps</div>
-          <h2>Controls needing setup</h2>
+          <div className="pbk-eyebrow">Workspace readiness</div>
+          <h2>A few setup items may need attention</h2>
         </div>
-        <div className="pbk-production-gaps-chips" aria-label="Production readiness summary">
-          <span className="pbk-production-chip neutral">{gaps.length} labeled</span>
+        <div className="pbk-production-gaps-chips" aria-label="Workspace readiness summary">
+          <span className="pbk-production-chip neutral">{gaps.length} checks</span>
           <span className={`pbk-production-chip ${blockingCount ? 'danger' : 'good'}`.trim()}>
-            {blockingCount} blocking
+            {blockingCount} needs attention
           </span>
           <span className="pbk-production-chip info">{optionalCount} optional</span>
           <span className={`pbk-production-chip ${primaryAllowed ? 'good' : 'danger'}`.trim()}>
-            Primary path {primaryAllowed ? 'allowed' : 'gated'}
+            Main workflow {primaryAllowed ? 'ready' : 'needs review'}
           </span>
           {primaryPath?.summary && (
             <span className="pbk-production-chip warn">
-              {primaryPath.summary.retryBeforeFallback || 0} retry-gated
+              {primaryPath.summary.retryBeforeFallback || 0} retry protected
             </span>
           )}
         </div>
@@ -895,32 +969,34 @@ function ProductionGapsRail({
       {primaryPath?.summary && (
         <div className="pbk-production-speed-strip">
           <span>
-            <small>First attempt</small>
+            <small>First try</small>
             <strong className={primaryAllowed ? 'text-emerald-200' : 'text-rose-200'}>
-              {primaryPath.result ||
-                (primaryAllowed ? 'primary_path_attempts_allowed' : 'primary_path_gated')}
+              {friendlyRuntimeLabel(
+                primaryPath.result ||
+                  (primaryAllowed ? 'primary_path_attempts_allowed' : 'primary_path_gated')
+              )}
             </strong>
-            <em>fallback SLO {primaryPath.fallbackSloTargetPercent ?? 0.1}%</em>
+            <em>fallback goal {primaryPath.fallbackSloTargetPercent ?? 0.1}%</em>
           </span>
           <span>
-            <small>Active gates</small>
+            <small>Watch items</small>
             <strong>
-              {primaryPath.summary.blocking || 0} blockers /{' '}
-              {primaryPath.summary.disabledOptional || 0} disabled optional
+              {primaryPath.summary.blocking || 0} needs review /{' '}
+              {primaryPath.summary.disabledOptional || 0} optional paused
             </strong>
-            <em>{primaryPath.summary.timeoutEventsRequired || 0} timeout events before fallback</em>
+            <em>{primaryPath.summary.timeoutEventsRequired || 0} slow events before fallback</em>
           </span>
           <span>
-            <small>Provider policy</small>
-            <strong>{primaryPath.summary.providerPolicies || 0} providers classified</strong>
-            <em>preflight / timeout / retry / label</em>
+            <small>Provider setup</small>
+            <strong>{primaryPath.summary.providerPolicies || 0} providers checked</strong>
+            <em>check / wait / retry / label</em>
           </span>
         </div>
       )}
       {visiblePrimaryControls.length > 0 && (
         <details className="pbk-production-compact-details">
           <summary>
-            <span>Primary controls</span>
+            <span>Workflow safeguards</span>
             <small>
               {visiblePrimaryControls.length}
               {hiddenControlCount ? ` + ${hiddenControlCount}` : ''} tracked
@@ -942,10 +1018,13 @@ function ProductionGapsRail({
                 <div className="min-w-0">
                   <strong>{control.label}</strong>
                   <small>
-                    {control.fallbackPolicy || 'retry_then_label_fallback'} /{' '}
+                    {friendlyRuntimeLabel(control.fallbackPolicy || 'retry_then_label_fallback')} /{' '}
                     {control.timeoutMs || 5000}ms
                   </small>
-                  <em>{control.reason || control.primaryAttempt || 'Primary path classified.'}</em>
+                  <em>
+                    {control.reason ||
+                      friendlyRuntimeLabel(control.primaryAttempt, 'Workflow check ready.')}
+                  </em>
                 </div>
               </div>
             ))}
@@ -962,13 +1041,13 @@ function ProductionGapsRail({
       ) : visibleGaps.length ? (
         <details className="pbk-production-compact-details">
           <summary>
-            <span>Setup gaps</span>
+            <span>Setup notes</span>
             <small>
               {visibleGaps.length}
               {hiddenGapsCount ? ` + ${hiddenGapsCount}` : ''} labeled
             </small>
           </summary>
-          <div className="pbk-production-compact-list" aria-label="Production gaps">
+          <div className="pbk-production-compact-list" aria-label="Workspace setup notes">
             {visibleGaps.map((gap) => (
               <div
                 key={gap.id}
@@ -981,7 +1060,8 @@ function ProductionGapsRail({
                 <div className="min-w-0">
                   <strong>{gap.label}</strong>
                   <small>
-                    {gap.category || 'production'} / {gap.status || 'not live'}
+                    {friendlyRuntimeLabel(gap.category || 'workspace')} /{' '}
+                    {friendlyRuntimeLabel(gap.status || 'not live')}
                   </small>
                   <em>{gap.operatorAction || gap.detail || 'No detail reported.'}</em>
                 </div>
@@ -993,9 +1073,7 @@ function ProductionGapsRail({
           </div>
         </details>
       ) : (
-        <div className="pbk-production-empty-row ready">
-          No production gaps reported by the bridge.
-        </div>
+        <div className="pbk-production-empty-row ready">Workspace checks are clear.</div>
       )}
     </PbkPanel>
   );
@@ -1040,22 +1118,22 @@ function FounderBattlefield({
   const failedCount = items.filter((item) => /failed/i.test(item.tag)).length;
   const sub =
     items.length > 0
-      ? `${approvalCount} approvals / ${failedCount} failed sends / ${urgentCount} urgent`
+      ? `${approvalCount} review items / ${failedCount} follow-ups need retry / ${urgentCount} high priority`
       : loading
-        ? 'bridge sync in progress'
-        : 'no ranked work waiting';
+        ? 'updating your workspace'
+        : 'no urgent work right now';
   const bridgeTone = loading ? 'amber' : error ? 'crimson' : 'lime';
-  const bridgeLabel = loading ? 'syncing' : error ? 'offline' : 'healthy';
+  const bridgeLabel = loading ? 'updating' : error ? 'needs attention' : 'connected';
 
   return (
     <section className="space-y-2" aria-labelledby="battlefield-title">
       <div className="pbk-battlefield">
         <div className="pbk-battlefield-left">
           <div id="battlefield-title" className="pbk-battlefield-label">
-            Do next / ranked queue
+            Next best steps
           </div>
           <div className="pbk-battlefield-count">
-            <em>{items.length}</em> waiting on you
+            <em>{items.length}</em> ready to review
           </div>
           <div className="pbk-battlefield-sub">{sub}</div>
         </div>
@@ -1081,7 +1159,7 @@ function FounderBattlefield({
                 </span>
                 <span className="pbk-bf-chip-meta">
                   <span className="pbk-bf-score">{item.score}</span>
-                  <span className="pbk-bf-source">{item.source}</span>
+                  <span className="pbk-bf-source">{friendlyBattlefieldSource(item.source)}</span>
                   <span className="pbk-bf-chip-when">{item.when}</span>
                 </span>
               </button>
@@ -1099,10 +1177,12 @@ function FounderBattlefield({
                   <PbkPulseDot color="sky" />
                   <span className="pbk-bf-chip-tag">Clear</span>
                   <span className="pbk-bf-chip-body">
-                    No urgent approvals, live calls, or failed sends in the bridge snapshot
+                    No urgent approvals, live calls, or failed sends right now
                   </span>
                 </span>
-                <span className="pbk-bf-reason">Bridge returned no waiting work items.</span>
+                <span className="pbk-bf-reason">
+                  Ava will surface the next item when it matters.
+                </span>
               </span>
               <span className="pbk-bf-chip-meta">
                 <span className="pbk-bf-score">0</span>
@@ -1148,7 +1228,10 @@ export function CommandCenter() {
   const [approvalDecisionDraft, setApprovalDecisionDraft] = useState<ApprovalDecisionDraft | null>(
     null
   );
-  const [activityLimit, setActivityLimit] = useState(8);
+  const [activityPage, setActivityPage] = useState(0);
+  const [approvalPage, setApprovalPage] = useState(0);
+  const [adminPage, setAdminPage] = useState(0);
+  const [resolvedApprovalIds, setResolvedApprovalIds] = useState<Set<string>>(() => new Set());
   const [widgetPrefs, setWidgetPrefs] = useState(() => readCommandWidgetPrefs());
   const [widgetPrefsSource, setWidgetPrefsSource] = useState('Device prefs');
   const [bridgeBattlefieldItems, setBridgeBattlefieldItems] = useState<BattlefieldItem[] | null>(
@@ -1199,7 +1282,25 @@ export function CommandCenter() {
     [snapshot?.activity]
   );
   const activityItems = intelligenceStreamItems || fallbackActivityItems;
-  const visibleActivity = activityItems.slice(0, activityLimit);
+  const pendingApprovals = useMemo(
+    () =>
+      getPendingApprovals(approvals).filter(
+        (item) => !resolvedApprovalIds.has(String(item.id || ''))
+      ),
+    [approvals, resolvedApprovalIds]
+  );
+  const visibleApprovals = useMemo(
+    () => getPageSlice(pendingApprovals, approvalPage, OPERATOR_LIST_PAGE_SIZE),
+    [approvalPage, pendingApprovals]
+  );
+  const visibleAdminTasks = useMemo(
+    () => getPageSlice(adminTasks, adminPage, OPERATOR_LIST_PAGE_SIZE),
+    [adminPage, adminTasks]
+  );
+  const visibleActivity = useMemo(
+    () => getPageSlice(activityItems, activityPage, OPERATOR_LIST_PAGE_SIZE),
+    [activityItems, activityPage]
+  );
   const calls = useMemo(
     () => (Array.isArray(snapshot?.calls) ? snapshot.calls : []),
     [snapshot?.calls]
@@ -1243,16 +1344,6 @@ export function CommandCenter() {
   const webSearchStatus = runtimeProviders.webSearch || {};
   const webSearchNeuralOutput = (webSearchStatus.neuralOutput || {}) as Record<string, unknown>;
   const webSearchLiveReady = Boolean(webSearchStatus.liveReady);
-  const webSearchFallbackProvider = String(webSearchStatus.fallbackProvider || 'pbk_brain').replace(
-    /_/g,
-    ' '
-  );
-  const webSearchPrimaryProvider = String(
-    webSearchStatus.primaryProvider || (webSearchLiveReady ? 'tavily' : webSearchFallbackProvider)
-  ).replace(/_/g, ' ');
-  const webSearchMissing = Array.isArray(webSearchStatus.missing)
-    ? webSearchStatus.missing.map(String).filter(Boolean)
-    : [];
   const activeCall = mapRuntimeCall(
     calls.find((call) =>
       ['live', 'connected', 'dialing', 'queued', 'on-hold'].includes(
@@ -1296,8 +1387,34 @@ export function CommandCenter() {
   };
 
   useEffect(() => {
-    setActivityLimit(8);
+    const pageCount = Math.max(1, Math.ceil(activityItems.length / OPERATOR_LIST_PAGE_SIZE));
+    setActivityPage((current) => Math.min(current, pageCount - 1));
   }, [activityItems.length]);
+
+  useEffect(() => {
+    const pageCount = Math.max(1, Math.ceil(pendingApprovals.length / OPERATOR_LIST_PAGE_SIZE));
+    setApprovalPage((current) => Math.min(current, pageCount - 1));
+  }, [pendingApprovals.length]);
+
+  useEffect(() => {
+    const pageCount = Math.max(1, Math.ceil(adminTasks.length / OPERATOR_LIST_PAGE_SIZE));
+    setAdminPage((current) => Math.min(current, pageCount - 1));
+  }, [adminTasks.length]);
+
+  useEffect(() => {
+    const hideResolvedApproval = (event: Event) => {
+      const detail = (event as CustomEvent<{ approvalId?: string }>).detail;
+      const approvalId = String(detail?.approvalId || '').trim();
+      if (!approvalId) return;
+      setResolvedApprovalIds((current) => {
+        const next = new Set(current);
+        next.add(approvalId);
+        return next;
+      });
+    };
+    window.addEventListener('pbk:approval-decision', hideResolvedApproval);
+    return () => window.removeEventListener('pbk:approval-decision', hideResolvedApproval);
+  }, []);
 
   const loadCommandLeadRoster = useCallback(async () => {
     try {
@@ -1544,11 +1661,27 @@ export function CommandCenter() {
     () => buildBattlefieldItems({ approvals, adminTasks, leadImports, messages, calls }),
     [approvals, adminTasks, leadImports, messages, calls]
   );
-  const battlefieldItems = bridgeBattlefieldItems || fallbackBattlefieldItems;
+  const pendingApprovalIds = useMemo(
+    () => new Set(pendingApprovals.map((approval) => String(approval.id || '')).filter(Boolean)),
+    [pendingApprovals]
+  );
+  const battlefieldItems = useMemo(() => {
+    const items = bridgeBattlefieldItems || fallbackBattlefieldItems;
+    return items.filter((item) => {
+      const approvalId = item.id.replace(/^approval-/, '');
+      const looksLikeApproval =
+        item.id.startsWith('approval-') || /approval|contract/i.test(`${item.tag} ${item.reason}`);
+      if (!looksLikeApproval) return true;
+      if (resolvedApprovalIds.has(approvalId) || resolvedApprovalIds.has(item.id)) return false;
+      return pendingApprovalIds.size
+        ? pendingApprovalIds.has(approvalId) || pendingApprovalIds.has(item.id)
+        : true;
+    });
+  }, [bridgeBattlefieldItems, fallbackBattlefieldItems, pendingApprovalIds, resolvedApprovalIds]);
   const battlefieldSourceNote = bridgeBattlefieldItems
     ? 'bridge-ranked founder queue'
     : 'client-ranked snapshot fallback';
-  const pendingApprovalCount = approvals.filter((item) => item.status === 'pending').length;
+  const pendingApprovalCount = pendingApprovals.length;
   const pendingAdminCount = adminTasks.filter((item) => item.status === 'pending').length;
   const heroTimeLabel = new Intl.DateTimeFormat('en-US', {
     weekday: 'long',
@@ -1565,7 +1698,7 @@ export function CommandCenter() {
   useEffect(() => {
     let cancelled = false;
     setBattlefieldQueueLoading(true);
-    fetchFounderWorkQueueRequest({ limit: 8 })
+    fetchFounderWorkQueueRequest({ limit: OPERATOR_LIST_PAGE_SIZE })
       .then((response) => {
         if (cancelled) return;
         const items = Array.isArray(response.items)
@@ -1607,11 +1740,11 @@ export function CommandCenter() {
     action: () => Promise<void>
   ) => {
     if (pendingAction) {
-      setActionStatus({ tone: 'pending', text: 'Another bridge action is already running.' });
+      setActionStatus({ tone: 'pending', text: 'Another Ava action is already running.' });
       return;
     }
     setPendingAction(key);
-    setActionStatus({ tone: 'pending', text: 'Working with the bridge...' });
+    setActionStatus({ tone: 'pending', text: 'Working on that request...' });
     try {
       await action();
       await refresh().catch((err) => {
@@ -1621,13 +1754,13 @@ export function CommandCenter() {
       setActionStatus({ tone: 'success', text: successMessage });
       showUiToast({
         tone: 'success',
-        title: 'Runtime action complete',
+        title: 'Ava updated the workspace',
         desc: successMessage,
       });
     } catch (nextError) {
       setActionStatus({
         tone: 'error',
-        text: nextError instanceof Error ? nextError.message : 'Runtime action failed.',
+        text: nextError instanceof Error ? nextError.message : 'Ava could not finish that action.',
       });
     } finally {
       setPendingAction('');
@@ -1636,22 +1769,17 @@ export function CommandCenter() {
 
   const runWebSearchProbe = async () => {
     setPendingAction('web-search:probe');
-    setActionStatus({ tone: 'pending', text: 'Checking web-search cognition...' });
+    setActionStatus({ tone: 'pending', text: 'Checking market research connection...' });
     setWebSearchProbeFailed(false);
     setWebSearchProbeError('');
     try {
       const result = await fetchWebSearchStatusRequest();
       const status = (result.status || {}) as Record<string, unknown>;
-      const neuralOutput = (status.neuralOutput || {}) as Record<string, unknown>;
-      const provider = String(status.primaryProvider || webSearchPrimaryProvider).replace(
-        /_/g,
-        ' '
-      );
-      const liveLabel = status.liveReady ? 'live Tavily' : 'fallback';
-      const spikeVersion = String(neuralOutput.spikeVersion || 'pbk-web-search-spikes-v1');
       setActionStatus({
         tone: 'success',
-        text: `Web-search status is ${liveLabel} via ${provider}; ${spikeVersion} and symbolic facts are available.`,
+        text: status.liveReady
+          ? 'Live market research is ready for Ava.'
+          : 'Ava can still work from saved knowledge while live research is being connected.',
       });
       await refresh().catch((err) => {
         console.warn('[PBK] State refresh failed after web-search probe:', err);
@@ -1678,9 +1806,9 @@ export function CommandCenter() {
     setAdminDecisionDraft({
       taskId,
       status,
-      provider: String(task.provider || 'admin'),
-      action: String(task.action || 'review'),
-      summary: String(task.summary || task.command || 'Administrative action'),
+      provider: friendlyRuntimeLabel(task.provider || 'Ava'),
+      action: friendlyRuntimeLabel(task.action || 'review'),
+      summary: String(task.summary || task.command || 'Workspace action'),
     });
   };
 
@@ -1707,7 +1835,7 @@ export function CommandCenter() {
     const approvalId = String(approval.id || '');
     if (!approvalId) return;
     if (pendingAction.startsWith(`approval:${approvalId}:`)) return;
-    const type = String(approval.type || 'approval');
+    const type = friendlyRuntimeLabel(approval.type || 'approval');
     const actionLabel =
       status === 'approved'
         ? 'approve'
@@ -1718,7 +1846,7 @@ export function CommandCenter() {
       approvalId,
       status,
       type,
-      leadName: String(approval.leadName || approval.address || 'PBK approval'),
+      leadName: friendlyRuntimeLabel(approval.leadName || approval.address || 'PBK approval'),
       address: String(approval.address || 'No address recorded'),
       actionLabel,
     });
@@ -1734,6 +1862,11 @@ export function CommandCenter() {
       draft.status === 'approved' ? 'Approved. Ava can continue.' : 'Decision sent to Ava.',
       async () => {
         await updateApprovalDecision(draft.approvalId, draft.status);
+        setResolvedApprovalIds((current) => {
+          const next = new Set(current);
+          next.add(draft.approvalId);
+          return next;
+        });
       }
     );
   };
@@ -1757,14 +1890,13 @@ export function CommandCenter() {
                 Good morning, PBK.{' '}
                 <em>
                   {pendingApprovalCount + pendingAdminCount
-                    ? `${pendingApprovalCount + pendingAdminCount} decisions need you.`
-                    : 'Your agents are standing by.'}
+                    ? `${pendingApprovalCount + pendingAdminCount} items are ready for review.`
+                    : 'Ava and the team are ready.'}
                 </em>
               </h1>
               <p>
-                Live agent activity, approvals, contracts, and admin operations. Every number below
-                is derived from the bridge snapshot or clearly marked when the canonical endpoint
-                still needs wiring.
+                Your calls, messages, leads, approvals, and agent activity are organized here so the
+                next step is easy to choose.
               </p>
             </div>
             <div className="pbk-hero-sync" aria-live="polite">
@@ -1775,7 +1907,7 @@ export function CommandCenter() {
                   loading ? 'bg-sky-400 animate-pulse' : error ? 'bg-amber-400' : 'bg-emerald-400',
                 ].join(' ')}
               />
-              {loading ? 'Syncing runtime' : error ? 'Bridge offline' : 'Bridge sync healthy'}
+              {loading ? 'Updating workspace' : error ? 'Connection needs attention' : 'Connected'}
             </div>
           </div>
 
@@ -1853,10 +1985,8 @@ export function CommandCenter() {
         <PbkPanel className="p-4">
           <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
             <div>
-              <h2 className="text-sm font-semibold text-slate-100">Widget controls</h2>
-              <p className="text-xs text-slate-500">
-                Personalise this dashboard across operators without changing runtime policy.
-              </p>
+              <h2 className="text-sm font-semibold text-slate-100">Dashboard sections</h2>
+              <p className="text-xs text-slate-500">Choose what this page shows for your day.</p>
             </div>
             <div className="flex flex-wrap gap-2">
               {COMMAND_WIDGETS.map((widget) => {
@@ -1956,28 +2086,29 @@ export function CommandCenter() {
               >
                 <div className="flex items-center justify-between gap-3">
                   <div>
-                    <h2 className="text-sm font-semibold text-slate-100">Admin Activity</h2>
+                    <h2 className="text-sm font-semibold text-slate-100">Workspace tasks</h2>
                     <p className="text-xs text-slate-500">
-                      Approval-backed infrastructure changes from Rex.
+                      Setup or background tasks that need a quick yes or no.
                     </p>
                   </div>
                 </div>
                 <div className="mt-3 space-y-2">
-                  {adminTasks.slice(0, 5).map((task) => (
+                  {visibleAdminTasks.map((task) => (
                     <div
                       key={String(task.id)}
                       className="rounded-xl border border-slate-800 bg-slate-900 px-3 py-3"
                     >
                       <div className="flex items-center justify-between gap-3">
                         <div className="text-xs font-medium text-slate-200">
-                          {String(task.provider || 'admin')} · {String(task.action || 'review')}
+                          {friendlyRuntimeLabel(task.provider || 'Ava')} ·{' '}
+                          {friendlyRuntimeLabel(task.action || 'review')}
                         </div>
                         <div className="text-[10px] uppercase tracking-[0.16em] text-slate-500">
                           {formatRuntimeStatus(task.status)}
                         </div>
                       </div>
                       <div className="mt-2 text-xs text-slate-400">
-                        {String(task.summary || task.command || 'Administrative action')}
+                        {String(task.summary || task.command || 'Workspace action')}
                       </div>
                       {String(task.status || '').toLowerCase() === 'pending' && (
                         <div className="mt-3 flex flex-wrap gap-2">
@@ -2003,10 +2134,17 @@ export function CommandCenter() {
                   ))}
                   {!adminTasks.length && (
                     <div className="rounded-xl border border-dashed border-slate-800 px-3 py-4 text-xs text-slate-500">
-                      No admin approvals are needed.
+                      No workspace tasks need review.
                     </div>
                   )}
                 </div>
+                <CompactPager
+                  page={adminPage}
+                  total={adminTasks.length}
+                  label="Workspace task pages"
+                  itemLabel="tasks"
+                  onPageChange={setAdminPage}
+                />
                 <DataSourceCaption endpoint="snapshot.adminTasks + POST /api/admin/tasks/:id/decision" />
               </section>
             )}
@@ -2017,9 +2155,11 @@ export function CommandCenter() {
               >
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div>
-                    <h2 className="text-sm font-semibold text-slate-100">Web Search Cognition</h2>
+                    <h2 className="text-sm font-semibold text-slate-100">
+                      Market and web research
+                    </h2>
                     <p className="text-xs text-slate-500">
-                      Live data status for Ava/Rex spikes, facts, and fallback telemetry.
+                      Live research status for Ava and Rex when they need current market context.
                     </p>
                   </div>
                   <span
@@ -2037,49 +2177,52 @@ export function CommandCenter() {
                         webSearchLiveReady ? 'bg-emerald-400' : 'bg-amber-300',
                       ].join(' ')}
                     />
-                    {webSearchLiveReady ? 'Tavily live' : 'Fallback active'}
+                    {webSearchLiveReady ? 'Live research ready' : 'Saved knowledge active'}
                   </span>
                 </div>
                 <div className="mt-4 grid gap-2 sm:grid-cols-2">
                   <div className="rounded-xl border border-slate-800 bg-slate-900 px-3 py-3">
                     <div className="text-[10px] uppercase tracking-[0.14em] text-slate-500">
-                      Provider Path
+                      Current information
                     </div>
                     <div className="mt-1 text-sm font-semibold capitalize text-slate-100">
-                      {webSearchPrimaryProvider}
+                      {webSearchLiveReady ? 'Ready for live research' : 'Using saved knowledge'}
                     </div>
                     <div className="mt-1 text-xs text-slate-500">
-                      {String(webSearchStatus.mode || 'waiting for bridge status')}
+                      {webSearchLiveReady
+                        ? 'Ava can check current market context.'
+                        : 'Ava can continue from the workspace record.'}
                     </div>
                   </div>
                   <div className="rounded-xl border border-slate-800 bg-slate-900 px-3 py-3">
                     <div className="text-[10px] uppercase tracking-[0.14em] text-slate-500">
-                      Neural Contract
+                      Research memory
                     </div>
                     <div className="mt-1 text-sm font-semibold text-slate-100">
-                      {String(webSearchNeuralOutput.spikeVersion || 'pbk-web-search-spikes-v1')}
+                      {webSearchNeuralOutput.exposesSymbolicFacts === false
+                        ? 'Saved guidance'
+                        : 'Saved guidance + facts'}
                     </div>
                     <div className="mt-1 text-xs text-slate-500">
                       {webSearchNeuralOutput.exposesSymbolicFacts === false
-                        ? 'Spikes only'
-                        : 'Spikes + symbolic facts'}
+                        ? 'Good for prepared answers.'
+                        : 'Good for prepared answers and known facts.'}
                     </div>
                   </div>
                 </div>
                 <div className="mt-3 rounded-xl border border-slate-800 bg-slate-900 px-3 py-3 text-xs text-slate-400">
-                  {String(
-                    webSearchStatus.note ||
-                      'Waiting for the bridge to report web-search cognition status.'
-                  )}
+                  {webSearchLiveReady
+                    ? 'Ava can use current market context when a conversation needs it.'
+                    : 'Ava can keep working from saved guidance while live research is connected.'}
                 </div>
                 <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
                   <div className="text-[11px] text-slate-500">
-                    Log event:{' '}
+                    Research check:{' '}
                     <span className="text-slate-300">
-                      {String(webSearchStatus.logEvent || 'pbk_web_search_provider')}
+                      {webSearchLiveReady ? 'ready' : 'needs setup'}
                     </span>
                     {!webSearchLiveReady && (
-                      <span> / Missing: {webSearchMissing.join(', ') || 'PBK_TAVILY_API_KEY'}</span>
+                      <span> / connect live research in Settings when available</span>
                     )}
                   </div>
                   <div className="flex flex-wrap gap-2">
@@ -2103,7 +2246,7 @@ export function CommandCenter() {
                       }}
                       className="rounded-full border border-sky-500/40 px-3 py-1.5 text-[11px] font-semibold text-sky-200 transition hover:border-sky-300 hover:text-sky-100 disabled:cursor-wait disabled:opacity-60"
                     >
-                      Probe Status
+                      Connection check
                     </button>
                   </div>
                   {webSearchProbeFailed && webSearchProbeError && (
@@ -2120,9 +2263,9 @@ export function CommandCenter() {
               <section className="pbk-panel pbk-priority-low">
                 <div className="flex items-center justify-between gap-3">
                   <div>
-                    <h2 className="text-sm font-semibold text-slate-100">Tooling Readiness</h2>
+                    <h2 className="text-sm font-semibold text-slate-100">Support tools</h2>
                     <p className="text-xs text-slate-500">
-                      Research, monitoring, and meta-agent support systems.
+                      Research, monitoring, and automation helpers Ava can use.
                     </p>
                   </div>
                   <div className="text-[11px] uppercase tracking-[0.14em] text-slate-500">
@@ -2161,7 +2304,7 @@ export function CommandCenter() {
                           </span>
                         </div>
                         <div className="mt-2 break-words text-xs text-slate-400">
-                          {String(item.meta?.note || 'Waiting on bridge status.')}
+                          {String(item.meta?.note || 'Checking connection status.')}
                         </div>
                       </div>
                     );
@@ -2178,7 +2321,9 @@ export function CommandCenter() {
                 <div className="flex items-center justify-between gap-3">
                   <div>
                     <h2 className="text-sm font-semibold text-slate-100">Activity Feed</h2>
-                    <p className="text-xs text-slate-500">Recent Ava, Rex, and provider events.</p>
+                    <p className="text-xs text-slate-500">
+                      Recent work from Ava, Rex, calls, messages, and providers.
+                    </p>
                   </div>
                 </div>
                 <div className="mt-3 space-y-2">
@@ -2211,21 +2356,17 @@ export function CommandCenter() {
                   ))}
                   {!visibleActivity.length && (
                     <div className="rounded-xl border border-dashed border-slate-800 px-3 py-4 text-xs text-slate-500">
-                      The bridge has not recorded activity yet.
+                      No activity is on this page yet.
                     </div>
                   )}
-                  {activityItems.length > visibleActivity.length && (
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setActivityLimit((current) => Math.min(current + 8, activityItems.length))
-                      }
-                      className="w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-xs font-semibold text-sky-200 transition hover:border-sky-500/50"
-                    >
-                      Load more activity ({visibleActivity.length} of {activityItems.length})
-                    </button>
-                  )}
                 </div>
+                <CompactPager
+                  page={activityPage}
+                  total={activityItems.length}
+                  label="Activity feed pages"
+                  itemLabel="events"
+                  onPageChange={setActivityPage}
+                />
                 <DataSourceCaption
                   endpoint="GET /api/intelligence/stream"
                   note={`${intelligenceStreamSource}; snapshot.activity fallback`}
@@ -2240,82 +2381,85 @@ export function CommandCenter() {
               >
                 <div className="flex items-center justify-between gap-3">
                   <div>
-                    <h2 className="text-sm font-semibold text-slate-100">Approvals Needed</h2>
+                    <h2 className="text-sm font-semibold text-slate-100">Approval board</h2>
                     <p className="text-xs text-slate-500">
-                      Items Ava/Rex need you to approve before sending.
+                      Review what Ava needs before she sends, signs, or changes anything.
                     </p>
                   </div>
                 </div>
                 <div className="mt-3 grid gap-2 md:grid-cols-2">
-                  {approvals
-                    .filter((item) => item.status === 'pending')
-                    .slice(0, 6)
-                    .map((approval) => (
-                      <div
-                        key={String(approval.id)}
-                        className={`pbk-command-approval-card ${
-                          String(approval.type || '')
-                            .toLowerCase()
-                            .includes('contract')
-                            ? 'contract'
-                            : ''
-                        }`}
-                        data-source="snapshot.approvals payload"
-                      >
-                        <div className="text-[11px] uppercase tracking-[0.16em] text-amber-300">
-                          {String(approval.type || 'approval')}
-                        </div>
-                        <div className="mt-2 text-sm font-semibold text-slate-100">
-                          {String(approval.leadName || approval.address || 'PBK approval')}
-                        </div>
-                        <div className="mt-1 text-xs text-slate-400">
-                          {String(approval.address || 'No address recorded')}
-                        </div>
-                        <div
-                          className="approval-preview"
-                          aria-label={`Approval payload preview for ${String(
-                            approval.leadName || approval.address || 'PBK approval'
-                          )}`}
-                        >
-                          {getApprovalPreview(approval)}
-                        </div>
-                        <div className="mt-3 flex flex-wrap gap-2">
-                          <button
-                            type="button"
-                            data-approval-primary="true"
-                            disabled={isApprovalDecisionPending(String(approval.id))}
-                            onClick={() => confirmApprovalDecision(approval, 'approved')}
-                            className="rounded-full bg-amber-400 px-3 py-1.5 text-[11px] font-semibold text-slate-950 transition hover:bg-amber-300 disabled:cursor-wait disabled:opacity-60"
-                          >
-                            {isApprovalDecisionPending(String(approval.id)) ? '…' : 'Approve'}
-                          </button>
-                          <button
-                            type="button"
-                            data-approval-secondary="true"
-                            disabled={isApprovalDecisionPending(String(approval.id))}
-                            onClick={() => {
-                              confirmApprovalDecision(
-                                approval,
-                                getApprovalSecondaryStatus(approval)
-                              );
-                            }}
-                            className="rounded-full border border-slate-700 px-3 py-1.5 text-[11px] font-semibold text-slate-300 transition hover:border-slate-500 disabled:cursor-wait disabled:opacity-60"
-                          >
-                            {isApprovalDecisionPending(String(approval.id))
-                              ? '…'
-                              : String(approval.type || '').toLowerCase() === 'contract'
-                                ? 'Needs Revision'
-                                : 'Decline'}
-                          </button>
-                        </div>
+                  {visibleApprovals.map((approval) => (
+                    <div
+                      key={String(approval.id)}
+                      className={`pbk-command-approval-card ${
+                        String(approval.type || '')
+                          .toLowerCase()
+                          .includes('contract')
+                          ? 'contract'
+                          : ''
+                      }`}
+                      data-source="snapshot.approvals payload"
+                    >
+                      <div className="text-[11px] uppercase tracking-[0.16em] text-amber-300">
+                        {friendlyRuntimeLabel(approval.type || 'approval')}
                       </div>
-                    ))}
-                  {!approvals.filter((item) => item.status === 'pending').length && (
+                      <div className="mt-2 text-sm font-semibold text-slate-100">
+                        {friendlyRuntimeLabel(
+                          approval.leadName || approval.address || 'PBK approval'
+                        )}
+                      </div>
+                      <div className="mt-1 text-xs text-slate-400">
+                        {String(approval.address || 'No address recorded')}
+                      </div>
+                      <div
+                        className="approval-preview"
+                        aria-label={`Approval payload preview for ${String(
+                          approval.leadName || approval.address || 'PBK approval'
+                        )}`}
+                      >
+                        {getApprovalPreview(approval)}
+                      </div>
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          data-approval-primary="true"
+                          disabled={isApprovalDecisionPending(String(approval.id))}
+                          onClick={() => confirmApprovalDecision(approval, 'approved')}
+                          className="rounded-full bg-amber-400 px-3 py-1.5 text-[11px] font-semibold text-slate-950 transition hover:bg-amber-300 disabled:cursor-wait disabled:opacity-60"
+                        >
+                          {isApprovalDecisionPending(String(approval.id)) ? '…' : 'Approve'}
+                        </button>
+                        <button
+                          type="button"
+                          data-approval-secondary="true"
+                          disabled={isApprovalDecisionPending(String(approval.id))}
+                          onClick={() => {
+                            confirmApprovalDecision(approval, getApprovalSecondaryStatus(approval));
+                          }}
+                          className="rounded-full border border-slate-700 px-3 py-1.5 text-[11px] font-semibold text-slate-300 transition hover:border-slate-500 disabled:cursor-wait disabled:opacity-60"
+                        >
+                          {isApprovalDecisionPending(String(approval.id))
+                            ? '…'
+                            : String(approval.type || '').toLowerCase() === 'contract'
+                              ? 'Needs Revision'
+                              : 'Decline'}
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                  {!pendingApprovals.length && (
                     <div className="rounded-xl border border-dashed border-slate-800 px-3 py-4 text-xs text-slate-500">
                       No pending approvals right now.
                     </div>
                   )}
                 </div>
+                <CompactPager
+                  page={approvalPage}
+                  total={pendingApprovals.length}
+                  label="Approval board pages"
+                  itemLabel="reviews"
+                  onPageChange={setApprovalPage}
+                />
                 <DataSourceCaption
                   endpoint="snapshot.approvals payload + PUT /api/approvals/:id"
                   note="preview uses message/body/text/content/payload/metadata fields"
@@ -2348,10 +2492,10 @@ export function CommandCenter() {
               className="w-full max-w-md rounded-2xl border border-slate-800 bg-slate-950 p-5 shadow-[0_24px_80px_rgba(2,6,23,0.55)]"
             >
               <div className="text-[11px] uppercase tracking-[0.16em] text-amber-300">
-                Admin safety check
+                Workspace review
               </div>
               <h3 id="admin-decision-title" className="mt-2 text-lg font-semibold text-slate-100">
-                Confirm admin decision
+                Confirm workspace choice
               </h3>
               <p className="mt-2 text-sm text-slate-400">
                 This will {adminDecisionDraft.status === 'approved' ? 'approve' : 'decline'}{' '}
@@ -2398,13 +2542,13 @@ export function CommandCenter() {
               className="w-full max-w-md rounded-2xl border border-slate-800 bg-slate-950 p-5 shadow-[0_24px_80px_rgba(2,6,23,0.55)]"
             >
               <div className="text-[11px] uppercase tracking-[0.16em] text-amber-300">
-                Approval safety check
+                Review before sending
               </div>
               <h3
                 id="approval-decision-title"
                 className="mt-2 text-lg font-semibold text-slate-100"
               >
-                Confirm approval decision
+                Confirm your choice
               </h3>
               <p className="mt-2 text-sm text-slate-400">
                 This will {approvalDecisionDraft.actionLabel}{' '}

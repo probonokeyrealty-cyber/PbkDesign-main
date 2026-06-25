@@ -23,6 +23,7 @@ import {
   Youtube,
   X,
 } from 'lucide-react';
+import { CompactPager, getPageSlice, OPERATOR_LIST_PAGE_SIZE } from '../components/CompactPager';
 import {
   activateSkillVersionRequest,
   approveSkillVersionRequest,
@@ -100,10 +101,6 @@ function displayDate(value?: string | null) {
     hour: 'numeric',
     minute: '2-digit',
   }).format(new Date(value));
-}
-
-function shortenHash(value = '') {
-  return value ? `${value.slice(0, 10)}...${value.slice(-6)}` : 'No hash';
 }
 
 function readNumber(value: unknown) {
@@ -222,10 +219,36 @@ function JsonSummary({ value }: { value?: Record<string, unknown> }) {
       {entries.slice(0, 6).map(([key, item]) => (
         <div key={key}>
           <dt>{key.replace(/_/g, ' ')}</dt>
-          <dd>{typeof item === 'object' ? JSON.stringify(item) : String(item)}</dd>
+          <dd>{formatSkillSummaryValue(item)}</dd>
         </div>
       ))}
     </dl>
+  );
+}
+
+function formatSkillSummaryValue(value: unknown) {
+  if (Array.isArray(value))
+    return value.length ? `${value.length} saved item${value.length === 1 ? '' : 's'}` : 'None';
+  if (value && typeof value === 'object') {
+    const readable = Object.entries(value as Record<string, unknown>)
+      .filter(([, item]) => ['string', 'number', 'boolean'].includes(typeof item))
+      .slice(0, 3)
+      .map(([key, item]) => `${key.replace(/_/g, ' ')}: ${String(item)}`)
+      .join(' · ');
+    return readable || 'Saved details';
+  }
+  return String(value ?? 'None recorded');
+}
+
+function formatSkillScope(value: unknown) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return String(value || 'Available when Ava needs it');
+  }
+  const record = value as Record<string, unknown>;
+  return (
+    [record.type, record.stage, record.audience, record.channel]
+      .filter((item) => typeof item === 'string' && item.trim())
+      .join(' · ') || 'Available when Ava needs it'
   );
 }
 
@@ -759,6 +782,7 @@ export function SkillStudio() {
   const [agentId, setAgentId] = useState('ava');
   const [rolloutPercent, setRolloutPercent] = useState(10);
   const [confirmingPrimaryAction, setConfirmingPrimaryAction] = useState(false);
+  const [skillPage, setSkillPage] = useState(0);
 
   const selected = useMemo(
     () => items.find((item) => item.versionId === selectedId) || null,
@@ -809,6 +833,10 @@ export function SkillStudio() {
       return 0;
     });
   }, [agentFilter, items, performanceFilter, riskFilter]);
+  const pagedVisibleItems = useMemo(
+    () => getPageSlice(visibleItems, skillPage, OPERATOR_LIST_PAGE_SIZE),
+    [skillPage, visibleItems]
+  );
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -845,6 +873,15 @@ export function SkillStudio() {
   useEffect(() => {
     setConfirmingPrimaryAction(false);
   }, [selectedId]);
+
+  useEffect(() => {
+    setSkillPage(0);
+  }, [agentFilter, lifecycleFilter, performanceFilter, riskFilter, search]);
+
+  useEffect(() => {
+    const pageCount = Math.max(1, Math.ceil(visibleItems.length / OPERATOR_LIST_PAGE_SIZE));
+    setSkillPage((current) => Math.min(current, pageCount - 1));
+  }, [visibleItems.length]);
 
   const runAction = async <T,>(
     action: () => Promise<T>,
@@ -1016,7 +1053,7 @@ export function SkillStudio() {
             <div>
               <span>Ava skills</span>
               <strong>
-                {visibleItems.length} of {items.length} draft and live skills
+                {pagedVisibleItems.length} shown · {visibleItems.length} matching skills
               </strong>
             </div>
             <Database size={17} />
@@ -1096,7 +1133,7 @@ export function SkillStudio() {
                 Loading authority...
               </div>
             ) : visibleItems.length ? (
-              visibleItems.map((item) => {
+              pagedVisibleItems.map((item) => {
                 const metrics = getSkillPerformance(item);
                 return (
                   <button
@@ -1135,10 +1172,17 @@ export function SkillStudio() {
             ) : (
               <div className="pbk-skill-empty">
                 <Search size={18} />
-                No governed versions match this view.
+                No Ava skills match this view.
               </div>
             )}
           </div>
+          <CompactPager
+            page={skillPage}
+            total={visibleItems.length}
+            label="Ava skill pages"
+            itemLabel="skills"
+            onPageChange={setSkillPage}
+          />
         </aside>
 
         <main className="pbk-skill-canvas">
@@ -1161,7 +1205,7 @@ export function SkillStudio() {
                       {STATE_LABELS[selected.lifecycleState] || selected.lifecycleState}
                     </span>
                     <span>Version {selected.versionNumber || 1}</span>
-                    <span>{shortenHash(selected.contentHash)}</span>
+                    <span>Saved version</span>
                   </div>
                   <h2>{selected.name}</h2>
                   <p>{selected.instructions || 'No instructions were stored for this version.'}</p>
@@ -1190,7 +1234,7 @@ export function SkillStudio() {
                 <header>
                   <Activity size={17} />
                   <div>
-                    <span>Outcome intelligence</span>
+                    <span>What is working</span>
                     <h3>Skill performance</h3>
                   </div>
                 </header>
@@ -1231,8 +1275,8 @@ export function SkillStudio() {
                     <div>
                       <strong>Safety boundary</strong>
                       <p>
-                        Candidates remain non-executable. Approval binds this exact SHA-256 content
-                        hash.
+                        New skills stay off until reviewed, so Ava cannot use them before you are
+                        comfortable.
                       </p>
                     </div>
                   </article>
@@ -1241,8 +1285,8 @@ export function SkillStudio() {
                     <div>
                       <strong>Chain placement</strong>
                       <p>
-                        This release treats the version as a standalone skill. Chain dependencies
-                        are not invented.
+                        This skill can stand on its own. If it needs related training later, add it
+                        intentionally.
                       </p>
                     </div>
                   </article>
@@ -1415,7 +1459,7 @@ export function SkillStudio() {
               <section>
                 <h3>
                   <Bot size={15} />
-                  Runtime
+                  Ava access
                 </h3>
                 <dl className="pbk-skill-inspector-list">
                   <div>
@@ -1423,12 +1467,12 @@ export function SkillStudio() {
                     <dd>{selected.agentId || 'Unassigned'}</dd>
                   </div>
                   <div>
-                    <dt>Tools</dt>
-                    <dd>{selected.toolAllowlist?.join(', ') || 'No tools declared'}</dd>
+                    <dt>Allowed actions</dt>
+                    <dd>{selected.toolAllowlist?.join(', ') || 'No special actions needed'}</dd>
                   </div>
                   <div>
-                    <dt>Scope</dt>
-                    <dd>{JSON.stringify(selected.scope || { type: 'not assigned' })}</dd>
+                    <dt>Applies when</dt>
+                    <dd>{formatSkillScope(selected.scope)}</dd>
                   </div>
                 </dl>
               </section>
@@ -1471,8 +1515,8 @@ export function SkillStudio() {
             </h3>
             <dl className="pbk-skill-inspector-list">
               <div>
-                <dt>System of record</dt>
-                <dd>{status?.authority || 'Render Postgres'}</dd>
+                <dt>Saved in</dt>
+                <dd>Workspace memory</dd>
               </div>
               <div>
                 <dt>Snapshot</dt>

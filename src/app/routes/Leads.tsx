@@ -18,6 +18,7 @@ import {
   X,
 } from 'lucide-react';
 import { PbkDataSource } from '../../components/pbk/index';
+import { CompactPager, getPageSlice, OPERATOR_LIST_PAGE_SIZE } from '../components/CompactPager';
 import { useRuntimeSnapshot } from '../hooks/useRuntimeSnapshot';
 import { ANALYZER_CURRENT_DEAL_KEY, readAnalyzerStorage } from '../utils/analyzerStorage';
 import {
@@ -356,7 +357,7 @@ function leadAddressMatchKey(lead: BridgeRecord) {
 
 function validateLeadForCall(lead: BridgeRecord) {
   if (!isCallablePhone(getLeadPhone(lead))) {
-    return `${getSellerName(lead)} needs a valid phone number before Telnyx can dial.`;
+    return `${getSellerName(lead)} needs a valid phone number before Ava can dial.`;
   }
   return '';
 }
@@ -896,16 +897,28 @@ function buildLeadsStats(leads: BridgeRecord[]): LeadsStats {
 
 function LeadsSourceRail() {
   return (
-    <div className="pbk-leads-source-rail" aria-label="Leads data sources">
-      <PbkDataSource endpoint="GET /api/leads" status="ships" note="full lead roster" />
-      <PbkDataSource endpoint="POST /api/leads" status="ships" note="canonical seller portal" />
-      <PbkDataSource endpoint="GET /state" status="ships" note="snapshot fallback" />
-      <PbkDataSource endpoint="GET /api/leads/:id/full" status="ships" note="lead detail" />
-      <PbkDataSource endpoint="GET /api/leads/:id/last-call" status="ships" note="call memory" />
-      <PbkDataSource endpoint="PATCH /api/leads/:id" status="ships" note="CRM corrections" />
-      <PbkDataSource endpoint="POST /invoke: telnyx_call" status="ships" note="call lane" />
-      <PbkDataSource endpoint="POST /api/contract/send" status="ships" note="contract packet" />
-    </div>
+    <details className="pbk-tech-details" aria-label="Leads technical details">
+      <summary>Technical details</summary>
+      <div className="pbk-leads-source-rail">
+        <PbkDataSource endpoint="GET /api/leads" status="ships" note="full lead roster" />
+        <PbkDataSource endpoint="POST /api/leads" status="ships" note="canonical seller portal" />
+        <PbkDataSource endpoint="GET /state" status="ships" note="snapshot fallback" />
+        <PbkDataSource endpoint="GET /api/leads/:id/full" status="ships" note="lead detail" />
+        <PbkDataSource endpoint="GET /api/leads/:id/last-call" status="ships" note="call memory" />
+        <PbkDataSource endpoint="PATCH /api/leads/:id" status="ships" note="CRM corrections" />
+        <PbkDataSource endpoint="POST /invoke: telnyx_call" status="ships" note="call lane" />
+        <PbkDataSource endpoint="POST /api/contract/send" status="ships" note="contract packet" />
+      </div>
+    </details>
+  );
+}
+
+function LeadsDataSourceDetails({ children }: { children: ReactNode }) {
+  return (
+    <details className="pbk-tech-details">
+      <summary>Technical details</summary>
+      {children}
+    </details>
   );
 }
 
@@ -970,16 +983,20 @@ function LeadsHero({
       <div className="pbk-leads-hero-top">
         <div>
           <div className="pbk-eyebrow">
-            Lead command -{' '}
-            {loading ? 'loading bridge' : error ? 'bridge offline' : `${stats.total} records`}
+            Leads workspace -{' '}
+            {loading
+              ? 'syncing roster'
+              : error
+                ? 'connection needs attention'
+                : `${stats.total} leads`}
           </div>
           <h1 className="pbk-display pbk-h1">
             Leads &amp; <em>contracts</em>.
           </h1>
           <p>
-            Seller pipeline, call memory, CRM corrections, and path-aware contract handoff in one
-            operator cockpit. The seller roster is pulled from the bridge first, with the runtime
-            snapshot labeled as a fallback when the full roster is unavailable.
+            Seller pipeline, call notes, CRM edits, and contract handoff live here. Open a seller,
+            update what changed, and Ava keeps the lead profile aligned with the latest calls and
+            messages.
           </p>
         </div>
         <div className="pbk-leads-hero-actions">
@@ -1007,15 +1024,15 @@ function LeadsHero({
 function LeadsPipelineRail({
   children,
   total,
-  visible,
   sourceNote,
-  onLoadMore,
+  page,
+  onPageChange,
 }: {
   children: ReactNode;
   total: number;
-  visible: number;
   sourceNote: string;
-  onLoadMore: () => void;
+  page: number;
+  onPageChange: (page: number) => void;
 }) {
   return (
     <section className={`${softPanelClass} pbk-leads-pipeline-rail overflow-hidden`}>
@@ -1023,18 +1040,20 @@ function LeadsPipelineRail({
         <div>
           <span className="pbk-kicker">Pipeline leads</span>
           <h2>Seller roster</h2>
-          <p>Tap a lead to load bridge detail and call memory.</p>
+          <p>Tap a lead to see the full profile, notes, call memory, and next best action.</p>
         </div>
-        <PbkDataSource endpoint="GET /api/leads" status="ships" note={sourceNote} />
+        <LeadsDataSourceDetails>
+          <PbkDataSource endpoint="GET /api/leads" status="ships" note={sourceNote} />
+        </LeadsDataSourceDetails>
       </div>
       {children}
-      {total > visible && (
-        <div className="pipeline-load">
-          <button type="button" className="load-more-leads" onClick={onLoadMore}>
-            Load 50 more
-          </button>
-        </div>
-      )}
+      <CompactPager
+        page={page}
+        total={total}
+        label="Seller roster pages"
+        itemLabel="leads"
+        onPageChange={onPageChange}
+      />
     </section>
   );
 }
@@ -1087,7 +1106,7 @@ export function Leads() {
   const [leadActionPending, setLeadActionPending] = useState('');
   const [reloading, setReloading] = useState(false);
   const [contractStatus, setContractStatus] = useState('');
-  const [displayLimit, setDisplayLimit] = useState(40);
+  const [leadPage, setLeadPage] = useState(0);
   const [leadQuery, setLeadQuery] = useState(() => searchParams.get('search') || '');
   const [leadFilter, setLeadFilter] = useState<'all' | 'hot' | 'callable' | 'contract'>('all');
   const reloadTimerRef = useRef<number | null>(null);
@@ -1133,8 +1152,8 @@ export function Leads() {
     });
   }, [leadFilter, leadQuery, leads]);
   const visibleLeads = useMemo(
-    () => filteredLeads.slice(0, displayLimit),
-    [displayLimit, filteredLeads]
+    () => getPageSlice(filteredLeads, leadPage, OPERATOR_LIST_PAGE_SIZE),
+    [filteredLeads, leadPage]
   );
   const leadsStats = useMemo(() => buildLeadsStats(leads), [leads]);
   const activeLead =
@@ -1184,8 +1203,13 @@ export function Leads() {
   }, [leads, navigate, searchParams, setSearchParams]);
 
   useEffect(() => {
-    setDisplayLimit(40);
+    setLeadPage(0);
   }, [leadFilter, leadQuery]);
+
+  useEffect(() => {
+    const pageCount = Math.max(1, Math.ceil(filteredLeads.length / OPERATOR_LIST_PAGE_SIZE));
+    setLeadPage((current) => Math.min(current, pageCount - 1));
+  }, [filteredLeads.length]);
 
   const beginLeadAction = useCallback((key: string) => {
     if (leadActionLockRef.current) return false;
@@ -1219,11 +1243,19 @@ export function Leads() {
   }, []);
   const rosterSourceLabel =
     leadRosterStatus === 'ready'
+      ? 'Live roster synced'
+      : leadRosterStatus === 'loading'
+        ? 'Syncing lead roster'
+        : leadRosterStatus === 'error'
+          ? 'Saved roster fallback'
+          : 'Roster pending';
+  const rosterSourceNote =
+    leadRosterStatus === 'ready'
       ? 'GET /api/leads full roster'
       : leadRosterStatus === 'loading'
         ? 'loading GET /api/leads'
         : leadRosterStatus === 'error'
-          ? 'snapshot fallback'
+          ? 'GET /api/leads unavailable; using runtime snapshot fallback'
           : 'pending full roster';
   const handleRefreshLeads = useCallback(() => {
     void Promise.all([refresh().catch(() => null), loadLeadRoster()]);
@@ -1408,11 +1440,11 @@ export function Leads() {
       const lead = unwrapLeadResponse(response);
       setLeadDetail(lead);
       setEditOpen(false);
-      setDetailStatus({ tone: 'success', text: 'Lead saved to bridge.' });
+      setDetailStatus({ tone: 'success', text: 'Lead saved.' });
       showUiToast({
         tone: 'success',
         title: 'Lead updated',
-        desc: `${getSellerName(lead)} was saved to the bridge.`,
+        desc: `${getSellerName(lead)} is updated for Ava, calls, messages, and contracts.`,
       });
       await Promise.all([refresh().catch(() => null), loadLeadRoster()]);
     } catch (nextError) {
@@ -1439,7 +1471,7 @@ export function Leads() {
       return;
     }
     if (!beginLeadAction('create-lead')) return;
-    setNewLeadStatus({ tone: 'info', text: 'Creating bridge lead record...' });
+    setNewLeadStatus({ tone: 'info', text: 'Creating lead...' });
     try {
       const response = await createLeadRequest(buildNewLeadPayload(newLeadForm));
       const lead = unwrapLeadResponse(response);
@@ -1449,10 +1481,10 @@ export function Leads() {
       setSelectedLeadId(nextLeadId);
       setLeadQuery('');
       setLeadFilter('all');
-      setDisplayLimit((current) => Math.max(current, 40));
+      setLeadPage(0);
       setNewLeadOpen(false);
       setNewLeadStatus(null);
-      setDetailStatus({ tone: 'success', text: 'New PBK lead created on the bridge.' });
+      setDetailStatus({ tone: 'success', text: 'New PBK lead created.' });
       window.dispatchEvent(new CustomEvent('pbk:lead-created', { detail: { lead } }));
       showUiToast({
         tone: 'success',
@@ -1504,10 +1536,10 @@ export function Leads() {
         status.includes('approval') || Boolean(response.approvalId || response.approval_id);
       showUiToast({
         tone: approvalQueued ? 'info' : 'success',
-        title: approvalQueued ? 'Call held by bridge' : 'Calling seller',
+        title: approvalQueued ? 'Call needs review' : 'Calling seller',
         desc: approvalQueued
-          ? `${getSellerName(lead)} returned an approval hold from the bridge/provider policy.`
-          : `${getSellerName(lead)} was sent to Telnyx from the manual lead quick action.`,
+          ? `${getSellerName(lead)} needs approval before Ava places the call.`
+          : `${getSellerName(lead)} was handed to Ava for the call.`,
       });
       await Promise.all([refresh().catch(() => null), loadLeadRoster()]);
     } catch (nextError) {
@@ -1515,9 +1547,7 @@ export function Leads() {
         tone: 'error',
         title: 'Call request failed',
         desc:
-          nextError instanceof Error
-            ? nextError.message
-            : 'The bridge did not accept the manual call request.',
+          nextError instanceof Error ? nextError.message : 'Ava could not start that call request.',
         critical: true,
       });
     } finally {
@@ -1585,9 +1615,7 @@ export function Leads() {
         tone: 'error',
         title: 'SMS failed',
         desc:
-          nextError instanceof Error
-            ? nextError.message
-            : 'The bridge did not accept the manual SMS.',
+          nextError instanceof Error ? nextError.message : 'Ava could not send that SMS request.',
         critical: true,
       });
     } finally {
@@ -1629,7 +1657,7 @@ export function Leads() {
         desc:
           nextError instanceof Error
             ? nextError.message
-            : 'The bridge did not accept the nurture request.',
+            : 'Ava could not start that nurture request.',
         critical: true,
       });
     } finally {
@@ -1663,8 +1691,8 @@ export function Leads() {
         tone: approvalQueued ? 'info' : 'success',
         title: approvalQueued ? 'Call queued for approval' : 'Call request sent',
         desc: approvalQueued
-          ? `${getSellerName(lead)} needs approval before Telnyx dials.`
-          : `${getSellerName(lead)} was handed to the Telnyx call lane.`,
+          ? `${getSellerName(lead)} needs approval before Ava dials.`
+          : `${getSellerName(lead)} was handed to Ava for the call.`,
       });
       await Promise.all([refresh().catch(() => null), loadLeadRoster()]);
     } catch (nextError) {
@@ -1672,9 +1700,7 @@ export function Leads() {
         tone: 'error',
         title: 'Call request failed',
         desc:
-          nextError instanceof Error
-            ? nextError.message
-            : 'The bridge did not accept the call request.',
+          nextError instanceof Error ? nextError.message : 'Ava could not start that call request.',
         critical: true,
       });
     } finally {
@@ -1821,16 +1847,16 @@ export function Leads() {
           aria-live="polite"
         >
           <AlertCircle size={15} aria-hidden="true" />
-          GET /api/leads unavailable, using runtime snapshot fallback: {leadRosterError}
+          Lead roster connection needs attention. Showing the saved roster so you can keep working.
         </div>
       )}
 
       <div className="pbk-leads-layout">
         <LeadsPipelineRail
           total={filteredLeads.length}
-          visible={visibleLeads.length}
-          sourceNote={rosterSourceLabel}
-          onLoadMore={() => setDisplayLimit((current) => current + 50)}
+          sourceNote={rosterSourceNote}
+          page={leadPage}
+          onPageChange={setLeadPage}
         >
           <div className="pbk-leads-roster-tools">
             <label className="pbk-leads-search">
@@ -2092,9 +2118,7 @@ export function Leads() {
               })}
               {!filteredLeads.length && (
                 <div className="px-4 py-10 text-center text-xs text-slate-500">
-                  {leads.length
-                    ? 'No leads match this search and filter.'
-                    : 'No bridge leads loaded yet.'}
+                  {leads.length ? 'No leads match this search and filter.' : 'No leads loaded yet.'}
                 </div>
               )}
             </div>
@@ -2378,8 +2402,7 @@ export function Leads() {
                           ))
                         ) : (
                           <div className="rounded-lg border border-dashed border-slate-800 px-3 py-4 text-center text-xs text-slate-500">
-                            Transcript will appear here after Telnyx/Deepgram call events are
-                            attached.
+                            Transcript will appear here after call notes are attached.
                           </div>
                         )}
                       </div>
@@ -2417,8 +2440,8 @@ export function Leads() {
                   Capture the full seller profile once.
                 </h3>
                 <p className="mt-1 max-w-3xl text-xs text-slate-500">
-                  Ava, Rex, approvals, analyzer, and contracts will all read this same bridge
-                  record. Analyzer and path fields are prefilled when a current deal exists.
+                  Ava, Rex, approvals, analyzer, and contracts will all use this same lead profile.
+                  Analyzer and path fields are prefilled when a current deal exists.
                 </p>
               </div>
               <button
@@ -2432,22 +2455,26 @@ export function Leads() {
             </div>
 
             <div className="pbk-new-lead-modal-body overflow-y-auto px-4 py-4">
-              <div className="mb-4 flex flex-wrap gap-2">
-                <PbkDataSource
-                  endpoint="POST /api/leads"
-                  status="ships"
-                  note="create canonical seller portal"
-                />
-                <PbkDataSource
-                  endpoint="localStorage:PBKAnalyzer"
-                  status="ships"
-                  note="deal/path seed only"
-                />
-                <PbkDataSource
-                  endpoint="GET /api/leads/:id/full"
-                  status="ships"
-                  note="portal readback"
-                />
+              <div className="mb-4">
+                <LeadsDataSourceDetails>
+                  <div className="flex flex-wrap gap-2">
+                    <PbkDataSource
+                      endpoint="POST /api/leads"
+                      status="ships"
+                      note="create canonical seller portal"
+                    />
+                    <PbkDataSource
+                      endpoint="localStorage:PBKAnalyzer"
+                      status="ships"
+                      note="deal/path seed only"
+                    />
+                    <PbkDataSource
+                      endpoint="GET /api/leads/:id/full"
+                      status="ships"
+                      note="portal readback"
+                    />
+                  </div>
+                </LeadsDataSourceDetails>
               </div>
 
               {newLeadStatus && (
@@ -2835,7 +2862,7 @@ export function Leads() {
 
             <div className="pbk-new-lead-modal-footer flex flex-col gap-2 border-t border-slate-800 px-4 py-4 sm:flex-row sm:items-center sm:justify-between">
               <div className="text-[11px] text-slate-500">
-                Source: Deal Analyzer seed + operator edits to bridge lead portal.
+                Source: Deal Analyzer seed + your lead edits.
               </div>
               <div className="pbk-new-lead-modal-actions flex flex-col gap-2 sm:flex-row sm:justify-end">
                 <button
@@ -3015,8 +3042,8 @@ export function Leads() {
                     Human BANT+ fields
                   </div>
                   <p className="mt-1 text-xs leading-5 text-slate-400">
-                    These fields save back into the bridge BANT record and Ava call metadata. No raw
-                    JSON editing required.
+                    These fields update Ava's lead notes and call memory. No raw JSON editing
+                    required.
                   </p>
                 </div>
                 <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
@@ -3332,7 +3359,7 @@ export function Leads() {
             role="dialog"
             aria-modal="true"
             aria-labelledby="lead-quick-sms-title"
-            className={`${softPanelClass} w-full max-w-lg overflow-hidden`}
+            className={`${softPanelClass} flex max-h-[min(92vh,720px)] w-full max-w-lg flex-col overflow-hidden`}
           >
             <div className="flex items-start justify-between gap-4 border-b border-slate-800 px-5 py-4">
               <div>
@@ -3353,7 +3380,7 @@ export function Leads() {
                 <X size={16} />
               </button>
             </div>
-            <div className="px-5 py-4">
+            <div className="min-h-0 overflow-y-auto px-5 py-4">
               <label className="grid gap-2 text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">
                 Message
                 <textarea
@@ -3368,31 +3395,33 @@ export function Leads() {
                 />
               </label>
               <p className="mt-2 text-xs text-slate-500">
-                Human-sent SMS uses the manual bridge lane. Provider failures are shown immediately
-                and can be retried without hiding the outcome.
+                Ava will send this as a direct seller text. If it cannot send, you will see the
+                reason immediately and can retry.
               </p>
             </div>
-            <div className="flex flex-col gap-2 border-t border-slate-800 px-5 py-4 sm:flex-row sm:justify-end">
-              <button
-                type="button"
-                onClick={() => setQuickSmsDraft(null)}
-                className="rounded-full border border-slate-700 px-4 py-2 text-sm font-semibold text-slate-300 transition hover:border-slate-500"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                disabled={isLeadActionBusy || !quickSmsDraft.body.trim()}
-                onClick={() => void sendQuickSms()}
-                className="inline-flex items-center justify-center gap-2 rounded-full bg-sky-400 px-4 py-2 text-sm font-bold text-slate-950 transition hover:bg-sky-300 disabled:cursor-wait disabled:opacity-60"
-              >
-                {leadActionPending === `sms:${quickSmsDraft.leadId}` ? (
-                  <Loader2 size={14} className="animate-spin" />
-                ) : (
-                  <Send size={15} />
-                )}
-                Send SMS
-              </button>
+            <div className="shrink-0 border-t border-slate-800 px-5 py-4">
+              <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
+                <button
+                  type="button"
+                  onClick={() => setQuickSmsDraft(null)}
+                  className="rounded-full border border-slate-700 px-4 py-2 text-sm font-semibold text-slate-300 transition hover:border-slate-500"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  disabled={isLeadActionBusy || !quickSmsDraft.body.trim()}
+                  onClick={() => void sendQuickSms()}
+                  className="inline-flex items-center justify-center gap-2 rounded-full bg-sky-400 px-4 py-2 text-sm font-bold text-slate-950 transition hover:bg-sky-300 disabled:cursor-wait disabled:opacity-60"
+                >
+                  {leadActionPending === `sms:${quickSmsDraft.leadId}` ? (
+                    <Loader2 size={14} className="animate-spin" />
+                  ) : (
+                    <Send size={15} />
+                  )}
+                  Send SMS
+                </button>
+              </div>
             </div>
           </div>
         </div>
@@ -3413,7 +3442,7 @@ export function Leads() {
               Place this call?
             </h3>
             <p className="mt-2 text-sm text-slate-400">
-              PBK will ask the bridge to dial this seller through the Telnyx call lane.
+              Ava will place this call for the selected seller.
             </p>
             <div className="mt-4 rounded-xl border border-slate-800 bg-slate-900 px-3 py-3 text-sm text-slate-300">
               <div className="font-semibold text-slate-100">{leadCallConfirmDraft.sellerName}</div>
@@ -3458,8 +3487,8 @@ export function Leads() {
               Confirm contract send
             </h3>
             <p className="mt-2 text-sm text-slate-400">
-              PBK cannot undo this provider send after DocuSign accepts it. Confirm the signer email
-              and lead phone before continuing.
+              Once DocuSign accepts this send, PBK cannot undo it. Confirm the signer email and lead
+              phone before continuing.
             </p>
             <div className="mt-4 rounded-xl border border-slate-800 bg-slate-900 px-3 py-3 text-sm text-slate-300">
               <div className="font-semibold text-slate-100">{PATH_LABELS[contractForm.path]}</div>

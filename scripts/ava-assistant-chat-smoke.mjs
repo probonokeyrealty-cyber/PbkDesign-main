@@ -243,6 +243,11 @@ assert(
   'Ava Chat must keep system/debug controls out of the default chat unless system status has a warning.'
 );
 assert(
+  avaChatRoute.includes('pbk-ava-chat-send-button') &&
+    /aria-label="Send to Ava"/.test(avaChatRoute),
+  'Ava Chat send button must have a stable mobile-safe selector and accessible label.'
+);
+assert(
   /ContextPanel title="Support log"[\s\S]*<details/.test(avaChatRoute),
   'Ava Chat technical support details should live behind the collapsible Support log drawer.'
 );
@@ -254,9 +259,22 @@ assert(
     pbkCss.includes('.pbk-ava-system-drawer') &&
     pbkCss.includes('.pbk-ava-slash-panel') &&
     pbkCss.includes('.pbk-ava-bubble-system') &&
+    pbkCss.includes('.pbk-ava-chat-send-button') &&
     !pbkCss.includes('.pbk-ava-companion-actions') &&
     !pbkCss.includes('.pbk-ava-composer-modes'),
   'Ava Chat must style thinking animation, inline approval, slash commands, and system drawer boundaries without the old menu CSS.'
+);
+assert(
+  /@media \(max-width: 767px\)[\s\S]*--pbk-mobile-nav-clearance:\s*max\(86px, calc\(76px \+ env\(safe-area-inset-bottom\)\)\)[\s\S]*\.pbk-shell-content-chat\s*{[\s\S]*height:\s*calc\(100dvh - 56px - var\(--pbk-mobile-nav-clearance\)\)/.test(
+    pbkCss
+  ),
+  'Mobile Ava Chat must shrink the full-height workspace above the fixed bottom nav so Send stays tappable.'
+);
+assert(
+  /\.pbk-ava-chat-send-button\s*{[\s\S]*touch-action:\s*manipulation[\s\S]*pointer-events:\s*auto/.test(
+    pbkCss
+  ),
+  'Ava Chat send button must remain explicitly touchable on mobile browsers.'
 );
 
 console.log('[ava-assistant-chat-smoke] ok');

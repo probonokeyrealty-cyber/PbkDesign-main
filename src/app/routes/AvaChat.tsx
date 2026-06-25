@@ -866,6 +866,16 @@ export function AvaChat() {
   }, [load]);
 
   useEffect(() => {
+    if (typeof window === 'undefined') return undefined;
+    const reloadCommandsAfterApprovalDecision = () => {
+      void load({ silent: true });
+    };
+    window.addEventListener('pbk:approval-decision', reloadCommandsAfterApprovalDecision);
+    return () =>
+      window.removeEventListener('pbk:approval-decision', reloadCommandsAfterApprovalDecision);
+  }, [load]);
+
+  useEffect(() => {
     return () => recognitionRef.current?.stop();
   }, []);
 
@@ -1995,7 +2005,7 @@ function AvaComposer({
               <PbkButton
                 type="button"
                 variant="sky-gradient"
-                className="min-h-11 min-w-11 justify-center px-3"
+                className="pbk-ava-chat-send-button min-h-11 min-w-11 justify-center px-3"
                 disabled={!draft.trim() || submitting}
                 onClick={onSubmit}
                 aria-label="Send to Ava"

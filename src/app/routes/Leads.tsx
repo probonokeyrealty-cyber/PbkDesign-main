@@ -1355,6 +1355,14 @@ export function Leads() {
     setEditOpen(true);
   };
 
+  const openEditModalForLead = (lead: BridgeRecord) => {
+    const id = getLeadId(lead);
+    if (id) setSelectedLeadId(id);
+    setLeadDetail(lead);
+    setEditForm(formFromLead(lead));
+    setEditOpen(true);
+  };
+
   const openNewLeadModal = () => {
     setNewLeadForm(seedNewLeadFromAnalyzer());
     setNewLeadStatus(null);
@@ -1867,208 +1875,229 @@ export function Leads() {
             </div>
           </div>
 
-          <div className="leads-mobile-cards">
-            {visibleLeads.map((lead) => {
-              const id = getLeadId(lead);
-              const score = getLeadScore(lead);
-              const path = normalizePath(lead.selected_path || lead.selectedPath, lead);
-              const sellerName = getSellerName(lead);
-              const isSelected = id === activeLeadId;
-              return (
-                <div
-                  key={id}
-                  role="button"
-                  tabIndex={0}
-                  aria-label={`Open lead ${sellerName} at ${getLeadAddress(lead)}`}
-                  aria-selected={isSelected}
-                  aria-pressed={isSelected}
-                  className="lead-mobile-card"
-                  onClick={() => setSelectedLeadId(id)}
-                  onKeyDown={(event) => {
-                    if (event.key === 'Enter' || event.key === ' ') {
-                      event.preventDefault();
-                      setSelectedLeadId(id);
-                    }
-                  }}
-                >
-                  <span className={['lead-score', scoreTone(score)].join(' ')}>{score}</span>
-                  <span className="min-w-0 flex-1">
-                    <SellerRosterIdentity
-                      sellerName={sellerName}
-                      address={getLeadAddress(lead)}
-                      variant="mobile"
-                    />
-                    <span className="mt-3 grid grid-cols-2 gap-2 text-[11px] text-slate-400">
-                      <span>
-                        ARV{' '}
-                        <strong className="text-slate-100">{getLeadFinancial(lead, 'arv')}</strong>
-                      </span>
-                      <span>
-                        MAO{' '}
-                        <strong className="text-slate-100">{getLeadFinancial(lead, 'mao')}</strong>
-                      </span>
-                    </span>
-                    <span className="mt-3 flex flex-wrap gap-1.5">
-                      {getLeadTags(lead).map((tag) => (
-                        <span
-                          key={tag}
-                          className="rounded-full border border-slate-700 px-2 py-1 text-[10px] uppercase tracking-[0.12em] text-slate-400"
-                        >
-                          {tag}
-                        </span>
-                      ))}
-                    </span>
-                    <span className="mt-3 flex items-center justify-between gap-3 text-[11px] text-slate-500">
-                      <span>{text(lead.status || lead.stage, PATH_LABELS[path])}</span>
-                      <span>{formatDate(lead.updatedAt || lead.createdAt)}</span>
-                    </span>
-                  </span>
-                  <span className="flex flex-col items-end gap-2">
-                    <span className="grid h-8 w-8 place-items-center rounded-full bg-slate-800 text-xs font-semibold text-sky-200">
-                      {getSellerInitial(sellerName)}
-                    </span>
-                    <span
-                      className="pbk-lead-quick-actions compact"
-                      aria-label="Lead quick actions"
-                    >
-                      <button
-                        type="button"
-                        aria-label={`Call ${sellerName}`}
-                        disabled={isLeadActionBusy || !isCallablePhone(getLeadPhone(lead))}
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          void startQuickLeadCall(lead);
-                        }}
-                      >
-                        {leadActionPending === `call:${id}` ? (
-                          <Loader2 size={13} className="animate-spin" />
-                        ) : (
-                          <Phone size={13} />
-                        )}
-                        <span>Call</span>
-                      </button>
-                      <button
-                        type="button"
-                        aria-label={`Text ${sellerName}`}
-                        disabled={isLeadActionBusy || !isCallablePhone(getLeadPhone(lead))}
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          openQuickSms(lead);
-                        }}
-                      >
-                        <MessageSquare size={13} />
-                        <span>SMS</span>
-                      </button>
-                      <button
-                        type="button"
-                        aria-label={`Add ${sellerName} to nurture`}
-                        disabled={isLeadActionBusy}
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          void addLeadToNurture(lead);
-                        }}
-                      >
-                        {leadActionPending === `nurture:${id}` ? (
-                          <Loader2 size={13} className="animate-spin" />
-                        ) : (
-                          <HeartHandshake size={13} />
-                        )}
-                        <span>Nurture</span>
-                      </button>
-                    </span>
-                  </span>
-                </div>
-              );
-            })}
-          </div>
-
-          <div className="leads-table-container max-h-[68vh] divide-y divide-slate-800 overflow-y-auto">
-            {visibleLeads.map((lead) => {
-              const id = getLeadId(lead);
-              const isSelected = id === activeLeadId;
-              const path = normalizePath(lead.selected_path || lead.selectedPath, lead);
-              const sellerName = getSellerName(lead);
-              return (
-                <div
-                  key={id}
-                  aria-selected={isSelected}
-                  className={[
-                    'grid w-full grid-cols-1 gap-3 px-4 py-4 text-left transition',
-                    isSelected ? 'bg-sky-500/10' : 'hover:bg-slate-900',
-                  ].join(' ')}
-                >
-                  <button
-                    type="button"
+          <div className="pbk-leads-roster-list" aria-label="Seller roster results">
+            <div className="leads-mobile-cards">
+              {visibleLeads.map((lead) => {
+                const id = getLeadId(lead);
+                const score = getLeadScore(lead);
+                const path = normalizePath(lead.selected_path || lead.selectedPath, lead);
+                const sellerName = getSellerName(lead);
+                const isSelected = id === activeLeadId;
+                return (
+                  <div
+                    key={id}
+                    role="button"
+                    tabIndex={0}
                     aria-label={`Open lead ${sellerName} at ${getLeadAddress(lead)}`}
+                    aria-selected={isSelected}
+                    aria-pressed={isSelected}
+                    className="lead-mobile-card"
                     onClick={() => setSelectedLeadId(id)}
-                    className="min-w-0 text-left"
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter' || event.key === ' ') {
+                        event.preventDefault();
+                        setSelectedLeadId(id);
+                      }
+                    }}
                   >
-                    <SellerRosterIdentity sellerName={sellerName} address={getLeadAddress(lead)} />
-                    <span className="mt-1 flex flex-wrap gap-2 text-[11px] text-slate-500">
-                      <span>
-                        {getLeadPhone(lead) || getLeadEmail(lead) || 'No contact captured'}
+                    <span className={['lead-score', scoreTone(score)].join(' ')}>{score}</span>
+                    <span className="min-w-0 flex-1">
+                      <SellerRosterIdentity
+                        sellerName={sellerName}
+                        address={getLeadAddress(lead)}
+                        variant="mobile"
+                      />
+                      <span className="mt-3 grid grid-cols-2 gap-2 text-[11px] text-slate-400">
+                        <span>
+                          ARV{' '}
+                          <strong className="text-slate-100">
+                            {getLeadFinancial(lead, 'arv')}
+                          </strong>
+                        </span>
+                        <span>
+                          MAO{' '}
+                          <strong className="text-slate-100">
+                            {getLeadFinancial(lead, 'mao')}
+                          </strong>
+                        </span>
                       </span>
-                      <span>Source: {text(lead.source, 'manual')}</span>
+                      <span className="mt-3 flex flex-wrap gap-1.5">
+                        {getLeadTags(lead).map((tag) => (
+                          <span
+                            key={tag}
+                            className="rounded-full border border-slate-700 px-2 py-1 text-[10px] uppercase tracking-[0.12em] text-slate-400"
+                          >
+                            {tag}
+                          </span>
+                        ))}
+                      </span>
+                      <span className="mt-3 flex items-center justify-between gap-3 text-[11px] text-slate-500">
+                        <span>{text(lead.status || lead.stage, PATH_LABELS[path])}</span>
+                        <span>{formatDate(lead.updatedAt || lead.createdAt)}</span>
+                      </span>
                     </span>
-                  </button>
-                  <span className="flex flex-wrap items-center gap-2">
-                    <span className="rounded-full border border-slate-700 bg-slate-900 px-2.5 py-1 text-[10px] uppercase tracking-[0.14em] text-slate-300">
-                      {PATH_LABELS[path]}
+                    <span className="flex flex-col items-end gap-2">
+                      <span className="grid h-8 w-8 place-items-center rounded-full bg-slate-800 text-xs font-semibold text-sky-200">
+                        {getSellerInitial(sellerName)}
+                      </span>
+                      <span
+                        className="pbk-lead-quick-actions compact"
+                        aria-label="Lead quick actions"
+                      >
+                        <button
+                          type="button"
+                          aria-label={`Edit ${sellerName}`}
+                          disabled={isLeadActionBusy}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            openEditModalForLead(lead);
+                          }}
+                        >
+                          <Edit3 size={13} />
+                          <span>Edit</span>
+                        </button>
+                        <button
+                          type="button"
+                          aria-label={`Call ${sellerName}`}
+                          disabled={isLeadActionBusy || !isCallablePhone(getLeadPhone(lead))}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            void startQuickLeadCall(lead);
+                          }}
+                        >
+                          {leadActionPending === `call:${id}` ? (
+                            <Loader2 size={13} className="animate-spin" />
+                          ) : (
+                            <Phone size={13} />
+                          )}
+                          <span>Call</span>
+                        </button>
+                        <button
+                          type="button"
+                          aria-label={`Text ${sellerName}`}
+                          disabled={isLeadActionBusy || !isCallablePhone(getLeadPhone(lead))}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            openQuickSms(lead);
+                          }}
+                        >
+                          <MessageSquare size={13} />
+                          <span>SMS</span>
+                        </button>
+                        <button
+                          type="button"
+                          aria-label={`Add ${sellerName} to nurture`}
+                          disabled={isLeadActionBusy}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            void addLeadToNurture(lead);
+                          }}
+                        >
+                          {leadActionPending === `nurture:${id}` ? (
+                            <Loader2 size={13} className="animate-spin" />
+                          ) : (
+                            <HeartHandshake size={13} />
+                          )}
+                          <span>Nurture</span>
+                        </button>
+                      </span>
                     </span>
-                    <span className="text-[11px] text-slate-500">
-                      {formatDate(lead.updatedAt || lead.createdAt)}
-                    </span>
-                    <span
-                      className="pbk-lead-quick-actions"
-                      aria-label={`Quick actions for ${sellerName}`}
+                  </div>
+                );
+              })}
+            </div>
+
+            <div className="leads-table-container divide-y divide-slate-800">
+              {visibleLeads.map((lead) => {
+                const id = getLeadId(lead);
+                const isSelected = id === activeLeadId;
+                const path = normalizePath(lead.selected_path || lead.selectedPath, lead);
+                const sellerName = getSellerName(lead);
+                return (
+                  <div
+                    key={id}
+                    aria-selected={isSelected}
+                    className={[
+                      'grid w-full grid-cols-1 gap-3 px-4 py-4 text-left transition',
+                      isSelected ? 'bg-sky-500/10' : 'hover:bg-slate-900',
+                    ].join(' ')}
+                  >
+                    <button
+                      type="button"
+                      aria-label={`Open lead ${sellerName} at ${getLeadAddress(lead)}`}
+                      onClick={() => setSelectedLeadId(id)}
+                      className="min-w-0 text-left"
                     >
-                      <button
-                        type="button"
-                        aria-label={`Call ${sellerName}`}
-                        disabled={isLeadActionBusy || !isCallablePhone(getLeadPhone(lead))}
-                        onClick={() => void startQuickLeadCall(lead)}
+                      <SellerRosterIdentity
+                        sellerName={sellerName}
+                        address={getLeadAddress(lead)}
+                      />
+                      <span className="mt-1 flex flex-wrap gap-2 text-[11px] text-slate-500">
+                        <span>
+                          {getLeadPhone(lead) || getLeadEmail(lead) || 'No contact captured'}
+                        </span>
+                        <span>Source: {text(lead.source, 'manual')}</span>
+                      </span>
+                    </button>
+                    <span className="flex flex-wrap items-center gap-2">
+                      <span className="rounded-full border border-slate-700 bg-slate-900 px-2.5 py-1 text-[10px] uppercase tracking-[0.14em] text-slate-300">
+                        {PATH_LABELS[path]}
+                      </span>
+                      <span className="text-[11px] text-slate-500">
+                        {formatDate(lead.updatedAt || lead.createdAt)}
+                      </span>
+                      <span
+                        className="pbk-lead-quick-actions"
+                        aria-label={`Quick actions for ${sellerName}`}
                       >
-                        {leadActionPending === `call:${id}` ? (
-                          <Loader2 size={13} className="animate-spin" />
-                        ) : (
-                          <Phone size={13} />
-                        )}
-                        <span>Call</span>
-                      </button>
-                      <button
-                        type="button"
-                        aria-label={`Text ${sellerName}`}
-                        disabled={isLeadActionBusy || !isCallablePhone(getLeadPhone(lead))}
-                        onClick={() => openQuickSms(lead)}
-                      >
-                        <MessageSquare size={13} />
-                        <span>SMS</span>
-                      </button>
-                      <button
-                        type="button"
-                        aria-label={`Add ${sellerName} to nurture`}
-                        disabled={isLeadActionBusy}
-                        onClick={() => void addLeadToNurture(lead)}
-                      >
-                        {leadActionPending === `nurture:${id}` ? (
-                          <Loader2 size={13} className="animate-spin" />
-                        ) : (
-                          <HeartHandshake size={13} />
-                        )}
-                        <span>Nurture</span>
-                      </button>
+                        <button
+                          type="button"
+                          aria-label={`Call ${sellerName}`}
+                          disabled={isLeadActionBusy || !isCallablePhone(getLeadPhone(lead))}
+                          onClick={() => void startQuickLeadCall(lead)}
+                        >
+                          {leadActionPending === `call:${id}` ? (
+                            <Loader2 size={13} className="animate-spin" />
+                          ) : (
+                            <Phone size={13} />
+                          )}
+                          <span>Call</span>
+                        </button>
+                        <button
+                          type="button"
+                          aria-label={`Text ${sellerName}`}
+                          disabled={isLeadActionBusy || !isCallablePhone(getLeadPhone(lead))}
+                          onClick={() => openQuickSms(lead)}
+                        >
+                          <MessageSquare size={13} />
+                          <span>SMS</span>
+                        </button>
+                        <button
+                          type="button"
+                          aria-label={`Add ${sellerName} to nurture`}
+                          disabled={isLeadActionBusy}
+                          onClick={() => void addLeadToNurture(lead)}
+                        >
+                          {leadActionPending === `nurture:${id}` ? (
+                            <Loader2 size={13} className="animate-spin" />
+                          ) : (
+                            <HeartHandshake size={13} />
+                          )}
+                          <span>Nurture</span>
+                        </button>
+                      </span>
                     </span>
-                  </span>
+                  </div>
+                );
+              })}
+              {!filteredLeads.length && (
+                <div className="px-4 py-10 text-center text-xs text-slate-500">
+                  {leads.length
+                    ? 'No leads match this search and filter.'
+                    : 'No bridge leads loaded yet.'}
                 </div>
-              );
-            })}
-            {!filteredLeads.length && (
-              <div className="px-4 py-10 text-center text-xs text-slate-500">
-                {leads.length
-                  ? 'No leads match this search and filter.'
-                  : 'No bridge leads loaded yet.'}
-              </div>
-            )}
+              )}
+            </div>
           </div>
         </LeadsPipelineRail>
 
@@ -2835,9 +2864,9 @@ export function Leads() {
       )}
 
       {editOpen && editForm && (
-        <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/80 p-4 backdrop-blur-sm">
+        <div className="pbk-lead-edit-modal-backdrop fixed inset-0 z-50 grid place-items-center bg-slate-950/80 p-4 backdrop-blur-sm">
           <div
-            className={`${softPanelClass} flex max-h-[90vh] w-full max-w-4xl flex-col overflow-hidden`}
+            className={`${softPanelClass} pbk-lead-edit-modal flex max-h-[90vh] w-full max-w-4xl flex-col overflow-hidden`}
           >
             <div className="flex items-center justify-between gap-3 border-b border-slate-800 px-4 py-4">
               <div>
@@ -2854,7 +2883,7 @@ export function Leads() {
                 <X size={18} />
               </button>
             </div>
-            <div className="overflow-y-auto p-4">
+            <div className="pbk-lead-edit-modal-body overflow-y-auto p-4">
               <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
                 <Field label="Full name">
                   <input
@@ -3064,7 +3093,7 @@ export function Leads() {
                 </div>
               </div>
             </div>
-            <div className="flex flex-col gap-2 border-t border-slate-800 px-4 py-4 sm:flex-row sm:justify-end">
+            <div className="pbk-lead-edit-modal-footer flex flex-col gap-2 border-t border-slate-800 px-4 py-4 sm:flex-row sm:justify-end">
               <button
                 type="button"
                 onClick={() => setEditOpen(false)}

@@ -207,11 +207,13 @@ export function useRuntimeSnapshot(pollMs = 5000) {
     };
 
     window.addEventListener('online', reconnectNow);
+    window.addEventListener('pbk:approval-decision', reconnectNow);
     document.addEventListener('visibilitychange', reconnectWhenVisible);
     return () => {
       cancelled = true;
       if (timerRef.current) window.clearTimeout(timerRef.current);
       window.removeEventListener('online', reconnectNow);
+      window.removeEventListener('pbk:approval-decision', reconnectNow);
       document.removeEventListener('visibilitychange', reconnectWhenVisible);
     };
   }, [pollMs, refresh]);

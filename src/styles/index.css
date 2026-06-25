@@ -1305,7 +1305,7 @@ html[data-theme='light'] .pbk-leads-surface .border-slate-700 {
 
   .pbk-lead-quick-actions.compact button {
     min-width: 0;
-    flex: 1 1 86px;
+    flex: 1 1 72px;
     padding-right: 0.45rem;
     padding-left: 0.45rem;
   }

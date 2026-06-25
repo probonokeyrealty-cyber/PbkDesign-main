@@ -31756,6 +31756,17 @@ function normalizeLeadIntake(payload = {}) {
     callContext: payload.callContext || payload.call_context || {},
     selectedPath: payload.selectedPath || payload.selected_path || payload.path || payload.dealPath || '',
     selected_path: payload.selected_path || payload.selectedPath || payload.path || payload.dealPath || '',
+    analyzer:
+      payload.analyzer && typeof payload.analyzer === 'object' && !Array.isArray(payload.analyzer)
+        ? payload.analyzer
+        : {},
+    deal: payload.deal && typeof payload.deal === 'object' && !Array.isArray(payload.deal) ? payload.deal : null,
+    agentDealContext:
+      payload.agentDealContext &&
+      typeof payload.agentDealContext === 'object' &&
+      !Array.isArray(payload.agentDealContext)
+        ? payload.agentDealContext
+        : {},
     tags,
     createdAt,
     updatedAt: payload.updatedAt || createdAt,
@@ -73159,11 +73170,27 @@ const server = createServer(async (request, response) => {
         !Array.isArray(body.assignment)
           ? body.assignment
           : {};
+      const analyzerPatch =
+        body.analyzer && typeof body.analyzer === 'object' && !Array.isArray(body.analyzer)
+          ? body.analyzer
+          : {};
+      const dealPatch =
+        body.deal && typeof body.deal === 'object' && !Array.isArray(body.deal)
+          ? body.deal
+          : {};
+      const agentDealContextPatch =
+        body.agentDealContext &&
+        typeof body.agentDealContext === 'object' &&
+        !Array.isArray(body.agentDealContext)
+          ? body.agentDealContext
+          : {};
+      const incomingCallContext =
+        body.call_metadata || body.callMetadata || body.callContext || body.call_context;
       const callMetadataPatch =
-        (body.call_metadata || body.callMetadata) &&
-        typeof (body.call_metadata || body.callMetadata) === 'object' &&
-        !Array.isArray(body.call_metadata || body.callMetadata)
-          ? body.call_metadata || body.callMetadata
+        incomingCallContext &&
+        typeof incomingCallContext === 'object' &&
+        !Array.isArray(incomingCallContext)
+          ? incomingCallContext
           : {};
       const existingNotesRecord =
         existing?.notes &&
@@ -73322,6 +73349,24 @@ const server = createServer(async (request, response) => {
             : existing?.mortgageBalance,
         bant: nextBant,
         callContext: callContextPatch,
+        analyzer: Object.keys(analyzerPatch).length
+          ? {
+              ...(existing?.analyzer || {}),
+              ...analyzerPatch,
+            }
+          : existing?.analyzer,
+        deal: Object.keys(dealPatch).length
+          ? {
+              ...(existing?.deal || {}),
+              ...dealPatch,
+            }
+          : existing?.deal,
+        agentDealContext: Object.keys(agentDealContextPatch).length
+          ? {
+              ...(existing?.agentDealContext || {}),
+              ...agentDealContextPatch,
+            }
+          : existing?.agentDealContext,
         selectedPath,
         selected_path: selectedPath,
         updatedAt: isoNow(),

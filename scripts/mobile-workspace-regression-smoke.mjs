@@ -71,13 +71,13 @@ assert(
     /@media \(max-width: 767px\)[\s\S]*?\.pbk-shell-frame\s*\{[\s\S]*?height:\s*100dvh[\s\S]*?min-height:\s*100dvh/.test(
       css
     ) &&
-    /@media \(max-width: 767px\)[\s\S]*?\.pbk-shell-content\s*\{[\s\S]*?padding-bottom:\s*max\(86px/.test(
+    /@media \(max-width: 767px\)[\s\S]*?\.pbk-shell-content\s*\{[\s\S]*?--pbk-mobile-nav-clearance:\s*max\(86px, calc\(76px \+ env\(safe-area-inset-bottom\)\)\)[\s\S]*?padding-bottom:\s*var\(--pbk-mobile-nav-clearance\)/.test(
       css
     ) &&
     /\.pbk-shell-content-chat\s*\{[\s\S]*?height:\s*100%[\s\S]*?max-height:\s*100%[\s\S]*?min-height:\s*0/.test(
       css
     ) &&
-    /@media \(max-width: 767px\)[\s\S]*?\.pbk-shell-content-chat\s*\{[\s\S]*?height:\s*calc\(100dvh - 56px\)[\s\S]*?max-height:\s*calc\(100dvh - 56px\)[\s\S]*?overflow:\s*hidden/.test(
+    /@media \(max-width: 767px\)[\s\S]*?\.pbk-shell-content-chat\s*\{[\s\S]*?height:\s*calc\(100dvh - 56px - var\(--pbk-mobile-nav-clearance\)\)[\s\S]*?max-height:\s*calc\(100dvh - 56px - var\(--pbk-mobile-nav-clearance\)\)[\s\S]*?padding-bottom:\s*0[\s\S]*?overflow:\s*hidden/.test(
       css
     ) &&
     /@media \(max-width: 767px\)[\s\S]*?\.pbk-shell-main-column-chat \.pbk-shell-favorites\s*\{[\s\S]*?display:\s*none/.test(
@@ -125,6 +125,9 @@ assert(
     avaChat.includes('pbk-ava-chat-action-rail') &&
     avaChat.includes('grid-rows-[auto_minmax(0,1fr)_auto]') &&
     /\.pbk-ava-chat-composer\s*\{[\s\S]*?padding-bottom:\s*max\(/.test(css) &&
+    /\.pbk-ava-chat-send-button\s*\{[\s\S]*?touch-action:\s*manipulation[\s\S]*?pointer-events:\s*auto/.test(
+      css
+    ) &&
     /\.pbk-ava-chat-action-rail\s*\{[\s\S]*?overflow-x:\s*auto/.test(css) &&
     /@media \(max-width: 640px\)[\s\S]*?\.pbk-ava-chat-toolbar\s*\{[\s\S]*?grid-template-columns:\s*minmax\(0,\s*1fr\)\s+44px/.test(
       css
@@ -133,7 +136,7 @@ assert(
       css
     ) &&
     avaChat.includes('aria-label="Send to Ava"') &&
-    avaChat.includes('className="min-h-11 min-w-11 justify-center px-3"') &&
+    avaChat.includes('className="pbk-ava-chat-send-button min-h-11 min-w-11 justify-center px-3"') &&
     !avaChat.includes('pbk-ava-lane-toggle'),
   'Ava Chat composer controls must fit 320px mobile viewports with a reachable send button.'
 );

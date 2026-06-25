@@ -2013,7 +2013,15 @@ export async function updateApprovalDecision(approvalId: string, status: string)
       actedAt: new Date().toISOString(),
     },
   });
-  return assertBridgeMutationSucceeded(response, 'Approval decision');
+  const result = assertBridgeMutationSucceeded(response, 'Approval decision');
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(
+      new CustomEvent('pbk:approval-decision', {
+        detail: { approvalId, status, response: result },
+      })
+    );
+  }
+  return result;
 }
 
 export async function fetchLeadsRequest() {
@@ -2831,13 +2839,60 @@ export async function sendDealToAgent(
     buildAgentDealContext(deal, {
       requestedBy: 'Analyzer runtime bridge',
     });
-  return invokeRuntimeTool<Record<string, unknown>>('updateCRM', {
-    target: deal.address || deal.sellerName || 'deal',
+  const selectedPath = deal.selectedPath || 'cash';
+  const askingPrice = deal.agreedPrice || deal.price || 0;
+  const estimatedRepairs = deal.repairs?.mid || 0;
+  const mao = deal.mao60 || deal.maoRBP || 0;
+  const mortgageBalance = deal.balance || deal.mtBalanceConfirm || 0;
+  return patchLeadRequest(leadId, {
+    source: 'analyzer-deal-sync',
+    syncedFrom: 'deal-analyzer',
+    actor: 'Analyzer runtime bridge',
+    address: deal.address,
+    propertyAddress: deal.address,
+    name: deal.sellerName,
+    leadName: deal.sellerName,
+    phone: deal.sellerPhone,
+    email: deal.sellerEmail,
+    selectedPath,
+    selected_path: selectedPath,
+    askingPrice,
+    arv: deal.arv,
+    mao,
+    mao60: deal.mao60,
+    maoRBP: deal.maoRBP,
+    estimatedRepairs,
+    mortgageBalance,
+    notes: deal.notes || '',
     leadId,
     lead_id: leadId,
     message: `Analyzer synced ${deal.address || 'deal'} to the runtime for ${deal.selectedPath || 'cash'} follow-up. Agent context includes ${agentDealContext.scriptPath}/${agentDealContext.scriptVariant}/${agentDealContext.activeScriptTab} script.`,
+    analyzer: {
+      source: 'analyzer-deal-sync',
+      syncedFrom: 'deal-analyzer',
+      selectedPath,
+      selected_path: selectedPath,
+      askingPrice,
+      arv: deal.arv,
+      mao,
+      mao60: deal.mao60,
+      maoRBP: deal.maoRBP,
+      estimatedRepairs,
+      mortgageBalance,
+      scriptPath: agentDealContext.scriptPath,
+      scriptVariant: agentDealContext.scriptVariant,
+      activeScriptTab: agentDealContext.activeScriptTab,
+      updatedAt: new Date().toISOString(),
+    },
     deal,
     agentDealContext,
+    call_metadata: {
+      source: 'analyzer-deal-sync',
+      syncedFrom: 'deal-analyzer',
+      selectedPath,
+      selected_path: selectedPath,
+      agentDealContext,
+    },
   });
 }
 

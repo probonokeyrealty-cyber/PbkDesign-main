@@ -107,6 +107,13 @@ assert(
   'Lead SMS quick action must open an editable manual compose dialog with visible send behavior.'
 );
 assert(
+  leads.includes('pbk-leads-roster-list') &&
+    /aria-label="Seller roster results"/.test(leads) &&
+    /aria-label=\{`Edit \$\{sellerName\}`\}/.test(leads) &&
+    /openEditModalForLead\(lead\)/.test(leads),
+  'Leads seller roster must keep entries in a fixed scroll region and expose direct mobile edit actions.'
+);
+assert(
   leads.includes('Add canonical phone') &&
     leads.includes('pbk-new-lead-modal-backdrop') &&
     leads.includes('pbk-new-lead-modal-footer') &&
@@ -153,6 +160,22 @@ assert(
     indexCss
   ),
   'Mobile seller roster should reserve bottom safe-area padding so the fixed nav does not cover card actions.'
+);
+assert(
+  pbkCss.includes('.pbk-leads-roster-list') &&
+    /pbk-leads-pipeline-rail[\s\S]*max-height:\s*min\(78vh, 780px\)/.test(pbkCss) &&
+    /@media \(max-width: 720px\)[\s\S]*\.pbk-leads-pipeline-rail\s*{[\s\S]*max-height:\s*min\(62dvh, 560px\)/.test(
+      pbkCss
+    ),
+  'Seller roster entries should scroll inside the fixed pipeline rail on desktop and mobile.'
+);
+assert(
+  leads.includes('pbk-lead-edit-modal-backdrop') &&
+    leads.includes('pbk-lead-edit-modal') &&
+    leads.includes('pbk-lead-edit-modal-body') &&
+    leads.includes('pbk-lead-edit-modal-footer') &&
+    pbkCss.includes('.pbk-lead-edit-modal-footer'),
+  'Lead edit modal must have mobile-safe classes so agents can edit and save on phones.'
 );
 
 console.log('leads-prototype-modern-smoke: ok');

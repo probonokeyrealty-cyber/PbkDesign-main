@@ -34,6 +34,7 @@ import {
   buildReplyDraftFromMessage,
   getApprovalFriendlySummary,
   getApprovalPreview,
+  getApprovalResolutionKeys,
   getPendingApprovals,
   getSmsSegmentInfo,
   isGenericApprovalCopy,
@@ -582,6 +583,7 @@ function InboxApprovalCard({
   const contract = isContractApproval(approval);
   const approvalId = String(approval.id || '');
   const risk = getApprovalRisk(approval);
+  const approvalPending = pendingAction.startsWith(`approval:${approvalId}:`);
   return (
     <div className={`pbk-inbox-approval-card risk-${risk} ${contract ? 'contract' : ''}`.trim()}>
       <div className="approval-top">
@@ -620,7 +622,7 @@ function InboxApprovalCard({
         <button
           type="button"
           data-approval-primary={index === 0 ? 'true' : undefined}
-          disabled={pendingAction === `approval:${approvalId}:approved`}
+          disabled={approvalPending}
           onClick={() => onDecision(approval, 'approved')}
           className="pbk-btn pbk-btn-success pbk-btn-sm"
         >
@@ -632,7 +634,7 @@ function InboxApprovalCard({
         <button
           type="button"
           data-approval-secondary={index === 0 ? 'true' : undefined}
-          disabled={pendingAction === `approval:${approvalId}:rejected`}
+          disabled={approvalPending}
           onClick={() => onDecision(approval, 'rejected')}
           className="pbk-btn pbk-btn-ghost pbk-btn-sm"
         >
@@ -644,7 +646,7 @@ function InboxApprovalCard({
         {contract ? (
           <button
             type="button"
-            disabled={pendingAction === `approval:${approvalId}:needs-revision`}
+            disabled={approvalPending}
             onClick={() => onDecision(approval, 'needs-revision')}
             className="pbk-btn pbk-btn-ghost pbk-btn-sm"
           >
@@ -1295,7 +1297,10 @@ export function Inbox() {
   const approvals = useMemo(
     () =>
       [...getPendingApprovals(snapshot?.approvals)]
-        .filter((approval) => !resolvedApprovalIds.has(String(approval.id || '')))
+        .filter(
+          (approval) =>
+            !getApprovalResolutionKeys(approval).some((key) => resolvedApprovalIds.has(key))
+        )
         .sort((left, right) => approvalRiskRank(right) - approvalRiskRank(left)),
     [resolvedApprovalIds, snapshot?.approvals]
   );
@@ -1402,12 +1407,25 @@ export function Inbox() {
 
   useEffect(() => {
     const hideResolvedApproval = (event: Event) => {
-      const detail = (event as CustomEvent<{ approvalId?: string }>).detail;
+      const detail = (
+        event as CustomEvent<{
+          approvalId?: string;
+          approvalIds?: string[];
+          approvalKeys?: string[];
+          response?: { approval?: Record<string, unknown> };
+        }>
+      ).detail;
       const approvalId = String(detail?.approvalId || '').trim();
-      if (!approvalId) return;
+      const nextKeys = [
+        approvalId,
+        ...(Array.isArray(detail?.approvalIds) ? detail.approvalIds : []),
+        ...(Array.isArray(detail?.approvalKeys) ? detail.approvalKeys : []),
+        ...getApprovalResolutionKeys(detail?.response?.approval || {}),
+      ].filter(Boolean);
+      if (!nextKeys.length) return;
       setResolvedApprovalIds((current) => {
         const next = new Set(current);
-        next.add(approvalId);
+        nextKeys.forEach((key) => next.add(key));
         return next;
       });
     };
@@ -1418,7 +1436,9 @@ export function Inbox() {
   const decideApproval = async (approval: Record<string, unknown>, status: string) => {
     const approvalId = String(approval.id || '');
     if (!approvalId) return;
+    if (pendingAction.startsWith(`approval:${approvalId}:`)) return;
     const key = `approval:${approvalId}:${status}`;
+    const resolutionKeys = getApprovalResolutionKeys(approval);
     setPendingAction(key);
     setActionStatus(null);
     try {
@@ -1426,6 +1446,7 @@ export function Inbox() {
       setResolvedApprovalIds((current) => {
         const next = new Set(current);
         next.add(approvalId);
+        resolutionKeys.forEach((resolutionKey) => next.add(resolutionKey));
         return next;
       });
       await refreshInbox();

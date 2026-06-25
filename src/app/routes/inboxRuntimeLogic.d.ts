@@ -37,6 +37,7 @@ export function isGenericApprovalCopy(value?: unknown): boolean;
 export function getApprovalFriendlySummary(approval?: InboxRecord): string;
 export function getApprovalPreview(approval?: InboxRecord): string;
 export function isContractApproval(approval?: InboxRecord): boolean;
+export function getApprovalResolutionKeys(approval?: InboxRecord): string[];
 export function getPendingApprovals(approvals?: InboxRecord[]): InboxRecord[];
 export function getPendingApprovalCount(snapshot?: { approvals?: InboxRecord[] }): number;
 export function getMessageTimestamp(message?: InboxRecord): string;

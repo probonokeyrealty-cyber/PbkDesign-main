@@ -238,6 +238,61 @@ export function isContractApproval(approval = {}) {
   return /contract|docusign|docu sign/.test(label);
 }
 
+export function getApprovalResolutionKeys(approval = {}) {
+  const payload = objectValue(approval.payload);
+  const metadata = objectValue(approval.metadata);
+  const keys = [];
+  const id = text(approval.id);
+  if (id) keys.push(id, `id:${id}`);
+  const type = friendlyApprovalLabel(
+    firstText(approval.type, metadata.kind, payload.type)
+  ).toLowerCase();
+  const action = friendlyApprovalLabel(
+    firstText(
+      approval.approvalAction,
+      approval.action,
+      metadata.approvalAction,
+      metadata.action,
+      metadata.requestedTool,
+      metadata.toolName,
+      payload.action
+    )
+  ).toLowerCase();
+  const concreteIds = [
+    firstText(approval.contractId, approval.contract_id, metadata.contractId, metadata.contract_id),
+    firstText(approval.campaignId, approval.campaign_id, metadata.campaignId, metadata.campaign_id),
+    firstText(approval.commandId, approval.command_id, metadata.commandId, metadata.command_id),
+    firstText(approval.localCommandId, metadata.localCommandId, metadata.local_command_id),
+    firstText(approval.approvalId, approval.approval_id),
+  ].filter(Boolean);
+  for (const concreteId of concreteIds) {
+    keys.push(`record:${concreteId.toLowerCase()}`);
+  }
+  const target = firstText(
+    approval.leadId,
+    approval.targetId,
+    approval.leadName,
+    approval.sellerName,
+    approval.address,
+    approval.propertyAddress,
+    approval.phone,
+    approval.email,
+    payload.leadId,
+    payload.leadName,
+    payload.address,
+    objectValue(payload.seller).phone,
+    objectValue(payload.seller).email,
+    metadata.leadId,
+    metadata.address
+  ).toLowerCase();
+  const preview = getApprovalPreview(approval).toLowerCase();
+  if ((type || action) && target) keys.push(`target:${type}|${action}|${target}`);
+  if ((type || action) && preview && !isGenericApprovalCopy(preview)) {
+    keys.push(`preview:${type}|${action}|${preview.slice(0, 180)}`);
+  }
+  return [...new Set(keys.filter(Boolean))];
+}
+
 export function getPendingApprovals(approvals = []) {
   return (Array.isArray(approvals) ? approvals : []).filter(
     (approval) => String(approval?.status || 'pending').toLowerCase() === 'pending'

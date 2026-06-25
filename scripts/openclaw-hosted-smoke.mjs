@@ -193,6 +193,7 @@ async function main() {
   assert(health?.components?.bridge?.status === 'up', 'Hosted /health did not expose command-center health components.');
   assert(health?.components?.postgres?.status === 'up', `Hosted /health expected postgres component up, got ${health?.components?.postgres?.status || 'missing'}.`);
   assert(health?.components?.agentOrchestration?.status === 'up', `Hosted /health expected agent orchestration up, got ${health?.components?.agentOrchestration?.status || 'missing'}.`);
+  assert(health?.components?.redis?.status === 'up', `Hosted /health expected Redis shared state up, got ${health?.components?.redis?.status || 'missing'}.`);
   assert(Number(health?.componentSummary?.total || 0) >= 10, 'Hosted /health component summary is incomplete.');
 
   const unauthorizedState = await request('/state');
@@ -212,6 +213,15 @@ async function main() {
   assert(agentOrchestration?.orchestration?.supervisor?.id === 'ava', 'Hosted agent orchestration did not report Ava as supervisor.');
   assert((agentOrchestration?.orchestration?.workers || []).some((agent) => agent.id === 'rex'), 'Hosted agent orchestration did not include Rex.');
   assert((agentOrchestration?.orchestration?.workers || []).some((agent) => agent.id === 'hermes'), 'Hosted agent orchestration did not include Hermes.');
+
+  const { response: eventBusResponse, parsed: eventBus } = await requestJson('/api/events/bus/status', {
+    headers: authHeaders(),
+  });
+  assert(eventBusResponse.ok, `Hosted event bus endpoint returned ${eventBusResponse.status}.`);
+  assert(eventBus?.ok === true, 'Hosted event bus did not report ok.');
+  assert(eventBus?.configured === true, 'Hosted event bus is not configured.');
+  assert(eventBus?.mode === 'redis', `Hosted event bus expected Redis mode, got ${eventBus?.mode || 'missing'}.`);
+  assert(eventBus?.connected === true, 'Hosted event bus is not connected to Redis.');
 
   const { response: invokeResponse, parsed: invoke } = await requestJsonWithRetry(
     '/invoke',
@@ -366,6 +376,12 @@ async function main() {
         hosted: health.runtime.hosted,
         agentOrchestration: agentOrchestration?.orchestration?.result || '',
         agentWorkers: (agentOrchestration?.orchestration?.workers || []).map((agent) => agent.id),
+        eventBus: {
+          mode: eventBus.mode,
+          connected: eventBus.connected,
+          pending: eventBus.pending,
+          backlog: eventBus.backlog,
+        },
         approvals: Array.isArray(state?.approvals) ? state.approvals.filter((approval) => !isDemoRuntimeApproval(approval)).length : 0,
         rawApprovals: Array.isArray(state?.approvals) ? state.approvals.length : 0,
         pdfBytes: pdfBuffer.length,

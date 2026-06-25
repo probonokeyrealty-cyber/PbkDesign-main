@@ -48,7 +48,7 @@ import {
 } from '../utils/runtimeBridge';
 import { showUiToast } from '../utils/uiFeedback';
 
-const TIMELINE_PAGE_SIZE = 80;
+const TIMELINE_PAGE_SIZE = 10;
 const PATH_TEMPLATE_NAMES: Record<string, string> = {
   cash: 'PBK_Cash_Offer_v1',
   rbp: 'PBK_RBP_v1',

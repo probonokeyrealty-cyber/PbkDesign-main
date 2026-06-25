@@ -12,6 +12,7 @@ const packageJson = read('package.json');
 const indexHtml = read('index.html');
 const runtimeBridge = read('src/app/utils/runtimeBridge.ts');
 const openclawServer = read('scripts/openclaw-local-server.mjs');
+const callModeTab = read('src/app/components/CallModeTab.tsx');
 
 const sendDealToAgentMatch = runtimeBridge.match(
   /export async function sendDealToAgent[\s\S]*?\n}\n\nexport type ConversationListResponse/
@@ -64,6 +65,22 @@ assert(
 assert(
   /patchLeadRequest\(leadId,\s*{/.test(sendDealToAgent),
   'Analyzer lead sync must PATCH /api/leads/:id through patchLeadRequest.'
+);
+
+assert(
+  /handleAddToCrm[\s\S]*patchLeadRequest\(leadId,\s*{/.test(callModeTab),
+  'Call Mode Add to CRM must use PATCH /api/leads/:id, not approval-gated updateCRM.'
+);
+
+assert(
+  !/handleAddToCrm[\s\S]*invokeRuntimeTool[^(]*\('updateCRM'/.test(callModeTab),
+  'Call Mode Add to CRM must not invoke updateCRM because it creates Slack approval noise.'
+);
+
+assert(
+  /source:\s*'deal_view_call_mode_manual'/.test(callModeTab) &&
+    /actor:\s*'Call Mode'/.test(callModeTab),
+  'Call Mode CRM sync must identify itself as a manual lead-profile edit.'
 );
 
 assert(

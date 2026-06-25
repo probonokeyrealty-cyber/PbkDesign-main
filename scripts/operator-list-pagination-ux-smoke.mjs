@@ -14,7 +14,9 @@ const packageJson = read('package.json');
 const pager = read('src/app/components/CompactPager.tsx');
 const commandCenter = read('src/app/routes/CommandCenter.tsx');
 const inbox = read('src/app/routes/Inbox.tsx');
+const unifiedInbox = read('src/app/routes/UnifiedInbox.tsx');
 const leads = read('src/app/routes/Leads.tsx');
+const leadPortal = read('src/app/routes/LeadPortal.tsx');
 const skillStudio = read('src/app/routes/SkillStudio.tsx');
 const callFloor = read('src/app/components/CallFloorPanel.tsx');
 const indexCss = read('src/styles/index.css');
@@ -85,10 +87,24 @@ for (const friendlyCopy of [
 assert(
   leads.includes('leadPage') &&
     leads.includes('getPageSlice(filteredLeads, leadPage, OPERATOR_LIST_PAGE_SIZE)') &&
-    leads.includes('label="Seller roster pages"'),
-  'Leads must page the seller roster by ten.'
+    leads.includes('label="Seller roster pages"') &&
+    leads.includes('leadActivityPage') &&
+    leads.includes('getPageSlice(leadActivity, leadActivityPage, OPERATOR_LIST_PAGE_SIZE)') &&
+    leads.includes('label="Lead activity pages"'),
+  'Leads must page the seller roster and lead activity by ten.'
 );
 assert(!leads.includes('displayLimit') && !leads.includes('Load 50 more'), 'Leads must not use the old growing list limit.');
+
+assert(
+  /const THREAD_PAGE_SIZE = 10;/.test(unifiedInbox) &&
+    /const TIMELINE_PAGE_SIZE = 10;/.test(unifiedInbox),
+  'Unified Inbox conversations and timelines must request ten records per page.'
+);
+
+assert(
+  /const TIMELINE_PAGE_SIZE = 10;/.test(leadPortal),
+  'Lead Portal timeline must request ten records per page.'
+);
 
 assert(
   skillStudio.includes('skillPage') &&

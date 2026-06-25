@@ -1107,6 +1107,7 @@ export function Leads() {
   const [reloading, setReloading] = useState(false);
   const [contractStatus, setContractStatus] = useState('');
   const [leadPage, setLeadPage] = useState(0);
+  const [leadActivityPage, setLeadActivityPage] = useState(0);
   const [leadQuery, setLeadQuery] = useState(() => searchParams.get('search') || '');
   const [leadFilter, setLeadFilter] = useState<'all' | 'hot' | 'callable' | 'contract'>('all');
   const reloadTimerRef = useRef<number | null>(null);
@@ -1260,24 +1261,41 @@ export function Leads() {
   const handleRefreshLeads = useCallback(() => {
     void Promise.all([refresh().catch(() => null), loadLeadRoster()]);
   }, [loadLeadRoster, refresh]);
-  const leadActivity = Array.isArray(activeLead?.activity)
-    ? (activeLead.activity as BridgeRecord[])
-    : Array.isArray(snapshot?.activity)
-      ? (snapshot.activity as BridgeRecord[]).filter((item) => {
-          const haystack = [item.leadId, item.leadName, item.target, item.text]
-            .filter(Boolean)
-            .join(' ')
-            .toLowerCase();
-          return (
-            haystack.includes(activeLeadId.toLowerCase()) ||
-            haystack.includes(
-              getLeadAddress(activeLead || {})
-                .toLowerCase()
-                .split(',')[0]
-            )
-          );
-        })
-      : [];
+  const leadActivity = useMemo(
+    () =>
+      Array.isArray(activeLead?.activity)
+        ? (activeLead.activity as BridgeRecord[])
+        : Array.isArray(snapshot?.activity)
+          ? (snapshot.activity as BridgeRecord[]).filter((item) => {
+              const haystack = [item.leadId, item.leadName, item.target, item.text]
+                .filter(Boolean)
+                .join(' ')
+                .toLowerCase();
+              return (
+                haystack.includes(activeLeadId.toLowerCase()) ||
+                haystack.includes(
+                  getLeadAddress(activeLead || {})
+                    .toLowerCase()
+                    .split(',')[0]
+                )
+              );
+            })
+          : [],
+    [activeLead, activeLeadId, snapshot?.activity]
+  );
+  const visibleLeadActivity = useMemo(
+    () => getPageSlice(leadActivity, leadActivityPage, OPERATOR_LIST_PAGE_SIZE),
+    [leadActivity, leadActivityPage]
+  );
+
+  useEffect(() => {
+    setLeadActivityPage(0);
+  }, [activeLeadId]);
+
+  useEffect(() => {
+    const pageCount = Math.max(1, Math.ceil(leadActivity.length / OPERATOR_LIST_PAGE_SIZE));
+    setLeadActivityPage((current) => Math.min(current, pageCount - 1));
+  }, [leadActivity.length]);
 
   useEffect(() => {
     if (!leads.length) return;
@@ -2335,9 +2353,9 @@ export function Leads() {
                         </div>
                       </div>
                       <div className="mt-3 space-y-2">
-                        {leadActivity.slice(0, 8).map((item, index) => (
+                        {visibleLeadActivity.map((item, index) => (
                           <div
-                            key={`${text(item.id, 'activity')}-${index}`}
+                            key={`${text(item.id, 'activity')}-${leadActivityPage}-${index}`}
                             className="rounded-xl border border-slate-800 bg-slate-950/70 px-3 py-3"
                           >
                             <div className="flex flex-wrap items-center justify-between gap-2">
@@ -2361,6 +2379,16 @@ export function Leads() {
                             No lead-specific activity yet. PDF and contract actions will appear
                             after they are captured.
                           </div>
+                        )}
+                        {leadActivity.length > OPERATOR_LIST_PAGE_SIZE && (
+                          <CompactPager
+                            page={leadActivityPage}
+                            total={leadActivity.length}
+                            label="Lead activity pages"
+                            itemLabel="activity items"
+                            onPageChange={setLeadActivityPage}
+                            className="mt-3"
+                          />
                         )}
                       </div>
                     </div>

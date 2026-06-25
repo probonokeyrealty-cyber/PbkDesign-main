@@ -7,7 +7,7 @@ import { InvestorYield } from './InvestorYield';
 import { getLiveInputPath, getPathLabel, getPathOptions } from '../utils/pbk';
 import type { AgentDealContext } from '../utils/agentDealContext';
 import {
-  invokeRuntimeTool,
+  patchLeadRequest,
   saveLeadNoteRequest,
   scheduleAppointmentRequest,
   sendOfferEmailRequest,
@@ -261,27 +261,26 @@ export function CallModeTab({
     setPendingPostCallAction('crm');
     setPostCallStatus('');
     try {
-      const result = await invokeRuntimeTool<Record<string, unknown>>('updateCRM', {
-        target: deal.address || getDealLeadName(deal),
-        leadId,
-        leadName: getDealLeadName(deal),
+      const result = await patchLeadRequest(leadId, {
+        name: getDealLeadName(deal),
         address: deal.address,
         email: deal.sellerEmail || '',
         phone: normalizePhone(deal.sellerPhone || ''),
-        selectedPath: activePath,
+        selected_path: activePath,
         selectedPathLabel: getPathLabel(activePath),
-        motivationScore: deal.motivationScore || 0,
+        motivation_score: deal.motivationScore || 0,
         notes: callNotes.trim() || deal.notes || '',
+        summary: callNotes.trim() || deal.notes || '',
         message: `Call Mode synced ${deal.address || getDealLeadName(deal)} to CRM after ${getPathLabel(activePath)} call review.`,
-        deal,
-        source: 'deal-view-call-mode',
+        source: 'deal_view_call_mode_manual',
+        actor: 'Call Mode',
       });
       const status = String(result.result || result.status || '').replace(/_/g, ' ') || 'submitted';
-      setPostCallStatus(`CRM update ${status}.`);
+      setPostCallStatus(`Lead profile ${status}.`);
       showUiToast({
         tone: 'success',
-        title: 'CRM update submitted',
-        desc: 'The bridge accepted the CRM sync request.',
+        title: 'Lead profile updated',
+        desc: 'Saved quietly to the lead profile. No approval or Slack review was needed.',
       });
     } catch (error) {
       showUiToast({

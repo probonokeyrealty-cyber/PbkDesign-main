@@ -29,8 +29,8 @@ assert(
 );
 
 assert(
-  /detail:\s*{[\s\S]*approvalId[\s\S]*status[\s\S]*response/.test(runtimeBridge),
-  'The approval decision event must include approvalId, status, and bridge response detail.'
+  /detail:\s*{[\s\S]*approvalId[\s\S]*approvalIds:\s*\[approvalId\][\s\S]*status[\s\S]*response/.test(runtimeBridge),
+  'The approval decision event must include approvalId, approvalIds, status, and bridge response detail.'
 );
 
 assert(
@@ -53,6 +53,34 @@ assert(
 assert(
   /getPendingApprovals\(approvals = \[\]\)[\s\S]*status[\s\S]*pending/.test(inboxRuntimeLogic),
   'Shared pending approval helper must hide approved, rejected, cancelled, and needs-revision decisions.'
+);
+
+assert(
+  /export function getApprovalResolutionKeys\(approval = {}\)/.test(inboxRuntimeLogic) &&
+    /preview:/.test(inboxRuntimeLogic) &&
+    /target:/.test(inboxRuntimeLogic),
+  'Shared approval logic must expose duplicate-aware resolution keys for related approval cards.'
+);
+
+assert(
+  commandCenter.includes('getApprovalResolutionKeys') &&
+    commandCenter.includes('approvalKeys') &&
+    commandCenter.includes('resolutionKeys.forEach'),
+  'Command Center must clear related approval keys after any approval decision.'
+);
+
+assert(
+  inbox.includes('getApprovalResolutionKeys') &&
+    inbox.includes('pendingAction.startsWith(`approval:${approvalId}:`)') &&
+    inbox.includes('resolutionKeys.forEach'),
+  'Inbox must clear related approval keys and lock the whole approval while a decision is in flight.'
+);
+
+assert(
+  avaChat.includes('getApprovalResolutionKeys') &&
+    avaChat.includes('approvalKeys') &&
+    avaChat.includes('nextKeys.forEach'),
+  'Ava Chat must listen for related approval keys when approvals are resolved elsewhere.'
 );
 
 [

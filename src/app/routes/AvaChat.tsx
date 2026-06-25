@@ -44,6 +44,7 @@ import {
   type LocalCommandRecord,
 } from '../utils/runtimeBridge';
 import { showUiToast } from '../utils/uiFeedback';
+import { getApprovalResolutionKeys } from './inboxRuntimeLogic.js';
 
 type SpeechRecognitionResultEvent = Event & {
   results: SpeechRecognitionResultList;
@@ -716,6 +717,7 @@ export function AvaChat() {
         const approvalId = String(approval.id || approvalRecord.approvalId || '');
         return (
           String(approval.status || '').toLowerCase() === 'pending' &&
+          !getApprovalResolutionKeys(approvalRecord).some((key) => resolvedApprovalIds.has(key)) &&
           !resolvedApprovalIds.has(approvalId) &&
           (String(approval.type || '').toLowerCase() === 'local_command' ||
             String(approval.approvalAction || '').toLowerCase() === 'executelocalcommand')
@@ -871,13 +873,25 @@ export function AvaChat() {
   useEffect(() => {
     if (typeof window === 'undefined') return undefined;
     const reloadCommandsAfterApprovalDecision = (event: Event) => {
-      const approvalId = String(
-        (event as CustomEvent<{ approvalId?: string }>).detail?.approvalId || ''
-      );
-      if (approvalId) {
+      const detail = (
+        event as CustomEvent<{
+          approvalId?: string;
+          approvalIds?: string[];
+          approvalKeys?: string[];
+          response?: { approval?: Record<string, unknown> };
+        }>
+      ).detail;
+      const approvalId = String(detail?.approvalId || '');
+      const nextKeys = [
+        approvalId,
+        ...(Array.isArray(detail?.approvalIds) ? detail.approvalIds : []),
+        ...(Array.isArray(detail?.approvalKeys) ? detail.approvalKeys : []),
+        ...getApprovalResolutionKeys(detail?.response?.approval || {}),
+      ].filter(Boolean);
+      if (nextKeys.length) {
         setResolvedApprovalIds((current) => {
           const next = new Set(current);
-          next.add(approvalId);
+          nextKeys.forEach((key) => next.add(key));
           return next;
         });
       }

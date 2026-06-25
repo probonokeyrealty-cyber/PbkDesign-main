@@ -39,8 +39,8 @@ import {
   normalizeConversationThreads,
 } from './conversationRuntimeLogic.js';
 
-const THREAD_PAGE_SIZE = 40;
-const TIMELINE_PAGE_SIZE = 80;
+const THREAD_PAGE_SIZE = 10;
+const TIMELINE_PAGE_SIZE = 10;
 const SELECTED_POLL_MS = 18_000;
 
 function record(value: unknown) {

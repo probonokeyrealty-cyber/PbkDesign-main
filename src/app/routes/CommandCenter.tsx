@@ -28,7 +28,11 @@ import {
   updateApprovalDecision,
 } from '../utils/runtimeBridge';
 import { showUiToast } from '../utils/uiFeedback';
-import { getApprovalPreview, getPendingApprovals } from './inboxRuntimeLogic.js';
+import {
+  getApprovalPreview,
+  getApprovalResolutionKeys,
+  getPendingApprovals,
+} from './inboxRuntimeLogic.js';
 
 function formatRelative(value?: string) {
   if (!value) return 'just now';
@@ -184,6 +188,8 @@ type ApprovalDecisionDraft = {
   leadName: string;
   address: string;
   actionLabel: string;
+  preview: string;
+  resolutionKeys: string[];
 };
 
 type ActionStatus = {
@@ -1334,7 +1340,7 @@ export function CommandCenter() {
   const pendingApprovals = useMemo(
     () =>
       getPendingApprovals(approvals).filter(
-        (item) => !resolvedApprovalIds.has(String(item.id || ''))
+        (item) => !getApprovalResolutionKeys(item).some((key) => resolvedApprovalIds.has(key))
       ),
     [approvals, resolvedApprovalIds]
   );
@@ -1459,12 +1465,25 @@ export function CommandCenter() {
 
   useEffect(() => {
     const hideResolvedApproval = (event: Event) => {
-      const detail = (event as CustomEvent<{ approvalId?: string }>).detail;
+      const detail = (
+        event as CustomEvent<{
+          approvalId?: string;
+          approvalIds?: string[];
+          approvalKeys?: string[];
+          response?: { approval?: Record<string, unknown> };
+        }>
+      ).detail;
       const approvalId = String(detail?.approvalId || '').trim();
-      if (!approvalId) return;
+      const nextKeys = [
+        approvalId,
+        ...(Array.isArray(detail?.approvalIds) ? detail.approvalIds : []),
+        ...(Array.isArray(detail?.approvalKeys) ? detail.approvalKeys : []),
+        ...getApprovalResolutionKeys(detail?.response?.approval || {}),
+      ].filter(Boolean);
+      if (!nextKeys.length) return;
       setResolvedApprovalIds((current) => {
         const next = new Set(current);
-        next.add(approvalId);
+        nextKeys.forEach((key) => next.add(key));
         return next;
       });
     };
@@ -1905,6 +1924,8 @@ export function CommandCenter() {
       leadName: friendlyRuntimeLabel(approval.leadName || approval.address || 'PBK approval'),
       address: String(approval.address || 'No address recorded'),
       actionLabel,
+      preview: getApprovalPreview(approval),
+      resolutionKeys: getApprovalResolutionKeys(approval),
     });
   };
 
@@ -1921,6 +1942,7 @@ export function CommandCenter() {
         setResolvedApprovalIds((current) => {
           const next = new Set(current);
           next.add(draft.approvalId);
+          draft.resolutionKeys.forEach((key) => next.add(key));
           return next;
         });
       }
@@ -2616,6 +2638,9 @@ export function CommandCenter() {
               </p>
               <div className="mt-4 rounded-xl border border-slate-800 bg-slate-900 px-3 py-3 text-sm text-slate-300">
                 {approvalDecisionDraft.address}
+              </div>
+              <div className="mt-3 rounded-xl border border-amber-300/30 bg-amber-300/10 px-3 py-3 text-sm leading-relaxed text-amber-50">
+                {approvalDecisionDraft.preview}
               </div>
               <div className="mt-5 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
                 <button

@@ -2017,7 +2017,7 @@ export async function updateApprovalDecision(approvalId: string, status: string)
   if (typeof window !== 'undefined') {
     window.dispatchEvent(
       new CustomEvent('pbk:approval-decision', {
-        detail: { approvalId, status, response: result },
+        detail: { approvalId, approvalIds: [approvalId], status, response: result },
       })
     );
   }

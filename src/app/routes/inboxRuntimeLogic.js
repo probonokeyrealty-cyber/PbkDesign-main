@@ -30,6 +30,20 @@ function friendlyApprovalLabel(value) {
     .trim();
 }
 
+export function isGenericApprovalCopy(value) {
+  const raw = text(value);
+  if (!raw) return false;
+  const normalized = raw.replace(/\s+/g, ' ').trim().toLowerCase();
+  return [
+    'administrative action queued for review.',
+    'administrative action queued for review',
+    'ava or rex needs an operator decision before continuing.',
+    'ava or rex needs an operator decision before continuing',
+    'actions ava or rex cannot complete without your decision.',
+    'actions ava or rex cannot complete without your decision',
+  ].includes(normalized);
+}
+
 function getApprovalFallbackSummary(approval, payload, metadata, contract) {
   const action = friendlyApprovalLabel(
     firstText(
@@ -65,6 +79,13 @@ function getApprovalFallbackSummary(approval, payload, metadata, contract) {
   if (channel) parts.push(`Channel: ${channel}`);
   if (parts.length) return parts.join(' · ');
   return 'Ava has a workspace action ready for review.';
+}
+
+export function getApprovalFriendlySummary(approval = {}) {
+  const payload = objectValue(approval.payload);
+  const metadata = objectValue(approval.metadata);
+  const contract = objectValue(approval.contract);
+  return getApprovalFallbackSummary(approval, payload, metadata, contract);
 }
 
 function gsmSeptetLength(message = '') {
@@ -199,7 +220,9 @@ export function getApprovalPreview(approval = {}) {
     contract.summary,
     approval.notes,
   ];
-  const preview = candidates.map((candidate) => text(candidate)).find(Boolean);
+  const preview = candidates
+    .map((candidate) => text(candidate))
+    .find((candidate) => candidate && !isGenericApprovalCopy(candidate));
   if (preview) return preview;
   if (Object.keys(payload).length || Object.keys(metadata).length || Object.keys(contract).length) {
     return getApprovalFallbackSummary(approval, payload, metadata, contract);

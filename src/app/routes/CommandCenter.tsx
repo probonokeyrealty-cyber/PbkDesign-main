@@ -694,7 +694,7 @@ function normalizeIntelligenceStreamItem(
   return {
     id: item.id || `intelligence-${index}`,
     actor: item.actor || item.title || 'PBK Agent',
-    text: item.text || item.title || 'Agent intelligence event',
+    text: friendlyRuntimeText(item.text || item.title || 'Agent intelligence event'),
     category: item.category || item.kind || 'INTELLIGENCE',
     source: item.source || 'GET /api/intelligence/stream',
     status: item.status || '',
@@ -808,7 +808,7 @@ function DataSourceCaption({
   return (
     <details className="pbk-tech-details">
       <summary>Technical details</summary>
-      <PbkDataSource endpoint={endpoint} status={status} note={note} />
+      <PbkDataSource endpoint={endpoint} status={status} note={friendlyRuntimeText(note)} />
     </details>
   );
 }
@@ -828,6 +828,15 @@ function friendlyRuntimeLabel(value: unknown, fallback = 'Ready') {
     lead_nurture: 'Lead nurture',
     'rex-decision': 'Rex decision',
     rex_decision: 'Rex decision',
+    tavily: 'Web research',
+    'tavily-live': 'Live web research',
+    tavily_live: 'Live web research',
+    'tavily live': 'Live web research',
+    'pbk-web-search-spikes': 'Web research signals',
+    pbk_web_search_spikes: 'Web research signals',
+    'fallback-active': 'Backup path active',
+    fallback_active: 'Backup path active',
+    'fallback active': 'Backup path active',
   };
   const normalized = raw.toLowerCase();
   if (known[normalized]) return known[normalized];
@@ -836,6 +845,33 @@ function friendlyRuntimeLabel(value: unknown, fallback = 'Ready') {
     .replace(/^pbk[_-]/i, '')
     .replace(/[_-]+/g, ' ')
     .replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function friendlyRuntimeText(value: unknown, fallback = '') {
+  const raw = String(value || '').trim();
+  if (!raw) return fallback;
+  const normalized = raw.toLowerCase();
+  if (
+    [
+      'tavily',
+      'tavily-live',
+      'tavily_live',
+      'tavily live',
+      'pbk-web-search-spikes',
+      'pbk_web_search_spikes',
+      'fallback-active',
+      'fallback_active',
+      'fallback active',
+    ].includes(normalized)
+  ) {
+    return friendlyRuntimeLabel(raw, fallback);
+  }
+  return raw
+    .replace(/\bTavily live search\b/gi, 'live web research')
+    .replace(/\bTavily live\b/gi, 'live web research')
+    .replace(/\bTavily\b/gi, 'web research')
+    .replace(/\bpbk-web-search-spikes\b/gi, 'web research signals')
+    .replace(/\bFallback active\b/gi, 'Backup path active');
 }
 
 function SourceConfidenceRail({ items, source }: { items: SystemSourceLabel[]; source: string }) {
@@ -1278,7 +1314,16 @@ export function CommandCenter() {
     [bridgeLeadRoster, snapshotLeadImports]
   );
   const fallbackActivityItems = useMemo(
-    () => (Array.isArray(snapshot?.activity) ? snapshot.activity : []),
+    () =>
+      (Array.isArray(snapshot?.activity) ? snapshot.activity : []).map((item) => {
+        const record = item as Record<string, unknown>;
+        return {
+          ...record,
+          text: friendlyRuntimeText(record.text || record.body || record.title || 'Runtime event'),
+          body: friendlyRuntimeText(record.body || record.text || record.title || 'Runtime event'),
+          title: friendlyRuntimeText(record.title),
+        };
+      }),
     [snapshot?.activity]
   );
   const activityItems = intelligenceStreamItems || fallbackActivityItems;
@@ -1332,10 +1377,17 @@ export function CommandCenter() {
       loading,
     ]
   );
-  const displayedSourceConfidenceItems =
+  const displayedSourceConfidenceItems = (
     sourceConfidenceItems && sourceConfidenceItems.length
       ? sourceConfidenceItems
-      : fallbackSourceConfidenceItems;
+      : fallbackSourceConfidenceItems
+  ).map((item) => ({
+    ...item,
+    source: friendlyRuntimeText(item.source || 'bridge'),
+    fallbackReason: friendlyRuntimeText(item.fallbackReason),
+    degradedReason: friendlyRuntimeText(item.degradedReason),
+    note: friendlyRuntimeText(item.note),
+  }));
   const isWidgetVisible = (id: CommandWidgetId) => widgetPrefs[id] !== false;
   const runtimeProviders = (snapshot?.status?.providers || {}) as Record<
     string,

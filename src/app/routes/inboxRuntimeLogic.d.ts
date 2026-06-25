@@ -33,6 +33,8 @@ export function getSmsSegmentInfo(message?: string): SmsSegmentInfo;
 export function normalizeComposeLead(record?: InboxRecord, index?: number): ComposeLeadMetric;
 export function normalizeComposeLeads(records?: InboxRecord[]): ComposeLeadMetric[];
 export function buildComposeRequest(draft?: InboxRecord, lead?: InboxRecord): ComposeRequest;
+export function isGenericApprovalCopy(value?: unknown): boolean;
+export function getApprovalFriendlySummary(approval?: InboxRecord): string;
 export function getApprovalPreview(approval?: InboxRecord): string;
 export function isContractApproval(approval?: InboxRecord): boolean;
 export function getPendingApprovals(approvals?: InboxRecord[]): InboxRecord[];

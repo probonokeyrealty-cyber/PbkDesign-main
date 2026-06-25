@@ -32,9 +32,11 @@ import { showUiToast } from '../utils/uiFeedback';
 import {
   buildComposeRequest,
   buildReplyDraftFromMessage,
+  getApprovalFriendlySummary,
   getApprovalPreview,
   getPendingApprovals,
   getSmsSegmentInfo,
+  isGenericApprovalCopy,
   isContractApproval,
   isUnreadMessage,
   normalizeComposeLeads,
@@ -268,7 +270,7 @@ function getApprovalReason(approval: Record<string, unknown>) {
   const explicit = String(
     metadata.reason || metadata.why || approval.reason || approval.description || ''
   ).trim();
-  if (explicit) return explicit;
+  if (explicit && !isGenericApprovalCopy(explicit)) return explicit;
   if (isLocalCommandApproval(approval)) {
     const action = String(metadata.action || approval.action || '').toLowerCase();
     if (action.includes('screenshot')) return 'Capture the current desktop state for Ava.';
@@ -281,7 +283,9 @@ function getApprovalReason(approval: Record<string, unknown>) {
       metadata.requestedBy || approval.actor || 'Ava'
     )}.`;
   }
-  return String(approval.notes || 'Ava or Rex needs an operator decision before continuing.');
+  const notes = String(approval.notes || '').trim();
+  if (notes && !isGenericApprovalCopy(notes)) return notes;
+  return getApprovalFriendlySummary(approval);
 }
 
 function isValidRecipientEmail(value: string) {

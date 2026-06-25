@@ -1,6 +1,6 @@
 import { chromium } from '@playwright/test';
 import { spawn } from 'node:child_process';
-import { mkdir, rm } from 'node:fs/promises';
+import { mkdir, rm, writeFile } from 'node:fs/promises';
 import net from 'node:net';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -178,6 +178,13 @@ async function collectRouteState(page, route) {
       (el.getAttribute('aria-label') || '').includes('Send to Ava')
     );
     const sendRect = send?.getBoundingClientRect();
+    const oldCopyVisible = config.oldCopy.filter((phrase) => text.includes(phrase));
+    const oldCopyContext = Object.fromEntries(
+      oldCopyVisible.map((phrase) => {
+        const index = text.indexOf(phrase);
+        return [phrase, text.slice(Math.max(0, index - 500), index + 700)];
+      })
+    );
     return {
       path: location.pathname,
       title: document.title,
@@ -187,7 +194,8 @@ async function collectRouteState(page, route) {
           text
         ),
       overflowX: document.documentElement.scrollWidth - document.documentElement.clientWidth,
-      oldCopyVisible: config.oldCopy.filter((phrase) => text.includes(phrase)),
+      oldCopyVisible,
+      oldCopyContext,
       pagers,
       avaSend: send
         ? {
@@ -240,6 +248,15 @@ async function runViewport(browser, baseUrl, viewport) {
     assert(state.bodyLength > 200, `${viewport.name} ${route.path} rendered too little content.`);
     assert(!state.frameworkOverlay, `${viewport.name} ${route.path} appears to show a framework overlay.`);
     assert(state.overflowX <= 1, `${viewport.name} ${route.path} has horizontal overflow ${state.overflowX}px.`);
+    if (state.oldCopyVisible.length > 0) {
+      await writeFile(
+        path.join(
+          artifactRoot,
+          `${viewport.name}-${route.path.replace(/^\//, '').replace(/\//g, '-')}-old-copy.json`
+        ),
+        JSON.stringify(state.oldCopyContext, null, 2)
+      );
+    }
     assert(
       state.oldCopyVisible.length === 0,
       `${viewport.name} ${route.path} still shows old copy: ${state.oldCopyVisible.join(', ')}`

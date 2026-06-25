@@ -114,6 +114,25 @@ describe('Inbox runtime logic', () => {
       })
     ).toBe('DocuSign contract packet terms');
   });
+
+  test('replaces generic backend approval copy with useful seller context', async () => {
+    const helper = await loadHelper();
+    expect(helper).not.toBeNull();
+
+    expect(helper.isGenericApprovalCopy('Administrative action queued for review.')).toBe(true);
+    const preview = helper.getApprovalPreview({
+      type: 'provider-action',
+      approvalAction: 'updateCRM',
+      message: 'Administrative action queued for review.',
+      payload: {
+        leadName: 'Tim',
+        propertyAddress: '9008B Bong Loop, Moses Lake, WA 98837',
+      },
+    });
+    expect(preview).not.toContain('Administrative action queued');
+    expect(preview).toContain('Seller: Tim');
+    expect(preview).toContain('Property: 9008B Bong Loop, Moses Lake, WA 98837');
+  });
 });
 
 describe('Inbox bridge wiring', () => {

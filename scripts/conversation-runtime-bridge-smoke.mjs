@@ -154,8 +154,9 @@ assert(
   'Protected local development requests must be allowed through the authenticated Vite proxy.'
 );
 assert(
-  /PBK bridge request timed out after 15 seconds\./.test(source),
-  'Bridge timeouts must surface an operator-readable error instead of a raw AbortSignal message.'
+  /BRIDGE_REQUEST_TIMEOUT_MS/.test(source) &&
+    /PBK bridge request timed out after \$\{Math\.round\(BRIDGE_REQUEST_TIMEOUT_MS \/ 1000\)\} seconds\./.test(source),
+  'Bridge timeouts must surface a configurable operator-readable error instead of a raw AbortSignal message.'
 );
 assert(
   /\['activity', activity\]/.test(helperFunctionSource('fetchConversationsRequest')),

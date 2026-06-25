@@ -140,7 +140,7 @@ assert(
   'Ava Chat must render screenshots and structured sidecar results inline.'
 );
 assert(
-  /showUiToast\(\{[\s\S]*title: result\.result[\s\S]*setSubmitting\(false\);[\s\S]*Promise\.allSettled/.test(
+  /showUiToast\(\{[\s\S]*title: result\.result[\s\S]*releaseSubmit\(\);[\s\S]*Promise\.allSettled/.test(
     avaChat
   ),
   'A successful queue response must be acknowledged before non-critical refresh work.'
@@ -157,6 +157,18 @@ assert(
   avaChat.includes('pbk-ava-chat-submit-row') &&
     avaChat.includes('pbk-ava-chat-submit-actions'),
   'Ava Chat composer must expose stable mobile layout hooks.'
+);
+assert(
+  avaChat.includes('submitInFlightRef') &&
+    /submitInFlightRef\.current\s*=\s*true/.test(avaChat) &&
+    /submitInFlightRef\.current\s*=\s*false/.test(avaChat),
+  'Ava Chat submission must use a synchronous in-flight guard so fast taps cannot double-send.'
+);
+assert(
+  /nativeEvent\.isComposing/.test(avaChat) &&
+    /keyCode\?\:\s*number/.test(avaChat) &&
+    /event\.key === 'Enter' && !event\.shiftKey && !composing/.test(avaChat),
+  'Ava Chat Enter-to-send must ignore IME composition events.'
 );
 assert(
   /\.pbk-ava-chat-submit-row[\s\S]*grid-template-columns:\s*44px minmax\(0,\s*1fr\)/.test(

@@ -80,8 +80,22 @@ export function createSkillRuntimeSnapshotCache({
     };
     snapshot.checksum = checksumSnapshotPayload(snapshot);
     const redisPayload = structuredClone(snapshot);
-    await redisSet?.(redisKey, redisPayload);
-    await writeText?.(filePath, JSON.stringify(snapshot, null, 2));
+    const [redisResult, fileResult] = await Promise.allSettled([
+      redisSet ? redisSet(redisKey, redisPayload) : Promise.resolve(null),
+      writeText ? writeText(filePath, JSON.stringify(snapshot, null, 2)) : Promise.resolve(null),
+    ]);
+    const warnings = [];
+    if (redisResult.status === 'rejected') {
+      warnings.push(`redis:${redisResult.reason?.message || 'write_failed'}`);
+    }
+    if (fileResult.status === 'rejected') {
+      warnings.push(`file:${fileResult.reason?.message || 'write_failed'}`);
+    }
+    snapshot.persistence = {
+      redis: redisResult.status === 'fulfilled',
+      file: fileResult.status === 'fulfilled',
+      warnings,
+    };
     return snapshot;
   }
 

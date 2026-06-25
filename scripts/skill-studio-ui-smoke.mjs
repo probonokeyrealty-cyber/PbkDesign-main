@@ -177,11 +177,13 @@ assert(
   'Skill candidate mobile sheet must sit above shell nav and keep the governed-skill button tappable.'
 );
 assert(
-  route.includes("selected.lifecycleState === 'ready_for_approval'") &&
+  route.includes('selectedIsReviewable') &&
+    route.includes("'candidate', 'needs_review', 'ready_for_approval'") &&
+    route.includes('Review and approve this skill') &&
     route.includes('confirmingPrimaryAction') &&
     route.includes('Confirm') &&
     !route.includes("if (compactViewport) setSelectedId('')"),
-  'Skill Studio must only approve ready-for-approval versions, confirm high-impact actions, and preserve selected skills across mobile viewport changes.'
+  'Skill Studio must let candidates enter the confirmed review path without skipping approval or losing selected skills on mobile.'
 );
 
 console.log('skill-studio-ui-smoke: ok');

@@ -179,34 +179,59 @@ async function readJsonBody(request: Request) {
 }
 
 async function fetchBridge(bridgeUrl: string, publicKey: string, requestId: string, body: Record<string, unknown>) {
-  const timeoutMs = getNumberEnv('PBK_PUBLIC_AVA_BRIDGE_TIMEOUT_MS', 10_000, 1000, 30_000);
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    const response = await fetch(`${bridgeUrl.replace(/\/+$/g, '')}/api/public/ava-chat`, {
-      method: 'POST',
-      signal: controller.signal,
-      headers: {
-        'Content-Type': 'application/json',
-        'X-Request-ID': requestId,
-        'X-Public-Ava-Key': publicKey,
-      },
-      body: JSON.stringify({
-        ...body,
-        source: body.source || 'netlify-public-ava-chat',
-      }),
-    });
-    const text = await response.text();
-    let payload: unknown = null;
+  const timeoutMs = getNumberEnv('PBK_PUBLIC_AVA_BRIDGE_TIMEOUT_MS', 25_000, 1000, 30_000);
+  const bridgeEndpoint = `${bridgeUrl.replace(/\/+$/g, '')}/api/public/ava-chat`;
+  const maxAttempts = 2;
+  let lastError = '';
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
     try {
-      payload = text ? JSON.parse(text) : null;
-    } catch {
-      payload = { ok: false, error: text.slice(0, 500) || `Bridge returned ${response.status}` };
+      const response = await fetch(bridgeEndpoint, {
+        method: 'POST',
+        signal: controller.signal,
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Request-ID': requestId,
+          'X-Public-Ava-Key': publicKey,
+        },
+        body: JSON.stringify({
+          ...body,
+          source: body.source || 'netlify-public-ava-chat',
+        }),
+      });
+      const text = await response.text();
+      let payload: unknown = null;
+      try {
+        payload = text ? JSON.parse(text) : null;
+      } catch {
+        payload = { ok: false, error: text.slice(0, 500) || `Bridge returned ${response.status}` };
+      }
+      if ([502, 503, 504].includes(response.status) && attempt < maxAttempts) {
+        await new Promise((resolve) => setTimeout(resolve, 750));
+        continue;
+      }
+      return { status: response.status, payload, attempts: attempt };
+    } catch (error) {
+      lastError = error instanceof Error ? error.message : 'Unknown bridge fetch error';
+      if (attempt < maxAttempts) {
+        await new Promise((resolve) => setTimeout(resolve, 750));
+        continue;
+      }
+    } finally {
+      clearTimeout(timeout);
     }
-    return { status: response.status, payload };
-  } finally {
-    clearTimeout(timeout);
   }
+  return {
+    status: 504,
+    payload: {
+      ok: false,
+      error: 'bridge_timeout',
+      message: lastError || 'Ava public chat bridge request timed out.',
+      requestId,
+    },
+    attempts: maxAttempts,
+  };
 }
 
 async function publicAvaChatHandler(request: Request, context: PublicAvaContext) {
@@ -299,6 +324,7 @@ async function publicAvaChatHandler(request: Request, context: PublicAvaContext)
     return jsonResponse(request, bridgeResponse.payload, bridgeResponse.status, {
       ...sharedHeaders,
       'X-PBK-Bridge': bridge.value.replace(/\/+$/g, ''),
+      'X-PBK-Bridge-Attempts': String(bridgeResponse.attempts || 1),
     });
   } catch (error) {
     return jsonResponse(

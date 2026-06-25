@@ -709,6 +709,7 @@ export function AvaChat() {
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
   const timelineRef = useRef<HTMLDivElement | null>(null);
   const loadInFlightRef = useRef(false);
+  const submitInFlightRef = useRef(false);
 
   const pendingApprovals = useMemo(
     () =>
@@ -999,7 +1000,12 @@ export function AvaChat() {
   const submitCommand = useCallback(
     async (value = draft) => {
       const command = value.trim();
-      if (!command || submitting) return;
+      if (!command || submitting || submitInFlightRef.current) return;
+      submitInFlightRef.current = true;
+      const releaseSubmit = () => {
+        submitInFlightRef.current = false;
+        setSubmitting(false);
+      };
       setSubmitting(true);
       setSubmitError('');
 
@@ -1032,7 +1038,7 @@ export function AvaChat() {
             title: response.ok === false ? 'Ava needs review' : 'Ava answered',
             desc: response.warning || 'Ava replied in the chat.',
           });
-          setSubmitting(false);
+          releaseSubmit();
           return;
         }
         const payload = {
@@ -1072,7 +1078,7 @@ export function AvaChat() {
           desc: message,
           critical: true,
         });
-        setSubmitting(false);
+        releaseSubmit();
         return;
       }
 
@@ -1090,7 +1096,7 @@ export function AvaChat() {
         title: result.result === 'queued_for_approval' ? 'Ready for your approval' : 'Ava is on it',
         desc: result.message || 'Ava picked up your request.',
       });
-      setSubmitting(false);
+      releaseSubmit();
 
       const refreshResults = await Promise.allSettled([refresh(), load({ silent: true })]);
       if (refreshResults.every((item) => item.status === 'rejected')) {
@@ -1964,7 +1970,10 @@ function AvaComposer({
             value={draft}
             onChange={(event) => setDraft(event.target.value)}
             onKeyDown={(event) => {
-              if (event.key === 'Enter' && !event.shiftKey) {
+              const composing =
+                event.nativeEvent.isComposing ||
+                (event.nativeEvent as KeyboardEvent & { keyCode?: number }).keyCode === 229;
+              if (event.key === 'Enter' && !event.shiftKey && !composing) {
                 event.preventDefault();
                 onSubmit();
               }

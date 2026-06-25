@@ -563,24 +563,31 @@ export default function App({ engineOnly = false }: AppProps) {
       );
       const nextOffer = Number(result?.targetOffer || deal.offer || 0);
       const nextRepairsMid = Number(result?.repairsMid || deal.repairs.mid || 0);
+      const analyzedDeal = {
+        ...deal,
+        isAnalyzed: true,
+        arv: nextArv,
+        mao60: nextMao60,
+        maoRBP: nextMaoRBP,
+        verdict: calculateVerdict(deal.price, nextArv, nextMaoRBP),
+        offer: nextOffer,
+        repairs: {
+          ...deal.repairs,
+          mid: nextRepairsMid,
+        },
+      };
       setDeal((prev) => {
         return {
           ...prev,
-          isAnalyzed: true,
-          arv: nextArv,
-          mao60: nextMao60,
-          maoRBP: nextMaoRBP,
-          verdict: calculateVerdict(prev.price, nextArv, nextMaoRBP),
-          offer: nextOffer,
-          repairs: {
-            ...prev.repairs,
-            mid: nextRepairsMid,
-          },
+          ...analyzedDeal,
         };
       });
       let leadSyncStatus = '';
       if (deal.leadId) {
         try {
+          const agentDealContext = buildAgentDealContext(analyzedDeal, {
+            requestedBy: 'Deal Analyzer analyze action',
+          });
           await patchLeadRequest(deal.leadId, {
             actor: 'Deal Analyzer',
             selectedPath: deal.selectedPath,
@@ -597,6 +604,15 @@ export default function App({ engineOnly = false }: AppProps) {
               estimatedRepairs: nextRepairsMid,
               repairsMid: nextRepairsMid,
               targetOffer: nextOffer,
+            },
+            deal: analyzedDeal,
+            agentDealContext,
+            call_metadata: {
+              source: 'deal-analyzer-analyze',
+              syncedFrom: 'deal-analyzer',
+              selectedPath: deal.selectedPath,
+              selected_path: deal.selectedPath,
+              agentDealContext,
             },
             callContext: {
               selectedPath: deal.selectedPath,
@@ -630,7 +646,7 @@ export default function App({ engineOnly = false }: AppProps) {
         }
       }
       const bridgeAnalysisStatus = result?.mao
-        ? `Bridge analysis synced. ARV ${Number(result.arv || 0).toLocaleString()} / MAO ${Number(result.mao || 0).toLocaleString()}.${leadSyncStatus}`
+        ? `Analysis saved. ARV ${Number(result.arv || 0).toLocaleString()} / MAO ${Number(result.mao || 0).toLocaleString()}.${leadSyncStatus}`
         : `${readiness.successMessage}${leadSyncStatus}`;
       setAnalyzeStatus(bridgeAnalysisStatus);
     } catch (error) {
@@ -641,8 +657,8 @@ export default function App({ engineOnly = false }: AppProps) {
       }));
       setAnalyzeStatus(
         error instanceof Error
-          ? `Runtime analysis failed. Retry before opening Call Mode or sending this deal to Ava: ${error.message}`
-          : 'Runtime analysis failed. Retry before opening Call Mode or sending this deal to Ava.'
+          ? `Ava could not finish the analysis. Retry before opening Call Mode or sending this deal to Ava: ${error.message}`
+          : 'Ava could not finish the analysis. Retry before opening Call Mode or sending this deal to Ava.'
       );
       return;
     }
@@ -1131,6 +1147,7 @@ export default function App({ engineOnly = false }: AppProps) {
             onOpenSnapshot={() => setLeftPanelOpen(true)}
             onOpenWorkflow={handleOpenWorkflowDrawer}
             onAnalyze={() => void handleAnalyzeDeal()}
+            onSaveDeal={() => void handleSaveDeal()}
             onTabChange={setActiveTab}
           />
 

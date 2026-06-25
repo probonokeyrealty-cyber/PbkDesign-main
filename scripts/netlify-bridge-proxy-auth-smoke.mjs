@@ -37,8 +37,13 @@ assert(
     /canApproveProviderActions/.test(source) &&
     /canToggleKillSwitch/.test(source) &&
     /canChangeGuardrails/.test(source) &&
+    /canManageSkills/.test(source) &&
     /team_permission_denied/.test(source),
   'Verified team permissions must be enforced before the bridge key is attached upstream.',
+);
+assert(
+  /skillGovernanceRoute[\s\S]*\/api\\\/skills\\\/[\s\S]*permissions\.canManageSkills !== true/.test(source),
+  'Netlify proxy team sessions must not approve, activate, roll back, import, reload, or write governed skills before bridge authority is attached.',
 );
 assert(
   /getAssistantChatText/.test(source) &&

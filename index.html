@@ -14744,6 +14744,8 @@
   document.querySelectorAll('[data-approval-filter]').forEach((button) => {
     button.addEventListener('click', () => {
       PBK.state.approvalFilter = button.dataset.approvalFilter || 'all';
+      PBK.state.runtime = PBK.state.runtime || {};
+      PBK.state.runtime.approvalBoardPage = 0;
       renderApprovalQueue(PBK.state.openclawRuntime || {});
     });
   });
@@ -15393,6 +15395,19 @@ Authority close: "What matters most to your seller: number, timeline, or certain
   syncDealPathControls('cash', false);
 
   document.addEventListener('click', (e) => {
+    const pageButton = e.target.closest('[data-approval-page-action]');
+    if (pageButton) {
+      e.preventDefault();
+      PBK.state.runtime = PBK.state.runtime || {};
+      const current = Number(PBK.state.runtime.approvalBoardPage || 0);
+      PBK.state.runtime.approvalBoardPage = Math.max(
+        0,
+        current + (pageButton.dataset.approvalPageAction === 'next' ? 1 : -1)
+      );
+      renderApprovalQueue(PBK.state.openclawRuntime || {});
+      return;
+    }
+
     const btn = e.target.closest('.qcard-actions .btn');
     if (!btn) return;
 
@@ -24197,6 +24212,29 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     }, 1800);
   }
 
+  function dispatchApprovalDecisionAccepted(approvalId, response = {}) {
+    const detail = {
+      approvalId: String(approvalId || '').trim(),
+      approvalIds: [String(approvalId || '').trim()].filter(Boolean),
+      response
+    };
+    window.dispatchEvent(new CustomEvent('pbk:approval-decision', { detail }));
+  }
+
+  window.addEventListener('pbk:approval-decision', (event) => {
+    const detail = event.detail || {};
+    const ids = new Set([
+      detail.approvalId,
+      ...(Array.isArray(detail.approvalIds) ? detail.approvalIds : []),
+      ...(Array.isArray(detail.approvalKeys) ? detail.approvalKeys : [])
+    ].map((id) => String(id || '').trim()).filter(Boolean));
+    if (!ids.size) return;
+    document.querySelectorAll('[data-approval-id]').forEach((card) => {
+      if (ids.has(String(card.dataset.approvalId || '').trim())) card.remove();
+    });
+    scheduleApprovalBoardRefreshRetry();
+  });
+
   async function handleApprovalAction(button, card) {
     const approvalId = card.dataset.approvalId;
     const rawAction = button.dataset.approvalAction || (button.classList.contains('btn-primary') ? 'approved' : 'rejected');
@@ -24276,6 +24314,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
         card.remove();
         scheduleApprovalBoardRefreshRetry();
       }
+      dispatchApprovalDecisionAccepted(approvalId, decisionResponse);
       toast({
         type: action === 'approved' ? 'success' : 'warning',
         title: action === 'approved'
@@ -24292,6 +24331,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     } catch (refreshError) {
       card.remove();
       scheduleApprovalBoardRefreshRetry();
+      dispatchApprovalDecisionAccepted(approvalId, decisionResponse);
       toast({
         type: action === 'approved' ? 'success' : 'warning',
         title: action === 'approved'
@@ -34970,11 +35010,23 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     const pendingAdminTasks = Array.isArray(snapshot?.adminTasks)
       ? snapshot.adminTasks.filter((item) => normalizeRuntimeStatus(item.status) === 'pending')
       : [];
-    const approvals = pendingApprovals
+    PBK.state.runtime = PBK.state.runtime || {};
+    const allApprovalRows = pendingApprovals
       .filter((item) => activeFilter === 'all' || getApprovalVisionMeta(item.type, item).filter === activeFilter)
-      .slice(0, 5);
-    const adminTasks = activeFilter === 'all' ? pendingAdminTasks.slice(0, 4) : [];
+      .map((item) => ({ kind: 'approval', item }));
+    const allAdminRows = activeFilter === 'all'
+      ? pendingAdminTasks.map((item) => ({ kind: 'admin', item }))
+      : [];
+    const boardRows = [...allApprovalRows, ...allAdminRows];
+    const pageSize = 10;
+    const pageCount = Math.max(1, Math.ceil(boardRows.length / pageSize));
+    const currentPage = Math.max(0, Math.min(pageCount - 1, Number(PBK.state.runtime.approvalBoardPage || 0)));
+    PBK.state.runtime.approvalBoardPage = currentPage;
+    const pageRows = boardRows.slice(currentPage * pageSize, currentPage * pageSize + pageSize);
+    const approvals = pageRows.filter((row) => row.kind === 'approval').map((row) => row.item);
+    const adminTasks = pageRows.filter((row) => row.kind === 'admin').map((row) => row.item);
     const totalQueued = pendingApprovals.length + pendingAdminTasks.length;
+    const filteredQueued = boardRows.length;
 
     document.querySelectorAll('[data-approval-filter]').forEach((button) => {
       const filter = button.dataset.approvalFilter || 'all';
@@ -35016,6 +35068,18 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       `;
       return;
     }
+
+    const pager = filteredQueued > pageSize
+      ? `
+        <div class="qcard qcard-pager" data-approval-board-pager>
+          <div class="qcard-body">Showing ${escapeHtml(String(currentPage * pageSize + 1))}-${escapeHtml(String(Math.min(filteredQueued, currentPage * pageSize + pageRows.length)))} of ${escapeHtml(String(filteredQueued))} review items.</div>
+          <div class="qcard-actions">
+            <button type="button" class="btn btn-ghost" data-approval-page-action="prev" ${currentPage <= 0 ? 'disabled aria-disabled="true"' : ''}>Previous</button>
+            <button type="button" class="btn btn-ghost" data-approval-page-action="next" ${currentPage >= pageCount - 1 ? 'disabled aria-disabled="true"' : ''}>Next</button>
+          </div>
+        </div>
+      `
+      : '';
 
     const approvalCards = approvals.map((approval) => {
       const type = String(approval.type || 'offer').toLowerCase();
@@ -35080,7 +35144,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       `;
     }).join('');
 
-    container.innerHTML = `${staleNotice}${approvalCards}${adminCards}`;
+    container.innerHTML = `${staleNotice}${pager}${approvalCards}${adminCards}${pager}`;
   };
 
   async function updateAdminTaskDecision(taskId, status) {

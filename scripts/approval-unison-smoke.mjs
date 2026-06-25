@@ -15,6 +15,7 @@ const avaChat = read('src/app/routes/AvaChat.tsx');
 const commandCenter = read('src/app/routes/CommandCenter.tsx');
 const inbox = read('src/app/routes/Inbox.tsx');
 const inboxRuntimeLogic = read('src/app/routes/inboxRuntimeLogic.js');
+const legacyShell = read('index.html');
 
 assert(
   packageJson.includes('"test:approval-unison"'),
@@ -81,6 +82,17 @@ assert(
     avaChat.includes('approvalKeys') &&
     avaChat.includes('nextKeys.forEach'),
   'Ava Chat must listen for related approval keys when approvals are resolved elsewhere.'
+);
+
+assert(
+  /function dispatchApprovalDecisionAccepted\(approvalId, response = {}\)[\s\S]*new CustomEvent\('pbk:approval-decision'/.test(
+    legacyShell
+  ) &&
+    /window\.addEventListener\('pbk:approval-decision'[\s\S]*document\.querySelectorAll\('\[data-approval-id\]'\)/.test(
+      legacyShell
+    ) &&
+    /dispatchApprovalDecisionAccepted\(approvalId, decisionResponse\)/.test(legacyShell),
+  'Legacy approval board must broadcast and consume pbk:approval-decision so decisions clear across all surfaces.'
 );
 
 [

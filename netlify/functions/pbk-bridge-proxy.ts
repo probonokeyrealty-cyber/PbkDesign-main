@@ -294,6 +294,15 @@ function authorizeTeamRequest({
     return deny('canToggleKillSwitch', 'change the PBK kill switch');
   }
 
+  const skillGovernanceTool =
+    /^(?:approveskillversion|activateskillversion|rollbackskillactivation|createskillcandidate|reloadskills|ingestskill)$/i.test(toolName);
+  const skillGovernanceRoute =
+    normalizedMethod !== 'GET'
+    && /(?:\/api\/skills\/(?:candidates|ingest|import-from-article|versions\/[^/]+\/(?:approve|activate)|activations\/[^/]+\/rollback|reload|outcomes)(?:\/|$))/.test(normalizedPath);
+  if ((skillGovernanceTool || skillGovernanceRoute) && permissions.canManageSkills !== true) {
+    return deny('canManageSkills', 'manage Ava skills and governance');
+  }
+
   const guardrailTool =
     /^(?:admin_update_env_var|admin_restart_openclaw|admin_run_away_worker|routeadmincommand|requestadminaction)$/i.test(toolName)
     || /^admin_/.test(normalizedToolName);

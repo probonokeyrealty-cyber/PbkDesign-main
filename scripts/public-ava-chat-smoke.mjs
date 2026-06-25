@@ -17,6 +17,13 @@ assert(/import type \{ Handler \}/.test(source), 'Public Ava Netlify function sh
 assert(/export\s+const\s+handler:\s*Handler/.test(source), 'Public Ava Netlify function must export a standard Netlify handler.');
 assert(/function buildRequestFromEvent/.test(source), 'Public Ava Netlify handler should adapt the event to the shared Request implementation.');
 assert(/new Response\(null,\s*\{\s*status:\s*204/.test(source), 'Public Ava OPTIONS responses must use a null 204 body.');
+assert(
+  /PBK_PUBLIC_AVA_BRIDGE_TIMEOUT_MS',\s*25_000/.test(source) &&
+    /const maxAttempts = 2/.test(source) &&
+    /\[502, 503, 504\]\.includes\(response\.status\)/.test(source) &&
+    /X-PBK-Bridge-Attempts/.test(source),
+  'Public Ava Netlify function should allow cold starts and retry one transient bridge failure.'
+);
 
 const publicAvaRedirectIndex = netlifyConfig.indexOf('from = "/api/public/ava-chat"');
 const apiCatchallRedirectIndex = netlifyConfig.indexOf('from = "/api/*"');

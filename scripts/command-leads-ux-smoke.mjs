@@ -17,13 +17,20 @@ function assert(condition, message) {
 assert(/webSearchProbeFailed/.test(commandCenter), 'Command Center should track failed web-search probes for retry.');
 assert(/Retry Probe/.test(commandCenter), 'Command Center should render a web-search retry button.');
 assert(/adminDecisionDraft/.test(commandCenter), 'Admin decisions should be staged in a confirmation dialog.');
-assert(/Confirm admin decision/.test(commandCenter), 'Admin approval/decline should show a confirmation dialog.');
+assert(
+  /aria-labelledby="admin-decision-title"/.test(commandCenter) &&
+    /Confirm workspace choice|Confirm admin decision/.test(commandCenter),
+  'Admin approval/decline should show a clear confirmation dialog.',
+);
 assert(
   /setTimeout\(\(\) => setActionStatus\(null\), 5000\)/.test(commandCenter),
   'Command Center success actionStatus should auto-clear.',
 );
 assert(/Number\.isFinite\(timestamp\)/.test(commandCenter), 'Activity timestamp formatting should guard invalid dates.');
-assert(/The bridge has not recorded activity yet/.test(commandCenter), 'Activity feed should keep its empty state.');
+assert(
+  /The bridge has not recorded activity yet|No activity is on this page yet/.test(commandCenter),
+  'Activity feed should keep its empty state.',
+);
 assert(/pollMs = 5000/.test(runtimeSnapshot), 'Runtime polling should remain at 5 seconds or faster by default.');
 
 for (const [label, source] of [

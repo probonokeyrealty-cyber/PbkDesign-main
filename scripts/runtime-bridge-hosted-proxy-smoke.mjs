@@ -99,8 +99,13 @@ assert(
     /canDeleteData/.test(bridge) &&
     /canSendContracts/.test(bridge) &&
     /canToggleKillSwitch/.test(bridge) &&
-    /canChangeGuardrails/.test(bridge),
+    /canChangeGuardrails/.test(bridge) &&
+    /canManageSkills/.test(bridge),
   'Direct Render fallback must enforce the same team permission boundary as the Netlify bridge proxy.'
+);
+assert(
+  /skillGovernanceRoute[\s\S]*\/api\\\/skills\\\/[\s\S]*permissions\.canManageSkills !== true/.test(bridge),
+  'Direct Render team sessions must not approve, activate, roll back, import, reload, or write governed skills unless skill management is explicitly enabled.'
 );
 
 assert(

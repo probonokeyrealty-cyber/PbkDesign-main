@@ -10413,7 +10413,7 @@ html[data-theme='light'] .pbk-ava-chat-surface {
 
 .pbk-analyzer-mobile-rail-actions {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 8px;
 }
 
@@ -10644,6 +10644,18 @@ html[data-theme='light'] .pbk-analyzer-mobile-quick-actions .pbk-btn {
   .pbk-analyzer-tab-shell[data-open='true'] {
     display: block;
     padding-bottom: 12px;
+  }
+
+  .pbk-deal-surface .pbk-analyzer-card input,
+  .pbk-deal-surface .pbk-analyzer-card textarea,
+  .pbk-deal-surface .pbk-analyzer-card select,
+  .pbk-deal-surface .pbk-call-card input,
+  .pbk-deal-surface .pbk-call-card textarea,
+  .pbk-deal-surface .pbk-call-card select,
+  .pbk-deal-surface .pbk-doc-card input,
+  .pbk-deal-surface .pbk-doc-card textarea,
+  .pbk-deal-surface .pbk-doc-card select {
+    font-size: 16px;
   }
 
   .pbk-analyzer-tabs {

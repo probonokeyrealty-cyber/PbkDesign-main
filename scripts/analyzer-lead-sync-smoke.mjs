@@ -13,6 +13,7 @@ const indexHtml = read('index.html');
 const runtimeBridge = read('src/app/utils/runtimeBridge.ts');
 const openclawServer = read('scripts/openclaw-local-server.mjs');
 const callModeTab = read('src/app/components/CallModeTab.tsx');
+const app = read('src/app/App.tsx');
 
 const sendDealToAgentMatch = runtimeBridge.match(
   /export async function sendDealToAgent[\s\S]*?\n}\n\nexport type ConversationListResponse/
@@ -78,6 +79,33 @@ assert(
 );
 
 assert(
+  /function isProfileOnlyCrmUpdate\(toolName = '', params = {}\)/.test(openclawServer) &&
+    /params\.profileOnly === true/.test(openclawServer) &&
+    /params\.providerWrite === false/.test(openclawServer) &&
+    /durableBinding/.test(openclawServer) &&
+    /if \(isProfileOnlyCrmUpdate\('updateCRM', params\)\) \{\s*return updateLeadProfileOnlyFromCrm\(params\);/s.test(
+      openclawServer
+    ),
+  'updateCRM must support explicit local/profile-only lead updates without creating Slack approvals.'
+);
+
+assert(
+  /if \(isProfileOnlyCrmUpdate\(toolName, params\)\) return null;/.test(openclawServer),
+  'Operating-mode guard must bypass approvals only for explicitly local/profile-only updateCRM calls.'
+);
+
+const patchLeadImportMatch = openclawServer.match(
+  /function patchLeadImport\(stateRef, matcher = {}, patch = {}\) \{[\s\S]*?\n\}/
+);
+assert(patchLeadImportMatch, 'patchLeadImport must be present.');
+assert(
+  !/seller\?\.name[\s\S]{0,160}normalizedName[\s\S]{0,80}return true/.test(
+    patchLeadImportMatch[0]
+  ),
+  'Lead patching must not match sellers by name alone; use lead id, email, address, or durable phone context.'
+);
+
+assert(
   /source:\s*'deal_view_call_mode_manual'/.test(callModeTab) &&
     /actor:\s*'Call Mode'/.test(callModeTab),
   'Call Mode CRM sync must identify itself as a manual lead-profile edit.'
@@ -136,6 +164,21 @@ assert(
     /agentDealContext,/.test(sendDealToAgent) &&
     /analyzer:/.test(sendDealToAgent),
   'Analyzer lead sync must preserve deal, analyzer, and agent context payloads.'
+);
+
+assert(
+  /const analyzedDeal = \{[\s\S]*isAnalyzed:\s*true[\s\S]*const agentDealContext = buildAgentDealContext\(analyzedDeal/.test(
+    app
+  ) &&
+    /patchLeadRequest\(deal\.leadId, \{[\s\S]*deal:\s*analyzedDeal,[\s\S]*agentDealContext,[\s\S]*call_metadata:/s.test(
+      app
+    ),
+  'Analyze button lead sync must preserve the same deal snapshot and agent context Ava receives from the dedicated handoff.'
+);
+
+assert(
+  /Analysis saved\./.test(app) && /Ava could not finish the analysis/.test(app),
+  'Analyze status copy should use agent-friendly language instead of bridge/runtime jargon.'
 );
 
 assert(

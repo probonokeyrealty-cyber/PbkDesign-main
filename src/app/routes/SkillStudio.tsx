@@ -883,6 +883,11 @@ export function SkillStudio() {
     setSkillPage((current) => Math.min(current, pageCount - 1));
   }, [visibleItems.length]);
 
+  const selectedIsReviewable = Boolean(
+    selected &&
+    ['candidate', 'needs_review', 'ready_for_approval'].includes(selected.lifecycleState)
+  );
+
   const runAction = async <T,>(
     action: () => Promise<T>,
     success: string | ((result: T) => string)
@@ -914,12 +919,17 @@ export function SkillStudio() {
 
   const primaryAction = !selected
     ? null
-    : selected.lifecycleState === 'ready_for_approval'
+    : selectedIsReviewable
       ? {
-          label: 'Approve this Ava skill',
+          label:
+            selected.lifecycleState === 'ready_for_approval'
+              ? 'Approve this Ava skill'
+              : 'Review and approve this skill',
           confirmTitle: 'Approve this skill for Ava?',
           confirmCopy:
-            'This keeps the skill off until you choose a small test. Ava will not use it live yet.',
+            selected.lifecycleState === 'ready_for_approval'
+              ? 'This keeps the skill off until you choose a small test. Ava will not use it live yet.'
+              : 'This records your review against the exact skill version. Ava will not use it live until you start a small test.',
           icon: FileCheck2,
           run: () =>
             runAction(

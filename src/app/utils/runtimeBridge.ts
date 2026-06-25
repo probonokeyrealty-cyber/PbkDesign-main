@@ -21,6 +21,10 @@ export type RuntimeTeamSession = {
 
 const DEFAULT_HOSTED_BRIDGE_ENDPOINT = 'https://pbk-openclaw-bridge.onrender.com';
 const RUNTIME_TEAM_SESSION_KEY = 'pbk:team-session:v1';
+const BRIDGE_REQUEST_TIMEOUT_MS = Math.max(
+  5_000,
+  Math.min(30_000, Number(import.meta.env.VITE_PBK_BRIDGE_TIMEOUT_MS || 25_000))
+);
 let avaSnnWorker: Worker | null = null;
 let rexSnnWorker: Worker | null = null;
 
@@ -1456,7 +1460,7 @@ export async function bridgeBlobRequest({
   const timeoutController = new AbortController();
   const onAbort = () => timeoutController.abort();
   signal?.addEventListener('abort', onAbort, { once: true });
-  const timeoutId = setTimeout(() => timeoutController.abort(), 15_000);
+  const timeoutId = setTimeout(() => timeoutController.abort(), BRIDGE_REQUEST_TIMEOUT_MS);
   const init = {
     method,
     headers: buildRuntimeHeaders({
@@ -1488,7 +1492,9 @@ export async function bridgeBlobRequest({
   } catch (error) {
     if (timeoutController.signal.aborted) {
       if (signal?.aborted) throw new DOMException('The operation was aborted.', 'AbortError');
-      throw new Error('PBK bridge request timed out after 15 seconds.');
+      throw new Error(
+        `PBK bridge request timed out after ${Math.round(BRIDGE_REQUEST_TIMEOUT_MS / 1000)} seconds.`
+      );
     }
     throw error;
   } finally {
@@ -1509,7 +1515,7 @@ export async function bridgeRequest<T = unknown>({
     method !== 'GET' && method !== 'DELETE' && (!serializedBody || serializedBody.length < 60000);
   const requestUrl = buildUrl(path);
   const timeoutController = new AbortController();
-  const timeoutId = setTimeout(() => timeoutController.abort(), 15_000);
+  const timeoutId = setTimeout(() => timeoutController.abort(), BRIDGE_REQUEST_TIMEOUT_MS);
   const init = {
     method,
     headers: buildHeaders(body !== undefined && method !== 'GET'),
@@ -1534,7 +1540,9 @@ export async function bridgeRequest<T = unknown>({
     }
   } catch (error) {
     if (timeoutController.signal.aborted) {
-      throw new Error('PBK bridge request timed out after 15 seconds.');
+      throw new Error(
+        `PBK bridge request timed out after ${Math.round(BRIDGE_REQUEST_TIMEOUT_MS / 1000)} seconds.`
+      );
     }
     throw error;
   } finally {

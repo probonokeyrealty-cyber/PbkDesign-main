@@ -3597,6 +3597,7 @@ function getTeamPermissions() {
     canSendContracts: false,
     canDeleteData: false,
     canChangeGuardrails: false,
+    canManageSkills: /^(1|true|yes|on)$/i.test(String(process.env.PBK_TEAM_CAN_MANAGE_SKILLS || '').trim()),
     canToggleKillSwitch: false,
   };
 }
@@ -3666,6 +3667,15 @@ function authorizeDirectTeamBridgeRequest({
     normalizedMethod !== 'GET' && /(?:kill-switch|killswitch)/.test(normalizedPath);
   if ((killSwitchTool || killSwitchRoute) && permissions.canToggleKillSwitch !== true) {
     return deny('canToggleKillSwitch', 'change the PBK kill switch');
+  }
+
+  const skillGovernanceTool =
+    /^(?:approveskillversion|activateskillversion|rollbackskillactivation|createskillcandidate|reloadskills|ingestskill)$/i.test(toolName);
+  const skillGovernanceRoute =
+    normalizedMethod !== 'GET' &&
+    /(?:\/api\/skills\/(?:candidates|ingest|import-from-article|versions\/[^/]+\/(?:approve|activate)|activations\/[^/]+\/rollback|reload|outcomes)(?:\/|$))/.test(normalizedPath);
+  if ((skillGovernanceTool || skillGovernanceRoute) && permissions.canManageSkills !== true) {
+    return deny('canManageSkills', 'manage Ava skills and governance');
   }
 
   const guardrailTool =
@@ -14072,9 +14082,6 @@ function patchLeadImport(stateRef, matcher = {}, patch = {}) {
     .toLowerCase();
   const normalizedLeadId = String(matcher.leadId || '').trim();
   const normalizedPhone = normalizePhone(matcher.phone || patch.phone || patch.seller?.phone || '');
-  const normalizedName = String(matcher.leadName || '')
-    .trim()
-    .toLowerCase();
   let matchedByInboundPlaceholderPhone = false;
   const existingIndex = stateRef.leadImports.findIndex((item) => {
     if (normalizedLeadId && String(item.leadId || '').trim() === normalizedLeadId) return true;
@@ -14090,13 +14097,6 @@ function patchLeadImport(stateRef, matcher = {}, patch = {}) {
       String(item?.property?.address || '')
         .trim()
         .toLowerCase() === normalizedAddress
-    )
-      return true;
-    if (
-      normalizedName &&
-      String(item?.seller?.name || '')
-        .trim()
-        .toLowerCase() === normalizedName
     )
       return true;
     if (normalizedPhone) {
@@ -40048,6 +40048,44 @@ function hasExplicitSellerBinding(params = {}) {
   });
 }
 
+function isProfileOnlyCrmUpdate(toolName = '', params = {}) {
+  if (toolName !== 'updateCRM') return false;
+  const durableBinding = [
+    params.leadId,
+    params.lead_id,
+    params.id,
+    params.email,
+    params.phone,
+    params.to,
+    params.address,
+    params.propertyAddress,
+    params.property_address,
+  ].some((value) => {
+    const normalized = String(value || '').trim().toLowerCase();
+    return Boolean(
+      normalized &&
+        !['unknown', 'unknown seller', 'unknown property', 'seller', 'provider action'].includes(
+          normalized
+        )
+    );
+  });
+  const scope = String(params.scope || params.syncScope || params.sync_scope || '').toLowerCase();
+  const providerWrite =
+    params.providerWrite ?? params.provider_write ?? params.externalSync ?? params.external_sync;
+  const profileOnly = Boolean(
+    params.profileOnly === true ||
+      params.profile_only === true ||
+      params.localOnly === true ||
+      params.local_only === true ||
+      params.providerWrite === false ||
+      params.provider_write === false ||
+      scope === 'profile' ||
+      scope === 'lead_profile' ||
+      scope === 'local_profile'
+  );
+  return profileOnly && providerWrite !== true && durableBinding && hasExplicitSellerBinding(params);
+}
+
 function isTrustedManualOperatorAction(params = {}) {
   if (params.manual !== true || params.manualSend !== true) return false;
   const source = String(params.source || params.requestSource || params.request_source || '')
@@ -40091,6 +40129,7 @@ function normalizeApprovalCreationResult(result = {}) {
 
 async function enforceOperatingModeForTool(toolName, params = {}) {
   if (!OPERATING_MODE_GATED_TOOLS.has(toolName)) return null;
+  if (isProfileOnlyCrmUpdate(toolName, params)) return null;
   if (isDirectProtectedEnvUpdate(toolName, params)) return null;
   if (SELLER_BOUND_PROVIDER_TOOLS.has(toolName) && !hasExplicitSellerBinding(params)) {
     const label = toolName.replace(/_/g, ' ');
@@ -48815,6 +48854,68 @@ async function syncCrmTransition(payload = {}) {
   };
 }
 
+async function updateLeadProfileOnlyFromCrm(params = {}) {
+  const nestedLead = params.lead && typeof params.lead === 'object' ? params.lead : {};
+  const normalized = normalizeLeadIntake({
+    ...nestedLead,
+    ...params,
+    source: params.source || params.requestSource || 'profile-only-crm-update',
+    leadSource: params.leadSource || params.source || params.requestSource || 'profile-only-crm-update',
+    status: params.status || params.stage || nestedLead.status || nestedLead.stage || 'active',
+    updatedAt: isoNow(),
+  });
+  syncLeadCompatibilityAliases(normalized);
+  const patched = patchLeadImport(
+    state,
+    {
+      leadId: params.leadId || params.lead_id || normalized.leadId || normalized.id || '',
+      address: params.address || params.propertyAddress || params.property_address || normalized.property?.address || '',
+      email: params.email || normalized.seller?.email || '',
+      phone: params.phone || params.to || normalized.seller?.phone || '',
+    },
+    normalized
+  );
+  const savedLead = patched || normalized;
+  if (!patched) {
+    addLeadImport(state, savedLead);
+  }
+  await persistLeadProfileRowToDb(savedLead, 'profile-only-crm-update');
+  const activity = makeActivity({
+    actor: params.actor || 'Ava',
+    category: 'CRM',
+    status: 'saved',
+    text:
+      params.message ||
+      `Updated lead profile for ${savedLead.seller?.name || savedLead.leadName || savedLead.address || 'seller'}.`,
+    target: savedLead.property?.address || savedLead.seller?.email || savedLead.seller?.phone || savedLead.leadId,
+  });
+  activity.id = String(params.eventId || params.event_id || params.idempotencyKey || activity.id);
+  activity.action = 'profile_updated';
+  activity.leadId = savedLead.leadId || savedLead.id;
+  activity.leadName = savedLead.seller?.name || savedLead.leadName;
+  activity.address = savedLead.property?.address || savedLead.address;
+  addActivity(state, activity);
+  await persistState(state);
+  await projectLiveConversationRecord({
+    record: activity,
+    projector: projectActivityEvent,
+    source: 'lead-profile-only-updated',
+  }).catch((error) => {
+    console.warn('[PBK] Profile-only CRM timeline projection failed:', error?.message || error);
+  });
+  const view = buildLeadFullView(savedLead.leadId || savedLead.id)?.lead || savedLead;
+  return {
+    ok: true,
+    result: 'profile_updated',
+    provider: 'local-profile',
+    providerWritesBlocked: false,
+    approvalRequired: false,
+    updatedAt: isoNow(),
+    target: savedLead.leadId || savedLead.id,
+    lead: view,
+  };
+}
+
 function getBatchDataProviderMeta() {
   const configured = Boolean(BATCHDATA_API_KEY);
   return {
@@ -52767,6 +52868,9 @@ const toolHandlers = {
 
   async updateCRM(params = {}) {
     recordToolUse('updateCRM');
+    if (isProfileOnlyCrmUpdate('updateCRM', params)) {
+      return updateLeadProfileOnlyFromCrm(params);
+    }
     const syncResult = await syncCrmTransition(params);
     if (syncResult?.provider === 'streak' && syncResult?.boxKey) {
       patchLeadImport(

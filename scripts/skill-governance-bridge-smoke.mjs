@@ -37,6 +37,13 @@ assert(
   'Missing Render authority and approved snapshot must fail closed.'
 );
 assert(
+  /canManageSkills/.test(bridge) &&
+    /skillGovernanceRoute[\s\S]*\/api\\\/skills\\\/[\s\S]*permissions\.canManageSkills !== true/.test(
+      bridge
+    ),
+  'Team sessions must not approve, activate, roll back, import, or reload governed skills unless skill management is explicitly enabled.'
+);
+assert(
   /fetchYouTubeTranscript[\s\S]*runDeepSeekChatCompletion[\s\S]*createSkillCandidate/.test(bridge),
   'YouTube ingestion must use the existing transcript, DeepSeek, and governance authority.'
 );

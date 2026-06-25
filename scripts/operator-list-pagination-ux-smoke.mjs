@@ -19,6 +19,7 @@ const leads = read('src/app/routes/Leads.tsx');
 const leadPortal = read('src/app/routes/LeadPortal.tsx');
 const skillStudio = read('src/app/routes/SkillStudio.tsx');
 const callFloor = read('src/app/components/CallFloorPanel.tsx');
+const legacyShell = read('index.html');
 const indexCss = read('src/styles/index.css');
 const css = read('src/styles/pbk-components.css');
 
@@ -126,6 +127,15 @@ assert(
 assert(
   !callFloor.includes('slice(0, 8)'),
   'Call Floor must not silently cap lists at eight or drop saved callbacks.'
+);
+
+assert(
+  legacyShell.includes('const pageSize = 10;') &&
+    legacyShell.includes('approvalBoardPage') &&
+    legacyShell.includes('data-approval-page-action="prev"') &&
+    legacyShell.includes('data-approval-page-action="next"') &&
+    !/pendingApprovals[\s\S]{0,160}\.slice\(0,\s*5\)/.test(legacyShell),
+  'Legacy approval board must page review items by ten instead of showing a partial long queue.'
 );
 
 assert(

@@ -268,6 +268,7 @@ export function DealAnalyzerMobileRail({
   onOpenSnapshot,
   onOpenWorkflow,
   onAnalyze,
+  onSaveDeal,
   onTabChange,
 }: Pick<
   DealAnalyzerChromeProps,
@@ -277,6 +278,7 @@ export function DealAnalyzerMobileRail({
   | 'onOpenSnapshot'
   | 'onOpenWorkflow'
   | 'onAnalyze'
+  | 'onSaveDeal'
   | 'onTabChange'
 >) {
   return (
@@ -289,6 +291,10 @@ export function DealAnalyzerMobileRail({
         <button type="button" aria-label="Analyze deal" className="is-primary" onClick={onAnalyze}>
           <BarChart3 size={16} />
           <span>{deal.isAnalyzed ? 'Refresh' : 'Analyze'}</span>
+        </button>
+        <button type="button" aria-label="Save deal" onClick={onSaveDeal}>
+          <Save size={16} />
+          <span>Save</span>
         </button>
         <button type="button" aria-label="Open Call Mode" onClick={() => onTabChange('callmode')}>
           <PhoneCall size={16} />

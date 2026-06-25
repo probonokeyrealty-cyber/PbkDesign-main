@@ -38,6 +38,10 @@ assert(
 );
 assert(/DealAnalyzerMobileRail/.test(app), 'Deal Analyzer should render the mobile action rail.');
 assert(
+  /<DealAnalyzerMobileRail[\s\S]*onSaveDeal=\{\(\) => void handleSaveDeal\(\)\}/.test(app),
+  'Deal Analyzer mobile rail should expose Save so agents can edit and save on phones.'
+);
+assert(
   /setLeftPanelOpen\(true\)/.test(app),
   'Mobile rail should open the analyzer snapshot drawer.'
 );
@@ -86,7 +90,7 @@ assert(
   'Seller-doc emails should block before sending when the seller email is missing.'
 );
 assert(
-  /Runtime analysis failed\. Retry before opening Call Mode/.test(app),
+  /Ava could not finish the analysis\. Retry before opening Call Mode/.test(app),
   'Analyzer runtime failures should not unlock Call Mode.'
 );
 assert(
@@ -275,6 +279,10 @@ assert(/\.pbk-deal-surface/.test(css), 'PBK CSS should define the deal surface.'
 assert(/\.pbk-analyzer-command/.test(css), 'PBK CSS should define analyzer command chrome.');
 assert(/\.pbk-analyzer-mobile-rail/.test(css), 'PBK CSS should define the mobile rail.');
 assert(
+  /grid-template-columns:\s*repeat\(5,\s*minmax\(0,\s*1fr\)\)/.test(css),
+  'Mobile analyzer rail should reserve room for Snapshot, Analyze, Save, Call, and Path controls.'
+);
+assert(
   /\.pbk-analyzer-mobile-status/.test(css),
   'PBK CSS should define the mobile analyzer feedback status.'
 );
@@ -304,6 +312,15 @@ assert(
 assert(
   /max-width: 720px/.test(css) && /pbk-analyzer-mobile-rail/.test(css),
   'PBK CSS should include mobile-specific analyzer rules.'
+);
+assert(
+  /@media \(max-width: 720px\)[\s\S]*\.pbk-deal-surface \.pbk-analyzer-card input[\s\S]*font-size:\s*16px/.test(
+    css
+  ) &&
+    /@media \(max-width: 720px\)[\s\S]*\.pbk-deal-surface \.pbk-doc-card select[\s\S]*font-size:\s*16px/.test(
+      css
+    ),
+  'Mobile analyzer, call, and document inputs should use 16px text so agents can edit without viewport zoom.'
 );
 
 assert(

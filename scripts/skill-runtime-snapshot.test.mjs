@@ -102,4 +102,26 @@ describe('skill runtime snapshot cache', () => {
     expect(loaded.available).toBe(true);
     expect(loaded.skills[0]).not.toHaveProperty('optionalAssignmentId');
   });
+
+  test('still writes the last-known-good file when Redis save fails', async () => {
+    const adapters = createMemoryAdapters();
+    const cache = createSkillRuntimeSnapshotCache({
+      ...adapters,
+      async redisSet() {
+        throw new Error('redis unavailable');
+      },
+      redisKey: 'pbk:skill-runtime-snapshot',
+      filePath: 'approved-skills.json',
+      now: () => new Date('2026-06-09T12:00:00.000Z'),
+    });
+
+    const saved = await cache.save([{ versionId: 'version-2', contentHash: 'hash-2' }]);
+    const loaded = await cache.load();
+
+    expect(saved.persistence.redis).toBe(false);
+    expect(saved.persistence.file).toBe(true);
+    expect(saved.persistence.warnings[0]).toContain('redis:');
+    expect(loaded.available).toBe(true);
+    expect(loaded.skills[0].versionId).toBe('version-2');
+  });
 });

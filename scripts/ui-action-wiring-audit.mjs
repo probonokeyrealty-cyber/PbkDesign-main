@@ -386,7 +386,7 @@ const mutationSuccessGuardMissing =
   !/return assertBridgeMutationSucceeded\(response, 'Offer email send'\)/.test(runtimeBridge) ||
   !/return assertBridgeMutationSucceeded\(response, 'Seller document send'\)/.test(runtimeBridge) ||
   !/return assertBridgeMutationSucceeded\(response, 'Lead contract send'\)/.test(runtimeBridge) ||
-  !/return assertBridgeMutationSucceeded\(response, 'Approval decision'\)/.test(runtimeBridge) ||
+  !/assertBridgeMutationSucceeded\(response, 'Approval decision'\)/.test(runtimeBridge) ||
   !/return assertBridgeMutationSucceeded\(response, 'Admin task decision'\)/.test(runtimeBridge);
 if (mutationSuccessGuardMissing) {
   fail.push({

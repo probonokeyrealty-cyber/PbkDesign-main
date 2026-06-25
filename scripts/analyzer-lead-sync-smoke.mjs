@@ -9,6 +9,7 @@ function assert(condition, message) {
 }
 
 const packageJson = read('package.json');
+const indexHtml = read('index.html');
 const runtimeBridge = read('src/app/utils/runtimeBridge.ts');
 const openclawServer = read('scripts/openclaw-local-server.mjs');
 
@@ -18,6 +19,11 @@ const sendDealToAgentMatch = runtimeBridge.match(
 assert(sendDealToAgentMatch, 'runtimeBridge must expose sendDealToAgent.');
 
 const sendDealToAgent = sendDealToAgentMatch[0];
+const legacyAnalyzerHandoffMatch = indexHtml.match(
+  /async function sendAnalyzerSnapshotToAgent[\s\S]*?\n  }\n\n  function getVisibleAnalyzerFrame/
+);
+assert(legacyAnalyzerHandoffMatch, 'Legacy embedded analyzer must expose sendAnalyzerSnapshotToAgent.');
+const legacyAnalyzerHandoff = legacyAnalyzerHandoffMatch[0];
 
 assert(
   packageJson.includes('"test:analyzer-lead-sync"'),
@@ -42,9 +48,30 @@ assert(
   );
 });
 
+[
+  'updateCRM',
+  'createApproval',
+  'requestAdminAction',
+  'postSlackApproval',
+  'approvalRequired',
+].forEach((blockedToken) => {
+  assert(
+    !legacyAnalyzerHandoff.includes(blockedToken),
+    `Legacy analyzer handoff must not touch approval/provider-write token ${blockedToken}.`
+  );
+});
+
 assert(
   /patchLeadRequest\(leadId,\s*{/.test(sendDealToAgent),
   'Analyzer lead sync must PATCH /api/leads/:id through patchLeadRequest.'
+);
+
+assert(
+  /requestOpenClawApi\(`\/api\/leads\/\$\{encodeURIComponent\(leadId\)\}`/.test(
+    legacyAnalyzerHandoff
+  ) &&
+    /method:\s*'PATCH'/.test(legacyAnalyzerHandoff),
+  'Legacy analyzer handoff must PATCH /api/leads/:id instead of invoking updateCRM.'
 );
 
 [
@@ -82,10 +109,24 @@ assert(
 );
 
 assert(
+  /source:\s*'analyzer-deal-sync'/.test(legacyAnalyzerHandoff) &&
+    /syncedFrom:\s*'deal-analyzer'/.test(legacyAnalyzerHandoff),
+  'Legacy analyzer handoff must identify itself as routine analyzer-to-lead profile sync.'
+);
+
+assert(
   /deal,/.test(sendDealToAgent) &&
     /agentDealContext,/.test(sendDealToAgent) &&
     /analyzer:/.test(sendDealToAgent),
   'Analyzer lead sync must preserve deal, analyzer, and agent context payloads.'
+);
+
+assert(
+  /deal,/.test(legacyAnalyzerHandoff) &&
+    /agentDealContext,/.test(legacyAnalyzerHandoff) &&
+    /analyzer:\s*analyzerPayload/.test(legacyAnalyzerHandoff) &&
+    /call_metadata:/.test(legacyAnalyzerHandoff),
+  'Legacy analyzer handoff must preserve deal, analyzer, agent context, and call metadata.'
 );
 
 [

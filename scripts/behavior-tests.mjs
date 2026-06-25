@@ -207,7 +207,7 @@ function testManualMessageBridgeContract() {
       'manual: parsed.manual',
       'manualSend: parsed.manualSend',
       'function isTrustedManualConversationProviderSend',
-      "['telnyx_sms', 'sendColdEmail', 'telnyx_call'].includes(toolName)",
+      "['telnyx_sms', 'sendColdEmail', 'telnyx_call', 'sendSellerDocs'].includes(toolName)",
       'isTrustedManualConversationProviderSend(toolName, params)',
       "manual: body.manual === false ? false : true",
       "manualSend: body.manualSend === false ? false : true",

@@ -6,6 +6,24 @@ const BASE_URL = String(process.env.PBK_HOSTED_BRIDGE_URL || 'https://pbk-opencl
 const API_KEY = String(process.env.PBK_BRIDGE_API_KEY || '').trim();
 const RUN_MUTATION_TESTS = /^(1|true|yes)$/i.test(String(process.env.PBK_HOSTED_SMOKE_MUTATE || '').trim());
 const SKIP_REVISION_CHECK = /^(1|true|yes)$/i.test(String(process.env.PBK_HOSTED_SMOKE_SKIP_REVISION_CHECK || '').trim());
+const READY_TIMEOUT_MS = Math.max(
+  30,
+  Number(
+    process.env.PBK_HOSTED_SMOKE_READY_TIMEOUT_SECONDS ||
+      process.env.PBK_HOSTED_SMOKE_READY_SECONDS ||
+      process.env.HOSTED_SMOKE_READY_TIMEOUT_SECONDS ||
+      process.env.HOSTED_SMOKE_READY_SECONDS ||
+      420,
+  ),
+) * 1000;
+const READY_INTERVAL_MS = Math.max(
+  5,
+  Number(process.env.PBK_HOSTED_SMOKE_READY_INTERVAL_SECONDS || process.env.HOSTED_SMOKE_READY_INTERVAL_SECONDS || 15),
+) * 1000;
+const OPERATION_ATTEMPTS = Math.max(
+  1,
+  Number(process.env.PBK_HOSTED_SMOKE_OPERATION_ATTEMPTS || process.env.HOSTED_SMOKE_OPERATION_ATTEMPTS || 3),
+);
 
 function getExpectedBridgeRevision() {
   const explicitRevision = String(process.env.PBK_EXPECTED_BRIDGE_REVISION || '').trim();
@@ -22,6 +40,10 @@ function assert(condition, message) {
   }
 }
 
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 async function request(pathname, options = {}) {
   const response = await fetch(`${BASE_URL}${pathname}`, options);
   return response;
@@ -30,7 +52,18 @@ async function request(pathname, options = {}) {
 async function requestJson(pathname, options = {}) {
   const response = await request(pathname, options);
   const text = await response.text();
-  const parsed = text ? JSON.parse(text) : null;
+  let parsed = null;
+  if (text) {
+    try {
+      parsed = JSON.parse(text);
+    } catch {
+      const contentType = response.headers.get('content-type') || 'unknown content-type';
+      const preview = text.replace(/\s+/g, ' ').slice(0, 160);
+      throw new Error(
+        `Hosted ${pathname} returned non-JSON ${response.status} (${contentType}): ${preview}`,
+      );
+    }
+  }
   return { response, parsed };
 }
 
@@ -61,9 +94,88 @@ function isDemoRuntimeApproval(approval = {}) {
     || /approval-offer-202-cherry|approval-contract-robert-chen|approval-batch-akron|lead-diane-kowalski|lead-robert-chen|daily_probate_import\.csv|Diane Kowalski|Robert Chen|Akron Probate Batch|202 Cherry Ln|55 Birch Rd/i.test(text);
 }
 
+function validateHostedHealth(health, expectedRevision) {
+  if (!health || typeof health !== 'object') return 'missing health payload';
+  if (health.ok !== true) return 'health did not return ok: true';
+  if (typeof health.revision !== 'string' || health.revision.length === 0) return 'missing revision';
+  if (!SKIP_REVISION_CHECK) {
+    if (!expectedRevision) return 'could not determine expected bridge revision';
+    if (health.revision !== expectedRevision) {
+      return `stale revision: expected ${expectedRevision}, got ${health.revision}`;
+    }
+  }
+  if (health?.features?.authRequired !== true) return 'authRequired is not true';
+  const configuredStateBackend =
+    health?.features?.configuredStateBackend || health?.runtime?.configuredStateBackend || '';
+  if (configuredStateBackend && configuredStateBackend !== 'postgres') {
+    return `configuredStateBackend ${configuredStateBackend}`;
+  }
+  if (health?.features?.stateBackend !== 'postgres') {
+    return `stateBackend ${health?.features?.stateBackend || 'missing'}`;
+  }
+  if (health?.runtime?.hosted !== true) return 'runtime.hosted is not true';
+  const stateBootstrapReady =
+    health?.components?.stateBootstrap?.ready === true ||
+    health?.components?.stateBootstrap?.status === 'up' ||
+    health?.runtime?.stateBootstrap?.ready === true;
+  if (!stateBootstrapReady) return 'state bootstrap is not ready';
+  if (health?.components?.bridge?.status !== 'up') return 'bridge component is not up';
+  if (health?.components?.postgres?.status !== 'up') {
+    return `postgres component is ${health?.components?.postgres?.status || 'missing'}`;
+  }
+  if (health?.components?.agentOrchestration?.status !== 'up') {
+    return `agent orchestration component is ${health?.components?.agentOrchestration?.status || 'missing'}`;
+  }
+  if (Number(health?.componentSummary?.total || 0) < 10) return 'component summary is incomplete';
+  return '';
+}
+
+async function waitForHostedHealth(expectedRevision) {
+  const startedAt = Date.now();
+  let lastProblem = 'not checked yet';
+
+  while (Date.now() - startedAt <= READY_TIMEOUT_MS) {
+    try {
+      const { response, parsed } = await requestJson('/health');
+      if (!response.ok) {
+        lastProblem = `/health returned ${response.status}`;
+      } else {
+        const healthProblem = validateHostedHealth(parsed, expectedRevision);
+        if (!healthProblem) return { response, parsed };
+        lastProblem = healthProblem;
+      }
+    } catch (error) {
+      lastProblem = error instanceof Error ? error.message : String(error);
+    }
+
+    await sleep(READY_INTERVAL_MS);
+  }
+
+  throw new Error(`Hosted bridge did not become ready within ${Math.round(READY_TIMEOUT_MS / 1000)}s: ${lastProblem}.`);
+}
+
+async function requestJsonWithRetry(pathname, options = {}, validate = () => '') {
+  let lastProblem = '';
+
+  for (let attempt = 1; attempt <= OPERATION_ATTEMPTS; attempt += 1) {
+    try {
+      const result = await requestJson(pathname, options);
+      const validationProblem = validate(result);
+      if (!validationProblem) return result;
+      lastProblem = validationProblem;
+    } catch (error) {
+      lastProblem = error instanceof Error ? error.message : String(error);
+    }
+
+    if (attempt < OPERATION_ATTEMPTS) await sleep(READY_INTERVAL_MS);
+  }
+
+  throw new Error(`Hosted ${pathname} did not pass after ${OPERATION_ATTEMPTS} attempt(s): ${lastProblem}`);
+}
+
 async function main() {
   const expectedRevision = getExpectedBridgeRevision();
-  const { response: healthResponse, parsed: health } = await requestJson('/health');
+  const { response: healthResponse, parsed: health } = await waitForHostedHealth(expectedRevision);
   assert(healthResponse.ok, `Hosted /health returned ${healthResponse.status}.`);
   assert(health?.ok === true, 'Hosted /health did not return ok: true.');
   assert(typeof health?.revision === 'string' && health.revision.length > 0, 'Hosted /health is missing revision.');
@@ -101,21 +213,27 @@ async function main() {
   assert((agentOrchestration?.orchestration?.workers || []).some((agent) => agent.id === 'rex'), 'Hosted agent orchestration did not include Rex.');
   assert((agentOrchestration?.orchestration?.workers || []).some((agent) => agent.id === 'hermes'), 'Hosted agent orchestration did not include Hermes.');
 
-  const { response: invokeResponse, parsed: invoke } = await requestJson('/invoke', {
-    method: 'POST',
-    headers: {
-      ...authHeaders(),
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      toolName: 'getBrainState',
-      params: {
-        query: 'What is the current bridge state?',
+  const { response: invokeResponse, parsed: invoke } = await requestJsonWithRetry(
+    '/invoke',
+    {
+      method: 'POST',
+      headers: {
+        ...authHeaders(),
+        'Content-Type': 'application/json',
       },
-    }),
-  });
-  assert(invokeResponse.ok, `Hosted /invoke returned ${invokeResponse.status}.`);
-  assert(invoke?.ok === true, 'Hosted /invoke did not succeed.');
+      body: JSON.stringify({
+        toolName: 'getBrainState',
+        params: {
+          query: 'Give me a plain English PBK operator summary.',
+        },
+      }),
+    },
+    ({ response, parsed }) => {
+      if (!response.ok) return `returned ${response.status}`;
+      if (parsed?.ok !== true) return 'did not succeed';
+      return '';
+    },
+  );
 
   const pdfResponse = await request('/api/documents/pdf', {
     method: 'POST',

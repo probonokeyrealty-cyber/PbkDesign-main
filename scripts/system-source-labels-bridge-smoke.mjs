@@ -161,7 +161,7 @@ assert(
 );
 
 assert(
-  /Runtime data truth/.test(commandCenter) &&
+  /Endpoint health and data activity are checked separately/.test(commandCenter) &&
     /dataState/.test(commandCenter) &&
     /lastCheckedAt/.test(commandCenter) &&
     /fallbackReason/.test(commandCenter) &&

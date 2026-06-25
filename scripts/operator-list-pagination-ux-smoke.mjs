@@ -16,6 +16,8 @@ const commandCenter = read('src/app/routes/CommandCenter.tsx');
 const inbox = read('src/app/routes/Inbox.tsx');
 const leads = read('src/app/routes/Leads.tsx');
 const skillStudio = read('src/app/routes/SkillStudio.tsx');
+const callFloor = read('src/app/components/CallFloorPanel.tsx');
+const indexCss = read('src/styles/index.css');
 const css = read('src/styles/pbk-components.css');
 
 assert(
@@ -96,10 +98,31 @@ assert(
 );
 
 assert(
+  callFloor.includes('OPERATOR_LIST_PAGE_SIZE') &&
+    callFloor.includes('filteredCallLeads') &&
+    callFloor.includes('visibleScheduledCalls') &&
+    callFloor.includes('getPageSlice(filteredCallLeads, callLeadPage, OPERATOR_LIST_PAGE_SIZE)') &&
+    callFloor.includes('getPageSlice(scheduledCalls, scheduledCallPage, OPERATOR_LIST_PAGE_SIZE)') &&
+    callFloor.includes('label="Call floor lead pages"') &&
+    callFloor.includes('label="Scheduled callback pages"'),
+  'Call Floor must page lead search results and scheduled callbacks by ten.'
+);
+assert(
+  !callFloor.includes('slice(0, 8)'),
+  'Call Floor must not silently cap lists at eight or drop saved callbacks.'
+);
+
+assert(
   css.includes('.pbk-list-pager') &&
     css.includes('.pbk-list-pager-status') &&
     css.includes('@media (max-width: 560px)'),
   'Shared pager styles must be present and mobile-aware.'
+);
+
+assert(
+  /\.call-floor-search input[\s\S]*font-size:\s*16px/.test(indexCss) &&
+    /\.scheduled-call-row button[\s\S]*width:\s*100%/.test(indexCss),
+  'Call Floor mobile controls must be thumb-friendly and avoid input zoom.'
 );
 
 console.log('operator-list-pagination-ux-smoke: ok');

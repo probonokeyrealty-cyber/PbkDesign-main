@@ -44,8 +44,9 @@ assert(
 );
 
 assert(
-  /Personalise this dashboard across operators/.test(commandCenter),
-  'Widget controls copy must no longer describe personalization as local-only.'
+  /Customize this dashboard for the whole team/.test(commandCenter) &&
+    /every agent sees the same command center/.test(commandCenter),
+  'Widget controls copy must describe shared team preferences instead of local-only personalization.'
 );
 
 assert(

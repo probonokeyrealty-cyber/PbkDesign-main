@@ -32806,18 +32806,115 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       return null;
     }
 
-    return invokeRuntimeTool('updateCRM', {
-      target: deal.address,
-      leadId: deal.leadId || deal.address,
-      message: `Analyzer snapshot ready for Ava: ${deal.address} - ARV ${fmt(deal.arv)} - MAO ${fmt(deal.mao60)} - target ${fmt(deal.offer)} - path ${deal.selectedPath || 'cash'} - script ${agentDealContext.scriptPath}/${agentDealContext.scriptVariant}/${agentDealContext.activeScriptTab}.`,
-      deal,
-      agentDealContext
-    }, {
-      actionLabel: 'Ava analyzer handoff',
-      successTitle: 'Analyzer sent to Ava',
-      successDesc: 'Ava can now use the latest ARV, MAO, offer, repair, path, and call-script context.',
-      errorTitle: 'Could not send analyzer snapshot'
+    const selectedPath = deal.selectedPath || getActiveAnalyzerDealPath() || 'cash';
+    const leadId = deal.leadId || getLeadRuntimeId(getActiveRuntimeLead() || {});
+    const analyzerPayload = {
+      source: 'analyzer-deal-sync',
+      syncedFrom: 'deal-analyzer',
+      selectedPath,
+      selected_path: selectedPath,
+      askingPrice: deal.agreedPrice || deal.price || deal.offer || 0,
+      arv: deal.arv,
+      mao: deal.mao60 || deal.maoRBP || 0,
+      mao60: deal.mao60,
+      maoRBP: deal.maoRBP,
+      estimatedRepairs: deal.repairs?.mid || 0,
+      mortgageBalance: deal.balance || deal.mtBalanceConfirm || 0,
+      scriptPath: agentDealContext.scriptPath,
+      scriptVariant: agentDealContext.scriptVariant,
+      activeScriptTab: agentDealContext.activeScriptTab,
+      updatedAt: new Date().toISOString()
+    };
+
+    if (!leadId) {
+      const response = await postRuntimeEvent('lead-intake', {
+        source: 'analyzer-deal-sync',
+        syncedFrom: 'deal-analyzer',
+        seller: {
+          name: deal.sellerName || deal.leadName || 'Analyzer Lead',
+          phone: deal.sellerPhone || deal.phone || '',
+          email: deal.sellerEmail || deal.email || ''
+        },
+        property: {
+          address: deal.address,
+          type: deal.type || 'house',
+          beds: deal.beds,
+          baths: deal.baths,
+          sqft: deal.sqft,
+          year: deal.year
+        },
+        analyzer: analyzerPayload,
+        deal,
+        agentDealContext,
+        call_metadata: {
+          source: 'analyzer-deal-sync',
+          syncedFrom: 'deal-analyzer',
+          selectedPath,
+          selected_path: selectedPath,
+          agentDealContext
+        },
+        tags: ['analyzer', 'ava-context']
+      }, {
+        actionLabel: 'Ava analyzer handoff',
+        successTitle: 'Analyzer sent to Ava',
+        successDesc: 'Ava can now use the latest ARV, MAO, offer, repair, path, and call-script context.',
+        errorTitle: 'Could not send analyzer snapshot'
+      });
+      if (response) await saveAnalyzerSidecarFields(next);
+      return response;
+    }
+
+    const response = await requestOpenClawApi(`/api/leads/${encodeURIComponent(leadId)}`, {
+      method: 'PATCH',
+      body: {
+        actor: 'Analyzer',
+        source: 'analyzer-deal-sync',
+        syncedFrom: 'deal-analyzer',
+        leadId,
+        lead_id: leadId,
+        name: deal.sellerName,
+        leadName: deal.sellerName,
+        phone: deal.sellerPhone,
+        email: deal.sellerEmail,
+        address: deal.address,
+        propertyAddress: deal.address,
+        propertyType: deal.type || 'house',
+        selectedPath,
+        selected_path: selectedPath,
+        askingPrice: deal.agreedPrice || deal.price || deal.offer || 0,
+        arv: deal.arv,
+        mao: deal.mao60 || deal.maoRBP || 0,
+        mao60: deal.mao60,
+        maoRBP: deal.maoRBP,
+        estimatedRepairs: deal.repairs?.mid || 0,
+        mortgageBalance: deal.balance || deal.mtBalanceConfirm || 0,
+        lastOffer: deal.offer || deal.agreedPrice,
+        last_offer: deal.offer || deal.agreedPrice,
+        notes: `Analyzer synced ARV ${money(deal.arv || 0)}, MAO ${money(deal.mao60 || 0)}, repairs ${money(deal.repairs?.mid || 0)}.`,
+        summary: `Analyzer refreshed ${DEAL_PATH_LABELS[selectedPath] || selectedPath || 'cash'} path for Ava.`,
+        message: `Analyzer synced ${deal.address} to Ava: ARV ${fmt(deal.arv)}, MAO ${fmt(deal.mao60 || deal.maoRBP)}, target ${fmt(deal.offer || deal.agreedPrice)}, path ${selectedPath}, script ${agentDealContext.scriptPath}/${agentDealContext.scriptVariant}/${agentDealContext.activeScriptTab}.`,
+        analyzer: analyzerPayload,
+        deal,
+        agentDealContext,
+        call_metadata: {
+          source: 'analyzer-deal-sync',
+          syncedFrom: 'deal-analyzer',
+          selectedPath,
+          selected_path: selectedPath,
+          agentDealContext
+        }
+      },
+      timeout: 12000
     });
+    await applyRuntimeResponse(response);
+    if (response) await saveAnalyzerSidecarFields(next);
+    toastOutcome({
+      outcome: getRuntimeOutcome(response, 'live'),
+      title: 'Analyzer sent to Ava',
+      desc: 'Ava can now use the latest ARV, MAO, offer, repair, path, and call-script context.',
+      response
+    });
+    return response;
   }
 
   function getVisibleAnalyzerFrame() {

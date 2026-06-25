@@ -7,6 +7,7 @@ import {
 } from '../utils/runtimeBridge';
 import { showUiToast, toastUndo } from '../utils/uiFeedback';
 import { PbkDataSource } from '../../components/pbk/index';
+import { CompactPager, getPageSlice, OPERATOR_LIST_PAGE_SIZE } from './CompactPager';
 
 type BridgeRecord = Record<string, unknown>;
 
@@ -170,6 +171,8 @@ export function CallFloorPanel({
   const [selectedLeadId, setSelectedLeadId] = useState('');
   const [callbackTime, setCallbackTime] = useState('');
   const [scheduledCalls, setScheduledCalls] = useState(() => readScheduledCalls());
+  const [callLeadPage, setCallLeadPage] = useState(0);
+  const [scheduledCallPage, setScheduledCallPage] = useState(0);
   const [scheduleActionPending, setScheduleActionPending] = useState('');
   const [cancelScheduledCallDraft, setCancelScheduledCallDraft] =
     useState<CancelScheduledCallDraft | null>(null);
@@ -186,9 +189,9 @@ export function CallFloorPanel({
     return phones;
   }, [calls]);
 
-  const visibleLeads = useMemo(() => {
+  const filteredCallLeads = useMemo(() => {
     const needle = query.trim().toLowerCase();
-    const filtered = needle
+    return needle
       ? leads.filter((lead) =>
           [getLeadName(lead), getLeadPhone(lead), getLeadAddress(lead), getLeadMotivation(lead)]
             .join(' ')
@@ -196,13 +199,24 @@ export function CallFloorPanel({
             .includes(needle)
         )
       : leads;
-    return filtered.slice(0, 8);
   }, [leads, query]);
+
+  const visibleLeads = useMemo(
+    () => getPageSlice(filteredCallLeads, callLeadPage, OPERATOR_LIST_PAGE_SIZE),
+    [callLeadPage, filteredCallLeads]
+  );
+
+  const visibleScheduledCalls = useMemo(
+    () => getPageSlice(scheduledCalls, scheduledCallPage, OPERATOR_LIST_PAGE_SIZE),
+    [scheduledCallPage, scheduledCalls]
+  );
 
   const selectedLead = useMemo(
     () =>
-      visibleLeads.find((lead) => getLeadId(lead) === selectedLeadId) || visibleLeads[0] || null,
-    [selectedLeadId, visibleLeads]
+      filteredCallLeads.find((lead) => getLeadId(lead) === selectedLeadId) ||
+      visibleLeads[0] ||
+      null,
+    [filteredCallLeads, selectedLeadId, visibleLeads]
   );
 
   const startBridgeCall = useCallback(
@@ -271,6 +285,20 @@ export function CallFloorPanel({
     },
     [activePhones, selectedLead]
   );
+
+  useEffect(() => {
+    setCallLeadPage(0);
+  }, [query]);
+
+  useEffect(() => {
+    const pageCount = Math.max(1, Math.ceil(filteredCallLeads.length / OPERATOR_LIST_PAGE_SIZE));
+    setCallLeadPage((current) => Math.min(current, pageCount - 1));
+  }, [filteredCallLeads.length]);
+
+  useEffect(() => {
+    const pageCount = Math.max(1, Math.ceil(scheduledCalls.length / OPERATOR_LIST_PAGE_SIZE));
+    setScheduledCallPage((current) => Math.min(current, pageCount - 1));
+  }, [scheduledCalls.length]);
 
   useEffect(() => {
     const onCallNow = (event: Event) => {
@@ -358,7 +386,7 @@ export function CallFloorPanel({
         scheduledAt: text(appointment.startTime, scheduledAt),
       };
       setScheduledCalls((current) =>
-        saveScheduledCalls([item, ...current.filter((call) => call.id !== item.id)].slice(0, 8))
+        saveScheduledCalls([item, ...current.filter((call) => call.id !== item.id)])
       );
       showUiToast({
         tone: 'success',
@@ -401,9 +429,7 @@ export function CallFloorPanel({
         scheduledAt: text(appointment.startTime, item.scheduledAt),
       };
       setScheduledCalls((current) =>
-        saveScheduledCalls(
-          [restored, ...current.filter((nextItem) => nextItem.id !== restored.id)].slice(0, 8)
-        )
+        saveScheduledCalls([restored, ...current.filter((nextItem) => nextItem.id !== restored.id)])
       );
       showUiToast({
         tone: 'success',
@@ -583,6 +609,14 @@ export function CallFloorPanel({
           </div>
         )}
       </div>
+      <CompactPager
+        page={callLeadPage}
+        total={filteredCallLeads.length}
+        label="Call floor lead pages"
+        itemLabel="leads"
+        className="mt-3"
+        onPageChange={setCallLeadPage}
+      />
 
       <div className="call-scheduler mt-4 rounded-2xl border border-slate-800 bg-slate-900/70 p-3">
         <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.14em] text-sky-300">
@@ -647,7 +681,7 @@ export function CallFloorPanel({
           <span>{scheduledCalls.length} synced</span>
         </div>
         <div className="mt-2 grid gap-2">
-          {scheduledCalls.map((item) => (
+          {visibleScheduledCalls.map((item) => (
             <div key={item.id} className="scheduled-call-row">
               <Clock3 size={14} className="text-sky-300" />
               <div className="min-w-0">
@@ -667,13 +701,21 @@ export function CallFloorPanel({
               </button>
             </div>
           ))}
-          {!scheduledCalls.length && (
+          {!visibleScheduledCalls.length && (
             <div className="rounded-xl border border-dashed border-slate-800 px-3 py-3 text-xs text-slate-500">
               No scheduled calls yet. Pick a lead, choose a time, and it will sync to the bridge
               queue.
             </div>
           )}
         </div>
+        <CompactPager
+          page={scheduledCallPage}
+          total={scheduledCalls.length}
+          label="Scheduled callback pages"
+          itemLabel="callbacks"
+          className="mt-3"
+          onPageChange={setScheduledCallPage}
+        />
       </div>
 
       <PbkDataSource

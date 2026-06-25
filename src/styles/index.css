@@ -1325,8 +1325,14 @@ html[data-theme='light'] .pbk-leads-surface .border-slate-700 {
   }
 
   .btn-call {
+    width: 100%;
     min-width: 48px;
     min-height: 48px;
+    justify-content: center;
+  }
+
+  .call-floor-search input {
+    font-size: 16px;
   }
 
   .callback-time-input {
@@ -1336,6 +1342,11 @@ html[data-theme='light'] .pbk-leads-surface .border-slate-700 {
   .outbound-lead-result,
   .scheduled-call-row {
     grid-template-columns: 1fr;
+  }
+
+  .scheduled-call-row button {
+    width: 100%;
+    justify-content: center;
   }
 }
 

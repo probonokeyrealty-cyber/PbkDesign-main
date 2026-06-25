@@ -3984,6 +3984,85 @@ function renderPdfFallbackHtml(payload = {}) {
 </html>`;
 }
 
+function pdfEscape(value = '') {
+  return String(value || '')
+    .replace(/\\/g, '\\\\')
+    .replace(/\(/g, '\\(')
+    .replace(/\)/g, '\\)')
+    .replace(/[^\x09\x0A\x0D\x20-\x7E]/g, '');
+}
+
+function wrapPdfText(value = '', width = 88) {
+  const words = String(value || '')
+    .replace(/\r/g, '')
+    .split(/\s+/)
+    .filter(Boolean);
+  const lines = [];
+  let line = '';
+  for (const word of words) {
+    const next = line ? `${line} ${word}` : word;
+    if (next.length > width && line) {
+      lines.push(line);
+      line = word;
+    } else {
+      line = next;
+    }
+  }
+  if (line) lines.push(line);
+  return lines.length ? lines : ['No document content available.'];
+}
+
+function buildSimplePdf(payload = {}) {
+  const title = payload.documentTitle || payload.documentType || 'PBK Document';
+  const company = payload.companyName || 'Probono Key Realty';
+  const address = payload.propertyAddress || 'No property loaded';
+  const pathLabel = payload.selectedPathLabel || 'Selected Path';
+  const bodyLines = wrapPdfText(payload.content || 'No document content available.');
+  const lines = [
+    { size: 18, text: title },
+    { size: 10, text: company },
+    { size: 10, text: `${pathLabel} | ${address} | ${new Date().toLocaleDateString('en-US')}` },
+    { size: 10, text: '' },
+    ...bodyLines.slice(0, 48).map((text) => ({ size: 10, text })),
+  ];
+
+  const commands = ['BT', '72 760 Td'];
+  let previousSize = 0;
+  lines.forEach((lineItem, index) => {
+    if (lineItem.size !== previousSize) {
+      commands.push(`/F1 ${lineItem.size} Tf`);
+      previousSize = lineItem.size;
+    }
+    if (index > 0) commands.push(`0 -${lineItem.size + 6} Td`);
+    commands.push(`(${pdfEscape(lineItem.text)}) Tj`);
+  });
+  commands.push('ET');
+
+  const stream = commands.join('\n');
+  const objects = [
+    '1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n',
+    '2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n',
+    '3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>\nendobj\n',
+    `4 0 obj\n<< /Length ${Buffer.byteLength(stream, 'ascii')} >>\nstream\n${stream}\nendstream\nendobj\n`,
+    '5 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n',
+  ];
+
+  let pdf = '%PDF-1.4\n';
+  const offsets = [0];
+  for (const object of objects) {
+    offsets.push(Buffer.byteLength(pdf, 'ascii'));
+    pdf += object;
+  }
+  const xrefOffset = Buffer.byteLength(pdf, 'ascii');
+  pdf += `xref\n0 ${objects.length + 1}\n`;
+  pdf += '0000000000 65535 f \n';
+  offsets.slice(1).forEach((offset) => {
+    pdf += `${String(offset).padStart(10, '0')} 00000 n \n`;
+  });
+  pdf += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xrefOffset}\n%%EOF\n`;
+  return Buffer.from(pdf, 'ascii');
+}
+
 function buildPdfPreviewUrl(payload = {}) {
   if (payload.previewUrl) return String(payload.previewUrl).trim();
   if (!payload.masterPackageQuery) return '';
@@ -4095,7 +4174,24 @@ async function getOrCreateIdempotentPdfDocument(body = {}, request = null) {
       pdf: Buffer.from(cached.pdf),
     };
   }
-  const pdf = await generatePdfDocument(body);
+  let pdf;
+  let cache = 'miss';
+  const forceSimpleFallback = /^(1|true|yes)$/i.test(
+    String(process.env.PBK_PDF_FORCE_SIMPLE_FALLBACK || '').trim()
+  );
+  try {
+    if (forceSimpleFallback) {
+      throw new Error('simple_pdf_fallback_forced');
+    }
+    pdf = await generatePdfDocument(body);
+  } catch (error) {
+    cache = 'fallback';
+    console.warn(
+      '[pbk-local-openclaw] PDF chromium renderer unavailable; using simple PDF fallback:',
+      error?.message || String(error || 'unknown error')
+    );
+    pdf = buildSimplePdf(body);
+  }
   PDF_IDEMPOTENCY_CACHE.set(key, {
     pdf: Buffer.from(pdf),
     createdAt: now,
@@ -4103,7 +4199,7 @@ async function getOrCreateIdempotentPdfDocument(body = {}, request = null) {
   });
   return {
     key,
-    cache: 'miss',
+    cache,
     pdf,
   };
 }

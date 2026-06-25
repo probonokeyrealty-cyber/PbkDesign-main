@@ -47,6 +47,7 @@ async function main() {
       PBK_SUPABASE_ENABLED: '0',
       PBK_DISABLE_POSTGRES: '1',
       PBK_ALLOW_UNAUTHENTICATED_HOSTED_BRIDGE: '1',
+      PBK_PDF_FORCE_SIMPLE_FALLBACK: '1',
     },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
@@ -76,7 +77,10 @@ async function main() {
       },
       body: JSON.stringify(payload),
     });
-    assert.equal(response.status, 200, `PDF route returned ${response.status}.`);
+    if (response.status !== 200) {
+      const body = await response.text().catch(() => '');
+      throw new Error(`PDF route returned ${response.status}: ${body.slice(0, 600)}`);
+    }
     assert.match(response.headers.get('content-type') || '', /application\/pdf/);
     const pdf = Buffer.from(await response.arrayBuffer());
     assert.equal(pdf.subarray(0, 4).toString('utf8'), '%PDF', 'PDF route did not return a PDF signature.');

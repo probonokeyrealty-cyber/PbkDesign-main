@@ -116,6 +116,43 @@ async function main() {
     });
     assertNotApprovalGate('manual email', email);
 
+    const immediateEmail = await requestJson(baseUrl, '/api/messages', {
+      leadId,
+      channel: 'email',
+      email: 'manual.actions@example.com',
+      subject: 'Immediate email route smoke',
+      message: 'Immediate email route smoke.',
+      manual: true,
+      manualSend: true,
+      source: 'unified_inbox_manual',
+    });
+    assertNotApprovalGate('immediate /api/messages email', immediateEmail);
+    assert.notEqual(
+      immediateEmail.json?.provider,
+      'Telnyx',
+      'Immediate /api/messages email must route through email delivery, not Telnyx SMS.'
+    );
+    assert.equal(
+      immediateEmail.json?.message?.channel,
+      'email',
+      'Immediate /api/messages email should persist as an email message.'
+    );
+
+    const immediateSms = await requestJson(baseUrl, '/api/messages', {
+      leadId,
+      channel: 'sms',
+      phone: '+16145550177',
+      message: 'Immediate SMS route smoke.',
+      manual: true,
+      manualSend: true,
+      source: 'unified_inbox_manual',
+    });
+    assertNotApprovalGate('immediate /api/messages SMS', immediateSms);
+    assert.ok(
+      immediateSms.json?.telnyx || immediateSms.json?.message?.channel === 'sms',
+      'Immediate /api/messages SMS should stay on the Telnyx/SMS path.'
+    );
+
     const call = await requestJson(baseUrl, '/api/calls', {
       leadId,
       phone: '+16145550177',
@@ -167,6 +204,8 @@ async function main() {
             lead: lead.status,
             sms: sms.status,
             email: email.status,
+            immediateEmail: immediateEmail.status,
+            immediateSms: immediateSms.status,
             call: call.status,
             nurture: nurture.status,
             sellerDocs: sellerDocs.status,

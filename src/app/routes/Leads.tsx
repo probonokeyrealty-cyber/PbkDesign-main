@@ -2241,7 +2241,7 @@ export function Leads() {
                     disabled={isLeadActionBusy}
                     className="inline-flex items-center gap-2 rounded-full border border-slate-700 px-3 py-2 text-xs font-semibold text-slate-300 transition hover:border-sky-400 hover:text-sky-200"
                   >
-                    <Edit3 size={14} /> Edit Lead
+                    <Edit3 size={14} /> Quick edit
                   </button>
                   <button
                     type="button"
@@ -2923,11 +2923,11 @@ export function Leads() {
           <div
             className={`${softPanelClass} pbk-lead-edit-modal flex max-h-[90vh] w-full max-w-4xl flex-col overflow-hidden`}
           >
-            <div className="flex items-center justify-between gap-3 border-b border-slate-800 px-4 py-4">
+            <div className="pbk-lead-edit-modal-header flex items-center justify-between gap-3 border-b border-slate-800 px-4 py-4">
               <div>
-                <h3 className="text-lg font-semibold text-slate-100">Edit Lead</h3>
+                <h3 className="text-lg font-semibold text-slate-100">Quick edit</h3>
                 <p className="text-xs text-slate-500">
-                  Correct CRM facts, BANT+, and Ava call memory.
+                  Update the essentials here. Open the seller profile for the complete form.
                 </p>
               </div>
               <button
@@ -3167,7 +3167,7 @@ export function Leads() {
                 ) : (
                   <Save size={15} />
                 )}
-                Save Changes
+                Save quick edit
               </button>
             </div>
           </div>

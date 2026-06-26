@@ -1901,6 +1901,10 @@ export async function sendAvaAssistantChatRequest(body: {
   sessionId?: string;
   source?: string;
   leadId?: string;
+  action?: string;
+  selectedAction?: string;
+  requiresApproval?: boolean;
+  context?: Record<string, unknown>;
   messages?: Array<{ role?: string; content?: string }>;
 }) {
   return bridgeRequest<AvaAssistantChatResponse>({

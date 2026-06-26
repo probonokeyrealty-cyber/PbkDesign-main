@@ -13,6 +13,7 @@ import {
 const root = process.cwd();
 const avaChatRoute = readFileSync(resolve(root, 'src/app/routes/AvaChat.tsx'), 'utf8');
 const pbkCss = readFileSync(resolve(root, 'src/styles/pbk-components.css'), 'utf8');
+const bridge = readFileSync(resolve(root, 'scripts/openclaw-local-server.mjs'), 'utf8');
 
 const sessionId = createAssistantSessionId();
 assert.match(sessionId, /^ava_chat_[0-9a-f]{12}$/i, 'Assistant session id should be stable, short, and namespaced.');
@@ -60,6 +61,33 @@ const callIntent = detectAssistantIntent('Call 614-555-0199 for me now.');
 assert.equal(callIntent.intent, 'call', 'Assistant should detect call requests.');
 assert.equal(callIntent.phone, '6145550199', 'Assistant should normalize phone numbers.');
 
+const smsIntent = detectAssistantIntent('Send a text to this lead that I can call tomorrow at 3.');
+assert.equal(smsIntent.intent, 'seller_message', 'Assistant should detect seller SMS requests.');
+assert.equal(smsIntent.channel, 'sms', 'Seller text requests should route to SMS.');
+assert.equal(smsIntent.delivery, 'send', 'Explicit send language should request approval-gated delivery.');
+assert.match(smsIntent.messageBody, /call tomorrow/i, 'SMS intent should extract the operator message body.');
+
+const emailIntent = detectAssistantIntent('Send an email to seller@example.com saying we can review the offer tonight.');
+assert.equal(emailIntent.intent, 'seller_message', 'Assistant should detect seller email requests.');
+assert.equal(emailIntent.channel, 'email', 'Email requests should route to email.');
+assert.equal(emailIntent.email, 'seller@example.com', 'Email intent should extract the recipient email.');
+
+const contractPrepareIntent = detectAssistantIntent('Prepare the contract for 202 Cherry Ln but do not send it.');
+assert.equal(contractPrepareIntent.intent, 'contract_prepare', 'Assistant should detect contract-preparation requests.');
+const contractSendIntent = detectAssistantIntent('Send DocuSign contract for 202 Cherry Ln.');
+assert.equal(contractSendIntent.intent, 'contract_send', 'Assistant should distinguish DocuSign send requests from draft prep.');
+
+const scheduleIntent = detectAssistantIntent('Schedule a follow-up for this lead tomorrow.');
+assert.equal(scheduleIntent.intent, 'schedule_follow_up', 'Assistant should detect follow-up scheduling requests.');
+assert.equal(scheduleIntent.when, 'tomorrow', 'Follow-up scheduling should extract simple timing hints.');
+
+const memoryIntent = detectAssistantIntent('Remember this note: seller needs spouse approval.');
+assert.equal(memoryIntent.intent, 'remember_note', 'Assistant should detect memory capture requests.');
+assert.match(memoryIntent.note, /spouse approval/i, 'Memory capture should retain the note body.');
+
+const callReviewIntent = detectAssistantIntent('Review the latest call and tell me what Ava missed.');
+assert.equal(callReviewIntent.intent, 'call_review', 'Assistant should detect latest-call review requests.');
+
 const additiveIntent = detectAssistantIntent('Use all frontier additives and sync the whole system intelligence.');
 assert.equal(
   additiveIntent.intent,
@@ -71,6 +99,13 @@ const publicCallPlan = planAssistantIntent(callIntent, { publicMode: true });
 assert.equal(publicCallPlan.action, 'blocked_public_provider_write', 'Public assistant chat must not place calls.');
 assert.match(publicCallPlan.answer, /public chat.*will not start calls/i, 'Public call block should explain the safety boundary.');
 assert.deepEqual(publicCallPlan.toolPlan, null, 'Public blocked intents must not return an executable tool plan.');
+
+const publicContractPlan = planAssistantIntent(contractSendIntent, { publicMode: true });
+assert.equal(
+  publicContractPlan.action,
+  'blocked_public_provider_write',
+  'Public assistant chat must not prepare private DocuSign actions.'
+);
 
 const publicApprovalPlan = planAssistantIntent(detectAssistantIntent("What's my approval status?"), { publicMode: true });
 assert.equal(publicApprovalPlan.action, 'blocked_public_private_data', 'Public assistant chat must not expose private approvals.');
@@ -131,6 +166,64 @@ const internalCallPlan = planAssistantIntent(callIntent, { publicMode: false, au
 assert.equal(internalCallPlan.action, 'approval_required', 'Authenticated call requests should still stay approval-gated.');
 assert.equal(internalCallPlan.toolPlan?.toolName, 'telnyx_call', 'Call requests should map to the Telnyx call tool only as an approval-gated plan.');
 assert.equal(internalCallPlan.toolPlan?.params?.forceApproval, true, 'Assistant call requests should force approval even if autopilot is enabled.');
+
+const internalSmsPlan = planAssistantIntent(smsIntent, {
+  publicMode: false,
+  authenticated: true,
+  leadId: 'lead-sms-1',
+});
+assert.equal(internalSmsPlan.action, 'approval_required', 'Ava-initiated SMS sends should be approval-gated.');
+assert.equal(internalSmsPlan.toolPlan?.toolName, 'telnyx_sms', 'SMS sends should route to Telnyx SMS.');
+assert.equal(internalSmsPlan.toolPlan?.params?.forceApproval, true, 'SMS sends should force approval.');
+
+const internalEmailPlan = planAssistantIntent(emailIntent, {
+  publicMode: false,
+  authenticated: true,
+});
+assert.equal(internalEmailPlan.action, 'approval_required', 'Ava-initiated email sends should be approval-gated.');
+assert.equal(internalEmailPlan.toolPlan?.toolName, 'sendColdEmail', 'Email sends should route to the email sender.');
+assert.equal(internalEmailPlan.toolPlan?.params?.email, 'seller@example.com', 'Email plan should keep the recipient email.');
+
+const internalContractPreparePlan = planAssistantIntent(contractPrepareIntent, {
+  publicMode: false,
+  authenticated: true,
+});
+assert.equal(internalContractPreparePlan.action, 'tool_plan', 'Contract prep should create a draft plan without sending.');
+assert.equal(internalContractPreparePlan.toolPlan?.toolName, 'prepareContract', 'Contract prep should route to prepareContract.');
+
+const internalContractSendPlan = planAssistantIntent(contractSendIntent, {
+  publicMode: false,
+  authenticated: true,
+});
+assert.equal(internalContractSendPlan.action, 'approval_required', 'DocuSign sends should be approval-gated.');
+assert.equal(
+  internalContractSendPlan.toolPlan?.toolName,
+  'prepare_and_send_contract',
+  'DocuSign sends should route to the path-aware contract sender.'
+);
+assert.equal(internalContractSendPlan.toolPlan?.params?.forceApproval, true, 'DocuSign sends should force approval.');
+
+const internalSchedulePlan = planAssistantIntent(scheduleIntent, {
+  publicMode: false,
+  authenticated: true,
+  leadId: 'lead-follow-up-1',
+});
+assert.equal(internalSchedulePlan.action, 'approval_required', 'Follow-up scheduling from Ava should be approval-gated.');
+assert.equal(internalSchedulePlan.toolPlan?.toolName, 'scheduleAppointment', 'Follow-up scheduling should route to scheduleAppointment.');
+
+const internalMemoryPlan = planAssistantIntent(memoryIntent, {
+  publicMode: false,
+  authenticated: true,
+  leadId: 'lead-memory-1',
+});
+assert.equal(internalMemoryPlan.action, 'tool_plan', 'Memory capture should use a readonly tool plan.');
+assert.equal(internalMemoryPlan.toolPlan?.toolName, 'addPbkMemory', 'Memory capture should route to PBK memory.');
+
+const internalCallReviewPlan = planAssistantIntent(callReviewIntent, {
+  publicMode: false,
+  authenticated: true,
+});
+assert.equal(internalCallReviewPlan.action, 'call_review_summary', 'Call reviews should use the internal call review summary path.');
 
 const nurtureStartIntent = detectAssistantIntent('Start a nurture sequence for this lead tonight.');
 assert.equal(nurtureStartIntent.intent, 'nurture_start', 'Assistant should distinguish explicit nurture automation from read-only consultation.');
@@ -275,6 +368,24 @@ assert(
     pbkCss
   ),
   'Ava Chat send button must remain explicitly touchable on mobile browsers.'
+);
+assert(
+  /function recordAvaAssistantPlanOps/.test(bridge) &&
+    /step:\s*'assistant_plan'/.test(bridge) &&
+    /traceContract:\s*'intent_plan_guardrail_proof_outcome'/.test(bridge) &&
+    /researchBasis:\s*\['openai_traces_evals', 'deepseek_function_calling_json', 'google_sre_golden_signals'\]/.test(
+      bridge
+    ),
+  'Ava assistant turns must be recorded as traceable plan operations with intent, guardrail, proof, and outcome metadata.'
+);
+assert(
+  /handleInternalAvaAssistantChatRequest[\s\S]*const assistantOpsStartedAt = Date\.now\(\)[\s\S]*recordAvaAssistantPlanOps\(\{[\s\S]*publicMode:\s*false/.test(
+    bridge
+  ) &&
+    /handlePublicAvaChatRequest[\s\S]*const assistantOpsStartedAt = Date\.now\(\)[\s\S]*recordAvaAssistantPlanOps\(\{[\s\S]*publicMode:\s*true/.test(
+      bridge
+    ),
+  'Both public and authenticated Ava chat handlers must emit assistant-plan operations.'
 );
 
 console.log('[ava-assistant-chat-smoke] ok');

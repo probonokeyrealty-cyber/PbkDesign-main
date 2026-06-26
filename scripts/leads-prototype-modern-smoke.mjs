@@ -174,7 +174,16 @@ assert(
     leads.includes('pbk-lead-edit-modal') &&
     leads.includes('pbk-lead-edit-modal-body') &&
     leads.includes('pbk-lead-edit-modal-footer') &&
-    pbkCss.includes('.pbk-lead-edit-modal-footer'),
+    leads.includes('Quick edit') &&
+    leads.includes('Save quick edit') &&
+    /\.pbk-lead-edit-modal-backdrop\s*{\s*z-index:\s*130;/.test(pbkCss) &&
+    /\.pbk-lead-edit-modal\s*{[\s\S]*min-height:\s*0;[\s\S]*display:\s*flex;/.test(pbkCss) &&
+    /\.pbk-lead-edit-modal-body\s*{[\s\S]*min-height:\s*0;[\s\S]*flex:\s*1 1 auto;[\s\S]*overscroll-behavior:\s*contain;/.test(
+      pbkCss
+    ) &&
+    /\.pbk-lead-edit-modal-footer\s*{[\s\S]*position:\s*sticky;[\s\S]*bottom:\s*0;[\s\S]*padding-bottom:\s*calc\(16px \+ env\(safe-area-inset-bottom\)\);/.test(
+      pbkCss
+    ),
   'Lead edit modal must have mobile-safe classes so agents can edit and save on phones.'
 );
 

@@ -70,7 +70,6 @@ assert(
 );
 
 for (const [toolName, routeName] of [
-  ['telnyx_sms', 'messages-route'],
   ['prepare_and_send_contract', 'contract-send-route'],
   ['sendColdEmail', 'cold-email-route'],
 ]) {
@@ -82,6 +81,8 @@ for (const [toolName, routeName] of [
 
 for (const [toolName, routeName] of [
   ['telnyx_call', 'calls-route'],
+  ['telnyx_sms', 'messages-route'],
+  ['sendColdEmail', 'messages-route'],
   ['telnyx_sms', 'lead-send-message'],
   ['sendColdEmail', 'lead-send-message'],
   ['sendSellerDocs', 'seller-docs-route'],

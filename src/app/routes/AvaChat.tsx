@@ -74,7 +74,11 @@ type AvaCommandAction =
   | 'send_sms'
   | 'execute_safe_script'
   | 'search_leads'
-  | 'analyze_deal';
+  | 'analyze_deal'
+  | 'prepare_contract'
+  | 'schedule_follow_up'
+  | 'review_call'
+  | 'remember_note';
 type HistoryFilter = 'all' | 'active' | 'completed' | 'failed';
 type ConnectionState = 'checking' | 'connected' | 'degraded';
 type AvaSystemStatus = {
@@ -122,6 +126,16 @@ const LOCAL_CONTROL_ACTIONS = new Set<AvaCommandAction>([
   'screenshot',
   'type_text',
   'execute_safe_script',
+]);
+const DOMAIN_ASSISTANT_ACTIONS = new Set<AvaCommandAction>([
+  'send_email',
+  'send_sms',
+  'search_leads',
+  'analyze_deal',
+  'prepare_contract',
+  'schedule_follow_up',
+  'review_call',
+  'remember_note',
 ]);
 
 const PBK_COMPANION_ACTIONS: CompanionAction[] = [
@@ -184,16 +198,16 @@ const PBK_COMPANION_ACTIONS: CompanionAction[] = [
     label: 'Prepare Contract',
     description: 'Queue the contract package without sending it yet.',
     prompt: 'Prepare the right contract package for this deal but do not send it yet.',
-    action: 'operator_command',
+    action: 'prepare_contract',
     icon: FileText,
-    requiresApproval: true,
+    requiresApproval: false,
   },
   {
     id: 'schedule-follow-up',
     label: 'Schedule Follow-up',
     description: 'Turn the next step into a seller timeline event.',
     prompt: 'Schedule the next follow-up for this seller and explain the recommended timing.',
-    action: 'operator_command',
+    action: 'schedule_follow_up',
     icon: CalendarClock,
     requiresApproval: true,
   },
@@ -212,7 +226,7 @@ const PBK_COMPANION_ACTIONS: CompanionAction[] = [
     description: 'Inspect a bad call, missed objection, or stale control.',
     prompt:
       'Review the latest seller interaction for missed context, repetition, and the next fix.',
-    action: 'operator_command',
+    action: 'review_call',
     icon: Bot,
     requiresApproval: false,
   },
@@ -221,7 +235,7 @@ const PBK_COMPANION_ACTIONS: CompanionAction[] = [
     label: 'Remember Note',
     description: 'Capture a seller fact, operator note, or coaching lesson.',
     prompt: 'Add this as a PBK memory and connect it to the current seller timeline.',
-    action: 'operator_command',
+    action: 'remember_note',
     icon: FileText,
     requiresApproval: false,
   },
@@ -299,6 +313,30 @@ const ACTIONS: Array<{
     description: 'Prepare deal analysis context.',
     icon: Sparkles,
   },
+  {
+    id: 'prepare_contract',
+    label: 'Contract',
+    description: 'Prepare the right seller contract package.',
+    icon: FileText,
+  },
+  {
+    id: 'schedule_follow_up',
+    label: 'Follow-up',
+    description: 'Prepare a seller follow-up for approval.',
+    icon: CalendarClock,
+  },
+  {
+    id: 'review_call',
+    label: 'Review call',
+    description: 'Review the latest seller interaction.',
+    icon: Bot,
+  },
+  {
+    id: 'remember_note',
+    label: 'Remember',
+    description: 'Save a seller fact or coaching note.',
+    icon: FileText,
+  },
 ];
 
 const ACTIVE_STATUSES = new Set([
@@ -344,6 +382,12 @@ function normalizeAction(value?: string): AvaCommandAction {
     : 'operator_command';
 }
 
+function getAvaChatLeadIdFromLocation() {
+  if (typeof window === 'undefined') return '';
+  const params = new URLSearchParams(window.location.search);
+  return params.get('leadId') || params.get('lead_id') || '';
+}
+
 function buildCommandParams(action: AvaCommandAction, command: string) {
   if (action === 'type_text') {
     return {
@@ -356,6 +400,10 @@ function buildCommandParams(action: AvaCommandAction, command: string) {
   if (action === 'send_sms') return { channel: 'sms', draftOnly: true };
   if (action === 'search_leads') return { query: command };
   if (action === 'analyze_deal') return { prompt: command };
+  if (action === 'prepare_contract') return { prompt: command, draftOnly: true };
+  if (action === 'schedule_follow_up') return { prompt: command, forceApproval: true };
+  if (action === 'review_call') return { prompt: command };
+  if (action === 'remember_note') return { note: command };
   return {};
 }
 
@@ -432,6 +480,33 @@ function classifyConversationalCommand(command: string, selectedAction: AvaComma
       action: 'analyze_deal',
       requiresApproval: false,
     },
+    {
+      pattern: /\b(?:prepare|draft|build|create).{0,32}(?:contract|agreement|docusign|docs?)\b/i,
+      action: 'prepare_contract',
+      requiresApproval: false,
+    },
+    {
+      pattern: /\b(?:send).{0,32}(?:contract|agreement|docusign|docs?)\b/i,
+      action: 'prepare_contract',
+      requiresApproval: true,
+    },
+    {
+      pattern:
+        /\b(?:schedule|set|queue|plan).{0,32}(?:follow[\s-]?up|appointment|callback|reminder)\b/i,
+      action: 'schedule_follow_up',
+      requiresApproval: true,
+    },
+    {
+      pattern:
+        /\b(?:review|score|audit|summarize).{0,32}(?:call|conversation|seller interaction|latest interaction)\b/i,
+      action: 'review_call',
+      requiresApproval: false,
+    },
+    {
+      pattern: /\b(?:remember|save|store|note).{0,32}(?:this|note|memory|seller fact|lesson)\b/i,
+      action: 'remember_note',
+      requiresApproval: false,
+    },
   ];
   const match = routes.find((route) => route.pattern.test(text));
   if (!match || selectedAction !== 'operator_command') {
@@ -457,6 +532,7 @@ function shouldUseAssistantChatRoute({
   requiresApproval: boolean;
 }) {
   if (LOCAL_CONTROL_ACTIONS.has(action)) return false;
+  if (DOMAIN_ASSISTANT_ACTIONS.has(action)) return true;
   if (selectedAction === 'operator_command' && requiresApproval) return false;
   return true;
 }
@@ -1026,6 +1102,14 @@ export function AvaChat() {
             message: command,
             sessionId: assistantSessionId || undefined,
             source: 'ava-chat-page',
+            leadId: getAvaChatLeadIdFromLocation() || undefined,
+            action: nextAction,
+            selectedAction: action,
+            requiresApproval: nextRequiresApproval,
+            context: {
+              path: typeof window === 'undefined' ? '' : window.location.pathname,
+              search: typeof window === 'undefined' ? '' : window.location.search,
+            },
           });
           if (response.sessionId) setAssistantSessionId(response.sessionId);
           setAssistantExchanges((current) =>

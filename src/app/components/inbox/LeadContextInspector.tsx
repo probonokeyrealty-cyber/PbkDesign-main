@@ -279,7 +279,7 @@ export function LeadContextInspector({
         <footer>
           <Link to={leadId ? `/leads/${encodeURIComponent(leadId)}?edit=1` : '/leads'}>
             <Pencil size={14} />
-            Edit lead
+            Quick edit
           </Link>
           <Link to={leadId ? `/leads/${encodeURIComponent(leadId)}` : '/leads'}>
             <ExternalLink size={14} />

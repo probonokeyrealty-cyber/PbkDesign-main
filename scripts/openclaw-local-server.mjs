@@ -40420,6 +40420,88 @@ function summarizeProviderActionResult(result = {}) {
   };
 }
 
+function recordAvaAssistantPlanOps({
+  sessionId = '',
+  leadId = '',
+  source = 'ava-assistant-chat',
+  publicMode = false,
+  text = '',
+  assistantIntent = {},
+  assistantPlan = {},
+  answer = '',
+  toolResult = null,
+  qa = null,
+  safety = null,
+  additiveIntelligence = null,
+  startedAt = Date.now(),
+} = {}) {
+  const toolPlan = assistantPlan?.toolPlan && typeof assistantPlan.toolPlan === 'object'
+    ? assistantPlan.toolPlan
+    : null;
+  const assistantAction = assistantPlan?.action || 'answered';
+  const usedIntent = assistantPlan?.usedIntent || assistantIntent?.intent || 'general';
+  const toolName = toolPlan?.toolName || assistantAction || 'answer';
+  const qaOk = !qa || qa.ok !== false;
+  const safetyBlocked = safety?.blocked === true;
+  const toolOk = !toolResult || toolResult.ok !== false;
+  void recordAgentOps({
+    agentName: 'Ava',
+    sessionId,
+    leadId,
+    step: 'assistant_plan',
+    toolName,
+    input: {
+      publicMode,
+      source,
+      messagePreview: String(text || '').slice(0, 500),
+      intent: assistantIntent?.intent || '',
+      classifierSource: assistantIntent?.classifierSource || '',
+      leadId,
+    },
+    output: {
+      answerPreview: String(answer || '').slice(0, 500),
+      assistantAction,
+      usedIntent,
+      suggestions: Array.isArray(assistantPlan?.suggestions) ? assistantPlan.suggestions.slice(0, 4) : [],
+      toolPlan: toolPlan
+        ? {
+            toolName: toolPlan.toolName || '',
+            providerWrite: Boolean(toolPlan.providerWrite),
+            approvalRequired: Boolean(toolPlan.approvalRequired || toolPlan.params?.forceApproval),
+            requiresConfirmation: Boolean(toolPlan.requiresConfirmation),
+            requiresBridgeConfirmation: Boolean(toolPlan.requiresBridgeConfirmation),
+            params: redactApprovalParamPreview(toolPlan.params || {}),
+          }
+        : null,
+      toolResult: toolResult ? summarizeProviderActionResult(toolResult) : null,
+      qa,
+      safety: safety
+        ? {
+            ok: safety.ok !== false,
+            result: safety.result || '',
+            blocked: Boolean(safety.blocked),
+            approvalRequired: Boolean(safety.approvalRequired),
+          }
+        : null,
+      additiveResult: additiveIntelligence?.result || '',
+      additiveCoverage: additiveIntelligence?.coverage || null,
+    },
+    latencyMs: Date.now() - startedAt,
+    success: Boolean(toolOk && qaOk && !safetyBlocked),
+    error: toolOk && qaOk && !safetyBlocked ? '' : (toolResult?.error || qa?.reason || safety?.result || 'assistant_plan_not_completed'),
+    metadata: {
+      source: 'ava-assistant-chat',
+      publicMode,
+      assistantAction,
+      usedIntent,
+      providerWrite: Boolean(toolPlan?.providerWrite),
+      approvalRequired: Boolean(toolPlan?.approvalRequired || toolPlan?.params?.forceApproval),
+      traceContract: 'intent_plan_guardrail_proof_outcome',
+      researchBasis: ['openai_traces_evals', 'deepseek_function_calling_json', 'google_sre_golden_signals'],
+    },
+  });
+}
+
 function getRuntimeOperatingMode() {
   const settings = ensureRuntimeSettings(state);
   const mode = String(settings.ui?.operatingMode || settings.operatingMode || state.status?.mode || 'approval').toLowerCase();
@@ -58850,6 +58932,7 @@ function isPublicAvaBrainAnswerSafe(answer = '') {
 }
 
 async function handlePublicAvaChatRequest(request) {
+  const assistantOpsStartedAt = Date.now();
   if (!PUBLIC_AVA_CHAT_ENABLED) {
     return {
       statusCode: 503,
@@ -58971,6 +59054,18 @@ async function handlePublicAvaChatRequest(request) {
   );
   await persistState(state);
 
+  recordAvaAssistantPlanOps({
+    sessionId,
+    source: 'public-ava-chat',
+    publicMode: true,
+    text,
+    assistantIntent,
+    assistantPlan,
+    answer,
+    toolResult: leadCapture || null,
+    startedAt: assistantOpsStartedAt,
+  });
+
   return {
     statusCode: 200,
     headers: {
@@ -59049,6 +59144,7 @@ function findInternalAssistantLead(query = '') {
 }
 
 async function handleInternalAvaAssistantChatRequest(request) {
+  const assistantOpsStartedAt = Date.now();
   const body = await readBody(request);
   const messages = normalizeConversationMessages(body.messages);
   const sanitizedInput = sanitizePublicAvaChatTurn(getLastUserMessage(messages, body.message || body.query || body.text || body.prompt || ''));
@@ -59129,6 +59225,23 @@ async function handleInternalAvaAssistantChatRequest(request) {
       result: 'approval_summary',
       pendingApprovals: getPendingRuntimeApprovals(state.approvals || []).length,
     };
+  } else if (assistantPlan.action === 'tool_plan' && assistantPlan.toolPlan?.toolName === 'prepareContract') {
+    const execution = await executeToolHandlerWithQa('prepareContract', assistantPlan.toolPlan.params || {}, 'ava-assistant-chat');
+    toolResult = execution.result;
+    qa = execution.qaValidation?.qa || null;
+    safety = execution.safetyValidation || null;
+    const contract = toolResult?.contract || {};
+    answer = toolResult?.ok === false
+      ? `I could not prepare that contract yet. ${toolResult?.error || toolResult?.message || ''}`.trim()
+      : `I prepared the contract draft${contract.leadName ? ` for ${contract.leadName}` : ''}. Nothing was sent.`;
+  } else if (assistantPlan.action === 'tool_plan' && assistantPlan.toolPlan?.toolName === 'addPbkMemory') {
+    const execution = await executeToolHandlerWithQa('addPbkMemory', assistantPlan.toolPlan.params || {}, 'ava-assistant-chat');
+    toolResult = execution.result;
+    qa = execution.qaValidation?.qa || null;
+    safety = execution.safetyValidation || null;
+    answer = toolResult?.ok === false
+      ? `I could not save that memory yet. ${toolResult?.error || toolResult?.message || ''}`.trim()
+      : 'Saved. I added that note to PBK memory for future Ava context.';
   } else if (assistantPlan.action === 'tool_plan' && assistantPlan.toolPlan?.toolName === 'consultNurtureAgent') {
     const execution = await executeToolHandlerWithQa('consultNurtureAgent', assistantPlan.toolPlan.params || {}, 'ava-assistant-chat');
     toolResult = execution.result;
@@ -59136,7 +59249,7 @@ async function handleInternalAvaAssistantChatRequest(request) {
     safety = execution.safetyValidation || null;
     const recommendation = toolResult?.recommendation || {};
     answer = [`Best next touch: ${recommendation.channel || 'sms'} ${recommendation.urgency || 'now'}.`, recommendation.reason ? `Reason: ${recommendation.reason}` : '', 'Confirm when you want me to prepare the sequence for approval.'].filter(Boolean).join(' ');
-  } else if (assistantPlan.action === 'approval_required' && ['telnyx_call', 'startNurtureSequence'].includes(assistantPlan.toolPlan?.toolName)) {
+  } else if (assistantPlan.action === 'approval_required' && ['telnyx_call', 'startNurtureSequence', 'telnyx_sms', 'sendColdEmail', 'prepare_and_send_contract', 'scheduleAppointment'].includes(assistantPlan.toolPlan?.toolName)) {
     const approvalToolName = assistantPlan.toolPlan.toolName;
     toolResult = await invokeToolWithOperatingGuard(approvalToolName, {
       ...(assistantPlan.toolPlan.params || {}),
@@ -59146,10 +59259,19 @@ async function handleInternalAvaAssistantChatRequest(request) {
     });
     const approvalId = toolResult?.approval?.id || toolResult?.approvalId || '';
     const queued = ['queued_for_approval', 'approval_required'].includes(String(toolResult?.result || toolResult?.outcome || '').toLowerCase());
-    if (approvalToolName === 'startNurtureSequence') {
-      answer = queued ? `I prepared the approval-gated nurture sequence${approvalId ? ` (${approvalId})` : ''}. Nothing sends until it is approved.` : `I could not prepare that approval-gated nurture sequence yet. Nothing sends until it is approved. ${toolResult?.message || ''}`.trim();
+    const actionLabels = {
+      startNurtureSequence: 'nurture sequence',
+      telnyx_call: 'call request',
+      telnyx_sms: 'text message',
+      sendColdEmail: 'email',
+      prepare_and_send_contract: 'DocuSign contract',
+      scheduleAppointment: 'follow-up',
+    };
+    const label = actionLabels[approvalToolName] || approvalToolName;
+    if (queued) {
+      answer = `I prepared the approval-gated ${label}${approvalId ? ` (${approvalId})` : ''}. Nothing goes out until it is approved.`;
     } else {
-      answer = queued ? `I prepared the approval-gated call request${approvalId ? ` (${approvalId})` : ''}. Ava will not dial until it is approved.` : `I could not prepare that approval-gated call request yet. Ava will not dial until it is approved and inside the allowed calling window. ${toolResult?.message || ''}`.trim();
+      answer = `I could not prepare that approval-gated ${label} yet. Nothing goes out until it is approved. ${toolResult?.message || toolResult?.error || ''}`.trim();
     }
   } else if (assistantPlan.action === 'tool_plan' && ['runUnifiedAdditiveIntelligence', 'runProviderAugmentedAdditiveIntelligence'].includes(assistantPlan.toolPlan?.toolName)) {
     const additiveToolName = assistantPlan.toolPlan.toolName;
@@ -59179,6 +59301,20 @@ async function handleInternalAvaAssistantChatRequest(request) {
       result: lead ? 'lead_found' : 'lead_not_found',
       lead: lead || null,
     };
+  } else if (assistantPlan.action === 'call_review_summary') {
+    const latestCall = sortNewest(state.calls || [])[0] || null;
+    if (latestCall) {
+      const transcript = String(latestCall.transcript || latestCall.summary || latestCall.notes || '').trim();
+      answer = [
+        `Latest call: ${latestCall.leadName || latestCall.phone || 'seller'}${latestCall.status ? ` (${latestCall.status})` : ''}.`,
+        transcript ? `Signal: ${transcript.slice(0, 180)}` : '',
+        'Next move: confirm motivation, timeline, decision maker, and the clean follow-up before sending anything.',
+      ].filter(Boolean).join(' ');
+      toolResult = { ok: true, result: 'latest_call_review', call: latestCall };
+    } else {
+      answer = 'I do not see a recorded call yet. Once a call lands, I can review the transcript, missed objections, and next seller move.';
+      toolResult = { ok: false, result: 'no_call_available' };
+    }
   } else if (assistantPlan.action === 'summary_plan') {
     answer = buildInternalAssistantSummaryAnswer();
     toolResult = { ok: true, result: 'runtime_summary' };
@@ -59209,6 +59345,22 @@ async function handleInternalAvaAssistantChatRequest(request) {
     })
   );
   persistStateInBackground('ava-assistant-chat');
+
+  recordAvaAssistantPlanOps({
+    sessionId,
+    leadId: assistantContextSession.leadId || '',
+    source: body.source || 'command-center-assistant',
+    publicMode: false,
+    text,
+    assistantIntent,
+    assistantPlan,
+    answer,
+    toolResult,
+    qa,
+    safety,
+    additiveIntelligence,
+    startedAt: assistantOpsStartedAt,
+  });
 
   return {
     statusCode: 200,
@@ -72716,8 +72868,83 @@ const server = createServer(async (request, response) => {
         });
         return;
       }
-      const routeTool = await executeRouteToolHandler('telnyx_sms', body, 'messages-route');
-      json(response, getRouteToolStatusCode(routeTool, { failureStatus: 409 }), buildRouteToolResponse(routeTool));
+      const immediateChannel =
+        String(body.channel || 'sms')
+          .trim()
+          .toLowerCase() === 'email'
+          ? 'email'
+          : 'sms';
+      const context = findLeadContext(body);
+      const messageBody = String(body.message || body.body || '').trim();
+      if (!messageBody) {
+        json(response, 400, { ok: false, error: 'Message body is required.' });
+        return;
+      }
+      const manualBody = {
+        ...body,
+        manual: body.manual === false ? false : true,
+        manualSend: body.manualSend === false ? false : true,
+        requestedBy: body.requestedBy || body.requested_by || body.actor || 'PBK operator',
+        source: body.source || 'unified_inbox_manual',
+      };
+      if (immediateChannel === 'email') {
+        const explicitSubjectMatch = messageBody.match(/^subject:\s*(.+)$/im);
+        const subject = body.subject || explicitSubjectMatch?.[1]?.trim() || `Message from Probono Key Realty`;
+        const cleanText = messageBody.replace(/^subject:\s*.+\r?\n*/i, '').trim();
+        const recipient = body.email || context.email || inferSkipTraceContact(context).email;
+        const send = await executeManualProviderRouteWithOutbox({
+          toolName: 'sendColdEmail',
+          provider: 'instantly',
+          channel: 'email',
+          params: {
+            ...manualBody,
+            ...context,
+            email: recipient,
+            subject,
+            body: cleanText,
+            customBody: cleanText,
+            templateId: body.templateId || 'custom',
+          },
+          source: 'messages-route',
+          leadId: context.leadId,
+          recipient,
+          messageBody: cleanText,
+          subject,
+          requestedBy: manualBody.requestedBy,
+        });
+        json(response, send.statusCode, {
+          ...send.response,
+          result: send.outbox.status === 'sent' ? 'live' : send.response.result || 'provider_missing',
+          verbiage:
+            send.outbox.status === 'sent'
+              ? 'Email sent or prepared.'
+              : send.outbox.error || 'Provider key missing.',
+        });
+        return;
+      }
+      const send = await executeManualProviderRouteWithOutbox({
+        toolName: 'telnyx_sms',
+        provider: 'telnyx',
+        channel: 'sms',
+        params: {
+          ...manualBody,
+          ...context,
+          body: messageBody,
+        },
+        source: 'messages-route',
+        leadId: context.leadId,
+        recipient: body.phone || context.phone || '',
+        messageBody,
+        requestedBy: manualBody.requestedBy,
+      });
+      json(response, send.statusCode, {
+        ...send.response,
+        result: send.outbox.status === 'sent' ? 'live' : send.response.result || 'provider_missing',
+        verbiage:
+          send.outbox.status === 'sent'
+            ? 'SMS sent or queued through Telnyx.'
+            : send.outbox.error || 'SMS was recorded without claiming carrier delivery.',
+      });
       return;
     }
 

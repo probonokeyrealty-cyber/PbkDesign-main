@@ -109,10 +109,14 @@ assert(
 assert(
   /send_email/.test(avaChat) &&
     /send_sms/.test(avaChat) &&
+    /prepare_contract/.test(avaChat) &&
+    /schedule_follow_up/.test(avaChat) &&
+    /remember_note/.test(avaChat) &&
+    /review_call/.test(avaChat) &&
     /execute_safe_script/.test(avaChat) &&
     /search_leads/.test(avaChat) &&
     /analyze_deal/.test(avaChat),
-  'Ava Chat must expose conversational actions for provider drafts, scripts, search, and deal analysis.'
+  'Ava Chat must expose conversational actions for provider drafts, contracts, follow-ups, memory, scripts, search, and deal analysis.'
 );
 assert(
   /classifyConversationalCommand[\s\S]*send_email[\s\S]*requiresApproval:\s*false/.test(avaChat) &&
@@ -120,9 +124,23 @@ assert(
     /classifyConversationalCommand[\s\S]*execute_safe_script[\s\S]*requiresApproval:\s*true/.test(
       avaChat
     ) &&
+    /classifyConversationalCommand[\s\S]*prepare_contract[\s\S]*requiresApproval:\s*false/.test(
+      avaChat
+    ) &&
+    /classifyConversationalCommand[\s\S]*schedule_follow_up[\s\S]*requiresApproval:\s*true/.test(
+      avaChat
+    ) &&
     /classifyConversationalCommand[\s\S]*llm_query[\s\S]*requiresApproval:\s*false/.test(avaChat) &&
     /classifyConversationalCommand[\s\S]*status[\s\S]*requiresApproval:\s*false/.test(avaChat),
   'Ava Chat must deterministically route common natural-language commands into the right approval lane.'
+);
+assert(
+  avaChat.includes('const DOMAIN_ASSISTANT_ACTIONS = new Set<AvaCommandAction>') &&
+    ['prepare_contract', 'schedule_follow_up', 'remember_note', 'review_call'].every((token) =>
+      avaChat.includes(`'${token}'`)
+    ) &&
+    /if \(DOMAIN_ASSISTANT_ACTIONS\.has\(action\)\) return true;/.test(avaChat),
+  'PBK domain actions must route to the Command Center assistant planner instead of the local desktop command queue.'
 );
 assert(
   /updateApprovalDecision\(approvalId,\s*decision\)/.test(avaChat) &&

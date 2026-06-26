@@ -231,6 +231,26 @@ function extractPhone(message = '') {
   return match ? match[0].replace(/\D/g, '').replace(/^1(?=\d{10}$)/, '') : '';
 }
 
+function extractEmailAddress(message = '') {
+  const match = String(message || '').match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i);
+  return cleanText(match?.[0] || '', 160);
+}
+
+function extractQuotedText(message = '') {
+  const text = String(message || '');
+  const quoted = text.match(/"([^"]{2,700})"/) || text.match(/'([^']{2,700})'/);
+  return cleanText(quoted?.[1] || '', 700);
+}
+
+function extractMessageBody(message = '') {
+  const quoted = extractQuotedText(message);
+  if (quoted) return quoted;
+  const match = String(message || '').match(
+    /\b(?:that|saying|says|message|body|text)\s*[:-]?\s+(.{3,700})$/i
+  );
+  return cleanText(match?.[1] || '', 700);
+}
+
 function extractLeadQuery(message = '') {
   const match = String(message || '').match(
     /\b(?:find|show|get|lookup|look up)\s+(?:lead|seller|contact)\s+(?:named|called|with)?\s*"?([^".,?]+)"?/i
@@ -256,6 +276,22 @@ function extractNurtureLeadQuery(message = '') {
     /\b(?:for|with|to)\s+(?:the\s+)?(?:lead|seller|contact)?\s*([^".,?]+?)(?:\s+\b(?:tonight|today|tomorrow|this week|next week|now|please|asap|after|before|at|on|by)\b|[.?!]|$)/i
   );
   return stripLeadQuery(match?.[1] || '');
+}
+
+function extractProviderLeadQuery(message = '') {
+  const text = String(message || '');
+  const match = text.match(
+    /\b(?:for|to|with)\s+(?:the\s+)?(?:lead|seller|contact)?\s*([^".,?]+?)(?:\s+\b(?:that|saying|about|regarding|tonight|today|tomorrow|this week|next week|now|please|asap|after|before|at|on|by|with)\b|[.?!]|$)/i
+  );
+  return stripLeadQuery(match?.[1] || '');
+}
+
+function extractFollowUpWhen(message = '') {
+  const text = cleanText(message, 500);
+  const match = text.match(
+    /\b(?:tonight|today|tomorrow|this week|next week|monday|tuesday|wednesday|thursday|friday|saturday|sunday|in \d+\s+(?:minutes?|hours?|days?)|at \d{1,2}(?::\d{2})?\s*(?:am|pm)?)\b/i
+  );
+  return cleanText(match?.[0] || '', 80);
 }
 
 function normalizeComparableText(value = '') {
@@ -437,6 +473,68 @@ export function detectAssistantIntent(message = '') {
   }
 
   if (
+    /\b(?:send|draft|compose|write|prepare)\b.{0,60}\b(?:sms|text|message|email|mail)\b/i.test(lower) ||
+    /^(?:text|sms|email|mail)\b/i.test(lower)
+  ) {
+    const channel = /\b(email|mail)\b/i.test(lower) ? 'email' : 'sms';
+    const delivery = /\b(?:send|text|sms|email|mail)\b/i.test(lower) &&
+      !/\b(?:draft|compose|write|prepare)\b/i.test(lower)
+      ? 'send'
+      : 'draft';
+    return {
+      intent: 'seller_message',
+      message: text,
+      channel,
+      delivery,
+      phone,
+      email: extractEmailAddress(text),
+      messageBody: extractMessageBody(text),
+      leadQuery: extractProviderLeadQuery(text),
+      classifierSource: 'regex',
+    };
+  }
+
+  if (/\b(?:send|prepare|draft|build|create).{0,48}(?:contract|agreement|docusign|seller docs?|docs?)\b/i.test(lower)) {
+    const sendRequested = /\bsend\b/i.test(lower) && !/\b(?:do not send|don't send|without sending|not send)\b/i.test(lower);
+    return {
+      intent: sendRequested ? 'contract_send' : 'contract_prepare',
+      message: text,
+      address,
+      leadQuery: extractProviderLeadQuery(text),
+      classifierSource: 'regex',
+    };
+  }
+
+  if (/\b(?:schedule|set|queue|plan).{0,48}(?:follow[\s-]?up|appointment|callback|reminder)\b/i.test(lower)) {
+    return {
+      intent: 'schedule_follow_up',
+      message: text,
+      leadQuery: extractProviderLeadQuery(text),
+      when: extractFollowUpWhen(text),
+      classifierSource: 'regex',
+    };
+  }
+
+  if (/\b(?:remember|save|store|note).{0,48}(?:this|note|memory|seller fact|lesson)\b/i.test(lower)) {
+    return {
+      intent: 'remember_note',
+      message: text,
+      note: extractMessageBody(text) || text,
+      leadQuery: extractProviderLeadQuery(text),
+      classifierSource: 'regex',
+    };
+  }
+
+  if (/\b(?:review|score|audit|summarize).{0,48}(?:latest\s+)?(?:call|conversation|seller interaction|interaction)\b/i.test(lower)) {
+    return {
+      intent: 'call_review',
+      message: text,
+      leadQuery: extractProviderLeadQuery(text),
+      classifierSource: 'regex',
+    };
+  }
+
+  if (
     /\b(analy[sz]e|mao|arv|offer|deal math|underwrite|property value|worth chasing|worth pursuing|worth it|should (?:we|i) chase|should (?:we|i) pursue|make sense as a deal|deal worth)\b/i.test(
       lower
     )
@@ -507,10 +605,33 @@ export function buildAssistantSuggestions(intent = 'general', { publicMode = tru
     return ['Recommend next touch', 'Find the lead', 'Draft the follow-up'];
   if (intent === 'nurture_start')
     return ['Prepare nurture approval', 'Check best timing first', 'Find the lead'];
+  if (intent === 'seller_message') return ['Draft the wording', 'Find the lead', 'Prepare for approval'];
+  if (intent === 'contract_prepare' || intent === 'contract_send')
+    return ['Prepare contract', 'Find the lead', 'Check DocuSign readiness'];
+  if (intent === 'schedule_follow_up') return ['Pick the lead', 'Recommend timing', 'Prepare follow-up'];
+  if (intent === 'remember_note') return ['Save note', 'Attach to lead', 'Recall later'];
+  if (intent === 'call_review') return ['Review latest call', 'Summarize missed context', 'Next coaching move'];
   if (intent === 'unified_additive_intelligence')
     return ['Run full intelligence', 'Show safest next step', 'Check provider readiness'];
   if (intent === 'summary') return ['Summarize calls', 'Show hot leads', 'What needs attention'];
   return ['Find a lead', 'Analyze a deal', 'Draft a follow-up'];
+}
+
+function getAssistantLeadPlanContext(detected = {}, options = {}) {
+  const session = normalizeAssistantSession(options.session || {});
+  const leadId = cleanText(options.leadId || detected.leadId || session.leadId || '', 120);
+  const providedLeads = [
+    ...(Array.isArray(options.leads) ? options.leads : []),
+    ...(Array.isArray(options.leadRoster) ? options.leadRoster : []),
+    ...(Array.isArray(options.session?.leads) ? options.session.leads : []),
+  ];
+  const leadQuery =
+    detected.leadQuery ||
+    detected.query ||
+    extractProviderLeadQuery(detected.message || '') ||
+    extractNurtureLeadQuery(detected.message || '');
+  const leadMatch = leadId ? null : findAssistantLeadMatch(leadQuery || detected.message || '', providedLeads);
+  return { leadId, leadQuery, leadMatch };
 }
 
 export function planAssistantIntent(detected = {}, options = {}) {
@@ -599,6 +720,279 @@ export function planAssistantIntent(detected = {}, options = {}) {
       action: 'internal_help',
       answer:
         'Tell me what you need in plain English. I can find leads, pull seller context, run deal math, draft follow-ups, summarize calls, prepare approvals, and help decide the next clean seller move.',
+      suggestions,
+      toolPlan: null,
+      usedIntent: intent,
+    };
+  }
+
+  if (
+    publicMode &&
+    ['seller_message', 'contract_prepare', 'contract_send', 'schedule_follow_up', 'remember_note', 'call_review'].includes(
+      intent
+    )
+  ) {
+    return {
+      action: 'blocked_public_provider_write',
+      answer:
+        'Public chat can capture property and callback details, but agent actions live inside the authenticated Command Center. Open PBK Command Center before texts, emails, contracts, follow-ups, memories, or call reviews touch private records.',
+      suggestions,
+      toolPlan: null,
+      usedIntent: intent,
+    };
+  }
+
+  if (!publicMode && intent === 'seller_message') {
+    const channel = detected.channel === 'email' ? 'email' : 'sms';
+    const delivery = detected.delivery === 'send' ? 'send' : 'draft';
+    const { leadId, leadQuery, leadMatch } = getAssistantLeadPlanContext(detected, options);
+    const recipient = channel === 'email' ? detected.email : detected.phone;
+    if (!leadId && !recipient && leadMatch) {
+      return {
+        action: 'lead_confirmation_required',
+        answer: `I found ${leadMatch.name || 'a likely lead'}${leadMatch.address ? ` at ${leadMatch.address}` : ''}. Confirm this is the right seller and I will ${delivery === 'send' ? 'prepare the message for approval' : 'draft the message'}.`,
+        suggestions,
+        leadMatch,
+        toolPlan: {
+          toolName: 'confirmLeadMatch',
+          params: {
+            nextToolName: channel === 'email' ? 'sendColdEmail' : 'telnyx_sms',
+            leadId: leadMatch.leadId,
+            matchedLead: leadMatch,
+            userRequest: detected.message,
+            channel,
+            delivery,
+            messageBody: detected.messageBody || '',
+          },
+          providerWrite: false,
+          requiresConfirmation: true,
+        },
+        usedIntent: intent,
+      };
+    }
+    if (!leadId && !recipient && leadQuery) {
+      return {
+        action: 'lead_lookup_required',
+        answer: `I need to confirm which seller you mean before I touch ${channel.toUpperCase()}. I can search for "${leadQuery}" and let you pick the right lead.`,
+        suggestions,
+        toolPlan: {
+          toolName: 'findLead',
+          params: { query: leadQuery, nextToolName: channel === 'email' ? 'sendColdEmail' : 'telnyx_sms' },
+          providerWrite: false,
+          requiresConfirmation: true,
+        },
+        usedIntent: intent,
+      };
+    }
+    if (delivery !== 'send') {
+      return {
+        action: 'draft_message',
+        answer:
+          detected.messageBody
+            ? `Draft ${channel.toUpperCase()}: ${detected.messageBody}`
+            : `Tell me the seller and the point you want made, and I will draft a clean ${channel === 'email' ? 'email' : 'text'} without sending it.`,
+        suggestions,
+        toolPlan: {
+          toolName: 'draftSellerMessage',
+          params: { leadId, channel, body: detected.messageBody || '', userRequest: detected.message },
+          providerWrite: false,
+        },
+        usedIntent: intent,
+      };
+    }
+    if (!detected.messageBody) {
+      return {
+        action: 'missing_required_info',
+        answer: `I can prepare the ${channel === 'email' ? 'email' : 'text'} for approval, but I need the exact message or goal first.`,
+        suggestions,
+        toolPlan: null,
+        usedIntent: intent,
+      };
+    }
+    return {
+      action: 'approval_required',
+      answer: `I will prepare that ${channel === 'email' ? 'email' : 'text'} for approval. Nothing sends until the approval path releases it.`,
+      suggestions,
+      toolPlan: {
+        toolName: channel === 'email' ? 'sendColdEmail' : 'telnyx_sms',
+        params: {
+          leadId,
+          ...(channel === 'email' ? { email: detected.email } : { phone: detected.phone, to: detected.phone }),
+          body: detected.messageBody,
+          message: detected.messageBody,
+          customBody: detected.messageBody,
+          subject: channel === 'email' ? 'Follow-up from Probono Key Realty' : undefined,
+          forceApproval: true,
+          source: 'ava-assistant-chat',
+        },
+        providerWrite: true,
+        approvalRequired: true,
+      },
+      usedIntent: intent,
+    };
+  }
+
+  if (!publicMode && ['contract_prepare', 'contract_send'].includes(intent)) {
+    const sendContract = intent === 'contract_send';
+    const { leadId, leadQuery, leadMatch } = getAssistantLeadPlanContext(detected, options);
+    if (!leadId && !detected.address && leadMatch) {
+      return {
+        action: 'lead_confirmation_required',
+        answer: `I found ${leadMatch.name || 'a likely lead'}${leadMatch.address ? ` at ${leadMatch.address}` : ''}. Confirm this is the right seller and I will ${sendContract ? 'prepare DocuSign for approval' : 'prepare the contract draft'}.`,
+        suggestions,
+        leadMatch,
+        toolPlan: {
+          toolName: 'confirmLeadMatch',
+          params: {
+            nextToolName: sendContract ? 'prepare_and_send_contract' : 'prepareContract',
+            leadId: leadMatch.leadId,
+            matchedLead: leadMatch,
+            userRequest: detected.message,
+          },
+          providerWrite: false,
+          requiresConfirmation: true,
+        },
+        usedIntent: intent,
+      };
+    }
+    if (!leadId && !detected.address && leadQuery) {
+      return {
+        action: 'lead_lookup_required',
+        answer: `I need to confirm the seller before preparing contract documents. I can search for "${leadQuery}" first.`,
+        suggestions,
+        toolPlan: {
+          toolName: 'findLead',
+          params: { query: leadQuery, nextToolName: sendContract ? 'prepare_and_send_contract' : 'prepareContract' },
+          providerWrite: false,
+          requiresConfirmation: true,
+        },
+        usedIntent: intent,
+      };
+    }
+    if (!leadId && !detected.address) {
+      return {
+        action: 'missing_required_info',
+        answer:
+          'Send me the seller, lead, or property address so I can prepare the right contract path without guessing.',
+        suggestions,
+        toolPlan: null,
+        usedIntent: intent,
+      };
+    }
+    return {
+      action: sendContract ? 'approval_required' : 'tool_plan',
+      answer: sendContract
+        ? 'I will prepare DocuSign for approval. Nothing sends until the approval path releases it.'
+        : 'I will prepare the contract draft now without sending it.',
+      suggestions,
+      toolPlan: {
+        toolName: sendContract ? 'prepare_and_send_contract' : 'prepareContract',
+        params: {
+          leadId,
+          address: detected.address,
+          userRequest: detected.message,
+          forceApproval: sendContract,
+          source: 'ava-assistant-chat',
+        },
+        providerWrite: sendContract,
+        approvalRequired: sendContract,
+      },
+      usedIntent: intent,
+    };
+  }
+
+  if (!publicMode && intent === 'schedule_follow_up') {
+    const { leadId, leadQuery, leadMatch } = getAssistantLeadPlanContext(detected, options);
+    if (!leadId && leadMatch) {
+      return {
+        action: 'lead_confirmation_required',
+        answer: `I found ${leadMatch.name || 'a likely lead'}${leadMatch.address ? ` at ${leadMatch.address}` : ''}. Confirm this is the right seller and I will prepare the follow-up for approval.`,
+        suggestions,
+        leadMatch,
+        toolPlan: {
+          toolName: 'confirmLeadMatch',
+          params: {
+            nextToolName: 'scheduleAppointment',
+            leadId: leadMatch.leadId,
+            matchedLead: leadMatch,
+            userRequest: detected.message,
+            when: detected.when || '',
+          },
+          providerWrite: false,
+          requiresConfirmation: true,
+        },
+        usedIntent: intent,
+      };
+    }
+    if (!leadId && leadQuery) {
+      return {
+        action: 'lead_lookup_required',
+        answer: `I need the seller first. I can search for "${leadQuery}" and then prepare the follow-up.`,
+        suggestions,
+        toolPlan: {
+          toolName: 'findLead',
+          params: { query: leadQuery, nextToolName: 'scheduleAppointment' },
+          providerWrite: false,
+          requiresConfirmation: true,
+        },
+        usedIntent: intent,
+      };
+    }
+    if (!leadId) {
+      return {
+        action: 'missing_required_info',
+        answer: 'Pick the lead first, then I can prepare the follow-up timing for approval.',
+        suggestions,
+        toolPlan: null,
+        usedIntent: intent,
+      };
+    }
+    return {
+      action: 'approval_required',
+      answer: 'I will prepare the follow-up for approval. Nothing is scheduled until it is approved.',
+      suggestions,
+      toolPlan: {
+        toolName: 'scheduleAppointment',
+        params: {
+          leadId,
+          notes: detected.message,
+          requestedWhen: detected.when || '',
+          forceApproval: true,
+          source: 'ava-assistant-chat',
+        },
+        providerWrite: true,
+        approvalRequired: true,
+      },
+      usedIntent: intent,
+    };
+  }
+
+  if (!publicMode && intent === 'remember_note') {
+    const { leadId } = getAssistantLeadPlanContext(detected, options);
+    return {
+      action: 'tool_plan',
+      answer: 'I will save that note to PBK memory so Ava can use it later.',
+      suggestions,
+      toolPlan: {
+        toolName: 'addPbkMemory',
+        params: {
+          agentName: 'ava',
+          memoryType: leadId ? 'lead_note' : 'operator_note',
+          leadId,
+          text: detected.note || detected.message,
+          content: detected.note || detected.message,
+          source: 'ava-assistant-chat',
+        },
+        providerWrite: false,
+      },
+      usedIntent: intent,
+    };
+  }
+
+  if (!publicMode && intent === 'call_review') {
+    return {
+      action: 'call_review_summary',
+      answer: 'I will review the latest seller interaction and pull the clean next coaching move.',
       suggestions,
       toolPlan: null,
       usedIntent: intent,

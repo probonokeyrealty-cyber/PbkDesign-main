@@ -143,8 +143,8 @@ assert(
 );
 assert(
   inspector.includes('`/leads/${encodeURIComponent(leadId)}?edit=1`') &&
-    inspector.includes('Edit lead'),
-  'Conversation lead context must deep-link into the canonical lead editor.'
+    inspector.includes('Quick edit'),
+  'Conversation lead context must deep-link into the canonical quick edit surface.'
 );
 assert(
   css.includes('.pbk-conversation-bubble') &&

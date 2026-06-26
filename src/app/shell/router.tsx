@@ -2,41 +2,68 @@ import { lazy } from 'react';
 import { createBrowserRouter, RouterProvider } from 'react-router';
 import { ParadiseLayout } from './ParadiseLayout';
 import { NotFound } from '../routes/NotFound';
+import { loadCurrentRoute } from '../utils/deployVersion';
 
 const CommandCenter = lazy(() =>
-  import('../routes/CommandCenter').then((module) => ({ default: module.CommandCenter }))
+  loadCurrentRoute(() => import('../routes/CommandCenter')).then((module) => ({
+    default: module.CommandCenter,
+  }))
 );
-const Leads = lazy(() => import('../routes/Leads').then((module) => ({ default: module.Leads })));
+const Leads = lazy(() =>
+  loadCurrentRoute(() => import('../routes/Leads')).then((module) => ({ default: module.Leads }))
+);
 const LeadPortal = lazy(() =>
-  import('../routes/LeadPortal').then((module) => ({ default: module.LeadPortal }))
+  loadCurrentRoute(() => import('../routes/LeadPortal')).then((module) => ({
+    default: module.LeadPortal,
+  }))
 );
 const DealView = lazy(() =>
-  import('../routes/DealView').then((module) => ({ default: module.DealView }))
+  loadCurrentRoute(() => import('../routes/DealView')).then((module) => ({
+    default: module.DealView,
+  }))
 );
-const Inbox = lazy(() => import('../routes/Inbox').then((module) => ({ default: module.Inbox })));
+const Inbox = lazy(() =>
+  loadCurrentRoute(() => import('../routes/Inbox')).then((module) => ({ default: module.Inbox }))
+);
 const UnifiedInbox = lazy(() =>
-  import('../routes/UnifiedInbox').then((module) => ({ default: module.UnifiedInbox }))
+  loadCurrentRoute(() => import('../routes/UnifiedInbox')).then((module) => ({
+    default: module.UnifiedInbox,
+  }))
 );
 const Settings = lazy(() =>
-  import('../routes/Settings').then((module) => ({ default: module.Settings }))
+  loadCurrentRoute(() => import('../routes/Settings')).then((module) => ({
+    default: module.Settings,
+  }))
 );
 const AgentFleet = lazy(() =>
-  import('../routes/AgentFleet').then((module) => ({ default: module.AgentFleet }))
+  loadCurrentRoute(() => import('../routes/AgentFleet')).then((module) => ({
+    default: module.AgentFleet,
+  }))
 );
 const MemoryAnalytics = lazy(() =>
-  import('../routes/MemoryAnalytics').then((module) => ({ default: module.MemoryAnalytics }))
+  loadCurrentRoute(() => import('../routes/MemoryAnalytics')).then((module) => ({
+    default: module.MemoryAnalytics,
+  }))
 );
 const SkillStudio = lazy(() =>
-  import('../routes/SkillStudio').then((module) => ({ default: module.SkillStudio }))
+  loadCurrentRoute(() => import('../routes/SkillStudio')).then((module) => ({
+    default: module.SkillStudio,
+  }))
 );
 const Analytics = lazy(() =>
-  import('../routes/Analytics').then((module) => ({ default: module.Analytics }))
+  loadCurrentRoute(() => import('../routes/Analytics')).then((module) => ({
+    default: module.Analytics,
+  }))
 );
 const Campaigns = lazy(() =>
-  import('../routes/Campaigns').then((module) => ({ default: module.Campaigns }))
+  loadCurrentRoute(() => import('../routes/Campaigns')).then((module) => ({
+    default: module.Campaigns,
+  }))
 );
 const AvaChat = lazy(() =>
-  import('../routes/AvaChat').then((module) => ({ default: module.AvaChat }))
+  loadCurrentRoute(() => import('../routes/AvaChat')).then((module) => ({
+    default: module.AvaChat,
+  }))
 );
 
 const shellBasename =

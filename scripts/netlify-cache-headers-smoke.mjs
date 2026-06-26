@@ -22,6 +22,14 @@ function assertCacheControl(path, expected) {
   );
 }
 
+function getRedirectBlock(path) {
+  const escapedPath = path.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const pattern = new RegExp(
+    `\\[\\[redirects\\]\\]\\s*\\n\\s*from\\s*=\\s*"${escapedPath}"[\\s\\S]*?(?=\\n\\[\\[|$)`,
+  );
+  return config.match(pattern)?.[0] ?? '';
+}
+
 [
   '/assets/*',
   '/*.woff2',
@@ -37,7 +45,10 @@ function assertCacheControl(path, expected) {
 
 [
   '/index.shell.html',
+  '/index.shell.html/*',
   '/ava-chat-widget.js',
+  '/404.html',
+  '/pbk-build-manifest.json',
   '/index.html',
   '/analyzer.html',
   '/',
@@ -47,8 +58,13 @@ function assertCacheControl(path, expected) {
   '/deal',
   '/deal/*',
   '/inbox',
+  '/inbox/*',
   '/fleet',
   '/memory',
+  '/skills',
+  '/skills/*',
+  '/skill-studio',
+  '/skill-studio/*',
   '/analytics',
   '/settings',
   '/campaigns',
@@ -61,6 +77,29 @@ const apiHeaderBlock = getHeaderBlock('/api/*');
 assert(
   !/immutable/.test(apiHeaderBlock),
   'API proxy routes must not be marked immutable; they need live bridge responses.',
+);
+
+const assetMissRedirect = /from\s*=\s*"\/assets\/\*"[\s\S]*?to\s*=\s*"\/404\.html"[\s\S]*?status\s*=\s*404/.exec(
+  config,
+);
+const shellFallbackRedirect = /from\s*=\s*"\/\*"[\s\S]*?to\s*=\s*"\/index\.shell\.html"[\s\S]*?status\s*=\s*200/.exec(
+  config,
+);
+assert(
+  assetMissRedirect,
+  'Missing Netlify 404 redirect for absent /assets/* chunks.',
+);
+assert(
+  shellFallbackRedirect,
+  'Missing Netlify catch-all shell fallback redirect.',
+);
+assert(
+  assetMissRedirect.index < shellFallbackRedirect.index,
+  'Absent asset chunks must be caught before the SPA shell fallback.',
+);
+assert(
+  !/force\s*=\s*true/.test(getRedirectBlock('/assets/*')),
+  'The /assets/* 404 redirect must not force existing built assets away from Netlify static hosting.',
 );
 
 const globalHeaderBlock = getHeaderBlock('/*');

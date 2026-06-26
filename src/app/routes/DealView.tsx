@@ -7,6 +7,7 @@ import {
   readAnalyzerStorage,
   writeAnalyzerStorage,
 } from '../utils/analyzerStorage';
+import { isStaleDynamicImportError, reloadForCurrentDeploy } from '../utils/deployVersion';
 import { fetchLeadFullRequest } from '../utils/runtimeBridge';
 
 type BridgeRecord = Record<string, unknown>;
@@ -308,27 +309,42 @@ class DealViewErrorBoundary extends Component<{ children: ReactNode }, DealViewE
 
   componentDidCatch(error: Error) {
     console.error('[PBK DealView] engine render failed', error);
+    if (isStaleDynamicImportError(error)) {
+      reloadForCurrentDeploy('deal-view-chunk-error');
+    }
   }
 
   render() {
     if (this.state.error) {
+      const staleChunk = isStaleDynamicImportError(this.state.error);
       return (
         <div className="grid h-full place-items-center bg-slate-950 p-6 text-slate-100">
           <div className="max-w-md rounded-2xl border border-amber-500/30 bg-amber-500/10 p-5">
             <div className="text-[11px] uppercase tracking-[0.16em] text-amber-300">
               Deal Analyzer paused
             </div>
-            <h2 className="mt-2 text-lg font-semibold">Ava could not open the analyzer view.</h2>
+            <h2 className="mt-2 text-lg font-semibold">
+              {staleChunk
+                ? 'Loading the latest analyzer...'
+                : 'Ava could not open the analyzer view.'}
+            </h2>
             <p className="mt-2 text-sm text-slate-300">
-              Your leads, approvals, and campaign boards are still available. Retry the analyzer; if
-              it repeats, use the Leads page while the error is reviewed.
+              {staleChunk
+                ? 'A deploy finished while this page was open. Reload the analyzer to use the current app files.'
+                : 'Your leads, approvals, and campaign boards are still available. Retry the analyzer; if it repeats, use the Leads page while the error is reviewed.'}
             </p>
             <button
               type="button"
               className="mt-4 rounded-full bg-sky-400 px-4 py-2 text-sm font-bold text-slate-950"
-              onClick={() => this.setState({ error: null })}
+              onClick={() => {
+                if (staleChunk) {
+                  window.location.reload();
+                  return;
+                }
+                this.setState({ error: null });
+              }}
             >
-              Retry
+              {staleChunk ? 'Reload analyzer' : 'Retry'}
             </button>
           </div>
         </div>

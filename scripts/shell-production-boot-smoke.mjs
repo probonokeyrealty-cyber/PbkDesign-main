@@ -1,4 +1,5 @@
 import { createServer } from 'node:http';
+import assert from 'node:assert/strict';
 import { access, readFile, stat } from 'node:fs/promises';
 import path from 'node:path';
 import process from 'node:process';
@@ -60,14 +61,27 @@ async function sendFile(response, filename) {
   response.end(body);
 }
 
+function sendNotFound(response) {
+  response.writeHead(404, {
+    'Cache-Control': 'no-store',
+    'Content-Type': 'text/plain; charset=utf-8',
+  });
+  response.end('not found');
+}
+
 await access(shellEntry);
 
 const server = createServer(async (request, response) => {
   try {
+    const pathname = decodeURIComponent(new URL(request.url || '/', 'http://127.0.0.1').pathname);
     const requested = safeDistPath(request.url || '/');
     const requestedStat = await stat(requested).catch(() => null);
     if (requestedStat?.isFile()) {
       await sendFile(response, requested);
+      return;
+    }
+    if (pathname.startsWith('/assets/')) {
+      sendNotFound(response);
       return;
     }
     await sendFile(response, shellEntry);
@@ -82,6 +96,15 @@ const address = server.address();
 if (!address || typeof address === 'string') {
   throw new Error('Unable to start production shell smoke server.');
 }
+
+const missingChunkResponse = await fetch(
+  `http://127.0.0.1:${address.port}/assets/__stale_missing_chunk__.js`,
+);
+assert.equal(
+  missingChunkResponse.status,
+  404,
+  'Production shell smoke must not serve the app shell for absent /assets/*.js chunks.',
+);
 
 const browser = await puppeteer.launch({
   executablePath: await findChrome(),

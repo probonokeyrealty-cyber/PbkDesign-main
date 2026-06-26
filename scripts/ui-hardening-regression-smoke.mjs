@@ -15,6 +15,9 @@ const landAnalysis = read('src/app/components/LandAnalysis.tsx');
 const router = read('src/app/shell/router.tsx');
 const viteConfig = read('vite.config.ts');
 const netlifyConfig = read('netlify.toml');
+const errorBoundary = read('src/app/components/ErrorBoundary.tsx');
+const deployVersion = read('src/app/utils/deployVersion.ts');
+const mainShell = read('src/main.shell.tsx');
 const inboxRoute = read('src/app/routes/Inbox.tsx');
 const inboxLogic = read('src/app/routes/inboxRuntimeLogic.js');
 const avaAssistant = read('scripts/ava-assistant-chat.mjs');
@@ -31,8 +34,8 @@ assert(
 );
 
 assert(
-  /lazy\(\(\)\s*=>\s*import\(/.test(router),
-  'Shell routes should be loaded with React.lazy dynamic imports.'
+  /lazy\(\(\)\s*=>\s*[\s\S]*?loadCurrentRoute\(\(\)\s*=>\s*import\(/.test(router),
+  'Shell routes should be loaded with guarded React.lazy dynamic imports.'
 );
 assert(
   !/import\s+\{\s*(CommandCenter|Leads|DealView|Inbox|Settings|AgentFleet|MemoryAnalytics|Analytics)\s*\}\s+from\s+['"]\.\.\/routes\//.test(
@@ -50,6 +53,20 @@ assert(
     netlifyConfig
   ),
   'Netlify should rewrite / to the split shell entry point.'
+);
+assert(
+  /from\s*=\s*["']\/assets\/\*["'][\s\S]*?to\s*=\s*["']\/404\.html["'][\s\S]*?status\s*=\s*404/.test(
+    netlifyConfig
+  ),
+  'Netlify should not serve the app shell for missing hashed asset chunks.'
+);
+assert(
+  /failed to fetch dynamically imported module/.test(deployVersion) &&
+    /reloadForCurrentDeploy/.test(errorBoundary) &&
+    /vite:preloadError/.test(deployVersion) &&
+    /loadCurrentRoute/.test(router) &&
+    /installPbkDeployGuard\(\);/.test(mainShell),
+  'Panel error boundary must recover once from stale dynamic import chunks after deploys.'
 );
 assert(
   /setTimeout\(\(\) => setActionStatus\(null\), 5000\)/.test(inboxRoute),

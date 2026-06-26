@@ -27,6 +27,13 @@ const devBridgeProxyHeaders = devBridgeApiKey
   ? { Authorization: `Bearer ${devBridgeApiKey}` }
   : undefined
 
+const pbkBuildId =
+  process.env.PBK_DEPLOY_SHA ||
+  process.env.COMMIT_REF ||
+  process.env.RENDER_GIT_COMMIT ||
+  process.env.GITHUB_SHA ||
+  `${Date.now()}`
+
 function figmaAssetResolver() {
   return {
     name: 'figma-asset-resolver',
@@ -91,10 +98,34 @@ function shellHistoryFallback() {
   }
 }
 
+function pbkBuildManifest() {
+  return {
+    name: 'pbk-build-manifest',
+    generateBundle() {
+      this.emitFile({
+        type: 'asset',
+        fileName: 'pbk-build-manifest.json',
+        source: JSON.stringify(
+          {
+            buildId: pbkBuildId,
+            generatedAt: new Date().toISOString(),
+          },
+          null,
+          2
+        ),
+      })
+    },
+  }
+}
+
 export default defineConfig({
+  define: {
+    __PBK_BUILD_ID__: JSON.stringify(pbkBuildId),
+  },
   plugins: [
     figmaAssetResolver(),
     shellHistoryFallback(),
+    pbkBuildManifest(),
     // The React and Tailwind plugins are both required for Make, even if
     // Tailwind is not being actively used – do not remove them
     react(),

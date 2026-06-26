@@ -20260,6 +20260,7 @@ async function recordEmotionalLearningInteractionRecord(params = {}) {
   upsertById(state, 'emotionalLearningInteractions', record);
   const postgres = await persistEmotionalLearningInteractionToPg(record);
   const agentDecision = await recordAgentDecisionRecord({
+    id: String(params.agentDecisionId || params.agent_decision_id || `agent-decision-${slugify(record.id).slice(0, 96)}`).trim(),
     agentId: 'ava',
     agentName: 'Ava',
     actionType: 'emotional_learning_interaction',
@@ -25170,12 +25171,162 @@ function inferContextAwareCallOutcome({
   };
 }
 
+function getCallOutcomeLearningIds(callId = '') {
+  const slug = slugify(callId).slice(0, 96);
+  return {
+    callEmotionId: `call-emotion-${slug}-final`,
+    emotionalLearningId: `emotional-learning-${slug}-post-call`,
+    agentDecisionId: `agent-decision-${slug}-post-call-outcome`,
+  };
+}
+
+function getPostCallLearningSignal({ session = {}, contextCall = null, message = {}, transcript = '' } = {}) {
+  const payload = plainObject(message.payload);
+  const frameCount = Math.max(
+    toNumber(session.frameCount, 0),
+    toNumber(payload.frameCount, 0),
+    toNumber(contextCall?.frameCount, 0),
+    toNumber(contextCall?.audioFrameCount, 0)
+  );
+  const audioBytes = Math.max(
+    toNumber(session.audioBytes, 0),
+    toNumber(payload.audioBytes, 0),
+    toNumber(contextCall?.audioBytes, 0)
+  );
+  const providerText = [
+    message.provider,
+    payload.provider,
+    payload.source,
+    payload.deepgram?.model,
+    session.deepgramModel,
+    contextCall?.provider,
+  ]
+    .filter(Boolean)
+    .join(' ');
+  const hasDeepgramSignal = /deepgram|telnyx-media-stream/i.test(providerText) || Boolean(payload.deepgram);
+  const hasSentimentSignal = Boolean(
+    session.sentiment ||
+      payload.sentiment ||
+      message.sentiment !== undefined ||
+      contextCall?.sentiment !== undefined ||
+      contextCall?.sentimentLabel
+  );
+  const hasRecordingSignal = Boolean(
+    message.recordingUrl ||
+      payload.recordingUrl ||
+      contextCall?.recordingUrl ||
+      contextCall?.recording_url ||
+      message.storagePath ||
+      payload.storagePath
+  );
+  const hasCallEvidence = Boolean(
+    frameCount > 0 ||
+      audioBytes > 0 ||
+      payload.transcriptFinal === true ||
+      hasDeepgramSignal ||
+      hasSentimentSignal ||
+      hasRecordingSignal
+  );
+  const transcriptLength = String(transcript || '').length;
+  const minimumTranscriptChars = hasCallEvidence ? 20 : 40;
+  return {
+    transcriptLength,
+    frameCount,
+    audioBytes,
+    hasDeepgramSignal,
+    hasSentimentSignal,
+    hasRecordingSignal,
+    hasCallEvidence,
+    minimumTranscriptChars,
+    usable: transcriptLength >= minimumTranscriptChars,
+  };
+}
+
+function getPostCallSentimentState({ session = {}, contextCall = null, message = {} } = {}) {
+  const payload = plainObject(message.payload);
+  const sentimentInput =
+    session.sentiment ||
+    payload.sentiment ||
+    {
+      sentiment:
+        message.sentiment ??
+        contextCall?.sentimentLabel ??
+        contextCall?.sentiment ??
+        '',
+    };
+  const sentimentLabel = String(
+    sentimentInput?.label ||
+      sentimentInput?.dominantEmotion ||
+      sentimentInput?.sentiment ||
+      contextCall?.sentimentLabel ||
+      message.sentiment ||
+      ''
+  ).trim();
+  const emotionState = normalizeEmotionState(sentimentInput, sentimentLabel);
+  return {
+    sentimentInput,
+    sentimentLabel: sentimentLabel || emotionState.dominant,
+    emotionState,
+  };
+}
+
+function mapPostCallOutcomeToSuccessWeight(inferredOutcome = {}) {
+  if (inferredOutcome.success === true) return 0.82;
+  if (inferredOutcome.success === false) return 0.18;
+  const reward = Number(inferredOutcome.reward ?? 0);
+  if (reward >= 0.35) return 0.62;
+  if (reward >= 0.2) return 0.54;
+  return 0.48;
+}
+
+function getLastAvaResponseForPostCallLearning(session = {}) {
+  const history = Array.isArray(session.avaLiveTurnHistory) ? session.avaLiveTurnHistory : [];
+  const latestTurn = [...history].reverse().find((turn) =>
+    Boolean(
+      turn?.spokenReply ||
+        turn?.response ||
+        turn?.reply ||
+        turn?.text ||
+        turn?.immediateScript ||
+        turn?.conversation?.spokenReply
+    )
+  );
+  return String(
+    session.lastAvaReplySpoken ||
+      session.lastAvaSpokenPreview ||
+      session.lastAvaReplyPreview ||
+      session.lastAvaPreview ||
+      latestTurn?.spokenReply ||
+      latestTurn?.conversation?.spokenReply ||
+      latestTurn?.response ||
+      latestTurn?.reply?.text ||
+      latestTurn?.text ||
+      latestTurn?.immediateScript ||
+      ''
+  ).slice(0, 4000);
+}
+
 async function recordPostCallLearningFromTranscript({ session = {}, contextCall = null, message = {}, transcriptText = '', reason = '' } = {}) {
   const transcript = String(transcriptText || '')
     .replace(/\s+/g, ' ')
     .trim();
   const callId = message.callId || session.callId || contextCall?.id || '';
-  if (!callId || transcript.length < 40) return { ok: false, skipped: true, result: 'weak_post_call_transcript' };
+  const learningSignal = getPostCallLearningSignal({ session, contextCall, message, transcript });
+  if (!callId || !learningSignal.usable) {
+    recordCallTrace('post_call_learning_skipped', {
+      callId,
+      leadId: message.leadId || contextCall?.leadId || session.leadId || '',
+      result: 'weak_post_call_transcript',
+      stage: 'postCallLearning',
+      reason,
+      transcriptLength: learningSignal.transcriptLength,
+      minimumTranscriptChars: learningSignal.minimumTranscriptChars,
+      hasCallEvidence: learningSignal.hasCallEvidence,
+      frameCount: learningSignal.frameCount,
+      audioBytes: learningSignal.audioBytes,
+    });
+    return { ok: false, skipped: true, result: 'weak_post_call_transcript', signal: learningSignal };
+  }
   const leadId = message.leadId || contextCall?.leadId || session.leadId || '';
   const inferredOutcome = inferContextAwareCallOutcome({
     session,
@@ -25183,6 +25334,111 @@ async function recordPostCallLearningFromTranscript({ session = {}, contextCall 
     transcript,
     reason,
   });
+  const postCallIds = getCallOutcomeLearningIds(callId);
+  const sentimentState = getPostCallSentimentState({ session, contextCall, message });
+  const successWeight = mapPostCallOutcomeToSuccessWeight(inferredOutcome);
+  const lastAvaResponse = getLastAvaResponseForPostCallLearning(session);
+  const emotion = await recordCallEmotionRecord({
+    id: postCallIds.callEmotionId,
+    tenantId: 'pbk',
+    leadId,
+    callId,
+    sessionId: session.streamId || session.id || callId,
+    text: transcript,
+    sentiment: sentimentState.sentimentLabel,
+    emotionState: sentimentState.emotionState,
+    context: 'post-call outcome learning',
+    source: 'telnyx-post-call-learning',
+    metadata: {
+      reason,
+      transcriptLength: learningSignal.transcriptLength,
+      frameCount: learningSignal.frameCount,
+      audioBytes: learningSignal.audioBytes,
+      finalOutcome: inferredOutcome.finalOutcome,
+      outcomeLabel: inferredOutcome.outcomeLabel,
+      reward: inferredOutcome.reward,
+      success: inferredOutcome.success,
+      signal: learningSignal,
+    },
+  }).catch((error) => ({ ok: false, error: error?.message || String(error) }));
+  const emotionalInteraction = await recordEmotionalLearningInteractionRecord({
+    id: postCallIds.emotionalLearningId,
+    tenantId: 'pbk',
+    leadId,
+    callId,
+    sessionId: session.streamId || session.id || callId,
+    sellerUtterance: transcript,
+    avaResponse: lastAvaResponse,
+    outcome: inferredOutcome.outcomeLabel,
+    successWeight,
+    tagsAfter:
+      inferredOutcome.success === true
+        ? [{ tag: 'trust_rising', intensity: 0.7 }]
+        : inferredOutcome.success === false
+          ? [{ tag: 'frustrated', intensity: 0.62 }]
+          : [],
+    emotionState: sentimentState.emotionState,
+    source: 'telnyx-post-call-learning',
+    agentDecisionId: `agent-decision-${slugify(postCallIds.emotionalLearningId).slice(0, 96)}`,
+    metadata: {
+      reason,
+      callEmotionId: emotion?.emotion?.id || postCallIds.callEmotionId,
+      finalOutcome: inferredOutcome.finalOutcome,
+      finalOutcomeSource: inferredOutcome.finalOutcomeSource,
+      finalOutcomeConfidence: inferredOutcome.finalOutcomeConfidence,
+      reward: inferredOutcome.reward,
+      transcriptLength: learningSignal.transcriptLength,
+      frameCount: learningSignal.frameCount,
+      audioBytes: learningSignal.audioBytes,
+      sourceMessageId: message.id || '',
+      signal: learningSignal,
+    },
+  }).catch((error) => ({ ok: false, error: error?.message || String(error) }));
+  const agentDecision = await recordAgentDecisionRecord({
+    id: postCallIds.agentDecisionId,
+    agentId: 'ava',
+    agentName: 'Ava',
+    actionType: 'post_call_outcome_observed',
+    leadId,
+    callId,
+    source: 'telnyx-post-call-learning',
+    context: {
+      sellerUtterance: transcript.slice(0, 4000),
+      leadName: message.leadName || contextCall?.leadName || '',
+      address: message.address || contextCall?.address || '',
+      selectedPath: session.selectedPath || contextCall?.selectedPath || contextCall?.path || '',
+      reason,
+      emotionState: sentimentState.emotionState,
+      sentiment: sentimentState.sentimentLabel,
+    },
+    parameters: {
+      transcriptLength: learningSignal.transcriptLength,
+      minimumTranscriptChars: learningSignal.minimumTranscriptChars,
+      frameCount: learningSignal.frameCount,
+      audioBytes: learningSignal.audioBytes,
+      hasCallEvidence: learningSignal.hasCallEvidence,
+      sourceMessageId: message.id || '',
+      lastAvaResponse: lastAvaResponse.slice(0, 1200),
+    },
+    outcome: {
+      label: inferredOutcome.outcomeLabel,
+      finalOutcome: inferredOutcome.finalOutcome,
+      finalOutcomeSource: inferredOutcome.finalOutcomeSource,
+      finalOutcomeConfidence: inferredOutcome.finalOutcomeConfidence,
+      success: inferredOutcome.success,
+      callbackScheduled: inferredOutcome.callbackScheduled,
+      pathLocked: inferredOutcome.pathLocked,
+      reward: inferredOutcome.reward,
+    },
+    emotionState: sentimentState.emotionState,
+    reward: inferredOutcome.reward,
+    metadata: {
+      schemaVersion: 'pbk-post-call-outcome-decision-v1',
+      callEmotionId: emotion?.emotion?.id || postCallIds.callEmotionId,
+      emotionalLearningInteractionId: emotionalInteraction?.interaction?.id || postCallIds.emotionalLearningId,
+      signal: learningSignal,
+    },
+  }).catch((error) => ({ ok: false, error: error?.message || String(error) }));
   const coachingTranscript =
     Array.isArray(contextCall?.transcript) && contextCall.transcript.length
       ? contextCall.transcript
@@ -25371,6 +25627,9 @@ async function recordPostCallLearningFromTranscript({ session = {}, contextCall 
     repeatedAuthorityAfterConfirmation,
     finalOutcome: inferredOutcome.finalOutcome,
     finalOutcomeSource: inferredOutcome.finalOutcomeSource,
+    callEmotion: emotion?.result || emotion?.error || '',
+    emotionalLearning: emotionalInteraction?.result || emotionalInteraction?.error || '',
+    agentDecision: agentDecision?.result || agentDecision?.error || '',
     coachingGrade: coaching?.report?.grade || '',
     scriptOutcomes: scriptOutcomes.map((item) => ({
       ok: item?.ok,
@@ -25392,6 +25651,9 @@ async function recordPostCallLearningFromTranscript({ session = {}, contextCall 
     result: 'post_call_learning_completed',
     qa,
     coaching,
+    emotion,
+    emotionalInteraction,
+    agentDecision,
     outcomes,
     scriptOutcomes,
   };
@@ -37043,11 +37305,168 @@ function upsertAvaActiveMemory(lesson = {}) {
   limitStateArrays(state);
 }
 
+function getCallOutcomeLearningCandidateCallId(candidate = {}) {
+  return String(candidate.callId || candidate.call_id || candidate.payload?.callId || candidate.payload?.call_id || '').trim();
+}
+
+function isUsableCallOutcomeLearningCandidate(candidate = {}) {
+  const channel = String(candidate.channel || '').toLowerCase();
+  if (!['call', 'voice', 'recording'].includes(channel)) return false;
+  const transcript = String(candidate.body || candidate.transcript || candidate.text || '').replace(/\s+/g, ' ').trim();
+  if (transcript.length < 20) return false;
+  if (!getCallOutcomeLearningCandidateCallId(candidate)) return false;
+  if (/no_transcript|failed|diagnostic/i.test(String(candidate.status || ''))) return false;
+  if (/deepgram live stream closed .* before a final transcript|diagnostics:\s*frames=/i.test(transcript)) return false;
+  return true;
+}
+
+function hasCallOutcomeLearningRecord(callId = '') {
+  const normalizedCallId = String(callId || '').trim();
+  if (!normalizedCallId) return false;
+  const ids = getCallOutcomeLearningIds(normalizedCallId);
+  const hasEmotion = (state.callEmotions || []).some((item) => item.id === ids.callEmotionId || (item.callId === normalizedCallId && item.source === 'telnyx-post-call-learning'));
+  const hasDecision = (state.agentDecisions || []).some((item) => item.id === ids.agentDecisionId || (item.callId === normalizedCallId && item.actionType === 'post_call_outcome_observed'));
+  return hasEmotion && hasDecision;
+}
+
+async function collectPostCallOutcomeLearningCandidates(limit = AVA_MEMORY_WORKER_LIMIT) {
+  const candidates = [];
+  const dbResult = await queryPgRows(
+    `SELECT id, lead_id, channel, direction, status, provider, body, sentiment, payload, created_at, updated_at
+     FROM public.unified_messages
+     WHERE COALESCE(workspace_id, 'pbk') = 'pbk'
+       AND channel IN ('call', 'voice', 'recording')
+       AND COALESCE(body, '') <> ''
+     ORDER BY created_at DESC
+     LIMIT $1`,
+    [Math.max(1, Math.min(500, Number(limit || AVA_MEMORY_WORKER_LIMIT)))]
+  );
+  if (dbResult.ok) {
+    for (const row of dbResult.rows || []) {
+      candidates.push({
+        source: 'supabase-call-outcome',
+        id: row.id,
+        leadId: row.lead_id || '',
+        channel: row.channel,
+        direction: row.direction,
+        status: row.status,
+        provider: row.provider,
+        body: row.body,
+        sentiment: row.sentiment,
+        payload: row.payload && typeof row.payload === 'object' ? row.payload : {},
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+      });
+    }
+  }
+
+  for (const message of sortNewest(state.messages || [])) {
+    if (candidates.length >= limit) break;
+    if (candidates.some((candidate) => candidate.id === message.id)) continue;
+    candidates.push({ ...message, source: 'bridge-state-call-outcome' });
+  }
+
+  return candidates
+    .filter(isUsableCallOutcomeLearningCandidate)
+    .filter((candidate) => !hasCallOutcomeLearningRecord(getCallOutcomeLearningCandidateCallId(candidate)))
+    .slice(0, Math.max(1, Math.min(200, Number(limit || AVA_MEMORY_WORKER_LIMIT))));
+}
+
+async function markPostCallOutcomeCandidateProcessed(candidate = {}, sessionId = '', result = {}) {
+  const payloadPatch = {
+    postCallOutcomeLearningProcessed: Boolean(result?.ok),
+    postCallOutcomeLearningSessionId: sessionId,
+    postCallOutcomeLearningProcessedAt: isoNow(),
+    postCallOutcomeLearningResult: result?.result || result?.error || 'unknown',
+  };
+  if (candidate.source === 'supabase-call-outcome') {
+    await queryPgRows(
+      `UPDATE public.unified_messages
+       SET payload = COALESCE(payload, '{}'::jsonb) || $2::jsonb,
+           updated_at = NOW()
+       WHERE id = $1`,
+      [candidate.id, JSON.stringify(payloadPatch)]
+    );
+  }
+  const localMessage = findMessageById(candidate.id);
+  if (localMessage) {
+    upsertMessage(state, {
+      ...localMessage,
+      payload: {
+        ...(localMessage.payload || {}),
+        ...payloadPatch,
+      },
+      updatedAt: isoNow(),
+    });
+  }
+}
+
+async function backfillPostCallOutcomeLearningFromMessages(params = {}) {
+  const limit = Math.max(1, Math.min(200, Number(params.limit || AVA_MEMORY_WORKER_LIMIT)));
+  const sessionId = params.sessionId || `post-call-outcome-backfill-${Date.now()}-${randomUUID().slice(0, 8)}`;
+  const candidates = await collectPostCallOutcomeLearningCandidates(limit);
+  const results = [];
+  for (const candidate of candidates) {
+    const callId = getCallOutcomeLearningCandidateCallId(candidate);
+    const contextCall = getCallById(callId) || {
+      id: callId,
+      leadId: candidate.leadId || candidate.payload?.leadId || '',
+      leadName: candidate.payload?.leadName || '',
+      address: candidate.payload?.address || '',
+      status: candidate.status || '',
+      provider: candidate.provider || '',
+      sentiment: candidate.sentiment ?? null,
+    };
+    const result = await recordPostCallLearningFromTranscript({
+      session: {
+        callId,
+        leadId: candidate.leadId || candidate.payload?.leadId || '',
+        streamId: candidate.payload?.streamId || '',
+        frameCount: candidate.payload?.frameCount || 0,
+        audioBytes: candidate.payload?.audioBytes || 0,
+        sentiment: candidate.payload?.sentiment || candidate.sentiment || null,
+        selectedPath: candidate.payload?.selectedPath || candidate.payload?.path || '',
+      },
+      contextCall,
+      message: {
+        ...candidate,
+        callId,
+        leadId: candidate.leadId || candidate.payload?.leadId || '',
+        leadName: candidate.payload?.leadName || '',
+        address: candidate.payload?.address || '',
+      },
+      transcriptText: candidate.body,
+      reason: params.reason || 'ava-memory-learning-call-outcome-backfill',
+    }).catch((error) => ({ ok: false, error: error?.message || String(error) }));
+    await markPostCallOutcomeCandidateProcessed(candidate, sessionId, result);
+    results.push({
+      id: candidate.id,
+      callId,
+      ok: Boolean(result?.ok),
+      result: result?.result || result?.error || '',
+    });
+  }
+  return {
+    ok: true,
+    result: 'post_call_outcome_learning_backfill_complete',
+    sessionId,
+    candidates: candidates.length,
+    recorded: results.filter((item) => item.ok).length,
+    skipped: results.filter((item) => !item.ok).length,
+    results,
+  };
+}
+
 async function runAvaMemoryLearning(params = {}) {
   recordToolUse('runAvaMemoryLearning');
   const sessionId = params.sessionId || `ava-learning-${Date.now()}-${randomUUID().slice(0, 8)}`;
   const limit = Math.max(1, Math.min(200, Number(params.limit || AVA_MEMORY_WORKER_LIMIT)));
   const minutesBudget = Math.max(1, Math.min(240, Number(params.minutesBudget || AVA_MEMORY_DAILY_MINUTES)));
+  const outcomeBackfill = await backfillPostCallOutcomeLearningFromMessages({
+    limit,
+    sessionId,
+    reason: 'ava-memory-learning-run',
+  });
   const candidates = await collectAvaLearningCandidates(limit);
   const lessons = [];
   const contextUpdates = [];
@@ -37079,13 +37498,14 @@ async function runAvaMemoryLearning(params = {}) {
     minutesBudget,
     candidatesProcessed: candidates.length,
     lessonsExtracted: lessons.length,
-    status: 'complete',
-    summary: `Ava processed ${candidates.length} call transcript${candidates.length === 1 ? '' : 's'} and learned ${lessons.length} tactic${lessons.length === 1 ? '' : 's'}.`,
+    status: lessons.length || outcomeBackfill.recorded ? 'complete' : 'idle',
+    summary: `Ava processed ${candidates.length} call transcript${candidates.length === 1 ? '' : 's'}, learned ${lessons.length} tactic${lessons.length === 1 ? '' : 's'}, and recorded ${outcomeBackfill.recorded} call outcome${outcomeBackfill.recorded === 1 ? '' : 's'}.`,
     metadata: {
       actor: params.actor || 'Ava memory worker',
       topTags,
       candidateIds: candidates.map((candidate) => candidate.id).filter(Boolean),
       contextUpdates,
+      outcomeBackfill,
     },
     createdAt: isoNow(),
     updatedAt: isoNow(),
@@ -37098,7 +37518,7 @@ async function runAvaMemoryLearning(params = {}) {
     makeActivity({
       actor: 'Ava',
       category: 'LEARNING',
-      status: lessons.length ? 'complete' : 'idle',
+      status: lessons.length || outcomeBackfill.recorded ? 'complete' : 'idle',
       text: session.summary,
       target: topTags[0]?.tag || 'call memory',
     })
@@ -37107,7 +37527,7 @@ async function runAvaMemoryLearning(params = {}) {
     id: `audit-${session.id}`,
     actor: params.actor || 'Ava memory worker',
     action: 'ava_memory_learning',
-    status: lessons.length ? 'complete' : 'idle',
+    status: lessons.length || outcomeBackfill.recorded ? 'complete' : 'idle',
     target: topTags[0]?.tag || 'call memory',
     details: session.summary,
     metadata: session.metadata,
@@ -37121,6 +37541,7 @@ async function runAvaMemoryLearning(params = {}) {
     session,
     lessons,
     contextUpdates,
+    outcomeBackfill,
     activeMemories: sortNewest(state.avaActiveMemories || []).slice(0, 12),
     warning: DATABASE_URL ? '' : 'PBK_DATABASE_URL is not configured; lessons were stored in bridge state only.',
   };

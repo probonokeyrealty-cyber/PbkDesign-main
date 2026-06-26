@@ -569,6 +569,23 @@ function shouldCompactStateResponse(targetPath = '') {
   return ['/state', '/api/state'].includes(targetPath);
 }
 
+function shouldCompactCampaignResponse(targetPath = '') {
+  return ['/api/campaigns', '/api/campaigns/lead-sources'].includes(targetPath);
+}
+
+function compactCampaignPayload(payload: Record<string, any>) {
+  const compact = { ...payload };
+  delete compact.state;
+  delete compact.runtimeState;
+  delete compact.snapshot;
+  compact.compact = true;
+  compact.compactMeta = {
+    source: 'netlify-bridge-proxy',
+    note: 'Full bridge state is omitted from campaign reads to keep the command center under Netlify function response limits.',
+  };
+  return compact;
+}
+
 export const handler: Handler = async (event) => {
   const requestId = getRequestId(event);
 
@@ -696,6 +713,17 @@ export const handler: Handler = async (event) => {
       try {
         const payload = JSON.parse(bytes.toString('utf8'));
         return json(compactStatePayload(payload), response.status, {
+          'X-PBK-Bridge-Proxy': 'netlify',
+          'X-Request-ID': responseHeaders['X-Request-ID'] || requestId,
+        }, event);
+      } catch {
+        // Fall through to the normal proxy response when upstream is not JSON.
+      }
+    }
+    if (shouldCompactCampaignResponse(targetPath) && isTextResponse(contentType)) {
+      try {
+        const payload = JSON.parse(bytes.toString('utf8'));
+        return json(compactCampaignPayload(payload), response.status, {
           'X-PBK-Bridge-Proxy': 'netlify',
           'X-Request-ID': responseHeaders['X-Request-ID'] || requestId,
         }, event);

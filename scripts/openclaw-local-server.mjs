@@ -71818,7 +71818,6 @@ const server = createServer(async (request, response) => {
         ok: true,
         result: 'live',
         sources: getCampaignLeadSourceOptions(),
-        state: buildStateSnapshot(),
       });
       return;
     }
@@ -71854,7 +71853,6 @@ const server = createServer(async (request, response) => {
         leads: state.campaignLeads || [],
         events: state.campaignEvents || [],
         sources: getCampaignLeadSourceOptions(),
-        state: buildStateSnapshot(),
       });
       return;
     }

@@ -8,6 +8,7 @@ const packageJson = read('package.json');
 const campaigns = read('src/app/routes/Campaigns.tsx');
 const runtimeBridge = read('src/app/utils/runtimeBridge.ts');
 const bridge = read('scripts/openclaw-local-server.mjs');
+const netlifyProxy = read('netlify/functions/pbk-bridge-proxy.ts');
 const pbkCss = read('src/styles/pbk-components.css');
 const dataMap = read('docs/modern-shell-bridge-data-map.md');
 
@@ -106,6 +107,44 @@ assert(
     bridge
   ),
   'GET /api/campaigns must identify actual storage provenance and distinguish healthy-empty data.'
+);
+const campaignReadRouteStart = bridge.indexOf(
+  "if (request.method === 'GET' && pathname === '/api/campaigns')"
+);
+const campaignReadRouteEnd = bridge.indexOf(
+  "if (request.method === 'POST' && pathname === '/api/campaigns')",
+  campaignReadRouteStart
+);
+const campaignReadRoute =
+  campaignReadRouteStart >= 0 && campaignReadRouteEnd > campaignReadRouteStart
+    ? bridge.slice(campaignReadRouteStart, campaignReadRouteEnd)
+    : '';
+const campaignLeadSourcesRouteStart = bridge.indexOf(
+  "if (request.method === 'GET' && pathname === '/api/campaigns/lead-sources')"
+);
+const campaignLeadSourcesRouteEnd = bridge.indexOf(
+  "if (request.method === 'GET' && pathname === '/api/campaigns/templates/ranked')",
+  campaignLeadSourcesRouteStart
+);
+const campaignLeadSourcesRoute =
+  campaignLeadSourcesRouteStart >= 0 && campaignLeadSourcesRouteEnd > campaignLeadSourcesRouteStart
+    ? bridge.slice(campaignLeadSourcesRouteStart, campaignLeadSourcesRouteEnd)
+    : '';
+assert(
+  campaignReadRoute && !/state:\s*buildStateSnapshot\(/.test(campaignReadRoute),
+  'GET /api/campaigns must not include the full runtime state; it exceeds Netlify function response limits.'
+);
+assert(
+  campaignLeadSourcesRoute && !/state:\s*buildStateSnapshot\(/.test(campaignLeadSourcesRoute),
+  'GET /api/campaigns/lead-sources must not include the full runtime state; it exceeds Netlify function response limits.'
+);
+assert(
+  /function shouldCompactCampaignResponse/.test(netlifyProxy) &&
+    /\/api\/campaigns/.test(netlifyProxy) &&
+    /\/api\/campaigns\/lead-sources/.test(netlifyProxy) &&
+    /function compactCampaignPayload/.test(netlifyProxy) &&
+    /delete compact\.state/.test(netlifyProxy),
+  'Netlify proxy must defensively remove full bridge state from campaign read responses.'
 );
 assert(
   /campaignRuntimeSource/.test(campaigns) &&

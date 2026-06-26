@@ -6257,11 +6257,11 @@ const PG_QUERY_RETRY_BASE_DELAY_MS = Math.max(
 );
 const PG_CONNECTION_TIMEOUT_MS = Math.max(
   1000,
-  Math.min(15000, Number(process.env.PBK_PG_CONNECTION_TIMEOUT_MS || (IS_HOSTED ? 4000 : 5000)))
+  Math.min(15000, Number(process.env.PBK_PG_CONNECTION_TIMEOUT_MS || (IS_HOSTED ? 6000 : 5000)))
 );
 const PG_QUERY_TIMEOUT_MS = Math.max(
   750,
-  Math.min(15000, Number(process.env.PBK_PG_QUERY_TIMEOUT_MS || (IS_HOSTED ? 4000 : 5000)))
+  Math.min(15000, Number(process.env.PBK_PG_QUERY_TIMEOUT_MS || (IS_HOSTED ? 12000 : 5000)))
 );
 const PG_STATEMENT_TIMEOUT_MS = Math.max(
   750,

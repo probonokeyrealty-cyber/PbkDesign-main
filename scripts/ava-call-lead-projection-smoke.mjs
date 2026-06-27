@@ -5,6 +5,8 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+import { canProjectLeadField } from './lead-field-provenance.mjs';
+
 const repoRoot = process.cwd();
 const port = String(19350 + Math.floor(Math.random() * 2000));
 const apiKey = 'ava-call-lead-projection-smoke-key';
@@ -108,6 +110,18 @@ async function main() {
     assert.equal(projection.json?.visibleLeadFacts?.askingPrice, 125000);
     assert.equal(projection.json?.visibleLeadFacts?.contractIntent, true);
     assert.equal(projection.json?.visibleLeadFacts?.callbackIntent, true);
+    assert.equal(
+      canProjectLeadField({
+        leadId,
+        fieldName: 'seller.email',
+        fieldValue: projection.json?.visibleLeadFacts?.email,
+        sourceChannel: 'call',
+        sourceId: 'ava-call-lead-projection-smoke',
+        confidence: 0.91,
+      }),
+      true,
+      'high-confidence call facts should satisfy lead field provenance projection gates.'
+    );
 
     const full = await requestJson(baseUrl, `/api/leads/${encodeURIComponent(leadId)}/full`);
     assert.equal(full.status, 200, `lead full view returned ${full.status}`);

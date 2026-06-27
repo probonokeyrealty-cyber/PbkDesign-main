@@ -3,6 +3,7 @@ import { selectGovernedAvaSkill } from './ava-governed-skill-router.mjs';
 import { ClosingStateMachine, PHASE_ORDER, Phase } from './ava-state-machine.mjs';
 import { guardAvaResponse } from './ava-response-guard.mjs';
 import { buildAvaWorkingMemory } from './ava-working-memory.mjs';
+import { decideAvaAction } from './ava-action-decision-policy.mjs';
 
 function normalizePhase(value = '') {
   const phase = String(value || '').trim().toLowerCase();
@@ -69,6 +70,24 @@ function hasItems(value) {
 
 function hasObject(value) {
   return Boolean(value && typeof value === 'object' && !Array.isArray(value));
+}
+
+function countEvidence(input = {}, evidence = {}) {
+  const explicit = Number(input.evidenceCount ?? input.confidenceInput?.evidenceCount);
+  if (Number.isFinite(explicit)) return explicit;
+  return Object.keys(evidence).length;
+}
+
+function actionDecisionConfidence(input = {}, confidence = {}) {
+  if (
+    input.actionConfidence !== null &&
+    input.actionConfidence !== undefined &&
+    input.actionConfidence !== ''
+  ) {
+    const explicit = Number(input.actionConfidence);
+    if (Number.isFinite(explicit)) return explicit;
+  }
+  return confidence.score || confidence.confidence || 0;
 }
 
 export function buildAvaIntelligenceUnisonStatus(input = {}, result = {}) {
@@ -187,11 +206,29 @@ export function orchestrateAvaTurn(input = {}) {
           : confidence.responseMode === 'verify'
             ? 'verification_question'
             : 'seller_reply';
+  const actionDecision = decideAvaAction({
+    actionType: input.proposedActionType || input.actionType || '',
+    source: input.actionSource || input.source || 'ava',
+    confidence: actionDecisionConfidence(input, confidence),
+    evidenceCount: countEvidence(input, evidence),
+    approvalState: input.approval?.status || input.approvalState || '',
+    safetyPassed: input.safetyPassed === true,
+    stopLanguageDetected: input.stopLanguageDetected === true || input.shouldStopContact === true,
+    dncMatched: input.dncMatched === true,
+    quietHours: input.quietHours === true,
+    consentMissing: input.consentMissing === true,
+    legalAdviceRequested: input.legalAdviceRequested === true,
+    taxAdviceRequested: input.taxAdviceRequested === true,
+    threatDetected: input.threatDetected === true,
+    humanRequested: input.humanRequested === true,
+    disputeDetected: input.disputeDetected === true,
+  });
 
   const result = {
     ok: true,
     result: 'ava_turn_orchestrated',
     answer: guard.answer,
+    actionDecision,
     turnDecision: {
       phase,
       nextMoveType,

@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 
 import { resolveProviderActionDispatchBackend } from './provider-action-dispatch-policy.mjs';
+import { attachProviderProof } from './provider-proof-ledger.mjs';
 
 let schemaReady = false;
 const localDispatches = new Map();
@@ -193,7 +194,17 @@ export async function executeProviderActionWithSharedLease({
       };
       localDispatches.set(lockKey, dispatching);
       try {
-        const value = await execute({ attemptToken, dispatchStartedAt });
+        const value = attachProviderProof(
+          await execute({ attemptToken, dispatchStartedAt }),
+          {
+            approvalId,
+            workspaceId,
+            toolName,
+            bindingHash,
+            attemptToken,
+            dispatchStartedAt,
+          }
+        );
         const completed = {
           ...dispatching,
           status: 'completed',
@@ -317,7 +328,17 @@ export async function executeProviderActionWithSharedLease({
     providerDispatchStarted = true;
 
     try {
-      const value = await execute({ attemptToken, dispatchStartedAt });
+      const value = attachProviderProof(
+        await execute({ attemptToken, dispatchStartedAt }),
+        {
+          approvalId,
+          workspaceId,
+          toolName,
+          bindingHash,
+          attemptToken,
+          dispatchStartedAt,
+        }
+      );
       const completedAt = now();
       await client.query(
         `UPDATE public.provider_action_dispatches

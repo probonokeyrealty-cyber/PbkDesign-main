@@ -5,6 +5,7 @@ const baseUrl = process.env.PBK_MOBILE_PROOF_BASE_URL || 'http://127.0.0.1:4174'
 const teamPasscode =
   process.env.PBK_MOBILE_PROOF_TEAM_PASSCODE || process.env.PBK_TEAM_PASSCODE || '';
 const teamSessionStorageKey = 'pbk:team-session:v1';
+const teamAuthAttempts = 3;
 const routes = ['/ava-chat', '/leads', '/inbox', '/deal', '/campaigns', '/skill-studio'];
 const device = devices['iPhone 13'];
 const routeExpectations = {
@@ -57,42 +58,100 @@ function shouldAuthenticateTeamSession() {
   );
 }
 
+function buildStoredTeamSession(session) {
+  return {
+    token: session.token,
+    role: session.role || 'team',
+    actor: session.actor || 'PBK mobile proof',
+    expiresAt: session.expiresAt,
+    permissions: session.permissions,
+  };
+}
+
+function isProtectedGateVisible(bodyText) {
+  return /protected operator workspace|team passcode|open command center/i.test(bodyText);
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 async function authenticateTeamSession(context) {
-  if (!shouldAuthenticateTeamSession()) return;
+  if (!shouldAuthenticateTeamSession()) return null;
 
   const authUrl = new URL('/api/auth/team', baseUrl).toString();
-  const response = await context.request.post(authUrl, {
-    data: {
-      passcode: teamPasscode,
-      actor: 'PBK mobile proof',
-    },
-    timeout: 30000,
-  });
+  const verifyUrl = new URL('/api/auth/team/verify', baseUrl).toString();
+  let lastError = '';
 
-  if (!response.ok()) {
-    throw new Error(
-      `team access authentication failed with ${response.status()} ${response.statusText()}`
+  for (let attempt = 1; attempt <= teamAuthAttempts; attempt += 1) {
+    const response = await context.request.post(authUrl, {
+      data: {
+        passcode: teamPasscode,
+        actor: 'PBK mobile proof',
+      },
+      timeout: 30000,
+    });
+
+    if (!response.ok()) {
+      lastError = `auth returned ${response.status()} ${response.statusText()}`;
+      await sleep(750 * attempt);
+      continue;
+    }
+
+    const session = await response.json();
+    if (!session?.ok || !session.token || !session.expiresAt) {
+      lastError = 'auth did not return a usable signed session';
+      await sleep(750 * attempt);
+      continue;
+    }
+
+    const verifyResponse = await context.request.post(verifyUrl, {
+      data: {},
+      headers: {
+        'X-PBK-Team-Token': session.token,
+      },
+      timeout: 30000,
+    });
+    const verifyPayload = await verifyResponse.json().catch(() => ({}));
+    if (!verifyResponse.ok() || verifyPayload?.ok === false) {
+      lastError = `session verify returned ${verifyResponse.status()} ${verifyResponse.statusText()}`;
+      await sleep(750 * attempt);
+      continue;
+    }
+
+    const teamSession = buildStoredTeamSession({
+      ...session,
+      permissions: verifyPayload.permissions || session.permissions,
+    });
+
+    await context.addInitScript(
+      ({ storageKey, storedSession }) => {
+        window.localStorage.setItem(storageKey, JSON.stringify(storedSession));
+      },
+      {
+        storageKey: teamSessionStorageKey,
+        storedSession: teamSession,
+      }
     );
+    return teamSession;
   }
 
-  const session = await response.json();
-  if (!session?.ok || !session.token || !session.expiresAt) {
-    throw new Error('team access authentication did not return a usable session.');
-  }
+  throw new Error(
+    `team access authentication did not verify after ${teamAuthAttempts} attempts${
+      lastError ? `: ${lastError}` : ''
+    }.`
+  );
+}
 
-  await context.addInitScript(
-    ({ storageKey, teamSession }) => {
-      window.localStorage.setItem(storageKey, JSON.stringify(teamSession));
+async function installTeamSessionOnPage(page, teamSession) {
+  if (!teamSession) return;
+  await page.evaluate(
+    ({ storageKey, storedSession }) => {
+      window.localStorage.setItem(storageKey, JSON.stringify(storedSession));
     },
     {
       storageKey: teamSessionStorageKey,
-      teamSession: {
-        token: session.token,
-        role: session.role || 'team',
-        actor: session.actor || 'PBK mobile proof',
-        expiresAt: session.expiresAt,
-        permissions: session.permissions,
-      },
+      storedSession: teamSession,
     }
   );
 }
@@ -128,12 +187,20 @@ async function checkRoute(context, route) {
       failures.push(`expected final URL to include "${route}", received "${finalUrl}".`);
     }
 
-    const bodyText = (await page.locator('body').innerText({ timeout: 10000 })).trim();
+    let bodyText = (await page.locator('body').innerText({ timeout: 10000 })).trim();
+    if (isProtectedGateVisible(bodyText) && teamPasscode) {
+      const refreshedSession = await authenticateTeamSession(context);
+      await installTeamSessionOnPage(page, refreshedSession);
+      await page.reload({ waitUntil: 'domcontentloaded' });
+      await page.waitForLoadState('networkidle', { timeout: 5000 }).catch(() => {});
+      bodyText = (await page.locator('body').innerText({ timeout: 10000 })).trim();
+    }
+
     if (!bodyText) {
       failures.push(`expected non-empty body text after navigating to ${url}.`);
     }
 
-    if (/protected operator workspace|team passcode|open command center/i.test(bodyText)) {
+    if (isProtectedGateVisible(bodyText)) {
       const envHint = teamPasscode
         ? 'the team session was not accepted by the hosted app.'
         : 'set PBK_MOBILE_PROOF_TEAM_PASSCODE or PBK_TEAM_PASSCODE to prove protected pages.';

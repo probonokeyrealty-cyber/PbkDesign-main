@@ -1836,10 +1836,10 @@ export function CommandCenter() {
     note: friendlyRuntimeText(item.note),
   }));
   const isWidgetVisible = (id: CommandWidgetId) => widgetPrefs[id] !== false;
-  const runtimeProviders = (snapshot?.status?.providers || {}) as Record<
-    string,
-    Record<string, unknown>
-  >;
+  const runtimeProviders = useMemo(
+    () => (snapshot?.status?.providers || {}) as Record<string, Record<string, unknown>>,
+    [snapshot?.status?.providers]
+  );
   const webSearchStatus = runtimeProviders.webSearch || {};
   const webSearchNeuralOutput = (webSearchStatus.neuralOutput || {}) as Record<string, unknown>;
   const webSearchLiveReady = Boolean(webSearchStatus.liveReady);

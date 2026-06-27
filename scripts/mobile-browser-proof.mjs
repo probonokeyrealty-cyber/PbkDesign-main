@@ -2,6 +2,9 @@
 import { chromium, devices } from '@playwright/test';
 
 const baseUrl = process.env.PBK_MOBILE_PROOF_BASE_URL || 'http://127.0.0.1:4174';
+const teamPasscode =
+  process.env.PBK_MOBILE_PROOF_TEAM_PASSCODE || process.env.PBK_TEAM_PASSCODE || '';
+const teamSessionStorageKey = 'pbk:team-session:v1';
 const routes = ['/ava-chat', '/leads', '/inbox', '/deal', '/campaigns', '/skill-studio'];
 const device = devices['iPhone 13'];
 const routeExpectations = {
@@ -43,6 +46,57 @@ function findRouteErrorMarker(bodyText) {
   return routeErrorPatterns.find((pattern) => pattern.test(bodyText));
 }
 
+function shouldAuthenticateTeamSession() {
+  if (!teamPasscode) return false;
+  const hostname = new URL(baseUrl).hostname.toLowerCase();
+  return (
+    hostname.includes('pbkcommandcenter') ||
+    hostname.endsWith('.netlify.app') ||
+    hostname.includes('pbk-openclaw-bridge') ||
+    hostname.endsWith('.onrender.com')
+  );
+}
+
+async function authenticateTeamSession(context) {
+  if (!shouldAuthenticateTeamSession()) return;
+
+  const authUrl = new URL('/api/auth/team', baseUrl).toString();
+  const response = await context.request.post(authUrl, {
+    data: {
+      passcode: teamPasscode,
+      actor: 'PBK mobile proof',
+    },
+    timeout: 30000,
+  });
+
+  if (!response.ok()) {
+    throw new Error(
+      `team access authentication failed with ${response.status()} ${response.statusText()}`
+    );
+  }
+
+  const session = await response.json();
+  if (!session?.ok || !session.token || !session.expiresAt) {
+    throw new Error('team access authentication did not return a usable session.');
+  }
+
+  await context.addInitScript(
+    ({ storageKey, teamSession }) => {
+      window.localStorage.setItem(storageKey, JSON.stringify(teamSession));
+    },
+    {
+      storageKey: teamSessionStorageKey,
+      teamSession: {
+        token: session.token,
+        role: session.role || 'team',
+        actor: session.actor || 'PBK mobile proof',
+        expiresAt: session.expiresAt,
+        permissions: session.permissions,
+      },
+    }
+  );
+}
+
 async function checkRoute(context, route) {
   const url = routeUrl(route);
   const page = await context.newPage();
@@ -77,6 +131,13 @@ async function checkRoute(context, route) {
     const bodyText = (await page.locator('body').innerText({ timeout: 10000 })).trim();
     if (!bodyText) {
       failures.push(`expected non-empty body text after navigating to ${url}.`);
+    }
+
+    if (/protected operator workspace|team passcode|open command center/i.test(bodyText)) {
+      const envHint = teamPasscode
+        ? 'the team session was not accepted by the hosted app.'
+        : 'set PBK_MOBILE_PROOF_TEAM_PASSCODE or PBK_TEAM_PASSCODE to prove protected pages.';
+      failures.push(`protected workspace gate is still visible; ${envHint}`);
     }
 
     const routeErrorMarker = findRouteErrorMarker(bodyText);
@@ -123,6 +184,7 @@ async function main() {
     const context = await browser.newContext({
       ...device,
     });
+    await authenticateTeamSession(context);
 
     for (const route of routes) {
       await checkRoute(context, route);

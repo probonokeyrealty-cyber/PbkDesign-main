@@ -1,5 +1,5 @@
 import { existsSync, readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { dirname, join, normalize, resolve, sep } from 'node:path';
 
 const root = process.cwd();
 const dockerfile = readFileSync(resolve(root, 'Dockerfile.openclaw'), 'utf8');
@@ -19,6 +19,14 @@ function getRelativeScriptImports(relativeFile) {
   return imports;
 }
 
+function resolveScriptImport(importer, relativePath) {
+  const resolved = normalize(join(dirname(importer), relativePath));
+  if (resolved.startsWith(`..${sep}`) || resolved === '..') {
+    throw new Error(`Bridge import escapes scripts/: ${importer} -> ${relativePath}`);
+  }
+  return resolved.replace(/\\/g, '/');
+}
+
 function dockerfilePackages(relativePath) {
   const segments = relativePath.split('/');
   return segments.some((_, index) => {
@@ -35,8 +43,9 @@ function visit(relativeFile) {
   seen.add(relativeFile);
 
   for (const relativePath of getRelativeScriptImports(relativeFile)) {
-    relativeImports.push(relativePath);
-    visit(relativePath);
+    const resolvedPath = resolveScriptImport(relativeFile, relativePath);
+    relativeImports.push(resolvedPath);
+    visit(resolvedPath);
   }
 }
 

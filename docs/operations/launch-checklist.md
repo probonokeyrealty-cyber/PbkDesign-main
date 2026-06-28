@@ -26,15 +26,12 @@ npm.cmd run test:founder
 
 ## 2. GitHub CI
 
-```powershell
-gh run list --branch main --limit 5
-```
-
 Expected:
 
-- `Founder Verify` is `completed success`
-- `Tooling Verify` is `completed success`
-- `Hosted Founder Smoke` is `completed success`
+- the current PR has `Founder Verify` as `completed success`
+- the current PR has `Tooling Verify` as `completed success`
+- the current PR has `Hosted Founder Smoke` as `completed success`, including protected mobile proof
+- the current PR has `PBK Agent Evals` as `completed success` when the release touches Ava, approvals, CRM, memory, skills, provider actions, or migrations
 
 Do not launch over a fresh failing workflow unless the failure is understood,
 documented, and unrelated to the release.

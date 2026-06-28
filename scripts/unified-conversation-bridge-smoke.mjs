@@ -33,8 +33,11 @@ assert(
   ) &&
     packageJson.scripts?.['test:founder']?.includes(
       'test:provider-action-dispatch'
+    ) &&
+    packageJson.scripts?.['test:proof-policy-autonomy']?.includes(
+      'test:provider-action-dispatch'
     ),
-  'Provider action dispatch behavior tests must remain in the founder verification gate.'
+  'Provider action dispatch behavior tests must remain in the founder and proof-policy verification gates.'
 );
 
 assert(
@@ -852,6 +855,13 @@ const providerDispatchPersistIndex = providerApprovalSource.indexOf(
 const providerDispatchExecuteIndex = providerApprovalSource.indexOf(
   'executeToolHandlerWithQa('
 );
+const providerLeaseInsertIndex = providerLeaseSource.indexOf(
+  'INSERT INTO public.provider_action_dispatches'
+);
+const providerLeaseExecuteIndex = providerLeaseSource.indexOf(
+  'await execute',
+  providerLeaseInsertIndex
+);
 assert(
     /providerActionDispatch/.test(providerApprovalSource) &&
     /executeProviderActionWithSharedLease/.test(providerApprovalSource) &&
@@ -873,9 +883,8 @@ assert(
       providerLeaseSource
     ) &&
     /const attemptToken = createId\(\)/.test(providerLeaseSource) &&
-    providerLeaseSource.indexOf(
-      'INSERT INTO public.provider_action_dispatches'
-    ) < providerLeaseSource.lastIndexOf('const value = await execute(') &&
+    providerLeaseInsertIndex >= 0 &&
+    providerLeaseExecuteIndex > providerLeaseInsertIndex &&
     /status:\s*'dispatching'/.test(providerApprovalSource) &&
     /dispatchStartedAt/.test(providerApprovalSource) &&
     /leasePolicy:\s*'manual_reconciliation'/.test(providerApprovalSource) &&

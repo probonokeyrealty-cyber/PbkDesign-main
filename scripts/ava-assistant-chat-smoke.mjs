@@ -387,5 +387,14 @@ assert(
     ),
   'Both public and authenticated Ava chat handlers must emit assistant-plan operations.'
 );
+assert(
+  /import \{ runAvaMissionController \} from '\.\/ava-mission-controller\.mjs'/.test(bridge) &&
+    /handleInternalAvaAssistantChatRequest[\s\S]*runAvaMissionController\(\{[\s\S]*assistantIntent[\s\S]*assistantPlan[\s\S]*assistantSession[\s\S]*toolResult/.test(
+      bridge
+    ) &&
+    /mission:\s*missionController\.mission/.test(bridge) &&
+    /trace:\s*missionController\.trace/.test(bridge),
+  'Authenticated Ava chat must pass through the mission controller and return compact mission/trace metadata.'
+);
 
 console.log('[ava-assistant-chat-smoke] ok');

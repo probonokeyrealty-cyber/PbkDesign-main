@@ -49,7 +49,7 @@ Solid lines are required for production behavior:
   Bridge.
 - The bridge is the single orchestration surface for data, agents, tools,
   provider actions, and safety gates.
-- Supabase/Postgres is durable state.
+- Render Postgres is the operational authority. Supabase is storage/analytics mirror where explicitly wired. Neon is disposable eval/sandbox state only.
 - Redis is live transient state.
 - Telnyx, Deepgram, ElevenLabs, DeepSeek, DocuSign, and Slack are provider
   dependencies for live calls, contracts, approvals, and communications.

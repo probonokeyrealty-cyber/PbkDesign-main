@@ -65,7 +65,7 @@ Rules:
 - Use "ready" only if the existing issue is already small enough for one unattended PR.
 - Use "split" if the parent issue is too large and should become 1-${MAX_CHILD_ISSUES} child issues.
 - Each child issue must be one PR worth of work.
-- Allowed labels are: ${['agent/ready', 'agent/human-required', ...AGENT_CATEGORY_LABELS, 'agent/automerge'].join(', ')}.
+- Allowed labels are: ${['agent/ready', 'agent/human-required', ...AGENT_CATEGORY_LABELS, 'agent/automerge'].join(', ')}. Do not add agent/reviewed; that label is applied only after review.
 - Every child must include exactly one category label from ${AGENT_CATEGORY_LABELS.join(', ')} and must include agent/ready.
 - Keep deploy impact explicit and conservative.
 

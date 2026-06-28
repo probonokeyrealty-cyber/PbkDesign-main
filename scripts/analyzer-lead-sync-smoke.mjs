@@ -14,6 +14,7 @@ const runtimeBridge = read('src/app/utils/runtimeBridge.ts');
 const openclawServer = read('scripts/openclaw-local-server.mjs');
 const callModeTab = read('src/app/components/CallModeTab.tsx');
 const app = read('src/app/App.tsx');
+const leadFieldProvenance = read('scripts/lead-field-provenance.mjs');
 
 const sendDealToAgentMatch = runtimeBridge.match(
   /export async function sendDealToAgent[\s\S]*?\n}\n\nexport type ConversationListResponse/
@@ -30,6 +31,19 @@ const legacyAnalyzerHandoff = legacyAnalyzerHandoffMatch[0];
 assert(
   packageJson.includes('"test:analyzer-lead-sync"'),
   'package.json must expose test:analyzer-lead-sync.'
+);
+
+assert(
+  packageJson.includes('"test:lead-field-provenance"'),
+  'package.json must expose test:lead-field-provenance.'
+);
+
+assert(
+  /export function buildLeadFieldProvenance/.test(leadFieldProvenance) &&
+    /export function canProjectLeadField/.test(leadFieldProvenance) &&
+    /confidence < 0\.7/.test(leadFieldProvenance) &&
+    /call'[\s\S]*sms'[\s\S]*email'[\s\S]*analyzer'[\s\S]*manual'/.test(leadFieldProvenance),
+  'Analyzer lead sync must have reusable field provenance projection gates ready.'
 );
 
 assert(

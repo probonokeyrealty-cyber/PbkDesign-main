@@ -3,6 +3,17 @@
 The bridge is the source of truth. Ava may recommend tools, but the browser must
 not execute provider writes directly.
 
+## Ava Action Decision Contract
+
+| Decision            | Meaning                                                                               | Provider write allowed?               |
+| ------------------- | ------------------------------------------------------------------------------------- | ------------------------------------- |
+| `autonomous`        | Ava/bridge may execute because policy, safety, evidence, and approval state allow it. | Only when `providerWriteAllowed=true` |
+| `approval_required` | A provider write or business-risk action needs operator approval first.               | No                                    |
+| `ask`               | Ava needs one clear question before acting.                                           | No                                    |
+| `handoff`           | Human operator should take over.                                                      | No                                    |
+| `log_only`          | Ava may save an internal note or low-risk timeline event.                             | No external provider write            |
+| `blocked`           | Compliance/safety rule prevents the action.                                           | No                                    |
+
 ## `analyzeDeal`
 
 ```json
@@ -70,8 +81,12 @@ Requirements: offer policy, approval state, contact info, and provider proof.
 }
 ```
 
-Use handoff when legal, tax, threat, complaint, angry escalation, title dispute,
-or large offer exception appears.
+Use `blocked` first when legal advice, tax advice, threat, DNC, STOP,
+quiet-hour, consent, or safety-boundary language appears. The blocked result can
+then create a human follow-up, but Ava must not continue the provider action.
+Use `handoff` when the seller asks for a person, a dispute needs operator
+judgment, a complaint needs follow-up, title context is unclear, or a large offer
+exception appears.
 
 ## Manual seller message
 

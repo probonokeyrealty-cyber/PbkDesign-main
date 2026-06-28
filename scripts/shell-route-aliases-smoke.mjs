@@ -7,6 +7,7 @@ const layout = readFileSync(resolve(root, 'src/app/shell/ParadiseLayout.tsx'), '
 const topbar = readFileSync(resolve(root, 'src/app/shell/ShellTopbar.tsx'), 'utf8');
 const netlifyConfig = readFileSync(resolve(root, 'netlify.toml'), 'utf8');
 const bridge = readFileSync(resolve(root, 'scripts/openclaw-local-server.mjs'), 'utf8');
+const productionShell = readFileSync(resolve(root, 'index.html'), 'utf8');
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
@@ -106,6 +107,10 @@ assert(redirectsToShell('/agent-console'), 'Netlify must serve the shell for /ag
 assert(redirectsToShell('/ava-chat'), 'Netlify must serve the shell for /ava-chat.');
 assert(redirectsToShell('/skills'), 'Netlify must serve the shell for /skills.');
 assert(redirectsToShell('/skill-studio'), 'Netlify must serve the shell for /skill-studio.');
+assert(
+  /'\/skill-studio':\s*'skillrepo'/.test(productionShell),
+  'Production command-center shell must map /skill-studio to the Skill Studio page.'
+);
 
 [
   '/agent-fleet',

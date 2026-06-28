@@ -103,6 +103,26 @@ assert.equal(orchestrated.guard.result, 'passed');
 assert.equal(orchestrated.confidence.band, 'high');
 assert.match(orchestrated.workingMemory.brief, /Price gap discovery/);
 
+const actionConfidenceOrchestrated = orchestrateAvaTurn({
+  candidateAnswer: 'I updated the CRM record.',
+  proposedActionType: 'crm.update',
+  actionConfidence: 0.92,
+  evidenceCount: 2,
+  confidenceInput: {
+    pathConfidence: 0.2,
+    goalConfidence: 0.2,
+    closingConfidence: 0.2,
+    transcriptConfidence: 0.2,
+    evidenceCount: 0,
+  },
+});
+
+assert.equal(
+  actionConfidenceOrchestrated.actionDecision.decision,
+  'autonomous',
+  'explicit actionConfidence drives action decision confidence'
+);
+
 const internalGuard = guardAvaResponse({
   answer: 'I will use telnyx_call with JSON { "tool": "sendDocuSign" }.',
 });

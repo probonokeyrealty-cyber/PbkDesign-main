@@ -33,6 +33,7 @@ import {
   getApprovalResolutionKeys,
   getPendingApprovals,
 } from './inboxRuntimeLogic.js';
+import { toOperatorCopy } from '../utils/operatorCopy';
 
 function formatRelative(value?: string) {
   if (!value) return 'just now';
@@ -81,7 +82,7 @@ function formatRuntimeStatus(status: unknown) {
   if (normalized === 'needs-revision') return 'Needs Revision';
   if (normalized === 'complete') return 'Complete';
   if (normalized === 'failed') return 'Delivery failed';
-  return normalized ? normalized.replace(/_/g, ' ') : 'No data yet';
+  return normalized ? toOperatorCopy(normalized) : 'No data yet';
 }
 
 function mapTranscriptLine(line: unknown, index: number): TranscriptLine | null {
@@ -203,6 +204,7 @@ type CommandWidgetId =
   | 'callFloor'
   | 'adminActivity'
   | 'webSearch'
+  | 'systemHealth'
   | 'statusLegend'
   | 'tooling'
   | 'activity'
@@ -215,6 +217,7 @@ const COMMAND_WIDGETS: Array<{ id: CommandWidgetId; label: string }> = [
   { id: 'callFloor', label: 'Call floor' },
   { id: 'adminActivity', label: 'Workspace tasks' },
   { id: 'webSearch', label: 'Market research' },
+  { id: 'systemHealth', label: 'System health' },
   { id: 'statusLegend', label: 'Status legend' },
   { id: 'tooling', label: 'Support tools' },
   { id: 'activity', label: 'Activity feed' },
@@ -714,13 +717,18 @@ function normalizeIntelligenceStreamItem(
 }
 
 function normalizeSystemSourceLabel(item: SystemSourceLabel, index: number): SystemSourceLabel {
+  const normalizedStatus = String(item.status || 'fallback').toLowerCase();
   return {
     id: item.id || `source-${index}`,
     label: item.label || item.endpoint || 'Runtime source',
     endpoint: item.endpoint || 'unknown',
     category: item.category || 'runtime',
     status: item.status || 'fallback',
-    readiness: item.readiness || (item.status === 'offline' ? 'unavailable' : 'ready'),
+    readiness:
+      item.readiness ||
+      (normalizedStatus === 'offline' || normalizedStatus === 'needs-wiring'
+        ? 'unavailable'
+        : 'ready'),
     source: item.source || 'bridge',
     dataState: item.dataState || 'unknown',
     stalenessMs:
@@ -819,14 +827,55 @@ function DataSourceCaption({
   );
 }
 
+const OPERATOR_COPY_TOKENS = [
+  'bridge_healthy',
+  'bridge-healthy',
+  'render_postgres_ready',
+  'render-postgres-ready',
+  'retry_gated',
+  'retry-gated',
+  'primary_path_gated',
+  'primary-path-gated',
+  'provider_policy',
+  'provider-policy',
+  'blocking',
+  'approval_required',
+  'approval-required',
+  'dispatching',
+  'reconciliation_required',
+  'reconciliation-required',
+  'delivered',
+  'failed',
+];
+
+function replaceOperatorCopyTokens(value: string) {
+  return OPERATOR_COPY_TOKENS.reduce(
+    (text, token) =>
+      text.replace(new RegExp(`\\b${token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'gi'), () =>
+        toOperatorCopy(token)
+      ),
+    value
+  );
+}
+
 function friendlyRuntimeLabel(value: unknown, fallback = 'Ready') {
   const raw = String(value || '').trim();
   if (!raw) return fallback;
   const known: Record<string, string> = {
     primary_path_attempts_allowed: 'Ready for first try',
-    primary_path_gated: 'Needs review before first try',
+    primary_path_gated: toOperatorCopy('primary_path_gated'),
     primary_path_report_unavailable: 'Readiness check unavailable',
     blocked_until_ready: 'Needs setup first',
+    bridge_healthy: toOperatorCopy('bridge_healthy'),
+    render_postgres_ready: toOperatorCopy('render_postgres_ready'),
+    retry_gated: toOperatorCopy('retry_gated'),
+    provider_policy: toOperatorCopy('provider_policy'),
+    blocking: toOperatorCopy('blocking'),
+    approval_required: toOperatorCopy('approval_required'),
+    dispatching: toOperatorCopy('dispatching'),
+    reconciliation_required: toOperatorCopy('reconciliation_required'),
+    delivered: toOperatorCopy('delivered'),
+    failed: toOperatorCopy('failed'),
     retry_then_label_fallback: 'Retry, then mark for review',
     no_fallback_hide_blocker: 'Needs setup before use',
     admin: 'Workspace setup',
@@ -846,11 +895,7 @@ function friendlyRuntimeLabel(value: unknown, fallback = 'Ready') {
   };
   const normalized = raw.toLowerCase();
   if (known[normalized]) return known[normalized];
-  return raw
-    .replace(/([a-z])([A-Z])/g, '$1 $2')
-    .replace(/^pbk[_-]/i, '')
-    .replace(/[_-]+/g, ' ')
-    .replace(/\b\w/g, (letter) => letter.toUpperCase());
+  return toOperatorCopy(raw);
 }
 
 function friendlyRuntimeText(value: unknown, fallback = '') {
@@ -872,7 +917,14 @@ function friendlyRuntimeText(value: unknown, fallback = '') {
   ) {
     return friendlyRuntimeLabel(raw, fallback);
   }
-  return raw
+  return replaceOperatorCopyTokens(raw)
+    .replace(/\bprimary path gated\b/gi, toOperatorCopy('primary_path_gated'))
+    .replace(/\bretry gated\b/gi, toOperatorCopy('retry_gated'))
+    .replace(/\bprovider policy\b/gi, toOperatorCopy('provider_policy'))
+    .replace(/\bapproval required\b/gi, toOperatorCopy('approval_required'))
+    .replace(/\breconciliation required\b/gi, toOperatorCopy('reconciliation_required'))
+    .replace(/\brender postgres ready\b/gi, toOperatorCopy('render_postgres_ready'))
+    .replace(/\bbridge healthy\b/gi, toOperatorCopy('bridge_healthy'))
     .replace(/\bTavily live search\b/gi, 'live web research')
     .replace(/\bTavily live\b/gi, 'live web research')
     .replace(/\bTavily\b/gi, 'web research')
@@ -880,12 +932,25 @@ function friendlyRuntimeText(value: unknown, fallback = '') {
     .replace(/\bFallback active\b/gi, 'Backup path active');
 }
 
-function SourceConfidenceRail({ items, source }: { items: SystemSourceLabel[]; source: string }) {
+type OperatorSystemSourceLabel = Omit<SystemSourceLabel, 'status' | 'readiness' | 'dataState'> & {
+  status?: string;
+  readiness?: string;
+  dataState?: string;
+};
+
+function SourceConfidenceRail({
+  items,
+  source,
+}: {
+  items: OperatorSystemSourceLabel[];
+  source: string;
+}) {
   const visibleItems = items.slice(0, OPERATOR_LIST_PAGE_SIZE);
   const statusTone = (status?: string) => {
-    if (status === 'live') return 'border-emerald-400/25 bg-emerald-500/10 text-emerald-100';
-    if (status === 'fallback') return 'border-sky-400/25 bg-sky-500/10 text-sky-100';
-    if (status === 'stale') return 'border-amber-400/30 bg-amber-500/10 text-amber-100';
+    const normalized = String(status || '').toLowerCase();
+    if (normalized === 'live') return 'border-emerald-400/25 bg-emerald-500/10 text-emerald-100';
+    if (normalized === 'fallback') return 'border-sky-400/25 bg-sky-500/10 text-sky-100';
+    if (normalized === 'stale') return 'border-amber-400/30 bg-amber-500/10 text-amber-100';
     return 'border-rose-400/30 bg-rose-500/10 text-rose-100';
   };
   const relativeLabel = (value?: string, prefix = 'Checked') => {
@@ -898,7 +963,7 @@ function SourceConfidenceRail({ items, source }: { items: SystemSourceLabel[]; s
     if (hours < 24) return `${prefix} ${hours}h ago`;
     return `${prefix} ${Math.floor(hours / 24)}d ago`;
   };
-  const activityLabel = (item: SystemSourceLabel) => {
+  const activityLabel = (item: OperatorSystemSourceLabel) => {
     if (item.dataState === 'empty') return 'No records yet';
     if (item.stalenessMs == null) return 'Activity time unavailable';
     const minutes = Math.floor(item.stalenessMs / 60_000);
@@ -924,9 +989,18 @@ function SourceConfidenceRail({ items, source }: { items: SystemSourceLabel[]; s
       </div>
       <div className="grid grid-cols-2 gap-2 md:grid-cols-3 xl:grid-cols-6">
         {visibleItems.map((item) => {
-          const detail = item.fallbackReason || item.degradedReason || activityLabel(item);
+          const detail = friendlyRuntimeText(
+            item.fallbackReason || item.degradedReason || activityLabel(item)
+          );
           const tone =
-            item.readiness === 'degraded' && item.status === 'live' ? 'stale' : item.status;
+            item.readiness === 'needs_attention' && String(item.status).toLowerCase() === 'live'
+              ? 'stale'
+              : item.status;
+          const statusLabel = friendlyRuntimeLabel(item.status || 'checking', 'Checking');
+          const readinessLabel =
+            item.readiness === 'needs_attention'
+              ? ` / ${friendlyRuntimeLabel('blocking', 'Needs attention')}`
+              : '';
           return (
             <div
               key={item.id}
@@ -937,10 +1011,12 @@ function SourceConfidenceRail({ items, source }: { items: SystemSourceLabel[]; s
             >
               <div className="flex items-center justify-between gap-2 text-[10px] uppercase opacity-75">
                 <span className="truncate font-semibold">
-                  {item.status || 'unknown'}
-                  {item.readiness === 'degraded' ? ' · degraded' : ''}
+                  {statusLabel}
+                  {readinessLabel}
                 </span>
-                <span className="truncate">{item.dataState || 'unknown'}</span>
+                <span className="truncate">
+                  {friendlyRuntimeLabel(item.dataState || 'unknown', 'Checking')}
+                </span>
               </div>
               <div className="mt-1 truncate text-sm font-semibold text-current">{item.label}</div>
               <div className="mt-1 truncate text-[11px] opacity-75">
@@ -954,6 +1030,356 @@ function SourceConfidenceRail({ items, source }: { items: SystemSourceLabel[]; s
           );
         })}
       </div>
+    </PbkPanel>
+  );
+}
+
+type OperatorHealthState = 'ready' | 'needs_attention' | 'checking';
+
+type OperatorHealthItem = {
+  id: string;
+  label: string;
+  state: OperatorHealthState;
+  copy: string;
+};
+
+function pickHealthValue(source: RuntimeRecord, keys: string[]) {
+  for (const key of keys) {
+    if (Object.hasOwn(source, key)) return source[key];
+  }
+  return undefined;
+}
+
+function pickSourceLabelHealthValue(
+  items: OperatorSystemSourceLabel[],
+  matchers: string[],
+  readyNote: string,
+  checkingNote: string
+) {
+  const matches = items.filter((item) => {
+    const text =
+      `${item.id} ${item.label} ${item.endpoint} ${item.source} ${item.note}`.toLowerCase();
+    return matchers.some((matcher) => text.includes(matcher));
+  });
+  if (!matches.length) return { state: 'checking', note: checkingNote };
+
+  if (
+    matches.some(
+      (item) =>
+        /offline|unavailable|needs attention|needs_attention|error|failed|missing|degraded/i.test(
+          `${item.status} ${item.readiness} ${item.fallbackReason} ${item.degradedReason} ${item.note}`
+        ) ||
+        /needs[-_\s]?wiring/i.test(
+          `${item.status} ${item.readiness} ${item.fallbackReason} ${item.degradedReason} ${item.note}`
+        )
+    )
+  ) {
+    return { state: 'needs_attention', note: `${readyNote} needs attention.` };
+  }
+
+  if (
+    matches.some((item) =>
+      /live|ready|connected/i.test(`${item.status} ${item.readiness} ${item.dataState}`)
+    )
+  ) {
+    return { state: 'ready', note: readyNote };
+  }
+
+  return { state: 'checking', note: checkingNote };
+}
+
+function getOperatorHealthState(value: unknown): OperatorHealthState {
+  if (value === true) return 'ready';
+  if (value === false) return 'needs_attention';
+  if (!value || typeof value !== 'object') return 'checking';
+  const record = value as RuntimeRecord;
+  const raw = String(
+    record.operatorState ||
+      record.healthState ||
+      record.state ||
+      record.status ||
+      record.result ||
+      ''
+  ).toLowerCase();
+  if (
+    record.warning ||
+    record.error ||
+    record.lastError ||
+    record.blocking ||
+    raw.includes('warning') ||
+    raw.includes('fail') ||
+    raw.includes('error') ||
+    raw.includes('missing') ||
+    raw.includes('unavailable') ||
+    raw.includes('needs_attention')
+  ) {
+    return 'needs_attention';
+  }
+  if (
+    record.ready === true ||
+    record.connected === true ||
+    record.healthy === true ||
+    record.liveReady === true ||
+    record.trained === true ||
+    raw.includes('ready') ||
+    raw.includes('connected') ||
+    raw.includes('healthy') ||
+    raw.includes('initialized') ||
+    raw.includes('render_postgres_ready')
+  ) {
+    return 'ready';
+  }
+  if (
+    record.ready === false ||
+    record.connected === false ||
+    record.healthy === false ||
+    record.trained === false ||
+    raw.includes('blocked') ||
+    raw.includes('gated')
+  ) {
+    return 'needs_attention';
+  }
+  return 'checking';
+}
+
+function getOperatorHealthStateLabel(state: OperatorHealthState) {
+  if (state === 'ready') return 'Ready';
+  if (state === 'needs_attention') return toOperatorCopy('blocking');
+  return 'Checking';
+}
+
+function buildOperatorHealthItem(
+  id: string,
+  label: string,
+  value: unknown,
+  copy: Record<OperatorHealthState, string>
+): OperatorHealthItem {
+  const state = getOperatorHealthState(value);
+  const record = value && typeof value === 'object' ? (value as RuntimeRecord) : {};
+  const detail = friendlyRuntimeText(
+    record.copy || record.operatorCopy || record.message || record.note
+  );
+  return {
+    id,
+    label,
+    state,
+    copy: `${getOperatorHealthStateLabel(state)}: ${detail || copy[state]}`,
+  };
+}
+
+function buildCommandCenterHealthInput({
+  snapshot,
+  tooling,
+  runtimeProviders,
+  toolingCoreReady,
+  toolingCoreTotal,
+  sourceConfidenceItems,
+  loading,
+  error,
+}: {
+  snapshot?: RuntimeSnapshot | null;
+  tooling?: RuntimeRecord | null;
+  runtimeProviders: Record<string, RuntimeRecord>;
+  toolingCoreReady: number;
+  toolingCoreTotal: number;
+  sourceConfidenceItems: OperatorSystemSourceLabel[];
+  loading: boolean;
+  error: string;
+}) {
+  const status = (snapshot?.status || {}) as RuntimeRecord;
+  const providerValues = runtimeProviders as RuntimeRecord;
+  const toolingValues = (tooling || {}) as RuntimeRecord;
+  const docusignProvider = pickHealthValue(providerValues, ['docusign', 'docuSign', 'docs']);
+  const documentDeliveries = Array.isArray(snapshot?.documentDeliveries)
+    ? snapshot.documentDeliveries
+    : [];
+  const docusignWarning =
+    docusignProvider ||
+    documentDeliveries.find((delivery) =>
+      /warning|fail|error|missing/i.test(
+        String(delivery.status || delivery.result || delivery.error || '')
+      )
+    );
+
+  return {
+    render:
+      pickHealthValue(providerValues, ['render', 'renderBridge']) ??
+      pickHealthValue(status, ['render', 'renderBridge']) ??
+      pickHealthValue(toolingValues, ['render', 'renderBridge']) ??
+      (error
+        ? { error }
+        : pickSourceLabelHealthValue(
+            sourceConfidenceItems,
+            ['render'],
+            'Hosted bridge is reachable.',
+            loading ? 'Checking the hosted bridge.' : 'Hosted bridge detail is still being checked.'
+          )),
+    openclaw:
+      pickHealthValue(providerValues, ['openclaw', 'openClaw', 'bridge']) ??
+      pickHealthValue(status, ['openclaw', 'openClaw', 'bridge']) ??
+      pickHealthValue(toolingValues, ['openclaw', 'openClaw', 'bridge']) ??
+      (error
+        ? { error }
+        : { state: 'checking', note: 'Live command bridge detail is still being checked.' }),
+    redis: pickHealthValue(providerValues, ['redis']) ??
+      pickHealthValue(status, ['redis']) ?? {
+        state: 'checking',
+        note: 'Live queue detail is not reported yet.',
+      },
+    postgres:
+      pickHealthValue(providerValues, ['postgres', 'database', 'renderPostgres']) ??
+      pickSourceLabelHealthValue(
+        sourceConfidenceItems,
+        ['postgres', 'database'],
+        toOperatorCopy('render_postgres_ready'),
+        'Saved data detail is still being checked.'
+      ),
+    netlify:
+      pickHealthValue(providerValues, ['netlify', 'frontend']) ??
+      pickHealthValue(status, ['netlify', 'frontend']) ??
+      pickHealthValue(toolingValues, ['netlify', 'frontend']) ??
+      pickSourceLabelHealthValue(
+        sourceConfidenceItems,
+        ['netlify', 'frontend'],
+        'Agent dashboard is available.',
+        loading ? 'Checking the agent dashboard.' : 'Agent dashboard detail is still being checked.'
+      ),
+    slack: pickHealthValue(providerValues, ['slack']) ??
+      pickHealthValue(toolingValues, ['slack']) ?? {
+        state: 'checking',
+        note: 'Team alert connection is not reported yet.',
+      },
+    docusign: docusignWarning || {
+      state: 'checking',
+      note: 'Contract sending detail is not reported yet.',
+    },
+    sms: pickHealthValue(providerValues, ['sms', 'telnyx']) ?? {
+      state: 'checking',
+      note: 'Text messaging detail is not reported yet.',
+    },
+    email: pickHealthValue(providerValues, ['email', 'instantly']) ?? {
+      state: 'checking',
+      note: 'Email sending detail is not reported yet.',
+    },
+    avaLearning:
+      pickHealthValue(toolingValues, ['pipelineMemory']) ??
+      (Array.isArray(snapshot?.callQaScores) && snapshot.callQaScores.length
+        ? { trained: true, note: 'Recent call reviews are saved.' }
+        : toolingCoreReady && toolingCoreTotal && toolingCoreReady >= toolingCoreTotal
+          ? { state: 'checking', note: 'Learning detail is not reported separately yet.' }
+          : { trained: false, note: 'Ava learning needs setup detail.' }),
+  };
+}
+
+function buildCommandCenterHealthSummary(input: RuntimeRecord): OperatorHealthItem[] {
+  return [
+    buildOperatorHealthItem('render', 'Render', input.render, {
+      ready: 'Hosted bridge is reachable.',
+      needs_attention: 'Hosted bridge needs a connection check.',
+      checking: 'Checking the hosted bridge.',
+    }),
+    buildOperatorHealthItem('openclaw', 'OpenClaw', input.openclaw, {
+      ready: 'Local command bridge is connected.',
+      needs_attention: 'Local command bridge needs setup.',
+      checking: 'Checking the local command bridge.',
+    }),
+    buildOperatorHealthItem('redis', 'Redis', input.redis, {
+      ready: 'Fast queue and cache are ready.',
+      needs_attention: 'Queue or cache needs attention.',
+      checking: 'Checking queue and cache.',
+    }),
+    buildOperatorHealthItem('postgres', 'Postgres', input.postgres, {
+      ready: 'Lead and workflow data are saved.',
+      needs_attention: 'Saved workspace data needs attention.',
+      checking: 'Checking saved workspace data.',
+    }),
+    buildOperatorHealthItem('netlify', 'Netlify', input.netlify, {
+      ready: 'Agent dashboard is available.',
+      needs_attention: 'Agent dashboard deploy needs attention.',
+      checking: 'Checking the agent dashboard.',
+    }),
+    buildOperatorHealthItem('slack', 'Slack', input.slack, {
+      ready: 'Team alerts can be sent.',
+      needs_attention: 'Team alerts need setup.',
+      checking: 'Checking team alerts.',
+    }),
+    buildOperatorHealthItem('docusign', 'DocuSign', input.docusign, {
+      ready: 'Contracts can be prepared for signature.',
+      needs_attention: 'Contracts need a DocuSign check before sending.',
+      checking: 'Checking contract sending.',
+    }),
+    buildOperatorHealthItem('sms', 'SMS', input.sms, {
+      ready: 'Text messages can be sent.',
+      needs_attention: 'Text messaging needs setup.',
+      checking: 'Checking text messaging.',
+    }),
+    buildOperatorHealthItem('email', 'Email', input.email, {
+      ready: 'Emails can be sent.',
+      needs_attention: 'Email sending needs setup.',
+      checking: 'Checking email sending.',
+    }),
+    buildOperatorHealthItem('avaLearning', 'Ava learning', input.avaLearning, {
+      ready: 'Ava is saving lessons from calls.',
+      needs_attention: 'Ava learning needs attention.',
+      checking: 'Checking Ava learning.',
+    }),
+  ];
+}
+
+function SystemHealthPanel({ items }: { items: OperatorHealthItem[] }) {
+  const counts = items.reduce(
+    (total, item) => ({ ...total, [item.state]: total[item.state] + 1 }),
+    { ready: 0, needs_attention: 0, checking: 0 } as Record<OperatorHealthState, number>
+  );
+  const stateClass = (state: OperatorHealthState) => {
+    if (state === 'ready') return 'bg-emerald-500/10 text-emerald-300';
+    if (state === 'needs_attention') return 'bg-amber-500/10 text-amber-300';
+    return 'bg-slate-800 text-slate-400';
+  };
+
+  return (
+    <PbkPanel className="pbk-priority-low p-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <div className="pbk-eyebrow">System health</div>
+          <h2 className="text-sm font-semibold text-slate-100">What Ava can use right now</h2>
+          <p className="mt-1 text-xs text-slate-500">
+            Plain-English checks for calls, contracts, messages, saved data, and team alerts.
+          </p>
+        </div>
+        <div className="flex flex-wrap gap-2 text-[10px] uppercase tracking-[0.14em]">
+          <span className="rounded-full bg-emerald-500/10 px-2 py-1 text-emerald-300">
+            {counts.ready} ready
+          </span>
+          <span className="rounded-full bg-amber-500/10 px-2 py-1 text-amber-300">
+            {counts.needs_attention} need attention
+          </span>
+          <span className="rounded-full bg-slate-800 px-2 py-1 text-slate-400">
+            {counts.checking} checking
+          </span>
+        </div>
+      </div>
+      <div className="mt-3 divide-y divide-slate-800">
+        {items.map((item) => (
+          <div key={item.id} className="grid gap-2 py-2.5 sm:grid-cols-[140px_120px_1fr]">
+            <div className="text-xs font-semibold text-slate-100">{item.label}</div>
+            <div>
+              <span
+                className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] ${stateClass(
+                  item.state
+                )}`}
+              >
+                {getOperatorHealthStateLabel(item.state)}
+              </span>
+            </div>
+            <div className="text-xs text-slate-400">{item.copy}</div>
+          </div>
+        ))}
+      </div>
+      <DataSourceCaption
+        endpoint="snapshot.status.providers + GET /api/tooling/status + GET /api/system/source-labels"
+        note="Health rows use checking when live provider detail is missing."
+      />
     </PbkPanel>
   );
 }
@@ -1068,8 +1494,10 @@ function ProductionGapsRail({
                     {control.timeoutMs || 5000}ms
                   </small>
                   <em>
-                    {control.reason ||
-                      friendlyRuntimeLabel(control.primaryAttempt, 'Workflow check ready.')}
+                    {friendlyRuntimeText(
+                      control.reason ||
+                        friendlyRuntimeLabel(control.primaryAttempt, 'Workflow check ready.')
+                    )}
                   </em>
                 </div>
               </div>
@@ -1101,7 +1529,7 @@ function ProductionGapsRail({
                 title={[gap.endpoint, gap.detail, gap.operatorAction].filter(Boolean).join(' - ')}
               >
                 <span className="pbk-production-row-status">
-                  {gap.optional ? 'optional' : gap.severity || 'required'}
+                  {friendlyRuntimeLabel(gap.optional ? 'optional' : gap.severity || 'required')}
                 </span>
                 <div className="min-w-0">
                   <strong>{gap.label}</strong>
@@ -1109,7 +1537,9 @@ function ProductionGapsRail({
                     {friendlyRuntimeLabel(gap.category || 'workspace')} /{' '}
                     {friendlyRuntimeLabel(gap.status || 'not live')}
                   </small>
-                  <em>{gap.operatorAction || gap.detail || 'No detail reported.'}</em>
+                  <em>
+                    {friendlyRuntimeText(gap.operatorAction || gap.detail || 'No detail reported.')}
+                  </em>
                 </div>
               </div>
             ))}
@@ -1169,7 +1599,11 @@ function FounderBattlefield({
         ? 'updating your workspace'
         : 'no urgent work right now';
   const bridgeTone = loading ? 'amber' : error ? 'crimson' : 'lime';
-  const bridgeLabel = loading ? 'updating' : error ? 'needs attention' : 'connected';
+  const bridgeLabel = loading
+    ? toOperatorCopy('dispatching')
+    : error
+      ? toOperatorCopy('blocking')
+      : toOperatorCopy('bridge_healthy');
 
   return (
     <section className="space-y-2" aria-labelledby="battlefield-title">
@@ -1251,7 +1685,7 @@ function FounderBattlefield({
           </div>
           <div className="pbk-bf-mini-stat">
             <div className="l">Mode</div>
-            <div className="v amber">{mode}</div>
+            <div className="v amber">{friendlyRuntimeLabel(mode, 'Auto')}</div>
           </div>
         </div>
       </div>
@@ -1393,16 +1827,19 @@ export function CommandCenter() {
       : fallbackSourceConfidenceItems
   ).map((item) => ({
     ...item,
+    status: friendlyRuntimeLabel(item.status || 'checking', 'Checking'),
+    readiness: item.readiness === 'degraded' ? 'needs_attention' : item.readiness,
+    dataState: friendlyRuntimeLabel(item.dataState || 'checking', 'Checking'),
     source: friendlyRuntimeText(item.source || 'bridge'),
     fallbackReason: friendlyRuntimeText(item.fallbackReason),
     degradedReason: friendlyRuntimeText(item.degradedReason),
     note: friendlyRuntimeText(item.note),
   }));
   const isWidgetVisible = (id: CommandWidgetId) => widgetPrefs[id] !== false;
-  const runtimeProviders = (snapshot?.status?.providers || {}) as Record<
-    string,
-    Record<string, unknown>
-  >;
+  const runtimeProviders = useMemo(
+    () => (snapshot?.status?.providers || {}) as Record<string, Record<string, unknown>>,
+    [snapshot?.status?.providers]
+  );
   const webSearchStatus = runtimeProviders.webSearch || {};
   const webSearchNeuralOutput = (webSearchStatus.neuralOutput || {}) as Record<string, unknown>;
   const webSearchLiveReady = Boolean(webSearchStatus.liveReady);
@@ -1769,6 +2206,31 @@ export function CommandCenter() {
     pendingApprovalCount || pendingAdminCount
       ? 'Approval'
       : String(snapshot?.settings?.mode || snapshot?.status?.mode || 'Auto').replace(/_/g, ' ');
+  const systemHealthItems = useMemo(
+    () =>
+      buildCommandCenterHealthSummary(
+        buildCommandCenterHealthInput({
+          snapshot,
+          tooling: tooling as RuntimeRecord | null,
+          runtimeProviders,
+          toolingCoreReady,
+          toolingCoreTotal,
+          sourceConfidenceItems: displayedSourceConfidenceItems,
+          loading,
+          error,
+        })
+      ),
+    [
+      displayedSourceConfidenceItems,
+      error,
+      loading,
+      runtimeProviders,
+      snapshot,
+      tooling,
+      toolingCoreReady,
+      toolingCoreTotal,
+    ]
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -2023,6 +2485,8 @@ export function CommandCenter() {
           primaryPath={primaryPathReliability}
         />
 
+        {isWidgetVisible('systemHealth') && <SystemHealthPanel items={systemHealthItems} />}
+
         {actionStatus && (
           <div
             role="status"
@@ -2044,7 +2508,7 @@ export function CommandCenter() {
             ) : (
               <CheckCircle2 size={15} className="mt-0.5 text-emerald-300" />
             )}
-            <span>{actionStatus.text}</span>
+            <span>{friendlyRuntimeText(actionStatus.text)}</span>
           </div>
         )}
 
@@ -2332,7 +2796,7 @@ export function CommandCenter() {
                   </div>
                   {webSearchProbeFailed && webSearchProbeError && (
                     <div className="basis-full text-[11px] text-amber-300">
-                      Last probe failed: {webSearchProbeError}
+                      Last check needs attention: {friendlyRuntimeText(webSearchProbeError)}
                     </div>
                   )}
                 </div>
@@ -2385,7 +2849,7 @@ export function CommandCenter() {
                           </span>
                         </div>
                         <div className="mt-2 break-words text-xs text-slate-400">
-                          {String(item.meta?.note || 'Checking connection status.')}
+                          {friendlyRuntimeText(item.meta?.note || 'Checking connection status.')}
                         </div>
                       </div>
                     );
@@ -2431,7 +2895,7 @@ export function CommandCenter() {
                         {String(item.text || 'Runtime event')}
                       </div>
                       <div className="mt-1 text-[11px] text-slate-500 uppercase tracking-[0.12em]">
-                        {String(item.category || 'INFO')}
+                        {friendlyRuntimeLabel(item.category || 'INFO')}
                       </div>
                     </div>
                   ))}

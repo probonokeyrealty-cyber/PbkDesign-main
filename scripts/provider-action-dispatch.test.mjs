@@ -64,6 +64,13 @@ describe('provider action dispatch lease', () => {
         (item) => item.value.providerActionResult?.result === 'sent'
       )
     ).toBe(true);
+    expect(
+      results.every(
+        (item) =>
+          item.value.providerProof?.provider === 'telnyx' &&
+          item.value.providerProof?.proofStatus === 'sent_waiting_for_receipt'
+      )
+    ).toBe(true);
   });
 
   test('a provider exception becomes reconciliation required and is not replayed', async () => {
@@ -91,6 +98,10 @@ describe('provider action dispatch lease', () => {
     expect(first.dispatch.status).toBe('reconciliation_required');
     expect(first.value.providerActionResult.result).toBe(
       'provider_delivery_unknown'
+    );
+    expect(first.value.providerProof?.provider).toBe('telnyx');
+    expect(first.value.providerProof?.proofStatus).toBe(
+      'reconciliation_required'
     );
     expect(second.executed).toBe(false);
     expect(second.dispatch.status).toBe('reconciliation_required');

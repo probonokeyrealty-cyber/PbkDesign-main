@@ -17,7 +17,7 @@ permissions:
 
 jobs:
   enable-automerge:
-    if: contains(github.event.pull_request.labels.*.name, 'agent/automerge') && github.event.pull_request.base.ref == 'main' && github.event.pull_request.head.repo.full_name == github.repository
+    if: contains(github.event.pull_request.labels.*.name, 'agent/automerge') && contains(github.event.pull_request.labels.*.name, 'agent/reviewed') && github.event.pull_request.base.ref == 'main' && github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     timeout-minutes: 10
 

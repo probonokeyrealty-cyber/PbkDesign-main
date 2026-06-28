@@ -34,7 +34,12 @@ export const AGENT_LABEL_SPECS = [
   {
     name: 'agent/automerge',
     color: '0B5FFF',
-    description: 'Safe to auto-merge after passing checks.',
+    description: 'Safe to auto-merge after passing checks and review.',
+  },
+  {
+    name: 'agent/reviewed',
+    color: '5319E7',
+    description: 'Human or reviewer approved this focused implementation pass.',
   },
 ];
 

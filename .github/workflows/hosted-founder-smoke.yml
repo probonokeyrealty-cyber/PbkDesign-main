@@ -16,6 +16,8 @@ jobs:
     env:
       PBK_BRIDGE_API_KEY: ${{ secrets.PBK_BRIDGE_API_KEY }}
       PBK_HOSTED_BRIDGE_URL: ${{ secrets.PBK_HOSTED_BRIDGE_URL }}
+      PBK_MOBILE_PROOF_BASE_URL: https://pbkcommandcenter.netlify.app
+      PBK_MOBILE_PROOF_TEAM_PASSCODE: ${{ secrets.PBK_MOBILE_PROOF_TEAM_PASSCODE || secrets.PBK_TEAM_PASSCODE }}
 
     steps:
       - name: Check hosted smoke secrets
@@ -23,6 +25,10 @@ jobs:
         run: |
           if [ -z "$PBK_BRIDGE_API_KEY" ]; then
             echo "PBK_BRIDGE_API_KEY is required; hosted smoke cannot be skipped on main."
+            exit 1
+          fi
+          if [ -z "$PBK_MOBILE_PROOF_TEAM_PASSCODE" ]; then
+            echo "PBK_MOBILE_PROOF_TEAM_PASSCODE is required; protected production page proof cannot run."
             exit 1
           fi
 
@@ -33,9 +39,16 @@ jobs:
         uses: actions/setup-node@v6
         with:
           node-version: 22
+          cache: npm
 
       - name: Confirm hosted smoke readiness strategy
         run: echo "Readiness is handled by scripts/openclaw-hosted-smoke.mjs."
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install browser for protected mobile proof
+        run: npx playwright install --with-deps chromium
 
       - name: Run hosted founder smoke
         shell: bash
@@ -64,3 +77,6 @@ jobs:
             echo "Hosted founder smoke failed with exit ${status}; retrying in ${HOSTED_SMOKE_RETRY_SECONDS}s."
             sleep "$HOSTED_SMOKE_RETRY_SECONDS"
           done
+
+      - name: Run protected production mobile proof
+        run: npm run test:mobile-browser-proof

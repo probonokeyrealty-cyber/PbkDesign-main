@@ -2,12 +2,19 @@
 
 Use this checklist before calling the founder build production-ready.
 
+## Work Method
+
+- Use a subagent-driven pass for broad changes: one focused implementation task at a time, then review before moving to the next task
+- Keep unrelated dirty files out of the release scope
+- Confirm the current PR has green required GitHub gates before production deploy: Founder Verify, Tooling Verify, Hosted Founder Smoke with protected mobile proof, and PBK Agent Evals when the change touches Ava, approvals, CRM, memory, skills, provider actions, or migrations
+
 ## Build
 
 - Run `npm run build`
 - Run `npm run test:mcp`
 - Run `npm run test:bridge`
 - Run `npm run test:neon-evaluation-harness`
+- Run `npm run test:mobile-browser-proof`
 - Run `npm run test:hosted` when hosted bridge secrets are available
 
 ## Bridge
@@ -61,11 +68,30 @@ Use this checklist before calling the founder build production-ready.
   - `PBK_N8N_LEAD_WEBHOOK`
 - Hosted bridge is not relying on file-backed state for important data
 - Netlify still renders all current tabs cleanly after a hard refresh
+- Hosted Founder Smoke has `PBK_MOBILE_PROOF_TEAM_PASSCODE` and proves protected production mobile pages
 
 ## Disposable Eval Lane
 
 - `npm run neon:evaluation:dry-run` prints a sanitized branch payload and eval environment
+- PBK Agent Evals workflow passed with a disposable Neon branch. This is blocking for release work that touches Ava, approvals, CRM, memory, skills, provider actions, or migrations
 - Live Neon evals use `NEON_API_KEY` and `NEON_PROJECT_ID`, not `PBK_DATABASE_URL`
 - Default eval commands receive `PBK_TEST_DATABASE_URL` and `PBK_EVAL_DATABASE_URL`
 - `PBK_DATABASE_URL`, `DATABASE_URL`, `SUPABASE_DB_URL`, and `PBK_MIGRATION_DATABASE_URL` stay scrubbed unless `--inject-runtime-db` is used intentionally
 - Temporary Neon branches have `expires_at` and are deleted after the child command exits
+- No `pbk-eval-*` branches remain after CI completion
+
+## Proof, Policy, and Autonomy Release Gate
+
+- Provider proof ledger smoke passed.
+- Live provider proof harness dry-run passed.
+- Approval unison source and live proof passed.
+- Ava action decision policy passed.
+- CRM field provenance smoke passed.
+- Call learning backfill dry-run passed.
+- Operator copy smoke passed.
+- Mobile browser proof passed against a fresh preview build.
+- Neon disposable eval dry-run passed locally, and live CI eval passed when secrets are available.
+- System Health operator panel smoke passed.
+- Compliance audit trail smoke passed.
+- Production hardening smoke passed.
+- `npm run test:proof-policy-autonomy` passed.

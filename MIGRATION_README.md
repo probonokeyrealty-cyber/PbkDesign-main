@@ -11,6 +11,7 @@
 This folder contains **5 comprehensive documents** for migrating PBK Command Center to the new Figma-style layout while preserving the proven calculation engine.
 
 ### 1️⃣ **PBK_FIELD_MAPPING.md** (Detailed Reference)
+
 - **Purpose:** Maps every HTML field ID to React component
 - **Format:** Table with "Figma Element → PBK ID → React Location → Decision"
 - **Sections:** 11 major UI sections documented
@@ -21,12 +22,14 @@ This folder contains **5 comprehensive documents** for migrating PBK Command Cen
 ---
 
 ### 2️⃣ **PBK_MIGRATION_CHECKLIST.md** (Implementation Guide)
+
 - **Purpose:** Step-by-step phased implementation plan
 - **Format:** 5 phases with tasks, gates, and testing
 - **Timeline:** ~15 hours total (2 days of work)
 - **Use When:** You're ready to start coding changes
 
 **Phases:**
+
 - ✅ **Pre-Migration:** Formula audit complete
 - 🔴 **Phase 1:** Add missing Live Call Input fields (2-3h)
 - ⚠️ **Phase 2:** Add owner/agent script variants (2-3h)
@@ -37,12 +40,14 @@ This folder contains **5 comprehensive documents** for migrating PBK Command Cen
 ---
 
 ### 3️⃣ **PBK_COMPONENT_ARCHITECTURE.md** (Technical Diagram)
+
 - **Purpose:** Explains React component structure and data flow
 - **Format:** Diagrams + component descriptions + decision matrix
 - **Coverage:** All 15 React components documented
 - **Use When:** You need to understand how components interact
 
 **Key Insights:**
+
 - Layer architecture (Engine → Types → Templates → UI)
 - Data flow from input to calculation to display
 - Keep vs Wrap vs Replace decisions for each component
@@ -51,12 +56,14 @@ This folder contains **5 comprehensive documents** for migrating PBK Command Cen
 ---
 
 ### 4️⃣ **PBK_MIGRATION_BLUEPRINT.md** (3-Column Master Sheet)
+
 - **Purpose:** Quick-reference implementation checklist
 - **Format:** 3 columns: "Figma Element → Existing PBK → Decision"
 - **Coverage:** Every visual element and calculation
 - **Use When:** You're implementing and need quick answers
 
 **Quick Stats:**
+
 - 110 total tools/features inventoried
 - 84 complete ✅
 - 9 partial ⚠️
@@ -66,12 +73,14 @@ This folder contains **5 comprehensive documents** for migrating PBK Command Cen
 ---
 
 ### 5️⃣ **PBK_TOOLS_INVENTORY.md** (Verification Report)
+
 - **Purpose:** Confirms all original PBK tools are accounted for
 - **Format:** 10 categories with status tables
 - **Coverage:** Deal Analysis, Land, Financing, Scripts, Docs, etc.
 - **Use When:** You need to verify nothing was lost in migration
 
 **Category Completion:**
+
 - Deal Analysis: ✅ 100%
 - Land Analysis: ⚠️ 85%
 - Financing: ⚠️ 70%
@@ -88,6 +97,7 @@ This folder contains **5 comprehensive documents** for migrating PBK Command Cen
 ## 🎯 CURRENT STATUS SUMMARY
 
 ### ✅ What's Working (85%)
+
 1. **All calculation formulas** - Locked and audited 2026-04-16
 2. **Core UI components** - Analyzer, Strategy Selector, Scripts
 3. **Document generation** - LOI, Seller Guide, PDF
@@ -95,6 +105,7 @@ This folder contains **5 comprehensive documents** for migrating PBK Command Cen
 5. **CRM features** - Enhanced beyond original HTML
 
 ### 🔴 What's Missing (15%)
+
 1. **Live Call Input fields** - 17 path-conditional fields missing
 2. **Script variants** - Owner vs Agent templates incomplete
 3. **Land input modes** - Square footage option missing
@@ -107,6 +118,7 @@ This folder contains **5 comprehensive documents** for migrating PBK Command Cen
 ### If You Want To...
 
 #### ✏️ **Start Implementing (Developer)**
+
 1. Read: `PBK_MIGRATION_CHECKLIST.md` → Phase 1
 2. Reference: `PBK_FIELD_MAPPING.md` → Section 6 (Live Call Inputs)
 3. Code: Update `src/app/types.ts` and `src/app/components/LiveCallInputs.tsx`
@@ -119,16 +131,19 @@ code src/app/components/LiveCallInputs.tsx
 ```
 
 #### 🔍 **Verify Feature Completeness (QA/Product)**
+
 1. Read: `PBK_TOOLS_INVENTORY.md`
 2. Check: Each category's completion percentage
 3. Test: Use the "Category Status" sections as test checklists
 
 #### 🏗️ **Understand Architecture (Tech Lead)**
+
 1. Read: `PBK_COMPONENT_ARCHITECTURE.md`
 2. Review: Data flow diagrams
 3. Understand: Keep vs Wrap vs Replace decisions
 
 #### 📊 **Get Quick Answers (Anyone)**
+
 1. Read: `PBK_MIGRATION_BLUEPRINT.md`
 2. Find: Your specific element in the tables
 3. See: Its status and decision instantly
@@ -152,6 +167,7 @@ calculateInvestorMetrics.*             // ✅ Matches HTML
 ```
 
 **How They're Protected:**
+
 - ✅ Centralized in `src/app/utils/dealCalculations.ts`
 - ✅ Marked with "FORMULA LOCKED" comments
 - ✅ Documented in `FORMULA_AUDIT.md`
@@ -159,6 +175,7 @@ calculateInvestorMetrics.*             // ✅ Matches HTML
 - ✅ All components use these (can't bypass)
 
 **If You Need To Change A Formula:**
+
 1. ⛔ **STOP** - Don't change it directly
 2. 📋 Verify against original HTML (`src/imports/PBK_Command_Center_v5.html`)
 3. 📝 Document the reason and HTML line reference
@@ -170,35 +187,45 @@ calculateInvestorMetrics.*             // ✅ Matches HTML
 ## 📈 MIGRATION PRIORITY
 
 ### 🔴 **CRITICAL (Do First)**
+
 **Phase 1: Complete Live Call Inputs**
+
 - **Why:** 17 missing fields block real-world usage
 - **Impact:** Users can't capture full deal details by path
 - **Effort:** 2-3 hours
 - **Files:** `types.ts`, `LiveCallInputs.tsx`
 
 ### ⚠️ **IMPORTANT (Do Second)**
+
 **Phase 2: Add Script Variants**
+
 - **Why:** Owner vs Agent scripts needed for different scenarios
 - **Impact:** Scripts are one-size-fits-all currently
 - **Effort:** 2-3 hours
 - **Files:** `scripts.ts`, `CallModeTab.tsx`
 
 ### 🟡 **NICE TO HAVE (Do Third)**
+
 **Phase 3: Land Square Footage Mode**
+
 - **Why:** Alternative input method for land deals
 - **Impact:** Users can only enter ¼ acre prices currently
 - **Effort:** 1-2 hours
 - **Files:** `types.ts`, `LandAnalysis.tsx`
 
 ### ✅ **VERIFICATION (Do Fourth)**
+
 **Phase 4: Document Field Check**
+
 - **Why:** Ensure new fields appear in generated documents
 - **Impact:** Documents may be missing recent data
 - **Effort:** 2-3 hours
 - **Files:** `PathDeliverables.tsx`, `PDFExporter.tsx`
 
 ### 🧪 **TESTING (Do Last)**
+
 **Phase 5: End-to-End Testing**
+
 - **Why:** Validate everything works together
 - **Impact:** Catch integration issues before production
 - **Effort:** 3-4 hours
@@ -209,6 +236,7 @@ calculateInvestorMetrics.*             // ✅ Matches HTML
 ## 📁 FILE REFERENCE
 
 ### Migration Docs (You Are Here)
+
 ```
 /workspaces/default/code/
 ├── MIGRATION_README.md              ← You are here
@@ -221,6 +249,7 @@ calculateInvestorMetrics.*             // ✅ Matches HTML
 ```
 
 ### Key Source Files
+
 ```
 src/
 ├── app/
@@ -240,6 +269,7 @@ src/
 ```
 
 ### Reference Files (Original HTML)
+
 ```
 src/imports/
 └── PBK_Command_Center_v5.html       ← Original source of truth
@@ -250,6 +280,7 @@ src/imports/
 ## 🎓 READING ORDER
 
 ### For Developers Starting Implementation
+
 1. **Start:** This file (MIGRATION_README.md)
 2. **Next:** `PBK_MIGRATION_CHECKLIST.md` → Phase 1 section
 3. **Reference:** `PBK_FIELD_MAPPING.md` → Section 6
@@ -257,6 +288,7 @@ src/imports/
 5. **Verify:** `PBK_COMPONENT_ARCHITECTURE.md` → Data flow
 
 ### For Product/QA Verifying Features
+
 1. **Start:** This file (MIGRATION_README.md)
 2. **Next:** `PBK_TOOLS_INVENTORY.md`
 3. **Test:** Use each category as a test checklist
@@ -264,6 +296,7 @@ src/imports/
 5. **Track:** `PBK_MIGRATION_CHECKLIST.md` → Phase progress
 
 ### For Tech Leads Planning Work
+
 1. **Start:** This file (MIGRATION_README.md)
 2. **Architecture:** `PBK_COMPONENT_ARCHITECTURE.md`
 3. **Scope:** `PBK_TOOLS_INVENTORY.md` → Completion matrix
@@ -275,6 +308,7 @@ src/imports/
 ## ⚠️ IMPORTANT REMINDERS
 
 ### ✅ DO
+
 - Add new fields to existing components (wrap, don't replace)
 - Use existing calculation functions (they're tested and correct)
 - Test after each phase before moving to next
@@ -282,6 +316,7 @@ src/imports/
 - Create git branches for each phase
 
 ### ⛔ DON'T
+
 - Touch anything in `dealCalculations.ts` without review
 - Rewrite existing working components
 - Skip testing phases
@@ -310,11 +345,12 @@ open PBK_FIELD_MAPPING.md  # Section 6: Live Call Inputs
 ```
 
 **Then:**
+
 1. Add new fields to `DealData` interface in `types.ts`
 2. Add path-conditional form sections to `LiveCallInputs.tsx`
 3. Test each path shows correct fields
 4. Verify data saves to localStorage
-5. Commit and push
+5. Commit to a task branch, open a PR, and wait for review plus required GitHub gates before merge or deploy
 
 ---
 

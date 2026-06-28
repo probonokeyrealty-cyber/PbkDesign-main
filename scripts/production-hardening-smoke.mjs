@@ -140,9 +140,9 @@ assert(
   'Render must declare the DocuSign Connect HMAC secret.'
 );
 assert(
-  workflow.includes('npm run test:founder') &&
-    !workflow.includes('npm run test:tooling'),
-  'GitHub CI must run the complete founder release gate.'
+  workflow.includes('npm run test:tooling') &&
+    !workflow.includes('npm run test:founder'),
+  'Tooling Verify must run the focused tooling gate, while Founder Verify owns the complete release gate.'
 );
 assert(
   /FOR UPDATE SKIP LOCKED/.test(skillGovernanceStore),

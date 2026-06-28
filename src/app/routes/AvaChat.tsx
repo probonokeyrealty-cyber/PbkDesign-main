@@ -114,6 +114,8 @@ type AvaAssistantExchange = {
   usedIntent?: string;
   assistantAction?: string;
   warning?: string;
+  mission?: Record<string, unknown> | null;
+  trace?: Record<string, unknown> | null;
 };
 
 const AVA_OPERATOR_MEMORY_KEY = 'pbk:ava-chat:operator-memory';
@@ -564,6 +566,8 @@ function buildAssistantExchange(
     usedIntent: response.usedIntent,
     assistantAction: response.assistantAction,
     warning: response.warning,
+    mission: response.mission,
+    trace: response.trace,
   };
 }
 
@@ -865,6 +869,10 @@ export function AvaChat() {
         exchange.answer,
         exchange.usedIntent,
         exchange.assistantAction,
+        String(exchange.mission?.status || ''),
+        String(exchange.mission?.currentStep || ''),
+        String(exchange.trace?.intent || ''),
+        String(exchange.trace?.toolName || ''),
         ...exchange.suggestions,
       ].some((value) =>
         String(value || '')
@@ -1021,6 +1029,14 @@ export function AvaChat() {
               usedIntent: String(item?.usedIntent || ''),
               assistantAction: String(item?.assistantAction || ''),
               warning: String(item?.warning || ''),
+              mission:
+                item?.mission && typeof item.mission === 'object' && !Array.isArray(item.mission)
+                  ? (item.mission as Record<string, unknown>)
+                  : null,
+              trace:
+                item?.trace && typeof item.trace === 'object' && !Array.isArray(item.trace)
+                  ? (item.trace as Record<string, unknown>)
+                  : null,
             })
           )
           .filter((item) => item.request && item.answer)

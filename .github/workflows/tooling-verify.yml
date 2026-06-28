@@ -13,7 +13,7 @@ permissions:
   contents: read
 
 jobs:
-  founder-verify:
+  tooling-verify:
     runs-on: ubuntu-latest
     timeout-minutes: 40
 
@@ -75,5 +75,5 @@ jobs:
           npm_ci_with_retry "root dependencies" npm ci
           npm_ci_with_retry "MCP server dependencies" npm ci --prefix ./mcp-server
 
-      - name: Run founder release gate
-        run: npm run test:founder
+      - name: Run tooling gate
+        run: npm run test:tooling

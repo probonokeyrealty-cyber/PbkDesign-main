@@ -1,5 +1,5 @@
 param(
-  [string]$RepoPath = "C:\Users\Dell\Documents\New project 2\PbkDesign-main",
+  [string]$RepoPath = "C:\Users\Dell\pbk-agent-runner",
   [string]$Repository = "probonokeyrealty-cyber/PbkDesign-main",
   [string]$AgentId = "main",
   [string]$OpenClawProfile = "pbk-worker",
@@ -235,6 +235,35 @@ function Get-OrCreatePullRequest {
   }
 }
 
+function Get-PullRequestLabelNames {
+  param([object]$PullRequest)
+  @($PullRequest.labels | ForEach-Object {
+      if ($_ -is [string]) { $_ } else { $_.name }
+    }) | Where-Object { $_ }
+}
+
+function Get-BlockingAgentPullRequest {
+  $json = (& gh pr list --repo $Repository --state open --limit 100 --json number,title,headRefName,labels,url 2>$null | Out-String).Trim()
+  if (-not $json) {
+    return $null
+  }
+
+  $pullRequests = @(ConvertFrom-JsonCompat -JsonText $json)
+  foreach ($pullRequest in $pullRequests) {
+    $labels = @(Get-PullRequestLabelNames -PullRequest $pullRequest)
+    $isAgentPullRequest =
+      "$($pullRequest.title)" -match '^\[agent\]\s*' -or
+      "$($pullRequest.headRefName)" -like "agent/*" -or
+      $labels -contains "agent/automerge"
+
+    if ($isAgentPullRequest -and -not ($labels -contains "agent/reviewed")) {
+      return $pullRequest
+    }
+  }
+
+  return $null
+}
+
 function Get-AgentPullRequestTitle {
   param([string]$IssueTitle)
 
@@ -393,9 +422,9 @@ function ConvertFrom-JsonCompat {
   return ($JsonText | ConvertFrom-Json)
 }
 
-function Assert-CleanRepo {
+function Get-MeaningfulRepoStatus {
   $status = @(git -C $RepoPath status --porcelain --untracked-files=all)
-  $meaningful = @($status | Where-Object {
+  return @($status | Where-Object {
       $line = "$_"
       if (-not $line.Trim()) {
         return $false
@@ -411,6 +440,10 @@ function Assert-CleanRepo {
 
       return $true
     })
+}
+
+function Assert-CleanRepo {
+  $meaningful = @(Get-MeaningfulRepoStatus)
 
   if ($meaningful.Count -gt 0) {
     throw ("Agent worker requires a clean repo clone. Pending changes:`n{0}" -f ($meaningful -join "`n"))
@@ -735,6 +768,12 @@ if (Get-EnvironmentValue -Name "OPENAI_API_KEY") {
   $fallbackAvailable = $true
 }
 
+$blockingPr = Get-BlockingAgentPullRequest
+if ($blockingPr) {
+  Write-Host ("Waiting for review on agent PR #{0}; not claiming another task. {1}" -f $blockingPr.number, $blockingPr.url)
+  exit 0
+}
+
 $issue = Get-NextIssue
 if (-not $issue) {
   Write-Host "No agent-ready issue available."
@@ -781,6 +820,11 @@ Worker claimed this issue on $(hostname) at $(Get-Date -Format o).
     $primaryFailureMessage = $_.Exception.Message
     if (-not $fallbackAvailable) {
       throw
+    }
+
+    $partialDiff = @(Get-MeaningfulRepoStatus)
+    if ($partialDiff.Count -gt 0) {
+      throw ("Primary worker failed after modifying files; stopping instead of running a second implementation pass. Pending changes:`n{0}" -f ($partialDiff -join "`n"))
     }
 
     Write-Warning "Primary worker run failed; retrying with fallback profile $FallbackOpenClawProfile. $primaryFailureMessage"

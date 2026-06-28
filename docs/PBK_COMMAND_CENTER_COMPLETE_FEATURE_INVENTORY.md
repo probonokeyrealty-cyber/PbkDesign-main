@@ -2,6 +2,8 @@
 
 Generated: 2026-05-31
 
+Historical inventory snapshot. Do not use this document as current release status. Current release authority is `RELEASE_CHECKLIST.md`, live `/health`, current PR gates, protected mobile proof, and disposable Neon evals.
+
 Production bridge revision: `2026-05-31-provider-augmented-additives-v3`
 
 Production status at last verification:
@@ -25,7 +27,7 @@ PBK Command Center is a production AI operating system for real estate wholesali
 
 - A modern command center dashboard.
 - A hosted bridge/API runtime on Render.
-- Supabase/Postgres operational state.
+- Render Postgres operational authority; Supabase storage/analytics mirror where explicitly wired; Neon disposable eval/sandbox state only.
 - Redis shared state/event coordination.
 - Ava, the acquisition closer and live-call intelligence agent.
 - Rex, the strategist and revenue alignment agent.
@@ -43,7 +45,7 @@ The system is not only a UI. It is a full operational runtime where agents, tool
 | ----------------------- | ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
 | Netlify dashboard       | Operator-facing web app       | Serves the modern PBK Command Center UI.                                                                                                   |
 | Render bridge           | Hosted API/tool/action brain  | Owns `/health`, `/invoke`, webhooks, voice routes, provider status, schema ensure, and tool execution.                                     |
-| Supabase/Postgres       | Durable structured state      | Stores memories, approvals, tool usage, safety audits, agent registry, nurture data, research additive runs, and other operational tables. |
+| Render Postgres         | Durable operational state     | Stores memories, approvals, tool usage, safety audits, agent registry, nurture data, research additive runs, and other operational tables. |
 | Redis                   | Shared call/event state       | Used for call state, singleton leases, event streams, and live state coordination.                                                         |
 | AWS S3/Supabase storage | Cold storage and playback     | Stores/serves recordings and document artifacts where configured.                                                                          |
 | Telnyx                  | Voice and SMS transport       | Handles inbound/outbound calls, media streaming, SMS, and recording webhooks.                                                              |

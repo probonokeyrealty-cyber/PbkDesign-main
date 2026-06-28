@@ -5,32 +5,36 @@ This runbook turns PBK into a low-cost unattended system while keeping live prov
 ## What ships in this repo
 
 - GitHub issue template for agent work packets
-- GitHub Actions for founder verification, hosted smoke, planner, and auto-merge
+- GitHub Actions for founder verification, tooling verification, hosted smoke, planner, and reviewed auto-merge
+- PBK Agent Evals for disposable Neon branch evaluation
 - GitHub label sync script
 - Local unattended worker script powered by `openclaw agent --local`
-- Hosted smoke harness for the live bridge
+- Hosted smoke harness for the live bridge and protected production mobile pages
 
 ## Required GitHub secrets
 
 Set these in `probonokeyrealty-cyber/PbkDesign-main`:
 
-| Secret | Purpose |
-| --- | --- |
-| `GOOGLE_API_KEY` | Planner model (`google/gemini-2.5-flash`) |
-| `PBK_SLACK_WEBHOOK_URL` | Daily planner digest / alerts |
-| `PBK_BRIDGE_API_KEY` | Hosted founder smoke auth |
-| `PBK_HOSTED_BRIDGE_URL` | Optional override for hosted smoke; defaults to Render bridge URL |
+| Secret                                     | Purpose                                                                                       |
+| ------------------------------------------ | --------------------------------------------------------------------------------------------- |
+| `GOOGLE_API_KEY`                           | Planner model (`google/gemini-2.5-flash`)                                                     |
+| `PBK_SLACK_WEBHOOK_URL`                    | Daily planner digest / alerts                                                                 |
+| `PBK_BRIDGE_API_KEY`                       | Hosted founder smoke auth                                                                     |
+| `PBK_HOSTED_BRIDGE_URL`                    | Optional override for hosted smoke; defaults to Render bridge URL                             |
+| `PBK_MOBILE_PROOF_TEAM_PASSCODE`           | Lets Hosted Founder Smoke prove protected production pages without exposing the team passcode |
+| `NEON_API_KEY` or `PBK_NEON_API_KEY`       | Disposable Neon branch evals                                                                  |
+| `NEON_PROJECT_ID` or `PBK_NEON_PROJECT_ID` | Neon project used for temporary eval branches                                                 |
 
 ## Required local desktop setup
 
 The unattended builder runs on your machine and needs:
 
-| Setting | Purpose |
-| --- | --- |
-| `PBK_GITHUB_TOKEN` or `gh auth login` | GitHub API + PR creation |
-| OpenClaw local model auth | Lets `openclaw agent --local` edit the repo |
-| `OPENAI_API_KEY` | Optional worker fallback when Gemini hits quota or stalls |
-| A clean dedicated repo clone | Prevents the worker from colliding with your active workspace |
+| Setting                               | Purpose                                                       |
+| ------------------------------------- | ------------------------------------------------------------- |
+| `PBK_GITHUB_TOKEN` or `gh auth login` | GitHub API + PR creation                                      |
+| OpenClaw local model auth             | Lets `openclaw agent --local` edit the repo                   |
+| `OPENAI_API_KEY`                      | Optional worker fallback when Gemini hits quota or stalls     |
+| A clean dedicated repo clone          | Prevents the worker from colliding with your active workspace |
 
 Recommended dedicated clone path:
 
@@ -45,9 +49,11 @@ Then point the scheduled worker at that clone instead of your live workspace.
 After these files are merged:
 
 1. Run the `Agent Planner` workflow once with `workflow_dispatch`.
-2. Confirm the seven `agent/*` labels exist.
-3. Create at least one issue from the `Agent Work Packet` template.
-4. Label it with exactly one category label plus `agent/ready`.
+2. Run `Hosted Founder Smoke` with `workflow_dispatch` and confirm protected mobile proof passes.
+3. Run `PBK Agent Evals` with `workflow_dispatch` once the workflow exists on the default branch.
+4. Confirm the seven `agent/*` labels exist.
+5. Create at least one issue from the `Agent Work Packet` template.
+6. Label it with exactly one category label plus `agent/ready`.
 
 ## Local worker registration
 
@@ -62,7 +68,7 @@ Then register the scheduled task:
 powershell -ExecutionPolicy Bypass -File .\scripts\register-pbk-agent-worker.ps1 -RepoPath C:\Users\Dell\pbk-agent-runner
 ```
 
-The task runs every 15 minutes, claims one `agent/ready` issue, creates a branch, uses the local OpenClaw agent to make the change, runs `npm run test:founder`, pushes the branch, and opens a PR.
+The task runs every 15 minutes, claims one `agent/ready` issue, creates a branch, uses the local OpenClaw agent to make one focused implementation pass, runs `npm run test:founder`, pushes the branch, and opens a PR. After opening the PR, it stops; do not claim the next release task until review is complete and required GitHub checks pass.
 
 Operational notes:
 
@@ -72,6 +78,7 @@ Operational notes:
 - Both worker profiles enable shell-env import so scheduled runs can inherit local provider keys without storing secrets in the repo.
 - The worker auto-configures a local Git identity in the runner clone and uses the GitHub CLI for PR creation so unattended runs do not depend on fragile REST JSON payloads.
 - Stale `pbk-agent-worker:claimed` comments older than the configured timeout are treated as reclaimable so a failed run does not jam the queue permanently.
+- Work packets should stay small enough for one focused implementation pass, then review between tasks. Split broad requests into multiple packets instead of bundling unrelated changes.
 
 ## Safety rules
 
@@ -80,7 +87,7 @@ The unattended system is allowed to:
 - edit code
 - run local founder checks
 - open PRs
-- auto-merge PRs only when labeled `agent/automerge`
+- request auto-merge only when labeled `agent/automerge` and `agent/reviewed`
 
 The unattended system must not:
 
@@ -89,8 +96,11 @@ The unattended system must not:
 - buy paid resources
 - rotate tokens
 - finish provider onboarding steps
+- bypass task-level review, unresolved comments, or required GitHub gates
 
 Use `agent/human-required` for any of those.
+
+Release work is never blindly auto-merged. The worker may open PRs only; merge requires task-level review, resolved comments, `agent/reviewed` for any auto-merge lane, and all required GitHub gates green.
 
 ## Hosted founder smoke
 
@@ -108,6 +118,20 @@ npm run test:hosted
 ```
 
 The default hosted smoke is read-mostly. Mutation mode intentionally creates replay-safe lead and approval events in the live bridge.
+
+## Protected production mobile proof
+
+Hosted Founder Smoke also runs:
+
+```powershell
+npm run test:mobile-browser-proof
+```
+
+Set `PBK_MOBILE_PROOF_TEAM_PASSCODE` in GitHub Actions secrets. The proof exchanges the passcode for a signed team session, never prints the secret, and checks `/ava-chat`, `/leads`, `/inbox/conversations`, `/analyzer`, `/campaigns`, and `/skills` against production.
+
+## Disposable Neon evals
+
+Use `PBK Agent Evals` for risky Ava, approval, CRM, or memory changes. It creates a disposable Neon branch, injects `PBK_TEST_DATABASE_URL` and `PBK_EVAL_DATABASE_URL`, runs the eval command, and deletes the branch in cleanup. Do not point evals at `PBK_DATABASE_URL` unless using `--inject-runtime-db` intentionally.
 
 ## Netlify repo drift cleanup
 

@@ -2,6 +2,12 @@
 
 Use this checklist before calling the founder build production-ready.
 
+## Work Method
+
+- Use a subagent-driven pass for broad changes: one focused implementation task at a time, then review before moving to the next task
+- Keep unrelated dirty files out of the release scope
+- Confirm the current PR has green required GitHub gates before production deploy: Founder Verify, Tooling Verify, Hosted Founder Smoke with protected mobile proof, and PBK Agent Evals when the change touches Ava, approvals, CRM, memory, skills, provider actions, or migrations
+
 ## Build
 
 - Run `npm run build`
@@ -62,11 +68,12 @@ Use this checklist before calling the founder build production-ready.
   - `PBK_N8N_LEAD_WEBHOOK`
 - Hosted bridge is not relying on file-backed state for important data
 - Netlify still renders all current tabs cleanly after a hard refresh
+- Hosted Founder Smoke has `PBK_MOBILE_PROOF_TEAM_PASSCODE` and proves protected production mobile pages
 
 ## Disposable Eval Lane
 
 - `npm run neon:evaluation:dry-run` prints a sanitized branch payload and eval environment
-- PBK Agent Evals workflow passed with a disposable Neon branch
+- PBK Agent Evals workflow passed with a disposable Neon branch. This is blocking for release work that touches Ava, approvals, CRM, memory, skills, provider actions, or migrations
 - Live Neon evals use `NEON_API_KEY` and `NEON_PROJECT_ID`, not `PBK_DATABASE_URL`
 - Default eval commands receive `PBK_TEST_DATABASE_URL` and `PBK_EVAL_DATABASE_URL`
 - `PBK_DATABASE_URL`, `DATABASE_URL`, `SUPABASE_DB_URL`, and `PBK_MIGRATION_DATABASE_URL` stay scrubbed unless `--inject-runtime-db` is used intentionally

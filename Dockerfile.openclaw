@@ -165,6 +165,7 @@ COPY scripts/coworker-heartbeat.mjs ./scripts/coworker-heartbeat.mjs
 COPY scripts/slack-mention-router.mjs ./scripts/slack-mention-router.mjs
 COPY scripts/youtube-training.mjs ./scripts/youtube-training.mjs
 COPY scripts/ava-assistant-chat.mjs ./scripts/ava-assistant-chat.mjs
+COPY scripts/ava-mission-controller.mjs ./scripts/ava-mission-controller.mjs
 COPY scripts/ava-state-machine.mjs ./scripts/ava-state-machine.mjs
 COPY scripts/ava-confidence.mjs ./scripts/ava-confidence.mjs
 COPY scripts/ava-working-memory.mjs ./scripts/ava-working-memory.mjs

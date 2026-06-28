@@ -54,6 +54,24 @@ function normalizeProvider(provider) {
   return PROVIDER_ALIASES.get(key) || key;
 }
 
+function inferProviderFromToolName(toolName) {
+  const key = normalizeKey(toolName);
+  if (!key) return '';
+  if (key.includes('telnyx') || key.includes('sms') || key.includes('call')) {
+    return 'telnyx';
+  }
+  if (key.includes('docusign') || key.includes('envelope')) {
+    return 'docusign';
+  }
+  if (key.includes('sendgrid') || key.includes('email')) {
+    return 'sendgrid';
+  }
+  if (key.includes('slack')) {
+    return 'slack';
+  }
+  return '';
+}
+
 function firstText(...values) {
   for (const value of values) {
     const text = normalizeText(value);
@@ -311,7 +329,9 @@ export function summarizeProviderProof({
   });
 
   let proofStatus = 'sent_waiting_for_receipt';
-  if (normalizeKey(attempt.status) === 'failed') {
+  if (normalizeKey(attempt.status) === 'reconciliation_required') {
+    proofStatus = 'reconciliation_required';
+  } else if (normalizeKey(attempt.status) === 'failed') {
     proofStatus = 'failed';
   } else if (matchingReceipts.some((receipt) => receipt.deliveryState === 'failed')) {
     proofStatus = 'failed';
@@ -348,13 +368,18 @@ export function attachProviderProof(value, context = {}) {
     value.provider,
     providerActionResult.provider,
     context.provider,
-    value.providerAttempt?.provider
+    value.providerAttempt?.provider,
+    inferProviderFromToolName(value.toolName),
+    inferProviderFromToolName(providerActionResult.toolName),
+    inferProviderFromToolName(context.toolName)
   );
   const providerAttemptId = firstText(
     value.providerAttemptId,
     providerActionResult.providerAttemptId,
     providerActionResult.provider_attempt_id,
-    value.providerAttempt?.providerAttemptId
+    value.providerAttempt?.providerAttemptId,
+    context.providerAttemptId,
+    context.attemptToken
   );
   const providerReceipts = Array.isArray(value.providerReceipts)
     ? value.providerReceipts
@@ -393,7 +418,11 @@ export function attachProviderProof(value, context = {}) {
     leadId: value.leadId || providerActionResult.leadId,
     idempotencyKey: value.idempotencyKey || providerActionResult.idempotencyKey,
     providerAttemptId,
-    status: providerActionResult.ok === false ? 'failed' : 'attempted',
+    status: providerActionResult.reconciliationRequired
+      ? 'reconciliation_required'
+      : providerActionResult.ok === false
+        ? 'failed'
+        : 'attempted',
     attemptedAt: firstText(
       value.attemptedAt,
       providerActionResult.attemptedAt,

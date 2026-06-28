@@ -54,6 +54,7 @@ import { SYNTHETIC_EDGE_CASE_SOURCE, buildSyntheticEdgeCaseObjections } from './
 import { getObservabilityStatus as getPbkObservabilityStatus, incrementObservabilityCounter, initializeObservability, recordEventBusBacklogMetric, recordGuardrailViolationMetric, recordLatencyMetric, withObservabilitySpan } from './observability.mjs';
 import { recordAvaResponseLatencyStatus } from './ava-latency-status.mjs';
 import { appendAssistantMessage, createAssistantSessionId, detectAssistantIntent, normalizeAssistantSession, planAssistantIntent, sanitizeAssistantTurn } from './ava-assistant-chat.mjs';
+import { runAvaMissionController } from './ava-mission-controller.mjs';
 import { buildInvokeRateLimitIdentity, createInvokeRateLimiter } from './invoke-rate-limit.mjs';
 import { ClosingStateMachine, Phase } from './ava-state-machine.mjs';
 import { calibrateAvaConfidence } from './ava-confidence.mjs';
@@ -59361,6 +59362,21 @@ async function handleInternalAvaAssistantChatRequest(request) {
     additiveIntelligence,
     startedAt: assistantOpsStartedAt,
   });
+  const missionController = await runAvaMissionController({
+    sessionId,
+    text,
+    source: body.source || 'command-center-assistant',
+    leadId: assistantContextSession.leadId || '',
+    assistantIntent,
+    assistantPlan,
+    assistantSession,
+    answer,
+    toolResult,
+    qa,
+    safety,
+    additiveIntelligence,
+    state,
+  });
 
   return {
     statusCode: 200,
@@ -59375,6 +59391,8 @@ async function handleInternalAvaAssistantChatRequest(request) {
       toolPlan: assistantPlan.toolPlan || null,
       toolResult,
       additiveIntelligence,
+      mission: missionController.mission,
+      trace: missionController.trace,
       qa,
       safety,
       warning: sanitizedInput.warning || '',

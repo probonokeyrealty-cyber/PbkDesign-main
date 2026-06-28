@@ -6,15 +6,15 @@ const teamPasscode =
   process.env.PBK_MOBILE_PROOF_TEAM_PASSCODE || process.env.PBK_TEAM_PASSCODE || '';
 const teamSessionStorageKey = 'pbk:team-session:v1';
 const teamAuthAttempts = 3;
-const routes = ['/ava-chat', '/leads', '/inbox', '/deal', '/campaigns', '/skill-studio'];
+const routes = ['/ava-chat', '/leads', '/inbox/conversations', '/analyzer', '/campaigns', '/skills'];
 const device = devices['iPhone 13'];
 const routeExpectations = {
   '/ava-chat': [/Ava/i],
   '/leads': [/Leads/i, /Contacts/i],
-  '/inbox': [/Inbox/i, /messages/i],
-  '/deal': [/Deal/i, /Analyzer/i],
+  '/inbox/conversations': [/Inbox/i, /messages/i, /Conversation/i],
+  '/analyzer': [/Deal/i, /Analyzer/i],
   '/campaigns': [/Campaign/i],
-  '/skill-studio': [/Skill/i],
+  '/skills': [/Skill/i],
 };
 const benignErrorPatterns = [
   /ResizeObserver loop (?:limit exceeded|completed with undelivered notifications)/i,
@@ -68,8 +68,12 @@ function buildStoredTeamSession(session) {
   };
 }
 
-function isProtectedGateVisible(bodyText) {
-  return /protected operator workspace|team passcode|open command center/i.test(bodyText);
+async function isProtectedGateVisible(page, bodyText) {
+  const stableGateCount = await page
+    .locator('.pbk-team-access-shell, #pbk-team-passcode')
+    .count()
+    .catch(() => 0);
+  return stableGateCount > 0 || /protected operator workspace|team passcode|open command center/i.test(bodyText);
 }
 
 function sleep(ms) {
@@ -188,7 +192,7 @@ async function checkRoute(context, route) {
     }
 
     let bodyText = (await page.locator('body').innerText({ timeout: 10000 })).trim();
-    if (isProtectedGateVisible(bodyText) && teamPasscode) {
+    if ((await isProtectedGateVisible(page, bodyText)) && teamPasscode) {
       const refreshedSession = await authenticateTeamSession(context);
       await installTeamSessionOnPage(page, refreshedSession);
       await page.reload({ waitUntil: 'domcontentloaded' });
@@ -200,7 +204,7 @@ async function checkRoute(context, route) {
       failures.push(`expected non-empty body text after navigating to ${url}.`);
     }
 
-    if (isProtectedGateVisible(bodyText)) {
+    if (await isProtectedGateVisible(page, bodyText)) {
       const envHint = teamPasscode
         ? 'the team session was not accepted by the hosted app.'
         : 'set PBK_MOBILE_PROOF_TEAM_PASSCODE or PBK_TEAM_PASSCODE to prove protected pages.';

@@ -33,8 +33,11 @@ assert(
   ) &&
     packageJson.scripts?.['test:founder']?.includes(
       'test:provider-action-dispatch'
+    ) &&
+    packageJson.scripts?.['test:proof-policy-autonomy']?.includes(
+      'test:provider-action-dispatch'
     ),
-  'Provider action dispatch behavior tests must remain in the founder verification gate.'
+  'Provider action dispatch behavior tests must remain in the founder and proof-policy verification gates.'
 );
 
 assert(

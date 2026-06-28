@@ -1,5 +1,7 @@
 # YouTube Skill Ingestion Implementation Plan
 
+REQUIRED WORKFLOW: Use `superpowers:subagent-driven-development` with one focused implementation pass per task and review between tasks.
+
 **Goal:** Add a production-safe YouTube-to-governed-candidate workflow to PBK Skill Studio.
 
 **Architecture:** Reuse the bridge's YouTube transcript and DeepSeek helpers, normalize model output in a focused module, and persist proposals through `createSkillCandidate`. Add a mobile-safe YouTube mode to the existing candidate dialog.
@@ -13,3 +15,4 @@
 - [ ] Add Manual/YouTube modes to Skill Studio.
 - [ ] Preserve sticky mobile actions and accessible form behavior.
 - [ ] Run focused governance, TypeScript, build, and browser verification.
+- [ ] Run review, required PR gates, and PBK Agent Evals on a disposable Neon branch before release if the change affects Skill Studio, Ava, CRM, or memory.

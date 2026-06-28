@@ -83,10 +83,11 @@ Canary/eval readiness confirms that core behavior still works before promotion:
 
 ## Release Rule
 
-Do not push high-risk provider or live-call changes unless:
+Do not merge or publish high-risk provider or live-call changes unless:
 
 - local tests pass
-- GitHub checks pass after push
+- task-level review is complete and review comments are resolved
+- current PR checks pass, including protected mobile proof and Neon evals when applicable
 - hosted `/health` is ready
 - hosted `/api/production/maturity` is ready
 

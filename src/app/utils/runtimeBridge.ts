@@ -424,6 +424,8 @@ export type AvaAssistantChatResponse = {
   toolPlan?: Record<string, unknown> | null;
   toolResult?: Record<string, unknown> | null;
   additiveIntelligence?: Record<string, unknown> | null;
+  mission?: Record<string, unknown> | null;
+  trace?: Record<string, unknown> | null;
   qa?: Record<string, unknown> | null;
   safety?: Record<string, unknown> | null;
   warning?: string;

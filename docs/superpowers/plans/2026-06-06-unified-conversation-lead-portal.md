@@ -1,6 +1,6 @@
 # Unified Conversation and Lead Portal Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED WORKFLOW: Use `superpowers:subagent-driven-development`. Execute one focused implementation task, perform spec review and code-quality review, then move to the next task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Ship a bridge-backed unified seller conversation workspace and durable lead portal while preserving the existing Inbox and Approvals lobby.
 
@@ -1941,16 +1941,17 @@ npm run conversations:backfill
 
 Verify one canonical non-merged thread per lead and no duplicate source events.
 
-- [ ] **Step 4: Push the completed branch**
+- [ ] **Step 4: Push the completed task branch and open a PR**
 
 ```powershell
 git status --short
-git push origin main
+git push origin HEAD
 ```
 
 Do not add `.tmp-cdp-pages.json` or `PBK_UNIFIED_PRODUCTION_PATCH_2026-05-23.patch`.
+Wait for review and required GitHub gates before merge or production deploy.
 
-- [ ] **Step 5: Deploy the bridge to Render**
+- [ ] **Step 5: Deploy the bridge to Render only after explicit release approval**
 
 Deploy the latest commit and verify:
 
@@ -1964,7 +1965,7 @@ Deploy the latest commit and verify:
 
 Verify the preview against the hosted Render bridge before production publish.
 
-- [ ] **Step 7: Publish production**
+- [ ] **Step 7: Publish production only after explicit release approval**
 
 Publish only after:
 

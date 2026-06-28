@@ -1,6 +1,6 @@
 # PBK Proof Policy Autonomy Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED WORKFLOW: Use `superpowers:subagent-driven-development`. Execute one focused implementation task, perform spec review and code-quality review, then move to the next task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Close the remaining PBK Command Center gaps by turning provider actions, approvals, Ava decisions, CRM updates, call learning, UX labels, mobile QA, evals, observability, and compliance into one measurable production control system.
 
@@ -1481,7 +1481,7 @@ Expected: both pass.
 Add:
 
 ```json
-"test:proof-policy-autonomy": "npm run test:provider-proof-ledger && npm run test:ava-action-decision-policy && npm run test:lead-field-provenance && npm run test:provider-live-proof-harness && npm run test:approval-live-unison-proof && npm run test:ava-call-learning-backfill && npm run test:operator-copy && npm run test:system-health-operator-view && npm run test:compliance-audit-trail && npm run test:production-hardening"
+"test:proof-policy-autonomy": "npm run test:provider-proof-ledger && npm run test:provider-action-dispatch && npm run test:ava-action-decision-policy && npm run test:lead-field-provenance && npm run test:provider-live-proof-harness && npm run test:approval-live-unison-proof && npm run test:approval-unison && npm run test:ava-call-learning-backfill && npm run test:operator-copy && npm run test:system-health-operator-view && npm run test:compliance-audit-trail && npm run test:mobile-browser-proof:preview && npm run test:production-hardening"
 ```
 
 - [ ] **Step 2: Add final release checklist items**

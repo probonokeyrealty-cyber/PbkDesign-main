@@ -90,22 +90,36 @@ function buildUnknownValue({
   attemptToken,
   error,
   dispatchStartedAt,
+  approvalId = '',
+  workspaceId = 'pbk',
+  toolName = '',
+  bindingHash = '',
 }) {
-  return {
-    providerActionResult: {
-      ok: false,
-      result: 'provider_delivery_unknown',
-      status: 'reconciliation_required',
-      error:
-        error?.message ||
-        String(error || 'Provider dispatch completion could not be confirmed.'),
-      reconciliationRequired: true,
+  return attachProviderProof(
+    {
+      providerActionResult: {
+        ok: false,
+        result: 'provider_delivery_unknown',
+        status: 'reconciliation_required',
+        error:
+          error?.message ||
+          String(error || 'Provider dispatch completion could not be confirmed.'),
+        reconciliationRequired: true,
+        attemptToken,
+        dispatchStartedAt,
+        providerAttempted: true,
+      },
+      providerActionQa: null,
+    },
+    {
+      approvalId,
+      workspaceId,
+      toolName,
+      bindingHash,
       attemptToken,
       dispatchStartedAt,
-      providerAttempted: true,
-    },
-    providerActionQa: null,
-  };
+    }
+  );
 }
 
 function buildUnavailable({
@@ -218,6 +232,10 @@ export async function executeProviderActionWithSharedLease({
           attemptToken,
           error,
           dispatchStartedAt,
+          approvalId,
+          workspaceId,
+          toolName,
+          bindingHash,
         });
         const unresolved = {
           ...dispatching,
@@ -272,6 +290,10 @@ export async function executeProviderActionWithSharedLease({
           error:
             'A prior provider dispatch began without a durable completion result.',
           dispatchStartedAt: existing.dispatchStartedAt,
+          approvalId,
+          workspaceId,
+          toolName,
+          bindingHash,
         });
         await client.query(
           `UPDATE public.provider_action_dispatches
@@ -370,6 +392,10 @@ export async function executeProviderActionWithSharedLease({
         attemptToken,
         error,
         dispatchStartedAt,
+        approvalId,
+        workspaceId,
+        toolName,
+        bindingHash,
       });
       await client.query(
         `UPDATE public.provider_action_dispatches
@@ -418,6 +444,10 @@ export async function executeProviderActionWithSharedLease({
       attemptToken,
       error,
       dispatchStartedAt,
+      approvalId,
+      workspaceId,
+      toolName,
+      bindingHash,
     });
     return {
       executed: true,

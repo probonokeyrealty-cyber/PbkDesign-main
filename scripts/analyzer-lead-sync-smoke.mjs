@@ -17,13 +17,13 @@ const app = read('src/app/App.tsx');
 const leadFieldProvenance = read('scripts/lead-field-provenance.mjs');
 
 const sendDealToAgentMatch = runtimeBridge.match(
-  /export async function sendDealToAgent[\s\S]*?\n}\n\nexport type ConversationListResponse/
+  /export async function sendDealToAgent[\s\S]*?\r?\n}\r?\n\r?\nexport type ConversationListResponse/
 );
 assert(sendDealToAgentMatch, 'runtimeBridge must expose sendDealToAgent.');
 
 const sendDealToAgent = sendDealToAgentMatch[0];
 const legacyAnalyzerHandoffMatch = indexHtml.match(
-  /async function sendAnalyzerSnapshotToAgent[\s\S]*?\n  }\n\n  function getVisibleAnalyzerFrame/
+  /async function sendAnalyzerSnapshotToAgent[\s\S]*?\r?\n  }\r?\n\r?\n  function getVisibleAnalyzerFrame/
 );
 assert(legacyAnalyzerHandoffMatch, 'Legacy embedded analyzer must expose sendAnalyzerSnapshotToAgent.');
 const legacyAnalyzerHandoff = legacyAnalyzerHandoffMatch[0];
@@ -109,7 +109,7 @@ assert(
 );
 
 const patchLeadImportMatch = openclawServer.match(
-  /function patchLeadImport\(stateRef, matcher = {}, patch = {}\) \{[\s\S]*?\n\}/
+  /function patchLeadImport\(stateRef, matcher = {}, patch = {}\) \{[\s\S]*?\r?\n\}/
 );
 assert(patchLeadImportMatch, 'patchLeadImport must be present.');
 assert(

@@ -6,6 +6,13 @@ const teamPasscode =
   process.env.PBK_MOBILE_PROOF_TEAM_PASSCODE || process.env.PBK_TEAM_PASSCODE || '';
 const teamSessionStorageKey = 'pbk:team-session:v1';
 const teamAuthAttempts = 3;
+const routeAttempts = Math.max(
+  1,
+  Number.parseInt(
+    process.env.PBK_MOBILE_PROOF_ROUTE_ATTEMPTS || (baseUrl.startsWith('http://127.0.0.1') ? '1' : '3'),
+    10
+  ) || 1
+);
 const routes = ['/ava-chat', '/leads', '/inbox/conversations', '/analyzer', '/campaigns', '/skills'];
 const device = devices['iPhone 13'];
 const routeExpectations = {
@@ -258,8 +265,25 @@ async function main() {
     await authenticateTeamSession(context);
 
     for (const route of routes) {
-      await checkRoute(context, route);
-      console.log(`[mobile-browser-proof] ${route} ok`);
+      let lastError = null;
+      for (let attempt = 1; attempt <= routeAttempts; attempt += 1) {
+        try {
+          await checkRoute(context, route);
+          if (attempt > 1) {
+            console.log(`[mobile-browser-proof] ${route} ok after ${attempt} attempts`);
+          } else {
+            console.log(`[mobile-browser-proof] ${route} ok`);
+          }
+          lastError = null;
+          break;
+        } catch (error) {
+          lastError = error;
+          if (attempt < routeAttempts) {
+            await sleep(1000 * attempt);
+          }
+        }
+      }
+      if (lastError) throw lastError;
     }
   } finally {
     if (browser) await browser.close();

@@ -80,6 +80,29 @@ assert.equal(approvalMission.mission?.status, 'waiting_on_approval', 'Approval-g
 assert.equal(approvalMission.mission?.approvalRequired, true, 'Mission should make approval requirement explicit.');
 assert.equal(approvalMission.trace?.actionPolicy?.providerWritesBlocked, true, 'Trace should preserve provider-write safety policy.');
 
+const intakeMission = await runAvaMissionController({
+  sessionId: 'ava_chat_controller_intake_smoke',
+  text: 'Find the seller and tell me the safest next move.',
+  source: 'ava-chat-page',
+  controllerStage: 'intake',
+  assistantIntent: { intent: 'find_lead', query: 'seller' },
+  assistantPlan: {
+    action: 'mission_intake',
+    usedIntent: 'find_lead',
+  },
+  assistantSession: {
+    history: [{ role: 'user', content: 'Find the seller.' }],
+  },
+  state: {
+    leadImports: [{ id: 'lead-intake-1', leadName: 'Intake Seller', address: '900 Main St' }],
+  },
+});
+
+assert.equal(intakeMission.mission?.status, 'planning', 'Controller-first intake should produce a planning mission before tools run.');
+assert.equal(intakeMission.mission?.controllerStage, 'intake', 'Mission should preserve the controller stage.');
+assert.equal(intakeMission.trace?.controllerStage, 'intake', 'Trace should preserve the controller stage.');
+assert.equal(intakeMission.trace?.controllerPath, 'orchestrateAvaTurn', 'Intake should still use the rich Ava orchestrator.');
+
 const runtimeBridge = readFileSync(resolve('src/app/utils/runtimeBridge.ts'), 'utf8');
 const bridge = readFileSync(resolve('scripts/openclaw-local-server.mjs'), 'utf8');
 const route = readFileSync(resolve('src/app/routes/AvaChat.tsx'), 'utf8');
@@ -89,6 +112,20 @@ assert.match(runtimeBridge, /trace\?: Record<string, unknown> \| null/, 'Runtime
 assert.match(bridge, /runAvaMissionController/, 'Bridge should call the Ava mission controller for assistant chat.');
 assert.match(bridge, /missionController\.mission/, 'Assistant chat response should return mission metadata.');
 assert.match(bridge, /missionController\.trace/, 'Assistant chat response should return mission trace.');
+assert.match(bridge, /avaMissionLedger/, 'Bridge state should include a durable Ava mission ledger.');
+assert.match(bridge, /function recordAvaMissionLedger/, 'Assistant chat should persist final mission proof to the durable ledger.');
+assert.match(bridge, /initialMissionController = await runAvaMissionController/, 'Assistant chat should run controller-first intake before deterministic planning.');
+assert.match(bridge, /controllerStage:\s*'intake'/, 'Controller-first intake should be explicitly labeled.');
+const internalHandlerSource = bridge.slice(
+  bridge.indexOf('async function handleInternalAvaAssistantChatRequest'),
+  bridge.indexOf('\nfunction createTelnyxPublicKeyObject')
+);
+assert(
+  internalHandlerSource.indexOf('initialMissionController = await runAvaMissionController') <
+    internalHandlerSource.indexOf('const assistantPlan = planAssistantIntent'),
+  'Controller-first intake must run before deterministic assistant planning.'
+);
+assert.match(bridge, /missionLedger:\s*missionLedgerRecord/, 'Assistant chat response should expose the persisted mission ledger proof.');
 assert.match(route, /mission: response\.mission/, 'Ava Chat exchanges should retain mission metadata.');
 assert.match(route, /trace: response\.trace/, 'Ava Chat exchanges should retain trace metadata.');
 

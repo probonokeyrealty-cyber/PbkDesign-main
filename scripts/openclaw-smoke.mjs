@@ -193,6 +193,46 @@ async function main() {
       /approval-gated/i.test(internalAvaAssistantCall?.answer || ''),
       'Internal Ava assistant chat did not explain the approval-gated call boundary.',
     );
+    assert(
+      internalAvaAssistantCall?.initialMission?.controllerStage === 'intake',
+      'Internal Ava assistant chat must run controller-first intake before deterministic planning.',
+    );
+    assert(
+      internalAvaAssistantCall?.mission?.schema === 'pbk.ava.mission_controller.v1',
+      'Internal Ava assistant chat must return mission metadata.',
+    );
+    assert(
+      internalAvaAssistantCall?.trace?.schema === 'pbk.ava.mission_trace.v1',
+      'Internal Ava assistant chat must return mission trace proof.',
+    );
+    assert(
+      internalAvaAssistantCall?.trace?.controllerPath === 'orchestrateAvaTurn',
+      '/api/assistant/chat must prove the mission controller path ran.',
+    );
+    assert(
+      internalAvaAssistantCall?.mission?.sessionId === 'smoke-internal-assistant-session',
+      'Mission metadata must preserve the assistant session id.',
+    );
+    assert(
+      internalAvaAssistantCall?.mission?.steps?.some((step) => step.id === 'orchestrate'),
+      'Mission metadata must include the orchestrate step.',
+    );
+    assert(
+      internalAvaAssistantCall?.mission?.steps?.some((step) => step.id === 'execute'),
+      'Mission metadata must include the execute/proof step.',
+    );
+    assert(
+      internalAvaAssistantCall?.mission?.status === 'waiting_on_approval',
+      'Approval-gated assistant actions must return a waiting_on_approval mission status.',
+    );
+    assert(
+      internalAvaAssistantCall?.mission?.approvalRequired === true,
+      'Mission metadata must expose approval requirement.',
+    );
+    assert(
+      internalAvaAssistantCall?.missionLedger?.schema === 'pbk.ava.mission_ledger.v1',
+      'Internal Ava assistant chat must persist and return mission ledger proof.',
+    );
     const publicAvaTtsNoLeadChat = await fetch(`${BASE_URL}/api/public/ava-chat`, {
       method: 'POST',
       headers: {

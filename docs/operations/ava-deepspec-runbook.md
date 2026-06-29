@@ -71,6 +71,7 @@ Run these before any production flip:
 npm run test:deepspec-speculative-client
 npm run test:deepspec-bridge-fallback
 npm run test:deepspec-export-ava-dataset
+npm run test:deepspec-benchmark-gate
 npm run test:ava-assistant-chat
 npm run test:release-status-bridge
 ```
@@ -83,6 +84,12 @@ Then benchmark current DeepSeek versus the speculative endpoint on the same reda
 - accepted speculative tokens, rejected tokens, acceptance length, and acceptance rate.
 - fallback rate and reason: timeout, HTTP error, malformed response, reasoning-only, empty response, not configured.
 - JSON/schema validity, tool-call validity, answer non-empty rate, and approval-gate compliance.
+
+Write the benchmark summary to JSON and run the executable promotion gate:
+
+```bash
+npm run deepspec:benchmark-gate -- .pbk-training/deepspec/benchmark-summary.json
+```
 
 Promotion criteria:
 

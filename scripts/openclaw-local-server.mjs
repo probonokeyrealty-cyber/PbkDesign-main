@@ -1094,6 +1094,7 @@ const LIMITS = {
   rexDecisions: 240,
   assistantSessions: 500,
   assistantExchanges: 2000,
+  avaMissionLedger: 1000,
   avaActiveMemories: 120,
   pbkMemories: 240,
   pbkFeedback: 240,
@@ -6201,6 +6202,7 @@ function buildDefaultState() {
     rexDecisions: [],
     assistantSessions: [],
     assistantExchanges: [],
+    avaMissionLedger: [],
     avaActiveMemories: [],
     pbkMemories: [],
     pbkFeedback: [],
@@ -12083,6 +12085,7 @@ function limitStateArrays(nextState) {
   nextState.rexDecisions = sortNewest(nextState.rexDecisions || []).slice(0, LIMITS.rexDecisions);
   nextState.assistantSessions = sortNewest(nextState.assistantSessions || []).slice(0, LIMITS.assistantSessions);
   nextState.assistantExchanges = sortNewest(nextState.assistantExchanges || []).slice(0, LIMITS.assistantExchanges);
+  nextState.avaMissionLedger = sortNewest(nextState.avaMissionLedger || []).slice(0, LIMITS.avaMissionLedger);
   nextState.avaActiveMemories = sortNewest(nextState.avaActiveMemories || []).slice(0, LIMITS.avaActiveMemories);
   nextState.pbkMemories = sortNewest(nextState.pbkMemories || []).slice(0, LIMITS.pbkMemories);
   nextState.pbkFeedback = sortNewest(nextState.pbkFeedback || []).slice(0, LIMITS.pbkFeedback);
@@ -12173,6 +12176,8 @@ function updateDerivedStatus(nextState) {
   };
   nextState.status.assistantSessions = (nextState.assistantSessions || []).length;
   nextState.status.assistantExchanges = (nextState.assistantExchanges || []).length;
+  nextState.status.avaMissionLedger = (nextState.avaMissionLedger || []).length;
+  nextState.status.lastAvaMissionAt = getItemTimestamp((nextState.avaMissionLedger || [])[0] || {}) || nextState.status.lastAvaMissionAt || null;
   nextState.status.avaActiveMemories = (nextState.avaActiveMemories || []).length;
   nextState.status.pbkMemories = (nextState.pbkMemories || []).length;
   nextState.status.pbkFeedback = (nextState.pbkFeedback || []).length;
@@ -12315,6 +12320,7 @@ function hydrateState(raw = {}) {
     rexDecisions: trimArray(raw.rexDecisions || defaults.rexDecisions, LIMITS.rexDecisions),
     assistantSessions: trimArray(raw.assistantSessions || defaults.assistantSessions, LIMITS.assistantSessions),
     assistantExchanges: trimArray(raw.assistantExchanges || defaults.assistantExchanges, LIMITS.assistantExchanges),
+    avaMissionLedger: trimArray(raw.avaMissionLedger || defaults.avaMissionLedger, LIMITS.avaMissionLedger),
     avaActiveMemories: trimArray(raw.avaActiveMemories || defaults.avaActiveMemories, LIMITS.avaActiveMemories),
     pbkMemories: trimArray(raw.pbkMemories || defaults.pbkMemories, LIMITS.pbkMemories),
     pbkFeedback: trimArray(raw.pbkFeedback || defaults.pbkFeedback, LIMITS.pbkFeedback),
@@ -41041,6 +41047,82 @@ function recordAvaAssistantPlanOps({
   });
 }
 
+function recordAvaMissionLedger({
+  missionController = null,
+  sessionId = '',
+  leadId = '',
+  text = '',
+  assistantIntent = {},
+  assistantPlan = {},
+  toolResult = null,
+  qa = null,
+  safety = null,
+  startedAt = Date.now(),
+} = {}) {
+  const mission = missionController?.mission && typeof missionController.mission === 'object'
+    ? missionController.mission
+    : null;
+  const trace = missionController?.trace && typeof missionController.trace === 'object'
+    ? missionController.trace
+    : null;
+  if (!mission) return null;
+
+  if (!Array.isArray(state.avaMissionLedger)) state.avaMissionLedger = [];
+  const now = isoNow();
+  const toolPlan = assistantPlan?.toolPlan && typeof assistantPlan.toolPlan === 'object'
+    ? assistantPlan.toolPlan
+    : null;
+  const missionId = String(mission.id || `ava-mission-${Date.now()}-${randomUUID().slice(0, 8)}`);
+  const record = {
+    id: `ava-mission-ledger-${Math.abs(hashString(`${missionId}|${sessionId}|${leadId}|${assistantPlan?.action || ''}`))}`,
+    schema: 'pbk.ava.mission_ledger.v1',
+    missionId,
+    sessionId: String(sessionId || mission.sessionId || ''),
+    leadId: String(leadId || mission.leadId || ''),
+    source: String(mission.source || trace?.source || 'ava-assistant-chat'),
+    controllerPath: String(trace?.controllerPath || ''),
+    controllerStage: String(mission.controllerStage || trace?.controllerStage || 'final'),
+    goal: String(mission.goal || text || '').slice(0, 500),
+    status: String(mission.status || ''),
+    currentStep: String(mission.currentStep || ''),
+    approvalRequired: Boolean(mission.approvalRequired),
+    intent: String(assistantPlan?.usedIntent || assistantIntent?.intent || trace?.intent || ''),
+    action: String(assistantPlan?.action || trace?.action || 'answered'),
+    toolName: String(toolPlan?.toolName || trace?.toolName || ''),
+    providerWrite: Boolean(toolPlan?.providerWrite || mission.nextAction?.providerWrite),
+    nextAction: mission.nextAction || null,
+    steps: Array.isArray(mission.steps)
+      ? mission.steps.slice(0, 8).map((step) => ({
+          id: String(step.id || ''),
+          label: String(step.label || '').slice(0, 120),
+          status: String(step.status || ''),
+          summary: String(step.summary || '').slice(0, 320),
+        }))
+      : [],
+    proof: {
+      traceSchema: trace?.schema || '',
+      turnDecisionReason: trace?.turnDecision?.reason || '',
+      actionDecision: trace?.actionDecision?.decision || '',
+      actionPolicy: trace?.actionPolicy || null,
+      toolResult: toolResult ? summarizeProviderActionResult(toolResult) : null,
+      qaOk: !qa || qa.ok !== false,
+      safetyOk: !safety || safety.ok !== false,
+      memorySignals: Array.isArray(trace?.workingMemory?.memories) ? trace.workingMemory.memories.length : 0,
+    },
+    createdAt: now,
+    updatedAt: now,
+    latencyMs: Date.now() - startedAt,
+  };
+  state.avaMissionLedger = [
+    record,
+    ...state.avaMissionLedger.filter((item) => item.id !== record.id),
+  ].slice(0, LIMITS.avaMissionLedger);
+  if (!state.status || typeof state.status !== 'object') state.status = {};
+  state.status.avaMissionLedger = state.avaMissionLedger.length;
+  state.status.lastAvaMissionAt = record.updatedAt;
+  return record;
+}
+
 function getRuntimeOperatingMode() {
   const settings = ensureRuntimeSettings(state);
   const mode = String(settings.ui?.operatingMode || settings.operatingMode || state.status?.mode || 'approval').toLowerCase();
@@ -60611,6 +60693,26 @@ async function handleInternalAvaAssistantChatRequest(request) {
       requestedHistory
     ),
   };
+  const assistantMemories = sortNewest(state.avaActiveMemories || []).slice(0, 12);
+  const initialMissionController = await runAvaMissionController({
+    controllerStage: 'intake',
+    sessionId,
+    text,
+    source: body.source || 'command-center-assistant',
+    leadId: assistantContextSession.leadId || '',
+    assistantIntent,
+    assistantPlan: {
+      action: 'mission_intake',
+      usedIntent: assistantIntent.intent,
+      answer: '',
+      toolPlan: null,
+    },
+    assistantSession: assistantContextSession,
+    answer: '',
+    toolResult: null,
+    state,
+    memories: assistantMemories,
+  });
   const assistantPlan = planAssistantIntent(assistantIntent, {
     publicMode: false,
     authenticated: true,
@@ -60628,8 +60730,8 @@ async function handleInternalAvaAssistantChatRequest(request) {
   let qa = null;
   let safety = null;
   let additiveIntelligence = null;
-  const assistantMemories = sortNewest(state.avaActiveMemories || []).slice(0, 12);
   let missionController = await runAvaMissionController({
+    controllerStage: 'planned',
     sessionId,
     text,
     source: body.source || 'command-center-assistant',
@@ -60825,7 +60927,6 @@ async function handleInternalAvaAssistantChatRequest(request) {
       target: assistantIntent.address || assistantIntent.phone || assistantIntent.query || 'command center',
     })
   );
-  persistStateInBackground('ava-assistant-chat');
 
   recordAvaAssistantPlanOps({
     sessionId,
@@ -60843,6 +60944,7 @@ async function handleInternalAvaAssistantChatRequest(request) {
     startedAt: assistantOpsStartedAt,
   });
   missionController = await runAvaMissionController({
+    controllerStage: 'final',
     sessionId,
     text,
     source: body.source || 'command-center-assistant',
@@ -60858,6 +60960,19 @@ async function handleInternalAvaAssistantChatRequest(request) {
     state,
     memories: assistantMemories,
   });
+  const missionLedgerRecord = recordAvaMissionLedger({
+    missionController,
+    sessionId,
+    leadId: assistantContextSession.leadId || '',
+    text,
+    assistantIntent,
+    assistantPlan,
+    toolResult,
+    qa,
+    safety,
+    startedAt: assistantOpsStartedAt,
+  });
+  persistStateInBackground('ava-assistant-chat');
 
   return {
     statusCode: 200,
@@ -60872,8 +60987,10 @@ async function handleInternalAvaAssistantChatRequest(request) {
       toolPlan: assistantPlan.toolPlan || null,
       toolResult,
       additiveIntelligence,
+      initialMission: initialMissionController.mission,
       mission: missionController.mission,
       trace: missionController.trace,
+      missionLedger: missionLedgerRecord,
       qa,
       safety,
       warning: sanitizedInput.warning || '',

@@ -127,6 +127,26 @@ function Test-IssueHasLabel {
   return (Get-IssueLabelNames -Issue $Issue) -contains $Label
 }
 
+function Test-AgentWorkOrderReady {
+  param([object]$Issue)
+
+  $body = if ($Issue.body) { "$($Issue.body)" } else { "" }
+  $requiredSections = @(
+    "## Success Criteria",
+    "## Required Tests",
+    "## Proof"
+  )
+  $missingSections = @($requiredSections | Where-Object {
+      $escaped = [regex]::Escape($_)
+      $body -notmatch "(?m)^\s*$escaped\b"
+    })
+
+  return [pscustomobject]@{
+    ok = ($missingSections.Count -eq 0)
+    missingSections = $missingSections
+  }
+}
+
 function Get-IssueComments {
   param([int]$Number)
   Invoke-GitHubApi -Method GET -Uri "https://api.github.com/repos/$Repository/issues/$Number/comments?per_page=100"
@@ -777,6 +797,24 @@ if ($blockingPr) {
 $issue = Get-NextIssue
 if (-not $issue) {
   Write-Host "No agent-ready issue available."
+  exit 0
+}
+
+$workOrderReady = Test-AgentWorkOrderReady -Issue $issue
+if (-not $workOrderReady.ok) {
+  $missing = ($workOrderReady.missingSections -join ", ")
+  $body = @"
+Agent worker cannot safely claim this issue yet.
+
+Missing required work-order sections: $missing
+
+Please add the missing sections and include concrete proof expectations before moving this back to agent/ready.
+"@
+  Add-IssueComment -Number $issue.number -Body $body
+  Invoke-GitHubApi -Method POST -Uri "https://api.github.com/repos/$Repository/issues/$($issue.number)/labels" -Body @{
+    labels = @("agent/human-required")
+  } | Out-Null
+  Write-Host ("Issue #{0} is missing required work-order sections; labeled agent/human-required instead of invoking OpenClaw." -f $issue.number)
   exit 0
 }
 

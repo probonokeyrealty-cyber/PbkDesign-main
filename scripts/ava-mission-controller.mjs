@@ -46,6 +46,7 @@ function inferMissionStatus({ assistantPlan = {}, toolResult = null, orchestrati
   const action = lower(assistantPlan.action);
   const result = lower(toolResult?.result || toolResult?.outcome || toolResult?.status);
   const decision = lower(orchestration.actionDecision?.decision);
+  if (action === 'mission_intake') return 'planning';
   if (action === 'approval_required' || result.includes('approval') || result.includes('queued')) {
     return 'waiting_on_approval';
   }
@@ -123,6 +124,7 @@ function compactOrchestration(orchestration = {}) {
 
 export async function runAvaMissionController(input = {}) {
   const assistantPlan = input.assistantPlan || {};
+  const controllerStage = cleanString(input.controllerStage || input.controller_stage || 'final') || 'final';
   const toolPlan = assistantPlan.toolPlan || {};
   const toolName = cleanString(toolPlan.toolName);
   const lead = pickLead(input.state || {}, input.leadId, toolPlan.params || {});
@@ -161,6 +163,7 @@ export async function runAvaMissionController(input = {}) {
     sessionId: input.sessionId || '',
     leadId: input.leadId || lead?.id || lead?.leadId || '',
     source: input.source || 'ava-assistant-chat',
+    controllerStage,
     goal: cleanString(input.text).slice(0, 280),
     status,
     approvalRequired: status === 'waiting_on_approval' || orchestration.actionDecision?.approvalRequired === true,
@@ -181,6 +184,7 @@ export async function runAvaMissionController(input = {}) {
   const trace = {
     schema: 'pbk.ava.mission_trace.v1',
     controllerPath: 'orchestrateAvaTurn',
+    controllerStage,
     source: input.source || 'ava-assistant-chat',
     intent: input.assistantIntent?.intent || assistantPlan.usedIntent || '',
     action: assistantPlan.action || 'answered',

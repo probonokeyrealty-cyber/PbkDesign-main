@@ -606,8 +606,14 @@ function plainMissionStatus(value: unknown) {
 }
 
 function getMissionSteps(mission: Record<string, unknown> | null) {
-  const steps = Array.isArray(mission?.steps) ? mission.steps : [];
-  return steps
+  const steps = Array.isArray(mission?.steps)
+    ? mission.steps
+    : Array.isArray(mission?.timeline)
+      ? mission.timeline
+      : Array.isArray(mission?.tasks)
+        ? mission.tasks
+        : [];
+  const normalized = steps
     .map((step, index) => {
       const record = asRecord(step);
       return record
@@ -621,6 +627,23 @@ function getMissionSteps(mission: Record<string, unknown> | null) {
     })
     .filter(Boolean)
     .slice(0, 4) as Array<{ id: string; label: string; status: string; summary: string }>;
+  if (normalized.length > 0) return normalized;
+
+  const nextAction = asRecord(mission?.nextAction);
+  const currentStep = compactText(
+    mission?.currentStep || nextAction?.type || nextAction?.toolName,
+    120
+  );
+  return currentStep
+    ? [
+        {
+          id: 'current-step',
+          label: 'Current step',
+          status: String(mission?.status || ''),
+          summary: currentStep,
+        },
+      ]
+    : [];
 }
 
 function getMissionInsight(trace: Record<string, unknown> | null) {
@@ -646,6 +669,10 @@ function AvaMissionTimeline({ exchange }: { exchange: AvaAssistantExchange }) {
     mission?.approvalRequired === true || actionPolicy?.approvalRequired === true;
   const insight = getMissionInsight(trace);
   const goal = compactText(mission?.goal, 180);
+  const fallbackInsight =
+    !goal && !insight && steps.length === 0 && memories.length === 0
+      ? 'Ava checked the request and is keeping the next move inside the right lane.'
+      : '';
 
   return (
     <div className="pbk-ava-mission-timeline mt-3 rounded-xl border border-[var(--ava-border)] bg-[var(--ava-bg)] p-3 text-xs leading-5">
@@ -680,6 +707,7 @@ function AvaMissionTimeline({ exchange }: { exchange: AvaAssistantExchange }) {
           <span className="font-semibold text-[var(--ava-text)]">Checked:</span> {insight}
         </p>
       )}
+      {fallbackInsight && <p className="mb-2 text-[var(--ava-text-muted)]">{fallbackInsight}</p>}
       {steps.length > 0 && (
         <ol className="grid gap-1.5">
           {steps.map((step) => {

@@ -304,6 +304,10 @@ assert(
   avaChatRoute.includes('Ava plan') &&
     avaChatRoute.includes('Understood:') &&
     avaChatRoute.includes('Checked:') &&
+    avaChatRoute.includes('mission?.timeline') &&
+    avaChatRoute.includes('mission?.tasks') &&
+    avaChatRoute.includes('currentStep') &&
+    avaChatRoute.includes('Ava checked the request and is keeping the next move inside the right lane.') &&
     avaChatRoute.includes('Review needed') &&
     avaChatRoute.includes('Safe lane') &&
     avaChatRoute.includes('Used {memories.length} memory signal'),

@@ -53,7 +53,7 @@ Return JSON only with this shape:
     {
       "title": "short task title",
       "labels": ["agent/ui", "agent/ready"],
-      "body": "Markdown body with sections: ## Goal, ## Success Criteria, ## Allowed Files, ## Forbidden Files, ## Required Tests, ## Deploy Impact"
+      "body": "Markdown body with sections: ## Goal, ## Success Criteria, ## Allowed Files, ## Forbidden Files, ## Required Tests, ## Proof, ## Deploy Impact"
     }
   ]
 }
@@ -67,6 +67,7 @@ Rules:
 - Each child issue must be one PR worth of work.
 - Allowed labels are: ${['agent/ready', 'agent/human-required', ...AGENT_CATEGORY_LABELS, 'agent/automerge'].join(', ')}. Do not add agent/reviewed; that label is applied only after review.
 - Every child must include exactly one category label from ${AGENT_CATEGORY_LABELS.join(', ')} and must include agent/ready.
+- Every child must include ## Proof with the exact commands, logs, or artifacts the worker must produce before review.
 - Keep deploy impact explicit and conservative.
 
 Issue #${issue.number}: ${issue.title}

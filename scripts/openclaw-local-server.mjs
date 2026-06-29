@@ -53,8 +53,9 @@ import { isYouTubeUrl, processYouTubeTraining, runYouTubeTrainingEvalSuite } fro
 import { SYNTHETIC_EDGE_CASE_SOURCE, buildSyntheticEdgeCaseObjections } from './synthetic-edge-cases.mjs';
 import { getObservabilityStatus as getPbkObservabilityStatus, incrementObservabilityCounter, initializeObservability, recordEventBusBacklogMetric, recordGuardrailViolationMetric, recordLatencyMetric, withObservabilitySpan } from './observability.mjs';
 import { recordAvaResponseLatencyStatus } from './ava-latency-status.mjs';
-import { appendAssistantMessage, createAssistantSessionId, detectAssistantIntent, normalizeAssistantSession, planAssistantIntent, sanitizeAssistantTurn } from './ava-assistant-chat.mjs';
+import { appendAssistantMessage, buildAssistantPrompt, createAssistantSessionId, detectAssistantIntent, normalizeAssistantSession, planAssistantIntent, sanitizeAssistantTurn } from './ava-assistant-chat.mjs';
 import { runAvaMissionController } from './ava-mission-controller.mjs';
+import { isDeepSpecConfigured, readDeepSpecConfig, requestSpeculativeChatCompletion } from './deepspec-speculative-client.mjs';
 import { buildInvokeRateLimitIdentity, createInvokeRateLimiter } from './invoke-rate-limit.mjs';
 import { ClosingStateMachine, Phase } from './ava-state-machine.mjs';
 import { calibrateAvaConfidence } from './ava-confidence.mjs';
@@ -408,7 +409,7 @@ function hydrateWindowsUserEnv(keys = []) {
   }
 }
 
-hydrateWindowsUserEnv(['PBK_DOCUSIGN_INTEGRATION_KEY', 'PBK_DOCUSIGN_USER_ID', 'PBK_DOCUSIGN_ACCOUNT_ID', 'PBK_DOCUSIGN_AUTH_HOST', 'PBK_DOCUSIGN_REST_BASE', 'PBK_DOCUSIGN_PRIVATE_KEY', 'PBK_DOCUSIGN_CONNECT_HMAC_SECRET', 'PBK_SUPABASE_URL', 'PBK_SUPABASE_SERVICE_ROLE_KEY', 'PBK_N8N_API_BASE_URL', 'PBK_N8N_API_KEY', 'PBK_N8N_APPROVAL_WEBHOOK', 'PBK_N8N_LEAD_WEBHOOK', 'PBK_SUPERMEMORY_API_KEY', 'PBK_SUPERMEMORY_API_URL', 'PBK_SUPERMEMORY_SYNC', 'PBK_DEEPGRAM_API_KEY', 'DEEPGRAM_API_KEY', 'PBK_HUMAN_AGENT_PHONE', 'PBK_UNDERWRITING_AGENT_PHONE', 'PBK_INBOUND_QUALIFY_BEFORE_TRANSFER', 'PBK_INBOUND_AFTER_HOURS_VOICEMAIL_ENABLED', 'PBK_INBOUND_AFTER_HOURS_START', 'PBK_INBOUND_AFTER_HOURS_END', 'PBK_INBOUND_TIMEZONE', 'PBK_TELNYX_AI_ASSISTANT_ID', 'TELNYX_AI_ASSISTANT_ID', 'PBK_AVA_MEMORY_DAILY_MINUTES', 'PBK_BROWSER_VOICE_ENABLED', 'PBK_ELEVENLABS_TTS_ENABLED', 'PBK_ELEVENLABS_API_KEY', 'ELEVENLABS_API_KEY', 'PBK_PROTECTED_OPS_PASSCODE', 'PBK_TEAM_PASSCODE', 'PBK_OPERATOR_PHONE', 'PBK_TOTP_REQUIRED', 'PBK_TOTP_SECRET', 'PBK_VOICE_PREWARM_ENABLED', 'PBK_REDIS_URL', 'REDIS_URL', 'PBK_REDIS_ENABLED', 'PBK_REDIS_NAMESPACE', 'PBK_SLACK_UPDATES_CHANNEL_ID', 'PBK_SLACK_UPDATES_CHANNEL', 'SLACK_UPDATES_CHANNEL_ID', 'PBK_SLACK_WEBHOOK_URL', 'SLACK_WEBHOOK_URL', 'PBK_SLACK_BOT_TOKEN', 'SLACK_BOT_TOKEN', 'PBK_SLACK_APPROVAL_CHANNEL_ID', 'PBK_SLACK_APPROVAL_CHANNEL', 'SLACK_APPROVAL_CHANNEL_ID', 'PBK_SLACK_SIGNING_SECRET', 'SLACK_SIGNING_SECRET', 'PBK_OPENAI_API_KEY', 'OPENAI_API_KEY', 'PBK_OPENAI_WEB_SEARCH_ENABLED', 'PBK_OPENAI_WEB_SEARCH_MODEL', 'PBK_OPENAI_BASE_URL', 'PBK_DEEPSEEK_API_KEY', 'DEEPSEEK_API_KEY', 'PBK_DEEPSEEK_BASE_URL', 'PBK_DEEPSEEK_MODEL', 'PBK_DEEPSEEK_FALLBACK_MODEL', 'PBK_DEEPSEEK_LIVE_MODEL', 'PBK_DEEPSEEK_LIVE_RETRY_MODELS', 'PBK_DEEPSEEK_LIVE_ATTEMPT_TIMEOUT_MS', 'PBK_DEEPSEEK_LIVE_RETRY_ATTEMPTS', 'PBK_DEEPSEEK_LIVE_RETRY_DELAY_MS', 'PBK_STRATEGIST_PROVIDER', 'PBK_TELNYX_LIVE_REPLY_STRATEGIST_MODE', 'PBK_TELNYX_LIVE_REPLY_STRATEGIST_TIMEOUT_MS', 'PBK_TAVILY_API_KEY', 'TAVILY_API_KEY', 'PBK_EMOTION_WORLD_MODEL_ENDPOINT', 'PBK_EMOTION_WORLD_MODEL_API_KEY', 'PBK_EMOTION_WORLD_MODEL_TIMEOUT_MS', 'PBK_HERMES_ENABLED', 'PBK_HERMES_GATEWAY_URL', 'PBK_HERMES_API_KEY', 'PBK_HERMES_WEBHOOK_URL', 'PBK_HERMES_SLACK_CHANNEL', 'PBK_HERMES_SUGGEST_ONLY', 'PBK_HERMES_TIMEOUT_MS']);
+hydrateWindowsUserEnv(['PBK_DOCUSIGN_INTEGRATION_KEY', 'PBK_DOCUSIGN_USER_ID', 'PBK_DOCUSIGN_ACCOUNT_ID', 'PBK_DOCUSIGN_AUTH_HOST', 'PBK_DOCUSIGN_REST_BASE', 'PBK_DOCUSIGN_PRIVATE_KEY', 'PBK_DOCUSIGN_CONNECT_HMAC_SECRET', 'PBK_SUPABASE_URL', 'PBK_SUPABASE_SERVICE_ROLE_KEY', 'PBK_N8N_API_BASE_URL', 'PBK_N8N_API_KEY', 'PBK_N8N_APPROVAL_WEBHOOK', 'PBK_N8N_LEAD_WEBHOOK', 'PBK_SUPERMEMORY_API_KEY', 'PBK_SUPERMEMORY_API_URL', 'PBK_SUPERMEMORY_SYNC', 'PBK_DEEPGRAM_API_KEY', 'DEEPGRAM_API_KEY', 'PBK_HUMAN_AGENT_PHONE', 'PBK_UNDERWRITING_AGENT_PHONE', 'PBK_INBOUND_QUALIFY_BEFORE_TRANSFER', 'PBK_INBOUND_AFTER_HOURS_VOICEMAIL_ENABLED', 'PBK_INBOUND_AFTER_HOURS_START', 'PBK_INBOUND_AFTER_HOURS_END', 'PBK_INBOUND_TIMEZONE', 'PBK_TELNYX_AI_ASSISTANT_ID', 'TELNYX_AI_ASSISTANT_ID', 'PBK_AVA_MEMORY_DAILY_MINUTES', 'PBK_BROWSER_VOICE_ENABLED', 'PBK_ELEVENLABS_TTS_ENABLED', 'PBK_ELEVENLABS_API_KEY', 'ELEVENLABS_API_KEY', 'PBK_PROTECTED_OPS_PASSCODE', 'PBK_TEAM_PASSCODE', 'PBK_OPERATOR_PHONE', 'PBK_TOTP_REQUIRED', 'PBK_TOTP_SECRET', 'PBK_VOICE_PREWARM_ENABLED', 'PBK_REDIS_URL', 'REDIS_URL', 'PBK_REDIS_ENABLED', 'PBK_REDIS_NAMESPACE', 'PBK_SLACK_UPDATES_CHANNEL_ID', 'PBK_SLACK_UPDATES_CHANNEL', 'SLACK_UPDATES_CHANNEL_ID', 'PBK_SLACK_WEBHOOK_URL', 'SLACK_WEBHOOK_URL', 'PBK_SLACK_BOT_TOKEN', 'SLACK_BOT_TOKEN', 'PBK_SLACK_APPROVAL_CHANNEL_ID', 'PBK_SLACK_APPROVAL_CHANNEL', 'SLACK_APPROVAL_CHANNEL_ID', 'PBK_SLACK_SIGNING_SECRET', 'SLACK_SIGNING_SECRET', 'PBK_OPENAI_API_KEY', 'OPENAI_API_KEY', 'PBK_OPENAI_WEB_SEARCH_ENABLED', 'PBK_OPENAI_WEB_SEARCH_MODEL', 'PBK_OPENAI_BASE_URL', 'PBK_DEEPSEEK_API_KEY', 'DEEPSEEK_API_KEY', 'PBK_DEEPSEEK_BASE_URL', 'PBK_DEEPSEEK_MODEL', 'PBK_DEEPSEEK_FALLBACK_MODEL', 'PBK_DEEPSEEK_LIVE_MODEL', 'PBK_DEEPSEEK_LIVE_RETRY_MODELS', 'PBK_DEEPSEEK_LIVE_ATTEMPT_TIMEOUT_MS', 'PBK_DEEPSEEK_LIVE_RETRY_ATTEMPTS', 'PBK_DEEPSEEK_LIVE_RETRY_DELAY_MS', 'PBK_DEEPSPEC_ENABLED', 'PBK_DEEPSPEC_ENDPOINT', 'PBK_DEEPSPEC_API_KEY', 'PBK_DEEPSPEC_PROVIDER', 'PBK_DEEPSPEC_TARGET_MODEL', 'PBK_DEEPSPEC_DRAFT_MODEL', 'PBK_DEEPSPEC_NUM_SPECULATIVE_TOKENS', 'PBK_DEEPSPEC_TIMEOUT_MS', 'PBK_DEEPSPEC_FALLBACK_ENABLED', 'PBK_STRATEGIST_PROVIDER', 'PBK_TELNYX_LIVE_REPLY_STRATEGIST_MODE', 'PBK_TELNYX_LIVE_REPLY_STRATEGIST_TIMEOUT_MS', 'PBK_TAVILY_API_KEY', 'TAVILY_API_KEY', 'PBK_EMOTION_WORLD_MODEL_ENDPOINT', 'PBK_EMOTION_WORLD_MODEL_API_KEY', 'PBK_EMOTION_WORLD_MODEL_TIMEOUT_MS', 'PBK_HERMES_ENABLED', 'PBK_HERMES_GATEWAY_URL', 'PBK_HERMES_API_KEY', 'PBK_HERMES_WEBHOOK_URL', 'PBK_HERMES_SLACK_CHANNEL', 'PBK_HERMES_SUGGEST_ONLY', 'PBK_HERMES_TIMEOUT_MS']);
 
 const APPROVAL_WEBHOOK_URL = String(process.env.PBK_N8N_APPROVAL_WEBHOOK || '').trim();
 const LEAD_WEBHOOK_URL = String(process.env.PBK_N8N_LEAD_WEBHOOK || '').trim();
@@ -29316,9 +29317,95 @@ async function runDeepSeekChatCompletion(messages = [], params = {}) {
   const attempts = [];
 
   const runAttempt = async (attemptIndex = 0) => {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), attemptTimeoutMs);
+    let controller = null;
+    let timeout = null;
+    const requestBody = {
+      model,
+      messages,
+      temperature: params.temperature ?? 0.25,
+      max_tokens: Math.max(128, Math.min(4096, toNumber(params.maxTokens || params.max_tokens, 1200))),
+      thinking: { type: thinkingMode },
+      ...(params.responseFormat === 'json' ? { response_format: { type: 'json_object' } } : {}),
+    };
+    let speculativeMeta = null;
+    const buildProviderMeta = (extra = {}) => ({
+      ...meta,
+      model,
+      thinkingMode,
+      attempt: attemptIndex + 1,
+      attemptTimeoutMs,
+      ...(speculativeMeta ? { speculative: speculativeMeta } : {}),
+      ...extra,
+    });
     try {
+      const speculativeConfig = readDeepSpecConfig(process.env);
+      if (params.speculative !== false && isDeepSpecConfigured(speculativeConfig)) {
+        const speculative = await requestSpeculativeChatCompletion(requestBody, {
+          config: speculativeConfig,
+        });
+        speculativeMeta = {
+          attempted: true,
+          used: Boolean(speculative.ok),
+          reason: speculative.ok ? 'accepted' : speculative.reason || 'request_failed',
+          provider: speculative.meta?.provider || speculativeConfig.provider,
+          targetModel: speculative.meta?.targetModel || speculativeConfig.targetModel,
+          draftModelConfigured: Boolean(speculative.meta?.draftModelConfigured || speculativeConfig.draftModel),
+          latencyMs: speculative.meta?.latencyMs ?? null,
+        };
+        if (speculative.ok) {
+          const payload = speculative.response;
+          const message = payload?.choices?.[0]?.message || {};
+          const answer = String(message.content || '').trim();
+          const reasoning = String(message.reasoning_content || '').trim();
+          await recordTokenUsage('deepspec', model, payload?.usage || {}, {
+            source: params.source || 'deepseek-strategist',
+            callId: params.callId || params.call_id || '',
+            leadId: params.leadId || params.lead_id || '',
+            responseId: payload?.id || '',
+          });
+          if (!answer && reasoning) {
+            return {
+              ok: false,
+              result: 'provider_reasoning_only',
+              provider: buildProviderMeta({ speculativeServed: true }),
+              error: 'DeepSpec returned reasoning content without a speakable JSON response.',
+              reasoning,
+              usage: payload?.usage || null,
+              responseId: payload?.id || '',
+            };
+          }
+          if (!answer) {
+            return {
+              ok: false,
+              result: 'provider_empty_response',
+              provider: buildProviderMeta({ speculativeServed: true }),
+              error: 'DeepSpec returned an empty response.',
+              usage: payload?.usage || null,
+              responseId: payload?.id || '',
+              payload,
+            };
+          }
+          return {
+            ok: true,
+            result: 'live',
+            answer,
+            reasoning,
+            provider: buildProviderMeta({ speculativeServed: true }),
+            usage: payload?.usage || null,
+            responseId: payload?.id || '',
+          };
+        }
+        if (!speculativeConfig.fallbackEnabled) {
+          return {
+            ok: false,
+            result: 'speculative_provider_error',
+            provider: buildProviderMeta(),
+            error: speculative.error || `DeepSpec speculative endpoint failed: ${speculative.reason || 'request_failed'}.`,
+          };
+        }
+      }
+      controller = new AbortController();
+      timeout = setTimeout(() => controller.abort(), attemptTimeoutMs);
       const response = await executeProviderCircuitGuard(
         'deepseek',
         () =>
@@ -29329,14 +29416,7 @@ async function runDeepSeekChatCompletion(messages = [], params = {}) {
               'Content-Type': 'application/json',
             },
             signal: controller.signal,
-            body: JSON.stringify({
-              model,
-              messages,
-              temperature: params.temperature ?? 0.25,
-              max_tokens: Math.max(128, Math.min(4096, toNumber(params.maxTokens || params.max_tokens, 1200))),
-              thinking: { type: thinkingMode },
-              ...(params.responseFormat === 'json' ? { response_format: { type: 'json_object' } } : {}),
-            }),
+            body: JSON.stringify(requestBody),
           }),
         async () =>
           new Response(JSON.stringify({ error: { message: 'DeepSeek circuit is open.' } }), {
@@ -29350,7 +29430,7 @@ async function runDeepSeekChatCompletion(messages = [], params = {}) {
           ok: false,
           result: 'provider_error',
           status: response.status,
-          provider: { ...meta, model, thinkingMode, attempt: attemptIndex + 1, attemptTimeoutMs },
+          provider: buildProviderMeta(),
           error: payload?.error?.message || payload?.message || `DeepSeek returned ${response.status}`,
           payload,
         };
@@ -29368,7 +29448,7 @@ async function runDeepSeekChatCompletion(messages = [], params = {}) {
         return {
           ok: false,
           result: 'provider_reasoning_only',
-          provider: { ...meta, model, thinkingMode, attempt: attemptIndex + 1, attemptTimeoutMs },
+          provider: buildProviderMeta(),
           error: 'DeepSeek returned reasoning content without a speakable JSON response.',
           reasoning,
           usage: payload?.usage || null,
@@ -29379,7 +29459,7 @@ async function runDeepSeekChatCompletion(messages = [], params = {}) {
         return {
           ok: false,
           result: 'provider_empty_response',
-          provider: { ...meta, model, thinkingMode, attempt: attemptIndex + 1, attemptTimeoutMs },
+          provider: buildProviderMeta(),
           error: 'DeepSeek returned an empty response.',
           usage: payload?.usage || null,
           responseId: payload?.id || '',
@@ -29391,7 +29471,7 @@ async function runDeepSeekChatCompletion(messages = [], params = {}) {
         result: 'live',
         answer,
         reasoning,
-        provider: { ...meta, model, thinkingMode, attempt: attemptIndex + 1, attemptTimeoutMs },
+        provider: buildProviderMeta(),
         usage: payload?.usage || null,
         responseId: payload?.id || '',
       };
@@ -29399,11 +29479,11 @@ async function runDeepSeekChatCompletion(messages = [], params = {}) {
       return {
         ok: false,
         result: error?.name === 'AbortError' ? 'provider_timeout' : 'provider_error',
-        provider: { ...meta, model, thinkingMode, attempt: attemptIndex + 1, attemptTimeoutMs },
+        provider: buildProviderMeta(),
         error: error?.name === 'AbortError' ? 'DeepSeek request timed out.' : error?.message || 'DeepSeek request failed.',
       };
     } finally {
-      clearTimeout(timeout);
+      if (timeout) clearTimeout(timeout);
     }
   };
 
@@ -45143,6 +45223,8 @@ async function buildSystemSourceLabelsSnapshot() {
   const intelligenceStream = buildIntelligenceStreamSnapshot({ limit: 24 });
   const agentRegistry = buildAgentRegistryStatus();
   const toolingStatus = await buildToolingStatus();
+  const openclawGateway = getOpenClawGatewayHealthComponent();
+  const netlifyMeta = getNetlifyProviderMeta();
   const registryAgents = Array.isArray(agentRegistry.registry?.agents)
     ? agentRegistry.registry.agents
     : [];
@@ -45195,6 +45277,36 @@ async function buildSystemSourceLabelsSnapshot() {
           : '',
       degradedReason: agentRegistry.ok ? '' : agentRegistry.result || 'agent registry degraded',
       note: 'Canonical remote/local roster for Agent Fleet.',
+    }),
+    makeLabel({
+      id: 'openclaw-gateway',
+      label: 'OpenClaw command bridge',
+      endpoint: 'GET /api/gateway/status',
+      category: 'ops',
+      source: 'runtime-provider-probe',
+      recordCount: openclawGateway.ready ? 1 : 0,
+      endpointReady: openclawGateway.configured !== false,
+      degradedReason: openclawGateway.ready
+        ? ''
+        : openclawGateway.note || 'Local OpenClaw heartbeat or direct gateway probe is not ready.',
+      note:
+        openclawGateway.note ||
+        (openclawGateway.ready
+          ? 'Local OpenClaw gateway heartbeat is connected.'
+          : 'Local OpenClaw gateway heartbeat is still being checked.'),
+    }),
+    makeLabel({
+      id: 'netlify-dashboard',
+      label: 'Netlify dashboard',
+      endpoint: 'GET /',
+      category: 'frontend',
+      source: 'runtime-provider-probe',
+      recordCount: netlifyMeta.ready ? 1 : 0,
+      endpointReady: netlifyMeta.ready,
+      degradedReason: netlifyMeta.ready
+        ? ''
+        : netlifyMeta.note || 'Netlify dashboard URL or deploy environment is not configured.',
+      note: netlifyMeta.note || 'Agent dashboard deploy readiness.',
     }),
     makeLabel({
       id: 'campaigns',
@@ -45269,17 +45381,9 @@ function readGitCommitShort() {
 function buildReleaseStatusSnapshot() {
   const generatedAt = isoNow();
   const renderMeta = getRenderProviderMeta();
+  const netlifyMeta = getNetlifyProviderMeta();
   const observability = getPbkObservabilityStatus();
   const toolingReady = existsSync(TOOLING_VERIFY_WORKFLOW_FILE);
-  const netlifyConfigured = Boolean(
-    process.env.NETLIFY ||
-      process.env.DEPLOY_ID ||
-      process.env.NETLIFY_SITE_ID ||
-      process.env.PBK_NETLIFY_SITE_ID ||
-      process.env.URL
-  );
-  const netlifyDeployId = String(process.env.DEPLOY_ID || process.env.NETLIFY_DEPLOY_ID || '').trim();
-  const netlifySite = String(process.env.SITE_NAME || process.env.NETLIFY_SITE_NAME || process.env.PBK_NETLIFY_SITE_ID || '').trim();
   const commit = readGitCommitShort();
   const pendingAdminTasks = getPendingAdminTasks(state.adminTasks).filter((task) =>
     /(render|netlify|deploy|env|migration|supabase|schema)/i.test(
@@ -45335,9 +45439,9 @@ function buildReleaseStatusSnapshot() {
     component({
       id: 'netlify',
       label: 'Netlify production deploy',
-      ready: netlifyConfigured,
-      configured: netlifyConfigured,
-      detail: netlifyDeployId || netlifySite || (netlifyConfigured ? 'Netlify env present' : 'Netlify env not exposed to bridge'),
+      ready: netlifyMeta.ready,
+      configured: netlifyMeta.configured,
+      detail: netlifyMeta.deployId || netlifyMeta.site || netlifyMeta.url || 'Netlify env not exposed to bridge',
       source: 'env/netlify',
     }),
     component({
@@ -45386,8 +45490,8 @@ function buildReleaseStatusSnapshot() {
       hosted: IS_HOSTED,
       stateBackend: STATE_BACKEND,
       renderServiceId: RENDER_SERVICE_ID || '',
-      netlifyDeployId,
-      netlifySite,
+      netlifyDeployId: netlifyMeta.deployId,
+      netlifySite: netlifyMeta.site,
       publicBaseUrl: PUBLIC_BASE_URL || '',
     },
     summary: {
@@ -48709,6 +48813,43 @@ function getRenderProviderMeta() {
     baseUrl: RENDER_BASE_URL,
     serviceId: RENDER_SERVICE_ID || '',
     missing,
+  };
+}
+
+function getNetlifyProviderMeta() {
+  const deployId = String(process.env.DEPLOY_ID || process.env.NETLIFY_DEPLOY_ID || '').trim();
+  const site =
+    String(
+      process.env.SITE_NAME ||
+        process.env.NETLIFY_SITE_NAME ||
+        process.env.NETLIFY_SITE_ID ||
+        process.env.PBK_NETLIFY_SITE_ID ||
+        ''
+    ).trim();
+  const url =
+    String(
+      process.env.URL ||
+        process.env.DEPLOY_PRIME_URL ||
+        process.env.PBK_NETLIFY_URL ||
+        process.env.PBK_FRONTEND_URL ||
+        'https://pbkcommandcenter.netlify.app'
+    ).trim();
+  const netlifyEnvPresent = Boolean(process.env.NETLIFY || deployId || site);
+  const knownFrontendUrl = /^https:\/\/(?:[a-z0-9-]+\.)?pbkcommandcenter\.netlify\.app\b/i.test(url);
+  const configured = Boolean(netlifyEnvPresent || knownFrontendUrl);
+  const ready = Boolean(configured && url);
+  return {
+    configured,
+    ready,
+    provider: 'Netlify',
+    mode: netlifyEnvPresent ? 'netlify-deploy-env' : 'configured-frontend-url',
+    url,
+    deployId,
+    site,
+    missing: ready ? [] : ['NETLIFY deployment env or PBK_NETLIFY_URL/PBK_FRONTEND_URL'],
+    note: ready
+      ? `Agent dashboard is available at ${url}.`
+      : 'Set Netlify deployment env or PBK_NETLIFY_URL/PBK_FRONTEND_URL so the bridge can report dashboard readiness.',
   };
 }
 
@@ -57563,6 +57704,8 @@ function buildStateSnapshot(options = {}) {
         batchdata: getBatchDataProviderMeta(),
         slack: getSlackProviderMeta(),
         render: getRenderProviderMeta(),
+        netlify: getNetlifyProviderMeta(),
+        frontend: getNetlifyProviderMeta(),
         redis: getRedisProviderMeta(),
       },
       stateBackend: runtimeMeta.stateBackend,
@@ -59144,6 +59287,106 @@ function findInternalAssistantLead(query = '') {
   );
 }
 
+function mergeAssistantHistories(...histories) {
+  const merged = [];
+  const seen = new Set();
+  for (const history of histories) {
+    for (const turn of Array.isArray(history) ? history : []) {
+      const role = ['user', 'assistant', 'system'].includes(String(turn?.role || '').toLowerCase())
+        ? String(turn.role).toLowerCase()
+        : 'user';
+      const content = String(turn?.content || '').trim();
+      if (!content) continue;
+      const key = `${role}:${content}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      merged.push({
+        role,
+        content,
+        at: turn?.at || turn?.timestamp || null,
+        metadata: turn?.metadata && typeof turn.metadata === 'object' ? turn.metadata : {},
+      });
+    }
+  }
+  return merged.slice(-40);
+}
+
+function dropCurrentAssistantUserTurn(history = [], text = '') {
+  const turns = Array.isArray(history) ? [...history] : [];
+  const current = String(text || '').trim();
+  const last = turns[turns.length - 1] || null;
+  if (last?.role === 'user' && String(last.content || '').trim() === current) {
+    turns.pop();
+  }
+  return turns;
+}
+
+function buildInternalAssistantDeepSeekContext(body = {}) {
+  const context = body.context && typeof body.context === 'object' ? body.context : {};
+  const lines = [
+    'Authenticated Command Center Ava Chat.',
+    body.source ? `Source: ${String(body.source).slice(0, 120)}` : '',
+    body.selectedAction ? `Selected action: ${String(body.selectedAction).slice(0, 80)}` : '',
+    body.action ? `Action: ${String(body.action).slice(0, 80)}` : '',
+    body.leadId || body.lead_id ? `Lead id: ${String(body.leadId || body.lead_id).slice(0, 120)}` : '',
+    context.path ? `Page: ${String(context.path).slice(0, 160)}` : '',
+    context.search ? `Query: ${String(context.search).slice(0, 240)}` : '',
+    'Use recent conversation history naturally. Do not expose tool names or infrastructure unless the operator asks for technical support.',
+  ].filter(Boolean);
+  return lines.join('\n');
+}
+
+async function runInternalAvaDeepSeekChat({
+  assistantContextSession = {},
+  text = '',
+  body = {},
+  sessionId = '',
+  leadId = '',
+} = {}) {
+  const prompt = buildAssistantPrompt(assistantContextSession, {
+    extraContext: buildInternalAssistantDeepSeekContext(body),
+  });
+  const deepSeekMessages = [
+    { role: 'system', content: prompt },
+    { role: 'user', content: String(text || '').trim() },
+  ].filter((message) => message.content);
+  const deepSeek = await runDeepSeekChatCompletion(deepSeekMessages, {
+    source: 'ava-assistant-chat',
+    sessionId,
+    leadId,
+    model: DEEPSEEK_LIVE_MODEL,
+    temperature: 0.45,
+    maxTokens: 700,
+    attemptTimeoutMs: DEEPSEEK_LIVE_ATTEMPT_TIMEOUT_MS,
+    retryAttempts: DEEPSEEK_LIVE_RETRY_ATTEMPTS,
+    retryDelayMs: DEEPSEEK_LIVE_RETRY_DELAY_MS,
+  });
+  if (deepSeek.ok && isPublicAvaBrainAnswerSafe(deepSeek.answer)) {
+    return {
+      ok: true,
+      answer: deepSeek.answer,
+      toolResult: {
+        ok: true,
+        result: 'deepseek_chat_answer',
+        provider: deepSeek.provider || null,
+        responseId: deepSeek.responseId || '',
+        attempts: deepSeek.attempts || [],
+      },
+    };
+  }
+  return {
+    ok: false,
+    answer: '',
+    toolResult: {
+      ok: false,
+      result: deepSeek.result || 'deepseek_chat_unavailable',
+      provider: deepSeek.provider || null,
+      error: deepSeek.error || 'DeepSeek chat path did not return a safe answer.',
+      attempts: deepSeek.attempts || [],
+    },
+  };
+}
+
 async function handleInternalAvaAssistantChatRequest(request) {
   const assistantOpsStartedAt = Date.now();
   const body = await readBody(request);
@@ -59162,10 +59405,18 @@ async function handleInternalAvaAssistantChatRequest(request) {
 
   const sessionId = getPublicAvaAssistantSessionId(request, body);
   const priorAssistantSession = await readPublicAvaAssistantSession(sessionId);
+  const requestedHistory = dropCurrentAssistantUserTurn(
+    normalizeAssistantSession({ history: messages }).history,
+    text
+  );
   const assistantIntent = detectAssistantIntent(text);
   const assistantContextSession = {
-    ...priorAssistantSession,
+    ...normalizeAssistantSession(priorAssistantSession),
     leadId: body.leadId || body.lead_id || priorAssistantSession?.leadId || priorAssistantSession?.lead_id || '',
+    history: mergeAssistantHistories(
+      normalizeAssistantSession(priorAssistantSession).history,
+      requestedHistory
+    ),
   };
   const assistantPlan = planAssistantIntent(assistantIntent, {
     publicMode: false,
@@ -59320,9 +59571,26 @@ async function handleInternalAvaAssistantChatRequest(request) {
     answer = buildInternalAssistantSummaryAnswer();
     toolResult = { ok: true, result: 'runtime_summary' };
   } else if (assistantPlan.action === 'general' && !answer) {
-    const brain = answerBrainQuery(state, text);
-    answer = isPublicAvaBrainAnswerSafe(brain?.answer) ? brain.answer : 'Tell me the seller, address, or task you want handled and I will help with the next step.';
-    toolResult = { ok: true, result: 'brain_answer', citations: brain?.citations || [] };
+    const deepSeekChat = await runInternalAvaDeepSeekChat({
+      assistantContextSession,
+      text,
+      body,
+      sessionId,
+      leadId: assistantContextSession.leadId || '',
+    });
+    if (deepSeekChat.ok) {
+      answer = deepSeekChat.answer;
+      toolResult = deepSeekChat.toolResult;
+    } else {
+      const brain = answerBrainQuery(state, text);
+      answer = isPublicAvaBrainAnswerSafe(brain?.answer) ? brain.answer : 'Tell me the seller, address, or task you want handled and I will help with the next step.';
+      toolResult = {
+        ok: true,
+        result: 'brain_answer',
+        citations: brain?.citations || [],
+        deepSeekFallback: deepSeekChat.toolResult,
+      };
+    }
   }
   if (sanitizedInput.truncated) {
     answer = `${sanitizedInput.warning} ${answer}`;
@@ -66206,6 +66474,9 @@ const server = createServer(async (request, response) => {
           batchdata: getBatchDataProviderMeta(),
           slack: getSlackProviderMeta(),
           render: getRenderProviderMeta(),
+          netlify: getNetlifyProviderMeta(),
+          frontend: getNetlifyProviderMeta(),
+          openclawGateway: getOpenClawGatewayHealthComponent(),
         },
         features: {
           documentsPdf: true,

@@ -634,6 +634,26 @@ export type ProductionGapsResponse = {
   primaryPath?: PrimaryPathReliabilityReport;
 };
 
+export type BridgeConnectionResponse = {
+  ok: boolean;
+  ready?: boolean;
+  result?: string;
+  checkedAt?: string;
+  blockers?: string[];
+  stateBackend?: string;
+  hosted?: boolean;
+  authRequired?: boolean;
+  productionReady?: boolean;
+  components?: Record<
+    string,
+    {
+      ready?: boolean;
+      status?: string;
+      note?: string;
+    }
+  >;
+};
+
 export type VectorCapacityTable = {
   id: string;
   label?: string;
@@ -1987,6 +2007,12 @@ export async function fetchReleaseStatusRequest() {
 export async function fetchProductionGapsRequest() {
   return bridgeRequest<ProductionGapsResponse>({
     path: '/api/production/gaps',
+  });
+}
+
+export async function fetchBridgeConnectionRequest() {
+  return bridgeRequest<BridgeConnectionResponse>({
+    path: '/api/bridge/connection',
   });
 }
 

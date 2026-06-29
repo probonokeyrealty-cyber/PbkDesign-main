@@ -211,6 +211,7 @@
     "test:observability": "node ./scripts/observability-smoke.mjs",
     "test:next-pass-backlog": "node ./scripts/next-pass-backlog-smoke.mjs",
     "test:ava-latency-status": "node ./scripts/ava-latency-status-smoke.mjs",
+    "test:deepspec-speculative-client": "node ./scripts/deepspec-speculative-client-smoke.mjs",
     "test:ava-assistant-chat": "node ./scripts/ava-assistant-chat-smoke.mjs && npm run test:ava-mission-controller",
     "test:ava-call-lead-projection": "node ./scripts/ava-call-lead-projection-smoke.mjs",
     "test:lead-field-provenance": "node ./scripts/lead-field-provenance-smoke.mjs",

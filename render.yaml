@@ -201,6 +201,27 @@ services:
         value: 1
       - key: PBK_DEEPSEEK_LIVE_RETRY_DELAY_MS
         value: 120
+
+      # Optional speculative-decoding lane for Ava/Rex latency work. Keep it
+      # disabled until the vLLM/DeepSpec endpoint is deployed and benchmarked.
+      - key: PBK_DEEPSPEC_ENABLED
+        value: "false"
+      - key: PBK_DEEPSPEC_ENDPOINT
+        sync: false
+      - key: PBK_DEEPSPEC_API_KEY
+        sync: false
+      - key: PBK_DEEPSPEC_PROVIDER
+        value: vllm
+      - key: PBK_DEEPSPEC_TARGET_MODEL
+        value: deepseek-v4-flash
+      - key: PBK_DEEPSPEC_DRAFT_MODEL
+        sync: false
+      - key: PBK_DEEPSPEC_NUM_SPECULATIVE_TOKENS
+        value: 5
+      - key: PBK_DEEPSPEC_TIMEOUT_MS
+        value: 2500
+      - key: PBK_DEEPSPEC_FALLBACK_ENABLED
+        value: "true"
       - key: PBK_STRATEGIST_PROVIDER
         value: deepseek
       - key: PBK_TELNYX_LIVE_REPLY_STRATEGIST_MODE

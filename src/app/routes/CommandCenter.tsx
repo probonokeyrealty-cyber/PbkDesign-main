@@ -11,6 +11,7 @@ import { useRuntimeSnapshot } from '../hooks/useRuntimeSnapshot';
 import { PbkDataSource, PbkPanel, PbkPulseDot } from '../../components/pbk/index';
 import {
   controlRuntimeCall,
+  fetchBridgeConnectionRequest,
   fetchLeadsRequest,
   fetchFounderWorkQueueRequest,
   fetchIntelligenceStreamRequest,
@@ -19,6 +20,7 @@ import {
   fetchWebSearchStatusRequest,
   type FounderWorkQueueItem,
   type IntelligenceStreamItem,
+  type BridgeConnectionResponse,
   type PrimaryPathReliabilityReport,
   type ProductionGapLabel,
   updateRuntimeSettingsRequest,
@@ -1171,6 +1173,7 @@ function buildCommandCenterHealthInput({
   snapshot,
   tooling,
   runtimeProviders,
+  bridgeConnection,
   toolingCoreReady,
   toolingCoreTotal,
   sourceConfidenceItems,
@@ -1180,6 +1183,7 @@ function buildCommandCenterHealthInput({
   snapshot?: RuntimeSnapshot | null;
   tooling?: RuntimeRecord | null;
   runtimeProviders: Record<string, RuntimeRecord>;
+  bridgeConnection?: BridgeConnectionResponse | null;
   toolingCoreReady: number;
   toolingCoreTotal: number;
   sourceConfidenceItems: OperatorSystemSourceLabel[];
@@ -1189,6 +1193,22 @@ function buildCommandCenterHealthInput({
   const status = (snapshot?.status || {}) as RuntimeRecord;
   const providerValues = runtimeProviders as RuntimeRecord;
   const toolingValues = (tooling || {}) as RuntimeRecord;
+  const bridgeConnectionRecord =
+    bridgeConnection && typeof bridgeConnection === 'object' ? bridgeConnection : null;
+  const bridgeConnectionComponents = (bridgeConnectionRecord?.components || {}) as RuntimeRecord;
+  const bridgeConnectionProof = bridgeConnectionRecord
+    ? bridgeConnectionRecord.ready
+      ? {
+          ready: true,
+          note: 'Live command bridge connection proof is ready.',
+        }
+      : {
+          ready: false,
+          note: bridgeConnectionRecord.blockers?.length
+            ? `Live command bridge needs attention: ${bridgeConnectionRecord.blockers.join(', ')}.`
+            : 'Live command bridge connection proof needs attention.',
+        }
+    : undefined;
   const docusignProvider = pickHealthValue(providerValues, ['docusign', 'docuSign', 'docs']);
   const documentDeliveries = Array.isArray(snapshot?.documentDeliveries)
     ? snapshot.documentDeliveries
@@ -1215,11 +1235,34 @@ function buildCommandCenterHealthInput({
             loading ? 'Checking the hosted bridge.' : 'Hosted bridge detail is still being checked.'
           )),
     openclaw:
-      pickHealthValue(providerValues, ['openclaw', 'openClaw', 'bridge']) ??
-      pickHealthValue(status, ['openclaw', 'openClaw', 'bridge']) ??
-      pickHealthValue(toolingValues, ['openclaw', 'openClaw', 'bridge']) ??
+      pickHealthValue(providerValues, [
+        'openclaw',
+        'openClaw',
+        'openclawGateway',
+        'openClawGateway',
+        'bridge',
+      ]) ??
+      pickHealthValue(status, [
+        'openclaw',
+        'openClaw',
+        'openclawGateway',
+        'openClawGateway',
+        'bridge',
+      ]) ??
+      pickHealthValue(toolingValues, [
+        'openclaw',
+        'openClaw',
+        'openclawGateway',
+        'openClawGateway',
+        'bridge',
+      ]) ??
+      pickHealthValue(bridgeConnectionComponents, ['bridge']) ??
+      bridgeConnectionProof ??
       (error
-        ? { error }
+        ? {
+            error,
+            note: 'Sign in or refresh the team session so protected bridge details can load.',
+          }
         : { state: 'checking', note: 'Live command bridge detail is still being checked.' }),
     redis: pickHealthValue(providerValues, ['redis']) ??
       pickHealthValue(status, ['redis']) ?? {
@@ -1326,7 +1369,7 @@ function buildCommandCenterHealthSummary(input: RuntimeRecord): OperatorHealthIt
   ];
 }
 
-function SystemHealthPanel({ items }: { items: OperatorHealthItem[] }) {
+function SystemHealthPanel({ items, source }: { items: OperatorHealthItem[]; source?: string }) {
   const counts = items.reduce(
     (total, item) => ({ ...total, [item.state]: total[item.state] + 1 }),
     { ready: 0, needs_attention: 0, checking: 0 } as Record<OperatorHealthState, number>
@@ -1377,8 +1420,8 @@ function SystemHealthPanel({ items }: { items: OperatorHealthItem[] }) {
         ))}
       </div>
       <DataSourceCaption
-        endpoint="snapshot.status.providers + GET /api/tooling/status + GET /api/system/source-labels"
-        note="Health rows use checking when live provider detail is missing."
+        endpoint="snapshot.status.providers + GET /api/bridge/connection + GET /api/tooling/status + GET /api/system/source-labels"
+        note={`Health rows use checking when live provider detail is missing. ${source || ''}`.trim()}
       />
     </PbkPanel>
   );
@@ -1729,6 +1772,10 @@ export function CommandCenter() {
     null
   );
   const [sourceConfidenceSource, setSourceConfidenceSource] = useState('client source fallback');
+  const [bridgeConnection, setBridgeConnection] = useState<BridgeConnectionResponse | null>(null);
+  const [bridgeConnectionSource, setBridgeConnectionSource] = useState(
+    'GET /api/bridge/connection pending'
+  );
   const [productionGaps, setProductionGaps] = useState<ProductionGapLabel[]>([]);
   const [primaryPathReliability, setPrimaryPathReliability] =
     useState<PrimaryPathReliabilityReport | null>(null);
@@ -1974,6 +2021,33 @@ export function CommandCenter() {
 
   useEffect(() => {
     let cancelled = false;
+    const refreshBridgeConnection = () => {
+      fetchBridgeConnectionRequest()
+        .then((response) => {
+          if (cancelled) return;
+          setBridgeConnection(response);
+          setBridgeConnectionSource(response.result || 'GET /api/bridge/connection');
+        })
+        .catch((connectionError) => {
+          if (cancelled) return;
+          setBridgeConnection(null);
+          setBridgeConnectionSource(
+            connectionError instanceof Error
+              ? `team session needed: ${connectionError.message}`
+              : 'team session needed'
+          );
+        });
+    };
+    refreshBridgeConnection();
+    const refreshTimer = window.setInterval(refreshBridgeConnection, 30_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(refreshTimer);
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
     const refreshSourceLabels = () => {
       fetchSystemSourceLabelsRequest()
         .then((response) => {
@@ -2213,6 +2287,7 @@ export function CommandCenter() {
           snapshot,
           tooling: tooling as RuntimeRecord | null,
           runtimeProviders,
+          bridgeConnection,
           toolingCoreReady,
           toolingCoreTotal,
           sourceConfidenceItems: displayedSourceConfidenceItems,
@@ -2222,6 +2297,7 @@ export function CommandCenter() {
       ),
     [
       displayedSourceConfidenceItems,
+      bridgeConnection,
       error,
       loading,
       runtimeProviders,
@@ -2485,7 +2561,9 @@ export function CommandCenter() {
           primaryPath={primaryPathReliability}
         />
 
-        {isWidgetVisible('systemHealth') && <SystemHealthPanel items={systemHealthItems} />}
+        {isWidgetVisible('systemHealth') && (
+          <SystemHealthPanel items={systemHealthItems} source={bridgeConnectionSource} />
+        )}
 
         {actionStatus && (
           <div

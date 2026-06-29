@@ -66,6 +66,20 @@ assert(
 );
 
 assert(
+  /fetchBridgeConnectionRequest/.test(commandCenter) &&
+    /GET \/api\/bridge\/connection/.test(commandCenter) &&
+    /bridgeConnectionSource/.test(commandCenter),
+  'Command Center must fetch protected live bridge connection proof for OpenClaw/bridge health.'
+);
+
+assert(
+  /bridgeConnectionComponents/.test(commandCenter) &&
+    /pickHealthValue\(bridgeConnectionComponents, \['bridge'\]\)/.test(commandCenter) &&
+    /Sign in or refresh the team session/.test(commandCenter),
+  'Command Center must distinguish missing team-session bridge proof from a disconnected OpenClaw provider.'
+);
+
+assert(
   !/openclaw:\s*error\s*\?\s*\{\s*error\s*\}\s*:\s*\{\s*connected:\s*true/.test(commandCenter),
   'Command Center must not mark OpenClaw ready when live bridge detail is missing.'
 );

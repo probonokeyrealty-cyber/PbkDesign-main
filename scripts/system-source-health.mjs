@@ -195,7 +195,7 @@ export function buildOperatorHealthSummary(input = {}) {
     {
       id: 'openclaw',
       label: 'OpenClaw',
-      aliases: ['bridge', 'openClaw'],
+      aliases: ['bridge', 'openClaw', 'openclawGateway', 'openClawGateway'],
       ready: 'Local command bridge is connected.',
       attention: 'Local command bridge needs setup.',
       checking: 'Checking the local command bridge.',

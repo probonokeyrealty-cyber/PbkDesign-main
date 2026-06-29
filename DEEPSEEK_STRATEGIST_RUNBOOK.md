@@ -20,6 +20,22 @@ PBK_STRATEGIST_PROVIDER=deepseek
 
 Do not commit the API key.
 
+Optional speculative-decoding lane, disabled by default:
+
+```text
+PBK_DEEPSPEC_ENABLED=false
+PBK_DEEPSPEC_ENDPOINT=<private vLLM or compatible OpenAI API base>
+PBK_DEEPSPEC_API_KEY=<private endpoint token>
+PBK_DEEPSPEC_PROVIDER=vllm
+PBK_DEEPSPEC_TARGET_MODEL=deepseek-v4-flash
+PBK_DEEPSPEC_DRAFT_MODEL=<DeepSeek-compatible draft checkpoint>
+PBK_DEEPSPEC_NUM_SPECULATIVE_TOKENS=5
+PBK_DEEPSPEC_TIMEOUT_MS=2500
+PBK_DEEPSPEC_FALLBACK_ENABLED=true
+```
+
+Do not point production DeepSeek traffic at a Qwen/Gemma draft checkpoint. The public DeepSpec release includes Qwen3 and Gemma drafts, which are useful for local evaluation and integration proofing, but Ava production needs a DeepSeek-compatible draft or a dedicated vLLM speculator service.
+
 ## Tools
 
 `avaAskStrategist`

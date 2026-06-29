@@ -133,6 +133,20 @@ assert(
 );
 
 assert(
+  /id:\s*'openclaw-gateway'/.test(bridge) &&
+    /label:\s*'OpenClaw command bridge'/.test(bridge) &&
+    /getOpenClawGatewayHealthComponent\(\)/.test(bridge),
+  'Source labels must include OpenClaw gateway readiness from the live gateway provider metadata.'
+);
+
+assert(
+  /id:\s*'netlify-dashboard'/.test(bridge) &&
+    /label:\s*'Netlify dashboard'/.test(bridge) &&
+    /getNetlifyProviderMeta\(\)/.test(bridge),
+  'Source labels must include Netlify dashboard readiness from provider metadata.'
+);
+
+assert(
   /async function buildSystemSourceLabelsSnapshot/.test(bridge) &&
     /const toolingStatus = await buildToolingStatus\(\)/.test(bridge) &&
     /await buildSystemSourceLabelsSnapshot\(\)/.test(bridge),

@@ -388,6 +388,20 @@ assert(
   'Both public and authenticated Ava chat handlers must emit assistant-plan operations.'
 );
 assert(
+  /import \{[\s\S]*buildAssistantPrompt[\s\S]*\} from '\.\/ava-assistant-chat\.mjs'/.test(bridge) &&
+    /normalizeAssistantSession\(\{\s*history:\s*messages\s*\}\)/.test(bridge) &&
+    /const requestedHistory =/.test(bridge) &&
+    /assistantContextSession[\s\S]*history:\s*mergeAssistantHistories/.test(bridge),
+  'Authenticated Ava chat must merge browser-supplied chat history into the server session before planning.'
+);
+assert(
+  /async function runInternalAvaDeepSeekChat/.test(bridge) &&
+    /buildAssistantPrompt\(assistantContextSession/.test(bridge) &&
+    /runDeepSeekChatCompletion\(deepSeekMessages/.test(bridge) &&
+    /assistantPlan\.action === 'general'[\s\S]*runInternalAvaDeepSeekChat/.test(bridge),
+  'Authenticated general Ava chat must use the DeepSeek chat path with recent session history before falling back to static brain answers.'
+);
+assert(
   /import \{ runAvaMissionController \} from '\.\/ava-mission-controller\.mjs'/.test(bridge) &&
     /handleInternalAvaAssistantChatRequest[\s\S]*runAvaMissionController\(\{[\s\S]*assistantIntent[\s\S]*assistantPlan[\s\S]*assistantSession[\s\S]*toolResult/.test(
       bridge

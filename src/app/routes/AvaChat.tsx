@@ -571,6 +571,18 @@ function buildAssistantExchange(
   };
 }
 
+function buildAssistantRequestMessages(exchanges: AvaAssistantExchange[], command: string) {
+  const messages = exchanges
+    .slice(-8)
+    .flatMap((exchange) => [
+      { role: 'user', content: exchange.request.slice(0, 1200) },
+      { role: 'assistant', content: exchange.answer.slice(0, 2400) },
+    ])
+    .filter((message) => message.content.trim());
+  messages.push({ role: 'user', content: command.slice(0, 1200) });
+  return messages;
+}
+
 function getResultText(command: LocalCommandRecord) {
   if (command.error) return command.error;
   const result = command.result;
@@ -1122,6 +1134,7 @@ export function AvaChat() {
             action: nextAction,
             selectedAction: action,
             requiresApproval: nextRequiresApproval,
+            messages: buildAssistantRequestMessages(assistantExchanges, command),
             context: {
               path: typeof window === 'undefined' ? '' : window.location.pathname,
               search: typeof window === 'undefined' ? '' : window.location.search,
@@ -1207,7 +1220,16 @@ export function AvaChat() {
         });
       }
     },
-    [action, assistantSessionId, draft, load, refresh, requiresApproval, submitting]
+    [
+      action,
+      assistantExchanges,
+      assistantSessionId,
+      draft,
+      load,
+      refresh,
+      requiresApproval,
+      submitting,
+    ]
   );
 
   const handleApprovalDecision = useCallback(

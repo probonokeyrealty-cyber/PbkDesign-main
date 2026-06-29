@@ -44381,20 +44381,30 @@ async function queryPgRows(sql = '', params = []) {
       error: 'PBK_DATABASE_URL is not configured.',
     };
   }
-  try {
-    const result = await pool.query(sql, params);
-    markPostgresHealth(true);
-    return { ok: true, reason: 'live', rows: result.rows || [] };
-  } catch (error) {
-    markPostgresHealth(false, error?.message || error);
-    return {
-      ok: false,
-      reason: 'query_failed',
-      rows: [],
-      error: error?.message || String(error),
-      code: error?.code || '',
-    };
+  const maxAttempts = getStatePersistRetryAttempts();
+  let attempt = 0;
+  let lastError = null;
+  for (attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      const result = await pool.query(sql, params);
+      markPostgresHealth(true);
+      return { ok: true, reason: 'live', rows: result.rows || [], retryAttempts: attempt };
+    } catch (error) {
+      lastError = error;
+      markPostgresHealth(false, error?.message || error);
+      if (attempt >= maxAttempts || !isTransientPostgresStatePersistError(error)) break;
+      await sleep(getStatePersistRetryDelayMs(attempt));
+    }
   }
+  return {
+    ok: false,
+    reason: 'query_failed',
+    rows: [],
+    error: lastError?.message || String(lastError),
+    code: lastError?.code || '',
+    retryAttempts: attempt,
+    retryable: isTransientPostgresStatePersistError(lastError),
+  };
 }
 
 async function buildVectorCapacityStatus() {

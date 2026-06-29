@@ -39,6 +39,14 @@ assert(
   'Hosted Postgres state persistence must retry transient connection-startup failures before failing closed.'
 );
 assert(
+  /async function queryPgRows\(sql = '', params = \[\]\)/.test(bridge) &&
+    /const maxAttempts = getStatePersistRetryAttempts\(\);/.test(bridge) &&
+    /isTransientPostgresStatePersistError\(error\)/.test(bridge) &&
+    /await sleep\(getStatePersistRetryDelayMs\(attempt\)\)/.test(bridge) &&
+    /retryAttempts: attempt/.test(bridge),
+  'Hosted Postgres table reads/writes must retry transient startup failures before failing provider proof persistence.'
+);
+assert(
   /const PG_QUERY_TIMEOUT_MS/.test(bridge) &&
     /const PG_STATEMENT_TIMEOUT_MS/.test(bridge) &&
     /const PG_LOCK_TIMEOUT_MS/.test(bridge) &&

@@ -55634,7 +55634,17 @@ const toolHandlers = {
     contractActivity.address = contract.address;
     contractActivity.contractId = contract.id;
     addActivity(state, contractActivity);
-    await persistState(state);
+    let statePersist = { ok: true };
+    try {
+      await persistState(state);
+    } catch (error) {
+      statePersist = {
+        ok: false,
+        code: String(error?.code || ''),
+        error: String(error?.message || error),
+      };
+      if (!live) throw error;
+    }
     if (live) {
       await projectLiveConversationRecord({
         record: contract,
@@ -55648,6 +55658,7 @@ const toolHandlers = {
       template,
       path: selectedPath,
       envelope,
+      statePersist,
       docusign: {
         live,
         configured: docusignMeta.configured,

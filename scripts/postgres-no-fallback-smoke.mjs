@@ -59,6 +59,12 @@ assert(
   'Live DocuSign sends must persist a durable pending contract before attempting the provider envelope.'
 );
 assert(
+  /let statePersist = \{ ok: true \};/.test(sendDocuSignSource) &&
+    /if \(!live\) throw error;/.test(sendDocuSignSource) &&
+    /statePersist,/.test(sendDocuSignSource),
+  'Live DocuSign sends must return the provider receipt after contract persistence even if the secondary state snapshot write is transiently unavailable.'
+);
+assert(
   /const PG_QUERY_TIMEOUT_MS/.test(bridge) &&
     /const PG_STATEMENT_TIMEOUT_MS/.test(bridge) &&
     /const PG_LOCK_TIMEOUT_MS/.test(bridge) &&

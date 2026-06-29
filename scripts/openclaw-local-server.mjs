@@ -53624,9 +53624,34 @@ const toolHandlers = {
     return buildAdminPersistenceStatus();
   },
 
-  async getDocuSignProviderStatus() {
+  async getDocuSignProviderStatus(params = {}) {
     recordToolUse('getDocuSignProviderStatus');
-    return buildDocuSignProviderStatus();
+    const status = buildDocuSignProviderStatus();
+    const liveAuth = Boolean(params.liveAuth || params.live_auth || params.checkJwt || params.check_jwt);
+    if (!liveAuth) return status;
+    const jwtAuth = {
+      checked: true,
+      ok: false,
+      tokenPresent: false,
+      checkedAt: isoNow(),
+      error: '',
+    };
+    try {
+      const token = await __dsRefreshAccessToken();
+      jwtAuth.ok = true;
+      jwtAuth.tokenPresent = Boolean(token);
+    } catch (error) {
+      jwtAuth.error = error instanceof Error ? error.message : 'DocuSign JWT auth failed.';
+    }
+    return {
+      ...status,
+      ready: status.ready && jwtAuth.ok,
+      productionReady: status.productionReady && jwtAuth.ok,
+      jwtAuth,
+      summary: jwtAuth.ok
+        ? status.summary
+        : `DocuSign config is present, but JWT auth is failing: ${jwtAuth.error}`,
+    };
   },
 
   async inspectStreakPipeline(params = {}) {
@@ -74125,7 +74150,9 @@ const server = createServer(async (request, response) => {
     }
 
     if (request.method === 'GET' && pathname === '/api/admin/docusign/status') {
-      const result = await toolHandlers.getDocuSignProviderStatus();
+      const result = await toolHandlers.getDocuSignProviderStatus({
+        liveAuth: ['1', 'true', 'yes'].includes(String(url.searchParams.get('liveAuth') || url.searchParams.get('live') || '').toLowerCase()),
+      });
       json(response, 200, {
         ...result,
         state: {

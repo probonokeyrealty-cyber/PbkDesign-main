@@ -71,16 +71,42 @@ const mockFetch = async (url, init = {}) => {
     body: init.body ? JSON.parse(init.body) : null,
     authorization: init.headers?.Authorization || '',
   });
-  const body = bridgeCalls.length === 1
-    ? {
+  let body = { ok: true, result: 'live' };
+  if (bridgeCalls.length === 1) {
+    body = {
         ok: true,
         result: 'live',
+        message: {
+          id: 'telnyx-message-1',
+        },
         outbox: {
           idempotencyKey: 'pbk-live-proof-sms-20260629010101',
           status: 'sent',
         },
-      }
-    : { ok: true, result: 'live' };
+      };
+  } else if (String(url).includes('/api/messages?limit=200')) {
+    body = {
+      ok: true,
+      result: 'live',
+      messages: [
+        {
+          id: 'telnyx-message-1',
+          channel: 'sms',
+          direction: 'outbound',
+          provider: 'Telnyx',
+          body: 'PBK live proof SMS pbk-live-proof-sms-20260629010101. No action needed.',
+          status: 'delivered',
+          providerMessageId: 'telnyx-message-1',
+          deliveryStatus: 'delivered',
+          payload: {
+            idempotencyKey: 'pbk-live-proof-sms-20260629010101',
+            providerMessageId: 'telnyx-message-1',
+            deliveryStatus: 'delivered',
+          },
+        },
+      ],
+    };
+  }
   return new Response(JSON.stringify(body), {
     status: 200,
     headers: { 'Content-Type': 'application/json' },
@@ -103,8 +129,9 @@ const liveSms = await runProviderLiveProof({
 
 assert.equal(liveSms.ok, true);
 assert.equal(liveSms.dryRun, false);
-assert.equal(liveSms.proofStatus, 'sent_waiting_for_receipt');
-assert.equal(bridgeCalls.length, 1);
+assert.equal(liveSms.proofStatus, 'provider_confirmed');
+assert.equal(liveSms.providerAttemptId, 'telnyx-message-1');
+assert.equal(bridgeCalls.length, 2);
 assert.equal(bridgeCalls[0].url, 'https://bridge.example.test/api/messages');
 assert.equal(bridgeCalls[0].authorization, 'Bearer bridge-secret');
 assert.equal(bridgeCalls[0].body.channel, 'sms');
@@ -121,6 +148,10 @@ assert(
 assert(
   bridgeSource.includes('durableDeliveryRecord'),
   'Manual provider proof should expose the durable delivery receipt used for classification.'
+);
+assert(
+  bridgeSource.includes('providerMessageId'),
+  'Telnyx message records should preserve provider ids for delivery reconciliation.'
 );
 
 const slackCalls = [];

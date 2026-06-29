@@ -172,6 +172,117 @@ function envNumber(env = process.env, key = '', fallback = 0) {
   return Number.isFinite(value) && value > 0 ? value : fallback;
 }
 
+const SMS_CONFIRMED_STATUSES = new Set(['delivered']);
+const SMS_FAILED_STATUSES = new Set(['delivery_failed', 'failed', 'undelivered', 'rejected', 'expired']);
+
+function messageMatchesProof(message = {}, proofKey = '') {
+  const key = clean(proofKey);
+  if (!key) return false;
+  const candidates = [
+    message.id,
+    message.idempotencyKey,
+    message.idempotency_key,
+    message.providerMessageId,
+    message.provider_message_id,
+    message.providerAttemptId,
+    message.provider_attempt_id,
+    message.outbox?.idempotencyKey,
+    message.payload?.idempotencyKey,
+    message.payload?.idempotency_key,
+    message.payload?.providerMessageId,
+    message.payload?.provider_message_id,
+    message.payload?.telnyx?.id,
+    message.body,
+    message.subject,
+  ].map(clean);
+  return candidates.some((candidate) => candidate === key || candidate.includes(key));
+}
+
+function getMessageProviderAttemptId(message = {}) {
+  return clean(
+    message.providerMessageId ||
+      message.provider_message_id ||
+      message.providerAttemptId ||
+      message.provider_attempt_id ||
+      message.payload?.providerMessageId ||
+      message.payload?.provider_message_id ||
+      message.payload?.telnyx?.id ||
+      message.id
+  );
+}
+
+function getMessageProviderStatus(message = {}) {
+  return clean(
+    message.deliveryStatus ||
+      message.delivery_status ||
+      message.providerStatus ||
+      message.provider_status ||
+      message.payload?.deliveryStatus ||
+      message.payload?.delivery_status ||
+      message.payload?.providerStatus ||
+      message.payload?.provider_status ||
+      message.payload?.telnyx?.status ||
+      message.status
+  ).toLowerCase();
+}
+
+async function pollSmsProofMessage({ env, fetchImpl, id, messageId = '' }) {
+  const timeoutMs = envNumber(env, 'PBK_LIVE_PROOF_SMS_POLL_MS', 90000);
+  const intervalMs = envNumber(env, 'PBK_LIVE_PROOF_SMS_POLL_INTERVAL_MS', 3000);
+  const deadline = Date.now() + timeoutMs;
+  let lastResult = null;
+  let lastMessage = null;
+
+  while (Date.now() <= deadline) {
+    const result = await getBridgeJson('/api/messages?limit=200', { env, fetchImpl });
+    lastResult = result;
+    const messages = Array.isArray(result.payload?.messages) ? result.payload.messages : [];
+    const message = messages.find((item) => clean(messageId) && clean(item.id) === clean(messageId)) ||
+      messages.find((item) => messageMatchesProof(item, id));
+    if (message) {
+      lastMessage = message;
+      const status = getMessageProviderStatus(message);
+      const providerAttemptId = getMessageProviderAttemptId(message);
+      if (SMS_CONFIRMED_STATUSES.has(status)) {
+        return {
+          ok: true,
+          proofStatus: 'provider_confirmed',
+          status: 'provider_confirmed',
+          providerAttemptId,
+          message,
+        };
+      }
+      if (SMS_FAILED_STATUSES.has(status)) {
+        return {
+          ok: false,
+          proofStatus: 'provider_error',
+          status: 'provider_error',
+          error: `Telnyx SMS delivery failed with status ${status}.`,
+          providerAttemptId,
+          message,
+        };
+      }
+    }
+    await sleep(intervalMs);
+  }
+
+  return {
+    ok: false,
+    proofStatus: 'carrier_receipt_pending',
+    status: 'carrier_receipt_pending',
+    error: `Telnyx accepted the SMS, but PBK did not receive a delivered carrier receipt before ${timeoutMs}ms.`,
+    providerAttemptId: getMessageProviderAttemptId(lastMessage || {}),
+    message: lastMessage,
+    bridgeResult: lastResult
+      ? {
+          ok: lastResult.ok,
+          status: lastResult.status,
+          result: lastResult.payload?.result || lastResult.payload?.status || '',
+        }
+      : null,
+  };
+}
+
 function findDocuSignProofContract(contracts = [], proofKey = '') {
   const key = clean(proofKey);
   return contracts.find((contract) => contractMatchesDocuSignProof(contract, key)) || null;
@@ -309,10 +420,23 @@ async function runSmsLiveProof({ env, fetchImpl, now }) {
     },
     { env, fetchImpl }
   );
-  return summarizeBridgeProof('sms', result, {
+  const proof = summarizeBridgeProof('sms', result, {
     idempotencyKey: id,
     canary: 'PBK_LIVE_PROOF_SMS_TO',
   });
+  if (!proof.ok) return proof;
+  const polled = await pollSmsProofMessage({
+    env,
+    fetchImpl,
+    id,
+    messageId: result.payload?.message?.id || result.payload?.outbox?.providerResult?.message?.id || '',
+  });
+  return {
+    ...proof,
+    ...polled,
+    initialBridgeResult: proof.bridgeResult,
+    bridgeResult: polled.bridgeResult || proof.bridgeResult,
+  };
 }
 
 async function runEmailLiveProof({ env, fetchImpl, now }) {

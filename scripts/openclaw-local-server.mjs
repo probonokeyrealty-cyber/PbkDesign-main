@@ -33388,6 +33388,23 @@ function createMessageRecord(params = {}) {
     body: String(params.body || params.message || '').trim(),
     status: params.status || (params.direction === 'inbound' ? 'received' : 'sent'),
     provider: params.provider || 'PBK',
+    providerMessageId:
+      params.providerMessageId ||
+      params.provider_message_id ||
+      params.messageId ||
+      params.message_id ||
+      '',
+    providerAttemptId:
+      params.providerAttemptId ||
+      params.provider_attempt_id ||
+      params.providerMessageId ||
+      params.provider_message_id ||
+      params.messageId ||
+      params.message_id ||
+      '',
+    providerStatus: params.providerStatus || params.provider_status || '',
+    deliveryStatus: params.deliveryStatus || params.delivery_status || '',
+    rawProviderEventType: params.rawProviderEventType || params.raw_provider_event_type || params.eventType || '',
     intent: params.intent || '',
     sentiment: params.sentiment ?? null,
     storagePath: params.storagePath || params.storage_path || params.recordingStoragePath || '',
@@ -33397,7 +33414,30 @@ function createMessageRecord(params = {}) {
     recordingUrl: params.recordingUrl || params.audioUrl || params.url || '',
     callId: params.callId || params.telnyxCallControlId || params.call_control_id || '',
     messagingProfileId: params.messagingProfileId || params.messaging_profile_id || '',
-    payload: params.payload && typeof params.payload === 'object' ? params.payload : {},
+    payload: {
+      ...(params.payload && typeof params.payload === 'object' ? params.payload : {}),
+      ...(params.providerMessageId || params.provider_message_id || params.messageId || params.message_id
+        ? {
+            providerMessageId:
+              params.providerMessageId ||
+              params.provider_message_id ||
+              params.messageId ||
+              params.message_id,
+          }
+        : {}),
+      ...(params.providerStatus || params.provider_status
+        ? { providerStatus: params.providerStatus || params.provider_status }
+        : {}),
+      ...(params.deliveryStatus || params.delivery_status
+        ? { deliveryStatus: params.deliveryStatus || params.delivery_status }
+        : {}),
+      ...(params.rawProviderEventType || params.raw_provider_event_type || params.eventType
+        ? {
+            rawProviderEventType:
+              params.rawProviderEventType || params.raw_provider_event_type || params.eventType,
+          }
+        : {}),
+    },
     createdAt: params.createdAt || isoNow(),
     updatedAt: params.updatedAt || isoNow(),
   };
@@ -55938,18 +55978,50 @@ const toolHandlers = {
       }
 
       const providerMessage = telnyxResponse.body?.data || {};
+      const providerRecipient = Array.isArray(providerMessage.to)
+        ? providerMessage.to.find((item) => normalizePhone(item?.phone_number || item?.phoneNumber || item?.number || item) === phone) || providerMessage.to[0]
+        : providerMessage.to && typeof providerMessage.to === 'object'
+          ? providerMessage.to
+          : {};
+      const providerMessageId = providerMessage.id || params.id || '';
+      const providerStatus = String(
+        providerRecipient?.status ||
+          providerMessage.status ||
+          'queued'
+      ).trim();
       const message = createMessageRecord({
         ...params,
-        id: providerMessage.id || params.id,
+        id: providerMessageId || params.id,
         leadId: context.leadId,
         leadName: context.leadName,
         address: context.address,
         phone,
         direction,
         body: bodyText,
-        status: providerMessage.status || 'queued',
+        status: providerStatus || 'queued',
         from: fromNumber,
         provider: 'Telnyx',
+        providerMessageId,
+        providerAttemptId: providerMessageId,
+        providerStatus,
+        deliveryStatus: providerStatus,
+        payload: {
+          ...(params.payload && typeof params.payload === 'object' ? params.payload : {}),
+          idempotencyKey: params.idempotencyKey || params.idempotency_key || '',
+          provider: 'telnyx',
+          providerMessageId,
+          providerStatus,
+          deliveryStatus: providerStatus,
+          telnyx: {
+            id: providerMessageId,
+            status: providerStatus,
+            recordType: providerMessage.record_type || providerMessage.recordType || '',
+            direction: providerMessage.direction || '',
+            webhookConfigured: Boolean(requestPayload.webhook_url),
+            messagingProfileId: providerMessage.messaging_profile_id || providerMessage.messagingProfileId || TELNYX_MESSAGING_PROFILE_ID || '',
+            response: providerMessage,
+          },
+        },
       });
 
       upsertMessage(state, message);
@@ -63358,6 +63430,19 @@ function mapTelnyxWebhook(body = {}) {
         body: payload.text || payload.body || '',
         direction: inbound ? 'inbound' : 'outbound',
         status: payload.status || (inbound ? 'received' : 'sent'),
+        providerMessageId: payload.id || payload.message_id || payload.messageId || '',
+        providerAttemptId: payload.id || payload.message_id || payload.messageId || '',
+        providerStatus: payload.status || '',
+        deliveryStatus: payload.status || '',
+        rawProviderEventType: eventType,
+        payload: {
+          provider: 'telnyx',
+          providerMessageId: payload.id || payload.message_id || payload.messageId || '',
+          providerStatus: payload.status || '',
+          deliveryStatus: payload.status || '',
+          rawProviderEventType: eventType,
+          telnyx: payload,
+        },
         leadName: payload.contact_name || '',
         actor: 'Telnyx',
       },

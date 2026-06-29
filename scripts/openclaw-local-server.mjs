@@ -63407,6 +63407,17 @@ function mapTelnyxWebhook(body = {}) {
     providerDirection === 'outbound';
 
   if (eventType.includes('message')) {
+    const mappedMessageStatus =
+      payload.status ||
+      (eventType.includes('delivered')
+        ? 'delivered'
+        : eventType.includes('failed') || eventType.includes('undelivered')
+          ? 'failed'
+          : inbound
+            ? 'received'
+            : eventType.includes('sent')
+              ? 'sent'
+              : 'sent');
     return {
       eventType: inbound ? 'sms-inbound' : 'sms-outbound',
       payload: {
@@ -63429,17 +63440,17 @@ function mapTelnyxWebhook(body = {}) {
         to: payloadTo || '',
         body: payload.text || payload.body || '',
         direction: inbound ? 'inbound' : 'outbound',
-        status: payload.status || (inbound ? 'received' : 'sent'),
+        status: mappedMessageStatus,
         providerMessageId: payload.id || payload.message_id || payload.messageId || '',
         providerAttemptId: payload.id || payload.message_id || payload.messageId || '',
-        providerStatus: payload.status || '',
-        deliveryStatus: payload.status || '',
+        providerStatus: mappedMessageStatus,
+        deliveryStatus: mappedMessageStatus,
         rawProviderEventType: eventType,
         payload: {
           provider: 'telnyx',
           providerMessageId: payload.id || payload.message_id || payload.messageId || '',
-          providerStatus: payload.status || '',
-          deliveryStatus: payload.status || '',
+          providerStatus: mappedMessageStatus,
+          deliveryStatus: mappedMessageStatus,
           rawProviderEventType: eventType,
           telnyx: payload,
         },

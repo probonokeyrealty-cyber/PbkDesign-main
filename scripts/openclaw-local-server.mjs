@@ -40976,6 +40976,15 @@ function isTrustedManualOperatorAction(params = {}) {
     .toLowerCase()
     .replace(/[^a-z0-9_-]+/g, '_')
     .replace(/^_+|_+$/g, '');
+  if (source === 'provider_live_proof') {
+    const idempotencyKey = String(params.idempotencyKey || params.idempotency_key || params.eventId || params.event_id || '')
+      .trim()
+      .toLowerCase();
+    const requestedBy = String(params.requestedBy || params.requested_by || params.actor || '')
+      .trim()
+      .toLowerCase();
+    return /^pbk-live-proof-(sms|email)-\d{14}$/.test(idempotencyKey) && requestedBy === 'pbk live proof harness';
+  }
   return [
     'manual',
     'command_center_manual',

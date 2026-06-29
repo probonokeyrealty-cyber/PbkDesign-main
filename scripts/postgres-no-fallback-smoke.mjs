@@ -47,6 +47,37 @@ assert(
     /retryAttempts: attempt/.test(bridge),
   'Hosted Postgres table reads/writes must retry transient startup failures before failing provider proof persistence.'
 );
+assert(
+  /async function persistApprovalRecordToPg\(approval = \{\}\)/.test(bridge) &&
+    /INSERT INTO public\.approvals/.test(bridge) &&
+    /async function loadApprovalRecordsFromPg/.test(bridge) &&
+    /postgres:approvals\+bridge-state/.test(bridge),
+  'Approval board create/read paths must use normalized Postgres approval rows instead of relying only on the large bridge_state snapshot.'
+);
+const createApprovalStart = bridge.indexOf('async createApproval(params = {})');
+const createApprovalEnd = bridge.indexOf('\n\n  async createApprovalTask', createApprovalStart);
+assert(createApprovalStart >= 0 && createApprovalEnd > createApprovalStart, 'createApproval handler must be present.');
+const createApprovalSource = bridge.slice(createApprovalStart, createApprovalEnd);
+assert(
+  createApprovalSource.indexOf('await persistApprovalRecordToPg(approval)') >= 0 &&
+    createApprovalSource.indexOf('await persistApprovalRecordToPg(approval)') <
+      createApprovalSource.indexOf('await persistState(state)') &&
+    /statePersist/.test(createApprovalSource),
+  'Approval creation must write the small durable approval row before attempting the large state snapshot.'
+);
+const approvalCallbackStart = bridge.indexOf("if (normalizedEvent === 'approval-callback')");
+const approvalCallbackEnd = bridge.indexOf("\n\n  if (normalizedEvent === 'recording-capture'", approvalCallbackStart);
+assert(
+  approvalCallbackStart >= 0 && approvalCallbackEnd > approvalCallbackStart,
+  'approval callback handler must be present.'
+);
+const approvalCallbackSource = bridge.slice(approvalCallbackStart, approvalCallbackEnd);
+assert(
+  /const approvalPersistence = await persistApprovalRecordToPg\(approval\);/.test(
+    approvalCallbackSource
+  ) && /statePersist/.test(approvalCallbackSource),
+  'Approval decisions must persist the small durable approval row before depending on bridge_state.'
+);
 const sendDocuSignStart = bridge.indexOf('async sendDocuSign(params = {})');
 const sendDocuSignEnd = bridge.indexOf('\n\n  async sendContract', sendDocuSignStart);
 assert(sendDocuSignStart >= 0 && sendDocuSignEnd > sendDocuSignStart, 'sendDocuSign handler must be present.');

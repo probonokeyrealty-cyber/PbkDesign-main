@@ -14597,6 +14597,116 @@ async function persistContractRecordToPg(contract = {}) {
   );
 }
 
+function buildApprovalSummary(approval = {}) {
+  return String(
+    approval.summary ||
+      approval.reason ||
+      approval.proposal ||
+      approval.notes ||
+      `${approval.type || 'approval'} for ${approval.leadName || approval.address || approval.id || 'PBK'}`
+  )
+    .trim()
+    .slice(0, 1000);
+}
+
+async function persistApprovalRecordToPg(approval = {}) {
+  const approvalId = String(approval.id || '').trim();
+  if (!approvalId) {
+    return { ok: false, reason: 'missing_approval_id', rows: [] };
+  }
+  const status = String(approval.status || 'pending').trim().toLowerCase() || 'pending';
+  return queryPgRows(
+    `INSERT INTO public.approvals (
+       id, workspace_id, type, status, lead_id, contract_id, requested_by,
+       summary, risk, payload, decided_at, created_at, updated_at
+     )
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11,$12,$13)
+     ON CONFLICT (id) DO UPDATE SET
+       workspace_id = EXCLUDED.workspace_id,
+       type = EXCLUDED.type,
+       status = EXCLUDED.status,
+       lead_id = EXCLUDED.lead_id,
+       contract_id = EXCLUDED.contract_id,
+       requested_by = EXCLUDED.requested_by,
+       summary = EXCLUDED.summary,
+       risk = EXCLUDED.risk,
+       payload = EXCLUDED.payload,
+       decided_at = EXCLUDED.decided_at,
+       updated_at = EXCLUDED.updated_at
+     RETURNING id, status, updated_at`,
+    [
+      approvalId,
+      normalizeTenantId(approval.workspaceId || approval.workspace_id || 'pbk'),
+      String(approval.type || 'offer').trim().toLowerCase() || 'offer',
+      status,
+      String(approval.leadId || approval.lead_id || '').trim(),
+      String(approval.contractId || approval.contract_id || '').trim(),
+      String(approval.requestedBy || approval.requested_by || approval.actor || 'Rex').trim(),
+      buildApprovalSummary(approval),
+      String(approval.risk || approval.riskLevel || approval.risk_level || 'medium').trim().toLowerCase(),
+      JSON.stringify(approval),
+      status === 'pending' ? null : approval.actedAt || approval.decidedAt || approval.updatedAt || isoNow(),
+      approval.createdAt || approval.created_at || isoNow(),
+      approval.updatedAt || approval.updated_at || isoNow(),
+    ]
+  );
+}
+
+function normalizePgApprovalRecord(row = {}) {
+  const payload = row.payload && typeof row.payload === 'object' ? row.payload : {};
+  return {
+    ...payload,
+    id: String(row.id || payload.id || '').trim(),
+    workspaceId: String(row.workspaceId || row.workspace_id || payload.workspaceId || 'pbk').trim(),
+    type: String(row.type || payload.type || 'offer').trim(),
+    status: String(row.status || payload.status || 'pending').trim(),
+    leadId: String(row.leadId || row.lead_id || payload.leadId || '').trim(),
+    contractId: String(row.contractId || row.contract_id || payload.contractId || '').trim(),
+    requestedBy: String(row.requestedBy || row.requested_by || payload.requestedBy || '').trim(),
+    summary: String(row.summary || payload.summary || buildApprovalSummary(payload)).trim(),
+    risk: String(row.risk || payload.risk || payload.riskLevel || 'medium').trim(),
+    actedAt: payload.actedAt || row.decidedAt || row.decided_at || '',
+    createdAt: payload.createdAt || row.createdAt || row.created_at || isoNow(),
+    updatedAt: payload.updatedAt || row.updatedAt || row.updated_at || isoNow(),
+  };
+}
+
+async function loadApprovalRecordsFromPg({ statusFilter = '', limit = 60 } = {}) {
+  const normalizedStatus = String(statusFilter || '').trim().toLowerCase();
+  const params = [Math.max(1, Math.min(200, Number(limit) || 60))];
+  const where = ["COALESCE(workspace_id, 'pbk') = 'pbk'"];
+  if (normalizedStatus) {
+    params.push(normalizedStatus);
+    where.push(`LOWER(status) = $${params.length}`);
+  }
+  const result = await queryPgRows(
+    `SELECT
+       id,
+       workspace_id AS "workspaceId",
+       type,
+       status,
+       lead_id AS "leadId",
+       contract_id AS "contractId",
+       requested_by AS "requestedBy",
+       summary,
+       risk,
+       payload,
+       decided_at AS "decidedAt",
+       created_at AS "createdAt",
+       updated_at AS "updatedAt"
+     FROM public.approvals
+     WHERE ${where.join(' AND ')}
+     ORDER BY updated_at DESC, created_at DESC
+     LIMIT $1`,
+    params
+  );
+  if (!result.ok) return result;
+  return {
+    ok: true,
+    rows: result.rows.map(normalizePgApprovalRecord),
+  };
+}
+
 async function backfillContractRecordsToPg(contracts = state.contracts || []) {
   const records = Array.isArray(contracts) ? contracts.filter((contract) => contract?.id) : [];
   let persisted = 0;
@@ -53894,7 +54004,18 @@ const toolHandlers = {
       })
     );
 
-    await persistState(state);
+    let approvalPersistence = await persistApprovalRecordToPg(approval);
+    let statePersist = { ok: true };
+    try {
+      await persistState(state);
+    } catch (error) {
+      statePersist = {
+        ok: false,
+        code: String(error?.code || ''),
+        error: String(error?.message || error),
+      };
+      if (!approvalPersistence.ok && approvalPersistence.reason !== 'no_database') throw error;
+    }
     await projectLiveConversationRecord({
       record: approval,
       projector: projectApprovalEvent,
@@ -53944,10 +54065,24 @@ const toolHandlers = {
       );
       approvalFanoutActivityRecorded = true;
     }
-    if (approvalFanoutActivityRecorded || approval.slackMessage) {
-      await persistState(state);
+    if (slack.ok || approval.slackMessage) {
+      const slackPersistence = await persistApprovalRecordToPg(approval);
+      if (slackPersistence.ok) approvalPersistence = slackPersistence;
     }
-    return { ok: true, result: 'queued_for_approval', approval, fanout, slack };
+    if (approvalFanoutActivityRecorded || approval.slackMessage) {
+      try {
+        await persistState(state);
+        statePersist = { ok: true };
+      } catch (error) {
+        statePersist = {
+          ok: false,
+          code: String(error?.code || ''),
+          error: String(error?.message || error),
+        };
+        if (!approvalPersistence.ok && approvalPersistence.reason !== 'no_database') throw error;
+      }
+    }
+    return { ok: true, result: 'queued_for_approval', approval, fanout, slack, approvalPersistence, statePersist };
   },
 
   async createApprovalTask(params = {}) {
@@ -56884,7 +57019,12 @@ async function handleEvent(eventType, payload = {}) {
           source: payload.source || 'approval-replay',
         });
         if (!slackDecisionSyncResult?.skipped) {
-          await persistState(state);
+          const approvalPersistence = await persistApprovalRecordToPg(approval);
+          try {
+            await persistState(state);
+          } catch (error) {
+            if (!approvalPersistence.ok && approvalPersistence.reason !== 'no_database') throw error;
+          }
         }
       }
       await projectLiveConversationRecord({
@@ -57445,7 +57585,18 @@ async function handleEvent(eventType, payload = {}) {
           source: payload.source || 'approval-callback',
         });
 
-    await persistState(state);
+    const approvalPersistence = await persistApprovalRecordToPg(approval);
+    let statePersist = { ok: true };
+    try {
+      await persistState(state);
+    } catch (error) {
+      statePersist = {
+        ok: false,
+        code: String(error?.code || ''),
+        error: String(error?.message || error),
+      };
+      if (!approvalPersistence.ok && approvalPersistence.reason !== 'no_database') throw error;
+    }
     await projectLiveConversationRecord({
       record: approval,
       projector: projectApprovalEvent,
@@ -57463,6 +57614,8 @@ async function handleEvent(eventType, payload = {}) {
       nurtureResult,
       localCommandResult,
       slackDecisionSyncResult,
+      approvalPersistence,
+      statePersist,
     };
   }
 
@@ -73346,9 +73499,29 @@ const server = createServer(async (request, response) => {
           .trim()
           .toLowerCase()
       );
-      const allApprovals = sortNewest(Array.isArray(state.approvals) ? state.approvals : []);
+      const postgresApprovals = await loadApprovalRecordsFromPg({
+        statusFilter,
+        limit,
+      });
+      const stateApprovals = sortNewest(Array.isArray(state.approvals) ? state.approvals : []);
+      const mergedApprovalMap = new Map();
+      for (const approval of stateApprovals) {
+        if (approval?.id) mergedApprovalMap.set(String(approval.id), approval);
+      }
+      if (postgresApprovals.ok) {
+        for (const approval of postgresApprovals.rows || []) {
+          if (approval?.id) {
+            mergedApprovalMap.set(String(approval.id), {
+              ...(mergedApprovalMap.get(String(approval.id)) || {}),
+              ...approval,
+              source: approval.source || mergedApprovalMap.get(String(approval.id))?.source || 'postgres:approvals',
+            });
+          }
+        }
+      }
+      const allApprovals = sortNewest(Array.from(mergedApprovalMap.values()));
       const visibleApprovals = includeDemo ? allApprovals : allApprovals.filter((approval) => !isDemoRuntimeApproval(approval));
-      const filteredApprovals = sortNewest(Array.isArray(state.approvals) ? state.approvals : [])
+      const filteredApprovals = sortNewest(allApprovals)
         .filter((approval) => includeDemo || !isDemoRuntimeApproval(approval))
         .filter((approval) => !statusFilter || String(approval.status || '').toLowerCase() === statusFilter)
         .slice(0, limit);
@@ -73358,6 +73531,8 @@ const server = createServer(async (request, response) => {
       json(response, 200, {
         ok: true,
         result: 'live',
+        source: postgresApprovals.ok ? 'postgres:approvals+bridge-state' : 'bridge-state',
+        warning: postgresApprovals.ok ? '' : `Postgres approvals unavailable (${postgresApprovals.error || postgresApprovals.reason || 'unknown_error'}); showing bridge-state approvals.`,
         status: statusFilter || 'all',
         count: filteredApprovals.length,
         rawApprovalCount: allApprovals.length,

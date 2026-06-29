@@ -90,6 +90,18 @@ assert(
   'Live DocuSign sends must persist a durable pending contract before attempting the provider envelope.'
 );
 assert(
+  /const DOCUSIGN_ENVELOPE_TIMEOUT_MS/.test(bridge) &&
+    /async function fetchDocuSignEnvelopeCreate/.test(bridge) &&
+    /signal: controller\.signal/.test(bridge) &&
+    /DocuSign envelope timed out after/.test(bridge),
+  'DocuSign envelope creation must use a bounded HTTP timeout so Render returns controlled provider errors instead of proxy 502s.'
+);
+assert(
+  /contract\.status = 'provider-error';/.test(sendDocuSignSource) &&
+    /contract\.envelopeId = '';/.test(sendDocuSignSource),
+  'DocuSign provider failures must not leave contracts marked sent with placeholder envelope ids.'
+);
+assert(
   /let statePersist = \{ ok: true \};/.test(sendDocuSignSource) &&
     /result: 'state_snapshot_background'/.test(sendDocuSignSource) &&
     /persistStateInBackground\('docusign live state snapshot'\)/.test(sendDocuSignSource) &&

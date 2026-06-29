@@ -658,6 +658,7 @@ const DOCUSIGN_PRIVATE_KEY = String(process.env.PBK_DOCUSIGN_PRIVATE_KEY || proc
 const DOCUSIGN_PRIVATE_KEY_B64 = String(process.env.PBK_DOCUSIGN_PRIVATE_KEY_B64 || process.env.PBK_DOCUSIGN_PRIVATE_KEY_BASE64 || process.env.DOCUSIGN_PRIVATE_KEY_B64 || process.env.DOCUSIGN_PRIVATE_KEY_BASE64 || '').trim();
 const DOCUSIGN_PRIVATE_KEY_PATH = String(process.env.PBK_DOCUSIGN_PRIVATE_KEY_PATH || process.env.DOCUSIGN_PRIVATE_KEY_PATH || '').trim();
 const DOCUSIGN_CONNECT_HMAC_SECRET = String(process.env.PBK_DOCUSIGN_CONNECT_HMAC_SECRET || '').trim();
+const DOCUSIGN_ENVELOPE_TIMEOUT_MS = Math.max(5000, Math.min(25000, Number(process.env.PBK_DOCUSIGN_ENVELOPE_TIMEOUT_MS || 18000)));
 
 // ── BatchData skip-trace ────────────────────────────────────────────────────
 const BATCHDATA_API_KEY = String(process.env.PBK_BATCHDATA_API_KEY || process.env.BATCHDATA_API_KEY || '').trim();
@@ -50286,6 +50287,39 @@ async function __dsAccessToken() {
   return __dsRefreshAccessToken();
 }
 
+async function fetchDocuSignEnvelopeCreate({ token = '', envelopeBody = {} } = {}) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), DOCUSIGN_ENVELOPE_TIMEOUT_MS);
+  try {
+    return await executeProviderCircuitGuard(
+      'docusign',
+      () =>
+        fetch(`${DOCUSIGN_REST_BASE}/v2.1/accounts/${DOCUSIGN_ACCOUNT_ID}/envelopes`, {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${token}`,
+            Accept: 'application/json',
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(envelopeBody),
+          signal: controller.signal,
+        }),
+      async () =>
+        new Response(JSON.stringify({ error: 'DocuSign circuit is open.' }), {
+          status: 503,
+          headers: { 'Content-Type': 'application/json' },
+        })
+    );
+  } catch (error) {
+    if (error?.name === 'AbortError') {
+      throw new Error(`DocuSign envelope timed out after ${DOCUSIGN_ENVELOPE_TIMEOUT_MS}ms.`);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function fireDocuSignEnvelope(params = {}) {
   const meta = getDocuSignProviderMeta();
   if (!meta.ready) {
@@ -50334,24 +50368,7 @@ async function fireDocuSignEnvelope(params = {}) {
     };
 
     try {
-      const response = await executeProviderCircuitGuard(
-        'docusign',
-        () =>
-          fetch(`${DOCUSIGN_REST_BASE}/v2.1/accounts/${DOCUSIGN_ACCOUNT_ID}/envelopes`, {
-            method: 'POST',
-            headers: {
-              Authorization: `Bearer ${token}`,
-              Accept: 'application/json',
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify(envelopeBody),
-          }),
-        async () =>
-          new Response(JSON.stringify({ error: 'DocuSign circuit is open.' }), {
-            status: 503,
-            headers: { 'Content-Type': 'application/json' },
-          })
-      );
+      const response = await fetchDocuSignEnvelopeCreate({ token, envelopeBody });
       const text = await response.text();
       let body = null;
       try {
@@ -50451,24 +50468,7 @@ async function fireDocuSignEnvelope(params = {}) {
   };
 
   try {
-    const response = await executeProviderCircuitGuard(
-      'docusign',
-      () =>
-        fetch(`${DOCUSIGN_REST_BASE}/v2.1/accounts/${DOCUSIGN_ACCOUNT_ID}/envelopes`, {
-          method: 'POST',
-          headers: {
-            Authorization: `Bearer ${token}`,
-            Accept: 'application/json',
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify(envelopeBody),
-        }),
-      async () =>
-        new Response(JSON.stringify({ error: 'DocuSign circuit is open.' }), {
-          status: 503,
-          headers: { 'Content-Type': 'application/json' },
-        })
-    );
+    const response = await fetchDocuSignEnvelopeCreate({ token, envelopeBody });
     const text = await response.text();
     let body = null;
     try {
@@ -55726,6 +55726,8 @@ const toolHandlers = {
     let providerError = '';
 
     if (docusignMeta.ready) {
+      contract.status = params.dryRun === true ? 'draft' : 'pending-provider';
+      contract.envelopeId = String(params.envelopeId || '').trim();
       if (params.dryRun !== true) {
         await upsertContract(state, {
           ...contract,
@@ -55750,9 +55752,16 @@ const toolHandlers = {
         if (contract.status === 'sent') contract.sentAt = contract.sentAt || isoNow();
       } else {
         providerError = response.error || 'DocuSign envelope create failed.';
+        contract.status = 'provider-error';
+        contract.envelopeId = '';
       }
     } else if (docusignMeta.configured) {
       providerError = docusignMeta.summary || 'DocuSign provider is configured but not ready.';
+      contract.status = 'provider-error';
+      contract.envelopeId = '';
+    } else {
+      contract.status = 'queued';
+      contract.envelopeId = '';
     }
 
     await upsertContract(state, contract);

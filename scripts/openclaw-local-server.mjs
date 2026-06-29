@@ -11139,7 +11139,7 @@ function isTransientPostgresStatePersistError(error = null) {
 }
 
 function getStatePersistRetryAttempts() {
-  return Math.max(1, Math.min(5, Number(process.env.PBK_STATE_PERSIST_RETRY_ATTEMPTS || (IS_HOSTED ? 3 : 1))));
+  return Math.max(1, Math.min(8, Number(process.env.PBK_STATE_PERSIST_RETRY_ATTEMPTS || (IS_HOSTED ? 5 : 1))));
 }
 
 function getStatePersistRetryDelayMs(attempt = 1) {
@@ -55591,6 +55591,14 @@ const toolHandlers = {
     let providerError = '';
 
     if (docusignMeta.ready) {
+      if (params.dryRun !== true) {
+        await upsertContract(state, {
+          ...contract,
+          status: 'pending-provider',
+          envelopeId: '',
+          providerProofPreflightAt: isoNow(),
+        });
+      }
       const response = await fireDocuSignEnvelope({
         ...params,
         ...contract,

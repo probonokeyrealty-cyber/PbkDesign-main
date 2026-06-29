@@ -34,6 +34,7 @@ assert(
   /function isTransientPostgresStatePersistError/.test(bridge) &&
     /57P01[\s\S]*57P02[\s\S]*57P03/.test(bridge) &&
     /function getStatePersistRetryAttempts/.test(bridge) &&
+    /IS_HOSTED \? 5 : 1/.test(bridge) &&
     /PBK_STATE_PERSIST_RETRY_ATTEMPTS/.test(bridge) &&
     /await sleep\(getStatePersistRetryDelayMs\(attempt\)\)/.test(bridge),
   'Hosted Postgres state persistence must retry transient connection-startup failures before failing closed.'
@@ -45,6 +46,17 @@ assert(
     /await sleep\(getStatePersistRetryDelayMs\(attempt\)\)/.test(bridge) &&
     /retryAttempts: attempt/.test(bridge),
   'Hosted Postgres table reads/writes must retry transient startup failures before failing provider proof persistence.'
+);
+const sendDocuSignStart = bridge.indexOf('async sendDocuSign(params = {})');
+const sendDocuSignEnd = bridge.indexOf('\n\n  async sendContract', sendDocuSignStart);
+assert(sendDocuSignStart >= 0 && sendDocuSignEnd > sendDocuSignStart, 'sendDocuSign handler must be present.');
+const sendDocuSignSource = bridge.slice(sendDocuSignStart, sendDocuSignEnd);
+assert(
+  sendDocuSignSource.indexOf("status: 'pending-provider'") >= 0 &&
+    sendDocuSignSource.indexOf('providerProofPreflightAt: isoNow()') >= 0 &&
+    sendDocuSignSource.indexOf('await upsertContract(state, {') <
+      sendDocuSignSource.indexOf('const response = await fireDocuSignEnvelope'),
+  'Live DocuSign sends must persist a durable pending contract before attempting the provider envelope.'
 );
 assert(
   /const PG_QUERY_TIMEOUT_MS/.test(bridge) &&

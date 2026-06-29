@@ -91,10 +91,12 @@ assert(
 );
 assert(
   /const DOCUSIGN_ENVELOPE_TIMEOUT_MS/.test(bridge) &&
+    /function buildDocuSignEnvelopeTimeoutResult/.test(bridge) &&
     /async function fetchDocuSignEnvelopeCreate/.test(bridge) &&
+    /const deadlineAt = startedAt \+ DOCUSIGN_ENVELOPE_TIMEOUT_MS/.test(bridge) &&
     /signal: controller\.signal/.test(bridge) &&
     /DocuSign envelope timed out after/.test(bridge),
-  'DocuSign envelope creation must use a bounded HTTP timeout so Render returns controlled provider errors instead of proxy 502s.'
+  'DocuSign envelope creation must use a bounded end-to-end timeout so Render returns controlled provider errors instead of proxy 502s.'
 );
 assert(
   /contract\.status = 'provider-error';/.test(sendDocuSignSource) &&

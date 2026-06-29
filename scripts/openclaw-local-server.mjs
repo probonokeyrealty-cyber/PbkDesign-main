@@ -50287,9 +50287,19 @@ async function __dsAccessToken() {
   return __dsRefreshAccessToken();
 }
 
-async function fetchDocuSignEnvelopeCreate({ token = '', envelopeBody = {} } = {}) {
+function buildDocuSignEnvelopeTimeoutResult(startedAt = Date.now()) {
+  return {
+    ok: false,
+    timeout: true,
+    retryable: true,
+    error: `DocuSign envelope timed out after ${Date.now() - startedAt}ms before provider confirmation.`,
+  };
+}
+
+async function fetchDocuSignEnvelopeCreate({ token = '', envelopeBody = {}, timeoutMs = DOCUSIGN_ENVELOPE_TIMEOUT_MS } = {}) {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), DOCUSIGN_ENVELOPE_TIMEOUT_MS);
+  const boundedTimeoutMs = Math.max(1000, Math.min(DOCUSIGN_ENVELOPE_TIMEOUT_MS, Number(timeoutMs) || DOCUSIGN_ENVELOPE_TIMEOUT_MS));
+  const timer = setTimeout(() => controller.abort(), boundedTimeoutMs);
   try {
     return await executeProviderCircuitGuard(
       'docusign',
@@ -50312,7 +50322,7 @@ async function fetchDocuSignEnvelopeCreate({ token = '', envelopeBody = {} } = {
     );
   } catch (error) {
     if (error?.name === 'AbortError') {
-      throw new Error(`DocuSign envelope timed out after ${DOCUSIGN_ENVELOPE_TIMEOUT_MS}ms.`);
+      throw new Error(`DocuSign envelope timed out after ${boundedTimeoutMs}ms.`);
     }
     throw error;
   } finally {
@@ -50321,6 +50331,8 @@ async function fetchDocuSignEnvelopeCreate({ token = '', envelopeBody = {} } = {
 }
 
 async function fireDocuSignEnvelope(params = {}) {
+  const startedAt = Date.now();
+  const deadlineAt = startedAt + DOCUSIGN_ENVELOPE_TIMEOUT_MS;
   const meta = getDocuSignProviderMeta();
   if (!meta.ready) {
     return {
@@ -50335,6 +50347,7 @@ async function fireDocuSignEnvelope(params = {}) {
   } catch (error) {
     return { ok: false, error: error instanceof Error ? error.message : 'DocuSign auth failed.' };
   }
+  if (Date.now() >= deadlineAt) return buildDocuSignEnvelopeTimeoutResult(startedAt);
 
   const signers =
     Array.isArray(params.signers) && params.signers.length
@@ -50368,7 +50381,12 @@ async function fireDocuSignEnvelope(params = {}) {
     };
 
     try {
-      const response = await fetchDocuSignEnvelopeCreate({ token, envelopeBody });
+      if (Date.now() >= deadlineAt) return buildDocuSignEnvelopeTimeoutResult(startedAt);
+      const response = await fetchDocuSignEnvelopeCreate({
+        token,
+        envelopeBody,
+        timeoutMs: deadlineAt - Date.now(),
+      });
       const text = await response.text();
       let body = null;
       try {
@@ -50435,6 +50453,7 @@ async function fireDocuSignEnvelope(params = {}) {
       };
     }
   }
+  if (Date.now() >= deadlineAt) return buildDocuSignEnvelopeTimeoutResult(startedAt);
 
   const envelopeBody = {
     emailSubject: params.emailSubject || `${params.selectedPathLabel || params.contractType || params.template || params.templateId || 'PBK Contract'} - ${params.address || params.leadName || 'Probono Key Realty'}`,
@@ -50468,7 +50487,12 @@ async function fireDocuSignEnvelope(params = {}) {
   };
 
   try {
-    const response = await fetchDocuSignEnvelopeCreate({ token, envelopeBody });
+    if (Date.now() >= deadlineAt) return buildDocuSignEnvelopeTimeoutResult(startedAt);
+    const response = await fetchDocuSignEnvelopeCreate({
+      token,
+      envelopeBody,
+      timeoutMs: deadlineAt - Date.now(),
+    });
     const text = await response.text();
     let body = null;
     try {

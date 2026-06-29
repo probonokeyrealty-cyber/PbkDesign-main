@@ -5,10 +5,6 @@ const PROVIDER_PROOF_REQUIREMENTS = {
   slack: ['PBK_SLACK_APPROVAL_CHANNEL_ID'],
 };
 
-const PROVIDER_PROOF_ALTERNATIVES = {
-  email: [['PBK_INSTANTLY_API_KEY', 'INSTANTLY_API_KEY', 'PBK_RESEND_API_KEY', 'RESEND_API_KEY']],
-};
-
 const DEFAULT_BRIDGE_URL = 'https://pbk-openclaw-bridge.onrender.com';
 const LIVE_CONFIRM_VALUE = 'send';
 
@@ -92,8 +88,7 @@ function isKnownProvider(provider) {
 
 export function getProviderProofRequirements(provider) {
   const normalizedProvider = normalizeProvider(provider);
-  const alternatives = (PROVIDER_PROOF_ALTERNATIVES[normalizedProvider] || []).map((group) => group.join('|'));
-  return [...(PROVIDER_PROOF_REQUIREMENTS[normalizedProvider] || []), ...alternatives];
+  return [...(PROVIDER_PROOF_REQUIREMENTS[normalizedProvider] || [])];
 }
 
 export function getProviderLiveProofRequirements(provider) {
@@ -116,14 +111,8 @@ export function assertLiveProofSafe({ provider, env = process.env } = {}) {
   }
 
   const baseRequired = PROVIDER_PROOF_REQUIREMENTS[normalizedProvider] || [];
-  const alternatives = PROVIDER_PROOF_ALTERNATIVES[normalizedProvider] || [];
   const required = getProviderProofRequirements(provider);
-  const missing = [
-    ...baseRequired.filter((key) => !hasEnvValue(env, key)),
-    ...alternatives
-      .filter((group) => !group.some((key) => hasEnvValue(env, key)))
-      .map((group) => group.join('|')),
-  ];
+  const missing = baseRequired.filter((key) => !hasEnvValue(env, key));
 
   if (missing.length > 0) {
     return {

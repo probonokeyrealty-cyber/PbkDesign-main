@@ -92,6 +92,7 @@ function publicResult(result = {}) {
     dryRun: result.dryRun,
     proofStatus: result.proofStatus || result.status || '',
     status: result.status || result.proofStatus || '',
+    error: result.error || '',
     httpStatus: result.httpStatus,
     missing: result.missing || [],
     required: result.required || [],

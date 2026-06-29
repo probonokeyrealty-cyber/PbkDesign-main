@@ -41640,9 +41640,9 @@ async function executeRouteToolHandler(toolName, params = {}, source = 'http-rou
 
 function getRouteToolStatusCode({ result = {}, guarded = null, qaValidation = null } = {}, { failureStatus = 400, successStatus = 200 } = {}) {
   if (guarded) return guarded.ok === false ? 409 : 202;
-  if (qaValidation?.qa?.ok === false || qaValidation?.ok === false) return 502;
   if (result?.ok === false) return failureStatus;
   if (result?.accepted === true || result?.queued === true || result?.result === 'docusign_queued') return 202;
+  if (qaValidation?.qa?.ok === false || qaValidation?.ok === false) return 502;
   return successStatus;
 }
 

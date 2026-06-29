@@ -293,6 +293,59 @@ const staleDocuSign = await runProviderLiveProof({
 assert.equal(staleDocuSign.ok, false);
 assert.equal(staleDocuSign.proofStatus, 'stale_contract_receipt');
 
+const queuedButHttpFailedDocuSign = await runProviderLiveProof({
+  provider: 'docusign',
+  dryRun: false,
+  now: new Date('2026-06-29T01:01:01.000Z'),
+  fetchImpl: async (url, init = {}) => {
+    if (String(url).endsWith('/api/contracts') && init.method === 'POST') {
+      return new Response(
+        JSON.stringify({
+          ok: false,
+          result: 'docusign_queued',
+          accepted: true,
+          queued: true,
+          contract: {
+            id: 'contract-pbk-live-proof-docusign-20260629010101',
+            idempotencyKey: 'pbk-live-proof-docusign-20260629010101',
+          },
+        }),
+        { status: 502, headers: { 'Content-Type': 'application/json' } }
+      );
+    }
+    return new Response(
+      JSON.stringify({
+        ok: true,
+        contract: {
+          id: 'contract-pbk-live-proof-docusign-20260629010101',
+          idempotencyKey: 'pbk-live-proof-docusign-20260629010101',
+          status: 'provider-error',
+          envelopeId: '',
+          providerError: 'DocuSign JWT auth failed: issuer_not_found',
+          docusignAsync: true,
+          docusignJob: { status: 'failed', error: 'DocuSign JWT auth failed: issuer_not_found' },
+        },
+      }),
+      { status: 200, headers: { 'Content-Type': 'application/json' } }
+    );
+  },
+  env: {
+    PBK_LIVE_PROOF_EMAIL_TO: 'canary@example.test',
+    PBK_DOCUSIGN_ACCOUNT_ID: 'account-id',
+    PBK_BRIDGE_API_KEY: 'bridge-secret',
+    PBK_LIVE_PROOF_CONFIRM: 'send',
+    PBK_LIVE_PROOF_DOCUSIGN_SEND: 'true',
+    PBK_LIVE_PROOF_DOCUSIGN_POLL_MS: '1000',
+    PBK_LIVE_PROOF_DOCUSIGN_POLL_INTERVAL_MS: '1',
+    PBK_LIVE_PROOF_BRIDGE_URL: 'https://bridge.example.test',
+  },
+});
+assert.equal(queuedButHttpFailedDocuSign.ok, false);
+assert.equal(queuedButHttpFailedDocuSign.queued, true);
+assert.equal(queuedButHttpFailedDocuSign.proofStatus, 'provider_error');
+assert.match(queuedButHttpFailedDocuSign.error, /issuer_not_found/);
+assert.equal(queuedButHttpFailedDocuSign.initialBridgeResult.status, 502);
+
 const unknownProvider = await runProviderLiveProof({
   provider: 'typo',
   dryRun: true,

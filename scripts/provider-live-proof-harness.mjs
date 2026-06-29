@@ -380,10 +380,7 @@ async function runDocuSignLiveProof({ env, fetchImpl, now }) {
     proof.proofStatus = 'draft_envelope_created';
     proof.status = 'draft_envelope_created';
   }
-  if (
-    proof.ok &&
-    (result.status === 202 || result.payload?.queued || result.payload?.accepted || result.payload?.result === 'docusign_queued')
-  ) {
+  if (result.status === 202 || result.payload?.queued || result.payload?.accepted || result.payload?.result === 'docusign_queued') {
     const polled = await pollDocuSignProofContract({
       env,
       fetchImpl,

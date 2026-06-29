@@ -83,11 +83,25 @@ const sendDocuSignEnd = bridge.indexOf('\n\n  async sendContract', sendDocuSignS
 assert(sendDocuSignStart >= 0 && sendDocuSignEnd > sendDocuSignStart, 'sendDocuSign handler must be present.');
 const sendDocuSignSource = bridge.slice(sendDocuSignStart, sendDocuSignEnd);
 assert(
-  sendDocuSignSource.indexOf("status: 'pending-provider'") >= 0 &&
-    sendDocuSignSource.indexOf('providerProofPreflightAt: isoNow()') >= 0 &&
-    sendDocuSignSource.indexOf('await upsertContract(state, {') <
-      sendDocuSignSource.indexOf('const response = await fireDocuSignEnvelope'),
-  'Live DocuSign sends must persist a durable pending contract before attempting the provider envelope.'
+  /status: params\.status \|\| 'draft'/.test(bridge) &&
+    /envelopeId: params\.envelopeId \|\| ''/.test(bridge) &&
+    !/envelopeId: params\.envelopeId \|\| `env-/.test(bridge) &&
+    /dryRun: params\.dryRun === true/.test(bridge) &&
+    /signers: Array\.isArray\(params\.signers\)/.test(bridge) &&
+    /docusignRequest: params\.docusignRequest \|\| buildDocuSignSendRequest\(params, params\)/.test(bridge),
+  'Contract records must default to draft with no envelope id until DocuSign returns a real provider envelope.'
+);
+assert(
+    /function shouldQueueDocuSignEnvelopeSend/.test(bridge) &&
+    /function buildDocuSignSendRequest/.test(bridge) &&
+    /function scheduleDocuSignEnvelopeJob/.test(bridge) &&
+    /async function processDocuSignEnvelopeJob/.test(bridge) &&
+    /async function claimDocuSignEnvelopeJob/.test(bridge) &&
+    /async function runDueDocuSignEnvelopeJobs/.test(bridge) &&
+    sendDocuSignSource.indexOf('buildQueuedDocuSignContract(contract, params, jobId)') >= 0 &&
+    sendDocuSignSource.indexOf('buildQueuedDocuSignContract(contract, params, jobId)') <
+      sendDocuSignSource.indexOf('scheduleDocuSignEnvelopeJob'),
+  'Live DocuSign sends must persist a durable pending contract and queue provider work before background reconciliation.'
 );
 assert(
   /const DOCUSIGN_ENVELOPE_TIMEOUT_MS/.test(bridge) &&
@@ -100,15 +114,42 @@ assert(
 );
 assert(
   /contract\.status = 'provider-error';/.test(sendDocuSignSource) &&
-    /contract\.envelopeId = '';/.test(sendDocuSignSource),
+    /contract\.envelopeId = '';/.test(sendDocuSignSource) &&
+    /const responseEnvelopeId = String\(response\.envelope\?\.envelopeId \|\| ''\)\.trim\(\);/.test(sendDocuSignSource) &&
+    /if \(response\.ok && responseEnvelopeId\)/.test(sendDocuSignSource) &&
+    /const confirmedEnvelopeId = String\(response\.envelope\?\.envelopeId \|\| ''\)\.trim\(\);/.test(bridge) &&
+    /if \(response\.ok && confirmedEnvelopeId\)/.test(bridge) &&
+    /'X-DocuSign-Idempotency-Key'/.test(bridge),
   'DocuSign provider failures must not leave contracts marked sent with placeholder envelope ids.'
 );
 assert(
+  /result: 'docusign_job_already_completed'/.test(bridge) &&
+    /result: 'docusign_job_already_processing'/.test(bridge) &&
+    /result: 'docusign_job_claim_failed'/.test(bridge) &&
+    /COALESCE\(payload #>> '\{docusignJob,status\}', ''\) NOT IN \('processing', 'completed'\)/.test(bridge) &&
+    /params: contract\.docusignRequest \|\| contract/.test(bridge),
+  'DocuSign reconciliation must preserve original send intent and avoid duplicate provider sends.'
+);
+assert(
   /let statePersist = \{ ok: true \};/.test(sendDocuSignSource) &&
-    /result: 'state_snapshot_background'/.test(sendDocuSignSource) &&
-    /persistStateInBackground\('docusign live state snapshot'\)/.test(sendDocuSignSource) &&
+    /live \? 'state_snapshot_background' : 'docusign_async_state_snapshot'/.test(sendDocuSignSource) &&
+    /persistStateInBackground\(live \? 'docusign live state snapshot' : 'docusign async queue snapshot'\)/.test(sendDocuSignSource) &&
     /statePersist,/.test(sendDocuSignSource),
-  'Live DocuSign sends must return the provider receipt after contract persistence and move the secondary state snapshot to background work.'
+  'Live and queued DocuSign sends must return after contract persistence and move the secondary state snapshot to background work.'
+);
+assert(
+  /result: queued \? 'docusign_queued'/.test(sendDocuSignSource) &&
+    /accepted: queued/.test(sendDocuSignSource) &&
+    /queued: queued/.test(sendDocuSignSource) &&
+    /if \(result\?\.accepted === true \|\| result\?\.queued === true \|\| result\?\.result === 'docusign_queued'\) return 202;/.test(
+      bridge
+    ) &&
+    /pathname === '\/api\/contracts\/docusign\/run-due'/.test(bridge) &&
+    /request\.method === 'GET'/.test(bridge) &&
+    /await loadContractForDocuSignJob\(contractDeleteMatch\.groups\.id\)/.test(bridge) &&
+    /const responseContract = result\.contract/.test(bridge) &&
+    /contract: updatedContract/.test(bridge),
+  'DocuSign async sends must return an accepted queued response, route as 202, and expose reconciliation/status endpoints.'
 );
 assert(
   /const PG_QUERY_TIMEOUT_MS/.test(bridge) &&

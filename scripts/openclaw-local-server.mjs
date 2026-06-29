@@ -33437,9 +33437,9 @@ function createContractRecord(params = {}) {
     selectedPathLabel: params.selectedPathLabel || '',
     timeline: params.timeline || '',
     earnestDeposit: params.earnestDeposit || '',
-    status: params.status || 'sent',
+    status: params.status || 'draft',
     provider: params.provider || 'DocuSign',
-    envelopeId: params.envelopeId || `env-${slugify(context.leadName || 'lead')}-${Date.now()}`,
+    envelopeId: params.envelopeId || '',
     documentTitle: params.documentTitle || 'PBK Master Deal Package',
     previewUrl: params.previewUrl || '',
     pdfUrl: params.pdfUrl || '',
@@ -33451,6 +33451,11 @@ function createContractRecord(params = {}) {
     docusignTemplateId: params.docusignTemplateId || params.docuSignTemplateId || '',
     docusignTemplateName: params.docusignTemplateName || params.docuSignTemplateName || params.templateName || '',
     templateName: params.templateName || params.docusignTemplateName || params.docuSignTemplateName || '',
+    dryRun: params.dryRun === true,
+    signers: Array.isArray(params.signers) ? params.signers.filter(Boolean) : [],
+    documentBase64: params.documentBase64 || '',
+    documentName: params.documentName || '',
+    emailSubject: params.emailSubject || '',
     templateVersion: params.templateVersion || '',
     templateDescription: params.templateDescription || '',
     templateDocuments: Array.isArray(params.templateDocuments) ? params.templateDocuments.filter(Boolean) : [],
@@ -33470,7 +33475,19 @@ function createContractRecord(params = {}) {
     underwritingReviewerName: params.underwritingReviewerName || '',
     analyzerRunId: params.analyzerRunId || params.analyzer_run_id || '',
     analyzerSnapshot: params.analyzerSnapshot || params.analyzer_snapshot || null,
+    idempotencyKey: params.idempotencyKey || params.idempotency_key || '',
+    requestedBy: params.requestedBy || params.requested_by || '',
+    source: params.source || '',
     sellerNotice: params.sellerNotice || '',
+    docusignAsync: params.docusignAsync === true,
+    docusignJobId: params.docusignJobId || '',
+    docusignQueuedAt: params.docusignQueuedAt || '',
+    docusignDesiredStatus: params.docusignDesiredStatus || '',
+    docusignRequest: params.docusignRequest || buildDocuSignSendRequest(params, params),
+    docusignJob: params.docusignJob || null,
+    providerProofPreflightAt: params.providerProofPreflightAt || '',
+    providerProofCompletedAt: params.providerProofCompletedAt || '',
+    providerError: params.providerError || '',
     sentAt: params.sentAt || params.sent_at || '',
     viewedAt: params.viewedAt || params.viewed_at || '',
     signedAt: params.signedAt || params.signed_at || '',
@@ -41625,6 +41642,7 @@ function getRouteToolStatusCode({ result = {}, guarded = null, qaValidation = nu
   if (guarded) return guarded.ok === false ? 409 : 202;
   if (qaValidation?.qa?.ok === false || qaValidation?.ok === false) return 502;
   if (result?.ok === false) return failureStatus;
+  if (result?.accepted === true || result?.queued === true || result?.result === 'docusign_queued') return 202;
   return successStatus;
 }
 
@@ -50296,7 +50314,7 @@ function buildDocuSignEnvelopeTimeoutResult(startedAt = Date.now()) {
   };
 }
 
-async function fetchDocuSignEnvelopeCreate({ token = '', envelopeBody = {}, timeoutMs = DOCUSIGN_ENVELOPE_TIMEOUT_MS } = {}) {
+async function fetchDocuSignEnvelopeCreate({ token = '', envelopeBody = {}, timeoutMs = DOCUSIGN_ENVELOPE_TIMEOUT_MS, idempotencyKey = '' } = {}) {
   const controller = new AbortController();
   const boundedTimeoutMs = Math.max(1000, Math.min(DOCUSIGN_ENVELOPE_TIMEOUT_MS, Number(timeoutMs) || DOCUSIGN_ENVELOPE_TIMEOUT_MS));
   const timer = setTimeout(() => controller.abort(), boundedTimeoutMs);
@@ -50310,6 +50328,7 @@ async function fetchDocuSignEnvelopeCreate({ token = '', envelopeBody = {}, time
             Authorization: `Bearer ${token}`,
             Accept: 'application/json',
             'Content-Type': 'application/json',
+            ...(idempotencyKey ? { 'X-DocuSign-Idempotency-Key': String(idempotencyKey).slice(0, 100) } : {}),
           },
           body: JSON.stringify(envelopeBody),
           signal: controller.signal,
@@ -50348,6 +50367,7 @@ async function fireDocuSignEnvelope(params = {}) {
     return { ok: false, error: error instanceof Error ? error.message : 'DocuSign auth failed.' };
   }
   if (Date.now() >= deadlineAt) return buildDocuSignEnvelopeTimeoutResult(startedAt);
+  const idempotencyKey = String(params.docusignJobId || params.idempotencyKey || params.contractId || params.id || '').trim();
 
   const signers =
     Array.isArray(params.signers) && params.signers.length
@@ -50386,6 +50406,7 @@ async function fireDocuSignEnvelope(params = {}) {
         token,
         envelopeBody,
         timeoutMs: deadlineAt - Date.now(),
+        idempotencyKey,
       });
       const text = await response.text();
       let body = null;
@@ -50492,6 +50513,7 @@ async function fireDocuSignEnvelope(params = {}) {
       token,
       envelopeBody,
       timeoutMs: deadlineAt - Date.now(),
+      idempotencyKey,
     });
     const text = await response.text();
     let body = null;
@@ -50524,6 +50546,388 @@ async function fireDocuSignEnvelope(params = {}) {
       error: error instanceof Error ? error.message : 'DocuSign envelope create failed.',
     };
   }
+}
+
+const DOCUSIGN_ASYNC_SENDS_ENABLED = !/^(0|false|no|off)$/i.test(
+  String(process.env.PBK_DOCUSIGN_ASYNC_SENDS || (IS_HOSTED ? 'true' : 'false')).trim()
+);
+const DOCUSIGN_ASYNC_JOB_DELAY_MS = Math.max(
+  100,
+  Math.min(10000, Number(process.env.PBK_DOCUSIGN_ASYNC_JOB_DELAY_MS || 750) || 750)
+);
+const docusignEnvelopeJobs = new Map();
+
+function shouldQueueDocuSignEnvelopeSend(params = {}, docusignMeta = getDocuSignProviderMeta()) {
+  if (!docusignMeta.ready) return false;
+  if (params.syncProviderSend === true || params.forceSyncProviderSend === true) return false;
+  if (params.asyncSend === false || params.docusignAsync === false) return false;
+  return (
+    DOCUSIGN_ASYNC_SENDS_ENABLED ||
+    params.asyncSend === true ||
+    params.docusignAsync === true ||
+    String(params.source || '').trim() === 'provider_live_proof'
+  );
+}
+
+function buildDocuSignJobId(contract = {}, params = {}) {
+  const explicit = String(params.docusignJobId || contract.docusignJobId || params.idempotencyKey || '').trim();
+  return explicit || `docusign-job-${slugify(contract.id || contract.leadName || randomUUID())}-${Date.now()}`;
+}
+
+function buildDocuSignSendRequest(params = {}, contract = {}) {
+  const saved = contract.docusignRequest && typeof contract.docusignRequest === 'object' ? contract.docusignRequest : {};
+  const desiredStatus = String(params.docusignDesiredStatus || contract.docusignDesiredStatus || saved.docusignDesiredStatus || '').trim().toLowerCase();
+  const dryRun = params.dryRun === true || saved.dryRun === true || desiredStatus === 'created';
+  const signers = Array.isArray(params.signers)
+    ? params.signers
+    : Array.isArray(saved.signers)
+      ? saved.signers
+      : Array.isArray(contract.signers)
+        ? contract.signers
+        : [];
+  return {
+    ...saved,
+    dryRun,
+    signers: signers
+      .map((signer, index) => ({
+        name: String(signer?.name || `Recipient ${index + 1}`).trim(),
+        email: String(signer?.email || '').trim(),
+        roleName: String(signer?.roleName || '').trim(),
+        recipientId: String(signer?.recipientId || index + 1).trim(),
+        routingOrder: String(signer?.routingOrder || index + 1).trim(),
+        tabs: signer?.tabs || undefined,
+      }))
+      .filter((signer) => signer.email),
+    documentBase64: String(params.documentBase64 || saved.documentBase64 || contract.documentBase64 || '').trim(),
+    documentName: String(params.documentName || saved.documentName || contract.documentName || '').trim(),
+    emailSubject: String(params.emailSubject || saved.emailSubject || contract.emailSubject || '').trim(),
+    docusignTemplateId: String(
+      params.docusignTemplateId ||
+        params.docuSignTemplateId ||
+        saved.docusignTemplateId ||
+        contract.docusignTemplateId ||
+        ''
+    ).trim(),
+    docusignTemplateName: String(params.docusignTemplateName || saved.docusignTemplateName || contract.docusignTemplateName || '').trim(),
+    templatePath: String(params.templatePath || saved.templatePath || contract.templatePath || '').trim(),
+    previewOrigin: String(params.previewOrigin || saved.previewOrigin || contract.previewOrigin || '').trim(),
+    idempotencyKey: String(params.idempotencyKey || saved.idempotencyKey || contract.idempotencyKey || '').trim(),
+    docusignJobId: String(params.docusignJobId || saved.docusignJobId || contract.docusignJobId || '').trim(),
+    docusignDesiredStatus: dryRun ? 'created' : 'sent',
+  };
+}
+
+function buildQueuedDocuSignContract(contract = {}, params = {}, jobId = '') {
+  const queuedAt = isoNow();
+  const docusignRequest = buildDocuSignSendRequest(
+    {
+      ...params,
+      docusignJobId: jobId,
+    },
+    contract
+  );
+  return {
+    ...contract,
+    status: 'pending-provider',
+    envelopeId: '',
+    providerProofPreflightAt: contract.providerProofPreflightAt || queuedAt,
+    docusignAsync: true,
+    docusignJobId: jobId,
+    docusignQueuedAt: contract.docusignQueuedAt || queuedAt,
+    docusignDesiredStatus: docusignRequest.docusignDesiredStatus,
+    dryRun: docusignRequest.dryRun,
+    signers: docusignRequest.signers,
+    documentBase64: docusignRequest.documentBase64,
+    documentName: docusignRequest.documentName,
+    emailSubject: docusignRequest.emailSubject,
+    docusignRequest,
+    docusignJob: {
+      ...(contract.docusignJob || {}),
+      id: jobId,
+      status: 'queued',
+      queuedAt,
+      attempt: Number(contract.docusignJob?.attempt || 0),
+    },
+  };
+}
+
+async function loadContractForDocuSignJob(contractId = '') {
+  const lookup = String(contractId || '').trim();
+  if (!lookup) return null;
+  const inMemory = findContractByLookup(lookup);
+  if (inMemory) return inMemory;
+  const loaded = await loadContractRecordsFromPg({ statusFilter: 'all', limit: 500 });
+  if (!loaded.ok) return null;
+  return loaded.rows.find((item) => item.id === lookup || item.contractId === lookup || item.envelopeId === lookup) || null;
+}
+
+function mergeContractIntoRuntimeState(contract = {}) {
+  const existingIndex = state.contracts.findIndex((item) => item.id === contract.id);
+  if (existingIndex >= 0) {
+    state.contracts.splice(existingIndex, 1, { ...state.contracts[existingIndex], ...contract });
+  } else {
+    state.contracts.unshift(contract);
+  }
+  limitStateArrays(state);
+  updateDerivedStatus(state);
+}
+
+async function claimDocuSignEnvelopeJob(contract = {}) {
+  const contractId = String(contract.id || '').trim();
+  if (!contractId) return { ok: false, result: 'missing_contract_id' };
+  if (!DATABASE_URL) {
+    await upsertContract(state, contract);
+    return { ok: true, result: 'claimed_without_database' };
+  }
+  const result = await queryPgRows(
+    `UPDATE public.contracts
+       SET payload = $2::jsonb,
+           status = 'pending-provider',
+           envelope_id = '',
+           updated_at = $3
+     WHERE id = $1
+       AND LOWER(status) = 'pending-provider'
+       AND COALESCE(envelope_id, '') = ''
+       AND COALESCE(payload #>> '{docusignJob,status}', '') NOT IN ('processing', 'completed')
+     RETURNING id`,
+    [contractId, JSON.stringify(contract), contract.updatedAt || isoNow()]
+  );
+  if (!result.ok) return result;
+  if (!result.rows.length) {
+    return { ok: false, result: 'docusign_job_already_claimed' };
+  }
+  mergeContractIntoRuntimeState(contract);
+  return { ok: true, result: 'claimed' };
+}
+
+async function processDocuSignEnvelopeJob({ contractId = '', params = {}, jobId = '' } = {}) {
+  const contract = await loadContractForDocuSignJob(contractId);
+  if (!contract) {
+    return { ok: false, result: 'docusign_job_contract_missing', contractId, jobId };
+  }
+  const existingEnvelopeId = String(contract.envelopeId || '').trim();
+  const existingJobStatus = String(contract.docusignJob?.status || '').trim().toLowerCase();
+  const existingStatus = String(contract.status || '').trim().toLowerCase();
+  if (existingEnvelopeId || existingJobStatus === 'completed') {
+    return {
+      ok: true,
+      result: 'docusign_job_already_completed',
+      skipped: true,
+      contract,
+      envelope: existingEnvelopeId ? { envelopeId: existingEnvelopeId } : null,
+    };
+  }
+  if (existingStatus !== 'pending-provider') {
+    return {
+      ok: false,
+      result: 'docusign_job_not_pending',
+      skipped: true,
+      contract,
+    };
+  }
+  if (existingJobStatus === 'processing') {
+    return {
+      ok: true,
+      result: 'docusign_job_already_processing',
+      queued: true,
+      contract,
+    };
+  }
+  const startedAt = isoNow();
+  const attempt = Number(contract.docusignJob?.attempt || 0) + 1;
+  const processingJobId = jobId || contract.docusignJobId || buildDocuSignJobId(contract, params);
+  const docusignRequest = buildDocuSignSendRequest(
+    {
+      ...params,
+      docusignJobId: processingJobId,
+    },
+    contract
+  );
+  const processingContract = {
+    ...contract,
+    status: 'pending-provider',
+    envelopeId: '',
+    docusignAsync: true,
+    docusignJobId: processingJobId,
+    dryRun: docusignRequest.dryRun,
+    signers: docusignRequest.signers,
+    documentBase64: docusignRequest.documentBase64,
+    documentName: docusignRequest.documentName,
+    emailSubject: docusignRequest.emailSubject,
+    docusignDesiredStatus: docusignRequest.docusignDesiredStatus,
+    docusignRequest,
+    docusignJob: {
+      ...(contract.docusignJob || {}),
+      id: processingJobId,
+      status: 'processing',
+      startedAt,
+      attempt,
+    },
+  };
+  const claim = await claimDocuSignEnvelopeJob(processingContract);
+  if (!claim.ok) {
+    if (claim.result !== 'docusign_job_already_claimed') {
+      return {
+        ok: false,
+        result: 'docusign_job_claim_failed',
+        error: claim.error || claim.reason || claim.result || 'DocuSign job claim failed.',
+        contract,
+      };
+    }
+    return {
+      ok: true,
+      result: claim.result || 'docusign_job_already_claimed',
+      queued: true,
+      contract,
+    };
+  }
+
+  const response = await fireDocuSignEnvelope({
+    ...docusignRequest,
+    ...processingContract,
+    dryRun: docusignRequest.dryRun,
+    signers: docusignRequest.signers,
+    docusignTemplateId:
+      docusignRequest.docusignTemplateId || processingContract.docusignTemplateId,
+    documentBase64: docusignRequest.documentBase64,
+    documentName: docusignRequest.documentName,
+    emailSubject: docusignRequest.emailSubject,
+    syncProviderSend: true,
+    asyncSend: false,
+  });
+
+  let finalContract = {
+    ...processingContract,
+    docusignJob: {
+      ...(processingContract.docusignJob || {}),
+      finishedAt: isoNow(),
+      attempt,
+    },
+  };
+  let live = false;
+  let envelope = null;
+  let providerError = '';
+
+  const confirmedEnvelopeId = String(response.envelope?.envelopeId || '').trim();
+  if (response.ok && confirmedEnvelopeId) {
+    live = true;
+    envelope = response.envelope || {};
+    finalContract.envelopeId = confirmedEnvelopeId;
+    finalContract.status = envelope.status === 'created' ? 'draft' : envelope.status || 'sent';
+    if (finalContract.status === 'sent') finalContract.sentAt = finalContract.sentAt || isoNow();
+    finalContract.providerProofCompletedAt = isoNow();
+    finalContract.docusignJob = {
+      ...finalContract.docusignJob,
+      status: 'completed',
+      envelopeId: finalContract.envelopeId,
+    };
+  } else {
+    providerError = response.error || 'DocuSign envelope create did not return a provider envelope id.';
+    finalContract.status = 'provider-error';
+    finalContract.envelopeId = '';
+    finalContract.providerError = providerError;
+    finalContract.docusignJob = {
+      ...finalContract.docusignJob,
+      status: 'failed',
+      error: providerError,
+      retryable: Boolean(response.retryable || response.timeout),
+    };
+  }
+
+  finalContract = await upsertContract(state, finalContract);
+  addActivity(
+    state,
+    makeActivity({
+      actor: 'DocuSign',
+      category: 'DOCUMENT',
+      status: live ? finalContract.status : 'warning',
+      text: live
+        ? `DocuSign completed ${finalContract.selectedPathLabel || 'contract'} for ${finalContract.leadName || finalContract.address || finalContract.id}.`
+        : `DocuSign envelope failed for ${finalContract.leadName || finalContract.address || finalContract.id}: ${providerError}`,
+      target: finalContract.address || finalContract.leadName || finalContract.id,
+    })
+  );
+  persistStateInBackground('docusign async job result');
+  if (live) {
+    await projectLiveConversationRecord({
+      record: finalContract,
+      projector: projectContractEvent,
+      source: 'docusign-envelope-async-worker',
+    });
+  }
+  return {
+    ok: live,
+    result: live ? 'docusign_provider_confirmed' : 'docusign_provider_error',
+    contract: finalContract,
+    envelope,
+    error: providerError || undefined,
+  };
+}
+
+function scheduleDocuSignEnvelopeJob({ contractId = '', params = {}, jobId = '', delayMs = DOCUSIGN_ASYNC_JOB_DELAY_MS } = {}) {
+  const key = String(contractId || '').trim();
+  if (!key) return { ok: false, result: 'missing_contract_id' };
+  if (docusignEnvelopeJobs.has(key)) {
+    return {
+      ok: true,
+      result: 'already_scheduled',
+      jobId: docusignEnvelopeJobs.get(key)?.jobId || jobId,
+    };
+  }
+  const resolvedJobId = jobId || buildDocuSignJobId({ id: key }, params);
+  const timer = setTimeout(async () => {
+    try {
+      await processDocuSignEnvelopeJob({
+        contractId: key,
+        params,
+        jobId: resolvedJobId,
+      });
+    } catch (error) {
+      console.warn('[pbk-local-openclaw] DocuSign async job failed:', error?.message || error);
+    } finally {
+      docusignEnvelopeJobs.delete(key);
+    }
+  }, delayMs);
+  if (typeof timer.unref === 'function') timer.unref();
+  docusignEnvelopeJobs.set(key, {
+    timer,
+    jobId: resolvedJobId,
+    queuedAt: isoNow(),
+  });
+  return {
+    ok: true,
+    result: 'scheduled',
+    jobId: resolvedJobId,
+  };
+}
+
+async function runDueDocuSignEnvelopeJobs({ limit = 5 } = {}) {
+  const loaded = await loadContractRecordsFromPg({ statusFilter: 'pending-provider', limit });
+  const records = loaded.ok ? loaded.rows : state.contracts || [];
+  const due = records
+    .filter((contract) => {
+      if (docusignEnvelopeJobs.has(String(contract.id || '').trim())) return false;
+      const status = String(contract.status || '').toLowerCase();
+      return status === 'pending-provider' && !String(contract.envelopeId || '').trim();
+    })
+    .slice(0, Math.max(1, Math.min(10, Number(limit) || 5)));
+  const results = [];
+  for (const contract of due) {
+    results.push(
+      await processDocuSignEnvelopeJob({
+        contractId: contract.id,
+        params: contract.docusignRequest || contract,
+        jobId: contract.docusignJobId || buildDocuSignJobId(contract, contract),
+      })
+    );
+  }
+  return {
+    ok: results.every((item) => item.ok),
+    result: results.some((item) => item.ok) ? 'docusign_due_jobs_processed' : 'docusign_due_jobs_attempted',
+    count: results.length,
+    source: loaded.ok ? 'postgres:contracts' : 'bridge-state',
+    results,
+  };
 }
 
 let state = await bootstrapRuntimeStateForLiveness();
@@ -55729,7 +56133,7 @@ const toolHandlers = {
       docusignTemplateId,
       docusignTemplateName: params.docusignTemplateName || params.templateName || template.name || '',
     });
-    const contract = createContractRecord({
+    let contract = createContractRecord({
       ...params,
       ...templateAudit,
       selectedPath,
@@ -55748,36 +56152,65 @@ const toolHandlers = {
     let live = false;
     let envelope = null;
     let providerError = '';
+    let queued = false;
+    let jobId = '';
+    let queueSchedule = null;
 
     if (docusignMeta.ready) {
-      contract.status = params.dryRun === true ? 'draft' : 'pending-provider';
+      const queueAsync = shouldQueueDocuSignEnvelopeSend(params, docusignMeta);
+      contract.status = params.dryRun === true && !queueAsync ? 'draft' : 'pending-provider';
       contract.envelopeId = String(params.envelopeId || '').trim();
-      if (params.dryRun !== true) {
-        await upsertContract(state, {
-          ...contract,
-          status: 'pending-provider',
-          envelopeId: '',
-          providerProofPreflightAt: isoNow(),
-        });
+      if (params.dryRun !== true || queueAsync) {
+        jobId = buildDocuSignJobId(contract, params);
+        contract = await upsertContract(
+          state,
+          queueAsync
+            ? buildQueuedDocuSignContract(contract, params, jobId)
+            : {
+                ...contract,
+                status: 'pending-provider',
+                envelopeId: '',
+                providerProofPreflightAt: isoNow(),
+              }
+        );
       }
-      const response = await fireDocuSignEnvelope({
-        ...params,
-        ...contract,
-        signers: params.signers,
-        docusignTemplateId,
-        documentBase64: params.documentBase64,
-        documentName: params.documentName,
-      });
-      if (response.ok) {
-        live = true;
-        envelope = response.envelope;
-        contract.envelopeId = envelope?.envelopeId || contract.envelopeId;
-        contract.status = envelope?.status === 'created' ? 'draft' : envelope?.status || contract.status;
-        if (contract.status === 'sent') contract.sentAt = contract.sentAt || isoNow();
+      if (queueAsync) {
+        queued = true;
+        queueSchedule = scheduleDocuSignEnvelopeJob({
+          contractId: contract.id,
+          jobId,
+          params: {
+            ...params,
+            ...contract,
+            signers: params.signers,
+            docusignTemplateId,
+            documentBase64: params.documentBase64,
+            documentName: params.documentName,
+            syncProviderSend: true,
+            asyncSend: false,
+          },
+        });
       } else {
-        providerError = response.error || 'DocuSign envelope create failed.';
-        contract.status = 'provider-error';
-        contract.envelopeId = '';
+        const response = await fireDocuSignEnvelope({
+          ...params,
+          ...contract,
+          signers: params.signers,
+          docusignTemplateId,
+          documentBase64: params.documentBase64,
+          documentName: params.documentName,
+        });
+        const responseEnvelopeId = String(response.envelope?.envelopeId || '').trim();
+        if (response.ok && responseEnvelopeId) {
+          live = true;
+          envelope = response.envelope;
+          contract.envelopeId = responseEnvelopeId;
+          contract.status = envelope?.status === 'created' ? 'draft' : envelope?.status || contract.status;
+          if (contract.status === 'sent') contract.sentAt = contract.sentAt || isoNow();
+        } else {
+          providerError = response.error || 'DocuSign envelope create did not return a provider envelope id.';
+          contract.status = 'provider-error';
+          contract.envelopeId = '';
+        }
       }
     } else if (docusignMeta.configured) {
       providerError = docusignMeta.summary || 'DocuSign provider is configured but not ready.';
@@ -55788,13 +56221,13 @@ const toolHandlers = {
       contract.envelopeId = '';
     }
 
-    await upsertContract(state, contract);
+    contract = await upsertContract(state, contract);
     const queueOnly = !docusignMeta.configured;
     const contractActivity = makeActivity({
       actor: 'DocuSign',
       category: 'DOCUMENT',
-      status: live ? contract.status : queueOnly ? 'pending' : 'warning',
-      text: live ? `Sent ${contract.selectedPathLabel || 'contract'} to ${contract.leadName}${contract.amount ? ` for ${currency(contract.amount)}` : ''} (envelope ${envelope?.envelopeId?.slice(0, 12) || ''})` : queueOnly ? `DocuSign queued for ${contract.leadName} - DocuSign env not configured.` : `DocuSign envelope failed for ${contract.leadName}: ${providerError}`,
+      status: live ? contract.status : queued || queueOnly ? 'pending' : 'warning',
+      text: live ? `Sent ${contract.selectedPathLabel || 'contract'} to ${contract.leadName}${contract.amount ? ` for ${currency(contract.amount)}` : ''} (envelope ${envelope?.envelopeId?.slice(0, 12) || ''})` : queued ? `DocuSign queued for ${contract.leadName || contract.address || contract.id}; provider confirmation will reconcile in the background.` : queueOnly ? `DocuSign queued for ${contract.leadName} - DocuSign env not configured.` : `DocuSign envelope failed for ${contract.leadName}: ${providerError}`,
       target: contract.address,
     });
     contractActivity.leadId = contract.leadId;
@@ -55803,13 +56236,13 @@ const toolHandlers = {
     contractActivity.contractId = contract.id;
     addActivity(state, contractActivity);
     let statePersist = { ok: true };
-    if (live) {
+    if (live || queued) {
       statePersist = {
         ok: true,
         queued: true,
-        result: 'state_snapshot_background',
+        result: live ? 'state_snapshot_background' : 'docusign_async_state_snapshot',
       };
-      persistStateInBackground('docusign live state snapshot');
+      persistStateInBackground(live ? 'docusign live state snapshot' : 'docusign async queue snapshot');
     } else {
       try {
         await persistState(state);
@@ -55830,7 +56263,12 @@ const toolHandlers = {
       });
     }
     return {
-      ok: live || queueOnly,
+      ok: live || queued || queueOnly,
+      result: queued ? 'docusign_queued' : live ? 'docusign_sent' : queueOnly ? 'docusign_env_unconfigured_queued' : 'docusign_provider_error',
+      accepted: queued || undefined,
+      queued: queued || undefined,
+      jobId: queued ? jobId : undefined,
+      queueSchedule: queued ? queueSchedule : undefined,
       contract,
       template,
       path: selectedPath,
@@ -55838,6 +56276,9 @@ const toolHandlers = {
       statePersist,
       docusign: {
         live,
+        queued,
+        async: queued,
+        jobId: queued ? jobId : undefined,
         configured: docusignMeta.configured,
         ready: docusignMeta.ready,
         error: providerError || undefined,
@@ -74699,6 +75140,18 @@ const server = createServer(async (request, response) => {
       return;
     }
 
+    if (request.method === 'POST' && pathname === '/api/contracts/docusign/run-due') {
+      const body = await readBody(request);
+      const result = await runDueDocuSignEnvelopeJobs({
+        limit: body.limit || body.max || 5,
+      });
+      json(response, result.ok ? 200 : result.count > 0 ? 207 : 200, {
+        ...result,
+        state: buildStateSnapshot(),
+      });
+      return;
+    }
+
     if (request.method === 'POST' && pathname === '/api/contract/send') {
       const body = await readBody(request);
       const routeTool = await executeRouteToolHandler('prepare_and_send_contract', body, 'contract-send-route');
@@ -74826,6 +75279,36 @@ const server = createServer(async (request, response) => {
       }
     }
 
+    const contractDocuSignProcessMatch = matchPath(pathname, '/api/contracts/:id/process-docusign');
+    if (contractDocuSignProcessMatch && request.method === 'POST') {
+      const body = await readBody(request);
+      const contractId = contractDocuSignProcessMatch.groups.id;
+      const scheduled = docusignEnvelopeJobs.get(String(contractId || '').trim());
+      if (scheduled && body.force !== true) {
+        json(response, 202, {
+          ok: true,
+          result: 'docusign_job_already_scheduled',
+          queued: true,
+          jobId: scheduled.jobId,
+          state: buildStateSnapshot(),
+        });
+        return;
+      }
+      const result = await processDocuSignEnvelopeJob({
+        contractId,
+        params: {
+          ...body,
+          id: contractId,
+        },
+        jobId: body.docusignJobId || body.jobId || '',
+      });
+      json(response, result.ok ? 200 : 207, {
+        ...result,
+        state: buildStateSnapshot(),
+      });
+      return;
+    }
+
     const contractActionMatch = matchPath(pathname, '/api/contracts/:id/action');
     if (contractActionMatch && request.method === 'POST') {
       const body = await readBody(request);
@@ -74845,6 +75328,26 @@ const server = createServer(async (request, response) => {
     }
 
     const contractDeleteMatch = matchPath(pathname, '/api/contracts/:id');
+    if (contractDeleteMatch && request.method === 'GET') {
+      const contract = await loadContractForDocuSignJob(contractDeleteMatch.groups.id);
+      if (!contract) {
+        json(response, 404, {
+          ok: false,
+          error: 'Contract not found.',
+          state: buildStateSnapshot(),
+        });
+        return;
+      }
+      json(response, 200, {
+        ok: true,
+        result: 'live',
+        source: 'postgres:contracts',
+        contract,
+        state: buildStateSnapshot(),
+      });
+      return;
+    }
+
     if (contractDeleteMatch && request.method === 'DELETE') {
       const body = await readBody(request);
       const contractId = contractDeleteMatch.groups.id;
@@ -74943,13 +75446,22 @@ const server = createServer(async (request, response) => {
         signers,
       });
       const result = routeTool.result || {};
+      const responseContract = result.contract && typeof result.contract === 'object' ? result.contract : contract;
 
-      contract.underwritingStatus = result.result === 'queued_for_approval' ? 'pending' : result.ok ? 'sent' : 'pending';
-      contract.updatedAt = isoNow();
-      await persistState(state);
+      const updatedContract = {
+        ...responseContract,
+        underwritingStatus:
+          result.result === 'queued_for_approval' || result.result === 'docusign_queued' || result.queued
+            ? 'pending'
+            : result.ok
+              ? 'sent'
+              : 'pending',
+        updatedAt: isoNow(),
+      };
+      await upsertContract(state, updatedContract);
       json(response, getRouteToolStatusCode(routeTool), {
         ...buildRouteToolResponse(routeTool),
-        contract,
+        contract: updatedContract,
       });
       return;
     }

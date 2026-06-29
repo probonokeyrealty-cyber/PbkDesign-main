@@ -169,6 +169,130 @@ assert.equal(slackCalls[0].url, 'https://bridge.example.test/api/approvals');
 assert.equal(slackCalls[1].url, 'https://bridge.example.test/api/approvals/pbk-live-proof-slack-20260629010101/approve');
 assert.equal(slackCalls[2].url, 'https://bridge.example.test/api/approvals?status=pending&limit=200');
 
+const docusignCalls = [];
+const mockDocuSignFetch = async (url, init = {}) => {
+  docusignCalls.push({
+    url: String(url),
+    method: init.method,
+    body: init.body ? JSON.parse(init.body) : null,
+  });
+  let body = { ok: true };
+  let status = 200;
+  if (String(url).endsWith('/api/contracts') && init.method === 'POST') {
+    status = 202;
+    body = {
+      ok: true,
+      result: 'docusign_queued',
+      accepted: true,
+      queued: true,
+      jobId: 'pbk-live-proof-docusign-20260629010101',
+      contract: {
+        id: 'contract-pbk-live-proof-docusign-20260629010101',
+        idempotencyKey: 'pbk-live-proof-docusign-20260629010101',
+        status: 'pending-provider',
+        envelopeId: '',
+        docusignJobId: 'pbk-live-proof-docusign-20260629010101',
+      },
+    };
+  } else if (String(url).endsWith('/api/contracts/contract-pbk-live-proof-docusign-20260629010101')) {
+    body = {
+      ok: true,
+      contract: {
+        id: 'contract-pbk-live-proof-docusign-20260629010101',
+        idempotencyKey: 'pbk-live-proof-docusign-20260629010101',
+        status: 'sent',
+        envelopeId: '00000000-0000-4000-9000-000000000001',
+        docusignAsync: true,
+        docusignJobId: 'pbk-live-proof-docusign-20260629010101',
+        providerProofCompletedAt: '2026-06-29T01:01:02.000Z',
+        docusignJob: {
+          status: 'completed',
+          envelopeId: '00000000-0000-4000-9000-000000000001',
+        },
+      },
+    };
+  }
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { 'Content-Type': 'application/json' },
+  });
+};
+
+const liveDocuSign = await runProviderLiveProof({
+  provider: 'docusign',
+  dryRun: false,
+  now: new Date('2026-06-29T01:01:01.000Z'),
+  fetchImpl: mockDocuSignFetch,
+  env: {
+    PBK_LIVE_PROOF_EMAIL_TO: 'canary@example.test',
+    PBK_DOCUSIGN_ACCOUNT_ID: 'account-id',
+    PBK_BRIDGE_API_KEY: 'bridge-secret',
+    PBK_LIVE_PROOF_CONFIRM: 'send',
+    PBK_LIVE_PROOF_DOCUSIGN_SEND: 'true',
+    PBK_LIVE_PROOF_DOCUSIGN_POLL_MS: '1000',
+    PBK_LIVE_PROOF_DOCUSIGN_POLL_INTERVAL_MS: '1',
+    PBK_LIVE_PROOF_BRIDGE_URL: 'https://bridge.example.test',
+  },
+});
+
+assert.equal(liveDocuSign.ok, true);
+assert.equal(liveDocuSign.queued, true);
+assert.equal(liveDocuSign.proofStatus, 'provider_confirmed');
+assert.equal(liveDocuSign.providerAttemptId, '00000000-0000-4000-9000-000000000001');
+assert.equal(docusignCalls.length, 2);
+assert.equal(docusignCalls[0].url, 'https://bridge.example.test/api/contracts');
+assert.equal(docusignCalls[0].body.id, 'contract-pbk-live-proof-docusign-20260629010101');
+assert.equal(docusignCalls[1].url, 'https://bridge.example.test/api/contracts/contract-pbk-live-proof-docusign-20260629010101');
+
+const staleDocuSign = await runProviderLiveProof({
+  provider: 'docusign',
+  dryRun: false,
+  now: new Date('2026-06-29T01:01:01.000Z'),
+  fetchImpl: async (url, init = {}) => {
+    if (String(url).endsWith('/api/contracts') && init.method === 'POST') {
+      return new Response(
+        JSON.stringify({
+          ok: true,
+          result: 'docusign_queued',
+          accepted: true,
+          queued: true,
+          contract: {
+            id: 'contract-pbk-live-proof-docusign-20260629010101',
+            idempotencyKey: 'pbk-live-proof-docusign-20260629010101',
+          },
+        }),
+        { status: 202, headers: { 'Content-Type': 'application/json' } }
+      );
+    }
+    return new Response(
+      JSON.stringify({
+        ok: true,
+        contract: {
+          id: 'contract-pbk-live-proof-docusign-20260629010101',
+          idempotencyKey: 'pbk-live-proof-docusign-OLD',
+          status: 'sent',
+          envelopeId: '00000000-0000-4000-9000-000000000001',
+          docusignAsync: true,
+          docusignJob: { status: 'completed' },
+        },
+      }),
+      { status: 200, headers: { 'Content-Type': 'application/json' } }
+    );
+  },
+  env: {
+    PBK_LIVE_PROOF_EMAIL_TO: 'canary@example.test',
+    PBK_DOCUSIGN_ACCOUNT_ID: 'account-id',
+    PBK_BRIDGE_API_KEY: 'bridge-secret',
+    PBK_LIVE_PROOF_CONFIRM: 'send',
+    PBK_LIVE_PROOF_DOCUSIGN_SEND: 'true',
+    PBK_LIVE_PROOF_DOCUSIGN_POLL_MS: '1000',
+    PBK_LIVE_PROOF_DOCUSIGN_POLL_INTERVAL_MS: '1',
+    PBK_LIVE_PROOF_BRIDGE_URL: 'https://bridge.example.test',
+  },
+});
+assert.equal(staleDocuSign.ok, false);
+assert.equal(staleDocuSign.proofStatus, 'stale_contract_receipt');
+
 const unknownProvider = await runProviderLiveProof({
   provider: 'typo',
   dryRun: true,

@@ -163,6 +163,104 @@ function proofId(provider, now = new Date()) {
   return `pbk-live-proof-${provider}-${stamp}`;
 }
 
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function envNumber(env = process.env, key = '', fallback = 0) {
+  const value = Number(env?.[key]);
+  return Number.isFinite(value) && value > 0 ? value : fallback;
+}
+
+function findDocuSignProofContract(contracts = [], proofKey = '') {
+  const key = clean(proofKey);
+  return contracts.find((contract) => contractMatchesDocuSignProof(contract, key)) || null;
+}
+
+function contractMatchesDocuSignProof(contract = {}, proofKey = '') {
+  const key = clean(proofKey);
+  if (!key) return false;
+  const strictCandidates = [
+    contract.idempotencyKey,
+    contract.idempotency_key,
+    contract.docusignJobId,
+    contract.documentTitle,
+    contract.emailSubject,
+  ].map(clean);
+  if (strictCandidates.some(Boolean)) {
+    return strictCandidates.some((candidate) => candidate === key || candidate.includes(key));
+  }
+  const fallbackCandidates = [
+    contract.id,
+    contract.contractId,
+  ].map(clean);
+  return fallbackCandidates.some((candidate) => candidate === key || candidate.includes(key));
+}
+
+async function pollDocuSignProofContract({ env, fetchImpl, id, sentEnvelope, contractId }) {
+  const timeoutMs = envNumber(env, 'PBK_LIVE_PROOF_DOCUSIGN_POLL_MS', 90000);
+  const intervalMs = envNumber(env, 'PBK_LIVE_PROOF_DOCUSIGN_POLL_INTERVAL_MS', 3000);
+  const deadline = Date.now() + timeoutMs;
+  let lastResult = null;
+  while (Date.now() <= deadline) {
+    const exactPath = clean(contractId) ? `/api/contracts/${encodeURIComponent(clean(contractId))}` : '';
+    const result = exactPath
+      ? await getBridgeJson(exactPath, { env, fetchImpl })
+      : await getBridgeJson('/api/contracts?limit=500', { env, fetchImpl });
+    lastResult = result;
+    const contract = exactPath && result.payload?.contract
+      ? result.payload.contract
+      : findDocuSignProofContract(Array.isArray(result.payload?.contracts) ? result.payload.contracts : [], id);
+    if (contract) {
+      if (!contractMatchesDocuSignProof(contract, id)) {
+        return {
+          ok: false,
+          proofStatus: 'stale_contract_receipt',
+          status: 'stale_contract_receipt',
+          error: 'DocuSign proof contract did not match the current proof idempotency key.',
+          contract,
+        };
+      }
+      const status = clean(contract.status).toLowerCase();
+      const envelopeId = clean(contract.envelopeId || contract.envelope_id);
+      const jobStatus = clean(contract.docusignJob?.status).toLowerCase();
+      const providerConfirmed = jobStatus === 'completed' || Boolean(clean(contract.providerProofCompletedAt));
+      if (status === 'provider-error') {
+        return {
+          ok: false,
+          proofStatus: 'provider_error',
+          status: 'provider_error',
+          error: contract.providerError || contract.docusignJob?.error || 'DocuSign provider returned an error.',
+          contract,
+        };
+      }
+      if (envelopeId && (providerConfirmed || !contract.docusignAsync) && (sentEnvelope || status === 'draft' || status === 'created')) {
+        return {
+          ok: true,
+          proofStatus: sentEnvelope ? 'provider_confirmed' : 'draft_envelope_created',
+          status: sentEnvelope ? 'provider_confirmed' : 'draft_envelope_created',
+          providerAttemptId: envelopeId,
+          contract,
+        };
+      }
+    }
+    await sleep(intervalMs);
+  }
+  return {
+    ok: false,
+    proofStatus: 'provider_confirmation_timeout',
+    status: 'provider_confirmation_timeout',
+    error: `DocuSign did not confirm a provider envelope before ${timeoutMs}ms.`,
+    bridgeResult: lastResult
+      ? {
+          ok: lastResult.ok,
+          status: lastResult.status,
+          result: lastResult.payload?.result || lastResult.payload?.status || '',
+        }
+      : null,
+  };
+}
+
 function summarizeBridgeProof(provider, bridgeResult, extra = {}) {
   const payload = bridgeResult.payload || {};
   const ok = bridgeResult.ok;
@@ -244,10 +342,12 @@ async function runEmailLiveProof({ env, fetchImpl, now }) {
 
 async function runDocuSignLiveProof({ env, fetchImpl, now }) {
   const id = proofId('docusign', now);
+  const contractId = `contract-${id}`;
   const sendEnvelope = clean(env.PBK_LIVE_PROOF_DOCUSIGN_SEND).toLowerCase() === 'true';
   const result = await postBridgeJson(
     '/api/contracts',
     {
+      id: contractId,
       leadName: 'PBK Live Proof Canary',
       address: 'PBK controlled proof lane',
       email: clean(env.PBK_LIVE_PROOF_EMAIL_TO),
@@ -279,6 +379,28 @@ async function runDocuSignLiveProof({ env, fetchImpl, now }) {
   if (proof.ok && !proof.sentEnvelope) {
     proof.proofStatus = 'draft_envelope_created';
     proof.status = 'draft_envelope_created';
+  }
+  if (
+    proof.ok &&
+    (result.status === 202 || result.payload?.queued || result.payload?.accepted || result.payload?.result === 'docusign_queued')
+  ) {
+    const polled = await pollDocuSignProofContract({
+      env,
+      fetchImpl,
+      id,
+      sentEnvelope: sendEnvelope,
+      contractId: result.payload?.contract?.id || contractId,
+    });
+    return {
+      ...proof,
+      ...polled,
+      queued: true,
+      jobId: result.payload?.jobId || result.payload?.contract?.docusignJobId || '',
+      initialBridgeResult: proof.bridgeResult,
+      bridgeResult: polled.bridgeResult || proof.bridgeResult,
+      contract: polled.contract || result.payload?.contract || null,
+      providerAttemptId: polled.providerAttemptId || proof.providerAttemptId,
+    };
   }
   if (proof.ok && (!result.payload?.docusign?.live || !clean(result.payload?.envelope?.envelopeId))) {
     proof.ok = false;

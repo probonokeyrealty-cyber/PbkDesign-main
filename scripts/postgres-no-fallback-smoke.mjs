@@ -31,6 +31,14 @@ assert(
   'The bridge must actively keep the Postgres pool warm and update health from a direct keepalive query.'
 );
 assert(
+  /function isTransientPostgresStatePersistError/.test(bridge) &&
+    /57P01[\s\S]*57P02[\s\S]*57P03/.test(bridge) &&
+    /function getStatePersistRetryAttempts/.test(bridge) &&
+    /PBK_STATE_PERSIST_RETRY_ATTEMPTS/.test(bridge) &&
+    /await sleep\(getStatePersistRetryDelayMs\(attempt\)\)/.test(bridge),
+  'Hosted Postgres state persistence must retry transient connection-startup failures before failing closed.'
+);
+assert(
   /const PG_QUERY_TIMEOUT_MS/.test(bridge) &&
     /const PG_STATEMENT_TIMEOUT_MS/.test(bridge) &&
     /const PG_LOCK_TIMEOUT_MS/.test(bridge) &&

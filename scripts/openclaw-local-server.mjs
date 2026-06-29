@@ -11129,21 +11129,50 @@ function buildStatePersistenceDiagnostics(nextState = {}, serialized = '', error
   };
 }
 
+function isTransientPostgresStatePersistError(error = null) {
+  const code = String(error?.code || error?.name || '').trim();
+  const message = String(error?.message || error || '');
+  return (
+    ['57P01', '57P02', '57P03', '53300', '08000', '08001', '08003', '08004', '08006', '08007', '08P01', 'ECONNRESET', 'ETIMEDOUT', 'EPIPE'].includes(code) ||
+    /not yet accepting connections|terminating connection|connection terminated|connection ended unexpectedly|timeout|too many connections/i.test(message)
+  );
+}
+
+function getStatePersistRetryAttempts() {
+  return Math.max(1, Math.min(5, Number(process.env.PBK_STATE_PERSIST_RETRY_ATTEMPTS || (IS_HOSTED ? 3 : 1))));
+}
+
+function getStatePersistRetryDelayMs(attempt = 1) {
+  const base = Math.max(50, Math.min(1000, Number(process.env.PBK_STATE_PERSIST_RETRY_BASE_MS || 250)));
+  return Math.min(3000, base * Math.max(1, 2 ** (Number(attempt || 1) - 1)));
+}
+
 async function persistStateToDb(nextState) {
   const pool = getPgPool();
   if (!pool) return false;
   let serialized = '';
+  let attempt = 0;
+  const maxAttempts = getStatePersistRetryAttempts();
   try {
     serialized = postgresJsonStringify(nextState);
-    await pool.query(
-      `INSERT INTO bridge_state (id, data, updated_at)
-       VALUES ('singleton', $1::jsonb, NOW())
-       ON CONFLICT (id) DO UPDATE SET data = EXCLUDED.data, updated_at = NOW()`,
-      [serialized]
-    );
+    for (attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      try {
+        await pool.query(
+          `INSERT INTO bridge_state (id, data, updated_at)
+           VALUES ('singleton', $1::jsonb, NOW())
+           ON CONFLICT (id) DO UPDATE SET data = EXCLUDED.data, updated_at = NOW()`,
+          [serialized]
+        );
+        break;
+      } catch (error) {
+        if (attempt >= maxAttempts || !isTransientPostgresStatePersistError(error)) throw error;
+        await sleep(getStatePersistRetryDelayMs(attempt));
+      }
+    }
     await persistActivityLogRecords(nextState.activity || []);
     markPostgresHealth(true);
     lastStateDbPersist = buildStatePersistenceDiagnostics(nextState, serialized, null, 'query');
+    lastStateDbPersist.retryAttempts = attempt;
     runtimeStateProvenance.source = 'render-postgres';
     runtimeStateProvenance.loadedFrom ||= 'render-postgres';
     runtimeStateProvenance.fallbackReason = '';
@@ -11156,6 +11185,8 @@ async function persistStateToDb(nextState) {
       error,
       serialized ? 'query' : 'serialize'
     );
+    lastStateDbPersist.retryAttempts = attempt || 1;
+    lastStateDbPersist.retryable = isTransientPostgresStatePersistError(error);
     markPostgresHealth(false, error?.message || error);
     if (!stateDbPersistWarned) {
       console.warn('[pbk-local-openclaw] postgres state persist unavailable; hosted state requires Postgres:', error?.message || error);
@@ -41617,8 +41648,9 @@ async function executeManualProviderRouteWithOutbox({
   const routeTool = circuit.result && typeof circuit.result === 'object' ? circuit.result : {};
   const routeResponse = buildRouteToolResponse(routeTool);
   const routeStatusCode = getRouteToolStatusCode(routeTool, { failureStatus: 409 });
-  const deliveryLive = routeStatusCode < 400 && isManualProviderDeliveryLive(toolName, routeResponse);
-  const statusCode = deliveryLive ? routeStatusCode : 409;
+  const providerDeliveryLive = isManualProviderDeliveryLive(toolName, routeResponse);
+  const deliveryLive = providerDeliveryLive && (routeStatusCode < 400 || ['telnyx_sms', 'sendColdEmail'].includes(toolName));
+  const statusCode = deliveryLive ? Math.min(routeStatusCode, 200) : 409;
   const error = deliveryLive ? '' : getManualProviderError(routeResponse, statusCode);
   if (deliveryLive) providerCircuitBreaker.recordSuccess(provider);
   else if (!(circuit.ok === false && circuit.providerAttempted === true && Number.isFinite(Number(circuit.failures)))) {

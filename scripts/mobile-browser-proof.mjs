@@ -254,11 +254,15 @@ async function checkRoute(context, route) {
 
     let bodyText = (await page.locator('body').innerText({ timeout: 10000 })).trim();
     if ((await isProtectedGateVisible(page, bodyText)) && teamPasscode) {
-      const refreshedSession = await authenticateTeamSession(context);
-      await installTeamSessionOnPage(page, refreshedSession);
-      await page.reload({ waitUntil: 'domcontentloaded' });
-      await page.waitForLoadState('networkidle', { timeout: 5000 }).catch(() => {});
-      bodyText = (await page.locator('body').innerText({ timeout: 10000 })).trim();
+      for (let authAttempt = 1; authAttempt <= teamAuthAttempts; authAttempt += 1) {
+        const refreshedSession = await authenticateTeamSession(context);
+        await installTeamSessionOnPage(page, refreshedSession);
+        await page.reload({ waitUntil: 'domcontentloaded' });
+        await page.waitForLoadState('networkidle', { timeout: 5000 }).catch(() => {});
+        bodyText = (await page.locator('body').innerText({ timeout: 10000 })).trim();
+        if (!(await isProtectedGateVisible(page, bodyText))) break;
+        await sleep(750 * authAttempt);
+      }
     }
 
     if (!bodyText) {

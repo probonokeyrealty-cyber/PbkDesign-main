@@ -55770,15 +55770,24 @@ const toolHandlers = {
     contractActivity.contractId = contract.id;
     addActivity(state, contractActivity);
     let statePersist = { ok: true };
-    try {
-      await persistState(state);
-    } catch (error) {
+    if (live) {
       statePersist = {
-        ok: false,
-        code: String(error?.code || ''),
-        error: String(error?.message || error),
+        ok: true,
+        queued: true,
+        result: 'state_snapshot_background',
       };
-      if (!live) throw error;
+      persistStateInBackground('docusign live state snapshot');
+    } else {
+      try {
+        await persistState(state);
+      } catch (error) {
+        statePersist = {
+          ok: false,
+          code: String(error?.code || ''),
+          error: String(error?.message || error),
+        };
+        throw error;
+      }
     }
     if (live) {
       await projectLiveConversationRecord({

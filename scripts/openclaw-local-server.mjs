@@ -7516,6 +7516,36 @@ async function ensurePgSchema() {
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
 
+    CREATE TABLE IF NOT EXISTS public.approvals (
+      id TEXT PRIMARY KEY,
+      workspace_id TEXT NOT NULL DEFAULT 'pbk',
+      type TEXT NOT NULL DEFAULT 'offer',
+      status TEXT NOT NULL DEFAULT 'pending',
+      lead_id TEXT,
+      contract_id TEXT,
+      requested_by TEXT NOT NULL DEFAULT 'Rex',
+      summary TEXT NOT NULL DEFAULT '',
+      risk TEXT NOT NULL DEFAULT 'medium',
+      payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+      decided_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    ALTER TABLE public.approvals
+      ADD COLUMN IF NOT EXISTS workspace_id TEXT NOT NULL DEFAULT 'pbk',
+      ADD COLUMN IF NOT EXISTS type TEXT NOT NULL DEFAULT 'offer',
+      ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'pending',
+      ADD COLUMN IF NOT EXISTS lead_id TEXT,
+      ADD COLUMN IF NOT EXISTS contract_id TEXT,
+      ADD COLUMN IF NOT EXISTS requested_by TEXT NOT NULL DEFAULT 'Rex',
+      ADD COLUMN IF NOT EXISTS summary TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS risk TEXT NOT NULL DEFAULT 'medium',
+      ADD COLUMN IF NOT EXISTS payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+      ADD COLUMN IF NOT EXISTS decided_at TIMESTAMPTZ,
+      ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+
     CREATE TABLE IF NOT EXISTS public.coach_memory (
       id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
       workspace_id TEXT NOT NULL DEFAULT 'pbk',

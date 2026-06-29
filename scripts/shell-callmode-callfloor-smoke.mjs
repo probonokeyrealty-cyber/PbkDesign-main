@@ -45,7 +45,14 @@ assert(
 );
 assert(/scheduleAppointmentRequest/.test(callMode), 'Schedule Follow-up should call the bridge scheduler.');
 assert(/sendOfferEmailRequest/.test(callMode), 'Send Offer Email should call the bridge email endpoint.');
-assert(/invokeRuntimeTool<Record<string, unknown>>\('updateCRM'/.test(callMode), 'Add to CRM should invoke the runtime CRM tool.');
+assert(
+  /handleAddToCrm[\s\S]*patchLeadRequest\(leadId,\s*{/.test(callMode),
+  'Add to CRM should quietly PATCH the lead profile.'
+);
+assert(
+  !/handleAddToCrm[\s\S]*invokeRuntimeTool[^(]*\('updateCRM'/.test(callMode),
+  'Add to CRM should not invoke approval-gated updateCRM.'
+);
 assert(/onBlur=\{\(\) => void saveCallNotes\(\)\}/.test(callMode), 'Call notes should autosave on blur.');
 assert(/handleScheduleFollowUp/.test(callMode) && /handleSendOfferEmail/.test(callMode) && /handleAddToCrm/.test(callMode), 'CallMode post-call buttons should have handlers.');
 

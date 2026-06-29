@@ -268,6 +268,7 @@ async function main() {
     }
 
     if (sawTranscript) break;
+    if (preflight && !sawActiveMedia && !sawFreshCall && !sawFreshMessage && !sawTranscript) break;
     await sleep(intervalMs);
   }
 

@@ -958,6 +958,15 @@ let lastStateDbLoad = {
   found: false,
   error: '',
 };
+let lastStateDbPersist = {
+  ok: !DATABASE_URL,
+  phase: DATABASE_URL ? 'pending' : 'file_mode',
+  error: '',
+  code: '',
+  byteLength: 0,
+  topLevelCounts: {},
+  checkedAt: '',
+};
 
 const SHOULD_RESET = IS_RESET;
 
@@ -1082,6 +1091,8 @@ const LIMITS = {
   revenueActions: 800,
   commandCenterActivations: 120,
   rexDecisions: 240,
+  assistantSessions: 500,
+  assistantExchanges: 2000,
   avaActiveMemories: 120,
   pbkMemories: 240,
   pbkFeedback: 240,
@@ -2301,6 +2312,13 @@ function buildAdminPersistenceStatus() {
     },
     docusign: buildDocuSignProviderStatus(),
     skillGovernance: getSkillGovernanceHealthMeta(),
+    statePersistence: {
+      backend: STATE_BACKEND,
+      provenance: runtimeStateProvenance,
+      postgresHealth: getPostgresHealthMeta(),
+      lastLoad: lastStateDbLoad,
+      lastPersist: lastStateDbPersist,
+    },
   };
 }
 
@@ -2975,6 +2993,26 @@ function hashString(value = '') {
 
 function jsonStringify(value) {
   return JSON.stringify(value, null, 2);
+}
+
+function sanitizeJsonForPostgres(value) {
+  if (typeof value === 'string') return value.replace(/\u0000/g, '');
+  if (typeof value === 'bigint') return value.toString();
+  if (Array.isArray(value)) return value.map((item) => sanitizeJsonForPostgres(item));
+  if (value instanceof Date) return value.toISOString();
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, nested]) => [
+        key.replace(/\u0000/g, ''),
+        sanitizeJsonForPostgres(nested),
+      ])
+    );
+  }
+  return value;
+}
+
+function postgresJsonStringify(value) {
+  return JSON.stringify(sanitizeJsonForPostgres(value));
 }
 
 function sleep(ms) {
@@ -6160,6 +6198,8 @@ function buildDefaultState() {
     agentVersions: [],
     agentVersionSnapshots: [],
     rexDecisions: [],
+    assistantSessions: [],
+    assistantExchanges: [],
     avaActiveMemories: [],
     pbkMemories: [],
     pbkFeedback: [],
@@ -11039,24 +11079,53 @@ async function persistActivityLogRecords(entries = []) {
   }
 }
 
+function buildStatePersistenceDiagnostics(nextState = {}, serialized = '', error = null, phase = 'query') {
+  const topLevelCounts = {};
+  if (nextState && typeof nextState === 'object') {
+    for (const [key, value] of Object.entries(nextState)) {
+      if (Array.isArray(value)) topLevelCounts[key] = value.length;
+      else if (value && typeof value === 'object') topLevelCounts[key] = Object.keys(value).length;
+    }
+  }
+  return {
+    ok: !error,
+    phase,
+    code: String(error?.code || error?.name || ''),
+    error: error ? String(error?.message || error).slice(0, 500) : '',
+    byteLength: serialized ? Buffer.byteLength(serialized, 'utf8') : 0,
+    topLevelCounts,
+    postgresReady: getPostgresHealthMeta().ready,
+    checkedAt: isoNow(),
+  };
+}
+
 async function persistStateToDb(nextState) {
   const pool = getPgPool();
   if (!pool) return false;
+  let serialized = '';
   try {
+    serialized = postgresJsonStringify(nextState);
     await pool.query(
       `INSERT INTO bridge_state (id, data, updated_at)
        VALUES ('singleton', $1::jsonb, NOW())
        ON CONFLICT (id) DO UPDATE SET data = EXCLUDED.data, updated_at = NOW()`,
-      [JSON.stringify(nextState)]
+      [serialized]
     );
     await persistActivityLogRecords(nextState.activity || []);
     markPostgresHealth(true);
+    lastStateDbPersist = buildStatePersistenceDiagnostics(nextState, serialized, null, 'query');
     runtimeStateProvenance.source = 'render-postgres';
     runtimeStateProvenance.loadedFrom ||= 'render-postgres';
     runtimeStateProvenance.fallbackReason = '';
     runtimeStateProvenance.lastPersistAt = isoNow();
     return true;
   } catch (error) {
+    lastStateDbPersist = buildStatePersistenceDiagnostics(
+      nextState,
+      serialized,
+      error,
+      serialized ? 'query' : 'serialize'
+    );
     markPostgresHealth(false, error?.message || error);
     if (!stateDbPersistWarned) {
       console.warn('[pbk-local-openclaw] postgres state persist unavailable; hosted state requires Postgres:', error?.message || error);
@@ -11097,7 +11166,11 @@ async function persistState(nextState) {
     runtimeStateProvenance.lastPersistAt = isoNow();
     const error = new Error('postgres_state_persist_required');
     error.code = 'postgres_state_persist_required';
-    error.details = runtimeStateProvenance.fallbackReason;
+    error.details = {
+      reason: runtimeStateProvenance.fallbackReason,
+      lastStateDbPersist,
+      lastStateDbLoad,
+    };
     throw error;
   }
   await ensureRuntimeDir();
@@ -11946,6 +12019,8 @@ function limitStateArrays(nextState) {
   nextState.agentVersions = sortNewest(nextState.agentVersions || []).slice(0, LIMITS.agentVersions);
   nextState.agentVersionSnapshots = sortNewest(nextState.agentVersionSnapshots || []).slice(0, LIMITS.agentVersionSnapshots);
   nextState.rexDecisions = sortNewest(nextState.rexDecisions || []).slice(0, LIMITS.rexDecisions);
+  nextState.assistantSessions = sortNewest(nextState.assistantSessions || []).slice(0, LIMITS.assistantSessions);
+  nextState.assistantExchanges = sortNewest(nextState.assistantExchanges || []).slice(0, LIMITS.assistantExchanges);
   nextState.avaActiveMemories = sortNewest(nextState.avaActiveMemories || []).slice(0, LIMITS.avaActiveMemories);
   nextState.pbkMemories = sortNewest(nextState.pbkMemories || []).slice(0, LIMITS.pbkMemories);
   nextState.pbkFeedback = sortNewest(nextState.pbkFeedback || []).slice(0, LIMITS.pbkFeedback);
@@ -12034,6 +12109,8 @@ function updateDerivedStatus(nextState) {
     lastEmotionAt: getItemTimestamp((nextState.callEmotions || [])[0] || {}) || nextState.status.emotionalIntelligence?.lastEmotionAt || null,
     lastMemoryAt: getItemTimestamp((nextState.emotionalMemory || [])[0] || {}) || nextState.status.emotionalIntelligence?.lastMemoryAt || null,
   };
+  nextState.status.assistantSessions = (nextState.assistantSessions || []).length;
+  nextState.status.assistantExchanges = (nextState.assistantExchanges || []).length;
   nextState.status.avaActiveMemories = (nextState.avaActiveMemories || []).length;
   nextState.status.pbkMemories = (nextState.pbkMemories || []).length;
   nextState.status.pbkFeedback = (nextState.pbkFeedback || []).length;
@@ -12174,6 +12251,8 @@ function hydrateState(raw = {}) {
     agentVersions: trimArray(raw.agentVersions || defaults.agentVersions, LIMITS.agentVersions),
     agentVersionSnapshots: trimArray(raw.agentVersionSnapshots || defaults.agentVersionSnapshots, LIMITS.agentVersionSnapshots),
     rexDecisions: trimArray(raw.rexDecisions || defaults.rexDecisions, LIMITS.rexDecisions),
+    assistantSessions: trimArray(raw.assistantSessions || defaults.assistantSessions, LIMITS.assistantSessions),
+    assistantExchanges: trimArray(raw.assistantExchanges || defaults.assistantExchanges, LIMITS.assistantExchanges),
     avaActiveMemories: trimArray(raw.avaActiveMemories || defaults.avaActiveMemories, LIMITS.avaActiveMemories),
     pbkMemories: trimArray(raw.pbkMemories || defaults.pbkMemories, LIMITS.pbkMemories),
     pbkFeedback: trimArray(raw.pbkFeedback || defaults.pbkFeedback, LIMITS.pbkFeedback),
@@ -29340,68 +29419,158 @@ async function runDeepSeekChatCompletion(messages = [], params = {}) {
     try {
       const speculativeConfig = readDeepSpecConfig(process.env);
       if (params.speculative !== false && isDeepSpecConfigured(speculativeConfig)) {
-        const speculative = await requestSpeculativeChatCompletion(requestBody, {
-          config: speculativeConfig,
-        });
-        speculativeMeta = {
-          attempted: true,
-          used: Boolean(speculative.ok),
-          reason: speculative.ok ? 'accepted' : speculative.reason || 'request_failed',
-          provider: speculative.meta?.provider || speculativeConfig.provider,
-          targetModel: speculative.meta?.targetModel || speculativeConfig.targetModel,
-          draftModelConfigured: Boolean(speculative.meta?.draftModelConfigured || speculativeConfig.draftModel),
-          latencyMs: speculative.meta?.latencyMs ?? null,
-        };
-        if (speculative.ok) {
-          const payload = speculative.response;
-          const message = payload?.choices?.[0]?.message || {};
-          const answer = String(message.content || '').trim();
-          const reasoning = String(message.reasoning_content || '').trim();
-          await recordTokenUsage('deepspec', model, payload?.usage || {}, {
+        const targetModel = String(speculativeConfig.targetModel || '').trim();
+        const targetMatchesRequest = !targetModel || targetModel === model;
+        if (!targetMatchesRequest) {
+          speculativeMeta = {
+            attempted: false,
+            used: false,
+            reason: 'model_mismatch',
+            provider: speculativeConfig.provider || 'vllm',
+            targetModel,
+            requestModel: model,
+            draftModelConfigured: Boolean(speculativeConfig.draftModel),
+            latencyMs: null,
+          };
+          incrementObservabilityCounter('llm_deepspec_skips', 1, {
+            provider: speculativeConfig.provider || 'vllm',
+            model,
+            targetModel,
+            reason: 'model_mismatch',
             source: params.source || 'deepseek-strategist',
-            callId: params.callId || params.call_id || '',
-            leadId: params.leadId || params.lead_id || '',
-            responseId: payload?.id || '',
           });
-          if (!answer && reasoning) {
-            return {
+        } else {
+          let speculativeFailureCounted = false;
+          incrementObservabilityCounter('llm_deepspec_attempts', 1, {
+            provider: speculativeConfig.provider || 'vllm',
+            model,
+            source: params.source || 'deepseek-strategist',
+          });
+          let speculative = null;
+          try {
+            speculative = await requestSpeculativeChatCompletion(requestBody, {
+              config: speculativeConfig,
+            });
+          } catch {
+            speculative = {
               ok: false,
-              result: 'provider_reasoning_only',
-              provider: buildProviderMeta({ speculativeServed: true }),
-              error: 'DeepSpec returned reasoning content without a speakable JSON response.',
-              reasoning,
-              usage: payload?.usage || null,
-              responseId: payload?.id || '',
+              reason: 'request_exception',
+              error: 'DeepSpec speculative endpoint threw before fallback.',
+              meta: {
+                provider: speculativeConfig.provider || 'vllm',
+                targetModel: speculativeConfig.targetModel || '',
+                draftModelConfigured: Boolean(speculativeConfig.draftModel),
+                latencyMs: null,
+              },
             };
           }
-          if (!answer) {
+          speculativeMeta = {
+            attempted: true,
+            used: Boolean(speculative.ok),
+            reason: speculative.ok ? 'accepted' : speculative.reason || 'request_failed',
+            provider: speculative.meta?.provider || speculativeConfig.provider,
+            targetModel: speculative.meta?.targetModel || speculativeConfig.targetModel,
+            draftModelConfigured: Boolean(speculative.meta?.draftModelConfigured || speculativeConfig.draftModel),
+            latencyMs: speculative.meta?.latencyMs ?? null,
+          };
+          if (Number.isFinite(Number(speculativeMeta.latencyMs))) {
+            recordLatencyMetric('llm_deepspec_latency_ms', Number(speculativeMeta.latencyMs), {
+              provider: speculativeMeta.provider || speculativeConfig.provider || 'vllm',
+              model,
+              used: speculativeMeta.used ? 'true' : 'false',
+              reason: speculativeMeta.reason || 'unknown',
+              source: params.source || 'deepseek-strategist',
+            });
+          }
+          if (speculative.ok) {
+            const payload = speculative.response;
+            const message = payload?.choices?.[0]?.message || {};
+            const answer = String(message.content || '').trim();
+            const reasoning = String(message.reasoning_content || '').trim();
+            await recordTokenUsage('deepspec', model, payload?.usage || {}, {
+              source: params.source || 'deepseek-strategist',
+              callId: params.callId || params.call_id || '',
+              leadId: params.leadId || params.lead_id || '',
+              responseId: payload?.id || '',
+            });
+            if (!answer && reasoning) {
+              speculativeMeta.used = false;
+              speculativeMeta.reason = 'reasoning_only';
+              speculativeFailureCounted = true;
+              incrementObservabilityCounter('llm_deepspec_fallbacks', 1, {
+                provider: speculativeMeta.provider || speculativeConfig.provider || 'vllm',
+                model,
+                reason: 'reasoning_only',
+                fallbackEnabled: speculativeConfig.fallbackEnabled ? 'true' : 'false',
+                source: params.source || 'deepseek-strategist',
+              });
+              if (!speculativeConfig.fallbackEnabled) {
+                return {
+                  ok: false,
+                  result: 'provider_reasoning_only',
+                  provider: buildProviderMeta({ speculativeServed: true }),
+                  error: 'DeepSpec returned reasoning content without a speakable JSON response.',
+                  reasoning,
+                  usage: payload?.usage || null,
+                  responseId: payload?.id || '',
+                };
+              }
+            } else if (!answer) {
+              speculativeMeta.used = false;
+              speculativeMeta.reason = 'empty_response';
+              speculativeFailureCounted = true;
+              incrementObservabilityCounter('llm_deepspec_fallbacks', 1, {
+                provider: speculativeMeta.provider || speculativeConfig.provider || 'vllm',
+                model,
+                reason: 'empty_response',
+                fallbackEnabled: speculativeConfig.fallbackEnabled ? 'true' : 'false',
+                source: params.source || 'deepseek-strategist',
+              });
+              if (!speculativeConfig.fallbackEnabled) {
+                return {
+                  ok: false,
+                  result: 'provider_empty_response',
+                  provider: buildProviderMeta({ speculativeServed: true }),
+                  error: 'DeepSpec returned an empty response.',
+                  usage: payload?.usage || null,
+                  responseId: payload?.id || '',
+                  payload,
+                };
+              }
+            } else {
+              incrementObservabilityCounter('llm_deepspec_accepts', 1, {
+                provider: speculativeMeta.provider || speculativeConfig.provider || 'vllm',
+                model,
+                source: params.source || 'deepseek-strategist',
+              });
+              return {
+                ok: true,
+                result: 'live',
+                answer,
+                reasoning,
+                provider: buildProviderMeta({ speculativeServed: true }),
+                usage: payload?.usage || null,
+                responseId: payload?.id || '',
+              };
+            }
+          }
+          if (!speculativeFailureCounted) {
+            incrementObservabilityCounter('llm_deepspec_fallbacks', 1, {
+              provider: speculativeMeta.provider || speculativeConfig.provider || 'vllm',
+              model,
+              reason: speculativeMeta.reason || 'request_failed',
+              fallbackEnabled: speculativeConfig.fallbackEnabled ? 'true' : 'false',
+              source: params.source || 'deepseek-strategist',
+            });
+          }
+          if (!speculativeConfig.fallbackEnabled) {
             return {
               ok: false,
-              result: 'provider_empty_response',
-              provider: buildProviderMeta({ speculativeServed: true }),
-              error: 'DeepSpec returned an empty response.',
-              usage: payload?.usage || null,
-              responseId: payload?.id || '',
-              payload,
+              result: 'speculative_provider_error',
+              provider: buildProviderMeta(),
+              error: speculative.error || `DeepSpec speculative endpoint failed: ${speculative.reason || 'request_failed'}.`,
             };
           }
-          return {
-            ok: true,
-            result: 'live',
-            answer,
-            reasoning,
-            provider: buildProviderMeta({ speculativeServed: true }),
-            usage: payload?.usage || null,
-            responseId: payload?.id || '',
-          };
-        }
-        if (!speculativeConfig.fallbackEnabled) {
-          return {
-            ok: false,
-            result: 'speculative_provider_error',
-            provider: buildProviderMeta(),
-            error: speculative.error || `DeepSpec speculative endpoint failed: ${speculative.reason || 'request_failed'}.`,
-          };
         }
       }
       controller = new AbortController();
@@ -33183,7 +33352,9 @@ function inferSenderProfile(profile = '') {
 function getSenderAddress(profile = '', override = '') {
   const selected = String(override || '').trim();
   if (selected) return selected;
-  return inferSenderProfile(profile) === 'cold' ? COLD_CAMPAIGN_EMAIL : MAIN_BUSINESS_EMAIL;
+  return inferSenderProfile(profile) === 'cold'
+    ? INSTANTLY_DEFAULT_FROM_EMAIL || COLD_CAMPAIGN_EMAIL
+    : MAIN_BUSINESS_EMAIL || INSTANTLY_DEFAULT_FROM_EMAIL;
 }
 
 function mentionsTelnyxNumberAdminIntent(normalized = '') {
@@ -37087,6 +37258,15 @@ async function collectAvaLearningCandidates(limit = AVA_MEMORY_WORKER_LIMIT) {
     if (candidates.some((candidate) => candidate.id === message.id)) continue;
     candidates.push({ ...message, source: 'bridge-state' });
   }
+
+  for (const call of sortNewest(state.calls || [])) {
+    if (candidates.length >= limit) break;
+    if (call.payload?.processedForLearning || call.processedForLearning) continue;
+    const candidate = buildAvaLearningCandidateFromCall(call, 'bridge-state-call');
+    if (!candidate) continue;
+    if (candidates.some((item) => item.id === candidate.id || item.callId === candidate.callId)) continue;
+    candidates.push(candidate);
+  }
   return candidates.slice(0, limit);
 }
 
@@ -37158,6 +37338,24 @@ async function markAvaLearningCandidateProcessed(candidate = {}, sessionId = '')
       },
       updatedAt: isoNow(),
     });
+  }
+  if (String(candidate.source || '').includes('bridge-state-call')) {
+    const localCall = getCallById(candidate.callId || candidate.id);
+    if (localCall) {
+      upsertCall(state, {
+        ...localCall,
+        payload: {
+          ...(localCall.payload && typeof localCall.payload === 'object' ? localCall.payload : {}),
+          processedForLearning: true,
+          learningSessionId: sessionId,
+          learningProcessedAt: isoNow(),
+        },
+        processedForLearning: true,
+        learningSessionId: sessionId,
+        learningProcessedAt: isoNow(),
+        updatedAt: isoNow(),
+      });
+    }
   }
 }
 
@@ -37390,6 +37588,52 @@ function getCallOutcomeLearningCandidateCallId(candidate = {}) {
   return String(candidate.callId || candidate.call_id || candidate.payload?.callId || candidate.payload?.call_id || '').trim();
 }
 
+function buildAvaLearningCandidateFromCall(call = {}, source = 'bridge-state-call') {
+  const callId = String(
+    call.id ||
+      call.callId ||
+      call.call_id ||
+      call.telnyxCallControlId ||
+      call.callControlId ||
+      call.telnyxCallLegId ||
+      call.telnyxCallSessionId ||
+      ''
+  ).trim();
+  if (!callId) return null;
+  const turns = getCallTranscriptTurns(call);
+  const transcriptText =
+    turns.length
+      ? turns.map((turn) => `${turn.speaker || 'unknown'}: ${turn.text}`).join('\n')
+      : String(call.transcriptText || call.transcript_text || call.body || call.notes || call.summary || '').trim();
+  if (!transcriptText) return null;
+  const payload = call.payload && typeof call.payload === 'object' ? call.payload : {};
+  return {
+    source,
+    id: callId,
+    callId,
+    leadId: call.leadId || call.lead_id || payload.leadId || payload.lead_id || '',
+    leadName: call.leadName || call.lead_name || payload.leadName || payload.lead_name || '',
+    address: call.address || payload.address || '',
+    channel: 'call',
+    direction: call.direction || payload.direction || 'call',
+    status: call.status || call.callStatus || payload.status || 'transcribed',
+    provider: call.provider || payload.provider || 'bridge-state-call',
+    body: transcriptText,
+    sentiment: call.sentiment ?? payload.sentiment ?? null,
+    durationSeconds: call.durationSeconds || call.duration_seconds || payload.durationSeconds || payload.duration_seconds || 0,
+    payload: {
+      ...payload,
+      callId,
+      leadId: call.leadId || call.lead_id || payload.leadId || payload.lead_id || '',
+      leadName: call.leadName || call.lead_name || payload.leadName || payload.lead_name || '',
+      address: call.address || payload.address || '',
+      sourceCallId: callId,
+    },
+    createdAt: call.createdAt || call.startedAt || call.started_at || call.created_at || call.updatedAt || isoNow(),
+    updatedAt: call.updatedAt || call.endedAt || call.ended_at || call.updated_at || isoNow(),
+  };
+}
+
 function isUsableCallOutcomeLearningCandidate(candidate = {}) {
   const channel = String(candidate.channel || '').toLowerCase();
   if (!['call', 'voice', 'recording'].includes(channel)) return false;
@@ -37447,6 +37691,15 @@ async function collectPostCallOutcomeLearningCandidates(limit = AVA_MEMORY_WORKE
     candidates.push({ ...message, source: 'bridge-state-call-outcome' });
   }
 
+  for (const call of sortNewest(state.calls || [])) {
+    if (candidates.length >= limit) break;
+    const candidate = buildAvaLearningCandidateFromCall(call, 'bridge-state-call-outcome');
+    if (!candidate) continue;
+    if (call.payload?.postCallOutcomeLearningProcessed || call.postCallOutcomeLearningProcessed) continue;
+    if (candidates.some((item) => item.id === candidate.id || getCallOutcomeLearningCandidateCallId(item) === candidate.callId)) continue;
+    candidates.push(candidate);
+  }
+
   return candidates
     .filter(isUsableCallOutcomeLearningCandidate)
     .filter((candidate) => !hasCallOutcomeLearningRecord(getCallOutcomeLearningCandidateCallId(candidate)))
@@ -37479,6 +37732,22 @@ async function markPostCallOutcomeCandidateProcessed(candidate = {}, sessionId =
       },
       updatedAt: isoNow(),
     });
+  }
+  if (String(candidate.source || '').includes('bridge-state-call')) {
+    const localCall = getCallById(getCallOutcomeLearningCandidateCallId(candidate) || candidate.id);
+    if (localCall) {
+      upsertCall(state, {
+        ...localCall,
+        payload: {
+          ...(localCall.payload && typeof localCall.payload === 'object' ? localCall.payload : {}),
+          ...payloadPatch,
+        },
+        postCallOutcomeLearningProcessed: Boolean(result?.ok),
+        postCallOutcomeLearningSessionId: sessionId,
+        postCallOutcomeLearningProcessedAt: payloadPatch.postCallOutcomeLearningProcessedAt,
+        updatedAt: isoNow(),
+      });
+    }
   }
 }
 
@@ -58957,7 +59226,83 @@ async function readPublicAvaAssistantSession(sessionId = '') {
   const cleanSessionId = sanitizePublicAvaAssistantSessionId(sessionId);
   const redisSession = await redisGetJson(redisKey('public-ava-assistant-session', cleanSessionId));
   if (redisSession) return normalizeAssistantSession(redisSession);
+  const stateSession = Array.isArray(state.assistantSessions)
+    ? state.assistantSessions.find((session) => session.id === cleanSessionId || session.sessionId === cleanSessionId)
+    : null;
+  if (stateSession?.history) return normalizeAssistantSession(stateSession);
   return normalizeAssistantSession(publicAvaAssistantSessionFallback.get(cleanSessionId) || {});
+}
+
+function getLatestAssistantTurn(history = [], role = '') {
+  const wantedRole = String(role || '').toLowerCase();
+  return [...(Array.isArray(history) ? history : [])]
+    .reverse()
+    .find((turn) => (!wantedRole || turn.role === wantedRole) && String(turn.content || '').trim());
+}
+
+function mirrorAvaAssistantSessionToBridgeState(sessionId = '', session = {}) {
+  const cleanSessionId = sanitizePublicAvaAssistantSessionId(sessionId);
+  const normalized = normalizeAssistantSession(session);
+  if (!cleanSessionId || !normalized.history.length) return;
+
+  if (!Array.isArray(state.assistantSessions)) state.assistantSessions = [];
+  if (!Array.isArray(state.assistantExchanges)) state.assistantExchanges = [];
+
+  const latestTurn = normalized.history[normalized.history.length - 1] || {};
+  const latestUser = getLatestAssistantTurn(normalized.history, 'user') || {};
+  const latestAssistant = getLatestAssistantTurn(normalized.history, 'assistant') || {};
+  const source =
+    latestTurn.metadata?.source ||
+    latestAssistant.metadata?.source ||
+    latestUser.metadata?.source ||
+    'ava-assistant-chat';
+  const now = isoNow();
+  const sessionRecord = {
+    id: cleanSessionId,
+    sessionId: cleanSessionId,
+    source,
+    leadId: normalized.leadId || '',
+    userId: normalized.userId || '',
+    messageCount: normalized.history.length,
+    lastRole: latestTurn.role || '',
+    lastUserPreview: String(latestUser.content || '').slice(0, 320),
+    lastAssistantPreview: String(latestAssistant.content || '').slice(0, 320),
+    history: normalized.history,
+    createdAt:
+      state.assistantSessions.find((item) => item.id === cleanSessionId || item.sessionId === cleanSessionId)
+        ?.createdAt || latestTurn.at || now,
+    updatedAt: latestTurn.at || now,
+  };
+  state.assistantSessions = [
+    sessionRecord,
+    ...state.assistantSessions.filter((item) => item.id !== cleanSessionId && item.sessionId !== cleanSessionId),
+  ];
+
+  if (latestAssistant.content) {
+    const exchangeSeed = `${cleanSessionId}|${latestAssistant.at || ''}|${latestUser.content || ''}|${latestAssistant.content || ''}`;
+    const exchangeId = `ava-exchange-${Math.abs(hashString(exchangeSeed))}`;
+    const exchangeRecord = {
+      id: exchangeId,
+      sessionId: cleanSessionId,
+      source,
+      leadId: normalized.leadId || '',
+      userPreview: String(latestUser.content || '').slice(0, 500),
+      assistantPreview: String(latestAssistant.content || '').slice(0, 500),
+      intent: latestAssistant.metadata?.intent || latestUser.metadata?.intent || '',
+      action: latestAssistant.metadata?.action || '',
+      createdAt: latestAssistant.at || now,
+      updatedAt: now,
+    };
+    state.assistantExchanges = [
+      exchangeRecord,
+      ...state.assistantExchanges.filter((item) => item.id !== exchangeId),
+    ];
+  }
+
+  limitStateArrays(state);
+  if (!state.status || typeof state.status !== 'object') state.status = {};
+  state.status.assistantSessions = (state.assistantSessions || []).length;
+  state.status.assistantExchanges = (state.assistantExchanges || []).length;
 }
 
 async function writePublicAvaAssistantSession(sessionId = '', session = {}) {
@@ -58968,6 +59313,7 @@ async function writePublicAvaAssistantSession(sessionId = '', session = {}) {
     updatedAt: isoNow(),
   });
   await redisSetJson(redisKey('public-ava-assistant-session', cleanSessionId), normalized, PUBLIC_AVA_ASSISTANT_SESSION_TTL_SECONDS);
+  mirrorAvaAssistantSessionToBridgeState(cleanSessionId, normalized);
   if (publicAvaAssistantSessionFallback.size > 500) {
     const oldestKey = publicAvaAssistantSessionFallback.keys().next().value;
     if (oldestKey) publicAvaAssistantSessionFallback.delete(oldestKey);
@@ -59321,8 +59667,11 @@ function dropCurrentAssistantUserTurn(history = [], text = '') {
   return turns;
 }
 
-function buildInternalAssistantDeepSeekContext(body = {}) {
+function buildInternalAssistantDeepSeekContext(body = {}, options = {}) {
   const context = body.context && typeof body.context === 'object' ? body.context : {};
+  const mission = options.missionController?.mission || null;
+  const trace = options.missionController?.trace || null;
+  const memories = Array.isArray(options.memories) ? options.memories : [];
   const lines = [
     'Authenticated Command Center Ava Chat.',
     body.source ? `Source: ${String(body.source).slice(0, 120)}` : '',
@@ -59331,6 +59680,15 @@ function buildInternalAssistantDeepSeekContext(body = {}) {
     body.leadId || body.lead_id ? `Lead id: ${String(body.leadId || body.lead_id).slice(0, 120)}` : '',
     context.path ? `Page: ${String(context.path).slice(0, 160)}` : '',
     context.search ? `Query: ${String(context.search).slice(0, 240)}` : '',
+    mission?.status ? `Mission status: ${String(mission.status).slice(0, 80)}` : '',
+    trace?.turnDecision?.reason ? `Mission reason: ${String(trace.turnDecision.reason).slice(0, 220)}` : '',
+    trace?.workingMemory?.brief ? `Working memory: ${String(trace.workingMemory.brief).slice(0, 500)}` : '',
+    memories.length
+      ? `Recent Ava lessons:\n${memories
+          .slice(0, 5)
+          .map((memory) => `- ${memory.objectionTag || memory.memoryType || 'lesson'}: ${memory.summary || memory.response || memory.prompt || ''}`.slice(0, 260))
+          .join('\n')}`
+      : '',
     'Use recent conversation history naturally. Do not expose tool names or infrastructure unless the operator asks for technical support.',
   ].filter(Boolean);
   return lines.join('\n');
@@ -59342,9 +59700,14 @@ async function runInternalAvaDeepSeekChat({
   body = {},
   sessionId = '',
   leadId = '',
+  missionController = null,
+  memories = [],
 } = {}) {
   const prompt = buildAssistantPrompt(assistantContextSession, {
-    extraContext: buildInternalAssistantDeepSeekContext(body),
+    extraContext: buildInternalAssistantDeepSeekContext(body, {
+      missionController,
+      memories,
+    }),
   });
   const deepSeekMessages = [
     { role: 'system', content: prompt },
@@ -59435,6 +59798,23 @@ async function handleInternalAvaAssistantChatRequest(request) {
   let qa = null;
   let safety = null;
   let additiveIntelligence = null;
+  const assistantMemories = sortNewest(state.avaActiveMemories || []).slice(0, 12);
+  let missionController = await runAvaMissionController({
+    sessionId,
+    text,
+    source: body.source || 'command-center-assistant',
+    leadId: assistantContextSession.leadId || '',
+    assistantIntent,
+    assistantPlan,
+    assistantSession,
+    answer,
+    toolResult,
+    qa,
+    safety,
+    additiveIntelligence,
+    state,
+    memories: assistantMemories,
+  });
 
   if (assistantPlan.action === 'tool_plan' && assistantPlan.toolPlan?.toolName === 'analyzeDeal') {
     let execution = null;
@@ -59577,6 +59957,8 @@ async function handleInternalAvaAssistantChatRequest(request) {
       body,
       sessionId,
       leadId: assistantContextSession.leadId || '',
+      missionController,
+      memories: assistantMemories,
     });
     if (deepSeekChat.ok) {
       answer = deepSeekChat.answer;
@@ -59630,7 +60012,7 @@ async function handleInternalAvaAssistantChatRequest(request) {
     additiveIntelligence,
     startedAt: assistantOpsStartedAt,
   });
-  const missionController = await runAvaMissionController({
+  missionController = await runAvaMissionController({
     sessionId,
     text,
     source: body.source || 'command-center-assistant',
@@ -59644,6 +60026,7 @@ async function handleInternalAvaAssistantChatRequest(request) {
     safety,
     additiveIntelligence,
     state,
+    memories: assistantMemories,
   });
 
   return {
@@ -72607,7 +72990,7 @@ const server = createServer(async (request, response) => {
 
     if (['GET', 'POST'].includes(request.method) && matchesPath(pathname, ['/api/admin/schema/status', '/api/admin/schema/ensure'])) {
       const pool = getPgPool();
-      const requiredTables = ['pbk_memories', 'pbk_feedback', 'pbk_intent_events', 'pbk_knowledge', 'pbk_tool_usage', 'pbk_local_commands', 'pbk_tasks', 'pbk_qa_audit', 'agent_registry', 'event_dead_letters', 'pbk_rex_autonomy_runs', 'pbk_safety_audit', 'pbk_eval_runs', 'test_cases', 'pbk_turn_latency', 'pbk_observability_alerts', 'pbk_goal_trajectories', 'pbk_action_intents', 'pbk_memory_curation_events', 'pbk_mission_resilience_eval_runs', 'agent_ops', 'generated_tools', 'agent_teams', 'skills', 'skill_usage', 'skill_definitions', 'skill_versions', 'skill_approvals', 'agent_skill_assignments', 'skill_activations', 'skill_audit_events', 'skill_projection_outbox', 'lead_profiles', 'lead_imports', 'calls', 'contract_path_templates', 'contracts', 'nurture_sequence_templates', 'nurture_instances', 'nurture_step_logs', 'pbk_research_additive_runs', 'pbk_research_additive_provider_checks', 'conversation_threads', 'conversation_thread_identities', 'conversation_events', 'communication_sender_identities', 'provider_action_dispatches'];
+      const requiredTables = ['bridge_state', 'approvals', 'pbk_memories', 'pbk_feedback', 'pbk_intent_events', 'pbk_knowledge', 'pbk_tool_usage', 'pbk_local_commands', 'pbk_tasks', 'pbk_qa_audit', 'agent_registry', 'event_dead_letters', 'pbk_rex_autonomy_runs', 'pbk_safety_audit', 'pbk_eval_runs', 'test_cases', 'pbk_turn_latency', 'pbk_observability_alerts', 'pbk_goal_trajectories', 'pbk_action_intents', 'pbk_memory_curation_events', 'pbk_mission_resilience_eval_runs', 'agent_ops', 'generated_tools', 'agent_teams', 'skills', 'skill_usage', 'skill_definitions', 'skill_versions', 'skill_approvals', 'agent_skill_assignments', 'skill_activations', 'skill_audit_events', 'skill_projection_outbox', 'lead_profiles', 'lead_imports', 'calls', 'contract_path_templates', 'contracts', 'nurture_sequence_templates', 'nurture_instances', 'nurture_step_logs', 'pbk_research_additive_runs', 'pbk_research_additive_provider_checks', 'conversation_threads', 'conversation_thread_identities', 'conversation_events', 'communication_sender_identities', 'provider_action_dispatches'];
       if (!pool) {
         json(response, 200, {
           ok: false,
@@ -73209,6 +73592,7 @@ const server = createServer(async (request, response) => {
         });
         return;
       }
+      const smsRecipient = normalizePhone(body.phone || body.to || context.phone || '');
       const send = await executeManualProviderRouteWithOutbox({
         toolName: 'telnyx_sms',
         provider: 'telnyx',
@@ -73216,11 +73600,13 @@ const server = createServer(async (request, response) => {
         params: {
           ...manualBody,
           ...context,
+          phone: smsRecipient,
+          to: smsRecipient,
           body: messageBody,
         },
         source: 'messages-route',
         leadId: context.leadId,
-        recipient: body.phone || context.phone || '',
+        recipient: smsRecipient,
         messageBody,
         requestedBy: manualBody.requestedBy,
       });
@@ -75238,6 +75624,7 @@ const server = createServer(async (request, response) => {
       ok: false,
       error: error instanceof Error ? error.message : 'Unknown server error',
       code: error?.code || (statusCode === 413 ? 'request_body_too_large' : 'bridge_error'),
+      ...(error?.code === 'postgres_state_persist_required' ? { details: error.details || null } : {}),
     });
   }
 });

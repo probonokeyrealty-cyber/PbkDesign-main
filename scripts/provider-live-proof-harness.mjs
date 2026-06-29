@@ -5,6 +5,10 @@ const PROVIDER_PROOF_REQUIREMENTS = {
   slack: ['PBK_SLACK_APPROVAL_CHANNEL_ID'],
 };
 
+const PROVIDER_PROOF_ALTERNATIVES = {
+  email: [['PBK_INSTANTLY_API_KEY', 'INSTANTLY_API_KEY', 'PBK_RESEND_API_KEY', 'RESEND_API_KEY']],
+};
+
 const DEFAULT_BRIDGE_URL = 'https://pbk-openclaw-bridge.onrender.com';
 const LIVE_CONFIRM_VALUE = 'send';
 
@@ -87,7 +91,9 @@ function isKnownProvider(provider) {
 }
 
 export function getProviderProofRequirements(provider) {
-  return [...(PROVIDER_PROOF_REQUIREMENTS[normalizeProvider(provider)] || [])];
+  const normalizedProvider = normalizeProvider(provider);
+  const alternatives = (PROVIDER_PROOF_ALTERNATIVES[normalizedProvider] || []).map((group) => group.join('|'));
+  return [...(PROVIDER_PROOF_REQUIREMENTS[normalizedProvider] || []), ...alternatives];
 }
 
 export function getProviderLiveProofRequirements(provider) {
@@ -109,8 +115,15 @@ export function assertLiveProofSafe({ provider, env = process.env } = {}) {
     };
   }
 
+  const baseRequired = PROVIDER_PROOF_REQUIREMENTS[normalizedProvider] || [];
+  const alternatives = PROVIDER_PROOF_ALTERNATIVES[normalizedProvider] || [];
   const required = getProviderProofRequirements(provider);
-  const missing = required.filter((key) => !hasEnvValue(env, key));
+  const missing = [
+    ...baseRequired.filter((key) => !hasEnvValue(env, key)),
+    ...alternatives
+      .filter((group) => !group.some((key) => hasEnvValue(env, key)))
+      .map((group) => group.join('|')),
+  ];
 
   if (missing.length > 0) {
     return {
@@ -238,6 +251,7 @@ async function runEmailLiveProof({ env, fetchImpl, now }) {
 
 async function runDocuSignLiveProof({ env, fetchImpl, now }) {
   const id = proofId('docusign', now);
+  const sendEnvelope = clean(env.PBK_LIVE_PROOF_DOCUSIGN_SEND).toLowerCase() === 'true';
   const result = await postBridgeJson(
     '/api/contracts',
     {
@@ -245,26 +259,37 @@ async function runDocuSignLiveProof({ env, fetchImpl, now }) {
       address: 'PBK controlled proof lane',
       email: clean(env.PBK_LIVE_PROOF_EMAIL_TO),
       amount: 1,
+      offerPrice: 1,
+      mao: 1,
       selectedPath: 'cash',
       selectedPathLabel: 'Controlled PBK live proof contract',
       contractType: 'provider-proof',
       documentTitle: `PBK live proof contract ${id}`,
       emailSubject: `PBK live proof DocuSign ${id}`,
+      qualificationVerified: true,
+      bantComplete: true,
       requestedBy: 'PBK live proof harness',
       source: 'provider_live_proof',
       idempotencyKey: id,
-      dryRun: clean(env.PBK_LIVE_PROOF_DOCUSIGN_SEND).toLowerCase() !== 'true',
+      dryRun: !sendEnvelope,
+      status: sendEnvelope ? 'sent' : 'draft',
     },
     { env, fetchImpl }
   );
   const proof = summarizeBridgeProof('docusign', result, {
     idempotencyKey: id,
     canary: 'PBK_LIVE_PROOF_EMAIL_TO',
-    sentEnvelope: clean(env.PBK_LIVE_PROOF_DOCUSIGN_SEND).toLowerCase() === 'true',
+    sentEnvelope: sendEnvelope,
   });
   if (proof.ok && !proof.sentEnvelope) {
     proof.proofStatus = 'draft_envelope_created';
     proof.status = 'draft_envelope_created';
+  }
+  if (proof.ok && (!result.payload?.docusign?.live || !clean(result.payload?.envelope?.envelopeId))) {
+    proof.ok = false;
+    proof.proofStatus = 'provider_confirmation_missing';
+    proof.status = 'provider_confirmation_missing';
+    proof.error = result.payload?.docusign?.error || 'DocuSign did not return a provider envelope id.';
   }
   return proof;
 }

@@ -37,7 +37,7 @@ PBK_DEEPSPEC_PROVIDER=vllm
 PBK_DEEPSPEC_TARGET_MODEL=deepseek-v4-flash
 PBK_DEEPSPEC_DRAFT_MODEL=
 PBK_DEEPSPEC_NUM_SPECULATIVE_TOKENS=5
-PBK_DEEPSPEC_TIMEOUT_MS=2500
+PBK_DEEPSPEC_TIMEOUT_MS=900
 PBK_DEEPSPEC_FALLBACK_ENABLED=true
 ```
 
@@ -63,19 +63,19 @@ PBK_DEEPSPEC_FALLBACK_ENABLED=true
   - On speculative failure, record fallback metadata in logs without exposing keys, then call the existing DeepSeek path when `PBK_DEEPSPEC_FALLBACK_ENABLED !== "false"`.
   - If fallback is disabled, return the existing bridge error shape with `provider: "deepspec"` and no secret material.
 
-- [ ] Add bridge fallback tests.
+- [x] Add bridge fallback tests.
   - Extend or add a bridge smoke that covers: speculative success, speculative timeout fallback, speculative 500 fallback, disabled config, and fallback-disabled error.
   - Verify `npm.cmd run test:ava-assistant-chat` still passes because Ava Chat depends on this path.
   - Verify `npm.cmd run test:release-status-bridge` still passes.
 
-- [ ] Add a DeepSpec data/eval harness for PBK prompts.
+- [x] Add a DeepSpec data/eval harness for PBK prompts.
   - Create `scripts/deepspec-export-ava-dataset.mjs`.
   - Input sources: approved Ava assistant exchanges, call transcripts, deal analysis prompts, and strategist responses already persisted by PBK.
   - Redact emails, phone numbers, exact street addresses, seller names when not needed, tokens, and passcodes.
   - Output JSONL with `{ "messages": [...], "accepted_answer": "..." }`.
   - Add package script `deepspec:export-ava-dataset`.
 
-- [ ] Add `docs/operations/ava-deepspec-runbook.md`.
+- [x] Add `docs/operations/ava-deepspec-runbook.md`.
   - Include vLLM launch example:
 
 ```bash
@@ -88,7 +88,7 @@ vllm serve <target-model> \
 - Include Render service env setup, health check, rollback, and benchmark commands.
 - Document that Qwen/Gemma released drafts are not production-compatible with DeepSeek target traffic unless the serving stack explicitly supports the target/draft pairing.
 
-- [ ] Add latency metrics.
+- [x] Add latency metrics.
   - Record `speculativeAttempted`, `speculativeUsed`, `speculativeFallbackReason`, `speculativeLatencyMs`, and total `deepseekLatencyMs`.
   - Surface aggregate fallback rate in the existing bridge health/debug endpoint without leaking prompts or secrets.
   - Keep the UI display simple: "Speculative lane ready/disabled/fallback" in operator diagnostics only.

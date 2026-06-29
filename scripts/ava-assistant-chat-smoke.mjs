@@ -277,16 +277,37 @@ const prompt = buildAssistantPrompt({
 });
 assert.match(prompt, /Previous conversation:/, 'Assistant prompt should include recent session context.');
 assert.match(prompt, /123 Cedar St/, 'Assistant prompt should include prior user turns.');
+assert.doesNotMatch(
+  prompt,
+  /Keep replies under two sentences/i,
+  'Ava Chat should not force every DeepSeek-backed reply into a robotic two-sentence ceiling.'
+);
+assert.match(
+  prompt,
+  /fuller conversation when the operator is asking for strategy, coaching, memory, or a complicated next action/i,
+  'Ava Chat should allow richer companion responses when the operator needs strategy or coaching.'
+);
 
 assert(
   avaChatRoute.includes('AvaThinkingBubble') &&
     avaChatRoute.includes('AssistantExchange') &&
+    avaChatRoute.includes('AvaMissionTimeline') &&
+    avaChatRoute.includes('pbk-ava-mission-timeline') &&
     avaChatRoute.includes('sendAvaAssistantChatRequest') &&
     avaChatRoute.includes('shouldUseAssistantChatRoute') &&
     avaChatRoute.includes('pbk-ava-inline-approval') &&
     avaChatRoute.includes('Review before Ava continues') &&
     avaChatRoute.includes('Speak to Ava'),
   'Ava Chat route must expose direct assistant replies, thinking, voice input, and inline approval states.'
+);
+assert(
+  avaChatRoute.includes('Ava plan') &&
+    avaChatRoute.includes('Understood:') &&
+    avaChatRoute.includes('Checked:') &&
+    avaChatRoute.includes('Review needed') &&
+    avaChatRoute.includes('Safe lane') &&
+    avaChatRoute.includes('Used {memories.length} memory signal'),
+  'Ava Chat must visibly explain Ava mission state, checked context, approval posture, and memory use.'
 );
 assert(
   avaChatRoute.includes('PBK_COMPANION_ACTIONS') &&
@@ -388,6 +409,16 @@ assert(
   'Both public and authenticated Ava chat handlers must emit assistant-plan operations.'
 );
 assert(
+  /assistantSessions:\s*500/.test(bridge) &&
+    /assistantExchanges:\s*2000/.test(bridge) &&
+    /function mirrorAvaAssistantSessionToBridgeState/.test(bridge) &&
+    /state\.assistantSessions\.find/.test(bridge) &&
+    /state\.assistantExchanges/.test(bridge) &&
+    /status\.assistantSessions/.test(bridge) &&
+    /status\.assistantExchanges/.test(bridge),
+  'Ava Chat should mirror sessions and exchanges into bridge state for durable companion memory breadcrumbs.'
+);
+assert(
   /import \{[\s\S]*buildAssistantPrompt[\s\S]*\} from '\.\/ava-assistant-chat\.mjs'/.test(bridge) &&
     /normalizeAssistantSession\(\{\s*history:\s*messages\s*\}\)/.test(bridge) &&
     /const requestedHistory =/.test(bridge) &&
@@ -398,17 +429,21 @@ assert(
   /async function runInternalAvaDeepSeekChat/.test(bridge) &&
     /buildAssistantPrompt\(assistantContextSession/.test(bridge) &&
     /runDeepSeekChatCompletion\(deepSeekMessages/.test(bridge) &&
+    /Recent Ava lessons:/.test(bridge) &&
+    /missionController,\s*\n\s*memories: assistantMemories/.test(bridge) &&
     /assistantPlan\.action === 'general'[\s\S]*runInternalAvaDeepSeekChat/.test(bridge),
-  'Authenticated general Ava chat must use the DeepSeek chat path with recent session history before falling back to static brain answers.'
+  'Authenticated general Ava chat must use DeepSeek with recent session history, active memories, and mission context before falling back.'
 );
 assert(
   /import \{ runAvaMissionController \} from '\.\/ava-mission-controller\.mjs'/.test(bridge) &&
+    /let missionController = await runAvaMissionController\(\{[\s\S]*memories:\s*assistantMemories/.test(bridge) &&
     /handleInternalAvaAssistantChatRequest[\s\S]*runAvaMissionController\(\{[\s\S]*assistantIntent[\s\S]*assistantPlan[\s\S]*assistantSession[\s\S]*toolResult/.test(
       bridge
     ) &&
+    /missionController = await runAvaMissionController\(\{[\s\S]*toolResult[\s\S]*memories:\s*assistantMemories/.test(bridge) &&
     /mission:\s*missionController\.mission/.test(bridge) &&
     /trace:\s*missionController\.trace/.test(bridge),
-  'Authenticated Ava chat must pass through the mission controller and return compact mission/trace metadata.'
+  'Authenticated Ava chat must run the mission controller before and after execution, then return compact mission/trace metadata.'
 );
 
 console.log('[ava-assistant-chat-smoke] ok');

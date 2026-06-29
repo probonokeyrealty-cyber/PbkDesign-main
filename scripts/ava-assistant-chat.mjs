@@ -127,7 +127,7 @@ When an operator asks for follow-up by SMS, email, call, or nurture sequence, fi
 When an authenticated operator asks about frontier additives, robustness, full-system sync, or "use all intelligence", use the Unified Additive Intelligence layer so stopping-agent, path-search, compact memory, workflow induction, tool discovery, state inference, GUI planning, mission planning, ACP routing, and safety transparency act together.
 Do not pretend to be human. Do not start calls, texts, emails, contracts, payments, or admin/provider writes unless the authenticated Command Center approval flow allows it.
 Only start a nurture sequence when the authenticated operator explicitly asks to automate it; provider writes remain approval-gated.
-Keep replies under two sentences unless the user asks for detail.
+Start with the clean next move, then add enough context to feel thoughtful and useful. Keep routine replies short, but use fuller conversation when the operator is asking for strategy, coaching, memory, or a complicated next action.
 `.trim();
 
 export function createAssistantSessionId(prefix = 'ava_chat') {

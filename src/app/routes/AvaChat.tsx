@@ -583,6 +583,143 @@ function buildAssistantRequestMessages(exchanges: AvaAssistantExchange[], comman
   return messages;
 }
 
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function compactText(value: unknown, max = 220) {
+  const text = String(value || '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return text.length > max ? `${text.slice(0, max - 1)}...` : text;
+}
+
+function plainMissionStatus(value: unknown) {
+  const status = String(value || '').toLowerCase();
+  if (status === 'waiting_on_approval') return 'Needs your review';
+  if (status === 'needs_review') return 'Needs a look';
+  if (status === 'blocked') return 'Paused';
+  if (status === 'completed') return 'Ready';
+  return status ? status.replace(/_/g, ' ') : 'Working';
+}
+
+function getMissionSteps(mission: Record<string, unknown> | null) {
+  const steps = Array.isArray(mission?.steps) ? mission.steps : [];
+  return steps
+    .map((step, index) => {
+      const record = asRecord(step);
+      return record
+        ? {
+            id: String(record.id || record.label || `step-${index}`),
+            label: compactText(record.label, 90),
+            status: String(record.status || ''),
+            summary: compactText(record.summary, 120),
+          }
+        : null;
+    })
+    .filter(Boolean)
+    .slice(0, 4) as Array<{ id: string; label: string; status: string; summary: string }>;
+}
+
+function getMissionInsight(trace: Record<string, unknown> | null) {
+  const workingMemory = asRecord(trace?.workingMemory);
+  const turnDecision = asRecord(trace?.turnDecision);
+  const actionPolicy = asRecord(trace?.actionPolicy);
+  return (
+    compactText(workingMemory?.brief, 180) ||
+    compactText(turnDecision?.reason, 180) ||
+    compactText(actionPolicy?.reason, 180)
+  );
+}
+
+function AvaMissionTimeline({ exchange }: { exchange: AvaAssistantExchange }) {
+  const mission = asRecord(exchange.mission);
+  const trace = asRecord(exchange.trace);
+  if (!mission && !trace) return null;
+  const steps = getMissionSteps(mission);
+  const actionPolicy = asRecord(trace?.actionPolicy);
+  const workingMemory = asRecord(trace?.workingMemory);
+  const memories = Array.isArray(workingMemory?.memories) ? workingMemory.memories : [];
+  const approvalRequired =
+    mission?.approvalRequired === true || actionPolicy?.approvalRequired === true;
+  const insight = getMissionInsight(trace);
+  const goal = compactText(mission?.goal, 180);
+
+  return (
+    <div className="pbk-ava-mission-timeline mt-3 rounded-xl border border-[var(--ava-border)] bg-[var(--ava-bg)] p-3 text-xs leading-5">
+      <div className="mb-2 flex flex-wrap items-center gap-2">
+        <span className="inline-flex items-center gap-1.5 font-semibold text-[var(--ava-text)]">
+          <BrainCircuit size={14} />
+          Ava plan
+        </span>
+        <span className="rounded-full border border-[var(--ava-border)] px-2 py-0.5 text-[11px] font-semibold text-[var(--ava-text-muted)]">
+          {plainMissionStatus(mission?.status)}
+        </span>
+        {approvalRequired && (
+          <span className="inline-flex items-center gap-1 rounded-full border border-[var(--ava-warning-border)] bg-[var(--ava-warning-soft)] px-2 py-0.5 text-[11px] font-semibold text-[var(--ava-warning)]">
+            <ShieldCheck size={12} />
+            Review needed
+          </span>
+        )}
+        {!approvalRequired && (
+          <span className="inline-flex items-center gap-1 rounded-full border border-[var(--ava-success-border)] bg-[var(--ava-success-soft)] px-2 py-0.5 text-[11px] font-semibold text-[var(--ava-success)]">
+            <CheckCircle2 size={12} />
+            Safe lane
+          </span>
+        )}
+      </div>
+      {goal && (
+        <p className="mb-2 text-[var(--ava-text-muted)]">
+          <span className="font-semibold text-[var(--ava-text)]">Understood:</span> {goal}
+        </p>
+      )}
+      {insight && (
+        <p className="mb-2 text-[var(--ava-text-muted)]">
+          <span className="font-semibold text-[var(--ava-text)]">Checked:</span> {insight}
+        </p>
+      )}
+      {steps.length > 0 && (
+        <ol className="grid gap-1.5">
+          {steps.map((step) => {
+            const done = /completed|ready/i.test(step.status);
+            const waiting = /approval|input|review|blocked/i.test(step.status);
+            return (
+              <li key={step.id} className="flex gap-2">
+                <span
+                  className={[
+                    'mt-0.5 inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full border',
+                    done
+                      ? 'border-[var(--ava-success-border)] text-[var(--ava-success)]'
+                      : waiting
+                        ? 'border-[var(--ava-warning-border)] text-[var(--ava-warning)]'
+                        : 'border-[var(--ava-border)] text-[var(--ava-text-faint)]',
+                  ].join(' ')}
+                  aria-hidden="true"
+                >
+                  {done ? <CheckCircle2 size={11} /> : <Clock3 size={11} />}
+                </span>
+                <span className="min-w-0">
+                  <span className="font-semibold text-[var(--ava-text)]">{step.label}</span>
+                  {step.summary && (
+                    <span className="block text-[var(--ava-text-muted)]">{step.summary}</span>
+                  )}
+                </span>
+              </li>
+            );
+          })}
+        </ol>
+      )}
+      {memories.length > 0 && (
+        <p className="mt-2 text-[11px] font-semibold text-[var(--ava-text-faint)]">
+          Used {memories.length} memory signal{memories.length === 1 ? '' : 's'}.
+        </p>
+      )}
+    </div>
+  );
+}
+
 function getResultText(command: LocalCommandRecord) {
   if (command.error) return command.error;
   const result = command.result;
@@ -1738,6 +1875,7 @@ function AssistantExchange({
               </p>
             )}
             <p className="whitespace-pre-wrap break-words">{exchange.answer}</p>
+            <AvaMissionTimeline exchange={exchange} />
             {exchange.suggestions.length > 0 && (
               <div className="mt-3 flex flex-wrap gap-2">
                 {exchange.suggestions.map((suggestion) => (

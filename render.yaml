@@ -219,7 +219,7 @@ services:
       - key: PBK_DEEPSPEC_NUM_SPECULATIVE_TOKENS
         value: 5
       - key: PBK_DEEPSPEC_TIMEOUT_MS
-        value: 2500
+        value: 900
       - key: PBK_DEEPSPEC_FALLBACK_ENABLED
         value: "true"
       - key: PBK_STRATEGIST_PROVIDER

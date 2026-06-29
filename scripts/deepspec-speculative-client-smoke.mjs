@@ -67,6 +67,9 @@ assert.match(
 );
 
 try {
+  const defaults = readDeepSpecConfig({});
+  assert.equal(defaults.timeoutMs, 900, 'default DeepSpec timeout should fail fast before slowing the fallback path');
+
   const disabled = readDeepSpecConfig({
     PBK_DEEPSPEC_ENABLED: 'false',
     PBK_DEEPSPEC_ENDPOINT: endpoint,

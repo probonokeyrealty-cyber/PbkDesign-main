@@ -35883,6 +35883,85 @@ async function fireTelnyxRequest(method, endpoint, payload, options = {}) {
   }
 }
 
+function sanitizeTelnyxMdrRecord(body = {}) {
+  const data = body?.data && typeof body.data === 'object' ? body.data : {};
+  const recipients = Array.isArray(data.to)
+    ? data.to.map((recipient) => ({
+        phoneNumber: maskPhoneForDiagnostics(recipient?.phone_number || recipient?.phoneNumber || recipient?.number || ''),
+        status: String(recipient?.status || '').trim(),
+        updatedAt: recipient?.updated_at || recipient?.updatedAt || '',
+      }))
+    : [];
+  const providerErrors = Array.isArray(data.errors)
+    ? data.errors.map((error) => ({
+        code: String(error?.code || '').trim(),
+        title: String(error?.title || '').trim(),
+        detail: String(error?.detail || '').trim(),
+      }))
+    : [];
+  const primaryStatus = recipients.find((recipient) => recipient.status)?.status || String(data.status || '').trim();
+
+  return {
+    id: data.id || '',
+    direction: data.direction || '',
+    type: data.type || '',
+    status: primaryStatus,
+    messagingProfileId: data.messaging_profile_id || data.messagingProfileId || '',
+    from: data.from
+      ? {
+          phoneNumber: maskPhoneForDiagnostics(data.from.phone_number || data.from.phoneNumber || ''),
+          carrier: data.from.carrier || '',
+          lineType: data.from.line_type || data.from.lineType || '',
+        }
+      : null,
+    recipients,
+    webhook: {
+      webhookUrlPresent: Boolean(data.webhook_url),
+      webhookFailoverUrlPresent: Boolean(data.webhook_failover_url),
+      useProfileWebhooks: data.use_profile_webhooks,
+    },
+    costPresent: Boolean(data.cost),
+    errors: providerErrors,
+    createdAt: data.created_at || data.createdAt || '',
+    updatedAt: data.updated_at || data.updatedAt || '',
+    validUntil: data.valid_until || data.validUntil || '',
+  };
+}
+
+async function getTelnyxMessageDeliveryStatus(messageId = '') {
+  const id = String(messageId || '').trim();
+  if (!id) {
+    return {
+      ok: false,
+      status: 400,
+      result: 'missing_message_id',
+      error: 'Telnyx message id is required.',
+    };
+  }
+
+  const result = await fireTelnyxRequest('GET', `/messages/${encodeURIComponent(id)}`, undefined);
+  if (!result.ok) {
+    return {
+      ok: false,
+      status: result.status || 502,
+      result: 'provider_error',
+      error: result.error || 'Telnyx MDR lookup failed.',
+      provider: 'telnyx',
+    };
+  }
+
+  const mdr = sanitizeTelnyxMdrRecord(result.body || {});
+  return {
+    ok: true,
+    status: result.status || 200,
+    result: 'live',
+    provider: 'telnyx',
+    deliveryStatus: mdr.status,
+    messageId: mdr.id || id,
+    mdr,
+  };
+}
+
 async function searchAvailableTelnyxNumbers(params = {}) {
   const quantity = Number(params.quantity || 1);
   const query = {
@@ -74154,6 +74233,18 @@ const server = createServer(async (request, response) => {
         liveAuth: ['1', 'true', 'yes'].includes(String(url.searchParams.get('liveAuth') || url.searchParams.get('live') || '').toLowerCase()),
       });
       json(response, 200, {
+        ...result,
+        state: {
+          status: buildStateSnapshot().status,
+        },
+      });
+      return;
+    }
+
+    const telnyxMessageStatusMatch = matchPath(pathname, '/api/admin/telnyx/messages/:id/status');
+    if (request.method === 'GET' && telnyxMessageStatusMatch) {
+      const result = await getTelnyxMessageDeliveryStatus(telnyxMessageStatusMatch.groups.id);
+      json(response, result.ok ? 200 : Number(result.status || 502), {
         ...result,
         state: {
           status: buildStateSnapshot().status,

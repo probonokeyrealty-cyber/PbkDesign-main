@@ -173,7 +173,7 @@ function envNumber(env = process.env, key = '', fallback = 0) {
 }
 
 const SMS_CONFIRMED_STATUSES = new Set(['delivered']);
-const SMS_FAILED_STATUSES = new Set(['delivery_failed', 'failed', 'undelivered', 'rejected', 'expired']);
+const SMS_FAILED_STATUSES = new Set(['delivery_failed', 'failed', 'undelivered', 'rejected', 'expired', 'dlr_timeout', 'gw_timeout']);
 
 function messageMatchesProof(message = {}, proofKey = '') {
   const key = clean(proofKey);
@@ -226,6 +226,71 @@ function getMessageProviderStatus(message = {}) {
   ).toLowerCase();
 }
 
+function getMdrProviderStatus(mdr = {}) {
+  return clean(
+    mdr.deliveryStatus ||
+      mdr.status ||
+      mdr.providerStatus ||
+      mdr.mdr?.status ||
+      mdr.payload?.deliveryStatus ||
+      mdr.payload?.providerStatus
+  ).toLowerCase();
+}
+
+async function getSmsMdrProof({ env, fetchImpl, providerAttemptId = '' }) {
+  const messageId = clean(providerAttemptId);
+  if (!messageId) return null;
+  const result = await getBridgeJson(`/api/admin/telnyx/messages/${encodeURIComponent(messageId)}/status`, {
+    env,
+    fetchImpl,
+  });
+  if (!result.ok) {
+    return {
+      ok: false,
+      proofStatus: 'provider_error',
+      status: 'provider_error',
+      error: result.payload?.error || `Telnyx MDR lookup failed with HTTP ${result.status}.`,
+      providerAttemptId: messageId,
+      mdr: result.payload?.mdr || null,
+      bridgeResult: {
+        ok: result.ok,
+        status: result.status,
+        result: result.payload?.result || result.payload?.status || '',
+      },
+    };
+  }
+  const status = getMdrProviderStatus(result.payload);
+  if (SMS_CONFIRMED_STATUSES.has(status)) {
+    return {
+      ok: true,
+      proofStatus: 'provider_confirmed',
+      status: 'provider_confirmed',
+      providerAttemptId: messageId,
+      mdr: result.payload?.mdr || null,
+    };
+  }
+  if (SMS_FAILED_STATUSES.has(status)) {
+    return {
+      ok: false,
+      proofStatus: 'provider_error',
+      status: 'provider_error',
+      error: `Telnyx MDR reports terminal SMS status ${status}.`,
+      providerAttemptId: messageId,
+      mdr: result.payload?.mdr || null,
+    };
+  }
+  return {
+    ok: false,
+    proofStatus: 'carrier_receipt_pending',
+    status: 'carrier_receipt_pending',
+    error: status
+      ? `Telnyx MDR is not delivered yet; current status is ${status}.`
+      : 'Telnyx MDR did not include a delivery status yet.',
+    providerAttemptId: messageId,
+    mdr: result.payload?.mdr || null,
+  };
+}
+
 async function pollSmsProofMessage({ env, fetchImpl, id, messageId = '' }) {
   const timeoutMs = envNumber(env, 'PBK_LIVE_PROOF_SMS_POLL_MS', 90000);
   const intervalMs = envNumber(env, 'PBK_LIVE_PROOF_SMS_POLL_INTERVAL_MS', 3000);
@@ -267,11 +332,17 @@ async function pollSmsProofMessage({ env, fetchImpl, id, messageId = '' }) {
   }
 
   return {
-    ok: false,
-    proofStatus: 'carrier_receipt_pending',
-    status: 'carrier_receipt_pending',
-    error: `Telnyx accepted the SMS, but PBK did not receive a delivered carrier receipt before ${timeoutMs}ms.`,
-    providerAttemptId: getMessageProviderAttemptId(lastMessage || {}),
+    ...((await getSmsMdrProof({
+      env,
+      fetchImpl,
+      providerAttemptId: getMessageProviderAttemptId(lastMessage || {}),
+    })) || {
+      ok: false,
+      proofStatus: 'carrier_receipt_pending',
+      status: 'carrier_receipt_pending',
+      error: `Telnyx accepted the SMS, but PBK did not receive a delivered carrier receipt before ${timeoutMs}ms.`,
+      providerAttemptId: getMessageProviderAttemptId(lastMessage || {}),
+    }),
     message: lastMessage,
     bridgeResult: lastResult
       ? {

@@ -153,6 +153,87 @@ assert(
   bridgeSource.includes('providerMessageId'),
   'Telnyx message records should preserve provider ids for delivery reconciliation.'
 );
+assert(
+  bridgeSource.includes('/api/admin/telnyx/messages/:id/status'),
+  'Bridge must expose an admin-only Telnyx MDR status endpoint for live delivery proof.'
+);
+
+const mdrCalls = [];
+const mockMdrFetch = async (url, init = {}) => {
+  mdrCalls.push({
+    url: String(url),
+    method: init.method,
+    body: init.body ? JSON.parse(init.body) : null,
+  });
+  let body = { ok: true, result: 'live' };
+  if (mdrCalls.length === 1) {
+    body = {
+      ok: true,
+      result: 'live',
+      message: { id: 'telnyx-message-timeout' },
+      outbox: {
+        idempotencyKey: 'pbk-live-proof-sms-20260629010202',
+        status: 'sent',
+      },
+    };
+  } else if (String(url).includes('/api/messages?limit=200')) {
+    body = {
+      ok: true,
+      result: 'live',
+      messages: [
+        {
+          id: 'telnyx-message-timeout',
+          channel: 'sms',
+          status: 'sent',
+          providerMessageId: 'telnyx-message-timeout',
+          deliveryStatus: 'sent',
+          payload: {
+            idempotencyKey: 'pbk-live-proof-sms-20260629010202',
+            providerMessageId: 'telnyx-message-timeout',
+            deliveryStatus: 'sent',
+          },
+        },
+      ],
+    };
+  } else if (String(url).includes('/api/admin/telnyx/messages/telnyx-message-timeout/status')) {
+    body = {
+      ok: true,
+      result: 'live',
+      deliveryStatus: 'dlr_timeout',
+      mdr: {
+        id: 'telnyx-message-timeout',
+        status: 'dlr_timeout',
+        errors: [{ code: 'dlr_timeout', title: 'No delivery receipt from carrier' }],
+      },
+    };
+  }
+  return new Response(JSON.stringify(body), {
+    status: 200,
+    headers: { 'Content-Type': 'application/json' },
+  });
+};
+
+const timedOutSms = await runProviderLiveProof({
+  provider: 'sms',
+  dryRun: false,
+  now: new Date('2026-06-29T01:02:02.000Z'),
+  fetchImpl: mockMdrFetch,
+  env: {
+    PBK_LIVE_PROOF_SMS_TO: '+15555550101',
+    PBK_TELNYX_FROM_NUMBER: '+15555550102',
+    PBK_BRIDGE_API_KEY: 'bridge-secret',
+    PBK_LIVE_PROOF_CONFIRM: 'send',
+    PBK_LIVE_PROOF_BRIDGE_URL: 'https://bridge.example.test/',
+    PBK_LIVE_PROOF_SMS_POLL_MS: '1',
+    PBK_LIVE_PROOF_SMS_POLL_INTERVAL_MS: '1',
+  },
+});
+
+assert.equal(timedOutSms.ok, false);
+assert.equal(timedOutSms.proofStatus, 'provider_error');
+assert.match(timedOutSms.error, /dlr_timeout/);
+assert.equal(timedOutSms.providerAttemptId, 'telnyx-message-timeout');
+assert(mdrCalls.some((call) => call.url === 'https://bridge.example.test/api/admin/telnyx/messages/telnyx-message-timeout/status'));
 
 const slackCalls = [];
 const mockSlackFetch = async (url, init = {}) => {

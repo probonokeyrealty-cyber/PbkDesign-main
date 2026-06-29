@@ -41047,6 +41047,45 @@ function recordAvaAssistantPlanOps({
   });
 }
 
+function redactAvaMissionLedgerText(value = '', maxLength = 320) {
+  return String(value || '')
+    .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, '[email]')
+    .replace(/(?:\+?1[\s.-]?)?(?:\(?\d{3}\)?[\s.-]?)\d{3}[\s.-]?\d{4}/g, (match) => maskPhoneForDiagnostics(match))
+    .replace(
+      /\b\d{1,6}\s+[A-Za-z0-9.'-]+(?:\s+[A-Za-z0-9.'-]+){0,5}\s+(?:st|street|ave|avenue|rd|road|dr|drive|ln|lane|loop|ct|court|blvd|boulevard|way|cir|circle|pl|place|pkwy|parkway)\b/gi,
+      '[address]',
+    )
+    .slice(0, maxLength);
+}
+
+function sanitizeAvaMissionNextAction(nextAction = null) {
+  if (!nextAction || typeof nextAction !== 'object' || Array.isArray(nextAction)) {
+    return nextAction ? redactAvaMissionLedgerText(nextAction, 180) : null;
+  }
+
+  const allowedKeys = [
+    'action',
+    'decision',
+    'label',
+    'reason',
+    'status',
+    'toolName',
+    'nextMoveType',
+    'risk',
+    'route',
+    'approvalRequired',
+    'requiresApproval',
+    'providerWrite',
+  ];
+  const sanitized = {};
+  for (const key of allowedKeys) {
+    if (!(key in nextAction)) continue;
+    const value = nextAction[key];
+    sanitized[key] = typeof value === 'string' ? redactAvaMissionLedgerText(value, 220) : value;
+  }
+  return Object.keys(sanitized).length ? sanitized : null;
+}
+
 function recordAvaMissionLedger({
   missionController = null,
   sessionId = '',
@@ -41082,26 +41121,26 @@ function recordAvaMissionLedger({
     source: String(mission.source || trace?.source || 'ava-assistant-chat'),
     controllerPath: String(trace?.controllerPath || ''),
     controllerStage: String(mission.controllerStage || trace?.controllerStage || 'final'),
-    goal: String(mission.goal || text || '').slice(0, 500),
+    goal: redactAvaMissionLedgerText(mission.goal || text || '', 260),
     status: String(mission.status || ''),
-    currentStep: String(mission.currentStep || ''),
+    currentStep: redactAvaMissionLedgerText(mission.currentStep || '', 180),
     approvalRequired: Boolean(mission.approvalRequired),
     intent: String(assistantPlan?.usedIntent || assistantIntent?.intent || trace?.intent || ''),
     action: String(assistantPlan?.action || trace?.action || 'answered'),
     toolName: String(toolPlan?.toolName || trace?.toolName || ''),
     providerWrite: Boolean(toolPlan?.providerWrite || mission.nextAction?.providerWrite),
-    nextAction: mission.nextAction || null,
+    nextAction: sanitizeAvaMissionNextAction(mission.nextAction),
     steps: Array.isArray(mission.steps)
       ? mission.steps.slice(0, 8).map((step) => ({
           id: String(step.id || ''),
-          label: String(step.label || '').slice(0, 120),
+          label: redactAvaMissionLedgerText(step.label || '', 120),
           status: String(step.status || ''),
-          summary: String(step.summary || '').slice(0, 320),
+          summary: redactAvaMissionLedgerText(step.summary || '', 240),
         }))
       : [],
     proof: {
       traceSchema: trace?.schema || '',
-      turnDecisionReason: trace?.turnDecision?.reason || '',
+      turnDecisionReason: redactAvaMissionLedgerText(trace?.turnDecision?.reason || '', 240),
       actionDecision: trace?.actionDecision?.decision || '',
       actionPolicy: trace?.actionPolicy || null,
       toolResult: toolResult ? summarizeProviderActionResult(toolResult) : null,

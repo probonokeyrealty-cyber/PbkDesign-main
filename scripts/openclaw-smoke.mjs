@@ -233,6 +233,10 @@ async function main() {
       internalAvaAssistantCall?.missionLedger?.schema === 'pbk.ava.mission_ledger.v1',
       'Internal Ava assistant chat must persist and return mission ledger proof.',
     );
+    assert(
+      !/\b614[\s.-]?555[\s.-]?0199\b|Call 614-555-0199/i.test(JSON.stringify(internalAvaAssistantCall?.missionLedger || {})),
+      'Mission ledger proof must not retain raw seller phone/request text.',
+    );
     const publicAvaTtsNoLeadChat = await fetch(`${BASE_URL}/api/public/ava-chat`, {
       method: 'POST',
       headers: {

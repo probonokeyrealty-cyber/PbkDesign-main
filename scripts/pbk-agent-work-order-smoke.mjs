@@ -28,8 +28,8 @@ assert.match(
 );
 assert.match(
   worker,
-  /\$requiredSections\s*=\s*@\([\s\S]*"## Success Criteria"[\s\S]*"## Required Tests"[\s\S]*"## Proof"/,
-  'Agent worker readiness validation must require Success Criteria, Required Tests, and Proof.'
+  /\$requiredSections\s*=\s*@\([\s\S]*"## Goal"[\s\S]*"## Success Criteria"[\s\S]*"## Allowed Files"[\s\S]*"## Forbidden Files"[\s\S]*"## Required Tests"[\s\S]*"## Proof"[\s\S]*"## Deploy Impact"/,
+  'Agent worker readiness validation must require the full planner work-order contract.'
 );
 assert.match(
   worker,

@@ -132,9 +132,13 @@ function Test-AgentWorkOrderReady {
 
   $body = if ($Issue.body) { "$($Issue.body)" } else { "" }
   $requiredSections = @(
+    "## Goal",
     "## Success Criteria",
+    "## Allowed Files",
+    "## Forbidden Files",
     "## Required Tests",
-    "## Proof"
+    "## Proof",
+    "## Deploy Impact"
   )
   $missingSections = @($requiredSections | Where-Object {
       $escaped = [regex]::Escape($_)

@@ -205,6 +205,8 @@ async function runSmsLiveProof({ env, fetchImpl, now }) {
       message: `PBK live proof SMS ${id}. No action needed.`,
       requestedBy: 'PBK live proof harness',
       source: 'provider_live_proof',
+      manual: true,
+      manualSend: true,
       idempotencyKey: id,
     },
     { env, fetchImpl }
@@ -228,6 +230,8 @@ async function runEmailLiveProof({ env, fetchImpl, now }) {
       message: `Subject: PBK live proof email ${id}\n\nThis is a controlled PBK provider proof email. No action needed.`,
       requestedBy: 'PBK live proof harness',
       source: 'provider_live_proof',
+      manual: true,
+      manualSend: true,
       idempotencyKey: id,
     },
     { env, fetchImpl }
@@ -259,6 +263,8 @@ async function runDocuSignLiveProof({ env, fetchImpl, now }) {
       bantComplete: true,
       requestedBy: 'PBK live proof harness',
       source: 'provider_live_proof',
+      manual: true,
+      manualSend: true,
       idempotencyKey: id,
       dryRun: !sendEnvelope,
       status: sendEnvelope ? 'sent' : 'draft',

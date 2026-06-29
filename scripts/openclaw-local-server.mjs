@@ -41014,7 +41014,7 @@ function isTrustedManualOperatorAction(params = {}) {
     const requestedBy = String(params.requestedBy || params.requested_by || params.actor || '')
       .trim()
       .toLowerCase();
-    return /^pbk-live-proof-(sms|email)-\d{14}$/.test(idempotencyKey) && requestedBy === 'pbk live proof harness';
+    return /^pbk-live-proof-(sms|email|docusign)-\d{14}$/.test(idempotencyKey) && requestedBy === 'pbk live proof harness';
   }
   return [
     'manual',
@@ -41029,7 +41029,7 @@ function isTrustedManualOperatorAction(params = {}) {
 }
 
 function isTrustedManualConversationProviderSend(toolName = '', params = {}) {
-  if (!['telnyx_sms', 'sendColdEmail', 'telnyx_call', 'sendSellerDocs'].includes(toolName)) return false;
+  if (!['telnyx_sms', 'sendColdEmail', 'telnyx_call', 'sendSellerDocs', 'sendDocuSign', 'sendContract', 'prepare_and_send_contract'].includes(toolName)) return false;
   return isTrustedManualOperatorAction(params);
 }
 
@@ -41522,14 +41522,24 @@ function buildRouteToolResponse(payload = {}) {
 
 function isManualProviderDeliveryLive(toolName = '', routeResponse = {}) {
   if (toolName === 'telnyx_sms') {
-    return Boolean(routeResponse.telnyx?.live || routeResponse.sms?.live || routeResponse.result === 'live');
+    const messageStatus = String(routeResponse.message?.status || '').toLowerCase();
+    const messageProvider = String(routeResponse.message?.provider || '').toLowerCase();
+    return Boolean(
+      routeResponse.telnyx?.live ||
+        routeResponse.sms?.live ||
+        routeResponse.result === 'live' ||
+        (messageProvider === 'telnyx' && ['queued', 'sent', 'delivered'].includes(messageStatus))
+    );
   }
   if (toolName === 'sendColdEmail') {
+    const messageStatus = String(routeResponse.message?.status || '').toLowerCase();
+    const messageProvider = String(routeResponse.message?.provider || '').toLowerCase();
     return Boolean(
       routeResponse.delivery?.live ||
         routeResponse.delivery?.ok ||
         routeResponse.email?.live ||
-        routeResponse.result === 'live'
+        routeResponse.result === 'live' ||
+        (['instantly', 'resend'].includes(messageProvider) && ['queued', 'sent', 'delivered'].includes(messageStatus))
     );
   }
   if (toolName === 'telnyx_call') {

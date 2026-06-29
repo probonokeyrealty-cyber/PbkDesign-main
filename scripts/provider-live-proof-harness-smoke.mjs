@@ -109,6 +109,8 @@ assert.equal(bridgeCalls[0].authorization, 'Bearer bridge-secret');
 assert.equal(bridgeCalls[0].body.channel, 'sms');
 assert.equal(bridgeCalls[0].body.phone, '+15555550101');
 assert.equal(bridgeCalls[0].body.source, 'provider_live_proof');
+assert.equal(bridgeCalls[0].body.manual, true);
+assert.equal(bridgeCalls[0].body.manualSend, true);
 
 const slackCalls = [];
 const mockSlackFetch = async (url, init = {}) => {

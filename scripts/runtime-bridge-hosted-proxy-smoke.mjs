@@ -5,6 +5,7 @@ import { resolve } from 'node:path';
 const root = process.cwd();
 const source = readFileSync(resolve(root, 'src/app/utils/runtimeBridge.ts'), 'utf8');
 const bridge = readFileSync(resolve(root, 'scripts/openclaw-local-server.mjs'), 'utf8');
+const mobileProof = readFileSync(resolve(root, 'scripts/mobile-browser-proof.mjs'), 'utf8');
 
 assert(
   /function\s+isNetlifyHostedRuntimeShell\(\)/.test(source),
@@ -111,6 +112,13 @@ assert(
 assert(
   /request\.pbkDirectTeamAuth = true/.test(bridge) && /X-PBK-Team-Token/.test(source),
   'Direct Render fallback must use a signed PBK team token instead of exposing PBK_BRIDGE_API_KEY.'
+);
+
+assert(
+  /PBK_HOSTED_BRIDGE_URL/.test(mobileProof) &&
+    /const authBases = uniqueUrls\(\[baseUrl, hostedBridgeUrl\]\)/.test(mobileProof) &&
+    /auth via \$\{authHost\}/.test(mobileProof),
+  'Mobile protected-page proof must fall back to direct hosted bridge team auth when the Netlify auth proxy is transiently unavailable.'
 );
 
 assert(

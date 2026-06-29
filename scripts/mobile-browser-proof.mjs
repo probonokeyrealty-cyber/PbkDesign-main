@@ -2,6 +2,7 @@
 import { chromium, devices } from '@playwright/test';
 
 const baseUrl = process.env.PBK_MOBILE_PROOF_BASE_URL || 'http://127.0.0.1:4174';
+const hostedBridgeUrl = String(process.env.PBK_HOSTED_BRIDGE_URL || '').trim();
 const teamPasscode =
   process.env.PBK_MOBILE_PROOF_TEAM_PASSCODE || process.env.PBK_TEAM_PASSCODE || '';
 const teamSessionStorageKey = 'pbk:team-session:v1';
@@ -40,6 +41,17 @@ const routeErrorPatterns = [
 
 function routeUrl(route) {
   return new URL(route, baseUrl).toString();
+}
+
+function uniqueUrls(urls) {
+  const seen = new Set();
+  return urls
+    .map((url) => String(url || '').replace(/\/+$/, ''))
+    .filter((url) => {
+      if (!url || seen.has(url)) return false;
+      seen.add(url);
+      return true;
+    });
 }
 
 function isBenignBrowserError(message) {
@@ -90,61 +102,64 @@ function sleep(ms) {
 async function authenticateTeamSession(context) {
   if (!shouldAuthenticateTeamSession()) return null;
 
-  const authUrl = new URL('/api/auth/team', baseUrl).toString();
-  const verifyUrl = new URL('/api/auth/team/verify', baseUrl).toString();
+  const authBases = uniqueUrls([baseUrl, hostedBridgeUrl]);
   let lastError = '';
 
   for (let attempt = 1; attempt <= teamAuthAttempts; attempt += 1) {
-    const response = await context.request.post(authUrl, {
-      data: {
-        passcode: teamPasscode,
-        actor: 'PBK mobile proof',
-      },
-      timeout: 30000,
-    });
+    for (const authBase of authBases) {
+      const authHost = new URL(authBase).host;
+      const authUrl = new URL('/api/auth/team', authBase).toString();
+      const verifyUrl = new URL('/api/auth/team/verify', authBase).toString();
+      const response = await context.request.post(authUrl, {
+        data: {
+          passcode: teamPasscode,
+          actor: 'PBK mobile proof',
+        },
+        timeout: 30000,
+      });
 
-    if (!response.ok()) {
-      lastError = `auth returned ${response.status()} ${response.statusText()}`;
-      await sleep(750 * attempt);
-      continue;
-    }
-
-    const session = await response.json();
-    if (!session?.ok || !session.token || !session.expiresAt) {
-      lastError = 'auth did not return a usable signed session';
-      await sleep(750 * attempt);
-      continue;
-    }
-
-    const verifyResponse = await context.request.post(verifyUrl, {
-      data: {},
-      headers: {
-        'X-PBK-Team-Token': session.token,
-      },
-      timeout: 30000,
-    });
-    const verifyPayload = await verifyResponse.json().catch(() => ({}));
-    if (!verifyResponse.ok() || verifyPayload?.ok === false) {
-      lastError = `session verify returned ${verifyResponse.status()} ${verifyResponse.statusText()}`;
-      await sleep(750 * attempt);
-      continue;
-    }
-
-    const teamSession = buildStoredTeamSession({
-      ...session,
-      permissions: verifyPayload.permissions || session.permissions,
-    });
-
-    await context.addInitScript(
-      ({ storageKey, storedSession }) => {
-        window.localStorage.setItem(storageKey, JSON.stringify(storedSession));
-      },
-      {
-        storageKey: teamSessionStorageKey,
-        storedSession: teamSession,
+      if (!response.ok()) {
+        lastError = `auth via ${authHost} returned ${response.status()} ${response.statusText()}`;
+        continue;
       }
-    );
-    return teamSession;
+
+      const session = await response.json();
+      if (!session?.ok || !session.token || !session.expiresAt) {
+        lastError = `auth via ${authHost} did not return a usable signed session`;
+        continue;
+      }
+
+      const verifyResponse = await context.request.post(verifyUrl, {
+        data: {},
+        headers: {
+          'X-PBK-Team-Token': session.token,
+        },
+        timeout: 30000,
+      });
+      const verifyPayload = await verifyResponse.json().catch(() => ({}));
+      if (!verifyResponse.ok() || verifyPayload?.ok === false) {
+        lastError = `session verify via ${authHost} returned ${verifyResponse.status()} ${verifyResponse.statusText()}`;
+        continue;
+      }
+
+      const teamSession = buildStoredTeamSession({
+        ...session,
+        permissions: verifyPayload.permissions || session.permissions,
+      });
+
+      await context.addInitScript(
+        ({ storageKey, storedSession }) => {
+          window.localStorage.setItem(storageKey, JSON.stringify(storedSession));
+        },
+        {
+          storageKey: teamSessionStorageKey,
+          storedSession: teamSession,
+        }
+      );
+      return teamSession;
+    }
+
+    await sleep(750 * attempt);
   }
 
   throw new Error(

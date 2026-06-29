@@ -1,6 +1,6 @@
 # Ava DeepSpec Speculative Decoding Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use `superpowers:subagent-driven-development` (recommended) or `superpowers:executing-plans` to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+REQUIRED WORKFLOW: Use `superpowers:subagent-driven-development` with one focused implementation pass per task and review between tasks.
 
 **Goal:** Add an optional speculative-decoding lane for Ava/Rex DeepSeek requests so PBK can reduce response latency while keeping existing DeepSeek fallback, approval gates, and response contracts intact.
 

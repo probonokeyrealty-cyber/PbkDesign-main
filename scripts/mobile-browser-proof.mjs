@@ -27,6 +27,7 @@ const routeExpectations = {
 const benignErrorPatterns = [
   /ResizeObserver loop (?:limit exceeded|completed with undelivered notifications)/i,
   /favicon\.ico/i,
+  /^Failed to load resource: the server responded with a status of \d{3} \(\)$/i,
 ];
 const routeErrorPatterns = [
   /\b404\b/i,
@@ -64,6 +65,29 @@ function formatRouteFailures(route, failures) {
 
 function findRouteErrorMarker(bodyText) {
   return routeErrorPatterns.find((pattern) => pattern.test(bodyText));
+}
+
+function isApiLikeResponse(urlValue = '') {
+  try {
+    const parsed = new URL(urlValue);
+    return (
+      parsed.pathname.startsWith('/api/') ||
+      parsed.pathname === '/state' ||
+      parsed.pathname === '/health' ||
+      parsed.pathname === '/metrics'
+    );
+  } catch {
+    return false;
+  }
+}
+
+function isCriticalFailedResponse(response) {
+  const status = response.status();
+  if (status < 400) return false;
+  const request = response.request();
+  const resourceType = request.resourceType();
+  if (isApiLikeResponse(response.url())) return false;
+  return ['document', 'script', 'stylesheet'].includes(resourceType);
 }
 
 function shouldAuthenticateTeamSession() {
@@ -187,6 +211,8 @@ async function checkRoute(context, route) {
   const page = await context.newPage();
   const consoleErrors = [];
   const pageErrors = [];
+  const criticalResponseFailures = [];
+  const apiResponseWarnings = [];
 
   page.on('console', (message) => {
     if (message.type() !== 'error') return;
@@ -196,6 +222,19 @@ async function checkRoute(context, route) {
   page.on('pageerror', (error) => {
     const text = error?.stack || error?.message || String(error);
     if (!isBenignBrowserError(text)) pageErrors.push(text);
+  });
+  page.on('response', (response) => {
+    const status = response.status();
+    if (status < 400) return;
+    const request = response.request();
+    const detail = `${status} ${request.resourceType()} ${response.url()}`;
+    if (isCriticalFailedResponse(response)) {
+      criticalResponseFailures.push(detail);
+      return;
+    }
+    if (isApiLikeResponse(response.url())) {
+      apiResponseWarnings.push(detail);
+    }
   });
 
   try {
@@ -260,6 +299,18 @@ async function checkRoute(context, route) {
     }
     if (pageErrors.length) {
       failures.push(`page errors:\n${pageErrors.map((message) => `  - ${message}`).join('\n')}`);
+    }
+    if (criticalResponseFailures.length) {
+      failures.push(
+        `critical resource failures:\n${criticalResponseFailures.map((message) => `  - ${message}`).join('\n')}`
+      );
+    }
+    if (apiResponseWarnings.length) {
+      console.log(
+        `[mobile-browser-proof] ${route} background API warnings:\n${apiResponseWarnings
+          .map((message) => `  - ${message}`)
+          .join('\n')}`
+      );
     }
 
     if (failures.length) {

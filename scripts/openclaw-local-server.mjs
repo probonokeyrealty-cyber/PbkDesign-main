@@ -41029,7 +41029,13 @@ function isTrustedManualOperatorAction(params = {}) {
 }
 
 function isTrustedManualConversationProviderSend(toolName = '', params = {}) {
-  if (!['telnyx_sms', 'sendColdEmail', 'telnyx_call', 'sendSellerDocs', 'sendDocuSign', 'sendContract', 'prepare_and_send_contract'].includes(toolName)) return false;
+  if (
+    !(
+      ['telnyx_sms', 'sendColdEmail', 'telnyx_call', 'sendSellerDocs'].includes(toolName) ||
+      ['sendDocuSign', 'sendContract', 'prepare_and_send_contract'].includes(toolName)
+    )
+  )
+    return false;
   return isTrustedManualOperatorAction(params);
 }
 
@@ -41565,6 +41571,70 @@ function getManualProviderError(routeResponse = {}, statusCode = 409) {
   );
 }
 
+const MANUAL_PROVIDER_DELIVERY_STATUSES = new Set(['queued', 'sent', 'delivered']);
+
+function normalizeProviderRecordText(value = '') {
+  return String(value || '')
+    .trim()
+    .toLowerCase();
+}
+
+function messageRecipientMatchesManualProviderRecord(message = {}, channel = '', recipient = '') {
+  if (!recipient) return true;
+  if (channel === 'sms' || channel === 'call') {
+    const expected = normalizePhone(recipient);
+    return [message.to, message.toPhone, message.phone].some((value) => normalizePhone(value) === expected);
+  }
+  const expected = normalizeProviderRecordText(recipient);
+  return [message.to, message.toEmail, message.email].some((value) => normalizeProviderRecordText(value) === expected);
+}
+
+function messageProviderMatchesManualProviderRecord(message = {}, toolName = '') {
+  const provider = normalizeProviderRecordText(message.provider);
+  if (toolName === 'telnyx_sms' || toolName === 'telnyx_call') return provider === 'telnyx';
+  if (toolName === 'sendColdEmail') return ['instantly', 'resend'].includes(provider);
+  if (toolName === 'sendSellerDocs') return ['resend', 'instantly'].includes(provider);
+  return Boolean(provider);
+}
+
+function messageContentMatchesManualProviderRecord(message = {}, { idempotencyKey = '', messageBody = '', subject = '' } = {}) {
+  const key = normalizeProviderRecordText(idempotencyKey);
+  const expectedBody = normalizeProviderRecordText(messageBody);
+  const expectedSubject = normalizeProviderRecordText(subject);
+  const actualBody = normalizeProviderRecordText(message.body);
+  const actualSubject = normalizeProviderRecordText(message.subject);
+  const actualId = normalizeProviderRecordText(message.id || message.messageId);
+  const actualPayload = normalizeProviderRecordText(JSON.stringify(message.payload || {}));
+
+  if (key && (actualBody.includes(key) || actualSubject.includes(key) || actualId.includes(key) || actualPayload.includes(key))) {
+    return true;
+  }
+  if (expectedSubject && actualSubject === expectedSubject) return true;
+  if (expectedBody && actualBody === expectedBody) return true;
+  return false;
+}
+
+function findManualProviderDeliveryRecord({
+  toolName = '',
+  channel = '',
+  recipient = '',
+  messageBody = '',
+  subject = '',
+  idempotencyKey = '',
+} = {}) {
+  const normalizedChannel = normalizeProviderRecordText(channel);
+  return (
+    sortNewest(state.messages || []).find((message) => {
+      if (normalizeProviderRecordText(message.channel) !== normalizedChannel) return false;
+      if (normalizeProviderRecordText(message.direction || 'outbound') !== 'outbound') return false;
+      if (!MANUAL_PROVIDER_DELIVERY_STATUSES.has(normalizeProviderRecordText(message.status))) return false;
+      if (!messageProviderMatchesManualProviderRecord(message, toolName)) return false;
+      if (!messageRecipientMatchesManualProviderRecord(message, normalizedChannel, recipient)) return false;
+      return messageContentMatchesManualProviderRecord(message, { idempotencyKey, messageBody, subject });
+    }) || null
+  );
+}
+
 async function executeManualProviderRouteWithOutbox({
   toolName,
   provider,
@@ -41659,7 +41729,20 @@ async function executeManualProviderRouteWithOutbox({
   const routeResponse = buildRouteToolResponse(routeTool);
   const routeStatusCode = getRouteToolStatusCode(routeTool, { failureStatus: 409 });
   const providerDeliveryLive = isManualProviderDeliveryLive(toolName, routeResponse);
-  const deliveryLive = providerDeliveryLive && (routeStatusCode < 400 || ['telnyx_sms', 'sendColdEmail'].includes(toolName));
+  const durableDeliveryRecord = providerDeliveryLive
+    ? null
+    : findManualProviderDeliveryRecord({
+        toolName,
+        channel,
+        recipient,
+        messageBody,
+        subject,
+        idempotencyKey,
+      });
+  const durableDeliveryLive = Boolean(durableDeliveryRecord);
+  const deliveryLive =
+    (providerDeliveryLive || durableDeliveryLive) &&
+    (routeStatusCode < 400 || ['telnyx_sms', 'sendColdEmail', 'sendSellerDocs'].includes(toolName));
   const statusCode = deliveryLive ? Math.min(routeStatusCode, 200) : 409;
   const error = deliveryLive ? '' : getManualProviderError(routeResponse, statusCode);
   if (deliveryLive) providerCircuitBreaker.recordSuccess(provider);
@@ -41677,10 +41760,11 @@ async function executeManualProviderRouteWithOutbox({
     queuedAt,
     sentAt: deliveryLive ? isoNow() : '',
     error,
-    providerResult: routeResponse,
+    providerResult: durableDeliveryRecord ? { ...routeResponse, durableDeliveryRecord } : routeResponse,
   });
   const responsePayload = {
     ...routeResponse,
+    durableDeliveryRecord,
     outbox,
     idempotencyKey,
     idempotentReplay: false,

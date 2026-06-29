@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 
 import {
   assertLiveProofCanSend,
@@ -111,6 +112,16 @@ assert.equal(bridgeCalls[0].body.phone, '+15555550101');
 assert.equal(bridgeCalls[0].body.source, 'provider_live_proof');
 assert.equal(bridgeCalls[0].body.manual, true);
 assert.equal(bridgeCalls[0].body.manualSend, true);
+
+const bridgeSource = readFileSync(new URL('./openclaw-local-server.mjs', import.meta.url), 'utf8');
+assert(
+  bridgeSource.includes('function findManualProviderDeliveryRecord'),
+  'Manual provider proof should recover live delivery from durable message receipts.'
+);
+assert(
+  bridgeSource.includes('durableDeliveryRecord'),
+  'Manual provider proof should expose the durable delivery receipt used for classification.'
+);
 
 const slackCalls = [];
 const mockSlackFetch = async (url, init = {}) => {

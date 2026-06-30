@@ -97,12 +97,18 @@ for (const endpoint of ['/api/auth/team/status', '/api/auth/team', '/api/auth/te
 assert(
   /function authorizeDirectTeamBridgeRequest/.test(bridge) &&
     /team_permission_denied/.test(bridge) &&
+    /canDeleteLeads/.test(bridge) &&
     /canDeleteData/.test(bridge) &&
     /canSendContracts/.test(bridge) &&
     /canToggleKillSwitch/.test(bridge) &&
     /canChangeGuardrails/.test(bridge) &&
     /canManageSkills/.test(bridge),
   'Direct Render fallback must enforce the same team permission boundary as the Netlify bridge proxy.'
+);
+assert(
+  /confirmedLeadDelete[\s\S]*permissions\.canDeleteLeads !== true[\s\S]*delete confirmed leads/.test(bridge) &&
+    /normalizedMethod === ['"]DELETE['"] && !confirmedLeadDelete && permissions\.canDeleteData !== true/.test(bridge),
+  'Direct Render fallback must allow confirmed lead deletes through canDeleteLeads without opening broad DELETE access.'
 );
 assert(
   /skillGovernanceRoute[\s\S]*\/api\\\/skills\\\/[\s\S]*permissions\.canManageSkills !== true/.test(bridge),

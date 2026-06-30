@@ -28,7 +28,10 @@ assert(
 );
 
 assert(
-  /function authorizeTeamRequest/.test(source) &&
+    /function authorizeTeamRequest/.test(source) &&
+    /function isConfirmedLeadDeleteRequest/.test(source) &&
+    /operator_confirmed_delete/.test(source) &&
+    /canDeleteLeads/.test(source) &&
     /canDeleteData/.test(source) &&
     /canSendContracts/.test(source) &&
     /canSendSms/.test(source) &&
@@ -40,6 +43,11 @@ assert(
     /canManageSkills/.test(source) &&
     /team_permission_denied/.test(source),
   'Verified team permissions must be enforced before the bridge key is attached upstream.',
+);
+assert(
+  /confirmedLeadDelete[\s\S]*permissions\.canDeleteLeads !== true[\s\S]*delete confirmed leads/.test(source) &&
+    /normalizedMethod === ['"]DELETE['"] && !confirmedLeadDelete && permissions\.canDeleteData !== true/.test(source),
+  'Confirmed lead deletes must use a narrow lead-delete permission while broad DELETE requests remain blocked.',
 );
 assert(
   /skillGovernanceRoute[\s\S]*\/api\\\/skills\\\/[\s\S]*permissions\.canManageSkills !== true/.test(source),

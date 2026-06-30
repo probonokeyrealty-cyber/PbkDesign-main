@@ -189,6 +189,14 @@ function isApprovalDecisionRequest(method = 'GET', path = '', body: Record<strin
   return /\b(?:approve|approved)\b/.test(decisionText);
 }
 
+function isConfirmedLeadDeleteRequest(method = 'GET', path = '', body: Record<string, unknown>) {
+  const normalizedMethod = String(method || 'GET').toUpperCase();
+  if (normalizedMethod !== 'DELETE') return false;
+  if (!/^\/api\/leads\/[^/]+$/.test(path)) return false;
+  const reason = String(body.reason || body.deleteReason || '').trim();
+  return reason === 'operator_confirmed_delete';
+}
+
 function authorizeTeamRequest({
   method = 'GET',
   targetPath = '',
@@ -214,7 +222,12 @@ function authorizeTeamRequest({
     permission,
   });
 
-  if (normalizedMethod === 'DELETE' && permissions.canDeleteData !== true) {
+  const confirmedLeadDelete = isConfirmedLeadDeleteRequest(normalizedMethod, normalizedPath, body);
+  if (confirmedLeadDelete && permissions.canDeleteLeads !== true) {
+    return deny('canDeleteLeads', 'delete confirmed leads');
+  }
+
+  if (normalizedMethod === 'DELETE' && !confirmedLeadDelete && permissions.canDeleteData !== true) {
     return deny('canDeleteData', 'delete PBK data');
   }
 

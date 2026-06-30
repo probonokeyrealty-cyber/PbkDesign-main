@@ -3637,6 +3637,7 @@ function getTeamPermissions() {
     canSendSms: !/^(0|false|no|off)$/i.test(String(process.env.PBK_TEAM_CAN_SEND_SMS || 'true').trim()),
     canSendEmail: !/^(0|false|no|off)$/i.test(String(process.env.PBK_TEAM_CAN_SEND_EMAIL || 'true').trim()),
     canSendContracts: false,
+    canDeleteLeads: !/^(0|false|no|off)$/i.test(String(process.env.PBK_TEAM_CAN_DELETE_LEADS || 'true').trim()),
     canDeleteData: false,
     canChangeGuardrails: false,
     canManageSkills: /^(1|true|yes|on)$/i.test(String(process.env.PBK_TEAM_CAN_MANAGE_SKILLS || '').trim()),
@@ -3654,6 +3655,10 @@ function authorizeDirectTeamBridgeRequest({
   const normalizedPath = String(pathname || '').toLowerCase();
   const toolName = String(body.toolName || body.tool || body.name || '').trim();
   const normalizedToolName = toolName.toLowerCase();
+  const confirmedLeadDelete =
+    normalizedMethod === 'DELETE' &&
+    /^\/api\/leads\/[^/]+$/.test(normalizedPath) &&
+    String(body.reason || body.deleteReason || '').trim() === 'operator_confirmed_delete';
 
   const deny = (permission, action) => ({
     ok: false,
@@ -3663,7 +3668,11 @@ function authorizeDirectTeamBridgeRequest({
     permission,
   });
 
-  if (normalizedMethod === 'DELETE' && permissions.canDeleteData !== true) {
+  if (confirmedLeadDelete && permissions.canDeleteLeads !== true) {
+    return deny('canDeleteLeads', 'delete confirmed leads');
+  }
+
+  if (normalizedMethod === 'DELETE' && !confirmedLeadDelete && permissions.canDeleteData !== true) {
     return deny('canDeleteData', 'delete PBK data');
   }
 

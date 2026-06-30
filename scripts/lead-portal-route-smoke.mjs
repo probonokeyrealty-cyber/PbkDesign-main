@@ -69,6 +69,12 @@ assert(
   'Lead Portal must expose a confirmed bridge-backed delete action.'
 );
 assert(
+  /const leadPatchMatch = matchPath\(pathname, '\/api\/leads\/:id'\);[\s\S]*?if \(leadPatchMatch && request\.method === 'PATCH'\)/.test(server) &&
+    /const leadPatchMatch = matchPath\(pathname, '\/api\/leads\/:id'\);[\s\S]*?rosterCount:\s*\(state\.leadImports \|\| \[\]\)\.length[\s\S]*?if \(leadPatchMatch && request\.method === 'PATCH'\)/.test(server) &&
+    !/const leadPatchMatch = matchPath\(pathname, '\/api\/leads\/:id'\);[\s\S]*?Lead not found\.[\s\S]{0,160}state:\s*buildStateSnapshot\(\)[\s\S]*?if \(leadPatchMatch && request\.method === 'PATCH'\)/.test(server),
+  'Lead delete route must return a compact receipt instead of a full state snapshot that can exceed hosted proxy limits.'
+);
+assert(
   portal.includes('BANT+ call context') &&
     read('src/app/components/leads/leadPortalModel.ts').includes('buildLeadPortalPatch') &&
     read('src/app/components/leads/leadPortalModel.ts').includes('call_metadata') &&

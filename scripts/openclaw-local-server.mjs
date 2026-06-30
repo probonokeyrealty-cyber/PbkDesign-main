@@ -75881,7 +75881,7 @@ const server = createServer(async (request, response) => {
         json(response, 404, {
           ok: false,
           error: 'Lead not found.',
-          state: buildStateSnapshot(),
+          leadId: leadPatchMatch.groups.id,
         });
         return;
       }
@@ -75976,7 +75976,7 @@ const server = createServer(async (request, response) => {
         ok: true,
         deleted: true,
         leadId: existing.leadId || existing.id,
-        state: buildStateSnapshot(),
+        rosterCount: (state.leadImports || []).length,
       });
       return;
     }

@@ -134,13 +134,19 @@ async function authenticateTeamSession(context) {
       const authHost = new URL(authBase).host;
       const authUrl = new URL('/api/auth/team', authBase).toString();
       const verifyUrl = new URL('/api/auth/team/verify', authBase).toString();
-      const response = await context.request.post(authUrl, {
-        data: {
-          passcode: teamPasscode,
-          actor: 'PBK mobile proof',
-        },
-        timeout: 30000,
-      });
+      let response;
+      try {
+        response = await context.request.post(authUrl, {
+          data: {
+            passcode: teamPasscode,
+            actor: 'PBK mobile proof',
+          },
+          timeout: 10000,
+        });
+      } catch (error) {
+        lastError = `auth via ${authHost} failed: ${error instanceof Error ? error.message : String(error)}`;
+        continue;
+      }
 
       if (!response.ok()) {
         lastError = `auth via ${authHost} returned ${response.status()} ${response.statusText()}`;
@@ -153,13 +159,21 @@ async function authenticateTeamSession(context) {
         continue;
       }
 
-      const verifyResponse = await context.request.post(verifyUrl, {
-        data: {},
-        headers: {
-          'X-PBK-Team-Token': session.token,
-        },
-        timeout: 30000,
-      });
+      let verifyResponse;
+      try {
+        verifyResponse = await context.request.post(verifyUrl, {
+          data: {},
+          headers: {
+            'X-PBK-Team-Token': session.token,
+          },
+          timeout: 10000,
+        });
+      } catch (error) {
+        lastError = `session verify via ${authHost} failed: ${
+          error instanceof Error ? error.message : String(error)
+        }`;
+        continue;
+      }
       const verifyPayload = await verifyResponse.json().catch(() => ({}));
       if (!verifyResponse.ok() || verifyPayload?.ok === false) {
         lastError = `session verify via ${authHost} returned ${verifyResponse.status()} ${verifyResponse.statusText()}`;

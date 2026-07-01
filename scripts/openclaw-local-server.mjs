@@ -59582,6 +59582,42 @@ function limitSnapshotArray(items, limit, compact = false) {
   return items.slice(0, Math.min(limit, COMPACT_STATE_ARRAY_LIMIT)).map((item) => compactSnapshotRecord(item));
 }
 
+function redactAvaAssistantSnapshotText(value = '', maxLength = 320) {
+  return redactAvaMissionLedgerText(value, maxLength);
+}
+
+function sanitizeAvaAssistantSessionSnapshot(session = {}) {
+  if (!session || typeof session !== 'object' || Array.isArray(session)) return {};
+  return {
+    id: String(session.id || '').slice(0, 140),
+    sessionId: String(session.sessionId || session.id || '').slice(0, 140),
+    source: String(session.source || '').slice(0, 80),
+    leadId: String(session.leadId || '').slice(0, 120),
+    messageCount: Number(session.messageCount || 0),
+    lastRole: String(session.lastRole || '').slice(0, 40),
+    lastUserPreview: redactAvaAssistantSnapshotText(session.lastUserPreview || '', 320),
+    lastAssistantPreview: redactAvaAssistantSnapshotText(session.lastAssistantPreview || '', 320),
+    createdAt: String(session.createdAt || ''),
+    updatedAt: String(session.updatedAt || ''),
+  };
+}
+
+function sanitizeAvaAssistantExchangeSnapshot(exchange = {}) {
+  if (!exchange || typeof exchange !== 'object' || Array.isArray(exchange)) return {};
+  return {
+    id: String(exchange.id || '').slice(0, 160),
+    sessionId: String(exchange.sessionId || '').slice(0, 140),
+    source: String(exchange.source || '').slice(0, 80),
+    leadId: String(exchange.leadId || '').slice(0, 120),
+    userPreview: redactAvaAssistantSnapshotText(exchange.userPreview || '', 420),
+    assistantPreview: redactAvaAssistantSnapshotText(exchange.assistantPreview || '', 420),
+    intent: String(exchange.intent || '').slice(0, 80),
+    action: String(exchange.action || '').slice(0, 80),
+    createdAt: String(exchange.createdAt || ''),
+    updatedAt: String(exchange.updatedAt || ''),
+  };
+}
+
 function buildStateSnapshot(options = {}) {
   updateDerivedStatus(state);
   const runtimeMeta = getRuntimeMeta();
@@ -59691,8 +59727,8 @@ function buildStateSnapshot(options = {}) {
     agentVersions: list(state.agentVersions || [], 80),
     agentVersionSnapshots: list(state.agentVersionSnapshots || [], 40),
     rexDecisions: list(state.rexDecisions || [], 120),
-    assistantSessions: list(state.assistantSessions || [], 60),
-    assistantExchanges: list(state.assistantExchanges || [], 120),
+    assistantSessions: list((state.assistantSessions || []).map(sanitizeAvaAssistantSessionSnapshot), 60),
+    assistantExchanges: list((state.assistantExchanges || []).map(sanitizeAvaAssistantExchangeSnapshot), 120),
     avaActiveMemories: list(state.avaActiveMemories || [], 120),
     avaLearningSessions: list(state.avaLearningSessions || [], 80),
     avaLearningRequests: list(state.avaLearningRequests || [], 80),
@@ -61515,7 +61551,7 @@ function getAvaDeepSeekDecisionFromToolResult(toolResult = null) {
     ? toolResult.deepSeekFallback.deepSeekDecision
     : null;
   if (fallback?.schema === 'ava_deepseek_decision_v1') return fallback;
-  return direct || fallback || null;
+  return null;
 }
 
 async function runInternalAvaDeepSeekChat({

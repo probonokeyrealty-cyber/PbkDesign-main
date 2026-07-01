@@ -550,11 +550,18 @@ function normalizeAssistantSuggestions(value: unknown) {
     : [];
 }
 
+function normalizeAvaDeepSeekDecision(value: unknown) {
+  const record = asRecord(value);
+  return record?.schema === 'ava_deepseek_decision_v1' ? record : null;
+}
+
 function getAssistantDeepSeekDecision(response: AvaAssistantChatResponse) {
-  const direct = asRecord(response.deepSeekDecision);
+  const direct = normalizeAvaDeepSeekDecision(response.deepSeekDecision);
   const toolResult = asRecord(response.toolResult);
-  const nested = asRecord(toolResult?.deepSeekDecision);
-  const fallback = asRecord(asRecord(toolResult?.deepSeekFallback)?.deepSeekDecision);
+  const nested = normalizeAvaDeepSeekDecision(toolResult?.deepSeekDecision);
+  const fallback = normalizeAvaDeepSeekDecision(
+    asRecord(toolResult?.deepSeekFallback)?.deepSeekDecision
+  );
   return direct || nested || fallback || null;
 }
 
@@ -718,6 +725,8 @@ function AvaMissionTimeline({ exchange }: { exchange: AvaAssistantExchange }) {
   const confidencePercent =
     Number.isFinite(confidence) && confidence > 0 ? Math.round(confidence * 100) : 0;
   const nextAction = compactText(deepSeekDecision?.nextAction, 180);
+  const blockedDecision =
+    decision === 'block' || String(mission?.status || '').toLowerCase() === 'blocked';
   const approvalRequired =
     mission?.approvalRequired === true ||
     actionPolicy?.approvalRequired === true ||
@@ -746,7 +755,13 @@ function AvaMissionTimeline({ exchange }: { exchange: AvaAssistantExchange }) {
             Review needed
           </span>
         )}
-        {!approvalRequired && (
+        {blockedDecision && !approvalRequired && (
+          <span className="inline-flex items-center gap-1 rounded-full border border-[var(--ava-warning-border)] bg-[var(--ava-warning-soft)] px-2 py-0.5 text-[11px] font-semibold text-[var(--ava-warning)]">
+            <CircleAlert size={12} />
+            Paused
+          </span>
+        )}
+        {!approvalRequired && !blockedDecision && (
           <span className="inline-flex items-center gap-1 rounded-full border border-[var(--ava-success-border)] bg-[var(--ava-success-soft)] px-2 py-0.5 text-[11px] font-semibold text-[var(--ava-success)]">
             <CheckCircle2 size={12} />
             Safe lane
@@ -1293,12 +1308,10 @@ export function AvaChat() {
                 !Array.isArray(item.controlEnvelope)
                   ? (item.controlEnvelope as Record<string, unknown>)
                   : null,
-              deepSeekDecision:
-                item?.deepSeekDecision &&
-                typeof item.deepSeekDecision === 'object' &&
-                !Array.isArray(item.deepSeekDecision)
-                  ? (item.deepSeekDecision as Record<string, unknown>)
-                  : null,
+              deepSeekDecision: normalizeAvaDeepSeekDecision(item?.deepSeekDecision) as Record<
+                string,
+                unknown
+              > | null,
             })
           )
           .filter((item) => item.request && item.answer)

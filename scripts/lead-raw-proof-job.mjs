@@ -1,5 +1,7 @@
 #!/usr/bin/env node
-import { Pool } from 'pg';
+import pg from 'pg';
+
+const { Pool } = pg;
 
 const leadId = String(process.argv[2] || process.env.PBK_LEAD_RAW_PROOF_ID || '').trim();
 

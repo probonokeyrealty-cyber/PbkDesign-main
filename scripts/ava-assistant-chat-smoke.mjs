@@ -439,6 +439,28 @@ assert(
   'Authenticated general Ava chat must use DeepSeek with recent session history, active memories, and mission context before falling back.'
 );
 assert(
+  /const DEEPSEEK_STRICT_TOOL_MODE =[\s\S]*PBK_DEEPSEEK_STRICT_TOOL_MODE/.test(bridge) &&
+    /const DEEPSEEK_STRICT_TOOL_BASE_URL =[\s\S]*PBK_DEEPSEEK_STRICT_TOOL_BASE_URL/.test(bridge) &&
+    /function normalizeDeepSeekToolsForStrictMode/.test(bridge) &&
+    /strict:\s*true/.test(bridge) &&
+    /\.slice\(0,\s*DEEPSEEK_MAX_TOOL_DEFINITIONS\)/.test(bridge),
+  'DeepSeek must expose a gated strict-tool contract with strict schemas capped to the provider limit.'
+);
+assert(
+  /const deepSeekUrl = hasDeepSeekTools && DEEPSEEK_STRICT_TOOL_MODE === 'enabled'/.test(bridge) &&
+    /fetch\(`\$\{deepSeekUrl\}\/chat\/completions`/.test(bridge) &&
+    /tool_calls/.test(bridge) &&
+    /reasoningPolicy:\s*buildDeepSeekReasoningPolicy/.test(bridge),
+  'DeepSeek chat completion must route strict tools through the beta base URL, preserve tool calls, and redact raw thinking output.'
+);
+assert(
+  /function buildAvaDeepSeekDecisionTools/.test(bridge) &&
+    /function parseAvaDeepSeekDecisionAnswer/.test(bridge) &&
+    /runInternalAvaDeepSeekChat[\s\S]*responseFormat:\s*'json'[\s\S]*tools:\s*buildAvaDeepSeekDecisionTools\(\)[\s\S]*deepSeekDecision/.test(bridge) &&
+    /reasoningPolicy:\s*deepSeek\.reasoningPolicy/.test(bridge),
+  'Ava DeepSeek chat must use a structured decision envelope instead of free-form fallback text.'
+);
+assert(
   /import \{ runAvaMissionController \} from '\.\/ava-mission-controller\.mjs'/.test(bridge) &&
     /let missionController = await runAvaMissionController\(\{[\s\S]*memories:\s*assistantMemories/.test(bridge) &&
     /handleInternalAvaAssistantChatRequest[\s\S]*runAvaMissionController\(\{[\s\S]*assistantIntent[\s\S]*assistantPlan[\s\S]*assistantSession[\s\S]*toolResult/.test(

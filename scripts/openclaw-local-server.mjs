@@ -610,6 +610,16 @@ const DEEPSEEK_THINKING_MODE = /^(enabled|disabled)$/i.test(String(process.env.P
       .trim()
       .toLowerCase()
   : 'disabled';
+const DEEPSEEK_STRICT_TOOL_MODE = /^(enabled|disabled)$/i.test(String(process.env.PBK_DEEPSEEK_STRICT_TOOL_MODE || 'disabled').trim())
+  ? String(process.env.PBK_DEEPSEEK_STRICT_TOOL_MODE || 'disabled')
+      .trim()
+      .toLowerCase()
+  : 'disabled';
+const DEEPSEEK_STRICT_TOOL_BASE_URL = String(process.env.PBK_DEEPSEEK_STRICT_TOOL_BASE_URL || 'https://api.deepseek.com/beta')
+  .trim()
+  .replace(/\/+$/g, '');
+const DEEPSEEK_MAX_TOOL_DEFINITIONS = 128;
+const DEEPSEEK_REASONING_EXPOSURE = 'raw_reasoning_redacted';
 const DEEPSEEK_LIVE_RETRY_MODELS = String(process.env.PBK_DEEPSEEK_LIVE_RETRY_MODELS || 'deepseek-v4-flash,deepseek-v4-pro')
   .split(',')
   .map((model) => model.trim())
@@ -29602,6 +29612,57 @@ function isRetryableDeepSeekResult(result = {}) {
   return code === 'provider_error' && (status === 408 || status === 409 || status === 425 || status === 429 || status >= 500);
 }
 
+function normalizeDeepSeekToolsForStrictMode(tools = []) {
+  if (!Array.isArray(tools)) return [];
+  return tools
+    .filter((tool) => tool && typeof tool === 'object' && String(tool.type || '').trim() === 'function')
+    .map((tool) => {
+      const fn = tool.function && typeof tool.function === 'object' ? tool.function : {};
+      const name = String(fn.name || '').trim();
+      if (!name) return null;
+      return {
+        type: 'function',
+        function: {
+          name,
+          description: String(fn.description || '').trim().slice(0, 1000),
+          parameters:
+            fn.parameters && typeof fn.parameters === 'object'
+              ? fn.parameters
+              : {
+                  type: 'object',
+                  additionalProperties: false,
+                  properties: {},
+                  required: [],
+                },
+          strict: true,
+        },
+      };
+    })
+    .filter(Boolean)
+    .slice(0, DEEPSEEK_MAX_TOOL_DEFINITIONS);
+}
+
+function buildDeepSeekReasoningPolicy(reasoning = '') {
+  const present = Boolean(String(reasoning || '').trim());
+  return {
+    policy: DEEPSEEK_REASONING_EXPOSURE,
+    present,
+    summary: present
+      ? 'DeepSeek returned private reasoning content; PBK used the final decision envelope and kept raw reasoning out of operator surfaces.'
+      : '',
+  };
+}
+
+function extractDeepSeekToolCallAnswer(toolCalls = []) {
+  if (!Array.isArray(toolCalls)) return '';
+  for (const call of toolCalls) {
+    const args = call?.function?.arguments ?? call?.arguments ?? '';
+    const text = typeof args === 'string' ? args.trim() : args && typeof args === 'object' ? JSON.stringify(args) : '';
+    if (text) return text;
+  }
+  return '';
+}
+
 async function runDeepSeekChatCompletion(messages = [], params = {}) {
   const meta = getDeepSeekProviderMeta();
   if (!meta.ready) {
@@ -29621,6 +29682,10 @@ async function runDeepSeekChatCompletion(messages = [], params = {}) {
   const retryAttempts = Math.max(0, Math.min(3, toNumber(params.retryAttempts ?? params.retries, 0)));
   const retryDelayMs = Math.max(0, Math.min(2000, toNumber(params.retryDelayMs ?? params.retry_delay_ms, 0)));
   const attemptTimeoutMs = Math.max(1000, toNumber(params.attemptTimeoutMs ?? params.attempt_timeout_ms ?? params.timeoutMs, DEEPSEEK_TIMEOUT_MS));
+  const requestedDeepSeekTools = normalizeDeepSeekToolsForStrictMode(params.tools || []);
+  const hasDeepSeekTools = requestedDeepSeekTools.length > 0;
+  const deepSeekTools = hasDeepSeekTools && DEEPSEEK_STRICT_TOOL_MODE === 'enabled' ? requestedDeepSeekTools : [];
+  const deepSeekUrl = hasDeepSeekTools && DEEPSEEK_STRICT_TOOL_MODE === 'enabled' ? DEEPSEEK_STRICT_TOOL_BASE_URL : DEEPSEEK_BASE_URL;
   const attempts = [];
 
   const runAttempt = async (attemptIndex = 0) => {
@@ -29633,6 +29698,8 @@ async function runDeepSeekChatCompletion(messages = [], params = {}) {
       max_tokens: Math.max(128, Math.min(4096, toNumber(params.maxTokens || params.max_tokens, 1200))),
       thinking: { type: thinkingMode },
       ...(params.responseFormat === 'json' ? { response_format: { type: 'json_object' } } : {}),
+      ...(deepSeekTools.length ? { tools: deepSeekTools } : {}),
+      ...(deepSeekTools.length && params.toolChoice ? { tool_choice: params.toolChoice } : {}),
     };
     let speculativeMeta = null;
     const buildProviderMeta = (extra = {}) => ({
@@ -29641,6 +29708,15 @@ async function runDeepSeekChatCompletion(messages = [], params = {}) {
       thinkingMode,
       attempt: attemptIndex + 1,
       attemptTimeoutMs,
+      jsonMode: params.responseFormat === 'json',
+      toolCallsRequested: hasDeepSeekTools,
+      toolCallsSent: deepSeekTools.length > 0,
+      toolCount: deepSeekTools.length,
+      strictToolMode: DEEPSEEK_STRICT_TOOL_MODE,
+      strictToolBaseUrl: DEEPSEEK_STRICT_TOOL_BASE_URL,
+      requestBaseUrl: deepSeekUrl,
+      reasoningExposure: DEEPSEEK_REASONING_EXPOSURE,
+      rawReasoningExposed: false,
       ...(speculativeMeta ? { speculative: speculativeMeta } : {}),
       ...extra,
     });
@@ -29713,7 +29789,8 @@ async function runDeepSeekChatCompletion(messages = [], params = {}) {
           if (speculative.ok) {
             const payload = speculative.response;
             const message = payload?.choices?.[0]?.message || {};
-            const answer = String(message.content || '').trim();
+            const toolCalls = Array.isArray(message.tool_calls) ? message.tool_calls : [];
+            const answer = String(message.content || extractDeepSeekToolCallAnswer(toolCalls) || '').trim();
             const reasoning = String(message.reasoning_content || '').trim();
             await recordTokenUsage('deepspec', model, payload?.usage || {}, {
               source: params.source || 'deepseek-strategist',
@@ -29739,6 +29816,7 @@ async function runDeepSeekChatCompletion(messages = [], params = {}) {
                   provider: buildProviderMeta({ speculativeServed: true }),
                   error: 'DeepSpec returned reasoning content without a speakable JSON response.',
                   reasoning,
+                  reasoningPolicy: buildDeepSeekReasoningPolicy(reasoning),
                   usage: payload?.usage || null,
                   responseId: payload?.id || '',
                 };
@@ -29776,6 +29854,8 @@ async function runDeepSeekChatCompletion(messages = [], params = {}) {
                 result: 'live',
                 answer,
                 reasoning,
+                reasoningPolicy: buildDeepSeekReasoningPolicy(reasoning),
+                toolCalls,
                 provider: buildProviderMeta({ speculativeServed: true }),
                 usage: payload?.usage || null,
                 responseId: payload?.id || '',
@@ -29806,7 +29886,7 @@ async function runDeepSeekChatCompletion(messages = [], params = {}) {
       const response = await executeProviderCircuitGuard(
         'deepseek',
         () =>
-          fetch(`${DEEPSEEK_BASE_URL}/chat/completions`, {
+          fetch(`${deepSeekUrl}/chat/completions`, {
             method: 'POST',
             headers: {
               Authorization: `Bearer ${DEEPSEEK_API_KEY}`,
@@ -29833,7 +29913,8 @@ async function runDeepSeekChatCompletion(messages = [], params = {}) {
         };
       }
       const message = payload?.choices?.[0]?.message || {};
-      const answer = String(message.content || '').trim();
+      const toolCalls = Array.isArray(message.tool_calls) ? message.tool_calls : [];
+      const answer = String(message.content || extractDeepSeekToolCallAnswer(toolCalls) || '').trim();
       const reasoning = String(message.reasoning_content || '').trim();
       await recordTokenUsage('deepseek', model, payload?.usage || {}, {
         source: params.source || 'deepseek-strategist',
@@ -29848,6 +29929,7 @@ async function runDeepSeekChatCompletion(messages = [], params = {}) {
           provider: buildProviderMeta(),
           error: 'DeepSeek returned reasoning content without a speakable JSON response.',
           reasoning,
+          reasoningPolicy: buildDeepSeekReasoningPolicy(reasoning),
           usage: payload?.usage || null,
           responseId: payload?.id || '',
         };
@@ -29868,6 +29950,8 @@ async function runDeepSeekChatCompletion(messages = [], params = {}) {
         result: 'live',
         answer,
         reasoning,
+        reasoningPolicy: buildDeepSeekReasoningPolicy(reasoning),
+        toolCalls,
         provider: buildProviderMeta(),
         usage: payload?.usage || null,
         responseId: payload?.id || '',
@@ -39524,6 +39608,14 @@ function getDeepSeekProviderMeta() {
     fallbackModel: DEEPSEEK_FALLBACK_MODEL,
     liveModel: DEEPSEEK_LIVE_MODEL,
     thinkingMode: DEEPSEEK_THINKING_MODE,
+    jsonMode: true,
+    toolCallsSupported: true,
+    strictToolMode: DEEPSEEK_STRICT_TOOL_MODE,
+    strictToolBaseUrl: DEEPSEEK_STRICT_TOOL_BASE_URL,
+    maxToolDefinitions: DEEPSEEK_MAX_TOOL_DEFINITIONS,
+    structuredDecisionContract: true,
+    reasoningExposure: DEEPSEEK_REASONING_EXPOSURE,
+    rawReasoningExposed: false,
     liveRetryModels: DEEPSEEK_LIVE_RETRY_MODELS,
     liveAttemptTimeoutMs: DEEPSEEK_LIVE_ATTEMPT_TIMEOUT_MS,
     liveRetryAttempts: DEEPSEEK_LIVE_RETRY_ATTEMPTS,
@@ -61287,8 +61379,101 @@ function buildInternalAssistantDeepSeekContext(body = {}, options = {}) {
           .join('\n')}`
       : '',
     'Use recent conversation history naturally. Do not expose tool names or infrastructure unless the operator asks for technical support.',
+    'Return only a JSON object with: reply, decision, confidence, nextAction, needsApproval, missionTimeline, and toolIntent.',
+    'Decision must be one of: answer, ask, act, approval_required, delegate, log_only, block.',
+    'Keep reply warm, specific, and operational. Do not expose raw reasoning_content or hidden chain-of-thought.',
   ].filter(Boolean);
   return lines.join('\n');
+}
+
+function buildAvaDeepSeekDecisionTools() {
+  return [
+    {
+      type: 'function',
+      function: {
+        name: 'pbk_ava_decision',
+        description:
+          'Produce Ava Command Center response plus a safe action decision. This function returns an advisory decision envelope; PBK controller gates provider writes before execution.',
+        strict: true,
+        parameters: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            reply: {
+              type: 'string',
+              description: 'Natural operator-facing Ava reply. No hidden reasoning or internal tool names.',
+            },
+            decision: {
+              type: 'string',
+              enum: ['answer', 'ask', 'act', 'approval_required', 'delegate', 'log_only', 'block'],
+              description: 'The safest next move for this turn.',
+            },
+            confidence: {
+              type: 'number',
+              description: 'Decision confidence from 0 to 1.',
+            },
+            nextAction: {
+              type: 'string',
+              description: 'Plain-English next action Ava recommends or will take after PBK policy gates.',
+            },
+            needsApproval: {
+              type: 'boolean',
+              description: 'True when the operator should approve before provider write, contract, campaign, or irreversible CRM operation.',
+            },
+            missionTimeline: {
+              type: 'array',
+              items: { type: 'string' },
+              description: 'Short visible timeline: understood, checked, can do, approval needed, learned.',
+            },
+            toolIntent: {
+              type: 'object',
+              additionalProperties: false,
+              properties: {
+                name: { type: 'string', description: 'Suggested PBK tool/action name or empty string.' },
+                providerWrite: { type: 'boolean', description: 'Whether the suggested action writes to a provider or CRM.' },
+                summary: { type: 'string', description: 'Plain-English action summary.' },
+                paramsJson: { type: 'string', description: 'Stringified safe parameters or empty string.' },
+              },
+              required: ['name', 'providerWrite', 'summary', 'paramsJson'],
+            },
+          },
+          required: ['reply', 'decision', 'confidence', 'nextAction', 'needsApproval', 'missionTimeline', 'toolIntent'],
+        },
+      },
+    },
+  ];
+}
+
+function parseAvaDeepSeekDecisionAnswer(answer = '') {
+  const parsed = extractJsonObjectFromText(answer);
+  const source = parsed && typeof parsed === 'object' ? parsed : {};
+  const allowed = new Set(['answer', 'ask', 'act', 'approval_required', 'delegate', 'log_only', 'block']);
+  const decision = allowed.has(String(source.decision || '').trim()) ? String(source.decision).trim() : 'answer';
+  const reply = sanitizeAvaSpokenOutput(source.reply || source.answer || answer || '', '').slice(0, 1200);
+  const nextAction = sanitizeAvaSpokenOutput(source.nextAction || source.next_action || '', '').slice(0, 260);
+  const missionTimeline = Array.isArray(source.missionTimeline || source.mission_timeline)
+    ? (source.missionTimeline || source.mission_timeline)
+        .map((item) => sanitizeAvaSpokenOutput(item || '', '').slice(0, 160))
+        .filter(Boolean)
+        .slice(0, 6)
+    : [];
+  const toolIntent = source.toolIntent && typeof source.toolIntent === 'object' ? source.toolIntent : {};
+  return {
+    schema: 'ava_deepseek_decision_v1',
+    ok: Boolean(reply),
+    reply,
+    decision,
+    confidence: Math.max(0, Math.min(1, toNumber(source.confidence, reply ? 0.6 : 0))),
+    nextAction,
+    needsApproval: Boolean(source.needsApproval || source.needs_approval || decision === 'approval_required'),
+    missionTimeline,
+    toolIntent: {
+      name: String(toolIntent.name || '').trim().slice(0, 80),
+      providerWrite: Boolean(toolIntent.providerWrite || toolIntent.provider_write),
+      summary: sanitizeAvaSpokenOutput(toolIntent.summary || '', '').slice(0, 220),
+      paramsJson: String(toolIntent.paramsJson || toolIntent.params_json || '').trim().slice(0, 1000),
+    },
+  };
 }
 
 async function runInternalAvaDeepSeekChat({
@@ -61317,18 +61502,27 @@ async function runInternalAvaDeepSeekChat({
     model: DEEPSEEK_LIVE_MODEL,
     temperature: 0.45,
     maxTokens: 700,
+    responseFormat: 'json',
+    tools: buildAvaDeepSeekDecisionTools(),
+    toolChoice: 'auto',
+    thinkingMode: body.deepSeekThinkingMode || body.thinkingMode || DEEPSEEK_THINKING_MODE,
     attemptTimeoutMs: DEEPSEEK_LIVE_ATTEMPT_TIMEOUT_MS,
     retryAttempts: DEEPSEEK_LIVE_RETRY_ATTEMPTS,
     retryDelayMs: DEEPSEEK_LIVE_RETRY_DELAY_MS,
   });
-  if (deepSeek.ok && isPublicAvaBrainAnswerSafe(deepSeek.answer)) {
+  const deepSeekDecision = parseAvaDeepSeekDecisionAnswer(deepSeek.answer);
+  const finalAnswer = deepSeekDecision.reply || deepSeek.answer || '';
+  if (deepSeek.ok && isPublicAvaBrainAnswerSafe(finalAnswer)) {
     return {
       ok: true,
-      answer: deepSeek.answer,
+      answer: finalAnswer,
       toolResult: {
         ok: true,
         result: 'deepseek_chat_answer',
         provider: deepSeek.provider || null,
+        deepSeekDecision,
+        toolCalls: deepSeek.toolCalls || [],
+        reasoningPolicy: deepSeek.reasoningPolicy || buildDeepSeekReasoningPolicy(deepSeek.reasoning || ''),
         responseId: deepSeek.responseId || '',
         attempts: deepSeek.attempts || [],
       },

@@ -2694,9 +2694,12 @@ export function CommandCenter() {
         <PbkPanel className="p-4">
           <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
             <div>
-              <h2 className="text-sm font-semibold text-slate-100">Show or hide sections</h2>
+              <h2 className="text-sm font-semibold text-slate-100">
+                Customize this dashboard for the whole team
+              </h2>
               <p className="text-xs text-slate-500">
-                Keep each agent focused on the work they need today.
+                every agent sees the same command center, so keep the shared view focused on
+                today&apos;s work.
               </p>
             </div>
             <div className="flex flex-wrap gap-2">

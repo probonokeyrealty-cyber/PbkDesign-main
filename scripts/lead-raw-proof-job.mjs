@@ -3,9 +3,11 @@ import pg from 'pg';
 
 const { Pool } = pg;
 
-const leadId = String(process.argv[2] || process.env.PBK_LEAD_RAW_PROOF_ID || '').trim();
+const modeArg = String(process.argv[2] || process.env.PBK_LEAD_RAW_PROOF_ID || '').trim();
+const auditMode = modeArg === '--audit' || String(process.env.PBK_LEAD_RAW_PROOF_MODE || '').trim() === 'audit';
+const leadId = auditMode ? '' : modeArg;
 
-if (!leadId) {
+if (!auditMode && !leadId) {
   console.error('PBK_LEAD_RAW_PROOF_ERROR missing lead id argument');
   process.exit(1);
 }
@@ -40,7 +42,25 @@ const pool = new Pool({
 });
 
 try {
-  const result = await pool.query(
+  if (auditMode) {
+    const result = await pool.query(
+      `SELECT
+        count(*)::INT AS total,
+        count(*) FILTER (WHERE raw ? 'leadProfile')::INT AS has_lead_profile,
+        count(*) FILTER (WHERE raw ? 'portalRecord')::INT AS has_portal_record,
+        count(*) FILTER (WHERE raw ? 'contractContext')::INT AS has_contract_context,
+        count(*) FILTER (WHERE raw ? 'approvalContext')::INT AS has_approval_context,
+        count(*) FILTER (WHERE raw ? 'fieldProvenance')::INT AS has_field_provenance,
+        count(*) FILTER (WHERE NOT (raw ? 'contractContext'))::INT AS missing_contract_context,
+        count(*) FILTER (WHERE NOT (raw ? 'approvalContext'))::INT AS missing_approval_context
+      FROM public.lead_profiles
+      WHERE workspace_id = 'pbk'`
+    );
+
+    console.log(`PBK_LEAD_RAW_AUDIT ${JSON.stringify(result.rows[0] || { total: 0 })}`);
+    process.exitCode = 0;
+  } else {
+    const result = await pool.query(
     `SELECT jsonb_build_object(
       'id', id,
       'email', email,
@@ -92,7 +112,8 @@ try {
     })}`
   );
 
-  if (missing.length || customMissing.length) process.exitCode = 1;
+    if (missing.length || customMissing.length) process.exitCode = 1;
+  }
 } catch (error) {
   console.error(`PBK_LEAD_RAW_PROOF_ERROR ${error instanceof Error ? error.message : String(error)}`);
   process.exitCode = 1;

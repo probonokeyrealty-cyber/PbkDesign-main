@@ -79,6 +79,47 @@ assert(
     /void persistLeadProfileRowToDb\(savedLead, 'manual-lead-create'\)/.test(server),
   'Manual lead creation must not block the operator save on secondary lead-profile projection.'
 );
+[
+  'const leadProfilePatch = plainRecord(payload.leadProfile || payload.lead_profile)',
+  'const portalRecordPatch = plainRecord(payload.portalRecord || payload.portal_record)',
+  'const contractsPatch = plainRecord(payload.contracts)',
+  'const approvalsPatch = plainRecord(payload.approvals)',
+  'const liveCallDetailsPatch = plainRecord(payload.liveCallDetails || payload.live_call_details)',
+  'normalized.leadProfile = leadProfile',
+  'normalized.lead_profile = leadProfile',
+  'normalized.portalRecord = portalRecord',
+  'normalized.portal_record = portalRecord',
+  'normalized.contracts = contracts',
+  'normalized.contractContext = contracts',
+  'normalized.contract_context = contracts',
+  'normalized.approvals = approvals',
+  'normalized.approvalContext = approvals',
+  'normalized.approval_context = approvals',
+  'normalized.liveCallDetails = liveCallDetails',
+  'normalized.live_call_details = liveCallDetails',
+].forEach((expected) => {
+  assert(
+    server.includes(expected),
+    `Lead save normalization must preserve rich seller profile packet: ${expected}`
+  );
+});
+assert(
+  /const leadProfile = \{[\s\S]*seller:\s*\{[\s\S]*\.\.\.normalized\.seller[\s\S]*property:\s*\{[\s\S]*\.\.\.normalized\.property[\s\S]*motivation:\s*\{[\s\S]*\.\.\.normalized\.motivation[\s\S]*compliance:\s*\{[\s\S]*\.\.\.normalized\.compliance[\s\S]*assignment:\s*\{[\s\S]*\.\.\.normalized\.assignment[\s\S]*\}/.test(server),
+  'Lead save normalization must refresh the nested leadProfile from the canonical seller/property/motivation/compliance/assignment fields.'
+);
+assert(
+  /const contracts = \{[\s\S]*sellerName:\s*normalized\.seller\.name[\s\S]*sellerEmail:\s*normalized\.seller\.email[\s\S]*sellerPhone:\s*normalized\.seller\.phone[\s\S]*propertyAddress:\s*normalized\.property\.address[\s\S]*readyForDraft:\s*Boolean\(normalized\.seller\.email && normalized\.property\.address\)/.test(server),
+  'Lead save normalization must refresh contract readiness fields when seller/contact/property data changes.'
+);
+assert(
+  /const approvals = \{[\s\S]*requiredForFirstOutbound:[\s\S]*normalized\.compliance\.tcpaConsent !== 'yes'[\s\S]*normalized\.compliance\.dncStatus !== 'clear'[\s\S]*compliance:\s*\{[\s\S]*\.\.\.normalized\.compliance/.test(server),
+  'Lead save normalization must keep approval/compliance context aligned with the saved lead.'
+);
+assert(
+  /const contractContext = plainRecord\(lead\.contractContext \|\| lead\.contract_context \|\| lead\.contracts\)/.test(server) &&
+    /contractContext,[\s\S]*contract_context:\s*contractContext,[\s\S]*approvalContext,[\s\S]*approval_context:\s*approvalContext/.test(server),
+  'Full lead detail must expose lead contract/approval context separately from related contract history arrays.'
+);
 
 assert(
   !/localStorage\.setItem\('pbk-dark-mode'/.test(app),

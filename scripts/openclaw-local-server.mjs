@@ -15006,6 +15006,14 @@ function compactObject(input = {}) {
   return Object.fromEntries(Object.entries(input || {}).filter(([, value]) => value !== undefined));
 }
 
+function plainRecord(value = {}) {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+}
+
+function hasRecordValues(value = {}) {
+  return Object.keys(plainRecord(value)).length > 0;
+}
+
 function normalizeLeadLookupValue(value = '') {
   return String(value || '').trim();
 }
@@ -15367,6 +15375,8 @@ function buildLeadFullView(leadOrId = {}) {
     selectedPath,
     selectedPathLabel: getPathDisplayLabel(selectedPath),
   };
+  const contractContext = plainRecord(lead.contractContext || lead.contract_context || lead.contracts);
+  const approvalContext = plainRecord(lead.approvalContext || lead.approval_context || lead.approvals);
   const context = findLeadContext({
     leadId: lead.leadId || lead.id,
     leadName: seller.name || lead.leadName || lead.name,
@@ -15395,6 +15405,10 @@ function buildLeadFullView(leadOrId = {}) {
     docusignTemplateName: getPathDocuSignTemplateName(selectedPath),
     seller,
     property,
+    contractContext,
+    contract_context: contractContext,
+    approvalContext,
+    approval_context: approvalContext,
     callContext,
     call_context: callContext,
     bant: normalizeBantInfo(lead.bant || {}, callContext.bant || {}),
@@ -32492,13 +32506,20 @@ function normalizeLeadIntake(payload = {}) {
   const motivation = payload.motivation || {};
   const compliance = payload.compliance || {};
   const assignment = payload.assignment || {};
+  const leadProfilePatch = plainRecord(payload.leadProfile || payload.lead_profile);
+  const portalRecordPatch = plainRecord(payload.portalRecord || payload.portal_record);
+  const contractsPatch = plainRecord(payload.contracts);
+  const approvalsPatch = plainRecord(payload.approvals);
+  const liveCallDetailsPatch = plainRecord(payload.liveCallDetails || payload.live_call_details);
+  const fieldProvenancePatch =
+    payload.fieldProvenance !== undefined ? payload.fieldProvenance : payload.field_provenance;
   const tags = Array.isArray(payload.tags)
     ? payload.tags.map((tag) => String(tag || '').trim()).filter(Boolean)
     : String(payload.tags || '')
         .split(',')
         .map((tag) => tag.trim())
         .filter(Boolean);
-  return {
+  const normalized = {
     id: payload.id || randomUUID(),
     leadId: payload.leadId || payload.id || randomUUID(),
     source: payload.source || payload.leadSource || 'manual',
@@ -32539,7 +32560,8 @@ function normalizeLeadIntake(payload = {}) {
       askingPrice: motivation.askingPrice ?? property.askingPrice ?? payload.askingPrice ?? null,
     },
     compliance: {
-      consentStatus: compliance.consentStatus || payload.consentStatus || 'unknown',
+      tcpaConsent: compliance.tcpaConsent || compliance.consentStatus || payload.tcpaConsent || payload.consentStatus || 'unknown',
+      consentStatus: compliance.consentStatus || compliance.tcpaConsent || payload.consentStatus || payload.tcpaConsent || 'unknown',
       dncStatus: compliance.dncStatus || payload.dncStatus || 'needs_review',
     },
     assignment: {
@@ -32566,6 +32588,118 @@ function normalizeLeadIntake(payload = {}) {
     createdAt,
     updatedAt: payload.updatedAt || createdAt,
   };
+  const selectedPathLabel = normalized.selectedPath || normalized.selected_path
+    ? getPathDisplayLabel(normalized.selectedPath || normalized.selected_path)
+    : '';
+  const leadProfile = {
+    ...leadProfilePatch,
+    seller: {
+      ...plainRecord(leadProfilePatch.seller),
+      ...normalized.seller,
+    },
+    property: {
+      ...plainRecord(leadProfilePatch.property),
+      ...normalized.property,
+    },
+    motivation: {
+      ...plainRecord(leadProfilePatch.motivation),
+      ...normalized.motivation,
+    },
+    compliance: {
+      ...plainRecord(leadProfilePatch.compliance),
+      ...normalized.compliance,
+    },
+    assignment: {
+      ...plainRecord(leadProfilePatch.assignment),
+      ...normalized.assignment,
+    },
+    tags: normalized.tags,
+    notes: normalized.notes,
+    score: normalized.score,
+    source: normalized.source,
+    stage: normalized.stage,
+  };
+  const liveCallDetails = {
+    ...liveCallDetailsPatch,
+    preferredChannel: normalized.seller.preferredChannel,
+    bestTimeToCall: normalized.seller.bestTimeToCall,
+    relationship: normalized.seller.relationshipToProperty,
+    selectedPath: normalized.selectedPath,
+    selected_path: normalized.selected_path,
+    ...(selectedPathLabel ? { selectedPathLabel } : {}),
+    assignedAgent: normalized.assignment.assignedAgent,
+    tcpaConsent: normalized.compliance.tcpaConsent || normalized.compliance.consentStatus,
+    dncStatus: normalized.compliance.dncStatus,
+  };
+  const contracts = {
+    ...contractsPatch,
+    sellerName: normalized.seller.name,
+    sellerEmail: normalized.seller.email,
+    sellerPhone: normalized.seller.phone,
+    propertyAddress: normalized.property.address,
+    askingPrice: normalized.property.askingPrice,
+    arv: normalized.property.arv,
+    mao: normalized.property.mao,
+    estimatedRepairs: normalized.property.estimatedRepairs,
+    selectedPath: normalized.selectedPath || normalized.selected_path,
+    readyForDraft: Boolean(normalized.seller.email && normalized.property.address),
+  };
+  const approvals = {
+    ...approvalsPatch,
+    requiredForContract: approvalsPatch.requiredForContract ?? true,
+    requiredForFirstOutbound:
+      approvalsPatch.requiredForFirstOutbound ??
+      (normalized.compliance.tcpaConsent !== 'yes' ||
+        normalized.compliance.dncStatus !== 'clear'),
+    compliance: {
+      ...plainRecord(approvalsPatch.compliance),
+      ...normalized.compliance,
+    },
+  };
+  const portalRecord = {
+    portalVersion: portalRecordPatch.portalVersion || 'pbk-lead-portal-v1',
+    source: portalRecordPatch.source || normalized.source,
+    ...portalRecordPatch,
+    leadProfile,
+    lead_profile: leadProfile,
+    contracts,
+    approvals,
+    liveCallDetails,
+    live_call_details: liveCallDetails,
+    ava: {
+      ...plainRecord(portalRecordPatch.ava),
+      assignedAgent:
+        plainRecord(portalRecordPatch.ava).assignedAgent || normalized.assignment.assignedAgent,
+      notes: plainRecord(portalRecordPatch.ava).notes || normalized.seller.notes,
+      callContext: {
+        ...plainRecord(plainRecord(portalRecordPatch.ava).callContext),
+        ...liveCallDetails,
+      },
+    },
+  };
+
+  normalized.leadProfile = leadProfile;
+  normalized.lead_profile = leadProfile;
+  normalized.portalRecord = portalRecord;
+  normalized.portal_record = portalRecord;
+  normalized.contracts = contracts;
+  normalized.contractContext = contracts;
+  normalized.contract_context = contracts;
+  normalized.approvals = approvals;
+  normalized.approvalContext = approvals;
+  normalized.approval_context = approvals;
+  normalized.liveCallDetails = liveCallDetails;
+  normalized.live_call_details = liveCallDetails;
+
+  if (Array.isArray(fieldProvenancePatch)) {
+    normalized.fieldProvenance = fieldProvenancePatch;
+    normalized.field_provenance = fieldProvenancePatch;
+  } else if (hasRecordValues(fieldProvenancePatch)) {
+    normalized.fieldProvenance = fieldProvenancePatch;
+    normalized.field_provenance = fieldProvenancePatch;
+  }
+
+  return normalized;
 }
 
 function syncLeadCompatibilityAliases(lead = {}) {

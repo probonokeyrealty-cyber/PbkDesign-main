@@ -884,6 +884,95 @@
   opacity: 0.48;
 }
 
+.pbk-mission-actions {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--s-3);
+  margin-top: var(--s-5);
+}
+
+.pbk-mission-action {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  min-height: 76px;
+  border: 1px solid var(--border-dim);
+  border-radius: var(--radius);
+  background: rgba(2, 6, 23, 0.52);
+  color: var(--text-primary);
+  padding: 12px;
+  text-align: left;
+  transition:
+    border-color var(--duration-fast),
+    background var(--duration-fast),
+    transform var(--duration-fast);
+}
+
+.pbk-mission-action:hover {
+  transform: translateY(-1px);
+  border-color: var(--border-bright);
+  background: rgba(15, 23, 42, 0.72);
+}
+
+.pbk-mission-action-icon {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  place-items: center;
+  border-radius: 10px;
+  background: rgba(14, 165, 233, 0.12);
+  color: var(--sky);
+}
+
+.pbk-mission-action.is-lime .pbk-mission-action-icon {
+  background: rgba(163, 230, 53, 0.12);
+  color: var(--lime);
+}
+
+.pbk-mission-action.is-amber .pbk-mission-action-icon {
+  background: rgba(255, 176, 32, 0.12);
+  color: var(--amber);
+}
+
+.pbk-mission-action-copy {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.pbk-mission-action-copy strong {
+  overflow: hidden;
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 850;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pbk-mission-action-copy small {
+  display: -webkit-box;
+  overflow: hidden;
+  color: var(--text-tertiary);
+  font-size: 11px;
+  line-height: 1.35;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.pbk-mission-action-count {
+  display: inline-flex;
+  min-width: 32px;
+  justify-content: center;
+  border-radius: 999px;
+  background: rgba(125, 211, 252, 0.1);
+  color: var(--text-primary);
+  padding: 4px 7px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 900;
+}
+
 .pbk-battlefield {
   position: relative;
   overflow: hidden;
@@ -1148,6 +1237,17 @@
   .pbk-command-hero-top {
     flex-direction: column;
   }
+  .pbk-mission-actions {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .pbk-mission-action {
+    min-height: 68px;
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+  .pbk-mission-action-count {
+    grid-column: 2;
+    justify-self: start;
+  }
   .pbk-stats-ribbon {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -1174,6 +1274,19 @@
 @media (max-width: 560px) {
   .pbk-command-hero {
     padding: var(--s-5) var(--s-4) var(--s-4);
+  }
+  .pbk-mission-actions {
+    grid-template-columns: 1fr;
+  }
+  .pbk-mission-action {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+  }
+  .pbk-mission-action-copy small {
+    -webkit-line-clamp: 1;
+  }
+  .pbk-mission-action-count {
+    grid-column: auto;
+    justify-self: end;
   }
   .pbk-stats-ribbon {
     grid-template-columns: 1fr;

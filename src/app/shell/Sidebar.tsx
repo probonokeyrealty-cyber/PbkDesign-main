@@ -5,6 +5,7 @@ import {
   Bot,
   BrainCircuit,
   Briefcase,
+  ClipboardCheck,
   Inbox as InboxIcon,
   LayoutDashboard,
   Menu,
@@ -143,15 +144,21 @@ export function Sidebar({
 
 export function MobileShellNavigation({ pendingApprovals = 0 }: { pendingApprovals?: number }) {
   const [open, setOpen] = useState(false);
-  const primaryItems = SHELL_NAV_ITEMS.slice(0, 4);
-  const overflowItems = SHELL_NAV_ITEMS.slice(4);
+  const primaryItems: typeof SHELL_NAV_ITEMS = [
+    { to: '/ava-chat', label: 'Ava', icon: Mic2 },
+    { to: '/leads', label: 'Leads', icon: Users },
+    { to: '/inbox', label: 'Inbox', icon: InboxIcon },
+    { to: '/', label: 'Tasks', icon: ClipboardCheck },
+  ];
+  const primaryPaths = new Set(primaryItems.map((item) => item.to));
+  const overflowItems = SHELL_NAV_ITEMS.filter((item) => !primaryPaths.has(item.to));
 
   return (
     <>
       <nav className="pbk-mobile-shell-nav md:hidden" aria-label="Mobile shell navigation">
         {primaryItems.map(({ to, label, icon: Icon }) => {
-          const showBadge = to === '/inbox' && pendingApprovals > 0;
-          const visibleLabel = label === 'Command Center' ? 'Command' : label;
+          const showBadge = (to === '/inbox' || to === '/') && pendingApprovals > 0;
+          const visibleLabel = label;
           const visibleBadge = pendingApprovals > 9 ? '9+' : pendingApprovals;
           return (
             <NavLink

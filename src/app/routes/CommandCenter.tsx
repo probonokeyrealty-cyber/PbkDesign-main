@@ -1,5 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AlertCircle, CheckCircle2, Loader2 } from 'lucide-react';
+import {
+  AlertCircle,
+  Bot,
+  CheckCircle2,
+  ClipboardCheck,
+  Inbox as InboxIcon,
+  Loader2,
+  Users,
+} from 'lucide-react';
 import { useNavigate } from 'react-router';
 import { CallFloorPanel } from '../components/CallFloorPanel';
 import { CallQualityReviewDialog } from '../components/CallQualityReviewDialog';
@@ -214,16 +222,16 @@ type CommandWidgetId =
 
 const COMMAND_WIDGET_PREFS_KEY = 'pbk:command-center:widgets';
 const COMMAND_WIDGETS: Array<{ id: CommandWidgetId; label: string }> = [
-  { id: 'kpis', label: 'KPI strip' },
+  { id: 'kpis', label: 'Daily numbers' },
   { id: 'liveCall', label: 'Live call' },
   { id: 'callFloor', label: 'Call floor' },
-  { id: 'adminActivity', label: 'Workspace tasks' },
-  { id: 'webSearch', label: 'Market research' },
+  { id: 'adminActivity', label: 'Team tasks' },
+  { id: 'webSearch', label: 'Market context' },
   { id: 'systemHealth', label: 'System health' },
-  { id: 'statusLegend', label: 'Status legend' },
-  { id: 'tooling', label: 'Support tools' },
+  { id: 'statusLegend', label: 'Status guide' },
+  { id: 'tooling', label: 'Ava tools' },
   { id: 'activity', label: 'Activity feed' },
-  { id: 'approvals', label: 'Approval board' },
+  { id: 'approvals', label: 'Review board' },
 ];
 const DEFAULT_COMMAND_WIDGETS = COMMAND_WIDGETS.reduce(
   (prefs, widget) => ({ ...prefs, [widget.id]: true }),
@@ -340,6 +348,15 @@ type BattlefieldItem = {
   cta: string;
   pulse?: 'default' | 'amber' | 'sky' | 'lime';
   targetPath: string;
+};
+
+type MissionQuickAction = {
+  label: string;
+  description: string;
+  count: string;
+  tone: 'sky' | 'lime' | 'amber';
+  targetPath: string;
+  icon: typeof AlertCircle;
 };
 
 function getNestedRecord(record: RuntimeRecord, key: string) {
@@ -1717,17 +1734,17 @@ function FounderBattlefield({
         </div>
         <div className="pbk-battlefield-right">
           <div className="pbk-bf-mini-stat">
-            <div className="l">Bridge</div>
+            <div className="l">Connection</div>
             <div className={`v ${bridgeTone}`}>{bridgeLabel}</div>
           </div>
           <div className="pbk-bf-mini-stat">
-            <div className="l">Agents</div>
+            <div className="l">Team</div>
             <div className="v">
               {agentsReady}/{agentsTotal || agentsReady || 0}
             </div>
           </div>
           <div className="pbk-bf-mini-stat">
-            <div className="l">Mode</div>
+            <div className="l">Ava mode</div>
             <div className="v amber">{friendlyRuntimeLabel(mode, 'Auto')}</div>
           </div>
         </div>
@@ -2269,6 +2286,46 @@ export function CommandCenter() {
     : 'client-ranked snapshot fallback';
   const pendingApprovalCount = pendingApprovals.length;
   const pendingAdminCount = adminTasks.filter((item) => item.status === 'pending').length;
+  const unreadMessageCount = messages.filter((message) => {
+    const status = String(message.status || '').toLowerCase();
+    return (
+      Boolean(message.unread || message.isUnread) || /unread|received|inbound|reply/.test(status)
+    );
+  }).length;
+  const missionQuickActions: MissionQuickAction[] = [
+    {
+      label: 'Ask Ava',
+      description: 'Plan the next move, draft messages, and hand off work.',
+      count: 'Start',
+      tone: 'sky',
+      targetPath: '/ava-chat',
+      icon: Bot,
+    },
+    {
+      label: 'Work leads',
+      description: 'Open seller records, missing facts, and call context.',
+      count: `${leadImports.length}`,
+      tone: 'lime',
+      targetPath: '/leads',
+      icon: Users,
+    },
+    {
+      label: 'Reply inbox',
+      description: 'Handle seller replies, scheduled sends, and conversations.',
+      count: `${unreadMessageCount || messages.length}`,
+      tone: unreadMessageCount ? 'amber' : 'sky',
+      targetPath: '/inbox',
+      icon: InboxIcon,
+    },
+    {
+      label: 'Review decisions',
+      description: 'Approve only the actions that truly need a human.',
+      count: `${pendingApprovalCount + pendingAdminCount}`,
+      tone: pendingApprovalCount + pendingAdminCount ? 'amber' : 'sky',
+      targetPath: '#approvals',
+      icon: ClipboardCheck,
+    },
+  ];
   const heroTimeLabel = new Intl.DateTimeFormat('en-US', {
     weekday: 'long',
     month: 'short',
@@ -2543,6 +2600,38 @@ export function CommandCenter() {
               ))}
             </div>
           )}
+
+          <div className="pbk-mission-actions" aria-label="Today quick actions">
+            {missionQuickActions.map((action) => {
+              const Icon = action.icon;
+              return (
+                <button
+                  key={action.label}
+                  type="button"
+                  className={`pbk-mission-action is-${action.tone}`}
+                  onClick={() => {
+                    if (action.targetPath.startsWith('#')) {
+                      document
+                        .querySelector(action.targetPath)
+                        ?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                      return;
+                    }
+                    navigate(action.targetPath);
+                  }}
+                >
+                  <span className="pbk-mission-action-icon">
+                    <Icon size={17} />
+                  </span>
+                  <span className="pbk-mission-action-copy">
+                    <strong>{action.label}</strong>
+                    <small>{action.description}</small>
+                  </span>
+                  <span className="pbk-mission-action-count">{action.count}</span>
+                </button>
+              );
+            })}
+          </div>
+
           <DataSourceCaption
             endpoint="GET /api/leads + snapshot.calls + snapshot.messages + snapshot.contracts"
             note={`${leadRosterSource}; non-lead stats use live runtime arrays`}
@@ -2605,10 +2694,9 @@ export function CommandCenter() {
         <PbkPanel className="p-4">
           <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
             <div>
-              <h2 className="text-sm font-semibold text-slate-100">Page sections</h2>
+              <h2 className="text-sm font-semibold text-slate-100">Show or hide sections</h2>
               <p className="text-xs text-slate-500">
-                Customize this dashboard for the whole team so every agent sees the same command
-                center.
+                Keep each agent focused on the work they need today.
               </p>
             </div>
             <div className="flex flex-wrap gap-2">

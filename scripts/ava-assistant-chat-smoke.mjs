@@ -450,8 +450,15 @@ assert(
   /const deepSeekUrl = hasDeepSeekTools && DEEPSEEK_STRICT_TOOL_MODE === 'enabled'/.test(bridge) &&
     /fetch\(`\$\{deepSeekUrl\}\/chat\/completions`/.test(bridge) &&
     /tool_calls/.test(bridge) &&
+    /function sanitizeDeepSeekToolCalls/.test(bridge) &&
+    /argumentsRedacted:\s*Boolean\(text\)/.test(bridge) &&
+    /reasoningRedacted:\s*Boolean\(reasoning\)/.test(bridge) &&
     /reasoningPolicy:\s*buildDeepSeekReasoningPolicy/.test(bridge),
-  'DeepSeek chat completion must route strict tools through the beta base URL, preserve tool calls, and redact raw thinking output.'
+  'DeepSeek chat completion must route strict tools through the beta base URL, preserve sanitized tool-call proof, and redact raw thinking output.'
+);
+assert(
+  /params\.speculative !== false && !hasDeepSeekTools && isDeepSpecConfigured/.test(bridge),
+  'DeepSpec speculative decoding must be skipped for strict-tool requests until the endpoint proves tool-call compatibility.'
 );
 assert(
   /function buildAvaDeepSeekDecisionTools/.test(bridge) &&

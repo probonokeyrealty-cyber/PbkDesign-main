@@ -29663,6 +29663,29 @@ function extractDeepSeekToolCallAnswer(toolCalls = []) {
   return '';
 }
 
+function sanitizeDeepSeekToolCalls(toolCalls = []) {
+  if (!Array.isArray(toolCalls)) return [];
+  return toolCalls
+    .map((call) => {
+      const name = String(call?.function?.name || call?.name || '').trim();
+      const args = call?.function?.arguments ?? call?.arguments ?? '';
+      const text = typeof args === 'string' ? args.trim() : args && typeof args === 'object' ? JSON.stringify(args) : '';
+      const parsed = extractJsonObjectFromText(text);
+      return {
+        id: String(call?.id || '').slice(0, 80),
+        type: String(call?.type || 'function').slice(0, 40),
+        function: {
+          name: name.slice(0, 80),
+          argumentKeys: parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? Object.keys(parsed).slice(0, 24) : [],
+          argumentsPresent: Boolean(text),
+          argumentsRedacted: Boolean(text),
+        },
+      };
+    })
+    .filter((call) => call.function.name || call.function.argumentsPresent)
+    .slice(0, DEEPSEEK_MAX_TOOL_DEFINITIONS);
+}
+
 async function runDeepSeekChatCompletion(messages = [], params = {}) {
   const meta = getDeepSeekProviderMeta();
   if (!meta.ready) {
@@ -29722,7 +29745,7 @@ async function runDeepSeekChatCompletion(messages = [], params = {}) {
     });
     try {
       const speculativeConfig = readDeepSpecConfig(process.env);
-      if (params.speculative !== false && isDeepSpecConfigured(speculativeConfig)) {
+      if (params.speculative !== false && !hasDeepSeekTools && isDeepSpecConfigured(speculativeConfig)) {
         const targetModel = String(speculativeConfig.targetModel || '').trim();
         const targetMatchesRequest = !targetModel || targetModel === model;
         if (!targetMatchesRequest) {
@@ -29815,7 +29838,8 @@ async function runDeepSeekChatCompletion(messages = [], params = {}) {
                   result: 'provider_reasoning_only',
                   provider: buildProviderMeta({ speculativeServed: true }),
                   error: 'DeepSpec returned reasoning content without a speakable JSON response.',
-                  reasoning,
+                  reasoning: '',
+                  reasoningRedacted: Boolean(reasoning),
                   reasoningPolicy: buildDeepSeekReasoningPolicy(reasoning),
                   usage: payload?.usage || null,
                   responseId: payload?.id || '',
@@ -29853,9 +29877,10 @@ async function runDeepSeekChatCompletion(messages = [], params = {}) {
                 ok: true,
                 result: 'live',
                 answer,
-                reasoning,
+                reasoning: '',
+                reasoningRedacted: Boolean(reasoning),
                 reasoningPolicy: buildDeepSeekReasoningPolicy(reasoning),
-                toolCalls,
+                toolCalls: sanitizeDeepSeekToolCalls(toolCalls),
                 provider: buildProviderMeta({ speculativeServed: true }),
                 usage: payload?.usage || null,
                 responseId: payload?.id || '',
@@ -29928,7 +29953,8 @@ async function runDeepSeekChatCompletion(messages = [], params = {}) {
           result: 'provider_reasoning_only',
           provider: buildProviderMeta(),
           error: 'DeepSeek returned reasoning content without a speakable JSON response.',
-          reasoning,
+          reasoning: '',
+          reasoningRedacted: Boolean(reasoning),
           reasoningPolicy: buildDeepSeekReasoningPolicy(reasoning),
           usage: payload?.usage || null,
           responseId: payload?.id || '',
@@ -29949,9 +29975,10 @@ async function runDeepSeekChatCompletion(messages = [], params = {}) {
         ok: true,
         result: 'live',
         answer,
-        reasoning,
+        reasoning: '',
+        reasoningRedacted: Boolean(reasoning),
         reasoningPolicy: buildDeepSeekReasoningPolicy(reasoning),
-        toolCalls,
+        toolCalls: sanitizeDeepSeekToolCalls(toolCalls),
         provider: buildProviderMeta(),
         usage: payload?.usage || null,
         responseId: payload?.id || '',
@@ -61522,7 +61549,7 @@ async function runInternalAvaDeepSeekChat({
         provider: deepSeek.provider || null,
         deepSeekDecision,
         toolCalls: deepSeek.toolCalls || [],
-        reasoningPolicy: deepSeek.reasoningPolicy || buildDeepSeekReasoningPolicy(deepSeek.reasoning || ''),
+        reasoningPolicy: deepSeek.reasoningPolicy || buildDeepSeekReasoningPolicy(''),
         responseId: deepSeek.responseId || '',
         attempts: deepSeek.attempts || [],
       },

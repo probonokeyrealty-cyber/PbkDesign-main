@@ -117,6 +117,7 @@ type AvaAssistantExchange = {
   mission?: Record<string, unknown> | null;
   trace?: Record<string, unknown> | null;
   controlEnvelope?: Record<string, unknown> | null;
+  deepSeekDecision?: Record<string, unknown> | null;
 };
 
 const AVA_OPERATOR_MEMORY_KEY = 'pbk:ava-chat:operator-memory';
@@ -549,6 +550,14 @@ function normalizeAssistantSuggestions(value: unknown) {
     : [];
 }
 
+function getAssistantDeepSeekDecision(response: AvaAssistantChatResponse) {
+  const direct = asRecord(response.deepSeekDecision);
+  const toolResult = asRecord(response.toolResult);
+  const nested = asRecord(toolResult?.deepSeekDecision);
+  const fallback = asRecord(asRecord(toolResult?.deepSeekFallback)?.deepSeekDecision);
+  return direct || nested || fallback || null;
+}
+
 function buildAssistantExchange(
   request: string,
   response: AvaAssistantChatResponse,
@@ -570,6 +579,7 @@ function buildAssistantExchange(
     mission: response.mission,
     trace: response.trace,
     controlEnvelope: response.controlEnvelope,
+    deepSeekDecision: getAssistantDeepSeekDecision(response),
   };
 }
 
@@ -605,6 +615,17 @@ function plainMissionStatus(value: unknown) {
   if (status === 'blocked') return 'Paused';
   if (status === 'completed') return 'Ready';
   return status ? status.replace(/_/g, ' ') : 'Working';
+}
+
+function plainAvaDecision(value: unknown) {
+  const decision = String(value || '').toLowerCase();
+  if (decision === 'approval_required') return 'Needs your review';
+  if (decision === 'log_only') return 'Log this only';
+  if (decision === 'ask') return 'Ask one more question';
+  if (decision === 'act') return 'Take the safe next step';
+  if (decision === 'delegate') return 'Hand this to the right helper';
+  if (decision === 'block') return 'Pause for safety';
+  return decision ? decision.replace(/_/g, ' ') : 'Answer now';
 }
 
 function getMissionSteps(mission: Record<string, unknown> | null) {
@@ -648,6 +669,27 @@ function getMissionSteps(mission: Record<string, unknown> | null) {
     : [];
 }
 
+function getDeepSeekMissionSteps(deepSeekDecision: Record<string, unknown> | null) {
+  const timeline = Array.isArray(deepSeekDecision?.missionTimeline)
+    ? deepSeekDecision.missionTimeline
+    : [];
+  return timeline
+    .map((item, index) => {
+      const summary = compactText(item, 140);
+      return summary
+        ? {
+            id: `deepseek-step-${index}`,
+            label: index === 0 ? 'Understood' : index === 1 ? 'Checked' : 'Next',
+            status:
+              index === timeline.length - 1 ? String(deepSeekDecision?.decision || '') : 'ready',
+            summary,
+          }
+        : null;
+    })
+    .filter(Boolean)
+    .slice(0, 5) as Array<{ id: string; label: string; status: string; summary: string }>;
+}
+
 function getMissionInsight(trace: Record<string, unknown> | null) {
   const workingMemory = asRecord(trace?.workingMemory);
   const turnDecision = asRecord(trace?.turnDecision);
@@ -662,17 +704,29 @@ function getMissionInsight(trace: Record<string, unknown> | null) {
 function AvaMissionTimeline({ exchange }: { exchange: AvaAssistantExchange }) {
   const mission = asRecord(exchange.mission);
   const trace = asRecord(exchange.trace);
-  if (!mission && !trace) return null;
-  const steps = getMissionSteps(mission);
+  const deepSeekDecision = asRecord(exchange.deepSeekDecision);
+  if (!mission && !trace && !deepSeekDecision) return null;
+  const missionSteps = getMissionSteps(mission);
+  const deepSeekSteps = getDeepSeekMissionSteps(deepSeekDecision);
+  const steps = missionSteps.length > 0 ? missionSteps : deepSeekSteps;
   const actionPolicy = asRecord(trace?.actionPolicy);
+  const toolIntent = asRecord(deepSeekDecision?.toolIntent);
   const workingMemory = asRecord(trace?.workingMemory);
   const memories = Array.isArray(workingMemory?.memories) ? workingMemory.memories : [];
+  const decision = String(deepSeekDecision?.decision || '').trim();
+  const confidence = Number(deepSeekDecision?.confidence);
+  const confidencePercent =
+    Number.isFinite(confidence) && confidence > 0 ? Math.round(confidence * 100) : 0;
+  const nextAction = compactText(deepSeekDecision?.nextAction, 180);
   const approvalRequired =
-    mission?.approvalRequired === true || actionPolicy?.approvalRequired === true;
-  const insight = getMissionInsight(trace);
+    mission?.approvalRequired === true ||
+    actionPolicy?.approvalRequired === true ||
+    deepSeekDecision?.needsApproval === true ||
+    decision === 'approval_required';
+  const insight = getMissionInsight(trace) || compactText(toolIntent?.summary, 180);
   const goal = compactText(mission?.goal, 180);
   const fallbackInsight =
-    !goal && !insight && steps.length === 0 && memories.length === 0
+    !goal && !insight && !decision && !nextAction && steps.length === 0 && memories.length === 0
       ? 'Ava checked the request and is keeping the next move inside the right lane.'
       : '';
 
@@ -707,6 +761,18 @@ function AvaMissionTimeline({ exchange }: { exchange: AvaAssistantExchange }) {
       {insight && (
         <p className="mb-2 text-[var(--ava-text-muted)]">
           <span className="font-semibold text-[var(--ava-text)]">Checked:</span> {insight}
+        </p>
+      )}
+      {decision && (
+        <p className="mb-2 text-[var(--ava-text-muted)]">
+          <span className="font-semibold text-[var(--ava-text)]">Ava decided:</span>{' '}
+          {plainAvaDecision(decision)}
+          {confidencePercent ? ` (${confidencePercent}% confidence)` : ''}
+        </p>
+      )}
+      {nextAction && (
+        <p className="mb-2 text-[var(--ava-text-muted)]">
+          <span className="font-semibold text-[var(--ava-text)]">Next move:</span> {nextAction}
         </p>
       )}
       {fallbackInsight && <p className="mb-2 text-[var(--ava-text-muted)]">{fallbackInsight}</p>}
@@ -1052,6 +1118,11 @@ export function AvaChat() {
         String(exchange.mission?.currentStep || ''),
         String(exchange.trace?.intent || ''),
         String(exchange.trace?.toolName || ''),
+        String(exchange.deepSeekDecision?.decision || ''),
+        String(exchange.deepSeekDecision?.nextAction || ''),
+        ...((Array.isArray(exchange.deepSeekDecision?.missionTimeline)
+          ? exchange.deepSeekDecision.missionTimeline
+          : []) as unknown[]),
         ...exchange.suggestions,
       ].some((value) =>
         String(value || '')
@@ -1215,6 +1286,18 @@ export function AvaChat() {
               trace:
                 item?.trace && typeof item.trace === 'object' && !Array.isArray(item.trace)
                   ? (item.trace as Record<string, unknown>)
+                  : null,
+              controlEnvelope:
+                item?.controlEnvelope &&
+                typeof item.controlEnvelope === 'object' &&
+                !Array.isArray(item.controlEnvelope)
+                  ? (item.controlEnvelope as Record<string, unknown>)
+                  : null,
+              deepSeekDecision:
+                item?.deepSeekDecision &&
+                typeof item.deepSeekDecision === 'object' &&
+                !Array.isArray(item.deepSeekDecision)
+                  ? (item.deepSeekDecision as Record<string, unknown>)
                   : null,
             })
           )

@@ -423,6 +423,7 @@ export type AvaAssistantChatResponse = {
   assistantAction?: string;
   toolPlan?: Record<string, unknown> | null;
   toolResult?: Record<string, unknown> | null;
+  deepSeekDecision?: Record<string, unknown> | null;
   additiveIntelligence?: Record<string, unknown> | null;
   initialMission?: Record<string, unknown> | null;
   initialControlEnvelope?: Record<string, unknown> | null;

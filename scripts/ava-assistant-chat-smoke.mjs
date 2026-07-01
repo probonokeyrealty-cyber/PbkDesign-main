@@ -304,6 +304,11 @@ assert(
   avaChatRoute.includes('Ava plan') &&
     avaChatRoute.includes('Understood:') &&
     avaChatRoute.includes('Checked:') &&
+    avaChatRoute.includes('Ava decided:') &&
+    avaChatRoute.includes('Next move:') &&
+    avaChatRoute.includes('deepSeekDecision') &&
+    avaChatRoute.includes('missionTimeline') &&
+    avaChatRoute.includes('confidencePercent') &&
     avaChatRoute.includes('mission?.timeline') &&
     avaChatRoute.includes('mission?.tasks') &&
     avaChatRoute.includes('currentStep') &&
@@ -464,8 +469,14 @@ assert(
   /function buildAvaDeepSeekDecisionTools/.test(bridge) &&
     /function parseAvaDeepSeekDecisionAnswer/.test(bridge) &&
     /runInternalAvaDeepSeekChat[\s\S]*responseFormat:\s*'json'[\s\S]*tools:\s*buildAvaDeepSeekDecisionTools\(\)[\s\S]*deepSeekDecision/.test(bridge) &&
+    /deepSeekDecision:\s*getAvaDeepSeekDecisionFromToolResult\(toolResult\)/.test(bridge) &&
     /reasoningPolicy:\s*deepSeek\.reasoningPolicy/.test(bridge),
-  'Ava DeepSeek chat must use a structured decision envelope instead of free-form fallback text.'
+  'Ava DeepSeek chat must use and return a structured decision envelope instead of free-form fallback text.'
+);
+assert(
+  /assistantSessions:\s*list\(state\.assistantSessions/.test(bridge) &&
+    /assistantExchanges:\s*list\(state\.assistantExchanges/.test(bridge),
+  'The authenticated runtime snapshot must expose sanitized Ava session/exchange previews, not only counters.'
 );
 assert(
   /import \{ runAvaMissionController \} from '\.\/ava-mission-controller\.mjs'/.test(bridge) &&

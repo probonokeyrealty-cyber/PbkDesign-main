@@ -59691,6 +59691,8 @@ function buildStateSnapshot(options = {}) {
     agentVersions: list(state.agentVersions || [], 80),
     agentVersionSnapshots: list(state.agentVersionSnapshots || [], 40),
     rexDecisions: list(state.rexDecisions || [], 120),
+    assistantSessions: list(state.assistantSessions || [], 60),
+    assistantExchanges: list(state.assistantExchanges || [], 120),
     avaActiveMemories: list(state.avaActiveMemories || [], 120),
     avaLearningSessions: list(state.avaLearningSessions || [], 80),
     avaLearningRequests: list(state.avaLearningRequests || [], 80),
@@ -61503,6 +61505,19 @@ function parseAvaDeepSeekDecisionAnswer(answer = '') {
   };
 }
 
+function getAvaDeepSeekDecisionFromToolResult(toolResult = null) {
+  if (!toolResult || typeof toolResult !== 'object' || Array.isArray(toolResult)) return null;
+  const direct = toolResult.deepSeekDecision && typeof toolResult.deepSeekDecision === 'object'
+    ? toolResult.deepSeekDecision
+    : null;
+  if (direct?.schema === 'ava_deepseek_decision_v1') return direct;
+  const fallback = toolResult.deepSeekFallback && typeof toolResult.deepSeekFallback === 'object'
+    ? toolResult.deepSeekFallback.deepSeekDecision
+    : null;
+  if (fallback?.schema === 'ava_deepseek_decision_v1') return fallback;
+  return direct || fallback || null;
+}
+
 async function runInternalAvaDeepSeekChat({
   assistantContextSession = {},
   text = '',
@@ -62004,6 +62019,7 @@ async function handleInternalAvaAssistantChatRequest(request) {
       assistantAction: assistantPlan.action || 'answered',
       toolPlan: assistantPlan.toolPlan || null,
       toolResult,
+      deepSeekDecision: getAvaDeepSeekDecisionFromToolResult(toolResult),
       additiveIntelligence,
       initialMission: initialMissionController.mission,
       initialControlEnvelope: initialMissionController.controlEnvelope,

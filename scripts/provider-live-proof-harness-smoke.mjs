@@ -140,6 +140,53 @@ assert.equal(bridgeCalls[0].body.source, 'provider_live_proof');
 assert.equal(bridgeCalls[0].body.manual, true);
 assert.equal(bridgeCalls[0].body.manualSend, true);
 
+const emailCalls = [];
+const mockEmailFetch = async (url, init = {}) => {
+  emailCalls.push({
+    url: String(url),
+    method: init.method,
+    body: init.body ? JSON.parse(init.body) : null,
+  });
+  return new Response(
+    JSON.stringify({
+      ok: true,
+      result: 'live',
+      message: {
+        id: 'email-message-1',
+        channel: 'email',
+        provider: 'Instantly',
+        status: 'sent',
+      },
+      outbox: {
+        idempotencyKey: 'pbk-live-proof-email-20260629010101',
+        status: 'sent',
+      },
+    }),
+    { status: 200, headers: { 'Content-Type': 'application/json' } }
+  );
+};
+
+const liveEmail = await runProviderLiveProof({
+  provider: 'email',
+  dryRun: false,
+  now: new Date('2026-06-29T01:01:01.000Z'),
+  fetchImpl: mockEmailFetch,
+  env: {
+    PBK_LIVE_PROOF_EMAIL_TO: 'canary@example.test',
+    PBK_INSTANTLY_DEFAULT_FROM_EMAIL: 'info@example.test',
+    PBK_BRIDGE_API_KEY: 'bridge-secret',
+    PBK_LIVE_PROOF_CONFIRM: 'send',
+    PBK_LIVE_PROOF_BRIDGE_URL: 'https://bridge.example.test/',
+  },
+});
+
+assert.equal(liveEmail.ok, true);
+assert.equal(liveEmail.proofStatus, 'acceptance_only');
+assert.equal(liveEmail.finalProof, false);
+assert.equal(liveEmail.requiresProviderReceipt, true);
+assert.equal(emailCalls.length, 1);
+assert.equal(emailCalls[0].body.channel, 'email');
+
 const bridgeSource = readFileSync(new URL('./openclaw-local-server.mjs', import.meta.url), 'utf8');
 assert(
   bridgeSource.includes('function findManualProviderDeliveryRecord'),

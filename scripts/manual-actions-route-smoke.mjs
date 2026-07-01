@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawn } from 'node:child_process';
@@ -53,6 +53,18 @@ function assertNotApprovalGate(label, result) {
 }
 
 async function main() {
+  const bridgeSource = await readFile(join(repoRoot, 'scripts/openclaw-local-server.mjs'), 'utf8');
+  assert.doesNotMatch(
+    bridgeSource,
+    /messageProvider\s*===\s*['"]telnyx['"][\s\S]{0,120}\[['"]queued['"],\s*['"]sent['"],\s*['"]delivered['"]\]\.includes\(messageStatus\)/,
+    'Telnyx SMS handoff statuses must not be treated as handset delivery proof.'
+  );
+  assert.match(
+    bridgeSource,
+    /toolName\s*===\s*['"]telnyx_sms['"]\s*&&\s*messageStatus\s*!==\s*['"]delivered['"]/,
+    'Durable Telnyx SMS proof must require delivered status.'
+  );
+
   const stateDir = await mkdtemp(join(tmpdir(), 'pbk-manual-actions-'));
   const baseUrl = `http://127.0.0.1:${port}`;
   const child = spawn(process.execPath, ['scripts/openclaw-local-server.mjs'], {

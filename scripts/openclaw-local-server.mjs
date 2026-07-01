@@ -42042,11 +42042,23 @@ function isManualProviderDeliveryLive(toolName = '', routeResponse = {}) {
   if (toolName === 'telnyx_sms') {
     const messageStatus = String(routeResponse.message?.status || '').toLowerCase();
     const messageProvider = String(routeResponse.message?.provider || '').toLowerCase();
+    const deliveryStatus = String(
+      routeResponse.message?.deliveryStatus ||
+        routeResponse.message?.payload?.deliveryStatus ||
+        routeResponse.message?.payload?.telnyx?.deliveryStatus ||
+        routeResponse.message?.payload?.telnyx?.status ||
+        routeResponse.telnyx?.deliveryStatus ||
+        routeResponse.telnyx?.status ||
+        routeResponse.sms?.deliveryStatus ||
+        routeResponse.sms?.status ||
+        ''
+    ).toLowerCase();
     return Boolean(
-      routeResponse.telnyx?.live ||
-        routeResponse.sms?.live ||
-        routeResponse.result === 'live' ||
-        (messageProvider === 'telnyx' && ['queued', 'sent', 'delivered'].includes(messageStatus))
+      routeResponse.telnyx?.delivered === true ||
+        routeResponse.sms?.delivered === true ||
+        routeResponse.result === 'delivered' ||
+        deliveryStatus === 'delivered' ||
+        (messageProvider === 'telnyx' && messageStatus === 'delivered')
     );
   }
   if (toolName === 'sendColdEmail') {
@@ -42137,9 +42149,11 @@ function findManualProviderDeliveryRecord({
   const normalizedChannel = normalizeProviderRecordText(channel);
   return (
     sortNewest(state.messages || []).find((message) => {
+      const messageStatus = normalizeProviderRecordText(message.status);
       if (normalizeProviderRecordText(message.channel) !== normalizedChannel) return false;
       if (normalizeProviderRecordText(message.direction || 'outbound') !== 'outbound') return false;
-      if (!MANUAL_PROVIDER_DELIVERY_STATUSES.has(normalizeProviderRecordText(message.status))) return false;
+      if (toolName === 'telnyx_sms' && messageStatus !== 'delivered') return false;
+      if (toolName !== 'telnyx_sms' && !MANUAL_PROVIDER_DELIVERY_STATUSES.has(messageStatus)) return false;
       if (!messageProviderMatchesManualProviderRecord(message, toolName)) return false;
       if (!messageRecipientMatchesManualProviderRecord(message, normalizedChannel, recipient)) return false;
       return messageContentMatchesManualProviderRecord(message, { idempotencyKey, messageBody, subject });

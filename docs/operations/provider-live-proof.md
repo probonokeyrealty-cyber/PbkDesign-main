@@ -40,4 +40,4 @@ npm run test:provider-live-proof-harness
 - DocuSign uses `POST /api/contracts`.
 - Slack creates a proof approval, approves it, then confirms it no longer appears in pending approvals.
 
-The live adapters report `sent_waiting_for_receipt` after the bridge accepts the provider action. Final provider receipts still need to be captured from Telnyx, email provider webhooks, DocuSign Connect, and Slack API responses before a proof run should be considered fully reconciled.
+The live adapters must not overclaim delivery after an API handoff. SMS reports `provider_confirmed` only after a delivered carrier receipt or MDR confirms delivery; a Telnyx `message.sent` handoff is not final handset proof. Email reports `acceptance_only` after the bridge/provider accepts the canary request; final email proof still requires provider webhook or inbox receipt reconciliation. DocuSign and Slack require their provider-specific receipt/reconciliation checks before a proof run should be considered fully reconciled.

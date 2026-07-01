@@ -529,10 +529,19 @@ async function runEmailLiveProof({ env, fetchImpl, now }) {
     },
     { env, fetchImpl }
   );
-  return summarizeBridgeProof('email', result, {
+  const proof = summarizeBridgeProof('email', result, {
     idempotencyKey: id,
     canary: 'PBK_LIVE_PROOF_EMAIL_TO',
   });
+  if (proof.ok) {
+    proof.proofStatus = 'acceptance_only';
+    proof.status = 'acceptance_only';
+    proof.finalProof = false;
+    proof.requiresProviderReceipt = true;
+    proof.note =
+      'Email provider accepted the canary request; final delivery requires provider webhook/inbox receipt reconciliation.';
+  }
+  return proof;
 }
 
 async function runDocuSignLiveProof({ env, fetchImpl, now }) {

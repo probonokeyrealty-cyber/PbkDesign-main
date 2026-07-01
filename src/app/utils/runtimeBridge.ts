@@ -425,8 +425,10 @@ export type AvaAssistantChatResponse = {
   toolResult?: Record<string, unknown> | null;
   additiveIntelligence?: Record<string, unknown> | null;
   initialMission?: Record<string, unknown> | null;
+  initialControlEnvelope?: Record<string, unknown> | null;
   mission?: Record<string, unknown> | null;
   trace?: Record<string, unknown> | null;
+  controlEnvelope?: Record<string, unknown> | null;
   missionLedger?: Record<string, unknown> | null;
   qa?: Record<string, unknown> | null;
   safety?: Record<string, unknown> | null;

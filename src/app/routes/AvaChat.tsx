@@ -116,6 +116,7 @@ type AvaAssistantExchange = {
   warning?: string;
   mission?: Record<string, unknown> | null;
   trace?: Record<string, unknown> | null;
+  controlEnvelope?: Record<string, unknown> | null;
 };
 
 const AVA_OPERATOR_MEMORY_KEY = 'pbk:ava-chat:operator-memory';
@@ -568,6 +569,7 @@ function buildAssistantExchange(
     warning: response.warning,
     mission: response.mission,
     trace: response.trace,
+    controlEnvelope: response.controlEnvelope,
   };
 }
 

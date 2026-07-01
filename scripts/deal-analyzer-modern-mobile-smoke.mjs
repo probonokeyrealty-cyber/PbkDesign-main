@@ -322,6 +322,18 @@ assert(
     ),
   'Mobile analyzer, call, and document inputs should use 16px text so agents can edit without viewport zoom.'
 );
+assert(
+  /@media \(max-width: 720px\)[\s\S]*\.pbk-deal-surface :is\(input, select, textarea\)[\s\S]*font-size:\s*16px[\s\S]*line-height:\s*1\.25[\s\S]*touch-action:\s*manipulation/.test(
+    css
+  ),
+  'Every mobile deal analyzer form control should keep the 16px no-zoom baseline.'
+);
+assert(
+  /@media \(max-width: 720px\)[\s\S]*\.pbk-deal-surface :is\(input, select, textarea\):focus[\s\S]*scroll-margin-bottom:\s*calc\(env\(safe-area-inset-bottom\) \+ 120px\)/.test(
+    css
+  ),
+  'Focused mobile deal analyzer fields should leave keyboard-safe scroll room.'
+);
 
 assert(
   pkg.scripts?.['test:deal-analyzer-modern-mobile'] ===

@@ -55,6 +55,107 @@ function inferMissionStatus({ assistantPlan = {}, toolResult = null, orchestrati
   return 'completed';
 }
 
+function stableHash(value = '') {
+  let hash = 0;
+  const text = String(value || '');
+  for (let i = 0; i < text.length; i += 1) {
+    hash = ((hash << 5) - hash + text.charCodeAt(i)) | 0;
+  }
+  return Math.abs(hash).toString(36);
+}
+
+function fingerprintParams(params = {}) {
+  if (!params || typeof params !== 'object') return '';
+  const safe = {};
+  for (const key of ['leadId', 'lead_id', 'address', 'propertyAddress', 'phone', 'to', 'email', 'recipientEmail']) {
+    if (params[key] !== undefined && params[key] !== null && params[key] !== '') {
+      safe[key] = String(params[key]).slice(0, 160);
+    }
+  }
+  return stableHash(JSON.stringify(safe));
+}
+
+function buildAvaControlEnvelope({
+  input = {},
+  assistantPlan = {},
+  toolName = '',
+  actionType = '',
+  providerWrite = false,
+  status = '',
+  orchestration = {},
+  controllerStage = 'final',
+}) {
+  const guardResult = lower(orchestration.guard?.result);
+  const guardBlocked = orchestration.guard?.blocked === true || guardResult === 'blocked' || guardResult === 'handoff';
+  const actionDecision = orchestration.actionDecision || {};
+  const orchestratorDecision = lower(actionDecision.decision);
+  const missingGoal = !cleanString(input.text);
+  let decision = 'allow';
+  let reason = actionDecision.reason || 'Ava controller allowed the next step.';
+
+  if (missingGoal) {
+    decision = 'ask_user';
+    reason = 'Ava needs a clear operator request before choosing a tool or action.';
+  } else if (guardBlocked) {
+    decision = 'blocked';
+    reason = actionDecision.reason || orchestration.guard?.reasons?.[0] || 'Ava blocked this step for safety.';
+  } else if (orchestratorDecision === 'blocked') {
+    decision = 'blocked';
+    reason = actionDecision.reason || 'Ava blocked this step for safety.';
+  } else if (
+    providerWrite ||
+    assistantPlan.action === 'approval_required' ||
+    status === 'waiting_on_approval' ||
+    actionDecision.approvalRequired === true
+  ) {
+    decision = 'approval_required';
+    reason = actionDecision.reason || 'Provider-write actions must move through the approval rail before execution.';
+  }
+
+  const approvalRequired = decision === 'approval_required';
+  const authorizesExecution = decision === 'allow';
+  const proofRequirements = [];
+  if (decision === 'allow') proofRequirements.push('mission_trace');
+  if (approvalRequired) proofRequirements.push('approval_receipt');
+  if (providerWrite) proofRequirements.push('provider_result');
+  if (decision === 'blocked') proofRequirements.push('blocked_reason');
+  if (decision === 'ask_user') proofRequirements.push('operator_clarification');
+
+  const paramsFingerprint = fingerprintParams(assistantPlan.toolPlan?.params || {});
+  const decisionSeed = [
+    input.sessionId || '',
+    controllerStage,
+    input.text || '',
+    assistantPlan.action || '',
+    toolName,
+    paramsFingerprint,
+    decision,
+  ].join('|');
+
+  return {
+    schema: 'pbk.ava.control_envelope.v1',
+    controllerDecisionId: `ava-control-${stableHash(decisionSeed)}`,
+    controllerStage,
+    source: input.source || 'ava-assistant-chat',
+    sessionId: input.sessionId || '',
+    leadId: input.leadId || '',
+    intent: input.assistantIntent?.intent || assistantPlan.usedIntent || '',
+    action: assistantPlan.action || 'answered',
+    decision,
+    authorizesExecution,
+    approvalRequired,
+    providerWritesBlocked: providerWrite && !authorizesExecution,
+    reason,
+    exactAction: {
+      toolName,
+      actionType,
+      providerWrite,
+      paramsFingerprint,
+    },
+    proofRequirements,
+  };
+}
+
 function buildMissionSteps({ text, assistantPlan = {}, toolResult = null, orchestration = {} }) {
   const toolName = cleanString(assistantPlan.toolPlan?.toolName);
   const executionStatus = toolResult?.ok === false ? 'needs_review' : 'completed';
@@ -157,6 +258,16 @@ export async function runAvaMissionController(input = {}) {
   });
   const compact = compactOrchestration(orchestration);
   const status = inferMissionStatus({ assistantPlan, toolResult: input.toolResult, orchestration });
+  const controlEnvelope = buildAvaControlEnvelope({
+    input,
+    assistantPlan,
+    toolName,
+    actionType,
+    providerWrite,
+    status,
+    orchestration,
+    controllerStage,
+  });
   const mission = {
     schema: 'pbk.ava.mission_controller.v1',
     id: `${input.sessionId || 'ava-session'}:${Date.now()}`,
@@ -190,11 +301,12 @@ export async function runAvaMissionController(input = {}) {
     action: assistantPlan.action || 'answered',
     toolName,
     actionPolicy: {
-      providerWritesBlocked: providerWrite && orchestration.actionDecision?.providerWriteAllowed !== true,
-      approvalRequired: mission.approvalRequired,
-      decision: orchestration.actionDecision?.decision || '',
-      reason: orchestration.actionDecision?.reason || '',
+      providerWritesBlocked: controlEnvelope.providerWritesBlocked,
+      approvalRequired: controlEnvelope.approvalRequired,
+      decision: controlEnvelope.decision,
+      reason: controlEnvelope.reason,
     },
+    controlEnvelope,
     turnDecision: compact.turnDecision,
     actionDecision: compact.actionDecision,
     guard: compact.guard,
@@ -211,6 +323,7 @@ export async function runAvaMissionController(input = {}) {
     result: 'ava_mission_controller_ready',
     mission,
     trace,
+    controlEnvelope,
     orchestration: compact,
   };
 }

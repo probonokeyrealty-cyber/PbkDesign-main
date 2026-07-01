@@ -55,6 +55,7 @@ import { getObservabilityStatus as getPbkObservabilityStatus, incrementObservabi
 import { recordAvaResponseLatencyStatus } from './ava-latency-status.mjs';
 import { appendAssistantMessage, buildAssistantPrompt, createAssistantSessionId, detectAssistantIntent, normalizeAssistantSession, planAssistantIntent, sanitizeAssistantTurn } from './ava-assistant-chat.mjs';
 import { runAvaMissionController } from './ava-mission-controller.mjs';
+import { buildLeadCommitEnvelope } from './lead-field-provenance.mjs';
 import { isDeepSpecConfigured, readDeepSpecConfig, requestSpeculativeChatCompletion } from './deepspec-speculative-client.mjs';
 import { buildInvokeRateLimitIdentity, createInvokeRateLimiter } from './invoke-rate-limit.mjs';
 import { ClosingStateMachine, Phase } from './ava-state-machine.mjs';
@@ -6933,6 +6934,11 @@ async function ensurePbkOperationalTables(pool) {
       dnc_reason TEXT NOT NULL DEFAULT '',
       assigned_agent TEXT NOT NULL DEFAULT '',
       next_action_at TIMESTAMPTZ,
+      bant JSONB NOT NULL DEFAULT '{}'::JSONB,
+      call_context JSONB NOT NULL DEFAULT '{}'::JSONB,
+      lead_commit_envelope JSONB NOT NULL DEFAULT '{}'::JSONB,
+      field_provenance JSONB NOT NULL DEFAULT '[]'::JSONB,
+      projection_proof JSONB NOT NULL DEFAULT '{}'::JSONB,
       raw JSONB NOT NULL DEFAULT '{}'::JSONB,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -6964,6 +6970,11 @@ async function ensurePbkOperationalTables(pool) {
       ADD COLUMN IF NOT EXISTS dnc_reason TEXT NOT NULL DEFAULT '',
       ADD COLUMN IF NOT EXISTS assigned_agent TEXT NOT NULL DEFAULT '',
       ADD COLUMN IF NOT EXISTS next_action_at TIMESTAMPTZ,
+      ADD COLUMN IF NOT EXISTS bant JSONB NOT NULL DEFAULT '{}'::JSONB,
+      ADD COLUMN IF NOT EXISTS call_context JSONB NOT NULL DEFAULT '{}'::JSONB,
+      ADD COLUMN IF NOT EXISTS lead_commit_envelope JSONB NOT NULL DEFAULT '{}'::JSONB,
+      ADD COLUMN IF NOT EXISTS field_provenance JSONB NOT NULL DEFAULT '[]'::JSONB,
+      ADD COLUMN IF NOT EXISTS projection_proof JSONB NOT NULL DEFAULT '{}'::JSONB,
       ADD COLUMN IF NOT EXISTS raw JSONB NOT NULL DEFAULT '{}'::JSONB,
       ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
@@ -14210,6 +14221,11 @@ async function completeLocalCommand(commandId = '', payload = {}) {
 }
 
 function addLeadImport(stateRef, leadImport) {
+  ensureLeadCommitEnvelope(leadImport, leadImport?.source || leadImport?.leadSource || 'lead-import-state', {
+    actorType: leadImport?.actor || leadImport?.requestedBy || 'Ava',
+    reason: 'Lead import added to bridge state.',
+    patch: buildLeadCommitPatch(leadImport),
+  });
   stateRef.leadImports.unshift(leadImport);
   limitStateArrays(stateRef);
   updateDerivedStatus(stateRef);
@@ -14292,6 +14308,17 @@ function patchLeadImport(stateRef, matcher = {}, patch = {}) {
     },
     updatedAt: isoNow(),
   };
+  const patchEnvelope = patch.leadCommitEnvelope || patch.lead_commit_envelope;
+  if (patchEnvelope?.schema === 'pbk.lead.commit_envelope.v1') {
+    ensureLeadCommitEnvelope(next, patch.source || current.source || current.leadSource || 'lead-import-patch');
+  } else {
+    ensureLeadCommitEnvelope(next, patch.source || current.source || current.leadSource || 'lead-import-patch', {
+      actorType: patch.actor || patch.requestedBy || current.actor || 'Ava',
+      reason: 'Lead import patched in bridge state.',
+      patch,
+      forceNew: true,
+    });
+  }
   stateRef.leadImports.splice(existingIndex, 1, next);
   limitStateArrays(stateRef);
   updateDerivedStatus(stateRef);
@@ -32702,6 +32729,59 @@ function normalizeLeadIntake(payload = {}) {
   return normalized;
 }
 
+function buildLeadCommitPatch(lead = {}) {
+  return {
+    seller: plainRecord(lead.seller),
+    property: plainRecord(lead.property),
+    motivation: plainRecord(lead.motivation),
+    compliance: plainRecord(lead.compliance),
+    assignment: plainRecord(lead.assignment),
+    bant: plainRecord(lead.bant),
+    callContext: plainRecord(lead.callContext || lead.call_context),
+    selectedPath: lead.selectedPath || lead.selected_path || '',
+    selected_path: lead.selected_path || lead.selectedPath || '',
+    notes: typeof lead.notes === 'string' ? lead.notes : plainRecord(lead.notes),
+    analyzer: plainRecord(lead.analyzer),
+    deal: plainRecord(lead.deal),
+    agentDealContext: plainRecord(lead.agentDealContext),
+    contractContext: plainRecord(lead.contractContext || lead.contract_context || lead.contracts),
+    approvalContext: plainRecord(lead.approvalContext || lead.approval_context || lead.approvals),
+  };
+}
+
+function ensureLeadCommitEnvelope(lead = {}, source = 'lead-profile-persist', options = {}) {
+  if (!lead || typeof lead !== 'object' || Array.isArray(lead)) return null;
+  const existing = lead.leadCommitEnvelope || lead.lead_commit_envelope;
+  if (existing?.schema === 'pbk.lead.commit_envelope.v1' && options.forceNew !== true) {
+    lead.leadCommitEnvelope = existing;
+    lead.lead_commit_envelope = existing;
+    lead.fieldProvenance = existing.fieldProvenance || lead.fieldProvenance || lead.field_provenance || [];
+    lead.field_provenance = lead.fieldProvenance;
+    lead.projectionProof = existing.projectionProof || lead.projectionProof || lead.projection_proof || null;
+    lead.projection_proof = lead.projectionProof;
+    return existing;
+  }
+  const envelope = buildLeadCommitEnvelope({
+    leadId: lead.leadId || lead.id || options.leadId || '',
+    source,
+    sourceChannel: options.sourceChannel || lead.sourceChannel || lead.source_channel || '',
+    sourceId: options.sourceId || lead.sourceId || lead.source_id || '',
+    actorType: options.actorType || lead.actorType || lead.actor || 'ava',
+    reason: options.reason || `Lead profile write through ${source}.`,
+    confidence: options.confidence,
+    patch: options.patch || buildLeadCommitPatch(lead),
+    contractContext: lead.contractContext || lead.contract_context || lead.contracts,
+    approvalContext: lead.approvalContext || lead.approval_context || lead.approvals,
+  });
+  lead.leadCommitEnvelope = envelope;
+  lead.lead_commit_envelope = envelope;
+  lead.fieldProvenance = envelope.fieldProvenance;
+  lead.field_provenance = envelope.fieldProvenance;
+  lead.projectionProof = envelope.projectionProof;
+  lead.projection_proof = envelope.projectionProof;
+  return envelope;
+}
+
 function syncLeadCompatibilityAliases(lead = {}) {
   const seller = lead.seller || {};
   const property = lead.property || {};
@@ -32972,6 +33052,28 @@ function syncAnalyzerRunToLeadProfile(params = {}, run = {}) {
     lastAnalyzerAt: run.createdAt || isoNow(),
   };
 
+  const analyzerLeadPatch = {
+    source: 'analyzer-deal-sync',
+    sourceChannel: 'analyzer',
+    sourceId: run.id || '',
+    actor: params.actor || params.requestedBy || 'Analyzer',
+    selectedPath,
+    selected_path: selectedPath,
+    property: propertyPatch,
+    callContext: callContextPatch,
+    call_context: callContextPatch,
+    analyzer: {
+      runId: run.id || '',
+      address: run.address || context.address || '',
+      arv: run.arv,
+      mao: run.mao,
+      maoRbp: propertyPatch.maoRbp,
+      targetOffer: run.targetOffer,
+      repairsMid: run.repairsMid,
+      estProfit: run.estProfit,
+      updatedAt: run.createdAt || isoNow(),
+    },
+  };
   return patchLeadImport(
     state,
     {
@@ -32980,24 +33082,7 @@ function syncAnalyzerRunToLeadProfile(params = {}, run = {}) {
       email: existing.seller?.email || context.email,
       leadName: existing.seller?.name || context.leadName,
     },
-    {
-      selectedPath,
-      selected_path: selectedPath,
-      property: propertyPatch,
-      callContext: callContextPatch,
-      call_context: callContextPatch,
-      analyzer: {
-        runId: run.id || '',
-        address: run.address || context.address || '',
-        arv: run.arv,
-        mao: run.mao,
-        maoRbp: propertyPatch.maoRbp,
-        targetOffer: run.targetOffer,
-        repairsMid: run.repairsMid,
-        estProfit: run.estProfit,
-        updatedAt: run.createdAt || isoNow(),
-      },
-    }
+    analyzerLeadPatch
   );
 }
 
@@ -35508,18 +35593,23 @@ async function persistLeadProfileRowToDb(lead = {}, source = 'property-data') {
       };
     }
   }
+  ensureLeadCommitEnvelope(lead, source, {
+    reason: `Persisted lead profile through ${source}.`,
+  });
   const result = await queryPgRows(
-    `INSERT INTO public.lead_profiles (
+     `INSERT INTO public.lead_profiles (
        id, workspace_id, external_id, source, status, stage, temperature,
        lead_name, first_name, last_name, email, phone, address, city, state,
        postal_code, owner_type, participant_role, motivation_score, dnc,
-       dnc_reason, assigned_agent, raw, created_at, updated_at
+       dnc_reason, assigned_agent, bant, call_context, lead_commit_envelope,
+       field_provenance, projection_proof, raw, created_at, updated_at
      )
      VALUES (
        $1, 'pbk', $2, $3, $4, $5, $6,
        $7, $8, $9, $10, $11, $12, $13, $14,
        $15, $16, $17, $18, $19,
-       $20, $21, $22::jsonb, NOW(), NOW()
+       $20, $21, $22::jsonb, $23::jsonb, $24::jsonb,
+       $25::jsonb, $26::jsonb, $27::jsonb, NOW(), NOW()
      )
      ON CONFLICT (id) DO UPDATE SET
        external_id = EXCLUDED.external_id,
@@ -35540,6 +35630,11 @@ async function persistLeadProfileRowToDb(lead = {}, source = 'property-data') {
        dnc = EXCLUDED.dnc,
        dnc_reason = EXCLUDED.dnc_reason,
        assigned_agent = EXCLUDED.assigned_agent,
+       bant = EXCLUDED.bant,
+       call_context = EXCLUDED.call_context,
+       lead_commit_envelope = EXCLUDED.lead_commit_envelope,
+       field_provenance = EXCLUDED.field_provenance,
+       projection_proof = EXCLUDED.projection_proof,
        raw = EXCLUDED.raw,
        updated_at = NOW()`,
     [
@@ -35567,6 +35662,11 @@ async function persistLeadProfileRowToDb(lead = {}, source = 'property-data') {
       String(lead.compliance?.dncStatus || lead.dncStatus || '').toLowerCase() === 'dnc',
       lead.compliance?.dncStatus || lead.dncReason || '',
       lead.assignment?.assignedAgent || 'Ava',
+      JSON.stringify(lead.bant || {}),
+      JSON.stringify(lead.callContext || lead.call_context || {}),
+      JSON.stringify(lead.leadCommitEnvelope || {}),
+      JSON.stringify(lead.fieldProvenance || []),
+      JSON.stringify(lead.projectionProof || {}),
       JSON.stringify(lead),
     ]
   );
@@ -37850,6 +37950,10 @@ async function updateLeadBantContextFromTranscript(candidate = {}, sessionId = '
     ...normalizeLeadTags(visibleFacts.tags || []),
   ];
   const leadPatch = {
+    source: 'ava-call-transcript-projection',
+    sourceChannel: 'call',
+    sourceId: candidate.id || candidate.callId || candidate.payload?.callId || '',
+    actor: 'Ava learning',
     ...(Object.keys(visibleFacts.seller || {}).length
       ? {
           seller: {
@@ -37914,24 +38018,107 @@ async function updateLeadBantContextFromTranscript(candidate = {}, sessionId = '
       updatedAt: isoNow(),
     });
     syncLeadCompatibilityAliases(localLead);
+    ensureLeadCommitEnvelope(localLead, 'ava-call-transcript-projection', {
+      actorType: 'Ava learning',
+      sourceChannel: 'call',
+      sourceId: candidate.id || candidate.callId || '',
+      reason: 'Call transcript/BANT projection created a lead profile.',
+      patch: leadPatch,
+      forceNew: true,
+    });
     addLeadImport(state, localLead);
   }
+
+  const callProjectionSourceId = candidate.id || candidate.callId || candidate.payload?.callId || '';
+  const callProjectionContext = { ...callContext, ...(visibleFacts.callContext || {}), bant: mergedBant };
+  const callProjectionLead =
+    localLead ||
+    normalizeLeadIntake({
+      id: leadId,
+      leadId,
+      source: 'ava-call-transcript-projection',
+      leadSource: 'ava-call-transcript-projection',
+      status: 'working',
+      stage: 'qualified',
+      bant: mergedBant,
+      callContext: callProjectionContext,
+      updatedAt: isoNow(),
+    });
+  const callProjectionEnvelope = ensureLeadCommitEnvelope(callProjectionLead, 'ava-call-transcript-projection', {
+    actorType: 'Ava learning',
+    sourceChannel: 'call',
+    sourceId: callProjectionSourceId,
+    reason: 'Call transcript/BANT projection updated lead context.',
+    patch: leadPatch,
+    forceNew: !callProjectionLead.leadCommitEnvelope && !callProjectionLead.lead_commit_envelope,
+  });
+  const callProjectionRawPatch = {
+    bant: mergedBant,
+    callContext: callProjectionContext,
+    call_context: callProjectionContext,
+    leadCommitEnvelope: callProjectionEnvelope,
+    lead_commit_envelope: callProjectionEnvelope,
+    fieldProvenance: callProjectionEnvelope?.fieldProvenance || [],
+    field_provenance: callProjectionEnvelope?.fieldProvenance || [],
+    projectionProof: callProjectionEnvelope?.projectionProof || {},
+    projection_proof: callProjectionEnvelope?.projectionProof || {},
+    source: 'ava-call-transcript-projection',
+    sourceChannel: 'call',
+    sourceId: callProjectionSourceId,
+  };
 
   await queryPgRows(
     `UPDATE public.lead_profiles
      SET bant = COALESCE(bant, '{}'::jsonb) || $2::jsonb,
          call_context = COALESCE(call_context, '{}'::jsonb) || $3::jsonb,
+         raw = COALESCE(raw, '{}'::jsonb) || $4::jsonb,
+         source = $5,
+         lead_commit_envelope = $6::jsonb,
+         field_provenance = $7::jsonb,
+         projection_proof = $8::jsonb,
          updated_at = NOW()
      WHERE id = $1`,
-    [leadId, JSON.stringify(bant), JSON.stringify({ ...callContext, ...(visibleFacts.callContext || {}), bant: mergedBant })]
+    [
+      leadId,
+      JSON.stringify(bant),
+      JSON.stringify(callProjectionContext),
+      JSON.stringify(callProjectionRawPatch),
+      'ava-call-transcript-projection',
+      JSON.stringify(callProjectionEnvelope || {}),
+      JSON.stringify(callProjectionEnvelope?.fieldProvenance || []),
+      JSON.stringify(callProjectionEnvelope?.projectionProof || {}),
+    ]
+  );
+  await queryPgRows(
+    `DO $$
+     BEGIN
+       IF to_regclass('public.leads') IS NOT NULL THEN
+         EXECUTE 'ALTER TABLE public.leads ADD COLUMN IF NOT EXISTS source TEXT NOT NULL DEFAULT ''manual''';
+         EXECUTE 'ALTER TABLE public.leads ADD COLUMN IF NOT EXISTS lead_commit_envelope JSONB NOT NULL DEFAULT ''{}''::jsonb';
+         EXECUTE 'ALTER TABLE public.leads ADD COLUMN IF NOT EXISTS field_provenance JSONB NOT NULL DEFAULT ''[]''::jsonb';
+         EXECUTE 'ALTER TABLE public.leads ADD COLUMN IF NOT EXISTS projection_proof JSONB NOT NULL DEFAULT ''{}''::jsonb';
+       END IF;
+     END $$;`
   );
   await queryPgRows(
     `UPDATE public.leads
      SET bant = COALESCE(bant, '{}'::jsonb) || $2::jsonb,
          call_context = COALESCE(call_context, '{}'::jsonb) || $3::jsonb,
+         source = $4,
+         lead_commit_envelope = $5::jsonb,
+         field_provenance = $6::jsonb,
+         projection_proof = $7::jsonb,
          updated_at = NOW()
      WHERE id = $1`,
-    [leadId, JSON.stringify(bant), JSON.stringify({ ...callContext, ...(visibleFacts.callContext || {}), bant: mergedBant })]
+    [
+      leadId,
+      JSON.stringify(bant),
+      JSON.stringify(callProjectionContext),
+      'ava-call-transcript-projection',
+      JSON.stringify(callProjectionEnvelope || {}),
+      JSON.stringify(callProjectionEnvelope?.fieldProvenance || []),
+      JSON.stringify(callProjectionEnvelope?.projectionProof || {}),
+    ]
   );
   if (localLead) {
     void persistLeadProfileRowToDb(localLead, 'ava-call-transcript-projection').catch((error) => {
@@ -41366,6 +41553,11 @@ function recordAvaMissionLedger({
   const trace = missionController?.trace && typeof missionController.trace === 'object'
     ? missionController.trace
     : null;
+  const controlEnvelope = missionController?.controlEnvelope && typeof missionController.controlEnvelope === 'object'
+    ? missionController.controlEnvelope
+    : trace?.controlEnvelope && typeof trace.controlEnvelope === 'object'
+      ? trace.controlEnvelope
+      : null;
   if (!mission) return null;
 
   if (!Array.isArray(state.avaMissionLedger)) state.avaMissionLedger = [];
@@ -41402,6 +41594,10 @@ function recordAvaMissionLedger({
       : [],
     proof: {
       traceSchema: trace?.schema || '',
+      controlEnvelopeSchema: controlEnvelope?.schema || '',
+      controllerDecisionId: controlEnvelope?.controllerDecisionId || '',
+      controllerDecision: controlEnvelope?.decision || '',
+      authorizesExecution: Boolean(controlEnvelope?.authorizesExecution),
       turnDecisionReason: redactAvaMissionLedgerText(trace?.turnDecision?.reason || '', 240),
       actionDecision: trace?.actionDecision?.decision || '',
       actionPolicy: trace?.actionPolicy || null,
@@ -50480,6 +50676,11 @@ async function updateLeadProfileOnlyFromCrm(params = {}) {
     updatedAt: isoNow(),
   });
   syncLeadCompatibilityAliases(normalized);
+  ensureLeadCommitEnvelope(normalized, normalized.source || 'profile-only-crm-update', {
+    actorType: params.actor || 'Ava',
+    reason: 'Profile-only CRM update saved without creating approval noise.',
+    patch: buildLeadCommitPatch(normalized),
+  });
   const patched = patchLeadImport(
     state,
     {
@@ -53463,6 +53664,18 @@ const toolHandlers = {
     }
     addAnalyzerRun(state, run);
     const syncedLead = syncAnalyzerRunToLeadProfile(params, run);
+    let leadProfilePersistence = null;
+    if (syncedLead) {
+      try {
+        leadProfilePersistence = await persistLeadProfileRowToDb(syncedLead, 'analyzer-deal-sync');
+      } catch (error) {
+        leadProfilePersistence = {
+          ok: false,
+          result: 'analyzer_lead_profile_persist_failed',
+          error: error?.message || String(error || 'unknown error'),
+        };
+      }
+    }
     addActivity(
       state,
       makeActivity({
@@ -53479,6 +53692,7 @@ const toolHandlers = {
       ...run,
       leadSynced: Boolean(syncedLead),
       leadId: syncedLead?.leadId || run.leadId,
+      leadProfilePersistence,
     };
   },
 
@@ -57668,6 +57882,11 @@ async function handleManualLeadCreate(payload = {}) {
     stage: payload.stage || payload.status || 'new',
   });
   if (eventId) leadImport.eventId = eventId;
+  ensureLeadCommitEnvelope(leadImport, payload.source || payload.leadSource || 'manual-lead-create', {
+    actorType: payload.actor || payload.requestedBy || 'PBK operator',
+    reason: 'Manual lead create saved to the canonical lead profile.',
+    patch: buildLeadCommitPatch(leadImport),
+  });
 
   const patched = patchLeadImport(
     state,
@@ -57808,7 +58027,25 @@ async function handleEvent(eventType, payload = {}) {
       return Boolean(leadEmailKey && itemEmailKey === leadEmailKey) || Boolean(leadAddressKey && leadPhoneKey && itemAddressKey === leadAddressKey && itemPhoneKey === leadPhoneKey);
     });
 
-    if (!duplicate) {
+    let savedLead = leadImport;
+    if (duplicate) {
+      savedLead =
+        patchLeadImport(
+          state,
+          {
+            leadId: duplicate.leadId || duplicate.id || leadImport.leadId,
+            email: duplicate.seller?.email || leadImport.seller?.email || '',
+            phone: duplicate.seller?.phone || leadImport.seller?.phone || '',
+            address: duplicate.property?.address || leadImport.property?.address || '',
+            leadName: duplicate.seller?.name || leadImport.seller?.name || '',
+          },
+          {
+            ...leadImport,
+            source: leadImport.source || payload.source || 'lead-intake-refresh',
+            leadSource: leadImport.leadSource || payload.leadSource || payload.source || 'lead-intake-refresh',
+          }
+        ) || duplicate;
+    } else {
       addLeadImport(state, leadImport);
     }
 
@@ -57818,17 +58055,17 @@ async function handleEvent(eventType, payload = {}) {
         actor: 'n8n',
         category: 'IMPORT',
         status: duplicate ? 'updated' : 'complete',
-        text: `${duplicate ? 'Lead refreshed' : 'Lead intake normalized'} from ${leadImport.source}`,
-        target: leadImport.seller.name,
+        text: `${duplicate ? 'Lead refreshed' : 'Lead intake normalized'} from ${savedLead.source || leadImport.source}`,
+        target: savedLead.seller?.name || leadImport.seller.name,
       })
     );
 
     let queuedAnalyzer = null;
-    if (leadImport.property.address) {
+    if (savedLead.property?.address || leadImport.property.address) {
       queuedAnalyzer = {
         id: randomUUID(),
-        leadId: leadImport.leadId,
-        address: leadImport.property.address,
+        leadId: savedLead.leadId || leadImport.leadId,
+        address: savedLead.property?.address || leadImport.property.address,
         arv: 0,
         repairsMid: 0,
         mao: 0,
@@ -57845,7 +58082,7 @@ async function handleEvent(eventType, payload = {}) {
           category: 'ANALYZE',
           status: 'queued',
           text: 'Analyzer queued from lead intake workflow',
-          target: leadImport.property.address,
+          target: savedLead.property?.address || leadImport.property.address,
         })
       );
     }
@@ -57857,7 +58094,7 @@ async function handleEvent(eventType, payload = {}) {
       result: 'lead_profile_projection_queued',
     };
     void persistLeadProfileRowToDb(
-      leadImport,
+      savedLead,
       fromN8nLeadIntake ? 'n8n-lead-intake' : 'lead-intake'
     ).catch((error) => {
       console.warn(
@@ -57867,7 +58104,7 @@ async function handleEvent(eventType, payload = {}) {
     });
     return {
       ok: true,
-      leadImport: duplicate || leadImport,
+      leadImport: savedLead,
       duplicate: Boolean(duplicate),
       queuedAnalyzer,
       profilePersistence,
@@ -60778,8 +61015,47 @@ async function handlePublicAvaChatRequest(request) {
   });
   const suppressLeadCapture = body.noLeadCapture === true || body.no_lead_capture === true || body.ttsDiagnostic === true || /\b(tts|voice|audio|avatar|chat-bubble)\b/i.test(source);
   const lead = extractPublicAvaLead(body, text);
+  const shouldAttemptLeadCapture = !suppressLeadCapture && lead.hasLeadSignal && (lead.hasContact || lead.address);
+  const publicMissionPlan = shouldAttemptLeadCapture
+    ? {
+        ...assistantPlan,
+        action: 'tool_plan',
+        usedIntent: assistantPlan.usedIntent || assistantIntent.intent,
+        answer: assistantPlan.answer || '',
+        toolPlan: {
+          toolName: 'lead_intake',
+          providerWrite: false,
+          params: {
+            source: 'website-chat',
+            leadSource: 'website-chat',
+            hasContact: Boolean(lead.hasContact),
+            requestedCallback: Boolean(lead.wantsCallback),
+            name: lead.name || '',
+            phone: lead.phone || '',
+            email: lead.email || '',
+            address: lead.address || '',
+          },
+        },
+      }
+    : assistantPlan;
+  const publicAssistantMemories = sortNewest(state.avaActiveMemories || []).slice(0, 12);
+  let missionController = await runAvaMissionController({
+    controllerStage: 'planned',
+    sessionId,
+    text,
+    source: 'public-ava-chat',
+    leadId: '',
+    assistantIntent,
+    assistantPlan: publicMissionPlan,
+    assistantSession,
+    answer: '',
+    toolResult: null,
+    state,
+    memories: publicAssistantMemories,
+  });
+  const controlGate = enforceAvaControlEnvelope(missionController, publicMissionPlan);
   let leadCapture = null;
-  if (!suppressLeadCapture && lead.hasLeadSignal && (lead.hasContact || lead.address)) {
+  if (shouldAttemptLeadCapture && controlGate.ok) {
     leadCapture = await handleEvent('lead-intake', {
       eventId: body.eventId || `public-ava-${Math.abs(hashString(`${lead.email}|${lead.phone}|${lead.address}|${text}`))}`,
       source: 'website-chat',
@@ -60798,21 +61074,29 @@ async function handlePublicAvaChatRequest(request) {
       requestedCallback: Boolean(lead.wantsCallback),
       providerWriteRequested: false,
     });
+  } else if (shouldAttemptLeadCapture) {
+    leadCapture = controlGate.toolResult || {
+      ok: false,
+      result: 'public_ava_control_blocked',
+      providerWritesBlocked: false,
+    };
   }
 
   const processQuestion = looksLikePublicProcessQuestion(text);
   const brain = lead.hasLeadSignal ? null : answerBrainQuery(state, text);
   const matched = Boolean(brain?.matches?.length) && isPublicAvaBrainAnswerSafe(brain?.answer);
-  const assistantPlannedAnswer = assistantPlan?.answer && assistantPlan.action !== 'general' ? assistantPlan.answer : '';
-  let answer = assistantPlannedAnswer || (matched ? `${brain.answer}\n\nIf you want the PBK team to review a property, send the address and best callback info. Public chat can save the request, but calls, SMS, email, and contracts stay approval-gated.` : lead.hasLeadSignal && (!processQuestion || lead.hasContact || lead.address) ? buildPublicAvaLeadAnswer(lead, leadCapture) : processQuestion ? buildPublicAvaProcessAnswer() : buildPublicAvaFallbackAnswer(lead));
+  const assistantPlannedAnswer = publicMissionPlan?.answer && publicMissionPlan.action !== 'general' ? publicMissionPlan.answer : '';
+  let answer = shouldAttemptLeadCapture && !controlGate.ok
+    ? controlGate.answer || 'I paused before saving that request. Nothing changed.'
+    : assistantPlannedAnswer || (matched ? `${brain.answer}\n\nIf you want the PBK team to review a property, send the address and best callback info. Public chat can save the request, but calls, SMS, email, and contracts stay approval-gated.` : lead.hasLeadSignal && (!processQuestion || lead.hasContact || lead.address) ? buildPublicAvaLeadAnswer(lead, leadCapture) : processQuestion ? buildPublicAvaProcessAnswer() : buildPublicAvaFallbackAnswer(lead));
   if (sanitizedInput.truncated) {
     answer = `${sanitizedInput.warning} ${answer}`;
   }
 
   assistantSession = appendAssistantMessage(assistantSession, 'assistant', answer, {
     source: 'public-ava-chat',
-    intent: assistantPlan.usedIntent || assistantIntent.intent,
-    action: assistantPlan.action || 'answered',
+    intent: publicMissionPlan.usedIntent || assistantIntent.intent,
+    action: publicMissionPlan.action || 'answered',
   });
   await writePublicAvaAssistantSession(sessionId, assistantSession);
 
@@ -60826,7 +61110,6 @@ async function handlePublicAvaChatRequest(request) {
       target: lead.address || lead.email || lead.phone || 'website visitor',
     })
   );
-  await persistState(state);
 
   recordAvaAssistantPlanOps({
     sessionId,
@@ -60834,11 +61117,36 @@ async function handlePublicAvaChatRequest(request) {
     publicMode: true,
     text,
     assistantIntent,
-    assistantPlan,
+    assistantPlan: publicMissionPlan,
     answer,
-    toolResult: leadCapture || null,
+    toolResult: leadCapture || controlGate.toolResult || null,
     startedAt: assistantOpsStartedAt,
   });
+  missionController = await runAvaMissionController({
+    controllerStage: 'final',
+    sessionId,
+    text,
+    source: 'public-ava-chat',
+    leadId: leadCapture?.leadImport?.leadId || leadCapture?.leadId || '',
+    assistantIntent,
+    assistantPlan: publicMissionPlan,
+    assistantSession,
+    answer,
+    toolResult: leadCapture || controlGate.toolResult || null,
+    state,
+    memories: publicAssistantMemories,
+  });
+  const missionLedgerRecord = recordAvaMissionLedger({
+    missionController,
+    sessionId,
+    leadId: leadCapture?.leadImport?.leadId || leadCapture?.leadId || '',
+    text,
+    assistantIntent,
+    assistantPlan: publicMissionPlan,
+    toolResult: leadCapture || controlGate.toolResult || null,
+    startedAt: assistantOpsStartedAt,
+  });
+  await persistState(state);
 
   return {
     statusCode: 200,
@@ -60850,10 +61158,15 @@ async function handlePublicAvaChatRequest(request) {
       ok: true,
       mode: 'public-readonly',
       answer,
-      suggestions: assistantPlan.suggestions || [],
+      suggestions: publicMissionPlan.suggestions || [],
       sessionId,
-      usedIntent: assistantPlan.usedIntent || assistantIntent.intent,
-      assistantAction: assistantPlan.action || 'answered',
+      usedIntent: publicMissionPlan.usedIntent || assistantIntent.intent,
+      assistantAction: publicMissionPlan.action || 'answered',
+      toolPlan: publicMissionPlan.toolPlan || null,
+      mission: missionController.mission,
+      trace: missionController.trace,
+      controlEnvelope: missionController.controlEnvelope,
+      missionLedger: missionLedgerRecord,
       citations: brain?.citations || ['PBK public knowledge'],
       leadCaptured: Boolean(leadCapture?.ok),
       leadCaptureSuppressed: suppressLeadCapture,
@@ -61034,6 +61347,91 @@ async function runInternalAvaDeepSeekChat({
   };
 }
 
+function enforceAvaControlEnvelope(missionController = {}, assistantPlan = {}) {
+  const controlEnvelope = missionController?.controlEnvelope && typeof missionController.controlEnvelope === 'object'
+    ? missionController.controlEnvelope
+    : missionController?.trace?.controlEnvelope && typeof missionController.trace.controlEnvelope === 'object'
+      ? missionController.trace.controlEnvelope
+      : null;
+  const toolName = String(assistantPlan?.toolPlan?.toolName || '').trim();
+  const providerWrite = Boolean(assistantPlan?.toolPlan?.providerWrite || controlEnvelope?.exactAction?.providerWrite);
+  const decision = String(controlEnvelope?.decision || '').trim().toLowerCase();
+  const approvalQueueAllowed =
+    decision === 'approval_required' &&
+    assistantPlan?.action === 'approval_required' &&
+    ['telnyx_call', 'startNurtureSequence', 'telnyx_sms', 'sendColdEmail', 'prepare_and_send_contract', 'scheduleAppointment'].includes(toolName);
+
+  if (!controlEnvelope?.schema) {
+    return {
+      ok: false,
+      decision: 'blocked',
+      answer: 'I paused before taking action because Ava could not produce a controller decision. Nothing changed.',
+      toolResult: {
+        ok: false,
+        result: 'ava_control_envelope_missing',
+        providerWritesBlocked: providerWrite,
+      },
+    };
+  }
+
+  if (decision === 'allow' && controlEnvelope.authorizesExecution === true) {
+    return { ok: true, decision, controlEnvelope };
+  }
+
+  if (approvalQueueAllowed) {
+    return {
+      ok: true,
+      decision,
+      approvalQueueAllowed: true,
+      controlEnvelope,
+    };
+  }
+
+  if (decision === 'approval_required') {
+    return {
+      ok: false,
+      decision,
+      answer: 'I can prepare that, but it has to go through approval before anything is sent, changed, or launched.',
+      toolResult: {
+        ok: false,
+        result: 'ava_control_approval_required',
+        approvalRequired: true,
+        providerWritesBlocked: providerWrite,
+        controllerDecisionId: controlEnvelope.controllerDecisionId || '',
+      },
+      controlEnvelope,
+    };
+  }
+
+  if (decision === 'ask_user') {
+    return {
+      ok: false,
+      decision,
+      answer: 'I need one more detail before I can safely take the next step.',
+      toolResult: {
+        ok: false,
+        result: 'ava_control_needs_clarification',
+        controllerDecisionId: controlEnvelope.controllerDecisionId || '',
+      },
+      controlEnvelope,
+    };
+  }
+
+  return {
+    ok: false,
+    decision: decision || 'blocked',
+    answer: 'I paused that action for safety. Nothing changed.',
+    toolResult: {
+      ok: false,
+      result: 'ava_control_blocked',
+      providerWritesBlocked: providerWrite,
+      reason: controlEnvelope.reason || '',
+      controllerDecisionId: controlEnvelope.controllerDecisionId || '',
+    },
+    controlEnvelope,
+  };
+}
+
 async function handleInternalAvaAssistantChatRequest(request) {
   const assistantOpsStartedAt = Date.now();
   const body = await readBody(request);
@@ -61119,8 +61517,12 @@ async function handleInternalAvaAssistantChatRequest(request) {
     state,
     memories: assistantMemories,
   });
+  const controlGate = enforceAvaControlEnvelope(missionController, assistantPlan);
 
-  if (assistantPlan.action === 'tool_plan' && assistantPlan.toolPlan?.toolName === 'analyzeDeal') {
+  if (!controlGate.ok) {
+    answer = controlGate.answer;
+    toolResult = controlGate.toolResult;
+  } else if (assistantPlan.action === 'tool_plan' && assistantPlan.toolPlan?.toolName === 'analyzeDeal') {
     let execution = null;
     let analyzeError = null;
     for (let attempt = 1; attempt <= 2; attempt += 1) {
@@ -61282,6 +61684,46 @@ async function handleInternalAvaAssistantChatRequest(request) {
     answer = `${sanitizedInput.warning} ${answer}`;
   }
 
+  missionController = await runAvaMissionController({
+    controllerStage: 'final',
+    sessionId,
+    text,
+    source: body.source || 'command-center-assistant',
+    leadId: assistantContextSession.leadId || '',
+    assistantIntent,
+    assistantPlan,
+    assistantSession,
+    answer,
+    toolResult,
+    qa,
+    safety,
+    additiveIntelligence,
+    state,
+    memories: assistantMemories,
+  });
+  const finalControlGate = enforceAvaControlEnvelope(missionController, assistantPlan);
+  if (!finalControlGate.ok) {
+    answer = finalControlGate.answer;
+    toolResult = finalControlGate.toolResult;
+    missionController = await runAvaMissionController({
+      controllerStage: 'final',
+      sessionId,
+      text,
+      source: body.source || 'command-center-assistant',
+      leadId: assistantContextSession.leadId || '',
+      assistantIntent,
+      assistantPlan,
+      assistantSession,
+      answer,
+      toolResult,
+      qa,
+      safety,
+      additiveIntelligence,
+      state,
+      memories: assistantMemories,
+    });
+  }
+
   assistantSession = appendAssistantMessage(assistantSession, 'assistant', answer, {
     source: 'command-center-assistant',
     intent: assistantPlan.usedIntent || assistantIntent.intent,
@@ -61315,23 +61757,6 @@ async function handleInternalAvaAssistantChatRequest(request) {
     additiveIntelligence,
     startedAt: assistantOpsStartedAt,
   });
-  missionController = await runAvaMissionController({
-    controllerStage: 'final',
-    sessionId,
-    text,
-    source: body.source || 'command-center-assistant',
-    leadId: assistantContextSession.leadId || '',
-    assistantIntent,
-    assistantPlan,
-    assistantSession,
-    answer,
-    toolResult,
-    qa,
-    safety,
-    additiveIntelligence,
-    state,
-    memories: assistantMemories,
-  });
   const missionLedgerRecord = recordAvaMissionLedger({
     missionController,
     sessionId,
@@ -61360,8 +61785,10 @@ async function handleInternalAvaAssistantChatRequest(request) {
       toolResult,
       additiveIntelligence,
       initialMission: initialMissionController.mission,
+      initialControlEnvelope: initialMissionController.controlEnvelope,
       mission: missionController.mission,
       trace: missionController.trace,
+      controlEnvelope: missionController.controlEnvelope,
       missionLedger: missionLedgerRecord,
       qa,
       safety,
@@ -76232,7 +76659,8 @@ const server = createServer(async (request, response) => {
         ...(existing || {}),
         id: existing?.id || leadPatchMatch.groups.id,
         leadId: existing?.leadId || leadPatchMatch.groups.id,
-        source: existing?.source || body.source || 'manual',
+        source: body.source || existing?.source || 'manual',
+        leadSource: body.leadSource || body.lead_source || body.source || existing?.leadSource || existing?.lead_source || existing?.source || 'manual',
         status: body.status || existing?.status || existing?.stage || 'working',
         stage: body.stage || existing?.stage || existing?.status || 'working',
         score: body.motivation_score ?? body.motivationScore ?? existing?.score,
@@ -76378,6 +76806,24 @@ const server = createServer(async (request, response) => {
         ...(body.stage !== undefined ? { stage: body.stage } : {}),
       };
       syncLeadCompatibilityAliases(nextLead);
+      ensureLeadCommitEnvelope(nextLead, body.source || 'lead-detail-edit', {
+        actorType: body.actor || 'Lead Detail',
+        reason: 'Lead/analyzer profile patch saved to the canonical lead record.',
+        patch: {
+          seller: sellerPatch,
+          property: propertyPatch,
+          motivation: motivationPatch,
+          compliance: compliancePatch,
+          assignment: assignmentPatch,
+          analyzer: analyzerPatch,
+          deal: dealPatch,
+          agentDealContext: agentDealContextPatch,
+          callContext: callContextPatch,
+          contractContext: nextLead.contractContext || nextLead.contracts,
+          approvalContext: nextLead.approvalContext || nextLead.approvals,
+        },
+        forceNew: true,
+      });
 
       const patched = existing
         ? patchLeadImport(
@@ -76427,6 +76873,7 @@ const server = createServer(async (request, response) => {
       json(response, 200, {
         ok: true,
         lead: buildLeadFullView((patched || nextLead).leadId || (patched || nextLead).id)?.lead || patched || nextLead,
+        leadCommitEnvelope: (patched || nextLead).leadCommitEnvelope,
         state: buildStateSnapshot(),
       });
       return;

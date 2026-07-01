@@ -40,10 +40,58 @@ assert(
 
 assert(
   /export function buildLeadFieldProvenance/.test(leadFieldProvenance) &&
+    /export function buildLeadCommitEnvelope/.test(leadFieldProvenance) &&
+    /export function canCommitLeadEnvelope/.test(leadFieldProvenance) &&
     /export function canProjectLeadField/.test(leadFieldProvenance) &&
     /confidence < 0\.7/.test(leadFieldProvenance) &&
     /call'[\s\S]*sms'[\s\S]*email'[\s\S]*analyzer'[\s\S]*manual'/.test(leadFieldProvenance),
   'Analyzer lead sync must have reusable field provenance projection gates ready.'
+);
+
+assert(
+  /import \{ buildLeadCommitEnvelope \} from '\.\/lead-field-provenance\.mjs';/.test(openclawServer) &&
+    /function ensureLeadCommitEnvelope/.test(openclawServer) &&
+    /function addLeadImport\(stateRef, leadImport\) \{[\s\S]*ensureLeadCommitEnvelope\(leadImport/.test(openclawServer) &&
+    /function patchLeadImport\(stateRef, matcher = \{\}, patch = \{\}\) \{[\s\S]*ensureLeadCommitEnvelope\(next/.test(openclawServer) &&
+    /lead\.leadCommitEnvelope = envelope/.test(openclawServer) &&
+    /lead\.fieldProvenance = envelope\.fieldProvenance/.test(openclawServer),
+  'Bridge lead writes must attach a LeadCommitEnvelope with field provenance before persistence.'
+);
+
+assert(
+  /CREATE TABLE IF NOT EXISTS public\.lead_profiles[\s\S]*lead_commit_envelope JSONB NOT NULL DEFAULT '\{\}'::JSONB[\s\S]*field_provenance JSONB NOT NULL DEFAULT '\[\]'::JSONB[\s\S]*projection_proof JSONB NOT NULL DEFAULT '\{\}'::JSONB/.test(openclawServer) &&
+    /INSERT INTO public\.lead_profiles \([\s\S]*lead_commit_envelope,[\s\S]*field_provenance,[\s\S]*projection_proof,[\s\S]*raw/.test(openclawServer) &&
+    /lead_commit_envelope = EXCLUDED\.lead_commit_envelope[\s\S]*field_provenance = EXCLUDED\.field_provenance[\s\S]*projection_proof = EXCLUDED\.projection_proof/.test(openclawServer),
+  'Postgres lead profile writes must persist LeadCommitEnvelope, field provenance, and projection proof as first-class columns.'
+);
+
+assert(
+  /function syncAnalyzerRunToLeadProfile\(params = \{\}, run = \{\}\) \{[\s\S]*source:\s*'analyzer-deal-sync'[\s\S]*sourceChannel:\s*'analyzer'[\s\S]*sourceId:\s*run\.id/.test(
+    openclawServer
+  ),
+  'Analyzer run projection must create analyzer-sourced lead commit proof before patching lead storage.'
+);
+
+assert(
+  /async function updateLeadBantContextFromTranscript\(candidate = \{\}, sessionId = ''\) \{[\s\S]*source:\s*'ava-call-transcript-projection'[\s\S]*sourceChannel:\s*'call'[\s\S]*sourceId:\s*candidate\.id/.test(
+    openclawServer
+  ),
+  'Call transcript/BANT projection must create call-sourced lead commit proof before patching lead storage.'
+);
+
+assert(
+  /async function updateLeadBantContextFromTranscript\(candidate = \{\}, sessionId = ''\) \{[\s\S]*const callProjectionEnvelope = ensureLeadCommitEnvelope[\s\S]*UPDATE public\.lead_profiles[\s\S]*lead_commit_envelope = \$6::jsonb[\s\S]*field_provenance = \$7::jsonb[\s\S]*projection_proof = \$8::jsonb[\s\S]*UPDATE public\.leads[\s\S]*lead_commit_envelope = \$5::jsonb[\s\S]*field_provenance = \$6::jsonb[\s\S]*projection_proof = \$7::jsonb/.test(openclawServer),
+  'Call-derived BANT direct Postgres writes must carry the LeadCommitEnvelope and projection proof.'
+);
+
+assert(
+  /async analyzeDeal\(params = \{\}\) \{[\s\S]*const syncedLead = syncAnalyzerRunToLeadProfile\(params, run\);[\s\S]*persistLeadProfileRowToDb\(syncedLead, 'analyzer-deal-sync'\)/.test(openclawServer),
+  'Analyzer deal sync must persist the analyzer-sourced LeadCommitEnvelope to Postgres lead_profiles.'
+);
+
+assert(
+  /if \(duplicate\) \{[\s\S]*patchLeadImport\([\s\S]*lead-intake-refresh[\s\S]*\} else \{\s*addLeadImport\(state, leadImport\);/.test(openclawServer),
+  'Duplicate lead intake refreshes must patch the existing lead so a fresh LeadCommitEnvelope is saved.'
 );
 
 assert(
@@ -207,10 +255,13 @@ assert(
   'const analyzerPatch =',
   'const dealPatch =',
   'const agentDealContextPatch =',
+  'ensureLeadCommitEnvelope(nextLead, body.source ||',
   'body.call_metadata || body.callMetadata || body.callContext || body.call_context',
   'callContext: callContextPatch',
   'call_context: callContextPatch',
   "persistLeadProfileRowToDb(patched || nextLead, 'lead-detail-edit')",
+  'leadCommitEnvelope: (patched || nextLead).leadCommitEnvelope',
+  'forceNew: true',
 ].forEach((expected) => {
   assert(openclawServer.includes(expected), `PATCH /api/leads/:id must preserve analyzer sync context: ${expected}`);
 });
@@ -220,6 +271,12 @@ assert(
     /deal:\s*Object\.keys\(dealPatch\)\.length[\s\S]*existing\?\.deal/.test(openclawServer) &&
     /agentDealContext:\s*Object\.keys\(agentDealContextPatch\)\.length[\s\S]*existing\?\.agentDealContext/.test(openclawServer),
   'PATCH /api/leads/:id must merge analyzer, deal, and agentDealContext without wiping existing lead memory.'
+);
+
+assert(
+  /source:\s*body\.source \|\| existing\?\.source \|\| 'manual'/.test(openclawServer) &&
+    /leadSource:\s*body\.leadSource \|\| body\.lead_source \|\| body\.source \|\| existing\?\.leadSource/.test(openclawServer),
+  'PATCH /api/leads/:id must let the current write source win so provenance is not mislabeled with stale lead source.'
 );
 
 console.log('analyzer-lead-sync-smoke: ok');

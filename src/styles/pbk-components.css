@@ -10759,6 +10759,21 @@ html[data-theme='light'] .pbk-analyzer-mobile-quick-actions .pbk-btn {
     padding-bottom: 12px;
   }
 
+  .pbk-deal-surface :is(input, select, textarea) {
+    min-height: 44px;
+    font-size: 16px;
+    line-height: 1.25;
+    touch-action: manipulation;
+  }
+
+  .pbk-deal-surface textarea {
+    min-height: 96px;
+  }
+
+  .pbk-deal-surface :is(input, select, textarea):focus {
+    scroll-margin-bottom: calc(env(safe-area-inset-bottom) + 120px);
+  }
+
   .pbk-deal-surface .pbk-analyzer-card input,
   .pbk-deal-surface .pbk-analyzer-card textarea,
   .pbk-deal-surface .pbk-analyzer-card select,

@@ -231,6 +231,21 @@ function extractPhone(message = '') {
   return match ? match[0].replace(/\D/g, '').replace(/^1(?=\d{10}$)/, '') : '';
 }
 
+function looksLikePhoneLeadLookup(message = '', phone = '') {
+  if (!phone) return false;
+  const text = String(message || '');
+  if (/\b(call|dial|ring|text|sms|send|email|mail|message|contract|docusign)\b/i.test(text)) return false;
+  const remainder = text
+    .replace(/(?:\+?1[\s.-]?)?(?:\(?\d{3}\)?[\s.-]?)\d{3}[\s.-]?\d{4}/g, ' ')
+    .replace(/[^\w\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!remainder) return true;
+  return /^(?:find|lookup|look up|search|open|show|pull up|lead|seller|contact|phone|number|this|that|please|lead phone|seller phone)$/i.test(
+    remainder
+  );
+}
+
 function extractEmailAddress(message = '') {
   const match = String(message || '').match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i);
   return cleanText(match?.[0] || '', 160);
@@ -489,6 +504,10 @@ export function detectAssistantIntent(message = '') {
 
   if (looksLikeReadOnlyAssistantAudit(text)) {
     return { intent: 'general', message: text, classifierSource: 'regex_read_only_audit', readOnly: true };
+  }
+
+  if (looksLikePhoneLeadLookup(text, phone)) {
+    return { intent: 'lead_lookup', message: text, query: phone, phone, classifierSource: 'regex_phone_lookup' };
   }
 
   if (

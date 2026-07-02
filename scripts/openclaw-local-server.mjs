@@ -61537,7 +61537,7 @@ function parseAvaDeepSeekDecisionAnswer(answer = '') {
   const source = parsed && typeof parsed === 'object' ? parsed : {};
   const allowed = new Set(['answer', 'ask', 'act', 'approval_required', 'delegate', 'log_only', 'block']);
   const decision = allowed.has(String(source.decision || '').trim()) ? String(source.decision).trim() : 'answer';
-  const reply = sanitizeAvaSpokenOutput(source.reply || source.answer || answer || '', '').slice(0, 1200);
+  const reply = sanitizeAvaSpokenOutput(source.reply || source.answer || source.response || source.message || answer || '', '').slice(0, 1200);
   const nextAction = sanitizeAvaSpokenOutput(source.nextAction || source.next_action || '', '').slice(0, 260);
   const missionTimeline = Array.isArray(source.missionTimeline || source.mission_timeline)
     ? (source.missionTimeline || source.mission_timeline)
@@ -61562,6 +61562,18 @@ function parseAvaDeepSeekDecisionAnswer(answer = '') {
       paramsJson: String(toolIntent.paramsJson || toolIntent.params_json || '').trim().slice(0, 1000),
     },
   };
+}
+
+function normalizeAvaAssistantAnswer(answer = '') {
+  const text = String(answer || '').trim();
+  if (!text) return '';
+  const parsed = extractJsonObjectFromText(text);
+  if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+    const candidate = parsed.reply || parsed.answer || parsed.response || parsed.message || '';
+    const normalized = sanitizeAvaSpokenOutput(candidate, '').slice(0, 1600);
+    if (normalized) return normalized;
+  }
+  return sanitizeAvaSpokenOutput(text, text).slice(0, 1600);
 }
 
 function getAvaDeepSeekDecisionFromToolResult(toolResult = null) {
@@ -62209,6 +62221,8 @@ async function handleInternalAvaAssistantChatRequest(request) {
       memories: assistantMemories,
     });
   }
+
+  answer = normalizeAvaAssistantAnswer(answer);
 
   assistantSession = appendAssistantMessage(assistantSession, 'assistant', answer, {
     source: 'command-center-assistant',

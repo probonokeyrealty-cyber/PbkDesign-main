@@ -61,6 +61,14 @@ const callIntent = detectAssistantIntent('Call 614-555-0199 for me now.');
 assert.equal(callIntent.intent, 'call', 'Assistant should detect call requests.');
 assert.equal(callIntent.phone, '6145550199', 'Assistant should normalize phone numbers.');
 
+const phoneLookupIntent = detectAssistantIntent('+1 (657) 500-1765');
+assert.equal(
+  phoneLookupIntent.intent,
+  'lead_lookup',
+  'A bare seller phone number should look up the lead instead of falling into generic chat.'
+);
+assert.equal(phoneLookupIntent.query, '6575001765', 'Bare phone lookup should use the normalized phone as the lead query.');
+
 const smsIntent = detectAssistantIntent('Send a text to this lead that I can call tomorrow at 3.');
 assert.equal(smsIntent.intent, 'seller_message', 'Assistant should detect seller SMS requests.');
 assert.equal(smsIntent.channel, 'sms', 'Seller text requests should route to SMS.');
@@ -481,6 +489,7 @@ assert(
 assert(
     /function buildAvaDeepSeekDecisionTools/.test(bridge) &&
     /function parseAvaDeepSeekDecisionAnswer/.test(bridge) &&
+    /function normalizeAvaAssistantAnswer/.test(bridge) &&
     /function ensureDeepSeekJsonModeMessages/.test(bridge) &&
     /function isAvaDeepSeekJsonModeFallbackCandidate/.test(bridge) &&
     /function buildAvaReadOnlyAuditFallback/.test(bridge) &&
@@ -500,6 +509,8 @@ assert(
     /ava_control_read_only_pause/.test(bridge) &&
     /I stayed read-only and did not change anything/.test(bridge) &&
     /runInternalAvaDeepSeekChat[\s\S]*responseFormat:\s*'json'[\s\S]*tools:\s*buildAvaDeepSeekDecisionTools\(\)[\s\S]*deepSeekDecision/.test(bridge) &&
+    /source\.reply \|\| source\.answer \|\| source\.response \|\| source\.message/.test(bridge) &&
+    /answer = normalizeAvaAssistantAnswer\(answer\)/.test(bridge) &&
     /deepSeekDecision:\s*getAvaDeepSeekDecisionFromToolResult\(toolResult\)/.test(bridge) &&
     /return null;[\s\S]*async function runInternalAvaDeepSeekChat/.test(bridge) &&
     /reasoningPolicy:\s*deepSeek\.reasoningPolicy/.test(bridge),

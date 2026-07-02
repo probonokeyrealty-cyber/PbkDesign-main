@@ -529,6 +529,8 @@ assert(
     /function looksLikeCurrentLeadContextRequest/.test(bridge) &&
     /function buildInternalAssistantCurrentLeadAnswer/.test(bridge) &&
     /toolResult = \{[\s\S]*result: activeLead \? 'current_lead_context' : 'current_lead_missing'/.test(bridge) &&
+    /activeLeadId:\s*activeAssistantLeadId/.test(bridge) &&
+    !/\n\s+activeLeadId,\n/.test(bridge) &&
     /activeLeadId: activeAssistantLeadId \|\| assistantContextSession\.leadId \|\| ''/.test(bridge),
   'Ava must promote a found lead into session context and answer current-seller follow-up turns from that active lead.'
 );

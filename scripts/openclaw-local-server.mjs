@@ -62227,7 +62227,7 @@ async function handleInternalAvaAssistantChatRequest(request) {
       ok: Boolean(activeLead),
       result: activeLead ? 'current_lead_context' : 'current_lead_missing',
       lead: activeLead || null,
-      activeLeadId,
+      activeLeadId: activeAssistantLeadId,
     };
   } else if (assistantPlan.action === 'general' && !answer) {
     const deepSeekChat = await runInternalAvaDeepSeekChat({

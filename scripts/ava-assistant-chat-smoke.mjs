@@ -506,6 +506,7 @@ assert(
     /readOnlyAnswerAllowed:\s*true/.test(bridge) &&
     /if \(readOnlyAuditRequest && assistantPlan\.action === 'general'\)[\s\S]*buildAvaReadOnlyAuditFallback/.test(bridge) &&
     /!\(readOnlyAuditRequest && assistantPlan\.action === 'general'\)/.test(bridge) &&
+    /const preserveReadOnlyAuditAnswer =[\s\S]*toolResult\?\.result === 'ava_read_only_audit'/.test(bridge) &&
     /ava_control_read_only_pause/.test(bridge) &&
     /I stayed read-only and did not change anything/.test(bridge) &&
     /runInternalAvaDeepSeekChat[\s\S]*responseFormat:\s*'json'[\s\S]*tools:\s*buildAvaDeepSeekDecisionTools\(\)[\s\S]*deepSeekDecision/.test(bridge) &&
@@ -515,6 +516,11 @@ assert(
     /return null;[\s\S]*async function runInternalAvaDeepSeekChat/.test(bridge) &&
     /reasoningPolicy:\s*deepSeek\.reasoningPolicy/.test(bridge),
   'Ava DeepSeek chat must use and return a structured decision envelope instead of free-form fallback text.'
+);
+assert(
+  /displayName = leadName && !\/\^unknown\\s\+seller\$\/i\.test\(leadName\) \? leadName : 'a matching lead'/.test(bridge) &&
+    /I can open the profile, summarize the latest timeline, or prepare the next seller step/.test(bridge),
+  'Ava lead lookup should use agent-friendly copy when a matched record lacks a real seller name.'
 );
 assert(
   /function sanitizeAvaAssistantSessionSnapshot/.test(bridge) &&

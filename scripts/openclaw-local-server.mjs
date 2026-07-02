@@ -62122,7 +62122,11 @@ async function handleInternalAvaAssistantChatRequest(request) {
     answer = [`Full PBK intelligence check is synced across ${coverage.used || 10}/${coverage.total || 10} layers.`, providerAugmentation.ready !== undefined ? `Provider readiness: ${providerAugmentation.ready || 0}/${providerAugmentation.configured || 0} configured external providers ready; PBK fallback is active.` : '', nextAction.action ? `Next action: ${String(nextAction.action).replace(/^consider_tool:/, 'consider ')}` : '', nextAction.reason ? `Why: ${String(nextAction.reason).slice(0, 260)}` : '', 'Messages, desktop actions, and contracts still wait for approval before anything changes.'].filter(Boolean).join(' ');
   } else if (assistantPlan.toolPlan?.toolName === 'findLead') {
     const lead = findInternalAssistantLead(assistantPlan.toolPlan.params?.query || '');
-    answer = lead ? `I found ${lead.leadName || lead.name || 'that lead'}${lead.address ? ` at ${lead.address}` : ''}.` : `I could not find a lead matching "${assistantPlan.toolPlan.params?.query || ''}" in the current Command Center snapshot.`;
+    const leadName = String(lead?.leadName || lead?.name || '').trim();
+    const displayName = leadName && !/^unknown\s+seller$/i.test(leadName) ? leadName : 'a matching lead';
+    answer = lead
+      ? `I found ${displayName}${lead.address ? ` at ${lead.address}` : ''}. I can open the profile, summarize the latest timeline, or prepare the next seller step.`
+      : `I could not find a lead matching "${assistantPlan.toolPlan.params?.query || ''}" in the current Command Center snapshot.`;
     toolResult = {
       ok: Boolean(lead),
       result: lead ? 'lead_found' : 'lead_not_found',
@@ -62200,7 +62204,9 @@ async function handleInternalAvaAssistantChatRequest(request) {
     memories: assistantMemories,
   });
   const finalControlGate = enforceAvaControlEnvelope(missionController, assistantPlan);
-  if (!finalControlGate.ok) {
+  const preserveReadOnlyAuditAnswer =
+    readOnlyAuditRequest && assistantPlan.action === 'general' && toolResult?.result === 'ava_read_only_audit';
+  if (!finalControlGate.ok && !preserveReadOnlyAuditAnswer) {
     answer = finalControlGate.answer;
     toolResult = finalControlGate.toolResult;
     missionController = await runAvaMissionController({

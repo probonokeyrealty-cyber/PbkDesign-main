@@ -61641,6 +61641,16 @@ function buildAvaReadOnlyAuditFallback({
   };
 }
 
+function isAvaReadOnlyAuditRequest(text = '') {
+  const lower = String(text || '').toLowerCase();
+  if (!lower) return false;
+  return (
+    /\b(audit|diagnose|explain|review|evaluate|assess)\b.{0,140}\b(ava|chat|assistant|conversation|dialogue|messages?|behavior|decision|controller|mission)\b/i.test(lower) &&
+    (/\b(?:do\s+not|don't|without)\s+(?:send|update|call|dial|text|email|message|change|touch|launch|execute)\b/i.test(lower) ||
+      /\bread[-\s]?only\b/i.test(lower))
+  );
+}
+
 function isAvaDeepSeekJsonModeFallbackCandidate(result = {}) {
   const normalizedResult = String(result?.result || '').trim().toLowerCase();
   const normalizedError = String(result?.error || '').trim().toLowerCase();
@@ -61901,6 +61911,7 @@ async function handleInternalAvaAssistantChatRequest(request) {
     text
   );
   const assistantIntent = detectAssistantIntent(text);
+  const readOnlyAuditRequest = Boolean(assistantIntent.readOnly || isAvaReadOnlyAuditRequest(text));
   const assistantContextSession = {
     ...normalizeAssistantSession(priorAssistantSession),
     leadId: body.leadId || body.lead_id || priorAssistantSession?.leadId || priorAssistantSession?.lead_id || '',
@@ -61965,7 +61976,7 @@ async function handleInternalAvaAssistantChatRequest(request) {
   });
   const controlGate = enforceAvaControlEnvelope(missionController, assistantPlan);
 
-  if (!controlGate.ok && !(assistantIntent.readOnly && assistantPlan.action === 'general')) {
+  if (!controlGate.ok && !(readOnlyAuditRequest && assistantPlan.action === 'general')) {
     answer = controlGate.answer;
     toolResult = controlGate.toolResult;
   } else if (assistantPlan.action === 'tool_plan' && assistantPlan.toolPlan?.toolName === 'analyzeDeal') {
@@ -62115,7 +62126,7 @@ async function handleInternalAvaAssistantChatRequest(request) {
     if (deepSeekChat.ok) {
       answer = deepSeekChat.answer;
       toolResult = deepSeekChat.toolResult;
-    } else if (assistantIntent.readOnly) {
+    } else if (readOnlyAuditRequest) {
       const auditFallback = buildAvaReadOnlyAuditFallback({
         state,
         missionController,

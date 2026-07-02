@@ -484,6 +484,8 @@ assert(
     /function ensureDeepSeekJsonModeMessages/.test(bridge) &&
     /function isAvaDeepSeekJsonModeFallbackCandidate/.test(bridge) &&
     /function buildAvaReadOnlyAuditFallback/.test(bridge) &&
+    /function isAvaReadOnlyAuditRequest/.test(bridge) &&
+    /const readOnlyAuditRequest = Boolean/.test(bridge) &&
     /messages:\s*requestMessages/.test(bridge) &&
     /ensureDeepSeekJsonModeMessages\(deepSeekMessages\)/.test(bridge) &&
     /responseFormat:\s*'text'/.test(bridge) &&
@@ -492,7 +494,7 @@ assert(
     /assistantIntent\.readOnly[\s\S]*buildAvaReadOnlyAuditFallback/.test(bridge) &&
     /result:\s*'ava_read_only_audit'/.test(bridge) &&
     /readOnlyAnswerAllowed:\s*true/.test(bridge) &&
-    /!\(assistantIntent\.readOnly && assistantPlan\.action === 'general'\)/.test(bridge) &&
+    /!\(readOnlyAuditRequest && assistantPlan\.action === 'general'\)/.test(bridge) &&
     /runInternalAvaDeepSeekChat[\s\S]*responseFormat:\s*'json'[\s\S]*tools:\s*buildAvaDeepSeekDecisionTools\(\)[\s\S]*deepSeekDecision/.test(bridge) &&
     /deepSeekDecision:\s*getAvaDeepSeekDecisionFromToolResult\(toolResult\)/.test(bridge) &&
     /return null;[\s\S]*async function runInternalAvaDeepSeekChat/.test(bridge) &&

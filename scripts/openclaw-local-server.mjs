@@ -61965,7 +61965,7 @@ async function handleInternalAvaAssistantChatRequest(request) {
   });
   const controlGate = enforceAvaControlEnvelope(missionController, assistantPlan);
 
-  if (!controlGate.ok) {
+  if (!controlGate.ok && !(assistantIntent.readOnly && assistantPlan.action === 'general')) {
     answer = controlGate.answer;
     toolResult = controlGate.toolResult;
   } else if (assistantPlan.action === 'tool_plan' && assistantPlan.toolPlan?.toolName === 'analyzeDeal') {

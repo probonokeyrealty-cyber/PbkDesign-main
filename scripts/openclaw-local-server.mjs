@@ -61410,6 +61410,67 @@ function findInternalAssistantLead(query = '') {
   );
 }
 
+function getInternalAssistantLeadId(lead = {}) {
+  return String(lead?.id || lead?.leadId || lead?.lead_id || '').trim();
+}
+
+function findInternalAssistantLeadById(leadId = '') {
+  const cleanLeadId = String(leadId || '').trim();
+  if (!cleanLeadId) return null;
+  return (
+    (state.leadImports || []).find((lead) => {
+      const ids = [lead.id, lead.leadId, lead.lead_id].map((item) => String(item || '').trim()).filter(Boolean);
+      return ids.includes(cleanLeadId);
+    }) || null
+  );
+}
+
+function looksLikeCurrentLeadContextRequest(text = '') {
+  return /\b(current|selected|this|that)\s+(seller|lead|contact|deal)\b/i.test(text) ||
+    /\b(open|show|pull up|summarize|recap|catch me up)\b.{0,80}\b(seller|lead|contact|timeline|context|deal)\b/i.test(text) ||
+    /\b(rbp|retail buyer program|novation|creative finance|mortgage takeover|cash offer|land deal)\b/i.test(text);
+}
+
+function buildInternalAssistantCurrentLeadAnswer(lead = {}, requestText = '') {
+  const leadId = getInternalAssistantLeadId(lead);
+  const leadName = String(lead.leadName || lead.name || lead.sellerName || '').trim();
+  const displayName = leadName && !/^unknown\s+seller$/i.test(leadName) ? leadName : 'this seller';
+  const address = String(lead.address || lead.propertyAddress || lead.property?.address || '').trim();
+  const status = String(lead.status || lead.stage || lead.pipelineStage || '').trim();
+  const recentCalls = sortNewest(state.calls || []).filter((call) =>
+    (leadId && call.leadId === leadId) ||
+    (address && String(call.address || '').toLowerCase() === address.toLowerCase()) ||
+    (lead.phone && normalizePhone(call.phone || call.from || '') === normalizePhone(lead.phone))
+  ).slice(0, 2);
+  const recentMessages = sortNewest(state.messages || []).filter((message) =>
+    (leadId && message.leadId === leadId) ||
+    (address && String(message.address || '').toLowerCase() === address.toLowerCase()) ||
+    (lead.phone && normalizePhone(message.phone || message.toPhone || message.fromPhone || '') === normalizePhone(lead.phone)) ||
+    (lead.email && String(message.email || message.toEmail || message.fromEmail || '').toLowerCase().includes(String(lead.email).toLowerCase()))
+  ).slice(0, 2);
+  const rbpRequested = /\b(rbp|retail buyer program|novation)\b/i.test(requestText);
+  const facts = [
+    address ? `property: ${address}` : '',
+    status ? `status: ${status}` : '',
+    lead.phone ? 'phone on file' : '',
+    lead.email ? 'email on file' : '',
+  ].filter(Boolean);
+  const timelineSignals = [
+    recentCalls[0]?.summary || recentCalls[0]?.transcript || '',
+    recentMessages[0]?.body || recentMessages[0]?.subject || '',
+  ].map((item) => String(item || '').trim()).filter(Boolean);
+  return [
+    `I am on ${displayName}${address ? ` at ${address}` : ''}.`,
+    facts.length ? `I checked the lead profile: ${facts.join(', ')}.` : 'I checked the lead profile, but it is still light on seller details.',
+    recentCalls.length || recentMessages.length
+      ? `Latest signal: ${(timelineSignals[0] || 'recent call/message activity is attached').slice(0, 180)}`
+      : 'I do not see a fresh call or message signal attached yet.',
+    rbpRequested
+      ? 'RBP lane: confirm the seller can wait for a higher-net path, verify payoff/mortgage facts, showings access, decision maker, and the minimum number before paperwork.'
+      : 'Next move: confirm motivation, timeline, decision maker, and the clean follow-up before sending anything.',
+  ].filter(Boolean).join(' ');
+}
+
 function mergeAssistantHistories(...histories) {
   const merged = [];
   const seen = new Set();
@@ -61980,6 +62041,7 @@ async function handleInternalAvaAssistantChatRequest(request) {
   let qa = null;
   let safety = null;
   let additiveIntelligence = null;
+  let activeAssistantLeadId = assistantContextSession.leadId || '';
   let missionController = await runAvaMissionController({
     controllerStage: 'planned',
     sessionId,
@@ -62124,6 +62186,12 @@ async function handleInternalAvaAssistantChatRequest(request) {
     const lead = findInternalAssistantLead(assistantPlan.toolPlan.params?.query || '');
     const leadName = String(lead?.leadName || lead?.name || '').trim();
     const displayName = leadName && !/^unknown\s+seller$/i.test(leadName) ? leadName : 'a matching lead';
+    const foundLeadId = getInternalAssistantLeadId(lead);
+    if (foundLeadId) {
+      activeAssistantLeadId = foundLeadId;
+      assistantContextSession.leadId = foundLeadId;
+      assistantSession.leadId = foundLeadId;
+    }
     answer = lead
       ? `I found ${displayName}${lead.address ? ` at ${lead.address}` : ''}. I can open the profile, summarize the latest timeline, or prepare the next seller step.`
       : `I could not find a lead matching "${assistantPlan.toolPlan.params?.query || ''}" in the current Command Center snapshot.`;
@@ -62131,6 +62199,7 @@ async function handleInternalAvaAssistantChatRequest(request) {
       ok: Boolean(lead),
       result: lead ? 'lead_found' : 'lead_not_found',
       lead: lead || null,
+      activeLeadId: foundLeadId || '',
     };
   } else if (assistantPlan.action === 'call_review_summary') {
     const latestCall = sortNewest(state.calls || [])[0] || null;
@@ -62149,13 +62218,24 @@ async function handleInternalAvaAssistantChatRequest(request) {
   } else if (assistantPlan.action === 'summary_plan') {
     answer = buildInternalAssistantSummaryAnswer();
     toolResult = { ok: true, result: 'runtime_summary' };
+  } else if (assistantPlan.action === 'general' && activeAssistantLeadId && looksLikeCurrentLeadContextRequest(text)) {
+    const activeLead = findInternalAssistantLeadById(activeAssistantLeadId) || findInternalAssistantLead(activeAssistantLeadId);
+    answer = activeLead
+      ? buildInternalAssistantCurrentLeadAnswer(activeLead, text)
+      : 'I had a selected lead id in this session, but I could not find the current lead record in the Command Center snapshot. Give me the seller phone, address, or name and I will reattach the right profile.';
+    toolResult = {
+      ok: Boolean(activeLead),
+      result: activeLead ? 'current_lead_context' : 'current_lead_missing',
+      lead: activeLead || null,
+      activeLeadId,
+    };
   } else if (assistantPlan.action === 'general' && !answer) {
     const deepSeekChat = await runInternalAvaDeepSeekChat({
       assistantContextSession,
       text,
       body,
       sessionId,
-      leadId: assistantContextSession.leadId || '',
+      leadId: activeAssistantLeadId || assistantContextSession.leadId || '',
       missionController,
       memories: assistantMemories,
     });
@@ -62191,7 +62271,7 @@ async function handleInternalAvaAssistantChatRequest(request) {
     sessionId,
     text,
     source: body.source || 'command-center-assistant',
-    leadId: assistantContextSession.leadId || '',
+    leadId: activeAssistantLeadId || assistantContextSession.leadId || '',
     assistantIntent,
     assistantPlan,
     assistantSession,
@@ -62214,7 +62294,7 @@ async function handleInternalAvaAssistantChatRequest(request) {
       sessionId,
       text,
       source: body.source || 'command-center-assistant',
-      leadId: assistantContextSession.leadId || '',
+      leadId: activeAssistantLeadId || assistantContextSession.leadId || '',
       assistantIntent,
       assistantPlan,
       assistantSession,
@@ -62250,7 +62330,7 @@ async function handleInternalAvaAssistantChatRequest(request) {
 
   recordAvaAssistantPlanOps({
     sessionId,
-    leadId: assistantContextSession.leadId || '',
+    leadId: activeAssistantLeadId || assistantContextSession.leadId || '',
     source: body.source || 'command-center-assistant',
     publicMode: false,
     text,
@@ -62266,7 +62346,7 @@ async function handleInternalAvaAssistantChatRequest(request) {
   const missionLedgerRecord = recordAvaMissionLedger({
     missionController,
     sessionId,
-    leadId: assistantContextSession.leadId || '',
+    leadId: activeAssistantLeadId || assistantContextSession.leadId || '',
     text,
     assistantIntent,
     assistantPlan,
@@ -62287,6 +62367,7 @@ async function handleInternalAvaAssistantChatRequest(request) {
       sessionId,
       usedIntent: assistantPlan.usedIntent || assistantIntent.intent,
       assistantAction: assistantPlan.action || 'answered',
+      activeLeadId: activeAssistantLeadId || assistantContextSession.leadId || '',
       toolPlan: assistantPlan.toolPlan || null,
       toolResult,
       deepSeekDecision: getAvaDeepSeekDecisionFromToolResult(toolResult),

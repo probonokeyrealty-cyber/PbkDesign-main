@@ -523,6 +523,16 @@ assert(
   'Ava lead lookup should use agent-friendly copy when a matched record lacks a real seller name.'
 );
 assert(
+  /let activeAssistantLeadId = assistantContextSession\.leadId/.test(bridge) &&
+    /activeAssistantLeadId = foundLeadId/.test(bridge) &&
+    /assistantSession\.leadId = foundLeadId/.test(bridge) &&
+    /function looksLikeCurrentLeadContextRequest/.test(bridge) &&
+    /function buildInternalAssistantCurrentLeadAnswer/.test(bridge) &&
+    /toolResult = \{[\s\S]*result: activeLead \? 'current_lead_context' : 'current_lead_missing'/.test(bridge) &&
+    /activeLeadId: activeAssistantLeadId \|\| assistantContextSession\.leadId \|\| ''/.test(bridge),
+  'Ava must promote a found lead into session context and answer current-seller follow-up turns from that active lead.'
+);
+assert(
   /function sanitizeAvaAssistantSessionSnapshot/.test(bridge) &&
     /function sanitizeAvaAssistantExchangeSnapshot/.test(bridge) &&
     /assistantSessions:\s*list\(\(state\.assistantSessions \|\| \[\]\)\.map\(sanitizeAvaAssistantSessionSnapshot\)/.test(bridge) &&

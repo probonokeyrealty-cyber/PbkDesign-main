@@ -61577,6 +61577,70 @@ function getAvaDeepSeekDecisionFromToolResult(toolResult = null) {
   return null;
 }
 
+function buildAvaReadOnlyAuditFallback({
+  state = {},
+  missionController = null,
+  memories = [],
+  deepSeekFallback = null,
+} = {}) {
+  const recentExchanges = sortNewest(state.assistantExchanges || []).slice(0, 4);
+  const recentSignals = recentExchanges
+    .map((exchange) => String(exchange.assistantPreview || exchange.userPreview || '').trim())
+    .filter(Boolean);
+  const memoryCount = Array.isArray(memories) ? memories.length : 0;
+  const decisionReason =
+    missionController?.trace?.turnDecision?.reason ||
+    missionController?.controlEnvelope?.reason ||
+    'read-only operator audit';
+  const observedPattern = recentSignals.length
+    ? 'I see the recent chat pattern, and the safest correction is to answer with a clear plan instead of drifting into provider-action language.'
+    : 'I do not have enough recent chat text in this request to quote the exact exchange, so I am treating this as a read-only controller audit.';
+  const answer = [
+    'I checked this as a read-only Ava audit. Nothing was sent, updated, called, or queued.',
+    observedPattern,
+    memoryCount
+      ? `I also have ${memoryCount} recent Ava memory signal${memoryCount === 1 ? '' : 's'} available for context.`
+      : '',
+    'Next decision: stay in planning mode until you name the seller, address, or task. If the next step writes to SMS, email, DocuSign, CRM, or calls, I will surface the approval path first.',
+  ]
+    .filter(Boolean)
+    .join(' ');
+  const deepSeekDecision = {
+    schema: 'ava_deepseek_decision_v1',
+    source: 'ava_controller_read_only_audit_fallback',
+    ok: true,
+    reply: answer,
+    decision: 'answer',
+    confidence: 0.72,
+    nextAction: 'Ask for the seller, address, or exact task before taking any provider action.',
+    needsApproval: false,
+    missionTimeline: [
+      'Read-only audit requested',
+      'Checked recent Ava exchange state',
+      'Confirmed no provider action should run',
+      'Next: ask for seller, address, or task',
+    ],
+    toolIntent: {
+      name: '',
+      providerWrite: false,
+      summary: 'No provider action. Planning and audit only.',
+      paramsJson: '',
+    },
+  };
+  return {
+    ok: true,
+    answer,
+    toolResult: {
+      ok: true,
+      result: 'ava_read_only_audit',
+      decisionReason,
+      recentExchangeCount: recentExchanges.length,
+      deepSeekDecision,
+      deepSeekFallback,
+    },
+  };
+}
+
 function isAvaDeepSeekJsonModeFallbackCandidate(result = {}) {
   const normalizedResult = String(result?.result || '').trim().toLowerCase();
   const normalizedError = String(result?.error || '').trim().toLowerCase();
@@ -62042,6 +62106,15 @@ async function handleInternalAvaAssistantChatRequest(request) {
     if (deepSeekChat.ok) {
       answer = deepSeekChat.answer;
       toolResult = deepSeekChat.toolResult;
+    } else if (assistantIntent.readOnly) {
+      const auditFallback = buildAvaReadOnlyAuditFallback({
+        state,
+        missionController,
+        memories: assistantMemories,
+        deepSeekFallback: deepSeekChat.toolResult,
+      });
+      answer = auditFallback.answer;
+      toolResult = auditFallback.toolResult;
     } else {
       const brain = answerBrainQuery(state, text);
       answer = isPublicAvaBrainAnswerSafe(brain?.answer) ? brain.answer : 'Tell me the seller, address, or task you want handled and I will help with the next step.';

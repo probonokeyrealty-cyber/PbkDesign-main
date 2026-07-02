@@ -61651,6 +61651,44 @@ async function runInternalAvaDeepSeekChat({
       ],
     };
   }
+  if (!deepSeek.ok && isAvaDeepSeekJsonModeFallbackCandidate(deepSeek)) {
+    const priorResult = deepSeek;
+    const retryModels = buildDeepSeekLiveRetryModels(DEEPSEEK_LIVE_MODEL).filter(
+      (model) => model && model !== DEEPSEEK_LIVE_MODEL
+    );
+    for (const model of retryModels) {
+      const modelFallback = await runDeepSeekChatCompletion(ensureDeepSeekJsonModeMessages(deepSeekMessages), {
+        source: 'ava-assistant-chat-model-fallback',
+        sessionId,
+        leadId,
+        model,
+        temperature: 0.35,
+        maxTokens: 700,
+        responseFormat: 'text',
+        thinkingMode: body.deepSeekThinkingMode || body.thinkingMode || DEEPSEEK_THINKING_MODE,
+        attemptTimeoutMs: Math.max(DEEPSEEK_LIVE_ATTEMPT_TIMEOUT_MS, 2200),
+        retryAttempts: 0,
+        retryDelayMs: 0,
+      });
+      deepSeek = {
+        ...modelFallback,
+        provider: {
+          ...(modelFallback.provider || {}),
+          jsonModeFallback: true,
+          modelFallback: true,
+          modelFallbackReason: priorResult.result || priorResult.error || 'primary_model_empty_response',
+        },
+        attempts: [
+          ...(priorResult.attempts || []),
+          ...(modelFallback.attempts || []).map((attempt) => ({
+            ...attempt,
+            retry: attempt.retry || `model_fallback:${model}`,
+          })),
+        ],
+      };
+      if (deepSeek.ok || !isAvaDeepSeekJsonModeFallbackCandidate(deepSeek)) break;
+    }
+  }
   const deepSeekDecision = parseAvaDeepSeekDecisionAnswer(deepSeek.answer);
   const finalAnswer = deepSeekDecision.reply || deepSeek.answer || '';
   if (deepSeek.ok && isPublicAvaBrainAnswerSafe(finalAnswer)) {

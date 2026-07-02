@@ -30,8 +30,13 @@ assert(
 );
 
 assert(
-  /detail:\s*{[\s\S]*approvalId[\s\S]*approvalIds:\s*\[approvalId\][\s\S]*status[\s\S]*response/.test(runtimeBridge),
-  'The approval decision event must include approvalId, approvalIds, status, and bridge response detail.'
+  /function collectApprovalDecisionIds\(approvalId: string, result: Record<string, unknown>\)/.test(
+    runtimeBridge
+  ) &&
+    /const approvalIds = collectApprovalDecisionIds\(approvalId, result\);[\s\S]*detail:\s*\{ approvalId, approvalIds, status, response: result \}/.test(
+      runtimeBridge
+    ),
+  'The approval decision event must include approvalId, collected approvalIds, status, and bridge response detail.'
 );
 
 assert(

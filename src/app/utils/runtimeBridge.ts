@@ -2049,6 +2049,61 @@ export async function postRuntimeEvent<T = Record<string, unknown>>(
   });
 }
 
+function addStringToken(tokens: Set<string>, value: unknown) {
+  const token = String(value || '').trim();
+  if (token) tokens.add(token);
+}
+
+function addStringArrayTokens(tokens: Set<string>, value: unknown) {
+  if (!Array.isArray(value)) return;
+  value.forEach((item) => addStringToken(tokens, item));
+}
+
+function addApprovalRecordTokens(tokens: Set<string>, value: unknown) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return;
+  const record = value as Record<string, unknown>;
+  [
+    record.id,
+    record.approvalId,
+    record.approval_id,
+    record.contractId,
+    record.contract_id,
+    record.campaignId,
+    record.campaign_id,
+    record.commandId,
+    record.command_id,
+    record.localCommandId,
+    record.local_command_id,
+  ].forEach((item) => addStringToken(tokens, item));
+}
+
+function collectApprovalDecisionIds(approvalId: string, result: Record<string, unknown>) {
+  const tokens = new Set<string>();
+  addStringToken(tokens, approvalId);
+  [
+    result.approvalIds,
+    result.approval_ids,
+    result.approvalKeys,
+    result.approval_keys,
+    result.resolutionKeys,
+    result.resolution_keys,
+    result.relatedApprovalIds,
+    result.related_approval_ids,
+  ].forEach((value) => addStringArrayTokens(tokens, value));
+  [
+    result.approvalId,
+    result.approval_id,
+    result.id,
+    result.approval,
+    result.record,
+    result.result,
+  ].forEach((value) => {
+    addStringToken(tokens, value);
+    addApprovalRecordTokens(tokens, value);
+  });
+  return [...tokens];
+}
+
 export async function updateApprovalDecision(approvalId: string, status: string) {
   const response = await bridgeRequest<Record<string, unknown>>({
     method: 'PUT',
@@ -2060,10 +2115,11 @@ export async function updateApprovalDecision(approvalId: string, status: string)
     },
   });
   const result = assertBridgeMutationSucceeded(response, 'Approval decision');
+  const approvalIds = collectApprovalDecisionIds(approvalId, result);
   if (typeof window !== 'undefined') {
     window.dispatchEvent(
       new CustomEvent('pbk:approval-decision', {
-        detail: { approvalId, approvalIds: [approvalId], status, response: result },
+        detail: { approvalId, approvalIds, status, response: result },
       })
     );
   }

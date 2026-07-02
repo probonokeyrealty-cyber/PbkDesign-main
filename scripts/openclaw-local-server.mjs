@@ -15059,6 +15059,25 @@ function uniqueLeadLookupValues(values = [], transform = (value) => String(value
   return [...new Set(values.map(transform).filter(Boolean))];
 }
 
+function getExactLeadDeleteIds(lead = {}, fallbackId = '') {
+  return uniqueLeadLookupValues([
+    lead.id,
+    lead.leadId,
+    lead.importId,
+    lead.externalId,
+    lead.external_id,
+    fallbackId,
+  ]);
+}
+
+function leadHasExactId(lead = {}, exactIds = []) {
+  const ids = Array.isArray(exactIds) ? exactIds.map((item) => String(item || '').trim()).filter(Boolean) : [];
+  if (!ids.length) return false;
+  return [lead.id, lead.leadId, lead.importId, lead.externalId, lead.external_id].some((value) =>
+    ids.includes(String(value || '').trim())
+  );
+}
+
 function findLeadImportByLookup(value = '') {
   const raw = normalizeLeadLookupValue(value);
   if (!raw) return null;
@@ -35812,21 +35831,7 @@ async function persistLeadProfileRowToDb(lead = {}, source = 'property-data') {
 }
 
 async function deleteLeadProfileRowFromDb(lead = {}, fallbackId = '') {
-  const seller = lead.seller || {};
-  const property = lead.property || {};
-  const ids = uniqueLeadLookupValues([lead.leadId, lead.id, lead.importId, lead.externalId, lead.external_id, fallbackId]);
-  const emails = uniqueLeadLookupValues([seller.email, lead.email], (value) =>
-    String(value || '')
-      .trim()
-      .toLowerCase()
-  );
-  const phones = uniqueLeadLookupValues([seller.phone, lead.phone], (value) => normalizePhone(value));
-  const phoneDigits = uniqueLeadLookupValues(phones, (value) => String(value || '').replace(/\D+/g, ''));
-  const addresses = uniqueLeadLookupValues([property.address, lead.address, lead.propertyAddress, lead.property_address], (value) =>
-    String(value || '')
-      .trim()
-      .toLowerCase()
-  );
+  const ids = getExactLeadDeleteIds(lead, fallbackId);
 
   const conditions = [];
   const params = [];
@@ -35838,22 +35843,6 @@ async function deleteLeadProfileRowFromDb(lead = {}, fallbackId = '') {
   if (ids.length) {
     const param = addParam(ids);
     conditions.push(`(id = ANY(${param}::text[]) OR external_id = ANY(${param}::text[]))`);
-  }
-  if (emails.length) {
-    const param = addParam(emails);
-    conditions.push(`LOWER(email) = ANY(${param}::text[])`);
-  }
-  if (phones.length) {
-    const param = addParam(phones);
-    conditions.push(`phone = ANY(${param}::text[])`);
-  }
-  if (phoneDigits.length) {
-    const param = addParam(phoneDigits);
-    conditions.push(`REGEXP_REPLACE(COALESCE(phone, ''), '\\D', '', 'g') = ANY(${param}::text[])`);
-  }
-  if (addresses.length) {
-    const param = addParam(addresses);
-    conditions.push(`LOWER(address) = ANY(${param}::text[])`);
   }
 
   if (!conditions.length) return { ok: false, reason: 'missing_lookup' };
@@ -77048,78 +77037,26 @@ const server = createServer(async (request, response) => {
         });
         return;
       }
-      const identifiers = {
-        leadId: existing.leadId || leadPatchMatch.groups.id,
-        id: existing.id,
-        email: existing.seller?.email,
-        phone: existing.seller?.phone,
-        address: existing.property?.address,
-        leadName: existing.seller?.name,
-      };
-      state.leadImports = (state.leadImports || []).filter((lead) => !leadMatchesIdentifiers(lead, identifiers));
+      const exactDeleteIds = getExactLeadDeleteIds(existing, leadPatchMatch.groups.id);
+      state.leadImports = (state.leadImports || []).filter((lead) => !leadHasExactId(lead, exactDeleteIds));
       state.messages = (state.messages || []).filter(
-        (item) =>
-          !leadMatchesIdentifiers(
-            {
-              id: item.id,
-              leadId: item.leadId,
-              seller: { email: item.email, phone: item.phone, name: item.leadName },
-              property: { address: item.address },
-            },
-            identifiers
-          )
+        (item) => !leadHasExactId({ id: item.id, leadId: item.leadId }, exactDeleteIds)
       );
       state.calls = (state.calls || []).filter(
-        (item) =>
-          !leadMatchesIdentifiers(
-            {
-              id: item.id,
-              leadId: item.leadId,
-              seller: { phone: item.phone, name: item.leadName },
-              property: { address: item.address },
-            },
-            identifiers
-          )
+        (item) => !leadHasExactId({ id: item.id, leadId: item.leadId }, exactDeleteIds)
       );
       state.appointments = (state.appointments || []).filter(
-        (item) =>
-          !leadMatchesIdentifiers(
-            {
-              id: item.id,
-              leadId: item.leadId,
-              seller: { email: item.email, phone: item.phone, name: item.leadName },
-              property: { address: item.address },
-            },
-            identifiers
-          )
+        (item) => !leadHasExactId({ id: item.id, leadId: item.leadId }, exactDeleteIds)
       );
       state.contracts = (state.contracts || []).filter(
-        (item) =>
-          !leadMatchesIdentifiers(
-            {
-              id: item.id,
-              leadId: item.leadId,
-              seller: { email: item.email, phone: item.phone, name: item.leadName },
-              property: { address: item.address },
-            },
-            identifiers
-          )
+        (item) => !leadHasExactId({ id: item.id, leadId: item.leadId }, exactDeleteIds)
       );
       state.analyzerRuns = (state.analyzerRuns || []).filter(
-        (item) =>
-          !leadMatchesIdentifiers(
-            {
-              id: item.id,
-              leadId: item.leadId,
-              seller: { name: item.leadName },
-              property: { address: item.address },
-            },
-            identifiers
-          )
+        (item) => !leadHasExactId({ id: item.id, leadId: item.leadId }, exactDeleteIds)
       );
       (state.campaigns || []).forEach((campaign) => {
         if (Array.isArray(campaign.leads)) {
-          campaign.leads = campaign.leads.filter((lead) => !leadMatchesIdentifiers(lead, identifiers));
+          campaign.leads = campaign.leads.filter((lead) => !leadHasExactId(lead, exactDeleteIds));
           campaign.updatedAt = isoNow();
         }
       });

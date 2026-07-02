@@ -497,6 +497,8 @@ assert(
     /readOnlyAnswerAllowed:\s*true/.test(bridge) &&
     /if \(readOnlyAuditRequest && assistantPlan\.action === 'general'\)[\s\S]*buildAvaReadOnlyAuditFallback/.test(bridge) &&
     /!\(readOnlyAuditRequest && assistantPlan\.action === 'general'\)/.test(bridge) &&
+    /ava_control_read_only_pause/.test(bridge) &&
+    /I stayed read-only and did not change anything/.test(bridge) &&
     /runInternalAvaDeepSeekChat[\s\S]*responseFormat:\s*'json'[\s\S]*tools:\s*buildAvaDeepSeekDecisionTools\(\)[\s\S]*deepSeekDecision/.test(bridge) &&
     /deepSeekDecision:\s*getAvaDeepSeekDecisionFromToolResult\(toolResult\)/.test(bridge) &&
     /return null;[\s\S]*async function runInternalAvaDeepSeekChat/.test(bridge) &&

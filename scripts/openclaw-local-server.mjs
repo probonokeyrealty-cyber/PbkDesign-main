@@ -61881,13 +61881,16 @@ function enforceAvaControlEnvelope(missionController = {}, assistantPlan = {}) {
     };
   }
 
+  const safeReadOnlyPause = !providerWrite;
   return {
     ok: false,
     decision: decision || 'blocked',
-    answer: 'I paused that action for safety. Nothing changed.',
+    answer: safeReadOnlyPause
+      ? 'I stayed read-only and did not change anything. Tell me the seller, address, or exact task, and I will show what I checked, what I can do next, and what would need approval.'
+      : 'I paused that action for safety. Nothing changed.',
     toolResult: {
       ok: false,
-      result: 'ava_control_blocked',
+      result: safeReadOnlyPause ? 'ava_control_read_only_pause' : 'ava_control_blocked',
       providerWritesBlocked: providerWrite,
       reason: controlEnvelope.reason || '',
       controllerDecisionId: controlEnvelope.controllerDecisionId || '',

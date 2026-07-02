@@ -67,6 +67,16 @@ assert.equal(smsIntent.channel, 'sms', 'Seller text requests should route to SMS
 assert.equal(smsIntent.delivery, 'send', 'Explicit send language should request approval-gated delivery.');
 assert.match(smsIntent.messageBody, /call tomorrow/i, 'SMS intent should extract the operator message body.');
 
+const readOnlyAuditIntent = detectAssistantIntent(
+  'Ava, audit your own last few seller-assistant messages. Tell me what you understood, what you checked, what decision you would make next, and what you need from me before taking action. Do not send messages, update CRM, or call providers.'
+);
+assert.equal(
+  readOnlyAuditIntent.intent,
+  'general',
+  'Read-only Ava audit prompts must not be misclassified as provider-write message requests.'
+);
+assert.equal(readOnlyAuditIntent.readOnly, true, 'Read-only Ava audit prompts should retain a read-only marker.');
+
 const emailIntent = detectAssistantIntent('Send an email to seller@example.com saying we can review the offer tonight.');
 assert.equal(emailIntent.intent, 'seller_message', 'Assistant should detect seller email requests.');
 assert.equal(emailIntent.channel, 'email', 'Email requests should route to email.');

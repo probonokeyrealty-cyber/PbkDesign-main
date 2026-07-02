@@ -441,6 +441,21 @@ function buildAssistantIntentFromClassifier(classified = null, context = {}) {
   return null;
 }
 
+function looksLikeReadOnlyAssistantAudit(text = '') {
+  const lower = String(text || '').toLowerCase();
+  if (!lower) return false;
+  const auditAsk =
+    /\b(audit|diagnose|explain|review|evaluate|assess)\b.{0,120}\b(ava|chat|assistant|conversation|dialogue|messages?|behavior|decision|controller|mission)\b/i.test(lower) ||
+    /\bwhat\s+(?:you|ava)\s+(?:understood|checked|would\s+do|would\s+decide|need(?:s)?\s+from\s+me)\b/i.test(lower);
+  const noProviderAction =
+    /\b(?:do\s+not|don't|without)\s+(?:send|update|call|dial|text|email|message|change|touch|launch|execute)\b/i.test(lower) ||
+    /\bread[-\s]?only\b/i.test(lower) ||
+    /\bno\s+(?:provider|crm|lead|seller|external)\s+(?:action|write|update|send|call)\b/i.test(lower);
+  const explicitProviderDraft =
+    /\b(?:draft|compose|write|prepare)\b.{0,60}\b(?:sms|text|message|email|contract|docusign|follow[-\s]?up)\b/i.test(lower);
+  return auditAsk && noProviderAction && !explicitProviderDraft;
+}
+
 export function detectAssistantIntent(message = '') {
   const text = cleanText(message, 2400);
   const lower = text.toLowerCase();
@@ -470,6 +485,10 @@ export function detectAssistantIntent(message = '') {
     )
   ) {
     return { intent: 'session_recall', message: text, classifierSource: 'regex' };
+  }
+
+  if (looksLikeReadOnlyAssistantAudit(text)) {
+    return { intent: 'general', message: text, classifierSource: 'regex_read_only_audit', readOnly: true };
   }
 
   if (

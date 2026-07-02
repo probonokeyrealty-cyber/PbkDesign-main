@@ -485,6 +485,7 @@ assert(
     /function isAvaDeepSeekJsonModeFallbackCandidate/.test(bridge) &&
     /function buildAvaReadOnlyAuditFallback/.test(bridge) &&
     /function isAvaReadOnlyAuditRequest/.test(bridge) &&
+    /\\baudit\\b[\s\S]*\\bread\[-\\s\]\?only\\b/.test(bridge) &&
     /const readOnlyAuditRequest = Boolean/.test(bridge) &&
     /messages:\s*requestMessages/.test(bridge) &&
     /ensureDeepSeekJsonModeMessages\(deepSeekMessages\)/.test(bridge) &&

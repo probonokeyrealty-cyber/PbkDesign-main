@@ -61644,6 +61644,14 @@ function buildAvaReadOnlyAuditFallback({
 function isAvaReadOnlyAuditRequest(text = '') {
   const lower = String(text || '').toLowerCase();
   if (!lower) return false;
+  if (
+    /\baudit\b/i.test(lower) &&
+    (/\bread[-\s]?only\b/i.test(lower) ||
+      /\b(?:do\s+not|don't|without)\b/i.test(lower) ||
+      /\bnothing\s+(?:should\s+)?(?:send|change|update|launch|execute)\b/i.test(lower))
+  ) {
+    return true;
+  }
   return (
     /\b(audit|diagnose|explain|review|evaluate|assess)\b.{0,140}\b(ava|chat|assistant|conversation|dialogue|messages?|behavior|decision|controller|mission)\b/i.test(lower) &&
     (/\b(?:do\s+not|don't|without)\s+(?:send|update|call|dial|text|email|message|change|touch|launch|execute)\b/i.test(lower) ||

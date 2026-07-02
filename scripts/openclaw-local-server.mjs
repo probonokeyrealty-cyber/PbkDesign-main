@@ -61815,6 +61815,15 @@ function enforceAvaControlEnvelope(missionController = {}, assistantPlan = {}) {
     return { ok: true, decision, controlEnvelope };
   }
 
+  if (decision === 'allow' && !providerWrite && assistantPlan?.action === 'general') {
+    return {
+      ok: true,
+      decision,
+      readOnlyAnswerAllowed: true,
+      controlEnvelope,
+    };
+  }
+
   if (approvalQueueAllowed) {
     return {
       ok: true,

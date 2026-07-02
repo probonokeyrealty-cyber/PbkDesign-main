@@ -471,6 +471,8 @@ assert(
 assert(
   /function buildAvaDeepSeekDecisionTools/.test(bridge) &&
     /function parseAvaDeepSeekDecisionAnswer/.test(bridge) &&
+    /function ensureDeepSeekJsonModeMessages/.test(bridge) &&
+    /messages:\s*requestMessages/.test(bridge) &&
     /runInternalAvaDeepSeekChat[\s\S]*responseFormat:\s*'json'[\s\S]*tools:\s*buildAvaDeepSeekDecisionTools\(\)[\s\S]*deepSeekDecision/.test(bridge) &&
     /deepSeekDecision:\s*getAvaDeepSeekDecisionFromToolResult\(toolResult\)/.test(bridge) &&
     /return null;[\s\S]*async function runInternalAvaDeepSeekChat/.test(bridge) &&

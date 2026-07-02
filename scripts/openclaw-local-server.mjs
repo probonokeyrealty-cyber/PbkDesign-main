@@ -29686,6 +29686,27 @@ function sanitizeDeepSeekToolCalls(toolCalls = []) {
     .slice(0, DEEPSEEK_MAX_TOOL_DEFINITIONS);
 }
 
+function ensureDeepSeekJsonModeMessages(messages = []) {
+  const normalized = Array.isArray(messages)
+    ? messages
+        .map((message) => ({
+          role: String(message?.role || 'user').trim() || 'user',
+          content: String(message?.content || '').trim(),
+        }))
+        .filter((message) => message.content)
+    : [];
+  const hasJsonInstruction = normalized.some((message) => /\bjson\b/i.test(message.content));
+  if (hasJsonInstruction) return normalized;
+  return [
+    {
+      role: 'system',
+      content:
+        'Return a valid JSON object only. This json instruction is required for DeepSeek JSON mode and must remain present even when other context is truncated.',
+    },
+    ...normalized,
+  ];
+}
+
 async function runDeepSeekChatCompletion(messages = [], params = {}) {
   const meta = getDeepSeekProviderMeta();
   if (!meta.ready) {
@@ -29710,13 +29731,15 @@ async function runDeepSeekChatCompletion(messages = [], params = {}) {
   const deepSeekTools = hasDeepSeekTools && DEEPSEEK_STRICT_TOOL_MODE === 'enabled' ? requestedDeepSeekTools : [];
   const deepSeekUrl = hasDeepSeekTools && DEEPSEEK_STRICT_TOOL_MODE === 'enabled' ? DEEPSEEK_STRICT_TOOL_BASE_URL : DEEPSEEK_BASE_URL;
   const attempts = [];
+  const requestMessages =
+    params.responseFormat === 'json' ? ensureDeepSeekJsonModeMessages(messages) : messages;
 
   const runAttempt = async (attemptIndex = 0) => {
     let controller = null;
     let timeout = null;
     const requestBody = {
       model,
-      messages,
+      messages: requestMessages,
       temperature: params.temperature ?? 0.25,
       max_tokens: Math.max(128, Math.min(4096, toNumber(params.maxTokens || params.max_tokens, 1200))),
       thinking: { type: thinkingMode },

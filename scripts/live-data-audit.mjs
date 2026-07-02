@@ -300,10 +300,17 @@ const checks = [
       /request\.method === 'DELETE'/.test(bridge) &&
       /findLeadImportByLookup/.test(bridge) &&
       /lead\.importId/.test(bridge) &&
+      /getExactLeadDeleteIds/.test(bridge) &&
+      /leadHasExactId/.test(bridge) &&
       /deleteLeadProfileRowFromDb/.test(bridge) &&
-      /uniqueLeadLookupValues/.test(bridge) &&
-      /REGEXP_REPLACE\(COALESCE\(phone/.test(bridge) &&
-      !/OR email = \$2/.test(bridge),
+      /const exactDeleteIds = getExactLeadDeleteIds\(existing, leadPatchMatch\.groups\.id\);/.test(
+        bridge
+      ) &&
+      /state\.leadImports = \(state\.leadImports \|\| \[\]\)\.filter\(\(lead\) => !leadHasExactId\(lead, exactDeleteIds\)\);/.test(
+        bridge
+      ) &&
+      !/LOWER\(email\) = ANY/.test(bridge) &&
+      !/REGEXP_REPLACE\(COALESCE\(phone/.test(bridge),
   },
   {
     name: 'Lead intake dedupe does not collapse blank-address blank-phone leads',

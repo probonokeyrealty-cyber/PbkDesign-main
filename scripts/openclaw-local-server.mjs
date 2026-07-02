@@ -61976,7 +61976,16 @@ async function handleInternalAvaAssistantChatRequest(request) {
   });
   const controlGate = enforceAvaControlEnvelope(missionController, assistantPlan);
 
-  if (!controlGate.ok && !(readOnlyAuditRequest && assistantPlan.action === 'general')) {
+  if (readOnlyAuditRequest && assistantPlan.action === 'general') {
+    const auditFallback = buildAvaReadOnlyAuditFallback({
+      state,
+      missionController,
+      memories: assistantMemories,
+      deepSeekFallback: null,
+    });
+    answer = auditFallback.answer;
+    toolResult = auditFallback.toolResult;
+  } else if (!controlGate.ok && !(readOnlyAuditRequest && assistantPlan.action === 'general')) {
     answer = controlGate.answer;
     toolResult = controlGate.toolResult;
   } else if (assistantPlan.action === 'tool_plan' && assistantPlan.toolPlan?.toolName === 'analyzeDeal') {

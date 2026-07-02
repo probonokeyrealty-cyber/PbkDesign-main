@@ -421,6 +421,7 @@ export type AvaAssistantChatResponse = {
   sessionId?: string;
   usedIntent?: string;
   assistantAction?: string;
+  activeLeadId?: string;
   toolPlan?: Record<string, unknown> | null;
   toolResult?: Record<string, unknown> | null;
   deepSeekDecision?: Record<string, unknown> | null;

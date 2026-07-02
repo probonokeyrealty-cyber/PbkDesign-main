@@ -322,8 +322,10 @@ assert(
   avaChatRoute.includes('Ava plan') &&
     avaChatRoute.includes('Understood:') &&
     avaChatRoute.includes('Checked:') &&
+    avaChatRoute.includes('Proof:') &&
     avaChatRoute.includes('Ava decided:') &&
     avaChatRoute.includes('Next move:') &&
+    avaChatRoute.includes('plainAvaToolProof') &&
     avaChatRoute.includes('deepSeekDecision') &&
     avaChatRoute.includes('missionTimeline') &&
     avaChatRoute.includes('confidencePercent') &&
@@ -338,6 +340,14 @@ assert(
     avaChatRoute.includes('Safe lane') &&
     avaChatRoute.includes('Used {memories.length} memory signal'),
   'Ava Chat must visibly explain Ava mission state, checked context, approval posture, and memory use.'
+);
+assert(
+  /activeLeadId\?: string/.test(avaChatRoute) &&
+    /toolResult\?: Record<string, unknown> \| null/.test(avaChatRoute) &&
+    /activeLeadId: response\.activeLeadId/.test(avaChatRoute) &&
+    /toolResult: response\.toolResult/.test(avaChatRoute) &&
+    /plainAvaToolProof\(toolResult, exchange\.activeLeadId \|\| ''\)/.test(avaChatRoute),
+  'Ava Chat must preserve active lead and tool proof on normal assistant turns so the visible timeline is not backend-only.'
 );
 assert(
   avaChatRoute.includes('PBK_COMPANION_ACTIONS') &&

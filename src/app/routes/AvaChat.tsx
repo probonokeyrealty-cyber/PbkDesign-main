@@ -113,6 +113,8 @@ type AvaAssistantExchange = {
   suggestions: string[];
   usedIntent?: string;
   assistantAction?: string;
+  activeLeadId?: string;
+  toolResult?: Record<string, unknown> | null;
   warning?: string;
   mission?: Record<string, unknown> | null;
   trace?: Record<string, unknown> | null;
@@ -582,6 +584,8 @@ function buildAssistantExchange(
     suggestions: normalizeAssistantSuggestions(response.suggestions),
     usedIntent: response.usedIntent,
     assistantAction: response.assistantAction,
+    activeLeadId: response.activeLeadId,
+    toolResult: response.toolResult,
     warning: response.warning,
     mission: response.mission,
     trace: response.trace,
@@ -708,11 +712,40 @@ function getMissionInsight(trace: Record<string, unknown> | null) {
   );
 }
 
+function plainAvaToolProof(toolResult: Record<string, unknown> | null, activeLeadId = '') {
+  const result = String(toolResult?.result || toolResult?.outcome || toolResult?.status || '')
+    .trim()
+    .toLowerCase();
+  if (!result && !activeLeadId) return '';
+  if (result === 'lead_found')
+    return 'Matched the seller record and made it the active lead for this chat.';
+  if (result === 'current_lead_context')
+    return 'Kept this turn attached to the selected seller record.';
+  if (result === 'approval_summary')
+    return 'Checked the current approval queue without changing anything.';
+  if (result === 'latest_call_review')
+    return 'Checked the latest call signal before recommending the next move.';
+  if (result === 'runtime_summary') return 'Checked the command center status before answering.';
+  if (result === 'deepseek_chat_answer')
+    return 'Answered through Ava intelligence with PBK safety gates still active.';
+  if (result === 'brain_answer')
+    return 'Answered from PBK knowledge because the live model path was not needed.';
+  if (result === 'ava_read_only_audit') return 'Stayed read-only and checked recent Ava behavior.';
+  if (/approval/.test(result))
+    return 'Prepared the request for review before anything can be sent or changed.';
+  if (/failed|missing|unavailable|not_found/.test(result))
+    return 'Checked the path and found something still needs attention.';
+  if (activeLeadId) return 'Kept this turn connected to the active seller record.';
+  return '';
+}
+
 function AvaMissionTimeline({ exchange }: { exchange: AvaAssistantExchange }) {
   const mission = asRecord(exchange.mission);
   const trace = asRecord(exchange.trace);
   const deepSeekDecision = asRecord(exchange.deepSeekDecision);
-  if (!mission && !trace && !deepSeekDecision) return null;
+  const toolResult = asRecord(exchange.toolResult);
+  const toolProof = plainAvaToolProof(toolResult, exchange.activeLeadId || '');
+  if (!mission && !trace && !deepSeekDecision && !toolProof) return null;
   const missionSteps = getMissionSteps(mission);
   const deepSeekSteps = getDeepSeekMissionSteps(deepSeekDecision);
   const steps = missionSteps.length > 0 ? missionSteps : deepSeekSteps;
@@ -776,6 +809,11 @@ function AvaMissionTimeline({ exchange }: { exchange: AvaAssistantExchange }) {
       {insight && (
         <p className="mb-2 text-[var(--ava-text-muted)]">
           <span className="font-semibold text-[var(--ava-text)]">Checked:</span> {insight}
+        </p>
+      )}
+      {toolProof && (
+        <p className="mb-2 text-[var(--ava-text-muted)]">
+          <span className="font-semibold text-[var(--ava-text)]">Proof:</span> {toolProof}
         </p>
       )}
       {decision && (

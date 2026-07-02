@@ -43739,7 +43739,21 @@ async function recordAgentHandoffTask(task = {}) {
     updatedAt: task.updatedAt || task.updated_at || isoNow(),
   };
   const existing = state.agentTasks.find((item) => item.id === record.id);
-  if (existing) return existing;
+  if (existing) {
+    Object.assign(existing, {
+      ...record,
+      createdAt: existing.createdAt || record.createdAt,
+      created_at: existing.created_at || record.createdAt,
+      metadata: {
+        ...(existing.metadata || {}),
+        ...(record.metadata || {}),
+      },
+    });
+    upsertById(state, 'agentTasks', existing);
+    state.agentTasks = sortNewest(state.agentTasks).slice(0, LIMITS.agentTasks);
+    void persistPbkTaskRecord(existing);
+    return existing;
+  }
   upsertById(state, 'agentTasks', record);
   state.agentTasks = sortNewest(state.agentTasks).slice(0, LIMITS.agentTasks);
   void persistPbkTaskRecord(record);
@@ -43756,6 +43770,85 @@ async function recordAgentHandoffTask(task = {}) {
     'agent-orchestration'
   );
   return record;
+}
+
+const AGENT_PROVIDER_WRITE_TOOL_NAMES = new Set([
+  'telnyx_sms',
+  'telnyx_call',
+  'sendDocuSign',
+  'sendContract',
+  'sendColdEmail',
+  'sendSellerDocs',
+  'prepare_and_send_contract',
+  'updateCRM',
+  'startNurtureSequence',
+  'scheduleAppointment',
+  'deleteLead',
+]);
+
+function normalizeAgentProviderIntentText(value = '') {
+  return String(value || '')
+    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+    .replace(/[_-]+/g, ' ')
+    .trim()
+    .toLowerCase();
+}
+
+function detectAgentProviderWriteIntent(payload = {}) {
+  if (payload.providerWrite === true || payload.provider_write === true) return true;
+  const toolCandidates = [payload.toolName, payload.tool, payload.action].map((item) => String(item || '').trim()).filter(Boolean);
+  if (toolCandidates.some((tool) => AGENT_PROVIDER_WRITE_TOOL_NAMES.has(tool))) return true;
+  const text = [payload.toolName, payload.tool, payload.action, payload.command, payload.query, payload.prompt, payload.intent]
+    .map((item) => normalizeAgentProviderIntentText(item))
+    .filter(Boolean)
+    .join(' ');
+  return /\b(send|text|sms|email|call|dial|docusign|contract|launch campaign|start nurture|update crm|delete|void|approve)\b/.test(text);
+}
+
+function buildAgentWorkOrderEnvelope({ agent = {}, payload = {}, command = '', capability = '', requestedId = '' } = {}) {
+  const agentId = normalizeAgentRegistryId(agent.id || requestedId || payload.agentId || payload.agent || '');
+  const providerWriteIntent = detectAgentProviderWriteIntent(payload);
+  const goal = String(payload.goal || command || payload.command || payload.query || payload.prompt || capability || `Run ${agentId || 'agent'} responsibility`).trim();
+  const providedSuccessCriteria = Array.isArray(payload.successCriteria)
+    ? payload.successCriteria
+    : Array.isArray(payload.success_criteria)
+      ? payload.success_criteria
+      : [payload.successCriteria || payload.success_criteria || ''];
+  const providedProofRequirements = Array.isArray(payload.proofRequirements)
+    ? payload.proofRequirements
+    : Array.isArray(payload.proof_requirements)
+      ? payload.proof_requirements
+      : [payload.proofRequirements || payload.proof_requirements || ''];
+  return {
+    schema: 'pbk.agent.work_order.v1',
+    id: `agent-work-order-${Date.now()}-${randomUUID().slice(0, 8)}`,
+    agentId,
+    agentName: agent.name || agentId,
+    requestedBy: payload.actor || payload.requestedBy || 'Ava',
+    source: payload.source || 'agent-registry',
+    capability,
+    goal,
+    autonomyMode: providerWriteIntent ? 'approval_gated' : 'supervised_autonomous',
+    approvalPolicy: {
+      providerWriteIntent,
+      approvalRequired: providerWriteIntent,
+      providerWrites: providerWriteIntent ? 'blocked_until_approval' : 'blocked_by_default',
+    },
+    successCriteria: normalizeStringList([
+      ...providedSuccessCriteria,
+      providerWriteIntent ? 'No provider write executes without approval proof.' : 'Return a useful recommendation or completed read-only result.',
+      'Return a concrete result, status, or next action.',
+      'Preserve PBK lead/context provenance when available.',
+    ]),
+    proofRequirements: normalizeStringList([
+      ...providedProofRequirements,
+      'agent_result',
+      'mission_trace',
+      providerWriteIntent ? 'approval_receipt' : '',
+      providerWriteIntent ? 'provider_result_after_approval' : '',
+    ]),
+    createdAt: isoNow(),
+  };
 }
 
 function buildAgentSmokePayload(agentId = '', params = {}) {
@@ -44346,17 +44439,42 @@ async function invokeAgentFromRegistry(params = {}) {
       registry: buildAgentRegistrySnapshot(registry),
     };
   }
+  const payload = params.payload && typeof params.payload === 'object' ? params.payload : params;
+  const command = String(payload.command || payload.query || payload.prompt || capability || requestedId || '').trim();
+  const workOrder = buildAgentWorkOrderEnvelope({
+    agent,
+    payload,
+    command,
+    capability,
+    requestedId,
+  });
+  let agentTask = null;
   try {
-    const payload = params.payload && typeof params.payload === 'object' ? params.payload : params;
-    const command = String(payload.command || payload.query || payload.prompt || capability || requestedId || '').trim();
+    agentTask = await recordAgentHandoffTask({
+      id: workOrder.id,
+      correlationId: workOrder.id,
+      fromAgent: normalizeAgentName(payload.actor || payload.requestedBy || 'Ava'),
+      toAgent: agent.name || agent.id,
+      taskType: 'agent_invocation',
+      status: 'running',
+      summary: `${agent.name || agent.id} started ${workOrder.goal}.`,
+      providerWrites: workOrder.approvalPolicy.providerWriteIntent ? 'approval_gated' : 'blocked',
+      metadata: {
+        workOrder,
+        successCriteria: workOrder.successCriteria,
+        proofRequirements: workOrder.proofRequirements,
+        approvalPolicy: workOrder.approvalPolicy,
+      },
+    });
     let agentContext = await prepareAgentActionPBKIntelligenceContext(payload, command, payload.context || payload);
     const payloadWithContext = {
       ...payload,
+      workOrder,
       pbkIntelligenceContext: agentContext,
       context:
         payload.context && typeof payload.context === 'object'
-          ? { ...payload.context, pbkIntelligenceContext: agentContext }
-          : { pbkIntelligenceContext: agentContext },
+          ? { ...payload.context, workOrder, pbkIntelligenceContext: agentContext }
+          : { workOrder, pbkIntelligenceContext: agentContext },
     };
     const output = await invokeRegisteredAgent(agent, payloadWithContext, {
       localHandlers: getLocalAgentRegistryHandlers(),
@@ -44371,19 +44489,59 @@ async function invokeAgentFromRegistry(params = {}) {
       output,
       agentContext
     );
+    agentTask = await recordAgentHandoffTask({
+      id: workOrder.id,
+      correlationId: workOrder.id,
+      fromAgent: normalizeAgentName(payload.actor || payload.requestedBy || 'Ava'),
+      toAgent: agent.name || agent.id,
+      taskType: 'agent_invocation',
+      status: output?.ok === false ? 'warning' : 'complete',
+      summary: `${agent.name || agent.id} fired for ${workOrder.goal}.`,
+      providerWrites: workOrder.approvalPolicy.providerWriteIntent ? 'approval_gated' : 'blocked',
+      metadata: {
+        workOrder,
+        successCriteria: workOrder.successCriteria,
+        proofRequirements: workOrder.proofRequirements,
+        approvalPolicy: workOrder.approvalPolicy,
+        routedTo,
+        outputResult: output?.result || output?.status || '',
+        pbkIntelligenceContext: summarizeRuntimePBKIntelligenceContext(agentContext),
+      },
+    });
     return {
       ok: true,
       result: 'agent_invoked',
       routedTo: `invokeRegisteredAgent:${agent.id}`,
       agent,
       output,
+      workOrder,
+      agentTask,
       pbkIntelligenceContext: summarizeRuntimePBKIntelligenceContext(agentContext),
     };
   } catch (error) {
+    agentTask = await recordAgentHandoffTask({
+      id: workOrder.id,
+      correlationId: workOrder.id,
+      fromAgent: normalizeAgentName(payload.actor || payload.requestedBy || 'Ava'),
+      toAgent: agent.name || agent.id,
+      taskType: 'agent_invocation',
+      status: 'failed',
+      summary: `${agent.name || agent.id} failed ${workOrder.goal}.`,
+      providerWrites: workOrder.approvalPolicy.providerWriteIntent ? 'approval_gated' : 'blocked',
+      metadata: {
+        workOrder,
+        successCriteria: workOrder.successCriteria,
+        proofRequirements: workOrder.proofRequirements,
+        approvalPolicy: workOrder.approvalPolicy,
+        error: error?.message || String(error),
+      },
+    });
     return {
       ok: false,
       result: 'agent_invoke_failed',
       agent,
+      workOrder,
+      agentTask,
       error: error?.message || String(error),
     };
   }
@@ -71995,10 +72153,10 @@ const server = createServer(async (request, response) => {
           rationale: body.rationale || `Deploy ${body.name || 'new agent'} from Agent Fleet.`,
           actor: body.actor || 'Agent Fleet UI',
           source: 'agent-fleet',
-          requestApproval: body.requestApproval !== false,
+          requestApproval: true,
         },
         {
-          requestApproval: body.requestApproval !== false,
+          requestApproval: true,
           actor: body.actor || 'Agent Fleet UI',
           source: 'agent-fleet',
         }
@@ -72024,10 +72182,10 @@ const server = createServer(async (request, response) => {
           rationale: body.rationale || `Agent Fleet requested ${body.action || body.tool || 'action'}.`,
           actor: body.actor || 'Agent Fleet UI',
           source: 'agent-fleet',
-          requestApproval: body.requestApproval !== false,
+          requestApproval: true,
         },
         {
-          requestApproval: body.requestApproval !== false,
+          requestApproval: true,
           actor: body.actor || 'Agent Fleet UI',
           source: 'agent-fleet',
         }
@@ -72052,10 +72210,10 @@ const server = createServer(async (request, response) => {
           rationale: body.rationale || `Agent Fleet requested skill action for ${body.skill || 'a skill'}.`,
           actor: body.actor || 'Agent Fleet UI',
           source: 'agent-fleet',
-          requestApproval: body.requestApproval !== false,
+          requestApproval: true,
         },
         {
-          requestApproval: body.requestApproval !== false,
+          requestApproval: true,
           actor: body.actor || 'Agent Fleet UI',
           source: 'agent-fleet',
         }

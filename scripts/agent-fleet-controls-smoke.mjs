@@ -78,11 +78,41 @@ for (const tool of [
   assert(bridge.includes(tool), `Bridge must register ${tool} for Agent Fleet operations.`);
 }
 
-assert.match(
-  bridge,
-  /requestApproval:\s*body\.requestApproval\s*!==\s*false/,
-  'Agent deploy/action/skill bridge routes must remain approval-gated by default.'
+const agentFleetRouteStart = bridge.indexOf("matchesPath(pathname, ['/api/agents/deploy'");
+const agentFleetRouteEnd = bridge.indexOf("matchesPath(pathname, ['/api/voice/browser/health'", agentFleetRouteStart);
+assert(agentFleetRouteStart > 0 && agentFleetRouteEnd > agentFleetRouteStart, 'Could not isolate Agent Fleet write routes.');
+const agentFleetRouteBlock = bridge.slice(agentFleetRouteStart, agentFleetRouteEnd);
+const agentDeployRouteBlock = agentFleetRouteBlock.slice(
+  agentFleetRouteBlock.indexOf("matchesPath(pathname, ['/api/agents/deploy'"),
+  agentFleetRouteBlock.indexOf("const agentActionMatch")
 );
+const agentActionRouteBlock = agentFleetRouteBlock.slice(
+  agentFleetRouteBlock.indexOf("const agentActionMatch"),
+  agentFleetRouteBlock.indexOf("const agentSkillActionMatch")
+);
+const agentSkillRouteBlock = agentFleetRouteBlock.slice(
+  agentFleetRouteBlock.indexOf("const agentSkillActionMatch"),
+  agentFleetRouteBlock.length
+);
+
+assert.doesNotMatch(
+  agentFleetRouteBlock,
+  /requestApproval:\s*body\.requestApproval\s*!==\s*false/,
+  'Agent deploy/action/skill bridge routes must not let client payloads opt out of approval.'
+);
+assert.match(
+  agentFleetRouteBlock,
+  /source:\s*'agent-fleet'[\s\S]*requestApproval:\s*true/,
+  'Agent deploy/action/skill bridge routes must be approval-gated server-side.'
+);
+for (const [name, routeBlock] of [
+  ['deploy', agentDeployRouteBlock],
+  ['action', agentActionRouteBlock],
+  ['skill', agentSkillRouteBlock],
+]) {
+  assert.match(routeBlock, /requestApproval:\s*true/, `Agent Fleet ${name} route must force approval server-side.`);
+  assert.doesNotMatch(routeBlock, /requestApproval:\s*body\.requestApproval\s*!==\s*false/, `Agent Fleet ${name} route must not accept client approval opt-out.`);
+}
 assert.match(
   agentFleet,
   /pendingTransferQueueRef/,

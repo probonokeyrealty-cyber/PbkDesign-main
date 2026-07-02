@@ -127,6 +127,35 @@ function Test-IssueHasLabel {
   return (Get-IssueLabelNames -Issue $Issue) -contains $Label
 }
 
+function Get-AgentWorkOrderSection {
+  param([string]$Body, [string]$Section)
+
+  $sectionName = "$Section" -replace '^\s*#+\s*', ''
+  $escaped = [regex]::Escape($sectionName)
+  $match = [regex]::Match($Body, "(?ms)^\s*#{2,3}\s+$escaped\b\s*(?<content>.*?)(?=^\s*#{2,3}\s+|\z)", [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
+  if (-not $match.Success) { return "" }
+  return "$($match.Groups["content"].Value)".Trim()
+}
+
+function Test-AgentWorkOrderSectionConcrete {
+  param([string]$Content)
+
+  $placeholderPatterns = @(
+    "^\s*$",
+    "^\s*TBD\s*$",
+    "^\s*todo\s*$",
+    "^\s*n/a\s*$",
+    "^\s*none\s*$",
+    "^\s*-\s*TBD\s*$",
+    "^\s*-\s*todo\s*$",
+    "^\s*-\s*n/a\s*$"
+  )
+  foreach ($pattern in $placeholderPatterns) {
+    if ($Content -match $pattern) { return $false }
+  }
+  return $true
+}
+
 function Test-AgentWorkOrderReady {
   param([object]$Issue)
 
@@ -140,14 +169,26 @@ function Test-AgentWorkOrderReady {
     "## Proof",
     "## Deploy Impact"
   )
+  $minimumRequiredTests = @("npm run test:founder")
   $missingSections = @($requiredSections | Where-Object {
-      $escaped = [regex]::Escape($_)
-      $body -notmatch "(?m)^\s*$escaped\b"
+      -not (Get-AgentWorkOrderSection -Body $body -Section $_)
     })
+  $placeholderSections = @()
+  foreach ($section in $requiredSections) {
+    if ($missingSections -contains $section) { continue }
+    $content = Get-AgentWorkOrderSection -Body $body -Section $section
+    if (-not (Test-AgentWorkOrderSectionConcrete -Content $content)) {
+      $placeholderSections += $section
+    }
+  }
+  $requiredTestsContent = Get-AgentWorkOrderSection -Body $body -Section "## Required Tests"
+  $missingRequiredTests = @($minimumRequiredTests | Where-Object { $requiredTestsContent -notmatch [regex]::Escape($_) })
 
   return [pscustomobject]@{
-    ok = ($missingSections.Count -eq 0)
+    ok = ($missingSections.Count -eq 0 -and $placeholderSections.Count -eq 0 -and $missingRequiredTests.Count -eq 0)
     missingSections = $missingSections
+    placeholderSections = $placeholderSections
+    missingRequiredTests = $missingRequiredTests
   }
 }
 
@@ -807,10 +848,14 @@ if (-not $issue) {
 $workOrderReady = Test-AgentWorkOrderReady -Issue $issue
 if (-not $workOrderReady.ok) {
   $missing = ($workOrderReady.missingSections -join ", ")
+  $placeholders = ($workOrderReady.placeholderSections -join ", ")
+  $missingTests = ($workOrderReady.missingRequiredTests -join ", ")
   $body = @"
 Agent worker cannot safely claim this issue yet.
 
 Missing required work-order sections: $missing
+Placeholder or empty sections: $placeholders
+Missing baseline required tests: $missingTests
 
 Please add the missing sections and include concrete proof expectations before moving this back to agent/ready.
 "@

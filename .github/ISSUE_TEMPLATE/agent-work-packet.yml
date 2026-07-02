@@ -65,6 +65,17 @@ body:
         - npm run test:founder
     validations:
       required: true
+  - type: textarea
+    id: proof
+    attributes:
+      label: Proof
+      description: Commands, logs, screenshots, or artifacts the agent must include in the PR before review.
+      placeholder: |
+        - Paste the exact command output for required tests
+        - Include screenshot or hosted proof for UI changes
+        - Include provider/approval ledger evidence for runtime changes
+    validations:
+      required: true
   - type: dropdown
     id: deploy_impact
     attributes:

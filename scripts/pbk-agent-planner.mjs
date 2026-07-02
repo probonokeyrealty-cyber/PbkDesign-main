@@ -30,6 +30,19 @@ function issueBody(issue = {}) {
   return stripPlannerMarker(issue.body || '').trim() || '_No body provided._';
 }
 
+function validatePlannerReadyWorkOrder(body = '') {
+  const requiredSections = ['## Goal', '## Success Criteria', '## Allowed Files', '## Forbidden Files', '## Required Tests', '## Proof', '## Deploy Impact'];
+  const missingSections = requiredSections.filter((section) => {
+    const sectionName = section.replace(/^\s*#+\s*/, '');
+    const escaped = sectionName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    return !new RegExp(`^\\s*#{2,3}\\s+${escaped}\\b`, 'mi').test(body);
+  });
+  return {
+    ok: missingSections.length === 0,
+    missingSections,
+  };
+}
+
 function formatChildIssueBody(parentIssue, child) {
   return [
     `Parent issue: #${parentIssue.number}`,
@@ -151,6 +164,20 @@ async function main() {
       report.decisions.push({ issue: issue.number, decision, summary });
 
       if (decision === 'ready') {
+        const readyValidation = validatePlannerReadyWorkOrder(issueBody(issue));
+        if (!readyValidation.ok) {
+          const labels = appendUniqueLabels(getLabelNames(issue), ['agent/human-required']);
+          await replaceIssueLabels({ token, repoConfig, issueNumber: issue.number, labels, dryRun });
+          await addIssueComment({
+            token,
+            repoConfig,
+            issueNumber: issue.number,
+            dryRun,
+            body: `${PLANNER_MARKER}\nPlanner could not mark this issue as \`agent/ready\` because the work-order contract is incomplete.\n\nMissing sections: ${readyValidation.missingSections.join(', ')}`,
+          });
+          report.skipped.push(`#${issue.number} missing ready work-order sections: ${readyValidation.missingSections.join(', ')}`);
+          continue;
+        }
         const labels = appendUniqueLabels(getLabelNames(issue), ['agent/ready']);
         await replaceIssueLabels({ token, repoConfig, issueNumber: issue.number, labels, dryRun });
         await addIssueComment({

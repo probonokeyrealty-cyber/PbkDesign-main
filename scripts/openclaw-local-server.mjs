@@ -61577,6 +61577,15 @@ function getAvaDeepSeekDecisionFromToolResult(toolResult = null) {
   return null;
 }
 
+function isAvaDeepSeekJsonModeFallbackCandidate(result = {}) {
+  const normalizedResult = String(result?.result || '').trim().toLowerCase();
+  const normalizedError = String(result?.error || '').trim().toLowerCase();
+  return (
+    ['provider_empty_response', 'provider_reasoning_only'].includes(normalizedResult) ||
+    /\b(empty response|reasoning content without a speakable json response)\b/i.test(normalizedError)
+  );
+}
+
 async function runInternalAvaDeepSeekChat({
   assistantContextSession = {},
   text = '',
@@ -61596,7 +61605,7 @@ async function runInternalAvaDeepSeekChat({
     { role: 'system', content: prompt },
     { role: 'user', content: String(text || '').trim() },
   ].filter((message) => message.content);
-  const deepSeek = await runDeepSeekChatCompletion(deepSeekMessages, {
+  let deepSeek = await runDeepSeekChatCompletion(deepSeekMessages, {
     source: 'ava-assistant-chat',
     sessionId,
     leadId,
@@ -61611,6 +61620,37 @@ async function runInternalAvaDeepSeekChat({
     retryAttempts: DEEPSEEK_LIVE_RETRY_ATTEMPTS,
     retryDelayMs: DEEPSEEK_LIVE_RETRY_DELAY_MS,
   });
+  if (!deepSeek.ok && isAvaDeepSeekJsonModeFallbackCandidate(deepSeek)) {
+    const jsonModeResult = deepSeek;
+    const textFallback = await runDeepSeekChatCompletion(ensureDeepSeekJsonModeMessages(deepSeekMessages), {
+      source: 'ava-assistant-chat-json-mode-fallback',
+      sessionId,
+      leadId,
+      model: DEEPSEEK_LIVE_MODEL,
+      temperature: 0.35,
+      maxTokens: 700,
+      responseFormat: 'text',
+      thinkingMode: body.deepSeekThinkingMode || body.thinkingMode || DEEPSEEK_THINKING_MODE,
+      attemptTimeoutMs: DEEPSEEK_LIVE_ATTEMPT_TIMEOUT_MS,
+      retryAttempts: 0,
+      retryDelayMs: 0,
+    });
+    deepSeek = {
+      ...textFallback,
+      provider: {
+        ...(textFallback.provider || {}),
+        jsonModeFallback: true,
+        jsonModeFallbackReason: jsonModeResult.result || jsonModeResult.error || 'json_mode_empty_response',
+      },
+      attempts: [
+        ...(jsonModeResult.attempts || []),
+        ...(textFallback.attempts || []).map((attempt) => ({
+          ...attempt,
+          retry: attempt.retry || 'json_mode_text_fallback',
+        })),
+      ],
+    };
+  }
   const deepSeekDecision = parseAvaDeepSeekDecisionAnswer(deepSeek.answer);
   const finalAnswer = deepSeekDecision.reply || deepSeek.answer || '';
   if (deepSeek.ok && isPublicAvaBrainAnswerSafe(finalAnswer)) {

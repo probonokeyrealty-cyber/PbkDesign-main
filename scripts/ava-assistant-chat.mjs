@@ -60,6 +60,15 @@ const LOCAL_INTENT_EXAMPLES = [
     ],
   },
   {
+    intent: 'agent_delegation',
+    examples: [
+      'ask the nurture agent to prep follow up',
+      'fire max on this seller',
+      'send rex to research the deal',
+      'have the call analyzer review the transcript',
+    ],
+  },
+  {
     intent: 'session_recall',
     examples: [
       'what did i just ask',
@@ -121,6 +130,7 @@ export const ASSISTANT_SYSTEM_PROMPT = `
 You are Ava, PBK Command Center's personal assistant.
 You are warm, concise, useful, and proactive. Speak like a capable operating partner for real estate agents, not a debug console.
 You can help analyze deals, summarize recent activity, find leads, explain PBK workflows, and prepare approval-gated actions.
+When the operator asks you to fire, ask, assign, route, or delegate to Max, Rex, Hermes, Nurture Agent, Call Analyzer, Prosody Tuner, Script Rotator, BANT Enforcer, QA Agent, or Research Orchestrator, create a registered-agent work order with success criteria and proof requirements before claiming progress.
 Keep internal labels out of normal replies: do not mention OpenClaw, bridge, sidecar, tool plan, provider write, local worker, or implementation details unless the operator explicitly asks for technical support.
 Prefer action-state replies: "I found...", "I queued...", "I'm missing...", "Here's the next clean move...".
 When an operator asks for follow-up by SMS, email, call, or nurture sequence, first consult the Nurture Agent for the best channel, timing, and sequence.
@@ -301,6 +311,129 @@ function extractProviderLeadQuery(message = '') {
   return stripLeadQuery(match?.[1] || '');
 }
 
+const ASSISTANT_AGENT_DELEGATION_DEFINITIONS = [
+  {
+    agentId: 'nurture-agent',
+    agentName: 'Nurture Agent',
+    capability: 'nurture',
+    patterns: [/\bnurture\s+agent\b/i, /\bfollow[-\s]?up\s+agent\b/i],
+  },
+  {
+    agentId: 'call-analyzer',
+    agentName: 'Call Analyzer',
+    capability: 'call_analysis',
+    patterns: [/\bcall\s+analy[sz]er\b/i, /\bcall\s+review\s+agent\b/i],
+  },
+  {
+    agentId: 'prosody-tuner',
+    agentName: 'Prosody Tuner',
+    capability: 'prosody',
+    patterns: [/\bprosody\s+tuner\b/i, /\btone\s+agent\b/i, /\bemotion\s+coach\b/i],
+  },
+  {
+    agentId: 'script-rotator',
+    agentName: 'Script Rotator',
+    capability: 'script_selection',
+    patterns: [/\bscript\s+rotator\b/i, /\bscript\s+agent\b/i, /\bobjection\s+script\b/i],
+  },
+  {
+    agentId: 'bant-enforcer',
+    agentName: 'BANT Enforcer',
+    capability: 'qualification',
+    patterns: [/\bbant\s+enforcer\b/i, /\bqualification\s+agent\b/i],
+  },
+  {
+    agentId: 'qa-agent',
+    agentName: 'QA Agent',
+    capability: 'qa',
+    patterns: [/\bqa\s+agent\b/i, /\bsafety\s+agent\b/i, /\bproof\s+agent\b/i],
+  },
+  {
+    agentId: 'research-orchestrator',
+    agentName: 'Research Orchestrator',
+    capability: 'research',
+    patterns: [/\bresearch\s+orchestrator\b/i, /\bresearch\s+agent\b/i, /\bmarket\s+research\b/i],
+  },
+  {
+    agentId: 'rex',
+    agentName: 'Rex',
+    capability: 'strategy',
+    patterns: [/\brex\b/i, /\bstrategist\b/i, /\brevenue\s+agent\b/i],
+  },
+  {
+    agentId: 'hermes',
+    agentName: 'Hermes',
+    capability: 'analysis',
+    patterns: [/\bhermes\b/i, /\bdiagnosis\s+agent\b/i, /\bfeedback\s+agent\b/i],
+  },
+  {
+    agentId: 'max',
+    agentName: 'Max',
+    capability: 'closing',
+    patterns: [/\bmax\b/i, /\bcloser\s+agent\b/i, /\bcontract\s+handoff\b/i],
+  },
+];
+
+function detectAssistantAgentDelegation(message = '') {
+  const text = cleanText(message, 1200);
+  const lowerText = text.toLowerCase();
+  if (!text) return null;
+  const delegationVerb =
+    /\b(?:ask|have|send|fire|trigger|delegate|assign|route|use|run|activate)\b/i.test(lowerText);
+  const agentMention =
+    /\b(?:agent|ava|max|rex|hermes|nurture|call\s+analy[sz]er|prosody|script\s+rotator|bant|qa|research\s+orchestrator|strategist|closer)\b/i.test(
+      lowerText
+    );
+  const taskLanguage =
+    /\b(?:prepare|prep|review|analy[sz]e|research|audit|score|recommend|follow[-\s]?up|contract|call|seller|lead|campaign|sequence|work\s+order|strategy|script|qualification|proof)\b/i.test(
+      lowerText
+    );
+  if (!(agentMention && (delegationVerb || taskLanguage))) return null;
+  const matched =
+    ASSISTANT_AGENT_DELEGATION_DEFINITIONS.find((definition) =>
+      definition.patterns.some((pattern) => pattern.test(text))
+    ) || null;
+  if (matched) return matched;
+  if (!delegationVerb) return null;
+  if (/\b(?:nurture|follow[-\s]?up|sequence|campaign|sms|text|email)\b/i.test(lowerText)) {
+    return ASSISTANT_AGENT_DELEGATION_DEFINITIONS.find((definition) => definition.agentId === 'nurture-agent');
+  }
+  if (/\b(?:call|transcript|objection|conversation)\b/i.test(lowerText)) {
+    return ASSISTANT_AGENT_DELEGATION_DEFINITIONS.find((definition) => definition.agentId === 'call-analyzer');
+  }
+  if (/\b(?:contract|offer|close|closing|seller\s+handoff)\b/i.test(lowerText)) {
+    return ASSISTANT_AGENT_DELEGATION_DEFINITIONS.find((definition) => definition.agentId === 'max');
+  }
+  if (/\b(?:research|market|strategy|revenue|autonomous\s+goal)\b/i.test(lowerText)) {
+    return ASSISTANT_AGENT_DELEGATION_DEFINITIONS.find((definition) => definition.agentId === 'rex');
+  }
+  return null;
+}
+
+function detectAssistantAgentProviderWriteIntent(message = '') {
+  return /\b(?:send|text|sms|email|mail|call|dial|ring|docusign|contract|update\s+crm|delete|remove|launch|start|activate|queue|schedule)\b/i.test(
+    String(message || '')
+  );
+}
+
+function buildAssistantAgentSuccessCriteria(agent = {}, message = '') {
+  const agentName = agent.agentName || 'Assigned agent';
+  return [
+    `${agentName} returns a clear recommendation or completed internal work result.`,
+    'Ava can explain what was checked, what changed, and what remains blocked.',
+    detectAssistantAgentProviderWriteIntent(message)
+      ? 'Any SMS, email, call, CRM, campaign, or contract action stays approval-gated before provider execution.'
+      : 'No provider write is executed unless a later approved action explicitly requests it.',
+  ];
+}
+
+function buildAssistantAgentProofRequirements(agent = {}, message = '') {
+  const requirements = ['agent_task_ledger', 'work_order_envelope', 'success_criteria_result'];
+  if (detectAssistantAgentProviderWriteIntent(message)) requirements.push('approval_policy');
+  if (/lead|seller|contact|property|address|phone|email/i.test(message)) requirements.push('lead_context_checked');
+  return requirements;
+}
+
 function extractFollowUpWhen(message = '') {
   const text = cleanText(message, 500);
   const match = text.match(
@@ -430,6 +563,18 @@ function buildAssistantIntentFromClassifier(classified = null, context = {}) {
     return { ...base, intent: 'unified_additive_intelligence' };
   }
   if (classified.intent === 'session_recall') return { ...base, intent: 'session_recall' };
+  if (classified.intent === 'agent_delegation') {
+    const agent = detectAssistantAgentDelegation(text);
+    if (agent) {
+      return {
+        ...base,
+        intent: 'agent_delegation',
+        ...agent,
+        command: text,
+        providerWriteIntent: detectAssistantAgentProviderWriteIntent(text),
+      };
+    }
+  }
   if (classified.intent === 'analyze_deal') {
     return { ...base, intent: 'analyze_deal', address };
   }
@@ -504,6 +649,18 @@ export function detectAssistantIntent(message = '') {
 
   if (looksLikeReadOnlyAssistantAudit(text)) {
     return { intent: 'general', message: text, classifierSource: 'regex_read_only_audit', readOnly: true };
+  }
+
+  const delegatedAgent = detectAssistantAgentDelegation(text);
+  if (delegatedAgent) {
+    return {
+      intent: 'agent_delegation',
+      message: text,
+      ...delegatedAgent,
+      command: text,
+      providerWriteIntent: detectAssistantAgentProviderWriteIntent(text),
+      classifierSource: 'regex_agent_delegation',
+    };
   }
 
   if (looksLikePhoneLeadLookup(text, phone)) {
@@ -651,6 +808,8 @@ export function buildAssistantSuggestions(intent = 'general', { publicMode = tru
   if (intent === 'call_review') return ['Review latest call', 'Summarize missed context', 'Next coaching move'];
   if (intent === 'unified_additive_intelligence')
     return ['Run full intelligence', 'Show safest next step', 'Check provider readiness'];
+  if (intent === 'agent_delegation')
+    return ['Fire the right agent', 'Show work-order proof', 'Keep sends approval-gated'];
   if (intent === 'summary') return ['Summarize calls', 'Show hot leads', 'What needs attention'];
   return ['Find a lead', 'Analyze a deal', 'Draft a follow-up'];
 }
@@ -711,6 +870,17 @@ export function planAssistantIntent(detected = {}, options = {}) {
     };
   }
 
+  if (publicMode && intent === 'agent_delegation') {
+    return {
+      action: 'blocked_public_provider_write',
+      answer:
+        'Agent work orders live inside the authenticated PBK Command Center. Open the Command Center and I can assign the right agent with proof and approval boundaries.',
+      suggestions,
+      toolPlan: null,
+      usedIntent: intent,
+    };
+  }
+
   if (intent === 'session_recall') {
     const session = normalizeAssistantSession(options.session || {});
     const recalledHistory = normalizeAssistantSession({
@@ -760,6 +930,44 @@ export function planAssistantIntent(detected = {}, options = {}) {
         'Tell me what you need in plain English. I can find leads, pull seller context, run deal math, draft follow-ups, summarize calls, prepare approvals, and help decide the next clean seller move.',
       suggestions,
       toolPlan: null,
+      usedIntent: intent,
+    };
+  }
+
+  if (!publicMode && intent === 'agent_delegation') {
+    const session = normalizeAssistantSession(options.session || {});
+    const leadId = cleanText(options.leadId || detected.leadId || session.leadId || '', 120);
+    const agent = {
+      agentId: detected.agentId || '',
+      agentName: detected.agentName || 'the right PBK agent',
+      capability: detected.capability || '',
+    };
+    const command = detected.command || detected.message || '';
+    const providerWriteIntent = Boolean(detected.providerWriteIntent);
+    return {
+      action: 'tool_plan',
+      answer: `I will assign ${agent.agentName} with a clear work order, success criteria, and proof. ${providerWriteIntent ? 'Any send, call, CRM, campaign, or contract step stays approval-gated.' : 'This stays internal until you ask for an approved action.'}`,
+      suggestions,
+      toolPlan: {
+        toolName: 'invokeRegisteredAgent',
+        params: {
+          agentId: agent.agentId,
+          capability: agent.capability,
+          command,
+          query: command,
+          prompt: command,
+          leadId,
+          actor: 'Ava Assistant',
+          requestedBy: 'Ava Assistant',
+          source: 'ava-assistant-chat',
+          providerWriteIntent,
+          approvalIntent: providerWriteIntent ? 'approval_gated_provider_write' : 'internal_read_only',
+          successCriteria: buildAssistantAgentSuccessCriteria(agent, command),
+          proofRequirements: buildAssistantAgentProofRequirements(agent, command),
+        },
+        providerWrite: false,
+        requiresBridgeConfirmation: true,
+      },
       usedIntent: intent,
     };
   }

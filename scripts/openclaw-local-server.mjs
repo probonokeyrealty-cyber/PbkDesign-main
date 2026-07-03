@@ -41959,14 +41959,18 @@ async function enforceOperatingModeForTool(toolName, params = {}) {
       Array.isArray(safetyValidation?.warnings) &&
       safetyValidation.warnings.length > 0
   );
+  const providerWriteRequiresApproval = Boolean(
+    safetyValidation?.providerWrite === true && safetyValidation?.approvalRequired !== false
+  );
   if (
     isTrustedManualConversationProviderSend(toolName, params) &&
     !forceApproval &&
-    !safetyReviewRequired
+    !safetyReviewRequired &&
+    !providerWriteRequiresApproval
   ) {
     return null;
   }
-  if (mode === 'autopilot' && !forceApproval && !safetyReviewRequired) return null;
+  if (mode === 'autopilot' && !forceApproval && !safetyReviewRequired && !providerWriteRequiresApproval) return null;
 
   if (mode === 'manual') {
     const event = makeActivity(
@@ -43795,10 +43799,10 @@ function normalizeAgentProviderIntentText(value = '') {
 }
 
 function detectAgentProviderWriteIntent(payload = {}) {
-  if (payload.providerWrite === true || payload.provider_write === true) return true;
+  if (payload.providerWrite === true || payload.provider_write === true || payload.providerWriteIntent === true || payload.provider_write_intent === true) return true;
   const toolCandidates = [payload.toolName, payload.tool, payload.action].map((item) => String(item || '').trim()).filter(Boolean);
   if (toolCandidates.some((tool) => AGENT_PROVIDER_WRITE_TOOL_NAMES.has(tool))) return true;
-  const text = [payload.toolName, payload.tool, payload.action, payload.command, payload.query, payload.prompt, payload.intent]
+  const text = [payload.toolName, payload.tool, payload.action, payload.command, payload.query, payload.prompt, payload.intent, payload.approvalIntent, payload.approval_intent]
     .map((item) => normalizeAgentProviderIntentText(item))
     .filter(Boolean)
     .join(' ');
@@ -62220,6 +62224,27 @@ async function handleInternalAvaAssistantChatRequest(request) {
   } else if (!controlGate.ok && !(readOnlyAuditRequest && assistantPlan.action === 'general')) {
     answer = controlGate.answer;
     toolResult = controlGate.toolResult;
+  } else if (assistantPlan.action === 'tool_plan' && assistantPlan.toolPlan?.toolName === 'invokeRegisteredAgent') {
+    toolResult = await invokeAgentFromRegistry({
+      ...(assistantPlan.toolPlan.params || {}),
+      leadId: activeAssistantLeadId || assistantContextSession.leadId || assistantPlan.toolPlan.params?.leadId || '',
+      sessionId,
+      source: 'ava-assistant-chat',
+      actor: 'Ava Assistant',
+    });
+    const agentName = toolResult?.agent?.name || assistantIntent.agentName || assistantPlan.toolPlan.params?.agentId || 'the assigned agent';
+    const workOrderId = toolResult?.workOrder?.id || '';
+    if (toolResult?.ok === false) {
+      answer = `I could not assign ${agentName} yet. ${toolResult?.error || 'The agent registry did not return a usable worker.'}`.trim();
+    } else {
+      answer = [
+        `I assigned ${agentName} with a clear work order${workOrderId ? ` (${workOrderId})` : ''}.`,
+        toolResult?.workOrder?.approvalPolicy?.approvalRequired
+          ? 'Any send, call, CRM, campaign, or contract step stays approval-gated.'
+          : 'This stayed internal and read-only unless you approve a later action.',
+        'I will use the agent task ledger and returned proof before claiming the next step is complete.',
+      ].filter(Boolean).join(' ');
+    }
   } else if (assistantPlan.action === 'tool_plan' && assistantPlan.toolPlan?.toolName === 'analyzeDeal') {
     let execution = null;
     let analyzeError = null;

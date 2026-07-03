@@ -120,6 +120,21 @@ assert.match(
   /function normalizeAgentProviderIntentText/,
   'Provider-write detection must normalize camelCase, underscores, and hyphens before matching.'
 );
+assert.match(
+  server,
+  /payload\.providerWriteIntent === true[\s\S]*payload\.approvalIntent/,
+  'Agent provider-write detection must honor Ava-delegated providerWriteIntent and approvalIntent markers.'
+);
+assert.match(
+  server,
+  /const providerWriteRequiresApproval = Boolean\([\s\S]*safetyValidation\?\.providerWrite === true[\s\S]*safetyValidation\?\.approvalRequired !== false/,
+  'Autopilot must still treat provider writes as approval-required when safety validation says so.'
+);
+assert.doesNotMatch(
+  server,
+  /if \(mode === 'autopilot' && !forceApproval && !safetyReviewRequired\) return null;/,
+  'Autopilot must not bypass provider-write approval solely because there are no safety warnings.'
+);
 
 const invokeStart = server.indexOf('async function invokeAgentFromRegistry');
 const invokeEnd = server.indexOf('\nfunction normalizeRexTool', invokeStart);

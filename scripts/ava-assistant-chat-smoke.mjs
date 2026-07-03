@@ -113,6 +113,36 @@ assert.equal(
   'Assistant should detect unified additive intelligence requests.'
 );
 
+const agentDelegationIntent = detectAssistantIntent('Ask the Nurture Agent to recommend the next follow-up for this lead.');
+assert.equal(
+  agentDelegationIntent.intent,
+  'agent_delegation',
+  'Assistant should detect natural-language registered-agent delegation requests.'
+);
+assert.equal(
+  agentDelegationIntent.agentId,
+  'nurture-agent',
+  'Nurture delegation should resolve to the registered Nurture Agent id.'
+);
+assert.equal(
+  agentDelegationIntent.providerWriteIntent,
+  false,
+  'Read-only agent recommendations should not be classified as provider writes.'
+);
+
+const agentProviderDelegationIntent = detectAssistantIntent('Fire Max to send the DocuSign contract for this seller.');
+assert.equal(
+  agentProviderDelegationIntent.intent,
+  'agent_delegation',
+  'Assistant should detect provider-write agent delegation requests.'
+);
+assert.equal(agentProviderDelegationIntent.agentId, 'max', 'Max delegation should resolve to the registered closer agent.');
+assert.equal(
+  agentProviderDelegationIntent.providerWriteIntent,
+  true,
+  'Agent delegation that mentions sends/contracts should carry provider-write intent for approval gating.'
+);
+
 const publicCallPlan = planAssistantIntent(callIntent, { publicMode: true });
 assert.equal(publicCallPlan.action, 'blocked_public_provider_write', 'Public assistant chat must not place calls.');
 assert.match(publicCallPlan.answer, /public chat.*will not start calls/i, 'Public call block should explain the safety boundary.');
@@ -287,6 +317,54 @@ assert.equal(
 assert.equal(additivePlan.toolPlan?.providerWrite, false, 'Unified additive intelligence should stay readonly.');
 assert.equal(additivePlan.toolPlan?.params?.liveProbe, true, 'Provider-aware additive intelligence should check configured providers.');
 
+const agentDelegationPlan = planAssistantIntent(agentDelegationIntent, {
+  publicMode: false,
+  authenticated: true,
+  leadId: 'lead-agent-1',
+});
+assert.equal(agentDelegationPlan.action, 'tool_plan', 'Registered-agent delegation should produce a tool plan.');
+assert.equal(
+  agentDelegationPlan.toolPlan?.toolName,
+  'invokeRegisteredAgent',
+  'Registered-agent delegation should route through the durable registry dispatcher.'
+);
+assert.equal(
+  agentDelegationPlan.toolPlan?.params?.agentId,
+  'nurture-agent',
+  'Agent delegation plans should preserve the resolved registered agent id.'
+);
+assert.equal(
+  agentDelegationPlan.toolPlan?.params?.leadId,
+  'lead-agent-1',
+  'Agent delegation plans should carry active lead context.'
+);
+assert.equal(
+  Array.isArray(agentDelegationPlan.toolPlan?.params?.successCriteria),
+  true,
+  'Agent delegation plans should include success criteria before firing a worker.'
+);
+assert.equal(
+  agentDelegationPlan.toolPlan?.params?.proofRequirements?.includes('work_order_envelope'),
+  true,
+  'Agent delegation plans should require work-order proof.'
+);
+
+const agentProviderDelegationPlan = planAssistantIntent(agentProviderDelegationIntent, {
+  publicMode: false,
+  authenticated: true,
+  leadId: 'lead-agent-2',
+});
+assert.equal(
+  agentProviderDelegationPlan.toolPlan?.params?.providerWriteIntent,
+  true,
+  'Provider-write delegation plans should explicitly mark providerWriteIntent.'
+);
+assert.equal(
+  agentProviderDelegationPlan.toolPlan?.params?.proofRequirements?.includes('approval_policy'),
+  true,
+  'Provider-write agent delegations should require approval-policy proof.'
+);
+
 const prompt = buildAssistantPrompt({
   history: [
     { role: 'user', content: 'Remember 123 Cedar St.' },
@@ -447,6 +525,17 @@ assert(
       bridge
     ),
   'Both public and authenticated Ava chat handlers must emit assistant-plan operations.'
+);
+assert(
+  /assistantPlan\.action === 'tool_plan' && assistantPlan\.toolPlan\?\.toolName === 'invokeRegisteredAgent'/.test(
+    bridge
+  ) &&
+    /toolResult = await invokeAgentFromRegistry\(\{[\s\S]*source:\s*'ava-assistant-chat'[\s\S]*actor:\s*'Ava Assistant'/.test(
+      bridge
+    ) &&
+    /workOrder\?\.id/.test(bridge) &&
+    /agent task ledger and returned proof/.test(bridge),
+  'Authenticated Ava chat must fire registered agents through invokeAgentFromRegistry and return work-order proof.'
 );
 assert(
   /assistantSessions:\s*500/.test(bridge) &&

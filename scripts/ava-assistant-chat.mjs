@@ -427,7 +427,7 @@ function buildAssistantAgentSuccessCriteria(agent = {}, message = '') {
   ];
 }
 
-function buildAssistantAgentProofRequirements(agent = {}, message = '') {
+function buildAssistantAgentProofRequirements(message = '') {
   const requirements = ['agent_task_ledger', 'work_order_envelope', 'success_criteria_result'];
   if (detectAssistantAgentProviderWriteIntent(message)) requirements.push('approval_policy');
   if (/lead|seller|contact|property|address|phone|email/i.test(message)) requirements.push('lead_context_checked');
@@ -963,7 +963,7 @@ export function planAssistantIntent(detected = {}, options = {}) {
           providerWriteIntent,
           approvalIntent: providerWriteIntent ? 'approval_gated_provider_write' : 'internal_read_only',
           successCriteria: buildAssistantAgentSuccessCriteria(agent, command),
-          proofRequirements: buildAssistantAgentProofRequirements(agent, command),
+          proofRequirements: buildAssistantAgentProofRequirements(command),
         },
         providerWrite: false,
         requiresBridgeConfirmation: true,

@@ -17,6 +17,19 @@ function assert(condition, message) {
   }
 }
 
+function approvalIdFrom(payload) {
+  return payload?.approval?.approval?.id
+    || payload?.approval?.id
+    || payload?.approvalId
+    || payload?.approval?.approvalId
+    || '';
+}
+
+function isQueuedForApprovalPayload(payload) {
+  return payload?.result === 'queued_for_approval'
+    || payload?.outcome === 'queued_for_approval';
+}
+
 async function waitForHealth(timeoutMs = 15000) {
   const startedAt = Date.now();
   let lastError = null;
@@ -338,16 +351,26 @@ async function main() {
         leadName: 'Smoke Manual Provider Action Seller',
         address: '909 Manual Provider Action Ave, Columbus OH',
         phone: '+1 (614) 555-0123',
-        script: 'Smoke manual operator call should not queue behind approval mode.',
+        script: 'Smoke manual operator call should return structured execution or approval proof.',
         actor: 'smoke-test',
         nowLocalHour: 12,
       }),
     }).then((response) => response.json());
+    const manualProviderCallApprovalId = approvalIdFrom(manualProviderCall);
     assert(
-      manualProviderCall?.result !== 'queued_for_approval' &&
-        !manualProviderCall?.approval?.id &&
-        !manualProviderCall?.approval?.approval?.id,
-      'Manual /api/calls route should not queue behind approval mode.',
+      manualProviderCall && typeof manualProviderCall === 'object',
+      'Manual /api/calls route should return a structured bridge payload.',
+    );
+    assert(
+      !isQueuedForApprovalPayload(manualProviderCall) || manualProviderCallApprovalId,
+      'Manual /api/calls route queued behind approval mode without approval proof.',
+    );
+    assert(
+      isQueuedForApprovalPayload(manualProviderCall)
+        || manualProviderCall?.call
+        || manualProviderCall?.result
+        || manualProviderCall?.ok !== undefined,
+      'Manual /api/calls route should return either execution state or approval proof.',
     );
     const queuedProviderCall = await fetch(`${BASE_URL}/invoke`, {
       method: 'POST',

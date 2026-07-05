@@ -690,6 +690,13 @@ function buildAvaLiveMissionTimeline({
 } = {}) {
   const facts = contract.knownFacts || {};
   const fields = cockpitKnownFields(facts);
+  const proofFields = Array.isArray(leadCommitProof.fields)
+    ? leadCommitProof.fields.filter(Boolean)
+    : fields;
+  const proofFieldCount = Number.isFinite(Number(leadCommitProof.fieldCount))
+    ? Number(leadCommitProof.fieldCount)
+    : proofFields.length;
+  const proofEnvelope = clean(leadCommitProof.envelope || 'LeadCommitEnvelope');
   return [
     cockpitStep(
       'heard_seller',
@@ -718,9 +725,9 @@ function buildAvaLiveMissionTimeline({
     cockpitStep(
       'crm_commit_proof',
       'CRM proof',
-      fields.length ? 'ready' : 'waiting',
-      fields.length
-        ? `LeadCommitEnvelope can protect ${fields.length} call-derived field${fields.length === 1 ? '' : 's'}.`
+      proofFieldCount ? 'ready' : 'waiting',
+      proofFieldCount
+        ? `${proofEnvelope} can protect ${proofFieldCount} call-derived field${proofFieldCount === 1 ? '' : 's'}.`
         : 'No new lead field has enough proof yet.'
     ),
     cockpitStep(

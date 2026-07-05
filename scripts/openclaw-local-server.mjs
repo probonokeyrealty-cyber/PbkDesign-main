@@ -37862,11 +37862,86 @@ async function findInboundLeadContext(phone = '') {
 }
 
 function getAvaActiveMemorySummary(limit = 5) {
-  return sortNewest(state.avaActiveMemories || [])
+  return getCleanAvaActiveMemories(limit)
     .slice(0, limit)
     .map((memory) => `- ${memory.objectionTag || memory.memoryType || 'lesson'}: ${memory.response || memory.summary || memory.prompt || ''}`.trim())
     .filter(Boolean)
     .join('\n');
+}
+
+function isAvaActiveMemoryOperationalNoise(memory = {}) {
+  if (!memory || typeof memory !== 'object') return false;
+  const metadata = memory.metadata && typeof memory.metadata === 'object' ? memory.metadata : {};
+  const haystack = [
+    memory.prompt,
+    memory.response,
+    memory.summary,
+    memory.source,
+    metadata.excerpt,
+    metadata.transcript,
+    metadata.transcriptPreview,
+    JSON.stringify(metadata),
+  ]
+    .filter(Boolean)
+    .join(' ');
+  return isOperationalCallTranscriptNoise(haystack);
+}
+
+function getCleanAvaActiveMemories(limit = 120) {
+  const max = Math.max(1, Math.min(120, Number(limit || 120)));
+  return sortNewest(state.avaActiveMemories || [])
+    .filter((memory) => !isAvaActiveMemoryOperationalNoise(memory))
+    .slice(0, max);
+}
+
+async function pruneOperationalNoiseAvaActiveMemories(options = {}) {
+  const before = Array.isArray(state.avaActiveMemories) ? state.avaActiveMemories.length : 0;
+  const removed = [];
+  if (Array.isArray(state.avaActiveMemories)) {
+    state.avaActiveMemories = state.avaActiveMemories.filter((memory) => {
+      if (!isAvaActiveMemoryOperationalNoise(memory)) return true;
+      removed.push(memory.id || memory.memoryType || 'unknown-memory');
+      return false;
+    });
+  }
+  let db = {
+    ok: true,
+    removed: 0,
+    reason: 'skipped',
+    error: '',
+  };
+  if (options.persistDb !== false) {
+    const result = await queryPgRows(
+      `DELETE FROM public.ava_active_memories
+       WHERE workspace_id = 'pbk'
+         AND (
+           lower(concat_ws(' ', prompt, response, summary, source, metadata::text)) LIKE '%deepgram live stream closed%'
+           OR lower(concat_ws(' ', prompt, response, summary, source, metadata::text)) LIKE '%before a final transcript was available%'
+           OR lower(concat_ws(' ', prompt, response, summary, source, metadata::text)) LIKE '%diagnostics: frames=%'
+           OR lower(concat_ws(' ', prompt, response, summary, source, metadata::text)) LIKE '%provider_diagnostic_not_seller%'
+         )
+       RETURNING id`,
+      []
+    );
+    db = {
+      ok: Boolean(result.ok),
+      removed: result.ok ? (result.rows || []).length : 0,
+      reason: result.reason || '',
+      error: result.error || '',
+    };
+  }
+  if (removed.length && options.persistState !== false) {
+    await persistState(state);
+  }
+  return {
+    ok: true,
+    result: removed.length || db.removed ? 'operational_noise_pruned' : 'no_operational_noise',
+    before,
+    after: Array.isArray(state.avaActiveMemories) ? state.avaActiveMemories.length : 0,
+    removed: removed.length,
+    removedIds: removed.slice(0, 20),
+    db,
+  };
 }
 
 function buildAvaInboundPromptContext({ lead = {}, route = 'ava_qualify', from = '', to = '' } = {}) {
@@ -39062,6 +39137,10 @@ function upsertAvaActiveMemory(lesson = {}) {
     createdAt: lesson.createdAt || isoNow(),
     updatedAt: isoNow(),
   };
+  if (isAvaActiveMemoryOperationalNoise(memory)) {
+    if (existingIndex >= 0) state.avaActiveMemories.splice(existingIndex, 1);
+    return;
+  }
   if (existingIndex >= 0) {
     state.avaActiveMemories.splice(existingIndex, 1, {
       ...state.avaActiveMemories[existingIndex],
@@ -39303,6 +39382,10 @@ async function runAvaMemoryLearning(params = {}) {
   const sessionId = params.sessionId || `ava-learning-${Date.now()}-${randomUUID().slice(0, 8)}`;
   const limit = Math.max(1, Math.min(200, Number(params.limit || AVA_MEMORY_WORKER_LIMIT)));
   const minutesBudget = Math.max(1, Math.min(240, Number(params.minutesBudget || AVA_MEMORY_DAILY_MINUTES)));
+  const memoryHygiene = await pruneOperationalNoiseAvaActiveMemories({
+    persistDb: true,
+    persistState: false,
+  });
   const outcomeBackfill = await backfillPostCallOutcomeLearningFromMessages({
     limit,
     sessionId,
@@ -39353,6 +39436,7 @@ async function runAvaMemoryLearning(params = {}) {
       contextUpdates,
       outcomeBackfill,
       prosodyPromotion,
+      memoryHygiene,
     },
     createdAt: isoNow(),
     updatedAt: isoNow(),
@@ -39390,7 +39474,8 @@ async function runAvaMemoryLearning(params = {}) {
     contextUpdates,
     outcomeBackfill,
     prosodyPromotion,
-    activeMemories: sortNewest(state.avaActiveMemories || []).slice(0, 12),
+    memoryHygiene,
+    activeMemories: getCleanAvaActiveMemories(12),
     warning: DATABASE_URL ? '' : 'PBK_DATABASE_URL is not configured; lessons were stored in bridge state only.',
   };
 }
@@ -60825,7 +60910,7 @@ function buildStateSnapshot(options = {}) {
     rexDecisions: list(state.rexDecisions || [], 120),
     assistantSessions: list((state.assistantSessions || []).map(sanitizeAvaAssistantSessionSnapshot), 60),
     assistantExchanges: list((state.assistantExchanges || []).map(sanitizeAvaAssistantExchangeSnapshot), 120),
-    avaActiveMemories: list(state.avaActiveMemories || [], 120),
+    avaActiveMemories: list(getCleanAvaActiveMemories(120), 120),
     avaLearningSessions: list(state.avaLearningSessions || [], 80),
     avaLearningRequests: list(state.avaLearningRequests || [], 80),
     repairItems: list(state.repairItems || [], 160),
@@ -62291,7 +62376,7 @@ async function handlePublicAvaChatRequest(request) {
         },
       }
     : assistantPlan;
-  const publicAssistantMemories = sortNewest(state.avaActiveMemories || []).slice(0, 12);
+  const publicAssistantMemories = getCleanAvaActiveMemories(12);
   let missionController = await runAvaMissionController({
     controllerStage: 'planned',
     sessionId,
@@ -63077,7 +63162,7 @@ async function handleInternalAvaAssistantChatRequest(request) {
       requestedHistory
     ),
   };
-  const assistantMemories = sortNewest(state.avaActiveMemories || []).slice(0, 12);
+  const assistantMemories = getCleanAvaActiveMemories(12);
   const initialMissionController = await runAvaMissionController({
     controllerStage: 'intake',
     sessionId,
@@ -72872,12 +72957,17 @@ const server = createServer(async (request, response) => {
     }
 
     if (request.method === 'GET' && matchesPath(pathname, ['/api/ava/active-memory', '/api/ava/memory'])) {
+      const hygiene = await pruneOperationalNoiseAvaActiveMemories({
+        persistDb: true,
+        persistState: true,
+      });
       json(response, 200, {
         ok: true,
         result: DATABASE_URL ? 'live' : 'local_view_only',
-        activeMemories: sortNewest(state.avaActiveMemories || []).slice(0, Math.max(1, Math.min(120, Number(url.searchParams.get('limit') || 50)))),
+        activeMemories: getCleanAvaActiveMemories(Math.max(1, Math.min(120, Number(url.searchParams.get('limit') || 50)))),
         learningSessions: sortNewest(state.avaLearningSessions || []).slice(0, 20),
         summary: getAvaActiveMemorySummary(8),
+        hygiene,
       });
       return;
     }
@@ -72915,7 +73005,7 @@ const server = createServer(async (request, response) => {
         ok: true,
         result: DATABASE_URL ? 'live' : 'local_view_only',
         verbiage: 'Ava active memory updated',
-        activeMemories: sortNewest(state.avaActiveMemories || []).slice(0, 50),
+        activeMemories: getCleanAvaActiveMemories(50),
         state: buildStateSnapshot(),
       });
       return;

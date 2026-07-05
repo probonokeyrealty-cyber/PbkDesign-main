@@ -82,8 +82,28 @@ assertContains(
 );
 assertContains(
   bridge,
+  /function isAvaActiveMemoryOperationalNoise[\s\S]*isOperationalCallTranscriptNoise/,
+  'Ava active memory must detect old provider diagnostic lessons before recall.',
+);
+assertContains(
+  bridge,
+  /function getCleanAvaActiveMemories[\s\S]*!isAvaActiveMemoryOperationalNoise/,
+  'Ava recall surfaces must filter operational diagnostic memory.',
+);
+assertContains(
+  bridge,
+  /async function pruneOperationalNoiseAvaActiveMemories[\s\S]*DELETE FROM public\.ava_active_memories[\s\S]*deepgram live stream closed/,
+  'Ava memory learning must delete old Deepgram diagnostic memories from Postgres.',
+);
+assertContains(
+  bridge,
   /async function promoteProsodyOutcomesToAvaMemory[\s\S]*pbk_prosody_decisions[\s\S]*upsertAvaActiveMemory/,
   'Measured prosody outcomes must promote into Ava active memory.',
+);
+assertContains(
+  bridge,
+  /const memoryHygiene = await pruneOperationalNoiseAvaActiveMemories\(/,
+  'runAvaMemoryLearning must run active-memory hygiene before returning memories.',
 );
 assertContains(
   bridge,
@@ -122,6 +142,7 @@ console.log(
         'post-call learning writes emotional_learning_interactions',
         'post-call learning writes agent_decisions with rewards',
         'Ava learning run backfills older call messages',
+        'old Deepgram/Telnyx diagnostics are pruned from active memory',
       ],
     },
     null,

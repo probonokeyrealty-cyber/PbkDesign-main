@@ -60,12 +60,40 @@ assert.match(
 );
 assert.match(
   bridge,
+  /function normalizeDeepSeekLiveModelName\(model = ''\)[\s\S]*\^deepseek/,
+  'DeepSeek fallback must normalize away accidental Gemini model ids.'
+);
+assert.match(
+  bridge,
   /model:\s*STRATEGIST_PROVIDER === 'gemini' \? GEMINI_LIVE_MODEL : DEEPSEEK_LIVE_MODEL[\s\S]*attemptTimeoutMs:\s*STRATEGIST_PROVIDER === 'gemini' \? GEMINI_LIVE_ATTEMPT_TIMEOUT_MS : DEEPSEEK_LIVE_ATTEMPT_TIMEOUT_MS/,
   'Telnyx live strategist calls must pass Gemini model and timeout settings when Gemini is selected.'
 );
+assert.match(
+  bridge,
+  /strategist_inline_timeout/,
+  'Live calls must record strategist inline timeouts instead of silently falling back.'
+);
+assert.match(
+  bridge,
+  /function shouldPruneLocalTelnyxMediaSession/,
+  'Live-call status endpoints must prune stale local Telnyx sessions.'
+);
+assert.match(
+  bridge,
+  /CREATE TABLE IF NOT EXISTS public\.pbk_call_traces/,
+  'Call traces must have durable Postgres storage for proof and learning.'
+);
+assert.match(
+  bridge,
+  /async function persistCallRecordToPg/,
+  'Live call upserts must persist durable call ledger rows.'
+);
 assert.equal(yamlEnvValue(render, 'PBK_LIVE_LLM_PROVIDER'), 'gemini', 'Render must select Gemini as the live LLM provider.');
-assert.equal(yamlEnvValue(render, 'PBK_GEMINI_LIVE_MODEL'), 'gemini-1.5-flash', 'Render must pin Gemini Flash for live calls.');
+assert.equal(yamlEnvValue(render, 'PBK_GEMINI_LIVE_MODEL'), 'gemini-3.5-flash', 'Render must pin a currently available Gemini Flash model for live calls.');
 assert.equal(yamlEnvValue(render, 'PBK_STRATEGIST_PROVIDER'), 'gemini', 'Legacy strategist provider env must agree with the live provider.');
+assert.equal(yamlEnvValue(render, 'PBK_AVA_CALL_INTELLIGENCE_TIMEOUT_MS'), '2500', 'Render must give Gemini enough live-call budget before local fallback.');
+assert.doesNotMatch(bridge, /gemini-1\.5-flash/, 'Bridge code must not reference the retired Gemini 1.5 Flash model.');
+assert.doesNotMatch(render, /gemini-1\.5-flash/, 'Render blueprint must not reference the retired Gemini 1.5 Flash model.');
 assert.equal(
   packageJson.scripts['test:ava-gemini-live-router'],
   'node ./scripts/ava-gemini-live-router-smoke.mjs',

@@ -128,7 +128,11 @@ function readAvaLiveCockpit(value: unknown) {
   if (
     !timeline.length &&
     !text(cockpit.nextBestQuestion) &&
-    !Object.keys(record(cockpit.leadCommitProof)).length
+    !Object.keys(record(cockpit.leadCommitProof)).length &&
+    !Object.keys(record(cockpit.memoryProof)).length &&
+    !Object.keys(record(cockpit.skillOutcomeProof)).length &&
+    !Object.keys(record(cockpit.observability)).length &&
+    number(cockpit.latencyMs) == null
   ) {
     return null;
   }
@@ -140,6 +144,7 @@ function readAvaLiveCockpit(value: unknown) {
     leadCommitProof: record(cockpit.leadCommitProof),
     memoryProof: record(cockpit.memoryProof),
     skillOutcomeProof: record(cockpit.skillOutcomeProof),
+    observability: record(cockpit.observability),
   };
 }
 

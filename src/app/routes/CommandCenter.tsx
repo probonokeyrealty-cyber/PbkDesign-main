@@ -70,7 +70,11 @@ function toNumber(value: unknown, fallback: number | null = null) {
 
 function mapCallStatus(status: unknown): LiveCallState['status'] {
   const normalized = String(status || '').toLowerCase();
-  if (/^(active|connected|in[_ -]?progress|live|ringing|transferring)$/.test(normalized))
+  if (
+    /^(active|answered|bridged|connected|in[_ -]?progress|live|media|ringing|transferring)$/.test(
+      normalized
+    )
+  )
     return 'connected';
   if (normalized === 'initiated' || normalized === 'dialing' || normalized === 'queued')
     return 'dialing';
@@ -79,6 +83,10 @@ function mapCallStatus(status: unknown): LiveCallState['status'] {
   if (normalized === 'ended' || normalized === 'completed' || normalized === 'failed')
     return 'ended';
   return 'idle';
+}
+
+function isActiveRuntimeCallStatus(status: unknown) {
+  return ['connected', 'dialing', 'on-hold'].includes(mapCallStatus(status));
 }
 
 function formatRuntimeStatus(status: unknown) {
@@ -168,17 +176,37 @@ function mapRuntimeCall(call: Record<string, unknown> | undefined): LiveCallStat
     : [];
 
   return {
-    callId: String(call.id || call.callId || ''),
-    dealId: call.dealId ? String(call.dealId) : null,
+    callId: String(
+      call.id || call.callId || call.call_id || call.callControlId || call.call_control_id || ''
+    ),
+    dealId: call.dealId || call.deal_id ? String(call.dealId || call.deal_id) : null,
     status: mapCallStatus(call.status),
     agentMode:
       String(call.agentMode || call.mode || 'autopilot') === 'human' ? 'human' : 'autopilot',
     caller: {
-      name: call.leadName ? String(call.leadName) : null,
-      phone: call.phone ? String(call.phone) : null,
+      name: call.leadName || call.lead_name ? String(call.leadName || call.lead_name) : null,
+      phone:
+        call.phone || call.recipientPhone || call.recipient_phone
+          ? String(call.phone || call.recipientPhone || call.recipient_phone)
+          : null,
       context: buildLiveCallCallerContext(call),
     },
-    startedAt: call.startedAt ? String(call.startedAt) : null,
+    startedAt:
+      call.startedAt ||
+      call.started_at ||
+      call.connectedAt ||
+      call.connected_at ||
+      call.createdAt ||
+      call.created_at
+        ? String(
+            call.startedAt ||
+              call.started_at ||
+              call.connectedAt ||
+              call.connected_at ||
+              call.createdAt ||
+              call.created_at
+          )
+        : null,
     sentiment,
     transcript,
     avaLiveCockpit:
@@ -1913,13 +1941,7 @@ export function CommandCenter() {
   const webSearchStatus = runtimeProviders.webSearch || {};
   const webSearchNeuralOutput = (webSearchStatus.neuralOutput || {}) as Record<string, unknown>;
   const webSearchLiveReady = Boolean(webSearchStatus.liveReady);
-  const activeCall = mapRuntimeCall(
-    calls.find((call) =>
-      ['live', 'connected', 'dialing', 'queued', 'on-hold'].includes(
-        String(call.status || '').toLowerCase()
-      )
-    ) || calls[0]
-  );
+  const activeCall = mapRuntimeCall(calls.find((call) => isActiveRuntimeCallStatus(call.status)));
   const endedCallForReview = useMemo(
     () =>
       calls.find((call) =>

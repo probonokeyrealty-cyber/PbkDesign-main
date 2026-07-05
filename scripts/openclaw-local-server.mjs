@@ -560,7 +560,7 @@ const AVA_CALL_INTELLIGENCE_ENABLED = !/^(0|false|no|off)$/i.test(String(process
 const AVA_CALL_INTELLIGENCE_STRATEGIST_MODE = String(process.env.PBK_AVA_CALL_INTELLIGENCE_STRATEGIST_MODE || 'inline')
   .trim()
   .toLowerCase();
-const AVA_CALL_INTELLIGENCE_TIMEOUT_MS = Math.max(350, Math.min(2500, Number(process.env.PBK_AVA_CALL_INTELLIGENCE_TIMEOUT_MS || 1200)));
+const AVA_CALL_INTELLIGENCE_TIMEOUT_MS = Math.max(350, Math.min(4000, Number(process.env.PBK_AVA_CALL_INTELLIGENCE_TIMEOUT_MS || TELNYX_LIVE_REPLY_STRATEGIST_TIMEOUT_MS || 2500)));
 let __elevenLabsValidation = {
   checkedAt: '',
   ok: null,
@@ -602,7 +602,7 @@ const GEMINI_API_KEY = String(process.env.PBK_GEMINI_API_KEY || process.env.GEMI
 const GEMINI_BASE_URL = String(process.env.PBK_GEMINI_BASE_URL || 'https://generativelanguage.googleapis.com/v1beta')
   .trim()
   .replace(/\/+$/g, '');
-const GEMINI_LIVE_MODEL = String(process.env.PBK_GEMINI_LIVE_MODEL || process.env.PBK_GEMINI_MODEL || 'gemini-1.5-flash').trim();
+const GEMINI_LIVE_MODEL = String(process.env.PBK_GEMINI_LIVE_MODEL || process.env.PBK_GEMINI_MODEL || 'gemini-3.5-flash').trim();
 const GEMINI_LIVE_ATTEMPT_TIMEOUT_MS = Math.max(500, Math.min(2500, Number(process.env.PBK_GEMINI_LIVE_ATTEMPT_TIMEOUT_MS || 1200)));
 const GEMINI_LIVE_RETRY_ATTEMPTS = Math.max(0, Math.min(2, Number(process.env.PBK_GEMINI_LIVE_RETRY_ATTEMPTS || 1)));
 const GEMINI_LIVE_RETRY_DELAY_MS = Math.max(0, Math.min(1000, Number(process.env.PBK_GEMINI_LIVE_RETRY_DELAY_MS || 90)));
@@ -1947,6 +1947,48 @@ async function persistCallTraceToRedis(record = {}) {
   }
 }
 
+async function persistCallTraceToPg(record = {}) {
+  const traceId = String(record.id || '').trim();
+  if (!traceId) return { ok: false, reason: 'missing_trace_id' };
+  return queryPgRows(
+    `INSERT INTO public.pbk_call_traces (
+       id, tenant_id, call_id, lead_id, stream_id, session_id, phone_masked,
+       event, stage, status, result, source, details, created_at
+     )
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13::jsonb,$14)
+     ON CONFLICT (id) DO UPDATE SET
+       tenant_id = EXCLUDED.tenant_id,
+       call_id = EXCLUDED.call_id,
+       lead_id = EXCLUDED.lead_id,
+       stream_id = EXCLUDED.stream_id,
+       session_id = EXCLUDED.session_id,
+       phone_masked = EXCLUDED.phone_masked,
+       event = EXCLUDED.event,
+       stage = EXCLUDED.stage,
+       status = EXCLUDED.status,
+       result = EXCLUDED.result,
+       source = EXCLUDED.source,
+       details = EXCLUDED.details,
+       created_at = EXCLUDED.created_at`,
+    [
+      traceId,
+      normalizeTenantId(record.tenantId || record.tenant_id || 'pbk'),
+      String(record.callId || record.call_id || '').trim().slice(0, 240),
+      String(record.leadId || record.lead_id || '').trim().slice(0, 240),
+      String(record.streamId || record.stream_id || '').trim().slice(0, 240),
+      String(record.sessionId || record.session_id || '').trim().slice(0, 240),
+      String(record.phoneMasked || record.phone_masked || '').trim().slice(0, 80),
+      String(record.event || 'call_trace').trim().slice(0, 160),
+      String(record.stage || '').trim().slice(0, 160),
+      String(record.status || '').trim().slice(0, 160),
+      String(record.result || '').trim().slice(0, 160),
+      String(record.source || '').trim().slice(0, 160),
+      JSON.stringify(record.details && typeof record.details === 'object' ? record.details : {}),
+      record.at || record.createdAt || record.created_at || isoNow(),
+    ]
+  );
+}
+
 function recordCallTrace(event = '', details = {}) {
   const phone = normalizePhone(details.phone || details.from || details.caller || '');
   const record = {
@@ -1974,6 +2016,7 @@ function recordCallTrace(event = '', details = {}) {
   const label = `${record.event}${record.callId ? ` call=${record.callId}` : ''}${record.phoneMasked ? ` phone=${record.phoneMasked}` : ''}${record.leadName ? ` lead=${record.leadName}` : ''}`;
   console.log(`[CallTrace] ${label}`);
   if (REDIS_ENABLED) void persistCallTraceToRedis(record);
+  void persistCallTraceToPg(record);
   return record;
 }
 
@@ -7080,6 +7123,38 @@ async function ensurePbkOperationalTables(pool) {
       ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
 
+    CREATE TABLE IF NOT EXISTS public.pbk_call_traces (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL DEFAULT 'pbk',
+      call_id TEXT NOT NULL DEFAULT '',
+      lead_id TEXT NOT NULL DEFAULT '',
+      stream_id TEXT NOT NULL DEFAULT '',
+      session_id TEXT NOT NULL DEFAULT '',
+      phone_masked TEXT NOT NULL DEFAULT '',
+      event TEXT NOT NULL DEFAULT '',
+      stage TEXT NOT NULL DEFAULT '',
+      status TEXT NOT NULL DEFAULT '',
+      result TEXT NOT NULL DEFAULT '',
+      source TEXT NOT NULL DEFAULT '',
+      details JSONB NOT NULL DEFAULT '{}'::JSONB,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    ALTER TABLE public.pbk_call_traces
+      ADD COLUMN IF NOT EXISTS tenant_id TEXT NOT NULL DEFAULT 'pbk',
+      ADD COLUMN IF NOT EXISTS call_id TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS lead_id TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS stream_id TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS session_id TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS phone_masked TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS event TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS stage TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS result TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS source TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS details JSONB NOT NULL DEFAULT '{}'::JSONB,
+      ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+
     CREATE TABLE IF NOT EXISTS public.contract_path_templates (
       path_key TEXT PRIMARY KEY,
       workspace_id TEXT NOT NULL DEFAULT 'pbk',
@@ -7485,6 +7560,12 @@ async function ensurePbkOperationalTables(pool) {
       ON public.agent_registry (tenant_id, status, updated_at DESC);
     CREATE INDEX IF NOT EXISTS calls_lead_started_idx
       ON public.calls (lead_id, started_at DESC);
+    CREATE INDEX IF NOT EXISTS calls_status_updated_idx
+      ON public.calls (workspace_id, status, updated_at DESC);
+    CREATE INDEX IF NOT EXISTS pbk_call_traces_call_lookup_idx
+      ON public.pbk_call_traces (tenant_id, call_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS pbk_call_traces_event_lookup_idx
+      ON public.pbk_call_traces (tenant_id, event, created_at DESC);
     CREATE INDEX IF NOT EXISTS contracts_lead_status_idx
       ON public.contracts (lead_id, status, created_at DESC);
     CREATE INDEX IF NOT EXISTS pbk_qa_audit_tool_idx
@@ -14556,17 +14637,25 @@ function upsertAppointment(stateRef, appointment) {
 
 function upsertCall(stateRef, call) {
   const existingIndex = stateRef.calls.findIndex((item) => item.id === call.id);
+  let nextCall = null;
   if (existingIndex >= 0) {
-    stateRef.calls.splice(existingIndex, 1, {
+    nextCall = {
       ...stateRef.calls[existingIndex],
       ...call,
       updatedAt: isoNow(),
-    });
+    };
+    stateRef.calls.splice(existingIndex, 1, nextCall);
   } else {
-    stateRef.calls.unshift(call);
+    nextCall = {
+      ...call,
+      createdAt: call.createdAt || call.created_at || isoNow(),
+      updatedAt: call.updatedAt || call.updated_at || isoNow(),
+    };
+    stateRef.calls.unshift(nextCall);
   }
   limitStateArrays(stateRef);
   updateDerivedStatus(stateRef);
+  void persistCallRecordToPg(nextCall);
 }
 
 function upsertMessage(stateRef, message) {
@@ -14578,6 +14667,103 @@ function upsertMessage(stateRef, message) {
   }
   limitStateArrays(stateRef);
   updateDerivedStatus(stateRef);
+}
+
+function compactCallTranscriptForPg(call = {}) {
+  const transcript = Array.isArray(call.transcript) ? call.transcript : [];
+  if (transcript.length) {
+    return transcript.slice(-200).map((item) => {
+      if (typeof item === 'string') return { speaker: 'unknown', text: item.slice(0, 1200) };
+      if (!item || typeof item !== 'object') return { speaker: 'unknown', text: String(item || '').slice(0, 1200) };
+      return {
+        speaker: String(item.speaker || item.role || item.from || 'unknown').slice(0, 80),
+        text: String(item.text || item.transcript || item.message || item.content || '').slice(0, 1200),
+        isFinal: Boolean(item.isFinal || item.speechFinal),
+        at: item.at || item.createdAt || item.created_at || item.timestamp || '',
+      };
+    });
+  }
+  const transcriptText = String(call.transcriptText || call.transcript_text || call.notes || '').trim();
+  return transcriptText ? [{ speaker: 'transcript', text: transcriptText.slice(0, 4000), isFinal: true, at: call.endedAt || call.ended_at || call.updatedAt || call.updated_at || '' }] : [];
+}
+
+async function persistCallRecordToPg(call = {}) {
+  const callId = String(call.id || call.callId || call.call_id || call.callControlId || call.call_control_id || '').trim();
+  if (!callId) return { ok: false, reason: 'missing_call_id' };
+  const rawSentiment = call.sentiment && typeof call.sentiment === 'object' ? call.sentiment.pbkScore ?? call.sentiment.score : call.sentiment ?? call.sentimentScore ?? call.sentiment_score;
+  const sentiment = rawSentiment === undefined || rawSentiment === null || rawSentiment === '' ? null : Math.max(0, Math.min(1, toNumber(rawSentiment, 0.5)));
+  const rawYellRisk = call.yellRisk ?? call.yell_risk ?? call.riskScore ?? call.risk_score;
+  const yellRisk = rawYellRisk === undefined || rawYellRisk === null || rawYellRisk === '' ? null : Math.max(0, Math.min(1, toNumber(rawYellRisk, 0)));
+  const participantConfidence =
+    call.participantConfidence === undefined && call.participant_confidence === undefined && call.callerRoleConfidence === undefined
+      ? null
+      : Math.max(0, Math.min(1, toNumber(call.participantConfidence ?? call.participant_confidence ?? call.callerRoleConfidence, 0)));
+  return queryPgRows(
+    `INSERT INTO public.calls (
+       id, lead_id, workspace_id, direction, status, provider, assistant_id,
+       phone, from_number, participant_role, participant_expertise, participant_confidence,
+       telnyx_call_control_id, telnyx_call_leg_id, telnyx_call_session_id,
+       sentiment, yell_risk, human_joined, ai_muted, transcript, notes,
+       started_at, ended_at, created_at, updated_at
+     )
+     VALUES (
+       $1,
+       (SELECT id FROM public.lead_profiles WHERE id = $2 LIMIT 1),
+       $3,$4,$5,$6,$7,$8,$9,$10,$11,$12,
+       $13,$14,$15,$16,$17,$18,$19,$20::jsonb,$21,$22,$23,$24,$25
+     )
+     ON CONFLICT (id) DO UPDATE SET
+       lead_id = COALESCE(EXCLUDED.lead_id, public.calls.lead_id),
+       workspace_id = EXCLUDED.workspace_id,
+       direction = EXCLUDED.direction,
+       status = EXCLUDED.status,
+       provider = EXCLUDED.provider,
+       assistant_id = EXCLUDED.assistant_id,
+       phone = EXCLUDED.phone,
+       from_number = EXCLUDED.from_number,
+       participant_role = EXCLUDED.participant_role,
+       participant_expertise = EXCLUDED.participant_expertise,
+       participant_confidence = EXCLUDED.participant_confidence,
+       telnyx_call_control_id = EXCLUDED.telnyx_call_control_id,
+       telnyx_call_leg_id = EXCLUDED.telnyx_call_leg_id,
+       telnyx_call_session_id = EXCLUDED.telnyx_call_session_id,
+       sentiment = COALESCE(EXCLUDED.sentiment, public.calls.sentiment),
+       yell_risk = COALESCE(EXCLUDED.yell_risk, public.calls.yell_risk),
+       human_joined = EXCLUDED.human_joined,
+       ai_muted = EXCLUDED.ai_muted,
+       transcript = CASE WHEN jsonb_array_length(EXCLUDED.transcript) > 0 THEN EXCLUDED.transcript ELSE public.calls.transcript END,
+       notes = COALESCE(NULLIF(EXCLUDED.notes, ''), public.calls.notes),
+       started_at = COALESCE(public.calls.started_at, EXCLUDED.started_at),
+       ended_at = COALESCE(EXCLUDED.ended_at, public.calls.ended_at),
+       updated_at = EXCLUDED.updated_at`,
+    [
+      callId,
+      String(call.leadId || call.lead_id || '').trim(),
+      normalizeTenantId(call.workspaceId || call.workspace_id || call.tenantId || call.tenant_id || 'pbk'),
+      String(call.direction || '').trim() || 'outbound',
+      String(call.status || call.callStatus || call.call_status || '').trim() || 'active',
+      String(call.provider || '').trim() || 'telnyx',
+      String(call.assistantId || call.assistant_id || call.agentId || call.agent_id || '').trim().slice(0, 160),
+      normalizePhone(call.phone || call.recipientPhone || call.recipient_phone || call.to || call.from || ''),
+      normalizePhone(call.fromNumber || call.from_number || call.from || ''),
+      String(call.participantRole || call.participant_role || call.callerRole || call.caller_role || '').trim().slice(0, 120),
+      String(call.participantExpertise || call.participant_expertise || '').trim().slice(0, 160),
+      participantConfidence,
+      String(call.callControlId || call.call_control_id || call.telnyxCallControlId || call.telnyx_call_control_id || callId).trim().slice(0, 240),
+      String(call.callLegId || call.call_leg_id || call.telnyxCallLegId || call.telnyx_call_leg_id || '').trim().slice(0, 240),
+      String(call.callSessionId || call.call_session_id || call.telnyxCallSessionId || call.telnyx_call_session_id || '').trim().slice(0, 240),
+      sentiment,
+      yellRisk,
+      Boolean(call.humanJoined ?? call.human_joined),
+      Boolean(call.aiMuted ?? call.ai_muted),
+      JSON.stringify(compactCallTranscriptForPg(call)),
+      String(call.notes || call.summary || call.nextMove || call.transcriptText || '').slice(0, 4000),
+      call.startedAt || call.started_at || call.startTime || call.start_time || call.createdAt || call.created_at || null,
+      call.endedAt || call.ended_at || null,
+      call.createdAt || call.created_at || isoNow(),
+      call.updatedAt || call.updated_at || isoNow(),
+    ]
+  );
 }
 
 async function persistContractRecordToPg(contract = {}) {
@@ -22517,7 +22703,7 @@ function getAvaCallIntelligenceSettings() {
   const strategistMode = String(configured.strategistMode || configured.strategist_mode || AVA_CALL_INTELLIGENCE_STRATEGIST_MODE || TELNYX_LIVE_REPLY_STRATEGIST_MODE || 'inline')
     .trim()
     .toLowerCase();
-  const strategistTimeoutMs = Math.max(350, Math.min(4000, Number(configured.strategistTimeoutMs || configured.strategist_timeout_ms || AVA_CALL_INTELLIGENCE_TIMEOUT_MS || TELNYX_LIVE_REPLY_STRATEGIST_TIMEOUT_MS)));
+  const strategistTimeoutMs = Math.max(350, Math.min(4000, Number(configured.strategistTimeoutMs || configured.strategist_timeout_ms || TELNYX_LIVE_REPLY_STRATEGIST_TIMEOUT_MS || AVA_CALL_INTELLIGENCE_TIMEOUT_MS)));
   return {
     enabled,
     strategistMode,
@@ -24304,16 +24490,21 @@ async function getAvaCallIntelligenceStatus(params = {}) {
   const telnyx = getTelnyxProviderMeta();
   const deepgram = getDeepgramProviderMeta(process.env);
   const eleven = getElevenLabsProviderMeta(process.env);
+  const gemini = getGeminiProviderMeta();
+  const deepSeek = getDeepSeekProviderMeta();
+  const liveLlmModel = STRATEGIST_PROVIDER === 'gemini' ? GEMINI_LIVE_MODEL : DEEPSEEK_LIVE_MODEL;
   const architecture = buildAvaCallArchitectureContext({
     tenantId: params.tenantId || params.tenant_id || 'pbk',
     transcript: params.transcript || params.query || '',
     leadId: params.leadId || params.lead_id || '',
   });
   const avaPaused = /paused|muted|human_takeover/i.test(String(ava?.status || ''));
-  const gaps = [...(!settings.enabled ? ['Ava call intelligence is disabled in runtime settings.'] : []), ...(avaPaused ? [`Ava agent runtime still reports ${ava?.status}; activate call intelligence to clear the dashboard pause state.`] : []), ...(!PBK_TELNYX_BRIDGE_AVA_REPLY_ENABLED ? ['Telnyx bridge Ava replies are disabled by PBK_TELNYX_BRIDGE_AVA_REPLY_ENABLED.'] : []), ...(!telnyx.voiceReady ? ['Telnyx voice provider is not fully ready.'] : []), ...(!deepgram.ready ? ['Deepgram live STT is not fully ready.'] : []), ...(!eleven.ready ? ['ElevenLabs TTS is not fully ready.'] : []), ...((architecture.prosody.learningRows || 0) < 10 ? ['Prosody learning is active but still needs measured call outcomes.'] : [])];
+  const liveLlmReady = STRATEGIST_PROVIDER === 'gemini' ? gemini.ready : deepSeek.ready;
+  const gaps = [...(!settings.enabled ? ['Ava call intelligence is disabled in runtime settings.'] : []), ...(avaPaused ? [`Ava agent runtime still reports ${ava?.status}; activate call intelligence to clear the dashboard pause state.`] : []), ...(!PBK_TELNYX_BRIDGE_AVA_REPLY_ENABLED ? ['Telnyx bridge Ava replies are disabled by PBK_TELNYX_BRIDGE_AVA_REPLY_ENABLED.'] : []), ...(!telnyx.voiceReady ? ['Telnyx voice provider is not fully ready.'] : []), ...(!deepgram.ready ? ['Deepgram live STT is not fully ready.'] : []), ...(!eleven.ready ? ['ElevenLabs TTS is not fully ready.'] : []), ...(!liveLlmReady ? [`Live-call LLM provider ${STRATEGIST_PROVIDER} is not ready.`] : []), ...((architecture.prosody.learningRows || 0) < 10 ? ['Prosody learning is active but still needs measured call outcomes.'] : [])];
+  const active = settings.enabled && !avaPaused && PBK_TELNYX_BRIDGE_AVA_REPLY_ENABLED && Boolean(telnyx.voiceReady) && Boolean(deepgram.ready) && Boolean(eleven.ready) && Boolean(liveLlmReady);
   return {
-    ok: settings.enabled && !avaPaused,
-    result: settings.enabled && !avaPaused ? 'ava_call_intelligence_active' : 'ava_call_intelligence_degraded',
+    ok: active,
+    result: active ? 'ava_call_intelligence_active' : 'ava_call_intelligence_degraded',
     generatedAt: isoNow(),
     settings,
     agents: { ava, rex },
@@ -24323,6 +24514,26 @@ async function getAvaCallIntelligenceStatus(params = {}) {
       strategistTimeoutMs: getTelnyxLiveReplyStrategistTimeoutMs(),
       telnyx: { ready: Boolean(telnyx.voiceReady), missing: telnyx.voiceMissing || [] },
       deepgram: { ready: Boolean(deepgram.ready), missing: deepgram.missing || [] },
+      llm: {
+        provider: STRATEGIST_PROVIDER,
+        model: liveLlmModel,
+        ready: Boolean(liveLlmReady),
+        attemptTimeoutMs: STRATEGIST_PROVIDER === 'gemini' ? GEMINI_LIVE_ATTEMPT_TIMEOUT_MS : DEEPSEEK_LIVE_ATTEMPT_TIMEOUT_MS,
+        totalTimeoutMs: getTelnyxLiveReplyStrategistTimeoutMs(),
+        structuredDecisionContract: STRATEGIST_PROVIDER === 'gemini',
+        fallbackProvider: STRATEGIST_PROVIDER === 'gemini' ? 'deepseek' : '',
+        gemini: {
+          ready: Boolean(gemini.ready),
+          model: GEMINI_LIVE_MODEL,
+          missing: gemini.missing || [],
+        },
+        deepSeek: {
+          ready: Boolean(deepSeek.ready),
+          model: DEEPSEEK_LIVE_MODEL,
+          fallbackModel: DEEPSEEK_FALLBACK_MODEL,
+          missing: deepSeek.missing || [],
+        },
+      },
       elevenLabs: {
         ready: Boolean(eleven.ready),
         voiceId: eleven.voiceId,
@@ -29797,6 +30008,11 @@ function normalizeGeminiLiveModelName(model = '') {
   return requested && !/^deepseek(?:-|\/|$)/i.test(requested) ? requested : GEMINI_LIVE_MODEL;
 }
 
+function normalizeDeepSeekLiveModelName(model = '') {
+  const requested = String(model || '').trim();
+  return requested && /^deepseek(?:-|\/|$)/i.test(requested) ? requested : DEEPSEEK_LIVE_MODEL || DEEPSEEK_FALLBACK_MODEL || DEEPSEEK_MODEL;
+}
+
 function isRetryableGeminiResult(result = {}) {
   if (result?.ok) return false;
   const code = String(result.result || '').trim();
@@ -30340,7 +30556,19 @@ async function runDeepSeekChatCompletion(messages = [], params = {}) {
 }
 
 function buildDeepSeekLiveRetryModels(primaryModel = '') {
-  return Array.from(new Set([String(primaryModel || '').trim(), DEEPSEEK_LIVE_MODEL, DEEPSEEK_FALLBACK_MODEL, DEEPSEEK_MODEL, ...DEEPSEEK_LIVE_RETRY_MODELS].filter(Boolean)));
+  return Array.from(
+    new Set(
+      [
+        normalizeDeepSeekLiveModelName(primaryModel),
+        DEEPSEEK_LIVE_MODEL,
+        DEEPSEEK_FALLBACK_MODEL,
+        DEEPSEEK_MODEL,
+        ...DEEPSEEK_LIVE_RETRY_MODELS,
+      ]
+        .map((model) => String(model || '').trim())
+        .filter((model) => model && /^deepseek(?:-|\/|$)/i.test(model))
+    )
+  );
 }
 
 function formatAvaRecentTurnsForSummary(session = {}, contextCall = null, limit = 4) {
@@ -31025,6 +31253,7 @@ async function askStrategistRecord(params = {}) {
     }
   }
   if (!strategist && (STRATEGIST_PROVIDER === 'deepseek' || STRATEGIST_PROVIDER === 'gemini')) {
+    const deepSeekPrimaryModel = normalizeDeepSeekLiveModelName(params.model || DEEPSEEK_LIVE_MODEL);
     recordCallTrace('deepseek_call_started', {
       callId: params.callId || params.metadata?.callId || '',
       streamId: params.streamId || params.metadata?.streamId || '',
@@ -31036,7 +31265,7 @@ async function askStrategistRecord(params = {}) {
     });
     const deepSeekStartedAt = Date.now();
     const primary = await runDeepSeekChatCompletion(built.messages, {
-      model: params.model || DEEPSEEK_MODEL,
+      model: deepSeekPrimaryModel,
       responseFormat: requestedResponseFormat === 'text' || requestedResponseFormat === 'none' ? 'text' : 'json',
       temperature: params.temperature ?? 0.2,
       maxTokens: params.maxTokens || 1200,
@@ -31058,18 +31287,18 @@ async function askStrategistRecord(params = {}) {
       stage: 'askStrategistRecord',
     });
     recordLatencyMetric('llm_deepseek_latency_ms', Date.now() - deepSeekStartedAt, {
-      model: params.model || DEEPSEEK_MODEL,
+      model: deepSeekPrimaryModel,
       ok: Boolean(primary.ok),
       stage: 'askStrategistRecord',
     });
     if (!primary.ok)
       incrementObservabilityCounter('llm_deepseek_errors', 1, {
-        model: params.model || DEEPSEEK_MODEL,
+        model: deepSeekPrimaryModel,
         result: primary.result || '',
       });
     fallbackChain.push({
       provider: 'deepseek',
-      model: params.model || DEEPSEEK_MODEL,
+      model: deepSeekPrimaryModel,
       result: primary.result,
       ok: primary.ok,
       error: primary.error || '',
@@ -31087,7 +31316,7 @@ async function askStrategistRecord(params = {}) {
       };
     } else if (requestedResponseFormat !== 'text' && ['provider_empty_response', 'provider_reasoning_only'].includes(primary.result)) {
       const textRetry = await runDeepSeekChatCompletion(built.messages, {
-        model: params.model || DEEPSEEK_MODEL,
+        model: deepSeekPrimaryModel,
         responseFormat: 'text',
         temperature: params.temperature ?? 0.2,
         maxTokens: params.maxTokens || 1200,
@@ -31099,7 +31328,7 @@ async function askStrategistRecord(params = {}) {
       });
       fallbackChain.push({
         provider: 'deepseek',
-        model: params.model || DEEPSEEK_MODEL,
+        model: deepSeekPrimaryModel,
         result: textRetry.result,
         ok: textRetry.ok,
         error: textRetry.error || '',
@@ -31118,7 +31347,7 @@ async function askStrategistRecord(params = {}) {
         };
       }
     }
-    if (!strategist && DEEPSEEK_FALLBACK_MODEL && DEEPSEEK_FALLBACK_MODEL !== (params.model || DEEPSEEK_MODEL)) {
+    if (!strategist && DEEPSEEK_FALLBACK_MODEL && DEEPSEEK_FALLBACK_MODEL !== deepSeekPrimaryModel) {
       const secondary = await runDeepSeekChatCompletion(built.messages, {
         model: DEEPSEEK_FALLBACK_MODEL,
         responseFormat: requestedResponseFormat === 'text' || requestedResponseFormat === 'none' ? 'text' : 'json',
@@ -31157,7 +31386,7 @@ async function askStrategistRecord(params = {}) {
           .map((attempt) => String(attempt.model || '').trim())
           .filter(Boolean)
       );
-      for (const retryModel of buildDeepSeekLiveRetryModels(params.model || DEEPSEEK_MODEL)) {
+      for (const retryModel of buildDeepSeekLiveRetryModels(deepSeekPrimaryModel)) {
         if (strategist || triedModels.has(retryModel)) continue;
         recordCallTrace('deepseek_call_retry_started', {
           callId: params.callId || params.metadata?.callId || '',
@@ -41842,7 +42071,7 @@ const APPROVAL_REPLAYABLE_PROVIDER_TOOLS = new Set(['sendColdEmail', 'telnyx_cal
 
 const SELLER_BOUND_PROVIDER_TOOLS = new Set(['sendColdEmail', 'telnyx_call', 'telnyx_sms', 'send_verification_sms', 'sendDocuSign', 'sendContract', 'prepare_and_send_contract', 'sendSellerDocs', 'skipTrace', 'startNurtureSequence', 'scheduleAppointment', 'updateCRM']);
 
-const DIRECT_ENV_UPDATE_ALLOWLIST = new Set(['PBK_TAVILY_API_KEY', 'TAVILY_API_KEY', 'PBK_GEMINI_API_KEY', 'GEMINI_API_KEY', 'GOOGLE_API_KEY', 'PBK_GEMINI_BASE_URL', 'PBK_GEMINI_MODEL', 'PBK_GEMINI_LIVE_MODEL', 'PBK_GEMINI_LIVE_ATTEMPT_TIMEOUT_MS', 'PBK_GEMINI_LIVE_RETRY_ATTEMPTS', 'PBK_GEMINI_LIVE_RETRY_DELAY_MS', 'PBK_LIVE_LLM_PROVIDER', 'PBK_DEEPSEEK_API_KEY', 'DEEPSEEK_API_KEY', 'PBK_DEEPSEEK_BASE_URL', 'PBK_DEEPSEEK_MODEL', 'PBK_DEEPSEEK_FALLBACK_MODEL', 'PBK_DEEPSEEK_LIVE_MODEL', 'PBK_DEEPSEEK_LIVE_RETRY_MODELS', 'PBK_DEEPSEEK_LIVE_ATTEMPT_TIMEOUT_MS', 'PBK_DEEPSEEK_LIVE_RETRY_ATTEMPTS', 'PBK_DEEPSEEK_LIVE_RETRY_DELAY_MS', 'PBK_TELNYX_LIVE_REPLY_STRATEGIST_MODE', 'PBK_TELNYX_LIVE_REPLY_STRATEGIST_TIMEOUT_MS', 'PBK_STRATEGIST_PROVIDER', 'PBK_HERMES_ENABLED', 'PBK_HERMES_GATEWAY_URL', 'PBK_HERMES_API_KEY', 'PBK_HERMES_WEBHOOK_URL', 'PBK_HERMES_SLACK_CHANNEL', 'PBK_HERMES_SUGGEST_ONLY', 'PBK_TOTP_SECRET', 'PBK_TOTP_REQUIRED', 'PBK_TOTP_WINDOW']);
+const DIRECT_ENV_UPDATE_ALLOWLIST = new Set(['PBK_TAVILY_API_KEY', 'TAVILY_API_KEY', 'PBK_GEMINI_API_KEY', 'GEMINI_API_KEY', 'GOOGLE_API_KEY', 'PBK_GEMINI_BASE_URL', 'PBK_GEMINI_MODEL', 'PBK_GEMINI_LIVE_MODEL', 'PBK_GEMINI_LIVE_ATTEMPT_TIMEOUT_MS', 'PBK_GEMINI_LIVE_RETRY_ATTEMPTS', 'PBK_GEMINI_LIVE_RETRY_DELAY_MS', 'PBK_LIVE_LLM_PROVIDER', 'PBK_DEEPSEEK_API_KEY', 'DEEPSEEK_API_KEY', 'PBK_DEEPSEEK_BASE_URL', 'PBK_DEEPSEEK_MODEL', 'PBK_DEEPSEEK_FALLBACK_MODEL', 'PBK_DEEPSEEK_LIVE_MODEL', 'PBK_DEEPSEEK_LIVE_RETRY_MODELS', 'PBK_DEEPSEEK_LIVE_ATTEMPT_TIMEOUT_MS', 'PBK_DEEPSEEK_LIVE_RETRY_ATTEMPTS', 'PBK_DEEPSEEK_LIVE_RETRY_DELAY_MS', 'PBK_TELNYX_LIVE_REPLY_STRATEGIST_MODE', 'PBK_TELNYX_LIVE_REPLY_STRATEGIST_TIMEOUT_MS', 'PBK_AVA_CALL_INTELLIGENCE_TIMEOUT_MS', 'PBK_STRATEGIST_PROVIDER', 'PBK_HERMES_ENABLED', 'PBK_HERMES_GATEWAY_URL', 'PBK_HERMES_API_KEY', 'PBK_HERMES_WEBHOOK_URL', 'PBK_HERMES_SLACK_CHANNEL', 'PBK_HERMES_SUGGEST_ONLY', 'PBK_TOTP_SECRET', 'PBK_TOTP_REQUIRED', 'PBK_TOTP_WINDOW']);
 
 function getEnvUpdateKeys(params = {}) {
   if (Array.isArray(params.envVars)) {
@@ -65595,6 +65824,39 @@ function isCurrentTelnyxMediaSession(session = {}) {
   return telnyxMediaSessionsByCallId.get(session.callId) === session;
 }
 
+function shouldPruneLocalTelnyxMediaSession(session = {}, contextCall = null, now = Date.now()) {
+  if (!session || typeof session !== 'object') return true;
+  if (session.finalized || session.endedAt) return true;
+  const callStatus = String(contextCall?.status || '')
+    .trim()
+    .toLowerCase();
+  if (callStatus && !isActiveLiveCall(contextCall)) return true;
+  const updatedMs = Date.parse(session.lastAudioAt || session.updatedAt || session.startedAt || '');
+  const hasNoAudio = Number(session.audioBytes || 0) <= 0 && Number(session.frameCount || 0) <= 0;
+  if (hasNoAudio && Number.isFinite(updatedMs) && now - updatedMs > 30_000) return true;
+  const deepgramClosed = session.deepgramSocketOpen === false && Number.isFinite(updatedMs) && now - updatedMs > 15_000;
+  return Boolean(deepgramClosed);
+}
+
+function pruneLocalTelnyxMediaSessions(reason = 'local_session_prune') {
+  const now = Date.now();
+  let pruned = 0;
+  for (const [id, session] of telnyxMediaSessionsByCallId.entries()) {
+    const contextCall = getCallById(session?.callId || id);
+    if (!shouldPruneLocalTelnyxMediaSession(session, contextCall, now)) continue;
+    telnyxMediaSessionsByCallId.delete(id);
+    pruned += 1;
+    recordCallTrace('local_media_session_pruned', {
+      ...session,
+      status: 'pruned',
+      result: contextCall && !isActiveLiveCall(contextCall) ? 'call_record_not_active' : 'stale_local_media_session',
+      stage: reason,
+      callStatus: contextCall?.status || '',
+    });
+  }
+  return pruned;
+}
+
 function pruneBrowserVoiceSessions() {
   const now = Date.now();
   for (const [token, session] of browserVoiceSessions.entries()) {
@@ -67666,6 +67928,7 @@ async function buildTelnyxLiveAvaReply({ session = {}, transcript = '', contextC
   const normalizedFallback = normalizeAvaVoiceReplyText(fallback, fallback);
   const mode = getTelnyxLiveReplyStrategistMode();
   const strategistTimeoutMs = getTelnyxLiveReplyStrategistTimeoutMs();
+  let inlineStrategistFallback = null;
 
   if (session.masterProbe?.mustAskBeforePitch && mode !== 'inline') {
     const nonRepeatingMasterProbe = avoidRepeatedAvaLiveReply(session, normalizedFallback, normalizedFallback);
@@ -67701,7 +67964,20 @@ async function buildTelnyxLiveAvaReply({ session = {}, transcript = '', contextC
         error: error?.message || 'Strategist reply unavailable.',
       },
     }));
-    const insight = strategistTimeoutMs > 0 ? await Promise.race([insightPromise, sleep(strategistTimeoutMs).then(() => null)]) : await insightPromise;
+    const insight =
+      strategistTimeoutMs > 0
+        ? await Promise.race([
+            insightPromise,
+            sleep(strategistTimeoutMs).then(() => ({
+              text: '',
+              strategist: {
+                ok: false,
+                result: 'strategist_inline_timeout',
+                timeoutMs: strategistTimeoutMs,
+              },
+            })),
+          ])
+        : await insightPromise;
     if (insight?.text) {
       const nonRepeating = avoidRepeatedAvaLiveReply(session, insight.text, normalizedFallback);
       return {
@@ -67711,6 +67987,19 @@ async function buildTelnyxLiveAvaReply({ session = {}, transcript = '', contextC
         strategistTimeoutMs,
         antiRepeat: nonRepeating,
       };
+    }
+    if (insight?.strategist?.result === 'strategist_inline_timeout') {
+      inlineStrategistFallback = insight.strategist;
+      recordCallTrace('ava_strategist_inline_timeout', {
+        ...session,
+        status: 'timeout',
+        result: 'strategist_inline_timeout',
+        timeoutMs: strategistTimeoutMs,
+        provider: STRATEGIST_PROVIDER,
+        model: STRATEGIST_PROVIDER === 'gemini' ? GEMINI_LIVE_MODEL : DEEPSEEK_LIVE_MODEL,
+        latestTranscript: transcript,
+        stage: 'buildTelnyxLiveAvaReply',
+      });
     }
     void insightPromise;
   } else if (mode !== 'off') {
@@ -67748,7 +68037,13 @@ async function buildTelnyxLiveAvaReply({ session = {}, transcript = '', contextC
     strategist: {
       ok: false,
       skipped: mode === 'off',
-      result: mode === 'off' ? 'strategist_disabled' : 'strategist_background',
+      result:
+        mode === 'off'
+          ? 'strategist_disabled'
+          : inlineStrategistFallback?.result === 'strategist_inline_timeout'
+            ? 'strategist_inline_timeout'
+            : 'strategist_background',
+      timeoutMs: inlineStrategistFallback?.timeoutMs || strategistTimeoutMs,
     },
   };
   if (session.lastFastLocalReplyMode) fastLocalReply.replyMode = session.lastFastLocalReplyMode;
@@ -68952,6 +69247,19 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
       labels: {
         path: session.selectedPath || contextCall?.selectedPath || '',
         result: speakResult.result || '',
+        llmProvider: reply.strategist?.provider?.provider || reply.strategist?.provider?.id || STRATEGIST_PROVIDER || '',
+        llmModel: reply.strategist?.provider?.model || (STRATEGIST_PROVIDER === 'gemini' ? GEMINI_LIVE_MODEL : DEEPSEEK_LIVE_MODEL),
+        llmResult: reply.strategist?.result || reply.replyMode || '',
+        llmUsedForReply: reply.replyMode === 'strategist_inline' && Boolean(reply.strategist?.ok),
+        fallbackChain: Array.isArray(reply.strategist?.fallbackChain)
+          ? reply.strategist.fallbackChain.map((item) => ({
+              provider: String(item.provider || '').slice(0, 40),
+              model: String(item.model || '').slice(0, 80),
+              result: String(item.result || '').slice(0, 80),
+              ok: Boolean(item.ok),
+            }))
+          : [],
+        strategistTimeoutMs: reply.strategistTimeoutMs || reply.strategist?.timeoutMs || getTelnyxLiveReplyStrategistTimeoutMs(),
       },
       source: 'telnyx-live-call',
     });
@@ -69393,7 +69701,7 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
         result: 'linear16_ready',
         stage: 'rotateTelnyxDeepgramToLinear16Fallback',
       });
-      await persistState(state);
+      persistStateInBackground('Deepgram linear16 fallback ready');
       return true;
     } catch (error) {
       session.deepgramSocketOpen = false;
@@ -69417,7 +69725,7 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
           target: session.callId || session.streamId || session.id,
         })
       );
-      await persistState(state);
+      persistStateInBackground('Deepgram linear16 fallback failed');
       return false;
     }
   };
@@ -70957,6 +71265,7 @@ const server = createServer(async (request, response) => {
     }
 
     if (request.method === 'GET' && matchesPath(pathname, ['/api/voice/status', '/api/v1/voice/status'])) {
+      pruneLocalTelnyxMediaSessions('voice_status');
       const sharedMediaSessions = await getSharedTelnyxCallStates();
       const activeMediaSessions = Array.from(telnyxMediaSessionsByCallId.values()).map((session) => {
         const contextCall = getCallById(session.callId);
@@ -71001,6 +71310,7 @@ const server = createServer(async (request, response) => {
     }
 
     if (request.method === 'GET' && matchesPath(pathname, ['/api/debug/live-call-status', '/api/v1/debug/live-call-status'])) {
+      pruneLocalTelnyxMediaSessions('debug_live_call_status');
       const sharedMediaSessions = await getSharedTelnyxCallStates();
       const activeMediaSessions = Array.from(telnyxMediaSessionsByCallId.values()).map((session) => {
         const contextCall = getCallById(session.callId);
@@ -71035,6 +71345,7 @@ const server = createServer(async (request, response) => {
     }
 
     if (request.method === 'GET' && matchesPath(pathname, ['/api/debug/call-state', '/api/v1/debug/call-state'])) {
+      pruneLocalTelnyxMediaSessions('debug_call_state');
       const callId = String(url.searchParams.get('callId') || url.searchParams.get('id') || '').trim();
       const phone = normalizePhone(url.searchParams.get('phone') || '');
       const traceLimit = Math.max(1, Math.min(120, Number(url.searchParams.get('traceLimit') || 40)));

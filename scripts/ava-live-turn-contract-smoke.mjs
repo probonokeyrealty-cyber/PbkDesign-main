@@ -265,8 +265,8 @@ assert.match(
 );
 assert.match(
   renderBlueprint,
-  /key:\s*PBK_GEMINI_LIVE_MODEL[\s\S]*?value:\s*gemini-1\.5-flash/,
-  'Render must explicitly pin Ava live calls to Gemini Flash instead of relying on fallback resolution.'
+  /key:\s*PBK_GEMINI_LIVE_MODEL[\s\S]*?value:\s*gemini-3\.5-flash/,
+  'Render must explicitly pin Ava live calls to a currently available Gemini Flash model instead of relying on fallback resolution.'
 );
 assert.match(
   renderBlueprint,

@@ -41,7 +41,7 @@ assertYamlValue(render, 'PBK_DEEPSEEK_FALLBACK_MODEL', 'deepseek-v4-flash');
 assertYamlValue(render, 'PBK_DEEPSEEK_LIVE_MODEL', 'deepseek-v4-flash');
 assertYamlValue(render, 'PBK_DEEPSEEK_LIVE_RETRY_MODELS', 'deepseek-v4-flash,deepseek-v4-pro');
 assertYamlValue(render, 'PBK_GEMINI_BASE_URL', 'https://generativelanguage.googleapis.com/v1beta');
-assertYamlValue(render, 'PBK_GEMINI_LIVE_MODEL', 'gemini-1.5-flash');
+assertYamlValue(render, 'PBK_GEMINI_LIVE_MODEL', 'gemini-3.5-flash');
 assertYamlValue(render, 'PBK_LIVE_LLM_PROVIDER', 'gemini');
 assertYamlValue(render, 'PBK_STRATEGIST_PROVIDER', 'gemini');
 
@@ -73,8 +73,8 @@ assertContains(
 );
 assertContains(
   bridge,
-  /const GEMINI_LIVE_MODEL = String\(process\.env\.PBK_GEMINI_LIVE_MODEL \|\| process\.env\.PBK_GEMINI_MODEL \|\| 'gemini-1\.5-flash'\)/,
-  'OpenClaw bridge must default Ava live calls to Gemini Flash.',
+  /const GEMINI_LIVE_MODEL = String\(process\.env\.PBK_GEMINI_LIVE_MODEL \|\| process\.env\.PBK_GEMINI_MODEL \|\| 'gemini-3\.5-flash'\)/,
+  'OpenClaw bridge must default Ava live calls to a currently available Gemini Flash model.',
 );
 assertContains(
   bridge,

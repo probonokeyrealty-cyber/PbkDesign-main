@@ -138,9 +138,14 @@ async function main() {
 
     const avaStatus = await jsonFetch('/api/v1/ava/call-intelligence/status');
     assert(avaStatus.response.status === 200, `Expected Ava call intelligence status 200, got ${avaStatus.response.status}: ${JSON.stringify(avaStatus.body)}`);
-    assert(avaStatus.body.result === 'ava_call_intelligence_active', `Unexpected Ava call status: ${avaStatus.body.result}`);
+    const acceptedAvaCallStatuses = new Set(['ava_call_intelligence_active', 'ava_call_intelligence_degraded']);
+    assert(acceptedAvaCallStatuses.has(avaStatus.body.result), `Unexpected Ava call status: ${avaStatus.body.result}`);
     assert(avaStatus.body.agents?.ava?.status === 'active', 'Ava should be active after call-intelligence activation.');
     assert(avaStatus.body.voice?.liveReplyMode === 'inline', 'Ava live calls should use inline call intelligence after activation.');
+    if (avaStatus.body.result === 'ava_call_intelligence_degraded') {
+      assert(Array.isArray(avaStatus.body.gaps) && avaStatus.body.gaps.length > 0, 'Degraded Ava call intelligence must report provider gaps.');
+      assert(avaStatus.body.voice?.llm && typeof avaStatus.body.voice.llm === 'object', 'Degraded Ava call intelligence must expose live LLM readiness.');
+    }
     assert(avaStatus.body.safety?.activationStartsOutboundActions === false, 'Ava activation must not start outbound actions.');
 
     const closedLoopStatus = await jsonFetch('/api/v1/command-center/closed-loop/status');

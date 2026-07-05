@@ -4860,14 +4860,69 @@ function normalizeBantValue(value) {
   return String(value).trim();
 }
 
+function isOperationalCallTranscriptNoise(value = '') {
+  const text = String(value || '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!text) return false;
+  const lower = text.toLowerCase();
+  if (!/\b(deepgram|telnyx|media stream|diagnostics|frames=|bytes=|transcriptfinal|lastEvent)\b/i.test(text)) {
+    return false;
+  }
+  return [
+    /deepgram live stream closed .*before (?:a )?final transcript/i,
+    /deepgram media stream ended without (?:a )?final transcript/i,
+    /deepgram live stream (?:closed|error|failed|connected|socket|opened)/i,
+    /deepgram .*telnyx media/i,
+    /diagnostics:\s*frames=\d+,\s*bytes=\d+/i,
+    /\bframes=\d+,\s*bytes=\d+\b.*\b(model|encoding|lastevent|deepgram|telnyx|media)\b/i,
+    /\b(no final transcript|before finalization|finalization)\b.*\b(deepgram|telnyx|media stream)\b/i,
+  ].some((pattern) => pattern.test(lower));
+}
+
+function sanitizeSellerMemoryValue(value, depth = 0) {
+  if (depth > 8) return value;
+  if (typeof value === 'string') {
+    return isOperationalCallTranscriptNoise(value) ? '' : value;
+  }
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => sanitizeSellerMemoryValue(item, depth + 1))
+      .filter((item) => {
+        if (item === '' || item === null || typeof item === 'undefined') return false;
+        if (Array.isArray(item)) return item.length > 0;
+        if (item && typeof item === 'object') return Object.keys(item).length > 0;
+        return true;
+      });
+  }
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.entries(value)
+        .map(([key, item]) => [key, sanitizeSellerMemoryValue(item, depth + 1)])
+        .filter(([, item]) => {
+          if (item === '' || item === null || typeof item === 'undefined') return false;
+          if (Array.isArray(item)) return item.length > 0;
+          if (item && typeof item === 'object') return Object.keys(item).length > 0;
+          return true;
+        })
+    );
+  }
+  return value;
+}
+
 function normalizeBantInfo(...sources) {
   const bant = {};
   for (const source of sources) {
     if (!source || typeof source !== 'object') continue;
-    const raw = source.bant && typeof source.bant === 'object' ? source.bant : source;
+    const sanitizedSource = sanitizeSellerMemoryValue(source);
+    if (!sanitizedSource || typeof sanitizedSource !== 'object') continue;
+    const raw =
+      sanitizedSource.bant && typeof sanitizedSource.bant === 'object'
+        ? sanitizedSource.bant
+        : sanitizedSource;
     for (const field of BANT_FIELDS) {
       const value = normalizeBantValue(raw[field] ?? raw[`bant_${field}`] ?? raw[`bant${field[0].toUpperCase()}${field.slice(1)}`]);
-      if (value) bant[field] = value;
+      if (value && !isOperationalCallTranscriptNoise(value)) bant[field] = value;
     }
   }
   return bant;
@@ -4901,6 +4956,7 @@ function deriveLiveBantFactsFromSession(session = {}) {
 
 function extractBantFromTranscript(transcript = '', existing = {}) {
   const text = String(transcript || '').trim();
+  if (isOperationalCallTranscriptNoise(text)) return normalizeBantInfo(existing);
   const lower = text.toLowerCase();
   const extracted = normalizeBantInfo(existing);
   const moneyMatch = text.match(/\b(?:want|need|asking|happy with|walk away(?: with)?|take|number(?: is)?|price(?: is)?)\s*(?:around|about|roughly|at least|near)?\s*\$?\s*([0-9][0-9,]{3,}(?:\.\d+)?\s*(?:k|thousand|grand)?)/i);
@@ -4948,17 +5004,19 @@ function extractTranscriptSnippet(text = '', pattern, radius = 72) {
 
 function inferVisibleLeadFactsFromTranscript(transcript = '', existingLead = {}, context = {}) {
   const text = String(transcript || '').replace(/\s+/g, ' ').trim();
+  const empty = {
+    seller: {},
+    property: {},
+    motivation: {},
+    compliance: {},
+    callContext: {},
+    tags: [],
+    inferredFacts: {},
+  };
   if (!text) {
-    return {
-      seller: {},
-      property: {},
-      motivation: {},
-      compliance: {},
-      callContext: {},
-      tags: [],
-      inferredFacts: {},
-    };
+    return empty;
   }
+  if (isOperationalCallTranscriptNoise(text)) return empty;
 
   const seller = existingLead.seller || {};
   const property = existingLead.property || {};
@@ -22578,6 +22636,12 @@ async function activateCommandCenterClosedLoop(params = {}) {
         tenantId,
         minSamples: params.minProsodySamples || 25,
       });
+    if (loops.prosodyTraining)
+      results.prosodyPromotion = await promoteProsodyOutcomesToAvaMemory({
+        tenantId,
+        limit: params.prosodyPromotionLimit || 12,
+        source: 'command-center-closed-loop',
+      });
     if (loops.rexGoalAlignment) {
       results.rexGoalAlignment = await buildRevenueGoalAlignment({
         tenantId,
@@ -22608,6 +22672,12 @@ async function activateCommandCenterClosedLoop(params = {}) {
           modelStatus: results.prosodyTraining.model?.status || '',
           sampleCount: results.prosodyTraining.model?.sampleCount || 0,
           successCount: results.prosodyTraining.model?.successCount || 0,
+        }
+      : null,
+    prosodyPromotion: results.prosodyPromotion
+      ? {
+          result: results.prosodyPromotion.result,
+          promoted: results.prosodyPromotion.promoted || 0,
         }
       : null,
     rexGoalAlignment: results.rexGoalAlignment
@@ -25898,6 +25968,22 @@ async function recordPostCallLearningFromTranscript({ session = {}, contextCall 
     .replace(/\s+/g, ' ')
     .trim();
   const callId = message.callId || session.callId || contextCall?.id || '';
+  if (isOperationalCallTranscriptNoise(transcript)) {
+    recordCallTrace('post_call_learning_skipped', {
+      callId,
+      leadId: message.leadId || contextCall?.leadId || session.leadId || '',
+      result: 'operational_transcript_ignored',
+      stage: 'postCallLearning',
+      reason: reason || 'provider_diagnostic_not_seller_outcome',
+      transcriptLength: transcript.length,
+    });
+    return {
+      ok: false,
+      skipped: true,
+      result: 'operational_transcript_ignored',
+      reason: 'provider_diagnostic_not_seller_outcome',
+    };
+  }
   const learningSignal = getPostCallLearningSignal({ session, contextCall, message, transcript });
   if (!callId || !learningSignal.usable) {
     recordCallTrace('post_call_learning_skipped', {
@@ -37787,7 +37873,11 @@ function buildAvaInboundPromptContext({ lead = {}, route = 'ava_qualify', from =
   const spokenLeadName = getSpokenLeadName(lead.leadName);
   const bant = normalizeBantInfo(lead.bant || {}, lead.raw?.bant || {}, lead.raw || {});
   const missingBant = getMissingBantFields(bant);
-  const callContext = lead.callContext || lead.raw?.call_context || lead.raw?.callContext || {};
+  const rawCallContext = lead.callContext || lead.raw?.call_context || lead.raw?.callContext || {};
+  const callContext =
+    rawCallContext && typeof rawCallContext === 'object'
+      ? sanitizeSellerMemoryValue(rawCallContext)
+      : {};
   const story = selectAvaStoryForContext({
     transcript: [lead.status, lead.stage, lead.address, callContext.lastObjection, callContext.summary].filter(Boolean).join(' '),
     address: lead.address,
@@ -37843,11 +37933,11 @@ function buildInboundLeadProfilePayload(lead = {}, parsed = {}, meta = {}) {
   const now = isoNow();
   const callContext =
     lead.callContext && typeof lead.callContext === 'object' && !Array.isArray(lead.callContext)
-      ? lead.callContext
+      ? sanitizeSellerMemoryValue(lead.callContext)
       : raw.callContext && typeof raw.callContext === 'object' && !Array.isArray(raw.callContext)
-        ? raw.callContext
+        ? sanitizeSellerMemoryValue(raw.callContext)
         : raw.call_context && typeof raw.call_context === 'object' && !Array.isArray(raw.call_context)
-          ? raw.call_context
+          ? sanitizeSellerMemoryValue(raw.call_context)
           : {};
   const existingTags = normalizeLeadTags(raw.tags || lead.tags || []);
   return normalizeLeadIntake({
@@ -38413,6 +38503,7 @@ function buildAvaLessonForObjection(objectionTag = '', transcript = '') {
 
 function extractAvaLessonsFromTranscript(candidate = {}) {
   const transcript = String(candidate.body || candidate.transcript || candidate.text || '').trim();
+  if (isOperationalCallTranscriptNoise(transcript)) return [];
   const objectionTag = classifyAvaObjection(transcript);
   const base = buildAvaLessonForObjection(objectionTag, transcript);
   const sentiment = Number(candidate.sentiment ?? candidate.payload?.sentiment?.pbkScore ?? 0.5);
@@ -38493,7 +38584,8 @@ async function collectAvaLearningCandidates(limit = AVA_MEMORY_WORKER_LIMIT) {
     const channel = String(message.channel || '').toLowerCase();
     if (!['call', 'voice', 'recording'].includes(channel)) continue;
     if (message.payload?.processedForLearning || message.processedForLearning) continue;
-    if (!String(message.body || '').trim()) continue;
+    const body = String(message.body || '').trim();
+    if (!body || isOperationalCallTranscriptNoise(body)) continue;
     if (candidates.some((candidate) => candidate.id === message.id)) continue;
     candidates.push({ ...message, source: 'bridge-state' });
   }
@@ -38506,7 +38598,12 @@ async function collectAvaLearningCandidates(limit = AVA_MEMORY_WORKER_LIMIT) {
     if (candidates.some((item) => item.id === candidate.id || item.callId === candidate.callId)) continue;
     candidates.push(candidate);
   }
-  return candidates.slice(0, limit);
+  return candidates
+    .filter((candidate) => {
+      const transcript = String(candidate.body || candidate.transcript || candidate.text || '').trim();
+      return transcript && !isOperationalCallTranscriptNoise(transcript);
+    })
+    .slice(0, limit);
 }
 
 async function persistAvaMemoryLesson(lesson = {}) {
@@ -38548,6 +38645,42 @@ async function persistAvaLearningSession(session = {}) {
       metadata = EXCLUDED.metadata,
       updated_at = EXCLUDED.updated_at`,
     [session.id, session.processedAt || isoNow(), session.minutesBudget ?? AVA_MEMORY_DAILY_MINUTES, session.candidatesProcessed ?? 0, session.lessonsExtracted ?? 0, session.status || 'complete', session.summary || '', JSON.stringify(session.metadata || {}), session.createdAt || isoNow(), session.updatedAt || isoNow()]
+  );
+  return result.ok;
+}
+
+async function persistAvaActiveMemoryToPg(memory = {}) {
+  const result = await queryPgRows(
+    `INSERT INTO public.ava_active_memories (
+      id, workspace_id, memory_type, objection_tag, prompt, response, summary,
+      score, outcome, source, metadata, created_at, updated_at
+    )
+    VALUES ($1,'pbk',$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11,$12)
+    ON CONFLICT (id) DO UPDATE SET
+      memory_type = EXCLUDED.memory_type,
+      objection_tag = EXCLUDED.objection_tag,
+      prompt = EXCLUDED.prompt,
+      response = EXCLUDED.response,
+      summary = EXCLUDED.summary,
+      score = GREATEST(public.ava_active_memories.score, EXCLUDED.score),
+      outcome = EXCLUDED.outcome,
+      source = EXCLUDED.source,
+      metadata = public.ava_active_memories.metadata || EXCLUDED.metadata,
+      updated_at = EXCLUDED.updated_at`,
+    [
+      memory.id,
+      memory.memoryType || 'ava-call-lesson',
+      memory.objectionTag || '',
+      memory.prompt || '',
+      memory.response || '',
+      memory.summary || memory.response || '',
+      Number(memory.score ?? 0.5),
+      memory.outcome || 'observed',
+      memory.source || 'ava-self-learning',
+      JSON.stringify(memory.metadata || {}),
+      memory.createdAt || isoNow(),
+      memory.updatedAt || isoNow(),
+    ]
   );
   return result.ok;
 }
@@ -38603,6 +38736,25 @@ async function updateLeadBantContextFromTranscript(candidate = {}, sessionId = '
   const leadId = String(candidate.leadId || candidate.payload?.leadId || '').trim();
   if (!leadId || !transcript) {
     return { ok: false, reason: 'missing_lead_or_transcript' };
+  }
+  if (isOperationalCallTranscriptNoise(transcript)) {
+    recordCallTrace('lead_bant_projection_skipped', {
+      callId: candidate.callId || candidate.payload?.callId || candidate.id || '',
+      leadId,
+      result: 'operational_transcript_ignored',
+      reason: 'provider_diagnostic_not_seller_memory',
+      stage: 'updateLeadBantContextFromTranscript',
+    });
+    return {
+      ok: true,
+      result: 'operational_transcript_ignored',
+      leadId,
+      hasBant: false,
+      visibleLeadFacts: {},
+      visibleLeadFieldsUpdated: [],
+      localUpdated: false,
+      reason: 'provider_diagnostic_not_seller_memory',
+    };
   }
   const bant = extractBantFromTranscript(transcript, candidate.payload?.bant || {});
   const hasBant = Object.keys(bant).length > 0;
@@ -38831,6 +38983,17 @@ async function recordBantSessionForLiveCall(params = {}) {
   const callId = String(call.id || call.callId || call.call_id || session.callId || '').trim();
   const leadId = String(call.leadId || call.lead_id || session.leadId || '').trim();
   if (!callId || !transcript) return { ok: false, reason: 'missing_call_or_transcript' };
+  if (isOperationalCallTranscriptNoise(transcript)) {
+    return {
+      ok: true,
+      result: 'operational_transcript_ignored',
+      reason: 'provider_diagnostic_not_seller_bant',
+      callId,
+      leadId,
+      bant: normalizeBantInfo(call.bant || {}, call.raw?.bant || {}, call.raw || {}),
+      missingBant: [],
+    };
+  }
   const existingBant = normalizeBantInfo(call.bant || {}, call.raw?.bant || {}, call.raw || {});
   const bant = normalizeBantInfo(existingBant, extractBantFromTranscript(transcript, existingBant));
   const missing = getMissingBantFields(bant);
@@ -38908,6 +39071,7 @@ function upsertAvaActiveMemory(lesson = {}) {
     state.avaActiveMemories.unshift(memory);
   }
   limitStateArrays(state);
+  void persistAvaActiveMemoryToPg(memory);
 }
 
 function getCallOutcomeLearningCandidateCallId(candidate = {}) {
@@ -38932,6 +39096,7 @@ function buildAvaLearningCandidateFromCall(call = {}, source = 'bridge-state-cal
       ? turns.map((turn) => `${turn.speaker || 'unknown'}: ${turn.text}`).join('\n')
       : String(call.transcriptText || call.transcript_text || call.body || call.notes || call.summary || '').trim();
   if (!transcriptText) return null;
+  if (isOperationalCallTranscriptNoise(transcriptText)) return null;
   const payload = call.payload && typeof call.payload === 'object' ? call.payload : {};
   return {
     source,
@@ -38967,7 +39132,7 @@ function isUsableCallOutcomeLearningCandidate(candidate = {}) {
   if (transcript.length < 20) return false;
   if (!getCallOutcomeLearningCandidateCallId(candidate)) return false;
   if (/no_transcript|failed|diagnostic/i.test(String(candidate.status || ''))) return false;
-  if (/deepgram live stream closed .* before a final transcript|diagnostics:\s*frames=/i.test(transcript)) return false;
+  if (isOperationalCallTranscriptNoise(transcript)) return false;
   return true;
 }
 
@@ -39143,6 +39308,11 @@ async function runAvaMemoryLearning(params = {}) {
     sessionId,
     reason: 'ava-memory-learning-run',
   });
+  const prosodyPromotion = await promoteProsodyOutcomesToAvaMemory({
+    tenantId: params.tenantId || params.tenant_id || 'pbk',
+    limit: params.prosodyLimit || params.prosody_limit || 12,
+    source: 'ava-memory-learning-run',
+  });
   const candidates = await collectAvaLearningCandidates(limit);
   const lessons = [];
   const contextUpdates = [];
@@ -39173,15 +39343,16 @@ async function runAvaMemoryLearning(params = {}) {
     processedAt: isoNow(),
     minutesBudget,
     candidatesProcessed: candidates.length,
-    lessonsExtracted: lessons.length,
-    status: lessons.length || outcomeBackfill.recorded ? 'complete' : 'idle',
-    summary: `Ava processed ${candidates.length} call transcript${candidates.length === 1 ? '' : 's'}, learned ${lessons.length} tactic${lessons.length === 1 ? '' : 's'}, and recorded ${outcomeBackfill.recorded} call outcome${outcomeBackfill.recorded === 1 ? '' : 's'}.`,
+    lessonsExtracted: lessons.length + prosodyPromotion.promoted,
+    status: lessons.length || outcomeBackfill.recorded || prosodyPromotion.promoted ? 'complete' : 'idle',
+    summary: `Ava processed ${candidates.length} call transcript${candidates.length === 1 ? '' : 's'}, learned ${lessons.length} tactic${lessons.length === 1 ? '' : 's'}, promoted ${prosodyPromotion.promoted} voice pattern${prosodyPromotion.promoted === 1 ? '' : 's'}, and recorded ${outcomeBackfill.recorded} call outcome${outcomeBackfill.recorded === 1 ? '' : 's'}.`,
     metadata: {
       actor: params.actor || 'Ava memory worker',
       topTags,
       candidateIds: candidates.map((candidate) => candidate.id).filter(Boolean),
       contextUpdates,
       outcomeBackfill,
+      prosodyPromotion,
     },
     createdAt: isoNow(),
     updatedAt: isoNow(),
@@ -39194,7 +39365,7 @@ async function runAvaMemoryLearning(params = {}) {
     makeActivity({
       actor: 'Ava',
       category: 'LEARNING',
-      status: lessons.length || outcomeBackfill.recorded ? 'complete' : 'idle',
+      status: lessons.length || outcomeBackfill.recorded || prosodyPromotion.promoted ? 'complete' : 'idle',
       text: session.summary,
       target: topTags[0]?.tag || 'call memory',
     })
@@ -39203,7 +39374,7 @@ async function runAvaMemoryLearning(params = {}) {
     id: `audit-${session.id}`,
     actor: params.actor || 'Ava memory worker',
     action: 'ava_memory_learning',
-    status: lessons.length || outcomeBackfill.recorded ? 'complete' : 'idle',
+    status: lessons.length || outcomeBackfill.recorded || prosodyPromotion.promoted ? 'complete' : 'idle',
     target: topTags[0]?.tag || 'call memory',
     details: session.summary,
     metadata: session.metadata,
@@ -39218,6 +39389,7 @@ async function runAvaMemoryLearning(params = {}) {
     lessons,
     contextUpdates,
     outcomeBackfill,
+    prosodyPromotion,
     activeMemories: sortNewest(state.avaActiveMemories || []).slice(0, 12),
     warning: DATABASE_URL ? '' : 'PBK_DATABASE_URL is not configured; lessons were stored in bridge state only.',
   };
@@ -46737,6 +46909,100 @@ async function trainAndPersistProsodyModel(params = {}) {
     ok: true,
     result: model.status,
     model,
+    db: { ok: result.ok, reason: result.reason, error: result.error || '' },
+  };
+}
+
+function buildProsodyActiveMemoryLesson(row = {}, params = {}) {
+  const emotion = String(row.emotion || 'neutral').toLowerCase();
+  const tags = normalizeStringList(row.tagsChosen || row.tags_chosen || []);
+  const speed = Number(row.speedChosen ?? row.speed_chosen ?? 1);
+  const stability = Number(row.stabilityChosen ?? row.stability_chosen ?? 0.5);
+  const similarityBoost = Number(row.similarityBoostChosen ?? row.similarity_boost_chosen ?? 0.75);
+  const reward = Number(row.reward ?? (row.outcomeSuccess || row.outcome_success ? 1 : 0.65));
+  const outcomeLabel = String(row.outcomeLabel || row.outcome_label || 'successful measured voice outcome').trim();
+  const callId = String(row.callId || row.call_id || '').trim();
+  const leadId = String(row.leadId || row.lead_id || '').trim();
+  const idSeed = [emotion, tags.join('-') || 'general', outcomeLabel].filter(Boolean).join('-');
+  const score = Math.max(0.55, Math.min(0.97, Number.isFinite(reward) ? 0.58 + reward * 0.32 : 0.74));
+  const tagText = tags.length ? ` with ${tags.join(', ')} voice tags` : '';
+  const speedText = Number.isFinite(speed) ? speed.toFixed(2) : '1.00';
+  const stabilityText = Number.isFinite(stability) ? stability.toFixed(2) : '0.50';
+  return {
+    id: `ava-prosody-memory-${slugify(idSeed).slice(0, 96)}`,
+    memoryType: 'ava-prosody-lesson',
+    objectionTag: `prosody-${emotion}`,
+    pathKey: `prosody:${emotion}:${tags.join('|') || 'general'}`,
+    prompt: `Seller emotion/tone reads as ${emotion}.`,
+    response: `Use a measured voice pattern: speed ${speedText}, stability ${stabilityText}${tagText}. Keep the reply warm, clear, and proof-backed.`,
+    source: 'ava-prosody-outcome-learning',
+    outcome: outcomeLabel,
+    score,
+    summary: `Measured prosody outcome promoted for ${emotion}: speed ${speedText}, stability ${stabilityText}${tagText}.`,
+    metadata: {
+      schemaVersion: 'pbk-ava-prosody-active-memory-v1',
+      source: params.source || 'prosody-promotion',
+      callId,
+      leadId,
+      emotion,
+      tags,
+      speed,
+      stability,
+      similarityBoost,
+      reward: Number.isFinite(reward) ? reward : null,
+      outcomeLabel,
+      createdFromDecisionId: row.id || '',
+    },
+    createdAt: row.createdAt || row.created_at || isoNow(),
+    updatedAt: isoNow(),
+  };
+}
+
+async function promoteProsodyOutcomesToAvaMemory(params = {}) {
+  const tenantId = normalizeTenantId(params.tenantId || params.tenant_id);
+  const days = Math.max(1, Math.min(180, Math.round(toNumber(params.days, 30))));
+  const limit = Math.max(1, Math.min(50, Math.round(toNumber(params.limit, 12))));
+  const minReward = Math.max(0, Math.min(1, Number(params.minReward ?? params.min_reward ?? 0.6)));
+  const result = await queryPgRows(
+    `SELECT id, tenant_id, call_id, lead_id, emotion, stability_chosen, speed_chosen,
+            similarity_boost_chosen, tags_chosen, outcome_success, outcome_label,
+            reward, created_at, updated_at
+     FROM public.pbk_prosody_decisions
+     WHERE tenant_id = $1
+       AND created_at > NOW() - ($2::int * INTERVAL '1 day')
+       AND (outcome_success IS TRUE OR COALESCE(reward, 0) >= $3)
+     ORDER BY COALESCE(reward, 0) DESC, created_at DESC
+     LIMIT $4`,
+    [tenantId, days, minReward, limit]
+  );
+  const fallbackRows = (Array.isArray(state.prosodyDecisions) ? state.prosodyDecisions : [])
+    .filter((row) => row && ((row.outcomeSuccess ?? row.outcome_success) === true || Number(row.reward || 0) >= minReward))
+    .sort((left, right) => Number(right.reward || 0) - Number(left.reward || 0))
+    .slice(0, limit);
+  const rows = result.ok ? result.rows || [] : fallbackRows;
+  const promoted = [];
+  const seen = new Set();
+  for (const row of rows) {
+    const lesson = buildProsodyActiveMemoryLesson(row, params);
+    if (!lesson.id || seen.has(lesson.id)) continue;
+    seen.add(lesson.id);
+    await persistAvaMemoryLesson(lesson);
+    upsertAvaActiveMemory(lesson);
+    promoted.push({
+      id: lesson.id,
+      emotion: lesson.metadata.emotion,
+      score: lesson.score,
+      outcome: lesson.outcome,
+      callId: lesson.metadata.callId,
+    });
+  }
+  if (promoted.length) await persistState(state);
+  return {
+    ok: true,
+    result: promoted.length ? 'prosody_outcomes_promoted' : 'no_measured_prosody_outcomes',
+    promoted: promoted.length,
+    memories: promoted,
+    source: result.ok ? 'postgres' : 'bridge-state',
     db: { ok: result.ok, reason: result.reason, error: result.error || '' },
   };
 }
@@ -67008,6 +67274,7 @@ function buildAvaLivePathLanguage(session = {}, contextCall = null) {
 
 function buildAvaLiveSalesNextMove({ session = {}, contextCall = null, transcript = '', intent = {}, opener = '' } = {}) {
   const clean = normalizeTelnyxRepairTranscript(transcript);
+  if (isOperationalCallTranscriptNoise(clean)) return '';
   const fullAddressKnown = Boolean(String(contextCall?.address || session.address || '').trim());
   const conditionKnown = Boolean(session.conditionCaptured || session.propertyCondition || contextCall?.condition || /\b(roof|hvac|foundation|tenant|vacant|occupied|repairs?|condition|updated|needs work|as is|as-is)\b/i.test(clean));
   const desiredNetKnown = Boolean(session.sellerAskingPrice || session.desiredNet || session.bant?.budget || intent.money);
@@ -71320,7 +71587,20 @@ const server = createServer(async (request, response) => {
         .filter((call) => isActiveLiveCall(call))
         .map((call) => ({
           id: call.id,
-          callControlId: call.callControlId || call.call_control_id || call.callId || '',
+          callControlId:
+            call.callControlId ||
+            call.call_control_id ||
+            call.telnyxCallControlId ||
+            call.telnyx_call_control_id ||
+            call.callId ||
+            '',
+          telnyxCallControlId:
+            call.telnyxCallControlId ||
+            call.telnyx_call_control_id ||
+            call.callControlId ||
+            call.call_control_id ||
+            call.callId ||
+            '',
           status: call.status || call.callStatus || '',
           selectedPath: call.selectedPath || call.selected_path || '',
           pathLocked: Boolean(call.pathLocked),

@@ -67,10 +67,20 @@ assert(/export async function scheduleAppointmentRequest/.test(runtimeBridge), '
 assert(/export async function cancelScheduledCallRequest/.test(runtimeBridge), 'runtimeBridge should expose scheduled-call cancellation.');
 assert(/export async function saveLeadNoteRequest/.test(runtimeBridge), 'runtimeBridge should expose lead note saving.');
 assert(/export async function sendOfferEmailRequest/.test(runtimeBridge), 'runtimeBridge should expose offer email sending.');
+assert(/export async function fetchLiveCallStatusRequest/.test(runtimeBridge), 'runtimeBridge should expose live-call media diagnostics.');
+const commandCenter = read('src/app/routes/CommandCenter.tsx');
+assert(/fetchLiveCallStatusRequest/.test(commandCenter), 'Command Center should load live-call media diagnostics.');
+assert(/isRuntimeCallEligibleForLiveWidget/.test(commandCenter), 'Command Center should gate the live widget with media proof.');
+assert(/liveCallDiagnosticsHasMediaProof[\s\S]*mediaStreamsOpen[\s\S]*sharedMediaStreamsOpen/.test(commandCenter), 'Live-call widget should not trust stale runtime records without open media streams.');
+assert(/telnyxCallControlId/.test(commandCenter), 'Command Center live-call identity matching should include Telnyx call control ids.');
 assert(
   /\/actions\/ai_assistant_stop/.test(localServer) &&
     /\/actions\/hangup/.test(localServer),
   'Live-call controls must reach the Telnyx provider instead of only mutating runtime state.'
+);
+assert(
+  /activeCallRecords[\s\S]*telnyxCallControlId/.test(localServer),
+  'Live-call diagnostics should expose Telnyx call control ids for UI matching.'
 );
 assert(
   /providerControl = await hangupTelnyxCall\(callControlId\);[\s\S]*?if \(!providerControl\.ok\)[\s\S]*?call\.status = 'ended'/.test(

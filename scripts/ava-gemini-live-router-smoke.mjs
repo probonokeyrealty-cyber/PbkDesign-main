@@ -16,6 +16,7 @@ function yamlEnvValue(source, key) {
 
 const bridge = readText('scripts/openclaw-local-server.mjs');
 const render = readText('render.yaml');
+const envExample = readText('.env.example');
 const packageJson = JSON.parse(readText('package.json'));
 
 assert.match(
@@ -92,6 +93,9 @@ assert.equal(yamlEnvValue(render, 'PBK_LIVE_LLM_PROVIDER'), 'gemini', 'Render mu
 assert.equal(yamlEnvValue(render, 'PBK_GEMINI_LIVE_MODEL'), 'gemini-3.5-flash', 'Render must pin a currently available Gemini Flash model for live calls.');
 assert.equal(yamlEnvValue(render, 'PBK_STRATEGIST_PROVIDER'), 'gemini', 'Legacy strategist provider env must agree with the live provider.');
 assert.equal(yamlEnvValue(render, 'PBK_AVA_CALL_INTELLIGENCE_TIMEOUT_MS'), '2500', 'Render must give Gemini enough live-call budget before local fallback.');
+assert.match(envExample, /^PBK_GEMINI_BASE_URL=https:\/\/generativelanguage\.googleapis\.com\/v1beta$/m, '.env.example must match the Render/code Gemini v1beta base URL.');
+assert.match(envExample, /^PBK_LIVE_LLM_PROVIDER=gemini$/m, '.env.example must default the live-call LLM provider to Gemini.');
+assert.match(envExample, /^PBK_GEMINI_LIVE_MODEL=gemini-3\.5-flash$/m, '.env.example must match the Render Gemini Flash model.');
 assert.doesNotMatch(bridge, /gemini-1\.5-flash/, 'Bridge code must not reference the retired Gemini 1.5 Flash model.');
 assert.doesNotMatch(render, /gemini-1\.5-flash/, 'Render blueprint must not reference the retired Gemini 1.5 Flash model.');
 assert.equal(

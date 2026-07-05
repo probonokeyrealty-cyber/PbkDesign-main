@@ -1758,6 +1758,12 @@ export async function fetchRuntimeState() {
   });
 }
 
+export async function fetchLiveCallStatusRequest() {
+  return bridgeRequest<Record<string, unknown>>({
+    path: '/api/debug/live-call-status',
+  });
+}
+
 export async function createRuntimeStateStreamSessionRequest() {
   return bridgeRequest<{
     ok: boolean;

@@ -52,8 +52,48 @@ assertContains(
 );
 assertContains(
   bridge,
+  /function isOperationalCallTranscriptNoise[\s\S]*deepgram live stream closed[\s\S]*diagnostics:\\s\*frames=/i,
+  'Operational Deepgram/Telnyx diagnostic text must be detected before memory or BANT learning.',
+);
+assertContains(
+  bridge,
+  /function sanitizeSellerMemoryValue[\s\S]*isOperationalCallTranscriptNoise/,
+  'Seller memory values must be recursively sanitized before prompt recall.',
+);
+assertContains(
+  bridge,
+  /function normalizeBantInfo[\s\S]*sanitizeSellerMemoryValue[\s\S]*!isOperationalCallTranscriptNoise/,
+  'BANT normalization must skip provider diagnostic text.',
+);
+assertContains(
+  bridge,
+  /async function updateLeadBantContextFromTranscript[\s\S]*operational_transcript_ignored[\s\S]*provider_diagnostic_not_seller_memory/,
+  'Lead projection must quarantine provider diagnostics instead of updating seller facts.',
+);
+assertContains(
+  bridge,
+  /async function recordPostCallLearningFromTranscript[\s\S]*isOperationalCallTranscriptNoise\(transcript\)[\s\S]*provider_diagnostic_not_seller_outcome/,
+  'Post-call learning must not promote provider diagnostics into outcome rows.',
+);
+assertContains(
+  bridge,
+  /async function persistAvaActiveMemoryToPg[\s\S]*public\.ava_active_memories/,
+  'Ava active memories must persist to Postgres, not only bridge state.',
+);
+assertContains(
+  bridge,
+  /async function promoteProsodyOutcomesToAvaMemory[\s\S]*pbk_prosody_decisions[\s\S]*upsertAvaActiveMemory/,
+  'Measured prosody outcomes must promote into Ava active memory.',
+);
+assertContains(
+  bridge,
   /const outcomeBackfill = await backfillPostCallOutcomeLearningFromMessages\(/,
   'runAvaMemoryLearning must execute the post-call outcome backfill.',
+);
+assertContains(
+  bridge,
+  /const prosodyPromotion = await promoteProsodyOutcomesToAvaMemory\(/,
+  'runAvaMemoryLearning must promote measured prosody outcomes into active memory.',
 );
 assertContains(
   bridge,

@@ -20,6 +20,7 @@ import { PbkDataSource, PbkPanel, PbkPulseDot } from '../../components/pbk/index
 import {
   controlRuntimeCall,
   fetchBridgeConnectionRequest,
+  fetchLiveCallStatusRequest,
   fetchLeadsRequest,
   fetchFounderWorkQueueRequest,
   fetchIntelligenceStreamRequest,
@@ -85,8 +86,56 @@ function mapCallStatus(status: unknown): LiveCallState['status'] {
   return 'idle';
 }
 
-function isActiveRuntimeCallStatus(status: unknown) {
-  return ['connected', 'dialing', 'on-hold'].includes(mapCallStatus(status));
+function getRuntimeCallIdentityCandidates(call: Record<string, unknown> | undefined) {
+  if (!call) return [];
+  return [
+    call.id,
+    call.callId,
+    call.call_id,
+    call.callControlId,
+    call.call_control_id,
+    call.telnyxCallControlId,
+    call.telnyx_call_control_id,
+    call.streamId,
+    call.stream_id,
+  ]
+    .map((value) => String(value || '').trim())
+    .filter(Boolean);
+}
+
+function getRecordArray(record: Record<string, unknown> | null | undefined, key: string) {
+  const value = record?.[key];
+  return Array.isArray(value) ? (value as Record<string, unknown>[]) : [];
+}
+
+function liveCallDiagnosticsHasMediaProof(
+  call: Record<string, unknown>,
+  diagnostics: Record<string, unknown> | null
+) {
+  if (!diagnostics || diagnostics.ok === false) return true;
+  const openMediaCount =
+    Number(diagnostics.mediaStreamsOpen || 0) + Number(diagnostics.sharedMediaStreamsOpen || 0);
+  if (openMediaCount <= 0) return false;
+  const callIds = new Set(getRuntimeCallIdentityCandidates(call).map((id) => id.toLowerCase()));
+  if (!callIds.size) return true;
+  const sessions = [
+    ...getRecordArray(diagnostics, 'activeMediaSessions'),
+    ...getRecordArray(diagnostics, 'sharedMediaSessions'),
+  ];
+  if (!sessions.length) return true;
+  return sessions.some((session) =>
+    getRuntimeCallIdentityCandidates(session).some((id) => callIds.has(id.toLowerCase()))
+  );
+}
+
+function isRuntimeCallEligibleForLiveWidget(
+  call: Record<string, unknown>,
+  diagnostics: Record<string, unknown> | null
+) {
+  const mappedStatus = mapCallStatus(call.status);
+  if (!['connected', 'dialing', 'on-hold'].includes(mappedStatus)) return false;
+  if (mappedStatus === 'dialing') return true;
+  return liveCallDiagnosticsHasMediaProof(call, diagnostics);
 }
 
 function formatRuntimeStatus(status: unknown) {
@@ -177,7 +226,14 @@ function mapRuntimeCall(call: Record<string, unknown> | undefined): LiveCallStat
 
   return {
     callId: String(
-      call.id || call.callId || call.call_id || call.callControlId || call.call_control_id || ''
+      call.id ||
+        call.callId ||
+        call.call_id ||
+        call.telnyxCallControlId ||
+        call.telnyx_call_control_id ||
+        call.callControlId ||
+        call.call_control_id ||
+        ''
     ),
     dealId: call.dealId || call.deal_id ? String(call.dealId || call.deal_id) : null,
     status: mapCallStatus(call.status),
@@ -1827,6 +1883,9 @@ export function CommandCenter() {
   const [bridgeConnectionSource, setBridgeConnectionSource] = useState(
     'GET /api/bridge/connection pending'
   );
+  const [liveCallDiagnostics, setLiveCallDiagnostics] = useState<Record<string, unknown> | null>(
+    null
+  );
   const [productionGaps, setProductionGaps] = useState<ProductionGapLabel[]>([]);
   const [primaryPathReliability, setPrimaryPathReliability] =
     useState<PrimaryPathReliabilityReport | null>(null);
@@ -1941,7 +2000,9 @@ export function CommandCenter() {
   const webSearchStatus = runtimeProviders.webSearch || {};
   const webSearchNeuralOutput = (webSearchStatus.neuralOutput || {}) as Record<string, unknown>;
   const webSearchLiveReady = Boolean(webSearchStatus.liveReady);
-  const activeCall = mapRuntimeCall(calls.find((call) => isActiveRuntimeCallStatus(call.status)));
+  const activeCall = mapRuntimeCall(
+    calls.find((call) => isRuntimeCallEligibleForLiveWidget(call, liveCallDiagnostics))
+  );
   const endedCallForReview = useMemo(
     () =>
       calls.find((call) =>
@@ -2085,6 +2146,25 @@ export function CommandCenter() {
     };
     refreshBridgeConnection();
     const refreshTimer = window.setInterval(refreshBridgeConnection, 30_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(refreshTimer);
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    const refreshLiveCallDiagnostics = () => {
+      fetchLiveCallStatusRequest()
+        .then((response) => {
+          if (!cancelled) setLiveCallDiagnostics(response);
+        })
+        .catch(() => {
+          if (!cancelled) setLiveCallDiagnostics(null);
+        });
+    };
+    refreshLiveCallDiagnostics();
+    const refreshTimer = window.setInterval(refreshLiveCallDiagnostics, 5_000);
     return () => {
       cancelled = true;
       window.clearInterval(refreshTimer);
@@ -2809,7 +2889,7 @@ export function CommandCenter() {
                     );
                   }}
                 />
-                <DataSourceCaption endpoint="snapshot.calls[0] + POST /api/calls/:id/action" />
+                <DataSourceCaption endpoint="snapshot.calls + GET /api/debug/live-call-status + POST /api/calls/:id/action" />
               </div>
             )}
 

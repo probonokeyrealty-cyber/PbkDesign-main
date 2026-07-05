@@ -145,6 +145,47 @@ async function main() {
       'lead call context should retain auditable inferred facts.'
     );
 
+    const diagnosticLead = await requestJson(baseUrl, '/api/leads', {
+      method: 'POST',
+      body: {
+        leadId: 'lead-ava-call-diagnostic-quarantine',
+        name: 'Diagnostic Smoke',
+        source: 'manual',
+      },
+    });
+    assert.equal(diagnosticLead.status, 200, `diagnostic lead create returned ${diagnosticLead.status}`);
+    const diagnosticTranscript =
+      'Deepgram live stream closed (media stream stop) before a final transcript was available. Diagnostics: frames=0, bytes=0, model=nova-2-phonecall, encoding=mulaw, lastEvent=none.';
+    const diagnosticProjection = await requestJson(baseUrl, '/api/calls/extract-bant', {
+      method: 'POST',
+      body: {
+        leadId: 'lead-ava-call-diagnostic-quarantine',
+        transcript: diagnosticTranscript,
+        actor: 'Ava smoke',
+      },
+    });
+    assert.equal(
+      diagnosticProjection.json?.result,
+      'operational_transcript_ignored',
+      'provider diagnostics should be quarantined instead of projected as seller memory.'
+    );
+    assert.deepEqual(
+      diagnosticProjection.json?.visibleLeadFacts || {},
+      {},
+      'provider diagnostics must not infer visible lead facts.'
+    );
+    const diagnosticFull = await requestJson(
+      baseUrl,
+      '/api/leads/lead-ava-call-diagnostic-quarantine/full'
+    );
+    assert.equal(diagnosticFull.status, 200, `diagnostic lead full view returned ${diagnosticFull.status}`);
+    const diagnosticFullText = JSON.stringify(diagnosticFull.json?.lead || {});
+    assert.doesNotMatch(
+      diagnosticFullText,
+      /Deepgram live stream closed|Diagnostics: frames=|before a final transcript/i,
+      'provider diagnostics must not persist into lead profile raw/call context.'
+    );
+
     console.log(
       JSON.stringify(
         {

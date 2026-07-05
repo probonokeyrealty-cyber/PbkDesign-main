@@ -220,17 +220,53 @@ const internalSmsPlan = planAssistantIntent(smsIntent, {
   authenticated: true,
   leadId: 'lead-sms-1',
 });
-assert.equal(internalSmsPlan.action, 'approval_required', 'Ava-initiated SMS sends should be approval-gated.');
-assert.equal(internalSmsPlan.toolPlan?.toolName, 'telnyx_sms', 'SMS sends should route to Telnyx SMS.');
-assert.equal(internalSmsPlan.toolPlan?.params?.forceApproval, true, 'SMS sends should force approval.');
+assert.equal(
+  internalSmsPlan.action,
+  'tool_plan',
+  'Ava-initiated SMS sends should consult Nurture Agent before provider approval.'
+);
+assert.equal(
+  internalSmsPlan.toolPlan?.toolName,
+  'consultNurtureAgent',
+  'SMS follow-up should route through Nurture Agent before Telnyx SMS approval.'
+);
+assert.equal(
+  internalSmsPlan.toolPlan?.params?.nextToolName,
+  'telnyx_sms',
+  'Nurture consultation should preserve the next SMS approval tool.'
+);
+assert.equal(
+  internalSmsPlan.toolPlan?.params?.approvalRequiredAfterConsult,
+  true,
+  'Nurture consultation should mark that approval is still required before a send.'
+);
+assert.equal(internalSmsPlan.toolPlan?.providerWrite, false, 'Nurture consultation should stay read-only.');
 
 const internalEmailPlan = planAssistantIntent(emailIntent, {
   publicMode: false,
   authenticated: true,
 });
-assert.equal(internalEmailPlan.action, 'approval_required', 'Ava-initiated email sends should be approval-gated.');
-assert.equal(internalEmailPlan.toolPlan?.toolName, 'sendColdEmail', 'Email sends should route to the email sender.');
+assert.equal(
+  internalEmailPlan.action,
+  'tool_plan',
+  'Ava-initiated email sends should consult Nurture Agent before provider approval.'
+);
+assert.equal(
+  internalEmailPlan.toolPlan?.toolName,
+  'consultNurtureAgent',
+  'Email follow-up should route through Nurture Agent before email approval.'
+);
+assert.equal(
+  internalEmailPlan.toolPlan?.params?.nextToolName,
+  'sendColdEmail',
+  'Nurture consultation should preserve the next email approval tool.'
+);
 assert.equal(internalEmailPlan.toolPlan?.params?.email, 'seller@example.com', 'Email plan should keep the recipient email.');
+assert.equal(
+  internalEmailPlan.toolPlan?.params?.approvalRequiredAfterConsult,
+  true,
+  'Nurture consultation should keep the email send approval-gated after review.'
+);
 
 const internalContractPreparePlan = planAssistantIntent(contractPrepareIntent, {
   publicMode: false,

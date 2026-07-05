@@ -24,6 +24,9 @@ assert(
   'MemorySourceRail',
   'MemoryStatRibbon',
   'MemorySkillRow',
+  'MemoryControlPanel',
+  'MemoryEventCard',
+  'MemoryProvenanceChips',
   'MemoryExperimentCard',
 ].forEach((component) => {
   assert(memory.includes(component), `Memory Analytics should include ${component}.`);
@@ -38,6 +41,10 @@ assert(
   'pbk-memory-body',
   'pbk-memory-card',
   'pbk-memory-perf-row',
+  'pbk-memory-control-panel',
+  'pbk-memory-hygiene',
+  'pbk-memory-provenance-chips',
+  'pbk-memory-event-actions',
   'pbk-memory-ab-card',
 ].forEach((className) => {
   assert(
@@ -103,6 +110,8 @@ assert(
   '.pbk-memory-stat',
   '.pbk-memory-card',
   '.pbk-memory-perf-row',
+  '.pbk-memory-control-panel',
+  '.pbk-memory-provenance-chips',
   '.pbk-memory-ab-card',
 ].forEach((selector) => {
   assert(pbkCss.includes(selector), `PBK CSS should include ${selector}.`);
@@ -111,6 +120,28 @@ assert(
 [
   'Ava intelligence memory',
   'What Ava is',
+  'Memory control center',
+  'Search, correct, and trust what Ava remembers',
+  'Memory hygiene',
+  'Possible conflicts',
+  'DNC and compliance',
+  'Sensitive data',
+  'Stop using',
+  'Open source record',
+  'Ava can use this',
+  'buildMemoryUsageProof',
+  'curateMemoryEventRequest',
+  'sourceHref',
+  'fetchMemoryEventsRequest({ limit: 100, offset: 0 })',
+  'Correct memory',
+  'Forget',
+  'Hide',
+  'Source needs review',
+  'pinnedMemoryIds',
+  'hiddenMemoryIds',
+  'handleMemoryCuration',
+  'filteredEvents',
+  'CompactPager',
   'Ask Ava',
   'Teach Ava',
   'data-label="Used"',

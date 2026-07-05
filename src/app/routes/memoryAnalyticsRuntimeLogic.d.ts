@@ -34,6 +34,16 @@ export type MemoryEventMetric = {
   agentName: string;
   createdAt: string;
   source: string;
+  sourceHref: string;
+  skillName: string;
+  leadId: string;
+  callId: string;
+  chatId: string;
+  campaignId: string;
+  confidence: number;
+  success: boolean | null;
+  score: number | null;
+  metadata: Record<string, unknown>;
 };
 
 export type MemoryAnalyticsViewModel = {

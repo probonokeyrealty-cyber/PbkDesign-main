@@ -213,8 +213,16 @@ assert(
 assert(
   bridge.includes('buildAvaStrategistAttemptSummary') &&
     bridge.includes('fallbackChain') &&
+    bridge.includes('GEMINI_LIVE_MODEL') &&
     bridge.includes('deepseek-v4-flash'),
-  'Ava strategist activity must expose the attempted DeepSeek live model/results before contract fallback.'
+  'Ava strategist activity must expose the attempted Gemini/DeepSeek live model results before contract fallback.'
+);
+assert(
+  bridge.includes('runGeminiGenerateContent') &&
+    bridge.includes("provider: 'gemini'") &&
+    bridge.includes('responseMimeType') &&
+    bridge.includes('buildGeminiStrategistResponseSchema'),
+  'Ava live strategist must support Gemini Flash structured decisions before fallback.'
 );
 assert(
   bridge.includes('isRetryableDeepSeekResult') &&
@@ -252,8 +260,23 @@ assert.doesNotMatch(
 const renderBlueprint = readFileSync('render.yaml', 'utf8');
 assert.match(
   renderBlueprint,
+  /key:\s*PBK_LIVE_LLM_PROVIDER[\s\S]*?value:\s*gemini/,
+  'Render must explicitly select Gemini Flash as Ava live-call strategist provider.'
+);
+assert.match(
+  renderBlueprint,
+  /key:\s*PBK_GEMINI_LIVE_MODEL[\s\S]*?value:\s*gemini-1\.5-flash/,
+  'Render must explicitly pin Ava live calls to Gemini Flash instead of relying on fallback resolution.'
+);
+assert.match(
+  renderBlueprint,
+  /key:\s*PBK_GEMINI_LIVE_ATTEMPT_TIMEOUT_MS[\s\S]*?value:\s*1200/,
+  'Render must keep each live Gemini attempt short enough for phone latency.'
+);
+assert.match(
+  renderBlueprint,
   /key:\s*PBK_DEEPSEEK_LIVE_MODEL[\s\S]*?value:\s*deepseek-v4-flash/,
-  'Render must explicitly pin Ava live calls to DeepSeek V4 Flash instead of relying on fallback resolution.'
+  'Render must explicitly keep DeepSeek V4 Flash available as Ava live-call fallback.'
 );
 assert.match(
   renderBlueprint,

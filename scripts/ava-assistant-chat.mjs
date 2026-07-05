@@ -1056,23 +1056,27 @@ export function planAssistantIntent(detected = {}, options = {}) {
       };
     }
     return {
-      action: 'approval_required',
-      answer: `I will prepare that ${channel === 'email' ? 'email' : 'text'} for approval. Nothing sends until the approval path releases it.`,
+      action: 'tool_plan',
+      answer: `I will have Nurture Agent check the timing, channel, and wording first. If it agrees, I will prepare the ${channel === 'email' ? 'email' : 'text'} for approval; nothing sends until the approval path releases it.`,
       suggestions,
       toolPlan: {
-        toolName: channel === 'email' ? 'sendColdEmail' : 'telnyx_sms',
+        toolName: 'consultNurtureAgent',
         params: {
           leadId,
+          userRequest: detected.message,
+          requestedChannel: channel,
+          proposedMessageBody: detected.messageBody,
+          nextToolName: channel === 'email' ? 'sendColdEmail' : 'telnyx_sms',
+          approvalRequiredAfterConsult: true,
           ...(channel === 'email' ? { email: detected.email } : { phone: detected.phone, to: detected.phone }),
           body: detected.messageBody,
           message: detected.messageBody,
           customBody: detected.messageBody,
           subject: channel === 'email' ? 'Follow-up from Probono Key Realty' : undefined,
-          forceApproval: true,
           source: 'ava-assistant-chat',
         },
-        providerWrite: true,
-        approvalRequired: true,
+        providerWrite: false,
+        approvalRequiredAfterConsult: true,
       },
       usedIntent: intent,
     };

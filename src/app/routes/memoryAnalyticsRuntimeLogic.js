@@ -79,26 +79,61 @@ export function buildMemoryAnalyticsViewModel({
     trend && typeof trend === 'object' ? trend.warning : ''
   );
   const events = arrayOr(memoryEventsResponse.events).map((event) => ({
-    id: String(
-      event.id || event.eventId || event.event_id || event.createdAt || event.created_at || ''
-    ).trim(),
-    type: String(
-      event.type || event.eventType || event.event_type || event.category || 'memory_event'
-    ).trim(),
-    title: String(
-      event.title ||
-        event.summary ||
-        event.text ||
-        event.skillName ||
-        event.skill_name ||
-        'Memory event'
-    ).trim(),
-    detail: String(event.detail || event.description || event.reason || event.outcome || '').trim(),
-    agentName: String(event.agentName || event.agent_name || event.agent || '').trim(),
-    createdAt: String(
-      event.createdAt || event.created_at || event.at || event.timestamp || ''
-    ).trim(),
-    source: String(event.source || memoryEventsResponse.source || '').trim(),
+    ...(() => {
+      const metadata = event.metadata && typeof event.metadata === 'object' ? event.metadata : {};
+      const score = numberOr(event.score ?? metadata.score, Number.NaN);
+      return {
+        id: String(
+          event.id || event.eventId || event.event_id || event.createdAt || event.created_at || ''
+        ).trim(),
+        type: String(
+          event.type || event.eventType || event.event_type || event.category || 'memory_event'
+        ).trim(),
+        title: String(
+          event.title ||
+            event.summary ||
+            event.text ||
+            event.skillName ||
+            event.skill_name ||
+            'Memory event'
+        ).trim(),
+        detail: String(
+          event.detail || event.description || event.reason || event.outcome || ''
+        ).trim(),
+        agentName: String(event.agentName || event.agent_name || event.agent || '').trim(),
+        createdAt: String(
+          event.createdAt || event.created_at || event.at || event.timestamp || ''
+        ).trim(),
+        source: String(event.source || metadata.source || memoryEventsResponse.source || '').trim(),
+        sourceHref: String(
+          event.sourceHref ||
+            event.source_href ||
+            event.sourceUrl ||
+            event.source_url ||
+            metadata.sourceHref ||
+            metadata.source_href ||
+            metadata.sourceUrl ||
+            metadata.source_url ||
+            ''
+        ).trim(),
+        skillName: String(event.skillName || event.skill_name || metadata.skillName || '').trim(),
+        leadId: String(event.leadId || event.lead_id || metadata.leadId || '').trim(),
+        callId: String(event.callId || event.call_id || metadata.callId || '').trim(),
+        chatId: String(event.chatId || event.chat_id || metadata.chatId || '').trim(),
+        campaignId: String(
+          event.campaignId || event.campaign_id || metadata.campaignId || ''
+        ).trim(),
+        confidence: normalizeConfidence(event.confidence ?? metadata.confidence ?? score),
+        success:
+          event.success === true || metadata.success === true
+            ? true
+            : event.success === false || metadata.success === false
+              ? false
+              : null,
+        score: Number.isFinite(score) ? score : null,
+        metadata,
+      };
+    })(),
   }));
   return {
     source: outcomesResponse.source || 'runtime',

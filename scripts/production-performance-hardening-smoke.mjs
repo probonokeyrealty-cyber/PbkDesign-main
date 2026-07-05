@@ -250,8 +250,8 @@ for (const renderMarker of [
 }
 assert.match(
   bridgeSource,
-  /strategistAttemptBudgetMs:\s*DEEPSEEK_LIVE_ATTEMPT_TIMEOUT_MS/,
-  'performance status must report the active DeepSeek live attempt timeout constant.'
+  /strategistAttemptBudgetMs:\s*STRATEGIST_PROVIDER\s*===\s*['"]gemini['"]\s*\?\s*GEMINI_LIVE_ATTEMPT_TIMEOUT_MS\s*:\s*DEEPSEEK_LIVE_ATTEMPT_TIMEOUT_MS/,
+  'performance status must report the active live LLM attempt timeout constant.'
 );
 assert.match(
   bridgeSource,

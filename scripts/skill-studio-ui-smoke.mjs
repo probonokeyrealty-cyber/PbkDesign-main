@@ -64,8 +64,18 @@ for (const label of [
   'Price objection',
   'Response',
   'Next question',
+  'Do not use when',
+  'Required facts',
+  'Approval trigger',
   'Preview skill',
   'triggerPolicy',
+  'buildStructuredTriggerPolicy',
+  'doNotUseIntents',
+  'doNotUseObjections',
+  'blockedEmotions',
+  'blockedEmotionalPhases',
+  'requiredFactKeys',
+  'approvalRequiredWhen',
 ]) {
   assert(route.includes(label), `Guided Skill Studio wizard must expose ${label}.`);
 }
@@ -91,12 +101,33 @@ assert(
 );
 assert(
   route.includes('getSkillPerformance') &&
+    route.includes('buildSkillTrainingQueue') &&
+    route.includes("Today's Training Queue") &&
+    route.includes('Review these first') &&
     route.includes('performanceFilter') &&
     route.includes('agentFilter') &&
     route.includes('riskFilter') &&
     route.includes('pbk-skill-performance-dashboard') &&
-    route.includes('pbk-skill-card-metrics'),
-  'Skill Studio repository must expose performance-aware governance filters and metrics.'
+    route.includes('pbk-skill-card-metrics') &&
+    route.includes('pbk-skill-training-queue'),
+  'Skill Studio repository must expose performance-aware governance filters, metrics, and a training queue.'
+);
+assert(
+    route.includes('buildSkillSimulation') &&
+    route.includes('buildSkillSimulationSeed') &&
+    route.includes('liveCallPatterns') &&
+    route.includes('recentSellerLine') &&
+    route.includes('Skill simulator') &&
+    route.includes('Seller says') &&
+    route.includes('Ava would use') &&
+    route.includes('Risk check') &&
+    route.includes('Agent responsibility') &&
+    route.includes('Outcome proof') &&
+    route.includes('buildSkillOutcomeProof') &&
+    route.includes('Automatic rollback') &&
+    styles.includes('.pbk-skill-simulator') &&
+    styles.includes('.pbk-skill-training-queue'),
+  'Skill Studio must expose a practice simulator, agent responsibility copy, and rollback-aware canary controls.'
 );
 assert(
   route.includes('Paste transcript or detailed notes') &&

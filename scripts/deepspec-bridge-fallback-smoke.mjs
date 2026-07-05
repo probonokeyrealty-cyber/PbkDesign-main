@@ -13,8 +13,8 @@ assertBridgePattern(
   'bridge should import the isolated DeepSpec speculative client'
 );
 assertBridgePattern(
-  /params\.speculative\s*!==\s*false\s*&&\s*isDeepSpecConfigured\(speculativeConfig\)/,
-  'bridge should keep DeepSpec opt-in and per-call disableable'
+  /params\.speculative\s*!==\s*false\s*&&\s*!hasDeepSeekTools\s*&&\s*isDeepSpecConfigured\(speculativeConfig\)/,
+  'bridge should keep DeepSpec opt-in, skip tool-call requests, and stay per-call disableable'
 );
 assertBridgePattern(
   /requestSpeculativeChatCompletion\(requestBody,\s*\{\s*config:\s*speculativeConfig,\s*\}\)/,

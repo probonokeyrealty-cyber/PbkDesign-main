@@ -410,7 +410,7 @@ function hydrateWindowsUserEnv(keys = []) {
   }
 }
 
-hydrateWindowsUserEnv(['PBK_DOCUSIGN_INTEGRATION_KEY', 'PBK_DOCUSIGN_USER_ID', 'PBK_DOCUSIGN_ACCOUNT_ID', 'PBK_DOCUSIGN_AUTH_HOST', 'PBK_DOCUSIGN_REST_BASE', 'PBK_DOCUSIGN_PRIVATE_KEY', 'PBK_DOCUSIGN_CONNECT_HMAC_SECRET', 'PBK_SUPABASE_URL', 'PBK_SUPABASE_SERVICE_ROLE_KEY', 'PBK_N8N_API_BASE_URL', 'PBK_N8N_API_KEY', 'PBK_N8N_APPROVAL_WEBHOOK', 'PBK_N8N_LEAD_WEBHOOK', 'PBK_SUPERMEMORY_API_KEY', 'PBK_SUPERMEMORY_API_URL', 'PBK_SUPERMEMORY_SYNC', 'PBK_DEEPGRAM_API_KEY', 'DEEPGRAM_API_KEY', 'PBK_HUMAN_AGENT_PHONE', 'PBK_UNDERWRITING_AGENT_PHONE', 'PBK_INBOUND_QUALIFY_BEFORE_TRANSFER', 'PBK_INBOUND_AFTER_HOURS_VOICEMAIL_ENABLED', 'PBK_INBOUND_AFTER_HOURS_START', 'PBK_INBOUND_AFTER_HOURS_END', 'PBK_INBOUND_TIMEZONE', 'PBK_TELNYX_AI_ASSISTANT_ID', 'TELNYX_AI_ASSISTANT_ID', 'PBK_AVA_MEMORY_DAILY_MINUTES', 'PBK_BROWSER_VOICE_ENABLED', 'PBK_ELEVENLABS_TTS_ENABLED', 'PBK_ELEVENLABS_API_KEY', 'ELEVENLABS_API_KEY', 'PBK_PROTECTED_OPS_PASSCODE', 'PBK_TEAM_PASSCODE', 'PBK_OPERATOR_PHONE', 'PBK_TOTP_REQUIRED', 'PBK_TOTP_SECRET', 'PBK_VOICE_PREWARM_ENABLED', 'PBK_REDIS_URL', 'REDIS_URL', 'PBK_REDIS_ENABLED', 'PBK_REDIS_NAMESPACE', 'PBK_SLACK_UPDATES_CHANNEL_ID', 'PBK_SLACK_UPDATES_CHANNEL', 'SLACK_UPDATES_CHANNEL_ID', 'PBK_SLACK_WEBHOOK_URL', 'SLACK_WEBHOOK_URL', 'PBK_SLACK_BOT_TOKEN', 'SLACK_BOT_TOKEN', 'PBK_SLACK_APPROVAL_CHANNEL_ID', 'PBK_SLACK_APPROVAL_CHANNEL', 'SLACK_APPROVAL_CHANNEL_ID', 'PBK_SLACK_SIGNING_SECRET', 'SLACK_SIGNING_SECRET', 'PBK_OPENAI_API_KEY', 'OPENAI_API_KEY', 'PBK_OPENAI_WEB_SEARCH_ENABLED', 'PBK_OPENAI_WEB_SEARCH_MODEL', 'PBK_OPENAI_BASE_URL', 'PBK_DEEPSEEK_API_KEY', 'DEEPSEEK_API_KEY', 'PBK_DEEPSEEK_BASE_URL', 'PBK_DEEPSEEK_MODEL', 'PBK_DEEPSEEK_FALLBACK_MODEL', 'PBK_DEEPSEEK_LIVE_MODEL', 'PBK_DEEPSEEK_LIVE_RETRY_MODELS', 'PBK_DEEPSEEK_LIVE_ATTEMPT_TIMEOUT_MS', 'PBK_DEEPSEEK_LIVE_RETRY_ATTEMPTS', 'PBK_DEEPSEEK_LIVE_RETRY_DELAY_MS', 'PBK_DEEPSPEC_ENABLED', 'PBK_DEEPSPEC_ENDPOINT', 'PBK_DEEPSPEC_API_KEY', 'PBK_DEEPSPEC_PROVIDER', 'PBK_DEEPSPEC_TARGET_MODEL', 'PBK_DEEPSPEC_DRAFT_MODEL', 'PBK_DEEPSPEC_NUM_SPECULATIVE_TOKENS', 'PBK_DEEPSPEC_TIMEOUT_MS', 'PBK_DEEPSPEC_FALLBACK_ENABLED', 'PBK_STRATEGIST_PROVIDER', 'PBK_TELNYX_LIVE_REPLY_STRATEGIST_MODE', 'PBK_TELNYX_LIVE_REPLY_STRATEGIST_TIMEOUT_MS', 'PBK_TAVILY_API_KEY', 'TAVILY_API_KEY', 'PBK_EMOTION_WORLD_MODEL_ENDPOINT', 'PBK_EMOTION_WORLD_MODEL_API_KEY', 'PBK_EMOTION_WORLD_MODEL_TIMEOUT_MS', 'PBK_HERMES_ENABLED', 'PBK_HERMES_GATEWAY_URL', 'PBK_HERMES_API_KEY', 'PBK_HERMES_WEBHOOK_URL', 'PBK_HERMES_SLACK_CHANNEL', 'PBK_HERMES_SUGGEST_ONLY', 'PBK_HERMES_TIMEOUT_MS']);
+hydrateWindowsUserEnv(['PBK_DOCUSIGN_INTEGRATION_KEY', 'PBK_DOCUSIGN_USER_ID', 'PBK_DOCUSIGN_ACCOUNT_ID', 'PBK_DOCUSIGN_AUTH_HOST', 'PBK_DOCUSIGN_REST_BASE', 'PBK_DOCUSIGN_PRIVATE_KEY', 'PBK_DOCUSIGN_CONNECT_HMAC_SECRET', 'PBK_SUPABASE_URL', 'PBK_SUPABASE_SERVICE_ROLE_KEY', 'PBK_N8N_API_BASE_URL', 'PBK_N8N_API_KEY', 'PBK_N8N_APPROVAL_WEBHOOK', 'PBK_N8N_LEAD_WEBHOOK', 'PBK_SUPERMEMORY_API_KEY', 'PBK_SUPERMEMORY_API_URL', 'PBK_SUPERMEMORY_SYNC', 'PBK_DEEPGRAM_API_KEY', 'DEEPGRAM_API_KEY', 'PBK_HUMAN_AGENT_PHONE', 'PBK_UNDERWRITING_AGENT_PHONE', 'PBK_INBOUND_QUALIFY_BEFORE_TRANSFER', 'PBK_INBOUND_AFTER_HOURS_VOICEMAIL_ENABLED', 'PBK_INBOUND_AFTER_HOURS_START', 'PBK_INBOUND_AFTER_HOURS_END', 'PBK_INBOUND_TIMEZONE', 'PBK_TELNYX_AI_ASSISTANT_ID', 'TELNYX_AI_ASSISTANT_ID', 'PBK_AVA_MEMORY_DAILY_MINUTES', 'PBK_BROWSER_VOICE_ENABLED', 'PBK_ELEVENLABS_TTS_ENABLED', 'PBK_ELEVENLABS_API_KEY', 'ELEVENLABS_API_KEY', 'PBK_PROTECTED_OPS_PASSCODE', 'PBK_TEAM_PASSCODE', 'PBK_OPERATOR_PHONE', 'PBK_TOTP_REQUIRED', 'PBK_TOTP_SECRET', 'PBK_VOICE_PREWARM_ENABLED', 'PBK_REDIS_URL', 'REDIS_URL', 'PBK_REDIS_ENABLED', 'PBK_REDIS_NAMESPACE', 'PBK_SLACK_UPDATES_CHANNEL_ID', 'PBK_SLACK_UPDATES_CHANNEL', 'SLACK_UPDATES_CHANNEL_ID', 'PBK_SLACK_WEBHOOK_URL', 'SLACK_WEBHOOK_URL', 'PBK_SLACK_BOT_TOKEN', 'SLACK_BOT_TOKEN', 'PBK_SLACK_APPROVAL_CHANNEL_ID', 'PBK_SLACK_APPROVAL_CHANNEL', 'SLACK_APPROVAL_CHANNEL_ID', 'PBK_SLACK_SIGNING_SECRET', 'SLACK_SIGNING_SECRET', 'PBK_OPENAI_API_KEY', 'OPENAI_API_KEY', 'PBK_OPENAI_WEB_SEARCH_ENABLED', 'PBK_OPENAI_WEB_SEARCH_MODEL', 'PBK_OPENAI_BASE_URL', 'PBK_GEMINI_API_KEY', 'GEMINI_API_KEY', 'GOOGLE_API_KEY', 'PBK_GEMINI_BASE_URL', 'PBK_GEMINI_MODEL', 'PBK_GEMINI_LIVE_MODEL', 'PBK_GEMINI_LIVE_ATTEMPT_TIMEOUT_MS', 'PBK_GEMINI_LIVE_RETRY_ATTEMPTS', 'PBK_GEMINI_LIVE_RETRY_DELAY_MS', 'PBK_LIVE_LLM_PROVIDER', 'PBK_DEEPSEEK_API_KEY', 'DEEPSEEK_API_KEY', 'PBK_DEEPSEEK_BASE_URL', 'PBK_DEEPSEEK_MODEL', 'PBK_DEEPSEEK_FALLBACK_MODEL', 'PBK_DEEPSEEK_LIVE_MODEL', 'PBK_DEEPSEEK_LIVE_RETRY_MODELS', 'PBK_DEEPSEEK_LIVE_ATTEMPT_TIMEOUT_MS', 'PBK_DEEPSEEK_LIVE_RETRY_ATTEMPTS', 'PBK_DEEPSEEK_LIVE_RETRY_DELAY_MS', 'PBK_DEEPSPEC_ENABLED', 'PBK_DEEPSPEC_ENDPOINT', 'PBK_DEEPSPEC_API_KEY', 'PBK_DEEPSPEC_PROVIDER', 'PBK_DEEPSPEC_TARGET_MODEL', 'PBK_DEEPSPEC_DRAFT_MODEL', 'PBK_DEEPSPEC_NUM_SPECULATIVE_TOKENS', 'PBK_DEEPSPEC_TIMEOUT_MS', 'PBK_DEEPSPEC_FALLBACK_ENABLED', 'PBK_STRATEGIST_PROVIDER', 'PBK_TELNYX_LIVE_REPLY_STRATEGIST_MODE', 'PBK_TELNYX_LIVE_REPLY_STRATEGIST_TIMEOUT_MS', 'PBK_TAVILY_API_KEY', 'TAVILY_API_KEY', 'PBK_EMOTION_WORLD_MODEL_ENDPOINT', 'PBK_EMOTION_WORLD_MODEL_API_KEY', 'PBK_EMOTION_WORLD_MODEL_TIMEOUT_MS', 'PBK_HERMES_ENABLED', 'PBK_HERMES_GATEWAY_URL', 'PBK_HERMES_API_KEY', 'PBK_HERMES_WEBHOOK_URL', 'PBK_HERMES_SLACK_CHANNEL', 'PBK_HERMES_SUGGEST_ONLY', 'PBK_HERMES_TIMEOUT_MS']);
 
 const APPROVAL_WEBHOOK_URL = String(process.env.PBK_N8N_APPROVAL_WEBHOOK || '').trim();
 const LEAD_WEBHOOK_URL = String(process.env.PBK_N8N_LEAD_WEBHOOK || '').trim();
@@ -598,6 +598,14 @@ const AVA_LIVE_RAG_TIMEOUT_MS = Math.max(40, Math.min(1000, Number(process.env.P
 const AVA_LIVE_RAG_MATCH_COUNT = Math.max(1, Math.min(5, Number(process.env.PBK_AVA_LIVE_RAG_MATCH_COUNT || 3)));
 const TAVILY_API_KEY = String(process.env.PBK_TAVILY_API_KEY || process.env.TAVILY_API_KEY || '').trim();
 const TAVILY_SEARCH_URL = String(process.env.PBK_TAVILY_SEARCH_URL || 'https://api.tavily.com/search').trim();
+const GEMINI_API_KEY = String(process.env.PBK_GEMINI_API_KEY || process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || '').trim();
+const GEMINI_BASE_URL = String(process.env.PBK_GEMINI_BASE_URL || 'https://generativelanguage.googleapis.com/v1beta')
+  .trim()
+  .replace(/\/+$/g, '');
+const GEMINI_LIVE_MODEL = String(process.env.PBK_GEMINI_LIVE_MODEL || process.env.PBK_GEMINI_MODEL || 'gemini-1.5-flash').trim();
+const GEMINI_LIVE_ATTEMPT_TIMEOUT_MS = Math.max(500, Math.min(2500, Number(process.env.PBK_GEMINI_LIVE_ATTEMPT_TIMEOUT_MS || 1200)));
+const GEMINI_LIVE_RETRY_ATTEMPTS = Math.max(0, Math.min(2, Number(process.env.PBK_GEMINI_LIVE_RETRY_ATTEMPTS || 1)));
+const GEMINI_LIVE_RETRY_DELAY_MS = Math.max(0, Math.min(1000, Number(process.env.PBK_GEMINI_LIVE_RETRY_DELAY_MS || 90)));
 const DEEPSEEK_API_KEY = String(process.env.PBK_DEEPSEEK_API_KEY || process.env.DEEPSEEK_API_KEY || '').trim();
 const DEEPSEEK_BASE_URL = String(process.env.PBK_DEEPSEEK_BASE_URL || 'https://api.deepseek.com')
   .trim()
@@ -627,9 +635,14 @@ const DEEPSEEK_LIVE_RETRY_MODELS = String(process.env.PBK_DEEPSEEK_LIVE_RETRY_MO
 const DEEPSEEK_LIVE_ATTEMPT_TIMEOUT_MS = Math.max(600, Math.min(2500, Number(process.env.PBK_DEEPSEEK_LIVE_ATTEMPT_TIMEOUT_MS || 1400)));
 const DEEPSEEK_LIVE_RETRY_ATTEMPTS = Math.max(0, Math.min(2, Number(process.env.PBK_DEEPSEEK_LIVE_RETRY_ATTEMPTS || 1)));
 const DEEPSEEK_LIVE_RETRY_DELAY_MS = Math.max(0, Math.min(1000, Number(process.env.PBK_DEEPSEEK_LIVE_RETRY_DELAY_MS || 120)));
-const STRATEGIST_PROVIDER = String(process.env.PBK_STRATEGIST_PROVIDER || 'deepseek')
+const LIVE_LLM_PROVIDER = String(process.env.PBK_LIVE_LLM_PROVIDER || process.env.PBK_STRATEGIST_PROVIDER || 'gemini')
   .trim()
   .toLowerCase();
+const STRATEGIST_PROVIDER = ['gemini', 'google'].includes(LIVE_LLM_PROVIDER)
+  ? 'gemini'
+  : LIVE_LLM_PROVIDER === 'deepseek'
+    ? 'deepseek'
+    : LIVE_LLM_PROVIDER || 'gemini';
 const DEEPSEEK_TIMEOUT_MS = Math.max(5000, Math.min(90000, Number(process.env.PBK_DEEPSEEK_TIMEOUT_MS || 30000)));
 const EMOTION_WORLD_MODEL_ENDPOINT = String(process.env.PBK_EMOTION_WORLD_MODEL_ENDPOINT || process.env.EMOTION_WORLD_MODEL_ENDPOINT || '')
   .trim()
@@ -1517,10 +1530,19 @@ function buildSharedTelnyxSessionState(session = {}, status = 'active') {
       session.avaLiveCockpit ||
       buildAvaLiveCockpitSnapshot({
         contract: session.avaLiveTurnContract || {},
+        callId: session.callId || session.id || '',
+        leadId: session.leadId || '',
+        transcript: lastTranscript.transcript || '',
         replyMode: session.lastAvaReplyMode || '',
         latencyMs: session.replyLatencySamples?.[0]?.latencyMs ?? null,
+        transcriptLatencyMs: session.replyLatencySamples?.[0]?.latencyMs ?? null,
         turnContractEnforced: Boolean(session.lastTurnContractEnforced),
         replyPreview: lastAvaSpoken || lastAvaPreview,
+        memory: {
+          hotRecallCount: Array.isArray(session.liveKnowledge) ? session.liveKnowledge.length : 0,
+          durableRecallCount: Number(session.avaLiveCallStartCache?.memorySummary?.count || 0),
+        },
+        skillOutcomeDraft: session.lastAvaLiveSkillOutcomeDraft || null,
       }),
     avaLiveTurnContract: session.avaLiveTurnContract || null,
     avaLiveTurnHistory: Array.isArray(session.avaLiveTurnHistory) ? session.avaLiveTurnHistory.slice(0, 8) : [],
@@ -1627,10 +1649,19 @@ function buildTelnyxMediaSessionDiagnostics(session = {}, contextCall = null, op
       session.avaLiveCockpit ||
       buildAvaLiveCockpitSnapshot({
         contract: session.avaLiveTurnContract || {},
+        callId: session.callId || session.id || '',
+        leadId: session.leadId || contextCall?.leadId || '',
+        transcript: lastTranscript.transcript || '',
         replyMode: session.lastAvaReplyMode || '',
         latencyMs: session.replyLatencySamples?.[0]?.latencyMs ?? null,
+        transcriptLatencyMs: session.replyLatencySamples?.[0]?.latencyMs ?? null,
         turnContractEnforced: Boolean(session.lastTurnContractEnforced),
         replyPreview: lastAvaSpoken || lastAvaPreview,
+        memory: {
+          hotRecallCount: Array.isArray(session.liveKnowledge) ? session.liveKnowledge.length : 0,
+          durableRecallCount: Number(session.avaLiveCallStartCache?.memorySummary?.count || 0),
+        },
+        skillOutcomeDraft: session.lastAvaLiveSkillOutcomeDraft || null,
       }),
     avaLiveTurnContract: session.avaLiveTurnContract || null,
     avaLiveTurnHistory: Array.isArray(session.avaLiveTurnHistory) ? session.avaLiveTurnHistory.slice(0, 8) : [],
@@ -2485,6 +2516,7 @@ function getRuntimeMeta() {
       tavily: getTavilyProviderMeta(),
       webSearch: getWebSearchProviderStatus(),
       openAiWebSearch: getOpenAiWebSearchProviderMeta(),
+      gemini: getGeminiProviderMeta(),
       deepSeek: getDeepSeekProviderMeta(),
       hermes: getHermesProviderMeta(),
       instantly: getInstantlyProviderMeta(),
@@ -2609,10 +2641,15 @@ async function buildCommandCenterHealthSnapshot(runtimeMeta = getRuntimeMeta()) 
       label: 'OpenAI web search',
       note: 'Responses API web search for Rex/Ava current-data answers.',
     }),
+    gemini: summarizeProviderComponent(providers.gemini, {
+      label: 'Gemini Flash live-call strategist',
+      optional: true,
+      note: 'Primary fast structured-decision lane for Ava live calls; PBK controller still gates actions.',
+    }),
     deepSeek: summarizeProviderComponent(providers.deepSeek, {
       label: 'DeepSeek strategist',
       optional: true,
-      note: 'Ava/Rex coaching lane for low-confidence objections and negotiation scripts.',
+      note: 'Fallback coaching lane for low-confidence objections and negotiation scripts.',
     }),
     hermes: summarizeProviderComponent(providers.hermes, {
       label: 'Hermes suggest-only analyst',
@@ -10924,12 +10961,12 @@ function getAvaLiveCallSpeedReadiness() {
     turnContractTargetMs: Number(process.env.PBK_AVA_TURN_CONTRACT_TARGET_MS || 100),
     strategist: {
       provider: STRATEGIST_PROVIDER,
-      model: DEEPSEEK_LIVE_MODEL,
-      retryModels: DEEPSEEK_LIVE_RETRY_MODELS,
-      attemptTimeoutMs: DEEPSEEK_LIVE_ATTEMPT_TIMEOUT_MS,
+      model: STRATEGIST_PROVIDER === 'gemini' ? GEMINI_LIVE_MODEL : DEEPSEEK_LIVE_MODEL,
+      retryModels: STRATEGIST_PROVIDER === 'gemini' ? [GEMINI_LIVE_MODEL, ...DEEPSEEK_LIVE_RETRY_MODELS] : DEEPSEEK_LIVE_RETRY_MODELS,
+      attemptTimeoutMs: STRATEGIST_PROVIDER === 'gemini' ? GEMINI_LIVE_ATTEMPT_TIMEOUT_MS : DEEPSEEK_LIVE_ATTEMPT_TIMEOUT_MS,
       totalTimeoutMs: TELNYX_LIVE_REPLY_STRATEGIST_TIMEOUT_MS,
-      retryAttempts: DEEPSEEK_LIVE_RETRY_ATTEMPTS,
-      retryDelayMs: DEEPSEEK_LIVE_RETRY_DELAY_MS,
+      retryAttempts: STRATEGIST_PROVIDER === 'gemini' ? GEMINI_LIVE_RETRY_ATTEMPTS : DEEPSEEK_LIVE_RETRY_ATTEMPTS,
+      retryDelayMs: STRATEGIST_PROVIDER === 'gemini' ? GEMINI_LIVE_RETRY_DELAY_MS : DEEPSEEK_LIVE_RETRY_DELAY_MS,
       phraseOnly: true,
     },
     prewarm: {
@@ -10942,6 +10979,7 @@ function getAvaLiveCallSpeedReadiness() {
       ...(duplicateSuppression ? [] : ['transcript_deduplication_missing']),
       ...(staleTurnCancellation ? [] : ['stale_turn_cancellation_missing']),
       ...(cacheAtCallStart ? [] : ['call_start_cache_missing']),
+      ...(STRATEGIST_PROVIDER === 'gemini' && GEMINI_LIVE_ATTEMPT_TIMEOUT_MS > 1800 ? ['gemini_attempt_budget_too_high'] : []),
       ...(DEEPSEEK_LIVE_ATTEMPT_TIMEOUT_MS > 2200 ? ['deepseek_attempt_budget_too_high'] : []),
       ...(TELNYX_LIVE_REPLY_STRATEGIST_TIMEOUT_MS > 4500 ? ['strategist_total_budget_too_high'] : []),
     ],
@@ -10958,7 +10996,7 @@ async function buildProductionPerformanceStatusSnapshot() {
   const liveSpeedReadiness = getAvaLiveCallSpeedReadiness();
   const liveCallSpeed = buildLiveCallSpeedBudget({
     contractTargetMs: Number(process.env.PBK_AVA_TURN_CONTRACT_TARGET_MS || 100),
-    strategistAttemptBudgetMs: DEEPSEEK_LIVE_ATTEMPT_TIMEOUT_MS,
+    strategistAttemptBudgetMs: STRATEGIST_PROVIDER === 'gemini' ? GEMINI_LIVE_ATTEMPT_TIMEOUT_MS : DEEPSEEK_LIVE_ATTEMPT_TIMEOUT_MS,
     strategistTotalBudgetMs: TELNYX_LIVE_REPLY_STRATEGIST_TIMEOUT_MS,
     duplicateSuppression: liveSpeedReadiness.duplicateSuppression,
     cacheAtCallStart: liveSpeedReadiness.cacheAtCallStart,
@@ -29470,12 +29508,12 @@ function buildAvaContractStrategistResponse(contract = {}) {
       `Intent=${contract.intent || 'unknown'}.`,
       `Phase=${contract.phase || 'unknown'}.`,
       skill.id ? `Active governed skill=${skill.name || skill.id}.` : '',
-      'DeepSeek may phrase only; it must not choose a different next move.',
+      'The live LLM may phrase only; it must not choose a different next move.',
     ]
       .filter(Boolean)
       .join(' '),
     risk: 'Do not substitute a generic coaching prompt when the live turn contract has a seller-ready next question.',
-    rule: `When DeepSeek is unavailable or misaligned, Ava must say the contract reply for ${category} and ask one question.`,
+    rule: `When the live LLM is unavailable or misaligned, Ava must say the contract reply for ${category} and ask one question.`,
     nextQuestion: contract.nextBestQuestion || contractReply,
     returnToBusiness: contractReply,
     approvalNeeded: Boolean(contract.handoffNeeded),
@@ -29485,19 +29523,20 @@ function buildAvaContractStrategistResponse(contract = {}) {
 
 function buildAvaStrategistAttemptSummary(fallbackChain = []) {
   const attempts = Array.isArray(fallbackChain) ? fallbackChain : [];
-  const deepSeekAttempts = attempts
-    .filter((attempt) => String(attempt.provider || '').toLowerCase() === 'deepseek')
+  const llmAttempts = attempts
+    .filter((attempt) => ['gemini', 'deepseek'].includes(String(attempt.provider || '').toLowerCase()))
     .map((attempt) => {
-      const model = String(attempt.model || 'deepseek').trim();
+      const provider = String(attempt.provider || 'llm').trim();
+      const model = String(attempt.model || provider).trim();
       const result = attempt.ok ? 'ok' : String(attempt.result || attempt.error || 'failed').trim();
       const retryCount = Array.isArray(attempt.attempts)
         ? attempt.attempts.filter((item) => item.retry === 'provider_retry').length
         : 0;
-      return `${model}:${result}${retryCount ? `+${retryCount} retry` : ''}`.slice(0, 80);
+      return `${provider}:${model}:${result}${retryCount ? `+${retryCount} retry` : ''}`.slice(0, 96);
     })
     .filter(Boolean);
-  if (!deepSeekAttempts.length) return '';
-  return `DeepSeek ${deepSeekAttempts.slice(0, 3).join(' -> ')}`;
+  if (!llmAttempts.length) return '';
+  return `Live LLM ${llmAttempts.slice(0, 3).join(' -> ')}`;
 }
 
 function buildAvaStrategistActivityText({ request = {}, strategist = {}, params = {} } = {}) {
@@ -29703,6 +29742,231 @@ function sanitizeDeepSeekToolCalls(toolCalls = []) {
     })
     .filter((call) => call.function.name || call.function.argumentsPresent)
     .slice(0, DEEPSEEK_MAX_TOOL_DEFINITIONS);
+}
+
+function normalizeGeminiMessagesForGenerateContent(messages = []) {
+  const normalized = Array.isArray(messages)
+    ? messages
+        .map((message) => ({
+          role: String(message?.role || 'user').trim().toLowerCase() || 'user',
+          content: String(message?.content || '').trim(),
+        }))
+        .filter((message) => message.content)
+    : [];
+  const systemText = normalized
+    .filter((message) => message.role === 'system')
+    .map((message) => message.content)
+    .join('\n\n')
+    .trim();
+  const contents = normalized
+    .filter((message) => message.role !== 'system')
+    .map((message) => ({
+      role: message.role === 'assistant' || message.role === 'model' ? 'model' : 'user',
+      parts: [{ text: message.content }],
+    }));
+  return {
+    systemText,
+    contents: contents.length ? contents : [{ role: 'user', parts: [{ text: 'Return a valid Ava strategist JSON decision.' }] }],
+  };
+}
+
+function buildGeminiStrategistResponseSchema() {
+  return {
+    type: 'OBJECT',
+    properties: {
+      immediateScript: { type: 'STRING' },
+      strategy: { type: 'STRING' },
+      risk: { type: 'STRING' },
+      rule: { type: 'STRING' },
+      nextQuestion: { type: 'STRING' },
+      returnToBusiness: { type: 'STRING' },
+      approvalNeeded: { type: 'BOOLEAN' },
+      confidence: { type: 'NUMBER' },
+      seller_intent: { type: 'STRING' },
+      objection: { type: 'STRING' },
+      risk_score: { type: 'NUMBER' },
+      crm_field_found: { type: 'STRING' },
+      handoff_needed: { type: 'BOOLEAN' },
+    },
+    required: ['immediateScript', 'strategy', 'risk', 'rule', 'nextQuestion', 'returnToBusiness', 'approvalNeeded', 'confidence'],
+  };
+}
+
+function normalizeGeminiLiveModelName(model = '') {
+  const requested = String(model || '').trim();
+  return requested && !/^deepseek(?:-|\/|$)/i.test(requested) ? requested : GEMINI_LIVE_MODEL;
+}
+
+function isRetryableGeminiResult(result = {}) {
+  if (result?.ok) return false;
+  const code = String(result.result || '').trim();
+  const status = Number(result.status || 0);
+  return code === 'provider_timeout' || code === 'provider_empty_response' || (code === 'provider_error' && (status === 408 || status === 409 || status === 425 || status === 429 || status >= 500));
+}
+
+async function runGeminiGenerateContent(messages = [], params = {}) {
+  const meta = getGeminiProviderMeta();
+  if (!meta.ready) {
+    return {
+      ok: false,
+      result: 'provider_missing',
+      provider: meta,
+      error: `Gemini Flash is not configured. ${meta.missing.join(', ') || 'Add PBK_GEMINI_API_KEY, GEMINI_API_KEY, or GOOGLE_API_KEY.'}`,
+    };
+  }
+  const model = normalizeGeminiLiveModelName(params.model || meta.liveModel || GEMINI_LIVE_MODEL);
+  const retryAttempts = Math.max(0, Math.min(3, toNumber(params.retryAttempts ?? params.retries, GEMINI_LIVE_RETRY_ATTEMPTS)));
+  const retryDelayMs = Math.max(0, Math.min(2000, toNumber(params.retryDelayMs ?? params.retry_delay_ms, GEMINI_LIVE_RETRY_DELAY_MS)));
+  const attemptTimeoutMs = Math.max(500, Math.min(3000, toNumber(params.attemptTimeoutMs ?? params.attempt_timeout_ms ?? params.timeoutMs, GEMINI_LIVE_ATTEMPT_TIMEOUT_MS)));
+  const responseFormat = String(params.responseFormat || params.response_format || 'json').trim().toLowerCase();
+  const { systemText, contents } = normalizeGeminiMessagesForGenerateContent(messages);
+  const attempts = [];
+  const buildProviderMeta = (extra = {}) => ({
+    ...meta,
+    model,
+    attemptTimeoutMs,
+    jsonMode: responseFormat !== 'text' && responseFormat !== 'none',
+    structuredDecisionContract: responseFormat !== 'text' && responseFormat !== 'none',
+    ...extra,
+  });
+
+  const runAttempt = async (attemptIndex = 0) => {
+    let controller = null;
+    let timeout = null;
+    const jsonMode = responseFormat !== 'text' && responseFormat !== 'none';
+    const requestBody = {
+      ...(systemText ? { systemInstruction: { parts: [{ text: systemText }] } } : {}),
+      contents,
+      generationConfig: {
+        temperature: params.temperature ?? 0.2,
+        maxOutputTokens: Math.max(128, Math.min(4096, toNumber(params.maxTokens || params.max_tokens, 1200))),
+        ...(jsonMode
+          ? {
+              responseMimeType: 'application/json',
+              responseSchema: buildGeminiStrategistResponseSchema(),
+            }
+          : {}),
+      },
+    };
+    try {
+      controller = new AbortController();
+      timeout = setTimeout(() => controller.abort(), attemptTimeoutMs);
+      const response = await executeProviderCircuitGuard(
+        'gemini',
+        () =>
+          fetch(`${GEMINI_BASE_URL}/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(GEMINI_API_KEY)}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            signal: controller.signal,
+            body: JSON.stringify(requestBody),
+          }),
+        async () =>
+          new Response(JSON.stringify({ error: { message: 'Gemini circuit is open.' } }), {
+            status: 503,
+            headers: { 'Content-Type': 'application/json' },
+          })
+      );
+      const payload = await response.json().catch(() => null);
+      if (!response.ok) {
+        return {
+          ok: false,
+          result: 'provider_error',
+          status: response.status,
+          provider: buildProviderMeta(),
+          error: payload?.error?.message || payload?.message || `Gemini returned ${response.status}`,
+          payload,
+        };
+      }
+      const parts = payload?.candidates?.[0]?.content?.parts || [];
+      const answer = parts
+        .map((part) => String(part?.text || '').trim())
+        .filter(Boolean)
+        .join('\n')
+        .trim();
+      const usage = payload?.usageMetadata || {};
+      await recordTokenUsage(
+        'gemini',
+        model,
+        {
+          promptTokens: usage.promptTokenCount,
+          completionTokens: usage.candidatesTokenCount,
+          totalTokens: usage.totalTokenCount,
+          raw: usage,
+        },
+        {
+          source: params.source || 'gemini-strategist',
+          callId: params.callId || params.call_id || '',
+          leadId: params.leadId || params.lead_id || '',
+          responseId: payload?.responseId || payload?.id || '',
+        }
+      );
+      if (!answer) {
+        return {
+          ok: false,
+          result: 'provider_empty_response',
+          provider: buildProviderMeta(),
+          error: 'Gemini returned an empty response.',
+          usage,
+          responseId: payload?.responseId || payload?.id || '',
+          payload,
+        };
+      }
+      return {
+        ok: true,
+        result: 'live',
+        answer,
+        provider: buildProviderMeta({ finishReason: payload?.candidates?.[0]?.finishReason || '' }),
+        usage,
+        responseId: payload?.responseId || payload?.id || '',
+      };
+    } catch (error) {
+      return {
+        ok: false,
+        result: error?.name === 'AbortError' ? 'provider_timeout' : 'provider_error',
+        provider: buildProviderMeta(),
+        error: error?.name === 'AbortError' ? 'Gemini request timed out.' : error?.message || 'Gemini request failed.',
+      };
+    } finally {
+      if (timeout) clearTimeout(timeout);
+    }
+  };
+
+  let lastResult = null;
+  for (let attemptIndex = 0; attemptIndex <= retryAttempts; attemptIndex++) {
+    const result = await runAttempt(attemptIndex);
+    attempts.push({
+      attempt: attemptIndex + 1,
+      model,
+      ok: Boolean(result.ok),
+      result: result.result || '',
+      status: result.status || null,
+      error: result.error || '',
+      retry: attemptIndex > 0 ? 'provider_retry' : '',
+      attemptTimeoutMs,
+    });
+    if (result.ok || !isRetryableGeminiResult(result) || attemptIndex >= retryAttempts) {
+      return {
+        ...result,
+        attempts,
+        retryAttempts,
+        attemptTimeoutMs,
+      };
+    }
+    lastResult = result;
+    await sleep(retryDelayMs * (attemptIndex + 1));
+  }
+
+  return {
+    ...(lastResult || {
+      ok: false,
+      result: 'provider_error',
+      provider: buildProviderMeta(),
+      error: 'Gemini retry loop ended without a result.',
+    }),
+    attempts,
+    retryAttempts,
+    attemptTimeoutMs,
+  };
 }
 
 function ensureDeepSeekJsonModeMessages(messages = []) {
@@ -30572,7 +30836,7 @@ function buildAvaPhrasingEnginePrompt(resolvedContext = {}, transcript = '') {
       }; clarifier=${sanitizeAvaSpokenOutput(goalInference.goalClarifyingQuestion || '').slice(0, 220)}.`
     : '';
   return [
-    'DeepSeek role: Ava phrasing engine only.',
+    'Live LLM role: Ava phrasing engine only.',
     'The contextResolver already chose the strategy from PBK scripts, governed skills, objections, BANT, probes, emotional memory, and call state.',
     'Do not change the strategy. Only phrase it.',
     `strategyLocked: ${move.strategyLocked === false ? 'false' : 'true'}`,
@@ -30694,7 +30958,73 @@ async function askStrategistRecord(params = {}) {
   const requestedResponseFormat = String(params.responseFormat || params.response_format || 'json')
     .trim()
     .toLowerCase();
-  if (STRATEGIST_PROVIDER === 'deepseek') {
+  if (STRATEGIST_PROVIDER === 'gemini') {
+    const geminiModel = normalizeGeminiLiveModelName(params.model || GEMINI_LIVE_MODEL);
+    recordCallTrace('gemini_call_started', {
+      callId: params.callId || params.metadata?.callId || '',
+      streamId: params.streamId || params.metadata?.streamId || '',
+      leadId: params.leadId || context.leadId || '',
+      leadName: params.leadName || context.leadName || '',
+      status: 'started',
+      result: 'gemini_live_strategist_started',
+      stage: 'askStrategistRecord',
+    });
+    const geminiStartedAt = Date.now();
+    const primary = await runGeminiGenerateContent(built.messages, {
+      source: 'ava-live-call-gemini-strategist',
+      callId: params.callId || params.metadata?.callId || '',
+      leadId: params.leadId || context.leadId || '',
+      model: geminiModel,
+      responseFormat: requestedResponseFormat === 'text' || requestedResponseFormat === 'none' ? 'text' : 'json',
+      temperature: params.temperature ?? 0.2,
+      maxTokens: params.maxTokens || 1200,
+      timeoutMs: params.timeoutMs || params.timeout_ms,
+      attemptTimeoutMs: params.attemptTimeoutMs || params.attempt_timeout_ms || GEMINI_LIVE_ATTEMPT_TIMEOUT_MS,
+      retryAttempts: params.retryAttempts ?? params.retry_attempts ?? GEMINI_LIVE_RETRY_ATTEMPTS,
+      retryDelayMs: params.retryDelayMs ?? params.retry_delay_ms ?? GEMINI_LIVE_RETRY_DELAY_MS,
+    });
+    recordCallTrace('gemini_call_completed', {
+      callId: params.callId || params.metadata?.callId || '',
+      streamId: params.streamId || params.metadata?.streamId || '',
+      leadId: params.leadId || context.leadId || '',
+      leadName: params.leadName || context.leadName || '',
+      status: primary.ok ? 'ok' : 'failed',
+      result: primary.result || '',
+      latencyMs: Date.now() - geminiStartedAt,
+      error: primary.error || '',
+      stage: 'askStrategistRecord',
+    });
+    recordLatencyMetric('llm_gemini_latency_ms', Date.now() - geminiStartedAt, {
+      model: geminiModel,
+      ok: Boolean(primary.ok),
+      stage: 'askStrategistRecord',
+    });
+    if (!primary.ok)
+      incrementObservabilityCounter('llm_gemini_errors', 1, {
+        model: geminiModel,
+        result: primary.result || '',
+      });
+    fallbackChain.push({
+      provider: 'gemini',
+      model: geminiModel,
+      result: primary.result,
+      ok: primary.ok,
+      error: primary.error || '',
+      attempts: primary.attempts || [],
+    });
+    if (primary.ok) {
+      const parsed = extractJsonObjectFromText(primary.answer);
+      strategist = {
+        ok: true,
+        result: 'live_gemini',
+        provider: primary.provider,
+        response: normalizeStrategistResponse(parsed || {}, primary.answer),
+        rawAnswer: primary.answer,
+        usage: primary.usage || null,
+      };
+    }
+  }
+  if (!strategist && (STRATEGIST_PROVIDER === 'deepseek' || STRATEGIST_PROVIDER === 'gemini')) {
     recordCallTrace('deepseek_call_started', {
       callId: params.callId || params.metadata?.callId || '',
       streamId: params.streamId || params.metadata?.streamId || '',
@@ -39598,6 +39928,28 @@ function getOpenAiWebSearchProviderMeta() {
   };
 }
 
+function getGeminiProviderMeta() {
+  const missing = [];
+  if (!GEMINI_API_KEY) missing.push('PBK_GEMINI_API_KEY or GEMINI_API_KEY or GOOGLE_API_KEY');
+  return {
+    configured: Boolean(GEMINI_API_KEY),
+    ready: Boolean(GEMINI_API_KEY && GEMINI_BASE_URL && GEMINI_LIVE_MODEL),
+    provider: 'Gemini',
+    mode: 'generate-content-structured-json',
+    model: GEMINI_LIVE_MODEL,
+    liveModel: GEMINI_LIVE_MODEL,
+    baseUrl: GEMINI_BASE_URL,
+    jsonMode: true,
+    structuredDecisionContract: true,
+    liveAttemptTimeoutMs: GEMINI_LIVE_ATTEMPT_TIMEOUT_MS,
+    liveRetryAttempts: GEMINI_LIVE_RETRY_ATTEMPTS,
+    liveRetryDelayMs: GEMINI_LIVE_RETRY_DELAY_MS,
+    strategistProvider: STRATEGIST_PROVIDER,
+    fallbackProvider: 'deepseek_then_contract',
+    missing,
+  };
+}
+
 function getEmbeddingProviderMeta() {
   const localProvider = EMBEDDING_PROVIDER_CONFIG.provider === 'local_hf';
   return {
@@ -41490,7 +41842,7 @@ const APPROVAL_REPLAYABLE_PROVIDER_TOOLS = new Set(['sendColdEmail', 'telnyx_cal
 
 const SELLER_BOUND_PROVIDER_TOOLS = new Set(['sendColdEmail', 'telnyx_call', 'telnyx_sms', 'send_verification_sms', 'sendDocuSign', 'sendContract', 'prepare_and_send_contract', 'sendSellerDocs', 'skipTrace', 'startNurtureSequence', 'scheduleAppointment', 'updateCRM']);
 
-const DIRECT_ENV_UPDATE_ALLOWLIST = new Set(['PBK_TAVILY_API_KEY', 'TAVILY_API_KEY', 'PBK_DEEPSEEK_API_KEY', 'DEEPSEEK_API_KEY', 'PBK_DEEPSEEK_BASE_URL', 'PBK_DEEPSEEK_MODEL', 'PBK_DEEPSEEK_FALLBACK_MODEL', 'PBK_DEEPSEEK_LIVE_MODEL', 'PBK_DEEPSEEK_LIVE_RETRY_MODELS', 'PBK_DEEPSEEK_LIVE_ATTEMPT_TIMEOUT_MS', 'PBK_DEEPSEEK_LIVE_RETRY_ATTEMPTS', 'PBK_DEEPSEEK_LIVE_RETRY_DELAY_MS', 'PBK_TELNYX_LIVE_REPLY_STRATEGIST_MODE', 'PBK_TELNYX_LIVE_REPLY_STRATEGIST_TIMEOUT_MS', 'PBK_STRATEGIST_PROVIDER', 'PBK_HERMES_ENABLED', 'PBK_HERMES_GATEWAY_URL', 'PBK_HERMES_API_KEY', 'PBK_HERMES_WEBHOOK_URL', 'PBK_HERMES_SLACK_CHANNEL', 'PBK_HERMES_SUGGEST_ONLY', 'PBK_TOTP_SECRET', 'PBK_TOTP_REQUIRED', 'PBK_TOTP_WINDOW']);
+const DIRECT_ENV_UPDATE_ALLOWLIST = new Set(['PBK_TAVILY_API_KEY', 'TAVILY_API_KEY', 'PBK_GEMINI_API_KEY', 'GEMINI_API_KEY', 'GOOGLE_API_KEY', 'PBK_GEMINI_BASE_URL', 'PBK_GEMINI_MODEL', 'PBK_GEMINI_LIVE_MODEL', 'PBK_GEMINI_LIVE_ATTEMPT_TIMEOUT_MS', 'PBK_GEMINI_LIVE_RETRY_ATTEMPTS', 'PBK_GEMINI_LIVE_RETRY_DELAY_MS', 'PBK_LIVE_LLM_PROVIDER', 'PBK_DEEPSEEK_API_KEY', 'DEEPSEEK_API_KEY', 'PBK_DEEPSEEK_BASE_URL', 'PBK_DEEPSEEK_MODEL', 'PBK_DEEPSEEK_FALLBACK_MODEL', 'PBK_DEEPSEEK_LIVE_MODEL', 'PBK_DEEPSEEK_LIVE_RETRY_MODELS', 'PBK_DEEPSEEK_LIVE_ATTEMPT_TIMEOUT_MS', 'PBK_DEEPSEEK_LIVE_RETRY_ATTEMPTS', 'PBK_DEEPSEEK_LIVE_RETRY_DELAY_MS', 'PBK_TELNYX_LIVE_REPLY_STRATEGIST_MODE', 'PBK_TELNYX_LIVE_REPLY_STRATEGIST_TIMEOUT_MS', 'PBK_STRATEGIST_PROVIDER', 'PBK_HERMES_ENABLED', 'PBK_HERMES_GATEWAY_URL', 'PBK_HERMES_API_KEY', 'PBK_HERMES_WEBHOOK_URL', 'PBK_HERMES_SLACK_CHANNEL', 'PBK_HERMES_SUGGEST_ONLY', 'PBK_TOTP_SECRET', 'PBK_TOTP_REQUIRED', 'PBK_TOTP_WINDOW']);
 
 function getEnvUpdateKeys(params = {}) {
   if (Array.isArray(params.envVars)) {
@@ -43107,16 +43459,17 @@ async function buildSkillTrendAnalytics({ skillId = '', skillName = '', days = 3
   };
 }
 
-async function buildMemoryEventsTimeline({ limit = 40 } = {}) {
+async function buildMemoryEventsTimeline({ limit = 40, offset = 0 } = {}) {
   const safeLimit = Math.max(1, Math.min(200, toNumber(limit, 40)));
+  const safeOffset = Math.max(0, toNumber(offset, 0));
   const [curationResult, usageResult] = await Promise.all([
     queryPgRows(
       `SELECT id, summary, delete_ids, dry_run, source, created_at
        FROM public.pbk_memory_curation_events
        WHERE COALESCE(tenant_id, 'pbk') = 'pbk'
        ORDER BY created_at DESC
-       LIMIT $1`,
-      [safeLimit]
+       LIMIT $1 OFFSET $2`,
+      [safeLimit, safeOffset]
     ),
     queryPgRows(
       `SELECT id, skill_id, skill_name, agent_id, agent_name, outcome, success,
@@ -43124,8 +43477,8 @@ async function buildMemoryEventsTimeline({ limit = 40 } = {}) {
        FROM public.skill_usage
        WHERE COALESCE(workspace_id, 'pbk') = 'pbk'
        ORDER BY used_at DESC, created_at DESC
-       LIMIT $1`,
-      [safeLimit]
+       LIMIT $1 OFFSET $2`,
+      [safeLimit, safeOffset]
     ),
   ]);
 
@@ -43138,6 +43491,7 @@ async function buildMemoryEventsTimeline({ limit = 40 } = {}) {
         ? row.summary
         : JSON.stringify(row.summary || {}).slice(0, 360),
     source: row.source || 'pbk_memory_curation_events',
+    sourceHref: `/memory?event=${encodeURIComponent(String(row.id || ''))}`,
     score: null,
     createdAt: row.created_at,
     metadata: {
@@ -43152,6 +43506,7 @@ async function buildMemoryEventsTimeline({ limit = 40 } = {}) {
     title: row.skill_name || 'Skill usage recorded',
     summary: row.outcome || (row.success === true ? 'successful skill outcome' : row.success === false ? 'unsuccessful skill outcome' : 'skill outcome recorded'),
     source: 'skill_usage',
+    sourceHref: row.skill_id ? `/skills?skillId=${encodeURIComponent(String(row.skill_id))}` : '',
     agentId: row.agent_id || '',
     agentName: row.agent_name || '',
     skillId: row.skill_id || '',
@@ -43164,13 +43519,18 @@ async function buildMemoryEventsTimeline({ limit = 40 } = {}) {
 
   const fallbackEvents = (state.activity || [])
     .filter((item) => /memory|skill|learning|ava|rex/i.test([item.category, item.type, item.text, item.summary].filter(Boolean).join(' ')))
-    .slice(0, safeLimit)
+    .slice(safeOffset, safeOffset + safeLimit)
     .map((item) => ({
       id: item.id || `activity-${hashString(JSON.stringify(item))}`,
       type: item.category || item.type || 'activity',
       title: item.summary || item.text || 'Runtime learning event',
       summary: item.text || item.summary || '',
-      source: 'bridge-state:activity',
+    source: 'bridge-state:activity',
+    sourceHref: item.leadId
+      ? `/leads?leadId=${encodeURIComponent(String(item.leadId))}`
+      : item.callId
+        ? `/calls?callId=${encodeURIComponent(String(item.callId))}`
+        : '',
       agentName: item.actor || '',
       createdAt: item.createdAt || item.at || isoNow(),
       metadata: item,
@@ -43188,9 +43548,76 @@ async function buildMemoryEventsTimeline({ limit = 40 } = {}) {
     result: postgresOk ? 'live' : 'local_view_only',
     source: postgresOk ? 'postgres:pbk_memory_curation_events+skill_usage' : 'bridge-state:activity',
     generatedAt: isoNow(),
+    limit: safeLimit,
+    offset: safeOffset,
+    hasMore: events.length >= safeLimit,
+    nextOffset: safeOffset + events.length,
     count: events.length,
     events,
     warning: postgresOk ? '' : `Postgres memory event tables unavailable (${curationResult.error || usageResult.error || 'postgres_unavailable'}); showing bridge-state learning activity.`,
+  };
+}
+
+async function curateMemoryEvent({ eventId = '', action = '', reason = '', correction = '', actor = '' } = {}) {
+  const normalizedEventId = String(eventId || '').trim();
+  const normalizedAction = String(action || '').trim().toLowerCase();
+  if (!normalizedEventId) {
+    return { ok: false, result: 'memory_event_id_required', error: 'eventId is required.' };
+  }
+  if (!['pin', 'unpin', 'correct', 'forget', 'hide'].includes(normalizedAction)) {
+    return {
+      ok: false,
+      result: 'memory_curation_action_invalid',
+      error: 'action must be pin, unpin, correct, forget, or hide.',
+    };
+  }
+  const createdAt = isoNow();
+  const summary = {
+    action: normalizedAction,
+    memoryEventId: normalizedEventId,
+    reason: String(reason || '').slice(0, 1000),
+    correction: String(correction || '').slice(0, 2000),
+    actor: String(actor || 'PBK Operator').slice(0, 160),
+    policy: 'non_destructive_audit_first',
+  };
+  const record = {
+    id: `memory-curation-${normalizedAction}-${hashString(`${normalizedEventId}:${createdAt}`)}`,
+    tenantId: 'pbk',
+    summary,
+    deleteIds: normalizedAction === 'forget' ? [normalizedEventId] : [],
+    dryRun: normalizedAction !== 'forget',
+    source: 'memory-control-center',
+    createdAt,
+  };
+  const postgresOk = await persistMemoryCurationEventToPg(record);
+  const activity = {
+    id: record.id,
+    type: 'memory_curation',
+    category: 'memory',
+    summary:
+      normalizedAction === 'correct'
+        ? 'Memory correction queued'
+        : normalizedAction === 'forget'
+          ? 'Memory forget request recorded'
+          : normalizedAction === 'pin'
+            ? 'Memory pinned for operator review'
+            : normalizedAction === 'unpin'
+              ? 'Memory unpinned'
+              : 'Memory hidden from operator view',
+    text: `${summary.actor} requested ${normalizedAction} for memory ${normalizedEventId}.`,
+    source: record.source,
+    createdAt,
+    metadata: summary,
+  };
+  state.activity = [activity, ...(Array.isArray(state.activity) ? state.activity : [])].slice(0, 500);
+  persistStateSoon();
+  return {
+    ok: true,
+    result: postgresOk ? 'memory_curation_recorded' : 'memory_curation_recorded_in_bridge_state',
+    eventId: normalizedEventId,
+    action: normalizedAction,
+    postgresOk,
+    curationEvent: activity,
   };
 }
 
@@ -62225,12 +62652,14 @@ async function handleInternalAvaAssistantChatRequest(request) {
     answer = controlGate.answer;
     toolResult = controlGate.toolResult;
   } else if (assistantPlan.action === 'tool_plan' && assistantPlan.toolPlan?.toolName === 'invokeRegisteredAgent') {
+    const agentSmokeMode = body.dryRun === true || body.smoke === true || body.agentSmoke === true;
     toolResult = await invokeAgentFromRegistry({
       ...(assistantPlan.toolPlan.params || {}),
       leadId: activeAssistantLeadId || assistantContextSession.leadId || assistantPlan.toolPlan.params?.leadId || '',
       sessionId,
       source: 'ava-assistant-chat',
       actor: 'Ava Assistant',
+      ...(agentSmokeMode ? { dryRun: true, smoke: true } : {}),
     });
     const agentName = toolResult?.agent?.name || assistantIntent.agentName || assistantPlan.toolPlan.params?.agentId || 'the assigned agent';
     const workOrderId = toolResult?.workOrder?.id || '';
@@ -67092,14 +67521,14 @@ async function buildTelnyxLiveAvaReplyInsight({ session = {}, transcript = '', c
       phrasingEnginePrompt,
       attemptedActions: ['captured-live-telnyx-speech', `call:${session.callId || 'unknown'}`, `intent:${pipeline?.intent?.intent || 'unknown'}`, activeTurnContract?.ok ? `turn_contract:${activeTurnContract.intent}:${activeTurnContract.nextBestQuestionCategory}` : 'turn_contract:none', `reaction:${conversation?.reaction?.trigger || 'none'}`, `objection:${conversation?.objectionType || 'unknown'}`, `path:${architecture.pathDecision.selectedPath || 'unknown'}:${architecture.pathDecision.pathLocked ? 'locked' : 'probing'}`, `war_manual:${architecture.warManual?.path?.key || 'unknown'}:${architecture.warManual?.objection?.tag || 'none'}`, `active_listening:${activeListening.callFlow?.nextStepId || 'listen.mirror_label'}:${activeListening.responseRequired !== false ? 'response_required' : 'no_response_required'}`, `next_bant:${architecture.bant.missing[0] || 'complete'}`, `context_resolver:${resolvedCallContext?.exactNextMove?.type || 'fallback'}:${resolvedCallContext?.ok ? 'ok' : 'fallback'}`],
       confidence: 0.82,
-      model: DEEPSEEK_LIVE_MODEL,
+      model: STRATEGIST_PROVIDER === 'gemini' ? GEMINI_LIVE_MODEL : DEEPSEEK_LIVE_MODEL,
       responseFormat: 'text',
       temperature: 0.35,
       maxTokens: 220,
       timeoutMs: getTelnyxLiveReplyStrategistTimeoutMs(),
-      attemptTimeoutMs: DEEPSEEK_LIVE_ATTEMPT_TIMEOUT_MS,
-      retryAttempts: DEEPSEEK_LIVE_RETRY_ATTEMPTS,
-      retryDelayMs: DEEPSEEK_LIVE_RETRY_DELAY_MS,
+      attemptTimeoutMs: STRATEGIST_PROVIDER === 'gemini' ? GEMINI_LIVE_ATTEMPT_TIMEOUT_MS : DEEPSEEK_LIVE_ATTEMPT_TIMEOUT_MS,
+      retryAttempts: STRATEGIST_PROVIDER === 'gemini' ? GEMINI_LIVE_RETRY_ATTEMPTS : DEEPSEEK_LIVE_RETRY_ATTEMPTS,
+      retryDelayMs: STRATEGIST_PROVIDER === 'gemini' ? GEMINI_LIVE_RETRY_DELAY_MS : DEEPSEEK_LIVE_RETRY_DELAY_MS,
       storeRule: false,
       status: 'suggested',
       metadata: {
@@ -68400,13 +68829,6 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
     clearPendingAvaSellerTurnFingerprint(session, pendingSellerTurnFingerprint);
     const activeTurnContract = reply.turnContract || session.avaLiveTurnContract || null;
     session.lastTurnContractEnforced = Boolean(reply.turnContractEnforced);
-    session.avaLiveCockpit = buildAvaLiveCockpitSnapshot({
-      contract: activeTurnContract || {},
-      replyMode: reply.replyMode || 'live',
-      latencyMs: null,
-      turnContractEnforced: Boolean(reply.turnContractEnforced),
-      replyPreview: spoken,
-    });
     session.lastAvaLiveSkillOutcomeDraft = buildAvaLiveSkillOutcomeDraft({
       contract: activeTurnContract || {},
       callId: session.callId || '',
@@ -68414,6 +68836,22 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
       transcript: item.transcript || transcriptForReply,
       reply: spoken,
       replyMode: reply.replyMode || 'live',
+    });
+    session.avaLiveCockpit = buildAvaLiveCockpitSnapshot({
+      contract: activeTurnContract || {},
+      callId: session.callId || session.id || '',
+      leadId: session.leadId || contextCall?.leadId || '',
+      transcript: item.transcript || transcriptForReply,
+      replyMode: reply.replyMode || 'live',
+      latencyMs: null,
+      transcriptLatencyMs: null,
+      turnContractEnforced: Boolean(reply.turnContractEnforced),
+      replyPreview: spoken,
+      memory: {
+        hotRecallCount: Array.isArray(session.liveKnowledge) ? session.liveKnowledge.length : 0,
+        durableRecallCount: Number(session.avaLiveCallStartCache?.memorySummary?.count || 0),
+      },
+      skillOutcomeDraft: session.lastAvaLiveSkillOutcomeDraft,
     });
     const outcomeMergedPBKIntelligenceContext = mergePBKIntelligenceContextOutcome(
       session.pbkIntelligenceContext || reply.pbkIntelligenceContext || {},
@@ -68475,10 +68913,19 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
     session.replyLatencySamples = session.replyLatencySamples.slice(0, 12);
     session.avaLiveCockpit = buildAvaLiveCockpitSnapshot({
       contract: activeTurnContract || {},
+      callId: session.callId || session.id || '',
+      leadId: session.leadId || contextCall?.leadId || '',
+      transcript: item.transcript || transcriptForReply,
       replyMode: reply.replyMode || 'live',
       latencyMs: speechFinalToReplyStartMs,
+      transcriptLatencyMs: speechFinalToReplyStartMs,
       turnContractEnforced: Boolean(reply.turnContractEnforced),
       replyPreview: spoken,
+      memory: {
+        hotRecallCount: Array.isArray(session.liveKnowledge) ? session.liveKnowledge.length : 0,
+        durableRecallCount: Number(session.avaLiveCallStartCache?.memorySummary?.count || 0),
+      },
+      skillOutcomeDraft: session.lastAvaLiveSkillOutcomeDraft,
     });
     const speakResult = await sendAvaPhoneReplyAudio(session, spoken);
     const turnCompletionMs = Math.max(0, Date.now() - speechFinalAt);
@@ -71650,7 +72097,19 @@ const server = createServer(async (request, response) => {
     if (request.method === 'GET' && matchesPath(pathname, ['/api/memory/events', '/api/v1/memory/events'])) {
       json(response, 200, await buildMemoryEventsTimeline({
         limit: url.searchParams.get('limit') || 40,
+        offset: url.searchParams.get('offset') || 0,
       }));
+      return;
+    }
+
+    const memoryCurateMatch = pathname.match(/^\/api(?:\/v1)?\/memory\/events\/([^/]+)\/curate$/);
+    if (request.method === 'POST' && memoryCurateMatch) {
+      const body = await readBody(request);
+      const result = await curateMemoryEvent({
+        ...body,
+        eventId: decodeURIComponent(memoryCurateMatch[1] || ''),
+      });
+      json(response, result.ok ? 200 : 400, result);
       return;
     }
 

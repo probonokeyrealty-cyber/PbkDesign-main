@@ -62,6 +62,7 @@ export interface LiveCallState {
   /** 0-100; <40 cold, 40-70 neutral, >70 warm. Streamed from OpenClaw. */
   sentiment: number | null;
   transcript: TranscriptLine[];
+  avaLiveCockpit?: Record<string, unknown> | null;
 }
 
 // ---- Empty state --------------------------------------------------------
@@ -79,6 +80,7 @@ const EMPTY_STATE: LiveCallState = {
   startedAt: null,
   sentiment: null,
   transcript: [],
+  avaLiveCockpit: null,
 };
 
 // ---- Utilities ----------------------------------------------------------
@@ -91,6 +93,54 @@ function fmtElapsed(startedAt: string | null): string {
   const m = Math.floor(total / 60);
   const s = total % 60;
   return `${m}:${s.toString().padStart(2, '0')}`;
+}
+
+function record(value: unknown) {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
+function text(value: unknown, fallback = '') {
+  return String(value ?? fallback).trim();
+}
+
+function number(value: unknown) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function readAvaLiveCockpit(value: unknown) {
+  const cockpit = record(value);
+  const timeline = Array.isArray(cockpit.missionTimeline)
+    ? cockpit.missionTimeline
+        .map((entry, index) => {
+          const step = record(entry);
+          return {
+            id: text(step.id, `mission-${index}`),
+            label: text(step.label, `Step ${index + 1}`),
+            status: text(step.status, 'waiting').replace(/_/g, ' '),
+            detail: text(step.detail),
+          };
+        })
+        .filter((step) => step.label || step.detail)
+    : [];
+  if (
+    !timeline.length &&
+    !text(cockpit.nextBestQuestion) &&
+    !Object.keys(record(cockpit.leadCommitProof)).length
+  ) {
+    return null;
+  }
+  return {
+    phase: text(cockpit.phase, 'tracking').replace(/_/g, ' '),
+    nextBestQuestion: text(cockpit.nextBestQuestion),
+    latencyMs: number(cockpit.latencyMs),
+    timeline,
+    leadCommitProof: record(cockpit.leadCommitProof),
+    memoryProof: record(cockpit.memoryProof),
+    skillOutcomeProof: record(cockpit.skillOutcomeProof),
+  };
 }
 
 function sentimentTone(score: number | null) {
@@ -223,6 +273,7 @@ export function LiveCallWidget({
   const status = useMemo(() => statusTone(live.status), [live.status]);
   const sent = useMemo(() => sentimentTone(live.sentiment), [live.sentiment]);
   const elapsed = fmtElapsed(live.startedAt);
+  const cockpit = useMemo(() => readAvaLiveCockpit(live.avaLiveCockpit), [live.avaLiveCockpit]);
   const transcriptMatchCount = useMemo(() => {
     const needle = transcriptQuery.trim().toLowerCase();
     if (!needle) return 0;
@@ -309,6 +360,70 @@ export function LiveCallWidget({
           </div>
         </div>
       </div>
+
+      {cockpit && (
+        <div className="border-b border-emerald-400/20 bg-emerald-500/5 px-4 py-3">
+          <div className="flex items-center justify-between gap-3 text-[10px] uppercase tracking-[0.14em]">
+            <span className="text-emerald-300">Ava mission</span>
+            <span className="text-slate-500">
+              {cockpit.phase}
+              {cockpit.latencyMs == null ? '' : ` - ${cockpit.latencyMs}ms`}
+            </span>
+          </div>
+          <div className="mt-2 rounded-md border border-slate-800 bg-slate-950/70 px-2.5 py-2">
+            <div className="text-[10px] uppercase tracking-[0.12em] text-sky-300">
+              Next best action
+            </div>
+            <div className="mt-1 text-[12px] leading-relaxed text-slate-100">
+              {cockpit.nextBestQuestion || 'Ava is tracking the seller turn and waiting for proof.'}
+            </div>
+          </div>
+          {cockpit.timeline.length > 0 && (
+            <div className="mt-2 grid gap-1.5">
+              {cockpit.timeline.slice(0, 3).map((step) => (
+                <div
+                  key={step.id || step.label}
+                  className="rounded-md border border-slate-800 bg-slate-950/60 px-2.5 py-1.5"
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-[11px] font-semibold text-slate-100">{step.label}</span>
+                    <span className="text-[9px] uppercase tracking-[0.12em] text-emerald-300">
+                      {step.status}
+                    </span>
+                  </div>
+                  {step.detail && (
+                    <div className="mt-0.5 line-clamp-2 text-[10px] leading-snug text-slate-500">
+                      {step.detail}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+          <div className="mt-2 grid grid-cols-3 gap-1.5 text-[10px]">
+            <div className="rounded-md border border-slate-800 bg-slate-950/60 px-2 py-1.5">
+              <span className="block uppercase tracking-[0.12em] text-slate-500">CRM</span>
+              <b className="mt-0.5 block text-slate-200">
+                {number(cockpit.leadCommitProof.fieldCount) || 0} fields
+              </b>
+            </div>
+            <div className="rounded-md border border-slate-800 bg-slate-950/60 px-2 py-1.5">
+              <span className="block uppercase tracking-[0.12em] text-slate-500">Memory</span>
+              <b className="mt-0.5 block truncate text-slate-200">
+                {text(cockpit.memoryProof.hotMemory, 'Ready').replace(/_/g, ' ')}
+              </b>
+            </div>
+            <div className="rounded-md border border-slate-800 bg-slate-950/60 px-2 py-1.5">
+              <span className="block uppercase tracking-[0.12em] text-slate-500">Skill</span>
+              <b className="mt-0.5 block truncate text-slate-200">
+                {text(cockpit.skillOutcomeProof.skillName) ||
+                  text(cockpit.skillOutcomeProof.skillId) ||
+                  'Waiting'}
+              </b>
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="border-b border-slate-800 px-4 py-2">
         <label className="flex items-center gap-2 rounded-md border border-slate-800 bg-slate-900 px-2.5 py-1.5 text-[11px] text-slate-400 focus-within:border-sky-500/60">

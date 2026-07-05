@@ -913,6 +913,8 @@ export type MemoryEventRecord = {
   title?: string;
   summary?: string;
   source?: string;
+  sourceHref?: string;
+  sourceUrl?: string;
   agentId?: string;
   agentName?: string;
   skillId?: string;
@@ -929,6 +931,10 @@ export type MemoryEventsResponse = {
   source?: string;
   generatedAt?: string;
   count?: number;
+  limit?: number;
+  offset?: number;
+  hasMore?: boolean;
+  nextOffset?: number;
   events?: MemoryEventRecord[];
   warning?: string;
 };
@@ -2345,12 +2351,38 @@ export async function fetchActiveExperimentsRequest() {
   });
 }
 
-export async function fetchMemoryEventsRequest({ limit = 40 } = {}) {
+export async function fetchMemoryEventsRequest({ limit = 40, offset = 0 } = {}) {
   const params = new URLSearchParams({
     limit: String(Math.max(1, Math.min(200, limit))),
+    offset: String(Math.max(0, offset)),
   });
   return bridgeRequest<MemoryEventsResponse>({
     path: `/api/memory/events?${params.toString()}`,
+  });
+}
+
+export async function curateMemoryEventRequest({
+  eventId,
+  action,
+  reason = '',
+  correction = '',
+  actor = 'PBK Operator',
+}: {
+  eventId: string;
+  action: 'pin' | 'unpin' | 'correct' | 'forget' | 'hide';
+  reason?: string;
+  correction?: string;
+  actor?: string;
+}) {
+  return bridgeRequest({
+    method: 'POST',
+    path: `/api/memory/events/${encodeURIComponent(eventId)}/curate`,
+    body: {
+      action,
+      reason,
+      correction,
+      actor,
+    },
   });
 }
 

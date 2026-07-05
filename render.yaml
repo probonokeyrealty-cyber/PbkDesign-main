@@ -180,9 +180,25 @@ services:
       - key: PBK_TAVILY_API_KEY
         sync: false
 
-      # DeepSeek strategist lane for Ava/Rex coaching. This is advisory:
-      # provider writes, offer increases, contracts, calls, and SMS remain
-      # approval-gated by the PBK bridge.
+      # Gemini Flash is the primary live-call strategist lane. It only returns
+      # structured decisions/phrasing; provider writes, offer increases,
+      # contracts, calls, and SMS remain approval-gated by the PBK bridge.
+      - key: PBK_GEMINI_API_KEY
+        sync: false
+      - key: PBK_GEMINI_BASE_URL
+        value: https://generativelanguage.googleapis.com/v1beta
+      - key: PBK_GEMINI_LIVE_MODEL
+        value: gemini-1.5-flash
+      - key: PBK_GEMINI_LIVE_ATTEMPT_TIMEOUT_MS
+        value: 1200
+      - key: PBK_GEMINI_LIVE_RETRY_ATTEMPTS
+        value: 1
+      - key: PBK_GEMINI_LIVE_RETRY_DELAY_MS
+        value: 90
+      - key: PBK_LIVE_LLM_PROVIDER
+        value: gemini
+
+      # DeepSeek remains the fallback strategist lane for Ava/Rex coaching.
       - key: PBK_DEEPSEEK_API_KEY
         sync: false
       - key: PBK_DEEPSEEK_BASE_URL
@@ -223,7 +239,7 @@ services:
       - key: PBK_DEEPSPEC_FALLBACK_ENABLED
         value: "true"
       - key: PBK_STRATEGIST_PROVIDER
-        value: deepseek
+        value: gemini
       - key: PBK_TELNYX_LIVE_REPLY_STRATEGIST_MODE
         value: inline
       - key: PBK_TELNYX_LIVE_REPLY_STRATEGIST_TIMEOUT_MS

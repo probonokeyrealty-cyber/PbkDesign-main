@@ -181,6 +181,12 @@ function mapRuntimeCall(call: Record<string, unknown> | undefined): LiveCallStat
     startedAt: call.startedAt ? String(call.startedAt) : null,
     sentiment,
     transcript,
+    avaLiveCockpit:
+      call.avaLiveCockpit && typeof call.avaLiveCockpit === 'object'
+        ? (call.avaLiveCockpit as Record<string, unknown>)
+        : call.ava_live_cockpit && typeof call.ava_live_cockpit === 'object'
+          ? (call.ava_live_cockpit as Record<string, unknown>)
+          : null,
   };
 }
 

@@ -220,6 +220,7 @@
     "test:deepspec-benchmark-gate": "node ./scripts/deepspec-benchmark-gate-smoke.mjs",
     "test:ava-assistant-chat": "node ./scripts/ava-assistant-chat-smoke.mjs && npm run test:ava-mission-controller",
     "test:ava-call-lead-projection": "node ./scripts/ava-call-lead-projection-smoke.mjs",
+    "test:ava-call-intelligence-control-loop": "node ./scripts/ava-call-intelligence-control-loop-smoke.mjs",
     "test:lead-field-provenance": "node ./scripts/lead-field-provenance-smoke.mjs",
     "test:ava-call-learning-backfill": "node ./scripts/ava-call-learning-backfill-smoke.mjs",
     "test:call-outcome-learning-loop": "node ./scripts/call-outcome-learning-loop-smoke.mjs",
@@ -263,7 +264,8 @@
     "test:postgres-no-fallback": "node ./scripts/postgres-no-fallback-smoke.mjs",
     "test:subagent-release-alignment": "node ./scripts/subagent-release-alignment-smoke.mjs",
     "test:agent-work-order": "node ./scripts/pbk-agent-work-order-smoke.mjs",
-    "test:production-hardening": "node ./scripts/production-hardening-smoke.mjs && npm run test:subagent-release-alignment && npm run test:agent-work-order && npm run test:deepspec-benchmark-gate && npm run test:stale-chunk-recovery && npm run test:manual-actions-routes && npm run test:approval-unison && npm run test:lead-controls-safety && npm run test:operator-list-pagination-ux && npm run test:pdf-output-quality && npm run test:postgres-no-fallback && npm run test:neon-evaluation-harness && npm run test:neon-evaluation-dry-run && npm run test:production-readiness-command-layer && npm run test:silent-error-governance && npm run test:production-gap-labels && npm run test:primary-path-reliability && npm run test:production-maturity-loop && npm run test:production-performance-hardening && npm run test:connection-strength && npm run test:ava-call-lead-projection && npm run test:call-outcome-learning-loop && npm run test:analyzer-lead-sync",
+    "test:ava-agent-delegation-runtime": "node ./scripts/ava-agent-delegation-runtime-smoke.mjs",
+    "test:production-hardening": "node ./scripts/production-hardening-smoke.mjs && npm run test:subagent-release-alignment && npm run test:agent-work-order && npm run test:ava-agent-delegation-runtime && npm run test:ava-gemini-live-router && npm run test:deepspec-benchmark-gate && npm run test:deepspec-bridge-fallback && npm run test:stale-chunk-recovery && npm run test:manual-actions-routes && npm run test:approval-unison && npm run test:lead-controls-safety && npm run test:operator-list-pagination-ux && npm run test:pdf-output-quality && npm run test:postgres-no-fallback && npm run test:neon-evaluation-harness && npm run test:neon-evaluation-dry-run && npm run test:production-readiness-command-layer && npm run test:silent-error-governance && npm run test:production-gap-labels && npm run test:primary-path-reliability && npm run test:production-maturity-loop && npm run test:production-performance-hardening && npm run test:connection-strength && npm run test:ava-call-lead-projection && npm run test:ava-call-intelligence-control-loop && npm run test:call-outcome-learning-loop && npm run test:analyzer-lead-sync",
     "test:supabase-public-lockdown": "node ./scripts/supabase-public-lockdown-smoke.mjs",
     "test:ci-hardening": "node --test ./scripts/ci-hardening-smoke.mjs",
     "test:migration-runner-safety": "node --test ./scripts/migration-runner-safety-smoke.mjs",
@@ -278,7 +280,8 @@
     "format": "prettier --write \"**/*.{js,mjs,ts,tsx,json,md,css}\"",
     "format:check": "prettier --check \"**/*.{js,mjs,ts,tsx,json,md,css}\"",
     "test:unit": "node --experimental-vm-modules ./node_modules/jest/bin/jest.js --config ./jest.config.mjs",
-    "prepare": "node ./.husky/install.mjs"
+    "prepare": "node ./.husky/install.mjs",
+    "test:ava-gemini-live-router": "node ./scripts/ava-gemini-live-router-smoke.mjs"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1056.0",

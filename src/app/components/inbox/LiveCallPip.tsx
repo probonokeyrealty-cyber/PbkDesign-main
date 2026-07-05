@@ -216,6 +216,48 @@ function readOperatorWhisper(call: RuntimeCall) {
   };
 }
 
+function readAvaLiveCockpit(call: RuntimeCall) {
+  const cockpit = record(call.avaLiveCockpit || call.ava_live_cockpit);
+  const timeline = Array.isArray(cockpit.missionTimeline)
+    ? cockpit.missionTimeline
+        .map((entry, index) => {
+          const step = record(entry);
+          return {
+            id: text(step.id, `ava-mission-${index}`),
+            label: text(step.label, `Step ${index + 1}`),
+            status: text(step.status, 'waiting').replace(/_/g, ' '),
+            detail: text(step.detail),
+          };
+        })
+        .filter((step) => step.label || step.detail)
+    : [];
+  const hasUsefulCockpit =
+    timeline.length ||
+    text(cockpit.nextBestQuestion) ||
+    text(cockpit.replyPreview) ||
+    Object.keys(record(cockpit.leadCommitProof)).length ||
+    Object.keys(record(cockpit.memoryProof)).length ||
+    Object.keys(record(cockpit.skillOutcomeProof)).length;
+  if (!hasUsefulCockpit) return null;
+  return {
+    intent: text(cockpit.intent, 'unknown').replace(/_/g, ' '),
+    phase: text(cockpit.phase, 'tracking').replace(/_/g, ' '),
+    nextBestQuestion: text(cockpit.nextBestQuestion),
+    latencyMs: number(cockpit.latencyMs),
+    timeline,
+    leadCommitProof: record(cockpit.leadCommitProof),
+    memoryProof: record(cockpit.memoryProof),
+    skillOutcomeProof: record(cockpit.skillOutcomeProof),
+    humanHandoff: record(cockpit.humanHandoff),
+    observability: record(cockpit.observability),
+  };
+}
+
+function proofStatus(value: unknown, fallback = 'Ready') {
+  const label = text(value, fallback).replace(/_/g, ' ');
+  return label.charAt(0).toUpperCase() + label.slice(1);
+}
+
 export function LiveCallPip({
   calls,
   leadId = '',
@@ -270,6 +312,7 @@ export function LiveCallPip({
   const sellerTalkWidth = talkTotal ? Math.round(((talkTime.seller || 0) / talkTotal) * 100) : 0;
   const sentiment = normalizeSentiment(liveCall);
   const operatorWhisper = readOperatorWhisper(liveCall);
+  const avaLiveCockpit = readAvaLiveCockpit(liveCall);
   const startedAt = text(liveCall.startedAt || liveCall.connectedAt || liveCall.createdAt);
 
   const runCallControl = async (
@@ -489,6 +532,74 @@ export function LiveCallPip({
                     : ''}
                 </p>
               )}
+            </section>
+          )}
+
+          {avaLiveCockpit && (
+            <section className="pbk-live-call-cockpit" aria-label="Ava mission timeline">
+              <div className="pbk-live-call-cockpit-head">
+                <span>
+                  <Sparkles size={13} />
+                  Ava mission timeline
+                </span>
+                <small>
+                  {avaLiveCockpit.phase}
+                  {avaLiveCockpit.latencyMs == null
+                    ? ''
+                    : ` - ${avaLiveCockpit.latencyMs}ms response`}
+                </small>
+              </div>
+              <div className="pbk-live-call-cockpit-next">
+                <b>Next best action</b>
+                <span>
+                  {avaLiveCockpit.nextBestQuestion ||
+                    `Tracking ${avaLiveCockpit.intent || 'seller context'}.`}
+                </span>
+              </div>
+              <ol className="pbk-live-call-mission-timeline">
+                {avaLiveCockpit.timeline.slice(0, 7).map((step) => (
+                  <li key={step.id || step.label}>
+                    <b>{step.label}</b>
+                    <small>{proofStatus(step.status)}</small>
+                    {step.detail && <span>{step.detail}</span>}
+                  </li>
+                ))}
+              </ol>
+              <div className="pbk-live-call-proof-grid">
+                <div>
+                  <b>CRM proof</b>
+                  <span>
+                    {proofStatus(avaLiveCockpit.leadCommitProof.envelope, 'LeadCommitEnvelope')}
+                  </span>
+                  <small>
+                    {number(avaLiveCockpit.leadCommitProof.fieldCount) || 0} protected field
+                    {(number(avaLiveCockpit.leadCommitProof.fieldCount) || 0) === 1 ? '' : 's'}
+                  </small>
+                </div>
+                <div>
+                  <b>Memory proof</b>
+                  <span>{proofStatus(avaLiveCockpit.memoryProof.hotMemory, 'Fast memory')}</span>
+                  <small>
+                    {proofStatus(
+                      avaLiveCockpit.observability.memoryWrite,
+                      'Post-call learning ready'
+                    )}
+                  </small>
+                </div>
+                <div>
+                  <b>Skill proof</b>
+                  <span>
+                    {text(avaLiveCockpit.skillOutcomeProof.skillName) ||
+                      text(avaLiveCockpit.skillOutcomeProof.skillId) ||
+                      'No active skill'}
+                  </span>
+                  <small>
+                    {avaLiveCockpit.skillOutcomeProof.ready
+                      ? 'Outcome can be scored'
+                      : 'Waiting for skill match'}
+                  </small>
+                </div>
+              </div>
             </section>
           )}
 

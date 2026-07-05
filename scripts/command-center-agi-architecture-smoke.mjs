@@ -40,13 +40,21 @@ assertYamlValue(render, 'PBK_DEEPSEEK_MODEL', 'deepseek-v4-pro');
 assertYamlValue(render, 'PBK_DEEPSEEK_FALLBACK_MODEL', 'deepseek-v4-flash');
 assertYamlValue(render, 'PBK_DEEPSEEK_LIVE_MODEL', 'deepseek-v4-flash');
 assertYamlValue(render, 'PBK_DEEPSEEK_LIVE_RETRY_MODELS', 'deepseek-v4-flash,deepseek-v4-pro');
-assertYamlValue(render, 'PBK_STRATEGIST_PROVIDER', 'deepseek');
+assertYamlValue(render, 'PBK_GEMINI_BASE_URL', 'https://generativelanguage.googleapis.com/v1beta');
+assertYamlValue(render, 'PBK_GEMINI_LIVE_MODEL', 'gemini-1.5-flash');
+assertYamlValue(render, 'PBK_LIVE_LLM_PROVIDER', 'gemini');
+assertYamlValue(render, 'PBK_STRATEGIST_PROVIDER', 'gemini');
 
 const deepSeekAttemptBudget = Number(yamlEnvValue(render, 'PBK_DEEPSEEK_LIVE_ATTEMPT_TIMEOUT_MS'));
+const geminiAttemptBudget = Number(yamlEnvValue(render, 'PBK_GEMINI_LIVE_ATTEMPT_TIMEOUT_MS'));
 const strategistBudget = Number(yamlEnvValue(render, 'PBK_TELNYX_LIVE_REPLY_STRATEGIST_TIMEOUT_MS'));
 assert(
   Number.isFinite(deepSeekAttemptBudget) && deepSeekAttemptBudget <= 1800,
-  'DeepSeek live attempt budget must stay below phone-call latency tolerance.',
+  'DeepSeek fallback attempt budget must stay below phone-call latency tolerance.',
+);
+assert(
+  Number.isFinite(geminiAttemptBudget) && geminiAttemptBudget <= 1500,
+  'Gemini Flash live attempt budget must stay below phone-call latency tolerance.',
 );
 assert(
   Number.isFinite(strategistBudget) && strategistBudget <= 3000,
@@ -65,8 +73,33 @@ assertContains(
 );
 assertContains(
   bridge,
+  /const GEMINI_LIVE_MODEL = String\(process\.env\.PBK_GEMINI_LIVE_MODEL \|\| process\.env\.PBK_GEMINI_MODEL \|\| 'gemini-1\.5-flash'\)/,
+  'OpenClaw bridge must default Ava live calls to Gemini Flash.',
+);
+assertContains(
+  bridge,
+  /PBK_LIVE_LLM_PROVIDER/,
+  'OpenClaw bridge must expose an explicit live LLM provider selector.',
+);
+assertContains(
+  bridge,
+  /responseMimeType:\s*'application\/json'/,
+  'Gemini Flash live calls must request structured JSON responses.',
+);
+assertContains(
+  bridge,
+  /buildGeminiStrategistResponseSchema/,
+  'Gemini Flash live calls must use a strict strategist decision schema.',
+);
+assertContains(
+  bridge,
+  /runGeminiGenerateContent/,
+  'OpenClaw bridge must route Ava live calls through the Gemini Flash provider shim.',
+);
+assertContains(
+  bridge,
   /response_format:\s*\{\s*type:\s*'json_object'\s*\}/,
-  'DeepSeek structured responses must request JSON mode when the strategist expects JSON.',
+  'DeepSeek fallback structured responses must request JSON mode when the strategist expects JSON.',
 );
 assertContains(
   bridge,
@@ -166,6 +199,11 @@ console.log(
     {
       ok: true,
       result: 'command_center_agi_architecture_guard_ready',
+      gemini: {
+        provider: yamlEnvValue(render, 'PBK_LIVE_LLM_PROVIDER'),
+        live: yamlEnvValue(render, 'PBK_GEMINI_LIVE_MODEL'),
+        attemptBudgetMs: geminiAttemptBudget,
+      },
       deepSeek: {
         strategist: yamlEnvValue(render, 'PBK_DEEPSEEK_MODEL'),
         live: yamlEnvValue(render, 'PBK_DEEPSEEK_LIVE_MODEL'),

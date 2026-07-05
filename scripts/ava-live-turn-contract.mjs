@@ -660,16 +660,170 @@ export function applyAvaLiveTurnContractToSession(session = {}, contract = {}, o
   return session;
 }
 
+function cockpitKnownFields(knownFacts = {}) {
+  return Object.entries(knownFacts || {})
+    .filter(([, value]) => clean(value))
+    .map(([key]) => key);
+}
+
+function cockpitStatusLabel(status = '') {
+  const value = clean(status);
+  if (!value) return 'waiting';
+  return value;
+}
+
+function cockpitStep(id = '', label = '', status = 'waiting', detail = '') {
+  return {
+    id: clean(id),
+    label: clean(label),
+    status: cockpitStatusLabel(status),
+    detail: clean(detail),
+  };
+}
+
+function buildAvaLiveMissionTimeline({
+  contract = {},
+  transcript = '',
+  memoryProof = {},
+  leadCommitProof = {},
+  skillOutcomeProof = {},
+} = {}) {
+  const facts = contract.knownFacts || {};
+  const fields = cockpitKnownFields(facts);
+  return [
+    cockpitStep(
+      'heard_seller',
+      'Heard seller',
+      transcript ? 'complete' : 'waiting',
+      transcript
+        ? clean(transcript).slice(0, 180)
+        : 'Waiting for the next seller turn from the live transcript.'
+    ),
+    cockpitStep(
+      'checked_memory',
+      'Checked memory',
+      memoryProof.recallCount || memoryProof.hotRecallCount || memoryProof.durableRecallCount
+        ? 'complete'
+        : 'ready',
+      memoryProof.recallCount || memoryProof.hotRecallCount || memoryProof.durableRecallCount
+        ? `Used ${memoryProof.recallCount || memoryProof.hotRecallCount || memoryProof.durableRecallCount} relevant memories.`
+        : 'Fast memory is ready during the call; durable memory updates after the turn.'
+    ),
+    cockpitStep(
+      'recommended_next_action',
+      'Recommended next action',
+      contract.nextBestQuestion ? 'ready' : 'waiting',
+      contract.nextBestQuestion || 'Ava is waiting for enough seller context to recommend the next move.'
+    ),
+    cockpitStep(
+      'crm_commit_proof',
+      'CRM proof',
+      fields.length ? 'ready' : 'waiting',
+      fields.length
+        ? `LeadCommitEnvelope can protect ${fields.length} call-derived field${fields.length === 1 ? '' : 's'}.`
+        : 'No new lead field has enough proof yet.'
+    ),
+    cockpitStep(
+      'skill_outcome_ready',
+      'Skill outcome',
+      skillOutcomeProof.ready ? 'ready' : 'waiting',
+      skillOutcomeProof.ready
+        ? `${skillOutcomeProof.skillName || skillOutcomeProof.skillId || 'Selected skill'} can be scored from this turn.`
+        : 'No live skill is active for this seller turn.'
+    ),
+    cockpitStep(
+      'memory_learning_ready',
+      'Memory learning',
+      'ready',
+      'Post-call learning can store source, confidence, and outcome when the call finishes.'
+    ),
+    cockpitStep(
+      'handoff_guard',
+      'Handoff guard',
+      contract.handoffNeeded ? 'needs_review' : 'clear',
+      contract.handoffNeeded
+        ? 'This turn includes risk or commitment language; keep human review available.'
+        : 'No handoff trigger detected on this turn.'
+    ),
+  ].filter((step) => step.id && step.label);
+}
+
 export function buildAvaLiveCockpitSnapshot({
   contract = {},
+  callId = '',
+  leadId = '',
+  transcript = '',
   replyMode = '',
   latencyMs = null,
+  transcriptLatencyMs = null,
   turnContractEnforced = false,
   replyPreview = '',
+  memory = {},
+  skillOutcomeDraft = null,
+  observability = {},
 } = {}) {
   const activeSkill = contract.activeSkill || {};
+  const memorySource = memory && typeof memory === 'object' ? memory : {};
+  const normalizedLatency =
+    latencyMs === null || latencyMs === undefined || latencyMs === '' ? null : Number(latencyMs);
+  const normalizedTranscriptLatency =
+    transcriptLatencyMs === null || transcriptLatencyMs === undefined || transcriptLatencyMs === ''
+      ? null
+      : Number(transcriptLatencyMs);
+  const knownFields = cockpitKnownFields(contract.knownFacts || {});
+  const normalizedCallId = clean(callId);
+  const normalizedLeadId = clean(leadId);
+  const activeSkillId = clean(activeSkill.id || skillOutcomeDraft?.skillId || '');
+  const activeSkillName = clean(activeSkill.name || skillOutcomeDraft?.skillName || '');
+  const memoryProof = {
+    source: 'ava_live_call_memory',
+    hotMemory: 'redis_or_in_process_live_call_state',
+    durableMemory: 'postgres_vector_after_call',
+    hotRecallCount: Number.isFinite(Number(memorySource.hotRecallCount))
+      ? Number(memorySource.hotRecallCount)
+      : Number.isFinite(Number(memorySource.recallCount))
+        ? Number(memorySource.recallCount)
+        : 0,
+    durableRecallCount: Number.isFinite(Number(memorySource.durableRecallCount))
+      ? Number(memorySource.durableRecallCount)
+      : 0,
+    recallCount: Number.isFinite(Number(memorySource.recallCount))
+      ? Number(memorySource.recallCount)
+      : Math.max(
+          0,
+          Number.isFinite(Number(memorySource.hotRecallCount)) ? Number(memorySource.hotRecallCount) : 0,
+          Number.isFinite(Number(memorySource.durableRecallCount)) ? Number(memorySource.durableRecallCount) : 0
+        ),
+    learningReady: true,
+  };
+  const leadCommitProof = {
+    required: true,
+    envelope: 'LeadCommitEnvelope',
+    source: 'ava-call-transcript-projection',
+    callId: normalizedCallId,
+    leadId: normalizedLeadId,
+    fieldCount: knownFields.length,
+    fields: knownFields,
+    confidencePolicy: 'source_confidence_reason_timestamp_required',
+  };
+  const skillOutcomeProof = {
+    ready: Boolean(skillOutcomeDraft?.ok || activeSkillId),
+    source: 'buildAvaLiveSkillOutcomeDraft',
+    skillId: activeSkillId,
+    skillName: activeSkillName,
+    outcomeLabel: clean(skillOutcomeDraft?.outcomeLabel || 'turn_contract_observed'),
+  };
+  const missionTimeline = buildAvaLiveMissionTimeline({
+    contract,
+    transcript,
+    memoryProof,
+    leadCommitProof,
+    skillOutcomeProof,
+  });
   return {
     ok: Boolean(contract?.ok),
+    callId: normalizedCallId,
+    leadId: normalizedLeadId,
     revision: contract.revision || AVA_LIVE_TURN_CONTRACT_REVISION,
     intent: contract.intent || 'unknown',
     objection: contract.objection || '',
@@ -691,9 +845,34 @@ export function buildAvaLiveCockpitSnapshot({
     forbiddenRepeats: Array.isArray(contract.forbiddenRepeats) ? contract.forbiddenRepeats : [],
     handoffNeeded: Boolean(contract.handoffNeeded),
     replyMode,
-    latencyMs: latencyMs === null || latencyMs === undefined || latencyMs === '' ? null : Number(latencyMs),
+    latencyMs: normalizedLatency,
+    transcriptLatencyMs: normalizedTranscriptLatency,
     turnContractEnforced: Boolean(turnContractEnforced),
     replyPreview: String(replyPreview || '').slice(0, 500),
+    missionTimeline,
+    leadCommitProof,
+    memoryProof,
+    skillOutcomeProof,
+    fastMemory: {
+      hot: 'redis_or_in_process_live_call_state',
+      durable: 'postgres_vector_after_call',
+      retrievalBudgetMs: 150,
+    },
+    humanHandoff: {
+      needed: Boolean(contract.handoffNeeded),
+      reason: contract.handoffNeeded
+        ? clean(contract.intent || contract.objection || 'review_required')
+        : '',
+    },
+    observability: {
+      latencyMs: normalizedLatency,
+      transcriptLatencyMs: normalizedTranscriptLatency,
+      crmWrite: 'guarded_by_lead_commit_envelope',
+      memoryWrite: 'post_call_learning_or_live_memory',
+      skillOutcomeWrite: 'recordSkillOutcome',
+      providerProof: 'telnyx_live_reply_trace',
+      ...(observability && typeof observability === 'object' ? observability : {}),
+    },
     generatedAt: new Date().toISOString(),
   };
 }

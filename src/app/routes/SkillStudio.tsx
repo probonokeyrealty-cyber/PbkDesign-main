@@ -78,6 +78,13 @@ const STATE_STEP: Record<string, number> = {
 
 const SKILL_WIZARD_STEPS = ['Situation', 'Ava reply', 'Next question', 'Preview'] as const;
 
+const AGENT_RESPONSIBILITY_COPY: Record<string, string> = {
+  ava: 'Ava uses this live in seller chat, calls, and next-best-question coaching.',
+  rex: 'Rex uses this for deal strategy, research memory, and revenue reasoning.',
+  'nurture-agent': 'Nurture uses this for follow-up timing, SMS/email drafts, and reply recovery.',
+  max: 'Max uses this before offer recap, contract readiness, and handoff checks.',
+};
+
 const SKILL_TRIGGER_OPTIONS = [
   { value: 'price_objection', label: 'Price objection' },
   { value: 'probate', label: 'Probate or inherited property' },
@@ -91,6 +98,11 @@ const SKILL_TRIGGER_OPTIONS = [
 
 function getSkillTriggerLabel(value: string) {
   return SKILL_TRIGGER_OPTIONS.find((option) => option.value === value)?.label || value;
+}
+
+function getAgentResponsibility(agentId?: string | null) {
+  const key = String(agentId || '').toLowerCase();
+  return AGENT_RESPONSIBILITY_COPY[key] || 'Assign this skill to the agent that should use it.';
 }
 
 function displayDate(value?: string | null) {
@@ -211,6 +223,224 @@ function getSkillPerformance(item: SkillGovernanceItem) {
   };
 }
 
+function extractInstructionSection(instructions: string | undefined, label: string) {
+  const source = String(instructions || '').trim();
+  if (!source) return '';
+  const pattern = new RegExp(`${label}:\\s*([\\s\\S]*?)(?:\\n\\n[A-Z][A-Za-z ]+:|$)`, 'i');
+  return source.match(pattern)?.[1]?.trim() || '';
+}
+
+function buildSkillTrainingQueue(items: SkillGovernanceItem[]) {
+  return items
+    .map((item) => {
+      const metrics = getSkillPerformance(item);
+      const state = item.lifecycleState;
+      let priority = 90;
+      let reason = 'Review proof before the next rollout.';
+      let action = 'Open skill';
+      if (['candidate', 'needs_review', 'ready_for_approval'].includes(state)) {
+        priority = 10;
+        reason = 'Needs human review before Ava can use it.';
+        action = 'Review next';
+      } else if (state === 'approved_inactive') {
+        priority = 20;
+        reason = 'Approved and ready for a small, watched rollout.';
+        action = 'Start small';
+      } else if (['failed', 'rolled_back'].includes(state)) {
+        priority = 25;
+        reason = 'Repair this before Ava sees a similar seller moment.';
+        action = 'Practice first';
+      } else if (metrics.usageCount <= 0) {
+        priority = 35;
+        reason = 'No outcome proof yet. Test it with a seller scenario.';
+        action = 'Simulate';
+      } else if ((metrics.successRate ?? 100) < 55 || (metrics.confidence ?? 100) < 60) {
+        priority = 40;
+        reason = 'Low confidence or weak outcomes. Tighten the response.';
+        action = 'Coach it';
+      } else if ((metrics.confidenceDelta ?? 0) < 0) {
+        priority = 45;
+        reason = 'Confidence is slipping this week. Check what changed.';
+        action = 'Review trend';
+      }
+      return { item, metrics, priority, reason, action };
+    })
+    .sort((left, right) => left.priority - right.priority)
+    .slice(0, 3);
+}
+
+function buildSkillOutcomeProof(item: SkillGovernanceItem) {
+  const metrics = getSkillPerformance(item);
+  if (metrics.usageCount <= 0) {
+    return 'No live outcome proof yet. Practice this in the simulator or start a small rollout after review.';
+  }
+  const success =
+    metrics.successRate === null
+      ? 'success rate not recorded yet'
+      : `${percentLabel(metrics.successRate)} success`;
+  const confidence =
+    metrics.confidence === null
+      ? 'confidence not recorded yet'
+      : `${percentLabel(metrics.confidence)} confidence`;
+  const delta = signedPercentLabel(metrics.confidenceDelta);
+  const normalizedSuccess =
+    metrics.successRate === null
+      ? null
+      : metrics.successRate <= 1
+        ? metrics.successRate * 100
+        : metrics.successRate;
+  const coaching =
+    normalizedSuccess !== null && normalizedSuccess < 60
+      ? 'Needs coaching before a wider rollout.'
+      : 'Keep watching seller outcomes before widening rollout.';
+  return `Used ${metrics.usageCount} time${metrics.usageCount === 1 ? '' : 's'}; ${success}; ${confidence}; ${delta}. ${coaching}`;
+}
+
+function buildSkillSimulation(item: SkillGovernanceItem, sellerLine: string) {
+  const triggerPolicy = readRecord(item.triggerPolicy);
+  const response =
+    extractInstructionSection(item.instructions, 'Response') ||
+    String(item.instructions || '')
+      .trim()
+      .slice(0, 340) ||
+    'Ava should acknowledge the seller, keep the tone calm, and ask one useful next question.';
+  const nextQuestion =
+    firstText(triggerPolicy.nextQuestion, triggerPolicy.next_question) ||
+    extractInstructionSection(item.instructions, 'Next question') ||
+    'What would make this feel like the right next step for you?';
+  const blockedWhen =
+    firstText(triggerPolicy.blockedWhen, triggerPolicy.blocked_when) ||
+    extractInstructionSection(item.instructions, 'Do not use when') ||
+    'Do not use if the seller is asking for legal, tax, lending, or contract advice.';
+  const risk = String(item.riskClass || 'medium').toLowerCase();
+  const needsApproval = ['high', 'critical'].includes(risk);
+  return {
+    sellerLine: sellerLine.trim() || 'Seller gives an objection or asks for next steps.',
+    response,
+    nextQuestion,
+    blockedWhen,
+    riskLabel: needsApproval ? 'Needs approval before live action' : 'Safe to practice',
+  };
+}
+
+function buildSkillSimulationSeed(item: SkillGovernanceItem | null) {
+  if (!item) return '';
+  const triggerPolicy = readRecord(item.triggerPolicy);
+  const provenance = readRecord(item.sourceProvenance);
+  const metadata = readRecord(provenance.metadata);
+  const arrays = [
+    triggerPolicy.liveCallPatterns,
+    triggerPolicy.callPatterns,
+    triggerPolicy.recentSellerLines,
+    triggerPolicy.examples,
+    provenance.liveCallPatterns,
+    provenance.callPatterns,
+    provenance.examples,
+    metadata.liveCallPatterns,
+    metadata.callPatterns,
+  ];
+  const scalarCandidates = [
+    triggerPolicy.liveCallPattern,
+    triggerPolicy.recentSellerLine,
+    triggerPolicy.example,
+    provenance.liveCallPattern,
+    provenance.recentSellerLine,
+    provenance.example,
+    metadata.liveCallPattern,
+    metadata.recentSellerLine,
+  ];
+  for (const value of scalarCandidates) {
+    const seed = String(value || '').trim();
+    if (seed) return seed.slice(0, 320);
+  }
+  for (const value of arrays) {
+    if (!Array.isArray(value)) continue;
+    for (const itemValue of value) {
+      const recordValue = readRecord(itemValue);
+      const fallbackValue =
+        typeof itemValue === 'string' || typeof itemValue === 'number' ? itemValue : '';
+      const seed = String(
+        recordValue.sellerLine ||
+          recordValue.transcript ||
+          recordValue.text ||
+          recordValue.summary ||
+          fallbackValue ||
+          ''
+      ).trim();
+      if (seed) return seed.slice(0, 320);
+    }
+  }
+  return '';
+}
+
+function normalizeSkillPolicyTerm(value = '') {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '');
+}
+
+function splitSkillPolicyTerms(value = '') {
+  return Array.from(
+    new Set(
+      value
+        .split(/[,|\n;]/)
+        .map(normalizeSkillPolicyTerm)
+        .filter(Boolean)
+    )
+  );
+}
+
+function buildStructuredTriggerPolicy({
+  blockedWhen = '',
+  requiredFacts = '',
+  approvalTrigger = '',
+}: {
+  blockedWhen?: string;
+  requiredFacts?: string;
+  approvalTrigger?: string;
+}) {
+  const blockedText = blockedWhen.toLowerCase();
+  const blockedTerms = splitSkillPolicyTerms(blockedWhen);
+  const requiredFactTerms = splitSkillPolicyTerms(requiredFacts);
+  const approvalTerms = splitSkillPolicyTerms(approvalTrigger);
+  const doNotUseIntents = new Set<string>();
+  const doNotUseObjections = new Set<string>();
+  const blockedEmotions = new Set<string>();
+  const blockedEmotionalPhases = new Set<string>();
+
+  if (/\blegal|attorney|lawyer|tax|lending|loan advice|contract advice\b/.test(blockedText)) {
+    doNotUseIntents.add('legal_review');
+    doNotUseObjections.add('legal_review');
+  }
+  if (/\bstop|do not call|dnc|unsubscribe|remove me\b/.test(blockedText)) {
+    doNotUseIntents.add('stop_contact');
+    doNotUseObjections.add('stop_contact');
+  }
+  if (/\bangry|hostile|frustrated|confused|elderly|distressed\b/.test(blockedText)) {
+    for (const emotion of ['angry', 'hostile', 'frustrated', 'confused', 'distressed']) {
+      if (blockedText.includes(emotion)) blockedEmotions.add(emotion);
+    }
+  }
+  for (const term of blockedTerms) {
+    if (/intent_/.test(term)) doNotUseIntents.add(term.replace(/^intent_/, ''));
+    if (/objection_/.test(term)) doNotUseObjections.add(term.replace(/^objection_/, ''));
+    if (/emotion_/.test(term)) blockedEmotions.add(term.replace(/^emotion_/, ''));
+    if (/phase_/.test(term)) blockedEmotionalPhases.add(term.replace(/^phase_/, ''));
+  }
+
+  return {
+    doNotUseIntents: Array.from(doNotUseIntents),
+    doNotUseObjections: Array.from(doNotUseObjections),
+    blockedEmotions: Array.from(blockedEmotions),
+    blockedEmotionalPhases: Array.from(blockedEmotionalPhases),
+    requiredFactKeys: requiredFactTerms,
+    approvalTriggerTerms: approvalTerms,
+    approvalRequiredWhen: approvalTerms,
+  };
+}
+
 function JsonSummary({ value }: { value?: Record<string, unknown> }) {
   const entries = Object.entries(value || {});
   if (!entries.length) return <span className="pbk-skill-muted">None recorded</span>;
@@ -280,6 +510,9 @@ function CreateCandidateDialog({
   const [triggerType, setTriggerType] = useState<string>(SKILL_TRIGGER_OPTIONS[0].value);
   const [instructions, setInstructions] = useState('');
   const [nextQuestion, setNextQuestion] = useState('');
+  const [blockedWhen, setBlockedWhen] = useState('');
+  const [requiredFacts, setRequiredFacts] = useState('');
+  const [approvalTrigger, setApprovalTrigger] = useState('');
   const [riskClass, setRiskClass] = useState('medium');
   const [agentId, setAgentId] = useState('ava');
   const [sourceNote, setSourceNote] = useState('');
@@ -296,6 +529,9 @@ function CreateCandidateDialog({
     `Trigger: ${triggerLabel}.`,
     `Response: ${instructions.trim()}`,
     `Next question: ${nextQuestion.trim()}`,
+    blockedWhen.trim() ? `Do not use when: ${blockedWhen.trim()}` : '',
+    requiredFacts.trim() ? `Required facts: ${requiredFacts.trim()}` : '',
+    approvalTrigger.trim() ? `Approval trigger: ${approvalTrigger.trim()}` : '',
     'Runtime rule: acknowledge the seller context first, avoid repeating answered facts, ask only this one next question unless the turn contract blocks it, and keep the skill review-only until governed activation.',
   ]
     .filter(Boolean)
@@ -309,6 +545,11 @@ function CreateCandidateDialog({
           ? Boolean(nextQuestion.trim())
           : Boolean(name.trim() && instructions.trim() && nextQuestion.trim());
   const manualCanSave = Boolean(name.trim() && instructions.trim() && nextQuestion.trim());
+  const structuredTriggerPolicy = buildStructuredTriggerPolicy({
+    blockedWhen,
+    requiredFacts,
+    approvalTrigger,
+  });
   return (
     <div
       className="pbk-skill-dialog-backdrop"
@@ -472,6 +713,36 @@ function CreateCandidateDialog({
                     />
                   </label>
                   <details className="pbk-skill-advanced">
+                    <summary>Boundaries and proof</summary>
+                    <label>
+                      Do not use when
+                      <textarea
+                        value={blockedWhen}
+                        onChange={(event) => setBlockedWhen(event.target.value)}
+                        placeholder="Example: seller asks for legal advice, contract terms are missing, or spouse approval is unresolved."
+                        rows={3}
+                      />
+                    </label>
+                    <label>
+                      Required facts
+                      <textarea
+                        value={requiredFacts}
+                        onChange={(event) => setRequiredFacts(event.target.value)}
+                        placeholder="Example: seller name, property address, mortgage balance, timeline, and decision maker."
+                        rows={3}
+                      />
+                    </label>
+                    <label>
+                      Approval trigger
+                      <textarea
+                        value={approvalTrigger}
+                        onChange={(event) => setApprovalTrigger(event.target.value)}
+                        placeholder="Example: ask for approval before sending a contract, changing CRM status, or quoting final terms."
+                        rows={3}
+                      />
+                    </label>
+                  </details>
+                  <details className="pbk-skill-advanced">
                     <summary>Advanced source details</summary>
                     <label>
                       Where did this come from?
@@ -504,6 +775,14 @@ function CreateCandidateDialog({
                       <div>
                         <dt>Risk</dt>
                         <dd>{riskClass}</dd>
+                      </div>
+                      <div>
+                        <dt>Agent responsibility</dt>
+                        <dd>{getAgentResponsibility(agentId)}</dd>
+                      </div>
+                      <div>
+                        <dt>Approval trigger</dt>
+                        <dd>{approvalTrigger.trim() || 'No special approval trigger added'}</dd>
                       </div>
                     </dl>
                     <pre>{compiledManualInstructions}</pre>
@@ -727,6 +1006,10 @@ function CreateCandidateDialog({
                   triggerType,
                   triggerLabel,
                   nextQuestion: nextQuestion.trim(),
+                  blockedWhen: blockedWhen.trim(),
+                  requiredFacts: requiredFacts.trim(),
+                  approvalTrigger: approvalTrigger.trim(),
+                  ...structuredTriggerPolicy,
                 },
                 sourceNote:
                   sourceNote.trim() ||
@@ -783,6 +1066,9 @@ export function SkillStudio() {
   const [rolloutPercent, setRolloutPercent] = useState(10);
   const [confirmingPrimaryAction, setConfirmingPrimaryAction] = useState(false);
   const [skillPage, setSkillPage] = useState(0);
+  const [simulationText, setSimulationText] = useState(
+    'Seller says the offer feels low and asks why PBK is different from another buyer.'
+  );
 
   const selected = useMemo(
     () => items.find((item) => item.versionId === selectedId) || null,
@@ -790,6 +1076,12 @@ export function SkillStudio() {
   );
   const currentStep = STATE_STEP[selected?.lifecycleState || 'candidate'] || 0;
   const selectedPerformance = selected ? getSkillPerformance(selected) : null;
+  const selectedOutcomeProof = selected ? buildSkillOutcomeProof(selected) : '';
+  const trainingQueue = useMemo(() => buildSkillTrainingQueue(items), [items]);
+  const simulation = useMemo(
+    () => (selected ? buildSkillSimulation(selected, simulationText) : null),
+    [selected, simulationText]
+  );
 
   const visibleItems = useMemo(() => {
     const normalizedAgent = agentFilter.trim().toLowerCase();
@@ -872,7 +1164,11 @@ export function SkillStudio() {
 
   useEffect(() => {
     setConfirmingPrimaryAction(false);
-  }, [selectedId]);
+    const seed = buildSkillSimulationSeed(selected);
+    setSimulationText(
+      seed || 'Seller says the offer feels low and asks why PBK is different from another buyer.'
+    );
+  }, [selected, selectedId]);
 
   useEffect(() => {
     setSkillPage(0);
@@ -1057,6 +1353,39 @@ export function SkillStudio() {
         </div>
       )}
 
+      {trainingQueue.length > 0 && (
+        <section className="pbk-skill-training-queue" aria-label="Today's Training Queue">
+          <div className="pbk-skill-training-queue-head">
+            <div>
+              <span>Today's Training Queue</span>
+              <h2>Review these first</h2>
+            </div>
+            <small>Ranked by review need, weak outcomes, and rollout readiness.</small>
+          </div>
+          <div className="pbk-skill-training-queue-grid">
+            {trainingQueue.map(({ item, metrics, reason, action }) => (
+              <button
+                type="button"
+                key={item.versionId}
+                className="pbk-skill-training-card"
+                onClick={() => {
+                  setSelectedId(item.versionId);
+                  setInspectorOpen(false);
+                }}
+              >
+                <span>{action}</span>
+                <strong>{item.name}</strong>
+                <p>{reason}</p>
+                <small>
+                  {STATE_LABELS[item.lifecycleState] || item.lifecycleState} - {metrics.usageCount}{' '}
+                  uses - {percentLabel(metrics.confidence)} confidence
+                </small>
+              </button>
+            ))}
+          </div>
+        </section>
+      )}
+
       <div className={`pbk-skill-workspace ${selected ? 'has-selection' : ''}`}>
         <aside className="pbk-skill-repository">
           <div className="pbk-skill-pane-head">
@@ -1237,6 +1566,43 @@ export function SkillStudio() {
                 ))}
               </ol>
 
+              {simulation && (
+                <section className="pbk-skill-simulator" aria-label="Skill simulator">
+                  <header>
+                    <Sparkles size={17} />
+                    <div>
+                      <span>Practice before approval</span>
+                      <h3>Skill simulator</h3>
+                    </div>
+                  </header>
+                  <label>
+                    Seller says
+                    <textarea
+                      value={simulationText}
+                      onChange={(event) => setSimulationText(event.target.value)}
+                      rows={3}
+                    />
+                  </label>
+                  <div className="pbk-skill-simulator-grid">
+                    <article>
+                      <span>Ava would use</span>
+                      <strong>{selected.name}</strong>
+                      <p>{simulation.response}</p>
+                    </article>
+                    <article>
+                      <span>Risk check</span>
+                      <strong>{simulation.riskLabel}</strong>
+                      <p>{simulation.blockedWhen}</p>
+                    </article>
+                    <article>
+                      <span>Next question</span>
+                      <strong>One step forward</strong>
+                      <p>{simulation.nextQuestion}</p>
+                    </article>
+                  </div>
+                </section>
+              )}
+
               <section
                 className="pbk-skill-performance-dashboard"
                 aria-label="Skill performance dashboard"
@@ -1269,6 +1635,9 @@ export function SkillStudio() {
                     <strong>{displayDate(selectedPerformance?.lastTriggeredAt)}</strong>
                   </article>
                 </div>
+                <p className="pbk-skill-outcome-proof">
+                  <strong>Outcome proof:</strong> {selectedOutcomeProof}
+                </p>
               </section>
 
               <section className="pbk-skill-stage">
@@ -1317,7 +1686,9 @@ export function SkillStudio() {
                       <strong>Agent scope</strong>
                       <p>
                         {selected.agentId
-                          ? `${selected.agentId.toUpperCase()} - ${selected.rolloutPercent || 0}% rollout`
+                          ? `${getAgentResponsibility(selected.agentId)} Current rollout: ${
+                              selected.rolloutPercent || 0
+                            }%.`
                           : 'Choose an agent when activating this approved version.'}
                       </p>
                     </div>
@@ -1352,6 +1723,9 @@ export function SkillStudio() {
                   </div>
                   <p>
                     New versions default to a bounded canary. Full activation is explicit at 100%.
+                    Automatic rollback watches compliance failures, seller complaints, and tool
+                    error spikes. The operator dashboard shows the alert and the skill can be turned
+                    off from this page.
                   </p>
                 </section>
               )}
@@ -1475,6 +1849,10 @@ export function SkillStudio() {
                   <div>
                     <dt>Agent</dt>
                     <dd>{selected.agentId || 'Unassigned'}</dd>
+                  </div>
+                  <div>
+                    <dt>Agent responsibility</dt>
+                    <dd>{getAgentResponsibility(selected.agentId)}</dd>
                   </div>
                   <div>
                     <dt>Allowed actions</dt>

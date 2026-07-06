@@ -125,6 +125,26 @@ assert(
   'Command Center must map bridge cockpit state into LiveCallWidget.'
 );
 
+const bridge = readFileSync('scripts/openclaw-local-server.mjs', 'utf8');
+assert(
+  /function buildAvaLiveConversionBehaviorContract/.test(bridge) &&
+    /weak_next_step/.test(bridge) &&
+    /pain_probe_required/.test(bridge) &&
+    /value_bridge_required/.test(bridge) &&
+    /concrete_next_step_required/.test(bridge),
+  'Ava live calls must have a conversion behavior contract for pain, value, and next step.'
+);
+assert(
+  /const conversionBehavior = buildAvaLiveConversionBehaviorContract\(/.test(bridge) &&
+    /conversionBehavior/.test(bridge) &&
+    /exactNextMove: text/.test(bridge),
+  'Ava resolved next move must run through the conversion behavior contract before the phrasing engine.'
+);
+assert(
+  /pain probe, value bridge, and concrete next step/.test(bridge),
+  'The live-call phrasing prompt must explicitly require pain probe, value bridge, and concrete next step behavior.'
+);
+
 const styles = readFileSync('src/styles/pbk-components.css', 'utf8');
 assert(
   styles.includes('.pbk-live-call-cockpit') &&

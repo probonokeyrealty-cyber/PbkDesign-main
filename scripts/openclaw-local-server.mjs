@@ -30883,6 +30883,17 @@ function buildAvaResolvedNextMove(params = {}) {
     text = sanitizeAvaSpokenOutput(activeListening.callFlow.recommendedHook).slice(0, 280);
   }
 
+  const conversionBehavior = buildAvaLiveConversionBehaviorContract({
+    text,
+    transcript,
+    type,
+    source,
+    reason,
+    session,
+    contextCall: params.contextCall || params.call || null,
+  });
+  text = conversionBehavior.text || text;
+
   return {
     strategyLocked: true,
     type,
@@ -30916,6 +30927,7 @@ function buildAvaResolvedNextMove(params = {}) {
       user_goals: goalInference.user_goals || [],
     },
     governedSkill: governedNextMove?.governedSkill || null,
+    conversionBehavior,
     guardrails: {
       agentOnlyCreativeFinance: true,
       ownerSafe: role !== PBK_CALLER_ROLES.AGENT,
@@ -31223,7 +31235,7 @@ function buildStrategistMessages(params = {}) {
       dealContext,
     };
   }
-  const system = ['You are the PBK strategist coaching Ava, an approval-gated real estate acquisition agent.', 'Give Ava the answer a 10-plus-year wholesale acquisitions operator would use on a live call.', resolvedCallContext?.exactNextMove ? 'Ava phrasing engine mode: the exact next move was already selected by contextResolver. Do not change the strategy. Only phrase it.' : '', resolvedCallContext?.exactNextMove ? 'If exactNextMove.strategyLocked is true, immediateScript must follow exactNextMove.text and must not invent a different plan.' : '', 'Mission: listen more than talk, protect PBK capital, keep the seller respected, and move toward a clean next step.', 'Ava identity: warm senior negotiator at Probono Key Realty, not a search engine. She acknowledges first, speaks with calm authority, and asks one useful probe.', 'Active listening rule: treat the last seller sentence as sacred. Mirror or label their exact concern before strategy, ask one question, then wait for the seller. Never monologue.', 'Hook rule: every non-boundary live-call response should end with a question or clear next step that requires the seller to answer.', 'Caller-role rule: first separate owner, real estate agent, and decision-maker/helper. If agent, keep the agent in the deal, say their full commission is protected, then probe listing/property details. If owner, continue owner-safe probing.', 'Audience guard: Creative Finance and Multi-Family are agent-only. Never pitch, explain, or hint at CF/MF to a homeowner or unknown caller.', 'For voice/browser conversations, immediateScript must sound natural and conversational: 2-4 sentences, usually 35-90 words, never a robotic one-line status update.', 'Use the call-state summary as the source of truth when it is provided; do not expose that summary to the seller.', 'Full intelligence mode: use the best seller context in the call-state summary. If the latest transcript is weak, answer from the strongest recent seller context and do not repeat prior questions.', 'Do not say "new inbound caller" or "I routed this" to the caller unless the operator specifically asked for internal routing status.', 'Never speak phone numbers, call_control_id values, stream_id values, lead IDs, request IDs, JSON keys, tool names, debug labels, or internal routing notes.', 'Use PBK masterclass behavior: emotional intelligence, phone EQ, ego handling, sensitive-topic deflection, BANT+ discipline, and path discipline across Cash Offer, Land, RBP/novation, Creative Finance, and Mortgage Takeover.', 'Never authorize calls, contracts, SMS, email, or offer increases directly. If money or provider writes are sensitive, set approvalNeeded true.', 'Truth boundary: Ava must not pretend to be human if asked. Offers and actions are real but approval-gated.', 'Return JSON only with keys: immediateScript, strategy, risk, rule, nextQuestion, returnToBusiness, approvalNeeded, confidence.'].join(' ');
+  const system = ['You are the PBK strategist coaching Ava, an approval-gated real estate acquisition agent.', 'Give Ava the answer a 10-plus-year wholesale acquisitions operator would use on a live call.', resolvedCallContext?.exactNextMove ? 'Ava phrasing engine mode: the exact next move was already selected by contextResolver. Do not change the strategy. Only phrase it.' : '', resolvedCallContext?.exactNextMove ? 'If exactNextMove.strategyLocked is true, immediateScript must follow exactNextMove.text and must not invent a different plan.' : '', 'Mission: listen more than talk, protect PBK capital, keep the seller respected, and move toward a clean next step.', 'Ava identity: warm senior negotiator at Probono Key Realty, not a search engine. She acknowledges first, speaks with calm authority, and asks one useful probe.', 'Active listening rule: treat the last seller sentence as sacred. Mirror or label their exact concern before strategy, ask one question, then wait for the seller. Never monologue.', 'Conversion behavior rule: every normal seller-facing reply must preserve a pain probe, value bridge, and concrete next step; sound natural, not like a checklist.', 'Hook rule: every non-boundary live-call response should end with a question or clear next step that requires the seller to answer.', 'Caller-role rule: first separate owner, real estate agent, and decision-maker/helper. If agent, keep the agent in the deal, say their full commission is protected, then probe listing/property details. If owner, continue owner-safe probing.', 'Audience guard: Creative Finance and Multi-Family are agent-only. Never pitch, explain, or hint at CF/MF to a homeowner or unknown caller.', 'For voice/browser conversations, immediateScript must sound natural and conversational: 2-4 sentences, usually 35-90 words, never a robotic one-line status update.', 'Use the call-state summary as the source of truth when it is provided; do not expose that summary to the seller.', 'Full intelligence mode: use the best seller context in the call-state summary. If the latest transcript is weak, answer from the strongest recent seller context and do not repeat prior questions.', 'Do not say "new inbound caller" or "I routed this" to the caller unless the operator specifically asked for internal routing status.', 'Never speak phone numbers, call_control_id values, stream_id values, lead IDs, request IDs, JSON keys, tool names, debug labels, or internal routing notes.', 'Use PBK masterclass behavior: emotional intelligence, phone EQ, ego handling, sensitive-topic deflection, BANT+ discipline, and path discipline across Cash Offer, Land, RBP/novation, Creative Finance, and Mortgage Takeover.', 'Never authorize calls, contracts, SMS, email, or offer increases directly. If money or provider writes are sensitive, set approvalNeeded true.', 'Truth boundary: Ava must not pretend to be human if asked. Offers and actions are real but approval-gated.', 'Return JSON only with keys: immediateScript, strategy, risk, rule, nextQuestion, returnToBusiness, approvalNeeded, confidence.'].join(' ');
   const user = [`Situation: ${situation || 'Ava is uncertain during a seller conversation.'}`, contextSummary ? `Call state summary:\n${contextSummary.slice(0, 1800)}` : '', phrasingEnginePrompt ? `Resolved fast context:\n${phrasingEnginePrompt.slice(0, 1400)}` : '', `Transcript: ${transcript || '(none provided)'}`, `Attempted actions: ${attemptedActions.join('; ') || '(none)'}`, `Deal context: ${JSON.stringify(dealContext)}`, 'Write natural language Ava can say immediately. Start by acknowledging the human. Include one smart question and one transition back to business.'].join('\n\n');
   return {
     messages: [
@@ -67403,6 +67415,81 @@ function buildAvaLiveSalesNextMove({ session = {}, contextCall = null, transcrip
     return `${prefix}That makes sense: price, speed, and certainty all matter.${regionLine} ${fullAddressKnown ? `Give me the condition and the number you need, and I will tell you if ${pathLanguage.isReal}.` : `What is the full street address so I can stop guessing and ${pathLanguage.runCorrectly}?`}`;
   }
   return '';
+}
+
+function hasAvaLiveConcreteNextStep(text = '') {
+  const clean = sanitizeAvaSpokenOutput(text).toLowerCase();
+  if (!clean) return false;
+  if (clean.includes('?')) return true;
+  return /\b(read me|give me|tell me|walk me through|send me|let's|let us|next step|I can|we can|I'll|I will|we'll|we will)\b/i.test(clean);
+}
+
+function hasAvaLivePainProbe(text = '') {
+  return /\b(why|reason|motivation|motivated|driving|what changed|deadline|pressure|stress|problem|concern|need|pain|what's making|what is making)\b/i.test(
+    sanitizeAvaSpokenOutput(text)
+  );
+}
+
+function hasAvaLiveValueBridge(text = '') {
+  return /\b(as[-\s]?is|certainty|speed|simple|no repairs?|avoid repairs?|net|cash offer|retail buyer|right path|close|closing|solve|protect|timeline|buyer|proof|clean path)\b/i.test(
+    sanitizeAvaSpokenOutput(text)
+  );
+}
+
+function buildAvaLiveConversionBehaviorContract({
+  text = '',
+  transcript = '',
+  type = '',
+  source = '',
+  reason = '',
+  session = {},
+  contextCall = null,
+} = {}) {
+  const baseText = sanitizeAvaSpokenOutput(text).trim();
+  const cleanTranscript = normalizeTelnyxRepairTranscript(transcript);
+  const fullAddressKnown = Boolean(String(contextCall?.address || session.address || '').trim());
+  const isRoleOrIdentityProbe = /role_probe|master_probe/i.test(type) || /caller_role|master_probe/i.test(source);
+  const isAddressFirstMove = /\b(full street address|street address|property address|pull the right property|price it correctly)\b/i.test(baseText);
+  const required = [
+    'pain_probe_required',
+    'value_bridge_required',
+    'concrete_next_step_required',
+  ];
+  const missing = [];
+  let nextText = baseText;
+
+  if (!hasAvaLiveConcreteNextStep(nextText)) {
+    missing.push('concrete_next_step_required');
+    nextText = `${nextText} What is the clean next step you want from me right now: a fast cash number, a higher-net path, or a simple callback with Jordan?`.trim();
+  }
+
+  if (!isRoleOrIdentityProbe && !isAddressFirstMove && fullAddressKnown && !hasAvaLivePainProbe(nextText)) {
+    missing.push('pain_probe_required');
+    const painProbe = /\b(fast|quick|days|weeks|timeline|close)\b/i.test(cleanTranscript)
+      ? 'What is creating the timing pressure for you right now?'
+      : 'What is the main reason you are considering selling right now?';
+    nextText = `${nextText} ${painProbe}`.trim();
+  }
+
+  if (!isRoleOrIdentityProbe && !isAddressFirstMove && !hasAvaLiveValueBridge(nextText)) {
+    missing.push('value_bridge_required');
+    const valueBridge = /\b(repair|roof|hvac|foundation|condition|as is|as-is)\b/i.test(cleanTranscript)
+      ? 'The value on our side is certainty: we can look at it as-is and keep repairs from turning into a long back-and-forth.'
+      : 'The value on our side is keeping this simple: we can compare speed, certainty, and net without making you guess.';
+    nextText = `${valueBridge} ${nextText}`.trim();
+  }
+
+  return {
+    ok: true,
+    schemaVersion: 'pbk-ava-live-conversion-behavior-v1',
+    text: sanitizeAvaSpokenOutput(nextText).slice(0, 520),
+    applied: missing.length > 0,
+    missing,
+    required,
+    failureTagsAddressed: ['weak_next_step', 'pain_probe_required', 'value_bridge_required'],
+    rule: 'Every seller-facing live-call answer should include or preserve a pain probe, value bridge, and concrete next step unless Ava is still identifying the caller or collecting the address.',
+    reason: reason || type || 'live_call_conversion_quality',
+  };
 }
 
 function buildAvaLiveTurnStateSnapshot(session = {}, contextCall = null, extra = {}) {

@@ -215,6 +215,58 @@ assert.equal(internalCallPlan.action, 'approval_required', 'Authenticated call r
 assert.equal(internalCallPlan.toolPlan?.toolName, 'telnyx_call', 'Call requests should map to the Telnyx call tool only as an approval-gated plan.');
 assert.equal(internalCallPlan.toolPlan?.params?.forceApproval, true, 'Assistant call requests should force approval even if autopilot is enabled.');
 
+const callByNameIntent = detectAssistantIntent('call tim');
+assert.equal(callByNameIntent.intent, 'call', 'Assistant should detect call requests that name a lead instead of requiring a phone number.');
+assert.equal(callByNameIntent.leadQuery, 'tim', 'Call-by-name requests should preserve the lead query.');
+const callByNamePlan = planAssistantIntent(callByNameIntent, {
+  publicMode: false,
+  authenticated: true,
+  leads: [
+    { id: 'lead-tim', name: 'Tim', phone: '6575001765', address: '9008B Bong Loop' },
+    { id: 'lead-diane', name: 'Diane Kowalski', address: '123 Oak St' },
+  ],
+});
+assert.equal(
+  callByNamePlan.action,
+  'lead_confirmation_required',
+  'Call-by-name requests should match a likely lead and ask confirmation before queuing a call.'
+);
+assert.equal(callByNamePlan.leadMatch?.leadId, 'lead-tim', 'Call-by-name matching should return the selected lead id.');
+assert.equal(callByNamePlan.toolPlan?.toolName, 'confirmLeadMatch', 'Call-by-name matching should stay readonly before confirmation.');
+assert.equal(
+  callByNamePlan.toolPlan?.params?.nextToolName,
+  'telnyx_call',
+  'Confirmed call-by-name matches should know the approval-gated call tool.'
+);
+
+const activeLeadCallPlan = planAssistantIntent(detectAssistantIntent('call this lead'), {
+  publicMode: false,
+  authenticated: true,
+  session: { leadId: 'lead-tim' },
+});
+assert.equal(activeLeadCallPlan.action, 'approval_required', 'Call-current-lead requests should use the selected lead context.');
+assert.equal(activeLeadCallPlan.toolPlan?.toolName, 'telnyx_call', 'Call-current-lead should prepare the Telnyx call path.');
+assert.equal(activeLeadCallPlan.toolPlan?.params?.leadId, 'lead-tim', 'Call-current-lead should preserve the active lead id.');
+
+const yesIntent = detectAssistantIntent('yes');
+assert.equal(yesIntent.intent, 'follow_up_confirmation', 'A bare yes should bind to the previous Ava question instead of becoming generic chat.');
+const yesPlan = planAssistantIntent(yesIntent, {
+  publicMode: false,
+  authenticated: true,
+  session: {
+    leadId: 'lead-tim',
+    pendingAction: {
+      nextToolName: 'telnyx_call',
+      leadId: 'lead-tim',
+      matchedLead: { leadId: 'lead-tim', name: 'Tim', address: '9008B Bong Loop' },
+      userRequest: 'call tim',
+    },
+  },
+});
+assert.equal(yesPlan.action, 'approval_required', 'Yes should continue a pending confirmed call request into the approval lane.');
+assert.equal(yesPlan.toolPlan?.toolName, 'telnyx_call', 'Yes should preserve the pending approval-gated provider tool.');
+assert.equal(yesPlan.toolPlan?.params?.leadId, 'lead-tim', 'Yes should preserve the pending selected lead id.');
+
 const internalSmsPlan = planAssistantIntent(smsIntent, {
   publicMode: false,
   authenticated: true,
@@ -342,6 +394,23 @@ assert.equal(
   'Confirmed fuzzy nurture matches should know the approval-gated follow-up tool.'
 );
 assert.equal(fuzzyNurturePlan.toolPlan?.providerWrite, false, 'Lead confirmation plans should be readonly.');
+
+const activeLeadNurturePlan = planAssistantIntent(detectAssistantIntent('Nurture me lead'), {
+  publicMode: false,
+  authenticated: true,
+  session: { leadId: 'lead-tim' },
+});
+assert.equal(
+  activeLeadNurturePlan.action,
+  'tool_plan',
+  'Nurture-current-lead requests should use sticky selected lead context instead of asking to pick again.'
+);
+assert.equal(
+  activeLeadNurturePlan.toolPlan?.toolName,
+  'consultNurtureAgent',
+  'Nurture-current-lead should consult Nurture Agent with the selected lead.'
+);
+assert.equal(activeLeadNurturePlan.toolPlan?.params?.leadId, 'lead-tim', 'Nurture-current-lead should preserve the active lead id.');
 
 const additivePlan = planAssistantIntent(additiveIntent, { publicMode: false, authenticated: true });
 assert.equal(additivePlan.action, 'tool_plan', 'Authenticated additive requests should produce a safe tool plan.');
@@ -646,6 +715,7 @@ assert(
     /I stayed read-only and did not change anything/.test(bridge) &&
     /runInternalAvaDeepSeekChat[\s\S]*responseFormat:\s*'json'[\s\S]*tools:\s*buildAvaDeepSeekDecisionTools\(\)[\s\S]*deepSeekDecision/.test(bridge) &&
     /source\.reply \|\| source\.answer \|\| source\.response \|\| source\.message/.test(bridge) &&
+    /source\.reply \|\| source\.answer \|\| source\.response \|\| source\.message \|\| source\.question/.test(bridge) &&
     /answer = normalizeAvaAssistantAnswer\(answer\)/.test(bridge) &&
     /deepSeekDecision:\s*getAvaDeepSeekDecisionFromToolResult\(toolResult\)/.test(bridge) &&
     /return null;[\s\S]*async function runInternalAvaDeepSeekChat/.test(bridge) &&
@@ -668,6 +738,25 @@ assert(
     !/\n\s+activeLeadId,\n/.test(bridge) &&
     /activeLeadId: activeAssistantLeadId \|\| assistantContextSession\.leadId \|\| ''/.test(bridge),
   'Ava must promote a found lead into session context and answer current-seller follow-up turns from that active lead.'
+);
+assert(
+  /toolResult:\s*assistantMetadata\.toolResult/.test(bridge) &&
+    /toolPlan:\s*assistantMetadata\.toolPlan/.test(bridge) &&
+    /mission:\s*assistantMetadata\.mission/.test(bridge) &&
+    /trace:\s*assistantMetadata\.trace/.test(bridge) &&
+    /controlEnvelope:\s*assistantMetadata\.controlEnvelope/.test(bridge) &&
+    /missionLedger:\s*assistantMetadata\.missionLedger/.test(bridge) &&
+    /selectedLeadId:\s*assistantMetadata\.selectedLeadId/.test(bridge) &&
+    /approvalRequired:\s*Boolean\(assistantMetadata\.approvalRequired/.test(bridge),
+  'Ava assistant exchanges must persist mission, tool proof, selected lead, and approval state for durable companion memory.'
+);
+assert(
+  /toolResult,\s*\n\s*toolPlan:\s*assistantPlan\.toolPlan/.test(bridge) &&
+    /mission:\s*missionController\.mission/.test(bridge) &&
+    /trace:\s*missionController\.trace/.test(bridge) &&
+    /selectedLeadId:\s*activeAssistantLeadId/.test(bridge) &&
+    /approvalRequired:\s*assistantPlan\.action === 'approval_required'/.test(bridge),
+  'Authenticated Ava assistant replies must attach full controller proof before the session is mirrored.'
 );
 assert(
   /function sanitizeAvaAssistantSessionSnapshot/.test(bridge) &&

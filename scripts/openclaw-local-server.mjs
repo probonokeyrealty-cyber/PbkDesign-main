@@ -62122,9 +62122,22 @@ function mirrorAvaAssistantSessionToBridgeState(sessionId = '', session = {}) {
   const latestTurn = normalized.history[normalized.history.length - 1] || {};
   const latestUser = getLatestAssistantTurn(normalized.history, 'user') || {};
   const latestAssistant = getLatestAssistantTurn(normalized.history, 'assistant') || {};
+  const assistantMetadata =
+    latestAssistant.metadata && typeof latestAssistant.metadata === 'object' && !Array.isArray(latestAssistant.metadata)
+      ? latestAssistant.metadata
+      : {};
+  const activeLeadId = String(
+    normalized.leadId ||
+      assistantMetadata.activeLeadId ||
+      assistantMetadata.selectedLeadId ||
+      assistantMetadata.leadId ||
+      ''
+  )
+    .trim()
+    .slice(0, 120);
   const source =
     latestTurn.metadata?.source ||
-    latestAssistant.metadata?.source ||
+    assistantMetadata.source ||
     latestUser.metadata?.source ||
     'ava-assistant-chat';
   const now = isoNow();
@@ -62132,8 +62145,9 @@ function mirrorAvaAssistantSessionToBridgeState(sessionId = '', session = {}) {
     id: cleanSessionId,
     sessionId: cleanSessionId,
     source,
-    leadId: normalized.leadId || '',
+    leadId: activeLeadId,
     userId: normalized.userId || '',
+    pendingAction: normalized.pendingAction || assistantMetadata.pendingAction || null,
     messageCount: normalized.history.length,
     lastRole: latestTurn.role || '',
     lastUserPreview: String(latestUser.content || '').slice(0, 320),
@@ -62156,11 +62170,26 @@ function mirrorAvaAssistantSessionToBridgeState(sessionId = '', session = {}) {
       id: exchangeId,
       sessionId: cleanSessionId,
       source,
-      leadId: normalized.leadId || '',
+      leadId: activeLeadId,
+      activeLeadId: activeLeadId,
+      selectedLeadId: assistantMetadata.selectedLeadId || activeLeadId || '',
       userPreview: String(latestUser.content || '').slice(0, 500),
       assistantPreview: String(latestAssistant.content || '').slice(0, 500),
-      intent: latestAssistant.metadata?.intent || latestUser.metadata?.intent || '',
-      action: latestAssistant.metadata?.action || '',
+      intent: assistantMetadata.intent || latestUser.metadata?.intent || '',
+      action: assistantMetadata.action || '',
+      toolResult: assistantMetadata.toolResult || null,
+      toolPlan: assistantMetadata.toolPlan || null,
+      mission: assistantMetadata.mission || null,
+      trace: assistantMetadata.trace || null,
+      controlEnvelope: assistantMetadata.controlEnvelope || null,
+      missionLedger: assistantMetadata.missionLedger || null,
+      deepSeekDecision: assistantMetadata.deepSeekDecision || null,
+      confidence: assistantMetadata.confidence ?? assistantMetadata.deepSeekDecision?.confidence ?? null,
+      approvalRequired: Boolean(assistantMetadata.approvalRequired ||
+          assistantMetadata.toolPlan?.approvalRequired ||
+          assistantMetadata.toolPlan?.params?.forceApproval ||
+          assistantMetadata.controlEnvelope?.approvalRequired
+      ),
       createdAt: latestAssistant.at || now,
       updatedAt: now,
     };
@@ -62768,7 +62797,7 @@ function parseAvaDeepSeekDecisionAnswer(answer = '') {
   const source = parsed && typeof parsed === 'object' ? parsed : {};
   const allowed = new Set(['answer', 'ask', 'act', 'approval_required', 'delegate', 'log_only', 'block']);
   const decision = allowed.has(String(source.decision || '').trim()) ? String(source.decision).trim() : 'answer';
-  const reply = sanitizeAvaSpokenOutput(source.reply || source.answer || source.response || source.message || answer || '', '').slice(0, 1200);
+  const reply = sanitizeAvaSpokenOutput(source.reply || source.answer || source.response || source.message || source.question || answer || '', '').slice(0, 1200);
   const nextAction = sanitizeAvaSpokenOutput(source.nextAction || source.next_action || '', '').slice(0, 260);
   const missionTimeline = Array.isArray(source.missionTimeline || source.mission_timeline)
     ? (source.missionTimeline || source.mission_timeline)
@@ -62800,7 +62829,7 @@ function normalizeAvaAssistantAnswer(answer = '') {
   if (!text) return '';
   const parsed = extractJsonObjectFromText(text);
   if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-    const candidate = parsed.reply || parsed.answer || parsed.response || parsed.message || '';
+    const candidate = parsed.reply || parsed.answer || parsed.response || parsed.message || parsed.question || '';
     const normalized = sanitizeAvaSpokenOutput(candidate, '').slice(0, 1600);
     if (normalized) return normalized;
   }
@@ -63212,6 +63241,7 @@ async function handleInternalAvaAssistantChatRequest(request) {
   let safety = null;
   let additiveIntelligence = null;
   let activeAssistantLeadId = assistantContextSession.leadId || '';
+  let pendingAssistantAction = null;
   let missionController = await runAvaMissionController({
     controllerStage: 'planned',
     sessionId,
@@ -63380,19 +63410,40 @@ async function handleInternalAvaAssistantChatRequest(request) {
     const leadName = String(lead?.leadName || lead?.name || '').trim();
     const displayName = leadName && !/^unknown\s+seller$/i.test(leadName) ? leadName : 'a matching lead';
     const foundLeadId = getInternalAssistantLeadId(lead);
+    const nextToolName = String(assistantPlan.toolPlan.params?.nextToolName || '').trim();
     if (foundLeadId) {
       activeAssistantLeadId = foundLeadId;
       assistantContextSession.leadId = foundLeadId;
       assistantSession.leadId = foundLeadId;
     }
+    if (lead && nextToolName) {
+      pendingAssistantAction = {
+        ...(assistantPlan.toolPlan.params || {}),
+        nextToolName,
+        leadId: foundLeadId || '',
+        matchedLead: {
+          leadId: foundLeadId || '',
+          name: displayName,
+          address: lead.address || lead.propertyAddress || '',
+          phone: lead.phone || lead.sellerPhone || '',
+        },
+        userRequest: assistantPlan.toolPlan.params?.userRequest || text,
+        source: 'ava-assistant-chat',
+      };
+      assistantContextSession.pendingAction = pendingAssistantAction;
+      assistantSession.pendingAction = pendingAssistantAction;
+    }
     answer = lead
-      ? `I found ${displayName}${lead.address ? ` at ${lead.address}` : ''}. I can open the profile, summarize the latest timeline, or prepare the next seller step.`
+      ? nextToolName === 'telnyx_call'
+        ? `I found ${displayName}${lead.address ? ` at ${lead.address}` : ''}. Confirm this is the right seller and I will prepare the approval-gated call request.`
+        : `I found ${displayName}${lead.address ? ` at ${lead.address}` : ''}. I can open the profile, summarize the latest timeline, or prepare the next seller step.`
       : `I could not find a lead matching "${assistantPlan.toolPlan.params?.query || ''}" in the current Command Center snapshot.`;
     toolResult = {
       ok: Boolean(lead),
       result: lead ? 'lead_found' : 'lead_not_found',
       lead: lead || null,
       activeLeadId: foundLeadId || '',
+      pendingAction: pendingAssistantAction,
     };
   } else if (assistantPlan.action === 'call_review_summary') {
     const latestCall = sortNewest(state.calls || [])[0] || null;
@@ -63503,10 +63554,53 @@ async function handleInternalAvaAssistantChatRequest(request) {
 
   answer = normalizeAvaAssistantAnswer(answer);
 
+  if (!pendingAssistantAction && assistantPlan.action === 'lead_confirmation_required' && assistantPlan.toolPlan?.toolName === 'confirmLeadMatch') {
+    pendingAssistantAction = {
+      ...(assistantPlan.toolPlan.params || {}),
+      userRequest: assistantPlan.toolPlan.params?.userRequest || text,
+      source: 'ava-assistant-chat',
+    };
+  }
+  if (pendingAssistantAction) {
+    assistantContextSession.pendingAction = pendingAssistantAction;
+    assistantSession.pendingAction = pendingAssistantAction;
+  }
+
+  const missionLedgerRecord = recordAvaMissionLedger({
+    missionController,
+    sessionId,
+    leadId: activeAssistantLeadId || assistantContextSession.leadId || '',
+    text,
+    assistantIntent,
+    assistantPlan,
+    toolResult,
+    qa,
+    safety,
+    startedAt: assistantOpsStartedAt,
+  });
+
   assistantSession = appendAssistantMessage(assistantSession, 'assistant', answer, {
     source: 'command-center-assistant',
     intent: assistantPlan.usedIntent || assistantIntent.intent,
     action: assistantPlan.action || 'answered',
+    activeLeadId: activeAssistantLeadId || assistantContextSession.leadId || '',
+    leadId: activeAssistantLeadId || assistantContextSession.leadId || '',
+    selectedLeadId: activeAssistantLeadId || assistantContextSession.leadId || '',
+    toolResult,
+    toolPlan: assistantPlan.toolPlan || null,
+    mission: missionController.mission,
+    trace: missionController.trace,
+    controlEnvelope: missionController.controlEnvelope,
+    missionLedger: missionLedgerRecord,
+    pendingAction: pendingAssistantAction || null,
+    deepSeekDecision: getAvaDeepSeekDecisionFromToolResult(toolResult),
+    confidence:
+      missionController?.trace?.turnDecision?.confidence ??
+      getAvaDeepSeekDecisionFromToolResult(toolResult)?.confidence ??
+      null,
+    approvalRequired:
+      assistantPlan.action === 'approval_required' ||
+      Boolean(assistantPlan.toolPlan?.approvalRequired || assistantPlan.toolPlan?.params?.forceApproval),
   });
   await writePublicAvaAssistantSession(sessionId, assistantSession);
 
@@ -63534,18 +63628,6 @@ async function handleInternalAvaAssistantChatRequest(request) {
     qa,
     safety,
     additiveIntelligence,
-    startedAt: assistantOpsStartedAt,
-  });
-  const missionLedgerRecord = recordAvaMissionLedger({
-    missionController,
-    sessionId,
-    leadId: activeAssistantLeadId || assistantContextSession.leadId || '',
-    text,
-    assistantIntent,
-    assistantPlan,
-    toolResult,
-    qa,
-    safety,
     startedAt: assistantOpsStartedAt,
   });
   persistStateInBackground('ava-assistant-chat');

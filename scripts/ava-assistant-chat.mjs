@@ -311,6 +311,28 @@ function extractProviderLeadQuery(message = '') {
   return stripLeadQuery(match?.[1] || '');
 }
 
+function extractCallLeadQuery(message = '') {
+  const text = String(message || '');
+  const quoted = text.match(/"([^"]{2,120})"/);
+  if (quoted?.[1]) return stripLeadQuery(quoted[1]);
+  const match = text.match(
+    /\b(?:call|dial|ring)\s+(?:the\s+)?(?:lead|seller|contact)?\s*([^".,?]+?)(?:\s+\b(?:today|tonight|tomorrow|this week|next week|now|please|asap|after|before|at|on|by|with|using|about)\b|[.?!]|$)/i
+  );
+  return stripLeadQuery(match?.[1] || '');
+}
+
+function detectFollowUpPolarity(message = '') {
+  const text = cleanText(message, 160).toLowerCase();
+  if (!text) return '';
+  if (/^(?:yes|y|yeah|yep|sure|ok|okay|correct|right|that one|do it|go ahead|continue|confirmed|confirm|approved|approve)\.?$/i.test(text)) {
+    return 'affirmative';
+  }
+  if (/^(?:no|n|nope|nah|cancel|stop|not yet|wrong|different one|do not|don't)\.?$/i.test(text)) {
+    return 'negative';
+  }
+  return '';
+}
+
 const ASSISTANT_AGENT_DELEGATION_DEFINITIONS = [
   {
     agentId: 'nurture-agent',
@@ -588,7 +610,9 @@ function buildAssistantIntentFromClassifier(classified = null, context = {}) {
       leadQuery: extractNurtureLeadQuery(text),
     };
   }
-  if (classified.intent === 'call' && phone) return { ...base, intent: 'call', phone };
+  if (classified.intent === 'call' && (phone || extractCallLeadQuery(text))) {
+    return { ...base, intent: 'call', phone, leadQuery: extractCallLeadQuery(text) };
+  }
   if (classified.intent === 'approvals') return { ...base, intent: 'approvals' };
   if (classified.intent === 'summary') return { ...base, intent: 'summary' };
   if (classified.intent === 'lead_lookup') {
@@ -645,6 +669,16 @@ export function detectAssistantIntent(message = '') {
     )
   ) {
     return { intent: 'session_recall', message: text, classifierSource: 'regex' };
+  }
+
+  const followUpPolarity = detectFollowUpPolarity(text);
+  if (followUpPolarity) {
+    return {
+      intent: 'follow_up_confirmation',
+      message: text,
+      polarity: followUpPolarity,
+      classifierSource: 'regex_follow_up',
+    };
   }
 
   if (looksLikeReadOnlyAssistantAudit(text)) {
@@ -755,8 +789,12 @@ export function detectAssistantIntent(message = '') {
     };
   }
 
-  if (/\b(call|dial|ring)\b/i.test(lower) && phone) {
-    return { intent: 'call', message: text, phone, classifierSource: 'regex' };
+  const callLeadQuery = extractCallLeadQuery(text);
+  if (
+    /\b(call|dial|ring)\b/i.test(lower) &&
+    (phone || callLeadQuery || /\b(?:this|that|current|selected)\s+(?:lead|seller|contact)\b/i.test(lower))
+  ) {
+    return { intent: 'call', message: text, phone, leadQuery: callLeadQuery, classifierSource: 'regex' };
   }
 
   if (
@@ -811,6 +849,7 @@ export function buildAssistantSuggestions(intent = 'general', { publicMode = tru
   if (intent === 'agent_delegation')
     return ['Fire the right agent', 'Show work-order proof', 'Keep sends approval-gated'];
   if (intent === 'summary') return ['Summarize calls', 'Show hot leads', 'What needs attention'];
+  if (intent === 'follow_up_confirmation') return ['Continue safely', 'Change lead', 'Cancel'];
   return ['Find a lead', 'Analyze a deal', 'Draft a follow-up'];
 }
 
@@ -829,6 +868,18 @@ function getAssistantLeadPlanContext(detected = {}, options = {}) {
     extractNurtureLeadQuery(detected.message || '');
   const leadMatch = leadId ? null : findAssistantLeadMatch(leadQuery || detected.message || '', providedLeads);
   return { leadId, leadQuery, leadMatch };
+}
+
+function getAssistantPendingAction(options = {}) {
+  const session = options.session && typeof options.session === 'object' ? options.session : {};
+  const pending =
+    options.pendingAction ||
+    options.pendingConfirmation ||
+    session.pendingAction ||
+    session.pendingConfirmation ||
+    session.awaitingConfirmation ||
+    null;
+  return pending && typeof pending === 'object' && !Array.isArray(pending) ? pending : null;
 }
 
 export function planAssistantIntent(detected = {}, options = {}) {
@@ -918,6 +969,99 @@ export function planAssistantIntent(detected = {}, options = {}) {
       answer:
         'Sign in to the PBK Command Center first, then I can use private deal data and team tools for you.',
       suggestions: ['Sign in', 'Use public chat safely'],
+      toolPlan: null,
+      usedIntent: intent,
+    };
+  }
+
+  if (!publicMode && intent === 'follow_up_confirmation') {
+    const pendingAction = getAssistantPendingAction(options);
+    if (detected.polarity === 'negative') {
+      return {
+        action: 'confirmation_declined',
+        answer: 'Got it. I will not continue that pending action. Tell me the seller or next move you want instead.',
+        suggestions,
+        toolPlan: null,
+        usedIntent: intent,
+      };
+    }
+    if (!pendingAction) {
+      return {
+        action: 'missing_confirmation_context',
+        answer:
+          'Yes to which action? Name the seller and the action, like "call Tim" or "draft a text," and I will keep it in the right approval lane.',
+        suggestions,
+        toolPlan: null,
+        usedIntent: intent,
+      };
+    }
+    const nextToolName = cleanText(
+      pendingAction.nextToolName ||
+        pendingAction.toolName ||
+        pendingAction.params?.nextToolName ||
+        pendingAction.params?.toolName ||
+        '',
+      120
+    );
+    const pendingLead = pendingAction.matchedLead && typeof pendingAction.matchedLead === 'object'
+      ? pendingAction.matchedLead
+      : {};
+    const leadId = cleanText(
+      pendingAction.leadId ||
+        pendingAction.lead_id ||
+        pendingAction.params?.leadId ||
+        pendingLead.leadId ||
+        pendingLead.id ||
+        options.leadId ||
+        options.session?.leadId ||
+        '',
+      120
+    );
+    const phone = extractPhone(
+      pendingAction.phone ||
+        pendingAction.to ||
+        pendingAction.params?.phone ||
+        pendingAction.params?.to ||
+        pendingLead.phone ||
+        ''
+    );
+    const sellerLabel = pendingLead.name || pendingLead.address || (leadId ? 'the selected lead' : phone || 'that seller');
+    if (nextToolName === 'telnyx_call') {
+      if (!leadId && !phone) {
+        return {
+          action: 'missing_required_info',
+          answer:
+            'I can prepare the call request, but I need the selected lead or phone number again so I do not dial the wrong seller.',
+          suggestions,
+          toolPlan: null,
+          usedIntent: intent,
+        };
+      }
+      return {
+        action: 'approval_required',
+        answer: `Confirmed. I will prepare the approval-gated call request for ${sellerLabel}. Nothing dials until it is approved.`,
+        suggestions,
+        toolPlan: {
+          toolName: 'telnyx_call',
+          params: {
+            leadId,
+            to: phone,
+            phone,
+            userRequest: pendingAction.userRequest || pendingAction.command || '',
+            forceApproval: true,
+            source: 'ava-assistant-chat',
+          },
+          providerWrite: true,
+          approvalRequired: true,
+        },
+        usedIntent: intent,
+      };
+    }
+    return {
+      action: 'confirmation_context_found',
+      answer:
+        'Confirmed. I still need to rebuild the exact action safely, so tell me the seller and whether this is a call, text, email, nurture, or contract step.',
+      suggestions,
       toolPlan: null,
       usedIntent: intent,
     };
@@ -1290,13 +1434,65 @@ export function planAssistantIntent(detected = {}, options = {}) {
   }
 
   if (!publicMode && intent === 'call') {
+    const { leadId, leadQuery, leadMatch } = getAssistantLeadPlanContext(detected, options);
+    const phone = detected.phone || '';
+    if (!leadId && !phone && leadMatch) {
+      return {
+        action: 'lead_confirmation_required',
+        answer: `I found ${leadMatch.name || 'a likely lead'}${leadMatch.address ? ` at ${leadMatch.address}` : ''}. Confirm this is the right seller and I will prepare the call request for approval.`,
+        suggestions,
+        leadMatch,
+        toolPlan: {
+          toolName: 'confirmLeadMatch',
+          params: {
+            nextToolName: 'telnyx_call',
+            leadId: leadMatch.leadId,
+            matchedLead: leadMatch,
+            userRequest: detected.message,
+            forceApproval: true,
+          },
+          providerWrite: false,
+          requiresConfirmation: true,
+        },
+        usedIntent: intent,
+      };
+    }
+    if (!leadId && !phone && leadQuery) {
+      return {
+        action: 'lead_lookup_required',
+        answer: `I need to confirm the seller before preparing a call. I can search for "${leadQuery}" and then keep the call approval-gated.`,
+        suggestions,
+        toolPlan: {
+          toolName: 'findLead',
+          params: {
+            query: leadQuery,
+            nextToolName: 'telnyx_call',
+            userRequest: detected.message,
+            forceApproval: true,
+          },
+          providerWrite: false,
+          requiresConfirmation: true,
+        },
+        usedIntent: intent,
+      };
+    }
+    if (!leadId && !phone) {
+      return {
+        action: 'missing_required_info',
+        answer:
+          'Tell me which seller or phone number to call, and I will prepare the call request for approval without dialing yet.',
+        suggestions,
+        toolPlan: null,
+        usedIntent: intent,
+      };
+    }
     return {
       action: 'approval_required',
-      answer: `I will prepare the call request for ${detected.phone}. Nothing dials until you approve it.`,
+      answer: `I will prepare the call request for ${phone || 'the selected lead'}. Nothing dials until you approve it.`,
       suggestions,
       toolPlan: {
         toolName: 'telnyx_call',
-        params: { to: detected.phone, forceApproval: true },
+        params: { leadId, to: phone, phone, userRequest: detected.message, forceApproval: true, source: 'ava-assistant-chat' },
         providerWrite: true,
         approvalRequired: true,
       },

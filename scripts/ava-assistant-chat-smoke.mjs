@@ -757,6 +757,12 @@ assert(
   'Ava must promote a found lead into session context and answer current-seller follow-up turns from that active lead.'
 );
 assert(
+  /import \{[\s\S]*findAssistantLeadMatch[\s\S]*\} from '\.\/ava-assistant-chat\.mjs';/.test(bridge) &&
+    /function findInternalAssistantLead\(query = ''\)[\s\S]*findAssistantLeadMatch\(query, state\.leadImports \|\| \[\], \{ threshold: 0\.3 \}\)/.test(bridge) &&
+    /findInternalAssistantLeadById\(fuzzyLeadMatch\.leadId\)/.test(bridge),
+  'Ava lead lookup execution should share the same fuzzy roster matcher as call/text/nurture planning.'
+);
+assert(
   /toolResult:\s*assistantMetadata\.toolResult/.test(bridge) &&
     /toolPlan:\s*assistantMetadata\.toolPlan/.test(bridge) &&
     /mission:\s*assistantMetadata\.mission/.test(bridge) &&

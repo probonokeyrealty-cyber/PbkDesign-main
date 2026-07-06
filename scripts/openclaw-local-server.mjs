@@ -53,7 +53,7 @@ import { isYouTubeUrl, processYouTubeTraining, runYouTubeTrainingEvalSuite } fro
 import { SYNTHETIC_EDGE_CASE_SOURCE, buildSyntheticEdgeCaseObjections } from './synthetic-edge-cases.mjs';
 import { getObservabilityStatus as getPbkObservabilityStatus, incrementObservabilityCounter, initializeObservability, recordEventBusBacklogMetric, recordGuardrailViolationMetric, recordLatencyMetric, withObservabilitySpan } from './observability.mjs';
 import { recordAvaResponseLatencyStatus } from './ava-latency-status.mjs';
-import { appendAssistantMessage, buildAssistantPrompt, createAssistantSessionId, detectAssistantIntent, normalizeAssistantSession, planAssistantIntent, sanitizeAssistantTurn } from './ava-assistant-chat.mjs';
+import { appendAssistantMessage, buildAssistantPrompt, createAssistantSessionId, detectAssistantIntent, findAssistantLeadMatch, normalizeAssistantSession, planAssistantIntent, sanitizeAssistantTurn } from './ava-assistant-chat.mjs';
 import { runAvaMissionController } from './ava-mission-controller.mjs';
 import { buildLeadCommitEnvelope } from './lead-field-provenance.mjs';
 import { isDeepSpecConfigured, readDeepSpecConfig, requestSpeculativeChatCompletion } from './deepspec-speculative-client.mjs';
@@ -62601,11 +62601,26 @@ function findInternalAssistantLead(query = '') {
     .trim()
     .toLowerCase();
   if (!cleanQuery) return null;
+  const exactLead = (state.leadImports || []).find((lead) => {
+    const haystack = [lead.leadName, lead.name, lead.sellerName, lead.address, lead.phone, lead.email, lead.leadId, lead.id].filter(Boolean).join(' ').toLowerCase();
+    return haystack.includes(cleanQuery);
+  });
+  if (exactLead) return exactLead;
+  const fuzzyLeadMatch = findAssistantLeadMatch(query, state.leadImports || [], { threshold: 0.3 });
+  if (!fuzzyLeadMatch) return null;
   return (
+    findInternalAssistantLeadById(fuzzyLeadMatch.leadId) ||
     (state.leadImports || []).find((lead) => {
-      const haystack = [lead.leadName, lead.name, lead.sellerName, lead.address, lead.phone, lead.email, lead.leadId, lead.id].filter(Boolean).join(' ').toLowerCase();
-      return haystack.includes(cleanQuery);
-    }) || null
+      const leadId = getInternalAssistantLeadId(lead);
+      const leadName = String(lead.leadName || lead.name || lead.sellerName || lead.seller?.name || lead.contact?.name || '').trim();
+      const leadAddress = String(lead.address || lead.propertyAddress || lead.property?.address || lead.home?.address || lead.mailingAddress || '').trim();
+      return (
+        (fuzzyLeadMatch.leadId && leadId === fuzzyLeadMatch.leadId) ||
+        (fuzzyLeadMatch.name && leadName === fuzzyLeadMatch.name) ||
+        (fuzzyLeadMatch.address && leadAddress === fuzzyLeadMatch.address)
+      );
+    }) ||
+    null
   );
 }
 

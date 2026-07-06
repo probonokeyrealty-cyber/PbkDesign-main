@@ -197,6 +197,23 @@ assert.match(
   'Assistant should answer recall requests from reloaded persisted session turns after refresh.'
 );
 
+const bareLeadNamePlan = planAssistantIntent(detectAssistantIntent('Tim'), {
+  publicMode: false,
+  authenticated: true,
+  session: {
+    history: [
+      { role: 'assistant', content: 'Which seller should I search for? Send me a name, phone, or address.' },
+    ],
+  },
+});
+assert.equal(
+  bareLeadNamePlan.action,
+  'tool_plan',
+  'A bare lead name after Ava asks for a seller should search leads instead of falling into generic chat.'
+);
+assert.equal(bareLeadNamePlan.toolPlan?.toolName, 'findLead', 'Bare lead names should route to findLead when Ava is waiting for a lead.');
+assert.equal(bareLeadNamePlan.toolPlan?.params?.query, 'Tim', 'Bare lead-name follow-up should preserve the user-provided name.');
+
 const internalAnalyzePlan = planAssistantIntent(analyzeIntent, { publicMode: false, authenticated: true });
 assert.equal(internalAnalyzePlan.action, 'tool_plan', 'Authenticated assistant should produce a safe tool plan for deal analysis.');
 assert.equal(internalAnalyzePlan.toolPlan?.toolName, 'analyzeDeal', 'Deal analysis should route to analyzeDeal.');

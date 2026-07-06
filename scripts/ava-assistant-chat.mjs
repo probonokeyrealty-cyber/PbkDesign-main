@@ -882,6 +882,40 @@ function getAssistantPendingAction(options = {}) {
   return pending && typeof pending === 'object' && !Array.isArray(pending) ? pending : null;
 }
 
+function looksLikeBareLeadIdentifier(message = '') {
+  const text = cleanText(message, 120);
+  if (!text || text.length < 2 || text.length > 80) return false;
+  if (detectFollowUpPolarity(text)) return false;
+  if (/[?!]/.test(text)) return false;
+  if (
+    /\b(?:call|dial|ring|text|sms|email|send|draft|compose|prepare|contract|docusign|analy[sz]e|mao|arv|nurture|follow|schedule|remember|review|audit|help|what|why|how|when|where)\b/i.test(
+      text
+    )
+  ) {
+    return false;
+  }
+  return /^[a-z0-9][a-z0-9\s.'#@+-]*$/i.test(text);
+}
+
+function sessionAwaitsLeadIdentifier(session = {}) {
+  const normalized = normalizeAssistantSession(session || {});
+  const pendingAction = getAssistantPendingAction({ session: normalized });
+  const nextToolName = cleanText(
+    pendingAction?.nextToolName || pendingAction?.toolName || pendingAction?.params?.nextToolName || '',
+    120
+  );
+  if (['findLead', 'lead_lookup'].includes(nextToolName)) return true;
+  const lastAssistant = [...normalized.history]
+    .reverse()
+    .find((turn) => turn.role === 'assistant' && String(turn.content || '').trim());
+  const prompt = String(lastAssistant?.content || '').toLowerCase();
+  return Boolean(
+    prompt &&
+      /\b(?:which|what|send|tell|pick|choose|name|phone|address|seller|lead|contact)\b/.test(prompt) &&
+      /\b(?:seller|lead|contact|name|phone|address)\b/.test(prompt)
+  );
+}
+
 export function planAssistantIntent(detected = {}, options = {}) {
   const publicMode = options.publicMode !== false;
   const authenticated = Boolean(options.authenticated);
@@ -971,6 +1005,21 @@ export function planAssistantIntent(detected = {}, options = {}) {
       suggestions: ['Sign in', 'Use public chat safely'],
       toolPlan: null,
       usedIntent: intent,
+    };
+  }
+
+  if (!publicMode && intent === 'general' && looksLikeBareLeadIdentifier(detected.message) && sessionAwaitsLeadIdentifier(options.session || {})) {
+    const query = cleanText(detected.message || '', 120);
+    return {
+      action: 'tool_plan',
+      answer: `I will look for a lead matching "${query}".`,
+      suggestions: buildAssistantSuggestions('lead_lookup', { publicMode }),
+      toolPlan: {
+        toolName: 'findLead',
+        params: { query },
+        providerWrite: false,
+      },
+      usedIntent: 'lead_lookup',
     };
   }
 

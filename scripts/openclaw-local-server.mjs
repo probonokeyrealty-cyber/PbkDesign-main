@@ -4928,6 +4928,82 @@ function normalizeBantInfo(...sources) {
   return bant;
 }
 
+function truthyQualificationFlag(value) {
+  if (value === true) return true;
+  if (value === false || value === undefined || value === null) return false;
+  return /^(?:1|true|yes|y|confirmed|verified|owner|decision[-\s]?maker)$/i.test(String(value).trim());
+}
+
+function buildContractQualificationContext(params = {}) {
+  const ownerVerified = truthyQualificationFlag(params.ownerVerified ?? params.owner_verified);
+  const authorityConfirmed = truthyQualificationFlag(
+    params.authorityConfirmed ?? params.authority_confirmed ?? params.decisionMakerConfirmed ?? params.decision_maker_confirmed
+  );
+  const directBant = {
+    budget:
+      params.budget ??
+      params.bantBudget ??
+      params.bant_budget ??
+      params.sellerBudget ??
+      params.seller_budget ??
+      params.askingPrice ??
+      params.asking_price ??
+      params.desiredNet ??
+      params.desired_net,
+    authority:
+      params.authority ??
+      params.bantAuthority ??
+      params.bant_authority ??
+      (ownerVerified || authorityConfirmed ? 'seller authority confirmed for this contract path' : ''),
+    need:
+      params.need ??
+      params.bantNeed ??
+      params.bant_need ??
+      params.motivation ??
+      params.motivationReason ??
+      params.motivation_reason,
+    timeline:
+      params.timeline ??
+      params.bantTimeline ??
+      params.bant_timeline ??
+      params.closeBy ??
+      params.close_by ??
+      params.targetCloseDate ??
+      params.target_close_date,
+    urgency:
+      params.urgency ??
+      params.bantUrgency ??
+      params.bant_urgency ??
+      params.urgencyReason ??
+      params.urgency_reason,
+  };
+  const bant = normalizeBantInfo(
+    params.bant || {},
+    params.bantStatus?.known || {},
+    params.qualification?.bant || {},
+    params.lead?.bant || {},
+    params.metadata?.bant || {},
+    params.callContext?.bant || {},
+    params.conversationContext?.bant || {},
+    directBant
+  );
+  const missingBant = getMissingBantFields(bant);
+  return compactObject({
+    bant,
+    bantComplete: missingBant.length === 0,
+    missingBant,
+    ownerVerified,
+    authorityConfirmed,
+    sellerBudget: params.sellerBudget ?? params.seller_budget ?? '',
+    askingPrice: params.askingPrice ?? params.asking_price ?? '',
+    desiredNet: params.desiredNet ?? params.desired_net ?? '',
+    motivation: params.motivation ?? params.motivationReason ?? params.motivation_reason ?? '',
+    timeline: params.timeline ?? params.closeBy ?? params.close_by ?? params.targetCloseDate ?? params.target_close_date ?? '',
+    urgency: params.urgency ?? params.urgencyReason ?? params.urgency_reason ?? '',
+    source: params.source || params.requestSource || params.request_source || '',
+  });
+}
+
 function getMissingBantFields(bant = {}) {
   return BANT_FIELDS.filter((field) => !normalizeBantValue(bant[field]));
 }
@@ -34509,6 +34585,7 @@ function createAppointmentRecord(params = {}) {
 
 function createContractRecord(params = {}) {
   const context = findLeadContext(params);
+  const qualification = buildContractQualificationContext(params);
   return {
     id: params.id || `contract-${slugify(context.leadName || context.address || randomUUID())}`,
     leadId: params.leadId || context.leadId,
@@ -34559,6 +34636,28 @@ function createContractRecord(params = {}) {
     underwritingReviewerName: params.underwritingReviewerName || '',
     analyzerRunId: params.analyzerRunId || params.analyzer_run_id || '',
     analyzerSnapshot: params.analyzerSnapshot || params.analyzer_snapshot || null,
+    bant: qualification.bant || {},
+    bantStatus: params.bantStatus || params.bant_status || {
+      known: qualification.bant || {},
+      missing: qualification.missingBant || [],
+      complete: qualification.bantComplete === true,
+    },
+    qualification: {
+      ...(params.qualification && typeof params.qualification === 'object' ? params.qualification : {}),
+      ...qualification,
+    },
+    ownerVerified: qualification.ownerVerified === true,
+    authorityConfirmed: qualification.authorityConfirmed === true,
+    askingPrice: qualification.askingPrice || params.askingPrice || params.asking_price || '',
+    sellerBudget: qualification.sellerBudget || params.sellerBudget || params.seller_budget || '',
+    desiredNet: qualification.desiredNet || params.desiredNet || params.desired_net || '',
+    motivation: qualification.motivation || params.motivation || params.motivationReason || params.motivation_reason || '',
+    urgency: qualification.urgency || params.urgency || params.urgencyReason || params.urgency_reason || '',
+    metadata: {
+      ...(params.metadata && typeof params.metadata === 'object' ? params.metadata : {}),
+      bant: qualification.bant || {},
+      qualification,
+    },
     idempotencyKey: params.idempotencyKey || params.idempotency_key || '',
     requestedBy: params.requestedBy || params.requested_by || '',
     source: params.source || '',
@@ -58718,6 +58817,20 @@ const toolHandlers = {
     const reviewerName = String(params.reviewerName || params.underwriterName || 'PBK Underwriting Supervisor').trim();
     const sellerNotice = String(params.sellerNotice || 'Our underwriting department supervisor will make the final sign-off and send the agreement from our main business email for signature. If you have any questions, you can call your acquisitions agent or contact our underwriting department directly.').trim();
     const approvalNotes = String(params.notes || `Contract lawyer prepared ${prepared.template?.name || 'the agreement'} for underwriting review. ${sellerNotice}`).trim();
+    const qualification = buildContractQualificationContext({
+      ...params,
+      ...contract,
+      bant: params.bant || contract.bant || {},
+      bantStatus: params.bantStatus || contract.bantStatus || {},
+      qualification: {
+        ...(contract.qualification && typeof contract.qualification === 'object' ? contract.qualification : {}),
+        ...(params.qualification && typeof params.qualification === 'object' ? params.qualification : {}),
+      },
+      metadata: {
+        ...(contract.metadata && typeof contract.metadata === 'object' ? contract.metadata : {}),
+        ...(params.metadata && typeof params.metadata === 'object' ? params.metadata : {}),
+      },
+    });
 
     const approvalResult = await toolHandlers.createApproval({
       type: 'contract',
@@ -58731,12 +58844,26 @@ const toolHandlers = {
       reviewerEmail,
       reviewerName,
       sellerNotice,
+      payload: {
+        bant: qualification.bant || {},
+        qualification,
+        ownerVerified: qualification.ownerVerified === true,
+        authorityConfirmed: qualification.authorityConfirmed === true,
+        askingPrice: qualification.askingPrice || '',
+        sellerBudget: qualification.sellerBudget || '',
+        desiredNet: qualification.desiredNet || '',
+        motivation: qualification.motivation || '',
+        timeline: qualification.timeline || '',
+        urgency: qualification.urgency || '',
+      },
       metadata: {
         selectedPath: contract.selectedPath || '',
         selectedPathLabel: contract.selectedPathLabel || '',
         contractType: contract.contractType || '',
         negotiationFile: contract.negotiationFile || '',
         templatePath: contract.templatePath || '',
+        bant: qualification.bant || {},
+        qualification,
       },
       notes: approvalNotes,
     });
@@ -58747,6 +58874,28 @@ const toolHandlers = {
     contract.underwritingReviewerEmail = reviewerEmail;
     contract.underwritingReviewerName = reviewerName;
     contract.sellerNotice = sellerNotice;
+    contract.bant = qualification.bant || {};
+    contract.bantStatus = {
+      known: qualification.bant || {},
+      missing: qualification.missingBant || [],
+      complete: qualification.bantComplete === true,
+    };
+    contract.qualification = {
+      ...(contract.qualification && typeof contract.qualification === 'object' ? contract.qualification : {}),
+      ...qualification,
+    };
+    contract.ownerVerified = qualification.ownerVerified === true;
+    contract.authorityConfirmed = qualification.authorityConfirmed === true;
+    contract.askingPrice = qualification.askingPrice || contract.askingPrice || '';
+    contract.sellerBudget = qualification.sellerBudget || contract.sellerBudget || '';
+    contract.desiredNet = qualification.desiredNet || contract.desiredNet || '';
+    contract.motivation = qualification.motivation || contract.motivation || '';
+    contract.urgency = qualification.urgency || contract.urgency || '';
+    contract.metadata = {
+      ...(contract.metadata && typeof contract.metadata === 'object' ? contract.metadata : {}),
+      bant: qualification.bant || {},
+      qualification,
+    };
     contract.notes = approvalNotes;
     contract.updatedAt = isoNow();
     await upsertContract(state, contract);
@@ -59594,6 +59743,41 @@ async function handleEvent(eventType, payload = {}) {
       if (contract) {
         contract.approvalId = approval.id;
         if (approval.status === 'approved' && approval.approvalAction === 'underwriting_sign' && String(contract.underwritingStatus || '').toLowerCase() !== 'sent') {
+          const approvalQualification =
+            approval.payload?.qualification ||
+            approval.metadata?.qualification ||
+            {};
+          const approvalBant =
+            approval.payload?.bant ||
+            approval.metadata?.bant ||
+            approvalQualification?.bant ||
+            {};
+          const qualification = buildContractQualificationContext({
+            ...contract,
+            bant: contract.bant || approvalBant,
+            bantStatus: contract.bantStatus || {},
+            qualification: {
+              ...(contract.qualification && typeof contract.qualification === 'object' ? contract.qualification : {}),
+              ...(approvalQualification && typeof approvalQualification === 'object' ? approvalQualification : {}),
+            },
+            metadata: {
+              ...(contract.metadata && typeof contract.metadata === 'object' ? contract.metadata : {}),
+              ...(approval.metadata && typeof approval.metadata === 'object' ? approval.metadata : {}),
+              bant: contract.metadata?.bant || approval.metadata?.bant || approvalBant,
+            },
+            ownerVerified:
+              contract.ownerVerified ?? approval.payload?.ownerVerified ?? approvalQualification?.ownerVerified,
+            authorityConfirmed:
+              contract.authorityConfirmed ??
+              approval.payload?.authorityConfirmed ??
+              approvalQualification?.authorityConfirmed,
+            askingPrice: contract.askingPrice || approval.payload?.askingPrice || approvalQualification?.askingPrice,
+            sellerBudget: contract.sellerBudget || approval.payload?.sellerBudget || approvalQualification?.sellerBudget,
+            desiredNet: contract.desiredNet || approval.payload?.desiredNet || approvalQualification?.desiredNet,
+            motivation: contract.motivation || approval.payload?.motivation || approvalQualification?.motivation,
+            timeline: contract.timeline || approval.payload?.timeline || approvalQualification?.timeline,
+            urgency: contract.urgency || approval.payload?.urgency || approvalQualification?.urgency,
+          });
           const signers = [];
           const reviewerEmail = String(approval.reviewerEmail || contract.underwritingReviewerEmail || MAIN_BUSINESS_EMAIL).trim();
           if (reviewerEmail) {
@@ -59615,6 +59799,27 @@ async function handleEvent(eventType, payload = {}) {
               ...contract,
               notes: approval.sellerNotice || contract.sellerNotice || contract.notes || 'Prepared for underwriting sign-off.',
               signers,
+              bant: qualification.bant || {},
+              bantStatus: {
+                known: qualification.bant || {},
+                missing: qualification.missingBant || [],
+                complete: qualification.bantComplete === true,
+              },
+              qualification,
+              metadata: {
+                ...(contract.metadata && typeof contract.metadata === 'object' ? contract.metadata : {}),
+                ...(approval.metadata && typeof approval.metadata === 'object' ? approval.metadata : {}),
+                bant: qualification.bant || {},
+                qualification,
+              },
+              ownerVerified: qualification.ownerVerified === true,
+              authorityConfirmed: qualification.authorityConfirmed === true,
+              askingPrice: qualification.askingPrice || contract.askingPrice || '',
+              sellerBudget: qualification.sellerBudget || contract.sellerBudget || '',
+              desiredNet: qualification.desiredNet || contract.desiredNet || '',
+              motivation: qualification.motivation || contract.motivation || '',
+              timeline: qualification.timeline || contract.timeline || '',
+              urgency: qualification.urgency || contract.urgency || '',
             },
             'approval-contract'
           );

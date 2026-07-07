@@ -4998,7 +4998,7 @@
 
 @media (max-width: 760px) {
   .pbk-skill-studio {
-    padding: 12px 10px calc(82px + env(safe-area-inset-bottom));
+    padding: 12px 10px calc(190px + env(safe-area-inset-bottom));
   }
   .pbk-skill-studio-header {
     align-items: stretch;
@@ -5082,7 +5082,7 @@
     position: fixed;
     z-index: 60;
     right: 10px;
-    bottom: calc(66px + env(safe-area-inset-bottom));
+    bottom: max(96px, calc(86px + env(safe-area-inset-bottom)));
     left: 10px;
     margin: 0;
     border: 1px solid var(--border);

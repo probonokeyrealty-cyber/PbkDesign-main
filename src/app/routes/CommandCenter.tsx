@@ -323,11 +323,20 @@ const COMMAND_WIDGETS: Array<{ id: CommandWidgetId; label: string }> = [
   { id: 'activity', label: 'Activity feed' },
   { id: 'approvals', label: 'Review board' },
 ];
+const CORE_COMMAND_WIDGETS = new Set<CommandWidgetId>(['adminActivity', 'activity', 'approvals']);
 const DEFAULT_COMMAND_WIDGETS = COMMAND_WIDGETS.reduce(
   (prefs, widget) => ({ ...prefs, [widget.id]: true }),
   {} as Record<CommandWidgetId, boolean>
 );
 type CommandWidgetPrefs = Record<CommandWidgetId, boolean>;
+
+function enforceCoreCommandWidgets(prefs: CommandWidgetPrefs): CommandWidgetPrefs {
+  const next = { ...prefs };
+  CORE_COMMAND_WIDGETS.forEach((id) => {
+    next[id] = true;
+  });
+  return next;
+}
 
 function normalizeCommandWidgetPrefs(value: unknown): CommandWidgetPrefs | null {
   if (!value || typeof value !== 'object') return null;
@@ -341,7 +350,7 @@ function normalizeCommandWidgetPrefs(value: unknown): CommandWidgetPrefs | null 
       foundWidget = true;
     }
   }
-  return foundWidget ? next : null;
+  return foundWidget ? enforceCoreCommandWidgets(next) : null;
 }
 
 function areCommandWidgetPrefsEqual(left: CommandWidgetPrefs, right: CommandWidgetPrefs) {
@@ -369,14 +378,15 @@ function readCommandWidgetPrefs() {
 }
 
 function writeCommandWidgetPrefs(prefs: CommandWidgetPrefs) {
+  const nextPrefs = enforceCoreCommandWidgets(prefs);
   if (typeof window !== 'undefined') {
     try {
-      window.localStorage.setItem(COMMAND_WIDGET_PREFS_KEY, JSON.stringify(prefs));
+      window.localStorage.setItem(COMMAND_WIDGET_PREFS_KEY, JSON.stringify(nextPrefs));
     } catch {
       // localStorage is a fallback, so private-mode failures should not block bridge writes.
     }
   }
-  return prefs;
+  return nextPrefs;
 }
 
 function getCallId(call: Record<string, unknown>) {
@@ -1897,6 +1907,7 @@ export function CommandCenter() {
   const announcedCallRef = useRef('');
   const reviewedCallRef = useRef(readReviewedCallIds());
   const promptedCallRef = useRef('');
+  const previousActiveCallStatusRef = useRef('');
 
   const approvals = useMemo(
     () => (Array.isArray(snapshot?.approvals) ? snapshot.approvals : []),
@@ -2326,14 +2337,27 @@ export function CommandCenter() {
   }, [activeCall?.callId, activeCall?.status, activeCall?.caller.name, activeCall?.caller.phone]);
 
   useEffect(() => {
+    const activeCallStatus = String(activeCall?.status || '').toLowerCase();
+    if (!activeCallStatus || activeCallStatus === 'idle' || activeCallStatus === 'ended') return;
+    previousActiveCallStatusRef.current = activeCallStatus;
+  }, [activeCall?.status]);
+
+  useEffect(() => {
     if (!endedCallForReview) return;
+    const activeCallStatus = String(activeCall?.status || '').toLowerCase();
+    const previousActiveCallStatus = previousActiveCallStatusRef.current;
+    const callEndedDuringThisSession =
+      activeCallStatus === 'ended' &&
+      Boolean(previousActiveCallStatus) &&
+      previousActiveCallStatus !== 'ended';
+    if (!callEndedDuringThisSession) return;
     const callId = getCallId(endedCallForReview);
     if (!callId || reviewedCallRef.current.has(callId) || promptedCallRef.current === callId) {
       return;
     }
     promptedCallRef.current = callId;
     setQualityReviewCall(endedCallForReview);
-  }, [endedCallForReview]);
+  }, [activeCall?.status, endedCallForReview]);
 
   const closeQualityReview = useCallback(() => {
     const callId = qualityReviewCall ? getCallId(qualityReviewCall) : '';

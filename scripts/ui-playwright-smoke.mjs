@@ -178,6 +178,28 @@ async function collectRouteState(page, route) {
       (el.getAttribute('aria-label') || '').includes('Send to Ava')
     );
     const sendRect = send?.getBoundingClientRect();
+    const mobileNav = document.querySelector('.pbk-mobile-shell-nav');
+    const mobileNavRect = mobileNav?.getBoundingClientRect();
+    const fixedAction = document.querySelector('.pbk-skill-primary-action');
+    const fixedActionRect = fixedAction?.getBoundingClientRect();
+    const fixedActionClearance =
+      mobileNavRect && fixedActionRect ? Math.round(mobileNavRect.top - fixedActionRect.bottom) : null;
+    const blockingDialogs = [...document.querySelectorAll('[role="dialog"][aria-modal="true"]')]
+      .filter((el) => {
+        const rect = el.getBoundingClientRect();
+        const style = window.getComputedStyle(el);
+        return (
+          rect.width > 0 &&
+          rect.height > 0 &&
+          style.visibility !== 'hidden' &&
+          style.display !== 'none' &&
+          Number(style.opacity || 1) > 0
+        );
+      })
+      .map((el) => ({
+        label: (el.getAttribute('aria-label') || el.querySelector('h1,h2,h3')?.textContent || '').trim(),
+        text: (el.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 220),
+      }));
     const oldCopyVisible = config.oldCopy.filter((phrase) => text.includes(phrase));
     const oldCopyContext = Object.fromEntries(
       oldCopyVisible.map((phrase) => {
@@ -196,6 +218,8 @@ async function collectRouteState(page, route) {
       overflowX: document.documentElement.scrollWidth - document.documentElement.clientWidth,
       oldCopyVisible,
       oldCopyContext,
+      fixedActionClearance,
+      blockingDialogs,
       pagers,
       avaSend: send
         ? {
@@ -265,6 +289,22 @@ async function runViewport(browser, baseUrl, viewport) {
       const pager = state.pagers.find((item) => item.label === label);
       assert(pager, `${viewport.name} ${route.path} missing pager "${label}".`);
       assert(pager.size === '10', `${viewport.name} ${route.path} pager "${label}" is not ten-item.`);
+    }
+    if (viewport.width <= 430 && route.path === '/skill-studio' && state.fixedActionClearance !== null) {
+      assert(
+        state.fixedActionClearance >= 8,
+        `${viewport.name} ${route.path} fixed skill action overlaps mobile nav by ${Math.abs(
+          state.fixedActionClearance
+        )}px.`
+      );
+    }
+    if (route.path === '/command-center') {
+      assert(
+        state.blockingDialogs.length === 0,
+        `${viewport.name} ${route.path} opens with blocking dialog: ${state.blockingDialogs
+          .map((item) => item.label || item.text)
+          .join(' | ')}`
+      );
     }
     if (route.avaSendCheck) {
       assert(state.avaSend, `${viewport.name} ${route.path} missing Ava Send button.`);

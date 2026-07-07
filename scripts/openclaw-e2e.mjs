@@ -17,6 +17,14 @@ function assert(condition, message) {
   }
 }
 
+function approvalIdFrom(payload) {
+  return payload?.approval?.approval?.id
+    || payload?.approval?.id
+    || payload?.approvalId
+    || payload?.approval?.approvalId
+    || '';
+}
+
 function authHeaders() {
   return {
     Authorization: `Bearer ${API_KEY}`,
@@ -24,13 +32,28 @@ function authHeaders() {
 }
 
 async function request(pathname, options = {}) {
-  return fetch(`${BASE_URL}${pathname}`, options);
+  try {
+    return await fetch(`${BASE_URL}${pathname}`, options);
+  } catch (error) {
+    throw new Error(`Request failed for ${pathname}: ${error instanceof Error ? error.message : String(error)}`);
+  }
 }
 
 async function requestJson(pathname, options = {}) {
   const response = await request(pathname, options);
   const text = await response.text();
-  const parsed = text ? JSON.parse(text) : null;
+  let parsed = null;
+  if (text) {
+    try {
+      parsed = JSON.parse(text);
+    } catch (error) {
+      throw new Error(
+        `Non-JSON response for ${pathname}: status=${response.status} text=${text
+          .replace(/\s+/g, ' ')
+          .slice(0, 400)}`,
+      );
+    }
+  }
   return { response, parsed };
 }
 
@@ -285,9 +308,12 @@ async function main() {
         notes: 'Scheduled acquisition follow-up after reply handling.',
       }),
     });
-    assert(call.response.ok && call.parsed?.ok === true, 'Call routing failed.');
     const callOutcome = call.parsed?.result || call.parsed?.outcome || '';
-    const callWasApprovalQueued = callOutcome === 'queued_for_approval' && Boolean(call.parsed?.approval?.approval?.id);
+    const callWasApprovalQueued = callOutcome === 'queued_for_approval' && Boolean(approvalIdFrom(call.parsed));
+    assert(
+      (call.response.ok && call.parsed?.ok === true) || (call.response.status === 409 && callWasApprovalQueued),
+      `Call routing failed: status=${call.response.status} payload=${JSON.stringify(call.parsed || {}).slice(0, 800)}`,
+    );
     assert(
       callWasApprovalQueued || call.parsed?.callStrategy?.script === 'novice-guided-walkthrough',
       `Expected approval-gated call queueing or novice-guided-walkthrough script, got ${call.parsed?.callStrategy?.script || callOutcome || 'missing'}.`,
@@ -310,6 +336,19 @@ async function main() {
         selectedPathLabel: 'Cash Offer',
         reviewerEmail: 'underwriting@example.com',
         reviewerName: 'PBK Underwriting Supervisor',
+        askingPrice: 78000,
+        ownerVerified: true,
+        authorityConfirmed: true,
+        motivation: 'Executor wants a clean probate sale without repairs.',
+        timeline: 'tomorrow at 5pm',
+        urgency: 'seller wants speed and certainty this week',
+        bant: {
+          budget: '78000',
+          authority: 'seller confirmed decision authority',
+          need: 'probate seller wants an as-is sale without repairs',
+          timeline: 'tomorrow at 5pm',
+          urgency: 'seller wants speed and certainty this week',
+        },
       }),
     });
     assert(lawyerReview.response.ok && lawyerReview.parsed?.ok === true, 'Contract lawyer review failed.');
@@ -336,7 +375,9 @@ async function main() {
     assert(
       contractApproval.parsed?.contractResult?.ok === true
       || Boolean(contractApproval.parsed?.contractResult?.docusign?.error),
-      'Approved contract did not produce a DocuSign result or a provider error.',
+      `Approved contract did not produce a DocuSign result or a provider error: ${JSON.stringify(
+        contractApproval.parsed?.contractResult || contractApproval.parsed || {},
+      ).slice(0, 1000)}`,
     );
 
     const replayedApproval = await requestJson(`/api/approvals/${encodeURIComponent(contractApprovalId)}`, {

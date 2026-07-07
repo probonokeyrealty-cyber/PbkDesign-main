@@ -51,10 +51,14 @@ expectContains(commandCenter, 'activityPage', 'Activity feed tracks a ten-item p
 expectContains(commandCenter, 'label="Activity feed pages"', 'Activity feed exposes page controls');
 expectContains(commandCenter, 'CallQualityReviewDialog', 'Ended calls surface a quality review popup');
 expectContains(commandCenter, 'pbk:command-center:widgets', 'Dashboard widget visibility is persisted locally');
-expectContains(commandCenter, 'Dashboard sections', 'Command Center exposes dashboard section controls');
-expectMatches(
+expectContains(
   commandCenter,
-  /active\|connected\|in\[_ -\]\?progress\|live\|ringing\|transferring/,
+  'Customize this dashboard for the whole team',
+  'Command Center exposes plain-language dashboard controls'
+);
+expectContains(
+  commandCenter,
+  'active|answered|bridged|connected|in[_ -]?progress|live|media|ringing|transferring',
   'Command Center live-call status mapping must match backend active statuses'
 );
 expectContains(

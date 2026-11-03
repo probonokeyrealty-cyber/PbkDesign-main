@@ -261,6 +261,7 @@
     "test:production-maturity-loop": "node ./scripts/production-maturity-loop-smoke.mjs",
     "test:production-performance-hardening": "node ./scripts/production-performance-hardening-smoke.mjs",
     "test:connection-strength": "node ./scripts/connection-strength-check-smoke.mjs",
+    "test:redis-recovery": "node ./scripts/redis-recovery-smoke.mjs",
     "test:postgres-no-fallback": "node ./scripts/postgres-no-fallback-smoke.mjs",
     "test:subagent-release-alignment": "node ./scripts/subagent-release-alignment-smoke.mjs",
     "test:agent-work-order": "node ./scripts/pbk-agent-work-order-smoke.mjs",

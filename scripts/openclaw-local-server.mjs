@@ -512,6 +512,7 @@ const REDIS_NAMESPACE =
 const REDIS_CALL_STATE_TTL_SECONDS = Math.max(300, Math.min(86400, Number(process.env.PBK_REDIS_CALL_STATE_TTL_SECONDS || 6 * 60 * 60)));
 const REDIS_LEASE_TTL_SECONDS = Math.max(30, Math.min(3600, Number(process.env.PBK_REDIS_LEASE_TTL_SECONDS || 15 * 60)));
 const REDIS_RETRY_COOLDOWN_MS = Math.max(5000, Math.min(300000, Number(process.env.PBK_REDIS_RETRY_COOLDOWN_MS || 60000)));
+const REDIS_CONNECT_TIMEOUT_MS = Math.max(250, Math.min(10000, Number(process.env.PBK_REDIS_CONNECT_TIMEOUT_MS || 1500)));
 const REDIS_ACTIVE_CALL_STALE_MS = Math.max(30_000, Math.min(10 * 60 * 1000, Number(process.env.PBK_REDIS_ACTIVE_CALL_STALE_MS || 3 * 60 * 1000)));
 const BRIDGE_READ_CACHE_DEFAULT_TTL_MS = Math.max(
   1000,
@@ -1210,14 +1211,16 @@ function redisKey(...parts) {
 
 async function getSharedRedisClient() {
   if (!REDIS_ENABLED) return null;
-  if (sharedRedisClient?.isOpen) return sharedRedisClient;
+  if (sharedRedisClient?.isReady) return sharedRedisClient;
   if (sharedRedisConnectPromise) return sharedRedisConnectPromise;
   if (Date.now() < sharedRedisDisabledUntil) return null;
 
   const client = createRedisClient({
     url: REDIS_URL,
+    disableOfflineQueue: true,
     socket: {
-      reconnectStrategy: (retries) => Math.min(1000, Math.max(50, retries * 100)),
+      connectTimeout: REDIS_CONNECT_TIMEOUT_MS,
+      reconnectStrategy: false,
     },
   });
   sharedRedisClient = client;
@@ -1229,14 +1232,13 @@ async function getSharedRedisClient() {
     sharedRedisLastReadyAt = isoNow();
   });
 
-  sharedRedisConnectPromise = client
-    .connect()
+  sharedRedisConnectPromise = withTimeout(client.connect(), REDIS_CONNECT_TIMEOUT_MS, 'Redis connect')
     .then(() => client)
     .catch(async (error) => {
       sharedRedisLastError = String(error?.message || error || 'Redis connection failed').slice(0, 240);
       sharedRedisDisabledUntil = Date.now() + REDIS_RETRY_COOLDOWN_MS;
       try {
-        await client.quit();
+        client.destroy();
       } catch {
         // Best effort cleanup. Redis is optional shared state, never a bridge blocker.
       }
@@ -1254,7 +1256,7 @@ function getRedisProviderMeta() {
   return {
     configured: Boolean(REDIS_URL),
     enabled: REDIS_ENABLED,
-    ready: Boolean(sharedRedisClient?.isOpen),
+    ready: Boolean(sharedRedisClient?.isReady),
     mode: REDIS_ENABLED ? 'shared_call_state_and_singleton_leases' : 'disabled',
     namespace: REDIS_NAMESPACE,
     instanceId: REDIS_INSTANCE_ID,
@@ -1349,7 +1351,7 @@ function clearBridgeReadCache(reason = 'state_changed') {
 }
 
 async function redisGetCachedReadResponseIfOpen(key) {
-  if (!sharedRedisClient?.isOpen) return null;
+  if (!sharedRedisClient?.isReady) return null;
   try {
     const raw = await sharedRedisClient.get(redisKey('read-cache', key));
     return raw ? JSON.parse(raw) : null;
@@ -1360,7 +1362,7 @@ async function redisGetCachedReadResponseIfOpen(key) {
 }
 
 function redisSetCachedReadResponseIfOpen(key, value, ttlMs) {
-  if (!sharedRedisClient?.isOpen) return;
+  if (!sharedRedisClient?.isReady) return;
   const ttlSeconds = Math.max(1, Math.ceil(Number(ttlMs || BRIDGE_READ_CACHE_DEFAULT_TTL_MS) / 1000));
   sharedRedisClient
     .set(redisKey('read-cache', key), JSON.stringify(value), { EX: ttlSeconds })

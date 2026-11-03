@@ -77,3 +77,6 @@ jobs:
 
       - name: Run founder gate
         run: npm run test:founder
+
+      - name: Verify Redis outage recovery
+        run: npm run test:redis-recovery

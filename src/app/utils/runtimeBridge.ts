@@ -1752,6 +1752,24 @@ export async function startLeadCallRequest(body: Record<string, unknown>) {
   });
 }
 
+export async function fetchApifyListingRequest(address: string) {
+  const query = new URLSearchParams({ address });
+  return bridgeRequest<{
+    cache?: { hit?: boolean };
+    propertyData?: {
+      source?: string;
+      data?: {
+        priceBasis?: string;
+        askingPriceUsd?: number;
+        sourceLinks?: string[];
+        propertyType?: string;
+        listingFacts?: Record<string, unknown>;
+        photoUrls?: string[];
+      };
+    } | null;
+  }>({ path: `/api/property-data?${query}` });
+}
+
 export async function fetchRuntimeState() {
   return bridgeRequest<RuntimeSnapshot>({
     path: '/state',

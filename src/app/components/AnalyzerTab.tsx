@@ -6,6 +6,7 @@ import { DealScoring } from './DealScoring';
 import { StrategySelector } from './StrategySelector';
 import { UnderwritingControls } from './UnderwritingControls';
 import { HelpTooltip } from './HelpTooltip';
+import { AnalyzerListingLookup } from './AnalyzerListingLookup';
 import { formatCurrency } from '../utils/formatting';
 import { calculateARV } from '../utils/dealCalculations';
 import { getAnalyzeReadiness } from '../utils/pbk';
@@ -147,6 +148,7 @@ export function AnalyzerTab({
             placeholder="123 Main St, City, ST 12345"
             className="w-full h-9 px-3 border border-gray-200 dark:border-slate-700 rounded-lg bg-gray-50 dark:bg-slate-900 text-gray-900 dark:text-gray-100 text-[12.5px] outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 transition-all"
           />
+          <AnalyzerListingLookup key={deal.address.trim()} deal={deal} onFill={onDealChange} />
         </div>
 
         <div className="flex gap-1.5 mb-3 flex-wrap items-center">

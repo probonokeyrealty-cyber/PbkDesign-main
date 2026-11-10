@@ -143,6 +143,7 @@
     "test:mobile-browser-proof": "node ./scripts/mobile-browser-proof.mjs",
     "test:mobile-browser-proof:preview": "npm run build && node ./scripts/mobile-browser-proof-preview.mjs",
     "test:settings-prototype-modern": "node ./scripts/settings-prototype-modern-smoke.mjs",
+    "test:settings-design-browser": "node ./scripts/settings-design-browser-smoke.mjs",
     "test:leads-prototype-modern": "node ./scripts/leads-prototype-modern-smoke.mjs",
     "test:leads-full-roster-bridge": "node ./scripts/leads-full-roster-bridge-smoke.mjs",
     "test:leads-new-lead-portal": "node ./scripts/leads-new-lead-portal-smoke.mjs",

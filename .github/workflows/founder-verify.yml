@@ -78,5 +78,12 @@ jobs:
       - name: Run founder gate
         run: npm run test:founder
 
+      - name: Verify batch release safeguards
+        run: |
+          npm run test:docker-render-config
+          npm run test:batch-review
+          npm run test:batch-apply
+          npm run test:batch-phone-dispatch
+
       - name: Verify Redis outage recovery
         run: npm run test:redis-recovery

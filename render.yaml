@@ -6,7 +6,7 @@ services:
     region: ohio
     dockerfilePath: ./Dockerfile.openclaw
     dockerContext: .
-    dockerCommand: node ./scripts/openclaw-local-server.mjs --public
+    dockerCommand: node --experimental-strip-types ./scripts/openclaw-local-server.mjs --public
     healthCheckPath: /health
     autoDeployTrigger: commit
     envVars:
@@ -20,6 +20,8 @@ services:
         value: 0.0.0.0
       - key: PBK_OPENCLAW_STATE_DIR
         value: /data/openclaw
+      - key: PBK_BATCH_APPLY_ENABLED
+        value: "false"
 
       # ── Core auth + state ───────────────────────────────────────────────
       # Bearer token required on POST endpoints. Same value goes into the PBK

@@ -997,6 +997,9 @@ function LeadsHero({
           <h1 className="pbk-display">Leads.</h1>
         </div>
         <div className="pbk-leads-hero-actions">
+          <Link to="/leads/batch-review" className="pbk-leads-refresh">
+            Batch review
+          </Link>
           <button type="button" className="pbk-leads-create" onClick={onCreateLead}>
             <Plus size={15} />
             New PBK lead

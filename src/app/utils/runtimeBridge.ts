@@ -2177,6 +2177,28 @@ export async function fetchLeadsRequest() {
   return response.leads || response.leadImports || [];
 }
 
+export async function fetchBatchReviewRosterRequest() {
+  const response = await bridgeRequest<{
+    ok: boolean;
+    complete: boolean;
+    leads?: LeadImport[];
+    dncPhones?: string[];
+    sampleApply?: { sampleCsv: string; revision: string };
+  }>({
+    path: '/api/leads/batch-review-roster',
+  });
+  if (response.ok !== true || response.complete !== true || !Array.isArray(response.leads)) {
+    throw new Error('The saved lead roster was not confirmed.');
+  }
+  return {
+    leads: response.leads,
+    dncPhones: Array.isArray(response.dncPhones)
+      ? response.dncPhones.filter((phone) => typeof phone === 'string')
+      : [],
+    sampleApply: response.sampleApply,
+  };
+}
+
 export async function createLeadRequest(body: Record<string, unknown>) {
   return bridgeRequest<Record<string, unknown>>({
     method: 'POST',

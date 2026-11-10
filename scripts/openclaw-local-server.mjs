@@ -56,6 +56,9 @@ import { recordAvaResponseLatencyStatus } from './ava-latency-status.mjs';
 import { appendAssistantMessage, buildAssistantPrompt, createAssistantSessionId, detectAssistantIntent, findAssistantLeadMatch, normalizeAssistantSession, planAssistantIntent, sanitizeAssistantTurn } from './ava-assistant-chat.mjs';
 import { runAvaMissionController } from './ava-mission-controller.mjs';
 import { buildLeadCommitEnvelope } from './lead-field-provenance.mjs';
+import { loadBatchReviewRoster } from './batch-review-roster.mjs';
+import { loadAppliedBatchLeads, runBatchApply } from './batch-apply.mjs';
+import { dispatchTelnyxWithBatchPhoneGuard, ensureBatchPhoneSchema, setWorkspacePhoneDnc } from './batch-phone-dispatch.mjs';
 import { isDeepSpecConfigured, readDeepSpecConfig, requestSpeculativeChatCompletion } from './deepspec-speculative-client.mjs';
 import { buildInvokeRateLimitIdentity, createInvokeRateLimiter } from './invoke-rate-limit.mjs';
 import { ClosingStateMachine, Phase } from './ava-state-machine.mjs';
@@ -7756,6 +7759,7 @@ async function ensurePbkOperationalTables(pool) {
   `);
   await ensureConversationSchema(pool);
   await ensureProviderActionDispatchSchemaCore(pool);
+  await ensureBatchPhoneSchema(pool);
   await ensureNurtureSchema(pool).catch((error) => {
     console.warn('[postgres] nurture schema ensure skipped', error?.message || error);
   });
@@ -34782,6 +34786,24 @@ function findDncEntryByPhone(phone = '') {
   return state.dncEntries.find((entry) => normalizePhone(entry.phone) === normalized) || null;
 }
 
+async function updateWorkspacePhoneDnc(phone, blocked) {
+  const pool = getPgPool();
+  if (pool) await setWorkspacePhoneDnc(pool, { phone, blocked });
+}
+
+async function readPersistedPhoneDnc(client, phone) {
+  const { rows } = await client.query(`
+    SELECT EXISTS (
+      SELECT 1 FROM public.bridge_state AS snapshot
+      CROSS JOIN LATERAL jsonb_array_elements(COALESCE(snapshot.data->'dncEntries', '[]'::jsonb)) AS dnc(entry)
+      CROSS JOIN LATERAL (SELECT regexp_replace(COALESCE(dnc.entry->>'phone', ''), '[^0-9]', '', 'g') AS digits) AS n
+      WHERE snapshot.id = 'singleton'
+      AND (CASE WHEN length(n.digits) = 10 THEN '+1' ELSE '+' END) || n.digits = $1
+    ) AS blocked
+  `, [phone]);
+  return rows[0].blocked;
+}
+
 function inferSenderProfile(profile = '') {
   return String(profile || '')
     .trim()
@@ -37033,8 +37055,15 @@ async function fireTelnyxRequest(method, endpoint, payload, options = {}) {
 
     const response = await executeProviderCircuitGuard(
       'telnyx',
-      () =>
-        fetch(url, {
+      () => dispatchTelnyxWithBatchPhoneGuard({
+        pool: getPgPool(),
+        method: String(method || 'POST'),
+        endpoint,
+        payload,
+        leadId: options.leadId,
+        isLocallyDnc: (phone) => Boolean(findDncEntryByPhone(phone)),
+        isPersistedDnc: readPersistedPhoneDnc,
+        dispatch: () => fetch(url, {
           method: String(method || 'POST').toUpperCase(),
           headers: {
             Authorization: `Bearer ${TELNYX_API_KEY}`,
@@ -37043,6 +37072,7 @@ async function fireTelnyxRequest(method, endpoint, payload, options = {}) {
           },
           ...(payload !== undefined ? { body: JSON.stringify(payload) } : {}),
         }),
+      }),
       async () =>
         new Response(JSON.stringify({ error: { message: 'Telnyx circuit is open.' } }), {
           status: 503,
@@ -37064,6 +37094,7 @@ async function fireTelnyxRequest(method, endpoint, payload, options = {}) {
       ok: response.ok,
       status: response.status,
       body,
+      ...(body?.batchPhoneGuard ? { batchPhoneGuard: body.batchPhoneGuard } : {}),
       error: response.ok ? '' : extractTelnyxError(body),
     };
   } catch (error) {
@@ -56672,7 +56703,10 @@ const toolHandlers = {
         reason: 'Inbound reply requested no further contact.',
         source: params.provider || params.channel || 'email-reply',
       });
-      if (dncEntry.phone && !findDncEntryByPhone(dncEntry.phone)) addDncEntry(state, dncEntry);
+      if (dncEntry.phone) {
+        if (!findDncEntryByPhone(dncEntry.phone)) addDncEntry(state, dncEntry);
+        await updateWorkspacePhoneDnc(dncEntry.phone, true);
+      }
       leadStage = 'dnc';
     } else if (reply.nextAction === 'archive') {
       leadStage = 'archived';
@@ -58210,7 +58244,10 @@ const toolHandlers = {
         if (TELNYX_MEDIA_STREAM_TOKEN) requestPayload.stream_auth_token = TELNYX_MEDIA_STREAM_TOKEN;
       }
 
-      const telnyxResponse = await fireTelnyxRequest('POST', '/calls', requestPayload);
+      const telnyxResponse = await fireTelnyxRequest('POST', '/calls', requestPayload, { leadId: context.leadId });
+      if (telnyxResponse.batchPhoneGuard) {
+        return { ok: false, blocked: true, result: telnyxResponse.batchPhoneGuard, error: telnyxResponse.error, providerAttempted: false };
+      }
       if (!telnyxResponse.ok) {
         addActivity(
           state,
@@ -58409,7 +58446,10 @@ const toolHandlers = {
       if (webhookUrl) requestPayload.webhook_url = webhookUrl;
       if (TELNYX_MESSAGING_PROFILE_ID) requestPayload.messaging_profile_id = TELNYX_MESSAGING_PROFILE_ID;
 
-      const telnyxResponse = await fireTelnyxRequest('POST', '/messages', requestPayload);
+      const telnyxResponse = await fireTelnyxRequest('POST', '/messages', requestPayload, { leadId: context.leadId });
+      if (telnyxResponse.batchPhoneGuard) {
+        return { ok: false, blocked: true, result: telnyxResponse.batchPhoneGuard, error: telnyxResponse.error, providerAttempted: false };
+      }
       if (!telnyxResponse.ok) {
         addActivity(
           state,
@@ -59008,8 +59048,9 @@ const toolHandlers = {
         source: explicitStop ? 'call-opt-out' : 'anger-detection',
       });
 
-      if (dncEntry.phone && !findDncEntryByPhone(dncEntry.phone)) {
-        addDncEntry(state, dncEntry);
+      if (dncEntry.phone) {
+        if (!findDncEntryByPhone(dncEntry.phone)) addDncEntry(state, dncEntry);
+        await updateWorkspacePhoneDnc(dncEntry.phone, true);
       }
 
       addActivity(
@@ -61000,6 +61041,7 @@ async function handleRuntimeEvent(normalizedEvent, payload) {
     if (!existing && entry.phone) {
       addDncEntry(state, entry);
     }
+    if (entry.phone) await updateWorkspacePhoneDnc(entry.phone, true);
     addActivity(
       state,
       makeActivity({
@@ -61027,7 +61069,9 @@ async function handleRuntimeEvent(normalizedEvent, payload) {
         error: 'DNC entry not found.',
       };
     }
-    const [removed] = state.dncEntries.splice(existingIndex, 1);
+    const removed = state.dncEntries[existingIndex];
+    await updateWorkspacePhoneDnc(removed.phone, false);
+    state.dncEntries = state.dncEntries.filter((entry) => entry !== removed);
     addActivity(
       state,
       makeActivity({
@@ -79298,6 +79342,16 @@ const server = createServer(async (request, response) => {
 
     const leadFullMatch = matchPath(pathname, '/api/leads/:id/full');
     if (leadFullMatch && request.method === 'GET') {
+      const [durableBatchLead] = await loadAppliedBatchLeads(queryPgRows, leadFullMatch.groups.id);
+      if (durableBatchLead) {
+        const exactHistory = (items = []) => sortNewest(items.filter(({ leadId }) => leadId === durableBatchLead.id));
+        json(response, 200, {
+          ok: true, lead: durableBatchLead, calls: exactHistory(state.calls),
+          messages: exactHistory(state.messages), contracts: exactHistory(state.contracts),
+          analyzerRuns: exactHistory(state.analyzerRuns), activity: exactHistory(state.activity),
+        });
+        return;
+      }
       const full = buildLeadFullView(leadFullMatch.groups.id);
       if (!full) {
         json(response, 404, {
@@ -79729,11 +79783,41 @@ const server = createServer(async (request, response) => {
       return;
     }
 
+    if (request.method === 'GET' && pathname === '/api/leads/batch-review-roster') {
+      const roster = await loadBatchReviewRoster({ bridgeLeads: state.leadImports, query: queryPgRows });
+      response.setHeader('Cache-Control', 'no-store');
+      json(response, roster.ok ? 200 : 503, roster.ok
+        ? { ...roster, dncPhones: [...new Set(state.dncEntries.map((entry) => normalizePhone(entry.phone)).filter(Boolean))] }
+        : roster);
+      return;
+    }
+
+    if (request.method === 'POST' && pathname === '/api/leads/batch-apply') {
+      response.setHeader('Cache-Control', 'no-store');
+      if (!BRIDGE_API_KEY || String(request.headers.authorization || '').trim() !== `Bearer ${BRIDGE_API_KEY}`) {
+        json(response, 403, { ok: false, error: 'Batch apply requires direct operator authentication.' });
+        return;
+      }
+      const result = await runBatchApply({
+        pool: getPgPool(),
+        body: await readBody(request),
+        enabled: process.env.PBK_BATCH_APPLY_ENABLED === 'true',
+        secret: BRIDGE_API_KEY,
+        getBridgeLeads: () => state.leadImports,
+      });
+      json(response, result.status, result.body);
+      return;
+    }
+
     if (request.method === 'GET' && matchesPath(pathname, ['/api/leads', '/api/leads/import'])) {
+      const batchLeads = await loadAppliedBatchLeads(queryPgRows);
+      const leads = new Map(state.leadImports.map((lead) => [lead.leadId || lead.id, lead]));
+      for (const lead of batchLeads) leads.set(lead.id, { ...leads.get(lead.id), ...lead });
+      const combined = [...leads.values()];
       json(response, 200, {
         ok: true,
-        leadImports: state.leadImports,
-        leads: state.leadImports,
+        leadImports: combined,
+        leads: combined,
       });
       return;
     }

@@ -59679,6 +59679,7 @@ async function handleRuntimeEvent(normalizedEvent, payload) {
     const incomingActor = payload.actor || approval.actor || 'n8n';
     const incomingActedAt = payload.actedAt || approval.actedAt || isoNow();
     const currentStatus = normalizeApprovalDecisionStatus(approval.status || 'pending');
+    const slackNeedsRevision = payload.source === 'slack-interaction' && incomingStatus === 'needs_revision';
     let localClaim = false;
     if (currentStatus === 'pending') {
       const claim = await claimPendingApprovalDecision(approval, {
@@ -59809,7 +59810,11 @@ async function handleRuntimeEvent(normalizedEvent, payload) {
         ...(approval.metadata || {}),
         launchReview: {
           reason: reviewReason,
-          notes: payload.notes || '',
+          notes: slackNeedsRevision
+            ? approvalNeedsLeadQualificationContext(approval)
+              ? 'Review seller context, offer path, and any known BANT+ details before approving.'
+              : 'Review the action details before approving.'
+            : payload.notes || '',
           actor: incomingActor,
           actedAt: approval.actedAt,
         },
@@ -59960,7 +59965,7 @@ async function handleRuntimeEvent(normalizedEvent, payload) {
     }
 
     if (String(approval.type || '').toLowerCase() === 'rex-decision' || String(approval.approvalAction || '').toLowerCase() === 'rex_apply') {
-      rexDecisionResult = payload.source === 'slack-interaction' && incomingStatus === 'needs_revision'
+      rexDecisionResult = slackNeedsRevision
         ? await requestRexDecisionModificationFromApproval(approval, { actor: incomingActor })
         : await handleRexDecisionApproval(approval, { actor: incomingActor });
     }
@@ -60404,7 +60409,9 @@ async function handleRuntimeEvent(normalizedEvent, payload) {
     await projectLiveConversationRecord({
       record: approval,
       projector: projectApprovalEvent,
-      source: 'approval-decided',
+      ...(slackNeedsRevision
+        ? { source: 'slack-approval-needs-review' }
+        : { source: 'approval-decided' }),
     });
     return {
       ok: true,

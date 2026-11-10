@@ -789,6 +789,7 @@ export type LeadStagesResponse = {
 
 export type DealTimelineResponse = {
   ok: boolean;
+  range?: 'ytd';
   result?: string;
   source?: string;
   generatedAt?: string;
@@ -803,6 +804,7 @@ export type DealTimelineResponse = {
 
 export type AiMetricsResponse = {
   ok: boolean;
+  range?: 'ytd';
   result?: string;
   source?: string;
   generatedAt?: string;
@@ -2193,19 +2195,21 @@ export async function fetchLeadStagesRequest({ limit = 500 } = {}) {
   });
 }
 
-export async function fetchDealTimelineRequest({ days = 30 } = {}) {
+export async function fetchDealTimelineRequest({ days = 30, range = '' } = {}) {
   const params = new URLSearchParams({
     days: String(days),
   });
+  if (range) params.set('range', range);
   return bridgeRequest<DealTimelineResponse>({
     path: `/api/deals/timeline?${params.toString()}`,
   });
 }
 
-export async function fetchAiMetricsRequest({ days = 30 } = {}) {
+export async function fetchAiMetricsRequest({ days = 30, range = '' } = {}) {
   const params = new URLSearchParams({
     days: String(days),
   });
+  if (range) params.set('range', range);
   return bridgeRequest<AiMetricsResponse>({
     path: `/api/observability/ai-metrics?${params.toString()}`,
   });

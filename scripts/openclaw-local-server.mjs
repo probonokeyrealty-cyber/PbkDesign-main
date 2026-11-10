@@ -43962,8 +43962,8 @@ function normalizeAnalyticsDeal(item = {}) {
   };
 }
 
-function buildDealTimelineFromItems(items = [], { days = 30, source = 'bridge-state', warning = '' } = {}) {
-  const startMs = Date.now() - Math.max(1, Number(days || 30)) * 24 * 60 * 60 * 1000;
+function buildDealTimelineFromItems(items = [], { days = 30, startAt = null, source = 'bridge-state', warning = '' } = {}) {
+  const startMs = startAt ? Date.parse(startAt) : Date.now() - Math.max(1, Number(days || 30)) * 24 * 60 * 60 * 1000;
   const groups = new Map();
   for (const item of Array.isArray(items) ? items : []) {
     const ts = getRecordTimestamp(item);
@@ -43980,13 +43980,15 @@ function buildDealTimelineFromItems(items = [], { days = 30, source = 'bridge-st
     result: source.startsWith('postgres') ? 'live' : 'local_view_only',
     source,
     generatedAt: isoNow(),
+    ...(startAt ? { range: 'ytd' } : {}),
     days: Array.from(groups.values()).sort((left, right) => String(left.day).localeCompare(String(right.day))),
     warning,
   };
 }
 
-async function buildDealTimelineAnalytics({ days = 30 } = {}) {
+async function buildDealTimelineAnalytics({ days = 30, range = '' } = {}) {
   const rangeDays = Math.max(1, Math.min(365, Number(days || 30)));
+  const startAt = range === 'ytd' ? getRangeStart('ytd').toISOString() : null;
   const result = await queryPgRows(
     `SELECT
        c.id,
@@ -43994,56 +43996,59 @@ async function buildDealTimelineAnalytics({ days = 30 } = {}) {
        c.status,
        c.amount::float AS amount,
        c.payload,
-       c.created_at,
-       c.updated_at,
+       c.created_at AS "createdAt",
+       c.updated_at AS "updatedAt",
        l.lead_name AS "leadName",
        l.address
      FROM public.contracts c
      LEFT JOIN public.lead_profiles l ON l.id = c.lead_id
      WHERE COALESCE(c.workspace_id, 'pbk') = 'pbk'
-       AND c.created_at > NOW() - ($1::int * INTERVAL '1 day')
+       AND c.created_at >= COALESCE($2::timestamptz, NOW() - ($1::int * INTERVAL '1 day'))
      ORDER BY c.created_at ASC`,
-    [rangeDays]
+    [rangeDays, startAt]
   );
   if (!result.ok || !result.rows.length) {
     return buildDealTimelineFromItems([...(state.contracts || []), ...(state.analyzerRuns || [])], {
       days: rangeDays,
+      startAt,
       source: 'bridge-state',
       warning: result.ok ? 'Postgres contracts is empty; showing bridge-state deal records.' : `Postgres contracts unavailable (${result.error || result.reason}); showing bridge-state deal records.`,
     });
   }
   return buildDealTimelineFromItems(result.rows, {
     days: rangeDays,
+    startAt,
     source: 'postgres:contracts',
   });
 }
 
-async function buildAiObservabilityMetrics({ days = 30 } = {}) {
+async function buildAiObservabilityMetrics({ days = 30, range = '' } = {}) {
   const rangeDays = Math.max(1, Math.min(365, Number(days || 30)));
+  const startAt = range === 'ytd' ? getRangeStart('ytd').toISOString() : null;
   const [latency, qa, safety, usage] = await Promise.all([
     queryPgRows(
       `SELECT percentile_cont(0.95) WITHIN GROUP (
          ORDER BY COALESCE(turn_completion_ms, transcript_to_tts_ms, speech_final_to_reply_start_ms)
        )::float AS p95_latency_ms
        FROM public.pbk_turn_latency
-       WHERE created_at > NOW() - ($1::int * INTERVAL '1 day')
+       WHERE created_at >= COALESCE($2::timestamptz, NOW() - ($1::int * INTERVAL '1 day'))
          AND COALESCE(turn_completion_ms, transcript_to_tts_ms, speech_final_to_reply_start_ms) IS NOT NULL`,
-      [rangeDays]
+      [rangeDays, startAt]
     ),
     queryPgRows(
       `SELECT
          COUNT(*)::int AS total,
          SUM(retry_count)::int AS retries
        FROM public.pbk_qa_audit
-       WHERE created_at > NOW() - ($1::int * INTERVAL '1 day')`,
-      [rangeDays]
+       WHERE created_at >= COALESCE($2::timestamptz, NOW() - ($1::int * INTERVAL '1 day'))`,
+      [rangeDays, startAt]
     ),
     queryPgRows(
       `SELECT COUNT(*)::int AS safety_blocks
        FROM public.pbk_safety_audit
-       WHERE created_at > NOW() - ($1::int * INTERVAL '1 day')
+       WHERE created_at >= COALESCE($2::timestamptz, NOW() - ($1::int * INTERVAL '1 day'))
          AND blocked IS TRUE`,
-      [rangeDays]
+      [rangeDays, startAt]
     ),
     queryPgRows(
       `SELECT
@@ -44058,8 +44063,8 @@ async function buildAiObservabilityMetrics({ days = 30 } = {}) {
            END
          ), 0)::float AS ai_spend_usd
        FROM public.pbk_tool_usage
-       WHERE created_at > NOW() - ($1::int * INTERVAL '1 day')`,
-      [rangeDays]
+       WHERE created_at >= COALESCE($2::timestamptz, NOW() - ($1::int * INTERVAL '1 day'))`,
+      [rangeDays, startAt]
     ),
   ]);
   const postgresOk = latency.ok || qa.ok || safety.ok || usage.ok;
@@ -44071,6 +44076,7 @@ async function buildAiObservabilityMetrics({ days = 30 } = {}) {
     result: postgresOk ? 'live' : 'local_view_only',
     source: postgresOk ? 'postgres:observability' : 'bridge-state',
     generatedAt: isoNow(),
+    ...(startAt ? { range: 'ytd' } : {}),
     days: rangeDays,
     metrics: {
       p95LatencyMs: toNumber(latency.rows?.[0]?.p95_latency_ms, 0),
@@ -44079,7 +44085,9 @@ async function buildAiObservabilityMetrics({ days = 30 } = {}) {
       toolCalls: toNumber(usage.rows?.[0]?.tool_calls, Object.values(toolUsage).reduce((sum, value) => sum + toNumber(value, 0), 0)),
       aiSpendUsd: Number(toNumber(usage.rows?.[0]?.ai_spend_usd, 0).toFixed(4)),
     },
-    warning: postgresOk ? '' : 'Postgres observability tables were unavailable; showing bridge-state counters where available.',
+    warning: [latency, qa, safety, usage].every((item) => item.ok)
+      ? ''
+      : 'Some AI metrics are unavailable for this period. Fallback counters may include activity outside the selected range.',
   };
 }
 
@@ -72220,12 +72228,12 @@ const server = createServer(async (request, response) => {
     }
 
     if (request.method === 'GET' && matchesPath(pathname, ['/api/deals/timeline', '/api/v1/deals/timeline'])) {
-      json(response, 200, await buildDealTimelineAnalytics({ days: url.searchParams.get('days') || 30 }));
+      json(response, 200, await buildDealTimelineAnalytics({ days: url.searchParams.get('days') || 30, range: url.searchParams.get('range') }));
       return;
     }
 
     if (request.method === 'GET' && matchesPath(pathname, ['/api/observability/ai-metrics', '/api/v1/observability/ai-metrics'])) {
-      json(response, 200, await buildAiObservabilityMetrics({ days: url.searchParams.get('days') || 30 }));
+      json(response, 200, await buildAiObservabilityMetrics({ days: url.searchParams.get('days') || 30, range: url.searchParams.get('range') }));
       return;
     }
 

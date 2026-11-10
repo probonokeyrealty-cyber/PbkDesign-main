@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { useNavigate, useSearchParams } from 'react-router';
+import { Link, useNavigate, useSearchParams } from 'react-router';
 import {
   AlertCircle,
+  ArrowUpRight,
   CheckCircle2,
   Edit3,
   FileSignature,
@@ -808,15 +809,18 @@ function unwrapLeadResponse(response: BridgeRecord): BridgeRecord {
 }
 
 function sameLeadRecord(left: BridgeRecord, right: BridgeRecord) {
-  const leftLeadId = getLeadId(left);
-  const rightLeadId = getLeadId(right);
+  const leftRecord = unwrapLeadResponse(left);
+  const rightRecord = unwrapLeadResponse(right);
+  const leftLeadId = pickFirstText(leftRecord.leadId, leftRecord.id, leftRecord.externalId);
+  const rightLeadId = pickFirstText(rightRecord.leadId, rightRecord.id, rightRecord.externalId);
+  // Shared addresses and contact details are not identity when both rows have an ID.
+  if (leftLeadId && rightLeadId) return leftLeadId === rightLeadId;
   const leftPhone = normalizePhone(getLeadPhone(left));
   const rightPhone = normalizePhone(getLeadPhone(right));
   const leftEmail = getLeadEmail(left).toLowerCase();
   const rightEmail = getLeadEmail(right).toLowerCase();
   const leftAddress = leadAddressMatchKey(left);
   const rightAddress = leadAddressMatchKey(right);
-  if (leftLeadId && rightLeadId && leftLeadId === rightLeadId) return true;
   if (leftPhone && rightPhone && leftPhone === rightPhone) return true;
   if (leftEmail && rightEmail && leftEmail === rightEmail) return true;
   return Boolean(leftAddress && rightAddress && leftAddress === rightAddress);
@@ -925,7 +929,7 @@ function LeadsDataSourceDetails({ children }: { children: ReactNode }) {
 function LeadsStatRibbon({ stats, sourceLabel }: { stats: LeadsStats; sourceLabel: string }) {
   const cards = [
     {
-      label: 'Bridge leads',
+      label: 'Total leads',
       value: String(stats.total),
       detail: sourceLabel,
       tone: 'sky',
@@ -937,7 +941,7 @@ function LeadsStatRibbon({ stats, sourceLabel }: { stats: LeadsStats; sourceLabe
       tone: 'lime',
     },
     {
-      label: 'Contract ready',
+      label: 'Email on file',
       value: String(stats.contractReady),
       detail: 'seller email captured',
       tone: 'sky',
@@ -990,14 +994,7 @@ function LeadsHero({
                 ? 'connection needs attention'
                 : `${stats.total} leads`}
           </div>
-          <h1 className="pbk-display pbk-h1">
-            Leads &amp; <em>contracts</em>.
-          </h1>
-          <p>
-            Seller pipeline, call notes, CRM edits, and contract handoff live here. Open a seller,
-            update what changed, and Ava keeps the lead profile aligned with the latest calls and
-            messages.
-          </p>
+          <h1 className="pbk-display">Leads.</h1>
         </div>
         <div className="pbk-leads-hero-actions">
           <button type="button" className="pbk-leads-create" onClick={onCreateLead}>
@@ -1016,7 +1013,7 @@ function LeadsHero({
         </div>
       </div>
       <LeadsStatRibbon stats={stats} sourceLabel={rosterSourceLabel} />
-      <LeadsSourceRail />
+      <LeadsDataSourceDetails><LeadsSourceRail /></LeadsDataSourceDetails>
     </section>
   );
 }
@@ -1035,12 +1032,13 @@ function LeadsPipelineRail({
   onPageChange: (page: number) => void;
 }) {
   return (
-    <section className={`${softPanelClass} pbk-leads-pipeline-rail overflow-hidden`}>
+    <section
+      className={`${softPanelClass} pbk-leads-pipeline-rail overflow-hidden`}
+      aria-labelledby="seller-roster-heading"
+    >
       <div className="pipeline-head">
         <div>
-          <span className="pbk-kicker">Pipeline leads</span>
-          <h2>Seller roster</h2>
-          <p>Tap a lead to see the full profile, notes, call memory, and next best action.</p>
+          <h2 id="seller-roster-heading">Seller roster</h2>
         </div>
         <LeadsDataSourceDetails>
           <PbkDataSource endpoint="GET /api/leads" status="ships" note={sourceNote} />
@@ -1930,22 +1928,16 @@ export function Leads() {
                 return (
                   <div
                     key={id}
-                    role="button"
-                    tabIndex={0}
-                    aria-label={`Open lead ${sellerName} at ${getLeadAddress(lead)}`}
-                    aria-selected={isSelected}
-                    aria-pressed={isSelected}
-                    className="lead-mobile-card"
-                    onClick={() => setSelectedLeadId(id)}
-                    onKeyDown={(event) => {
-                      if (event.key === 'Enter' || event.key === ' ') {
-                        event.preventDefault();
-                        setSelectedLeadId(id);
-                      }
-                    }}
+                    className={`lead-mobile-card${isSelected ? ' is-selected' : ''}`}
                   >
                     <span className={['lead-score', scoreTone(score)].join(' ')}>{score}</span>
-                    <span className="min-w-0 flex-1">
+                    <button
+                      type="button"
+                      className="pbk-lead-mobile-select"
+                      aria-label={`Open lead ${sellerName} at ${getLeadAddress(lead)}`}
+                      aria-pressed={isSelected}
+                      onClick={() => setSelectedLeadId(id)}
+                    >
                       <SellerRosterIdentity
                         sellerName={sellerName}
                         address={getLeadAddress(lead)}
@@ -1979,11 +1971,16 @@ export function Leads() {
                         <span>{text(lead.status || lead.stage, PATH_LABELS[path])}</span>
                         <span>{formatDate(lead.updatedAt || lead.createdAt)}</span>
                       </span>
-                    </span>
+                    </button>
+                    <Link
+                      to={`/leads/${encodeURIComponent(id)}`}
+                      className="pbk-lead-workspace-link"
+                      aria-label={`Open workspace for ${sellerName}`}
+                      title="Open seller workspace"
+                    >
+                      <ArrowUpRight size={18} aria-hidden="true" />
+                    </Link>
                     <span className="flex flex-col items-end gap-2">
-                      <span className="grid h-8 w-8 place-items-center rounded-full bg-slate-800 text-xs font-semibold text-sky-200">
-                        {getSellerInitial(sellerName)}
-                      </span>
                       <span
                         className="pbk-lead-quick-actions compact"
                         aria-label="Lead quick actions"
@@ -2060,30 +2057,35 @@ export function Leads() {
                 return (
                   <div
                     key={id}
-                    aria-selected={isSelected}
+                    data-selected={isSelected}
                     className={[
-                      'grid w-full grid-cols-1 gap-3 px-4 py-4 text-left transition',
+                      'pbk-lead-ledger-row grid w-full grid-cols-1 gap-2 px-3 py-3 text-left transition',
                       isSelected ? 'bg-sky-500/10' : 'hover:bg-slate-900',
                     ].join(' ')}
                   >
                     <button
                       type="button"
                       aria-label={`Open lead ${sellerName} at ${getLeadAddress(lead)}`}
+                      aria-pressed={isSelected}
                       onClick={() => setSelectedLeadId(id)}
-                      className="min-w-0 text-left"
+                      className="pbk-lead-ledger-identity"
                     >
-                      <SellerRosterIdentity
-                        sellerName={sellerName}
-                        address={getLeadAddress(lead)}
-                      />
-                      <span className="mt-1 flex flex-wrap gap-2 text-[11px] text-slate-500">
-                        <span>
+                      <span className="pbk-lead-ledger-avatar" aria-hidden="true">{getSellerInitial(sellerName)}</span>
+                      <span className="min-w-0">
+                        <SellerRosterIdentity
+                          sellerName={sellerName}
+                          address={getLeadAddress(lead)}
+                        />
+                        <span className="pbk-lead-ledger-contact">
                           {getLeadPhone(lead) || getLeadEmail(lead) || 'No contact captured'}
                         </span>
-                        <span>Source: {text(lead.source, 'manual')}</span>
                       </span>
                     </button>
                     <span className="flex flex-wrap items-center gap-2">
+                      <span className="pbk-lead-ledger-score">{getLeadScore(lead)} score</span>
+                      <span className="pbk-lead-ledger-stage">
+                        {text(lead.status || lead.stage || asBridgeRecord(lead.assignment).stage, 'Stage not set').replace(/[_-]+/g, ' ')}
+                      </span>
                       <span className="rounded-full border border-slate-700 bg-slate-900 px-2.5 py-1 text-[10px] uppercase tracking-[0.14em] text-slate-300">
                         {PATH_LABELS[path]}
                       </span>
@@ -2146,11 +2148,11 @@ export function Leads() {
         <LeadsDetailShell>
           {activeLead ? (
             <div className="space-y-4">
-              <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+              <div className="flex flex-col gap-3">
                 <div className="min-w-0">
                   <div className="flex flex-wrap items-center gap-2">
                     <h2
-                      className="truncate text-2xl font-semibold text-slate-100"
+                      className="break-words text-2xl font-semibold text-slate-100"
                       title={getSellerName(activeLead)}
                     >
                       {getSellerName(activeLead)}
@@ -2174,6 +2176,13 @@ export function Leads() {
                   </div>
                 </div>
                 <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={() => navigate(`/leads/${encodeURIComponent(activeLeadId)}`)}
+                    className="inline-flex items-center gap-2 rounded-lg bg-sky-300 px-3 py-2 text-xs font-bold text-slate-950 transition hover:bg-sky-200"
+                  >
+                    Open lead <ArrowUpRight size={14} aria-hidden="true" />
+                  </button>
                   <button
                     type="button"
                     onClick={() => void startQuickLeadCall(activeLead)}
@@ -2218,13 +2227,6 @@ export function Leads() {
                       <HeartHandshake size={14} />
                     )}
                     Nurture
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => navigate(`/leads/${encodeURIComponent(activeLeadId)}`)}
-                    className="inline-flex items-center gap-2 rounded-full border border-sky-400/40 bg-sky-400/10 px-3 py-2 text-xs font-semibold text-sky-200 transition hover:border-sky-300 hover:bg-sky-400/15"
-                  >
-                    Open lead
                   </button>
                   <button
                     type="button"

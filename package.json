@@ -140,6 +140,7 @@
     "test:leads-full-roster-bridge": "node ./scripts/leads-full-roster-bridge-smoke.mjs",
     "test:leads-new-lead-portal": "node ./scripts/leads-new-lead-portal-smoke.mjs",
     "test:lead-portal-route": "node ./scripts/lead-portal-route-smoke.mjs",
+    "test:leads-design-browser": "node ./scripts/leads-design-browser-smoke.mjs",
     "test:render-docker-imports": "node ./scripts/render-docker-imports-smoke.mjs",
     "test:shell-production-boot": "node ./scripts/shell-production-boot-smoke.mjs",
     "test:stale-chunk-recovery": "node ./scripts/stale-chunk-recovery-smoke.mjs",

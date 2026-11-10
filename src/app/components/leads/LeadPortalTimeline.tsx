@@ -1,5 +1,4 @@
 import { MessageSquareText } from 'lucide-react';
-import { PbkDataSource } from '../../../components/pbk/index';
 import { ConversationTimeline } from '../inbox/ConversationTimeline';
 import type { ConversationEvent, ConversationThread } from '../../utils/runtimeBridge';
 
@@ -27,12 +26,10 @@ export function LeadPortalTimeline({
   onEventChanged,
 }: LeadPortalTimelineProps) {
   return (
-    <section className="pbk-lead-portal-timeline">
+    <section className="pbk-lead-portal-timeline" id="lead-timeline" aria-labelledby="lead-timeline-heading">
       <header>
         <div>
-          <span className="pbk-kicker">SMS, email, calls, contracts &amp; approvals</span>
-          <h2>Unified seller timeline</h2>
-          <p>One chronological record across every confirmed provider event.</p>
+          <h2 id="lead-timeline-heading">Seller timeline</h2>
         </div>
         <MessageSquareText size={20} />
       </header>
@@ -53,18 +50,9 @@ export function LeadPortalTimeline({
       ) : (
         <div className="pbk-lead-portal-empty">
           <MessageSquareText size={22} />
-          <strong>No canonical conversation thread yet</strong>
-          <span>
-            The seller record is live, but no normalized SMS, email, call, or document event has
-            been attached to this lead.
-          </span>
+          <strong>No events in this timeline yet</strong>
         </div>
       )}
-      <PbkDataSource
-        endpoint="GET /api/conversations/:threadId/timeline"
-        status="ships"
-        note="canonical seller event history"
-      />
     </section>
   );
 }

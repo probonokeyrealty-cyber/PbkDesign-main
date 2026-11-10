@@ -9,11 +9,11 @@ function numberLabel(value: number | null, suffix = '') {
 export function LeadPortalProperty({ lead }: { lead: LeadPortalModel }) {
   const locality = [lead.city, lead.state, lead.zip].filter(Boolean).join(', ');
   return (
-    <section className="pbk-lead-portal-card">
+    <section className="pbk-lead-portal-card" id="lead-property" aria-labelledby="lead-property-heading">
       <header>
         <div>
           <span className="pbk-kicker">Address &amp; asset details</span>
-          <h2>Property</h2>
+          <h2 id="lead-property-heading">Property</h2>
         </div>
         <Home size={19} />
       </header>

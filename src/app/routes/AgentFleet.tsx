@@ -732,6 +732,8 @@ function getAgentHealthFacts({
     lastSuccessLabel: formatAgentHealthTimestamp(lastSuccess),
     lastFailureLabel: lastFailure ? formatAgentHealthTimestamp(lastFailure) : 'None reported',
     missingTools,
+    toolReadinessLabel:
+      !healthProbe && !capability.ready && missingTools.length === 0 ? 'tools unknown' : '',
     readinessDetail:
       capability.blockedReasons?.[0]?.replace(/[:_]/g, ' ') ||
       (missingTools.length
@@ -1034,6 +1036,11 @@ function AgentHealthEvidence({
             <li key={tool}>{tool}</li>
           ))}
         </ul>
+      )}
+      {facts.toolReadinessLabel && (
+        <p>
+          Tool readiness: <strong>{facts.toolReadinessLabel}</strong>
+        </p>
       )}
       {facts.readinessDetail && <p>{facts.readinessDetail}</p>}
       <p className="pbk-agent-health-source">

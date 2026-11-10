@@ -87,6 +87,12 @@ async function verify(engine, viewport, device = {}) {
     await expect(detail.getByRole('button', { name: 'Request call' })).toBeDisabled();
     await detail.getByText('Health evidence', { exact: true }).click();
     await expect(detail.getByText('qa-review-tool', { exact: true })).toBeVisible();
+    await detail.getByText('Health evidence', { exact: true }).click();
+
+    await roster.getByRole('button', { name: 'Inspect Max', exact: true }).click();
+    await detail.getByText('Health evidence', { exact: true }).click();
+    await expect(detail.getByText('tools unknown', { exact: true })).toBeVisible();
+    await detail.getByText('Health evidence', { exact: true }).click();
 
     await roster.getByRole('button', { name: 'Inspect Ava', exact: true }).click();
     await expect(detail.getByRole('heading', { name: 'Ava', exact: true })).toBeInViewport();

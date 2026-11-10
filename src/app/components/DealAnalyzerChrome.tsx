@@ -115,6 +115,7 @@ export function DealAnalyzerCommandHeader({
   const verdictMeta = getVerdictMeta(deal.verdict);
   const pathLabel = getPathLabel(selectedPath);
   const pathControl = getPathControlMetric(deal, selectedPath);
+  const isWorkbench = activeTab === 'analyzer' || activeTab === 'callmode';
 
   const handleTabChange = (tab: AnalyzerTabId) => {
     onTabChange(tab);
@@ -122,13 +123,13 @@ export function DealAnalyzerCommandHeader({
   };
 
   return (
-    <header className="pbk-analyzer-command" data-view={activeTab}>
+    <header className="pbk-analyzer-command" data-view={activeTab} data-workbench={isWorkbench}>
       <div className="pbk-analyzer-command-main">
         <div className="pbk-analyzer-title-block">
-          <span className="pbk-kicker">Deal Analyzer</span>
-          {activeTab === 'analyzer' ? (
+          <span className="pbk-kicker">{activeTab === 'callmode' ? 'Call Mode' : 'Deal Analyzer'}</span>
+          {isWorkbench ? (
             <>
-              <h1>The deal.</h1>
+              <h1>{activeTab === 'callmode' ? 'The call.' : 'The deal.'}</h1>
               <p>{deal.address.trim() || 'No property loaded'}</p>
             </>
           ) : (

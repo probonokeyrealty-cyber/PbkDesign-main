@@ -1,4 +1,5 @@
-import { useState } from 'react';
+import { useLayoutEffect, useRef, useState } from 'react';
+import { Calculator, PanelRight } from 'lucide-react';
 import { DealData, PBKPath } from '../types';
 import { RepairCalculator } from './RepairCalculator';
 import { LandAnalysis } from './LandAnalysis';
@@ -6,7 +7,8 @@ import { DealScoring } from './DealScoring';
 import { StrategySelector } from './StrategySelector';
 import { UnderwritingControls } from './UnderwritingControls';
 import { HelpTooltip } from './HelpTooltip';
-import { AnalyzerListingLookup } from './AnalyzerListingLookup';
+import { AnalyzerListingLookup, AnalyzerListingPhotos, type AnalyzerPhotoResult } from './AnalyzerListingLookup';
+import { AnalyzerSellerHistory } from './AnalyzerSellerHistory';
 import { formatCurrency } from '../utils/formatting';
 import { calculateARV } from '../utils/dealCalculations';
 import { getAnalyzeReadiness } from '../utils/pbk';
@@ -24,6 +26,8 @@ interface AnalyzerTabProps {
   onOpenCallMode: (path: PBKPath) => void;
   analyzeStatus: string;
 }
+
+type AnalyzerView = 'valuation' | 'context';
 
 export function AnalyzerTab({
   deal,
@@ -55,6 +59,25 @@ export function AnalyzerTab({
 
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [isSending, setIsSending] = useState(false);
+  const [view, setView] = useState<AnalyzerView>('valuation');
+  const [photoResult, setPhotoResult] = useState<AnalyzerPhotoResult | null>(null);
+  const scrollOffsets = useRef<Record<AnalyzerView, number>>({ valuation: 0, context: 0 });
+  const scrollContainer = useRef<HTMLElement | null>(null);
+  const leadId = deal.leadId?.trim() || '';
+  const address = deal.address.trim();
+  const currentPhotoResult = photoResult?.address === address ? photoResult : null;
+
+  function switchView(next: AnalyzerView, button: HTMLButtonElement) {
+    if (view === next) return;
+    scrollContainer.current = button.closest<HTMLElement>('.pbk-deal-content');
+    scrollOffsets.current[view] = scrollContainer.current?.scrollTop ?? 0;
+    setView(next);
+  }
+
+  useLayoutEffect(() => {
+    const container = scrollContainer.current;
+    if (container) container.scrollTop = scrollOffsets.current[view];
+  }, [view]);
 
   const arv = deal.arv || calculateARV(deal.comps);
   const analyzeReadiness = getAnalyzeReadiness(deal);
@@ -102,8 +125,8 @@ export function AnalyzerTab({
               'Overpriced - the current list price is outside the safer PBK range. Either negotiate significantly or pass.',
           };
 
-  return (
-    <div className="pbk-analyzer-main p-3.5">
+  const valuation = (
+    <div id="analyzer-valuation" className="pbk-analyzer-valuation">
       <section aria-labelledby="analyzer-property-heading" className="pbk-analyzer-card pbk-analyzer-hero pbk-analyzer-workbench-section">
         <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
           <h2 id="analyzer-property-heading" className="pbk-analyzer-section-title">01 / Property details</h2>
@@ -143,7 +166,12 @@ export function AnalyzerTab({
             placeholder="123 Main St, City, ST 12345"
             className="w-full h-9 px-3 border border-gray-200 dark:border-slate-700 rounded-lg bg-gray-50 dark:bg-slate-900 text-gray-900 dark:text-gray-100 text-[12.5px] outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 transition-all"
           />
-          <AnalyzerListingLookup key={deal.address.trim()} deal={deal} onFill={onDealChange} />
+          <AnalyzerListingLookup
+            key={address}
+            deal={deal}
+            onFill={onDealChange}
+            onPhotoResult={setPhotoResult}
+          />
         </div>
 
         <div className="pbk-analyzer-segments" role="group" aria-label="Contact type">
@@ -572,6 +600,40 @@ export function AnalyzerTab({
           <UnderwritingControls deal={deal} onDealChange={onDealChange} />
         </>
       )}
+    </div>
+  );
+
+  return (
+    <div className="pbk-analyzer-main p-3.5">
+      <div className="pbk-analyzer-context-switch" role="group" aria-label="Analyzer view">
+        <button
+          type="button"
+          aria-pressed={view === 'valuation'}
+          aria-controls="analyzer-valuation"
+          onClick={(event) => switchView('valuation', event.currentTarget)}
+        >
+          <Calculator size={16} aria-hidden="true" /> Valuation
+        </button>
+        <button
+          type="button"
+          aria-pressed={view === 'context'}
+          aria-controls="analyzer-deal-context"
+          onClick={(event) => switchView('context', event.currentTarget)}
+        >
+          <PanelRight size={16} aria-hidden="true" /> Context
+        </button>
+      </div>
+      <div className="pbk-analyzer-context-layout" data-view={view}>
+        {valuation}
+        <aside id="analyzer-deal-context" className="pbk-analyzer-context" aria-labelledby="analyzer-context-heading">
+          <h2 id="analyzer-context-heading">Deal context</h2>
+          <AnalyzerListingPhotos
+            key={address + ':' + currentPhotoResult?.status}
+            result={currentPhotoResult}
+          />
+          <AnalyzerSellerHistory key={leadId} leadId={leadId} />
+        </aside>
+      </div>
     </div>
   );
 }

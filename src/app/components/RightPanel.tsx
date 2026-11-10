@@ -1,3 +1,4 @@
+import { useEffect, useRef } from 'react';
 import { DealData, PBKPath, QuickDocumentType } from '../types';
 import { Eye, FileText, Printer, Send, X } from 'lucide-react';
 import { formatCurrency } from '../utils/formatting';
@@ -5,6 +6,7 @@ import { getPathLabel, getPdfReadiness } from '../utils/pbk';
 
 interface RightPanelProps {
   isOpen: boolean;
+  drawer?: boolean;
   onClose: () => void;
   deal: DealData;
   selectedPath: PBKPath;
@@ -17,6 +19,7 @@ interface RightPanelProps {
 
 export function RightPanel({
   isOpen,
+  drawer = false,
   onClose,
   deal,
   selectedPath,
@@ -30,21 +33,46 @@ export function RightPanel({
   const isLand = deal.type === 'land';
   const primaryValue = isLand ? deal.builderTotal : deal.mao60;
   const secondaryValue = isLand ? deal.offer : deal.maoRBP;
+  const closeButton = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    const button = closeButton.current;
+    if (!drawer || !isOpen || !button) return;
+    const trigger = document.activeElement;
+    button.focus({ preventScroll: true });
+    return () => {
+      if (trigger instanceof HTMLElement && trigger.isConnected &&
+          (document.activeElement === document.body || document.activeElement === button)) {
+        trigger.focus({ preventScroll: true });
+      }
+    };
+  }, [drawer, isOpen]);
+
+  if (drawer && !isOpen) return null;
 
   return (
     <aside
+      aria-label="Deal workflow"
+      onKeyDown={(event) => {
+        if (drawer && event.key === 'Escape') {
+          event.stopPropagation();
+          onClose();
+        }
+      }}
       className={`
-        fixed md:relative top-[54px] md:top-0 right-0 bottom-0 z-40
+        fixed ${drawer ? 'md:absolute' : 'md:relative'} top-[54px] md:top-0 right-0 bottom-0 z-40
         pbk-analyzer-workflow-panel w-[300px] bg-white/96 dark:bg-slate-900/96 border-l border-gray-200 dark:border-slate-700
         overflow-y-auto p-3 transition-transform duration-250 backdrop-blur-lg
         ${isOpen ? 'translate-x-0' : 'translate-x-full md:translate-x-0'}
       `}
     >
-      <div className="md:hidden flex items-center justify-between mb-3">
+      <div className={`${drawer ? '' : 'md:hidden'} flex items-center justify-between mb-3`}>
         <div className="text-[10px] font-bold uppercase tracking-wide text-gray-500 dark:text-gray-400">
           Workflow
         </div>
         <button
+          ref={closeButton}
+          type="button"
           onClick={onClose}
           aria-label="Close panel"
           className="p-1.5 rounded-md text-gray-500 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-slate-800"

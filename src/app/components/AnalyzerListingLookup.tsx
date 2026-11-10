@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { Search } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { ExternalLink, Image as ImageIcon, Search } from 'lucide-react';
 import type { DealData } from '../types';
 import { formatCurrency } from '../utils/formatting';
 import { fetchApifyListingRequest } from '../utils/runtimeBridge';
@@ -38,6 +38,8 @@ type LookupState =
       photos: string[];
     };
 
+export type AnalyzerPhotoResult = { address: string; status: LookupState['status']; urls: string[] };
+
 const numericFields = ['beds', 'baths', 'sqft', 'year', 'dom'] as const;
 
 function positiveNumber(value: unknown): value is number {
@@ -51,18 +53,25 @@ function photoLinks(value: unknown): string[] {
   ))].slice(0, 6);
 }
 
-export function AnalyzerListingLookup({ deal, onFill }: {
+export function AnalyzerListingLookup({ deal, onFill, onPhotoResult }: {
   deal: DealData;
   onFill: (updates: Partial<DealData>) => void;
+  onPhotoResult: (result: AnalyzerPhotoResult) => void;
 }) {
   const address = deal.address.trim();
   const [lookup, setLookup] = useState<LookupState>({ status: 'idle' });
-  const [failedPhotos, setFailedPhotos] = useState<string[]>([]);
   const [filledCount, setFilledCount] = useState(0);
+
+  useEffect(() => {
+    onPhotoResult({
+      address,
+      status: lookup.status,
+      urls: lookup.status === 'found' ? lookup.photos : [],
+    });
+  }, [address, lookup, onPhotoResult]);
 
   async function lookUp() {
     setFilledCount(0);
-    setFailedPhotos([]);
     setLookup({ status: 'loading' });
     try {
       const response = await fetchApifyListingRequest(address);
@@ -104,9 +113,6 @@ export function AnalyzerListingLookup({ deal, onFill }: {
     }
   }
   const fillableCount = Object.keys(updates).length;
-  const photos = lookup.status === 'found'
-    ? lookup.photos.filter((url) => !failedPhotos.includes(url))
-    : [];
 
   return (
     <div className="pbk-analyzer-listing">
@@ -158,27 +164,68 @@ export function AnalyzerListingLookup({ deal, onFill }: {
               Fill empty fields
             </button>
             {filledCount > 0 && <p className="mt-1">Filled {filledCount} empty fields.</p>}
-            {photos.length > 0 ? (
-              <ul aria-label="Listing photos" className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3">
-                {photos.map((url) => (
-                  <li key={url} className="min-w-0">
-                    <a href={url} target="_blank" rel="noopener noreferrer">
-                      <img
-                        src={url}
-                        alt={`Listing photo ${lookup.photos.indexOf(url) + 1}`}
-                        loading="lazy"
-                        referrerPolicy="no-referrer"
-                        onError={() => setFailedPhotos((failed) => [...failed, url])}
-                        className="aspect-video w-full rounded-md object-cover"
-                      />
-                    </a>
-                  </li>
-                ))}
-              </ul>
-            ) : <p className="mt-2">No listing photos available.</p>}
           </div>
         )}
       </div>
     </div>
+  );
+}
+
+export function AnalyzerListingPhotos({ result }: { result: AnalyzerPhotoResult | null }) {
+  const [failedPhotos, setFailedPhotos] = useState<string[]>([]);
+  const [selectedPhoto, setSelectedPhoto] = useState('');
+  const urls = result?.urls ?? [];
+  const photos = urls.filter((url) => !failedPhotos.includes(url));
+  const currentPhoto = photos.includes(selectedPhoto) ? selectedPhoto : photos[0];
+  const status = result?.status ?? 'idle';
+
+  return (
+    <section className="pbk-analyzer-context-section" aria-labelledby="analyzer-photo-heading">
+      <header>
+        <ImageIcon size={16} aria-hidden="true" />
+        <h3 id="analyzer-photo-heading">Listing photos</h3>
+        {photos.length > 0 && <span className="pbk-analyzer-context-meta">{photos.length}</span>}
+      </header>
+      {currentPhoto ? (
+        <>
+          <div className="pbk-analyzer-photo-stage">
+            <img
+              src={currentPhoto}
+              alt={`Listing photo ${urls.indexOf(currentPhoto) + 1}`}
+              loading="lazy"
+              referrerPolicy="no-referrer"
+              onError={() => setFailedPhotos((failed) => [...failed, currentPhoto])}
+            />
+          </div>
+          {photos.length > 1 && (
+            <ul className="pbk-analyzer-photo-strip" aria-label="Listing photo choices">
+              {photos.map((url) => (
+                <li key={url}>
+                  <button
+                    type="button"
+                    aria-label={`View photo ${urls.indexOf(url) + 1}`}
+                    aria-pressed={currentPhoto === url}
+                    onClick={() => setSelectedPhoto(url)}
+                  >
+                    <img src={url} alt="" loading="lazy" referrerPolicy="no-referrer"
+                      onError={() => setFailedPhotos((failed) => [...failed, url])} />
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+          <a className="pbk-analyzer-context-link" href={currentPhoto} target="_blank" rel="noopener noreferrer">
+            Full-size photo <ExternalLink size={13} aria-hidden="true" />
+          </a>
+        </>
+      ) : (
+        <p className="pbk-analyzer-context-meta" role="status">
+          {status === 'idle' ? 'No listing loaded.'
+            : status === 'loading' ? 'Looking up listing photos...'
+            : status === 'error' ? 'Listing lookup unavailable.'
+            : 'No listing photos available.'}
+        </p>
+      )}
+    </section>
   );
 }

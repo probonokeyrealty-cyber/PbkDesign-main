@@ -1201,6 +1201,7 @@ export default function App({ engineOnly = false }: AppProps) {
 
         <RightPanel
           isOpen={rightPanelOpen}
+          drawer={activeTab === 'analyzer'}
           onClose={() => setRightPanelOpen(false)}
           deal={activeDeal}
           selectedPath={activeSelectedPath}

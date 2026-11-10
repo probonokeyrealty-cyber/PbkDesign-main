@@ -75,9 +75,11 @@ try {
   await arv.fill('2100000');
   await expect(arv).toHaveValue('2100000');
   assert.deepEqual(lookups, [['GET', '?' + new URLSearchParams({ address }).toString()]]);
+  await page.getByRole('button', { name: 'Context', exact: true }).click();
   const photo = page.getByRole('img', { name: 'Listing photo 1' });
   await expect(photo).toBeVisible();
   await expect.poll(() => photo.evaluate((img) => img.naturalWidth)).toBeGreaterThan(0);
+  await page.getByRole('button', { name: 'Valuation', exact: true }).click();
   const beds = page.getByRole('spinbutton', { name: 'Bedrooms' });
   await beds.fill('7');
   await page.getByRole('button', { name: 'Fill empty fields' }).click();

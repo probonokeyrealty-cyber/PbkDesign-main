@@ -4,6 +4,7 @@ import { chromium, expect } from '@playwright/test';
 const base = new URL(process.argv[2] || 'http://127.0.0.1:5188');
 assert(['127.0.0.1', 'localhost'].includes(base.hostname), 'Use a local Vite server.');
 const address = '9966 Sunset Blvd, Beverly Hills, CA 90210';
+const landAddress = '9921 Tower Ln, Beverly Hills, CA 90210';
 const source = 'https://www.redfin.com/CA/Beverly-Hills/9966-Sunset-Blvd-90210/home/6822202';
 const browser = await chromium.launch();
 
@@ -15,7 +16,8 @@ try {
     const url = new URL(request.url());
     if (url.pathname === '/api/property-data') {
       lookups.push([request.method(), url.search]);
-      const hit = url.searchParams.get('address') === address;
+      const land = url.searchParams.get('address') === landAddress;
+      const hit = land || url.searchParams.get('address') === address;
       return route.fulfill({ json: {
         ok: hit,
         cache: { hit },
@@ -23,9 +25,12 @@ try {
           source: 'apify-for-sale',
           data: {
             priceBasis: 'asking_price',
-            askingPriceUsd: 29995000,
+            askingPriceUsd: land ? 1995000 : 29995000,
             sourceLinks: [source, 'javascript:alert(1)', source],
-            listingFacts: { beds: 6, baths: 8, sqft: 9138, year: 1989, dom: 38, lotSqft: 46129 },
+            propertyType: land ? 'land' : 'house',
+            listingFacts: land
+              ? { lotSqft: 23531 }
+              : { beds: 6, baths: 8, sqft: 9138, year: 1989, dom: 38, lotSqft: 46129 },
             photoUrls: ['https://ap.rdcpix.com/test-property.jpg'],
           },
           values: { arv: 29995000, comps: [{ soldPrice: 29995000 }] },
@@ -75,7 +80,38 @@ try {
   await expect(page.getByRole('link', { name: 'Redfin' })).toHaveCount(0);
   await page.getByRole('button', { name: 'Look up asking price' }).click();
   await expect(page.getByText('No current Apify listing found for this address.')).toBeVisible();
-  console.log('Analyzer Apify lookup: read-only hit, address change, and miss passed.');
+
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await addressInput.fill(landAddress);
+  const compAddress = page.getByRole('textbox', { name: 'Comp A address', exact: true });
+  const compDate = page.getByRole('textbox', { name: 'Comp A sold date', exact: true });
+  await compAddress.fill('QA test comp');
+  await comp.fill('2250000');
+  await compDate.fill('Jan 2026');
+  await expect(arv).toHaveValue('2250000');
+  const readUnderwriting = () => page.locator('#deal-arv, input[aria-label^="Comp "]')
+    .evaluateAll((inputs) => inputs.map((input) => [input.id || input.getAttribute('aria-label'), input.value]));
+  const beforeLand = await readUnderwriting();
+  await page.getByRole('button', { name: 'Land/Lot', exact: true }).click();
+  const acres = page.getByRole('spinbutton', { name: 'Lot size in acres', exact: true });
+  const fill = page.getByRole('button', { name: 'Fill empty fields', exact: true });
+  await expect(acres).toHaveValue('');
+  await page.getByRole('button', { name: 'Look up asking price' }).click();
+  await expect(page.getByText(/Lot: 23,531 sq ft/)).toBeVisible();
+  await fill.click();
+  await expect(acres).toHaveValue('0.5402');
+  await expect(listPrice).toHaveValue('29995000');
+  await acres.fill('0.25');
+  await listPrice.fill('');
+  await fill.click();
+  await expect(listPrice).toHaveValue('1995000');
+  await expect(acres).toHaveValue('0.25');
+  await acres.fill('');
+  await fill.click();
+  await expect(acres).toHaveValue('0.5402');
+  await page.getByRole('button', { name: 'House', exact: true }).click();
+  assert.deepEqual(await readUnderwriting(), beforeLand);
+  console.log('Analyzer Apify lookup: house, vacant land, manual acreage, cleared acreage, and unchanged underwriting passed.');
 } finally {
   await browser.close();
 }

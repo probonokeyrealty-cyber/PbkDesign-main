@@ -120,7 +120,7 @@ const initialDealData: DealData = {
     condition: '',
   },
   builderPrice: 30000,
-  lotSize: '0.25',
+  lotSize: '',
   builderTotal: 0,
   offer: 0,
   zipCode: '',

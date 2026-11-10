@@ -37,7 +37,7 @@ export function LandAnalysis({ deal, onDealChange }: LandAnalysisProps) {
     const pricePerQuarterAcre = (deal.landPriceSqFt || 0) * SQFT_PER_QUARTER_ACRE;
 
     onDealChange({
-      lotSize: acres.toFixed(4),
+      lotSize: sqft > 0 ? acres.toFixed(4) : '',
       builderPrice: Math.round(pricePerQuarterAcre)
     });
   };

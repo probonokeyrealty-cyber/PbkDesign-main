@@ -260,10 +260,17 @@ export function AnalyzerTab({
               </div>
               <input
                 type="number"
-                step="0.01"
+                step="any"
                 aria-label="Lot size in acres"
                 value={deal.lotSize || ''}
-                onChange={(e) => handleInputChange('lotSize', e.target.value)}
+                onChange={(e) => {
+                  const lotSize = e.target.value;
+                  const acres = Number(lotSize);
+                  onDealChange({
+                    lotSize,
+                    landLotSizeSqFt: Number.isFinite(acres) && acres > 0 ? acres * 43560 : 0,
+                  });
+                }}
                 placeholder="0.25"
                 className="w-full border-none outline-none bg-transparent text-[14px] font-semibold text-gray-900 dark:text-gray-100"
               />

@@ -9,6 +9,7 @@ import {
   ChevronDown,
   CircleAlert,
   Clock3,
+  ExternalLink,
   Cpu,
   Filter,
   FileText,
@@ -31,6 +32,7 @@ import {
   Terminal,
   X,
 } from 'lucide-react';
+import { Link, useSearchParams } from 'react-router';
 import { PbkButton, PbkDataSource, PbkEmpty, PbkPulseDot } from '../../components/pbk/index';
 import { useRuntimeSnapshot } from '../hooks/useRuntimeSnapshot';
 import {
@@ -386,12 +388,6 @@ function normalizeAction(value?: string): AvaCommandAction {
   return ACTIONS.some((item) => item.id === value)
     ? (value as AvaCommandAction)
     : 'operator_command';
-}
-
-function getAvaChatLeadIdFromLocation() {
-  if (typeof window === 'undefined') return '';
-  const params = new URLSearchParams(window.location.search);
-  return params.get('leadId') || params.get('lead_id') || '';
 }
 
 function buildCommandParams(action: AvaCommandAction, command: string) {
@@ -773,11 +769,11 @@ function AvaMissionTimeline({ exchange }: { exchange: AvaAssistantExchange }) {
       : '';
 
   return (
-    <div className="pbk-ava-mission-timeline mt-3 rounded-xl border border-[var(--ava-border)] bg-[var(--ava-bg)] p-3 text-xs leading-5">
-      <div className="mb-2 flex flex-wrap items-center gap-2">
+    <details className="pbk-ava-mission-timeline group mt-3 border-t border-[var(--ava-border)] text-xs leading-5">
+      <summary className="flex min-h-11 cursor-pointer list-none flex-wrap items-center gap-x-2 gap-y-1 py-2">
         <span className="inline-flex items-center gap-1.5 font-semibold text-[var(--ava-text)]">
-          <BrainCircuit size={14} />
-          Ava plan
+          <BrainCircuit size={14} aria-hidden="true" />
+          Mission timeline
         </span>
         <span className="rounded-full border border-[var(--ava-border)] px-2 py-0.5 text-[11px] font-semibold text-[var(--ava-text-muted)]">
           {plainMissionStatus(mission?.status)}
@@ -800,72 +796,79 @@ function AvaMissionTimeline({ exchange }: { exchange: AvaAssistantExchange }) {
             Safe lane
           </span>
         )}
+        <ChevronDown
+          size={15}
+          className="pbk-ava-mission-chevron group-open:rotate-180"
+          aria-hidden="true"
+        />
+      </summary>
+      <div className="pbk-ava-mission-evidence pb-1 pt-2">
+        {goal && (
+          <p className="mb-2 text-[var(--ava-text-muted)]">
+            <span className="font-semibold text-[var(--ava-text)]">Understood:</span> {goal}
+          </p>
+        )}
+        {insight && (
+          <p className="mb-2 text-[var(--ava-text-muted)]">
+            <span className="font-semibold text-[var(--ava-text)]">Checked:</span> {insight}
+          </p>
+        )}
+        {toolProof && (
+          <p className="mb-2 text-[var(--ava-text-muted)]">
+            <span className="font-semibold text-[var(--ava-text)]">Proof:</span> {toolProof}
+          </p>
+        )}
+        {decision && (
+          <p className="mb-2 text-[var(--ava-text-muted)]">
+            <span className="font-semibold text-[var(--ava-text)]">Ava decided:</span>{' '}
+            {plainAvaDecision(decision)}
+            {confidencePercent ? ` (${confidencePercent}% confidence)` : ''}
+          </p>
+        )}
+        {nextAction && (
+          <p className="mb-2 text-[var(--ava-text-muted)]">
+            <span className="font-semibold text-[var(--ava-text)]">Next move:</span> {nextAction}
+          </p>
+        )}
+        {fallbackInsight && <p className="mb-2 text-[var(--ava-text-muted)]">{fallbackInsight}</p>}
+        {steps.length > 0 && (
+          <ol className="grid gap-1.5">
+            {steps.map((step) => {
+              const done = /completed|ready/i.test(step.status);
+              const waiting = /approval|input|review|blocked/i.test(step.status);
+              return (
+                <li key={step.id} className="flex gap-2">
+                  <span
+                    className={[
+                      'mt-0.5 inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full border',
+                      done
+                        ? 'border-[var(--ava-success-border)] text-[var(--ava-success)]'
+                        : waiting
+                          ? 'border-[var(--ava-warning-border)] text-[var(--ava-warning)]'
+                          : 'border-[var(--ava-border)] text-[var(--ava-text-faint)]',
+                    ].join(' ')}
+                    aria-hidden="true"
+                  >
+                    {done ? <CheckCircle2 size={11} /> : <Clock3 size={11} />}
+                  </span>
+                  <span className="min-w-0">
+                    <span className="font-semibold text-[var(--ava-text)]">{step.label}</span>
+                    {step.summary && (
+                      <span className="block text-[var(--ava-text-muted)]">{step.summary}</span>
+                    )}
+                  </span>
+                </li>
+              );
+            })}
+          </ol>
+        )}
+        {memories.length > 0 && (
+          <p className="mt-2 text-[11px] font-semibold text-[var(--ava-text-faint)]">
+            Used {memories.length} memory signal{memories.length === 1 ? '' : 's'}.
+          </p>
+        )}
       </div>
-      {goal && (
-        <p className="mb-2 text-[var(--ava-text-muted)]">
-          <span className="font-semibold text-[var(--ava-text)]">Understood:</span> {goal}
-        </p>
-      )}
-      {insight && (
-        <p className="mb-2 text-[var(--ava-text-muted)]">
-          <span className="font-semibold text-[var(--ava-text)]">Checked:</span> {insight}
-        </p>
-      )}
-      {toolProof && (
-        <p className="mb-2 text-[var(--ava-text-muted)]">
-          <span className="font-semibold text-[var(--ava-text)]">Proof:</span> {toolProof}
-        </p>
-      )}
-      {decision && (
-        <p className="mb-2 text-[var(--ava-text-muted)]">
-          <span className="font-semibold text-[var(--ava-text)]">Ava decided:</span>{' '}
-          {plainAvaDecision(decision)}
-          {confidencePercent ? ` (${confidencePercent}% confidence)` : ''}
-        </p>
-      )}
-      {nextAction && (
-        <p className="mb-2 text-[var(--ava-text-muted)]">
-          <span className="font-semibold text-[var(--ava-text)]">Next move:</span> {nextAction}
-        </p>
-      )}
-      {fallbackInsight && <p className="mb-2 text-[var(--ava-text-muted)]">{fallbackInsight}</p>}
-      {steps.length > 0 && (
-        <ol className="grid gap-1.5">
-          {steps.map((step) => {
-            const done = /completed|ready/i.test(step.status);
-            const waiting = /approval|input|review|blocked/i.test(step.status);
-            return (
-              <li key={step.id} className="flex gap-2">
-                <span
-                  className={[
-                    'mt-0.5 inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full border',
-                    done
-                      ? 'border-[var(--ava-success-border)] text-[var(--ava-success)]'
-                      : waiting
-                        ? 'border-[var(--ava-warning-border)] text-[var(--ava-warning)]'
-                        : 'border-[var(--ava-border)] text-[var(--ava-text-faint)]',
-                  ].join(' ')}
-                  aria-hidden="true"
-                >
-                  {done ? <CheckCircle2 size={11} /> : <Clock3 size={11} />}
-                </span>
-                <span className="min-w-0">
-                  <span className="font-semibold text-[var(--ava-text)]">{step.label}</span>
-                  {step.summary && (
-                    <span className="block text-[var(--ava-text-muted)]">{step.summary}</span>
-                  )}
-                </span>
-              </li>
-            );
-          })}
-        </ol>
-      )}
-      {memories.length > 0 && (
-        <p className="mt-2 text-[11px] font-semibold text-[var(--ava-text-faint)]">
-          Used {memories.length} memory signal{memories.length === 1 ? '' : 's'}.
-        </p>
-      )}
-    </div>
+    </details>
   );
 }
 
@@ -1062,6 +1065,8 @@ function getAvaSystemStatus({
 }
 
 export function AvaChat() {
+  const [searchParams] = useSearchParams();
+  const linkedLeadId = searchParams.get('leadId') || searchParams.get('lead_id') || '';
   const { snapshot, refresh } = useRuntimeSnapshot(30000);
   const [draft, setDraft] = useState('');
   const [transcript, setTranscript] = useState('');
@@ -1079,7 +1084,7 @@ export function AvaChat() {
   const [connectionState, setConnectionState] = useState<ConnectionState>('checking');
   const [connectionError, setConnectionError] = useState('');
   const [submitError, setSubmitError] = useState('');
-  const [contextOpen, setContextOpen] = useState(false);
+  const contextRef = useRef<HTMLDialogElement | null>(null);
   const [decidingApprovalId, setDecidingApprovalId] = useState('');
   const [operatorMemory, setOperatorMemory] = useState<OperatorMemory | null>(null);
   const [resolvedApprovalIds, setResolvedApprovalIds] = useState<Set<string>>(() => new Set());
@@ -1392,10 +1397,6 @@ export function AvaChat() {
     timeline.scrollTop = timeline.scrollHeight;
   }, [conversationCount, historyFilter, searchQuery]);
 
-  useEffect(() => {
-    if (!systemStatus.visible && contextOpen) setContextOpen(false);
-  }, [contextOpen, systemStatus.visible]);
-
   const stopListening = () => {
     recognitionRef.current?.stop();
     recognitionRef.current = null;
@@ -1431,7 +1432,7 @@ export function AvaChat() {
             message: command,
             sessionId: assistantSessionId || undefined,
             source: 'ava-chat-page',
-            leadId: getAvaChatLeadIdFromLocation() || undefined,
+            leadId: linkedLeadId || undefined,
             action: nextAction,
             selectedAction: action,
             requiresApproval: nextRequiresApproval,
@@ -1447,11 +1448,13 @@ export function AvaChat() {
           );
           setDraft('');
           setTranscript(command);
-          showUiToast({
-            tone: response.ok === false ? 'warning' : 'success',
-            title: response.ok === false ? 'Ava needs review' : 'Ava answered',
-            desc: response.warning || 'Ava replied in the chat.',
-          });
+          if (response.ok === false || response.warning) {
+            showUiToast({
+              tone: 'warning',
+              title: 'Ava needs review',
+              desc: response.warning || 'Review the latest reply.',
+            });
+          }
           releaseSubmit();
           return;
         }
@@ -1526,6 +1529,7 @@ export function AvaChat() {
       assistantExchanges,
       assistantSessionId,
       draft,
+      linkedLeadId,
       load,
       refresh,
       requiresApproval,
@@ -1630,17 +1634,16 @@ export function AvaChat() {
       <div className="grid h-full min-h-0 grid-rows-[auto_minmax(0,1fr)]">
         <AvaIdentityBar
           state={avaState}
-          connectionState={connectionState}
-          sidecarConnected={Boolean(status?.connected)}
+          linkedLeadId={linkedLeadId}
           pendingApprovals={pendingApprovals}
           loading={loading}
           systemStatus={systemStatus}
           onRefresh={() => void load()}
-          onOpenContext={() => setContextOpen(true)}
+          onOpenContext={() => contextRef.current?.showModal()}
         />
 
         <div className="grid min-h-0">
-          <main className="pbk-ava-chat-main grid min-h-0 grid-rows-[auto_minmax(0,1fr)_auto]">
+          <div className="pbk-ava-chat-main grid min-h-0 grid-rows-[auto_minmax(0,1fr)_auto]">
             {(conversationItems.length > 0 || !defaultChatView) && (
               <ConversationToolbar
                 query={searchQuery}
@@ -1734,60 +1737,56 @@ export function AvaChat() {
               onSubmit={() => void submitCommand()}
               onSelectCompanionAction={selectCompanionAction}
             />
-          </main>
+          </div>
         </div>
       </div>
 
-      {contextOpen && (
-        <div
-          className="fixed inset-0 z-50 flex items-end bg-black/55"
-          role="dialog"
-          aria-modal="true"
-          aria-label="Ava context"
-          onMouseDown={(event) => {
-            if (event.currentTarget === event.target) setContextOpen(false);
-          }}
-        >
-          <div className="max-h-[82dvh] w-full overflow-y-auto rounded-t-2xl border border-[var(--ava-border)] bg-[var(--ava-panel)] shadow-2xl">
-            <div className="sticky top-0 z-10 flex items-center justify-between border-b border-[var(--ava-border)] bg-[var(--ava-panel)] px-4 py-3">
-              <div>
-                <div className="pbk-eyebrow">Ava context</div>
-                <h2 className="font-semibold">What Ava will do next</h2>
-              </div>
-              <button
-                type="button"
-                className="grid size-11 place-items-center rounded-lg border border-[var(--ava-border)] text-[var(--ava-text-muted)]"
-                onClick={() => setContextOpen(false)}
-                aria-label="Close Ava context"
-              >
-                <X size={18} />
-              </button>
+      <dialog
+        ref={contextRef}
+        id="ava-context"
+        className="pbk-ava-context-dialog"
+        aria-label="Ava context"
+        onMouseDown={(event) => {
+          if (event.currentTarget === event.target) event.currentTarget.close();
+        }}
+      >
+        <div className="w-full">
+          <div className="sticky top-0 z-10 flex items-center justify-between border-b border-[var(--ava-border)] bg-[var(--ava-panel)] px-4 py-3">
+            <div>
+              <h2 className="font-semibold">Ava context</h2>
             </div>
-            <AvaContextRail
-              action={selectedAction}
-              actionIcon={<SelectedActionIcon size={17} />}
-              requiresApproval={requiresApproval}
-              pendingApprovals={pendingApprovals}
-              status={status}
-              connectionState={connectionState}
-              commands={commands}
-              operatorMemory={operatorMemory}
-              onResumeOperatorMemory={() => {
-                resumeOperatorMemory();
-                setContextOpen(false);
-              }}
-            />
+            <button
+              type="button"
+              className="grid size-11 place-items-center rounded-lg border border-[var(--ava-border)] text-[var(--ava-text-muted)]"
+              onClick={() => contextRef.current?.close()}
+              aria-label="Close Ava context"
+            >
+              <X size={18} />
+            </button>
           </div>
+          <AvaContextRail
+            action={selectedAction}
+            actionIcon={<SelectedActionIcon size={17} />}
+            requiresApproval={requiresApproval}
+            pendingApprovals={pendingApprovals}
+            status={status}
+            connectionState={connectionState}
+            commands={commands}
+            operatorMemory={operatorMemory}
+            onResumeOperatorMemory={() => {
+              contextRef.current?.close();
+              resumeOperatorMemory();
+            }}
+          />
         </div>
-      )}
+      </dialog>
     </section>
   );
 }
 
 function AvaIdentityBar({
   state,
-  connectionState,
-  sidecarConnected,
+  linkedLeadId,
   pendingApprovals,
   loading,
   systemStatus,
@@ -1795,8 +1794,7 @@ function AvaIdentityBar({
   onOpenContext,
 }: {
   state: 'ready' | 'listening' | 'thinking' | 'working' | 'offline';
-  connectionState: ConnectionState;
-  sidecarConnected: boolean;
+  linkedLeadId: string;
   pendingApprovals: number;
   loading: boolean;
   systemStatus: AvaSystemStatus;
@@ -1812,52 +1810,37 @@ function AvaIdentityBar({
   }[state];
 
   return (
-    <header className="flex min-h-16 items-center justify-between gap-3 border-b border-[var(--ava-border)] bg-[var(--ava-panel)] px-3 py-2.5 sm:px-5">
-      <div className="flex min-w-0 items-center gap-3">
-        <AvaPresenceOrb state={state} compact />
-        <div className="min-w-0">
-          <div className="flex items-center gap-2">
-            <h1 className="font-[var(--font-display)] text-2xl font-semibold leading-none">Ava</h1>
-            <PbkPulseDot color={state === 'offline' ? 'amber' : 'lime'} />
-          </div>
-          <p className="mt-1 truncate text-xs text-[var(--ava-text-muted)]">{stateLabel}</p>
+    <header className="pbk-ava-ledger-header border-b border-[var(--ava-border)]">
+      <div className="min-w-0">
+        <div className="flex items-center gap-2">
+          <h1 className="font-semibold leading-none">Ava Chat</h1>
+          <PbkPulseDot color={state === 'offline' ? 'amber' : 'lime'} />
         </div>
-      </div>
-
-      <div className="hidden items-stretch divide-x divide-[var(--ava-border)] md:flex">
-        <HeaderHealth
-          label="Ava"
-          value={connectionState === 'connected' ? 'Connected' : connectionState}
-          healthy={connectionState === 'connected'}
-        />
-        <HeaderHealth
-          label="Desktop"
-          value={sidecarConnected ? 'Connected' : 'Waiting'}
-          healthy={sidecarConnected}
-        />
-        <HeaderHealth
-          label="Approvals"
-          value={`${pendingApprovals} pending`}
-          healthy={pendingApprovals === 0}
-          warning={pendingApprovals > 0}
-        />
+        <p className="mt-1 text-xs text-[var(--ava-text-muted)]">{stateLabel}</p>
       </div>
 
       <div className="flex items-center gap-2">
-        {systemStatus.visible && (
-          <button
-            type="button"
-            className={[
-              'pbk-ava-system-indicator grid size-11 place-items-center rounded-lg border bg-[var(--ava-panel-elevated)] transition',
-              systemStatus.tone === 'danger' ? 'is-danger' : 'is-warning',
-            ].join(' ')}
-            onClick={onOpenContext}
-            aria-label={`Open Ava support details: ${systemStatus.label}`}
-            title={systemStatus.reasons.join('\n')}
-          >
-            <Settings2 size={18} />
-          </button>
-        )}
+        <button
+          type="button"
+          className={[
+            'pbk-ava-system-indicator grid size-11 place-items-center rounded-lg border border-[var(--ava-border)] bg-[var(--ava-panel)] text-[var(--ava-text-muted)] transition',
+            systemStatus.visible
+              ? systemStatus.tone === 'danger'
+                ? 'is-danger'
+                : 'is-warning'
+              : '',
+          ].join(' ')}
+          onClick={(event) => {
+            event.currentTarget.focus();
+            onOpenContext();
+          }}
+          aria-label="Open Ava context"
+          aria-haspopup="dialog"
+          aria-controls="ava-context"
+          title={systemStatus.visible ? systemStatus.reasons.join('\n') : 'Ava context'}
+        >
+          <Settings2 size={18} />
+        </button>
         <button
           type="button"
           className="grid size-11 place-items-center rounded-lg border border-[var(--ava-border)] bg-[var(--ava-panel-elevated)] text-[var(--ava-text-muted)] transition hover:text-[var(--ava-text)]"
@@ -1868,38 +1851,26 @@ function AvaIdentityBar({
           <RefreshCw size={18} className={loading ? 'animate-spin' : ''} />
         </button>
       </div>
+      {(linkedLeadId || pendingApprovals > 0) && (
+        <div className="pbk-ava-ledger-links">
+          {linkedLeadId && (
+            <Link
+              className="pbk-ava-evidence-link"
+              to={`/leads/${encodeURIComponent(linkedLeadId)}`}
+            >
+              <ExternalLink size={14} aria-hidden="true" />
+              Open linked lead
+            </Link>
+          )}
+          {pendingApprovals > 0 && (
+            <Link className="pbk-ava-evidence-link is-review" to="/inbox#inbox-approvals">
+              <ShieldCheck size={15} aria-hidden="true" />
+              {pendingApprovals} {pendingApprovals === 1 ? 'approval' : 'approvals'} pending
+            </Link>
+          )}
+        </div>
+      )}
     </header>
-  );
-}
-
-function HeaderHealth({
-  label,
-  value,
-  healthy,
-  warning = false,
-}: {
-  label: string;
-  value: string;
-  healthy: boolean;
-  warning?: boolean;
-}) {
-  return (
-    <div className="min-w-28 px-5">
-      <div className="text-[10px] font-bold uppercase text-[var(--ava-text-faint)]">{label}</div>
-      <div className="mt-1 flex items-center gap-2 text-xs">
-        <span
-          className={[
-            'size-2 rounded-full',
-            healthy
-              ? 'bg-[var(--ava-success)]'
-              : warning
-                ? 'bg-[var(--ava-warning)]'
-                : 'bg-[var(--ava-danger)]',
-          ].join(' ')}
-        />
-        <span className="max-w-32 truncate">{value}</span>
-      </div>
-    </div>
   );
 }
 
@@ -2039,6 +2010,15 @@ function AssistantExchange({
               </p>
             )}
             <p className="whitespace-pre-wrap break-words">{exchange.answer}</p>
+            {exchange.activeLeadId && (
+              <Link
+                className="pbk-ava-evidence-link mt-1"
+                to={`/leads/${encodeURIComponent(exchange.activeLeadId)}`}
+              >
+                <ExternalLink size={14} aria-hidden="true" />
+                Open lead used in this reply
+              </Link>
+            )}
             <AvaMissionTimeline exchange={exchange} />
             {exchange.suggestions.length > 0 && (
               <div className="mt-3 flex flex-wrap gap-2">
@@ -2363,7 +2343,7 @@ function AvaComposer({
   return (
     <div className="pbk-ava-chat-composer border-t border-[var(--ava-border)] bg-[var(--ava-bg)] px-2 pt-2 sm:px-5 sm:pb-4 sm:pt-3">
       <div className="mx-auto w-full max-w-4xl">
-        <div className="rounded-2xl border border-[var(--ava-border-bright)] bg-[var(--ava-panel-elevated)] p-2 shadow-[0_16px_50px_rgba(0,0,0,0.18)]">
+        <div className="rounded-lg border border-[var(--ava-border-bright)] bg-[var(--ava-panel-elevated)] p-2">
           {submitError && (
             <div
               role="alert"

@@ -10414,12 +10414,119 @@ html[data-theme='light'] .pbk-ava-chat-surface {
   box-shadow: inset 3px 0 0 var(--ava-warning);
 }
 
+.pbk-ava-ledger-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px 16px;
+  min-height: 64px;
+  padding: 10px 20px;
+  background: var(--ava-bg);
+}
+
+.pbk-ava-ledger-header h1 {
+  font-family: var(--font-display);
+  font-size: 28px;
+  letter-spacing: 0;
+}
+
+.pbk-ava-ledger-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 16px;
+  margin-left: auto;
+  order: -1;
+}
+
+.pbk-ava-ledger-header > :first-child {
+  order: -2;
+}
+
+.pbk-ava-evidence-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 36px;
+  color: var(--ava-sky);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.pbk-ava-evidence-link.is-review {
+  color: var(--ava-warning);
+}
+
+.pbk-ava-evidence-link:hover {
+  text-decoration: underline;
+}
+
+.pbk-ava-mission-timeline > summary {
+  position: relative;
+  padding-right: 22px;
+}
+
+.pbk-ava-mission-chevron {
+  position: absolute;
+  top: 14px;
+  right: 1px;
+}
+
+.pbk-ava-mission-timeline > summary::-webkit-details-marker {
+  display: none;
+}
+
+.pbk-ava-mission-evidence {
+  overflow-wrap: anywhere;
+}
+
+.pbk-ava-context-dialog {
+  position: fixed;
+  inset: 0 0 0 auto;
+  width: min(100%, 420px);
+  height: 100dvh;
+  max-height: none;
+  max-width: none;
+  margin: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  border: 0;
+  border-left: 1px solid var(--ava-border);
+  background: var(--ava-panel);
+  color: var(--ava-text);
+}
+
+.pbk-ava-context-dialog::backdrop {
+  background: rgb(0 0 0 / 55%);
+}
+
+@media (max-width: 640px) {
+  .pbk-ava-ledger-header {
+    padding: 8px 10px 4px;
+  }
+
+  .pbk-ava-ledger-header h1 {
+    font-size: 23px;
+  }
+
+  .pbk-ava-ledger-links {
+    flex-basis: 100%;
+    margin: 0;
+    order: 0;
+    border-top: 1px solid var(--ava-border);
+  }
+
+  .pbk-ava-evidence-link {
+    min-height: 44px;
+  }
+}
+
 .pbk-ava-system-indicator {
   position: relative;
   color: var(--ava-text-muted);
 }
 
-.pbk-ava-system-indicator::after {
+.pbk-ava-system-indicator:is(.is-warning, .is-danger)::after {
   content: '';
   position: absolute;
   top: 7px;

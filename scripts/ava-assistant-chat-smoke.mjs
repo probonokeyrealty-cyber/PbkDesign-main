@@ -519,7 +519,7 @@ assert(
   'Ava Chat route must expose direct assistant replies, thinking, voice input, and inline approval states.'
 );
 assert(
-  avaChatRoute.includes('Ava plan') &&
+  avaChatRoute.includes('Mission timeline') &&
     avaChatRoute.includes('Understood:') &&
     avaChatRoute.includes('Checked:') &&
     avaChatRoute.includes('Proof:') &&
@@ -590,11 +590,12 @@ assert(
 assert(
     avaChatRoute.includes('pbk-ava-system-drawer') &&
     avaChatRoute.includes('getAvaSystemStatus') &&
-    avaChatRoute.includes('systemStatus.visible &&') &&
-    avaChatRoute.includes('Open Ava support details:') &&
+    avaChatRoute.includes('systemStatus.visible ?') &&
+    avaChatRoute.includes('Open Ava context') &&
+    avaChatRoute.includes('aria-haspopup="dialog"') &&
     avaChatRoute.includes('pbk-ava-chat-thread') &&
     avaChatRoute.includes('pbk-ava-chat-composer'),
-  'Ava Chat must keep system/debug controls out of the default chat unless system status has a warning.'
+  'Ava Chat must keep diagnostics in the context dialog and surface warnings on its trigger.'
 );
 assert(
   avaChatRoute.includes('pbk-ava-chat-send-button') &&

@@ -127,6 +127,7 @@
     "test:agent-fleet-controls": "node ./scripts/agent-fleet-controls-smoke.mjs",
     "test:agent-fleet": "npm run test:agent-fleet-prototype-modern && npm run test:agent-fleet-lead-context-roster && npm run test:agent-registry-canonical && npm run test:agent-health-modern && npm run test:agent-memory-wiring && npm run test:agent-settings-shell-ux && npm run test:agent-fleet-controls",
     "test:memory-prototype-modern": "node ./scripts/memory-prototype-modern-smoke.mjs",
+    "test:memory-design-browser": "node ./scripts/memory-design-browser-smoke.mjs",
     "test:analytics-prototype-modern": "node ./scripts/analytics-prototype-modern-smoke.mjs",
     "test:inbox-prototype-modern": "node ./scripts/inbox-prototype-modern-smoke.mjs",
     "test:unified-inbox-ui": "node ./scripts/unified-inbox-ui-smoke.mjs",

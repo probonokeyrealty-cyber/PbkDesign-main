@@ -2405,7 +2405,7 @@ export async function curateMemoryEventRequest({
   correction?: string;
   actor?: string;
 }) {
-  return bridgeRequest({
+  return bridgeRequest<{ ok: boolean }>({
     method: 'POST',
     path: `/api/memory/events/${encodeURIComponent(eventId)}/curate`,
     body: {

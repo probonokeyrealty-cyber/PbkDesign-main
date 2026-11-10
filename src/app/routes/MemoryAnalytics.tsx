@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router';
 import {
   AlertTriangle,
   Database,
+  ExternalLink,
   EyeOff,
   Pin,
   Plus,
@@ -21,12 +22,16 @@ import {
   fetchSkillTrendsRequest,
 } from '../utils/runtimeBridge';
 import { showUiToast } from '../utils/uiFeedback';
-import { buildMemoryAnalyticsViewModel } from './memoryAnalyticsRuntimeLogic.js';
+import {
+  buildMemoryAnalyticsViewModel,
+  buildMemoryConflictGroups,
+} from './memoryAnalyticsRuntimeLogic.js';
 
 type MemoryViewModel = ReturnType<typeof buildMemoryAnalyticsViewModel>;
 type SkillMetric = MemoryViewModel['skills'][number];
 type ExperimentMetric = MemoryViewModel['experiments'][number];
 type MemoryEventMetric = MemoryViewModel['events'][number];
+type CurationReceipt = 'Correction queued' | 'Forget request recorded';
 type MemoryStats = {
   activeSkills: number;
   totalUsage: number;
@@ -81,19 +86,21 @@ function eventAgeDays(event: MemoryEventMetric) {
   return Math.floor((Date.now() - time) / 86_400_000);
 }
 
-function buildMemoryHygiene(events: MemoryEventMetric[]) {
+function buildMemoryHygiene(events: MemoryEventMetric[], pairedKeys: Set<string>) {
   const lowConfidence = events.filter(
     (event) => Number(event.confidence || 0) > 0 && Number(event.confidence || 0) < 70
   );
-  const needsSource = events.filter((event) => !event.source && !event.leadId && !event.callId);
+  const needsSource = events.filter((event) => !event.source && !getMemorySourceHref(event));
   const stale = events.filter((event) => {
     const age = eventAgeDays(event);
     return age !== null && age > 30;
   });
-  const contradictions = events.filter((event) =>
-    /conflict|contradict|changed|different|mismatch|price|mortgage/i.test(
-      `${event.title} ${event.detail}`
-    )
+  const contradictions = events.filter(
+    (event) =>
+      pairedKeys.has(getMemoryEventKey(event)) ||
+      /\b(?:conflict\w*|contradict\w*|mismatch\w*|inconsisten\w*)\b/i.test(
+        `${event.title} ${event.detail}`
+      )
   );
   const compliance = events.filter((event) =>
     /dnc|do not call|stop texting|unsubscribe|compliance|consent|permission/i.test(
@@ -138,12 +145,54 @@ function getMemoryEventKey(event: MemoryEventMetric) {
 }
 
 function getMemorySourceHref(event: MemoryEventMetric) {
-  if (event.sourceHref) return event.sourceHref;
-  if (event.leadId) return `/leads?leadId=${encodeURIComponent(event.leadId)}`;
+  if (/^\/(?![\\/])[^\\]*$|^https?:\/\//i.test(event.sourceHref)) return event.sourceHref;
+  if (event.leadId) return `/leads/${encodeURIComponent(event.leadId)}`;
   if (event.callId) return `/calls?callId=${encodeURIComponent(event.callId)}`;
   if (event.chatId) return `/ava-chat?threadId=${encodeURIComponent(event.chatId)}`;
   if (event.campaignId) return `/campaigns?campaignId=${encodeURIComponent(event.campaignId)}`;
-  return `/ava-chat?prompt=${encodeURIComponent(`Show me the source for memory: ${event.title}`)}`;
+  return '';
+}
+
+function MemorySourceLink({ event }: { event: MemoryEventMetric }) {
+  const href = getMemorySourceHref(event);
+  const label = event.source || 'Open source record';
+  if (!href) return <span>{event.source || 'Source needs review'}</span>;
+  const content = (
+    <>
+      <ExternalLink size={13} aria-hidden="true" />
+      {label}
+    </>
+  );
+  return href.startsWith('/') ? <Link to={href}>{content}</Link> : <a href={href}>{content}</a>;
+}
+
+function MemoryConflictComparison({
+  groups,
+}: {
+  groups: ReturnType<typeof buildMemoryConflictGroups>;
+}) {
+  if (!groups.length) return null;
+  return (
+    <section className="pbk-memory-comparison" aria-labelledby="memory-conflicts-title">
+      <h2 id="memory-conflicts-title">Conflicting facts</h2>
+      {groups.map(({ id, label, observations }) => (
+        <div className="pbk-memory-conflict-group" key={id}>
+          <h3>{label}</h3>
+          <div className="pbk-memory-conflict-observations">
+            {observations.map(({ event, value }) => (
+              <article key={getMemoryEventKey(event)} className="pbk-memory-observation">
+                <strong>{value}</strong>
+                <div className="pbk-memory-evidence">
+                  <MemorySourceLink event={event} />
+                  <small>{formatMemoryDate(event.createdAt)}</small>
+                </div>
+              </article>
+            ))}
+          </div>
+        </div>
+      ))}
+    </section>
+  );
 }
 
 function buildMemoryUsageProof(event: MemoryEventMetric) {
@@ -164,7 +213,7 @@ function buildMemoryUsageProof(event: MemoryEventMetric) {
         : event.campaignId
           ? 'campaign work'
           : 'future Ava decisions';
-  return `Ava can use this for ${channel}. Source: ${source}. ${confidence}; ${outcome}.`;
+  return `Context: ${channel}. Source: ${source}. ${confidence}; ${outcome}.`;
 }
 
 function Sparkline({ values }: { values: number[] }) {
@@ -229,22 +278,12 @@ function MemoryHero({
   stats: MemoryStats;
   onRefresh: () => void;
 }) {
-  const sourceLabel = model.source && model.source !== 'runtime' ? model.source : 'live learning';
   return (
     <section className="pbk-memory-hero">
       <div className="pbk-memory-hero-top">
         <div>
-          <div className="pbk-eyebrow">
-            Ava intelligence memory - {stats.activeSkills} active skills - {sourceLabel}
-          </div>
-          <h1 className="pbk-display pbk-h1">
-            What Ava is <em>learning</em>.
-          </h1>
-          <p>
-            See which replies, questions, and follow-up moves are helping sellers move forward. Ava
-            uses this memory to answer better in chat, coach calls, and keep weak responses visible
-            until they improve.
-          </p>
+          <div className="pbk-eyebrow">Ava learning</div>
+          <h1 className="pbk-display">Memory</h1>
         </div>
         <div className="pbk-memory-hero-actions">
           <button
@@ -277,14 +316,7 @@ function MemoryHero({
 }
 
 function MemoryStatRibbon({ stats, generatedAt }: { stats: MemoryStats; generatedAt: string }) {
-  const generatedLabel = generatedAt
-    ? new Intl.DateTimeFormat('en-US', {
-        month: 'short',
-        day: 'numeric',
-        hour: 'numeric',
-        minute: '2-digit',
-      }).format(new Date(generatedAt))
-    : 'runtime';
+  const generatedLabel = formatMemoryDate(generatedAt);
   return (
     <div className="pbk-memory-grid">
       <div className="pbk-memory-stat">
@@ -299,12 +331,12 @@ function MemoryStatRibbon({ stats, generatedAt }: { stats: MemoryStats; generate
       </div>
       <div className="pbk-memory-stat">
         <div className="l">Avg confidence</div>
-        <div className="v lime">{stats.averageConfidence}%</div>
+        <div className="v lime">{stats.activeSkills ? `${stats.averageConfidence}%` : 'N/A'}</div>
         <div className="delta">{stats.provenSkills} proven responses</div>
       </div>
       <div className="pbk-memory-stat">
         <div className="l">Last refresh</div>
-        <div className="v">{generatedLabel}</div>
+        <div className="v is-date">{generatedLabel}</div>
         <div className="delta">{stats.evolvingSkills} evolving</div>
       </div>
     </div>
@@ -346,7 +378,6 @@ function MemorySkillRow({ skill }: { skill: SkillMetric }) {
 
 function MemoryProvenanceChips({ event }: { event: MemoryEventMetric }) {
   const chips = [
-    event.source ? `Source: ${event.source}` : '',
     event.confidence ? `Confidence: ${event.confidence}%` : '',
     event.agentName ? `Agent: ${event.agentName}` : '',
     event.skillName ? `Skill: ${event.skillName}` : '',
@@ -357,11 +388,9 @@ function MemoryProvenanceChips({ event }: { event: MemoryEventMetric }) {
   ].filter(Boolean);
   return (
     <div className="pbk-memory-provenance-chips" aria-label="Memory provenance">
-      {chips.length ? (
-        chips.map((chip) => <span key={chip}>{chip}</span>)
-      ) : (
-        <span>Source needs review</span>
-      )}
+      {chips.map((chip) => (
+        <span key={chip}>{chip}</span>
+      ))}
     </div>
   );
 }
@@ -369,6 +398,8 @@ function MemoryProvenanceChips({ event }: { event: MemoryEventMetric }) {
 function MemoryEventCard({
   event,
   pinned,
+  receipt,
+  busy,
   onPin,
   onHide,
   onCorrect,
@@ -376,6 +407,8 @@ function MemoryEventCard({
 }: {
   event: MemoryEventMetric;
   pinned: boolean;
+  receipt?: CurationReceipt;
+  busy: boolean;
   onPin: () => void;
   onHide: () => void;
   onCorrect: () => void;
@@ -384,39 +417,56 @@ function MemoryEventCard({
   const correctionPrompt = encodeURIComponent(
     `Please review and correct this Ava memory if needed: ${event.title}. ${event.detail}`
   );
-  const sourceHref = getMemorySourceHref(event);
+  const title =
+    event.type === 'memory_curation' &&
+    Array.isArray(event.metadata.deleteIds) &&
+    event.metadata.deleteIds.length > 0
+      ? 'Forget request recorded'
+      : event.title;
   return (
-    <div key={event.id || `${event.type}-${event.createdAt}`} className="pbk-memory-event">
+    <article className="pbk-memory-event" aria-label={title} aria-busy={busy}>
       <span>{event.type}</span>
-      <strong>{event.title}</strong>
+      <h3>{title}</h3>
       {event.detail && <p>{event.detail}</p>}
-      <small>
-        {event.agentName ? `${event.agentName} - ` : ''}
-        {formatMemoryDate(event.createdAt)}
-      </small>
-      <p className="pbk-memory-usage-proof">{buildMemoryUsageProof(event)}</p>
-      <MemoryProvenanceChips event={event} />
+      <div className="pbk-memory-evidence">
+        <MemorySourceLink event={event} />
+        <small>{formatMemoryDate(event.createdAt)}</small>
+      </div>
+      {receipt && (
+        <p className="pbk-memory-receipt" role="status">
+          {receipt}
+        </p>
+      )}
+      <details className="pbk-memory-record-details">
+        <summary>Record details</summary>
+        <p className="pbk-memory-usage-proof">{buildMemoryUsageProof(event)}</p>
+        <MemoryProvenanceChips event={event} />
+      </details>
       <div className="pbk-memory-event-actions">
-        <button type="button" onClick={onPin}>
+        <button type="button" onClick={onPin} disabled={busy} aria-pressed={pinned}>
           <Pin size={13} />
           {pinned ? 'Unpin' : 'Pin'}
         </button>
-        <Link to={sourceHref}>Open source record</Link>
-        <button type="button" onClick={onCorrect}>
+        <button type="button" onClick={onCorrect} disabled={busy}>
           <Sparkles size={13} />
           Correct memory
         </button>
         <Link to={`/ava-chat?prompt=${correctionPrompt}`}>Ask Ava</Link>
-        <button type="button" onClick={onHide}>
+        <button type="button" onClick={onHide} disabled={busy}>
           <EyeOff size={13} />
           Hide
         </button>
-        <button type="button" onClick={onForget}>
+        <button
+          type="button"
+          onClick={onForget}
+          disabled={busy}
+          title="Record a forget request for review"
+        >
           <Trash2 size={13} />
           Forget
         </button>
       </div>
-    </div>
+    </article>
   );
 }
 
@@ -452,13 +502,15 @@ function MemoryControlPanel({
       <div className="pbk-memory-control-head">
         <div>
           <span>Memory control center</span>
-          <h2>Search, correct, and trust what Ava remembers</h2>
+          <h2>Memory records</h2>
         </div>
         <small>{pinnedCount} pinned memories</small>
       </div>
       <label className="pbk-memory-search">
         <Search size={16} />
         <input
+          aria-label="Search memories"
+          type="search"
           value={search}
           onChange={(event) => onSearch(event.target.value)}
           placeholder="Search seller facts, sources, calls, skills, or lead ids"
@@ -470,6 +522,7 @@ function MemoryControlPanel({
             type="button"
             key={item.value}
             className={filter === item.value ? 'active' : ''}
+            aria-pressed={filter === item.value}
             onClick={() => onFilter(item.value)}
           >
             {item.label}
@@ -477,44 +530,46 @@ function MemoryControlPanel({
           </button>
         ))}
       </div>
-      <div className="pbk-memory-hygiene-title">Memory hygiene</div>
-      <div className="pbk-memory-hygiene">
-        <article>
-          <AlertTriangle size={15} />
-          <div>
-            <strong>{hygiene.contradictions.length} possible conflicts</strong>
-            <span>Confirm these before Ava uses them in offers or seller advice.</span>
-          </div>
-        </article>
-        <article>
-          <AlertTriangle size={15} />
-          <div>
-            <strong>{hygiene.lowConfidence.length} low-confidence memories</strong>
-            <span>Coach or correct these before they shape live conversations.</span>
-          </div>
-        </article>
-        <article>
-          <AlertTriangle size={15} />
-          <div>
-            <strong>{hygiene.stale.length} stale memories</strong>
-            <span>Older facts should be refreshed before a new offer or contract.</span>
-          </div>
-        </article>
-        <article>
-          <AlertTriangle size={15} />
-          <div>
-            <strong>{hygiene.compliance.length} DNC or compliance memories</strong>
-            <span>Respect these before calls, SMS, campaigns, or contract follow-up.</span>
-          </div>
-        </article>
-        <article>
-          <AlertTriangle size={15} />
-          <div>
-            <strong>{hygiene.sensitive.length} sensitive memories</strong>
-            <span>Review these before Ava repeats private or regulated data.</span>
-          </div>
-        </article>
-      </div>
+      <details className="pbk-memory-hygiene-details">
+        <summary className="pbk-memory-hygiene-title">Memory hygiene</summary>
+        <div className="pbk-memory-hygiene">
+          <article>
+            <AlertTriangle size={15} />
+            <div>
+              <strong>{hygiene.contradictions.length} possible conflicts</strong>
+              <span>Confirm these before Ava uses them in offers or seller advice.</span>
+            </div>
+          </article>
+          <article>
+            <AlertTriangle size={15} />
+            <div>
+              <strong>{hygiene.lowConfidence.length} low-confidence memories</strong>
+              <span>Coach or correct these before they shape live conversations.</span>
+            </div>
+          </article>
+          <article>
+            <AlertTriangle size={15} />
+            <div>
+              <strong>{hygiene.stale.length} stale memories</strong>
+              <span>Older facts should be refreshed before a new offer or contract.</span>
+            </div>
+          </article>
+          <article>
+            <AlertTriangle size={15} />
+            <div>
+              <strong>{hygiene.compliance.length} DNC or compliance memories</strong>
+              <span>Respect these before calls, SMS, campaigns, or contract follow-up.</span>
+            </div>
+          </article>
+          <article>
+            <AlertTriangle size={15} />
+            <div>
+              <strong>{hygiene.sensitive.length} sensitive memories</strong>
+              <span>Review these before Ava repeats private or regulated data.</span>
+            </div>
+          </article>
+        </div>
+      </details>
     </section>
   );
 }
@@ -603,6 +658,9 @@ export function MemoryAnalytics() {
   const [memoryPage, setMemoryPage] = useState(0);
   const [pinnedMemoryIds, setPinnedMemoryIds] = useState<string[]>([]);
   const [hiddenMemoryIds, setHiddenMemoryIds] = useState<string[]>([]);
+  const [curationReceipts, setCurationReceipts] = useState(new Map<string, CurationReceipt>());
+  const [curatingIds, setCuratingIds] = useState<string[]>([]);
+  const curatingRef = useRef(new Set<string>());
   const stats = useMemo(() => buildMemoryStats(model.skills), [model.skills]);
   const topSkills = useMemo(
     () =>
@@ -615,7 +673,24 @@ export function MemoryAnalytics() {
         .slice(0, 8),
     [model.skills]
   );
-  const memoryHygiene = useMemo(() => buildMemoryHygiene(model.events), [model.events]);
+  const conflictGroups = useMemo(() => {
+    const hidden = new Set(hiddenMemoryIds);
+    return buildMemoryConflictGroups(
+      model.events.filter((event) => !hidden.has(getMemoryEventKey(event)))
+    );
+  }, [hiddenMemoryIds, model.events]);
+  const memoryHygiene = useMemo(() => {
+    const hidden = new Set(hiddenMemoryIds);
+    const pairedKeys = new Set(
+      conflictGroups.flatMap(({ observations }) =>
+        observations.map(({ event }) => getMemoryEventKey(event))
+      )
+    );
+    return buildMemoryHygiene(
+      model.events.filter((event) => !hidden.has(getMemoryEventKey(event))),
+      pairedKeys
+    );
+  }, [conflictGroups, hiddenMemoryIds, model.events]);
   const filteredEvents = useMemo(() => {
     const hidden = new Set(hiddenMemoryIds);
     const buckets: Record<string, Set<string>> = {
@@ -641,8 +716,17 @@ export function MemoryAnalytics() {
   );
   const pinnedEvents = useMemo(() => {
     const pinned = new Set(pinnedMemoryIds);
-    return model.events.filter((event) => pinned.has(getMemoryEventKey(event)));
-  }, [model.events, pinnedMemoryIds]);
+    const hidden = new Set(hiddenMemoryIds);
+    return model.events.filter(
+      (event) => pinned.has(getMemoryEventKey(event)) && !hidden.has(getMemoryEventKey(event))
+    );
+  }, [hiddenMemoryIds, model.events, pinnedMemoryIds]);
+  const visibleConflicts = useMemo(() => {
+    const matches = new Set(filteredEvents.map(getMemoryEventKey));
+    return conflictGroups.filter(({ observations }) =>
+      observations.some(({ event }) => matches.has(getMemoryEventKey(event)))
+    );
+  }, [conflictGroups, filteredEvents]);
 
   useEffect(() => {
     setMemoryPage(0);
@@ -717,16 +801,11 @@ export function MemoryAnalytics() {
   const handleMemoryCuration = useCallback(
     async (event: MemoryEventMetric, action: 'pin' | 'unpin' | 'correct' | 'forget' | 'hide') => {
       const eventKey = getMemoryEventKey(event);
-      if (!eventKey) return;
-      if (action === 'pin') {
-        setPinnedMemoryIds((current) => [...new Set([...current, eventKey])]);
-      } else if (action === 'unpin') {
-        setPinnedMemoryIds((current) => current.filter((id) => id !== eventKey));
-      } else if (action === 'hide' || action === 'forget') {
-        setHiddenMemoryIds((current) => [...new Set([...current, eventKey])]);
-      }
+      if (!eventKey || curatingRef.current.has(eventKey)) return;
+      curatingRef.current.add(eventKey);
+      setCuratingIds((current) => [...current, eventKey]);
       try {
-        await curateMemoryEventRequest({
+        const result = await curateMemoryEventRequest({
           eventId: eventKey,
           action,
           reason: `${action} requested from Memory control center for ${event.title || event.type}.`,
@@ -735,34 +814,64 @@ export function MemoryAnalytics() {
               ? `Review this memory for accuracy: ${event.title}. ${event.detail || ''}`
               : '',
         });
+        if (result?.ok !== true) throw new Error('The bridge did not confirm the memory action.');
+        if (action === 'pin') {
+          setPinnedMemoryIds((current) => [...new Set([...current, eventKey])]);
+        } else if (action === 'unpin') {
+          setPinnedMemoryIds((current) => current.filter((id) => id !== eventKey));
+        } else if (action === 'hide') {
+          setHiddenMemoryIds((current) => [...new Set([...current, eventKey])]);
+          setPinnedMemoryIds((current) => current.filter((id) => id !== eventKey));
+        } else if (action === 'correct' || action === 'forget') {
+          const receipt = action === 'correct' ? 'Correction queued' : 'Forget request recorded';
+          setCurationReceipts((current) => new Map(current).set(eventKey, receipt));
+          void loadMemoryAnalytics();
+          return;
+        }
         showUiToast({
           tone: 'success',
           title:
-            action === 'correct'
-              ? 'Memory correction queued'
-              : action === 'forget'
-                ? 'Forget request recorded'
-                : action === 'pin'
-                  ? 'Memory pinned'
-                  : action === 'unpin'
-                    ? 'Memory unpinned'
-                    : 'Memory hidden',
+            action === 'pin'
+              ? 'Memory pinned'
+              : action === 'unpin'
+                ? 'Memory unpinned'
+                : 'Memory hidden',
           desc: 'Ava memory curation was recorded through the bridge.',
         });
-        if (action === 'correct' || action === 'forget') void loadMemoryAnalytics();
       } catch (curationError) {
         showUiToast({
           tone: 'warning',
-          title: 'Memory updated locally',
+          title: 'Memory action not confirmed',
           desc:
             curationError instanceof Error
               ? curationError.message
               : 'The bridge did not confirm durable memory curation.',
         });
+      } finally {
+        curatingRef.current.delete(eventKey);
+        setCuratingIds((current) => current.filter((id) => id !== eventKey));
       }
     },
     [loadMemoryAnalytics]
   );
+
+  const renderMemoryEvent = (event: MemoryEventMetric) => {
+    const eventKey = getMemoryEventKey(event);
+    const pinned = pinnedMemoryIds.includes(eventKey);
+    return (
+      <MemoryEventCard
+        key={eventKey}
+        event={event}
+        pinned={pinned}
+        receipt={curationReceipts.get(eventKey)}
+        busy={curatingIds.includes(eventKey)}
+        onPin={() => void handleMemoryCuration(event, pinned ? 'unpin' : 'pin')}
+        onHide={() => void handleMemoryCuration(event, 'hide')}
+        onCorrect={() => void handleMemoryCuration(event, 'correct')}
+        onForget={() => void handleMemoryCuration(event, 'forget')}
+      />
+    );
+  };
 
   return (
     <div className="pbk-memory-surface min-h-full text-slate-100">
@@ -795,33 +904,54 @@ export function MemoryAnalytics() {
           search={memorySearch}
           filter={memoryFilter}
           hygiene={memoryHygiene}
-          pinnedCount={pinnedMemoryIds.length}
+          pinnedCount={pinnedEvents.length}
           visibleCount={filteredEvents.length}
           onSearch={setMemorySearch}
           onFilter={setMemoryFilter}
         />
 
+        <MemoryConflictComparison groups={visibleConflicts} />
+
         {pinnedEvents.length > 0 && (
-          <section className="pbk-memory-card">
+          <section className="pbk-memory-card" aria-labelledby="memory-pinned-title">
             <div className="mem-card-head">
-              <h3>Pinned memories</h3>
+              <h2 id="memory-pinned-title">Pinned memories</h2>
               <span className="more">operator watchlist</span>
             </div>
             <div className="mem-card-body pbk-memory-pinned-grid">
-              {pinnedEvents.map((event) => (
-                <MemoryEventCard
-                  key={event.id || `${event.type}-${event.createdAt}`}
-                  event={event}
-                  pinned
-                  onPin={() => void handleMemoryCuration(event, 'unpin')}
-                  onHide={() => void handleMemoryCuration(event, 'hide')}
-                  onCorrect={() => void handleMemoryCuration(event, 'correct')}
-                  onForget={() => void handleMemoryCuration(event, 'forget')}
-                />
-              ))}
+              {pinnedEvents.map(renderMemoryEvent)}
             </div>
           </section>
         )}
+
+        <section
+          className="pbk-memory-card pbk-memory-recent"
+          aria-labelledby="memory-recent-title"
+        >
+          <div className="mem-card-head">
+            <h2 id="memory-recent-title">Recent memory events</h2>
+            <span className="more">{filteredEvents.length} matching</span>
+          </div>
+          <div className="mem-card-body">
+            {pagedEvents.length ? (
+              pagedEvents.map(renderMemoryEvent)
+            ) : (
+              <div className="pbk-memory-empty">
+                <Database size={18} />
+                {status === 'loading'
+                  ? 'Loading recent learning...'
+                  : 'No memories match this view. Clear the search or switch filters.'}
+              </div>
+            )}
+            <CompactPager
+              page={memoryPage}
+              total={filteredEvents.length}
+              label="Memory event pages"
+              itemLabel="memories"
+              onPageChange={setMemoryPage}
+            />
+          </div>
+        </section>
 
         <section className="pbk-memory-body">
           <div className="pbk-memory-card span-2">
@@ -875,47 +1005,6 @@ export function MemoryAnalytics() {
                 status="ships"
                 note="canonical memory timeline"
               />
-            </div>
-          </div>
-
-          <div className="pbk-memory-card">
-            <div className="mem-card-head">
-              <h3>Recent memory events</h3>
-              <span className="more">GET /api/memory/events</span>
-            </div>
-            <div className="mem-card-body">
-              {pagedEvents.length ? (
-                pagedEvents.map((event) => {
-                  const eventKey = getMemoryEventKey(event);
-                  const pinned = pinnedMemoryIds.includes(eventKey);
-                  return (
-                    <MemoryEventCard
-                      key={eventKey}
-                      event={event}
-                      pinned={pinned}
-                      onPin={() => void handleMemoryCuration(event, pinned ? 'unpin' : 'pin')}
-                      onHide={() => void handleMemoryCuration(event, 'hide')}
-                      onCorrect={() => void handleMemoryCuration(event, 'correct')}
-                      onForget={() => void handleMemoryCuration(event, 'forget')}
-                    />
-                  );
-                })
-              ) : (
-                <div className="pbk-memory-empty">
-                  <Database size={18} />
-                  {status === 'loading'
-                    ? 'Loading recent learning...'
-                    : 'No memories match this view. Clear the search or switch filters.'}
-                </div>
-              )}
-              <CompactPager
-                page={memoryPage}
-                total={filteredEvents.length}
-                label="Memory event pages"
-                itemLabel="memories"
-                onPageChange={setMemoryPage}
-              />
-              <PbkDataSource endpoint="GET /api/memory/events" status="ships" />
             </div>
           </div>
 

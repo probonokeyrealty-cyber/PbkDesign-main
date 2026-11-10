@@ -1,5 +1,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { AlertCircle, Check, ChevronDown, ChevronUp, Loader2, Phone, X } from 'lucide-react';
+import {
+  AlertCircle,
+  ArrowLeft,
+  Check,
+  ChevronDown,
+  ChevronUp,
+  Loader2,
+  MessageSquare,
+  Phone,
+  X,
+} from 'lucide-react';
+import { Link } from 'react-router';
 import { showUiToast } from '../utils/uiFeedback';
 import { PbkDataSource } from '../../components/pbk/index';
 import {
@@ -661,10 +672,16 @@ function formatAgentHealthTimestamp(value?: string) {
   return new Date(value).toLocaleDateString();
 }
 
-function formatAgentLatency(value?: number) {
+function formatAgentLatency(value?: number, sample = 'p95') {
   if (!Number.isFinite(Number(value)) || Number(value) <= 0) return 'Not sampled';
   const latency = Math.round(Number(value));
-  return latency >= 1000 ? `${(latency / 1000).toFixed(1)}s p95` : `${latency}ms p95`;
+  const duration = latency >= 1000 ? `${(latency / 1000).toFixed(1)}s` : `${latency}ms`;
+  return `${duration} ${sample}`;
+}
+
+function getAgentHealthState(agent: FleetAgent, healthProbe?: AgentHealthProbe) {
+  if (typeof healthProbe?.ready === 'boolean') return healthProbe.ready ? 'ready' : 'degraded';
+  return agent.lastError ? 'degraded' : 'local';
 }
 
 function getAgentCapabilityLabel(agent: FleetAgent, healthProbe?: AgentHealthProbe) {
@@ -689,23 +706,16 @@ function getAgentHealthFacts({
   lastOutcome: string;
 }) {
   const capability = agent.capability || {};
-  const latency =
-    capability.latencyP95Ms ||
-    Number(
-      (healthProbe as AgentHealthProbe & { latencyMs?: number; latencyP95Ms?: number })
-        ?.latencyP95Ms
-    ) ||
-    Number(
-      (healthProbe as AgentHealthProbe & { latencyMs?: number; latencyP95Ms?: number })?.latencyMs
-    ) ||
-    0;
+  const probe = healthProbe as
+    | (AgentHealthProbe & { latencyMs?: number; latencyP95Ms?: number })
+    | undefined;
+  const latencyP95 = capability.latencyP95Ms || Number(probe?.latencyP95Ms);
   const lastSuccess =
     capability.lastSuccess ||
     (bridgeWorker?.lastActive && (bridgeWorker.ready || bridgeWorker.status === 'ready')
       ? bridgeWorker.lastActive
       : '') ||
-    healthProbe?.lastSeen ||
-    agent.healthCheckedAt;
+    (healthProbe?.ready ? healthProbe.lastSeen : '');
   const lastFailure =
     capability.lastFailure ||
     (agent.lastError ? agent.healthCheckedAt || healthProbe?.lastSeen || '' : '');
@@ -716,7 +726,9 @@ function getAgentHealthFacts({
       : [];
   return {
     capabilityLabel: getAgentCapabilityLabel(agent, healthProbe),
-    latencyLabel: formatAgentLatency(latency),
+    latencyLabel: latencyP95
+      ? formatAgentLatency(latencyP95)
+      : formatAgentLatency(Number(probe?.latencyMs), 'latest'),
     lastSuccessLabel: formatAgentHealthTimestamp(lastSuccess),
     lastFailureLabel: lastFailure ? formatAgentHealthTimestamp(lastFailure) : 'None reported',
     missingTools,
@@ -842,18 +854,8 @@ function AgentFleetHero({
     <section className="pbk-fleet-hero">
       <div className="pbk-fleet-hero-top">
         <div>
-          <div className="pbk-eyebrow">
-            {registryBacked
-              ? `Agent Fleet - ${active} active - ${standby} standby - ${inactive} inactive`
-              : `Agent Fleet - ${agents.length} catalog entries - live status unavailable`}
-          </div>
-          <h1 className="pbk-display pbk-h1">
-            The <em>agent fleet</em>.
-          </h1>
-          <p>
-            Pick an agent, preview how they would handle a lead, request approval for a call, and
-            move proven Ava skills between teammates from one command surface.
-          </p>
+          <div className="pbk-eyebrow">PBK operations</div>
+          <h1 className="pbk-display">Agent Fleet</h1>
         </div>
         <div className="pbk-fleet-bridge-card">
           <span className={bridgeConnected ? 'live' : bridgeConnected === false ? 'warn' : ''} />
@@ -861,7 +863,9 @@ function AgentFleetHero({
           <small>
             {pendingTransferCount
               ? `${pendingTransferCount} learning transfer retries`
-              : `${agentRegistrySource} roster`}
+              : registryBacked
+                ? `${active} active · ${standby} standby · ${inactive} inactive`
+                : 'Catalog only · live status unavailable'}
           </small>
         </div>
       </div>
@@ -872,7 +876,7 @@ function AgentFleetHero({
           <div className="pbk-stat-value">{agents.length}</div>
         </div>
         <div className="pbk-stat">
-          <div className="pbk-stat-label">Skills loaded</div>
+          <div className="pbk-stat-label">Skill references</div>
           <div className="pbk-stat-value">{countSkills(agents)}</div>
         </div>
         <div className="pbk-stat">
@@ -881,7 +885,7 @@ function AgentFleetHero({
           <div className="pbk-stat-label">{leadContextSource}</div>
         </div>
         <div className="pbk-stat">
-          <div className="pbk-stat-label">Call outcomes</div>
+          <div className="pbk-stat-label">Calls in snapshot</div>
           <div className="pbk-stat-value">{callCount}</div>
         </div>
       </div>
@@ -912,27 +916,18 @@ function AgentFleetCard({
 }) {
   const activityState = getAgentActivityState(agent, bridgeWorker);
   const ready = localSnnActive || Boolean(bridgeWorker?.ready);
-  const healthReady = Boolean(healthProbe?.ready);
   const registryBacked = isRegistryBackedSource(agent.registrySource);
-  const healthState = healthProbe
-    ? healthReady
-      ? 'ready'
-      : 'degraded'
-    : agent.lastError
-      ? 'degraded'
-      : registryBacked
-        ? 'ready'
-        : 'local';
-  const missingTools = Array.isArray(healthProbe?.missingTools) ? healthProbe.missingTools : [];
-  const healthSource = healthProbe
-    ? healthProbe.healthProbe || healthProbe.source || 'GET /api/agents/health'
-    : agent.registryEndpoint || agent.registrySource || 'local registry';
-  const healthLastSeen = healthProbe?.lastSeen || agent.healthCheckedAt;
-  const healthFacts = getAgentHealthFacts({ agent, healthProbe, bridgeWorker, lastOutcome });
-  const topSkills = agent.skills.slice(0, 3);
+  const healthState = getAgentHealthState(agent, healthProbe);
   return (
     <article className={`pbk-agent-card ${selected ? 'selected' : ''}`.trim()}>
-      <button type="button" className="pbk-agent-card-button" onClick={onSelect}>
+      <button
+        type="button"
+        className="pbk-agent-card-button"
+        aria-label={`Inspect ${agent.name}`}
+        aria-pressed={selected}
+        aria-controls="fleet-agent-detail"
+        onClick={onSelect}
+      >
         <span className="pbk-agent-card-head">
           <span className="pbk-agent-avatar-wrap">
             <span
@@ -951,7 +946,7 @@ function AgentFleetCard({
             </span>
           </span>
           <span className={`pbk-agent-deploy-pill ${getAgentDeployClass(agent)}`}>
-            {registryBacked ? (agent.status === 'active' ? 'production' : agent.status) : 'catalog'}
+            {registryBacked ? agent.status : 'catalog'}
           </span>
         </span>
 
@@ -961,86 +956,19 @@ function AgentFleetCard({
             {ready ? 'Learning ready' : 'Learning status pending'} -{' '}
             {agent.metadata.orchestrationRole || 'worker'}
           </span>
-          <span className="sentiment-line">
-            <span>{registryBacked ? 'Confidence lane' : 'Reference confidence'}</span>
-            <span className="sentiment-bar">
-              <span
-                className="sentiment-fill"
-                style={{ width: `${Math.min(96, 44 + agent.skills.length * 11)}%` }}
-              />
-            </span>
-          </span>
         </span>
 
         <span className="pbk-agent-health-strip" data-source="GET /api/agents/health">
           <span className={`pbk-agent-health-state ${healthState}`}>
             {healthState === 'ready'
-              ? 'health ready'
+              ? 'Health ready'
               : healthState === 'degraded'
-                ? 'degraded'
-                : 'local catalog'}
+                ? 'Needs attention'
+                : 'Health not verified'}
           </span>
-          <span>
-            {missingTools.length
-              ? `${missingTools.length} tool gaps`
-              : healthProbe
-                ? 'tools clear'
-                : 'tools unknown'}
-          </span>
-          <span className="pbk-agent-health-source" title={healthSource}>
-            {healthSource}
-          </span>
-          {healthLastSeen && <span title={healthProbe?.lastSeen}>seen {healthLastSeen}</span>}
-        </span>
-
-        <span
-          className={`pbk-agent-capability-strip ${
-            agent.capability?.ready || healthReady
-              ? 'ready'
-              : healthState === 'degraded'
-                ? 'degraded'
-                : 'pending'
-          }`.trim()}
-          aria-label={`${agent.name} capability readiness`}
-        >
-          <span>
-            <small>Last success</small>
-            <strong>{healthFacts.lastSuccessLabel}</strong>
-          </span>
-          <span>
-            <small>Last failure</small>
-            <strong>{healthFacts.lastFailureLabel}</strong>
-          </span>
-          <span>
-            <small>Latency</small>
-            <strong>{healthFacts.latencyLabel}</strong>
-          </span>
-          <span title={healthFacts.readinessDetail || healthFacts.capabilityLabel}>
-            <small>Capability</small>
-            <strong>{healthFacts.capabilityLabel}</strong>
-          </span>
-        </span>
-
-        <span className="pbk-agent-skill-chips">
-          {topSkills.length ? (
-            topSkills.map((skill) => (
-              <span
-                key={skill.name}
-                className={`pbk-agent-skill-chip ${skill.confidence >= 80 ? 'proven' : skill.confidence >= 60 ? 'evolving' : ''}`.trim()}
-              >
-                {skill.name} - {skill.confidence}%
-              </span>
-            ))
-          ) : (
-            <span className="pbk-agent-skill-chip">No skills recorded</span>
-          )}
-        </span>
-
-        <span className="pbk-agent-meta">
-          <span>
-            {agent.skills.length} skills - {agent.capabilities.length} capabilities
-          </span>
-          <span title={lastOutcome}>Last call outcome: {lastOutcome}</span>
+          {healthProbe?.missingTools?.length ? (
+            <span>{healthProbe.missingTools.length} tool gaps</span>
+          ) : null}
         </span>
       </button>
       {transferFeedback && (
@@ -1054,7 +982,69 @@ function AgentFleetCard({
 }
 
 function AgentDetailPanel({ children }: { children: ReactNode }) {
-  return <section className="pbk-agent-detail-panel">{children}</section>;
+  return (
+    <section id="fleet-agent-detail" className="pbk-agent-detail-panel" aria-label="Selected agent">
+      {children}
+    </section>
+  );
+}
+
+function AgentHealthEvidence({
+  agent,
+  healthProbe,
+  bridgeWorker,
+  lastOutcome,
+}: {
+  agent: FleetAgent;
+  healthProbe?: AgentHealthProbe;
+  bridgeWorker?: BridgeSnnWorker;
+  lastOutcome: string;
+}) {
+  const facts = getAgentHealthFacts({ agent, healthProbe, bridgeWorker, lastOutcome });
+  const state = getAgentHealthState(agent, healthProbe);
+  return (
+    <details className="pbk-fleet-health-evidence">
+      <summary>
+        Health evidence <ChevronDown size={15} aria-hidden="true" />
+      </summary>
+      <div
+        className={`pbk-agent-capability-strip ${state}`}
+        aria-label={`${agent.name} capability readiness`}
+      >
+        <span>
+          <small>Last success</small>
+          <strong>{facts.lastSuccessLabel}</strong>
+        </span>
+        <span>
+          <small>Last failure</small>
+          <strong>{facts.lastFailureLabel}</strong>
+        </span>
+        <span>
+          <small>Latency</small>
+          <strong>{facts.latencyLabel}</strong>
+        </span>
+        <span>
+          <small>Capability</small>
+          <strong>{facts.capabilityLabel}</strong>
+        </span>
+      </div>
+      {facts.missingTools.length > 0 && (
+        <ul aria-label="Missing tools">
+          {facts.missingTools.map((tool) => (
+            <li key={tool}>{tool}</li>
+          ))}
+        </ul>
+      )}
+      {facts.readinessDetail && <p>{facts.readinessDetail}</p>}
+      <p className="pbk-agent-health-source">
+        {healthProbe
+          ? healthProbe.healthProbe || healthProbe.source || 'GET /api/agents/health'
+          : 'No health check recorded'}
+        {healthProbe?.lastSeen &&
+          ` · Last seen ${formatAgentHealthTimestamp(healthProbe.lastSeen)}`}
+      </p>
+    </details>
+  );
 }
 
 interface SkillTransferModalProps {
@@ -1294,6 +1284,7 @@ function TestSkillPanel({
         </button>
       </div>
       <textarea
+        aria-label="Test scenario"
         className="w-full resize-none rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-xs text-slate-200 placeholder-slate-500 focus:border-sky-500/60 focus:outline-none"
         rows={3}
         placeholder={`e.g. "Seller insists property is worth $200k. We're at $120k. They seem frustrated."`}
@@ -1404,6 +1395,7 @@ export function AgentFleet() {
     Record<string, string>
   >({});
   const [pendingTransferCount, setPendingTransferCount] = useState(0);
+  const detailHeadingRef = useRef<HTMLHeadingElement>(null);
   const pendingTransferQueueRef = useRef<PendingTransfer[]>([]);
   const previewRequestIdRef = useRef(0);
   const transferFeedbackTimersRef = useRef<number[]>([]);
@@ -1608,6 +1600,7 @@ export function AgentFleet() {
   );
   const selectedLeadCanonicalId = selectedLead ? getLeadOptionId(selectedLead) : '';
   const activeBridgeWorker = getBridgeSnnWorkerForAgent(bridgeSnnWorkers, activeAgent.id);
+  const activeHealthProbe = getHealthProbeForAgent(agentHealthProbes, activeAgent);
   const activeLocalSnn =
     (activeAgent.id === 'ava' && snnStatus.ava) || (activeAgent.id === 'rex' && snnStatus.rex);
   const activeActivityState = getAgentActivityState(activeAgent, activeBridgeWorker);
@@ -1942,7 +1935,7 @@ export function AgentFleet() {
           <FleetLoadingSkeleton />
         ) : (
           <div className="pbk-fleet-layout">
-            <section className="pbk-agent-grid" aria-label="Agent roster">
+            <section id="fleet-roster" className="pbk-agent-grid" aria-label="Agent roster">
               {agents.map((agent) => {
                 const bridgeWorker = getBridgeSnnWorkerForAgent(bridgeSnnWorkers, agent.id);
                 const localSnnActive =
@@ -1957,47 +1950,40 @@ export function AgentFleet() {
                     localSnnActive={localSnnActive}
                     transferFeedback={transferFeedbackByAgentId[agent.id]}
                     lastOutcome={lastCallOutcomeByAgentId[agent.id] || 'No call outcome yet'}
-                    onSelect={() => setActiveAgentId(agent.id)}
+                    onSelect={() => {
+                      setActiveAgentId(agent.id);
+                      window.requestAnimationFrame(() => detailHeadingRef.current?.focus());
+                    }}
                   />
                 );
               })}
-              <div className="pbk-agent-deploy-card">
-                <div className="plus">+</div>
-                <h4>Deploy new agent</h4>
-                <p>
-                  Request an approval-gated remote worker deployment for the selected registry
-                  agent.
-                </p>
-                <button
-                  type="button"
-                  className="pbk-agent-deploy-button"
-                  disabled={deployActionPending}
-                  onClick={() => void handleDeployAgent()}
-                >
-                  {deployActionPending ? 'Requesting...' : 'Request deployment'}
-                </button>
-                {deployStatus && <span className="pbk-agent-deploy-status">{deployStatus}</span>}
-                <PbkDataSource endpoint="POST /api/agents/deploy" status="ships" />
-              </div>
             </section>
             {/* Detail panel */}
             <AgentDetailPanel>
               <div className="pbk-dp-head">
+                <a className="pbk-fleet-back-link" href="#fleet-roster">
+                  <ArrowLeft size={15} aria-hidden="true" />
+                  Agent roster
+                </a>
                 <div className="pbk-dp-head-row">
                   <div className="pbk-dp-avatar-wrap">
                     <div className="pbk-dp-avatar">{activeAgent.initial}</div>
                     <div className={`pbk-dp-status-dot ${activeActivityState}`} />
                   </div>
                   <div className="pbk-dp-id min-w-0">
-                    <div className="name">
-                      <em>{activeAgent.name}</em>
-                    </div>
+                    <h2 className="name" tabIndex={-1} ref={detailHeadingRef}>
+                      {activeAgent.name}
+                    </h2>
                     <div className="meta">
                       {activeAgent.role} - {activeAgent.version}
                     </div>
                   </div>
                   <div className="pbk-dp-flags">
-                    <span>{activeAgent.status}</span>
+                    <span>
+                      {isRegistryBackedSource(activeAgent.registrySource)
+                        ? activeAgent.status
+                        : 'Catalog'}
+                    </span>
                     {(activeLocalSnn || activeBridgeWorker?.ready) && <span>Learning ready</span>}
                   </div>
                 </div>
@@ -2010,6 +1996,14 @@ export function AgentFleet() {
                   <span>{activeAgent.metadata.orchestrationRole || 'worker'}</span>
                 </div>
               </div>
+
+              <AgentHealthEvidence
+                key={activeAgent.id}
+                agent={activeAgent}
+                healthProbe={activeHealthProbe}
+                bridgeWorker={activeBridgeWorker}
+                lastOutcome={lastCallOutcomeByAgentId[activeAgent.id] || 'No call outcome yet'}
+              />
 
               {/* Capabilities bar */}
               <div className="pbk-dp-context-badges border-b border-slate-800 px-4 py-3">
@@ -2026,29 +2020,25 @@ export function AgentFleet() {
               <div className="border-b border-slate-800 px-4 py-4">
                 <div className="grid gap-3 lg:grid-cols-[1fr_auto] lg:items-end">
                   <div>
-                    <div className="text-[11px] uppercase tracking-[0.16em] text-slate-500">
-                      Deal context preview
+                    <h3 className="pbk-fleet-preview-title">Deal context preview</h3>
+                    <div className="pbk-fleet-lead-picker">
+                      <select
+                        aria-label="Lead for deal context preview"
+                        value={selectedLeadId}
+                        onChange={(event) => setSelectedLeadId(event.target.value)}
+                      >
+                        {leadOptions.length ? (
+                          leadOptions.map((lead) => (
+                            <option key={getLeadOptionKey(lead)} value={getLeadOptionKey(lead)}>
+                              {getLeadOptionLabel(lead)}
+                            </option>
+                          ))
+                        ) : (
+                          <option value="">No bridge leads loaded yet</option>
+                        )}
+                      </select>
+                      <ChevronDown size={15} aria-hidden="true" />
                     </div>
-                    <p className="mt-1 text-xs text-slate-500">
-                      Read-only preview of how {activeAgent.name} would handle a live lead. Provider
-                      writes stay blocked.
-                    </p>
-                    <select
-                      aria-label="Lead for deal context preview"
-                      className="mt-3 w-full rounded-xl border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-200 outline-none focus:border-sky-500/60"
-                      value={selectedLeadId}
-                      onChange={(event) => setSelectedLeadId(event.target.value)}
-                    >
-                      {leadOptions.length ? (
-                        leadOptions.map((lead) => (
-                          <option key={getLeadOptionKey(lead)} value={getLeadOptionKey(lead)}>
-                            {getLeadOptionLabel(lead)}
-                          </option>
-                        ))
-                      ) : (
-                        <option value="">No bridge leads loaded yet</option>
-                      )}
-                    </select>
                   </div>
                   <div className="flex flex-wrap gap-2 lg:justify-end">
                     <button
@@ -2085,6 +2075,17 @@ export function AgentFleet() {
                     </button>
                   </div>
                 </div>
+                <Link
+                  className="pbk-fleet-ava-link"
+                  to={
+                    selectedLeadCanonicalId
+                      ? `/ava-chat?leadId=${encodeURIComponent(selectedLeadCanonicalId)}`
+                      : '/ava-chat'
+                  }
+                >
+                  <MessageSquare size={15} aria-hidden="true" />
+                  Open Ava Chat
+                </Link>
                 {previewError && (
                   <div className="mt-4 flex flex-col gap-3 rounded-2xl border border-rose-400/30 bg-rose-500/10 p-4 text-sm text-rose-100 sm:flex-row sm:items-start sm:justify-between">
                     <div className="flex min-w-0 gap-2">
@@ -2115,12 +2116,11 @@ export function AgentFleet() {
                   </div>
                 )}
                 {dealPreview && (
-                  <div className="mt-4 rounded-2xl border border-sky-500/20 bg-sky-500/5 p-4">
+                  <div className="mt-3 border-t border-[var(--border-dim)] pt-3">
                     <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
                       <div>
-                        <div className="text-[10px] uppercase tracking-[0.16em] text-sky-300">
-                          {dealPreview.writeMode || 'read_only'} /{' '}
-                          {dealPreview.result || 'agent_deal_context_preview'}
+                        <div className="text-xs font-semibold text-[var(--sky)]">
+                          Read-only preview
                         </div>
                         <h3 className="mt-1 text-sm font-semibold text-slate-100">
                           {formatAgentPreviewAction(dealPreview.recommendedAction)}
@@ -2129,9 +2129,11 @@ export function AgentFleet() {
                           {dealPreview.summary}
                         </p>
                       </div>
-                      <span className="rounded-full border border-sky-500/30 px-3 py-1 text-[11px] font-semibold text-sky-200">
-                        {Math.round(Number(dealPreview.confidence || 0))}% confidence
-                      </span>
+                      {Number.isFinite(dealPreview.confidence) && (
+                        <span className="text-xs text-[var(--text-secondary)]">
+                          {Math.round(Number(dealPreview.confidence))}% confidence
+                        </span>
+                      )}
                     </div>
                     <div className="mt-3 grid gap-2 md:grid-cols-3">
                       <div className="rounded-xl bg-slate-950/70 px-3 py-2">
@@ -2208,6 +2210,30 @@ export function AgentFleet() {
                   </div>
                 )}
               </div>
+
+              <section className="pbk-agent-deploy-card" aria-label="Deployment">
+                <div>
+                  <h3>Deployment</h3>
+                  <p>{activeAgent.name} · Approval required</p>
+                </div>
+                <button
+                  type="button"
+                  className="pbk-agent-deploy-button"
+                  disabled={deployActionPending}
+                  onClick={() => void handleDeployAgent()}
+                >
+                  {deployActionPending ? 'Requesting...' : 'Request deployment'}
+                </button>
+                {deployStatus && (
+                  <span className="pbk-agent-deploy-status" role="status">
+                    {deployStatus}
+                  </span>
+                )}
+                <details>
+                  <summary>Deployment source</summary>
+                  <PbkDataSource endpoint="POST /api/agents/deploy" status="ships" />
+                </details>
+              </section>
 
               {/* Skills */}
               <div className="p-4">

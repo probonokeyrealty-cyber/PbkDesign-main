@@ -124,6 +124,7 @@
     "test:campaigns-shell": "node ./scripts/campaigns-shell-smoke.mjs",
     "test:campaigns-prototype-modern": "node ./scripts/campaigns-prototype-modern-smoke.mjs",
     "test:agent-fleet-prototype-modern": "node ./scripts/agent-fleet-prototype-modern-smoke.mjs",
+    "test:agent-fleet-design-browser": "node ./scripts/agent-fleet-design-browser-smoke.mjs",
     "test:agent-fleet-controls": "node ./scripts/agent-fleet-controls-smoke.mjs",
     "test:agent-fleet": "npm run test:agent-fleet-prototype-modern && npm run test:agent-fleet-lead-context-roster && npm run test:agent-registry-canonical && npm run test:agent-health-modern && npm run test:agent-memory-wiring && npm run test:agent-settings-shell-ux && npm run test:agent-fleet-controls",
     "test:memory-prototype-modern": "node ./scripts/memory-prototype-modern-smoke.mjs",

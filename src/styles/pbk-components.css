@@ -2576,69 +2576,29 @@
    ============================================================ */
 .pbk-fleet-surface {
   min-height: 100%;
-  background:
-    radial-gradient(ellipse at top left, rgba(232, 121, 249, 0.1) 0%, transparent 30%),
-    radial-gradient(ellipse at top right, rgba(14, 165, 233, 0.14) 0%, transparent 34%),
-    var(--bg-void);
+  background: var(--bg-void);
   color: var(--text-primary);
 }
 .pbk-fleet-hero {
-  position: relative;
-  overflow: hidden;
-  border: 1px solid var(--border-dim);
-  border-radius: var(--radius-xl);
-  background:
-    linear-gradient(135deg, rgba(6, 8, 11, 0.95), rgba(16, 12, 26, 0.94)),
-    radial-gradient(circle at 18% 18%, var(--magenta-glow), transparent 36%);
-  padding: clamp(var(--s-5), 4vw, var(--s-9)) var(--s-6) var(--s-4);
-  box-shadow: 0 18px 52px rgba(0, 0, 0, 0.38);
-}
-.pbk-fleet-hero::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  background:
-    linear-gradient(90deg, transparent 0, rgba(125, 211, 252, 0.06) 50%, transparent 100%),
-    repeating-linear-gradient(
-      90deg,
-      transparent 0,
-      transparent 54px,
-      rgba(232, 121, 249, 0.035) 55px,
-      transparent 56px
-    );
-  opacity: 0.58;
-}
-.pbk-fleet-hero > * {
-  position: relative;
-  z-index: 1;
+  border-bottom: 1px solid var(--border-dim);
+  padding: var(--s-2) 0 var(--s-4);
 }
 .pbk-fleet-hero-top {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
   gap: var(--s-5);
 }
 .pbk-fleet-hero h1 {
   margin: 0;
-}
-.pbk-fleet-hero p {
-  max-width: 720px;
-  margin: var(--s-3) 0 0;
-  color: var(--text-secondary);
-  font-size: 14px;
-  line-height: 1.7;
+  font-size: 34px;
+  letter-spacing: 0;
 }
 .pbk-fleet-bridge-card {
-  min-width: 190px;
   display: grid;
-  gap: 5px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  background: rgba(6, 8, 11, 0.72);
-  padding: var(--s-3);
-  font-family: var(--font-mono);
-  text-transform: uppercase;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 3px 8px;
 }
 .pbk-fleet-bridge-card > span {
   width: 9px;
@@ -2648,21 +2608,20 @@
 }
 .pbk-fleet-bridge-card > span.live {
   background: var(--lime);
-  box-shadow: 0 0 16px var(--lime-glow);
 }
 .pbk-fleet-bridge-card > span.warn {
   background: var(--amber);
-  box-shadow: 0 0 16px var(--amber-glow);
 }
 .pbk-fleet-bridge-card strong {
   color: var(--text-primary);
   font-size: 12px;
-  letter-spacing: 0.12em;
+  letter-spacing: 0;
 }
 .pbk-fleet-bridge-card small {
-  color: var(--text-tertiary);
-  font-size: 10px;
-  letter-spacing: 0.08em;
+  grid-column: 2;
+  color: var(--text-secondary);
+  font-size: 11px;
+  letter-spacing: 0;
   line-height: 1.45;
 }
 .pbk-fleet-source-rail {
@@ -2683,20 +2642,20 @@
 }
 .pbk-fleet-layout {
   display: grid;
-  grid-template-columns: minmax(0, 2fr) minmax(380px, 1fr);
+  grid-template-columns: minmax(260px, min(31%, 360px)) minmax(0, 1fr);
   gap: var(--s-4);
   align-items: start;
 }
 .pbk-agent-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
-  gap: var(--s-4);
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--s-2);
 }
 .pbk-agent-card {
   position: relative;
   overflow: hidden;
   border: 1px solid var(--border-dim);
-  border-radius: var(--radius-lg);
+  border-radius: 8px;
   background: var(--bg-panel);
   transition:
     border-color var(--duration-fast),
@@ -2709,9 +2668,6 @@
 }
 .pbk-agent-card.selected {
   border-color: var(--sky);
-  box-shadow:
-    0 0 0 1px var(--sky-glow),
-    0 8px 24px rgba(0, 0, 0, 0.25);
 }
 .pbk-agent-card.selected::before {
   content: '';
@@ -2720,18 +2676,18 @@
   top: 0;
   bottom: 0;
   width: 3px;
-  background: linear-gradient(180deg, var(--sky), var(--ion));
+  background: var(--sky);
 }
 .pbk-agent-card-button {
   width: 100%;
   display: flex;
   flex-direction: column;
-  gap: var(--s-3);
+  gap: var(--s-2);
   border: 0;
   background: transparent;
   color: inherit;
   cursor: pointer;
-  padding: var(--s-4);
+  padding: var(--s-3);
   text-align: left;
 }
 .pbk-agent-card-head {
@@ -2818,10 +2774,11 @@
   color: var(--text-primary);
   font-family: var(--font-display);
   font-weight: 700;
-  letter-spacing: -0.01em;
+  letter-spacing: 0;
   line-height: 1.1;
 }
 .pbk-agent-id .name {
+  display: block;
   font-size: 17px;
 }
 .pbk-dp-id .name {
@@ -2834,12 +2791,14 @@
 }
 .pbk-agent-id .role,
 .pbk-dp-id .meta {
+  display: block;
   margin-top: 4px;
   color: var(--text-tertiary);
   font-family: var(--font-mono);
   font-size: 10px;
   letter-spacing: 0.1em;
   text-transform: uppercase;
+  overflow-wrap: anywhere;
 }
 .pbk-agent-deploy-pill {
   flex-shrink: 0;
@@ -2869,12 +2828,9 @@
 .pbk-agent-activity {
   display: grid;
   gap: 5px;
-  border-left: 2px solid var(--border-bright);
-  border-radius: var(--radius);
-  background: var(--bg-void);
+  min-width: 0;
   color: var(--text-secondary);
-  padding: var(--s-3);
-  font-family: var(--font-mono);
+  overflow-wrap: anywhere;
   font-size: 11px;
   line-height: 1.5;
 }
@@ -2895,40 +2851,13 @@
   color: var(--text-primary);
   font-weight: 700;
 }
-.pbk-agent-activity .sentiment-line {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  color: var(--text-tertiary);
-  font-size: 10px;
-}
-.pbk-agent-activity .sentiment-bar {
-  width: 80px;
-  max-width: 40%;
-  height: 3px;
-  overflow: hidden;
-  border-radius: 999px;
-  background: var(--bg-panel);
-}
-.pbk-agent-activity .sentiment-fill {
-  display: block;
-  height: 100%;
-  border-radius: inherit;
-  background: linear-gradient(90deg, var(--crimson), var(--amber), var(--lime));
-}
 .pbk-agent-health-strip {
-  display: grid;
-  grid-template-columns: auto auto minmax(0, 1fr);
+  display: flex;
+  flex-wrap: wrap;
   gap: 6px;
   align-items: center;
-  border: 1px solid rgba(125, 211, 252, 0.12);
-  border-radius: var(--radius);
-  background: rgba(6, 8, 11, 0.5);
-  color: var(--text-tertiary);
-  padding: 7px 9px;
-  font-family: var(--font-mono);
-  font-size: 9px;
-  letter-spacing: 0.04em;
+  color: var(--text-secondary);
+  font-size: 11px;
 }
 .pbk-agent-health-state {
   border-radius: 999px;
@@ -2953,11 +2882,8 @@
 }
 .pbk-agent-health-source {
   min-width: 0;
-  overflow: hidden;
-  color: var(--sky);
-  text-align: right;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
+  color: var(--text-secondary);
 }
 .pbk-agent-capability-strip {
   display: grid;
@@ -2990,6 +2916,8 @@
   margin-top: 3px;
   color: var(--text-secondary);
   font-size: 11px;
+  overflow-wrap: anywhere;
+  white-space: normal;
 }
 .pbk-agent-capability-strip.ready > span {
   border-color: rgba(163, 230, 53, 0.18);
@@ -3065,31 +2993,16 @@
   text-transform: uppercase;
 }
 .pbk-agent-deploy-card {
-  min-height: 220px;
   display: flex;
-  flex-direction: column;
+  flex-wrap: wrap;
   align-items: center;
-  justify-content: center;
-  gap: var(--s-2);
-  border: 1.5px dashed var(--border);
-  border-radius: var(--radius-lg);
-  background: transparent;
+  justify-content: space-between;
+  gap: 8px 12px;
+  border-bottom: 1px solid var(--border-dim);
   color: var(--text-secondary);
-  padding: var(--s-5);
-  text-align: center;
+  padding: var(--s-4);
 }
-.pbk-agent-deploy-card .plus {
-  width: 48px;
-  height: 48px;
-  display: grid;
-  place-items: center;
-  border: 2px dashed var(--border-bright);
-  border-radius: 50%;
-  color: var(--text-tertiary);
-  font-size: 26px;
-  line-height: 1;
-}
-.pbk-agent-deploy-card h4 {
+.pbk-agent-deploy-card h3 {
   margin: 0;
   color: var(--text-primary);
   font-family: var(--font-display);
@@ -3097,15 +3010,12 @@
   font-weight: 600;
 }
 .pbk-agent-deploy-card p {
-  max-width: 220px;
-  color: var(--text-tertiary);
-  font-family: var(--font-mono);
-  font-size: 10px;
-  letter-spacing: 0.06em;
+  color: var(--text-secondary);
+  font-size: 12px;
   line-height: 1.5;
 }
 .pbk-agent-deploy-button {
-  min-height: 34px;
+  min-height: 44px;
   border: 1px solid rgba(14, 165, 233, 0.4);
   border-radius: 8px;
   background: rgba(14, 165, 233, 0.12);
@@ -3133,7 +3043,7 @@
   opacity: 0.64;
 }
 .pbk-agent-deploy-status {
-  max-width: 240px;
+  flex-basis: 100%;
   color: var(--text-secondary);
   font-size: 11px;
   line-height: 1.45;
@@ -3142,11 +3052,10 @@
   position: sticky;
   top: 72px;
   max-height: calc(100vh - 88px);
-  overflow: hidden;
-  display: flex;
-  flex-direction: column;
+  min-width: 0;
+  overflow-y: auto;
   border: 1px solid var(--border-dim);
-  border-radius: var(--radius-lg);
+  border-radius: 8px;
   background: var(--bg-panel);
 }
 .pbk-dp-head {
@@ -3184,12 +3093,81 @@
 .pbk-dp-context-badges {
   margin-top: var(--s-3);
 }
-.pbk-agent-detail-panel > .border-b,
-.pbk-agent-detail-panel > .p-4 {
-  flex-shrink: 0;
+.pbk-fleet-health-evidence {
+  border-bottom: 1px solid var(--border-dim);
+  padding: 0 var(--s-4);
+  color: var(--text-secondary);
+  font-size: 13px;
 }
-.pbk-agent-detail-panel > .p-4:last-child {
-  overflow-y: auto;
+.pbk-fleet-health-evidence > summary {
+  display: flex;
+  min-height: 44px;
+  align-items: center;
+  justify-content: space-between;
+  cursor: pointer;
+  list-style: none;
+  color: var(--text-primary);
+}
+.pbk-fleet-health-evidence > summary::-webkit-details-marker {
+  display: none;
+}
+.pbk-fleet-health-evidence[open] > summary svg {
+  transform: rotate(180deg);
+}
+.pbk-fleet-health-evidence :is(p, ul) {
+  margin: 8px 0;
+}
+.pbk-agent-deploy-card details {
+  flex-basis: 100%;
+  font-size: 12px;
+}
+.pbk-agent-deploy-card summary {
+  cursor: pointer;
+}
+.pbk-fleet-ava-link,
+.pbk-fleet-back-link {
+  display: inline-flex;
+  min-height: 44px;
+  align-items: center;
+  gap: 6px;
+  color: var(--sky);
+  font-size: 13px;
+  font-weight: 650;
+}
+.pbk-fleet-preview-title {
+  color: var(--text-primary);
+  font-size: 15px;
+  font-weight: 650;
+}
+.pbk-fleet-lead-picker {
+  position: relative;
+  min-width: 0;
+  margin-top: 8px;
+}
+.pbk-fleet-lead-picker select {
+  width: 100%;
+  min-height: 44px;
+  appearance: none;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-void);
+  color: var(--text-primary);
+  padding: 8px 32px 8px 10px;
+}
+.pbk-fleet-lead-picker > svg {
+  position: absolute;
+  top: 50%;
+  right: 10px;
+  transform: translateY(-50%);
+  pointer-events: none;
+  color: var(--text-secondary);
+}
+.pbk-fleet-ava-link:hover,
+.pbk-fleet-back-link:hover {
+  text-decoration: underline;
+}
+.pbk-fleet-back-link {
+  display: none;
 }
 .pbk-skill-row {
   border: 1px solid var(--border-dim);
@@ -3207,7 +3185,7 @@
   font-family: var(--font-mono);
   font-size: 11px;
 }
-@media (max-width: 1200px) {
+@media (max-width: 1050px) {
   .pbk-fleet-layout {
     grid-template-columns: 1fr;
   }
@@ -3215,15 +3193,18 @@
     position: static;
     max-height: none;
   }
+  .pbk-fleet-back-link {
+    display: inline-flex;
+  }
 }
 @media (max-width: 720px) {
-  .pbk-fleet-hero {
-    padding: var(--s-5) var(--s-4) var(--s-4);
+  .pbk-fleet-hero h1 {
+    font-size: 28px;
   }
   .pbk-fleet-hero-top,
   .pbk-dp-head-row {
-    flex-direction: column;
-    align-items: stretch;
+    flex-wrap: wrap;
+    gap: 8px;
   }
   .pbk-agent-grid {
     grid-template-columns: 1fr;
@@ -3231,6 +3212,12 @@
   .pbk-dp-flags {
     margin-left: 0;
     justify-content: flex-start;
+  }
+  .pbk-agent-capability-strip {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .pbk-agent-detail-panel :is(select, textarea) {
+    font-size: 16px;
   }
 }
 

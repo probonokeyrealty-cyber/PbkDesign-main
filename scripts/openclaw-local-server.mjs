@@ -15023,6 +15023,10 @@ function buildApprovalSummary(approval = {}) {
 }
 
 async function persistApprovalRecordToPg(approval = {}) {
+  return writeApprovalRecordToPg(approval);
+}
+
+async function writeApprovalRecordToPg(approval, claimPending = false) {
   const approvalId = String(approval.id || '').trim();
   if (!approvalId) {
     return { ok: false, reason: 'missing_approval_id', rows: [] };
@@ -15046,6 +15050,8 @@ async function persistApprovalRecordToPg(approval = {}) {
        payload = EXCLUDED.payload,
        decided_at = EXCLUDED.decided_at,
        updated_at = EXCLUDED.updated_at
+     WHERE approvals.workspace_id = EXCLUDED.workspace_id
+       AND approvals.status = ${claimPending ? "'pending'" : 'EXCLUDED.status'}
      RETURNING id, status, updated_at`,
     [
       approvalId,
@@ -15063,6 +15069,48 @@ async function persistApprovalRecordToPg(approval = {}) {
       approval.updatedAt || approval.updated_at || isoNow(),
     ]
   );
+}
+
+function replayApprovalDecision(approval, status) {
+  return normalizeApprovalDecisionStatus(approval.status) === status
+    ? { ok: true, replayed: true, approval }
+    : {
+        ok: false,
+        statusCode: 409,
+        approval,
+        error: 'This approval already has a different decision. Review the current status.',
+      };
+}
+
+async function claimPendingApprovalDecision(approval, decision) {
+  const proposed = { ...approval, ...decision };
+  // A conditional UPSERT covers approvals that predate the normalized table.
+  const claimed = await writeApprovalRecordToPg(proposed, true);
+  if (!IS_HOSTED && STATE_BACKEND === 'file' && claimed.reason === 'no_database') {
+    return { claimed: true, local: true };
+  }
+  if (claimed.ok && claimed.rows.length) return { claimed: true };
+  if (claimed.ok) {
+    const current = await queryPgRows(
+      'SELECT * FROM public.approvals WHERE id = $1 AND workspace_id = $2',
+      [approval.id, normalizeTenantId(approval.workspaceId || approval.workspace_id || 'pbk')]
+    );
+    if (current.ok && current.rows.length) {
+      const canonical = normalizePgApprovalRecord(current.rows[0]);
+      if (normalizeApprovalDecisionStatus(canonical.status) !== 'pending') {
+        Object.assign(approval, canonical);
+        return { claimed: false, result: replayApprovalDecision(approval, decision.status) };
+      }
+    }
+  }
+  return {
+    claimed: false,
+    result: {
+      ok: false,
+      statusCode: 503,
+      error: 'Could not confirm a durable approval decision. No new dispatch was started.',
+    },
+  };
 }
 
 function normalizePgApprovalRecord(row = {}) {
@@ -51022,6 +51070,26 @@ async function executeApprovedCampaign(approval = {}, options = {}) {
     };
   }
 
+  if (!approval.id) {
+    return { ok: false, result: 'missing_approval_id', error: 'Campaign approval ID is required.' };
+  }
+  const dispatch = await executeProviderActionWithSharedLease({
+    approvalId: approval.id,
+    workspaceId: approval.workspaceId || approval.workspace_id || 'pbk',
+    toolName: 'startCampaign',
+    execute: async () => ({ campaignResult: await startApprovedCampaign(approval, options) }),
+  });
+  if (dispatch.value?.campaignResult) {
+    return { ...dispatch.value.campaignResult, replayed: !dispatch.executed };
+  }
+  return dispatch.value?.providerActionResult || {
+    ok: false,
+    result: 'campaign_dispatch_unconfirmed',
+    error: 'Campaign dispatch could not be confirmed. Check the provider before trying again.',
+  };
+}
+
+async function startApprovedCampaign(approval, options) {
   const leads = getApprovalCampaignLeads(approval);
   const instantlyResult = await createInstantlyCampaignForApproval({ approval, leads });
   const startAt = Date.now();
@@ -59427,11 +59495,28 @@ async function handleManualLeadCreate(payload = {}) {
   };
 }
 
+const approvalDecisionLocks = new Map();
+
 async function handleEvent(eventType, payload = {}) {
   const normalizedEvent = String(eventType || '')
     .trim()
     .toLowerCase();
 
+  if (normalizedEvent !== 'approval-callback') {
+    return handleRuntimeEvent(normalizedEvent, payload);
+  }
+  const approvalId = String(payload.id || '');
+  const previous = approvalDecisionLocks.get(approvalId) || Promise.resolve();
+  const current = previous.catch(() => {}).then(() => handleRuntimeEvent(normalizedEvent, payload));
+  approvalDecisionLocks.set(approvalId, current);
+  try {
+    return await current;
+  } finally {
+    if (approvalDecisionLocks.get(approvalId) === current) approvalDecisionLocks.delete(approvalId);
+  }
+}
+
+async function handleRuntimeEvent(normalizedEvent, payload) {
   if (normalizedEvent === 'lead-intake' || normalizedEvent === 'lead-import') {
     const fromN8nLeadIntake = payload?._source === 'n8n-lead-intake';
     const eventId = payload?.eventId || payload?.event_id || null;
@@ -59588,8 +59673,22 @@ async function handleEvent(eventType, payload = {}) {
     const incomingStatus = normalizeApprovalDecisionStatus(
       payload.status || approval.status || 'pending'
     );
+    if (!['approved', 'rejected', 'needs_revision', 'cancelled'].includes(incomingStatus)) {
+      return { ok: false, statusCode: 400, error: 'Unsupported approval decision.' };
+    }
     const incomingActor = payload.actor || approval.actor || 'n8n';
-    const incomingActedAt = payload.actedAt || approval.actedAt || null;
+    const incomingActedAt = payload.actedAt || approval.actedAt || isoNow();
+    const currentStatus = normalizeApprovalDecisionStatus(approval.status || 'pending');
+    let localClaim = false;
+    if (currentStatus === 'pending') {
+      const claim = await claimPendingApprovalDecision(approval, {
+        status: incomingStatus,
+        actor: incomingActor,
+        actedAt: incomingActedAt,
+      });
+      if (!claim.claimed) return claim.result;
+      localClaim = claim.local === true;
+    }
     const exactApprovalReplay =
       normalizeApprovalDecisionStatus(approval.status) === incomingStatus &&
       approval.actor === incomingActor &&
@@ -59641,6 +59740,9 @@ async function handleEvent(eventType, payload = {}) {
       Boolean(approval.metadata?.providerActionAttemptedAt) &&
       Boolean(approval.metadata?.conversationSendBinding?.conversationEventId) &&
       !approval.metadata?.conversationProjection?.projectedAt;
+    if (currentStatus !== 'pending' && !exactApprovalReplay) {
+      return replayApprovalDecision(approval, incomingStatus);
+    }
     if (
       exactApprovalReplay &&
       !retryConversationProjectionOnly &&
@@ -59681,6 +59783,13 @@ async function handleEvent(eventType, payload = {}) {
     approval.actor = incomingActor;
     approval.actedAt = incomingActedAt || isoNow();
     approval.notes = payload.notes || approval.notes;
+    if (localClaim) {
+      try {
+        await persistState(state);
+      } catch (error) {
+        return { ok: false, statusCode: 503, error: 'Could not save the approval decision. No dispatch was started.' };
+      }
+    }
     if (payload.teamAuth && typeof payload.teamAuth === 'object') {
       approval.metadata = {
         ...(approval.metadata || {}),
@@ -59851,7 +59960,9 @@ async function handleEvent(eventType, payload = {}) {
     }
 
     if (String(approval.type || '').toLowerCase() === 'rex-decision' || String(approval.approvalAction || '').toLowerCase() === 'rex_apply') {
-      rexDecisionResult = await handleRexDecisionApproval(approval, { actor: incomingActor });
+      rexDecisionResult = payload.source === 'slack-interaction' && incomingStatus === 'needs_revision'
+        ? await requestRexDecisionModificationFromApproval(approval, { actor: incomingActor })
+        : await handleRexDecisionApproval(approval, { actor: incomingActor });
     }
 
     if (approval.status === 'approved' && String(approval.type || '').toLowerCase() === 'provider-action') {
@@ -64114,69 +64225,31 @@ async function handleSlackApprovalInteraction(payload = {}) {
   const isModify = /modify|counter|needs_revision|needs-revision|review/i.test(actionKind);
   const isReject = /reject|decline/i.test(actionKind);
   const status = isModify ? 'needs_revision' : isReject ? 'rejected' : 'approved';
-  let result = null;
-  if (isModify) {
-    const approval = state.approvals.find((item) => item.id === approvalId);
-    if (!approval) {
-      result = { ok: false, error: `Approval ${approvalId} was not found.` };
-    } else {
-      approval.status = status;
-      approval.actor = actor;
-      approval.actedAt = isoNow();
-      approval.notes = 'Slack marked this item as needing review before approval.';
-      approval.reviewReason = 'slack_needs_review';
-      approval.falsePositiveTag = 'slack_needs_review';
-      approval.metadata = {
-        ...(approval.metadata || {}),
-        launchReview: {
-          reason: 'slack_needs_review',
-          notes: approvalNeedsLeadQualificationContext(approval) ? 'Review seller context, offer path, and any known BANT+ details before approving.' : 'Review the action details before approving.',
-          actor,
-          actedAt: approval.actedAt,
-        },
-      };
-      const rexDecisionResult = String(approval.type || '').toLowerCase() === 'rex-decision' || String(approval.approvalAction || '').toLowerCase() === 'rex_apply' ? await requestRexDecisionModificationFromApproval(approval, { actor }) : null;
-      addActivity(
-        state,
-        makeActivity({
-          actor,
-          category: 'APPROVAL',
-          status: 'warning',
-          text: `${approval.type || 'Approval'} marked needs review from Slack`,
-          target: approval.address || approval.leadName || approval.id,
-        })
-      );
-      await persistState(state);
-      await projectLiveConversationRecord({
-        record: approval,
-        projector: projectApprovalEvent,
-        source: 'slack-approval-needs-review',
-      });
-      result = { ok: true, approval, rexDecisionResult };
-    }
-  } else {
-    result = await handleEvent('approval-callback', {
-      id: approvalId,
-      status,
-      actor,
-      actedAt: isoNow(),
-      notes: `Slack interactive approval ${status}.`,
-      source: 'slack-interaction',
-      skipSlackSync: true,
-    });
-  }
-  const update = await updateSlackApprovalMessage({
-    channel: payload.channel?.id || payload.container?.channel_id || payload.message?.channel || '',
-    ts: payload.message?.ts || payload.container?.message_ts || '',
-    approval: result.approval || { id: approvalId, status },
+  const result = await handleEvent('approval-callback', {
+    id: approvalId,
     status,
     actor,
+    actedAt: isoNow(),
+    notes: isModify
+      ? 'Slack marked this item as needing review before approval.'
+      : `Slack interactive approval ${status}.`,
+    reviewReason: isModify ? 'slack_needs_review' : '',
+    source: 'slack-interaction',
+    skipSlackSync: true,
   });
+  const canonicalStatus = result.approval?.status;
+  const update = canonicalStatus ? await updateSlackApprovalMessage({
+    channel: payload.channel?.id || payload.container?.channel_id || payload.message?.channel || '',
+    ts: payload.message?.ts || payload.container?.message_ts || '',
+    approval: result.approval,
+    status: canonicalStatus,
+    actor: result.approval.actor || actor,
+  }) : null;
   const ok = result.ok !== false;
   return {
     ok,
-    status: ok ? 200 : 404,
-    text: ok ? `PBK approval ${status === 'needs_revision' ? 'sent back for modification' : status}.` : result.error || 'PBK approval was not found.',
+    status: ok ? 200 : result.statusCode || 404,
+    text: ok ? `PBK approval ${canonicalStatus === 'needs_revision' ? 'sent back for modification' : canonicalStatus}.` : result.error || 'PBK approval was not found.',
     result,
     update,
   };
@@ -77342,7 +77415,7 @@ const server = createServer(async (request, response) => {
         falsePositiveTag: body.falsePositiveTag || body.reviewReason || '',
         teamAuth: body.teamAuth || null,
       });
-      json(response, result.ok === false ? 404 : 200, {
+      json(response, result.ok === false ? result.statusCode || 404 : 200, {
         ...result,
         state: buildStateSnapshot(),
       });
@@ -77393,7 +77466,7 @@ const server = createServer(async (request, response) => {
         falsePositiveTag: body.falsePositiveTag || body.reviewReason || '',
         teamAuth: body.teamAuth || null,
       });
-      json(response, result.ok === false ? 404 : 200, {
+      json(response, result.ok === false ? result.statusCode || 404 : 200, {
         ...result,
         state: buildStateSnapshot(),
       });

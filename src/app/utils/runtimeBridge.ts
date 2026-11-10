@@ -2145,6 +2145,13 @@ export async function updateApprovalDecision(approvalId: string, status: string)
     },
   });
   const result = assertBridgeMutationSucceeded(response, 'Approval decision');
+  const approval = result?.approval as { id?: string; status?: string } | undefined;
+  if (
+    approval?.id !== approvalId ||
+    String(approval.status || '').replace(/-/g, '_') !== status.replace(/-/g, '_')
+  ) {
+    throw new Error('The bridge did not confirm this approval decision.');
+  }
   const approvalIds = collectApprovalDecisionIds(approvalId, result);
   if (typeof window !== 'undefined') {
     window.dispatchEvent(

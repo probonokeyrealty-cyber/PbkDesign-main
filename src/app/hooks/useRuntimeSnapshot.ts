@@ -110,7 +110,7 @@ function subscribeRuntimeSnapshotStream(listener: RuntimeSnapshotListener) {
   };
 }
 
-export function useRuntimeSnapshot(pollMs = 5000) {
+export function useRuntimeSnapshot(pollMs = 5000, reportFirstFailure = false) {
   const [snapshot, setSnapshot] = useState<RuntimeSnapshot | null>(null);
   const [quotas, setQuotas] = useState<RuntimeQuotas | null>(null);
   const [tooling, setTooling] = useState<RuntimeToolingStatus | null>(null);
@@ -148,7 +148,7 @@ export function useRuntimeSnapshot(pollMs = 5000) {
       failuresRef.current += 1;
       const message =
         nextError instanceof Error ? nextError.message : 'Could not load PBK runtime.';
-      if (!hasHydratedRef.current || failuresRef.current >= 4) {
+      if (reportFirstFailure || !hasHydratedRef.current || failuresRef.current >= 4) {
         setError(message);
       } else {
         setError('');
@@ -158,7 +158,7 @@ export function useRuntimeSnapshot(pollMs = 5000) {
       inFlightRef.current = false;
       setLoading(false);
     }
-  }, [applySnapshot]);
+  }, [applySnapshot, reportFirstFailure]);
 
   useEffect(() => subscribeRuntimeSnapshotStream(applySnapshot), [applySnapshot]);
 

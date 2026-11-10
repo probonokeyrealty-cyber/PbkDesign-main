@@ -1251,5 +1251,10 @@ export function openMasterPackageWindow(
   printMode = false
 ): Window | null {
   const query = buildMasterPackageParams(deal, branding, printMode);
-  return window.open(`/PBK_Master_Deal_Package.html?${query}`, '_blank', 'noopener');
+  // Opening with the noopener feature returns null even when a tab opened.
+  const popup = window.open('', '_blank');
+  if (!popup) return null;
+  popup.opener = null;
+  popup.location.replace(`/PBK_Master_Deal_Package.html?${query}`);
+  return popup;
 }

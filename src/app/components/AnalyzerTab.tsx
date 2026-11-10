@@ -104,26 +104,21 @@ export function AnalyzerTab({
 
   return (
     <div className="pbk-analyzer-main p-3.5">
-      <div className="pbk-analyzer-card pbk-analyzer-hero bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-xl p-4 mb-3 shadow-sm">
+      <section aria-labelledby="analyzer-property-heading" className="pbk-analyzer-card pbk-analyzer-hero pbk-analyzer-workbench-section">
         <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
-          <div className="flex items-center gap-2">
-            <div className="w-1 h-3 bg-blue-500 rounded-sm"></div>
-            <h3 className="text-[10px] font-bold uppercase tracking-wide text-blue-500">
-              Step 1 - Enter Property Details
-            </h3>
-          </div>
+          <h2 id="analyzer-property-heading" className="pbk-analyzer-section-title">01 / Property details</h2>
           <div className="flex flex-wrap gap-2">
             <button
               type="button"
               onClick={onSaveDeal}
-              className="rounded-full bg-blue-500 px-3 py-1.5 text-[11px] font-semibold text-white shadow-sm transition hover:bg-blue-600"
+              className="pbk-btn pbk-btn-ghost pbk-btn-sm"
             >
               Save Deal
             </button>
             <button
               type="button"
               onClick={onClearDeal}
-              className="rounded-full border border-gray-200 bg-gray-50 px-3 py-1.5 text-[11px] font-semibold text-gray-700 transition hover:bg-gray-100 dark:border-slate-700 dark:bg-slate-900 dark:text-gray-300 dark:hover:bg-slate-800"
+              className="pbk-btn pbk-btn-ghost pbk-btn-sm"
             >
               Clear
             </button>
@@ -151,49 +146,37 @@ export function AnalyzerTab({
           <AnalyzerListingLookup key={deal.address.trim()} deal={deal} onFill={onDealChange} />
         </div>
 
-        <div className="flex gap-1.5 mb-3 flex-wrap items-center">
-          <span className="text-[11.5px] text-gray-600 dark:text-gray-400">Contact:</span>
+        <div className="pbk-analyzer-segments" role="group" aria-label="Contact type">
+          <span>Contact</span>
           <button
+            type="button"
+            aria-pressed={deal.contact === 'owner'}
             onClick={() => handleInputChange('contact', 'owner')}
-            className={`px-3 py-1 rounded-full text-[11.5px] border transition-all ${
-              deal.contact === 'owner'
-                ? 'bg-black dark:bg-slate-700 text-white border-black dark:border-slate-700'
-                : 'bg-white dark:bg-slate-800 text-gray-600 dark:text-gray-300 border-gray-200 dark:border-slate-700'
-            }`}
           >
             Owner/FSBO
           </button>
           <button
+            type="button"
+            aria-pressed={deal.contact === 'realtor'}
             onClick={() => handleInputChange('contact', 'realtor')}
-            className={`px-3 py-1 rounded-full text-[11.5px] border transition-all ${
-              deal.contact === 'realtor'
-                ? 'bg-black dark:bg-slate-700 text-white border-black dark:border-slate-700'
-                : 'bg-white dark:bg-slate-800 text-gray-600 dark:text-gray-300 border-gray-200 dark:border-slate-700'
-            }`}
           >
             Realtor Listed
           </button>
         </div>
 
-        <div className="flex gap-1.5 mb-3 flex-wrap items-center">
-          <span className="text-[11.5px] text-gray-600 dark:text-gray-400">Type:</span>
+        <div className="pbk-analyzer-segments" role="group" aria-label="Property type">
+          <span>Type</span>
           <button
+            type="button"
+            aria-pressed={deal.type === 'house'}
             onClick={() => handleInputChange('type', 'house')}
-            className={`px-3 py-1 rounded-full text-[11.5px] border transition-all ${
-              deal.type === 'house'
-                ? 'bg-black dark:bg-slate-700 text-white border-black dark:border-slate-700'
-                : 'bg-white dark:bg-slate-800 text-gray-600 dark:text-gray-300 border-gray-200 dark:border-slate-700'
-            }`}
           >
             House
           </button>
           <button
+            type="button"
+            aria-pressed={deal.type === 'land'}
             onClick={() => handleInputChange('type', 'land')}
-            className={`px-3 py-1 rounded-full text-[11.5px] border transition-all ${
-              deal.type === 'land'
-                ? 'bg-black dark:bg-slate-700 text-white border-black dark:border-slate-700'
-                : 'bg-white dark:bg-slate-800 text-gray-600 dark:text-gray-300 border-gray-200 dark:border-slate-700'
-            }`}
           >
             Land/Lot
           </button>
@@ -308,17 +291,12 @@ export function AnalyzerTab({
           status="ships"
           note="live analysis with local underwriting formulas"
         />
-      </div>
+      </section>
 
       {deal.type === 'house' && (
         <>
-          <div className="pbk-analyzer-card bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-xl p-4 mb-3 shadow-sm">
-            <div className="flex items-center gap-2 mb-3">
-              <div className="w-1 h-3 bg-blue-500 rounded-sm"></div>
-              <h3 className="text-[10px] font-bold uppercase tracking-wide text-blue-500">
-                Step 2 - House Numbers
-              </h3>
-            </div>
+          <section aria-labelledby="analyzer-house-heading" className="pbk-analyzer-card pbk-analyzer-workbench-section">
+            <h2 id="analyzer-house-heading" className="pbk-analyzer-section-title mb-3">02 / House numbers</h2>
 
             <div className="space-y-2">
               <div className="flex items-start gap-2">
@@ -333,7 +311,7 @@ export function AnalyzerTab({
                     </small>
                   </label>
                 </div>
-                <div className="w-32">
+                <div className="relative w-32">
                   <input
                     id="deal-arv"
                     type="number"
@@ -342,7 +320,7 @@ export function AnalyzerTab({
                     placeholder="0"
                     className="w-full h-9 pl-5 pr-3 border border-gray-200 dark:border-slate-700 rounded-lg bg-gray-50 dark:bg-slate-900 text-gray-900 dark:text-gray-100 text-[12.5px] outline-none focus:border-blue-500 transition-all"
                   />
-                  <span className="absolute left-2 top-2 text-[12px] text-gray-500">$</span>
+                  <span aria-hidden="true" className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-[12px] text-gray-500">$</span>
                 </div>
               </div>
 
@@ -447,7 +425,7 @@ export function AnalyzerTab({
                 </div>
               </div>
             </div>
-          </div>
+          </section>
 
           <RepairCalculator onRepairChange={(repairs) => handleInputChange('repairs', repairs)} />
         </>
@@ -455,58 +433,50 @@ export function AnalyzerTab({
 
       {deal.type === 'land' && <LandAnalysis deal={deal} onDealChange={onDealChange} />}
 
-      <div className="pbk-analyzer-card bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-xl p-4 mb-3 shadow-sm">
-        <div className="flex items-center gap-2 mb-3">
-          <div className="w-1 h-3 bg-blue-500 rounded-sm"></div>
-          <h3 className="text-[10px] font-bold uppercase tracking-wide text-blue-500">
-            Comparable Sales (Mean = ARV)
-          </h3>
-        </div>
-
-        <div className="space-y-2">
+      <section aria-labelledby="analyzer-comps-heading" className="pbk-analyzer-card pbk-analyzer-workbench-section">
+        <h2 id="analyzer-comps-heading" className="pbk-analyzer-section-title mb-3">Comparable Sales (Mean = ARV)</h2>
+        <div>
           {(['A', 'B', 'C'] as const).map((comp) => (
             <div
               key={comp}
-              className="flex items-center gap-2 bg-gray-50 dark:bg-slate-900 border border-gray-200 dark:border-slate-700 rounded-lg p-2"
+              className="pbk-analyzer-comp-row"
+              role="group"
+              aria-label={`Comparable sale ${comp}`}
             >
-              <span
-                className="text-[11px] font-bold text-blue-500 text-center w-6"
-                aria-hidden="true"
-              >
-                {comp}
-              </span>
-              <input
-                type="text"
-                inputMode="text"
-                enterKeyHint="next"
-                autoComplete="street-address"
-                aria-label={`Comp ${comp} address`}
-                value={deal.comps[comp].address}
-                onChange={(e) => handleCompChange(comp, 'address', e.target.value)}
-                placeholder="123 Main St, City, MI"
-                className="flex-1 h-7 px-2 border border-gray-200 dark:border-slate-700 rounded bg-white dark:bg-slate-800 text-[11.5px] text-gray-900 dark:text-gray-100 outline-none focus:border-blue-500 transition-all"
-              />
-              <div className="flex items-center bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded px-2 h-7">
-                <span className="text-[11.5px] text-gray-500" aria-hidden="true">
-                  $
-                </span>
+              <span className="pbk-analyzer-comp-id" aria-hidden="true">{comp}</span>
+              <label className="pbk-analyzer-comp-address">
+                <span aria-hidden="true">Address</span>
+                <input
+                  type="text"
+                  inputMode="text"
+                  enterKeyHint="next"
+                  autoComplete="street-address"
+                  aria-label={`Comp ${comp} address`}
+                  value={deal.comps[comp].address}
+                  onChange={(e) => handleCompChange(comp, 'address', e.target.value)}
+                  placeholder="123 Main St, City, MI"
+                />
+              </label>
+              <label>
+                <span aria-hidden="true">Sold price ($)</span>
                 <input
                   type="number"
                   aria-label={`Comp ${comp} sold price`}
                   value={deal.comps[comp].price || ''}
                   onChange={(e) => handleCompChange(comp, 'price', parseFloat(e.target.value) || 0)}
                   placeholder="0"
-                  className="w-20 border-none outline-none bg-transparent text-[11.5px] text-gray-900 dark:text-gray-100"
                 />
-              </div>
-              <input
-                type="text"
-                aria-label={`Comp ${comp} sold date`}
-                value={deal.comps[comp].date}
-                onChange={(e) => handleCompChange(comp, 'date', e.target.value)}
-                placeholder="Jan 2025"
-                className="w-20 h-7 px-2 border border-gray-200 dark:border-slate-700 rounded bg-white dark:bg-slate-800 text-[11.5px] text-gray-900 dark:text-gray-100 outline-none focus:border-blue-500 transition-all"
-              />
+              </label>
+              <label>
+                <span aria-hidden="true">Sold date</span>
+                <input
+                  type="text"
+                  aria-label={`Comp ${comp} sold date`}
+                  value={deal.comps[comp].date}
+                  onChange={(e) => handleCompChange(comp, 'date', e.target.value)}
+                  placeholder="Jan 2025"
+                />
+              </label>
             </div>
           ))}
         </div>
@@ -514,7 +484,7 @@ export function AnalyzerTab({
         <div className="text-[10.5px] text-gray-500 dark:text-gray-400 mt-2">
           ARV = average of Comp A + B + C sold prices. Edit any comp to recalculate.
         </div>
-      </div>
+      </section>
 
       {arv > 0 && (
         <div className="pbk-analyzer-card bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-xl p-4 mb-3 shadow-sm">

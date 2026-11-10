@@ -51,6 +51,17 @@ try {
   const listPrice = page.getByRole('spinbutton', { name: 'List price in dollars' });
   const arv = page.getByRole('spinbutton', { name: /^ARV Auto from comps/ });
   const comp = page.getByRole('spinbutton', { name: 'Comp A sold price' });
+  await expect(page.getByRole('heading', { name: 'The deal.', exact: true })).toBeVisible();
+  const soldComps = page.getByRole('region', { name: 'Comparable Sales (Mean = ARV)' });
+  await expect(soldComps).toBeVisible();
+  const withinPanel = () => soldComps.evaluate((panel) => {
+    const bounds = panel.getBoundingClientRect();
+    return [...panel.querySelectorAll('input')].every((input) => {
+      const field = input.getBoundingClientRect();
+      return field.width > 0 && field.left >= bounds.left && field.right <= bounds.right;
+    });
+  });
+  assert.equal(await withinPanel(), true, 'Sold comp inputs must fit on mobile.');
   await addressInput.fill(address);
   const arvBefore = await arv.inputValue();
   await page.getByRole('button', { name: 'Look up asking price' }).click({ timeout: 5000 });
@@ -60,6 +71,9 @@ try {
   await expect(listPrice).toHaveValue('');
   await expect(arv).toHaveValue(arvBefore);
   await expect(comp).toHaveValue('');
+
+  await arv.fill('2100000');
+  await expect(arv).toHaveValue('2100000');
   assert.deepEqual(lookups, [['GET', '?' + new URLSearchParams({ address }).toString()]]);
   const photo = page.getByRole('img', { name: 'Listing photo 1' });
   await expect(photo).toBeVisible();
@@ -73,7 +87,7 @@ try {
   await expect(page.getByRole('spinbutton', { name: 'Square footage' })).toHaveValue('9138');
   await expect(page.getByRole('spinbutton', { name: 'Year built' })).toHaveValue('1989');
   await expect(page.getByRole('spinbutton', { name: 'Days on market' })).toHaveValue('38');
-  await expect(arv).toHaveValue(arvBefore);
+  await expect(arv).toHaveValue('2100000');
   await expect(comp).toHaveValue('');
 
   await addressInput.fill('99999 Unlisted Avenue, Beverly Hills, CA 90210');
@@ -82,6 +96,7 @@ try {
   await expect(page.getByText('No current Apify listing found for this address.')).toBeVisible();
 
   await page.setViewportSize({ width: 1440, height: 900 });
+  assert.equal(await withinPanel(), true, 'Sold comp inputs must fit on desktop.');
   await addressInput.fill(landAddress);
   const compAddress = page.getByRole('textbox', { name: 'Comp A address', exact: true });
   const compDate = page.getByRole('textbox', { name: 'Comp A sold date', exact: true });
@@ -89,6 +104,9 @@ try {
   await comp.fill('2250000');
   await compDate.fill('Jan 2026');
   await expect(arv).toHaveValue('2250000');
+  const compB = page.getByRole('spinbutton', { name: 'Comp B sold price' });
+  await compB.fill('2750000');
+  await expect(arv).toHaveValue('2500000');
   const readUnderwriting = () => page.locator('#deal-arv, input[aria-label^="Comp "]')
     .evaluateAll((inputs) => inputs.map((input) => [input.id || input.getAttribute('aria-label'), input.value]));
   const beforeLand = await readUnderwriting();
@@ -111,7 +129,7 @@ try {
   await expect(acres).toHaveValue('0.5402');
   await page.getByRole('button', { name: 'House', exact: true }).click();
   assert.deepEqual(await readUnderwriting(), beforeLand);
-  console.log('Analyzer Apify lookup: house, vacant land, manual acreage, cleared acreage, and unchanged underwriting passed.');
+  console.log('Analyzer: responsive layout, house and land autofill, manual ARV, comp averaging, and unchanged underwriting passed.');
 } finally {
   await browser.close();
 }

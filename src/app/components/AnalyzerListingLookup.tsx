@@ -109,12 +109,12 @@ export function AnalyzerListingLookup({ deal, onFill }: {
     : [];
 
   return (
-    <div className="mt-2 text-xs text-gray-700 dark:text-gray-300">
+    <div className="pbk-analyzer-listing">
       <button
         type="button"
         disabled={!address || lookup.status === 'loading'}
         onClick={() => void lookUp()}
-        className="inline-flex min-h-9 items-center gap-1.5 rounded-md border border-gray-200 px-2.5 font-semibold hover:bg-gray-50 disabled:opacity-50 dark:border-slate-700 dark:hover:bg-slate-900"
+        className="pbk-btn pbk-btn-ghost pbk-btn-sm"
       >
         <Search size={14} aria-hidden="true" />
         Look up asking price
@@ -128,7 +128,7 @@ export function AnalyzerListingLookup({ deal, onFill }: {
           <p className="mt-2">Could not look up the listing. Try again.</p>
         )}
         {lookup.status === 'found' && (
-          <div className="mt-2 border-l-2 border-blue-500 pl-3">
+          <div className="pbk-analyzer-listing-result">
             <p>Apify asking price <strong>{formatCurrency(lookup.price)}</strong></p>
             {(lookup.propertyType || positiveNumber(lookup.facts.lotSqft)) && (
               <p className="mt-1">
@@ -153,7 +153,7 @@ export function AnalyzerListingLookup({ deal, onFill }: {
               type="button"
               disabled={!fillableCount}
               onClick={() => { onFill(updates); setFilledCount(fillableCount); }}
-              className="mt-2 inline-flex min-h-9 items-center rounded-md border border-gray-200 px-2.5 font-semibold hover:bg-gray-50 disabled:opacity-50 dark:border-slate-700 dark:hover:bg-slate-900"
+              className="pbk-btn pbk-btn-ghost pbk-btn-sm mt-2"
             >
               Fill empty fields
             </button>

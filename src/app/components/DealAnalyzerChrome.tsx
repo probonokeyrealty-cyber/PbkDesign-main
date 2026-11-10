@@ -122,15 +122,24 @@ export function DealAnalyzerCommandHeader({
   };
 
   return (
-    <header className="pbk-analyzer-command">
+    <header className="pbk-analyzer-command" data-view={activeTab}>
       <div className="pbk-analyzer-command-main">
         <div className="pbk-analyzer-title-block">
           <span className="pbk-kicker">Deal Analyzer</span>
-          <h1>{getShortAddress(deal.address)}</h1>
-          <p>
-            Operator-first underwriting, path selection, call prep, and seller package controls stay
-            in one live engine.
-          </p>
+          {activeTab === 'analyzer' ? (
+            <>
+              <h1>The deal.</h1>
+              <p>{deal.address.trim() || 'No property loaded'}</p>
+            </>
+          ) : (
+            <>
+              <h1>{getShortAddress(deal.address)}</h1>
+              <p>
+                Operator-first underwriting, path selection, call prep, and seller package controls stay
+                in one live engine.
+              </p>
+            </>
+          )}
         </div>
 
         <div className="pbk-analyzer-command-actions">
@@ -158,7 +167,7 @@ export function DealAnalyzerCommandHeader({
             <FileText size={14} />
             Docs
           </button>
-          <button type="button" className="pbk-btn pbk-btn-primary pbk-btn-sm" onClick={onSaveDeal}>
+          <button type="button" className={`pbk-btn pbk-btn-${activeTab === 'analyzer' ? 'ghost' : 'primary'} pbk-btn-sm`} onClick={onSaveDeal}>
             <Save size={14} />
             Save
           </button>
@@ -166,7 +175,7 @@ export function DealAnalyzerCommandHeader({
             <UserPlus size={14} />
             Lead
           </button>
-          <button type="button" className="pbk-btn pbk-btn-success pbk-btn-sm" onClick={onAnalyze}>
+          <button type="button" className={`pbk-btn pbk-btn-${activeTab === 'analyzer' ? 'primary' : 'success'} pbk-btn-sm`} onClick={onAnalyze}>
             <Sparkles size={14} />
             Analyze
           </button>

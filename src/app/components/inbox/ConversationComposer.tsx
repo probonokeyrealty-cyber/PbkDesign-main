@@ -16,6 +16,7 @@ import {
   WandSparkles,
 } from 'lucide-react';
 import { getSmsSegmentInfo } from '../../routes/inboxRuntimeLogic.js';
+import { beginInboxSubmission, isInboxSubmissionHeld } from './inboxSubmission';
 import {
   fetchReplyTemplatesRequest,
   fetchSenderIdentitiesRequest,
@@ -97,18 +98,15 @@ function buildOutboxSendOutcome({
   if (tone === 'success') {
     return {
       tone,
-      title: channel === 'sms' ? 'SMS sent' : 'Email sent',
-      detail: `${provider}accepted the manual send. Idempotency: ${
-        outbox.idempotencyKey || 'recorded'
-      }.`,
+      title: channel === 'sms' ? 'SMS accepted by provider' : 'Email accepted by provider',
+      detail: `${provider || 'Provider '}accepted the message. This does not confirm delivery.`,
     };
   }
   const reason = outbox.error || fallbackResult || 'Provider did not confirm delivery.';
   return {
     tone,
-    title: outbox.retryable ? 'Send failed, retry available' : 'Send failed',
-    detail: `${reason}${outbox.retryable ? ' You can retry this exact draft without double-sending confirmed deliveries.' : ''}`,
-    actionLabel: outbox.retryable ? 'Retry send' : undefined,
+    title: 'Send unconfirmed',
+    detail: `${reason} Check the conversation before sending another message.`,
   };
 }
 
@@ -260,7 +258,7 @@ export function ConversationComposer({
   const [notice, setNotice] = useState<ComposerOutcome | null>(null);
   const [sendOutcome, setSendOutcome] = useState<ComposerOutcome | null>(null);
   const [recommendationGuard, setRecommendationGuard] = useState('');
-  const [submittedFingerprint, setSubmittedFingerprint] = useState('');
+  const sendingRef = useRef(false);
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
   const senderRequestSequence = useRef(0);
   const senderSyncAttempted = useRef(false);
@@ -292,6 +290,7 @@ export function ConversationComposer({
   const scheduleInvalid =
     sendLater && (!scheduledFor || new Date(scheduledFor).getTime() <= Date.now());
   const sendFingerprint = JSON.stringify({
+    threadId: thread.id,
     channel,
     senderIdentityId,
     recipient,
@@ -299,8 +298,7 @@ export function ConversationComposer({
     body: body.trim(),
     scheduledFor: sendLater ? scheduledFor : '',
   });
-  const exactMessageAlreadyQueued =
-    Boolean(submittedFingerprint) && submittedFingerprint === sendFingerprint;
+  const exactMessageAlreadyQueued = isInboxSubmissionHeld(sendFingerprint);
   const sendDisabledReason = blockedByDnc
     ? 'This seller is marked do not contact.'
     : recommendationGuard
@@ -320,7 +318,7 @@ export function ConversationComposer({
                   : scheduleInvalid
                     ? 'Choose a future schedule time.'
                     : exactMessageAlreadyQueued
-                      ? 'This exact message is already queued. Edit it before submitting another copy.'
+                      ? 'This draft was already submitted. Check the conversation before sending another message.'
                       : '';
   const canSend =
     Boolean(recipient && body.trim() && senderIdentityId && senderMatchesChannel) &&
@@ -330,14 +328,6 @@ export function ConversationComposer({
     !recommendationGuard &&
     !scheduleInvalid &&
     !exactMessageAlreadyQueued &&
-    !sending;
-  const canRetrySend =
-    Boolean(recipient && body.trim() && senderIdentityId && senderMatchesChannel) &&
-    !senderLoading &&
-    !senderRestriction &&
-    !blockedByDnc &&
-    !recommendationGuard &&
-    !scheduleInvalid &&
     !sending;
   const showSendGuard = Boolean(
     blockedByDnc ||
@@ -546,14 +536,17 @@ export function ConversationComposer({
     }
   };
 
-  const sendMessage = async (options: { retry?: boolean } = {}) => {
-    if (options.retry ? !canRetrySend : !canSend) return;
+  const sendMessage = async () => {
+    if (sendingRef.current || !canSend) return;
+    const finish = beginInboxSubmission(sendFingerprint);
+    if (!finish) return;
+    sendingRef.current = true;
     const submittedChannel = channel;
     const submittedBody = body.trim();
     const submittedSubject = channel === 'email' ? subject.trim() : '';
-    const submittedSendFingerprint = sendFingerprint;
     setSending(true);
     setSendOutcome(null);
+    let hold = true;
     try {
       const response = await sendConversationMessageRequest(thread.id, {
         channel,
@@ -573,40 +566,34 @@ export function ConversationComposer({
         channel: submittedChannel,
         fallbackResult: String(response.error || response.result || ''),
       });
-      const heldForRetry =
-        approvalRequired ||
-        response.scheduled ||
-        outboxOutcome?.tone === 'error' ||
-        outboxOutcome?.tone === 'warning';
+      const providerAccepted =
+        response.ok !== false &&
+        (outboxOutcome?.tone === 'success' || response.providerDeliveryClaimed === true);
+      hold = approvalRequired || Boolean(response.scheduled) || !providerAccepted;
       setSendOutcome({
         tone:
-          outboxOutcome?.tone || (approvalRequired || response.scheduled ? 'warning' : 'success'),
+          approvalRequired || response.scheduled ? 'warning' : providerAccepted ? 'success' : 'error',
         title:
-          outboxOutcome?.title ||
           (approvalRequired
-            ? 'Manual send held by bridge'
+            ? 'Awaiting approval'
             : response.scheduled
               ? 'Message scheduled'
-              : 'Provider sent'),
+              : outboxOutcome?.title || (providerAccepted ? 'Provider accepted' : 'Send unconfirmed')),
         detail:
-          outboxOutcome?.detail ||
           (approvalRequired
-            ? 'Manual send is direct when the bridge returns a provider-send result. This hold came back from the bridge/provider policy, so the draft stays intact for retry or review.'
+            ? 'This message will not send unless it is approved.'
             : response.scheduled
               ? `Scheduled for ${new Date(response.scheduledFor || scheduledFor).toLocaleString()}.`
-              : `Manual send is direct. Provider result: ${response.result || 'accepted'}.`),
-        actionLabel: outboxOutcome?.actionLabel,
+              : outboxOutcome?.detail || (providerAccepted
+                ? 'Provider acceptance does not confirm delivery.'
+                : 'No provider receipt was returned. Check the conversation before sending another message.')),
       });
-      if (approvalRequired || response.scheduled) {
-        setSubmittedFingerprint(submittedSendFingerprint);
-      } else if (heldForRetry) {
-        setSubmittedFingerprint('');
-      } else if (
+      if (
+        !hold &&
         channelRef.current === submittedChannel &&
         bodyRef.current.trim() === submittedBody &&
         (submittedChannel !== 'email' || subjectRef.current.trim() === submittedSubject)
       ) {
-        setSubmittedFingerprint('');
         setBody('');
         if (submittedChannel === 'email') setSubject('');
       }
@@ -614,11 +601,13 @@ export function ConversationComposer({
     } catch (error) {
       setSendOutcome({
         tone: 'error',
-        title: 'Send failed',
-        detail: error instanceof Error ? error.message : 'The bridge rejected the message.',
-        actionLabel: 'Retry send',
+        title: 'Send unconfirmed',
+        detail: `Check the conversation before sending another message. ${error instanceof Error ? error.message : ''}`.trim(),
       });
+      onSent();
     } finally {
+      finish(hold);
+      sendingRef.current = false;
       setSending(false);
     }
   };
@@ -788,7 +777,6 @@ export function ConversationComposer({
             outcome={sendOutcome}
             label="send result"
             onDismiss={() => setSendOutcome(null)}
-            onAction={sendOutcome.actionLabel ? () => void sendMessage({ retry: true }) : undefined}
           />
         )}
       </div>

@@ -12,6 +12,7 @@ import {
   Search,
   UserRoundSearch,
 } from 'lucide-react';
+import { Link } from 'react-router';
 import { PbkDataSource } from '../../../components/pbk/index';
 import type { ConversationThread } from '../../utils/runtimeBridge';
 import { getConversationPreview } from '../../routes/conversationRuntimeLogic.js';
@@ -120,8 +121,8 @@ export function ConversationThreadRail({
       <div className="pbk-conversation-thread-tools">
         <div className="pbk-conversation-thread-heading">
           <div>
-            <div className="pbk-eyebrow">Seller conversations</div>
-            <h1>Unified Inbox</h1>
+            <div className="pbk-eyebrow">Seller communications</div>
+            <h1>Conversations</h1>
           </div>
           <button
             type="button"
@@ -132,6 +133,10 @@ export function ConversationThreadRail({
             New message
           </button>
         </div>
+        <Link className="pbk-conversation-review-link" to="/inbox#inbox-approvals">
+          <FileCheck2 size={15} aria-hidden="true" />
+          Review approvals
+        </Link>
         <label className="pbk-conversation-search">
           <Search size={15} aria-hidden="true" />
           <span className="sr-only">Search conversations</span>

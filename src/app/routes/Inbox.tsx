@@ -1,4 +1,4 @@
-import { type ReactNode, useCallback, useEffect, useMemo, useState } from 'react';
+import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router';
 import {
   AlertCircle,
@@ -19,6 +19,7 @@ import {
 import { PbkDataSource } from '../../components/pbk/index';
 import { CompactPager, getPageSlice, OPERATOR_LIST_PAGE_SIZE } from '../components/CompactPager';
 import { InboxSignalLanes, type InboxSignalLane } from '../components/inbox/InboxSignalLanes';
+import { beginInboxSubmission, isInboxSubmissionHeld } from '../components/inbox/inboxSubmission';
 import { useRuntimeSnapshot } from '../hooks/useRuntimeSnapshot';
 import {
   archiveMessageRequest,
@@ -478,21 +479,13 @@ function InboxHero({
     <section className="pbk-inbox-hero">
       <div className="pbk-inbox-hero-top">
         <div>
-          <div className="pbk-eyebrow">
-            Unified inbox - {stats.pendingApprovals} approvals - {stats.unreadMessages} unread
-          </div>
-          <h1 className="pbk-display pbk-h1">
-            Inbox &amp; <em>approvals</em>.
-          </h1>
-          <p>
-            Seller replies, Ava/Rex approvals, scheduled outreach, and new messages in one
-            workspace. Archive actions stay saved with the seller message record.
-          </p>
+          <div className="pbk-eyebrow">Seller communications</div>
+          <h1 className="pbk-display">Inbox.</h1>
         </div>
         <div className="pbk-inbox-hero-actions">
           <span className="pbk-inbox-sync">
             <Database size={13} />
-            {loading ? 'syncing' : 'workspace synced'}
+            {loading ? 'Refreshing' : 'Messages and approvals'}
           </span>
           <button
             type="button"
@@ -509,7 +502,7 @@ function InboxHero({
             onClick={onOpenInbox}
           >
             <MessagesSquare size={14} />
-            Open Unified Inbox
+            Open conversations
           </button>
           <button type="button" className="pbk-btn pbk-btn-ghost pbk-btn-sm" onClick={onCompose}>
             <Plus size={14} />
@@ -798,15 +791,21 @@ function ComposeModal({
   const [draft, setDraft] = useState<ComposeDraft>(EMPTY_DRAFT);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [sending, setSending] = useState(false);
+  const sendingRef = useRef(false);
+  const openedRef = useRef(false);
   const [sendError, setSendError] = useState('');
   const [draftSaveFailed, setDraftSaveFailed] = useState(false);
 
   useEffect(() => {
-    if (!open) return;
+    if (!open) {
+      openedRef.current = false;
+      return;
+    }
+    if (sendingRef.current || (openedRef.current && !initialDraft)) return;
+    openedRef.current = true;
     const nextDraft = initialDraft ? { ...EMPTY_DRAFT, ...initialDraft } : readComposeDraft();
     setDraft(nextDraft);
     setPickerOpen(false);
-    setSending(false);
     setSendError('');
     setDraftSaveFailed(false);
     if (initialDraft) {
@@ -835,7 +834,7 @@ function ComposeModal({
     const close = (event: Event) => {
       const detail = (event as CustomEvent<{ handled?: boolean }>).detail;
       if (detail && typeof detail === 'object') detail.handled = true;
-      onClose();
+      if (!sendingRef.current) onClose();
     };
     window.addEventListener('pbk:escape-ui', close);
     return () => window.removeEventListener('pbk:escape-ui', close);
@@ -854,8 +853,19 @@ function ComposeModal({
     .slice(0, 5);
   const segmentInfo = getSmsSegmentInfo(draft.message);
   const recipientValidation = validateComposeRecipient(draft, selectedLead);
+  const request = buildComposeRequest(draft, selectedLead || {});
+  const submissionKey = JSON.stringify([
+    'inbox-compose',
+    request.path,
+    request.body.channel,
+    request.body.to,
+    request.body.message,
+    request.body.scheduledFor,
+  ]);
+  const submissionHeld = isInboxSubmissionHeld(submissionKey);
   const sendDisabled =
     sending ||
+    submissionHeld ||
     !draft.recipient.trim() ||
     !draft.message.trim() ||
     (draft.sendLater && !draft.sendAt.trim()) ||
@@ -874,14 +884,17 @@ function ComposeModal({
   };
 
   const sendCompose = async () => {
-    if (sendDisabled) return;
+    if (sendingRef.current || sendDisabled) return;
     if (recipientValidation) {
       setSendError(recipientValidation);
       return;
     }
+    const finish = beginInboxSubmission(submissionKey);
+    if (!finish) return;
+    sendingRef.current = true;
     setSending(true);
     setSendError('');
-    const request = buildComposeRequest(draft, selectedLead || {});
+    let hold = true;
     try {
       const response =
         request.path === '/api/messages'
@@ -895,9 +908,19 @@ function ComposeModal({
         response.result || response.outcome || responseMessage.status || ''
       ).toLowerCase();
       const scheduled = request.path === '/api/messages' || result === 'scheduled';
+      const approvalRequired =
+        Boolean(response.approval || response.requiresApproval) ||
+        result === 'approval_required' ||
+        result === 'queued_for_approval';
+      if (response.ok === false && !approvalRequired) {
+        throw new Error(String(response.error || 'No send receipt was returned.'));
+      }
+      hold = scheduled || approvalRequired;
       showUiToast({
         tone: 'success',
-        title: scheduled
+        title: approvalRequired
+          ? 'Awaiting approval'
+          : scheduled
           ? 'Message scheduled'
           : draft.channel === 'sms'
             ? 'SMS submitted'
@@ -908,13 +931,16 @@ function ComposeModal({
       });
       clearComposeDraft();
       setDraft(EMPTY_DRAFT);
-      await onSent();
       onClose();
+      void onSent().catch(() => {});
     } catch (nextError) {
-      const message = nextError instanceof Error ? nextError.message : 'Message send failed.';
+      const reason = nextError instanceof Error ? nextError.message : 'No receipt was returned.';
+      const message = `Could not confirm this request. Check the conversation before sending another message. ${reason}`;
       setSendError(message);
-      showUiToast({ tone: 'error', title: 'Message not sent', desc: message, critical: true });
+      void onSent().catch(() => {});
     } finally {
+      finish(hold);
+      sendingRef.current = false;
       setSending(false);
     }
   };
@@ -922,7 +948,9 @@ function ComposeModal({
   if (!open) return null;
 
   return (
-    <div className="modal-backdrop" role="presentation" onMouseDown={onClose}>
+    <div className="modal-backdrop" role="presentation" onMouseDown={() => {
+      if (!sendingRef.current) onClose();
+    }}>
       <div
         className="modal compose-modal"
         role="dialog"
@@ -944,6 +972,7 @@ function ComposeModal({
             type="button"
             className="modal-close"
             onClick={onClose}
+            disabled={sending}
             aria-label="Close compose"
           >
             <X size={18} />
@@ -1099,10 +1128,10 @@ function ComposeModal({
           </div>
         )}
 
-        {sendError && (
-          <div className="flex items-start gap-2 rounded-xl border border-rose-400/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-100">
+        {(sendError || (!sending && submissionHeld)) && (
+          <div role="status" className="flex items-start gap-2 rounded-lg border border-rose-400/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-100">
             <AlertCircle size={14} className="mt-0.5 shrink-0" />
-            <span>{sendError}</span>
+            <span>{sendError || 'This draft was already submitted. Check the conversation before sending another message.'}</span>
           </div>
         )}
 
@@ -1113,7 +1142,7 @@ function ComposeModal({
               : 'Draft saved locally as you type.'}
           </span>
           <div className="flex gap-2">
-            <button type="button" className="btn-secondary" onClick={onClose}>
+            <button type="button" className="btn-secondary" onClick={onClose} disabled={sending}>
               Cancel
             </button>
             <button
@@ -1277,6 +1306,7 @@ export function Inbox() {
   const navigate = useNavigate();
   const { snapshot, loading, error, refresh } = useRuntimeSnapshot();
   const [pendingAction, setPendingAction] = useState('');
+  const approvalInFlight = useRef(false);
   const [actionStatus, setActionStatus] = useState<InboxActionStatus | null>(null);
   const [approvalFeedbackById, setApprovalFeedbackById] = useState<Record<string, string>>({});
   const [composeOpen, setComposeOpen] = useState(false);
@@ -1437,6 +1467,8 @@ export function Inbox() {
     const approvalId = String(approval.id || '');
     if (!approvalId) return;
     if (pendingAction.startsWith(`approval:${approvalId}:`)) return;
+    if (approvalInFlight.current) return;
+    approvalInFlight.current = true;
     const key = `approval:${approvalId}:${status}`;
     const resolutionKeys = getApprovalResolutionKeys(approval);
     setPendingAction(key);
@@ -1471,6 +1503,7 @@ export function Inbox() {
         text: nextError instanceof Error ? nextError.message : 'Approval update failed.',
       });
     } finally {
+      approvalInFlight.current = false;
       setPendingAction('');
     }
   };
@@ -1636,11 +1669,10 @@ export function Inbox() {
             onSelectLane={selectSignalLane}
           />
 
-          <section id="inbox-approvals" className="pbk-inbox-card">
+          <section id="inbox-approvals" className="pbk-inbox-card" aria-labelledby="inbox-review-heading">
             <div className="pbk-inbox-card-head">
               <div>
-                <h2>Needs your review</h2>
-                <p>Ava is ready to keep moving once you choose one of these.</p>
+                <h2 id="inbox-review-heading">Needs your review</h2>
               </div>
               <span className="count">{approvals.length}</span>
             </div>
@@ -1659,10 +1691,10 @@ export function Inbox() {
                   />
                 );
               })}
-              {!approvals.length && (
+              {!approvals.length && !bridgeError && !loading && (
                 <div className="pbk-inbox-empty">
                   <InboxIcon size={18} />
-                  <span>Ava has nothing ready for review.</span>
+                  <span>No pending approvals.</span>
                 </div>
               )}
             </div>
@@ -1682,8 +1714,7 @@ export function Inbox() {
           <section id="inbox-messages" className="pbk-inbox-card pbk-inbox-message-card">
             <div className="pbk-inbox-card-head">
               <div>
-                <h2>Message stream</h2>
-                <p>Recent replies and sent messages from calls, SMS, and email.</p>
+                <h2>Recent messages</h2>
               </div>
               <span className="count">
                 {visibleMessages.length

@@ -129,6 +129,7 @@
     "test:analytics-prototype-modern": "node ./scripts/analytics-prototype-modern-smoke.mjs",
     "test:inbox-prototype-modern": "node ./scripts/inbox-prototype-modern-smoke.mjs",
     "test:unified-inbox-ui": "node ./scripts/unified-inbox-ui-smoke.mjs",
+    "test:inbox-design-browser": "node ./scripts/inbox-design-browser-smoke.mjs",
     "test:manual-ux-gaps": "node ./scripts/manual-ux-gap-smoke.mjs",
     "test:manual-actions-routes": "node ./scripts/manual-actions-route-smoke.mjs",
     "test:pdf-output-quality": "node ./scripts/pdf-output-quality-smoke.mjs",

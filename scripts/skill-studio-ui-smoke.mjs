@@ -119,7 +119,8 @@ assert(
     route.includes('recentSellerLine') &&
     route.includes('Skill simulator') &&
     route.includes('Seller says') &&
-    route.includes('Ava would use') &&
+    route.includes('Saved response') &&
+    route.includes('Simulation only') &&
     route.includes('Risk check') &&
     route.includes('Agent responsibility') &&
     route.includes('Outcome proof') &&

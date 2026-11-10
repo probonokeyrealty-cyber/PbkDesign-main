@@ -6859,9 +6859,18 @@ function startPostgresKeepAlive() {
 }
 
 function executeProviderActionWithSharedLease(options) {
+  const pool = getPgPool();
+  let leaseClient;
   return executeProviderActionWithSharedLeaseCore({
     ...options,
-    pool: getPgPool(),
+    pool: pool && options.readWithLeaseClient ? {
+      query: (...args) => pool.query(...args),
+      connect: async () => {
+        leaseClient = await pool.connect();
+        return leaseClient;
+      },
+    } : pool,
+    execute: (context) => options.execute(context, leaseClient),
     isHosted: IS_HOSTED,
     now: isoNow,
     logger: console,
@@ -11540,13 +11549,13 @@ function persistStateInBackground(context = 'background') {
   });
 }
 
-async function persistCampaignRecord(campaign = {}) {
+async function persistCampaignRecord(campaign = {}, { expected } = {}) {
   const pool = getPgPool();
   if (!pool || !campaign.id) return false;
   const channel = normalizeCampaignChannel(campaign.channel || 'email');
   const dbChannel = ['email', 'call', 'sms', 'mixed'].includes(channel) ? channel : 'mixed';
   try {
-    await pool.query(
+    const result = await pool.query(
       `INSERT INTO public.campaigns (
         id, name, channel, provider, status, template_id, lead_source, lead_filter,
         schedule, sequence, metrics, approval_id, approval_status, pending_action,
@@ -11581,10 +11590,20 @@ async function persistCampaignRecord(campaign = {}) {
         notes = EXCLUDED.notes,
         created_by = EXCLUDED.created_by,
         updated_at = EXCLUDED.updated_at,
-        archived_at = EXCLUDED.archived_at`,
-      [campaign.id, campaign.name || 'Untitled campaign', dbChannel, campaign.provider || getCampaignProvider(channel), normalizeCampaignStatus(campaign.status || 'draft'), campaign.templateId || campaign.template_id || null, campaign.leadSource || campaign.lead_source || null, JSON.stringify(campaign.leadFilter || campaign.lead_filter || {}), JSON.stringify(campaign.schedule || {}), JSON.stringify(campaign.sequence || {}), JSON.stringify(campaign.metrics || {}), campaign.approvalId || campaign.approval_id || null, campaign.approvalStatus || campaign.approval_status || null, campaign.pendingAction || campaign.pending_action || null, campaign.executionId || campaign.execution_id || null, campaign.providerCampaignId || campaign.provider_campaign_id || null, campaign.lastWorkerRunAt || campaign.last_worker_run_at || null, campaign.suppressionMode || campaign.suppression_mode || 'same_channel_active_campaigns', toNumber(campaign.conflictCount ?? campaign.conflict_count, 0), campaign.notes || null, campaign.createdBy || campaign.created_by || 'PBK Command Center', campaign.createdAt || campaign.created_at || isoNow(), campaign.updatedAt || campaign.updated_at || isoNow(), campaign.archivedAt || campaign.archived_at || null]
+        archived_at = EXCLUDED.archived_at
+      WHERE NOT $25::boolean OR (
+        campaigns.approval_id IS NOT DISTINCT FROM $26::text
+        AND campaigns.status = $27::text
+        AND campaigns.pending_action IS NOT DISTINCT FROM $28::text
+        AND campaigns.approval_status IS NOT DISTINCT FROM $29::text
+        AND campaigns.schedule = $30::jsonb
+      )`,
+      [campaign.id, campaign.name || 'Untitled campaign', dbChannel, campaign.provider || getCampaignProvider(channel), normalizeCampaignStatus(campaign.status || 'draft'), campaign.templateId || campaign.template_id || null, campaign.leadSource || campaign.lead_source || null, JSON.stringify(campaign.leadFilter || campaign.lead_filter || {}), JSON.stringify(campaign.schedule || {}), JSON.stringify(campaign.sequence || {}), JSON.stringify(campaign.metrics || {}), campaign.approvalId || campaign.approval_id || null, campaign.approvalStatus || campaign.approval_status || null, campaign.pendingAction || campaign.pending_action || null, campaign.executionId || campaign.execution_id || null, campaign.providerCampaignId || campaign.provider_campaign_id || null, campaign.lastWorkerRunAt || campaign.last_worker_run_at || null, campaign.suppressionMode || campaign.suppression_mode || 'same_channel_active_campaigns', toNumber(campaign.conflictCount ?? campaign.conflict_count, 0), campaign.notes || null, campaign.createdBy || campaign.created_by || 'PBK Command Center', campaign.createdAt || campaign.created_at || isoNow(), campaign.updatedAt || campaign.updated_at || isoNow(), campaign.archivedAt || campaign.archived_at || null,
+        Boolean(expected), expected?.approvalId || expected?.approval_id || null,
+        expected ? normalizeCampaignStatus(expected.status) : null, expected?.pendingAction || expected?.pending_action || null,
+        expected?.approvalStatus || expected?.approval_status || null, JSON.stringify(expected?.schedule || {})]
     );
-    return true;
+    return result.rowCount === 1;
   } catch (error) {
     console.warn('[pbk-local-openclaw] campaign persistence skipped:', error?.message || error);
     return false;
@@ -49608,9 +49627,45 @@ function buildCampaignFromPayload(payload = {}) {
   return { campaign, leads, conflicts };
 }
 
+const campaignOperations = new Map();
+
+async function queueCampaignOperation(key, operation) {
+  const previous = campaignOperations.get(key) || Promise.resolve();
+  const current = previous.catch(() => {}).then(operation);
+  campaignOperations.set(key, current);
+  try {
+    return await current;
+  } finally {
+    if (campaignOperations.get(key) === current) campaignOperations.delete(key);
+  }
+}
+
 async function createCampaignRecord(payload = {}) {
+  const id = payload.id;
+  if (typeof id !== 'string' || !/^campaign-draft-[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(id)) {
+    return saveNewCampaignRecord(payload);
+  }
+  return queueCampaignOperation(`binding:${id}`, () => {
+    ensureCampaignCollections();
+    const campaign = state.campaigns.find((item) => item.id === id);
+    if (!campaign) return saveNewCampaignRecord(payload, { startDispatchVersion: 2 });
+    const leads = getCampaignLeads(id);
+    return {
+      ok: true,
+      result: 'live',
+      verbiage: 'Campaign draft already saved',
+      replayed: true,
+      campaign,
+      leads,
+      conflicts: findCampaignConflicts(leads, campaign.channel, id),
+    };
+  });
+}
+
+async function saveNewCampaignRecord(payload, { startDispatchVersion } = {}) {
   ensureCampaignCollections();
   const { campaign, leads, conflicts } = buildCampaignFromPayload(payload);
+  if (startDispatchVersion) campaign.startDispatchVersion = startDispatchVersion;
   upsertById(state, 'campaigns', campaign);
   state.campaignLeads = (state.campaignLeads || []).filter((lead) => lead.campaignId !== campaign.id);
   leads.forEach((lead, index) => {
@@ -49686,6 +49741,10 @@ async function createCampaignRecord(payload = {}) {
 }
 
 async function patchCampaignRecord(campaignId = '', patch = {}) {
+  return queueCampaignOperation(`binding:${campaignId}`, () => applyCampaignRecordPatch(campaignId, patch));
+}
+
+async function applyCampaignRecordPatch(campaignId, patch) {
   ensureCampaignCollections();
   const current = (state.campaigns || []).find((campaign) => campaign.id === campaignId);
   if (!current) {
@@ -49713,10 +49772,13 @@ async function patchCampaignRecord(campaignId = '', patch = {}) {
   const next = {
     ...current,
     ...patch,
+    id: current.id,
+    startDispatchVersion: current.startDispatchVersion,
     channel: normalizeCampaignChannel(patch.channel || current.channel),
     status: requestedStatus,
     updatedAt: isoNow(),
   };
+  if (DATABASE_URL && !(await persistCampaignRecord(next, { expected: current }))) return campaignBindingUnavailable();
   upsertById(state, 'campaigns', next);
   recordCampaignEvent({
     campaignId,
@@ -49737,7 +49799,6 @@ async function patchCampaignRecord(campaignId = '', patch = {}) {
     })
   );
   await persistState(state);
-  await persistCampaignRecord(next);
   return {
     ok: true,
     result: 'live',
@@ -49951,7 +50012,53 @@ async function removeCampaignLeadFromCampaign(campaignId = '', payload = {}) {
   };
 }
 
+function getApprovalCampaignId(approval = {}) {
+  return String(approval.metadata?.campaignId || approval.metadata?.campaign_id || approval.campaignId || '').trim();
+}
+
+function isCampaignStartApproval(approval = {}) {
+  return String(approval.type || '').toLowerCase() === 'campaign' &&
+    normalizeCampaignApprovalAction(approval) === 'start_campaign';
+}
+
+function findCampaignProviderStartExecution(campaignId) {
+  return campaignId && (state.campaignExecutions || []).find((item) => item.campaignId === campaignId &&
+    (item.status === 'provider-started' || item.instantly?.ok || item.instantly?.endpoint));
+}
+
+function isCampaignStartBlocked(campaign) {
+  return normalizeCampaignStatus(campaign.status) === 'paused' || isCampaignTerminal(campaign);
+}
+
+function isCampaignTerminal(campaign) {
+  return ['archived', 'cancelled', 'completed'].includes(normalizeCampaignStatus(campaign.status));
+}
+
+function campaignBindingUnavailable() {
+  return {
+    ok: false,
+    result: 'campaign_binding_unavailable',
+    error: 'The durable campaign binding could not be confirmed.',
+    providerAttempted: false,
+  };
+}
+
+function blockedCampaignStart() {
+  return {
+    ok: false,
+    result: 'campaign_start_blocked',
+    error: 'This approval no longer authorizes a start for the current campaign state.',
+  };
+}
+
 async function requestCampaignApproval(campaignId = '', params = {}) {
+  return queueCampaignOperation(`approval:${campaignId}`, async () => {
+    const prepared = await queueCampaignOperation(`binding:${campaignId}`, () => prepareCampaignApproval(campaignId, params));
+    return prepared.publishing || prepared;
+  });
+}
+
+async function prepareCampaignApproval(campaignId, params) {
   ensureCampaignCollections();
   const campaign = (state.campaigns || []).find((item) => item.id === campaignId);
   if (!campaign) {
@@ -49962,15 +50069,68 @@ async function requestCampaignApproval(campaignId = '', params = {}) {
       error: 'Campaign record not found.',
     };
   }
-  const selectedLeads = getCampaignLeads(campaignId).map(normalizeCampaignLead);
   const action = params.requestedAction || params.approvalAction || 'start_campaign';
+  const normalizedAction = normalizeCampaignApprovalAction({ approvalAction: action });
+  if (normalizedAction === 'campaign_resume' && isCampaignTerminal(campaign)) return blockedCampaignStart();
+  if (normalizedAction === 'start_campaign') {
+    const execution = findCampaignProviderStartExecution(campaignId);
+    if (campaign.providerCampaignId || execution) {
+      const started = campaign.providerCampaignId || execution?.instantly?.ok || execution?.status === 'provider-started';
+      return {
+        ok: true,
+        result: started ? 'live' : execution.instantly?.result || 'provider_missing',
+        verbiage: started ? 'Campaign execution already started' : 'Campaign start already attempted; check the provider',
+        replayed: true,
+        campaign,
+        execution,
+        approval: state.approvals.find((item) => item.id === (execution?.approvalId || campaign.approvalId)),
+      };
+    }
+    if (isCampaignStartBlocked(campaign)) return blockedCampaignStart();
+    if (campaign.pendingAction && normalizeCampaignApprovalAction({ approvalAction: campaign.pendingAction }) !== 'start_campaign') {
+      return blockedCampaignStart();
+    }
+    const approvals = state.approvals.filter((item) => isCampaignStartApproval(item) && getApprovalCampaignId(item) === campaignId);
+    const current = approvals.find((item) => item.id === campaign.approvalId);
+    const pending = approvals.find((item) => item.status === 'pending');
+    const approval = current?.status === 'approved' && campaign.pendingAction ? current : pending;
+    if (approval) {
+      const scheduled = approval.status === 'approved' && getCampaignStartNotBefore(campaign, approval) !== null;
+      return {
+        ok: true,
+        result: scheduled ? 'scheduled' : 'queued_for_approval',
+        verbiage: scheduled ? 'Campaign start is scheduled' : 'Campaign start approval already requested',
+        replayed: true,
+        campaign,
+        approval,
+      };
+    }
+  }
+  const selectedLeads = getCampaignLeads(campaignId).map(normalizeCampaignLead);
   const previousCampaignStatus = normalizeCampaignStatus(campaign.status || 'draft');
+  const deferredStart = ['campaign_cancel', 'campaign_pause', 'campaign_resume'].includes(normalizedAction)
+    ? getBoundScheduledCampaignStart(campaign)
+    : null;
   const providerConfig = getCampaignProviderConfig({
     ...campaign,
     ...params,
     providerConfig: params.providerConfig || campaign.providerConfig,
   });
-  const { approval, fanout } = await toolHandlers.createApproval({
+  // Bind the campaign before publishing a card that can be approved immediately.
+  const approvalId = randomUUID();
+  const pendingCampaign = {
+    ...campaign,
+    status: normalizeCampaignStatus(params.status || 'pending'),
+    approvalId,
+    approvalStatus: 'pending',
+    pendingAction: action,
+    pendingPreviousStatus: previousCampaignStatus,
+    updatedAt: isoNow(),
+  };
+  if (DATABASE_URL && !(await persistCampaignRecord(pendingCampaign, { expected: campaign }))) return campaignBindingUnavailable();
+  upsertById(state, 'campaigns', pendingCampaign);
+  const approvalParams = {
+    id: approvalId,
     type: 'campaign',
     leadName: campaign.name,
     address: `${selectedLeads.length || campaign.leadCount || 0} campaign leads`,
@@ -49983,6 +50143,7 @@ async function requestCampaignApproval(campaignId = '', params = {}) {
       campaignId: campaign.id,
       campaignName: campaign.name,
       previousCampaignStatus,
+      ...(deferredStart ? { deferredStartApprovalId: deferredStart.id } : {}),
       campaignChannel: campaign.channel,
       campaignProvider: campaign.provider || getCampaignProvider(campaign.channel),
       templateId: campaign.templateId || '',
@@ -49999,17 +50160,13 @@ async function requestCampaignApproval(campaignId = '', params = {}) {
       from_email: providerConfig.from_email,
       statusMessage: `${String(action).replace(/_/g, ' ')} queued for approval`,
     },
-  });
-  const nextCampaign = {
-    ...campaign,
-    status: normalizeCampaignStatus(params.status || 'pending'),
-    approvalId: approval.id,
-    approvalStatus: 'pending',
-    pendingAction: action,
-    pendingPreviousStatus: previousCampaignStatus,
-    updatedAt: isoNow(),
   };
-  upsertById(state, 'campaigns', nextCampaign);
+  return { publishing: publishCampaignApproval(campaign, action, params.actor, approvalParams) };
+}
+
+async function publishCampaignApproval(campaign, action, actor, approvalParams) {
+  const campaignId = campaign.id;
+  const { approval, fanout } = await toolHandlers.createApproval(approvalParams);
   recordCampaignEvent({
     campaignId,
     eventType: 'approval_requested',
@@ -50021,7 +50178,7 @@ async function requestCampaignApproval(campaignId = '', params = {}) {
   addActivity(
     state,
     makeActivity({
-      actor: params.actor || 'PBK Command Center',
+      actor: actor || 'PBK Command Center',
       category: 'CAMPAIGN',
       status: 'pending',
       text: `Campaign "${campaign.name}" queued for approval before provider execution.`,
@@ -50033,8 +50190,8 @@ async function requestCampaignApproval(campaignId = '', params = {}) {
     ok: true,
     result: 'queued_for_approval',
     verbiage: 'Campaign queued for approval',
-    campaign: nextCampaign,
-    approval,
+    campaign: state.campaigns.find((item) => item.id === campaignId),
+    approval: state.approvals.find((item) => item.id === approval.id) || approval,
     fanout,
   };
 }
@@ -50278,7 +50435,7 @@ function findCampaignSuppressionForLead(lead = {}, channel = '') {
   );
 }
 
-function isCampaignLeadContactable(campaign = {}, lead = {}, channel = '') {
+function isCampaignLeadContactable(campaign = {}, lead = {}, channel = '', now = new Date()) {
   const suppression = findCampaignSuppressionForLead(lead, channel);
   if (suppression) {
     return {
@@ -50299,7 +50456,7 @@ function isCampaignLeadContactable(campaign = {}, lead = {}, channel = '') {
       dnc,
     };
   }
-  const windowCheck = isWithinCampaignWindow(campaign, lead);
+  const windowCheck = isWithinCampaignWindow(campaign, lead, now);
   if (!windowCheck.ok) {
     return {
       ok: false,
@@ -50368,7 +50525,7 @@ async function processCampaignLeadStep(campaign = {}, lead = {}, options = {}) {
   const allowProviderWrites = Boolean(options.allowProviderWrites);
   const providerConfig = getCampaignProviderConfig(campaign);
   const targetLabel = lead.address || lead.leadName || lead.email || lead.phone || lead.id;
-  const contactable = isCampaignLeadContactable(campaign, lead, channel);
+  const contactable = isCampaignLeadContactable(campaign, lead, channel, now);
 
   if (!contactable.ok) {
     patchCampaignLead(lead.id, {
@@ -50576,7 +50733,98 @@ async function processCampaignLeadStep(campaign = {}, lead = {}, options = {}) {
   };
 }
 
+function getCampaignStartNotBefore(campaign, approval) {
+  let notBefore = null;
+  for (const value of [campaign?.schedule?.firstSendAt, approval?.metadata?.schedule?.firstSendAt]) {
+    if (value == null || value === '') continue;
+    // A legacy datetime-local value does not identify the operator's time zone.
+    const timestamp = typeof value === 'string' && /T\d{2}:\d{2}.*(?:Z|[+-]\d{2}:?\d{2})$/i.test(value)
+      ? Date.parse(value)
+      : NaN;
+    if (!Number.isFinite(timestamp)) return Infinity;
+    notBefore = notBefore === null ? timestamp : Math.max(notBefore, timestamp);
+  }
+  return notBefore;
+}
+
+function invalidCampaignStartSchedule() {
+  return {
+    ok: false,
+    result: 'campaign_schedule_invalid',
+    error: 'First send must include a time zone offset or UTC (Z) before the campaign can start.',
+    providerAttempted: false,
+  };
+}
+
+function scheduledCampaignStart(firstSendAt) {
+  return {
+    ok: true,
+    result: 'scheduled',
+    verbiage: 'Campaign start is scheduled',
+    firstSendAt: new Date(firstSendAt).toISOString(),
+    providerAttempted: false,
+  };
+}
+
+function findApprovedScheduledCampaignStart(campaign, approvalId) {
+  const approval = approvalId && state.approvals.find((item) => item.id === approvalId);
+  return approval?.status === 'approved' && isCampaignStartApproval(approval) &&
+    getApprovalCampaignId(approval) === campaign.id && getCampaignStartNotBefore(campaign, approval) !== null
+    ? approval : null;
+}
+
+function getBoundScheduledCampaignStart(campaign) {
+  const current = state.approvals.find((item) => item.id === campaign.approvalId);
+  if (current?.status !== 'approved' || getApprovalCampaignId(current) !== campaign.id ||
+      campaign.providerCampaignId || findCampaignProviderStartExecution(campaign.id)) return null;
+  return findApprovedScheduledCampaignStart(campaign,
+    isCampaignStartApproval(current) ? current.id : current.metadata?.deferredStartApprovalId);
+}
+
+function getDeferredCampaignStartApproval(campaign, status) {
+  if (status === 'pending' && campaign.pendingAction &&
+      normalizeCampaignApprovalAction({ approvalAction: campaign.pendingAction }) === 'start_campaign') {
+    return getBoundScheduledCampaignStart(campaign);
+  }
+  if (status === 'active' && !campaign.executionId && !campaign.providerCampaignId) {
+    const approval = state.approvals.find((item) => item.id === campaign.approvalId);
+    if (approval && normalizeCampaignApprovalAction(approval) === 'campaign_resume') {
+      return getBoundScheduledCampaignStart(campaign);
+    }
+  }
+  return null;
+}
+
+async function restoreScheduledCampaignAfterDeniedCancel(approval) {
+  if (normalizeCampaignApprovalAction(approval) !== 'campaign_cancel' || !approval.metadata?.deferredStartApprovalId) return;
+  const campaignId = getApprovalCampaignId(approval);
+  return queueCampaignOperation(`binding:${campaignId}`, () => restoreScheduledCampaignBinding(approval, campaignId));
+}
+
+async function restoreScheduledCampaignBinding(approval, campaignId) {
+  const campaign = (state.campaigns || []).find((item) => item.id === campaignId);
+  if (!campaign || campaign.status !== 'pending' || campaign.approvalId !== approval.id) return;
+  const start = findApprovedScheduledCampaignStart(campaign, approval.metadata.deferredStartApprovalId);
+  if (!start) return;
+  const execution = (state.campaignExecutions || []).find((item) => item.approvalId === start.id);
+  const restored = {
+    ...campaign,
+    status: campaign.providerCampaignId || execution?.instantly?.ok ? 'active' : execution ? 'provider_missing' : 'pending',
+    approvalId: start.id,
+    approvalStatus: 'approved',
+    pendingAction: execution || campaign.providerCampaignId ? '' : 'start_campaign',
+    pendingPreviousStatus: '',
+    updatedAt: isoNow(),
+  };
+  if (DATABASE_URL && !(await persistCampaignRecord(restored, { expected: campaign }))) return;
+  upsertById(state, 'campaigns', restored);
+}
+
 async function runCampaignScheduler(options = {}) {
+  return queueCampaignOperation('scheduler', () => runCampaignSchedulerPass(options));
+}
+
+async function runCampaignSchedulerPass(options) {
   ensureCampaignCollections();
   const now = options.now instanceof Date ? options.now : new Date();
   const dryRun = options.dryRun ?? !(CAMPAIGN_WORKER_ENABLED && CAMPAIGN_WORKER_CONFIRM_PROVIDER_WRITES);
@@ -50588,6 +50836,32 @@ async function runCampaignScheduler(options = {}) {
   for (const campaign of sortNewest(state.campaigns || [])) {
     if (processed.length >= limit) break;
     const status = normalizeCampaignStatus(campaign.status);
+    const deferredApproval = getDeferredCampaignStartApproval(campaign, status);
+    const firstSendAt = getCampaignStartNotBefore(campaign, deferredApproval);
+    if (firstSendAt === Infinity) {
+      const invalid = invalidCampaignStartSchedule();
+      skipped.push({ campaignId: campaign.id, status, result: invalid.result, reason: invalid.error });
+      continue;
+    }
+    if (firstSendAt !== null && firstSendAt > now.getTime()) {
+      skipped.push({ campaignId: campaign.id, status, result: 'scheduled', reason: 'Campaign start is not due.' });
+      continue;
+    }
+    if (deferredApproval) {
+      if (!allowProviderWrites) {
+        skipped.push({ campaignId: campaign.id, status, result: 'scheduled', reason: 'Campaign start is due; provider writes are not enabled for this run.' });
+        continue;
+      }
+      const result = await executeApprovedCampaign(deferredApproval, { actor: options.actor });
+      processed.push({
+        campaignId: campaign.id,
+        campaignName: campaign.name,
+        result: result.result,
+        dryRun: false,
+        reason: result.error || result.verbiage || '',
+      });
+      continue;
+    }
     if (status !== 'active') {
       skipped.push({ campaignId: campaign.id, status, reason: 'Campaign is not active.' });
       continue;
@@ -50650,7 +50924,12 @@ async function runCampaignScheduler(options = {}) {
       updatedAt: isoNow(),
     };
     upsertById(state, 'campaigns', campaignPatch);
-    await persistCampaignRecord(campaignPatch);
+    if (DATABASE_URL) {
+      await queryPgRows(
+        'UPDATE public.campaigns SET metrics = $2::jsonb, last_worker_run_at = $3 WHERE id = $1',
+        [campaign.id, JSON.stringify(campaignPatch.metrics), campaignPatch.lastWorkerRunAt]
+      );
+    }
   }
 
   const run = {
@@ -50901,6 +51180,16 @@ async function applyApprovedCampaignLifecycleAction(approval = {}, options = {})
       action,
     };
   }
+  if ((action === 'campaign_resume' && isCampaignTerminal(campaign)) || campaign.approvalId !== approval.id ||
+      (campaign.pendingAction && normalizeCampaignApprovalAction({ approvalAction: campaign.pendingAction }) !== action)) {
+    return {
+      ok: false,
+      result: 'campaign_action_stale',
+      error: 'This lifecycle approval no longer matches the current campaign action.',
+      action,
+      providerAttempted: false,
+    };
+  }
 
   const previousStatus = normalizeCampaignStatus(
     metadata.previousCampaignStatus ||
@@ -50983,6 +51272,17 @@ async function applyApprovedCampaignLifecycleAction(approval = {}, options = {})
       activityText: `Campaign "${campaign.name}" template changes approved.`,
     },
   }[action];
+  if (!campaign.pendingAction && campaign.approvalStatus === 'approved') {
+    return {
+      ok: true,
+      result: actionConfig.result,
+      verbiage: actionConfig.verbiage,
+      action,
+      campaign,
+      replayed: true,
+      providerAttempted: false,
+    };
+  }
   const now = isoNow();
   const nextCampaign = {
     ...campaign,
@@ -51000,6 +51300,7 @@ async function applyApprovedCampaignLifecycleAction(approval = {}, options = {})
   if (action === 'campaign_archive') nextCampaign.archivedAt = now;
   if (action === 'campaign_cancel') nextCampaign.cancelledAt = now;
 
+  if (DATABASE_URL && !(await persistCampaignRecord(nextCampaign, { expected: campaign }))) return campaignBindingUnavailable();
   upsertById(state, 'campaigns', nextCampaign);
   recordCampaignEvent({
     campaignId,
@@ -51036,7 +51337,6 @@ async function applyApprovedCampaignLifecycleAction(approval = {}, options = {})
     updatedAt: now,
   });
   await persistState(state);
-  await persistCampaignRecord(nextCampaign);
   return {
     ok: true,
     result: actionConfig.result,
@@ -51047,7 +51347,127 @@ async function applyApprovedCampaignLifecycleAction(approval = {}, options = {})
   };
 }
 
+function hasCurrentCampaignStartBinding(campaign, approval) {
+  if (!campaign) return true;
+  const status = normalizeCampaignStatus(campaign.status);
+  if (isCampaignStartBlocked(campaign)) return false;
+  return !campaign.approvalId || campaign.approvalId === approval.id ||
+    getDeferredCampaignStartApproval(campaign, status)?.id === approval.id;
+}
+
+async function resolveCampaignStartDispatchId(approval, workspaceId, campaignId) {
+  const stableId = `campaign-start:${JSON.stringify([workspaceId, campaignId])}`;
+  const freshId = approval.metadata?.campaignStartDispatchVersion === 2 ? stableId : approval.id;
+  const isLegacyStart = (item) => ['pending', 'approved'].includes(item.status) &&
+    isCampaignStartApproval(item) && getApprovalCampaignId(item) === campaignId &&
+    item.metadata?.campaignStartDispatchVersion !== 2;
+  const legacyIds = new Set(state.approvals.filter(isLegacyStart).map((item) => item.id));
+  if (!DATABASE_URL) return selectFreshCampaignDispatchId(approval, freshId, legacyIds);
+
+  // Reuse older approval-key claims, including an in-flight or unresolved attempt.
+  const lookup = await queryPgRows(
+    `SELECT d.approval_id
+     FROM public.provider_action_dispatches d
+     LEFT JOIN public.approvals a ON a.id = d.approval_id AND a.type = 'campaign'
+     WHERE d.workspace_id = $1 AND d.tool_name = 'startCampaign'
+       AND (d.approval_id IN ($2, $4)
+         OR (COALESCE(NULLIF(a.payload #>> '{metadata,campaignId}', ''),
+                      NULLIF(a.payload #>> '{metadata,campaign_id}', ''),
+                      a.payload ->> 'campaignId') = $3
+             AND (d.status <> 'completed'
+               OR NULLIF(d.result #>> '{campaignResult,execution,instantly,endpoint}', '') IS NOT NULL
+               OR d.result #>> '{campaignResult,execution,status}' = 'provider-started')))
+     ORDER BY d.dispatch_started_at, d.approval_id
+     LIMIT 1`,
+    [workspaceId, approval.id, campaignId, stableId]
+  );
+  if (!lookup.ok) return { error: lookup.error };
+  if (lookup.rows[0]?.approval_id) return { id: lookup.rows[0].approval_id };
+
+  // A legacy worker can still claim an approval that has no dispatch row yet.
+  const legacy = await queryPgRows(
+    `SELECT id, type, status, payload
+     FROM public.approvals
+     WHERE workspace_id = $1 AND type = 'campaign' AND status IN ('pending', 'approved')
+       AND COALESCE(NULLIF(payload #>> '{metadata,campaignId}', ''),
+                    NULLIF(payload #>> '{metadata,campaign_id}', ''),
+                    payload ->> 'campaignId') = $2`,
+    [normalizeTenantId(workspaceId), campaignId]
+  );
+  if (!legacy.ok) return { error: legacy.error };
+  for (const row of legacy.rows) {
+    const candidate = normalizePgApprovalRecord(row);
+    if (isLegacyStart(candidate)) legacyIds.add(candidate.id);
+  }
+  return selectFreshCampaignDispatchId(approval, freshId, legacyIds);
+}
+
+function selectFreshCampaignDispatchId(approval, freshId, legacyIds) {
+  if (legacyIds.size === 0) return { id: freshId };
+  if (legacyIds.size === 1 && legacyIds.has(approval.id)) return { id: approval.id };
+  return {
+    error: 'A different legacy start approval is still pending or approved. Reconcile it before dispatching this campaign.',
+    result: 'campaign_legacy_approval_conflict',
+  };
+}
+
+async function checkDurableCampaignStart(client, approval, campaign, campaignId, workspaceId) {
+  if (!client) return campaignBindingUnavailable();
+  let row;
+  try {
+    const result = await client.query(
+      `SELECT a.status AS start_status, a.payload AS start_payload,
+              c.id AS campaign_id, c.status AS campaign_status, c.schedule,
+              c.approval_id AS binding_id, c.approval_status AS binding_status,
+              c.pending_action, c.execution_id, c.provider_campaign_id,
+              b.type AS bound_type, b.status AS bound_status, b.payload AS bound_payload
+       FROM public.approvals a
+       LEFT JOIN public.campaigns c ON c.id = NULLIF($2, '')
+       LEFT JOIN public.approvals b ON b.id = c.approval_id AND b.workspace_id = a.workspace_id
+       WHERE a.id = $1 AND a.workspace_id = $3 AND a.type = 'campaign'`,
+      [approval.id, campaignId, normalizeTenantId(workspaceId)]
+    );
+    [row] = result.rows;
+  } catch {
+    return campaignBindingUnavailable();
+  }
+  const start = row && { ...row.start_payload, id: approval.id, type: 'campaign', status: row.start_status };
+  if (!start || start.status !== 'approved' || !isCampaignStartApproval(start) || getApprovalCampaignId(start) !== campaignId) {
+    return blockedCampaignStart();
+  }
+  if (campaignId) {
+    if (!campaign || row.campaign_id !== campaignId || row.binding_id !== campaign.approvalId ||
+        row.campaign_status !== normalizeCampaignStatus(campaign.status) ||
+        isCampaignStartBlocked({ status: row.campaign_status }) || row.provider_campaign_id) {
+      return blockedCampaignStart();
+    }
+    const pendingStart = ['pending', 'active'].includes(row.campaign_status) && row.binding_id === approval.id &&
+      ['pending', 'approved'].includes(row.binding_status) &&
+      row.pending_action && normalizeCampaignApprovalAction({ approvalAction: row.pending_action }) === 'start_campaign';
+    const bound = { ...row.bound_payload, type: row.bound_type, status: row.bound_status };
+    const resumedStart = row.campaign_status === 'active' && !row.execution_id && row.binding_status === 'approved' &&
+      bound.type === 'campaign' && bound.status === 'approved' && getApprovalCampaignId(bound) === campaignId &&
+      normalizeCampaignApprovalAction(bound) === 'campaign_resume' && bound.metadata?.deferredStartApprovalId === approval.id;
+    if (!pendingStart && !resumedStart) return blockedCampaignStart();
+  }
+  const notBefore = getCampaignStartNotBefore({ schedule: row.schedule }, start);
+  if (notBefore === Infinity) return invalidCampaignStartSchedule();
+  if (notBefore !== null && notBefore > Date.now()) {
+    return {
+      ...campaignBindingUnavailable(),
+      error: 'The durable first-send time moved into the future after dispatch was queued.',
+    };
+  }
+  return null;
+}
+
 async function executeApprovedCampaign(approval = {}, options = {}) {
+  const campaignId = getApprovalCampaignId(approval);
+  if (!campaignId) return executeCampaignUnderBinding(approval, options, campaignId);
+  return queueCampaignOperation(`binding:${campaignId}`, () => executeCampaignUnderBinding(approval, options, campaignId));
+}
+
+async function executeCampaignUnderBinding(approval, options, campaignId) {
   if (String(approval.status || '').toLowerCase() !== 'approved') {
     return {
       ok: false,
@@ -51060,24 +51480,85 @@ async function executeApprovedCampaign(approval = {}, options = {}) {
   const lifecycleResult = await applyApprovedCampaignLifecycleAction(approval, options);
   if (lifecycleResult) return lifecycleResult;
 
-  const existing = (state.campaignExecutions || []).find((item) => item.approvalId === approval.id);
-  if (existing) {
+  const campaign = (state.campaigns || []).find((item) => item.id === campaignId);
+  const existing = (state.campaignExecutions || []).find((item) => item.approvalId === approval.id) ||
+    findCampaignProviderStartExecution(campaignId);
+  if (existing || campaign?.providerCampaignId) {
+    const started = campaign?.providerCampaignId || existing?.instantly?.ok || existing?.status === 'provider-started';
     return {
       ok: true,
-      result: 'live',
-      verbiage: 'Campaign execution already started',
+      result: started ? 'live' : existing.instantly?.result || 'provider_missing',
+      verbiage: started ? 'Campaign execution already started' : 'Campaign start already attempted; check the provider',
+      replayed: true,
       execution: existing,
+      campaign,
     };
   }
 
   if (!approval.id) {
     return { ok: false, result: 'missing_approval_id', error: 'Campaign approval ID is required.' };
   }
+  if (!hasCurrentCampaignStartBinding(campaign, approval)) {
+    return blockedCampaignStart();
+  }
+  const firstSendAt = getCampaignStartNotBefore(campaign, approval);
+  if (firstSendAt !== null && firstSendAt > Date.now()) {
+    if (campaign && (!campaign.approvalId || campaign.approvalId === approval.id) &&
+        (campaign.approvalStatus !== 'approved' || campaign.status !== 'pending')) {
+      const scheduledCampaign = {
+        ...campaign,
+        status: 'pending',
+        approvalId: approval.id,
+        approvalStatus: 'approved',
+        pendingAction: 'start_campaign',
+        updatedAt: isoNow(),
+      };
+      if (DATABASE_URL && !(await persistCampaignRecord(scheduledCampaign, { expected: campaign }))) return campaignBindingUnavailable();
+      upsertById(state, 'campaigns', scheduledCampaign);
+    }
+    if (firstSendAt === Infinity) return invalidCampaignStartSchedule();
+    return scheduledCampaignStart(firstSendAt);
+  }
+
+  const workspaceId = approval.workspaceId || approval.workspace_id || 'pbk';
+  const leads = getApprovalCampaignLeads(approval);
+  const dispatchKey = campaignId && INSTANTLY_API_KEY && leads.some((lead) => lead.email)
+    ? await resolveCampaignStartDispatchId(approval, workspaceId, campaignId)
+    : { id: approval.id };
+  if (!dispatchKey.id) {
+    return {
+      ok: false,
+      result: dispatchKey.result || 'provider_dispatch_lease_unavailable',
+      error: dispatchKey.error || 'Existing campaign dispatch claims could not be checked.',
+      providerAttempted: false,
+      retryable: !dispatchKey.result,
+    };
+  }
   const dispatch = await executeProviderActionWithSharedLease({
-    approvalId: approval.id,
-    workspaceId: approval.workspaceId || approval.workspace_id || 'pbk',
+    approvalId: dispatchKey.id,
+    workspaceId,
     toolName: 'startCampaign',
-    execute: async () => ({ campaignResult: await startApprovedCampaign(approval, options) }),
+    readWithLeaseClient: Boolean(DATABASE_URL),
+    execute: async (_context, leaseClient) => {
+      const latestApproval = state.approvals.find((item) => item.id === approval.id);
+      const latestCampaign = (state.campaigns || []).find((item) => item.id === campaignId);
+      if (latestApproval?.status !== 'approved' || getApprovalCampaignId(latestApproval) !== campaignId ||
+          (campaign && !latestCampaign) || !hasCurrentCampaignStartBinding(latestCampaign, latestApproval)) {
+        return { campaignResult: { ...blockedCampaignStart(), providerAttempted: false } };
+      }
+      const latestFirstSend = getCampaignStartNotBefore(latestCampaign, latestApproval);
+      if (latestFirstSend === Infinity) return { campaignResult: invalidCampaignStartSchedule() };
+      if (latestFirstSend !== null && latestFirstSend > Date.now()) {
+        return { campaignResult: scheduledCampaignStart(latestFirstSend) };
+      }
+      if (DATABASE_URL) {
+        const blocked = await checkDurableCampaignStart(leaseClient, latestApproval, latestCampaign, campaignId, workspaceId);
+        if (blocked) return { campaignResult: { ...blocked, providerAttempted: false, reconciliationRequired: true } };
+      }
+      return {
+        campaignResult: await startApprovedCampaign(latestApproval, options, leads, latestCampaign?.approvalId),
+      };
+    },
   });
   if (dispatch.value?.campaignResult) {
     return { ...dispatch.value.campaignResult, replayed: !dispatch.executed };
@@ -51089,8 +51570,7 @@ async function executeApprovedCampaign(approval = {}, options = {}) {
   };
 }
 
-async function startApprovedCampaign(approval, options) {
-  const leads = getApprovalCampaignLeads(approval);
+async function startApprovedCampaign(approval, options, leads, boundApprovalId) {
   const instantlyResult = await createInstantlyCampaignForApproval({ approval, leads });
   const startAt = Date.now();
   const steps = leads.flatMap((lead, leadIndex) => {
@@ -51129,7 +51609,7 @@ async function startApprovedCampaign(approval, options) {
 
   const execution = {
     id: `campaign-exec-${approval.id || Date.now()}`,
-    campaignId: approval.metadata?.campaignId || '',
+    campaignId: getApprovalCampaignId(approval),
     approvalId: approval.id || '',
     result: 'live',
     status: instantlyResult.ok ? 'provider-started' : 'scheduled-with-provider-gaps',
@@ -51148,15 +51628,19 @@ async function startApprovedCampaign(approval, options) {
   };
   upsertById(state, 'campaignExecutions', execution);
   await persistCampaignExecutionRecord(execution);
-  const campaignId = approval.metadata?.campaignId || '';
+  const campaignId = execution.campaignId;
   if (campaignId) {
     const campaign = (state.campaigns || []).find((item) => item.id === campaignId);
     if (campaign) {
+      const bindingUnchanged = campaign.approvalId === boundApprovalId && !isCampaignStartBlocked(campaign);
       const nextCampaign = {
         ...campaign,
-        status: instantlyResult.ok ? 'active' : 'provider_missing',
-        approvalStatus: 'approved',
-        pendingAction: '',
+        ...(bindingUnchanged ? {
+          status: instantlyResult.ok ? 'active' : 'provider_missing',
+          approvalId: campaign.approvalId || approval.id,
+          approvalStatus: 'approved',
+          pendingAction: '',
+        } : {}),
         executionId: execution.id,
         providerCampaignId: instantlyResult.providerCampaignId || campaign.providerCampaignId || '',
         metrics: {
@@ -51165,8 +51649,9 @@ async function startApprovedCampaign(approval, options) {
         },
         updatedAt: isoNow(),
       };
-      upsertById(state, 'campaigns', nextCampaign);
-      await persistCampaignRecord(nextCampaign);
+      if (!DATABASE_URL || await persistCampaignRecord(nextCampaign, { expected: campaign })) {
+        upsertById(state, 'campaigns', nextCampaign);
+      }
       recordCampaignEvent({
         campaignId,
         eventType: 'execution_started',
@@ -56537,6 +57022,14 @@ const toolHandlers = {
       createdAt: params.createdAt || isoNow(),
     };
 
+    if (isCampaignStartApproval(approval)) {
+      const campaignId = getApprovalCampaignId(approval);
+      const campaign = campaignId && (state.campaigns || []).find((item) => item.id === campaignId);
+      const { campaignStartDispatchVersion, ...metadata } = approval.metadata;
+      approval.metadata = campaign?.startDispatchVersion === 2
+        ? { ...metadata, campaignStartDispatchVersion: 2 }
+        : metadata;
+    }
     addApproval(state, approval);
     addActivity(
       state,
@@ -59956,8 +60449,12 @@ async function handleRuntimeEvent(normalizedEvent, payload) {
       }
     }
 
-    if (approval.status === 'approved' && String(approval.type || '').toLowerCase() === 'campaign') {
-      campaignResult = await executeApprovedCampaign(approval, { actor: incomingActor });
+    if (String(approval.type || '').toLowerCase() === 'campaign') {
+      if (approval.status === 'approved') {
+        campaignResult = await executeApprovedCampaign(approval, { actor: incomingActor });
+      } else if (approval.status === 'rejected') {
+        await restoreScheduledCampaignAfterDeniedCancel(approval);
+      }
     }
 
     if (approval.status === 'approved' && (String(approval.type || '').toLowerCase() === 'prompt-edit' || String(approval.approvalAction || '').toLowerCase() === 'prompt_patch')) {

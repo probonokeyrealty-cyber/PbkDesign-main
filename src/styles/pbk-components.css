@@ -1461,67 +1461,82 @@
    ============================================================ */
 .pbk-campaign-surface {
   min-height: 100%;
-  background:
-    radial-gradient(ellipse at top left, rgba(14, 165, 233, 0.16) 0%, transparent 34%),
-    radial-gradient(ellipse at top right, rgba(163, 230, 53, 0.08) 0%, transparent 30%),
-    var(--bg-void);
+  background: var(--bg-void);
   color: var(--text-primary);
 }
 .pbk-campaign-hero {
-  position: relative;
-  overflow: hidden;
-  border: 1px solid var(--border-dim);
-  border-radius: var(--radius-xl);
-  background:
-    linear-gradient(135deg, rgba(6, 8, 11, 0.96), rgba(12, 18, 28, 0.94)),
-    radial-gradient(circle at 12% 12%, var(--sky-glow), transparent 34%);
-  padding: clamp(var(--s-5), 4vw, var(--s-9)) var(--s-6) var(--s-4);
-  box-shadow: 0 18px 52px rgba(0, 0, 0, 0.36);
-}
-.pbk-campaign-hero::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  background:
-    linear-gradient(90deg, transparent 0, rgba(125, 211, 252, 0.08) 50%, transparent 100%),
-    repeating-linear-gradient(
-      90deg,
-      transparent 0,
-      transparent 46px,
-      rgba(125, 211, 252, 0.03) 47px,
-      transparent 48px
-    );
-  opacity: 0.52;
-}
-.pbk-campaign-hero > * {
-  position: relative;
-  z-index: 1;
+  display: grid;
+  gap: var(--s-4);
 }
 .pbk-campaign-hero-top {
   display: flex;
   justify-content: space-between;
-  gap: var(--s-5);
-  align-items: flex-start;
+  flex-wrap: wrap;
+  gap: var(--s-3);
+  align-items: center;
 }
 .pbk-campaign-hero h1 {
   margin: 0;
-  max-width: 840px;
+  font-size: 36px;
+  letter-spacing: 0;
 }
-.pbk-campaign-hero p {
-  max-width: 680px;
-  margin: var(--s-3) 0 0;
+.pbk-campaign-page-actions {
+  display: flex;
+  gap: var(--s-2);
+  flex-wrap: wrap;
+}
+.pbk-campaign-status-strip {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin: 0;
+  border-block: 1px solid var(--border-dim);
+  font-variant-numeric: tabular-nums;
+}
+.pbk-campaign-status-strip > div {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  padding: var(--s-3) var(--s-4);
+}
+.pbk-campaign-status-strip > div + div {
+  border-inline-start: 1px solid var(--border-dim);
+}
+.pbk-campaign-status-strip dt {
   color: var(--text-secondary);
-  font-size: 14px;
-  line-height: 1.7;
+  font-size: 13px;
+}
+.pbk-campaign-status-strip dd {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: 16px;
+  font-weight: 650;
+}
+.pbk-camp-performance-disclosure {
+  border-block: 1px solid var(--border-dim);
+}
+.pbk-camp-performance-disclosure > summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 44px;
+  gap: var(--s-2);
+  padding: var(--s-2) 0;
+  color: var(--text-primary);
+  cursor: pointer;
+}
+.pbk-camp-performance-disclosure > summary::-webkit-details-marker {
+  display: none;
+}
+.pbk-camp-performance-disclosure[open] > summary svg {
+  transform: rotate(180deg);
 }
 .pbk-camp-drilldown {
   display: grid;
   gap: var(--s-4);
-  border-color: rgba(163, 230, 53, 0.2);
-  background:
-    linear-gradient(135deg, rgba(6, 8, 11, 0.86), rgba(11, 18, 16, 0.9)),
-    radial-gradient(circle at top right, var(--lime-glow), transparent 36%);
+  border-color: var(--border-dim);
+  background: var(--bg-panel);
 }
 .pbk-camp-drilldown-head {
   display: flex;
@@ -1642,9 +1657,13 @@
 }
 .pbk-camp-toolbar {
   display: grid;
-  grid-template-columns: minmax(260px, 1fr) minmax(280px, auto) minmax(150px, auto) auto auto;
+  grid-template-columns: minmax(180px, 1fr) auto minmax(118px, auto) auto auto;
   gap: var(--s-3);
   align-items: center;
+  box-shadow: none;
+}
+.pbk-camp-toolbar > .pbk-data-source {
+  grid-column: 1 / -1;
 }
 .pbk-camp-search {
   position: relative;
@@ -1662,7 +1681,7 @@
   padding-left: 36px;
 }
 .pbk-camp-select {
-  min-width: 144px;
+  min-width: 0;
   text-transform: capitalize;
 }
 .pbk-camp-channel-chip {
@@ -1843,9 +1862,9 @@
   flex-wrap: wrap;
   align-items: center;
   gap: 8px;
-  color: var(--text-tertiary);
+  color: var(--text-secondary);
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: 12px;
 }
 .pbk-camp-card-meta strong {
   color: var(--text-primary);
@@ -2014,9 +2033,8 @@
   display: grid;
   grid-template-rows: auto minmax(0, 1fr) auto;
   border: 1px solid var(--border);
-  border-radius: var(--radius-xl);
-  background:
-    radial-gradient(circle at top right, var(--sky-glow), transparent 34%), var(--bg-console);
+  border-radius: 8px;
+  background: var(--bg-console);
   box-shadow: 0 30px 110px rgba(0, 0, 0, 0.58);
   color: var(--text-primary);
 }
@@ -2034,7 +2052,7 @@
 .pbk-wiz-head h2 {
   margin: 0;
   font-family: var(--font-display);
-  font-size: clamp(26px, 4vw, 38px);
+  font-size: 30px;
   line-height: 1;
 }
 .pbk-wiz-head h2 em,
@@ -2100,6 +2118,19 @@
   overflow: auto;
   overscroll-behavior: contain;
   padding: var(--s-5);
+}
+.pbk-camp-message-preview {
+  margin: var(--s-3) 0 0;
+  color: var(--text-primary);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.pbk-campaign-surface .pbk-review-card .row .l {
+  color: var(--text-secondary);
+}
+.pbk-campaign-surface .pbk-review-card .row .v {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 .pbk-wiz-validation {
   display: flex;
@@ -2390,7 +2421,6 @@
   }
 }
 @media (max-width: 900px) {
-  .pbk-campaign-hero-top,
   .pbk-camp-drilldown-head,
   .pbk-wiz-foot {
     flex-direction: column;
@@ -2531,8 +2561,27 @@
   }
 }
 @media (max-width: 560px) {
-  .pbk-campaign-hero {
-    padding: var(--s-5) var(--s-4) var(--s-4);
+  .pbk-campaign-hero h1 {
+    font-size: 29px;
+  }
+  .pbk-campaign-status-strip {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .pbk-campaign-status-strip > div {
+    padding-inline: var(--s-2);
+  }
+  .pbk-campaign-status-strip > div:nth-child(3) {
+    border-inline-start: 0;
+  }
+  .pbk-campaign-status-strip > div:nth-child(n + 3) {
+    border-top: 1px solid var(--border-dim);
+  }
+  .pbk-campaign-page-actions .pbk-btn {
+    min-height: 44px;
+  }
+  .pbk-camp-search .pbk-input,
+  .pbk-camp-select {
+    font-size: 16px;
   }
   .pbk-camp-drilldown-summary {
     grid-template-columns: 1fr;

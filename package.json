@@ -123,6 +123,7 @@
     "test:docker-render-config": "node ./scripts/docker-render-config-smoke.mjs",
     "test:campaigns-shell": "node ./scripts/campaigns-shell-smoke.mjs",
     "test:campaigns-prototype-modern": "node ./scripts/campaigns-prototype-modern-smoke.mjs",
+    "test:campaigns-design-browser": "node ./scripts/campaigns-design-browser-smoke.mjs",
     "test:agent-fleet-prototype-modern": "node ./scripts/agent-fleet-prototype-modern-smoke.mjs",
     "test:agent-fleet-design-browser": "node ./scripts/agent-fleet-design-browser-smoke.mjs",
     "test:agent-fleet-controls": "node ./scripts/agent-fleet-controls-smoke.mjs",

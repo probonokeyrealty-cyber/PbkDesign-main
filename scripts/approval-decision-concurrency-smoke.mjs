@@ -1,11 +1,12 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { createHmac } from 'node:crypto';
+import { createHmac, randomUUID } from 'node:crypto';
 import { once } from 'node:events';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { test } from 'node:test';
 import { setTimeout as delay } from 'node:timers/promises';
 
 const stateDir = await mkdtemp(join(tmpdir(), 'pbk-approval-qa-'));
@@ -41,6 +42,18 @@ const execFileSync = childProcess.execFileSync;
 childProcess.execFileSync = (file, ...args) => file === 'powershell.exe'
   ? '{}' : execFileSync(file, ...args);
 syncBuiltinESMExports();
+const realDate = Date;
+let clockOffset = 0;
+const fixtureNow = () => realDate.now() + clockOffset;
+globalThis.Date = new Proxy(realDate, {
+  construct: (target, args, newTarget) => Reflect.construct(target, args.length ? args : [fixtureNow()], newTarget),
+  apply: () => new realDate(fixtureNow()).toString(),
+  get: (target, key) => key === 'now' ? fixtureNow : Reflect.get(target, key),
+});
+process.on('message', (timestamp) => {
+  clockOffset = timestamp - realDate.now();
+  process.send('clock-updated');
+});
 const realFetch = globalThis.fetch;
 globalThis.fetch = (target, options) => {
   const url = new URL(String(target));
@@ -70,8 +83,9 @@ const child = spawn(process.execPath, [
     PBK_INSTANTLY_BASE_URL: providerUrl,
     PBK_SLACK_BOT_TOKEN: 'fixture',
     PBK_SLACK_SIGNING_SECRET: slackSigningKey,
+    PBK_CAMPAIGN_WORKER_ENABLED: 'true',
   },
-  stdio: ['ignore', 'ignore', 'pipe'],
+  stdio: ['ignore', 'ignore', 'pipe', 'ipc'],
 });
 const closed = once(child, 'close');
 let stderr = '';
@@ -86,6 +100,28 @@ async function request(path, method = 'GET', body) {
   });
   return { status: res.status, ...(await res.json()) };
 }
+
+async function createDraft(schedule = {}, id = `campaign-draft-${randomUUID()}`) {
+  const response = await request('/api/campaigns', 'POST', {
+    id,
+    name: 'Fixture draft',
+    selectedLeads: [{ leadId: id, leadName: 'Fixture seller', email: 'qa@example.invalid' }],
+    schedule,
+  });
+  assert.equal(response.ok, true);
+  assert.equal(response.campaign.id, id);
+  assert.equal(response.leads.length, 1);
+  return response;
+}
+
+function decide(id) {
+  return request(`/api/approvals/${id}/approve`, 'POST', { actor: 'QA operator' });
+}
+
+function runDue(options) {
+  return request('/api/campaigns/run-due', 'POST', options);
+}
+
 try {
   for (let attempt = 0; ; attempt++) {
     if (await fetch(origin + '/health').then((res) => res.ok).catch(() => false)) break;
@@ -151,6 +187,211 @@ try {
   assert.equal((await request(nextPath, 'PUT', { status: 'approved' })).status, 409);
   assert.equal(providerRequests, 1);
   console.log('Approval concurrency: one provider request, replay and conflict handled, stale Slack Modify reconciled.');
+
+  await test('A reserved draft ID returns the original campaign and leads on create replay', async () => {
+    const { campaign, leads } = await createDraft();
+    const replay = await request('/api/campaigns', 'POST', {
+      id: campaign.id,
+      name: 'Stale retry name',
+      selectedLeads: [{ leadId: 'stale', email: 'stale@example.invalid' }],
+    });
+    assert.equal(replay.ok, true);
+    assert.deepEqual(replay.campaign, campaign);
+    assert.deepEqual(replay.leads, leads);
+  });
+
+  await test('Start request replays preserve one active campaign and its leads', async () => {
+    const before = providerRequests;
+    const { campaign, leads } = await createDraft();
+    const path = `/api/campaigns/${campaign.id}`;
+    const [original, concurrentReplay] = await Promise.all([
+      request(`${path}/approval`, 'POST', { requestedAction: 'start_campaign' }),
+      request(`${path}/actions`, 'POST', { action: 'start' }),
+    ]);
+    assert.equal(original.ok, true);
+    assert.equal(concurrentReplay.ok, true);
+    assert.equal(concurrentReplay.approval.id, original.approval.id, 'Concurrent Start aliases must share one approval');
+    assert.equal((await decide(original.approval.id)).campaignResult.result, 'live');
+    const replay = await request('/api/campaigns', 'POST', {
+      id: campaign.id,
+      name: 'Stale retry name',
+      selectedLeads: [{ leadId: 'stale', email: 'stale@example.invalid' }],
+    });
+    assert.equal(replay.ok, true);
+    assert.equal(replay.campaign.name, campaign.name);
+    assert.equal(replay.campaign.status, 'active');
+    assert.equal(replay.campaign.approvalId, original.approval.id);
+    assert.deepEqual(replay.leads.map((lead) => lead.id), leads.map((lead) => lead.id));
+    const restarted = await request(`${path}/approval`, 'POST', { requestedAction: 'start_campaign' });
+    assert.equal(restarted.ok, true);
+    assert.equal(restarted.campaign.status, 'active');
+    const current = await request('/state');
+    assert.equal(current.approvals.filter((item) => item.metadata?.campaignId === campaign.id).length, 1);
+    assert.equal(providerRequests - before, 1);
+
+    for (const [action, status] of [['pause', 'paused'], ['resume', 'active']]) {
+      const lifecycle = await request(`${path}/actions`, 'POST', { action });
+      assert.notEqual(lifecycle.approval.id, original.approval.id);
+      const approved = await decide(lifecycle.approval.id);
+      assert.equal(approved.campaignResult.campaign.status, status);
+    }
+    assert.equal(providerRequests - before, 1, 'Pause and resume must not create another provider campaign');
+  });
+
+  await test('Two approved cards for the same campaign share one provider dispatch', async () => {
+    const before = providerRequests;
+    const { campaign, leads } = await createDraft();
+    const approvals = await Promise.all(['first', 'second'].map((suffix) => request('/api/approvals', 'POST', {
+      id: `${campaign.id}-${suffix}`,
+      type: 'campaign',
+      approvalAction: 'start_campaign',
+      leadName: campaign.name,
+      metadata: { campaignId: campaign.id, selectedLeads: leads },
+    })));
+    const results = await Promise.all(approvals.map(({ approval }) => decide(approval.id)));
+    assert.deepEqual(results.map(({ campaignResult }) => campaignResult.ok), [true, true]);
+    assert.equal(providerRequests - before, 1, 'Different approval IDs must not start the same campaign twice');
+    assert.equal(new Set(results.map(({ campaignResult }) => campaignResult.execution.id)).size, 1);
+  });
+
+  await test('A scheduled approval waits for its timestamp and a write-enabled due run', async () => {
+    const before = providerRequests;
+    const firstSendAt = new Date(Date.now() + 86_400_000).toISOString();
+    const { campaign } = await createDraft({ firstSendAt });
+    const { approval } = await request(`/api/campaigns/${campaign.id}/approval`, 'POST', {});
+    const decision = await decide(approval.id);
+    assert.equal(decision.approval.status, 'approved');
+    assert.equal(decision.campaignResult.result, 'scheduled');
+    const execute = () => request('/api/campaigns/execute-approved', 'POST', { approvalId: approval.id });
+    assert.equal((await execute()).result, 'scheduled');
+    const replay = await request(`/api/campaigns/${campaign.id}/approval`, 'POST', {});
+    assert.equal(replay.result, 'scheduled');
+    assert.equal(replay.approval.id, approval.id);
+    await runDue({ dryRun: false, confirmProviderWrites: true });
+    assert.equal(providerRequests, before, 'No route may dispatch before the scheduled time');
+
+    const action = (name) => request(`/api/campaigns/${campaign.id}/actions`, 'POST', { action: name });
+    const cancel = await action('cancel');
+    assert.equal(cancel.approval.status, 'pending');
+    const advanced = once(child, 'message');
+    child.send(Date.parse(firstSendAt));
+    assert.equal((await advanced)[0], 'clock-updated');
+    await runDue({ dryRun: false, confirmProviderWrites: true });
+    assert.equal((await execute()).result, 'campaign_start_blocked');
+    assert.equal(providerRequests, before, 'A pending cancel must block the scheduled start');
+    const denied = await request(`/api/approvals/${cancel.approval.id}/decline`, 'POST', {});
+    assert.equal(denied.approval.status, 'rejected');
+    const restored = await request(`/api/campaigns/${campaign.id}`);
+    assert.equal(restored.campaign.status, 'pending');
+    assert.equal(restored.campaign.approvalStatus, 'approved');
+    assert.equal(restored.campaign.approvalId, approval.id);
+    assert.equal(restored.campaign.schedule.firstSendAt, firstSendAt);
+
+    await runDue({ dryRun: true, confirmProviderWrites: true });
+    await runDue({ dryRun: false });
+    assert.equal(providerRequests, before, 'Dry-run and unconfirmed workers must not dispatch a due campaign');
+
+    const pause = await action('pause');
+    assert.equal((await decide(pause.approval.id)).campaignResult.campaign.status, 'paused');
+    assert.equal((await execute()).result, 'campaign_start_blocked');
+    assert.equal((await action('start')).result, 'campaign_start_blocked');
+    await runDue({ dryRun: false, confirmProviderWrites: true });
+    assert.equal(providerRequests, before, 'A paused campaign must not dispatch even when its start is due');
+
+    const resume = await action('resume');
+    assert.equal((await decide(resume.approval.id)).campaignResult.campaign.status, 'active');
+
+    const runs = await Promise.all([
+      runDue({ dryRun: false, confirmProviderWrites: true }),
+      runDue({ dryRun: false, confirmProviderWrites: true }),
+    ]);
+    assert(runs.every((run) => run.ok));
+    const current = await request(`/api/campaigns/${campaign.id}`);
+    assert.equal(current.campaign.status, 'active');
+    assert.equal((await execute()).ok, true);
+    assert.equal(providerRequests - before, 1, 'Overlapping due runs and approval replays must dispatch once');
+  });
+
+  await test('Replaying an approved resume cannot restore a cancelled scheduled start', async () => {
+    const before = providerRequests;
+    const firstSendAt = new Date(Date.now() + 172_800_000).toISOString();
+    const { campaign } = await createDraft({ firstSendAt });
+    const path = `/api/campaigns/${campaign.id}`;
+    const action = (name) => request(`${path}/actions`, 'POST', { action: name });
+    const start = await action('start');
+    assert.equal((await decide(start.approval.id)).campaignResult.result, 'scheduled');
+    for (const name of ['pause', 'resume', 'cancel']) {
+      const { approval } = await action(name);
+      assert.equal((await decide(approval.id)).campaignResult.ok, true);
+      if (name === 'resume') campaign.resumeApprovalId = approval.id;
+    }
+    const replay = await request('/api/campaigns/execute-approved', 'POST', { approvalId: campaign.resumeApprovalId });
+    assert.equal(replay.ok, false);
+    assert.equal((await request(path)).campaign.status, 'cancelled');
+    const advanced = once(child, 'message');
+    child.send(Date.parse(firstSendAt));
+    await advanced;
+    await runDue({ dryRun: false, confirmProviderWrites: true });
+    assert.equal(providerRequests, before);
+  });
+
+  await test('A timezone-less legacy schedule cannot silently dispatch', async () => {
+    const before = providerRequests;
+    const firstSendAt = '2099-01-01T09:00';
+    const { campaign } = await createDraft({ firstSendAt });
+    const { approval } = await request(`/api/campaigns/${campaign.id}/approval`, 'POST', {});
+    const decision = await decide(approval.id);
+    assert.equal(decision.campaignResult.result, 'campaign_schedule_invalid');
+    assert.equal((await request('/api/campaigns/execute-approved', 'POST', { approvalId: approval.id })).result, 'campaign_schedule_invalid');
+    await runDue({ dryRun: false, confirmProviderWrites: true });
+    assert.equal(providerRequests, before);
+  });
+
+  await test('Direct terminal PATCH revokes a retained resume approval before a due run', async () => {
+    const before = providerRequests;
+    const firstSendAt = new Date(Date.now() + 259_200_000).toISOString();
+    const { campaign } = await createDraft({ firstSendAt });
+    const path = `/api/campaigns/${campaign.id}`;
+    const action = (name) => request(`${path}/actions`, 'POST', { action: name });
+    const start = await action('start');
+    assert.equal((await decide(start.approval.id)).campaignResult.result, 'scheduled');
+    const pause = await action('pause');
+    assert.equal((await decide(pause.approval.id)).campaignResult.campaign.status, 'paused');
+    const resume = await action('resume');
+    assert.equal((await decide(resume.approval.id)).campaignResult.campaign.status, 'active');
+    const cancelled = await request(path, 'PATCH', { status: 'cancelled' });
+    assert.equal(cancelled.campaign.approvalId, resume.approval.id);
+    const replay = await request('/api/campaigns/execute-approved', 'POST', { approvalId: resume.approval.id });
+    assert.equal(replay.result, 'campaign_action_stale');
+    const advanced = once(child, 'message');
+    child.send(Date.parse(firstSendAt));
+    await advanced;
+    await runDue({ dryRun: false, confirmProviderWrites: true });
+    assert.equal((await request(path)).campaign.status, 'cancelled');
+    assert.equal(providerRequests, before);
+  });
+
+  await test('Ambiguous legacy start cards block without creating a provider dispatch', async () => {
+    const before = providerRequests;
+    const { campaign, leads } = await createDraft({}, 'legacy-fixture-campaign');
+    const cards = [];
+    for (const suffix of ['first', 'second']) {
+      const { approval } = await request('/api/approvals', 'POST', {
+        id: `${campaign.id}-${suffix}`,
+        type: 'campaign',
+        approvalAction: 'start_campaign',
+        metadata: { campaignId: campaign.id, selectedLeads: leads },
+      });
+      assert.equal(approval.metadata.campaignStartDispatchVersion, undefined);
+      cards.push(approval);
+    }
+    for (const card of cards) {
+      const decision = await decide(card.id);
+      assert.equal(decision.campaignResult.result, 'campaign_legacy_approval_conflict');
+      assert.equal(decision.campaignResult.providerAttempted, false);
+    }
+    assert.equal(providerRequests, before);
+  });
 } finally {
   child.kill();
   await closed;

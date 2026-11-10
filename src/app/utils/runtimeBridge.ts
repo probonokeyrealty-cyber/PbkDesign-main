@@ -953,6 +953,7 @@ export type ObservabilityStatusResponse = {
 
 export type CampaignRecord = {
   id: string;
+  senderIdentityId?: string;
   name?: string;
   channel?: string;
   provider?: string;
@@ -2520,7 +2521,7 @@ export async function fetchReplyTemplatesRequest({
 }
 
 export async function createCampaignRequest(body: Record<string, unknown>) {
-  return bridgeRequest<CampaignsResponse & { campaign?: CampaignRecord }>({
+  return bridgeRequest<CampaignsResponse & { campaign?: CampaignRecord; replayed?: boolean }>({
     method: 'POST',
     path: '/api/campaigns',
     body,

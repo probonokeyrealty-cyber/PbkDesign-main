@@ -169,8 +169,8 @@ assert(
   'Campaign card and table approval controls must share one status/pending-action predicate.'
 );
 assert(
-  /Campaign draft saved; approval still needed/.test(campaigns) &&
-    /Use Request approval from its card after the approval board is reachable/.test(campaigns),
+  /Campaign saved; approval not confirmed/.test(campaigns) &&
+    /Check the saved campaign before retrying approval from its card/.test(campaigns),
   'Campaign wizard must not tell users the save failed after a draft was created but approval queuing failed.'
 );
 assert(
@@ -228,7 +228,7 @@ assert(
   'Approved pause/restart campaign actions must update campaign state without creating a provider execution.'
 );
 assert(
-  /\/active\|running\/i\.test\(String\(campaign\.status \|\| ''\)\)/.test(campaigns) &&
+  /\['active', 'running'\]\.includes\(normalizedCampaignStatus\(campaign\)\)/.test(campaigns) &&
     !/\/active\|running\|pending\/i\.test\(String\(campaign\.status \|\| ''\)\)/.test(campaigns),
   'Campaign summary must not double-count pending approval campaigns as active.'
 );
@@ -239,7 +239,7 @@ assert(
   'Campaign wizard must explain the no-lead-source state before an agent can request approval.'
 );
 assert(
-  /disabled=\{busyCampaignId === campaign\.id \|\| !approvalAllowed\}/.test(campaigns),
+  /disabled=\{Boolean\(busyCampaignId\) \|\| !approvalAllowed\}/.test(campaigns),
   'Campaign table Approval must be disabled for pending, active, approved, cancelled, or already-queued campaigns.'
 );
 assert(

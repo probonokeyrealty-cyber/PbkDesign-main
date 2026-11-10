@@ -2,9 +2,12 @@ import assert from 'node:assert/strict';
 import { chromium, devices, expect, webkit } from '@playwright/test';
 import { createServer } from 'vite';
 
-const server = await createServer({ server: { host: '127.0.0.1', port: 0 } });
-await server.listen();
-const origin = `http://127.0.0.1:${server.httpServer.address().port}`;
+const hosted = process.env.PBK_INBOX_HOSTED_PROOF === '1';
+const server = hosted ? null : await createServer({ server: { host: '127.0.0.1', port: 0 } });
+await server?.listen();
+const origin = hosted
+  ? 'https://pbk-openclaw-bridge.onrender.com'
+  : `http://127.0.0.1:${server.httpServer.address().port}`;
 const lead = { id: 'qa-lead', name: 'Inbox QA Seller', phone: '+12025550142' };
 const thread = {
   id: 'qa-thread', leadId: lead.id, title: lead.name, unreadCount: 0,
@@ -22,10 +25,24 @@ const sender = {
 async function verify(engine, viewport, device = {}) {
   const browser = await engine.launch();
   try {
-    const page = await browser.newPage({ ...device, viewport });
+    const page = await browser.newPage({ ...device, viewport, serviceWorkers: 'block' });
+    if (hosted) {
+      await page.addInitScript((expectedOrigin) => {
+        if (location.origin !== expectedOrigin) return;
+        localStorage.setItem('pbk:team-session:v1', JSON.stringify({
+          token: 'fixture-only',
+          role: 'team',
+          expiresAt: new Date(Date.now() + 600_000).toISOString(),
+        }));
+      }, origin);
+      await page.routeWebSocket('**/*', (socket) => socket.close());
+    }
     const sends = [];
     const decisions = [];
     let resolved = false;
+    let mismatchedThread = false;
+    let wrongThreadReads = 0;
+    const wrongThread = { ...thread, id: 'qa-wrong-thread', leadId: 'qa-other-lead' };
     await page.route('**/*', (route) => {
       const req = route.request();
       const url = new URL(req.url());
@@ -33,7 +50,14 @@ async function verify(engine, viewport, device = {}) {
       if (path === '/state') return route.fulfill({ json: { approvals: resolved ? [] : [approval], leads: [lead] } });
       if (path === '/api/leads') return route.fulfill({ json: { ok: true, leads: [lead], items: [lead] } });
       if (path === '/api/leads/qa-lead/full') return route.fulfill({ json: { ok: true, lead } });
-      if (path === '/api/conversations') return route.fulfill({ json: { ok: true, items: [thread] } });
+      if (path === '/api/conversations') {
+        const items = mismatchedThread && url.searchParams.has('leadId') ? [wrongThread] : [thread];
+        return route.fulfill({ json: { ok: true, items } });
+      }
+      if (path.startsWith('/api/conversations/qa-wrong-thread')) {
+        wrongThreadReads++;
+        return route.fulfill({ json: { ok: true, thread: wrongThread, items: [] } });
+      }
       if (path === '/api/conversations/qa-thread') {
         return route.fulfill({ json: { ok: true, thread, recipientSummary: { phone: lead.phone } } });
       }
@@ -58,8 +82,11 @@ async function verify(engine, viewport, device = {}) {
         }
         return route.fulfill({ status: 502, json: { error: 'Fixture lost the response' } });
       }
-      if (url.origin !== origin || /^\/(api\/|health$|events$|invoke$)/.test(path)) {
+      if (/^\/(api\/|health$|events$|invoke$)/.test(path)) {
         return route.fulfill({ json: { ok: true, items: [] } });
+      }
+      if (hosted && (req.method() !== 'GET' || !['document', 'script', 'stylesheet', 'font', 'image'].includes(req.resourceType()))) {
+        return route.abort();
       }
       return route.continue();
     });
@@ -137,7 +164,24 @@ async function verify(engine, viewport, device = {}) {
     await expect(page.getByRole('link', { name: /open lead|lead portal/i }).first()).toHaveAttribute('href', '/leads/qa-lead');
     await page.goto(`${origin}/command-center`);
     await expect(page.getByRole('region', { name: 'Review', exact: true }).getByText('No pending approvals right now.')).toBeVisible();
-    console.log(`Inbox, Conversations, approval deduplication and send hold: ${engine.name()} ${viewport.width}px`);
+
+    mismatchedThread = true;
+    await page.goto(`${origin}/leads/qa-lead`);
+    const message = page.getByRole('button', { name: 'Message', exact: true });
+    await expect(message).toBeDisabled();
+    await expect(page.getByRole('heading', { name: 'Seller timeline' })).toBeVisible();
+    assert.equal(wrongThreadReads, 0, 'Lead Portal must not open a different lead’s timeline');
+
+    await page.goto(`${origin}/inbox/conversations?lead=qa-lead`);
+    await expect(page.getByText('This seller has no canonical conversation thread yet.')).toBeVisible();
+    assert.equal(new URL(page.url()).searchParams.get('thread'), null);
+    assert.equal(wrongThreadReads, 0, 'Inbox must not open a different lead’s thread');
+    await expect(page.getByRole('region', { name: 'Message composer' })).toHaveCount(0);
+
+    mismatchedThread = false;
+    await page.goto(`${origin}/inbox/conversations?lead=qa-lead`);
+    await expect(page).toHaveURL(/thread=qa-thread/);
+    console.log(`${hosted ? 'Deployed' : 'Local'} Inbox and Lead Portal: exact lead match, approval deduplication, and send hold passed on ${engine.name()} ${viewport.width}px`);
   } finally {
     await browser.close();
   }
@@ -147,5 +191,5 @@ try {
   await verify(chromium, { width: 1440, height: 900 });
   await verify(webkit, { width: 390, height: 844 }, devices['iPhone 13']);
 } finally {
-  await server.close();
+  await server?.close();
 }

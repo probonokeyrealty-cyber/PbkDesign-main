@@ -95,6 +95,9 @@ export function UnifiedInbox() {
   const [threadLoading, setThreadLoading] = useState(true);
   const [threadLoadingMore, setThreadLoadingMore] = useState(false);
   const [threadError, setThreadError] = useState('');
+  const [leadThreadError, setLeadThreadError] = useState<{ leadId: string; message: string } | null>(
+    null
+  );
   const [search, setSearch] = useState('');
   const [activeFilter, setActiveFilter] = useState<ConversationFilter>('all');
   const [compactViewport, setCompactViewport] = useState(
@@ -216,23 +219,26 @@ export function UnifiedInbox() {
   useEffect(() => {
     if (!requestedLeadId || selectedThreadId) return undefined;
     const requestId = ++leadThreadResolveSequence.current;
+    setLeadThreadError(null);
     void fetchConversationsRequest({ leadId: requestedLeadId, limit: 2 })
       .then((response) => {
         if (requestId !== leadThreadResolveSequence.current) return;
-        const canonical =
-          (response.items || []).find((candidate) => candidate.leadId === requestedLeadId) ||
-          response.items?.[0];
+        const canonical = response.items?.find((candidate) => candidate.leadId === requestedLeadId);
         if (canonical?.id) {
           setSelectedThreadInUrl(canonical.id);
           return;
         }
-        setThreadError('This seller has no canonical conversation thread yet.');
+        setLeadThreadError({
+          leadId: requestedLeadId,
+          message: 'This seller has no canonical conversation thread yet.',
+        });
       })
       .catch((error) => {
         if (requestId !== leadThreadResolveSequence.current) return;
-        setThreadError(
-          error instanceof Error ? error.message : 'Unable to resolve the seller conversation.'
-        );
+        setLeadThreadError({
+          leadId: requestedLeadId,
+          message: error instanceof Error ? error.message : 'Unable to resolve the seller conversation.',
+        });
       });
     return () => {
       leadThreadResolveSequence.current += 1;
@@ -590,6 +596,11 @@ export function UnifiedInbox() {
     threadId: selectedThreadId,
     profileOpen,
   });
+  const conversationNotice = degradedReason
+    ? `Conversation Postgres is unavailable or degraded. Unified Inbox is blocked until the conversation database is healthy: ${degradedReason}`
+    : !selectedThreadId && leadThreadError?.leadId === requestedLeadId
+      ? leadThreadError.message
+      : '';
 
   return (
     <div
@@ -597,13 +608,10 @@ export function UnifiedInbox() {
       className={`pbk-unified-inbox ${profileOpen ? 'profile-open' : ''}`}
       data-mobile-state={mobileState}
     >
-      {degradedReason && (
+      {conversationNotice && (
         <div className="pbk-conversation-degraded" role="status">
           <AlertTriangle size={15} />
-          <span>
-            Conversation Postgres is unavailable or degraded. Unified Inbox is blocked until the
-            conversation database is healthy: {degradedReason}
-          </span>
+          <span>{conversationNotice}</span>
         </div>
       )}
 

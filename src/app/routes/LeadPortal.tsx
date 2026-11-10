@@ -240,9 +240,7 @@ export function LeadPortal() {
       const selectedThread =
         conversationResponse?.items?.find(
           (candidate) => candidate.leadId === (canonicalLeadId || leadId)
-        ) ||
-        conversationResponse?.items?.[0] ||
-        null;
+        ) ?? null;
       setThread(selectedThread);
       if (selectedThread) {
         await loadTimeline(selectedThread);

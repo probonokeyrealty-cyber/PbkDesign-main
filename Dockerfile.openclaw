@@ -168,6 +168,7 @@ COPY scripts/youtube-training.mjs ./scripts/youtube-training.mjs
 COPY scripts/ava-assistant-chat.mjs ./scripts/ava-assistant-chat.mjs
 COPY scripts/lead-raw-proof-job.mjs ./scripts/lead-raw-proof-job.mjs
 COPY scripts/lead-field-provenance.mjs ./scripts/lead-field-provenance.mjs
+COPY scripts/attom-property-preview.mjs ./scripts/attom-property-preview.mjs
 COPY scripts/batch-review-roster.mjs ./scripts/batch-review-roster.mjs
 COPY scripts/batch-phone-dispatch.mjs ./scripts/batch-phone-dispatch.mjs
 COPY scripts/batch-apply.mjs ./scripts/batch-apply.mjs

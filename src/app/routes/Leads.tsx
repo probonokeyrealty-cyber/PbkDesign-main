@@ -20,6 +20,7 @@ import {
 } from 'lucide-react';
 import { PbkDataSource } from '../../components/pbk/index';
 import { CompactPager, getPageSlice, OPERATOR_LIST_PAGE_SIZE } from '../components/CompactPager';
+import { AttomPropertyPreview } from '../components/leads/AttomPropertyPreview';
 import { useRuntimeSnapshot } from '../hooks/useRuntimeSnapshot';
 import { ANALYZER_CURRENT_DEAL_KEY, readAnalyzerStorage } from '../utils/analyzerStorage';
 import {
@@ -858,9 +859,9 @@ function mergeVisibleLeadDetail(current: BridgeRecord[], lead: BridgeRecord): Br
   return matched ? next : [record, ...next];
 }
 
-function Field({ label, children }: { label: string; children: ReactNode }) {
+function Field({ label, children, className = '' }: { label: string; children: ReactNode; className?: string }) {
   return (
-    <label className="space-y-1.5 text-xs text-slate-400">
+    <label className={`space-y-1.5 text-xs text-slate-400 ${className}`}>
       <span className="font-medium text-slate-300">{label}</span>
       {children}
     </label>
@@ -2624,8 +2625,8 @@ export function Leads() {
                     <span>Property</span>
                     <strong>Address and asset details</strong>
                   </div>
-                  <div className="grid grid-cols-1 gap-3 md:grid-cols-4">
-                    <Field label="Property address">
+                  <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+                    <Field label="Property address" className="col-span-full">
                       <input
                         className={inputClass}
                         value={newLeadForm.propertyAddress}
@@ -2638,7 +2639,7 @@ export function Leads() {
                         }
                       />
                     </Field>
-                    <Field label="City">
+                    <Field label="City" className="col-span-full md:col-span-2">
                       <input
                         className={inputClass}
                         value={newLeadForm.city}
@@ -2672,7 +2673,7 @@ export function Leads() {
                         }
                       />
                     </Field>
-                    <Field label="Occupancy">
+                    <Field label="Occupancy" className="md:col-span-2">
                       <select
                         className={inputClass}
                         value={newLeadForm.occupancy}
@@ -2689,7 +2690,7 @@ export function Leads() {
                         <option value="vacant">Vacant</option>
                       </select>
                     </Field>
-                    <Field label="Condition">
+                    <Field label="Condition" className="md:col-span-2">
                       <select
                         className={inputClass}
                         value={newLeadForm.condition}
@@ -2707,6 +2708,10 @@ export function Leads() {
                       </select>
                     </Field>
                   </div>
+                  <AttomPropertyPreview address={{
+                    street: newLeadForm.propertyAddress, city: newLeadForm.city,
+                    state: newLeadForm.state, zip: newLeadForm.zip,
+                  }} />
                 </section>
 
                 <section className="new-lead-section">

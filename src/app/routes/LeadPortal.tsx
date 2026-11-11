@@ -699,10 +699,11 @@ export function LeadPortal() {
         </div>
         <div className="pbk-portal-context-column">
           <LeadPortalDealContext lead={lead} />
-          <LeadPortalProperty lead={lead} />
           <LeadPortalContactability lead={lead} />
         </div>
       </div>
+
+      <LeadPortalProperty key={lead.id || leadId} lead={lead} />
 
       <details className="pbk-portal-source-details">
         <summary>Data sources</summary>

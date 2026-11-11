@@ -1,61 +1,66 @@
-import { Building2, Home, MapPin, Ruler } from 'lucide-react';
+import { useState } from 'react';
+import * as Tabs from '@radix-ui/react-tabs';
+import { Building2, ImageOff } from 'lucide-react';
 import type { LeadPortalModel } from './leadPortalModel';
 import { formatLeadValue } from './leadPortalModel';
+import { AttomPropertyPreview } from './AttomPropertyPreview';
 
 function numberLabel(value: number | null, suffix = '') {
   return value === null ? 'Not captured' : `${value.toLocaleString()}${suffix}`;
 }
 
 export function LeadPortalProperty({ lead }: { lead: LeadPortalModel }) {
-  const locality = [lead.city, lead.state, lead.zip].filter(Boolean).join(', ');
+  const [tab, setTab] = useState('overview');
+  const locality = [lead.city, [lead.state, lead.zip].filter(Boolean).join(' ')].filter(Boolean).join(', ');
   return (
-    <section className="pbk-lead-portal-card" id="lead-property" aria-labelledby="lead-property-heading">
-      <header>
-        <div>
-          <span className="pbk-kicker">Address &amp; asset details</span>
+    <section className="pbk-lead-portal-card pbk-property-workspace" id="lead-property" aria-labelledby="lead-property-heading">
+      <header className="pbk-property-header">
+        <div className="pbk-property-identity">
           <h2 id="lead-property-heading">Property</h2>
-        </div>
-        <Home size={19} />
-      </header>
-      <div className="pbk-lead-portal-property-address">
-        <MapPin size={17} />
-        <div>
           <strong>{lead.address || 'Address not captured'}</strong>
-          <span>{locality || 'City, state, and ZIP not captured'}</span>
+          {locality && <p>{locality}</p>}
         </div>
-      </div>
-      <div className="pbk-lead-portal-property-grid">
-        <div>
-          <Building2 />
-          <span>Type</span>
-          <strong>{lead.propertyType}</strong>
-        </div>
-        <div>
-          <Ruler />
-          <span>Size</span>
-          <strong>{numberLabel(lead.sqft, ' sq ft')}</strong>
-        </div>
-        <div>
-          <span>Beds / baths</span>
-          <strong>
-            {lead.beds === null && lead.baths === null
-              ? 'Not captured'
-              : `${lead.beds ?? '-'} / ${lead.baths ?? '-'}`}
-          </strong>
-        </div>
-        <div>
-          <span>Year built</span>
-          <strong>{numberLabel(lead.yearBuilt)}</strong>
-        </div>
-        <div>
-          <span>Occupancy</span>
-          <strong>{formatLeadValue(lead.occupancy)}</strong>
-        </div>
-        <div>
-          <span>Condition</span>
-          <strong>{formatLeadValue(lead.condition)}</strong>
-        </div>
-      </div>
+        <dl className="pbk-property-key-facts" aria-label="Key facts from the saved lead">
+          <div><dt>Beds / baths</dt><dd>{lead.beds === null && lead.baths === null
+            ? 'Not captured' : `${lead.beds ?? '-'} / ${lead.baths ?? '-'}`}</dd></div>
+          <div><dt>Living area</dt><dd>{numberLabel(lead.sqft, ' sq ft')}</dd></div>
+          <div><dt>Year built</dt><dd>{lead.yearBuilt ?? 'Not captured'}</dd></div>
+        </dl>
+      </header>
+      <Tabs.Root value={tab} onValueChange={setTab} activationMode="manual">
+        <Tabs.List aria-label="Property workspace sections" className="pbk-property-tabs">
+          <Tabs.Trigger value="overview">Overview</Tabs.Trigger>
+          <Tabs.Trigger value="record">Property record</Tabs.Trigger>
+          <Tabs.Trigger value="photos">Photos</Tabs.Trigger>
+        </Tabs.List>
+        <Tabs.Content value="overview" className="pbk-property-tab-panel">
+          <div className="pbk-property-group-heading">
+            <Building2 size={16} aria-hidden />
+            <h3>Saved lead facts</h3>
+          </div>
+          <dl className="pbk-property-overview">
+            <div><dt>Property type</dt><dd>{formatLeadValue(lead.propertyType)}</dd></div>
+            <div><dt>Occupancy</dt><dd>{formatLeadValue(lead.occupancy)}</dd></div>
+            <div><dt>Condition</dt><dd>{formatLeadValue(lead.condition)}</dd></div>
+          </dl>
+        </Tabs.Content>
+        <Tabs.Content value="record" forceMount hidden={tab !== 'record'} tabIndex={tab === 'record' ? 0 : -1} className="pbk-property-tab-panel">
+          <AttomPropertyPreview
+            comparison
+            address={{ street: lead.address, city: lead.city, state: lead.state, zip: lead.zip }}
+            saved={{
+              propertyType: /^(?:not captured|unknown)$/i.test(lead.propertyType) ? null : formatLeadValue(lead.propertyType),
+              livingSqft: lead.sqft, beds: lead.beds, baths: lead.baths, yearBuilt: lead.yearBuilt,
+            }}
+          />
+        </Tabs.Content>
+        <Tabs.Content value="photos" className="pbk-property-tab-panel">
+          <div className="pbk-property-photos-empty">
+            <ImageOff size={20} aria-hidden />
+            <div><h3>MLS not connected</h3><p>No listing photos available.</p></div>
+          </div>
+        </Tabs.Content>
+      </Tabs.Root>
     </section>
   );
 }

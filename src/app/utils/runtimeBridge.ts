@@ -1755,6 +1755,35 @@ export async function startLeadCallRequest(body: Record<string, unknown>) {
   });
 }
 
+export type AttomPreviewAddress = { street: string; city: string; state: string; zip: string };
+
+export type AttomPropertyFacts = {
+  address: string;
+  apn: string | null;
+  propertyType: string | null;
+  lotSqft: number | null;
+  lotAcres: number | null;
+  livingSqft: number | null;
+  beds: number | null;
+  baths: number | null;
+  yearBuilt: number | null;
+  taxAmount: number | null;
+  taxYear: number | null;
+  recordedSaleAmount: number | null;
+  recordedSaleDate: string | null;
+};
+
+export type AttomPreviewResult =
+  | { status: 'matched'; profile: AttomPropertyFacts }
+  | { status: 'invalid_address' | 'not_configured' | 'not_found' | 'ambiguous' | 'unavailable'
+    | 'authorization_failed' | 'rate_limited' | 'timed_out' };
+
+export function fetchAttomPropertyPreview(address: AttomPreviewAddress) {
+  return bridgeRequest<AttomPreviewResult>({
+    method: 'POST', path: '/api/property-data/attom-preview', body: address, keepalive: false,
+  });
+}
+
 export async function fetchApifyListingRequest(address: string) {
   const query = new URLSearchParams({ address });
   return bridgeRequest<{

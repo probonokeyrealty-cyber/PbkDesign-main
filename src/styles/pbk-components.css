@@ -13910,6 +13910,311 @@ html[data-theme='light'] .pbk-lead-edit-modal-footer {
   font-size: 12px;
 }
 
+.pbk-property-workspace {
+  width: 100%;
+  max-width: 1600px;
+  margin-inline: auto;
+  overflow-wrap: anywhere;
+}
+
+.pbk-property-workspace > .pbk-property-header {
+  align-items: end;
+  padding-bottom: 14px;
+}
+
+.pbk-property-identity {
+  min-width: 0;
+}
+
+.pbk-property-workspace .pbk-property-identity h2 {
+  margin: 0 0 5px;
+  color: var(--text-secondary);
+  font: 600 12px/1.25 var(--font-ui);
+}
+
+.pbk-property-identity > strong {
+  color: var(--text-primary);
+  font: 600 24px/1.2 var(--font-display);
+}
+
+.pbk-property-identity > p {
+  margin: 3px 0 0;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.pbk-property-key-facts,
+.pbk-property-overview {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin: 0;
+}
+
+.pbk-property-key-facts > div {
+  border-inline-start: 1px solid var(--border-dim);
+  padding-inline: 10px;
+}
+
+.pbk-property-key-facts dt,
+.pbk-property-overview dt {
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.pbk-property-key-facts dd,
+.pbk-property-overview dd {
+  margin: 3px 0 0;
+  color: var(--text-primary);
+  font-weight: 650;
+}
+
+.pbk-property-tabs {
+  display: flex;
+  gap: 4px;
+  border-bottom: 1px solid var(--border-dim);
+}
+
+.pbk-property-tabs > button {
+  min-width: 0;
+  min-height: 44px;
+  padding: 6px 12px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--text-secondary);
+  font: 550 13px/1.2 var(--font-ui);
+  cursor: pointer;
+}
+
+.pbk-property-tabs > button:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.pbk-property-tabs > button[data-state='active'] {
+  border-bottom-color: var(--sky);
+  color: var(--text-primary);
+}
+
+.pbk-property-tab-panel {
+  padding-top: 14px;
+}
+
+.pbk-property-tabs > button:focus-visible,
+.pbk-property-tab-panel:focus-visible {
+  outline: 2px solid var(--sky);
+  outline-offset: -2px;
+}
+
+.pbk-property-group-heading,
+.pbk-property-photos-empty {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.pbk-property-group-heading h3,
+.pbk-property-photos-empty h3,
+.pbk-attom-comparison h3 {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: 14px;
+}
+
+.pbk-property-group-heading svg,
+.pbk-property-photos-empty svg {
+  flex-shrink: 0;
+  color: var(--text-secondary);
+}
+
+.pbk-property-overview {
+  margin-top: 10px;
+}
+
+.pbk-property-overview > div {
+  border-top: 1px solid var(--border-dim);
+  padding-top: 8px;
+}
+
+.pbk-property-photos-empty {
+  min-height: 94px;
+}
+
+.pbk-property-photos-empty p {
+  margin: 3px 0 0;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.pbk-attom-preview {
+  min-width: 0;
+  margin-top: 12px;
+  border-top: 1px solid var(--line-soft, rgba(125, 211, 252, 0.16));
+  padding-top: 12px;
+  color: var(--text-primary);
+  overflow-wrap: anywhere;
+}
+
+.pbk-attom-preview-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.pbk-attom-preview [role='status'],
+.pbk-attom-preview-address,
+.pbk-attom-facts dt,
+.pbk-attom-preview small {
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.pbk-attom-preview [role='status']:not(:empty),
+.pbk-attom-preview-address {
+  margin-top: 6px;
+}
+
+.pbk-attom-preview-address small {
+  display: block;
+}
+
+.pbk-attom-preview-address strong {
+  color: var(--text-primary);
+}
+
+.pbk-attom-preview[data-comparison] {
+  margin: 0;
+  border: 0;
+  padding: 0;
+}
+
+.pbk-attom-preview[data-comparison] .pbk-attom-match {
+  margin-top: 10px;
+  border-inline-start: 2px solid var(--sky);
+  padding: 9px 12px;
+  background: var(--bg-console);
+}
+
+.pbk-attom-preview[data-comparison] .pbk-attom-match [role='status'] {
+  margin: 0;
+  font-weight: 650;
+}
+
+.pbk-attom-comparison > section {
+  margin-top: 14px;
+}
+
+.pbk-attom-comparison dl {
+  margin: 6px 0 0;
+}
+
+.pbk-attom-comparison dl > div {
+  display: grid;
+  grid-template-columns: minmax(0, 1.05fr) repeat(2, minmax(0, 1fr)) minmax(0, 0.85fr);
+  align-items: start;
+  gap: 5px 12px;
+  border-top: 1px solid var(--border-dim);
+  padding-block: 7px;
+}
+
+.pbk-attom-comparison dt {
+  font-weight: 600;
+}
+
+.pbk-attom-comparison dd {
+  min-width: 0;
+  margin: 0;
+}
+
+.pbk-attom-comparison dd small {
+  display: block;
+}
+
+.pbk-attom-conflicts {
+  padding: 9px 12px 4px;
+  background: color-mix(in srgb, var(--amber) 12%, var(--bg-panel));
+}
+
+.pbk-attom-comparison .pbk-attom-difference {
+  color: var(--amber);
+  font-size: 12px;
+}
+
+@media (max-width: 720px) {
+  .pbk-property-workspace > .pbk-property-header {
+    display: grid;
+    align-items: start;
+    gap: 10px;
+  }
+
+  .pbk-property-tabs > button {
+    flex: 1;
+    padding-inline: 5px;
+  }
+
+  .pbk-attom-comparison dl > div {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .pbk-attom-comparison dd:not(.pbk-attom-difference) {
+    display: grid;
+    grid-template-columns: minmax(0, 5.8rem) minmax(0, 1fr);
+    align-items: baseline;
+    gap: 4px;
+  }
+}
+
+.pbk-attom-record-details {
+  margin-top: 10px;
+}
+
+.pbk-attom-record-details summary {
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.pbk-attom-facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 145px), 1fr));
+  gap: 8px 12px;
+  margin: 8px 0 0;
+}
+
+.pbk-attom-facts > div {
+  min-width: 0;
+  border-top: 1px solid var(--line-soft, rgba(125, 211, 252, 0.16));
+  padding-top: 6px;
+}
+
+.pbk-attom-facts dd {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 8px;
+  margin: 0;
+}
+
+.pbk-attom-facts .pbk-attom-difference {
+  color: var(--amber);
+  font-size: 12px;
+}
+
+html[data-theme='light'] .pbk-new-lead-modal .pbk-attom-preview {
+  --bg-hover: #eef3f8;
+  --border: #cbd5e1;
+  --border-bright: #94a3b8;
+  --text-primary: #0f172a;
+  --text-secondary: #475569;
+}
+
+html[data-theme='light'] .pbk-attom-preview .pbk-attom-difference {
+  color: #92400e;
+}
+
 .pbk-lead-portal-tags {
   display: flex;
   flex-wrap: wrap;

@@ -2467,21 +2467,17 @@ export function Leads() {
           >
             <div className="pbk-new-lead-modal-header flex items-start justify-between gap-3 border-b border-slate-800 px-4 py-4">
               <div className="min-w-0">
-                <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-sky-300">
-                  New PBK lead
+                <div className="pbk-property-label">
+                  Unsaved draft
                 </div>
-                <h3 id="new-pbk-lead-title" className="mt-1 text-xl font-semibold text-slate-100">
-                  Capture the full seller profile once.
+                <h3 id="new-pbk-lead-title">
+                  Create lead
                 </h3>
-                <p className="mt-1 max-w-3xl text-xs text-slate-500">
-                  Ava, Rex, approvals, analyzer, and contracts will all use this same lead profile.
-                  Analyzer and path fields are prefilled when a current deal exists.
-                </p>
               </div>
               <button
                 type="button"
                 onClick={() => setNewLeadOpen(false)}
-                className="rounded-full p-2 text-slate-400 transition hover:bg-slate-800 hover:text-slate-100"
+                className="pbk-btn pbk-btn-ghost"
                 aria-label="Close new lead form"
               >
                 <X size={18} />
@@ -2533,12 +2529,12 @@ export function Leads() {
               )}
 
               <div className="new-lead-portal-grid">
-                <section className="new-lead-section">
+                <section className="new-lead-section new-lead-section-wide">
                   <div className="new-lead-section-head">
                     <span>Seller</span>
                     <strong>Personal info</strong>
                   </div>
-                  <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
                     <Field label="Seller name">
                       <input
                         className={inputClass}
@@ -2620,11 +2616,12 @@ export function Leads() {
                   </div>
                 </section>
 
-                <section className="new-lead-section">
+                <section className="new-lead-section new-lead-section-wide">
                   <div className="new-lead-section-head">
                     <span>Property</span>
                     <strong>Address and asset details</strong>
                   </div>
+                  <div className="pbk-new-lead-property-layout">
                   <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
                     <Field label="Property address" className="col-span-full">
                       <input
@@ -2707,11 +2704,34 @@ export function Leads() {
                         <option value="heavy">Heavy</option>
                       </select>
                     </Field>
+                    {[
+                      ['Beds', 'beds', '3'],
+                      ['Baths', 'baths', '2'],
+                      ['Sq ft', 'sqft', '1540'],
+                      ['Year built', 'yearBuilt', '1974'],
+                    ].map(([label, key, placeholder]) => (
+                      <Field key={key} label={label}>
+                        <input
+                          className={inputClass}
+                          value={String(newLeadForm[key as keyof NewLeadFormState] || '')}
+                          placeholder={placeholder}
+                          onChange={(event) => setNewLeadForm({ ...newLeadForm, [key]: event.target.value })}
+                        />
+                      </Field>
+                    ))}
                   </div>
-                  <AttomPropertyPreview address={{
-                    street: newLeadForm.propertyAddress, city: newLeadForm.city,
-                    state: newLeadForm.state, zip: newLeadForm.zip,
-                  }} />
+                    <AttomPropertyPreview
+                      mode="draft"
+                      address={{
+                        street: newLeadForm.propertyAddress, city: newLeadForm.city,
+                        state: newLeadForm.state, zip: newLeadForm.zip,
+                      }}
+                      saved={{
+                        beds: numberOrNull(newLeadForm.beds), baths: numberOrNull(newLeadForm.baths),
+                        livingSqft: numberOrNull(newLeadForm.sqft), yearBuilt: numberOrNull(newLeadForm.yearBuilt),
+                      }}
+                    />
+                  </div>
                 </section>
 
                 <section className="new-lead-section">
@@ -2840,10 +2860,6 @@ export function Leads() {
                   </div>
                   <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
                     {[
-                      ['Beds', 'beds', '3'],
-                      ['Baths', 'baths', '2'],
-                      ['Sq ft', 'sqft', '1540'],
-                      ['Year built', 'yearBuilt', '1974'],
                       ['Est. repairs', 'estimatedRepairs', '$28,000'],
                       ['ARV', 'arv', '$220,000'],
                       ['MAO', 'mao', '$118,000'],
@@ -2900,7 +2916,7 @@ export function Leads() {
 
             <div className="pbk-new-lead-modal-footer flex flex-col gap-2 border-t border-slate-800 px-4 py-4 sm:flex-row sm:items-center sm:justify-between">
               <div className="text-[11px] text-slate-500">
-                Source: Deal Analyzer seed + your lead edits.
+                ATTOM results are not saved to the lead.
               </div>
               <div className="pbk-new-lead-modal-actions flex flex-col gap-2 sm:flex-row sm:justify-end">
                 <button

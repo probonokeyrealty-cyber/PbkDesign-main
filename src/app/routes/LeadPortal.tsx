@@ -703,7 +703,7 @@ export function LeadPortal() {
         </div>
       </div>
 
-      <LeadPortalProperty key={lead.id || leadId} lead={lead} />
+      <LeadPortalProperty key={lead.id || leadId} lead={lead} onEdit={startEdit} />
 
       <details className="pbk-portal-source-details">
         <summary>Data sources</summary>

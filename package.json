@@ -148,6 +148,7 @@
     "test:leads-full-roster-bridge": "node ./scripts/leads-full-roster-bridge-smoke.mjs",
     "test:leads-new-lead-portal": "node ./scripts/leads-new-lead-portal-smoke.mjs",
     "test:lead-portal-route": "node ./scripts/lead-portal-route-smoke.mjs",
+    "test:lead-property-workspaces-browser": "node ./scripts/lead-property-workspaces-browser-smoke.mjs",
     "test:leads-design-browser": "node ./scripts/leads-design-browser-smoke.mjs",
     "test:batch-review": "node --experimental-strip-types --test ./scripts/batch-review-unit.mjs",
     "test:batch-phone-dispatch": "node --experimental-strip-types --test ./scripts/batch-phone-dispatch-smoke.mjs",

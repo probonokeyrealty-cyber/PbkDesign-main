@@ -1,6 +1,6 @@
 # Lead Property Workspaces Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **REQUIRED WORKFLOW:** Use superpowers:subagent-driven-development for implementation and independent review. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Implement the approved Claude property workspace and Create Lead concept locally.
 

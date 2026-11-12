@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AlertCircle, ArrowRight, Loader2, Save, StickyNote } from 'lucide-react';
-import { useNavigate, useParams, useSearchParams } from 'react-router';
+import { useLocation, useNavigate, useParams, useSearchParams } from 'react-router';
+import { readLeadQueueReturn } from '../utils/leadQueueReturn';
 import { PbkDataSource } from '../../components/pbk/index';
 import { LeadPortalContactability } from '../components/leads/LeadPortalContactability';
 import { LeadPortalDealContext } from '../components/leads/LeadPortalDealContext';
@@ -122,6 +123,12 @@ function PortalSelect({
 export function LeadPortal() {
   const { leadId = '' } = useParams();
   const navigate = useNavigate();
+  const location = useLocation();
+  const returnContext = readLeadQueueReturn(location.state?.leadReturn);
+  const backLabel = returnContext && returnContext.path !== '/leads' ? 'Today' : 'Leads';
+  const returnToQueue = () => navigate(returnContext ? returnContext.path + returnContext.search : '/leads', {
+    state: returnContext ? { queueReturn: returnContext } : null,
+  });
   const [searchParams, setSearchParams] = useSearchParams();
   const requestSequence = useRef(0);
   const timelineRequestSequence = useRef(0);
@@ -228,7 +235,7 @@ export function LeadPortal() {
       const canonicalLead = unwrapLead(fullResponse);
       const canonicalLeadId = String(canonicalLead.leadId || canonicalLead.id || leadId).trim();
       if (canonicalLeadId && canonicalLeadId !== leadId) {
-        navigate(`/leads/${encodeURIComponent(canonicalLeadId)}`, { replace: true });
+        navigate(`/leads/${encodeURIComponent(canonicalLeadId)}`, { replace: true, state: location.state });
         return;
       }
       const conversationResponse = await fetchConversationsRequest({
@@ -256,7 +263,7 @@ export function LeadPortal() {
     } finally {
       if (requestId === requestSequence.current) setLoading(false);
     }
-  }, [leadId, loadTimeline, navigate]);
+  }, [leadId, loadTimeline, navigate, location.state]);
 
   useEffect(() => {
     actionSequence.current += 1;
@@ -585,8 +592,8 @@ export function LeadPortal() {
           <button type="button" onClick={() => void loadPortal()}>
             Retry
           </button>
-          <button type="button" onClick={() => navigate('/leads')}>
-            Back to leads
+          <button type="button" onClick={returnToQueue}>
+            Back to {backLabel.toLowerCase()}
           </button>
         </div>
       </div>
@@ -620,7 +627,8 @@ export function LeadPortal() {
         loading={loading}
         pendingAction={pendingAction}
         messageAvailable={Boolean(thread)}
-        onBack={() => navigate('/leads')}
+        onBack={returnToQueue}
+        backLabel={backLabel}
         onRefresh={() => void loadPortal()}
         onEdit={startEdit}
         onAddPhone={startEdit}

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { chromium, devices, expect, webkit } from '@playwright/test';
 import { createServer } from 'vite';
+import { mkdirSync } from 'node:fs';
 
 const server = await createServer({ server: { host: '127.0.0.1', port: 0 } });
 await server.listen();
@@ -25,6 +26,7 @@ async function verify(browserType, viewport, device = {}) {
     let resolved = false;
     let unavailable = true;
     let changed = false;
+    let preflightOffline = false;
     let release;
     let respond;
     const responseHeld = new Promise((resolve) => { respond = resolve; });
@@ -33,7 +35,7 @@ async function verify(browserType, viewport, device = {}) {
       const request = route.request();
       const url = new URL(request.url());
       if (url.pathname === '/state' && request.method() === 'GET') {
-        if (unavailable) return route.fulfill({ status: 503, json: { error: 'Fixture offline' } });
+        if (unavailable || preflightOffline) return route.fulfill({ status: 503, json: { error: 'Fixture offline' } });
         return route.fulfill({
           json: {
             approvals: resolved
@@ -70,6 +72,10 @@ async function verify(browserType, viewport, device = {}) {
     await page.goto(`${origin}/command-center`);
     await expect(page.getByRole('heading', { name: 'Today.', exact: true })).toBeVisible();
     const review = page.getByRole('region', { name: 'Review', exact: true });
+    const rail = review.getByRole('list', { name: 'Decision Rail', exact: true });
+    await expect(rail).toBeVisible();
+    await expect(rail.getByText('Receipt', { exact: true })).toBeVisible();
+    await expect(review.getByText('Queue unavailable. No decision can be submitted.', { exact: true })).toBeVisible();
     await expect(review.getByText('Approval queue unavailable.')).toBeVisible();
     await expect(review.getByText('No pending approvals right now.')).toHaveCount(0);
     unavailable = false;
@@ -80,22 +86,34 @@ async function verify(browserType, viewport, device = {}) {
     const approve = row.getByRole('button', { name: 'Review approval' });
     await expect(row.getByText(seller.message)).toBeVisible();
     if (process.env.PBK_TODAY_REVIEW_SCREENSHOTS === '1') {
+      mkdirSync('.pbk-local', { recursive: true });
       await page.screenshot({ path: `.pbk-local/today-review-${browserType.name()}-${viewport.width}.png` });
     }
     await approve.click();
     const dialog = page.getByRole('dialog', { name: 'Approve SMS?' });
+    await expect(dialog.getByRole('list', { name: 'Decision Rail' }).locator('[aria-current="step"]')).toContainText('Review');
     await expect(dialog.getByText(seller.message)).toBeVisible();
     await expect(dialog.getByRole('button', { name: 'Cancel' })).toBeFocused();
     await page.keyboard.press('Escape');
     await expect(dialog).toHaveCount(0);
     await expect(approve).toBeFocused();
+    await expect(review.getByText('Review cancelled. Nothing submitted.', { exact: true })).toBeVisible();
     await expect(page.getByText('Shortcut not handled')).toHaveCount(0);
     assert.equal(requests.length, 0);
+
+    await approve.click();
+    preflightOffline = true;
+    await dialog.getByRole('button', { name: 'Confirm decision' }).click();
+    await expect(rail.locator('[data-state="blocked"]')).toContainText('Evidence');
+    assert.equal(requests.length, 0, 'A failed preflight must not submit a decision');
+    preflightOffline = false;
 
     await approve.click();
     const confirm = dialog.getByRole('button', { name: 'Confirm decision' });
     await confirm.evaluate((button) => { button.click(); button.click(); });
     await responseHeld;
+    await expect(rail.locator('[aria-current="step"]')).toContainText('Review');
+    await expect(review.getByRole('region', { name: 'Decision receipt' })).toHaveCount(0);
     await expect(review.locator('[data-approval-id="qa-other"]').getByRole('button', {
       name: 'Review approval',
     })).toBeDisabled();
@@ -105,6 +123,15 @@ async function verify(browserType, viewport, device = {}) {
     await expect(page.getByRole('status').filter({
       hasText: 'Approval recorded. Delivery has not been confirmed.',
     })).toBeVisible();
+    const receipt = review.getByRole('region', { name: 'Decision receipt' });
+    await expect(receipt).toContainText('qa-sms');
+    await expect(receipt).toContainText('Approved');
+    await expect(receipt).toContainText('Delivery not confirmed');
+    await expect(receipt.getByRole('button')).toHaveCount(0);
+    if (process.env.PBK_TODAY_REVIEW_SCREENSHOTS === '1') {
+      await receipt.scrollIntoViewIfNeeded();
+      await page.screenshot({ path: `.pbk-local/decision-receipt-${browserType.name()}-${viewport.width}.png` });
+    }
     assert.deepEqual(requests.map(({ path, status }) => [path, status]), [
       ['/api/approvals/qa-sms', 'approved'],
     ]);
@@ -115,6 +142,9 @@ async function verify(browserType, viewport, device = {}) {
     await dialog.getByRole('button', { name: 'Confirm decision' }).click();
     await expect(page.getByRole('status').filter({ hasText: 'This request changed.' })).toBeVisible();
     await expect(other.getByText('Updated draft with different details.')).toBeVisible();
+    await expect(rail.locator('[data-state="blocked"]')).toContainText('Evidence');
+    await expect(receipt).toHaveCount(0);
+    await expect(reviewOther).toBeEnabled();
     assert.equal(requests.length, 1, 'A changed draft must not be approved');
 
     await other.getByRole('button', { name: 'Decline' }).click();
@@ -123,6 +153,9 @@ async function verify(browserType, viewport, device = {}) {
     }).click();
     await expect(other.getByText('Decision unconfirmed.')).toBeVisible();
     await expect(reviewOther).toBeDisabled();
+    await expect(rail.locator('[data-state="blocked"]')).toContainText('Receipt');
+    await expect(review.getByText('Outcome unknown. Check approval history before retrying.', { exact: true })).toBeVisible();
+    await expect(receipt).toHaveCount(0);
     assert.deepEqual(requests.map(({ status }) => status), ['approved', 'rejected']);
     assert.deepEqual(unexpectedWrites, []);
     assert.equal(await page.evaluate(() =>

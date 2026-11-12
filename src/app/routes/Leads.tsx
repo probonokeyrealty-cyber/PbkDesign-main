@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { Link, useNavigate, useSearchParams } from 'react-router';
+import { Link, useLocation, useNavigate, useSearchParams } from 'react-router';
+import { readLeadQueueReturn, type LeadQueueReturn } from '../utils/leadQueueReturn';
 import {
   AlertCircle,
   ArrowUpRight,
@@ -1077,7 +1078,12 @@ const softPanelClass =
 export function Leads() {
   const { snapshot, loading, error, refresh } = useRuntimeSnapshot();
   const navigate = useNavigate();
+  const location = useLocation();
+  const restoredQueue = useMemo(() => readLeadQueueReturn(location.state?.queueReturn), [location.state]);
+  const restorePending = useRef(restoredQueue?.path === '/leads');
+  const initialFilters = useRef(true);
   const [searchParams, setSearchParams] = useSearchParams();
+  const previousUrlSearch = useRef(searchParams.get('search'));
   const snapshotLeads = useMemo(
     () => (Array.isArray(snapshot?.leadImports) ? (snapshot.leadImports as BridgeRecord[]) : []),
     [snapshot?.leadImports]
@@ -1087,7 +1093,7 @@ export function Leads() {
     'idle'
   );
   const [leadRosterError, setLeadRosterError] = useState('');
-  const [selectedLeadId, setSelectedLeadId] = useState('');
+  const [selectedLeadId, setSelectedLeadId] = useState(restoredQueue?.leadId || '');
   const [leadDetail, setLeadDetail] = useState<BridgeRecord | null>(null);
   const [lastCall, setLastCall] = useState<BridgeRecord | null>(null);
   const [detailStatus, setDetailStatus] = useState<DetailStatus | null>(null);
@@ -1108,10 +1114,14 @@ export function Leads() {
   const [leadActionPending, setLeadActionPending] = useState('');
   const [reloading, setReloading] = useState(false);
   const [contractStatus, setContractStatus] = useState('');
-  const [leadPage, setLeadPage] = useState(0);
+  const [leadPage, setLeadPage] = useState(restoredQueue?.queue?.page || 0);
   const [leadActivityPage, setLeadActivityPage] = useState(0);
-  const [leadQuery, setLeadQuery] = useState(() => searchParams.get('search') || '');
-  const [leadFilter, setLeadFilter] = useState<'all' | 'hot' | 'callable' | 'contract'>('all');
+  const [leadQuery, setLeadQuery] = useState(() => restoredQueue?.queue?.query ?? searchParams.get('search') ?? '');
+  const [leadFilter, setLeadFilter] = useState<'all' | 'hot' | 'callable' | 'contract'>(restoredQueue?.queue?.filter || 'all');
+  const leadReturnContext = (leadId: string): LeadQueueReturn => ({
+    path: '/leads', search: location.search, scrollY: window.scrollY, leadId,
+    queue: { query: leadQuery, filter: leadFilter, page: leadPage },
+  });
   const reloadTimerRef = useRef<number | null>(null);
   const reloadInFlightRef = useRef(false);
   const leadActionLockRef = useRef(false);
@@ -1169,14 +1179,22 @@ export function Leads() {
   );
 
   useEffect(() => {
+    const requestedSearch = searchParams.get('search');
+    if (previousUrlSearch.current !== requestedSearch) {
+      previousUrlSearch.current = requestedSearch;
+      setLeadQuery(requestedSearch || '');
+    }
+  }, [searchParams]);
+
+  useEffect(() => {
     const requestedLeadId = searchParams.get('lead');
     const requestedSearch = searchParams.get('search');
 
     if (requestedLeadId) {
-      navigate(`/leads/${encodeURIComponent(requestedLeadId)}`, { replace: true });
+      navigate(`/leads/${encodeURIComponent(requestedLeadId)}`, { replace: true, state: location.state });
       return;
-    } else if (requestedSearch && leads.length) {
-      setLeadQuery(requestedSearch);
+    } else if (requestedSearch && leads.length && !restoredQueue?.queue) {
+      if (leadQuery !== requestedSearch) return;
       const needle = requestedSearch.toLowerCase();
       const match = leads.find((lead) =>
         [getSellerName(lead), getLeadAddress(lead), getLeadPhone(lead), getLeadEmail(lead)]
@@ -1203,16 +1221,35 @@ export function Leads() {
         { replace: true }
       );
     }
-  }, [leads, navigate, searchParams, setSearchParams]);
+  }, [leads, navigate, searchParams, setSearchParams, location.state, restoredQueue, leadQuery]);
 
   useEffect(() => {
+    if (initialFilters.current) { initialFilters.current = false; return; }
     setLeadPage(0);
   }, [leadFilter, leadQuery]);
 
   useEffect(() => {
+    if (restorePending.current && leadRosterStatus !== 'ready' && leadRosterStatus !== 'error') return;
     const pageCount = Math.max(1, Math.ceil(filteredLeads.length / OPERATOR_LIST_PAGE_SIZE));
     setLeadPage((current) => Math.min(current, pageCount - 1));
-  }, [filteredLeads.length]);
+  }, [filteredLeads.length, leadRosterStatus]);
+
+  useEffect(() => {
+    if (!restorePending.current || leadRosterStatus !== 'ready') return;
+    const frame = requestAnimationFrame(() => {
+      const candidates = document.querySelectorAll<HTMLButtonElement>('[data-lead-queue-id]');
+      const target = Array.from(candidates).find(node => node.dataset.leadQueueId === restoredQueue?.leadId && node.getClientRects().length);
+      if (target) target.focus({ preventScroll: true });
+      window.scrollTo(0, restoredQueue?.scrollY || 0);
+      if (target) {
+        const bounds = target.getBoundingClientRect();
+        if (bounds.top < 80 || bounds.bottom > window.innerHeight - 80) target.scrollIntoView({ block: 'center' });
+      }
+      if (!target) document.querySelector<HTMLInputElement>('.pbk-leads-search input')?.focus();
+      restorePending.current = false;
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [leadRosterStatus, visibleLeads, restoredQueue]);
 
   const beginLeadAction = useCallback((key: string) => {
     if (leadActionLockRef.current) return false;
@@ -1301,10 +1338,11 @@ export function Leads() {
 
   useEffect(() => {
     if (!leads.length) return;
+    if (restorePending.current && leadRosterStatus !== 'ready') return;
     if (!selectedLeadId || !leads.some((lead) => getLeadId(lead) === selectedLeadId)) {
       setSelectedLeadId(getLeadId(leads[0]));
     }
-  }, [leads, selectedLeadId]);
+  }, [leads, selectedLeadId, leadRosterStatus]);
 
   useEffect(() => {
     void loadLeadRoster();
@@ -1938,6 +1976,7 @@ export function Leads() {
                     <button
                       type="button"
                       className="pbk-lead-mobile-select"
+                      data-lead-queue-id={id}
                       aria-label={`Open lead ${sellerName} at ${getLeadAddress(lead)}`}
                       aria-pressed={isSelected}
                       onClick={() => setSelectedLeadId(id)}
@@ -1978,6 +2017,7 @@ export function Leads() {
                     </button>
                     <Link
                       to={`/leads/${encodeURIComponent(id)}`}
+                      state={{ leadReturn: leadReturnContext(id) }}
                       className="pbk-lead-workspace-link"
                       aria-label={`Open workspace for ${sellerName}`}
                       title="Open seller workspace"
@@ -2069,6 +2109,7 @@ export function Leads() {
                   >
                     <button
                       type="button"
+                      data-lead-queue-id={id}
                       aria-label={`Open lead ${sellerName} at ${getLeadAddress(lead)}`}
                       aria-pressed={isSelected}
                       onClick={() => setSelectedLeadId(id)}
@@ -2182,7 +2223,7 @@ export function Leads() {
                 <div className="flex flex-wrap gap-2">
                   <button
                     type="button"
-                    onClick={() => navigate(`/leads/${encodeURIComponent(activeLeadId)}`)}
+                    onClick={() => navigate(`/leads/${encodeURIComponent(activeLeadId)}`, { state: { leadReturn: leadReturnContext(activeLeadId) } })}
                     className="inline-flex items-center gap-2 rounded-lg bg-sky-300 px-3 py-2 text-xs font-bold text-slate-950 transition hover:bg-sky-200"
                   >
                     Open lead <ArrowUpRight size={14} aria-hidden="true" />

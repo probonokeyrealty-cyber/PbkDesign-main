@@ -1,0 +1,31 @@
+.pbk-decision-rail {
+  min-width: 0;
+  margin-block: 16px;
+  color: var(--text-primary);
+  font-family: var(--font-ui);
+  text-align: left;
+}
+.pbk-decision-subject { margin: 0 0 10px; font-size: 13px; font-weight: 600; overflow-wrap: anywhere; }
+.pbk-decision-rail ol { list-style: none; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; padding: 0; margin: 0; }
+.pbk-decision-rail li { border-top: 2px solid var(--border); padding-block: 10px; min-width: 0; }
+.pbk-decision-step-name { display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 650; line-height: 1.4; }
+.pbk-decision-step-name svg { flex: 0 0 15px; }
+.pbk-decision-step-name small { margin-left: auto; color: var(--text-secondary); font: 10px var(--font-mono); }
+.pbk-decision-step-detail { display: block; margin-top: 5px; color: var(--text-secondary); font-size: 12px; line-height: 1.4; overflow-wrap: anywhere; }
+.pbk-decision-rail li[data-state=current] { border-color: var(--sky); }
+.pbk-decision-rail li[data-state=current] .pbk-decision-step-name { color: var(--sky); }
+.pbk-decision-rail li[data-state=blocked] { border-color: var(--amber); }
+.pbk-decision-rail li[data-state=blocked] .pbk-decision-step-name { color: var(--amber); }
+.pbk-decision-rail li[data-state=done] .pbk-decision-step-name svg { color: var(--sky); }
+.pbk-decision-note { margin: 4px 0 0; color: var(--text-secondary); font-size: 12px; line-height: 1.5; }
+.pbk-decision-receipt { border-top: 1px solid var(--border); margin-top: 14px; padding-top: 12px; }
+.pbk-decision-receipt-heading { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; font-size: 13px; }
+.pbk-decision-receipt-heading > span { margin-left: auto; color: var(--text-secondary); font: 10px var(--font-mono); }
+.pbk-decision-receipt dl { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 14px; margin: 12px 0 0; }
+.pbk-decision-receipt dl > div { min-width: 0; }
+.pbk-decision-receipt dt { color: var(--text-secondary); font-size: 11px; }
+.pbk-decision-receipt dd { margin: 3px 0 0; font-size: 12px; overflow-wrap: anywhere; }
+@media (max-width: 600px) {
+  .pbk-decision-rail ol { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px 14px; }
+  .pbk-decision-receipt dl { grid-template-columns: minmax(0, 1fr); }
+}

@@ -1,5 +1,7 @@
 # Decision Rail
 
+REQUIRED WORKFLOW: Use `superpowers:subagent-driven-development` with one focused implementation pass per task and review between tasks.
+
 Local implementation of the selected Claude Decision Rail, scoped to Today's existing Review queue and confirmation dialog.
 
 - Render Action, Evidence, Review and Receipt as one shared, presentational component.

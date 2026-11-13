@@ -1,5 +1,7 @@
 # Lead Evidence Guidance
 
+REQUIRED WORKFLOW: Use `superpowers:subagent-driven-development` with one focused implementation pass per task and review between tasks.
+
 Continue the selected Decision Rail design with actionable, read-only guidance on Lead Workspace.
 
 - Identify missing address components beside Property facts. Complete address opens the existing editor; complete addresses offer Review property record, which changes tabs and moves keyboard focus but does not run a lookup.

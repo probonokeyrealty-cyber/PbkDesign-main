@@ -1,5 +1,7 @@
 # Queue Return Context
 
+REQUIRED WORKFLOW: Use `superpowers:subagent-driven-development` with one focused implementation pass per task and review between tasks.
+
 Implement the first navigation slice of the approved Claude Decision Rail prototype locally.
 
 - Keep the existing queue and lead screens; carry return context in React Router history state, not global storage or query parameters.

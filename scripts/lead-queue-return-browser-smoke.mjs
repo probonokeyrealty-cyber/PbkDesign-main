@@ -44,8 +44,11 @@ try {
       await page.getByRole('button', { name: 'Hot 80+', exact: true }).click();
       await page.getByRole('button', { name: 'Next leads page', exact: true }).click();
       const selected = page.getByRole('button', { name: /^Open lead Queue Sample 12 at / }).filter({ visible: true });
+      const queueUrl = page.url();
       await selected.click();
+      await expect(page).toHaveURL(queueUrl);
       await page.getByRole('button', { name: 'Open lead', exact: true }).click();
+      await expect(page).toHaveURL(origin + '/leads/queue-demo-12');
       await expect(page.getByRole('heading', { name: 'Queue Sample 12', exact: true })).toBeVisible();
       await page.getByRole('button', { name: 'Back to leads', exact: true }).click();
       await expect(search).toHaveValue('Queue Sample');

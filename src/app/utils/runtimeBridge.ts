@@ -20,7 +20,20 @@ export type RuntimeTeamSession = {
 };
 
 const DEFAULT_HOSTED_BRIDGE_ENDPOINT = 'https://pbk-openclaw-bridge.onrender.com';
-const RUNTIME_TEAM_SESSION_KEY = 'pbk:team-session:v1';
+export const RUNTIME_TEAM_SESSION_KEY = 'pbk:team-session:v1';
+export const RUNTIME_ACCESS_ERROR_EVENT = 'pbk:runtime-access-error';
+
+export class RuntimeBridgeError extends Error {
+  constructor(message: string, public status: number, public code = '') {
+    super(message);
+    this.name = 'RuntimeBridgeError';
+  }
+}
+
+function isTeamSessionRejection(error: unknown): error is RuntimeBridgeError {
+  return error instanceof RuntimeBridgeError && error.status === 401
+    && /^(?:team_auth_required|invalid_team_session|invalid_team_session_payload|expired_team_session|missing_team_session)$/.test(error.code);
+}
 const BRIDGE_REQUEST_TIMEOUT_MS = Math.max(
   5_000,
   Math.min(30_000, Number(import.meta.env.VITE_PBK_BRIDGE_TIMEOUT_MS || 25_000))
@@ -1215,7 +1228,8 @@ export function getRuntimeTeamSession(): RuntimeTeamSession | null {
     const raw = window.localStorage.getItem(RUNTIME_TEAM_SESSION_KEY);
     if (!raw) return null;
     const session = JSON.parse(raw) as RuntimeTeamSession;
-    if (!session?.token || !session.expiresAt || Date.parse(session.expiresAt) <= Date.now()) {
+    const expiresAt = Date.parse(session?.expiresAt || '');
+    if (!session?.token || !Number.isFinite(expiresAt) || expiresAt <= Date.now()) {
       window.localStorage.removeItem(RUNTIME_TEAM_SESSION_KEY);
       return null;
     }
@@ -1484,6 +1498,36 @@ function extractBridgeErrorMessage(parsed: unknown, status: number) {
   return fallback;
 }
 
+function bridgeResponseError(response: Response, parsed: unknown, requestUrl: string, requestTeamToken = '') {
+  const record = parsed && typeof parsed === 'object' ? parsed as Record<string, unknown> : null;
+  const privateSiteRejected = response.status === 401
+    && !record
+    && isNetlifyHostedRuntimeShell()
+    && new URL(requestUrl).origin === window.location.origin
+    && !response.headers.has('X-PBK-Bridge-Proxy');
+  const error = new RuntimeBridgeError(
+    privateSiteRejected
+      ? 'Netlify private-site access is required. Restore site access, then verify again.'
+      : extractBridgeErrorMessage(parsed, response.status),
+    response.status,
+    privateSiteRejected ? 'private_site_auth_required' : String(record?.code || ''),
+  );
+  const currentSession = getRuntimeTeamSession();
+  const sessionRejected = isTeamSessionRejection(error) && Boolean(requestTeamToken)
+    && (!currentSession || currentSession.token === requestTeamToken);
+  if (sessionRejected) clearRuntimeTeamSession();
+  if (privateSiteRejected || sessionRejected) {
+    window.dispatchEvent(new CustomEvent(RUNTIME_ACCESS_ERROR_EVENT, {
+      detail: {
+        code: sessionRejected ? 'team_session_rejected' : error.code,
+        message: sessionRejected ? 'Your PBK team session expired or was rejected. Sign in again.' : error.message,
+        sessionWasCurrent: currentSession?.token === requestTeamToken,
+      },
+    }));
+  }
+  return error;
+}
+
 export async function bridgeBlobRequest({
   method = 'GET',
   path,
@@ -1510,20 +1554,19 @@ export async function bridgeBlobRequest({
 
   try {
     let response = await fetch(requestUrl, init);
-    if (await shouldRetryRuntimeViaHosted(response, requestUrl, path)) {
+    if (await shouldRetryRuntimeViaHosted(response, requestUrl, path, method)) {
       const fallbackUrl = buildHostedRuntimeFallbackUrl(requestUrl);
       if (fallbackUrl) response = await fetch(fallbackUrl, init);
     }
     if (!response.ok) {
       const text = await response.text();
-      let message = `Bridge request failed (${response.status})`;
+      let payload: unknown = text;
       try {
-        const payload = text ? JSON.parse(text) : null;
-        message = extractBridgeErrorMessage(payload, response.status);
+        payload = text ? JSON.parse(text) : null;
       } catch {
-        if (text) message = text;
+        // Non-JSON 401s can come from Netlify before the function is invoked.
       }
-      throw new Error(message);
+      throw bridgeResponseError(response, payload, requestUrl, init.headers['X-PBK-Team-Token']);
     }
     return await response.blob();
   } catch (error) {
@@ -1564,7 +1607,7 @@ export async function bridgeRequest<T = unknown>({
   let parsed: unknown;
   try {
     response = await fetch(requestUrl, init);
-    if (await shouldRetryRuntimeViaHosted(response, requestUrl, path)) {
+    if (await shouldRetryRuntimeViaHosted(response, requestUrl, path, method)) {
       const fallbackUrl = buildHostedRuntimeFallbackUrl(requestUrl);
       if (fallbackUrl) response = await fetch(fallbackUrl, init);
     }
@@ -1587,7 +1630,7 @@ export async function bridgeRequest<T = unknown>({
   }
 
   if (!response.ok) {
-    throw new Error(extractBridgeErrorMessage(parsed, response.status));
+    throw bridgeResponseError(response, parsed, requestUrl, init.headers['X-PBK-Team-Token']);
   }
 
   return parsed as T;
@@ -1640,7 +1683,8 @@ function buildHostedRuntimeFallbackUrl(url = '') {
   }
 }
 
-async function shouldRetryRuntimeViaHosted(response: Response, url = '', path = '') {
+async function shouldRetryRuntimeViaHosted(response: Response, url = '', path = '', method = 'GET') {
+  if (!['GET', 'HEAD'].includes(method.toUpperCase())) return false;
   const canRetryProtectedWithTeamToken = Boolean(getRuntimeTeamSession()?.token);
   if (!isAuthOptionalRuntimePath(path) && !canRetryProtectedWithTeamToken) return false;
   if (!buildHostedRuntimeFallbackUrl(url)) return false;
@@ -1664,7 +1708,10 @@ export async function fetchTeamAuthStatusRequest() {
   });
 }
 
-export async function authenticateTeamSessionRequest(body: { passcode: string; actor?: string }) {
+export async function authenticateTeamSessionRequest(
+  body: { passcode: string; actor?: string },
+  isCurrentRequest: () => boolean = () => true,
+) {
   const response = await bridgeRequest<RuntimeTeamSession & { ok: boolean }>({
     method: 'POST',
     path: '/api/auth/team',
@@ -1672,6 +1719,9 @@ export async function authenticateTeamSessionRequest(body: { passcode: string; a
   });
   if (!response.ok || !response.token) {
     throw new Error('PBK team session could not be created.');
+  }
+  if (!isCurrentRequest()) {
+    throw new Error('This sign-in was superseded by another session change. Verify access again.');
   }
   return saveRuntimeTeamSession({
     token: response.token,
@@ -1697,7 +1747,10 @@ export async function verifyRuntimeTeamSessionRequest() {
       path: '/api/auth/team/verify',
       body: {},
     });
-    if (!verified.ok) throw new Error('Team session verification failed.');
+    if (!verified || verified.ok !== true) throw new Error('Team session verification is unavailable.');
+    if (getRuntimeTeamSession()?.token !== session.token) {
+      throw new Error('The PBK team session changed during verification. Verify access again.');
+    }
     return saveRuntimeTeamSession({
       ...session,
       role: verified.role || session.role,
@@ -1705,9 +1758,15 @@ export async function verifyRuntimeTeamSessionRequest() {
       expiresAt: verified.expiresAt || session.expiresAt,
       permissions: verified.permissions || session.permissions,
     });
-  } catch {
-    clearRuntimeTeamSession();
-    return null;
+  } catch (error) {
+    const currentSession = getRuntimeTeamSession();
+    if (!currentSession) return null;
+    if (isTeamSessionRejection(error) && currentSession.token === session.token) {
+      clearRuntimeTeamSession();
+      return null;
+    }
+    // An edge login, timeout, or unavailable verifier is not proof of revocation.
+    throw error;
   }
 }
 

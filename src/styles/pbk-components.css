@@ -7673,6 +7673,32 @@
   font-size: 8px;
   line-height: 1.55;
 }
+.pbk-team-access-recovery {
+  position: fixed;
+  z-index: 1400;
+  right: 16px;
+  bottom: 80px;
+  width: min(420px, calc(100% - 32px));
+  background: var(--bg-panel);
+}
+.pbk-team-access-recovery .pbk-team-access-error { margin-top: 0; }
+.pbk-team-access-recovery-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.pbk-team-access-recovery-actions a,
+.pbk-team-access-recovery-actions button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 40px;
+  padding: 8px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: var(--bg-panel);
+  color: var(--text-primary);
+  font-size: 12px;
+}
+.pbk-team-access-recovery-actions svg { width: 16px; height: 16px; flex: none; }
+.pbk-team-access-recovery-actions button:disabled { opacity: 0.6; cursor: wait; }
 .pbk-live-call-talk-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;

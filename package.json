@@ -114,6 +114,7 @@
     "test:operator-copy": "node ./scripts/operator-copy-smoke.mjs",
     "test:command-center-prototype-visual": "node ./scripts/command-center-prototype-visual-smoke.mjs",
     "test:netlify-bridge-proxy-auth": "node ./scripts/netlify-bridge-proxy-auth-smoke.mjs",
+    "test:team-access-recovery-browser": "node ./scripts/team-access-recovery-browser-smoke.mjs",
     "test:runtime-bridge-hosted-proxy": "node ./scripts/runtime-bridge-hosted-proxy-smoke.mjs",
     "test:pipeline-voice-readiness": "node ./scripts/pipeline-voice-readiness-smoke.mjs",
     "test:root-shell-promotion": "node ./scripts/root-shell-promotion-smoke.mjs",

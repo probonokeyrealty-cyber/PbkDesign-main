@@ -28,9 +28,10 @@ for (const token of [
 }
 
 assert(
-  /extractBridgeErrorMessage\(payload,\s*response\.status\)/.test(runtimeBridge) &&
+  /bridgeResponseError\(response, payload, requestUrl,/.test(runtimeBridge) &&
+    /bridgeResponseError\(response, parsed, requestUrl,/.test(runtimeBridge) &&
     /extractBridgeErrorMessage\(parsed,\s*response\.status\)/.test(runtimeBridge),
-  'Both blob and JSON bridge requests must use the shared error extractor.'
+  'Both blob and JSON requests must use the shared auth-aware error builder and bridge error extractor.'
 );
 
 assert(

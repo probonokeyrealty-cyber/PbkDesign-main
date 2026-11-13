@@ -3,6 +3,7 @@ import { chromium, devices, expect, webkit } from '@playwright/test';
 import { createServer } from 'vite';
 import { mkdirSync } from 'node:fs';
 
+process.env.PBK_DEV_BRIDGE_URL = 'http://127.0.0.1:1';
 const server = await createServer({ server: { host: '127.0.0.1', port: 0 } });
 await server.listen();
 const origin = `http://127.0.0.1:${server.httpServer.address().port}`;
@@ -21,12 +22,15 @@ async function verify(browserType, viewport, device = {}) {
   const browser = await browserType.launch();
   try {
     const page = await browser.newPage({ ...device, viewport });
+    await page.clock.install();
+    await page.routeWebSocket('**/*', (socket) => socket.close());
     const requests = [];
     const unexpectedWrites = [];
     let resolved = false;
     let unavailable = true;
     let changed = false;
     let preflightOffline = false;
+    let offlineReads = 0;
     let release;
     let respond;
     const responseHeld = new Promise((resolve) => { respond = resolve; });
@@ -35,7 +39,10 @@ async function verify(browserType, viewport, device = {}) {
       const request = route.request();
       const url = new URL(request.url());
       if (url.pathname === '/state' && request.method() === 'GET') {
-        if (unavailable || preflightOffline) return route.fulfill({ status: 503, json: { error: 'Fixture offline' } });
+        if (unavailable || preflightOffline) {
+          offlineReads++;
+          return route.fulfill({ status: 503, json: { error: 'Fixture offline' } });
+        }
         return route.fulfill({
           json: {
             approvals: resolved
@@ -85,6 +92,8 @@ async function verify(browserType, viewport, device = {}) {
     const row = review.locator('[data-approval-id="qa-sms"]');
     const approve = row.getByRole('button', { name: 'Review approval' });
     await expect(row.getByText(seller.message)).toBeVisible();
+    // Advance polling explicitly so it cannot consume a preflight-only outage.
+    await page.clock.pauseAt(await page.evaluate(() => Date.now() + 100));
     if (process.env.PBK_TODAY_REVIEW_SCREENSHOTS === '1') {
       mkdirSync('.pbk-local', { recursive: true });
       await page.screenshot({ path: `.pbk-local/today-review-${browserType.name()}-${viewport.width}.png` });
@@ -103,8 +112,22 @@ async function verify(browserType, viewport, device = {}) {
 
     await approve.click();
     preflightOffline = true;
+    await page.clock.fastForward(5_000);
+    await expect(dialog.getByRole('button', { name: 'Confirm decision' })).toBeDisabled();
+    await expect(review.getByText('Queue unavailable. No decision can be submitted.', { exact: true })).toBeVisible();
+    assert.equal(requests.length, 0, 'A polling outage must disable approval without writing');
+    preflightOffline = false;
+    await page.clock.fastForward(30_000);
+    await expect(dialog.getByRole('button', { name: 'Confirm decision' })).toBeEnabled();
+    await dialog.getByRole('button', { name: 'Cancel' }).click();
+    await expect(dialog).toHaveCount(0);
+
+    await approve.click();
+    const offlineReadsBeforePreflight = offlineReads;
+    preflightOffline = true;
     await dialog.getByRole('button', { name: 'Confirm decision' }).click();
     await expect(rail.locator('[data-state="blocked"]')).toContainText('Evidence');
+    assert(offlineReads > offlineReadsBeforePreflight, 'The preflight must actually reach the unavailable fixture');
     assert.equal(requests.length, 0, 'A failed preflight must not submit a decision');
     preflightOffline = false;
 
@@ -163,7 +186,7 @@ async function verify(browserType, viewport, device = {}) {
       document.querySelector('.pbk-today-review').scrollWidth <=
         document.querySelector('.pbk-today-review').clientWidth
     ), true, 'Today and Review must not overflow');
-    console.log(`${browserType.name()} ${viewport.width}px: evidence, keyboard cancel, duplicate, changed/unknown decisions, and layout passed.`);
+    console.log(`${browserType.name()} ${viewport.width}px: polling outage/recovery, failed preflight, keyboard cancel, duplicate, changed/unknown decisions, and layout passed.`);
   } finally {
     await browser.close();
   }

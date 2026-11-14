@@ -55,6 +55,12 @@ export type MemoryAnalyticsViewModel = {
   experiments: MemoryExperimentMetric[];
 };
 
+export function buildMemoryConflictGroups(events?: MemoryEventMetric[]): Array<{
+  id: string;
+  label: string;
+  observations: Array<{ event: MemoryEventMetric; value: string }>;
+}>;
+
 export function normalizeSkillMetric(
   skill?: Record<string, unknown>,
   trendResponse?: SkillTrendsResponse | Record<string, unknown>

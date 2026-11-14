@@ -110,7 +110,7 @@ assert(
   'Campaign launch must request bridge approval.'
 );
 assert(
-  /const closeWizard = useCallback\(\(\) => setWizardOpen\(false\), \[\]\)/.test(campaigns) &&
+  /const closeWizard = useCallback\(\(\) => \{[\s\S]*?!submitting\.current\) setWizardOpen\(false\);\s*\}, \[\]\)/.test(campaigns) &&
     /onClose=\{closeWizard\}/.test(campaigns),
   'Campaign wizard close behavior must stay referentially stable while the draft changes.'
 );

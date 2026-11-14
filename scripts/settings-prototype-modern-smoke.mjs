@@ -54,7 +54,7 @@ assert(
   'GET /api/tooling/status',
   'PUT /api/admin/tasks/:id',
   'GET /api/observability/status',
-  'GET/POST /api/settings',
+  'GET/PATCH /api/settings',
 ].forEach((endpoint) => {
   assert(settings.includes(endpoint), `Settings should surface data source ${endpoint}.`);
 });

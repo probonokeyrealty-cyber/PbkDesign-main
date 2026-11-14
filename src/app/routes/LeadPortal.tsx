@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AlertCircle, Loader2, Save, StickyNote } from 'lucide-react';
+import { AlertCircle, ArrowRight, Loader2, Save, StickyNote } from 'lucide-react';
 import { useNavigate, useParams, useSearchParams } from 'react-router';
 import { PbkDataSource } from '../../components/pbk/index';
 import { LeadPortalContactability } from '../components/leads/LeadPortalContactability';
@@ -240,9 +240,7 @@ export function LeadPortal() {
       const selectedThread =
         conversationResponse?.items?.find(
           (candidate) => candidate.leadId === (canonicalLeadId || leadId)
-        ) ||
-        conversationResponse?.items?.[0] ||
-        null;
+        ) ?? null;
       setThread(selectedThread);
       if (selectedThread) {
         await loadTimeline(selectedThread);
@@ -664,41 +662,69 @@ export function LeadPortal() {
         onDelete={() => setConfirmAction('delete')}
       />
 
-      <div className="pbk-lead-portal-source">
-        <PbkDataSource
-          endpoint="GET /api/leads/:id/full"
-          status="ships"
-          note="canonical seller, property, calls, documents, and analyzer context"
-        />
-        <PbkDataSource
-          endpoint="GET /api/conversations?leadId=:leadId"
-          status="ships"
-          note={thread ? 'canonical seller thread resolved' : 'no thread attached yet'}
-        />
-      </div>
+      <nav className="pbk-portal-sections" aria-label="Lead workspace sections">
+        <a href="#lead-timeline">Timeline</a>
+        <a href="#lead-numbers">Numbers</a>
+        <a href="#lead-property">Property</a>
+      </nav>
+
+      {lead.bantNextStep && (
+        <section className="pbk-portal-next-step" aria-labelledby="lead-next-step-heading">
+          <ArrowRight size={18} aria-hidden="true" />
+          <div>
+            <h2 id="lead-next-step-heading">Next step</h2>
+            <p>{lead.bantNextStep}</p>
+          </div>
+        </section>
+      )}
 
       <div className="pbk-lead-portal-grid">
-        <LeadPortalOverview lead={lead} />
-        <LeadPortalContactability lead={lead} />
-        <LeadPortalProperty lead={lead} />
-        <LeadPortalDealContext lead={lead} />
+        <div className="pbk-portal-main-column">
+          <LeadPortalTimeline
+            thread={thread}
+            events={events}
+            loading={timelineLoading}
+            loadingMore={timelineLoadingMore}
+            error={timelineError}
+            hasMore={Boolean(timelineCursor)}
+            onRetry={() => thread && void loadTimeline(thread)}
+            onLoadMore={() =>
+              thread &&
+              timelineCursor &&
+              void loadTimeline(thread, { cursor: timelineCursor, append: true })
+            }
+            onEventChanged={() => thread && void loadTimeline(thread)}
+          />
+          <LeadPortalOverview lead={lead} />
+        </div>
+        <div className="pbk-portal-context-column">
+          <LeadPortalDealContext lead={lead} />
+          <LeadPortalContactability lead={lead} />
+        </div>
       </div>
 
-      <LeadPortalTimeline
-        thread={thread}
-        events={events}
-        loading={timelineLoading}
-        loadingMore={timelineLoadingMore}
-        error={timelineError}
-        hasMore={Boolean(timelineCursor)}
-        onRetry={() => thread && void loadTimeline(thread)}
-        onLoadMore={() =>
-          thread &&
-          timelineCursor &&
-          void loadTimeline(thread, { cursor: timelineCursor, append: true })
-        }
-        onEventChanged={() => thread && void loadTimeline(thread)}
-      />
+      <LeadPortalProperty key={lead.id || leadId} lead={lead} onEdit={startEdit} />
+
+      <details className="pbk-portal-source-details">
+        <summary>Data sources</summary>
+        <div className="pbk-lead-portal-source">
+          <PbkDataSource
+            endpoint="GET /api/leads/:id/full"
+            status="ships"
+            note="canonical seller, property, calls, documents, and analyzer context"
+          />
+          <PbkDataSource
+            endpoint="GET /api/conversations?leadId=:leadId"
+            status="ships"
+            note={thread ? 'canonical seller thread resolved' : 'no thread attached yet'}
+          />
+          <PbkDataSource
+            endpoint="GET /api/conversations/:threadId/timeline"
+            status="ships"
+            note="canonical seller event history"
+          />
+        </div>
+      </details>
 
       <Dialog open={editOpen} onOpenChange={setEditOpen}>
         <DialogContent className="pbk-lead-portal-edit">

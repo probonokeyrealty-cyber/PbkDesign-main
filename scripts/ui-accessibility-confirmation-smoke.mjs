@@ -110,10 +110,10 @@ expect(
 
 const leads = read('src/app/routes/Leads.tsx');
 expect(leads, /type LeadCallConfirmDraft/, 'Leads has a call confirmation draft');
-expect(leads, /aria-selected=\{isSelected\}/, 'Leads table rows expose selected state');
-expect(leads, /aria-pressed=\{isSelected\}/, 'Leads mobile cards expose pressed state');
+expect(leads, /pbk-lead-ledger-row[\s\S]*?<button[\s\S]*?aria-pressed=\{isSelected\}/, 'Leads table buttons expose pressed state');
+expect(leads, /pbk-lead-mobile-select[\s\S]*?aria-pressed=\{isSelected\}/, 'Leads mobile cards expose pressed state');
 expect(leads, /aria-label=\{`Open lead \$\{sellerName\}/, 'Leads mobile cards have contextual aria-labels');
-expect(leads, /aria-label=\{`Open lead \$\{getSellerName\(lead\)\}/, 'Leads table buttons have contextual aria-labels');
+expect(leads, /pbk-lead-ledger-row[\s\S]*?<button[\s\S]*?aria-label=\{`Open lead \$\{sellerName\}/, 'Leads table buttons have contextual aria-labels');
 expect(leads, /aria-labelledby="lead-call-confirm-title"/, 'Leads confirms call requests before dialing');
 
 const failed = checks.filter((check) => !check.passed);

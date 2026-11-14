@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router';
-import { BarChart3, Database, Download, RefreshCw, TrendingUp, X } from 'lucide-react';
+import { ArrowRight, ChevronDown, Database, Download, RefreshCw, X } from 'lucide-react';
 import { PbkDataSource } from '../../components/pbk/index';
 import {
   fetchAiMetricsRequest,
@@ -15,6 +15,24 @@ import { showUiToast } from '../utils/uiFeedback';
 import { buildAnalyticsCsv, buildAnalyticsViewModel } from './analyticsRuntimeLogic.js';
 
 type AnalyticsViewModel = ReturnType<typeof buildAnalyticsViewModel>;
+const ANALYTICS_RANGES = [
+  { id: '7d', label: '7D', caption: 'Last 7 days', days: 7 },
+  { id: '30d', label: '30D', caption: 'Last 30 days', days: 30 },
+  { id: '90d', label: '90D', caption: 'Last 90 days', days: 90 },
+  { id: 'ytd', label: 'YTD', caption: 'Year to date', days: 30 },
+] as const;
+type AnalyticsRange = (typeof ANALYTICS_RANGES)[number];
+const ANALYTICS_RANGE_KEY = 'pbk-analytics-range';
+
+function readAnalyticsRange() {
+  try {
+    const stored = window.localStorage.getItem(ANALYTICS_RANGE_KEY);
+    return ANALYTICS_RANGES.find(({ id }) => id === stored) || ANALYTICS_RANGES[1];
+  } catch {
+    return ANALYTICS_RANGES[1];
+  }
+}
+
 type AnalyticsLeadItem = AnalyticsLead & {
   name?: string;
   revenue?: number;
@@ -44,6 +62,7 @@ interface DrillDownPanelProps {
   title: string;
   meta: string;
   items: AnalyticsLeadItem[];
+  canExport: boolean;
   onClose: () => void;
   onExport: () => void;
 }
@@ -67,6 +86,7 @@ function dayLabel(value: string) {
     weekday: 'short',
     month: 'short',
     day: 'numeric',
+    timeZone: 'UTC',
   }).format(parsed);
 }
 
@@ -223,9 +243,11 @@ function CampaignAttributionList({
 function CampaignAttributionPanel({
   drilldown,
   loading,
+  range,
 }: {
   drilldown: CampaignDrilldownResponse | null;
   loading: boolean;
+  range: AnalyticsRange;
 }) {
   const sourceRows = useMemo(() => buildCampaignAttributionRows(drilldown, 'source'), [drilldown]);
   const channelRows = useMemo(
@@ -239,61 +261,63 @@ function CampaignAttributionPanel({
   const generated = drilldown?.generatedAt ? formatGeneratedAt(drilldown.generatedAt) : 'waiting';
 
   return (
-    <div className="pbk-analytics-card pbk-analytics-premium-card pbk-analytics-attribution-card">
+    <section
+      className="pbk-analytics-card pbk-analytics-attribution-card span-2"
+      aria-labelledby="analytics-attribution-title"
+    >
       <div className="pbk-analytics-card-head">
         <div>
-          <h2>Campaign attribution</h2>
-          <p>Source, channel, reply, and connected-call signals from campaign drilldown rows.</p>
+          <h2 id="analytics-attribution-title">Campaign attribution</h2>
         </div>
-        <span className="tf">{loading && !drilldown ? 'syncing' : 'bridge drilldown'}</span>
+        <span className="tf">{range.caption}</span>
       </div>
 
-      <div className="pbk-analytics-attribution-summary">
-        <div>
-          <span>Lead rows</span>
-          <strong>{shortNumber(Number(summary.leads || leadRows || 0))}</strong>
-        </div>
-        <div>
-          <span>Replies</span>
-          <strong>{shortNumber(Number(summary.replied || 0))}</strong>
-        </div>
-        <div>
-          <span>Reply rate</span>
-          <strong>{formatPercent(replyRate)}</strong>
-        </div>
-        <div>
-          <span>Connect</span>
-          <strong>{formatPercent(connectRate)}</strong>
-        </div>
-      </div>
+      {drilldown ? (
+        <>
+          <div className="pbk-analytics-attribution-summary">
+            <div>
+              <span>Lead rows</span>
+              <strong>{shortNumber(Number(summary.leads || leadRows || 0))}</strong>
+            </div>
+            <div>
+              <span>Replies</span>
+              <strong>{shortNumber(Number(summary.replied || 0))}</strong>
+            </div>
+            <div>
+              <span>Reply rate</span>
+              <strong>{formatPercent(replyRate)}</strong>
+            </div>
+            <div>
+              <span>Connect</span>
+              <strong>{formatPercent(connectRate)}</strong>
+            </div>
+          </div>
 
-      <div className="pbk-analytics-attribution-grid">
-        <CampaignAttributionList
-          title="Source ranking"
-          rows={sourceRows}
-          empty={
-            loading
-              ? 'Loading campaign attribution from the bridge...'
-              : 'No campaign lead rows returned yet.'
-          }
-        />
-        <CampaignAttributionList
-          title="Channel ranking"
-          rows={channelRows}
-          empty={
-            loading
-              ? 'Loading channel attribution from the bridge...'
-              : 'No channel attribution rows returned yet.'
-          }
-        />
-      </div>
+          <div className="pbk-analytics-attribution-grid">
+            <CampaignAttributionList
+              title="Source ranking"
+              rows={sourceRows}
+              empty="No campaign lead rows returned yet."
+            />
+            <CampaignAttributionList
+              title="Channel ranking"
+              rows={channelRows}
+              empty="No channel attribution rows returned yet."
+            />
+          </div>
 
-      <PbkDataSource
-        endpoint="GET /api/analytics/campaign-drilldown"
-        status="ships"
-        note={`${leadRows ? `${shortNumber(leadRows)} rows` : 'no rows yet'} - generated ${generated}`}
-      />
-    </div>
+          <PbkDataSource
+            endpoint="GET /api/analytics/campaign-drilldown"
+            status="ships"
+            note={`${shortNumber(leadRows)} rows returned - ${generated}`}
+          />
+        </>
+      ) : (
+        <p className="pbk-analytics-empty compact">
+          {loading ? 'Loading campaign attribution...' : 'Campaign attribution unavailable.'}
+        </p>
+      )}
+    </section>
   );
 }
 
@@ -318,75 +342,71 @@ function AnalyticsSourceRail() {
       <PbkDataSource
         endpoint="GET /api/analytics/campaign-drilldown"
         status="ships"
-        note="premium source-ranked campaign attribution"
+        note="campaign attribution by source and channel"
       />
     </div>
   );
 }
 
-function AnalyticsStatRibbon({ stats }: { stats: AnalyticsStats }) {
-  const generatedLabel = formatGeneratedAt(stats.generatedAt);
+function AnalyticsStatRibbon({
+  stats,
+  available,
+  range,
+}: {
+  stats: AnalyticsStats;
+  available: boolean;
+  range: AnalyticsRange;
+}) {
   return (
-    <div className="pbk-analytics-grid">
+    <section className="pbk-analytics-grid" aria-label="Key metrics">
       <div className="pbk-analytics-stat">
         <div className="l">Leads tracked</div>
-        <div className="v sky">{shortNumber(stats.leadsTracked)}</div>
-        <div className="delta">largest bridge funnel stage</div>
+        <div className="v">{available ? shortNumber(stats.leadsTracked) : '-'}</div>
+        <div className="delta">Largest funnel stage</div>
       </div>
       <div className="pbk-analytics-stat">
         <div className="l">Closed deals</div>
-        <div className="v lime">{shortNumber(stats.closedDeals)}</div>
-        <div className="delta">{formatPercent(stats.closedRate)} close rate</div>
+        <div className="v">{available ? shortNumber(stats.closedDeals) : '-'}</div>
+        <div className="delta">
+          {available ? `${formatPercent(stats.closedRate)} close rate` : 'Acquisition funnel'}
+        </div>
       </div>
       <div className="pbk-analytics-stat">
         <div className="l">Deal revenue</div>
-        <div className="v">{money(stats.totalRevenue)}</div>
-        <div className="delta">from deal timeline</div>
+        <div className="v sky">{available ? money(stats.totalRevenue) : '-'}</div>
+        <div className="delta">{range.caption}</div>
       </div>
       <div className="pbk-analytics-stat">
         <div className="l">AI ROI</div>
-        <div className="v amber">{stats.roiMultiple ? `${stats.roiMultiple}x` : '-'}</div>
+        <div className="v">{available && stats.roiMultiple ? `${stats.roiMultiple}x` : '-'}</div>
         <div className="delta">
-          {money(stats.aiSpend)} tracked spend - {generatedLabel}
+          {available ? `${money(stats.aiSpend)} tracked spend` : range.caption}
         </div>
       </div>
-    </div>
+    </section>
   );
 }
 
 function AnalyticsHero({
   status,
-  stats,
-  source,
+  range,
+  generatedAt,
+  onRange,
   onRefresh,
   onExport,
 }: {
   status: 'loading' | 'ready' | 'error';
-  stats: AnalyticsStats;
-  source: string;
+  range: AnalyticsRange;
+  generatedAt: string;
+  onRange: (range: AnalyticsRange) => void;
   onRefresh: () => void;
   onExport: () => void;
 }) {
   return (
-    <section className="pbk-analytics-hero">
+    <header className="pbk-analytics-hero">
       <div className="pbk-analytics-hero-top">
-        <div>
-          <div className="pbk-eyebrow">
-            Live analytics - {shortNumber(stats.leadsTracked)} leads - {money(stats.totalRevenue)}
-          </div>
-          <h1 className="pbk-display pbk-h1">
-            Analytics &amp; <em>deal flow</em>.
-          </h1>
-          <p>
-            Funnel, deal revenue, ROI, and AI performance are pulled from the PBK bridge. Premium
-            campaign attribution now reads the same bridge drilldown contract used by Campaigns.
-          </p>
-        </div>
+        <h1 className="pbk-display pbk-h1">Analytics</h1>
         <div className="pbk-analytics-hero-actions">
-          <span className="pbk-analytics-sync">
-            <Database size={13} />
-            {status === 'loading' ? 'syncing' : source || 'runtime'}
-          </span>
           <button
             type="button"
             className="pbk-btn pbk-btn-ghost pbk-btn-sm"
@@ -398,7 +418,7 @@ function AnalyticsHero({
           </button>
           <button
             type="button"
-            className="pbk-btn pbk-btn-sky-gradient pbk-btn-sm"
+            className="pbk-btn pbk-btn-primary pbk-btn-sm"
             onClick={onExport}
             disabled={status !== 'ready'}
           >
@@ -407,9 +427,28 @@ function AnalyticsHero({
           </button>
         </div>
       </div>
-      <AnalyticsStatRibbon stats={stats} />
-      <AnalyticsSourceRail />
-    </section>
+      <div className="pbk-analytics-toolbar">
+        <div className="pbk-analytics-range" role="group" aria-label="Analytics date range">
+          {ANALYTICS_RANGES.map((option) => (
+            <button
+              type="button"
+              key={option.id}
+              aria-pressed={option.id === range.id}
+              onClick={() => onRange(option)}
+            >
+              {option.label}
+            </button>
+          ))}
+        </div>
+        <span className="pbk-analytics-sync" role="status">
+          {status === 'loading'
+            ? 'Loading data'
+            : generatedAt
+              ? `Updated ${formatGeneratedAt(generatedAt)}`
+              : 'Data unavailable'}
+        </span>
+      </div>
+    </header>
   );
 }
 
@@ -422,23 +461,32 @@ function AnalyticsFunnelStep({
   stage: AnalyticsViewModel['funnel'][number];
   index: number;
   maxTotal: number;
-  onOpen: () => void;
+  onOpen: (trigger: HTMLButtonElement) => void;
 }) {
   const percent = maxTotal ? Math.round((stage.total / maxTotal) * 100) : 0;
   return (
     <button
       type="button"
-      className={`pbk-analytics-funnel-step s${Math.min(index + 1, 5)}`}
-      onClick={onOpen}
+      className="pbk-analytics-funnel-step"
+      onClick={(event) => onOpen(event.currentTarget)}
       aria-label={`Open ${stage.label} drill-down`}
+      aria-describedby={`analytics-stage-count-${index}`}
     >
       <span className="fs-label">
-        Step {index + 1} - {stage.label}
+        <span className="fs-index" aria-hidden="true">
+          {String(index + 1).padStart(2, '0')}
+        </span>{' '}
+        {stage.label}
       </span>
-      <span className="fs-bar">
-        <span className="fs-fill" style={{ width: `${Math.max(4, percent)}%` }} />
-        <strong>{shortNumber(stage.total)}</strong>
+      <span className="fs-bar" aria-hidden="true">
+        <span
+          className="fs-fill"
+          style={{ width: `${maxTotal ? (stage.total / maxTotal) * 100 : 0}%` }}
+        />
       </span>
+      <strong className="fs-count" id={`analytics-stage-count-${index}`}>
+        {shortNumber(stage.total)}
+      </strong>
       <span className="fs-val">{percent}%</span>
     </button>
   );
@@ -451,17 +499,17 @@ function AnalyticsDailyBar({
 }: {
   day: AnalyticsViewModel['dailyDeals'][number];
   maxDaily: number;
-  onOpen: () => void;
+  onOpen: (trigger: HTMLButtonElement) => void;
 }) {
-  const height = Math.max(4, (day.count / maxDaily) * 100);
+  const height = (day.count / maxDaily) * 100;
   return (
     <button
       type="button"
       className="pbk-analytics-daily-bar"
-      onClick={onOpen}
-      aria-label={`Open daily deals for ${dayLabel(day.day)}`}
+      onClick={(event) => onOpen(event.currentTarget)}
+      aria-label={`Open daily deals for ${dayLabel(day.day)}: ${shortNumber(day.count)} closed, ${money(day.revenue)} revenue`}
     >
-      <span className="bar-track">
+      <span className="bar-track" aria-hidden="true">
         <span className="bar-fill" style={{ height: `${height}%` }} />
       </span>
       <span className="bar-count">{shortNumber(day.count)}</span>
@@ -472,114 +520,125 @@ function AnalyticsDailyBar({
 }
 
 function AnalyticsMetricTile({ metric }: { metric: AnalyticsViewModel['aiMetrics'][number] }) {
-  const label = metric.label.toLowerCase();
-  const tone = label.includes('safety') ? 'amber' : label.includes('retry') ? 'lime' : 'sky';
   return (
-    <div className={`pbk-analytics-metric ${tone}`}>
-      <div className="metric-icon">
-        <BarChart3 size={15} />
-      </div>
-      <div>
-        <div className="l">{metric.label}</div>
-        <div className="v">{metric.value}</div>
-        <div className="sub">raw {String(metric.raw ?? 0)}</div>
-      </div>
+    <div className="pbk-analytics-metric">
+      <dt className="l">{metric.label}</dt>
+      <dd className="v">{metric.value}</dd>
     </div>
   );
 }
 
-function DrillDownPanel({ open, title, meta, items, onClose, onExport }: DrillDownPanelProps) {
+function DrillDownPanel({
+  open,
+  title,
+  meta,
+  items,
+  canExport,
+  onClose,
+  onExport,
+}: DrillDownPanelProps) {
   const navigate = useNavigate();
+  const dialogRef = useRef<HTMLDialogElement>(null);
 
   useEffect(() => {
-    if (!open) return undefined;
-    const onEscape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') onClose();
-    };
-    window.addEventListener('keydown', onEscape);
-    return () => window.removeEventListener('keydown', onEscape);
-  }, [open, onClose]);
+    const dialog = dialogRef.current;
+    if (!open || !dialog) return;
+    dialog.showModal();
+    return () => dialog.close();
+  }, [open]);
 
   if (!open) return null;
 
   return (
-    <div className="drill-backdrop" role="presentation" onMouseDown={onClose}>
-      <aside
-        className="drill-panel min-w-[min(320px,calc(100vw-2rem))]"
-        role="dialog"
-        aria-modal="true"
-        aria-label={title}
-        onMouseDown={(event) => event.stopPropagation()}
-      >
-        <div className="flex items-start justify-between gap-3 border-b border-slate-800 px-4 py-4">
-          <div>
-            <div className="text-[11px] uppercase tracking-[0.16em] text-slate-500">Drill-down</div>
-            <h2 className="mt-1 text-lg font-semibold text-slate-100">{title}</h2>
-            <p className="mt-1 text-xs text-slate-500">{meta}</p>
+    <dialog
+      ref={dialogRef}
+      className="pbk-analytics-drill"
+      aria-labelledby="analytics-drill-title"
+      aria-describedby="analytics-drill-meta"
+      onCancel={(event) => {
+        event.preventDefault();
+        onClose();
+      }}
+      onClick={(event) => {
+        if (event.target === event.currentTarget) onClose();
+      }}
+    >
+      <header className="pbk-analytics-drill-head">
+        <div>
+          <h2 id="analytics-drill-title">{title}</h2>
+          <p id="analytics-drill-meta">{meta}</p>
+        </div>
+        <button
+          type="button"
+          className="pbk-btn pbk-btn-ghost pbk-analytics-drill-close"
+          onClick={onClose}
+          aria-label="Close drill-down"
+        >
+          <X size={18} />
+        </button>
+      </header>
+
+      <div className="pbk-analytics-drill-list">
+        {items.length ? (
+          items.map((item) => (
+            <button
+              key={item.id}
+              type="button"
+              className="pbk-analytics-drill-row"
+              onClick={() => {
+                onClose();
+                navigate(`/leads/${encodeURIComponent(item.id)}`);
+              }}
+            >
+              <span className="pbk-analytics-drill-record">
+                <strong>{item.name || 'Unknown seller'}</strong>
+                <span>{item.address || 'Address pending'}</span>
+                <span>{item.stageLabel || item.stage || 'Lead'}</span>
+              </span>
+              <span className="pbk-analytics-drill-revenue">{money(item.revenue || 0)}</span>
+              <ArrowRight size={16} aria-hidden="true" />
+            </button>
+          ))
+        ) : (
+          <div className="pbk-analytics-empty compact">
+            No lead rows returned for this slice yet.
           </div>
-          <button
-            type="button"
-            className="modal-close"
-            onClick={onClose}
-            aria-label="Close drill-down"
-          >
-            <X size={18} />
-          </button>
-        </div>
+        )}
+      </div>
 
-        <div className="flex-1 space-y-2 overflow-y-auto p-4">
-          {items.length ? (
-            items.map((item) => (
-              <button
-                key={item.id}
-                type="button"
-                className="w-full rounded-2xl border border-slate-800 bg-slate-900 px-3 py-3 text-left transition hover:border-sky-500/40"
-                onClick={() => {
-                  onClose();
-                  navigate(`/leads/${encodeURIComponent(item.id)}`);
-                }}
-              >
-                <div className="flex items-center justify-between gap-3">
-                  <span className="font-semibold text-slate-100">
-                    {item.name || 'Unknown seller'}
-                  </span>
-                  <span className="text-xs text-lime-300">{money(item.revenue || 0)}</span>
-                </div>
-                <div className="mt-1 text-xs text-slate-400">
-                  {item.address || 'Address pending'}
-                </div>
-                <div className="mt-2 text-[10px] uppercase tracking-[0.14em] text-slate-500">
-                  {item.stageLabel || item.stage || 'Lead'}
-                </div>
-              </button>
-            ))
-          ) : (
-            <div className="rounded-2xl border border-slate-800 bg-slate-900 px-3 py-6 text-center text-sm text-slate-400">
-              No lead rows returned for this slice yet.
-            </div>
-          )}
-        </div>
-
-        <div className="border-t border-slate-800 p-4">
-          <button type="button" className="btn-secondary w-full justify-center" onClick={onExport}>
-            <Download size={15} />
-            Export CSV
-          </button>
-        </div>
-      </aside>
-    </div>
+      <footer className="pbk-analytics-drill-foot">
+        <button
+          type="button"
+          className="pbk-btn pbk-btn-primary"
+          disabled={!canExport}
+          onClick={onExport}
+        >
+          <Download size={15} />
+          Export CSV
+        </button>
+      </footer>
+    </dialog>
   );
 }
 
 const EMPTY_ANALYTICS = buildAnalyticsViewModel();
 
 export function Analytics() {
+  const [range, setRange] = useState(readAnalyticsRange);
   const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading');
   const [error, setError] = useState('');
-  const [model, setModel] = useState<AnalyticsViewModel>(EMPTY_ANALYTICS);
-  const [campaignAttribution, setCampaignAttribution] = useState<CampaignDrilldownResponse | null>(
-    null
-  );
+  const [snapshot, setSnapshot] = useState<{
+    range: AnalyticsRange['id'];
+    model: AnalyticsViewModel;
+    campaignAttribution: CampaignDrilldownResponse | null;
+  }>();
+  const requestVersion = useRef(0);
+  const invalidateRequest = useCallback(() => {
+    requestVersion.current++;
+  }, []);
+  const drillTrigger = useRef<HTMLButtonElement | null>(null);
+  const current = snapshot?.range === range.id ? snapshot : undefined;
+  const model = current?.model || EMPTY_ANALYTICS;
   const [drillDownPanel, setDrillDownPanel] = useState<{
     open: boolean;
     title: string;
@@ -593,29 +652,55 @@ export function Analytics() {
   });
 
   const loadAnalytics = useCallback(async () => {
+    const version = ++requestVersion.current;
     setStatus('loading');
     setError('');
+    const period = { days: range.days, range: range.id === 'ytd' ? 'ytd' : '' };
     try {
       const [stagesResponse, timelineResponse, aiMetricsResponse, campaignAttributionResponse] =
         await Promise.all([
           fetchLeadStagesRequest({ limit: 500 }),
-          fetchDealTimelineRequest({ days: 30 }),
-          fetchAiMetricsRequest({ days: 30 }),
-          fetchCampaignDrilldownRequest({ range: '30d', limit: 120 }).catch(() => null),
+          fetchDealTimelineRequest(period),
+          fetchAiMetricsRequest(period),
+          fetchCampaignDrilldownRequest({ range: range.id, limit: 120 }).catch(() => null),
         ]);
-      setModel(buildAnalyticsViewModel({ stagesResponse, timelineResponse, aiMetricsResponse }));
-      setCampaignAttribution(campaignAttributionResponse);
+      if (version !== requestVersion.current) return;
+      if (
+        range.id === 'ytd' &&
+        (timelineResponse.range !== 'ytd' || aiMetricsResponse.range !== 'ytd')
+      ) {
+        throw new Error('The bridge did not confirm the year-to-date range.');
+      }
+      setSnapshot({
+        range: range.id,
+        model: buildAnalyticsViewModel({ stagesResponse, timelineResponse, aiMetricsResponse }),
+        campaignAttribution: campaignAttributionResponse,
+      });
       setStatus('ready');
     } catch (loadError) {
+      if (version !== requestVersion.current) return;
       setError(loadError instanceof Error ? loadError.message : String(loadError));
-      setCampaignAttribution(null);
       setStatus('error');
     }
-  }, []);
+  }, [range]);
 
   useEffect(() => {
     void loadAnalytics();
-  }, [loadAnalytics]);
+    return invalidateRequest;
+  }, [invalidateRequest, loadAnalytics]);
+
+  const selectRange = (nextRange: AnalyticsRange) => {
+    if (nextRange.id === range.id) return;
+    invalidateRequest();
+    setStatus('loading');
+    setError('');
+    setRange(nextRange);
+    try {
+      window.localStorage.setItem(ANALYTICS_RANGE_KEY, nextRange.id);
+    } catch {
+      // The range still applies for this visit when storage is unavailable.
+    }
+  };
 
   const maxDaily = useMemo(
     () => Math.max(1, ...model.dailyDeals.map((item) => item.count)),
@@ -639,7 +724,16 @@ export function Analytics() {
     });
   }, [model]);
 
-  const openStage = (stage: AnalyticsViewModel['funnel'][number]) => {
+  const closeDrillDown = () => {
+    setDrillDownPanel((current) => ({ ...current, open: false }));
+    const trigger = drillTrigger.current;
+    requestAnimationFrame(() => {
+      if (trigger?.isConnected) trigger.focus({ preventScroll: true });
+    });
+  };
+
+  const openStage = (stage: AnalyticsViewModel['funnel'][number], trigger: HTMLButtonElement) => {
+    drillTrigger.current = trigger;
     setDrillDownPanel({
       open: true,
       title: stage.label,
@@ -648,7 +742,8 @@ export function Analytics() {
     });
   };
 
-  const openDay = (day: AnalyticsViewModel['dailyDeals'][number]) => {
+  const openDay = (day: AnalyticsViewModel['dailyDeals'][number], trigger: HTMLButtonElement) => {
+    drillTrigger.current = trigger;
     setDrillDownPanel({
       open: true,
       title: `Deals closed - ${dayLabel(day.day)}`,
@@ -658,48 +753,50 @@ export function Analytics() {
   };
 
   return (
-    <div className="pbk-analytics-surface min-h-full text-slate-100">
-      <main className="space-y-4 p-4 md:p-6">
+    <div className="pbk-analytics-surface">
+      <main className="pbk-analytics-main">
         <AnalyticsHero
           status={status}
-          stats={stats}
-          source={model.source}
+          range={range}
+          generatedAt={model.generatedAt}
+          onRange={selectRange}
           onRefresh={loadAnalytics}
           onExport={exportAnalytics}
         />
 
         {status === 'error' && (
-          <section className="rounded-2xl border border-red-400/30 bg-red-500/10 p-4">
-            <h2 className="text-sm font-semibold text-red-100">Analytics bridge unavailable</h2>
-            <p className="mt-1 text-sm text-red-200/80">{error}</p>
+          <section className="pbk-analytics-notice" role="alert">
+            <div>
+              <h2>{current ? 'Showing last loaded data' : 'Analytics unavailable'}</h2>
+              <p>{error}</p>
+            </div>
             <button
               type="button"
-              className="pbk-btn pbk-btn-ghost pbk-btn-sm mt-3"
+              className="pbk-btn pbk-btn-ghost pbk-btn-sm"
               onClick={loadAnalytics}
             >
               <RefreshCw size={14} />
-              Retry bridge fetch
+              Retry
             </button>
           </section>
         )}
 
         {model.warnings.length > 0 && (
-          <section className="rounded-2xl border border-amber-400/30 bg-amber-500/10 p-3 text-xs text-amber-100">
+          <section className="pbk-analytics-notice" aria-label="Data source warnings">
             {model.warnings.join(' ')}
           </section>
         )}
 
+        <AnalyticsStatRibbon stats={stats} available={Boolean(current)} range={range} />
+
         <section className="pbk-analytics-body">
-          <div className="pbk-analytics-card span-2">
+          <div className="pbk-analytics-card">
             <div className="pbk-analytics-card-head">
               <div>
                 <h2>Acquisition funnel</h2>
-                <p>
-                  {shortNumber(stats.leadsTracked)} leads - {shortNumber(stats.closedDeals)} closed
-                  - {formatPercent(stats.closedRate)} closed rate
-                </p>
+                <p>Counts and share of the largest stage</p>
               </div>
-              <span className="tf">bridge funnel</span>
+              <span className="tf">Current snapshot</span>
             </div>
             <div className="pbk-analytics-funnel">
               {model.funnel.length ? (
@@ -709,7 +806,7 @@ export function Analytics() {
                     stage={stage}
                     index={index}
                     maxTotal={maxFunnel}
-                    onOpen={() => openStage(stage)}
+                    onOpen={(trigger) => openStage(stage, trigger)}
                   />
                 ))
               ) : (
@@ -726,19 +823,24 @@ export function Analytics() {
           <div className="pbk-analytics-card pbk-analytics-deal-card">
             <div className="pbk-analytics-card-head">
               <div>
-                <h2>Deals closed - daily</h2>
-                <p>Each bar opens bridge-returned deal rows for that day.</p>
+                <h2>Daily closed deals</h2>
+                <p>Closed deals and revenue by day (UTC)</p>
               </div>
-              <span className="tf">30 days</span>
+              <span className="tf">{range.caption}</span>
             </div>
-            <div className="pbk-analytics-daily-bars">
+            <div
+              className="pbk-analytics-daily-bars"
+              role="region"
+              aria-label="Daily closed deals chart"
+              tabIndex={model.dailyDeals.length ? 0 : undefined}
+            >
               {model.dailyDeals.length ? (
                 model.dailyDeals.map((day) => (
                   <AnalyticsDailyBar
                     key={day.day}
                     day={day}
                     maxDaily={maxDaily}
-                    onOpen={() => openDay(day)}
+                    onOpen={(trigger) => openDay(day, trigger)}
                   />
                 ))
               ) : (
@@ -755,20 +857,20 @@ export function Analytics() {
           <div className="pbk-analytics-card pbk-analytics-roi-card">
             <div className="pbk-analytics-card-head">
               <div>
-                <h2>Cost per lead - AI ROI</h2>
-                <p>Spend math uses observability metrics plus deal timeline revenue.</p>
+                <h2>Cost and AI ROI</h2>
+                <p>Period spend and revenue; lead counts from the current funnel.</p>
               </div>
-              <TrendingUp size={16} />
+              <span className="tf">{range.caption}</span>
             </div>
             <div className="roi-grid">
               <div className="roi-cell">
                 <div className="l">Cost per contacted lead</div>
-                <div className="v">{money(model.roi.costPerContactedLead)}</div>
+                <div className="v">{current ? money(model.roi.costPerContactedLead) : '-'}</div>
                 <div className="sub">AI spend divided by contacted stages</div>
               </div>
               <div className="roi-cell">
                 <div className="l">Cost per qualified lead</div>
-                <div className="v">{money(model.roi.costPerQualifiedLead)}</div>
+                <div className="v">{current ? money(model.roi.costPerQualifiedLead) : '-'}</div>
                 <div className="sub">Qualified, offer, and closed stages</div>
               </div>
               <div className="roi-cell">
@@ -776,18 +878,24 @@ export function Analytics() {
                 <div className="v lime">
                   {model.roi.roiMultiple ? `${model.roi.roiMultiple}x` : '-'}
                 </div>
-                <div className="sub">{money(model.roi.revenue)} revenue</div>
+                <div className="sub">
+                  {current ? `${money(model.roi.revenue)} revenue` : 'Revenue / AI spend'}
+                </div>
               </div>
               <div className="roi-cell">
                 <div className="l">Cost per closed deal</div>
-                <div className="v">{money(model.roi.costPerClosedDeal)}</div>
-                <div className="sub">{shortNumber(stats.closedDeals)} closed deals</div>
+                <div className="v">{current ? money(model.roi.costPerClosedDeal) : '-'}</div>
+                <div className="sub">
+                  {current ? `${shortNumber(stats.closedDeals)} closed deals` : 'Current funnel'}
+                </div>
               </div>
             </div>
-            <div className="roi-formula">
-              {money(model.roi.aiSpend)} AI spend - {shortNumber(stats.leadsTracked)} tracked leads
-              - {money(model.roi.revenue)} revenue
-            </div>
+            {current && (
+              <div className="roi-formula">
+                {money(model.roi.aiSpend)} AI spend - {shortNumber(stats.leadsTracked)} tracked
+                leads - {money(model.roi.revenue)} revenue
+              </div>
+            )}
             <PbkDataSource endpoint="GET /api/observability/ai-metrics" status="ships" />
           </div>
 
@@ -795,29 +903,44 @@ export function Analytics() {
             <div className="pbk-analytics-card-head">
               <div>
                 <h2>AI performance</h2>
-                <p>Latency, QA retry, and safety signal health.</p>
               </div>
+              <span className="tf">{range.caption}</span>
             </div>
-            <div className="pbk-analytics-metrics">
-              {model.aiMetrics.map((metric) => (
-                <AnalyticsMetricTile key={metric.label} metric={metric} />
-              ))}
-            </div>
+            <dl className="pbk-analytics-metrics">
+              {current
+                ? model.aiMetrics.map((metric) => (
+                    <AnalyticsMetricTile key={metric.label} metric={metric} />
+                  ))
+                : model.aiMetrics.map((metric) => (
+                    <AnalyticsMetricTile key={metric.label} metric={{ ...metric, value: '-' }} />
+                  ))}
+            </dl>
             <PbkDataSource endpoint="GET /api/observability/ai-metrics" status="ships" />
           </div>
 
           <CampaignAttributionPanel
-            drilldown={campaignAttribution}
+            drilldown={current?.campaignAttribution || null}
             loading={status === 'loading'}
+            range={range}
           />
         </section>
+
+        <details className="pbk-analytics-sources">
+          <summary>
+            <Database size={15} aria-hidden="true" /> Data sources{' '}
+            <ChevronDown size={15} aria-hidden="true" />
+          </summary>
+          {current && <p>{model.source}</p>}
+          <AnalyticsSourceRail />
+        </details>
 
         <DrillDownPanel
           open={drillDownPanel.open}
           title={drillDownPanel.title}
           meta={drillDownPanel.meta}
           items={drillDownPanel.items}
-          onClose={() => setDrillDownPanel((current) => ({ ...current, open: false }))}
+          canExport={status === 'ready'}
+          onClose={closeDrillDown}
           onExport={exportAnalytics}
         />
       </main>

@@ -270,7 +270,9 @@ assert.ok(
   'read endpoint cache must use Redis only when the shared client is already open so cold requests do not block on Redis'
 );
 assert.ok(
-  /persistState\(nextState\)[\s\S]*clearBridgeReadCache\(['"]persist_state['"]\)/.test(bridgeSource),
+  /async function persistState\(nextState, \{ allowBootstrap = false \} = \{\}\) \{[\s\S]*?clearBridgeReadCache\(['"]persist_state['"]\)/.test(
+    bridgeSource.slice(bridgeSource.indexOf('async function persistState('), bridgeSource.indexOf('function persistStateInBackground('))
+  ),
   'state persistence must invalidate cached status/config responses'
 );
 for (const cacheMarker of [

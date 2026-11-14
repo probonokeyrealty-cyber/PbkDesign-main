@@ -25,6 +25,7 @@ import {
   fetchFounderWorkQueueRequest,
   fetchIntelligenceStreamRequest,
   fetchProductionGapsRequest,
+  fetchRuntimeState,
   fetchSystemSourceLabelsRequest,
   fetchWebSearchStatusRequest,
   type FounderWorkQueueItem,
@@ -288,10 +289,26 @@ type ApprovalDecisionDraft = {
   type: string;
   leadName: string;
   address: string;
+  recipient: string;
   actionLabel: string;
   preview: string;
   resolutionKeys: string[];
 };
+
+function approvalRecordKeys(approval: Record<string, unknown>) {
+  return getApprovalResolutionKeys({
+    id: approval.id,
+    approvalId: approval.approvalId,
+    approval_id: approval.approval_id,
+  });
+}
+
+function approvalRecipient(approval: Record<string, unknown>) {
+  const payload = approval.payload as Record<string, unknown> | undefined;
+  return [approval.phone || payload?.phone, approval.email || payload?.email]
+    .filter((value): value is string => typeof value === 'string' && Boolean(value.trim()))
+    .join(' / ');
+}
 
 type ActionStatus = {
   tone: 'pending' | 'success' | 'error';
@@ -1715,19 +1732,6 @@ function ProductionGapsRail({
   );
 }
 
-function StatSpark({ tone }: { tone: string }) {
-  const stroke = tone === 'lime' ? 'var(--lime)' : tone === 'warn' ? 'var(--amber)' : 'var(--sky)';
-  return (
-    <svg className="pbk-stat-spark" viewBox="0 0 70 24" fill="none" aria-hidden="true">
-      <path
-        d="M0 20 L10 17 L20 18 L30 12 L40 14 L50 8 L60 10 L70 5"
-        stroke={stroke}
-        strokeWidth="1.5"
-      />
-    </svg>
-  );
-}
-
 function FounderBattlefield({
   items,
   loading,
@@ -1859,7 +1863,7 @@ function FounderBattlefield({
 
 export function CommandCenter() {
   const navigate = useNavigate();
-  const { snapshot, tooling, loading, error, refresh } = useRuntimeSnapshot();
+  const { snapshot, tooling, loading, error, refresh } = useRuntimeSnapshot(5000, true);
   const [actionStatus, setActionStatus] = useState<ActionStatus | null>(null);
   const [pendingAction, setPendingAction] = useState('');
   const [webSearchProbeFailed, setWebSearchProbeFailed] = useState(false);
@@ -1868,6 +1872,12 @@ export function CommandCenter() {
   const [approvalDecisionDraft, setApprovalDecisionDraft] = useState<ApprovalDecisionDraft | null>(
     null
   );
+  const approvalDialogRef = useRef<HTMLDialogElement>(null);
+  const approvalTriggerRef = useRef<HTMLButtonElement>(null);
+  const runtimeActionLock = useRef(false);
+  const uncertainApprovalKeys = useRef(new Set<string>());
+  const reviewHeadingRef = useRef<HTMLHeadingElement>(null);
+  const approvalsAvailable = Boolean(!error && Array.isArray(snapshot?.approvals));
   const [activityPage, setActivityPage] = useState(0);
   const [approvalPage, setApprovalPage] = useState(0);
   const [adminPage, setAdminPage] = useState(0);
@@ -1942,7 +1952,7 @@ export function CommandCenter() {
   const pendingApprovals = useMemo(
     () =>
       getPendingApprovals(approvals).filter(
-        (item) => !getApprovalResolutionKeys(item).some((key) => resolvedApprovalIds.has(key))
+        (item) => !approvalRecordKeys(item).some((key) => resolvedApprovalIds.has(key))
       ),
     [approvals, resolvedApprovalIds]
   );
@@ -2078,8 +2088,10 @@ export function CommandCenter() {
       const nextKeys = [
         approvalId,
         ...(Array.isArray(detail?.approvalIds) ? detail.approvalIds : []),
-        ...(Array.isArray(detail?.approvalKeys) ? detail.approvalKeys : []),
-        ...getApprovalResolutionKeys(detail?.response?.approval || {}),
+        ...(Array.isArray(detail?.approvalKeys)
+          ? detail.approvalKeys.filter((key) => !/^(target|preview):/.test(key))
+          : []),
+        ...approvalRecordKeys(detail?.response?.approval || {}),
       ].filter(Boolean);
       if (!nextKeys.length) return;
       setResolvedApprovalIds((current) => {
@@ -2091,6 +2103,14 @@ export function CommandCenter() {
     window.addEventListener('pbk:approval-decision', hideResolvedApproval);
     return () => window.removeEventListener('pbk:approval-decision', hideResolvedApproval);
   }, []);
+
+  useEffect(() => {
+    const dialog = approvalDialogRef.current;
+    if (approvalDecisionDraft && dialog && !dialog.open) dialog.showModal();
+    return () => {
+      if (dialog?.open) dialog.close();
+    };
+  }, [approvalDecisionDraft]);
 
   const loadCommandLeadRoster = useCallback(async () => {
     try {
@@ -2451,8 +2471,8 @@ export function CommandCenter() {
     },
     {
       label: 'Review decisions',
-      description: 'Approve only the actions that truly need a human.',
-      count: `${pendingApprovalCount + pendingAdminCount}`,
+      description: 'Messages, contracts, and other requests.',
+      count: approvalsAvailable ? `${pendingApprovalCount}` : '—',
       tone: pendingApprovalCount + pendingAdminCount ? 'amber' : 'sky',
       targetPath: '#approvals',
       icon: ClipboardCheck,
@@ -2462,8 +2482,6 @@ export function CommandCenter() {
     weekday: 'long',
     month: 'short',
     day: 'numeric',
-    hour: 'numeric',
-    minute: '2-digit',
   }).format(new Date());
   const approvalMode =
     pendingApprovalCount || pendingAdminCount
@@ -2541,10 +2559,8 @@ export function CommandCenter() {
     successMessage: string,
     action: () => Promise<void>
   ) => {
-    if (pendingAction) {
-      setActionStatus({ tone: 'pending', text: 'Another Ava action is already running.' });
-      return;
-    }
+    if (runtimeActionLock.current || pendingAction) return;
+    runtimeActionLock.current = true;
     setPendingAction(key);
     setActionStatus({ tone: 'pending', text: 'Working on that request...' });
     try {
@@ -2565,6 +2581,7 @@ export function CommandCenter() {
         text: nextError instanceof Error ? nextError.message : 'Ava could not finish that action.',
       });
     } finally {
+      runtimeActionLock.current = false;
       setPendingAction('');
     }
   };
@@ -2632,40 +2649,90 @@ export function CommandCenter() {
 
   const confirmApprovalDecision = (
     approval: Record<string, unknown>,
-    status: ApprovalDecisionDraft['status']
+    status: ApprovalDecisionDraft['status'],
+    trigger: HTMLButtonElement
   ) => {
     const approvalId = String(approval.id || '');
-    if (!approvalId) return;
-    if (pendingAction.startsWith(`approval:${approvalId}:`)) return;
+    if (!approvalId || !approvalsAvailable || pendingAction || runtimeActionLock.current) return;
+    const resolutionKeys = approvalRecordKeys(approval);
+    if (resolutionKeys.some((key) => uncertainApprovalKeys.current.has(key))) return;
+    approvalTriggerRef.current = trigger;
     const type = friendlyRuntimeLabel(approval.type || 'approval');
     const actionLabel =
       status === 'approved'
-        ? 'approve'
+        ? 'Approve'
         : status === 'needs-revision'
-          ? 'request revisions for'
-          : 'decline';
+          ? 'Request revisions for'
+          : 'Decline';
     setApprovalDecisionDraft({
       approvalId,
       status,
       type,
       leadName: friendlyRuntimeLabel(approval.leadName || approval.address || 'PBK approval'),
       address: String(approval.address || 'No address recorded'),
+      recipient: approvalRecipient(approval),
       actionLabel,
       preview: getApprovalPreview(approval),
-      resolutionKeys: getApprovalResolutionKeys(approval),
+      resolutionKeys,
     });
   };
 
-  const executeApprovalDecision = () => {
-    if (!approvalDecisionDraft) return;
-    const draft = approvalDecisionDraft;
-    if (pendingAction.startsWith(`approval:${draft.approvalId}:`)) return;
+  const cancelApprovalDecision = () => {
+    approvalDialogRef.current?.close();
     setApprovalDecisionDraft(null);
+    const trigger = approvalTriggerRef.current;
+    if (trigger?.isConnected && !trigger.disabled) trigger.focus();
+    else reviewHeadingRef.current?.focus();
+    approvalTriggerRef.current = null;
+  };
+
+  const executeApprovalDecision = () => {
+    if (!approvalDecisionDraft || !approvalsAvailable || pendingAction || runtimeActionLock.current)
+      return;
+    const draft = approvalDecisionDraft;
+    if (
+      !pendingApprovals.some((item) => item.id === draft.approvalId) ||
+      draft.resolutionKeys.some((key) => uncertainApprovalKeys.current.has(key))
+    )
+      return;
+    approvalDialogRef.current?.close();
+    setApprovalDecisionDraft(null);
+    approvalTriggerRef.current = null;
+    reviewHeadingRef.current?.focus({ preventScroll: true });
     void runRuntimeAction(
       `approval:${draft.approvalId}:${draft.status}`,
-      draft.status === 'approved' ? 'Approved. Ava can continue.' : 'Decision sent to Ava.',
+      draft.status === 'approved'
+        ? 'Approval recorded. Delivery has not been confirmed.'
+        : 'Review decision recorded.',
       async () => {
-        await updateApprovalDecision(draft.approvalId, draft.status);
+        const fresh = await fetchRuntimeState();
+        if (!Array.isArray(fresh?.approvals)) {
+          throw new Error('The approval queue could not be verified. No decision was submitted.');
+        }
+        const current = getPendingApprovals(fresh.approvals).find(
+          (item) => item.id === draft.approvalId
+        );
+        if (
+          !current ||
+          getApprovalPreview(current) !== draft.preview ||
+          friendlyRuntimeLabel(current.type || 'approval') !== draft.type ||
+          friendlyRuntimeLabel(current.leadName || current.address || 'PBK approval') !==
+            draft.leadName ||
+          String(current.address || 'No address recorded') !== draft.address ||
+          approvalRecipient(current) !== draft.recipient
+        ) {
+          await refresh().catch(() => null);
+          throw new Error('This request changed. Review the latest queue before deciding.');
+        }
+        try {
+          await updateApprovalDecision(draft.approvalId, draft.status);
+        } catch {
+          draft.resolutionKeys.forEach((key) => uncertainApprovalKeys.current.add(key));
+          await refresh().catch(() => null);
+          throw new Error(
+            'Decision not confirmed. Check the approval history before trying again.'
+          );
+        }
         setResolvedApprovalIds((current) => {
           const next = new Set(current);
           next.add(draft.approvalId);
@@ -2676,6 +2743,11 @@ export function CommandCenter() {
     );
   };
 
+  const isApprovalDecisionUnavailable = (approval: Record<string, unknown>) =>
+    !approval.id ||
+    !approvalsAvailable ||
+    Boolean(pendingAction) ||
+    approvalRecordKeys(approval).some((key) => uncertainApprovalKeys.current.has(key));
   const isAdminDecisionPending = (taskId: string) => pendingAction.startsWith(`admin:${taskId}:`);
   const isApprovalDecisionPending = (approvalId: string) =>
     pendingAction.startsWith(`approval:${approvalId}:`);
@@ -2687,21 +2759,19 @@ export function CommandCenter() {
   return (
     <div className="pbk-command-surface min-h-full space-y-6 bg-[var(--bg-void)] p-4 text-[var(--text-primary)] md:p-6">
       <div className="mx-auto max-w-screen-2xl space-y-6">
-        <section className="pbk-command-hero">
+        <section className="pbk-today-header" aria-labelledby="today-heading">
           <div className="pbk-command-hero-top">
             <div>
-              <div className="pbk-eyebrow">Live / {heroTimeLabel}</div>
-              <h1 className="pbk-display pbk-h1">
-                Good morning, PBK.{' '}
-                <em>
-                  {pendingApprovalCount + pendingAdminCount
-                    ? `${pendingApprovalCount + pendingAdminCount} items are ready for review.`
-                    : 'Ava and the team are ready.'}
-                </em>
+              <div className="pbk-eyebrow">{heroTimeLabel}</div>
+              <h1 id="today-heading" className="pbk-display">
+                Today.
               </h1>
               <p>
-                Your calls, messages, leads, approvals, and agent activity are organized here so the
-                next step is easy to choose.
+                {approvalsAvailable
+                  ? `${pendingApprovalCount} awaiting approval · ${unreadMessageCount} replies waiting`
+                  : loading
+                    ? 'Updating the workspace'
+                    : 'Approval status unavailable'}
               </p>
             </div>
             <div className="pbk-hero-sync" aria-live="polite">
@@ -2715,76 +2785,7 @@ export function CommandCenter() {
               {loading ? 'Updating workspace' : error ? 'Connection needs attention' : 'Connected'}
             </div>
           </div>
-
-          {isWidgetVisible('kpis') && (
-            <div className="pbk-stats-ribbon">
-              {heroStats.map((stat) => (
-                <div key={stat.label} className="pbk-stat">
-                  <div className="pbk-stat-label">{stat.label}</div>
-                  <div className="pbk-stat-value">
-                    {stat.value}
-                    <span className={`pbk-stat-delta ${stat.tone === 'warn' ? 'warn' : ''}`}>
-                      {stat.delta}
-                    </span>
-                  </div>
-                  <StatSpark tone={stat.tone} />
-                </div>
-              ))}
-            </div>
-          )}
-
-          <div className="pbk-mission-actions" aria-label="Today quick actions">
-            {missionQuickActions.map((action) => {
-              const Icon = action.icon;
-              return (
-                <button
-                  key={action.label}
-                  type="button"
-                  className={`pbk-mission-action is-${action.tone}`}
-                  onClick={() => {
-                    if (action.targetPath.startsWith('#')) {
-                      document
-                        .querySelector(action.targetPath)
-                        ?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-                      return;
-                    }
-                    navigate(action.targetPath);
-                  }}
-                >
-                  <span className="pbk-mission-action-icon">
-                    <Icon size={17} />
-                  </span>
-                  <span className="pbk-mission-action-copy">
-                    <strong>{action.label}</strong>
-                    <small>{action.description}</small>
-                  </span>
-                  <span className="pbk-mission-action-count">{action.count}</span>
-                </button>
-              );
-            })}
-          </div>
-
-          <DataSourceCaption
-            endpoint="GET /api/leads + snapshot.calls + snapshot.messages + snapshot.contracts"
-            note={`${leadRosterSource}; non-lead stats use live runtime arrays`}
-          />
         </section>
-
-        <SourceConfidenceRail
-          items={displayedSourceConfidenceItems}
-          source={sourceConfidenceSource}
-        />
-
-        <ProductionGapsRail
-          gaps={productionGaps}
-          source={productionGapsSource}
-          loading={productionGapsLoading}
-          primaryPath={primaryPathReliability}
-        />
-
-        {isWidgetVisible('systemHealth') && (
-          <SystemHealthPanel items={systemHealthItems} source={bridgeConnectionSource} />
-        )}
 
         {actionStatus && (
           <div
@@ -2811,6 +2812,192 @@ export function CommandCenter() {
           </div>
         )}
 
+        {(isWidgetVisible('approvals') || isWidgetVisible('activity')) && (
+          <div
+            className={`pbk-today-review${isWidgetVisible('approvals') && isWidgetVisible('activity') ? ' is-split' : ''}`}
+          >
+            {isWidgetVisible('approvals') && (
+              <section
+                id="approvals"
+                aria-labelledby="pbk-review-heading"
+                className="pbk-panel pbk-review-section"
+              >
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <h2 id="pbk-review-heading" ref={reviewHeadingRef} tabIndex={-1}>
+                      Review
+                    </h2>
+                    <p className="pbk-review-subtitle">Approval queue</p>
+                  </div>
+                  {approvalsAvailable && (
+                    <span className="pbk-review-count">{pendingApprovalCount} pending</span>
+                  )}
+                </div>
+                <div className="pbk-review-list">
+                  {visibleApprovals.map((approval) => (
+                    <div
+                      key={String(approval.id)}
+                      className={`pbk-command-approval-card ${
+                        String(approval.type || '')
+                          .toLowerCase()
+                          .includes('contract')
+                          ? 'contract'
+                          : ''
+                      }`}
+                      data-source="snapshot.approvals payload"
+                      data-approval-id={String(approval.id)}
+                    >
+                      <div className="pbk-review-row-meta">
+                        <span>{friendlyRuntimeLabel(approval.type || 'approval')}</span>
+                        {Boolean(approval.createdAt) && (
+                          <time
+                            dateTime={String(approval.createdAt)}
+                            title={formatActivityTitle(String(approval.createdAt))}
+                          >
+                            {formatRelative(String(approval.createdAt))}
+                          </time>
+                        )}
+                      </div>
+                      <div className="mt-2 text-sm font-semibold text-slate-100">
+                        {friendlyRuntimeLabel(
+                          approval.leadName || approval.address || 'PBK approval'
+                        )}
+                      </div>
+                      <div className="mt-1 text-xs text-slate-400">
+                        {String(approval.address || 'No address recorded')}
+                      </div>
+                      <div
+                        className="approval-preview"
+                        aria-label={`Approval payload preview for ${String(
+                          approval.leadName || approval.address || 'PBK approval'
+                        )}`}
+                      >
+                        {getApprovalPreview(approval)}
+                      </div>
+                      {approvalRecordKeys(approval).some((key) =>
+                        uncertainApprovalKeys.current.has(key)
+                      ) && (
+                        <p className="pbk-review-empty">
+                          Decision unconfirmed. Check the approval history before retrying.
+                        </p>
+                      )}
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          data-approval-primary="true"
+                          disabled={Boolean(isApprovalDecisionUnavailable(approval))}
+                          onClick={(event) =>
+                            confirmApprovalDecision(approval, 'approved', event.currentTarget)
+                          }
+                          className="pbk-review-button pbk-review-button-primary"
+                        >
+                          {isApprovalDecisionPending(String(approval.id))
+                            ? 'Submitting…'
+                            : 'Review approval'}
+                        </button>
+                        <button
+                          type="button"
+                          data-approval-secondary="true"
+                          disabled={Boolean(isApprovalDecisionUnavailable(approval))}
+                          onClick={(event) => {
+                            confirmApprovalDecision(
+                              approval,
+                              getApprovalSecondaryStatus(approval),
+                              event.currentTarget
+                            );
+                          }}
+                          className="pbk-review-button"
+                        >
+                          {isApprovalDecisionPending(String(approval.id))
+                            ? '…'
+                            : String(approval.type || '').toLowerCase() === 'contract'
+                              ? 'Needs Revision'
+                              : 'Decline'}
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                  {(!approvalsAvailable || !pendingApprovals.length) && (
+                    <div className="pbk-review-empty" role="status">
+                      {loading
+                        ? 'Loading approval queue…'
+                        : !approvalsAvailable
+                          ? pendingApprovals.length
+                            ? 'Approval queue unavailable. Showing saved requests.'
+                            : 'Approval queue unavailable.'
+                          : 'No pending approvals right now.'}
+                    </div>
+                  )}
+                </div>
+                <CompactPager
+                  page={approvalPage}
+                  total={pendingApprovals.length}
+                  label="Approval board pages"
+                  itemLabel="reviews"
+                  onPageChange={setApprovalPage}
+                />
+                <DataSourceCaption
+                  endpoint="snapshot.approvals payload + PUT /api/approvals/:id"
+                  note="preview uses message/body/text/content/payload/metadata fields"
+                />
+              </section>
+            )}
+            {isWidgetVisible('activity') && (
+              <section
+                className="pbk-panel pbk-today-activity"
+                aria-labelledby="pbk-activity-heading"
+              >
+                <h2 id="pbk-activity-heading">Recent activity</h2>
+                <div className="mt-3 space-y-2">
+                  {visibleActivity.map((item, index) => (
+                    <div
+                      key={`${String(item.id || item.at || item.createdAt || 'activity')}-${index}`}
+                      className="pbk-today-activity-row"
+                    >
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="text-xs font-medium text-slate-100">
+                          {String(item.actor || 'System')}
+                        </div>
+                        <div
+                          className="text-[10px] text-slate-500"
+                          title={formatActivityTitle(String(item.at || item.createdAt || ''))}
+                        >
+                          {formatRelative(String(item.at || item.createdAt || ''))}
+                        </div>
+                      </div>
+                      <div
+                        className="mt-2 line-clamp-2 max-w-full text-xs text-slate-300"
+                        title={String(item.text || 'Runtime event')}
+                      >
+                        {String(item.text || 'Runtime event')}
+                      </div>
+                      <div className="mt-1 text-[11px] text-slate-500 uppercase tracking-[0.12em]">
+                        {friendlyRuntimeLabel(item.category || 'INFO')}
+                      </div>
+                    </div>
+                  ))}
+                  {!visibleActivity.length && (
+                    <div className="rounded-xl border border-dashed border-slate-800 px-3 py-4 text-xs text-slate-500">
+                      No activity is on this page yet.
+                    </div>
+                  )}
+                </div>
+                <CompactPager
+                  page={activityPage}
+                  total={activityItems.length}
+                  label="Activity feed pages"
+                  itemLabel="events"
+                  onPageChange={setActivityPage}
+                />
+                <DataSourceCaption
+                  endpoint="GET /api/intelligence/stream"
+                  note={`${intelligenceStreamSource}; snapshot.activity fallback`}
+                />
+              </section>
+            )}
+          </div>
+        )}
+
         <FounderBattlefield
           items={battlefieldItems}
           loading={loading || battlefieldQueueLoading}
@@ -2822,6 +3009,75 @@ export function CommandCenter() {
           sourceNote={battlefieldSourceNote}
           onSelect={selectBattlefieldItem}
         />
+
+        <div className="pbk-mission-actions" aria-label="Today quick actions">
+          {missionQuickActions.map((action) => {
+            const Icon = action.icon;
+            return (
+              <button
+                key={action.label}
+                type="button"
+                className={`pbk-mission-action is-${action.tone}`}
+                disabled={action.targetPath === '#approvals' && !isWidgetVisible('approvals')}
+                onClick={() => {
+                  if (action.targetPath.startsWith('#')) {
+                    document
+                      .querySelector(action.targetPath)
+                      ?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                    return;
+                  }
+                  navigate(action.targetPath);
+                }}
+              >
+                <span className="pbk-mission-action-icon">
+                  <Icon size={17} />
+                </span>
+                <span className="pbk-mission-action-copy">
+                  <strong>{action.label}</strong>
+                  <small>{action.description}</small>
+                </span>
+                <span className="pbk-mission-action-count">{action.count}</span>
+              </button>
+            );
+          })}
+        </div>
+
+        <DataSourceCaption
+          endpoint="GET /api/leads + snapshot.calls + snapshot.messages + snapshot.contracts"
+          note={`${leadRosterSource}; non-lead stats use live runtime arrays`}
+        />
+
+        {isWidgetVisible('kpis') && (
+          <div className="pbk-stats-ribbon">
+            {heroStats.map((stat) => (
+              <div key={stat.label} className="pbk-stat">
+                <div className="pbk-stat-label">{stat.label}</div>
+                <div className="pbk-stat-value">
+                  {stat.value}
+                  <span className={`pbk-stat-delta ${stat.tone === 'warn' ? 'warn' : ''}`}>
+                    {stat.delta}
+                  </span>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        <SourceConfidenceRail
+          items={displayedSourceConfidenceItems}
+          source={sourceConfidenceSource}
+        />
+
+        <ProductionGapsRail
+          gaps={productionGaps}
+          source={productionGapsSource}
+          loading={productionGapsLoading}
+          primaryPath={primaryPathReliability}
+        />
+
+        {isWidgetVisible('systemHealth') && (
+          <SystemHealthPanel items={systemHealthItems} source={bridgeConnectionSource} />
+        )}
 
         <PbkPanel className="p-4">
           <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
@@ -2866,453 +3122,296 @@ export function CommandCenter() {
 
         {isWidgetVisible('statusLegend') && <StatusColorLegend />}
 
-        <div className="grid grid-cols-1 xl:grid-cols-12 gap-4">
-          <div className="xl:col-span-5 space-y-4">
-            {isWidgetVisible('liveCall') && (
-              <div
-                id="live-call"
-                className={
-                  activeCall?.status && activeCall.status !== 'idle'
-                    ? 'pbk-priority-live rounded-lg'
-                    : 'rounded-lg'
-                }
-              >
-                <LiveCallWidget
-                  state={activeCall}
-                  onTakeOver={(state) => {
-                    const callId = state.callId || '';
-                    void runRuntimeAction(
-                      `call:${callId}:takeover`,
-                      'Human takeover sent to the bridge.',
-                      async () => {
-                        if (callId) await controlRuntimeCall(callId, 'takeover');
-                        navigate(state.dealId ? `/deal/${state.dealId}` : '/deal');
-                      }
-                    );
-                  }}
-                  onMute={(state) => {
-                    const callId = state.callId || '';
-                    if (!callId) return;
-                    void runRuntimeAction(
-                      `call:${callId}:mute`,
-                      'Ava mute command sent to the bridge.',
-                      async () => {
-                        await controlRuntimeCall(callId, 'mute');
-                      }
-                    );
-                  }}
-                  onEnd={(state) => {
-                    const callId = state.callId || '';
-                    if (!callId) return;
-                    void runRuntimeAction(
-                      `call:${callId}:end`,
-                      'Call end command sent to the bridge.',
-                      async () => {
-                        await controlRuntimeCall(callId, 'end');
-                      }
-                    );
-                  }}
-                />
-                <DataSourceCaption endpoint="snapshot.calls + GET /api/debug/live-call-status + POST /api/calls/:id/action" />
-              </div>
-            )}
-
-            {isWidgetVisible('callFloor') && (
-              <CallFloorPanel
-                leads={leadImports}
-                calls={calls}
-                leadSourceEndpoint={leadRosterSource}
+        <div className="space-y-4">
+          {isWidgetVisible('liveCall') && (
+            <div
+              id="live-call"
+              className={
+                activeCall?.status && activeCall.status !== 'idle'
+                  ? 'pbk-priority-live rounded-lg'
+                  : 'rounded-lg'
+              }
+            >
+              <LiveCallWidget
+                state={activeCall}
+                onTakeOver={(state) => {
+                  const callId = state.callId || '';
+                  void runRuntimeAction(
+                    `call:${callId}:takeover`,
+                    'Human takeover sent to the bridge.',
+                    async () => {
+                      if (callId) await controlRuntimeCall(callId, 'takeover');
+                      navigate(state.dealId ? `/deal/${state.dealId}` : '/deal');
+                    }
+                  );
+                }}
+                onMute={(state) => {
+                  const callId = state.callId || '';
+                  if (!callId) return;
+                  void runRuntimeAction(
+                    `call:${callId}:mute`,
+                    'Ava mute command sent to the bridge.',
+                    async () => {
+                      await controlRuntimeCall(callId, 'mute');
+                    }
+                  );
+                }}
+                onEnd={(state) => {
+                  const callId = state.callId || '';
+                  if (!callId) return;
+                  void runRuntimeAction(
+                    `call:${callId}:end`,
+                    'Call end command sent to the bridge.',
+                    async () => {
+                      await controlRuntimeCall(callId, 'end');
+                    }
+                  );
+                }}
               />
-            )}
+              <DataSourceCaption endpoint="snapshot.calls + GET /api/debug/live-call-status + POST /api/calls/:id/action" />
+            </div>
+          )}
 
-            {isWidgetVisible('adminActivity') && (
-              <section
-                id="admin-activity"
-                className={`pbk-panel ${pendingAdminCount ? 'pbk-priority-high' : 'pbk-priority-low'}`}
-              >
-                <div className="flex items-center justify-between gap-3">
-                  <div>
-                    <h2 className="text-sm font-semibold text-slate-100">Workspace tasks</h2>
-                    <p className="text-xs text-slate-500">
-                      Setup or background tasks that need a quick yes or no.
-                    </p>
+          {isWidgetVisible('callFloor') && (
+            <CallFloorPanel
+              leads={leadImports}
+              calls={calls}
+              leadSourceEndpoint={leadRosterSource}
+            />
+          )}
+
+          {isWidgetVisible('adminActivity') && (
+            <section
+              id="admin-activity"
+              className={`pbk-panel ${pendingAdminCount ? 'pbk-priority-high' : 'pbk-priority-low'}`}
+            >
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <h2 className="text-sm font-semibold text-slate-100">Workspace tasks</h2>
+                  <p className="text-xs text-slate-500">
+                    Setup or background tasks that need a quick yes or no.
+                  </p>
+                </div>
+              </div>
+              <div className="mt-3 space-y-2">
+                {visibleAdminTasks.map((task) => (
+                  <div
+                    key={String(task.id)}
+                    className="rounded-xl border border-slate-800 bg-slate-900 px-3 py-3"
+                  >
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="text-xs font-medium text-slate-200">
+                        {friendlyRuntimeLabel(task.provider || 'Ava')} ·{' '}
+                        {friendlyRuntimeLabel(task.action || 'review')}
+                      </div>
+                      <div className="text-[10px] uppercase tracking-[0.16em] text-slate-500">
+                        {formatRuntimeStatus(task.status)}
+                      </div>
+                    </div>
+                    <div className="mt-2 text-xs text-slate-400">
+                      {String(task.summary || task.command || 'Workspace action')}
+                    </div>
+                    {String(task.status || '').toLowerCase() === 'pending' && (
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          disabled={isAdminDecisionPending(String(task.id))}
+                          onClick={() => confirmAdminDecision(task, 'approved')}
+                          className="rounded-full bg-sky-500 px-3 py-1.5 text-[11px] font-semibold text-slate-950 transition hover:bg-sky-400 disabled:cursor-wait disabled:opacity-60"
+                        >
+                          {isAdminDecisionPending(String(task.id)) ? '…' : 'Approve'}
+                        </button>
+                        <button
+                          type="button"
+                          disabled={isAdminDecisionPending(String(task.id))}
+                          onClick={() => confirmAdminDecision(task, 'rejected')}
+                          className="rounded-full border border-slate-700 px-3 py-1.5 text-[11px] font-semibold text-slate-300 transition hover:border-slate-500 disabled:cursor-wait disabled:opacity-60"
+                        >
+                          {isAdminDecisionPending(String(task.id)) ? '…' : 'Decline'}
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                ))}
+                {!adminTasks.length && (
+                  <div className="rounded-xl border border-dashed border-slate-800 px-3 py-4 text-xs text-slate-500">
+                    No workspace tasks need review.
+                  </div>
+                )}
+              </div>
+              <CompactPager
+                page={adminPage}
+                total={adminTasks.length}
+                label="Workspace task pages"
+                itemLabel="tasks"
+                onPageChange={setAdminPage}
+              />
+              <DataSourceCaption endpoint="snapshot.adminTasks + POST /api/admin/tasks/:id/decision" />
+            </section>
+          )}
+
+          {isWidgetVisible('webSearch') && (
+            <section
+              className={`pbk-panel ${webSearchLiveReady ? 'pbk-priority-money' : 'pbk-priority-high'}`}
+            >
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <h2 className="text-sm font-semibold text-slate-100">Market and web research</h2>
+                  <p className="text-xs text-slate-500">
+                    Live research status for Ava and Rex when they need current market context.
+                  </p>
+                </div>
+                <span
+                  className={[
+                    'inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] uppercase tracking-[0.14em]',
+                    webSearchLiveReady
+                      ? 'bg-emerald-500/10 text-emerald-300'
+                      : 'bg-amber-500/10 text-amber-300',
+                  ].join(' ')}
+                >
+                  <span
+                    aria-hidden="true"
+                    className={[
+                      'h-1.5 w-1.5 rounded-full',
+                      webSearchLiveReady ? 'bg-emerald-400' : 'bg-amber-300',
+                    ].join(' ')}
+                  />
+                  {webSearchLiveReady ? 'Live research ready' : 'Saved knowledge active'}
+                </span>
+              </div>
+              <div className="mt-4 grid gap-2 sm:grid-cols-2">
+                <div className="rounded-xl border border-slate-800 bg-slate-900 px-3 py-3">
+                  <div className="text-[10px] uppercase tracking-[0.14em] text-slate-500">
+                    Current information
+                  </div>
+                  <div className="mt-1 text-sm font-semibold capitalize text-slate-100">
+                    {webSearchLiveReady ? 'Ready for live research' : 'Using saved knowledge'}
+                  </div>
+                  <div className="mt-1 text-xs text-slate-500">
+                    {webSearchLiveReady
+                      ? 'Ava can check current market context.'
+                      : 'Ava can continue from the workspace record.'}
                   </div>
                 </div>
-                <div className="mt-3 space-y-2">
-                  {visibleAdminTasks.map((task) => (
-                    <div
-                      key={String(task.id)}
-                      className="rounded-xl border border-slate-800 bg-slate-900 px-3 py-3"
-                    >
-                      <div className="flex items-center justify-between gap-3">
-                        <div className="text-xs font-medium text-slate-200">
-                          {friendlyRuntimeLabel(task.provider || 'Ava')} ·{' '}
-                          {friendlyRuntimeLabel(task.action || 'review')}
-                        </div>
-                        <div className="text-[10px] uppercase tracking-[0.16em] text-slate-500">
-                          {formatRuntimeStatus(task.status)}
-                        </div>
-                      </div>
-                      <div className="mt-2 text-xs text-slate-400">
-                        {String(task.summary || task.command || 'Workspace action')}
-                      </div>
-                      {String(task.status || '').toLowerCase() === 'pending' && (
-                        <div className="mt-3 flex flex-wrap gap-2">
-                          <button
-                            type="button"
-                            disabled={isAdminDecisionPending(String(task.id))}
-                            onClick={() => confirmAdminDecision(task, 'approved')}
-                            className="rounded-full bg-sky-500 px-3 py-1.5 text-[11px] font-semibold text-slate-950 transition hover:bg-sky-400 disabled:cursor-wait disabled:opacity-60"
-                          >
-                            {isAdminDecisionPending(String(task.id)) ? '…' : 'Approve'}
-                          </button>
-                          <button
-                            type="button"
-                            disabled={isAdminDecisionPending(String(task.id))}
-                            onClick={() => confirmAdminDecision(task, 'rejected')}
-                            className="rounded-full border border-slate-700 px-3 py-1.5 text-[11px] font-semibold text-slate-300 transition hover:border-slate-500 disabled:cursor-wait disabled:opacity-60"
-                          >
-                            {isAdminDecisionPending(String(task.id)) ? '…' : 'Decline'}
-                          </button>
-                        </div>
-                      )}
-                    </div>
-                  ))}
-                  {!adminTasks.length && (
-                    <div className="rounded-xl border border-dashed border-slate-800 px-3 py-4 text-xs text-slate-500">
-                      No workspace tasks need review.
-                    </div>
+                <div className="rounded-xl border border-slate-800 bg-slate-900 px-3 py-3">
+                  <div className="text-[10px] uppercase tracking-[0.14em] text-slate-500">
+                    Research memory
+                  </div>
+                  <div className="mt-1 text-sm font-semibold text-slate-100">
+                    {webSearchNeuralOutput.exposesSymbolicFacts === false
+                      ? 'Saved guidance'
+                      : 'Saved guidance + facts'}
+                  </div>
+                  <div className="mt-1 text-xs text-slate-500">
+                    {webSearchNeuralOutput.exposesSymbolicFacts === false
+                      ? 'Good for prepared answers.'
+                      : 'Good for prepared answers and known facts.'}
+                  </div>
+                </div>
+              </div>
+              <div className="mt-3 rounded-xl border border-slate-800 bg-slate-900 px-3 py-3 text-xs text-slate-400">
+                {webSearchLiveReady
+                  ? 'Ava can use current market context when a conversation needs it.'
+                  : 'Ava can keep working from saved guidance while live research is connected.'}
+              </div>
+              <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+                <div className="text-[11px] text-slate-500">
+                  Research check:{' '}
+                  <span className="text-slate-300">
+                    {webSearchLiveReady ? 'ready' : 'needs setup'}
+                  </span>
+                  {!webSearchLiveReady && (
+                    <span> / connect live research in Settings when available</span>
                   )}
                 </div>
-                <CompactPager
-                  page={adminPage}
-                  total={adminTasks.length}
-                  label="Workspace task pages"
-                  itemLabel="tasks"
-                  onPageChange={setAdminPage}
-                />
-                <DataSourceCaption endpoint="snapshot.adminTasks + POST /api/admin/tasks/:id/decision" />
-              </section>
-            )}
-
-            {isWidgetVisible('webSearch') && (
-              <section
-                className={`pbk-panel ${webSearchLiveReady ? 'pbk-priority-money' : 'pbk-priority-high'}`}
-              >
-                <div className="flex flex-wrap items-start justify-between gap-3">
-                  <div>
-                    <h2 className="text-sm font-semibold text-slate-100">
-                      Market and web research
-                    </h2>
-                    <p className="text-xs text-slate-500">
-                      Live research status for Ava and Rex when they need current market context.
-                    </p>
-                  </div>
-                  <span
-                    className={[
-                      'inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] uppercase tracking-[0.14em]',
-                      webSearchLiveReady
-                        ? 'bg-emerald-500/10 text-emerald-300'
-                        : 'bg-amber-500/10 text-amber-300',
-                    ].join(' ')}
-                  >
-                    <span
-                      aria-hidden="true"
-                      className={[
-                        'h-1.5 w-1.5 rounded-full',
-                        webSearchLiveReady ? 'bg-emerald-400' : 'bg-amber-300',
-                      ].join(' ')}
-                    />
-                    {webSearchLiveReady ? 'Live research ready' : 'Saved knowledge active'}
-                  </span>
-                </div>
-                <div className="mt-4 grid gap-2 sm:grid-cols-2">
-                  <div className="rounded-xl border border-slate-800 bg-slate-900 px-3 py-3">
-                    <div className="text-[10px] uppercase tracking-[0.14em] text-slate-500">
-                      Current information
-                    </div>
-                    <div className="mt-1 text-sm font-semibold capitalize text-slate-100">
-                      {webSearchLiveReady ? 'Ready for live research' : 'Using saved knowledge'}
-                    </div>
-                    <div className="mt-1 text-xs text-slate-500">
-                      {webSearchLiveReady
-                        ? 'Ava can check current market context.'
-                        : 'Ava can continue from the workspace record.'}
-                    </div>
-                  </div>
-                  <div className="rounded-xl border border-slate-800 bg-slate-900 px-3 py-3">
-                    <div className="text-[10px] uppercase tracking-[0.14em] text-slate-500">
-                      Research memory
-                    </div>
-                    <div className="mt-1 text-sm font-semibold text-slate-100">
-                      {webSearchNeuralOutput.exposesSymbolicFacts === false
-                        ? 'Saved guidance'
-                        : 'Saved guidance + facts'}
-                    </div>
-                    <div className="mt-1 text-xs text-slate-500">
-                      {webSearchNeuralOutput.exposesSymbolicFacts === false
-                        ? 'Good for prepared answers.'
-                        : 'Good for prepared answers and known facts.'}
-                    </div>
-                  </div>
-                </div>
-                <div className="mt-3 rounded-xl border border-slate-800 bg-slate-900 px-3 py-3 text-xs text-slate-400">
-                  {webSearchLiveReady
-                    ? 'Ava can use current market context when a conversation needs it.'
-                    : 'Ava can keep working from saved guidance while live research is connected.'}
-                </div>
-                <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
-                  <div className="text-[11px] text-slate-500">
-                    Research check:{' '}
-                    <span className="text-slate-300">
-                      {webSearchLiveReady ? 'ready' : 'needs setup'}
-                    </span>
-                    {!webSearchLiveReady && (
-                      <span> / connect live research in Settings when available</span>
-                    )}
-                  </div>
-                  <div className="flex flex-wrap gap-2">
-                    {webSearchProbeFailed && (
-                      <button
-                        type="button"
-                        disabled={pendingAction === 'web-search:probe'}
-                        onClick={() => {
-                          void runWebSearchProbe();
-                        }}
-                        className="rounded-full bg-sky-400 px-3 py-1.5 text-[11px] font-bold text-slate-950 transition hover:bg-sky-300 disabled:cursor-wait disabled:opacity-60"
-                      >
-                        Retry Probe
-                      </button>
-                    )}
+                <div className="flex flex-wrap gap-2">
+                  {webSearchProbeFailed && (
                     <button
                       type="button"
                       disabled={pendingAction === 'web-search:probe'}
                       onClick={() => {
                         void runWebSearchProbe();
                       }}
-                      className="rounded-full border border-sky-500/40 px-3 py-1.5 text-[11px] font-semibold text-sky-200 transition hover:border-sky-300 hover:text-sky-100 disabled:cursor-wait disabled:opacity-60"
+                      className="rounded-full bg-sky-400 px-3 py-1.5 text-[11px] font-bold text-slate-950 transition hover:bg-sky-300 disabled:cursor-wait disabled:opacity-60"
                     >
-                      Connection check
+                      Retry Probe
                     </button>
-                  </div>
-                  {webSearchProbeFailed && webSearchProbeError && (
-                    <div className="basis-full text-[11px] text-amber-300">
-                      Last check needs attention: {friendlyRuntimeText(webSearchProbeError)}
-                    </div>
                   )}
+                  <button
+                    type="button"
+                    disabled={pendingAction === 'web-search:probe'}
+                    onClick={() => {
+                      void runWebSearchProbe();
+                    }}
+                    className="rounded-full border border-sky-500/40 px-3 py-1.5 text-[11px] font-semibold text-sky-200 transition hover:border-sky-300 hover:text-sky-100 disabled:cursor-wait disabled:opacity-60"
+                  >
+                    Connection check
+                  </button>
                 </div>
-                <DataSourceCaption endpoint="GET /api/brain/web-search/status" />
-              </section>
-            )}
+                {webSearchProbeFailed && webSearchProbeError && (
+                  <div className="basis-full text-[11px] text-amber-300">
+                    Last check needs attention: {friendlyRuntimeText(webSearchProbeError)}
+                  </div>
+                )}
+              </div>
+              <DataSourceCaption endpoint="GET /api/brain/web-search/status" />
+            </section>
+          )}
 
-            {isWidgetVisible('tooling') && (
-              <section className="pbk-panel pbk-priority-low">
-                <div className="flex items-center justify-between gap-3">
-                  <div>
-                    <h2 className="text-sm font-semibold text-slate-100">Support tools</h2>
-                    <p className="text-xs text-slate-500">
-                      Research, monitoring, and automation helpers Ava can use.
-                    </p>
-                  </div>
-                  <div className="text-[11px] uppercase tracking-[0.14em] text-slate-500">
-                    {String(toolingCoreReady)}/{String(toolingCoreTotal)} core
-                  </div>
+          {isWidgetVisible('tooling') && (
+            <section className="pbk-panel pbk-priority-low">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <h2 className="text-sm font-semibold text-slate-100">Support tools</h2>
+                  <p className="text-xs text-slate-500">
+                    Research, monitoring, and automation helpers Ava can use.
+                  </p>
                 </div>
-                <div className="mt-3 space-y-2">
-                  {toolingHighlights.map((item) => {
-                    const ready = Boolean(item.meta?.ready);
-                    return (
-                      <div
-                        key={item.label}
-                        className="rounded-xl border border-slate-800 bg-slate-900 px-3 py-3 transition-colors hover:border-slate-700"
-                      >
-                        <div className="flex flex-wrap items-center justify-between gap-2">
-                          <div className="min-w-0 text-xs font-medium text-slate-200">
-                            {item.label}
-                          </div>
+                <div className="text-[11px] uppercase tracking-[0.14em] text-slate-500">
+                  {String(toolingCoreReady)}/{String(toolingCoreTotal)} core
+                </div>
+              </div>
+              <div className="mt-3 space-y-2">
+                {toolingHighlights.map((item) => {
+                  const ready = Boolean(item.meta?.ready);
+                  return (
+                    <div
+                      key={item.label}
+                      className="rounded-xl border border-slate-800 bg-slate-900 px-3 py-3 transition-colors hover:border-slate-700"
+                    >
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div className="min-w-0 text-xs font-medium text-slate-200">
+                          {item.label}
+                        </div>
+                        <span
+                          aria-label={`${item.label} status: ${ready ? 'Ready' : 'Needs setup'}`}
+                          className={[
+                            'inline-flex shrink-0 items-center gap-1.5 rounded-full px-2 py-0.5 text-[10px] uppercase tracking-[0.14em]',
+                            ready
+                              ? 'bg-emerald-500/10 text-emerald-300'
+                              : 'bg-slate-800 text-slate-400',
+                          ].join(' ')}
+                        >
                           <span
-                            aria-label={`${item.label} status: ${ready ? 'Ready' : 'Needs setup'}`}
+                            aria-hidden="true"
                             className={[
-                              'inline-flex shrink-0 items-center gap-1.5 rounded-full px-2 py-0.5 text-[10px] uppercase tracking-[0.14em]',
-                              ready
-                                ? 'bg-emerald-500/10 text-emerald-300'
-                                : 'bg-slate-800 text-slate-400',
+                              'h-1.5 w-1.5 rounded-full',
+                              ready ? 'bg-emerald-400' : 'bg-slate-500',
                             ].join(' ')}
-                          >
-                            <span
-                              aria-hidden="true"
-                              className={[
-                                'h-1.5 w-1.5 rounded-full',
-                                ready ? 'bg-emerald-400' : 'bg-slate-500',
-                              ].join(' ')}
-                            />
-                            {ready ? 'Ready' : 'Needs setup'}
-                          </span>
-                        </div>
-                        <div className="mt-2 break-words text-xs text-slate-400">
-                          {friendlyRuntimeText(item.meta?.note || 'Checking connection status.')}
-                        </div>
+                          />
+                          {ready ? 'Ready' : 'Needs setup'}
+                        </span>
                       </div>
-                    );
-                  })}
-                </div>
-                <DataSourceCaption endpoint="GET /api/tooling/status" />
-              </section>
-            )}
-          </div>
-
-          <div className="xl:col-span-7 space-y-4">
-            {isWidgetVisible('activity') && (
-              <section className="pbk-panel">
-                <div className="flex items-center justify-between gap-3">
-                  <div>
-                    <h2 className="text-sm font-semibold text-slate-100">Activity Feed</h2>
-                    <p className="text-xs text-slate-500">
-                      Recent work from Ava, Rex, calls, messages, and providers.
-                    </p>
-                  </div>
-                </div>
-                <div className="mt-3 space-y-2">
-                  {visibleActivity.map((item, index) => (
-                    <div
-                      key={`${String(item.id || item.at || item.createdAt || 'activity')}-${index}`}
-                      className="rounded-xl border border-slate-800 bg-slate-900 px-3 py-3"
-                    >
-                      <div className="flex items-center justify-between gap-3">
-                        <div className="text-xs font-medium text-slate-100">
-                          {String(item.actor || 'System')}
-                        </div>
-                        <div
-                          className="text-[10px] text-slate-500"
-                          title={formatActivityTitle(String(item.at || item.createdAt || ''))}
-                        >
-                          {formatRelative(String(item.at || item.createdAt || ''))}
-                        </div>
-                      </div>
-                      <div
-                        className="mt-2 line-clamp-2 max-w-full text-xs text-slate-300"
-                        title={String(item.text || 'Runtime event')}
-                      >
-                        {String(item.text || 'Runtime event')}
-                      </div>
-                      <div className="mt-1 text-[11px] text-slate-500 uppercase tracking-[0.12em]">
-                        {friendlyRuntimeLabel(item.category || 'INFO')}
+                      <div className="mt-2 break-words text-xs text-slate-400">
+                        {friendlyRuntimeText(item.meta?.note || 'Checking connection status.')}
                       </div>
                     </div>
-                  ))}
-                  {!visibleActivity.length && (
-                    <div className="rounded-xl border border-dashed border-slate-800 px-3 py-4 text-xs text-slate-500">
-                      No activity is on this page yet.
-                    </div>
-                  )}
-                </div>
-                <CompactPager
-                  page={activityPage}
-                  total={activityItems.length}
-                  label="Activity feed pages"
-                  itemLabel="events"
-                  onPageChange={setActivityPage}
-                />
-                <DataSourceCaption
-                  endpoint="GET /api/intelligence/stream"
-                  note={`${intelligenceStreamSource}; snapshot.activity fallback`}
-                />
-              </section>
-            )}
-
-            {isWidgetVisible('approvals') && (
-              <section
-                id="approvals"
-                className={`pbk-panel ${pendingApprovalCount ? 'pbk-priority-high' : 'pbk-priority-low'}`}
-              >
-                <div className="flex items-center justify-between gap-3">
-                  <div>
-                    <h2 className="text-sm font-semibold text-slate-100">Approval board</h2>
-                    <p className="text-xs text-slate-500">
-                      Review what Ava needs before she sends, signs, or changes anything.
-                    </p>
-                  </div>
-                </div>
-                <div className="mt-3 grid gap-2 md:grid-cols-2">
-                  {visibleApprovals.map((approval) => (
-                    <div
-                      key={String(approval.id)}
-                      className={`pbk-command-approval-card ${
-                        String(approval.type || '')
-                          .toLowerCase()
-                          .includes('contract')
-                          ? 'contract'
-                          : ''
-                      }`}
-                      data-source="snapshot.approvals payload"
-                    >
-                      <div className="text-[11px] uppercase tracking-[0.16em] text-amber-300">
-                        {friendlyRuntimeLabel(approval.type || 'approval')}
-                      </div>
-                      <div className="mt-2 text-sm font-semibold text-slate-100">
-                        {friendlyRuntimeLabel(
-                          approval.leadName || approval.address || 'PBK approval'
-                        )}
-                      </div>
-                      <div className="mt-1 text-xs text-slate-400">
-                        {String(approval.address || 'No address recorded')}
-                      </div>
-                      <div
-                        className="approval-preview"
-                        aria-label={`Approval payload preview for ${String(
-                          approval.leadName || approval.address || 'PBK approval'
-                        )}`}
-                      >
-                        {getApprovalPreview(approval)}
-                      </div>
-                      <div className="mt-3 flex flex-wrap gap-2">
-                        <button
-                          type="button"
-                          data-approval-primary="true"
-                          disabled={isApprovalDecisionPending(String(approval.id))}
-                          onClick={() => confirmApprovalDecision(approval, 'approved')}
-                          className="rounded-full bg-amber-400 px-3 py-1.5 text-[11px] font-semibold text-slate-950 transition hover:bg-amber-300 disabled:cursor-wait disabled:opacity-60"
-                        >
-                          {isApprovalDecisionPending(String(approval.id)) ? '…' : 'Approve'}
-                        </button>
-                        <button
-                          type="button"
-                          data-approval-secondary="true"
-                          disabled={isApprovalDecisionPending(String(approval.id))}
-                          onClick={() => {
-                            confirmApprovalDecision(approval, getApprovalSecondaryStatus(approval));
-                          }}
-                          className="rounded-full border border-slate-700 px-3 py-1.5 text-[11px] font-semibold text-slate-300 transition hover:border-slate-500 disabled:cursor-wait disabled:opacity-60"
-                        >
-                          {isApprovalDecisionPending(String(approval.id))
-                            ? '…'
-                            : String(approval.type || '').toLowerCase() === 'contract'
-                              ? 'Needs Revision'
-                              : 'Decline'}
-                        </button>
-                      </div>
-                    </div>
-                  ))}
-                  {!pendingApprovals.length && (
-                    <div className="rounded-xl border border-dashed border-slate-800 px-3 py-4 text-xs text-slate-500">
-                      No pending approvals right now.
-                    </div>
-                  )}
-                </div>
-                <CompactPager
-                  page={approvalPage}
-                  total={pendingApprovals.length}
-                  label="Approval board pages"
-                  itemLabel="reviews"
-                  onPageChange={setApprovalPage}
-                />
-                <DataSourceCaption
-                  endpoint="snapshot.approvals payload + PUT /api/approvals/:id"
-                  note="preview uses message/body/text/content/payload/metadata fields"
-                />
-              </section>
-            )}
-          </div>
+                  );
+                })}
+              </div>
+              <DataSourceCaption endpoint="GET /api/tooling/status" />
+            </section>
+          )}
         </div>
 
         <CallQualityReviewDialog
@@ -3380,55 +3479,61 @@ export function CommandCenter() {
         )}
 
         {approvalDecisionDraft && (
-          <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/80 p-4 backdrop-blur-sm">
-            <div
-              role="dialog"
-              aria-modal="true"
-              aria-labelledby="approval-decision-title"
-              className="w-full max-w-md rounded-2xl border border-slate-800 bg-slate-950 p-5 shadow-[0_24px_80px_rgba(2,6,23,0.55)]"
-            >
-              <div className="text-[11px] uppercase tracking-[0.16em] text-amber-300">
-                Review before sending
-              </div>
-              <h3
-                id="approval-decision-title"
-                className="mt-2 text-lg font-semibold text-slate-100"
-              >
-                Confirm your choice
-              </h3>
-              <p className="mt-2 text-sm text-slate-400">
-                This will {approvalDecisionDraft.actionLabel}{' '}
-                <span className="font-semibold text-slate-200">{approvalDecisionDraft.type}</span>{' '}
-                for {approvalDecisionDraft.leadName}.
-              </p>
-              <div className="mt-4 rounded-xl border border-slate-800 bg-slate-900 px-3 py-3 text-sm text-slate-300">
-                {approvalDecisionDraft.address}
-              </div>
-              <div className="mt-3 rounded-xl border border-amber-300/30 bg-amber-300/10 px-3 py-3 text-sm leading-relaxed text-amber-50">
-                {approvalDecisionDraft.preview}
-              </div>
-              <div className="mt-5 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
-                <button
-                  type="button"
-                  onClick={() => setApprovalDecisionDraft(null)}
-                  className="rounded-full border border-slate-700 px-4 py-2 text-sm font-semibold text-slate-300 transition hover:border-slate-500"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="button"
-                  disabled={
-                    pendingAction ===
-                    `approval:${approvalDecisionDraft.approvalId}:${approvalDecisionDraft.status}`
-                  }
-                  onClick={executeApprovalDecision}
-                  className="rounded-full bg-amber-400 px-4 py-2 text-sm font-bold text-slate-950 transition hover:bg-amber-300 disabled:cursor-wait disabled:opacity-60"
-                >
-                  Confirm decision
-                </button>
-              </div>
+          <dialog
+            ref={approvalDialogRef}
+            aria-labelledby="approval-decision-title"
+            onKeyDown={(event) => {
+              if (event.key === 'Escape') event.stopPropagation();
+            }}
+            onCancel={(event) => {
+              event.preventDefault();
+              cancelApprovalDecision();
+            }}
+            className="pbk-review-dialog"
+          >
+            <div className="text-[11px] uppercase tracking-[0.16em] text-amber-300">
+              Review before sending
             </div>
-          </div>
+            <h3 id="approval-decision-title" className="mt-2 text-lg font-semibold text-slate-100">
+              {approvalDecisionDraft.actionLabel} {approvalDecisionDraft.type}?
+            </h3>
+            <p className="mt-2 text-sm text-slate-400">{approvalDecisionDraft.leadName}</p>
+            <div className="mt-4 pbk-review-evidence text-sm">
+              {approvalDecisionDraft.address}
+              {approvalDecisionDraft.recipient && <div>{approvalDecisionDraft.recipient}</div>}
+            </div>
+            <div className="mt-3 pbk-review-evidence text-sm leading-relaxed">
+              {approvalDecisionDraft.preview}
+            </div>
+            {(!approvalsAvailable ||
+              !pendingApprovals.some((item) => item.id === approvalDecisionDraft.approvalId)) && (
+              <p role="status" className="mt-3 text-sm">
+                This request is no longer available for review.
+              </p>
+            )}
+            <div className="mt-5 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+              <button
+                type="button"
+                autoFocus
+                onClick={cancelApprovalDecision}
+                className="pbk-review-button"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={
+                  Boolean(pendingAction) ||
+                  !approvalsAvailable ||
+                  !pendingApprovals.some((item) => item.id === approvalDecisionDraft.approvalId)
+                }
+                onClick={executeApprovalDecision}
+                className="pbk-review-button pbk-review-button-primary"
+              >
+                Confirm decision
+              </button>
+            </div>
+          </dialog>
         )}
       </div>
     </div>

@@ -294,69 +294,32 @@ export function CallModeTab({
   };
 
   return (
-    <div className="p-3.5">
-      <div className="pbk-analyzer-card bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-xl p-4 mb-3 shadow-sm">
+    <div className="pbk-analyzer-main pbk-call-workbench">
+      <section
+        aria-labelledby="call-path-heading"
+        className="pbk-analyzer-card pbk-analyzer-workbench-section"
+      >
         <div className="flex items-center justify-between gap-3 mb-3 flex-wrap">
-          <div className="flex items-center gap-2">
-            <div className="w-1 h-3 bg-purple-500 rounded-sm"></div>
-            <h3 className="text-[10px] font-bold uppercase tracking-wide text-purple-500">
-              Path Selector
-            </h3>
-          </div>
-          <div className="text-[10px] text-gray-500 dark:text-gray-400">
-            Active packet path:{' '}
-            <strong className="text-purple-600 dark:text-purple-300">
-              {getPathLabel(activePath)}
-            </strong>
-          </div>
+          <h2 id="call-path-heading" className="pbk-analyzer-section-title">
+            Path selector
+          </h2>
+          <span className="pbk-call-active-path">Active packet: {getPathLabel(activePath)}</span>
         </div>
 
-        <div className="mb-3 rounded-2xl border border-purple-200 bg-purple-50 px-3 py-2 text-[11px] leading-5 text-purple-800 dark:border-purple-800 dark:bg-purple-950/30 dark:text-purple-300">
-          Tap a path and the scripts, tracker, live inputs, and Documents/PDF packet all follow this
-          same selected path.
+        <div className="pbk-call-path-grid" role="group" aria-label="Deal path">
+          {pathOptions.map((option) => (
+            <button
+              key={option.id}
+              type="button"
+              aria-pressed={option.id === activePath}
+              onClick={() => onSelectPath(option.id)}
+              className="pbk-btn pbk-btn-ghost"
+            >
+              {option.label}
+            </button>
+          ))}
         </div>
-
-        <div className="flex gap-2 overflow-x-auto pb-1">
-          {pathOptions.map((option) => {
-            const isActive = option.id === activePath;
-            const toneClasses =
-              option.tone === 'green'
-                ? isActive
-                  ? 'border-green-500 bg-green-500 text-white shadow-green-500/25'
-                  : 'border-green-200 bg-green-50 text-green-700 hover:bg-green-100 dark:border-green-800 dark:bg-green-950/30 dark:text-green-300'
-                : option.tone === 'blue'
-                  ? isActive
-                    ? 'border-blue-500 bg-blue-500 text-white shadow-blue-500/25'
-                    : 'border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100 dark:border-blue-800 dark:bg-blue-950/30 dark:text-blue-300'
-                  : option.tone === 'purple'
-                    ? isActive
-                      ? 'border-purple-500 bg-purple-500 text-white shadow-purple-500/25'
-                      : 'border-purple-200 bg-purple-50 text-purple-700 hover:bg-purple-100 dark:border-purple-800 dark:bg-purple-950/30 dark:text-purple-300'
-                    : option.tone === 'amber'
-                      ? isActive
-                        ? 'border-amber-500 bg-amber-500 text-white shadow-amber-500/25'
-                        : 'border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-300'
-                      : isActive
-                        ? 'border-slate-600 bg-slate-700 text-white shadow-slate-900/20'
-                        : 'border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300';
-
-            return (
-              <button
-                key={option.id}
-                type="button"
-                aria-pressed={isActive}
-                onClick={() => onSelectPath(option.id)}
-                className={`min-w-fit rounded-full border px-4 py-2 text-left transition-all shadow-sm ${toneClasses}`}
-              >
-                <div className="text-[9px] font-semibold uppercase tracking-[0.2em] opacity-80">
-                  Path
-                </div>
-                <div className="text-[12px] font-semibold leading-tight">{option.label}</div>
-              </button>
-            );
-          })}
-        </div>
-      </div>
+      </section>
 
       <ScriptPanel
         deal={deal}
@@ -375,13 +338,13 @@ export function CallModeTab({
 
       <LiveDealTrackerPanel deal={deal} activePath={activePath} />
 
-      <div className="pbk-analyzer-card bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-xl p-4 mb-3 shadow-sm">
-        <div className="flex items-center gap-2 mb-3">
-          <div className="w-1 h-3 bg-blue-500 rounded-sm"></div>
-          <h3 className="text-[10px] font-bold uppercase tracking-wide text-blue-500">
-            Call Notes
-          </h3>
-        </div>
+      <section
+        aria-labelledby="call-notes-heading"
+        className="pbk-analyzer-card pbk-analyzer-workbench-section"
+      >
+        <h2 id="call-notes-heading" className="pbk-analyzer-section-title mb-3">
+          Call notes
+        </h2>
 
         <textarea
           aria-label="Call notes"
@@ -394,7 +357,7 @@ export function CallModeTab({
           placeholder="Take notes during your call..."
           className="w-full h-32 px-3 py-2 border border-gray-200 dark:border-slate-700 rounded-lg bg-gray-50 dark:bg-slate-900 text-gray-900 dark:text-gray-100 text-[12.5px] outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 transition-all resize-vertical"
         />
-      </div>
+      </section>
 
       <LiveCallInputs
         deal={deal}
@@ -403,17 +366,20 @@ export function CallModeTab({
         canonicalPath={activePath}
       />
 
-      <div className="pbk-analyzer-card bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-xl p-4 mb-3 shadow-sm">
-        <div className="flex items-center gap-2 mb-3">
-          <div className="w-1 h-3 bg-blue-500 rounded-sm"></div>
-          <h3 className="text-[10px] font-bold uppercase tracking-wide text-blue-500">
-            Post-Call Actions
-          </h3>
-        </div>
+      <section
+        aria-labelledby="call-actions-heading"
+        className="pbk-analyzer-card pbk-analyzer-workbench-section"
+      >
+        <h2 id="call-actions-heading" className="pbk-analyzer-section-title mb-3">
+          Post-call actions
+        </h2>
 
         <div className="space-y-2">
           {postCallStatus && (
-            <div className="rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-[11px] text-sky-800 dark:border-sky-700 dark:bg-sky-950/30 dark:text-sky-200">
+            <div
+              role="status"
+              className="rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-[11px] text-sky-800 dark:border-sky-700 dark:bg-sky-950/30 dark:text-sky-200"
+            >
               {postCallStatus}
             </div>
           )}
@@ -442,7 +408,7 @@ export function CallModeTab({
             {pendingPostCallAction === 'crm' ? 'Syncing...' : 'Add to CRM'}
           </button>
         </div>
-      </div>
+      </section>
     </div>
   );
 }

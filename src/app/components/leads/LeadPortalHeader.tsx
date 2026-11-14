@@ -50,7 +50,7 @@ export function LeadPortalHeader({
   return (
     <header className="pbk-lead-portal-header">
       <div className="pbk-lead-portal-heading">
-        <button type="button" className="back" onClick={onBack}>
+        <button type="button" className="back" aria-label="Back to leads" onClick={onBack}>
           <ArrowLeft size={16} />
           Leads
         </button>
@@ -62,6 +62,9 @@ export function LeadPortalHeader({
             <span className="pbk-kicker">Seller workspace</span>
             <h1>{lead.name}</h1>
             <p>{lead.address || 'Property address not captured'}</p>
+            <p className="pbk-portal-contact-summary">
+              {[lead.phone || lead.email, lead.assignedAgent].filter(Boolean).join(' / ')}
+            </p>
           </div>
         </div>
         <div className="pbk-lead-portal-status">
@@ -72,9 +75,9 @@ export function LeadPortalHeader({
       </div>
 
       <div className="pbk-lead-portal-actions" aria-label="Lead actions">
-        <button type="button" onClick={onRefresh} disabled={loading}>
-          <RefreshCw size={16} className={loading ? 'animate-spin' : ''} />
-          Refresh
+        <button type="button" className="primary" onClick={onAnalyze}>
+          <BadgeDollarSign size={16} />
+          Analyze
         </button>
         <button type="button" onClick={onEdit}>
           <Edit3 size={16} />
@@ -111,9 +114,9 @@ export function LeadPortalHeader({
           <FileSignature size={16} />
           Contract
         </button>
-        <button type="button" className="primary" onClick={onAnalyze}>
-          <BadgeDollarSign size={16} />
-          Analyze
+        <button type="button" onClick={onRefresh} disabled={loading}>
+          <RefreshCw size={16} className={loading ? 'animate-spin' : ''} />
+          Refresh
         </button>
         <button
           type="button"

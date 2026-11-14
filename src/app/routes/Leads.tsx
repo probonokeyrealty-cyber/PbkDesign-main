@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { useNavigate, useSearchParams } from 'react-router';
+import { Link, useNavigate, useSearchParams } from 'react-router';
 import {
   AlertCircle,
+  ArrowUpRight,
   CheckCircle2,
   Edit3,
   FileSignature,
@@ -19,6 +20,7 @@ import {
 } from 'lucide-react';
 import { PbkDataSource } from '../../components/pbk/index';
 import { CompactPager, getPageSlice, OPERATOR_LIST_PAGE_SIZE } from '../components/CompactPager';
+import { AttomPropertyPreview } from '../components/leads/AttomPropertyPreview';
 import { useRuntimeSnapshot } from '../hooks/useRuntimeSnapshot';
 import { ANALYZER_CURRENT_DEAL_KEY, readAnalyzerStorage } from '../utils/analyzerStorage';
 import {
@@ -808,15 +810,18 @@ function unwrapLeadResponse(response: BridgeRecord): BridgeRecord {
 }
 
 function sameLeadRecord(left: BridgeRecord, right: BridgeRecord) {
-  const leftLeadId = getLeadId(left);
-  const rightLeadId = getLeadId(right);
+  const leftRecord = unwrapLeadResponse(left);
+  const rightRecord = unwrapLeadResponse(right);
+  const leftLeadId = pickFirstText(leftRecord.leadId, leftRecord.id, leftRecord.externalId);
+  const rightLeadId = pickFirstText(rightRecord.leadId, rightRecord.id, rightRecord.externalId);
+  // Shared addresses and contact details are not identity when both rows have an ID.
+  if (leftLeadId && rightLeadId) return leftLeadId === rightLeadId;
   const leftPhone = normalizePhone(getLeadPhone(left));
   const rightPhone = normalizePhone(getLeadPhone(right));
   const leftEmail = getLeadEmail(left).toLowerCase();
   const rightEmail = getLeadEmail(right).toLowerCase();
   const leftAddress = leadAddressMatchKey(left);
   const rightAddress = leadAddressMatchKey(right);
-  if (leftLeadId && rightLeadId && leftLeadId === rightLeadId) return true;
   if (leftPhone && rightPhone && leftPhone === rightPhone) return true;
   if (leftEmail && rightEmail && leftEmail === rightEmail) return true;
   return Boolean(leftAddress && rightAddress && leftAddress === rightAddress);
@@ -854,9 +859,17 @@ function mergeVisibleLeadDetail(current: BridgeRecord[], lead: BridgeRecord): Br
   return matched ? next : [record, ...next];
 }
 
-function Field({ label, children }: { label: string; children: ReactNode }) {
+function Field({
+  label,
+  children,
+  className = '',
+}: {
+  label: string;
+  children: ReactNode;
+  className?: string;
+}) {
   return (
-    <label className="space-y-1.5 text-xs text-slate-400">
+    <label className={`space-y-1.5 text-xs text-slate-400 ${className}`}>
       <span className="font-medium text-slate-300">{label}</span>
       {children}
     </label>
@@ -925,7 +938,7 @@ function LeadsDataSourceDetails({ children }: { children: ReactNode }) {
 function LeadsStatRibbon({ stats, sourceLabel }: { stats: LeadsStats; sourceLabel: string }) {
   const cards = [
     {
-      label: 'Bridge leads',
+      label: 'Total leads',
       value: String(stats.total),
       detail: sourceLabel,
       tone: 'sky',
@@ -937,7 +950,7 @@ function LeadsStatRibbon({ stats, sourceLabel }: { stats: LeadsStats; sourceLabe
       tone: 'lime',
     },
     {
-      label: 'Contract ready',
+      label: 'Email on file',
       value: String(stats.contractReady),
       detail: 'seller email captured',
       tone: 'sky',
@@ -990,16 +1003,12 @@ function LeadsHero({
                 ? 'connection needs attention'
                 : `${stats.total} leads`}
           </div>
-          <h1 className="pbk-display pbk-h1">
-            Leads &amp; <em>contracts</em>.
-          </h1>
-          <p>
-            Seller pipeline, call notes, CRM edits, and contract handoff live here. Open a seller,
-            update what changed, and Ava keeps the lead profile aligned with the latest calls and
-            messages.
-          </p>
+          <h1 className="pbk-display">Leads.</h1>
         </div>
         <div className="pbk-leads-hero-actions">
+          <Link to="/leads/batch-review" className="pbk-leads-refresh">
+            Batch review
+          </Link>
           <button type="button" className="pbk-leads-create" onClick={onCreateLead}>
             <Plus size={15} />
             New PBK lead
@@ -1016,7 +1025,9 @@ function LeadsHero({
         </div>
       </div>
       <LeadsStatRibbon stats={stats} sourceLabel={rosterSourceLabel} />
-      <LeadsSourceRail />
+      <LeadsDataSourceDetails>
+        <LeadsSourceRail />
+      </LeadsDataSourceDetails>
     </section>
   );
 }
@@ -1035,12 +1046,13 @@ function LeadsPipelineRail({
   onPageChange: (page: number) => void;
 }) {
   return (
-    <section className={`${softPanelClass} pbk-leads-pipeline-rail overflow-hidden`}>
+    <section
+      className={`${softPanelClass} pbk-leads-pipeline-rail overflow-hidden`}
+      aria-labelledby="seller-roster-heading"
+    >
       <div className="pipeline-head">
         <div>
-          <span className="pbk-kicker">Pipeline leads</span>
-          <h2>Seller roster</h2>
-          <p>Tap a lead to see the full profile, notes, call memory, and next best action.</p>
+          <h2 id="seller-roster-heading">Seller roster</h2>
         </div>
         <LeadsDataSourceDetails>
           <PbkDataSource endpoint="GET /api/leads" status="ships" note={sourceNote} />
@@ -1928,24 +1940,15 @@ export function Leads() {
                 const sellerName = getSellerName(lead);
                 const isSelected = id === activeLeadId;
                 return (
-                  <div
-                    key={id}
-                    role="button"
-                    tabIndex={0}
-                    aria-label={`Open lead ${sellerName} at ${getLeadAddress(lead)}`}
-                    aria-selected={isSelected}
-                    aria-pressed={isSelected}
-                    className="lead-mobile-card"
-                    onClick={() => setSelectedLeadId(id)}
-                    onKeyDown={(event) => {
-                      if (event.key === 'Enter' || event.key === ' ') {
-                        event.preventDefault();
-                        setSelectedLeadId(id);
-                      }
-                    }}
-                  >
+                  <div key={id} className={`lead-mobile-card${isSelected ? ' is-selected' : ''}`}>
                     <span className={['lead-score', scoreTone(score)].join(' ')}>{score}</span>
-                    <span className="min-w-0 flex-1">
+                    <button
+                      type="button"
+                      className="pbk-lead-mobile-select"
+                      aria-label={`Open lead ${sellerName} at ${getLeadAddress(lead)}`}
+                      aria-pressed={isSelected}
+                      onClick={() => setSelectedLeadId(id)}
+                    >
                       <SellerRosterIdentity
                         sellerName={sellerName}
                         address={getLeadAddress(lead)}
@@ -1979,11 +1982,16 @@ export function Leads() {
                         <span>{text(lead.status || lead.stage, PATH_LABELS[path])}</span>
                         <span>{formatDate(lead.updatedAt || lead.createdAt)}</span>
                       </span>
-                    </span>
+                    </button>
+                    <Link
+                      to={`/leads/${encodeURIComponent(id)}`}
+                      className="pbk-lead-workspace-link"
+                      aria-label={`Open workspace for ${sellerName}`}
+                      title="Open seller workspace"
+                    >
+                      <ArrowUpRight size={18} aria-hidden="true" />
+                    </Link>
                     <span className="flex flex-col items-end gap-2">
-                      <span className="grid h-8 w-8 place-items-center rounded-full bg-slate-800 text-xs font-semibold text-sky-200">
-                        {getSellerInitial(sellerName)}
-                      </span>
                       <span
                         className="pbk-lead-quick-actions compact"
                         aria-label="Lead quick actions"
@@ -2060,30 +2068,40 @@ export function Leads() {
                 return (
                   <div
                     key={id}
-                    aria-selected={isSelected}
+                    data-selected={isSelected}
                     className={[
-                      'grid w-full grid-cols-1 gap-3 px-4 py-4 text-left transition',
+                      'pbk-lead-ledger-row grid w-full grid-cols-1 gap-2 px-3 py-3 text-left transition',
                       isSelected ? 'bg-sky-500/10' : 'hover:bg-slate-900',
                     ].join(' ')}
                   >
                     <button
                       type="button"
                       aria-label={`Open lead ${sellerName} at ${getLeadAddress(lead)}`}
+                      aria-pressed={isSelected}
                       onClick={() => setSelectedLeadId(id)}
-                      className="min-w-0 text-left"
+                      className="pbk-lead-ledger-identity"
                     >
-                      <SellerRosterIdentity
-                        sellerName={sellerName}
-                        address={getLeadAddress(lead)}
-                      />
-                      <span className="mt-1 flex flex-wrap gap-2 text-[11px] text-slate-500">
-                        <span>
+                      <span className="pbk-lead-ledger-avatar" aria-hidden="true">
+                        {getSellerInitial(sellerName)}
+                      </span>
+                      <span className="min-w-0">
+                        <SellerRosterIdentity
+                          sellerName={sellerName}
+                          address={getLeadAddress(lead)}
+                        />
+                        <span className="pbk-lead-ledger-contact">
                           {getLeadPhone(lead) || getLeadEmail(lead) || 'No contact captured'}
                         </span>
-                        <span>Source: {text(lead.source, 'manual')}</span>
                       </span>
                     </button>
                     <span className="flex flex-wrap items-center gap-2">
+                      <span className="pbk-lead-ledger-score">{getLeadScore(lead)} score</span>
+                      <span className="pbk-lead-ledger-stage">
+                        {text(
+                          lead.status || lead.stage || asBridgeRecord(lead.assignment).stage,
+                          'Stage not set'
+                        ).replace(/[_-]+/g, ' ')}
+                      </span>
                       <span className="rounded-full border border-slate-700 bg-slate-900 px-2.5 py-1 text-[10px] uppercase tracking-[0.14em] text-slate-300">
                         {PATH_LABELS[path]}
                       </span>
@@ -2146,11 +2164,11 @@ export function Leads() {
         <LeadsDetailShell>
           {activeLead ? (
             <div className="space-y-4">
-              <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+              <div className="flex flex-col gap-3">
                 <div className="min-w-0">
                   <div className="flex flex-wrap items-center gap-2">
                     <h2
-                      className="truncate text-2xl font-semibold text-slate-100"
+                      className="break-words text-2xl font-semibold text-slate-100"
                       title={getSellerName(activeLead)}
                     >
                       {getSellerName(activeLead)}
@@ -2174,6 +2192,13 @@ export function Leads() {
                   </div>
                 </div>
                 <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={() => navigate(`/leads/${encodeURIComponent(activeLeadId)}`)}
+                    className="inline-flex items-center gap-2 rounded-lg bg-sky-300 px-3 py-2 text-xs font-bold text-slate-950 transition hover:bg-sky-200"
+                  >
+                    Open lead <ArrowUpRight size={14} aria-hidden="true" />
+                  </button>
                   <button
                     type="button"
                     onClick={() => void startQuickLeadCall(activeLead)}
@@ -2218,13 +2243,6 @@ export function Leads() {
                       <HeartHandshake size={14} />
                     )}
                     Nurture
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => navigate(`/leads/${encodeURIComponent(activeLeadId)}`)}
-                    className="inline-flex items-center gap-2 rounded-full border border-sky-400/40 bg-sky-400/10 px-3 py-2 text-xs font-semibold text-sky-200 transition hover:border-sky-300 hover:bg-sky-400/15"
-                  >
-                    Open lead
                   </button>
                   <button
                     type="button"
@@ -2461,21 +2479,13 @@ export function Leads() {
           >
             <div className="pbk-new-lead-modal-header flex items-start justify-between gap-3 border-b border-slate-800 px-4 py-4">
               <div className="min-w-0">
-                <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-sky-300">
-                  New PBK lead
-                </div>
-                <h3 id="new-pbk-lead-title" className="mt-1 text-xl font-semibold text-slate-100">
-                  Capture the full seller profile once.
-                </h3>
-                <p className="mt-1 max-w-3xl text-xs text-slate-500">
-                  Ava, Rex, approvals, analyzer, and contracts will all use this same lead profile.
-                  Analyzer and path fields are prefilled when a current deal exists.
-                </p>
+                <div className="pbk-property-label">Unsaved draft</div>
+                <h3 id="new-pbk-lead-title">Create lead</h3>
               </div>
               <button
                 type="button"
                 onClick={() => setNewLeadOpen(false)}
-                className="rounded-full p-2 text-slate-400 transition hover:bg-slate-800 hover:text-slate-100"
+                className="pbk-btn pbk-btn-ghost"
                 aria-label="Close new lead form"
               >
                 <X size={18} />
@@ -2527,12 +2537,12 @@ export function Leads() {
               )}
 
               <div className="new-lead-portal-grid">
-                <section className="new-lead-section">
+                <section className="new-lead-section new-lead-section-wide">
                   <div className="new-lead-section-head">
                     <span>Seller</span>
                     <strong>Personal info</strong>
                   </div>
-                  <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
                     <Field label="Seller name">
                       <input
                         className={inputClass}
@@ -2614,93 +2624,127 @@ export function Leads() {
                   </div>
                 </section>
 
-                <section className="new-lead-section">
+                <section className="new-lead-section new-lead-section-wide">
                   <div className="new-lead-section-head">
                     <span>Property</span>
                     <strong>Address and asset details</strong>
                   </div>
-                  <div className="grid grid-cols-1 gap-3 md:grid-cols-4">
-                    <Field label="Property address">
-                      <input
-                        className={inputClass}
-                        value={newLeadForm.propertyAddress}
-                        placeholder="Property street address"
-                        onChange={(event) =>
-                          setNewLeadForm({
-                            ...newLeadForm,
-                            propertyAddress: event.target.value,
-                          })
-                        }
-                      />
-                    </Field>
-                    <Field label="City">
-                      <input
-                        className={inputClass}
-                        value={newLeadForm.city}
-                        placeholder="Columbus"
-                        onChange={(event) =>
-                          setNewLeadForm({ ...newLeadForm, city: event.target.value })
-                        }
-                      />
-                    </Field>
-                    <Field label="State">
-                      <input
-                        className={inputClass}
-                        value={newLeadForm.state}
-                        placeholder="OH"
-                        maxLength={2}
-                        onChange={(event) =>
-                          setNewLeadForm({
-                            ...newLeadForm,
-                            state: event.target.value.toUpperCase(),
-                          })
-                        }
-                      />
-                    </Field>
-                    <Field label="ZIP">
-                      <input
-                        className={inputClass}
-                        value={newLeadForm.zip}
-                        placeholder="43215"
-                        onChange={(event) =>
-                          setNewLeadForm({ ...newLeadForm, zip: event.target.value })
-                        }
-                      />
-                    </Field>
-                    <Field label="Occupancy">
-                      <select
-                        className={inputClass}
-                        value={newLeadForm.occupancy}
-                        onChange={(event) =>
-                          setNewLeadForm({
-                            ...newLeadForm,
-                            occupancy: event.target.value as NewLeadFormState['occupancy'],
-                          })
-                        }
-                      >
-                        <option value="unknown">Unknown</option>
-                        <option value="owner_occupied">Owner occupied</option>
-                        <option value="tenant_occupied">Tenant occupied</option>
-                        <option value="vacant">Vacant</option>
-                      </select>
-                    </Field>
-                    <Field label="Condition">
-                      <select
-                        className={inputClass}
-                        value={newLeadForm.condition}
-                        onChange={(event) =>
-                          setNewLeadForm({
-                            ...newLeadForm,
-                            condition: event.target.value as NewLeadFormState['condition'],
-                          })
-                        }
-                      >
-                        <option value="unknown">Unknown</option>
-                        <option value="light">Light</option>
-                        <option value="moderate">Moderate</option>
-                        <option value="heavy">Heavy</option>
-                      </select>
-                    </Field>
+                  <div className="pbk-new-lead-property-layout">
+                    <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+                      <Field label="Property address" className="col-span-full">
+                        <input
+                          className={inputClass}
+                          value={newLeadForm.propertyAddress}
+                          placeholder="Property street address"
+                          onChange={(event) =>
+                            setNewLeadForm({
+                              ...newLeadForm,
+                              propertyAddress: event.target.value,
+                            })
+                          }
+                        />
+                      </Field>
+                      <Field label="City" className="col-span-full md:col-span-2">
+                        <input
+                          className={inputClass}
+                          value={newLeadForm.city}
+                          placeholder="Columbus"
+                          onChange={(event) =>
+                            setNewLeadForm({ ...newLeadForm, city: event.target.value })
+                          }
+                        />
+                      </Field>
+                      <Field label="State">
+                        <input
+                          className={inputClass}
+                          value={newLeadForm.state}
+                          placeholder="OH"
+                          maxLength={2}
+                          onChange={(event) =>
+                            setNewLeadForm({
+                              ...newLeadForm,
+                              state: event.target.value.toUpperCase(),
+                            })
+                          }
+                        />
+                      </Field>
+                      <Field label="ZIP">
+                        <input
+                          className={inputClass}
+                          value={newLeadForm.zip}
+                          placeholder="43215"
+                          onChange={(event) =>
+                            setNewLeadForm({ ...newLeadForm, zip: event.target.value })
+                          }
+                        />
+                      </Field>
+                      <Field label="Occupancy" className="md:col-span-2">
+                        <select
+                          className={inputClass}
+                          value={newLeadForm.occupancy}
+                          onChange={(event) =>
+                            setNewLeadForm({
+                              ...newLeadForm,
+                              occupancy: event.target.value as NewLeadFormState['occupancy'],
+                            })
+                          }
+                        >
+                          <option value="unknown">Unknown</option>
+                          <option value="owner_occupied">Owner occupied</option>
+                          <option value="tenant_occupied">Tenant occupied</option>
+                          <option value="vacant">Vacant</option>
+                        </select>
+                      </Field>
+                      <Field label="Condition" className="md:col-span-2">
+                        <select
+                          className={inputClass}
+                          value={newLeadForm.condition}
+                          onChange={(event) =>
+                            setNewLeadForm({
+                              ...newLeadForm,
+                              condition: event.target.value as NewLeadFormState['condition'],
+                            })
+                          }
+                        >
+                          <option value="unknown">Unknown</option>
+                          <option value="light">Light</option>
+                          <option value="moderate">Moderate</option>
+                          <option value="heavy">Heavy</option>
+                        </select>
+                      </Field>
+                      {[
+                        ['Beds', 'beds', '3'],
+                        ['Baths', 'baths', '2'],
+                        ['Sq ft', 'sqft', '1540'],
+                        ['Year built', 'yearBuilt', '1974'],
+                      ].map(([label, key, placeholder]) => (
+                        <Field key={key} label={label}>
+                          <input
+                            className={inputClass}
+                            value={String(newLeadForm[key as keyof NewLeadFormState] || '')}
+                            placeholder={placeholder}
+                            onChange={(event) =>
+                              setNewLeadForm({ ...newLeadForm, [key]: event.target.value })
+                            }
+                          />
+                        </Field>
+                      ))}
+                    </div>
+                    <AttomPropertyPreview
+                      mode="draft"
+                      address={{
+                        street: newLeadForm.propertyAddress,
+                        city: newLeadForm.city,
+                        state: newLeadForm.state,
+                        zip: newLeadForm.zip,
+                      }}
+                      saved={{
+                        beds: numberOrNull(newLeadForm.beds),
+                        baths: numberOrNull(newLeadForm.baths),
+                        livingSqft: numberOrNull(newLeadForm.sqft),
+                        yearBuilt: numberOrNull(newLeadForm.yearBuilt),
+                      }}
+                    />
                   </div>
                 </section>
 
@@ -2830,10 +2874,6 @@ export function Leads() {
                   </div>
                   <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
                     {[
-                      ['Beds', 'beds', '3'],
-                      ['Baths', 'baths', '2'],
-                      ['Sq ft', 'sqft', '1540'],
-                      ['Year built', 'yearBuilt', '1974'],
                       ['Est. repairs', 'estimatedRepairs', '$28,000'],
                       ['ARV', 'arv', '$220,000'],
                       ['MAO', 'mao', '$118,000'],
@@ -2890,7 +2930,7 @@ export function Leads() {
 
             <div className="pbk-new-lead-modal-footer flex flex-col gap-2 border-t border-slate-800 px-4 py-4 sm:flex-row sm:items-center sm:justify-between">
               <div className="text-[11px] text-slate-500">
-                Source: Deal Analyzer seed + your lead edits.
+                ATTOM results are not saved to the lead.
               </div>
               <div className="pbk-new-lead-modal-actions flex flex-col gap-2 sm:flex-row sm:justify-end">
                 <button

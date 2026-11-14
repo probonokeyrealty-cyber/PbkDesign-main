@@ -24,6 +24,12 @@ expectIncludes(
 );
 expectIncludes(renderYaml, 'dockerContext: .', 'Render Docker context must be the repo root.');
 expectIncludes(renderYaml, 'healthCheckPath: /health', 'Render health check must hit /health.');
+expectIncludes(
+  renderYaml,
+  'dockerCommand: node --experimental-strip-types ./scripts/openclaw-local-server.mjs --public',
+  'Render must support the shared batch review TypeScript module.'
+);
+assert.match(renderYaml, /key: PBK_BATCH_APPLY_ENABLED\s+value: "false"/, 'Real batch writes must be off in the Render release.');
 
 assert.match(
   dockerfile,
@@ -86,7 +92,7 @@ expectIncludes(dockerfile, 'ENV PORT=10000', 'Docker image must default PORT to 
 expectIncludes(dockerfile, 'EXPOSE 10000', 'Docker image must expose Render fallback port 10000.');
 expectIncludes(
   dockerfile,
-  'CMD ["node", "./scripts/openclaw-local-server.mjs", "--public"]',
+  'CMD ["node", "--experimental-strip-types", "./scripts/openclaw-local-server.mjs", "--public"]',
   'Docker image must start the hosted bridge in public mode.'
 );
 expectIncludes(

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Check, ChevronDown, Copy, Download } from 'lucide-react';
+import { Check, ChevronDown, Copy, Download, Send } from 'lucide-react';
 import { DealData, PBKPath } from '../types';
 import { buildPbkPathScripts, PbkLegacyScriptPath } from '../templates/pbkPathScripts';
 import { sanitizeLegacyCopy } from '../utils/formatting';
@@ -224,51 +224,46 @@ export function ScriptPanel({
   };
 
   return (
-    <section className="mb-3 overflow-hidden rounded-[24px] border border-gray-200 bg-white shadow-sm dark:border-slate-700 dark:bg-slate-900/90">
-      <div className="border-b border-gray-200 bg-gradient-to-br from-white via-slate-50 to-blue-50/50 p-4 dark:border-slate-800 dark:from-slate-950 dark:via-slate-900 dark:to-blue-950/20">
+    <section
+      aria-labelledby="call-script-heading"
+      className="pbk-analyzer-card pbk-analyzer-workbench-section"
+    >
+      <div className="pbk-call-script-header">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
-            <div className="flex items-center gap-2">
-              <div className="h-3 w-1 rounded-sm bg-orange-500"></div>
-              <div className="text-[10px] font-bold uppercase tracking-[0.2em] text-orange-500">
-                Call Mode Script Panel
-              </div>
-            </div>
-            <h3 className="mt-2 text-xl font-semibold leading-tight text-gray-950 dark:text-gray-100">
+            <h2 id="call-script-heading" className="pbk-analyzer-section-title">
+              Call Mode Script Panel
+            </h2>
+            <h3 className="mt-2 text-base font-semibold leading-tight text-gray-950 dark:text-gray-100">
               {currentPath.name}
             </h3>
-            <p className="mt-1 max-w-2xl text-sm leading-6 text-gray-600 dark:text-gray-300">
-              Canonical PBK script flow: opener, acquisition pitch, then objection control.
-            </p>
           </div>
           <div
-            className={`rounded-full border px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.16em] ${accentClasses}`}
+            className={`rounded border px-2 py-1 font-mono text-[11px] font-semibold uppercase ${accentClasses}`}
           >
             {scriptVariant === 'agent' ? 'Agent Partnership' : 'Owner Direct'}
           </div>
         </div>
 
         <div className="mt-4 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-          <div className="grid grid-cols-3 gap-2 rounded-2xl border border-gray-200 bg-white/85 p-1.5 dark:border-slate-700 dark:bg-slate-950/60">
+          <div className="pbk-call-script-segments" role="group" aria-label="Script section">
             {(Object.keys(TAB_LABELS) as ScriptTab[]).map((tab) => (
               <button
                 key={tab}
                 type="button"
+                aria-pressed={activeTab === tab}
                 onClick={() => setActiveTab(tab)}
-                className={`min-h-10 rounded-xl px-3 py-2 text-[10px] font-bold uppercase tracking-[0.12em] transition ${
-                  activeTab === tab
-                    ? 'bg-slate-950 text-white shadow-sm dark:bg-blue-500'
-                    : 'text-gray-500 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-slate-800'
-                }`}
+                className="pbk-btn pbk-btn-ghost"
               >
                 {TAB_LABELS[tab]}
               </button>
             ))}
           </div>
 
-          <div className="grid grid-cols-2 gap-2 rounded-2xl border border-gray-200 bg-white/85 p-1.5 dark:border-slate-700 dark:bg-slate-950/60">
+          <div className="pbk-call-script-segments" role="group" aria-label="Script audience">
             <button
               type="button"
+              aria-pressed={scriptVariant === 'owner'}
               disabled={forcedVariant === 'agent'}
               title={
                 forcedVariant === 'agent'
@@ -276,16 +271,13 @@ export function ScriptPanel({
                   : undefined
               }
               onClick={() => onScriptVariantChange('owner')}
-              className={`min-h-10 rounded-xl px-3 py-2 text-[10px] font-bold uppercase tracking-[0.12em] transition ${
-                scriptVariant === 'owner'
-                  ? 'bg-blue-500 text-white shadow-sm'
-                  : 'text-gray-500 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-slate-800'
-              } ${forcedVariant === 'agent' ? 'cursor-not-allowed opacity-40' : ''}`}
+              className="pbk-btn pbk-btn-ghost"
             >
               Owner
             </button>
             <button
               type="button"
+              aria-pressed={scriptVariant === 'agent'}
               disabled={forcedVariant === 'owner'}
               title={
                 forcedVariant === 'owner'
@@ -293,11 +285,7 @@ export function ScriptPanel({
                   : undefined
               }
               onClick={() => onScriptVariantChange('agent')}
-              className={`min-h-10 rounded-xl px-3 py-2 text-[10px] font-bold uppercase tracking-[0.12em] transition ${
-                scriptVariant === 'agent'
-                  ? 'bg-purple-500 text-white shadow-sm'
-                  : 'text-gray-500 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-slate-800'
-              } ${forcedVariant === 'owner' ? 'cursor-not-allowed opacity-40' : ''}`}
+              className="pbk-btn pbk-btn-ghost"
             >
               Agent
             </button>
@@ -305,16 +293,14 @@ export function ScriptPanel({
         </div>
       </div>
 
-      <div className="p-4">
+      <div className="pt-3">
         <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-          <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-gray-500 dark:text-gray-400">
-            {TAB_LABELS[activeTab]} Script
-          </div>
+          <div className="pbk-call-active-path">{TAB_LABELS[activeTab]} Script</div>
           <div className="flex w-full flex-wrap gap-2 sm:w-auto">
             <button
               type="button"
               onClick={copyScript}
-              className="inline-flex min-h-10 flex-1 items-center justify-center gap-2 rounded-full border border-gray-200 bg-white px-3.5 py-2 text-[11px] font-semibold text-gray-700 transition hover:bg-gray-50 dark:border-slate-700 dark:bg-slate-950 dark:text-gray-200 dark:hover:bg-slate-800 sm:flex-none"
+              className="pbk-btn pbk-btn-ghost flex-1 sm:flex-none"
             >
               {copied ? <Check size={13} /> : <Copy size={13} />}
               {copied ? 'Copied' : 'Copy'}
@@ -322,7 +308,7 @@ export function ScriptPanel({
             <button
               type="button"
               onClick={downloadScript}
-              className="inline-flex min-h-10 flex-1 items-center justify-center gap-2 rounded-full border border-gray-200 bg-white px-3.5 py-2 text-[11px] font-semibold text-gray-700 transition hover:bg-gray-50 dark:border-slate-700 dark:bg-slate-950 dark:text-gray-200 dark:hover:bg-slate-800 sm:flex-none"
+              className="pbk-btn pbk-btn-ghost flex-1 sm:flex-none"
             >
               <Download size={13} />
               Download
@@ -331,8 +317,9 @@ export function ScriptPanel({
               <button
                 type="button"
                 onClick={pushScriptToAgent}
-                className="inline-flex min-h-10 flex-1 items-center justify-center gap-2 rounded-full border border-orange-200 bg-orange-50 px-3.5 py-2 text-[11px] font-semibold text-orange-700 transition hover:bg-orange-100 dark:border-orange-800/70 dark:bg-orange-900/20 dark:text-orange-200 dark:hover:bg-orange-900/30 sm:flex-none"
+                className="pbk-btn pbk-btn-primary flex-1 sm:flex-none"
               >
+                <Send size={13} aria-hidden="true" />
                 Push to Ava
               </button>
             ) : null}

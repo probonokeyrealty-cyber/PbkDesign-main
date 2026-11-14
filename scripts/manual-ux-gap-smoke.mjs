@@ -110,12 +110,12 @@ assert(
   'Approval creation must bound n8n and Slack fanout so UI actions do not time out.'
 );
 assert(
-  /canRetrySend/.test(composer) &&
-    /sendMessage\(\{ retry: true \}\)/.test(composer) &&
-    /if \(options\.retry \? !canRetrySend : !canSend\) return;/.test(composer) &&
-    /setSubmittedFingerprint\(submittedSendFingerprint\)/.test(composer) &&
-    /setSubmittedFingerprint\(''\)/.test(composer),
-  'Unified Inbox retry must bypass the duplicate-submission fingerprint while preserving send validation.'
+  /if \(sendingRef\.current \|\| !canSend\) return;/.test(composer) &&
+    /beginInboxSubmission\(sendFingerprint\)/.test(composer) &&
+    /let hold = true/.test(composer) &&
+    /finish\(hold\)/.test(composer) &&
+    !/sendMessage\(\{ retry: true \}\)/.test(composer),
+  'Unified Inbox must hold uncertain submissions and never retry by bypassing send validation.'
 );
 assert(
   /<form[\s\S]*onSubmit=\{\(event\) => \{[\s\S]*void createLead\(\);[\s\S]*type="submit"[\s\S]*Create lead/.test(

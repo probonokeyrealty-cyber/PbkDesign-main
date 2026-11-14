@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router';
 import {
   Activity,
   AlertTriangle,
   Bot,
   Check,
+  ChevronDown,
   ChevronLeft,
   CircleDot,
   Database,
@@ -116,6 +117,7 @@ function displayDate(value?: string | null) {
 }
 
 function readNumber(value: unknown) {
+  if (typeof value !== 'number' && (typeof value !== 'string' || !value.trim())) return null;
   const numeric = Number(value);
   return Number.isFinite(numeric) ? numeric : null;
 }
@@ -174,7 +176,7 @@ function getSkillPerformance(item: SkillGovernanceItem) {
     firstNumber(raw.wins, raw.successes, outcomes.wins, outcomes.successes, metrics.wins) || 0;
   const losses =
     firstNumber(raw.losses, raw.failures, outcomes.losses, outcomes.failures, metrics.losses) || 0;
-  const derivedRate = usageCount > 0 ? wins / Math.max(1, wins + losses || usageCount) : null;
+  const derivedRate = usageCount > 0 && wins + losses > 0 ? wins / (wins + losses) : null;
   const successRate = firstNumber(
     raw.successRate,
     raw.success_rate,
@@ -1066,6 +1068,8 @@ export function SkillStudio() {
   const [rolloutPercent, setRolloutPercent] = useState(10);
   const [confirmingPrimaryAction, setConfirmingPrimaryAction] = useState(false);
   const [skillPage, setSkillPage] = useState(0);
+  const versionHeadingRef = useRef<HTMLHeadingElement>(null);
+  const repositorySearchRef = useRef<HTMLInputElement>(null);
   const [simulationText, setSimulationText] = useState(
     'Seller says the offer feels low and asks why PBK is different from another buyer.'
   );
@@ -1213,6 +1217,12 @@ export function SkillStudio() {
     }
   };
 
+  const openSkillVersion = (versionId: string) => {
+    setSelectedId(versionId);
+    setInspectorOpen(false);
+    window.requestAnimationFrame(() => versionHeadingRef.current?.focus());
+  };
+
   const primaryAction = !selected
     ? null
     : selectedIsReviewable
@@ -1289,13 +1299,8 @@ export function SkillStudio() {
     <div className="pbk-skill-studio">
       <header className="pbk-skill-studio-header">
         <div>
-          <span className="pbk-eyebrow">Ava learning - human approved</span>
-          <h1 className="pbk-display">
-            Skill <em>Studio</em>
-          </h1>
-          <p>
-            Teach Ava what to say, review what is working, and turn stronger responses on carefully.
-          </p>
+          <span className="pbk-eyebrow">Ava learning</span>
+          <h1 className="pbk-display">Skill Studio</h1>
         </div>
         <div className="pbk-skill-studio-header-actions">
           <button
@@ -1344,10 +1349,17 @@ export function SkillStudio() {
       </section>
 
       {(error || notice) && (
-        <div className={`pbk-skill-banner ${error ? 'error' : 'success'}`}>
+        <div
+          className={`pbk-skill-banner ${error ? 'error' : 'success'}`}
+          role={error ? 'alert' : 'status'}
+        >
           {error ? <AlertTriangle size={16} /> : <Check size={16} />}
           <span>{error || notice}</span>
-          <button type="button" onClick={() => (error ? setError('') : setNotice(''))}>
+          <button
+            type="button"
+            aria-label="Dismiss skill notification"
+            onClick={() => (error ? setError('') : setNotice(''))}
+          >
             <X size={15} />
           </button>
         </div>
@@ -1360,7 +1372,6 @@ export function SkillStudio() {
               <span>Today's Training Queue</span>
               <h2>Review these first</h2>
             </div>
-            <small>Ranked by review need, weak outcomes, and rollout readiness.</small>
           </div>
           <div className="pbk-skill-training-queue-grid">
             {trainingQueue.map(({ item, metrics, reason, action }) => (
@@ -1368,10 +1379,7 @@ export function SkillStudio() {
                 type="button"
                 key={item.versionId}
                 className="pbk-skill-training-card"
-                onClick={() => {
-                  setSelectedId(item.versionId);
-                  setInspectorOpen(false);
-                }}
+                onClick={() => openSkillVersion(item.versionId)}
               >
                 <span>{action}</span>
                 <strong>{item.name}</strong>
@@ -1404,6 +1412,7 @@ export function SkillStudio() {
               onChange={(event) => setSearch(event.target.value)}
               placeholder="Search Ava skills or replies"
               aria-label="Search skill repository"
+              ref={repositorySearchRef}
             />
           </div>
           <div className="pbk-skill-filter-grid">
@@ -1479,7 +1488,7 @@ export function SkillStudio() {
                     type="button"
                     key={item.versionId}
                     className={`pbk-skill-list-item ${selected?.versionId === item.versionId ? 'selected' : ''}`}
-                    onClick={() => setSelectedId(item.versionId)}
+                    onClick={() => openSkillVersion(item.versionId)}
                   >
                     <span className={`pbk-skill-state state-${item.lifecycleState}`}>
                       {STATE_LABELS[item.lifecycleState] || item.lifecycleState}
@@ -1524,15 +1533,27 @@ export function SkillStudio() {
           />
         </aside>
 
-        <main className="pbk-skill-canvas">
+        <div className="pbk-skill-canvas">
           {selected ? (
             <>
               <div className="pbk-skill-mobile-detail-head">
-                <button type="button" onClick={() => setSelectedId('')}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSelectedId('');
+                    setInspectorOpen(false);
+                    window.requestAnimationFrame(() => repositorySearchRef.current?.focus());
+                  }}
+                >
                   <ChevronLeft size={17} />
                   Repository
                 </button>
-                <button type="button" onClick={() => setInspectorOpen(true)}>
+                <button
+                  type="button"
+                  onClick={() => setInspectorOpen(true)}
+                  aria-controls="skill-record"
+                  aria-expanded={inspectorOpen}
+                >
                   <SlidersHorizontal size={17} />
                   Inspect
                 </button>
@@ -1546,18 +1567,29 @@ export function SkillStudio() {
                     <span>Version {selected.versionNumber || 1}</span>
                     <span>Saved version</span>
                   </div>
-                  <h2>{selected.name}</h2>
-                  <p>{selected.instructions || 'No instructions were stored for this version.'}</p>
-                </div>
-                <div className="pbk-skill-version-icon">
-                  <Sparkles size={22} />
+                  <h2 tabIndex={-1} ref={versionHeadingRef}>
+                    {selected.name}
+                  </h2>
                 </div>
               </div>
+
+              <nav className="pbk-skill-evidence-nav" aria-label="Skill evidence">
+                {simulation && <a href="#skill-simulator">Simulator</a>}
+                <a href="#skill-outcome-proof">Outcome evidence</a>
+                <a href="#skill-decision">Decision</a>
+              </nav>
+              <details className="pbk-skill-saved-instructions">
+                <summary>
+                  Saved instructions <ChevronDown size={15} aria-hidden="true" />
+                </summary>
+                <p>{selected.instructions || 'No instructions were stored for this version.'}</p>
+              </details>
 
               <ol className="pbk-skill-lifecycle" aria-label="Skill lifecycle">
                 {LIFECYCLE_STEPS.map((step, index) => (
                   <li
                     key={step}
+                    aria-current={index === currentStep ? 'step' : undefined}
                     className={`${index < currentStep ? 'complete' : ''} ${index === currentStep ? 'current' : ''}`}
                   >
                     <span>{index < currentStep ? <Check size={13} /> : index + 1}</span>
@@ -1567,13 +1599,17 @@ export function SkillStudio() {
               </ol>
 
               {simulation && (
-                <section className="pbk-skill-simulator" aria-label="Skill simulator">
+                <section
+                  id="skill-simulator"
+                  className="pbk-skill-simulator"
+                  aria-label="Skill simulator"
+                >
                   <header>
                     <Sparkles size={17} />
                     <div>
-                      <span>Practice before approval</span>
                       <h3>Skill simulator</h3>
                     </div>
+                    <span className="pbk-skill-simulation-label">Simulation only</span>
                   </header>
                   <label>
                     Seller says
@@ -1585,8 +1621,11 @@ export function SkillStudio() {
                   </label>
                   <div className="pbk-skill-simulator-grid">
                     <article>
-                      <span>Ava would use</span>
-                      <strong>{selected.name}</strong>
+                      <span>Seller scenario</span>
+                      <p>{simulation.sellerLine}</p>
+                    </article>
+                    <article>
+                      <span>Saved response</span>
                       <p>{simulation.response}</p>
                     </article>
                     <article>
@@ -1596,7 +1635,6 @@ export function SkillStudio() {
                     </article>
                     <article>
                       <span>Next question</span>
-                      <strong>One step forward</strong>
                       <p>{simulation.nextQuestion}</p>
                     </article>
                   </div>
@@ -1604,14 +1642,14 @@ export function SkillStudio() {
               )}
 
               <section
+                id="skill-outcome-proof"
                 className="pbk-skill-performance-dashboard"
                 aria-label="Skill performance dashboard"
               >
                 <header>
                   <Activity size={17} />
                   <div>
-                    <span>What is working</span>
-                    <h3>Skill performance</h3>
+                    <h3>Recorded outcomes</h3>
                   </div>
                 </header>
                 <div>
@@ -1696,108 +1734,114 @@ export function SkillStudio() {
                 </div>
               </section>
 
-              {selected.lifecycleState === 'approved_inactive' && (
-                <section className="pbk-skill-rollout">
-                  <div>
-                    <label>
-                      Agent
-                      <select value={agentId} onChange={(event) => setAgentId(event.target.value)}>
-                        <option value="ava">Ava</option>
-                        <option value="rex">Rex</option>
-                        <option value="nurture-agent">Nurture</option>
-                        <option value="max">Max</option>
-                      </select>
-                    </label>
-                    <label>
-                      Rollout
-                      <output>{rolloutPercent}%</output>
-                      <input
-                        type="range"
-                        min="5"
-                        max="100"
-                        step="5"
-                        value={rolloutPercent}
-                        onChange={(event) => setRolloutPercent(Number(event.target.value))}
-                      />
-                    </label>
-                  </div>
-                  <p>
-                    New versions default to a bounded canary. Full activation is explicit at 100%.
-                    Automatic rollback watches compliance failures, seller complaints, and tool
-                    error spikes. The operator dashboard shows the alert and the skill can be turned
-                    off from this page.
-                  </p>
-                </section>
-              )}
+              <div id="skill-decision" className="pbk-skill-decision">
+                {selected.lifecycleState === 'approved_inactive' && (
+                  <section className="pbk-skill-rollout">
+                    <div>
+                      <label>
+                        Agent
+                        <select
+                          aria-label="Rollout agent"
+                          value={agentId}
+                          onChange={(event) => setAgentId(event.target.value)}
+                        >
+                          <option value="ava">Ava</option>
+                          <option value="rex">Rex</option>
+                          <option value="nurture-agent">Nurture</option>
+                          <option value="max">Max</option>
+                        </select>
+                      </label>
+                      <label>
+                        Rollout
+                        <output>{rolloutPercent}%</output>
+                        <input
+                          type="range"
+                          aria-label="Rollout percentage"
+                          min="5"
+                          max="100"
+                          step="5"
+                          value={rolloutPercent}
+                          onChange={(event) => setRolloutPercent(Number(event.target.value))}
+                        />
+                      </label>
+                    </div>
+                    <p>
+                      New versions default to a bounded canary. Full activation is explicit at 100%.
+                      Automatic rollback watches compliance failures, seller complaints, and tool
+                      error spikes. The operator dashboard shows the alert and the skill can be
+                      turned off from this page.
+                    </p>
+                  </section>
+                )}
 
-              <section className="pbk-skill-outcomes">
-                <header>
-                  <Activity size={17} />
-                  <h3>Outcome readiness</h3>
-                </header>
-                <div>
-                  <span>Runtime state</span>
-                  <strong>{selected.activationStatus || 'Not active'}</strong>
-                  <span>Rollout</span>
-                  <strong>{selected.rolloutPercent || 0}%</strong>
-                  <span>Priority</span>
-                  <strong>{selected.priority || 100}</strong>
-                  <span>Last activation</span>
-                  <strong>{displayDate(selected.activatedAt)}</strong>
-                </div>
-              </section>
-
-              {primaryAction && (
-                <div className="pbk-skill-primary-action">
-                  <div>
-                    <span>Next controlled action</span>
-                    <strong>{primaryAction.label}</strong>
-                    {confirmingPrimaryAction && (
-                      <small>
-                        {primaryAction.confirmTitle} {primaryAction.confirmCopy}
-                      </small>
-                    )}
-                  </div>
-                  {confirmingPrimaryAction ? (
-                    <div className="pbk-skill-primary-confirm">
-                      <button
-                        type="button"
-                        className="pbk-btn pbk-btn-ghost"
-                        onClick={() => setConfirmingPrimaryAction(false)}
-                        disabled={busy}
-                      >
-                        Cancel
-                      </button>
+                {primaryAction && (
+                  <div className="pbk-skill-primary-action">
+                    <div>
+                      <span>Next controlled action</span>
+                      <strong>{primaryAction.label}</strong>
+                      {confirmingPrimaryAction && (
+                        <small>
+                          {primaryAction.confirmTitle} {primaryAction.confirmCopy}
+                        </small>
+                      )}
+                    </div>
+                    {confirmingPrimaryAction ? (
+                      <div className="pbk-skill-primary-confirm">
+                        <button
+                          type="button"
+                          className="pbk-btn pbk-btn-ghost"
+                          onClick={() => setConfirmingPrimaryAction(false)}
+                          disabled={busy}
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          type="button"
+                          className={`pbk-btn ${
+                            primaryAction.danger ? 'pbk-btn-danger' : 'pbk-btn-primary'
+                          }`}
+                          onClick={() => {
+                            setConfirmingPrimaryAction(false);
+                            void primaryAction.run();
+                          }}
+                          disabled={busy}
+                        >
+                          <primaryAction.icon size={16} />
+                          {busy ? 'Working' : 'Confirm'}
+                        </button>
+                      </div>
+                    ) : (
                       <button
                         type="button"
                         className={`pbk-btn ${
                           primaryAction.danger ? 'pbk-btn-danger' : 'pbk-btn-primary'
                         }`}
-                        onClick={() => {
-                          setConfirmingPrimaryAction(false);
-                          void primaryAction.run();
-                        }}
+                        onClick={() => setConfirmingPrimaryAction(true)}
                         disabled={busy}
                       >
                         <primaryAction.icon size={16} />
-                        {busy ? 'Working' : 'Confirm'}
+                        {busy ? 'Working' : primaryAction.label}
                       </button>
-                    </div>
-                  ) : (
-                    <button
-                      type="button"
-                      className={`pbk-btn ${
-                        primaryAction.danger ? 'pbk-btn-danger' : 'pbk-btn-primary'
-                      }`}
-                      onClick={() => setConfirmingPrimaryAction(true)}
-                      disabled={busy}
-                    >
-                      <primaryAction.icon size={16} />
-                      {busy ? 'Working' : primaryAction.label}
-                    </button>
-                  )}
-                </div>
-              )}
+                    )}
+                  </div>
+                )}
+                <section className="pbk-skill-outcomes">
+                  <header>
+                    <Activity size={17} />
+                    <h3>Outcome readiness</h3>
+                  </header>
+                  <div>
+                    <span>Runtime state</span>
+                    <strong>{selected.activationStatus || 'Not active'}</strong>
+                    <span>Rollout</span>
+                    <strong>{selected.rolloutPercent || 0}%</strong>
+                    <span>Priority</span>
+                    <strong>{selected.priority || 100}</strong>
+                    <span>Last activation</span>
+                    <strong>{displayDate(selected.activatedAt)}</strong>
+                  </div>
+                </section>
+              </div>
             </>
           ) : (
             <div className="pbk-skill-empty-canvas">
@@ -1808,9 +1852,13 @@ export function SkillStudio() {
               </p>
             </div>
           )}
-        </main>
+        </div>
 
-        <aside className={`pbk-skill-studio-inspector ${inspectorOpen ? 'open' : ''}`}>
+        <aside
+          id="skill-record"
+          aria-label="Skill record"
+          className={`pbk-skill-studio-inspector ${inspectorOpen ? 'open' : ''}`}
+        >
           <div className="pbk-skill-pane-head">
             <div>
               <span>Skill details</span>

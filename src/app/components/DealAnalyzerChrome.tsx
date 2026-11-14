@@ -115,6 +115,12 @@ export function DealAnalyzerCommandHeader({
   const verdictMeta = getVerdictMeta(deal.verdict);
   const pathLabel = getPathLabel(selectedPath);
   const pathControl = getPathControlMetric(deal, selectedPath);
+  const workbench = {
+    analyzer: { label: 'Deal Analyzer', title: 'The deal.' },
+    callmode: { label: 'Call Mode', title: 'The call.' },
+    documents: { label: 'Documents', title: 'The paper.' },
+    crm: null,
+  }[activeTab];
 
   const handleTabChange = (tab: AnalyzerTabId) => {
     onTabChange(tab);
@@ -122,15 +128,28 @@ export function DealAnalyzerCommandHeader({
   };
 
   return (
-    <header className="pbk-analyzer-command">
+    <header
+      className="pbk-analyzer-command"
+      data-view={activeTab}
+      data-workbench={Boolean(workbench)}
+    >
       <div className="pbk-analyzer-command-main">
         <div className="pbk-analyzer-title-block">
-          <span className="pbk-kicker">Deal Analyzer</span>
-          <h1>{getShortAddress(deal.address)}</h1>
-          <p>
-            Operator-first underwriting, path selection, call prep, and seller package controls stay
-            in one live engine.
-          </p>
+          <span className="pbk-kicker">{workbench?.label || 'Deal Analyzer'}</span>
+          {workbench ? (
+            <>
+              <h1>{workbench.title}</h1>
+              <p>{deal.address.trim() || 'No property loaded'}</p>
+            </>
+          ) : (
+            <>
+              <h1>{getShortAddress(deal.address)}</h1>
+              <p>
+                Operator-first underwriting, path selection, call prep, and seller package controls
+                stay in one live engine.
+              </p>
+            </>
+          )}
         </div>
 
         <div className="pbk-analyzer-command-actions">
@@ -158,7 +177,11 @@ export function DealAnalyzerCommandHeader({
             <FileText size={14} />
             Docs
           </button>
-          <button type="button" className="pbk-btn pbk-btn-primary pbk-btn-sm" onClick={onSaveDeal}>
+          <button
+            type="button"
+            className={`pbk-btn pbk-btn-${activeTab === 'analyzer' ? 'ghost' : 'primary'} pbk-btn-sm`}
+            onClick={onSaveDeal}
+          >
             <Save size={14} />
             Save
           </button>
@@ -166,7 +189,11 @@ export function DealAnalyzerCommandHeader({
             <UserPlus size={14} />
             Lead
           </button>
-          <button type="button" className="pbk-btn pbk-btn-success pbk-btn-sm" onClick={onAnalyze}>
+          <button
+            type="button"
+            className={`pbk-btn pbk-btn-${activeTab === 'analyzer' ? 'primary' : 'success'} pbk-btn-sm`}
+            onClick={onAnalyze}
+          >
             <Sparkles size={14} />
             Analyze
           </button>

@@ -12,6 +12,11 @@ const CommandCenter = lazy(() =>
 const Leads = lazy(() =>
   loadCurrentRoute(() => import('../routes/Leads')).then((module) => ({ default: module.Leads }))
 );
+const BatchReview = lazy(() =>
+  loadCurrentRoute(() => import('../routes/BatchReview')).then((module) => ({
+    default: module.BatchReview,
+  }))
+);
 const LeadPortal = lazy(() =>
   loadCurrentRoute(() => import('../routes/LeadPortal')).then((module) => ({
     default: module.LeadPortal,
@@ -83,6 +88,7 @@ const router = createBrowserRouter(
         { path: 'command-center', element: <CommandCenter /> },
         { path: 'dashboard', element: <CommandCenter /> },
         { path: 'leads', element: <Leads /> },
+        { path: 'leads/batch-review', element: <BatchReview /> },
         { path: 'leads/:leadId', element: <LeadPortal /> },
         { path: 'deal', element: <DealView /> },
         { path: 'deal/:id', element: <DealView /> },

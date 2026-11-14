@@ -76,7 +76,7 @@ The account contains 87 form records, including older/domain variants and repeat
 
 Hosted Postgres is reachable. Direct Gemini and DeepSeek requests returned HTTP 200. Hosted assistant turns timed out while Redis reported ECONNREFUSED. Render's existing free Key Value instance `red-d8ae2v7avr4c73dfbqog` is suspended; both resume endpoints returned HTTP 500. The local Redis recovery patch bounds connection attempts, disables offline queuing, and uses isReady instead of isOpen for readiness.
 
-The local OpenClaw gateway was restarted, but its existing profile selects Ollama. Its model/profile configuration needs review before using it as PBK's cloud-model agent runtime. No production configuration or model credentials were changed during this recovery pass.
+The local OpenClaw gateway was restarted and now passes HTTP health and the hosted outbound heartbeat check. Its existing profile selects Ollama, so its model/profile configuration needs review before using it as PBK's cloud-model agent runtime. No production model credentials were changed during this recovery pass.
 
 ## References
 

@@ -1,5 +1,16 @@
-import { useEffect, useState } from 'react';
-import { Activity, Database, ExternalLink, Loader2, RefreshCw, ShieldCheck } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import {
+  Activity,
+  ChevronDown,
+  Database,
+  ExternalLink,
+  FileText,
+  Loader2,
+  Mail,
+  Phone,
+  RefreshCw,
+  ShieldCheck,
+} from 'lucide-react';
 import { PbkDataSource } from '../../components/pbk/index';
 import { useRuntimeSnapshot } from '../hooks/useRuntimeSnapshot';
 import {
@@ -38,7 +49,7 @@ function readinessForProvider(meta: Record<string, unknown> | undefined): Readin
 
 function describeProvider(meta: Record<string, unknown> | undefined) {
   const state = readinessForProvider(meta);
-  if (state === 'unknown') return 'Waiting for bridge';
+  if (state === 'unknown') return 'Status unavailable';
   if (state === 'ready') return 'Ready';
   if (state === 'partial') return 'Connected, not tested';
   return 'Needs setup';
@@ -90,11 +101,12 @@ function formatRuntimeStatus(status: unknown) {
 }
 
 const DOT_CLASS: Record<ReadinessState, string> = {
-  ready: 'bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.55)]',
-  partial: 'bg-amber-400 shadow-[0_0_8px_rgba(251,191,36,0.45)]',
-  missing: 'bg-slate-600',
-  unknown: 'bg-slate-700 animate-pulse',
+  ready: 'bg-emerald-500',
+  partial: 'bg-amber-500',
+  missing: 'bg-amber-500',
+  unknown: 'bg-slate-500',
 };
+const PROVIDER_ICONS = { telnyx: Phone, instantly: Mail, docs: FileText };
 const TOOLING_CARD_FALLBACK_COUNT = 11;
 
 type SettingsAdminDecisionDraft = {
@@ -110,6 +122,8 @@ type SettingsRuntimeCard = {
   label: string;
   meta: Record<string, unknown> | undefined;
 };
+
+type SettingsProvider = SettingsRuntimeCard & { id: keyof typeof PROVIDER_ICONS };
 
 type SettingsStat = {
   label: string;
@@ -139,7 +153,7 @@ function SettingsSourceRail() {
       />
       <PbkDataSource endpoint="PUT /api/admin/tasks/:id" status="ships" note="admin decisions" />
       <PbkDataSource
-        endpoint="GET/POST /api/settings"
+        endpoint="GET/PATCH /api/settings"
         status="ships"
         note="operator mode and runtime preferences"
       />
@@ -179,61 +193,58 @@ function SettingsStatRibbon({ stats }: { stats: SettingsStat[] }) {
 function SettingsHero({
   loading,
   error,
-  stateBackend,
-  stats,
+  hasSnapshot,
   onRefresh,
 }: {
   loading: boolean;
   error: string | null | undefined;
-  stateBackend: string;
-  stats: SettingsStat[];
+  hasSnapshot: boolean;
   onRefresh: () => void;
 }) {
   return (
     <section className="pbk-settings-hero">
       <div className="pbk-settings-hero-top">
-        <div>
-          <div className="pbk-eyebrow">
-            Runtime settings -{' '}
-            {loading ? 'checking bridge' : error ? 'bridge offline' : stateBackend}
-          </div>
-          <h1 className="pbk-display pbk-h1">
-            Settings &amp; <em>safety</em>.
-          </h1>
-          <p>
-            Provider readiness, tooling health, admin approvals, and safety controls in one
-            bridge-backed operating panel. Every tile states its source before it ships.
-          </p>
-        </div>
+        <h1>Settings</h1>
         <button
           type="button"
           className="pbk-settings-refresh"
           onClick={onRefresh}
           disabled={loading}
         >
-          <RefreshCw size={15} className={loading ? 'animate-spin' : ''} />
+          <RefreshCw size={15} className={loading ? 'animate-spin' : ''} aria-hidden="true" />
           {loading ? 'Refreshing' : 'Refresh settings'}
         </button>
       </div>
-      <SettingsStatRibbon stats={stats} />
-      <SettingsSourceRail />
+      {error && (
+        <p className="pbk-settings-status" role="status">
+          {hasSnapshot
+            ? 'Showing last known settings. Refresh failed.'
+            : 'Settings are unavailable. Try refreshing.'}
+        </p>
+      )}
     </section>
   );
 }
 
-function SettingsProviderCard({ card }: { card: SettingsRuntimeCard }) {
+function SettingsProviderCard({ card }: { card: SettingsProvider }) {
   const state = readinessForProvider(card.meta);
+  const Icon = PROVIDER_ICONS[card.id];
+  const note = String(card.meta?.note || '');
   return (
     <section className="pbk-settings-provider-card">
-      <div className="card-head">
+      <div className="pbk-settings-provider-name">
+        <span className="pbk-settings-provider-icon">
+          <Icon size={17} aria-hidden="true" />
+        </span>
         <div>
-          <span className="pbk-kicker">Provider</span>
           <h3>{card.label}</h3>
+          {note && <p>{note}</p>}
         </div>
-        <StatusDot state={state} />
       </div>
-      <strong>{describeProvider(card.meta)}</strong>
-      <p>{String(card.meta?.note || '') || 'Bridge-backed runtime surface.'}</p>
+      <span className="pbk-settings-provider-status" data-readiness={state}>
+        <StatusDot state={state} />
+        {describeProvider(card.meta)}
+      </span>
     </section>
   );
 }
@@ -649,7 +660,11 @@ function SettingsVectorCapacityPanel({
 }
 
 export function Settings() {
-  const { snapshot, quotas, tooling, loading, error, refresh } = useRuntimeSnapshot();
+  const { snapshot, quotas, tooling, loading, error, refresh } = useRuntimeSnapshot(5000, true);
+  const [manualRefresh, setManualRefresh] = useState(false);
+  const adminDialog = useRef<HTMLDialogElement>(null);
+  const adminTrigger = useRef<HTMLButtonElement>(null);
+  const adminHeading = useRef<HTMLHeadingElement>(null);
   const [pendingAction, setPendingAction] = useState('');
   const [actionStatus, setActionStatus] = useState('');
   const [refreshingDecision, setRefreshingDecision] = useState(false);
@@ -659,6 +674,13 @@ export function Settings() {
   const [vectorCapacity, setVectorCapacity] = useState<VectorCapacityStatusResponse | null>(null);
   const [settingsAdminDecisionDraft, setSettingsAdminDecisionDraft] =
     useState<SettingsAdminDecisionDraft | null>(null);
+
+  useEffect(() => {
+    const dialog = adminDialog.current;
+    if (!dialog) return;
+    if (settingsAdminDecisionDraft && !dialog.open) dialog.showModal();
+    if (!settingsAdminDecisionDraft && dialog.open) dialog.close();
+  }, [settingsAdminDecisionDraft]);
   const status = (snapshot?.status || {}) as Record<string, unknown>;
   const runtimeProviders = (status.providers || {}) as Record<string, Record<string, unknown>>;
   const adminTasks = Array.isArray(snapshot?.adminTasks) ? snapshot.adminTasks : [];
@@ -684,7 +706,7 @@ export function Settings() {
         .join(' - ')
     : '';
 
-  const providerCards: SettingsRuntimeCard[] = [
+  const providerCards: SettingsProvider[] = [
     { id: 'telnyx', label: 'Telnyx', meta: quotas?.telnyx || runtimeProviders.telnyx },
     { id: 'instantly', label: 'Instantly', meta: quotas?.instantly || runtimeProviders.instantly },
     { id: 'docs', label: 'Document Sends', meta: quotas?.docs },
@@ -756,28 +778,30 @@ export function Settings() {
   const settingsStats: SettingsStat[] = [
     {
       label: 'Providers ready',
-      value: `${providerReadyCount}/${providerCards.length}`,
-      detail: 'quota and provider status',
+      value: providerCards.some((card) => card.meta)
+        ? `${providerReadyCount}/${providerCards.length}`
+        : '-',
+      detail: 'Calls, email, documents',
       tone: providerReadyCount === providerCards.length ? 'lime' : 'amber',
     },
     {
       label: 'Core tooling',
-      value: `${String(toolingCoreReady)}/${String(toolingCoreTotal)}`,
+      value: tooling ? `${toolingCoreReady}/${toolingCoreTotal}` : '-',
       detail: toolingOptionalTotal
         ? `${String(toolingOptionalReady)}/${String(toolingOptionalTotal)} optional enabled`
-        : 'required systems',
+        : 'Required systems',
       tone: toolingCoreReady >= toolingCoreTotal ? 'lime' : 'sky',
     },
     {
       label: 'Admin queue',
-      value: String(pendingAdminCount),
-      detail: 'pending infrastructure decisions',
+      value: snapshot ? String(pendingAdminCount) : '-',
+      detail: 'Awaiting review',
       tone: pendingAdminCount ? 'amber' : 'lime',
     },
     {
       label: 'Safety holds',
-      value: String(status.pendingApprovals || 0),
-      detail: 'operator-gated outbound actions',
+      value: snapshot ? String(status.pendingApprovals || 0) : '-',
+      detail: 'Outbound approvals',
       tone: Number(status.pendingApprovals || 0) ? 'amber' : 'sky',
     },
   ];
@@ -845,10 +869,12 @@ export function Settings() {
 
   const confirmSettingsAdminDecision = (
     task: Record<string, unknown>,
-    status: SettingsAdminDecisionDraft['status']
+    status: SettingsAdminDecisionDraft['status'],
+    trigger: HTMLButtonElement
   ) => {
     const taskId = String(task.id || '');
     if (!taskId) return;
+    adminTrigger.current = trigger;
     setSettingsAdminDecisionDraft({
       taskId,
       status,
@@ -858,10 +884,29 @@ export function Settings() {
     });
   };
 
+  const cancelAdminDecision = () => {
+    adminDialog.current?.close();
+    setSettingsAdminDecisionDraft(null);
+    adminTrigger.current?.focus();
+  };
+
+  const refreshSettings = async () => {
+    setManualRefresh(true);
+    try {
+      await refresh();
+    } catch {
+      // The snapshot hook reports the failed refresh without dropping the last snapshot.
+    } finally {
+      setManualRefresh(false);
+    }
+  };
+
   const decideAdminTask = async () => {
     if (!settingsAdminDecisionDraft) return;
     const { taskId, status } = settingsAdminDecisionDraft;
     const key = `admin:${taskId}:${status}`;
+    adminDialog.current?.close();
+    adminHeading.current?.focus({ preventScroll: true });
     setSettingsAdminDecisionDraft(null);
     setPendingAction(key);
     setActionStatus('');
@@ -888,12 +933,13 @@ export function Settings() {
   return (
     <div className="pbk-settings-surface">
       <SettingsHero
-        loading={loading}
+        loading={loading || manualRefresh}
         error={error}
-        stateBackend={stateBackend}
-        stats={settingsStats}
-        onRefresh={() => void refresh()}
+        hasSnapshot={Boolean(snapshot)}
+        onRefresh={() => void refreshSettings()}
       />
+
+      <SettingsStatRibbon stats={settingsStats} />
 
       {actionStatus && (
         <div className="pbk-settings-status" aria-live="polite">
@@ -907,64 +953,24 @@ export function Settings() {
         </div>
       )}
 
-      <div className="pbk-settings-provider-strip" aria-label="Provider readiness">
-        {providerCards.map((card) => (
-          <SettingsProviderCard key={card.id} card={card} />
-        ))}
-      </div>
-
-      <div className="pbk-settings-layout">
-        <SettingsReleasePanel releaseStatus={releaseStatus} fallback={releaseFallback} />
-
-        <section className="pbk-settings-card span-2">
-          <div className="pbk-settings-card-head">
-            <div>
-              <span className="pbk-kicker">Runtime support</span>
-              <h2>Agent tools</h2>
-              <p>
-                Repo-level systems that support research, observability, workflow health, and future
-                agent training.
-              </p>
-            </div>
-            <PbkDataSource endpoint="GET /api/tooling/status" status="ships" />
-          </div>
-
-          <div className="pbk-settings-tool-grid">
-            {toolingCards.map((card) => (
-              <SettingsToolCard key={card.id} card={card} />
+      <div className="pbk-settings-workspace">
+        <section className="pbk-settings-band" aria-labelledby="settings-provider-title">
+          <h2 id="settings-provider-title">Provider connections</h2>
+          <div className="pbk-settings-provider-strip">
+            {providerCards.map((card) => (
+              <SettingsProviderCard key={card.id} card={card} />
             ))}
           </div>
-
-          <div className="pbk-settings-metrics">
-            <div>
-              <span className="pbk-kicker">Metrics endpoint</span>
-              {metricsUrl ? (
-                <a href={metricsUrl} target="_blank" rel="noreferrer">
-                  {metricsUrl}
-                  <ExternalLink size={13} aria-hidden="true" />
-                </a>
-              ) : (
-                <strong>{observabilitySummary || 'Waiting for bridge connection'}</strong>
-              )}
-            </div>
-            <PbkDataSource
-              endpoint="GET /api/observability/status"
-              status="ships"
-              note={observabilityStatus?.serviceName || 'canonical dashboard URL/status'}
-            />
-          </div>
         </section>
-
-        <SettingsVectorCapacityPanel capacity={vectorCapacity} />
-
-        <section className="pbk-settings-card pbk-settings-admin-card">
+        <section
+          className="pbk-settings-band pbk-settings-admin-card"
+          aria-labelledby="settings-admin-title"
+        >
           <div className="pbk-settings-card-head">
-            <div>
-              <span className="pbk-kicker">Approvals</span>
-              <h2>Admin approvals needed</h2>
-              <p>Test mode and approval-backed infrastructure changes queued by Rex.</p>
-            </div>
-            <PbkDataSource endpoint="PUT /api/admin/tasks/:id" status="ships" />
+            <h2 id="settings-admin-title" ref={adminHeading} tabIndex={-1}>
+              Admin approvals
+            </h2>
+            {snapshot && <span className="pbk-settings-count">{pendingAdminCount} pending</span>}
           </div>
           <div className="admin-list">
             {adminTasks.map((task) => (
@@ -981,7 +987,9 @@ export function Settings() {
                       <button
                         type="button"
                         disabled={Boolean(pendingAction) || refreshingDecision}
-                        onClick={() => confirmSettingsAdminDecision(task, 'approved')}
+                        onClick={(event) =>
+                          confirmSettingsAdminDecision(task, 'approved', event.currentTarget)
+                        }
                         className="approve"
                       >
                         Approve
@@ -989,7 +997,9 @@ export function Settings() {
                       <button
                         type="button"
                         disabled={Boolean(pendingAction) || refreshingDecision}
-                        onClick={() => confirmSettingsAdminDecision(task, 'rejected')}
+                        onClick={(event) =>
+                          confirmSettingsAdminDecision(task, 'rejected', event.currentTarget)
+                        }
                         className="decline"
                       >
                         Decline
@@ -1001,67 +1011,100 @@ export function Settings() {
               </div>
             ))}
             {!adminTasks.length && (
-              <div className="pbk-settings-empty">No admin approvals are needed.</div>
+              <div className="pbk-settings-empty">
+                {snapshot
+                  ? 'No admin approvals are needed.'
+                  : loading
+                    ? 'Checking for admin approvals...'
+                    : 'Admin approvals are unavailable.'}
+              </div>
             )}
           </div>
         </section>
-
-        <SettingsSafetyRail status={status} />
       </div>
 
-      {settingsAdminDecisionDraft && (
-        <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/80 p-4 backdrop-blur-sm">
-          <div
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="settings-admin-decision-title"
-            className="w-full max-w-md rounded-2xl border border-slate-800 bg-slate-950 p-5 shadow-[0_24px_80px_rgba(2,6,23,0.55)]"
-          >
-            <div className="text-[11px] uppercase tracking-[0.16em] text-amber-300">
-              Admin safety check
+      <details className="pbk-settings-diagnostics">
+        <summary>
+          <Activity size={17} aria-hidden="true" />
+          <span>System diagnostics</span>
+          <ChevronDown className="pbk-settings-chevron" size={16} aria-hidden="true" />
+        </summary>
+        <div className="pbk-settings-layout">
+          <SettingsReleasePanel releaseStatus={releaseStatus} fallback={releaseFallback} />
+          <section className="pbk-settings-card span-2">
+            <div className="pbk-settings-card-head">
+              <h2>Agent tools</h2>
+              <PbkDataSource endpoint="GET /api/tooling/status" status="ships" />
             </div>
-            <h3
-              id="settings-admin-decision-title"
-              className="mt-2 text-lg font-semibold text-slate-100"
-            >
-              Confirm admin decision
-            </h3>
-            <p className="mt-2 text-sm text-slate-400">
+            <div className="pbk-settings-tool-grid">
+              {toolingCards.map((card) => (
+                <SettingsToolCard key={card.id} card={card} />
+              ))}
+            </div>
+            <div className="pbk-settings-metrics">
+              <div>
+                <span className="pbk-kicker">Metrics endpoint</span>
+                {metricsUrl ? (
+                  <a href={metricsUrl} target="_blank" rel="noreferrer">
+                    {metricsUrl}
+                    <ExternalLink size={13} aria-hidden="true" />
+                  </a>
+                ) : (
+                  <strong>{observabilitySummary || 'Waiting for bridge connection'}</strong>
+                )}
+              </div>
+              <PbkDataSource
+                endpoint="GET /api/observability/status"
+                status="ships"
+                note={observabilityStatus?.serviceName || 'canonical dashboard URL/status'}
+              />
+            </div>
+          </section>
+          <SettingsVectorCapacityPanel capacity={vectorCapacity} />
+          {snapshot && <SettingsSafetyRail status={status} />}
+        </div>
+        <SettingsSourceRail />
+      </details>
+
+      <dialog
+        ref={adminDialog}
+        className="pbk-settings-dialog"
+        aria-labelledby="settings-admin-decision-title"
+        aria-describedby="settings-admin-decision-summary"
+        onCancel={(event) => {
+          event.preventDefault();
+          cancelAdminDecision();
+        }}
+      >
+        {settingsAdminDecisionDraft && (
+          <>
+            <h2 id="settings-admin-decision-title">Confirm admin decision</h2>
+            <p>
               This will {settingsAdminDecisionDraft.status === 'approved' ? 'approve' : 'decline'}{' '}
-              <span className="font-semibold text-slate-200">
+              <strong>
                 {settingsAdminDecisionDraft.provider} / {settingsAdminDecisionDraft.action}
-              </span>
+              </strong>
               .
             </p>
-            <div className="mt-4 rounded-xl border border-slate-800 bg-slate-900 px-3 py-3 text-sm text-slate-300">
-              {settingsAdminDecisionDraft.summary}
-            </div>
-            <div className="mt-5 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
-              <button
-                type="button"
-                onClick={() => setSettingsAdminDecisionDraft(null)}
-                className="rounded-full border border-slate-700 px-4 py-2 text-sm font-semibold text-slate-300 transition hover:border-slate-500"
-              >
+            <p id="settings-admin-decision-summary">{settingsAdminDecisionDraft.summary}</p>
+            <div className="pbk-settings-dialog-actions">
+              <button type="button" onClick={cancelAdminDecision}>
                 Cancel
               </button>
               <button
                 type="button"
-                disabled={
-                  refreshingDecision ||
-                  pendingAction ===
-                    `admin:${settingsAdminDecisionDraft.taskId}:${settingsAdminDecisionDraft.status}`
-                }
+                disabled={Boolean(pendingAction) || refreshingDecision}
                 onClick={() => void decideAdminTask()}
-                className="rounded-full bg-sky-400 px-4 py-2 text-sm font-bold text-slate-950 transition hover:bg-sky-300 disabled:cursor-wait disabled:opacity-60"
+                className="primary"
               >
                 {settingsAdminDecisionDraft.status === 'approved'
                   ? 'Approve admin task'
                   : 'Decline admin task'}
               </button>
             </div>
-          </div>
-        </div>
-      )}
+          </>
+        )}
+      </dialog>
     </div>
   );
 }

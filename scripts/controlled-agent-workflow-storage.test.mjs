@@ -67,7 +67,12 @@ test('PG stores all eleven linked inputs and rejects corrupted dependencies befo
     const corrupt = await readControlledAgentQualification(db, runId);
     assert.equal(corrupt.workflow.crossAgentWorkflowVerified, false);
     assert.equal(corrupt.agents.find(agent => agent.agentId === 'script-rotator').workflowLinkVerified, false);
-    await assert.rejects(readControlledWorkflowPredecessor(db, storage, 'qa-agent'), /predecessor_unverified/);
+    await assert.rejects(readControlledWorkflowPredecessor(db, storage, 'qa-agent'), error => {
+      assert(error.message.includes(`controlled_workflow_predecessor_unverified:${runId}:script-rotator:`));
+      assert(error.message.includes('consumedPredecessorVerified'));
+      assert.equal(error.message.includes('tampered'), false, 'diagnostic must not contain output text');
+      return true;
+    });
     await db.query(`UPDATE ${schema}.qualification_results SET output=$1::jsonb WHERE agent_id='max'`, [JSON.stringify(outputs.max)]);
     await db.query(`UPDATE ${schema}.pbk_tasks SET metadata=jsonb_set(metadata,'{workOrder,payload,score}','99') WHERE id='task-nurture-agent'`);
     assert.equal((await readControlledAgentQualification(db, runId)).workflow.crossAgentWorkflowVerified, false);

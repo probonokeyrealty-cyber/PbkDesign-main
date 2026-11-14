@@ -71,10 +71,13 @@ export async function readControlledWorkflowPredecessor(pool, storage, agentId) 
   const report = await readControlledAgentQualification(pool, storage.runId);
   const evidence = report.agents.find(agent => agent.agentId === agentId);
   const prefix = controlledWorkflowOrder.slice(0, controlledWorkflowOrder.indexOf(agentId) + 1);
-  if (!evidence || !prefix.every(id => {
+  const failure = prefix.map(id => {
     const agent = report.agents.find(item => item.agentId === id);
-    return agent?.completed && agent.durable && agent.workflowLinkVerified && Object.values(agent.criteria).every(value => value === true);
-  })) throw new Error('controlled_workflow_predecessor_unverified');
+    const checks = agent ? { completed: agent.completed, durable: agent.durable,
+      ...agent.correlationChecks, workflowLinkVerified: agent.workflowLinkVerified, ...agent.criteria } : { present: false };
+    return { agentId: id, failedChecks: Object.entries(checks).filter(([, value]) => value !== true).map(([key]) => key) };
+  }).find(agent => agent.failedChecks.length);
+  if (!evidence || failure) throw new Error(`controlled_workflow_predecessor_unverified:${storage.runId}:${failure?.agentId || agentId}:${failure?.failedChecks.join(',') || 'present'}`);
   const result = (await pool.query(`SELECT data,output FROM ${identifier(storage.schema)}.qualification_results WHERE agent_id=$1`, [agentId])).rows[0];
   if (!result || result.data.runId !== storage.runId || result.data.agentId !== agentId) throw new Error('controlled_workflow_predecessor_missing');
   return { agentId, workOrderId: result.data.workOrderId, output: result.output };
@@ -111,9 +114,11 @@ export async function readControlledAgentQualification(pool, runId) {
     const semantic = isAgentHandlerCompletion(result.agent_id, output);
     const sequence = controlledWorkflowOrder.indexOf(result.agent_id);
     const predecessor = sequence > 0 ? results.find(item => item.agent_id === controlledWorkflowOrder[sequence - 1]) : null;
-    const workflowLinkVerified = (!predecessor || new Date(predecessor.completed_at).getTime() <= new Date(task?.created_at).getTime()) && verifyControlledWorkflowLink(result.agent_id, source.data,
+    const predecessorPersistedBeforeTask = !predecessor || new Date(predecessor.completed_at).getTime() <= new Date(task?.created_at).getTime();
+    const consumedPredecessorVerified = verifyControlledWorkflowLink(result.agent_id, source.data,
       predecessor ? { agentId: predecessor.agent_id, workOrderId: predecessor.data.workOrderId, output: predecessor.output } : null,
       data.workflowLink, task?.metadata?.workOrder?.payload);
+    const workflowLinkVerified = predecessorPersistedBeforeTask && consumedPredecessorVerified;
     const evidenceRecordIds = correlated ? [task.id, `${runId}:${result.agent_id}`] : [];
     const row = async (table, id) => (await pool.query(`SELECT * FROM ${identifier(schema)}.${identifier(table)} WHERE id=$1`, [id])).rows[0];
     let criteria = {};
@@ -183,6 +188,7 @@ export async function readControlledAgentQualification(pool, runId) {
       fixtureIdentityMatch: ['leadId','callId','sourceUpdatedAt'].every(key => data[key] === fixture[key] && qualification[key] === fixture[key]),
       completionTimeMatch: data.completedAt === completedAt && Number.isFinite(Date.parse(completedAt))
         && Date.parse(completedAt) >= Date.parse(sourceUpdatedAt) && Date.parse(completedAt) <= new Date(result.completed_at).getTime(),
+      predecessorPersistedBeforeTask, consumedPredecessorVerified,
     };
     agents.push({ ...data, agentId: result.agent_id, completed: correlated && semantic, durable: correlated,
       workflowLinkVerified, criteria, evidenceRecordIds, correlationChecks });

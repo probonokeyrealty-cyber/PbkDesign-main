@@ -25,11 +25,14 @@ async function admin(path, body, method = 'POST') {
     );
   return data;
 }
-async function call(command, payload = {}, token) {
+const staffOrigin = 'https://pbk-investor-staging--pbkcenter.netlify.app';
+const investorOrigin = 'https://pbk-investors-staging.netlify.app';
+async function call(command, payload = {}, token, origin = staffOrigin) {
   const r = await fetch(api, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
+      Origin: origin,
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
     },
     body: JSON.stringify({ command, payload }),
@@ -98,10 +101,15 @@ for (const key of ['editor', 'reviewer', 'investor', 'other', 'pending']) {
     type: 'magiclink',
     email: users[key].email,
   });
-  const r = await call('authVerify', {
-    email: users[key].email,
-    code: link.email_otp || link.properties?.email_otp,
-  });
+  const r = await call(
+    'authVerify',
+    {
+      email: users[key].email,
+      code: link.email_otp || link.properties?.email_otp,
+    },
+    undefined,
+    ['investor', 'other', 'pending'].includes(key) ? investorOrigin : staffOrigin
+  );
   if (key === 'pending') {
     assert.equal(r.status, 403);
     continue;
@@ -111,6 +119,42 @@ for (const key of ['editor', 'reviewer', 'investor', 'other', 'pending']) {
 }
 assert.equal((await call('list')).status, 401);
 assert.equal((await call('list', {}, 'invalid-token')).status, 401);
+assert.equal((await call('list', {}, undefined, investorOrigin)).status, 401);
+assert.equal((await call('list', {}, tokens.investor, investorOrigin)).status, 200);
+assert.equal((await call('list', {}, tokens.reviewer, investorOrigin)).status, 403);
+assert.equal((await call('release', {}, tokens.investor, investorOrigin)).status, 403);
+assert.equal(
+  (await call('list', {}, tokens.investor, 'https://www.probonokeyrealty.com')).status,
+  403
+);
+const publicPreflight = await fetch(api, {
+  method: 'OPTIONS',
+  headers: {
+    Origin: investorOrigin,
+    'Access-Control-Request-Method': 'POST',
+    'Access-Control-Request-Headers': 'content-type,authorization',
+  },
+});
+assert.equal(publicPreflight.status, 204);
+assert.equal(publicPreflight.headers.get('access-control-allow-origin'), investorOrigin);
+const staffCodeOnInvestorEntry = await admin('/auth/v1/admin/generate_link', {
+  type: 'magiclink',
+  email: users.reviewer.email,
+});
+assert.equal(
+  (
+    await call(
+      'authVerify',
+      {
+        email: users.reviewer.email,
+        code: staffCodeOnInvestorEntry.email_otp || staffCodeOnInvestorEntry.properties?.email_otp,
+      },
+      undefined,
+      investorOrigin
+    )
+  ).status,
+  403
+);
 const draft = {
   title: 'Fictional API QA house',
   address: '100 Sample Street',
@@ -196,11 +240,16 @@ assert.equal((await call('preview', { id: p.id }, tokens.reviewer)).status, 200)
 r = await call('release', { id: p.id, revision: p.revision }, tokens.reviewer);
 assert.equal(r.status, 200, JSON.stringify(r.data));
 p = r.data.property;
-const visible = await call('property', { id: p.id }, tokens.investor);
+const visible = await call('property', { id: p.id }, tokens.investor, investorOrigin);
 assert.equal(visible.status, 200);
 assert.ok(!JSON.stringify(visible.data).includes('NEVER RELEASE'));
 assert.ok(!JSON.stringify(visible.data).includes('internalNotes'));
-const signed = await call('file', { id: p.id, assetId: p.assets[0].id }, tokens.investor);
+const signed = await call(
+  'file',
+  { id: p.id, assetId: p.assets[0].id },
+  tokens.investor,
+  investorOrigin
+);
 assert.equal(signed.status, 200, JSON.stringify(signed.data));
 assert.equal(signed.data.expiresIn, 60);
 const downloaded = await fetch(signed.data.url);
@@ -236,7 +285,7 @@ const inquiry = {
   timing: 'QA only',
 };
 const concurrent = await Promise.all(
-  Array.from({ length: 3 }, () => call('inquire', inquiry, tokens.investor))
+  Array.from({ length: 3 }, () => call('inquire', inquiry, tokens.investor, investorOrigin))
 );
 assert.ok(
   concurrent.every((x) => x.status === 200),
@@ -292,6 +341,10 @@ const report = {
   propertyId: p.id,
   receiptId: receipt.id,
   checks: [
+    'public staging origin preflight and approved investor sign-in pass',
+    'anonymous and pending public entry denied',
+    'public entry rejects staff sign-in and staff session reads',
+    'public entry rejects staff commands and production origins',
     'unapproved/anonymous denied',
     'individual auth verified',
     'editor release denied',

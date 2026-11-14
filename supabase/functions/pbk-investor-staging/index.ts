@@ -1,17 +1,17 @@
 import { storePrivateAsset } from './uploadLifecycle.mjs';
 import { readLimitedBody } from './bodyLimit.mjs';
 import { execute, membership, verificationInput } from './domain.mjs';
+import {
+  PUBLIC_INVESTOR_ORIGIN,
+  isAllowedOrigin,
+  assertEntryCommand,
+  assertEntryMember,
+} from './entryPolicy.mjs';
 
 const URL = Deno.env.get('SUPABASE_URL')!;
 const SERVICE = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
 const ANON = Deno.env.get('SUPABASE_ANON_KEY')!;
 const BUCKET = 'pbk-investor-staging';
-const origins = new Set([
-  'http://localhost:5179',
-  'http://127.0.0.1:5179',
-  'https://pbk-investor-staging--pbkcenter.netlify.app',
-  'https://probono-key-realty.webflow.io',
-]);
 const providerHeaders = {
   apikey: SERVICE,
   Authorization: `Bearer ${SERVICE}`,
@@ -24,7 +24,7 @@ const json = (data: unknown, status = 200, origin = '') =>
       'Content-Type': 'application/json',
       'Cache-Control': 'no-store',
       'X-Content-Type-Options': 'nosniff',
-      ...(origins.has(origin) ? { 'Access-Control-Allow-Origin': origin, Vary: 'Origin' } : {}),
+      ...(isAllowedOrigin(origin) ? { 'Access-Control-Allow-Origin': origin, Vary: 'Origin' } : {}),
     },
   });
 async function provider(path: string, options: RequestInit = {}) {
@@ -91,6 +91,7 @@ async function fileInfo(req: Request, input: any) {
   const row = await read();
   const { uid } = await identity(req, row.data);
   const member = membership(row.data, uid);
+  assertEntryMember(req.headers.get('Origin') || '', member);
   const p = row.data.properties[input.id];
   if (!p) throw Object.assign(new Error('Property not available.'), { status: 404 });
   if (member.role === 'investor') execute(row.data, uid, 'property', { id: input.id });
@@ -143,7 +144,7 @@ async function retryStaleUploads(data: any) {
 }
 Deno.serve(async (req: Request) => {
   const origin = req.headers.get('Origin') || '';
-  if (origin && !origins.has(origin)) return json({ error: 'Origin not allowed.' }, 403);
+  if (origin && !isAllowedOrigin(origin)) return json({ error: 'Origin not allowed.' }, 403);
   if (req.method === 'OPTIONS')
     return new Response(null, {
       status: 204,
@@ -160,6 +161,7 @@ Deno.serve(async (req: Request) => {
     const contentLength = Number(req.headers.get('content-length') || 0);
     if (contentLength > 14_000_000) return json({ error: 'Request too large.' }, 413, origin);
     if (req.headers.get('Content-Type')?.startsWith('multipart/form-data')) {
+      assertEntryCommand(origin, 'asset');
       const before = await read();
       const { uid } = await identity(req, before.data);
       const m = membership(before.data, uid);
@@ -269,6 +271,7 @@ Deno.serve(async (req: Request) => {
     const input = JSON.parse(raw);
     const command = String(input.command || '');
     const payload = input.payload || {};
+    assertEntryCommand(origin, command);
     if (command === 'authStart') {
       const email = String(payload.email || '')
         .trim()
@@ -277,7 +280,10 @@ Deno.serve(async (req: Request) => {
       const found =
         row.data.invitations?.[email]?.approved ||
         Object.values(row.data.members).find(
-          (m: any) => m.email?.toLowerCase() === email && m.approved
+          (m: any) =>
+            m.email?.toLowerCase() === email &&
+            m.approved &&
+            (origin !== PUBLIC_INVESTOR_ORIGIN || m.role === 'investor')
         );
       if (found && !email.endsWith('@example.com')) {
         // Provider rate-limits OTP delivery. Unknown/pending members get the same response.
@@ -323,7 +329,7 @@ Deno.serve(async (req: Request) => {
             detail: { approvedBy: invite.approvedBy },
           });
         }
-        membership(data, auth.user.id);
+        assertEntryMember(origin, membership(data, auth.user.id));
         data.sessions ||= {};
         for (const [key, value] of Object.entries(data.sessions) as any)
           if (value.expiresAt <= Date.now()) delete data.sessions[key];
@@ -343,6 +349,7 @@ Deno.serve(async (req: Request) => {
     if (command === 'asset') return json({ error: 'Use the private upload action.' }, 400, origin);
     const current = await read();
     const { uid, hash } = await identity(req, current.data);
+    assertEntryMember(origin, membership(current.data, uid));
     if (command === 'logout') {
       await mutate((data) => {
         delete data.sessions?.[hash];
@@ -354,6 +361,7 @@ Deno.serve(async (req: Request) => {
       const session = data.sessions?.[hash];
       if (!session || session.expiresAt <= Date.now())
         throw Object.assign(new Error('Sign in again.'), { status: 401 });
+      assertEntryMember(origin, membership(data, uid));
       return execute(data, uid, command, payload);
     });
     return json(result, 200, origin);

@@ -1,0 +1,31 @@
+{
+  "checkedAt": "2026-11-14T03:06:00.541Z",
+  "propertyId": "e3326e37-dfab-4077-9801-80c8eed280d4",
+  "receiptId": "ec7f1fc4-432b-468b-8eea-23bbcb3871c5",
+  "checks": [
+    "public staging origin preflight and approved investor sign-in pass",
+    "anonymous and pending public entry denied",
+    "public entry rejects staff sign-in and staff session reads",
+    "public entry rejects staff commands and production origins",
+    "unapproved/anonymous denied",
+    "individual auth verified",
+    "editor release denied",
+    "preview required",
+    "private PNG upload/download hash match",
+    "same-revision upload race returns one success and one conflict",
+    "private PDF upload/download hash match",
+    "public asset denied",
+    "buyer projection excludes notes",
+    "three concurrent retries produce one inquiry",
+    "cross-investor history isolated",
+    "staff sees inquiry",
+    "unreleased revision isolated",
+    "stale save rejected",
+    "withdraw denies record/new file URL",
+    "audit preserved",
+    "logged-out token denied",
+    "revoked existing session denied"
+  ],
+  "productionChanges": false,
+  "notificationsSent": false
+}

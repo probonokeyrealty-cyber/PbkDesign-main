@@ -158,14 +158,40 @@ form.set('title', 'Synthetic QA image');
 form.set('rights', 'PBK internal synthetic QA fixture');
 form.set('alt', 'Synthetic single-pixel QA image, not a property photo');
 form.set('buyerVisible', 'true');
-const upload = await fetch(api, {
+const racingUploads = await Promise.all(
+  Array.from({ length: 2 }, async () => {
+    const body = new FormData();
+    for (const [key, value] of form.entries()) body.set(key, value);
+    const response = await fetch(api, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${tokens.editor}` },
+      body,
+    });
+    return { status: response.status, data: await response.json() };
+  })
+);
+assert.deepEqual(
+  racingUploads.map((r) => r.status).sort(),
+  [200, 409],
+  JSON.stringify(racingUploads)
+);
+p = racingUploads.find((r) => r.status === 200).data.property;
+const pdf = await fs.readFile('.pbk-local/upload-fixtures/PBK-QA-packet.pdf');
+const pdfForm = new FormData();
+pdfForm.set('id', p.id);
+pdfForm.set('revision', String(p.revision));
+pdfForm.set('file', new Blob([pdf], { type: 'application/pdf' }), 'PBK-QA-packet.pdf');
+pdfForm.set('title', 'Fictional QA packet');
+pdfForm.set('rights', 'PBK-owned synthetic QA packet');
+pdfForm.set('buyerVisible', 'true');
+const pdfUpload = await fetch(api, {
   method: 'POST',
   headers: { Authorization: `Bearer ${tokens.editor}` },
-  body: form,
+  body: pdfForm,
 });
-const uploadData = await upload.json();
-assert.equal(upload.status, 200, JSON.stringify(uploadData));
-p = uploadData.property;
+const pdfData = await pdfUpload.json();
+assert.equal(pdfUpload.status, 200, JSON.stringify(pdfData));
+p = pdfData.property;
 assert.equal((await call('preview', { id: p.id }, tokens.reviewer)).status, 200);
 r = await call('release', { id: p.id, revision: p.revision }, tokens.reviewer);
 assert.equal(r.status, 200, JSON.stringify(r.data));
@@ -189,6 +215,18 @@ assert.equal(
 assert.notEqual(
   (await fetch(`${base}/storage/v1/object/public/pbk-investor-staging/${p.assets[0].path}`)).status,
   200
+);
+const pdfAsset = p.assets.find((a) => a.kind === 'packet');
+const pdfSigned = await call('file', { id: p.id, assetId: pdfAsset.id }, tokens.investor);
+assert.equal(pdfSigned.status, 200);
+const pdfDownload = await fetch(pdfSigned.data.url);
+assert.equal(pdfDownload.status, 200);
+assert.equal(
+  crypto
+    .createHash('sha256')
+    .update(Buffer.from(await pdfDownload.arrayBuffer()))
+    .digest('hex'),
+  crypto.createHash('sha256').update(pdf).digest('hex')
 );
 const inquiry = {
   id: p.id,
@@ -259,6 +297,8 @@ const report = {
     'editor release denied',
     'preview required',
     'private PNG upload/download hash match',
+    'same-revision upload race returns one success and one conflict',
+    'private PDF upload/download hash match',
     'public asset denied',
     'buyer projection excludes notes',
     'three concurrent retries produce one inquiry',

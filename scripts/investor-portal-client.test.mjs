@@ -53,3 +53,12 @@ test('chunked bodies stop at byte ceiling without Content-Length', async () => {
   );
   assert.equal(new TextDecoder().decode(bytes), 'okay');
 });
+
+const facts = await import('../src/app/investor/displayFact.mjs').catch(() => ({}));
+test('missing property facts are Unknown and numeric zero is preserved', () => {
+  assert.equal(typeof facts.displayFact, 'function');
+  for (const value of ['', '  ', null, undefined])
+    assert.equal(facts.displayFact(value), 'Unknown');
+  assert.equal(facts.displayFact(0), 0);
+  assert.equal(facts.displayFact('Vacant'), 'Vacant');
+});

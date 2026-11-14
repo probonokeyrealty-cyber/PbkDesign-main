@@ -1,0 +1,27 @@
+{
+  "checkedAt": "2026-11-14T02:52:00.730Z",
+  "propertyId": "870dcfc6-d957-46ce-909a-a7471fe58b4c",
+  "receiptId": "1d3930a1-992b-4ff6-a719-b005eb7bca8a",
+  "checks": [
+    "unapproved/anonymous denied",
+    "individual auth verified",
+    "editor release denied",
+    "preview required",
+    "private PNG upload/download hash match",
+    "same-revision upload race returns one success and one conflict",
+    "private PDF upload/download hash match",
+    "public asset denied",
+    "buyer projection excludes notes",
+    "three concurrent retries produce one inquiry",
+    "cross-investor history isolated",
+    "staff sees inquiry",
+    "unreleased revision isolated",
+    "stale save rejected",
+    "withdraw denies record/new file URL",
+    "audit preserved",
+    "logged-out token denied",
+    "revoked existing session denied"
+  ],
+  "productionChanges": false,
+  "notificationsSent": false
+}

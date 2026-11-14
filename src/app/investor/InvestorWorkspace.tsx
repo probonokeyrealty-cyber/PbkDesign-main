@@ -1,3 +1,4 @@
+import { displayFact } from './displayFact.mjs';
 import { clearPrivateSession } from './clientState.mjs';
 import { useEffect, useRef, useState } from 'react';
 import { portalRequest, uploadPortalAsset, type PortalMember } from './portalApi';
@@ -138,7 +139,7 @@ function Packet({
             ].map(([k, v]) => (
               <div key={k}>
                 <dt>{k}</dt>
-                <dd>{v ?? 'Unknown'}</dd>
+                <dd>{displayFact(v)}</dd>
               </div>
             ))}
           </dl>

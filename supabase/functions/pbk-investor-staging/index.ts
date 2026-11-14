@@ -1,3 +1,4 @@
+import { storePrivateAsset } from './uploadLifecycle.mjs';
 import { readLimitedBody } from './bodyLimit.mjs';
 import { execute, membership, verificationInput } from './domain.mjs';
 
@@ -105,6 +106,41 @@ async function fileInfo(req: Request, input: any) {
   });
   return { url: `${URL}/storage/v1${signed.signedURL}`, expiresIn: 60 };
 }
+// Only generated, durably reserved paths can be removed. Never scan/delete a bucket.
+async function reconcileUpload(entry: any) {
+  const current = await read();
+  const property = Object.values(current.data.properties).find((p: any) =>
+    p.assets.some((a: any) => a.path === entry.path)
+  ) as any;
+  if (property) return { property };
+  if (!current.data.pendingUploads?.[entry.id]) return null;
+  if (
+    !/^[0-9a-f-]{36}\/[0-9a-f-]{36}$/.test(entry.path) ||
+    entry.path !== entry.propertyId + '/' + entry.id
+  )
+    throw Error('Invalid staging upload reservation.');
+  await provider('/storage/v1/object/' + BUCKET, {
+    method: 'DELETE',
+    body: JSON.stringify({ prefixes: [entry.path] }),
+  });
+  await mutate((data) => {
+    delete data.pendingUploads?.[entry.id];
+    return { state: data, changed: true, result: {} };
+  });
+  return null;
+}
+async function retryStaleUploads(data: any) {
+  const old = Object.values(data.pendingUploads || {})
+    .filter((p: any) => p.createdAt < Date.now() - 3600_000)
+    .slice(0, 10);
+  for (const entry of old) {
+    try {
+      await reconcileUpload(entry);
+    } catch {
+      console.warn('Private staging upload cleanup deferred.');
+    }
+  }
+}
 Deno.serve(async (req: Request) => {
   const origin = req.headers.get('Origin') || '';
   if (origin && !origins.has(origin)) return json({ error: 'Origin not allowed.' }, 403);
@@ -166,35 +202,65 @@ Deno.serve(async (req: Request) => {
       if (!valid) return json({ error: 'File contents do not match its type.' }, 400, origin);
       const assetId = crypto.randomUUID();
       const path = `${id}/${assetId}`;
-      const upload = await fetch(`${URL}/storage/v1/object/${BUCKET}/${path}`, {
-        method: 'POST',
-        headers: {
-          apikey: SERVICE,
-          Authorization: `Bearer ${SERVICE}`,
-          'Content-Type': file.type,
-          'x-upsert': 'false',
+      await retryStaleUploads(before.data);
+      const entry = { id: assetId, path, propertyId: id, createdAt: Date.now() };
+      const result = await storePrivateAsset({
+        reserve: () =>
+          mutate((data) => {
+            const actor = membership(data, uid);
+            if (!['editor', 'reviewer'].includes(actor.role))
+              throw Object.assign(Error('Staff access is required.'), { status: 403 });
+            if (data.properties[id]?.revision !== revision)
+              throw Object.assign(Error('Property changed. Reload before uploading.'), {
+                status: 409,
+              });
+            data.pendingUploads ||= {};
+            if (Object.keys(data.pendingUploads).length >= 50)
+              throw Object.assign(Error('Pending upload cleanup is required. Try again later.'), {
+                status: 507,
+              });
+            data.pendingUploads[assetId] = entry;
+            if (JSON.stringify(data).length > 8_000_000)
+              throw Object.assign(Error('Staging capacity reached.'), { status: 507 });
+            return { state: data, changed: true, result: {} };
+          }),
+        upload: async () => {
+          const upload = await fetch(`${URL}/storage/v1/object/${BUCKET}/${path}`, {
+            method: 'POST',
+            headers: {
+              apikey: SERVICE,
+              Authorization: `Bearer ${SERVICE}`,
+              'Content-Type': file.type,
+              'x-upsert': 'false',
+            },
+            body: bytes,
+          });
+          if (!upload.ok) throw new Error('Private upload failed.');
         },
-        body: bytes,
-      });
-      if (!upload.ok) throw new Error('Private upload failed.');
-      const result = await mutate((data) => {
-        membership(data, uid);
-        return execute(data, uid, 'asset', {
-          id,
-          revision,
-          asset: {
-            id: assetId,
-            path,
-            title,
-            alt,
-            kind: file.type === 'application/pdf' ? 'packet' : 'photo',
-            mime: file.type,
-            rights,
-            buyerVisible: form.get('buyerVisible') === 'true',
-            uploadedBy: uid,
-            uploadedAt: new Date().toISOString(),
-          },
-        });
+        attach: async () => {
+          return await mutate((data) => {
+            membership(data, uid);
+            const output = execute(data, uid, 'asset', {
+              id,
+              revision,
+              asset: {
+                id: assetId,
+                path,
+                title,
+                alt,
+                kind: file.type === 'application/pdf' ? 'packet' : 'photo',
+                mime: file.type,
+                rights,
+                buyerVisible: form.get('buyerVisible') === 'true',
+                uploadedBy: uid,
+                uploadedAt: new Date().toISOString(),
+              },
+            });
+            delete output.state.pendingUploads?.[assetId];
+            return output;
+          });
+        },
+        reconcile: () => reconcileUpload(entry),
       });
       return json(result, 200, origin);
     }

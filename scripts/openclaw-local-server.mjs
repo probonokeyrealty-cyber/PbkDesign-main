@@ -42946,6 +42946,8 @@ function recordAvaAssistantPlanOps({
     error: toolOk && qaOk && !safetyBlocked ? '' : (toolResult?.error || qa?.reason || safety?.result || 'assistant_plan_not_completed'),
     metadata: {
       source: 'ava-assistant-chat',
+      diagnostic: source === 'ava-latency-diagnostic',
+      operational: source !== 'ava-latency-diagnostic',
       requestTiming,
       publicMode,
       assistantAction,
@@ -45927,6 +45929,7 @@ async function invokeAgentFromRegistry(params = {}) {
         routedTo,
         outputResult: output?.result || output?.status || '',
         executionEvidence: buildAgentExecutionEvidence({
+          agentId: agent.id,
           payload,
           output,
           durationMs: performance.now() - invocationStartedAt,
@@ -45964,6 +45967,7 @@ async function invokeAgentFromRegistry(params = {}) {
         approvalPolicy: workOrder.approvalPolicy,
         error: error?.message || String(error),
         executionEvidence: buildAgentExecutionEvidence({
+          agentId: agent.id,
           payload,
           output: { ok: false, status: 'failed' },
           durationMs: performance.now() - invocationStartedAt,
@@ -64809,7 +64813,7 @@ async function handleInternalAvaAssistantChatRequest(request) {
       activeLeadId: activeAssistantLeadId,
     };
   } else if (assistantPlan.action === 'general' && !answer) {
-    const deepSeekChat = await runInternalAvaDeepSeekChat({
+    const deepSeekChat = await requestTiming.measure('tool_execution', () => runInternalAvaDeepSeekChat({
       assistantContextSession,
       text,
       body,
@@ -64817,7 +64821,7 @@ async function handleInternalAvaAssistantChatRequest(request) {
       leadId: activeAssistantLeadId || assistantContextSession.leadId || '',
       missionController,
       memories: assistantMemories,
-    });
+    }));
     if (deepSeekChat.ok) {
       answer = deepSeekChat.answer;
       toolResult = deepSeekChat.toolResult;
@@ -64973,6 +64977,11 @@ async function handleInternalAvaAssistantChatRequest(request) {
     body: {
       ok: true,
       mode: 'command-center-assistant',
+      measurementClassification: {
+        diagnostic: body.source === 'ava-latency-diagnostic',
+        operational: body.source !== 'ava-latency-diagnostic',
+      },
+      releaseCommit: process.env.RENDER_GIT_COMMIT || '',
       requestTiming: requestTiming.snapshot(),
       answer,
       suggestions: assistantPlan.suggestions || [],

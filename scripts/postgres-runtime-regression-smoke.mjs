@@ -261,6 +261,40 @@ test('retry backoff shares the operation deadline and cannot launch a late retry
   assert.equal(fixture.counters.queries, 0);
 });
 
+for (const remainingMs of [999, 1000]) test(`backoff cannot fit ${remainingMs}ms remaining even if a timer wakes early`, async (t) => {
+  const fixture = runtime(t, { env: { PBK_PG_QUERY_RETRY_BASE_DELAY_MS: '1000' } });
+  let now = 100;
+  let attempts = 0;
+  let sleeps = 0;
+  fixture.context.Date = { now: () => now };
+  fixture.context.sleep = async () => { sleeps++; now = 1099; };
+  await assert.rejects(fixture.context.withPostgresConnectionRetry(async () => {
+    attempts++;
+    if (attempts === 1) throw connectionError();
+    return 'must not retry';
+  }, 'deadline boundary', { deadlineAt: 100 + remainingMs }), {
+    code: 'PBK_POSTGRES_OPERATION_TIMEOUT', executionOutcome: 'not_submitted', timeout: true, postgresRetryHandled: true,
+  });
+  assert.equal(attempts, 1);
+  assert.equal(sleeps, 0);
+});
+
+for (const oversleep of [false, true]) test(`fitting backoff ${oversleep ? 'cannot retry after oversleep' : 'allows an in-budget retry'}`, async (t) => {
+  const fixture = runtime(t, { env: { PBK_PG_QUERY_RETRY_BASE_DELAY_MS: '1000' } });
+  let now = 100;
+  let attempts = 0;
+  fixture.context.Date = { now: () => now };
+  fixture.context.sleep = async (delay) => { assert.equal(delay, 1000); now = oversleep ? 1200 : 1100; };
+  const operation = fixture.context.withPostgresConnectionRetry(async () => {
+    attempts++;
+    if (attempts === 1) throw connectionError();
+    return 'retried in budget';
+  }, 'deadline boundary', { deadlineAt: 1150 });
+  if (oversleep) await assert.rejects(operation, { code: 'PBK_POSTGRES_OPERATION_TIMEOUT', executionOutcome: 'not_submitted' });
+  else assert.equal(await operation, 'retried in budget');
+  assert.equal(attempts, oversleep ? 1 : 2);
+});
+
 test('non-idempotent script exposure is not replayed after a lost acknowledgment', async (t) => {
   let usageCount = 0;
   const fixture = runtime(t, { execute(sql) {

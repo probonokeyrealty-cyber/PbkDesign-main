@@ -18,6 +18,7 @@ function fixture({ abortRead = false, blockFinal = false } = {}) {
   controller.abort();
   const context = vm.createContext({
     Date,
+    process: { env: { RENDER_GIT_COMMIT: 'fixture-commit' } },
     createAvaRequestTiming: () => createAvaRequestTiming({ now: () => clock }),
     readBody: async () => ({ message: 'find absent fixture', sessionId: 'isolated' }),
     normalizeConversationMessages: () => [],

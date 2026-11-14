@@ -30722,6 +30722,7 @@ function ensureDeepSeekJsonModeMessages(messages = []) {
 }
 
 async function runDeepSeekChatCompletion(messages = [], params = {}) {
+  const measure = (stage, operation) => params.requestTiming ? params.requestTiming.measure(stage, operation) : operation();
   const meta = getDeepSeekProviderMeta();
   if (!meta.ready) {
     return {
@@ -30945,25 +30946,28 @@ async function runDeepSeekChatCompletion(messages = [], params = {}) {
       }
       controller = new AbortController();
       timeout = setTimeout(() => controller.abort(), attemptTimeoutMs);
-      const response = await executeProviderCircuitGuard(
-        'deepseek',
-        () =>
-          fetch(`${deepSeekUrl}/chat/completions`, {
-            method: 'POST',
-            headers: {
-              Authorization: `Bearer ${DEEPSEEK_API_KEY}`,
-              'Content-Type': 'application/json',
-            },
-            signal: controller.signal,
-            body: JSON.stringify(requestBody),
-          }),
-        async () =>
-          new Response(JSON.stringify({ error: { message: 'DeepSeek circuit is open.' } }), {
-            status: 503,
-            headers: { 'Content-Type': 'application/json' },
-          })
-      );
-      const payload = await response.json().catch(() => null);
+      const { response, payload } = await measure('llm_request', async () => {
+        const response = await executeProviderCircuitGuard(
+          'deepseek',
+          () =>
+            fetch(`${deepSeekUrl}/chat/completions`, {
+              method: 'POST',
+              headers: {
+                Authorization: `Bearer ${DEEPSEEK_API_KEY}`,
+                'Content-Type': 'application/json',
+              },
+              signal: controller.signal,
+              body: JSON.stringify(requestBody),
+            }),
+          async () =>
+            new Response(JSON.stringify({ error: { message: 'DeepSeek circuit is open.' } }), {
+              status: 503,
+              headers: { 'Content-Type': 'application/json' },
+            })
+        );
+        const payload = await response.json().catch(() => null);
+        return { response, payload };
+      });
       if (!response.ok) {
         return {
           ok: false,
@@ -30978,12 +30982,12 @@ async function runDeepSeekChatCompletion(messages = [], params = {}) {
       const toolCalls = Array.isArray(message.tool_calls) ? message.tool_calls : [];
       const answer = String(message.content || extractDeepSeekToolCallAnswer(toolCalls) || '').trim();
       const reasoning = String(message.reasoning_content || '').trim();
-      await recordTokenUsage('deepseek', model, payload?.usage || {}, {
+      await measure('llm_usage', () => recordTokenUsage('deepseek', model, payload?.usage || {}, {
         source: params.source || 'deepseek-strategist',
         callId: params.callId || params.call_id || '',
         leadId: params.leadId || params.lead_id || '',
         responseId: payload?.id || '',
-      });
+      }));
       if (!answer && reasoning) {
         return {
           ok: false,
@@ -42946,6 +42950,8 @@ function recordAvaAssistantPlanOps({
     error: toolOk && qaOk && !safetyBlocked ? '' : (toolResult?.error || qa?.reason || safety?.result || 'assistant_plan_not_completed'),
     metadata: {
       source: 'ava-assistant-chat',
+      diagnostic: source === 'ava-latency-diagnostic',
+      operational: source !== 'ava-latency-diagnostic',
       requestTiming,
       publicMode,
       assistantAction,
@@ -45927,6 +45933,7 @@ async function invokeAgentFromRegistry(params = {}) {
         routedTo,
         outputResult: output?.result || output?.status || '',
         executionEvidence: buildAgentExecutionEvidence({
+          agentId: agent.id,
           payload,
           output,
           durationMs: performance.now() - invocationStartedAt,
@@ -45964,6 +45971,7 @@ async function invokeAgentFromRegistry(params = {}) {
         approvalPolicy: workOrder.approvalPolicy,
         error: error?.message || String(error),
         executionEvidence: buildAgentExecutionEvidence({
+          agentId: agent.id,
           payload,
           output: { ok: false, status: 'failed' },
           durationMs: performance.now() - invocationStartedAt,
@@ -64282,6 +64290,7 @@ async function runInternalAvaDeepSeekChat({
   leadId = '',
   missionController = null,
   memories = [],
+  requestTiming = null,
 } = {}) {
   const prompt = buildAssistantPrompt(assistantContextSession, {
     extraContext: buildInternalAssistantDeepSeekContext(body, {
@@ -64295,6 +64304,7 @@ async function runInternalAvaDeepSeekChat({
   ].filter((message) => message.content);
   let deepSeek = await runDeepSeekChatCompletion(deepSeekMessages, {
     source: 'ava-assistant-chat',
+    requestTiming,
     sessionId,
     leadId,
     model: DEEPSEEK_LIVE_MODEL,
@@ -64312,6 +64322,7 @@ async function runInternalAvaDeepSeekChat({
     const jsonModeResult = deepSeek;
     const textFallback = await runDeepSeekChatCompletion(ensureDeepSeekJsonModeMessages(deepSeekMessages), {
       source: 'ava-assistant-chat-json-mode-fallback',
+      requestTiming,
       sessionId,
       leadId,
       model: DEEPSEEK_LIVE_MODEL,
@@ -64347,6 +64358,7 @@ async function runInternalAvaDeepSeekChat({
     for (const model of retryModels) {
       const modelFallback = await runDeepSeekChatCompletion(ensureDeepSeekJsonModeMessages(deepSeekMessages), {
         source: 'ava-assistant-chat-model-fallback',
+        requestTiming,
         sessionId,
         leadId,
         model,
@@ -64809,7 +64821,8 @@ async function handleInternalAvaAssistantChatRequest(request) {
       activeLeadId: activeAssistantLeadId,
     };
   } else if (assistantPlan.action === 'general' && !answer) {
-    const deepSeekChat = await runInternalAvaDeepSeekChat({
+    const deepSeekChat = await requestTiming.measure('tool_execution', () => runInternalAvaDeepSeekChat({
+      requestTiming,
       assistantContextSession,
       text,
       body,
@@ -64817,7 +64830,7 @@ async function handleInternalAvaAssistantChatRequest(request) {
       leadId: activeAssistantLeadId || assistantContextSession.leadId || '',
       missionController,
       memories: assistantMemories,
-    });
+    }));
     if (deepSeekChat.ok) {
       answer = deepSeekChat.answer;
       toolResult = deepSeekChat.toolResult;
@@ -64973,6 +64986,11 @@ async function handleInternalAvaAssistantChatRequest(request) {
     body: {
       ok: true,
       mode: 'command-center-assistant',
+      measurementClassification: {
+        diagnostic: body.source === 'ava-latency-diagnostic',
+        operational: body.source !== 'ava-latency-diagnostic',
+      },
+      releaseCommit: process.env.RENDER_GIT_COMMIT || '',
       requestTiming: requestTiming.snapshot(),
       answer,
       suggestions: assistantPlan.suggestions || [],

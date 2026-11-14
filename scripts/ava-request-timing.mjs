@@ -4,6 +4,7 @@ const STAGES = new Set([
   'body_read', 'session_read', 'controller_intake', 'intent_plan',
   'controller_planned', 'tool_execution', 'lead_lookup', 'controller_final',
   'controller_final_recheck', 'session_write',
+  'llm_request', 'llm_usage',
 ]);
 
 // Labels are allowlisted; never retain prompts, lead data, or exception messages.

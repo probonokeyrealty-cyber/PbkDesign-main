@@ -2,6 +2,10 @@ import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { PDFParse } from 'pdf-parse';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { isAbsolute, join, relative } from 'node:path';
+import { buildAgentRuntimeSmokeEnv } from './agent-runtime-smoke-isolation.mjs';
 
 const repoRoot = process.cwd();
 const port = String(18820 + Math.floor(Math.random() * 3000));
@@ -13,6 +17,7 @@ async function waitForBridge(baseUrl, timeoutMs = 30_000) {
     try {
       const response = await fetch(`${baseUrl}/health`, {
         headers: { Authorization: `Bearer ${apiKey}` },
+        signal: AbortSignal.timeout(2000),
       });
       if (response.ok) return;
     } catch {
@@ -35,10 +40,13 @@ async function readPdfText(buffer) {
 
 async function main() {
   const baseUrl = `http://127.0.0.1:${port}`;
-  const child = spawn(process.execPath, ['scripts/openclaw-local-server.mjs'], {
+  const stateDir = await mkdtemp(join(tmpdir(), 'pbk-pdf-quality-'));
+  const child = spawn(process.execPath, ['--import', './scripts/agent-runtime-smoke-isolation.mjs', 'scripts/openclaw-local-server.mjs'], {
     cwd: repoRoot,
     env: {
-      ...process.env,
+      ...buildAgentRuntimeSmokeEnv(),
+      PBK_AGENT_SMOKE_ISOLATED: '1',
+      PBK_OPENCLAW_STATE_DIR: stateDir,
       PORT: port,
       HOST: '127.0.0.1',
       PBK_BRIDGE_API_KEY: apiKey,
@@ -50,10 +58,12 @@ async function main() {
       PBK_PDF_FORCE_SIMPLE_FALLBACK: '1',
     },
     stdio: ['ignore', 'pipe', 'pipe'],
+    windowsHide: true,
   });
 
   const stderr = [];
   child.stderr.on('data', (chunk) => stderr.push(String(chunk)));
+  child.stdout.resume();
 
   try {
     await waitForBridge(baseUrl);
@@ -70,6 +80,7 @@ async function main() {
 
     const response = await fetch(`${baseUrl}/api/documents/pdf`, {
       method: 'POST',
+      signal: AbortSignal.timeout(15000),
       headers: {
         Authorization: `Bearer ${apiKey}`,
         'Content-Type': 'application/json',
@@ -105,6 +116,9 @@ async function main() {
   } finally {
     if (!child.killed) child.kill();
     await Promise.race([once(child, 'exit'), new Promise((resolve) => setTimeout(resolve, 2000))]).catch(() => {});
+    const tempRelative = relative(tmpdir(), stateDir);
+    assert.ok(tempRelative && !tempRelative.startsWith('..') && !isAbsolute(tempRelative));
+    await rm(stateDir, { recursive: true, force: true });
     if (child.exitCode && child.exitCode !== 0) {
       console.warn(stderr.join('').split('\n').slice(-8).join('\n'));
     }

@@ -1,5 +1,6 @@
 import { strict as assert } from 'node:assert';
 import { readFileSync } from 'node:fs';
+import { requiredAgentRegistryIds } from './agent-registry.mjs';
 
 import {
   clearPBKIntelligenceContextSessions,
@@ -13,6 +14,7 @@ import {
 clearPBKIntelligenceContextSessions();
 
 const baseInput = {
+  lastSyncAt: new Date().toISOString(),
   lead: {
     id: 'lead-123',
     leadName: 'Diane Seller',
@@ -49,15 +51,7 @@ const baseInput = {
       action: 'jump',
     },
   },
-  agents: [
-    { id: 'ava' },
-    { id: 'rex' },
-    { id: 'qa-agent' },
-    { id: 'script-rotator' },
-    { id: 'prosody-tuner' },
-    { id: 'nurture-agent' },
-    { id: 'call-analyzer' },
-  ],
+  agents: requiredAgentRegistryIds.map((id) => ({ id })),
 };
 
 const firstResult = await withPBKIntelligenceContext(

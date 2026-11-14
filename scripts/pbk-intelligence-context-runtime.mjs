@@ -52,8 +52,15 @@ function contextAgeMs(context = {}, now = Date.now()) {
 
 function buildRefreshInput(context = {}, options = {}) {
   const input = options.input && typeof options.input === 'object' ? options.input : {};
-  const identity = context.identity && typeof context.identity === 'object' ? context.identity : {};
-  const callState = context.callState && typeof context.callState === 'object' ? context.callState : {};
+  const identity = input.identity || context.identity || {};
+  const callState = input.callState || context.callState || {};
+  let lastSyncAt = context.dataFreshness?.lastSyncAt ?? context.lastSyncAt ?? null;
+  // Rebuilding a packet is not a source read; preserve explicit missing evidence too.
+  if (Object.hasOwn(input, 'lastSyncAt')) lastSyncAt = input.lastSyncAt ?? null;
+  else if (Object.hasOwn(input, 'last_sync_at')) lastSyncAt = input.last_sync_at ?? null;
+  else if (input.dataFreshness && Object.hasOwn(input.dataFreshness, 'lastSyncAt')) {
+    lastSyncAt = input.dataFreshness.lastSyncAt ?? null;
+  }
   return {
     leadId: options.leadId || input.leadId || input.lead_id || identity.leadId,
     callId: options.callId || input.callId || input.call_id || identity.callId || callState.callId,
@@ -81,7 +88,10 @@ function buildRefreshInput(context = {}, options = {}) {
     turnContract: input.turnContract || context.turnContract,
     agents: input.agents || options.agents || context.agents || [],
     outcome: context.outcome,
-    lastSyncAt: new Date().toISOString(),
+    lastSyncAt,
+    leadStale: input.leadStale ?? input.lead_stale ?? input.dataFreshness?.leadStale ?? context.dataFreshness?.leadStale,
+    memoryStale: input.memoryStale ?? input.dataFreshness?.memoryStale ?? input.memory?.stale ?? context.dataFreshness?.memoryStale,
+    skillsStale: input.skillsStale ?? input.dataFreshness?.skillsStale ?? input.skills?.stale ?? context.dataFreshness?.skillsStale,
     workspaceId: input.workspaceId || input.workspace_id || context.workspaceId,
     contextId: context.contextId,
   };

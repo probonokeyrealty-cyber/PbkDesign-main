@@ -35,6 +35,7 @@ const Settings = lazy(() =>
     default: module.Settings,
   }))
 );
+const PropertyLog = lazy(() => import('../routes/PropertyLog').then(module=>({default:module.PropertyLog})));
 const AgentFleet = lazy(() =>
   loadCurrentRoute(() => import('../routes/AgentFleet')).then((module) => ({
     default: module.AgentFleet,
@@ -103,6 +104,7 @@ const router = createBrowserRouter(
         { path: 'agent-console', element: <AvaChat /> },
         { path: 'ava-chat', element: <AvaChat /> },
         { path: 'settings', element: <Settings /> },
+        { path: 'property-log', element: <PropertyLog /> },
         { path: '*', element: <NotFound /> },
       ],
     },

@@ -63,6 +63,7 @@ const shellHistoryPaths = new Set([
   '/skill-studio',
   '/analytics',
   '/settings',
+  '/property-log',
   '/campaigns',
   '/agent',
   '/agent-console',
@@ -198,6 +199,7 @@ export default defineConfig({
         main: path.resolve(__dirname, 'index.html'),
         analyzer: path.resolve(__dirname, 'analyzer.html'),
         shell: path.resolve(__dirname, 'index.shell.html'),
+        investor: path.resolve(__dirname, 'investor-portal.html'),
       },
       output: {
         manualChunks(id) {

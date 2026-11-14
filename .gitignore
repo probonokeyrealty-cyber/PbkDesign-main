@@ -37,3 +37,6 @@ PBK_UNIFIED_PRODUCTION_PATCH_2026-05-23.patch
 
 .DS_Store
 Thumbs.db
+
+# Supabase CLI local project metadata
+supabase/.temp/

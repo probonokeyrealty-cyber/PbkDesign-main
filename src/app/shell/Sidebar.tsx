@@ -21,6 +21,7 @@ export const SHELL_NAV_ITEMS: Array<{ to: string; label: string; icon: typeof La
   { to: '/', label: 'Command Center', icon: LayoutDashboard },
   { to: '/leads', label: 'Leads', icon: Users },
   { to: '/deal', label: 'Deal', icon: Briefcase },
+  { to: '/property-log', label: 'Property log', icon: ClipboardCheck },
   { to: '/inbox', label: 'Inbox', icon: InboxIcon },
   { to: '/fleet', label: 'Agent Fleet', icon: Bot },
   { to: '/memory', label: 'Memory', icon: BrainCircuit },

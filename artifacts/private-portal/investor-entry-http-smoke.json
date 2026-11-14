@@ -1,0 +1,38 @@
+{
+  "checkedAt": "2026-11-14T03:16:31.424Z",
+  "investor": "https://pbk-investors-staging.netlify.app",
+  "staff": "https://pbk-investor-staging--pbkcenter.netlify.app",
+  "checks": [
+    {
+      "path": "/",
+      "status": 200,
+      "anonymousShell": true
+    },
+    {
+      "path": "/investor-portal.html",
+      "status": 200,
+      "anonymousShell": true
+    },
+    {
+      "path": "/property-log",
+      "status": 404
+    },
+    {
+      "path": "/index.shell.html",
+      "status": 404
+    },
+    {
+      "path": "/api/health",
+      "status": 404
+    },
+    {
+      "path": "/state",
+      "status": 404
+    },
+    {
+      "staffPropertyLog": true,
+      "status": 401
+    }
+  ],
+  "cookiesOrAuthorizationSent": false
+}

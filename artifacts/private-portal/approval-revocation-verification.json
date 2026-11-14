@@ -1,0 +1,63 @@
+{
+  "checkedAt": "2026-11-14T03:29:52.776Z",
+  "phase": "verify-expiry",
+  "qaEmail": "pbk.qa.approval.20261113@example.com",
+  "propertyId": "2724b9aa-af79-4efb-9741-830f0e7f5d76",
+  "checks": [
+    "Unapproved verified QA identity cannot sign in",
+    "Reviewer approval succeeds through the protected staff action",
+    "Approved QA identity can sign in",
+    "Approved investor sees the released house without internal notes",
+    "Approved investor PDF download matches the owned QA fixture",
+    "Reviewer revocation succeeds",
+    "Revoked existing session denied: session",
+    "Revoked existing session denied: list",
+    "Revoked existing session denied: property",
+    "Revoked existing session denied: file",
+    "Revoked existing session denied: saved",
+    "Revoked existing session denied: inquiries",
+    "Omitting Origin does not bypass revoked membership",
+    "Revoked verified identity cannot start a new portal session",
+    "Previously issued PDF URL denied after its 60-second lifetime",
+    "Approval and revocation audit history retained",
+    "QA investor remains revoked at end of test"
+  ],
+  "preRevocationLink": 200,
+  "expiredPdfStatus": 400,
+  "existingLinkExpiresAt": "2026-11-14T03:29:38.000Z",
+  "finalInvestorStatus": "Revoked",
+  "outreach": false,
+  "productionChanges": false,
+  "browser": {
+    "initiallyDenied": true,
+    "approvedHouseVisible": true,
+    "approvedPdfControlWorked": true,
+    "revokedPdfRequestDenied": true,
+    "revokedHouseControls": 0,
+    "revokedPdfControls": 0,
+    "staffShowsNotApproved": true,
+    "sessionsEnded": true
+  },
+  "environment": [
+    {
+      "name": "pbk-investors-staging",
+      "id": "7d2d0593-795c-4cd6-a5ab-51abcf7b0d1f",
+      "deploy": "6af7cff476e236b1805b6fb2",
+      "deployUnchanged": true,
+      "visitorAccessUnchanged": true
+    },
+    {
+      "name": "pbkcenter",
+      "id": "87711eb9-2a9f-40b4-92c6-0f8075151ff0",
+      "deploy": "6af7d086370813a89ab209a6",
+      "deployUnchanged": true,
+      "visitorAccessUnchanged": true
+    }
+  ],
+  "audit": {
+    "approvalEvents": 1,
+    "revocationEvents": 2,
+    "historyPreserved": true
+  },
+  "configurationChanges": []
+}

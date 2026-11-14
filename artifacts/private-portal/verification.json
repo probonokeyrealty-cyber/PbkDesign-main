@@ -1,0 +1,36 @@
+{
+  "date": "2026-11-14T02:54:07.275Z",
+  "stage": "https://pbk-investor-staging--pbkcenter.netlify.app",
+  "frontendDeploy": "6af7c97681ba7d4a8796a6dc",
+  "backendVersion": 6,
+  "productionDeployUnchanged": "6af7c732d1721e237426ebd8",
+  "reviewerEmail": "probonokeyrealty@gmail.com",
+  "domainClientUploadTests": "20/20",
+  "hostedApiChecks": "18/18",
+  "mobileWidths": [
+    390,
+    320
+  ],
+  "browserUpload": "PNG and PDF uploaded through Windows native picker; released version 2 opened by investor in Chrome",
+  "browserInquiry": "e07af035-306b-4ea7-a878-cda0f3375c43",
+  "browserInquiryCount": 1,
+  "browserInquiryVersion": 2,
+  "pendingUploads": 0,
+  "unreferencedStorageObjects": 0,
+  "bucketPublic": false,
+  "anonymousTableSelect": false,
+  "hostedBridgeReadOnlyHealth": {
+    "status": 200,
+    "ok": true,
+    "crmSyncReady": true
+  },
+  "liveCrmOrCalendlySubmission": false,
+  "outreach": false,
+  "webflowPublication": false,
+  "productionChanges": false,
+  "limitations": [
+    "Existing Netlify team SSO remains enabled for this staging deployment.",
+    "Signed URLs may remain valid for 60 seconds after issue.",
+    "Previous isolated broader bridge offline smoke did not pass; hosted portal and read-only health checks passed."
+  ]
+}

@@ -34,6 +34,9 @@ const pbkBuildId =
   process.env.GITHUB_SHA ||
   `${Date.now()}`
 
+const portalEnvironment = process.env.PBK_PORTAL_ENV || (process.env.NODE_ENV === 'production' ? 'live' : 'staging')
+if (!['live', 'staging'].includes(portalEnvironment)) throw Error('Invalid PBK portal environment')
+
 function figmaAssetResolver() {
   return {
     name: 'figma-asset-resolver',
@@ -63,6 +66,7 @@ const shellHistoryPaths = new Set([
   '/skill-studio',
   '/analytics',
   '/settings',
+  '/property-log',
   '/campaigns',
   '/agent',
   '/agent-console',
@@ -108,6 +112,7 @@ function pbkBuildManifest() {
         source: JSON.stringify(
           {
             buildId: pbkBuildId,
+            portalEnvironment,
             generatedAt: new Date().toISOString(),
           },
           null,
@@ -121,6 +126,7 @@ function pbkBuildManifest() {
 export default defineConfig({
   define: {
     __PBK_BUILD_ID__: JSON.stringify(pbkBuildId),
+    __PBK_PORTAL_ENV__: JSON.stringify(portalEnvironment),
   },
   plugins: [
     figmaAssetResolver(),
@@ -198,6 +204,7 @@ export default defineConfig({
         main: path.resolve(__dirname, 'index.html'),
         analyzer: path.resolve(__dirname, 'analyzer.html'),
         shell: path.resolve(__dirname, 'index.shell.html'),
+        investor: path.resolve(__dirname, 'investor-portal.html'),
       },
       output: {
         manualChunks(id) {

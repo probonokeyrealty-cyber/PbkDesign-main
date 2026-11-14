@@ -32,6 +32,20 @@ timeout = 25
     Cache-Control = "public, max-age=31536000, immutable"
 
 [[headers]]
+  for = "/investor-portal.html"
+  [headers.values]
+    Cache-Control = "no-store"
+    X-Robots-Tag = "noindex, nofollow"
+    Content-Security-Policy = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; img-src 'self' data:; font-src 'self' https://fonts.gstatic.com; connect-src 'self' https://asumndiooctluuecydhj.supabase.co; frame-ancestors 'none'"
+
+[[headers]]
+  for = "/property-log"
+  [headers.values]
+    Cache-Control = "no-store"
+    X-Robots-Tag = "noindex, nofollow"
+    Content-Security-Policy = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; img-src 'self' data: https:; font-src 'self' data: https://fonts.gstatic.com; connect-src 'self' https://pbk-openclaw-bridge.onrender.com wss://pbk-openclaw-bridge.onrender.com https://asumndiooctluuecydhj.supabase.co; frame-ancestors 'none'"
+
+[[headers]]
   for = "/*.woff2"
   [headers.values]
     Cache-Control = "public, max-age=31536000, immutable"
@@ -234,6 +248,12 @@ timeout = 25
 [[redirects]]
 from = "/api/documents/pdf"
 to = "/.netlify/functions/documents-pdf"
+status = 200
+force = true
+
+[[redirects]]
+from = "/property-log"
+to = "/index.shell.html"
 status = 200
 force = true
 

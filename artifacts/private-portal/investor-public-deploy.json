@@ -1,0 +1,16 @@
+{
+  "siteId": "7d2d0593-795c-4cd6-a5ab-51abcf7b0d1f",
+  "deployId": "6af7cff476e236b1805b6fb2",
+  "url": "https://pbk-investors-staging.netlify.app",
+  "state": "ready",
+  "files": [
+    "/404.html",
+    "/assets/investor-portal-Bl-8HL_W.js",
+    "/assets/investor-portal-P_rzNbaN.css",
+    "/investor-portal.html",
+    "/robots.txt",
+    "/_headers",
+    "/_redirects"
+  ],
+  "existingProductionDeployUnchanged": "6af7c732d1721e237426ebd8"
+}

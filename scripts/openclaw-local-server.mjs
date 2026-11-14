@@ -18,12 +18,13 @@ import { lookupAttomPropertyPreview } from './attom-property-preview.mjs';
 import { applyAgentVersionRollback, buildAgentRegistrySnapshot, buildAgentVersionSnapshot, buildDefaultAgentRegistry, buildStableAgentFleetMeasurement, findAgentsByCapability, invokeRegisteredAgent, mergeAgentRegistryRecords, normalizeAgentRegistryId, normalizeAgentRegistryRecord, validateAgentVersionSnapshot } from './agent-registry.mjs';
 import { buildAgentExecutionEvidence, collectAgentFleetEvidence, isNonOperationalAgentEvidence, isAgentHandlerCompletion } from './agent-fleet-measurement.mjs';
 import { controlledExecution, createControlledPool, createScopedState, assertControlledToolAllowed } from './controlled-execution-scope.mjs';
-import { createControlledAgentStorage, saveControlledAgentResult, readControlledAgentQualification } from './controlled-agent-storage.mjs';
+import { createControlledAgentStorage, saveControlledAgentResult, readControlledAgentQualification, readControlledWorkflowPredecessor } from './controlled-agent-storage.mjs';
+import { runControlledAgentWorkflow } from './controlled-agent-workflow.mjs';
 import { createAvaRequestTiming } from './ava-request-timing.mjs';
 import { createBackgroundPersistence } from './background-persistence.mjs';
 import { createPoolSchemaInitializer } from './pool-schema-initializer.mjs';
 import { observeUsagePersistence } from './ava-accounting-status.mjs';
-import { buildAvaDecisionMessages } from './ava-decision-messages.mjs';
+import { buildAvaDecisionMessages, isAvaCompactDecisionSafe } from './ava-decision-messages.mjs';
 import { EventTypes, getEventBusStatus, publishEvent as publishEventBusEvent } from './event-bus/streams.mjs';
 import { buildRexKpiSnapshot, proposeAutonomousRexGoals, selectRexProactiveLeadAction } from './rex-autonomy.mjs';
 import { recordScriptOutcomeStats, selectContextAwareScript } from './context-aware-script-rotator.mjs';
@@ -30896,6 +30897,16 @@ async function runDeepSeekChatCompletion(messages = [], params = {}) {
               leadId: params.leadId || params.lead_id || '',
               responseId: payload?.id || '',
             })));
+            if (payload?.choices?.[0]?.finish_reason === 'length' || payload?.choices?.[0]?.finish_reason === 'content_filter') {
+              return {
+                ok: false,
+                result: 'provider_incomplete_response',
+                provider: buildProviderMeta({ finishReason: payload.choices[0].finish_reason }),
+                error: 'DeepSpec did not finish a complete response.',
+                usage: payload?.usage || null,
+                responseId: payload?.id || '',
+              };
+            }
             if (!answer && reasoning) {
               speculativeMeta.used = false;
               speculativeMeta.reason = 'reasoning_only';
@@ -31029,6 +31040,16 @@ async function runDeepSeekChatCompletion(messages = [], params = {}) {
         leadId: params.leadId || params.lead_id || '',
         responseId: payload?.id || '',
       })));
+      if (payload?.choices?.[0]?.finish_reason === 'length' || payload?.choices?.[0]?.finish_reason === 'content_filter') {
+        return {
+          ok: false,
+          result: 'provider_incomplete_response',
+          provider: buildProviderMeta({ finishReason: payload.choices[0].finish_reason }),
+          error: 'DeepSeek did not finish a complete response.',
+          usage: payload?.usage || null,
+          responseId: payload?.id || '',
+        };
+      }
       if (!answer && reasoning) {
         return {
           ok: false,
@@ -45772,13 +45793,18 @@ async function checkAgentRegistryHealth({ persist = false } = {}) {
 
 function getLocalAgentRegistryHandlers() {
   return {
-    ava: async (payload = {}) =>
-      toolHandlers.runAgentCommand({
+    ava: async (payload = {}) => {
+      if (controlledExecution.getStore()) {
+        const response = await toolHandlers.getAvaConversationIntelligence(payload);
+        return { ok: response?.ok === true, routedTo: 'ava_conversation_intelligence', response };
+      }
+      return toolHandlers.runAgentCommand({
         ...payload,
         command: payload.command || payload.query || 'Summarize Ava live-call readiness.',
         actor: payload.actor || 'Agent Registry',
         source: payload.source || 'agent-registry',
-      }),
+      });
+    },
     max: async (payload = {}) => {
       const query = String(payload.query || payload.command || payload.transcript || '').trim();
       const closing = await toolHandlers.retrieveClosingIntelligence({
@@ -45810,6 +45836,8 @@ function getLocalAgentRegistryHandlers() {
     hermes: async (payload = {}) => {
       if (payload.action === 'analyze_patterns') {
         const pattern = induceWorkflowMemoryCore({ transcript: payload.transcript });
+        if (controlledExecution.getStore() && payload.stoppingResult?.result === 'halt')
+          pattern.workflow.steps.unshift(payload.stoppingResult.intervention);
         return { ok: pattern.ok === true, result: 'hermes_pattern_analysis', provider: 'pbk-local-pattern-analysis', pattern,
           strategy: pattern.workflow.steps.join(' '), safety: { suggestOnly: true, providerWrites: 'blocked' } };
       }
@@ -45940,7 +45968,7 @@ async function executeControlledAgentQualification() {
     const fixture = storage.fixture;
     const marker = { diagnostic: true, operational: false, source: 'controlled-qualification', runId: storage.runId };
     const lead = { id: fixture.leadId, leadId: fixture.leadId, name: fixture.leadName, leadName: fixture.leadName,
-      phone: '', email: '', address: '', bant: fixture.bant, stage: 'warm', updatedAt: fixture.sourceUpdatedAt, ...marker };
+      phone: '', email: '', address: '', bant: fixture.bant, updatedAt: fixture.sourceUpdatedAt, ...marker };
     fixtureState.leads = [lead];
     fixtureState.leadImports = [lead];
     fixtureState.calls = [{ id: fixture.callId, leadId: fixture.leadId, leadName: fixture.leadName, transcript: fixture.transcript,
@@ -45948,51 +45976,29 @@ async function executeControlledAgentQualification() {
     fixtureState.brainDocs = [{ id: `${storage.runId}-source`, title: 'Controlled seller relocation deadline', source: 'controlled-qualification',
       citation: `controlled-qualification:${storage.runId}`, summary: fixture.transcript, content: fixture.transcript, createdAt: fixture.sourceUpdatedAt }];
     const common = { ...marker, leadId: fixture.leadId, callId: fixture.callId, leadName: fixture.leadName,
-      transcript: fixture.transcript, bant: fixture.bant, selectedPath: 'cash', seller_type: 'seller',
-      readOnly: true, noProviderWrites: true, remember: false, synthesize: false, stage: 'warm', phone: '', email: '', score: 65 };
-    const cases = [
-      ['ava', { command: 'Ava, explain BANT before giving an offer.' }],
-      ['bant-enforcer', {}],
-      ['max', { query: 'I need to understand the cash sale process before deciding.' }],
-      ['script-rotator', { query: 'I need to think about the cash sale process.' }],
-      ['prosody-tuner', { text: 'I am worried about moving in thirty days.', emotion: 'worried' }],
-      ['call-analyzer', { limit: 1 }],
-      ['hermes', { action: 'analyze_patterns' }],
-      ['research-orchestrator', { query: 'Evaluate safety and stop risk.', transcript: 'Seller: Stop calling and remove me.' }],
-      ['nurture-agent', {}],
-      ['rex', { query: 'Explain the controlled seller relocation deadline.', conversational: false }],
-    ];
-    let nurtureOutput = null;
-    for (const [agentId, payload] of cases) {
-      const scope = { ...storage, agentId, state: fixtureState, blockedNetwork: 0, blockedSql: 0 };
+      selectedPath: 'cash', seller_type: 'seller',
+      readOnly: true, noProviderWrites: true, remember: false, synthesize: false, phone: '', email: '' };
+    await runControlledAgentWorkflow({ fixture,
+      readPrevious: agentId => readControlledWorkflowPredecessor(pool, storage, agentId),
+      execute: async (agentId, payload, workflowLink) => {
+      const scope = { ...storage, agentId, workflowInput: payload, state: fixtureState, blockedNetwork: 0, blockedSql: 0 };
       scope.pool = createControlledPool(pool, scope);
-      await controlledExecution.run(scope, async () => {
+      return controlledExecution.run(scope, async () => {
+        // The call analyzer reads the fixture call, rather than payload.transcript.
+        if (agentId === 'call-analyzer') fixtureState.calls[0].transcript = payload.transcript;
         const result = await invokeAgentFromRegistry({ agentId, payload: { ...common, ...payload } });
         await scope.pool.drain();
-        if (agentId === 'nurture-agent') nurtureOutput = result.output;
-        if (agentId === 'bant-enforcer' && result.output?.complete) common.bant = result.output.bant;
         const evidence = result.agentTask?.metadata?.executionEvidence || {};
         const data = { agentId, runId: storage.runId, leadId: fixture.leadId, callId: fixture.callId,
           sourceUpdatedAt: fixture.sourceUpdatedAt, contextId: result.pbkIntelligenceContext?.contextId || '',
           workOrderId: result.workOrder?.id || '', completedAt: evidence.completedAt || isoNow(),
-          outputResult: [result.output?.result, result.output?.routedTo, result.output?.status].find(value => typeof value === 'string' && value.trim()) || (agentId === 'rex' && isAgentHandlerCompletion(agentId, result.output) ? 'rex_sourced_answer' : 'handler_failed'),
+          outputResult: [result.output?.result, result.output?.routedTo, result.output?.status, result.output?.qa?.validator].find(value => typeof value === 'string' && value.trim()) || (agentId === 'rex' && isAgentHandlerCompletion(agentId, result.output) ? 'rex_sourced_answer' : 'handler_failed'),
+          workflowLink,
           blockedSql: scope.blockedSql, blockedNetwork: scope.blockedNetwork, operational: false };
         await controlledExecution.exit(() => saveControlledAgentResult(pool, storage, agentId, data, result.output || {}, result.pbkIntelligenceContext || {}));
+        return { output: result.output, workOrderId: data.workOrderId };
       });
-    }
-    // QA validates an actual preceding handler result, not a fabricated success payload.
-    const scope = { ...storage, agentId: 'qa-agent', state: fixtureState, blockedNetwork: 0, blockedSql: 0 };
-    scope.pool = createControlledPool(pool, scope);
-    await controlledExecution.run(scope, async () => {
-      const result = await invokeAgentFromRegistry({ agentId: 'qa-agent', payload: { ...common, toolName: 'consultNurtureAgent', params: common, result: nurtureOutput } });
-      await scope.pool.drain();
-      const evidence = result.agentTask?.metadata?.executionEvidence || {};
-      const data = { agentId: 'qa-agent', runId: storage.runId, leadId: fixture.leadId, callId: fixture.callId, sourceUpdatedAt: fixture.sourceUpdatedAt,
-        contextId: result.pbkIntelligenceContext?.contextId || '', workOrderId: result.workOrder?.id || '',
-        completedAt: evidence.completedAt || isoNow(), outputResult: result.output?.result?.result || result.output?.qa?.validator || 'handler_failed',
-        blockedSql: scope.blockedSql, blockedNetwork: scope.blockedNetwork, operational: false };
-      await controlledExecution.exit(() => saveControlledAgentResult(pool, storage, 'qa-agent', data, result.output || {}, result.pbkIntelligenceContext || {}));
-    });
+    } });
     return await readControlledAgentQualification(pool, storage.runId);
   } finally { controlledQualificationRunning = false; }
 }
@@ -46022,7 +46028,7 @@ async function invokeAgentFromRegistry(params = {}) {
     requestedId,
   });
   const scope = controlledExecution.getStore();
-  if (scope) workOrder.payload = { leadId: scope.fixture.leadId, callId: scope.fixture.callId, runId: scope.runId, diagnostic: true, operational: false };
+  if (scope) workOrder.payload = { ...scope.workflowInput, leadId: scope.fixture.leadId, callId: scope.fixture.callId, runId: scope.runId, diagnostic: true, operational: false };
   let agentTask = null;
   try {
     agentTask = await recordAgentHandoffTask({
@@ -64550,6 +64556,17 @@ async function runInternalAvaDeepSeekChat({
   const deepSeekDecision = parseAvaDeepSeekDecisionAnswer(deepSeek.answer);
   const finalAnswer = deepSeekDecision.reply || deepSeek.answer || '';
   const usagePersistence = deepSeek.provider?.usagePersistence || null;
+  if (deepSeek.ok && !isAvaCompactDecisionSafe(deepSeek.answer)) {
+    return {
+      ok: false, answer: '', usagePersistence,
+      toolResult: {
+        ok: false, result: 'provider_invalid_decision',
+        provider: deepSeek.provider || null,
+        error: 'DeepSeek did not return a valid safe decision contract.',
+        attempts: deepSeek.attempts || [],
+      },
+    };
+  }
   if (deepSeek.ok && isPublicAvaBrainAnswerSafe(finalAnswer)) {
     return {
       ok: true,

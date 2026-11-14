@@ -3,6 +3,7 @@ import { isDeepStrictEqual } from 'node:util';
 import { parse, toSql } from 'pgsql-ast-parser';
 import { remapControlledSql } from './controlled-execution-scope.mjs';
 import { isAgentHandlerCompletion } from './agent-fleet-measurement.mjs';
+import { controlledWorkflowOrder, verifyControlledWorkflowLink } from './controlled-agent-workflow.mjs';
 
 const TABLES = ['bridge_state', 'pbk_tasks', 'agent_ops', 'pbk_agent_decisions', 'pbk_qa_audit', 'pbk_call_analyses', 'lead_profiles', 'pbk_knowledge', 'pbk_memories', 'pbk_tool_usage', 'pbk_research_additive_runs', 'pbk_feedback', 'pbk_intent_events', 'calls'];
 const identifier = (value) => {
@@ -66,6 +67,19 @@ export async function saveControlledAgentResult(pool, storage, agentId, data, ou
     [agentId, JSON.stringify(data), JSON.stringify(output), JSON.stringify(context)]);
 }
 
+export async function readControlledWorkflowPredecessor(pool, storage, agentId) {
+  const report = await readControlledAgentQualification(pool, storage.runId);
+  const evidence = report.agents.find(agent => agent.agentId === agentId);
+  const prefix = controlledWorkflowOrder.slice(0, controlledWorkflowOrder.indexOf(agentId) + 1);
+  if (!evidence || !prefix.every(id => {
+    const agent = report.agents.find(item => item.agentId === id);
+    return agent?.completed && agent.durable && agent.workflowLinkVerified && Object.values(agent.criteria).every(value => value === true);
+  })) throw new Error('controlled_workflow_predecessor_unverified');
+  const result = (await pool.query(`SELECT data,output FROM ${identifier(storage.schema)}.qualification_results WHERE agent_id=$1`, [agentId])).rows[0];
+  if (!result || result.data.runId !== storage.runId || result.data.agentId !== agentId) throw new Error('controlled_workflow_predecessor_missing');
+  return { agentId, workOrderId: result.data.workOrderId, output: result.output };
+}
+
 export async function readControlledAgentQualification(pool, runId) {
   const schema = controlledSchemaForRun(runId);
   const source = (await pool.query(`SELECT data,source_at,revision FROM ${identifier(schema)}.qualification_fixture WHERE id=$1`, [runId])).rows[0];
@@ -95,13 +109,20 @@ export async function readControlledAgentQualification(pool, runId) {
       && data.completedAt === completedAt && Number.isFinite(Date.parse(completedAt))
       && Date.parse(completedAt) >= Date.parse(sourceUpdatedAt) && Date.parse(completedAt) <= new Date(result.completed_at).getTime());
     const semantic = isAgentHandlerCompletion(result.agent_id, output);
+    const sequence = controlledWorkflowOrder.indexOf(result.agent_id);
+    const predecessor = sequence > 0 ? results.find(item => item.agent_id === controlledWorkflowOrder[sequence - 1]) : null;
+    const workflowLinkVerified = (!predecessor || new Date(predecessor.completed_at).getTime() <= new Date(task?.created_at).getTime()) && verifyControlledWorkflowLink(result.agent_id, source.data,
+      predecessor ? { agentId: predecessor.agent_id, workOrderId: predecessor.data.workOrderId, output: predecessor.output } : null,
+      data.workflowLink, task?.metadata?.workOrder?.payload);
     const evidenceRecordIds = correlated ? [task.id, `${runId}:${result.agent_id}`] : [];
     const row = async (table, id) => (await pool.query(`SELECT * FROM ${identifier(schema)}.${identifier(table)} WHERE id=$1`, [id])).rows[0];
     let criteria = {};
     switch (result.agent_id) {
       case 'ava': criteria = { conversationalResponse: semantic }; break;
       case 'rex': criteria = { strategyAnswer: semantic, sourceEvidence: semantic && output.citations.includes(`controlled-qualification:${runId}`) }; break;
-      case 'hermes': criteria = { patternAnalysisExecuted: semantic, suggestOnly: output.safety?.suggestOnly === true }; break;
+      case 'hermes': criteria = { patternAnalysisExecuted: semantic, suggestOnly: output.safety?.suggestOnly === true,
+        stoppingInterventionLearned: Boolean(predecessor?.output.result === 'halt'
+          && output.pattern?.workflow?.steps?.includes(predecessor.output.intervention)) }; break;
       case 'bant-enforcer': criteria = { allFieldsComplete: semantic }; break;
       case 'max': criteria = { closingAdvice: semantic, approvalGatePreserved: output.safety?.approvalGate === true }; break;
       case 'prosody-tuner': {
@@ -123,7 +144,10 @@ export async function readControlledAgentQualification(pool, runId) {
       }
       case 'call-analyzer': {
         const analysis = output.analyses?.length === 1 ? await row('pbk_call_analyses', output.analyses[0].id) : null;
-        const persisted = Boolean(analysis?.call_id === fixture.callId && analysis.lead_id === fixture.leadId && analysis.status === 'analyzed');
+        const persisted = Boolean(analysis?.call_id === fixture.callId && analysis.lead_id === fixture.leadId && analysis.status === 'analyzed'
+          && Number(analysis.score) === output.analyses?.[0]?.score
+          && analysis.transcript === output.analyses?.[0]?.transcript
+          && typeof analysis.transcript === 'string' && analysis.transcript.includes(JSON.stringify(predecessor?.output.prosody)));
         if (persisted) evidenceRecordIds.push(analysis.id);
         criteria = { fixtureOnlyAnalysis: semantic && output.analyses.length === 1 && output.analyses[0].callId === fixture.callId, analysisPersisted: persisted };
         break;
@@ -131,7 +155,9 @@ export async function readControlledAgentQualification(pool, runId) {
       case 'nurture-agent': {
         const profile = await row('lead_profiles', fixture.leadId);
         const scheduled = (await pool.query(`SELECT count(*)::int AS n FROM ${identifier(schema)}.lead_profiles WHERE phone<>'' OR email<>''`)).rows[0].n;
-        const persisted = Boolean(profile?.id === fixture.leadId && profile.source === 'controlled-qualification' && !profile.phone && !profile.email);
+        const persisted = Boolean(profile?.id === fixture.leadId && profile.source === 'controlled-qualification' && !profile.phone && !profile.email
+          && Number(profile.engagement_score) === predecessor?.output.analyses?.[0]?.score
+          && output.lead?.score === predecessor?.output.analyses?.[0]?.score);
         if (persisted) evidenceRecordIds.push(profile.id);
         criteria = { fixtureProfilePersisted: persisted, recommendationProduced: semantic, noSendScheduled: scheduled === 0 && data.blockedNetwork === 0 };
         break;
@@ -158,7 +184,8 @@ export async function readControlledAgentQualification(pool, runId) {
       completionTimeMatch: data.completedAt === completedAt && Number.isFinite(Date.parse(completedAt))
         && Date.parse(completedAt) >= Date.parse(sourceUpdatedAt) && Date.parse(completedAt) <= new Date(result.completed_at).getTime(),
     };
-    agents.push({ ...data, agentId: result.agent_id, completed: correlated && semantic, durable: correlated, criteria, evidenceRecordIds, correlationChecks });
+    agents.push({ ...data, agentId: result.agent_id, completed: correlated && semantic, durable: correlated,
+      workflowLinkVerified, criteria, evidenceRecordIds, correlationChecks });
   }
   return {
     schemaVersion: 'pbk-controlled-qualification-v1', source: 'controlled-qualification', runId,
@@ -166,6 +193,8 @@ export async function readControlledAgentQualification(pool, runId) {
     guard: { atomic: true, noContact: true, externalWritesBlocked: true, fixtureOnly: true },
     storage: { backend: 'postgres', readbackVerified: true, schema, handlerTablesIsolated: true },
     fixture, agents,
+    workflow: { order: [...controlledWorkflowOrder], linkedAgentCount: agents.filter(agent => agent.workflowLinkVerified && agent.completed && agent.durable).length,
+      crossAgentWorkflowVerified: agents.length === controlledWorkflowOrder.length && agents.every(agent => agent.workflowLinkVerified && agent.completed && agent.durable && Object.values(agent.criteria).every(value => value === true)) },
     sourceAgeMs: Math.max(0, Date.now() - Date.parse(sourceUpdatedAt)),
     sourceExpired: Date.now() - Date.parse(sourceUpdatedAt) > 60000,
   };

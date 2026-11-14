@@ -3,17 +3,55 @@ import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 import { test } from '@jest/globals';
 import { buildAssistantPrompt } from './ava-assistant-chat.mjs';
-import { buildAvaDecisionMessages } from './ava-decision-messages.mjs';
+import { buildAvaDecisionMessages, isAvaCompactDecisionSafe } from './ava-decision-messages.mjs';
+
+test('decision contract avoids generating invented work and repeated conversational metadata', () => {
+  const contract = buildAvaDecisionMessages('approval-gated', 'Explain your role')[1].content;
+  assert(contract.includes('compact JSON'));
+  assert(contract.includes('nextAction=""'));
+  assert(contract.includes('missionTimeline=[]'));
+  assert(contract.includes('Do not omit required fields'));
+});
+
+test('compact no-tool decisions cannot hide action or approval proposals', () => {
+  const answer = { reply: 'A specific answer.', decision: 'answer', confidence: 0.8, nextAction: '', missionTimeline: [], needsApproval: false, toolIntent: null };
+  assert.equal(isAvaCompactDecisionSafe(JSON.stringify(answer)), true);
+  for (const decision of ['act', 'delegate', 'approval_required']) {
+    assert.equal(isAvaCompactDecisionSafe(JSON.stringify({ ...answer, decision })), false);
+  }
+  assert.equal(isAvaCompactDecisionSafe(JSON.stringify({ ...answer, needsApproval: true })), false);
+  assert.equal(isAvaCompactDecisionSafe(JSON.stringify({ ...answer, needs_approval: true })), false);
+  assert.equal(isAvaCompactDecisionSafe(JSON.stringify({ ...answer, toolIntent: { providerWrite: true } })), false);
+  const write = { ...answer, decision: 'act', toolIntent: { name: 'telnyx_sms', providerWrite: true, summary: 'Proposed only', paramsJson: '{}' } };
+  assert.equal(isAvaCompactDecisionSafe(JSON.stringify(write)), false);
+  assert.equal(isAvaCompactDecisionSafe(JSON.stringify({ ...write, needsApproval: true })), true);
+  assert.equal(isAvaCompactDecisionSafe(JSON.stringify({ ...answer, toolIntent: { name: '', providerWrite: false, provider_write: true, summary: '', paramsJson: '' } })), false);
+  for (const invalid of ['safe plain text', '{"reply":"partial', JSON.stringify({ ...answer, confidence: 2 }), JSON.stringify({ ...answer, decision: 'unknown' }), JSON.stringify({ ...answer, toolIntent: [] })]) {
+    assert.equal(isAvaCompactDecisionSafe(invalid), false);
+  }
+});
+
+test('compact no-tool JSON preserves the canonical safe decision object', () => {
+  const source = readFileSync(new URL('./openclaw-local-server.mjs', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
+  const start = source.indexOf('function parseAvaDeepSeekDecisionAnswer(');
+  const end = source.indexOf('\nfunction normalizeAvaAssistantAnswer', start);
+  const context = vm.createContext({ extractJsonObjectFromText: JSON.parse, sanitizeAvaSpokenOutput: (text) => String(text), toNumber: Number });
+  vm.runInContext(source.slice(start, end), context);
+  const decision = { reply: 'A specific answer.', decision: 'answer', confidence: 0.8, nextAction: '', needsApproval: false, missionTimeline: [] };
+  assert.equal(JSON.stringify(context.parseAvaDeepSeekDecisionAnswer(JSON.stringify({ ...decision, toolIntent: null }))),
+    JSON.stringify(context.parseAvaDeepSeekDecisionAnswer(JSON.stringify({ ...decision, toolIntent: { name: '', providerWrite: false, summary: '', paramsJson: '' } }))));
+});
 
 test('actual chat keeps a complete JSON contract outside truncated memory context', async () => {
   const source = readFileSync(new URL('./openclaw-local-server.mjs', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
   let sentMessages;
+  let completionAnswer = JSON.stringify({ reply: 'safe answer', decision: 'answer', confidence: 0.8, nextAction: '', missionTimeline: [], needsApproval: false, toolIntent: null });
   const context = vm.createContext({
-    buildAssistantPrompt, buildAvaDecisionMessages,
+    buildAssistantPrompt, buildAvaDecisionMessages, isAvaCompactDecisionSafe,
     buildAvaDeepSeekDecisionTools: () => [],
     runDeepSeekChatCompletion: async (messages) => {
       sentMessages = messages;
-      return { ok: true, answer: 'safe answer', provider: { usagePersistence: { ok: true } }, reasoningPolicy: {} };
+      return { ok: true, answer: completionAnswer, provider: { usagePersistence: { ok: true } }, reasoningPolicy: {} };
     },
     DEEPSEEK_LIVE_MODEL: 'fixture-model', DEEPSEEK_THINKING_MODE: 'disabled',
     DEEPSEEK_LIVE_ATTEMPT_TIMEOUT_MS: 1400, DEEPSEEK_LIVE_RETRY_ATTEMPTS: 1, DEEPSEEK_LIVE_RETRY_DELAY_MS: 100,
@@ -25,14 +63,23 @@ test('actual chat keeps a complete JSON contract outside truncated memory contex
   const start = source.indexOf('async function runInternalAvaDeepSeekChat(');
   const end = source.indexOf('\nfunction enforceAvaControlEnvelope', start);
   vm.runInContext(source.slice(start, end), context);
-  await context.runInternalAvaDeepSeekChat({
+  const accepted = await context.runInternalAvaDeepSeekChat({
     text: 'Explain your role', body: { source: 'ava-latency-diagnostic' },
     memories: Array.from({ length: 5 }, () => ({ summary: 'memory '.repeat(80) })),
     missionController: { mission: { status: 'completed' }, trace: { turnDecision: { reason: 'r'.repeat(220) }, workingMemory: { brief: 'b'.repeat(500) } } },
   });
+  assert.equal(accepted.ok, true);
   const contract = sentMessages.find((message) => message.role === 'system' && message.content.includes('EXAMPLE JSON'));
   assert(contract, 'JSON format instructions must survive large memory context');
   for (const key of ['reply', 'decision', 'confidence', 'nextAction', 'needsApproval', 'missionTimeline', 'toolIntent']) assert(contract.content.includes(`"${key}"`));
   assert(sentMessages[0].content.includes('approval-gated'));
   assert.equal(sentMessages.at(-1).content, 'Explain your role');
+  for (const badAnswer of ['{"reply":"unfinished', JSON.stringify({ reply: 'Proposed action', decision: 'act', confidence: 0.8, nextAction: '', needsApproval: false, missionTimeline: [], toolIntent: null })]) {
+    completionAnswer = badAnswer;
+    const rejected = await context.runInternalAvaDeepSeekChat({ text: 'Explain your role' });
+    assert.equal(rejected.ok, false);
+    assert.equal(rejected.answer, '');
+    assert.equal(rejected.toolResult.result, 'provider_invalid_decision');
+    assert.equal(rejected.usagePersistence.ok, true, 'a rejected decision retains real provider accounting');
+  }
 });

@@ -76,7 +76,7 @@ export function summarizeBenchmark(samples) {
   const modelCompletedLatency = summarizeLatency(completedModel.map((sample) => sample.elapsedMs));
   const speedProven = overall.count >= 20 && overall.p95Ms < 2500 && blocked.length === 0
     && completedLatency.count > 0 && completedLatency.p95Ms < 2500
-    && completedModel.length >= 6 && completedModel.length === model.length && modelCompletedLatency.p95Ms < 2500;
+    && completedModel.length >= 6 && completedModel.length === samples.filter((sample) => sample.scenario === 'model_chat').length && modelCompletedLatency.p95Ms < 2500;
   return {
     schema: 'pbk.ava.controlled_latency.v2', metricKind: 'operator_request', diagnostic: true,
     composition: 'Per 24-request cycle: 18 deterministic (6 negative lookup controls) and 6 varied model requests; prior v1 used 20 deterministic and 4 model requests',

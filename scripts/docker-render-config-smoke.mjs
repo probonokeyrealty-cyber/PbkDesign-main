@@ -51,6 +51,11 @@ expectIncludes(
   'npm ci --legacy-peer-deps --ignore-scripts',
   'Docker frontend dependency install must skip git-hook prepare scripts that are not copied into the image.'
 );
+expectIncludes(
+  dockerfile,
+  'COPY investor-portal.html ./investor-portal.html',
+  'Docker frontend stage must preserve every required Vite entry, including the investor portal.'
+);
 assert.equal(
   packageJson.dependencies?.react,
   '18.3.1',

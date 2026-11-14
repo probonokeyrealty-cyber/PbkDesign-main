@@ -51,4 +51,23 @@ test('completion measures provider response and awaited accounting independently
   assert.equal(bodyTimeout.ok, false);
   assert.equal(bodyTimeout.result, 'provider_timeout');
   assert.equal(usageCalls, 0, 'an interrupted response has no usable token accounting payload');
+  assert.equal(bodyTimeout.provider.usagePersistence, null, 'timeout accounting is unknown, not a zero receipt');
+  context.fetch = async () => ({ ok: true, json: async () => ({
+    choices: [{ finish_reason: 'length', message: { content: '{"reply":"unfinished' } }], usage: { total_tokens: 12 },
+  }) });
+  const truncated = await context.runDeepSeekChatCompletion([], { requestTiming: timing });
+  assert.equal(truncated.ok, false, 'token-truncated model output is not a native completion');
+  assert.equal(truncated.result, 'provider_incomplete_response');
+  assert.equal(usageCalls, 1, 'completed provider usage still requires accounting even when generation was truncated');
+  context.isDeepSpecConfigured = () => true;
+  context.readDeepSpecConfig = () => ({ targetModel: 'fixture-model' });
+  context.incrementObservabilityCounter = () => {};
+  context.recordLatencyMetric = () => {};
+  context.requestSpeculativeChatCompletion = async () => ({ ok: true, response: {
+    choices: [{ finish_reason: 'length', message: { content: 'partial output' } }], usage: { total_tokens: 12 },
+  } });
+  const speculativeTruncated = await context.runDeepSeekChatCompletion([], {});
+  assert.equal(speculativeTruncated.ok, false);
+  assert.equal(speculativeTruncated.result, 'provider_incomplete_response');
+  assert.equal(usageCalls, 2);
 });

@@ -26,6 +26,7 @@ RUN if [ -f package-lock.json ]; then npm ci --legacy-peer-deps --ignore-scripts
 COPY index.html ./index.html
 COPY analyzer.html ./analyzer.html
 COPY index.shell.html ./index.shell.html
+COPY investor-portal.html ./investor-portal.html
 COPY vite.config.ts ./vite.config.ts
 COPY tsconfig.json ./tsconfig.json
 COPY postcss.config.mjs ./postcss.config.mjs
@@ -147,6 +148,7 @@ COPY scripts/agent-registry.mjs ./scripts/agent-registry.mjs
 COPY scripts/agent-fleet-measurement.mjs ./scripts/agent-fleet-measurement.mjs
 COPY scripts/controlled-execution-scope.mjs ./scripts/controlled-execution-scope.mjs
 COPY scripts/controlled-agent-storage.mjs ./scripts/controlled-agent-storage.mjs
+COPY scripts/controlled-agent-workflow.mjs ./scripts/controlled-agent-workflow.mjs
 COPY scripts/background-persistence.mjs ./scripts/background-persistence.mjs
 COPY scripts/pool-schema-initializer.mjs ./scripts/pool-schema-initializer.mjs
 COPY scripts/ava-accounting-status.mjs ./scripts/ava-accounting-status.mjs

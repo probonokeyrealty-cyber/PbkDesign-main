@@ -7,6 +7,8 @@ import { controlledExecution, createScopedState, createControlledPool, remapCont
   assertControlledToolAllowed } from './controlled-execution-scope.mjs';
 import { createControlledAgentStorage, saveControlledAgentResult, readControlledAgentQualification } from './controlled-agent-storage.mjs';
 import { isAgentHandlerCompletion } from './agent-fleet-measurement.mjs';
+import { runControlledAgentWorkflow } from './controlled-agent-workflow.mjs';
+import { workflowTestOutputs } from './controlled-workflow-test-fixtures.mjs';
 
 const monolith = readFileSync(new URL('./openclaw-local-server.mjs', import.meta.url), 'utf8');
 function actualFunction(name) {
@@ -136,9 +138,13 @@ test('actual controlled execution loop enters atomic fixture scope for every one
   const calls = [];
   const saved = [];
   const fixture = { runId: 'pbk-q-unit', leadId: 'fixture-lead', callId: 'fixture-call', leadName: 'Fixture',
-    sourceUpdatedAt: new Date().toISOString(), transcript: 'Synthetic relocation conversation', bant: {} };
+    sourceUpdatedAt: new Date().toISOString(), transcript: 'Synthetic relocation conversation',
+    bant: { budget: '100000', authority: 'owner', need: 'moving', timeline: '30 days', urgency: 'deadline' } };
   const storage = { runId: fixture.runId, schema: 'pbk_q_abc', fixture, tables: new Set() };
-  const sandbox = vm.createContext({ controlledExecution, isAgentHandlerCompletion, BRIDGE_API_KEY: 'unit-key', DATABASE_URL: 'unit-only',
+  const outputs = workflowTestOutputs(fixture);
+  const stored = new Map();
+  const sandbox = vm.createContext({ controlledExecution, isAgentHandlerCompletion, runControlledAgentWorkflow,
+    readControlledWorkflowPredecessor: async (_pool, _storage, id) => stored.get(id), BRIDGE_API_KEY: 'unit-key', DATABASE_URL: 'unit-only',
     runtimeStateBootstrap: { ready: true }, getPgPool: () => ({}), createControlledAgentStorage: async () => storage,
     process: { env: {} }, BUILD_REVISION: 'unit-revision', buildDefaultState: () => ({ status: {}, calls: [{ id: 'seed' }],
       approvals: [{ id: 'seed' }], brainDocs: [{ id: 'seed' }], agentTasks: [], leadImports: [] }),
@@ -154,10 +160,16 @@ test('actual controlled execution loop enters atomic fixture scope for every one
       assert.equal(payload.operational, false);
       assert.equal(payload.phone, '');
       assert.equal(payload.email, '');
+      for (const key of ['transcript', 'bant', 'score', 'stage']) {
+        if (!Object.hasOwn(scope.workflowInput, key)) assert.equal(Object.hasOwn(payload, key), false, `${agentId}: stale fixture ${key}`);
+      }
       calls.push(agentId);
-      return { output: {}, workOrder: { id: `work-${agentId}` }, pbkIntelligenceContext: { contextId: `${fixture.runId}:${agentId}` } };
+      return { output: outputs[agentId], workOrder: { id: `work-${agentId}` }, pbkIntelligenceContext: { contextId: `${fixture.runId}:${agentId}` } };
     }, isoNow: () => new Date().toISOString(),
-    saveControlledAgentResult: async (_pool, _storage, agentId) => { assert.equal(controlledExecution.getStore(), undefined); saved.push(agentId); },
+    saveControlledAgentResult: async (_pool, _storage, agentId, data, output) => {
+      assert.equal(controlledExecution.getStore(), undefined); saved.push(agentId);
+      stored.set(agentId, { agentId, workOrderId: data.workOrderId, output });
+    },
     readControlledAgentQualification: async () => ({ runId: fixture.runId }),
   });
   vm.runInContext(`let controlledQualificationRunning = false;\n${actualFunction('executeControlledAgentQualification')}`, sandbox);
@@ -165,7 +177,7 @@ test('actual controlled execution loop enters atomic fixture scope for every one
   assert.equal(calls.length, 11);
   assert.equal(new Set(calls).size, 11);
   assert.deepEqual(saved, calls);
-  assert.equal(calls.at(-1), 'qa-agent');
+  assert.equal(calls.at(-1), 'hermes');
 });
 
 for (const scenario of ['missing-auth', 'team-auth', 'client-fixture', 'client-flags', 'empty-post']) {

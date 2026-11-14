@@ -89,3 +89,15 @@ test('24 plan has six varied model requests; blocked responses never supply comp
   assert.equal(report.budgetProven, false);
   assert.equal(report.latencyWithinBudget, false);
 });
+
+test('every planned model request needs completion timing, not merely six observed successes', () => {
+  const samples = buildBenchmarkPlan(32).map(({ id }, index) => ({
+    scenario: id, elapsedMs: 100, httpStatus: 200, ok: true, toolOk: true,
+    result: id === 'model_chat' ? 'deepseek_chat_answer' : 'success',
+    usagePersistence: id === 'model_chat' ? { ok: true } : null, releaseCommit: 'same',
+    timing: { metricKind: 'operator_request', durationMs: 80,
+      stages: id === 'model_chat' && index < 24 ? [{ stage: 'llm_request', durationMs: 60 }] : [] },
+  }));
+  assert.equal(summarizeBenchmark(samples).budgetProven, false);
+  assert.equal(summarizeBenchmark(samples).latencyWithinBudget, false);
+});

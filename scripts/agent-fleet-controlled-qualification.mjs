@@ -4,12 +4,13 @@ import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { requiredAgentRegistryIds } from './agent-registry.mjs';
 import { validateDeploymentCommit } from './agent-fleet-safe-verification.mjs';
+import { controlledWorkflowOrder } from './controlled-agent-workflow.mjs';
 
 // These prove bounded handler work, not customer delivery or organic performance.
 export const qualificationCriteria = {
   ava: ['conversationalResponse'],
   rex: ['strategyAnswer', 'sourceEvidence'],
-  hermes: ['patternAnalysisExecuted', 'suggestOnly'],
+  hermes: ['patternAnalysisExecuted', 'suggestOnly', 'stoppingInterventionLearned'],
   'prosody-tuner': ['finiteProsody', 'fixtureDecisionPersisted'],
   'bant-enforcer': ['allFieldsComplete'],
   'qa-agent': ['validatorExecuted', 'auditPersisted'],
@@ -36,6 +37,9 @@ export function validateQualificationReport(report, { now = Date.now(), maxSourc
   for (const key of ['atomic', 'noContact', 'externalWritesBlocked', 'fixtureOnly']) assert.equal(report.guard?.[key], true, `guard: ${key}`);
   assert.equal(report.storage?.backend, 'postgres');
   assert.equal(report.storage.readbackVerified, true);
+  assert.deepEqual(report.workflow?.order, [...controlledWorkflowOrder], 'Missing ordered cross-agent workflow');
+  assert.equal(report.workflow.linkedAgentCount, 11, 'Unverified workflow dependencies');
+  assert.equal(report.workflow.crossAgentWorkflowVerified, true, 'Independent handlers are not a workflow');
   const sourceAt = timestamp(report.fixture?.sourceUpdatedAt, 'fixture');
   assert(sourceAt <= now, 'Source timestamp is in the future');
   assert(Number.isFinite(maxSourceAgeMs) && maxSourceAgeMs > 0 && maxSourceAgeMs <= 60000, 'Cannot weaken source freshness threshold');
@@ -50,6 +54,7 @@ export function validateQualificationReport(report, { now = Date.now(), maxSourc
     const label = agent.agentId;
     assert.equal(agent.completed, true, `${label}: incomplete handler`);
     assert.equal(agent.durable, true, `${label}: missing PG readback`);
+    assert.equal(agent.workflowLinkVerified, true, `${label}: missing consumed predecessor proof`);
     assert.equal(agent.operational, false, `${label}: diagnostic became business evidence`);
     assert.equal(agent.runId, report.runId, `${label}: run mismatch`);
     for (const key of ['leadId', 'callId', 'sourceUpdatedAt']) assert.equal(agent[key], report.fixture[key], `${label}: ${key} mismatch`);
@@ -66,7 +71,7 @@ export function validateQualificationReport(report, { now = Date.now(), maxSourc
     for (const criterion of qualificationCriteria[label]) assert.equal(agent.criteria?.[criterion], true, `${label}: ${criterion}`);
   }
   return { runId: report.runId, qualifiedAgentCount: report.agents.length, sourceExpired,
-    sourceAgeMs: now - sourceAt, productionReadinessVerified: false, organicReadinessPromoted: false };
+    sourceAgeMs: now - sourceAt, crossAgentWorkflowVerified: true, productionReadinessVerified: false, organicReadinessPromoted: false };
 }
 
 export function validateQualificationAging(before, after, options = {}) {
@@ -143,9 +148,12 @@ export async function runControlledQualification(request, {
   }
   return { ...execution, ...persisted, deployment, independentReadbackVerified: true,
     freshnessAgingVerified: Boolean(aged), agedSourceExpired: aged?.sourceExpired ?? null,
-    crossAgentWorkflowVerified: false, phoneLatencyProven: false,
-    evidence: readback.agents.map(({ agentId, workOrderId, contextId, evidenceRecordIds, completedAt, sourceUpdatedAt }) =>
-      ({ agentId, workOrderId, contextId, evidenceRecordIds, completedAt, sourceUpdatedAt })) };
+    crossAgentWorkflowVerified: persisted.crossAgentWorkflowVerified, phoneLatencyProven: false,
+    workflow: readback.workflow,
+    evidence: readback.agents.map(({ agentId, workOrderId, contextId, evidenceRecordIds, completedAt, sourceUpdatedAt, workflowLink, workflowLinkVerified }) =>
+      ({ agentId, workOrderId, contextId, evidenceRecordIds, completedAt, sourceUpdatedAt,
+        workflowLinkVerified, sequence: workflowLink.sequence, predecessorAgentId: workflowLink.predecessorAgentId,
+        predecessorWorkOrderId: workflowLink.predecessorWorkOrderId, predecessorOutputDigest: workflowLink.predecessorOutputDigest })) };
 }
 
 async function main(args) {

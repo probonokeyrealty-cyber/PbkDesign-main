@@ -319,7 +319,7 @@ const internalAvaChatBlock =
     : '';
 assert(
   internalAvaChatBlock &&
-    /await writePublicAvaAssistantSession/.test(internalAvaChatBlock) &&
+    /await requestTiming\.measure\('session_write', \(\) => writePublicAvaAssistantSession\(sessionId, assistantSession\)\)/.test(internalAvaChatBlock) &&
     /persistStateInBackground\('ava-assistant-chat'\)/.test(internalAvaChatBlock) &&
     !/await persistState\(state\)/.test(internalAvaChatBlock),
   'Internal Ava chat must return the answer even when non-critical activity persistence is temporarily unavailable.'

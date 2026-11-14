@@ -170,7 +170,7 @@ assert.match(bridge, /missionController\.trace/, 'Assistant chat response should
 assert.match(bridge, /missionController\.controlEnvelope/, 'Assistant chat response should return the hard control envelope.');
 assert.match(bridge, /avaMissionLedger/, 'Bridge state should include a durable Ava mission ledger.');
 assert.match(bridge, /function recordAvaMissionLedger/, 'Assistant chat should persist final mission proof to the durable ledger.');
-assert.match(bridge, /initialMissionController = await runAvaMissionController/, 'Assistant chat should run controller-first intake before deterministic planning.');
+assert.match(bridge, /initialMissionController = await requestTiming\.measure\('controller_intake', \(\) => runAvaMissionController/, 'Assistant chat should await timed controller-first intake before deterministic planning.');
 assert.match(bridge, /controllerStage:\s*'intake'/, 'Controller-first intake should be explicitly labeled.');
 assert.match(bridge, /function enforceAvaControlEnvelope/, 'Assistant chat should enforce the hard control envelope before tool execution.');
 assert.match(bridge, /enforceAvaControlEnvelope\(missionController/, 'Assistant chat should gate planned execution through the control envelope.');
@@ -193,9 +193,10 @@ assert(
     controlEnvelopeSource.indexOf('providerWrite ||'),
   'Guard blocked/handoff must take precedence over approval-required provider-write routing.'
 );
+const intakeOffset = internalHandlerSource.indexOf("initialMissionController = await requestTiming.measure('controller_intake'");
+const planOffset = internalHandlerSource.indexOf("const assistantPlan = requestTiming.measureSync('intent_plan'");
 assert(
-  internalHandlerSource.indexOf('initialMissionController = await runAvaMissionController') <
-    internalHandlerSource.indexOf('const assistantPlan = planAssistantIntent'),
+  intakeOffset >= 0 && planOffset > intakeOffset,
   'Controller-first intake must run before deterministic assistant planning.'
 );
 assert(

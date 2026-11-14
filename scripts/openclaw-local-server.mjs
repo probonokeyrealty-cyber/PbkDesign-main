@@ -16,6 +16,8 @@ import { DeleteObjectCommand, GetObjectCommand, HeadBucketCommand, PutObjectComm
 import { getSignedUrl as getS3SignedUrl } from '@aws-sdk/s3-request-presigner';
 import { lookupAttomPropertyPreview } from './attom-property-preview.mjs';
 import { applyAgentVersionRollback, buildAgentRegistrySnapshot, buildAgentVersionSnapshot, buildDefaultAgentRegistry, buildStableAgentFleetMeasurement, findAgentsByCapability, invokeRegisteredAgent, mergeAgentRegistryRecords, normalizeAgentRegistryId, normalizeAgentRegistryRecord, validateAgentVersionSnapshot } from './agent-registry.mjs';
+import { buildAgentExecutionEvidence, collectAgentFleetEvidence, isNonOperationalAgentEvidence } from './agent-fleet-measurement.mjs';
+import { createAvaRequestTiming } from './ava-request-timing.mjs';
 import { EventTypes, getEventBusStatus, publishEvent as publishEventBusEvent } from './event-bus/streams.mjs';
 import { buildRexKpiSnapshot, proposeAutonomousRexGoals, selectRexProactiveLeadAction } from './rex-autonomy.mjs';
 import { recordScriptOutcomeStats, selectContextAwareScript } from './context-aware-script-rotator.mjs';
@@ -3086,12 +3088,16 @@ async function buildProductionReadinessSnapshot({
     lastActions: buildProductionLastAgentActions(),
     requireIntelligenceContext: false,
   });
+  const operationalEvidence = collectAgentFleetEvidence(state);
   const stableAgentFleetMeasurement = buildStableAgentFleetMeasurement(getCurrentAgentRegistry(), {
     healthProbes: (state.agents || []).map(buildAgentHealthProbe),
     toolCatalog: buildProductionToolCatalog(),
     intelligenceContext,
-    latencySamples: buildProductionAgentLatencySamples(),
-    lastActions: buildProductionLastAgentActions(),
+    latencySamples: operationalEvidence.latencySamples,
+    lastActions: operationalEvidence.lastActions,
+    evidenceDiagnostics: operationalEvidence.diagnostics,
+    unverifiedLatencySamples: operationalEvidence.unverifiedLatencySamples,
+    requireSourceProvenance: true,
   });
   const bridgeConnection = buildBridgeConnectionStatus({
     runtimeMeta,
@@ -13081,8 +13087,9 @@ function mirrorAgentOpsMeasurementToState(params = {}) {
   const createdAt = params.createdAt || params.created_at || isoNow();
   const agentName = normalizeAgentName(params.agentName || params.agent_name || params.agent || 'PBK');
   const agentId = normalizeAgentRosterId(agentName) || normalizeAgentRosterId(params.agentName || params.agent || '');
-  const latencyMs = Math.max(0, Math.round(toNumber(params.latencyMs ?? params.latency_ms, 0)));
-  const success = params.success !== false && !params.error;
+  const rawLatency = params.latencyMs ?? params.latency_ms;
+  const latencyMs = typeof rawLatency === 'number' && Number.isFinite(rawLatency) && rawLatency >= 0 ? Math.round(rawLatency) : null;
+  const success = params.success === true && !params.error;
   const toolName = String(params.toolName || params.tool_name || '').trim();
   const sessionId = String(
     params.sessionId || params.session_id || params.callId || params.call_id || params.leadId || params.lead_id || ''
@@ -13105,6 +13112,9 @@ function mirrorAgentOpsMeasurementToState(params = {}) {
     completedAt: createdAt,
     metadata: {
       source: 'agent_ops',
+      requestTiming: params.metadata?.requestTiming || null,
+      metricKind: params.metadata?.requestTiming?.metricKind || 'tool_execution',
+      operational: !isNonOperationalAgentEvidence(params),
       toolName,
       latencyMs,
       durationMs: latencyMs,
@@ -23491,16 +23501,18 @@ function buildRuntimePBKIntelligenceContext(params = {}) {
   ensureAgentFleetCollections();
   const session = params.session || {};
   const contextCall = params.contextCall || params.call || {};
-  // lastRedisSyncAt records attempts too; only a successful sync is source evidence.
-  const lastSyncAt = [
-    session.lastRedisSyncResult === 'redis_call_state_synced' ? session.lastRedisSyncAt : null,
-    contextCall.updatedAt,
-    session.updatedAt,
-  ].map((value) => {
-    const at = typeof value === 'number' ? new Date(value).getTime()
-      : typeof value === 'string' && value.trim() ? Date.parse(value) : NaN;
-    return Number.isFinite(at) && at > 0 ? new Date(at).toISOString() : null;
-  }).find(Boolean) || null;
+  // Caller timestamps and packet creation are not authoritative source reads.
+  const callId = contextCall.id || contextCall.callId || session.callId || params.callId || '';
+  const leadId = contextCall.leadId || session.leadId || params.leadId || '';
+  const sourceRecord = callId
+    ? (state.calls || []).find((item) => item.id === callId && (!leadId || item.leadId === leadId))
+    : [...(state.leadImports || []), ...(state.leads || [])].find((item) => item.id === leadId);
+  const sourceAt = sourceRecord && !isNonOperationalAgentEvidence(sourceRecord)
+    ? sourceRecord.updatedAt || sourceRecord.updated_at || null : null;
+  const lastSyncAt = typeof sourceAt === 'string' && Number.isFinite(Date.parse(sourceAt)) ? new Date(sourceAt).toISOString() : null;
+  const sourceEvidence = lastSyncAt && sourceRecord?.id
+    ? { kind: callId ? 'runtime_call_record' : 'runtime_lead_record', recordId: sourceRecord.id, at: lastSyncAt }
+    : null;
   const architecture = params.architecture || {};
   const transcript = String(params.transcript || params.query || params.text || '').trim();
   const scripts =
@@ -23563,6 +23575,8 @@ function buildRuntimePBKIntelligenceContext(params = {}) {
     sentiment: session.sentiment?.pbkScore ?? params.sentiment ?? contextCall.sentiment ?? null,
     leadStale: Boolean(params.leadStale),
     lastSyncAt,
+    sourceEvidence,
+    diagnostic: isNonOperationalAgentEvidence(params),
   });
 }
 
@@ -23571,7 +23585,7 @@ function applyRuntimePBKIntelligenceContextToSession(session = {}, context = {})
   session.pbkIntelligenceContext = context;
   session.pbkIntelligenceReadiness = context.fleetReadiness || null;
   session.pbkIntelligenceContextUpdatedAt = context.generatedAt || isoNow();
-  if (state && typeof state === 'object') {
+  if (state && typeof state === 'object' && context.diagnostic !== true) {
     if (!state.status || typeof state.status !== 'object') state.status = {};
     state.status.pbkIntelligenceContext = summarizeRuntimePBKIntelligenceContext(context);
     state.status.pbkIntelligenceReadiness = context.fleetReadiness || null;
@@ -23748,6 +23762,7 @@ function isFullAgentActionPBKIntelligenceContext(context = {}) {
 
 function publishAgentActionPBKIntelligenceContext(context = {}) {
   if (!context || typeof context !== 'object') return null;
+  if (context.diagnostic === true) return summarizeRuntimePBKIntelligenceContext(context);
   if (!state.status || typeof state.status !== 'object') state.status = {};
   state.status.pbkIntelligenceContext = summarizeRuntimePBKIntelligenceContext(context);
   state.status.pbkIntelligenceReadiness = context.fleetReadiness || null;
@@ -23757,10 +23772,8 @@ function publishAgentActionPBKIntelligenceContext(context = {}) {
 
 async function prepareAgentActionPBKIntelligenceContext(params = {}, command = '', context = {}) {
   const ids = getAgentActionContextIds(params, context);
-  const input =
-    isFullAgentActionPBKIntelligenceContext(params.pbkIntelligenceContext)
-      ? params.pbkIntelligenceContext
-      : buildAgentActionPBKIntelligenceContextInput(params, command, context);
+  // Supplied packets may describe intent, but cannot assert source freshness.
+  const input = buildAgentActionPBKIntelligenceContextInput(params, command, context);
   const result = await withPBKIntelligenceContext(
     {
       leadId: ids.leadId,
@@ -23842,6 +23855,7 @@ function summarizeRuntimePBKIntelligenceContext(context = {}) {
     memoryReady: Boolean(context.memory?.ready),
     skillsReady: Boolean(context.skills?.ready),
     dataFreshnessReady: Boolean(context.dataFreshness?.ready),
+    dataFreshness: context.dataFreshness || null,
     activeSkill: context.turnContract?.activeSkill || null,
     intent: context.turnContract?.intent || '',
     objection: context.turnContract?.objection || '',
@@ -42869,6 +42883,7 @@ function recordAvaAssistantPlanOps({
   safety = null,
   additiveIntelligence = null,
   startedAt = Date.now(),
+  requestTiming = null,
 } = {}) {
   const toolPlan = assistantPlan?.toolPlan && typeof assistantPlan.toolPlan === 'object'
     ? assistantPlan.toolPlan
@@ -42926,6 +42941,7 @@ function recordAvaAssistantPlanOps({
     error: toolOk && qaOk && !safetyBlocked ? '' : (toolResult?.error || qa?.reason || safety?.result || 'assistant_plan_not_completed'),
     metadata: {
       source: 'ava-assistant-chat',
+      requestTiming,
       publicMode,
       assistantAction,
       usedIntent,
@@ -44860,20 +44876,17 @@ function buildAgentOrchestrationSnapshot() {
   ensureAgentFleetCollections();
   const registryStatus = buildAgentRegistrySnapshot(getCurrentAgentRegistry());
   const probes = (state.agents || []).map(buildAgentHealthProbe);
-  const intelligenceContext = {
-    memory: { ready: Boolean(state.status?.pbkIntelligenceReadiness?.required?.memory) },
-    skills: { ready: Boolean(state.status?.pbkIntelligenceReadiness?.required?.skills) },
-    dataFreshness: {
-      ready: Boolean(state.status?.pbkIntelligenceReadiness?.required?.dataFreshness),
-    },
-    fleetReadiness: { ready: Boolean(state.status?.pbkIntelligenceReadiness?.ready) },
-    ...(state.status?.pbkIntelligenceContext || {}),
-  };
+  // Never combine readiness from a different context with this packet.
+  const intelligenceContext = state.status?.pbkIntelligenceContext || {};
+  const operationalEvidence = collectAgentFleetEvidence(state);
   const measurement = buildStableAgentFleetMeasurement(getCurrentAgentRegistry(), {
     healthProbes: probes,
     toolCatalog: buildProductionToolCatalog(),
-    latencySamples: buildProductionAgentLatencySamples(),
-    lastActions: buildProductionLastAgentActions(),
+    latencySamples: operationalEvidence.latencySamples,
+    lastActions: operationalEvidence.lastActions,
+    evidenceDiagnostics: operationalEvidence.diagnostics,
+    unverifiedLatencySamples: operationalEvidence.unverifiedLatencySamples,
+    requireSourceProvenance: true,
     intelligenceContext,
   });
   const supervisor = probes.find((agent) => agent.id === 'ava') || null;
@@ -45828,6 +45841,7 @@ function getLocalAgentRegistryHandlers() {
 }
 
 async function invokeAgentFromRegistry(params = {}) {
+  const invocationStartedAt = performance.now();
   const registry = getCurrentAgentRegistry();
   const requestedId = normalizeAgentRegistryId(params.agentId || params.id || params.agent || '');
   const capability = String(params.capability || '').trim();
@@ -45907,9 +45921,17 @@ async function invokeAgentFromRegistry(params = {}) {
         approvalPolicy: workOrder.approvalPolicy,
         routedTo,
         outputResult: output?.result || output?.status || '',
+        executionEvidence: buildAgentExecutionEvidence({
+          payload,
+          output,
+          durationMs: performance.now() - invocationStartedAt,
+          completedAt: isoNow(),
+          workOrderId: workOrder.id,
+        }),
         pbkIntelligenceContext: summarizeRuntimePBKIntelligenceContext(agentContext),
       },
     });
+    await persistState(state);
     return {
       ok: true,
       result: 'agent_invoked',
@@ -45936,8 +45958,16 @@ async function invokeAgentFromRegistry(params = {}) {
         proofRequirements: workOrder.proofRequirements,
         approvalPolicy: workOrder.approvalPolicy,
         error: error?.message || String(error),
+        executionEvidence: buildAgentExecutionEvidence({
+          payload,
+          output: { ok: false, status: 'failed' },
+          durationMs: performance.now() - invocationStartedAt,
+          completedAt: isoNow(),
+          workOrderId: workOrder.id,
+        }),
       },
     });
+    await persistState(state);
     return {
       ok: false,
       result: 'agent_invoke_failed',
@@ -64472,7 +64502,8 @@ function enforceAvaControlEnvelope(missionController = {}, assistantPlan = {}) {
 
 async function handleInternalAvaAssistantChatRequest(request) {
   const assistantOpsStartedAt = Date.now();
-  const body = await readBody(request);
+  const requestTiming = createAvaRequestTiming();
+  const body = await requestTiming.measure('body_read', () => readBody(request));
   const messages = normalizeConversationMessages(body.messages);
   const sanitizedInput = sanitizePublicAvaChatTurn(getLastUserMessage(messages, body.message || body.query || body.text || body.prompt || ''));
   const text = sanitizedInput.content;
@@ -64487,7 +64518,7 @@ async function handleInternalAvaAssistantChatRequest(request) {
   }
 
   const sessionId = getPublicAvaAssistantSessionId(request, body);
-  const priorAssistantSession = await readPublicAvaAssistantSession(sessionId);
+  const priorAssistantSession = await requestTiming.measure('session_read', () => readPublicAvaAssistantSession(sessionId));
   const requestedHistory = dropCurrentAssistantUserTurn(
     normalizeAssistantSession({ history: messages }).history,
     text
@@ -64503,7 +64534,7 @@ async function handleInternalAvaAssistantChatRequest(request) {
     ),
   };
   const assistantMemories = getCleanAvaActiveMemories(12);
-  const initialMissionController = await runAvaMissionController({
+  const initialMissionController = await requestTiming.measure('controller_intake', () => runAvaMissionController({
     controllerStage: 'intake',
     sessionId,
     text,
@@ -64521,14 +64552,14 @@ async function handleInternalAvaAssistantChatRequest(request) {
     toolResult: null,
     state,
     memories: assistantMemories,
-  });
-  const assistantPlan = planAssistantIntent(assistantIntent, {
+  }));
+  const assistantPlan = requestTiming.measureSync('intent_plan', () => planAssistantIntent(assistantIntent, {
     publicMode: false,
     authenticated: true,
     session: assistantContextSession,
     leadId: assistantContextSession.leadId,
     leads: state.leadImports || [],
-  });
+  }));
   let assistantSession = appendAssistantMessage(assistantContextSession, 'user', text, {
     source: body.source || 'command-center-assistant',
     intent: assistantIntent.intent,
@@ -64541,7 +64572,7 @@ async function handleInternalAvaAssistantChatRequest(request) {
   let additiveIntelligence = null;
   let activeAssistantLeadId = assistantContextSession.leadId || '';
   let pendingAssistantAction = null;
-  let missionController = await runAvaMissionController({
+  let missionController = await requestTiming.measure('controller_planned', () => runAvaMissionController({
     controllerStage: 'planned',
     sessionId,
     text,
@@ -64557,7 +64588,7 @@ async function handleInternalAvaAssistantChatRequest(request) {
     additiveIntelligence,
     state,
     memories: assistantMemories,
-  });
+  }));
   const controlGate = enforceAvaControlEnvelope(missionController, assistantPlan);
 
   if (readOnlyAuditRequest && assistantPlan.action === 'general') {
@@ -64705,7 +64736,7 @@ async function handleInternalAvaAssistantChatRequest(request) {
     const providerAugmentation = toolResult?.providerAugmentation || {};
     answer = [`Full PBK intelligence check is synced across ${coverage.used || 10}/${coverage.total || 10} layers.`, providerAugmentation.ready !== undefined ? `Provider readiness: ${providerAugmentation.ready || 0}/${providerAugmentation.configured || 0} configured external providers ready; PBK fallback is active.` : '', nextAction.action ? `Next action: ${String(nextAction.action).replace(/^consider_tool:/, 'consider ')}` : '', nextAction.reason ? `Why: ${String(nextAction.reason).slice(0, 260)}` : '', 'Messages, desktop actions, and contracts still wait for approval before anything changes.'].filter(Boolean).join(' ');
   } else if (assistantPlan.toolPlan?.toolName === 'findLead') {
-    const lead = findInternalAssistantLead(assistantPlan.toolPlan.params?.query || '');
+    const lead = requestTiming.measureSync('lead_lookup', () => findInternalAssistantLead(assistantPlan.toolPlan.params?.query || ''));
     const leadName = String(lead?.leadName || lead?.name || '').trim();
     const displayName = leadName && !/^unknown\s+seller$/i.test(leadName) ? leadName : 'a matching lead';
     const foundLeadId = getInternalAssistantLeadId(lead);
@@ -64809,7 +64840,7 @@ async function handleInternalAvaAssistantChatRequest(request) {
     answer = `${sanitizedInput.warning} ${answer}`;
   }
 
-  missionController = await runAvaMissionController({
+  missionController = await requestTiming.measure('controller_final', () => runAvaMissionController({
     controllerStage: 'final',
     sessionId,
     text,
@@ -64825,14 +64856,14 @@ async function handleInternalAvaAssistantChatRequest(request) {
     additiveIntelligence,
     state,
     memories: assistantMemories,
-  });
+  }));
   const finalControlGate = enforceAvaControlEnvelope(missionController, assistantPlan);
   const preserveReadOnlyAuditAnswer =
     readOnlyAuditRequest && assistantPlan.action === 'general' && toolResult?.result === 'ava_read_only_audit';
   if (!finalControlGate.ok && !preserveReadOnlyAuditAnswer) {
     answer = finalControlGate.answer;
     toolResult = finalControlGate.toolResult;
-    missionController = await runAvaMissionController({
+    missionController = await requestTiming.measure('controller_final_recheck', () => runAvaMissionController({
       controllerStage: 'final',
       sessionId,
       text,
@@ -64848,7 +64879,7 @@ async function handleInternalAvaAssistantChatRequest(request) {
       additiveIntelligence,
       state,
       memories: assistantMemories,
-    });
+    }));
   }
 
   answer = normalizeAvaAssistantAnswer(answer);
@@ -64901,7 +64932,7 @@ async function handleInternalAvaAssistantChatRequest(request) {
       assistantPlan.action === 'approval_required' ||
       Boolean(assistantPlan.toolPlan?.approvalRequired || assistantPlan.toolPlan?.params?.forceApproval),
   });
-  await writePublicAvaAssistantSession(sessionId, assistantSession);
+  await requestTiming.measure('session_write', () => writePublicAvaAssistantSession(sessionId, assistantSession));
 
   addActivity(
     state,
@@ -64928,6 +64959,7 @@ async function handleInternalAvaAssistantChatRequest(request) {
     safety,
     additiveIntelligence,
     startedAt: assistantOpsStartedAt,
+    requestTiming: requestTiming.snapshot(),
   });
   persistStateInBackground('ava-assistant-chat');
 
@@ -64936,6 +64968,7 @@ async function handleInternalAvaAssistantChatRequest(request) {
     body: {
       ok: true,
       mode: 'command-center-assistant',
+      requestTiming: requestTiming.snapshot(),
       answer,
       suggestions: assistantPlan.suggestions || [],
       sessionId,

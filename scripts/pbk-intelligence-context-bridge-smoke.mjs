@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { isAbsolute, join, relative } from 'node:path';
@@ -15,6 +15,15 @@ await new Promise((resolve) => listener.close(resolve));
 const stateDir = await mkdtemp(join(tmpdir(), 'pbk-context-freshness-'));
 const apiKey = 'isolated-context-freshness-smoke';
 const baseUrl = `http://127.0.0.1:${port}`;
+// Only this isolated child reads these fixtures; no hosted state is touched.
+const storedAt = new Date().toISOString();
+await writeFile(join(stateDir, 'openclaw-state.json'), JSON.stringify({
+  leadImports: [{ id: 'context-stored-lead', updatedAt: storedAt }],
+  calls: [
+    { id: 'context-stored-call', leadId: 'context-old', updatedAt: storedAt },
+    { id: 'context-stale-call', leadId: 'context-old', updatedAt: '2026-07-14T12:00:00Z' },
+  ],
+}));
 const child = spawn(process.execPath, [
   '--import', new URL('./agent-runtime-smoke-isolation.mjs', import.meta.url).href,
   'scripts/openclaw-local-server.mjs',
@@ -72,11 +81,18 @@ try {
   assert.equal((await invoke('context-old', old)).dataFreshnessReady, false, 'A stale source must stay stale through prepare/finalize.');
   assert.equal((await invoke('context-old', old)).dataFreshnessReady, false, 'A second real action must not restamp the stale packet.');
   const fresh = { session: { lastRedisSyncResult: 'redis_call_state_synced', lastRedisSyncAt: Date.now() - 50 } };
-  assert.equal((await invoke('context-old', fresh)).dataFreshnessReady, true, 'New source data must refresh the previously stale session.');
+  assert.equal((await invoke('context-old', fresh)).dataFreshnessReady, false, 'A caller Redis timestamp cannot assert freshness.');
   assert.equal((await invoke('context-fallback', {
     session: { lastRedisSyncResult: 'redis_unavailable', lastRedisSyncAt: Date.now() },
     call: { updatedAt: new Date(Date.now() - 50).toISOString() },
-  })).dataFreshnessReady, true, 'Independent call evidence remains usable without Redis.');
+  })).dataFreshnessReady, false, 'A caller call timestamp cannot assert freshness.');
+  const storedCall = await invoke('context-old', { callId: 'context-stored-call' });
+  assert.equal(storedCall.dataFreshnessReady, true, 'Matching authoritative call evidence remains usable without Redis.');
+  assert.equal(storedCall.dataFreshness.lastSyncAt, storedAt);
+  assert.equal(storedCall.dataFreshness.source.recordId, 'context-stored-call');
+  assert.equal((await invoke('context-other', { callId: 'context-stored-call' })).dataFreshnessReady, false, 'Stored call evidence must match its lead.');
+  assert.equal((await invoke('context-old', { callId: 'context-stale-call', ...fresh })).dataFreshnessReady, false, 'Caller freshness cannot refresh a stale authoritative source.');
+  assert.equal((await invoke('context-stored-lead')).dataFreshnessReady, true, 'The canonical leadImports collection supplies authoritative lead evidence.');
   assert.equal((await invoke('context-missing')).dataFreshnessReady, false, 'Missing evidence must not receive a generated timestamp.');
   const diagnostic = await invoke('');
   assert.equal(diagnostic.readiness.required.leadIdentity, false);
@@ -90,7 +106,7 @@ try {
   );
   assert.equal(healthAfter.measurement.ready, false);
   assert(healthAfter.measurement.agents.some((agent) => agent.blockers.includes('latency_not_sampled')));
-  console.log('pbk-intelligence-context-bridge-smoke: 6 source/refresh scenarios passed; diagnostic health unchanged; latency gaps retained');
+  console.log('pbk-intelligence-context-bridge-smoke: authoritative lead/call freshness and forged-source negatives passed; diagnostic health unchanged; latency gaps retained');
 } finally {
   if (child.exitCode === null && child.signalCode === null) {
     const exited = once(child, 'exit');

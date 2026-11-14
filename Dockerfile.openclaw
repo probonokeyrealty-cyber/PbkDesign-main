@@ -143,6 +143,8 @@ ENV PATH="/app/.venv/bin:${PATH}"
 COPY scripts/pbk-deepgram-client.mjs ./scripts/pbk-deepgram-client.mjs
 COPY scripts/qa-agent.mjs ./scripts/qa-agent.mjs
 COPY scripts/agent-registry.mjs ./scripts/agent-registry.mjs
+COPY scripts/agent-fleet-measurement.mjs ./scripts/agent-fleet-measurement.mjs
+COPY scripts/ava-request-timing.mjs ./scripts/ava-request-timing.mjs
 COPY scripts/rex-autonomy.mjs ./scripts/rex-autonomy.mjs
 COPY scripts/context-aware-script-rotator.mjs ./scripts/context-aware-script-rotator.mjs
 COPY scripts/ava-governed-skill-router.mjs ./scripts/ava-governed-skill-router.mjs

@@ -1,6 +1,6 @@
 # Private Investor Portal Implementation Plan
 
-> Execute sequentially with superpowers:executing-plans. The founder approved the design and staging implementation on November 13, 2026.
+REQUIRED WORKFLOW: Use `superpowers:subagent-driven-development` for independent implementation tasks, with a fresh whole-release review and existing publication approvals.
 
 **Goal:** Working private staging property draft → release → investor inquiry → staff receipt.
 **Architecture:** Add a property-log route to the existing operator shell and a separate buyer entry. A staging-only Supabase Edge Function validates individual Auth sessions and reads live membership permissions. An isolated, service-only staging state aggregate uses compare-and-swap revision commits so property releases, inquiries and audit records commit atomically. Private Storage holds approved packet assets. Existing runtime, CRM and Webflow code remain untouched.

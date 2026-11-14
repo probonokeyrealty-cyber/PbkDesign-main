@@ -1,6 +1,6 @@
 # Private Investor Live Release Implementation Plan
 
-> **For agentic workers:** Use superpowers:executing-plans inline, with a fresh whole-release review before production publication.
+REQUIRED WORKFLOW: Use `superpowers:subagent-driven-development` for independent implementation tasks, with a fresh whole-release review and existing publication approvals.
 
 **Goal:** Publish the approved private investor portal live with a staff-only property log and verify the complete lifecycle without changing public forms or staging-only guide/badge features.
 
@@ -28,7 +28,7 @@
 ## Tasks
 - [x] Integrate origin/main into isolated branch; reserve dedicated live project. No existing deploy changed.
 - [x] RED→GREEN tests for explicit profiles, exact-origin policy, live seeding and environment isolation; refactor shared handler and add live build/copy.
-- [ ] Add service-only live aggregate/commit/private bucket; seed existing approved real members only; deploy isolated backend and protected candidate builds.
+- [x] Add service-only live aggregate/commit/private bucket; seed existing approved real members only; deploy isolated backend and protected candidate builds.
 - [ ] Run build, typecheck, portal tests, required founder release checks and hosted isolation/upload/lifecycle QA. Fresh whole-release review; fix material issues.
 - [ ] Publish dedicated investor build and latest integrated staff dashboard through normal Git release; configure exact live Auth return URLs with required UI action-time approval.
 - [ ] Chrome desktop/mobile full lifecycle, real file picker uploads, one inquiry, approval/revocation, expired PDF denial; withdraw QA house and revoke QA investor, preserve history. Record proof and final URLs.
@@ -42,3 +42,11 @@
 - Backend live function v1 deployed; protected buyer candidate 6af8698223e2b2e444e68f8f ready. Existing staff deployment was unchanged by that deployment. Hosted live API regression passed 22 checks with synthetic QA only; house withdrawn, audit retained. PNG/PDF download hashes matched. No email or CRM notifications sent.
 - Independent reviewer found no additional critical/high portal-code issue; confirmed newer main 103219c must be integrated before staff publication. Known SMTP/custom-email and live Auth allowlist remain launch blockers.
 - Broad founder suite stops at existing Windows Jest discovery: rootDir in testMatch does not match Windows normalized paths. Targeted 31 portal tests, typecheck, lint and minimum release gates passed before reintegration; will rerun minimum gates after final merge.
+
+- Ruling: align the two portal plan headers with the current repository workflow guard. Historical coupled implementation used inline execution plus a fresh independent reviewer; this header does not claim earlier delegated implementation. Future independent work follows the repository default.
+
+- Reintegrated origin/main 103219c as f2b88fb; reviewer verified runtime/provenance/timing/Docker files match main. All code-review findings resolved, including strictly binding QA release/withdrawal to the per-environment recorded property ID.
+- Full `npm run test:founder` passed on the integrated tree (local log `.pbk-local/live-founder-final.log`), including 26 Jest suites (477 passed, 8 skipped), 31 portal tests, build, MCP, bridge and the remaining founder gates. Node-native portal tests use `.node-test.mjs`; founder invokes them explicitly after Jest. Windows targeted Jest globs normalized without changing selected test files.
+- Live hosted access lifecycle passed 19 checks: unapproved denied, approved packet/PDF readable, revocation blocks existing/new sessions, no-Origin bypass denied, previously signed PDF denied after 60 seconds (HTTP400), audit retained, QA investor revoked. Existing real membership maps match staging; live bucket remains private, pendingUploads=0.
+- Browser buyer desktop sign-in (no-outreach generated QA code), search/save/keyboard packet tabs/PDF opening/nonbinding inquiry and 390px mobile sign-in/filter/packet layout verified. Real email delivery is not verified; custom SMTP is disabled. Protected buyer site retains Netlify team protection pending launch dependencies.
+- Updated protected staff staging candidate is 6af86d3286db3bc84df96d50. It did not change the existing production deploy. Native Windows picker selected and uploaded the owned QA PNG; PDF upload verification in progress. Browser-only return URL save is prepared but awaits required action-time approval. Existing staging Auth URLs/default URL unchanged.

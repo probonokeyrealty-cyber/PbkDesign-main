@@ -107,6 +107,35 @@ if (phase === 'setup') {
   state.investorBrowserCode = await code(email);
   state.reviewerBrowserCode = await code(state.reviewerEmail);
   state.finalInvestorStatus = 'Not approved';
+} else if (phase === 'release-qa') {
+  assert.equal(state.reviewerEmail, `${qaStem}.reviewer@example.com`);
+  if (!state.reviewerToken) {
+    const signedIn = await verify(state.reviewerEmail, staffOrigin);
+    assert.equal(signedIn.status, 200);
+    state.reviewerToken = signedIn.data.token;
+  }
+  const prior = JSON.parse(await fs.readFile(qaFile('portal-api-qa.json'), 'utf8'));
+  assert.equal(prior.environment, qaProfile.environment);
+  const record = await call('property', { id: prior.propertyId }, state.reviewerToken, staffOrigin);
+  assert.equal(record.status, 200);
+  const property = record.data.property;
+  assert.equal(property.draft.fictional, true);
+  assert.equal(property.draft.title, 'Unreleased API revision');
+  assert.equal((await call('preview', {id:property.id}, state.reviewerToken, staffOrigin)).status, 200);
+  assert.equal((await call('release', {id:property.id, revision:property.revision}, state.reviewerToken, staffOrigin)).status, 200);
+  check('Only the owned fictional API QA house is released for access lifecycle verification');
+} else if (phase === 'withdraw-qa') {
+  assert.ok(state.reviewerToken && state.propertyId, 'Run approval verification first.');
+  const prior = JSON.parse(await fs.readFile(qaFile('portal-api-qa.json'), 'utf8'));
+  assert.equal(prior.environment, qaProfile.environment);
+  assert.equal(state.propertyId, prior.propertyId, 'Only the recorded QA property may be withdrawn.');
+  const record = await call('property', {id:state.propertyId}, state.reviewerToken, staffOrigin);
+  assert.equal(record.status, 200);
+  const property = record.data.property;
+  assert.equal(property.draft.fictional, true);
+  assert.equal(property.draft.title, 'Unreleased API revision');
+  assert.equal((await call('withdraw', {id:property.id, revision:property.revision}, state.reviewerToken, staffOrigin)).status, 200);
+  check('Owned fictional QA house withdrawn; property and inquiry history retained');
 } else if (phase === 'browser-link') {
   const link = await provider(
     '/auth/v1/admin/generate_link?redirect_to=' + encodeURIComponent(publicOrigin + '/'),
@@ -127,11 +156,14 @@ if (phase === 'setup') {
   check('Approved QA identity can sign in');
   const list = await call('list', {}, state.investorToken);
   assert.equal(list.status, 200);
+  const prior = JSON.parse(await fs.readFile(qaFile('portal-api-qa.json'), 'utf8'));
+  assert.equal(prior.environment, qaProfile.environment);
+  if (process.env.PBK_QA_PROPERTY_ID) assert.equal(process.env.PBK_QA_PROPERTY_ID, prior.propertyId);
   const property = list.data.properties.find(
     (p) =>
       p.fictional === true &&
       p.assets?.some((a) => a.kind === 'packet') &&
-      (!process.env.PBK_QA_PROPERTY_ID || p.id === process.env.PBK_QA_PROPERTY_ID)
+      p.id === prior.propertyId
   );
   assert.ok(property, 'No released fictional packet is available for QA.');
   state.propertyId = property.id;

@@ -9,15 +9,18 @@ const buyer = 'https://pbk-investors-staging.netlify.app';
 const staff = 'https://pbk-investor-staging--pbkcenter.netlify.app';
 const users = JSON.parse(await fs.readFile('.pbk-local/portal-qa-identities.json', 'utf8'));
 async function generated(key, redirect) {
-  const r = await fetch(base + '/auth/v1/admin/generate_link', {
-    method: 'POST',
-    headers: {
-      apikey: service,
-      Authorization: `Bearer ${service}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({ type: 'magiclink', email: users[key].email, redirect_to: redirect }),
-  });
+  const r = await fetch(
+    base + '/auth/v1/admin/generate_link?redirect_to=' + encodeURIComponent(redirect),
+    {
+      method: 'POST',
+      headers: {
+        apikey: service,
+        Authorization: `Bearer ${service}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ type: 'magiclink', email: users[key].email }),
+    }
+  );
   assert.equal(r.status, 200, 'QA link generation');
   const data = await r.json();
   return data.action_link || data.properties?.action_link;

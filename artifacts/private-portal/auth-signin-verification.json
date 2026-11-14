@@ -1,0 +1,50 @@
+{
+  "checkedAt": "2026-11-14T12:25:57.244Z",
+  "checks": [
+    {
+      "role": "investor",
+      "returnUrl": "https://pbk-investors-staging.netlify.app/",
+      "callback": "pass",
+      "approvedAccess": "pass",
+      "logoutReplayDenied": "pass",
+      "consumedLinkDenied": "pass"
+    },
+    {
+      "role": "reviewer",
+      "returnUrl": "https://pbk-investor-staging--pbkcenter.netlify.app/property-log",
+      "callback": "pass",
+      "approvedAccess": "pass",
+      "logoutReplayDenied": "pass",
+      "consumedLinkDenied": "pass"
+    }
+  ],
+  "invalidAndMissingTokenDenied": true,
+  "emailSent": false,
+  "crmWrites": false,
+  "productionWrites": false,
+  "clientDate": "2026-11-14",
+  "redirectAllowlistSaved": [
+    "https://pbk-investors-staging.netlify.app/",
+    "https://pbk-investor-staging--pbkcenter.netlify.app/property-log"
+  ],
+  "defaultSiteUrlUnchanged": "http://localhost:3000",
+  "productionDeployBeforeAfter": "6af7d086370813a89ab209a6",
+  "staffNetlifyProtection": "SSO team login remains enabled for all deployments",
+  "browserChecks": {
+    "investorDesktop": "signed in; correct entry; URL fragment cleared",
+    "staffDesktop": "signed in as reviewer; correct property log; URL fragment cleared",
+    "investorMobile390": "signed in; no horizontal overflow; sign-out succeeded; consumed link denied",
+    "staffMobile390": "signed in as reviewer; no horizontal overflow; sign-out succeeded; consumed link denied"
+  },
+  "backendVersion": 8,
+  "hostedEntryChecks": 7,
+  "liveCrmOrCalendlySubmission": false,
+  "badgeAndGuideConfigurationChanged": false,
+  "gradientsChanged": false,
+  "bridgeReadOnlyHealth": {
+    "status": 200,
+    "ok": true,
+    "authRequired": true,
+    "bridgeUp": true
+  }
+}

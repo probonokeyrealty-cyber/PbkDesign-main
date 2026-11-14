@@ -1,3 +1,4 @@
+import { clearPrivateSession } from './clientState.mjs';
 import { useEffect, useRef, useState } from 'react';
 import { portalRequest, uploadPortalAsset, type PortalMember } from './portalApi';
 import './portal.css';
@@ -180,7 +181,7 @@ function Packet({
   );
 }
 
-function PortalConfirm({
+export function PortalConfirm({
   text,
   onConfirm,
   onCancel,
@@ -215,7 +216,13 @@ function PortalConfirm({
     </dialog>
   );
 }
-export function InvestorWorkspace({ staffMode = false }: { staffMode?: boolean }) {
+export function InvestorWorkspace({
+  staffMode = false,
+  onDirtyChange,
+}: {
+  staffMode?: boolean;
+  onDirtyChange?: (dirty: boolean) => void;
+}) {
   const [member, setMember] = useState<PortalMember | null>(null),
     [email, setEmail] = useState(''),
     [code, setCode] = useState(''),
@@ -258,20 +265,71 @@ export function InvestorWorkspace({ staffMode = false }: { staffMode?: boolean }
     window.addEventListener('beforeunload', protect);
     return () => window.removeEventListener('beforeunload', protect);
   }, [dirty]);
+  useEffect(() => onDirtyChange?.(dirty), [dirty, onDirtyChange]);
+  useEffect(() => {
+    const expired = () => {
+      clearPrivateState();
+      setError('Your session expired. Sign in again.');
+    };
+    window.addEventListener('pbk-portal-expired', expired);
+    return () => window.removeEventListener('pbk-portal-expired', expired);
+  }, []);
+  useEffect(() => {
+    if (!member) return;
+    const revalidate = () => {
+      if (document.visibilityState === 'visible')
+        void portalRequest('session').catch(() => {
+          clearPrivateState();
+          setError('Your session expired. Sign in again.');
+        });
+    };
+    document.addEventListener('visibilitychange', revalidate);
+    return () => document.removeEventListener('visibilitychange', revalidate);
+  }, [member]);
+  const errorSummary = useRef<HTMLParagraphElement>(null);
+  useEffect(() => {
+    if (error) {
+      errorSummary.current?.focus();
+      errorSummary.current?.scrollIntoView({ block: 'center', behavior: 'instant' });
+    }
+  }, [error]);
   function clearPrivateState() {
-    setMember(null);
-    setSelected(null);
-    setPreview(null);
-    setHistory(null);
-    setReceipt(null);
-    setAccessMembers([]);
-    setCode('');
-    setCodeSent(false);
-    setProperties([]);
-    setInquiries([]);
-    setSaved([]);
-    setMessage('');
-    setView(staffMode ? 'Property log' : 'Inventory');
+    clearPrivateSession(
+      {
+        member: setMember,
+        selected: setSelected,
+        preview: setPreview,
+        history: setHistory,
+        receipt: setReceipt,
+        accessMembers: setAccessMembers,
+        code: setCode,
+        codeSent: setCodeSent,
+        properties: setProperties,
+        inquiries: setInquiries,
+        saved: setSaved,
+        message: setMessage,
+        view: setView,
+        draft: setDraft,
+        editing: setEditing,
+        dirty: setDirty,
+        file: setFile,
+        rights: setRights,
+        alt: setAlt,
+        confirmation: setConfirmation,
+        search: setSearch,
+        filter: setFilter,
+        assetFilter: setAssetFilter,
+        maxPrice: setMaxPrice,
+        packetTab: setPacketTab,
+        proposed: setProposed,
+        timing: setTiming,
+        requestKey: setRequestKey,
+        investorEmail: setInvestorEmail,
+        contactId: setContactId,
+      },
+      blank,
+      staffMode
+    );
   }
   async function refresh() {
     const [p, i, s] = await Promise.all([
@@ -476,7 +534,7 @@ export function InvestorWorkspace({ staffMode = false }: { staffMode?: boolean }
             )}
           </form>
           {error && (
-            <p role="alert" className="portal-error">
+            <p ref={errorSummary} tabIndex={-1} role="alert" className="portal-error">
               {error}
             </p>
           )}
@@ -587,7 +645,7 @@ export function InvestorWorkspace({ staffMode = false }: { staffMode?: boolean }
         </button>
       </nav>
       {error && (
-        <p role="alert" className="portal-error">
+        <p ref={errorSummary} tabIndex={-1} role="alert" className="portal-error">
           {error}
         </p>
       )}
@@ -611,7 +669,7 @@ export function InvestorWorkspace({ staffMode = false }: { staffMode?: boolean }
                 void act(save);
               }}
             >
-              <fieldset>
+              <fieldset disabled={busy}>
                 <legend>Property</legend>
                 <div className="portal-grid">
                   {input('title', 'Property title')}
@@ -640,7 +698,7 @@ export function InvestorWorkspace({ staffMode = false }: { staffMode?: boolean }
                   {input('condition', 'Condition')}
                 </div>
               </fieldset>
-              <fieldset>
+              <fieldset disabled={busy}>
                 <legend>Numbers and sources</legend>
                 <div className="portal-grid">
                   {moneyInput('askingCents', 'Asking price, USD')}
@@ -658,7 +716,7 @@ export function InvestorWorkspace({ staffMode = false }: { staffMode?: boolean }
                   Price on request
                 </label>
               </fieldset>
-              <fieldset>
+              <fieldset disabled={busy}>
                 <legend>Investor copy</legend>
                 <label>
                   Summary
@@ -683,7 +741,7 @@ export function InvestorWorkspace({ staffMode = false }: { staffMode?: boolean }
                   Fictional staging sample
                 </label>
               </fieldset>
-              <fieldset>
+              <fieldset disabled={busy}>
                 <legend>Internal only</legend>
                 <label>
                   Internal staff notes
@@ -694,7 +752,7 @@ export function InvestorWorkspace({ staffMode = false }: { staffMode?: boolean }
                 </label>
                 <p className="portal-muted">These notes never enter the investor response.</p>
               </fieldset>
-              <fieldset>
+              <fieldset disabled={busy}>
                 <legend>Review checklist</legend>
                 {Object.entries(checkLabels).map(([key, label]) => (
                   <label key={key} className="portal-check">
@@ -1118,6 +1176,7 @@ export function InvestorWorkspace({ staffMode = false }: { staffMode?: boolean }
                         const r = await portalRequest('inquire', {
                           id: selected.id,
                           key: requestKey,
+                          version: selected.version,
                           message,
                           proposedCents: proposed ? Math.round(Number(proposed) * 100) : null,
                           timing,

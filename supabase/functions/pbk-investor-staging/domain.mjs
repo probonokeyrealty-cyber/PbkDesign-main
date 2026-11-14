@@ -387,6 +387,7 @@ export function execute(original, uid, command, payload = {}) {
         fail('Enter a message and a valid request key.');
       const fingerprint = JSON.stringify({
         propertyId: payload.id,
+        version: payload.version,
         message,
         proposedCents,
         timing,
@@ -402,6 +403,11 @@ export function execute(original, uid, command, payload = {}) {
       }
       const p = getProperty(state, payload.id);
       const published = buyerView(p);
+      if (!Number.isInteger(payload.version) || payload.version !== published.version)
+        fail(
+          'Property version changed. Refresh and review the current packet before sending.',
+          409
+        );
       const inquiry = {
         id: crypto.randomUUID(),
         propertyId: p.id,
@@ -426,7 +432,11 @@ export function execute(original, uid, command, payload = {}) {
     default:
       fail('Unknown portal action.', 404);
   }
-  if (changed && JSON.stringify(state).length > 8_000_000)
+  const securityAction =
+    command === 'revokeInvestor' ||
+    command === 'withdraw' ||
+    (command === 'status' && ['Under contract', 'Sold'].includes(payload.status));
+  if (changed && JSON.stringify(state).length > (securityAction ? 11_000_000 : 8_000_000))
     fail('Staging capacity reached. No changes were saved.', 507);
   return { state, result, changed };
 }

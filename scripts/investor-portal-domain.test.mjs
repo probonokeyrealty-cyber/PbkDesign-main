@@ -89,6 +89,7 @@ test('inquiry retries create one record; payload mismatch fails; history is priv
   let { s, id } = released();
   const payload = {
     id,
+    version: 1,
     key: 'qa-key-123456789',
     message: 'No-outreach internal QA',
     proposedCents: null,
@@ -106,7 +107,12 @@ test('inquiry retries create one record; payload mismatch fails; history is priv
 });
 test('withdraw/revoke remove buyer access and preserve audit and inquiries', () => {
   let { s, id } = released();
-  s = run(s, 'alice', 'inquire', { id, key: 'qa-key-123456789', message: 'No outreach' }).state;
+  s = run(s, 'alice', 'inquire', {
+    id,
+    version: 1,
+    key: 'qa-key-123456789',
+    message: 'No outreach',
+  }).state;
   const count = s.audit.length;
   s = run(s, 'reviewer', 'withdraw', { id, revision: 2 }).state;
   assert.equal(run(s, 'alice', 'list').result.properties.length, 0);
@@ -163,6 +169,7 @@ test('status transitions hide sold inventory and preserve historical inquiry', (
   let { s, id } = released();
   s = run(s, 'alice', 'inquire', {
     id,
+    version: 1,
     key: 'test-status-key-12345',
     message: 'NO OUTREACH QA',
   }).state;
@@ -198,4 +205,50 @@ test('email verification links are restricted to our auth provider', () => {
     () => verificationInput('', base + '/auth/v1/verify?type=recovery&token=abc', base),
     /PBK email/
   );
+});
+
+test('inquiry rejects changed release and original retry survives later release', () => {
+  let { s, id } = released();
+  const input = { id, version: 1, key: 'version-test-key-12345', message: 'NO OUTREACH' };
+  const first = run(s, 'alice', 'inquire', input);
+  s = first.state;
+  let p = s.properties[id];
+  s = run(s, 'editor', 'save', {
+    id,
+    revision: p.revision,
+    draft: { ...data, askingCents: 30000000 },
+  }).state;
+  s = run(s, 'reviewer', 'preview', { id }).state;
+  s = run(s, 'reviewer', 'release', { id, revision: s.properties[id].revision }).state;
+  assert.throws(
+    () => run(s, 'alice', 'inquire', { ...input, key: 'new-version-key-12345' }),
+    /changed|version/i
+  );
+  assert.equal(run(s, 'alice', 'inquire', input).result.inquiry.id, first.result.inquiry.id);
+  assert.throws(
+    () => run(s, 'alice', 'inquire', { ...input, key: 'missing-version-key', version: undefined }),
+    /version/i
+  );
+});
+test('capacity reserve permits security actions while ordinary writes fail', () => {
+  let { s, id } = released();
+  s.members.alice.email = 'alice@example.com';
+  s.padding = 'x'.repeat(7999900 - JSON.stringify(s).length);
+  assert.throws(
+    () =>
+      run(s, 'alice', 'inquire', {
+        id,
+        version: 1,
+        key: 'capacity-test-key-12345',
+        message: 'NO OUTREACH',
+      }),
+    /capacity/
+  );
+  const revoked = run(s, 'reviewer', 'revokeInvestor', { email: 'alice@example.com' }).state;
+  assert.equal(revoked.members.alice.approved, false);
+  const withdrawn = run(s, 'reviewer', 'withdraw', {
+    id,
+    revision: s.properties[id].revision,
+  }).state;
+  assert.equal(run(withdrawn, 'alice', 'list').result.properties.length, 0);
 });

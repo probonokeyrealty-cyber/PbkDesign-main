@@ -1,3 +1,4 @@
+import { readLimitedBody } from './bodyLimit.mjs';
 import { execute, membership, verificationInput } from './domain.mjs';
 
 const URL = Deno.env.get('SUPABASE_URL')!;
@@ -123,7 +124,15 @@ Deno.serve(async (req: Request) => {
     const contentLength = Number(req.headers.get('content-length') || 0);
     if (contentLength > 14_000_000) return json({ error: 'Request too large.' }, 413, origin);
     if (req.headers.get('Content-Type')?.startsWith('multipart/form-data')) {
-      const form = await req.formData();
+      const before = await read();
+      const { uid } = await identity(req, before.data);
+      const m = membership(before.data, uid);
+      if (!['editor', 'reviewer'].includes(m.role))
+        return json({ error: 'Staff access is required.' }, 403, origin);
+      const uploadBody = await readLimitedBody(req, 11_000_000);
+      const form = await new Response(uploadBody, {
+        headers: { 'Content-Type': req.headers.get('Content-Type')! },
+      }).formData();
       const id = String(form.get('id') || '');
       const revision = Number(form.get('revision'));
       const file = form.get('file');
@@ -139,10 +148,7 @@ Deno.serve(async (req: Request) => {
       const alt = String(form.get('alt') || '').slice(0, 400);
       if (!rights || rights.length > 1000 || (file.type !== 'application/pdf' && !alt))
         return json({ error: 'Media rights and photo alt text are required.' }, 400, origin);
-      const before = await read();
-      const { uid } = await identity(req, before.data);
-      const m = membership(before.data, uid);
-      if (!['editor', 'reviewer'].includes(m.role) || !before.data.properties[id])
+      if (!before.data.properties[id])
         return json({ error: 'Staff access is required.' }, 403, origin);
       if (before.data.properties[id].revision !== revision)
         return json({ error: 'Property changed. Reload before uploading.' }, 409, origin);
@@ -192,7 +198,7 @@ Deno.serve(async (req: Request) => {
       });
       return json(result, 200, origin);
     }
-    const raw = await req.text();
+    const raw = new TextDecoder().decode(await readLimitedBody(req, 100_000));
     if (raw.length > 100_000) return json({ error: 'Request too large.' }, 413, origin);
     const input = JSON.parse(raw);
     const command = String(input.command || '');
@@ -293,4 +299,3 @@ Deno.serve(async (req: Request) => {
     );
   }
 });
-

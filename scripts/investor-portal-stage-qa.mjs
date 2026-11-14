@@ -192,6 +192,7 @@ assert.notEqual(
 );
 const inquiry = {
   id: p.id,
+  version: p.releaseVersion,
   key: crypto.randomUUID(),
   message: 'NO OUTREACH — synthetic staging API inquiry',
   timing: 'QA only',

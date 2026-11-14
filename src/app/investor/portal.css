@@ -205,8 +205,8 @@
 .portal-tabs a {
   padding: 12px;
 }
-.portal-tabs [aria-pressed='true'],
-.portal-panel nav [aria-selected='true'] {
+.pbk-portal .portal-tabs [aria-pressed='true'],
+.pbk-portal .portal-panel nav [aria-selected='true'] {
   background: var(--portal-action);
   color: #fff;
 }

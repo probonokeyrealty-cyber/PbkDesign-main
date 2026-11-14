@@ -1,0 +1,29 @@
+{
+  "date": "2026-11-14T02:23:04.094Z",
+  "stage": "https://pbk-investor-staging--pbkcenter.netlify.app",
+  "frontendDeploy": "6af7c48ac22e9850f88b354d",
+  "backendVersion": 5,
+  "productionDeployUnchanged": "6af7b7b387bbca35f557eba7",
+  "reviewerEmail": "probonokeyrealty@gmail.com",
+  "domainClientTests": "16/16",
+  "hostedApiChecks": "16/16",
+  "mobileWidths": [
+    390,
+    320
+  ],
+  "desktopWidth": 1440,
+  "staffToInvestorReceipt": "d4037132-9d02-488e-adad-87a0ae094c9b",
+  "browserUpload": "blocked by extension file access; API upload passed",
+  "bridgeSmoke": "isolated offline run did not pass; production runtime untouched",
+  "outreach": false,
+  "webflowPublication": false,
+  "finalReviewedReceipt": "e9c17475-c019-4976-85f5-60b906191b04",
+  "finalReviewedReceiptCount": 1,
+  "finalViewedVersion": 1,
+  "finalDatabaseChecks": {
+    "ownerRole": "reviewer",
+    "bucketPublic": false,
+    "anonymousTableSelect": false
+  },
+  "finalProductionCheck": "6af7b7b387bbca35f557eba7"
+}

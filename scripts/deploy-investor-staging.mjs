@@ -93,7 +93,7 @@ const report = {
   deployId: deploy.id,
   state: deploy.state,
   url: deploy.deploy_ssl_url || deploy.deploy_url,
-  alias: deploy.ssl_url,
+  productionUrl: deploy.ssl_url,
   productionDeployUnchanged: true,
   productionDeployId: after.published_deploy?.id,
 };

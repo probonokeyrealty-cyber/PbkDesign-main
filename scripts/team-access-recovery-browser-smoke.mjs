@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { mkdirSync } from 'node:fs';
 import { chromium, webkit, expect } from '@playwright/test';
 import { createServer } from 'vite';
+import { createProxyFixture } from './fixtures/netlify-proxy-qa.mjs';
 
 const server = await createServer({ server: { host: '127.0.0.1', port: 0 } });
 await server.listen();
@@ -18,7 +19,7 @@ const session = {
 async function verify(browserType, width) {
   const browser = await browserType.launch();
   try {
-    const scenarios = ['post-login rejection', 'stale rejection during sign-in', 'usage write fallback', 'protected rejection', 'expiry during verification', 'expiry during outage', 'stale rejection after sign-in', 'superseded sign-in', 'malformed expiry', 'revoked then offline status', 'temporary verification', 'private site', 'malformed verification', 'invalid session', 'expired session', 'cross tab', 'cross tab signout', 'private sign-in', 'wrong passcode', 'draft recovery', 'blob recovery', 'no mutation replay'];
+    const scenarios = ['proxy verifier outage', 'proxy verifier malformed', 'proxy verifier revoked', 'post-login rejection', 'stale rejection during sign-in', 'usage write fallback', 'protected rejection', 'expiry during verification', 'expiry during outage', 'stale rejection after sign-in', 'superseded sign-in', 'malformed expiry', 'revoked then offline status', 'temporary verification', 'private site', 'malformed verification', 'invalid session', 'expired session', 'cross tab', 'cross tab signout', 'private sign-in', 'wrong passcode', 'draft recovery', 'blob recovery', 'no mutation replay'];
     if (process.argv[2]) assert.ok(scenarios.includes(process.argv[2]), 'Unknown auth QA scenario');
     for (const scenario of scenarios.filter(value => !process.argv[2] || value === process.argv[2])) {
       const context = await browser.newContext({ viewport: { width, height: 900 } });
@@ -37,6 +38,14 @@ async function verify(browserType, width) {
       let mutations = 0;
       let signIns = 0;
       const errors = [];
+      let proxyVerificationResponse;
+      const proxyCalls = [];
+      const proxy = createProxyFixture(async target => {
+        const path = new URL(target).pathname;
+        proxyCalls.push(path);
+        assert.equal(path, '/api/auth/team/verify', 'Unverified requests must never reach the protected target');
+        return proxyVerificationResponse();
+      });
       await context.routeWebSocket('**/*', socket => socket.close());
       await context.route('**/*', async route => {
         const request = route.request();
@@ -65,6 +74,11 @@ async function verify(browserType, width) {
           return route.fulfill({ json: { ok: true, ...session, token: scenario === 'stale rejection after sign-in' ? 'new-fixture-session' : session.token } });
         }
         if (['/api/leads', '/api/leads/fixture', '/api/approvals/fixture', '/invoke'].includes(url.pathname)) {
+          if (proxyVerificationResponse) {
+            const result = await proxy({ httpMethod: request.method(), path: url.pathname,
+              queryStringParameters: { path: url.pathname }, headers: request.headers() });
+            return route.fulfill({ status: result.statusCode, headers: result.headers, body: result.body });
+          }
           if (['stale rejection after sign-in', 'stale rejection during sign-in'].includes(scenario) && !heldRead) { heldRead = route; return; }
           if (request.method() !== 'GET') mutations++;
           if (quotaExceeded) return route.fulfill({ status: 503, json: { ok: false, error: 'usage_exceeded' } });
@@ -86,7 +100,38 @@ async function verify(browserType, width) {
         });
       }
       await page.goto(hosted + fixturePath + (scenario === 'post-login rejection' ? '?protected-refresh=1' : ''));
-      if (scenario === 'post-login rejection') {
+      if (scenario.startsWith('proxy verifier')) {
+        await expect(page.getByRole('heading', { name: 'Fixture workspace' })).toBeVisible();
+        await page.getByRole('textbox', { name: 'Unsaved operator draft' }).fill('Preserve through verifier outage');
+        if (scenario === 'proxy verifier revoked') {
+          proxyVerificationResponse = () => Response.json({ ok: false, code: 'expired_team_session' }, { status: 401 });
+          await page.getByRole('button', { name: 'Check fixture connection' }).click();
+          await expect(page.getByRole('textbox', { name: 'Team passcode' })).toBeVisible();
+          await expect(page.getByRole('heading', { name: 'Fixture workspace' })).toHaveCount(0);
+          assert.equal(await page.evaluate(key => localStorage.getItem(key), sessionKey), null);
+        } else {
+          const statuses = scenario === 'proxy verifier malformed' ? [200] : [500, 502, 503, 504, 429];
+          for (const status of statuses) {
+            proxyVerificationResponse = () => status === 200 ? Response.json({}) : new Response('<html>Fixture unavailable</html>', { status });
+            for (const blob of [false, true]) {
+              const error = await page.evaluate(async blob => {
+                const { bridgeRequest, bridgeBlobRequest } = await import('/src/app/utils/runtimeBridge.ts');
+                try { await (blob ? bridgeBlobRequest : bridgeRequest)({ path: '/api/leads' }); }
+                catch (error) { return { code: error.code, status: error.status }; }
+              }, blob);
+              assert.equal(await page.evaluate(key => JSON.parse(localStorage.getItem(key))?.token, sessionKey), session.token);
+              assert.deepEqual(error, { code: 'team_auth_verification_unavailable', status: status === 200 ? 502 : status });
+              await expect(page.getByRole('textbox', { name: 'Unsaved operator draft' })).toHaveValue('Preserve through verifier outage');
+              await expect(page.getByRole('heading', { name: 'Fixture workspace' })).toBeVisible();
+            }
+          }
+          proxyVerificationResponse = null;
+          await page.getByRole('button', { name: 'Check fixture connection' }).click();
+          await expect(page.getByLabel('Fixture connection result')).toHaveText('ready');
+          await expect(page.getByRole('textbox', { name: 'Unsaved operator draft' })).toHaveValue('Preserve through verifier outage');
+        }
+        assert.ok(proxyCalls.length > 0, 'The regression must exercise the actual proxy verifier');
+      } else if (scenario === 'post-login rejection') {
         await page.getByRole('textbox', { name: 'Team passcode' }).fill('fixture-only-passcode');
         await page.getByRole('button', { name: 'Open command center', exact: true }).click();
         await expect(page.getByRole('alert')).toContainText('expired or was rejected');

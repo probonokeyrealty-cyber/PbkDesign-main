@@ -41,7 +41,7 @@ export async function createControlledAgentStorage(pool, { tables = TABLES, revi
       const expression = toSql.expr(statement.columns[0].expr);
       await pool.query(`ALTER TABLE ${identifier(schema)}.${identifier(table)} ALTER COLUMN ${identifier(column.name)} SET DEFAULT ${expression}`);
     }
-    const keys = await pool.query(`SELECT c.contype, array_agg(a.attname ORDER BY k.ordinality) AS columns
+    const keys = await pool.query(`SELECT c.contype, array_agg(a.attname::text ORDER BY k.ordinality) AS columns
       FROM pg_catalog.pg_constraint c CROSS JOIN LATERAL unnest(c.conkey) WITH ORDINALITY k(attnum, ordinality)
       JOIN pg_catalog.pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum
       WHERE c.conrelid = $1::regclass AND c.contype IN ('p','u') GROUP BY c.oid, c.contype`, [`public.${table}`]);

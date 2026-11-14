@@ -23,6 +23,7 @@ import { createAvaRequestTiming } from './ava-request-timing.mjs';
 import { createBackgroundPersistence } from './background-persistence.mjs';
 import { createPoolSchemaInitializer } from './pool-schema-initializer.mjs';
 import { observeUsagePersistence } from './ava-accounting-status.mjs';
+import { buildAvaDecisionMessages } from './ava-decision-messages.mjs';
 import { EventTypes, getEventBusStatus, publishEvent as publishEventBusEvent } from './event-bus/streams.mjs';
 import { buildRexKpiSnapshot, proposeAutonomousRexGoals, selectRexProactiveLeadAction } from './rex-autonomy.mjs';
 import { recordScriptOutcomeStats, selectContextAwareScript } from './context-aware-script-rotator.mjs';
@@ -64452,10 +64453,7 @@ async function runInternalAvaDeepSeekChat({
       memories,
     }),
   });
-  const deepSeekMessages = [
-    { role: 'system', content: prompt },
-    { role: 'user', content: String(text || '').trim() },
-  ].filter((message) => message.content);
+  const deepSeekMessages = buildAvaDecisionMessages(prompt, text);
   let deepSeek = await runDeepSeekChatCompletion(deepSeekMessages, {
     source: 'ava-assistant-chat',
     requestTiming,

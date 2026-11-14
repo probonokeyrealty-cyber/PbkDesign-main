@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from '@jest/globals';
 import { requiredAgentRegistryIds } from './agent-registry.mjs';
-import { qualificationCriteria, validateQualificationReport, validateQualificationAging, createQualificationRequest, runControlledQualification } from './agent-fleet-controlled-qualification.mjs';
+import { qualificationCriteria, validateQualificationReport, validateQualificationAging, createQualificationRequest, runControlledQualification, summarizeQualificationResponse } from './agent-fleet-controlled-qualification.mjs';
 
 const at = '2026-11-14T12:00:00.000Z';
 function fixture() {
@@ -25,6 +25,22 @@ test('controlled qualification validates eleven genuine correlated handlers with
   const result = validateQualificationReport(fixture(), { now: Date.parse(at) });
   assert.equal(result.qualifiedAgentCount, 11);
   assert.equal(result.productionReadinessVerified, false);
+});
+
+test('attempt evidence retains only bounded run and criterion facts before strict validation', () => {
+  const report = fixture();
+  report.apiKey = 'never-retain';
+  report.agents[0].customerTranscript = 'never-retain';
+  report.agents[0].completed = false;
+  const summary = summarizeQualificationResponse('/api/agents/controlled-qualification', 200, report);
+  assert.equal(summary.runId, 'test-run');
+  assert.equal(summary.agents.length, 11);
+  assert.equal(summary.agents[0].completed, false);
+  assert.equal(JSON.stringify(summary).includes('never-retain'), false);
+  assert.equal(summarizeQualificationResponse('/api/agents/controlled-qualification', 500,
+    { code: 'bridge_error', error: 'secret-in-error' }).errorCode, 'bridge_error');
+  assert.equal(JSON.stringify(summarizeQualificationResponse('/api/agents/controlled-qualification', 500,
+    { code: 'secret-in-error', error: 'secret-in-error' })).includes('secret-in-error'), false);
 });
 
 for (const defect of ['missing-agent', 'duplicate-task', 'wrong-run', 'wrong-call', 'operational', 'criterion',

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { writeFile } from 'node:fs/promises';
+import { appendFile, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { requiredAgentRegistryIds } from './agent-registry.mjs';
@@ -81,7 +81,22 @@ export function validateQualificationAging(before, after, options = {}) {
   return validateQualificationReport(after, { ...options, allowExpired: true });
 }
 
-export function createQualificationRequest(baseUrl, apiKey) {
+export function summarizeQualificationResponse(path, httpStatus, data) {
+  const knownErrors = new Set(['bridge_error', 'controlled_founder_auth_required', 'controlled_server_fixture_only',
+    'controlled_request_rejected', 'controlled_runtime_unavailable', 'controlled_run_in_progress',
+    'controlled_custom_column_type_blocked', 'controlled_storage_schema_missing', 'controlled_sql_statement_blocked',
+    'controlled_sql_table_blocked', 'controlled_sql_function_blocked', 'controlled_sql_type_blocked']);
+  const error = [data?.code, data?.result, data?.error].find((value) => knownErrors.has(value));
+  return { path, httpStatus, ...(error ? { errorCode: error } : {}),
+    ...(typeof data?.runId === 'string' && /^[a-zA-Z0-9-]{1,80}$/.test(data.runId) ? { runId: data.runId } : {}),
+    ...(Array.isArray(data?.agents) ? { agents: data.agents.filter((item) => qualificationCriteria[item?.agentId]).map((item) => ({
+      agentId: item.agentId, completed: item.completed === true, durable: item.durable === true,
+      operational: item.operational === true,
+      criteria: Object.fromEntries(qualificationCriteria[item.agentId].map((key) => [key, item.criteria?.[key] === true])),
+    })) } : {}) };
+}
+
+export function createQualificationRequest(baseUrl, apiKey, { onResponse = async () => {} } = {}) {
   const base = new URL(baseUrl);
   assert(base.protocol === 'https:' || (base.protocol === 'http:' && base.hostname === '127.0.0.1'));
   assert(base.pathname === '/' && !base.username && !base.password && !base.search && !base.hash);
@@ -96,8 +111,10 @@ export function createQualificationRequest(baseUrl, apiKey) {
       headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
       ...(execute ? { body: '{}' } : {}), signal: AbortSignal.timeout(120000),
     });
+    const data = await response.json();
+    await onResponse(summarizeQualificationResponse(path, response.status, data));
     assert(response.ok, `Qualification HTTP ${response.status}`);
-    return response.json();
+    return data;
   };
 }
 
@@ -140,7 +157,8 @@ async function main(args) {
   assert(args.length === 7 && args[0] === '--execute' && args[1] === '--expected-revision'
     && args[3] === '--guard-reviewed-revision' && args[5] === '--output',
   'Usage: --plan | --execute --expected-revision SHA --guard-reviewed-revision SHA --output PATH');
-  const result = await runControlledQualification(createQualificationRequest(process.env.PBK_BRIDGE_URL, process.env.PBK_BRIDGE_API_KEY),
+  const result = await runControlledQualification(createQualificationRequest(process.env.PBK_BRIDGE_URL, process.env.PBK_BRIDGE_API_KEY,
+    { onResponse: (summary) => appendFile(resolve(`${args[6]}.attempt.ndjson`), `${JSON.stringify(summary)}\n`) }),
     { expectedRevision: args[2], reviewedGuardRevision: args[4], verifyAging: true });
   await writeFile(resolve(args[6]), `${JSON.stringify(result, null, 2)}\n`, { flag: 'wx' });
   return result;

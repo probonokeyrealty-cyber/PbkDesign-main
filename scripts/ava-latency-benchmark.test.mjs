@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from '@jest/globals';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
-import { summarizeLatency, summarizeBenchmark, runBenchmark, SCENARIOS } from './ava-latency-benchmark.mjs';
+import { summarizeLatency, summarizeBenchmark, runBenchmark, SCENARIOS, buildBenchmarkPlan } from './ava-latency-benchmark.mjs';
 
 test('nearest-rank p95 retains slow observations, with no zero for missing samples', () => {
   assert.equal(summarizeLatency([1, 2, 9000]).p95Ms, 9000);
@@ -60,8 +60,9 @@ test('real operator recorder excludes diagnostic source without changing ordinar
 });
 
 test('model fallback and missing release identity cannot certify the budget', () => {
-  const samples = Array.from({ length: 24 }, (_, index) => ({ scenario: SCENARIOS[index % SCENARIOS.length].id, elapsedMs: 100, httpStatus: 200, ok: true,
-    releaseCommit: 'same-release', timing: { metricKind: 'operator_request', durationMs: 80, stages: [] } }));
+  const samples = buildBenchmarkPlan(24).map(({ id }) => ({ scenario: id, elapsedMs: 100, httpStatus: 200, ok: true,
+    result: id === 'model_chat' ? 'deepseek_chat_answer' : 'success', usagePersistence: id === 'model_chat' ? { ok: true } : null,
+    releaseCommit: 'same-release', timing: { metricKind: 'operator_request', durationMs: 80, stages: id === 'model_chat' ? [{ stage: 'llm_request', durationMs: 60 }] : [] } }));
   assert.equal(summarizeBenchmark(samples).budgetProven, true);
   assert.equal(summarizeBenchmark(samples.map((sample) => ({ ...sample, fallback: true }))).budgetProven, false);
   assert.equal(summarizeBenchmark(samples.map((sample) => ({ ...sample, releaseCommit: '' }))).budgetProven, false);
@@ -69,4 +70,22 @@ test('model fallback and missing release identity cannot certify the budget', ()
   const failedAccounting = summarizeBenchmark(samples.map((sample) => ({ ...sample, usagePersistence: { ok: false } })));
   assert.equal(failedAccounting.accountingFailures, 24);
   assert.equal(failedAccounting.budgetProven, false);
+});
+
+test('24 plan has six varied model requests; blocked responses never supply completion speed proof', () => {
+  const plan = buildBenchmarkPlan(24);
+  assert.equal(plan.length, 24);
+  const model = plan.filter((item) => item.id === 'model_chat');
+  assert.equal(model.length, 6);
+  assert.equal(new Set(model.map((item) => item.message)).size, 6);
+  const report = summarizeBenchmark(plan.map(({ id }) => ({ scenario: id, elapsedMs: 5, httpStatus: 200, ok: true,
+    toolOk: false, governanceBlocked: true, result: 'ava_control_read_only_pause', releaseCommit: 'same',
+    timing: { metricKind: 'operator_request', durationMs: 3, stages: id === 'model_chat' ? [{ stage: 'llm_request', durationMs: 2 }] : [] } })));
+  assert.equal(report.overall.count, 24);
+  assert.equal(report.completed.count, 0);
+  assert.equal(report.blocked.count, 24);
+  assert.equal(report.modelBacked.observed.count, 6);
+  assert.equal(report.modelBacked.completed.count, 0);
+  assert.equal(report.budgetProven, false);
+  assert.equal(report.latencyWithinBudget, false);
 });

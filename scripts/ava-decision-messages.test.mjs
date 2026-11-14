@@ -45,17 +45,21 @@ test('compact no-tool JSON preserves the canonical safe decision object', () => 
 test('actual chat keeps a complete JSON contract outside truncated memory context', async () => {
   const source = readFileSync(new URL('./openclaw-local-server.mjs', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
   let sentMessages;
+  let sentParams;
   let completionAnswer = JSON.stringify({ reply: 'safe answer', decision: 'answer', confidence: 0.8, nextAction: '', missionTimeline: [], needsApproval: false, toolIntent: null });
   const context = vm.createContext({
     buildAssistantPrompt, buildAvaDecisionMessages, isAvaCompactDecisionSafe,
     buildAvaDeepSeekDecisionTools: () => [],
-    runDeepSeekChatCompletion: async (messages) => {
+    runDeepSeekChatCompletion: async (messages, params) => {
       sentMessages = messages;
+      sentParams = params;
       return { ok: true, answer: completionAnswer, provider: { usagePersistence: { ok: true } }, reasoningPolicy: {} };
     },
     DEEPSEEK_LIVE_MODEL: 'fixture-model', DEEPSEEK_THINKING_MODE: 'disabled',
     DEEPSEEK_LIVE_ATTEMPT_TIMEOUT_MS: 1400, DEEPSEEK_LIVE_RETRY_ATTEMPTS: 1, DEEPSEEK_LIVE_RETRY_DELAY_MS: 100,
-    parseAvaDeepSeekDecisionAnswer: (answer) => ({ reply: answer }), isPublicAvaBrainAnswerSafe: () => true,
+    parseAvaDeepSeekDecisionAnswer: (answer) => { try { return JSON.parse(answer); } catch { return { reply: answer }; } },
+    isPublicAvaBrainAnswerSafe: () => true,
+    buildDeepSeekReasoningPolicy: () => ({}),
   });
   const contextStart = source.indexOf('function buildInternalAssistantDeepSeekContext(');
   const contextEnd = source.indexOf('\nfunction buildAvaDeepSeekDecisionTools', contextStart);
@@ -69,6 +73,10 @@ test('actual chat keeps a complete JSON contract outside truncated memory contex
     missionController: { mission: { status: 'completed' }, trace: { turnDecision: { reason: 'r'.repeat(220) }, workingMemory: { brief: 'b'.repeat(500) } } },
   });
   assert.equal(accepted.ok, true);
+  assert(Number.isFinite(sentParams.deadlineAt), 'live completion must carry one absolute request deadline');
+  assert(sentParams.deadlineAt <= Date.now() + 2300);
+  assert.equal(sentParams.attemptTimeoutMs, 2300, 'primary can finish within the whole budget instead of restarting at 1400');
+  assert.equal(sentParams.speculative, false, 'the native live path cannot spend its budget on another endpoint');
   const contract = sentMessages.find((message) => message.role === 'system' && message.content.includes('EXAMPLE JSON'));
   assert(contract, 'JSON format instructions must survive large memory context');
   for (const key of ['reply', 'decision', 'confidence', 'nextAction', 'needsApproval', 'missionTimeline', 'toolIntent']) assert(contract.content.includes(`"${key}"`));
@@ -82,4 +90,41 @@ test('actual chat keeps a complete JSON contract outside truncated memory contex
     assert.equal(rejected.toolResult.result, 'provider_invalid_decision');
     assert.equal(rejected.usagePersistence.ok, true, 'a rejected decision retains real provider accounting');
   }
+  for (const decision of ['block', 'approval_required', 'act', 'delegate']) {
+    completionAnswer = JSON.stringify({
+      reply: 'A calm, safe sentence.', decision, confidence: 0.8, nextAction: '',
+      needsApproval: decision !== 'block', missionTimeline: [],
+      toolIntent: decision === 'block' ? null : { name: 'telnyx_sms', providerWrite: true, summary: 'Proposed only', paramsJson: '{}' },
+    });
+    const rejected = await context.runInternalAvaDeepSeekChat({ text: 'Explain your role' });
+    assert.equal(rejected.ok, false, `${decision} cannot become a native read-only answer`);
+    assert.equal(rejected.controllerRejected, true);
+    assert.equal(rejected.toolResult.result, 'ava_control_model_decision');
+    assert.equal(rejected.toolResult.deepSeekDecision.decision, decision);
+    assert.equal(rejected.usagePersistence.ok, true);
+  }
+  const fallbackParams = [];
+  context.Date = { now: () => 1000 };
+  context.ensureDeepSeekJsonModeMessages = (messages) => messages;
+  context.isAvaDeepSeekJsonModeFallbackCandidate = (result) => ['provider_empty_response', 'provider_reasoning_only'].includes(result.result);
+  context.buildDeepSeekLiveRetryModels = () => ['fixture-model', 'fixture-secondary'];
+  context.runDeepSeekChatCompletion = async (_, params) => {
+    fallbackParams.push(params);
+    if (fallbackParams.length < 3) return { ok: false, result: 'provider_empty_response', provider: {}, attempts: [] };
+    return {
+      ok: true, answer: JSON.stringify({ reply: 'A safe answer.', decision: 'answer', confidence: 0.8, nextAction: '', missionTimeline: [], needsApproval: false, toolIntent: null }),
+      provider: { usagePersistence: { ok: true } }, attempts: [],
+    };
+  };
+  const fallback = await context.runInternalAvaDeepSeekChat({
+    text: 'Explain your role', requestTiming: { snapshot: () => ({ durationMs: 350 }) },
+  });
+  assert.equal(fallbackParams.length, 3);
+  assert(fallbackParams.every((params) => params.deadlineAt === 2950), 'JSON and model fallbacks cannot reset elapsed request budget');
+  assert(fallbackParams.every((params) => params.speculative === false));
+  assert.equal(fallbackParams[0].model, 'fixture-model');
+  assert.equal(fallbackParams[1].model, 'fixture-model');
+  assert.equal(fallbackParams[2].model, 'fixture-secondary');
+  assert.equal(fallback.toolResult.provider.jsonModeFallback, true);
+  assert.equal(fallback.toolResult.provider.modelFallback, true, 'fallback completion remains visibly labeled, never native');
 });

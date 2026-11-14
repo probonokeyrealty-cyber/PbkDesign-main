@@ -1,15 +1,26 @@
 const INTERNAL_LANGUAGE_PATTERN =
   /\b(?:telnyx_call|telnyx_sms|sendDocuSign|sendContract|analyzeDeal|createApproval|toolName|tool\s*call|JSON|call[_ -]?id|stream[_ -]?id|debug|metadata|function\s*call)\b/i;
 const SIGNATURE_PATTERN =
-  /\b(?:sign(?:ature|ing)?|docusign|send\s+(?:the\s+)?(?:contract|documents?)|contract\s+now|lock\s+it\s+up|paperwork\s+now)\b/i;
+  /\b(?:sign(?:ing)?|docusign\s+(?:this|these|it|the|your|now|today)|signature\s+(?:is\s+)?(?:required|needed|here|please)|(?:send(?:ing)?|sent|prepar(?:e|ed|ing)|launch(?:ing)?|start(?:ing)?)\s+(?:(?:the|a|an|your|our|approval-gated|approved)\s+)*(?:docusign(?:\s+contract)?|contract|documents?)|(?:need|request|obtain|collect|provide)\s+(?:(?:the|a|your)\s+)*signature|contract\s+now|lock\s+it\s+up|paperwork\s+now)\b/gi;
 const FALSE_URGENCY_PATTERN =
   /\b(?:expires today|only today|last chance|now or never|must sign today|offer goes away)\b/i;
 const LEGAL_TAX_RISK_PATTERN =
-  /\b(?:you do not need (?:a )?(?:lawyer|attorney|cpa)|don't need (?:a )?(?:lawyer|attorney|cpa)|ignore (?:your )?(?:lawyer|attorney|cpa)|tax advice|legal advice)\b/i;
+  /\b(?:you do not need (?:an? )?(?:lawyer|attorney|cpa)|don't need (?:an? )?(?:lawyer|attorney|cpa)|ignore (?:your )?(?:lawyer|attorney|cpa)|(?:give|provide|offer)\s+(?:legal|tax)\s+advice|tax advice|legal advice)\b/gi;
 const MONEY_PATTERN = /\$?\b(\d{2,3}(?:,\d{3})+|\d{5,7})(?:\.\d{1,2})?\b/g;
 
 function clean(value = '') {
   return String(value || '').replace(/\s+/g, ' ').trim();
+}
+
+function hasAffirmativeAction(answer, pattern) {
+  for (const match of answer.matchAll(pattern)) {
+    const prefix = answer.slice(0, match.index).replace(/[\u2018\u2019]/g, "'");
+    // Negation only applies immediately to this action, never across another verb or clause.
+    if (!/\b(?:not|never|cannot|can't|don't|doesn't|didn't|won't|wouldn't|shouldn't|mustn't)\s+(?:be\s+)?$/i.test(prefix)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function fingerprintQuestion(value = '') {
@@ -73,7 +84,7 @@ export function guardAvaResponse(input = {}) {
     });
   }
 
-  if (LEGAL_TAX_RISK_PATTERN.test(originalAnswer)) {
+  if (hasAffirmativeAction(originalAnswer, LEGAL_TAX_RISK_PATTERN)) {
     return guardResult({
       result: 'handoff',
       blocked: true,
@@ -84,7 +95,7 @@ export function guardAvaResponse(input = {}) {
   }
 
   if (
-    SIGNATURE_PATTERN.test(originalAnswer) &&
+    hasAffirmativeAction(originalAnswer, SIGNATURE_PATTERN) &&
     (evidence.participantsIdentified === false || input.authorityKnown === false || phaseBeforeAuthority(phase))
   ) {
     return guardResult({

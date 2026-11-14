@@ -30777,6 +30777,7 @@ async function runDeepSeekChatCompletion(messages = [], params = {}) {
   const retryAttempts = Math.max(0, Math.min(3, toNumber(params.retryAttempts ?? params.retries, 0)));
   const retryDelayMs = Math.max(0, Math.min(2000, toNumber(params.retryDelayMs ?? params.retry_delay_ms, 0)));
   const attemptTimeoutMs = Math.max(1000, toNumber(params.attemptTimeoutMs ?? params.attempt_timeout_ms ?? params.timeoutMs, DEEPSEEK_TIMEOUT_MS));
+  const deadlineAt = Number.isFinite(params.deadlineAt) ? params.deadlineAt : Infinity;
   const requestedDeepSeekTools = normalizeDeepSeekToolsForStrictMode(params.tools || []);
   const hasDeepSeekTools = requestedDeepSeekTools.length > 0;
   const deepSeekTools = hasDeepSeekTools && DEEPSEEK_STRICT_TOOL_MODE === 'enabled' ? requestedDeepSeekTools : [];
@@ -30788,6 +30789,7 @@ async function runDeepSeekChatCompletion(messages = [], params = {}) {
   const runAttempt = async (attemptIndex = 0) => {
     let controller = null;
     let timeout = null;
+    const remainingTimeoutMs = Math.max(0, Math.min(attemptTimeoutMs, deadlineAt - Date.now()));
     const requestBody = {
       model,
       messages: requestMessages,
@@ -30805,7 +30807,7 @@ async function runDeepSeekChatCompletion(messages = [], params = {}) {
       model,
       thinkingMode,
       attempt: attemptIndex + 1,
-      attemptTimeoutMs,
+      attemptTimeoutMs: remainingTimeoutMs,
       jsonMode: params.responseFormat === 'json',
       toolCallsRequested: hasDeepSeekTools,
       toolCallsSent: deepSeekTools.length > 0,
@@ -30993,7 +30995,7 @@ async function runDeepSeekChatCompletion(messages = [], params = {}) {
         }
       }
       controller = new AbortController();
-      timeout = setTimeout(() => controller.abort(), attemptTimeoutMs);
+      timeout = setTimeout(() => controller.abort(), remainingTimeoutMs);
       const { response, payload } = await measure('llm_request', async () => {
         const response = await executeProviderCircuitGuard(
           'deepseek',
@@ -31021,6 +31023,8 @@ async function runDeepSeekChatCompletion(messages = [], params = {}) {
         return { response, payload };
       });
       if (!response.ok) {
+        if (Date.now() >= deadlineAt) controller.abort();
+        controller.signal.throwIfAborted();
         return {
           ok: false,
           result: 'provider_error',
@@ -31040,6 +31044,10 @@ async function runDeepSeekChatCompletion(messages = [], params = {}) {
         leadId: params.leadId || params.lead_id || '',
         responseId: payload?.id || '',
       })));
+      if (Number.isFinite(deadlineAt)) {
+        if (Date.now() >= deadlineAt) controller.abort();
+        controller.signal.throwIfAborted();
+      }
       if (payload?.choices?.[0]?.finish_reason === 'length' || payload?.choices?.[0]?.finish_reason === 'content_filter') {
         return {
           ok: false,
@@ -31100,6 +31108,13 @@ async function runDeepSeekChatCompletion(messages = [], params = {}) {
 
   let lastResult = null;
   for (let attemptIndex = 0; attemptIndex <= retryAttempts; attemptIndex++) {
+    if (Date.now() >= deadlineAt) {
+      return {
+        ok: false, result: 'provider_timeout', error: 'DeepSeek overall request budget exhausted.',
+        provider: { ...meta, model, thinkingMode, attemptTimeoutMs: 0 },
+        attempts, retryAttempts, attemptTimeoutMs,
+      };
+    }
     const result = await runAttempt(attemptIndex);
     attempts.push({
       attempt: attemptIndex + 1,
@@ -31109,7 +31124,7 @@ async function runDeepSeekChatCompletion(messages = [], params = {}) {
       status: result.status || null,
       error: result.error || '',
       retry: attemptIndex > 0 ? 'provider_retry' : '',
-      attemptTimeoutMs,
+      attemptTimeoutMs: result.provider?.attemptTimeoutMs ?? attemptTimeoutMs,
     });
     if (result.ok || !isRetryableDeepSeekResult(result) || attemptIndex >= retryAttempts) {
       return {
@@ -31120,7 +31135,15 @@ async function runDeepSeekChatCompletion(messages = [], params = {}) {
       };
     }
     lastResult = result;
-    await sleep(retryDelayMs * (attemptIndex + 1));
+    const delayMs = retryDelayMs * (attemptIndex + 1);
+    if (delayMs >= deadlineAt - Date.now()) {
+      return {
+        ...result, ok: false, result: 'provider_timeout',
+        error: 'DeepSeek overall request budget exhausted before retry.',
+        attempts, retryAttempts, attemptTimeoutMs,
+      };
+    }
+    await sleep(delayMs);
   }
 
   return {
@@ -64461,6 +64484,10 @@ async function runInternalAvaDeepSeekChat({
   memories = [],
   requestTiming = null,
 } = {}) {
+  // All attempts share the turn budget; leave room for finalization and transport.
+  const liveBudgetMs = 2300;
+  const elapsedMs = requestTiming?.snapshot?.().durationMs || 0;
+  const deadlineAt = Date.now() + Math.max(0, liveBudgetMs - elapsedMs);
   const prompt = buildAssistantPrompt(assistantContextSession, {
     extraContext: buildInternalAssistantDeepSeekContext(body, {
       missionController,
@@ -64471,6 +64498,8 @@ async function runInternalAvaDeepSeekChat({
   let deepSeek = await runDeepSeekChatCompletion(deepSeekMessages, {
     source: 'ava-assistant-chat',
     requestTiming,
+    deadlineAt,
+    speculative: false,
     sessionId,
     leadId,
     model: DEEPSEEK_LIVE_MODEL,
@@ -64480,7 +64509,7 @@ async function runInternalAvaDeepSeekChat({
     tools: buildAvaDeepSeekDecisionTools(),
     toolChoice: 'auto',
     thinkingMode: body.deepSeekThinkingMode || body.thinkingMode || DEEPSEEK_THINKING_MODE,
-    attemptTimeoutMs: DEEPSEEK_LIVE_ATTEMPT_TIMEOUT_MS,
+    attemptTimeoutMs: liveBudgetMs,
     retryAttempts: DEEPSEEK_LIVE_RETRY_ATTEMPTS,
     retryDelayMs: DEEPSEEK_LIVE_RETRY_DELAY_MS,
   });
@@ -64489,6 +64518,8 @@ async function runInternalAvaDeepSeekChat({
     const textFallback = await runDeepSeekChatCompletion(ensureDeepSeekJsonModeMessages(deepSeekMessages), {
       source: 'ava-assistant-chat-json-mode-fallback',
       requestTiming,
+      deadlineAt,
+      speculative: false,
       sessionId,
       leadId,
       model: DEEPSEEK_LIVE_MODEL,
@@ -64496,7 +64527,7 @@ async function runInternalAvaDeepSeekChat({
       maxTokens: 700,
       responseFormat: 'text',
       thinkingMode: body.deepSeekThinkingMode || body.thinkingMode || DEEPSEEK_THINKING_MODE,
-      attemptTimeoutMs: DEEPSEEK_LIVE_ATTEMPT_TIMEOUT_MS,
+      attemptTimeoutMs: liveBudgetMs,
       retryAttempts: 0,
       retryDelayMs: 0,
     });
@@ -64525,6 +64556,8 @@ async function runInternalAvaDeepSeekChat({
       const modelFallback = await runDeepSeekChatCompletion(ensureDeepSeekJsonModeMessages(deepSeekMessages), {
         source: 'ava-assistant-chat-model-fallback',
         requestTiming,
+        deadlineAt,
+        speculative: false,
         sessionId,
         leadId,
         model,
@@ -64532,7 +64565,7 @@ async function runInternalAvaDeepSeekChat({
         maxTokens: 700,
         responseFormat: 'text',
         thinkingMode: body.deepSeekThinkingMode || body.thinkingMode || DEEPSEEK_THINKING_MODE,
-        attemptTimeoutMs: Math.max(DEEPSEEK_LIVE_ATTEMPT_TIMEOUT_MS, 2200),
+        attemptTimeoutMs: liveBudgetMs,
         retryAttempts: 0,
         retryDelayMs: 0,
       });
@@ -64566,6 +64599,28 @@ async function runInternalAvaDeepSeekChat({
         provider: deepSeek.provider || null,
         error: 'DeepSeek did not return a valid safe decision contract.',
         attempts: deepSeek.attempts || [],
+      },
+    };
+  }
+  if (deepSeek.ok && (
+    !['answer', 'ask', 'log_only'].includes(deepSeekDecision.decision)
+    || deepSeekDecision.needsApproval
+    || deepSeekDecision.toolIntent?.name
+    || deepSeekDecision.toolIntent?.providerWrite
+    || deepSeek.toolCalls?.length
+  )) {
+    return {
+      ok: false, controllerRejected: true, usagePersistence,
+      answer: deepSeekDecision.needsApproval
+        ? 'That proposed action requires approval. Nothing was sent or changed.'
+        : 'I paused that response for safety. Nothing was sent or changed.',
+      toolResult: {
+        ok: false, result: 'ava_control_model_decision',
+        modelDecision: deepSeekDecision.decision,
+        deepSeekDecision, approvalRequired: Boolean(deepSeekDecision.needsApproval),
+        providerWritesBlocked: true,
+        provider: deepSeek.provider || null,
+        usagePersistence, attempts: deepSeek.attempts || [],
       },
     };
   }
@@ -65017,6 +65072,9 @@ async function handleInternalAvaAssistantChatRequest(request) {
     if (deepSeekChat.ok) {
       answer = deepSeekChat.answer;
       toolResult = deepSeekChat.toolResult;
+    } else if (deepSeekChat.controllerRejected) {
+      answer = deepSeekChat.answer;
+      toolResult = deepSeekChat.toolResult;
     } else if (readOnlyAuditRequest) {
       const auditFallback = buildAvaReadOnlyAuditFallback({
         state,
@@ -65063,7 +65121,14 @@ async function handleInternalAvaAssistantChatRequest(request) {
     readOnlyAuditRequest && assistantPlan.action === 'general' && toolResult?.result === 'ava_read_only_audit';
   if (!finalControlGate.ok && !preserveReadOnlyAuditAnswer) {
     answer = finalControlGate.answer;
-    toolResult = finalControlGate.toolResult;
+    toolResult = {
+      ...finalControlGate.toolResult,
+      controllerRejection: {
+        decision: finalControlGate.decision,
+        reason: finalControlGate.controlEnvelope?.reason || '',
+        guardReasons: missionController?.trace?.guard?.reasons || [],
+      },
+    };
     missionController = await requestTiming.measure('controller_final_recheck', () => runAvaMissionController({
       controllerStage: 'final',
       sessionId,

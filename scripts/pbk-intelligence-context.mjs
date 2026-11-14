@@ -198,6 +198,7 @@ function buildDataFreshness({ identity = {}, memory = {}, skills = {}, input = {
     memoryStale,
     skillsStale,
     lastSyncAt,
+    source: input.sourceEvidence || input.source || null,
     ageMs,
     ageStatus,
     maxAgeMs,
@@ -300,6 +301,7 @@ export function buildPBKIntelligenceContext(input = {}, { now = Date.now, maxAge
   const context = {
     revision: PBK_INTELLIGENCE_CONTEXT_REVISION,
     contextId: clean(input.contextId || [identity.leadId || identity.normalizedPhone || identity.normalizedEmail || 'unknown', identity.callId].filter(Boolean).join(':')),
+    diagnostic: input.diagnostic === true,
     generatedAt: new Date(nowMs).toISOString(),
     workspaceId: clean(input.workspaceId || input.workspace_id || 'pbk') || 'pbk',
     identity,

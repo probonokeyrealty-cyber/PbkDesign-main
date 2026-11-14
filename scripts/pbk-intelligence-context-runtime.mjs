@@ -40,14 +40,9 @@ function parseTimeMs(value) {
 }
 
 function contextAgeMs(context = {}, now = Date.now()) {
-  const lastSyncAt =
-    context.dataFreshness?.lastSyncAt ||
-    context.lastSyncAt ||
-    context.updatedAt ||
-    context.generatedAt ||
-    context.savedAt;
+  const lastSyncAt = context.dataFreshness?.lastSyncAt || context.lastSyncAt;
   const lastSyncMs = parseTimeMs(lastSyncAt);
-  return lastSyncMs ? Math.max(0, now - lastSyncMs) : Number.POSITIVE_INFINITY;
+  return lastSyncMs && lastSyncMs <= now ? now - lastSyncMs : Number.POSITIVE_INFINITY;
 }
 
 function buildRefreshInput(context = {}, options = {}) {
@@ -89,11 +84,13 @@ function buildRefreshInput(context = {}, options = {}) {
     agents: input.agents || options.agents || context.agents || [],
     outcome: context.outcome,
     lastSyncAt,
+    sourceEvidence: input.sourceEvidence ?? input.dataFreshness?.source ?? context.dataFreshness?.source ?? null,
     leadStale: input.leadStale ?? input.lead_stale ?? input.dataFreshness?.leadStale ?? context.dataFreshness?.leadStale,
     memoryStale: input.memoryStale ?? input.dataFreshness?.memoryStale ?? input.memory?.stale ?? context.dataFreshness?.memoryStale,
     skillsStale: input.skillsStale ?? input.dataFreshness?.skillsStale ?? input.skills?.stale ?? context.dataFreshness?.skillsStale,
     workspaceId: input.workspaceId || input.workspace_id || context.workspaceId,
     contextId: context.contextId,
+    diagnostic: input.diagnostic === true || context.diagnostic === true,
   };
 }
 
@@ -111,7 +108,8 @@ function getContextKey({ leadId = '', callId = '', input = {}, context = {} } = 
     clean(context.callState?.callId) ||
     clean(context.callId) ||
     getContextCallId(input);
-  return `${resolvedLeadId || 'unknown'}:${resolvedCallId || 'none'}`;
+  const namespace = input.diagnostic === true || context.diagnostic === true ? 'diagnostic:' : '';
+  return `${namespace}${resolvedLeadId || 'unknown'}:${resolvedCallId || 'none'}`;
 }
 
 function pruneExpiredSessions(now = Date.now()) {
@@ -195,7 +193,9 @@ export async function ensureFreshPBKIntelligenceContext(context = {}, options = 
     1000,
     Number(options.maxAgeMs || options.freshnessTtlMs || options.freshness_ttl_ms || DEFAULT_CONTEXT_FRESHNESS_MS)
   );
-  if (contextAgeMs(context) <= maxAgeMs) return context;
+  if (contextAgeMs(context) <= maxAgeMs && !options.input) {
+    return { ...context, fleetReadiness: buildPBKIntelligenceFleetReadiness({ context, agents: options.agents || context.agents || [], maxAgeMs }) };
+  }
 
   const rebuilt = buildPBKIntelligenceContext(buildRefreshInput(context, options));
   const refreshed = {

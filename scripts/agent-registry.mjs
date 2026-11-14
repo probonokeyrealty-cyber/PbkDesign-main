@@ -632,13 +632,24 @@ export function buildStableAgentFleetMeasurement(registry = [], options = {}) {
     fleetReadiness: context.fleetReadiness?.ready ?? context.readiness?.ready,
   };
   const generatedAt = new Date(typeof options.now === 'function' ? options.now() : options.now || Date.now()).toISOString();
+  if (options.requireSourceProvenance) {
+    const freshness = context.dataFreshness || {};
+    const age = Date.parse(generatedAt) - Date.parse(freshness.lastSyncAt || '');
+    const source = freshness.source || {};
+    const identityMatches = source.kind === 'runtime_lead_record' ? source.recordId === context.identity?.leadId
+      : source.kind === 'runtime_call_record' ? source.recordId === context.identity?.callId : false;
+    const fresh = Number.isFinite(age) && age >= 0 && age <= (freshness.maxAgeMs ?? 60_000)
+      && Boolean(identityMatches && source.recordId && source.at === freshness.lastSyncAt);
+    contextReadiness.dataFreshness = contextReadiness.dataFreshness === true && fresh;
+    contextReadiness.fleetReadiness = contextReadiness.fleetReadiness === true && fresh;
+  }
   const agents = requiredIds.map((agentId) => {
     const agent = byId.get(agentId) || normalizeAgentRegistryRecord({ id: agentId, name: agentId, status: 'missing' });
     const probe = getMeasurementProbeForAgent(options.healthProbes || [], agent);
     const action = getMeasurementLastAction(options.lastActions || {}, agent);
     const requiredTools = uniqueStrings(agent.metadata?.requiredTools || agent.requiredTools || []);
     const missingTools = requiredTools.filter((tool) => !catalog[tool]);
-    const samples = getMeasurementLatencySamples(options.latencySamples || {}, probe || {}, agent);
+    const samples = getMeasurementLatencySamples(options.latencySamples || {}, options.requireSourceProvenance ? {} : probe || {}, agent);
     const lastSuccessAt = getMeasurementLastSuccessAt(action);
     const lastFailureAt = getMeasurementLastFailureAt(agent, probe || {}, action);
     const status = String(agent.status || '').toLowerCase();
@@ -652,6 +663,8 @@ export function buildStableAgentFleetMeasurement(registry = [], options = {}) {
     blockers.push(...missingTools.map((tool) => `missing_tool:${tool}`));
     if (samples.length < minLatencySamples) blockers.push('latency_not_sampled');
     if (samples.length && percentile(samples, 0.95) > maxLatencyP95Ms) blockers.push('latency_p95_above_budget');
+    const unverifiedSamples = getMeasurementLatencySamples(options.unverifiedLatencySamples || {}, {}, agent);
+    if (unverifiedSamples.length && percentile(unverifiedSamples, 0.95) > maxLatencyP95Ms) blockers.push('unverified_latency_p95_above_budget');
     if (!lastSuccessAt) blockers.push('last_success_missing');
     for (const key of ['memory', 'skills', 'dataFreshness', 'fleetReadiness']) {
       if (contextReadiness[key] !== true) blockers.push(`${key}_not_ready`);
@@ -667,6 +680,7 @@ export function buildStableAgentFleetMeasurement(registry = [], options = {}) {
       result: measured ? 'agent_fully_measured' : 'agent_measurement_gap',
       blockers,
       measurement: {
+        evidence: options.evidenceDiagnostics?.[agentId] || (options.requireSourceProvenance ? { state: 'no_operational_use_observed' } : null),
         inventory: byId.has(agentId),
         healthProbe: Boolean(probe),
         healthReady: probe?.ready === true && probe?.present === true,
@@ -686,6 +700,8 @@ export function buildStableAgentFleetMeasurement(registry = [], options = {}) {
       metrics: {
         latencyP95Ms: percentile(samples, 0.95),
         latencySamples: samples.length,
+        unverifiedLatencySamples: unverifiedSamples.length,
+        unverifiedLatencyP95Ms: percentile(unverifiedSamples, 0.95),
         lastSuccessAt,
         lastFailureAt,
         maxLatencyP95Ms,

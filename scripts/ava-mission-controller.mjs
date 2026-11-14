@@ -46,8 +46,11 @@ function inferMissionStatus({ assistantPlan = {}, toolResult = null, orchestrati
   const action = lower(assistantPlan.action);
   const result = lower(toolResult?.result || toolResult?.outcome || toolResult?.status);
   const decision = lower(orchestration.actionDecision?.decision);
+  const completedApprovalRead = assistantPlan.toolPlan?.toolName === 'getApprovals'
+    && assistantPlan.toolPlan.providerWrite === false && assistantPlan.toolPlan.approvalRequired !== true
+    && toolResult?.ok === true && toolResult.approvalRequired !== true && result === 'approval_summary';
   if (action === 'mission_intake') return 'planning';
-  if (action === 'approval_required' || result.includes('approval') || result.includes('queued')) {
+  if (action === 'approval_required' || (!completedApprovalRead && result.includes('approval')) || result.includes('queued')) {
     return 'waiting_on_approval';
   }
   if (decision === 'blocked' || orchestration.guard?.result === 'blocked') return 'blocked';

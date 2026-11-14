@@ -113,6 +113,7 @@ RUN npm install --legacy-peer-deps --no-save --no-audit --no-fund --loglevel=war
       @opentelemetry/sdk-node@0.218.0 \
       puppeteer-core@24.41.0 \
       pg@8.13.1 \
+      pgsql-ast-parser@12.0.1 \
       redis@5.10.0 \
       ws@8.20.1 \
       youtube-transcript@1.3.1 \
@@ -144,6 +145,12 @@ COPY scripts/pbk-deepgram-client.mjs ./scripts/pbk-deepgram-client.mjs
 COPY scripts/qa-agent.mjs ./scripts/qa-agent.mjs
 COPY scripts/agent-registry.mjs ./scripts/agent-registry.mjs
 COPY scripts/agent-fleet-measurement.mjs ./scripts/agent-fleet-measurement.mjs
+COPY scripts/controlled-execution-scope.mjs ./scripts/controlled-execution-scope.mjs
+COPY scripts/controlled-agent-storage.mjs ./scripts/controlled-agent-storage.mjs
+COPY scripts/background-persistence.mjs ./scripts/background-persistence.mjs
+COPY scripts/pool-schema-initializer.mjs ./scripts/pool-schema-initializer.mjs
+COPY scripts/ava-accounting-status.mjs ./scripts/ava-accounting-status.mjs
+COPY scripts/ava-decision-messages.mjs ./scripts/ava-decision-messages.mjs
 COPY scripts/ava-request-timing.mjs ./scripts/ava-request-timing.mjs
 COPY scripts/rex-autonomy.mjs ./scripts/rex-autonomy.mjs
 COPY scripts/context-aware-script-rotator.mjs ./scripts/context-aware-script-rotator.mjs

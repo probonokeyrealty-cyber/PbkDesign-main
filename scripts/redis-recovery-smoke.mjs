@@ -8,6 +8,7 @@ const functions = source.slice(source.indexOf('async function getSharedRedisClie
 
 function runtime(client) {
   const context = vm.createContext({
+    controlledExecution: { getStore: () => undefined },
     REDIS_ENABLED: true, REDIS_URL: 'redis://test.invalid', REDIS_NAMESPACE: 'test',
     REDIS_INSTANCE_ID: 'test', REDIS_RETRY_COOLDOWN_MS: 1000,
     REDIS_CONNECT_TIMEOUT_MS: 25, REDIS_COMMAND_TIMEOUT_MS: 25,

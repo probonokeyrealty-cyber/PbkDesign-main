@@ -18,6 +18,7 @@ type LeadPortalHeaderProps = {
   pendingAction: string;
   messageAvailable: boolean;
   onBack: () => void;
+  backLabel?: string;
   onRefresh: () => void;
   onEdit: () => void;
   onAddPhone?: () => void;
@@ -35,6 +36,7 @@ export function LeadPortalHeader({
   pendingAction,
   messageAvailable,
   onBack,
+  backLabel = 'Leads',
   onRefresh,
   onEdit,
   onAddPhone,
@@ -50,9 +52,9 @@ export function LeadPortalHeader({
   return (
     <header className="pbk-lead-portal-header">
       <div className="pbk-lead-portal-heading">
-        <button type="button" className="back" aria-label="Back to leads" onClick={onBack}>
+        <button type="button" className="back" aria-label={`Back to ${backLabel.toLowerCase()}`} onClick={onBack}>
           <ArrowLeft size={16} />
-          Leads
+          {backLabel}
         </button>
         <div className="pbk-lead-portal-identity">
           <span className="avatar" aria-hidden="true">

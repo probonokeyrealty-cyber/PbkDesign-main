@@ -144,6 +144,7 @@ export function buildNurtureComplianceHealth(env = process.env) {
 }
 
 export async function ensureNurtureSchema(pool) {
+  if (pool?.controlled === true) return true;
   requireNurturePool(pool);
   await pool.query(`
     CREATE EXTENSION IF NOT EXISTS pgcrypto;

@@ -1,4 +1,5 @@
 import { mkdir, appendFile } from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { recordQaValidationMetric } from './observability.mjs';
@@ -461,6 +462,7 @@ export function buildQaAuditRecord({
   createdAt = new Date().toISOString(),
 } = {}) {
   return {
+    id: `pbk-qa-${randomUUID()}`,
     toolName: String(toolName || '').trim(),
     tool_name: String(toolName || '').trim(),
     passed: qa.ok === true,

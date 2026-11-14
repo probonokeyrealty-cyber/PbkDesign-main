@@ -78,6 +78,7 @@ test('caller full context cannot bypass authoritative rebuilding or diagnostic m
   const authoritative = { diagnostic: true, identity: { leadId: 'synthetic-lead' }, dataFreshness: { lastSyncAt: null } };
   const sandbox = vm.createContext({
     state: { agents: [] },
+    controlledExecution: { getStore: () => undefined },
     getAgentActionContextIds: () => ({ leadId: 'synthetic-lead', callId: '' }),
     isFullAgentActionPBKIntelligenceContext: () => true,
     buildAgentActionPBKIntelligenceContextInput: () => authoritative,

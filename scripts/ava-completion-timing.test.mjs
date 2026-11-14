@@ -23,6 +23,7 @@ test('completion measures provider response and awaited accounting independently
     fetch: async () => { clock += 400; return { ok: true, json: async () => { clock += 20; return { choices: [{ message: { content: 'safe answer' } }], usage: { total_tokens: 10 } }; } }; },
     recordTokenUsage: async () => { clock += 900; return { ok: true }; },
     sanitizeDeepSeekToolCalls: (value) => value, buildDeepSeekReasoningPolicy: () => ({}),
+    extractDeepSeekToolCallAnswer: () => '',
     isRetryableDeepSeekResult: () => false,
   });
   vm.runInContext(source.slice(start, end), context);
@@ -39,4 +40,15 @@ test('completion measures provider response and awaited accounting independently
   assert.equal(failedAccounting.provider.usagePersistence.ok, false);
   assert.equal(failedAccounting.provider.usagePersistence.warning, 'token_usage_persistence_failed');
   assert(!JSON.stringify(failedAccounting.provider.usagePersistence).includes('secret-database'));
+  context.fetch = async () => ({ ok: true, json: async () => {
+    const error = new Error('body cancelled');
+    error.name = 'AbortError';
+    throw error;
+  } });
+  let usageCalls = 0;
+  context.recordTokenUsage = async () => { usageCalls++; return { ok: true }; };
+  const bodyTimeout = await context.runDeepSeekChatCompletion([], { requestTiming: timing });
+  assert.equal(bodyTimeout.ok, false);
+  assert.equal(bodyTimeout.result, 'provider_timeout');
+  assert.equal(usageCalls, 0, 'an interrupted response has no usable token accounting payload');
 });

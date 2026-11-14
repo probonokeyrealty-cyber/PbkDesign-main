@@ -147,7 +147,18 @@ export async function readControlledAgentQualification(pool, runId) {
         break;
       }
     }
-    agents.push({ ...data, agentId: result.agent_id, completed: correlated && semantic, durable: correlated, criteria, evidenceRecordIds });
+    const correlationChecks = {
+      taskPresent: Boolean(task), taskComplete: task?.status === 'complete',
+      workOrderAgentMatch: task?.metadata?.workOrder?.agentId === result.agent_id,
+      workOrderSourceMatch: task?.metadata?.workOrder?.source === 'controlled-qualification',
+      executionNonOperational: execution.operational === false,
+      handlerCompletionVerified: execution.handlerCompletionVerified === true,
+      actualContextIdentityMatch: context.contextId === data.contextId && task?.metadata?.pbkIntelligenceContext?.contextId === data.contextId,
+      fixtureIdentityMatch: ['leadId','callId','sourceUpdatedAt'].every(key => data[key] === fixture[key] && qualification[key] === fixture[key]),
+      completionTimeMatch: data.completedAt === completedAt && Number.isFinite(Date.parse(completedAt))
+        && Date.parse(completedAt) >= Date.parse(sourceUpdatedAt) && Date.parse(completedAt) <= new Date(result.completed_at).getTime(),
+    };
+    agents.push({ ...data, agentId: result.agent_id, completed: correlated && semantic, durable: correlated, criteria, evidenceRecordIds, correlationChecks });
   }
   return {
     schemaVersion: 'pbk-controlled-qualification-v1', source: 'controlled-qualification', runId,

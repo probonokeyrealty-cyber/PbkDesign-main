@@ -31002,7 +31002,11 @@ async function runDeepSeekChatCompletion(messages = [], params = {}) {
               headers: { 'Content-Type': 'application/json' },
             })
         );
-        const payload = await response.json().catch(() => null);
+        const payload = await response.json().catch((error) => {
+          if (controller.signal.aborted) controller.signal.throwIfAborted();
+          if (error?.name === 'AbortError') throw error;
+          return null;
+        });
         return { response, payload };
       });
       if (!response.ok) {
@@ -45222,12 +45226,14 @@ async function recordAgentHandoffTask(task = {}) {
     });
     upsertById(state, 'agentTasks', existing);
     state.agentTasks = sortNewest(state.agentTasks).slice(0, LIMITS.agentTasks);
-    void persistPbkTaskRecord(existing);
+    const saved = persistPbkTaskRecord(existing);
+    if (qualificationScope && (await saved)?.ok !== true) throw new Error('controlled_task_persistence_failed');
     return existing;
   }
   upsertById(state, 'agentTasks', record);
   state.agentTasks = sortNewest(state.agentTasks).slice(0, LIMITS.agentTasks);
-  void persistPbkTaskRecord(record);
+  const saved = persistPbkTaskRecord(record);
+  if (qualificationScope && (await saved)?.ok !== true) throw new Error('controlled_task_persistence_failed');
   void publishPbkEvent(
     EventTypes.AGENT_TASK_CREATED,
     {
@@ -45969,7 +45975,7 @@ async function executeControlledAgentQualification() {
         const data = { agentId, runId: storage.runId, leadId: fixture.leadId, callId: fixture.callId,
           sourceUpdatedAt: fixture.sourceUpdatedAt, contextId: result.pbkIntelligenceContext?.contextId || '',
           workOrderId: result.workOrder?.id || '', completedAt: evidence.completedAt || isoNow(),
-          outputResult: result.output?.result || result.output?.routedTo || result.output?.status || (agentId === 'rex' && isAgentHandlerCompletion(agentId, result.output) ? 'rex_sourced_answer' : 'handler_failed'),
+          outputResult: [result.output?.result, result.output?.routedTo, result.output?.status].find(value => typeof value === 'string' && value.trim()) || (agentId === 'rex' && isAgentHandlerCompletion(agentId, result.output) ? 'rex_sourced_answer' : 'handler_failed'),
           blockedSql: scope.blockedSql, blockedNetwork: scope.blockedNetwork, operational: false };
         await controlledExecution.exit(() => saveControlledAgentResult(pool, storage, agentId, data, result.output || {}, result.pbkIntelligenceContext || {}));
       });

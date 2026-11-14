@@ -309,13 +309,16 @@ function testAvaTurnContractBehavior() {
 }
 
 function testPBKIntelligenceContextAndFleetReadiness() {
-  const registry = buildDefaultAgentRegistry({ now: Date.now() });
+  const now = Date.parse('2026-11-14T12:00:00.000Z');
+  const lastSyncAt = new Date(now - 1000).toISOString();
+  const registry = buildDefaultAgentRegistry({ now, env: {} });
   const registryIds = registry.map((agent) => agent.id);
   for (const requiredId of requiredAgentRegistryIds) {
     assert(registryIds.includes(requiredId), `Agent registry missing ${requiredId}.`);
   }
 
-  const context = buildPBKIntelligenceContext({
+  const input = {
+    lastSyncAt,
     lead: {
       id: 'lead-behavior-1',
       name: 'Behavior Seller',
@@ -345,29 +348,45 @@ function testPBKIntelligenceContextAndFleetReadiness() {
       activeSkill: { id: 'skill-price-gap', name: 'Price gap discovery', action: 'jump' },
     },
     agents: registry,
-  });
+  };
+  const context = buildPBKIntelligenceContext(input, { now });
 
   assert.equal(context.identity.ready, true);
   assert.equal(context.memory.ready, true);
   assert.equal(context.skills.ready, true);
   assert.equal(context.turnContract.intent, 'already_gave_price');
+  assert.equal(context.dataFreshness.lastSyncAt, lastSyncAt);
+  assert.equal(context.dataFreshness.ageMs, 1000);
   assert.equal(context.dataFreshness.ready, true);
   assert.equal(context.fleetReadiness.ready, true);
   assert.deepEqual(context.fleetReadiness.missingAgents, []);
   assert(context.agentHandoffs.some((handoff) => handoff.agentId === 'script-rotator'));
 
+  const missingEvidence = buildPBKIntelligenceContext({ ...input, lastSyncAt: undefined }, { now });
+  assert.equal(missingEvidence.dataFreshness.lastSyncAt, null, 'Context construction must not invent source evidence.');
+  assert.equal(missingEvidence.dataFreshness.ageStatus, 'missing');
+  assert.equal(missingEvidence.dataFreshness.ready, false);
+  assert.equal(missingEvidence.fleetReadiness.required.dataFreshness, false);
+  assert.equal(missingEvidence.fleetReadiness.ready, false, 'A complete roster cannot replace source freshness evidence.');
+  const claimedReady = buildPBKIntelligenceFleetReadiness({
+    context: { ...missingEvidence, dataFreshness: { ...missingEvidence.dataFreshness, ready: true } },
+    agents: registry,
+    now,
+  });
+  assert.equal(claimedReady.required.dataFreshness, false, 'A ready flag cannot replace a source timestamp.');
+  assert.equal(claimedReady.ready, false);
+
   const incomplete = buildPBKIntelligenceFleetReadiness({
     context: {
-      identity: { ready: true },
-      memory: { ready: false },
-      skills: { ready: true },
-      turnContract: { ok: true, intent: 'make_offer' },
-      dataFreshness: { ready: true },
+      ...context,
+      memory: { ...context.memory, ready: false },
     },
     agents: registry,
+    now,
   });
   assert.equal(incomplete.ready, false);
   assert.equal(incomplete.required.memory, false);
+  assert.equal(incomplete.required.dataFreshness, true, 'The missing-memory case must retain valid freshness evidence.');
 }
 
 function testBehaviorSuiteIsInReleaseGate() {

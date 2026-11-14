@@ -16,6 +16,7 @@ import { PbkDataSource } from '../../components/pbk/index';
 import {
   deployAgentRequest,
   fetchAgentHealthRequest,
+  fetchAgentMeasurementRequest,
   fetchAgentRegistryRequest,
   fetchLatestQaAuditRequest,
   fetchAgentSnnStatusRequest,
@@ -26,6 +27,9 @@ import {
   invokeRuntimeTool,
   startLeadCallRequest,
   type AgentHealthProbe,
+  type AgentFleetMeasurement,
+  type AgentMeasurement,
+  type AgentMeasurementResponse,
   type AgentRegistryRecord,
   type AgentRegistryResponse,
   type QaAuditRecord,
@@ -47,19 +51,9 @@ type FleetAgent = RegistryAgent & {
   registrySource?: string;
   healthCheckedAt?: string;
   lastError?: string;
-  capability?: {
-    ready?: boolean;
-    result?: string;
-    requiredTools?: string[];
-    missingTools?: string[];
-    contextReady?: Record<string, boolean>;
-    contextKnown?: Record<string, boolean>;
-    latencyP95Ms?: number;
-    lastSuccess?: string;
-    lastFailure?: string;
-    blockedReason?: string;
-    blockedReasons?: string[];
-  };
+  capability?: AgentMeasurement;
+  measurementSource?: string;
+  measurementGeneratedAt?: string;
 };
 
 type PendingTransfer = {
@@ -533,6 +527,57 @@ function mergeAgentStatuses(
   return [...byId.values()];
 }
 
+function selectAgentMeasurement(
+  measurementResult: PromiseSettledResult<AgentMeasurementResponse>,
+  healthResult: PromiseSettledResult<AgentMeasurementResponse>
+) {
+  const unavailable = { measurement: undefined, source: '', warning: '' };
+  if (measurementResult.status === 'rejected') {
+    return {
+      ...unavailable,
+      warning: 'Measurement request failed; readiness is unverified. Check access and connection.',
+    };
+  }
+  let selected: { measurement?: AgentFleetMeasurement; source: string; warning: string } =
+    unavailable;
+  let selectedAt = -Infinity;
+  for (const [result, source] of [
+    [measurementResult, 'GET /api/agents/measurement'],
+    [healthResult, 'GET /api/agents/health (measurement)'],
+  ] as const) {
+    if (result.status !== 'fulfilled') continue;
+    const candidate = result.value.measurement;
+    const generatedAt = Date.parse(candidate?.generatedAt || '');
+    if (!Number.isFinite(generatedAt) || !Array.isArray(candidate?.agents)) continue;
+    if (generatedAt > selectedAt || (generatedAt === selectedAt && candidate.ready === false)) {
+      selected = { measurement: candidate, source, warning: '' };
+      selectedAt = generatedAt;
+    }
+  }
+  return selected.measurement
+    ? selected
+    : {
+        ...unavailable,
+        warning: 'Measurement evidence has no valid snapshot timestamp; readiness is unverified.',
+      };
+}
+
+function mergeAgentMeasurements(
+  agents: FleetAgent[],
+  measurement?: AgentFleetMeasurement,
+  source = 'GET /api/agents/measurement'
+) {
+  const byId = new Map(
+    (measurement?.agents || []).map((agent) => [normalizeFleetAgentId(agent.id), agent])
+  );
+  return agents.map((agent) => ({
+    ...agent,
+    capability: byId.get(normalizeFleetAgentId(agent.id)),
+    measurementSource: measurement ? source : undefined,
+    measurementGeneratedAt: measurement?.generatedAt,
+  }));
+}
+
 function normalizeFleetAgentId(value = '') {
   return String(value || '')
     .trim()
@@ -673,23 +718,29 @@ function formatAgentHealthTimestamp(value?: string) {
 }
 
 function formatAgentLatency(value?: number, sample = 'p95') {
-  if (!Number.isFinite(Number(value)) || Number(value) <= 0) return 'Not sampled';
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) return 'Not sampled';
   const latency = Math.round(Number(value));
   const duration = latency >= 1000 ? `${(latency / 1000).toFixed(1)}s` : `${latency}ms`;
-  return `${duration} ${sample}`;
+  return sample ? `${duration} ${sample}` : duration;
 }
 
 function getAgentHealthState(agent: FleetAgent, healthProbe?: AgentHealthProbe) {
-  if (typeof healthProbe?.ready === 'boolean') return healthProbe.ready ? 'ready' : 'degraded';
-  return agent.lastError ? 'degraded' : 'local';
+  const capability = agent.capability;
+  if (capability) {
+    return capability.ready === true &&
+      capability.measured === true &&
+      Array.isArray(capability.blockers) &&
+      capability.blockers.length === 0
+      ? 'ready'
+      : 'degraded';
+  }
+  return agent.lastError || healthProbe?.ready === false ? 'degraded' : 'local';
 }
 
-function getAgentCapabilityLabel(agent: FleetAgent, healthProbe?: AgentHealthProbe) {
-  if (agent.capability?.ready) return 'Ready to help';
-  if (agent.capability?.blockedReason) {
-    return agent.capability.blockedReason.replace(/[:_]/g, ' ');
+function getAgentCapabilityLabel(agent: FleetAgent) {
+  if (agent.capability) {
+    return getAgentHealthState(agent) === 'ready' ? 'Measured ready' : 'Not measured ready';
   }
-  if (healthProbe?.ready) return 'Tools and health clear';
   if (agent.lastError) return agent.lastError;
   return isRegistryBackedSource(agent.registrySource) ? 'Capability pending proof' : 'Catalog only';
 }
@@ -697,49 +748,43 @@ function getAgentCapabilityLabel(agent: FleetAgent, healthProbe?: AgentHealthPro
 function getAgentHealthFacts({
   agent,
   healthProbe,
-  bridgeWorker,
-  lastOutcome,
 }: {
   agent: FleetAgent;
   healthProbe?: AgentHealthProbe;
-  bridgeWorker?: BridgeSnnWorker;
-  lastOutcome: string;
 }) {
-  const capability = agent.capability || {};
-  const probe = healthProbe as
-    | (AgentHealthProbe & { latencyMs?: number; latencyP95Ms?: number })
-    | undefined;
-  const latencyP95 = capability.latencyP95Ms || Number(probe?.latencyP95Ms);
-  const lastSuccess =
-    capability.lastSuccess ||
-    (bridgeWorker?.lastActive && (bridgeWorker.ready || bridgeWorker.status === 'ready')
-      ? bridgeWorker.lastActive
-      : '') ||
-    (healthProbe?.ready ? healthProbe.lastSeen : '');
-  const lastFailure =
-    capability.lastFailure ||
-    (agent.lastError ? agent.healthCheckedAt || healthProbe?.lastSeen || '' : '');
-  const missingTools = capability.missingTools?.length
-    ? capability.missingTools
-    : Array.isArray(healthProbe?.missingTools)
-      ? healthProbe.missingTools
-      : [];
+  const capability = agent.capability;
+  // Only canonical action metrics count as proof; heartbeats are liveness, not success.
+  const metrics = capability?.metrics;
+  const samples = metrics?.latencySamples;
+  const latencySampled = typeof samples === 'number' && Number.isFinite(samples) && samples > 0;
+  const missingTools = capability?.missingTools ?? healthProbe?.missingTools ?? [];
   return {
-    capabilityLabel: getAgentCapabilityLabel(agent, healthProbe),
-    latencyLabel: latencyP95
-      ? formatAgentLatency(latencyP95)
-      : formatAgentLatency(Number(probe?.latencyMs), 'latest'),
-    lastSuccessLabel: formatAgentHealthTimestamp(lastSuccess),
-    lastFailureLabel: lastFailure ? formatAgentHealthTimestamp(lastFailure) : 'None reported',
+    capabilityLabel: getAgentCapabilityLabel(agent),
+    latencyLabel: latencySampled ? formatAgentLatency(metrics?.latencyP95Ms) : 'Not sampled',
+    latencyDetail: latencySampled
+      ? `${samples} sample${samples === 1 ? '' : 's'}${
+          typeof metrics?.maxLatencyP95Ms === 'number'
+            ? `; ${formatAgentLatency(metrics.maxLatencyP95Ms, '')} budget`
+            : ''
+        }`
+      : '',
+    lastSuccessLabel: formatAgentHealthTimestamp(metrics?.lastSuccessAt),
+    lastFailureLabel:
+      metrics?.lastFailureAt === ''
+        ? 'None reported'
+        : formatAgentHealthTimestamp(metrics?.lastFailureAt),
+    lastSuccessAt: metrics?.lastSuccessAt,
+    lastFailureAt: metrics?.lastFailureAt,
     missingTools,
     toolReadinessLabel:
-      !healthProbe && !capability.ready && missingTools.length === 0 ? 'tools unknown' : '',
+      !healthProbe && !capability?.measurement?.toolsMeasured && missingTools.length === 0
+        ? 'tools unknown'
+        : '',
     readinessDetail:
-      capability.blockedReasons?.[0]?.replace(/[:_]/g, ' ') ||
+      capability?.blockers?.map((blocker) => blocker.replace(/[:_]/g, ' ')).join('; ') ||
       (missingTools.length
         ? `${missingTools.length} tool gap${missingTools.length === 1 ? '' : 's'}`
-        : '') ||
-      (lastOutcome && lastOutcome !== 'No call outcome yet' ? lastOutcome : ''),
+        : ''),
   };
 }
 
@@ -955,18 +1000,18 @@ function AgentFleetCard({
         <span className={`pbk-agent-activity ${activityState}`}>
           <strong>{getAgentSummary(agent, lastOutcome, bridgeWorker)}</strong>
           <span>
-            {ready ? 'Learning ready' : 'Learning status pending'} -{' '}
+            {ready ? 'Learning connected' : 'Learning status pending'} -{' '}
             {agent.metadata.orchestrationRole || 'worker'}
           </span>
         </span>
 
-        <span className="pbk-agent-health-strip" data-source="GET /api/agents/health">
+        <span className="pbk-agent-health-strip" data-source={agent.measurementSource}>
           <span className={`pbk-agent-health-state ${healthState}`}>
             {healthState === 'ready'
-              ? 'Health ready'
+              ? 'Measured ready'
               : healthState === 'degraded'
                 ? 'Needs attention'
-                : 'Health not verified'}
+                : 'Measurement unavailable'}
           </span>
           {healthProbe?.missingTools?.length ? (
             <span>{healthProbe.missingTools.length} tool gaps</span>
@@ -994,15 +1039,11 @@ function AgentDetailPanel({ children }: { children: ReactNode }) {
 function AgentHealthEvidence({
   agent,
   healthProbe,
-  bridgeWorker,
-  lastOutcome,
 }: {
   agent: FleetAgent;
   healthProbe?: AgentHealthProbe;
-  bridgeWorker?: BridgeSnnWorker;
-  lastOutcome: string;
 }) {
-  const facts = getAgentHealthFacts({ agent, healthProbe, bridgeWorker, lastOutcome });
+  const facts = getAgentHealthFacts({ agent, healthProbe });
   const state = getAgentHealthState(agent, healthProbe);
   return (
     <details className="pbk-fleet-health-evidence">
@@ -1015,11 +1056,11 @@ function AgentHealthEvidence({
       >
         <span>
           <small>Last success</small>
-          <strong>{facts.lastSuccessLabel}</strong>
+          <strong title={facts.lastSuccessAt}>{facts.lastSuccessLabel}</strong>
         </span>
         <span>
           <small>Last failure</small>
-          <strong>{facts.lastFailureLabel}</strong>
+          <strong title={facts.lastFailureAt}>{facts.lastFailureLabel}</strong>
         </span>
         <span>
           <small>Latency</small>
@@ -1030,6 +1071,7 @@ function AgentHealthEvidence({
           <strong>{facts.capabilityLabel}</strong>
         </span>
       </div>
+      {facts.latencyDetail && <p>Latency: {facts.latencyDetail}</p>}
       {facts.missingTools.length > 0 && (
         <ul aria-label="Missing tools">
           {facts.missingTools.map((tool) => (
@@ -1043,6 +1085,15 @@ function AgentHealthEvidence({
         </p>
       )}
       {facts.readinessDetail && <p>{facts.readinessDetail}</p>}
+      <p className="pbk-agent-health-source">
+        {agent.capability ? agent.measurementSource : 'Measurement evidence unavailable'}
+        {agent.capability && agent.measurementGeneratedAt && (
+          <span title={agent.measurementGeneratedAt}>
+            {' '}
+            - Snapshot {formatAgentHealthTimestamp(agent.measurementGeneratedAt)}
+          </span>
+        )}
+      </p>
       <p className="pbk-agent-health-source">
         {healthProbe
           ? healthProbe.healthProbe || healthProbe.source || 'GET /api/agents/health'
@@ -1373,6 +1424,7 @@ export function AgentFleet() {
   const [agents, setAgents] = useState<FleetAgent[]>(buildFleetAgents);
   const [agentsLoading, setAgentsLoading] = useState(true);
   const [bridgeConnected, setBridgeConnected] = useState<boolean | null>(null);
+  const [measurementWarning, setMeasurementWarning] = useState('');
   const [activeAgentId, setActiveAgentId] = useState('ava');
   const [selectedSkill, setSelectedSkill] = useState<AgentSkill | null>(null);
   const [expandedExample, setExpandedExample] = useState<string | null>(null);
@@ -1474,11 +1526,17 @@ export function AgentFleet() {
       fetchRuntimeToolingStatus(),
       fetchAgentHealthRequest(),
       fetchAgentRegistryRequest(),
+      fetchAgentMeasurementRequest(),
     ])
-      .then(([toolingResult, healthResult, registryResult]) => {
+      .then(([toolingResult, healthResult, registryResult, measurementResult]) => {
         if (cancelled) return;
         let bridgeAgents: Array<Record<string, unknown>> = [];
         let registryAgents: FleetAgent[] = [];
+        const selectedMeasurement = selectAgentMeasurement(measurementResult, healthResult);
+        setMeasurementWarning(selectedMeasurement.warning);
+        if (measurementResult.status === 'rejected') {
+          console.warn('[PBK AgentFleet] agent measurement unavailable', measurementResult.reason);
+        }
         if (toolingResult.status === 'fulfilled') {
           const raw = toolingResult.value as Record<string, unknown>;
           bridgeAgents = Array.isArray(raw.agents)
@@ -1507,7 +1565,8 @@ export function AgentFleet() {
         if (
           toolingResult.status === 'fulfilled' ||
           healthResult.status === 'fulfilled' ||
-          registryResult.status === 'fulfilled'
+          registryResult.status === 'fulfilled' ||
+          measurementResult.status === 'fulfilled'
         ) {
           setAgents((prev) => {
             const baseAgents = registryAgents.length
@@ -1515,7 +1574,11 @@ export function AgentFleet() {
               : prev.length
                 ? prev
                 : buildFleetAgents();
-            const merged = mergeAgentStatuses(baseAgents, bridgeAgents);
+            const merged = mergeAgentMeasurements(
+              mergeAgentStatuses(baseAgents, bridgeAgents),
+              selectedMeasurement.measurement,
+              selectedMeasurement.source
+            );
             flushTransferQueue(pendingTransferQueueRef.current, merged)
               .catch((error) => {
                 console.warn('[PBK AgentFleet] queued skill transfer flush failed', error);
@@ -1537,6 +1600,7 @@ export function AgentFleet() {
           });
           setBridgeConnected(true);
         } else {
+          setAgents((prev) => mergeAgentMeasurements(prev));
           setBridgeConnected(false);
           setPreviewError(
             toolingResult.reason instanceof Error
@@ -1936,6 +2000,12 @@ export function AgentFleet() {
           leadContextSource={leadContextSource}
           callCount={runtimeCalls.length}
         />
+        {measurementWarning && (
+          <div role="alert" className="flex items-start gap-2 text-sm text-amber-300">
+            <AlertCircle size={16} className="mt-0.5 shrink-0" aria-hidden="true" />
+            <span>{measurementWarning}</span>
+          </div>
+        )}
         {transferStatus && <div className="pbk-fleet-transfer-status">{transferStatus}</div>}
 
         {agentsLoading ? (
@@ -1991,7 +2061,9 @@ export function AgentFleet() {
                         ? activeAgent.status
                         : 'Catalog'}
                     </span>
-                    {(activeLocalSnn || activeBridgeWorker?.ready) && <span>Learning ready</span>}
+                    {(activeLocalSnn || activeBridgeWorker?.ready) && (
+                      <span>Learning connected</span>
+                    )}
                   </div>
                 </div>
                 <p className="mt-2 text-xs text-slate-500 leading-relaxed">
@@ -2008,8 +2080,6 @@ export function AgentFleet() {
                 key={activeAgent.id}
                 agent={activeAgent}
                 healthProbe={activeHealthProbe}
-                bridgeWorker={activeBridgeWorker}
-                lastOutcome={lastCallOutcomeByAgentId[activeAgent.id] || 'No call outcome yet'}
               />
 
               {/* Capabilities bar */}

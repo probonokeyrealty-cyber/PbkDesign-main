@@ -24797,7 +24797,7 @@ function buildAvaCallArchitectureContext(params = {}) {
   };
 }
 
-function setAgentRuntimeActive(agentId = '', patch = {}) {
+async function setAgentRuntimeActive(agentId = '', patch = {}) {
   ensureAgentFleetCollections();
   const agent = findAgentRecord(agentId);
   if (!agent) return null;
@@ -24814,6 +24814,26 @@ function setAgentRuntimeActive(agentId = '', patch = {}) {
       lastAction: 'activate_call_intelligence',
     },
   };
+  const registryAgent = getCurrentAgentRegistry().find((record) => record.id === normalizeAgentRegistryId(agent.id));
+  if (!registryAgent) throw new Error('agent_registry_activation_target_missing');
+  // Activation changes operator status, not observed health, and only for this target.
+  let nextRegistryAgent = { ...registryAgent, status: nextAgent.status, updatedAt: nextAgent.updatedAt };
+  if (DATABASE_URL) {
+    try {
+      const persisted = await getPgPool()?.query(
+        `UPDATE public.agent_registry SET status = $1, updated_at = $2
+         WHERE id = $3 AND tenant_id = $4 RETURNING *`,
+        [nextAgent.status, nextAgent.updatedAt, registryAgent.id, normalizeTenantId('pbk')]
+      );
+      if (persisted?.rowCount !== 1) throw new Error('agent_registry_activation_target_missing');
+      nextRegistryAgent = normalizeAgentRegistryRecord(persisted.rows[0]);
+    } catch (cause) {
+      const error = new Error('agent_registry_activation_persist_failed', { cause });
+      error.code = 'agent_registry_activation_persist_failed';
+      throw error;
+    }
+  }
+  applyAgentRegistryToRuntime(getCurrentAgentRegistry().map((record) => record.id === nextRegistryAgent.id ? nextRegistryAgent : record));
   upsertById(state, 'agents', nextAgent);
   return nextAgent;
 }
@@ -24856,20 +24876,20 @@ async function activateAvaCallIntelligence(params = {}) {
     activatedAt: callSettings.activatedAt,
   };
 
-  const ava = setAgentRuntimeActive('ava', {
+  const ava = await setAgentRuntimeActive('ava', {
     status: 'active',
     activity: 'Call intelligence active: scripts, BANT+, $100K War Manual, active listening/call-flow, memory, prosody, tool router, Rex oversight, and safety gates online.',
     updatedBy: actor,
     config: { avaCallIntelligence: callSettings },
   });
-  const rex = setAgentRuntimeActive('rex', {
+  const rex = await setAgentRuntimeActive('rex', {
     status: 'active',
     activity: 'Daily goal alignment, call analysis, script/prosody recommendations, and $1M/month oversight active.',
     updatedBy: actor,
     config: { revenueGoalOversight: true, targetMonthlyRevenue: REVENUE_TARGET_MONTHLY },
   });
   const hermesReady = getHermesProviderMeta().ready;
-  const hermes = setAgentRuntimeActive('hermes', {
+  const hermes = await setAgentRuntimeActive('hermes', {
     status: hermesReady ? 'active' : 'standby',
     activity: hermesReady ? 'Suggest-only call pattern analysis ready; provider writes blocked.' : 'Suggest-only analyst lane registered; external Hermes provider not required for Ava call activation.',
     updatedBy: actor,

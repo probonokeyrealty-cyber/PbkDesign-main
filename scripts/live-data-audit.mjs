@@ -1604,7 +1604,7 @@ const checks = [
       /exactNextMove/.test(bridge),
   },
   {
-    name: 'Ava episodic memory embeds calls and retrieves similar winning calls in the resolver',
+    name: 'Ava episodic memory embeds calls and labels recalled calls by observed outcome',
     ok:
       /CREATE TABLE IF NOT EXISTS public\.call_embeddings/.test(callEmbeddingsMigration) &&
       /embedding VECTOR\(1536\)/.test(callEmbeddingsMigration) &&
@@ -1620,7 +1620,11 @@ const checks = [
       /CREATE OR REPLACE FUNCTION public\.match_call_embeddings/.test(bridge) &&
       /episodicMemory/.test(bridge) &&
       /match_call_embeddings/.test(bridge) &&
-      /Similar past winning call/.test(bridge),
+      /function formatEpisodicMemoryLabel\(/.test(bridge) &&
+      /const label = formatEpisodicMemoryLabel\(memory, index\)/.test(bridge) &&
+      /Similar past successful call/.test(bridge) &&
+      /Similar past caution call/.test(bridge) &&
+      /Closest similar past call/.test(bridge),
   },
   {
     name: 'Ava live RAG retrieves Brain knowledge inside the call resolver before DeepSeek phrases',

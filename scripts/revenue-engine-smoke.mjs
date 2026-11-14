@@ -1,13 +1,21 @@
+import strictAssert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
+import { once } from 'node:events';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { setTimeout as delay } from 'node:timers/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import vm from 'node:vm';
+import { PGlite } from '@electric-sql/pglite';
+import ts from 'typescript';
+import { buildAgentRuntimeSmokeEnv } from './agent-runtime-smoke-isolation.mjs';
+import { buildAgentRegistrySnapshot, buildDefaultAgentRegistry, mergeAgentRegistryRecords, normalizeAgentRegistryId, normalizeAgentRegistryRecord } from './agent-registry.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const ROOT_DIR = path.resolve(__dirname, '..');
 const SERVER_ENTRY = path.join(ROOT_DIR, 'scripts', 'openclaw-local-server.mjs');
-const SMOKE_ID = `${process.pid}-${Date.now()}`;
 const PORT = Number(process.env.PBK_REVENUE_ENGINE_SMOKE_PORT || (21740 + (process.pid % 900)));
 const API_KEY = String(process.env.PBK_REVENUE_ENGINE_SMOKE_API_KEY || 'pbk-revenue-engine-smoke-key').trim();
 const BASE_URL = `http://127.0.0.1:${PORT}`;
@@ -45,21 +53,96 @@ async function jsonFetch(pathname, options = {}) {
   return { response, body };
 }
 
+async function testCanonicalActivationPersistence() {
+  const source = await readFile(SERVER_ENTRY, 'utf8');
+  const ast = ts.createSourceFile('bridge.mjs', source, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
+  const functions = new Map(ast.statements.filter(ts.isFunctionDeclaration).map((node) => [node.name.text, node.getText(ast)]));
+  const now = '2026-11-14T12:00:00.000Z';
+  const defaults = buildDefaultAgentRegistry({ env: {}, now: Date.parse(now) }).map((agent) => ({
+    ...agent,
+    status: 'paused',
+    endpoint: `https://${agent.id}.example.invalid/invoke`,
+    metadata: { ...agent.metadata, operatorOwned: true },
+  }));
+  const db = await PGlite.create();
+  try {
+    await db.exec(`CREATE TABLE public.agent_registry (
+      id text PRIMARY KEY, tenant_id text NOT NULL, name text NOT NULL,
+      description text, capabilities text[], status text, endpoint text, version text,
+      health_checked_at timestamptz, last_error text, metadata jsonb,
+      created_at timestamptz DEFAULT now(), updated_at timestamptz
+    )`);
+    const state = { agents: defaults.map((agent) => ({ ...agent })), agentRegistry: [] };
+    const context = vm.createContext({
+      state, DATABASE_URL: 'isolated-pglite', console,
+      isoNow: () => now, getPgPool: () => db,
+      normalizeTenantId: (tenant) => tenant, normalizeAgentRegistryId, normalizeAgentRegistryRecord,
+      mergeAgentRegistryRecords, buildAgentRegistrySnapshot,
+      buildDefaultAgentRegistry: () => defaults,
+      ensureAgentFleetCollections() {},
+      findAgentRecord: (id) => state.agents.find((agent) => agent.id === id),
+      getCurrentAgentRegistry: () => state.agentRegistry,
+      applyAgentRegistryToRuntime: (registry) => { state.agentRegistry = registry; },
+      agentRegistryLoadedAt: now,
+      upsertById: (target, key, record) => {
+        target[key] = target[key].map((item) => item.id === record.id ? record : item);
+      },
+    });
+    for (const name of ['upsertAgentRegistryRecordsToPg', 'readAgentRegistryFromPg', 'syncAgentRegistryFromPg', 'setAgentRuntimeActive']) {
+      assert(functions.has(name), `Missing bridge helper: ${name}`);
+      vm.runInContext(functions.get(name), context);
+    }
+    await context.syncAgentRegistryFromPg();
+    const before = (await db.query('SELECT * FROM public.agent_registry ORDER BY id')).rows;
+    const activated = await context.setAgentRuntimeActive('ava', { updatedBy: 'isolated-smoke' });
+    strictAssert.equal(activated.status, 'active');
+    strictAssert.equal(state.agentRegistry.find((agent) => agent.id === 'ava').status, 'active', 'Activation must update canonical state');
+    const after = (await db.query('SELECT * FROM public.agent_registry ORDER BY id')).rows;
+    const originalAva = before.find((row) => row.id === 'ava');
+    const savedAva = after.find((row) => row.id === 'ava');
+    strictAssert.deepEqual(savedAva, { ...originalAva, status: 'active' }, 'Activation must preserve operator fields and cannot invent health evidence');
+    strictAssert.deepEqual(after.filter((row) => row.id !== 'ava'), before.filter((row) => row.id !== 'ava'), 'Paused siblings must remain byte-for-byte unchanged');
+    state.agentRegistry = [];
+    await context.syncAgentRegistryFromPg();
+    strictAssert.equal(state.agentRegistry.find((agent) => agent.id === 'ava').status, 'active', 'Activation must survive insert-only bootstrap reload');
+    strictAssert.equal(state.agentRegistry.find((agent) => agent.id === 'rex').status, 'paused');
+    strictAssert.equal(state.agentRegistry.find((agent) => agent.id === 'ava').healthCheckedAt, '');
+
+    context.getPgPool = () => ({ query: async () => { throw new Error('injected_failure'); } });
+    await strictAssert.rejects(context.setAgentRuntimeActive('rex'), { code: 'agent_registry_activation_persist_failed' });
+    strictAssert.equal(state.agentRegistry.find((agent) => agent.id === 'rex').status, 'paused');
+    strictAssert.equal(state.agents.find((agent) => agent.id === 'rex').status, 'paused', 'Failed persistence must not publish active runtime status');
+    console.log('Canonical activation persists across bootstrap; paused siblings and health evidence are preserved; failed persistence rejects.');
+  } finally {
+    await db.close();
+  }
+}
+
 async function main() {
-  const child = spawn(process.execPath, [SERVER_ENTRY, '--reset'], {
+  await testCanonicalActivationPersistence();
+  const stateDir = await mkdtemp(path.join(tmpdir(), 'pbk-revenue-engine-smoke-'));
+  const child = spawn(process.execPath, [
+    '--import', new URL('./agent-runtime-smoke-isolation.mjs', import.meta.url).href,
+    SERVER_ENTRY, '--reset',
+  ], {
     cwd: ROOT_DIR,
     env: {
-      ...process.env,
+      ...buildAgentRuntimeSmokeEnv(),
+      PBK_AGENT_SMOKE_ISOLATED: '1',
       PBK_OPENCLAW_PORT: String(PORT),
+      PBK_OPENCLAW_HOST: '127.0.0.1',
       PBK_BRIDGE_API_KEY: API_KEY,
-      PBK_OPENCLAW_STATE_DIR: path.join(ROOT_DIR, '.pbk-local', `revenue-engine-smoke-${SMOKE_ID}`),
+      PBK_OPENCLAW_STATE_DIR: stateDir,
+      PBK_AGENT_REGISTRY_HEALTH_ENABLED: 'false',
       PBK_OPENCLAW_RESET: '1',
       PBK_COMMAND_CENTER_CLOSED_LOOP_ENABLED: 'true',
       PBK_AUTOPILOT_LOW_RISK: 'true',
       PBK_REVENUE_TARGET_MONTHLY: '1000000',
     },
     stdio: ['ignore', 'pipe', 'pipe'],
+    windowsHide: true,
   });
+  child.stdout.resume();
 
   let stderr = '';
   child.stderr.on('data', (chunk) => {
@@ -67,10 +150,14 @@ async function main() {
   });
 
   const cleanup = async () => {
-    if (!child.killed) {
+    if (child.exitCode === null && child.signalCode === null) {
+      const exited = once(child, 'exit');
       child.kill();
-      await delay(150);
+      await exited;
     }
+    const relative = path.relative(tmpdir(), stateDir);
+    assert(relative && !relative.startsWith('..') && !path.isAbsolute(relative), 'Invalid smoke cleanup directory');
+    await rm(stateDir, { recursive: true, force: true });
   };
 
   try {
@@ -140,7 +227,13 @@ async function main() {
     assert(avaStatus.response.status === 200, `Expected Ava call intelligence status 200, got ${avaStatus.response.status}: ${JSON.stringify(avaStatus.body)}`);
     const acceptedAvaCallStatuses = new Set(['ava_call_intelligence_active', 'ava_call_intelligence_degraded']);
     assert(acceptedAvaCallStatuses.has(avaStatus.body.result), `Unexpected Ava call status: ${avaStatus.body.result}`);
-    assert(avaStatus.body.agents?.ava?.status === 'active', 'Ava should be active after call-intelligence activation.');
+    assert(avaStatus.body.agents?.ava?.status === 'active', `Ava should be active after call-intelligence activation; got ${avaStatus.body.agents?.ava?.status}.`);
+    assert(!avaStatus.body.agents?.ava?.healthCheckedAt, 'Activation must not manufacture a health-check timestamp.');
+    assert(avaStatus.body.agents?.ava?.ready === false, 'Active without observed health must remain unready.');
+    const savedState = JSON.parse(await readFile(path.join(stateDir, 'openclaw-state.json'), 'utf8'));
+    assert(savedState.agentRegistry.find((agent) => agent.id === 'ava')?.status === 'active', 'Canonical Ava status must be saved in local state.');
+    assert(savedState.agentRegistry.find((agent) => agent.id === 'rex')?.status === 'active', 'Canonical Rex status must be saved in local state.');
+    assert(savedState.agentRegistry.find((agent) => agent.id === 'hermes')?.status === 'standby', 'Unconfigured Hermes must remain standby.');
     assert(avaStatus.body.voice?.liveReplyMode === 'inline', 'Ava live calls should use inline call intelligence after activation.');
     if (avaStatus.body.result === 'ava_call_intelligence_degraded') {
       assert(Array.isArray(avaStatus.body.gaps) && avaStatus.body.gaps.length > 0, 'Degraded Ava call intelligence must report provider gaps.');

@@ -28961,7 +28961,7 @@ async function runOpenAiWebSearch(query = '', params = {}) {
   };
 }
 
-function answerBrainQuery(stateRef, query = '') {
+function answerBrainQuery(stateRef, query = '', { storedEvidenceOnly = false } = {}) {
   const trimmed = String(query || '').trim();
   const blogDocs = (stateRef.brainBlogPosts || []).map(brainBlogPostToDoc);
   const matches = [...(stateRef.brainDocs || []), ...blogDocs]
@@ -28973,7 +28973,7 @@ function answerBrainQuery(stateRef, query = '') {
     .sort((left, right) => right.score - left.score || String(right.createdAt).localeCompare(String(left.createdAt)))
     .slice(0, 3);
 
-  if (looksLikePbkDoctrineQuery(trimmed)) {
+  if (!storedEvidenceOnly && looksLikePbkDoctrineQuery(trimmed)) {
     return buildRexDoctrineAnswer(stateRef, trimmed, matches);
   }
 
@@ -58148,6 +58148,8 @@ const toolHandlers = {
     recordToolUse('getBrainState');
     const messages = normalizeConversationMessages(params.messages);
     const query = getLastUserMessage(messages, params.query || params.q || '');
+    // Controlled handoff data is retrieval input, never an operator intent command.
+    if (controlledExecution.getStore()) return answerBrainQuery(state, query, { storedEvidenceOnly: true });
     const isReadableSummaryIntent = looksLikeReadableSummaryQuery(query);
     const isBrowserResearchIntent = looksLikeBrowserResearchIntent(query);
     const isTroubleshootingIntent = !isReadableSummaryIntent && !isBrowserResearchIntent && looksLikeRexTroubleshootingQuery(query);

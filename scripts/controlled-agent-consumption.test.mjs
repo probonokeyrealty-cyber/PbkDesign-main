@@ -14,6 +14,46 @@ const start = monolith.indexOf('function getLocalAgentRegistryHandlers(');
 const registrySource = monolith.slice(start, monolith.indexOf('\n}', start) + 2);
 const fixture = { leadId: 'fixture', callId: 'fixture-call' };
 
+test('actual Rex retrieval keeps QA-derived quoted PBK data out of operator doctrine routing', async () => {
+  const actualFunction = name => {
+    const index = monolith.indexOf(`function ${name}(`);
+    assert(index >= 0);
+    return monolith.slice(index, monolith.indexOf('\n}', index) + 2);
+  };
+  const state = { status: {}, brainBlogPosts: [], approvals: [], brainDocs: [{ id: 'fixture-source',
+    title: 'Controlled seller relocation deadline', summary: 'Seller needs to sell within thirty days because of relocation.',
+    citation: 'controlled-qualification:fixture-run', createdAt: new Date().toISOString() }] };
+  const sandbox = vm.createContext({ controlledExecution, state,
+    recordToolUse() {}, makeActivity: value => value, normalizeConversationMessages: () => [], getLastUserMessage: (_messages, query) => query,
+    looksLikeBrowserResearchIntent: () => false, mentionsTelnyxNumberAdminIntent: () => false,
+    getPendingRuntimeApprovals: () => [], getPbkCoreDoctrineText: () => 'Five PBK paths.', PBK_CORE_DEAL_PATHS: [],
+    brainBlogPostToDoc: value => value,
+    buildRexConversationalBrainResponse: async (_state, params) => params.baseResponse,
+  });
+  for (const name of ['scoreBrainDocMatch', 'looksLikePbkDoctrineQuery', 'buildRexDoctrineAnswer', 'answerBrainQuery',
+    'looksLikeReadableSummaryQuery', 'looksLikeRexTroubleshootingQuery', 'looksLikeOpenAiWebSearchIntent', 'looksLikeAdminIntent'])
+    vm.runInContext(actualFunction(name), sandbox);
+  const methodStart = monolith.indexOf('  async getBrainState(params = {}) {');
+  const methodEnd = monolith.indexOf('\n  async launchBrowserResearch(', methodStart);
+  vm.runInContext(`var toolHandlers = {${monolith.slice(methodStart, methodEnd)}}`, sandbox);
+  const qa = workflowTestOutputs(fixture)['qa-agent'];
+  qa.result = { ok: true, result: 'recommendation', lead: { id: fixture.leadId, name: 'PBK Controlled Qualification', score: 50, stage: 'cold' },
+    recommendation: { channel: 'email', urgency: 'later', reason: 'Lead is warm but not urgent; start with a low-friction email.' } };
+  const input = { ...controlledWorkflowInput('rex', fixture, { agentId: 'qa-agent', output: qa }), readOnly: true };
+  const organic = await sandbox.toolHandlers.getBrainState(input);
+  assert(organic.citations.includes('PBK runtime doctrine'), 'normal operator doctrine routing must stay unchanged');
+  await controlledExecution.run({}, async () => {
+    const result = await sandbox.toolHandlers.getBrainState(input);
+    assert.equal(result.query, input.query, 'the actual QA-derived query must remain intact');
+    assert(result.citations.includes(state.brainDocs[0].citation), 'Rex must cite the actual retrieved source');
+    assert.equal(result.matches[0].id, 'fixture-source');
+    assert(result.answer.includes(state.brainDocs[0].summary));
+    state.brainDocs = [];
+    const missing = await sandbox.toolHandlers.getBrainState(input);
+    assert.equal(missing.citations.length, 0, 'no source must not fabricate a fixture citation');
+  });
+});
+
 test('actual registry Ava passes Rex answer directly to conversation engine, not canned command routing', async () => {
   let consumed;
   const sandbox = vm.createContext({ controlledExecution, toolHandlers: {

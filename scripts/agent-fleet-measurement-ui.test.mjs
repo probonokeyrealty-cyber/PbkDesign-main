@@ -12,7 +12,7 @@ function loadFunctions(path, names, globals = {}) {
   const source = readFileSync(new URL(path, import.meta.url), 'utf8');
   const ast = ts.createSourceFile(path, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
   const functions = ast.statements.filter(
-    (node) => ts.isFunctionDeclaration(node) && names.includes(node.name?.text)
+    (node) => (ts.isFunctionDeclaration(node) || ts.isClassDeclaration(node)) && names.includes(node.name?.text)
   );
   const { outputText } = ts.transpileModule(functions.map((node) => node.getText(ast)).join('\n'), {
     compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },
@@ -263,6 +263,9 @@ function bridge(status, payload) {
     '../src/app/utils/runtimeBridge.ts',
     [
       'bridgeRequest',
+      'RuntimeBridgeError',
+      'isTeamSessionRejection',
+      'bridgeResponseError',
       'acceptAgentMeasurementGapResponse',
       'fetchAgentHealthRequest',
       'fetchAgentMeasurementRequest',
@@ -277,6 +280,8 @@ function bridge(status, payload) {
       buildHeaders: () => ({}),
       shouldRetryRuntimeViaHosted: async () => false,
       extractBridgeErrorMessage: (_, code) => `Bridge request failed (${code})`,
+      getRuntimeTeamSession: () => null,
+      isNetlifyHostedRuntimeShell: () => false,
       fetch: async () => new Response(JSON.stringify(payload), { status }),
     }
   );

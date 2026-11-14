@@ -8,7 +8,10 @@ import {
   Loader2,
   Users,
 } from 'lucide-react';
-import { useNavigate } from 'react-router';
+import { useLocation, useNavigate } from 'react-router';
+import { DecisionRail, type DecisionProgress } from '../components/DecisionRail';
+import '../../styles/decision-rail.css';
+import { readLeadQueueReturn } from '../utils/leadQueueReturn';
 import { CallFloorPanel } from '../components/CallFloorPanel';
 import { CallQualityReviewDialog } from '../components/CallQualityReviewDialog';
 import { CompactPager, getPageSlice, OPERATOR_LIST_PAGE_SIZE } from '../components/CompactPager';
@@ -1787,6 +1790,7 @@ function FounderBattlefield({
               <button
                 key={item.id}
                 type="button"
+                data-today-queue-id={item.id}
                 className={`pbk-bf-chip ${item.tone}`}
                 title={`${item.tag}: ${item.body} / ${item.reason}`}
                 aria-label={`Rank ${index + 1}, score ${item.score}, ${item.tag}: ${item.body}. ${item.reason}`}
@@ -1863,6 +1867,9 @@ function FounderBattlefield({
 
 export function CommandCenter() {
   const navigate = useNavigate();
+  const location = useLocation();
+  const returnContext = useMemo(() => readLeadQueueReturn(location.state?.queueReturn), [location.state]);
+  const restoredReturn = useRef(false);
   const { snapshot, tooling, loading, error, refresh } = useRuntimeSnapshot(5000, true);
   const [actionStatus, setActionStatus] = useState<ActionStatus | null>(null);
   const [pendingAction, setPendingAction] = useState('');
@@ -1873,6 +1880,7 @@ export function CommandCenter() {
     null
   );
   const approvalDialogRef = useRef<HTMLDialogElement>(null);
+  const [decisionProgress, setDecisionProgress] = useState<DecisionProgress>({ phase: 'idle' });
   const approvalTriggerRef = useRef<HTMLButtonElement>(null);
   const runtimeActionLock = useRef(false);
   const uncertainApprovalKeys = useRef(new Set<string>());
@@ -2544,6 +2552,22 @@ export function CommandCenter() {
     };
   }, [approvals, adminTasks, leadImports, messages, calls]);
 
+  useEffect(() => {
+    if (restoredReturn.current || !returnContext || returnContext.path === '/leads' || loading || battlefieldQueueLoading) return;
+    const frame = requestAnimationFrame(() => {
+      const target = Array.from(document.querySelectorAll<HTMLButtonElement>('[data-today-queue-id]'))
+        .find(node => node.dataset.todayQueueId === returnContext.leadId);
+      target?.focus({ preventScroll: true });
+      window.scrollTo(0, returnContext.scrollY);
+      if (target) {
+        const bounds = target.getBoundingClientRect();
+        if (bounds.top < 80 || bounds.bottom > window.innerHeight - 80) target.scrollIntoView({ block: 'center' });
+      }
+      restoredReturn.current = true;
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [returnContext, loading, battlefieldQueueLoading, battlefieldItems]);
+
   const selectBattlefieldItem = (item: BattlefieldItem) => {
     if (item.targetPath.startsWith('#')) {
       document
@@ -2551,7 +2575,9 @@ export function CommandCenter() {
         ?.scrollIntoView({ behavior: 'smooth', block: 'start' });
       return;
     }
-    navigate(item.targetPath);
+    navigate(item.targetPath, /^\/leads(?:\/|\?)/.test(item.targetPath) ? {
+      state: { leadReturn: { path: location.pathname, search: location.search, scrollY: window.scrollY, leadId: item.id } },
+    } : undefined);
   };
 
   const runRuntimeAction = async (
@@ -2664,6 +2690,7 @@ export function CommandCenter() {
         : status === 'needs-revision'
           ? 'Request revisions for'
           : 'Decline';
+    setDecisionProgress({ phase: 'review', approvalId, subject: `${actionLabel} ${type} / ${friendlyRuntimeLabel(approval.leadName || approval.address || 'PBK approval')}` });
     setApprovalDecisionDraft({
       approvalId,
       status,
@@ -2678,6 +2705,7 @@ export function CommandCenter() {
   };
 
   const cancelApprovalDecision = () => {
+    setDecisionProgress(current => ({ ...current, phase: 'cancelled' }));
     approvalDialogRef.current?.close();
     setApprovalDecisionDraft(null);
     const trigger = approvalTriggerRef.current;
@@ -2695,6 +2723,7 @@ export function CommandCenter() {
       draft.resolutionKeys.some((key) => uncertainApprovalKeys.current.has(key))
     )
       return;
+    setDecisionProgress(current => ({ ...current, phase: 'checking' }));
     approvalDialogRef.current?.close();
     setApprovalDecisionDraft(null);
     approvalTriggerRef.current = null;
@@ -2705,8 +2734,15 @@ export function CommandCenter() {
         ? 'Approval recorded. Delivery has not been confirmed.'
         : 'Review decision recorded.',
       async () => {
-        const fresh = await fetchRuntimeState();
+        let fresh: Awaited<ReturnType<typeof fetchRuntimeState>>;
+        try {
+          fresh = await fetchRuntimeState();
+        } catch (error) {
+          setDecisionProgress(previous => ({ ...previous, phase: 'changed' }));
+          throw error;
+        }
         if (!Array.isArray(fresh?.approvals)) {
+          setDecisionProgress(current => ({ ...current, phase: 'changed' }));
           throw new Error('The approval queue could not be verified. No decision was submitted.');
         }
         const current = getPendingApprovals(fresh.approvals).find(
@@ -2721,18 +2757,22 @@ export function CommandCenter() {
           String(current.address || 'No address recorded') !== draft.address ||
           approvalRecipient(current) !== draft.recipient
         ) {
+          setDecisionProgress(previous => ({ ...previous, phase: 'changed' }));
           await refresh().catch(() => null);
           throw new Error('This request changed. Review the latest queue before deciding.');
         }
         try {
+          setDecisionProgress(previous => ({ ...previous, phase: 'submitting' }));
           await updateApprovalDecision(draft.approvalId, draft.status);
         } catch {
+          setDecisionProgress(previous => ({ ...previous, phase: 'unconfirmed' }));
           draft.resolutionKeys.forEach((key) => uncertainApprovalKeys.current.add(key));
           await refresh().catch(() => null);
           throw new Error(
             'Decision not confirmed. Check the approval history before trying again.'
           );
         }
+        setDecisionProgress(previous => ({ ...previous, phase: 'recorded', decision: draft.status, acknowledgedAt: new Date().toISOString() }));
         setResolvedApprovalIds((current) => {
           const next = new Set(current);
           next.add(draft.approvalId);
@@ -2833,6 +2873,7 @@ export function CommandCenter() {
                     <span className="pbk-review-count">{pendingApprovalCount} pending</span>
                   )}
                 </div>
+                <DecisionRail progress={decisionProgress} available={approvalsAvailable} />
                 <div className="pbk-review-list">
                   {visibleApprovals.map((approval) => (
                     <div
@@ -3497,6 +3538,7 @@ export function CommandCenter() {
             <h3 id="approval-decision-title" className="mt-2 text-lg font-semibold text-slate-100">
               {approvalDecisionDraft.actionLabel} {approvalDecisionDraft.type}?
             </h3>
+            <DecisionRail progress={decisionProgress} available={approvalsAvailable} showReceipt={false} />
             <p className="mt-2 text-sm text-slate-400">{approvalDecisionDraft.leadName}</p>
             <div className="mt-4 pbk-review-evidence text-sm">
               {approvalDecisionDraft.address}

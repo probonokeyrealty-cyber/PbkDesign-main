@@ -3,11 +3,15 @@ import type { LeadPortalModel } from './leadPortalModel';
 import { formatLeadValue } from './leadPortalModel';
 
 export function LeadPortalContactability({ lead }: { lead: LeadPortalModel }) {
-  const blocked = /blocked|dnc|do not call/i.test(lead.dncStatus);
-  const consented = /yes|consent|clear|approved/i.test(lead.tcpaConsent);
+  const dnc = lead.dncStatus.trim().toLowerCase().replace(/[_-]+/g, ' ');
+  const blocked = ['blocked', 'dnc', 'do not call', 'do not contact'].includes(dnc);
+  const clear = dnc === 'clear';
+  const consent = lead.tcpaConsent.trim().toLowerCase();
+  const consented = consent === 'yes';
+  const summary = blocked ? 'Contact blocked' : consented && clear ? 'Records on file' : 'Contact records need review';
 
   return (
-    <section className="pbk-lead-portal-card">
+    <section className="pbk-lead-portal-card" aria-label="Contactability">
       <header>
         <div>
           <span className="pbk-kicker">Reachability &amp; safety</span>
@@ -15,6 +19,10 @@ export function LeadPortalContactability({ lead }: { lead: LeadPortalModel }) {
         </div>
         <ShieldCheck size={19} />
       </header>
+      <div className="pbk-contact-record-status" data-blocked={blocked}>
+        <strong>{summary}</strong>
+        <span>Saved lead records, not an outreach clearance.</span>
+      </div>
       <div className="pbk-lead-portal-detail-list">
         <div>
           <Phone />
@@ -42,7 +50,7 @@ export function LeadPortalContactability({ lead }: { lead: LeadPortalModel }) {
           <span>TCPA consent</span>
           <strong>{formatLeadValue(lead.tcpaConsent)}</strong>
         </div>
-        <div className={blocked ? 'blocked' : lead.dncStatus === 'clear' ? 'clear' : 'review'}>
+        <div className={blocked ? 'blocked' : clear ? 'clear' : 'review'}>
           <span>DNC status</span>
           <strong>{formatLeadValue(lead.dncStatus)}</strong>
         </div>

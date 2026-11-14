@@ -14,6 +14,7 @@ const commandTimeoutMs = 40;
 
 function runtime(createRedisClient, overrides = {}) {
   const context = vm.createContext({
+    controlledExecution: { getStore: () => undefined },
     REDIS_ENABLED: true, REDIS_URL: 'redis://127.0.0.1', REDIS_NAMESPACE: 'test',
     REDIS_INSTANCE_ID: 'test-instance', REDIS_RETRY_COOLDOWN_MS: 1000,
     REDIS_CONNECT_TIMEOUT_MS: 500, REDIS_COMMAND_TIMEOUT_MS: commandTimeoutMs,

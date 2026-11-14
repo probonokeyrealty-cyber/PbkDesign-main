@@ -16,8 +16,13 @@ import { DeleteObjectCommand, GetObjectCommand, HeadBucketCommand, PutObjectComm
 import { getSignedUrl as getS3SignedUrl } from '@aws-sdk/s3-request-presigner';
 import { lookupAttomPropertyPreview } from './attom-property-preview.mjs';
 import { applyAgentVersionRollback, buildAgentRegistrySnapshot, buildAgentVersionSnapshot, buildDefaultAgentRegistry, buildStableAgentFleetMeasurement, findAgentsByCapability, invokeRegisteredAgent, mergeAgentRegistryRecords, normalizeAgentRegistryId, normalizeAgentRegistryRecord, validateAgentVersionSnapshot } from './agent-registry.mjs';
-import { buildAgentExecutionEvidence, collectAgentFleetEvidence, isNonOperationalAgentEvidence } from './agent-fleet-measurement.mjs';
+import { buildAgentExecutionEvidence, collectAgentFleetEvidence, isNonOperationalAgentEvidence, isAgentHandlerCompletion } from './agent-fleet-measurement.mjs';
+import { controlledExecution, createControlledPool, createScopedState, assertControlledToolAllowed } from './controlled-execution-scope.mjs';
+import { createControlledAgentStorage, saveControlledAgentResult, readControlledAgentQualification } from './controlled-agent-storage.mjs';
 import { createAvaRequestTiming } from './ava-request-timing.mjs';
+import { createBackgroundPersistence } from './background-persistence.mjs';
+import { createPoolSchemaInitializer } from './pool-schema-initializer.mjs';
+import { observeUsagePersistence } from './ava-accounting-status.mjs';
 import { EventTypes, getEventBusStatus, publishEvent as publishEventBusEvent } from './event-bus/streams.mjs';
 import { buildRexKpiSnapshot, proposeAutonomousRexGoals, selectRexProactiveLeadAction } from './rex-autonomy.mjs';
 import { recordScriptOutcomeStats, selectContextAwareScript } from './context-aware-script-rotator.mjs';
@@ -1222,6 +1227,7 @@ function redisKey(...parts) {
 }
 
 async function getSharedRedisClient() {
+  if (controlledExecution.getStore()) return null;
   if (!REDIS_ENABLED) return null;
   if (sharedRedisClient?.isReady) return sharedRedisClient;
   if (sharedRedisConnectPromise) return sharedRedisConnectPromise;
@@ -6689,6 +6695,7 @@ function getDatabaseUrlHost() {
 }
 
 function markPostgresHealth(ok, error = '', options = {}) {
+  if (controlledExecution.getStore()) return;
   const now = isoNow();
   if (!DATABASE_URL) {
     postgresHealth = {
@@ -6911,6 +6918,7 @@ async function withPostgresConnectionRetry(operation, label = 'postgres', option
 }
 
 function getPgPool() {
+  if (controlledExecution.getStore()) return controlledExecution.getStore().pool;
   if (__pgPool) return __pgPool;
   if (!DATABASE_URL) return null;
   __pgPool = new PgPool({
@@ -7970,6 +7978,7 @@ async function ensurePbkOperationalTables(pool) {
 }
 
 async function ensurePgSchema() {
+  if (controlledExecution.getStore()) return true;
   const pool = getPgPool();
   if (!pool) {
     markPostgresHealth(false, 'PBK_DATABASE_URL is not configured.');
@@ -11701,6 +11710,10 @@ async function loadStateFromRuntimeFile() {
 }
 
 async function persistState(nextState, { allowBootstrap = false } = {}) {
+  if (controlledExecution.getStore()) {
+    await getPgPool().query(`INSERT INTO bridge_state(id,data,updated_at) VALUES('singleton',$1::jsonb,NOW()) ON CONFLICT(id) DO UPDATE SET data=EXCLUDED.data,updated_at=NOW()`, [postgresJsonStringify(nextState)]);
+    return;
+  }
   if (DATABASE_URL && !runtimeStateBootstrap.ready && !allowBootstrap) {
     const error = new Error('Runtime state must be restored before it can be saved.');
     error.code = 'state_bootstrap_unavailable';
@@ -11739,13 +11752,17 @@ async function persistState(nextState, { allowBootstrap = false } = {}) {
   scheduleRuntimeStateBroadcast('persist');
 }
 
+const backgroundStatePersistence = createBackgroundPersistence({
+  persist: () => persistState(state),
+  onError: (error, context) => console.warn(`[pbk-local-openclaw] ${context} state persist failed:`, error?.message || error),
+});
+
 function persistStateInBackground(context = 'background') {
-  void persistState(state).catch((error) => {
-    console.warn(
-      `[pbk-local-openclaw] ${context} state persist failed:`,
-      error?.message || error
-    );
-  });
+  if (typeof controlledExecution !== 'undefined' && controlledExecution.getStore()) {
+    void persistState(state).catch((error) => console.warn(`[pbk-local-openclaw] ${context} state persist failed:`, error?.message || error));
+    return;
+  }
+  void backgroundStatePersistence.schedule(context);
 }
 
 async function persistCampaignRecord(campaign = {}, { expected } = {}) {
@@ -12977,7 +12994,7 @@ async function recoverRuntimeStateAfterBootstrapFailure() {
     try {
       // Replace liveness-only placeholders before unblocking operator requests.
       const loadedState = await loadState();
-      state = loadedState;
+      state = createScopedState(loadedState);
       const registry = await syncAgentRegistryFromPg({ seed: false, persist: false });
       if (registry.persistence?.ok === false) {
         throw new Error(registry.persistence.error || 'Agent registry could not be restored from Postgres.');
@@ -13369,6 +13386,7 @@ async function recordPbkTurnLatency(record = {}) {
 }
 
 async function publishPbkEvent(type, payload = {}, source = 'bridge') {
+  if (controlledExecution.getStore()) return { ok: true, skipped: true, result: 'controlled_event_isolated' };
   try {
     return await publishEventBusEvent(type, payload, source);
   } catch (error) {
@@ -22454,7 +22472,8 @@ function buildCallFailureAnalysis(call = {}, params = {}) {
 
 async function analyzeRecentAvaCalls(params = {}) {
   const limit = Math.max(1, Math.min(80, Math.round(toNumber(params.limit || params.count, 12))));
-  const calls = sortNewest(state.calls || []).slice(0, limit);
+  const scope = controlledExecution.getStore();
+  const calls = sortNewest(state.calls || []).filter(call => !scope || call.id === scope.fixture.callId).slice(0, limit);
   const analyses = [];
   for (const call of calls) {
     const analysis = buildCallFailureAnalysis(call, params);
@@ -23779,6 +23798,12 @@ async function prepareAgentActionPBKIntelligenceContext(params = {}, command = '
   const ids = getAgentActionContextIds(params, context);
   // Supplied packets may describe intent, but cannot assert source freshness.
   const input = buildAgentActionPBKIntelligenceContextInput(params, command, context);
+  const scope = controlledExecution.getStore();
+  if (scope) {
+    input.contextId = `${scope.runId}:${scope.agentId}`;
+    publishAgentActionPBKIntelligenceContext(input);
+    return input;
+  }
   const result = await withPBKIntelligenceContext(
     {
       leadId: ids.leadId,
@@ -23807,6 +23832,11 @@ async function prepareAgentActionPBKIntelligenceContext(params = {}, command = '
 }
 
 async function finalizeAgentActionPBKIntelligenceContext(params = {}, command = '', context = {}, routedTo = '', response = null, agentContext = null) {
+  if (controlledExecution.getStore()) {
+    const next = mergePBKIntelligenceContextOutcome(agentContext, { actionTaken: routedTo, sellerReaction: response?.ok === false ? 'failed' : 'completed' });
+    publishAgentActionPBKIntelligenceContext(next);
+    return next;
+  }
   const ids = getAgentActionContextIds(params, context);
   const input =
     agentContext ||
@@ -27555,12 +27585,14 @@ function extractOpenAiCitations(payload = {}) {
   return [...citations].slice(0, 8);
 }
 
+const ensureTokenUsageSchema = createPoolSchemaInitializer();
+
 async function recordTokenUsage(provider = '', model = '', usage = {}, meta = {}) {
   const promptTokens = toNumber(usage?.prompt_tokens ?? usage?.promptTokens ?? usage?.input_tokens ?? usage?.inputTokens, 0);
   const completionTokens = toNumber(usage?.completion_tokens ?? usage?.completionTokens ?? usage?.output_tokens ?? usage?.outputTokens, 0);
   const totalTokens = toNumber(usage?.total_tokens ?? usage?.totalTokens, promptTokens + completionTokens);
   if (!provider || !model || !totalTokens) return { ok: false, reason: 'empty_usage' };
-  await queryPgRows(
+  const schema = await ensureTokenUsageSchema(getPgPool(), () => queryPgRows(
     `CREATE TABLE IF NOT EXISTS public.pbk_token_usage (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
       workspace_id TEXT NOT NULL DEFAULT 'pbk',
@@ -27576,7 +27608,8 @@ async function recordTokenUsage(provider = '', model = '', usage = {}, meta = {}
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )`,
     []
-  );
+  ));
+  if (!schema.ok) return schema;
   return queryPgRows(
     `INSERT INTO public.pbk_token_usage (
       workspace_id, provider, model, call_id, lead_id,
@@ -29110,6 +29143,7 @@ function mergeRexSemanticMemory(baseResponse = {}, semanticMemory = {}) {
 async function buildRexConversationalBrainResponse(stateRef = {}, params = {}) {
   const query = String(params.query || '').trim();
   const lexicalResponse = params.baseResponse || answerBrainQuery(stateRef, query);
+  if (controlledExecution.getStore()) return { ...lexicalResponse, rexConversationMode: 'isolated_stored_evidence' };
   const semanticMemory = query
     ? await retrieveRexResearchMemories({
         query,
@@ -30763,6 +30797,7 @@ async function runDeepSeekChatCompletion(messages = [], params = {}) {
       ...(deepSeekTools.length && params.toolChoice ? { tool_choice: params.toolChoice } : {}),
     };
     let speculativeMeta = null;
+    let usagePersistence = null;
     const buildProviderMeta = (extra = {}) => ({
       ...meta,
       model,
@@ -30778,6 +30813,7 @@ async function runDeepSeekChatCompletion(messages = [], params = {}) {
       requestBaseUrl: deepSeekUrl,
       reasoningExposure: DEEPSEEK_REASONING_EXPOSURE,
       rawReasoningExposed: false,
+      usagePersistence,
       ...(speculativeMeta ? { speculative: speculativeMeta } : {}),
       ...extra,
     });
@@ -30853,12 +30889,12 @@ async function runDeepSeekChatCompletion(messages = [], params = {}) {
             const toolCalls = Array.isArray(message.tool_calls) ? message.tool_calls : [];
             const answer = String(message.content || extractDeepSeekToolCallAnswer(toolCalls) || '').trim();
             const reasoning = String(message.reasoning_content || '').trim();
-            await recordTokenUsage('deepspec', model, payload?.usage || {}, {
+            usagePersistence = await measure('llm_usage', () => observeUsagePersistence(() => recordTokenUsage('deepspec', model, payload?.usage || {}, {
               source: params.source || 'deepseek-strategist',
               callId: params.callId || params.call_id || '',
               leadId: params.leadId || params.lead_id || '',
               responseId: payload?.id || '',
-            });
+            })));
             if (!answer && reasoning) {
               speculativeMeta.used = false;
               speculativeMeta.reason = 'reasoning_only';
@@ -30982,12 +31018,12 @@ async function runDeepSeekChatCompletion(messages = [], params = {}) {
       const toolCalls = Array.isArray(message.tool_calls) ? message.tool_calls : [];
       const answer = String(message.content || extractDeepSeekToolCallAnswer(toolCalls) || '').trim();
       const reasoning = String(message.reasoning_content || '').trim();
-      await measure('llm_usage', () => recordTokenUsage('deepseek', model, payload?.usage || {}, {
+      usagePersistence = await measure('llm_usage', () => observeUsagePersistence(() => recordTokenUsage('deepseek', model, payload?.usage || {}, {
         source: params.source || 'deepseek-strategist',
         callId: params.callId || params.call_id || '',
         leadId: params.leadId || params.lead_id || '',
         responseId: payload?.id || '',
-      }));
+      })));
       if (!answer && reasoning) {
         return {
           ok: false,
@@ -43485,7 +43521,8 @@ async function validateToolResultWithQa(toolName, params = {}, result = {}, sour
       toolName,
       params,
       result,
-      source,
+      source: controlledExecution.getStore() ? 'controlled-qualification' : source,
+      ...(controlledExecution.getStore() ? { metricSink: async () => {}, auditFallbackSink: async () => { throw new Error('controlled_qa_audit_required'); } } : {}),
       auditSink: recordPbkQaAudit,
       approvalSink: async (approval) =>
         toolHandlers.createApproval({
@@ -45149,6 +45186,13 @@ function buildAgentDealContextPreview(params = {}) {
 }
 
 async function recordAgentHandoffTask(task = {}) {
+  const qualificationScope = controlledExecution.getStore();
+  if (qualificationScope) {
+    task = { ...task, metadata: { ...task.metadata, source: 'controlled-qualification', operational: false,
+      qualification: { runId: qualificationScope.runId, agentId: qualificationScope.agentId, leadId: qualificationScope.fixture.leadId,
+        callId: qualificationScope.fixture.callId, sourceUpdatedAt: qualificationScope.fixture.sourceUpdatedAt,
+        contextId: task.metadata?.pbkIntelligenceContext?.contextId || '' } } };
+  }
   ensureAgentFleetCollections();
   const record = {
     id: task.id || `pbk-agent-task-${Date.now()}-${randomUUID().slice(0, 8)}`,
@@ -45756,12 +45800,14 @@ function getLocalAgentRegistryHandlers() {
         agent: 'rex',
         requestedBy: payload.requestedBy || payload.actor || 'Agent Registry',
       }),
-    hermes: async () => ({
-      ok: true,
-      result: 'hermes_registry_status',
-      hermes: getHermesProviderMeta(),
-      safety: { suggestOnly: true, providerWrites: 'blocked' },
-    }),
+    hermes: async (payload = {}) => {
+      if (payload.action === 'analyze_patterns') {
+        const pattern = induceWorkflowMemoryCore({ transcript: payload.transcript });
+        return { ok: pattern.ok === true, result: 'hermes_pattern_analysis', provider: 'pbk-local-pattern-analysis', pattern,
+          strategy: pattern.workflow.steps.join(' '), safety: { suggestOnly: true, providerWrites: 'blocked' } };
+      }
+      return { ok: true, result: 'hermes_registry_status', hermes: getHermesProviderMeta(), safety: { suggestOnly: true, providerWrites: 'blocked' } };
+    },
     'call-analyzer': async (payload = {}) =>
       analyzeRecentAvaCalls({
         ...payload,
@@ -45776,14 +45822,33 @@ function getLocalAgentRegistryHandlers() {
           source: payload.source || 'agent-registry',
         });
       }
-      return toolHandlers.getProsodyAdvice(payload);
+      const result = await toolHandlers.getProsodyAdvice(payload);
+      const scope = controlledExecution.getStore();
+      if (scope && result.ok) {
+        const recorded = await recordAgentDecisionRecord({ agentId: 'prosody-tuner', agentName: 'Prosody Tuner',
+          actionType: 'prosody_advice', source: 'controlled-qualification', leadId: scope.fixture.leadId, callId: scope.fixture.callId,
+          context: { contextId: payload.pbkIntelligenceContext?.contextId }, parameters: result.prosody, outcome: { adviceProduced: true },
+          metadata: { runId: scope.runId, diagnostic: true, operational: false } });
+        result.fixtureDecisionId = recorded.decision?.id || '';
+      }
+      return result;
     },
-    'script-rotator': async (payload = {}) =>
-      toolHandlers.retrieveClosingIntelligence({
+    'script-rotator': async (payload = {}) => {
+      const result = await toolHandlers.retrieveClosingIntelligence({
         ...payload,
         query: payload.query || payload.transcript || payload.objection || 'best closing script for current seller context',
         source: payload.source || 'agent-registry',
-      }),
+      });
+      const scope = controlledExecution.getStore();
+      if (scope && result.ok && result.nextBestPhrase) {
+        const memory = normalizePbkMemoryRecord({ leadId: scope.fixture.leadId, sourceId: scope.fixture.callId,
+          source: 'controlled-qualification', content: result.nextBestPhrase, memoryType: 'qualification_script',
+          metadata: { runId: scope.runId, diagnostic: true, operational: false } });
+        await persistPbkMemoryToPg(memory);
+        result.fixtureMemoryId = memory.id;
+      }
+      return result;
+    },
     'bant-enforcer': async (payload = {}) => {
       const bant = normalizeBantInfo(payload.bant || {}, payload, extractBantFromTranscript(payload.transcript || payload.query || '', payload.bant || {}));
       const missing = getMissingBantFields(bant);
@@ -45851,6 +45916,80 @@ function getLocalAgentRegistryHandlers() {
   };
 }
 
+let controlledQualificationRunning = false;
+async function executeControlledAgentQualification() {
+  if (!BRIDGE_API_KEY || !DATABASE_URL || !runtimeStateBootstrap.ready) throw new Error('controlled_runtime_unavailable');
+  if (controlledQualificationRunning) throw new Error('controlled_run_in_progress');
+  controlledQualificationRunning = true;
+  try {
+    const pool = getPgPool();
+    const storage = await createControlledAgentStorage(pool, { revision: process.env.RENDER_GIT_COMMIT || BUILD_REVISION });
+    const fixtureState = buildDefaultState();
+    // Start from structural defaults, never from customer state, histories or documents.
+    for (const [key, value] of Object.entries(fixtureState)) if (Array.isArray(value)) fixtureState[key] = [];
+    fixtureState.status = { ...fixtureState.status, toolUsage: {}, defaultTelnyxFromNumber: '', queryCountToday: 0, marketPulse: [], topics: {} };
+    fixtureState.agents = buildDefaultAgentFleet();
+    fixtureState.agentRegistry = getCurrentAgentRegistry().map(agent => ({ ...agent, metadata: { ...agent.metadata } }));
+    const fixture = storage.fixture;
+    const marker = { diagnostic: true, operational: false, source: 'controlled-qualification', runId: storage.runId };
+    const lead = { id: fixture.leadId, leadId: fixture.leadId, name: fixture.leadName, leadName: fixture.leadName,
+      phone: '', email: '', address: '', bant: fixture.bant, stage: 'warm', updatedAt: fixture.sourceUpdatedAt, ...marker };
+    fixtureState.leads = [lead];
+    fixtureState.leadImports = [lead];
+    fixtureState.calls = [{ id: fixture.callId, leadId: fixture.leadId, leadName: fixture.leadName, transcript: fixture.transcript,
+      status: 'completed', duration: 90, updatedAt: fixture.sourceUpdatedAt, ...marker }];
+    fixtureState.brainDocs = [{ id: `${storage.runId}-source`, title: 'Controlled seller relocation deadline', source: 'controlled-qualification',
+      citation: `controlled-qualification:${storage.runId}`, summary: fixture.transcript, content: fixture.transcript, createdAt: fixture.sourceUpdatedAt }];
+    const common = { ...marker, leadId: fixture.leadId, callId: fixture.callId, leadName: fixture.leadName,
+      transcript: fixture.transcript, bant: fixture.bant, selectedPath: 'cash', seller_type: 'seller',
+      readOnly: true, noProviderWrites: true, remember: false, synthesize: false, stage: 'warm', phone: '', email: '', score: 65 };
+    const cases = [
+      ['ava', { command: 'Ava, explain BANT before giving an offer.' }],
+      ['bant-enforcer', {}],
+      ['max', { query: 'I need to understand the cash sale process before deciding.' }],
+      ['script-rotator', { query: 'I need to think about the cash sale process.' }],
+      ['prosody-tuner', { text: 'I am worried about moving in thirty days.', emotion: 'worried' }],
+      ['call-analyzer', { limit: 1 }],
+      ['hermes', { action: 'analyze_patterns' }],
+      ['research-orchestrator', { query: 'Evaluate safety and stop risk.', transcript: 'Seller: Stop calling and remove me.' }],
+      ['nurture-agent', {}],
+      ['rex', { query: 'Explain the controlled seller relocation deadline.', conversational: false }],
+    ];
+    let nurtureOutput = null;
+    for (const [agentId, payload] of cases) {
+      const scope = { ...storage, agentId, state: fixtureState, blockedNetwork: 0, blockedSql: 0 };
+      scope.pool = createControlledPool(pool, scope);
+      await controlledExecution.run(scope, async () => {
+        const result = await invokeAgentFromRegistry({ agentId, payload: { ...common, ...payload } });
+        await scope.pool.drain();
+        if (agentId === 'nurture-agent') nurtureOutput = result.output;
+        if (agentId === 'bant-enforcer' && result.output?.complete) common.bant = result.output.bant;
+        const evidence = result.agentTask?.metadata?.executionEvidence || {};
+        const data = { agentId, runId: storage.runId, leadId: fixture.leadId, callId: fixture.callId,
+          sourceUpdatedAt: fixture.sourceUpdatedAt, contextId: result.pbkIntelligenceContext?.contextId || '',
+          workOrderId: result.workOrder?.id || '', completedAt: evidence.completedAt || isoNow(),
+          outputResult: result.output?.result || result.output?.routedTo || result.output?.status || (agentId === 'rex' && isAgentHandlerCompletion(agentId, result.output) ? 'rex_sourced_answer' : 'handler_failed'),
+          blockedSql: scope.blockedSql, blockedNetwork: scope.blockedNetwork, operational: false };
+        await controlledExecution.exit(() => saveControlledAgentResult(pool, storage, agentId, data, result.output || {}, result.pbkIntelligenceContext || {}));
+      });
+    }
+    // QA validates an actual preceding handler result, not a fabricated success payload.
+    const scope = { ...storage, agentId: 'qa-agent', state: fixtureState, blockedNetwork: 0, blockedSql: 0 };
+    scope.pool = createControlledPool(pool, scope);
+    await controlledExecution.run(scope, async () => {
+      const result = await invokeAgentFromRegistry({ agentId: 'qa-agent', payload: { ...common, toolName: 'consultNurtureAgent', params: common, result: nurtureOutput } });
+      await scope.pool.drain();
+      const evidence = result.agentTask?.metadata?.executionEvidence || {};
+      const data = { agentId: 'qa-agent', runId: storage.runId, leadId: fixture.leadId, callId: fixture.callId, sourceUpdatedAt: fixture.sourceUpdatedAt,
+        contextId: result.pbkIntelligenceContext?.contextId || '', workOrderId: result.workOrder?.id || '',
+        completedAt: evidence.completedAt || isoNow(), outputResult: result.output?.result?.result || result.output?.qa?.validator || 'handler_failed',
+        blockedSql: scope.blockedSql, blockedNetwork: scope.blockedNetwork, operational: false };
+      await controlledExecution.exit(() => saveControlledAgentResult(pool, storage, 'qa-agent', data, result.output || {}, result.pbkIntelligenceContext || {}));
+    });
+    return await readControlledAgentQualification(pool, storage.runId);
+  } finally { controlledQualificationRunning = false; }
+}
+
 async function invokeAgentFromRegistry(params = {}) {
   const invocationStartedAt = performance.now();
   const registry = getCurrentAgentRegistry();
@@ -45875,6 +46014,8 @@ async function invokeAgentFromRegistry(params = {}) {
     capability,
     requestedId,
   });
+  const scope = controlledExecution.getStore();
+  if (scope) workOrder.payload = { leadId: scope.fixture.leadId, callId: scope.fixture.callId, runId: scope.runId, diagnostic: true, operational: false };
   let agentTask = null;
   try {
     agentTask = await recordAgentHandoffTask({
@@ -53835,7 +53976,13 @@ async function runDueDocuSignEnvelopeJobs({ limit = 5 } = {}) {
   };
 }
 
-let state = await bootstrapRuntimeStateForLiveness();
+let state = createScopedState(await bootstrapRuntimeStateForLiveness());
+const unscopedFetch = globalThis.fetch;
+globalThis.fetch = (...args) => {
+  const scope = controlledExecution.getStore();
+  if (scope) { scope.blockedNetwork++; return Promise.reject(new Error('controlled_network_blocked')); }
+  return unscopedFetch(...args);
+};
 if (runtimeStateBootstrap.ready) {
   await syncAgentRegistryFromPg({ seed: true, persist: false }).catch((error) => {
     console.warn('[pbk-local-openclaw] agent registry bootstrap skipped:', error?.message || error);
@@ -59904,7 +60051,7 @@ const toolHandlers = {
   async runAgentCommand(params = {}) {
     recordToolUse('runAgentCommand');
     const command = String(params.command || params.text || '').trim();
-    const fastIntentResult = await routeFastCommandIntent(command, params);
+    const fastIntentResult = controlledExecution.getStore() ? null : await routeFastCommandIntent(command, params);
     if (fastIntentResult) {
       return {
         ok: true,
@@ -61862,6 +62009,13 @@ async function handleRuntimeEvent(normalizedEvent, payload) {
   return {
     ok: true,
     received: normalizedEvent,
+  };
+}
+
+for (const [name, handler] of Object.entries(toolHandlers)) {
+  toolHandlers[name] = async (...args) => {
+    assertControlledToolAllowed(name);
+    return handler(...args);
   };
 }
 
@@ -64391,13 +64545,16 @@ async function runInternalAvaDeepSeekChat({
   }
   const deepSeekDecision = parseAvaDeepSeekDecisionAnswer(deepSeek.answer);
   const finalAnswer = deepSeekDecision.reply || deepSeek.answer || '';
+  const usagePersistence = deepSeek.provider?.usagePersistence || null;
   if (deepSeek.ok && isPublicAvaBrainAnswerSafe(finalAnswer)) {
     return {
       ok: true,
       answer: finalAnswer,
+      usagePersistence,
       toolResult: {
         ok: true,
         result: 'deepseek_chat_answer',
+        usagePersistence,
         provider: deepSeek.provider || null,
         deepSeekDecision,
         toolCalls: deepSeek.toolCalls || [],
@@ -64410,6 +64567,7 @@ async function runInternalAvaDeepSeekChat({
   return {
     ok: false,
     answer: '',
+    usagePersistence,
     toolResult: {
       ok: false,
       result: deepSeek.result || 'deepseek_chat_unavailable',
@@ -64587,6 +64745,7 @@ async function handleInternalAvaAssistantChatRequest(request) {
   let qa = null;
   let safety = null;
   let additiveIntelligence = null;
+  let usagePersistence = null;
   let activeAssistantLeadId = assistantContextSession.leadId || '';
   let pendingAssistantAction = null;
   let missionController = await requestTiming.measure('controller_planned', () => runAvaMissionController({
@@ -64831,6 +64990,7 @@ async function handleInternalAvaAssistantChatRequest(request) {
       missionController,
       memories: assistantMemories,
     }));
+    usagePersistence = deepSeekChat.usagePersistence || null;
     if (deepSeekChat.ok) {
       answer = deepSeekChat.answer;
       toolResult = deepSeekChat.toolResult;
@@ -64991,6 +65151,8 @@ async function handleInternalAvaAssistantChatRequest(request) {
         operational: body.source !== 'ava-latency-diagnostic',
       },
       releaseCommit: process.env.RENDER_GIT_COMMIT || '',
+      usagePersistence,
+      instrumentationWarnings: usagePersistence?.ok === false ? ['token_usage_persistence_failed'] : [],
       requestTiming: requestTiming.snapshot(),
       answer,
       suggestions: assistantPlan.suggestions || [],
@@ -72475,6 +72637,29 @@ const server = createServer(async (request, response) => {
           providerWrites: 'blocked',
         },
       });
+      return;
+    }
+
+    if (pathname === '/api/agents/controlled-qualification') {
+      if (!BRIDGE_API_KEY || request.headers.authorization !== `Bearer ${BRIDGE_API_KEY}`) {
+        json(response, 403, { ok: false, result: 'controlled_founder_auth_required' });
+        return;
+      }
+      if (request.method === 'GET' && [...url.searchParams.keys()].every(key => key === 'runId')) {
+        const report = await readControlledAgentQualification(getPgPool(), url.searchParams.get('runId') || '');
+        json(response, 200, report);
+        return;
+      }
+      if (request.method === 'POST' && !url.search) {
+        const body = await readBody(request);
+        if (!body || Array.isArray(body) || typeof body !== 'object' || Object.keys(body).length) {
+          json(response, 400, { ok: false, result: 'controlled_server_fixture_only' });
+          return;
+        }
+        json(response, 200, await executeControlledAgentQualification());
+        return;
+      }
+      json(response, 400, { ok: false, result: 'controlled_request_rejected' });
       return;
     }
 

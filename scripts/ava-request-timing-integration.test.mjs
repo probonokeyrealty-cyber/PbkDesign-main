@@ -9,7 +9,7 @@ const start = source.indexOf('async function handleInternalAvaAssistantChatReque
 const end = source.indexOf('\n}\n', start) + 2;
 assert(start >= 0 && end > start);
 
-function fixture({ abortRead = false, blockFinal = false } = {}) {
+function fixture({ abortRead = false, blockFinal = false, general = false } = {}) {
   let clock = 0;
   let recorded;
   let writes = 0;
@@ -42,6 +42,7 @@ function fixture({ abortRead = false, blockFinal = false } = {}) {
     },
     planAssistantIntent: () => {
       clock += 20;
+      if (general) return { action: 'general' };
       return { action: 'tool_plan', toolPlan: { toolName: 'findLead', params: { query: 'absent fixture' } } };
     },
     appendAssistantMessage: (session) => session,
@@ -56,6 +57,7 @@ function fixture({ abortRead = false, blockFinal = false } = {}) {
     normalizeAvaAssistantAnswer: (answer) => answer,
     recordAvaMissionLedger: () => ({}),
     getAvaDeepSeekDecisionFromToolResult: () => null,
+    runInternalAvaDeepSeekChat: async () => ({ ok: true, answer: 'Safe answer', usagePersistence: { ok: false, result: 'failed', warning: 'token_usage_persistence_failed' }, toolResult: { ok: true } }),
     writePublicAvaAssistantSession: async () => { writes += 1; clock += 900; },
     addActivity: () => {},
     makeActivity: (activity) => activity,
@@ -109,4 +111,12 @@ test('actual handler does not continue to session write after cancelled read', a
   await assert.rejects(runtime.run(), { name: 'AbortError' });
   assert.equal(runtime.writes, 0);
   assert.equal(runtime.recorded, undefined);
+});
+
+test('accounting failure remains visible even when final governance replaces the model result', async () => {
+  const runtime = fixture({ general: true, blockFinal: true });
+  const result = await runtime.run();
+  assert.equal(result.body.toolResult.result, 'ava_control_blocked');
+  assert.equal(result.body.usagePersistence.ok, false);
+  assert.equal(result.body.instrumentationWarnings[0], 'token_usage_persistence_failed');
 });

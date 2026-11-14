@@ -84,6 +84,7 @@ function runtime(t, {
       PBK_PG_QUERY_RETRY_BASE_DELAY_MS: '50', PBK_STATE_PERSIST_RETRY_BASE_MS: '50', ...env } },
     IS_HOSTED: true, DATABASE_URL: 'postgres://isolated@localhost/never-connected',
     PgPool: IsolatedPool, __pgPool: null, postgresHealth: {},
+    controlledExecution: { getStore: () => undefined },
     isoNow: () => new Date().toISOString(), sleep: pause,
     stateDbPersistWarned: false, activityLogPersistenceWarned: false,
     runtimeStateProvenance: {}, lastStateDbPersist: {},

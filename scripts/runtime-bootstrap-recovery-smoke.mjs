@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 import ts from 'typescript';
+import { controlledExecution, createScopedState } from './controlled-execution-scope.mjs';
 
 const source = readFileSync(new URL('./openclaw-local-server.mjs', import.meta.url), 'utf8');
 const ast = ts.createSourceFile('bridge.mjs', source, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
@@ -12,6 +13,7 @@ let writes = 0;
 let releaseLoad;
 const durable = { status: {}, leads: [{ id: 'existing-seller' }] };
 const context = vm.createContext({
+  controlledExecution, createScopedState,
   DATABASE_URL: 'isolated-test', IS_HOSTED: true, PG_KEEPALIVE_INTERVAL_MS: 10,
   postgresKeepAliveTimer: null, runtimeStateRecoveryPromise: null,
   runtimeStateBootstrap: { ready: false }, runtimeStateProvenance: {},
@@ -43,7 +45,8 @@ unavailable = false;
 context.startPostgresKeepAlive();
 await new Promise((resolve) => setTimeout(resolve, 30));
 assert.equal(context.runtimeStateBootstrap.ready, true, 'A recovered database must reload durable state and unblock auth without a restart.');
-assert.equal(context.state, durable, 'Recovery must restore authoritative state, not empty bootstrap placeholders.');
+assert.equal(context.state.leads, durable.leads, 'Recovery must expose authoritative records through the scoped state wrapper.');
+assert.deepEqual(JSON.parse(JSON.stringify(context.state)), durable, 'Recovery must restore authoritative state, not empty bootstrap placeholders.');
 assert.equal(context.shouldBlockForRuntimeStateBootstrap('POST', '/invoke'), false);
 assert.equal(writes, 0, 'Reloading an existing database must not overwrite it.');
 

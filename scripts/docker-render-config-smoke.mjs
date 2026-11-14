@@ -56,6 +56,11 @@ expectIncludes(
   'COPY investor-portal.html ./investor-portal.html',
   'Docker frontend stage must preserve every required Vite entry, including the investor portal.'
 );
+expectIncludes(
+  dockerfile,
+  'COPY supabase/functions/pbk-investor-staging/releaseProfile.mjs ./supabase/functions/pbk-investor-staging/releaseProfile.mjs',
+  'Docker frontend stage must include the portal release-profile dependency outside src.'
+);
 assert.equal(
   packageJson.dependencies?.react,
   '18.3.1',

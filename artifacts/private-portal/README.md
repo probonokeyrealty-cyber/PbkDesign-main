@@ -16,7 +16,17 @@ Concurrent production activity: existing production was `6af7c732d1721e237426ebd
 
 Access evidence: `investor-access-verification.json`, `hosted-public-entry-retest.json`, `investor-entry-http-smoke.json`, `investor-public-access-desktop.png`, `investor-public-access-receipt.png`, `investor-pending-access-denied.png`, `investor-public-staff-receipt.png`.
 
-### Staging operation
+### Approval and revocation retest — November 13
+
+A separate synthetic, no-outreach investor (`pbk.qa.approval.20261113@example.com`) was initially denied, approved through the reviewer API, signed in through Chrome, and allowed to read the released fictional house and download the matching PDF. It was then revoked while both its API and browser sessions remained active. The existing token received 403 for session, house list, individual property, PDF signing, saved properties and inquiry history; removing Origin did not bypass membership. A new verified sign-in was also denied. The browser's PDF request was rejected, its private state cleared, and both house and download controls disappeared. Staff saw **Not approved** afterward.
+
+The PDF URL issued before revocation remained usable until its pre-existing 60-second expiry, then Storage returned 400 with an expired-JWT error. Revocation blocks new access immediately; it cannot recall a PDF already downloaded or instantly invalidate an already-issued signed URL. No security behavior or deployment was changed by this test.
+
+All 17 lifecycle checks, 23 regressions and seven cookie-free HTTP checks passed. The QA member and invitation are left revoked; one approval and two revocation audit events (initial denial setup plus final revocation) are preserved. Both deployed frontends and their visitor settings remained unchanged throughout this test. CRM/Calendly configuration, gradients, badge and guide staging guards were not modified. Evidence: `approval-revocation-verification.json`, `approval-qa-approved.png`, `approval-qa-revoked-browser.png`, `approval-qa-staff-revoked.png`.
+
+The scoped test helper is `scripts/investor-approval-revocation-qa.mjs`: run `setup`, `approve`, `revoke`, then `verify-expiry` after the reported link expiry. It uses one fixed synthetic account and ignored local QA credentials; finish with the revoked state rather than leaving the approval phase active. It does not reset real investor roles or create CRM records, inquiries, appointments or outreach.
+
+### Staging operation instructions
 
 Staff sign in at the protected property log with their approved staff email. A reviewer can approve an investor's application email in **Investor access**; the investor then requests a code at the separate investor staging address. Approval does not grant Netlify team membership. Revoking the investor in the property log denies the next protected request and clears the app session on revalidation. Existing per-user inquiry history and published property snapshots remain authoritative.
 

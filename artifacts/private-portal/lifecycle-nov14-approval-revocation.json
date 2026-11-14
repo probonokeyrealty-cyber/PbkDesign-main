@@ -1,0 +1,31 @@
+{
+  "checkedAt": "2026-11-14T13:31:15.676Z",
+  "phase": "verify-expiry",
+  "qaEmail": "pbk.qa.approval.20261113@example.com",
+  "propertyId": "97c5e7ca-d34d-41b3-87cf-2c0b130037a2",
+  "checks": [
+    "Unapproved verified QA identity cannot sign in",
+    "Reviewer approval succeeds through the protected staff action",
+    "Approved QA identity can sign in",
+    "Approved investor sees the released house without internal notes",
+    "Approved investor PDF download matches the owned QA fixture",
+    "Reviewer revocation succeeds",
+    "Revoked existing session denied: session",
+    "Revoked existing session denied: list",
+    "Revoked existing session denied: property",
+    "Revoked existing session denied: file",
+    "Revoked existing session denied: saved",
+    "Revoked existing session denied: inquiries",
+    "Omitting Origin does not bypass revoked membership",
+    "Revoked verified identity cannot start a new portal session",
+    "Previously issued PDF URL denied after its 60-second lifetime",
+    "Approval and revocation audit history retained",
+    "QA investor remains revoked at end of test"
+  ],
+  "preRevocationLink": 200,
+  "expiredPdfStatus": 400,
+  "existingLinkExpiresAt": "2026-11-14T13:30:26.000Z",
+  "finalInvestorStatus": "Revoked",
+  "outreach": false,
+  "productionChanges": false
+}

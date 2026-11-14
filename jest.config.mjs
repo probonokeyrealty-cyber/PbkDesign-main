@@ -1,6 +1,6 @@
 export default {
   testEnvironment: 'node',
-  testMatch: ['<rootDir>/scripts/**/*.test.mjs'],
+  testMatch: ['**/scripts/**/*.test.mjs'],
   modulePathIgnorePatterns: [
     '<rootDir>/.pbk-local/',
     '<rootDir>/.venv/',

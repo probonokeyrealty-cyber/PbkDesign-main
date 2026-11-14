@@ -1,4 +1,4 @@
-import { Suspense, useCallback, useEffect, useRef, useState } from 'react';
+import { Suspense, useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { Outlet, useLocation, useNavigate } from 'react-router';
 import { ErrorBoundary } from '../components/ErrorBoundary';
 import { SessionTimeoutWarning } from '../components/SessionTimeoutWarning';
@@ -44,6 +44,7 @@ const VALID_SHELL_PATHS = new Set([
   '/campaigns',
   '/ava-chat',
   '/settings',
+  '/property-log',
 ]);
 
 function getPathnameOnly(path = '') {
@@ -100,6 +101,23 @@ function dispatchShortcutEvent(eventName: string, label: string) {
  * inside the `<Outlet />` via `routes/DealView.tsx`. Nothing in the engine
  * is touched — it's a pure wrap.
  */
+// The property log has its own individually verified portal identity boundary.
+// All other operator routes retain the existing shared-team gate unchanged.
+function RouteAccessBoundary({
+  portal,
+  children,
+  onAuthenticated,
+}: {
+  portal: boolean;
+  children: ReactNode;
+  onAuthenticated: () => Promise<void>;
+}) {
+  return portal ? (
+    <>{children}</>
+  ) : (
+    <TeamAccessGate onAuthenticated={onAuthenticated}>{children}</TeamAccessGate>
+  );
+}
 export function ParadiseLayout() {
   const location = useLocation();
   const navigate = useNavigate();
@@ -297,7 +315,11 @@ export function ParadiseLayout() {
     location.pathname === '/agent-console';
 
   return (
-    <TeamAccessGate
+    <RouteAccessBoundary
+      portal={
+        location.pathname === '/property-log' ||
+        location.pathname.endsWith('/index.shell.html/property-log')
+      }
       onAuthenticated={async () => {
         await refresh();
       }}
@@ -363,6 +385,6 @@ export function ParadiseLayout() {
         />
         <UiToastHost />
       </div>
-    </TeamAccessGate>
+    </RouteAccessBoundary>
   );
 }

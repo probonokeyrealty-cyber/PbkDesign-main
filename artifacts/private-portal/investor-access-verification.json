@@ -1,0 +1,68 @@
+{
+  "verifiedAt": "2026-11-14T03:15:20.583Z",
+  "investor": {
+    "url": "https://pbk-investors-staging.netlify.app",
+    "siteId": "7d2d0593-795c-4cd6-a5ab-51abcf7b0d1f",
+    "deployId": "6af7cff476e236b1805b6fb2",
+    "netlifyTeamLoginRequired": false,
+    "appLogin": "verified email plus approved investor membership",
+    "anonymousInventoryDenied": true,
+    "pendingDenied": true,
+    "staffIdentityDenied": true
+  },
+  "staff": {
+    "url": "https://pbk-investor-staging--pbkcenter.netlify.app/property-log",
+    "siteId": "87711eb9-2a9f-40b4-92c6-0f8075151ff0",
+    "netlifyTeamLoginRequired": true,
+    "protectionScope": "all",
+    "pbkStaffRoleRequired": true
+  },
+  "backend": {
+    "name": "pbk-investor-staging",
+    "version": 7,
+    "publicBucket": false,
+    "anonymousTableSelect": false,
+    "productionOriginDenied": true
+  },
+  "tests": {
+    "domainClientUploadPolicy": "23/23",
+    "hostedApi": "22/22",
+    "cookieFreeHttp": "7/7",
+    "build": true,
+    "investorOnlyBuild": true,
+    "typecheck": true,
+    "chromeApprovedLogin": true,
+    "chromePendingDenied": true,
+    "chromePdfOpened": true,
+    "mobileWidth": 390,
+    "mobileNoHorizontalOverflow": true,
+    "staffReceivedBrowserInquiry": true,
+    "browserInquiryReceipt": "40dc63ff-399d-41ee-8282-7114f7707ba9",
+    "browserInquiryCount": 1,
+    "qaBrowserSessionsSignedOut": true
+  },
+  "existingProduction": {
+    "beforeAndImmediatelyAfterOurStageDeploy": "6af7c732d1721e237426ebd8",
+    "laterConcurrentDeploy": "6af7d086370813a89ab209a6",
+    "concurrentTitle": "Ava Chat workbench: preserved history/context/drafts and guarded approvals",
+    "concurrentPublishedAt": "2026-11-14T03:08:43.414Z",
+    "concurrentSource": "cli/main",
+    "modifiedOrDeployedByThisTask": false,
+    "netlifyVisitorAccessChanged": false
+  },
+  "preserved": {
+    "gradients": true,
+    "crmConfiguration": true,
+    "calendlyConfiguration": true,
+    "goldBadgesAndGuideStagingGuards": true,
+    "webflowPublished": false,
+    "outreachSent": false,
+    "liveCrmSubmission": false,
+    "calendlyBooking": false
+  },
+  "limitations": [
+    "This is a staging portal, with existing synthetic fixtures and internal nonbinding inquiries.",
+    "Signed links remain valid for up to 60 seconds after issuance.",
+    "Public site is a sign-in shell; this does not grant anonymous access to inventory."
+  ]
+}

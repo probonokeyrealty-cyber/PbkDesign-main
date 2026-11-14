@@ -1,0 +1,19 @@
+{
+  "propertyId": "97c5e7ca-d34d-41b3-87cf-2c0b130037a2",
+  "version": 1,
+  "internalNotesAbsent": true,
+  "hashes": [
+    {
+      "kind": "photo",
+      "title": "PBK-QA-photo.png",
+      "bytes": 20491,
+      "sha256": "92994d5e8717645fc2273ef97cd058edba69ae66f1b9caa00d7c037533844cc5"
+    },
+    {
+      "kind": "packet",
+      "title": "PBK-QA-packet.pdf",
+      "bytes": 23786,
+      "sha256": "ebfb108bfc2e29c866cbe19d2c55d48ada1396f911dd3e4bb0594f0744224a18"
+    }
+  ]
+}

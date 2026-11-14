@@ -1,6 +1,8 @@
 # Bridge Smoke Isolation Implementation Plan
 
-> **For agentic workers:** Use superpowers:executing-plans. No deployment, push or real provider calls.
+REQUIRED WORKFLOW: Use `superpowers:subagent-driven-development` with one focused implementation pass per task and review between tasks.
+
+No deployment, push or real provider calls during implementation.
 
 **Goal:** Make `npm run test:bridge` use disposable synthetic state and fail closed against working-state writes and provider access.
 

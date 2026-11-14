@@ -6894,7 +6894,12 @@ async function withPostgresConnectionRetry(operation, label = 'postgres', option
         error.postgresRetryHandled = true;
         throw error;
       }
-      const delayMs = Math.min(baseDelayMs * (attempt + 1), Math.max(0, (options.deadlineAt ?? Infinity) - Date.now()));
+      const delayMs = baseDelayMs * (attempt + 1);
+      const remainingMs = (options.deadlineAt ?? Infinity) - Date.now();
+      // Never shorten backoff to fit: an early timer wake can launch a late retry.
+      if (delayMs >= remainingMs) {
+        throw createPostgresDeadlineError(label, 'not_submitted');
+      }
       console.warn(
         `[pbk-local-openclaw] ${label} transient connection failure; retrying in ${delayMs}ms:`,
         error?.message || error

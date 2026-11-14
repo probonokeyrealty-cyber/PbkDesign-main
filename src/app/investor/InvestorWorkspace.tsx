@@ -1,6 +1,7 @@
+import { PORTAL_IS_STAGING } from './portalEnvironment';
 import { displayFact } from './displayFact.mjs';
 import { clearPrivateSession } from './clientState.mjs';
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   completeEmailCallback,
   portalRequest,
@@ -76,8 +77,12 @@ function Packet({
       <div className="portal-line">
         <div>
           <p className="portal-eyebrow">
-            {p.fictional ? 'FICTIONAL STAGING SAMPLE' : 'PRIVATE PROPERTY PACKET'} · VERSION{' '}
-            {p.version}
+            {p.fictional
+              ? PORTAL_IS_STAGING
+                ? 'FICTIONAL STAGING SAMPLE'
+                : 'FICTIONAL QA SAMPLE'
+              : 'PRIVATE PROPERTY PACKET'}{' '}
+            · VERSION {p.version}
           </p>
           <h2>{p.title}</h2>
           <p>
@@ -207,7 +212,7 @@ export function PortalConfirm({
       ref={dialog}
       className="pbk-portal portal-confirm"
       onCancel={onCancel}
-      aria-label="Confirm staging property change"
+      aria-label={PORTAL_IS_STAGING ? 'Confirm staging property change' : 'Confirm property change'}
     >
       <h2>Confirm property change</h2>
       <p>{text}</p>
@@ -262,66 +267,10 @@ export function InvestorWorkspace({
   const [accessMembers, setAccessMembers] = useState<any[]>([]),
     [investorEmail, setInvestorEmail] = useState(''),
     [contactId, setContactId] = useState('');
-  useEffect(() => {
-    let active = true;
-    void completeEmailCallback()
-      .then(async (received) => {
-        if (!received || !active) return;
-        setBusy(true);
-        try {
-          await enterWorkspace();
-        } catch (e) {
-          clearPrivateState();
-          setError((e as Error).message);
-        } finally {
-          setBusy(false);
-        }
-      })
-      .catch((e) => {
-        if (active) setError((e as Error).message);
-      });
-    return () => {
-      active = false;
-    };
-  }, []);
-  useEffect(() => {
-    if (!dirty) return;
-    const protect = (event: BeforeUnloadEvent) => {
-      event.preventDefault();
-      event.returnValue = '';
-    };
-    window.addEventListener('beforeunload', protect);
-    return () => window.removeEventListener('beforeunload', protect);
-  }, [dirty]);
-  useEffect(() => onDirtyChange?.(dirty), [dirty, onDirtyChange]);
-  useEffect(() => {
-    const expired = () => {
-      clearPrivateState();
-      setError('Your session expired. Sign in again.');
-    };
-    window.addEventListener('pbk-portal-expired', expired);
-    return () => window.removeEventListener('pbk-portal-expired', expired);
-  }, []);
-  useEffect(() => {
-    if (!member) return;
-    const revalidate = () => {
-      if (document.visibilityState === 'visible')
-        void portalRequest('session').catch(() => {
-          clearPrivateState();
-          setError('Your session expired. Sign in again.');
-        });
-    };
-    document.addEventListener('visibilitychange', revalidate);
-    return () => document.removeEventListener('visibilitychange', revalidate);
-  }, [member]);
-  const errorSummary = useRef<HTMLParagraphElement>(null);
-  useEffect(() => {
-    if (error) {
-      errorSummary.current?.focus();
-      errorSummary.current?.scrollIntoView({ block: 'center', behavior: 'instant' });
-    }
-  }, [error]);
-  function clearPrivateState() {
+  const [confirmation, setConfirmation] = useState<{ command: string; status?: string } | null>(
+    null
+  );
+  const clearPrivateState = useCallback(() => {
     clearPrivateSession(
       {
         member: setMember,
@@ -358,8 +307,8 @@ export function InvestorWorkspace({
       blank,
       staffMode
     );
-  }
-  async function refresh() {
+  }, [staffMode]);
+  const refresh = useCallback(async () => {
     const [p, i, s] = await Promise.all([
       portalRequest('list'),
       portalRequest('inquiries'),
@@ -368,8 +317,8 @@ export function InvestorWorkspace({
     setProperties(p.properties);
     setInquiries(i.inquiries);
     setSaved(s.ids);
-  }
-  async function enterWorkspace() {
+  }, []);
+  const enterWorkspace = useCallback(async () => {
     const r = await portalRequest('session');
     if (
       (staffMode && r.member.role === 'investor') ||
@@ -384,7 +333,64 @@ export function InvestorWorkspace({
     }
     setMember(r.member);
     await refresh();
-  }
+  }, [staffMode, refresh]);
+  useEffect(() => {
+    let active = true;
+    setBusy(true);
+    void completeEmailCallback()
+      .then(async (received) => {
+        if (received && active) await enterWorkspace();
+      })
+      .catch((e) => {
+        if (active) {
+          clearPrivateState();
+          setError((e as Error).message);
+        }
+      })
+      .finally(() => {
+        if (active) setBusy(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [clearPrivateState, enterWorkspace]);
+  useEffect(() => {
+    if (!dirty) return;
+    const protect = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = '';
+    };
+    window.addEventListener('beforeunload', protect);
+    return () => window.removeEventListener('beforeunload', protect);
+  }, [dirty]);
+  useEffect(() => onDirtyChange?.(dirty), [dirty, onDirtyChange]);
+  useEffect(() => {
+    const expired = () => {
+      clearPrivateState();
+      setError('Your session expired. Sign in again.');
+    };
+    window.addEventListener('pbk-portal-expired', expired);
+    return () => window.removeEventListener('pbk-portal-expired', expired);
+  }, [clearPrivateState]);
+  useEffect(() => {
+    if (!member) return;
+    const revalidate = () => {
+      if (document.visibilityState === 'visible')
+        void portalRequest('session').catch(() => {
+          clearPrivateState();
+          setError('Your session expired. Sign in again.');
+        });
+    };
+    document.addEventListener('visibilitychange', revalidate);
+    return () => document.removeEventListener('visibilitychange', revalidate);
+  }, [member, clearPrivateState]);
+  const errorSummary = useRef<HTMLParagraphElement>(null);
+  useEffect(() => {
+    if (error) {
+      errorSummary.current?.focus();
+      errorSummary.current?.scrollIntoView({ block: 'center', behavior: 'instant' });
+    }
+  }, [error]);
   async function act(action: () => Promise<void>) {
     setError('');
     setNotice('');
@@ -444,9 +450,6 @@ export function InvestorWorkspace({
     setPreview(r.property);
     setNotice('Investor preview recorded. Review the packet before releasing.');
   }
-  const [confirmation, setConfirmation] = useState<{ command: string; status?: string } | null>(
-    null
-  );
   async function transition(command: string, status?: string) {
     if (dirty) throw new Error('Save or discard your changes first.');
     setConfirmation({ command, status });
@@ -463,7 +466,9 @@ export function InvestorWorkspace({
     await refresh();
     setNotice(
       command === 'release'
-        ? 'Reviewed version released to approved staging investors.'
+        ? PORTAL_IS_STAGING
+          ? 'Reviewed version released to approved staging investors.'
+          : 'Reviewed version released to approved investors.'
         : command === 'withdraw'
           ? 'Property withdrawn. History is preserved.'
           : 'Status updated.'
@@ -507,7 +512,9 @@ export function InvestorWorkspace({
     return (
       <div className={`pbk-portal ${staffMode ? 'portal-staff' : ''}`}>
         <section className="portal-login">
-          <p className="portal-eyebrow">PROBONO KEY REALTY · PRIVATE STAGING</p>
+          <p className="portal-eyebrow">
+            PROBONO KEY REALTY · {PORTAL_IS_STAGING ? 'PRIVATE STAGING' : 'PRIVATE INVESTOR ACCESS'}
+          </p>
           <h1>{staffMode ? 'Your property log.' : 'A clearer view of your next opportunity.'}</h1>
           <p>
             {staffMode
@@ -577,8 +584,10 @@ export function InvestorWorkspace({
             Not approved yet? Share your Buy Box with PBK →
           </a>
           <p className="portal-muted">
-            Staging only. No public inventory. Your sign-in stays in this tab; refreshing asks you
-            to sign in again.
+            {PORTAL_IS_STAGING
+              ? 'Staging only. No public inventory.'
+              : 'Only approved accounts can view private inventory.'}{' '}
+            Your sign-in stays in this tab; refreshing asks you to sign in again.
           </p>
         </section>
       </div>
@@ -600,9 +609,13 @@ export function InvestorWorkspace({
         <PortalConfirm
           text={
             confirmation.command === 'release'
-              ? 'Release this reviewed version to approved staging investors?'
+              ? PORTAL_IS_STAGING
+                ? 'Release this reviewed version to approved staging investors?'
+                : 'Release this reviewed version to approved investors?'
               : confirmation.command === 'withdraw'
-                ? 'Withdraw this property from staging investor access?'
+                ? PORTAL_IS_STAGING
+                  ? 'Withdraw this property from staging investor access?'
+                  : 'Withdraw this property from investor access?'
                 : `Change published status to ${confirmation.status}?`
           }
           onCancel={() => setConfirmation(null)}
@@ -618,7 +631,9 @@ export function InvestorWorkspace({
           PBK <span>{staffMode ? 'Property log' : 'Private investors'}</span>
         </a>
         <div className="portal-line">
-          <span className="portal-chip">STAGING · {member.role}</span>
+          <span className="portal-chip">
+            {PORTAL_IS_STAGING ? 'STAGING' : 'PRIVATE'} · {member.role}
+          </span>
           <button
             disabled={busy}
             onClick={() =>
@@ -772,7 +787,7 @@ export function InvestorWorkspace({
                     checked={draft.fictional}
                     onChange={(e) => change('fictional', e.target.checked)}
                   />{' '}
-                  Fictional staging sample
+                  {PORTAL_IS_STAGING ? 'Fictional staging sample' : 'Fictional QA sample'}
                 </label>
               </fieldset>
               <fieldset disabled={busy}>
@@ -949,7 +964,9 @@ export function InvestorWorkspace({
               e.preventDefault();
               void act(async () => {
                 if (
-                  !window.confirm(`Approve private staging investor access for ${investorEmail}?`)
+                  !window.confirm(
+                    `Approve private ${PORTAL_IS_STAGING ? 'staging ' : ''}investor access for ${investorEmail}?`
+                  )
                 )
                   return;
                 await portalRequest('approveInvestor', {
@@ -996,7 +1013,12 @@ export function InvestorWorkspace({
                   disabled={busy}
                   onClick={() =>
                     act(async () => {
-                      if (!window.confirm(`Revoke staging investor access for ${m.email}?`)) return;
+                      if (
+                        !window.confirm(
+                          `Revoke ${PORTAL_IS_STAGING ? 'staging ' : ''}investor access for ${m.email}?`
+                        )
+                      )
+                        return;
                       await portalRequest('revokeInvestor', { email: m.email });
                       setAccessMembers((await portalRequest('members')).members);
                       setNotice('Investor access revoked. History is preserved.');
@@ -1270,7 +1292,7 @@ export function InvestorWorkspace({
         </section>
       )}
       <footer className="portal-footer">
-        Private staging workspace · No automatic outreach ·{' '}
+        Private {PORTAL_IS_STAGING ? 'staging ' : ''}workspace · No automatic outreach ·{' '}
         <a href="https://www.probonokeyrealty.com/privacy-policy">Privacy</a> ·{' '}
         <a href="https://www.probonokeyrealty.com/terms-conditions">Terms</a>
       </footer>

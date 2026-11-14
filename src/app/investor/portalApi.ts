@@ -1,7 +1,7 @@
 import { createSessionLifetime } from './sessionLifetime.mjs';
 import { consumeEmailCallback } from './emailCallback.mjs';
-export const PORTAL_API =
-  'https://asumndiooctluuecydhj.supabase.co/functions/v1/pbk-investor-staging';
+import { PORTAL_PROFILE } from './portalEnvironment';
+export const PORTAL_API = `https://asumndiooctluuecydhj.supabase.co/functions/v1/${PORTAL_PROFILE.functionName}`;
 let accessToken = '';
 // Read and scrub at module startup, before React renders or any network work begins.
 const emailCallback = consumeEmailCallback(window.location, window.history);

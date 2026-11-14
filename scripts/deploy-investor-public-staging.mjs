@@ -1,10 +1,16 @@
-// Only the dedicated investor staging project. Never deploy to the existing production project.
+// Only the fixed buyer-only projects. Never deploy an operator shell through this script.
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import crypto from 'node:crypto';
-const siteId = '7d2d0593-795c-4cd6-a5ab-51abcf7b0d1f';
+const live = process.argv.includes('--live');
+const siteId = live
+  ? '98e22ea2-79b2-4dd3-ae7c-b3835bc5f0bb'
+  : '7d2d0593-795c-4cd6-a5ab-51abcf7b0d1f';
 const protectedSiteId = '87711eb9-2a9f-40b4-92c6-0f8075151ff0';
-const root = '.pbk-local/investor-public-stage';
+const root = live ? '.pbk-local/investor-live' : '.pbk-local/investor-public-stage';
+const profile = JSON.parse(await fs.readFile(`${root}/portal-release.json`, 'utf8'));
+if (profile.environment !== (live ? 'live' : 'staging'))
+  throw Error('Investor build environment does not match the deployment target.');
 const config = JSON.parse(
   await fs.readFile(path.join(process.env.APPDATA, 'netlify/Config/config.json'), 'utf8')
 );
@@ -20,12 +26,12 @@ async function api(route, options = {}) {
 }
 const before = await api(`/sites/${protectedSiteId}`);
 const stage = await api(`/sites/${siteId}`);
-if (stage.name !== 'pbk-investors-staging' || siteId === protectedSiteId)
+if (stage.name !== (live ? 'pbk-investors' : 'pbk-investors-staging') || siteId === protectedSiteId)
   throw Error('Dedicated staging target mismatch.');
 await fs.writeFile(`${root}/_redirects`, '/ /investor-portal.html 200!\n/* /404.html 404\n');
 await fs.writeFile(
   `${root}/404.html`,
-  '<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Page not available | PBK</title><body><h1>Page not available</h1><p>This address is for the private investor staging portal.</p><a href="/">Return to investor sign-in</a></body></html>'
+  `<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Page not available | PBK</title><body><h1>Page not available</h1><p>This address is for the private investor ${live ? '' : 'staging '}portal.</p><a href="/">Return to investor sign-in</a></body></html>`
 );
 await fs.writeFile(`${root}/robots.txt`, 'User-agent: *\nDisallow: /\n');
 await fs.writeFile(
@@ -49,7 +55,7 @@ async function walk(dir) {
     else {
       const name = '/' + path.relative(root, file).replaceAll('\\', '/');
       if (
-        !/^\/(investor-portal\.html|404\.html|robots\.txt|_headers|_redirects|assets\/[\w-]+\.(js|css))$/.test(
+        !/^\/(investor-portal\.html|portal-release\.json|404\.html|robots\.txt|_headers|_redirects|assets\/[\w-]+\.(js|css))$/.test(
           name
         )
       )
@@ -69,7 +75,9 @@ let deploy = await api(`/sites/${siteId}/deploys`, {
   headers: { 'Content-Type': 'application/json' },
   body: JSON.stringify({
     draft: false,
-    title: 'Investor staging only — approved login required',
+    title: live
+      ? 'Private investor portal - approved access required'
+      : 'Investor staging only — approved login required',
     async: true,
     files,
     functions: {},
@@ -103,10 +111,13 @@ if (after.published_deploy?.id !== before.published_deploy?.id)
 const report = {
   siteId,
   deployId: deploy.id,
-  url: 'https://pbk-investors-staging.netlify.app',
+  url: live ? 'https://pbk-investors.netlify.app' : 'https://pbk-investors-staging.netlify.app',
   state: deploy.state,
   files: Object.keys(files),
   existingProductionDeployUnchanged: after.published_deploy?.id,
 };
-await fs.writeFile('.pbk-local/investor-public-deploy.json', JSON.stringify(report, null, 2));
+await fs.writeFile(
+  live ? '.pbk-local/investor-live-deploy.json' : '.pbk-local/investor-public-deploy.json',
+  JSON.stringify(report, null, 2)
+);
 console.log(JSON.stringify(report, null, 2));

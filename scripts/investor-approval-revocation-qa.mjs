@@ -2,16 +2,17 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import crypto from 'node:crypto';
+import { qaLive, qaProfile, qaStem, qaFile } from './investor-qa-profile.mjs';
 const base = process.env.PBK_SUPABASE_URL?.replace(/\/$/, '');
 const service = process.env.PBK_SUPABASE_SERVICE_ROLE_KEY;
 assert.equal(base, 'https://asumndiooctluuecydhj.supabase.co');
 assert.ok(service, 'Staging provider credentials unavailable.');
-const api = base + '/functions/v1/pbk-investor-staging';
-const publicOrigin = 'https://pbk-investors-staging.netlify.app';
-const staffOrigin = 'https://pbk-investor-staging--pbkcenter.netlify.app';
-const stateFile = '.pbk-local/approval-revocation-qa.json';
-const reportFile = '.pbk-local/approval-revocation-report.json';
-const email = 'pbk.qa.approval.20261113@example.com';
+const api = base + '/functions/v1/' + qaProfile.functionName;
+const publicOrigin = qaProfile.publicOrigin;
+const staffOrigin = qaProfile.staffOrigin;
+const stateFile = qaFile('approval-revocation-qa.json');
+const reportFile = qaFile('approval-revocation-report.json');
+const email = qaLive ? 'pbk.qa.live.approval.20261114@example.com' : 'pbk.qa.approval.20261113@example.com';
 const phase = process.argv[2] || 'setup';
 await fs.mkdir('.pbk-local', { recursive: true });
 let state = { email, checks: [] };
@@ -72,15 +73,17 @@ async function save() {
     existingLinkExpiresAt: state.signedExpiresAt,
     finalInvestorStatus: state.finalInvestorStatus,
     outreach: false,
-    productionChanges: false,
+    environment: qaProfile.environment,
+    scopedSyntheticLiveQa: qaLive,
+    realMembershipsChanged: false,
   };
   await fs.writeFile(reportFile, JSON.stringify(report, null, 2));
   console.log(JSON.stringify(report, null, 2));
 }
 if (phase === 'setup') {
   state = { email, userId: state.userId, checks: [] };
-  const identities = JSON.parse(await fs.readFile('.pbk-local/portal-qa-identities.json', 'utf8'));
-  assert.equal(identities.reviewer.email, 'pbk.qa.portal.20261113.reviewer@example.com');
+  const identities = JSON.parse(await fs.readFile(qaFile('portal-qa-identities.json'), 'utf8'));
+  assert.equal(identities.reviewer.email, `${qaStem}.reviewer@example.com`);
   state.reviewerEmail = identities.reviewer.email;
   const signedIn = await verify(state.reviewerEmail, staffOrigin);
   assert.equal(signedIn.status, 200);

@@ -1,11 +1,17 @@
 import { membership } from './domain.mjs';
-import { PUBLIC_INVESTOR_ORIGIN, assertEntryMember } from './entryPolicy.mjs';
-const staffOrigin = 'https://pbk-investor-staging--pbkcenter.netlify.app';
-export function authRedirectUrl(origin) {
-  if (origin === PUBLIC_INVESTOR_ORIGIN || origin === 'https://probono-key-realty.webflow.io')
-    return PUBLIC_INVESTOR_ORIGIN + '/';
-  if (origin === staffOrigin) return staffOrigin + '/property-log';
-  if (['http://localhost:5179', 'http://127.0.0.1:5179'].includes(origin))
+import { assertEntryMember, isAllowedOrigin } from './entryPolicy.mjs';
+import { portalProfile } from './releaseProfile.mjs';
+const staging = portalProfile('staging');
+export function authRedirectUrl(origin, profile = staging) {
+  if (!isAllowedOrigin(origin, profile))
+    throw Object.assign(Error('Use a recognized sign-in page.'), { status: 403 });
+  if (origin === profile.publicOrigin || origin === 'https://probono-key-realty.webflow.io')
+    return profile.publicOrigin + '/';
+  if (origin === profile.staffOrigin) return profile.staffOrigin + '/property-log';
+  if (
+    profile.environment === 'staging' &&
+    ['http://localhost:5179', 'http://127.0.0.1:5179'].includes(origin)
+  )
     return origin + '/investor-portal.html';
   throw Object.assign(Error('Use a recognized staging sign-in page.'), { status: 403 });
 }
@@ -16,7 +22,8 @@ export function registerVerifiedSession(
   hash,
   providerExpiresAt,
   origin,
-  now = Date.now()
+  now = Date.now(),
+  profile = staging
 ) {
   if (
     !user?.id ||
@@ -51,7 +58,7 @@ export function registerVerifiedSession(
       detail: { approvedBy: invite.approvedBy },
     });
   }
-  assertEntryMember(origin, membership(data, user.id));
+  assertEntryMember(origin, membership(data, user.id), profile);
   data.sessions ||= {};
   data.endedSessions ||= {};
   for (const [key, value] of Object.entries(data.sessions)) {

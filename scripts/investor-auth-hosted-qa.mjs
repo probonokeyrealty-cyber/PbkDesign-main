@@ -1,13 +1,14 @@
 // Synthetic sign-in links only. Auth admin generation sends no email.
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
+import { qaProfile, qaFile } from './investor-qa-profile.mjs';
 const base = process.env.PBK_SUPABASE_URL?.replace(/\/$/, '');
 const service = process.env.PBK_SUPABASE_SERVICE_ROLE_KEY;
 if (base !== 'https://asumndiooctluuecydhj.supabase.co' || !service)
   throw Error('Expected staging auth configuration unavailable.');
-const buyer = 'https://pbk-investors-staging.netlify.app';
-const staff = 'https://pbk-investor-staging--pbkcenter.netlify.app';
-const users = JSON.parse(await fs.readFile('.pbk-local/portal-qa-identities.json', 'utf8'));
+const buyer = qaProfile.publicOrigin;
+const staff = qaProfile.staffOrigin;
+const users = JSON.parse(await fs.readFile(qaFile('portal-qa-identities.json'), 'utf8'));
 async function generated(key, redirect) {
   const r = await fetch(
     base + '/auth/v1/admin/generate_link?redirect_to=' + encodeURIComponent(redirect),
@@ -26,7 +27,7 @@ async function generated(key, redirect) {
   return data.action_link || data.properties?.action_link;
 }
 async function call(command, token, origin) {
-  const r = await fetch(base + '/functions/v1/pbk-investor-staging', {
+  const r = await fetch(base + '/functions/v1/' + qaProfile.functionName, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -44,7 +45,7 @@ if (process.argv.includes('--browser-links')) {
     ['reviewer', staff + '/property-log'],
   ])
     links[key] = await generated(key, redirect);
-  await fs.writeFile('.pbk-local/auth-callback-browser-links.json', JSON.stringify(links));
+  await fs.writeFile(qaFile('auth-callback-browser-links.json'), JSON.stringify(links));
   console.log('Two no-outreach QA links prepared in ignored local storage; no email sent.');
   process.exit(0);
 }
@@ -100,7 +101,8 @@ const report = {
   invalidAndMissingTokenDenied: true,
   emailSent: false,
   crmWrites: false,
-  productionWrites: false,
+  environment: qaProfile.environment,
+  realMembershipsChanged: false,
 };
-await fs.writeFile('.pbk-local/auth-callback-hosted-qa.json', JSON.stringify(report, null, 2));
+await fs.writeFile(qaFile('auth-callback-hosted-qa.json'), JSON.stringify(report, null, 2));
 console.log(JSON.stringify(report, null, 2));

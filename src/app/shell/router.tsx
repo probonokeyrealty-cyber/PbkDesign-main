@@ -40,7 +40,7 @@ const Settings = lazy(() =>
     default: module.Settings,
   }))
 );
-const PropertyLog = lazy(() => import('../routes/PropertyLog').then(module=>({default:module.PropertyLog})));
+const PropertyLog = lazy(() => loadCurrentRoute(() => import('../routes/PropertyLog')).then(module=>({default:module.PropertyLog})));
 const AgentFleet = lazy(() =>
   loadCurrentRoute(() => import('../routes/AgentFleet')).then((module) => ({
     default: module.AgentFleet,

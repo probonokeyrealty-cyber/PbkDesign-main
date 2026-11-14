@@ -2,11 +2,12 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import crypto from 'node:crypto';
+import { qaLive, qaProfile, qaStem, qaFile } from './investor-qa-profile.mjs';
 const base = process.env.PBK_SUPABASE_URL?.replace(/\/$/, '');
 const service = process.env.PBK_SUPABASE_SERVICE_ROLE_KEY;
 if (base !== 'https://asumndiooctluuecydhj.supabase.co' || !service)
   throw Error('Expected PBK staging provider configuration is unavailable.');
-const api = `${base}/functions/v1/pbk-investor-staging`;
+const api = `${base}/functions/v1/${qaProfile.functionName}`;
 const headers = {
   apikey: service,
   Authorization: `Bearer ${service}`,
@@ -25,8 +26,8 @@ async function admin(path, body, method = 'POST') {
     );
   return data;
 }
-const staffOrigin = 'https://pbk-investor-staging--pbkcenter.netlify.app';
-const investorOrigin = 'https://pbk-investors-staging.netlify.app';
+const staffOrigin = qaProfile.staffOrigin;
+const investorOrigin = qaProfile.publicOrigin;
 async function call(command, payload = {}, token, origin = staffOrigin) {
   const r = await fetch(api, {
     method: 'POST',
@@ -41,7 +42,7 @@ async function call(command, payload = {}, token, origin = staffOrigin) {
 }
 const root = '.pbk-local';
 await fs.mkdir(root, { recursive: true });
-const file = `${root}/portal-qa-identities.json`;
+const file = qaFile('portal-qa-identities.json');
 let users = {};
 try {
   users = JSON.parse(await fs.readFile(file, 'utf8'));
@@ -53,12 +54,12 @@ for (const [key, role] of [
   ['other', 'investor'],
   ['pending', 'investor'],
 ]) {
-  const email = `pbk.qa.portal.20261113.${key}@example.com`;
+  const email = `${qaStem}.${key}@example.com`;
   if (!users[key]) {
     const u = await admin('/auth/v1/admin/users', {
       email,
       email_confirm: true,
-      app_metadata: { pbk_portal_staging: true },
+      app_metadata: { pbk_portal_qa: true, qa_no_outreach: true },
     });
     users[key] = { id: u.id || u.user?.id, email, role };
     await fs.writeFile(file, JSON.stringify(users, null, 2));
@@ -66,17 +67,19 @@ for (const [key, role] of [
 }
 for (let n = 0; n < 5; n++) {
   const rows = await admin(
-    '/rest/v1/pbk_investor_staging_state?id=eq.staging&select=revision,data',
+    `/rest/v1/${qaProfile.table}?id=eq.${qaProfile.stateId}&select=revision,data`,
     null,
     'GET'
   );
   const { revision, data } = rows[0];
   for (const [key, u] of Object.entries(users)) {
     if (key === 'owner') continue; // Retests must never rewrite the real staff membership.
+    assert.equal(u.email, `${qaStem}.${key}@example.com`);
+    assert.ok(!data.members[u.id] || data.members[u.id].email === u.email, 'Cannot replace another membership');
     data.members[u.id] = { email: u.email, role: u.role, approved: key !== 'pending' };
   }
   if (
-    await admin('/rest/v1/rpc/pbk_investor_staging_commit', {
+    await admin('/rest/v1/rpc/' + qaProfile.commitRpc, {
       expected_revision: revision,
       next_data: data,
     })
@@ -91,7 +94,7 @@ if (process.argv.includes('--codes')) {
     const r = await admin('/auth/v1/admin/generate_link', { type: 'magiclink', email: u.email });
     codes[key] = { email: u.email, code: r.email_otp || r.properties?.email_otp };
   }
-  await fs.writeFile(`${root}/portal-qa-codes.json`, JSON.stringify(codes, null, 2));
+  await fs.writeFile(qaFile('portal-qa-codes.json'), JSON.stringify(codes, null, 2));
   console.log('No-outreach QA sign-in codes prepared in ignored local storage. No emails sent.');
   process.exit(0);
 }
@@ -262,7 +265,7 @@ assert.equal(
   crypto.createHash('sha256').update(png).digest('hex')
 );
 assert.notEqual(
-  (await fetch(`${base}/storage/v1/object/public/pbk-investor-staging/${p.assets[0].path}`)).status,
+  (await fetch(`${base}/storage/v1/object/public/${qaProfile.bucket}/${p.assets[0].path}`)).status,
   200
 );
 const pdfAsset = p.assets.find((a) => a.kind === 'packet');
@@ -364,8 +367,10 @@ const report = {
     'logged-out token denied',
     'revoked existing session denied',
   ],
-  productionChanges: false,
+  environment: qaProfile.environment,
+  scopedSyntheticLiveQa: qaLive,
+  realMembershipsChanged: false,
   notificationsSent: false,
 };
-await fs.writeFile(`${root}/portal-api-qa.json`, JSON.stringify(report, null, 2));
+await fs.writeFile(qaFile('portal-api-qa.json'), JSON.stringify(report, null, 2));
 console.log(JSON.stringify(report, null, 2));

@@ -34,6 +34,9 @@ const pbkBuildId =
   process.env.GITHUB_SHA ||
   `${Date.now()}`
 
+const portalEnvironment = process.env.PBK_PORTAL_ENV || (process.env.NODE_ENV === 'production' ? 'live' : 'staging')
+if (!['live', 'staging'].includes(portalEnvironment)) throw Error('Invalid PBK portal environment')
+
 function figmaAssetResolver() {
   return {
     name: 'figma-asset-resolver',
@@ -109,6 +112,7 @@ function pbkBuildManifest() {
         source: JSON.stringify(
           {
             buildId: pbkBuildId,
+            portalEnvironment,
             generatedAt: new Date().toISOString(),
           },
           null,
@@ -122,6 +126,7 @@ function pbkBuildManifest() {
 export default defineConfig({
   define: {
     __PBK_BUILD_ID__: JSON.stringify(pbkBuildId),
+    __PBK_PORTAL_ENV__: JSON.stringify(portalEnvironment),
   },
   plugins: [
     figmaAssetResolver(),

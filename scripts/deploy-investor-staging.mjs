@@ -3,6 +3,9 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import crypto from 'node:crypto';
 const siteId = '87711eb9-2a9f-40b4-92c6-0f8075151ff0';
+const manifest = JSON.parse(await fs.readFile('dist/pbk-build-manifest.json', 'utf8'));
+if (manifest.portalEnvironment !== 'staging')
+  throw Error('Build the staff staging profile with npm run build:staff-staging first.');
 const config = JSON.parse(
   await fs.readFile(path.join(process.env.APPDATA, 'netlify/Config/config.json'), 'utf8')
 );

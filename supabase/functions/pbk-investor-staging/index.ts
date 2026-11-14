@@ -1,6 +1,7 @@
 import { storePrivateAsset } from './uploadLifecycle.mjs';
 import { readLimitedBody } from './bodyLimit.mjs';
 import { execute, membership, verificationInput } from './domain.mjs';
+import { authRedirectUrl, registerVerifiedSession } from './authSession.mjs';
 import {
   PUBLIC_INVESTOR_ORIGIN,
   isAllowedOrigin,
@@ -86,6 +87,27 @@ async function identity(req: Request, data: any) {
   if (user.id !== session.uid) throw Object.assign(new Error('Invalid session.'), { status: 401 });
   membership(data, user.id);
   return { uid: user.id, hash: await digest(token) };
+}
+async function beginVerifiedSession(token: string, origin: string) {
+  // A callback fragment is untrusted until Auth validates its bearer token.
+  const response = await fetch(`${URL}/auth/v1/user`, {
+    headers: { apikey: ANON, Authorization: `Bearer ${token}` },
+  });
+  if (!response.ok)
+    throw Object.assign(Error('Your sign-in link expired. Request a fresh sign-in link.'), {
+      status: 401,
+    });
+  const user = await response.json();
+  let expiresAt = NaN;
+  try {
+    const part = token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');
+    expiresAt = Number(JSON.parse(atob(part)).exp) * 1000;
+  } catch {}
+  const hash = await digest(token);
+  return await mutate((data) => {
+    const expiresIn = registerVerifiedSession(data, user, hash, expiresAt, origin);
+    return { changed: true, state: data, result: { expiresIn } };
+  });
 }
 async function fileInfo(req: Request, input: any) {
   const row = await read();
@@ -287,14 +309,23 @@ Deno.serve(async (req: Request) => {
         );
       if (found && !email.endsWith('@example.com')) {
         // Provider rate-limits OTP delivery. Unknown/pending members get the same response.
-        await fetch(`${URL}/auth/v1/otp`, {
-          method: 'POST',
-          headers: { apikey: ANON, 'Content-Type': 'application/json' },
-          body: JSON.stringify({ email, create_user: true }),
-        });
+        const sent = await fetch(
+          `${URL}/auth/v1/otp?redirect_to=${encodeURIComponent(authRedirectUrl(origin))}`,
+          {
+            method: 'POST',
+            headers: { apikey: ANON, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email, create_user: true }),
+          }
+        );
+        if (!sent.ok)
+          return json(
+            { error: 'Unable to send a sign-in link right now. Please retry shortly.' },
+            503,
+            origin
+          );
       }
       return json(
-        { message: 'If your access is approved, a sign-in code will arrive by email.' },
+        { message: 'If your access is approved, a sign-in link will arrive by email.' },
         200,
         origin
       );
@@ -307,43 +338,15 @@ Deno.serve(async (req: Request) => {
       });
       if (!response.ok) return json({ error: 'That code is invalid or expired.' }, 401, origin);
       const auth = await response.json();
-      const hash = await digest(auth.access_token);
-      await mutate((data) => {
-        if (!data.members[auth.user.id]) {
-          const email = String(auth.user.email || '').toLowerCase();
-          const invite = data.invitations?.[email];
-          if (!auth.user.email_confirmed_at || !invite?.approved)
-            throw Object.assign(new Error('Your portal access is not approved.'), { status: 403 });
-          data.members[auth.user.id] = {
-            email,
-            role: 'investor',
-            approved: true,
-            highLevelContactId: invite.highLevelContactId || '',
-          };
-          data.audit.push({
-            id: crypto.randomUUID(),
-            actor: auth.user.id,
-            action: 'approved_investor_signed_in',
-            entityId: auth.user.id,
-            at: new Date().toISOString(),
-            detail: { approvedBy: invite.approvedBy },
-          });
-        }
-        assertEntryMember(origin, membership(data, auth.user.id));
-        data.sessions ||= {};
-        for (const [key, value] of Object.entries(data.sessions) as any)
-          if (value.expiresAt <= Date.now()) delete data.sessions[key];
-        data.sessions[hash] = {
-          uid: auth.user.id,
-          expiresAt: Math.min(Date.now() + 3600_000, Date.now() + auth.expires_in * 1000),
-        };
-        return { changed: true, state: data, result: {} };
-      });
-      return json(
-        { token: auth.access_token, expiresIn: Math.min(3600, auth.expires_in) },
-        200,
-        origin
-      );
+      const session = await beginVerifiedSession(auth.access_token, origin);
+      return json({ token: auth.access_token, ...session }, 200, origin);
+    }
+    if (command === 'authCallback') {
+      const header = req.headers.get('Authorization') || '';
+      const token = header.startsWith('Bearer ') ? header.slice(7) : '';
+      if (!token || token.length > 8192)
+        return json({ error: 'Request a fresh sign-in link.' }, 401, origin);
+      return json(await beginVerifiedSession(token, origin), 200, origin);
     }
     if (command === 'file') return json(await fileInfo(req, payload), 200, origin);
     if (command === 'asset') return json({ error: 'Use the private upload action.' }, 400, origin);
@@ -352,6 +355,12 @@ Deno.serve(async (req: Request) => {
     assertEntryMember(origin, membership(current.data, uid));
     if (command === 'logout') {
       await mutate((data) => {
+        data.endedSessions ||= {};
+        // Retain only a hash so a consumed callback cannot resurrect a signed-out session.
+        data.endedSessions[hash] = Math.max(
+          data.sessions?.[hash]?.providerExpiresAt || 0,
+          Date.now() + 3600000
+        );
         delete data.sessions?.[hash];
         return { changed: true, state: data, result: { signedOut: true } };
       });

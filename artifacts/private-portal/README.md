@@ -54,6 +54,16 @@ The mobile inquiry returned receipt `e07af035-306b-4ea7-a878-cda0f3375c43`. Staf
 
 ## Boundaries
 
+### Staging email-link repair — November 13
+
+Root cause: the shared Auth service had Site URL `http://localhost:3000`, no redirect allowlist, and the staging app supported pasted verification URLs/OTPs but did not consume the session returned after clicking a Magic Link.
+
+The staging-only backend now requests an exact return address for each entry. Both frontends consume the callback, clear the URL fragment before async work, verify the bearer with the project's Auth service, and register only currently approved members. Staff identities remain rejected on the public investor entry. No refresh token is retained; session expiry and logout tombstones prevent callback replay from extending or resurrecting a portal session. Existing OTP/pasted-link sign-in remains available.
+
+Deployed backend version 8, investor staging `6af7d9c60274bd1c39bde625`, and protected staff draft `6af7d9d2f34920866cfb7fbc`. Production deploy `6af7d086370813a89ab209a6` was unchanged before/after both deployments. No access protection was removed. No Webflow, CRM, Calendly, gradient, gold-badge or guide configuration was changed.
+
+Validation so far: 27 regressions, full build, investor-only build, typecheck, diff check, independent code review, seven hosted entry checks, and two hosted invalid-credential checks passed. Chrome verified expired-link recovery and fragment removal at 390px with no overflow. **Complete clicked-link verification is pending approval to save two exact Auth redirect URLs:** `https://pbk-investors-staging.netlify.app/` and `https://pbk-investor-staging--pbkcenter.netlify.app/property-log`. The default Site URL remains unchanged. They are prepared in the dashboard but not saved. `scripts/investor-auth-hosted-qa.mjs` exercises synthetic links without sending email, verifies both return destinations, role access, logout replay rejection and single-use behavior; run it after that setting is saved.
+
 Upload-retest frontend deploy: `6af7c97681ba7d4a8796a6dc`; backend version 6 at that point. Production deploy remained `6af7c732d1721e237426ebd8` throughout that earlier retest. No Webflow publish, production deployment, or changes to existing gradients, public Buy Box, HighLevel, Calendly, gold badges or guide configuration were made. No new live CRM submission or Calendly booking was created. The gold badge and guide connection staging restrictions were left unchanged.
 
 The original staff project's Netlify team SSO remains enabled for all its deployments. Investors now use the separate address documented above. Signed links expire after 60 seconds; withdrawal denies new links, while an already-issued link can survive until its expiry. The earlier isolated wider-bridge offline smoke did not pass; that is distinct from the passing hosted portal API and read-only bridge health check. This staging verification is not a production release certification.

@@ -1,7 +1,12 @@
 import { displayFact } from './displayFact.mjs';
 import { clearPrivateSession } from './clientState.mjs';
 import { useEffect, useRef, useState } from 'react';
-import { portalRequest, uploadPortalAsset, type PortalMember } from './portalApi';
+import {
+  completeEmailCallback,
+  portalRequest,
+  uploadPortalAsset,
+  type PortalMember,
+} from './portalApi';
 import './portal.css';
 
 type Draft = { [key: string]: any; checks: Record<string, boolean> };
@@ -258,6 +263,28 @@ export function InvestorWorkspace({
     [investorEmail, setInvestorEmail] = useState(''),
     [contactId, setContactId] = useState('');
   useEffect(() => {
+    let active = true;
+    void completeEmailCallback()
+      .then(async (received) => {
+        if (!received || !active) return;
+        setBusy(true);
+        try {
+          await enterWorkspace();
+        } catch (e) {
+          clearPrivateState();
+          setError((e as Error).message);
+        } finally {
+          setBusy(false);
+        }
+      })
+      .catch((e) => {
+        if (active) setError((e as Error).message);
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+  useEffect(() => {
     if (!dirty) return;
     const protect = (event: BeforeUnloadEvent) => {
       event.preventDefault();
@@ -341,6 +368,22 @@ export function InvestorWorkspace({
     setProperties(p.properties);
     setInquiries(i.inquiries);
     setSaved(s.ids);
+  }
+  async function enterWorkspace() {
+    const r = await portalRequest('session');
+    if (
+      (staffMode && r.member.role === 'investor') ||
+      (!staffMode && r.member.role !== 'investor')
+    ) {
+      await portalRequest('logout');
+      throw new Error(
+        staffMode
+          ? 'Staff access is required for the property log.'
+          : 'Use the staff property log for this staff identity.'
+      );
+    }
+    setMember(r.member);
+    await refresh();
   }
   async function act(action: () => Promise<void>) {
     setError('');
@@ -479,21 +522,11 @@ export function InvestorWorkspace({
                   await portalRequest('authStart', { email });
                   setCodeSent(true);
                   setNotice(
-                    'If your access is approved, check your email for a sign-in code or link.'
+                    'If your access is approved, open the sign-in link in your email. It returns you here automatically. You can also paste the unclicked link below.'
                   );
                 } else {
                   await portalRequest('authVerify', { email, code });
-                  const r = await portalRequest('session');
-                  if (staffMode && r.member.role === 'investor') {
-                    await portalRequest('logout');
-                    throw new Error('Staff access is required for the property log.');
-                  }
-                  if (!staffMode && r.member.role !== 'investor') {
-                    await portalRequest('logout');
-                    throw new Error('Use the staff property log for this staff identity.');
-                  }
-                  setMember(r.member);
-                  await refresh();
+                  await enterWorkspace();
                 }
               });
             }}
@@ -520,7 +553,7 @@ export function InvestorWorkspace({
               </label>
             )}
             <button className="portal-primary" disabled={busy}>
-              {busy ? 'Please wait…' : codeSent ? 'Verify and sign in' : 'Send sign-in code'}
+              {busy ? 'Please wait…' : codeSent ? 'Verify and sign in' : 'Email my sign-in link'}
             </button>
             {codeSent && (
               <button

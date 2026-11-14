@@ -9,6 +9,7 @@ const allowedOrigins = new Set([
 const investorCommands = new Set([
   'authStart',
   'authVerify',
+  'authCallback',
   'session',
   'list',
   'property',

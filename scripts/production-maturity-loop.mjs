@@ -342,6 +342,9 @@ export function createProviderCircuitBreaker({
       if (state.state === 'open') state.state = 'half_open';
       try {
         const result = await fn();
+        if (result instanceof Response && result.skipped === true && result.providerAttempted === false) {
+          return { ok: false, provider: state.provider, providerAttempted: false, fallback: result };
+        }
         if (isCircuitEligibleProviderFailure(result)) {
           const error = new Error(describeReturnedProviderFailure(result));
           fail(state, error);

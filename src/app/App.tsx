@@ -120,7 +120,7 @@ const initialDealData: DealData = {
     condition: '',
   },
   builderPrice: 30000,
-  lotSize: '0.25',
+  lotSize: '',
   builderTotal: 0,
   offer: 0,
   zipCode: '',
@@ -1201,6 +1201,7 @@ export default function App({ engineOnly = false }: AppProps) {
 
         <RightPanel
           isOpen={rightPanelOpen}
+          drawer={activeTab === 'analyzer'}
           onClose={() => setRightPanelOpen(false)}
           deal={activeDeal}
           selectedPath={activeSelectedPath}

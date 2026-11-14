@@ -96,6 +96,25 @@ assert.equal(normalizedMemory.skills[0].name, 'Live Skill');
 assert.deepEqual(normalizedMemory.skills[0].trend, [70, 75, 80]);
 assert.equal(normalizedMemory.experiments.length, 0);
 
+const memoryFacts = memoryLogic.buildMemoryAnalyticsViewModel({
+  memoryEventsResponse: {
+    events: [
+      { id: 'one', title: 'Asking price', detail: '$240,000', leadId: 'lead-one' },
+      { id: 'same', title: 'Asking price', detail: '240000.00', leadId: 'lead-one' },
+      { id: 'other-lead', title: 'Asking price', detail: '$300,000', leadId: 'lead-two' },
+      { id: 'other-field', title: 'Mortgage balance', detail: '$130,000', leadId: 'lead-one' },
+      { id: 'unrelated-text', title: 'Asking price', detail: 'Price discussed', leadId: 'lead-one' },
+    ],
+  },
+});
+assert.deepEqual(memoryLogic.buildMemoryConflictGroups(memoryFacts.events), []);
+const conflictEvents = [
+  ...memoryFacts.events,
+  { ...memoryFacts.events[0], id: 'conflict', detail: '$245,000' },
+];
+const [priceConflict] = memoryLogic.buildMemoryConflictGroups(conflictEvents);
+assert.deepEqual(priceConflict.observations.map(({ value }) => value), ['$240,000', '$240,000', '$245,000']);
+
 const partialMemory = memoryLogic.buildMemoryAnalyticsViewModel({
   outcomesResponse: {
     warning: 'Skill outcomes source stale',

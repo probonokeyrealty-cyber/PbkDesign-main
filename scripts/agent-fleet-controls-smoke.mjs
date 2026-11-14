@@ -155,8 +155,18 @@ assert.match(
 );
 assert.match(
   agentFleet,
-  /Learning ready/,
-  'Agent Fleet must present agent readiness in nontechnical language.'
+  /Learning connected/,
+  'Learning connectivity must not imply measured agent readiness.'
+);
+assert.match(
+  agentFleet,
+  /Measured ready/,
+  'Agent Fleet must explicitly label canonical measured readiness.'
+);
+assert.doesNotMatch(
+  agentFleet,
+  /Tools and health clear|Learning ready|Health ready/,
+  'Health and learning liveness must not substitute for measured readiness.'
 );
 assert.doesNotMatch(
   agentFleet,

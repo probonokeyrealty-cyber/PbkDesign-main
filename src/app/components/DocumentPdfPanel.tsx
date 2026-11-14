@@ -120,24 +120,21 @@ export function DocumentPdfPanel({
           : 'Generating PDF...';
 
   return (
-    <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm dark:border-slate-700 dark:bg-slate-800">
+    <section
+      aria-labelledby="docs-preview-heading"
+      className="pbk-analyzer-card pbk-analyzer-workbench-section"
+    >
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <div className="mb-2 text-[9px] font-semibold uppercase tracking-[0.18em] text-emerald-500">
-            PDF Sync
-          </div>
-          <div className="text-[16px] font-semibold tracking-tight text-gray-900 dark:text-gray-100">
+          <h2 id="docs-preview-heading" className="pbk-analyzer-section-title">
             Master PDF Preview
-          </div>
-          <div className="mt-1 text-[11px] leading-5 text-gray-500 dark:text-gray-400">
-            Auto-regenerates the same PBK master package output used by the selected-path packet,
-            without changing Preview or Print.
-          </div>
+          </h2>
           <div className="mt-2 inline-flex rounded-full border border-blue-200 bg-blue-50 px-3 py-1 text-[10px] font-semibold uppercase tracking-wide text-blue-700 dark:border-blue-800 dark:bg-blue-900/20 dark:text-blue-300">
             Path locked: {getPathLabel(selectedPath)}
           </div>
         </div>
         <div
+          role="status"
           className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-[10px] font-semibold uppercase tracking-wide ${
             status === 'ready'
               ? 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-800 dark:bg-emerald-900/20 dark:text-emerald-300'
@@ -163,11 +160,11 @@ export function DocumentPdfPanel({
         </div>
       ) : null}
 
-      <div className="mt-3 flex flex-wrap gap-2">
+      <div className="pbk-doc-controls mt-3">
         <button
           type="button"
           onClick={() => void generatePdf('refresh')}
-          className="inline-flex items-center gap-2 rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-[11px] font-semibold text-gray-700 transition-all hover:bg-gray-100 dark:border-slate-700 dark:bg-slate-900 dark:text-gray-200 dark:hover:bg-slate-800"
+          className="pbk-btn pbk-btn-ghost"
         >
           <RefreshCw size={14} />
           Refresh PDF
@@ -182,11 +179,8 @@ export function DocumentPdfPanel({
             }
             onPdfAction?.('download');
           }}
-          className={`inline-flex items-center gap-2 rounded-xl px-3 py-2 text-[11px] font-semibold transition-all ${
-            pdfUrl
-              ? 'bg-emerald-500 text-white hover:bg-emerald-600'
-              : 'pointer-events-none bg-gray-200 text-gray-400 dark:bg-slate-700 dark:text-slate-500'
-          }`}
+          aria-disabled={!pdfUrl}
+          className="pbk-btn pbk-btn-primary"
         >
           <Download size={14} />
           Download PDF
@@ -202,18 +196,15 @@ export function DocumentPdfPanel({
             }
             onPdfAction?.('open');
           }}
-          className={`inline-flex items-center gap-2 rounded-xl px-3 py-2 text-[11px] font-semibold transition-all ${
-            pdfUrl
-              ? 'border border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100 dark:border-blue-800 dark:bg-blue-900/20 dark:text-blue-300'
-              : 'pointer-events-none border border-gray-200 bg-gray-50 text-gray-400 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-500'
-          }`}
+          aria-disabled={!pdfUrl}
+          className="pbk-btn pbk-btn-ghost"
         >
           <ExternalLink size={14} />
           Open PDF
         </a>
       </div>
 
-      <div className="mt-3 overflow-hidden rounded-2xl border border-gray-200 bg-gray-50 dark:border-slate-700 dark:bg-slate-900">
+      <div className="mt-3 overflow-hidden rounded-md border border-gray-200 bg-gray-50 dark:border-slate-700 dark:bg-slate-900">
         {pdfUrl ? (
           <iframe
             title="PBK Master Deal Package PDF preview"
@@ -226,6 +217,6 @@ export function DocumentPdfPanel({
           </div>
         )}
       </div>
-    </div>
+    </section>
   );
 }

@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
   AlertCircle,
   CheckCircle2,
+  ChevronDown,
   Grid2X2,
   List,
   Mail,
@@ -10,7 +11,6 @@ import {
   Plus,
   RefreshCw,
   Search,
-  Send,
   ShieldCheck,
   Trash2,
   X,
@@ -53,6 +53,7 @@ type ViewMode = 'cards' | 'table';
 type TemplateStatus = 'idle' | 'loading' | 'ready' | 'error';
 
 type CampaignWizardDraft = {
+  id: string;
   name: string;
   channel: string;
   leadSource: string;
@@ -66,6 +67,7 @@ type CampaignWizardDraft = {
 };
 
 const DEFAULT_DRAFT: CampaignWizardDraft = {
+  id: '',
   name: '',
   channel: 'email',
   leadSource: 'all-imports',
@@ -110,15 +112,23 @@ function formatDate(value?: string) {
   return new Intl.DateTimeFormat('en-US', {
     month: 'short',
     day: 'numeric',
+    year: 'numeric',
     hour: 'numeric',
     minute: '2-digit',
+    timeZoneName: 'short',
   }).format(parsed);
+}
+
+function campaignScheduleInstant(value: string) {
+  const time = Date.parse(value);
+  return Number.isFinite(time) ? new Date(time).toISOString() : null;
 }
 
 function statusClass(status = '') {
   const normalized = status.toLowerCase();
   if (['active', 'running', 'approved'].includes(normalized)) return 'active';
-  if (['pending', 'queued', 'approval_required'].includes(normalized)) return 'pending';
+  if (['pending', 'queued', 'approval_required', 'scheduled'].includes(normalized))
+    return 'pending';
   if (['paused'].includes(normalized)) return 'paused';
   if (['complete', 'completed', 'done'].includes(normalized)) return 'completed';
   if (['cancelled', 'failed', 'rejected'].includes(normalized)) return 'cancelled';
@@ -129,13 +139,35 @@ function campaignActionError(error: unknown, fallback: string) {
   return error instanceof Error && error.message ? error.message : fallback;
 }
 
+function campaignApprovalFeedback(result?: string, detail?: string) {
+  if (result === 'scheduled') {
+    return { title: 'Campaign already scheduled', desc: 'The approved start time is unchanged.' };
+  }
+  if (result && result !== 'queued_for_approval') {
+    return {
+      title: 'Campaign approval status unchanged',
+      desc: detail || 'Check the campaign record for its latest status.',
+    };
+  }
+  return { title: 'Campaign queued for approval', desc: 'No outreach is sent by this request.' };
+}
+
 function normalizedCampaignStatus(campaign: CampaignRecord | { status?: string }) {
   return String(campaign.status || 'draft').toLowerCase();
 }
 
+function isScheduledCampaignStart(campaign: CampaignRecord) {
+  return (
+    normalizedCampaignStatus(campaign) === 'pending' &&
+    campaign.approvalStatus === 'approved' &&
+    campaign.pendingAction === 'start_campaign' &&
+    Boolean(campaign.schedule?.firstSendAt)
+  );
+}
+
 function canRequestCampaignApproval(campaign: CampaignRecord) {
   const status = normalizedCampaignStatus(campaign);
-  if (campaign.pendingAction) return false;
+  if (campaign.pendingAction || campaign.providerCampaignId) return false;
   return ![
     'pending',
     'queued',
@@ -143,6 +175,9 @@ function canRequestCampaignApproval(campaign: CampaignRecord) {
     'approved',
     'active',
     'running',
+    'completed',
+    'complete',
+    'done',
     'cancelled',
     'failed',
     'rejected',
@@ -150,6 +185,7 @@ function canRequestCampaignApproval(campaign: CampaignRecord) {
 }
 
 function canHoldCampaign(campaign: CampaignRecord) {
+  if (isScheduledCampaignStart(campaign)) return true;
   const status = normalizedCampaignStatus(campaign);
   if (campaign.pendingAction) return false;
   return ![
@@ -168,7 +204,7 @@ function canHoldCampaign(campaign: CampaignRecord) {
 
 function canCancelCampaign(campaign: CampaignRecord) {
   const status = normalizedCampaignStatus(campaign);
-  if (campaign.pendingAction) return false;
+  if (campaign.pendingAction && !isScheduledCampaignStart(campaign)) return false;
   return !['cancelled', 'failed', 'rejected', 'completed', 'complete', 'done'].includes(status);
 }
 
@@ -539,6 +575,7 @@ function buildCampaignPayload(
     },
   };
   return {
+    id: draft.id,
     name: draft.name.trim(),
     channel: draft.channel,
     leadSource: draft.leadSource,
@@ -553,7 +590,7 @@ function buildCampaignPayload(
     senderEmail: fromEmail,
     providerConfig,
     schedule: {
-      firstSendAt: draft.scheduledFor || null,
+      firstSendAt: campaignScheduleInstant(draft.scheduledFor),
       dailyCap: Number(draft.dailyCap || 50),
       window: '9-5-est',
       providerConfig,
@@ -580,6 +617,35 @@ function buildCampaignPayload(
     notes: draft.notes.trim(),
     actor: 'PBK React shell',
   };
+}
+
+function savedCampaignMatchesReview(
+  saved: CampaignRecord,
+  reviewed: ReturnType<typeof buildCampaignPayload>
+) {
+  const savedSteps = saved.sequence?.steps;
+  return (
+    saved.name === reviewed.name &&
+    saved.channel === reviewed.channel &&
+    saved.leadSource === reviewed.leadSource &&
+    saved.templateId === reviewed.templateId &&
+    (saved.senderIdentityId || '') === reviewed.senderIdentityId &&
+    (saved.notes || '') === (reviewed.notes || '') &&
+    (saved.schedule?.firstSendAt || null) === reviewed.schedule.firstSendAt &&
+    saved.schedule?.dailyCap === reviewed.schedule.dailyCap &&
+    saved.schedule?.window === reviewed.schedule.window &&
+    Array.isArray(savedSteps) &&
+    savedSteps.length === reviewed.sequence.steps.length &&
+    reviewed.sequence.steps.every((step, index) => {
+      const prior = savedSteps[index];
+      return (
+        prior?.step === step.step &&
+        prior.channel === step.channel &&
+        prior.delayHours === step.delayHours &&
+        prior.body === step.body
+      );
+    })
+  );
 }
 
 function ChannelBadge({ channel }: { channel: string }) {
@@ -749,7 +815,9 @@ function CampaignCard({
   onPatchStatus: (campaign: CampaignRecord, status: string) => void;
   onCancel: (campaign: CampaignRecord) => void;
 }) {
-  const status = String(campaign.status || 'draft');
+  const status = isScheduledCampaignStart(campaign)
+    ? 'scheduled'
+    : String(campaign.status || 'draft');
   const normalizedChannel = campaignChannel(campaign);
   const progress = getCampaignProgress(campaign);
   const canRequestApproval = canRequestCampaignApproval(campaign);
@@ -771,9 +839,7 @@ function CampaignCard({
     >
       <div className="pbk-camp-card-head">
         <div className="min-w-0">
-          <h2 title={campaign.name}>
-            {campaign.name || 'Untitled'} <em>campaign</em>
-          </h2>
+          <h2 title={campaign.name}>{campaign.name || 'Untitled campaign'}</h2>
           <span className={`pbk-camp-status-pill ${statusClass(status)}`}>
             {status.replace(/_/g, ' ')}
           </span>
@@ -791,7 +857,9 @@ function CampaignCard({
         </span>
         <span className="dot" />
         <span>
-          {formatDate(String(campaign.schedule?.firstSendAt || campaign.updatedAt || ''))}
+          {campaign.schedule?.firstSendAt
+            ? `First send: ${formatDate(String(campaign.schedule.firstSendAt))}`
+            : 'No first send set'}
         </span>
       </div>
 
@@ -818,7 +886,11 @@ function CampaignCard({
         </div>
       </div>
 
-      {campaign.pendingAction ? (
+      {isScheduledCampaignStart(campaign) ? (
+        <div className="pbk-camp-warning">
+          <strong>Approved, waiting to start</strong>
+        </div>
+      ) : campaign.pendingAction ? (
         <div className="pbk-camp-warning">
           <strong>Awaiting approval</strong>
           <span>{String(campaign.pendingAction).replace(/_/g, ' ')}</span>
@@ -844,7 +916,7 @@ function CampaignCard({
       <div className="pbk-camp-card-actions">
         <PbkButton
           size="sm"
-          variant="success"
+          variant="primary"
           disabled={busy || !canRequestApproval}
           onClick={() => onRequestApproval(campaign)}
         >
@@ -878,39 +950,23 @@ function CampaignCard({
 
 function CampaignHero({
   summary,
-  loading,
+  available,
   onNewCampaign,
 }: {
   summary: {
     active: number;
     draft: number;
     pending: number;
-    completed: number;
-    leads: number;
-    replies: number;
-    cost: number;
+    scheduled: number;
   };
-  loading: boolean;
+  available: boolean;
   onNewCampaign: () => void;
 }) {
   return (
-    <section className="pbk-campaign-hero">
+    <header className="pbk-campaign-hero">
       <div className="pbk-campaign-hero-top">
-        <div>
-          <div className="pbk-eyebrow">
-            Campaigns - {summary.active} active - {summary.draft} draft - {summary.completed}{' '}
-            complete
-          </div>
-          <h1 className="pbk-display pbk-h1">
-            Outreach <em>campaigns</em>.
-          </h1>
-          <p>
-            Email sequences via <strong>Instantly</strong>. Outbound calls and SMS via{' '}
-            <strong>Telnyx</strong>. Approval-gated, bridge-tracked, paused or resumed from one
-            cockpit.
-          </p>
-        </div>
-        <div className="flex flex-wrap gap-2">
+        <h1 className="pbk-display pbk-h1">Campaigns</h1>
+        <div className="pbk-campaign-page-actions">
           <PbkButton
             variant="ghost"
             onClick={() => window.dispatchEvent(new CustomEvent('pbk:open-compose'))}
@@ -925,41 +981,25 @@ function CampaignHero({
         </div>
       </div>
 
-      <div className="pbk-stats-ribbon">
-        <div className="pbk-stat">
-          <div className="pbk-stat-label">Active / pending</div>
-          <div className="pbk-stat-value">
-            {summary.active}
-            <span className="pbk-stat-delta warn">{summary.pending} pending</span>
-          </div>
+      <dl className="pbk-campaign-status-strip" aria-label="Campaigns in this view">
+        <div>
+          <dt>Awaiting approval</dt>
+          <dd>{available ? summary.pending : '-'}</dd>
         </div>
-        <div className="pbk-stat">
-          <div className="pbk-stat-label">Leads loaded</div>
-          <div className="pbk-stat-value">{formatNumber(summary.leads)}</div>
+        <div>
+          <dt>Active</dt>
+          <dd>{available ? summary.active : '-'}</dd>
         </div>
-        <div className="pbk-stat">
-          <div className="pbk-stat-label">Replies / verbal</div>
-          <div className="pbk-stat-value">
-            {formatNumber(summary.replies)}
-            <span className="pbk-stat-delta">
-              {summary.leads ? formatPercent((summary.replies / summary.leads) * 100) : '0%'}
-            </span>
-          </div>
+        <div>
+          <dt>Scheduled</dt>
+          <dd>{available ? summary.scheduled : '-'}</dd>
         </div>
-        <div className="pbk-stat">
-          <div className="pbk-stat-label">Estimated spend</div>
-          <div className="pbk-stat-value">{formatMoney(summary.cost)}</div>
+        <div>
+          <dt>Drafts</dt>
+          <dd>{available ? summary.draft : '-'}</dd>
         </div>
-      </div>
-
-      <PbkDataSource
-        endpoint="GET /api/campaigns + GET /api/campaigns/lead-sources"
-        status="ships"
-        note={
-          loading ? 'refreshing campaign cockpit' : 'hero stats derive from bridge campaign records'
-        }
-      />
-    </section>
+      </dl>
+    </header>
   );
 }
 
@@ -1030,7 +1070,9 @@ function CampaignsTableView({
         <span>Actions</span>
       </div>
       {campaigns.map((campaign) => {
-        const status = String(campaign.status || 'draft');
+        const status = isScheduledCampaignStart(campaign)
+          ? 'scheduled'
+          : String(campaign.status || 'draft');
         const progress = getCampaignProgress(campaign);
         const holdAction = getCampaignHoldAction(status);
         const approvalAllowed = canRequestCampaignApproval(campaign);
@@ -1057,7 +1099,7 @@ function CampaignsTableView({
               <button
                 type="button"
                 className="chip-btn"
-                disabled={busyCampaignId === campaign.id || !approvalAllowed}
+                disabled={Boolean(busyCampaignId) || !approvalAllowed}
                 onClick={() => onRequestApproval(campaign)}
                 title={
                   approvalAllowed
@@ -1070,7 +1112,7 @@ function CampaignsTableView({
               <button
                 type="button"
                 className="chip-btn"
-                disabled={busyCampaignId === campaign.id || !holdAllowed}
+                disabled={Boolean(busyCampaignId) || !holdAllowed}
                 onClick={() => onPatchStatus(campaign, holdAction.action)}
                 title={
                   holdAllowed
@@ -1083,7 +1125,7 @@ function CampaignsTableView({
               <button
                 type="button"
                 className="chip-btn"
-                disabled={busyCampaignId === campaign.id || !cancelAllowed}
+                disabled={Boolean(busyCampaignId) || !cancelAllowed}
                 onClick={() => onCancel(campaign)}
                 title={
                   cancelAllowed
@@ -1142,6 +1184,7 @@ function CampaignWizard({
   senderLoading,
   senderError,
   saving,
+  saveError,
   onChange,
   onRefreshTemplates,
   onRefreshSenders,
@@ -1159,6 +1202,7 @@ function CampaignWizard({
   senderLoading: boolean;
   senderError: string;
   saving: WizardMode | null;
+  saveError: string;
   onChange: (draft: CampaignWizardDraft) => void;
   onRefreshTemplates: () => void;
   onRefreshSenders: () => void;
@@ -1168,6 +1212,11 @@ function CampaignWizard({
 }) {
   const [step, setStep] = useState(1);
   const [stepError, setStepError] = useState('');
+  const wizardBody = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (wizardBody.current) wizardBody.current.scrollTop = 0;
+  }, [step, stepError, saveError]);
 
   useEffect(() => {
     if (!open) return undefined;
@@ -1193,33 +1242,38 @@ function CampaignWizard({
     senderIdentities.find((identity) => identity.id === draft.senderIdentityId) || null;
   const canSubmit = Boolean(draft.name.trim()) && Boolean(draft.firstMessage.trim());
   const estimatedCost = asNumber(source?.count, 0) * (draft.channel === 'email' ? 0.002 : 0.03);
-  const validateStep = () => {
-    if (step === 1 && !['email', 'call', 'sms'].includes(draft.channel)) {
+  const validateStep = (candidate: number) => {
+    if (candidate === 1 && !['email', 'call', 'sms'].includes(draft.channel)) {
       return 'Choose Email, Calls, or SMS before continuing.';
     }
-    if (step === 1 && !draft.senderIdentityId.trim()) {
+    if (candidate === 1 && !selectedSender) {
       return `Choose a connected ${senderQuery.label} before continuing.`;
     }
-    if (step === 2 && !draft.leadSource.trim()) {
+    if (candidate === 2 && !draft.leadSource.trim()) {
       return 'Choose a lead source before continuing.';
     }
-    if (step === 2 && leadSourcesFallback) {
+    if (candidate === 2 && leadSourcesFallback) {
       return 'No live lead group is loaded yet. Save a draft for now, then request approval after leads sync.';
     }
-    if (step === 3 && !draft.firstMessage.trim()) {
+    if (candidate === 3 && !draft.firstMessage.trim()) {
       return 'Add the first seller-facing message before continuing.';
     }
-    if (step === 4 && !draft.name.trim()) {
+    if (candidate === 4 && !draft.name.trim()) {
       return 'Name the campaign before reviewing it.';
     }
-    if (step === 4 && asNumber(draft.dailyCap, 0) < 1) {
+    if (candidate === 4 && asNumber(draft.dailyCap, 0) < 1) {
       return 'Daily cap must be at least 1.';
     }
     return '';
   };
   const next = () => {
-    const validationError = validateStep();
+    if (saving) return;
+    const invalidStep = (step === WIZARD_STEPS.length ? [1, 2, 3, 4] : [step]).find((candidate) =>
+      validateStep(candidate)
+    );
+    const validationError = invalidStep ? validateStep(invalidStep) : '';
     if (validationError) {
+      if (invalidStep) setStep(invalidStep);
       setStepError(validationError);
       return;
     }
@@ -1248,6 +1302,7 @@ function CampaignWizard({
         className="pbk-wiz-modal"
         role="dialog"
         aria-modal="true"
+        aria-busy={Boolean(saving)}
         aria-labelledby="campaign-wizard-title"
         onMouseDown={(event) => event.stopPropagation()}
       >
@@ -1259,20 +1314,29 @@ function CampaignWizard({
             <button
               type="button"
               className="pbk-wiz-close"
+              disabled={Boolean(saving)}
               onClick={onClose}
               aria-label="Close wizard"
             >
               <X size={16} />
             </button>
           </div>
-          <CampaignWizardStepper step={step} onStep={setStep} />
+          <CampaignWizardStepper
+            step={step}
+            onStep={(nextStep) => {
+              if (!saving) {
+                setStepError('');
+                setStep(nextStep);
+              }
+            }}
+          />
         </div>
 
-        <div className="pbk-wiz-body">
-          {stepError && (
+        <div className="pbk-wiz-body" ref={wizardBody}>
+          {(stepError || saveError) && (
             <div className="pbk-wiz-validation" role="alert" aria-live="assertive">
               <AlertCircle size={15} />
-              <span>{stepError}</span>
+              <span>{stepError || saveError}</span>
             </div>
           )}
           <CampaignWizardPane active={step === 1}>
@@ -1510,7 +1574,7 @@ function CampaignWizard({
                 />
               </label>
               <label className="pbk-schedule-row">
-                <span className="label">First send</span>
+                <span className="label">First send (local time)</span>
                 <PbkInput
                   id="campaign-schedule-first-send"
                   name="campaignScheduledFor"
@@ -1549,9 +1613,7 @@ function CampaignWizard({
             <h3>
               Final <em>review</em>.
             </h3>
-            <p>
-              Save as a bridge campaign or send it into the approval queue for provider execution.
-            </p>
+            <p>Requesting approval does not send outreach.</p>
             <div className="pbk-review-grid">
               <div className="pbk-review-card">
                 <h5>Channel</h5>
@@ -1584,11 +1646,28 @@ function CampaignWizard({
                 </div>
               </div>
               <div className="pbk-review-card">
-                <h5>Template</h5>
+                <h5>Schedule</h5>
+                <div className="row">
+                  <span className="l">First send</span>
+                  <span className="v">
+                    {draft.scheduledFor ? formatDate(draft.scheduledFor) : 'After approval'}
+                  </span>
+                </div>
+                {draft.scheduledFor && (
+                  <p>Approved campaigns with a start time wait for the scheduled runner.</p>
+                )}
+                <div className="row">
+                  <span className="l">Daily cap</span>
+                  <span className="v">{formatNumber(draft.dailyCap)}</span>
+                </div>
+              </div>
+              <div className="pbk-review-card">
+                <h5>Message</h5>
                 <div className="row">
                   <span className="l">Template ID</span>
                   <span className="v">{draft.templateId || 'custom'}</span>
                 </div>
+                <p className="pbk-camp-message-preview">{draft.firstMessage.trim()}</p>
                 <div className="row">
                   <span className="l">Follow-up</span>
                   <span className="v">
@@ -1639,14 +1718,14 @@ function CampaignWizard({
             </PbkButton>
             <PbkButton
               type="button"
-              variant={step === WIZARD_STEPS.length ? 'success' : 'primary'}
+              variant="primary"
               disabled={(step === WIZARD_STEPS.length && !canSubmit) || Boolean(saving)}
               onClick={next}
             >
               {saving === 'approval' ? (
                 <RefreshCw size={14} className="animate-spin" />
               ) : (
-                <Send size={14} />
+                <ShieldCheck size={14} />
               )}
               {step === WIZARD_STEPS.length ? 'Request approval' : 'Next'}
             </PbkButton>
@@ -1667,7 +1746,12 @@ export function Campaigns() {
   const [channelFilter, setChannelFilter] = useState('all');
   const [viewMode, setViewMode] = useState<ViewMode>('cards');
   const [wizardOpen, setWizardOpen] = useState(false);
-  const closeWizard = useCallback(() => setWizardOpen(false), []);
+  const submitting = useRef(false);
+  const actionInFlight = useRef(false);
+  const loadVersion = useRef(0);
+  const closeWizard = useCallback(() => {
+    if (!submitting.current) setWizardOpen(false);
+  }, []);
   const [draft, setDraft] = useState<CampaignWizardDraft>(() => readDraft());
   const [templates, setTemplates] = useState<Record<string, ReplyTemplateRecord> | null>(null);
   const [templateStatus, setTemplateStatus] = useState<TemplateStatus>('idle');
@@ -1675,6 +1759,7 @@ export function Campaigns() {
   const [senderLoading, setSenderLoading] = useState(false);
   const [senderError, setSenderError] = useState('');
   const [saving, setSaving] = useState<WizardMode | null>(null);
+  const [saveError, setSaveError] = useState('');
   const [busyCampaignId, setBusyCampaignId] = useState('');
   const [drilldown, setDrilldown] = useState<CampaignDrilldownResponse | null>(null);
   const [campaignRuntimeSource, setCampaignRuntimeSource] = useState('Loading campaign source');
@@ -1685,6 +1770,7 @@ export function Campaigns() {
   );
 
   const loadCampaigns = useCallback(async () => {
+    const version = ++loadVersion.current;
     setStatus('loading');
     setError('');
     try {
@@ -1702,6 +1788,7 @@ export function Campaigns() {
           limit: 120,
         }).catch(() => null),
       ]);
+      if (version !== loadVersion.current) return;
       setCampaigns(campaignResponse.campaigns || []);
       setSources(sourceResponse.sources || campaignResponse.sources || []);
       setDrilldown(drilldownResponse);
@@ -1718,6 +1805,7 @@ export function Campaigns() {
       );
       setStatus('ready');
     } catch (loadError) {
+      if (version !== loadVersion.current) return;
       setStatus('error');
       setDrilldown(null);
       setCampaignRuntimeFallbackReason('');
@@ -1835,32 +1923,18 @@ export function Campaigns() {
 
   const summary = useMemo(() => {
     const active = campaigns.filter((campaign) =>
-      /active|running/i.test(String(campaign.status || ''))
+      ['active', 'running'].includes(normalizedCampaignStatus(campaign))
     ).length;
-    const draftCount = campaigns.filter((campaign) =>
-      /draft/i.test(String(campaign.status || ''))
+    const draftCount = campaigns.filter(
+      (campaign) => normalizedCampaignStatus(campaign) === 'draft'
     ).length;
     const pending = campaigns.filter(
       (campaign) =>
-        /pending|approval/i.test(String(campaign.status || '')) || campaign.pendingAction
+        !isScheduledCampaignStart(campaign) &&
+        (statusClass(campaign.status) === 'pending' || Boolean(campaign.pendingAction))
     ).length;
-    const completed = campaigns.filter((campaign) =>
-      /complete|completed|done/i.test(String(campaign.status || ''))
-    ).length;
-    const leads = campaigns.reduce(
-      (sum, campaign) => sum + asNumber(campaign.leadCount || metric(campaign, 'leads')),
-      0
-    );
-    const replies = campaigns.reduce(
-      (sum, campaign) =>
-        sum + asNumber(metricFirst(campaign, ['replied', 'replies', 'verbal', 'verbalYes'])),
-      0
-    );
-    const cost = campaigns.reduce(
-      (sum, campaign) => sum + asNumber(metricFirst(campaign, ['estimatedCost', 'cost'])),
-      0
-    );
-    return { active, draft: draftCount, pending, completed, leads, replies, cost };
+    const scheduled = campaigns.filter(isScheduledCampaignStart).length;
+    return { active, draft: draftCount, pending, scheduled };
   }, [campaigns]);
 
   const displayedCampaigns = useMemo(() => {
@@ -1869,14 +1943,32 @@ export function Campaigns() {
   }, [campaigns, channelFilter]);
 
   const handleWizardSubmit = async (mode: WizardMode) => {
+    if (submitting.current) return;
+    submitting.current = true;
+    setSaveError('');
     setSaving(mode);
     try {
-      const response = await createCampaignRequest(
-        buildCampaignPayload(draft, selectedCampaignSender)
-      );
+      // Persist the identity before the first POST so a lost response can be retried safely.
+      const submission = { ...draft, id: draft.id || `campaign-draft-${crypto.randomUUID()}` };
+      setDraft(submission);
+      try {
+        window.localStorage.setItem(CAMPAIGN_WIZARD_DRAFT_KEY, JSON.stringify(submission));
+      } catch {
+        // The in-memory draft still keeps the same ID while this page is open.
+      }
+      const reviewed = buildCampaignPayload(submission, selectedCampaignSender);
+      const response = await createCampaignRequest(reviewed);
       if (!response.ok || !response.campaign?.id) {
         throw new Error(response.error || response.verbiage || 'Campaign save failed.');
       }
+      if (response.replayed && !savedCampaignMatchesReview(response.campaign, reviewed)) {
+        setSaveError(
+          'The saved draft differs from this review. No changes were applied and no approval was requested. Restore the saved values before retrying.'
+        );
+        await loadCampaigns();
+        return;
+      }
+      let feedback = { title: 'Campaign draft saved', desc: 'No approval requested.' };
       if (mode === 'approval') {
         try {
           const approvalResponse = await requestCampaignApprovalRequest(response.campaign.id, {
@@ -1889,6 +1981,7 @@ export function Campaigns() {
               approvalResponse.error || approvalResponse.verbiage || 'Approval request failed.'
             );
           }
+          feedback = campaignApprovalFeedback(approvalResponse.result, approvalResponse.verbiage);
         } catch (approvalError) {
           clearDraft();
           setDraft(DEFAULT_DRAFT);
@@ -1897,8 +1990,8 @@ export function Campaigns() {
           showUiToast({
             tone: 'warning',
             critical: true,
-            title: 'Campaign draft saved; approval still needed',
-            desc: `${response.campaign.name || draft.name || 'Campaign'} is saved once. Use Request approval from its card after the approval board is reachable. ${campaignActionError(
+            title: 'Campaign saved; approval not confirmed',
+            desc: `Check the saved campaign before retrying approval from its card. ${campaignActionError(
               approvalError,
               'Approval request failed.'
             )}`,
@@ -1912,31 +2005,28 @@ export function Campaigns() {
       await loadCampaigns();
       showUiToast({
         tone: 'success',
-        title: mode === 'approval' ? 'Campaign queued for approval' : 'Campaign draft saved',
-        desc:
-          mode === 'approval'
-            ? 'The approval queue now owns provider execution.'
-            : 'The campaign is saved in the bridge as a draft.',
+        ...feedback,
       });
     } catch (submitError) {
-      showUiToast({
-        tone: 'error',
-        critical: true,
-        title: 'Campaign save failed',
-        desc:
-          submitError instanceof Error ? submitError.message : 'The bridge rejected the campaign.',
-      });
+      setSaveError(
+        `Campaign save not confirmed. Retrying uses the same draft. ${campaignActionError(
+          submitError,
+          'The bridge did not confirm the save.'
+        )}`
+      );
     } finally {
+      submitting.current = false;
       setSaving(null);
     }
   };
 
   const requestApproval = async (campaign: CampaignRecord) => {
-    if (!campaign.id) return;
+    if (!campaign.id || actionInFlight.current || !canRequestCampaignApproval(campaign)) return;
     const confirmed = window.confirm(
       `Request operator approval for "${campaign.name || campaign.id}"? This queues the campaign for human review and does not send outreach until it is approved.`
     );
     if (!confirmed) return;
+    actionInFlight.current = true;
     setBusyCampaignId(campaign.id);
     try {
       const approvalResponse = await requestCampaignApprovalRequest(campaign.id, {
@@ -1951,8 +2041,7 @@ export function Campaigns() {
       await loadCampaigns();
       showUiToast({
         tone: 'success',
-        title: 'Approval requested',
-        desc: `${campaign.name || 'Campaign'} is waiting in the approval queue.`,
+        ...campaignApprovalFeedback(approvalResponse.result, approvalResponse.verbiage),
       });
     } catch (actionError) {
       showUiToast({
@@ -1962,13 +2051,15 @@ export function Campaigns() {
         desc: campaignActionError(actionError, 'The bridge rejected the request.'),
       });
     } finally {
+      actionInFlight.current = false;
       setBusyCampaignId('');
     }
   };
 
   const patchStatus = async (campaign: CampaignRecord, action: string) => {
-    if (!campaign.id) return;
+    if (!campaign.id || actionInFlight.current || !canHoldCampaign(campaign)) return;
     const holdAction = getCampaignHoldAction(String(campaign.status || 'draft'));
+    actionInFlight.current = true;
     setBusyCampaignId(campaign.id);
     try {
       const response = await runCampaignActionRequest(campaign.id, {
@@ -1992,12 +2083,13 @@ export function Campaigns() {
         desc: campaignActionError(actionError, 'The bridge rejected the update.'),
       });
     } finally {
+      actionInFlight.current = false;
       setBusyCampaignId('');
     }
   };
 
   const cancelCampaign = async (campaign: CampaignRecord) => {
-    if (!campaign.id) return;
+    if (!campaign.id || actionInFlight.current || !canCancelCampaign(campaign)) return;
     const approvalRequired = requiresCampaignCancelApproval(campaign);
     const confirmed = window.confirm(
       approvalRequired
@@ -2005,6 +2097,7 @@ export function Campaigns() {
         : `Cancel draft campaign "${campaign.name || campaign.id}"?`
     );
     if (!confirmed) return;
+    actionInFlight.current = true;
     setBusyCampaignId(campaign.id);
     try {
       if (approvalRequired) {
@@ -2047,6 +2140,7 @@ export function Campaigns() {
         desc: campaignActionError(actionError, 'The bridge rejected the action.'),
       });
     } finally {
+      actionInFlight.current = false;
       setBusyCampaignId('');
     }
   };
@@ -2056,15 +2150,8 @@ export function Campaigns() {
       <main className="mx-auto flex w-full max-w-screen-2xl flex-col gap-4 px-4 py-5 pb-8">
         <CampaignHero
           summary={summary}
-          loading={status === 'loading'}
+          available={status === 'ready'}
           onNewCampaign={() => setWizardOpen(true)}
-        />
-
-        <CampaignDrilldownPanel
-          drilldown={drilldown}
-          campaigns={campaigns}
-          sources={sources}
-          loading={status === 'loading'}
         />
 
         <PbkPanel className="pbk-camp-toolbar">
@@ -2075,7 +2162,7 @@ export function Campaigns() {
               name="campaignsSearch"
               value={search}
               onChange={(event) => setSearch(event.target.value)}
-              placeholder="Search campaign name, provider, template, notes..."
+              placeholder="Search campaigns"
               aria-label="Search campaigns"
               autoComplete="off"
             />
@@ -2194,7 +2281,7 @@ export function Campaigns() {
               <CampaignCard
                 key={campaign.id}
                 campaign={campaign}
-                busy={busyCampaignId === campaign.id}
+                busy={Boolean(busyCampaignId)}
                 onRequestApproval={(item) => void requestApproval(item)}
                 onPatchStatus={(item, nextStatus) => void patchStatus(item, nextStatus)}
                 onCancel={(item) => void cancelCampaign(item)}
@@ -2212,6 +2299,19 @@ export function Campaigns() {
             onCancel={(item) => void cancelCampaign(item)}
           />
         )}
+        {status === 'ready' && (
+          <details className="pbk-camp-performance-disclosure">
+            <summary>
+              Campaign performance <ChevronDown size={16} aria-hidden="true" />
+            </summary>
+            <CampaignDrilldownPanel
+              drilldown={drilldown}
+              campaigns={campaigns}
+              sources={sources}
+              loading={false}
+            />
+          </details>
+        )}
       </main>
 
       <CampaignWizard
@@ -2227,6 +2327,7 @@ export function Campaigns() {
         senderLoading={senderLoading}
         senderError={senderError}
         saving={saving}
+        saveError={saveError}
         onChange={setDraft}
         onRefreshTemplates={() => void loadTemplates(draft.channel)}
         onRefreshSenders={() => void loadSenderIdentities(true)}

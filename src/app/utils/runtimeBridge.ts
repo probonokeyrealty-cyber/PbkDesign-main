@@ -307,12 +307,43 @@ export type AgentHealthProbe = {
 export type AgentFleetMeasurement = {
   ready?: boolean;
   result?: string;
+  generatedAt?: string;
   measurementVersion?: string;
   requiredIds?: string[];
   total?: number;
   measuredCount?: number;
   blockers?: string[];
-  agents?: Array<Record<string, unknown>>;
+  agents?: AgentMeasurement[];
+};
+
+export type AgentMeasurement = {
+  id: string;
+  name?: string;
+  ready?: boolean;
+  measured?: boolean;
+  result?: string;
+  blockers?: string[];
+  requiredTools?: string[];
+  missingTools?: string[];
+  measurement?: {
+    healthReady?: boolean;
+    toolsMeasured?: boolean;
+    toolsReady?: boolean;
+    contextKnown?: Record<string, boolean>;
+  };
+  metrics?: {
+    lastSuccessAt?: string;
+    lastFailureAt?: string;
+    latencyP95Ms?: number;
+    latencySamples?: number;
+    maxLatencyP95Ms?: number;
+  };
+};
+
+export type AgentMeasurementResponse = {
+  ok: boolean;
+  result?: string;
+  measurement?: AgentFleetMeasurement;
 };
 
 export type AgentHealthResponse = {
@@ -789,6 +820,7 @@ export type LeadStagesResponse = {
 
 export type DealTimelineResponse = {
   ok: boolean;
+  range?: 'ytd';
   result?: string;
   source?: string;
   generatedAt?: string;
@@ -803,6 +835,7 @@ export type DealTimelineResponse = {
 
 export type AiMetricsResponse = {
   ok: boolean;
+  range?: 'ytd';
   result?: string;
   source?: string;
   generatedAt?: string;
@@ -953,6 +986,7 @@ export type ObservabilityStatusResponse = {
 
 export type CampaignRecord = {
   id: string;
+  senderIdentityId?: string;
   name?: string;
   channel?: string;
   provider?: string;
@@ -1139,6 +1173,7 @@ type BridgeRequestOptions = {
   path: string;
   body?: unknown;
   keepalive?: boolean;
+  acceptErrorResponse?: (payload: unknown, status: number) => boolean;
 };
 
 function getHostPBK(): Record<string, unknown> | null {
@@ -1542,6 +1577,7 @@ export async function bridgeRequest<T = unknown>({
   path,
   body,
   keepalive,
+  acceptErrorResponse,
 }: BridgeRequestOptions): Promise<T> {
   assertRuntimeAuthConfigured(path);
   const serializedBody = body !== undefined && method !== 'GET' ? JSON.stringify(body) : undefined;
@@ -1583,7 +1619,7 @@ export async function bridgeRequest<T = unknown>({
     clearTimeout(timeoutId);
   }
 
-  if (!response.ok) {
+  if (!response.ok && !(method === 'GET' && acceptErrorResponse?.(parsed, response.status))) {
     throw new Error(extractBridgeErrorMessage(parsed, response.status));
   }
 
@@ -1752,6 +1788,65 @@ export async function startLeadCallRequest(body: Record<string, unknown>) {
   });
 }
 
+export type AttomPreviewAddress = { street: string; city: string; state: string; zip: string };
+
+export type AttomPropertyFacts = {
+  address: string;
+  apn: string | null;
+  propertyType: string | null;
+  lotSqft: number | null;
+  lotAcres: number | null;
+  livingSqft: number | null;
+  beds: number | null;
+  baths: number | null;
+  yearBuilt: number | null;
+  taxAmount: number | null;
+  taxYear: number | null;
+  recordedSaleAmount: number | null;
+  recordedSaleDate: string | null;
+};
+
+export type AttomPreviewResult =
+  | { status: 'matched'; profile: AttomPropertyFacts }
+  | {
+      status:
+        | 'invalid_address'
+        | 'not_configured'
+        | 'not_found'
+        | 'ambiguous'
+        | 'unavailable'
+        | 'authorization_failed'
+        | 'rate_limited'
+        | 'timed_out';
+    };
+
+export function fetchAttomPropertyPreview(address: AttomPreviewAddress) {
+  return bridgeRequest<AttomPreviewResult>({
+    method: 'POST',
+    path: '/api/property-data/attom-preview',
+    body: address,
+    keepalive: false,
+  });
+}
+
+export async function fetchApifyListingRequest(address: string) {
+  const query = new URLSearchParams({ address });
+  return bridgeRequest<{
+    cache?: { hit?: boolean };
+    propertyData?: {
+      source?: string;
+      data?: {
+        priceBasis?: string;
+        askingPriceUsd?: number;
+        sourceLinks?: string[];
+        propertyType?: string;
+        listingFacts?: Record<string, unknown>;
+        photoUrls?: string[];
+      };
+    } | null;
+  }>({ path: `/api/property-data?${query}` });
+}
+
 export async function fetchRuntimeState() {
   return bridgeRequest<RuntimeSnapshot>({
     path: '/state',
@@ -1842,9 +1937,29 @@ export async function fetchRuntimeToolingStatus() {
   }
 }
 
+function acceptAgentMeasurementGapResponse(payload: unknown, status: number) {
+  if (status !== 503 || !payload || typeof payload !== 'object') return false;
+  const measurement = (payload as AgentMeasurementResponse).measurement;
+  // A measured readiness gap is evidence, not a transport failure.
+  return (
+    measurement?.ready === false &&
+    measurement.result === 'stable_agent_fleet_measurement_gaps' &&
+    Array.isArray(measurement.agents) &&
+    measurement.agents.every((agent) => agent && typeof agent.id === 'string')
+  );
+}
+
 export async function fetchAgentHealthRequest() {
   return bridgeRequest<AgentHealthResponse>({
     path: '/api/agents/health',
+    acceptErrorResponse: acceptAgentMeasurementGapResponse,
+  });
+}
+
+export async function fetchAgentMeasurementRequest() {
+  return bridgeRequest<AgentMeasurementResponse>({
+    path: '/api/agents/measurement',
+    acceptErrorResponse: acceptAgentMeasurementGapResponse,
   });
 }
 
@@ -2127,6 +2242,13 @@ export async function updateApprovalDecision(approvalId: string, status: string)
     },
   });
   const result = assertBridgeMutationSucceeded(response, 'Approval decision');
+  const approval = result?.approval as { id?: string; status?: string } | undefined;
+  if (
+    approval?.id !== approvalId ||
+    String(approval.status || '').replace(/-/g, '_') !== status.replace(/-/g, '_')
+  ) {
+    throw new Error('The bridge did not confirm this approval decision.');
+  }
   const approvalIds = collectApprovalDecisionIds(approvalId, result);
   if (typeof window !== 'undefined') {
     window.dispatchEvent(
@@ -2149,6 +2271,28 @@ export async function fetchLeadsRequest() {
   return response.leads || response.leadImports || [];
 }
 
+export async function fetchBatchReviewRosterRequest() {
+  const response = await bridgeRequest<{
+    ok: boolean;
+    complete: boolean;
+    leads?: LeadImport[];
+    dncPhones?: string[];
+    sampleApply?: { sampleCsv: string; revision: string };
+  }>({
+    path: '/api/leads/batch-review-roster',
+  });
+  if (response.ok !== true || response.complete !== true || !Array.isArray(response.leads)) {
+    throw new Error('The saved lead roster was not confirmed.');
+  }
+  return {
+    leads: response.leads,
+    dncPhones: Array.isArray(response.dncPhones)
+      ? response.dncPhones.filter((phone) => typeof phone === 'string')
+      : [],
+    sampleApply: response.sampleApply,
+  };
+}
+
 export async function createLeadRequest(body: Record<string, unknown>) {
   return bridgeRequest<Record<string, unknown>>({
     method: 'POST',
@@ -2167,19 +2311,21 @@ export async function fetchLeadStagesRequest({ limit = 500 } = {}) {
   });
 }
 
-export async function fetchDealTimelineRequest({ days = 30 } = {}) {
+export async function fetchDealTimelineRequest({ days = 30, range = '' } = {}) {
   const params = new URLSearchParams({
     days: String(days),
   });
+  if (range) params.set('range', range);
   return bridgeRequest<DealTimelineResponse>({
     path: `/api/deals/timeline?${params.toString()}`,
   });
 }
 
-export async function fetchAiMetricsRequest({ days = 30 } = {}) {
+export async function fetchAiMetricsRequest({ days = 30, range = '' } = {}) {
   const params = new URLSearchParams({
     days: String(days),
   });
+  if (range) params.set('range', range);
   return bridgeRequest<AiMetricsResponse>({
     path: `/api/observability/ai-metrics?${params.toString()}`,
   });
@@ -2380,7 +2526,7 @@ export async function curateMemoryEventRequest({
   correction?: string;
   actor?: string;
 }) {
-  return bridgeRequest({
+  return bridgeRequest<{ ok: boolean }>({
     method: 'POST',
     path: `/api/memory/events/${encodeURIComponent(eventId)}/curate`,
     body: {
@@ -2495,7 +2641,7 @@ export async function fetchReplyTemplatesRequest({
 }
 
 export async function createCampaignRequest(body: Record<string, unknown>) {
-  return bridgeRequest<CampaignsResponse & { campaign?: CampaignRecord }>({
+  return bridgeRequest<CampaignsResponse & { campaign?: CampaignRecord; replayed?: boolean }>({
     method: 'POST',
     path: '/api/campaigns',
     body,

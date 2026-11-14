@@ -59,8 +59,8 @@ assert(
   'Inbox must use router navigation for the unified workspace.'
 );
 assert(
-  inbox.includes('Open Unified Inbox'),
-  'Inbox must expose the Open Unified Inbox command.'
+  inbox.includes('Open conversations'),
+  'Inbox must expose the Open conversations command.'
 );
 assert(
   /navigate\(['"]\/inbox\/conversations['"]\)/.test(inbox),
@@ -220,12 +220,12 @@ assert(
   'Manual unified inbox sends must carry explicit source/manual metadata through the bridge contract.'
 );
 assert(
-  composer.includes('Manual send is direct') &&
-    composer.includes('Provider sent') &&
-    composer.includes('Send failed') &&
-    composer.includes('Retry send') &&
+  composer.includes('Awaiting approval') &&
+    composer.includes('accepted by provider') &&
+    composer.includes('Send unconfirmed') &&
+    composer.includes('beginInboxSubmission(sendFingerprint)') &&
     !composer.includes('Ava/Rex approval is required before the provider sends this message.'),
-  'Manual send states must be direct, retryable, and free of AI approval-gate copy.'
+  'Manual send states must distinguish approval, provider acceptance, and uncertain sends.'
 );
 assert(
   /focusToken\?: number/.test(composer) &&
@@ -343,7 +343,7 @@ assert(
   'Reply templates must use stable scalar dependencies instead of refetching on every render.'
 );
 assert(
-  /submittedFingerprint/.test(composer) &&
+  /isInboxSubmissionHeld\(sendFingerprint\)/.test(composer) &&
     /exactMessageAlreadyQueued/.test(composer),
   'A queued approval or scheduled message must not be submitted twice without an edit.'
 );

@@ -2,13 +2,16 @@ import { spawn } from 'node:child_process';
 import { setTimeout as delay } from 'node:timers/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { buildAgentRuntimeSmokeEnv } from './agent-runtime-smoke-isolation.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const ROOT_DIR = path.resolve(__dirname, '..');
 const SERVER_ENTRY = path.join(ROOT_DIR, 'scripts', 'openclaw-local-server.mjs');
-const PORT = Number(process.env.PBK_SMOKE_PORT || 18788);
-const API_KEY = String(process.env.PBK_SMOKE_API_KEY || process.env.PBK_BRIDGE_API_KEY || 'pbk-smoke-test-key').trim();
+const PORT = Number(process.env.PBK_SMOKE_PORT || 19000 + Math.floor(Math.random() * 2000));
+const API_KEY = 'pbk-isolated-bridge-smoke-key';
 const BASE_URL = `http://127.0.0.1:${PORT}`;
 
 function assert(condition, message) {
@@ -36,7 +39,7 @@ async function waitForHealth(timeoutMs = 15000) {
 
   while (Date.now() - startedAt < timeoutMs) {
     try {
-      const response = await fetch(`${BASE_URL}/health`);
+      const response = await fetch(`${BASE_URL}/health`, { signal: AbortSignal.timeout(2000) });
       if (response.ok) {
         return await response.json();
       }
@@ -51,15 +54,21 @@ async function waitForHealth(timeoutMs = 15000) {
 }
 
 async function main() {
-  const child = spawn(process.execPath, [SERVER_ENTRY, '--reset'], {
+  const stateDir = await mkdtemp(path.join(tmpdir(), 'pbk-bridge-smoke-'));
+  const child = spawn(process.execPath, ['--import', './scripts/agent-runtime-smoke-isolation.mjs', SERVER_ENTRY, '--reset'], {
     cwd: ROOT_DIR,
     env: {
-      ...process.env,
+      ...buildAgentRuntimeSmokeEnv(),
+      PBK_AGENT_SMOKE_ISOLATED: '1',
+      PBK_OPENCLAW_STATE_DIR: stateDir,
       PBK_OPENCLAW_PORT: String(PORT),
+      PBK_OPENCLAW_HOST: '127.0.0.1',
       PBK_BRIDGE_API_KEY: API_KEY,
     },
     stdio: ['ignore', 'pipe', 'pipe'],
+    windowsHide: true,
   });
+  child.stdout.resume();
 
   let stderr = '';
   child.stderr.on('data', (chunk) => {
@@ -71,6 +80,9 @@ async function main() {
       child.kill();
       await delay(150);
     }
+    const relative = path.relative(tmpdir(), stateDir);
+    assert(relative && !relative.startsWith('..') && !path.isAbsolute(relative), 'Invalid test cleanup directory');
+    await rm(stateDir, { recursive: true, force: true });
   };
 
   try {
@@ -1585,9 +1597,17 @@ async function main() {
     assert(canonicalDeny?.ok === true && canonicalDeny?.approval?.status === 'rejected', 'Canonical approval deny endpoint did not reject.');
     assert(canonicalContractSend?.ok === true, 'Canonical contract send endpoint did not succeed.');
     assert(canonicalContractRemind?.ok === true, 'Canonical contract remind endpoint did not succeed.');
-    assert(canonicalContractPdfResponse.ok, `Canonical contract PDF endpoint returned ${canonicalContractPdfResponse.status}.`);
-    assert((canonicalContractPdfResponse.headers.get('content-type') || '').includes('application/pdf'), 'Canonical contract PDF endpoint did not return application/pdf.');
-    assert(canonicalContractPdfBuffer.subarray(0, 4).toString('utf8') === '%PDF', 'Canonical contract PDF endpoint did not return a valid PDF signature.');
+    if (canonicalContractPdfResponse.status === 503) {
+      // This isolated child cannot spawn Chromium. Prove honest failure, not PDF delivery.
+      const unavailable = JSON.parse(canonicalContractPdfBuffer.toString('utf8'));
+      assert(unavailable.ok === false && unavailable.code === 'pdf_renderer_unavailable', 'Missing renderer must return the specific contract PDF failure.');
+      assert(unavailable.retryable === true, 'Contract PDF failure must expose a retry path.');
+      assert(!(canonicalContractPdfResponse.headers.get('content-type') || '').includes('application/pdf'), 'Renderer failures must never masquerade as PDFs.');
+    } else {
+      assert(canonicalContractPdfResponse.ok, `Canonical contract PDF endpoint returned ${canonicalContractPdfResponse.status}.`);
+      assert((canonicalContractPdfResponse.headers.get('content-type') || '').includes('application/pdf'), 'Canonical contract PDF endpoint did not return application/pdf.');
+      assert(canonicalContractPdfBuffer.subarray(0, 4).toString('utf8') === '%PDF', 'Canonical contract PDF endpoint did not return a valid PDF signature.');
+    }
     assert(canonicalContractVoid?.ok === true && String(canonicalContractVoid?.contract?.status || '').includes('void'), 'Canonical contract void endpoint did not void the contract.');
     assert(instantlyWebhook?.ok === true, 'Instantly webhook endpoint did not succeed.');
     assert(emailWebhook?.ok === true, 'Email webhook endpoint did not succeed.');
@@ -1600,6 +1620,9 @@ async function main() {
     console.log(JSON.stringify({
       ok: true,
       revision: health.revision,
+      verificationMode: 'isolated_offline',
+      providerDeliveryVerified: false,
+      canonicalContractPdfReady: canonicalContractPdfResponse.ok,
       healthStatus: health.status,
       authRequired: health.features.authRequired,
       stateBackend: health.features.stateBackend,

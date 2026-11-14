@@ -156,19 +156,41 @@ assert(
   /result: 'skill_authority_unavailable'[\s\S]*failClosed: true/.test(bridge),
   'Skill runtime authority failure must be explicit and fail closed.'
 );
+const pgPoolSource = bridge.match(/function getPgPool\(\) \{[\s\S]*?\r?\n\}/)?.[0] || '';
+const pgAcquireStart = pgPoolSource.indexOf('const acquire =');
+const pgQueryStart = pgPoolSource.indexOf('__pgPool.query =');
+const pgConnectStart = pgPoolSource.indexOf('__pgPool.connect =');
+assert(
+  pgAcquireStart >= 0 && pgQueryStart > pgAcquireStart && pgConnectStart > pgQueryStart,
+  'Postgres pool must expose a shared acquisition path and both query/connect wrappers.'
+);
+const pgAcquireSource = pgPoolSource.slice(pgAcquireStart, pgQueryStart);
+const pgQuerySource = pgPoolSource.slice(pgQueryStart, pgConnectStart);
+const pgConnectSource = pgPoolSource.slice(pgConnectStart);
 assert(
   /function isTransientPostgresConnectionError/.test(bridge) &&
-    /withPostgresConnectionRetry/.test(bridge) &&
-    /withPostgresOperationDeadline/.test(bridge) &&
     /PBK_PG_OPERATION_TIMEOUT_MS/.test(bridge) &&
-    /__pgPool\.query = \(\.\.\.args\) =>[\s\S]*withPostgresConnectionRetry/.test(bridge) &&
-    /__pgPool\.connect = \(\.\.\.args\) =>[\s\S]*withPostgresConnectionRetry/.test(bridge) &&
-    /connectionTimeoutMillis: PG_CONNECTION_TIMEOUT_MS/.test(bridge) &&
-    /max: PG_POOL_MAX/.test(bridge) &&
-    /idleTimeoutMillis: PG_IDLE_TIMEOUT_MS/.test(bridge) &&
-    /maxLifetimeSeconds: PG_MAX_LIFETIME_SECONDS/.test(bridge) &&
-    /keepAlive: true/.test(bridge),
-  'Render Postgres transient connection refusals must be retried at the pool boundary.'
+    (pgPoolSource.match(/withPostgresConnectionRetry\s*\(/g) || []).length === 1 &&
+    /withPostgresConnectionRetry\s*\(/.test(pgAcquireSource) &&
+    /withPostgresOperationDeadline\(rawConnect\(\)/.test(pgAcquireSource) &&
+    /\{ deadlineAt \}/.test(pgAcquireSource) &&
+    /onLateResolve:\s*\(client\) => client\.release\(true\)/.test(pgAcquireSource) &&
+    /await acquire\(deadlineAt\)/.test(pgQuerySource) &&
+    /acquire\(Date\.now\(\) \+ getPostgresOperationTimeoutMs\(\)\)/.test(pgConnectSource) &&
+    /connectionTimeoutMillis: PG_CONNECTION_TIMEOUT_MS/.test(pgPoolSource) &&
+    /max: PG_POOL_MAX/.test(pgPoolSource) &&
+    /idleTimeoutMillis: PG_IDLE_TIMEOUT_MS/.test(pgPoolSource) &&
+    /maxLifetimeSeconds: PG_MAX_LIFETIME_SECONDS/.test(pgPoolSource) &&
+    /keepAlive: true/.test(pgPoolSource),
+  'Postgres must retry only acquisition through one shared, deadline-bounded retry budget and release late clients.'
+);
+assert(
+  !/withPostgresConnectionRetry|\b(?:for|while)\s*\(/.test(pgQuerySource) &&
+    (pgQuerySource.match(/client\.query\s*\(/g) || []).length === 1 &&
+    /withPostgresOperationDeadline\(rawQuery\(\)/.test(pgQuerySource) &&
+    /submitted \? 'unknown' : 'not_submitted'/.test(pgQuerySource) &&
+    /error\.postgresRetryHandled = true/.test(pgQuerySource),
+  'Submitted SQL must not be replayed; query timeouts must preserve unknown outcomes and prevent outer retries.'
 );
 assert(
   /const PG_TRANSIENT_GRACE_MS = 0;/.test(bridge) &&

@@ -1,14 +1,13 @@
-export const PBK_INTELLIGENCE_CONTEXT_REVISION = '2026-06-13-intelligence-context-v1';
+import { normalizeAgentRegistryId, requiredAgentRegistryIds } from './agent-registry.mjs';
 
-const REQUIRED_CONTEXT_AGENTS = [
-  'ava',
-  'rex',
-  'qa-agent',
-  'script-rotator',
-  'prosody-tuner',
-  'nurture-agent',
-  'call-analyzer',
-];
+export const PBK_INTELLIGENCE_CONTEXT_REVISION = '2026-06-13-intelligence-context-v1';
+const DEFAULT_CONTEXT_FRESHNESS_MS = 60_000;
+
+function resolveNow(now = Date.now) {
+  const value = typeof now === 'function' ? now() : now;
+  if (!Number.isFinite(value)) throw new TypeError('PBK intelligence context requires a finite clock value.');
+  return value;
+}
 
 function clean(value = '') {
   return String(value || '').replace(/\s+/g, ' ').trim();
@@ -105,7 +104,7 @@ function buildCallState(input = {}) {
   };
 }
 
-function normalizeMemory(input = {}) {
+function normalizeMemory(input = {}, now = Date.now()) {
   const memory = input.memory && typeof input.memory === 'object' ? input.memory : {};
   const episodic = asArray(memory.episodic || input.episodicMemory || input.episodic || []);
   const coaching = asArray(memory.coaching || input.coachingMemory || input.coaching || []);
@@ -117,7 +116,7 @@ function normalizeMemory(input = {}) {
     coaching,
     vectorResults,
     recent: asArray(memory.recent || input.recentMemory || []),
-    lastRecallAt: lastRecallAt || (ready ? new Date().toISOString() : null),
+    lastRecallAt: lastRecallAt || (ready ? new Date(now).toISOString() : null),
     ready,
     stale: Boolean(memory.stale || input.memoryStale),
   };
@@ -181,9 +180,16 @@ function normalizeTurnContract(input = {}) {
   };
 }
 
-function buildDataFreshness({ identity, memory, skills, input = {} } = {}) {
-  const now = Date.now();
-  const lastSyncAt = input.lastSyncAt || input.last_sync_at || new Date(now).toISOString();
+function buildDataFreshness({ identity = {}, memory = {}, skills = {}, input = {}, now, maxAgeMs = DEFAULT_CONTEXT_FRESHNESS_MS } = {}) {
+  const lastSyncAt = input.lastSyncAt ?? input.last_sync_at ?? null;
+  const lastSyncMs = typeof lastSyncAt === 'string' && lastSyncAt.trim() ? Date.parse(lastSyncAt) : NaN;
+  const ageMs = Number.isFinite(lastSyncMs) ? now - lastSyncMs : null;
+  const ageStatus = !Number.isFinite(maxAgeMs) || maxAgeMs < 0
+    ? 'invalid_max_age'
+    : !lastSyncAt ? 'missing'
+      : ageMs === null ? 'invalid'
+        : ageMs < 0 ? 'future'
+          : ageMs > maxAgeMs ? 'stale' : 'fresh';
   const leadStale = Boolean(input.leadStale || input.lead_stale || !identity.ready);
   const memoryStale = Boolean(input.memoryStale || memory.stale);
   const skillsStale = Boolean(input.skillsStale || skills.stale);
@@ -192,7 +198,10 @@ function buildDataFreshness({ identity, memory, skills, input = {} } = {}) {
     memoryStale,
     skillsStale,
     lastSyncAt,
-    ready: !leadStale && !memoryStale && !skillsStale,
+    ageMs,
+    ageStatus,
+    maxAgeMs,
+    ready: ageStatus === 'fresh' && !leadStale && !memoryStale && !skillsStale,
   };
 }
 
@@ -247,20 +256,28 @@ function buildOutcome(input = {}) {
   };
 }
 
-export function buildPBKIntelligenceFleetReadiness({ context = {}, agents = [] } = {}) {
+export function buildPBKIntelligenceFleetReadiness({
+  context = {}, agents = context.agents || [], now = Date.now,
+  maxAgeMs = context.dataFreshness?.maxAgeMs ?? DEFAULT_CONTEXT_FRESHNESS_MS,
+} = {}) {
+  const nowMs = resolveNow(now);
   const agentIds = new Set(
     (Array.isArray(agents) ? agents : [])
-      .map((agent) => clean(agent.id || agent.agentId || agent.name).toLowerCase())
+      .map((agent) => normalizeAgentRegistryId(agent?.id || agent?.agentId || agent?.name))
       .filter(Boolean)
   );
-  const missingAgents = REQUIRED_CONTEXT_AGENTS.filter((agentId) => agentIds.size && !agentIds.has(agentId));
+  const missingAgents = requiredAgentRegistryIds.filter((agentId) => !agentIds.has(agentId));
+  const freshness = buildDataFreshness({
+    identity: context.identity, memory: context.memory, skills: context.skills,
+    input: context.dataFreshness, now: nowMs, maxAgeMs,
+  });
   const required = {
     leadIdentity: Boolean(context.identity?.ready),
     memory: Boolean(context.memory?.ready),
     skills: Boolean(context.skills?.ready),
     turnContract: Boolean(context.turnContract?.ok && context.turnContract?.intent),
-    dataFreshness: Boolean(context.dataFreshness?.ready),
-    agentCoverage: !agentIds.size || missingAgents.length === 0,
+    dataFreshness: context.dataFreshness?.ready === true && freshness.ready,
+    agentCoverage: missingAgents.length === 0,
   };
   const ready = Object.values(required).every(Boolean);
   return {
@@ -268,34 +285,36 @@ export function buildPBKIntelligenceFleetReadiness({ context = {}, agents = [] }
     result: ready ? 'pbk_intelligence_context_ready' : 'pbk_intelligence_context_incomplete',
     required,
     missingAgents,
-    checkedAt: new Date().toISOString(),
+    checkedAt: new Date(nowMs).toISOString(),
   };
 }
 
-export function buildPBKIntelligenceContext(input = {}) {
+export function buildPBKIntelligenceContext(input = {}, { now = Date.now, maxAgeMs = DEFAULT_CONTEXT_FRESHNESS_MS } = {}) {
+  const nowMs = resolveNow(now);
   const identity = buildIdentity(input);
   const callState = buildCallState(input);
-  const memory = normalizeMemory(input);
+  const memory = normalizeMemory(input, nowMs);
   const skills = normalizeSkills(input);
   const turnContract = normalizeTurnContract(input);
-  const dataFreshness = buildDataFreshness({ identity, memory, skills, input });
+  const dataFreshness = buildDataFreshness({ identity, memory, skills, input, now: nowMs, maxAgeMs });
   const context = {
     revision: PBK_INTELLIGENCE_CONTEXT_REVISION,
     contextId: clean(input.contextId || [identity.leadId || identity.normalizedPhone || identity.normalizedEmail || 'unknown', identity.callId].filter(Boolean).join(':')),
-    generatedAt: new Date().toISOString(),
+    generatedAt: new Date(nowMs).toISOString(),
     workspaceId: clean(input.workspaceId || input.workspace_id || 'pbk') || 'pbk',
     identity,
     callState,
     memory,
     skills,
     turnContract,
+    agents: [...asArray(input.agents)],
     dataFreshness,
     outcome: buildOutcome(input),
     agentHandoffs: [],
     auditTrail: [
       {
         event: 'pbk_intelligence_context_built',
-        at: new Date().toISOString(),
+        at: new Date(nowMs).toISOString(),
         leadId: identity.leadId,
         callId: identity.callId,
         intent: turnContract.intent,
@@ -307,13 +326,25 @@ export function buildPBKIntelligenceContext(input = {}) {
   context.fleetReadiness = buildPBKIntelligenceFleetReadiness({
     context,
     agents: input.agents || [],
+    now: nowMs,
+    maxAgeMs,
   });
   return context;
 }
 
-export function mergePBKIntelligenceContextOutcome(context = {}, outcome = {}) {
+export function mergePBKIntelligenceContextOutcome(context = {}, outcome = {}, {
+  now = Date.now, maxAgeMs = context.dataFreshness?.maxAgeMs ?? DEFAULT_CONTEXT_FRESHNESS_MS,
+} = {}) {
+  const nowMs = resolveNow(now);
+  const dataFreshness = buildDataFreshness({
+    identity: context.identity, memory: context.memory, skills: context.skills,
+    input: context.dataFreshness, now: nowMs, maxAgeMs,
+  });
+  dataFreshness.ready = context.dataFreshness?.ready === true && dataFreshness.ready;
   const next = {
     ...(context && typeof context === 'object' ? context : {}),
+    agents: [...asArray(outcome.agents ?? context.agents)],
+    dataFreshness,
     outcome: {
       ...(context.outcome && typeof context.outcome === 'object' ? context.outcome : buildOutcome()),
       ...buildOutcome({ outcome }),
@@ -322,7 +353,7 @@ export function mergePBKIntelligenceContextOutcome(context = {}, outcome = {}) {
       ...(Array.isArray(context.auditTrail) ? context.auditTrail : []),
       {
         event: 'pbk_intelligence_context_outcome_merged',
-        at: new Date().toISOString(),
+        at: new Date(nowMs).toISOString(),
         actionTaken: clean(outcome.actionTaken || outcome.action_taken || ''),
         sellerReaction: clean(outcome.sellerReaction || outcome.seller_reaction || ''),
       },
@@ -330,7 +361,9 @@ export function mergePBKIntelligenceContextOutcome(context = {}, outcome = {}) {
   };
   next.fleetReadiness = buildPBKIntelligenceFleetReadiness({
     context: next,
-    agents: outcome.agents || [],
+    agents: next.agents,
+    now: nowMs,
+    maxAgeMs,
   });
   return next;
 }

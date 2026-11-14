@@ -14,6 +14,7 @@ import pg from 'pg';
 import { createClient as createRedisClient } from 'redis';
 import { DeleteObjectCommand, GetObjectCommand, HeadBucketCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { getSignedUrl as getS3SignedUrl } from '@aws-sdk/s3-request-presigner';
+import { lookupAttomPropertyPreview } from './attom-property-preview.mjs';
 import { applyAgentVersionRollback, buildAgentRegistrySnapshot, buildAgentVersionSnapshot, buildDefaultAgentRegistry, buildStableAgentFleetMeasurement, findAgentsByCapability, invokeRegisteredAgent, mergeAgentRegistryRecords, normalizeAgentRegistryId, normalizeAgentRegistryRecord, validateAgentVersionSnapshot } from './agent-registry.mjs';
 import { EventTypes, getEventBusStatus, publishEvent as publishEventBusEvent } from './event-bus/streams.mjs';
 import { buildRexKpiSnapshot, proposeAutonomousRexGoals, selectRexProactiveLeadAction } from './rex-autonomy.mjs';
@@ -56,10 +57,14 @@ import { recordAvaResponseLatencyStatus } from './ava-latency-status.mjs';
 import { appendAssistantMessage, buildAssistantPrompt, createAssistantSessionId, detectAssistantIntent, findAssistantLeadMatch, normalizeAssistantSession, planAssistantIntent, sanitizeAssistantTurn } from './ava-assistant-chat.mjs';
 import { runAvaMissionController } from './ava-mission-controller.mjs';
 import { buildLeadCommitEnvelope } from './lead-field-provenance.mjs';
+import { loadBatchReviewRoster } from './batch-review-roster.mjs';
+import { loadAppliedBatchLeads, runBatchApply } from './batch-apply.mjs';
+import { dispatchTelnyxWithBatchPhoneGuard, ensureBatchPhoneSchema, setWorkspacePhoneDnc } from './batch-phone-dispatch.mjs';
 import { isDeepSpecConfigured, readDeepSpecConfig, requestSpeculativeChatCompletion } from './deepspec-speculative-client.mjs';
 import { buildInvokeRateLimitIdentity, createInvokeRateLimiter } from './invoke-rate-limit.mjs';
 import { ClosingStateMachine, Phase } from './ava-state-machine.mjs';
 import { calibrateAvaConfidence } from './ava-confidence.mjs';
+import { guardAvaResponse } from './ava-response-guard.mjs';
 import { orchestrateAvaTurn } from './ava-turn-orchestrator.mjs';
 import { NegotiationPolicy } from './negotiation-policy.mjs';
 import { QuestionPolicy } from './question-policy.mjs';
@@ -441,6 +446,7 @@ const PBK_TELNYX_ALLOW_HOSTED_AI_ASSISTANT_WITH_BRIDGE = /^(1|true|yes)$/i.test(
 const PBK_TELNYX_BRIDGE_AVA_REPLY_FORCE = /^(1|true|yes)$/i.test(String(process.env.PBK_TELNYX_BRIDGE_AVA_REPLY_FORCE || '').trim());
 const TELNYX_BRIDGE_AVA_REPLY_MIN_MS = Math.max(600, Math.min(6000, Number(process.env.PBK_TELNYX_BRIDGE_AVA_REPLY_MIN_MS || 1800)));
 const TELNYX_BRIDGE_AVA_FINAL_ONLY_REPLY_DELAY_MS = Math.max(450, Math.min(2500, Number(process.env.PBK_TELNYX_BRIDGE_AVA_FINAL_ONLY_REPLY_DELAY_MS || 950)));
+const TELNYX_BRIDGE_AVA_REPLY_RETRY_BUFFER_MS = Math.max(60, Math.min(750, Number(process.env.PBK_TELNYX_BRIDGE_AVA_REPLY_RETRY_BUFFER_MS || 120)));
 const TELNYX_BRIDGE_AVA_TURN_LOCK_MIN_MS = Math.max(1800, Math.min(12000, Number(process.env.PBK_TELNYX_BRIDGE_AVA_TURN_LOCK_MIN_MS || 2800)));
 const TELNYX_BRIDGE_AVA_TURN_LOCK_MAX_MS = Math.max(TELNYX_BRIDGE_AVA_TURN_LOCK_MIN_MS, Math.min(30000, Number(process.env.PBK_TELNYX_BRIDGE_AVA_TURN_LOCK_MAX_MS || 9000)));
 const TELNYX_BRIDGE_AVA_CALLER_FLOOR_MS = Math.max(5000, Math.min(30000, Number(process.env.PBK_TELNYX_BRIDGE_AVA_CALLER_FLOOR_MS || 12000)));
@@ -455,6 +461,8 @@ const TELNYX_BIDIRECTIONAL_MEDIA_MODE = String(process.env.PBK_TELNYX_BIDIRECTIO
   .toLowerCase();
 const TELNYX_ELEVENLABS_OUTPUT_FORMAT = String(process.env.PBK_TELNYX_ELEVENLABS_OUTPUT_FORMAT || 'mp3_44100_128').trim();
 const TELNYX_ELEVENLABS_MEDIA_REPLY_MIN_MS = Math.max(1000, Math.min(10000, Number(process.env.PBK_TELNYX_ELEVENLABS_MEDIA_REPLY_MIN_MS || 1100)));
+const ELEVENLABS_TELNYX_TTS_TIMEOUT_MS = Math.max(2000, Math.min(15000, Number(process.env.PBK_ELEVENLABS_TELNYX_TTS_TIMEOUT_MS || process.env.PBK_ELEVENLABS_TIMEOUT_MS || 8000)));
+const ELEVENLABS_TELNYX_TTS_STALE_MS = Math.max(2500, Math.min(30000, Number(process.env.PBK_ELEVENLABS_TELNYX_TTS_STALE_MS || 12000)));
 const TELNYX_STREAM_ESTABLISH_BEFORE_ORIGINATE = !/^(0|false|no|off)$/i.test(String(process.env.PBK_TELNYX_STREAM_ESTABLISH_BEFORE_ORIGINATE || (PBK_TELNYX_ELEVENLABS_MEDIA_REPLY_ENABLED ? 'true' : 'false')).trim());
 const HUMAN_AGENT_PHONE = normalizePhone(process.env.PBK_HUMAN_AGENT_PHONE || process.env.HUMAN_AGENT_PHONE || '');
 const UNDERWRITING_AGENT_PHONE = normalizePhone(process.env.PBK_UNDERWRITING_AGENT_PHONE || process.env.UNDERWRITING_AGENT_PHONE || HUMAN_AGENT_PHONE || '');
@@ -512,6 +520,7 @@ const REDIS_NAMESPACE =
 const REDIS_CALL_STATE_TTL_SECONDS = Math.max(300, Math.min(86400, Number(process.env.PBK_REDIS_CALL_STATE_TTL_SECONDS || 6 * 60 * 60)));
 const REDIS_LEASE_TTL_SECONDS = Math.max(30, Math.min(3600, Number(process.env.PBK_REDIS_LEASE_TTL_SECONDS || 15 * 60)));
 const REDIS_RETRY_COOLDOWN_MS = Math.max(5000, Math.min(300000, Number(process.env.PBK_REDIS_RETRY_COOLDOWN_MS || 60000)));
+const REDIS_CONNECT_TIMEOUT_MS = Math.max(250, Math.min(10000, Number(process.env.PBK_REDIS_CONNECT_TIMEOUT_MS || 1500)));
 const REDIS_ACTIVE_CALL_STALE_MS = Math.max(30_000, Math.min(10 * 60 * 1000, Number(process.env.PBK_REDIS_ACTIVE_CALL_STALE_MS || 3 * 60 * 1000)));
 const BRIDGE_READ_CACHE_DEFAULT_TTL_MS = Math.max(
   1000,
@@ -978,6 +987,7 @@ let runtimeStateBootstrap = {
   error: '',
   checkedAt: '',
 };
+let runtimeStateRecoveryPromise = null;
 let lastStateDbLoad = {
   ok: !DATABASE_URL,
   found: false,
@@ -1196,6 +1206,7 @@ let sharedRedisLastError = '';
 let sharedRedisDisabledUntil = 0;
 let sharedRedisLastReadyAt = '';
 const REDIS_INSTANCE_ID = `${process.env.RENDER_SERVICE_ID || process.env.COMPUTERNAME || process.pid}-${randomUUID().slice(0, 8)}`;
+const REDIS_COMMAND_TIMEOUT_MS = Math.max(250, Math.min(10000, Number(process.env.PBK_REDIS_COMMAND_TIMEOUT_MS) || 1500));
 
 function redisKey(...parts) {
   return [REDIS_NAMESPACE, ...parts]
@@ -1210,43 +1221,39 @@ function redisKey(...parts) {
 
 async function getSharedRedisClient() {
   if (!REDIS_ENABLED) return null;
-  if (sharedRedisClient?.isOpen) return sharedRedisClient;
+  if (sharedRedisClient?.isReady) return sharedRedisClient;
   if (sharedRedisConnectPromise) return sharedRedisConnectPromise;
   if (Date.now() < sharedRedisDisabledUntil) return null;
 
-  const client = createRedisClient({
+  const client = withRedisCommandDeadlines(createRedisClient({
     url: REDIS_URL,
+    disableOfflineQueue: true,
     socket: {
-      reconnectStrategy: (retries) => Math.min(1000, Math.max(50, retries * 100)),
+      connectTimeout: REDIS_CONNECT_TIMEOUT_MS,
+      reconnectStrategy: false,
     },
-  });
+  }));
   sharedRedisClient = client;
   client.on('error', (error) => {
-    sharedRedisLastError = String(error?.message || error || 'unknown Redis error').slice(0, 240);
+    if (sharedRedisClient === client) sharedRedisLastError = String(error?.message || error || 'unknown Redis error').slice(0, 240);
   });
   client.on('ready', () => {
+    if (sharedRedisClient !== client) return;
     sharedRedisLastError = '';
     sharedRedisLastReadyAt = isoNow();
   });
 
-  sharedRedisConnectPromise = client
-    .connect()
-    .then(() => client)
-    .catch(async (error) => {
-      sharedRedisLastError = String(error?.message || error || 'Redis connection failed').slice(0, 240);
-      sharedRedisDisabledUntil = Date.now() + REDIS_RETRY_COOLDOWN_MS;
-      try {
-        await client.quit();
-      } catch {
-        // Best effort cleanup. Redis is optional shared state, never a bridge blocker.
-      }
-      if (sharedRedisClient === client) sharedRedisClient = null;
+  const connectPromise = withTimeout(client.connect(), REDIS_CONNECT_TIMEOUT_MS, 'Redis connect')
+    .then(() => sharedRedisClient === client && client.isReady ? client : null)
+    .catch((error) => {
+      retireSharedRedisClient(client, error);
       return null;
     })
     .finally(() => {
-      sharedRedisConnectPromise = null;
+      if (sharedRedisConnectPromise === connectPromise) sharedRedisConnectPromise = null;
     });
 
+  sharedRedisConnectPromise = connectPromise;
   return sharedRedisConnectPromise;
 }
 
@@ -1254,7 +1261,7 @@ function getRedisProviderMeta() {
   return {
     configured: Boolean(REDIS_URL),
     enabled: REDIS_ENABLED,
-    ready: Boolean(sharedRedisClient?.isOpen),
+    ready: Boolean(sharedRedisClient?.isReady),
     mode: REDIS_ENABLED ? 'shared_call_state_and_singleton_leases' : 'disabled',
     namespace: REDIS_NAMESPACE,
     instanceId: REDIS_INSTANCE_ID,
@@ -1262,7 +1269,55 @@ function getRedisProviderMeta() {
     lastError: sharedRedisLastError,
     callStateTtlSeconds: REDIS_CALL_STATE_TTL_SECONDS,
     leaseTtlSeconds: REDIS_LEASE_TTL_SECONDS,
+    commandTimeoutMs: REDIS_COMMAND_TIMEOUT_MS,
   };
+}
+
+function retireSharedRedisClient(client, error) {
+  if (sharedRedisClient === client) {
+    sharedRedisClient = null;
+    sharedRedisLastError = String(error?.message || error || 'Redis unavailable').slice(0, 240);
+    sharedRedisDisabledUntil = Date.now() + REDIS_RETRY_COOLDOWN_MS;
+  }
+  try {
+    if (client.isOpen) client.destroy();
+  } catch {
+    // Cleanup is best effort and must never close a replacement client's socket.
+  }
+}
+
+function recordSharedRedisError(client, error, fallback) {
+  const message = String(error?.message || error || fallback).slice(0, 240);
+  if (sharedRedisClient === client) sharedRedisLastError = message;
+  return message;
+}
+
+function withRedisCommandDeadlines(client) {
+  // Cover the shared command surface, including injected rate-limit and health clients.
+  for (const name of ['get', 'set', 'eval', 'ping', 'del', 'sAdd', 'sRem', 'sMembers', 'expire', 'lPush', 'lTrim', 'lRange', 'sendCommand']) {
+    if (typeof client[name] !== 'function') continue;
+    const command = client[name].bind(client);
+    client[name] = async (...args) => {
+      let timer;
+      try {
+        return await Promise.race([
+          Promise.resolve().then(() => command(...args)),
+          new Promise((_, reject) => {
+            timer = setTimeout(() => {
+              const error = new Error(`Redis ${name} timed out after ${REDIS_COMMAND_TIMEOUT_MS}ms`);
+              error.code = 'REDIS_COMMAND_TIMEOUT';
+              reject(error);
+              // A sent write may have committed: discard the socket, never retry it.
+              retireSharedRedisClient(client, error);
+            }, REDIS_COMMAND_TIMEOUT_MS);
+          }),
+        ]);
+      } finally {
+        clearTimeout(timer);
+      }
+    };
+  }
+  return client;
 }
 
 async function redisSetJson(key, value, ttlSeconds = REDIS_CALL_STATE_TTL_SECONDS) {
@@ -1272,8 +1327,8 @@ async function redisSetJson(key, value, ttlSeconds = REDIS_CALL_STATE_TTL_SECOND
     await client.set(key, JSON.stringify(value), { EX: ttlSeconds });
     return { ok: true, result: 'redis_set' };
   } catch (error) {
-    sharedRedisLastError = String(error?.message || error || 'Redis set failed').slice(0, 240);
-    return { ok: false, result: 'redis_set_failed', error: sharedRedisLastError };
+    const message = recordSharedRedisError(client, error, 'Redis set failed');
+    return { ok: false, result: 'redis_set_failed', error: message };
   }
 }
 
@@ -1284,7 +1339,7 @@ async function redisGetJson(key) {
     const raw = await client.get(key);
     return raw ? JSON.parse(raw) : null;
   } catch (error) {
-    sharedRedisLastError = String(error?.message || error || 'Redis get failed').slice(0, 240);
+    recordSharedRedisError(client, error, 'Redis get failed');
     return null;
   }
 }
@@ -1349,24 +1404,26 @@ function clearBridgeReadCache(reason = 'state_changed') {
 }
 
 async function redisGetCachedReadResponseIfOpen(key) {
-  if (!sharedRedisClient?.isOpen) return null;
+  const client = sharedRedisClient;
+  if (!client?.isReady) return null;
   try {
-    const raw = await sharedRedisClient.get(redisKey('read-cache', key));
+    const raw = await client.get(redisKey('read-cache', key));
     return raw ? JSON.parse(raw) : null;
   } catch (error) {
-    sharedRedisLastError = String(error?.message || error || 'Redis read-cache get failed').slice(0, 240);
+    recordSharedRedisError(client, error, 'Redis read-cache get failed');
     return null;
   }
 }
 
-function redisSetCachedReadResponseIfOpen(key, value, ttlMs) {
-  if (!sharedRedisClient?.isOpen) return;
+async function redisSetCachedReadResponseIfOpen(key, value, ttlMs) {
+  const client = sharedRedisClient;
+  if (!client?.isReady) return;
   const ttlSeconds = Math.max(1, Math.ceil(Number(ttlMs || BRIDGE_READ_CACHE_DEFAULT_TTL_MS) / 1000));
-  sharedRedisClient
-    .set(redisKey('read-cache', key), JSON.stringify(value), { EX: ttlSeconds })
-    .catch((error) => {
-      sharedRedisLastError = String(error?.message || error || 'Redis read-cache set failed').slice(0, 240);
-    });
+  try {
+    await client.set(redisKey('read-cache', key), JSON.stringify(value), { EX: ttlSeconds });
+  } catch (error) {
+    recordSharedRedisError(client, error, 'Redis read-cache set failed');
+  }
 }
 
 async function getCachedReadResponse(name, ttlMs = BRIDGE_READ_CACHE_DEFAULT_TTL_MS, producer, params = '') {
@@ -1408,7 +1465,7 @@ async function getCachedReadResponse(name, ttlMs = BRIDGE_READ_CACHE_DEFAULT_TTL
       bridgeReadCache.set(cacheKey, nextEntry);
       bridgeReadCacheStats.writes += 1;
       bridgeReadCacheStats.lastWriteAt = isoNow();
-      redisSetCachedReadResponseIfOpen(cacheKey, nextEntry, ttl);
+      void redisSetCachedReadResponseIfOpen(cacheKey, nextEntry, ttl);
     } else {
       bridgeReadCacheStats.skippedWrites += 1;
       bridgeReadCacheStats.lastSkippedWriteAt = isoNow();
@@ -1425,8 +1482,10 @@ async function getCachedReadResponse(name, ttlMs = BRIDGE_READ_CACHE_DEFAULT_TTL
 }
 
 async function redisAcquireLease(name = '', ttlSeconds = REDIS_LEASE_TTL_SECONDS) {
+  if (!REDIS_ENABLED) return { ok: true, result: 'redis_lease_skipped', owner: 'local' };
+  if (!name) return { ok: false, result: 'redis_lease_missing_name', owner: 'unknown' };
   const client = await getSharedRedisClient();
-  if (!client || !name) return { ok: true, result: 'redis_lease_skipped', owner: 'local' };
+  if (!client) return { ok: false, result: 'redis_lease_unavailable', owner: 'unknown', error: sharedRedisLastError };
   const key = redisKey('lease', name);
   try {
     const acquired = await client.set(key, REDIS_INSTANCE_ID, { NX: true, EX: ttlSeconds });
@@ -1434,13 +1493,12 @@ async function redisAcquireLease(name = '', ttlSeconds = REDIS_LEASE_TTL_SECONDS
     const owner = await client.get(key).catch(() => '');
     return { ok: false, result: 'redis_lease_held', owner: owner || 'unknown' };
   } catch (error) {
-    sharedRedisLastError = String(error?.message || error || 'Redis lease failed').slice(0, 240);
-    // Fail open for safety: missing Redis must not disable the bridge.
+    const message = recordSharedRedisError(client, error, 'Redis lease failed');
     return {
-      ok: true,
-      result: 'redis_lease_failed_open',
-      owner: 'local',
-      error: sharedRedisLastError,
+      ok: false,
+      result: 'redis_lease_failed',
+      owner: 'unknown',
+      error: message,
     };
   }
 }
@@ -1755,18 +1813,18 @@ async function syncTelnyxSessionToRedis(session = {}, status = 'active', options
     });
     return { ok: true, result: 'redis_call_state_synced', key };
   } catch (error) {
-    sharedRedisLastError = String(error?.message || error || 'Redis call-state sync failed').slice(0, 240);
+    const message = recordSharedRedisError(client, error, 'Redis call-state sync failed');
     session.lastRedisSyncResult = 'redis_call_state_failed';
-    session.lastRedisSyncError = sharedRedisLastError;
-    console.warn(`[RedisState] ${session.callId || session.streamId || session.id || 'call'} sync failed: ${sharedRedisLastError}`);
+    session.lastRedisSyncError = message;
+    console.warn(`[RedisState] ${session.callId || session.streamId || session.id || 'call'} sync failed: ${message}`);
     recordCallTrace('redis_sync_failed', {
       ...session,
       status: normalizedStatus,
       result: 'redis_call_state_failed',
-      error: sharedRedisLastError,
+      error: message,
       stage: options.trigger || 'syncTelnyxSessionToRedis',
     });
-    return { ok: false, result: 'redis_call_state_failed', error: sharedRedisLastError };
+    return { ok: false, result: 'redis_call_state_failed', error: message };
   }
 }
 
@@ -1813,7 +1871,7 @@ async function getSharedTelnyxCallStates() {
     }
     return records.sort((a, b) => String(b.updatedAt || '').localeCompare(String(a.updatedAt || '')));
   } catch (error) {
-    sharedRedisLastError = String(error?.message || error || 'Redis shared call read failed').slice(0, 240);
+    recordSharedRedisError(client, error, 'Redis shared call read failed');
     return [];
   }
 }
@@ -1829,12 +1887,12 @@ async function deleteSharedTelnyxCallState(id = '') {
     await client.sRem(redisKey('calls', 'active'), normalizedId);
     return { ok: true, result: 'redis_call_state_deleted', id: normalizedId };
   } catch (error) {
-    sharedRedisLastError = String(error?.message || error || 'Redis call-state delete failed').slice(0, 240);
+    const message = recordSharedRedisError(client, error, 'Redis call-state delete failed');
     return {
       ok: false,
       result: 'redis_call_state_delete_failed',
       id: normalizedId,
-      error: sharedRedisLastError,
+      error: message,
     };
   }
 }
@@ -1875,15 +1933,15 @@ async function clearInboundLeadContextCaches(phone = '', callId = '') {
     });
     return { ok: true, result: 'lead_context_cache_cleared', deleted, keyCount: keys.length };
   } catch (error) {
-    sharedRedisLastError = String(error?.message || error || 'Redis lead context cache clear failed').slice(0, 240);
+    const message = recordSharedRedisError(client, error, 'Redis lead context cache clear failed');
     recordCallTrace('lead_context_cache_cleared', {
       callId,
       phone: normalizedPhone,
       result: 'clear_failed',
-      error: sharedRedisLastError,
+      error: message,
       stage: 'clearInboundLeadContextCaches',
     });
-    return { ok: false, result: 'lead_context_cache_clear_failed', error: sharedRedisLastError };
+    return { ok: false, result: 'lead_context_cache_clear_failed', error: message };
   }
 }
 
@@ -1942,8 +2000,8 @@ async function persistCallTraceToRedis(record = {}) {
     }
     return { ok: true, result: 'call_trace_written' };
   } catch (error) {
-    sharedRedisLastError = String(error?.message || error || 'Redis call trace write failed').slice(0, 240);
-    return { ok: false, result: 'call_trace_write_failed', error: sharedRedisLastError };
+    const message = recordSharedRedisError(client, error, 'Redis call trace write failed');
+    return { ok: false, result: 'call_trace_write_failed', error: message };
   }
 }
 
@@ -2914,12 +2972,19 @@ function buildProductionLastAgentActions() {
         ''
     );
     if (!agentId) continue;
-    const status = /fail|error|reject|denied|blocked/i.test(String(item.status || item.result || ''))
+    const rawStatus = String(item.status || item.result || '').trim().toLowerCase();
+    const status = /fail|error|reject|denied|blocked/.test(rawStatus)
       ? 'failure'
-      : 'success';
-    const at = getItemTimestamp(item) || item.completedAt || item.updatedAt || item.createdAt || isoNow();
+      : /^(success|succeeded|complete|completed)$/.test(rawStatus)
+        ? 'success'
+        : rawStatus || 'unknown';
+    const sourceAt = item.completedAt || item.completed_at || item.updatedAt || item.updated_at || getItemTimestamp(item) || '';
+    const atMs = Date.parse(sourceAt);
+    const at = Number.isFinite(atMs) ? new Date(atMs).toISOString() : '';
     const existing = actions[agentId];
-    if (!existing || String(at).localeCompare(String(existing.at || '')) > 0) {
+    const existingAtMs = Date.parse(existing?.at || '');
+    // An unorderable record cannot establish a successful latest action.
+    if (!existing || !Number.isFinite(atMs) || atMs > existingAtMs || (atMs === existingAtMs && status !== 'success')) {
       actions[agentId] = { status, at };
     }
   }
@@ -5040,8 +5105,9 @@ function extractBantFromTranscript(transcript = '', existing = {}) {
   if (!extracted.budget && (moneyMatch || trailingIntentMoneyMatch)) {
     extracted.budget = (moneyMatch?.[1] || trailingIntentMoneyMatch?.[1] || '').trim();
   }
-  if (!extracted.authority && (hasStrongAvaOwnerRoleAssertion(text) || /\b(wife|husband|spouse|partner|attorney|lawyer|executor|co-?owner|decision|my client|seller)\b/i.test(text))) {
-    extracted.authority = text.match(/.{0,40}\b(owner|i own|my house|my home|wife|husband|spouse|partner|attorney|lawyer|executor|co-?owner|decision|my client|seller)\b.{0,60}/i)?.[0]?.trim() || 'decision authority mentioned';
+  const authorityEvidencePattern = /\b(?:i\s+own|i'?m\s+the\s+owner|my\s+(?:house|home|property)|(?:my|the)\s+(?:wife|husband|spouse|partner|attorney|lawyer|executor|co-?owner|client)|decision\s+maker|make\s+the\s+decision|authorized\s+to\s+(?:sell|sign)|power\s+of\s+attorney)\b/i;
+  if (!extracted.authority && (hasStrongAvaOwnerRoleAssertion(text) || authorityEvidencePattern.test(text))) {
+    extracted.authority = text.match(/.{0,40}\b(owner|i\s+own|my\s+house|my\s+home|my\s+property|wife|husband|spouse|partner|attorney|lawyer|executor|co-?owner|decision\s+maker|make\s+the\s+decision|my\s+client|authorized|power\s+of\s+attorney)\b.{0,60}/i)?.[0]?.trim() || 'decision authority mentioned';
   }
   if (!extracted.need && /\b(probate|estate|divorce|relocat|foreclos|tax|vacant|repair|tenant|downsiz|behind|inherited|condition)\b/i.test(text)) {
     extracted.need = text.match(/.{0,40}\b(probate|estate|divorce|relocat|foreclos|tax|vacant|repair|tenant|downsiz|behind|inherited|condition)\b.{0,80}/i)?.[0]?.trim() || 'seller need mentioned';
@@ -6081,13 +6147,26 @@ function mergeDuplicateAgentRosterRecord(existing = {}, incoming = {}) {
   const incomingPreferred = getAgentRosterQualityScore(incoming) >= getAgentRosterQualityScore(existing);
   const primary = incomingPreferred ? incoming : existing;
   const fallback = incomingPreferred ? existing : incoming;
+  const registryRecord = incoming.registry?.source === 'agent_registry'
+    ? incoming
+    : existing.registry?.source === 'agent_registry' ? existing : null;
+  const healthCheckedAt = registryRecord
+    ? registryRecord.healthCheckedAt || registryRecord.health_checked_at || registryRecord.lastSeen || ''
+    : primary.healthCheckedAt || primary.health_checked_at || fallback.healthCheckedAt || fallback.health_checked_at || '';
+  // Registry projections carry check time in lastSeen; do not promote it to activity.
+  const lastSeen = [
+    existing.lastActionAt || existing.lastSeen || '',
+    incoming.lastActionAt || (incoming.registry?.source === 'agent_registry' ? '' : incoming.lastSeen) || '',
+  ].filter((at) => Number.isFinite(Date.parse(at))).sort((a, b) => Date.parse(b) - Date.parse(a))[0] || '';
   return mergeAgentRosterRecord(
     {
       ...primary,
       skills: Array.isArray(primary.skills) && primary.skills.length ? primary.skills : fallback.skills || [],
       requiredTools: Array.isArray(primary.requiredTools) && primary.requiredTools.length ? primary.requiredTools : fallback.requiredTools || [],
       supervises: normalizeStringList(primary.supervises || fallback.supervises || []),
-      lastSeen: primary.lastSeen || primary.healthCheckedAt || primary.health_checked_at || fallback.lastSeen,
+      lastSeen,
+      healthCheckedAt,
+      health_checked_at: healthCheckedAt,
     },
     fallback
   );
@@ -6750,37 +6829,66 @@ function isTransientPostgresConnectionError(error) {
   );
 }
 
-function withPostgresOperationDeadline(promise, label = 'pg operation') {
+function getPostgresOperationTimeoutMs() {
+  return Number.isFinite(PG_OPERATION_TIMEOUT_MS) ? PG_OPERATION_TIMEOUT_MS : 15000;
+}
+
+function createPostgresDeadlineError(label, executionOutcome = 'unknown') {
+  const error = new Error(`${label} timed out after ${getPostgresOperationTimeoutMs()}ms; execution outcome: ${executionOutcome}`);
+  error.code = 'PBK_POSTGRES_OPERATION_TIMEOUT';
+  error.timeout = true;
+  error.executionOutcome = executionOutcome;
+  error.postgresRetryHandled = true;
+  return error;
+}
+
+function withPostgresOperationDeadline(promise, label = 'pg operation', options = {}) {
   let timer = null;
+  let expired = false;
+  const remainingMs = Math.max(0, (options.deadlineAt ?? Date.now() + getPostgresOperationTimeoutMs()) - Date.now());
   return Promise.race([
-    promise,
+    Promise.resolve(promise).then((value) => {
+      if (expired) options.onLateResolve?.(value);
+      return value;
+    }),
     new Promise((_, reject) => {
       timer = setTimeout(() => {
-        const error = new Error(`${label} timed out after ${PG_OPERATION_TIMEOUT_MS}ms`);
-        error.code = 'PBK_POSTGRES_OPERATION_TIMEOUT';
-        error.timeout = true;
+        expired = true;
+        const error = createPostgresDeadlineError(label, options.getExecutionOutcome?.() || 'unknown');
         reject(error);
-      }, PG_OPERATION_TIMEOUT_MS);
+        options.onTimeout?.(error);
+      }, remainingMs);
     }),
   ]).finally(() => {
     if (timer) clearTimeout(timer);
   });
 }
 
-async function withPostgresConnectionRetry(operation, label = 'postgres') {
+async function withPostgresConnectionRetry(operation, label = 'postgres', options = {}) {
   let lastError = null;
-  for (let attempt = 0; attempt <= PG_QUERY_RETRY_ATTEMPTS; attempt += 1) {
+  const retryAttempts = Number.isFinite(PG_QUERY_RETRY_ATTEMPTS)
+    ? Math.max(0, Math.min(3, Math.trunc(PG_QUERY_RETRY_ATTEMPTS))) : 2;
+  const baseDelayMs = Number.isFinite(PG_QUERY_RETRY_BASE_DELAY_MS) ? PG_QUERY_RETRY_BASE_DELAY_MS : 200;
+  for (let attempt = 0; attempt <= retryAttempts; attempt += 1) {
     try {
+      if (options.deadlineAt && Date.now() >= options.deadlineAt) {
+        throw createPostgresDeadlineError(label, 'not_submitted');
+      }
       const result = await operation();
       if (attempt > 0) markPostgresHealth(true);
       return result;
     } catch (error) {
+      if (!error || typeof error !== 'object') error = new Error(String(error));
       lastError = error;
+      error.executionOutcome ||= 'not_submitted';
       const timeout = isBoundedPostgresOperationTimeout(error);
       const transient = isTransientPostgresConnectionError(error);
       markPostgresHealth(false, error?.message || error, { transient, timeout });
-      if (!transient || attempt >= PG_QUERY_RETRY_ATTEMPTS) throw error;
-      const delayMs = PG_QUERY_RETRY_BASE_DELAY_MS * (attempt + 1);
+      if (!transient || attempt >= retryAttempts) {
+        error.postgresRetryHandled = true;
+        throw error;
+      }
+      const delayMs = Math.min(baseDelayMs * (attempt + 1), Math.max(0, (options.deadlineAt ?? Infinity) - Date.now()));
       console.warn(
         `[pbk-local-openclaw] ${label} transient connection failure; retrying in ${delayMs}ms:`,
         error?.message || error
@@ -6812,18 +6920,83 @@ function getPgPool() {
     // Disable cert validation for managed-DB hostnames; keep it on for localhost.
     ssl: /(localhost|127\.0\.0\.1)/.test(DATABASE_URL) ? false : { rejectUnauthorized: false },
   });
-  const rawQuery = __pgPool.query.bind(__pgPool);
   const rawConnect = __pgPool.connect.bind(__pgPool);
-  __pgPool.query = (...args) =>
+  // Retry only checkout failures: after dispatch, even ECONNRESET may hide a commit.
+  const acquire = (deadlineAt) =>
     withPostgresConnectionRetry(
-      () => withPostgresOperationDeadline(rawQuery(...args), 'pg query'),
-      'pg query'
+      () => withPostgresOperationDeadline(rawConnect(), 'pg connect', {
+        deadlineAt,
+        getExecutionOutcome: () => 'not_submitted',
+        onLateResolve: (client) => client.release(true),
+      }),
+      'pg connect',
+      { deadlineAt }
     );
-  __pgPool.connect = (...args) =>
-    withPostgresConnectionRetry(
-      () => withPostgresOperationDeadline(rawConnect(...args), 'pg connect'),
-      'pg connect'
+  __pgPool.query = (...args) => {
+    const callback = typeof args[0] === 'function' ? args.shift()
+      : typeof args[1] === 'function' ? args.splice(1, 1)[0]
+        : typeof args[2] === 'function' ? args.pop() : null;
+    const [text, values] = args;
+    const deadlineAt = Date.now() + getPostgresOperationTimeoutMs();
+    let submitted = false;
+    let finishQuery = null;
+    const rawQuery = async () => {
+      if (text === undefined || text === null) throw new TypeError('A query is required');
+      const client = await acquire(deadlineAt);
+      if (Date.now() >= deadlineAt) {
+        client.release(true);
+        throw createPostgresDeadlineError('pg query', 'not_submitted');
+      }
+      return new Promise((resolve, reject) => {
+        let settled = false;
+        const onError = (error) => finish(error);
+        const finish = (error, result) => {
+          if (settled) return;
+          settled = true;
+          client.removeListener('error', onError);
+          client.release(error || undefined);
+          if (error) reject(error);
+          else resolve(result);
+        };
+        finishQuery = finish;
+        client.once('error', onError);
+        submitted = true;
+        try {
+          client.query(text, values, finish);
+        } catch (error) {
+          finish(error);
+        }
+      });
+    };
+    const promise = withPostgresOperationDeadline(rawQuery(), 'pg query', {
+      deadlineAt,
+      getExecutionOutcome: () => submitted ? 'unknown' : 'not_submitted',
+      // Destroying the client releases pool capacity, but cannot prove a rollback.
+      onTimeout: (error) => finishQuery?.(error),
+    }).catch((error) => {
+      if (!error || typeof error !== 'object') error = new Error(String(error));
+      error.executionOutcome ||= submitted ? 'unknown' : 'not_submitted';
+      error.postgresRetryHandled = true;
+      markPostgresHealth(false, error.message, {
+        transient: isTransientPostgresConnectionError(error),
+        timeout: isBoundedPostgresOperationTimeout(error),
+      });
+      throw error;
+    });
+    if (!callback) return promise;
+    void promise.then((result) => callback(undefined, result), (error) => callback(error));
+    return undefined;
+  };
+  __pgPool.connect = (...args) => {
+    const promise = acquire(Date.now() + getPostgresOperationTimeoutMs());
+    if (typeof args[0] !== 'function') return promise;
+    const callback = args[0];
+    void promise.then(
+      (client) => callback(undefined, client, client.release),
+      (error) => callback(error, undefined, () => {})
     );
+    return undefined;
+  };
   __pgPool.on('error', (err) => {
     console.error('[pbk-local-openclaw] pg pool error:', err && err.message ? err.message : err);
     markPostgresHealth(false, err?.message || err);
@@ -6833,20 +7006,26 @@ function getPgPool() {
 
 function startPostgresKeepAlive() {
   if (!DATABASE_URL || postgresKeepAliveTimer) return;
+  let running = false;
   const run = async () => {
+    if (running) return;
     const pool = getPgPool();
     if (!pool) {
       markPostgresHealth(false, 'PBK_DATABASE_URL is not configured.');
       return;
     }
+    running = true;
     try {
       await pool.query('SELECT 1 AS ok');
       markPostgresHealth(true);
+      await recoverRuntimeStateAfterBootstrapFailure();
     } catch (error) {
       markPostgresHealth(false, error?.message || error, {
         transient: isTransientPostgresConnectionError(error),
       });
       console.warn('[pbk-local-openclaw] Postgres keepalive failed:', error?.message || error);
+    } finally {
+      running = false;
     }
   };
   void run();
@@ -6857,9 +7036,18 @@ function startPostgresKeepAlive() {
 }
 
 function executeProviderActionWithSharedLease(options) {
+  const pool = getPgPool();
+  let leaseClient;
   return executeProviderActionWithSharedLeaseCore({
     ...options,
-    pool: getPgPool(),
+    pool: pool && options.readWithLeaseClient ? {
+      query: (...args) => pool.query(...args),
+      connect: async () => {
+        leaseClient = await pool.connect();
+        return leaseClient;
+      },
+    } : pool,
+    execute: (context) => options.execute(context, leaseClient),
     isHosted: IS_HOSTED,
     now: isoNow,
     logger: console,
@@ -7745,6 +7933,7 @@ async function ensurePbkOperationalTables(pool) {
   `);
   await ensureConversationSchema(pool);
   await ensureProviderActionDispatchSchemaCore(pool);
+  await ensureBatchPhoneSchema(pool);
   await ensureNurtureSchema(pool).catch((error) => {
     console.warn('[postgres] nurture schema ensure skipped', error?.message || error);
   });
@@ -11416,6 +11605,7 @@ function buildStatePersistenceDiagnostics(nextState = {}, serialized = '', error
 }
 
 function isTransientPostgresStatePersistError(error = null) {
+  if (error?.postgresRetryHandled || error?.executionOutcome === 'unknown' || isBoundedPostgresOperationTimeout(error)) return false;
   const code = String(error?.code || error?.name || '').trim();
   const message = String(error?.message || error || '');
   return (
@@ -11425,12 +11615,16 @@ function isTransientPostgresStatePersistError(error = null) {
 }
 
 function getStatePersistRetryAttempts() {
-  return Math.max(1, Math.min(8, Number(process.env.PBK_STATE_PERSIST_RETRY_ATTEMPTS || (IS_HOSTED ? 5 : 1))));
+  const fallback = IS_HOSTED ? 5 : 1;
+  const configured = Number(process.env.PBK_STATE_PERSIST_RETRY_ATTEMPTS || fallback);
+  return Number.isFinite(configured) ? Math.max(1, Math.min(8, Math.trunc(configured))) : fallback;
 }
 
 function getStatePersistRetryDelayMs(attempt = 1) {
-  const base = Math.max(50, Math.min(1000, Number(process.env.PBK_STATE_PERSIST_RETRY_BASE_MS || 250)));
-  return Math.min(3000, base * Math.max(1, 2 ** (Number(attempt || 1) - 1)));
+  const configured = Number(process.env.PBK_STATE_PERSIST_RETRY_BASE_MS || 250);
+  const base = Number.isFinite(configured) ? Math.max(50, Math.min(1000, configured)) : 250;
+  const safeAttempt = Number.isFinite(Number(attempt)) ? Math.max(1, Math.min(8, Math.trunc(Number(attempt)))) : 1;
+  return Math.min(3000, base * 2 ** (safeAttempt - 1));
 }
 
 async function persistStateToDb(nextState) {
@@ -11495,7 +11689,12 @@ async function loadStateFromRuntimeFile() {
   }
 }
 
-async function persistState(nextState) {
+async function persistState(nextState, { allowBootstrap = false } = {}) {
+  if (DATABASE_URL && !runtimeStateBootstrap.ready && !allowBootstrap) {
+    const error = new Error('Runtime state must be restored before it can be saved.');
+    error.code = 'state_bootstrap_unavailable';
+    throw error;
+  }
   clearBridgeReadCache('persist_state');
   nextState.status.lastUpdatedAt = isoNow();
   updateDerivedStatus(nextState);
@@ -11538,13 +11737,13 @@ function persistStateInBackground(context = 'background') {
   });
 }
 
-async function persistCampaignRecord(campaign = {}) {
+async function persistCampaignRecord(campaign = {}, { expected } = {}) {
   const pool = getPgPool();
   if (!pool || !campaign.id) return false;
   const channel = normalizeCampaignChannel(campaign.channel || 'email');
   const dbChannel = ['email', 'call', 'sms', 'mixed'].includes(channel) ? channel : 'mixed';
   try {
-    await pool.query(
+    const result = await pool.query(
       `INSERT INTO public.campaigns (
         id, name, channel, provider, status, template_id, lead_source, lead_filter,
         schedule, sequence, metrics, approval_id, approval_status, pending_action,
@@ -11579,10 +11778,20 @@ async function persistCampaignRecord(campaign = {}) {
         notes = EXCLUDED.notes,
         created_by = EXCLUDED.created_by,
         updated_at = EXCLUDED.updated_at,
-        archived_at = EXCLUDED.archived_at`,
-      [campaign.id, campaign.name || 'Untitled campaign', dbChannel, campaign.provider || getCampaignProvider(channel), normalizeCampaignStatus(campaign.status || 'draft'), campaign.templateId || campaign.template_id || null, campaign.leadSource || campaign.lead_source || null, JSON.stringify(campaign.leadFilter || campaign.lead_filter || {}), JSON.stringify(campaign.schedule || {}), JSON.stringify(campaign.sequence || {}), JSON.stringify(campaign.metrics || {}), campaign.approvalId || campaign.approval_id || null, campaign.approvalStatus || campaign.approval_status || null, campaign.pendingAction || campaign.pending_action || null, campaign.executionId || campaign.execution_id || null, campaign.providerCampaignId || campaign.provider_campaign_id || null, campaign.lastWorkerRunAt || campaign.last_worker_run_at || null, campaign.suppressionMode || campaign.suppression_mode || 'same_channel_active_campaigns', toNumber(campaign.conflictCount ?? campaign.conflict_count, 0), campaign.notes || null, campaign.createdBy || campaign.created_by || 'PBK Command Center', campaign.createdAt || campaign.created_at || isoNow(), campaign.updatedAt || campaign.updated_at || isoNow(), campaign.archivedAt || campaign.archived_at || null]
+        archived_at = EXCLUDED.archived_at
+      WHERE NOT $25::boolean OR (
+        campaigns.approval_id IS NOT DISTINCT FROM $26::text
+        AND campaigns.status = $27::text
+        AND campaigns.pending_action IS NOT DISTINCT FROM $28::text
+        AND campaigns.approval_status IS NOT DISTINCT FROM $29::text
+        AND campaigns.schedule = $30::jsonb
+      )`,
+      [campaign.id, campaign.name || 'Untitled campaign', dbChannel, campaign.provider || getCampaignProvider(channel), normalizeCampaignStatus(campaign.status || 'draft'), campaign.templateId || campaign.template_id || null, campaign.leadSource || campaign.lead_source || null, JSON.stringify(campaign.leadFilter || campaign.lead_filter || {}), JSON.stringify(campaign.schedule || {}), JSON.stringify(campaign.sequence || {}), JSON.stringify(campaign.metrics || {}), campaign.approvalId || campaign.approval_id || null, campaign.approvalStatus || campaign.approval_status || null, campaign.pendingAction || campaign.pending_action || null, campaign.executionId || campaign.execution_id || null, campaign.providerCampaignId || campaign.provider_campaign_id || null, campaign.lastWorkerRunAt || campaign.last_worker_run_at || null, campaign.suppressionMode || campaign.suppression_mode || 'same_channel_active_campaigns', toNumber(campaign.conflictCount ?? campaign.conflict_count, 0), campaign.notes || null, campaign.createdBy || campaign.created_by || 'PBK Command Center', campaign.createdAt || campaign.created_at || isoNow(), campaign.updatedAt || campaign.updated_at || isoNow(), campaign.archivedAt || campaign.archived_at || null,
+        Boolean(expected), expected?.approvalId || expected?.approval_id || null,
+        expected ? normalizeCampaignStatus(expected.status) : null, expected?.pendingAction || expected?.pending_action || null,
+        expected?.approvalStatus || expected?.approval_status || null, JSON.stringify(expected?.schedule || {})]
     );
-    return true;
+    return result.rowCount === 1;
   } catch (error) {
     console.warn('[pbk-local-openclaw] campaign persistence skipped:', error?.message || error);
     return false;
@@ -12663,7 +12872,7 @@ async function loadState() {
   if (SHOULD_RESET) {
     const fresh = buildDefaultState();
     ensureImmutablePbkKnowledge(fresh);
-    await persistState(fresh);
+    await persistState(fresh, { allowBootstrap: true });
     return fresh;
   }
 
@@ -12693,7 +12902,7 @@ async function loadState() {
     runtimeStateProvenance.loadedFrom = 'postgres-empty-default';
     runtimeStateProvenance.fallbackReason = '';
     runtimeStateProvenance.lastLoadAt = isoNow();
-    await persistState(fresh);
+    await persistState(fresh, { allowBootstrap: true });
     return fresh;
   }
 
@@ -12748,6 +12957,40 @@ async function bootstrapRuntimeStateForLiveness() {
     updateDerivedStatus(fallbackState);
     return fallbackState;
   }
+}
+
+async function recoverRuntimeStateAfterBootstrapFailure() {
+  if (!DATABASE_URL || runtimeStateBootstrap.ready) return true;
+  if (runtimeStateRecoveryPromise) return runtimeStateRecoveryPromise;
+  runtimeStateRecoveryPromise = (async () => {
+    try {
+      // Replace liveness-only placeholders before unblocking operator requests.
+      const loadedState = await loadState();
+      state = loadedState;
+      const registry = await syncAgentRegistryFromPg({ seed: false, persist: false });
+      if (registry.persistence?.ok === false) {
+        throw new Error(registry.persistence.error || 'Agent registry could not be restored from Postgres.');
+      }
+      clearBridgeReadCache('state_bootstrap_recovered');
+      runtimeStateBootstrap = {
+        ok: true, ready: true, status: 'ready', code: '', error: '', checkedAt: isoNow(),
+      };
+      scheduleRuntimeStateBroadcast('state_bootstrap_recovered');
+      console.log('[pbk-local-openclaw] Postgres runtime state restored after startup failure.');
+      return true;
+    } catch (error) {
+      const detail = String(error?.details || error?.message || error || 'state recovery failed');
+      runtimeStateBootstrap = {
+        ok: false, ready: false, status: 'state_bootstrap_unavailable',
+        code: String(error?.code || 'state_bootstrap_unavailable'), error: detail, checkedAt: isoNow(),
+      };
+      console.warn('[pbk-local-openclaw] runtime state recovery pending:', detail);
+      return false;
+    } finally {
+      runtimeStateRecoveryPromise = null;
+    }
+  })();
+  return runtimeStateRecoveryPromise;
 }
 
 async function recordPbkToolUsage(params = {}) {
@@ -13507,7 +13750,7 @@ async function runYouTubeTrainingEvalSuiteRecord(params = {}) {
   };
 }
 
-async function upsertAgentRegistryRecordsToPg(records = []) {
+async function upsertAgentRegistryRecordsToPg(records = [], { insertOnly = false } = {}) {
   const pool = getPgPool();
   if (!pool) return { ok: false, reason: 'postgres_unavailable' };
   const agents = mergeAgentRegistryRecords(records, []);
@@ -13520,7 +13763,7 @@ async function upsertAgentRegistryRecordsToPg(records = []) {
           version, health_checked_at, last_error, metadata, updated_at
         )
         VALUES ($1,$2,$3,$4,$5::text[],$6,$7,$8,$9,$10,$11::jsonb,$12)
-        ON CONFLICT (id) DO UPDATE SET
+        ON CONFLICT (id) ${insertOnly ? 'DO NOTHING' : `DO UPDATE SET
           name = EXCLUDED.name,
           description = EXCLUDED.description,
           capabilities = ARRAY(SELECT DISTINCT capability FROM unnest(public.agent_registry.capabilities || EXCLUDED.capabilities) AS capability),
@@ -13530,7 +13773,7 @@ async function upsertAgentRegistryRecordsToPg(records = []) {
           health_checked_at = EXCLUDED.health_checked_at,
           last_error = EXCLUDED.last_error,
           metadata = public.agent_registry.metadata || EXCLUDED.metadata,
-          updated_at = EXCLUDED.updated_at`,
+          updated_at = EXCLUDED.updated_at`}`,
         [agent.id, normalizeTenantId(agent.tenantId || agent.tenant_id || 'pbk'), agent.name, agent.description || '', agent.capabilities || [], agent.status || 'active', agent.endpoint || '', agent.version || '', agent.healthCheckedAt || agent.health_checked_at || null, agent.lastError || agent.last_error || '', JSON.stringify(agent.metadata && typeof agent.metadata === 'object' ? agent.metadata : {}), isoNow()]
       );
       count += 1;
@@ -13566,7 +13809,7 @@ async function readAgentRegistryFromPg() {
 
 async function syncAgentRegistryFromPg({ seed = true, persist = false } = {}) {
   const defaults = buildDefaultAgentRegistry();
-  if (seed) await upsertAgentRegistryRecordsToPg(defaults);
+  if (seed) await upsertAgentRegistryRecordsToPg(defaults, { insertOnly: true });
   const read = await readAgentRegistryFromPg();
   const registry = mergeAgentRegistryRecords(read.ok && read.agents.length ? read.agents : [], defaults);
   applyAgentRegistryToRuntime(registry);
@@ -15021,6 +15264,10 @@ function buildApprovalSummary(approval = {}) {
 }
 
 async function persistApprovalRecordToPg(approval = {}) {
+  return writeApprovalRecordToPg(approval);
+}
+
+async function writeApprovalRecordToPg(approval, claimPending = false) {
   const approvalId = String(approval.id || '').trim();
   if (!approvalId) {
     return { ok: false, reason: 'missing_approval_id', rows: [] };
@@ -15044,6 +15291,8 @@ async function persistApprovalRecordToPg(approval = {}) {
        payload = EXCLUDED.payload,
        decided_at = EXCLUDED.decided_at,
        updated_at = EXCLUDED.updated_at
+     WHERE approvals.workspace_id = EXCLUDED.workspace_id
+       AND approvals.status = ${claimPending ? "'pending'" : 'EXCLUDED.status'}
      RETURNING id, status, updated_at`,
     [
       approvalId,
@@ -15061,6 +15310,48 @@ async function persistApprovalRecordToPg(approval = {}) {
       approval.updatedAt || approval.updated_at || isoNow(),
     ]
   );
+}
+
+function replayApprovalDecision(approval, status) {
+  return normalizeApprovalDecisionStatus(approval.status) === status
+    ? { ok: true, replayed: true, approval }
+    : {
+        ok: false,
+        statusCode: 409,
+        approval,
+        error: 'This approval already has a different decision. Review the current status.',
+      };
+}
+
+async function claimPendingApprovalDecision(approval, decision) {
+  const proposed = { ...approval, ...decision };
+  // A conditional UPSERT covers approvals that predate the normalized table.
+  const claimed = await writeApprovalRecordToPg(proposed, true);
+  if (!IS_HOSTED && STATE_BACKEND === 'file' && claimed.reason === 'no_database') {
+    return { claimed: true, local: true };
+  }
+  if (claimed.ok && claimed.rows.length) return { claimed: true };
+  if (claimed.ok) {
+    const current = await queryPgRows(
+      'SELECT * FROM public.approvals WHERE id = $1 AND workspace_id = $2',
+      [approval.id, normalizeTenantId(approval.workspaceId || approval.workspace_id || 'pbk')]
+    );
+    if (current.ok && current.rows.length) {
+      const canonical = normalizePgApprovalRecord(current.rows[0]);
+      if (normalizeApprovalDecisionStatus(canonical.status) !== 'pending') {
+        Object.assign(approval, canonical);
+        return { claimed: false, result: replayApprovalDecision(approval, decision.status) };
+      }
+    }
+  }
+  return {
+    claimed: false,
+    result: {
+      ok: false,
+      statusCode: 503,
+      error: 'Could not confirm a durable approval decision. No new dispatch was started.',
+    },
+  };
 }
 
 function normalizePgApprovalRecord(row = {}) {
@@ -23200,6 +23491,16 @@ function buildRuntimePBKIntelligenceContext(params = {}) {
   ensureAgentFleetCollections();
   const session = params.session || {};
   const contextCall = params.contextCall || params.call || {};
+  // lastRedisSyncAt records attempts too; only a successful sync is source evidence.
+  const lastSyncAt = [
+    session.lastRedisSyncResult === 'redis_call_state_synced' ? session.lastRedisSyncAt : null,
+    contextCall.updatedAt,
+    session.updatedAt,
+  ].map((value) => {
+    const at = typeof value === 'number' ? new Date(value).getTime()
+      : typeof value === 'string' && value.trim() ? Date.parse(value) : NaN;
+    return Number.isFinite(at) && at > 0 ? new Date(at).toISOString() : null;
+  }).find(Boolean) || null;
   const architecture = params.architecture || {};
   const transcript = String(params.transcript || params.query || params.text || '').trim();
   const scripts =
@@ -23261,7 +23562,7 @@ function buildRuntimePBKIntelligenceContext(params = {}) {
     agents: state.agents || buildDefaultAgentFleet(),
     sentiment: session.sentiment?.pbkScore ?? params.sentiment ?? contextCall.sentiment ?? null,
     leadStale: Boolean(params.leadStale),
-    lastSyncAt: session.lastRedisSyncResult || contextCall.updatedAt || session.updatedAt || isoNow(),
+    lastSyncAt,
   });
 }
 
@@ -24496,7 +24797,7 @@ function buildAvaCallArchitectureContext(params = {}) {
   };
 }
 
-function setAgentRuntimeActive(agentId = '', patch = {}) {
+async function setAgentRuntimeActive(agentId = '', patch = {}) {
   ensureAgentFleetCollections();
   const agent = findAgentRecord(agentId);
   if (!agent) return null;
@@ -24513,6 +24814,26 @@ function setAgentRuntimeActive(agentId = '', patch = {}) {
       lastAction: 'activate_call_intelligence',
     },
   };
+  const registryAgent = getCurrentAgentRegistry().find((record) => record.id === normalizeAgentRegistryId(agent.id));
+  if (!registryAgent) throw new Error('agent_registry_activation_target_missing');
+  // Activation changes operator status, not observed health, and only for this target.
+  let nextRegistryAgent = { ...registryAgent, status: nextAgent.status, updatedAt: nextAgent.updatedAt };
+  if (DATABASE_URL) {
+    try {
+      const persisted = await getPgPool()?.query(
+        `UPDATE public.agent_registry SET status = $1, updated_at = $2
+         WHERE id = $3 AND tenant_id = $4 RETURNING *`,
+        [nextAgent.status, nextAgent.updatedAt, registryAgent.id, normalizeTenantId('pbk')]
+      );
+      if (persisted?.rowCount !== 1) throw new Error('agent_registry_activation_target_missing');
+      nextRegistryAgent = normalizeAgentRegistryRecord(persisted.rows[0]);
+    } catch (cause) {
+      const error = new Error('agent_registry_activation_persist_failed', { cause });
+      error.code = 'agent_registry_activation_persist_failed';
+      throw error;
+    }
+  }
+  applyAgentRegistryToRuntime(getCurrentAgentRegistry().map((record) => record.id === nextRegistryAgent.id ? nextRegistryAgent : record));
   upsertById(state, 'agents', nextAgent);
   return nextAgent;
 }
@@ -24555,20 +24876,20 @@ async function activateAvaCallIntelligence(params = {}) {
     activatedAt: callSettings.activatedAt,
   };
 
-  const ava = setAgentRuntimeActive('ava', {
+  const ava = await setAgentRuntimeActive('ava', {
     status: 'active',
     activity: 'Call intelligence active: scripts, BANT+, $100K War Manual, active listening/call-flow, memory, prosody, tool router, Rex oversight, and safety gates online.',
     updatedBy: actor,
     config: { avaCallIntelligence: callSettings },
   });
-  const rex = setAgentRuntimeActive('rex', {
+  const rex = await setAgentRuntimeActive('rex', {
     status: 'active',
     activity: 'Daily goal alignment, call analysis, script/prosody recommendations, and $1M/month oversight active.',
     updatedBy: actor,
     config: { revenueGoalOversight: true, targetMonthlyRevenue: REVENUE_TARGET_MONTHLY },
   });
   const hermesReady = getHermesProviderMeta().ready;
-  const hermes = setAgentRuntimeActive('hermes', {
+  const hermes = await setAgentRuntimeActive('hermes', {
     status: hermesReady ? 'active' : 'standby',
     activity: hermesReady ? 'Suggest-only call pattern analysis ready; provider writes blocked.' : 'Suggest-only analyst lane registered; external Hermes provider not required for Ava call activation.',
     updatedBy: actor,
@@ -28293,10 +28614,23 @@ function formatEpisodicMemoryForPrompt(episodicMemory = {}) {
     .map((memory, index) => {
       const similarity = memory.similarity ? ` similarity ${Number(memory.similarity).toFixed(2)}` : '';
       const outcome = memory.outcome ? ` outcome ${memory.outcome}` : ' outcome observed';
-      const label = index === 0 ? 'Similar past winning call' : 'Similar past call';
+      const label = formatEpisodicMemoryLabel(memory, index);
       return `- ${label}${similarity};${outcome}: ${sanitizeAvaSpokenOutput(memory.sourceText || '').slice(0, 260)}`;
     })
     .join('\n');
+}
+
+function formatEpisodicMemoryLabel(memory = {}, index = 0) {
+  const outcome = String(memory.outcome || memory.metadata?.outcome || '')
+    .trim()
+    .toLowerCase();
+  if (/\b(win|won|signed|contract|appointment|callback|qualified|converted|closed)\b/i.test(outcome)) {
+    return 'Similar past successful call';
+  }
+  if (/\b(lost|failed|dead|dnc|do not call|unqualified|bad_fit|no[-_ ]deal|angry)\b/i.test(outcome)) {
+    return 'Similar past caution call';
+  }
+  return index === 0 ? 'Closest similar past call' : 'Similar past call';
 }
 
 function normalizeLiveRagBrainDoc(doc = {}) {
@@ -34713,6 +35047,24 @@ function findDncEntryByPhone(phone = '') {
   return state.dncEntries.find((entry) => normalizePhone(entry.phone) === normalized) || null;
 }
 
+async function updateWorkspacePhoneDnc(phone, blocked) {
+  const pool = getPgPool();
+  if (pool) await setWorkspacePhoneDnc(pool, { phone, blocked });
+}
+
+async function readPersistedPhoneDnc(client, phone) {
+  const { rows } = await client.query(`
+    SELECT EXISTS (
+      SELECT 1 FROM public.bridge_state AS snapshot
+      CROSS JOIN LATERAL jsonb_array_elements(COALESCE(snapshot.data->'dncEntries', '[]'::jsonb)) AS dnc(entry)
+      CROSS JOIN LATERAL (SELECT regexp_replace(COALESCE(dnc.entry->>'phone', ''), '[^0-9]', '', 'g') AS digits) AS n
+      WHERE snapshot.id = 'singleton'
+      AND (CASE WHEN length(n.digits) = 10 THEN '+1' ELSE '+' END) || n.digits = $1
+    ) AS blocked
+  `, [phone]);
+  return rows[0].blocked;
+}
+
 function inferSenderProfile(profile = '') {
   return String(profile || '')
     .trim()
@@ -36964,8 +37316,15 @@ async function fireTelnyxRequest(method, endpoint, payload, options = {}) {
 
     const response = await executeProviderCircuitGuard(
       'telnyx',
-      () =>
-        fetch(url, {
+      () => dispatchTelnyxWithBatchPhoneGuard({
+        pool: getPgPool(),
+        method: String(method || 'POST'),
+        endpoint,
+        payload,
+        leadId: options.leadId,
+        isLocallyDnc: (phone) => Boolean(findDncEntryByPhone(phone)),
+        isPersistedDnc: readPersistedPhoneDnc,
+        dispatch: () => fetch(url, {
           method: String(method || 'POST').toUpperCase(),
           headers: {
             Authorization: `Bearer ${TELNYX_API_KEY}`,
@@ -36974,6 +37333,7 @@ async function fireTelnyxRequest(method, endpoint, payload, options = {}) {
           },
           ...(payload !== undefined ? { body: JSON.stringify(payload) } : {}),
         }),
+      }),
       async () =>
         new Response(JSON.stringify({ error: { message: 'Telnyx circuit is open.' } }), {
           status: 503,
@@ -36995,6 +37355,7 @@ async function fireTelnyxRequest(method, endpoint, payload, options = {}) {
       ok: response.ok,
       status: response.status,
       body,
+      ...(body?.batchPhoneGuard ? { batchPhoneGuard: body.batchPhoneGuard } : {}),
       error: response.ok ? '' : extractTelnyxError(body),
     };
   } catch (error) {
@@ -43893,8 +44254,8 @@ function normalizeAnalyticsDeal(item = {}) {
   };
 }
 
-function buildDealTimelineFromItems(items = [], { days = 30, source = 'bridge-state', warning = '' } = {}) {
-  const startMs = Date.now() - Math.max(1, Number(days || 30)) * 24 * 60 * 60 * 1000;
+function buildDealTimelineFromItems(items = [], { days = 30, startAt = null, source = 'bridge-state', warning = '' } = {}) {
+  const startMs = startAt ? Date.parse(startAt) : Date.now() - Math.max(1, Number(days || 30)) * 24 * 60 * 60 * 1000;
   const groups = new Map();
   for (const item of Array.isArray(items) ? items : []) {
     const ts = getRecordTimestamp(item);
@@ -43911,13 +44272,15 @@ function buildDealTimelineFromItems(items = [], { days = 30, source = 'bridge-st
     result: source.startsWith('postgres') ? 'live' : 'local_view_only',
     source,
     generatedAt: isoNow(),
+    ...(startAt ? { range: 'ytd' } : {}),
     days: Array.from(groups.values()).sort((left, right) => String(left.day).localeCompare(String(right.day))),
     warning,
   };
 }
 
-async function buildDealTimelineAnalytics({ days = 30 } = {}) {
+async function buildDealTimelineAnalytics({ days = 30, range = '' } = {}) {
   const rangeDays = Math.max(1, Math.min(365, Number(days || 30)));
+  const startAt = range === 'ytd' ? getRangeStart('ytd').toISOString() : null;
   const result = await queryPgRows(
     `SELECT
        c.id,
@@ -43925,56 +44288,59 @@ async function buildDealTimelineAnalytics({ days = 30 } = {}) {
        c.status,
        c.amount::float AS amount,
        c.payload,
-       c.created_at,
-       c.updated_at,
+       c.created_at AS "createdAt",
+       c.updated_at AS "updatedAt",
        l.lead_name AS "leadName",
        l.address
      FROM public.contracts c
      LEFT JOIN public.lead_profiles l ON l.id = c.lead_id
      WHERE COALESCE(c.workspace_id, 'pbk') = 'pbk'
-       AND c.created_at > NOW() - ($1::int * INTERVAL '1 day')
+       AND c.created_at >= COALESCE($2::timestamptz, NOW() - ($1::int * INTERVAL '1 day'))
      ORDER BY c.created_at ASC`,
-    [rangeDays]
+    [rangeDays, startAt]
   );
   if (!result.ok || !result.rows.length) {
     return buildDealTimelineFromItems([...(state.contracts || []), ...(state.analyzerRuns || [])], {
       days: rangeDays,
+      startAt,
       source: 'bridge-state',
       warning: result.ok ? 'Postgres contracts is empty; showing bridge-state deal records.' : `Postgres contracts unavailable (${result.error || result.reason}); showing bridge-state deal records.`,
     });
   }
   return buildDealTimelineFromItems(result.rows, {
     days: rangeDays,
+    startAt,
     source: 'postgres:contracts',
   });
 }
 
-async function buildAiObservabilityMetrics({ days = 30 } = {}) {
+async function buildAiObservabilityMetrics({ days = 30, range = '' } = {}) {
   const rangeDays = Math.max(1, Math.min(365, Number(days || 30)));
+  const startAt = range === 'ytd' ? getRangeStart('ytd').toISOString() : null;
   const [latency, qa, safety, usage] = await Promise.all([
     queryPgRows(
       `SELECT percentile_cont(0.95) WITHIN GROUP (
          ORDER BY COALESCE(turn_completion_ms, transcript_to_tts_ms, speech_final_to_reply_start_ms)
        )::float AS p95_latency_ms
        FROM public.pbk_turn_latency
-       WHERE created_at > NOW() - ($1::int * INTERVAL '1 day')
+       WHERE created_at >= COALESCE($2::timestamptz, NOW() - ($1::int * INTERVAL '1 day'))
          AND COALESCE(turn_completion_ms, transcript_to_tts_ms, speech_final_to_reply_start_ms) IS NOT NULL`,
-      [rangeDays]
+      [rangeDays, startAt]
     ),
     queryPgRows(
       `SELECT
          COUNT(*)::int AS total,
          SUM(retry_count)::int AS retries
        FROM public.pbk_qa_audit
-       WHERE created_at > NOW() - ($1::int * INTERVAL '1 day')`,
-      [rangeDays]
+       WHERE created_at >= COALESCE($2::timestamptz, NOW() - ($1::int * INTERVAL '1 day'))`,
+      [rangeDays, startAt]
     ),
     queryPgRows(
       `SELECT COUNT(*)::int AS safety_blocks
        FROM public.pbk_safety_audit
-       WHERE created_at > NOW() - ($1::int * INTERVAL '1 day')
+       WHERE created_at >= COALESCE($2::timestamptz, NOW() - ($1::int * INTERVAL '1 day'))
          AND blocked IS TRUE`,
-      [rangeDays]
+      [rangeDays, startAt]
     ),
     queryPgRows(
       `SELECT
@@ -43989,8 +44355,8 @@ async function buildAiObservabilityMetrics({ days = 30 } = {}) {
            END
          ), 0)::float AS ai_spend_usd
        FROM public.pbk_tool_usage
-       WHERE created_at > NOW() - ($1::int * INTERVAL '1 day')`,
-      [rangeDays]
+       WHERE created_at >= COALESCE($2::timestamptz, NOW() - ($1::int * INTERVAL '1 day'))`,
+      [rangeDays, startAt]
     ),
   ]);
   const postgresOk = latency.ok || qa.ok || safety.ok || usage.ok;
@@ -44002,6 +44368,7 @@ async function buildAiObservabilityMetrics({ days = 30 } = {}) {
     result: postgresOk ? 'live' : 'local_view_only',
     source: postgresOk ? 'postgres:observability' : 'bridge-state',
     generatedAt: isoNow(),
+    ...(startAt ? { range: 'ytd' } : {}),
     days: rangeDays,
     metrics: {
       p95LatencyMs: toNumber(latency.rows?.[0]?.p95_latency_ms, 0),
@@ -44010,7 +44377,9 @@ async function buildAiObservabilityMetrics({ days = 30 } = {}) {
       toolCalls: toNumber(usage.rows?.[0]?.tool_calls, Object.values(toolUsage).reduce((sum, value) => sum + toNumber(value, 0), 0)),
       aiSpendUsd: Number(toNumber(usage.rows?.[0]?.ai_spend_usd, 0).toFixed(4)),
     },
-    warning: postgresOk ? '' : 'Postgres observability tables were unavailable; showing bridge-state counters where available.',
+    warning: [latency, qa, safety, usage].every((item) => item.ok)
+      ? ''
+      : 'Some AI metrics are unavailable for this period. Fallback counters may include activity outside the selected range.',
   };
 }
 
@@ -44448,12 +44817,15 @@ function getAgentToolProbe(toolName = '') {
 
 function buildAgentHealthProbe(agent = {}) {
   const agentId = normalizeAgentRosterId(agent.id || agent.name);
+  const registryAgent = getCurrentAgentRegistry().find((record) => record.id === agentId);
+  const checkedAt = registryAgent?.healthCheckedAt || registryAgent?.health_checked_at || '';
+  const registryReady = registryAgent?.status === 'active' && Number.isFinite(Date.parse(checkedAt));
   const requiredTools = normalizeStringList(agent.requiredTools || []);
   const toolProbes = requiredTools.map(getAgentToolProbe);
   const missingTools = toolProbes.filter((item) => !item.ready).map((item) => item.tool);
   const hermesMeta = agentId === 'hermes' ? getHermesProviderMeta() : null;
   const providerReady = agentId === 'hermes' ? Boolean(hermesMeta?.ready) : true;
-  const present = Boolean(agentId);
+  const present = Boolean(registryAgent);
   return {
     id: agentId,
     name: agent.name || agentId,
@@ -44461,10 +44833,12 @@ function buildAgentHealthProbe(agent = {}) {
     orchestrationRole: agent.orchestrationRole || (agent.supervisor ? 'worker' : 'worker'),
     supervisor: agent.supervisor || '',
     supervises: normalizeStringList(agent.supervises || []),
-    status: agent.status || 'unknown',
+    status: registryAgent?.status || agent.status || 'unknown',
     activity: agent.activity || '',
     present,
-    ready: present && missingTools.length === 0 && providerReady,
+    ready: present && registryReady && missingTools.length === 0 && providerReady,
+    checkedAt,
+    healthCheckedAt: checkedAt,
     providerReady,
     provider: hermesMeta
       ? {
@@ -44478,7 +44852,7 @@ function buildAgentHealthProbe(agent = {}) {
     missingTools,
     healthProbe: agent.healthProbe || `agent:${agentId}:heartbeat`,
     safety: agent.safety || {},
-    lastSeen: agent.lastSeen || '',
+    lastSeen: agent.lastActionAt || (agent.registry?.source === 'agent_registry' && agent.lastSeen === checkedAt ? '' : agent.lastSeen) || '',
   };
 }
 
@@ -46420,30 +46794,23 @@ async function queryPgRows(sql = '', params = []) {
       error: 'PBK_DATABASE_URL is not configured.',
     };
   }
-  const maxAttempts = getStatePersistRetryAttempts();
-  let attempt = 0;
-  let lastError = null;
-  for (attempt = 1; attempt <= maxAttempts; attempt += 1) {
-    try {
-      const result = await pool.query(sql, params);
-      markPostgresHealth(true);
-      return { ok: true, reason: 'live', rows: result.rows || [], retryAttempts: attempt };
-    } catch (error) {
-      lastError = error;
-      markPostgresHealth(false, error?.message || error);
-      if (attempt >= maxAttempts || !isTransientPostgresStatePersistError(error)) break;
-      await sleep(getStatePersistRetryDelayMs(attempt));
-    }
+  try {
+    const result = await pool.query(sql, params);
+    markPostgresHealth(true);
+    return { ok: true, reason: 'live', rows: result.rows || [], retryAttempts: 1 };
+  } catch (error) {
+    markPostgresHealth(false, error?.message || error);
+    return {
+      ok: false,
+      reason: 'query_failed',
+      rows: [],
+      error: error?.message || String(error),
+      code: error?.code || '',
+      retryAttempts: 1,
+      retryable: false,
+      executionOutcome: error?.executionOutcome || 'unknown',
+    };
   }
-  return {
-    ok: false,
-    reason: 'query_failed',
-    rows: [],
-    error: lastError?.message || String(lastError),
-    code: lastError?.code || '',
-    retryAttempts: attempt,
-    retryable: isTransientPostgresStatePersistError(lastError),
-  };
 }
 
 async function buildVectorCapacityStatus() {
@@ -49558,9 +49925,45 @@ function buildCampaignFromPayload(payload = {}) {
   return { campaign, leads, conflicts };
 }
 
+const campaignOperations = new Map();
+
+async function queueCampaignOperation(key, operation) {
+  const previous = campaignOperations.get(key) || Promise.resolve();
+  const current = previous.catch(() => {}).then(operation);
+  campaignOperations.set(key, current);
+  try {
+    return await current;
+  } finally {
+    if (campaignOperations.get(key) === current) campaignOperations.delete(key);
+  }
+}
+
 async function createCampaignRecord(payload = {}) {
+  const id = payload.id;
+  if (typeof id !== 'string' || !/^campaign-draft-[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(id)) {
+    return saveNewCampaignRecord(payload);
+  }
+  return queueCampaignOperation(`binding:${id}`, () => {
+    ensureCampaignCollections();
+    const campaign = state.campaigns.find((item) => item.id === id);
+    if (!campaign) return saveNewCampaignRecord(payload, { startDispatchVersion: 2 });
+    const leads = getCampaignLeads(id);
+    return {
+      ok: true,
+      result: 'live',
+      verbiage: 'Campaign draft already saved',
+      replayed: true,
+      campaign,
+      leads,
+      conflicts: findCampaignConflicts(leads, campaign.channel, id),
+    };
+  });
+}
+
+async function saveNewCampaignRecord(payload, { startDispatchVersion } = {}) {
   ensureCampaignCollections();
   const { campaign, leads, conflicts } = buildCampaignFromPayload(payload);
+  if (startDispatchVersion) campaign.startDispatchVersion = startDispatchVersion;
   upsertById(state, 'campaigns', campaign);
   state.campaignLeads = (state.campaignLeads || []).filter((lead) => lead.campaignId !== campaign.id);
   leads.forEach((lead, index) => {
@@ -49636,6 +50039,10 @@ async function createCampaignRecord(payload = {}) {
 }
 
 async function patchCampaignRecord(campaignId = '', patch = {}) {
+  return queueCampaignOperation(`binding:${campaignId}`, () => applyCampaignRecordPatch(campaignId, patch));
+}
+
+async function applyCampaignRecordPatch(campaignId, patch) {
   ensureCampaignCollections();
   const current = (state.campaigns || []).find((campaign) => campaign.id === campaignId);
   if (!current) {
@@ -49663,10 +50070,13 @@ async function patchCampaignRecord(campaignId = '', patch = {}) {
   const next = {
     ...current,
     ...patch,
+    id: current.id,
+    startDispatchVersion: current.startDispatchVersion,
     channel: normalizeCampaignChannel(patch.channel || current.channel),
     status: requestedStatus,
     updatedAt: isoNow(),
   };
+  if (DATABASE_URL && !(await persistCampaignRecord(next, { expected: current }))) return campaignBindingUnavailable();
   upsertById(state, 'campaigns', next);
   recordCampaignEvent({
     campaignId,
@@ -49687,7 +50097,6 @@ async function patchCampaignRecord(campaignId = '', patch = {}) {
     })
   );
   await persistState(state);
-  await persistCampaignRecord(next);
   return {
     ok: true,
     result: 'live',
@@ -49901,7 +50310,53 @@ async function removeCampaignLeadFromCampaign(campaignId = '', payload = {}) {
   };
 }
 
+function getApprovalCampaignId(approval = {}) {
+  return String(approval.metadata?.campaignId || approval.metadata?.campaign_id || approval.campaignId || '').trim();
+}
+
+function isCampaignStartApproval(approval = {}) {
+  return String(approval.type || '').toLowerCase() === 'campaign' &&
+    normalizeCampaignApprovalAction(approval) === 'start_campaign';
+}
+
+function findCampaignProviderStartExecution(campaignId) {
+  return campaignId && (state.campaignExecutions || []).find((item) => item.campaignId === campaignId &&
+    (item.status === 'provider-started' || item.instantly?.ok || item.instantly?.endpoint));
+}
+
+function isCampaignStartBlocked(campaign) {
+  return normalizeCampaignStatus(campaign.status) === 'paused' || isCampaignTerminal(campaign);
+}
+
+function isCampaignTerminal(campaign) {
+  return ['archived', 'cancelled', 'completed'].includes(normalizeCampaignStatus(campaign.status));
+}
+
+function campaignBindingUnavailable() {
+  return {
+    ok: false,
+    result: 'campaign_binding_unavailable',
+    error: 'The durable campaign binding could not be confirmed.',
+    providerAttempted: false,
+  };
+}
+
+function blockedCampaignStart() {
+  return {
+    ok: false,
+    result: 'campaign_start_blocked',
+    error: 'This approval no longer authorizes a start for the current campaign state.',
+  };
+}
+
 async function requestCampaignApproval(campaignId = '', params = {}) {
+  return queueCampaignOperation(`approval:${campaignId}`, async () => {
+    const prepared = await queueCampaignOperation(`binding:${campaignId}`, () => prepareCampaignApproval(campaignId, params));
+    return prepared.publishing || prepared;
+  });
+}
+
+async function prepareCampaignApproval(campaignId, params) {
   ensureCampaignCollections();
   const campaign = (state.campaigns || []).find((item) => item.id === campaignId);
   if (!campaign) {
@@ -49912,15 +50367,68 @@ async function requestCampaignApproval(campaignId = '', params = {}) {
       error: 'Campaign record not found.',
     };
   }
-  const selectedLeads = getCampaignLeads(campaignId).map(normalizeCampaignLead);
   const action = params.requestedAction || params.approvalAction || 'start_campaign';
+  const normalizedAction = normalizeCampaignApprovalAction({ approvalAction: action });
+  if (normalizedAction === 'campaign_resume' && isCampaignTerminal(campaign)) return blockedCampaignStart();
+  if (normalizedAction === 'start_campaign') {
+    const execution = findCampaignProviderStartExecution(campaignId);
+    if (campaign.providerCampaignId || execution) {
+      const started = campaign.providerCampaignId || execution?.instantly?.ok || execution?.status === 'provider-started';
+      return {
+        ok: true,
+        result: started ? 'live' : execution.instantly?.result || 'provider_missing',
+        verbiage: started ? 'Campaign execution already started' : 'Campaign start already attempted; check the provider',
+        replayed: true,
+        campaign,
+        execution,
+        approval: state.approvals.find((item) => item.id === (execution?.approvalId || campaign.approvalId)),
+      };
+    }
+    if (isCampaignStartBlocked(campaign)) return blockedCampaignStart();
+    if (campaign.pendingAction && normalizeCampaignApprovalAction({ approvalAction: campaign.pendingAction }) !== 'start_campaign') {
+      return blockedCampaignStart();
+    }
+    const approvals = state.approvals.filter((item) => isCampaignStartApproval(item) && getApprovalCampaignId(item) === campaignId);
+    const current = approvals.find((item) => item.id === campaign.approvalId);
+    const pending = approvals.find((item) => item.status === 'pending');
+    const approval = current?.status === 'approved' && campaign.pendingAction ? current : pending;
+    if (approval) {
+      const scheduled = approval.status === 'approved' && getCampaignStartNotBefore(campaign, approval) !== null;
+      return {
+        ok: true,
+        result: scheduled ? 'scheduled' : 'queued_for_approval',
+        verbiage: scheduled ? 'Campaign start is scheduled' : 'Campaign start approval already requested',
+        replayed: true,
+        campaign,
+        approval,
+      };
+    }
+  }
+  const selectedLeads = getCampaignLeads(campaignId).map(normalizeCampaignLead);
   const previousCampaignStatus = normalizeCampaignStatus(campaign.status || 'draft');
+  const deferredStart = ['campaign_cancel', 'campaign_pause', 'campaign_resume'].includes(normalizedAction)
+    ? getBoundScheduledCampaignStart(campaign)
+    : null;
   const providerConfig = getCampaignProviderConfig({
     ...campaign,
     ...params,
     providerConfig: params.providerConfig || campaign.providerConfig,
   });
-  const { approval, fanout } = await toolHandlers.createApproval({
+  // Bind the campaign before publishing a card that can be approved immediately.
+  const approvalId = randomUUID();
+  const pendingCampaign = {
+    ...campaign,
+    status: normalizeCampaignStatus(params.status || 'pending'),
+    approvalId,
+    approvalStatus: 'pending',
+    pendingAction: action,
+    pendingPreviousStatus: previousCampaignStatus,
+    updatedAt: isoNow(),
+  };
+  if (DATABASE_URL && !(await persistCampaignRecord(pendingCampaign, { expected: campaign }))) return campaignBindingUnavailable();
+  upsertById(state, 'campaigns', pendingCampaign);
+  const approvalParams = {
+    id: approvalId,
     type: 'campaign',
     leadName: campaign.name,
     address: `${selectedLeads.length || campaign.leadCount || 0} campaign leads`,
@@ -49933,6 +50441,7 @@ async function requestCampaignApproval(campaignId = '', params = {}) {
       campaignId: campaign.id,
       campaignName: campaign.name,
       previousCampaignStatus,
+      ...(deferredStart ? { deferredStartApprovalId: deferredStart.id } : {}),
       campaignChannel: campaign.channel,
       campaignProvider: campaign.provider || getCampaignProvider(campaign.channel),
       templateId: campaign.templateId || '',
@@ -49949,17 +50458,13 @@ async function requestCampaignApproval(campaignId = '', params = {}) {
       from_email: providerConfig.from_email,
       statusMessage: `${String(action).replace(/_/g, ' ')} queued for approval`,
     },
-  });
-  const nextCampaign = {
-    ...campaign,
-    status: normalizeCampaignStatus(params.status || 'pending'),
-    approvalId: approval.id,
-    approvalStatus: 'pending',
-    pendingAction: action,
-    pendingPreviousStatus: previousCampaignStatus,
-    updatedAt: isoNow(),
   };
-  upsertById(state, 'campaigns', nextCampaign);
+  return { publishing: publishCampaignApproval(campaign, action, params.actor, approvalParams) };
+}
+
+async function publishCampaignApproval(campaign, action, actor, approvalParams) {
+  const campaignId = campaign.id;
+  const { approval, fanout } = await toolHandlers.createApproval(approvalParams);
   recordCampaignEvent({
     campaignId,
     eventType: 'approval_requested',
@@ -49971,7 +50476,7 @@ async function requestCampaignApproval(campaignId = '', params = {}) {
   addActivity(
     state,
     makeActivity({
-      actor: params.actor || 'PBK Command Center',
+      actor: actor || 'PBK Command Center',
       category: 'CAMPAIGN',
       status: 'pending',
       text: `Campaign "${campaign.name}" queued for approval before provider execution.`,
@@ -49983,8 +50488,8 @@ async function requestCampaignApproval(campaignId = '', params = {}) {
     ok: true,
     result: 'queued_for_approval',
     verbiage: 'Campaign queued for approval',
-    campaign: nextCampaign,
-    approval,
+    campaign: state.campaigns.find((item) => item.id === campaignId),
+    approval: state.approvals.find((item) => item.id === approval.id) || approval,
     fanout,
   };
 }
@@ -50228,7 +50733,7 @@ function findCampaignSuppressionForLead(lead = {}, channel = '') {
   );
 }
 
-function isCampaignLeadContactable(campaign = {}, lead = {}, channel = '') {
+function isCampaignLeadContactable(campaign = {}, lead = {}, channel = '', now = new Date()) {
   const suppression = findCampaignSuppressionForLead(lead, channel);
   if (suppression) {
     return {
@@ -50249,7 +50754,7 @@ function isCampaignLeadContactable(campaign = {}, lead = {}, channel = '') {
       dnc,
     };
   }
-  const windowCheck = isWithinCampaignWindow(campaign, lead);
+  const windowCheck = isWithinCampaignWindow(campaign, lead, now);
   if (!windowCheck.ok) {
     return {
       ok: false,
@@ -50318,7 +50823,7 @@ async function processCampaignLeadStep(campaign = {}, lead = {}, options = {}) {
   const allowProviderWrites = Boolean(options.allowProviderWrites);
   const providerConfig = getCampaignProviderConfig(campaign);
   const targetLabel = lead.address || lead.leadName || lead.email || lead.phone || lead.id;
-  const contactable = isCampaignLeadContactable(campaign, lead, channel);
+  const contactable = isCampaignLeadContactable(campaign, lead, channel, now);
 
   if (!contactable.ok) {
     patchCampaignLead(lead.id, {
@@ -50526,7 +51031,98 @@ async function processCampaignLeadStep(campaign = {}, lead = {}, options = {}) {
   };
 }
 
+function getCampaignStartNotBefore(campaign, approval) {
+  let notBefore = null;
+  for (const value of [campaign?.schedule?.firstSendAt, approval?.metadata?.schedule?.firstSendAt]) {
+    if (value == null || value === '') continue;
+    // A legacy datetime-local value does not identify the operator's time zone.
+    const timestamp = typeof value === 'string' && /T\d{2}:\d{2}.*(?:Z|[+-]\d{2}:?\d{2})$/i.test(value)
+      ? Date.parse(value)
+      : NaN;
+    if (!Number.isFinite(timestamp)) return Infinity;
+    notBefore = notBefore === null ? timestamp : Math.max(notBefore, timestamp);
+  }
+  return notBefore;
+}
+
+function invalidCampaignStartSchedule() {
+  return {
+    ok: false,
+    result: 'campaign_schedule_invalid',
+    error: 'First send must include a time zone offset or UTC (Z) before the campaign can start.',
+    providerAttempted: false,
+  };
+}
+
+function scheduledCampaignStart(firstSendAt) {
+  return {
+    ok: true,
+    result: 'scheduled',
+    verbiage: 'Campaign start is scheduled',
+    firstSendAt: new Date(firstSendAt).toISOString(),
+    providerAttempted: false,
+  };
+}
+
+function findApprovedScheduledCampaignStart(campaign, approvalId) {
+  const approval = approvalId && state.approvals.find((item) => item.id === approvalId);
+  return approval?.status === 'approved' && isCampaignStartApproval(approval) &&
+    getApprovalCampaignId(approval) === campaign.id && getCampaignStartNotBefore(campaign, approval) !== null
+    ? approval : null;
+}
+
+function getBoundScheduledCampaignStart(campaign) {
+  const current = state.approvals.find((item) => item.id === campaign.approvalId);
+  if (current?.status !== 'approved' || getApprovalCampaignId(current) !== campaign.id ||
+      campaign.providerCampaignId || findCampaignProviderStartExecution(campaign.id)) return null;
+  return findApprovedScheduledCampaignStart(campaign,
+    isCampaignStartApproval(current) ? current.id : current.metadata?.deferredStartApprovalId);
+}
+
+function getDeferredCampaignStartApproval(campaign, status) {
+  if (status === 'pending' && campaign.pendingAction &&
+      normalizeCampaignApprovalAction({ approvalAction: campaign.pendingAction }) === 'start_campaign') {
+    return getBoundScheduledCampaignStart(campaign);
+  }
+  if (status === 'active' && !campaign.executionId && !campaign.providerCampaignId) {
+    const approval = state.approvals.find((item) => item.id === campaign.approvalId);
+    if (approval && normalizeCampaignApprovalAction(approval) === 'campaign_resume') {
+      return getBoundScheduledCampaignStart(campaign);
+    }
+  }
+  return null;
+}
+
+async function restoreScheduledCampaignAfterDeniedCancel(approval) {
+  if (normalizeCampaignApprovalAction(approval) !== 'campaign_cancel' || !approval.metadata?.deferredStartApprovalId) return;
+  const campaignId = getApprovalCampaignId(approval);
+  return queueCampaignOperation(`binding:${campaignId}`, () => restoreScheduledCampaignBinding(approval, campaignId));
+}
+
+async function restoreScheduledCampaignBinding(approval, campaignId) {
+  const campaign = (state.campaigns || []).find((item) => item.id === campaignId);
+  if (!campaign || campaign.status !== 'pending' || campaign.approvalId !== approval.id) return;
+  const start = findApprovedScheduledCampaignStart(campaign, approval.metadata.deferredStartApprovalId);
+  if (!start) return;
+  const execution = (state.campaignExecutions || []).find((item) => item.approvalId === start.id);
+  const restored = {
+    ...campaign,
+    status: campaign.providerCampaignId || execution?.instantly?.ok ? 'active' : execution ? 'provider_missing' : 'pending',
+    approvalId: start.id,
+    approvalStatus: 'approved',
+    pendingAction: execution || campaign.providerCampaignId ? '' : 'start_campaign',
+    pendingPreviousStatus: '',
+    updatedAt: isoNow(),
+  };
+  if (DATABASE_URL && !(await persistCampaignRecord(restored, { expected: campaign }))) return;
+  upsertById(state, 'campaigns', restored);
+}
+
 async function runCampaignScheduler(options = {}) {
+  return queueCampaignOperation('scheduler', () => runCampaignSchedulerPass(options));
+}
+
+async function runCampaignSchedulerPass(options) {
   ensureCampaignCollections();
   const now = options.now instanceof Date ? options.now : new Date();
   const dryRun = options.dryRun ?? !(CAMPAIGN_WORKER_ENABLED && CAMPAIGN_WORKER_CONFIRM_PROVIDER_WRITES);
@@ -50538,6 +51134,32 @@ async function runCampaignScheduler(options = {}) {
   for (const campaign of sortNewest(state.campaigns || [])) {
     if (processed.length >= limit) break;
     const status = normalizeCampaignStatus(campaign.status);
+    const deferredApproval = getDeferredCampaignStartApproval(campaign, status);
+    const firstSendAt = getCampaignStartNotBefore(campaign, deferredApproval);
+    if (firstSendAt === Infinity) {
+      const invalid = invalidCampaignStartSchedule();
+      skipped.push({ campaignId: campaign.id, status, result: invalid.result, reason: invalid.error });
+      continue;
+    }
+    if (firstSendAt !== null && firstSendAt > now.getTime()) {
+      skipped.push({ campaignId: campaign.id, status, result: 'scheduled', reason: 'Campaign start is not due.' });
+      continue;
+    }
+    if (deferredApproval) {
+      if (!allowProviderWrites) {
+        skipped.push({ campaignId: campaign.id, status, result: 'scheduled', reason: 'Campaign start is due; provider writes are not enabled for this run.' });
+        continue;
+      }
+      const result = await executeApprovedCampaign(deferredApproval, { actor: options.actor });
+      processed.push({
+        campaignId: campaign.id,
+        campaignName: campaign.name,
+        result: result.result,
+        dryRun: false,
+        reason: result.error || result.verbiage || '',
+      });
+      continue;
+    }
     if (status !== 'active') {
       skipped.push({ campaignId: campaign.id, status, reason: 'Campaign is not active.' });
       continue;
@@ -50600,7 +51222,12 @@ async function runCampaignScheduler(options = {}) {
       updatedAt: isoNow(),
     };
     upsertById(state, 'campaigns', campaignPatch);
-    await persistCampaignRecord(campaignPatch);
+    if (DATABASE_URL) {
+      await queryPgRows(
+        'UPDATE public.campaigns SET metrics = $2::jsonb, last_worker_run_at = $3 WHERE id = $1',
+        [campaign.id, JSON.stringify(campaignPatch.metrics), campaignPatch.lastWorkerRunAt]
+      );
+    }
   }
 
   const run = {
@@ -50851,6 +51478,16 @@ async function applyApprovedCampaignLifecycleAction(approval = {}, options = {})
       action,
     };
   }
+  if ((action === 'campaign_resume' && isCampaignTerminal(campaign)) || campaign.approvalId !== approval.id ||
+      (campaign.pendingAction && normalizeCampaignApprovalAction({ approvalAction: campaign.pendingAction }) !== action)) {
+    return {
+      ok: false,
+      result: 'campaign_action_stale',
+      error: 'This lifecycle approval no longer matches the current campaign action.',
+      action,
+      providerAttempted: false,
+    };
+  }
 
   const previousStatus = normalizeCampaignStatus(
     metadata.previousCampaignStatus ||
@@ -50933,6 +51570,17 @@ async function applyApprovedCampaignLifecycleAction(approval = {}, options = {})
       activityText: `Campaign "${campaign.name}" template changes approved.`,
     },
   }[action];
+  if (!campaign.pendingAction && campaign.approvalStatus === 'approved') {
+    return {
+      ok: true,
+      result: actionConfig.result,
+      verbiage: actionConfig.verbiage,
+      action,
+      campaign,
+      replayed: true,
+      providerAttempted: false,
+    };
+  }
   const now = isoNow();
   const nextCampaign = {
     ...campaign,
@@ -50950,6 +51598,7 @@ async function applyApprovedCampaignLifecycleAction(approval = {}, options = {})
   if (action === 'campaign_archive') nextCampaign.archivedAt = now;
   if (action === 'campaign_cancel') nextCampaign.cancelledAt = now;
 
+  if (DATABASE_URL && !(await persistCampaignRecord(nextCampaign, { expected: campaign }))) return campaignBindingUnavailable();
   upsertById(state, 'campaigns', nextCampaign);
   recordCampaignEvent({
     campaignId,
@@ -50986,7 +51635,6 @@ async function applyApprovedCampaignLifecycleAction(approval = {}, options = {})
     updatedAt: now,
   });
   await persistState(state);
-  await persistCampaignRecord(nextCampaign);
   return {
     ok: true,
     result: actionConfig.result,
@@ -50997,7 +51645,127 @@ async function applyApprovedCampaignLifecycleAction(approval = {}, options = {})
   };
 }
 
+function hasCurrentCampaignStartBinding(campaign, approval) {
+  if (!campaign) return true;
+  const status = normalizeCampaignStatus(campaign.status);
+  if (isCampaignStartBlocked(campaign)) return false;
+  return !campaign.approvalId || campaign.approvalId === approval.id ||
+    getDeferredCampaignStartApproval(campaign, status)?.id === approval.id;
+}
+
+async function resolveCampaignStartDispatchId(approval, workspaceId, campaignId) {
+  const stableId = `campaign-start:${JSON.stringify([workspaceId, campaignId])}`;
+  const freshId = approval.metadata?.campaignStartDispatchVersion === 2 ? stableId : approval.id;
+  const isLegacyStart = (item) => ['pending', 'approved'].includes(item.status) &&
+    isCampaignStartApproval(item) && getApprovalCampaignId(item) === campaignId &&
+    item.metadata?.campaignStartDispatchVersion !== 2;
+  const legacyIds = new Set(state.approvals.filter(isLegacyStart).map((item) => item.id));
+  if (!DATABASE_URL) return selectFreshCampaignDispatchId(approval, freshId, legacyIds);
+
+  // Reuse older approval-key claims, including an in-flight or unresolved attempt.
+  const lookup = await queryPgRows(
+    `SELECT d.approval_id
+     FROM public.provider_action_dispatches d
+     LEFT JOIN public.approvals a ON a.id = d.approval_id AND a.type = 'campaign'
+     WHERE d.workspace_id = $1 AND d.tool_name = 'startCampaign'
+       AND (d.approval_id IN ($2, $4)
+         OR (COALESCE(NULLIF(a.payload #>> '{metadata,campaignId}', ''),
+                      NULLIF(a.payload #>> '{metadata,campaign_id}', ''),
+                      a.payload ->> 'campaignId') = $3
+             AND (d.status <> 'completed'
+               OR NULLIF(d.result #>> '{campaignResult,execution,instantly,endpoint}', '') IS NOT NULL
+               OR d.result #>> '{campaignResult,execution,status}' = 'provider-started')))
+     ORDER BY d.dispatch_started_at, d.approval_id
+     LIMIT 1`,
+    [workspaceId, approval.id, campaignId, stableId]
+  );
+  if (!lookup.ok) return { error: lookup.error };
+  if (lookup.rows[0]?.approval_id) return { id: lookup.rows[0].approval_id };
+
+  // A legacy worker can still claim an approval that has no dispatch row yet.
+  const legacy = await queryPgRows(
+    `SELECT id, type, status, payload
+     FROM public.approvals
+     WHERE workspace_id = $1 AND type = 'campaign' AND status IN ('pending', 'approved')
+       AND COALESCE(NULLIF(payload #>> '{metadata,campaignId}', ''),
+                    NULLIF(payload #>> '{metadata,campaign_id}', ''),
+                    payload ->> 'campaignId') = $2`,
+    [normalizeTenantId(workspaceId), campaignId]
+  );
+  if (!legacy.ok) return { error: legacy.error };
+  for (const row of legacy.rows) {
+    const candidate = normalizePgApprovalRecord(row);
+    if (isLegacyStart(candidate)) legacyIds.add(candidate.id);
+  }
+  return selectFreshCampaignDispatchId(approval, freshId, legacyIds);
+}
+
+function selectFreshCampaignDispatchId(approval, freshId, legacyIds) {
+  if (legacyIds.size === 0) return { id: freshId };
+  if (legacyIds.size === 1 && legacyIds.has(approval.id)) return { id: approval.id };
+  return {
+    error: 'A different legacy start approval is still pending or approved. Reconcile it before dispatching this campaign.',
+    result: 'campaign_legacy_approval_conflict',
+  };
+}
+
+async function checkDurableCampaignStart(client, approval, campaign, campaignId, workspaceId) {
+  if (!client) return campaignBindingUnavailable();
+  let row;
+  try {
+    const result = await client.query(
+      `SELECT a.status AS start_status, a.payload AS start_payload,
+              c.id AS campaign_id, c.status AS campaign_status, c.schedule,
+              c.approval_id AS binding_id, c.approval_status AS binding_status,
+              c.pending_action, c.execution_id, c.provider_campaign_id,
+              b.type AS bound_type, b.status AS bound_status, b.payload AS bound_payload
+       FROM public.approvals a
+       LEFT JOIN public.campaigns c ON c.id = NULLIF($2, '')
+       LEFT JOIN public.approvals b ON b.id = c.approval_id AND b.workspace_id = a.workspace_id
+       WHERE a.id = $1 AND a.workspace_id = $3 AND a.type = 'campaign'`,
+      [approval.id, campaignId, normalizeTenantId(workspaceId)]
+    );
+    [row] = result.rows;
+  } catch {
+    return campaignBindingUnavailable();
+  }
+  const start = row && { ...row.start_payload, id: approval.id, type: 'campaign', status: row.start_status };
+  if (!start || start.status !== 'approved' || !isCampaignStartApproval(start) || getApprovalCampaignId(start) !== campaignId) {
+    return blockedCampaignStart();
+  }
+  if (campaignId) {
+    if (!campaign || row.campaign_id !== campaignId || row.binding_id !== campaign.approvalId ||
+        row.campaign_status !== normalizeCampaignStatus(campaign.status) ||
+        isCampaignStartBlocked({ status: row.campaign_status }) || row.provider_campaign_id) {
+      return blockedCampaignStart();
+    }
+    const pendingStart = ['pending', 'active'].includes(row.campaign_status) && row.binding_id === approval.id &&
+      ['pending', 'approved'].includes(row.binding_status) &&
+      row.pending_action && normalizeCampaignApprovalAction({ approvalAction: row.pending_action }) === 'start_campaign';
+    const bound = { ...row.bound_payload, type: row.bound_type, status: row.bound_status };
+    const resumedStart = row.campaign_status === 'active' && !row.execution_id && row.binding_status === 'approved' &&
+      bound.type === 'campaign' && bound.status === 'approved' && getApprovalCampaignId(bound) === campaignId &&
+      normalizeCampaignApprovalAction(bound) === 'campaign_resume' && bound.metadata?.deferredStartApprovalId === approval.id;
+    if (!pendingStart && !resumedStart) return blockedCampaignStart();
+  }
+  const notBefore = getCampaignStartNotBefore({ schedule: row.schedule }, start);
+  if (notBefore === Infinity) return invalidCampaignStartSchedule();
+  if (notBefore !== null && notBefore > Date.now()) {
+    return {
+      ...campaignBindingUnavailable(),
+      error: 'The durable first-send time moved into the future after dispatch was queued.',
+    };
+  }
+  return null;
+}
+
 async function executeApprovedCampaign(approval = {}, options = {}) {
+  const campaignId = getApprovalCampaignId(approval);
+  if (!campaignId) return executeCampaignUnderBinding(approval, options, campaignId);
+  return queueCampaignOperation(`binding:${campaignId}`, () => executeCampaignUnderBinding(approval, options, campaignId));
+}
+
+async function executeCampaignUnderBinding(approval, options, campaignId) {
   if (String(approval.status || '').toLowerCase() !== 'approved') {
     return {
       ok: false,
@@ -51010,17 +51778,97 @@ async function executeApprovedCampaign(approval = {}, options = {}) {
   const lifecycleResult = await applyApprovedCampaignLifecycleAction(approval, options);
   if (lifecycleResult) return lifecycleResult;
 
-  const existing = (state.campaignExecutions || []).find((item) => item.approvalId === approval.id);
-  if (existing) {
+  const campaign = (state.campaigns || []).find((item) => item.id === campaignId);
+  const existing = (state.campaignExecutions || []).find((item) => item.approvalId === approval.id) ||
+    findCampaignProviderStartExecution(campaignId);
+  if (existing || campaign?.providerCampaignId) {
+    const started = campaign?.providerCampaignId || existing?.instantly?.ok || existing?.status === 'provider-started';
     return {
       ok: true,
-      result: 'live',
-      verbiage: 'Campaign execution already started',
+      result: started ? 'live' : existing.instantly?.result || 'provider_missing',
+      verbiage: started ? 'Campaign execution already started' : 'Campaign start already attempted; check the provider',
+      replayed: true,
       execution: existing,
+      campaign,
     };
   }
 
+  if (!approval.id) {
+    return { ok: false, result: 'missing_approval_id', error: 'Campaign approval ID is required.' };
+  }
+  if (!hasCurrentCampaignStartBinding(campaign, approval)) {
+    return blockedCampaignStart();
+  }
+  const firstSendAt = getCampaignStartNotBefore(campaign, approval);
+  if (firstSendAt !== null && firstSendAt > Date.now()) {
+    if (campaign && (!campaign.approvalId || campaign.approvalId === approval.id) &&
+        (campaign.approvalStatus !== 'approved' || campaign.status !== 'pending')) {
+      const scheduledCampaign = {
+        ...campaign,
+        status: 'pending',
+        approvalId: approval.id,
+        approvalStatus: 'approved',
+        pendingAction: 'start_campaign',
+        updatedAt: isoNow(),
+      };
+      if (DATABASE_URL && !(await persistCampaignRecord(scheduledCampaign, { expected: campaign }))) return campaignBindingUnavailable();
+      upsertById(state, 'campaigns', scheduledCampaign);
+    }
+    if (firstSendAt === Infinity) return invalidCampaignStartSchedule();
+    return scheduledCampaignStart(firstSendAt);
+  }
+
+  const workspaceId = approval.workspaceId || approval.workspace_id || 'pbk';
   const leads = getApprovalCampaignLeads(approval);
+  const dispatchKey = campaignId && INSTANTLY_API_KEY && leads.some((lead) => lead.email)
+    ? await resolveCampaignStartDispatchId(approval, workspaceId, campaignId)
+    : { id: approval.id };
+  if (!dispatchKey.id) {
+    return {
+      ok: false,
+      result: dispatchKey.result || 'provider_dispatch_lease_unavailable',
+      error: dispatchKey.error || 'Existing campaign dispatch claims could not be checked.',
+      providerAttempted: false,
+      retryable: !dispatchKey.result,
+    };
+  }
+  const dispatch = await executeProviderActionWithSharedLease({
+    approvalId: dispatchKey.id,
+    workspaceId,
+    toolName: 'startCampaign',
+    readWithLeaseClient: Boolean(DATABASE_URL),
+    execute: async (_context, leaseClient) => {
+      const latestApproval = state.approvals.find((item) => item.id === approval.id);
+      const latestCampaign = (state.campaigns || []).find((item) => item.id === campaignId);
+      if (latestApproval?.status !== 'approved' || getApprovalCampaignId(latestApproval) !== campaignId ||
+          (campaign && !latestCampaign) || !hasCurrentCampaignStartBinding(latestCampaign, latestApproval)) {
+        return { campaignResult: { ...blockedCampaignStart(), providerAttempted: false } };
+      }
+      const latestFirstSend = getCampaignStartNotBefore(latestCampaign, latestApproval);
+      if (latestFirstSend === Infinity) return { campaignResult: invalidCampaignStartSchedule() };
+      if (latestFirstSend !== null && latestFirstSend > Date.now()) {
+        return { campaignResult: scheduledCampaignStart(latestFirstSend) };
+      }
+      if (DATABASE_URL) {
+        const blocked = await checkDurableCampaignStart(leaseClient, latestApproval, latestCampaign, campaignId, workspaceId);
+        if (blocked) return { campaignResult: { ...blocked, providerAttempted: false, reconciliationRequired: true } };
+      }
+      return {
+        campaignResult: await startApprovedCampaign(latestApproval, options, leads, latestCampaign?.approvalId),
+      };
+    },
+  });
+  if (dispatch.value?.campaignResult) {
+    return { ...dispatch.value.campaignResult, replayed: !dispatch.executed };
+  }
+  return dispatch.value?.providerActionResult || {
+    ok: false,
+    result: 'campaign_dispatch_unconfirmed',
+    error: 'Campaign dispatch could not be confirmed. Check the provider before trying again.',
+  };
+}
+
+async function startApprovedCampaign(approval, options, leads, boundApprovalId) {
   const instantlyResult = await createInstantlyCampaignForApproval({ approval, leads });
   const startAt = Date.now();
   const steps = leads.flatMap((lead, leadIndex) => {
@@ -51059,7 +51907,7 @@ async function executeApprovedCampaign(approval = {}, options = {}) {
 
   const execution = {
     id: `campaign-exec-${approval.id || Date.now()}`,
-    campaignId: approval.metadata?.campaignId || '',
+    campaignId: getApprovalCampaignId(approval),
     approvalId: approval.id || '',
     result: 'live',
     status: instantlyResult.ok ? 'provider-started' : 'scheduled-with-provider-gaps',
@@ -51078,15 +51926,19 @@ async function executeApprovedCampaign(approval = {}, options = {}) {
   };
   upsertById(state, 'campaignExecutions', execution);
   await persistCampaignExecutionRecord(execution);
-  const campaignId = approval.metadata?.campaignId || '';
+  const campaignId = execution.campaignId;
   if (campaignId) {
     const campaign = (state.campaigns || []).find((item) => item.id === campaignId);
     if (campaign) {
+      const bindingUnchanged = campaign.approvalId === boundApprovalId && !isCampaignStartBlocked(campaign);
       const nextCampaign = {
         ...campaign,
-        status: instantlyResult.ok ? 'active' : 'provider_missing',
-        approvalStatus: 'approved',
-        pendingAction: '',
+        ...(bindingUnchanged ? {
+          status: instantlyResult.ok ? 'active' : 'provider_missing',
+          approvalId: campaign.approvalId || approval.id,
+          approvalStatus: 'approved',
+          pendingAction: '',
+        } : {}),
         executionId: execution.id,
         providerCampaignId: instantlyResult.providerCampaignId || campaign.providerCampaignId || '',
         metrics: {
@@ -51095,8 +51947,9 @@ async function executeApprovedCampaign(approval = {}, options = {}) {
         },
         updatedAt: isoNow(),
       };
-      upsertById(state, 'campaigns', nextCampaign);
-      await persistCampaignRecord(nextCampaign);
+      if (!DATABASE_URL || await persistCampaignRecord(nextCampaign, { expected: campaign })) {
+        upsertById(state, 'campaigns', nextCampaign);
+      }
       recordCampaignEvent({
         campaignId,
         eventType: 'execution_started',
@@ -52940,12 +53793,14 @@ async function runDueDocuSignEnvelopeJobs({ limit = 5 } = {}) {
 }
 
 let state = await bootstrapRuntimeStateForLiveness();
-await syncAgentRegistryFromPg({ seed: true, persist: false }).catch((error) => {
-  console.warn('[pbk-local-openclaw] agent registry bootstrap skipped:', error?.message || error);
-});
-await seedMemoryAnalyticsStateToPg().catch((error) => {
-  console.warn('[pbk-local-openclaw] memory analytics bootstrap skipped:', error?.message || error);
-});
+if (runtimeStateBootstrap.ready) {
+  await syncAgentRegistryFromPg({ seed: true, persist: false }).catch((error) => {
+    console.warn('[pbk-local-openclaw] agent registry bootstrap skipped:', error?.message || error);
+  });
+  await seedMemoryAnalyticsStateToPg().catch((error) => {
+    console.warn('[pbk-local-openclaw] memory analytics bootstrap skipped:', error?.message || error);
+  });
+}
 const analyzerResultCache = new Map();
 
 function buildAnalyzerCacheKey(params = {}) {
@@ -56109,7 +56964,10 @@ const toolHandlers = {
         reason: 'Inbound reply requested no further contact.',
         source: params.provider || params.channel || 'email-reply',
       });
-      if (dncEntry.phone && !findDncEntryByPhone(dncEntry.phone)) addDncEntry(state, dncEntry);
+      if (dncEntry.phone) {
+        if (!findDncEntryByPhone(dncEntry.phone)) addDncEntry(state, dncEntry);
+        await updateWorkspacePhoneDnc(dncEntry.phone, true);
+      }
       leadStage = 'dnc';
     } else if (reply.nextAction === 'archive') {
       leadStage = 'archived';
@@ -56467,6 +57325,14 @@ const toolHandlers = {
       createdAt: params.createdAt || isoNow(),
     };
 
+    if (isCampaignStartApproval(approval)) {
+      const campaignId = getApprovalCampaignId(approval);
+      const campaign = campaignId && (state.campaigns || []).find((item) => item.id === campaignId);
+      const { campaignStartDispatchVersion, ...metadata } = approval.metadata;
+      approval.metadata = campaign?.startDispatchVersion === 2
+        ? { ...metadata, campaignStartDispatchVersion: 2 }
+        : metadata;
+    }
     addApproval(state, approval);
     addActivity(
       state,
@@ -57639,7 +58505,10 @@ const toolHandlers = {
         if (TELNYX_MEDIA_STREAM_TOKEN) requestPayload.stream_auth_token = TELNYX_MEDIA_STREAM_TOKEN;
       }
 
-      const telnyxResponse = await fireTelnyxRequest('POST', '/calls', requestPayload);
+      const telnyxResponse = await fireTelnyxRequest('POST', '/calls', requestPayload, { leadId: context.leadId });
+      if (telnyxResponse.batchPhoneGuard) {
+        return { ok: false, blocked: true, result: telnyxResponse.batchPhoneGuard, error: telnyxResponse.error, providerAttempted: false };
+      }
       if (!telnyxResponse.ok) {
         addActivity(
           state,
@@ -57838,7 +58707,10 @@ const toolHandlers = {
       if (webhookUrl) requestPayload.webhook_url = webhookUrl;
       if (TELNYX_MESSAGING_PROFILE_ID) requestPayload.messaging_profile_id = TELNYX_MESSAGING_PROFILE_ID;
 
-      const telnyxResponse = await fireTelnyxRequest('POST', '/messages', requestPayload);
+      const telnyxResponse = await fireTelnyxRequest('POST', '/messages', requestPayload, { leadId: context.leadId });
+      if (telnyxResponse.batchPhoneGuard) {
+        return { ok: false, blocked: true, result: telnyxResponse.batchPhoneGuard, error: telnyxResponse.error, providerAttempted: false };
+      }
       if (!telnyxResponse.ok) {
         addActivity(
           state,
@@ -58437,8 +59309,9 @@ const toolHandlers = {
         source: explicitStop ? 'call-opt-out' : 'anger-detection',
       });
 
-      if (dncEntry.phone && !findDncEntryByPhone(dncEntry.phone)) {
-        addDncEntry(state, dncEntry);
+      if (dncEntry.phone) {
+        if (!findDncEntryByPhone(dncEntry.phone)) addDncEntry(state, dncEntry);
+        await updateWorkspacePhoneDnc(dncEntry.phone, true);
       }
 
       addActivity(
@@ -59425,11 +60298,28 @@ async function handleManualLeadCreate(payload = {}) {
   };
 }
 
+const approvalDecisionLocks = new Map();
+
 async function handleEvent(eventType, payload = {}) {
   const normalizedEvent = String(eventType || '')
     .trim()
     .toLowerCase();
 
+  if (normalizedEvent !== 'approval-callback') {
+    return handleRuntimeEvent(normalizedEvent, payload);
+  }
+  const approvalId = String(payload.id || '');
+  const previous = approvalDecisionLocks.get(approvalId) || Promise.resolve();
+  const current = previous.catch(() => {}).then(() => handleRuntimeEvent(normalizedEvent, payload));
+  approvalDecisionLocks.set(approvalId, current);
+  try {
+    return await current;
+  } finally {
+    if (approvalDecisionLocks.get(approvalId) === current) approvalDecisionLocks.delete(approvalId);
+  }
+}
+
+async function handleRuntimeEvent(normalizedEvent, payload) {
   if (normalizedEvent === 'lead-intake' || normalizedEvent === 'lead-import') {
     const fromN8nLeadIntake = payload?._source === 'n8n-lead-intake';
     const eventId = payload?.eventId || payload?.event_id || null;
@@ -59586,8 +60476,23 @@ async function handleEvent(eventType, payload = {}) {
     const incomingStatus = normalizeApprovalDecisionStatus(
       payload.status || approval.status || 'pending'
     );
+    if (!['approved', 'rejected', 'needs_revision', 'cancelled'].includes(incomingStatus)) {
+      return { ok: false, statusCode: 400, error: 'Unsupported approval decision.' };
+    }
     const incomingActor = payload.actor || approval.actor || 'n8n';
-    const incomingActedAt = payload.actedAt || approval.actedAt || null;
+    const incomingActedAt = payload.actedAt || approval.actedAt || isoNow();
+    const currentStatus = normalizeApprovalDecisionStatus(approval.status || 'pending');
+    const slackNeedsRevision = payload.source === 'slack-interaction' && incomingStatus === 'needs_revision';
+    let localClaim = false;
+    if (currentStatus === 'pending') {
+      const claim = await claimPendingApprovalDecision(approval, {
+        status: incomingStatus,
+        actor: incomingActor,
+        actedAt: incomingActedAt,
+      });
+      if (!claim.claimed) return claim.result;
+      localClaim = claim.local === true;
+    }
     const exactApprovalReplay =
       normalizeApprovalDecisionStatus(approval.status) === incomingStatus &&
       approval.actor === incomingActor &&
@@ -59639,6 +60544,9 @@ async function handleEvent(eventType, payload = {}) {
       Boolean(approval.metadata?.providerActionAttemptedAt) &&
       Boolean(approval.metadata?.conversationSendBinding?.conversationEventId) &&
       !approval.metadata?.conversationProjection?.projectedAt;
+    if (currentStatus !== 'pending' && !exactApprovalReplay) {
+      return replayApprovalDecision(approval, incomingStatus);
+    }
     if (
       exactApprovalReplay &&
       !retryConversationProjectionOnly &&
@@ -59679,6 +60587,13 @@ async function handleEvent(eventType, payload = {}) {
     approval.actor = incomingActor;
     approval.actedAt = incomingActedAt || isoNow();
     approval.notes = payload.notes || approval.notes;
+    if (localClaim) {
+      try {
+        await persistState(state);
+      } catch (error) {
+        return { ok: false, statusCode: 503, error: 'Could not save the approval decision. No dispatch was started.' };
+      }
+    }
     if (payload.teamAuth && typeof payload.teamAuth === 'object') {
       approval.metadata = {
         ...(approval.metadata || {}),
@@ -59698,7 +60613,11 @@ async function handleEvent(eventType, payload = {}) {
         ...(approval.metadata || {}),
         launchReview: {
           reason: reviewReason,
-          notes: payload.notes || '',
+          notes: slackNeedsRevision
+            ? approvalNeedsLeadQualificationContext(approval)
+              ? 'Review seller context, offer path, and any known BANT+ details before approving.'
+              : 'Review the action details before approving.'
+            : payload.notes || '',
           actor: incomingActor,
           actedAt: approval.actedAt,
         },
@@ -59840,8 +60759,12 @@ async function handleEvent(eventType, payload = {}) {
       }
     }
 
-    if (approval.status === 'approved' && String(approval.type || '').toLowerCase() === 'campaign') {
-      campaignResult = await executeApprovedCampaign(approval, { actor: incomingActor });
+    if (String(approval.type || '').toLowerCase() === 'campaign') {
+      if (approval.status === 'approved') {
+        campaignResult = await executeApprovedCampaign(approval, { actor: incomingActor });
+      } else if (approval.status === 'rejected') {
+        await restoreScheduledCampaignAfterDeniedCancel(approval);
+      }
     }
 
     if (approval.status === 'approved' && (String(approval.type || '').toLowerCase() === 'prompt-edit' || String(approval.approvalAction || '').toLowerCase() === 'prompt_patch')) {
@@ -59849,7 +60772,9 @@ async function handleEvent(eventType, payload = {}) {
     }
 
     if (String(approval.type || '').toLowerCase() === 'rex-decision' || String(approval.approvalAction || '').toLowerCase() === 'rex_apply') {
-      rexDecisionResult = await handleRexDecisionApproval(approval, { actor: incomingActor });
+      rexDecisionResult = slackNeedsRevision
+        ? await requestRexDecisionModificationFromApproval(approval, { actor: incomingActor })
+        : await handleRexDecisionApproval(approval, { actor: incomingActor });
     }
 
     if (approval.status === 'approved' && String(approval.type || '').toLowerCase() === 'provider-action') {
@@ -60291,7 +61216,9 @@ async function handleEvent(eventType, payload = {}) {
     await projectLiveConversationRecord({
       record: approval,
       projector: projectApprovalEvent,
-      source: 'approval-decided',
+      ...(slackNeedsRevision
+        ? { source: 'slack-approval-needs-review' }
+        : { source: 'approval-decided' }),
     });
     return {
       ok: true,
@@ -60375,6 +61302,7 @@ async function handleEvent(eventType, payload = {}) {
     if (!existing && entry.phone) {
       addDncEntry(state, entry);
     }
+    if (entry.phone) await updateWorkspacePhoneDnc(entry.phone, true);
     addActivity(
       state,
       makeActivity({
@@ -60402,7 +61330,9 @@ async function handleEvent(eventType, payload = {}) {
         error: 'DNC entry not found.',
       };
     }
-    const [removed] = state.dncEntries.splice(existingIndex, 1);
+    const removed = state.dncEntries[existingIndex];
+    await updateWorkspacePhoneDnc(removed.phone, false);
+    state.dncEntries = state.dncEntries.filter((entry) => entry !== removed);
     addActivity(
       state,
       makeActivity({
@@ -61400,19 +62330,33 @@ function buildElevenLabsTtsRequest(body = {}, text = '', { stream = false } = {}
 
 async function fetchElevenLabsTts(body = {}, text = '', options = {}) {
   const request = buildElevenLabsTtsRequest(body, text, options);
+  const timeoutMs = Math.max(0, Number(options.timeoutMs || 0));
   const fireRequest = (ttsRequest) =>
     executeProviderCircuitGuard(
       'elevenlabs',
-      () =>
-        fetch(ttsRequest.url, {
-          method: 'POST',
-          headers: {
-            Accept: 'audio/mpeg',
-            'Content-Type': 'application/json',
-            'xi-api-key': ELEVENLABS_API_KEY,
-          },
-          body: JSON.stringify(ttsRequest.payload),
-        }),
+      async () => {
+        const controller = timeoutMs > 0 ? new AbortController() : null;
+        let timeout = null;
+        try {
+          if (controller) {
+            timeout = setTimeout(() => {
+              controller.abort(new Error(`ElevenLabs TTS timed out after ${timeoutMs}ms`));
+            }, timeoutMs);
+          }
+          return await fetch(ttsRequest.url, {
+            method: 'POST',
+            headers: {
+              Accept: 'audio/mpeg',
+              'Content-Type': 'application/json',
+              'xi-api-key': ELEVENLABS_API_KEY,
+            },
+            body: JSON.stringify(ttsRequest.payload),
+            ...(controller ? { signal: controller.signal } : {}),
+          });
+        } finally {
+          if (timeout) clearTimeout(timeout);
+        }
+      },
       async () => new Response('ElevenLabs circuit is open.', { status: 503 })
     );
   let response = await fireRequest(request);
@@ -61458,7 +62402,103 @@ async function fetchElevenLabsTts(body = {}, text = '', options = {}) {
   return result;
 }
 
-async function sendElevenLabsTtsToTelnyxMediaStream(session = {}, text = '') {
+function sendTelnyxMediaClearCommand(session = {}, reason = 'caller_barge_in') {
+  const socket = session?.telnyxMediaSocket;
+  if (!socket || socket.readyState !== WebSocket.OPEN || !session.streamId) {
+    return {
+      ok: false,
+      result: 'media_clear_unavailable',
+      reason,
+    };
+  }
+  try {
+    socket.send(
+      JSON.stringify({
+        event: 'clear',
+        stream_id: session.streamId,
+      })
+    );
+    session.lastTelnyxMediaClearAt = isoNow();
+    session.lastTelnyxMediaClearReason = reason;
+    const lockKey = getTelnyxAvaTurnLockKey(session);
+    if (lockKey) telnyxAvaTurnLocksByCallId.delete(lockKey);
+    recordCallTrace('telnyx_media_clear_sent', {
+      ...session,
+      status: 'sent',
+      result: reason,
+      stage: 'sendTelnyxMediaClearCommand',
+    });
+    return {
+      ok: true,
+      result: 'telnyx_media_clear_sent',
+      reason,
+    };
+  } catch (error) {
+    recordCallTrace('telnyx_media_clear_failed', {
+      ...session,
+      status: 'warning',
+      result: reason,
+      error: error?.message || 'Telnyx media clear failed.',
+      stage: 'sendTelnyxMediaClearCommand',
+    });
+    return {
+      ok: false,
+      result: 'telnyx_media_clear_failed',
+      reason,
+      error: error?.message || 'Telnyx media clear failed.',
+    };
+  }
+}
+
+function isTelnyxTtsReplyStale(session = {}, options = {}) {
+  if (!isCurrentTelnyxMediaSession(session)) {
+    return {
+      stale: true,
+      result: 'not_current_media_session',
+    };
+  }
+  if (session.avaReplySuppressed || session.finalized) {
+    return {
+      stale: true,
+      result: session.finalized ? 'media_session_finalized' : 'superseded_media_stream',
+    };
+  }
+  const expectedTurnVersion = Number(options.replyTurnVersion || session.pendingAvaReplyTurnVersion || 0);
+  const currentTurnVersion = Number(session.sellerTranscriptVersion || 0);
+  if (expectedTurnVersion && currentTurnVersion && expectedTurnVersion !== currentTurnVersion) {
+    return {
+      stale: true,
+      result: 'stale_seller_turn_before_media_send',
+      expectedTurnVersion,
+      currentTurnVersion,
+    };
+  }
+  const replyStartedAt = Number(options.replyStartedAt || 0);
+  const callerBargeInAt = Date.parse(session.lastCallerAudioDuringAvaAt || '') || 0;
+  if (replyStartedAt && callerBargeInAt > replyStartedAt) {
+    return {
+      stale: true,
+      result: 'caller_barge_in_before_media_send',
+      expectedTurnVersion,
+      currentTurnVersion,
+    };
+  }
+  if (replyStartedAt && Date.now() - replyStartedAt > ELEVENLABS_TELNYX_TTS_STALE_MS) {
+    return {
+      stale: true,
+      result: 'tts_reply_stale_by_age',
+      ageMs: Date.now() - replyStartedAt,
+    };
+  }
+  return {
+    stale: false,
+    result: 'fresh',
+    expectedTurnVersion,
+    currentTurnVersion,
+  };
+}
+
+async function sendElevenLabsTtsToTelnyxMediaStream(session = {}, text = '', options = {}) {
   const cleanText = sanitizeAvaSpokenOutput(text, 'I hear you. Let me slow this down so I can help the right way. What matters most right now: speed, certainty, or price?').slice(0, 900);
   const socket = session?.telnyxMediaSocket;
   if (!PBK_TELNYX_ELEVENLABS_MEDIA_REPLY_ENABLED) {
@@ -61539,7 +62579,10 @@ async function sendElevenLabsTtsToTelnyxMediaStream(session = {}, text = '') {
         transport: 'telnyx-media-stream',
       },
     },
-    cleanText
+    cleanText,
+    {
+      timeoutMs: ELEVENLABS_TELNYX_TTS_TIMEOUT_MS,
+    }
   );
   recordCallTrace('elevenlabs_tts_payload', {
     ...session,
@@ -61589,6 +62632,29 @@ async function sendElevenLabsTtsToTelnyxMediaStream(session = {}, text = '') {
     };
   }
 
+  const staleReply = isTelnyxTtsReplyStale(session, options);
+  if (staleReply.stale) {
+    recordCallTrace('ava_phone_reply_skipped', {
+      ...session,
+      status: 'skipped',
+      result: staleReply.result || 'stale_seller_turn_before_media_send',
+      transcript: options.transcript || session.lastAvaReplyTranscript || '',
+      replyPreview: cleanText.slice(0, 260),
+      pendingTurnVersion: staleReply.expectedTurnVersion || options.replyTurnVersion || 0,
+      currentTurnVersion: staleReply.currentTurnVersion || session.sellerTranscriptVersion || 0,
+      stage: 'sendElevenLabsTtsToTelnyxMediaStream',
+    });
+    return {
+      ok: false,
+      skipped: true,
+      result: staleReply.result || 'stale_seller_turn_before_media_send',
+      provider: 'ElevenLabs',
+      voiceId: tts.voiceId,
+      bytes: audioBuffer.length,
+      error: 'Seller turn changed before TTS audio could be sent.',
+    };
+  }
+
   const mediaMessage = {
     event: 'media',
     stream_id: session.streamId,
@@ -61610,11 +62676,11 @@ async function sendElevenLabsTtsToTelnyxMediaStream(session = {}, text = '') {
   };
 }
 
-async function sendAvaPhoneReplyAudio(session = {}, text = '') {
+async function sendAvaPhoneReplyAudio(session = {}, text = '', options = {}) {
   const safeText = sanitizeAvaSpokenOutput(text, 'I hear you. Let me slow this down so I can help the right way. What matters most right now: speed, certainty, or price?');
   let mediaResult = null;
   try {
-    mediaResult = await sendElevenLabsTtsToTelnyxMediaStream(session, safeText);
+    mediaResult = await sendElevenLabsTtsToTelnyxMediaStream(session, safeText, options);
     if (mediaResult.ok) return mediaResult;
   } catch (error) {
     mediaResult = {
@@ -61622,6 +62688,19 @@ async function sendAvaPhoneReplyAudio(session = {}, text = '') {
       result: 'elevenlabs_telnyx_media_exception',
       provider: 'ElevenLabs',
       error: error?.message || 'ElevenLabs phone media reply failed.',
+    };
+  }
+
+  const staleReply = isTelnyxTtsReplyStale(session, options);
+  if (staleReply.stale) {
+    return {
+      ok: false,
+      skipped: true,
+      result: staleReply.result || 'stale_seller_turn_before_telnyx_fallback',
+      provider: 'Telnyx',
+      fallbackFrom: 'elevenlabs_telnyx_media',
+      elevenLabsMedia: mediaResult,
+      error: 'Seller turn changed before fallback phone audio could be sent.',
     };
   }
 
@@ -64112,69 +65191,31 @@ async function handleSlackApprovalInteraction(payload = {}) {
   const isModify = /modify|counter|needs_revision|needs-revision|review/i.test(actionKind);
   const isReject = /reject|decline/i.test(actionKind);
   const status = isModify ? 'needs_revision' : isReject ? 'rejected' : 'approved';
-  let result = null;
-  if (isModify) {
-    const approval = state.approvals.find((item) => item.id === approvalId);
-    if (!approval) {
-      result = { ok: false, error: `Approval ${approvalId} was not found.` };
-    } else {
-      approval.status = status;
-      approval.actor = actor;
-      approval.actedAt = isoNow();
-      approval.notes = 'Slack marked this item as needing review before approval.';
-      approval.reviewReason = 'slack_needs_review';
-      approval.falsePositiveTag = 'slack_needs_review';
-      approval.metadata = {
-        ...(approval.metadata || {}),
-        launchReview: {
-          reason: 'slack_needs_review',
-          notes: approvalNeedsLeadQualificationContext(approval) ? 'Review seller context, offer path, and any known BANT+ details before approving.' : 'Review the action details before approving.',
-          actor,
-          actedAt: approval.actedAt,
-        },
-      };
-      const rexDecisionResult = String(approval.type || '').toLowerCase() === 'rex-decision' || String(approval.approvalAction || '').toLowerCase() === 'rex_apply' ? await requestRexDecisionModificationFromApproval(approval, { actor }) : null;
-      addActivity(
-        state,
-        makeActivity({
-          actor,
-          category: 'APPROVAL',
-          status: 'warning',
-          text: `${approval.type || 'Approval'} marked needs review from Slack`,
-          target: approval.address || approval.leadName || approval.id,
-        })
-      );
-      await persistState(state);
-      await projectLiveConversationRecord({
-        record: approval,
-        projector: projectApprovalEvent,
-        source: 'slack-approval-needs-review',
-      });
-      result = { ok: true, approval, rexDecisionResult };
-    }
-  } else {
-    result = await handleEvent('approval-callback', {
-      id: approvalId,
-      status,
-      actor,
-      actedAt: isoNow(),
-      notes: `Slack interactive approval ${status}.`,
-      source: 'slack-interaction',
-      skipSlackSync: true,
-    });
-  }
-  const update = await updateSlackApprovalMessage({
-    channel: payload.channel?.id || payload.container?.channel_id || payload.message?.channel || '',
-    ts: payload.message?.ts || payload.container?.message_ts || '',
-    approval: result.approval || { id: approvalId, status },
+  const result = await handleEvent('approval-callback', {
+    id: approvalId,
     status,
     actor,
+    actedAt: isoNow(),
+    notes: isModify
+      ? 'Slack marked this item as needing review before approval.'
+      : `Slack interactive approval ${status}.`,
+    reviewReason: isModify ? 'slack_needs_review' : '',
+    source: 'slack-interaction',
+    skipSlackSync: true,
   });
+  const canonicalStatus = result.approval?.status;
+  const update = canonicalStatus ? await updateSlackApprovalMessage({
+    channel: payload.channel?.id || payload.container?.channel_id || payload.message?.channel || '',
+    ts: payload.message?.ts || payload.container?.message_ts || '',
+    approval: result.approval,
+    status: canonicalStatus,
+    actor: result.approval.actor || actor,
+  }) : null;
   const ok = result.ok !== false;
   return {
     ok,
-    status: ok ? 200 : 404,
-    text: ok ? `PBK approval ${status === 'needs_revision' ? 'sent back for modification' : status}.` : result.error || 'PBK approval was not found.',
+    status: ok ? 200 : result.statusCode || 404,
+    text: ok ? `PBK approval ${canonicalStatus === 'needs_revision' ? 'sent back for modification' : canonicalStatus}.` : result.error || 'PBK approval was not found.',
     result,
     update,
   };
@@ -68013,6 +69054,97 @@ function stripUnconfirmedAvaLiveLeadName(text = '', { session = {}, contextCall 
   return stripped.trim() || clean;
 }
 
+function resolveAvaLiveMao(session = {}, contextCall = null, reply = {}) {
+  const candidates = [
+    session.mao,
+    session.maxAllowableOffer,
+    session.analysis?.mao,
+    session.dealAnalysis?.mao,
+    session.pathDecision?.analysis?.mao,
+    contextCall?.mao,
+    contextCall?.maxAllowableOffer,
+    contextCall?.analysis?.mao,
+    contextCall?.dealAnalysis?.mao,
+    contextCall?.raw?.analysis?.mao,
+    contextCall?.raw?.contractContext?.mao,
+    contextCall?.contractContext?.mao,
+    contextCall?.lead?.analysis?.mao,
+    reply?.architecture?.analysis?.mao,
+    reply?.architecture?.fullIntelligence?.analysis?.mao,
+    reply?.pbkIntelligenceContext?.deal?.mao,
+    reply?.pbkIntelligenceContext?.analysis?.mao,
+  ];
+  for (const candidate of candidates) {
+    const value = toMoneyNumber(candidate, 0);
+    if (Number.isFinite(value) && value > 0) return value;
+  }
+  return 0;
+}
+
+function hasAvaLiveAuthorityEvidence(session = {}, contextCall = null, reply = {}) {
+  return Boolean(
+    session.authorityConfirmed ||
+      session.decisionMakerConfirmed ||
+      normalizeBantValue(session.bant?.authority || session.bantStatus?.known?.authority || contextCall?.bant?.authority) ||
+      reply?.turnContract?.knownFacts?.authority ||
+      reply?.architecture?.bant?.known?.authority
+  );
+}
+
+function guardTelnyxLiveSpokenReply(reply = {}, { session = {}, contextCall = null, transcript = '', pathDecision = {}, callerRoleDecision = {}, masterProbe = {} } = {}) {
+  const ownerSafe = stripUnconfirmedAvaLiveLeadName(
+    enforceAvaOwnerSafeReply(reply.text || '', {
+      session,
+      contextCall,
+      transcript,
+      query: transcript,
+      architecture: reply.architecture,
+      pathDecision: pathDecision || reply.architecture?.pathDecision || session.pathDecision || {},
+      callerRoleDecision: callerRoleDecision || reply.architecture?.callerRole || session.callerRole,
+      masterProbe: masterProbe || reply.architecture?.masterProbe || session.masterProbe,
+    }),
+    { session, contextCall }
+  );
+  const activeTurnContract = reply.turnContract || session.avaLiveTurnContract || null;
+  const guard = guardAvaResponse({
+    answer: ownerSafe,
+    transcript,
+    query: transcript,
+    phase: activeTurnContract?.phase || session.goalInference?.phase || '',
+    authorityKnown: hasAvaLiveAuthorityEvidence(session, contextCall, reply),
+    evidence: {
+      participantsIdentified: hasAvaLiveAuthorityEvidence(session, contextCall, reply),
+      mao: resolveAvaLiveMao(session, contextCall, reply),
+    },
+    context: {
+      mao: resolveAvaLiveMao(session, contextCall, reply),
+    },
+    previousQuestions: [
+      session.lastAvaReplySpoken,
+      session.lastAvaSpokenPreview,
+      ...(Array.isArray(session.askedLiveQuestions) ? session.askedLiveQuestions : []),
+    ].filter(Boolean),
+  });
+  const guardedText = guard.answer || ownerSafe;
+  if (guard.result !== 'passed') {
+    recordCallTrace('ava_live_spoken_guard', {
+      ...session,
+      status: guard.blocked ? 'blocked' : 'rewritten',
+      result: guard.result,
+      reasons: guard.reasons || [],
+      transcript,
+      originalPreview: ownerSafe.slice(0, 320),
+      guardedPreview: guardedText.slice(0, 320),
+      stage: 'guardTelnyxLiveSpokenReply',
+    });
+  }
+  return {
+    text: guardedText,
+    guard,
+    ownerSafeText: ownerSafe,
+  };
+}
+
 function chooseMissingBantFieldForTurn(session = {}, missing = []) {
   const ordered = Array.isArray(missing) ? missing.filter(Boolean) : [];
   if (!ordered.length) return '';
@@ -68978,20 +70110,15 @@ async function injectDebugTranscriptIntoLiveCall(body = {}) {
   }
 
   const reply = await buildTelnyxLiveAvaReply({ session, transcript, contextCall });
-  const guardedReplyText = stripUnconfirmedAvaLiveLeadName(
-    enforceAvaOwnerSafeReply(reply.text || '', {
-      session,
-      contextCall,
-      transcript,
-      query: transcript,
-      architecture: reply.architecture,
-      pathDecision: reply.architecture?.pathDecision || session.pathDecision || livePathDecision,
-      callerRoleDecision: reply.architecture?.callerRole || session.callerRole,
-      masterProbe: reply.architecture?.masterProbe || session.masterProbe,
-    }),
-    { session, contextCall }
-  );
-  const spoken = sanitizeAvaSpokenOutput(guardedReplyText, 'I hear you. Let me slow this down so I can help the right way. What matters most right now: speed, certainty, or price?');
+  const guardedReply = guardTelnyxLiveSpokenReply(reply, {
+    session,
+    contextCall,
+    transcript,
+    pathDecision: reply.architecture?.pathDecision || session.pathDecision || livePathDecision,
+    callerRoleDecision: reply.architecture?.callerRole || session.callerRole,
+    masterProbe: reply.architecture?.masterProbe || session.masterProbe,
+  });
+  const spoken = sanitizeAvaSpokenOutput(guardedReply.text, 'I hear you. Let me slow this down so I can help the right way. What matters most right now: speed, certainty, or price?');
   session.operatorWhisper =
     buildOperatorWhisperRecord(reply, spoken) || session.operatorWhisper || null;
   session.lastAvaReplyPreview = String(reply.text || '').slice(0, 1200);
@@ -69010,7 +70137,11 @@ async function injectDebugTranscriptIntoLiveCall(body = {}) {
     result: shouldSpeak ? 'call_not_speakable' : 'speak_not_requested',
   };
   if (shouldSpeak && spoken && (!contextCall || isTelnyxCallStillSpeakable(contextCall))) {
-    speakResult = await sendAvaPhoneReplyAudio(session, spoken);
+    speakResult = await sendAvaPhoneReplyAudio(session, spoken, {
+      replyTurnVersion: item.turnVersion || session.sellerTranscriptVersion || 0,
+      replyStartedAt: Date.now(),
+      transcript,
+    });
     if (speakResult.ok) {
       session.lastAvaReplySpoken = spoken;
       session.lastAvaSpokenPreview = spoken.slice(0, 320);
@@ -69174,6 +70305,7 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
   let noTranscriptFallbackTimer = null;
   let telnyxFinalOnlyReplyTimer = null;
   let telnyxPendingFinalReplyItem = null;
+  let telnyxQueuedAvaReplyTimer = null;
   let suppressNextDeepgramCloseWarning = false;
 
   socket.on('message', (raw) => {
@@ -69205,6 +70337,10 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
       clearTimeout(telnyxFinalOnlyReplyTimer);
       telnyxFinalOnlyReplyTimer = null;
       telnyxPendingFinalReplyItem = null;
+    }
+    if (telnyxQueuedAvaReplyTimer) {
+      clearTimeout(telnyxQueuedAvaReplyTimer);
+      telnyxQueuedAvaReplyTimer = null;
     }
     const ownsCurrentCallSlot = Boolean(session.callId && telnyxMediaSessionsByCallId.get(session.callId) === session);
     if (ownsCurrentCallSlot) telnyxMediaSessionsByCallId.delete(session.callId);
@@ -69578,6 +70714,53 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
     }, TELNYX_BRIDGE_AVA_FINAL_ONLY_REPLY_DELAY_MS);
   };
 
+  const queueTelnyxAvaReplyRetry = (item = {}, delayMs = TELNYX_BRIDGE_AVA_REPLY_RETRY_BUFFER_MS, reason = 'reply_retry') => {
+    if (!item?.transcript || finalized) return false;
+    const retryDelayMs = Math.max(TELNYX_BRIDGE_AVA_REPLY_RETRY_BUFFER_MS, Math.min(12000, Number(delayMs || TELNYX_BRIDGE_AVA_REPLY_RETRY_BUFFER_MS)));
+    const retryTurnVersion = Number(item.turnVersion || session.sellerTranscriptVersion || 0);
+    const transcriptPreview = String(item.transcript || '').slice(0, 220);
+    if (telnyxQueuedAvaReplyTimer) clearTimeout(telnyxQueuedAvaReplyTimer);
+    session.queuedAvaReply = {
+      reason,
+      transcript: transcriptPreview,
+      turnVersion: retryTurnVersion,
+      retryAt: new Date(Date.now() + retryDelayMs).toISOString(),
+      updatedAt: isoNow(),
+    };
+    recordCallTrace('ava_phone_reply_queued', {
+      ...session,
+      status: 'queued',
+      result: reason,
+      transcript: item.transcript,
+      retryDelayMs,
+      turnVersion: retryTurnVersion,
+      stage: 'queueTelnyxAvaReplyRetry',
+    });
+    telnyxQueuedAvaReplyTimer = setTimeout(() => {
+      telnyxQueuedAvaReplyTimer = null;
+      const pending = session.queuedAvaReply;
+      delete session.queuedAvaReply;
+      if (finalized || !pending || !item?.transcript) return;
+      if (retryTurnVersion && Number(session.sellerTranscriptVersion || 0) !== retryTurnVersion) {
+        recordCallTrace('ava_phone_reply_skipped', {
+          ...session,
+          status: 'skipped',
+          result: 'queued_turn_superseded',
+          transcript: item.transcript,
+          pendingTurnVersion: retryTurnVersion,
+          currentTurnVersion: session.sellerTranscriptVersion || 0,
+          stage: 'queueTelnyxAvaReplyRetry',
+        });
+        return;
+      }
+      void maybeSpeakTelnyxAvaReply({
+        ...item,
+        queuedRetry: true,
+      });
+    }, retryDelayMs);
+    return true;
+  };
+
   const maybeSpeakTelnyxAvaReply = async (item) => {
     if (!PBK_TELNYX_BRIDGE_AVA_REPLY_ENABLED) return;
     if (session.telnyxAiAssistantStarted && !PBK_TELNYX_BRIDGE_AVA_REPLY_FORCE) return;
@@ -69646,12 +70829,17 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
       recordCallTrace('ava_phone_reply_skipped', {
         ...session,
         status: 'skipped',
-        result: 'ava_turn_lock_active',
+        result: 'ava_turn_lock_active_queued',
         transcript: item.transcript,
         lockReason: activeTurnLock.reason,
         lockRemainingMs: activeTurnLock.remainingMs,
         stage: 'maybeSpeakTelnyxAvaReply',
       });
+      queueTelnyxAvaReplyRetry(
+        item,
+        activeTurnLock.remainingMs + TELNYX_BRIDGE_AVA_REPLY_RETRY_BUFFER_MS,
+        'ava_turn_lock_active_queued'
+      );
       return;
     }
     if (isCallerRequestingFloor(transcriptForReply)) {
@@ -69721,7 +70909,23 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
       });
       return;
     }
-    if (now - Number(session.lastAvaReplyAt || 0) < TELNYX_BRIDGE_AVA_REPLY_MIN_MS) return;
+    const replyCooldownRemaining = TELNYX_BRIDGE_AVA_REPLY_MIN_MS - (now - Number(session.lastAvaReplyAt || 0));
+    if (replyCooldownRemaining > 0) {
+      recordCallTrace('ava_phone_reply_skipped', {
+        ...session,
+        status: 'skipped',
+        result: 'reply_cooldown_queued',
+        transcript: item.transcript,
+        retryDelayMs: replyCooldownRemaining + TELNYX_BRIDGE_AVA_REPLY_RETRY_BUFFER_MS,
+        stage: 'maybeSpeakTelnyxAvaReply',
+      });
+      queueTelnyxAvaReplyRetry(
+        item,
+        replyCooldownRemaining + TELNYX_BRIDGE_AVA_REPLY_RETRY_BUFFER_MS,
+        'reply_cooldown_queued'
+      );
+      return;
+    }
     const duplicateSellerTurn = hasRecentAvaSellerTurnFingerprint(
       session,
       item.transcript || transcriptForReply,
@@ -69810,20 +71014,15 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
       reply.architecture.pbkIntelligenceContext = summarizeRuntimePBKIntelligenceContext(replyPBKIntelligenceContext);
       reply.architecture.pbkIntelligenceReadiness = replyPBKIntelligenceContext.fleetReadiness || null;
     }
-    const guardedReplyText = stripUnconfirmedAvaLiveLeadName(
-      enforceAvaOwnerSafeReply(reply.text || '', {
-        session,
-        contextCall,
-        transcript: item.transcript,
-        query: item.transcript,
-        architecture: reply.architecture,
-        pathDecision: reply.architecture?.pathDecision || session.pathDecision || {},
-        callerRoleDecision: reply.architecture?.callerRole || session.callerRole,
-        masterProbe: reply.architecture?.masterProbe || session.masterProbe,
-      }),
-      { session, contextCall }
-    );
-    const spoken = sanitizeAvaSpokenOutput(guardedReplyText, 'I hear you. Let me slow this down so I can help the right way. What matters most right now: speed, certainty, or price?');
+    const guardedReply = guardTelnyxLiveSpokenReply(reply, {
+      session,
+      contextCall,
+      transcript: item.transcript,
+      pathDecision: reply.architecture?.pathDecision || session.pathDecision || {},
+      callerRoleDecision: reply.architecture?.callerRole || session.callerRole,
+      masterProbe: reply.architecture?.masterProbe || session.masterProbe,
+    });
+    const spoken = sanitizeAvaSpokenOutput(guardedReply.text, 'I hear you. Let me slow this down so I can help the right way. What matters most right now: speed, certainty, or price?');
     if (Number(session.sellerTranscriptVersion || 0) !== replyTurnVersion) {
       delete session.pendingAvaReplyTranscript;
       delete session.pendingAvaReplyTurnVersion;
@@ -69963,7 +71162,11 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
       },
       skillOutcomeDraft: session.lastAvaLiveSkillOutcomeDraft,
     });
-    const speakResult = await sendAvaPhoneReplyAudio(session, spoken);
+    const speakResult = await sendAvaPhoneReplyAudio(session, spoken, {
+      replyTurnVersion,
+      replyStartedAt: replyStartAt,
+      transcript: item.transcript || transcriptForReply,
+    });
     const turnCompletionMs = Math.max(0, Date.now() - speechFinalAt);
     recordLatencyMetric('speech_final_to_reply_start_ms', speechFinalToReplyStartMs, {
       callId: session.callId || '',
@@ -70137,11 +71340,34 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
     scheduleRuntimeStateBroadcast('telnyx-ava-reply');
   };
 
+  const noteTelnyxCallerSpeechDuringAva = () => {
+    if (finalized || session.finalized || session.avaReplySuppressed || !isCurrentTelnyxMediaSession(session)) return;
+    const activePlaybackLock = getActiveTelnyxAvaTurnLock(session);
+    if (activePlaybackLock && /^ava_(?:reply_sending|speaking|reply_attempted)$/i.test(activePlaybackLock.reason || '')) {
+      session.lastCallerAudioDuringAvaAt = isoNow();
+      session.lastCallerAudioDuringAvaTurnVersion = Number(session.sellerTranscriptVersion || 0);
+      const lastClearAt = Date.parse(session.lastTelnyxMediaClearAt || '') || 0;
+      if (Date.now() - lastClearAt > 600) {
+        const clearResult = sendTelnyxMediaClearCommand(session, 'caller_barge_in');
+        recordCallTrace('ava_phone_barge_in_detected', {
+          ...session,
+          status: clearResult.ok ? 'cleared' : 'detected',
+          result: clearResult.result || 'caller_barge_in',
+          lockReason: activePlaybackLock.reason,
+          lockRemainingMs: activePlaybackLock.remainingMs,
+          stage: 'handleTelnyxDeepgramMessage',
+        });
+      }
+    }
+  };
+
   const handleTelnyxDeepgramMessage = (data) => {
     const normalized = normalizeDeepgramLiveTranscript(data);
     const transcript = normalized.transcript;
     if (!transcript) {
       const eventType = String(data?.type || data?.event || data?.message_type || data?.metadata?.request_id || '').trim();
+      // Raw media includes silence; only speech evidence can interrupt playback.
+      if (/^(?:SpeechStarted|speech_start|speech_started)$/i.test(eventType)) noteTelnyxCallerSpeechDuringAva();
       const errorText = String(data?.error || data?.err_msg || data?.message || '').trim();
       if (eventType || errorText) {
         session.deepgramEventCount += 1;
@@ -70187,6 +71413,7 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
     session.transcript.push(item);
     const actionableTranscript = !isWeakTelnyxSellerUtterance(transcript);
     const committedTranscript = Boolean(normalized.isFinal || normalized.speechFinal);
+    if (committedTranscript) noteTelnyxCallerSpeechDuringAva();
     recordCallTrace('deepgram_transcript', {
       ...session,
       status: session.lastDeepgramEvent,
@@ -70361,11 +71588,103 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
         })
       );
       persistStateInBackground('Deepgram socket close');
+      void reconnectTelnyxDeepgramAfterClose(session.lastDeepgramEvent || 'socket_close');
     });
   };
 
+  async function reconnectTelnyxDeepgramAfterClose(reason = 'socket_close') {
+    if (finalized || session.deepgramReconnectInFlight) return false;
+    session.deepgramReconnectAttempts = Number(session.deepgramReconnectAttempts || 0) + 1;
+    if (session.deepgramReconnectAttempts > 2) {
+      recordCallTrace('deepgram_socket_reconnect_skipped', {
+        ...session,
+        status: 'skipped',
+        result: 'reconnect_attempt_limit',
+        reason,
+        stage: 'reconnectTelnyxDeepgramAfterClose',
+      });
+      return false;
+    }
+    session.deepgramReconnectInFlight = true;
+    recordCallTrace('deepgram_socket_reconnect_start', {
+      ...session,
+      status: 'reconnecting',
+      result: reason,
+      attempt: session.deepgramReconnectAttempts,
+      stage: 'reconnectTelnyxDeepgramAfterClose',
+    });
+    clearNoTranscriptFallbackTimer();
+    stopTelnyxDeepgramKeepAliveTimer();
+    deepgramReady = false;
+    const replayFrames = getTelnyxReplayFrames();
+    try {
+      const telnyxLiveModel = getTelnyxDeepgramLiveModel();
+      const codecOptions = session.deepgramFallbackActive
+        ? {
+            encoding: 'linear16',
+            sampleRate: 8000,
+          }
+        : buildTelnyxDeepgramLiveOptions(session.telnyxMediaCodec || DEEPGRAM_STREAM_CODEC);
+      session.deepgramModel = telnyxLiveModel;
+      session.deepgramEncoding = codecOptions.encoding;
+      session.deepgramSampleRate = codecOptions.sampleRate;
+      deepgramConnection = await createDeepgramLiveConnectionWithCircuit(
+        {
+          manualWebSocket: true,
+          model: telnyxLiveModel,
+          encoding: codecOptions.encoding,
+          sampleRate: codecOptions.sampleRate,
+          channels: 1,
+          interimResults: true,
+          utteranceEndMs: 1000,
+        },
+        process.env
+      );
+      attachTelnyxDeepgramHandlers(deepgramConnection);
+      deepgramConnection.connect();
+      await withTimeout(deepgramConnection.waitForOpen(), TELNYX_DEEPGRAM_OPEN_TIMEOUT_MS, 'Deepgram reconnect open');
+      if (finalized) {
+        deepgramConnection.close?.();
+        return false;
+      }
+      deepgramReady = true;
+      session.deepgramSocketOpen = true;
+      session.deepgramReconnectInFlight = false;
+      session.deepgramReadyAt = isoNow();
+      for (const frame of replayFrames) {
+        sendDeepgramAudio(deepgramConnection, prepareTelnyxFrameForDeepgram(frame));
+      }
+      flushPendingTelnyxMediaFrames();
+      startTelnyxDeepgramKeepAliveTimer();
+      recordCallTrace('deepgram_socket_reconnect_ready', {
+        ...session,
+        status: 'connected',
+        result: 'deepgram_reconnected',
+        replayedFrames: replayFrames.length,
+        stage: 'reconnectTelnyxDeepgramAfterClose',
+      });
+      void syncTelnyxSessionToRedis(session, 'active', { force: true });
+      persistStateInBackground('Deepgram socket reconnected');
+      return true;
+    } catch (error) {
+      session.deepgramSocketOpen = false;
+      session.deepgramReconnectInFlight = false;
+      session.lastDeepgramEvent = 'socket_reconnect_failed';
+      session.lastDeepgramError = String(error?.message || error || 'unknown error').slice(0, 240);
+      recordCallTrace('deepgram_socket_reconnect_failed', {
+        ...session,
+        status: 'warning',
+        result: 'deepgram_reconnect_failed',
+        error: session.lastDeepgramError,
+        stage: 'reconnectTelnyxDeepgramAfterClose',
+      });
+      persistStateInBackground('Deepgram socket reconnect failed');
+      return false;
+    }
+  }
+
   const rotateTelnyxDeepgramToLinear16Fallback = async (reason = 'no-transcript-after-audio') => {
-    if (finalized || session.deepgramFallbackActive || session.transcript.length > 0 || !session.audioBytes) return false;
+    if (finalized || session.deepgramFallbackActive || !session.audioBytes) return false;
     session.deepgramFallbackActive = true;
     session.deepgramFallbackReason = reason;
     recordCallTrace('deepgram_fallback_start', {
@@ -71641,12 +72960,12 @@ const server = createServer(async (request, response) => {
     }
 
     if (request.method === 'GET' && matchesPath(pathname, ['/api/deals/timeline', '/api/v1/deals/timeline'])) {
-      json(response, 200, await buildDealTimelineAnalytics({ days: url.searchParams.get('days') || 30 }));
+      json(response, 200, await buildDealTimelineAnalytics({ days: url.searchParams.get('days') || 30, range: url.searchParams.get('range') }));
       return;
     }
 
     if (request.method === 'GET' && matchesPath(pathname, ['/api/observability/ai-metrics', '/api/v1/observability/ai-metrics'])) {
-      json(response, 200, await buildAiObservabilityMetrics({ days: url.searchParams.get('days') || 30 }));
+      json(response, 200, await buildAiObservabilityMetrics({ days: url.searchParams.get('days') || 30, range: url.searchParams.get('range') }));
       return;
     }
 
@@ -74120,6 +75439,13 @@ const server = createServer(async (request, response) => {
         ...result,
         state: buildStateSnapshot(),
       });
+      return;
+    }
+
+    if (request.method === 'POST' && pathname === '/api/property-data/attom-preview') {
+      const result = await lookupAttomPropertyPreview(await readBody(request));
+      response.setHeader('Cache-Control', 'no-store');
+      json(response, 200, { ok: true, ...result });
       return;
     }
 
@@ -77340,7 +78666,7 @@ const server = createServer(async (request, response) => {
         falsePositiveTag: body.falsePositiveTag || body.reviewReason || '',
         teamAuth: body.teamAuth || null,
       });
-      json(response, result.ok === false ? 404 : 200, {
+      json(response, result.ok === false ? result.statusCode || 404 : 200, {
         ...result,
         state: buildStateSnapshot(),
       });
@@ -77391,7 +78717,7 @@ const server = createServer(async (request, response) => {
         falsePositiveTag: body.falsePositiveTag || body.reviewReason || '',
         teamAuth: body.teamAuth || null,
       });
-      json(response, result.ok === false ? 404 : 200, {
+      json(response, result.ok === false ? result.statusCode || 404 : 200, {
         ...result,
         state: buildStateSnapshot(),
       });
@@ -78414,7 +79740,21 @@ const server = createServer(async (request, response) => {
         return;
       }
 
-      const pdf = await generatePdfDocument(buildContractPdfPayload(contract));
+      let pdf;
+      try {
+        pdf = await generatePdfDocument(buildContractPdfPayload(contract));
+      } catch (error) {
+        console.warn('[pbk-local-openclaw] Contract PDF renderer unavailable:', error?.message || error);
+        json(response, 503, {
+          ok: false,
+          result: 'contract_pdf_unavailable',
+          code: 'pdf_renderer_unavailable',
+          error: 'Contract PDF could not be generated. Please retry after the document service recovers.',
+          retryable: true,
+          contractId: contract.id,
+        });
+        return;
+      }
       const filename = `${safeFilename(contract.documentTitle || contract.leadName || contract.address || contract.id || 'PBK_Contract')}.pdf`;
       sendBinary(response, 200, pdf, {
         'Content-Type': 'application/pdf',
@@ -78711,6 +80051,16 @@ const server = createServer(async (request, response) => {
 
     const leadFullMatch = matchPath(pathname, '/api/leads/:id/full');
     if (leadFullMatch && request.method === 'GET') {
+      const [durableBatchLead] = await loadAppliedBatchLeads(queryPgRows, leadFullMatch.groups.id);
+      if (durableBatchLead) {
+        const exactHistory = (items = []) => sortNewest(items.filter(({ leadId }) => leadId === durableBatchLead.id));
+        json(response, 200, {
+          ok: true, lead: durableBatchLead, calls: exactHistory(state.calls),
+          messages: exactHistory(state.messages), contracts: exactHistory(state.contracts),
+          analyzerRuns: exactHistory(state.analyzerRuns), activity: exactHistory(state.activity),
+        });
+        return;
+      }
       const full = buildLeadFullView(leadFullMatch.groups.id);
       if (!full) {
         json(response, 404, {
@@ -79142,11 +80492,41 @@ const server = createServer(async (request, response) => {
       return;
     }
 
+    if (request.method === 'GET' && pathname === '/api/leads/batch-review-roster') {
+      const roster = await loadBatchReviewRoster({ bridgeLeads: state.leadImports, query: queryPgRows });
+      response.setHeader('Cache-Control', 'no-store');
+      json(response, roster.ok ? 200 : 503, roster.ok
+        ? { ...roster, dncPhones: [...new Set(state.dncEntries.map((entry) => normalizePhone(entry.phone)).filter(Boolean))] }
+        : roster);
+      return;
+    }
+
+    if (request.method === 'POST' && pathname === '/api/leads/batch-apply') {
+      response.setHeader('Cache-Control', 'no-store');
+      if (!BRIDGE_API_KEY || String(request.headers.authorization || '').trim() !== `Bearer ${BRIDGE_API_KEY}`) {
+        json(response, 403, { ok: false, error: 'Batch apply requires direct operator authentication.' });
+        return;
+      }
+      const result = await runBatchApply({
+        pool: getPgPool(),
+        body: await readBody(request),
+        enabled: process.env.PBK_BATCH_APPLY_ENABLED === 'true',
+        secret: BRIDGE_API_KEY,
+        getBridgeLeads: () => state.leadImports,
+      });
+      json(response, result.status, result.body);
+      return;
+    }
+
     if (request.method === 'GET' && matchesPath(pathname, ['/api/leads', '/api/leads/import'])) {
+      const batchLeads = await loadAppliedBatchLeads(queryPgRows);
+      const leads = new Map(state.leadImports.map((lead) => [lead.leadId || lead.id, lead]));
+      for (const lead of batchLeads) leads.set(lead.id, { ...leads.get(lead.id), ...lead });
+      const combined = [...leads.values()];
       json(response, 200, {
         ok: true,
-        leadImports: state.leadImports,
-        leads: state.leadImports,
+        leadImports: combined,
+        leads: combined,
       });
       return;
     }
@@ -80365,6 +81745,7 @@ function startEmotionalLearningAutoImprove() {
   const firstDelayMs = Math.max(60 * 1000, Number(process.env.PBK_EMOTIONAL_LEARNING_IMPROVE_FIRST_DELAY_MS || 5 * 60 * 1000));
   const minWeight = Math.max(0.1, Math.min(1, Number(process.env.PBK_EMOTIONAL_LEARNING_PROMOTE_MIN_WEIGHT || 0.65)));
   const run = async (reason = 'scheduled') => {
+    if (!runtimeStateBootstrap.ready) return;
     try {
       const result = await improveEmotionalLearningMemoryRecord({ minWeight, source: reason });
       if (result.promoted) {
@@ -80394,6 +81775,7 @@ function startCommandCenterClosedLoopScheduler() {
   if (commandCenterClosedLoopSchedulerStarted || !isCommandCenterClosedLoopEnabled()) return;
   commandCenterClosedLoopSchedulerStarted = true;
   const runSafely = async (label, fn) => {
+    if (!runtimeStateBootstrap.ready) return { ok: false, result: 'state_bootstrap_unavailable' };
     try {
       const lease = await redisAcquireLease(`closed-loop:${label}`, REDIS_LEASE_TTL_SECONDS);
       if (!lease.ok) {
@@ -80448,12 +81830,14 @@ function startAgentRegistryHealthScheduler() {
   const intervalMs = Math.max(30_000, Number(process.env.PBK_AGENT_REGISTRY_HEALTH_INTERVAL_MS || 60_000));
   const firstDelayMs = Math.max(5_000, Number(process.env.PBK_AGENT_REGISTRY_HEALTH_FIRST_DELAY_MS || 15_000));
   const firstTimer = setTimeout(() => {
+    if (!runtimeStateBootstrap.ready) return;
     void checkAgentRegistryHealth({ persist: false })
       .then((result) => console.log(`[pbk-local-openclaw] agent registry health: ${result.result}`))
       .catch((error) => console.warn('[pbk-local-openclaw] agent registry health skipped:', error?.message || error));
   }, firstDelayMs);
   firstTimer.unref?.();
   const interval = setInterval(() => {
+    if (!runtimeStateBootstrap.ready) return;
     void checkAgentRegistryHealth({ persist: false }).catch((error) => console.warn('[pbk-local-openclaw] agent registry health skipped:', error?.message || error));
   }, intervalMs);
   interval.unref?.();

@@ -64,6 +64,64 @@ export function normalizeSkillMetric(skill = {}, trendResponse = {}) {
   };
 }
 
+const currencyFacts = {
+  asking_price: 'Asking price',
+  mortgage_balance: 'Mortgage balance',
+};
+
+function normalizeFactKey(value) {
+  return value
+    .trim()
+    .replace(/([a-z0-9])([A-Z])/g, '$1_$2')
+    .toLowerCase()
+    .replace(/\s+/g, '_');
+}
+
+export function buildMemoryConflictGroups(events = []) {
+  const groups = new Map();
+  for (const event of events) {
+    const { leadId, metadata, title, detail } = event;
+    if (!leadId) continue;
+    const rawKey = metadata.factKey ?? metadata.fact_key;
+    const declaredKey = typeof rawKey === 'string' ? normalizeFactKey(rawKey) : '';
+    const key = declaredKey || normalizeFactKey(title);
+    const currencyLabel = Object.hasOwn(currencyFacts, key) ? currencyFacts[key] : '';
+    const declaredValue = metadata.factValue ?? metadata.fact_value;
+    const rawValue = declaredValue ?? (currencyLabel ? detail : null);
+    if ((!declaredKey && !currencyLabel) || !['number', 'string'].includes(typeof rawValue))
+      continue;
+    const rawText = String(rawValue).trim();
+    if (!rawText) continue;
+    let value = rawText;
+    let comparisonKey = rawText.toLowerCase();
+    if (currencyLabel) {
+      if (!/^\$?\s*(?:\d+|\d{1,3}(?:,\d{3})+)(?:\.\d{1,2})?$/.test(rawText)) continue;
+      const amount = Number(rawText.replace(/[$,\s]/g, ''));
+      if (!Number.isFinite(amount)) continue;
+      comparisonKey = String(amount);
+      value = new Intl.NumberFormat('en-US', {
+        style: 'currency',
+        currency: 'USD',
+        minimumFractionDigits: 0,
+        maximumFractionDigits: 2,
+      }).format(amount);
+    }
+    const groupKey = JSON.stringify([leadId, key]);
+    const group = groups.get(groupKey) ?? {
+      id: groupKey,
+      label: currencyLabel || key.replace(/_/g, ' '),
+      observations: [],
+      values: new Set(),
+    };
+    group.values.add(comparisonKey);
+    group.observations.push({ event, value });
+    groups.set(groupKey, group);
+  }
+  return [...groups.values()]
+    .filter(({ values }) => values.size > 1)
+    .map(({ id, label, observations }) => ({ id, label, observations }));
+}
+
 export function buildMemoryAnalyticsViewModel({
   outcomesResponse = {},
   trendsBySkillId = {},
@@ -104,7 +162,7 @@ export function buildMemoryAnalyticsViewModel({
         createdAt: String(
           event.createdAt || event.created_at || event.at || event.timestamp || ''
         ).trim(),
-        source: String(event.source || metadata.source || memoryEventsResponse.source || '').trim(),
+        source: String(event.source || metadata.source || '').trim(),
         sourceHref: String(
           event.sourceHref ||
             event.source_href ||

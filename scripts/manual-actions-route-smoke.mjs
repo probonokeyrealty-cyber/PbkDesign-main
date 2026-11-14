@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { isAbsolute, join, relative } from 'node:path';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
+import { buildAgentRuntimeSmokeEnv } from './agent-runtime-smoke-isolation.mjs';
 
 const repoRoot = process.cwd();
 const port = String(19100 + Math.floor(Math.random() * 2500));
@@ -15,6 +16,7 @@ async function waitForBridge(baseUrl, timeoutMs = 30_000) {
     try {
       const response = await fetch(`${baseUrl}/health`, {
         headers: { Authorization: `Bearer ${apiKey}` },
+        signal: AbortSignal.timeout(2000),
       });
       if (response.ok) return;
     } catch {
@@ -28,6 +30,7 @@ async function waitForBridge(baseUrl, timeoutMs = 30_000) {
 async function requestJson(baseUrl, path, body) {
   const response = await fetch(`${baseUrl}${path}`, {
     method: 'POST',
+    signal: AbortSignal.timeout(15000),
     headers: {
       Authorization: `Bearer ${apiKey}`,
       'Content-Type': 'application/json',
@@ -76,10 +79,11 @@ async function main() {
 
   const stateDir = await mkdtemp(join(tmpdir(), 'pbk-manual-actions-'));
   const baseUrl = `http://127.0.0.1:${port}`;
-  const child = spawn(process.execPath, ['scripts/openclaw-local-server.mjs'], {
+  const child = spawn(process.execPath, ['--import', './scripts/agent-runtime-smoke-isolation.mjs', 'scripts/openclaw-local-server.mjs'], {
     cwd: repoRoot,
     env: {
-      ...process.env,
+      ...buildAgentRuntimeSmokeEnv(),
+      PBK_AGENT_SMOKE_ISOLATED: '1',
       PORT: port,
       HOST: '127.0.0.1',
       PBK_OPENCLAW_STATE_DIR: stateDir,
@@ -93,10 +97,12 @@ async function main() {
       INSTANTLY_API_KEY: '',
     },
     stdio: ['ignore', 'pipe', 'pipe'],
+    windowsHide: true,
   });
 
   const stderr = [];
   child.stderr.on('data', (chunk) => stderr.push(String(chunk)));
+  child.stdout.resume();
 
   try {
     await waitForBridge(baseUrl);
@@ -112,6 +118,17 @@ async function main() {
     const leadId = String(lead.json?.leadId || lead.json?.lead?.leadId || lead.json?.lead?.id || '');
     assert.ok(leadId, 'manual lead save should return a lead id.');
     assert.equal(String(lead.json?.leadId || ''), leadId, 'manual lead save should expose a top-level leadId.');
+    const readOptions = { headers: { Authorization: `Bearer ${apiKey}` }, signal: AbortSignal.timeout(5000) };
+    const rosterResponse = await fetch(`${baseUrl}/api/leads`, readOptions);
+    assert.equal(rosterResponse.status, 200);
+    const roster = await rosterResponse.json();
+    assert.ok(roster.leads.some((item) => String(item.leadId || item.id) === leadId), 'Created lead must appear in the roster.');
+    const detailResponse = await fetch(`${baseUrl}/api/leads/${encodeURIComponent(leadId)}/full`, readOptions);
+    assert.equal(detailResponse.status, 200, 'Created lead detail must load.');
+    const detail = await detailResponse.json();
+    assert.equal(detail.lead?.name, 'Manual Actions Smoke Seller', 'Lead detail must retain the seller name.');
+    const saved = JSON.parse(await readFile(join(stateDir, 'openclaw-state.json'), 'utf8'));
+    assert.ok(saved.leadImports.some((item) => String(item.leadId || item.id) === leadId), 'Save must reach the isolated durable backend.');
 
     const sms = await requestJson(baseUrl, '/api/lead/send-message', {
       leadId,
@@ -224,7 +241,9 @@ async function main() {
       JSON.stringify(
         {
           ok: true,
-          result: 'manual_actions_routes_ready',
+          result: 'manual_actions_offline_routes_verified',
+          providerDeliveryVerified: false,
+          note: 'Provider credentials and outbound network are disabled; these checks prove local save/read and failure routing, not real delivery.',
           statuses: {
             lead: lead.status,
             sms: sms.status,
@@ -243,6 +262,8 @@ async function main() {
   } finally {
     if (!child.killed) child.kill();
     await Promise.race([once(child, 'exit'), new Promise((resolve) => setTimeout(resolve, 2000))]).catch(() => {});
+    const tempRelative = relative(tmpdir(), stateDir);
+    assert.ok(tempRelative && !tempRelative.startsWith('..') && !isAbsolute(tempRelative));
     await rm(stateDir, { recursive: true, force: true }).catch(() => {});
     if (child.exitCode && child.exitCode !== 0) {
       console.warn(stderr.join('').split('\n').slice(-8).join('\n'));

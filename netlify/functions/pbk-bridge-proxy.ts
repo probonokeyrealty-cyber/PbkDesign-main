@@ -630,6 +630,9 @@ export const handler: Handler = async (event) => {
     );
   }
   const targetUrl = new URL(targetPath, `${BRIDGE_URL}/`);
+  if (targetUrl.pathname.replace(/\/+$/, '') === '/api/leads/batch-apply') {
+    return json({ ok: false, error: 'Batch apply requires direct operator authentication.' }, 403, {}, event);
+  }
   appendQueryParams(targetUrl, event);
 
   const hasBody = !['GET', 'HEAD'].includes(String(event.httpMethod || 'GET').toUpperCase()) && event.body != null;

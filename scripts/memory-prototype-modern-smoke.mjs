@@ -118,17 +118,17 @@ assert(
 });
 
 [
-  'Ava intelligence memory',
-  'What Ava is',
+  'Conflicting facts',
+  'MemoryConflictComparison',
   'Memory control center',
-  'Search, correct, and trust what Ava remembers',
+  'Search memories',
   'Memory hygiene',
   'Possible conflicts',
   'DNC and compliance',
   'Sensitive data',
   'Stop using',
   'Open source record',
-  'Ava can use this',
+  'Forget request recorded',
   'buildMemoryUsageProof',
   'curateMemoryEventRequest',
   'sourceHref',

@@ -1,4 +1,7 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import vm from 'node:vm';
+import ts from 'typescript';
 import {
   buildVectorTableReadiness,
   isExcludedEpisodicCall,
@@ -50,5 +53,22 @@ assert.equal(
   }),
   false
 );
+
+const bridgeSource = readFileSync(new URL('./openclaw-local-server.mjs', import.meta.url), 'utf8');
+const bridgeAst = ts.createSourceFile('bridge.mjs', bridgeSource, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
+const labelDeclaration = bridgeAst.statements.find(
+  (node) => ts.isFunctionDeclaration(node) && node.name?.text === 'formatEpisodicMemoryLabel'
+);
+assert(labelDeclaration, 'Bridge must label episodic memory by its observed outcome.');
+const label = vm.runInNewContext(`${labelDeclaration.getText(bridgeAst)}; formatEpisodicMemoryLabel;`);
+for (const outcome of ['won', 'signed', 'appointment', 'callback']) {
+  assert.equal(label({ outcome }), 'Similar past successful call');
+}
+for (const outcome of ['lost', 'failed', 'dnc', 'unqualified']) {
+  assert.equal(label({ outcome }), 'Similar past caution call');
+}
+assert.equal(label({ metadata: { outcome: 'lost' } }), 'Similar past caution call');
+assert.equal(label({}), 'Closest similar past call');
+assert.equal(label({ outcome: 'unknown' }, 1), 'Similar past call');
 
 console.log('ava-episodic-memory-smoke: ok');

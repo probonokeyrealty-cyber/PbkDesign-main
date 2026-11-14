@@ -27,7 +27,7 @@ export function LandAnalysis({ deal, onDealChange }: LandAnalysisProps) {
 
     onDealChange({
       landLotSizeSqFt: sqft,
-      landPriceSqFt: parseFloat(pricePerSqFt.toFixed(4))
+      landPriceSqFt: parseFloat(pricePerSqFt.toFixed(4)),
     });
   };
 
@@ -37,8 +37,8 @@ export function LandAnalysis({ deal, onDealChange }: LandAnalysisProps) {
     const pricePerQuarterAcre = (deal.landPriceSqFt || 0) * SQFT_PER_QUARTER_ACRE;
 
     onDealChange({
-      lotSize: acres.toFixed(4),
-      builderPrice: Math.round(pricePerQuarterAcre)
+      lotSize: sqft > 0 ? acres.toFixed(4) : '',
+      builderPrice: Math.round(pricePerQuarterAcre),
     });
   };
 
@@ -55,11 +55,11 @@ export function LandAnalysis({ deal, onDealChange }: LandAnalysisProps) {
     onDealChange({
       builderTotal,
       // Auto-calculate offer using dynamic spread if not manually edited
-      offer: deal.offer || calculatedOffer
+      offer: deal.offer || calculatedOffer,
     });
   };
 
-  const builderTotal = (parseFloat(deal.lotSize) || 0) / 0.25 * deal.builderPrice;
+  const builderTotal = ((parseFloat(deal.lotSize) || 0) / 0.25) * deal.builderPrice;
   const units = (parseFloat(deal.lotSize) || 0) / 0.25;
   const spread = builderTotal - (deal.offer || 0);
   const spreadPercent = builderTotal > 0 ? ((spread / builderTotal) * 100).toFixed(1) : '0';
@@ -211,7 +211,9 @@ export function LandAnalysis({ deal, onDealChange }: LandAnalysisProps) {
                 <input
                   type="number"
                   value={deal.landLotSizeSqFt || ''}
-                  onChange={(e) => handleInputChange('landLotSizeSqFt', parseFloat(e.target.value) || 0)}
+                  onChange={(e) =>
+                    handleInputChange('landLotSizeSqFt', parseFloat(e.target.value) || 0)
+                  }
                   onBlur={() => {
                     syncFromSqFt();
                     calculateBuilderTotal();
@@ -305,48 +307,58 @@ export function LandAnalysis({ deal, onDealChange }: LandAnalysisProps) {
                 Your Offer
               </div>
             </div>
-            <div className={`rounded-lg p-3 text-center ${
-              spread >= builderTotal * 0.15
-                ? 'bg-gradient-to-br from-green-50 to-green-100 dark:from-green-900/20 dark:to-green-800/20 border border-green-200 dark:border-green-700'
-                : 'bg-gradient-to-br from-yellow-50 to-yellow-100 dark:from-yellow-900/20 dark:to-yellow-800/20 border border-yellow-200 dark:border-yellow-700'
-            }`}>
-              <div className={`text-[16px] font-semibold ${
+            <div
+              className={`rounded-lg p-3 text-center ${
                 spread >= builderTotal * 0.15
-                  ? 'text-green-700 dark:text-green-400'
-                  : 'text-yellow-700 dark:text-yellow-400'
-              }`}>
+                  ? 'bg-gradient-to-br from-green-50 to-green-100 dark:from-green-900/20 dark:to-green-800/20 border border-green-200 dark:border-green-700'
+                  : 'bg-gradient-to-br from-yellow-50 to-yellow-100 dark:from-yellow-900/20 dark:to-yellow-800/20 border border-yellow-200 dark:border-yellow-700'
+              }`}
+            >
+              <div
+                className={`text-[16px] font-semibold ${
+                  spread >= builderTotal * 0.15
+                    ? 'text-green-700 dark:text-green-400'
+                    : 'text-yellow-700 dark:text-yellow-400'
+                }`}
+              >
                 {formatCurrency(spread)}
               </div>
-              <div className={`text-[9.5px] font-medium uppercase tracking-wide mt-0.5 ${
-                spread >= builderTotal * 0.15
-                  ? 'text-green-600 dark:text-green-500'
-                  : 'text-yellow-600 dark:text-yellow-500'
-              }`}>
+              <div
+                className={`text-[9.5px] font-medium uppercase tracking-wide mt-0.5 ${
+                  spread >= builderTotal * 0.15
+                    ? 'text-green-600 dark:text-green-500'
+                    : 'text-yellow-600 dark:text-yellow-500'
+                }`}
+              >
                 Spread ({spreadPercent}%)
               </div>
             </div>
           </div>
 
           {/* Verdict */}
-          <div className={`rounded-lg p-3 border-l-4 ${
-            spread >= builderTotal * 0.20
-              ? 'bg-green-50 dark:bg-green-900/20 border-green-500 dark:border-green-600'
-              : spread >= builderTotal * 0.15
-              ? 'bg-yellow-50 dark:bg-yellow-900/20 border-yellow-500 dark:border-yellow-600'
-              : 'bg-red-50 dark:bg-red-900/20 border-red-500 dark:border-red-600'
-          }`}>
-            <div className={`text-[12.5px] font-semibold leading-relaxed ${
-              spread >= builderTotal * 0.20
-                ? 'text-green-800 dark:text-green-300'
+          <div
+            className={`rounded-lg p-3 border-l-4 ${
+              spread >= builderTotal * 0.2
+                ? 'bg-green-50 dark:bg-green-900/20 border-green-500 dark:border-green-600'
                 : spread >= builderTotal * 0.15
-                ? 'text-yellow-800 dark:text-yellow-300'
-                : 'text-red-800 dark:text-red-300'
-            }`}>
-              {spread >= builderTotal * 0.20
+                  ? 'bg-yellow-50 dark:bg-yellow-900/20 border-yellow-500 dark:border-yellow-600'
+                  : 'bg-red-50 dark:bg-red-900/20 border-red-500 dark:border-red-600'
+            }`}
+          >
+            <div
+              className={`text-[12.5px] font-semibold leading-relaxed ${
+                spread >= builderTotal * 0.2
+                  ? 'text-green-800 dark:text-green-300'
+                  : spread >= builderTotal * 0.15
+                    ? 'text-yellow-800 dark:text-yellow-300'
+                    : 'text-red-800 dark:text-red-300'
+              }`}
+            >
+              {spread >= builderTotal * 0.2
                 ? 'Go - Excellent land spread. 20%+ spread provides strong profit margin for assignment to builder.'
                 : spread >= builderTotal * 0.15
-                ? 'Review - Workable land spread. 15-20% spread is acceptable. Negotiate for better terms if possible.'
-                : 'Pass - Thin margins. Less than 15% spread. Need better spread or pass on this deal.'}
+                  ? 'Review - Workable land spread. 15-20% spread is acceptable. Negotiate for better terms if possible.'
+                  : 'Pass - Thin margins. Less than 15% spread. Need better spread or pass on this deal.'}
             </div>
           </div>
 
@@ -356,10 +368,14 @@ export function LandAnalysis({ deal, onDealChange }: LandAnalysisProps) {
               💡 Strategy Tips
             </div>
             <ul className="text-[11px] text-blue-800 dark:text-blue-300 space-y-1 leading-relaxed">
-              <li>• Contact local builders who pay {formatCurrency(deal.builderPrice)} per ¼ acre</li>
+              <li>
+                • Contact local builders who pay {formatCurrency(deal.builderPrice)} per ¼ acre
+              </li>
               <li>• Verify zoning allows residential development</li>
               <li>• Check for utilities access (water, sewer, electric)</li>
-              <li>• Assignment fee: {formatCurrency(spread)} ({spreadPercent}% of builder total)</li>
+              <li>
+                • Assignment fee: {formatCurrency(spread)} ({spreadPercent}% of builder total)
+              </li>
             </ul>
           </div>
         </div>

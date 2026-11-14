@@ -159,9 +159,9 @@ for (const copy of [
   'Seller workspace',
   'Contactability',
   'Property',
-  'Deal context',
+  'Underwriting',
   'Ava pre-call brief',
-  'Unified seller timeline',
+  'Seller timeline',
 ]) {
   assert(combined.includes(copy), `Lead portal must render "${copy}".`);
 }

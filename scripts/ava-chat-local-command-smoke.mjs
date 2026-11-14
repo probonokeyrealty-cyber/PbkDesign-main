@@ -68,7 +68,7 @@ const avaChat = read('src/app/routes/AvaChat.tsx');
   'Ava starter prompts',
   'Draft Text',
   'Prep Call',
-  'Open Ava support details:',
+  'Open Ava context',
   'Review before Ava continues',
   'onApprovalDecision',
 ].forEach((token) => {
@@ -306,8 +306,10 @@ assert(
 assert(
   /getAvaSystemStatus/.test(avaChat) &&
     /pendingApprovals > 0/.test(avaChat) &&
-    /systemStatus\.visible &&/.test(avaChat),
-  'Ava Chat must only surface the system drawer indicator for real warnings such as waiting approvals.'
+    /systemStatus\.visible\s*\?\s*systemStatus\.tone === 'danger'\s*\? 'is-danger'\s*: 'is-warning'\s*: ''/.test(
+      avaChat
+    ),
+  'Ava Chat context must show a warning marker only for real warnings such as waiting approvals.'
 );
 const internalAvaChatStart = bridge.indexOf('async function handleInternalAvaAssistantChatRequest');
 const internalAvaChatEnd = bridge.indexOf('function createTelnyxPublicKeyObject', internalAvaChatStart);

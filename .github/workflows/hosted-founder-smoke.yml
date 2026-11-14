@@ -16,7 +16,7 @@ jobs:
     env:
       PBK_BRIDGE_API_KEY: ${{ secrets.PBK_BRIDGE_API_KEY }}
       PBK_HOSTED_BRIDGE_URL: ${{ secrets.PBK_HOSTED_BRIDGE_URL }}
-      PBK_MOBILE_PROOF_BASE_URL: https://pbkcommandcenter.netlify.app
+      PBK_MOBILE_PROOF_BASE_URL: https://pbk-openclaw-bridge.onrender.com
       PBK_MOBILE_PROOF_TEAM_PASSCODE: ${{ secrets.PBK_MOBILE_PROOF_TEAM_PASSCODE || secrets.PBK_TEAM_PASSCODE }}
 
     steps:

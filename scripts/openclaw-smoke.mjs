@@ -1,18 +1,10 @@
-import { spawn } from 'node:child_process';
 import { setTimeout as delay } from 'node:timers/promises';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { buildAgentRuntimeSmokeEnv } from './agent-runtime-smoke-isolation.mjs';
+import { startIsolatedBridge } from './bridge-smoke-isolation.mjs';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-const ROOT_DIR = path.resolve(__dirname, '..');
-const SERVER_ENTRY = path.join(ROOT_DIR, 'scripts', 'openclaw-local-server.mjs');
-const PORT = Number(process.env.PBK_SMOKE_PORT || 19000 + Math.floor(Math.random() * 2000));
-const API_KEY = 'pbk-isolated-bridge-smoke-key';
-const BASE_URL = `http://127.0.0.1:${PORT}`;
+let isolatedBridge;
+let API_KEY;
+let BASE_URL;
+const fetch = (...args) => isolatedBridge.fetch(...args);
 
 function assert(condition, message) {
   if (!condition) {
@@ -54,38 +46,10 @@ async function waitForHealth(timeoutMs = 15000) {
 }
 
 async function main() {
-  const stateDir = await mkdtemp(path.join(tmpdir(), 'pbk-bridge-smoke-'));
-  const child = spawn(process.execPath, ['--import', './scripts/agent-runtime-smoke-isolation.mjs', SERVER_ENTRY, '--reset'], {
-    cwd: ROOT_DIR,
-    env: {
-      ...buildAgentRuntimeSmokeEnv(),
-      PBK_AGENT_SMOKE_ISOLATED: '1',
-      PBK_OPENCLAW_STATE_DIR: stateDir,
-      PBK_OPENCLAW_PORT: String(PORT),
-      PBK_OPENCLAW_HOST: '127.0.0.1',
-      PBK_BRIDGE_API_KEY: API_KEY,
-    },
-    stdio: ['ignore', 'pipe', 'pipe'],
-    windowsHide: true,
-  });
-  child.stdout.resume();
-
-  let stderr = '';
-  child.stderr.on('data', (chunk) => {
-    stderr += String(chunk || '');
-  });
-
-  const cleanup = async () => {
-    if (!child.killed) {
-      child.kill();
-      await delay(150);
-    }
-    const relative = path.relative(tmpdir(), stateDir);
-    assert(relative && !relative.startsWith('..') && !path.isAbsolute(relative), 'Invalid test cleanup directory');
-    await rm(stateDir, { recursive: true, force: true });
-  };
-
   try {
+    isolatedBridge = await startIsolatedBridge();
+    API_KEY = isolatedBridge.apiKey;
+    BASE_URL = isolatedBridge.origin;
     const health = await waitForHealth();
     const unauthorizedState = await fetch(`${BASE_URL}/state`);
     const state = await fetch(`${BASE_URL}/state`, {
@@ -1597,17 +1561,10 @@ async function main() {
     assert(canonicalDeny?.ok === true && canonicalDeny?.approval?.status === 'rejected', 'Canonical approval deny endpoint did not reject.');
     assert(canonicalContractSend?.ok === true, 'Canonical contract send endpoint did not succeed.');
     assert(canonicalContractRemind?.ok === true, 'Canonical contract remind endpoint did not succeed.');
-    if (canonicalContractPdfResponse.status === 503) {
-      // This isolated child cannot spawn Chromium. Prove honest failure, not PDF delivery.
-      const unavailable = JSON.parse(canonicalContractPdfBuffer.toString('utf8'));
-      assert(unavailable.ok === false && unavailable.code === 'pdf_renderer_unavailable', 'Missing renderer must return the specific contract PDF failure.');
-      assert(unavailable.retryable === true, 'Contract PDF failure must expose a retry path.');
-      assert(!(canonicalContractPdfResponse.headers.get('content-type') || '').includes('application/pdf'), 'Renderer failures must never masquerade as PDFs.');
-    } else {
-      assert(canonicalContractPdfResponse.ok, `Canonical contract PDF endpoint returned ${canonicalContractPdfResponse.status}.`);
-      assert((canonicalContractPdfResponse.headers.get('content-type') || '').includes('application/pdf'), 'Canonical contract PDF endpoint did not return application/pdf.');
-      assert(canonicalContractPdfBuffer.subarray(0, 4).toString('utf8') === '%PDF', 'Canonical contract PDF endpoint did not return a valid PDF signature.');
-    }
+    // The isolated module hook supplies an offline PDF fixture; failure is a regression here.
+    assert(canonicalContractPdfResponse.ok, `Canonical contract PDF endpoint returned ${canonicalContractPdfResponse.status}.`);
+    assert((canonicalContractPdfResponse.headers.get('content-type') || '').includes('application/pdf'), 'Canonical contract PDF endpoint did not return application/pdf.');
+    assert(canonicalContractPdfBuffer.subarray(0, 4).toString('utf8') === '%PDF', 'Canonical contract PDF endpoint did not return a valid PDF signature.');
     assert(canonicalContractVoid?.ok === true && String(canonicalContractVoid?.contract?.status || '').includes('void'), 'Canonical contract void endpoint did not void the contract.');
     assert(instantlyWebhook?.ok === true, 'Instantly webhook endpoint did not succeed.');
     assert(emailWebhook?.ok === true, 'Email webhook endpoint did not succeed.');
@@ -1647,19 +1604,15 @@ async function main() {
       leadReplaySafe: Boolean(secondLeadEvent?.replayed),
       approvalReplaySafe: Boolean(secondApprovalDecision?.replayed),
       pdfBytes: pdfBuffer.length,
+      isolation: { state: 'disposable-sample', pdfRenderer: 'offline-fixture', blockedNetwork: isolatedBridge.blockedNetwork },
     }, null, 2));
   } catch (error) {
-    await cleanup();
     const message = error instanceof Error ? error.message : 'Unknown smoke test failure';
-    if (stderr.trim()) {
-      console.error(stderr.trim());
-    }
     console.error(message);
     process.exitCode = 1;
-    return;
+  } finally {
+    await isolatedBridge?.stop();
   }
-
-  await cleanup();
 }
 
-main();
+await main();

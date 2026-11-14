@@ -1,6 +1,8 @@
 export default {
   testEnvironment: 'node',
-  testMatch: ['<rootDir>/scripts/**/*.test.mjs'],
+  // Keep the absolute worktree path out of the glob on Windows.
+  roots: ['<rootDir>/scripts'],
+  testMatch: ['**/*.test.mjs'],
   modulePathIgnorePatterns: [
     '<rootDir>/.pbk-local/',
     '<rootDir>/.venv/',

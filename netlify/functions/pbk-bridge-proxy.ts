@@ -433,12 +433,19 @@ async function verifyTeamSession(
       signal: controller.signal,
     });
     const payload = await response.json().catch(() => ({})) as Record<string, unknown>;
-    if (!response.ok || payload.ok === false) {
+    if (!response.ok || payload?.ok !== true) {
+      // Verifier outages and malformed responses are not proof of session revocation.
+      const sessionRejected = response.status === 401
+        && /^(?:team_auth_required|invalid_team_session|invalid_team_session_payload|expired_team_session|missing_team_session)$/.test(String(payload?.code || ''));
+      const unavailableStatus = response.status === 429 || (response.status >= 500 && response.status <= 599)
+        ? response.status : 502;
       return {
         ok: false,
-        statusCode: response.status === 503 ? 503 : 401,
-        error: String(payload.error || 'PBK team session is invalid or expired.'),
-        code: String(payload.code || 'invalid_team_session'),
+        statusCode: sessionRejected ? 401 : unavailableStatus,
+        error: sessionRejected
+          ? String(payload.error || 'PBK team session is invalid or expired.')
+          : 'PBK team session could not be verified.',
+        code: sessionRejected ? String(payload.code) : 'team_auth_verification_unavailable',
       };
     }
     const permissions =

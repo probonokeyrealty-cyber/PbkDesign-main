@@ -7,6 +7,7 @@ const server = await createServer({ server: { host: '127.0.0.1', port: 0 } });
 await server.listen();
 const origin = 'http://127.0.0.1:' + server.httpServer.address().port;
 const address = { street: '24 Sample Oak Lane', city: 'Example City', state: 'CA', zip: '90210' };
+const nextAddress = { ...address, street: '86 Sample Cedar Drive' };
 const lead = {
   id: 'property-ui-sample', leadId: 'property-ui-sample',
   seller: { name: 'Sample Seller' }, assignment: { stage: 'new' },
@@ -17,9 +18,11 @@ const profile = {
   apn: '000-01', propertyType: 'Single family', livingSqft: 1850, lotSqft: 5200,
   beds: 3, baths: 2, yearBuilt: 1986,
 };
+const nextProfile = { ...profile, address: '86 SAMPLE CEDAR DR, EXAMPLE CITY, CA 90210', apn: '000-02' };
 
 async function verify(browser, config, label) {
   const page = await browser.newPage(config);
+  const staleLookup = Promise.withResolvers();
   try {
     page.setDefaultTimeout(15_000);
     const lookups = [];
@@ -28,7 +31,7 @@ async function verify(browser, config, label) {
     const errors = [];
     page.on('pageerror', (error) => errors.push(error.message));
     await page.routeWebSocket('**/*', (socket) => socket.close());
-    await page.route('**/*', (route) => {
+    await page.route('**/*', async (route) => {
       const req = route.request();
       const url = new URL(req.url());
       if (url.origin !== origin) {
@@ -43,6 +46,14 @@ async function verify(browser, config, label) {
       if (path === '/api/property-data/attom-preview' && req.method() === 'POST') {
         const payload = req.postDataJSON();
         lookups.push(payload);
+        if (payload.street === nextAddress.street) {
+          const first = lookups.filter((lookup) => lookup.street === nextAddress.street).length === 1;
+          return send(first ? { ok: true, status: 'timed_out' } : { ok: true, status: 'matched', profile: nextProfile });
+        }
+        if (lookups.length === 3) {
+          await staleLookup.promise;
+          return send({ ok: true, status: 'matched', profile });
+        }
         return send({ ok: true, status: 'matched', profile });
       }
       if (path === '/api/state/stream/session') return send({ ok: false });
@@ -128,19 +139,37 @@ async function verify(browser, config, label) {
       await preview.scrollIntoViewIfNeeded();
       await page.screenshot({ scale: 'css', path: '.pbk-local/create-lead-preview-' + label + '.png' });
     }
-    await form.getByLabel('Property address').fill('86 Sample Cedar Drive');
+    await preview.getByRole('button', { name: 'Run lookup again' }).click();
+    await expect.poll(() => lookups.length).toBe(3);
+    await expect(preview.getByRole('status')).toHaveText('Looking up property...');
+    await form.getByLabel('Property address').fill(nextAddress.street);
     await expect(preview.getByText('Exact address match')).toHaveCount(0);
+    const beforeRetry = await readInputs();
+    await lookup.click();
+    await expect(preview.getByRole('status')).toHaveText('ATTOM took too long to respond.');
+    assert.deepEqual(await readInputs(), beforeRetry);
+    await preview.getByRole('button', { name: 'Retry lookup' }).click();
+    await expect(preview.getByText(nextProfile.address, { exact: true })).toBeVisible();
+    const staleResponse = page.waitForResponse((response) =>
+      new URL(response.url()).pathname === '/api/property-data/attom-preview' &&
+      response.request().postDataJSON()?.street === address.street);
+    staleLookup.resolve();
+    assert.equal(await (await staleResponse).finished(), null);
+    await expect(preview.getByText(nextProfile.address, { exact: true })).toBeVisible();
+    await expect(preview.getByText(profile.address, { exact: true })).toHaveCount(0);
+    assert.deepEqual(await readInputs(), beforeRetry);
     await expect(sqft).toHaveValue('1700');
     await expect(form.getByRole('button', { name: 'Create lead', exact: true })).toBeInViewport();
     assert.ok(await form.evaluate((el) => el.scrollWidth <= el.clientWidth + 1));
     await form.getByRole('button', { name: 'Cancel', exact: true }).click();
     await expect(form).toBeHidden();
-    assert.deepEqual(lookups, [address, address]);
+    assert.deepEqual(lookups, [address, address, address, nextAddress, nextAddress]);
     assert.deepEqual(writes, []);
     assert.deepEqual(mediaRequests, []);
     assert.deepEqual(errors, []);
-    console.log(label + ': property workspace and unsaved Create Lead passed');
+    console.log(label + ': property workspace, draft preservation, timeout recovery, and stale lookup isolation passed');
   } finally {
+    staleLookup.resolve();
     await page.close();
   }
 }

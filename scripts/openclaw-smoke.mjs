@@ -1,15 +1,10 @@
-import { spawn } from 'node:child_process';
 import { setTimeout as delay } from 'node:timers/promises';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { startIsolatedBridge } from './bridge-smoke-isolation.mjs';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-const ROOT_DIR = path.resolve(__dirname, '..');
-const SERVER_ENTRY = path.join(ROOT_DIR, 'scripts', 'openclaw-local-server.mjs');
-const PORT = Number(process.env.PBK_SMOKE_PORT || 18788);
-const API_KEY = String(process.env.PBK_SMOKE_API_KEY || process.env.PBK_BRIDGE_API_KEY || 'pbk-smoke-test-key').trim();
-const BASE_URL = `http://127.0.0.1:${PORT}`;
+let isolatedBridge;
+let API_KEY;
+let BASE_URL;
+const fetch = (...args) => isolatedBridge.fetch(...args);
 
 function assert(condition, message) {
   if (!condition) {
@@ -51,29 +46,10 @@ async function waitForHealth(timeoutMs = 15000) {
 }
 
 async function main() {
-  const child = spawn(process.execPath, [SERVER_ENTRY, '--reset'], {
-    cwd: ROOT_DIR,
-    env: {
-      ...process.env,
-      PBK_OPENCLAW_PORT: String(PORT),
-      PBK_BRIDGE_API_KEY: API_KEY,
-    },
-    stdio: ['ignore', 'pipe', 'pipe'],
-  });
-
-  let stderr = '';
-  child.stderr.on('data', (chunk) => {
-    stderr += String(chunk || '');
-  });
-
-  const cleanup = async () => {
-    if (!child.killed) {
-      child.kill();
-      await delay(150);
-    }
-  };
-
   try {
+    isolatedBridge = await startIsolatedBridge();
+    API_KEY = isolatedBridge.apiKey;
+    BASE_URL = isolatedBridge.origin;
     const health = await waitForHealth();
     const unauthorizedState = await fetch(`${BASE_URL}/state`);
     const state = await fetch(`${BASE_URL}/state`, {
@@ -1624,19 +1600,15 @@ async function main() {
       leadReplaySafe: Boolean(secondLeadEvent?.replayed),
       approvalReplaySafe: Boolean(secondApprovalDecision?.replayed),
       pdfBytes: pdfBuffer.length,
+      isolation: { state: 'disposable-sample', pdfRenderer: 'offline-fixture', blockedNetwork: isolatedBridge.blockedNetwork },
     }, null, 2));
   } catch (error) {
-    await cleanup();
     const message = error instanceof Error ? error.message : 'Unknown smoke test failure';
-    if (stderr.trim()) {
-      console.error(stderr.trim());
-    }
     console.error(message);
     process.exitCode = 1;
-    return;
+  } finally {
+    await isolatedBridge?.stop();
   }
-
-  await cleanup();
 }
 
-main();
+await main();

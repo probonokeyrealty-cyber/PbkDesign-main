@@ -73,7 +73,8 @@ async function loopbackRedis() {
   const values = new Map();
   let stall = false;
   let connections = 0;
-  const server = net.createServer((socket) => {
+  // Avoid Nagle/delayed-ACK stalls between small pipelined replies.
+  const server = net.createServer({ noDelay: true }, (socket) => {
     connections += 1;
     sockets.add(socket);
     socket.on('error', () => {});
@@ -167,6 +168,16 @@ try {
   assert.equal(server.connections, 2);
   console.log('Established Redis command deadline, socket cleanup, cooldown, and recovery passed.');
 
+  const healthy = await context.getSharedRedisClient();
+  for (let index = 0; index < 3; index += 1) {
+    assert.deepEqual(await within(Promise.all([
+      healthy.set(`pipeline:${index}`, 'value'), healthy.get(`pipeline:${index}`),
+    ]), 'Healthy pipelined Redis replies'), ['OK', 'value']);
+  }
+  assert.equal(context.sharedRedisClient, healthy);
+  assert.equal(context.getRedisProviderMeta().ready, true);
+  console.log('Healthy pipelined Redis replies settle within the unchanged command deadline.');
+
   const commands = [
     ['get', ['read']],
     ['set', ['ambiguous-write', 'committed']],
@@ -235,13 +246,21 @@ try {
   const cacheWrite = await within(context.redisSetCachedReadResponseIfOpen('write', { value: 1 }, 1000), 'Cache SET');
   assert.equal(cacheWrite, undefined);
   assert.equal(context.sharedRedisClient, null);
-  await reconnect();
+  const serializationClient = await reconnect();
   server.values.set('test:read-cache:malformed:default', 'not json');
   assert.equal((await context.getCachedReadResponse('malformed', 1000, producer)).ok, true);
+  assert.equal(context.getRedisProviderMeta().ready, true, 'Malformed JSON must not retire a healthy socket');
   const circular = {};
   circular.self = circular;
   assert.equal(await context.getCachedReadResponse('circular', 1000, async () => circular), circular);
   assert.equal(context.getRedisProviderMeta().ready, true, 'Serialization errors must not retire a healthy socket');
+  assert.equal(context.sharedRedisClient, serializationClient, 'Serialization errors must preserve the same client');
+  assert.equal(context.sharedRedisDisabledUntil, 0);
+  assert.match(context.getRedisProviderMeta().lastError, /circular/i, 'Serialization must run, not be skipped after a GET timeout');
+  assert.deepEqual(server.commands.filter(([, key]) => key === 'test:read-cache:circular:default'), [
+    ['GET', 'test:read-cache:circular:default'],
+  ], 'A circular value must be rejected before any SET reaches Redis');
+  assert.equal(await within(serializationClient.ping(), 'Redis after serialization error'), 'PONG');
   console.log('Read-cache fallback, RAM reuse, write timeout, and serialization failure behavior passed.');
 } finally {
   for (const client of clients) if (client.isOpen) client.destroy();

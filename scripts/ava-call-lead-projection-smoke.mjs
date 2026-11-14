@@ -5,6 +5,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+import { buildAgentRuntimeSmokeEnv } from './agent-runtime-smoke-isolation.mjs';
 import { canProjectLeadField } from './lead-field-provenance.mjs';
 
 const repoRoot = process.cwd();
@@ -49,12 +50,18 @@ async function requestJson(baseUrl, path, { method = 'GET', body } = {}) {
 async function main() {
   const stateDir = await mkdtemp(join(tmpdir(), 'pbk-ava-call-projection-'));
   const baseUrl = `http://127.0.0.1:${port}`;
-  const child = spawn(process.execPath, ['scripts/openclaw-local-server.mjs'], {
+  const child = spawn(process.execPath, [
+    '--import', new URL('./agent-runtime-smoke-isolation.mjs', import.meta.url).href,
+    'scripts/openclaw-local-server.mjs',
+  ], {
     cwd: repoRoot,
     env: {
-      ...process.env,
+      ...buildAgentRuntimeSmokeEnv(),
+      PBK_AGENT_SMOKE_ISOLATED: '1',
       PORT: port,
       HOST: '127.0.0.1',
+      PBK_OPENCLAW_PORT: port,
+      PBK_OPENCLAW_HOST: '127.0.0.1',
       PBK_OPENCLAW_STATE_DIR: stateDir,
       PBK_BRIDGE_API_KEY: apiKey,
       PBK_TEAM_PASSCODE: 'pbkway',
@@ -66,7 +73,9 @@ async function main() {
       INSTANTLY_API_KEY: '',
     },
     stdio: ['ignore', 'pipe', 'pipe'],
+    windowsHide: true,
   });
+  child.stdout.resume();
 
   const stderr = [];
   child.stderr.on('data', (chunk) => stderr.push(String(chunk)));

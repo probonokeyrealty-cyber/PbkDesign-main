@@ -307,12 +307,43 @@ export type AgentHealthProbe = {
 export type AgentFleetMeasurement = {
   ready?: boolean;
   result?: string;
+  generatedAt?: string;
   measurementVersion?: string;
   requiredIds?: string[];
   total?: number;
   measuredCount?: number;
   blockers?: string[];
-  agents?: Array<Record<string, unknown>>;
+  agents?: AgentMeasurement[];
+};
+
+export type AgentMeasurement = {
+  id: string;
+  name?: string;
+  ready?: boolean;
+  measured?: boolean;
+  result?: string;
+  blockers?: string[];
+  requiredTools?: string[];
+  missingTools?: string[];
+  measurement?: {
+    healthReady?: boolean;
+    toolsMeasured?: boolean;
+    toolsReady?: boolean;
+    contextKnown?: Record<string, boolean>;
+  };
+  metrics?: {
+    lastSuccessAt?: string;
+    lastFailureAt?: string;
+    latencyP95Ms?: number;
+    latencySamples?: number;
+    maxLatencyP95Ms?: number;
+  };
+};
+
+export type AgentMeasurementResponse = {
+  ok: boolean;
+  result?: string;
+  measurement?: AgentFleetMeasurement;
 };
 
 export type AgentHealthResponse = {
@@ -1142,6 +1173,7 @@ type BridgeRequestOptions = {
   path: string;
   body?: unknown;
   keepalive?: boolean;
+  acceptErrorResponse?: (payload: unknown, status: number) => boolean;
 };
 
 function getHostPBK(): Record<string, unknown> | null {
@@ -1545,6 +1577,7 @@ export async function bridgeRequest<T = unknown>({
   path,
   body,
   keepalive,
+  acceptErrorResponse,
 }: BridgeRequestOptions): Promise<T> {
   assertRuntimeAuthConfigured(path);
   const serializedBody = body !== undefined && method !== 'GET' ? JSON.stringify(body) : undefined;
@@ -1586,7 +1619,7 @@ export async function bridgeRequest<T = unknown>({
     clearTimeout(timeoutId);
   }
 
-  if (!response.ok) {
+  if (!response.ok && !(method === 'GET' && acceptErrorResponse?.(parsed, response.status))) {
     throw new Error(extractBridgeErrorMessage(parsed, response.status));
   }
 
@@ -1904,9 +1937,29 @@ export async function fetchRuntimeToolingStatus() {
   }
 }
 
+function acceptAgentMeasurementGapResponse(payload: unknown, status: number) {
+  if (status !== 503 || !payload || typeof payload !== 'object') return false;
+  const measurement = (payload as AgentMeasurementResponse).measurement;
+  // A measured readiness gap is evidence, not a transport failure.
+  return (
+    measurement?.ready === false &&
+    measurement.result === 'stable_agent_fleet_measurement_gaps' &&
+    Array.isArray(measurement.agents) &&
+    measurement.agents.every((agent) => agent && typeof agent.id === 'string')
+  );
+}
+
 export async function fetchAgentHealthRequest() {
   return bridgeRequest<AgentHealthResponse>({
     path: '/api/agents/health',
+    acceptErrorResponse: acceptAgentMeasurementGapResponse,
+  });
+}
+
+export async function fetchAgentMeasurementRequest() {
+  return bridgeRequest<AgentMeasurementResponse>({
+    path: '/api/agents/measurement',
+    acceptErrorResponse: acceptAgentMeasurementGapResponse,
   });
 }
 

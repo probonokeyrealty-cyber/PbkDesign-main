@@ -104,6 +104,13 @@ if (phase === 'setup') {
   state.investorBrowserCode = await code(email);
   state.reviewerBrowserCode = await code(state.reviewerEmail);
   state.finalInvestorStatus = 'Not approved';
+} else if (phase === 'browser-link') {
+  const link = await provider(
+    '/auth/v1/admin/generate_link?redirect_to=' + encodeURIComponent(publicOrigin + '/'),
+    { type: 'magiclink', email }
+  );
+  state.investorBrowserLink = link.action_link || link.properties?.action_link;
+  assert.ok(state.investorBrowserLink, 'QA browser link missing.');
 } else if (phase === 'approve') {
   assert.ok(state.userId && state.reviewerToken, 'Run setup first.');
   assert.equal(
@@ -118,7 +125,10 @@ if (phase === 'setup') {
   const list = await call('list', {}, state.investorToken);
   assert.equal(list.status, 200);
   const property = list.data.properties.find(
-    (p) => p.fictional === true && p.assets?.some((a) => a.kind === 'packet')
+    (p) =>
+      p.fictional === true &&
+      p.assets?.some((a) => a.kind === 'packet') &&
+      (!process.env.PBK_QA_PROPERTY_ID || p.id === process.env.PBK_QA_PROPERTY_ID)
   );
   assert.ok(property, 'No released fictional packet is available for QA.');
   state.propertyId = property.id;
@@ -220,5 +230,6 @@ if (phase === 'setup') {
   delete state.signedUrl;
   delete state.investorBrowserCode;
   delete state.reviewerBrowserCode;
+  delete state.investorBrowserLink;
 } else throw Error('Unknown QA phase.');
 await save();

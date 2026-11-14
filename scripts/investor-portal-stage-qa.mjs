@@ -52,15 +52,13 @@ for (const [key, role] of [
   ['investor', 'investor'],
   ['other', 'investor'],
   ['pending', 'investor'],
-  ['owner', 'reviewer'],
 ]) {
-  const email =
-    key === 'owner' ? 'probonokeyrealty@gmail.com' : `pbk.qa.portal.20261113.${key}@example.com`;
+  const email = `pbk.qa.portal.20261113.${key}@example.com`;
   if (!users[key]) {
     const u = await admin('/auth/v1/admin/users', {
       email,
-      email_confirm: key !== 'owner',
-      app_metadata: { pbk_portal_staging: key !== 'owner' },
+      email_confirm: true,
+      app_metadata: { pbk_portal_staging: true },
     });
     users[key] = { id: u.id || u.user?.id, email, role };
     await fs.writeFile(file, JSON.stringify(users, null, 2));
@@ -73,8 +71,10 @@ for (let n = 0; n < 5; n++) {
     'GET'
   );
   const { revision, data } = rows[0];
-  for (const [key, u] of Object.entries(users))
+  for (const [key, u] of Object.entries(users)) {
+    if (key === 'owner') continue; // Retests must never rewrite the real staff membership.
     data.members[u.id] = { email: u.email, role: u.role, approved: key !== 'pending' };
+  }
   if (
     await admin('/rest/v1/rpc/pbk_investor_staging_commit', {
       expected_revision: revision,

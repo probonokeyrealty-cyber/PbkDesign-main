@@ -1,0 +1,84 @@
+{
+  "clientDate": "2026-11-14",
+  "scope": "Staging-only fictional no-outreach lifecycle retest",
+  "productCodeChanged": false,
+  "deploymentStartedByThisWork": false,
+  "propertyId": "97c5e7ca-d34d-41b3-87cf-2c0b130037a2",
+  "propertyReleaseVersion": 1,
+  "propertyFinalStatus": "Withdrawn",
+  "propertyAuditEventsRetained": 7,
+  "inquiryReceipt": "154464c1-2654-4dd3-91f8-d45181ddecca",
+  "inquiriesForThisProperty": 1,
+  "qaInvestorFinalStatus": "Revoked",
+  "regressionsPassed": 27,
+  "hostedApiChecksPassed": 22,
+  "approvalRevocationChecksPassed": 17,
+  "cookieFreeEntryChecksPassed": 7,
+  "actualBrowserUploads": [
+    "PBK-QA-photo.png",
+    "PBK-QA-packet.pdf"
+  ],
+  "browserPicker": "Windows native picker; extension chooser reports file access disabled",
+  "browser": [
+    "Staff created and saved fictional draft",
+    "Staff uploaded owned PNG and PDF",
+    "Reviewer previewed and released version 1",
+    "Unapproved investor link denied",
+    "Approved investor opened released packet and private photo/PDF in Chrome",
+    "One nonbinding inquiry shown with matching staff receipt",
+    "390px mobile approved packet; no horizontal overflow; keyboard tabs passed; PDF opened",
+    "Revoked desktop and mobile private views cleared on protected action",
+    "Staff withdrew fictional house and viewed seven retained audit events; signed out"
+  ],
+  "files": {
+    "propertyId": "97c5e7ca-d34d-41b3-87cf-2c0b130037a2",
+    "version": 1,
+    "internalNotesAbsent": true,
+    "hashes": [
+      {
+        "kind": "photo",
+        "title": "PBK-QA-photo.png",
+        "bytes": 20491,
+        "sha256": "92994d5e8717645fc2273ef97cd058edba69ae66f1b9caa00d7c037533844cc5"
+      },
+      {
+        "kind": "packet",
+        "title": "PBK-QA-packet.pdf",
+        "bytes": 23786,
+        "sha256": "ebfb108bfc2e29c866cbe19d2c55d48ada1396f911dd3e4bb0594f0744224a18"
+      }
+    ]
+  },
+  "pendingUploads": 0,
+  "unreferencedPrivateObjects": 0,
+  "realMembershipHashBefore": "fb56166b01324559e1209534d4dcf480",
+  "realMembershipHashAfter": "fb56166b01324559e1209534d4dcf480",
+  "productionBefore": "6af8584747b1c3bcb76e5291",
+  "productionAfter": "6af8621ce352dd18113177cc",
+  "concurrentProductionRelease": {
+    "initiatedByThisWork": false,
+    "branch": "main",
+    "commit": "53ecb515e3d892b69cf06fc2e77b635f103690b0",
+    "title": "fix: persist canonical agent activation and show verified fleet evidence",
+    "publishedAtUtc": "2026-11-14T13:29:19.237Z",
+    "actionTaken": "Left untouched"
+  },
+  "staffNetlifyTeamProtectionUnchanged": true,
+  "crmOrCalendlySubmission": false,
+  "crmCalendlySettingsChanged": false,
+  "webflowPublish": false,
+  "goldBadgesPromoted": false,
+  "guideConnectionPromoted": false,
+  "gradientsChanged": false,
+  "bridgeReadOnlyHealth": {
+    "httpStatus": 200,
+    "ok": true,
+    "authRequired": true,
+    "bridgeStatus": "up"
+  },
+  "limitations": [
+    "A private PDF URL issued before revocation may remain valid until its existing 60-second expiry; expiry was verified.",
+    "A downloaded file cannot be recalled.",
+    "No actual email delivery, live CRM form submission or Calendly booking was performed."
+  ]
+}

@@ -95,9 +95,10 @@ export function UnifiedInbox() {
   const [threadLoading, setThreadLoading] = useState(true);
   const [threadLoadingMore, setThreadLoadingMore] = useState(false);
   const [threadError, setThreadError] = useState('');
-  const [leadThreadError, setLeadThreadError] = useState<{ leadId: string; message: string } | null>(
-    null
-  );
+  const [leadThreadError, setLeadThreadError] = useState<{
+    leadId: string;
+    message: string;
+  } | null>(null);
   const [search, setSearch] = useState('');
   const [activeFilter, setActiveFilter] = useState<ConversationFilter>('all');
   const [compactViewport, setCompactViewport] = useState(
@@ -237,7 +238,8 @@ export function UnifiedInbox() {
         if (requestId !== leadThreadResolveSequence.current) return;
         setLeadThreadError({
           leadId: requestedLeadId,
-          message: error instanceof Error ? error.message : 'Unable to resolve the seller conversation.',
+          message:
+            error instanceof Error ? error.message : 'Unable to resolve the seller conversation.',
         });
       });
     return () => {

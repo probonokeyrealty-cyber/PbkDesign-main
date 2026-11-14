@@ -74,12 +74,17 @@ function RowDetails({
             {sharedPhones.map((entry) => (
               <li key={entry.phone}>
                 <strong>{entry.phone}</strong>
-                {' · Rows '}{entry.rows.slice(0, 6).join(', ')}
+                {' · Rows '}
+                {entry.rows.slice(0, 6).join(', ')}
                 {entry.rows.length > 6 && ` +${entry.rows.length - 6} more`}
                 {' · '}
-                {entry.status === 'dnc' ? 'DNC: blocked on all rows'
-                  : entry.status === 'candidate' ? `One contact slot: row ${entry.row}`
-                  : entry.status === 'unknown' ? 'DNC unknown: held' : 'No eligible row'}
+                {entry.status === 'dnc'
+                  ? 'DNC: blocked on all rows'
+                  : entry.status === 'candidate'
+                    ? `One contact slot: row ${entry.row}`
+                    : entry.status === 'unknown'
+                      ? 'DNC unknown: held'
+                      : 'No eligible row'}
               </li>
             ))}
           </ul>
@@ -169,11 +174,12 @@ export function BatchReview() {
   const shared = useMemo(() => {
     const entries = batch?.contactPlan.filter((entry) => entry.rows.length > 1) ?? [];
     const byRow = new Map<number, BatchContactEntry[]>();
-    for (const entry of entries) for (const number of entry.rows) {
-      const list = byRow.get(number) ?? [];
-      list.push(entry);
-      byRow.set(number, list);
-    }
+    for (const entry of entries)
+      for (const number of entry.rows) {
+        const list = byRow.get(number) ?? [];
+        list.push(entry);
+        byRow.set(number, list);
+      }
     return { entries, byRow, blocked: entries.filter(({ status }) => status === 'dnc').length };
   }, [batch]);
   const filtered = useMemo(() => {
@@ -233,7 +239,10 @@ export function BatchReview() {
         name: file.name,
         rows,
         contactPlan: buildBatchContactPlan(
-          rows, roster.leads, new Set(rows.map(({ number }) => number)), roster.dncPhones
+          rows,
+          roster.leads,
+          new Set(rows.map(({ number }) => number)),
+          roster.dncPhones
         ),
         rosterSize: roster.leads.length,
         sampleRevision:
@@ -252,9 +261,14 @@ export function BatchReview() {
 
   const applySample = async () => {
     if (
-      window.location.hostname !== '127.0.0.1' || !batch?.sampleRevision ||
-      !confirmation.current?.open || !eligible.length || busy.current || receipt
-    ) return;
+      window.location.hostname !== '127.0.0.1' ||
+      !batch?.sampleRevision ||
+      !confirmation.current?.open ||
+      !eligible.length ||
+      busy.current ||
+      receipt
+    )
+      return;
     busy.current = true;
     confirmation.current.close();
     setPending(true);
@@ -277,9 +291,14 @@ export function BatchReview() {
         registeredPhoneCount?: number;
         error?: string;
       };
-      if (!response.ok || !result.ok || !result.summary ||
-        typeof result.registeredPhoneCount !== 'number' || !Number.isSafeInteger(result.registeredPhoneCount) ||
-        result.registeredPhoneCount < 0) {
+      if (
+        !response.ok ||
+        !result.ok ||
+        !result.summary ||
+        typeof result.registeredPhoneCount !== 'number' ||
+        !Number.isSafeInteger(result.registeredPhoneCount) ||
+        result.registeredPhoneCount < 0
+      ) {
         throw new Error(result.error || 'Could not apply the sample.');
       }
       setReceipt({ summary: result.summary, registeredPhoneCount: result.registeredPhoneCount });
@@ -356,34 +375,46 @@ export function BatchReview() {
             </div>
             <div className="pbk-batch-meta-actions">
               {batch.sampleRevision && (
-                <button type="button" className="pbk-btn pbk-btn-primary"
+                <button
+                  type="button"
+                  className="pbk-btn pbk-btn-primary"
                   disabled={pending || !eligible.length || Boolean(receipt)}
-                  onClick={() => confirmation.current?.showModal()}>
+                  onClick={() => confirmation.current?.showModal()}
+                >
                   <ClipboardCheck size={16} aria-hidden="true" /> Apply reviewed sample rows
                 </button>
               )}
-            <button
-              type="button"
-              className="pbk-btn pbk-btn-ghost"
-              disabled={pending}
-              onClick={() => {
-                setBatch(null);
-                setFile(null);
-                setError('');
-                resetReview();
-                if (input.current) input.current.value = '';
-              }}
-            >
-              <Trash2 size={16} aria-hidden="true" /> Clear batch
-            </button>
+              <button
+                type="button"
+                className="pbk-btn pbk-btn-ghost"
+                disabled={pending}
+                onClick={() => {
+                  setBatch(null);
+                  setFile(null);
+                  setError('');
+                  resetReview();
+                  if (input.current) input.current.value = '';
+                }}
+              >
+                <Trash2 size={16} aria-hidden="true" /> Clear batch
+              </button>
             </div>
           </div>
           {receipt && (
             <section className="pbk-batch-receipt" role="status" aria-label="Sample apply result">
               <strong>Sample applied</strong>
-              <span>{receipt.summary.created} created · {receipt.summary.updated} updated · {receipt.summary.unchanged} unchanged</span>
-              <span>{receipt.summary.conflicts} conflicts · {receipt.summary.invalid} invalid · {receipt.summary.unreviewed} unreviewed skipped</span>
-              <span>{receipt.registeredPhoneCount} {receipt.registeredPhoneCount === 1 ? 'phone number' : 'phone numbers'} registered</span>
+              <span>
+                {receipt.summary.created} created · {receipt.summary.updated} updated ·{' '}
+                {receipt.summary.unchanged} unchanged
+              </span>
+              <span>
+                {receipt.summary.conflicts} conflicts · {receipt.summary.invalid} invalid ·{' '}
+                {receipt.summary.unreviewed} unreviewed skipped
+              </span>
+              <span>
+                {receipt.registeredPhoneCount}{' '}
+                {receipt.registeredPhoneCount === 1 ? 'phone number' : 'phone numbers'} registered
+              </span>
             </section>
           )}
           <div className="pbk-batch-filters" role="group" aria-label="Row category">
@@ -445,11 +476,15 @@ export function BatchReview() {
                 </label>
                 {shared.entries.length > 0 && (
                   <label className="pbk-batch-checkbox">
-                    <input type="checkbox" checked={sharedOnly} onChange={(event) => {
-                      setSharedOnly(event.target.checked);
-                      setPage(0);
-                      setSelected(null);
-                    }} />
+                    <input
+                      type="checkbox"
+                      checked={sharedOnly}
+                      onChange={(event) => {
+                        setSharedOnly(event.target.checked);
+                        setPage(0);
+                        setSelected(null);
+                      }}
+                    />
                     Shared phones ({shared.entries.length}, {shared.blocked} DNC)
                   </label>
                 )}
@@ -522,20 +557,54 @@ export function BatchReview() {
           </div>
         </div>
       )}
-      <dialog ref={confirmation} className="pbk-batch-confirm" aria-labelledby="pbk-batch-confirm-title">
+      <dialog
+        ref={confirmation}
+        className="pbk-batch-confirm"
+        aria-labelledby="pbk-batch-confirm-title"
+      >
         <h2 id="pbk-batch-confirm-title">Confirm sample apply</h2>
         <dl>
-          <div><dt>New reviewed rows</dt><dd>{eligible.filter(({ status }) => status === 'new').length}</dd></div>
-          <div><dt>Matched reviewed rows</dt><dd>{eligible.filter(({ status }) => status === 'match').length}</dd></div>
-          <div><dt>Conflicts skipped</dt><dd>{summary.conflict}</dd></div>
-          <div><dt>Invalid rows skipped</dt><dd>{summary.invalid}</dd></div>
-          <div><dt>Unreviewed eligible rows skipped</dt><dd>{summary.new + summary.match - eligible.length}</dd></div>
+          <div>
+            <dt>New reviewed rows</dt>
+            <dd>{eligible.filter(({ status }) => status === 'new').length}</dd>
+          </div>
+          <div>
+            <dt>Matched reviewed rows</dt>
+            <dd>{eligible.filter(({ status }) => status === 'match').length}</dd>
+          </div>
+          <div>
+            <dt>Conflicts skipped</dt>
+            <dd>{summary.conflict}</dd>
+          </div>
+          <div>
+            <dt>Invalid rows skipped</dt>
+            <dd>{summary.invalid}</dd>
+          </div>
+          <div>
+            <dt>Unreviewed eligible rows skipped</dt>
+            <dd>{summary.new + summary.match - eligible.length}</dd>
+          </div>
         </dl>
-        <p>Only the local sample roster changes. Existing values and DNC flags are kept. No outreach.</p>
+        <p>
+          Only the local sample roster changes. Existing values and DNC flags are kept. No outreach.
+        </p>
         <div className="pbk-batch-meta-actions">
-          <button type="button" className="pbk-btn pbk-btn-ghost" autoFocus onClick={() => confirmation.current?.close()}>Cancel</button>
-          <button type="button" className="pbk-btn pbk-btn-primary" disabled={pending || !eligible.length || Boolean(receipt)}
-            onClick={() => void applySample()}>Confirm apply</button>
+          <button
+            type="button"
+            className="pbk-btn pbk-btn-ghost"
+            autoFocus
+            onClick={() => confirmation.current?.close()}
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            className="pbk-btn pbk-btn-primary"
+            disabled={pending || !eligible.length || Boolean(receipt)}
+            onClick={() => void applySample()}
+          >
+            Confirm apply
+          </button>
         </div>
       </dialog>
     </div>

@@ -3,7 +3,8 @@ import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { isAbsolute, join, relative } from 'node:path';
+import { buildAgentRuntimeSmokeEnv } from './agent-runtime-smoke-isolation.mjs';
 
 const repoRoot = process.cwd();
 const port = String(19600 + Math.floor(Math.random() * 2000));
@@ -15,6 +16,7 @@ async function waitForBridge(baseUrl, timeoutMs = 30_000) {
     try {
       const response = await fetch(`${baseUrl}/health`, {
         headers: { Authorization: `Bearer ${apiKey}` },
+        signal: AbortSignal.timeout(2000),
       });
       if (response.ok) return;
     } catch {
@@ -28,6 +30,7 @@ async function waitForBridge(baseUrl, timeoutMs = 30_000) {
 async function requestJson(baseUrl, path, { method = 'GET', body } = {}) {
   const response = await fetch(`${baseUrl}${path}`, {
     method,
+    signal: AbortSignal.timeout(30_000),
     headers: {
       Authorization: `Bearer ${apiKey}`,
       'Content-Type': 'application/json',
@@ -122,10 +125,15 @@ function assertWorkOrderProof(label, payload, { agentId, providerWriteIntent }) 
 async function main() {
   const stateDir = await mkdtemp(join(tmpdir(), 'pbk-ava-agent-delegation-'));
   const baseUrl = `http://127.0.0.1:${port}`;
-  const child = spawn(process.execPath, ['scripts/openclaw-local-server.mjs'], {
+  const child = spawn(process.execPath, [
+    '--import',
+    new URL('./agent-runtime-smoke-isolation.mjs', import.meta.url).href,
+    'scripts/openclaw-local-server.mjs',
+  ], {
     cwd: repoRoot,
     env: {
-      ...process.env,
+      ...buildAgentRuntimeSmokeEnv(),
+      PBK_AGENT_SMOKE_ISOLATED: '1',
       PORT: port,
       HOST: '127.0.0.1',
       PBK_OPENCLAW_STATE_DIR: stateDir,
@@ -133,6 +141,7 @@ async function main() {
       PBK_TEAM_PASSCODE: 'pbkway',
       PBK_SUPABASE_ENABLED: '0',
       PBK_DISABLE_POSTGRES: '1',
+      PBK_REDIS_ENABLED: '0',
       PBK_ALLOW_UNAUTHENTICATED_HOSTED_BRIDGE: '1',
       PBK_DEEPSEEK_API_KEY: '',
       RESEND_API_KEY: '',
@@ -140,10 +149,12 @@ async function main() {
       INSTANTLY_API_KEY: '',
     },
     stdio: ['ignore', 'pipe', 'pipe'],
+    windowsHide: true,
   });
 
   const stderr = [];
   child.stderr.on('data', (chunk) => stderr.push(String(chunk)));
+  child.stdout.resume();
 
   try {
     await waitForBridge(baseUrl);
@@ -203,9 +214,14 @@ async function main() {
       )
     );
   } finally {
-    if (!child.killed) child.kill();
-    await Promise.race([once(child, 'exit'), new Promise((resolve) => setTimeout(resolve, 2000))]).catch(() => {});
-    await rm(stateDir, { recursive: true, force: true }).catch(() => {});
+    if (child.exitCode === null && child.signalCode === null) {
+      const exited = once(child, 'exit');
+      child.kill();
+      await exited;
+    }
+    const relativeStateDir = relative(tmpdir(), stateDir);
+    assert(!isAbsolute(relativeStateDir) && relativeStateDir.startsWith('pbk-ava-agent-delegation-'));
+    await rm(stateDir, { recursive: true, force: true });
     if (child.exitCode && child.exitCode !== 0) {
       console.warn(stderr.join('').split('\n').slice(-8).join('\n'));
     }

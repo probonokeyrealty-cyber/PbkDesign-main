@@ -112,7 +112,9 @@ export async function startIsolatedBridge({ entry = defaultEntry, args = [], sta
       fetch: async (target, options = {}) => {
         if (!active || child.exitCode !== null || child.signalCode !== null) throw new Error('Isolated bridge is stopped');
         if (new URL(target).origin !== origin) throw new Error('Smoke request origin is not the isolated child');
-        return fetch(target, { ...options, redirect: 'error', signal: AbortSignal.any([requests.signal, AbortSignal.timeout(20000)]) });
+        const signals = [requests.signal, AbortSignal.timeout(20000)];
+        if (options.signal) signals.push(options.signal);
+        return fetch(target, { ...options, redirect: 'error', signal: AbortSignal.any(signals) });
       },
     };
   } catch (error) {

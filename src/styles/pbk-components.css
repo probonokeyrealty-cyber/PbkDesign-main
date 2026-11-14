@@ -11670,7 +11670,13 @@ html[data-theme='light'] :is(.pbk-analyzer-command[data-workbench='true'], .pbk-
   --text-secondary: #475569;
 }
 
-html[data-theme='light'] :is(.pbk-analyzer-section-title, .pbk-analyzer-comp-id, .pbk-analyzer-segments button[aria-pressed='true'], .pbk-analyzer-command[data-workbench='true'] .pbk-analyzer-tabs button[data-active='true']) {
+html[data-theme='light']
+  :is(
+    .pbk-analyzer-section-title,
+    .pbk-analyzer-comp-id,
+    .pbk-analyzer-segments button[aria-pressed='true'],
+    .pbk-analyzer-command[data-workbench='true'] .pbk-analyzer-tabs button[data-active='true']
+  ) {
   color: #075985;
 }
 
@@ -12105,13 +12111,18 @@ html[data-theme='light'] :is(.pbk-analyzer-section-title, .pbk-analyzer-comp-id,
   overflow-wrap: anywhere;
 }
 
-.pbk-call-workbench :is(.pbk-call-path-grid, .pbk-call-script-segments) button[aria-pressed='true'] {
+.pbk-call-workbench
+  :is(.pbk-call-path-grid, .pbk-call-script-segments)
+  button[aria-pressed='true'] {
   border-color: var(--sky-dim);
   background: var(--sky-glow);
   color: var(--sky);
 }
 
-html[data-theme='light'] .pbk-call-workbench :is(.pbk-call-path-grid, .pbk-call-script-segments) button[aria-pressed='true'] {
+html[data-theme='light']
+  .pbk-call-workbench
+  :is(.pbk-call-path-grid, .pbk-call-script-segments)
+  button[aria-pressed='true'] {
   color: #075985;
 }
 
@@ -14264,7 +14275,9 @@ html[data-theme='light'] .pbk-lead-edit-modal-footer {
     align-items: start;
   }
 
-  .pbk-attom-preview[data-mode='workspace'] .pbk-attom-layout[data-matched='true'] .pbk-attom-lookup {
+  .pbk-attom-preview[data-mode='workspace']
+    .pbk-attom-layout[data-matched='true']
+    .pbk-attom-lookup {
     grid-column: 2;
     grid-row: 1;
   }
@@ -14463,7 +14476,9 @@ html[data-theme='light'] .pbk-new-lead-modal :is(input, select, textarea) {
   color: var(--text-primary);
 }
 
-html[data-theme='light'] .pbk-new-lead-modal :is(label, label > span, .pbk-new-lead-modal-actions button[type='button']) {
+html[data-theme='light']
+  .pbk-new-lead-modal
+  :is(label, label > span, .pbk-new-lead-modal-actions button[type='button']) {
   color: var(--text-secondary);
 }
 

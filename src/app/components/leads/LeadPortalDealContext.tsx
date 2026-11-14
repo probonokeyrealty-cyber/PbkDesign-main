@@ -4,7 +4,11 @@ import { formatLeadMoney, formatLeadValue } from './leadPortalModel';
 
 export function LeadPortalDealContext({ lead }: { lead: LeadPortalModel }) {
   return (
-    <section className="pbk-lead-portal-card pbk-lead-portal-deal" id="lead-numbers" aria-labelledby="lead-numbers-heading">
+    <section
+      className="pbk-lead-portal-card pbk-lead-portal-deal"
+      id="lead-numbers"
+      aria-labelledby="lead-numbers-heading"
+    >
       <header>
         <div>
           <span className="pbk-kicker">Motivation &amp; underwriting</span>

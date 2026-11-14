@@ -41,8 +41,11 @@ export function RightPanel({
     const trigger = document.activeElement;
     button.focus({ preventScroll: true });
     return () => {
-      if (trigger instanceof HTMLElement && trigger.isConnected &&
-          (document.activeElement === document.body || document.activeElement === button)) {
+      if (
+        trigger instanceof HTMLElement &&
+        trigger.isConnected &&
+        (document.activeElement === document.body || document.activeElement === button)
+      ) {
         trigger.focus({ preventScroll: true });
       }
     };

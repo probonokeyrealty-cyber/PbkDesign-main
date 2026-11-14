@@ -10,10 +10,11 @@ function runtime(client) {
   const context = vm.createContext({
     REDIS_ENABLED: true, REDIS_URL: 'redis://test.invalid', REDIS_NAMESPACE: 'test',
     REDIS_INSTANCE_ID: 'test', REDIS_RETRY_COOLDOWN_MS: 1000,
-    REDIS_CONNECT_TIMEOUT_MS: 25, REDIS_CALL_STATE_TTL_SECONDS: 60, REDIS_LEASE_TTL_SECONDS: 60,
+    REDIS_CONNECT_TIMEOUT_MS: 25, REDIS_COMMAND_TIMEOUT_MS: 25,
+    REDIS_CALL_STATE_TTL_SECONDS: 60, REDIS_LEASE_TTL_SECONDS: 60,
     sharedRedisClient: null, sharedRedisConnectPromise: null, sharedRedisDisabledUntil: 0,
     sharedRedisLastError: '', sharedRedisLastReadyAt: '',
-    createRedisClient: () => client, isoNow: () => new Date().toISOString(),
+    createRedisClient: () => client, isoNow: () => new Date().toISOString(), setTimeout, clearTimeout,
     withTimeout: (promise, ms) => {
       let timer;
       return Promise.race([promise, new Promise((_, reject) => {

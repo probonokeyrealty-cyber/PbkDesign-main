@@ -515,8 +515,8 @@ export function buildAgentRegistrySnapshot(
   const pendingHealth = agents.filter(
     (agent) =>
       requiredIds.includes(agent.id) &&
-      String(agent.status || '').toLowerCase() !== 'active' &&
-      !(agent.healthCheckedAt || agent.health_checked_at)
+      (String(agent.status || '').toLowerCase() !== 'active' ||
+        !(agent.healthCheckedAt || agent.health_checked_at))
   );
   const capabilities = uniqueStrings(agents.flatMap((agent) => agent.capabilities || [])).sort();
   const inventoryReady = missing.length === 0 && degraded.length === 0;
@@ -582,20 +582,22 @@ function getMeasurementLastAction(lastActions = {}, agent = {}) {
 function getMeasurementLatencySamples(latencySamples = {}, healthProbe = {}, agent = {}) {
   const agentId = normalizeAgentRegistryId(agent.id || agent.agentId || agent.name);
   const direct = latencySamples && typeof latencySamples === 'object' ? latencySamples[agentId] : [];
-  const values = Array.isArray(direct) ? direct : [direct];
+  const values = Array.isArray(direct) ? [...direct] : [direct];
   for (const key of ['latencyP95Ms', 'latencyMs', 'probeLatencyMs']) {
-    if (Number.isFinite(Number(healthProbe?.[key]))) values.push(Number(healthProbe[key]));
+    values.push(healthProbe?.[key]);
   }
-  return values.map(Number).filter(Number.isFinite);
+  return values
+    .filter((value) => typeof value === 'number' || (typeof value === 'string' && value.trim()))
+    .map(Number)
+    .filter((value) => Number.isFinite(value) && value >= 0);
 }
 
-function getMeasurementLastSuccessAt(agent = {}, probe = {}, action = null) {
+function getMeasurementLastSuccessAt(action = null) {
   const actionStatus = String(action?.status || action?.result || '').toLowerCase();
-  if (action && !/fail|error|reject|denied|blocked/.test(actionStatus)) {
+  if (action && /^(success|succeeded|complete|completed)$/.test(actionStatus)) {
     return action.at || action.completedAt || action.completed_at || action.updatedAt || action.createdAt || '';
   }
-  if (probe?.ready) return probe.lastSeen || probe.last_seen || probe.checkedAt || probe.checked_at || '';
-  return agent.healthCheckedAt || agent.health_checked_at || '';
+  return '';
 }
 
 function getMeasurementLastFailureAt(agent = {}, probe = {}, action = null) {
@@ -611,12 +613,24 @@ function getMeasurementLastFailureAt(agent = {}, probe = {}, action = null) {
 
 export function buildStableAgentFleetMeasurement(registry = [], options = {}) {
   const requiredIds = uniqueStrings(options.requiredIds || REQUIRED_AGENT_IDS);
-  const normalizedRegistry = mergeAgentRegistryRecords(registry, buildDefaultAgentRegistry({ env: options.env || {} }));
+  const observedRegistry = mergeAgentRegistryRecords(registry, []);
+  const observedIds = new Set(observedRegistry.map((agent) => agent.id));
+  const normalizedRegistry = mergeAgentRegistryRecords(
+    observedRegistry,
+    buildDefaultAgentRegistry({ env: options.env || {} }).filter((agent) => observedIds.has(agent.id))
+  );
   const byId = new Map(normalizedRegistry.map((agent) => [agent.id, agent]));
   const catalog = normalizeToolCatalog(options.toolCatalog || {});
   const maxLatencyP95Ms = Number(options.maxLatencyP95Ms || 2500);
   const minLatencySamples = Math.max(0, Number(options.minLatencySamples ?? 1));
   const context = options.intelligenceContext && typeof options.intelligenceContext === 'object' ? options.intelligenceContext : {};
+  // The bridge publishes both full context packets and compact status summaries.
+  const contextReadiness = {
+    memory: context.memory?.ready ?? context.memoryReady,
+    skills: context.skills?.ready ?? context.skillsReady,
+    dataFreshness: context.dataFreshness?.ready ?? context.dataFreshnessReady,
+    fleetReadiness: context.fleetReadiness?.ready ?? context.readiness?.ready,
+  };
   const generatedAt = new Date(typeof options.now === 'function' ? options.now() : options.now || Date.now()).toISOString();
   const agents = requiredIds.map((agentId) => {
     const agent = byId.get(agentId) || normalizeAgentRegistryRecord({ id: agentId, name: agentId, status: 'missing' });
@@ -625,7 +639,7 @@ export function buildStableAgentFleetMeasurement(registry = [], options = {}) {
     const requiredTools = uniqueStrings(agent.metadata?.requiredTools || agent.requiredTools || []);
     const missingTools = requiredTools.filter((tool) => !catalog[tool]);
     const samples = getMeasurementLatencySamples(options.latencySamples || {}, probe || {}, agent);
-    const lastSuccessAt = getMeasurementLastSuccessAt(agent, probe || {}, action);
+    const lastSuccessAt = getMeasurementLastSuccessAt(action);
     const lastFailureAt = getMeasurementLastFailureAt(agent, probe || {}, action);
     const status = String(agent.status || '').toLowerCase();
     const blockers = [];
@@ -634,13 +648,13 @@ export function buildStableAgentFleetMeasurement(registry = [], options = {}) {
     if (!agent.capabilities?.length) blockers.push('capabilities_missing');
     if (!['active', 'standby'].includes(status)) blockers.push(`registry_status_${status || 'missing'}`);
     if (!probe) blockers.push('health_probe_missing');
-    else if (probe.ready === false || probe.present === false) blockers.push('health_probe_not_ready');
+    else if (probe.ready !== true || probe.present !== true) blockers.push('health_probe_not_ready');
     blockers.push(...missingTools.map((tool) => `missing_tool:${tool}`));
     if (samples.length < minLatencySamples) blockers.push('latency_not_sampled');
     if (samples.length && percentile(samples, 0.95) > maxLatencyP95Ms) blockers.push('latency_p95_above_budget');
     if (!lastSuccessAt) blockers.push('last_success_missing');
     for (const key of ['memory', 'skills', 'dataFreshness', 'fleetReadiness']) {
-      if (context[key]?.ready === false) blockers.push(`${key}_not_ready`);
+      if (contextReadiness[key] !== true) blockers.push(`${key}_not_ready`);
     }
     const measured = blockers.length === 0;
     return {
@@ -655,7 +669,7 @@ export function buildStableAgentFleetMeasurement(registry = [], options = {}) {
       measurement: {
         inventory: byId.has(agentId),
         healthProbe: Boolean(probe),
-        healthReady: Boolean(probe?.ready !== false && probe?.present !== false && probe),
+        healthReady: probe?.ready === true && probe?.present === true,
         toolsMeasured: requiredTools.length > 0,
         toolsReady: missingTools.length === 0,
         latencyMeasured: samples.length >= minLatencySamples,
@@ -663,10 +677,10 @@ export function buildStableAgentFleetMeasurement(registry = [], options = {}) {
         lastSuccessObserved: Boolean(lastSuccessAt),
         lastFailureObserved: Boolean(lastFailureAt),
         contextKnown: {
-          memory: context.memory?.ready !== undefined,
-          skills: context.skills?.ready !== undefined,
-          dataFreshness: context.dataFreshness?.ready !== undefined,
-          fleetReadiness: context.fleetReadiness?.ready !== undefined,
+          memory: typeof contextReadiness.memory === 'boolean',
+          skills: typeof contextReadiness.skills === 'boolean',
+          dataFreshness: typeof contextReadiness.dataFreshness === 'boolean',
+          fleetReadiness: typeof contextReadiness.fleetReadiness === 'boolean',
         },
       },
       metrics: {

@@ -921,10 +921,10 @@ function ComposeModal({
         title: approvalRequired
           ? 'Awaiting approval'
           : scheduled
-          ? 'Message scheduled'
-          : draft.channel === 'sms'
-            ? 'SMS submitted'
-            : 'Email submitted',
+            ? 'Message scheduled'
+            : draft.channel === 'sms'
+              ? 'SMS submitted'
+              : 'Email submitted',
         desc: scheduled
           ? `Scheduled for ${formatDateTime(draft.sendAt)}.`
           : String(response.verbiage || 'Message request accepted.'),
@@ -948,9 +948,13 @@ function ComposeModal({
   if (!open) return null;
 
   return (
-    <div className="modal-backdrop" role="presentation" onMouseDown={() => {
-      if (!sendingRef.current) onClose();
-    }}>
+    <div
+      className="modal-backdrop"
+      role="presentation"
+      onMouseDown={() => {
+        if (!sendingRef.current) onClose();
+      }}
+    >
       <div
         className="modal compose-modal"
         role="dialog"
@@ -1129,9 +1133,15 @@ function ComposeModal({
         )}
 
         {(sendError || (!sending && submissionHeld)) && (
-          <div role="status" className="flex items-start gap-2 rounded-lg border border-rose-400/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-100">
+          <div
+            role="status"
+            className="flex items-start gap-2 rounded-lg border border-rose-400/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-100"
+          >
             <AlertCircle size={14} className="mt-0.5 shrink-0" />
-            <span>{sendError || 'This draft was already submitted. Check the conversation before sending another message.'}</span>
+            <span>
+              {sendError ||
+                'This draft was already submitted. Check the conversation before sending another message.'}
+            </span>
           </div>
         )}
 
@@ -1669,7 +1679,11 @@ export function Inbox() {
             onSelectLane={selectSignalLane}
           />
 
-          <section id="inbox-approvals" className="pbk-inbox-card" aria-labelledby="inbox-review-heading">
+          <section
+            id="inbox-approvals"
+            className="pbk-inbox-card"
+            aria-labelledby="inbox-review-heading"
+          >
             <div className="pbk-inbox-card-head">
               <div>
                 <h2 id="inbox-review-heading">Needs your review</h2>

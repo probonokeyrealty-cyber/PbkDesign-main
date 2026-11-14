@@ -128,7 +128,11 @@ export function DealAnalyzerCommandHeader({
   };
 
   return (
-    <header className="pbk-analyzer-command" data-view={activeTab} data-workbench={Boolean(workbench)}>
+    <header
+      className="pbk-analyzer-command"
+      data-view={activeTab}
+      data-workbench={Boolean(workbench)}
+    >
       <div className="pbk-analyzer-command-main">
         <div className="pbk-analyzer-title-block">
           <span className="pbk-kicker">{workbench?.label || 'Deal Analyzer'}</span>
@@ -141,8 +145,8 @@ export function DealAnalyzerCommandHeader({
             <>
               <h1>{getShortAddress(deal.address)}</h1>
               <p>
-                Operator-first underwriting, path selection, call prep, and seller package controls stay
-                in one live engine.
+                Operator-first underwriting, path selection, call prep, and seller package controls
+                stay in one live engine.
               </p>
             </>
           )}
@@ -173,7 +177,11 @@ export function DealAnalyzerCommandHeader({
             <FileText size={14} />
             Docs
           </button>
-          <button type="button" className={`pbk-btn pbk-btn-${activeTab === 'analyzer' ? 'ghost' : 'primary'} pbk-btn-sm`} onClick={onSaveDeal}>
+          <button
+            type="button"
+            className={`pbk-btn pbk-btn-${activeTab === 'analyzer' ? 'ghost' : 'primary'} pbk-btn-sm`}
+            onClick={onSaveDeal}
+          >
             <Save size={14} />
             Save
           </button>
@@ -181,7 +189,11 @@ export function DealAnalyzerCommandHeader({
             <UserPlus size={14} />
             Lead
           </button>
-          <button type="button" className={`pbk-btn pbk-btn-${activeTab === 'analyzer' ? 'primary' : 'success'} pbk-btn-sm`} onClick={onAnalyze}>
+          <button
+            type="button"
+            className={`pbk-btn pbk-btn-${activeTab === 'analyzer' ? 'primary' : 'success'} pbk-btn-sm`}
+            onClick={onAnalyze}
+          >
             <Sparkles size={14} />
             Analyze
           </button>

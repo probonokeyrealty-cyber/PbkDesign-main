@@ -7,7 +7,11 @@ import { DealScoring } from './DealScoring';
 import { StrategySelector } from './StrategySelector';
 import { UnderwritingControls } from './UnderwritingControls';
 import { HelpTooltip } from './HelpTooltip';
-import { AnalyzerListingLookup, AnalyzerListingPhotos, type AnalyzerPhotoResult } from './AnalyzerListingLookup';
+import {
+  AnalyzerListingLookup,
+  AnalyzerListingPhotos,
+  type AnalyzerPhotoResult,
+} from './AnalyzerListingLookup';
 import { AnalyzerSellerHistory } from './AnalyzerSellerHistory';
 import { formatCurrency } from '../utils/formatting';
 import { calculateARV } from '../utils/dealCalculations';
@@ -127,15 +131,16 @@ export function AnalyzerTab({
 
   const valuation = (
     <div id="analyzer-valuation" className="pbk-analyzer-valuation">
-      <section aria-labelledby="analyzer-property-heading" className="pbk-analyzer-card pbk-analyzer-hero pbk-analyzer-workbench-section">
+      <section
+        aria-labelledby="analyzer-property-heading"
+        className="pbk-analyzer-card pbk-analyzer-hero pbk-analyzer-workbench-section"
+      >
         <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
-          <h2 id="analyzer-property-heading" className="pbk-analyzer-section-title">01 / Property details</h2>
+          <h2 id="analyzer-property-heading" className="pbk-analyzer-section-title">
+            01 / Property details
+          </h2>
           <div className="flex flex-wrap gap-2">
-            <button
-              type="button"
-              onClick={onSaveDeal}
-              className="pbk-btn pbk-btn-ghost pbk-btn-sm"
-            >
+            <button type="button" onClick={onSaveDeal} className="pbk-btn pbk-btn-ghost pbk-btn-sm">
               Save Deal
             </button>
             <button
@@ -323,8 +328,13 @@ export function AnalyzerTab({
 
       {deal.type === 'house' && (
         <>
-          <section aria-labelledby="analyzer-house-heading" className="pbk-analyzer-card pbk-analyzer-workbench-section">
-            <h2 id="analyzer-house-heading" className="pbk-analyzer-section-title mb-3">02 / House numbers</h2>
+          <section
+            aria-labelledby="analyzer-house-heading"
+            className="pbk-analyzer-card pbk-analyzer-workbench-section"
+          >
+            <h2 id="analyzer-house-heading" className="pbk-analyzer-section-title mb-3">
+              02 / House numbers
+            </h2>
 
             <div className="space-y-2">
               <div className="flex items-start gap-2">
@@ -348,7 +358,12 @@ export function AnalyzerTab({
                     placeholder="0"
                     className="w-full h-9 pl-5 pr-3 border border-gray-200 dark:border-slate-700 rounded-lg bg-gray-50 dark:bg-slate-900 text-gray-900 dark:text-gray-100 text-[12.5px] outline-none focus:border-blue-500 transition-all"
                   />
-                  <span aria-hidden="true" className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-[12px] text-gray-500">$</span>
+                  <span
+                    aria-hidden="true"
+                    className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-[12px] text-gray-500"
+                  >
+                    $
+                  </span>
                 </div>
               </div>
 
@@ -461,8 +476,13 @@ export function AnalyzerTab({
 
       {deal.type === 'land' && <LandAnalysis deal={deal} onDealChange={onDealChange} />}
 
-      <section aria-labelledby="analyzer-comps-heading" className="pbk-analyzer-card pbk-analyzer-workbench-section">
-        <h2 id="analyzer-comps-heading" className="pbk-analyzer-section-title mb-3">Comparable Sales (Mean = ARV)</h2>
+      <section
+        aria-labelledby="analyzer-comps-heading"
+        className="pbk-analyzer-card pbk-analyzer-workbench-section"
+      >
+        <h2 id="analyzer-comps-heading" className="pbk-analyzer-section-title mb-3">
+          Comparable Sales (Mean = ARV)
+        </h2>
         <div>
           {(['A', 'B', 'C'] as const).map((comp) => (
             <div
@@ -471,7 +491,9 @@ export function AnalyzerTab({
               role="group"
               aria-label={`Comparable sale ${comp}`}
             >
-              <span className="pbk-analyzer-comp-id" aria-hidden="true">{comp}</span>
+              <span className="pbk-analyzer-comp-id" aria-hidden="true">
+                {comp}
+              </span>
               <label className="pbk-analyzer-comp-address">
                 <span aria-hidden="true">Address</span>
                 <input
@@ -625,7 +647,11 @@ export function AnalyzerTab({
       </div>
       <div className="pbk-analyzer-context-layout" data-view={view}>
         {valuation}
-        <aside id="analyzer-deal-context" className="pbk-analyzer-context" aria-labelledby="analyzer-context-heading">
+        <aside
+          id="analyzer-deal-context"
+          className="pbk-analyzer-context"
+          aria-labelledby="analyzer-context-heading"
+        >
           <h2 id="analyzer-context-heading">Deal context</h2>
           <AnalyzerListingPhotos
             key={address + ':' + currentPhotoResult?.status}

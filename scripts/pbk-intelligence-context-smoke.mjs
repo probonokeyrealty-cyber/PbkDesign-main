@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { requiredAgentRegistryIds } from './agent-registry.mjs';
 
 import {
   PBK_INTELLIGENCE_CONTEXT_REVISION,
@@ -8,6 +9,8 @@ import {
 } from './pbk-intelligence-context.mjs';
 
 const context = buildPBKIntelligenceContext({
+  lastSyncAt: new Date().toISOString(),
+  agents: requiredAgentRegistryIds.map((id) => ({ id })),
   lead: {
     id: 'lead-300k',
     name: 'Seller With Price',
@@ -98,15 +101,7 @@ assert(readiness.missingAgents.includes('qa-agent'));
 
 const fullFleetReadiness = buildPBKIntelligenceFleetReadiness({
   context,
-  agents: [
-    { id: 'ava', status: 'active' },
-    { id: 'rex', status: 'active' },
-    { id: 'qa-agent', status: 'active' },
-    { id: 'script-rotator', status: 'active' },
-    { id: 'prosody-tuner', status: 'active' },
-    { id: 'nurture-agent', status: 'active' },
-    { id: 'call-analyzer', status: 'active' },
-  ],
+  agents: requiredAgentRegistryIds.map((id) => ({ id, status: 'active' })),
 });
 
 assert.equal(fullFleetReadiness.ready, true);

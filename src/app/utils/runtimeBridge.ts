@@ -1834,12 +1834,24 @@ export type AttomPropertyFacts = {
 
 export type AttomPreviewResult =
   | { status: 'matched'; profile: AttomPropertyFacts }
-  | { status: 'invalid_address' | 'not_configured' | 'not_found' | 'ambiguous' | 'unavailable'
-    | 'authorization_failed' | 'rate_limited' | 'timed_out' };
+  | {
+      status:
+        | 'invalid_address'
+        | 'not_configured'
+        | 'not_found'
+        | 'ambiguous'
+        | 'unavailable'
+        | 'authorization_failed'
+        | 'rate_limited'
+        | 'timed_out';
+    };
 
 export function fetchAttomPropertyPreview(address: AttomPreviewAddress) {
   return bridgeRequest<AttomPreviewResult>({
-    method: 'POST', path: '/api/property-data/attom-preview', body: address, keepalive: false,
+    method: 'POST',
+    path: '/api/property-data/attom-preview',
+    body: address,
+    keepalive: false,
   });
 }
 

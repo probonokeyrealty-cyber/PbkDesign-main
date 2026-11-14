@@ -38,7 +38,11 @@ type LookupState =
       photos: string[];
     };
 
-export type AnalyzerPhotoResult = { address: string; status: LookupState['status']; urls: string[] };
+export type AnalyzerPhotoResult = {
+  address: string;
+  status: LookupState['status'];
+  urls: string[];
+};
 
 const numericFields = ['beds', 'baths', 'sqft', 'year', 'dom'] as const;
 
@@ -48,12 +52,22 @@ function positiveNumber(value: unknown): value is number {
 
 function photoLinks(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
-  return [...new Set(value.filter((url): url is string =>
-    typeof url === 'string' && /^https:\/\/ap\.rdcpix\.com\/[a-z0-9_-]+\.(?:jpe?g|png|webp)$/i.test(url)
-  ))].slice(0, 6);
+  return [
+    ...new Set(
+      value.filter(
+        (url): url is string =>
+          typeof url === 'string' &&
+          /^https:\/\/ap\.rdcpix\.com\/[a-z0-9_-]+\.(?:jpe?g|png|webp)$/i.test(url)
+      )
+    ),
+  ].slice(0, 6);
 }
 
-export function AnalyzerListingLookup({ deal, onFill, onPhotoResult }: {
+export function AnalyzerListingLookup({
+  deal,
+  onFill,
+  onPhotoResult,
+}: {
   deal: DealData;
   onFill: (updates: Partial<DealData>) => void;
   onPhotoResult: (result: AnalyzerPhotoResult) => void;
@@ -77,9 +91,12 @@ export function AnalyzerListingLookup({ deal, onFill, onPhotoResult }: {
       const response = await fetchApifyListingRequest(address);
       const record = response?.propertyData;
       const price = record?.data?.askingPriceUsd;
-      if (!response?.cache?.hit || record?.source !== 'apify-for-sale' ||
-          record.data?.priceBasis !== 'asking_price' ||
-          !positiveNumber(price)) {
+      if (
+        !response?.cache?.hit ||
+        record?.source !== 'apify-for-sale' ||
+        record.data?.priceBasis !== 'asking_price' ||
+        !positiveNumber(price)
+      ) {
         setLookup({ status: 'missing' });
         return;
       }
@@ -135,19 +152,27 @@ export function AnalyzerListingLookup({ deal, onFill, onPhotoResult }: {
         )}
         {lookup.status === 'found' && (
           <div className="pbk-analyzer-listing-result">
-            <p>Apify asking price <strong>{formatCurrency(lookup.price)}</strong></p>
+            <p>
+              Apify asking price <strong>{formatCurrency(lookup.price)}</strong>
+            </p>
             {(lookup.propertyType || positiveNumber(lookup.facts.lotSqft)) && (
               <p className="mt-1">
                 {lookup.propertyType && <span className="capitalize">{lookup.propertyType}</span>}
                 {lookup.propertyType && positiveNumber(lookup.facts.lotSqft) && ' | '}
-                {positiveNumber(lookup.facts.lotSqft) && `Lot: ${lookup.facts.lotSqft.toLocaleString('en-US')} sq ft`}
+                {positiveNumber(lookup.facts.lotSqft) &&
+                  `Lot: ${lookup.facts.lotSqft.toLocaleString('en-US')} sq ft`}
               </p>
             )}
             {lookup.sources.length > 0 && (
               <ul aria-label="Listing sources" className="mt-1 flex flex-wrap gap-x-3 gap-y-1">
                 {lookup.sources.map(([url, name]) => (
                   <li key={url}>
-                    <a href={url} target="_blank" rel="noopener noreferrer" className="text-blue-700 underline dark:text-blue-300">
+                    <a
+                      href={url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-blue-700 underline dark:text-blue-300"
+                    >
                       {name}
                     </a>
                   </li>
@@ -158,7 +183,10 @@ export function AnalyzerListingLookup({ deal, onFill, onPhotoResult }: {
             <button
               type="button"
               disabled={!fillableCount}
-              onClick={() => { onFill(updates); setFilledCount(fillableCount); }}
+              onClick={() => {
+                onFill(updates);
+                setFilledCount(fillableCount);
+              }}
               className="pbk-btn pbk-btn-ghost pbk-btn-sm mt-2"
             >
               Fill empty fields
@@ -207,23 +235,36 @@ export function AnalyzerListingPhotos({ result }: { result: AnalyzerPhotoResult 
                     aria-pressed={currentPhoto === url}
                     onClick={() => setSelectedPhoto(url)}
                   >
-                    <img src={url} alt="" loading="lazy" referrerPolicy="no-referrer"
-                      onError={() => setFailedPhotos((failed) => [...failed, url])} />
+                    <img
+                      src={url}
+                      alt=""
+                      loading="lazy"
+                      referrerPolicy="no-referrer"
+                      onError={() => setFailedPhotos((failed) => [...failed, url])}
+                    />
                   </button>
                 </li>
               ))}
             </ul>
           )}
-          <a className="pbk-analyzer-context-link" href={currentPhoto} target="_blank" rel="noopener noreferrer">
+          <a
+            className="pbk-analyzer-context-link"
+            href={currentPhoto}
+            target="_blank"
+            rel="noopener noreferrer"
+          >
             Full-size photo <ExternalLink size={13} aria-hidden="true" />
           </a>
         </>
       ) : (
         <p className="pbk-analyzer-context-meta" role="status">
-          {status === 'idle' ? 'No listing loaded.'
-            : status === 'loading' ? 'Looking up listing photos...'
-            : status === 'error' ? 'Listing lookup unavailable.'
-            : 'No listing photos available.'}
+          {status === 'idle'
+            ? 'No listing loaded.'
+            : status === 'loading'
+              ? 'Looking up listing photos...'
+              : status === 'error'
+                ? 'Listing lookup unavailable.'
+                : 'No listing photos available.'}
         </p>
       )}
     </section>

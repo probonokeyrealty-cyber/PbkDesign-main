@@ -143,8 +143,8 @@ assert(
 
 assert.equal(
   packageJson.scripts?.['test:connection-strength'],
-  'node ./scripts/connection-strength-check-smoke.mjs',
-  'package.json must expose the connection strength smoke.'
+  'node ./scripts/connection-strength-check-smoke.mjs && node ./scripts/openclaw-gateway-heartbeat-smoke.mjs && npm run test:runtime-recovery',
+  'package.json must expose connection strength, heartbeat deadlines, and database recovery coverage.'
 );
 assert.equal(
   packageJson.scripts?.['render:doctor'],

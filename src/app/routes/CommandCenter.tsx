@@ -2721,7 +2721,8 @@ export function CommandCenter() {
     if (
       !pendingApprovals.some((item) => item.id === draft.approvalId) ||
       draft.resolutionKeys.some((key) => uncertainApprovalKeys.current.has(key))
-    ) return;
+    )
+      return;
     setDecisionProgress(current => ({ ...current, phase: 'checking' }));
     approvalDialogRef.current?.close();
     setApprovalDecisionDraft(null);
@@ -2744,12 +2745,15 @@ export function CommandCenter() {
           setDecisionProgress(current => ({ ...current, phase: 'changed' }));
           throw new Error('The approval queue could not be verified. No decision was submitted.');
         }
-        const current = getPendingApprovals(fresh.approvals).find((item) => item.id === draft.approvalId);
+        const current = getPendingApprovals(fresh.approvals).find(
+          (item) => item.id === draft.approvalId
+        );
         if (
           !current ||
           getApprovalPreview(current) !== draft.preview ||
           friendlyRuntimeLabel(current.type || 'approval') !== draft.type ||
-          friendlyRuntimeLabel(current.leadName || current.address || 'PBK approval') !== draft.leadName ||
+          friendlyRuntimeLabel(current.leadName || current.address || 'PBK approval') !==
+            draft.leadName ||
           String(current.address || 'No address recorded') !== draft.address ||
           approvalRecipient(current) !== draft.recipient
         ) {
@@ -2764,7 +2768,9 @@ export function CommandCenter() {
           setDecisionProgress(previous => ({ ...previous, phase: 'unconfirmed' }));
           draft.resolutionKeys.forEach((key) => uncertainApprovalKeys.current.add(key));
           await refresh().catch(() => null);
-          throw new Error('Decision not confirmed. Check the approval history before trying again.');
+          throw new Error(
+            'Decision not confirmed. Check the approval history before trying again.'
+          );
         }
         setDecisionProgress(previous => ({ ...previous, phase: 'recorded', decision: draft.status, acknowledgedAt: new Date().toISOString() }));
         setResolvedApprovalIds((current) => {
@@ -2778,7 +2784,9 @@ export function CommandCenter() {
   };
 
   const isApprovalDecisionUnavailable = (approval: Record<string, unknown>) =>
-    !approval.id || !approvalsAvailable || Boolean(pendingAction) ||
+    !approval.id ||
+    !approvalsAvailable ||
+    Boolean(pendingAction) ||
     approvalRecordKeys(approval).some((key) => uncertainApprovalKeys.current.has(key));
   const isAdminDecisionPending = (taskId: string) => pendingAction.startsWith(`admin:${taskId}:`);
   const isApprovalDecisionPending = (approvalId: string) =>
@@ -2795,10 +2803,16 @@ export function CommandCenter() {
           <div className="pbk-command-hero-top">
             <div>
               <div className="pbk-eyebrow">{heroTimeLabel}</div>
-              <h1 id="today-heading" className="pbk-display">Today.</h1>
-              <p>{approvalsAvailable
-                ? `${pendingApprovalCount} awaiting approval · ${unreadMessageCount} replies waiting`
-                : loading ? 'Updating the workspace' : 'Approval status unavailable'}</p>
+              <h1 id="today-heading" className="pbk-display">
+                Today.
+              </h1>
+              <p>
+                {approvalsAvailable
+                  ? `${pendingApprovalCount} awaiting approval · ${unreadMessageCount} replies waiting`
+                  : loading
+                    ? 'Updating the workspace'
+                    : 'Approval status unavailable'}
+              </p>
             </div>
             <div className="pbk-hero-sync" aria-live="polite">
               <span
@@ -2811,7 +2825,6 @@ export function CommandCenter() {
               {loading ? 'Updating workspace' : error ? 'Connection needs attention' : 'Connected'}
             </div>
           </div>
-
         </section>
 
         {actionStatus && (
@@ -2840,7 +2853,9 @@ export function CommandCenter() {
         )}
 
         {(isWidgetVisible('approvals') || isWidgetVisible('activity')) && (
-          <div className={`pbk-today-review${isWidgetVisible('approvals') && isWidgetVisible('activity') ? ' is-split' : ''}`}>
+          <div
+            className={`pbk-today-review${isWidgetVisible('approvals') && isWidgetVisible('activity') ? ' is-split' : ''}`}
+          >
             {isWidgetVisible('approvals') && (
               <section
                 id="approvals"
@@ -2849,10 +2864,14 @@ export function CommandCenter() {
               >
                 <div className="flex items-center justify-between gap-3">
                   <div>
-                    <h2 id="pbk-review-heading" ref={reviewHeadingRef} tabIndex={-1}>Review</h2>
+                    <h2 id="pbk-review-heading" ref={reviewHeadingRef} tabIndex={-1}>
+                      Review
+                    </h2>
                     <p className="pbk-review-subtitle">Approval queue</p>
                   </div>
-                  {approvalsAvailable && <span className="pbk-review-count">{pendingApprovalCount} pending</span>}
+                  {approvalsAvailable && (
+                    <span className="pbk-review-count">{pendingApprovalCount} pending</span>
+                  )}
                 </div>
                 <DecisionRail progress={decisionProgress} available={approvalsAvailable} />
                 <div className="pbk-review-list">
@@ -2872,7 +2891,10 @@ export function CommandCenter() {
                       <div className="pbk-review-row-meta">
                         <span>{friendlyRuntimeLabel(approval.type || 'approval')}</span>
                         {Boolean(approval.createdAt) && (
-                          <time dateTime={String(approval.createdAt)} title={formatActivityTitle(String(approval.createdAt))}>
+                          <time
+                            dateTime={String(approval.createdAt)}
+                            title={formatActivityTitle(String(approval.createdAt))}
+                          >
                             {formatRelative(String(approval.createdAt))}
                           </time>
                         )}
@@ -2893,25 +2915,37 @@ export function CommandCenter() {
                       >
                         {getApprovalPreview(approval)}
                       </div>
-                      {approvalRecordKeys(approval).some((key) => uncertainApprovalKeys.current.has(key)) && (
-                        <p className="pbk-review-empty">Decision unconfirmed. Check the approval history before retrying.</p>
+                      {approvalRecordKeys(approval).some((key) =>
+                        uncertainApprovalKeys.current.has(key)
+                      ) && (
+                        <p className="pbk-review-empty">
+                          Decision unconfirmed. Check the approval history before retrying.
+                        </p>
                       )}
                       <div className="mt-3 flex flex-wrap gap-2">
                         <button
                           type="button"
                           data-approval-primary="true"
                           disabled={Boolean(isApprovalDecisionUnavailable(approval))}
-                          onClick={(event) => confirmApprovalDecision(approval, 'approved', event.currentTarget)}
+                          onClick={(event) =>
+                            confirmApprovalDecision(approval, 'approved', event.currentTarget)
+                          }
                           className="pbk-review-button pbk-review-button-primary"
                         >
-                          {isApprovalDecisionPending(String(approval.id)) ? 'Submitting…' : 'Review approval'}
+                          {isApprovalDecisionPending(String(approval.id))
+                            ? 'Submitting…'
+                            : 'Review approval'}
                         </button>
                         <button
                           type="button"
                           data-approval-secondary="true"
                           disabled={Boolean(isApprovalDecisionUnavailable(approval))}
                           onClick={(event) => {
-                            confirmApprovalDecision(approval, getApprovalSecondaryStatus(approval), event.currentTarget);
+                            confirmApprovalDecision(
+                              approval,
+                              getApprovalSecondaryStatus(approval),
+                              event.currentTarget
+                            );
                           }}
                           className="pbk-review-button"
                         >
@@ -2926,10 +2960,13 @@ export function CommandCenter() {
                   ))}
                   {(!approvalsAvailable || !pendingApprovals.length) && (
                     <div className="pbk-review-empty" role="status">
-                      {loading ? 'Loading approval queue…' : !approvalsAvailable
-                        ? pendingApprovals.length ? 'Approval queue unavailable. Showing saved requests.'
-                          : 'Approval queue unavailable.'
-                        : 'No pending approvals right now.'}
+                      {loading
+                        ? 'Loading approval queue…'
+                        : !approvalsAvailable
+                          ? pendingApprovals.length
+                            ? 'Approval queue unavailable. Showing saved requests.'
+                            : 'Approval queue unavailable.'
+                          : 'No pending approvals right now.'}
                     </div>
                   )}
                 </div>
@@ -2947,7 +2984,10 @@ export function CommandCenter() {
               </section>
             )}
             {isWidgetVisible('activity') && (
-              <section className="pbk-panel pbk-today-activity" aria-labelledby="pbk-activity-heading">
+              <section
+                className="pbk-panel pbk-today-activity"
+                aria-labelledby="pbk-activity-heading"
+              >
                 <h2 id="pbk-activity-heading">Recent activity</h2>
                 <div className="mt-3 space-y-2">
                   {visibleActivity.map((item, index) => (
@@ -3124,297 +3164,295 @@ export function CommandCenter() {
         {isWidgetVisible('statusLegend') && <StatusColorLegend />}
 
         <div className="space-y-4">
-            {isWidgetVisible('liveCall') && (
-              <div
-                id="live-call"
-                className={
-                  activeCall?.status && activeCall.status !== 'idle'
-                    ? 'pbk-priority-live rounded-lg'
-                    : 'rounded-lg'
-                }
-              >
-                <LiveCallWidget
-                  state={activeCall}
-                  onTakeOver={(state) => {
-                    const callId = state.callId || '';
-                    void runRuntimeAction(
-                      `call:${callId}:takeover`,
-                      'Human takeover sent to the bridge.',
-                      async () => {
-                        if (callId) await controlRuntimeCall(callId, 'takeover');
-                        navigate(state.dealId ? `/deal/${state.dealId}` : '/deal');
-                      }
-                    );
-                  }}
-                  onMute={(state) => {
-                    const callId = state.callId || '';
-                    if (!callId) return;
-                    void runRuntimeAction(
-                      `call:${callId}:mute`,
-                      'Ava mute command sent to the bridge.',
-                      async () => {
-                        await controlRuntimeCall(callId, 'mute');
-                      }
-                    );
-                  }}
-                  onEnd={(state) => {
-                    const callId = state.callId || '';
-                    if (!callId) return;
-                    void runRuntimeAction(
-                      `call:${callId}:end`,
-                      'Call end command sent to the bridge.',
-                      async () => {
-                        await controlRuntimeCall(callId, 'end');
-                      }
-                    );
-                  }}
-                />
-                <DataSourceCaption endpoint="snapshot.calls + GET /api/debug/live-call-status + POST /api/calls/:id/action" />
-              </div>
-            )}
-
-            {isWidgetVisible('callFloor') && (
-              <CallFloorPanel
-                leads={leadImports}
-                calls={calls}
-                leadSourceEndpoint={leadRosterSource}
+          {isWidgetVisible('liveCall') && (
+            <div
+              id="live-call"
+              className={
+                activeCall?.status && activeCall.status !== 'idle'
+                  ? 'pbk-priority-live rounded-lg'
+                  : 'rounded-lg'
+              }
+            >
+              <LiveCallWidget
+                state={activeCall}
+                onTakeOver={(state) => {
+                  const callId = state.callId || '';
+                  void runRuntimeAction(
+                    `call:${callId}:takeover`,
+                    'Human takeover sent to the bridge.',
+                    async () => {
+                      if (callId) await controlRuntimeCall(callId, 'takeover');
+                      navigate(state.dealId ? `/deal/${state.dealId}` : '/deal');
+                    }
+                  );
+                }}
+                onMute={(state) => {
+                  const callId = state.callId || '';
+                  if (!callId) return;
+                  void runRuntimeAction(
+                    `call:${callId}:mute`,
+                    'Ava mute command sent to the bridge.',
+                    async () => {
+                      await controlRuntimeCall(callId, 'mute');
+                    }
+                  );
+                }}
+                onEnd={(state) => {
+                  const callId = state.callId || '';
+                  if (!callId) return;
+                  void runRuntimeAction(
+                    `call:${callId}:end`,
+                    'Call end command sent to the bridge.',
+                    async () => {
+                      await controlRuntimeCall(callId, 'end');
+                    }
+                  );
+                }}
               />
-            )}
+              <DataSourceCaption endpoint="snapshot.calls + GET /api/debug/live-call-status + POST /api/calls/:id/action" />
+            </div>
+          )}
 
-            {isWidgetVisible('adminActivity') && (
-              <section
-                id="admin-activity"
-                className={`pbk-panel ${pendingAdminCount ? 'pbk-priority-high' : 'pbk-priority-low'}`}
-              >
-                <div className="flex items-center justify-between gap-3">
-                  <div>
-                    <h2 className="text-sm font-semibold text-slate-100">Workspace tasks</h2>
-                    <p className="text-xs text-slate-500">
-                      Setup or background tasks that need a quick yes or no.
-                    </p>
+          {isWidgetVisible('callFloor') && (
+            <CallFloorPanel
+              leads={leadImports}
+              calls={calls}
+              leadSourceEndpoint={leadRosterSource}
+            />
+          )}
+
+          {isWidgetVisible('adminActivity') && (
+            <section
+              id="admin-activity"
+              className={`pbk-panel ${pendingAdminCount ? 'pbk-priority-high' : 'pbk-priority-low'}`}
+            >
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <h2 className="text-sm font-semibold text-slate-100">Workspace tasks</h2>
+                  <p className="text-xs text-slate-500">
+                    Setup or background tasks that need a quick yes or no.
+                  </p>
+                </div>
+              </div>
+              <div className="mt-3 space-y-2">
+                {visibleAdminTasks.map((task) => (
+                  <div
+                    key={String(task.id)}
+                    className="rounded-xl border border-slate-800 bg-slate-900 px-3 py-3"
+                  >
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="text-xs font-medium text-slate-200">
+                        {friendlyRuntimeLabel(task.provider || 'Ava')} ·{' '}
+                        {friendlyRuntimeLabel(task.action || 'review')}
+                      </div>
+                      <div className="text-[10px] uppercase tracking-[0.16em] text-slate-500">
+                        {formatRuntimeStatus(task.status)}
+                      </div>
+                    </div>
+                    <div className="mt-2 text-xs text-slate-400">
+                      {String(task.summary || task.command || 'Workspace action')}
+                    </div>
+                    {String(task.status || '').toLowerCase() === 'pending' && (
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          disabled={isAdminDecisionPending(String(task.id))}
+                          onClick={() => confirmAdminDecision(task, 'approved')}
+                          className="rounded-full bg-sky-500 px-3 py-1.5 text-[11px] font-semibold text-slate-950 transition hover:bg-sky-400 disabled:cursor-wait disabled:opacity-60"
+                        >
+                          {isAdminDecisionPending(String(task.id)) ? '…' : 'Approve'}
+                        </button>
+                        <button
+                          type="button"
+                          disabled={isAdminDecisionPending(String(task.id))}
+                          onClick={() => confirmAdminDecision(task, 'rejected')}
+                          className="rounded-full border border-slate-700 px-3 py-1.5 text-[11px] font-semibold text-slate-300 transition hover:border-slate-500 disabled:cursor-wait disabled:opacity-60"
+                        >
+                          {isAdminDecisionPending(String(task.id)) ? '…' : 'Decline'}
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                ))}
+                {!adminTasks.length && (
+                  <div className="rounded-xl border border-dashed border-slate-800 px-3 py-4 text-xs text-slate-500">
+                    No workspace tasks need review.
+                  </div>
+                )}
+              </div>
+              <CompactPager
+                page={adminPage}
+                total={adminTasks.length}
+                label="Workspace task pages"
+                itemLabel="tasks"
+                onPageChange={setAdminPage}
+              />
+              <DataSourceCaption endpoint="snapshot.adminTasks + POST /api/admin/tasks/:id/decision" />
+            </section>
+          )}
+
+          {isWidgetVisible('webSearch') && (
+            <section
+              className={`pbk-panel ${webSearchLiveReady ? 'pbk-priority-money' : 'pbk-priority-high'}`}
+            >
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <h2 className="text-sm font-semibold text-slate-100">Market and web research</h2>
+                  <p className="text-xs text-slate-500">
+                    Live research status for Ava and Rex when they need current market context.
+                  </p>
+                </div>
+                <span
+                  className={[
+                    'inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] uppercase tracking-[0.14em]',
+                    webSearchLiveReady
+                      ? 'bg-emerald-500/10 text-emerald-300'
+                      : 'bg-amber-500/10 text-amber-300',
+                  ].join(' ')}
+                >
+                  <span
+                    aria-hidden="true"
+                    className={[
+                      'h-1.5 w-1.5 rounded-full',
+                      webSearchLiveReady ? 'bg-emerald-400' : 'bg-amber-300',
+                    ].join(' ')}
+                  />
+                  {webSearchLiveReady ? 'Live research ready' : 'Saved knowledge active'}
+                </span>
+              </div>
+              <div className="mt-4 grid gap-2 sm:grid-cols-2">
+                <div className="rounded-xl border border-slate-800 bg-slate-900 px-3 py-3">
+                  <div className="text-[10px] uppercase tracking-[0.14em] text-slate-500">
+                    Current information
+                  </div>
+                  <div className="mt-1 text-sm font-semibold capitalize text-slate-100">
+                    {webSearchLiveReady ? 'Ready for live research' : 'Using saved knowledge'}
+                  </div>
+                  <div className="mt-1 text-xs text-slate-500">
+                    {webSearchLiveReady
+                      ? 'Ava can check current market context.'
+                      : 'Ava can continue from the workspace record.'}
                   </div>
                 </div>
-                <div className="mt-3 space-y-2">
-                  {visibleAdminTasks.map((task) => (
-                    <div
-                      key={String(task.id)}
-                      className="rounded-xl border border-slate-800 bg-slate-900 px-3 py-3"
-                    >
-                      <div className="flex items-center justify-between gap-3">
-                        <div className="text-xs font-medium text-slate-200">
-                          {friendlyRuntimeLabel(task.provider || 'Ava')} ·{' '}
-                          {friendlyRuntimeLabel(task.action || 'review')}
-                        </div>
-                        <div className="text-[10px] uppercase tracking-[0.16em] text-slate-500">
-                          {formatRuntimeStatus(task.status)}
-                        </div>
-                      </div>
-                      <div className="mt-2 text-xs text-slate-400">
-                        {String(task.summary || task.command || 'Workspace action')}
-                      </div>
-                      {String(task.status || '').toLowerCase() === 'pending' && (
-                        <div className="mt-3 flex flex-wrap gap-2">
-                          <button
-                            type="button"
-                            disabled={isAdminDecisionPending(String(task.id))}
-                            onClick={() => confirmAdminDecision(task, 'approved')}
-                            className="rounded-full bg-sky-500 px-3 py-1.5 text-[11px] font-semibold text-slate-950 transition hover:bg-sky-400 disabled:cursor-wait disabled:opacity-60"
-                          >
-                            {isAdminDecisionPending(String(task.id)) ? '…' : 'Approve'}
-                          </button>
-                          <button
-                            type="button"
-                            disabled={isAdminDecisionPending(String(task.id))}
-                            onClick={() => confirmAdminDecision(task, 'rejected')}
-                            className="rounded-full border border-slate-700 px-3 py-1.5 text-[11px] font-semibold text-slate-300 transition hover:border-slate-500 disabled:cursor-wait disabled:opacity-60"
-                          >
-                            {isAdminDecisionPending(String(task.id)) ? '…' : 'Decline'}
-                          </button>
-                        </div>
-                      )}
-                    </div>
-                  ))}
-                  {!adminTasks.length && (
-                    <div className="rounded-xl border border-dashed border-slate-800 px-3 py-4 text-xs text-slate-500">
-                      No workspace tasks need review.
-                    </div>
+                <div className="rounded-xl border border-slate-800 bg-slate-900 px-3 py-3">
+                  <div className="text-[10px] uppercase tracking-[0.14em] text-slate-500">
+                    Research memory
+                  </div>
+                  <div className="mt-1 text-sm font-semibold text-slate-100">
+                    {webSearchNeuralOutput.exposesSymbolicFacts === false
+                      ? 'Saved guidance'
+                      : 'Saved guidance + facts'}
+                  </div>
+                  <div className="mt-1 text-xs text-slate-500">
+                    {webSearchNeuralOutput.exposesSymbolicFacts === false
+                      ? 'Good for prepared answers.'
+                      : 'Good for prepared answers and known facts.'}
+                  </div>
+                </div>
+              </div>
+              <div className="mt-3 rounded-xl border border-slate-800 bg-slate-900 px-3 py-3 text-xs text-slate-400">
+                {webSearchLiveReady
+                  ? 'Ava can use current market context when a conversation needs it.'
+                  : 'Ava can keep working from saved guidance while live research is connected.'}
+              </div>
+              <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+                <div className="text-[11px] text-slate-500">
+                  Research check:{' '}
+                  <span className="text-slate-300">
+                    {webSearchLiveReady ? 'ready' : 'needs setup'}
+                  </span>
+                  {!webSearchLiveReady && (
+                    <span> / connect live research in Settings when available</span>
                   )}
                 </div>
-                <CompactPager
-                  page={adminPage}
-                  total={adminTasks.length}
-                  label="Workspace task pages"
-                  itemLabel="tasks"
-                  onPageChange={setAdminPage}
-                />
-                <DataSourceCaption endpoint="snapshot.adminTasks + POST /api/admin/tasks/:id/decision" />
-              </section>
-            )}
-
-            {isWidgetVisible('webSearch') && (
-              <section
-                className={`pbk-panel ${webSearchLiveReady ? 'pbk-priority-money' : 'pbk-priority-high'}`}
-              >
-                <div className="flex flex-wrap items-start justify-between gap-3">
-                  <div>
-                    <h2 className="text-sm font-semibold text-slate-100">
-                      Market and web research
-                    </h2>
-                    <p className="text-xs text-slate-500">
-                      Live research status for Ava and Rex when they need current market context.
-                    </p>
-                  </div>
-                  <span
-                    className={[
-                      'inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] uppercase tracking-[0.14em]',
-                      webSearchLiveReady
-                        ? 'bg-emerald-500/10 text-emerald-300'
-                        : 'bg-amber-500/10 text-amber-300',
-                    ].join(' ')}
-                  >
-                    <span
-                      aria-hidden="true"
-                      className={[
-                        'h-1.5 w-1.5 rounded-full',
-                        webSearchLiveReady ? 'bg-emerald-400' : 'bg-amber-300',
-                      ].join(' ')}
-                    />
-                    {webSearchLiveReady ? 'Live research ready' : 'Saved knowledge active'}
-                  </span>
-                </div>
-                <div className="mt-4 grid gap-2 sm:grid-cols-2">
-                  <div className="rounded-xl border border-slate-800 bg-slate-900 px-3 py-3">
-                    <div className="text-[10px] uppercase tracking-[0.14em] text-slate-500">
-                      Current information
-                    </div>
-                    <div className="mt-1 text-sm font-semibold capitalize text-slate-100">
-                      {webSearchLiveReady ? 'Ready for live research' : 'Using saved knowledge'}
-                    </div>
-                    <div className="mt-1 text-xs text-slate-500">
-                      {webSearchLiveReady
-                        ? 'Ava can check current market context.'
-                        : 'Ava can continue from the workspace record.'}
-                    </div>
-                  </div>
-                  <div className="rounded-xl border border-slate-800 bg-slate-900 px-3 py-3">
-                    <div className="text-[10px] uppercase tracking-[0.14em] text-slate-500">
-                      Research memory
-                    </div>
-                    <div className="mt-1 text-sm font-semibold text-slate-100">
-                      {webSearchNeuralOutput.exposesSymbolicFacts === false
-                        ? 'Saved guidance'
-                        : 'Saved guidance + facts'}
-                    </div>
-                    <div className="mt-1 text-xs text-slate-500">
-                      {webSearchNeuralOutput.exposesSymbolicFacts === false
-                        ? 'Good for prepared answers.'
-                        : 'Good for prepared answers and known facts.'}
-                    </div>
-                  </div>
-                </div>
-                <div className="mt-3 rounded-xl border border-slate-800 bg-slate-900 px-3 py-3 text-xs text-slate-400">
-                  {webSearchLiveReady
-                    ? 'Ava can use current market context when a conversation needs it.'
-                    : 'Ava can keep working from saved guidance while live research is connected.'}
-                </div>
-                <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
-                  <div className="text-[11px] text-slate-500">
-                    Research check:{' '}
-                    <span className="text-slate-300">
-                      {webSearchLiveReady ? 'ready' : 'needs setup'}
-                    </span>
-                    {!webSearchLiveReady && (
-                      <span> / connect live research in Settings when available</span>
-                    )}
-                  </div>
-                  <div className="flex flex-wrap gap-2">
-                    {webSearchProbeFailed && (
-                      <button
-                        type="button"
-                        disabled={pendingAction === 'web-search:probe'}
-                        onClick={() => {
-                          void runWebSearchProbe();
-                        }}
-                        className="rounded-full bg-sky-400 px-3 py-1.5 text-[11px] font-bold text-slate-950 transition hover:bg-sky-300 disabled:cursor-wait disabled:opacity-60"
-                      >
-                        Retry Probe
-                      </button>
-                    )}
+                <div className="flex flex-wrap gap-2">
+                  {webSearchProbeFailed && (
                     <button
                       type="button"
                       disabled={pendingAction === 'web-search:probe'}
                       onClick={() => {
                         void runWebSearchProbe();
                       }}
-                      className="rounded-full border border-sky-500/40 px-3 py-1.5 text-[11px] font-semibold text-sky-200 transition hover:border-sky-300 hover:text-sky-100 disabled:cursor-wait disabled:opacity-60"
+                      className="rounded-full bg-sky-400 px-3 py-1.5 text-[11px] font-bold text-slate-950 transition hover:bg-sky-300 disabled:cursor-wait disabled:opacity-60"
                     >
-                      Connection check
+                      Retry Probe
                     </button>
-                  </div>
-                  {webSearchProbeFailed && webSearchProbeError && (
-                    <div className="basis-full text-[11px] text-amber-300">
-                      Last check needs attention: {friendlyRuntimeText(webSearchProbeError)}
-                    </div>
                   )}
+                  <button
+                    type="button"
+                    disabled={pendingAction === 'web-search:probe'}
+                    onClick={() => {
+                      void runWebSearchProbe();
+                    }}
+                    className="rounded-full border border-sky-500/40 px-3 py-1.5 text-[11px] font-semibold text-sky-200 transition hover:border-sky-300 hover:text-sky-100 disabled:cursor-wait disabled:opacity-60"
+                  >
+                    Connection check
+                  </button>
                 </div>
-                <DataSourceCaption endpoint="GET /api/brain/web-search/status" />
-              </section>
-            )}
+                {webSearchProbeFailed && webSearchProbeError && (
+                  <div className="basis-full text-[11px] text-amber-300">
+                    Last check needs attention: {friendlyRuntimeText(webSearchProbeError)}
+                  </div>
+                )}
+              </div>
+              <DataSourceCaption endpoint="GET /api/brain/web-search/status" />
+            </section>
+          )}
 
-            {isWidgetVisible('tooling') && (
-              <section className="pbk-panel pbk-priority-low">
-                <div className="flex items-center justify-between gap-3">
-                  <div>
-                    <h2 className="text-sm font-semibold text-slate-100">Support tools</h2>
-                    <p className="text-xs text-slate-500">
-                      Research, monitoring, and automation helpers Ava can use.
-                    </p>
-                  </div>
-                  <div className="text-[11px] uppercase tracking-[0.14em] text-slate-500">
-                    {String(toolingCoreReady)}/{String(toolingCoreTotal)} core
-                  </div>
+          {isWidgetVisible('tooling') && (
+            <section className="pbk-panel pbk-priority-low">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <h2 className="text-sm font-semibold text-slate-100">Support tools</h2>
+                  <p className="text-xs text-slate-500">
+                    Research, monitoring, and automation helpers Ava can use.
+                  </p>
                 </div>
-                <div className="mt-3 space-y-2">
-                  {toolingHighlights.map((item) => {
-                    const ready = Boolean(item.meta?.ready);
-                    return (
-                      <div
-                        key={item.label}
-                        className="rounded-xl border border-slate-800 bg-slate-900 px-3 py-3 transition-colors hover:border-slate-700"
-                      >
-                        <div className="flex flex-wrap items-center justify-between gap-2">
-                          <div className="min-w-0 text-xs font-medium text-slate-200">
-                            {item.label}
-                          </div>
+                <div className="text-[11px] uppercase tracking-[0.14em] text-slate-500">
+                  {String(toolingCoreReady)}/{String(toolingCoreTotal)} core
+                </div>
+              </div>
+              <div className="mt-3 space-y-2">
+                {toolingHighlights.map((item) => {
+                  const ready = Boolean(item.meta?.ready);
+                  return (
+                    <div
+                      key={item.label}
+                      className="rounded-xl border border-slate-800 bg-slate-900 px-3 py-3 transition-colors hover:border-slate-700"
+                    >
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div className="min-w-0 text-xs font-medium text-slate-200">
+                          {item.label}
+                        </div>
+                        <span
+                          aria-label={`${item.label} status: ${ready ? 'Ready' : 'Needs setup'}`}
+                          className={[
+                            'inline-flex shrink-0 items-center gap-1.5 rounded-full px-2 py-0.5 text-[10px] uppercase tracking-[0.14em]',
+                            ready
+                              ? 'bg-emerald-500/10 text-emerald-300'
+                              : 'bg-slate-800 text-slate-400',
+                          ].join(' ')}
+                        >
                           <span
-                            aria-label={`${item.label} status: ${ready ? 'Ready' : 'Needs setup'}`}
+                            aria-hidden="true"
                             className={[
-                              'inline-flex shrink-0 items-center gap-1.5 rounded-full px-2 py-0.5 text-[10px] uppercase tracking-[0.14em]',
-                              ready
-                                ? 'bg-emerald-500/10 text-emerald-300'
-                                : 'bg-slate-800 text-slate-400',
+                              'h-1.5 w-1.5 rounded-full',
+                              ready ? 'bg-emerald-400' : 'bg-slate-500',
                             ].join(' ')}
-                          >
-                            <span
-                              aria-hidden="true"
-                              className={[
-                                'h-1.5 w-1.5 rounded-full',
-                                ready ? 'bg-emerald-400' : 'bg-slate-500',
-                              ].join(' ')}
-                            />
-                            {ready ? 'Ready' : 'Needs setup'}
-                          </span>
-                        </div>
-                        <div className="mt-2 break-words text-xs text-slate-400">
-                          {friendlyRuntimeText(item.meta?.note || 'Checking connection status.')}
-                        </div>
+                          />
+                          {ready ? 'Ready' : 'Needs setup'}
+                        </span>
                       </div>
-                    );
-                  })}
-                </div>
-                <DataSourceCaption endpoint="GET /api/tooling/status" />
-              </section>
-            )}
+                      <div className="mt-2 break-words text-xs text-slate-400">
+                        {friendlyRuntimeText(item.meta?.note || 'Checking connection status.')}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+              <DataSourceCaption endpoint="GET /api/tooling/status" />
+            </section>
+          )}
         </div>
 
         <CallQualityReviewDialog
@@ -3494,51 +3532,49 @@ export function CommandCenter() {
             }}
             className="pbk-review-dialog"
           >
-              <div className="text-[11px] uppercase tracking-[0.16em] text-amber-300">
-                Review before sending
-              </div>
-              <h3
-                id="approval-decision-title"
-                className="mt-2 text-lg font-semibold text-slate-100"
-              >
-                {approvalDecisionDraft.actionLabel} {approvalDecisionDraft.type}?
-              </h3>
-              <DecisionRail progress={decisionProgress} available={approvalsAvailable} showReceipt={false} />
-              <p className="mt-2 text-sm text-slate-400">
-                {approvalDecisionDraft.leadName}
+            <div className="text-[11px] uppercase tracking-[0.16em] text-amber-300">
+              Review before sending
+            </div>
+            <h3 id="approval-decision-title" className="mt-2 text-lg font-semibold text-slate-100">
+              {approvalDecisionDraft.actionLabel} {approvalDecisionDraft.type}?
+            </h3>
+            <DecisionRail progress={decisionProgress} available={approvalsAvailable} showReceipt={false} />
+            <p className="mt-2 text-sm text-slate-400">{approvalDecisionDraft.leadName}</p>
+            <div className="mt-4 pbk-review-evidence text-sm">
+              {approvalDecisionDraft.address}
+              {approvalDecisionDraft.recipient && <div>{approvalDecisionDraft.recipient}</div>}
+            </div>
+            <div className="mt-3 pbk-review-evidence text-sm leading-relaxed">
+              {approvalDecisionDraft.preview}
+            </div>
+            {(!approvalsAvailable ||
+              !pendingApprovals.some((item) => item.id === approvalDecisionDraft.approvalId)) && (
+              <p role="status" className="mt-3 text-sm">
+                This request is no longer available for review.
               </p>
-              <div className="mt-4 pbk-review-evidence text-sm">
-                {approvalDecisionDraft.address}
-                {approvalDecisionDraft.recipient && <div>{approvalDecisionDraft.recipient}</div>}
-              </div>
-              <div className="mt-3 pbk-review-evidence text-sm leading-relaxed">
-                {approvalDecisionDraft.preview}
-              </div>
-              {(!approvalsAvailable ||
-                !pendingApprovals.some((item) => item.id === approvalDecisionDraft.approvalId)) && (
-                <p role="status" className="mt-3 text-sm">This request is no longer available for review.</p>
-              )}
-              <div className="mt-5 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
-                <button
-                  type="button"
-                  autoFocus
-                  onClick={cancelApprovalDecision}
-                  className="pbk-review-button"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="button"
-                  disabled={
-                    Boolean(pendingAction) || !approvalsAvailable ||
-                    !pendingApprovals.some((item) => item.id === approvalDecisionDraft.approvalId)
-                  }
-                  onClick={executeApprovalDecision}
-                  className="pbk-review-button pbk-review-button-primary"
-                >
-                  Confirm decision
-                </button>
-              </div>
+            )}
+            <div className="mt-5 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+              <button
+                type="button"
+                autoFocus
+                onClick={cancelApprovalDecision}
+                className="pbk-review-button"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={
+                  Boolean(pendingAction) ||
+                  !approvalsAvailable ||
+                  !pendingApprovals.some((item) => item.id === approvalDecisionDraft.approvalId)
+                }
+                onClick={executeApprovalDecision}
+                className="pbk-review-button pbk-review-button-primary"
+              >
+                Confirm decision
+              </button>
+            </div>
           </dialog>
         )}
       </div>

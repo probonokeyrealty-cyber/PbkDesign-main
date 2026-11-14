@@ -194,8 +194,13 @@ export function PathDeliverables({
 
   return (
     <div className="pbk-analyzer-main pbk-doc-workbench">
-      <section aria-labelledby="docs-export-heading" className="pbk-analyzer-card pbk-analyzer-workbench-section">
-        <h2 id="docs-export-heading" className="pbk-analyzer-section-title mb-3">Master Deal PDF</h2>
+      <section
+        aria-labelledby="docs-export-heading"
+        className="pbk-analyzer-card pbk-analyzer-workbench-section"
+      >
+        <h2 id="docs-export-heading" className="pbk-analyzer-section-title mb-3">
+          Master Deal PDF
+        </h2>
         <div className="pbk-doc-controls">
           <button type="button" onClick={onPreview} className="pbk-btn pbk-btn-ghost">
             <Eye size={14} aria-hidden="true" />
@@ -205,12 +210,19 @@ export function PathDeliverables({
             <Printer size={14} aria-hidden="true" />
             Print Package
           </button>
-          <button type="button" onClick={onGenerate} disabled={!readiness.ready} className="pbk-btn pbk-btn-primary">
+          <button
+            type="button"
+            onClick={onGenerate}
+            disabled={!readiness.ready}
+            className="pbk-btn pbk-btn-primary"
+          >
             <FilePlus size={14} aria-hidden="true" />
             Generate Master PDF
           </button>
         </div>
-        <p className="pbk-doc-status" role="status">{exportStatus}</p>
+        <p className="pbk-doc-status" role="status">
+          {exportStatus}
+        </p>
         {!readiness.ready && (
           <p className="pbk-doc-status">Missing: {readiness.missing.join(', ')}</p>
         )}
@@ -218,8 +230,13 @@ export function PathDeliverables({
 
       <div className="pbk-doc-grid">
         <div className="min-w-0">
-          <section aria-labelledby="docs-quick-heading" className="pbk-analyzer-card pbk-analyzer-workbench-section">
-            <h2 id="docs-quick-heading" className="pbk-analyzer-section-title mb-3">Quick Documents</h2>
+          <section
+            aria-labelledby="docs-quick-heading"
+            className="pbk-analyzer-card pbk-analyzer-workbench-section"
+          >
+            <h2 id="docs-quick-heading" className="pbk-analyzer-section-title mb-3">
+              Quick Documents
+            </h2>
             <div className="pbk-doc-quick-grid">
               {quickDocumentCards.map((card) => {
                 const Icon = card.icon;
@@ -248,20 +265,25 @@ export function PathDeliverables({
             </div>
           </section>
 
-          <section aria-labelledby="docs-templates-heading" className="pbk-analyzer-card pbk-analyzer-workbench-section">
-            <h2 id="docs-templates-heading" className="pbk-analyzer-section-title mb-3">Document Templates</h2>
+          <section
+            aria-labelledby="docs-templates-heading"
+            className="pbk-analyzer-card pbk-analyzer-workbench-section"
+          >
+            <h2 id="docs-templates-heading" className="pbk-analyzer-section-title mb-3">
+              Document Templates
+            </h2>
             <div className="pbk-doc-controls mb-3" role="group" aria-label="Document template">
-                {(Object.keys(documentLabels) as QuickDocumentType[]).map((documentType) => (
-                  <button
-                    key={documentType}
-                    type="button"
-                    aria-pressed={activeDocument === documentType}
-                    onClick={() => onDocumentChange(documentType)}
-                    className="pbk-btn pbk-btn-ghost"
-                  >
-                    {documentLabels[documentType]}
-                  </button>
-                ))}
+              {(Object.keys(documentLabels) as QuickDocumentType[]).map((documentType) => (
+                <button
+                  key={documentType}
+                  type="button"
+                  aria-pressed={activeDocument === documentType}
+                  onClick={() => onDocumentChange(documentType)}
+                  className="pbk-btn pbk-btn-ghost"
+                >
+                  {documentLabels[documentType]}
+                </button>
+              ))}
             </div>
             <textarea
               aria-label={`Edit ${activeDocument} document`}

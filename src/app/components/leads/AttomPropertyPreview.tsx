@@ -7,9 +7,20 @@ import {
   type AttomPropertyFacts,
 } from '../../utils/runtimeBridge';
 
-type SavedFacts = Partial<Pick<AttomPropertyFacts, 'propertyType' | 'beds' | 'baths' | 'livingSqft' | 'yearBuilt'>>;
-type PreviewProps = { address: AttomPreviewAddress; saved: SavedFacts; mode: 'workspace' | 'draft' };
-type FactRow = { label: string; value: string | number | null; saved?: string | number | null; equivalent?: boolean };
+type SavedFacts = Partial<
+  Pick<AttomPropertyFacts, 'propertyType' | 'beds' | 'baths' | 'livingSqft' | 'yearBuilt'>
+>;
+type PreviewProps = {
+  address: AttomPreviewAddress;
+  saved: SavedFacts;
+  mode: 'workspace' | 'draft';
+};
+type FactRow = {
+  label: string;
+  value: string | number | null;
+  saved?: string | number | null;
+  equivalent?: boolean;
+};
 const messages = {
   invalid_address: 'Enter the full street address, city, state, and ZIP.',
   not_configured: 'ATTOM lookup is not enabled.',
@@ -22,7 +33,9 @@ const messages = {
 };
 const retryable = new Set(['timed_out', 'rate_limited', 'unavailable']);
 const money = new Intl.NumberFormat('en-US', {
-  style: 'currency', currency: 'USD', maximumFractionDigits: 0,
+  style: 'currency',
+  currency: 'USD',
+  maximumFractionDigits: 0,
 });
 const area = (value: number | null, unit: string) =>
   value == null ? null : `${value.toLocaleString()} ${unit}`;
@@ -35,11 +48,18 @@ const rowStatuses = {
 } as const;
 
 export function propertyAddressLabel({ street, city, state, zip }: AttomPreviewAddress) {
-  return [street.trim(), city.trim(), [state.trim(), zip.trim()].filter(Boolean).join(' ')].filter(Boolean).join(', ');
+  return [street.trim(), city.trim(), [state.trim(), zip.trim()].filter(Boolean).join(' ')]
+    .filter(Boolean)
+    .join(', ');
 }
 
 export function hasLookupAddress({ street, city, state, zip }: AttomPreviewAddress) {
-  return Boolean(street.trim() && city.trim() && /^[a-z]{2}$/i.test(state.trim()) && /^\d{5}(?:-\d{4})?$/.test(zip.trim()));
+  return Boolean(
+    street.trim() &&
+    city.trim() &&
+    /^[a-z]{2}$/i.test(state.trim()) &&
+    /^\d{5}(?:-\d{4})?$/.test(zip.trim())
+  );
 }
 
 function rowStatus({ saved, value, equivalent }: FactRow): keyof typeof rowStatuses {
@@ -49,9 +69,13 @@ function rowStatus({ saved, value, equivalent }: FactRow): keyof typeof rowStatu
 }
 
 function propertyTypeKey(value: string | null | undefined) {
-  const type = value?.trim().toLowerCase().replace(/[-_\s]+/g, ' ');
+  const type = value
+    ?.trim()
+    .toLowerCase()
+    .replace(/[-_\s]+/g, ' ');
   return /^(?:house|(?:detached )?single family(?: residence| residential)?)$/.test(type ?? '')
-    ? 'single family' : type;
+    ? 'single family'
+    : type;
 }
 
 export function AttomPropertyPreview(props: PreviewProps) {
@@ -83,15 +107,28 @@ function PropertyLookup({ address, saved, mode }: PreviewProps) {
   }
 
   const profile = result?.status === 'matched' ? result.profile : null;
-  const facts: FactRow[] = profile ? [
-    { label: 'Property type', value: profile.propertyType, saved: saved.propertyType,
-      equivalent: propertyTypeKey(saved.propertyType) === propertyTypeKey(profile.propertyType) },
-    { label: 'Living area', value: area(profile.livingSqft, 'sq ft'), saved: area(saved.livingSqft ?? null, 'sq ft') },
-    { label: 'Beds', value: profile.beds, saved: saved.beds },
-    { label: 'Baths', value: profile.baths, saved: saved.baths },
-    { label: 'Year built', value: profile.yearBuilt, saved: saved.yearBuilt },
-    { label: 'Lot size', value: area(profile.lotSqft, 'sq ft') ?? area(profile.lotAcres, 'acres') },
-  ] : [];
+  const facts: FactRow[] = profile
+    ? [
+        {
+          label: 'Property type',
+          value: profile.propertyType,
+          saved: saved.propertyType,
+          equivalent: propertyTypeKey(saved.propertyType) === propertyTypeKey(profile.propertyType),
+        },
+        {
+          label: 'Living area',
+          value: area(profile.livingSqft, 'sq ft'),
+          saved: area(saved.livingSqft ?? null, 'sq ft'),
+        },
+        { label: 'Beds', value: profile.beds, saved: saved.beds },
+        { label: 'Baths', value: profile.baths, saved: saved.baths },
+        { label: 'Year built', value: profile.yearBuilt, saved: saved.yearBuilt },
+        {
+          label: 'Lot size',
+          value: area(profile.lotSqft, 'sq ft') ?? area(profile.lotAcres, 'acres'),
+        },
+      ]
+    : [];
   const differences = facts.filter((fact) => rowStatus(fact) === 'different');
   const remaining = facts.filter((fact) => rowStatus(fact) !== 'different');
   const visibleFacts = differencesOnly ? differences : [...differences, ...remaining];
@@ -99,7 +136,9 @@ function PropertyLookup({ address, saved, mode }: PreviewProps) {
     saved.beds != null ? `${saved.beds} bd` : '',
     saved.baths != null ? `${saved.baths} ba` : '',
     area(saved.livingSqft ?? null, 'sq ft'),
-  ].filter(Boolean).join(' / ');
+  ]
+    .filter(Boolean)
+    .join(' / ');
   return (
     <section className="pbk-attom-preview" data-mode={mode} aria-label="ATTOM property preview">
       {isDraft && (
@@ -110,15 +149,23 @@ function PropertyLookup({ address, saved, mode }: PreviewProps) {
         </div>
       )}
       <div className="pbk-attom-preview-head">
-        <div className="pbk-attom-title"><Database size={16} aria-hidden /><h3>{isDraft ? 'Address lookup preview' : 'ATTOM property records'}</h3></div>
+        <div className="pbk-attom-title">
+          <Database size={16} aria-hidden />
+          <h3>{isDraft ? 'Address lookup preview' : 'ATTOM property records'}</h3>
+        </div>
         <span className="pbk-property-label">Read only</span>
       </div>
       <div className="pbk-attom-layout" data-matched={Boolean(profile)}>
         <div className="pbk-attom-lookup">
           <div className="pbk-attom-lookup-top">
             <div role="status" data-matched={Boolean(profile)}>
-              {loading ? 'Looking up property...' : result && result.status !== 'matched'
-                ? messages[result.status] ?? messages.unavailable : profile ? 'Exact address match' : null}
+              {loading
+                ? 'Looking up property...'
+                : result && result.status !== 'matched'
+                  ? (messages[result.status] ?? messages.unavailable)
+                  : profile
+                    ? 'Exact address match'
+                    : null}
             </div>
             {!loading && !result && !completeAddress && <p>{messages.invalid_address}</p>}
             <button
@@ -127,16 +174,44 @@ function PropertyLookup({ address, saved, mode }: PreviewProps) {
               disabled={loading || !completeAddress}
               onClick={() => void lookup()}
             >
-              {loading ? <Loader2 size={15} className="animate-spin" aria-hidden /> : <Search size={15} aria-hidden />}
-              {result && retryable.has(result.status) ? 'Retry lookup' : profile ? 'Run lookup again' : 'Look up property'}
+              {loading ? (
+                <Loader2 size={15} className="animate-spin" aria-hidden />
+              ) : (
+                <Search size={15} aria-hidden />
+              )}
+              {result && retryable.has(result.status)
+                ? 'Retry lookup'
+                : profile
+                  ? 'Run lookup again'
+                  : 'Look up property'}
             </button>
           </div>
           {profile && (
             <dl className="pbk-attom-source">
-              {!isDraft && <div><dt>Address sent</dt><dd>{typedAddress}</dd></div>}
-              <div><dt>Address returned</dt><dd>{profile.address}</dd></div>
-              {profile.apn && <div><dt>Parcel (APN)</dt><dd>{profile.apn}</dd></div>}
-              {lookedUpAt && <div><dt>Checked</dt><dd><time dateTime={lookedUpAt.toISOString()}>{lookedUpAt.toLocaleString()}</time></dd></div>}
+              {!isDraft && (
+                <div>
+                  <dt>Address sent</dt>
+                  <dd>{typedAddress}</dd>
+                </div>
+              )}
+              <div>
+                <dt>Address returned</dt>
+                <dd>{profile.address}</dd>
+              </div>
+              {profile.apn && (
+                <div>
+                  <dt>Parcel (APN)</dt>
+                  <dd>{profile.apn}</dd>
+                </div>
+              )}
+              {lookedUpAt && (
+                <div>
+                  <dt>Checked</dt>
+                  <dd>
+                    <time dateTime={lookedUpAt.toISOString()}>{lookedUpAt.toLocaleString()}</time>
+                  </dd>
+                </div>
+              )}
             </dl>
           )}
         </div>
@@ -146,28 +221,57 @@ function PropertyLookup({ address, saved, mode }: PreviewProps) {
               <div className="pbk-attom-comparison-head">
                 <h4>Saved lead vs. ATTOM record</h4>
                 <div className="pbk-attom-filter" role="group" aria-label="Filter property records">
-                  <button type="button" aria-pressed={!differencesOnly} onClick={() => setDifferencesOnly(false)}>All fields ({facts.length})</button>
-                  <button type="button" aria-pressed={differencesOnly} onClick={() => setDifferencesOnly(true)}>Differences only ({differences.length})</button>
+                  <button
+                    type="button"
+                    aria-pressed={!differencesOnly}
+                    onClick={() => setDifferencesOnly(false)}
+                  >
+                    All fields ({facts.length})
+                  </button>
+                  <button
+                    type="button"
+                    aria-pressed={differencesOnly}
+                    onClick={() => setDifferencesOnly(true)}
+                  >
+                    Differences only ({differences.length})
+                  </button>
                 </div>
               </div>
             )}
             {visibleFacts.length ? (
               <dl className="pbk-attom-rows">
-                {visibleFacts.map((fact) => <ComparisonRow key={fact.label} fact={fact} isDraft={isDraft} />)}
+                {visibleFacts.map((fact) => (
+                  <ComparisonRow key={fact.label} fact={fact} isDraft={isDraft} />
+                ))}
               </dl>
-            ) : <p className="pbk-attom-no-differences">No conflicting values.</p>}
-            {(profile.taxAmount != null || profile.recordedSaleAmount != null || profile.recordedSaleDate) && (
+            ) : (
+              <p className="pbk-attom-no-differences">No conflicting values.</p>
+            )}
+            {(profile.taxAmount != null ||
+              profile.recordedSaleAmount != null ||
+              profile.recordedSaleDate) && (
               <details className="pbk-attom-record-details">
                 <summary>Taxes and recorded transfer</summary>
                 <dl className="pbk-attom-facts">
                   {profile.taxAmount != null && (
-                    <Fact label={profile.taxYear == null ? 'Property tax' : `Property tax (${profile.taxYear})`}
-                      value={money.format(profile.taxAmount)} />
+                    <Fact
+                      label={
+                        profile.taxYear == null
+                          ? 'Property tax'
+                          : `Property tax (${profile.taxYear})`
+                      }
+                      value={money.format(profile.taxAmount)}
+                    />
                   )}
                   {profile.recordedSaleAmount != null && (
-                    <Fact label="Reported transfer amount (not a comp)" value={money.format(profile.recordedSaleAmount)} />
+                    <Fact
+                      label="Reported transfer amount (not a comp)"
+                      value={money.format(profile.recordedSaleAmount)}
+                    />
                   )}
-                  {profile.recordedSaleDate && <Fact label="Transfer recorded on" value={profile.recordedSaleDate} />}
+                  {profile.recordedSaleDate && (
+                    <Fact label="Transfer recorded on" value={profile.recordedSaleDate} />
+                  )}
                 </dl>
               </details>
             )}
@@ -184,13 +288,29 @@ function ComparisonRow({ fact, isDraft }: { fact: FactRow; isDraft: boolean }) {
   return (
     <div data-status={status}>
       <dt>{fact.label}</dt>
-      <dd><small>{isDraft ? 'You typed' : 'Saved lead'}</small><strong>{fact.saved ?? 'Not entered'}</strong></dd>
-      <dd><small>ATTOM record</small><strong>{fact.value ?? 'Not on record'}</strong></dd>
-      <dd className="pbk-attom-row-status"><Icon size={13} aria-hidden />{isDraft && status === 'lead' ? 'Only in draft' : rowStatuses[status]}</dd>
+      <dd>
+        <small>{isDraft ? 'You typed' : 'Saved lead'}</small>
+        <strong>{fact.saved ?? 'Not entered'}</strong>
+      </dd>
+      <dd>
+        <small>ATTOM record</small>
+        <strong>{fact.value ?? 'Not on record'}</strong>
+      </dd>
+      <dd className="pbk-attom-row-status">
+        <Icon size={13} aria-hidden />
+        {isDraft && status === 'lead' ? 'Only in draft' : rowStatuses[status]}
+      </dd>
     </div>
   );
 }
 
 function Fact({ label, value }: FactRow) {
-  return <div><dt>{label}</dt><dd><strong>{value ?? 'Not on record'}</strong></dd></div>;
+  return (
+    <div>
+      <dt>{label}</dt>
+      <dd>
+        <strong>{value ?? 'Not on record'}</strong>
+      </dd>
+    </div>
+  );
 }

@@ -860,7 +860,15 @@ function mergeVisibleLeadDetail(current: BridgeRecord[], lead: BridgeRecord): Br
   return matched ? next : [record, ...next];
 }
 
-function Field({ label, children, className = '' }: { label: string; children: ReactNode; className?: string }) {
+function Field({
+  label,
+  children,
+  className = '',
+}: {
+  label: string;
+  children: ReactNode;
+  className?: string;
+}) {
   return (
     <label className={`space-y-1.5 text-xs text-slate-400 ${className}`}>
       <span className="font-medium text-slate-300">{label}</span>
@@ -1018,7 +1026,9 @@ function LeadsHero({
         </div>
       </div>
       <LeadsStatRibbon stats={stats} sourceLabel={rosterSourceLabel} />
-      <LeadsDataSourceDetails><LeadsSourceRail /></LeadsDataSourceDetails>
+      <LeadsDataSourceDetails>
+        <LeadsSourceRail />
+      </LeadsDataSourceDetails>
     </section>
   );
 }
@@ -1968,10 +1978,7 @@ export function Leads() {
                 const sellerName = getSellerName(lead);
                 const isSelected = id === activeLeadId;
                 return (
-                  <div
-                    key={id}
-                    className={`lead-mobile-card${isSelected ? ' is-selected' : ''}`}
-                  >
+                  <div key={id} className={`lead-mobile-card${isSelected ? ' is-selected' : ''}`}>
                     <span className={['lead-score', scoreTone(score)].join(' ')}>{score}</span>
                     <button
                       type="button"
@@ -2115,7 +2122,9 @@ export function Leads() {
                       onClick={() => setSelectedLeadId(id)}
                       className="pbk-lead-ledger-identity"
                     >
-                      <span className="pbk-lead-ledger-avatar" aria-hidden="true">{getSellerInitial(sellerName)}</span>
+                      <span className="pbk-lead-ledger-avatar" aria-hidden="true">
+                        {getSellerInitial(sellerName)}
+                      </span>
                       <span className="min-w-0">
                         <SellerRosterIdentity
                           sellerName={sellerName}
@@ -2129,7 +2138,10 @@ export function Leads() {
                     <span className="flex flex-wrap items-center gap-2">
                       <span className="pbk-lead-ledger-score">{getLeadScore(lead)} score</span>
                       <span className="pbk-lead-ledger-stage">
-                        {text(lead.status || lead.stage || asBridgeRecord(lead.assignment).stage, 'Stage not set').replace(/[_-]+/g, ' ')}
+                        {text(
+                          lead.status || lead.stage || asBridgeRecord(lead.assignment).stage,
+                          'Stage not set'
+                        ).replace(/[_-]+/g, ' ')}
                       </span>
                       <span className="rounded-full border border-slate-700 bg-slate-900 px-2.5 py-1 text-[10px] uppercase tracking-[0.14em] text-slate-300">
                         {PATH_LABELS[path]}
@@ -2508,12 +2520,8 @@ export function Leads() {
           >
             <div className="pbk-new-lead-modal-header flex items-start justify-between gap-3 border-b border-slate-800 px-4 py-4">
               <div className="min-w-0">
-                <div className="pbk-property-label">
-                  Unsaved draft
-                </div>
-                <h3 id="new-pbk-lead-title">
-                  Create lead
-                </h3>
+                <div className="pbk-property-label">Unsaved draft</div>
+                <h3 id="new-pbk-lead-title">Create lead</h3>
               </div>
               <button
                 type="button"
@@ -2663,113 +2671,119 @@ export function Leads() {
                     <strong>Address and asset details</strong>
                   </div>
                   <div className="pbk-new-lead-property-layout">
-                  <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-                    <Field label="Property address" className="col-span-full">
-                      <input
-                        className={inputClass}
-                        value={newLeadForm.propertyAddress}
-                        placeholder="Property street address"
-                        onChange={(event) =>
-                          setNewLeadForm({
-                            ...newLeadForm,
-                            propertyAddress: event.target.value,
-                          })
-                        }
-                      />
-                    </Field>
-                    <Field label="City" className="col-span-full md:col-span-2">
-                      <input
-                        className={inputClass}
-                        value={newLeadForm.city}
-                        placeholder="Columbus"
-                        onChange={(event) =>
-                          setNewLeadForm({ ...newLeadForm, city: event.target.value })
-                        }
-                      />
-                    </Field>
-                    <Field label="State">
-                      <input
-                        className={inputClass}
-                        value={newLeadForm.state}
-                        placeholder="OH"
-                        maxLength={2}
-                        onChange={(event) =>
-                          setNewLeadForm({
-                            ...newLeadForm,
-                            state: event.target.value.toUpperCase(),
-                          })
-                        }
-                      />
-                    </Field>
-                    <Field label="ZIP">
-                      <input
-                        className={inputClass}
-                        value={newLeadForm.zip}
-                        placeholder="43215"
-                        onChange={(event) =>
-                          setNewLeadForm({ ...newLeadForm, zip: event.target.value })
-                        }
-                      />
-                    </Field>
-                    <Field label="Occupancy" className="md:col-span-2">
-                      <select
-                        className={inputClass}
-                        value={newLeadForm.occupancy}
-                        onChange={(event) =>
-                          setNewLeadForm({
-                            ...newLeadForm,
-                            occupancy: event.target.value as NewLeadFormState['occupancy'],
-                          })
-                        }
-                      >
-                        <option value="unknown">Unknown</option>
-                        <option value="owner_occupied">Owner occupied</option>
-                        <option value="tenant_occupied">Tenant occupied</option>
-                        <option value="vacant">Vacant</option>
-                      </select>
-                    </Field>
-                    <Field label="Condition" className="md:col-span-2">
-                      <select
-                        className={inputClass}
-                        value={newLeadForm.condition}
-                        onChange={(event) =>
-                          setNewLeadForm({
-                            ...newLeadForm,
-                            condition: event.target.value as NewLeadFormState['condition'],
-                          })
-                        }
-                      >
-                        <option value="unknown">Unknown</option>
-                        <option value="light">Light</option>
-                        <option value="moderate">Moderate</option>
-                        <option value="heavy">Heavy</option>
-                      </select>
-                    </Field>
-                    {[
-                      ['Beds', 'beds', '3'],
-                      ['Baths', 'baths', '2'],
-                      ['Sq ft', 'sqft', '1540'],
-                      ['Year built', 'yearBuilt', '1974'],
-                    ].map(([label, key, placeholder]) => (
-                      <Field key={key} label={label}>
+                    <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+                      <Field label="Property address" className="col-span-full">
                         <input
                           className={inputClass}
-                          value={String(newLeadForm[key as keyof NewLeadFormState] || '')}
-                          placeholder={placeholder}
-                          onChange={(event) => setNewLeadForm({ ...newLeadForm, [key]: event.target.value })}
+                          value={newLeadForm.propertyAddress}
+                          placeholder="Property street address"
+                          onChange={(event) =>
+                            setNewLeadForm({
+                              ...newLeadForm,
+                              propertyAddress: event.target.value,
+                            })
+                          }
                         />
                       </Field>
-                    ))}
-                  </div>
+                      <Field label="City" className="col-span-full md:col-span-2">
+                        <input
+                          className={inputClass}
+                          value={newLeadForm.city}
+                          placeholder="Columbus"
+                          onChange={(event) =>
+                            setNewLeadForm({ ...newLeadForm, city: event.target.value })
+                          }
+                        />
+                      </Field>
+                      <Field label="State">
+                        <input
+                          className={inputClass}
+                          value={newLeadForm.state}
+                          placeholder="OH"
+                          maxLength={2}
+                          onChange={(event) =>
+                            setNewLeadForm({
+                              ...newLeadForm,
+                              state: event.target.value.toUpperCase(),
+                            })
+                          }
+                        />
+                      </Field>
+                      <Field label="ZIP">
+                        <input
+                          className={inputClass}
+                          value={newLeadForm.zip}
+                          placeholder="43215"
+                          onChange={(event) =>
+                            setNewLeadForm({ ...newLeadForm, zip: event.target.value })
+                          }
+                        />
+                      </Field>
+                      <Field label="Occupancy" className="md:col-span-2">
+                        <select
+                          className={inputClass}
+                          value={newLeadForm.occupancy}
+                          onChange={(event) =>
+                            setNewLeadForm({
+                              ...newLeadForm,
+                              occupancy: event.target.value as NewLeadFormState['occupancy'],
+                            })
+                          }
+                        >
+                          <option value="unknown">Unknown</option>
+                          <option value="owner_occupied">Owner occupied</option>
+                          <option value="tenant_occupied">Tenant occupied</option>
+                          <option value="vacant">Vacant</option>
+                        </select>
+                      </Field>
+                      <Field label="Condition" className="md:col-span-2">
+                        <select
+                          className={inputClass}
+                          value={newLeadForm.condition}
+                          onChange={(event) =>
+                            setNewLeadForm({
+                              ...newLeadForm,
+                              condition: event.target.value as NewLeadFormState['condition'],
+                            })
+                          }
+                        >
+                          <option value="unknown">Unknown</option>
+                          <option value="light">Light</option>
+                          <option value="moderate">Moderate</option>
+                          <option value="heavy">Heavy</option>
+                        </select>
+                      </Field>
+                      {[
+                        ['Beds', 'beds', '3'],
+                        ['Baths', 'baths', '2'],
+                        ['Sq ft', 'sqft', '1540'],
+                        ['Year built', 'yearBuilt', '1974'],
+                      ].map(([label, key, placeholder]) => (
+                        <Field key={key} label={label}>
+                          <input
+                            className={inputClass}
+                            value={String(newLeadForm[key as keyof NewLeadFormState] || '')}
+                            placeholder={placeholder}
+                            onChange={(event) =>
+                              setNewLeadForm({ ...newLeadForm, [key]: event.target.value })
+                            }
+                          />
+                        </Field>
+                      ))}
+                    </div>
                     <AttomPropertyPreview
                       mode="draft"
                       address={{
-                        street: newLeadForm.propertyAddress, city: newLeadForm.city,
-                        state: newLeadForm.state, zip: newLeadForm.zip,
+                        street: newLeadForm.propertyAddress,
+                        city: newLeadForm.city,
+                        state: newLeadForm.state,
+                        zip: newLeadForm.zip,
                       }}
                       saved={{
-                        beds: numberOrNull(newLeadForm.beds), baths: numberOrNull(newLeadForm.baths),
-                        livingSqft: numberOrNull(newLeadForm.sqft), yearBuilt: numberOrNull(newLeadForm.yearBuilt),
+                        beds: numberOrNull(newLeadForm.beds),
+                        baths: numberOrNull(newLeadForm.baths),
+                        livingSqft: numberOrNull(newLeadForm.sqft),
+                        yearBuilt: numberOrNull(newLeadForm.yearBuilt),
                       }}
                     />
                   </div>

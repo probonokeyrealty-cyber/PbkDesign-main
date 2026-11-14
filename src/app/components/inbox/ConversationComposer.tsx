@@ -572,21 +572,24 @@ export function ConversationComposer({
       hold = approvalRequired || Boolean(response.scheduled) || !providerAccepted;
       setSendOutcome({
         tone:
-          approvalRequired || response.scheduled ? 'warning' : providerAccepted ? 'success' : 'error',
-        title:
-          (approvalRequired
-            ? 'Awaiting approval'
-            : response.scheduled
-              ? 'Message scheduled'
-              : outboxOutcome?.title || (providerAccepted ? 'Provider accepted' : 'Send unconfirmed')),
-        detail:
-          (approvalRequired
-            ? 'This message will not send unless it is approved.'
-            : response.scheduled
-              ? `Scheduled for ${new Date(response.scheduledFor || scheduledFor).toLocaleString()}.`
-              : outboxOutcome?.detail || (providerAccepted
+          approvalRequired || response.scheduled
+            ? 'warning'
+            : providerAccepted
+              ? 'success'
+              : 'error',
+        title: approvalRequired
+          ? 'Awaiting approval'
+          : response.scheduled
+            ? 'Message scheduled'
+            : outboxOutcome?.title || (providerAccepted ? 'Provider accepted' : 'Send unconfirmed'),
+        detail: approvalRequired
+          ? 'This message will not send unless it is approved.'
+          : response.scheduled
+            ? `Scheduled for ${new Date(response.scheduledFor || scheduledFor).toLocaleString()}.`
+            : outboxOutcome?.detail ||
+              (providerAccepted
                 ? 'Provider acceptance does not confirm delivery.'
-                : 'No provider receipt was returned. Check the conversation before sending another message.')),
+                : 'No provider receipt was returned. Check the conversation before sending another message.'),
       });
       if (
         !hold &&
@@ -602,7 +605,8 @@ export function ConversationComposer({
       setSendOutcome({
         tone: 'error',
         title: 'Send unconfirmed',
-        detail: `Check the conversation before sending another message. ${error instanceof Error ? error.message : ''}`.trim(),
+        detail:
+          `Check the conversation before sending another message. ${error instanceof Error ? error.message : ''}`.trim(),
       });
       onSent();
     } finally {

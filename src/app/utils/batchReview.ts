@@ -535,7 +535,10 @@ export function buildBatchReview(rows: SourceRow[], roster: readonly unknown[]):
     const primary = fields.get('phone')?.trim();
     const contactPhones =
       primary && !phones.some(({ number }) => phoneKey(number) === phoneKey(primary))
-        ? [...phones, { slot: 0, number: primary, dnc: 'unknown' as const, dncSource: '', type: '' }]
+        ? [
+            ...phones,
+            { slot: 0, number: primary, dnc: 'unknown' as const, dncSource: '', type: '' },
+          ]
         : phones;
     return {
       number: row.number,
@@ -552,10 +555,7 @@ export function buildBatchReview(rows: SourceRow[], roster: readonly unknown[]):
 export type BatchContactEntry = {
   phone: string;
   rows: number[];
-} & (
-  | { status: 'candidate'; row: number }
-  | { status: 'dnc' | 'unknown' | 'not-reviewed' }
-);
+} & ({ status: 'candidate'; row: number } | { status: 'dnc' | 'unknown' | 'not-reviewed' });
 
 export function buildBatchContactPlan(
   rows: readonly BatchReviewRow[],
@@ -569,13 +569,20 @@ export function buildBatchContactPlan(
       if (phone.dnc === 'dnc') blocked.add(phoneKey(phone.number));
     }
   }
-  const groups = new Map<string, { rows: Set<number>; eligible: Set<number>; candidates: Set<number> }>();
+  const groups = new Map<
+    string,
+    { rows: Set<number>; eligible: Set<number>; candidates: Set<number> }
+  >();
   for (const row of rows) {
     const eligible = reviewed.has(row.number) && (row.status === 'new' || row.status === 'match');
     for (const phone of row.phones) {
       const key = phoneKey(phone.number);
       if (!/^\d{10}$/.test(key)) continue;
-      const group = groups.get(key) ?? { rows: new Set(), eligible: new Set(), candidates: new Set() };
+      const group = groups.get(key) ?? {
+        rows: new Set(),
+        eligible: new Set(),
+        candidates: new Set(),
+      };
       groups.set(key, group);
       group.rows.add(row.number);
       // Excluding a property row must never discard a positive DNC signal.
@@ -643,7 +650,12 @@ export function applyReviewedBatch(
   const leads = [...roster];
   const byId = new Map(roster.map((lead, index) => [readSavedFields(lead).get('leadId'), index]));
   const summary: BatchApplySummary = {
-    created: 0, updated: 0, unchanged: 0, conflicts: 0, invalid: 0, unreviewed: 0,
+    created: 0,
+    updated: 0,
+    unchanged: 0,
+    conflicts: 0,
+    invalid: 0,
+    unreviewed: 0,
   };
   const classified = buildBatchReview(rows, roster);
   for (const [index, review] of classified.entries()) {
@@ -680,15 +692,21 @@ export function applyReviewedBatch(
     }
     const saved = leads[savedIndex];
     const existing = readSavedFields(saved);
-    const patch: RowRecord = Object.fromEntries([...incoming.fields].filter(([field]) =>
-      field !== 'leadId' && !metadataFields.has(field) && !existing.has(field)
-    ));
+    const patch: RowRecord = Object.fromEntries(
+      [...incoming.fields].filter(
+        ([field]) => field !== 'leadId' && !metadataFields.has(field) && !existing.has(field)
+      )
+    );
     const existingPhones = savedPhones(saved, existing);
     const extraPhones: ReviewPhone[] = [];
     for (const phone of incoming.phones) {
-      if ([...existingPhones, ...extraPhones].some((candidate) =>
-        candidate.slot === phone.slot || phoneKey(candidate.number) === phoneKey(phone.number)
-      )) continue;
+      if (
+        [...existingPhones, ...extraPhones].some(
+          (candidate) =>
+            candidate.slot === phone.slot || phoneKey(candidate.number) === phoneKey(phone.number)
+        )
+      )
+        continue;
       extraPhones.push(phone);
     }
     if (extraPhones.length) {
@@ -707,7 +725,10 @@ export function applyReviewedBatch(
     summary,
     appliedLeadIds,
     contactPlan: buildBatchContactPlan(
-      classified, roster, new Set(appliedLeadIds.keys()), workspaceDncPhones
+      classified,
+      roster,
+      new Set(appliedLeadIds.keys()),
+      workspaceDncPhones
     ),
   };
 }

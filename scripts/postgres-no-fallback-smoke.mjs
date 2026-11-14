@@ -39,13 +39,16 @@ assert(
     /await sleep\(getStatePersistRetryDelayMs\(attempt\)\)/.test(bridge),
   'Hosted Postgres state persistence must retry transient connection-startup failures before failing closed.'
 );
+const queryPgRowsSource = bridge.match(/async function queryPgRows\(sql = '', params = \[\]\) \{[\s\S]*?\n\}/)?.[0] || '';
+const statePersistRetrySource = bridge.match(/function isTransientPostgresStatePersistError\(error = null\) \{[\s\S]*?\n\}/)?.[0] || '';
 assert(
-  /async function queryPgRows\(sql = '', params = \[\]\)/.test(bridge) &&
-    /const maxAttempts = getStatePersistRetryAttempts\(\);/.test(bridge) &&
-    /isTransientPostgresStatePersistError\(error\)/.test(bridge) &&
-    /await sleep\(getStatePersistRetryDelayMs\(attempt\)\)/.test(bridge) &&
-    /retryAttempts: attempt/.test(bridge),
-  'Hosted Postgres table reads/writes must retry transient startup failures before failing provider proof persistence.'
+  (queryPgRowsSource.match(/await pool\.query\s*\(/g) || []).length === 1 &&
+    !/\b(?:for|while)\s*\(|getStatePersistRetryAttempts|withPostgresConnectionRetry|await sleep/.test(queryPgRowsSource) &&
+    /retryAttempts: 1/.test(queryPgRowsSource) &&
+    /retryable: false/.test(queryPgRowsSource) &&
+    /executionOutcome: error\?\.executionOutcome \|\| 'unknown'/.test(queryPgRowsSource) &&
+    /if \(error\?\.postgresRetryHandled \|\| error\?\.executionOutcome === 'unknown' \|\| isBoundedPostgresOperationTimeout\(error\)\) return false/.test(statePersistRetrySource),
+  'Postgres reads/writes must use the pool acquisition retry budget only; callers must not replay submitted or timed-out SQL.'
 );
 assert(
   /async function persistApprovalRecordToPg\(approval = \{\}\)/.test(bridge) &&
@@ -229,7 +232,7 @@ assert(
   'Hosted Postgres state load must fail closed instead of loading runtime file/default fallbacks.'
 );
 
-const persistStateStart = bridge.indexOf('async function persistState(nextState)');
+const persistStateStart = bridge.indexOf('async function persistState(nextState');
 const persistStateEnd = bridge.indexOf('async function persistCampaignRecord', persistStateStart);
 assert(persistStateStart >= 0 && persistStateEnd > persistStateStart, 'persistState must be present.');
 const persistStateSource = bridge.slice(persistStateStart, persistStateEnd);

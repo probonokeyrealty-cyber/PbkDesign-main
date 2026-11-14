@@ -26,7 +26,11 @@ export function LeadPortalTimeline({
   onEventChanged,
 }: LeadPortalTimelineProps) {
   return (
-    <section className="pbk-lead-portal-timeline" id="lead-timeline" aria-labelledby="lead-timeline-heading">
+    <section
+      className="pbk-lead-portal-timeline"
+      id="lead-timeline"
+      aria-labelledby="lead-timeline-heading"
+    >
       <header>
         <div>
           <h2 id="lead-timeline-heading">Seller timeline</h2>

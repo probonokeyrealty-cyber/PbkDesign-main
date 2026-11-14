@@ -120,10 +120,15 @@ export function DocumentPdfPanel({
           : 'Generating PDF...';
 
   return (
-    <section aria-labelledby="docs-preview-heading" className="pbk-analyzer-card pbk-analyzer-workbench-section">
+    <section
+      aria-labelledby="docs-preview-heading"
+      className="pbk-analyzer-card pbk-analyzer-workbench-section"
+    >
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h2 id="docs-preview-heading" className="pbk-analyzer-section-title">Master PDF Preview</h2>
+          <h2 id="docs-preview-heading" className="pbk-analyzer-section-title">
+            Master PDF Preview
+          </h2>
           <div className="mt-2 inline-flex rounded-full border border-blue-200 bg-blue-50 px-3 py-1 text-[10px] font-semibold uppercase tracking-wide text-blue-700 dark:border-blue-800 dark:bg-blue-900/20 dark:text-blue-300">
             Path locked: {getPathLabel(selectedPath)}
           </div>

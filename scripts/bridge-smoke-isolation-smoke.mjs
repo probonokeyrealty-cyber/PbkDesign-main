@@ -163,6 +163,34 @@ test('expired child authority cannot POST to a replacement listener on its old p
   }
 });
 
+test('caller cancellation aborts only its request without overriding isolation deadlines', async () => {
+  const harness = await startIsolatedBridge({
+    entry: fileURLToPath(new URL('./fixtures/bridge-smoke-lifecycle-probe.mjs', import.meta.url)),
+  });
+  let timer;
+  try {
+    const controller = new AbortController();
+    const reason = new Error('Sample caller cancelled');
+    const rejected = assert.rejects(
+      harness.fetch(harness.origin + '/hang', { signal: controller.signal }),
+      error => error === reason,
+    );
+    await delay(30);
+    controller.abort(reason);
+    await Promise.race([
+      rejected,
+      new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('Caller abort signal was ignored')), 1000); }),
+    ]);
+    const response = await harness.fetch(harness.origin);
+    assert.ok(response.ok, 'Cancelling one request must leave the isolated child usable');
+    const alreadyAborted = AbortSignal.abort(reason);
+    await assert.rejects(harness.fetch(harness.origin, { signal: alreadyAborted }), error => error === reason);
+  } finally {
+    clearTimeout(timer);
+    await harness.stop();
+  }
+});
+
 test('stopping the child aborts an in-flight request', async () => {
   const harness = await startIsolatedBridge({
     entry: fileURLToPath(new URL('./fixtures/bridge-smoke-lifecycle-probe.mjs', import.meta.url)),

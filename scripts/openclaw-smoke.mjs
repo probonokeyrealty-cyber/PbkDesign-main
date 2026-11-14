@@ -31,7 +31,7 @@ async function waitForHealth(timeoutMs = 15000) {
 
   while (Date.now() - startedAt < timeoutMs) {
     try {
-      const response = await fetch(`${BASE_URL}/health`);
+      const response = await fetch(`${BASE_URL}/health`, { signal: AbortSignal.timeout(2000) });
       if (response.ok) {
         return await response.json();
       }
@@ -1561,6 +1561,7 @@ async function main() {
     assert(canonicalDeny?.ok === true && canonicalDeny?.approval?.status === 'rejected', 'Canonical approval deny endpoint did not reject.');
     assert(canonicalContractSend?.ok === true, 'Canonical contract send endpoint did not succeed.');
     assert(canonicalContractRemind?.ok === true, 'Canonical contract remind endpoint did not succeed.');
+    // The isolated module hook supplies an offline PDF fixture; failure is a regression here.
     assert(canonicalContractPdfResponse.ok, `Canonical contract PDF endpoint returned ${canonicalContractPdfResponse.status}.`);
     assert((canonicalContractPdfResponse.headers.get('content-type') || '').includes('application/pdf'), 'Canonical contract PDF endpoint did not return application/pdf.');
     assert(canonicalContractPdfBuffer.subarray(0, 4).toString('utf8') === '%PDF', 'Canonical contract PDF endpoint did not return a valid PDF signature.');
@@ -1576,6 +1577,9 @@ async function main() {
     console.log(JSON.stringify({
       ok: true,
       revision: health.revision,
+      verificationMode: 'isolated_offline',
+      providerDeliveryVerified: false,
+      canonicalContractPdfReady: canonicalContractPdfResponse.ok,
       healthStatus: health.status,
       authRequired: health.features.authRequired,
       stateBackend: health.features.stateBackend,

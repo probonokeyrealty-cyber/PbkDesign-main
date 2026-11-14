@@ -24,8 +24,8 @@ export function AnalyzerSellerHistory({ leadId }: { leadId: string }) {
         const response = await fetchConversationsRequest({ leadId, limit: 10 });
         if (!active) return;
         if (!response.ok || !Array.isArray(response.items)) throw new Error();
-        const thread = response.items.find((item) =>
-          item.leadId === leadId && item.id?.trim() && !item.mergedIntoThreadId
+        const thread = response.items.find(
+          (item) => item.leadId === leadId && item.id?.trim() && !item.mergedIntoThreadId
         );
         if (!thread) {
           setHistory({ status: 'missing' });
@@ -36,9 +36,13 @@ export function AnalyzerSellerHistory({ leadId }: { leadId: string }) {
         if (!active) return;
         if (!timeline.ok || !Array.isArray(timeline.items)) throw new Error();
         const events = timeline.items
-          .filter((event) => event.threadId === thread.id &&
-            (event.leadId == null || event.leadId === leadId) &&
-            !event.hiddenAt && !event.spamReportedAt)
+          .filter(
+            (event) =>
+              event.threadId === thread.id &&
+              (event.leadId == null || event.leadId === leadId) &&
+              !event.hiddenAt &&
+              !event.spamReportedAt
+          )
           .sort((a, b) => (Date.parse(b.occurredAt) || 0) - (Date.parse(a.occurredAt) || 0))
           .slice(0, 4);
         setHistory({ status: 'ready', events });
@@ -48,7 +52,9 @@ export function AnalyzerSellerHistory({ leadId }: { leadId: string }) {
     }
 
     void loadHistory();
-    return () => { active = false; };
+    return () => {
+      active = false;
+    };
   }, [leadId, attempt]);
 
   return (
@@ -69,17 +75,25 @@ export function AnalyzerSellerHistory({ leadId }: { leadId: string }) {
                 return (
                   <li key={event.id}>
                     <div className="pbk-analyzer-history-meta">
-                      <span>{[event.direction, event.channel || event.eventType].filter(Boolean).join(' / ')}</span>
+                      <span>
+                        {[event.direction, event.channel || event.eventType]
+                          .filter(Boolean)
+                          .join(' / ')}
+                      </span>
                       {Number.isFinite(timestamp) && (
                         <time dateTime={event.occurredAt}>{eventDate.format(timestamp)}</time>
                       )}
                     </div>
-                    {summary && <p>{summary.length > 180 ? summary.slice(0, 177) + '...' : summary}</p>}
+                    {summary && (
+                      <p>{summary.length > 180 ? summary.slice(0, 177) + '...' : summary}</p>
+                    )}
                   </li>
                 );
               })}
             </ol>
-          ) : <p className="pbk-analyzer-context-meta">No recent activity.</p>}
+          ) : (
+            <p className="pbk-analyzer-context-meta">No recent activity.</p>
+          )}
           <a
             className="pbk-analyzer-context-link"
             href={`/inbox/conversations?lead=${encodeURIComponent(leadId)}`}
@@ -92,15 +106,21 @@ export function AnalyzerSellerHistory({ leadId }: { leadId: string }) {
       ) : (
         <>
           <p role="status" className="pbk-analyzer-context-meta">
-            {history.status === 'loading' ? 'Loading seller history...'
-              : history.status === 'missing' ? 'No conversation is linked to this lead.'
-              : 'Seller history is unavailable.'}
+            {history.status === 'loading'
+              ? 'Loading seller history...'
+              : history.status === 'missing'
+                ? 'No conversation is linked to this lead.'
+                : 'Seller history is unavailable.'}
           </p>
           {history.status === 'error' && (
-            <button type="button" className="pbk-btn pbk-btn-ghost pbk-btn-sm" onClick={() => {
-              setHistory({ status: 'loading' });
-              setAttempt((count) => count + 1);
-            }}>
+            <button
+              type="button"
+              className="pbk-btn pbk-btn-ghost pbk-btn-sm"
+              onClick={() => {
+                setHistory({ status: 'loading' });
+                setAttempt((count) => count + 1);
+              }}
+            >
               <RotateCw size={14} aria-hidden="true" /> Retry
             </button>
           )}

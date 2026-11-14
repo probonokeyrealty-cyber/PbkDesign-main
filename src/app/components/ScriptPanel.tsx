@@ -224,11 +224,16 @@ export function ScriptPanel({
   };
 
   return (
-    <section aria-labelledby="call-script-heading" className="pbk-analyzer-card pbk-analyzer-workbench-section">
+    <section
+      aria-labelledby="call-script-heading"
+      className="pbk-analyzer-card pbk-analyzer-workbench-section"
+    >
       <div className="pbk-call-script-header">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
-            <h2 id="call-script-heading" className="pbk-analyzer-section-title">Call Mode Script Panel</h2>
+            <h2 id="call-script-heading" className="pbk-analyzer-section-title">
+              Call Mode Script Panel
+            </h2>
             <h3 className="mt-2 text-base font-semibold leading-tight text-gray-950 dark:text-gray-100">
               {currentPath.name}
             </h3>
@@ -290,9 +295,7 @@ export function ScriptPanel({
 
       <div className="pt-3">
         <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-          <div className="pbk-call-active-path">
-            {TAB_LABELS[activeTab]} Script
-          </div>
+          <div className="pbk-call-active-path">{TAB_LABELS[activeTab]} Script</div>
           <div className="flex w-full flex-wrap gap-2 sm:w-auto">
             <button
               type="button"

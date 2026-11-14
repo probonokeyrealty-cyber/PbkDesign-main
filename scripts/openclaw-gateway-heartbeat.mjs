@@ -40,6 +40,10 @@ const PROBE_TIMEOUT_MS = Math.max(
   1000,
   Number(process.env.PBK_OPENCLAW_GATEWAY_PROBE_TIMEOUT_MS || getArgValue('--timeout-ms') || 3000),
 );
+const requestedBridgeTimeout = Number(process.env.PBK_OPENCLAW_BRIDGE_REQUEST_TIMEOUT_MS || 10_000);
+const BRIDGE_REQUEST_TIMEOUT_MS = Number.isFinite(requestedBridgeTimeout)
+  ? Math.min(30_000, Math.max(1000, requestedBridgeTimeout))
+  : 10_000;
 const ONCE = process.argv.includes('--once')
   || /^(1|true|yes)$/i.test(String(process.env.PBK_OPENCLAW_GATEWAY_HEARTBEAT_ONCE || '').trim());
 const SKILL_STATS = process.argv.includes('--skill-stats');
@@ -103,8 +107,9 @@ async function requestBridgeJson(pathname = '', options = {}) {
       ...(options.headers || {}),
     },
     body: options.body ? JSON.stringify(options.body) : undefined,
+    signal: AbortSignal.timeout(BRIDGE_REQUEST_TIMEOUT_MS),
   });
-  const body = await response.json().catch(() => ({}));
+  const body = await response.json();
   if (!response.ok) {
     throw new Error(body?.error || body?.message || `Bridge returned ${response.status}`);
   }
@@ -305,8 +310,9 @@ async function sendHeartbeat() {
       'Content-Type': 'application/json',
     },
     body: JSON.stringify(payload),
+    signal: AbortSignal.timeout(BRIDGE_REQUEST_TIMEOUT_MS),
   });
-  const body = await response.json().catch(() => ({}));
+  const body = await response.json();
   if (!response.ok) {
     throw new Error(body?.error || body?.gateway?.note || `Bridge returned ${response.status}`);
   }
@@ -339,6 +345,7 @@ async function main() {
     try {
       const result = await sendHeartbeat();
       console.log(JSON.stringify({ checkedAt: new Date().toISOString(), ...result }));
+      if (ONCE && (!result.ok || !result.ready)) process.exitCode = 1;
     } catch (error) {
       console.error(JSON.stringify({
         checkedAt: new Date().toISOString(),

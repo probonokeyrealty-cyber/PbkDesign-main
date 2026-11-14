@@ -295,9 +295,14 @@ export function CallModeTab({
 
   return (
     <div className="pbk-analyzer-main pbk-call-workbench">
-      <section aria-labelledby="call-path-heading" className="pbk-analyzer-card pbk-analyzer-workbench-section">
+      <section
+        aria-labelledby="call-path-heading"
+        className="pbk-analyzer-card pbk-analyzer-workbench-section"
+      >
         <div className="flex items-center justify-between gap-3 mb-3 flex-wrap">
-          <h2 id="call-path-heading" className="pbk-analyzer-section-title">Path selector</h2>
+          <h2 id="call-path-heading" className="pbk-analyzer-section-title">
+            Path selector
+          </h2>
           <span className="pbk-call-active-path">Active packet: {getPathLabel(activePath)}</span>
         </div>
 
@@ -333,8 +338,13 @@ export function CallModeTab({
 
       <LiveDealTrackerPanel deal={deal} activePath={activePath} />
 
-      <section aria-labelledby="call-notes-heading" className="pbk-analyzer-card pbk-analyzer-workbench-section">
-        <h2 id="call-notes-heading" className="pbk-analyzer-section-title mb-3">Call notes</h2>
+      <section
+        aria-labelledby="call-notes-heading"
+        className="pbk-analyzer-card pbk-analyzer-workbench-section"
+      >
+        <h2 id="call-notes-heading" className="pbk-analyzer-section-title mb-3">
+          Call notes
+        </h2>
 
         <textarea
           aria-label="Call notes"
@@ -356,12 +366,20 @@ export function CallModeTab({
         canonicalPath={activePath}
       />
 
-      <section aria-labelledby="call-actions-heading" className="pbk-analyzer-card pbk-analyzer-workbench-section">
-        <h2 id="call-actions-heading" className="pbk-analyzer-section-title mb-3">Post-call actions</h2>
+      <section
+        aria-labelledby="call-actions-heading"
+        className="pbk-analyzer-card pbk-analyzer-workbench-section"
+      >
+        <h2 id="call-actions-heading" className="pbk-analyzer-section-title mb-3">
+          Post-call actions
+        </h2>
 
         <div className="space-y-2">
           {postCallStatus && (
-            <div role="status" className="rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-[11px] text-sky-800 dark:border-sky-700 dark:bg-sky-950/30 dark:text-sky-200">
+            <div
+              role="status"
+              className="rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-[11px] text-sky-800 dark:border-sky-700 dark:bg-sky-950/30 dark:text-sky-200"
+            >
               {postCallStatus}
             </div>
           )}

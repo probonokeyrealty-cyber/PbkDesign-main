@@ -63,6 +63,7 @@ import { isYouTubeUrl, processYouTubeTraining, runYouTubeTrainingEvalSuite } fro
 import { SYNTHETIC_EDGE_CASE_SOURCE, buildSyntheticEdgeCaseObjections } from './synthetic-edge-cases.mjs';
 import { getObservabilityStatus as getPbkObservabilityStatus, incrementObservabilityCounter, initializeObservability, recordEventBusBacklogMetric, recordGuardrailViolationMetric, recordLatencyMetric, withObservabilitySpan } from './observability.mjs';
 import { recordAvaResponseLatencyStatus } from './ava-latency-status.mjs';
+import { readPhoneTtsAudio, summarizePhoneTurnTiming } from './ava-phone-latency.mjs';
 import { appendAssistantMessage, buildAssistantPrompt, createAssistantSessionId, detectAssistantIntent, findAssistantLeadMatch, normalizeAssistantSession, planAssistantIntent, sanitizeAssistantTurn } from './ava-assistant-chat.mjs';
 import { runAvaMissionController } from './ava-mission-controller.mjs';
 import { buildLeadCommitEnvelope } from './lead-field-provenance.mjs';
@@ -62795,6 +62796,7 @@ async function sendElevenLabsTtsToTelnyxMediaStream(session = {}, text = '', opt
   const cooldownRemaining = TELNYX_ELEVENLABS_MEDIA_REPLY_MIN_MS - (now - Number(session.lastMediaReplyAt || 0));
   if (cooldownRemaining > 0) await sleep(cooldownRemaining);
 
+  if (options.phoneTurnTiming) options.phoneTurnTiming.ttsRequestedAt = Date.now();
   const tts = await fetchElevenLabsTts(
     {
       outputFormat: TELNYX_ELEVENLABS_OUTPUT_FORMAT,
@@ -62856,7 +62858,10 @@ async function sendElevenLabsTtsToTelnyxMediaStream(session = {}, text = '', opt
     };
   }
 
-  const audioBuffer = Buffer.from(await tts.response.arrayBuffer());
+  const audioBuffer = await readPhoneTtsAudio(tts.response, () => {
+    if (options.phoneTurnTiming) options.phoneTurnTiming.ttsFirstAudioByteAt = Date.now();
+  });
+  if (options.phoneTurnTiming) options.phoneTurnTiming.ttsAudioReadyAt = Date.now();
   if (!audioBuffer.length) {
     return {
       ok: false,
@@ -62898,6 +62903,7 @@ async function sendElevenLabsTtsToTelnyxMediaStream(session = {}, text = '', opt
     },
   };
   socket.send(JSON.stringify(mediaMessage));
+  if (options.phoneTurnTiming) options.phoneTurnTiming.mediaEnqueuedAt = Date.now();
   session.lastMediaReplyAt = Date.now();
   recordElevenLabsValidation({ ok: true, status: 200, voiceId: tts.voiceId });
   return {
@@ -62940,6 +62946,7 @@ async function sendAvaPhoneReplyAudio(session = {}, text = '', options = {}) {
   }
 
   const fallback = await speakTelnyxCall(session.callId, safeText);
+  if (fallback.ok && options.phoneTurnTiming) options.phoneTurnTiming.fallbackAcceptedAt = Date.now();
   return {
     ...fallback,
     provider: fallback.ok ? 'Telnyx' : fallback.provider || 'Telnyx',
@@ -71266,6 +71273,10 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
       item.transcript || transcriptForReply,
       now
     );
+    const phoneTurnTiming = {
+      sttFinalReceivedAt: Date.parse(item.capturedAt || '') || null,
+      replyBuildStartedAt: Date.now(),
+    };
     let reply;
     try {
       reply = await buildTelnyxLiveAvaReply({
@@ -71273,6 +71284,7 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
         transcript: item.transcript,
         contextCall,
       });
+      phoneTurnTiming.replyBuildCompletedAt = Date.now();
     } catch (error) {
       delete session.pendingAvaReplyTranscript;
       delete session.pendingAvaReplyTurnVersion;
@@ -71472,6 +71484,17 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
       replyTurnVersion,
       replyStartedAt: replyStartAt,
       transcript: item.transcript || transcriptForReply,
+      phoneTurnTiming,
+    });
+    const phoneLatency = summarizePhoneTurnTiming(phoneTurnTiming);
+    recordCallTrace('ava_phone_latency', {
+      callId: session.callId || '',
+      streamId: session.streamId || '',
+      turnVersion: replyTurnVersion,
+      status: speakResult.ok ? 'bridge_observed' : 'warning',
+      result: speakResult.result || '',
+      turnTiming: phoneLatency,
+      stage: 'maybeSpeakTelnyxAvaReply.latency',
     });
     const turnCompletionMs = Math.max(0, Date.now() - speechFinalAt);
     recordLatencyMetric('speech_final_to_reply_start_ms', speechFinalToReplyStartMs, {
@@ -71496,6 +71519,7 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
       ok: Boolean(speakResult.ok),
       labels: {
         path: session.selectedPath || contextCall?.selectedPath || '',
+        phoneLatency,
         result: speakResult.result || '',
         llmProvider: reply.strategist?.provider?.provider || reply.strategist?.provider?.id || STRATEGIST_PROVIDER || '',
         llmModel: reply.strategist?.provider?.model || (STRATEGIST_PROVIDER === 'gemini' ? GEMINI_LIVE_MODEL : DEEPSEEK_LIVE_MODEL),

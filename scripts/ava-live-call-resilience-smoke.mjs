@@ -3,6 +3,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
+import { summarizePhoneTurnTiming } from './ava-phone-latency.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, '..');
@@ -172,8 +173,10 @@ assert.equal(sent.length, beforeSuppressed, 'Suppressed, replaced, or finalized 
 
 let audioOptions;
 runtime.sendAvaPhoneReplyAudio = async (_session, _text, options) => { audioOptions = options; return { ok: true }; };
+runtime.summarizePhoneTurnTiming = summarizePhoneTurnTiming;
 await vm.runInContext(`(async () => {
   const replyTurnVersion = 1, replyStartAt = ${clock}, spoken = 'Test reply';
+  const phoneTurnTiming = { sttFinalReceivedAt: ${clock} };
   const item = { transcript: 'Test seller' }, transcriptForReply = '';
 ${sourceBetween('    const speakResult = await sendAvaPhoneReplyAudio(session, spoken, {', '    const turnCompletionMs')}
 })()`, runtime);

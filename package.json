@@ -12,6 +12,7 @@
     "build": "vite build",
     "build:investor-staging": "vite build --config vite.investor-staging.config.ts",
     "build:investor-live": "vite build --config vite.investor-live.config.ts",
+    "test:investor-packet-browser": "npm run build:investor-live && node scripts/investor-packet-browser-smoke.mjs",
     "build:staff-staging": "node scripts/build-investor-staff-staging.mjs",
     "deploy:investor-live": "node scripts/deploy-investor-public-staging.mjs --live",
     "deploy:investor-staging-public": "node scripts/deploy-investor-public-staging.mjs",

@@ -252,7 +252,7 @@
     "test:deepspec-export-ava-dataset": "node ./scripts/deepspec-export-ava-dataset-smoke.mjs",
     "deepspec:benchmark-gate": "node ./scripts/deepspec-benchmark-gate.mjs",
     "test:deepspec-benchmark-gate": "node ./scripts/deepspec-benchmark-gate-smoke.mjs",
-    "test:ava-assistant-chat": "node ./scripts/ava-assistant-chat-smoke.mjs && npm run test:ava-mission-controller && node --test ./scripts/ava-chat-stream-client.node-test.mjs",
+    "test:ava-assistant-chat": "node ./scripts/ava-assistant-chat-smoke.mjs && npm run test:ava-mission-controller && node --test ./scripts/ava-chat-stream-client.node-test.mjs ./scripts/ava-reply-speech.node-test.mjs ./scripts/ava-voice-recognition.node-test.mjs",
     "test:ava-call-lead-projection": "node ./scripts/ava-call-lead-projection-smoke.mjs",
     "test:ava-call-intelligence-control-loop": "node ./scripts/ava-call-intelligence-control-loop-smoke.mjs",
     "test:lead-field-provenance": "node ./scripts/lead-field-provenance-smoke.mjs",

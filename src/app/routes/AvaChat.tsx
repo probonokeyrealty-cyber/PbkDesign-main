@@ -30,12 +30,15 @@ import {
   Sparkles,
   Square,
   Terminal,
+  Volume2,
+  VolumeX,
   X,
 } from 'lucide-react';
 import { Link, useSearchParams } from 'react-router';
 import { PbkButton, PbkDataSource, PbkEmpty, PbkPulseDot } from '../../components/pbk/index';
 import { useRuntimeSnapshot } from '../hooks/useRuntimeSnapshot';
 import {
+  bridgeBlobRequest,
   fetchDesktopSidecarStatusRequest,
   fetchLocalCommandsRequest,
   queueLocalCommandRequest,
@@ -47,6 +50,7 @@ import {
 } from '../utils/runtimeBridge';
 import { showUiToast } from '../utils/uiFeedback';
 import { getApprovalResolutionKeys } from './inboxRuntimeLogic.js';
+import { createAvaAudioPlayer, createAvaReplySpeech, type AvaVoiceProgress } from '../utils/avaReplySpeech';
 
 type SpeechRecognitionResultEvent = Event & {
   results: SpeechRecognitionResultList;
@@ -1096,6 +1100,64 @@ export function AvaChat() {
   const loadInFlightRef = useRef(false);
   const submitInFlightRef = useRef(false);
   const assistantRequestRef = useRef<AbortController | null>(null);
+  const voicePlayerRef = useRef<ReturnType<typeof createAvaAudioPlayer> | null>(null);
+  const replySpeechRef = useRef<ReturnType<typeof createAvaReplySpeech> | null>(null);
+  const voiceEnabledRef = useRef(false);
+  const voiceMountedRef = useRef(true);
+  const voiceSettingRef = useRef(0);
+  const [voiceEnabled, setVoiceEnabled] = useState(false);
+  const [voiceProgress, setVoiceProgress] = useState<AvaVoiceProgress>({ state: 'idle', spokenCharacters: 0, queuedCharacters: 0 });
+  const [voiceError, setVoiceError] = useState('');
+  const voiceBusy = voiceProgress.state === 'preparing' || voiceProgress.state === 'speaking';
+
+  const getVoicePlayer = useCallback(() => {
+    voicePlayerRef.current ??= createAvaAudioPlayer((text, signal) => bridgeBlobRequest({
+      method: 'POST', path: '/api/voice/tts', accept: 'audio/mpeg', signal,
+      body: { text, source: 'ava-chat-stream-speech', noLeadCapture: true },
+    }));
+    return voicePlayerRef.current;
+  }, []);
+
+  const stopReplySpeech = useCallback(() => {
+    replySpeechRef.current?.stop();
+    replySpeechRef.current = null;
+  }, []);
+
+  const setVoiceOutput = useCallback((enabled: boolean) => {
+    stopReplySpeech();
+    const setting = ++voiceSettingRef.current;
+    voiceEnabledRef.current = enabled;
+    setVoiceEnabled(enabled);
+    setVoiceError('');
+    if (enabled) void getVoicePlayer().prepare().catch(() => {
+      if (!voiceMountedRef.current || setting !== voiceSettingRef.current) return;
+      voiceEnabledRef.current = false;
+      setVoiceEnabled(false);
+      setVoiceError('Voice playback is unavailable. Ava\'s text is still available.');
+    });
+  }, [getVoicePlayer, stopReplySpeech]);
+
+  const beginReplySpeech = useCallback(() => {
+    const queue = createAvaReplySpeech(getVoicePlayer().play,
+      progress => { if (voiceMountedRef.current && replySpeechRef.current === queue) setVoiceProgress(progress); },
+      error => { if (voiceMountedRef.current && replySpeechRef.current === queue) setVoiceError(error.code === 'reply_changed'
+        ? 'Ava revised this reply. Voice stopped; the final text is available.'
+        : 'Voice playback failed. Ava\'s text is still available.'); });
+    replySpeechRef.current = queue;
+    setVoiceProgress({ state: 'idle', spokenCharacters: 0, queuedCharacters: 0 });
+    return queue;
+  }, [getVoicePlayer]);
+
+  useEffect(() => {
+    voiceMountedRef.current = true;
+    return () => {
+      voiceMountedRef.current = false;
+      replySpeechRef.current?.stop();
+      replySpeechRef.current = null;
+      void voicePlayerRef.current?.close().catch(() => {});
+      voicePlayerRef.current = null;
+    };
+  }, []);
 
   const pendingApprovals = useMemo(
     () =>
@@ -1300,7 +1362,15 @@ export function AvaChat() {
 
   useEffect(() => {
     return () => {
-      recognitionRef.current?.stop();
+      const recognition = recognitionRef.current;
+      recognitionRef.current = null;
+      if (recognition) {
+        recognition.onstart = null;
+        recognition.onend = null;
+        recognition.onerror = null;
+        recognition.onresult = null;
+        try { recognition.stop(); } catch { /* Recognition may already have ended. */ }
+      }
       assistantRequestRef.current?.abort();
       assistantRequestRef.current = null;
     };
@@ -1408,15 +1478,16 @@ export function AvaChat() {
   }, [assistantExchanges, conversationCount, historyFilter, searchQuery]);
 
   const stopListening = () => {
-    recognitionRef.current?.stop();
+    const recognition = recognitionRef.current;
     recognitionRef.current = null;
+    try { recognition?.stop(); } catch { /* Recognition may already have ended. */ }
     setListening(false);
   };
 
   const submitCommand = useCallback(
     async (value = draft) => {
       const command = value.trim();
-      if (!command || submitting || submitInFlightRef.current) return;
+      if (!voiceMountedRef.current || !command || submitting || submitInFlightRef.current) return;
       submitInFlightRef.current = true;
       const releaseSubmit = () => {
         submitInFlightRef.current = false;
@@ -1425,11 +1496,14 @@ export function AvaChat() {
       };
       setSubmitting(true);
       setSubmitError('');
+      stopReplySpeech();
+      setVoiceError('');
 
       let result;
       let useAssistantChat = false;
       let pendingExchange: AvaAssistantExchange | undefined;
       let assistantController: AbortController | undefined;
+      let replySpeech: ReturnType<typeof createAvaReplySpeech> | undefined;
       try {
         const routed = classifyConversationalCommand(command, action);
         const nextAction = routed.action;
@@ -1443,6 +1517,7 @@ export function AvaChat() {
         if (useAssistantChat) {
           assistantController = new AbortController();
           assistantRequestRef.current = assistantController;
+          if (voiceEnabledRef.current) replySpeech = beginReplySpeech();
           const now = new Date().toISOString();
           pendingExchange = {
             id: createAvaAssistantExchangeId(), request: command, answer: '', status: 'pending',
@@ -1470,12 +1545,15 @@ export function AvaChat() {
             signal: assistantController.signal,
             onAnswer: (text) => {
               if (assistantRequestRef.current !== assistantController || assistantController.signal.aborted) return;
+              replySpeech?.update(text);
               setAssistantExchanges((current) => current.map((exchange) => exchange.id === exchangeId
                 ? { ...exchange, answer: text, updatedAt: new Date().toISOString() }
                 : exchange));
             },
           });
           if (assistantRequestRef.current !== assistantController) return;
+          if (response.ok === false) replySpeech?.stop();
+          else replySpeech?.finish(String(response.answer || response.result || '').trim());
           if (response.sessionId) setAssistantSessionId(response.sessionId);
           setAssistantExchanges((current) =>
             current.map((exchange) => exchange.id === exchangeId
@@ -1505,6 +1583,7 @@ export function AvaChat() {
         };
         result = await queueLocalCommandRequest(payload);
       } catch (err) {
+        replySpeech?.stop();
         if (useAssistantChat && assistantRequestRef.current !== assistantController) return;
         const cancelled = Boolean(assistantController?.signal.aborted);
         const message = err instanceof Error ? err.message : 'Ava could not start that request.';
@@ -1572,6 +1651,8 @@ export function AvaChat() {
       refresh,
       requiresApproval,
       submitting,
+      beginReplySpeech,
+      stopReplySpeech,
     ]
   );
 
@@ -1614,22 +1695,26 @@ export function AvaChat() {
   );
 
   const startListening = () => {
+    if (!voiceMountedRef.current) return;
     const SpeechRecognition = getSpeechRecognitionConstructor();
     if (!SpeechRecognition) {
       setSubmitError('This browser does not expose SpeechRecognition or webkitSpeechRecognition.');
       return;
     }
+    setVoiceOutput(true);
     const recognition = new SpeechRecognition();
     recognition.continuous = false;
     recognition.interimResults = true;
     recognition.lang = 'en-US';
-    recognition.onstart = () => setListening(true);
-    recognition.onend = () => setListening(false);
+    recognition.onstart = () => { if (voiceMountedRef.current && recognitionRef.current === recognition) setListening(true); };
+    recognition.onend = () => { if (voiceMountedRef.current && recognitionRef.current === recognition) setListening(false); };
     recognition.onerror = (event) => {
+      if (!voiceMountedRef.current || recognitionRef.current !== recognition) return;
       setSubmitError(event.error || 'Voice recognition stopped.');
       setListening(false);
     };
     recognition.onresult = (event) => {
+      if (!voiceMountedRef.current || recognitionRef.current !== recognition) return;
       const text = Array.from(event.results)
         .map((result) => result[0]?.transcript || '')
         .join(' ')
@@ -1768,12 +1853,19 @@ export function AvaChat() {
               listening={listening}
               submitting={submitting}
               speechSupported={speechSupported}
+              voiceEnabled={voiceEnabled}
+              voiceProgress={voiceProgress}
+              voiceError={voiceError}
+              onToggleVoice={() => setVoiceOutput(!voiceEnabledRef.current)}
               submitError={submitError}
               textareaRef={composerRef}
               onStartListening={startListening}
               onStopListening={stopListening}
               onSubmit={() => void submitCommand()}
-              onStopResponse={assistantRequestRef.current ? () => assistantRequestRef.current?.abort() : undefined}
+              onStopResponse={assistantRequestRef.current || voiceBusy ? () => {
+                assistantRequestRef.current?.abort();
+                stopReplySpeech();
+              } : undefined}
               onSelectCompanionAction={selectCompanionAction}
             />
           </div>
@@ -2347,6 +2439,10 @@ function AvaComposer({
   listening,
   submitting,
   speechSupported,
+  voiceEnabled,
+  voiceProgress,
+  voiceError,
+  onToggleVoice,
   submitError,
   textareaRef,
   onStartListening,
@@ -2363,6 +2459,10 @@ function AvaComposer({
   listening: boolean;
   submitting: boolean;
   speechSupported: boolean;
+  voiceEnabled: boolean;
+  voiceProgress: AvaVoiceProgress;
+  voiceError: string;
+  onToggleVoice: () => void;
   submitError: string;
   textareaRef: React.RefObject<HTMLTextAreaElement | null>;
   onStartListening: () => void;
@@ -2397,6 +2497,7 @@ function AvaComposer({
               <span className="break-words">{submitError}</span>
             </div>
           )}
+          {voiceError && <p role="status" className="mb-2 text-xs text-[var(--ava-danger)]">{voiceError}</p>}
           <label className="sr-only" htmlFor="ava-command-input">
             Ask Ava anything
           </label>
@@ -2474,6 +2575,27 @@ function AvaComposer({
                 {listening ? <Square size={17} /> : <Mic size={18} />}
               </button>
 
+              <button
+                type="button"
+                onClick={onToggleVoice}
+                disabled={submitting && !voiceEnabled}
+                aria-pressed={voiceEnabled}
+                aria-label={voiceEnabled ? 'Turn off spoken replies' : 'Read replies aloud'}
+                title={voiceEnabled ? 'Turn off spoken replies' : 'Read replies aloud'}
+                className="grid size-11 shrink-0 place-items-center rounded-full border border-[var(--ava-border)] bg-[var(--ava-panel)] text-[var(--ava-sky)] disabled:opacity-50"
+              >
+                {voiceEnabled ? <Volume2 size={18} /> : <VolumeX size={18} />}
+              </button>
+              <span
+                role="status"
+                data-ava-voice-state={voiceProgress.state}
+                data-ava-spoken-characters={voiceProgress.spokenCharacters}
+                data-ava-queued-characters={voiceProgress.queuedCharacters}
+                className="text-xs text-[var(--ava-text-muted)]"
+              >
+                {voiceProgress.state === 'speaking' ? 'Speaking' : voiceProgress.state === 'preparing' ? 'Preparing voice...' : voiceEnabled ? 'Voice on' : ''}
+              </span>
+
               <div className="hidden min-h-11 min-w-0 flex-1 items-center gap-2 rounded-lg border border-[var(--ava-border)] bg-[var(--ava-panel)] px-3 text-xs font-semibold text-[var(--ava-text-muted)] sm:flex sm:flex-none">
                 <ShieldCheck size={15} className="text-[var(--ava-sky)]" />
                 <span className="truncate">
@@ -2494,12 +2616,12 @@ function AvaComposer({
                 type="button"
                 variant="sky-gradient"
                 className="pbk-ava-chat-send-button min-h-11 min-w-11 w-24 shrink-0 justify-center px-3"
-                disabled={submitting && onStopResponse ? false : !draft.trim() || submitting}
-                onClick={submitting && onStopResponse ? onStopResponse : onSubmit}
-                aria-label={submitting && onStopResponse ? 'Stop Ava response' : 'Send to Ava'}
-                title={submitting && onStopResponse ? 'Stop Ava response' : 'Send to Ava'}
+                disabled={onStopResponse ? false : !draft.trim() || submitting}
+                onClick={onStopResponse || onSubmit}
+                aria-label={onStopResponse ? 'Stop Ava response' : 'Send to Ava'}
+                title={onStopResponse ? 'Stop Ava response' : 'Send to Ava'}
               >
-                {submitting && onStopResponse ? <Square size={17} aria-hidden="true" /> : <>
+                {onStopResponse ? <Square size={17} aria-hidden="true" /> : <>
                   {submitting ? <Loader2 className="animate-spin" size={17} /> : <Send size={17} />}
                   <span className="hidden sm:inline">{submitting ? 'Sending' : 'Send'}</span>
                 </>}

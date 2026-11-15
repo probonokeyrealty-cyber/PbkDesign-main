@@ -7,6 +7,8 @@ for (const kind of Object.keys(authEmailCopy))
     assert.match(subject, /^PBK \| /);
     assert.match(html, /Probono Key Realty/);
     assert.match(html, /role="presentation"/);
+    assert.equal((html.match(/<h1\b/g) || []).length, 1);
+    if (kind === 'magic-link-or-otp') assert.match(html, /\{\{ \.Token \}\}/);
     assert.doesNotMatch(html, /<script|<img|https?:\/\//);
     if (authEmailCopy[kind][4] === 'code') {
       assert.match(html, /\{\{ \.Token \}\}/);

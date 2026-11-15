@@ -93,18 +93,21 @@ export function authEmailTemplate(kind) {
   const copy = authEmailCopy[kind];
   if (!copy) throw new Error('Unknown authentication email template.');
   const [subject, title, body, cta, mode] = copy;
-  const action =
+  let action =
     mode === 'code'
       ? '<p style="font-size:14px;margin-bottom:8px">Your one-time code</p><p style="font-size:30px;font-weight:bold;line-height:1.5;margin-top:0">{{ .Token }}</p>'
       : mode === 'notice'
         ? ''
         : `<p style="margin:28px 0"><a href="{{ .ConfirmationURL }}" style="display:inline-block;padding:16px 24px;background:#102f42;color:#ffffff;text-decoration:none;border-radius:4px;font-weight:bold;line-height:20px">${cta}</a></p><p style="font-size:13px;line-height:1.6">If the button does not open, copy this link into your browser:<br><a href="{{ .ConfirmationURL }}" style="color:#176c9e;word-break:break-all">{{ .ConfirmationURL }}</a></p>`;
+  if (kind === 'magic-link-or-otp')
+    action +=
+      '<p style="font-size:14px">Or enter this one-time code on the PBK sign-in page:</p><p style="font-family:monospace;font-size:30px;font-weight:bold">{{ .Token }}</p>';
   const security =
     mode === 'notice'
       ? 'PBK will never ask you to send your password or verification code by email.'
       : 'Never share this code or link, or your password. If you did not request this email, you can ignore it.';
   return {
-    subject: 'PBK | ' + subject.replace(/ PBK/g, ''),
+    subject: 'PBK | ' + subject.replace(/ PBK/g, '').replace(/ to$/, ''),
     html: `<!doctype html><html lang="en"><head><meta name="viewport" content="width=device-width, initial-scale=1"><meta charset="utf-8"><title>${subject}</title></head><body style="margin:0;background:#f4f8fb;color:#102f42;font-family:Arial,sans-serif"><table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr><td align="center" style="padding:24px 16px"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:560px;background:#ffffff;border-top:4px solid #3299da"><tr><td style="padding:24px"><p style="font-size:24px;font-weight:bold;margin:0">PBK</p><p style="font-size:13px;margin:6px 0 28px">Probono Key Realty &middot; Account Security</p><h1 style="font-family:Georgia,serif;font-size:28px;line-height:1.25">${title}</h1><p style="font-size:16px;line-height:1.6">${body}</p>${action}<p style="font-size:13px;line-height:1.6;color:#526673">${security}</p><hr style="border:0;border-top:1px solid #dce6ed;margin:28px 0"><p style="font-size:12px;line-height:1.6;color:#526673">PBK &middot; Probono Key Realty<br>This is an automated account-security email, not a property offer. Existing account permissions still apply.</p></td></tr></table></td></tr></table></body></html>`,
   };
 }

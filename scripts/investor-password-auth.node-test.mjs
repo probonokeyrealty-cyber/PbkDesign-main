@@ -22,7 +22,13 @@ async function fixture(
   const original = globalThis.fetch;
   globalThis.fetch = async (url, init = {}) => {
     const path = new URL(url).pathname;
-    calls.push({ path, url: String(url), method: init.method, body: init.body, headers: init.headers });
+    calls.push({
+      path,
+      url: String(url),
+      method: init.method,
+      body: init.body,
+      headers: init.headers,
+    });
     if (path === '/rest/v1/' + profile.table)
       return Response.json([{ revision: 1, data: structuredClone(state) }]);
     if (path === '/rest/v1/rpc/' + profile.commitRpc) {
@@ -36,6 +42,10 @@ async function fixture(
     if (path === '/auth/v1/user')
       return Response.json({ id: 'buyer', email, email_confirmed_at: '2026-11-15' });
     if (path === '/auth/v1/recover') return Response.json({});
+    if (path === '/auth/v1/verify')
+      return Response.json(valid ? { access_token: token } : { msg: 'private provider detail' }, {
+        status: valid ? 200 : 403,
+      });
     throw Error(`Unexpected provider path: ${path}`);
   };
   const call = (command, payload = {}, bearer) =>
@@ -123,19 +133,67 @@ test('recovery is approval-gated and has a generic response for unknown emails',
   }));
 
 test('staff recovery sends only from the staff entry and returns to the Property Log', async () =>
-  fixture(async ({ call, calls, email }) => {
-    assert.equal((await call('recoverPassword', { email })).status, 200);
-    const sent = calls.find((c) => c.path === '/auth/v1/recover');
-    assert.ok(sent);
-    assert.equal(new URL(sent.url).searchParams.get('redirect_to'), profile.staffOrigin + '/property-log');
-    assert.equal(JSON.parse(sent.body).email, email);
-  }, { role: 'reviewer', origin: profile.staffOrigin }));
+  fixture(
+    async ({ call, calls, email }) => {
+      assert.equal((await call('recoverPassword', { email })).status, 200);
+      const sent = calls.find((c) => c.path === '/auth/v1/recover');
+      assert.ok(sent);
+      assert.equal(
+        new URL(sent.url).searchParams.get('redirect_to'),
+        profile.staffOrigin + '/property-log'
+      );
+      assert.equal(JSON.parse(sent.body).email, email);
+    },
+    { role: 'reviewer', origin: profile.staffOrigin }
+  ));
 
 test('the investor entry does not send recovery emails for staff identities', async () =>
+  fixture(
+    async ({ call, calls, email }) => {
+      assert.equal((await call('recoverPassword', { email })).status, 200);
+      assert.equal(calls.filter((c) => c.path === '/auth/v1/recover').length, 0);
+    },
+    { role: 'reviewer' }
+  ));
+
+test('staff recovery code opens only a verified approved recovery session', async () =>
+  fixture(
+    async ({ call, calls, email }) => {
+      const response = await call('verifyRecovery', { email, code: '123456' });
+      const result = await response.json();
+      assert.equal(response.status, 200, JSON.stringify(result));
+      assert.ok(result.token);
+      const verification = calls.find((c) => c.path === '/auth/v1/verify');
+      assert.deepEqual(JSON.parse(verification.body), { email, token: '123456', type: 'recovery' });
+      assert.equal((await call('session', {}, result.token)).status, 200);
+    },
+    { role: 'reviewer', origin: profile.staffOrigin }
+  ));
+
+for (const options of [{ approved: false }, { role: 'reviewer' }])
+  test(`recovery code preserves approval and public-entry isolation: ${JSON.stringify(options)}`, async () =>
+    fixture(async ({ call, email }) => {
+      const response = await call('verifyRecovery', { email, code: '123456' });
+      assert.equal(response.status, 403);
+      assert.equal((await response.json()).token, undefined);
+    }, options));
+
+test('expired recovery codes return a safe actionable error', async () =>
+  fixture(
+    async ({ call, email }) => {
+      const response = await call('verifyRecovery', { email, code: '123456' });
+      assert.equal(response.status, 401);
+      assert.match((await response.json()).error, /new recovery code/i);
+    },
+    { valid: false }
+  ));
+
+test('malformed recovery codes never call the provider', async () =>
   fixture(async ({ call, calls, email }) => {
-    assert.equal((await call('recoverPassword', { email })).status, 200);
-    assert.equal(calls.filter((c) => c.path === '/auth/v1/recover').length, 0);
-  }, { role: 'reviewer' }));
+    const response = await call('verifyRecovery', { email, code: 'not-a-code' });
+    assert.equal(response.status, 400);
+    assert.equal(calls.filter((c) => c.path === '/auth/v1/verify').length, 0);
+  }));
 
 test('setting a password requires a verified approved session and never returns the password', async () =>
   fixture(async ({ call, email, calls }) => {

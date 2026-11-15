@@ -30,7 +30,16 @@ try {
               status: 401,
               json: { error: 'Email or password is incorrect.' },
             });
+          if (command === 'verifyRecovery' && payload.code !== '123456')
+            return route.fulfill({
+              status: 401,
+              json: {
+                error: 'That recovery code is invalid or expired. Request a new recovery code.',
+              },
+            });
           const replies = {
+            recoverPassword: { message: 'If approved, a recovery email will arrive.' },
+            verifyRecovery: { token: 'fixture-only-staff', expiresIn: 3600 },
             authPassword: { token: 'fixture-only-staff', expiresIn: 3600 },
             session: { member: { id: 'fixture-staff', email: 'staff@example.invalid', role } },
             list: { properties: [] },
@@ -64,6 +73,24 @@ try {
       await page.getByRole('button', { name: 'Sign in', exact: true }).click();
       await expect(page.getByRole('alert')).toContainText('Email or password is incorrect.');
       await expect(page.getByLabel('Password', { exact: true })).toHaveValue('');
+      if (role === 'reviewer') {
+        await page.getByRole('button', { name: 'Forgot password?', exact: true }).click();
+        await expect(page.getByLabel('Password recovery code', { exact: true })).toBeVisible();
+        await page.getByLabel('Password recovery code', { exact: true }).fill('000000');
+        await page.getByRole('button', { name: 'Continue to set password', exact: true }).click();
+        await expect(page.getByRole('alert')).toContainText('invalid or expired');
+        await page.getByLabel('Password recovery code', { exact: true }).fill('123456');
+        await page.getByRole('button', { name: 'Continue to set password', exact: true }).click();
+        await expect(
+          page.getByRole('heading', { name: 'Set your password.', exact: true })
+        ).toBeVisible();
+        await page.screenshot({
+          path: `output/playwright/staff-password-setup-${width}.png`,
+          fullPage: true,
+        });
+        // Stop before entering any new credential; the account owner performs this step.
+        await page.getByRole('button', { name: 'Cancel and sign out', exact: true }).click();
+      }
       await page.getByLabel('Password', { exact: true }).fill('fixture-only-password');
       await page.getByRole('button', { name: 'Sign in', exact: true }).click();
       if (role === 'investor') {

@@ -7,6 +7,7 @@ const investorCommands = new Set([
   'authCallback',
   'authPassword',
   'recoverPassword',
+  'verifyRecovery',
   'setPassword',
   'session',
   'list',

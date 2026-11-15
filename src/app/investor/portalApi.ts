@@ -39,7 +39,7 @@ export async function portalRequest(
   if (!response.ok) {
     throw new Error(result.error || 'Unable to complete this action.');
   }
-  if (command === 'authVerify' || command === 'authCallback' || command === 'authPassword') {
+  if (['authVerify', 'authCallback', 'authPassword', 'verifyRecovery'].includes(command)) {
     accessToken = command === 'authCallback' ? callbackToken! : result.token;
     lifetime.arm(result.expiresIn);
   }

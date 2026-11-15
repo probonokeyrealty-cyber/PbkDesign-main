@@ -375,6 +375,38 @@ export function createPortalHandler(profile: any) {
           origin
         );
       }
+      if (command === 'verifyRecovery') {
+        const email = String(payload.email || '')
+          .trim()
+          .toLowerCase();
+        const code = String(payload.code || '').trim();
+        if (!email || email.length > 254 || !/^[0-9]{6,10}$/.test(code))
+          return json(
+            { error: 'Enter your email and the recovery code from the newest PBK email.' },
+            400,
+            origin
+          );
+        const response = await fetch(`${URL}/auth/v1/verify`, {
+          method: 'POST',
+          headers: { apikey: ANON, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email, token: code, type: 'recovery' }),
+          signal: AbortSignal.timeout(10000),
+        });
+        if (!response.ok)
+          return json(
+            {
+              error:
+                response.status === 429
+                  ? 'Too many attempts. Wait before trying again.'
+                  : 'That recovery code is invalid or expired. Request a new recovery code and use the newest email.',
+            },
+            response.status === 429 ? 429 : 401,
+            origin
+          );
+        const auth = await response.json();
+        const session = await beginVerifiedSession(auth.access_token, origin);
+        return json({ token: auth.access_token, ...session }, 200, origin);
+      }
       if (command === 'authVerify') {
         const response = await fetch(`${URL}/auth/v1/verify`, {
           method: 'POST',

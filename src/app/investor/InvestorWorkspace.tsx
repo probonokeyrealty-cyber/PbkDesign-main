@@ -626,6 +626,10 @@ export function InvestorWorkspace({
                     setPassword('');
                   }
                   await enterWorkspace();
+                } else if (loginMode === 'recovery') {
+                  await portalRequest('verifyRecovery', { email, code });
+                  setCode('');
+                  setPasswordSetup(true);
                 } else if (!codeSent) {
                   await portalRequest('authStart', { email });
                   setCodeSent(true);
@@ -663,11 +667,16 @@ export function InvestorWorkspace({
                 />
               </label>
             )}
-            {loginMode === 'email' && codeSent && (
+            {loginMode !== 'password' && codeSent && (
               <label>
-                Sign-in code or complete email link
+                {loginMode === 'recovery'
+                  ? 'Password recovery code'
+                  : 'Sign-in code or complete email link'}
                 <input
                   autoComplete="one-time-code"
+                  inputMode={loginMode === 'recovery' ? 'numeric' : undefined}
+                  pattern={loginMode === 'recovery' ? '[0-9]{6,10}' : undefined}
+                  maxLength={loginMode === 'recovery' ? 10 : undefined}
                   required
                   value={code}
                   onChange={(e) => setCode(e.target.value)}
@@ -677,11 +686,13 @@ export function InvestorWorkspace({
             <button className="portal-primary" disabled={busy}>
               {busy
                 ? 'Please wait…'
-                : loginMode === 'password'
-                  ? 'Sign in'
-                  : codeSent
-                    ? 'Verify and sign in'
-                    : 'Email my sign-in link'}
+                : loginMode === 'recovery'
+                  ? 'Continue to set password'
+                  : loginMode === 'password'
+                    ? 'Sign in'
+                    : codeSent
+                      ? 'Verify and sign in'
+                      : 'Email my sign-in link'}
             </button>
             <button
               type="button"
@@ -709,13 +720,33 @@ export function InvestorWorkspace({
                   setPassword('');
                   void act(async () => {
                     await portalRequest('recoverPassword', { email });
+                    setLoginMode('recovery');
+                    setCodeSent(true);
+                    setCode('');
                     setNotice(
-                      'If your account is approved and registered, a password reset link will arrive by email. First time here? Use an email link, then choose Set or change password.'
+                      'If your account is approved and registered, a PBK recovery email will arrive. Enter its recovery code here to choose your password. Use the newest email only.'
                     );
                   });
                 }}
               >
                 Forgot password?
+              </button>
+            )}
+            {loginMode === 'recovery' && (
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() =>
+                  void act(async () => {
+                    await portalRequest('recoverPassword', { email });
+                    setCode('');
+                    setNotice(
+                      'If your account is approved, a new recovery email is on its way. Earlier codes no longer work.'
+                    );
+                  })
+                }
+              >
+                Send a new recovery code
               </button>
             )}
             {loginMode === 'email' && codeSent && (

@@ -26,6 +26,7 @@ import { createBackgroundPersistence } from './background-persistence.mjs';
 import { createPoolSchemaInitializer } from './pool-schema-initializer.mjs';
 import { observeUsagePersistence } from './ava-accounting-status.mjs';
 import { buildAvaDecisionMessages, isAvaCompactDecisionSafe } from './ava-decision-messages.mjs';
+import { joinAvaSpeechResponses, splitAvaSpeechText } from './ava-speech-chunks.mjs';
 import { EventTypes, getEventBusStatus, publishEvent as publishEventBusEvent } from './event-bus/streams.mjs';
 import { buildRexKpiSnapshot, proposeAutonomousRexGoals, selectRexProactiveLeadAction } from './rex-autonomy.mjs';
 import { recordScriptOutcomeStats, selectContextAwareScript } from './context-aware-script-rotator.mjs';
@@ -29273,14 +29274,14 @@ function buildRexTroubleshootingAnswer(stateRef, query = '') {
   };
 }
 
-function normalizeConversationMessages(messages = []) {
+function normalizeConversationMessages(messages = [], { assistantMaxChars = 4000 } = {}) {
   if (!Array.isArray(messages)) return [];
   return messages
     .map((message) => ({
       role: ['user', 'assistant', 'system'].includes(String(message?.role || '').toLowerCase()) ? String(message.role).toLowerCase() : 'user',
       content: String(message?.content || '')
         .trim()
-        .slice(0, 4000),
+        .slice(0, String(message?.role || '').toLowerCase() === 'assistant' ? assistantMaxChars : 4000),
       at: message?.at || message?.createdAt || null,
     }))
     .filter((message) => message.content)
@@ -30144,7 +30145,7 @@ function looksLikeStrategistMetaText(value = '') {
   return /\b(we need to generate|we are asked to|given a transcript|based on the given situation|generate (?:a )?json|json response|immediatescript|nextquestion|returntobusiness|approvalneeded|pbk strategist|operatorread)\b/i.test(text) || /^\s*\{[\s\S]*"(?:strategy|risk|rule|nextQuestion|immediateScript)"/i.test(text);
 }
 
-function sanitizeAvaSpokenOutput(value = '', fallback = '') {
+function sanitizeAvaSpokenOutput(value = '', fallback = '', { preserveFormatting = false } = {}) {
   const cleanCandidate = (candidate = '') =>
     String(candidate || '')
       .replace(/```(?:json|text)?/gi, '')
@@ -30164,12 +30165,12 @@ function sanitizeAvaSpokenOutput(value = '', fallback = '') {
       .replace(/\b(?:call|stream|session|lead|req|request)[-_]?[a-z0-9]{10,}\b/gi, ' ')
       .replace(/\b(?:internal\s+)?(?:m\s*number|model\s+number|debug\s+number|system\s+number)\b[^,.?!]*(?:[,.?!]|\s|$)/gi, ' ')
       .replace(/\[(?:laughs|whispers|excited|sighs|sad|softly|focused)\]/gi, '')
-      .replace(/\s+/g, ' ')
+      .replace(preserveFormatting ? /[^\S\r\n]+/g : /\s+/g, ' ')
       .trim();
 
-  const primary = cleanCandidate(normalizeAvaSpokenScript(value) || String(value || '').trim());
+  const primary = cleanCandidate(normalizeAvaSpokenScript(value, { preserveFormatting }) || String(value || '').trim());
   if (primary && !looksLikeStrategistMetaText(primary)) return primary;
-  const backup = cleanCandidate(normalizeAvaSpokenScript(fallback) || String(fallback || '').trim());
+  const backup = cleanCandidate(normalizeAvaSpokenScript(fallback, { preserveFormatting }) || String(fallback || '').trim());
   if (backup && !looksLikeStrategistMetaText(backup)) return backup;
   return '';
 }
@@ -30204,7 +30205,7 @@ function recordAvaSpokenOutputDiagnostics(record = {}) {
   return lastAvaSpokenOutput;
 }
 
-function normalizeAvaSpokenScript(value = '') {
+function normalizeAvaSpokenScript(value = '', { preserveFormatting = false } = {}) {
   let text = String(value || '').trim();
   if (!text) return '';
   const parsed = extractJsonObjectFromText(text);
@@ -30214,7 +30215,7 @@ function normalizeAvaSpokenScript(value = '') {
   text = text
     .replace(/```(?:json)?/gi, '')
     .replace(/```/g, '')
-    .replace(/\s+/g, ' ')
+    .replace(preserveFormatting ? /[^\S\r\n]+/g : /\s+/g, ' ')
     .trim();
   if (!text || looksLikeStrategistMetaText(text)) return '';
   return text;
@@ -52480,27 +52481,33 @@ function getNetlifyProviderMeta() {
     ).trim();
   const url =
     String(
-      process.env.URL ||
-        process.env.DEPLOY_PRIME_URL ||
-        process.env.PBK_NETLIFY_URL ||
+      process.env.PBK_NETLIFY_URL ||
         process.env.PBK_FRONTEND_URL ||
-        'https://pbkcommandcenter.netlify.app'
+        process.env.URL ||
+        process.env.DEPLOY_PRIME_URL ||
+        'https://pbkcenter.netlify.app'
     ).trim();
   const netlifyEnvPresent = Boolean(process.env.NETLIFY || deployId || site);
-  const knownFrontendUrl = /^https:\/\/(?:[a-z0-9-]+\.)?pbkcommandcenter\.netlify\.app\b/i.test(url);
-  const configured = Boolean(netlifyEnvPresent || knownFrontendUrl);
-  const ready = Boolean(configured && url);
+  let validUrl = false;
+  try {
+    const parsed = new URL(url);
+    validUrl = ['https:', 'http:'].includes(parsed.protocol) && !parsed.username && !parsed.password;
+  } catch {
+    // An invalid frontend link cannot be used by the operator.
+  }
+  const configured = validUrl;
+  const ready = configured;
   return {
     configured,
     ready,
     provider: 'Netlify',
     mode: netlifyEnvPresent ? 'netlify-deploy-env' : 'configured-frontend-url',
-    url,
+    url: validUrl ? url : '',
     deployId,
     site,
     missing: ready ? [] : ['NETLIFY deployment env or PBK_NETLIFY_URL/PBK_FRONTEND_URL'],
     note: ready
-      ? `Agent dashboard is available at ${url}.`
+      ? `Agent dashboard is linked at ${url}; team sign-in is required.`
       : 'Set Netlify deployment env or PBK_NETLIFY_URL/PBK_FRONTEND_URL so the bridge can report dashboard readiness.',
   };
 }
@@ -62541,7 +62548,7 @@ function buildElevenLabsTtsRequest(body = {}, text = '', { stream = false } = {}
         });
   const textControls = applyProsodyTextControls(safeText, prosody || {}, { modelId });
   const payload = {
-    text: String(textControls.text || safeText || '').slice(0, 1800),
+    text: String(textControls.text || safeText || ''),
     model_id: modelId,
     voice_settings: {
       stability: Number(body.stability ?? prosody?.stability ?? ELEVENLABS_STABILITY),
@@ -62566,6 +62573,20 @@ function buildElevenLabsTtsRequest(body = {}, text = '', { stream = false } = {}
 }
 
 async function fetchElevenLabsTts(body = {}, text = '', options = {}) {
+  const speechText = sanitizeAvaSpokenOutput(text || body.text || body.input || '', body.fallbackText || body.fallback_text || '');
+  const chunks = splitAvaSpeechText(speechText);
+  if (chunks.length > 1) {
+    const first = await fetchElevenLabsTts(body, chunks[0], options);
+    return {
+      ...first,
+      sanitizedText: speechText,
+      response: joinAvaSpeechResponses(first.response, chunks.slice(1), async (chunk, signal) => {
+        const chunkSignal = options.signal ? AbortSignal.any([options.signal, signal]) : signal;
+        const next = await fetchElevenLabsTts({ ...body, voiceId: first.voiceId }, chunk, { ...options, signal: chunkSignal });
+        return next.response;
+      }),
+    };
+  }
   const request = buildElevenLabsTtsRequest(body, text, options);
   const timeoutMs = Math.max(0, Number(options.timeoutMs || 0));
   const fireRequest = (ttsRequest) =>
@@ -62573,6 +62594,9 @@ async function fetchElevenLabsTts(body = {}, text = '', options = {}) {
       'elevenlabs',
       async () => {
         const controller = timeoutMs > 0 ? new AbortController() : null;
+        const signal = controller
+          ? (options.signal ? AbortSignal.any([options.signal, controller.signal]) : controller.signal)
+          : options.signal;
         let timeout = null;
         try {
           if (controller) {
@@ -62588,7 +62612,7 @@ async function fetchElevenLabsTts(body = {}, text = '', options = {}) {
               'xi-api-key': ELEVENLABS_API_KEY,
             },
             body: JSON.stringify(ttsRequest.payload),
-            ...(controller ? { signal: controller.signal } : {}),
+            ...(signal ? { signal } : {}),
           });
         } finally {
           if (timeout) clearTimeout(timeout);
@@ -63009,10 +63033,13 @@ async function sendElevenLabsTtsStream(response, body = {}, text = '') {
 
   let bytes = 0;
   let chunks = 0;
+  let reader = null;
+  const cancelAudio = () => { void reader?.cancel().catch(() => {}); };
+  response.once('close', cancelAudio);
   try {
-    const reader = tts.response.body?.getReader?.();
+    reader = tts.response.body?.getReader?.();
     if (!reader) throw new Error('ElevenLabs streaming response did not expose a readable body.');
-    while (true) {
+    while (!response.destroyed && !response.writableEnded) {
       const { done, value } = await reader.read();
       if (done) break;
       if (!value?.byteLength) continue;
@@ -63021,6 +63048,7 @@ async function sendElevenLabsTtsStream(response, body = {}, text = '') {
       if (response.destroyed || response.writableEnded) break;
       response.write(Buffer.from(value));
     }
+    if (response.destroyed) return;
     recordElevenLabsValidation({
       ok: true,
       status: 200,
@@ -63049,6 +63077,8 @@ async function sendElevenLabsTtsStream(response, body = {}, text = '') {
     }
     return;
   } finally {
+    response.off('close', cancelAudio);
+    await reader?.cancel().catch(() => {});
     if (!response.destroyed && !response.writableEnded) response.end();
   }
   if (!bytes || !chunks) {
@@ -64339,7 +64369,7 @@ function parseAvaDeepSeekDecisionAnswer(answer = '') {
   const source = parsed && typeof parsed === 'object' ? parsed : {};
   const allowed = new Set(['answer', 'ask', 'act', 'approval_required', 'delegate', 'log_only', 'block']);
   const decision = allowed.has(String(source.decision || '').trim()) ? String(source.decision).trim() : 'answer';
-  const reply = sanitizeAvaSpokenOutput(source.reply || source.answer || source.response || source.message || source.question || answer || '', '').slice(0, 1200);
+  const reply = sanitizeAvaSpokenOutput(source.reply || source.answer || source.response || source.message || source.question || answer || '', '', { preserveFormatting: true });
   const nextAction = sanitizeAvaSpokenOutput(source.nextAction || source.next_action || '', '').slice(0, 260);
   const missionTimeline = Array.isArray(source.missionTimeline || source.mission_timeline)
     ? (source.missionTimeline || source.mission_timeline)
@@ -64372,10 +64402,10 @@ function normalizeAvaAssistantAnswer(answer = '') {
   const parsed = extractJsonObjectFromText(text);
   if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
     const candidate = parsed.reply || parsed.answer || parsed.response || parsed.message || parsed.question || '';
-    const normalized = sanitizeAvaSpokenOutput(candidate, '').slice(0, 1600);
+    const normalized = sanitizeAvaSpokenOutput(candidate, '', { preserveFormatting: true });
     if (normalized) return normalized;
   }
-  return sanitizeAvaSpokenOutput(text, text).slice(0, 1600);
+  return sanitizeAvaSpokenOutput(text, text, { preserveFormatting: true });
 }
 
 function getAvaDeepSeekDecisionFromToolResult(toolResult = null) {
@@ -64492,8 +64522,9 @@ async function runInternalAvaDeepSeekChat({
   memories = [],
   requestTiming = null,
 } = {}) {
-  // All attempts share the turn budget; leave room for finalization and transport.
-  const liveBudgetMs = 2300;
+  // Operator explanations need a larger budget than short seller phone turns.
+  // All retries still share one deadline, leaving room for proxy transport.
+  const liveBudgetMs = 30_000;
   const elapsedMs = requestTiming?.snapshot?.().durationMs || 0;
   const deadlineAt = Date.now() + Math.max(0, liveBudgetMs - elapsedMs);
   const prompt = buildAssistantPrompt(assistantContextSession, {
@@ -64512,7 +64543,7 @@ async function runInternalAvaDeepSeekChat({
     leadId,
     model: DEEPSEEK_LIVE_MODEL,
     temperature: 0.45,
-    maxTokens: 700,
+    maxTokens: 4096,
     responseFormat: 'json',
     tools: buildAvaDeepSeekDecisionTools(),
     toolChoice: 'auto',
@@ -64532,7 +64563,7 @@ async function runInternalAvaDeepSeekChat({
       leadId,
       model: DEEPSEEK_LIVE_MODEL,
       temperature: 0.35,
-      maxTokens: 700,
+      maxTokens: 4096,
       responseFormat: 'text',
       thinkingMode: body.deepSeekThinkingMode || body.thinkingMode || DEEPSEEK_THINKING_MODE,
       attemptTimeoutMs: liveBudgetMs,
@@ -64570,7 +64601,7 @@ async function runInternalAvaDeepSeekChat({
         leadId,
         model,
         temperature: 0.35,
-        maxTokens: 700,
+        maxTokens: 4096,
         responseFormat: 'text',
         thinkingMode: body.deepSeekThinkingMode || body.thinkingMode || DEEPSEEK_THINKING_MODE,
         attemptTimeoutMs: liveBudgetMs,
@@ -64765,7 +64796,7 @@ async function handleInternalAvaAssistantChatRequest(request) {
   const assistantOpsStartedAt = Date.now();
   const requestTiming = createAvaRequestTiming();
   const body = await requestTiming.measure('body_read', () => readBody(request));
-  const messages = normalizeConversationMessages(body.messages);
+  const messages = normalizeConversationMessages(body.messages, { assistantMaxChars: 64_000 });
   const sanitizedInput = sanitizePublicAvaChatTurn(getLastUserMessage(messages, body.message || body.query || body.text || body.prompt || ''));
   const text = sanitizedInput.content;
   if (!text) {

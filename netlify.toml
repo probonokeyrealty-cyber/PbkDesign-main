@@ -13,9 +13,6 @@ timeout = 26
 [functions.public-ava-chat]
 timeout = 15
 
-[functions.pbk-bridge-proxy]
-timeout = 25
-
 [[headers]]
   for = "/*"
   [headers.values]

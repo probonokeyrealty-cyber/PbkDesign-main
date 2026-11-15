@@ -595,7 +595,7 @@ function buildAssistantRequestMessages(exchanges: AvaAssistantExchange[], comman
     .slice(-8)
     .flatMap((exchange) => [
       { role: 'user', content: exchange.request.slice(0, 1200) },
-      { role: 'assistant', content: exchange.answer.slice(0, 2400) },
+      { role: 'assistant', content: exchange.answer },
     ])
     .filter((message) => message.content.trim());
   messages.push({ role: 'user', content: command.slice(0, 1200) });
@@ -1329,7 +1329,7 @@ export function AvaChat() {
             (item): AvaAssistantExchange => ({
               id: String(item?.id || createAvaAssistantExchangeId()),
               request: String(item?.request || '').slice(0, 1200),
-              answer: String(item?.answer || '').slice(0, 4000),
+              answer: String(item?.answer || ''),
               status: item?.status === 'failed' ? 'failed' : 'completed',
               createdAt: String(item?.createdAt || item?.updatedAt || new Date().toISOString()),
               updatedAt: String(item?.updatedAt || item?.createdAt || new Date().toISOString()),

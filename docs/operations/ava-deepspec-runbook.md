@@ -6,6 +6,12 @@ DeepSpec is PBK's optional speculative-decoding lane for Ava/Rex DeepSeek traffi
 
 Keep `PBK_DEEPSPEC_ENABLED=false` until a private vLLM-compatible endpoint proves it is faster and stable on PBK prompts.
 
+Speculation runs inside the inference server, which must load both the target weights and a compatible draft/speculator. PBK cannot add target-token verification around the hosted `api.deepseek.com` API. The existing endpoint client routes requests to an already configured server; it does not enable speculation there.
+
+Render hosts PBK's bridge, not the GPU inference service in this proposal. Render's published compute plans specify CPU/RAM and do not document the claimed $19-49/month GPU option. A separate GPU host, a target/draft pairing supported by the selected engine version, and measured cost are prerequisites. See [Render compute plans](https://render.com/docs/compute-plans), [DeepSpec supported families](https://github.com/deepseek-ai/DeepSpec), and [vLLM speculative decoding](https://docs.vllm.ai/en/stable/features/speculative_decoding/).
+
+The interactive Ava chat path explicitly passes `speculative: false`. Operator chat now uses a shared 30-second model budget and up to 4096 output tokens so detailed explanations can complete, with no fixed word/sentence cap. Seller phone-turn timing remains separate. Enabling the speculative env flag does not accelerate `/api/assistant/chat`. Conversation wording, history continuity, and token streaming are separate concerns from speculative decoding.
+
 Do not claim a 10x production gain until PBK benchmarks show it across p50, p95, fallback rate, and answer quality. Speculative decoding can reduce decode latency, but Ava's full turn also includes prompt prefill, network, bridge work, tool planning, provider calls, JSON validation, approval checks, speech, and UI rendering.
 
 ## Environment

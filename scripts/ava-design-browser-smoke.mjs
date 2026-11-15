@@ -1,12 +1,13 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { chromium, devices, expect, webkit } from '@playwright/test';
-import { createServer } from 'vite';
+import { preview } from 'vite';
 
-const server = await createServer({ server: { host: '127.0.0.1', port: 0 } });
-await server.listen();
+const shellHtml = readFileSync(new URL('../dist/index.shell.html', import.meta.url), 'utf8');
+const server = await preview({ preview: { host: '127.0.0.1', port: 0, strictPort: true } });
 const origin = `http://127.0.0.1:${server.httpServer.address().port}`;
 const leadId = 'qa-ava-lead';
-const answer = 'I found the latest seller note.';
+const answer = `I found the latest seller note.\n\n${Array.from({ length: 42 }, (_, index) => `Step ${index + 1}: compare the seller's timeline, property condition, and confirmed deal facts before recommending the next action.`).join('\n\n')}\n\nFinal required detail: the complete explanation is preserved.`;
 const chatUrl = `${origin}/ava-chat?leadId=${leadId}`;
 const approval = { id: 'qa-ava-review', type: 'local_command', status: 'pending' };
 const command = {
@@ -23,6 +24,12 @@ async function verify(engine, viewport, device = {}) {
   const browser = await engine.launch();
   try {
     const page = await browser.newPage({ ...device, viewport });
+    await page.addInitScript(() => {
+      localStorage.setItem('pbk:local:openclaw-config', JSON.stringify({
+        endpoint: location.origin,
+        apiKey: 'fixture-only-browser-authority',
+      }));
+    });
     const chatRequests = [];
     const decisions = [];
     let pending = true;
@@ -30,6 +37,9 @@ async function verify(engine, viewport, device = {}) {
       const req = route.request();
       const url = new URL(req.url());
       const path = url.pathname;
+      if (path === '/ava-chat') {
+        return route.fulfill({ contentType: 'text/html', body: shellHtml });
+      }
       if (path === '/state') {
         return route.fulfill({ json: { approvals: pending ? [approval] : [] } });
       }
@@ -99,6 +109,11 @@ async function verify(engine, viewport, device = {}) {
 
     await page.reload();
     await expect(page.getByText(answer, { exact: true })).toBeVisible();
+    assert.equal(await page.getByText(answer, { exact: true }).textContent(), answer);
+    if (process.env.PBK_AVA_SCREENSHOTS === '1') {
+      await page.getByText(answer, { exact: true }).evaluate((node) => node.scrollIntoView({ block: 'start' }));
+      await page.screenshot({ path: `.pbk-local/ava-chat-long-${engine.name()}-${viewport.width}.png` });
+    }
     const history = page.getByRole('searchbox', { name: 'Search past chats' });
     await history.fill('unmatched fixture');
     await expect(page.getByText('No matching chats')).toBeVisible();
@@ -145,5 +160,5 @@ try {
   await verify(chromium, { width: 1440, height: 900 });
   await verify(webkit, { width: 390, height: 844 }, devices['iPhone 13']);
 } finally {
-  await server.close();
+  await new Promise((resolve, reject) => server.httpServer.close((error) => error ? reject(error) : resolve()));
 }

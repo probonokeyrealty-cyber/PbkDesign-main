@@ -27,6 +27,14 @@ REQUIRED WORKFLOW: Use `superpowers:subagent-driven-development` with one focuse
 
 ## Environment Contract
 
+### Feasibility Update (2026-11-15)
+
+The endpoint client and fallback code exist, but GPU serving and target/draft compatibility remain prerequisites. A DeepSeek API key does not provide target weights or a token-verification interface. DeepSpec currently documents Qwen3 and Gemma targets; its Qwen draft is not a DeepSeek V4 draft. Do not promise 2-3x end-to-end Ava acceleration from the released checkpoints.
+
+Keep PBK on Render and use a separate GPU host if a compatible inference deployment is established. Render's current [compute catalog](https://render.com/docs/compute-plans) documents CPU/RAM instances, not the GPU plan assumed in the initial proposal. Budget training, target plus draft serving, network, and utilization before provisioning.
+
+The current `runInternalAvaDeepSeekChat` disables speculation for interactive chat. Following the founder's detailed-chat request, operator chat now has a shared 30-second model budget with up to 4096 output tokens and no fixed word/sentence cap. Seller phone-turn timing remains separate. Benchmark eligible strategist calls before any speculative rollout. Prompt continuity and streaming must be evaluated independently.
+
 Add these placeholders to local env docs and Render. Only `PBK_DEEPSPEC_API_KEY` is secret, but `PBK_DEEPSPEC_ENDPOINT` and `PBK_DEEPSPEC_DRAFT_MODEL` are environment-specific and should be set from Render UI until the service is final.
 
 ```text
@@ -47,7 +55,7 @@ PBK_DEEPSPEC_FALLBACK_ENABLED=true
   - Export `readDeepSpecConfig(env)`, `isDeepSpecConfigured(config)`, and `requestSpeculativeChatCompletion(payload, options)`.
   - Accept an OpenAI-compatible endpoint base. Normalize trailing `/v1` so both `https://service.example.com` and `https://service.example.com/v1` work.
   - Send `Authorization: Bearer ${PBK_DEEPSPEC_API_KEY}` only when the key exists.
-  - Use `AbortSignal.timeout(Number(PBK_DEEPSPEC_TIMEOUT_MS || 2500))`.
+  - Bound the endpoint request with an abort controller and the configured timeout (900 ms by default).
   - Return `{ ok: true, response, meta }` on compatible response; return `{ ok: false, reason, meta }` without throwing on expected endpoint failures.
 
 - [x] Add focused smoke coverage in `scripts/deepspec-speculative-client-smoke.mjs`.

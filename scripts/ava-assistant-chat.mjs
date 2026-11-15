@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 
 const MAX_ASSISTANT_HISTORY = 40;
 const MAX_TURN_CONTENT = 1800;
+const MAX_ASSISTANT_REPLY_CONTENT = 64_000;
 const COMMAND_CENTER_PATH = '/index.shell.html';
 const TURN_TRUNCATION_WARNING =
   'Long text truncated; Ava only retained the first 1800 characters for this turn.';
@@ -152,10 +153,10 @@ export function redactAssistantSecrets(value = '') {
   return text;
 }
 
-export function sanitizeAssistantTurn(value = '', maxLength = MAX_TURN_CONTENT) {
+export function sanitizeAssistantTurn(value = '', maxLength = MAX_TURN_CONTENT, { preserveFormatting = false } = {}) {
   const raw = String(value || '');
   const compacted = redactAssistantSecrets(raw)
-    .replace(/\s+/g, ' ')
+    .replace(preserveFormatting ? /[^\S\r\n]+/g : /\s+/g, ' ')
     .trim();
   const truncated = compacted.length > maxLength;
   return {
@@ -188,7 +189,8 @@ export function normalizeAssistantSession(session = {}) {
     ...session,
     history: history
       .map((turn) => {
-        const sanitized = sanitizeAssistantTurn(turn?.content || '');
+        const isAssistant = String(turn?.role || '').toLowerCase() === 'assistant';
+        const sanitized = sanitizeAssistantTurn(turn?.content || '', isAssistant ? MAX_ASSISTANT_REPLY_CONTENT : MAX_TURN_CONTENT, { preserveFormatting: isAssistant });
         return {
           role: ['user', 'assistant', 'system'].includes(String(turn?.role || '').toLowerCase())
             ? String(turn.role).toLowerCase()
@@ -212,7 +214,7 @@ export function appendAssistantMessage(session = {}, role = 'user', content = ''
   const safeRole = ['user', 'assistant', 'system'].includes(String(role || '').toLowerCase())
     ? String(role).toLowerCase()
     : 'user';
-  const sanitized = sanitizeAssistantTurn(content);
+  const sanitized = sanitizeAssistantTurn(content, safeRole === 'assistant' ? MAX_ASSISTANT_REPLY_CONTENT : MAX_TURN_CONTENT, { preserveFormatting: safeRole === 'assistant' });
   if (!sanitized.content) return normalized;
   normalized.history = [
     ...normalized.history,

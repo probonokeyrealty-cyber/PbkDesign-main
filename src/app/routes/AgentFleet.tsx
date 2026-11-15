@@ -10,7 +10,9 @@ import {
   Phone,
   X,
 } from 'lucide-react';
-import { Link } from 'react-router';
+import { Link, useLocation, useNavigate } from 'react-router';
+import { fleetHref, readFleetReturn, readFleetRoute } from '../utils/fleetContext';
+import '../../styles/fleet-context.css';
 import { showUiToast } from '../utils/uiFeedback';
 import { PbkDataSource } from '../../components/pbk/index';
 import {
@@ -1028,7 +1030,17 @@ function AgentFleetCard({
   );
 }
 
-function AgentDetailPanel({ children }: { children: ReactNode }) {
+function AgentDetailPanel({ children, available }: { children: ReactNode; available: boolean }) {
+  if (!available) {
+    return (
+      <section className="pbk-context-strip" role="alert">
+        <div>
+          <h2>Agent unavailable</h2>
+          <p>Choose an agent from the roster to continue. No agent was substituted.</p>
+        </div>
+      </section>
+    );
+  }
   return (
     <section id="fleet-agent-detail" className="pbk-agent-detail-panel" aria-label="Selected agent">
       {children}
@@ -1421,11 +1433,27 @@ function FleetLoadingSkeleton() {
 // ---------- Main component ----------
 
 export function AgentFleet() {
+  const location = useLocation();
+  const navigate = useNavigate();
+  const routeContext = useMemo(() => readFleetRoute(location.search), [location.search]);
+  const routeContextRef = useRef(routeContext);
+  routeContextRef.current = routeContext;
+  const fleetEntry = useMemo(
+    () => readFleetReturn(location.state?.fleetEntry, routeContext.leadId),
+    [location.state, routeContext.leadId]
+  );
+  const [leadQuery, setLeadQuery] = useState(fleetEntry?.query || '');
+  const [leadsLoading, setLeadsLoading] = useState(true);
+  const contextHeadingRef = useRef<HTMLHeadingElement>(null);
+  const workspaceLinkRef = useRef<HTMLAnchorElement>(null);
+  const restoredContextKey = useRef('');
   const [agents, setAgents] = useState<FleetAgent[]>(buildFleetAgents);
   const [agentsLoading, setAgentsLoading] = useState(true);
   const [bridgeConnected, setBridgeConnected] = useState<boolean | null>(null);
   const [measurementWarning, setMeasurementWarning] = useState('');
-  const [activeAgentId, setActiveAgentId] = useState('ava');
+  const [activeAgentId, setActiveAgentId] = useState(
+    routeContext.explicitAgent ? routeContext.agentId || 'unresolved' : 'ava'
+  );
   const [selectedSkill, setSelectedSkill] = useState<AgentSkill | null>(null);
   const [expandedExample, setExpandedExample] = useState<string | null>(null);
   const [testingSkill, setTestingSkill] = useState<string | null>(null);
@@ -1439,7 +1467,7 @@ export function AgentFleet() {
   const [leadOptions, setLeadOptions] = useState<RuntimeLeadOption[]>([]);
   const [leadContextSource, setLeadContextSource] = useState('pending full roster');
   const [runtimeCalls, setRuntimeCalls] = useState<RuntimeCallRecord[]>([]);
-  const [selectedLeadId, setSelectedLeadId] = useState('');
+  const [selectedLeadId, setSelectedLeadId] = useState(routeContext.leadId);
   const [dealPreview, setDealPreview] = useState<AgentDealPreview | null>(null);
   const [qaAudits, setQaAudits] = useState<QaAuditRecord[]>([]);
   const [qaAuditStatus, setQaAuditStatus] = useState('No QA proof loaded yet');
@@ -1461,6 +1489,29 @@ export function AgentFleet() {
   const syncPendingTransferCount = useCallback(() => {
     setPendingTransferCount(pendingTransferQueueRef.current.length);
   }, []);
+
+  useEffect(() => {
+    if (routeContext.explicitLead) setSelectedLeadId(routeContext.leadId);
+    setActiveAgentId(routeContext.explicitAgent ? routeContext.agentId || 'unresolved' : 'ava');
+  }, [routeContext]);
+
+  useEffect(() => {
+    if (agentsLoading || leadsLoading || restoredContextKey.current === location.key) return;
+    restoredContextKey.current = location.key;
+    if (location.state?.fleetSelection === true) return;
+    if (fleetEntry?.restoreFocus) setLeadQuery(fleetEntry.query);
+    const frame = window.requestAnimationFrame(() => {
+      if (fleetEntry?.restoreFocus) {
+        const scroller = contextHeadingRef.current?.closest<HTMLElement>('.pbk-shell-content');
+        if (scroller) scroller.scrollTo(0, fleetEntry.scrollY);
+        else window.scrollTo(0, fleetEntry.scrollY);
+        (workspaceLinkRef.current || contextHeadingRef.current)?.focus({ preventScroll: true });
+      } else {
+        contextHeadingRef.current?.focus({ preventScroll: true });
+      }
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [agentsLoading, leadsLoading, location.key, location.state, fleetEntry]);
 
   useEffect(() => {
     setSnnStatus(getSnnWorkerStatus());
@@ -1491,17 +1542,25 @@ export function AgentFleet() {
         const fullRoster = Array.isArray(rosterResult.value)
           ? (rosterResult.value as RuntimeLeadOption[])
           : [];
-        setLeadOptions(fullRoster.slice(0, 25));
+        setLeadOptions(fullRoster.filter((lead) => getLeadOptionId(lead)));
         setLeadContextSource('GET /api/leads full roster');
         setSelectedLeadId(
-          (current) => current || (fullRoster[0] ? getLeadOptionKey(fullRoster[0]) : '')
+          (current) =>
+            current ||
+            (routeContextRef.current.explicitLead
+              ? routeContextRef.current.leadId
+              : getLeadOptionId(fullRoster.find((lead) => getLeadOptionId(lead)) || {}))
         );
       } else {
         console.warn('[PBK AgentFleet] full lead roster unavailable', rosterResult.reason);
-        setLeadOptions(snapshotLeads.slice(0, 25));
-        setLeadContextSource('snapshot fallback');
+        setLeadOptions(snapshotLeads.filter((lead) => getLeadOptionId(lead)));
+        setLeadContextSource('Snapshot fallback (incomplete)');
         setSelectedLeadId(
-          (current) => current || (snapshotLeads[0] ? getLeadOptionKey(snapshotLeads[0]) : '')
+          (current) =>
+            current ||
+            (routeContextRef.current.explicitLead
+              ? routeContextRef.current.leadId
+              : getLeadOptionId(snapshotLeads.find((lead) => getLeadOptionId(lead)) || {}))
         );
       }
       if (stateResult.status === 'fulfilled') {
@@ -1513,6 +1572,7 @@ export function AgentFleet() {
         console.warn('[PBK AgentFleet] runtime calls unavailable', stateResult.reason);
         setRuntimeCalls([]);
       }
+      setLeadsLoading(false);
     });
     return () => {
       cancelled = true;
@@ -1666,10 +1726,84 @@ export function AgentFleet() {
     }, {});
   }, [agents, runtimeCalls]);
   const selectedLead = useMemo(
-    () => leadOptions.find((lead) => getLeadOptionKey(lead) === selectedLeadId) || null,
-    [leadOptions, selectedLeadId]
+    () =>
+      routeContext.invalid
+        ? null
+        : leadOptions.find((lead) => getLeadOptionId(lead) === selectedLeadId) || null,
+    [leadOptions, selectedLeadId, routeContext.invalid]
   );
   const selectedLeadCanonicalId = selectedLead ? getLeadOptionId(selectedLead) : '';
+  const agentSelectionResolved = agents.some((agent) => agent.id === activeAgentId);
+  const matchingLeads = useMemo(() => {
+    const query = leadQuery.trim().toLowerCase();
+    return leadOptions.filter(
+      (lead) =>
+        !query ||
+        `${getLeadOptionLabel(lead)} ${getLeadOptionId(lead)}`.toLowerCase().includes(query)
+    );
+  }, [leadOptions, leadQuery]);
+  const visibleLeadOptions =
+    selectedLead && !matchingLeads.includes(selectedLead)
+      ? [selectedLead, ...matchingLeads]
+      : matchingLeads;
+  const workspaceReturn =
+    selectedLeadCanonicalId && agentSelectionResolved
+      ? readFleetReturn(
+          {
+            leadId: selectedLeadCanonicalId,
+            agentId: activeAgentId,
+            query: leadQuery,
+            scrollY: 0,
+            workspaceEntry: fleetEntry?.workspaceEntry || false,
+            restoreFocus: true,
+            leadReturn: fleetEntry?.leadReturn || null,
+          },
+          selectedLeadCanonicalId
+        )
+      : null;
+  const outerBackLabel = fleetEntry?.leadReturn
+    ? fleetEntry.leadReturn.path === '/leads'
+      ? 'leads'
+      : 'today'
+    : fleetEntry?.workspaceEntry
+      ? 'workspace'
+      : 'leads';
+  const returnFromFleet = () => {
+    if (fleetEntry?.leadReturn) {
+      const queue = fleetEntry.leadReturn;
+      navigate(queue.path + queue.search, { state: { queueReturn: queue } });
+    } else if (fleetEntry?.workspaceEntry && selectedLeadCanonicalId) {
+      navigate(`/leads/${encodeURIComponent(selectedLeadCanonicalId)}`, {
+        state: { focusAgentLink: true },
+      });
+    } else navigate('/leads');
+  };
+  const selectFleetLead = (leadId: string) => {
+    previewRequestIdRef.current += 1;
+    setDealPreview(null);
+    setPreviewLoading(false);
+    setPreviewError('');
+    setSelectedLeadId(leadId);
+    navigate(fleetHref(leadId, activeAgentId), { replace: true, state: { fleetSelection: true } });
+  };
+  const selectFleetAgent = (agentId: string) => {
+    previewRequestIdRef.current += 1;
+    setDealPreview(null);
+    setPreviewLoading(false);
+    setPreviewError('');
+    setActiveAgentId(agentId);
+    const params = new URLSearchParams(location.search);
+    params.set('agent', agentId);
+    if (selectedLeadCanonicalId) params.set('leadId', selectedLeadCanonicalId);
+    navigate(`/fleet?${params}`, {
+      replace: true,
+      state: {
+        fleetSelection: true,
+        ...(fleetEntry ? { fleetEntry: { ...fleetEntry, agentId } } : {}),
+      },
+    });
+    window.requestAnimationFrame(() => detailHeadingRef.current?.focus());
+  };
   const activeBridgeWorker = getBridgeSnnWorkerForAgent(bridgeSnnWorkers, activeAgent.id);
   const activeHealthProbe = getHealthProbeForAgent(agentHealthProbes, activeAgent);
   const activeLocalSnn =
@@ -1681,8 +1815,13 @@ export function AgentFleet() {
   useEffect(() => {
     previewRequestIdRef.current += 1;
     setDealPreview(null);
+    setPreviewLoading(false);
     setPreviewError('');
   }, [activeAgentId, selectedLeadId]);
+
+  useEffect(() => {
+    setSelectedSkill(null);
+  }, [activeAgentId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -2000,6 +2139,34 @@ export function AgentFleet() {
           leadContextSource={leadContextSource}
           callCount={runtimeCalls.length}
         />
+        <section className="pbk-context-strip" aria-label="Fleet lead context">
+          <div className="pbk-context-identity">
+            <span className="pbk-kicker">Lead context</span>
+            <h2 ref={contextHeadingRef} tabIndex={-1}>
+              {leadsLoading
+                ? 'Loading leads'
+                : selectedLead
+                  ? getLeadOptionName(selectedLead)
+                  : 'Lead unavailable'}
+            </h2>
+            <code>
+              {selectedLeadCanonicalId ||
+                (routeContext.explicitLead ? 'Requested lead is not resolved' : 'Select a lead')}
+            </code>
+            <p>
+              {leadContextSource} · {leadOptions.length} loaded
+            </p>
+          </div>
+          <button type="button" className="btn-secondary" onClick={returnFromFleet}>
+            <ArrowLeft size={15} aria-hidden="true" /> Back to {outerBackLabel}
+          </button>
+        </section>
+        {!leadsLoading && !selectedLead && (
+          <p role="status">
+            The requested lead is unavailable. Choose a lead explicitly; no other seller has been
+            substituted.
+          </p>
+        )}
         {measurementWarning && (
           <div role="alert" className="flex items-start gap-2 text-sm text-amber-300">
             <AlertCircle size={16} className="mt-0.5 shrink-0" aria-hidden="true" />
@@ -2021,22 +2188,21 @@ export function AgentFleet() {
                   <AgentFleetCard
                     key={agent.id}
                     agent={agent}
-                    selected={activeAgent.id === agent.id}
+                    selected={activeAgentId === agent.id}
                     bridgeWorker={bridgeWorker}
                     healthProbe={getHealthProbeForAgent(agentHealthProbes, agent)}
                     localSnnActive={localSnnActive}
                     transferFeedback={transferFeedbackByAgentId[agent.id]}
                     lastOutcome={lastCallOutcomeByAgentId[agent.id] || 'No call outcome yet'}
                     onSelect={() => {
-                      setActiveAgentId(agent.id);
-                      window.requestAnimationFrame(() => detailHeadingRef.current?.focus());
+                      selectFleetAgent(agent.id);
                     }}
                   />
                 );
               })}
             </section>
             {/* Detail panel */}
-            <AgentDetailPanel>
+            <AgentDetailPanel available={agentSelectionResolved}>
               <div className="pbk-dp-head">
                 <a className="pbk-fleet-back-link" href="#fleet-roster">
                   <ArrowLeft size={15} aria-hidden="true" />
@@ -2098,20 +2264,44 @@ export function AgentFleet() {
                 <div className="grid gap-3 lg:grid-cols-[1fr_auto] lg:items-end">
                   <div>
                     <h3 className="pbk-fleet-preview-title">Deal context preview</h3>
+                    <label className="pbk-fleet-context-search">
+                      Search leads
+                      <input
+                        type="search"
+                        aria-label="Search fleet leads"
+                        maxLength={4000}
+                        value={leadQuery}
+                        onChange={(event) => setLeadQuery(event.target.value)}
+                        placeholder="Name, property address, or lead ID"
+                      />
+                    </label>
+                    <p className="pbk-fleet-match-count" role="status">
+                      {matchingLeads.length} matching leads · {leadOptions.length} loaded
+                      {selectedLead && !matchingLeads.includes(selectedLead)
+                        ? ' · Selection retained'
+                        : ''}
+                    </p>
                     <div className="pbk-fleet-lead-picker">
                       <select
                         aria-label="Lead for deal context preview"
-                        value={selectedLeadId}
-                        onChange={(event) => setSelectedLeadId(event.target.value)}
+                        value={selectedLeadCanonicalId}
+                        onChange={(event) => selectFleetLead(event.target.value)}
                       >
-                        {leadOptions.length ? (
-                          leadOptions.map((lead) => (
+                        {!selectedLeadCanonicalId && (
+                          <option value="" disabled>
+                            Select a lead
+                          </option>
+                        )}
+                        {visibleLeadOptions.length ? (
+                          visibleLeadOptions.map((lead) => (
                             <option key={getLeadOptionKey(lead)} value={getLeadOptionKey(lead)}>
-                              {getLeadOptionLabel(lead)}
+                              {getLeadOptionLabel(lead)} · {getLeadOptionId(lead)}
                             </option>
                           ))
                         ) : (
-                          <option value="">No bridge leads loaded yet</option>
+                          <option value="" disabled>
+                            {leadsLoading ? 'Loading leads' : 'No matching leads'}
+                          </option>
                         )}
                       </select>
                       <ChevronDown size={15} aria-hidden="true" />
@@ -2152,6 +2342,39 @@ export function AgentFleet() {
                     </button>
                   </div>
                 </div>
+                {workspaceReturn && (
+                  <Link
+                    ref={workspaceLinkRef}
+                    className="pbk-fleet-ava-link pbk-fleet-workspace-link"
+                    to={`/leads/${encodeURIComponent(selectedLeadCanonicalId)}`}
+                    onClick={(event) => {
+                      if (
+                        event.button !== 0 ||
+                        event.metaKey ||
+                        event.ctrlKey ||
+                        event.shiftKey ||
+                        event.altKey
+                      )
+                        return;
+                      event.preventDefault();
+                      const context = {
+                        ...workspaceReturn,
+                        scrollY:
+                          event.currentTarget.closest<HTMLElement>('.pbk-shell-content')
+                            ?.scrollTop ?? window.scrollY,
+                      };
+                      navigate(fleetHref(selectedLeadCanonicalId, activeAgentId), {
+                        replace: true,
+                        state: { fleetEntry: context },
+                      });
+                      navigate(`/leads/${encodeURIComponent(selectedLeadCanonicalId)}`, {
+                        state: { fleetReturn: context },
+                      });
+                    }}
+                  >
+                    <ArrowLeft size={15} aria-hidden="true" /> Open lead workspace
+                  </Link>
+                )}
                 <Link
                   className="pbk-fleet-ava-link"
                   to={
@@ -2412,7 +2635,7 @@ export function AgentFleet() {
         )}
       </main>
 
-      {selectedSkill && (
+      {agentSelectionResolved && selectedSkill && (
         <SkillTransferModal
           skill={selectedSkill}
           currentAgentId={activeAgent.id}

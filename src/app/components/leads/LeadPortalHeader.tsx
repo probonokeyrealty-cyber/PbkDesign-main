@@ -1,6 +1,7 @@
 import {
   ArrowLeft,
   BadgeDollarSign,
+  Bot,
   Edit3,
   FileSignature,
   MessageSquare,
@@ -27,6 +28,8 @@ type LeadPortalHeaderProps = {
   onNote: () => void;
   onContract: () => void;
   onAnalyze: () => void;
+  onInspectAgent?: () => void;
+  inspectAgentAvailable?: boolean;
   onDelete: () => void;
 };
 
@@ -45,6 +48,8 @@ export function LeadPortalHeader({
   onNote,
   onContract,
   onAnalyze,
+  onInspectAgent,
+  inspectAgentAvailable = true,
   onDelete,
 }: LeadPortalHeaderProps) {
   const hasCallablePhone = lead.phone.replace(/\D/g, '').length >= 10;
@@ -52,7 +57,12 @@ export function LeadPortalHeader({
   return (
     <header className="pbk-lead-portal-header">
       <div className="pbk-lead-portal-heading">
-        <button type="button" className="back" aria-label={`Back to ${backLabel.toLowerCase()}`} onClick={onBack}>
+        <button
+          type="button"
+          className="back"
+          aria-label={`Back to ${backLabel.toLowerCase()}`}
+          onClick={onBack}
+        >
           <ArrowLeft size={16} />
           {backLabel}
         </button>
@@ -81,6 +91,16 @@ export function LeadPortalHeader({
           <BadgeDollarSign size={16} />
           Analyze
         </button>
+        {onInspectAgent && (
+          <button
+            type="button"
+            onClick={onInspectAgent}
+            disabled={loading || !inspectAgentAvailable}
+            data-inspect-agent
+          >
+            <Bot size={16} aria-hidden="true" /> Inspect agent
+          </button>
+        )}
         <button type="button" onClick={onEdit}>
           <Edit3 size={16} />
           Edit

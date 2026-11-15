@@ -2,6 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AlertCircle, ArrowRight, Loader2, Save, StickyNote } from 'lucide-react';
 import { useLocation, useNavigate, useParams, useSearchParams } from 'react-router';
 import { readLeadQueueReturn } from '../utils/leadQueueReturn';
+import { fleetHref, readFleetReturn } from '../utils/fleetContext';
+import '../../styles/fleet-context.css';
 import { PbkDataSource } from '../../components/pbk/index';
 import { LeadPortalContactability } from '../components/leads/LeadPortalContactability';
 import { LeadPortalDealContext } from '../components/leads/LeadPortalDealContext';
@@ -125,10 +127,23 @@ export function LeadPortal() {
   const navigate = useNavigate();
   const location = useLocation();
   const returnContext = readLeadQueueReturn(location.state?.leadReturn);
-  const backLabel = returnContext && returnContext.path !== '/leads' ? 'Today' : 'Leads';
-  const returnToQueue = () => navigate(returnContext ? returnContext.path + returnContext.search : '/leads', {
-    state: returnContext ? { queueReturn: returnContext } : null,
-  });
+  const fleetReturn = readFleetReturn(location.state?.fleetReturn, leadId);
+  const backLabel = fleetReturn
+    ? 'Fleet'
+    : returnContext && returnContext.path !== '/leads'
+      ? 'Today'
+      : 'Leads';
+  const returnToQueue = () => {
+    if (fleetReturn) {
+      navigate(fleetHref(fleetReturn.leadId, fleetReturn.agentId), {
+        state: { fleetEntry: { ...fleetReturn, restoreFocus: true } },
+      });
+    } else
+      navigate(returnContext ? returnContext.path + returnContext.search : '/leads', {
+        state: returnContext ? { queueReturn: returnContext } : null,
+      });
+  };
+  const workspaceRootRef = useRef<HTMLElement>(null);
   const [searchParams, setSearchParams] = useSearchParams();
   const requestSequence = useRef(0);
   const timelineRequestSequence = useRef(0);
@@ -158,6 +173,20 @@ export function LeadPortal() {
     [leadPayload]
   );
   currentLeadIdRef.current = leadId;
+
+  useEffect(() => {
+    if (loading || !lead) return;
+    const frame = requestAnimationFrame(() => {
+      const target = location.state?.focusAgentLink
+        ? workspaceRootRef.current?.querySelector<HTMLElement>('[data-inspect-agent]')
+        : workspaceRootRef.current?.querySelector<HTMLElement>('h1');
+      if (target) {
+        if (target.tagName === 'H1') target.tabIndex = -1;
+        target.focus({ preventScroll: true });
+      }
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [loading, lead, location.key, location.state]);
 
   const beginAction = (name: string) => {
     const token = ++actionSequence.current;
@@ -235,7 +264,10 @@ export function LeadPortal() {
       const canonicalLead = unwrapLead(fullResponse);
       const canonicalLeadId = String(canonicalLead.leadId || canonicalLead.id || leadId).trim();
       if (canonicalLeadId && canonicalLeadId !== leadId) {
-        navigate(`/leads/${encodeURIComponent(canonicalLeadId)}`, { replace: true, state: location.state });
+        navigate(`/leads/${encodeURIComponent(canonicalLeadId)}`, {
+          replace: true,
+          state: location.state,
+        });
         return;
       }
       const conversationResponse = await fetchConversationsRequest({
@@ -621,7 +653,7 @@ export function LeadPortal() {
           };
 
   return (
-    <main className="pbk-lead-portal">
+    <main className="pbk-lead-portal" ref={workspaceRootRef}>
       <LeadPortalHeader
         lead={lead}
         loading={loading}
@@ -667,8 +699,32 @@ export function LeadPortal() {
           setConfirmAction('contract');
         }}
         onAnalyze={() => navigate(`/deal/${encodeURIComponent(lead.id || leadId)}`)}
+        inspectAgentAvailable={lead.id === leadId}
+        onInspectAgent={() => {
+          if (loading || lead.id !== leadId) return;
+          navigate(fleetHref(leadId, fleetReturn?.agentId || 'ava'), {
+            state: {
+              fleetEntry: {
+                leadId,
+                agentId: fleetReturn?.agentId || 'ava',
+                query: fleetReturn?.query || '',
+                scrollY: 0,
+                workspaceEntry: true,
+                restoreFocus: false,
+                leadReturn: fleetReturn?.leadReturn || returnContext,
+              },
+            },
+          });
+        }}
         onDelete={() => setConfirmAction('delete')}
       />
+      <section className="pbk-context-strip" aria-label="Workspace lead context">
+        <div className="pbk-context-identity">
+          <span className="pbk-kicker">Current lead</span>
+          <code>{lead.id || leadId}</code>
+        </div>
+        <span>{fleetReturn ? `Agent context: ${fleetReturn.agentId}` : 'Seller workspace'}</span>
+      </section>
 
       <nav className="pbk-portal-sections" aria-label="Lead workspace sections">
         <a href="#lead-timeline">Timeline</a>

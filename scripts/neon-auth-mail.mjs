@@ -187,7 +187,7 @@ export function smtpOptions(env) {
     auth: { user: env.PBK_NEON_SMTP_USER, pass: env.PBK_NEON_SMTP_PASSWORD },
     connectionTimeout: 2000,
     greetingTimeout: 2000,
-    socketTimeout: 5000,
+    socketTimeout: 8000,
     logger: false,
     debug: false,
     disableFileAccess: true,

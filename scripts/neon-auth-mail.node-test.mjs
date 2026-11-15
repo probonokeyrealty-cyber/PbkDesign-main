@@ -192,6 +192,7 @@ test('Microsoft 365 SMTP mandates authenticated STARTTLS and certificate verific
   let o = smtpOptions(config);
   assert.equal(o.host, 'smtp.office365.com');
   assert.equal(o.port, 587);
+  assert.equal(o.socketTimeout, 8000);
   assert.equal(o.requireTLS, true);
   assert.equal(o.tls.rejectUnauthorized, true);
   assert.equal(o.logger, false);

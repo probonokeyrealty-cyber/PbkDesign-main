@@ -2591,7 +2591,7 @@ function AvaComposer({
                 data-ava-voice-state={voiceProgress.state}
                 data-ava-spoken-characters={voiceProgress.spokenCharacters}
                 data-ava-queued-characters={voiceProgress.queuedCharacters}
-                className="text-xs text-[var(--ava-text-muted)]"
+                className="min-w-0 flex-1 break-words text-xs leading-4 text-[var(--ava-text-muted)] sm:flex-none"
               >
                 {voiceProgress.state === 'speaking' ? 'Speaking' : voiceProgress.state === 'preparing' ? 'Preparing voice...' : voiceEnabled ? 'Voice on' : ''}
               </span>

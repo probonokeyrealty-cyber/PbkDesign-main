@@ -11002,7 +11002,7 @@ html[data-theme='light'] .pbk-ava-chat-surface {
 
   .pbk-ava-chat-submit-row {
     display: grid !important;
-    grid-template-columns: 44px minmax(0, 1fr);
+    grid-template-columns: minmax(0, 1fr) 96px;
     align-items: center;
   }
 

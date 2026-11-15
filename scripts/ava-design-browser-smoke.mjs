@@ -129,6 +129,13 @@ async function verify(engine, viewport, device = {}) {
     );
 
     const composer = page.getByRole('textbox', { name: 'Ask Ava anything' });
+    if (viewport.width <= 600) {
+      const sendBounds = await page.getByRole('button', { name: 'Send to Ava', exact: true }).boundingBox();
+      for (const name of ['Speak to Ava', 'Read replies aloud']) {
+        const bounds = await page.getByRole('button', { name, exact: true }).boundingBox();
+        assert.ok(bounds.x + bounds.width <= sendBounds.x, `${name} must not overlap Send on mobile`);
+      }
+    }
     await composer.fill('What is the latest seller note?');
     await page.getByRole('button', { name: 'Send to Ava' }).click();
     const response = page.getByRole('article').filter({ hasText: answer });

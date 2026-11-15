@@ -1,5 +1,6 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join, normalize, resolve, sep } from 'node:path';
+import { build } from 'esbuild';
 
 const root = process.cwd();
 const dockerfile = readFileSync(resolve(root, 'Dockerfile.openclaw'), 'utf8');
@@ -67,6 +68,22 @@ for (const match of streamingImports.matchAll(/from ['"](@[^/'"]+\/[^/'"]+|[^./'
   }
 }
 
+const frontendStart = dockerfile.search(/^FROM .* AS frontend\s*$/m);
+const nextStage = dockerfile.indexOf('\nFROM ', frontendStart + 1);
+const frontendStage = dockerfile.slice(frontendStart, nextStage < 0 ? undefined : nextStage);
+const frontendCopies = [...frontendStage.matchAll(/^COPY ([^\r\n]+)\s+\S+\s*$/gm)]
+  .flatMap(match => match[1].trim().split(/\s+/));
+const voiceBundle = await build({
+  entryPoints: ['src/app/utils/avaReplySpeech.ts'], bundle: true, write: false,
+  format: 'esm', platform: 'browser', metafile: true,
+});
+for (const input of Object.keys(voiceBundle.metafile.inputs)) {
+  const file = input.replace(/\\/g, '/');
+  if (!frontendCopies.some(copy => file === copy || file.startsWith(`${copy}/`))) {
+    throw new Error(`Frontend image does not package the voice dependency ${file}`);
+  }
+}
+
 console.log(
   JSON.stringify(
     {
@@ -74,6 +91,7 @@ console.log(
       result: 'render_docker_imports_ready',
       checkedImports: relativeImports.length,
       checkedFiles: seen.size,
+      frontendVoiceInputs: Object.keys(voiceBundle.metafile.inputs).length,
     },
     null,
     2

@@ -33,6 +33,7 @@ COPY postcss.config.mjs ./postcss.config.mjs
 COPY tailwind.pbk.config.ts ./tailwind.pbk.config.ts
 COPY src ./src
 COPY public ./public
+COPY scripts/ava-speech-chunks.mjs scripts/ava-speech-chunks.d.mts ./scripts/
 COPY supabase/functions/pbk-investor-staging/releaseProfile.mjs ./supabase/functions/pbk-investor-staging/releaseProfile.mjs
 RUN npm run build --ignore-scripts
 

@@ -43,7 +43,7 @@ const avaChat = read('src/app/routes/AvaChat.tsx');
   'queueLocalCommandRequest',
   'fetchLocalCommandsRequest',
   'fetchDesktopSidecarStatusRequest',
-  'sendAvaAssistantChatRequest',
+  'streamAvaAssistantChatRequest',
   'updateApprovalDecision',
   'requiresApproval',
   'Promise.allSettled',

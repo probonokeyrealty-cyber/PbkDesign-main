@@ -1846,7 +1846,9 @@ const checks = [
   {
     name: 'Netlify hosted app proxies operational bridge routes through same-origin functions',
     ok:
-      /export\s+const\s+handler/.test(netlifyBridgeProxyFunction) &&
+      (/export\s+const\s+handler/.test(netlifyBridgeProxyFunction) ||
+        (/export\s+default\s+async\s+function\s+fetchHandler/.test(netlifyBridgeProxyFunction) &&
+          /return webResponse\(await proxyRequest\(event,\s*\{\s*streaming:\s*true/.test(netlifyBridgeProxyFunction))) &&
       /PBK_BRIDGE_URL/.test(netlifyBridgeProxyFunction) &&
       /process\.env\.PBK_BRIDGE_API_KEY/.test(netlifyBridgeProxyFunction) &&
       /verifyTeamSession/.test(netlifyBridgeProxyFunction) &&

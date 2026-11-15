@@ -1,6 +1,6 @@
 # Context-First Command Center Hub Implementation Plan
 
-> **For agentic workers:** Use superpowers:executing-plans to implement task-by-task in this session, then obtain fresh-context review.
+> **REQUIRED WORKFLOW:** Use superpowers:subagent-driven-development for implementation and obtain fresh-context review before release.
 
 **Goal:** Make every loaded lead reachable in Fleet and preserve exact context and queue return through Workspace.
 

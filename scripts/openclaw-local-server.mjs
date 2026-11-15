@@ -1,4 +1,5 @@
 import { execFileSync } from 'node:child_process';
+import { createNeonMailRouter } from './neon-auth-mail.mjs';
 import { createServer, globalAgent as httpGlobalAgent } from 'node:http';
 import { globalAgent as httpsGlobalAgent } from 'node:https';
 import { createHash, createHmac, createPrivateKey, createPublicKey, createSign as __dsCreateSign, randomUUID, timingSafeEqual, verify as verifySignature } from 'node:crypto';
@@ -72491,11 +72492,15 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
   });
 }
 
+const neonAuthMailRouter = createNeonMailRouter();
 const server = createServer(async (request, response) => {
   response.pbkAcceptsGzip = /\bgzip\b/i.test(String(request.headers['accept-encoding'] || ''));
   response.pbkCorsHeaders = buildBridgeCorsHeaders(request);
   const url = new URL(request.url || '/', `http://${request.headers.host || `${HOST}:${PORT}`}`);
   const pathname = url.pathname.replace(/\/+$/, '') || '/';
+
+  if (['/api/webhooks/neon-auth-mail', '/api/admin/neon-auth-mail'].includes(pathname)
+    && await neonAuthMailRouter(request, response)) return;
 
   if (request.method === 'OPTIONS') {
     response.writeHead(204, {

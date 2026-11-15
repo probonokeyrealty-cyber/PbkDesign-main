@@ -349,6 +349,43 @@ export function createNeonMailRouter({
         }
         if (req.method !== 'POST') throw fail(405, 'method_not_allowed');
         const input = JSON.parse(await rawBody(req));
+        if (input.action === 'diagnose') {
+          const { auth: _auth, ...options } = smtpOptions(env);
+          const factory =
+            transporterFactory || (await import('nodemailer')).default.createTransport;
+          const probe = factory({
+            ...options,
+            connectionTimeout: 12000,
+            greetingTimeout: 8000,
+            socketTimeout: 12000,
+            dnsTimeout: 3000,
+          });
+          const started = Date.now();
+          try {
+            await probe.verify();
+            reply(res, 200, {
+              smtpReachable: true,
+              tlsRequired: true,
+              authenticated: false,
+              elapsedMs: Date.now() - started,
+            });
+          } catch (error) {
+            // Never expose provider text: it may contain account identifiers or SMTP content.
+            const code = /^[A-Z_]{2,32}$/.test(error.code || '') ? error.code : 'SMTP_PROBE_FAILED';
+            const command = ['CONN', 'EHLO', 'HELO', 'STARTTLS'].includes(error.command)
+              ? error.command
+              : 'unknown';
+            reply(res, 200, {
+              smtpReachable: false,
+              code,
+              command,
+              elapsedMs: Date.now() - started,
+            });
+          } finally {
+            probe.close?.();
+          }
+          return true;
+        }
         if (!['verify', 'test'].includes(input.action)) throw fail(400, 'unknown_action');
         const { transporter } = await resources();
         await transporter.verify();

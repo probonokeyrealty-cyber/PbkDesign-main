@@ -28,6 +28,8 @@ The mailer uses `smtp.office365.com:587`, mandatory STARTTLS, TLS 1.2 or higher,
 
 ## Signature and Delivery Safety
 
+For a connection timeout, call the protected admin endpoint with `{"action":"diagnose"}`. It performs a credential-free SMTP/STARTTLS verification against the fixed Microsoft 365 host with a bounded 12-second connection window, without accessing the mail ledger or sending email. The result includes reachability, elapsed time, and allowlisted error/command labels only. `smtpReachable: true` is not authentication or inbox-delivery proof. Never enable the webhook on this signal alone.
+
 The verifier preserves raw bytes and validates Neon's Ed25519 detached-JWS format, including its double-base64url signing payload. It pins the JWKS origin and Academy endpoint, checks timestamp freshness and signed/header event IDs, and limits JWKS refreshes. Recipients, email purpose, expiry, channel, and link origins are checked after signature verification. Auth codes and reset URLs never enter activity logs.
 
 `pbk_neon_auth_mail_events` stores only event ID, payload hash, delivery status, and timestamps. A primary-key claim deduplicates concurrent deliveries durably across bridge replicas and restarts. An SMTP acceptance followed by a lost acknowledgement or DB error is ambiguous: the event becomes `unknown` (or remains `sending` after a crash) and must not be automatically resent. The owner may request a new code while the old event is reconciled. There is no exactly-once SMTP guarantee.

@@ -350,6 +350,61 @@ test('protected SMTP verification and test email cannot override the owner recip
   }
 });
 
+test('protected network diagnosis uses no credentials, database or mail delivery', async () => {
+  let probes = 0,
+    closed = 0;
+  const router = createNeonMailRouter({
+    env: config,
+    poolFactory: class {
+      constructor() {
+        throw Error('diagnosis must not use DB');
+      }
+    },
+    transporterFactory: (options) => {
+      probes++;
+      assert.equal(options.auth, undefined);
+      assert.equal(options.requireTLS, true);
+      assert.equal(options.tls.rejectUnauthorized, true);
+      assert.equal(options.connectionTimeout, 12000);
+      return {
+        verify: async () => {
+          throw Object.assign(Error('secret response'), { code: 'ETIMEDOUT', command: 'CONN' });
+        },
+        close: () => {
+          closed++;
+        },
+        sendMail: () => {
+          throw Error('must never send');
+        },
+      };
+    },
+  });
+  const server = createServer(async (req, res) => {
+    await router(req, res);
+  });
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  try {
+    const url = 'http://127.0.0.1:' + server.address().port + '/api/admin/neon-auth-mail';
+    const body = JSON.stringify({ action: 'diagnose' });
+    assert.equal((await fetch(url, { method: 'POST', body })).status, 401);
+    assert.equal(probes, 0);
+    const response = await fetch(url, {
+      method: 'POST',
+      body,
+      headers: { Authorization: 'Bearer fixture-admin' },
+    });
+    assert.equal(response.status, 200);
+    const result = await response.json();
+    assert.equal(result.smtpReachable, false);
+    assert.equal(result.code, 'ETIMEDOUT');
+    assert.equal(result.command, 'CONN');
+    assert.doesNotMatch(JSON.stringify(result), /secret response|fixture-only|auth@example/);
+    assert.equal(closed, 1);
+  } finally {
+    await new Promise((r) => server.close(r));
+  }
+});
+
 test('Docker contains the mailer and pins its SMTP dependency without adding a public staff route', async () => {
   const docker = await readFile(new URL('../Dockerfile.openclaw', import.meta.url), 'utf8');
   assert.match(docker, /nodemailer@10\.6\.0/);

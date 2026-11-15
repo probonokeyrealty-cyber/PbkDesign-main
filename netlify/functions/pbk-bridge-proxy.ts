@@ -693,7 +693,7 @@ export const handler: Handler = async (event) => {
     }
   }
 
-  const PROXY_TIMEOUT_MS = Math.max(
+  const PROXY_TIMEOUT_MS = isAssistantChatPath(targetPath) ? 40_000 : Math.max(
     5000,
     Math.min(25000, Number(process.env.PBK_BRIDGE_PROXY_TIMEOUT_MS || 20000)),
   );
@@ -707,8 +707,6 @@ export const handler: Handler = async (event) => {
       body,
       signal: abortController.signal,
     });
-    clearTimeout(timeoutHandle);
-
     const responseHeaders: Record<string, string> = {
       ...buildCorsHeaders(event),
       'Cache-Control': response.headers.get('cache-control') || 'no-store',
@@ -775,7 +773,6 @@ export const handler: Handler = async (event) => {
       isBase64Encoded: !textResponse,
     };
   } catch (error) {
-    clearTimeout(timeoutHandle);
     const timedOut = error instanceof Error && error.name === 'AbortError';
     return json(
       {
@@ -789,5 +786,7 @@ export const handler: Handler = async (event) => {
       { 'X-Request-ID': requestId },
       event,
     );
+  } finally {
+    clearTimeout(timeoutHandle);
   }
 };

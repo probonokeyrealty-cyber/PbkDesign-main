@@ -74,8 +74,10 @@ test('actual chat keeps a complete JSON contract outside truncated memory contex
   });
   assert.equal(accepted.ok, true);
   assert(Number.isFinite(sentParams.deadlineAt), 'live completion must carry one absolute request deadline');
-  assert(sentParams.deadlineAt <= Date.now() + 2300);
-  assert.equal(sentParams.attemptTimeoutMs, 2300, 'primary can finish within the whole budget instead of restarting at 1400');
+  assert(sentParams.deadlineAt > Date.now() + 20_000, 'operator explanations need more than the phone-turn budget');
+  assert(sentParams.deadlineAt <= Date.now() + 30_000);
+  assert.equal(sentParams.attemptTimeoutMs, 30_000);
+  assert.equal(sentParams.maxTokens, 4096, 'operator chat must have room for a complete explanation');
   assert.equal(sentParams.speculative, false, 'the native live path cannot spend its budget on another endpoint');
   const contract = sentMessages.find((message) => message.role === 'system' && message.content.includes('EXAMPLE JSON'));
   assert(contract, 'JSON format instructions must survive large memory context');
@@ -120,7 +122,7 @@ test('actual chat keeps a complete JSON contract outside truncated memory contex
     text: 'Explain your role', requestTiming: { snapshot: () => ({ durationMs: 350 }) },
   });
   assert.equal(fallbackParams.length, 3);
-  assert(fallbackParams.every((params) => params.deadlineAt === 2950), 'JSON and model fallbacks cannot reset elapsed request budget');
+  assert(fallbackParams.every((params) => params.deadlineAt === 30650), 'JSON and model fallbacks cannot reset elapsed request budget');
   assert(fallbackParams.every((params) => params.speculative === false));
   assert.equal(fallbackParams[0].model, 'fixture-model');
   assert.equal(fallbackParams[1].model, 'fixture-model');

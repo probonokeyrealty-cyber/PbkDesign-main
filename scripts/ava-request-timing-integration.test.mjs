@@ -9,18 +9,19 @@ const start = source.indexOf('async function handleInternalAvaAssistantChatReque
 const end = source.indexOf('\n}\n', start) + 2;
 assert(start >= 0 && end > start);
 
-function fixture({ abortRead = false, blockFinal = false, general = false } = {}) {
+function fixture({ abortRead = false, blockFinal = false, general = false, messages = [], priorHistory = [] } = {}) {
   let clock = 0;
   let recorded;
   let writes = 0;
   let gateCalls = 0;
+  let contextHistory;
   const controller = new AbortController();
   controller.abort();
   const context = vm.createContext({
     Date,
     process: { env: { RENDER_GIT_COMMIT: 'fixture-commit' } },
     createAvaRequestTiming: () => createAvaRequestTiming({ now: () => clock }),
-    readBody: async () => ({ message: 'find absent fixture', sessionId: 'isolated' }),
+    readBody: async () => ({ message: 'find absent fixture', sessionId: 'isolated', messages }),
     normalizeConversationMessages: () => [],
     sanitizePublicAvaChatTurn: (content) => ({ content }),
     getLastUserMessage: (_, fallback) => fallback,
@@ -28,7 +29,7 @@ function fixture({ abortRead = false, blockFinal = false, general = false } = {}
     readPublicAvaAssistantSession: async () => {
       clock += 1500;
       if (abortRead) controller.signal.throwIfAborted();
-      return { history: [] };
+      return { history: priorHistory };
     },
     dropCurrentAssistantUserTurn: () => [],
     normalizeAssistantSession: (session = {}) => ({ history: [], ...session }),
@@ -57,7 +58,10 @@ function fixture({ abortRead = false, blockFinal = false, general = false } = {}
     normalizeAvaAssistantAnswer: (answer) => answer,
     recordAvaMissionLedger: () => ({}),
     getAvaDeepSeekDecisionFromToolResult: () => null,
-    runInternalAvaDeepSeekChat: async () => ({ ok: true, answer: 'Safe answer', usagePersistence: { ok: false, result: 'failed', warning: 'token_usage_persistence_failed' }, toolResult: { ok: true } }),
+    runInternalAvaDeepSeekChat: async ({ assistantContextSession }) => {
+      contextHistory = assistantContextSession.history;
+      return { ok: true, answer: 'Safe answer', usagePersistence: { ok: false, result: 'failed', warning: 'token_usage_persistence_failed' }, toolResult: { ok: true } };
+    },
     writePublicAvaAssistantSession: async () => { writes += 1; clock += 900; },
     addActivity: () => {},
     makeActivity: (activity) => activity,
@@ -65,13 +69,29 @@ function fixture({ abortRead = false, blockFinal = false, general = false } = {}
     persistStateInBackground: () => {},
     state: { leadImports: [] },
   });
+  const normalizerStart = source.indexOf('function normalizeConversationMessages(');
+  vm.runInContext(source.slice(normalizerStart, source.indexOf('\nfunction getLastUserMessage', normalizerStart)), context);
+  const historyStart = source.indexOf('function mergeAssistantHistories(');
+  vm.runInContext(source.slice(historyStart, source.indexOf('\nfunction buildInternalAssistantDeepSeekContext', historyStart)), context);
   vm.runInContext(source.slice(start, end), context);
   return {
     run: () => context.handleInternalAvaAssistantChatRequest({}),
     get recorded() { return recorded; },
     get writes() { return writes; },
+    get contextHistory() { return contextHistory; },
   };
 }
+
+test('actual chat request normalization and merge retain long replies without duplicate echoes', async () => {
+  const history = Array.from({ length: 8 }, (_, i) => [
+    { role: 'user', content: `Question ${i}` },
+    { role: 'assistant', content: `${'Detailed explanation. '.repeat(250)}Ending ${i}` },
+  ]).flat();
+  const runtime = fixture({ general: true, messages: history, priorHistory: history });
+  await runtime.run();
+  assert.equal(runtime.contextHistory.length, 16, 'Full replies must deduplicate against persisted history');
+  assert.deepEqual(Array.from(runtime.contextHistory, ({ role, content }) => ({ role, content })), history);
+});
 
 test('actual handler retains unsuccessful lookup and attributes session I/O separately', async () => {
   const runtime = fixture();

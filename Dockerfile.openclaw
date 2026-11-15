@@ -154,6 +154,7 @@ COPY scripts/background-persistence.mjs ./scripts/background-persistence.mjs
 COPY scripts/pool-schema-initializer.mjs ./scripts/pool-schema-initializer.mjs
 COPY scripts/ava-accounting-status.mjs ./scripts/ava-accounting-status.mjs
 COPY scripts/ava-decision-messages.mjs ./scripts/ava-decision-messages.mjs
+COPY scripts/ava-speech-chunks.mjs ./scripts/ava-speech-chunks.mjs
 COPY scripts/ava-request-timing.mjs ./scripts/ava-request-timing.mjs
 COPY scripts/rex-autonomy.mjs ./scripts/rex-autonomy.mjs
 COPY scripts/context-aware-script-rotator.mjs ./scripts/context-aware-script-rotator.mjs

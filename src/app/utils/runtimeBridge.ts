@@ -1628,7 +1628,8 @@ export async function bridgeRequest<T = unknown>({
     method !== 'GET' && method !== 'DELETE' && (!serializedBody || serializedBody.length < 60000);
   const requestUrl = buildUrl(path);
   const timeoutController = new AbortController();
-  const timeoutId = setTimeout(() => timeoutController.abort(), BRIDGE_REQUEST_TIMEOUT_MS);
+  const requestTimeoutMs = /^\/api\/(?:v1\/)?assistant\/chat$/.test(path) ? 45_000 : BRIDGE_REQUEST_TIMEOUT_MS;
+  const timeoutId = setTimeout(() => timeoutController.abort(), requestTimeoutMs);
   const init = {
     method,
     headers: buildHeaders(body !== undefined && method !== 'GET'),
@@ -1654,7 +1655,7 @@ export async function bridgeRequest<T = unknown>({
   } catch (error) {
     if (timeoutController.signal.aborted) {
       throw new Error(
-        `PBK bridge request timed out after ${Math.round(BRIDGE_REQUEST_TIMEOUT_MS / 1000)} seconds.`
+        `PBK bridge request timed out after ${Math.round(requestTimeoutMs / 1000)} seconds.`
       );
     }
     throw error;

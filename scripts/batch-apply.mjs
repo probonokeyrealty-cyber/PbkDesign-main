@@ -139,9 +139,14 @@ export async function loadAppliedBatchLeads(query, leadId = '') {
     FROM public.lead_profiles WHERE COALESCE(workspace_id, 'pbk') = 'pbk'
       AND (source = 'batch-review' OR raw ? 'batchReviewId')
       ${exact ? 'AND id = $1' : ''}
-    ORDER BY id LIMIT ${exact ? '1' : '10000'}
+    ORDER BY id LIMIT ${exact ? '1' : '10001'}
   `, exact ? [leadId] : []);
-  if (!result.ok) return [];
+  if (!result?.ok || !Array.isArray(result.rows) || result.rows.length > (exact ? 1 : 10000)) {
+    const error = new Error('The saved lead roster is unavailable. Try again shortly.');
+    error.code = 'lead_roster_unavailable';
+    error.status = 503;
+    throw error;
+  }
   return result.rows.map((row) => ({
     ...record(row.raw), id: row.id, leadId: row.id, phone: row.phone,
     address: row.address, leadName: row.lead_name, stage: row.stage, status: row.status,

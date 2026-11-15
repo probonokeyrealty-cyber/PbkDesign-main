@@ -8,6 +8,7 @@ import {
   Loader2,
   MessageSquare,
   Phone,
+  RefreshCw,
   X,
 } from 'lucide-react';
 import { Link, useLocation, useNavigate } from 'react-router';
@@ -1466,6 +1467,9 @@ export function AgentFleet() {
   const [agentRegistrySource, setAgentRegistrySource] = useState('local fallback');
   const [leadOptions, setLeadOptions] = useState<RuntimeLeadOption[]>([]);
   const [leadContextSource, setLeadContextSource] = useState('pending full roster');
+  const [rosterRefresh, setRosterRefresh] = useState(0);
+  const [rosterError, setRosterError] = useState('');
+  const confirmedRosterRef = useRef(false);
   const [runtimeCalls, setRuntimeCalls] = useState<RuntimeCallRecord[]>([]);
   const [selectedLeadId, setSelectedLeadId] = useState(routeContext.leadId);
   const [dealPreview, setDealPreview] = useState<AgentDealPreview | null>(null);
@@ -1519,6 +1523,8 @@ export function AgentFleet() {
 
   useEffect(() => {
     let cancelled = false;
+    setLeadsLoading(true);
+    setRosterError('');
     Promise.allSettled([
       fetchAgentSnnStatusRequest(),
       fetchLeadsRequest(),
@@ -1539,6 +1545,7 @@ export function AgentFleet() {
           ? (stateResult.value.leadImports as RuntimeLeadOption[])
           : [];
       if (rosterResult.status === 'fulfilled') {
+        confirmedRosterRef.current = true;
         const fullRoster = Array.isArray(rosterResult.value)
           ? (rosterResult.value as RuntimeLeadOption[])
           : [];
@@ -1553,8 +1560,13 @@ export function AgentFleet() {
         );
       } else {
         console.warn('[PBK AgentFleet] full lead roster unavailable', rosterResult.reason);
-        setLeadOptions(snapshotLeads.filter((lead) => getLeadOptionId(lead)));
-        setLeadContextSource('Snapshot fallback (incomplete)');
+        setRosterError('Lead roster refresh is unavailable.');
+        if (confirmedRosterRef.current) {
+          setLeadContextSource('Saved full roster (refresh unavailable)');
+        } else {
+          setLeadOptions(snapshotLeads.filter((lead) => getLeadOptionId(lead)));
+          setLeadContextSource('Snapshot fallback (incomplete)');
+        }
         setSelectedLeadId(
           (current) =>
             current ||
@@ -1577,7 +1589,7 @@ export function AgentFleet() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [rosterRefresh]);
 
   useEffect(() => {
     let cancelled = false;
@@ -2156,7 +2168,17 @@ export function AgentFleet() {
             <p>
               {leadContextSource} · {leadOptions.length} loaded
             </p>
+            {rosterError && <p role="alert">{rosterError}</p>}
           </div>
+          <button
+            type="button"
+            className="btn-secondary"
+            disabled={leadsLoading}
+            onClick={() => setRosterRefresh((value) => value + 1)}
+          >
+            <RefreshCw size={15} aria-hidden="true" />
+            {rosterError ? 'Retry lead roster' : 'Refresh lead roster'}
+          </button>
           <button type="button" className="btn-secondary" onClick={returnFromFleet}>
             <ArrowLeft size={15} aria-hidden="true" /> Back to {outerBackLabel}
           </button>

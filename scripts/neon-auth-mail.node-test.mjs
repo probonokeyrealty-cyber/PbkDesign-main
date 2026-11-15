@@ -410,3 +410,43 @@ test('Docker contains the mailer and pins its SMTP dependency without adding a p
   assert.match(docker, /nodemailer@10\.6\.0/);
   assert.match(docker, /COPY scripts\/neon-auth-mail\.mjs/);
 });
+
+test('explicit authenticated diagnosis uses saved credentials without sending and sanitizes AUTH errors', async () => {
+  const router = createNeonMailRouter({
+    env: config,
+    transporterFactory: (options) => {
+      assert.equal(options.auth.user, config.PBK_NEON_SMTP_USER);
+      assert.equal(options.auth.pass, config.PBK_NEON_SMTP_PASSWORD);
+      return {
+        verify: async () => {
+          throw Object.assign(Error('private mailbox detail'), {
+            code: 'EAUTH',
+            command: 'AUTH LOGIN',
+          });
+        },
+        close() {},
+      };
+    },
+  });
+  const server = createServer(async (req, res) => {
+    await router(req, res);
+  });
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  try {
+    const response = await fetch(
+      'http://127.0.0.1:' + server.address().port + '/api/admin/neon-auth-mail',
+      {
+        method: 'POST',
+        headers: { Authorization: 'Bearer fixture-admin' },
+        body: JSON.stringify({ action: 'diagnose', authenticate: true }),
+      }
+    );
+    const result = await response.json();
+    assert.equal(result.command, 'AUTH');
+    assert.equal(result.code, 'EAUTH');
+    assert.equal(result.authenticated, false);
+    assert.doesNotMatch(JSON.stringify(result), /fixture-only|private mailbox|auth@example/);
+  } finally {
+    await new Promise((r) => server.close(r));
+  }
+});

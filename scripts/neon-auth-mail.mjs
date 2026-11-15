@@ -355,6 +355,7 @@ export function createNeonMailRouter({
             transporterFactory || (await import('nodemailer')).default.createTransport;
           const probe = factory({
             ...options,
+            ...(input.authenticate === true ? { auth: _auth } : {}),
             connectionTimeout: 12000,
             greetingTimeout: 8000,
             socketTimeout: 12000,
@@ -366,19 +367,28 @@ export function createNeonMailRouter({
             reply(res, 200, {
               smtpReachable: true,
               tlsRequired: true,
-              authenticated: false,
+              authenticated: input.authenticate === true,
               elapsedMs: Date.now() - started,
             });
           } catch (error) {
             // Never expose provider text: it may contain account identifiers or SMTP content.
             const code = /^[A-Z_]{2,32}$/.test(error.code || '') ? error.code : 'SMTP_PROBE_FAILED';
-            const command = ['CONN', 'EHLO', 'HELO', 'STARTTLS'].includes(error.command)
-              ? error.command
-              : 'unknown';
+            const command = /^AUTH(?: (?:LOGIN|PLAIN|XOAUTH2))?$/.test(error.command || '')
+              ? 'AUTH'
+              : ['CONN', 'EHLO', 'HELO', 'STARTTLS'].includes(error.command)
+                ? error.command
+                : 'unknown';
             reply(res, 200, {
               smtpReachable: false,
+              authenticated: false,
               code,
               command,
+              ...(Number.isInteger(error.responseCode) ? { responseCode: error.responseCode } : {}),
+              ...(/(?:smtpclientauthentication|smtp auth|basic authentication) is disabled/i.test(
+                error.response || ''
+              )
+                ? { reason: 'smtp_auth_disabled' }
+                : {}),
               elapsedMs: Date.now() - started,
             });
           } finally {

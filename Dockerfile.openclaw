@@ -119,6 +119,7 @@ RUN npm install --legacy-peer-deps --no-save --no-audit --no-fund --loglevel=war
       puppeteer-core@24.41.0 \
       pg@8.13.1 \
       nodemailer@10.6.0 \
+      @azure/msal-node@7.2.2 \
       pgsql-ast-parser@12.0.1 \
       redis@5.10.0 \
       ws@8.20.1 \
@@ -240,6 +241,7 @@ COPY scripts/event-bus ./scripts/event-bus
 COPY scripts/property-data-adapter.mjs ./scripts/property-data-adapter.mjs
 COPY scripts/openclaw-local-server.mjs ./scripts/openclaw-local-server.mjs
 COPY scripts/neon-auth-mail.mjs ./scripts/neon-auth-mail.mjs
+COPY scripts/neon-auth-microsoft.mjs ./scripts/neon-auth-microsoft.mjs
 COPY --from=frontend /frontend/dist/index.html ./index.html
 COPY --from=frontend /frontend/dist/analyzer.html ./analyzer.html
 COPY --from=frontend /frontend/dist/index.shell.html ./index.shell.html

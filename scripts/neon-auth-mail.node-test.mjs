@@ -412,6 +412,91 @@ test('Docker contains the mailer and pins its SMTP dependency without adding a p
   assert.match(docker, /COPY scripts\/neon-auth-mail\.mjs/);
 });
 
+test('Graph setup stays admin-only and its callback cannot dispatch a message', async () => {
+  let sends = 0,
+    completed = 0;
+  class Pool {
+    on() {}
+    async query(sql, args) {
+      return { rows: sql.startsWith('INSERT') ? [{ event_id: args[0] }] : [] };
+    }
+  }
+  const router = createNeonMailRouter({
+    env: { ...config, PBK_NEON_MAIL_PROVIDER: 'microsoft_graph', PBK_NEON_SMTP_PASSWORD: '' },
+    poolFactory: Pool,
+    microsoftMailFactory: () => ({
+      configured: () => true,
+      begin: async () => 'https://login.microsoftonline.com/fixture',
+      complete: async () => {
+        completed++;
+        return { connected: true };
+      },
+      verify: async () => true,
+      sendMail: async (message, id) => {
+        assert.equal(message.to, recipient);
+        assert.equal(typeof id, 'string');
+        sends++;
+        return { accepted: [recipient] };
+      },
+    }),
+  });
+  const server = createServer(async (req, res) => {
+    await router(req, res);
+  });
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  try {
+    const base = 'http://127.0.0.1:' + server.address().port;
+    const admin = base + '/api/admin/neon-auth-mail';
+    assert.equal(
+      (await fetch(admin, { method: 'POST', body: JSON.stringify({ action: 'oauth_start' }) }))
+        .status,
+      401
+    );
+    const headers = { Authorization: 'Bearer fixture-admin' };
+    assert.equal((await (await fetch(admin, { headers })).json()).provider, 'microsoft_graph');
+    const verify = await fetch(admin, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ action: 'verify' }),
+    });
+    assert.equal((await verify.json()).mailVerified, true);
+    assert.equal((await fetch(base + '/api/webhooks/neon-auth-mail/oauth/callback')).status, 405);
+    const bad = await fetch(base + '/api/webhooks/neon-auth-mail/oauth/callback', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: 'code=fixture',
+    });
+    assert.equal(bad.status, 400);
+    assert.equal(completed, 0);
+    assert.equal(sends, 0);
+    const begin = await fetch(admin, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ action: 'oauth_start' }),
+    });
+    assert.equal((await begin.json()).authUrl, 'https://login.microsoftonline.com/fixture');
+    const callback = await fetch(base + '/api/webhooks/neon-auth-mail/oauth/callback', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ state: 'a'.repeat(43), code: 'fixture' }),
+    });
+    assert.equal(callback.status, 200);
+    assert.equal(completed, 1);
+    assert.equal(sends, 0);
+    const sent = await fetch(admin, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ action: 'test', to: 'customer@example.invalid' }),
+    });
+    const result = await sent.json();
+    assert.equal(result.providerAccepted, true);
+    assert.equal(result.provider, 'microsoft_graph');
+    assert.equal(sends, 1);
+  } finally {
+    await new Promise((r) => server.close(r));
+  }
+});
+
 test('explicit authenticated diagnosis uses saved credentials without sending and sanitizes AUTH errors', async () => {
   const router = createNeonMailRouter({
     env: config,

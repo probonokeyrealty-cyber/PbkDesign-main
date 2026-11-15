@@ -1,4 +1,5 @@
 import { createHash, createPublicKey, timingSafeEqual, verify, randomUUID } from 'node:crypto';
+import { createMicrosoftMail } from './neon-auth-microsoft.mjs';
 
 export const NEON_AUTH_URL =
   'https://ep-divine-silence-b4ckkyun.neonauth.c-6.us-east-2.aws.neon.tech/pbk_academy/auth';
@@ -222,9 +223,19 @@ export function createNeonMailRouter({
   env = process.env,
   transporterFactory,
   poolFactory,
+  microsoftMailFactory = createMicrosoftMail,
   verifyEvent = createNeonVerifier(),
 } = {}) {
   let transporter, pool, initialized, opening;
+  const provider = env.PBK_NEON_MAIL_PROVIDER || 'smtp';
+  const graph = provider === 'microsoft_graph';
+  function checkConfiguration() {
+    if (!['smtp', 'microsoft_graph'].includes(provider)) throw fail(503, 'mail_provider_invalid');
+    if (graph) {
+      if (!microsoftMailFactory({ env }).configured())
+        throw fail(503, 'microsoft_oauth_not_configured');
+    } else smtpOptions(env);
+  }
   async function resources() {
     if (opening) return opening;
     opening = openResources().catch((error) => {
@@ -234,12 +245,8 @@ export function createNeonMailRouter({
     return opening;
   }
   async function openResources() {
-    const options = smtpOptions(env);
+    checkConfiguration();
     if (!env.PBK_DATABASE_URL) throw fail(503, 'mail_ledger_not_configured');
-    if (!transporter) {
-      const factory = transporterFactory || (await import('nodemailer')).default.createTransport;
-      transporter = factory(options);
-    }
     if (!pool) {
       const Pool = poolFactory || (await import('pg')).default.Pool;
       pool = new Pool({
@@ -250,6 +257,13 @@ export function createNeonMailRouter({
         idleTimeoutMillis: 10000,
       });
       pool.on?.('error', () => {});
+    }
+    if (!transporter) {
+      if (graph) transporter = microsoftMailFactory({ env, pool });
+      else {
+        const factory = transporterFactory || (await import('nodemailer')).default.createTransport;
+        transporter = factory(smtpOptions(env));
+      }
     }
     if (!initialized)
       initialized = pool
@@ -289,13 +303,14 @@ export function createNeonMailRouter({
     ledger,
     send: async (message, id) => {
       const { transporter } = await resources();
-      return transporter.sendMail({
+      const payload = {
         ...message,
         from: { name: 'PBK | Probono Key Realty', address: env.PBK_NEON_MAIL_FROM },
         messageId: `<pbk-neon-${digest(id)}@${env.PBK_NEON_MAIL_FROM.split('@')[1]}>`,
         disableFileAccess: true,
         disableUrlAccess: true,
-      });
+      };
+      return graph ? transporter.sendMail(payload, id) : transporter.sendMail(payload);
     },
   });
   const reply = (res, status, data) => {
@@ -319,8 +334,29 @@ export function createNeonMailRouter({
   }
   return async (req, res) => {
     const path = new URL(req.url, 'http://bridge.local').pathname;
-    if (!['/api/webhooks/neon-auth-mail', '/api/admin/neon-auth-mail'].includes(path)) return false;
+    if (
+      ![
+        '/api/webhooks/neon-auth-mail',
+        '/api/admin/neon-auth-mail',
+        '/api/webhooks/neon-auth-mail/oauth/callback',
+      ].includes(path)
+    )
+      return false;
     try {
+      if (path === '/api/webhooks/neon-auth-mail/oauth/callback') {
+        if (req.method !== 'POST') throw fail(405, 'method_not_allowed');
+        if (
+          !String(req.headers['content-type'] || '').startsWith('application/x-www-form-urlencoded')
+        )
+          throw fail(400, 'invalid_callback');
+        const form = new URLSearchParams((await rawBody(req)).toString('utf8'));
+        if (!graph || !/^[A-Za-z0-9_-]{32,128}$/.test(form.get('state') || ''))
+          throw fail(400, 'invalid_callback');
+        const { transporter } = await resources();
+        await transporter.complete(form);
+        reply(res, 200, { connected: true, provider });
+        return true;
+      }
       if (path === '/api/admin/neon-auth-mail') {
         const expected = Buffer.from(`Bearer ${env.PBK_BRIDGE_API_KEY || ''}`),
           actual = Buffer.from(String(req.headers.authorization || ''));
@@ -333,7 +369,7 @@ export function createNeonMailRouter({
         if (req.method === 'GET') {
           let configured = true;
           try {
-            smtpOptions(env);
+            checkConfiguration();
           } catch {
             configured = false;
           }
@@ -344,12 +380,24 @@ export function createNeonMailRouter({
                 )
               ).rows
             : [];
-          reply(res, 200, { configured, mode: 'owner-only-controlled-test', events: counts });
+          reply(res, 200, {
+            configured,
+            provider,
+            mode: 'owner-only-controlled-test',
+            events: counts,
+          });
           return true;
         }
         if (req.method !== 'POST') throw fail(405, 'method_not_allowed');
         const input = JSON.parse(await rawBody(req));
+        if (input.action === 'oauth_start') {
+          if (!graph) throw fail(409, 'microsoft_provider_not_selected');
+          const { transporter } = await resources();
+          reply(res, 200, { authUrl: await transporter.begin() });
+          return true;
+        }
         if (input.action === 'diagnose') {
+          if (graph) throw fail(409, 'smtp_provider_not_selected');
           const { auth: _auth, ...options } = smtpOptions(env);
           const factory =
             transporterFactory || (await import('nodemailer')).default.createTransport;
@@ -401,7 +449,7 @@ export function createNeonMailRouter({
         await transporter.verify();
         if (input.action === 'verify')
           reply(res, 200, {
-            smtpVerified: true,
+            ...(graph ? { mailVerified: true, provider } : { smtpVerified: true }),
             tlsRequired: true,
             mode: 'owner-only-controlled-test',
           });
@@ -413,7 +461,11 @@ export function createNeonMailRouter({
             text: 'PBK | Probono Key Realty\nThis is your requested owner-only email delivery test. No password or verification code is included. No customer has been contacted.',
             html: '<h1>PBK</h1><p>Probono Key Realty</p><p>This is your requested owner-only email delivery test. No password or verification code is included. No customer has been contacted.</p>',
           });
-          reply(res, 200, { ...result, eventId: id });
+          reply(res, 200, {
+            ...result,
+            ...(graph ? { providerAccepted: true, provider } : {}),
+            eventId: id,
+          });
         } else throw fail(400, 'unknown_action');
         return true;
       }

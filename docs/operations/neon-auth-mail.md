@@ -17,7 +17,19 @@ Set these in Render's secret environment settings, never in Git or chat:
 
 The mailer uses `smtp.office365.com:587`, mandatory STARTTLS, TLS 1.2 or higher, and certificate verification. No SMTP protocol debug logs or tokens are emitted. The paid Render bridge can reach this SMTP port; hosted Supabase Edge Functions block it. Microsoft 365 must permit SMTP AUTH for this mailbox; do not weaken tenant security or authentication policies to make a test pass.
 
-## Activation Order
+## Microsoft Graph OAuth Setup
+
+The approved alternative is a dedicated single-tenant Microsoft application using delegated `Mail.Send`, `User.Read` (sender verification), and `offline_access`. No application-wide mailbox permissions, inbox-read permissions, or staff-login changes are needed. Keep the Neon webhook disabled during setup.
+
+Use the existing bridge mail endpoint, branding, exact owner-recipient allowlist, and durable send ledger. Select this transport explicitly with `PBK_NEON_MAIL_PROVIDER=microsoft_graph`; never silently fall back to password SMTP after an OAuth failure.
+
+Store `PBK_NEON_MS_CLIENT_ID`, `PBK_NEON_MS_TENANT_ID`, `PBK_NEON_MS_CLIENT_SECRET`, and a dedicated base64-encoded 32-byte `PBK_NEON_MS_CACHE_KEY` in Render secrets. Never put them in Git, chat, browser storage, activity logs, or screenshots. Client-secret creation and secure entry are completed by the owner. Preserve the encryption key during redeployments; rotating it requires reconnecting OAuth.
+
+Register the Web redirect URI `https://pbk-openclaw-bridge.onrender.com/api/webhooks/neon-auth-mail/oauth/callback`. The callback accepts form-post authorization responses, validates a short-lived one-time state and PKCE verifier, and verifies the signed-in mailbox against `PBK_NEON_MAIL_FROM`. It does not grant a PBK staff session or send email. MSAL token cache and PKCE data are encrypted in backend-only Postgres tables; setup starts only through the protected admin endpoint using `{"action":"oauth_start"}`.
+
+After owner sign-in and consent, require `{"action":"verify"}` to return `mailVerified: true` with provider `microsoft_graph`, then send the existing benign owner-only test using `{"action":"test"}`. Microsoft Graph acceptance is not inbox-delivery proof. Confirm owner receipt and sender branding before enabling Neon events, then verify a real signed owner-only event and the unchanged private staff routes.
+
+## SMTP Activation Order
 
 1. Deploy the handler, pinned Nodemailer runtime dependency, and Docker packaging. Keep Neon webhooks disabled.
 2. With the existing bridge admin bearer key, `POST /api/admin/neon-auth-mail` with `{"action":"verify"}`. Require `smtpVerified: true`.

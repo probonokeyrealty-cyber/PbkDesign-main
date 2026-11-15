@@ -20,4 +20,4 @@ jobs:
         with:
           node-version: 22
       - name: Verify signatures, isolation, delivery claims, and packaging
-        run: node --test scripts/neon-auth-mail.node-test.mjs
+        run: node --test scripts/neon-auth-mail.node-test.mjs scripts/neon-auth-microsoft.node-test.mjs

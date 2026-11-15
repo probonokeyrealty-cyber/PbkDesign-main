@@ -72526,7 +72526,7 @@ const server = createServer(async (request, response) => {
   const url = new URL(request.url || '/', `http://${request.headers.host || `${HOST}:${PORT}`}`);
   const pathname = url.pathname.replace(/\/+$/, '') || '/';
 
-  if (['/api/webhooks/neon-auth-mail', '/api/admin/neon-auth-mail'].includes(pathname)
+  if (['/api/webhooks/neon-auth-mail', '/api/admin/neon-auth-mail', '/api/webhooks/neon-auth-mail/oauth/callback'].includes(pathname)
     && await neonAuthMailRouter(request, response)) return;
 
   if (request.method === 'OPTIONS') {

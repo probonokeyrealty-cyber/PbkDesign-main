@@ -10,12 +10,13 @@ const start = source.indexOf('async function handleInternalAvaAssistantChatReque
 const end = source.indexOf('\n}\n', start) + 2;
 assert(start >= 0 && end > start);
 
-function fixture({ abortRead = false, blockFinal = false, general = false, messages = [], priorHistory = [], streaming = false, cancelAfterPreview = false, rewritePreview = false, rewriteFinal = false } = {}) {
+function fixture({ abortRead = false, blockFinal = false, general = false, messages = [], priorHistory = [], priorSession = {}, historyMode, streaming = false, cancelAfterPreview = false, rewritePreview = false, rewriteFinal = false } = {}) {
   let clock = 0;
   let recorded;
   let writes = 0;
   let gateCalls = 0;
   let contextHistory;
+  let contextSession;
   const previews = [];
   const streamController = new AbortController();
   const controller = new AbortController();
@@ -25,7 +26,7 @@ function fixture({ abortRead = false, blockFinal = false, general = false, messa
     sanitizeAvaStreamReply,
     process: { env: { RENDER_GIT_COMMIT: 'fixture-commit' } },
     createAvaRequestTiming: () => createAvaRequestTiming({ now: () => clock }),
-    readBody: async () => ({ message: 'find absent fixture', sessionId: 'isolated', messages }),
+    readBody: async () => ({ message: 'find absent fixture', sessionId: 'isolated', messages, historyMode }),
     normalizeConversationMessages: () => [],
     sanitizePublicAvaChatTurn: (content) => ({ content }),
     getLastUserMessage: (_, fallback) => fallback,
@@ -33,12 +34,13 @@ function fixture({ abortRead = false, blockFinal = false, general = false, messa
     readPublicAvaAssistantSession: async () => {
       clock += 1500;
       if (abortRead) controller.signal.throwIfAborted();
-      return { history: priorHistory };
+      return { ...priorSession, history: priorHistory };
     },
     dropCurrentAssistantUserTurn: () => [],
     normalizeAssistantSession: (session = {}) => ({ history: [], ...session }),
     detectAssistantIntent: () => ({ intent: 'lead_lookup' }),
     isAvaReadOnlyAuditRequest: () => false,
+    looksLikeCurrentLeadContextRequest: () => false,
     mergeAssistantHistories: () => [],
     getCleanAvaActiveMemories: () => [],
     runAvaMissionController: async ({ controllerStage }) => {
@@ -65,6 +67,7 @@ function fixture({ abortRead = false, blockFinal = false, general = false, messa
     getAvaDeepSeekDecisionFromToolResult: () => null,
     isPublicAvaBrainAnswerSafe: () => true,
     runInternalAvaDeepSeekChat: async ({ assistantContextSession, stream }) => {
+      contextSession = assistantContextSession;
       contextHistory = assistantContextSession.history;
       if (stream && await stream.check('Safe prefix')) await stream.onAnswer('Safe prefix');
       if (cancelAfterPreview) streamController.abort();
@@ -90,6 +93,7 @@ function fixture({ abortRead = false, blockFinal = false, general = false, messa
     get recorded() { return recorded; },
     get writes() { return writes; },
     get contextHistory() { return contextHistory; },
+    get contextSession() { return contextSession; },
   };
 }
 
@@ -131,6 +135,51 @@ test('actual chat request normalization and merge retain long replies without du
   await runtime.run();
   assert.equal(runtime.contextHistory.length, 16, 'Full replies must deduplicate against persisted history');
   assert.deepEqual(Array.from(runtime.contextHistory, ({ role, content }) => ({ role, content })), history);
+});
+
+test('completed-only browser history excludes a saved tail that finished after Stop', async () => {
+  const completed = [
+    { role: 'user', content: 'Describe CEDAR.' },
+    { role: 'assistant', content: 'CEDAR - green walls.' },
+  ];
+  const runtime = fixture({
+    general: true,
+    historyMode: 'completed-only',
+    messages: [...completed, { role: 'user', content: 'find absent fixture' }],
+    priorHistory: [...completed,
+      { role: 'user', content: 'Describe ORCHID at length.' },
+      { role: 'assistant', content: 'ORCHID - purple walls.' },
+    ],
+    priorSession: { leadId: 'fixture-lead', pendingAction: { approvalRequired: true } },
+  });
+  await runtime.run();
+  assert.deepEqual(Array.from(runtime.contextHistory, ({ role, content }) => ({ role, content })), completed);
+  assert.equal(runtime.contextSession.leadId, 'fixture-lead');
+  assert.equal(runtime.contextSession.pendingAction.approvalRequired, true);
+});
+
+test('completed-only snapshot preserves repeated answers in the supplied chronological order', async () => {
+  const completed = [
+    { role: 'user', content: 'Describe CEDAR.' },
+    { role: 'assistant', content: 'Green walls.' },
+    { role: 'user', content: 'Describe ORCHID.' },
+    { role: 'assistant', content: 'Purple walls.' },
+    { role: 'user', content: 'Describe CEDAR again.' },
+    { role: 'assistant', content: 'Green walls.' },
+  ];
+  const runtime = fixture({ general: true, historyMode: 'completed-only', messages: completed, priorHistory: completed });
+  await runtime.run();
+  assert.deepEqual(Array.from(runtime.contextHistory, ({ role, content }) => ({ role, content })), completed);
+});
+
+test('completed-only snapshot with no finished turns does not resurrect a cancelled first reply', async () => {
+  const runtime = fixture({
+    general: true, historyMode: 'completed-only',
+    messages: [{ role: 'user', content: 'find absent fixture' }],
+    priorHistory: [{ role: 'user', content: 'Cancelled question' }, { role: 'assistant', content: 'Cancelled answer' }],
+  });
+  await runtime.run();
+  assert.equal(runtime.contextHistory.length, 0);
 });
 
 test('actual handler retains unsuccessful lookup and attributes session I/O separately', async () => {

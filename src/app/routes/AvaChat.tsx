@@ -1455,6 +1455,7 @@ export function AvaChat() {
           const response = await streamAvaAssistantChatRequest({
             message: command,
             sessionId: assistantSessionId || undefined,
+            historyMode: 'completed-only',
             source: 'ava-chat-page',
             leadId: linkedLeadId || undefined,
             action: nextAction,

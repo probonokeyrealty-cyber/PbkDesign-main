@@ -64854,10 +64854,13 @@ async function handleInternalAvaAssistantChatRequest(request) {
   const assistantContextSession = {
     ...normalizeAssistantSession(priorAssistantSession),
     leadId: body.leadId || body.lead_id || priorAssistantSession?.leadId || priorAssistantSession?.lead_id || '',
-    history: mergeAssistantHistories(
-      normalizeAssistantSession(priorAssistantSession).history,
-      requestedHistory
-    ),
+    // A hosted stream may finish after Stop; only the browser knows which replies it completed.
+    history: body.historyMode === 'completed-only' && Array.isArray(body.messages)
+      ? requestedHistory
+      : mergeAssistantHistories(
+        normalizeAssistantSession(priorAssistantSession).history,
+        requestedHistory
+      ),
   };
   const assistantMemories = getCleanAvaActiveMemories(12);
   const initialMissionController = await requestTiming.measure('controller_intake', () => runAvaMissionController({

@@ -2115,6 +2115,7 @@ export async function fetchLocalCommandsRequest({
 export async function sendAvaAssistantChatRequest(body: {
   message: string;
   sessionId?: string;
+  historyMode?: 'completed-only';
   source?: string;
   leadId?: string;
   action?: string;

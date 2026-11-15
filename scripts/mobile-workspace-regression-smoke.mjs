@@ -137,7 +137,7 @@ assert(
       css
     ) &&
     (avaChat.includes('aria-label="Send to Ava"') ||
-      /aria-label=\{submitting && onStopResponse \? 'Stop Ava response' : 'Send to Ava'\}/.test(avaChat)) &&
+      /aria-label=\{(?:submitting && )?onStopResponse \? 'Stop Ava response' : 'Send to Ava'\}/.test(avaChat)) &&
     ['min-h-11', 'min-w-11', 'justify-center', 'px-3'].every((token) => avaSendButtonClasses.includes(token)) &&
     !avaChat.includes('pbk-ava-lane-toggle'),
   'Ava Chat composer controls must fit 320px mobile viewports with a reachable send button.'

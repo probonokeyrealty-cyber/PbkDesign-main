@@ -119,18 +119,21 @@ function Packet({
       </nav>
       {packetTab === 'Overview' ? (
         <>
+          <div className="portal-eyebrow">Asking price</div>
           <p className="portal-price">
             {p.priceOnRequest ? 'Price on request' : usd(p.askingCents)}
           </p>
+          <h3 className="portal-section-label">Property summary</h3>
           <p>{p.summary || 'No summary provided.'}</p>
-          <p>{p.knownIssues || 'Known issues: not provided. Complete your own due diligence.'}</p>
+          <h3 className="portal-section-label">Known issues</h3>
+          <p>{p.knownIssues || 'Not provided. Complete your own due diligence.'}</p>
           <div className="portal-grid">
             <div className="portal-fact">
-              <span>Rehab · estimate</span>
+              <span>Estimated repairs</span>
               <strong>{usd(p.rehabCents)}</strong>
             </div>
             <div className="portal-fact">
-              <span>ARV · estimate</span>
+              <span>After-repair value · estimate</span>
               <strong>{usd(p.arvCents)}</strong>
             </div>
           </div>
@@ -1145,6 +1148,7 @@ export function InvestorWorkspace({
                         <br />
                         {d.city}, {d.state} {d.zip}
                       </p>
+                      <div className="portal-eyebrow">Asking price</div>
                       <p className="portal-price">
                         {d.priceOnRequest ? 'Price on request' : usd(d.askingCents)}
                       </p>

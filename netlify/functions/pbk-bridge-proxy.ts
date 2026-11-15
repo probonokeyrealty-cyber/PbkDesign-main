@@ -721,6 +721,18 @@ export const handler: Handler = async (event) => {
 
     const bytes = Buffer.from(await response.arrayBuffer());
     const contentType = responseHeaders['content-type'] || responseHeaders['Content-Type'] || '';
+    if (['/api/leads', '/api/leads/import'].includes(targetPath) && isTextResponse(contentType)) {
+      try {
+        // The full roster's pretty-printed JSON can exceed Netlify's response limit.
+        // Preserve every record, field, and alias; remove only transport whitespace.
+        return json(JSON.parse(bytes.toString('utf8')), response.status, {
+          'X-PBK-Bridge-Proxy': 'netlify',
+          'X-Request-ID': responseHeaders['X-Request-ID'] || requestId,
+        }, event);
+      } catch {
+        // Preserve upstream error bodies that are not JSON.
+      }
+    }
     if (shouldCompactHealthResponse(targetPath) && isTextResponse(contentType)) {
       try {
         const payload = JSON.parse(bytes.toString('utf8'));

@@ -10,6 +10,27 @@ const event = (method = 'GET') => ({
   body: method === 'GET' ? null : JSON.stringify({ status: 'approved' }),
 });
 
+test('large lead rosters are serialized compactly without losing records or fields', async () => {
+  const leads = Array.from({ length: 1256 }, (_, id) => ({
+    id: `lead-${id}`,
+    name: `Seller ${id}`,
+    notes: 'x'.repeat(1900),
+    facts: Object.fromEntries(Array.from({ length: 20 }, (_, i) => [`field${i}`, i])),
+  }));
+  const payload = { ok: true, leads, leadImports: leads };
+  const pretty = JSON.stringify(payload, null, 2);
+  assert.ok(Buffer.byteLength(pretty) > 6_000_000, 'Fixture must reproduce the oversized transport');
+  const handler = createProxyFixture(async target => new Response(
+    new URL(target).pathname === '/api/auth/team/verify'
+      ? JSON.stringify({ ok: true, permissions: {} }) : pretty,
+    { headers: { 'content-type': 'application/json' } },
+  ));
+  const response = await handler(event());
+  assert.equal(response.statusCode, 200);
+  assert.ok(Buffer.byteLength(response.body) < 6_000_000, 'Roster must fit the hosted response limit');
+  assert.deepEqual(JSON.parse(response.body), payload, 'Keep every lead and compatibility alias');
+});
+
 for (const status of [429, 500, 502, 503, 504]) {
   for (const method of ['GET', 'PUT']) test(`${status} verifier outage blocks ${method} without claiming session revocation`, async () => {
     const calls = [];

@@ -101,6 +101,8 @@ ENV NPM_CONFIG_FETCH_RETRY_MAXTIMEOUT=120000
 RUN npm install --legacy-peer-deps --no-save --no-audit --no-fund --loglevel=warn --timeout=600000 \
       @sparticuz/chromium@147.0.1 \
       @deepgram/sdk@5.1.0 \
+      @streamparser/json@0.0.26 \
+      eventsource-parser@3.1.1 \
       @huggingface/transformers@4.2.0 \
       @langchain/langgraph@1.3.2 \
       @modelcontextprotocol/sdk@1.29.0 \
@@ -155,6 +157,8 @@ COPY scripts/pool-schema-initializer.mjs ./scripts/pool-schema-initializer.mjs
 COPY scripts/ava-accounting-status.mjs ./scripts/ava-accounting-status.mjs
 COPY scripts/ava-decision-messages.mjs ./scripts/ava-decision-messages.mjs
 COPY scripts/ava-speech-chunks.mjs ./scripts/ava-speech-chunks.mjs
+COPY scripts/ava-deepseek-stream.mjs ./scripts/ava-deepseek-stream.mjs
+COPY scripts/ava-chat-events.mjs ./scripts/ava-chat-events.mjs
 COPY scripts/ava-request-timing.mjs ./scripts/ava-request-timing.mjs
 COPY scripts/rex-autonomy.mjs ./scripts/rex-autonomy.mjs
 COPY scripts/context-aware-script-rotator.mjs ./scripts/context-aware-script-rotator.mjs

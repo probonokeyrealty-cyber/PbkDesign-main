@@ -2,8 +2,18 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 import { test } from '@jest/globals';
-import { buildAssistantPrompt } from './ava-assistant-chat.mjs';
+import { buildAssistantPrompt, sanitizeAssistantTurn } from './ava-assistant-chat.mjs';
+import { createAvaDecisionPreview, sanitizeAvaStreamReply } from './ava-deepseek-stream.mjs';
 import { buildAvaDecisionMessages, isAvaCompactDecisionSafe } from './ava-decision-messages.mjs';
+
+test('streaming contract puts a complete safety decision before the last reply field', () => {
+  const contract = buildAvaDecisionMessages('PBK policy', 'Explain', { streaming: true })[1].content;
+  const example = JSON.parse(contract.split('EXAMPLE JSON:\n')[1]);
+  assert.equal(Object.keys(example).at(-1), 'reply');
+  assert.equal(example.decision, 'answer');
+  assert.equal(example.toolIntent, null);
+  assert.match(contract, /before.*reply/i);
+});
 
 test('decision contract avoids generating invented work and repeated conversational metadata', () => {
   const contract = buildAvaDecisionMessages('approval-gated', 'Explain your role')[1].content;
@@ -49,6 +59,8 @@ test('actual chat keeps a complete JSON contract outside truncated memory contex
   let completionAnswer = JSON.stringify({ reply: 'safe answer', decision: 'answer', confidence: 0.8, nextAction: '', missionTimeline: [], needsApproval: false, toolIntent: null });
   const context = vm.createContext({
     buildAssistantPrompt, buildAvaDecisionMessages, isAvaCompactDecisionSafe,
+    createAvaDecisionPreview, sanitizeAssistantTurn, sanitizeAvaStreamReply,
+    normalizeAvaAssistantAnswer: value => value,
     buildAvaDeepSeekDecisionTools: () => [],
     runDeepSeekChatCompletion: async (messages, params) => {
       sentMessages = messages;
@@ -84,6 +96,11 @@ test('actual chat keeps a complete JSON contract outside truncated memory contex
   for (const key of ['reply', 'decision', 'confidence', 'nextAction', 'needsApproval', 'missionTimeline', 'toolIntent']) assert(contract.content.includes(`"${key}"`));
   assert(sentMessages[0].content.includes('approval-gated'));
   assert.equal(sentMessages.at(-1).content, 'Explain your role');
+  completionAnswer = JSON.stringify({ decision: 'answer', confidence: 0.8, nextAction: '', missionTimeline: [], needsApproval: false, toolIntent: null,
+    reply: '<think>Private planning</think>Visible explanation. sk-proj-abcdefghijklmnopqrst' });
+  const cleaned = await context.runInternalAvaDeepSeekChat({ text: 'Explain your role', stream: { check: async () => true, onAnswer() {} } });
+  assert.equal(cleaned.answer, 'Visible explanation. [redacted-secret]');
+  assert.equal(cleaned.toolResult.deepSeekDecision.reply, cleaned.answer);
   for (const badAnswer of ['{"reply":"unfinished', JSON.stringify({ reply: 'Proposed action', decision: 'act', confidence: 0.8, nextAction: '', needsApproval: false, missionTimeline: [], toolIntent: null })]) {
     completionAnswer = badAnswer;
     const rejected = await context.runInternalAvaDeepSeekChat({ text: 'Explain your role' });

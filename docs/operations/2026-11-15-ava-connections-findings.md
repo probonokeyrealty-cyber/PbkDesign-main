@@ -37,3 +37,22 @@ The updated unit suite passed 47 suites (671 tests, 8 skipped), including actual
 Passed: typecheck, production build, Netlify provider regression tests (4), release-status smoke, Ava assistant/mission-controller smokes, operator-health smoke, connection-strength/runtime-recovery checks, DeepSpec client/fallback/export/benchmark-gate smokes, bridge syntax check, YAML parse, and whitespace check.
 
 Unrelated in-progress workflow, investor, and UI edits were preserved. No production deployment, new GPU service, or provider-key rotation was performed. The attached Desktop Commander launcher was inspected as reference data; its download-and-execute command was not run.
+
+## Hosted Release Follow-Up
+
+This follow-up supersedes the earlier local-only deployment status above. The founder's subsequent continuation authorized release. Ava changes were committed as `b183c61` and pushed to `main` from an isolated worktree. The concurrent, already-published Fleet context changes were preserved, tested together with Ava, and subsequently incorporated upstream as `830edc9`.
+
+- Render deployment `dep-dbt1m115efls73fb3l2g` is live on `830edc9`, which includes the Ava changes. Netlify staff deployment `6afa1b8d6d41857c32763933` is ready with Ava and the same Fleet source snapshot. A future Git deploy still replaces a manual Netlify deploy; the tested source is now represented on `main`.
+- A hosted synthetic read-only request returned a complete 307-word, 1741-character `deepseek-v4-flash` answer, including its requested ending, in about 3.7 seconds. A follow-up correctly expanded the third principle in about 1.8 seconds. These are individual diagnostic samples, not production percentile measurements. Some probe wording instead hit deterministic lookup or safety-pause paths; those gates remain in place and not every request is model-backed.
+- A hosted 2035-character ElevenLabs speech request returned 2,912,009 audio bytes. Chromium decoded the combined response as about 182 seconds of audio. Full-text chunk ordering and cancellation also passed automated tests; audible quality was not reviewed.
+- Netlify team-login protection remains enabled on all deployments. Anonymous `/`, `/leads`, and `/settings` checks returned 401 after release. BrowserOS reached the separate team-passcode gate, so this is not a claim of a full authenticated hosted UI run. Combined built-asset desktop, 390px WebKit, and 320px regression checks passed.
+- DeepSeek is configured and ready using existing Render credentials; no keys were added or rotated. Netlify health now links `https://pbkcenter.netlify.app`. Two subsequent hosted OpenClaw checks reported fresh successful local heartbeats, unlike the earlier failures; this confirms current readiness, not long-term stability.
+- Removed the obsolete proxy `timeout = 25` declaration from `netlify.toml`. Netlify documents a non-configurable 60-second synchronous limit; the application retains its bounded 30/40/45-second model/proxy/browser deadlines. The added configuration regression passed.
+
+Token-by-token text rendering and speculative decoding remain out of scope and disabled respectively. Seller phone-turn deadlines and provider approval controls were not relaxed.
+
+## Token Streaming Follow-Up
+
+The founder subsequently authorized real text streaming. The implementation now consumes DeepSeek SSE, waits for complete non-action decision metadata, and forwards sanitized/controller-checked reply prefixes through Netlify API v2 to the existing chat exchange. A Stop control cancels generation; interrupted replies remain visible but do not enter completed browser history. The final validated response retains the existing mission, approval and session metadata. JSON compatibility and phone-turn behavior remain unchanged.
+
+Before deployment, independent review findings were fixed for runtime package installation, final-event redaction and controller rewrites, tagged hidden reasoning, retained usage after missing terminal markers, and Netlify's named-handler API selection. CLI-built manifests proved the old bundle selected API v1 and the corrected default Fetch bundle selects API v2. Fresh local verification passed 50 unit suites (724 tests, 8 skipped), 17 client-stream tests, build, lint, typecheck, bridge and packaging checks, plus Chromium 1440px and WebKit 390px held-tail/Stop/interruption/history/overflow checks. Hosted first-text and completion timings are still pending release verification.

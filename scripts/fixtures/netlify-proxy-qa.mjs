@@ -7,15 +7,24 @@ const { outputText } = ts.transpileModule(source, {
   compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },
 });
 
-export function createProxyFixture(upstreamFetch, timers = {}) {
+function loadProxy(upstreamFetch, timers = {}) {
   if (typeof upstreamFetch !== 'function') throw new Error('An isolated upstream fixture is required');
   const exports = {};
   vm.runInNewContext(outputText, {
-    exports, URL, Buffer, AbortController, Error,
+    exports, URL, Buffer, AbortController, Error, DOMException,
+    Request, Response, Headers, ReadableStream,
     setTimeout: timers.setTimeout || setTimeout,
     clearTimeout: timers.clearTimeout || clearTimeout,
     process: { env: { PBK_BRIDGE_URL: 'https://bridge-fixture.invalid', PBK_BRIDGE_API_KEY: 'fixture-only-authority' } },
     fetch: upstreamFetch,
   });
-  return exports.handler;
+  return exports;
+}
+
+export function createProxyFixture(upstreamFetch, timers = {}) {
+  return loadProxy(upstreamFetch, timers).legacyHandler;
+}
+
+export function createFetchProxyFixture(upstreamFetch, timers = {}) {
+  return loadProxy(upstreamFetch, timers).default;
 }

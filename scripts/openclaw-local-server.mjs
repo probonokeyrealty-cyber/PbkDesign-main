@@ -26,6 +26,8 @@ import { createPoolSchemaInitializer } from './pool-schema-initializer.mjs';
 import { observeUsagePersistence } from './ava-accounting-status.mjs';
 import { buildAvaDecisionMessages, isAvaCompactDecisionSafe } from './ava-decision-messages.mjs';
 import { joinAvaSpeechResponses, splitAvaSpeechText } from './ava-speech-chunks.mjs';
+import { createAvaDecisionPreview, readDeepSeekStream, sanitizeAvaStreamReply } from './ava-deepseek-stream.mjs';
+import { streamAvaChatResponse } from './ava-chat-events.mjs';
 import { EventTypes, getEventBusStatus, publishEvent as publishEventBusEvent } from './event-bus/streams.mjs';
 import { buildRexKpiSnapshot, proposeAutonomousRexGoals, selectRexProactiveLeadAction } from './rex-autonomy.mjs';
 import { recordScriptOutcomeStats, selectContextAwareScript } from './context-aware-script-rotator.mjs';
@@ -30791,6 +30793,7 @@ async function runDeepSeekChatCompletion(messages = [], params = {}) {
   const runAttempt = async (attemptIndex = 0) => {
     let controller = null;
     let timeout = null;
+    const streamPreview = params.streamPreviewFactory?.();
     const remainingTimeoutMs = Math.max(0, Math.min(attemptTimeoutMs, deadlineAt - Date.now()));
     const requestBody = {
       model,
@@ -30798,6 +30801,7 @@ async function runDeepSeekChatCompletion(messages = [], params = {}) {
       temperature: params.temperature ?? 0.25,
       max_tokens: Math.max(128, Math.min(4096, toNumber(params.maxTokens || params.max_tokens, 1200))),
       thinking: { type: thinkingMode },
+      ...(streamPreview ? { stream: true, stream_options: { include_usage: true } } : {}),
       ...(params.responseFormat === 'json' ? { response_format: { type: 'json_object' } } : {}),
       ...(deepSeekTools.length ? { tools: deepSeekTools } : {}),
       ...(deepSeekTools.length && params.toolChoice ? { tool_choice: params.toolChoice } : {}),
@@ -31008,7 +31012,7 @@ async function runDeepSeekChatCompletion(messages = [], params = {}) {
                 Authorization: `Bearer ${DEEPSEEK_API_KEY}`,
                 'Content-Type': 'application/json',
               },
-              signal: controller.signal,
+              signal: params.signal ? AbortSignal.any([controller.signal, params.signal]) : controller.signal,
               body: JSON.stringify(requestBody),
             }),
           async () =>
@@ -31017,7 +31021,10 @@ async function runDeepSeekChatCompletion(messages = [], params = {}) {
               headers: { 'Content-Type': 'application/json' },
             })
         );
-        const payload = await response.json().catch((error) => {
+        const payload = streamPreview && response.ok ? await readDeepSeekStream(response, {
+          signal: params.signal ? AbortSignal.any([controller.signal, params.signal]) : controller.signal,
+          onDelta: delta => streamPreview.write(delta),
+        }) : await response.json().catch((error) => {
           if (controller.signal.aborted) controller.signal.throwIfAborted();
           if (error?.name === 'AbortError') throw error;
           return null;
@@ -31097,8 +31104,17 @@ async function runDeepSeekChatCompletion(messages = [], params = {}) {
         responseId: payload?.id || '',
       };
     } catch (error) {
+      if (error.providerUsage && !usagePersistence) {
+        usagePersistence = await measure('llm_usage', () => observeUsagePersistence(() => recordTokenUsage('deepseek', model, error.providerUsage, {
+          source: params.source || 'deepseek-strategist',
+          callId: params.callId || params.call_id || '', leadId: params.leadId || params.lead_id || '',
+          responseId: error.responseId || '',
+        })));
+      }
+      if (params.signal?.aborted) params.signal.throwIfAborted();
       return {
         ok: false,
+        streamInterrupted: Boolean(streamPreview?.emitted),
         result: error?.name === 'AbortError' ? 'provider_timeout' : 'provider_error',
         provider: buildProviderMeta(),
         error: error?.name === 'AbortError' ? 'DeepSeek request timed out.' : error?.message || 'DeepSeek request failed.',
@@ -31128,7 +31144,7 @@ async function runDeepSeekChatCompletion(messages = [], params = {}) {
       retry: attemptIndex > 0 ? 'provider_retry' : '',
       attemptTimeoutMs: result.provider?.attemptTimeoutMs ?? attemptTimeoutMs,
     });
-    if (result.ok || !isRetryableDeepSeekResult(result) || attemptIndex >= retryAttempts) {
+    if (result.ok || result.streamInterrupted || !isRetryableDeepSeekResult(result) || attemptIndex >= retryAttempts) {
       return {
         ...result,
         attempts,
@@ -64520,6 +64536,7 @@ async function runInternalAvaDeepSeekChat({
   missionController = null,
   memories = [],
   requestTiming = null,
+  stream = null,
 } = {}) {
   // Operator explanations need a larger budget than short seller phone turns.
   // All retries still share one deadline, leaving room for proxy transport.
@@ -64532,8 +64549,18 @@ async function runInternalAvaDeepSeekChat({
       memories,
     }),
   });
-  const deepSeekMessages = buildAvaDecisionMessages(prompt, text);
+  const deepSeekMessages = buildAvaDecisionMessages(prompt, text, { streaming: Boolean(stream) });
+  let streamedAnswer = false;
+  const streamingOptions = stream ? {
+    signal: stream.signal,
+    streamPreviewFactory: () => createAvaDecisionPreview({
+      sanitize: value => normalizeAvaAssistantAnswer(sanitizeAssistantTurn(value, 64_000, { preserveFormatting: true }).content),
+      check: stream.check,
+      onAnswer: async value => { await stream.onAnswer(value); streamedAnswer = true; },
+    }),
+  } : {};
   let deepSeek = await runDeepSeekChatCompletion(deepSeekMessages, {
+    ...streamingOptions,
     source: 'ava-assistant-chat',
     requestTiming,
     deadlineAt,
@@ -64551,9 +64578,11 @@ async function runInternalAvaDeepSeekChat({
     retryAttempts: DEEPSEEK_LIVE_RETRY_ATTEMPTS,
     retryDelayMs: DEEPSEEK_LIVE_RETRY_DELAY_MS,
   });
+  if (!deepSeek.ok && streamedAnswer) throw new Error('Ava response stream was interrupted.');
   if (!deepSeek.ok && isAvaDeepSeekJsonModeFallbackCandidate(deepSeek)) {
     const jsonModeResult = deepSeek;
     const textFallback = await runDeepSeekChatCompletion(ensureDeepSeekJsonModeMessages(deepSeekMessages), {
+      ...streamingOptions,
       source: 'ava-assistant-chat-json-mode-fallback',
       requestTiming,
       deadlineAt,
@@ -64569,6 +64598,7 @@ async function runInternalAvaDeepSeekChat({
       retryAttempts: 0,
       retryDelayMs: 0,
     });
+    if (!textFallback.ok && streamedAnswer) throw new Error('Ava response stream was interrupted.');
     deepSeek = {
       ...textFallback,
       provider: {
@@ -64592,6 +64622,7 @@ async function runInternalAvaDeepSeekChat({
     );
     for (const model of retryModels) {
       const modelFallback = await runDeepSeekChatCompletion(ensureDeepSeekJsonModeMessages(deepSeekMessages), {
+        ...streamingOptions,
         source: 'ava-assistant-chat-model-fallback',
         requestTiming,
         deadlineAt,
@@ -64607,6 +64638,7 @@ async function runInternalAvaDeepSeekChat({
         retryAttempts: 0,
         retryDelayMs: 0,
       });
+      if (!modelFallback.ok && streamedAnswer) throw new Error('Ava response stream was interrupted.');
       deepSeek = {
         ...modelFallback,
         provider: {
@@ -64627,9 +64659,11 @@ async function runInternalAvaDeepSeekChat({
     }
   }
   const deepSeekDecision = parseAvaDeepSeekDecisionAnswer(deepSeek.answer);
-  const finalAnswer = deepSeekDecision.reply || deepSeek.answer || '';
+  if (stream) deepSeekDecision.reply = normalizeAvaAssistantAnswer(sanitizeAvaStreamReply(deepSeekDecision.reply));
+  const finalAnswer = stream ? deepSeekDecision.reply : deepSeekDecision.reply || deepSeek.answer || '';
   const usagePersistence = deepSeek.provider?.usagePersistence || null;
   if (deepSeek.ok && !isAvaCompactDecisionSafe(deepSeek.answer)) {
+    if (streamedAnswer) throw new Error('Ava response stream did not finish a valid decision.');
     return {
       ok: false, answer: '', usagePersistence,
       toolResult: {
@@ -64882,6 +64916,7 @@ async function handleInternalAvaAssistantChatRequest(request) {
     memories: assistantMemories,
   }));
   const controlGate = enforceAvaControlEnvelope(missionController, assistantPlan);
+  request.avaStream?.signal.throwIfAborted();
 
   if (readOnlyAuditRequest && assistantPlan.action === 'general') {
     const auditFallback = buildAvaReadOnlyAuditFallback({
@@ -65105,6 +65140,21 @@ async function handleInternalAvaAssistantChatRequest(request) {
       leadId: activeAssistantLeadId || assistantContextSession.leadId || '',
       missionController,
       memories: assistantMemories,
+      stream: request.avaStream ? {
+        ...request.avaStream,
+        check: async preview => {
+          if (!isPublicAvaBrainAnswerSafe(preview)) return false;
+          const previewController = await runAvaMissionController({
+            controllerStage: 'stream_preview', sessionId, text,
+            source: body.source || 'command-center-assistant',
+            leadId: activeAssistantLeadId || '', assistantIntent, assistantPlan, assistantSession,
+            answer: preview, toolResult: { ok: true, result: 'deepseek_chat_preview' },
+            state, memories: assistantMemories,
+          });
+          return previewController.trace?.guard?.result === 'passed'
+            && enforceAvaControlEnvelope(previewController, assistantPlan).ok;
+        },
+      } : null,
     }));
     usagePersistence = deepSeekChat.usagePersistence || null;
     if (deepSeekChat.ok) {
@@ -65157,6 +65207,12 @@ async function handleInternalAvaAssistantChatRequest(request) {
   const finalControlGate = enforceAvaControlEnvelope(missionController, assistantPlan);
   const preserveReadOnlyAuditAnswer =
     readOnlyAuditRequest && assistantPlan.action === 'general' && toolResult?.result === 'ava_read_only_audit';
+  if (request.avaStream && finalControlGate.ok && missionController.trace?.guard?.result === 'rewritten') {
+    answer = missionController.trace.turnDecision?.answer || 'I paused that reply for review. Nothing was sent or changed.';
+    if (toolResult?.deepSeekDecision) {
+      toolResult = { ...toolResult, deepSeekDecision: { ...toolResult.deepSeekDecision, reply: answer } };
+    }
+  }
   if (!finalControlGate.ok && !preserveReadOnlyAuditAnswer) {
     answer = finalControlGate.answer;
     toolResult = {
@@ -65186,7 +65242,7 @@ async function handleInternalAvaAssistantChatRequest(request) {
     }));
   }
 
-  answer = normalizeAvaAssistantAnswer(answer);
+  answer = normalizeAvaAssistantAnswer(request.avaStream ? sanitizeAvaStreamReply(answer) : answer);
 
   if (!pendingAssistantAction && assistantPlan.action === 'lead_confirmation_required' && assistantPlan.toolPlan?.toolName === 'confirmLeadMatch') {
     pendingAssistantAction = {
@@ -65236,6 +65292,7 @@ async function handleInternalAvaAssistantChatRequest(request) {
       assistantPlan.action === 'approval_required' ||
       Boolean(assistantPlan.toolPlan?.approvalRequired || assistantPlan.toolPlan?.params?.forceApproval),
   });
+  request.avaStream?.signal.throwIfAborted();
   await requestTiming.measure('session_write', () => writePublicAvaAssistantSession(sessionId, assistantSession));
 
   addActivity(
@@ -73072,6 +73129,10 @@ const server = createServer(async (request, response) => {
     }
 
     if (request.method === 'POST' && matchesPath(pathname, ['/api/assistant/chat', '/api/v1/assistant/chat'])) {
+      if (String(request.headers.accept || '').includes('text/event-stream')) {
+        await streamAvaChatResponse(request, response, () => handleInternalAvaAssistantChatRequest(request), getResponseCorsHeaders(response));
+        return;
+      }
       const result = await handleInternalAvaAssistantChatRequest(request);
       json(response, result.statusCode || 200, result.body || {});
       return;

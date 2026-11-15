@@ -36,10 +36,14 @@ export function isAvaCompactDecisionSafe(answer) {
   return true;
 }
 
-export function buildAvaDecisionMessages(prompt, text) {
+export function buildAvaDecisionMessages(prompt, text, { streaming = false } = {}) {
+  const contract = streaming ? DECISION_JSON_CONTRACT.slice(0, DECISION_JSON_CONTRACT.indexOf('EXAMPLE JSON:'))
+    + 'For streaming, output ALL decision metadata before the reply field. Put reply LAST, after decision, confidence, nextAction, needsApproval, missionTimeline, and toolIntent. Never change metadata after starting reply.\nEXAMPLE JSON:\n'
+    + JSON.stringify({ decision: 'answer', confidence: 0.8, nextAction: '', needsApproval: false, missionTimeline: [], toolIntent: null, reply: '<natural operator-facing reply>' })
+    : DECISION_JSON_CONTRACT;
   return [
     { role: 'system', content: prompt },
-    { role: 'system', content: DECISION_JSON_CONTRACT },
+    { role: 'system', content: contract },
     { role: 'user', content: String(text || '').trim() },
   ].filter((message) => message.content);
 }

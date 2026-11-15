@@ -1,14 +1,14 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { createServer, request as httpRequest } from 'node:http';
 import { chromium, devices, expect, webkit } from '@playwright/test';
 import { preview } from 'vite';
 
 const shellHtml = readFileSync(new URL('../dist/index.shell.html', import.meta.url), 'utf8');
 const server = await preview({ preview: { host: '127.0.0.1', port: 0, strictPort: true } });
-const origin = `http://127.0.0.1:${server.httpServer.address().port}`;
+const previewOrigin = `http://127.0.0.1:${server.httpServer.address().port}`;
 const leadId = 'qa-ava-lead';
 const answer = `I found the latest seller note.\n\n${Array.from({ length: 42 }, (_, index) => `Step ${index + 1}: compare the seller's timeline, property condition, and confirmed deal facts before recommending the next action.`).join('\n\n')}\n\nFinal required detail: the complete explanation is preserved.`;
-const chatUrl = `${origin}/ava-chat?leadId=${leadId}`;
 const approval = { id: 'qa-ava-review', type: 'local_command', status: 'pending' };
 const command = {
   id: 'qa-ava-command',
@@ -22,8 +22,36 @@ const command = {
 
 async function verify(engine, viewport, device = {}) {
   const browser = await engine.launch();
+  const streams = new Map();
+  const streamServer = createServer(async (req, res) => {
+    if (req.method !== 'POST' || req.url !== '/api/assistant/chat') {
+      const upstream = httpRequest(new URL(req.url, previewOrigin), { method: req.method, headers: req.headers }, (response) => {
+        res.writeHead(response.statusCode, response.headers);
+        response.pipe(res);
+      });
+      upstream.on('error', () => { res.writeHead(502); res.end(); });
+      req.pipe(upstream);
+      return;
+    }
+    const chunks = [];
+    for await (const chunk of req) chunks.push(chunk);
+    const payload = JSON.parse(Buffer.concat(chunks).toString());
+    const entry = { res, payload, closed: false };
+    streams.set(payload.message, entry);
+    res.on('close', () => { entry.closed = true; });
+    res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache' });
+    res.write(': keepalive\n\nevent: status\ndata: checking\n\n');
+    res.write(`event: answer\ndata: ${JSON.stringify({ text: `Partial ${payload.message}` })}\n\n`);
+  });
+  await new Promise((resolve) => streamServer.listen(0, '127.0.0.1', resolve));
+  const origin = `http://127.0.0.1:${streamServer.address().port}`;
+  const chatUrl = `${origin}/ava-chat?leadId=${leadId}`;
   try {
     const page = await browser.newPage({ ...device, viewport });
+    page.on('requestfailed', (request) => {
+      if (!/abort|cancel/i.test(request.failure()?.errorText || '')) console.error('Browser request failed:', request.url(), request.failure()?.errorText);
+    });
+    page.on('console', (message) => { if (message.type() === 'error') console.error('Browser error:', message.text()); });
     await page.addInitScript(() => {
       localStorage.setItem('pbk:local:openclaw-config', JSON.stringify({
         endpoint: location.origin,
@@ -51,6 +79,11 @@ async function verify(engine, viewport, device = {}) {
       }
       if (path === '/api/assistant/chat' && req.method() === 'POST') {
         chatRequests.push(req.postDataJSON());
+        if (req.postDataJSON().message.startsWith('Stream fixture:')) {
+          assert.equal(req.headers().accept, 'text/event-stream');
+          assert.equal(req.postDataJSON().stream, true);
+          return route.continue();
+        }
         return route.fulfill({
           json: {
             ok: true,
@@ -69,6 +102,9 @@ async function verify(engine, viewport, device = {}) {
         decisions.push(req.postDataJSON());
         pending = false;
         return route.fulfill({ json: { ok: true, approval: { ...approval, status: 'approved' } } });
+      }
+      if (url.origin !== origin && req.resourceType() === 'stylesheet') {
+        return route.fulfill({ contentType: 'text/css', body: '' });
       }
       if (url.origin !== origin || /^\/(api\/|health$|events$|invoke$)/.test(path)) {
         return route.fulfill({ json: { ok: true } });
@@ -141,6 +177,88 @@ async function verify(engine, viewport, device = {}) {
       chatRequests[1].messages.find(({ role }) => role === 'assistant')?.content,
       answer
     );
+
+    const persisted = () => page.evaluate(() => JSON.parse(localStorage.getItem('pbk:ava-chat:assistant-exchanges') || '[]'));
+    const streamAsk = 'Stream fixture: complete';
+    await composer.fill(streamAsk);
+    await page.getByRole('button', { name: 'Send to Ava' }).click();
+    const streaming = page.getByRole('article').filter({ hasText: streamAsk });
+    await expect(streaming).toHaveAttribute('data-status', 'pending');
+    const exchangeId = await streaming.getAttribute('data-exchange-id');
+    await expect(composer).toHaveValue('');
+    await expect(streaming.getByText(`Partial ${streamAsk}`, { exact: true })).toBeVisible();
+    assert.equal(streams.get(streamAsk).res.writableEnded, false, 'upstream tail is still held');
+    const stop = page.getByRole('button', { name: 'Stop Ava response', exact: true });
+    await expect(stop).toBeVisible();
+    await expect(stop).toHaveAttribute('title', 'Stop Ava response');
+    const stopBounds = await stop.boundingBox();
+    await composer.fill('This must not double send');
+    await composer.press('Enter');
+    assert.equal(chatRequests.length, 3);
+    assert.equal((await persisted()).some((item) => item.request === streamAsk), false);
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), true);
+    if (process.env.PBK_AVA_SCREENSHOTS === '1') {
+      await page.screenshot({ path: `.pbk-local/ava-chat-stream-pending-${engine.name()}-${viewport.width}.png` });
+    }
+    const completedAnswer = 'Final controller-approved answer replaces the provisional text.';
+    streams.get(streamAsk).res.end(`event: done\ndata: ${JSON.stringify({
+      ok: true, answer: completedAnswer, sessionId: 'qa-stream-session', activeLeadId: leadId,
+      mission: { status: 'completed', steps: [{ id: 'stream-done', label: 'Stream metadata retained', status: 'completed' }] },
+      trace: { intent: 'stream-proof' }, controlEnvelope: { status: 'safe' }, toolResult: { draftOnly: true },
+    })}\n\n`);
+    await expect(streaming).toHaveAttribute('data-status', 'completed');
+    assert.equal(await streaming.getAttribute('data-exchange-id'), exchangeId);
+    await expect(streaming.getByText(completedAnswer, { exact: true })).toBeVisible();
+    await expect(streaming.getByText(`Partial ${streamAsk}`, { exact: true })).toHaveCount(0);
+    await expect(stop).toHaveCount(0);
+    await expect(composer).toHaveValue('This must not double send');
+    const saved = (await persisted()).find((item) => item.id === exchangeId);
+    assert.deepEqual(saved.trace, { intent: 'stream-proof' });
+    assert.deepEqual(saved.controlEnvelope, { status: 'safe' });
+    assert.deepEqual(saved.toolResult, { draftOnly: true });
+    await streaming.getByText('Mission timeline', { exact: true }).click();
+    await expect(streaming.getByText('Stream metadata retained', { exact: true })).toBeVisible();
+
+    for (const kind of ['cancel', 'interrupt', 'error']) {
+      const ask = `Stream fixture: ${kind}`;
+      await composer.fill(ask);
+      await page.getByRole('button', { name: 'Send to Ava' }).click();
+      const partial = page.getByRole('article').filter({ hasText: ask });
+      await expect(partial.getByText(`Partial ${ask}`, { exact: true })).toBeVisible();
+      await expect(stop).toBeVisible();
+      const bounds = await stop.boundingBox();
+      assert.ok(Math.abs(bounds.width - stopBounds.width) < 0.5);
+      assert.ok(Math.abs(bounds.height - stopBounds.height) < 0.5);
+      if (kind === 'cancel') await stop.click();
+      else if (kind === 'error') streams.get(ask).res.end('event: error\ndata: {"message":"The response was interrupted.","code":"stream_failed"}\n\n');
+      else streams.get(ask).res.end();
+      await expect(partial).toHaveAttribute('data-status', kind === 'cancel' ? 'cancelled' : 'failed');
+      await expect(partial.getByText(`Partial ${ask}`, { exact: true })).toBeVisible();
+      await expect(partial.getByText(kind === 'cancel' ? 'Cancelled' : 'Interrupted', { exact: true })).toBeVisible();
+      await expect(stop).toHaveCount(0);
+      await expect.poll(() => streams.get(ask).closed).toBe(true);
+      assert.equal((await persisted()).some((item) => item.request === ask), false);
+      const sent = chatRequests.at(-1);
+      assert.equal(sent.messages.some((item) => item.content.startsWith('Partial ')), false);
+      assert.equal(sent.messages.some((item) => item.content === completedAnswer), true);
+      assert.equal(sent.sessionId, 'qa-stream-session');
+    }
+    const unmountAsk = 'Stream fixture: unmount';
+    await composer.fill(unmountAsk);
+    await page.getByRole('button', { name: 'Send to Ava' }).click();
+    await expect(page.getByText(`Partial ${unmountAsk}`, { exact: true })).toBeVisible();
+    await page.evaluate(() => {
+      history.pushState({}, '', '/leads');
+      dispatchEvent(new PopStateEvent('popstate'));
+    });
+    await expect.poll(() => streams.get(unmountAsk).closed).toBe(true);
+    assert.equal((await persisted()).every((item) => item.status === 'completed'), true);
+    assert.equal((await persisted()).some((item) => item.request === unmountAsk), false);
+    await page.goto(chatUrl);
+    await expect(page.getByText(completedAnswer, { exact: true })).toBeVisible();
+    await expect(page.getByRole('article').filter({ hasText: completedAnswer }).getByRole('link', { name: 'Open lead used in this reply' })).toHaveAttribute('href', `/leads/${leadId}`);
+    await expect(page.getByText(/^Partial Stream fixture:/)).toHaveCount(0);
+    assert.equal(chatRequests.length, 7, 'no duplicate POST or automatic retry');
     assert.equal(
       await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1),
       true
@@ -149,10 +267,12 @@ async function verify(engine, viewport, device = {}) {
       await page.screenshot({ path: `.pbk-local/ava-chat-${engine.name()}-${viewport.width}.png` });
     }
     console.log(
-      `Ava history, lead context, mission and approval: ${engine.name()} ${viewport.width}px`
+      `Ava streaming, Stop, interruption, JSON fallback, history, mission and approval: ${engine.name()} ${viewport.width}px`
     );
   } finally {
     await browser.close();
+    streamServer.closeAllConnections();
+    await new Promise((resolve) => streamServer.close(resolve));
   }
 }
 

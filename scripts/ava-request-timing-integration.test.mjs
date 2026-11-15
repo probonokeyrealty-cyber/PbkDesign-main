@@ -3,22 +3,26 @@ import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 import { test } from '@jest/globals';
 import { createAvaRequestTiming } from './ava-request-timing.mjs';
+import { sanitizeAvaStreamReply } from './ava-deepseek-stream.mjs';
 
 const source = readFileSync(new URL('./openclaw-local-server.mjs', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
 const start = source.indexOf('async function handleInternalAvaAssistantChatRequest(request) {');
 const end = source.indexOf('\n}\n', start) + 2;
 assert(start >= 0 && end > start);
 
-function fixture({ abortRead = false, blockFinal = false, general = false, messages = [], priorHistory = [] } = {}) {
+function fixture({ abortRead = false, blockFinal = false, general = false, messages = [], priorHistory = [], streaming = false, cancelAfterPreview = false, rewritePreview = false, rewriteFinal = false } = {}) {
   let clock = 0;
   let recorded;
   let writes = 0;
   let gateCalls = 0;
   let contextHistory;
+  const previews = [];
+  const streamController = new AbortController();
   const controller = new AbortController();
   controller.abort();
   const context = vm.createContext({
     Date,
+    sanitizeAvaStreamReply,
     process: { env: { RENDER_GIT_COMMIT: 'fixture-commit' } },
     createAvaRequestTiming: () => createAvaRequestTiming({ now: () => clock }),
     readBody: async () => ({ message: 'find absent fixture', sessionId: 'isolated', messages }),
@@ -37,9 +41,10 @@ function fixture({ abortRead = false, blockFinal = false, general = false, messa
     isAvaReadOnlyAuditRequest: () => false,
     mergeAssistantHistories: () => [],
     getCleanAvaActiveMemories: () => [],
-    runAvaMissionController: async () => {
+    runAvaMissionController: async ({ controllerStage }) => {
       clock += 10;
-      return { mission: {}, trace: {}, controlEnvelope: {} };
+      const rewritten = (rewritePreview && controllerStage === 'stream_preview') || (rewriteFinal && controllerStage === 'final');
+      return { mission: {}, trace: { guard: { result: rewritten ? 'rewritten' : 'passed' }, turnDecision: { answer: 'Controller-safe replacement.' } }, controlEnvelope: {} };
     },
     planAssistantIntent: () => {
       clock += 20;
@@ -58,8 +63,11 @@ function fixture({ abortRead = false, blockFinal = false, general = false, messa
     normalizeAvaAssistantAnswer: (answer) => answer,
     recordAvaMissionLedger: () => ({}),
     getAvaDeepSeekDecisionFromToolResult: () => null,
-    runInternalAvaDeepSeekChat: async ({ assistantContextSession }) => {
+    isPublicAvaBrainAnswerSafe: () => true,
+    runInternalAvaDeepSeekChat: async ({ assistantContextSession, stream }) => {
       contextHistory = assistantContextSession.history;
+      if (stream && await stream.check('Safe prefix')) await stream.onAnswer('Safe prefix');
+      if (cancelAfterPreview) streamController.abort();
       return { ok: true, answer: 'Safe answer', usagePersistence: { ok: false, result: 'failed', warning: 'token_usage_persistence_failed' }, toolResult: { ok: true } };
     },
     writePublicAvaAssistantSession: async () => { writes += 1; clock += 900; },
@@ -75,12 +83,44 @@ function fixture({ abortRead = false, blockFinal = false, general = false, messa
   vm.runInContext(source.slice(historyStart, source.indexOf('\nfunction buildInternalAssistantDeepSeekContext', historyStart)), context);
   vm.runInContext(source.slice(start, end), context);
   return {
-    run: () => context.handleInternalAvaAssistantChatRequest({}),
+    run: () => context.handleInternalAvaAssistantChatRequest(streaming ? {
+      avaStream: { signal: streamController.signal, onAnswer: async text => { previews.push(text); } },
+    } : {}),
+    previews,
     get recorded() { return recorded; },
     get writes() { return writes; },
     get contextHistory() { return contextHistory; },
   };
 }
+
+test('actual chat handler checks streamed prefixes and persists only the complete reply', async () => {
+  const runtime = fixture({ general: true, streaming: true });
+  const result = await runtime.run();
+  assert.deepEqual(runtime.previews, ['Safe prefix']);
+  assert.equal(result.body.answer, 'Safe answer');
+  assert.equal(runtime.writes, 1);
+});
+
+test('actual chat never persists an assistant answer after Stop', async () => {
+  const runtime = fixture({ general: true, streaming: true, cancelAfterPreview: true });
+  await assert.rejects(runtime.run(), { name: 'AbortError' });
+  assert.deepEqual(runtime.previews, ['Safe prefix']);
+  assert.equal(runtime.writes, 0);
+  assert.equal(runtime.recorded, undefined);
+});
+
+test('a rewritten guard result cannot leak an unrewritten streamed prefix', async () => {
+  const runtime = fixture({ general: true, streaming: true, rewritePreview: true });
+  await runtime.run();
+  assert.deepEqual(runtime.previews, []);
+});
+
+test('the final event and persisted record honor a controller rewrite after previews', async () => {
+  const runtime = fixture({ general: true, streaming: true, rewriteFinal: true });
+  const result = await runtime.run();
+  assert.equal(result.body.answer, 'Controller-safe replacement.');
+  assert.equal(runtime.recorded.answer, 'Controller-safe replacement.');
+});
 
 test('actual chat request normalization and merge retain long replies without duplicate echoes', async () => {
   const history = Array.from({ length: 8 }, (_, i) => [

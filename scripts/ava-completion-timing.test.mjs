@@ -4,6 +4,7 @@ import vm from 'node:vm';
 import { test } from '@jest/globals';
 import { createAvaRequestTiming } from './ava-request-timing.mjs';
 import { observeUsagePersistence } from './ava-accounting-status.mjs';
+import { readDeepSeekStream } from './ava-deepseek-stream.mjs';
 
 function deadlineCompletionFixture() {
   const source = readFileSync(new URL('./openclaw-local-server.mjs', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
@@ -11,7 +12,7 @@ function deadlineCompletionFixture() {
   let fetchCalls = 0;
   const timers = [];
   const context = vm.createContext({
-    Date: { now: () => clock }, process: { env: {} }, AbortController, Response,
+    Date: { now: () => clock }, process: { env: {} }, AbortController, AbortSignal, Response,
     setTimeout: (_, duration) => { timers.push(duration); return timers.length; }, clearTimeout: () => {},
     observeUsagePersistence, getDeepSeekProviderMeta: () => ({ ready: true, model: 'fixture-model' }),
     DEEPSEEK_MODEL: 'fixture-model', DEEPSEEK_THINKING_MODE: 'disabled', DEEPSEEK_TIMEOUT_MS: 1400,
@@ -30,6 +31,69 @@ function deadlineCompletionFixture() {
   vm.runInContext(source.slice(start, source.indexOf('\nfunction buildDeepSeekLiveRetryModels', start)), context);
   return { context, timers, advance: (duration) => { clock += duration; }, calls: () => fetchCalls };
 }
+
+test('native completion consumes SSE without waiting for JSON and retains usage', async () => {
+  const fixture = deadlineCompletionFixture();
+  fixture.context.readDeepSeekStream = readDeepSeekStream;
+  let body;
+  const visible = [];
+  fixture.context.fetch = async (_, request) => {
+    body = JSON.parse(request.body);
+    return new Response('data: {"id":"stream-fixture","choices":[{"delta":{"content":"safe answer"},"finish_reason":null}]}\n\ndata: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\ndata: {"choices":[],"usage":{"total_tokens":25}}\n\ndata: [DONE]\n\n');
+  };
+  let recordedUsage;
+  fixture.context.recordTokenUsage = async (_, __, usage) => { recordedUsage = usage; return { ok: true }; };
+  const result = await fixture.context.runDeepSeekChatCompletion([], { streamPreviewFactory: () => ({ write: text => visible.push(text), emitted: false }) });
+  assert.equal(result.ok, true);
+  assert.equal(body.stream, true);
+  assert.equal(body.stream_options.include_usage, true);
+  assert.deepEqual(visible, ['safe answer']);
+  assert.equal(recordedUsage.total_tokens, 25);
+  assert.equal(result.answer, 'safe answer');
+});
+
+test('a provider interruption after visible text is never automatically retried', async () => {
+  const fixture = deadlineCompletionFixture();
+  fixture.context.readDeepSeekStream = readDeepSeekStream;
+  let calls = 0;
+  let emitted = false;
+  fixture.context.fetch = async () => { calls++; return new Response('data: {"choices":[{"delta":{"content":"part"}}]}\n\n'); };
+  const result = await fixture.context.runDeepSeekChatCompletion([], { retryAttempts: 2, streamPreviewFactory: () => ({ write: () => { emitted = true; }, get emitted() { return emitted; } }) });
+  assert.equal(result.ok, false);
+  assert.equal(result.streamInterrupted, true);
+  assert.equal(calls, 1);
+});
+
+test('caller cancellation is forwarded to the provider and never starts a retry', async () => {
+  const fixture = deadlineCompletionFixture();
+  fixture.context.readDeepSeekStream = readDeepSeekStream;
+  const controller = new AbortController();
+  let signal;
+  let calls = 0;
+  fixture.context.fetch = async (_, request) => {
+    calls++;
+    signal = request.signal;
+    return new Response(new ReadableStream({}));
+  };
+  const running = fixture.context.runDeepSeekChatCompletion([], { signal: controller.signal, retryAttempts: 2, streamPreviewFactory: () => ({ write() {}, emitted: false }) });
+  await new Promise(resolve => setTimeout(resolve, 0));
+  controller.abort();
+  await assert.rejects(running, { name: 'AbortError' });
+  assert.equal(signal.aborted, true);
+  assert.equal(calls, 1);
+});
+
+test('a received usage receipt is accounted even when the stream loses its terminal event', async () => {
+  const fixture = deadlineCompletionFixture();
+  fixture.context.readDeepSeekStream = readDeepSeekStream;
+  let accounted;
+  fixture.context.fetch = async () => new Response('data: {"choices":[{"delta":{"content":"partial"},"finish_reason":"stop"}],"usage":{"total_tokens":37}}\n\n');
+  fixture.context.recordTokenUsage = async (_, __, usage) => { accounted = usage; return { ok: true }; };
+  const result = await fixture.context.runDeepSeekChatCompletion([], { streamPreviewFactory: () => ({ write() {}, emitted: false }) });
+  assert.equal(result.ok, false);
+  assert.equal(result.provider.usagePersistence.ok, true);
+  assert.equal(accounted.total_tokens, 37);
+});
 
 test('absolute deadline includes body reading and never accepts a late native response', async () => {
   const fixture = deadlineCompletionFixture();

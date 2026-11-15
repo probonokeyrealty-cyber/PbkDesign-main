@@ -1,5 +1,6 @@
 import { DealData } from '../types';
 import { buildAgentDealContext, type AgentDealContext } from './agentDealContext';
+import { readAvaChatResponse, type AvaChatStreamOptions } from './avaChatStream';
 import {
   createPbkSnnWorker,
   injectSearchCognition,
@@ -2127,6 +2128,42 @@ export async function sendAvaAssistantChatRequest(body: {
     path: '/api/assistant/chat',
     body,
   });
+}
+
+export async function streamAvaAssistantChatRequest(
+  body: Parameters<typeof sendAvaAssistantChatRequest>[0],
+  { onAnswer, signal }: AvaChatStreamOptions = {},
+) {
+  signal?.throwIfAborted();
+  const path = '/api/assistant/chat';
+  assertRuntimeAuthConfigured(path);
+  const requestUrl = buildUrl(path);
+  const controller = new AbortController();
+  const onAbort = () => controller.abort();
+  signal?.addEventListener('abort', onAbort, { once: true });
+  const timeoutId = setTimeout(() => controller.abort(), 45_000);
+  const headers = buildRuntimeHeaders({ json: true, accept: 'text/event-stream' });
+  try {
+    // POSTs are never replayed, including when the proxy is unavailable.
+    const response = await fetch(requestUrl, {
+      method: 'POST', headers, body: JSON.stringify({ ...body, stream: true }),
+      signal: controller.signal,
+    });
+    if (!response.ok) {
+      const text = await response.text();
+      let parsed: unknown = text;
+      try { parsed = JSON.parse(text); } catch { /* Preserve non-JSON site/auth errors. */ }
+      throw bridgeResponseError(response, parsed, requestUrl, headers['X-PBK-Team-Token']);
+    }
+    return await readAvaChatResponse(response, { onAnswer, signal: controller.signal });
+  } catch (error) {
+    if (signal?.aborted) throw new DOMException('The operation was aborted.', 'AbortError');
+    if (controller.signal.aborted) throw new Error('PBK bridge request timed out after 45 seconds.');
+    throw error;
+  } finally {
+    clearTimeout(timeoutId);
+    signal?.removeEventListener('abort', onAbort);
+  }
 }
 
 export async function queueLocalCommandRequest(body: Record<string, unknown>) {

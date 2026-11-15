@@ -511,7 +511,7 @@ assert(
     avaChatRoute.includes('AssistantExchange') &&
     avaChatRoute.includes('AvaMissionTimeline') &&
     avaChatRoute.includes('pbk-ava-mission-timeline') &&
-    avaChatRoute.includes('sendAvaAssistantChatRequest') &&
+    avaChatRoute.includes('streamAvaAssistantChatRequest') &&
     avaChatRoute.includes('shouldUseAssistantChatRoute') &&
     avaChatRoute.includes('pbk-ava-inline-approval') &&
     avaChatRoute.includes('Review before Ava continues') &&
@@ -599,7 +599,7 @@ assert(
 );
 assert(
   avaChatRoute.includes('pbk-ava-chat-send-button') &&
-    /aria-label="Send to Ava"/.test(avaChatRoute),
+    avaChatRoute.includes("'Send to Ava'") && avaChatRoute.includes("'Stop Ava response'"),
   'Ava Chat send button must have a stable mobile-safe selector and accessible label.'
 );
 assert(
@@ -734,7 +734,7 @@ assert(
     /runInternalAvaDeepSeekChat[\s\S]*responseFormat:\s*'json'[\s\S]*tools:\s*buildAvaDeepSeekDecisionTools\(\)[\s\S]*deepSeekDecision/.test(bridge) &&
     /source\.reply \|\| source\.answer \|\| source\.response \|\| source\.message/.test(bridge) &&
     /source\.reply \|\| source\.answer \|\| source\.response \|\| source\.message \|\| source\.question/.test(bridge) &&
-    /answer = normalizeAvaAssistantAnswer\(answer\)/.test(bridge) &&
+    /answer = normalizeAvaAssistantAnswer\(/.test(bridge) &&
     /deepSeekDecision:\s*getAvaDeepSeekDecisionFromToolResult\(toolResult\)/.test(bridge) &&
     /return null;[\s\S]*async function runInternalAvaDeepSeekChat/.test(bridge) &&
     /reasoningPolicy:\s*deepSeek\.reasoningPolicy/.test(bridge),

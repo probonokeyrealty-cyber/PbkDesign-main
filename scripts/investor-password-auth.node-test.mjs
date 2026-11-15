@@ -10,7 +10,10 @@ const { createPortalHandler } =
   await import('../supabase/functions/pbk-investor-staging/server.ts');
 const profile = portalProfile('live');
 
-async function fixture(run, { approved = true, role = 'investor', valid = true } = {}) {
+async function fixture(
+  run,
+  { approved = true, role = 'investor', valid = true, origin = profile.publicOrigin } = {}
+) {
   let state = emptyState();
   const email = 'buyer@example.invalid';
   state.members.buyer = { email, approved, role };
@@ -19,7 +22,7 @@ async function fixture(run, { approved = true, role = 'investor', valid = true }
   const original = globalThis.fetch;
   globalThis.fetch = async (url, init = {}) => {
     const path = new URL(url).pathname;
-    calls.push({ path, method: init.method, body: init.body, headers: init.headers });
+    calls.push({ path, url: String(url), method: init.method, body: init.body, headers: init.headers });
     if (path === '/rest/v1/' + profile.table)
       return Response.json([{ revision: 1, data: structuredClone(state) }]);
     if (path === '/rest/v1/rpc/' + profile.commitRpc) {
@@ -40,7 +43,7 @@ async function fixture(run, { approved = true, role = 'investor', valid = true }
       new Request('https://qa-provider.example/functions/v1/' + profile.functionName, {
         method: 'POST',
         headers: {
-          Origin: profile.publicOrigin,
+          Origin: origin,
           'Content-Type': 'application/json',
           ...(bearer ? { Authorization: `Bearer ${bearer}` } : {}),
         },
@@ -64,6 +67,31 @@ test('password login uses Auth and registers only an approved investor session',
     assert.equal(calls.filter((c) => c.path === '/auth/v1/token').length, 1);
     assert.equal((await call('session', {}, data.token)).status, 200);
   }));
+
+for (const role of ['editor', 'reviewer'])
+  test(`approved ${role} signs into the staff Property Log through the verified-session handler`, async () =>
+    fixture(
+      async ({ call, email }) => {
+        const r = await call('authPassword', { email, password: 'fixture-only-password' });
+        const login = await r.json();
+        assert.equal(r.status, 200, JSON.stringify(login));
+        assert.ok(login.token);
+        const session = await call('session', {}, login.token);
+        assert.equal(session.status, 200);
+        assert.equal((await session.json()).member.role, role);
+      },
+      { role, origin: profile.staffOrigin }
+    ));
+
+test('unapproved staff cannot sign into the Property Log', async () =>
+  fixture(
+    async ({ call, email }) => {
+      const r = await call('authPassword', { email, password: 'fixture-only-password' });
+      assert.equal(r.status, 403);
+      assert.equal((await r.json()).token, undefined);
+    },
+    { role: 'reviewer', approved: false, origin: profile.staffOrigin }
+  ));
 
 for (const options of [{ approved: false }, { role: 'reviewer' }])
   test(`password login cannot bypass approval or staff isolation: ${JSON.stringify(options)}`, async () =>
@@ -93,6 +121,21 @@ test('recovery is approval-gated and has a generic response for unknown emails',
     assert.deepEqual(await denied.json(), await allowed.json());
     assert.equal(calls.filter((c) => c.path === '/auth/v1/recover').length, 1);
   }));
+
+test('staff recovery sends only from the staff entry and returns to the Property Log', async () =>
+  fixture(async ({ call, calls, email }) => {
+    assert.equal((await call('recoverPassword', { email })).status, 200);
+    const sent = calls.find((c) => c.path === '/auth/v1/recover');
+    assert.ok(sent);
+    assert.equal(new URL(sent.url).searchParams.get('redirect_to'), profile.staffOrigin + '/property-log');
+    assert.equal(JSON.parse(sent.body).email, email);
+  }, { role: 'reviewer', origin: profile.staffOrigin }));
+
+test('the investor entry does not send recovery emails for staff identities', async () =>
+  fixture(async ({ call, calls, email }) => {
+    assert.equal((await call('recoverPassword', { email })).status, 200);
+    assert.equal(calls.filter((c) => c.path === '/auth/v1/recover').length, 0);
+  }, { role: 'reviewer' }));
 
 test('setting a password requires a verified approved session and never returns the password', async () =>
   fixture(async ({ call, email, calls }) => {

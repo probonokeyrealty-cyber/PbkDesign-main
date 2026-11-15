@@ -602,12 +602,17 @@ export function InvestorWorkspace({
       <div className={`pbk-portal ${staffMode ? 'portal-staff' : ''}`}>
         <section className="portal-login">
           <p className="portal-eyebrow">
-            PROBONO KEY REALTY · {PORTAL_IS_STAGING ? 'PRIVATE STAGING' : 'PRIVATE INVESTOR ACCESS'}
+            PROBONO KEY REALTY ·{' '}
+            {staffMode
+              ? 'PRIVATE STAFF PROPERTY LOG'
+              : PORTAL_IS_STAGING
+                ? 'PRIVATE STAGING'
+                : 'PRIVATE INVESTOR ACCESS'}
           </p>
-          <h1>{staffMode ? 'Your property log.' : 'Investor sign-in.'}</h1>
+          <h1>{staffMode ? 'Staff sign-in.' : 'Investor sign-in.'}</h1>
           <p>
             {staffMode
-              ? 'Sign in with your approved staff identity to prepare and review properties.'
+              ? 'Use your approved staff email and password. This is separate from your Command Center team session.'
               : 'Sign in with the email on your approved PBK application.'}
           </p>
           <form
@@ -736,13 +741,24 @@ export function InvestorWorkspace({
             </p>
           )}
           {notice && <p role="status">{notice}</p>}
-          <a href="https://www.probonokeyrealty.com/investors#investor-application">
-            Not approved yet? Share your Buy Box with PBK →
-          </a>
+          {staffMode ? (
+            <a href="/">Back to Command Center</a>
+          ) : (
+            <>
+              <a href="https://www.probonokeyrealty.com/investors#investor-application">
+                Not approved yet? Share your Buy Box with PBK →
+              </a>
+              <p className="portal-muted">
+                PBK team members sign in through the private Command Center.
+              </p>
+            </>
+          )}
           <p className="portal-muted">
-            {PORTAL_IS_STAGING
-              ? 'Staging only. No public inventory.'
-              : 'Only approved accounts can view private inventory.'}{' '}
+            {staffMode
+              ? 'Approved staff accounts only.'
+              : PORTAL_IS_STAGING
+                ? 'Staging only. No public inventory.'
+                : 'Only approved accounts can view private inventory.'}{' '}
             Your sign-in stays in this tab; refreshing asks you to sign in again.
           </p>
         </section>

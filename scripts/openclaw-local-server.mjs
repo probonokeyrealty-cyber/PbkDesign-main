@@ -65312,10 +65312,11 @@ async function handleInternalAvaAssistantChatRequest(request) {
   request.avaStream?.signal.throwIfAborted();
   if (completedHistorySnapshot) {
     // The snapshot controls this turn's context, not the shared durable conversation record.
+    const durableHistory = normalizeAssistantSession(priorAssistantSession).history;
     assistantSession = normalizeAssistantSession({
       ...assistantSession,
       history: [
-        ...mergeAssistantHistories(normalizeAssistantSession(priorAssistantSession).history, requestedHistory),
+        ...(durableHistory.length ? durableHistory : requestedHistory),
         ...assistantSession.history.slice(-2),
       ],
     });

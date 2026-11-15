@@ -164,15 +164,21 @@ test('completed-only browser history excludes a saved tail that finished after S
 test('completed-only snapshot preserves repeated answers in the supplied chronological order', async () => {
   const completed = [
     { role: 'user', content: 'Describe CEDAR.' },
-    { role: 'assistant', content: 'Green walls.' },
+    { role: 'assistant', content: 'Green walls.', at: '2026-11-15T10:00:00.000Z' },
     { role: 'user', content: 'Describe ORCHID.' },
     { role: 'assistant', content: 'Purple walls.' },
     { role: 'user', content: 'Describe CEDAR again.' },
-    { role: 'assistant', content: 'Green walls.' },
+    { role: 'assistant', content: 'Green walls.', at: '2026-11-15T10:02:00.000Z', metadata: { source: 'repeated-completion' } },
   ];
   const runtime = fixture({ general: true, historyMode: 'completed-only', messages: completed, priorHistory: completed });
   await runtime.run();
-  assert.deepEqual(Array.from(runtime.contextHistory, ({ role, content }) => ({ role, content })), completed);
+  assert.deepEqual(Array.from(runtime.contextHistory, ({ role, content }) => ({ role, content })),
+    completed.map(({ role, content }) => ({ role, content })));
+  assert.deepEqual(Array.from(runtime.persistedSession.history.slice(0, -2), ({ role, content }) => ({ role, content })),
+    completed.map(({ role, content }) => ({ role, content })));
+  assert.equal(runtime.persistedSession.history[1].at, '2026-11-15T10:00:00.000Z');
+  assert.equal(runtime.persistedSession.history[5].at, '2026-11-15T10:02:00.000Z');
+  assert.equal(runtime.persistedSession.history[5].metadata.source, 'repeated-completion');
 });
 
 test('completed-only snapshot with no finished turns does not resurrect a cancelled first reply', async () => {
@@ -202,6 +208,15 @@ test('a stale tab controls its context without erasing another tab\'s completed 
     'find absent fixture', 'Safe answer',
   ]);
   assert.equal(runtime.persistedSession.history[3].metadata.source, 'other-tab');
+});
+
+test('completed browser history bootstraps an expired durable session', async () => {
+  const completed = [{ role: 'user', content: 'Earlier question' }, { role: 'assistant', content: 'Earlier answer' }];
+  const runtime = fixture({ general: true, historyMode: 'completed-only', messages: completed });
+  await runtime.run();
+  assert.deepEqual(Array.from(runtime.persistedSession.history, turn => turn.content), [
+    'Earlier question', 'Earlier answer', 'find absent fixture', 'Safe answer',
+  ]);
 });
 
 test('actual handler retains unsuccessful lookup and attributes session I/O separately', async () => {

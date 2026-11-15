@@ -91,7 +91,7 @@ export async function readDeepSeekStream(response, { signal, onDelta = () => {} 
   }
 }
 
-export function createAvaDecisionPreview({ onAnswer, sanitize, check }) {
+export function createAvaDecisionPreview({ onAnswer, sanitize, check, now = Date.now }) {
   const parser = new JSONParser({ emitPartialTokens: true, emitPartialValues: true });
   const metadata = {};
   const completedKeys = new Set();
@@ -101,6 +101,8 @@ export function createAvaDecisionPreview({ onAnswer, sanitize, check }) {
   let validOrder = true;
   let blocked = false;
   let emitted = '';
+  let lastEmissionAt = -Infinity;
+  let wireBytes = 0;
   parser.onValue = ({ key, value, stack, partial }) => {
     if (stack.length !== 1) return;
     if (key === 'reply') {
@@ -120,18 +122,25 @@ export function createAvaDecisionPreview({ onAnswer, sanitize, check }) {
     async write(delta) {
       parser.write(delta);
       if (blocked || !validOrder || !reply) return;
+      if (emitted && !replyComplete && now() - lastEmissionAt < 50) return;
       const decision = { ...metadata, reply };
       if (!isAvaCompactDecisionSafe(JSON.stringify(decision))
         || !['answer', 'ask', 'log_only'].includes(metadata.decision)
         || metadata.needsApproval || metadata.toolIntent !== null) return;
       // Hold the unfinished word so a credential split across tokens can be redacted.
-      const boundary = reply.search(/\S+$/);
-      const stable = replyComplete || boundary < 0 ? reply : reply.slice(0, boundary);
+      let boundary = reply.length;
+      while (boundary > 0 && !/\s/.test(reply[boundary - 1])) boundary--;
+      const stable = replyComplete ? reply : reply.slice(0, boundary);
       const visible = sanitize(sanitizeAvaStreamReply(stable));
       if (!visible || visible === emitted) return;
+      const bytes = Buffer.byteLength(JSON.stringify({ text: visible })) + 32;
+      // Bound cumulative progress overhead, not the final authoritative answer.
+      if (wireBytes + bytes > 8 * 1024 * 1024) return;
       if (!await check(visible, decision)) { blocked = true; return; }
       await onAnswer(visible);
       emitted = visible;
+      lastEmissionAt = now();
+      wireBytes += bytes;
     },
   };
 }

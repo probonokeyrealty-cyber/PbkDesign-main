@@ -78,11 +78,37 @@ test('controller-rejected prefixes are never displayed', async () => {
 test('an unfinished credential token is held until it can be sanitized', async () => {
   assert.equal(typeof streaming.createAvaDecisionPreview, 'function');
   const answers = [];
-  const preview = streaming.createAvaDecisionPreview({ onAnswer: text => answers.push(text), sanitize: text => text, check: async () => true });
+  let clock = 0;
+  const preview = streaming.createAvaDecisionPreview({ now: () => clock, onAnswer: text => answers.push(text), sanitize: text => text, check: async () => true });
   await preview.write(header + 'Example sk-partial');
+  clock = 50;
   await preview.write('-credential value ');
   assert.equal(answers.at(-1), 'Example [redacted-secret] value ');
   assert.ok(answers.every(text => !text.includes('sk-')));
+});
+
+test('token bursts are coalesced without delaying the first words or the final text', async () => {
+  let clock = 0;
+  const answers = [];
+  const preview = streaming.createAvaDecisionPreview({ now: () => clock, onAnswer: text => answers.push(text), sanitize: text => text, check: async () => true });
+  await preview.write(header + 'First words. ');
+  assert.equal(answers[0], 'First words. ');
+  for (let i = 0; i < 200; i++) { clock++; await preview.write('more '); }
+  assert.equal(answers.length, 5, 'At most twenty cumulative updates per second');
+  await preview.write('Complete ending."}');
+  assert.equal(answers.length, 6);
+  assert.ok(answers.at(-1).endsWith('Complete ending.'));
+});
+
+test('progress snapshots stay below a bounded wire budget without truncating provider text', async () => {
+  let clock = 0;
+  let wireBytes = 0;
+  const preview = streaming.createAvaDecisionPreview({ now: () => clock, onAnswer: text => { wireBytes += Buffer.byteLength(JSON.stringify({ text })) + 32; }, sanitize: text => text, check: async () => true });
+  await preview.write(header + 'a'.repeat(60_000) + ' ');
+  for (let i = 0; i < 160; i++) { clock += 50; await preview.write('more words. '); }
+  await preview.write('Complete ending."}');
+  assert.ok(wireBytes <= 8 * 1024 * 1024, 'Leave headroom under the hosted streamed-response limit');
+  assert.equal(preview.emitted, true);
 });
 
 test('reasoning is redacted and tool-call deltas are accumulated, never sent as text', async () => {

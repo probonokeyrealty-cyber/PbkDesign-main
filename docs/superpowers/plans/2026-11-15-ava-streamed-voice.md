@@ -37,5 +37,7 @@ Files: `src/app/routes/AvaChat.tsx`, existing runtime bridge adapter.
 
 ### Task 3: Approved Release
 - [x] Independently review changes and address findings.
-- [ ] Preserve concurrent main changes, push only the approved scope, and wait for published/live deployments.
-- [ ] Verify first speech before text completion, full spoken tail, Stop, mobile overflow, and staff protection.
+- [x] Preserve concurrent main changes, push only the approved scope, and wait for published/live deployments.
+- [x] Verify first speech before text completion, full spoken tail, Stop, mobile overflow, and staff protection.
+
+Release evidence and the separate oversized-generation limitation are recorded in `docs/superpowers/verification/2026-11-15-ava-streamed-voice.md`.

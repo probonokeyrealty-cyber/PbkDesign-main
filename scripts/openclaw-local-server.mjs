@@ -16099,23 +16099,20 @@ function parseBantPayload(value, fallback = {}) {
 }
 
 function getLeadActivityItems(context = {}) {
-  const search = [context.leadId, context.leadName, context.address].filter(Boolean).join(' ').toLowerCase();
-  return sortNewest(state.activity || []).filter((item) => {
-    if (!search) return false;
-    const haystack = [item.leadId, item.leadName, item.target, item.address, item.text, item.category].filter(Boolean).join(' ').toLowerCase();
-    return (context.leadId && haystack.includes(String(context.leadId).toLowerCase())) || (context.leadName && haystack.includes(String(context.leadName).toLowerCase().split(/\s+/)[0])) || (context.address && haystack.includes(String(context.address).toLowerCase().split(',')[0]));
-  });
+  return sortNewest(state.activity || []).filter((item) => Boolean(context.leadId) && item.leadId === context.leadId);
 }
 
 function buildLeadFullView(leadOrId = {}) {
   const lead = typeof leadOrId === 'string' ? findLeadImportByLookup(leadOrId) : leadOrId;
   if (!lead) return null;
+  const leadId = lead.leadId || lead.id;
+  if (typeof leadId !== 'string' || !leadId) return null;
   const seller = lead.seller || {};
   const property = lead.property || {};
-  const selectedPath = inferLeadSelectedPath(lead);
+  const ownedCallContext = getLeadOwnedCallContext(lead, leadId);
+  const selectedPath = inferLeadSelectedPath({ ...lead, callContext: ownedCallContext, call_context: ownedCallContext });
   const callContext = {
-    ...(lead.call_context || {}),
-    ...(lead.callContext || {}),
+    ...ownedCallContext,
     selected_path: selectedPath,
     selectedPath,
     selectedPathLabel: getPathDisplayLabel(selectedPath),
@@ -16129,11 +16126,12 @@ function buildLeadFullView(leadOrId = {}) {
     phone: seller.phone || lead.phone,
     email: seller.email || lead.email,
   });
-  const calls = sortNewest(state.calls || []).filter((call) => (context.leadId && call.leadId === context.leadId) || (context.address && String(call.address || '').toLowerCase() === String(context.address).toLowerCase()) || (context.phone && normalizePhone(call.phone) === normalizePhone(context.phone)) || (context.leadName && String(call.leadName || '').toLowerCase() === String(context.leadName).toLowerCase()));
-  const messages = sortNewest(state.messages || []).filter((message) => (context.leadId && message.leadId === context.leadId) || (context.address && String(message.address || '').toLowerCase() === String(context.address).toLowerCase()) || (context.email && String(message.email || '').toLowerCase() === String(context.email).toLowerCase()) || (context.phone && normalizePhone(message.phone) === normalizePhone(context.phone)));
-  const contracts = sortNewest(state.contracts || []).filter((contract) => (context.leadId && contract.leadId === context.leadId) || (context.address && String(contract.address || '').toLowerCase() === String(context.address).toLowerCase()) || (context.email && String(contract.email || '').toLowerCase() === String(context.email).toLowerCase()));
-  const analyzerRuns = sortNewest(state.analyzerRuns || []).filter((run) => (context.leadId && run.leadId === context.leadId) || (context.address && String(run.address || '').toLowerCase() === String(context.address).toLowerCase()));
-  const activity = getLeadActivityItems(context);
+  const exactHistory = (items = []) => sortNewest(items.filter((item) => item.leadId === leadId));
+  const calls = exactHistory(state.calls);
+  const messages = exactHistory(state.messages);
+  const contracts = exactHistory(state.contracts);
+  const analyzerRuns = exactHistory(state.analyzerRuns);
+  const activity = getLeadActivityItems({ leadId });
   const fullLead = {
     ...lead,
     id: lead.id || context.leadId,
@@ -16187,26 +16185,39 @@ function summarizeTranscriptForLead(call = {}, fallbackSummary = '') {
   return String(call.body || call.script || 'No summary captured yet.').slice(0, 420);
 }
 
-function buildLeadLastCallDetails(leadId = '') {
-  const full = buildLeadFullView(leadId);
-  if (!full) return null;
-  const lead = full.lead || {};
-  const callContext = lead.callContext || {};
-  const latestCall = full.calls?.[0] || full.messages?.find((message) => String(message.channel || '').toLowerCase() === 'call') || null;
-  if (!latestCall && !Object.keys(callContext).length) {
+function getLeadOwnedCallContext(lead = {}, leadId = lead.leadId || lead.id) {
+  const owned = (value) => {
+    const context = plainRecord(value);
+    return Object.hasOwn(context, 'leadId') && context.leadId !== leadId ? {} : context;
+  };
+  return { ...owned(lead.call_context), ...owned(lead.callContext) };
+}
+
+function buildLeadLastCallDetails(leadId = '', durableLead = null) {
+  if (typeof leadId !== 'string' || !leadId.trim() || leadId !== leadId.trim()) return null;
+  const lead = durableLead || (state.leadImports || []).find((item) => (item.leadId || item.id) === leadId);
+  if (!lead || (lead.leadId || lead.id) !== leadId) return null;
+  // Do not use the full-view/contact lookup: shared contact details are not identity.
+  const callContext = getLeadOwnedCallContext(lead, leadId);
+  const calls = (state.calls || []).filter((call) => call.leadId === leadId);
+  const callMessages = (state.messages || []).filter((message) => message.leadId === leadId && String(message.channel || '').toLowerCase() === 'call');
+  const latestCall = sortNewest(calls)[0] || sortNewest(callMessages)[0] || null;
+  const hasCallContext = ['summary', 'callSummary', 'sentiment', 'sentimentScore', 'last_offer', 'lastOffer', 'offer']
+    .some((key) => callContext[key] !== undefined && callContext[key] !== null && callContext[key] !== '');
+  if (!latestCall && !hasCallContext) {
     return {
       ok: true,
-      leadId: lead.leadId || lead.id || leadId,
+      leadId,
       call: null,
     };
   }
   const transcript = Array.isArray(latestCall?.transcript) ? latestCall.transcript : [];
   const sentiment = callContext.sentiment ?? callContext.sentimentScore ?? latestCall?.sentiment ?? null;
-  const lastOffer = callContext.last_offer ?? callContext.lastOffer ?? callContext.offer ?? latestCall?.lastOffer ?? null;
+  const lastOffer = callContext.last_offer ?? callContext.lastOffer ?? callContext.offer ?? latestCall?.last_offer ?? latestCall?.lastOffer ?? null;
   const summary = summarizeTranscriptForLead(latestCall || {}, callContext.summary || callContext.callSummary || '');
   return {
     ok: true,
-    leadId: lead.leadId || lead.id || leadId,
+    leadId,
     call: latestCall
       ? {
           ...latestCall,
@@ -16216,7 +16227,8 @@ function buildLeadLastCallDetails(leadId = '') {
           last_offer: lastOffer,
         }
       : {
-          id: `call-context-${lead.leadId || lead.id || leadId}`,
+          id: `call-context-${leadId}`,
+          leadId,
           status: 'context-only',
           transcript,
           summary,
@@ -80504,17 +80516,42 @@ const server = createServer(async (request, response) => {
 
     const leadFullMatch = matchPath(pathname, '/api/leads/:id/full');
     if (leadFullMatch && request.method === 'GET') {
-      const [durableBatchLead] = await loadAppliedBatchLeads(queryPgRows, leadFullMatch.groups.id);
+      response.setHeader('Cache-Control', 'no-store');
+      let leadId;
+      try {
+        leadId = decodeURIComponent(leadFullMatch.groups.id);
+        if (!leadId.trim() || leadId !== leadId.trim()) throw new Error('Invalid lead ID');
+      } catch {
+        json(response, 400, { ok: false, error: 'Invalid lead ID.' });
+        return;
+      }
+      let durableBatchLead;
+      try {
+        if (IS_HOSTED || getPgPool()) [durableBatchLead] = await loadAppliedBatchLeads(queryPgRows, leadId);
+      } catch {
+        response.setHeader('Retry-After', '1');
+        json(response, 503, { ok: false, code: 'lead_roster_unavailable', error: 'The saved lead record is unavailable. Try again shortly.' });
+        return;
+      }
       if (durableBatchLead) {
+        if ((durableBatchLead.leadId || durableBatchLead.id) !== leadId) {
+          json(response, 404, { ok: false, error: 'Lead not found.' });
+          return;
+        }
         const exactHistory = (items = []) => sortNewest(items.filter(({ leadId }) => leadId === durableBatchLead.id));
+        const history = {
+          calls: exactHistory(state.calls), messages: exactHistory(state.messages),
+          contracts: exactHistory(state.contracts), analyzerRuns: exactHistory(state.analyzerRuns),
+          activity: exactHistory(state.activity),
+        };
+        const callContext = getLeadOwnedCallContext(durableBatchLead, leadId);
         json(response, 200, {
-          ok: true, lead: durableBatchLead, calls: exactHistory(state.calls),
-          messages: exactHistory(state.messages), contracts: exactHistory(state.contracts),
-          analyzerRuns: exactHistory(state.analyzerRuns), activity: exactHistory(state.activity),
+          ok: true, lead: { ...durableBatchLead, ...history, callContext, call_context: callContext }, ...history,
         });
         return;
       }
-      const full = buildLeadFullView(leadFullMatch.groups.id);
+      const exactLead = (state.leadImports || []).find((item) => (item.leadId || item.id) === leadId);
+      const full = exactLead ? buildLeadFullView(exactLead) : null;
       if (!full) {
         json(response, 404, {
           ok: false,
@@ -80528,7 +80565,23 @@ const server = createServer(async (request, response) => {
 
     const leadLastCallMatch = matchPath(pathname, '/api/leads/:id/last-call');
     if (leadLastCallMatch && request.method === 'GET') {
-      const details = buildLeadLastCallDetails(leadLastCallMatch.groups.id);
+      let leadId;
+      try {
+        leadId = decodeURIComponent(leadLastCallMatch.groups.id);
+        if (!leadId.trim() || leadId !== leadId.trim()) throw new Error('Invalid lead ID');
+      } catch {
+        json(response, 400, { ok: false, error: 'Invalid lead ID.' });
+        return;
+      }
+      let durableLead;
+      try {
+        if (IS_HOSTED || getPgPool()) [durableLead] = await loadAppliedBatchLeads(queryPgRows, leadId);
+      } catch (error) {
+        if (error?.code !== 'lead_roster_unavailable') throw error;
+        json(response, 503, { ok: false, error: 'Lead call history is unavailable.', code: 'lead_roster_unavailable' });
+        return;
+      }
+      const details = buildLeadLastCallDetails(leadId, durableLead);
       if (!details) {
         json(response, 404, {
           ok: false,
@@ -80972,12 +81025,24 @@ const server = createServer(async (request, response) => {
     }
 
     if (request.method === 'GET' && matchesPath(pathname, ['/api/leads', '/api/leads/import'])) {
-      const batchLeads = await loadAppliedBatchLeads(queryPgRows);
+      response.setHeader('Cache-Control', 'no-store');
+      let batchLeads;
+      try {
+        batchLeads = !IS_HOSTED && !getPgPool() ? [] : await loadAppliedBatchLeads(queryPgRows);
+      } catch {
+        response.setHeader('Retry-After', '1');
+        json(response, 503, {
+          ok: false, complete: false, code: 'lead_roster_unavailable',
+          error: 'The saved lead roster is unavailable. Try again shortly.',
+        });
+        return;
+      }
       const leads = new Map(state.leadImports.map((lead) => [lead.leadId || lead.id, lead]));
       for (const lead of batchLeads) leads.set(lead.id, { ...leads.get(lead.id), ...lead });
       const combined = [...leads.values()];
       json(response, 200, {
         ok: true,
+        complete: true,
         leadImports: combined,
         leads: combined,
       });

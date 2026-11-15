@@ -12,7 +12,9 @@ function loadFunctions(path, names, globals = {}) {
   const source = readFileSync(new URL(path, import.meta.url), 'utf8');
   const ast = ts.createSourceFile(path, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
   const functions = ast.statements.filter(
-    (node) => (ts.isFunctionDeclaration(node) || ts.isClassDeclaration(node)) && names.includes(node.name?.text)
+    (node) =>
+      (ts.isFunctionDeclaration(node) || ts.isClassDeclaration(node)) &&
+      names.includes(node.name?.text)
   );
   const { outputText } = ts.transpileModule(functions.map((node) => node.getText(ast)).join('\n'), {
     compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },
@@ -263,6 +265,8 @@ function bridge(status, payload) {
     '../src/app/utils/runtimeBridge.ts',
     [
       'bridgeRequest',
+      'fetchRuntimeResponse',
+      'canRecoverRuntimeRead',
       'RuntimeBridgeError',
       'isTeamSessionRejection',
       'bridgeResponseError',
@@ -272,6 +276,8 @@ function bridge(status, payload) {
     ],
     {
       AbortController,
+      Headers,
+      DOMException,
       setTimeout,
       clearTimeout,
       BRIDGE_REQUEST_TIMEOUT_MS: 1000,

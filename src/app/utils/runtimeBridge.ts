@@ -25,15 +25,24 @@ export const RUNTIME_TEAM_SESSION_KEY = 'pbk:team-session:v1';
 export const RUNTIME_ACCESS_ERROR_EVENT = 'pbk:runtime-access-error';
 
 export class RuntimeBridgeError extends Error {
-  constructor(message: string, public status: number, public code = '') {
+  constructor(
+    message: string,
+    public status: number,
+    public code = ''
+  ) {
     super(message);
     this.name = 'RuntimeBridgeError';
   }
 }
 
 function isTeamSessionRejection(error: unknown): error is RuntimeBridgeError {
-  return error instanceof RuntimeBridgeError && error.status === 401
-    && /^(?:team_auth_required|invalid_team_session|invalid_team_session_payload|expired_team_session|missing_team_session)$/.test(error.code);
+  return (
+    error instanceof RuntimeBridgeError &&
+    error.status === 401 &&
+    /^(?:team_auth_required|invalid_team_session|invalid_team_session_payload|expired_team_session|missing_team_session)$/.test(
+      error.code
+    )
+  );
 }
 const BRIDGE_REQUEST_TIMEOUT_MS = Math.max(
   5_000,
@@ -1531,34 +1540,115 @@ function extractBridgeErrorMessage(parsed: unknown, status: number) {
   return fallback;
 }
 
-function bridgeResponseError(response: Response, parsed: unknown, requestUrl: string, requestTeamToken = '') {
-  const record = parsed && typeof parsed === 'object' ? parsed as Record<string, unknown> : null;
-  const privateSiteRejected = response.status === 401
-    && !record
-    && isNetlifyHostedRuntimeShell()
-    && new URL(requestUrl).origin === window.location.origin
-    && !response.headers.has('X-PBK-Bridge-Proxy');
+function bridgeResponseError(
+  response: Response,
+  parsed: unknown,
+  requestUrl: string,
+  requestTeamToken = ''
+) {
+  const record = parsed && typeof parsed === 'object' ? (parsed as Record<string, unknown>) : null;
+  const privateSiteRejected =
+    response.status === 401 &&
+    !record &&
+    isNetlifyHostedRuntimeShell() &&
+    new URL(requestUrl).origin === window.location.origin &&
+    !response.headers.has('X-PBK-Bridge-Proxy');
   const error = new RuntimeBridgeError(
     privateSiteRejected
       ? 'Netlify private-site access is required. Restore site access, then verify again.'
       : extractBridgeErrorMessage(parsed, response.status),
     response.status,
-    privateSiteRejected ? 'private_site_auth_required' : String(record?.code || ''),
+    privateSiteRejected ? 'private_site_auth_required' : String(record?.code || '')
   );
   const currentSession = getRuntimeTeamSession();
-  const sessionRejected = isTeamSessionRejection(error) && Boolean(requestTeamToken)
-    && (!currentSession || currentSession.token === requestTeamToken);
+  const sessionRejected =
+    isTeamSessionRejection(error) &&
+    Boolean(requestTeamToken) &&
+    (!currentSession || currentSession.token === requestTeamToken);
   if (sessionRejected) clearRuntimeTeamSession();
   if (privateSiteRejected || sessionRejected) {
-    window.dispatchEvent(new CustomEvent(RUNTIME_ACCESS_ERROR_EVENT, {
-      detail: {
-        code: sessionRejected ? 'team_session_rejected' : error.code,
-        message: sessionRejected ? 'Your PBK team session expired or was rejected. Sign in again.' : error.message,
-        sessionWasCurrent: currentSession?.token === requestTeamToken,
-      },
-    }));
+    window.dispatchEvent(
+      new CustomEvent(RUNTIME_ACCESS_ERROR_EVENT, {
+        detail: {
+          code: sessionRejected ? 'team_session_rejected' : error.code,
+          message: sessionRejected
+            ? 'Your PBK team session expired or was rejected. Sign in again.'
+            : error.message,
+          sessionWasCurrent: currentSession?.token === requestTeamToken,
+        },
+      })
+    );
   }
   return error;
+}
+
+function canRecoverRuntimeRead(method = 'GET', path = '') {
+  const verb = method.toUpperCase();
+  if (verb === 'POST') return path === '/api/auth/team/verify';
+  return (
+    ['GET', 'HEAD'].includes(verb) &&
+    /^(?:\/state|\/health|\/status|\/api\/(?:health|status)|\/api\/auth\/team\/status|\/api\/leads(?:\/import|\/[^/?]+\/(?:full|last-call))?)$/.test(
+      path
+    )
+  );
+}
+
+async function fetchRuntimeResponse(requestUrl: string, init: RequestInit, path: string) {
+  const safeRead = canRecoverRuntimeRead(init.method, path);
+  const requestToken = new Headers(init.headers).get('X-PBK-Team-Token') || '';
+  for (let attempt = 0; ; attempt++) {
+    let response: Response | undefined;
+    let failure: unknown;
+    try {
+      response = await fetch(requestUrl, init);
+      if (
+        safeRead &&
+        (getRuntimeTeamSession()?.token || '') === requestToken &&
+        (await shouldRetryRuntimeViaHosted(response, requestUrl, path, init.method))
+      ) {
+        const fallbackUrl = buildHostedRuntimeFallbackUrl(requestUrl);
+        if (
+          fallbackUrl &&
+          !init.signal?.aborted &&
+          (getRuntimeTeamSession()?.token || '') === requestToken
+        ) {
+          response = await fetch(fallbackUrl, init);
+        }
+      }
+      if (![502, 503, 504].includes(response.status)) return response;
+    } catch (error) {
+      failure = error;
+    }
+    // Only known reads may be replayed, with the original deadline and authority.
+    if (
+      !safeRead ||
+      attempt >= 2 ||
+      init.signal?.aborted ||
+      (getRuntimeTeamSession()?.token || '') !== requestToken
+    ) {
+      if (response) return response;
+      throw failure;
+    }
+    await new Promise<void>((resolve, reject) => {
+      const abort = () => {
+        clearTimeout(timer);
+        reject(new DOMException('The operation was aborted.', 'AbortError'));
+      };
+      const timer = setTimeout(
+        () => {
+          init.signal?.removeEventListener('abort', abort);
+          resolve();
+        },
+        250 * (attempt + 1)
+      );
+      init.signal?.addEventListener('abort', abort, { once: true });
+      if (init.signal?.aborted) abort();
+    });
+    if ((getRuntimeTeamSession()?.token || '') !== requestToken) {
+      if (response) return response;
+      throw failure;
+    }
+  }
 }
 
 export async function bridgeBlobRequest({
@@ -1574,6 +1664,7 @@ export async function bridgeBlobRequest({
   const timeoutController = new AbortController();
   const onAbort = () => timeoutController.abort();
   signal?.addEventListener('abort', onAbort, { once: true });
+  if (signal?.aborted) onAbort();
   const timeoutId = setTimeout(() => timeoutController.abort(), BRIDGE_REQUEST_TIMEOUT_MS);
   const init = {
     method,
@@ -1586,11 +1677,7 @@ export async function bridgeBlobRequest({
   };
 
   try {
-    let response = await fetch(requestUrl, init);
-    if (await shouldRetryRuntimeViaHosted(response, requestUrl, path, method)) {
-      const fallbackUrl = buildHostedRuntimeFallbackUrl(requestUrl);
-      if (fallbackUrl) response = await fetch(fallbackUrl, init);
-    }
+    const response = await fetchRuntimeResponse(requestUrl, init, path);
     if (!response.ok) {
       const text = await response.text();
       let payload: unknown = text;
@@ -1629,7 +1716,9 @@ export async function bridgeRequest<T = unknown>({
     method !== 'GET' && method !== 'DELETE' && (!serializedBody || serializedBody.length < 60000);
   const requestUrl = buildUrl(path);
   const timeoutController = new AbortController();
-  const requestTimeoutMs = /^\/api\/(?:v1\/)?assistant\/chat$/.test(path) ? 45_000 : BRIDGE_REQUEST_TIMEOUT_MS;
+  const requestTimeoutMs = /^\/api\/(?:v1\/)?assistant\/chat$/.test(path)
+    ? 45_000
+    : BRIDGE_REQUEST_TIMEOUT_MS;
   const timeoutId = setTimeout(() => timeoutController.abort(), requestTimeoutMs);
   const init = {
     method,
@@ -1641,11 +1730,7 @@ export async function bridgeRequest<T = unknown>({
   let response: Response;
   let parsed: unknown;
   try {
-    response = await fetch(requestUrl, init);
-    if (await shouldRetryRuntimeViaHosted(response, requestUrl, path, method)) {
-      const fallbackUrl = buildHostedRuntimeFallbackUrl(requestUrl);
-      if (fallbackUrl) response = await fetch(fallbackUrl, init);
-    }
+    response = await fetchRuntimeResponse(requestUrl, init, path);
     const text = await response.text();
     parsed = text;
     try {
@@ -1718,7 +1803,12 @@ function buildHostedRuntimeFallbackUrl(url = '') {
   }
 }
 
-async function shouldRetryRuntimeViaHosted(response: Response, url = '', path = '', method = 'GET') {
+async function shouldRetryRuntimeViaHosted(
+  response: Response,
+  url = '',
+  path = '',
+  method = 'GET'
+) {
   if (!['GET', 'HEAD'].includes(method.toUpperCase())) return false;
   const canRetryProtectedWithTeamToken = Boolean(getRuntimeTeamSession()?.token);
   if (!isAuthOptionalRuntimePath(path) && !canRetryProtectedWithTeamToken) return false;
@@ -1745,7 +1835,7 @@ export async function fetchTeamAuthStatusRequest() {
 
 export async function authenticateTeamSessionRequest(
   body: { passcode: string; actor?: string },
-  isCurrentRequest: () => boolean = () => true,
+  isCurrentRequest: () => boolean = () => true
 ) {
   const response = await bridgeRequest<RuntimeTeamSession & { ok: boolean }>({
     method: 'POST',
@@ -1782,7 +1872,8 @@ export async function verifyRuntimeTeamSessionRequest() {
       path: '/api/auth/team/verify',
       body: {},
     });
-    if (!verified || verified.ok !== true) throw new Error('Team session verification is unavailable.');
+    if (!verified || verified.ok !== true)
+      throw new Error('Team session verification is unavailable.');
     if (getRuntimeTeamSession()?.token !== session.token) {
       throw new Error('The PBK team session changed during verification. Verify access again.');
     }
@@ -2361,11 +2452,26 @@ export async function updateApprovalDecision(approvalId: string, status: string)
 export async function fetchLeadsRequest() {
   const response = await bridgeRequest<{
     ok: boolean;
+    complete?: boolean;
     leads?: LeadImport[];
     leadImports?: LeadImport[];
   }>({
     path: '/api/leads',
   });
+  if (
+    !response ||
+    response.ok === false ||
+    response.complete === false ||
+    (response.leads !== undefined && !Array.isArray(response.leads)) ||
+    (response.leadImports !== undefined && !Array.isArray(response.leadImports)) ||
+    (!Array.isArray(response.leads) && !Array.isArray(response.leadImports))
+  ) {
+    throw new RuntimeBridgeError(
+      'The saved lead roster is incomplete or unavailable. Try again shortly.',
+      503,
+      'lead_roster_unavailable'
+    );
+  }
   return response.leads || response.leadImports || [];
 }
 

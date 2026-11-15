@@ -422,6 +422,17 @@ async function verify(engine, width) {
       page.getByText('Snapshot fallback (incomplete)', { exact: false }).first()
     ).toBeVisible();
     await expect(page.getByRole('button', { name: 'Preview Ava', exact: true })).toBeDisabled();
+    mode = 'normal';
+    await page.getByRole('button', { name: 'Retry lead roster', exact: true }).click();
+    await expect(picker).toHaveValue('sample-47');
+    await search.fill('Sample 47');
+    mode = 'fallback';
+    await page.getByRole('button', { name: 'Refresh lead roster', exact: true }).click();
+    await expect(page.getByText('Saved full roster (refresh unavailable)', { exact: false }).first()).toBeVisible();
+    await expect(picker).toHaveValue('sample-47');
+    await expect(search).toHaveValue('Sample 47');
+    await expect(page.getByRole('button', { name: 'Retry lead roster', exact: true })).toBeEnabled();
+    await expect(page.getByRole('region', { name: 'Fleet lead context' })).toContainText('65 loaded');
     mode = 'empty';
     await page.reload({ waitUntil: 'domcontentloaded' });
     await expect(picker).toHaveValue('');

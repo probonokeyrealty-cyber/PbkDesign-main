@@ -39,7 +39,7 @@ export async function portalRequest(
   if (!response.ok) {
     throw new Error(result.error || 'Unable to complete this action.');
   }
-  if (command === 'authVerify' || command === 'authCallback') {
+  if (command === 'authVerify' || command === 'authCallback' || command === 'authPassword') {
     accessToken = command === 'authCallback' ? callbackToken! : result.token;
     lifetime.arm(result.expiresIn);
   }
@@ -62,6 +62,9 @@ export function completeEmailCallback() {
       return true;
     })();
   return callbackAttempt;
+}
+export function isPasswordRecovery() {
+  return emailCallback?.recovery === true;
 }
 export async function uploadPortalAsset(form: FormData) {
   const response = await fetch(PORTAL_API, {

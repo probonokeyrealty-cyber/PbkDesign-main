@@ -7,6 +7,24 @@ const server = await import('../supabase/functions/pbk-investor-staging/authSess
 const buyer = 'https://pbk-investors-staging.netlify.app';
 const staff = 'https://pbk-investor-staging--pbkcenter.netlify.app';
 
+test('password recovery callbacks retain only the recovery intent and scrub credentials', () => {
+  let cleared = false;
+  const callback = client.consumeEmailCallback(
+    {
+      pathname: '/',
+      search: '',
+      hash: '#access_token=fixture&refresh_token=discard&type=recovery',
+    },
+    {
+      replaceState: () => {
+        cleared = true;
+      },
+    }
+  );
+  assert.deepEqual(callback, { token: 'fixture', recovery: true });
+  assert.equal(cleared, true);
+});
+
 test('email callbacks remove all credentials before returning a token and never retain refresh tokens', () => {
   assert.equal(typeof client.consumeEmailCallback, 'function');
   const replaced = [];

@@ -7,5 +7,5 @@ export function consumeEmailCallback(location, history) {
   const token = params.get('access_token');
   if (params.has('error') || !token || token.length > 8192)
     return { error: 'This email link is invalid or expired. Request a fresh sign-in link below.' };
-  return { token };
+  return params.get('type') === 'recovery' ? { token, recovery: true } : { token };
 }

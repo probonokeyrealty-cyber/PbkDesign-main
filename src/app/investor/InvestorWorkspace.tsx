@@ -4,6 +4,7 @@ import { clearPrivateSession } from './clientState.mjs';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   completeEmailCallback,
+  isPasswordRecovery,
   portalRequest,
   uploadPortalAsset,
   type PortalMember,
@@ -241,6 +242,10 @@ export function InvestorWorkspace({
     [email, setEmail] = useState(''),
     [code, setCode] = useState(''),
     [codeSent, setCodeSent] = useState(false);
+  const [loginMode, setLoginMode] = useState('password'),
+    [password, setPassword] = useState(''),
+    [confirmPassword, setConfirmPassword] = useState(''),
+    [passwordSetup, setPasswordSetup] = useState(false);
   const [busy, setBusy] = useState(false),
     [error, setError] = useState(''),
     [notice, setNotice] = useState(''),
@@ -284,6 +289,10 @@ export function InvestorWorkspace({
         accessMembers: setAccessMembers,
         code: setCode,
         codeSent: setCodeSent,
+        loginMode: setLoginMode,
+        password: setPassword,
+        confirmPassword: setConfirmPassword,
+        passwordSetup: setPasswordSetup,
         properties: setProperties,
         inquiries: setInquiries,
         saved: setSaved,
@@ -342,7 +351,10 @@ export function InvestorWorkspace({
     setBusy(true);
     void completeEmailCallback()
       .then(async (received) => {
-        if (received && active) await enterWorkspace();
+        if (received && active) {
+          if (isPasswordRecovery()) setPasswordSetup(true);
+          else await enterWorkspace();
+        }
       })
       .catch((e) => {
         if (active) {
@@ -511,6 +523,80 @@ export function InvestorWorkspace({
       />
     </label>
   );
+  if (passwordSetup)
+    return (
+      <div className={`pbk-portal ${staffMode ? 'portal-staff' : ''}`}>
+        <section className="portal-login">
+          <p className="portal-eyebrow">PBK · PRIVATE ACCOUNT</p>
+          <h1>Set your password.</h1>
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              void act(async () => {
+                if (password !== confirmPassword) throw new Error('Passwords do not match.');
+                try {
+                  await portalRequest('setPassword', { password });
+                } finally {
+                  setPassword('');
+                  setConfirmPassword('');
+                }
+                setPasswordSetup(false);
+                await enterWorkspace();
+                setNotice('Your password was updated.');
+              });
+            }}
+          >
+            <label>
+              New password
+              <input
+                type="password"
+                autoComplete="new-password"
+                minLength={12}
+                maxLength={128}
+                required
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+              />
+            </label>
+            <p className="portal-muted">
+              Use 12–128 characters. A password manager can create one for you.
+            </p>
+            <label>
+              Confirm new password
+              <input
+                type="password"
+                autoComplete="new-password"
+                minLength={12}
+                maxLength={128}
+                required
+                value={confirmPassword}
+                onChange={(e) => setConfirmPassword(e.target.value)}
+              />
+            </label>
+            <button className="portal-primary" disabled={busy}>
+              {busy ? 'Updating…' : 'Save password'}
+            </button>
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() =>
+                void act(async () => {
+                  await portalRequest('logout');
+                  clearPrivateState();
+                })
+              }
+            >
+              Cancel and sign out
+            </button>
+          </form>
+          {error && (
+            <p ref={errorSummary} tabIndex={-1} role="alert" className="portal-error">
+              {error}
+            </p>
+          )}
+        </section>
+      </div>
+    );
   if (!member)
     return (
       <div className={`pbk-portal ${staffMode ? 'portal-staff' : ''}`}>
@@ -518,17 +604,24 @@ export function InvestorWorkspace({
           <p className="portal-eyebrow">
             PROBONO KEY REALTY · {PORTAL_IS_STAGING ? 'PRIVATE STAGING' : 'PRIVATE INVESTOR ACCESS'}
           </p>
-          <h1>{staffMode ? 'Your property log.' : 'A clearer view of your next opportunity.'}</h1>
+          <h1>{staffMode ? 'Your property log.' : 'Investor sign-in.'}</h1>
           <p>
             {staffMode
               ? 'Sign in with your approved staff identity to prepare and review properties.'
-              : 'Private property packets for approved PBK investors. Sign in with the email on your approved application.'}
+              : 'Sign in with the email on your approved PBK application.'}
           </p>
           <form
             onSubmit={(e) => {
               e.preventDefault();
               void act(async () => {
-                if (!codeSent) {
+                if (loginMode === 'password') {
+                  try {
+                    await portalRequest('authPassword', { email, password });
+                  } finally {
+                    setPassword('');
+                  }
+                  await enterWorkspace();
+                } else if (!codeSent) {
                   await portalRequest('authStart', { email });
                   setCodeSent(true);
                   setNotice(
@@ -545,13 +638,27 @@ export function InvestorWorkspace({
               Email address
               <input
                 type="email"
-                autoComplete="email"
+                name="portal-email"
+                autoComplete="username"
                 required
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
               />
             </label>
-            {codeSent && (
+            {loginMode === 'password' && (
+              <label>
+                Password
+                <input
+                  type="password"
+                  autoComplete="current-password"
+                  required
+                  maxLength={256}
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                />
+              </label>
+            )}
+            {loginMode === 'email' && codeSent && (
               <label>
                 Sign-in code or complete email link
                 <input
@@ -563,9 +670,50 @@ export function InvestorWorkspace({
               </label>
             )}
             <button className="portal-primary" disabled={busy}>
-              {busy ? 'Please wait…' : codeSent ? 'Verify and sign in' : 'Email my sign-in link'}
+              {busy
+                ? 'Please wait…'
+                : loginMode === 'password'
+                  ? 'Sign in'
+                  : codeSent
+                    ? 'Verify and sign in'
+                    : 'Email my sign-in link'}
             </button>
-            {codeSent && (
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => {
+                setLoginMode(loginMode === 'password' ? 'email' : 'password');
+                setPassword('');
+                setCode('');
+                setCodeSent(false);
+                setError('');
+                setNotice('');
+              }}
+            >
+              {loginMode === 'password' ? 'Use an email link instead' : 'Use password instead'}
+            </button>
+            {loginMode === 'password' && (
+              <button
+                type="button"
+                disabled={busy}
+                onClick={(e) => {
+                  const emailInput = e.currentTarget.form?.elements.namedItem(
+                    'portal-email'
+                  ) as HTMLInputElement;
+                  if (!emailInput?.reportValidity()) return;
+                  setPassword('');
+                  void act(async () => {
+                    await portalRequest('recoverPassword', { email });
+                    setNotice(
+                      'If your account is approved and registered, a password reset link will arrive by email. First time here? Use an email link, then choose Set or change password.'
+                    );
+                  });
+                }}
+              >
+                Forgot password?
+              </button>
+            )}
+            {loginMode === 'email' && codeSent && (
               <button
                 type="button"
                 onClick={() => {
@@ -577,6 +725,11 @@ export function InvestorWorkspace({
               </button>
             )}
           </form>
+          {loginMode === 'password' && (
+            <p className="portal-muted">
+              First time here? Use an email link, then choose Set or change password.
+            </p>
+          )}
           {error && (
             <p ref={errorSummary} tabIndex={-1} role="alert" className="portal-error">
               {error}
@@ -637,6 +790,18 @@ export function InvestorWorkspace({
           <span className="portal-chip">
             {PORTAL_IS_STAGING ? 'STAGING' : 'PRIVATE'} · {member.role}
           </span>
+          <button
+            disabled={busy}
+            onClick={() => {
+              if (!leaveEditor()) return;
+              setPassword('');
+              setConfirmPassword('');
+              setError('');
+              setPasswordSetup(true);
+            }}
+          >
+            Set or change password
+          </button>
           <button
             disabled={busy}
             onClick={() =>

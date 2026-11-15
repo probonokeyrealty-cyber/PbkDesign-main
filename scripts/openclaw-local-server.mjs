@@ -64861,13 +64861,14 @@ async function handleInternalAvaAssistantChatRequest(request) {
     normalizeAssistantSession({ history: messages }).history,
     text
   );
+  const completedHistorySnapshot = body.historyMode === 'completed-only' && Array.isArray(body.messages);
   const assistantIntent = detectAssistantIntent(text);
   const readOnlyAuditRequest = Boolean(assistantIntent.readOnly || isAvaReadOnlyAuditRequest(text));
   const assistantContextSession = {
     ...normalizeAssistantSession(priorAssistantSession),
     leadId: body.leadId || body.lead_id || priorAssistantSession?.leadId || priorAssistantSession?.lead_id || '',
     // A hosted stream may finish after Stop; only the browser knows which replies it completed.
-    history: body.historyMode === 'completed-only' && Array.isArray(body.messages)
+    history: completedHistorySnapshot
       ? requestedHistory
       : mergeAssistantHistories(
         normalizeAssistantSession(priorAssistantSession).history,
@@ -65309,6 +65310,16 @@ async function handleInternalAvaAssistantChatRequest(request) {
       Boolean(assistantPlan.toolPlan?.approvalRequired || assistantPlan.toolPlan?.params?.forceApproval),
   });
   request.avaStream?.signal.throwIfAborted();
+  if (completedHistorySnapshot) {
+    // The snapshot controls this turn's context, not the shared durable conversation record.
+    assistantSession = normalizeAssistantSession({
+      ...assistantSession,
+      history: [
+        ...mergeAssistantHistories(normalizeAssistantSession(priorAssistantSession).history, requestedHistory),
+        ...assistantSession.history.slice(-2),
+      ],
+    });
+  }
   await requestTiming.measure('session_write', () => writePublicAvaAssistantSession(sessionId, assistantSession));
 
   addActivity(

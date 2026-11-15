@@ -674,7 +674,7 @@ assert(
   /import \{[\s\S]*buildAssistantPrompt[\s\S]*\} from '\.\/ava-assistant-chat\.mjs'/.test(bridge) &&
     /normalizeAssistantSession\(\{\s*history:\s*messages\s*\}\)/.test(bridge) &&
     /const requestedHistory =/.test(bridge) &&
-    /assistantContextSession[\s\S]*history: body\.historyMode === 'completed-only'[\s\S]*\? requestedHistory[\s\S]*: mergeAssistantHistories/.test(bridge),
+    /assistantContextSession[\s\S]*history: completedHistorySnapshot[\s\S]*\? requestedHistory[\s\S]*: mergeAssistantHistories/.test(bridge),
   'Authenticated Ava chat must honor completed-only browser history and retain legacy session merging.'
 );
 assert(

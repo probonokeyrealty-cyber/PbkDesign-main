@@ -4,6 +4,7 @@ import vm from 'node:vm';
 import { test } from '@jest/globals';
 import { createAvaRequestTiming } from './ava-request-timing.mjs';
 import { sanitizeAvaStreamReply } from './ava-deepseek-stream.mjs';
+import { appendAssistantMessage, normalizeAssistantSession } from './ava-assistant-chat.mjs';
 
 const source = readFileSync(new URL('./openclaw-local-server.mjs', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
 const start = source.indexOf('async function handleInternalAvaAssistantChatRequest(request) {');
@@ -17,6 +18,7 @@ function fixture({ abortRead = false, blockFinal = false, general = false, messa
   let gateCalls = 0;
   let contextHistory;
   let contextSession;
+  let persistedSession;
   const previews = [];
   const streamController = new AbortController();
   const controller = new AbortController();
@@ -37,7 +39,7 @@ function fixture({ abortRead = false, blockFinal = false, general = false, messa
       return { ...priorSession, history: priorHistory };
     },
     dropCurrentAssistantUserTurn: () => [],
-    normalizeAssistantSession: (session = {}) => ({ history: [], ...session }),
+    normalizeAssistantSession,
     detectAssistantIntent: () => ({ intent: 'lead_lookup' }),
     isAvaReadOnlyAuditRequest: () => false,
     looksLikeCurrentLeadContextRequest: () => false,
@@ -53,7 +55,7 @@ function fixture({ abortRead = false, blockFinal = false, general = false, messa
       if (general) return { action: 'general' };
       return { action: 'tool_plan', toolPlan: { toolName: 'findLead', params: { query: 'absent fixture' } } };
     },
-    appendAssistantMessage: (session) => session,
+    appendAssistantMessage,
     enforceAvaControlEnvelope: () => {
       gateCalls += 1;
       return blockFinal && gateCalls === 2
@@ -73,7 +75,7 @@ function fixture({ abortRead = false, blockFinal = false, general = false, messa
       if (cancelAfterPreview) streamController.abort();
       return { ok: true, answer: 'Safe answer', usagePersistence: { ok: false, result: 'failed', warning: 'token_usage_persistence_failed' }, toolResult: { ok: true } };
     },
-    writePublicAvaAssistantSession: async () => { writes += 1; clock += 900; },
+    writePublicAvaAssistantSession: async (_, session) => { persistedSession = session; writes += 1; clock += 900; },
     addActivity: () => {},
     makeActivity: (activity) => activity,
     recordAvaAssistantPlanOps: (record) => { recorded = record; },
@@ -94,6 +96,7 @@ function fixture({ abortRead = false, blockFinal = false, general = false, messa
     get writes() { return writes; },
     get contextHistory() { return contextHistory; },
     get contextSession() { return contextSession; },
+    get persistedSession() { return persistedSession; },
   };
 }
 
@@ -180,6 +183,25 @@ test('completed-only snapshot with no finished turns does not resurrect a cancel
   });
   await runtime.run();
   assert.equal(runtime.contextHistory.length, 0);
+});
+
+test('a stale tab controls its context without erasing another tab\'s completed saved reply', async () => {
+  const tabB = [
+    { role: 'user', content: 'Describe CEDAR.' },
+    { role: 'assistant', content: 'CEDAR - green walls.' },
+  ];
+  const tabA = [...tabB,
+    { role: 'user', content: 'Describe ORCHID.' },
+    { role: 'assistant', content: 'ORCHID - purple walls.', metadata: { source: 'other-tab' } },
+  ];
+  const runtime = fixture({ general: true, historyMode: 'completed-only', messages: tabB, priorHistory: tabA });
+  await runtime.run();
+  assert.deepEqual(Array.from(runtime.contextHistory, ({ role, content }) => ({ role, content })), tabB);
+  assert.deepEqual(Array.from(runtime.persistedSession.history, turn => turn.content), [
+    'Describe CEDAR.', 'CEDAR - green walls.', 'Describe ORCHID.', 'ORCHID - purple walls.',
+    'find absent fixture', 'Safe answer',
+  ]);
+  assert.equal(runtime.persistedSession.history[3].metadata.source, 'other-tab');
 });
 
 test('actual handler retains unsuccessful lookup and attributes session I/O separately', async () => {

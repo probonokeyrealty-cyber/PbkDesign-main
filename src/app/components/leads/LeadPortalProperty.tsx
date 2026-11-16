@@ -151,7 +151,7 @@ export function LeadPortalProperty({
           />
         </Tabs.Content>
         <Tabs.Content value="comps" className="pbk-property-tab-panel">
-          <LeadComps address={address} />
+          <LeadComps address={address} leadId={lead.id} />
         </Tabs.Content>
         <Tabs.Content value="photos" className="pbk-property-tab-panel">
           <div className="pbk-property-photos-empty">

@@ -33,3 +33,6 @@
 .pbk-places-attribution { color:white; padding:8px 14px; font:400 12px/1.5 sans-serif; white-space:nowrap; }
 .pbk-address-notice { margin:4px 0; font-size:12px; color:var(--text-secondary, #94a3b8); }
 .pbk-address-source { font-size:11px; color:var(--sky, #7dd3fc); }
+.pbk-comps-selection { display:flex; flex-wrap:wrap; align-items:center; gap:10px; padding-top:12px; border-top:1px solid var(--border-subtle, #334155); font-size:12px; }
+.pbk-comps-selection p { flex-basis:100%; }
+.pbk-lead-comps input[type=checkbox] { width:18px; height:18px; margin-right:6px; accent-color:var(--sky, #38bdf8); }

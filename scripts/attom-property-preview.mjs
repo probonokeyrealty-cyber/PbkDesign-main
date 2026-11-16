@@ -30,6 +30,12 @@ export function parseAttomAddress(input) {
   return { street, city, state, zip };
 }
 
+export function sameAttomAddress(first, second) {
+  const a = parseAttomAddress(first), b = parseAttomAddress(second);
+  return Boolean(a && b && attomStreetKey(a.street) === attomStreetKey(b.street) &&
+    normalized(a.city) === normalized(b.city) && a.state === b.state && zip5(a.zip) === zip5(b.zip));
+}
+
 function number(value, min = 0) {
   if (typeof value !== 'number' && !/^\d+(?:\.\d+)?$/.test(text(value))) return null;
   const n = Number(value);

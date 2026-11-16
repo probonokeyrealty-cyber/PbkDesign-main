@@ -14,6 +14,7 @@ const lead = { id: 'comps-fixture', seller: { name: 'Fixture Seller' }, property
 try {
   await mkdir('output/playwright', { recursive: true });
   for (const width of [390, 1440]) {
+    let currentLead = structuredClone(lead);
     const page = await browser.newPage({ viewport: { width, height: 960 } });
     const errors = []; const outbound = []; const writes = [];
     let fail = false; let pendingFacts;
@@ -38,9 +39,18 @@ try {
       }
       if (path === '/api/auth/team/status') return send({ ok: true, configured: false, authRequired: false });
       if (path === '/api/state/stream/session') return send({ ok: false });
+      if (path === '/api/scripts/current' && request.method() === 'POST') return send({ ok: true, script: null });
+      if (path === '/api/leads/' + lead.id && request.method() === 'PATCH') {
+        writes.push(path);
+        const patch = request.postDataJSON();
+        assert.equal(patch.source, 'lead-comps-reviewed');
+        assert.deepEqual(patch.expectedPropertyAddress, address);
+        currentLead = { ...currentLead, analyzer: patch.analyzer, deal: patch.deal };
+        return send({ ok: true, lead: currentLead });
+      }
       if (request.method() !== 'GET') { writes.push(path); return route.abort(); }
       if (path === '/api/leads') return send({ ok: true, leads: [lead] });
-      if (path.startsWith('/api/leads/' + lead.id)) return send({ ok: true, lead });
+      if (path.startsWith('/api/leads/' + lead.id)) return send({ ok: true, lead: currentLead });
       if (path === '/state') return send({ leadImports: [lead] });
       return send({ ok: true, items: [] });
     });
@@ -66,6 +76,9 @@ try {
     await page.getByRole('tab', { name: 'Comps', exact: true }).click();
     const comps = page.getByRole('region', { name: 'Recent comparable sales' });
     await expect(comps.getByText('$400,000', { exact: true })).toBeVisible();
+    await comps.getByRole('checkbox', { name: /^Select comp/ }).check();
+    await comps.getByRole('button', { name: 'Save selected comps', exact: true }).click();
+    await expect(comps.getByText('Selected comps saved to this lead.', { exact: true })).toBeVisible();
     await comps.getByLabel('Sort').selectOption('distance');
     await comps.getByLabel('Radius').selectOption('2');
     await expect(comps.getByText(/No recorded sales within 2 miles/)).toBeVisible();
@@ -80,7 +93,24 @@ try {
     await comps.scrollIntoViewIfNeeded();
     await page.screenshot({ path: `output/playwright/property-comps-${width}.png`, fullPage: true });
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1));
-    assert.deepEqual(errors, []); assert.deepEqual(writes, []);
+    await comps.getByRole('link', { name: 'Open analyzer', exact: true }).click();
+    await expect(page.getByRole('spinbutton', { name: 'Comp A sold price', exact: true })).toHaveValue('400000');
+    await expect(page.getByRole('textbox', { name: 'Comp A address', exact: true })).toHaveValue('86 Sample Cedar Drive, Example City, CA 90210');
+    const callMode = page.getByRole('button', { name: 'Open Call Mode', exact: true });
+    if (await callMode.isVisible()) await callMode.click();
+    else await page.getByRole('button', { name: 'Switch analyzer tab to Call Mode', exact: true }).click();
+    const tabs = page.getByRole('tablist', { name: 'Call workbench views' });
+    await expect(tabs).toBeVisible();
+    const notes = page.getByRole('textbox', { name: 'Call notes', exact: true });
+    await expect(notes).toBeVisible();
+    await tabs.getByRole('tab', { name: 'Numbers', exact: true }).click();
+    await expect(notes).toBeHidden();
+    await tabs.getByRole('tab', { name: 'Follow-up', exact: true }).click();
+    await expect(page.getByRole('heading', { name: 'Post-call actions', exact: true })).toBeVisible();
+    await tabs.getByRole('tab', { name: 'Talk', exact: true }).click();
+    await expect(notes).toBeVisible();
+    assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1));
+    assert.deepEqual(errors, []); assert.deepEqual(writes, ['/api/leads/' + lead.id]);
     assert.ok(outbound.every(host => host === 'https://fonts.googleapis.com'), 'No data-provider or customer traffic is allowed');
     await page.close();
     console.log(`property-intelligence: ${width}px keyboard selection, fact preservation, stale response, comps, empty, timeout and retry passed (fixtures)`);

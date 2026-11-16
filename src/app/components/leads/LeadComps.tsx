@@ -1,6 +1,8 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { Link } from 'react-router';
 import { AlertCircle, Loader2, RefreshCw } from 'lucide-react';
-import { fetchAttomRecentSales, type AttomPreviewAddress, type RecentSalesResult } from '../../utils/runtimeBridge';
+import { fetchAttomRecentSales, patchLeadRequest, type AttomPreviewAddress, type RecentSalesResult } from '../../utils/runtimeBridge';
+import { selectedCompPatch } from '../../utils/leadComps.mjs';
 import { hasLookupAddress } from './AttomPropertyPreview';
 import '../../../styles/property-intelligence.css';
 
@@ -15,15 +17,20 @@ const messages: Record<string, string> = {
   unavailable: 'Could not reach the record source. Your lead is unchanged.',
 };
 
-export function LeadComps({ address }: { address: AttomPreviewAddress }) {
+export function LeadComps({ address, leadId = '' }: { address: AttomPreviewAddress; leadId?: string }) {
   const [radius, setRadius] = useState(1);
   const [sort, setSort] = useState('date');
   const [refresh, setRefresh] = useState(0);
+  const [selected, setSelected] = useState<string[]>([]);
+  const [saving, setSaving] = useState(false);
+  const [saveStatus, setSaveStatus] = useState('');
   const [result, setResult] = useState<{ key: string; data: RecentSalesResult } | null>(null);
   const queryKey = JSON.stringify([address.street, address.city, address.state, address.zip, radius, refresh]);
+  const scope = useRef(''); scope.current = leadId + queryKey;
   const complete = hasLookupAddress(address) || /^.+,\s*[^,]+,\s*[A-Z]{2}\s+\d{5}(?:-\d{4})?$/i.test(address.street);
   useEffect(() => {
     let current = true;
+    setSelected([]); setSaveStatus(''); setSaving(false);
     if (complete) {
       void fetchAttomRecentSales(address, radius).then(
         data => { if (current) setResult({ key: queryKey, data }); },
@@ -36,6 +43,19 @@ export function LeadComps({ address }: { address: AttomPreviewAddress }) {
   const loading = complete && !data;
   const rows = useMemo(() => [...(data?.sales || [])].sort((a, b) => sort === 'price'
     ? b.price - a.price : sort === 'distance' ? a.distanceMiles - b.distanceMiles : b.soldDate.localeCompare(a.soldDate)), [data, sort]);
+  async function saveSelection() {
+    if (!leadId || !data || saving) return;
+    const current = scope.current;
+    setSaving(true); setSaveStatus('');
+    try {
+      const patch = selectedCompPatch(data, selected, address);
+      const response = await patchLeadRequest(leadId, patch);
+      if (response.ok === false) throw Error('The bridge did not save the selected comps.');
+      if (scope.current === current) setSaveStatus('Selected comps saved to this lead.');
+    } catch (error) {
+      if (scope.current === current) setSaveStatus(error instanceof Error ? error.message : 'Unable to save comps. Retry when the bridge is available.');
+    } finally { if (scope.current === current) setSaving(false); }
+  }
   return <section className="pbk-lead-comps" aria-label="Recent comparable sales" aria-busy={loading}>
     <header>
       <div><h3>Recorded sales</h3><p>ATTOM public records · Last 30 days · Not MLS listings</p></div>
@@ -57,10 +77,16 @@ export function LeadComps({ address }: { address: AttomPreviewAddress }) {
         {rows.length > 0 && <div className="pbk-comps-table-scroll"><table>
           <caption className="sr-only">Recent sales from {data.windowStart} to {data.windowEnd}</caption>
           <thead><tr><th scope="col">Property</th><th scope="col">Sold</th><th scope="col">Price</th><th scope="col">Distance</th><th scope="col">Beds / baths</th><th scope="col">Sq ft</th><th scope="col">$/sq ft</th></tr></thead>
-          <tbody>{rows.map(row => <tr key={row.id}><th scope="row">{row.address}<small>{row.propertyType || 'Type not reported'}</small></th><td data-label="Sold">{row.soldDate}</td><td data-label="Price">{money.format(row.price)}</td><td data-label="Distance">{row.distanceMiles.toFixed(2)} mi</td><td data-label="Beds / baths">{row.beds ?? '-'} / {row.baths ?? '-'}</td><td data-label="Sq ft">{row.sqft?.toLocaleString() ?? '-'}</td><td data-label="$/sq ft">{row.pricePerSqft == null ? '-' : money.format(row.pricePerSqft)}</td></tr>)}</tbody>
+          <tbody>{rows.map(row => <tr key={row.id}><th scope="row">{leadId && <input type="checkbox" aria-label={`Select comp ${row.address}`} checked={selected.includes(row.id)} disabled={saving || (!selected.includes(row.id) && selected.length >= 3)} onChange={e => { setSaveStatus(''); setSelected(ids => e.target.checked ? [...ids, row.id] : ids.filter(id => id !== row.id)); }} />} {row.address}<small>{row.propertyType || 'Type not reported'}</small></th><td data-label="Sold">{row.soldDate}</td><td data-label="Price">{money.format(row.price)}</td><td data-label="Distance">{row.distanceMiles.toFixed(2)} mi</td><td data-label="Beds / baths">{row.beds ?? '-'} / {row.baths ?? '-'}</td><td data-label="Sq ft">{row.sqft?.toLocaleString() ?? '-'}</td><td data-label="$/sq ft">{row.pricePerSqft == null ? '-' : money.format(row.pricePerSqft)}</td></tr>)}</tbody>
         </table></div>}
         {!rows.length && radius < 5 && <button type="button" className="pbk-btn pbk-btn-ghost pbk-btn-sm" onClick={() => setRadius(radius < 2 ? 2 : 5)}>Widen to {radius < 2 ? 2 : 5} miles</button>}
         <p className="pbk-comps-source">{data.windowStart} - {data.windowEnd} · Retrieved {data.retrievedAt ? new Date(data.retrievedAt).toLocaleString() : 'just now'}{data.partial ? ' · Provider result window limited' : ''}</p>
+        {leadId && <div className="pbk-comps-selection">
+          <span>{selected.length}/3 selected{selected.length ? ' · replaces saved comp set' : ''}</span>
+          <button type="button" className="pbk-btn pbk-btn-primary pbk-btn-sm" disabled={!selected.length || saving} onClick={() => void saveSelection()}>{saving ? 'Saving...' : 'Save selected comps'}</button>
+          <Link className="pbk-btn pbk-btn-ghost pbk-btn-sm" to={`/deal/${encodeURIComponent(leadId)}`}>Open analyzer</Link>
+          {saveStatus && <p role="status">{saveStatus}</p>}
+        </div>}
       </>}
   </section>;
 }

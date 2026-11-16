@@ -4,6 +4,10 @@
 
 Extends the existing Deal Analyzer address field and Lead Portal Property tabs. Staff routes and bridge authentication remain protected. No customer outreach, lead creation, automatic lead writes, or automatic valuation is performed.
 
+Operators can explicitly select one to three recorded sales and save them through the existing canonical lead PATCH. This replaces the three analyzer comp slots, retains a bounded source/date snapshot in the lead analyzer payload, and marks analysis stale. The same lead opens in Analyzer with these comps restored. A changed subject address blocks an in-flight save and prevents old research comps from hydrating another property. No separate CRM database or authorization path is introduced.
+
+Call Mode separates Talk, Numbers and Follow-up using the existing Radix tabs, retaining mounted controls and notes while switching views. A seller/property header links back to the canonical lead. Claude reviewed this flow; the [Atomic CRM](https://github.com/marmelab/atomic-crm) and [shadcn combobox](https://github.com/shadcn-ui/ui) repositories informed interaction patterns only, not a replacement backend or new framework dependency.
+
 Claude reviewed the desktop/mobile interaction layout on November 15, 2026. The existing PBK design system is retained. Google supplies address predictions only; ATTOM supplies verified property facts and recorded sales. No PropStream API or MLS integration is represented as connected.
 
 ## Configuration
@@ -33,7 +37,7 @@ All use the existing bridge/team authorization gate and return `Cache-Control: n
 ## Verification
 
 ```powershell
-node --test scripts/attom-recent-sales.node-test.mjs scripts/address-suggestions.node-test.mjs
+node --test scripts/attom-recent-sales.node-test.mjs scripts/address-suggestions.node-test.mjs scripts/lead-comps.node-test.mjs
 node scripts/property-intelligence-browser-smoke.mjs
 node scripts/lead-property-workspaces-browser-smoke.mjs
 node scripts/render-docker-imports-smoke.mjs

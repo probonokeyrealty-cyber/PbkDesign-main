@@ -93,7 +93,7 @@ export async function startIsolatedBridge({ entry = defaultEntry, args = [], sta
     child.once('error', invalidate);
     child.stderr.on('data', chunk => { stderr = (stderr + chunk).slice(-6000); });
     await new Promise((resolve, reject) => {
-      startupTimer = setTimeout(() => reject(new Error('Isolated bridge startup timed out')), startupMs);
+      startupTimer = setTimeout(() => reject(new Error(`Isolated bridge startup timed out (${startupMs}ms): ${stderr || '(no child stderr)'}`)), startupMs);
       child.once('error', reject);
       child.once('close', code => reject(new Error(`Isolated bridge exited during startup (${code}): ${stderr}`)));
       child.on('message', message => {

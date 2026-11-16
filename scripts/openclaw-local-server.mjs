@@ -15,7 +15,7 @@ import pg from 'pg';
 import { createClient as createRedisClient } from 'redis';
 import { DeleteObjectCommand, GetObjectCommand, HeadBucketCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { getSignedUrl as getS3SignedUrl } from '@aws-sdk/s3-request-presigner';
-import { lookupAttomPropertyPreview } from './attom-property-preview.mjs';
+import { lookupAttomPropertyPreview, sameAttomAddress } from './attom-property-preview.mjs';
 import { lookupAttomRecentSales } from './attom-recent-sales.mjs';
 import { lookupAddressSuggestions } from './address-suggestions.mjs';
 import { applyAgentVersionRollback, buildAgentRegistrySnapshot, buildAgentVersionSnapshot, buildDefaultAgentRegistry, buildStableAgentFleetMeasurement, findAgentsByCapability, invokeRegisteredAgent, mergeAgentRegistryRecords, normalizeAgentRegistryId, normalizeAgentRegistryRecord, validateAgentVersionSnapshot } from './agent-registry.mjs';
@@ -80724,6 +80724,17 @@ const server = createServer(async (request, response) => {
     if (leadPatchMatch && request.method === 'PATCH') {
       const body = await readBody(request);
       const existing = findLeadImportByLookup(leadPatchMatch.groups.id);
+      if (body.expectedPropertyAddress) {
+        if (!existing) { json(response, 404, { ok: false, error: 'Lead not found.' }); return; }
+        const p = existing.property || {};
+        if (!sameAttomAddress(body.expectedPropertyAddress, {
+          street: p.address || existing.address, city: p.city || existing.city,
+          state: p.state || existing.state, zip: p.zip || p.zipCode || existing.zip || existing.zipCode,
+        })) {
+          json(response, 409, { ok: false, error: 'The lead property changed. Refresh the lead before saving comps.', code: 'property_context_changed' });
+          return;
+        }
+      }
       const sellerPatch =
         body.seller && typeof body.seller === 'object' && !Array.isArray(body.seller)
           ? body.seller

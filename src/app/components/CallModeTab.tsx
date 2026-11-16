@@ -1,4 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
+import * as Tabs from '@radix-ui/react-tabs';
+import { Link } from 'react-router';
+import '../../styles/call-workbench.css';
 import { DealData, PBKPath } from '../types';
 import { LiveCallInputs } from './LiveCallInputs';
 import { LiveDealTrackerPanel } from './LiveDealTrackerPanel';
@@ -93,6 +96,7 @@ export function CallModeTab({
   const [lastSavedNotes, setLastSavedNotes] = useState(deal.notes || '');
   const [postCallStatus, setPostCallStatus] = useState('');
   const [pendingPostCallAction, setPendingPostCallAction] = useState('');
+  const [callView, setCallView] = useState('talk');
   const [scriptVariant, setScriptVariant] = useState<ScriptVariant>(
     deal.contact === 'realtor' ? 'agent' : 'owner'
   );
@@ -295,6 +299,17 @@ export function CallModeTab({
 
   return (
     <div className="pbk-analyzer-main pbk-call-workbench">
+      <header className="pbk-call-context-header">
+        <div><strong>{deal.sellerName || 'Seller'}</strong><span>{deal.address || 'Property not selected'}</span></div>
+        {deal.leadId && <Link className="pbk-btn pbk-btn-ghost pbk-btn-sm" to={`/leads/${encodeURIComponent(deal.leadId)}`}>Open lead</Link>}
+      </header>
+      <Tabs.Root value={callView} onValueChange={setCallView} activationMode="manual">
+        <Tabs.List className="pbk-call-view-tabs" aria-label="Call workbench views">
+          <Tabs.Trigger value="talk">Talk</Tabs.Trigger>
+          <Tabs.Trigger value="numbers">Numbers</Tabs.Trigger>
+          <Tabs.Trigger value="followup">Follow-up</Tabs.Trigger>
+        </Tabs.List>
+        <Tabs.Content value="talk" forceMount hidden={callView !== 'talk'} className="pbk-call-view-panel">
       <section
         aria-labelledby="call-path-heading"
         className="pbk-analyzer-card pbk-analyzer-workbench-section"
@@ -330,14 +345,6 @@ export function CallModeTab({
         onPushScriptToAgent={onPushScriptToAgent}
       />
 
-      {isCoCPath(activePath) ? (
-        <div className="mb-3">
-          <InvestorYield deal={deal} onDealChange={onDealChange} activePath={activePath} />
-        </div>
-      ) : null}
-
-      <LiveDealTrackerPanel deal={deal} activePath={activePath} />
-
       <section
         aria-labelledby="call-notes-heading"
         className="pbk-analyzer-card pbk-analyzer-workbench-section"
@@ -358,14 +365,22 @@ export function CallModeTab({
           className="w-full h-32 px-3 py-2 border border-gray-200 dark:border-slate-700 rounded-lg bg-gray-50 dark:bg-slate-900 text-gray-900 dark:text-gray-100 text-[12.5px] outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 transition-all resize-vertical"
         />
       </section>
-
+      </Tabs.Content>
+      <Tabs.Content value="numbers" forceMount hidden={callView !== 'numbers'} className="pbk-call-view-panel">
+      {isCoCPath(activePath) ? (
+        <div className="mb-3">
+          <InvestorYield deal={deal} onDealChange={onDealChange} activePath={activePath} />
+        </div>
+      ) : null}
+      <LiveDealTrackerPanel deal={deal} activePath={activePath} />
       <LiveCallInputs
         deal={deal}
         onDealChange={onDealChange}
         selectedPath={getLiveInputPath(activePath)}
         canonicalPath={activePath}
       />
-
+      </Tabs.Content>
+      <Tabs.Content value="followup" forceMount hidden={callView !== 'followup'} className="pbk-call-view-panel">
       <section
         aria-labelledby="call-actions-heading"
         className="pbk-analyzer-card pbk-analyzer-workbench-section"
@@ -409,6 +424,8 @@ export function CallModeTab({
           </button>
         </div>
       </section>
+      </Tabs.Content>
+      </Tabs.Root>
     </div>
   );
 }

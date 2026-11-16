@@ -9,6 +9,7 @@ import {
 } from '../utils/analyzerStorage';
 import { isStaleDynamicImportError, reloadForCurrentDeploy } from '../utils/deployVersion';
 import { fetchLeadFullRequest } from '../utils/runtimeBridge';
+import { savedLeadComps } from '../utils/leadComps.mjs';
 
 type BridgeRecord = Record<string, unknown>;
 
@@ -169,7 +170,8 @@ export function buildAnalyzerDealFromLead(payload: BridgeRecord, requestedLeadId
   const city = firstText(property.city, lead.city);
   const state = firstText(property.state, lead.state);
   const zipCode = firstText(property.zip, property.zipCode, lead.zip, lead.zipCode);
-  const fullAddress = address ? [address, city, state, zipCode].filter(Boolean).join(', ') : '';
+  const fullAddress = address ? (/[,].*\b[A-Z]{2}\s+\d{5}(?:-\d{4})?$/i.test(address)
+    ? address : [address, city, [state, zipCode].filter(Boolean).join(' ')].filter(Boolean).join(', ')) : '';
   const arv = firstNumber(property.arv, callContext.arv, analysis.arv, lead.arv);
   const mao = firstNumber(
     property.mao,
@@ -223,8 +225,10 @@ export function buildAnalyzerDealFromLead(payload: BridgeRecord, requestedLeadId
       typeof lead.notes === 'string' ? lead.notes : ''
     ),
     vacantStatus: firstText(property.occupancy, lead.occupancy),
-    isAnalyzed: arv !== undefined || mao !== undefined || maoRBP !== undefined ? true : undefined,
+    isAnalyzed: record(lead.deal).isAnalyzed === false ? false : arv !== undefined || mao !== undefined || maoRBP !== undefined ? true : undefined,
   };
+  const comps = savedLeadComps(lead);
+  if (comps) deal.comps = comps;
 
   if (repairEstimate !== undefined || condition) {
     deal.repairs = {
@@ -283,6 +287,9 @@ function hydrateAnalyzerFromLead(payload: BridgeRecord, leadId: string) {
     currentLeadId && currentLeadId === leadId
       ? mergeMeaningfulAnalyzerValues(currentDeal, mappedDeal)
       : mergeMeaningfulAnalyzerValues({}, mappedDeal);
+  // Reviewed comp selections replace the whole set, including intentionally emptied slots.
+  if (mappedDeal.comps) mergedDeal.comps = mappedDeal.comps;
+  if (mappedDeal.isAnalyzed === false) mergedDeal.isAnalyzed = false;
 
   if (window.PBKAnalyzer?.setState) {
     window.PBKAnalyzer.setState({

@@ -21,13 +21,28 @@ const sender = {
   id: 'qa-sender', channel: 'sms', provider: 'telnyx', lifecycleStatus: 'active',
   status: 'active', address: '+12025550143', label: 'QA sender', eligibility: { eligible: true },
 };
+const incomingMessage = {
+  id: 'qa-incoming', leadId: lead.id, leadName: lead.name, channel: 'sms',
+  from: lead.phone, body: 'Fixture seller reply', direction: 'inbound',
+  read: false, createdAt: '2026-11-09T12:00:00Z',
+};
 
 async function verify(engine, viewport, device = {}) {
   const browser = await engine.launch();
   try {
-    const page = await browser.newPage({ ...device, viewport, serviceWorkers: 'block' });
+    const context = await browser.newContext({ ...device, viewport, serviceWorkers: 'block' });
+    const page = await context.newPage();
+    await context.routeWebSocket('**/*', (socket) => socket.close());
+    await context.addInitScript(() => {
+      window.__qaComposeWrites = [];
+      const setItem = Storage.prototype.setItem;
+      Storage.prototype.setItem = function (key, value) {
+        if (key === 'pbk:compose:draft') window.__qaComposeWrites.push(JSON.parse(value));
+        return setItem.call(this, key, value);
+      };
+    });
     if (hosted) {
-      await page.addInitScript((expectedOrigin) => {
+      await context.addInitScript((expectedOrigin) => {
         if (location.origin !== expectedOrigin) return;
         localStorage.setItem('pbk:team-session:v1', JSON.stringify({
           token: 'fixture-only',
@@ -35,7 +50,6 @@ async function verify(engine, viewport, device = {}) {
           expiresAt: new Date(Date.now() + 600_000).toISOString(),
         }));
       }, origin);
-      await page.routeWebSocket('**/*', (socket) => socket.close());
     }
     const sends = [];
     const decisions = [];
@@ -43,13 +57,17 @@ async function verify(engine, viewport, device = {}) {
     let mismatchedThread = false;
     let wrongThreadReads = 0;
     const wrongThread = { ...thread, id: 'qa-wrong-thread', leadId: 'qa-other-lead' };
-    await page.route('**/*', (route) => {
+    await context.route('**/*', (route) => {
       const req = route.request();
       const url = new URL(req.url());
       const path = url.pathname;
+      if (url.origin !== origin) return route.abort();
       if (path === '/state') return route.fulfill({ json: { approvals: resolved ? [] : [approval], leads: [lead] } });
       if (path === '/api/leads') return route.fulfill({ json: { ok: true, leads: [lead], items: [lead] } });
       if (path === '/api/leads/qa-lead/full') return route.fulfill({ json: { ok: true, lead } });
+      if (path === '/api/messages' && req.method() === 'GET') {
+        return route.fulfill({ json: { ok: true, messages: [incomingMessage] } });
+      }
       if (path === '/api/conversations') {
         const items = mismatchedThread && url.searchParams.has('leadId') ? [wrongThread] : [thread];
         return route.fulfill({ json: { ok: true, items } });
@@ -100,6 +118,76 @@ async function verify(engine, viewport, device = {}) {
     await page.goto(`${origin}/inbox`);
     await expect(page.getByRole('heading', { name: 'Inbox.', exact: true })).toBeVisible();
     await expect(page.getByText(approval.message)).toBeVisible();
+
+    const draftKey = 'pbk:compose:draft';
+    const savedDraft = {
+      channel: 'email', recipient: 'draft-only@example.test', leadId: '',
+      message: 'Unsent manual draft survives overlapping tabs',
+      sendLater: true, sendAt: '2099-02-01T09:00',
+    };
+    await page.evaluate(({ key, draft }) => {
+      localStorage.setItem(key, JSON.stringify(draft));
+      window.__qaComposeWrites = [];
+    }, { key: draftKey, draft: savedDraft });
+    const openCompose = async target => {
+      await target.getByRole('button', { name: 'Compose', exact: true }).first().click();
+      return target.getByRole('dialog', { name: 'Compose message' });
+    };
+    const storedDraft = () => page.evaluate(key => JSON.parse(localStorage.getItem(key)), draftKey);
+    const firstDraft = await openCompose(page);
+    await expect(firstDraft.getByPlaceholder('Write a seller-facing message...')).toHaveValue(savedDraft.message);
+    assert.deepEqual(await storedDraft(), savedDraft);
+    assert.deepEqual(await page.evaluate(() => window.__qaComposeWrites), [],
+      'Opening Compose must never write its initial blank or restored draft to shared storage');
+
+    const second = await context.newPage();
+    await second.goto(`${origin}/inbox`);
+    await expect(second.getByRole('heading', { name: 'Inbox.', exact: true })).toBeVisible();
+    const secondDraft = await openCompose(second);
+    await expect(secondDraft.getByPlaceholder('Write a seller-facing message...')).toHaveValue(savedDraft.message);
+    assert.deepEqual(await storedDraft(), savedDraft);
+    assert.deepEqual(await second.evaluate(() => window.__qaComposeWrites), [],
+      'A second Compose tab must not overwrite an existing draft during restoration');
+    await firstDraft.getByRole('button', { name: 'Close compose' }).click();
+    const editedDraft = { ...savedDraft, message: 'Newer unsent wording from the second tab' };
+    await secondDraft.getByPlaceholder('Write a seller-facing message...').fill(editedDraft.message);
+    await expect.poll(storedDraft).toEqual(editedDraft);
+    await openCompose(page);
+    await expect(firstDraft.getByPlaceholder('Write a seller-facing message...')).toHaveValue(editedDraft.message);
+    assert.deepEqual(await page.evaluate(() => window.__qaComposeWrites), [],
+      'Reopening a stale tab must restore the newer draft without writing its older state');
+    assert.deepEqual(await storedDraft(), editedDraft);
+    await page.reload();
+    await expect(page.getByRole('heading', { name: 'Inbox.', exact: true })).toBeVisible();
+    await openCompose(page);
+    await expect(firstDraft.getByPlaceholder('Write a seller-facing message...')).toHaveValue(editedDraft.message);
+    assert.deepEqual(await storedDraft(), editedDraft);
+    assert.deepEqual(await page.evaluate(() => window.__qaComposeWrites), [],
+      'Reloading alongside another open composer must not blank the saved draft');
+    if (process.env.PBK_INBOX_SCREENSHOTS === '1') {
+      await page.screenshot({ path: `.pbk-local/compose-restored-${engine.name()}-${viewport.width}.png` });
+    }
+    await firstDraft.getByPlaceholder('Write a seller-facing message...').fill('');
+    await expect.poll(storedDraft).toEqual({ ...editedDraft, message: '' });
+    await firstDraft.getByPlaceholder('Write a seller-facing message...').fill(editedDraft.message);
+    await expect.poll(storedDraft).toEqual(editedDraft);
+    await checkWidth();
+    assert.deepEqual(sends, []);
+    assert.deepEqual(decisions, []);
+    await firstDraft.getByRole('button', { name: 'Close compose' }).click();
+    await secondDraft.getByRole('button', { name: 'Close compose' }).click();
+    await second.close();
+    await page.getByRole('button', { name: `Reply to ${lead.name}`, exact: true }).click();
+    await expect(firstDraft.getByPlaceholder('Name or phone number')).toHaveValue(lead.phone);
+    await expect(firstDraft.getByPlaceholder('Write a seller-facing message...')).toHaveValue('');
+    await expect.poll(storedDraft).toEqual({
+      channel: 'sms', recipient: lead.phone, leadId: lead.id,
+      message: '', sendLater: false, sendAt: '',
+    });
+    await firstDraft.getByRole('button', { name: 'Close compose' }).click();
+    await page.evaluate(key => localStorage.removeItem(key), draftKey);
+    console.log(`Compose restoration performs no writes across tabs or reloads: ${engine.name()} ${viewport.width}px`);
+
     await page.getByRole('button', { name: 'Approve', exact: true }).click();
     const confirmation = page.getByRole('dialog');
     await expect(confirmation.getByText(approval.message)).toBeVisible();
@@ -130,6 +218,8 @@ async function verify(engine, viewport, device = {}) {
     await doubleClick(schedule);
     await expect(compose).toHaveCount(0);
     assert.equal(sends.filter(({ path }) => path === '/api/messages').length, 1);
+    assert.equal(await page.evaluate(key => localStorage.getItem(key), draftKey), null,
+      'An accepted schedule must clear its submitted compose draft');
     await checkWidth();
     if (process.env.PBK_INBOX_SCREENSHOTS === '1') {
       await page.screenshot({ path: `.pbk-local/inbox-${engine.name()}-${viewport.width}.png` });
@@ -190,6 +280,7 @@ async function verify(engine, viewport, device = {}) {
 try {
   await verify(chromium, { width: 1440, height: 900 });
   await verify(webkit, { width: 390, height: 844 }, devices['iPhone 13']);
+  await verify(webkit, { width: 320, height: 740 }, devices['iPhone 13']);
 } finally {
   await server?.close();
 }

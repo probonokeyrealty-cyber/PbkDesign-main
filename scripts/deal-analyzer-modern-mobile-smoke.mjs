@@ -1,5 +1,10 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import strictAssert from 'node:assert/strict';
+import vm from 'node:vm';
+import ts from 'typescript';
+import { savedLeadComps } from '../src/app/utils/leadComps.mjs';
+import { latestCallModeNote } from '../src/app/utils/analyzerLeadPersistence.mjs';
 
 const root = process.cwd();
 
@@ -148,11 +153,88 @@ assert(
 assert(
   /propertyTypeSource/.test(dealView) &&
     /selectedPathSource/.test(dealView) &&
-    /isAnalyzed:\s*record\(lead\.deal\)\.isAnalyzed === false \? false : arv !== undefined \|\| mao !== undefined \|\| maoRBP !== undefined\s*\? true\s*:\s*undefined/.test(
+    /isAnalyzed:\s*record\(lead\.deal\)\.isAnalyzed === false\s*\? false\s*:\s*arv !== undefined \|\| mao !== undefined \|\| maoRBP !== undefined\s*\? true\s*:\s*undefined/.test(
       dealView
-    ),
-  'Lead hydration should not replace existing type, path, or analyzed state with guessed defaults.'
+    ) && /if \(mappedDeal\.isAnalyzed === false\) mergedDeal\.isAnalyzed = false/.test(dealView),
+  'Lead hydration must preserve explicit unanalyzed state and avoid guessed type, path, or analyzed defaults.'
 );
+
+// Execute only the hydration functions with sample state, never the React route or bridge.
+const hydrationNames = [
+  'record', 'firstText', 'firstNumber', 'normalizePropertyType', 'normalizeContact',
+  'normalizePath', 'isMeaningfulAnalyzerValue', 'mergeMeaningfulAnalyzerValues',
+  'buildAnalyzerDealFromLead', 'hydrateAnalyzerFromLead',
+];
+const hydrationAst = ts.createSourceFile('DealView.tsx', dealView, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+const hydrationFunctions = hydrationAst.statements.filter(node =>
+  ts.isFunctionDeclaration(node) && hydrationNames.includes(node.name?.text));
+strictAssert.equal(hydrationFunctions.length, hydrationNames.length);
+const { outputText: hydrationCode } = ts.transpileModule(hydrationFunctions.map(node => node.getText(hydrationAst)).join('\n'), {
+  compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },
+});
+let sampleCurrent = {}, sampleHydrated;
+let sampleStored = {}, storageReads = 0, storageWrites = 0;
+const hydration = vm.createContext({
+  exports: {}, savedLeadComps, latestCallModeNote, ANALYZER_CURRENT_DEAL_KEY: 'sample-only',
+  readAnalyzerStorage: (key) => {
+    strictAssert.equal(key, 'sample-only');
+    storageReads += 1;
+    return structuredClone(sampleStored);
+  },
+  writeAnalyzerStorage: (key, deal) => {
+    strictAssert.equal(key, 'sample-only');
+    storageWrites += 1;
+    sampleStored = structuredClone(deal);
+  },
+  window: { PBKAnalyzer: {
+    getState: () => ({ deal: sampleCurrent }),
+    setState: state => { sampleHydrated = structuredClone(state.deal); },
+  } },
+});
+vm.runInContext(hydrationCode, hydration, { timeout: 1000 });
+const mapLead = payload => structuredClone(hydration.buildAnalyzerDealFromLead(payload, 'sample-a'));
+const blankDeal = mapLead({ id: 'sample-a' });
+for (const field of ['type', 'selectedPath', 'isAnalyzed']) strictAssert.equal(blankDeal[field], undefined);
+for (const field of ['arv', 'mao', 'maoRBP']) {
+  strictAssert.equal(mapLead({ id: 'sample-a', property: { [field]: 0 } }).isAnalyzed, true);
+}
+const manualUnanalyzed = { id: 'sample-a', deal: { isAnalyzed: false }, property: { arv: 245000 } };
+strictAssert.equal(mapLead(manualUnanalyzed).isAnalyzed, false);
+strictAssert.equal(mapLead(manualUnanalyzed).arv, 245000);
+sampleCurrent = { leadId: 'sample-a', type: 'land', selectedPath: 'land-owner', arv: 245000,
+  price: 120000, notes: 'Manual wording', isAnalyzed: true, comps: { A: { address: 'Sample comp', price: 260000 } } };
+const originalManual = structuredClone(sampleCurrent);
+hydration.hydrateAnalyzerFromLead({ id: 'sample-a' }, 'sample-a');
+strictAssert.deepEqual(sampleHydrated, originalManual);
+hydration.hydrateAnalyzerFromLead(manualUnanalyzed, 'sample-a');
+strictAssert.equal(sampleHydrated.isAnalyzed, false);
+strictAssert.deepEqual(sampleCurrent, originalManual, 'Hydration must not mutate the current draft');
+hydration.hydrateAnalyzerFromLead({ id: 'sample-b' }, 'sample-b');
+strictAssert.equal(sampleHydrated.leadId, 'sample-b');
+for (const field of ['arv', 'price', 'comps', 'notes', 'selectedPath', 'type']) strictAssert.equal(sampleHydrated[field], undefined);
+strictAssert.equal(storageReads, 0, 'Mounted hydration must not read fallback storage');
+strictAssert.equal(storageWrites, 0, 'Mounted hydration must not write fallback storage');
+
+// Cold route loads hydrate storage before the Analyzer API has mounted.
+delete hydration.window.PBKAnalyzer;
+sampleStored = structuredClone(originalManual);
+hydration.hydrateAnalyzerFromLead({ id: 'sample-a' }, 'sample-a');
+strictAssert.equal(storageReads, 1);
+strictAssert.equal(storageWrites, 1, 'Cold-route hydration must persist the hydrated draft');
+strictAssert.deepEqual(sampleStored, originalManual, 'Cold hydration must retain same-lead draft values');
+hydration.hydrateAnalyzerFromLead(manualUnanalyzed, 'sample-a');
+strictAssert.equal(storageReads, 2);
+strictAssert.equal(storageWrites, 2);
+strictAssert.equal(sampleStored.isAnalyzed, false);
+strictAssert.equal(sampleStored.notes, originalManual.notes);
+strictAssert.deepEqual(sampleStored.comps, originalManual.comps);
+hydration.hydrateAnalyzerFromLead({ id: 'sample-a-other' }, 'sample-a-other');
+strictAssert.equal(storageReads, 3);
+strictAssert.equal(storageWrites, 3);
+strictAssert.equal(sampleStored.leadId, 'sample-a-other');
+for (const field of ['arv', 'price', 'comps', 'notes', 'selectedPath', 'type']) strictAssert.equal(sampleStored[field], undefined);
+strictAssert.deepEqual(sampleCurrent, originalManual, 'Storage hydration must not mutate the mounted draft fixture');
+
 assert(
   /window\.PBKAnalyzer\?\.setState/.test(dealView) &&
     /writeAnalyzerStorage/.test(dealView) &&

@@ -1851,7 +1851,8 @@ const checks = [
   {
     name: 'Netlify hosted app proxies operational bridge routes through same-origin functions',
     ok:
-      /export default async function fetchHandler\(request: Request\): Promise<Response>/.test(netlifyBridgeProxyFunction) &&
+      /export\s+default\s+async\s+function\s+fetchHandler\(request: Request\): Promise<Response>/.test(netlifyBridgeProxyFunction) &&
+      /export\s+const\s+legacyHandler:\s*Handler\s*=\s*\(event\)\s*=>\s*proxyRequest\(event\)/.test(netlifyBridgeProxyFunction) &&
       !/export\s+const\s+handler\s*:/.test(netlifyBridgeProxyFunction) &&
       /webResponse\(await proxyRequest\(event, \{ streaming: true, signal: request.signal, body \}\)/.test(netlifyBridgeProxyFunction) &&
       /PBK_BRIDGE_URL/.test(netlifyBridgeProxyFunction) &&

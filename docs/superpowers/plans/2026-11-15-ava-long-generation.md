@@ -36,6 +36,7 @@ Review fixes: shared proxy/direct chat-intent permissions, narrow trusted PBK pr
 
 ### Task 3: Release Verification
 - [x] Independent review and targeted/build/runtime gates.
-- [ ] Deploy the tested continuation of the approved Ava work without overwriting concurrent changes.
-- [ ] Verify a live long reply, streaming voice, Stop, completed-only follow-up context, mobile containment, and staff protection.
-- [ ] Record exact evidence and remaining platform safeguards.
+- [x] Deploy the tested continuation of the approved Ava work without overwriting concurrent changes.
+- [x] Verify a live long reply through its complete ending, hosted authentication, and preserved permission gates.
+- [x] Observe active streamed-reply speech; retain Stop/completed-only context regressions and hand remaining browser playback/device checks to the user at their explicit request. No fresh mobile or full device-playback result is claimed after that handoff.
+- [x] Record exact evidence and remaining platform safeguards in `docs/superpowers/verification/2026-11-15-ava-long-generation.md`.

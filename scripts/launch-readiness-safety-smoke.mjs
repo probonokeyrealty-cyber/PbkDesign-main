@@ -11,7 +11,8 @@ try {
   assert.equal(result.shadowCanaryComparison.ready, false, 'Default same-version metrics are not a live comparison');
   assert.equal(result.canaryPromotionGate.ready, false);
   assert.equal(result.ready, false);
-  assert.equal(result.executionEvidence.source, 'not_configured');
+  assert.equal(result.executionEvidence.source, 'postgres_unavailable');
+  assert.equal(result.executionEvidence.verified, false);
   console.log('launch-readiness-safety-smoke: ok (missing evidence remains not ready)');
 } finally {
   await child.stop();

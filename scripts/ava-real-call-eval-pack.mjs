@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import {
   buildAvaLiveTurnContract,
@@ -446,84 +448,135 @@ const reportedFailedCallScenarios = [
   },
 ];
 
-const results = reportedFailedCallScenarios.map(assertScenario);
+export const AVA_REAL_CALL_EVAL_SCENARIO_IDS = Object.freeze([
+  ...reportedFailedCallScenarios.map(({ id }) => id),
+  'governed-trust-skill-cockpit',
+]);
 
-const skillScenario = assertScenario({
-  id: 'governed-trust-skill-cockpit',
-  transcript: 'How do I know this is not a scam?',
-  ledger: { fullAddress: '123 Main St', authority: 'owner' },
-  activeSkill: {
-    id: 'skill-trust-reset',
-    name: 'Trust reset',
-    instructions: 'Validate distrust, offer proof, then ask what proof would help.',
-  },
-  governedSkillSelection: {
-    result: 'governed_skill_selected',
-    action: 'jump',
-    reasonCodes: ['objection_match'],
-    matchedTriggers: ['trust_scam'],
-  },
-  expected: {
-    intent: 'trust_scam',
-    nextBestQuestionCategory: 'trust_proof',
-    replyMatches: [/fair concern|proof/i],
-  },
-});
-
-const cockpit = buildAvaLiveCockpitSnapshot({
-  contract: skillScenario.contract,
-  replyMode: 'fast_local_turn_contract_skill',
-  latencyMs: 142,
-  turnContractEnforced: true,
-});
-assert.equal(cockpit.intent, 'trust_scam');
-assert.equal(cockpit.activeSkill.name, 'Trust reset');
-assert.equal(cockpit.replyMode, 'fast_local_turn_contract_skill');
-assert.equal(cockpit.latencyMs, 142);
-assert.equal(cockpit.turnContractEnforced, true);
-assert(cockpit.knownFacts.fullAddress);
-assert(cockpit.missingFacts.includes('target_price'));
-
-const outcomeDraft = buildAvaLiveSkillOutcomeDraft({
-  contract: skillScenario.contract,
-  callId: 'call-eval-1',
-  leadId: 'lead-eval-1',
-  transcript: 'How do I know this is not a scam?',
-  reply: skillScenario.reply,
-  replyMode: 'fast_local_turn_contract_skill',
-});
-assert.equal(outcomeDraft.skillName, 'Trust reset');
-assert.equal(outcomeDraft.skillId, 'skill-trust-reset');
-assert.equal(outcomeDraft.agentName, 'Ava');
-assert.equal(outcomeDraft.outcomeLabel, 'turn_contract_observed');
-assert.equal(outcomeDraft.metadata.intent, 'trust_scam');
-assert.equal(outcomeDraft.metadata.nextQuestionCategory, 'trust_proof');
-
-const bridgeSource = readFileSync('scripts/openclaw-local-server.mjs', 'utf8');
-assert(
-  bridgeSource.includes('avaLiveCockpit') &&
-    bridgeSource.includes('avaLiveTurnHistory') &&
-    bridgeSource.includes('post_call_turn_contract_learning'),
-  'Live bridge must expose cockpit metadata and summarize governed turn-contract skills into post-call learning.'
-);
-
-console.log(
-  JSON.stringify(
-    {
-      ok: true,
-      result: 'ava_real_call_eval_pack_passed',
-      scenarios: results.length + 1,
-      coverage: {
-        intents: [...new Set(results.map(({ contract }) => contract.intent))].sort(),
-        handoffCases: results.filter(({ contract }) => contract.handoffNeeded).length,
-      },
-      sampleReplies: {
-        alreadyGavePrice: results.find((item) => item.scenario.id === 'already-gave-price-no-repeat')?.reply,
-        stopContact: results.find((item) => item.scenario.id === 'stop-contact-no-question')?.reply,
-        ambiguousYes: results.find((item) => item.scenario.id === 'ambiguous-yes-clarifies')?.reply,
-      },
+function assertGovernedTrustSkill() {
+  const skillScenario = assertScenario({
+    id: 'governed-trust-skill-cockpit',
+    transcript: 'How do I know this is not a scam?',
+    ledger: { fullAddress: '123 Main St', authority: 'owner' },
+    activeSkill: {
+      id: 'skill-trust-reset',
+      name: 'Trust reset',
+      instructions: 'Validate distrust, offer proof, then ask what proof would help.',
     },
-    null,
-    2
-  )
-);
+    governedSkillSelection: {
+      result: 'governed_skill_selected',
+      action: 'jump',
+      reasonCodes: ['objection_match'],
+      matchedTriggers: ['trust_scam'],
+    },
+    expected: {
+      intent: 'trust_scam',
+      nextBestQuestionCategory: 'trust_proof',
+      replyMatches: [/fair concern|proof/i],
+    },
+  });
+
+  const cockpit = buildAvaLiveCockpitSnapshot({
+    contract: skillScenario.contract,
+    replyMode: 'fast_local_turn_contract_skill',
+    latencyMs: 142,
+    turnContractEnforced: true,
+  });
+  assert.equal(cockpit.intent, 'trust_scam');
+  assert.equal(cockpit.activeSkill.name, 'Trust reset');
+  assert.equal(cockpit.replyMode, 'fast_local_turn_contract_skill');
+  assert.equal(cockpit.latencyMs, 142);
+  assert.equal(cockpit.turnContractEnforced, true);
+  assert(cockpit.knownFacts.fullAddress);
+  assert(cockpit.missingFacts.includes('target_price'));
+
+  const outcomeDraft = buildAvaLiveSkillOutcomeDraft({
+    contract: skillScenario.contract,
+    callId: 'call-eval-1',
+    leadId: 'lead-eval-1',
+    transcript: 'How do I know this is not a scam?',
+    reply: skillScenario.reply,
+    replyMode: 'fast_local_turn_contract_skill',
+  });
+  assert.equal(outcomeDraft.skillName, 'Trust reset');
+  assert.equal(outcomeDraft.skillId, 'skill-trust-reset');
+  assert.equal(outcomeDraft.agentName, 'Ava');
+  assert.equal(outcomeDraft.outcomeLabel, 'turn_contract_observed');
+  assert.equal(outcomeDraft.metadata.intent, 'trust_scam');
+  assert.equal(outcomeDraft.metadata.nextQuestionCategory, 'trust_proof');
+
+  const bridgeSource = readFileSync(new URL('./openclaw-local-server.mjs', import.meta.url), 'utf8');
+  assert(
+    bridgeSource.includes('avaLiveCockpit') &&
+      bridgeSource.includes('avaLiveTurnHistory') &&
+      bridgeSource.includes('post_call_turn_contract_learning'),
+    'Live bridge must expose cockpit metadata and summarize governed turn-contract skills into post-call learning.'
+  );
+  return skillScenario;
+}
+
+function executeAvaRealCallChecks() {
+  const scenarioResults = [];
+  const checks = [
+    ...reportedFailedCallScenarios.map((scenario) => [scenario.id, () => assertScenario(scenario)]),
+    ['governed-trust-skill-cockpit', assertGovernedTrustSkill],
+  ];
+  const results = checks.map(([id, check]) => {
+    try {
+      const detail = check();
+      if (id !== 'governed-trust-skill-cockpit') scenarioResults.push(detail);
+      return { id, executed: true, passed: true, reason: 'Controlled turn-contract assertions passed.' };
+    } catch {
+      // Dependency errors can contain private runtime data; return fixed labels only.
+      return { id, executed: true, passed: false, reason: `${id}: controlled turn-contract check failed.` };
+    }
+  });
+  const passed = results.filter((row) => row.passed).length;
+  return {
+    report: {
+      ok: passed === results.length,
+      total: results.length,
+      passed,
+      failed: results.length - passed,
+      results,
+    },
+    scenarioResults,
+  };
+}
+
+export function runAvaRealCallQualification() {
+  return executeAvaRealCallChecks().report;
+}
+
+function main() {
+  const { report, scenarioResults: results } = executeAvaRealCallChecks();
+  if (!report.ok) {
+    console.log(JSON.stringify(report, null, 2));
+    process.exitCode = 1;
+    return;
+  }
+  console.log(
+    JSON.stringify(
+      {
+        ok: true,
+        result: 'ava_real_call_eval_pack_passed',
+        scenarios: results.length + 1,
+        coverage: {
+          intents: [...new Set(results.map(({ contract }) => contract.intent))].sort(),
+          handoffCases: results.filter(({ contract }) => contract.handoffNeeded).length,
+        },
+        sampleReplies: {
+          alreadyGavePrice: results.find((item) => item.scenario.id === 'already-gave-price-no-repeat')?.reply,
+          stopContact: results.find((item) => item.scenario.id === 'stop-contact-no-question')?.reply,
+          ambiguousYes: results.find((item) => item.scenario.id === 'ambiguous-yes-clarifies')?.reply,
+        },
+      },
+      null,
+      2
+    )
+  );
+}
+
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  main();
+}

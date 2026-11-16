@@ -26,6 +26,11 @@ import { runControlledAgentWorkflow } from './controlled-agent-workflow.mjs';
 import { createAvaRequestTiming } from './ava-request-timing.mjs';
 import { createBackgroundPersistence, createCoalescedPersistence } from './background-persistence.mjs';
 import { createProviderActionBinding, hashProviderActionContext, validateProviderActionAuthorization, validateNegotiationApproval } from './provider-action-authorization.mjs';
+import { authorizeQualificationRequest, executeReleaseQualification, isDirectQualificationFounder, readReleaseQualification } from './release-qualification.mjs';
+import { loadQualificationCiEvidence } from './release-qualification-ci.mjs';
+import { AVA_REAL_CALL_EVAL_SCENARIO_IDS, runAvaRealCallQualification } from './ava-real-call-eval-pack.mjs';
+import { BEHAVIOR_QUALIFICATION_CASE_IDS, runBehaviorQualification } from './behavior-tests.mjs';
+import { SILENT_ERROR_POLICY_CASE_IDS, runSilentErrorPolicyQualification } from './silent-error-governance-smoke.mjs';
 import { createPoolSchemaInitializer } from './pool-schema-initializer.mjs';
 import { observeUsagePersistence } from './ava-accounting-status.mjs';
 import { buildAvaDecisionMessages, isAvaCompactDecisionSafe } from './ava-decision-messages.mjs';
@@ -211,38 +216,12 @@ void initializeObservability({ serviceName: 'pbk-openclaw-bridge' });
 
 const productionReadinessMonitor = createProductionReadinessMonitor();
 const productionIdempotencyStore = createIdempotencyStore();
-const AVA_REAL_CALL_EVAL_SCENARIOS = Object.freeze([
-  'already-gave-price-no-repeat',
-  'repeat-complaint-advance',
-  'make-offer-before-facts',
-  'make-offer-after-price-address',
-  'friday-close-with-price',
-  'fast-sale-needs-price',
-  'fast-sale-known-price-and-timeline',
-  'competing-offer-terms',
-  'price-too-low-net-question',
-  'need-to-think-specific-hesitation',
-  'spouse-decision-maker',
-  'trust-scam-proof',
-  'probate-handoff',
-  'attorney-review-handoff',
-  'trustee-bankruptcy-handoff',
-  'stop-contact-no-question',
-  'seller-max-net-rbp',
-  'subject-to-path-signal',
-  'seller-finance-path-signal',
-  'land-path-signal',
-  'caller-is-agent',
-  'agent-top-dollar-not-cash-default',
-  'partial-address-needs-canonical-address',
-  'full-facts-advance-to-timeline',
-  'tenant-pain-do-not-jump-offer',
-  'emotional-loss-handoff',
-  'ambiguous-yes-clarifies',
-  'send-contract-confirm-before-action',
-  'agent-cash-does-not-work',
-  'governed-trust-skill-cockpit',
-]);
+const AVA_REAL_CALL_EVAL_SCENARIOS = AVA_REAL_CALL_EVAL_SCENARIO_IDS;
+const RELEASE_QUALIFICATION_CASES = Object.freeze({
+  failedCall: AVA_REAL_CALL_EVAL_SCENARIO_IDS,
+  behavior: BEHAVIOR_QUALIFICATION_CASE_IDS,
+  silentPolicy: SILENT_ERROR_POLICY_CASE_IDS,
+});
 const runtimeEventArchiveFallbackEvents = [];
 const runtimeEventArchiveStats = {
   attempted: 0,
@@ -3128,7 +3107,7 @@ async function buildProductionReadinessSnapshot({
     requireTurnContract: false,
   });
   const slo = productionReadinessMonitor.getSloStatus();
-  const maturity = buildProductionMaturitySnapshot({ runtimeMeta });
+  const maturity = await buildProductionMaturitySnapshot({ runtimeMeta });
   return {
     ok: true,
     result:
@@ -11455,22 +11434,25 @@ async function buildProductionPerformanceStatusSnapshot() {
   });
 }
 
-function buildProductionMaturitySnapshot({ runtimeMeta = getRuntimeMeta() } = {}) {
+async function buildProductionMaturitySnapshot({ runtimeMeta = getRuntimeMeta() } = {}) {
   const archive = getRuntimeEventArchiveStatus();
   const providerCircuits = getProviderCircuitStatus();
   const stableAgentFleetMeasurement = buildAgentOrchestrationSnapshot().measurement;
   const sloStatus = productionReadinessMonitor.getSloStatus();
-  // No attested failed-call/canary execution reader is wired yet. Do not accept
-  // caller-supplied state or environment metrics as proof that tests executed.
+  const qualification = await readReleaseQualification({
+    pool: getPgPool(), revision: process.env.RENDER_GIT_COMMIT || BUILD_REVISION,
+    secret: BRIDGE_API_KEY, requiredCases: RELEASE_QUALIFICATION_CASES,
+  });
   const executionEvidence = buildExecutedReadinessEvidence({
     revision: process.env.RENDER_GIT_COMMIT || BUILD_REVISION,
-    evidence: {}, requiredScenarioIds: AVA_REAL_CALL_EVAL_SCENARIOS, sloStatus,
+    evidence: qualification.evidence, requiredScenarioIds: AVA_REAL_CALL_EVAL_SCENARIOS, sloStatus,
   });
   const { failedCallEvalGate, shadowCanaryComparison, canaryPromotionGate } = executionEvidence;
   const blockers = [
     ...(archive.ready ? [] : ['runtime_event_archive']),
     ...(providerCircuits.ready ? [] : providerCircuits.openProviders.map((provider) => `provider_circuit:${provider}`)),
     ...(failedCallEvalGate.ready ? [] : ['failed_call_eval']),
+    ...(qualification.qualification.ready ? [] : ['no_contact_qualification']),
     ...(executionEvidence.ready ? [] : ['executed_release_evidence']),
     ...(stableAgentFleetMeasurement?.ready ? [] : ['stable_agent_fleet_measurement']),
     ...(shadowCanaryComparison.ready ? [] : shadowCanaryComparison.blockers.map((item) => `shadow:${item}`)),
@@ -11487,6 +11469,7 @@ function buildProductionMaturitySnapshot({ runtimeMeta = getRuntimeMeta() } = {}
       runtimeArchiveReady: archive.ready,
       providerCircuitsReady: providerCircuits.ready,
       failedCallEvalReady: failedCallEvalGate.ready,
+      controlledQualificationReady: qualification.qualification.ready,
       stableAgentFleetMeasured: Boolean(stableAgentFleetMeasurement?.ready),
       shadowCanaryReady: shadowCanaryComparison.ready,
       canaryPromotionReady: canaryPromotionGate.ready,
@@ -11495,8 +11478,12 @@ function buildProductionMaturitySnapshot({ runtimeMeta = getRuntimeMeta() } = {}
     providerCircuits,
     failedCallEvalGate,
     stableAgentFleetMeasurement,
-    executionEvidence: { ...executionEvidence, source: 'not_configured',
-      note: 'Executed release evidence is not connected. Packaged checks and environment defaults do not qualify as run proof.' },
+    executionEvidence: { ...executionEvidence, source: qualification.source,
+      verified: qualification.verified, qualificationRunId: qualification.runId || null,
+      qualificationStatus: qualification.result,
+      note: 'Only signed server-executed Postgres readback qualifies. Controlled policy checks do not certify operational silent-error audits, seller delivery or independent canary performance.' },
+    qualification: { ...qualification.qualification, verified: qualification.verified,
+      runId: qualification.runId || null, executedAt: qualification.executedAt || null, source: qualification.source },
     shadowCanaryComparison: {
       ...shadowCanaryComparison,
       mode: 'unverified',
@@ -72832,10 +72819,41 @@ const server = createServer(async (request, response) => {
     }
 
     if (request.method === 'GET' && matchesPath(pathname, ['/api/production/maturity', '/api/maturity/status'])) {
-      const maturity = await getCachedReadResponse('production-maturity', BRIDGE_READ_CACHE_TTL_MS.productionMaturity, () =>
-        buildProductionMaturitySnapshot({ runtimeMeta: getRuntimeMeta() })
-      );
+      // Always read the newest signed run; a cached prior pass cannot hide a newer failure.
+      const maturity = await buildProductionMaturitySnapshot({ runtimeMeta: getRuntimeMeta() });
       json(response, maturity.ready ? 200 : 202, maturity);
+      return;
+    }
+
+    if (pathname === '/api/admin/qualification/run') {
+      const authority = authorizeQualificationRequest({ method: request.method, search: url.search,
+        headers: request.headers, body: {} }, BRIDGE_API_KEY);
+      if (!authority.ok) {
+        json(response, authority.status, { ok: false, result: authority.result });
+        return;
+      }
+      const allowed = authorizeQualificationRequest({ method: request.method, search: url.search,
+        headers: request.headers, body: await readBody(request) }, BRIDGE_API_KEY);
+      if (!allowed.ok) {
+        json(response, allowed.status, { ok: false, result: allowed.result });
+        return;
+      }
+      const revision = process.env.RENDER_GIT_COMMIT || BUILD_REVISION;
+      const result = await executeReleaseQualification({
+        pool: runtimeStateBootstrap.ready ? getPgPool() : null, revision, secret: BRIDGE_API_KEY,
+        requiredCases: RELEASE_QUALIFICATION_CASES,
+        loadCi: () => loadQualificationCiEvidence({ revision, token: process.env.GITHUB_TOKEN || process.env.GITHUB_PAT || '' }),
+        runChecks: async () => {
+          const checks = {};
+          for (const [id, run] of [['failedCall', runAvaRealCallQualification], ['behavior', runBehaviorQualification],
+            ['silentPolicy', runSilentErrorPolicyQualification]]) {
+            try { checks[id] = await run(); } catch { checks[id] = null; }
+          }
+          return checks;
+        },
+      });
+      clearBridgeReadCache('release_qualification_executed');
+      json(response, result.ok ? 200 : result.result === 'qualification_run_in_progress' ? 409 : 503, result);
       return;
     }
 
@@ -73008,7 +73026,7 @@ const server = createServer(async (request, response) => {
     }
 
     if (pathname === '/api/agents/controlled-qualification') {
-      if (!BRIDGE_API_KEY || request.headers.authorization !== `Bearer ${BRIDGE_API_KEY}`) {
+      if (!isDirectQualificationFounder(request.headers, BRIDGE_API_KEY)) {
         json(response, 403, { ok: false, result: 'controlled_founder_auth_required' });
         return;
       }

@@ -6,6 +6,7 @@ import vm from 'node:vm';
 import ts from 'typescript';
 import Pool from 'pg-pool';
 import { withPgTransaction } from './skill-governance-store.mjs';
+import { createCoalescedPersistence } from './background-persistence.mjs';
 
 // Run with node --test. Extract only database helpers; no bridge startup, .env, or sockets.
 const source = readFileSync(new URL('./openclaw-local-server.mjs', import.meta.url), 'utf8');
@@ -18,10 +19,12 @@ const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const connectionError = () => Object.assign(new Error('Connection terminated unexpectedly'), { code: 'ECONNRESET' });
 
 function load(context, names) {
-  for (const name of names) {
+  const persistence = names.includes('persistStateToDb');
+  for (const name of persistence ? ['writeStateToDb', ...names] : names) {
     assert.ok(functions.has(name), `Missing bridge function: ${name}`);
     vm.runInContext(functions.get(name), context);
   }
+  if (persistence) context.stateDbWriteQueue = createCoalescedPersistence({ persist: context.writeStateToDb });
 }
 
 function runtime(t, {

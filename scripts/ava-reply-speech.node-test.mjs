@@ -53,6 +53,22 @@ test('a detailed answer retains all characters and its unpunctuated final tail',
   assert.ok(played.every(chunk => chunk.length <= 600));
 });
 
+test('a long generated reply drains beyond old model budgets without repeating or cutting its tail', async () => {
+  const played = [];
+  let progress;
+  const queue = speech.createAvaReplySpeech(async text => { played.push(text); }, value => { progress = value; }, error => { throw error; });
+  const text = `${'A detailed section with an example and a complete explanation. '.repeat(1400)}All sections have been covered.`;
+  assert.ok(text.length > 64_000);
+  for (let end = 2500; end < text.length; end += 2500) queue.update(text.slice(0, end));
+  queue.finish(text);
+  await queue.done;
+  assert.equal(played.join(''), text);
+  assert.ok(played.every(chunk => chunk.length <= 600));
+  assert.equal(progress.spokenCharacters, text.length);
+  assert.equal(progress.queuedCharacters, 0);
+  assert.equal(progress.state, 'idle');
+});
+
 test('a fragment waits until a sentence boundary or final completion', async () => {
   const f = fixture();
   f.queue.update('An incomplete fragment');

@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 import ts from 'typescript';
+import { getAvaChatRequiredPermissions } from '../ava-team-chat-permissions.mjs';
 
 const source = readFileSync(new URL('../../netlify/functions/pbk-bridge-proxy.ts', import.meta.url), 'utf8');
 const { outputText } = ts.transpileModule(source, {
@@ -12,6 +13,10 @@ function loadProxy(upstreamFetch, timers = {}) {
   const exports = {};
   vm.runInNewContext(outputText, {
     exports, URL, Buffer, AbortController, Error, DOMException,
+    require: name => {
+      if (name === '../../scripts/ava-team-chat-permissions.mjs') return { getAvaChatRequiredPermissions };
+      throw new Error(`Unexpected proxy fixture import: ${name}`);
+    },
     Request, Response, Headers, ReadableStream,
     setTimeout: timers.setTimeout || setTimeout,
     clearTimeout: timers.clearTimeout || clearTimeout,

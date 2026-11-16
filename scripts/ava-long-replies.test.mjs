@@ -47,6 +47,18 @@ test('follow-up context retains the end of a detailed assistant answer', () => {
   assert.match(redacted.history[0].content, /\[redacted-secret\]$/);
 });
 
+test('a long generated explanation retains its complete tail beyond the old 64000-character history cutoff', () => {
+  const answer = `${'Detailed example and explanation. '.repeat(2500)}\n\nThe entire ending remains available.`;
+  assert.ok(answer.length > 64_000);
+  const session = appendAssistantMessage({}, 'assistant', answer);
+  assert.equal(session.history[0].content.length, answer.length);
+  assert.equal(session.history[0].content.slice(-36), answer.slice(-36));
+  assert.equal(normalizeAssistantSession(session).history[0].content, answer);
+  const context = fixture();
+  assert.equal(context.parseAvaDeepSeekDecisionAnswer(JSON.stringify({ reply: answer })).reply, answer);
+  assert.equal(context.normalizeAvaAssistantAnswer(answer), answer);
+});
+
 test('speech request building preserves all supplied text beyond 1800 characters', () => {
   const context = fixture();
   const request = context.buildElevenLabsTtsRequest({ autoProsody: false }, explanation);

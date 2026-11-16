@@ -29,6 +29,7 @@ import { buildAvaDecisionMessages, isAvaCompactDecisionSafe } from './ava-decisi
 import { joinAvaSpeechResponses, splitAvaSpeechText } from './ava-speech-chunks.mjs';
 import { createAvaDecisionPreview, readDeepSeekStream, sanitizeAvaStreamReply } from './ava-deepseek-stream.mjs';
 import { streamAvaChatResponse } from './ava-chat-events.mjs';
+import { getAvaChatRequiredPermissions } from './ava-team-chat-permissions.mjs';
 import { EventTypes, getEventBusStatus, publishEvent as publishEventBusEvent } from './event-bus/streams.mjs';
 import { buildRexKpiSnapshot, proposeAutonomousRexGoals, selectRexProactiveLeadAction } from './rex-autonomy.mjs';
 import { recordScriptOutcomeStats, selectContextAwareScript } from './context-aware-script-rotator.mjs';
@@ -3830,6 +3831,7 @@ function authorizeDirectTeamBridgeRequest({
   const normalizedPath = String(pathname || '').toLowerCase();
   const toolName = String(body.toolName || body.tool || body.name || '').trim();
   const normalizedToolName = toolName.toLowerCase();
+  const chatPermissions = getAvaChatRequiredPermissions(normalizedPath, body);
   const confirmedLeadDelete =
     normalizedMethod === 'DELETE' &&
     /^\/api\/leads\/[^/]+$/.test(normalizedPath) &&
@@ -3867,7 +3869,7 @@ function authorizeDirectTeamBridgeRequest({
     normalizedMethod !== 'GET' &&
     /(?:\/api\/messages|\/api\/conversation|\/api\/conversations|\/api\/sms|\/api\/inbox)/.test(normalizedPath) &&
     /sms|message|conversation|inbox/.test(normalizedPath);
-  if ((smsTool || smsRoute) && permissions.canSendSms !== true) {
+  if ((smsTool || smsRoute || chatPermissions.has('canSendSms')) && permissions.canSendSms !== true) {
     return deny('canSendSms', 'send SMS messages');
   }
 
@@ -3876,7 +3878,7 @@ function authorizeDirectTeamBridgeRequest({
     normalizedMethod !== 'GET' &&
     /(?:\/api\/cold-email|\/api\/messages|\/api\/conversation|\/api\/conversations|\/api\/email|\/api\/inbox)/.test(normalizedPath) &&
     /email|message|conversation|inbox/.test(normalizedPath);
-  if ((emailTool || emailRoute) && permissions.canSendEmail !== true) {
+  if ((emailTool || emailRoute || chatPermissions.has('canSendEmail')) && permissions.canSendEmail !== true) {
     return deny('canSendEmail', 'send emails');
   }
 
@@ -3884,8 +3886,12 @@ function authorizeDirectTeamBridgeRequest({
   const callRoute =
     normalizedMethod !== 'GET' &&
     /(?:\/api\/calls|\/api\/operator\/call|\/api\/call)/.test(normalizedPath);
-  if ((callTool || callRoute) && permissions.canPlaceCalls !== true) {
+  if ((callTool || callRoute || chatPermissions.has('canPlaceCalls')) && permissions.canPlaceCalls !== true) {
     return deny('canPlaceCalls', 'place calls');
+  }
+
+  if (chatPermissions.has('canApproveProviderActions') && permissions.canApproveProviderActions !== true) {
+    return deny('canApproveProviderActions', 'approve provider actions');
   }
 
   const killSwitchTool = /^(?:pbk_kill_switch|killswitch|togglekillswitch)$/i.test(toolName);
@@ -30812,7 +30818,7 @@ async function runDeepSeekChatCompletion(messages = [], params = {}) {
       model,
       messages: requestMessages,
       temperature: params.temperature ?? 0.25,
-      max_tokens: Math.max(128, Math.min(4096, toNumber(params.maxTokens || params.max_tokens, 1200))),
+      max_tokens: Math.max(128, Math.min(params.longReply === true ? 32_768 : 4096, toNumber(params.maxTokens || params.max_tokens, 1200))),
       thinking: { type: thinkingMode },
       ...(streamPreview ? { stream: true, stream_options: { include_usage: true } } : {}),
       ...(params.responseFormat === 'json' ? { response_format: { type: 'json_object' } } : {}),
@@ -31014,7 +31020,14 @@ async function runDeepSeekChatCompletion(messages = [], params = {}) {
         }
       }
       controller = new AbortController();
-      timeout = setTimeout(() => controller.abort(), remainingTimeoutMs);
+      const attemptDeadlineAt = Date.now() + remainingTimeoutMs;
+      const armTimeout = () => {
+        if (timeout) clearTimeout(timeout);
+        const remaining = Math.max(0, attemptDeadlineAt - Date.now());
+        const idle = streamPreview ? Math.max(1000, toNumber(params.streamIdleTimeoutMs, remaining)) : remaining;
+        timeout = setTimeout(() => controller.abort(), Math.min(remaining, idle));
+      };
+      armTimeout();
       const { response, payload } = await measure('llm_request', async () => {
         const response = await executeProviderCircuitGuard(
           'deepseek',
@@ -31037,6 +31050,8 @@ async function runDeepSeekChatCompletion(messages = [], params = {}) {
         const payload = streamPreview && response.ok ? await readDeepSeekStream(response, {
           signal: params.signal ? AbortSignal.any([controller.signal, params.signal]) : controller.signal,
           onDelta: delta => streamPreview.write(delta),
+          onActivity: armTimeout,
+          maxContentCharacters: params.longReply === true ? 1_048_576 : 128_000,
         }) : await response.json().catch((error) => {
           if (controller.signal.aborted) controller.signal.throwIfAborted();
           if (error?.name === 'AbortError') throw error;
@@ -62403,7 +62418,7 @@ function sendBinary(response, statusCode, body, headers = {}) {
   response.end(body);
 }
 
-const BRIDGE_DEFAULT_ALLOWED_ORIGINS = ['https://pbkcommandcenter.netlify.app', 'https://pbk-openclaw-bridge.onrender.com', 'http://localhost:3000', 'http://localhost:5173', 'http://127.0.0.1:3000', 'http://127.0.0.1:5173', `http://${HOST}:${PORT}`];
+const BRIDGE_DEFAULT_ALLOWED_ORIGINS = ['https://pbkcenter.netlify.app', 'https://pbkcommandcenter.netlify.app', 'https://pbk-openclaw-bridge.onrender.com', 'http://localhost:3000', 'http://localhost:5173', 'http://127.0.0.1:3000', 'http://127.0.0.1:5173', `http://${HOST}:${PORT}`];
 
 function getBridgeAllowedOrigins() {
   const configured = String(process.env.PBK_ALLOWED_ORIGINS || process.env.PBK_CORS_ALLOWED_ORIGINS || '')
@@ -62413,14 +62428,32 @@ function getBridgeAllowedOrigins() {
   return new Set([...BRIDGE_DEFAULT_ALLOWED_ORIGINS, ...configured]);
 }
 
+function isBridgeOriginAllowed(origin = '') {
+  const allowed = getBridgeAllowedOrigins();
+  if (allowed.has(origin)) return true;
+  try {
+    const candidate = new URL(origin);
+    if (candidate.protocol !== 'https:' || candidate.port || candidate.origin !== origin) return false;
+    for (const trusted of allowed) {
+      const site = new URL(trusted);
+      if (site.protocol !== 'https:' || site.port || site.hostname.includes('--')
+        || !/^[a-z0-9-]+\.netlify\.app$/.test(site.hostname)) continue;
+      const suffix = `--${site.hostname}`;
+      if (candidate.hostname.endsWith(suffix)
+        && /^[a-z0-9][a-z0-9-]*$/.test(candidate.hostname.slice(0, -suffix.length))) return true;
+    }
+  } catch { /* Malformed origins are never trusted. */ }
+  return false;
+}
+
 function buildBridgeCorsHeaders(request) {
   const headers = {
     'Access-Control-Allow-Methods': 'GET,POST,PUT,PATCH,DELETE,OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type, Authorization, Idempotency-Key, X-Idempotency-Key, X-PBK-Webhook-Secret, X-Webhook-Secret, X-PBK-Signature, X-Public-Ava-Key, X-Public-Key, X-Request-ID, X-PBK-TOTP, X-OTP, X-PBK-Local-Callback-Token',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-PBK-Team-Token, Idempotency-Key, X-Idempotency-Key, X-PBK-Webhook-Secret, X-Webhook-Secret, X-PBK-Signature, X-Public-Ava-Key, X-Public-Key, X-Request-ID, X-PBK-TOTP, X-OTP, X-PBK-Local-Callback-Token',
     Vary: 'Origin',
   };
   const origin = String(request?.headers?.origin || '').trim();
-  if (origin && getBridgeAllowedOrigins().has(origin)) {
+  if (origin && isBridgeOriginAllowed(origin)) {
     headers['Access-Control-Allow-Origin'] = origin;
   }
   return headers;
@@ -62430,7 +62463,7 @@ function getResponseCorsHeaders(response) {
   return (
     response?.pbkCorsHeaders || {
       'Access-Control-Allow-Methods': 'GET,POST,PUT,PATCH,DELETE,OPTIONS',
-      'Access-Control-Allow-Headers': 'Content-Type, Authorization, Idempotency-Key, X-Idempotency-Key, X-PBK-Webhook-Secret, X-Webhook-Secret, X-PBK-Signature, X-Public-Ava-Key, X-Public-Key, X-Request-ID, X-PBK-TOTP, X-OTP, X-PBK-Local-Callback-Token',
+      'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-PBK-Team-Token, Idempotency-Key, X-Idempotency-Key, X-PBK-Webhook-Secret, X-Webhook-Secret, X-PBK-Signature, X-Public-Ava-Key, X-Public-Key, X-Request-ID, X-PBK-TOTP, X-OTP, X-PBK-Local-Callback-Token',
       Vary: 'Origin',
     }
   );
@@ -64552,8 +64585,9 @@ async function runInternalAvaDeepSeekChat({
   stream = null,
 } = {}) {
   // Operator explanations need a larger budget than short seller phone turns.
-  // All retries still share one deadline, leaving room for proxy transport.
-  const liveBudgetMs = 30_000;
+  // Long staff streams use Render directly; phone turns retain their own budgets.
+  // Every retry/fallback still shares one deadline and an inactivity watchdog.
+  const liveBudgetMs = 600_000;
   const elapsedMs = requestTiming?.snapshot?.().durationMs || 0;
   const deadlineAt = Date.now() + Math.max(0, liveBudgetMs - elapsedMs);
   const prompt = buildAssistantPrompt(assistantContextSession, {
@@ -64567,7 +64601,10 @@ async function runInternalAvaDeepSeekChat({
   const streamingOptions = stream ? {
     signal: stream.signal,
     streamPreviewFactory: () => createAvaDecisionPreview({
-      sanitize: value => normalizeAvaAssistantAnswer(sanitizeAssistantTurn(value, 64_000, { preserveFormatting: true }).content),
+      sanitize: value => {
+        if (value.length > 256_000) throw new Error('Ava reply exceeded the response safety budget.');
+        return normalizeAvaAssistantAnswer(sanitizeAssistantTurn(value, 256_000, { preserveFormatting: true }).content);
+      },
       check: stream.check,
       onAnswer: async value => { await stream.onAnswer(value); streamedAnswer = true; },
     }),
@@ -64582,7 +64619,9 @@ async function runInternalAvaDeepSeekChat({
     leadId,
     model: DEEPSEEK_LIVE_MODEL,
     temperature: 0.45,
-    maxTokens: 4096,
+    maxTokens: 32_768,
+    longReply: true,
+    streamIdleTimeoutMs: 90_000,
     responseFormat: 'json',
     tools: buildAvaDeepSeekDecisionTools(),
     toolChoice: 'auto',
@@ -64604,7 +64643,9 @@ async function runInternalAvaDeepSeekChat({
       leadId,
       model: DEEPSEEK_LIVE_MODEL,
       temperature: 0.35,
-      maxTokens: 4096,
+      maxTokens: 32_768,
+      longReply: true,
+      streamIdleTimeoutMs: 90_000,
       responseFormat: 'text',
       thinkingMode: body.deepSeekThinkingMode || body.thinkingMode || DEEPSEEK_THINKING_MODE,
       attemptTimeoutMs: liveBudgetMs,
@@ -64644,7 +64685,9 @@ async function runInternalAvaDeepSeekChat({
         leadId,
         model,
         temperature: 0.35,
-        maxTokens: 4096,
+        maxTokens: 32_768,
+        longReply: true,
+        streamIdleTimeoutMs: 90_000,
         responseFormat: 'text',
         thinkingMode: body.deepSeekThinkingMode || body.thinkingMode || DEEPSEEK_THINKING_MODE,
         attemptTimeoutMs: liveBudgetMs,
@@ -64674,6 +64717,7 @@ async function runInternalAvaDeepSeekChat({
   const deepSeekDecision = parseAvaDeepSeekDecisionAnswer(deepSeek.answer);
   if (stream) deepSeekDecision.reply = normalizeAvaAssistantAnswer(sanitizeAvaStreamReply(deepSeekDecision.reply));
   const finalAnswer = stream ? deepSeekDecision.reply : deepSeekDecision.reply || deepSeek.answer || '';
+  if (finalAnswer.length > 256_000) throw new Error('Ava reply exceeded the response safety budget.');
   const usagePersistence = deepSeek.provider?.usagePersistence || null;
   if (deepSeek.ok && !isAvaCompactDecisionSafe(deepSeek.answer)) {
     if (streamedAnswer) throw new Error('Ava response stream did not finish a valid decision.');
@@ -64842,7 +64886,7 @@ async function handleInternalAvaAssistantChatRequest(request) {
   const assistantOpsStartedAt = Date.now();
   const requestTiming = createAvaRequestTiming();
   const body = await requestTiming.measure('body_read', () => readBody(request));
-  const messages = normalizeConversationMessages(body.messages, { assistantMaxChars: 64_000 });
+  const messages = normalizeConversationMessages(body.messages, { assistantMaxChars: 256_000 });
   const sanitizedInput = sanitizePublicAvaChatTurn(getLastUserMessage(messages, body.message || body.query || body.text || body.prompt || ''));
   const text = sanitizedInput.content;
   if (!text) {

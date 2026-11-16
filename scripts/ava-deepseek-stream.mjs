@@ -25,7 +25,7 @@ export function sanitizeAvaStreamReply(value = '') {
   return redactAssistantSecrets(visible.replace(/<(?:think|analysis|reasoning|reflection|scratchpad)\b[^>]*$/gi, ''));
 }
 
-export async function readDeepSeekStream(response, { signal, onDelta = () => {} } = {}) {
+export async function readDeepSeekStream(response, { signal, onDelta = () => {}, onActivity = () => {}, maxContentCharacters = 128_000 } = {}) {
   if (!response.body) throw new Error('DeepSeek stream is unavailable.');
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
@@ -38,6 +38,8 @@ export async function readDeepSeekStream(response, { signal, onDelta = () => {} 
   let id = '';
   let usage = null;
   const toolCalls = [];
+  const contentLimit = Number.isFinite(maxContentCharacters) && maxContentCharacters > 0
+    ? Math.min(1_048_576, maxContentCharacters) : 128_000;
   const cancel = () => { void reader.cancel().catch(() => {}); };
   signal?.addEventListener('abort', cancel, { once: true });
   try {
@@ -46,6 +48,7 @@ export async function readDeepSeekStream(response, { signal, onDelta = () => {} 
       const next = await reader.read();
       signal?.throwIfAborted();
       if (next.done) break;
+      onActivity();
       parser.feed(decoder.decode(next.value, { stream: true }));
       while (events.length) {
         const data = events.shift();
@@ -70,7 +73,7 @@ export async function readDeepSeekStream(response, { signal, onDelta = () => {} 
         }
         if (typeof delta.content === 'string' && delta.content) {
           answer += delta.content;
-          if (answer.length > 128_000) throw new Error('DeepSeek stream exceeded the response budget.');
+          if (answer.length > contentLimit) throw new Error('DeepSeek stream exceeded the response budget.');
           // Tool decisions are retained for final validation, never rendered as text.
           if (!toolCalls.length) await onDelta(delta.content);
         }

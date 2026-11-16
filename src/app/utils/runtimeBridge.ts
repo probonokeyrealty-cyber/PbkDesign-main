@@ -2228,13 +2228,24 @@ export async function streamAvaAssistantChatRequest(
 ) {
   signal?.throwIfAborted();
   const path = '/api/assistant/chat';
-  assertRuntimeAuthConfigured(path);
-  const requestUrl = buildUrl(path);
+  const configuredUrl = buildUrl(path);
+  const directRenderUrl = buildHostedRuntimeFallbackUrl(configuredUrl);
+  const headers = buildRuntimeHeaders({ json: true, accept: 'text/event-stream' });
+  if (directRenderUrl) {
+    if (!headers['X-PBK-Team-Token']) {
+      throw new RuntimeBridgeError('Your PBK team session is missing or expired. Sign in again.', 401, 'missing_team_session');
+    }
+    // Netlify cannot carry long chat streams. Render already accepts team auth.
+    delete headers.Authorization;
+  } else {
+    assertRuntimeAuthConfigured(path);
+  }
+  const requestUrl = directRenderUrl || configuredUrl;
   const controller = new AbortController();
   const onAbort = () => controller.abort();
   signal?.addEventListener('abort', onAbort, { once: true });
-  const timeoutId = setTimeout(() => controller.abort(), 45_000);
-  const headers = buildRuntimeHeaders({ json: true, accept: 'text/event-stream' });
+  const timeoutMs = 11 * 60_000;
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
   try {
     // POSTs are never replayed, including when the proxy is unavailable.
     const response = await fetch(requestUrl, {
@@ -2245,12 +2256,16 @@ export async function streamAvaAssistantChatRequest(
       const text = await response.text();
       let parsed: unknown = text;
       try { parsed = JSON.parse(text); } catch { /* Preserve non-JSON site/auth errors. */ }
+      const record = parsed && typeof parsed === 'object' ? parsed as Record<string, unknown> : null;
+      if (directRenderUrl && response.status === 401 && !record?.code) {
+        parsed = { ...record, error: extractBridgeErrorMessage(parsed, response.status), code: 'invalid_team_session' };
+      }
       throw bridgeResponseError(response, parsed, requestUrl, headers['X-PBK-Team-Token']);
     }
     return await readAvaChatResponse(response, { onAnswer, signal: controller.signal });
   } catch (error) {
     if (signal?.aborted) throw new DOMException('The operation was aborted.', 'AbortError');
-    if (controller.signal.aborted) throw new Error('PBK bridge request timed out after 45 seconds.');
+    if (controller.signal.aborted) throw new Error(`PBK bridge request timed out after ${timeoutMs / 1000} seconds.`);
     throw error;
   } finally {
     clearTimeout(timeoutId);

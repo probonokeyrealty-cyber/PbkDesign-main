@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 
 const MAX_ASSISTANT_HISTORY = 40;
 const MAX_TURN_CONTENT = 1800;
-const MAX_ASSISTANT_REPLY_CONTENT = 64_000;
+const MAX_ASSISTANT_REPLY_CONTENT = 256_000;
 const COMMAND_CENTER_PATH = '/index.shell.html';
 const TURN_TRUNCATION_WARNING =
   'Long text truncated; Ava only retained the first 1800 characters for this turn.';

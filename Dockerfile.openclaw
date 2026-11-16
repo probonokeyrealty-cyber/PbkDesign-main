@@ -240,6 +240,7 @@ COPY scripts/invoke-rate-limit.mjs ./scripts/invoke-rate-limit.mjs
 COPY scripts/event-bus ./scripts/event-bus
 COPY scripts/property-data-adapter.mjs ./scripts/property-data-adapter.mjs
 COPY scripts/openclaw-local-server.mjs ./scripts/openclaw-local-server.mjs
+COPY scripts/ava-team-chat-permissions.mjs ./scripts/ava-team-chat-permissions.mjs
 COPY scripts/neon-auth-mail.mjs ./scripts/neon-auth-mail.mjs
 COPY scripts/neon-auth-microsoft.mjs ./scripts/neon-auth-microsoft.mjs
 COPY --from=frontend /frontend/dist/index.html ./index.html

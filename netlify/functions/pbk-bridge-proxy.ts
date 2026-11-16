@@ -1,4 +1,5 @@
 import type { Handler, HandlerResponse } from '@netlify/functions';
+import { getAvaChatRequiredPermissions } from '../../scripts/ava-team-chat-permissions.mjs';
 
 const MAX_BODY_BYTES = 5 * 1024 * 1024; // Headroom under Netlify's buffered request limit.
 
@@ -168,21 +169,6 @@ function isAssistantChatPath(path = '') {
   return path === '/api/assistant/chat' || path === '/api/v1/assistant/chat';
 }
 
-function getAssistantChatText(path = '', body: Record<string, unknown>) {
-  if (!isAssistantChatPath(path)) return '';
-  return collectBodyText(body, [
-    'message',
-    'prompt',
-    'command',
-    'request',
-    'input',
-    'text',
-    'action',
-    'assistantAction',
-    'usedIntent',
-  ]).toLowerCase();
-}
-
 function isApprovalDecisionRequest(method = 'GET', path = '', body: Record<string, unknown>) {
   const normalizedMethod = String(method || 'GET').toUpperCase();
   if (!['POST', 'PUT', 'PATCH'].includes(normalizedMethod)) return false;
@@ -214,7 +200,7 @@ function authorizeTeamRequest({
   const normalizedPath = String(targetPath || '').toLowerCase();
   const toolName = getToolName(body);
   const normalizedToolName = toolName.toLowerCase();
-  const assistantChatText = getAssistantChatText(normalizedPath, body);
+  const chatPermissions = getAvaChatRequiredPermissions(normalizedPath, body);
 
   const deny = (permission: string, action: string) => ({
     ok: false as const,
@@ -249,10 +235,7 @@ function authorizeTeamRequest({
     normalizedMethod !== 'GET'
     && /(?:\/api\/messages|\/api\/conversation|\/api\/conversations|\/api\/sms|\/api\/inbox)/.test(normalizedPath)
     && /sms|message|conversation|inbox/.test(normalizedPath);
-  const assistantSmsIntent = Boolean(
-    assistantChatText
-      && /\b(?:(?:send|draft|compose|write|prepare|queue).{0,48}(?:sms|text|message)|(?:sms|text)\s+(?:seller|owner|lead|to))\b/i.test(assistantChatText),
-  );
+  const assistantSmsIntent = chatPermissions.has('canSendSms');
   if ((smsTool || smsRoute || assistantSmsIntent) && permissions.canSendSms !== true) {
     return deny('canSendSms', 'send SMS messages');
   }
@@ -262,10 +245,7 @@ function authorizeTeamRequest({
     normalizedMethod !== 'GET'
     && /(?:\/api\/cold-email|\/api\/messages|\/api\/conversation|\/api\/conversations|\/api\/email|\/api\/inbox)/.test(normalizedPath)
     && /email|mail|message|conversation|inbox/.test(normalizedPath);
-  const assistantEmailIntent = Boolean(
-    assistantChatText
-      && /\b(?:(?:send|draft|compose|write|prepare|queue).{0,48}(?:email|mail)|email\s+(?:seller|owner|lead|to))\b/i.test(assistantChatText),
-  );
+  const assistantEmailIntent = chatPermissions.has('canSendEmail');
   if ((emailTool || emailRoute || assistantEmailIntent) && permissions.canSendEmail !== true) {
     return deny('canSendEmail', 'send emails');
   }
@@ -274,11 +254,7 @@ function authorizeTeamRequest({
   const callRoute =
     normalizedMethod !== 'GET'
     && /(?:\/api\/calls|\/api\/operator\/call|\/api\/call)/.test(normalizedPath);
-  const assistantCallIntent = Boolean(
-    assistantChatText
-      && !/\b(?:review|summarize|score|transcribe|transcript|recording|qa|quality).{0,32}call\b/i.test(assistantChatText)
-      && /\b(?:(?:place|make|start|launch|initiate|dial|ring|connect|prepare|queue|set up).{0,48}call|call.{0,48}(?:seller|owner|lead|prospect|now|for approval|request|before dialing|dial))\b/i.test(assistantChatText),
-  );
+  const assistantCallIntent = chatPermissions.has('canPlaceCalls');
   if ((callTool || callRoute || assistantCallIntent) && permissions.canPlaceCalls !== true) {
     return deny('canPlaceCalls', 'place calls');
   }
@@ -290,10 +266,7 @@ function authorizeTeamRequest({
       normalizedMethod !== 'GET'
       && /(?:\/api\/provider-writes|\/api\/outbound|\/api\/nurture|\/api\/campaigns\/[^/]+\/approval)/.test(normalizedPath)
     );
-  const assistantProviderApprovalIntent = Boolean(
-    assistantChatText
-      && /\b(?:nurture|sequence|provider|approval|approve|approved|launch campaign|start campaign)\b/i.test(assistantChatText),
-  );
+  const assistantProviderApprovalIntent = chatPermissions.has('canApproveProviderActions');
   if (
     (providerApprovalTool || providerApprovalRoute || assistantProviderApprovalIntent)
     && permissions.canApproveProviderActions !== true

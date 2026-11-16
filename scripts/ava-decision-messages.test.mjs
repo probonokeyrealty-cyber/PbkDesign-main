@@ -60,6 +60,7 @@ test('actual chat keeps a complete JSON contract outside truncated memory contex
   const context = vm.createContext({
     buildAssistantPrompt, buildAvaDecisionMessages, isAvaCompactDecisionSafe,
     createAvaDecisionPreview, sanitizeAssistantTurn, sanitizeAvaStreamReply,
+    MAX_ASSISTANT_REPLY_CONTENT: 256_000,
     normalizeAvaAssistantAnswer: value => value,
     buildAvaDeepSeekDecisionTools: () => [],
     runDeepSeekChatCompletion: async (messages, params) => {
@@ -86,10 +87,12 @@ test('actual chat keeps a complete JSON contract outside truncated memory contex
   });
   assert.equal(accepted.ok, true);
   assert(Number.isFinite(sentParams.deadlineAt), 'live completion must carry one absolute request deadline');
-  assert(sentParams.deadlineAt > Date.now() + 20_000, 'operator explanations need more than the phone-turn budget');
-  assert(sentParams.deadlineAt <= Date.now() + 30_000);
-  assert.equal(sentParams.attemptTimeoutMs, 30_000);
-  assert.equal(sentParams.maxTokens, 4096, 'operator chat must have room for a complete explanation');
+  assert(sentParams.deadlineAt > Date.now() + 590_000, 'detailed operator chat must outlast the old generation and proxy limits');
+  assert(sentParams.deadlineAt <= Date.now() + 600_000);
+  assert.equal(sentParams.attemptTimeoutMs, 600_000);
+  assert.equal(sentParams.maxTokens, 32_768, 'operator chat must not retain the generic provider ceiling');
+  assert.equal(sentParams.longReply, true);
+  assert.equal(sentParams.streamIdleTimeoutMs, 90_000);
   assert.equal(sentParams.speculative, false, 'the native live path cannot spend its budget on another endpoint');
   const contract = sentMessages.find((message) => message.role === 'system' && message.content.includes('EXAMPLE JSON'));
   assert(contract, 'JSON format instructions must survive large memory context');
@@ -139,7 +142,8 @@ test('actual chat keeps a complete JSON contract outside truncated memory contex
     text: 'Explain your role', requestTiming: { snapshot: () => ({ durationMs: 350 }) },
   });
   assert.equal(fallbackParams.length, 3);
-  assert(fallbackParams.every((params) => params.deadlineAt === 30650), 'JSON and model fallbacks cannot reset elapsed request budget');
+  assert(fallbackParams.every((params) => params.deadlineAt === 600650), 'JSON and model fallbacks cannot reset elapsed request budget');
+  assert(fallbackParams.every((params) => params.maxTokens === 32_768 && params.longReply === true && params.streamIdleTimeoutMs === 90_000));
   assert(fallbackParams.every((params) => params.speculative === false));
   assert.equal(fallbackParams[0].model, 'fixture-model');
   assert.equal(fallbackParams[1].model, 'fixture-model');

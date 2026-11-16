@@ -6,7 +6,8 @@ const bundled = await build({
   entryPoints: ['src/app/utils/runtimeBridge.ts'], bundle: true, write: false,
   format: 'esm', platform: 'browser', define: { 'import.meta.env': '{}' },
 });
-const bridge = await import(`data:text/javascript;base64,${Buffer.from(bundled.outputFiles[0].text).toString('base64')}`);
+const fixtureSource = `${bundled.outputFiles[0].text}\n//# sourceURL=ava-chat-stream-client-fixture.mjs`;
+const bridge = await import(`data:text/javascript;base64,${Buffer.from(fixtureSource).toString('base64')}`);
 const originalFetch = globalThis.fetch;
 const originalWindow = globalThis.window;
 const encoder = new TextEncoder();
@@ -44,6 +45,92 @@ function fixture() {
 }
 function event(name, value) { return `event: ${name}\r\ndata: ${JSON.stringify(value)}\r\n\r\n`; }
 const tick = () => new Promise((resolve) => setImmediate(resolve));
+function hostedSession(overrides = {}) {
+  window.location = new URL('https://fixture.netlify.app');
+  const session = { token: 'fixture-only-team', role: 'team', actor: 'Fixture operator',
+    expiresAt: new Date(Date.now() + 3_600_000).toISOString(), ...overrides };
+  storage.set(bridge.RUNTIME_TEAM_SESSION_KEY, JSON.stringify(session));
+  return session;
+}
+
+for (const origin of ['https://fixture.netlify.app', 'https://preview--fixture.netlify.app', 'https://pbkcommandcenter.example']) {
+  test(`streams ${origin} directly to Render with only the existing team token`, async () => {
+    hostedSession();
+    window.location = new URL(origin);
+    const upstream = fixture();
+    const pending = invoke();
+    upstream.write(event('done', final));
+    assert.deepEqual(await pending, final);
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].url, 'https://pbk-openclaw-bridge.onrender.com/api/assistant/chat');
+    assert.equal(calls[0].method, 'POST');
+    assert.equal(calls[0].headers['X-PBK-Team-Token'], 'fixture-only-team');
+    assert.equal(calls[0].headers.Authorization, undefined, 'stale local authority must not reach Render');
+    assert.equal(calls[0].headers.Accept, 'text/event-stream');
+    assert.equal(JSON.parse(calls[0].body).stream, true);
+  });
+}
+
+test('does not forward a same-origin host API key to the direct Render chat route', async () => {
+  hostedSession();
+  window.PBK = { openclaw: { getConfig: () => ({ endpoint: window.location.origin, apiKey: 'fixture-only-authority' }) } };
+  const upstream = fixture();
+  const pending = invoke();
+  upstream.write(event('done', final));
+  await pending;
+  assert.equal(calls[0].url, 'https://pbk-openclaw-bridge.onrender.com/api/assistant/chat');
+  assert.equal(calls[0].headers.Authorization, undefined);
+  assert.equal(calls[0].headers['X-PBK-Team-Token'], 'fixture-only-team');
+});
+
+for (const state of ['missing', 'expired', 'invalid expiry', 'empty token', 'malformed']) {
+  test(`fails closed before fetching hosted chat with a ${state} team session`, async () => {
+    hostedSession();
+    if (state === 'missing') storage.delete(bridge.RUNTIME_TEAM_SESSION_KEY);
+    if (state === 'expired') hostedSession({ expiresAt: new Date(Date.now() - 1).toISOString() });
+    if (state === 'invalid expiry') hostedSession({ expiresAt: 'invalid' });
+    if (state === 'empty token') hostedSession({ token: '' });
+    if (state === 'malformed') storage.set(bridge.RUNTIME_TEAM_SESSION_KEY, '{broken');
+    globalThis.fetch = async (url, init) => { calls.push({ url, ...init }); return Response.json(final); };
+    await assert.rejects(() => invoke(), (e) => e instanceof bridge.RuntimeBridgeError && e.status === 401 && e.code === 'missing_team_session');
+    assert.equal(calls.length, 0);
+    assert.equal(storage.has(bridge.RUNTIME_TEAM_SESSION_KEY), false);
+  });
+}
+
+test('same-origin host authority cannot bypass a missing hosted team session', async () => {
+  hostedSession();
+  storage.delete(bridge.RUNTIME_TEAM_SESSION_KEY);
+  window.PBK = { openclaw: { getConfig: () => ({ endpoint: window.location.origin, apiKey: 'fixture-only-authority' }) } };
+  globalThis.fetch = async (url, init) => { calls.push({ url, ...init }); return Response.json(final); };
+  await assert.rejects(() => invoke(), /session|sign in/i);
+  assert.equal(calls.length, 0);
+});
+
+for (const endpoint of ['https://custom-bridge.example/runtime', 'http://localhost:4000', 'http://127.0.0.1:4000']) {
+  test(`preserves the explicit hosted-shell endpoint ${endpoint}`, async () => {
+    hostedSession();
+    window.PBK = { openclaw: { getConfig: () => ({ endpoint, apiKey: 'fixture-only-authority' }) } };
+    const upstream = fixture();
+    const pending = invoke();
+    upstream.write(event('done', final));
+    await pending;
+    assert.equal(calls[0].url, `${endpoint}/api/assistant/chat`);
+    assert.equal(calls[0].headers.Authorization, 'Bearer fixture-only-authority');
+    assert.equal(calls[0].headers['X-PBK-Team-Token'], 'fixture-only-team');
+    assert.equal(calls.length, 1);
+  });
+}
+
+test('leaves non-streaming chat and other hosted calls on the same origin', async () => {
+  hostedSession();
+  globalThis.fetch = async (url, init) => { calls.push({ url, ...init }); return Response.json(final); };
+  await bridge.sendAvaAssistantChatRequest({ message: 'Existing JSON chat' });
+  await bridge.bridgeRequest({ method: 'POST', path: '/invoke', body: { toolName: 'fixture' } });
+  assert.deepEqual(calls.map((call) => call.url), [
+    'https://fixture.netlify.app/api/assistant/chat', 'https://fixture.netlify.app/invoke',
+  ]);
+});
 
 test('publishes cumulative answers before the held tail and retains authoritative done metadata', async () => {
   const upstream = fixture();
@@ -171,31 +258,159 @@ test('falls back to a complete detailed JSON response on the same request', asyn
   assert.deepEqual(answers, []);
 });
 
-test('45-second timeout covers a held response body after headers', async (t) => {
+for (const phase of ['before headers', 'after headers']) {
+  test(`hosted chat can complete beyond 60 seconds ${phase}`, async (t) => {
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    hostedSession();
+    const controller = new AbortController();
+    t.after(() => controller.abort());
+    let finish;
+    if (phase === 'after headers') {
+      const upstream = fixture();
+      finish = () => upstream.write(event('done', final));
+    } else {
+      globalThis.fetch = (url, init) => {
+        calls.push({ url, ...init });
+        return new Promise((resolve, reject) => {
+          init.signal.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')), { once: true });
+          finish = () => resolve(new Response(event('done', final), { headers: { 'Content-Type': 'text/event-stream' } }));
+        });
+      };
+    }
+    const answers = [];
+    let settled = false;
+    const outcome = invoke({ signal: controller.signal, onAnswer: (s) => answers.push(s) })
+      .then((value) => ({ value }), (error) => ({ error })).finally(() => { settled = true; });
+    await tick();
+    t.mock.timers.tick(120_000);
+    await tick();
+    assert.equal(settled, false, 'long generation must remain pending past the old deadline');
+    assert.equal(calls[0].signal.aborted, false);
+    finish();
+    assert.deepEqual((await outcome).value, final);
+    assert.deepEqual(answers, []);
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].url, 'https://pbk-openclaw-bridge.onrender.com/api/assistant/chat');
+  });
+}
+
+test('Stop cancels hosted chat at ten minutes without replay or a completed answer', async (t) => {
   t.mock.timers.enable({ apis: ['setTimeout'] });
+  hostedSession();
+  const controller = new AbortController();
+  t.after(() => controller.abort());
   const upstream = fixture();
-  const pending = invoke();
-  const rejected = assert.rejects(pending, /timed out after 45 seconds/);
+  const answers = [];
+  const outcome = invoke({ signal: controller.signal, onAnswer: (s) => answers.push(s) })
+    .then((value) => ({ value }), (error) => ({ error }));
+  upstream.write(event('answer', { text: 'Before late stop' }));
+  await tick();
+  t.mock.timers.tick(600_000);
+  await tick();
+  assert.equal(calls[0].signal.aborted, false);
+  controller.abort();
+  const result = await outcome;
+  assert.equal(result.error?.name, 'AbortError');
+  assert.equal(result.value, undefined);
+  assert.deepEqual(answers, ['Before late stop']);
+  assert.equal(upstream.cancelled, true);
+  assert.equal(calls[0].signal.aborted, true);
+  assert.equal(calls.length, 1);
+});
+
+test('eleven-minute transport guard covers the held body and does not reset on answers', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  hostedSession();
+  const upstream = fixture();
+  const controller = new AbortController();
+  t.after(() => controller.abort());
+  let settled = false;
+  const outcome = invoke({ signal: controller.signal })
+    .then((value) => ({ value }), (error) => ({ error })).finally(() => { settled = true; });
   upstream.write(event('answer', { text: 'Before timeout' }));
   await tick();
-  t.mock.timers.tick(45_000);
-  await rejected;
+  t.mock.timers.tick(659_999);
+  await tick();
+  assert.equal(settled, false);
+  assert.equal(calls[0].signal.aborted, false);
+  upstream.write(event('answer', { text: 'Still working' }));
+  await tick();
+  t.mock.timers.tick(1);
+  const result = await outcome;
+  assert.match(result.error?.message || '', /timed out after 660 seconds/);
+  assert.equal(result.value, undefined);
   assert.equal(upstream.cancelled, true);
+  assert.equal(calls[0].signal.aborted, true);
   assert.equal(calls.length, 1);
 });
 
 test('preserves auth rejection handling and never retries a POST through the hosted fallback', async () => {
-  window.location = new URL('https://fixture.netlify.app');
-  storage.set(bridge.RUNTIME_TEAM_SESSION_KEY, JSON.stringify({ token: 'fixture-only-team', expiresAt: new Date(Date.now() + 60000).toISOString() }));
+  hostedSession();
   globalThis.fetch = async (url, init) => { calls.push({ url, ...init }); return Response.json({ code: 'expired_team_session', error: 'Sign in again' }, { status: 401 }); };
   await assert.rejects(() => invoke(), (e) => e instanceof bridge.RuntimeBridgeError && e.status === 401 && e.code === 'expired_team_session');
   assert.equal(storage.has(bridge.RUNTIME_TEAM_SESSION_KEY), false);
   assert.equal(calls[0].headers['X-PBK-Team-Token'], 'fixture-only-team');
+  assert.equal(calls[0].url, 'https://pbk-openclaw-bridge.onrender.com/api/assistant/chat');
   assert.equal(calls.length, 1);
 });
 
-test('does not retry exhausted proxy or non-JSON errors', async () => {
-  globalThis.fetch = async (url, init) => { calls.push({ url, ...init }); return new Response('Usage exceeded', { status: 503 }); };
-  await assert.rejects(() => invoke(), /Usage exceeded/);
+test('a rejected captured token cannot invalidate a replacement team session', async () => {
+  hostedSession();
+  globalThis.fetch = async (url, init) => {
+    calls.push({ url, ...init });
+    hostedSession({ token: 'fixture-replacement-team' });
+    return Response.json({ code: 'expired_team_session', error: 'Sign in again' }, { status: 401 });
+  };
+  await assert.rejects(() => invoke(), (e) => e instanceof bridge.RuntimeBridgeError && e.code === 'expired_team_session');
+  assert.equal(bridge.getRuntimeTeamSession()?.token, 'fixture-replacement-team');
+  assert.equal(calls[0].headers['X-PBK-Team-Token'], 'fixture-only-team');
   assert.equal(calls.length, 1);
 });
+
+for (const [format, replaced] of [['JSON', false], ['JSON', true], ['plain text', false], ['plain text', true]]) {
+  test(`generic ${format} direct Render 401 rejects the captured token${replaced ? ' without clearing a replacement' : ''}`, async () => {
+    hostedSession();
+    globalThis.fetch = async (url, init) => {
+      calls.push({ url, ...init });
+      if (replaced) hostedSession({ token: 'fixture-replacement-team' });
+      return format === 'JSON'
+        ? Response.json({ error: 'Unauthorized' }, { status: 401 })
+        : new Response('Unauthorized', { status: 401 });
+    };
+    await assert.rejects(() => invoke(), (e) => e instanceof bridge.RuntimeBridgeError && e.status === 401 && e.code === 'invalid_team_session');
+    assert.equal(bridge.getRuntimeTeamSession()?.token, replaced ? 'fixture-replacement-team' : undefined);
+    assert.equal(calls[0].headers['X-PBK-Team-Token'], 'fixture-only-team');
+    assert.equal(calls[0].url, 'https://pbk-openclaw-bridge.onrender.com/api/assistant/chat');
+    assert.equal(calls.length, 1);
+  });
+}
+
+test('a generic 401 at an explicit custom endpoint is not reclassified as a team rejection', async () => {
+  hostedSession();
+  window.PBK = { openclaw: { getConfig: () => ({ endpoint: 'https://custom-bridge.example', apiKey: 'fixture-only-authority' }) } };
+  globalThis.fetch = async (url, init) => {
+    calls.push({ url, ...init });
+    return Response.json({ error: 'Unauthorized' }, { status: 401 });
+  };
+  await assert.rejects(() => invoke(), (e) => e instanceof bridge.RuntimeBridgeError && e.status === 401 && e.code === '');
+  assert.equal(bridge.getRuntimeTeamSession()?.token, 'fixture-only-team');
+  assert.equal(calls[0].url, 'https://custom-bridge.example/api/assistant/chat');
+  assert.equal(calls.length, 1);
+});
+
+for (const failure of ['proxy', 'explicit auth code', 'permission', 'transport']) {
+  test(`hosted ${failure} failure is not retried and does not clear team auth`, async () => {
+    hostedSession();
+    globalThis.fetch = async (url, init) => {
+      calls.push({ url, ...init });
+      if (failure === 'transport') throw new TypeError('Failed to fetch');
+      if (failure === 'permission') return Response.json({ code: 'team_permission_denied', error: 'Not allowed' }, { status: 403 });
+      if (failure === 'explicit auth code') return Response.json({ code: 'private_site_auth_required', error: 'Private site' }, { status: 401 });
+      return new Response('Usage exceeded', { status: 503 });
+    };
+    await assert.rejects(() => invoke(), /Usage exceeded|Private site|Not allowed|Failed to fetch/);
+    assert.equal(bridge.getRuntimeTeamSession()?.token, 'fixture-only-team');
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].url, 'https://pbk-openclaw-bridge.onrender.com/api/assistant/chat');
+  });
+}

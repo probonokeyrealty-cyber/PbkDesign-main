@@ -229,6 +229,10 @@ export function buildAnalyzerDealFromLead(payload: BridgeRecord, requestedLeadId
   };
   const comps = savedLeadComps(lead);
   if (comps) deal.comps = comps;
+  else if (record(record(lead.analyzer).recordedSales).address) {
+    deal.comps = Object.fromEntries(['A', 'B', 'C'].map(key => [key, { address: '', price: 0, date: '', link: '' }])) as DealData['comps'];
+    deal.isAnalyzed = false;
+  }
 
   if (repairEstimate !== undefined || condition) {
     deal.repairs = {

@@ -109,6 +109,11 @@ try {
     await expect(page.getByRole('heading', { name: 'Post-call actions', exact: true })).toBeVisible();
     await tabs.getByRole('tab', { name: 'Talk', exact: true }).click();
     await expect(notes).toBeVisible();
+    await page.screenshot({ path: `output/playwright/property-call-${width}.png`, fullPage: true });
+    currentLead.property.address = '789 Different Property Road';
+    await page.goto(origin + '/deal/' + lead.id);
+    await expect(page.getByRole('spinbutton', { name: 'Comp A sold price', exact: true })).toHaveValue('');
+    await expect(page.getByRole('textbox', { name: 'Comp A address', exact: true })).toHaveValue('');
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1));
     assert.deepEqual(errors, []); assert.deepEqual(writes, ['/api/leads/' + lead.id]);
     assert.ok(outbound.every(host => host === 'https://fonts.googleapis.com'), 'No data-provider or customer traffic is allowed');

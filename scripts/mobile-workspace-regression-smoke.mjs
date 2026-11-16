@@ -132,6 +132,7 @@ assert(
     /@media \(max-width: 640px\)[\s\S]*?\.pbk-ava-chat-toolbar\s*\{[\s\S]*?grid-template-columns:\s*minmax\(0,\s*1fr\)\s+44px/.test(
       css
     ) &&
+    /className="pbk-ava-chat-controls\b[^"\n]*\bw-full\b[^"\n]*\bmin-w-0\b/.test(avaChat) &&
     /@media \(max-width: 640px\)[\s\S]*?\.pbk-ava-chat-submit-row\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)\s+96px/.test(
       css
     ) &&

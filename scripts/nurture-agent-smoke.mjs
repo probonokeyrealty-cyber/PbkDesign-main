@@ -70,6 +70,9 @@ const approved = await executeApprovedSequence(
       if (/SELECT id, lead_name, first_name, email, phone, address/is.test(sql)) {
         return { rows: [{ id: 'lead-1', first_name: 'Diane', phone: '+15555550123', email: '', address: '123 Oak St' }] };
       }
+      if (/UPDATE public\.nurture_instances[\s\S]*RETURNING id/i.test(sql)) {
+        return { rows: [{ id: params[0] }], rowCount: 1 };
+      }
       return { rows: [] };
     },
   },
@@ -77,12 +80,22 @@ const approved = await executeApprovedSequence(
   {
     ensureSchema: false,
     skipPolicy: true,
-    invokeTool: async () => ({ ok: true, result: 'sent' }),
+    invokeTool: async (tool, params) => {
+      assert.equal(tool, 'telnyx_sms');
+      assert.equal(params.body, 'Hi Diane');
+      assert.equal(params.approvalId, 'approval-1');
+      return {
+        ok: true,
+        message: { providerMessageId: 'fixture-sms', status: 'delivered' },
+        telnyx: { live: true },
+      };
+    },
   },
 );
 assert.equal(approved.ok, true);
 assert.equal(approved.approvalId, 'approval-1');
 assert.equal(approved.result, 'approved_sequence_executed');
+assert.equal(approved.status, 'delivered');
 
 console.log(
   JSON.stringify(

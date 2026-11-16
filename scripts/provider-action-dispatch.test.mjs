@@ -21,6 +21,18 @@ function createTestPool(connectionString) {
 }
 
 describe('provider action dispatch lease', () => {
+  test('an existing attempt cannot be reused for a different tool, payload binding, or workspace', async () => {
+    const approvalId = `approval-${randomUUID()}`;
+    const base = { approvalId, workspaceId: 'pbk', toolName: 'telnyx_sms', bindingHash: 'original-action' };
+    const execute = jest.fn(async () => ({ providerActionResult: { ok: true, result: 'sent' } }));
+    await executeProviderActionWithSharedLease({ ...base, execute });
+    for (const changed of [{ toolName: 'sendColdEmail' }, { bindingHash: 'changed-action' }, { workspaceId: 'other' }]) {
+      const result = await executeProviderActionWithSharedLease({ ...base, ...changed, execute });
+      expect(result.executed).toBe(false);
+      expect(result.value.providerActionResult).toMatchObject({ ok: false, result: 'approval_binding_mismatch', providerAttempted: false });
+    }
+    expect(execute).toHaveBeenCalledTimes(1);
+  });
   test('hosted mode fails closed without Postgres', async () => {
     const execute = jest.fn(async () => ({ ok: true }));
     const result = await executeProviderActionWithSharedLease({

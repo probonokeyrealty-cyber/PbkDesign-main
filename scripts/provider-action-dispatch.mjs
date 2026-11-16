@@ -157,6 +157,18 @@ function buildUnavailable({
   };
 }
 
+function bindingMismatch(existing, { approvalId, workspaceId, toolName, bindingHash }) {
+  if (existing.workspaceId === workspaceId && existing.toolName === toolName && existing.bindingHash === bindingHash) return null;
+  return {
+    executed: false,
+    dispatch: { approvalId, workspaceId, toolName, bindingHash, status: 'blocked' },
+    value: { providerActionResult: {
+      ok: false, blocked: true, result: 'approval_binding_mismatch', providerAttempted: false,
+      error: 'This approval already belongs to a different provider action.',
+    } },
+  };
+}
+
 export async function executeProviderActionWithSharedLease({
   pool = null,
   isHosted = false,
@@ -169,7 +181,7 @@ export async function executeProviderActionWithSharedLease({
   createId = randomUUID,
   logger = console,
 }) {
-  const lockKey = `pbk-provider-action:${workspaceId}:${approvalId}`;
+  const lockKey = `pbk-provider-action:${approvalId}`;
   const backend = resolveProviderActionDispatchBackend({
     isHosted,
     hasPostgresPool: Boolean(pool),
@@ -188,6 +200,8 @@ export async function executeProviderActionWithSharedLease({
     return withLocalLock(lockKey, async () => {
       const existing = localDispatches.get(lockKey);
       if (existing) {
+        const mismatch = bindingMismatch(existing, { approvalId, workspaceId, toolName, bindingHash });
+        if (mismatch) return mismatch;
         return {
           executed: false,
           dispatch: existing,
@@ -283,6 +297,8 @@ export async function executeProviderActionWithSharedLease({
     );
     if (existingResult.rows[0]) {
       const existing = mapRow(existingResult.rows[0]);
+      const mismatch = bindingMismatch(existing, { approvalId, workspaceId, toolName, bindingHash });
+      if (mismatch) return mismatch;
       if (existing.status === 'dispatching') {
         const reconciliationRequiredAt = now();
         const value = buildUnknownValue({

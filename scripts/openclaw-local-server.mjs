@@ -25,6 +25,7 @@ import { createControlledAgentStorage, saveControlledAgentResult, readControlled
 import { runControlledAgentWorkflow } from './controlled-agent-workflow.mjs';
 import { createAvaRequestTiming } from './ava-request-timing.mjs';
 import { createBackgroundPersistence, createCoalescedPersistence } from './background-persistence.mjs';
+import { createProviderActionBinding, hashProviderActionContext, validateProviderActionAuthorization, validateNegotiationApproval } from './provider-action-authorization.mjs';
 import { createPoolSchemaInitializer } from './pool-schema-initializer.mjs';
 import { observeUsagePersistence } from './ava-accounting-status.mjs';
 import { buildAvaDecisionMessages, isAvaCompactDecisionSafe } from './ava-decision-messages.mjs';
@@ -92,7 +93,7 @@ import {
 } from './warmth-dominance.mjs';
 import { listTeamWorkflowTemplates, runAgentTeamWorkflow } from './agent-teams.mjs';
 import { runAutoSkillLearner as runAutoSkillLearnerCore } from './auto-skill-learner.mjs';
-import { buildNurtureComplianceHealth, consultNurtureAgentCore, ensureNurtureSchema, executeApprovedSequence as executeApprovedNurtureSequenceCore, processDueNurtureInstances, startNurtureSequenceCore } from './nurture-agent.mjs';
+import { buildNurtureComplianceHealth, buildNurtureProviderParams, consultNurtureAgentCore, ensureNurtureSchema, executeApprovedSequence as executeApprovedNurtureSequenceCore, processDueNurtureInstances, startNurtureSequenceCore } from './nurture-agent.mjs';
 import { getEmotionTrainingStatus } from './onnx-training-worker.mjs';
 import { buildResearchAdditivesStatus, buildSafetyTransparencyReport, checkResearchAdditiveProviders as checkResearchAdditiveProvidersCore, compactLongHorizonMemory as compactLongHorizonMemoryCore, discoverExternalTool as discoverExternalToolCore, evaluateStoppingAgent as evaluateStoppingAgentCore, induceWorkflowMemory as induceWorkflowMemoryCore, inferProactiveHumanState as inferProactiveHumanStateCore, planDeterministicGuiAutomation as planDeterministicGuiAutomationCore, planExecutionPathSearch as planExecutionPathSearchCore, planMasterAgentMission as planMasterAgentMissionCore, routeAcpMessage as routeAcpMessageCore, runProviderAugmentedAdditiveIntelligence as runProviderAugmentedAdditiveIntelligenceCore, runUnifiedAdditiveIntelligence as runUnifiedAdditiveIntelligenceCore } from './research-additives.mjs';
 import { buildDeclarativeActionIntent, curateEpisodicMemories as curateEpisodicMemoriesCore, reconcileDeclarativeActionIntent, runMissionResilienceEval as runMissionResilienceEvalCore, selectBacktrackingStrategy as selectBacktrackingStrategyCore, updateGoalBeliefsBayesian as updateGoalBeliefsBayesianCore } from './mission-resilience.mjs';
@@ -137,9 +138,7 @@ import {
   prewarmEmbeddingProvider,
 } from './vector-embedding.mjs';
 import {
-  buildCanaryPromotionGate,
-  buildFailedCallEvalGate,
-  buildShadowCanaryComparison,
+  buildExecutedReadinessEvidence,
   classifySellerFinalOutcome,
   createProviderCircuitBreaker,
   createRuntimeEventArchive,
@@ -3110,6 +3109,8 @@ async function buildProductionReadinessSnapshot({
     toolCatalog: buildProductionToolCatalog(),
     intelligenceContext,
     latencySamples: operationalEvidence.latencySamples,
+    latencyObservations: operationalEvidence.latencyObservations,
+    latencyBudgetsMs: {},
     lastActions: operationalEvidence.lastActions,
     evidenceDiagnostics: operationalEvidence.diagnostics,
     unverifiedLatencySamples: operationalEvidence.unverifiedLatencySamples,
@@ -11454,62 +11455,23 @@ async function buildProductionPerformanceStatusSnapshot() {
   });
 }
 
-function buildAvaFailedCallEvalGateSnapshot() {
-  return buildFailedCallEvalGate({
-    scenarios: AVA_REAL_CALL_EVAL_SCENARIOS.map((id) => ({
-      id,
-      passed: true,
-      source: 'scripts/ava-real-call-eval-pack.mjs',
-    })),
-  });
-}
-
 function buildProductionMaturitySnapshot({ runtimeMeta = getRuntimeMeta() } = {}) {
   const archive = getRuntimeEventArchiveStatus();
   const providerCircuits = getProviderCircuitStatus();
-  const failedCallEvalGate = buildAvaFailedCallEvalGateSnapshot();
   const stableAgentFleetMeasurement = buildAgentOrchestrationSnapshot().measurement;
   const sloStatus = productionReadinessMonitor.getSloStatus();
-  const shadowCanaryComparison = buildShadowCanaryComparison({
-    baseline: {
-      version: runtimeMeta.commit || runtimeMeta.version || 'current',
-      behaviorPassRate: 1,
-      p95LatencyMs: Number(process.env.PBK_CURRENT_P95_LATENCY_MS || 900),
-      errorRate: Number(process.env.PBK_CURRENT_ERROR_RATE || 0.01),
-      fallbackRate: Number(process.env.PBK_CURRENT_FALLBACK_RATE || 0.08),
-    },
-    candidate: {
-      version: process.env.PBK_CANARY_COMMIT || runtimeMeta.commit || runtimeMeta.version || 'current',
-      behaviorPassRate: Number(process.env.PBK_CANARY_BEHAVIOR_PASS_RATE || 1),
-      p95LatencyMs: Number(process.env.PBK_CANARY_P95_LATENCY_MS || process.env.PBK_CURRENT_P95_LATENCY_MS || 900),
-      errorRate: Number(process.env.PBK_CANARY_ERROR_RATE || process.env.PBK_CURRENT_ERROR_RATE || 0.01),
-      fallbackRate: Number(process.env.PBK_CANARY_FALLBACK_RATE || process.env.PBK_CURRENT_FALLBACK_RATE || 0.08),
-    },
+  // No attested failed-call/canary execution reader is wired yet. Do not accept
+  // caller-supplied state or environment metrics as proof that tests executed.
+  const executionEvidence = buildExecutedReadinessEvidence({
+    revision: process.env.RENDER_GIT_COMMIT || BUILD_REVISION,
+    evidence: {}, requiredScenarioIds: AVA_REAL_CALL_EVAL_SCENARIOS, sloStatus,
   });
-  const canaryPromotionGate = buildCanaryPromotionGate({
-    canaryHealth: {
-      ready: runtimeMeta.productionReady !== false,
-      result: runtimeMeta.productionReady === false ? 'runtime_not_ready' : 'runtime_ready',
-      stateBackend: runtimeMeta.stateBackend,
-    },
-    behaviorGate: {
-      ready: true,
-      result: 'founder_behavior_gate_packaged',
-      evidence: ['test:founder', 'test:production-hardening', 'test:ava-governed-skill-router'],
-    },
-    failedCallEvalGate,
-    silentErrorReport: {
-      launchReady: true,
-      result: 'silent_error_governance_packaged',
-      evidence: ['test:silent-error-governance', 'test:production-gap-labels'],
-      blockers: [],
-    },
-    sloStatus,
-  });
+  const { failedCallEvalGate, shadowCanaryComparison, canaryPromotionGate } = executionEvidence;
   const blockers = [
     ...(archive.ready ? [] : ['runtime_event_archive']),
     ...(providerCircuits.ready ? [] : providerCircuits.openProviders.map((provider) => `provider_circuit:${provider}`)),
     ...(failedCallEvalGate.ready ? [] : ['failed_call_eval']),
+    ...(executionEvidence.ready ? [] : ['executed_release_evidence']),
     ...(stableAgentFleetMeasurement?.ready ? [] : ['stable_agent_fleet_measurement']),
     ...(shadowCanaryComparison.ready ? [] : shadowCanaryComparison.blockers.map((item) => `shadow:${item}`)),
     ...(canaryPromotionGate.ready ? [] : canaryPromotionGate.blockers.map((item) => `canary:${item}`)),
@@ -11533,12 +11495,12 @@ function buildProductionMaturitySnapshot({ runtimeMeta = getRuntimeMeta() } = {}
     providerCircuits,
     failedCallEvalGate,
     stableAgentFleetMeasurement,
+    executionEvidence: { ...executionEvidence, source: 'not_configured',
+      note: 'Executed release evidence is not connected. Packaged checks and environment defaults do not qualify as run proof.' },
     shadowCanaryComparison: {
       ...shadowCanaryComparison,
-      mode: process.env.PBK_CANARY_COMMIT ? 'candidate_metrics' : 'same_version_reference',
-      note: process.env.PBK_CANARY_COMMIT
-        ? 'Candidate metrics supplied through PBK_CANARY_* env vars.'
-        : 'No separate candidate metrics supplied; comparison machinery is ready but not shadowing live traffic.',
+      mode: 'unverified',
+      note: 'No independent, versioned live comparison has been verified.',
     },
     canaryPromotionGate,
   };
@@ -13156,6 +13118,11 @@ function mirrorAgentOpsMeasurementToState(params = {}) {
     metadata: {
       source: 'agent_ops',
       requestTiming: params.metadata?.requestTiming || null,
+      channel: params.metadata?.requestTiming?.metricKind === 'operator_request' ? 'chat' : 'unknown',
+      latencyKind: 'completion',
+      timings: params.metadata?.requestTiming?.firstTokenMs === undefined ? {} : {
+        firstTokenMs: params.metadata.requestTiming.firstTokenMs,
+      },
       metricKind: params.metadata?.requestTiming?.metricKind || 'tool_execution',
       operational: !isNonOperationalAgentEvidence(params),
       toolName,
@@ -16590,15 +16557,34 @@ async function executeToolFirstIntent(detected = {}, command = '', params = {}, 
 function buildAnalyzerSummary(params = {}) {
   const deal = params.deal || {};
   const address = params.address || deal.address || 'Unknown address';
-  const seed = hashString(address);
-  const propertyValues = getPropertyAnalysisValues(params.propertyData || deal.propertyData || {});
-  const fallbackArv = Math.round((120000 + (seed % 150000)) / 5000) * 5000;
-  const fallbackRepairs = Math.round((16000 + (seed % 42000)) / 500) * 500;
-  const arv = toMoneyNumber(params.arv, 0) || toMoneyNumber(deal.arv, 0) || propertyValues.arv || averagePrices({ comps: propertyValues.compObject }) || averagePrices(deal) || fallbackArv;
-  const repairsMid = toMoneyNumber(params.repairsMid, 0) || toMoneyNumber(params.repairs, 0) || toMoneyNumber(deal?.repairs?.mid, 0) || propertyValues.repairsMid || fallbackRepairs;
-  const fee = toNumber(params.fee, 0) || toNumber(deal.fee, 9000) || 9000;
-  const mao = toMoneyNumber(params.mao, 0) || toMoneyNumber(deal.mao60, 0) || propertyValues.mao || Math.max(0, Math.round((arv - repairsMid) * 0.68 - fee));
-  const targetOffer = toMoneyNumber(params.offerPrice, 0) || toMoneyNumber(deal.offer, 0) || toMoneyNumber(deal.agreedPrice, 0) || propertyValues.targetOffer || Math.max(0, Math.round(mao * 0.85));
+  const propertyData = params.propertyData || deal.propertyData || {};
+  const propertyValues = getPropertyAnalysisValues(propertyData);
+  const raw = propertyData.data || propertyData.values || propertyData;
+  const firstInput = (...values) => {
+    const value = values.find((item) => item !== undefined && item !== null && item !== '');
+    if (!['number', 'string'].includes(typeof value)) return null;
+    const normalized = String(value).trim().replace(/^\$/, '');
+    if (!/^(?:\d+|\d{1,3}(?:,\d{3})+)(?:\.\d+)?$/.test(normalized)) return null;
+    const number = Number(normalized.replace(/,/g, ''));
+    return Number.isFinite(number) && number >= 0 ? number : null;
+  };
+  const arv = firstInput(params.arv, deal.arv, propertyValues.arv || undefined,
+    averagePrices({ comps: propertyValues.compObject }) || averagePrices(deal) || undefined);
+  const repairsMid = firstInput(params.repairsMid, params.repairs, deal?.repairs?.mid,
+    raw.repairsMid, raw.estimatedRepairs, raw.repairs, raw.rehabEstimate);
+  const missingInputs = [arv > 0 ? '' : 'arv', repairsMid !== null ? '' : 'repairs'].filter(Boolean);
+  if (missingInputs.length) {
+    return {
+      ok: false, result: 'analysis_incomplete', status: 'incomplete', address,
+      missingInputs, enrichment: params.enrichment || null,
+      error: `Analysis needs valid ${missingInputs.join(' and ')} inputs before calculating an offer.`,
+    };
+  }
+  const fee = firstInput(params.fee, deal.fee, 9000);
+  const mao = firstInput(params.mao, deal.mao60, propertyValues.mao || undefined)
+    ?? Math.max(0, Math.round((arv - repairsMid) * 0.68 - (fee ?? 9000)));
+  const targetOffer = firstInput(params.offerPrice, deal.offer, deal.agreedPrice, propertyValues.targetOffer || undefined)
+    ?? Math.max(0, Math.round(mao * 0.85));
   const estProfit = Math.max(0, mao - targetOffer);
 
   return {
@@ -32550,13 +32536,6 @@ async function persistOfferOverrideToPg(record = {}) {
   }
 }
 
-function isApprovalApproved(approvalId = '') {
-  const id = String(approvalId || '').trim();
-  if (!id) return false;
-  const approval = (state.approvals || []).find((item) => item.id === id);
-  return Boolean(approval && String(approval.status || '').toLowerCase() === 'approved');
-}
-
 async function avaOverrideOfferRecord(params = {}) {
   const context = findLeadContext(params);
   const tenantId = normalizeTenantId(params.tenantId || params.tenant_id || 'pbk');
@@ -32578,13 +32557,20 @@ async function avaOverrideOfferRecord(params = {}) {
       message: 'Offer override was queued because no approved approvalId or protected passcode was provided.',
     };
   }
-  if (approvalId && !isApprovalApproved(approvalId) && !passcodeValid) {
+  const approval = (state.approvals || []).find((item) => item.id === approvalId);
+  if (approvalId && !passcodeValid && !validateNegotiationApproval({
+    approval, leadId, tenantId, finalOffer, avaScript: String(params.avaScript || '').trim(),
+  })) {
     return {
       ok: false,
-      result: 'approval_required',
+      result: 'approval_binding_mismatch',
       approvalId,
-      error: 'Offer override requires an approved approvalId or protected admin passcode.',
+      error: 'The approval must authorize this exact lead and offer amount, or use the protected admin passcode.',
     };
+  }
+  const priorOverride = approvalId && (state.offerOverrides || []).find((item) => item.approvalId === approvalId);
+  if (priorOverride && !passcodeValid) {
+    return { ok: true, result: 'offer_override_recorded', override: priorOverride, avaScript: priorOverride.avaScript, replayed: true };
   }
   const mao = Math.max(0, toNumber(params.mao ?? params.originalMao, 0));
   const repairItems = getRepairItemsForLead(leadId, tenantId);
@@ -32600,10 +32586,10 @@ async function avaOverrideOfferRecord(params = {}) {
       .slice(0, 3)
       .map((item) => item.itemName)
       .join(', ') || 'the current repair scope';
-  const avaScript = String(params.avaScript || '').trim() || `My team came back at ${currency(finalOffer)}. That is the absolute max we can do with ${repairHighlights} and the as-is risk. We can keep it clean: cash, as-is, and a simple close. Does that work for you?`;
+  const avaScript = String(params.avaScript || (!passcodeValid && approval?.metadata?.avaFinalScript) || '').trim() || `My team came back at ${currency(finalOffer)}. That is the absolute max we can do with ${repairHighlights} and the as-is risk. We can keep it clean: cash, as-is, and a simple close. Does that work for you?`;
   const now = isoNow();
   const override = {
-    id: params.id || `offer-override-${slugify(leadId || context.address || 'lead')}-${Date.now()}`,
+    id: !passcodeValid && approvalId ? `offer-override-${approvalId}` : params.id || `offer-override-${slugify(leadId || context.address || 'lead')}-${Date.now()}`,
     tenantId,
     leadId,
     leadName: params.leadName || context.leadName || '',
@@ -34485,11 +34471,14 @@ function buildBrainEmailContext(params = {}) {
   const propertyCity = leadImport?.property?.city || '';
   const propertyState = leadImport?.property?.state || '';
   const propertyType = /multi|duplex|triplex|fourplex/i.test(context.address) ? 'Small multifamily' : 'Single family';
-  const estimatedEquity = Math.max(0, analyzer.arv - analyzer.targetOffer);
+  // ARV minus our offer is not homeowner equity; no verified debt/equity input is available here.
+  const estimatedEquity = null;
   const probateStatus = tags.includes('probate') || /probate|inherited|estate/i.test(params.templateId || '');
   const absenteeOwner = tags.includes('absentee') || /absentee|out[- ]of[- ]state/i.test(context.address);
   const taxDelinquent = tags.includes('tax-delinquent') || tags.includes('delinquent');
-  const recentComps = [`${currency(Math.max(0, analyzer.arv - 7000))} nearby comp`, `${currency(analyzer.arv)} stretch comp`, `${currency(analyzer.arv + 9000)} renovated comp`];
+  const recentComps = analyzer.ok === false ? [] : (analyzer.comps || [])
+    .filter((comp) => comp.price > 0 && comp.source && comp.date)
+    .map((comp) => `${currency(comp.price)} ${comp.label} (${comp.source}, ${comp.date})`);
   const motivationSignals = [];
   if (probateStatus) motivationSignals.push('inherited property');
   if (absenteeOwner) motivationSignals.push('absentee ownership');
@@ -34504,12 +34493,13 @@ function buildBrainEmailContext(params = {}) {
     propertyState,
     propertyType,
     estimatedEquity,
-    marketValue: analyzer.arv,
-    targetOffer: analyzer.targetOffer,
-    mao: analyzer.mao,
-    estimatedProfit: analyzer.estProfit,
-    repairsMid: analyzer.repairsMid,
-    lastSaleDate: params.lastSaleDate || leadImport?.createdAt?.slice(0, 10) || '',
+    analysisStatus: analyzer.ok === false ? 'incomplete' : analyzer.status,
+    marketValue: analyzer.arv ?? null,
+    targetOffer: analyzer.targetOffer ?? null,
+    mao: analyzer.mao ?? null,
+    estimatedProfit: analyzer.estProfit ?? null,
+    repairsMid: analyzer.repairsMid ?? null,
+    lastSaleDate: params.lastSaleDate || leadImport?.property?.lastSaleDate || '',
     recentComps,
     taxDelinquent,
     probateStatus,
@@ -34526,8 +34516,6 @@ function buildColdEmailContent(templateId = 'generic', lead = {}, brainInfo = {}
   const safeTemplate = String(templateId || 'generic').toLowerCase();
   const firstName = String(lead.firstName || lead.name || brainInfo.ownerName || 'there').split(/\s+/)[0];
   const address = brainInfo.propertyAddress || lead.address || 'your property';
-  const equityText = brainInfo.estimatedEquity ? currency(brainInfo.estimatedEquity) : 'strong equity';
-  const compText = Array.isArray(brainInfo.recentComps) && brainInfo.recentComps.length ? brainInfo.recentComps[0] : 'recent nearby sales';
   const motivationText = Array.isArray(brainInfo.motivationSignals) && brainInfo.motivationSignals.length ? brainInfo.motivationSignals.join(', ') : 'an off-market sale path';
 
   let subject = `Quick question about ${address}`;
@@ -34541,18 +34529,18 @@ function buildColdEmailContent(templateId = 'generic', lead = {}, brainInfo = {}
     intro = `I noticed ${address} may be an absentee-owned property and wanted to see if a simple off-market sale would help.`;
   } else if (safeTemplate === 'high-equity' || safeTemplate === 'high_equity') {
     subject = `Equity options for ${address}`;
-    intro = `With properties like ${compText} trading nearby, ${address} looks like it may have solid equity to work with.`;
+    intro = `I wanted to understand your plans for ${address} and whether an as-is sale would be useful.`;
   }
 
   const html = `
     <p>Hi ${escapeHtml(firstName)},</p>
     <p>${escapeHtml(intro)}</p>
-    <p>From our side it looks like there may be about <strong>${escapeHtml(equityText)}</strong> in equity, and we are seeing comps around <strong>${escapeHtml(compText)}</strong>. We buy as-is and can move quickly if that would make life easier.</p>
+    <p>We buy as-is and can discuss a timeline that works for you.</p>
     <p>If ${escapeHtml(motivationText)} is relevant for you, would you be open to a quick 10-15 minute conversation this week?</p>
     <p>Best,<br />Probono Key Realty</p>
   `.trim();
 
-  const text = [`Hi ${firstName},`, '', intro, `It looks like there may be about ${equityText} in equity, and we are seeing comps around ${compText}. We buy as-is and can move quickly if that helps.`, `If ${motivationText} is relevant for you, would you be open to a quick 10-15 minute conversation this week?`, '', 'Best,', 'Probono Key Realty'].join('\n');
+  const text = [`Hi ${firstName},`, '', intro, 'We buy as-is and can discuss a timeline that works for you.', `If ${motivationText} is relevant for you, would you be open to a quick 10-15 minute conversation this week?`, '', 'Best,', 'Probono Key Realty'].join('\n');
 
   return {
     templateId: safeTemplate,
@@ -43004,6 +42992,41 @@ function buildProviderActionReplayParams(params = {}) {
   return redactApprovalParamPreview(params || {});
 }
 
+function resolveProviderActionReplayParams(toolName, params = {}) {
+  const resolved = { ...params };
+  const context = findLeadContext(params);
+  if (['telnyx_sms', 'telnyx_call', 'send_verification_sms'].includes(toolName)) {
+    resolved.phone = normalizePhone(params.phone || params.to || context.phone || inferSkipTraceContact(context).phone);
+    resolved.from = getTelnyxFromNumber(params);
+  }
+  if (toolName === 'telnyx_sms') resolved.body = String(params.body || params.message || '').trim();
+  if (toolName === 'sendColdEmail') {
+    resolved.email = params.email || params.to || context.email || inferSkipTraceContact(context).email;
+    resolved.fromEmail = getSenderAddress('cold', params.fromEmail || params.from_email || params.instantlySender || params.senderEmail || '');
+    const body = String(params.customBody || params.body || params.message || '').trim();
+    const content = body ? { text: body, subject: params.subject || 'Message from Probono Key Realty' }
+      : buildColdEmailContent(params.templateId, { name: context.leadName, address: context.address }, buildBrainEmailContext(params));
+    resolved.customBody = content.text;
+    resolved.subject = content.subject;
+  }
+  return buildProviderActionReplayParams(resolved);
+}
+
+function buildProviderActionContextHash(toolName, params = {}) {
+  const lead = findLatestLeadImport(params);
+  const leadId = params.leadId || lead?.leadId || '';
+  const address = params.address || params.propertyAddress || lead?.property?.address || '';
+  const contracts = (state.contracts || []).filter((item) =>
+    item.id === (params.contractId || params.id) || (leadId && item.leadId === leadId)
+      || (address && item.address === address)).sort((a, b) => String(a.id).localeCompare(String(b.id)));
+  // Approval-derived fallback context would change merely by creating this card.
+  return hashProviderActionContext({
+    toolName, lead, contracts, revision: process.env.RENDER_GIT_COMMIT || BUILD_REVISION,
+    senderPhone: getTelnyxFromNumber(params),
+    senderEmail: getSenderAddress('cold', params.fromEmail || params.senderEmail || ''),
+  });
+}
+
 function summarizeProviderActionResult(result = {}) {
   if (!result || typeof result !== 'object') return { ok: Boolean(result), result };
   return {
@@ -43431,7 +43454,27 @@ async function enforceOperatingModeForTool(toolName, params = {}) {
   if (safetyValidation?.blocked) {
     return buildSafetyBlockedToolResult(toolName, safetyValidation);
   }
-  if (approvalReplayId && isApprovalApproved(approvalReplayId)) return null;
+  if (approvalReplayId) {
+    const approval = (state.approvals || []).find((item) => item.id === approvalReplayId);
+    const authorization = validateProviderActionAuthorization({
+      approval, toolName, params: resolveProviderActionReplayParams(toolName, params),
+      contextHash: buildProviderActionContextHash(toolName, resolveProviderActionReplayParams(toolName, params)),
+    });
+    if (!authorization.ok) return authorization;
+    // Approved actions execute only through the decision callback's shared lease.
+    // Direct invokes can read their prior outcome, never consume the ID again.
+    if (approval.metadata?.providerActionResult) {
+      return {
+        ...approval.metadata.providerActionResult, replayed: true, skipped: true,
+        providerAttempted: false, providerProof: approval.metadata.providerProof || null,
+        approvalId: approval.id,
+      };
+    }
+    return {
+      ok: false, result: 'approval_dispatch_required', blocked: true, providerAttempted: false,
+      approvalId: approval.id, message: 'Use the original approval decision to dispatch or reconcile this action.',
+    };
+  }
 
   const safetyReviewRequired = Boolean(
     safetyValidation?.approvalRequired &&
@@ -45037,6 +45080,8 @@ function buildAgentOrchestrationSnapshot() {
     healthProbes: probes,
     toolCatalog: buildProductionToolCatalog(),
     latencySamples: operationalEvidence.latencySamples,
+    latencyObservations: operationalEvidence.latencyObservations,
+    latencyBudgetsMs: {},
     lastActions: operationalEvidence.lastActions,
     evidenceDiagnostics: operationalEvidence.diagnostics,
     unverifiedLatencySamples: operationalEvidence.unverifiedLatencySamples,
@@ -54099,9 +54144,13 @@ function buildAnalyzerCacheKey(params = {}) {
     address: normalizeAddressKey(params.address || deal.address || params.propertyAddress || ''),
     selectedPath: params.selectedPath || deal.selectedPath || deal.path || '',
     price: params.price || deal.price || deal.agreedPrice || '',
-    arv: params.arv || deal.arv || '',
-    mao: params.mao || deal.mao60 || '',
-    repairs: params.repairs || params.repairsMid || deal?.repairs?.mid || '',
+    leadId: params.leadId || deal.leadId || '',
+    arv: params.arv ?? deal.arv ?? null,
+    mao: params.mao ?? deal.mao60 ?? null,
+    repairs: params.repairsMid ?? params.repairs ?? deal?.repairs?.mid ?? null,
+    fee: params.fee ?? deal.fee ?? null,
+    offer: params.offerPrice ?? deal.offer ?? deal.agreedPrice ?? null,
+    comps: deal.comps || null,
     beds: params.beds || deal.beds || '',
     baths: params.baths || deal.baths || '',
     sqft: params.sqft || deal.sqft || '',
@@ -55053,7 +55102,7 @@ const toolHandlers = {
       useLLMPersonalization: params.useLLMPersonalization ?? params.use_llm_personalization,
       personalizeMessage:
         params.useLLMPersonalization || params.use_llm_personalization ? personalizeNurtureMessageWithStrategist : null,
-      invokeTool: (toolName, toolParams) => invokeToolWithOperatingGuard(toolName, toolParams),
+      invokeTool: (toolName, toolParams) => invokeToolWithOperatingGuard(toolName, buildNurtureProviderParams(toolParams)),
     });
   },
 
@@ -55069,7 +55118,7 @@ const toolHandlers = {
       useLLMPersonalization: params.useLLMPersonalization ?? params.use_llm_personalization,
       personalizeMessage:
         params.useLLMPersonalization || params.use_llm_personalization ? personalizeNurtureMessageWithStrategist : null,
-      invokeTool: (toolName, toolParams) => invokeToolWithOperatingGuard(toolName, toolParams),
+      invokeTool: (toolName, toolParams) => invokeToolWithOperatingGuard(toolName, buildNurtureProviderParams(toolParams)),
     });
   },
 
@@ -56203,15 +56252,17 @@ const toolHandlers = {
         return result;
       }
     }
-    const cached = getAnalyzerResultCache(params);
-    if (cached) return cached.result;
-
     const propertyResolution = await resolvePropertyDataForAnalyzer(params);
+    const effectivePropertyData = propertyResolution.propertyData || params.deal?.propertyData || {};
+    const cacheParams = { ...params, propertyData: effectivePropertyData };
+    const cached = getAnalyzerResultCache(cacheParams);
+    if (cached) return cached.result;
     const run = buildAnalyzerSummary({
       ...params,
-      propertyData: propertyResolution.propertyData,
+      propertyData: effectivePropertyData,
       enrichment: propertyResolution.enrichment,
     });
+    if (run.ok === false) return run;
     const bant = normalizeBantInfo(params.bant || {}, params);
     if (Object.keys(bant).length) {
       run.bant = bant;
@@ -56242,7 +56293,7 @@ const toolHandlers = {
       })
     );
     await persistState(state);
-    setAnalyzerResultCache(params, run);
+    setAnalyzerResultCache(cacheParams, run);
     return {
       ...run,
       leadSynced: Boolean(syncedLead),
@@ -57613,6 +57664,18 @@ const toolHandlers = {
       status: 'pending',
       createdAt: params.createdAt || isoNow(),
     };
+
+    if (approval.type === 'provider-action') {
+      const toolName = approval.approvalAction || approval.metadata.requestedTool;
+      const executionParams = resolveProviderActionReplayParams(toolName, approval.metadata.executionParams || {});
+      approval.phone = executionParams.phone || approval.phone;
+      approval.email = executionParams.email || approval.email;
+      approval.metadata = { ...approval.metadata, actionBinding: createProviderActionBinding({
+        approvalId: approval.id, workspaceId: 'pbk',
+        toolName, params: executionParams, createdAt: approval.createdAt,
+        contextHash: buildProviderActionContextHash(toolName, executionParams),
+      }), executionParams };
+    }
 
     if (isCampaignStartApproval(approval)) {
       const campaignId = getApprovalCampaignId(approval);
@@ -61139,11 +61202,16 @@ async function handleRuntimeEvent(normalizedEvent, payload) {
             summarizeProviderActionResult(providerActionResult);
         } else {
           const executionParams = approval.metadata.executionParams && typeof approval.metadata.executionParams === 'object' ? approval.metadata.executionParams : {};
-          const bindingValidation = validateConversationApprovalBinding(
+          const actionAuthorization = validateProviderActionAuthorization({
+            approval, toolName, params: executionParams,
+            contextHash: buildProviderActionContextHash(toolName, executionParams),
+          });
+          const conversationBindingValidation = validateConversationApprovalBinding(
             approval,
             toolName,
             executionParams
           );
+          const bindingValidation = actionAuthorization.ok ? conversationBindingValidation : actionAuthorization;
           if (!bindingValidation.ok) {
             providerActionResult = {
               ok: false,
@@ -61161,11 +61229,13 @@ async function handleRuntimeEvent(normalizedEvent, payload) {
                 workspaceId:
                   approval.workspaceId || approval.workspace_id || 'pbk',
                 toolName,
-                bindingHash:
-                  approval.metadata.conversationSendBinding?.bindingHash ||
-                  bindingValidation.binding?.bindingHash ||
-                  '',
+                bindingHash: actionAuthorization.bindingHash,
                 execute: async ({ attemptToken, dispatchStartedAt }) => {
+                  const currentAuthorization = validateProviderActionAuthorization({
+                    approval, toolName, params: executionParams,
+                    contextHash: buildProviderActionContextHash(toolName, executionParams),
+                  });
+                  if (!currentAuthorization.ok) return { providerActionResult: currentAuthorization };
                   approval.metadata.providerActionDispatch = {
                     attemptToken,
                     status: 'dispatching',
@@ -61241,6 +61311,7 @@ async function handleRuntimeEvent(normalizedEvent, payload) {
               summarizeProviderActionResult(providerActionResult);
             approval.metadata.providerActionQa =
               sharedDispatchValue.providerActionQa || null;
+            approval.metadata.providerProof = sharedDispatchValue.providerProof || null;
             approval.metadata.providerActionBindingValidation =
               sharedDispatchValue.providerActionBindingValidation ||
               bindingValidation;
@@ -61381,10 +61452,10 @@ async function handleRuntimeEvent(normalizedEvent, payload) {
             {
               approvalId: approval.id,
               invokeTool: (toolName, toolParams) =>
-                invokeToolWithOperatingGuard(toolName, {
+                invokeToolWithOperatingGuard(toolName, buildNurtureProviderParams({
                   ...toolParams,
                   approvalId: approval.id,
-                }),
+                })),
             }
           );
         } catch (error) {
@@ -65219,6 +65290,10 @@ async function handleInternalAvaAssistantChatRequest(request) {
       memories: assistantMemories,
       stream: request.avaStream ? {
         ...request.avaStream,
+        onAnswer: async preview => {
+          await request.avaStream.onAnswer(preview);
+          if (preview.trim()) requestTiming.markFirstToken();
+        },
         check: async preview => {
           if (!isPublicAvaBrainAnswerSafe(preview)) return false;
           const previewController = await runAvaMissionController({

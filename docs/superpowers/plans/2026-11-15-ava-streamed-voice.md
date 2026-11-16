@@ -1,6 +1,6 @@
 # Ava Streamed Voice Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans. Steps use checkbox syntax for tracking.
+> **For agentic workers:** REQUIRED WORKFLOW: Use superpowers:subagent-driven-development for future execution and reviewed task gates. Steps use checkbox syntax for tracking.
 
 **Goal:** Speak streamed Ava replies promptly and finish detailed explanations without truncation.
 

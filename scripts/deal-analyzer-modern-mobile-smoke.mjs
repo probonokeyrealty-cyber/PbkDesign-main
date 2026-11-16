@@ -148,7 +148,7 @@ assert(
 assert(
   /propertyTypeSource/.test(dealView) &&
     /selectedPathSource/.test(dealView) &&
-    /isAnalyzed:\s*record\(lead.deal\).isAnalyzed === false \? false : arv !== undefined \|\| mao !== undefined \|\| maoRBP !== undefined\s*\? true\s*:\s*undefined/.test(
+    /isAnalyzed:\s*record\(lead\.deal\)\.isAnalyzed === false \? false : arv !== undefined \|\| mao !== undefined \|\| maoRBP !== undefined\s*\? true\s*:\s*undefined/.test(
       dealView
     ),
   'Lead hydration should not replace existing type, path, or analyzed state with guessed defaults.'

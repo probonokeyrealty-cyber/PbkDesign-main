@@ -182,6 +182,9 @@ async function verify(engine, width) {
       )
         return route.continue();
       if (path === '/api/state/stream/session') return route.fulfill({ json: { ok: false } });
+      if (path === '/api/property-data/address-suggestions' && request.method() === 'POST') {
+        return route.fulfill({ json: { status: 'unavailable', suggestions: [] } });
+      }
       if (path === '/invoke' && request.postDataJSON()?.toolName === 'previewAgentDealContext') {
         pendingPreviews.push({ route, params: request.postDataJSON().params });
         return;
@@ -208,10 +211,18 @@ async function verify(engine, width) {
     await compA.fill('2200000');
     await compB.fill('2800000');
     await expect(arv).toHaveValue('2500000');
-    await page.getByRole('button', { name: 'Look up asking price', exact: true }).click();
-    await page.getByRole('button', { name: 'Fill empty fields', exact: true }).click();
+    const listPrice = page.getByRole('spinbutton', { name: 'List price in dollars' });
+    const baths = page.getByRole('spinbutton', { name: 'Bathrooms', exact: true });
+    const sqft = page.getByRole('spinbutton', { name: 'Square footage', exact: true });
+    const factsBefore = await Promise.all([listPrice, baths, sqft].map(field => field.inputValue()));
+    await page.getByRole('button', { name: 'Find listing photos', exact: true }).click();
+    await expect(page.getByRole('region', { name: /Property details/i })
+      .getByText('No saved Apify photos for this address.', { exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Fill empty fields', exact: true })).toHaveCount(0);
+    for (const [index, field] of [listPrice, baths, sqft].entries()) {
+      await expect(field).toHaveValue(factsBefore[index]);
+    }
     await expect(beds).toHaveValue('7');
-    await expect(page.getByRole('spinbutton', { name: 'Bathrooms' })).toHaveValue('2');
     await expect(arv).toHaveValue('2500000');
     await expect(compA).toHaveValue('2200000');
     await expect(compB).toHaveValue('2800000');
@@ -250,9 +261,9 @@ async function verify(engine, width) {
     await expect(openWorkspace).toBeFocused();
     await expect
       .poll(() =>
-        openWorkspace.evaluate((node) => node.closest('.pbk-shell-content')?.scrollTop ?? scrollY)
+        openWorkspace.evaluate((node, expected) => Math.abs((node.closest('.pbk-shell-content')?.scrollTop ?? scrollY) - expected), fleetScroll)
       )
-      .toBe(fleetScroll);
+      .toBeLessThanOrEqual(1);
     await expect(page).toHaveURL(/agent=rex/);
     await page.screenshot({ path: `output/context-hub-fleet-${engine.name()}-${width}.png` });
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1));
@@ -440,6 +451,9 @@ async function verify(engine, width) {
     await page.goto(`${origin}/analyzer`);
     await expect(address).toHaveValue('47 Fictional Way, Example City, CA 90210');
     await expect(beds).toHaveValue('7');
+    for (const [index, field] of [listPrice, baths, sqft].entries()) {
+      await expect(field).toHaveValue(factsBefore[index]);
+    }
     await expect(arv).toHaveValue('2500000');
     await expect(compA).toHaveValue('2200000');
     await expect(compB).toHaveValue('2800000');

@@ -68,8 +68,10 @@ assert(
 assert(
   /isApprovalQueuedResponse/.test(app) &&
     /Analyzer snapshot queued for approval/.test(app) &&
-    /Ava queued approval/.test(app),
-  'Deal Analyzer send/save actions must distinguish queued approval from completed CRM/provider sync.'
+    /patchLeadRequest\(activeDeal.leadId, buildAnalyzerLeadPatch\(activeDeal\)\)/.test(app) &&
+    /if \(response.ok === false\) throw new Error/.test(app) &&
+    /Lead saved\./.test(app) && /Lead not saved\./.test(app),
+  'Agent handoffs must label approvals while manual saves require canonical write confirmation.'
 );
 assert(
   !/Analyzer snapshot sent to Ava and the runtime CRM queue|runtime CRM synced|Bridge sync pending/.test(
@@ -146,7 +148,7 @@ assert(
 assert(
   /propertyTypeSource/.test(dealView) &&
     /selectedPathSource/.test(dealView) &&
-    /isAnalyzed:\s*arv !== undefined \|\| mao !== undefined \|\| maoRBP !== undefined\s*\? true\s*:\s*undefined/.test(
+    /isAnalyzed:\s*record\(lead.deal\).isAnalyzed === false \? false : arv !== undefined \|\| mao !== undefined \|\| maoRBP !== undefined\s*\? true\s*:\s*undefined/.test(
       dealView
     ),
   'Lead hydration should not replace existing type, path, or analyzed state with guessed defaults.'

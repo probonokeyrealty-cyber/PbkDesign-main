@@ -189,11 +189,11 @@ assert(
   'Ava Chat Enter-to-send must ignore IME composition events.'
 );
 assert(
-  /\.pbk-ava-chat-submit-row[\s\S]*grid-template-columns:\s*44px minmax\(0,\s*1fr\)/.test(
+  /\.pbk-ava-chat-submit-row\s*\{[^}]*grid-template-columns:\s*(?:44px minmax\(0,\s*1fr\)|minmax\(0,\s*1fr\) 96px)\s*;/.test(
     pbkComponentsCss
   ) &&
-    /\.pbk-ava-chat-send-button[\s\S]*width:\s*100%/.test(pbkComponentsCss),
-  'Ava Chat mobile composer must keep Send as a full-width tappable control.'
+    /\.pbk-ava-chat-send-button\s*\{[^}]*width:\s*100%\s*;/.test(pbkComponentsCss),
+  'Ava Chat mobile composer must reserve separate control and Send columns with a full-width tappable Send button.'
 );
 
 assert(

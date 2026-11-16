@@ -36,11 +36,15 @@ export function isAvaCompactDecisionSafe(answer) {
   return true;
 }
 
-export function buildAvaDecisionMessages(prompt, text, { streaming = false } = {}) {
-  const contract = streaming ? DECISION_JSON_CONTRACT.slice(0, DECISION_JSON_CONTRACT.indexOf('EXAMPLE JSON:'))
+export function buildAvaDecisionMessages(prompt, text, { streaming = false, maxOutputTokens = 0 } = {}) {
+  const capacity = Number.isInteger(maxOutputTokens) && maxOutputTokens > 4096
+    ? `This operator chat has room for ${maxOutputTokens} output tokens, including JSON. Complete a requested long explanation in this reply when it fits. Do not invent a shorter channel limit or promise installments solely because the reply is long. Do not ask the operator to say begin for an explanation they already requested. Do not fill the budget unnecessarily or claim a provider/tool failure without evidence.\n`
+    : '';
+  const baseContract = DECISION_JSON_CONTRACT.replace('EXAMPLE JSON:', `${capacity}EXAMPLE JSON:`);
+  const contract = streaming ? baseContract.slice(0, baseContract.indexOf('EXAMPLE JSON:'))
     + 'For streaming, output ALL decision metadata before the reply field. Put reply LAST, after decision, confidence, nextAction, needsApproval, missionTimeline, and toolIntent. Never change metadata after starting reply.\nEXAMPLE JSON:\n'
     + JSON.stringify({ decision: 'answer', confidence: 0.8, nextAction: '', needsApproval: false, missionTimeline: [], toolIntent: null, reply: '<natural operator-facing reply>' })
-    : DECISION_JSON_CONTRACT;
+    : baseContract;
   return [
     { role: 'system', content: prompt },
     { role: 'system', content: contract },

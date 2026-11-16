@@ -14,6 +14,8 @@ Primary references checked: [DeepSeek Chat Completions](https://api-docs.deepsee
 
 Review ruling: both proxy and direct Render chat use one shared chat-intent permission classifier. This preserves the existing SMS, email, call, and provider-approval restrictions before a model or workflow runs. Canonical PBK staff origins and recognized HTTPS Netlify deployment hostnames derived from explicitly trusted sites can send the existing team-session header; unrelated Netlify sites, lookalikes, nonstandard ports, and HTTP previews remain excluded. No wildcard Netlify origin or credentialed-cookie CORS was added.
 
+Live-test ruling: the model sometimes claimed an unsupported shorter channel limit. The chat contract now receives the actual output budget and instructs Ava to honor requested depth within it, without inventing a smaller cap or asking for a redundant "begin". This does not authorize actions, bypass a safety rewrite, or require unnecessary verbosity. Browser playback verification was handed back to the user at their request after active speech was observed.
+
 ## Acceptance
 
 - Requests above 4,096 output tokens and 30/45/60 seconds can complete through the staff chat stream.

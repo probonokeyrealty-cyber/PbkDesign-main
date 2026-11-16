@@ -64596,7 +64596,7 @@ async function runInternalAvaDeepSeekChat({
       memories,
     }),
   });
-  const deepSeekMessages = buildAvaDecisionMessages(prompt, text, { streaming: Boolean(stream) });
+  const deepSeekMessages = buildAvaDecisionMessages(prompt, text, { streaming: Boolean(stream), maxOutputTokens: 32_768 });
   let streamedAnswer = false;
   const streamingOptions = stream ? {
     signal: stream.signal,

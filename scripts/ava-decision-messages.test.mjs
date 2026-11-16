@@ -23,6 +23,14 @@ test('decision contract avoids generating invented work and repeated conversatio
   assert(contract.includes('Do not omit required fields'));
 });
 
+test.each([false, true])('long chat declares its real output room without inventing a shorter channel cap (streaming=%s)', streaming => {
+  const contract = buildAvaDecisionMessages('PBK approval policy', 'Explain in detail', { streaming, maxOutputTokens: 32_768 })[1].content;
+  assert.match(contract, /32768 output tokens/);
+  assert.match(contract, /Do not invent a shorter channel limit/);
+  assert.match(contract, /Do not ask.*begin/i);
+  assert.match(contract, /no fixed word or sentence limit/i);
+});
+
 test('compact no-tool decisions cannot hide action or approval proposals', () => {
   const answer = { reply: 'A specific answer.', decision: 'answer', confidence: 0.8, nextAction: '', missionTimeline: [], needsApproval: false, toolIntent: null };
   assert.equal(isAvaCompactDecisionSafe(JSON.stringify(answer)), true);

@@ -1,6 +1,6 @@
 # Ava Long Generation Implementation Plan
 
-> **For agentic workers:** Use superpowers:executing-plans. Steps use checkbox syntax for tracking.
+REQUIRED WORKFLOW: Use `superpowers:subagent-driven-development` with one focused implementation pass per task and review between tasks. Steps use checkbox syntax for tracking.
 
 **Goal:** Remove short chat-generation cutoffs while preserving safe streaming speech and completed-only context.
 

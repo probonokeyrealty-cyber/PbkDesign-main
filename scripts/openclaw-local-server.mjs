@@ -30,6 +30,8 @@ import { authorizeQualificationRequest, executeReleaseQualification, isDirectQua
 import { loadQualificationCiEvidence } from './release-qualification-ci.mjs';
 import { collectOperationalAudit } from './operational-audit-collector.mjs';
 import { executeOperationalAudit, readOperationalAudit } from './operational-audit-store.mjs';
+import { collectBacklogReconciliation } from './backlog-reconciliation-collector.mjs';
+import { executeBacklogReconciliation, readBacklogReconciliation } from './backlog-reconciliation-store.mjs';
 import { AVA_REAL_CALL_EVAL_SCENARIO_IDS, runAvaRealCallQualification } from './ava-real-call-eval-pack.mjs';
 import { BEHAVIOR_QUALIFICATION_CASE_IDS, runBehaviorQualification } from './behavior-tests.mjs';
 import { SILENT_ERROR_POLICY_CASE_IDS, runSilentErrorPolicyQualification } from './silent-error-governance-smoke.mjs';
@@ -11448,6 +11450,10 @@ async function buildProductionMaturitySnapshot({ runtimeMeta = getRuntimeMeta() 
   const operationalAudit = await readOperationalAudit({
     pool: getPgPool(), revision: process.env.RENDER_GIT_COMMIT || BUILD_REVISION, secret: BRIDGE_API_KEY,
   });
+  const backlogReconciliation = await readBacklogReconciliation({
+    pool: getPgPool(), revision: process.env.RENDER_GIT_COMMIT || BUILD_REVISION, secret: BRIDGE_API_KEY,
+    collect: ({ now }) => collectBacklogReconciliation({ pool: getPgPool(), secret: BRIDGE_API_KEY, now }),
+  });
   const executionEvidence = buildExecutedReadinessEvidence({
     revision: process.env.RENDER_GIT_COMMIT || BUILD_REVISION,
     evidence: { ...qualification.evidence, ...operationalAudit.evidence },
@@ -11477,6 +11483,7 @@ async function buildProductionMaturitySnapshot({ runtimeMeta = getRuntimeMeta() 
       failedCallEvalReady: failedCallEvalGate.ready,
       controlledQualificationReady: qualification.qualification.ready,
       operationalAuditReady: operationalAudit.audit?.ready === true && operationalAudit.verified === true,
+      backlogReconciliationVerified: backlogReconciliation.verified === true,
       stableAgentFleetMeasured: Boolean(stableAgentFleetMeasurement?.ready),
       shadowCanaryReady: shadowCanaryComparison.ready,
       canaryPromotionReady: canaryPromotionGate.ready,
@@ -11496,6 +11503,18 @@ async function buildProductionMaturitySnapshot({ runtimeMeta = getRuntimeMeta() 
     operationalAudit: { ...operationalAudit.audit, ready: operationalAudit.verified === true && operationalAudit.audit?.ready === true,
       verified: operationalAudit.verified, runId: operationalAudit.runId || null,
       source: operationalAudit.source, result: operationalAudit.result, executedAt: operationalAudit.executedAt || null },
+    // Internal recovery is supplementary evidence, never delivery or launch qualification.
+    backlogReconciliation: {
+      verified: backlogReconciliation.verified === true,
+      runId: backlogReconciliation.verified ? backlogReconciliation.runId : null,
+      executedAt: backlogReconciliation.verified ? backlogReconciliation.executedAt : null,
+      source: backlogReconciliation.source,
+      result: backlogReconciliation.result,
+      counts: backlogReconciliation.verified ? backlogReconciliation.reconciliation.counts : null,
+      launchQualified: false,
+      noContact: true,
+      providerWritesBlocked: true,
+    },
     shadowCanaryComparison: {
       ...shadowCanaryComparison,
       mode: 'unverified',
@@ -72834,6 +72853,29 @@ const server = createServer(async (request, response) => {
       // Always read the newest signed run; a cached prior pass cannot hide a newer failure.
       const maturity = await buildProductionMaturitySnapshot({ runtimeMeta: getRuntimeMeta() });
       json(response, maturity.ready ? 200 : 202, maturity);
+      return;
+    }
+
+    if (pathname === '/api/admin/reconciliation/run') {
+      const authority = authorizeQualificationRequest({ method: request.method, search: url.search,
+        headers: request.headers, body: {} }, BRIDGE_API_KEY);
+      if (!authority.ok) {
+        json(response, authority.status, { ok: false, result: authority.result });
+        return;
+      }
+      const allowed = authorizeQualificationRequest({ method: request.method, search: url.search,
+        headers: request.headers, body: await readBody(request) }, BRIDGE_API_KEY);
+      if (!allowed.ok) {
+        json(response, allowed.status, { ok: false, result: allowed.result });
+        return;
+      }
+      const pool = runtimeStateBootstrap.ready ? getPgPool() : null;
+      const result = await executeBacklogReconciliation({
+        pool, revision: process.env.RENDER_GIT_COMMIT || BUILD_REVISION, secret: BRIDGE_API_KEY,
+        collect: ({ now }) => collectBacklogReconciliation({ pool, secret: BRIDGE_API_KEY, now }),
+      });
+      clearBridgeReadCache('backlog_reconciliation_executed');
+      json(response, result.ok ? 200 : result.result === 'backlog_reconciliation_in_progress' ? 409 : 503, result);
       return;
     }
 

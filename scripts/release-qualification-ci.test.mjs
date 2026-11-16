@@ -367,6 +367,8 @@ test('workflow requires full isolated Postgres and default Chromium/WebKit execu
   assert.match(postgres.run, /--runInBand/);
   assert.match(postgres.run, /--json/);
   assert.match(postgres.run, /--runTestsByPath scripts\/conversation-store.test.mjs scripts\/provider-action-dispatch.test.mjs scripts\/release-qualification.test.mjs scripts\/operational-audit-store.test.mjs/);
+  assert.match(postgres.run, /scripts\/backlog-reconciliation-store.test.mjs/);
+  assert.match(postgres.run, /scripts\/backlog-reconciliation-integration.test.mjs/);
   assert.match(postgres.env.NEON_API_KEY, /secrets.NEON_API_KEY \|\| secrets.PBK_NEON_API_KEY/);
   assert.match(postgres.env.NEON_PROJECT_ID, /vars.NEON_PROJECT_ID/);
   assert.match(job.steps.find((step) => step.name === names[3]).run, /playwright install --with-deps chromium webkit/);
@@ -379,14 +381,20 @@ test('workflow requires full isolated Postgres and default Chromium/WebKit execu
 
 function report() {
   return {
-    success: true, numTotalTestSuites: 4, numPassedTestSuites: 4, numFailedTestSuites: 0, numPendingTestSuites: 0,
-    numTotalTests: 16, numPassedTests: 16, numFailedTests: 0, numPendingTests: 0, numTodoTests: 0, numRuntimeErrorTestSuites: 0,
-    testResults: ['conversation-store', 'operational-audit-store', 'provider-action-dispatch', 'release-qualification'].map((name) => ({
+    success: true, numTotalTestSuites: 6, numPassedTestSuites: 6, numFailedTestSuites: 0, numPendingTestSuites: 0,
+    numTotalTests: 24, numPassedTests: 24, numFailedTests: 0, numPendingTests: 0, numTodoTests: 0, numRuntimeErrorTestSuites: 0,
+    testResults: ['backlog-reconciliation-integration', 'backlog-reconciliation-store', 'conversation-store', 'operational-audit-store', 'provider-action-dispatch', 'release-qualification'].map((name) => ({
       name: `/fixture/scripts/${name}.test.mjs`, status: 'passed',
       assertionResults: Array.from({ length: 4 }, () => ({ status: 'passed' })),
     })),
   };
 }
+
+test('founder CI executes the isolated no-delivery reconciliation boundary smoke', () => {
+  const founder = parse(readFileSync(new URL('../.github/workflows/founder-verify.yml', import.meta.url), 'utf8'));
+  const commands = founder.jobs['founder-verify'].steps.map(step => step.run || '').join('\n');
+  assert.match(commands, /npm run test:backlog-reconciliation-bridge/);
+});
 
 for (const [defect, mutate, passes] of [
   ['clean success', () => {}, true],

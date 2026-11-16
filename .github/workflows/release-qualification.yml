@@ -59,6 +59,8 @@ jobs:
           --config jest.config.mjs --runInBand
           --runTestsByPath scripts/conversation-store.test.mjs scripts/provider-action-dispatch.test.mjs
           scripts/release-qualification.test.mjs scripts/operational-audit-store.test.mjs
+          scripts/backlog-reconciliation-store.test.mjs
+          scripts/backlog-reconciliation-integration.test.mjs
           --json --outputFile=$POSTGRES_REPORT
 
       - name: Assert zero skipped or failed Postgres tests
@@ -72,12 +74,12 @@ jobs:
           for (const key of ['numFailedTests', 'numPendingTests', 'numTodoTests', 'numFailedTestSuites', 'numPendingTestSuites', 'numRuntimeErrorTestSuites']) {
             assert.equal(report[key], 0, key);
           }
-          assert.equal(report.numTotalTestSuites, 4);
-          assert.equal(report.numPassedTestSuites, 4);
+          assert.equal(report.numTotalTestSuites, 6);
+          assert.equal(report.numPassedTestSuites, 6);
           assert.ok(report.numTotalTests > 0);
           assert.equal(report.numPassedTests, report.numTotalTests);
-          assert.equal(report.testResults.length, 4);
-          const expected = ['conversation-store.test.mjs', 'operational-audit-store.test.mjs', 'provider-action-dispatch.test.mjs', 'release-qualification.test.mjs'];
+          assert.equal(report.testResults.length, 6);
+          const expected = ['backlog-reconciliation-integration.test.mjs', 'backlog-reconciliation-store.test.mjs', 'conversation-store.test.mjs', 'operational-audit-store.test.mjs', 'provider-action-dispatch.test.mjs', 'release-qualification.test.mjs'];
           const actual = report.testResults.map((suite) => suite.name.replaceAll('\\', '/').split('/').pop()).sort();
           assert.deepEqual(actual, expected);
           let assertions = 0;

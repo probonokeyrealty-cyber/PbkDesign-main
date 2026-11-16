@@ -14,7 +14,7 @@ function fixture() {
     evidence: {
       failedCallEval: run('eval-1', { scenarios: [{ id: 'stop', passed: true }, { id: 'approval', passed: true }] }),
       behavior: run('behavior-1', { passed: true }),
-      silentErrors: run('errors-1', { passed: true }),
+      silentErrors: run('errors-1', { passed: true, provenance: 'operational', scope: 'durable_operational_audit' }),
       canary: run('comparison-1', {
         provenance: 'operational',
         baseline: run('baseline-1', { revision: 'previous-release', provenance: 'operational', sampleCount: 10, ...metrics }),
@@ -83,6 +83,14 @@ test('absent evidence never passes an empty evaluation set', () => {
   assert.equal(result.failedCallEvalGate.ready, false);
   assert.equal(result.failedCallEvalGate.passed, 0);
 });
+
+for (const change of [{ provenance: 'controlled' }, { scope: 'deterministic_policy_regression' }, { scope: undefined }]) {
+  test(`silent errors require an operational audit, not a controlled policy fixture: ${JSON.stringify(change)}`, () => {
+    const options = fixture();
+    Object.assign(options.evidence.silentErrors, change);
+    assert.equal(build(options).silentErrorReport.launchReady, false);
+  });
+}
 
 for (const scenarios of [
   [], [{ id: 'stop', passed: true }],

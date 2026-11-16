@@ -290,6 +290,7 @@ try {
     await verify(chromium, { width: 320, height: 740 }, devices['iPhone 13']);
   } else {
     await verify(webkit, { width: 390, height: 844 }, devices['iPhone 13']);
+    await verify(webkit, { width: 320, height: 844 }, devices['iPhone 13']);
   }
 } finally {
   await new Promise((resolve, reject) => server.httpServer.close((error) => error ? reject(error) : resolve()));

@@ -196,9 +196,13 @@ assert(
 );
 assert(
   /className="pbk-ava-chat-submit-row flex min-w-0 flex-wrap/.test(avaChat) &&
-    avaChat.includes('pbk-ava-chat-send-button min-h-11 min-w-11 w-24 shrink-0') &&
-    avaChat.includes("aria-label={onStopResponse ? 'Stop Ava response' : 'Send to Ava'}"),
-  'Ava Chat mobile composer must reserve a reachable 96px Send/Stop control with a 44px minimum touch target.'
+    /pbk-ava-chat-send-button min-h-11 min-w-11 w-24 shrink-0/.test(avaChat) &&
+    avaChat.includes("aria-label={onStopResponse ? 'Stop Ava response' : 'Send to Ava'}") &&
+    /@media \(max-width: 640px\)[\s\S]*?\.pbk-ava-chat-submit-row\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)\s+96px/.test(
+      pbkComponentsCss
+    ) &&
+    /\.pbk-ava-chat-send-button\s*\{[^}]*width:\s*100%/.test(pbkComponentsCss),
+  'Ava Chat mobile composer must reserve a stable 96px column for Send/Stop.'
 );
 
 assert(

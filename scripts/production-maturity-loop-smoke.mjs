@@ -303,9 +303,9 @@ assert(
 assert(
   bridgeSource.includes('createRuntimeEventArchive') &&
     bridgeSource.includes('createProviderCircuitBreaker') &&
-    bridgeSource.includes('buildCanaryPromotionGate') &&
-    bridgeSource.includes('buildShadowCanaryComparison'),
-  'Bridge must wire runtime archive, provider circuit breakers, canary promotion gates, and shadow comparisons.'
+    bridgeSource.includes('buildExecutedReadinessEvidence') &&
+    bridgeSource.includes('requiredScenarioIds: AVA_REAL_CALL_EVAL_SCENARIOS'),
+  'Bridge must wire runtime archive, provider circuits, and executed-evidence canary/evaluation gates.'
 );
 assert(
   bridgeSource.includes('/api/runtime/events/status') &&

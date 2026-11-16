@@ -8,6 +8,20 @@ export function requireNurturePool(pool) {
   return pool;
 }
 
+export function buildNurtureProviderParams(params = {}) {
+  const { approvalId, approval_id, metadata, ...providerParams } = params;
+  const nurtureSequenceApprovalId = String(approvalId || approval_id || '').trim();
+  // Sequence approval is provenance, not authority for a child provider send.
+  return {
+    ...providerParams,
+    forceApproval: true,
+    metadata: {
+      ...(metadata && typeof metadata === 'object' && !Array.isArray(metadata) ? metadata : {}),
+      ...(nurtureSequenceApprovalId ? { nurtureSequenceApprovalId } : {}),
+    },
+  };
+}
+
 function sqlJson(value) {
   return JSON.stringify(value && typeof value === 'object' ? value : {});
 }
@@ -400,6 +414,59 @@ async function loadLead(pool, leadId) {
   return result.rows[0] || null;
 }
 
+function classifyNurtureOutcome(channel, outcome) {
+  if (!outcome || typeof outcome !== 'object') {
+    return { status: 'unknown', error: 'The invoke adapter returned no outcome.' };
+  }
+  const record = channel === 'call' ? outcome.call : outcome.message;
+  const provider = channel === 'email' ? outcome.delivery : outcome.telnyx;
+  const statuses = [
+    outcome.result, outcome.outcome, outcome.status,
+    record?.status, record?.deliveryStatus, record?.providerStatus,
+    record?.payload?.deliveryStatus, record?.payload?.providerStatus,
+    record?.payload?.telnyx?.status, provider?.status,
+  ].map((value) => String(value || '').trim().toLowerCase());
+  if (outcome.requiresApproval === true ||
+      ['pending', 'proposed'].includes(String(outcome.approval?.status || '').toLowerCase()) ||
+      statuses.some((status) =>
+    ['queued_for_approval', 'approval_required', 'pending_approval'].includes(status))) {
+    return { status: 'queued_for_approval', error: 'Awaiting approval and outcome reconciliation.' };
+  }
+  const simulated = [outcome, record, provider].some((value) =>
+    value?.simulated === true || value?.preview === true || value?.dryRun === true || value?.live === false) ||
+    String(record?.provider || '').toLowerCase() === 'simulated';
+  if (outcome.ok === false || outcome.blocked === true || outcome.error || provider?.error ||
+      provider?.ok === false || simulated ||
+      statuses.some((status) => ['failed', 'undelivered', 'rejected', 'blocked', 'cancelled',
+        'canceled', 'expired', 'provider_missing', 'unavailable', 'sending_failed',
+        'delivery_failed', 'bounced'].includes(status))) {
+    return {
+      status: 'failed',
+      error: String(outcome.error || provider?.error || outcome.reason ||
+        (typeof outcome.message === 'string' ? outcome.message : '') || 'No successful live provider outcome.'),
+    };
+  }
+  const providerId = channel === 'call'
+    ? record?.telnyxCallControlId || record?.telnyxCallLegId || provider?.response?.call_control_id
+    : channel === 'email'
+      ? provider?.id || provider?.body?.id || record?.providerMessageId
+      : record?.providerMessageId || record?.payload?.providerMessageId || provider?.response?.id;
+  if (outcome.ok !== true || typeof providerId !== 'string' || !providerId.trim()) {
+    return { status: 'unknown', error: 'No identifiable provider outcome; manual reconciliation required.' };
+  }
+  if (statuses.some((status) => ['unknown', 'pending', 'indeterminate'].includes(status))) {
+    return { status: 'unknown', error: 'Provider outcome is unresolved; manual reconciliation required.' };
+  }
+  // Acceptance/sent is not delivery. SMS/email require delivered; calls require completed.
+  const terminalStatus = channel === 'call' ? 'completed' : 'delivered';
+  if (statuses.includes(terminalStatus)) return { status: terminalStatus, error: '' };
+  if (outcome.accepted === true || provider?.ok === true || statuses.some((status) =>
+    ['accepted', 'queued', 'sent', 'sending', 'initiated', 'ringing', 'in_progress', 'live'].includes(status))) {
+    return { status: 'accepted', error: 'Provider accepted the action; terminal proof is still required.' };
+  }
+  return { status: 'unknown', error: 'Provider identity alone is not an outcome; manual reconciliation required.' };
+}
+
 export async function processNurtureInstance(pool, instanceId, options = {}) {
   requireNurturePool(pool);
   if (options.ensureSchema !== false) await ensureNurtureSchema(pool);
@@ -412,6 +479,12 @@ export async function processNurtureInstance(pool, instanceId, options = {}) {
     [String(instanceId || '')]
   );
   const instance = instanceResult.rows[0];
+  if (instance?.status === 'paused') {
+    return {
+      ok: false, result: 'blocked', status: 'paused', reason: instance.pause_reason,
+      stepIndex: Number(instance.current_step || 0),
+    };
+  }
   if (!instance || instance.status !== 'active')
     return { ok: false, reason: 'inactive_or_missing' };
 
@@ -437,7 +510,7 @@ export async function processNurtureInstance(pool, instanceId, options = {}) {
     channel,
     step,
   });
-  let status = 'sent';
+  let status = 'unknown';
   let error = '';
   let invokeResult = {};
 
@@ -448,8 +521,8 @@ export async function processNurtureInstance(pool, instanceId, options = {}) {
          FROM public.nurture_step_logs
          WHERE tenant_id = 'pbk'
            AND lead_id = $1
-           AND status IN ('sent','queued_for_approval')
-           AND sent_at >= date_trunc('day', NOW())`,
+           AND status IN ('sent','queued_for_approval','accepted','delivered','completed')
+           AND COALESCE(sent_at, created_at) >= date_trunc('day', NOW())`,
         [lead.id],
       )
       .catch(() => ({ rows: [{ sent_today: 0 }] }));
@@ -481,8 +554,8 @@ export async function processNurtureInstance(pool, instanceId, options = {}) {
       await pool.query(
         `UPDATE public.nurture_instances
          SET next_step_at = $2, updated_at = NOW()
-         WHERE id = $1`,
-        [instance.id, nextAllowedAt],
+         WHERE id = $1 AND status = 'active' AND current_step = $3`,
+        [instance.id, nextAllowedAt, stepIndex],
       );
       return {
         ok: true,
@@ -496,17 +569,49 @@ export async function processNurtureInstance(pool, instanceId, options = {}) {
     }
   }
 
+  // A durable, non-expiring claim fails closed across concurrent workers and crashes.
+  // No callback reconciliation is wired here: never release this claim to blindly resend.
+  const claimed = await pool.query(
+    `UPDATE public.nurture_instances
+     SET status = 'paused', pause_reason = 'nurture_dispatch_in_flight', next_step_at = NULL, updated_at = NOW()
+     WHERE id = $1 AND status = 'active' AND current_step = $2
+     RETURNING id`,
+    [instance.id, stepIndex],
+  );
+  if (!claimed.rows[0]) return { ok: false, result: 'blocked', reason: 'state_changed', stepIndex };
+
+  const previous = await pool.query(
+    `SELECT status, result FROM public.nurture_step_logs
+     WHERE nurture_instance_id = $1 AND step_index = $2 AND tenant_id = 'pbk'
+       AND status NOT IN ('deferred_quiet_hours','deferred_daily_throttle')
+     ORDER BY created_at DESC LIMIT 1`,
+    [instance.id, stepIndex],
+  );
+  if (previous.rows[0]) {
+    await pool.query(
+      `UPDATE public.nurture_instances
+       SET pause_reason = 'nurture_reconciliation_required', updated_at = NOW()
+       WHERE id = $1 AND status = 'paused' AND pause_reason = 'nurture_dispatch_in_flight'
+         AND current_step = $2`,
+      [instance.id, stepIndex],
+    );
+    return { ok: false, result: 'blocked', status: previous.rows[0].status, stepIndex,
+      reason: 'prior_attempt_requires_reconciliation' };
+  }
+
   try {
-    if (channel === 'sms') {
-      invokeResult = await options.invokeTool?.('telnyx_sms', {
+    if (typeof options.invokeTool !== 'function') {
+      invokeResult = { ok: false, error: 'Nurture invoke adapter is missing.' };
+    } else if (channel === 'sms') {
+      invokeResult = await options.invokeTool('telnyx_sms', {
         leadId: lead.id,
         to: lead.phone,
-        text: message,
+        body: message,
         source: 'nurture-agent',
         approvalId: options.approvalId || options.approval_id || '',
       });
     } else if (channel === 'email') {
-      invokeResult = await options.invokeTool?.('sendColdEmail', {
+      invokeResult = await options.invokeTool('sendColdEmail', {
         leadId: lead.id,
         to: lead.email,
         subject: 'Quick follow-up from PBK',
@@ -515,7 +620,7 @@ export async function processNurtureInstance(pool, instanceId, options = {}) {
         approvalId: options.approvalId || options.approval_id || '',
       });
     } else if (channel === 'call') {
-      invokeResult = await options.invokeTool?.('telnyx_call', {
+      invokeResult = await options.invokeTool('telnyx_call', {
         leadId: lead.id,
         to: lead.phone,
         callControlId: `nurture_${instance.id}`,
@@ -523,26 +628,22 @@ export async function processNurtureInstance(pool, instanceId, options = {}) {
         approvalId: options.approvalId || options.approval_id || '',
       });
     } else {
-      status = 'skipped';
-      invokeResult = { ok: true, result: 'unsupported_or_empty_channel' };
+      invokeResult = { ok: false, error: 'Unsupported or empty nurture channel.' };
     }
-    if (invokeResult?.ok === false) {
-      status = invokeResult.result === 'queued_for_approval' ? 'queued_for_approval' : 'failed';
-      error = invokeResult.error || invokeResult.message || '';
-    } else if (invokeResult?.result === 'queued_for_approval') {
-      status = 'queued_for_approval';
-    }
+    ({ status, error } = classifyNurtureOutcome(channel, invokeResult));
   } catch (err) {
-    status = 'failed';
-    error = err?.message || String(err);
+    // The provider may have accepted before the adapter threw. Do not assume rejection.
+    status = 'unknown';
+    error = String(err?.message || err);
     invokeResult = { ok: false, error };
   }
 
+  const terminal = status === 'delivered' || status === 'completed';
   await pool.query(
     `INSERT INTO public.nurture_step_logs (
        tenant_id, nurture_instance_id, lead_id, step_index, channel, message_sent, sent_at, status, error, result, created_at
      )
-     VALUES ($1,$2,$3,$4,$5,$6,NOW(),$7,$8,$9::jsonb,NOW())`,
+     VALUES ($1,$2,$3,$4,$5,$6,$10,$7,$8,$9::jsonb,NOW())`,
     [
       'pbk',
       instance.id,
@@ -553,29 +654,48 @@ export async function processNurtureInstance(pool, instanceId, options = {}) {
       status,
       error.slice(0, 1000),
       sqlJson(invokeResult),
+      terminal ? new Date().toISOString() : null,
     ]
   );
 
-  const nextIndex = stepIndex + 1;
-  if (nextIndex >= steps.length) {
+  if (!terminal) {
     await pool.query(
       `UPDATE public.nurture_instances
-       SET current_step = $2, status = 'completed', next_step_at = NULL, updated_at = NOW()
-       WHERE id = $1`,
-      [instance.id, nextIndex]
+       SET pause_reason = $2, updated_at = NOW()
+       WHERE id = $1 AND status = 'paused' AND pause_reason = 'nurture_dispatch_in_flight'
+         AND current_step = $3`,
+      [instance.id, `nurture_${status}`, stepIndex],
     );
+    return { ok: false, result: status, status, error, channel, stepIndex,
+      requiresManualReconciliation: true };
+  }
+
+  const nextIndex = stepIndex + 1;
+  if (nextIndex >= steps.length) {
+    const completed = await pool.query(
+      `UPDATE public.nurture_instances
+       SET current_step = $2, status = 'completed', pause_reason = '', next_step_at = NULL, updated_at = NOW()
+       WHERE id = $1 AND status = 'paused' AND pause_reason = 'nurture_dispatch_in_flight'
+         AND current_step = $3
+       RETURNING id`,
+      [instance.id, nextIndex, stepIndex]
+    );
+    if (!completed.rows[0]) return { ok: false, result: 'blocked', reason: 'state_changed', status, channel, stepIndex };
     return { ok: true, result: 'completed', status, channel, stepIndex };
   }
 
   const nextStep = steps[nextIndex] || {};
   const delayHours = Math.max(0, Number(nextStep.delay_hours || nextStep.delayHours || 0));
   const nextStepAt = new Date(Date.now() + delayHours * 60 * 60 * 1000).toISOString();
-  await pool.query(
+  const advanced = await pool.query(
     `UPDATE public.nurture_instances
-     SET current_step = $2, next_step_at = $3, updated_at = NOW()
-     WHERE id = $1`,
-    [instance.id, nextIndex, nextStepAt]
+     SET current_step = $2, status = 'active', pause_reason = '', next_step_at = $3, updated_at = NOW()
+     WHERE id = $1 AND status = 'paused' AND pause_reason = 'nurture_dispatch_in_flight'
+       AND current_step = $4
+     RETURNING id`,
+    [instance.id, nextIndex, nextStepAt, stepIndex]
   );
+  if (!advanced.rows[0]) return { ok: false, result: 'blocked', reason: 'state_changed', status, channel, stepIndex };
 
   return { ok: true, result: 'step_processed', status, channel, stepIndex, nextStepAt };
 }
@@ -621,12 +741,17 @@ export async function startNurtureSequenceCore(pool, params = {}, options = {}) 
     };
 
   const active = await pool.query(
-    `SELECT id FROM public.nurture_instances
-     WHERE tenant_id = 'pbk' AND lead_id = $1 AND status = 'active'
-     ORDER BY created_at DESC
+    `SELECT id, status, pause_reason FROM public.nurture_instances
+     WHERE tenant_id = 'pbk' AND lead_id = $1 AND status IN ('active','paused')
+     ORDER BY (status = 'paused') DESC, created_at DESC
      LIMIT 1`,
     [leadId]
   );
+  // Starting a replacement sequence must not become an implicit retry of a blocked send.
+  if (active.rows[0]?.status === 'paused') {
+    return { ok: false, result: 'blocked', nurtureInstanceId: active.rows[0].id,
+      reason: active.rows[0].pause_reason, requiresManualReconciliation: true };
+  }
   if (active.rows[0] && !params.force) {
     return { ok: true, result: 'already_active', nurtureInstanceId: active.rows[0].id };
   }
@@ -654,8 +779,8 @@ export async function startNurtureSequenceCore(pool, params = {}, options = {}) 
   }
   const processed = await processNurtureInstance(pool, instance.id, options);
   return {
-    ok: true,
-    result: 'started',
+    ok: processed.ok !== false,
+    result: processed.ok === false ? 'blocked' : 'started',
     nurtureInstanceId: instance.id,
     instance,
     firstStep: processed,
@@ -676,7 +801,7 @@ export async function pauseNurtureForPhoneStop(pool, params = {}) {
   const updated = await pool.query(
     `UPDATE public.nurture_instances
      SET status = 'paused', pause_reason = 'seller_reply_stop', updated_at = NOW()
-     WHERE tenant_id = 'pbk' AND lead_id = $1 AND status = 'active'
+     WHERE tenant_id = 'pbk' AND lead_id = $1 AND status IN ('active','paused')
      RETURNING id`,
     [lead.rows[0].id]
   );

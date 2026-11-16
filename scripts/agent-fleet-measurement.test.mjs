@@ -135,3 +135,63 @@ test('strict fleet measurement ignores health timing and ages source evidence', 
   assert(stale.blockers.includes('dataFreshness_not_ready'));
   assert(stale.blockers.includes('fleetReadiness_not_ready'));
 });
+
+test('elapsed completion and actual first-token observations stay separate without losing duration', () => {
+  const result = collect([record({ latencyMs: 71_660, channel: 'chat', metadata: {
+    source: 'agent_ops', success: true, latencyKind: 'completion', timings: { firstTokenMs: 800 },
+  } })]);
+  assert.deepEqual(result.latencySamples.ava, [71_660]);
+  assert.deepEqual(result.latencyObservations.ava.map(({ kind, channel, valueMs, verified }) => ({ kind, channel, valueMs, verified })), [
+    { kind: 'completion', channel: 'chat', valueMs: 71_660, verified: true },
+    { kind: 'first_token', channel: 'chat', valueMs: 800, verified: true },
+  ]);
+});
+
+test('legacy timing kind and missing latency remain explicit unknowns, not fast first tokens', () => {
+  const result = collect([record(), record({ id: 'missing', latencyMs: null })]);
+  assert.deepEqual(result.latencySamples.ava, [6544]);
+  assert.deepEqual(result.latencyObservations.ava.map(({ kind, valueMs }) => ({ kind, valueMs })), [
+    { kind: 'unknown', valueMs: 6544 }, { kind: 'unknown', valueMs: null },
+  ]);
+});
+
+test('failed slow jobs and unverified legacy durations remain visible with provenance', () => {
+  const result = collect([
+    record({ status: 'failed', latencyMs: 90_000, channel: 'research', metadata: { source: 'agent_ops', success: false, latencyKind: 'completion' } }),
+    record({ id: 'legacy', metadata: {} }),
+  ]);
+  assert.equal(result.latencyObservations.ava.length, 2);
+  assert.equal(result.latencyObservations.ava[0].valueMs, 90_000);
+  assert.equal(result.latencyObservations.ava[1].verified, false);
+  assert.deepEqual(result.unverifiedLatencySamples.ava, [6544]);
+});
+
+test('execution evidence accepts only supplied milestone timings and labels handler duration as completion', () => {
+  const evidence = buildAgentExecutionEvidence({ agentId: 'ava', output: completions.ava,
+    durationMs: 71_660, completedAt: at, workOrderId: 'work-1', channel: 'chat', timings: { firstTokenMs: 800 } });
+  const result = collect([record({ id: 'work-1', latencyMs: undefined, metadata: {
+    workOrder: { id: 'work-1' }, executionEvidence: evidence,
+  } })]);
+  assert.deepEqual(result.latencySamples.ava, [71_660]);
+  assert.equal(result.latencyObservations.ava.find(({ kind }) => kind === 'first_token').valueMs, 800);
+  assert.equal(result.latencyObservations.ava.find(({ kind }) => kind === 'completion').valueMs, 71_660);
+});
+
+test('controlled provenance never becomes organic success or latency evidence', () => {
+  const result = collect([record({ metadata: { source: 'agent_ops', success: true, provenance: 'controlled' } })]);
+  assert.equal(result.lastActions.ava, undefined);
+  assert.equal(result.latencySamples.ava, undefined);
+  assert.equal(result.diagnostics.ava.excludedRecords, 1);
+});
+
+test('explicit phone speech and provider/research completions retain their own timing kinds', () => {
+  const result = collect([
+    record({ id: 'phone', channel: 'phone', metadata: { source: 'agent_ops', latencyKind: 'completion', timings: { speechStartMs: 500, speechCompletionMs: 8000 } } }),
+    record({ id: 'provider', channel: 'provider', metadata: { source: 'agent_ops', latencyKind: 'completion' } }),
+    record({ id: 'research', channel: 'research', metadata: { source: 'agent_ops', latencyKind: 'completion' } }),
+  ]);
+  assert.equal(result.latencyObservations.ava.filter(({ channel }) => channel === 'phone').length, 3);
+  assert.equal(result.latencyObservations.ava.find(({ kind }) => kind === 'speech_completion').valueMs, 8000);
+  assert.equal(result.latencyObservations.ava.find(({ channel }) => channel === 'research').kind, 'completion');
+  assert.equal(result.latencyObservations.ava.find(({ channel }) => channel === 'provider').kind, 'completion');
+});

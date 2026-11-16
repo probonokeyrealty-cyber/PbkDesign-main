@@ -235,6 +235,7 @@ COPY scripts/conversation-store.mjs ./scripts/conversation-store.mjs
 COPY scripts/backfill-conversations.mjs ./scripts/backfill-conversations.mjs
 COPY scripts/provider-action-dispatch-policy.mjs ./scripts/provider-action-dispatch-policy.mjs
 COPY scripts/provider-action-dispatch.mjs ./scripts/provider-action-dispatch.mjs
+COPY scripts/provider-action-authorization.mjs ./scripts/provider-action-authorization.mjs
 COPY scripts/provider-proof-ledger.mjs ./scripts/provider-proof-ledger.mjs
 COPY scripts/invoke-rate-limit.mjs ./scripts/invoke-rate-limit.mjs
 COPY scripts/event-bus ./scripts/event-bus

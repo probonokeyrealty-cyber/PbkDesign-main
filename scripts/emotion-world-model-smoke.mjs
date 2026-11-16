@@ -1,121 +1,20 @@
-import { spawn } from 'node:child_process';
-import { createServer } from 'node:http';
-import { setTimeout as delay } from 'node:timers/promises';
+import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-const ROOT_DIR = path.resolve(__dirname, '..');
-const SERVER_ENTRY = path.join(ROOT_DIR, 'scripts', 'openclaw-local-server.mjs');
-const SMOKE_ID = `${process.pid}-${Date.now()}`;
-const PORT = Number(process.env.PBK_EMOTION_MODEL_SMOKE_PORT || (21808 + (process.pid % 1000)));
-const MODEL_PORT = Number(process.env.PBK_EMOTION_MODEL_MOCK_PORT || (22808 + (process.pid % 1000)));
-const API_KEY = String(process.env.PBK_EMOTION_MODEL_SMOKE_API_KEY || 'pbk-emotion-model-smoke-key').trim();
-const BASE_URL = `http://127.0.0.1:${PORT}`;
-const MODEL_URL = `http://127.0.0.1:${MODEL_PORT}/predict`;
+import { startIsolatedBridge } from './bridge-smoke-isolation.mjs';
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
 }
 
-async function readRequestBody(request) {
-  const chunks = [];
-  for await (const chunk of request) chunks.push(chunk);
-  return Buffer.concat(chunks).toString('utf8');
-}
-
-async function waitForHealth(timeoutMs = 15000) {
-  const startedAt = Date.now();
-  let lastError = null;
-  while (Date.now() - startedAt < timeoutMs) {
-    try {
-      const response = await fetch(`${BASE_URL}/health`);
-      if (response.ok) return response.json();
-      lastError = new Error(`Health returned ${response.status}`);
-    } catch (error) {
-      lastError = error;
-    }
-    await delay(250);
-  }
-  throw lastError || new Error('Timed out waiting for bridge health.');
-}
-
-async function jsonFetch(pathname, options = {}) {
-  const response = await fetch(`${BASE_URL}${pathname}`, {
-    ...options,
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${API_KEY}`,
-      ...(options.headers || {}),
-    },
-  });
-  const body = await response.json().catch(() => ({}));
-  return { response, body };
-}
-
 async function main() {
-  const modelRequests = [];
-  const modelServer = createServer(async (request, response) => {
-    if (request.method !== 'POST' || request.url !== '/predict') {
-      response.writeHead(404, { 'Content-Type': 'application/json' });
-      response.end(JSON.stringify({ ok: false, error: 'not_found' }));
-      return;
-    }
-    const body = JSON.parse(await readRequestBody(request) || '{}');
-    modelRequests.push(body);
-    response.writeHead(200, { 'Content-Type': 'application/json' });
-    response.end(JSON.stringify({
-      ok: true,
-      model: 'mock-emotional-onnx-v0',
-      nextEmotion: {
-        joy: 0.32,
-        sadness: 0.18,
-        anger: 0.06,
-        fear: 0.44,
-      },
-      policyHint: 'model_selected_calibrated_question',
-      confidence: 0.91,
-    }));
-  });
-
-  await new Promise((resolve, reject) => {
-    modelServer.once('error', reject);
-    modelServer.listen(MODEL_PORT, '127.0.0.1', resolve);
-  });
-
-  const child = spawn(process.execPath, [SERVER_ENTRY, '--reset'], {
-    cwd: ROOT_DIR,
-    env: {
-      ...process.env,
-      PBK_OPENCLAW_PORT: String(PORT),
-      PBK_BRIDGE_API_KEY: API_KEY,
-      PBK_OPENCLAW_STATE_DIR: path.join(ROOT_DIR, '.pbk-local', `emotion-model-smoke-${SMOKE_ID}`),
-      PBK_OPENCLAW_RESET: '1',
-      PBK_EMOTION_WORLD_MODEL_ENDPOINT: MODEL_URL,
-      PBK_EMOTION_WORLD_MODEL_API_KEY: 'mock-model-secret',
-      PBK_EMOTION_WORLD_MODEL_TIMEOUT_MS: '2000',
-    },
-    stdio: ['ignore', 'pipe', 'pipe'],
-  });
-
-  let stderr = '';
-  child.stderr.on('data', (chunk) => {
-    stderr += String(chunk || '');
-  });
-
-  const cleanup = async () => {
-    if (!child.killed) {
-      child.kill();
-      await delay(150);
-    }
-    await new Promise((resolve) => modelServer.close(resolve));
-  };
+  const child = await startIsolatedBridge({ startupMs: 60000,
+    entry: fileURLToPath(new URL('./fixtures/emotion-world-model-bridge-fixture.mjs', import.meta.url)) });
 
   try {
-    await waitForHealth();
-    const predicted = await jsonFetch('/api/emotion/predict', {
+    const response = await child.fetch(child.origin + '/api/emotion/predict', {
       method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${child.apiKey}` },
       body: JSON.stringify({
         leadId: 'smoke-model-lead',
         actionType: 'calibrated_question',
@@ -129,6 +28,8 @@ async function main() {
       }),
     });
 
+    const predicted = { response, body: await response.json() };
+    const modelRequests = JSON.parse(await readFile(path.join(child.stateDir, 'model-requests.json'), 'utf8'));
     assert(predicted.response.status === 200, `Expected emotion predict 200, got ${predicted.response.status}`);
     assert(predicted.body.ok === true, 'Emotion prediction did not return ok=true.');
     assert(modelRequests.length === 1, `Expected exactly one world-model request, got ${modelRequests.length}.`);
@@ -148,10 +49,7 @@ async function main() {
       requestCount: modelRequests.length,
     }, null, 2));
   } finally {
-    await cleanup();
-    if (stderr && /Error|Unhandled|EADDRINUSE/i.test(stderr)) {
-      console.error(stderr);
-    }
+    await child.stop();
   }
 }
 

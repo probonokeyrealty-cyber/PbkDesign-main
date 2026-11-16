@@ -1,6 +1,6 @@
 # Ava Token Streaming Implementation Plan
 
-> **For agentic workers:** REQUIRED WORKFLOW: Use superpowers:subagent-driven-development, test-driven development, and independent code review for each boundary below.
+> **For agentic workers:** REQUIRED WORKFLOW: Use `superpowers:subagent-driven-development` with test-driven development for each boundary below. Execute one focused implementation task, perform spec review and independent code-quality review, then move to the next task. Obtain fresh-context review before release; pushing or deployment requires explicit release approval. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Display Ava's safe answer while DeepSeek is generating it, without buffering the complete answer or relaxing approval gates.
 

@@ -1,6 +1,6 @@
 # Faster Triage Implementation Plan
 
-> **For agentic workers:** REQUIRED WORKFLOW: Use superpowers:subagent-driven-development. Each task requires failing regressions, minimal fixes, and review. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED WORKFLOW: Use `superpowers:subagent-driven-development`. Execute one focused implementation task, perform spec review and code-quality review, then move to the next task. Obtain fresh-context review before release; pushing or deployment requires explicit release approval. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Implement the approved faster-triage Figma concepts in existing Today/Review and Lead Workspace routes, locally only.
 

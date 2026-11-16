@@ -292,8 +292,11 @@ const missingBridgeProxyRoutes = requiredBridgeProxyRoutes.filter((path) => {
   const redirectTo = /to\s*=\s*["']\/\.netlify\/functions\/pbk-bridge-proxy\?path=/.test(netlifyConfig);
   return !redirectFrom || !redirectTo;
 });
-const bridgeProxyUnsafe = !/export\s+default\s+async\s+function\s+fetchHandler/.test(bridgeProxyFunction)
+const bridgeProxyUnsafe = !/export default async function fetchHandler\(request: Request\): Promise<Response>/.test(bridgeProxyFunction)
   || !/forwardStream\(response\.body,\s*abortController,\s*cleanup\)/.test(bridgeProxyFunction)
+  || !/webResponse\(await proxyRequest\(event, \{ streaming: true, signal: request.signal, body \}\)/.test(bridgeProxyFunction)
+  || !/verifyTeamSession/.test(bridgeProxyFunction)
+  || !/headers\.Authorization\s*=\s*`Bearer \$\{bridgeApiKey\}`/.test(bridgeProxyFunction)
   || !/authorization/.test(bridgeProxyFunction)
   || !/X-PBK-Team-Token/i.test(bridgeProxyFunction)
   || !/PBK_BRIDGE_URL/.test(bridgeProxyFunction)

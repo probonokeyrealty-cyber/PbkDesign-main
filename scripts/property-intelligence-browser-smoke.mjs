@@ -60,6 +60,23 @@ try {
     await beds.fill('7');
     await input.fill('24 Sample');
     await expect(page.getByRole('option', { name: full })).toBeVisible();
+    for (const theme of ['light', 'dark']) {
+      const contrast = await page.evaluate(theme => {
+        document.documentElement.dataset.theme = theme;
+        const list = document.querySelector('.pbk-address-suggestions');
+        const luminance = css => {
+          const rgb = css.match(/[\d.]+/g).slice(0, 3).map(Number).map(v => { const s = v / 255; return s <= 0.04045 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4; });
+          return rgb[0] * 0.2126 + rgb[1] * 0.7152 + rgb[2] * 0.0722;
+        };
+        const bg = luminance(getComputedStyle(list).backgroundColor);
+        return [...list.querySelectorAll('button,.pbk-places-attribution')].map(node => {
+          const fg = luminance(getComputedStyle(node).color);
+          return (Math.max(fg, bg) + 0.05) / (Math.min(fg, bg) + 0.05);
+        });
+      }, theme);
+      assert.ok(contrast.every(ratio => ratio >= 4.5), `${theme} suggestions and attribution must have readable contrast: ${contrast}`);
+    }
+    await page.evaluate(() => { document.documentElement.dataset.theme = 'light'; });
     await input.press('ArrowDown'); await input.press('Enter');
     await expect(input).toHaveValue(full);
     await expect(page.getByRole('spinbutton', { name: 'Square footage' })).toHaveValue('1800');

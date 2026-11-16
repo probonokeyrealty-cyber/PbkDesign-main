@@ -26,11 +26,11 @@
 .pbk-address-picker { position:relative; min-width:0; }
 .pbk-address-input-row { display:flex; gap:6px; }
 .pbk-address-input-row input { flex:1; min-width:0; min-height:44px; padding:8px 12px; border:1px solid var(--border-subtle, #334155); border-radius:6px; background:var(--bg-panel, #0f172a); color:var(--text-primary, #e2e8f0); font:inherit; font-size:14px; }
-.pbk-address-suggestions { position:absolute; top:48px; z-index:30; width:100%; max-height:360px; overflow:auto; background:var(--bg-panel-elevated, #111827); border:1px solid var(--sky-dim, #38bdf8); border-radius:6px; box-shadow:0 8px 24px #0004; }
+.pbk-address-suggestions { position:absolute; top:48px; z-index:30; width:100%; max-height:360px; overflow:auto; background:var(--bg-panel, #111827); color:var(--text-primary, #e2e8f0); border:1px solid var(--sky-dim, #38bdf8); border-radius:6px; box-shadow:0 8px 24px #0004; }
 .pbk-address-suggestions ul { margin:0; padding:4px; list-style:none; }
 .pbk-address-suggestions button { display:block; width:100%; min-height:48px; padding:10px; border:0; background:transparent; text-align:left; color:var(--text-primary, #e2e8f0); font-size:14px; overflow-wrap:anywhere; }
 .pbk-address-suggestions [aria-selected=true],.pbk-address-suggestions button:hover { background:var(--bg-hover, #1e293b); }
-.pbk-places-attribution { color:white; padding:8px 14px; font:400 12px/1.5 sans-serif; white-space:nowrap; }
+.pbk-places-attribution { color:var(--text-primary, #e2e8f0); padding:8px 14px; font:400 12px/1.5 sans-serif; white-space:nowrap; }
 .pbk-address-notice { margin:4px 0; font-size:12px; color:var(--text-secondary, #94a3b8); }
 .pbk-address-source { font-size:11px; color:var(--sky, #7dd3fc); }
 .pbk-comps-selection { display:flex; flex-wrap:wrap; align-items:center; gap:10px; padding-top:12px; border-top:1px solid var(--border-subtle, #334155); font-size:12px; }

@@ -18,6 +18,8 @@ const messages: Record<string, string> = {
 };
 
 export function LeadComps({ address, leadId = '' }: { address: AttomPreviewAddress; leadId?: string }) {
+  const { street, city, state, zip } = address;
+  const lookupAddress = useMemo(() => ({ street, city, state, zip }), [street, city, state, zip]);
   const [radius, setRadius] = useState(1);
   const [sort, setSort] = useState('date');
   const [refresh, setRefresh] = useState(0);
@@ -32,13 +34,13 @@ export function LeadComps({ address, leadId = '' }: { address: AttomPreviewAddre
     let current = true;
     setSelected([]); setSaveStatus(''); setSaving(false);
     if (complete) {
-      void fetchAttomRecentSales(address, radius).then(
+      void fetchAttomRecentSales(lookupAddress, radius).then(
         data => { if (current) setResult({ key: queryKey, data }); },
         () => { if (current) setResult({ key: queryKey, data: { status: 'unavailable' } }); },
       );
     }
     return () => { current = false; };
-  }, [queryKey, complete]);
+  }, [queryKey, complete, lookupAddress, radius, leadId]);
   const data = result?.key === queryKey ? result.data : null;
   const loading = complete && !data;
   const rows = useMemo(() => [...(data?.sales || [])].sort((a, b) => sort === 'price'

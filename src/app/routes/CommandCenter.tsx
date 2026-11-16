@@ -12,6 +12,8 @@ import { useLocation, useNavigate } from 'react-router';
 import { DecisionRail, type DecisionProgress } from '../components/DecisionRail';
 import '../../styles/decision-rail.css';
 import { readLeadQueueReturn } from '../utils/leadQueueReturn';
+import { resolveTriageLead } from '../utils/leadTriage';
+import '../../styles/faster-triage.css';
 import { CallFloorPanel } from '../components/CallFloorPanel';
 import { CallQualityReviewDialog } from '../components/CallQualityReviewDialog';
 import { CompactPager, getPageSlice, OPERATOR_LIST_PAGE_SIZE } from '../components/CompactPager';
@@ -468,6 +470,9 @@ type BattlefieldItem = {
   cta: string;
   pulse?: 'default' | 'amber' | 'sky' | 'lime';
   targetPath: string;
+  leadId?: string;
+  recordKind?: string;
+  recordId?: string;
 };
 
 type MissionQuickAction = {
@@ -761,7 +766,7 @@ function buildBattlefieldItems(params: {
         source: 'snapshot.leadImports',
         reason: 'Lead score crossed the hot-lead threshold.',
         cta: 'Open lead',
-        targetPath: '/leads',
+        targetPath: lead.id || lead.leadId ? `/leads/${encodeURIComponent(String(lead.id || lead.leadId))}` : '/leads',
       });
     });
 
@@ -790,6 +795,8 @@ function normalizeBridgeBattlefieldItem(
     cta: String(item.cta || 'Open'),
     pulse,
     targetPath: String(item.targetPath || '/'),
+    recordKind: item.recordKind,
+    recordId: item.recordId,
   };
 }
 
@@ -1737,6 +1744,7 @@ function ProductionGapsRail({
 
 function FounderBattlefield({
   items,
+  leads,
   loading,
   error,
   agentsReady,
@@ -1747,6 +1755,7 @@ function FounderBattlefield({
   onSelect,
 }: {
   items: BattlefieldItem[];
+  leads: RuntimeRecord[];
   loading: boolean;
   error: string;
   agentsReady: number;
@@ -1761,7 +1770,7 @@ function FounderBattlefield({
   const failedCount = items.filter((item) => /failed/i.test(item.tag)).length;
   const sub =
     items.length > 0
-      ? `${approvalCount} review items / ${failedCount} follow-ups need retry / ${urgentCount} high priority`
+      ? `${approvalCount} review items / ${failedCount} follow-ups need review / ${urgentCount} high priority`
       : loading
         ? 'updating your workspace'
         : 'no urgent work right now';
@@ -1773,28 +1782,29 @@ function FounderBattlefield({
       : toOperatorCopy('bridge_healthy');
 
   return (
-    <section className="space-y-2" aria-labelledby="battlefield-title">
+    <section className="pbk-triage-queue space-y-2" aria-labelledby="battlefield-title">
       <div className="pbk-battlefield">
         <div className="pbk-battlefield-left">
-          <div id="battlefield-title" className="pbk-battlefield-label">
-            Next best steps
-          </div>
+          <h2 id="battlefield-title" className="pbk-battlefield-label">Work queue</h2>
           <div className="pbk-battlefield-count">
-            <em>{items.length}</em> ready to review
+            <em>{items.length}</em> work items
           </div>
           <div className="pbk-battlefield-sub">{sub}</div>
         </div>
         <div className="pbk-battlefield-center" aria-label="Ranked work queue">
           {items.length ? (
-            items.map((item, index) => (
+            items.map((item, index) => {
+              const context = resolveTriageLead(item, leads);
+              return (
               <button
                 key={item.id}
                 type="button"
                 data-today-queue-id={item.id}
+                disabled={item.recordKind === 'lead' && !context}
                 className={`pbk-bf-chip ${item.tone}`}
                 title={`${item.tag}: ${item.body} / ${item.reason}`}
-                aria-label={`Rank ${index + 1}, score ${item.score}, ${item.tag}: ${item.body}. ${item.reason}`}
-                onClick={() => onSelect(item)}
+                aria-label={`Rank ${index + 1}, score ${item.score}, ${item.tag}: ${item.body}. ${context ? context.nextStep.text : item.reason}`}
+                onClick={() => onSelect(context ? { ...item, targetPath: context.href } : item)}
               >
                 <span className="pbk-bf-rank">#{index + 1}</span>
                 <span className="pbk-bf-chip-main">
@@ -1803,7 +1813,11 @@ function FounderBattlefield({
                     <span className="pbk-bf-chip-tag">{item.tag}</span>
                     <span className="pbk-bf-chip-body">{item.body}</span>
                   </span>
-                  <span className="pbk-bf-reason">{item.reason}</span>
+                  {context && <code className="pbk-triage-lead-id" data-triage-lead-id={context.leadId}>{context.leadId}</code>}
+                  {context
+                    ? <span className="pbk-triage-next-step" data-next-step-state={context.nextStep.state}>{context.nextStep.text}</span>
+                    : <span className="pbk-bf-reason">{item.reason}</span>}
+                  <span className="pbk-triage-destination">{context ? 'Open workspace' : item.cta || 'Open'}</span>
                 </span>
                 <span className="pbk-bf-chip-meta">
                   <span className="pbk-bf-score">{item.score}</span>
@@ -1811,25 +1825,26 @@ function FounderBattlefield({
                   <span className="pbk-bf-chip-when">{item.when}</span>
                 </span>
               </button>
-            ))
+              );
+            })
           ) : (
             <button
               type="button"
               className="pbk-bf-chip warm"
-              aria-label="Ranked queue is clear"
+              aria-label={loading ? 'Loading work queue' : error ? 'Work queue unavailable' : 'Ranked queue is clear'}
               onClick={() => undefined}
             >
               <span className="pbk-bf-rank">#0</span>
               <span className="pbk-bf-chip-main">
                 <span className="pbk-bf-chip-line">
                   <PbkPulseDot color="sky" />
-                  <span className="pbk-bf-chip-tag">Clear</span>
+                  <span className="pbk-bf-chip-tag">{loading ? 'Loading' : error ? 'Unavailable' : 'Clear'}</span>
                   <span className="pbk-bf-chip-body">
-                    No urgent approvals, live calls, or failed sends right now
+                    {loading ? 'Loading work queue' : error ? 'Work queue unavailable' : 'No urgent approvals, live calls, or failed sends right now'}
                   </span>
                 </span>
                 <span className="pbk-bf-reason">
-                  Ava will surface the next item when it matters.
+                  {loading || error ? 'No contact status has been verified.' : 'Ava will surface the next item when it matters.'}
                 </span>
               </span>
               <span className="pbk-bf-chip-meta">
@@ -2580,6 +2595,16 @@ export function CommandCenter() {
     } : undefined);
   };
 
+  const jumpToTodaySection = (event: React.MouseEvent<HTMLAnchorElement>, id: string) => {
+    event.preventDefault();
+    const section = document.getElementById(id);
+    if (!section) return;
+    const heading = section.querySelector<HTMLElement>('h2') || section;
+    heading.tabIndex = -1;
+    heading.focus({ preventScroll: true });
+    section.scrollIntoView({ block: 'start', behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
+  };
+
   const runRuntimeAction = async (
     key: string,
     successMessage: string,
@@ -2852,6 +2877,23 @@ export function CommandCenter() {
           </div>
         )}
 
+        <nav className="pbk-triage-sections" aria-label="Today sections">
+          <a href="#battlefield-title" onClick={event => jumpToTodaySection(event, 'battlefield-title')}>Work queue</a>
+          {isWidgetVisible('approvals') && <a href="#approvals" onClick={event => jumpToTodaySection(event, 'approvals')}>Review {approvalsAvailable ? `(${pendingApprovalCount})` : ''}</a>}
+        </nav>
+        <div className={`pbk-faster-triage${isWidgetVisible('approvals') ? ' has-review' : ''}`}>
+        <FounderBattlefield
+          items={battlefieldItems}
+          leads={leadImports}
+          loading={loading || battlefieldQueueLoading}
+          error={error}
+          agentsReady={toolingCoreReady}
+          agentsTotal={toolingCoreTotal}
+          mode={approvalMode}
+          sourceLabel={battlefieldSource}
+          sourceNote={battlefieldSourceNote}
+          onSelect={selectBattlefieldItem}
+        />
         {(isWidgetVisible('approvals') || isWidgetVisible('activity')) && (
           <div
             className={`pbk-today-review${isWidgetVisible('approvals') && isWidgetVisible('activity') ? ' is-split' : ''}`}
@@ -3039,17 +3081,7 @@ export function CommandCenter() {
           </div>
         )}
 
-        <FounderBattlefield
-          items={battlefieldItems}
-          loading={loading || battlefieldQueueLoading}
-          error={error}
-          agentsReady={toolingCoreReady}
-          agentsTotal={toolingCoreTotal}
-          mode={approvalMode}
-          sourceLabel={battlefieldSource}
-          sourceNote={battlefieldSourceNote}
-          onSelect={selectBattlefieldItem}
-        />
+        </div>
 
         <div className="pbk-mission-actions" aria-label="Today quick actions">
           {missionQuickActions.map((action) => {

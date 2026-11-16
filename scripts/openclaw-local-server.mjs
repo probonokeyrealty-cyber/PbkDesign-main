@@ -24,7 +24,7 @@ import { controlledExecution, createControlledPool, createScopedState, assertCon
 import { createControlledAgentStorage, saveControlledAgentResult, readControlledAgentQualification, readControlledWorkflowPredecessor } from './controlled-agent-storage.mjs';
 import { runControlledAgentWorkflow } from './controlled-agent-workflow.mjs';
 import { createAvaRequestTiming } from './ava-request-timing.mjs';
-import { createBackgroundPersistence } from './background-persistence.mjs';
+import { createBackgroundPersistence, createCoalescedPersistence } from './background-persistence.mjs';
 import { createPoolSchemaInitializer } from './pool-schema-initializer.mjs';
 import { observeUsagePersistence } from './ava-accounting-status.mjs';
 import { buildAvaDecisionMessages, isAvaCompactDecisionSafe } from './ava-decision-messages.mjs';
@@ -11662,7 +11662,13 @@ function getStatePersistRetryDelayMs(attempt = 1) {
   return Math.min(3000, base * 2 ** (safeAttempt - 1));
 }
 
-async function persistStateToDb(nextState) {
+const stateDbWriteQueue = createCoalescedPersistence({ persist: writeStateToDb });
+
+function persistStateToDb(nextState) {
+  return stateDbWriteQueue.schedule(nextState);
+}
+
+async function writeStateToDb(nextState) {
   const pool = getPgPool();
   if (!pool) return false;
   let serialized = '';

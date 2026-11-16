@@ -41,6 +41,7 @@ node --test scripts/attom-recent-sales.node-test.mjs scripts/address-suggestions
 node scripts/property-intelligence-browser-smoke.mjs
 node scripts/property-crm-roundtrip-smoke.mjs
 node scripts/manual-lead-replay-durability-smoke.mjs
+node --test scripts/state-write-queue.node-test.mjs
 node scripts/lead-property-workspaces-browser-smoke.mjs
 node scripts/render-docker-imports-smoke.mjs
 npm run typecheck
@@ -52,3 +53,5 @@ Browser tests use synthetic records and block all external requests. They cover 
 The round-trip script defaults to a disposable isolated bridge. Live mode requires explicit operator authorization, `PBK_PROPERTY_QA_LIVE=1`, `--live`, and the existing bridge credential in the environment. It only writes fixed `pbk-qa-property-workflow-*` fixtures labeled `[PBK QA]` with no phone/email and denied contact permissions. It refuses any address collision with another lead. It checks correct-lead persistence/read-back, unchanged control lead, and HTTP 409 for a mismatched property. Fixtures are retained for audit; it never deletes existing leads or invokes outreach. Comp-save action provenance is separate from the lead acquisition source.
 
 Hosted Google suggestions, selected-address details, ATTOM facts, and 12 recent sales were verified using ATTOM's public Denver sample address. The live canonical lead round-trip also passed with three selected sales; a manual create initially returned HTTP 500, while subsequent controlled saves succeeded. Do not treat this as a guarantee of uninterrupted database availability. Final release checks must verify the deployed commit, bridge/Postgres readiness, unauthenticated rejection, and Netlify staff SSO scope `all`.
+
+Further live writes reproduced `postgres_state_persist_required` with `Connection terminated unexpectedly`. Render reports the database on `basic_256mb`, and database logs show repeated backend processes killed by signal 9 and recovery mode. This is consistent with resource pressure, not proof of a missing comp schema. State snapshots were about 9 MB. The bridge now serializes/coalesces full-state writes: pending cumulative snapshots can merge, active writes cannot overlap, and every waiter receives its actual batch result or error. A burst test confirms 51 requests need two writes with maximum concurrency one. This reduces pressure but does not promise a 256 MB database cannot fail; infrastructure upgrades require owner billing approval.

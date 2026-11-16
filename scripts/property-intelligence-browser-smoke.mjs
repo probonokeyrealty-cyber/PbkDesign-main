@@ -28,7 +28,7 @@ try {
       const send = json => route.fulfill({ json });
       if (path === '/api/property-data/address-suggestions') {
         const body = request.postDataJSON();
-        return send(body.placeId ? { status: 'matched', address } : { status: 'matched', suggestions: [{ id: 'fixture-place', label: full }] });
+        return send(body.placeId ? { status: 'matched', address } : { status: 'matched', suggestions: [{ id: 'fixture-place', label: full }, ...[2, 3, 4, 5].map(n => ({ id: `fixture-place-${n}`, label: `${n} Fixture Road, Example City, CA, USA` }))] });
       }
       if (path === '/api/property-data/attom-preview') {
         if (pendingFacts) await pendingFacts.promise;
@@ -72,6 +72,11 @@ try {
     await beds.fill('7');
     await input.fill('24 Sample');
     await expect(page.getByRole('option', { name: full })).toBeVisible();
+    await input.evaluate(node => node.scrollIntoView({ block: 'end' }));
+    await expect.poll(() => page.evaluate(() => {
+      const bounds = document.querySelector('.pbk-address-suggestions').getBoundingClientRect();
+      return bounds.top >= 0 && bounds.bottom <= innerHeight - 88;
+    })).toBe(true);
     for (const theme of ['light', 'dark']) {
       const contrast = await page.evaluate(theme => {
         document.documentElement.dataset.theme = theme;

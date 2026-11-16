@@ -1,8 +1,52 @@
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
-import { once } from 'node:events';
-import { test } from '@jest/globals';
+import { EventEmitter, once } from 'node:events';
+import { jest, test } from '@jest/globals';
 import * as chat from './ava-chat-events.mjs';
+
+test('quiet streams get one-second transport comments, respecting backpressure and disconnect', async () => {
+  jest.useFakeTimers();
+  const request = new EventEmitter();
+  const response = Object.assign(new EventEmitter(), {
+    destroyed: false, writableEnded: false, writableNeedDrain: false,
+    writeHead() {}, flushHeaders() {},
+    write(chunk) { writes.push(chunk); return true; },
+    end() { this.writableEnded = true; },
+  });
+  const writes = [];
+  let started;
+  const ready = new Promise(resolve => { started = resolve; });
+  const running = chat.streamAvaChatResponse(request, response, async () => {
+    const stopped = new Promise(resolve => request.avaStream.signal.addEventListener('abort', resolve, { once: true }));
+    started();
+    await stopped;
+    return { body: { ok: true, answer: 'Must not complete after disconnect.' } };
+  });
+  try {
+    await ready;
+    await jest.advanceTimersByTimeAsync(999);
+    assert.equal(writes.filter(chunk => chunk.startsWith(':')).length, 0);
+    await jest.advanceTimersByTimeAsync(1);
+    assert.equal(writes.filter(chunk => chunk === ': keep-alive\n\n').length, 1,
+      'A quiet stream must wake buffered browser delivery within one second');
+    response.writableNeedDrain = true;
+    await jest.advanceTimersByTimeAsync(1000);
+    assert.equal(writes.filter(chunk => chunk.startsWith(':')).length, 1);
+    response.destroyed = true;
+    response.emit('close');
+    await running;
+    assert.equal(jest.getTimerCount(), 0, 'Disconnect must dispose the keep-alive interval');
+    const count = writes.length;
+    await jest.advanceTimersByTimeAsync(10_000);
+    assert.equal(writes.length, count, 'Disconnect must stop keep-alives');
+    assert.equal(writes.some(chunk => chunk.includes('event: done')), false);
+  } finally {
+    response.destroyed = true;
+    response.emit('close');
+    await running;
+    jest.useRealTimers();
+  }
+});
 
 test('the real HTTP chat stream flushes an answer before the final result', async () => {
   assert.equal(typeof chat.streamAvaChatResponse, 'function');

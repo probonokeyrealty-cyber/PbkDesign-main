@@ -82,7 +82,7 @@ assert(
 assert(
   /\.pbk-ava-chat-controls[\s\S]*width:\s*100%/.test(styles) &&
     /placeholder="Ask Ava anything\.\.\."/.test(avaChat) &&
-    /aria-label="Send to Ava"/.test(avaChat),
+    /aria-label=\{onStopResponse \? 'Stop Ava response' : 'Send to Ava'\}/.test(avaChat),
   'Ava Chat composer controls must stay compact and readable on narrow mobile screens.'
 );
 

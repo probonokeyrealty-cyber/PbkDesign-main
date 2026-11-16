@@ -115,6 +115,7 @@ assert(
     ),
   'Unified inbox mobile composer must keep tools and send controls in a compact reachable dock.'
 );
+const avaSendButtonClasses = avaChat.match(/className="(pbk-ava-chat-send-button[^"]*)"/)?.[1].split(/\s+/) || [];
 assert(
   avaChat.includes('pbk-ava-chat-composer') &&
     avaChat.includes('pbk-ava-chat-controls') &&
@@ -135,8 +136,9 @@ assert(
     /@media \(max-width: 420px\)[\s\S]*?\.pbk-ava-chat-controls\s*\{[\s\S]*?display:\s*flex[\s\S]*?width:\s*100%/.test(
       css
     ) &&
-    avaChat.includes('aria-label="Send to Ava"') &&
-    avaChat.includes('className="pbk-ava-chat-send-button min-h-11 min-w-11 justify-center px-3"') &&
+    (avaChat.includes('aria-label="Send to Ava"') ||
+      /aria-label=\{(?:submitting && )?onStopResponse \? 'Stop Ava response' : 'Send to Ava'\}/.test(avaChat)) &&
+    ['min-h-11', 'min-w-11', 'justify-center', 'px-3'].every((token) => avaSendButtonClasses.includes(token)) &&
     !avaChat.includes('pbk-ava-lane-toggle'),
   'Ava Chat composer controls must fit 320px mobile viewports with a reachable send button.'
 );

@@ -18,7 +18,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
-      POSTGRES_REPORT: ${{ runner.temp }}/release-qualification-postgres.json
+      POSTGRES_REPORT: release-qualification-postgres.json
       PBK_DATABASE_URL: ''
       DATABASE_URL: ''
       SUPABASE_DB_URL: ''

@@ -350,6 +350,8 @@ test('workflow requires full isolated Postgres and default Chromium/WebKit execu
   const job = config.jobs['release-qualification'];
   assert.equal(job.name, 'Release qualification');
   assert.equal(job['runs-on'], 'ubuntu-latest');
+  assert.equal(job.env.POSTGRES_REPORT, 'release-qualification-postgres.json',
+    'Job-level env cannot use runner context; report is relative to the fixed checkout');
   assert.ok(job['timeout-minutes'] <= 30);
   assert.equal(job.steps.find((step) => step.uses === 'actions/setup-node@v6').with['node-version'], 22);
   for (const name of names) {

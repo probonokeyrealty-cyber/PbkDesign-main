@@ -275,8 +275,11 @@ assert.ok(
   ),
   'state persistence must invalidate cached status/config responses'
 );
+assert.ok(bridgeSource.includes('const maturity = await buildProductionMaturitySnapshot({ runtimeMeta: getRuntimeMeta() });'),
+  'maturity must read the newest signed qualification directly so a cached pass cannot hide a later failure');
+assert.ok(!bridgeSource.includes("getCachedReadResponse('production-maturity'"),
+  'execution-evidence readiness cannot reuse a cached prior pass');
 for (const cacheMarker of [
-  "getCachedReadResponse('production-maturity'",
   "getCachedReadResponse('performance-status'",
   "getCachedReadResponse('agent-orchestration'",
   "getCachedReadResponse('agent-registry'",

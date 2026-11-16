@@ -62,6 +62,33 @@ The success-path gap is covered by `scripts/backlog-reconciliation-integration.t
 
 ### Task 4: Verification And Review
 
-- [ ] Run collector/store/boundary/readiness regressions serially, plus typecheck, lint, build, bridge syntax and dependency-closure checks.
-- [ ] Obtain independent security/spec/code review; fix substantive findings with regression tests.
-- [ ] Record actual results and remaining limitations; preserve unrelated `output/` and do not publish.
+- [x] Run collector/store/boundary/readiness regressions serially, plus typecheck, lint, build, bridge syntax and dependency-closure checks.
+- [x] Obtain independent security/spec/code review; fix substantive findings with regression tests.
+- [x] Record actual results and remaining limitations; preserve unrelated `output/` and do not publish.
+
+## Verification Results
+
+- Full unit run: 63 suites, 1,493 passed, 12 conditional integration skips, zero failures.
+- Focused final regressions: 11 suites, 626 passed, five conditional Postgres skips.
+- Disposable Postgres: six suites, 304 passed, zero skipped/failed/runtime errors;
+  the actual workflow structured-report gate accepted the report. Temporary branch
+  deletion was independently confirmed by HTTP 404.
+- Final collector: 143 tests, including exact scored-output and model-alias regressions.
+- Typecheck, standard and targeted lint, production build, bridge syntax, whitespace,
+  317 package scripts, Docker configuration and dependency closure passed.
+- Isolated reconciliation, operational-audit, qualification, approval-action-safety
+  and missing-evidence readiness smokes passed without actual provider writes.
+- Independent final review of code commit `811d502`: READY, no actionable findings.
+
+The Postgres round trip preceded the delimiter-only model-alias fix; final unit
+coverage and isolated bridge smokes include that fix. Hosted CI and the full
+founder aggregate have not run. There are no UI changes requiring browser/mobile
+verification. This is local build verification, not launch or delivery qualification.
+
+## Deliberate Limits
+
+Unknown dispatches cannot be unlocked by this path, including by an inline receipt
+claim. Full dead-letter recovery remains unverified even when QA and memory are
+verified. Source-current reads incur bounded database work so a changed original
+or proof row cannot leave stale recovery evidence visible. Publication and live
+execution still require separate authorization.

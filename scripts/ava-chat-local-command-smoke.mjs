@@ -43,7 +43,7 @@ const avaChat = read('src/app/routes/AvaChat.tsx');
   'queueLocalCommandRequest',
   'fetchLocalCommandsRequest',
   'fetchDesktopSidecarStatusRequest',
-  'sendAvaAssistantChatRequest',
+  'streamAvaAssistantChatRequest',
   'updateApprovalDecision',
   'requiresApproval',
   'Promise.allSettled',
@@ -189,11 +189,11 @@ assert(
   'Ava Chat Enter-to-send must ignore IME composition events.'
 );
 assert(
-  /\.pbk-ava-chat-submit-row[\s\S]*grid-template-columns:\s*44px minmax\(0,\s*1fr\)/.test(
+  /@media \(max-width: 640px\)[\s\S]*?\.pbk-ava-chat-submit-row\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)\s+96px/.test(
     pbkComponentsCss
   ) &&
-    /\.pbk-ava-chat-send-button[\s\S]*width:\s*100%/.test(pbkComponentsCss),
-  'Ava Chat mobile composer must keep Send as a full-width tappable control.'
+    /\.pbk-ava-chat-send-button\s*\{[^}]*width:\s*100%/.test(pbkComponentsCss),
+  'Ava Chat mobile composer must reserve a stable 96px column for Send/Stop.'
 );
 
 assert(

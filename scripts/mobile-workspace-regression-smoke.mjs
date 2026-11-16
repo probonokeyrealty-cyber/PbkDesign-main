@@ -132,11 +132,11 @@ assert(
     /@media \(max-width: 640px\)[\s\S]*?\.pbk-ava-chat-toolbar\s*\{[\s\S]*?grid-template-columns:\s*minmax\(0,\s*1fr\)\s+44px/.test(
       css
     ) &&
-    /@media \(max-width: 420px\)[\s\S]*?\.pbk-ava-chat-controls\s*\{[\s\S]*?display:\s*flex[\s\S]*?width:\s*100%/.test(
+    /@media \(max-width: 420px\)[\s\S]*?\.pbk-ava-chat-controls\s*\{[^}]*display:\s*flex[^}]*width:\s*auto/.test(
       css
     ) &&
-    avaChat.includes('aria-label="Send to Ava"') &&
-    avaChat.includes('className="pbk-ava-chat-send-button min-h-11 min-w-11 justify-center px-3"') &&
+    /aria-label=\{onStopResponse \? 'Stop Ava response' : 'Send to Ava'\}/.test(avaChat) &&
+    /className="pbk-ava-chat-send-button\b[^"]*\bmin-h-11\b[^"]*\bmin-w-11\b[^"]*\bshrink-0\b/.test(avaChat) &&
     !avaChat.includes('pbk-ava-lane-toggle'),
   'Ava Chat composer controls must fit 320px mobile viewports with a reachable send button.'
 );

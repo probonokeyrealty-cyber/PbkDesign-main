@@ -62,6 +62,9 @@ if (missing.length) {
 
 const streamingImports = readFileSync(resolve(root, 'scripts/ava-deepseek-stream.mjs'), 'utf8');
 const runtimeStage = dockerfile.slice(dockerfile.lastIndexOf('FROM '));
+if (!/^COPY package\.json \.\/package\.json\s*$/m.test(runtimeStage)) {
+  throw new Error('Runtime image must package the release manifest read by fixed behavior and silent-policy checks');
+}
 for (const match of streamingImports.matchAll(/from ['"](@[^/'"]+\/[^/'"]+|[^./'":]+)['"]/g)) {
   if (!runtimeStage.includes(` ${match[1]}@`)) {
     throw new Error(`Runtime image does not install the streaming dependency ${match[1]}`);

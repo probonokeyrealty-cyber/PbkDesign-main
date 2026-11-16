@@ -50,6 +50,12 @@ for (const answer of [
   'I am not sending documents.',
   'I cannot give legal advice.',
   "I don't provide tax advice.",
+  'A pause can be a sign of careful attention.',
+  'Confusion is a sign of a missing explanation, not a reason to rush.',
+  'These details are a sign of progress in understanding.',
+  'A pause is a sign that the listener is thinking.',
+  'That is often a clear sign of confusion.',
+  'This can be a reliable sign that the pace is comfortable.',
 ]) {
   test(`safe policy or negated action: ${answer}`, () => assert.equal(guard(answer).blocked, false));
 }
@@ -71,6 +77,16 @@ for (const answer of [
   "I won't stop signing documents.",
   'I will not send email and I will send the documents.',
   'DocuSign is approval-gated. Send the contract now.',
+  'Please sign off on the contract.',
+  'The signing of the contract is next.',
+  'A pause is a sign of attention. Sign the contract now.',
+  'Sign that contract now.',
+  'A pause is a sign that someone is listening. Sign that document now.',
+  'Please sign of your own free will after reviewing the contract.',
+  'If you prefer option A sign that document today.',
+  'If your choice is A sign that document today.',
+  'If your choice is a sign that document today.',
+  'If your choice is a sign of your own free will after reviewing the contract.',
 ]) {
   test(`signature action remains blocked: ${answer}`, () => {
     assert.equal(guard(answer).blocked, true);

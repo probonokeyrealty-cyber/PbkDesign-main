@@ -16,6 +16,8 @@ Review ruling: both proxy and direct Render chat use one shared chat-intent perm
 
 Live-test ruling: the model sometimes claimed an unsupported shorter channel limit. The chat contract now receives the actual output budget and instructs Ava to honor requested depth within it, without inventing a smaller cap or asking for a redundant "begin". This does not authorize actions, bypass a safety rewrite, or require unnecessary verbosity. Browser playback verification was handed back to the user at their request after active speech was observed.
 
+Guard ruling: a 72-second live reply reached the final controller but was paused for `signature_before_authority`. Unit reproduction confirmed ordinary descriptive wording such as "is a sign of attention" was classified as signing. Preserve the original signature pattern, and distinguish only a bounded copular noun phrase with a lowercase article and a known communication-cue noun or finite explanatory clause from an imperative. Unknown/ambiguous uses remain conservative. Real signing, signing-of, sign-off, DocuSign, mixed-clause actions, and option-letter review counterexamples remain blocked; provider approval rules are unchanged.
+
 ## Acceptance
 
 - Requests above 4,096 output tokens and 30/45/60 seconds can complete through the staff chat stream.

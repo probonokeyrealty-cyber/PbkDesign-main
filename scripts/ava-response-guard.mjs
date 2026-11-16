@@ -15,6 +15,13 @@ function clean(value = '') {
 function hasAffirmativeAction(answer, pattern) {
   for (const match of answer.matchAll(pattern)) {
     const prefix = answer.slice(0, match.index).replace(/[\u2018\u2019]/g, "'");
+    // Recognize only descriptive communication cues, never a document imperative.
+    if (pattern === SIGNATURE_PATTERN && /^sign$/i.test(match[0])) {
+      const nominalPrefix = prefix.match(/\b(?:is|are|was|were|be|been|being)(?:\s+(?:often|usually|sometimes|generally|typically|simply|also|not|never)){0,2}\s+(a|the)(?:\s+(?:clear|good|strong|positive|negative|early|warning|useful|reliable)){0,2}\s+$/i);
+      const tail = answer.slice(match.index + match[0].length);
+      if (nominalPrefix && nominalPrefix[1] === nominalPrefix[1].toLowerCase()
+        && /^\s+(?:of\s+(?:a\s+missing\s+explanation|(?:(?:careful|clear)\s+)?(?:attention|confusion|progress|understanding|hesitation|engagement|overload|uncertainty|processing|listening|respect|tension|stress))|that\s+(?:the\s+)?(?:listener|speaker|pace|explanation|message)\s+(?:is|has|needs|seems))\b/i.test(tail)) continue;
+    }
     // Negation only applies immediately to this action, never across another verb or clause.
     if (!/\b(?:not|never|cannot|can't|don't|doesn't|didn't|won't|wouldn't|shouldn't|mustn't)\s+(?:be\s+)?$/i.test(prefix)) {
       return true;

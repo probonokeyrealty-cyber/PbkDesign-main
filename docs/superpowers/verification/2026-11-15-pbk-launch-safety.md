@@ -1,8 +1,9 @@
 # PBK Launch Safety Verification
 
 Date: November 15, 2026 (America/Los_Angeles).
-Branch: `codex/pbk-launch-safety`, based on `a277e5c` after preserving concurrent
-CRM and durable-state serialization changes.
+Branch: `codex/pbk-launch-safety`, initially based on `a277e5c` after preserving
+concurrent CRM and durable-state serialization changes. PR preparation later
+synchronized the feature branch with `origin/main` at `0dfcab6`.
 
 ## Implemented Locally
 
@@ -138,3 +139,31 @@ verification handoff, no commit, push, merge, deployment or worktree cleanup had
 been performed. The owner subsequently authorized a branch push and PR; this
 does not authorize a merge into `main` or deployment. Production qualification
 conditions above still apply.
+
+## PR Integration Verification
+
+After the owner's push/PR authorization, the feature branch incorporated five
+newer main-branch commits through `0dfcab6`, without changing the local `main`
+branch. Two overlapping regression assertions were resolved by retaining the
+new CRM-save checks, explicit stale-analysis state and both mobile containment
+checks. The new faster-triage plan header and the pagination smoke's renamed
+`Work queue` expectation were aligned with existing policy/current UI. No product
+UI was changed by these compatibility fixes.
+
+Fresh results on the combined tree:
+
+- Serialized full Jest: 54 suites passed, 912 tests passed, 8 database-dependent
+  tests skipped. Artifact: `.pbk-local/launch-safety-pr-unit.json`.
+- Typecheck, lint and production build: exit 0.
+- Release-UI and production-hardening constituent checks: passed across resumed
+  runs after the two policy/copy fixture corrections. No uninterrupted wrapper
+  pass is claimed; GitHub CI must still verify the complete PR merge result.
+- Isolated bridge/bridge-isolation, UI actions, live-data audit and Render Docker
+  import closure: exit 0. New launch-safety pre-gate passed again.
+- Chromium browser regression at 1440px, 390px and 320px: streaming, Stop,
+  interruption, JSON fallback, completed-only history, mission and approval
+  checks passed. No live voice playback was performed.
+
+Integration logs use `.pbk-local/pr-*.log`. The earlier external-database,
+WebKit, trusted-readiness-evidence and manual nurture-reconciliation limitations
+still apply. This PR preparation is not a production release authorization.

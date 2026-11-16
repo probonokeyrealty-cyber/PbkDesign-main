@@ -93,7 +93,8 @@ async function verify(browserType, viewport, device = {}) {
     const approve = row.getByRole('button', { name: 'Review approval' });
     await expect(row.getByText(seller.message)).toBeVisible();
     // Advance polling explicitly so it cannot consume a preflight-only outage.
-    await page.clock.pauseAt(await page.evaluate(() => Date.now() + 100));
+    // Leave headroom for the browser round trip on a busy Windows/WebKit host.
+    await page.clock.pauseAt(await page.evaluate(() => Date.now() + 60_000));
     if (process.env.PBK_TODAY_REVIEW_SCREENSHOTS === '1') {
       mkdirSync('.pbk-local', { recursive: true });
       await page.screenshot({ path: `.pbk-local/today-review-${browserType.name()}-${viewport.width}.png` });
@@ -111,14 +112,23 @@ async function verify(browserType, viewport, device = {}) {
     assert.equal(requests.length, 0);
 
     await approve.click();
+    const readsBeforePolling = offlineReads;
     preflightOffline = true;
-    await page.clock.fastForward(5_000);
-    await expect(dialog.getByRole('button', { name: 'Confirm decision' })).toBeDisabled();
+    // Hidden tabs back off polling to 60s; drive that timer and bounded read retries.
+    await page.clock.fastForward(60_000);
+    await expect.poll(async () => {
+      await page.clock.fastForward(5_000);
+      return dialog.getByRole('button', { name: 'Confirm decision' }).isDisabled();
+    }, { timeout: 20000 }).toBe(true);
+    assert(offlineReads > readsBeforePolling, 'Polling must actually read the unavailable fixture');
     await expect(review.getByText('Queue unavailable. No decision can be submitted.', { exact: true })).toBeVisible();
     assert.equal(requests.length, 0, 'A polling outage must disable approval without writing');
     preflightOffline = false;
-    await page.clock.fastForward(30_000);
-    await expect(dialog.getByRole('button', { name: 'Confirm decision' })).toBeEnabled();
+    await page.clock.fastForward(60_000);
+    await expect.poll(async () => {
+      await page.clock.fastForward(5_000);
+      return dialog.getByRole('button', { name: 'Confirm decision' }).isEnabled();
+    }, { timeout: 20000 }).toBe(true);
     await dialog.getByRole('button', { name: 'Cancel' }).click();
     await expect(dialog).toHaveCount(0);
 
@@ -126,6 +136,10 @@ async function verify(browserType, viewport, device = {}) {
     const offlineReadsBeforePreflight = offlineReads;
     preflightOffline = true;
     await dialog.getByRole('button', { name: 'Confirm decision' }).click();
+    await expect.poll(async () => {
+      await page.clock.fastForward(100);
+      return (await rail.locator('[data-state="blocked"]').allTextContents()).join(' ');
+    }, { timeout: 20000 }).toContain('Evidence');
     await expect(rail.locator('[data-state="blocked"]')).toContainText('Evidence');
     assert(offlineReads > offlineReadsBeforePreflight, 'The preflight must actually reach the unavailable fixture');
     assert.equal(requests.length, 0, 'A failed preflight must not submit a decision');

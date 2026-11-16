@@ -3,7 +3,9 @@ import { AlertCircle, ArrowRight, Loader2, Save, StickyNote } from 'lucide-react
 import { useLocation, useNavigate, useParams, useSearchParams } from 'react-router';
 import { readLeadQueueReturn } from '../utils/leadQueueReturn';
 import { fleetHref, readFleetReturn } from '../utils/fleetContext';
+import { readStoredNextStep } from '../utils/leadTriage';
 import '../../styles/fleet-context.css';
+import '../../styles/faster-triage.css';
 import { PbkDataSource } from '../../components/pbk/index';
 import { LeadPortalContactability } from '../components/leads/LeadPortalContactability';
 import { LeadPortalDealContext } from '../components/leads/LeadPortalDealContext';
@@ -172,6 +174,16 @@ export function LeadPortal() {
     () => (leadPayload ? buildLeadPortalModel(leadPayload) : null),
     [leadPayload]
   );
+  const nextStep = readStoredNextStep(lead?.id === leadId ? leadPayload : null);
+  const jumpToSection = (event: React.MouseEvent<HTMLAnchorElement>, id: string) => {
+    event.preventDefault();
+    const section = workspaceRootRef.current?.querySelector<HTMLElement>(`#${id}`);
+    if (!section) return;
+    const heading = section.querySelector<HTMLElement>('h2') || section;
+    heading.tabIndex = -1;
+    heading.focus({ preventScroll: true });
+    section.scrollIntoView({ block: 'start', behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
+  };
   currentLeadIdRef.current = leadId;
 
   useEffect(() => {
@@ -727,20 +739,19 @@ export function LeadPortal() {
       </section>
 
       <nav className="pbk-portal-sections" aria-label="Lead workspace sections">
-        <a href="#lead-timeline">Timeline</a>
-        <a href="#lead-numbers">Numbers</a>
-        <a href="#lead-property">Property</a>
+        <a href="#lead-next-step" onClick={event => jumpToSection(event, 'lead-next-step')}>Next step</a>
+        <a href="#lead-timeline" onClick={event => jumpToSection(event, 'lead-timeline')}>Timeline</a>
+        <a href="#lead-numbers" onClick={event => jumpToSection(event, 'lead-numbers')}>Numbers</a>
+        <a href="#lead-property" onClick={event => jumpToSection(event, 'lead-property')}>Property</a>
       </nav>
 
-      {lead.bantNextStep && (
-        <section className="pbk-portal-next-step" aria-labelledby="lead-next-step-heading">
+        <section id="lead-next-step" className="pbk-portal-next-step" aria-labelledby="lead-next-step-heading" data-next-step-state={nextStep.state}>
           <ArrowRight size={18} aria-hidden="true" />
           <div>
             <h2 id="lead-next-step-heading">Next step</h2>
-            <p>{lead.bantNextStep}</p>
+            <p>{nextStep.text}</p>
           </div>
         </section>
-      )}
 
       <div className="pbk-lead-portal-grid">
         <div className="pbk-portal-main-column">

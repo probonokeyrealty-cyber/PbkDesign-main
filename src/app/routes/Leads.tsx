@@ -1574,10 +1574,6 @@ export function Leads() {
       setNewLeadStatus({ tone: 'error', text: 'Seller name is required.' });
       return;
     }
-    if (!newLeadForm.phone.trim() && !newLeadForm.email.trim()) {
-      setNewLeadStatus({ tone: 'error', text: 'Add a phone or email before creating the lead.' });
-      return;
-    }
     if (!newLeadForm.propertyAddress.trim()) {
       setNewLeadStatus({ tone: 'error', text: 'Property address is required.' });
       return;

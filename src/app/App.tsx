@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
+import { buildAnalyzerLeadPatch } from './utils/analyzerLeadPersistence.mjs';
 import { TopBar } from './components/TopBar';
 import { LeftPanel } from './components/LeftPanel';
 import { RightPanel } from './components/RightPanel';
@@ -593,7 +594,7 @@ export default function App({ engineOnly = false }: AppProps) {
             selectedPath: deal.selectedPath,
             selected_path: deal.selectedPath,
             property: {
-              address: deal.address,
+              ...(buildAnalyzerLeadPatch(analyzedDeal).property as Record<string, unknown>),
               propertyType: deal.type,
               askingPrice: deal.price,
               arv: nextArv,
@@ -626,6 +627,7 @@ export default function App({ engineOnly = false }: AppProps) {
               repairsMid: nextRepairsMid,
             },
             analyzer: {
+              comps: analyzedDeal.comps,
               runId: result?.id,
               address: result?.address || deal.address,
               arv: nextArv,
@@ -735,29 +737,17 @@ export default function App({ engineOnly = false }: AppProps) {
         type: 'note',
         content: `Analyzer deal saved with path ${getPathLabel(activeSelectedPath)}.`,
       });
-      setAnalyzeStatus(`${saved.address}: Saved locally. Ava handoff pending.`);
-      try {
-        const response = await sendDealToAgent(activeDeal);
-        appendSavedDealActivity(activeDeal, {
-          type: 'note',
-          content: isApprovalQueuedResponse(response)
-            ? `Ava approval queued for ${getPathLabel(activeSelectedPath)}.`
-            : `Activity saved to team CRM for ${getPathLabel(activeSelectedPath)}.`,
-        });
-        setAnalyzeStatus(
-          isApprovalQueuedResponse(response)
-            ? `${saved.address}: Saved locally. Ava queued approval for ${getPathLabel(activeSelectedPath)}.`
-            : `${saved.address}: Saved locally. Team CRM synced for ${getPathLabel(activeSelectedPath)}.`
-        );
-      } catch (syncError) {
-        setAnalyzeStatus(
-          syncError instanceof Error
-            ? `${saved.address}: Saved locally. Ava handoff pending: ${syncError.message}`
-            : `${saved.address}: Saved locally. Ava handoff pending.`
-        );
+      if (!activeDeal.leadId) {
+        setAnalyzeStatus(`${saved.address}: Draft saved on this device. Create or open a lead to save it to the CRM.`);
+        return;
       }
+      setAnalyzeStatus(`${saved.address}: Saving lead...`);
+      const response = await patchLeadRequest(activeDeal.leadId, buildAnalyzerLeadPatch(activeDeal));
+      if (response.ok === false) throw new Error('The bridge did not save the lead.');
+      setAnalyzeStatus(`${saved.address}: Lead saved.`);
+      window.dispatchEvent(new CustomEvent('pbk:lead-updated', { detail: { leadId: activeDeal.leadId } }));
     } catch (error) {
-      setAnalyzeStatus(error instanceof Error ? error.message : 'Could not save this deal.');
+      setAnalyzeStatus(`Lead not saved. Your local draft remains. ${error instanceof Error ? error.message : 'Try again.'}`);
       setActiveTab('analyzer');
     }
   };

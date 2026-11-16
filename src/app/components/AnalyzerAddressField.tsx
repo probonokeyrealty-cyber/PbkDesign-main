@@ -1,5 +1,6 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import { Loader2, Search } from 'lucide-react';
+import * as Popover from '@radix-ui/react-popover';
 import type { DealData } from '../types';
 import { fetchAddressSuggestions, fetchAttomPropertyPreview, type AttomPreviewAddress } from '../utils/runtimeBridge';
 import '../../styles/property-intelligence.css';
@@ -82,8 +83,8 @@ export function AnalyzerAddressField({ deal, onChange }: { deal: DealData; onCha
     catch { if (revision.current === version) setNotice('Property lookup failed. Your entries are unchanged.'); }
     finally { if (revision.current === version) setBusy(false); }
   }
-  return <div className="pbk-address-picker" onBlur={e => { if (!e.currentTarget.contains(e.relatedTarget as Node)) { setOpen(false); setFocused(false); } }}>
-    <div className="pbk-address-input-row">
+  return <Popover.Root open={open} onOpenChange={setOpen}><div className="pbk-address-picker" onBlur={e => { if (!e.currentTarget.contains(e.relatedTarget as Node)) { setOpen(false); setFocused(false); } }}>
+    <Popover.Anchor asChild><div className="pbk-address-input-row">
       <input id="deal-property-address" role="combobox" aria-autocomplete="list" aria-expanded={open} aria-controls={listId}
         aria-activedescendant={open && active >= 0 ? `${listId}-${active}` : undefined}
         autoComplete="off" value={deal.address} placeholder="123 Main St, City, ST 12345"
@@ -97,13 +98,16 @@ export function AnalyzerAddressField({ deal, onChange }: { deal: DealData; onCha
           if (e.key === 'Enter' && active >= 0) { e.preventDefault(); void select(suggestions[active].id); }
         }} />
       <button type="button" className="pbk-btn pbk-btn-ghost pbk-btn-sm" title="Look up ATTOM property facts" aria-label="Look up ATTOM property facts" disabled={busy || !deal.address.trim()} onClick={() => void verifyTyped()}>{busy ? <Loader2 size={17} className="animate-spin" /> : <Search size={17} />}</button>
-    </div>
-    {open && <div className="pbk-address-suggestions"><ul id={listId} role="listbox" aria-label="Suggested addresses">
+    </div></Popover.Anchor>
+    {open && <Popover.Content className="pbk-address-suggestions" role="presentation" align="start" sideOffset={4}
+      collisionPadding={{ top: 12, right: 12, bottom: 104, left: 12 }}
+      onOpenAutoFocus={e => e.preventDefault()} onCloseAutoFocus={e => e.preventDefault()}>
+      <ul id={listId} role="listbox" aria-label="Suggested addresses">
       {suggestions.map((s, i) => <li id={`${listId}-${i}`} role="option" aria-selected={i === active} key={s.id}>
         <button type="button" tabIndex={-1} onMouseDown={e => e.preventDefault()} onClick={() => void select(s.id)}>{s.label}</button>
       </li>)}
-    </ul><div className="pbk-places-attribution" translate="no">Google Maps</div></div>}
+    </ul><div className="pbk-places-attribution" translate="no">Google Maps</div></Popover.Content>}
     <p role="status" aria-live="polite" className="pbk-address-notice">{busy ? 'Looking up property facts...' : notice}</p>
     {source?.address === deal.address && <small className="pbk-address-source">ATTOM · {new Date(source.at).toLocaleDateString()} · {source.fields.join(', ') || 'Address verified'}</small>}
-  </div>;
+  </div></Popover.Root>;
 }

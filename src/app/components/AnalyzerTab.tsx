@@ -165,7 +165,6 @@ export function AnalyzerTab({
           <AnalyzerListingLookup
             key={address}
             deal={deal}
-            onFill={onDealChange}
             onPhotoResult={setPhotoResult}
           />
         </div>

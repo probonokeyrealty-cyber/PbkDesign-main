@@ -22,6 +22,8 @@ Claude reviewed the desktop/mobile interaction layout on November 15, 2026. The 
 
 Address suggestions use a 350ms debounce, minimum four characters, a session token, and a maximum of five predictions. The picker supports arrow keys, Enter and Escape. Users can always leave an address typed manually. The lookup icon verifies a fully typed street/city/state/ZIP using ATTOM without Google.
 
+The picker uses the existing Radix popover positioner, retaining the field's theme tokens and keyboard focus. Collision padding reserves space for bottom navigation and the on-screen viewport; suggestions can flip above a low field rather than disappearing beneath mobile controls. Browser regression tests include five suggestions near the bottom edge.
+
 Selecting a complete US address retrieves ATTOM facts. Only empty numeric property fields, ZIP and empty land lot fields are populated. Existing values, values edited in flight, pricing, ARV, repairs, financing, and comps remain unchanged. The UI shows the ATTOM source/date and fields added. Stale responses are discarded.
 
 The Comps tab loads only when opened. Radius is explicitly selected from 0.5, 1, 2 or 5 miles (default 1). The adapter requests sale transactions sorted newest first, validates transaction dates and distance, excludes the subject, deduplicates parcels, and returns at most 20 priced sales. At most three 100-record pages are inspected under a 6.5-second shared deadline. A limited provider window is labeled. It never silently widens the date window or radius. Public records can lag closings; these are not MLS sold listings and are not guaranteed valuation-quality comparables.

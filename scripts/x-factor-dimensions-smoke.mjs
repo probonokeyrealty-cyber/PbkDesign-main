@@ -1,78 +1,25 @@
-﻿import { spawn } from 'node:child_process';
-import { setTimeout as delay } from 'node:timers/promises';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-const ROOT_DIR = path.resolve(__dirname, '..');
-const SERVER_ENTRY = path.join(ROOT_DIR, 'scripts', 'openclaw-local-server.mjs');
-const SMOKE_ID = `${process.pid}-${Date.now()}`;
-const PORT = Number(process.env.PBK_X_FACTOR_SMOKE_PORT || (19920 + (process.pid % 700)));
-const API_KEY = String(process.env.PBK_X_FACTOR_SMOKE_API_KEY || 'pbk-x-factor-smoke-key').trim();
-const BASE_URL = `http://127.0.0.1:${PORT}`;
+import { startIsolatedBridge } from './bridge-smoke-isolation.mjs';
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
 }
 
-async function waitForHealth(timeoutMs = 18000) {
-  const startedAt = Date.now();
-  let lastError = null;
-  while (Date.now() - startedAt < timeoutMs) {
-    try {
-      const response = await fetch(`${BASE_URL}/health`);
-      if (response.ok) return response.json();
-      lastError = new Error(`Health returned ${response.status}`);
-    } catch (error) {
-      lastError = error;
-    }
-    await delay(300);
-  }
-  throw lastError || new Error('Timed out waiting for bridge health.');
-}
-
-async function jsonFetch(pathname, options = {}) {
-  const response = await fetch(`${BASE_URL}${pathname}`, {
-    ...options,
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${API_KEY}`,
-      ...(options.headers || {}),
-    },
-  });
-  const body = await response.json().catch(() => ({}));
-  return { response, body };
-}
-
 async function main() {
-  const child = spawn(process.execPath, [SERVER_ENTRY, '--reset'], {
-    cwd: ROOT_DIR,
-    env: {
-      ...process.env,
-      PBK_OPENCLAW_PORT: String(PORT),
-      PBK_BRIDGE_API_KEY: API_KEY,
-      PBK_OPENCLAW_STATE_DIR: path.join(ROOT_DIR, '.pbk-local', `x-factor-smoke-${SMOKE_ID}`),
-      PBK_OPENCLAW_RESET: '1',
-    },
-    stdio: ['ignore', 'pipe', 'pipe'],
-  });
-
-  let stderr = '';
-  child.stderr.on('data', (chunk) => {
-    stderr += String(chunk || '');
-  });
-
-  const cleanup = async () => {
-    if (!child.killed) {
-      child.kill();
-      await delay(150);
-    }
-  };
+  const child = await startIsolatedBridge({ startupMs: 60000 });
+  async function jsonFetch(pathname, options = {}) {
+    const response = await child.fetch(`${child.origin}${pathname}`, {
+      ...options,
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${child.apiKey}`,
+        ...(options.headers || {}),
+      },
+    });
+    const body = await response.json().catch(() => ({}));
+    return { response, body };
+  }
 
   try {
-    await waitForHealth();
-
     const status = await jsonFetch('/api/intelligence/capabilities');
     assert(status.response.status === 200, `Expected intelligence capabilities 200, got ${status.response.status}: ${JSON.stringify(status.body)}`);
     assert(status.body.result === 'x_factor_capabilities', `Unexpected capability result: ${status.body.result}`);
@@ -206,10 +153,7 @@ async function main() {
       goal: goal.body.plan.id,
     }, null, 2));
   } finally {
-    await cleanup();
-    if (stderr && process.env.PBK_SHOW_SMOKE_STDERR === '1') {
-      console.error(stderr);
-    }
+    await child.stop();
   }
 }
 

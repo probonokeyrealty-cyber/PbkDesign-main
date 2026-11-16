@@ -173,8 +173,19 @@ const { outputText: hydrationCode } = ts.transpileModule(hydrationFunctions.map(
   compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },
 });
 let sampleCurrent = {}, sampleHydrated;
+let sampleStored = {}, storageReads = 0, storageWrites = 0;
 const hydration = vm.createContext({
   exports: {}, savedLeadComps, latestCallModeNote, ANALYZER_CURRENT_DEAL_KEY: 'sample-only',
+  readAnalyzerStorage: (key) => {
+    strictAssert.equal(key, 'sample-only');
+    storageReads += 1;
+    return structuredClone(sampleStored);
+  },
+  writeAnalyzerStorage: (key, deal) => {
+    strictAssert.equal(key, 'sample-only');
+    storageWrites += 1;
+    sampleStored = structuredClone(deal);
+  },
   window: { PBKAnalyzer: {
     getState: () => ({ deal: sampleCurrent }),
     setState: state => { sampleHydrated = structuredClone(state.deal); },
@@ -201,6 +212,28 @@ strictAssert.deepEqual(sampleCurrent, originalManual, 'Hydration must not mutate
 hydration.hydrateAnalyzerFromLead({ id: 'sample-b' }, 'sample-b');
 strictAssert.equal(sampleHydrated.leadId, 'sample-b');
 for (const field of ['arv', 'price', 'comps', 'notes', 'selectedPath', 'type']) strictAssert.equal(sampleHydrated[field], undefined);
+strictAssert.equal(storageReads, 0, 'Mounted hydration must not read fallback storage');
+strictAssert.equal(storageWrites, 0, 'Mounted hydration must not write fallback storage');
+
+// Cold route loads hydrate storage before the Analyzer API has mounted.
+delete hydration.window.PBKAnalyzer;
+sampleStored = structuredClone(originalManual);
+hydration.hydrateAnalyzerFromLead({ id: 'sample-a' }, 'sample-a');
+strictAssert.equal(storageReads, 1);
+strictAssert.equal(storageWrites, 1, 'Cold-route hydration must persist the hydrated draft');
+strictAssert.deepEqual(sampleStored, originalManual, 'Cold hydration must retain same-lead draft values');
+hydration.hydrateAnalyzerFromLead(manualUnanalyzed, 'sample-a');
+strictAssert.equal(storageReads, 2);
+strictAssert.equal(storageWrites, 2);
+strictAssert.equal(sampleStored.isAnalyzed, false);
+strictAssert.equal(sampleStored.notes, originalManual.notes);
+strictAssert.deepEqual(sampleStored.comps, originalManual.comps);
+hydration.hydrateAnalyzerFromLead({ id: 'sample-a-other' }, 'sample-a-other');
+strictAssert.equal(storageReads, 3);
+strictAssert.equal(storageWrites, 3);
+strictAssert.equal(sampleStored.leadId, 'sample-a-other');
+for (const field of ['arv', 'price', 'comps', 'notes', 'selectedPath', 'type']) strictAssert.equal(sampleStored[field], undefined);
+strictAssert.deepEqual(sampleCurrent, originalManual, 'Storage hydration must not mutate the mounted draft fixture');
 
 assert(
   /window\.PBKAnalyzer\?\.setState/.test(dealView) &&

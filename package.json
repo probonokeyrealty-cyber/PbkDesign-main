@@ -176,7 +176,7 @@
     "test:shell-production-boot": "node ./scripts/shell-production-boot-smoke.mjs",
     "test:stale-chunk-recovery": "node ./scripts/stale-chunk-recovery-smoke.mjs",
     "test:ava-intent-router": "node ./scripts/ava-intent-router-smoke.mjs",
-    "test:ava-chat-local-command": "npm run test:ava-intent-router && node ./scripts/ava-chat-local-command-smoke.mjs",
+    "test:ava-chat-local-command": "npm run test:ava-intent-router && node ./scripts/ava-chat-local-command-smoke.mjs && node --test ./scripts/ava-chat-stream-client.node-test.mjs",
     "test:ava-design-browser": "npm run build && node ./scripts/ava-design-browser-smoke.mjs",
     "test:agent-memory-wiring": "node ./scripts/agent-memory-wiring-smoke.mjs",
     "test:mobile-wiring-lead-portal": "node ./scripts/mobile-wiring-lead-portal-smoke.mjs",
@@ -318,7 +318,7 @@
     "lint": "eslint \"src/app/**/*.{ts,tsx}\" \"scripts/agent-registry.mjs\" \"scripts/ava-assistant-chat.mjs\" \"scripts/ava-intent-router.mjs\" \"scripts/ava-governed-skill-router.mjs\" \"scripts/ava-emotional-script-library.mjs\" \"scripts/ava-live-skill-fallback.mjs\" \"scripts/ava-live-turn-contract.mjs\" \"scripts/pbk-intelligence-context.mjs\" \"scripts/pbk-intelligence-context-runtime.mjs\" \"scripts/nurture-agent.mjs\" \"scripts/agent-teams.mjs\" \"scripts/auto-skill-learner.mjs\" \"scripts/research-additives.mjs\" \"scripts/tool-handlers/**/*.mjs\" --max-warnings=0 --cache",
     "format": "prettier --write \"**/*.{js,mjs,ts,tsx,json,md,css}\"",
     "format:check": "prettier --check \"**/*.{js,mjs,ts,tsx,json,md,css}\"",
-    "test:unit": "node --experimental-vm-modules ./node_modules/jest/bin/jest.js --config ./jest.config.mjs",
+    "test:unit": "node --experimental-vm-modules ./node_modules/jest/bin/jest.js --config ./jest.config.mjs --runInBand",
     "prepare": "node ./.husky/install.mjs",
     "test:ava-gemini-live-router": "node ./scripts/ava-gemini-live-router-smoke.mjs"
   },

@@ -27,7 +27,7 @@ const migrations = fs
 
 assert(
   pkg.scripts?.['test:ava-chat-local-command'] ===
-    'npm run test:ava-intent-router && node ./scripts/ava-chat-local-command-smoke.mjs',
+    'npm run test:ava-intent-router && node ./scripts/ava-chat-local-command-smoke.mjs && node --test ./scripts/ava-chat-stream-client.node-test.mjs',
   'package.json must expose test:ava-chat-local-command.'
 );
 
@@ -74,6 +74,12 @@ const avaChat = read('src/app/routes/AvaChat.tsx');
 ].forEach((token) => {
   assert(avaChat.includes(token), `AvaChat.tsx must include ${token}.`);
 });
+assert(
+  /await streamAvaAssistantChatRequest\([\s\S]*historyMode: 'completed-only'[\s\S]*signal: assistantController.signal[\s\S]*onAnswer:/.test(avaChat) &&
+    /assistantRequestRef.current !== assistantController \|\| assistantController.signal.aborted/.test(avaChat) &&
+    /status: cancelled \? 'cancelled' : 'failed'/.test(avaChat),
+  'Ava must stream incremental replies with cancellation, stale-request isolation, and honest interrupted states.'
+);
 [
   'pbk-ava-chat-quick-strip',
   'AvaComposerModePicker',
@@ -191,9 +197,10 @@ assert(
 assert(
   /className="pbk-ava-chat-submit-row flex min-w-0 flex-wrap/.test(avaChat) &&
     /pbk-ava-chat-send-button min-h-11 min-w-11 w-24 shrink-0/.test(avaChat) &&
+    avaChat.includes("aria-label={onStopResponse ? 'Stop Ava response' : 'Send to Ava'}") &&
     /@media \(max-width: 640px\)[\s\S]*?\.pbk-ava-chat-submit-row\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)\s+96px/.test(
-    pbkComponentsCss
-  ) &&
+      pbkComponentsCss
+    ) &&
     /\.pbk-ava-chat-send-button\s*\{[^}]*width:\s*100%/.test(pbkComponentsCss),
   'Ava Chat mobile composer must reserve a stable 96px column for Send/Stop.'
 );

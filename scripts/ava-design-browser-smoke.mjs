@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { createServer, request as httpRequest } from 'node:http';
 import { chromium, devices, expect, webkit } from '@playwright/test';
 import { preview } from 'vite';
+import { streamAvaChatResponse } from './ava-chat-events.mjs';
 
 const shellHtml = readFileSync(new URL('../dist/index.shell.html', import.meta.url), 'utf8');
 const server = await preview({ preview: { host: '127.0.0.1', port: 0, strictPort: true } });
@@ -23,6 +24,8 @@ const command = {
 async function verify(engine, viewport, device = {}) {
   const browser = await engine.launch();
   const streams = new Map();
+  const routedStreams = [];
+  const observedResponses = new Set();
   const streamServer = createServer(async (req, res) => {
     if (req.method !== 'POST' || req.url !== '/api/assistant/chat') {
       const upstream = httpRequest(new URL(req.url, previewOrigin), { method: req.method, headers: req.headers }, (response) => {
@@ -36,12 +39,33 @@ async function verify(engine, viewport, device = {}) {
     const chunks = [];
     for await (const chunk of req) chunks.push(chunk);
     const payload = JSON.parse(Buffer.concat(chunks).toString());
-    const entry = { res, payload, closed: false };
+    let releaseCompletion;
+    const completion = new Promise((resolve) => { releaseCompletion = resolve; });
+    const entry = {
+      res, payload, closed: false, partialWritten: false, finished: false, signal: null,
+      finish: (body) => releaseCompletion({ statusCode: 200, body }),
+    };
     streams.set(payload.message, entry);
     res.on('close', () => { entry.closed = true; });
-    res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache' });
-    res.write(': keepalive\n\nevent: status\ndata: checking\n\n');
-    res.write(`event: answer\ndata: ${JSON.stringify({ text: `Partial ${payload.message}` })}\n\n`);
+    try {
+      await streamAvaChatResponse(req, res, async () => {
+        const { signal, onAnswer } = req.avaStream;
+        entry.signal = signal;
+        // Closing a held response must also release the callback and its heartbeat.
+        const abort = () => releaseCompletion({ statusCode: 499, body: { ok: false } });
+        signal.addEventListener('abort', abort, { once: true });
+        try {
+          if (signal.aborted) abort();
+          await onAnswer(`Partial ${payload.message}`);
+          entry.partialWritten = true;
+          return await completion;
+        } finally {
+          signal.removeEventListener('abort', abort);
+        }
+      });
+    } finally {
+      entry.finished = true;
+    }
   });
   await new Promise((resolve) => streamServer.listen(0, '127.0.0.1', resolve));
   const origin = `http://127.0.0.1:${streamServer.address().port}`;
@@ -52,6 +76,12 @@ async function verify(engine, viewport, device = {}) {
       if (!/abort|cancel/i.test(request.failure()?.errorText || '')) console.error('Browser request failed:', request.url(), request.failure()?.errorText);
     });
     page.on('console', (message) => { if (message.type() === 'error') console.error('Browser error:', message.text()); });
+    page.on('response', (response) => {
+      const request = response.request();
+      if (request.method() === 'POST' && new URL(response.url()).pathname === '/api/assistant/chat') {
+        observedResponses.add(request.postDataJSON().message);
+      }
+    });
     await page.addInitScript(() => {
       localStorage.setItem('pbk:local:openclaw-config', JSON.stringify({
         endpoint: location.origin,
@@ -80,6 +110,7 @@ async function verify(engine, viewport, device = {}) {
       if (path === '/api/assistant/chat' && req.method() === 'POST') {
         chatRequests.push(req.postDataJSON());
         if (req.postDataJSON().message.startsWith('Stream fixture:')) {
+          routedStreams.push(req.postDataJSON().message);
           assert.equal(req.headers().accept, 'text/event-stream');
           assert.equal(req.postDataJSON().stream, true);
           return route.continue();
@@ -208,17 +239,19 @@ async function verify(engine, viewport, device = {}) {
       await page.screenshot({ path: `.pbk-local/ava-chat-stream-pending-${engine.name()}-${viewport.width}.png` });
     }
     const completedAnswer = 'Final controller-approved answer replaces the provisional text.';
-    streams.get(streamAsk).res.end(`event: done\ndata: ${JSON.stringify({
+    streams.get(streamAsk).finish({
       ok: true, answer: completedAnswer, sessionId: 'qa-stream-session', activeLeadId: leadId,
       mission: { status: 'completed', steps: [{ id: 'stream-done', label: 'Stream metadata retained', status: 'completed' }] },
       trace: { intent: 'stream-proof' }, controlEnvelope: { status: 'safe' }, toolResult: { draftOnly: true },
-    })}\n\n`);
+    });
     await expect(streaming).toHaveAttribute('data-status', 'completed');
     assert.equal(await streaming.getAttribute('data-exchange-id'), exchangeId);
     await expect(streaming.getByText(completedAnswer, { exact: true })).toBeVisible();
     await expect(streaming.getByText(`Partial ${streamAsk}`, { exact: true })).toHaveCount(0);
     await expect(stop).toHaveCount(0);
     await expect(composer).toHaveValue('This must not double send');
+    await expect.poll(async () => (await persisted()).find((item) => item.id === exchangeId)?.status)
+      .toBe('completed');
     const saved = (await persisted()).find((item) => item.id === exchangeId);
     assert.deepEqual(saved.trace, { intent: 'stream-proof' });
     assert.deepEqual(saved.controlEnvelope, { status: 'safe' });
@@ -276,6 +309,16 @@ async function verify(engine, viewport, device = {}) {
     console.log(
       `Ava streaming, Stop, interruption, JSON fallback, history, mission and approval: ${engine.name()} ${viewport.width}px`
     );
+  } catch (error) {
+    console.error('Ava fixture transport failure:', JSON.stringify({
+      engine: engine.name(), width: viewport.width, routedStreams,
+      streams: [...streams].map(([message, entry]) => ({
+        message, responseObserved: observedResponses.has(message), headersSent: entry.res.headersSent,
+        partialWritten: entry.partialWritten, writableEnded: entry.res.writableEnded,
+        closed: entry.closed, aborted: entry.signal?.aborted ?? null, finished: entry.finished,
+      })),
+    }));
+    throw error;
   } finally {
     await browser.close();
     streamServer.closeAllConnections();

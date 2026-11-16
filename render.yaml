@@ -670,7 +670,7 @@ databases:
   - name: pbk-openclaw-db
     databaseName: pbk_openclaw
     user: pbk_openclaw_user
-    plan: basic-256mb
+    plan: basic-1gb
     region: ohio
     postgresMajorVersion: "18"
     ipAllowList: []

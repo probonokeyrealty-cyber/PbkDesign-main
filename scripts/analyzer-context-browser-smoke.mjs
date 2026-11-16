@@ -196,10 +196,26 @@ async function verify(engine, compact, device = {}) {
 
     exact = false;
     const priorTimelines = reads.filter((url) => url.includes('/timeline')).length;
+    const readDraftEnvelopes = () => page.evaluate((key) => {
+      const decode = (raw) => JSON.parse(decodeURIComponent(escape(atob(raw))));
+      return {
+        persistent: decode(localStorage.getItem(key.replace(/:session$/, ''))),
+        session: decode(sessionStorage.getItem(key)),
+      };
+    }, storageKey);
+    const draftsBeforeReload = await readDraftEnvelopes();
     await page.reload();
     await expect(page.getByRole('combobox', { name: 'Address', exact: true })).toHaveValue('43 Fixture Avenue', { timeout: 20_000 });
     await expect(beds).toHaveValue('4');
     await expect(comp).toHaveValue('2200000');
+    const draftsAfterReload = await readDraftEnvelopes();
+    for (const scope of ['persistent', 'session']) {
+      assert.deepEqual(draftsAfterReload[scope].payload, draftsBeforeReload[scope].payload,
+        `Reload must preserve the ${scope} Analyzer draft payload, independent of envelope timestamps`);
+      assert.notEqual(draftsAfterReload[scope].savedAt, draftsBeforeReload[scope].savedAt,
+        'The fixture must exercise a refreshed autosave envelope');
+    }
+    console.log('Analyzer reload preserves draft payloads while refreshing envelope timestamps');
     if (compact) await toggle.click();
     await expect(page.getByText('No conversation is linked to this lead.')).toBeVisible();
     await expect(page.getByRole('link', { name: 'Open conversation' })).toHaveCount(0);

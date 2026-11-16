@@ -39,10 +39,16 @@ All use the existing bridge/team authorization gate and return `Cache-Control: n
 ```powershell
 node --test scripts/attom-recent-sales.node-test.mjs scripts/address-suggestions.node-test.mjs scripts/lead-comps.node-test.mjs
 node scripts/property-intelligence-browser-smoke.mjs
+node scripts/property-crm-roundtrip-smoke.mjs
+node scripts/manual-lead-replay-durability-smoke.mjs
 node scripts/lead-property-workspaces-browser-smoke.mjs
 node scripts/render-docker-imports-smoke.mjs
 npm run typecheck
 npm run build
 ```
 
-Browser tests use synthetic records and block all external requests. They cover 390px/1440px, keyboard selection, preserved edits, stale replies, comps, empty results, timeouts, retry and page overflow. A separate read-only check with the existing ATTOM key returned 12 sales for ATTOM's published Denver sample address. This is provider-adapter proof, not deployment proof. Google and the new hosted routes still require live verification after the key and release are in place.
+Browser tests use synthetic records and block all external requests. They cover 390px/1440px, light/dark contrast, keyboard selection, preserved edits, stale replies, failed comp saves and retry, clearing old-property comps, delayed lead-switch responses, Call Mode note persistence and view switching, empty results, timeouts, and overflow. The replay durability test deliberately makes an isolated storage file unwritable, proving a failed save cannot turn into a false-success replay.
+
+The round-trip script defaults to a disposable isolated bridge. Live mode requires explicit operator authorization, `PBK_PROPERTY_QA_LIVE=1`, `--live`, and the existing bridge credential in the environment. It only writes fixed `pbk-qa-property-workflow-*` fixtures labeled `[PBK QA]` with no phone/email and denied contact permissions. It refuses any address collision with another lead. It checks correct-lead persistence/read-back, unchanged control lead, and HTTP 409 for a mismatched property. Fixtures are retained for audit; it never deletes existing leads or invokes outreach. Comp-save action provenance is separate from the lead acquisition source.
+
+Hosted Google suggestions, selected-address details, ATTOM facts, and 12 recent sales were verified using ATTOM's public Denver sample address. The live canonical lead round-trip also passed with three selected sales; a manual create initially returned HTTP 500, while subsequent controlled saves succeeded. Do not treat this as a guarantee of uninterrupted database availability. Final release checks must verify the deployed commit, bridge/Postgres readiness, unauthenticated rejection, and Netlify staff SSO scope `all`.

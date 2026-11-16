@@ -60477,6 +60477,11 @@ async function handleManualLeadCreate(payload = {}) {
   if (eventId) {
     const prior = (state.leadImports || []).find((item) => item && item.eventId === eventId);
     if (prior) {
+      // A prior attempt may have reached memory but failed its durable write.
+      await persistState(state);
+      void persistLeadProfileRowToDb(prior, 'manual-lead-replay').catch((error) => {
+        console.warn('[pbk-local-openclaw] manual lead replay projection failed:', error?.message || 'unknown error');
+      });
       return {
         ok: true,
         replayed: true,

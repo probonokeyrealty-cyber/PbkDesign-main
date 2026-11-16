@@ -7,6 +7,8 @@ const result = { status: 'matched', source: 'ATTOM', sales: [{ id: 'comp-1', add
 test('selected comps stay under the canonical lead analyzer/deal and clear unused slots', () => {
   const patch = selectedCompPatch(result, ['comp-1'], address);
   assert.deepEqual(patch.expectedPropertyAddress, address);
+  assert.equal(patch.actionSource, 'lead-comps-reviewed');
+  assert.ok(!('source' in patch), 'Saving research must not replace lead acquisition source.');
   assert.equal(patch.deal.comps.A.price, 400000);
   assert.equal(patch.deal.comps.B.price, 0);
   assert.equal(patch.deal.isAnalyzed, false);

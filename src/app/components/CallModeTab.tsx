@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import * as Tabs from '@radix-ui/react-tabs';
 import { Link } from 'react-router';
 import '../../styles/call-workbench.css';
@@ -97,6 +97,8 @@ export function CallModeTab({
   const [postCallStatus, setPostCallStatus] = useState('');
   const [pendingPostCallAction, setPendingPostCallAction] = useState('');
   const [callView, setCallView] = useState('talk');
+  const noteScope = getDealLeadId(deal) || deal.address;
+  const previousNoteScope = useRef(noteScope);
   const [scriptVariant, setScriptVariant] = useState<ScriptVariant>(
     deal.contact === 'realtor' ? 'agent' : 'owner'
   );
@@ -114,9 +116,11 @@ export function CallModeTab({
   }, [forcedVariant]);
 
   useEffect(() => {
+    if (previousNoteScope.current === noteScope) return;
+    previousNoteScope.current = noteScope;
     setCallNotes(deal.notes || '');
     setLastSavedNotes(deal.notes || '');
-  }, [deal.address, deal.notes]);
+  }, [noteScope, deal.notes]);
 
   const saveCallNotes = useCallback(async () => {
     const note = callNotes.trim();
@@ -127,7 +131,7 @@ export function CallModeTab({
       return;
     }
     try {
-      await saveLeadNoteRequest({
+      const response = await saveLeadNoteRequest({
         leadId,
         leadName: getDealLeadName(deal),
         address: deal.address,
@@ -137,6 +141,7 @@ export function CallModeTab({
         actor: 'Call Mode',
         source: 'deal-view-call-mode',
       });
+      if (response.ok === false) throw new Error('The bridge did not save the call notes.');
       setLastSavedNotes(note);
       setPostCallStatus('Call notes saved to the bridge.');
     } catch (error) {

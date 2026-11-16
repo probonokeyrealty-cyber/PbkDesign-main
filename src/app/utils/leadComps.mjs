@@ -11,7 +11,7 @@ export function selectedCompPatch(result, selectedIds, address) {
     address: selected[i].address, price: selected[i].price, date: selected[i].soldDate, link: '',
   } : { address: '', price: 0, date: '', link: '' }]));
   return {
-    actor: 'PBK operator', source: 'lead-comps-reviewed', expectedPropertyAddress: address,
+    actor: 'PBK operator', actionSource: 'lead-comps-reviewed', expectedPropertyAddress: address,
     analyzer: { comps, recordedSales: { provider: 'ATTOM', review: 'operator-selected', address,
       retrievedAt: result.retrievedAt, windowStart: result.windowStart, windowEnd: result.windowEnd,
       radiusMiles: result.radiusMiles, selectedIds: ids, sales: result.sales.slice(0, 20) } },

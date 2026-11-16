@@ -1,4 +1,4 @@
-import { Component, useCallback, useEffect, useState, type ReactNode } from 'react';
+import { Component, useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { useParams } from 'react-router';
 import App from '../App';
 import type { DealData, PBKPath } from '../types';
@@ -371,13 +371,20 @@ export function DealView() {
   const [loading, setLoading] = useState(Boolean(leadId));
   const [error, setError] = useState('');
   const [retryToken, setRetryToken] = useState(0);
+  const [loadedLeadId, setLoadedLeadId] = useState('');
+  const requestVersion = useRef(0);
+  const currentLeadId = useRef(leadId);
+  currentLeadId.current = leadId;
 
   const loadLead = useCallback(async () => {
     if (!leadId) return;
+    const version = ++requestVersion.current;
+    const isCurrent = () => currentLeadId.current === leadId && requestVersion.current === version;
     setLoading(true);
     setError('');
     try {
       const response = await fetchLeadFullRequest(leadId);
+      if (!isCurrent()) return;
       if (response.ok === false || !hasDealLeadPayload(response)) {
         throw new Error(
           firstText(response.error, response.message, response.verbiage) ||
@@ -385,10 +392,11 @@ export function DealView() {
         );
       }
       hydrateAnalyzerFromLead(response, leadId);
+      setLoadedLeadId(leadId);
     } catch (nextError) {
-      setError(friendlyDealLoadError(nextError));
+      if (isCurrent()) setError(friendlyDealLoadError(nextError));
     } finally {
-      setLoading(false);
+      if (isCurrent()) setLoading(false);
     }
   }, [leadId]);
 
@@ -399,6 +407,8 @@ export function DealView() {
       return;
     }
     void loadLead();
+    const version = requestVersion.current;
+    return () => { requestVersion.current = version + 1; };
   }, [leadId, loadLead, retryToken]);
 
   if (!leadId) {
@@ -411,7 +421,7 @@ export function DealView() {
     );
   }
 
-  if (loading) {
+  if ((loading || loadedLeadId !== leadId) && !error) {
     return (
       <div className="grid h-full min-h-[680px] place-items-center bg-slate-950 p-6 text-slate-100">
         <div role="status" className="text-center">

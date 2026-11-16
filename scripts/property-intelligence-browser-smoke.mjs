@@ -11,13 +11,14 @@ const browser = await chromium.launch();
 const address = { street: '24 Sample Oak Lane', city: 'Example City', state: 'CA', zip: '90210' };
 const full = '24 Sample Oak Lane, Example City, CA 90210';
 const lead = { id: 'comps-fixture', seller: { name: 'Fixture Seller' }, property: { ...address, address: address.street, beds: 3, sqft: 1600 } };
+const otherLead = { id: 'comps-other-fixture', seller: { name: 'Other Fixture Seller' }, property: { ...address, address: '88 Other Seller Street' } };
 try {
   await mkdir('output/playwright', { recursive: true });
   for (const width of [390, 1440]) {
     let currentLead = structuredClone(lead);
     const page = await browser.newPage({ viewport: { width, height: 960 } });
     const errors = []; const outbound = []; const writes = [];
-    let fail = false; let pendingFacts;
+    let fail = false; let failSave = true; let pendingFacts; let pendingLead; let leadStarted;
     page.on('pageerror', e => errors.push(e.message));
     await page.routeWebSocket('**/*', socket => socket.close());
     await page.route('**/*', async route => {
@@ -40,17 +41,28 @@ try {
       if (path === '/api/auth/team/status') return send({ ok: true, configured: false, authRequired: false });
       if (path === '/api/state/stream/session') return send({ ok: false });
       if (path === '/api/scripts/current' && request.method() === 'POST') return send({ ok: true, script: null });
+      if (path === '/api/leads/add-note' && request.method() === 'POST') {
+        assert.equal(request.postDataJSON().leadId, lead.id);
+        writes.push(path);
+        return send({ ok: true });
+      }
       if (path === '/api/leads/' + lead.id && request.method() === 'PATCH') {
         writes.push(path);
         const patch = request.postDataJSON();
-        assert.equal(patch.source, 'lead-comps-reviewed');
+        assert.equal(patch.actionSource, 'lead-comps-reviewed');
+        assert.ok(!('source' in patch));
         assert.deepEqual(patch.expectedPropertyAddress, address);
+        if (failSave) return route.fulfill({ status: 503, json: { ok: false, error: 'Controlled save failure' } });
         currentLead = { ...currentLead, analyzer: patch.analyzer, deal: patch.deal };
         return send({ ok: true, lead: currentLead });
       }
       if (request.method() !== 'GET') { writes.push(path); return route.abort(); }
       if (path === '/api/leads') return send({ ok: true, leads: [lead] });
-      if (path.startsWith('/api/leads/' + lead.id)) return send({ ok: true, lead: currentLead });
+      if (path.startsWith('/api/leads/' + otherLead.id)) return send({ ok: true, lead: otherLead });
+      if (path.startsWith('/api/leads/' + lead.id)) {
+        if (pendingLead) { leadStarted.resolve(); await pendingLead.promise; }
+        return send({ ok: true, lead: currentLead });
+      }
       if (path === '/state') return send({ leadImports: [lead] });
       return send({ ok: true, items: [] });
     });
@@ -95,6 +107,10 @@ try {
     await expect(comps.getByText('$400,000', { exact: true })).toBeVisible();
     await comps.getByRole('checkbox', { name: /^Select comp/ }).check();
     await comps.getByRole('button', { name: 'Save selected comps', exact: true }).click();
+    await expect(comps.getByText('Selected comps saved to this lead.', { exact: true })).toHaveCount(0);
+    await expect(comps.getByRole('button', { name: 'Save selected comps', exact: true })).toBeEnabled();
+    failSave = false;
+    await comps.getByRole('button', { name: 'Save selected comps', exact: true }).click();
     await expect(comps.getByText('Selected comps saved to this lead.', { exact: true })).toBeVisible();
     await comps.getByLabel('Sort').selectOption('distance');
     await comps.getByLabel('Radius').selectOption('2');
@@ -120,21 +136,39 @@ try {
     await expect(tabs).toBeVisible();
     const notes = page.getByRole('textbox', { name: 'Call notes', exact: true });
     await expect(notes).toBeVisible();
+    await notes.fill('Controlled QA notes: retain across call views.');
     await tabs.getByRole('tab', { name: 'Numbers', exact: true }).click();
     await expect(notes).toBeHidden();
     await tabs.getByRole('tab', { name: 'Follow-up', exact: true }).click();
     await expect(page.getByRole('heading', { name: 'Post-call actions', exact: true })).toBeVisible();
     await tabs.getByRole('tab', { name: 'Talk', exact: true }).click();
     await expect(notes).toBeVisible();
+    await expect(notes).toHaveValue('Controlled QA notes: retain across call views.');
     await page.screenshot({ path: `output/playwright/property-call-${width}.png`, fullPage: true });
     currentLead.property.address = '789 Different Property Road';
     await page.goto(origin + '/deal/' + lead.id);
     await expect(page.getByRole('spinbutton', { name: 'Comp A sold price', exact: true })).toHaveValue('');
     await expect(page.getByRole('textbox', { name: 'Comp A address', exact: true })).toHaveValue('');
+    // An old lead fetch must not overwrite the next seller after client-side navigation.
+    pendingLead = Promise.withResolvers(); leadStarted = Promise.withResolvers();
+    await page.goto(origin + '/deal/' + lead.id, { waitUntil: 'domcontentloaded' });
+    await leadStarted.promise;
+    await page.evaluate(id => {
+      history.pushState({}, '', '/deal/' + id);
+      dispatchEvent(new PopStateEvent('popstate'));
+    }, otherLead.id);
+    const otherAddress = '88 Other Seller Street, Example City, CA 90210';
+    await expect(page.getByRole('combobox', { name: 'Address', exact: true })).toHaveValue(otherAddress);
+    const oldResponse = page.waitForResponse(r => new URL(r.url()).pathname.startsWith('/api/leads/' + lead.id));
+    pendingLead.resolve(); pendingLead = undefined;
+    await oldResponse;
+    await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    await expect(page.getByRole('combobox', { name: 'Address', exact: true })).toHaveValue(otherAddress);
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1));
-    assert.deepEqual(errors, []); assert.deepEqual(writes, ['/api/leads/' + lead.id]);
+    assert.deepEqual(errors, []);
+    assert.deepEqual(writes, ['/api/leads/' + lead.id, '/api/leads/' + lead.id, '/api/leads/add-note']);
     assert.ok(outbound.every(host => host === 'https://fonts.googleapis.com'), 'No data-provider or customer traffic is allowed');
     await page.close();
-    console.log(`property-intelligence: ${width}px keyboard selection, fact preservation, stale response, comps, empty, timeout and retry passed (fixtures)`);
+    console.log(`property-intelligence: ${width}px theme contrast, search, failed save/retry, comps handoff, lead-switch isolation, note persistence and call views passed (fixtures)`);
   }
 } finally { await browser.close(); await server.close(); }

@@ -366,7 +366,7 @@ test('workflow requires full isolated Postgres and default Chromium/WebKit execu
   assert.match(postgres.run, /--experimental-vm-modules/);
   assert.match(postgres.run, /--runInBand/);
   assert.match(postgres.run, /--json/);
-  assert.match(postgres.run, /--runTestsByPath scripts\/conversation-store.test.mjs scripts\/provider-action-dispatch.test.mjs scripts\/release-qualification.test.mjs/);
+  assert.match(postgres.run, /--runTestsByPath scripts\/conversation-store.test.mjs scripts\/provider-action-dispatch.test.mjs scripts\/release-qualification.test.mjs scripts\/operational-audit-store.test.mjs/);
   assert.match(postgres.env.NEON_API_KEY, /secrets.NEON_API_KEY \|\| secrets.PBK_NEON_API_KEY/);
   assert.match(postgres.env.NEON_PROJECT_ID, /vars.NEON_PROJECT_ID/);
   assert.match(job.steps.find((step) => step.name === names[3]).run, /playwright install --with-deps chromium webkit/);
@@ -379,9 +379,9 @@ test('workflow requires full isolated Postgres and default Chromium/WebKit execu
 
 function report() {
   return {
-    success: true, numTotalTestSuites: 3, numPassedTestSuites: 3, numFailedTestSuites: 0, numPendingTestSuites: 0,
-    numTotalTests: 12, numPassedTests: 12, numFailedTests: 0, numPendingTests: 0, numTodoTests: 0, numRuntimeErrorTestSuites: 0,
-    testResults: ['conversation-store', 'provider-action-dispatch', 'release-qualification'].map((name) => ({
+    success: true, numTotalTestSuites: 4, numPassedTestSuites: 4, numFailedTestSuites: 0, numPendingTestSuites: 0,
+    numTotalTests: 16, numPassedTests: 16, numFailedTests: 0, numPendingTests: 0, numTodoTests: 0, numRuntimeErrorTestSuites: 0,
+    testResults: ['conversation-store', 'operational-audit-store', 'provider-action-dispatch', 'release-qualification'].map((name) => ({
       name: `/fixture/scripts/${name}.test.mjs`, status: 'passed',
       assertionResults: Array.from({ length: 4 }, () => ({ status: 'passed' })),
     })),

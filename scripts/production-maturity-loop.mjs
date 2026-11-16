@@ -573,6 +573,11 @@ export function buildExecutedReadinessEvidence({
   }
   const behaviorGate = passedGate(evidence.behavior);
   const silentGate = passedGate(evidence.silentErrors);
+  if (evidence.silentErrors?.provenance !== 'operational'
+    || evidence.silentErrors?.scope !== 'durable_operational_audit') {
+    silentGate.blockers.push('durable_operational_audit_required');
+    silentGate.ready = false;
+  }
   const silentErrorReport = { ...silentGate, launchReady: silentGate.ready };
   const canary = asRecord(evidence.canary);
   const baseline = asRecord(canary.baseline);

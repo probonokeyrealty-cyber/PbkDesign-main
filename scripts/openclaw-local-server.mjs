@@ -28,6 +28,8 @@ import { createBackgroundPersistence, createCoalescedPersistence } from './backg
 import { createProviderActionBinding, hashProviderActionContext, validateProviderActionAuthorization, validateNegotiationApproval } from './provider-action-authorization.mjs';
 import { authorizeQualificationRequest, executeReleaseQualification, isDirectQualificationFounder, readReleaseQualification } from './release-qualification.mjs';
 import { loadQualificationCiEvidence } from './release-qualification-ci.mjs';
+import { collectOperationalAudit } from './operational-audit-collector.mjs';
+import { executeOperationalAudit, readOperationalAudit } from './operational-audit-store.mjs';
 import { AVA_REAL_CALL_EVAL_SCENARIO_IDS, runAvaRealCallQualification } from './ava-real-call-eval-pack.mjs';
 import { BEHAVIOR_QUALIFICATION_CASE_IDS, runBehaviorQualification } from './behavior-tests.mjs';
 import { SILENT_ERROR_POLICY_CASE_IDS, runSilentErrorPolicyQualification } from './silent-error-governance-smoke.mjs';
@@ -11443,9 +11445,13 @@ async function buildProductionMaturitySnapshot({ runtimeMeta = getRuntimeMeta() 
     pool: getPgPool(), revision: process.env.RENDER_GIT_COMMIT || BUILD_REVISION,
     secret: BRIDGE_API_KEY, requiredCases: RELEASE_QUALIFICATION_CASES,
   });
+  const operationalAudit = await readOperationalAudit({
+    pool: getPgPool(), revision: process.env.RENDER_GIT_COMMIT || BUILD_REVISION, secret: BRIDGE_API_KEY,
+  });
   const executionEvidence = buildExecutedReadinessEvidence({
     revision: process.env.RENDER_GIT_COMMIT || BUILD_REVISION,
-    evidence: qualification.evidence, requiredScenarioIds: AVA_REAL_CALL_EVAL_SCENARIOS, sloStatus,
+    evidence: { ...qualification.evidence, ...operationalAudit.evidence },
+    requiredScenarioIds: AVA_REAL_CALL_EVAL_SCENARIOS, sloStatus,
   });
   const { failedCallEvalGate, shadowCanaryComparison, canaryPromotionGate } = executionEvidence;
   const blockers = [
@@ -11470,6 +11476,7 @@ async function buildProductionMaturitySnapshot({ runtimeMeta = getRuntimeMeta() 
       providerCircuitsReady: providerCircuits.ready,
       failedCallEvalReady: failedCallEvalGate.ready,
       controlledQualificationReady: qualification.qualification.ready,
+      operationalAuditReady: operationalAudit.audit?.ready === true && operationalAudit.verified === true,
       stableAgentFleetMeasured: Boolean(stableAgentFleetMeasurement?.ready),
       shadowCanaryReady: shadowCanaryComparison.ready,
       canaryPromotionReady: canaryPromotionGate.ready,
@@ -11481,9 +11488,14 @@ async function buildProductionMaturitySnapshot({ runtimeMeta = getRuntimeMeta() 
     executionEvidence: { ...executionEvidence, source: qualification.source,
       verified: qualification.verified, qualificationRunId: qualification.runId || null,
       qualificationStatus: qualification.result,
-      note: 'Only signed server-executed Postgres readback qualifies. Controlled policy checks do not certify operational silent-error audits, seller delivery or independent canary performance.' },
+      operationalAuditVerified: operationalAudit.verified,
+      operationalAuditRunId: operationalAudit.runId || null,
+      note: 'Only signed server-executed Postgres readback qualifies. Operational audit coverage is separate from controlled policy checks; neither certifies seller delivery or independent canary performance.' },
     qualification: { ...qualification.qualification, verified: qualification.verified,
       runId: qualification.runId || null, executedAt: qualification.executedAt || null, source: qualification.source },
+    operationalAudit: { ...operationalAudit.audit, ready: operationalAudit.verified === true && operationalAudit.audit?.ready === true,
+      verified: operationalAudit.verified, runId: operationalAudit.runId || null,
+      source: operationalAudit.source, result: operationalAudit.result, executedAt: operationalAudit.executedAt || null },
     shadowCanaryComparison: {
       ...shadowCanaryComparison,
       mode: 'unverified',
@@ -72822,6 +72834,39 @@ const server = createServer(async (request, response) => {
       // Always read the newest signed run; a cached prior pass cannot hide a newer failure.
       const maturity = await buildProductionMaturitySnapshot({ runtimeMeta: getRuntimeMeta() });
       json(response, maturity.ready ? 200 : 202, maturity);
+      return;
+    }
+
+    if (pathname === '/api/admin/operational-audit/run') {
+      const authority = authorizeQualificationRequest({ method: request.method, search: url.search,
+        headers: request.headers, body: {} }, BRIDGE_API_KEY);
+      if (!authority.ok) {
+        json(response, authority.status, { ok: false, result: authority.result });
+        return;
+      }
+      const allowed = authorizeQualificationRequest({ method: request.method, search: url.search,
+        headers: request.headers, body: await readBody(request) }, BRIDGE_API_KEY);
+      if (!allowed.ok) {
+        json(response, allowed.status, { ok: false, result: allowed.result });
+        return;
+      }
+      const pool = runtimeStateBootstrap.ready ? getPgPool() : null;
+      const result = await executeOperationalAudit({ pool, revision: process.env.RENDER_GIT_COMMIT || BUILD_REVISION,
+        secret: BRIDGE_API_KEY, collect: async ({ now }) => {
+          const obs = getPbkObservabilityStatus();
+          const bus = await getEventBusStatus();
+          return collectOperationalAudit({ pool, now, runtime: {
+            authenticationConfigured: Boolean(BRIDGE_API_KEY), approvalMode: state.status?.mode,
+            bootstrapReady: runtimeStateBootstrap.ready,
+            archiveReady: getRuntimeEventArchiveStatus().ready,
+            providerCircuitsReady: getProviderCircuitStatus().ready,
+            observabilityReady: Boolean(obs.enabled && obs.initialized && obs.otelReady),
+            eventBusConnected: bus.connected === true,
+          } });
+        },
+      });
+      clearBridgeReadCache('operational_audit_executed');
+      json(response, result.ok ? 200 : result.result === 'operational_audit_in_progress' ? 409 : 503, result);
       return;
     }
 

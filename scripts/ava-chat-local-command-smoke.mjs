@@ -189,7 +189,9 @@ assert(
   'Ava Chat Enter-to-send must ignore IME composition events.'
 );
 assert(
-  /@media \(max-width: 640px\)[\s\S]*?\.pbk-ava-chat-submit-row\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)\s+96px/.test(
+  /className="pbk-ava-chat-submit-row flex min-w-0 flex-wrap/.test(avaChat) &&
+    /pbk-ava-chat-send-button min-h-11 min-w-11 w-24 shrink-0/.test(avaChat) &&
+    /@media \(max-width: 640px\)[\s\S]*?\.pbk-ava-chat-submit-row\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)\s+96px/.test(
     pbkComponentsCss
   ) &&
     /\.pbk-ava-chat-send-button\s*\{[^}]*width:\s*100%/.test(pbkComponentsCss),

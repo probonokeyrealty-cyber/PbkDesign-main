@@ -1139,6 +1139,8 @@ async function main() {
         address: '808 Smoke Test Ave, Columbus OH',
         condition: 'needs roof work',
         sellerFacing: false,
+        arv: 200000,
+        repairs: 30000,
       }),
     }).then((response) => response.json());
     const canonicalApproveRequest = await fetch(`${BASE_URL}/api/approvals`, {

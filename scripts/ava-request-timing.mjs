@@ -11,6 +11,7 @@ const STAGES = new Set([
 export function createAvaRequestTiming({ now = () => performance.now() } = {}) {
   const startedAt = now();
   const stages = [];
+  let firstTokenMs;
 
   function begin(name) {
     if (!STAGES.has(name)) throw new TypeError('Unknown Ava timing stage');
@@ -26,6 +27,9 @@ export function createAvaRequestTiming({ now = () => performance.now() } = {}) {
   }
 
   return {
+    markFirstToken() {
+      if (firstTokenMs === undefined) firstTokenMs = Math.max(0, now() - startedAt);
+    },
     async measure(stage, operation) {
       const start = begin(stage);
       try {
@@ -53,6 +57,7 @@ export function createAvaRequestTiming({ now = () => performance.now() } = {}) {
         schema: 'pbk.ava.request_timing.v1',
         metricKind: 'operator_request',
         durationMs: Math.max(0, now() - startedAt),
+        ...(firstTokenMs === undefined ? {} : { firstTokenMs }),
         stages: stages.map((stage) => ({ ...stage })),
       };
     },

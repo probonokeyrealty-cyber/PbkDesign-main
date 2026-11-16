@@ -80,7 +80,7 @@ assert(
   'Ava Chat mobile quick actions must wrap instead of overflowing the viewport.'
 );
 assert(
-  /\.pbk-ava-chat-controls[\s\S]*width:\s*100%/.test(styles) &&
+  /className="pbk-ava-chat-controls\b[^"\n]*\bw-full\b[^"\n]*\bmin-w-0\b/.test(avaChat) &&
     /placeholder="Ask Ava anything\.\.\."/.test(avaChat),
   'Ava Chat composer controls must stay compact and readable on narrow mobile screens.'
 );

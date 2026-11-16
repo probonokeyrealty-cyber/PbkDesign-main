@@ -19,12 +19,14 @@ const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const connectionError = () => Object.assign(new Error('Connection terminated unexpectedly'), { code: 'ECONNRESET' });
 
 function load(context, names) {
-  const persistence = names.includes('persistStateToDb');
-  for (const name of persistence ? ['writeStateToDb', ...names] : names) {
+  if (names.includes('persistStateToDb')) {
+    load(context, ['writeStateToDb']);
+    context.stateDbWriteQueue = createCoalescedPersistence({ persist: context.writeStateToDb });
+  }
+  for (const name of names) {
     assert.ok(functions.has(name), `Missing bridge function: ${name}`);
     vm.runInContext(functions.get(name), context);
   }
-  if (persistence) context.stateDbWriteQueue = createCoalescedPersistence({ persist: context.writeStateToDb });
 }
 
 function runtime(t, {

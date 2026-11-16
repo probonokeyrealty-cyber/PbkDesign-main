@@ -611,6 +611,47 @@ function getMeasurementLastFailureAt(agent = {}, probe = {}, action = null) {
   return '';
 }
 
+function measureLatencyKinds(observations, options, nowMs, minSamples) {
+  const rows = Array.isArray(observations) ? observations : [];
+  const byKind = {};
+  const blockers = [];
+  const maxAgeMs = options.latencyMaxAgeMs ?? 86_400_000;
+  if (!rows.length) blockers.push('latency_not_sampled');
+  for (const row of rows) {
+    const channel = ['chat', 'phone', 'research', 'provider'].includes(row?.channel) ? row.channel : 'unknown';
+    const kind = ['first_token', 'completion', 'speech_start', 'speech_completion'].includes(row?.kind) ? row.kind : 'unknown';
+    const groups = byKind[channel] ||= {};
+    const group = groups[kind] ||= { observations: 0, samples: new Map(), unknownSamples: 0 };
+    group.observations++;
+    if (typeof row?.valueMs === 'number' && Number.isFinite(row.valueMs) && row.valueMs >= 0) {
+      // Repeated milestones for one run are not independent samples; retain its slowest value.
+      const key = row.recordId || `unidentified-${group.observations}`;
+      group.samples.set(key, Math.max(group.samples.get(key) ?? 0, row.valueMs));
+    }
+    else { group.unknownSamples++; blockers.push(`latency_value_unknown:${channel}:${kind}`); }
+    if (channel === 'unknown' || kind === 'unknown') blockers.push(`latency_kind_unknown:${channel}:${kind}`);
+    if (row?.verified !== true || !row.recordId || !['agent_ops', 'registry_execution'].includes(row.source)) blockers.push(`latency_provenance_unverified:${channel}:${kind}`);
+    const age = nowMs - Date.parse(row?.at || '');
+    if (!Number.isFinite(maxAgeMs) || maxAgeMs < 0 || !Number.isFinite(age) || age < 0 || age > maxAgeMs) blockers.push(`latency_time_unverified:${channel}:${kind}`);
+  }
+  for (const [channel, groups] of Object.entries(byKind)) {
+    for (const [kind, group] of Object.entries(groups)) {
+      const configured = options.latencyBudgetsMs?.[channel]?.[kind];
+      const budgetMs = typeof configured === 'number' && Number.isFinite(configured) && configured > 0 ? configured : null;
+      const values = [...group.samples.values()];
+      const p95Ms = values.length ? percentile(values, 0.95) : null;
+      groups[kind] = { observations: group.observations, samples: values.length, unknownSamples: group.unknownSamples,
+        p95Ms, budgetMs, withinBudget: p95Ms === null || budgetMs === null ? null : p95Ms <= budgetMs };
+      if (budgetMs === null) blockers.push(`latency_budget_unknown:${channel}:${kind}`);
+      if (values.length < minSamples) blockers.push(`latency_not_sampled:${channel}:${kind}`);
+      if (p95Ms !== null && budgetMs !== null && p95Ms > budgetMs) blockers.push(`latency_p95_above_budget:${channel}:${kind}`);
+    }
+  }
+  return { byKind, blockers: uniqueStrings(blockers), count: rows.length,
+    measured: rows.length > 0 && Object.values(byKind).every((groups) => Object.values(groups).every((group) => group.samples >= minSamples && group.unknownSamples === 0)),
+    withinBudget: blockers.length ? (Object.values(byKind).some((groups) => Object.values(groups).some((group) => group.withinBudget === false)) ? false : null) : true };
+}
+
 export function buildStableAgentFleetMeasurement(registry = [], options = {}) {
   const requiredIds = uniqueStrings(options.requiredIds || REQUIRED_AGENT_IDS);
   const observedRegistry = mergeAgentRegistryRecords(registry, []);
@@ -650,6 +691,9 @@ export function buildStableAgentFleetMeasurement(registry = [], options = {}) {
     const requiredTools = uniqueStrings(agent.metadata?.requiredTools || agent.requiredTools || []);
     const missingTools = requiredTools.filter((tool) => !catalog[tool]);
     const samples = getMeasurementLatencySamples(options.latencySamples || {}, options.requireSourceProvenance ? {} : probe || {}, agent);
+    const unverifiedSamples = getMeasurementLatencySamples(options.unverifiedLatencySamples || {}, {}, agent);
+    const typedLatency = Object.hasOwn(options, 'latencyObservations')
+      ? measureLatencyKinds(options.latencyObservations?.[agentId], options, Date.parse(generatedAt), Math.max(1, minLatencySamples)) : null;
     const lastSuccessAt = getMeasurementLastSuccessAt(action);
     const lastFailureAt = getMeasurementLastFailureAt(agent, probe || {}, action);
     const status = String(agent.status || '').toLowerCase();
@@ -661,10 +705,27 @@ export function buildStableAgentFleetMeasurement(registry = [], options = {}) {
     if (!probe) blockers.push('health_probe_missing');
     else if (probe.ready !== true || probe.present !== true) blockers.push('health_probe_not_ready');
     blockers.push(...missingTools.map((tool) => `missing_tool:${tool}`));
-    if (samples.length < minLatencySamples) blockers.push('latency_not_sampled');
-    if (samples.length && percentile(samples, 0.95) > maxLatencyP95Ms) blockers.push('latency_p95_above_budget');
-    const unverifiedSamples = getMeasurementLatencySamples(options.unverifiedLatencySamples || {}, {}, agent);
-    if (unverifiedSamples.length && percentile(unverifiedSamples, 0.95) > maxLatencyP95Ms) blockers.push('unverified_latency_p95_above_budget');
+    if (typedLatency) {
+      blockers.push(...typedLatency.blockers);
+      // The typed view must account for every original duration, including slow legacy rows.
+      const observations = Array.isArray(options.latencyObservations?.[agentId]) ? options.latencyObservations[agentId] : [];
+      for (const [values, verified] of [[samples, true], [unverifiedSamples, false]]) {
+        const remaining = observations.filter((row) => row?.verified === verified).map((row) => row?.valueMs);
+        for (const value of values) {
+          const index = remaining.indexOf(value);
+          if (index < 0) {
+            blockers.push('latency_observations_incomplete');
+            typedLatency.withinBudget = typedLatency.withinBudget === false ? false : null;
+            break;
+          }
+          remaining.splice(index, 1);
+        }
+      }
+    } else {
+      if (!samples.length || samples.length < minLatencySamples) blockers.push('latency_not_sampled');
+      if (samples.length && percentile(samples, 0.95) > maxLatencyP95Ms) blockers.push('latency_p95_above_budget');
+      if (unverifiedSamples.length && percentile(unverifiedSamples, 0.95) > maxLatencyP95Ms) blockers.push('unverified_latency_p95_above_budget');
+    }
     if (!lastSuccessAt) blockers.push('last_success_missing');
     for (const key of ['memory', 'skills', 'dataFreshness', 'fleetReadiness']) {
       if (contextReadiness[key] !== true) blockers.push(`${key}_not_ready`);
@@ -686,8 +747,8 @@ export function buildStableAgentFleetMeasurement(registry = [], options = {}) {
         healthReady: probe?.ready === true && probe?.present === true,
         toolsMeasured: requiredTools.length > 0,
         toolsReady: missingTools.length === 0,
-        latencyMeasured: samples.length >= minLatencySamples,
-        latencyWithinBudget: !samples.length || percentile(samples, 0.95) <= maxLatencyP95Ms,
+        latencyMeasured: typedLatency ? typedLatency.measured : samples.length > 0 && samples.length >= minLatencySamples,
+        latencyWithinBudget: typedLatency ? typedLatency.withinBudget : samples.length ? percentile(samples, 0.95) <= maxLatencyP95Ms : null,
         lastSuccessObserved: Boolean(lastSuccessAt),
         lastFailureObserved: Boolean(lastFailureAt),
         contextKnown: {
@@ -698,13 +759,14 @@ export function buildStableAgentFleetMeasurement(registry = [], options = {}) {
         },
       },
       metrics: {
-        latencyP95Ms: percentile(samples, 0.95),
+        latencyP95Ms: samples.length ? percentile(samples, 0.95) : null,
         latencySamples: samples.length,
         unverifiedLatencySamples: unverifiedSamples.length,
-        unverifiedLatencyP95Ms: percentile(unverifiedSamples, 0.95),
+        unverifiedLatencyP95Ms: unverifiedSamples.length ? percentile(unverifiedSamples, 0.95) : null,
+        ...(typedLatency ? { latencyByKind: typedLatency.byKind, latencyObservationCount: typedLatency.count } : {}),
         lastSuccessAt,
         lastFailureAt,
-        maxLatencyP95Ms,
+        maxLatencyP95Ms: typedLatency ? null : maxLatencyP95Ms,
       },
       requiredTools,
       missingTools,

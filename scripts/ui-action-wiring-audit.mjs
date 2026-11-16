@@ -294,6 +294,7 @@ const missingBridgeProxyRoutes = requiredBridgeProxyRoutes.filter((path) => {
 });
 const bridgeProxyUnsafe = !/export\s+default\s+async\s+function\s+fetchHandler\(request: Request\)/.test(bridgeProxyFunction)
   || !/export\s+const\s+legacyHandler:\s*Handler\s*=\s*\(event\)\s*=>\s*proxyRequest\(event\)/.test(bridgeProxyFunction)
+  || !/forwardStream\(response\.body,\s*abortController,\s*cleanup\)/.test(bridgeProxyFunction)
   || !/authorization/.test(bridgeProxyFunction)
   || !/X-PBK-Team-Token/i.test(bridgeProxyFunction)
   || !/PBK_BRIDGE_URL/.test(bridgeProxyFunction)

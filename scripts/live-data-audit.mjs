@@ -1848,6 +1848,7 @@ const checks = [
     ok:
       /export\s+default\s+async\s+function\s+fetchHandler\(request: Request\)/.test(netlifyBridgeProxyFunction) &&
       /export\s+const\s+legacyHandler:\s*Handler\s*=\s*\(event\)\s*=>\s*proxyRequest\(event\)/.test(netlifyBridgeProxyFunction) &&
+      !/export\s+const\s+handler\s*:/.test(netlifyBridgeProxyFunction) &&
       /PBK_BRIDGE_URL/.test(netlifyBridgeProxyFunction) &&
       /process\.env\.PBK_BRIDGE_API_KEY/.test(netlifyBridgeProxyFunction) &&
       /verifyTeamSession/.test(netlifyBridgeProxyFunction) &&

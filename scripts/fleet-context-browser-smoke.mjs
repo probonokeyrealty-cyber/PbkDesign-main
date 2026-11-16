@@ -197,7 +197,7 @@ async function verify(engine, width) {
       return route.fulfill(apiFixture(path, mode));
     });
     await page.goto(`${origin}/analyzer`);
-    const address = page.getByRole('textbox', { name: 'Address', exact: true });
+    const address = page.getByRole('combobox', { name: 'Address', exact: true });
     const beds = page.getByRole('spinbutton', { name: 'Bedrooms' });
     const arv = page.locator('#deal-arv');
     const compA = page.getByRole('spinbutton', { name: 'Comp A sold price' });

@@ -110,7 +110,7 @@ async function verify(browser, config, label) {
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
 
     await page.goto(origin + '/leads');
-    await page.getByRole('button', { name: 'New PBK lead', exact: true }).first().click();
+    await page.getByRole('button', { name: 'Add seller', exact: true }).first().click();
     const form = page.getByRole('dialog', { name: 'Create lead' });
     const preview = form.getByRole('region', { name: 'ATTOM property preview' });
     await expect(form.getByText('Unsaved draft', { exact: true })).toBeVisible();

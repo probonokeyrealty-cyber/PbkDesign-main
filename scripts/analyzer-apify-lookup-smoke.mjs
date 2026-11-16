@@ -47,7 +47,7 @@ try {
   });
 
   await page.goto(new URL('/analyzer', base).href);
-  const addressInput = page.getByRole('textbox', { name: 'Address', exact: true });
+  const addressInput = page.getByRole('combobox', { name: 'Address', exact: true });
   const listPrice = page.getByRole('spinbutton', { name: 'List price in dollars' });
   const arv = page.getByRole('spinbutton', { name: /^ARV Auto from comps/ });
   const comp = page.getByRole('spinbutton', { name: 'Comp A sold price' });

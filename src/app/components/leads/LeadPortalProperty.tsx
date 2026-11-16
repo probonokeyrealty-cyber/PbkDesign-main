@@ -3,6 +3,7 @@ import * as Tabs from '@radix-ui/react-tabs';
 import { Building2, ExternalLink, FileSearch, ImageOff, Pencil } from 'lucide-react';
 import type { LeadPortalModel } from './leadPortalModel';
 import { formatLeadValue } from './leadPortalModel';
+import { LeadComps } from './LeadComps';
 import {
   AttomPropertyPreview,
   hasLookupAddress,
@@ -106,6 +107,7 @@ export function LeadPortalProperty({
           <Tabs.Trigger value="overview">Overview</Tabs.Trigger>
           <Tabs.Trigger ref={recordTabRef} value="record">Property record</Tabs.Trigger>
           <Tabs.Trigger value="photos">Photos</Tabs.Trigger>
+          <Tabs.Trigger value="comps">Comps</Tabs.Trigger>
         </Tabs.List>
         <Tabs.Content value="overview" className="pbk-property-tab-panel">
           <div className="pbk-property-group-heading">
@@ -147,6 +149,9 @@ export function LeadPortalProperty({
               yearBuilt: lead.yearBuilt,
             }}
           />
+        </Tabs.Content>
+        <Tabs.Content value="comps" className="pbk-property-tab-panel">
+          <LeadComps address={address} />
         </Tabs.Content>
         <Tabs.Content value="photos" className="pbk-property-tab-panel">
           <div className="pbk-property-photos-empty">

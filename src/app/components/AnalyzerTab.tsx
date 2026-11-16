@@ -13,6 +13,7 @@ import {
   type AnalyzerPhotoResult,
 } from './AnalyzerListingLookup';
 import { AnalyzerSellerHistory } from './AnalyzerSellerHistory';
+import { AnalyzerAddressField } from './AnalyzerAddressField';
 import { formatCurrency } from '../utils/formatting';
 import { calculateARV } from '../utils/dealCalculations';
 import { getAnalyzeReadiness } from '../utils/pbk';
@@ -160,17 +161,7 @@ export function AnalyzerTab({
           >
             Address
           </label>
-          <input
-            id="deal-property-address"
-            type="text"
-            inputMode="text"
-            enterKeyHint="next"
-            autoComplete="street-address"
-            value={deal.address}
-            onChange={(e) => handleInputChange('address', e.target.value)}
-            placeholder="123 Main St, City, ST 12345"
-            className="w-full h-9 px-3 border border-gray-200 dark:border-slate-700 rounded-lg bg-gray-50 dark:bg-slate-900 text-gray-900 dark:text-gray-100 text-[12.5px] outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 transition-all"
-          />
+          <AnalyzerAddressField deal={deal} onChange={onDealChange} />
           <AnalyzerListingLookup
             key={address}
             deal={deal}

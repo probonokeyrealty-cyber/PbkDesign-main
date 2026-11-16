@@ -16,6 +16,8 @@ import { createClient as createRedisClient } from 'redis';
 import { DeleteObjectCommand, GetObjectCommand, HeadBucketCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { getSignedUrl as getS3SignedUrl } from '@aws-sdk/s3-request-presigner';
 import { lookupAttomPropertyPreview } from './attom-property-preview.mjs';
+import { lookupAttomRecentSales } from './attom-recent-sales.mjs';
+import { lookupAddressSuggestions } from './address-suggestions.mjs';
 import { applyAgentVersionRollback, buildAgentRegistrySnapshot, buildAgentVersionSnapshot, buildDefaultAgentRegistry, buildStableAgentFleetMeasurement, findAgentsByCapability, invokeRegisteredAgent, mergeAgentRegistryRecords, normalizeAgentRegistryId, normalizeAgentRegistryRecord, validateAgentVersionSnapshot } from './agent-registry.mjs';
 import { buildAgentExecutionEvidence, collectAgentFleetEvidence, isNonOperationalAgentEvidence, isAgentHandlerCompletion } from './agent-fleet-measurement.mjs';
 import { controlledExecution, createControlledPool, createScopedState, assertControlledToolAllowed } from './controlled-execution-scope.mjs';
@@ -75960,6 +75962,20 @@ const server = createServer(async (request, response) => {
         ...result,
         state: buildStateSnapshot(),
       });
+      return;
+    }
+
+    if (request.method === 'POST' && pathname === '/api/property-data/address-suggestions') {
+      const result = await lookupAddressSuggestions(await readBody(request));
+      response.setHeader('Cache-Control', 'no-store');
+      json(response, 200, { ok: true, ...result });
+      return;
+    }
+
+    if (request.method === 'POST' && pathname === '/api/property-data/attom-sales') {
+      const result = await lookupAttomRecentSales(await readBody(request));
+      response.setHeader('Cache-Control', 'no-store');
+      json(response, 200, { ok: true, ...result });
       return;
     }
 

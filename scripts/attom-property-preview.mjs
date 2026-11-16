@@ -6,13 +6,13 @@ const identifier = (value) => Number.isSafeInteger(value) && value > 0 ? String(
 const suffix = { STREET: 'ST', AVENUE: 'AVE', BOULEVARD: 'BLVD', DRIVE: 'DR', LANE: 'LN',
   ROAD: 'RD', COURT: 'CT', PLACE: 'PL', CIRCLE: 'CIR', TERRACE: 'TER', WAY: 'WAY' };
 
-function streetKey(value) {
+export function attomStreetKey(value) {
   const parts = normalized(value).replace(/\s*#\s*/g, ' UNIT ').split(/ (?:APT|UNIT) /);
   const street = parts[0].replace(/ ([A-Z]+)$/, (full, word) => suffix[word] ? ' ' + suffix[word] : full);
   return [street, ...parts.slice(1)].join(' UNIT ');
 }
 
-function parseAddress(input) {
+export function parseAttomAddress(input) {
   let street = text(input?.street);
   let city = text(input?.city);
   let state = text(input?.state).toUpperCase();
@@ -43,11 +43,11 @@ function project(row) {
   return {
     address: `${text(address.line1)}, ${text(address.locality)}, ${text(address.countrySubd)} ${zip5(address.postal1)}`,
     attomId: identifier(id.attomId), fips: identifier(id.fips), apn: identifier(id.apn),
-    propertyType: text(summary?.propType) || text(summary?.propertyType) || null,
+    propertyType: text(summary?.propType) || text(summary?.proptype) || text(summary?.propertyType) || null,
     lotSqft: number(lot?.lotSize2, 1), lotAcres: number(lot?.lotSize1, 0.00001),
-    livingSqft: number(building?.size?.livingSize, 1),
+    livingSqft: number(building?.size?.livingSize ?? building?.size?.universalsize, 1),
     beds: number(building?.rooms?.beds), baths: number(building?.rooms?.bathsTotal),
-    yearBuilt: number(summary?.yearBuilt, 1000),
+    yearBuilt: number(summary?.yearBuilt ?? summary?.yearbuilt, 1000),
     taxAmount: number(tax?.taxAmt), taxYear: number(tax?.taxYear, 1000),
     recordedSaleAmount: number(amount?.saleAmt, 1),
     recordedSaleDate: /^\d{4}-\d{2}-\d{2}$/.test(text(amount?.saleRecDate)) ? text(amount.saleRecDate) : null,
@@ -59,7 +59,7 @@ export async function lookupAttomPropertyPreview(input, {
   apiKey = process.env.ATTOM_API_KEY,
   request = fetch,
 } = {}) {
-  const address = parseAddress(input);
+  const address = parseAttomAddress(input);
   if (!address) return { status: 'invalid_address' };
   if (!enabled || !text(apiKey)) return { status: 'not_configured' };
 
@@ -82,7 +82,7 @@ export async function lookupAttomPropertyPreview(input, {
     if (!response.ok || code !== '0' || !Array.isArray(payload.property)) return { status: 'unavailable' };
     if (!payload.property.length) return { status: 'not_found' };
     const exact = payload.property.filter(({ address: candidate } = {}) => candidate &&
-      streetKey(candidate.line1) === streetKey(address.street) &&
+      attomStreetKey(candidate.line1) === attomStreetKey(address.street) &&
       normalized(candidate.locality) === normalized(address.city) &&
       normalized(candidate.countrySubd) === address.state &&
       zip5(candidate.postal1) === zip5(address.zip));

@@ -112,7 +112,7 @@ async function verify(engine, compact, device = {}) {
     const beds = page.getByRole('spinbutton', { name: 'Bedrooms' });
     const arv = page.locator('#deal-arv');
     const comp = page.getByRole('spinbutton', { name: 'Comp A sold price' });
-    await expect(page.getByRole('textbox', { name: 'Address', exact: true })).toHaveValue(address, { timeout: 20_000 });
+    await expect(page.getByRole('combobox', { name: 'Address', exact: true })).toHaveValue(address, { timeout: 20_000 });
     await expect(arv).toHaveValue('2100000');
     await beds.fill('4');
     await page.getByRole('button', { name: 'Look up asking price' }).click();
@@ -175,7 +175,7 @@ async function verify(engine, compact, device = {}) {
     await expect(comp).toHaveValue('2200000');
     await expect(arv).toHaveValue('2200000');
 
-    await page.getByRole('textbox', { name: 'Address', exact: true }).fill('43 Fixture Avenue');
+    await page.getByRole('combobox', { name: 'Address', exact: true }).fill('43 Fixture Avenue');
     await page.getByRole('button', { name: 'Look up asking price' }).click();
     await expect(askingPrice).toBeVisible();
     if (compact) await toggle.click();

@@ -148,6 +148,7 @@ RUN python3 -m venv /app/.venv \
 ENV PATH="/app/.venv/bin:${PATH}"
 
 # Copy the bridge source last so dependency installation caches across rebuilds.
+COPY package.json ./package.json
 COPY scripts/pbk-deepgram-client.mjs ./scripts/pbk-deepgram-client.mjs
 COPY scripts/qa-agent.mjs ./scripts/qa-agent.mjs
 COPY scripts/agent-registry.mjs ./scripts/agent-registry.mjs
@@ -236,6 +237,12 @@ COPY scripts/backfill-conversations.mjs ./scripts/backfill-conversations.mjs
 COPY scripts/provider-action-dispatch-policy.mjs ./scripts/provider-action-dispatch-policy.mjs
 COPY scripts/provider-action-dispatch.mjs ./scripts/provider-action-dispatch.mjs
 COPY scripts/provider-action-authorization.mjs ./scripts/provider-action-authorization.mjs
+COPY scripts/release-qualification.mjs ./scripts/release-qualification.mjs
+COPY scripts/release-qualification-ci.mjs ./scripts/release-qualification-ci.mjs
+COPY scripts/ava-real-call-eval-pack.mjs ./scripts/ava-real-call-eval-pack.mjs
+COPY scripts/behavior-tests.mjs ./scripts/behavior-tests.mjs
+COPY scripts/silent-error-governance-smoke.mjs ./scripts/silent-error-governance-smoke.mjs
+COPY scripts/silent-error-governance.mjs ./scripts/silent-error-governance.mjs
 COPY scripts/provider-proof-ledger.mjs ./scripts/provider-proof-ledger.mjs
 COPY scripts/invoke-rate-limit.mjs ./scripts/invoke-rate-limit.mjs
 COPY scripts/event-bus ./scripts/event-bus

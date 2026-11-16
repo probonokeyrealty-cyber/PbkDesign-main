@@ -2610,6 +2610,12 @@ describe('sender identity persistence', () => {
   });
 });
 
+async function preparePooledConversationIntegration(pool) {
+  // Transactional fixtures roll this prerequisite back; pooled races need it committed.
+  await pool.query(`CREATE TABLE IF NOT EXISTS public.lead_profiles (id TEXT PRIMARY KEY)`);
+  await ensureConversationSchema(pool);
+}
+
 async function withConversationStoreIntegration(run) {
   const { Client } = await import('pg');
   const client = new Client({
@@ -2657,7 +2663,7 @@ describe('conversation store Postgres integration', () => {
       const address = `sender-${randomUUID()}@example.com`;
       const store = createConversationStore(pool);
       try {
-        await ensureConversationSchema(pool);
+        await preparePooledConversationIntegration(pool);
         const created = await store.upsertSenderIdentity({
           workspaceId,
           provider: 'instantly',
@@ -2863,7 +2869,7 @@ describe('conversation store Postgres integration', () => {
       const email = `seller-${randomUUID()}@example.com`;
 
       try {
-        await ensureConversationSchema(pool);
+        await preparePooledConversationIntegration(pool);
         await pool.query(
           `
             INSERT INTO public.lead_profiles (id)
@@ -2961,7 +2967,7 @@ describe('conversation store Postgres integration', () => {
       });
 
       try {
-        await ensureConversationSchema(pool);
+        await preparePooledConversationIntegration(pool);
         await pool.query(
           `
             INSERT INTO public.lead_profiles (id)

@@ -23,9 +23,10 @@ export async function streamAvaChatResponse(request, response, run, headers = {}
     }
   };
   request.avaStream = { signal: controller.signal, onAnswer: text => emit('answer', { text }) };
+  // Quiet fetch streams can strand their last chunk in affected WebKit builds.
   const heartbeat = setInterval(() => {
     if (!response.destroyed && !response.writableEnded && !response.writableNeedDrain) response.write(': keep-alive\n\n');
-  }, 10_000);
+  }, 1000);
   heartbeat.unref?.();
   try {
     await emit('status', { phase: 'thinking' });

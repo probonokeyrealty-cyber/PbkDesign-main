@@ -9,6 +9,7 @@ import { createControlledAgentStorage, saveControlledAgentResult, readControlled
 import { isAgentHandlerCompletion } from './agent-fleet-measurement.mjs';
 import { runControlledAgentWorkflow } from './controlled-agent-workflow.mjs';
 import { workflowTestOutputs } from './controlled-workflow-test-fixtures.mjs';
+import { isDirectQualificationFounder } from './release-qualification.mjs';
 
 const monolith = readFileSync(new URL('./openclaw-local-server.mjs', import.meta.url), 'utf8');
 function actualFunction(name) {
@@ -180,24 +181,39 @@ test('actual controlled execution loop enters atomic fixture scope for every one
   assert.equal(calls.at(-1), 'hermes');
 });
 
-for (const scenario of ['missing-auth', 'team-auth', 'client-fixture', 'client-flags', 'empty-post']) {
+for (const [scenario, headers, expectedStatus] of [
+  ['missing-auth', {}, 403],
+  ['team-auth', { 'x-pbk-team-token': 'unit-team' }, 403],
+  ['bearer-with-team-token', { authorization: 'Bearer unit-key', 'x-pbk-team-token': 'unit-team' }, 403],
+  ['bearer-with-proxy-header', { authorization: 'Bearer unit-key', 'x-pbk-netlify-proxy': 'pbk-bridge-proxy' }, 403],
+  ['bearer-with-empty-team-header', { Authorization: 'Bearer unit-key', 'X-PBK-Team-Token': '' }, 403],
+  ['bearer-with-empty-proxy-header', { Authorization: 'Bearer unit-key', 'X-PBK-Netlify-Proxy': '' }, 403],
+  ['client-fixture', { authorization: 'Bearer unit-key' }, 400],
+  ['client-flags', { authorization: 'Bearer unit-key' }, 400],
+  ['empty-post', { authorization: 'Bearer unit-key' }, 200],
+]) {
   test(`actual qualification route enforces founder auth and server fixture only: ${scenario}`, async () => {
     const start = monolith.indexOf("    if (pathname === '/api/agents/controlled-qualification') {");
     const end = monolith.indexOf("\n    if (request.method === 'GET' && matchesPath(pathname, ['/api/agents/orchestration'", start);
     assert(start >= 0 && end > start);
     let executed = false;
+    let bodyReads = 0;
     let status;
+    let payload;
     const body = scenario === 'client-fixture' ? { leadId: 'customer' } : scenario === 'client-flags' ? { dryRun: true, approved: true } : {};
-    const sandbox = vm.createContext({ BRIDGE_API_KEY: 'unit-key', pathname: '/api/agents/controlled-qualification',
-      request: { method: 'POST', headers: scenario === 'missing-auth' ? {} : scenario === 'team-auth' ? { 'x-pbk-team-token': 'unit-team' } : { authorization: 'Bearer unit-key' } },
+    const sandbox = vm.createContext({ isDirectQualificationFounder, BRIDGE_API_KEY: 'unit-key', pathname: '/api/agents/controlled-qualification',
+      request: { method: 'POST', headers },
       response: {}, url: new URL('https://example.com/api/agents/controlled-qualification'),
-      readBody: async () => body, json: (_response, code) => { status = code; },
+      readBody: async () => { bodyReads++; return body; }, json: (_response, code, data) => { status = code; payload = data; },
       executeControlledAgentQualification: async () => { executed = true; return {}; },
     });
     vm.runInContext(`async function reviewedRoute() {\n${monolith.slice(start, end)}\n}`, sandbox);
     await sandbox.reviewedRoute();
     assert.equal(executed, scenario === 'empty-post');
-    assert.equal(status, scenario === 'empty-post' ? 200 : ['missing-auth', 'team-auth'].includes(scenario) ? 403 : 400);
+    assert.equal(status, expectedStatus);
+    assert.equal(bodyReads, expectedStatus === 403 ? 0 : 1, 'Founder authentication must precede body reads');
+    if (expectedStatus === 403) assert.equal(payload.result, 'controlled_founder_auth_required');
+    if (expectedStatus === 400) assert.equal(payload.result, 'controlled_server_fixture_only');
   });
 }
 

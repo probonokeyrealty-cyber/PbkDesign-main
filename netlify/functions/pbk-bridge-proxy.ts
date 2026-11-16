@@ -681,6 +681,14 @@ async function proxyRequest(event: Parameters<Handler>[0], options: {
     );
   }
   const targetUrl = new URL(targetPath, `${BRIDGE_URL}/`);
+  // Never lend the proxy's founder bearer to qualification routes.
+  if (['/api/agents/controlled-qualification', '/api/admin/qualification/run'].includes(targetUrl.pathname.replace(/\/+$/, ''))) {
+    return json({
+      ok: false,
+      error: 'Qualification requires direct founder authentication.',
+      code: 'qualification_founder_auth_required',
+    }, 403, { 'X-Request-ID': requestId }, event);
+  }
   if (targetUrl.pathname.replace(/\/+$/, '') === '/api/leads/batch-apply') {
     return json({ ok: false, error: 'Batch apply requires direct operator authentication.' }, 403, {}, event);
   }

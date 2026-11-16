@@ -148,6 +148,7 @@ RUN python3 -m venv /app/.venv \
 ENV PATH="/app/.venv/bin:${PATH}"
 
 # Copy the bridge source last so dependency installation caches across rebuilds.
+COPY package.json ./package.json
 COPY scripts/pbk-deepgram-client.mjs ./scripts/pbk-deepgram-client.mjs
 COPY scripts/qa-agent.mjs ./scripts/qa-agent.mjs
 COPY scripts/agent-registry.mjs ./scripts/agent-registry.mjs

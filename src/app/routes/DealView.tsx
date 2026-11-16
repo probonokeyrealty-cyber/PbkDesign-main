@@ -10,6 +10,7 @@ import {
 import { isStaleDynamicImportError, reloadForCurrentDeploy } from '../utils/deployVersion';
 import { fetchLeadFullRequest } from '../utils/runtimeBridge';
 import { savedLeadComps } from '../utils/leadComps.mjs';
+import { latestCallModeNote } from '../utils/analyzerLeadPersistence.mjs';
 
 type BridgeRecord = Record<string, unknown>;
 
@@ -217,6 +218,8 @@ export function buildAnalyzerDealFromLead(payload: BridgeRecord, requestedLeadId
     zipCode,
     timeline: firstText(motivation.timeline, callContext.timeline, lead.timeline),
     notes: firstText(
+      latestCallModeNote(payload, firstText(lead.leadId, lead.id, requestedLeadId)),
+      record(lead.deal).notes,
       callContext.summary,
       callContext.callSummary,
       seller.notes,

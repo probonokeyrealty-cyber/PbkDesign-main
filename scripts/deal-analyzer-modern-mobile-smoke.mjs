@@ -4,6 +4,7 @@ import strictAssert from 'node:assert/strict';
 import vm from 'node:vm';
 import ts from 'typescript';
 import { savedLeadComps } from '../src/app/utils/leadComps.mjs';
+import { latestCallModeNote } from '../src/app/utils/analyzerLeadPersistence.mjs';
 
 const root = process.cwd();
 
@@ -72,8 +73,10 @@ assert(
 assert(
   /isApprovalQueuedResponse/.test(app) &&
     /Analyzer snapshot queued for approval/.test(app) &&
-    /Ava queued approval/.test(app),
-  'Deal Analyzer send/save actions must distinguish queued approval from completed CRM/provider sync.'
+    /patchLeadRequest\(activeDeal.leadId, buildAnalyzerLeadPatch\(activeDeal\)\)/.test(app) &&
+    /if \(response.ok === false\) throw new Error/.test(app) &&
+    /Lead saved\./.test(app) && /Lead not saved\./.test(app),
+  'Agent handoffs must label approvals while manual saves require canonical write confirmation.'
 );
 assert(
   !/Analyzer snapshot sent to Ava and the runtime CRM queue|runtime CRM synced|Bridge sync pending/.test(
@@ -171,7 +174,7 @@ const { outputText: hydrationCode } = ts.transpileModule(hydrationFunctions.map(
 });
 let sampleCurrent = {}, sampleHydrated;
 const hydration = vm.createContext({
-  exports: {}, savedLeadComps, ANALYZER_CURRENT_DEAL_KEY: 'sample-only',
+  exports: {}, savedLeadComps, latestCallModeNote, ANALYZER_CURRENT_DEAL_KEY: 'sample-only',
   window: { PBKAnalyzer: {
     getState: () => ({ deal: sampleCurrent }),
     setState: state => { sampleHydrated = structuredClone(state.deal); },

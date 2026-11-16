@@ -96,12 +96,8 @@ async function verify(browser, config, label) {
     }
     await workspace.getByRole('tab', { name: 'Photos' }).click();
     const photos = workspace.getByRole('tabpanel');
-    await expect(photos.getByText('MLS not connected')).toBeVisible();
-    const zillow = photos.getByRole('link', { name: 'Open on Zillow' });
-    await expect(zillow).toHaveAttribute('target', '_blank');
-    const link = new URL(await zillow.getAttribute('href'));
-    assert.equal(link.origin, 'https://www.zillow.com');
-    assert.match(decodeURIComponent(link.pathname), /24.Sample.Oak.Lane.*90210/);
+    await expect(photos.getByText('No saved Apify photos for this address.')).toBeVisible();
+    await expect(photos.getByRole('button', { name: 'Refresh Apify photos' })).toBeEnabled();
     await expect(photos.getByRole('img')).toHaveCount(0);
     await expect(photos.getByText('Exact address match')).toHaveCount(0);
     await record.click();

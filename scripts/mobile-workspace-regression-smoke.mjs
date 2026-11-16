@@ -132,7 +132,10 @@ assert(
     /@media \(max-width: 640px\)[\s\S]*?\.pbk-ava-chat-toolbar\s*\{[\s\S]*?grid-template-columns:\s*minmax\(0,\s*1fr\)\s+44px/.test(
       css
     ) &&
-    /@media \(max-width: 420px\)[\s\S]*?\.pbk-ava-chat-controls\s*\{[^}]*display:\s*flex[^}]*width:\s*auto/.test(
+    /@media \(max-width: 640px\)[\s\S]*?\.pbk-ava-chat-submit-row\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)\s+96px/.test(
+      css
+    ) &&
+    /@media \(max-width: 420px\)[\s\S]*?\.pbk-ava-chat-controls\s*\{[^}]*display:\s*flex\s*!important;[^}]*width:\s*auto\s*!important;/.test(
       css
     ) &&
     /aria-label=\{onStopResponse \? 'Stop Ava response' : 'Send to Ava'\}/.test(avaChat) &&

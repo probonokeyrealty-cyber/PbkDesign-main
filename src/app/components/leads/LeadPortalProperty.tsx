@@ -1,6 +1,7 @@
 import { useRef, useState } from 'react';
 import * as Tabs from '@radix-ui/react-tabs';
-import { Building2, ExternalLink, FileSearch, ImageOff, Pencil } from 'lucide-react';
+import { Building2, ExternalLink, FileSearch, Pencil } from 'lucide-react';
+import { LeadListingPhotos } from '../AnalyzerListingLookup';
 import type { LeadPortalModel } from './leadPortalModel';
 import { formatLeadValue } from './leadPortalModel';
 import { LeadComps } from './LeadComps';
@@ -154,18 +155,7 @@ export function LeadPortalProperty({
           <LeadComps address={address} leadId={lead.id} />
         </Tabs.Content>
         <Tabs.Content value="photos" className="pbk-property-tab-panel">
-          <div className="pbk-property-photos-empty">
-            <ImageOff size={22} aria-hidden />
-            <div>
-              <h3>No listing photos in PBK</h3>
-              <p>MLS not connected</p>
-              {zillowHref ? (
-                <ZillowLink href={zillowHref} />
-              ) : (
-                <p>No complete property address on file.</p>
-              )}
-            </div>
-          </div>
+          <LeadListingPhotos key={propertyAddressLabel(address)} address={hasLookupAddress(address) ? propertyAddressLabel(address) : ''} />
         </Tabs.Content>
       </Tabs.Root>
     </section>

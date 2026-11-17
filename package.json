@@ -108,6 +108,8 @@
     "test:e2e": "node ./scripts/openclaw-e2e.mjs",
     "test:e2e:browseros": "node ./scripts/browseros-e2e.mjs",
     "test:hosted": "node ./scripts/openclaw-hosted-smoke.mjs",
+    "test:hosted-isolation": "node --test --test-concurrency=1 ./scripts/hosted-smoke-isolation.node-test.mjs ./scripts/bridge-smoke-isolation-smoke.mjs",
+    "test:hosted-browser": "node ./scripts/hosted-founder-browser-smoke.mjs",
     "test:brain-outside-in": "node ./scripts/brain-outside-in-smoke.mjs",
     "test:mcp": "npm --prefix ./mcp-server run typecheck",
     "test:strategy": "node ./scripts/test-negotiation-intelligence.mjs",

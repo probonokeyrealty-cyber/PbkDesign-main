@@ -6,7 +6,7 @@ Use this checklist before calling the founder build production-ready.
 
 - Use a subagent-driven pass for broad changes: one focused implementation task at a time, then review before moving to the next task
 - Keep unrelated dirty files out of the release scope
-- Confirm the current PR has green required GitHub gates before production deploy: Founder Verify, Tooling Verify, Hosted Founder Smoke with protected mobile proof, and PBK Agent Evals when the change touches Ava, approvals, CRM, memory, skills, provider actions, or migrations
+- Confirm green required GitHub gates before production deploy: Founder Verify and Tooling Verify for the current PR, Hosted Founder Smoke's isolated sample bridge and desktop/mobile proof for the release commit, and PBK Agent Evals when the change touches Ava, approvals, CRM, memory, skills, provider actions, or migrations
 
 ## Build
 
@@ -68,7 +68,7 @@ Use this checklist before calling the founder build production-ready.
   - `PBK_N8N_LEAD_WEBHOOK`
 - Hosted bridge is not relying on file-backed state for important data
 - Netlify still renders all current tabs cleanly after a hard refresh
-- Hosted Founder Smoke has `PBK_MOBILE_PROOF_TEAM_PASSCODE` and proves protected production mobile pages
+- Hosted Founder Smoke runs without application secrets against isolated sample state; it does not prove protected production pages. Use a separately approved read-only live check for production access and mobile verification. See [smoke isolation](docs/hosted-founder-smoke.md).
 
 ## Disposable Eval Lane
 

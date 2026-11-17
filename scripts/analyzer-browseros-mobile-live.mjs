@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
-import { resolve, dirname } from 'node:path';
+import { resolve, dirname, relative, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium, expect } from '@playwright/test';
 
@@ -39,19 +39,61 @@ export function parseOptions(argv) {
     output: resolve(flags.get('--output-dir') || resolve(root, '.pbk-local', 'browseros-mobile-' + Date.now())) };
 }
 
-export function requestDisposition(method, value, base) {
+const analyzerAsset = /^\/assets\/(App|analyzerStorage|DealView)-[^/]+\.js$/;
+const shellPaths = new Set(['/analyzer', '/index.shell.html', '/pbk-build-manifest.json']);
+
+export function requestDisposition(method, value, base, staticPaths = new Set()) {
   const url = new URL(value);
   const read = ['GET', 'HEAD', 'OPTIONS'].includes(method);
+  if (url.username || url.password) return read ? 'deny-read' : 'deny-write';
   if (url.origin !== base) {
     return method === 'GET' && ['fonts.googleapis.com', 'fonts.gstatic.com'].includes(url.hostname) && url.protocol === 'https:'
       ? 'live' : 'deny-external';
   }
-  if (url.pathname === '/api/auth/team/verify' && method === 'POST') return 'verify';
-  if (url.pathname === '/api/state/stream/session' && method === 'POST') return 'stream';
+  if (!url.search && url.pathname === '/api/auth/team/verify' && method === 'POST') return 'verify';
+  if (!url.search && url.pathname === '/api/state/stream/session' && method === 'POST') return 'stream';
   if (!read) return 'deny-write';
-  if (url.pathname === '/api/auth/team/status') return 'live';
+  if (!url.search && url.pathname === '/api/auth/team/status' && method === 'GET') return 'live';
   if (url.pathname === '/api/property-data/address-suggestions') return 'suggestions';
-  return /^\/(api\/|state$|health$|events$|invoke$|\.netlify\/functions\/)/.test(url.pathname) ? 'fixture' : 'live';
+  if (/^\/(api(?:\/|$)|brain(?:\/|$)|state$|health$|status$|metrics$|events$|invoke$|\.netlify\/functions(?:\/|$))/.test(url.pathname)) return 'fixture';
+  const staticFile = /^\/(assets|fonts)\/[a-zA-Z0-9_./-]+$/.test(url.pathname) && staticPaths.has(url.pathname);
+  return !url.search && ['GET', 'HEAD'].includes(method) && (shellPaths.has(url.pathname) || staticFile)
+    ? 'live' : 'deny-read';
+}
+
+export function observeAnalyzerBuild(page, expectedAssets, base) {
+  const observations = [];
+  const onResponse = response => {
+    const url = new URL(response.url());
+    if (!analyzerAsset.test(url.pathname)) return;
+    observations.push((async () => {
+      try {
+        return { url, status: response.status(), hash: createHash('sha256').update(await response.body()).digest('hex') };
+      } catch {
+        return { url, unavailable: true };
+      }
+    })());
+  };
+  page.on('response', onResponse);
+  return {
+    async verify() {
+      const loaded = new Set();
+      // Read every response, including duplicate paths; one matching fetch cannot hide a stale body.
+      for (let index = 0; index < observations.length; index++) {
+        const { url, status, hash, unavailable } = await observations[index];
+        assert.equal(url.origin, base, 'Loaded Analyzer asset origin mismatch');
+        assert.ok(expectedAssets.has(url.pathname), 'Unexpected loaded Analyzer asset: ' + url.pathname);
+        assert.ok(!unavailable, 'Loaded Analyzer asset body unavailable: ' + url.pathname);
+        assert.equal(status, 200, 'Loaded Analyzer asset status mismatch: ' + url.pathname);
+        assert.equal(hash, createHash('sha256').update(expectedAssets.get(url.pathname)).digest('hex'),
+          'Loaded Analyzer asset body mismatch: ' + url.pathname);
+        loaded.add(url.pathname);
+      }
+      for (const path of expectedAssets.keys()) assert.ok(loaded.has(path), 'Missing loaded Analyzer asset: ' + path);
+      return [...expectedAssets.keys()];
+    },
+    stop() { page.off('response', onResponse); },
+  };
 }
 
 async function fingerprintDrafts(page, key) {
@@ -67,28 +109,30 @@ async function run(options) {
   const { base, cdpUrl, revision, dist, output } = options;
   const key = 'pbk:prod:analyzer:current-deal';
   const authKey = 'pbk:team-session:v1';
-  const report = { revision, modes: [], blocked: [], bundleMatches: [] };
+  const report = { revision, modes: [], blocked: [], bundleMatches: [], loadedBuildChecks: 0 };
   mkdirSync(output, { recursive: true });
   let source, sourceBefore;
+  const staticPaths = new Set();
+  const pinnedAssets = new Map();
   async function protect(context) {
     const state = { unavailable: false, authVerified: 0, authFailures: 0, businessWrites: 0 };
     await context.routeWebSocket('**/*', socket => socket.close());
     await context.route('**/*', async route => {
       const request = route.request();
-      const policy = requestDisposition(request.method(), request.url(), base);
-      if (policy === 'verify') {
-        if (state.unavailable) {
+      const policy = requestDisposition(request.method(), request.url(), base, staticPaths);
+      if (policy === 'verify' || policy === 'live') {
+        if (policy === 'verify' && state.unavailable) {
           state.authFailures++;
           return route.fulfill({ status: 503, json: { ok: false, error: 'QA-only verification interruption' } });
         }
         const response = await route.fetch({ maxRedirects: 0 });
-        if (response.ok()) state.authVerified++;
+        if (response.status() >= 300 && response.status() < 400) return route.abort();
+        if (policy === 'verify' && response.ok()) state.authVerified++;
         return route.fulfill({ response });
       }
       if (policy === 'stream') return route.fulfill({ json: { ok: false } });
       if (policy === 'suggestions') return route.fulfill({ json: { status: 'unavailable', suggestions: [] } });
       if (policy === 'fixture') return route.fulfill({ json: { ok: true, items: [], leads: [], approvals: [] } });
-      if (policy === 'live') return route.continue();
       if (!['GET', 'HEAD', 'OPTIONS'].includes(request.method())) state.businessWrites++;
       const url = new URL(request.url());
       report.blocked.push(request.method() + ' ' + url.origin + url.pathname);
@@ -115,6 +159,17 @@ async function ready(page) {
   await expect(address(page)).toBeVisible({ timeout: 90000 });
   await expect.poll(() => page.evaluate(() => Boolean(window.PBKAnalyzer?.getState))).toBe(true);
 }
+async function loadAnalyzer(page, reload = false) {
+  const proof = observeAnalyzerBuild(page, pinnedAssets, base);
+  try {
+    if (reload) await page.reload();
+    else await page.goto(`${base}/analyzer`);
+    await ready(page);
+    const matched = await proof.verify();
+    report.bundleMatches = matched.map(path => path.slice('/assets/'.length));
+    report.loadedBuildChecks++;
+  } finally { proof.stop(); }
+}
 const raw = page => page.evaluate(key => localStorage.getItem(key), key);
 async function stored(page) {
   const value = await raw(page);
@@ -136,8 +191,7 @@ async function release(page) {
 
 async function prove(context, state, name) {
   const first = context.pages().find(page => page.url().startsWith(base)) || await context.newPage();
-  await first.goto(`${base}/analyzer`);
-  await ready(first);
+  await loadAnalyzer(first);
   assert.equal(await raw(first), null, 'Refuse to overwrite an existing shared QA draft');
   assert.equal(await first.evaluate(key => sessionStorage.getItem(`${key}:session`), key), null, 'Refuse to overwrite an existing private QA draft');
   await first.evaluate(() => window.PBKAnalyzer.setState({ deal: {
@@ -148,13 +202,11 @@ async function prove(context, state, name) {
   await expect.poll(async () => (await stored(first))?.beds).toBe(4);
   const seed = await first.evaluate(() => window.PBKAnalyzer.getState().deal);
   const initial = await raw(first);
-  await first.reload();
-  await ready(first);
+  await loadAnalyzer(first, true);
   assert.equal(await raw(first), initial);
   assert.equal(await first.evaluate(() => window.__qaDraftWrites), 0);
   const second = await context.newPage();
-  await second.goto(`${base}/analyzer`);
-  await ready(second);
+  await loadAnalyzer(second);
   assert.equal(await second.evaluate(() => window.__qaDraftWrites), 0);
 
   await second.evaluate(key => { window.__staleDraftRead = localStorage.getItem(key); }, key);
@@ -176,15 +228,13 @@ async function prove(context, state, name) {
   const loser = winner === 5 ? second : first;
   const privateBeds = winner === 5 ? 6 : 5;
   await expect(loser.locator('#analyzer-valuation').getByText(/Another tab changed this draft/)).toBeVisible();
-  await loser.reload();
-  await ready(loser);
+  await loadAnalyzer(loser, true);
   await expect(bedrooms(loser)).toHaveValue(String(privateBeds));
   assert.equal(await loser.evaluate(() => window.__qaDraftWrites), 0);
   await first.evaluate(deal => { document.activeElement?.blur(); window.PBKAnalyzer.setState({ deal, manualFields: ['notes', 'repairs'] }); }, seed);
   await expect.poll(async () => (await stored(first))?.beds).toBe(4);
   await second.evaluate(key => sessionStorage.removeItem(`${key}:session`), key);
-  await first.reload(); await second.reload();
-  await ready(first); await ready(second);
+  await loadAnalyzer(first, true); await loadAnalyzer(second, true);
 
   await bedrooms(second).fill('6');
   await expect.poll(async () => (await stored(second))?.beds).toBe(6);
@@ -197,7 +247,7 @@ async function prove(context, state, name) {
   await bedrooms(second).fill('7');
   await expect(second.locator('#analyzer-valuation').getByText(/Another tab changed this draft/)).toBeVisible();
   const shared = await raw(first);
-  await second.reload(); await ready(second);
+  await loadAnalyzer(second, true);
   await expect(bedrooms(second)).toHaveValue('7');
   assert.equal(await raw(first), shared);
   assert.equal(await second.evaluate(() => window.__qaDraftWrites), 0);
@@ -250,6 +300,21 @@ async function prove(context, state, name) {
 }
 
   try {
+    const localManifest = JSON.parse(readFileSync(resolve(dist, 'pbk-build-manifest.json'), 'utf8'));
+    assert.equal(localManifest.buildId, revision, 'Local assets must belong to the pinned build');
+    for (const directory of readdirSync(dist, { withFileTypes: true }).filter(entry =>
+      entry.isDirectory() && ['assets', 'fonts'].includes(entry.name))) {
+      for (const entry of readdirSync(resolve(dist, directory.name), { recursive: true, withFileTypes: true })) {
+        if (!entry.isFile() || !/\.(js|css|woff2?|ttf|otf|png|jpe?g|svg|webp|ico)$/.test(entry.name)) continue;
+        const path = '/' + relative(dist, resolve(entry.parentPath, entry.name)).split(sep).join('/');
+        staticPaths.add(path);
+        if (analyzerAsset.test(path)) pinnedAssets.set(path, readFileSync(resolve(dist, '.' + path)));
+      }
+    }
+    for (const family of ['App', 'DealView', 'analyzerStorage']) {
+      assert.equal([...pinnedAssets.keys()].filter(path => analyzerAsset.exec(path)?.[1] === family).length,
+        1, 'Require exactly one local pinned Analyzer bundle for ' + family);
+    }
     const browser = await chromium.connectOverCDP(cdpUrl);
     source = browser.contexts().flatMap(context => context.pages()).find(page => new URL(page.url()).origin === base);
     assert.ok(source, 'Open an authenticated PBK tab in BrowserOS before this manual test.');
@@ -275,22 +340,11 @@ async function prove(context, state, name) {
         }, { key: authKey, value: session, base });
         const state = await protect(context);
         const page = await context.newPage();
-        await page.goto(base + '/analyzer');
-        await ready(page);
+        await loadAnalyzer(page);
         const viewport = await page.evaluate(() => ({ width: innerWidth, height: innerHeight, touch: navigator.maxTouchPoints }));
         assert.equal(viewport.width, width);
         assert.ok(viewport.touch > 0);
         console.log('BrowserOS actual mobile viewport: ' + JSON.stringify(viewport));
-        if (!report.bundleMatches.length) {
-          for (const name of readdirSync(dist + '/assets').filter(name => /^(App-|analyzerStorage-|DealView-)/.test(name) && name.endsWith('.js'))) {
-            const response = await context.request.get(base + '/assets/' + name, { maxRedirects: 0 });
-            assert.equal(response.status(), 200);
-            assert.equal(createHash('sha256').update(await response.body()).digest('hex'),
-              createHash('sha256').update(readFileSync(dist + '/assets/' + name)).digest('hex'), 'Deployed asset mismatch');
-            report.bundleMatches.push(name);
-          }
-          assert.equal(report.bundleMatches.length, 3, 'Verify all three deployed Analyzer bundles');
-        }
         await prove(context, state, 'browseros-mobile-chromium-' + width);
       } finally { await context.close(); }
     }

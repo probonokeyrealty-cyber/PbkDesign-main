@@ -39,6 +39,20 @@ test('unsupported risk and arrears claims remain unverified', () => {
   }
 });
 
+test('unset price, area, and year are not asserted as factual zeros', () => {
+  const deal = { ...sample(), price: 0, sqft: 0, year: 0 };
+  const before = JSON.stringify(deal);
+  const query = new URLSearchParams(api.buildMasterPackageParams(deal));
+  for (const key of ['listPrice', 'sqft', 'year']) assert.equal(query.get(key), '', key);
+  const text = api.buildPathPackageText(deal);
+  for (const label of ['List price', 'Square footage', 'Year built']) {
+    assert.ok(text.includes(label + ': Not provided'), label);
+  }
+  assert.equal(query.get('beds'), '0');
+  assert.equal(query.get('dom'), '0');
+  assert.equal(JSON.stringify(deal), before);
+});
+
 test('the template separates an agreed cash offer from MAO and preserves percent characters', () => {
   const html = readFileSync('public/PBK_Master_Deal_Package.html', 'utf8');
   const reader = html.match(/\(function\(\) \{[\s\S]*?\}\)\(\);/)[0];

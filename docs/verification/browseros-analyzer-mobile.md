@@ -13,8 +13,11 @@ npm run test:analyzer-draft-storage
 
 Importing the live runner does not connect to a browser. The offline checks cover
 explicit opt-in, build pinning, loopback-only CDP, target-site validation, and the
-fail-closed request policy. They also run through the existing Analyzer storage
-test command; no hosted workflow is added.
+fail-closed request policy. Offline response fixtures also reject stale-shell
+bundle paths, missing responses, changed bytes, foreign origins, failed responses,
+and unavailable bodies. They run through the existing Analyzer storage test
+command; no hosted workflow is added. These checks do not revalidate the previous
+live run or establish a new hosted, session, mobile, or screenshot result.
 
 ## Manual Live Run
 
@@ -26,6 +29,8 @@ test command; no hosted workflow is added.
    Keep both interfaces local; do not expose a debugger over the network.
 3. Have the exact deployed build's `dist` directory available. Pin the full
    deployed commit SHA, not a branch name or this test-only branch's commit.
+   Its local `pbk-build-manifest.json` must contain that SHA as `buildId`, with
+   exactly one App, DealView, and analyzerStorage JavaScript bundle in `assets`.
 4. Run the following with those non-secret values supplied locally:
 
 ```powershell
@@ -49,8 +54,16 @@ reports and sample-only screenshots stay under ignored `.pbk-local/`.
 - Allows real team status/verification only. CRM/property/runtime reads are
   fixtures; business mutations, direct providers, and WebSockets are blocked.
   Stream-session creation is stubbed. External reads are limited to font hosts.
-- Verifies the deployed manifest and exact App, DealView, and analyzerStorage
-  asset hashes against the supplied build.
+  Live same-site reads are limited to the exact, query-free team status URL,
+  Analyzer shell/manifest paths, and static asset/font files present in the local
+  build. Only the exact query-free POST verification URL reaches real auth.
+  Brain GETs (which can write memory), `/status`, and `/metrics` are fixtures;
+  unknown reads fail closed. Allowed live requests cannot follow redirects.
+- Verifies both local and deployed manifests against the pinned SHA. For every
+  QA navigation/reload, compares the actual page response paths and SHA-256 bodies
+  for App, DealView, and analyzerStorage to the local entries. Missing, stale,
+  unreadable, foreign-origin, or non-200 bundles fail. Independently downloading
+  matching files is not evidence that the tested shell loaded them.
 - Checks simultaneous writers with a deliberately stale localStorage read,
   private conflict drafts, reloads, passive cross-tab updates, ARV/sold comps,
   manual repair notes, and horizontal overflow.

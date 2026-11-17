@@ -20,6 +20,7 @@ try {
     for (const width of [1440, 390]) {
       const page = await browser.newPage({ viewport: { width, height: 900 } });
       const requests = [];
+      let failPdf = false;
       await page.addInitScript(() => {
         window.print = () => {};
         window.qaBlockedFrames = [];
@@ -47,6 +48,7 @@ try {
         }
         if (url.pathname === '/api/documents/pdf' && req.method() === 'POST') {
           requests.push(req.postDataJSON());
+          if (failPdf) return route.fulfill({ status: 503, json: { error: 'QA PDF unavailable' } });
           return route.fulfill({ contentType: 'application/pdf', body: pdf });
         }
         if (url.origin !== origin || /^\/(api\/|state$|health$|events$|invoke$)/.test(url.pathname)) {
@@ -122,6 +124,33 @@ try {
         panel.getByRole('link', { name: 'Download PDF' }).click(),
       ]);
       assert.deepEqual(await readFile(await download.path()), pdf);
+      const stablePdfUrl = await iframe.getAttribute('src');
+      await templates.getByRole('button', { name: 'Path Package', exact: true }).click();
+      await page.waitForTimeout(1500);
+      assert.equal(await iframe.getAttribute('src'), stablePdfUrl,
+        'Template-only rerenders must retain the current PDF');
+      failPdf = true;
+      await panel.getByRole('button', { name: 'Refresh PDF' }).click();
+      await expect(panel.getByText('PDF service offline', { exact: true })).toBeVisible();
+      for (const name of ['Download PDF', 'Open PDF']) {
+        const control = panel.locator('a').filter({ hasText: name });
+        await expect(control).toHaveAttribute('aria-disabled', 'true');
+        await expect(control).not.toHaveAttribute('href', /./);
+      }
+      await expect(iframe).toHaveCount(0);
+      failPdf = false;
+      await panel.getByRole('button', { name: 'Refresh PDF' }).click();
+      await expect(panel.getByText(/^PDF ready/)).toBeVisible();
+      failPdf = true;
+      await page.getByRole('textbox', { name: 'Your Company Name', exact: true }).fill('QA revised company');
+      await expect(panel.locator('a').filter({ hasText: 'Download PDF' }))
+        .toHaveAttribute('aria-disabled', 'true');
+      await expect(iframe).toHaveCount(0);
+      await expect(panel.getByText('PDF service offline', { exact: true })).toBeVisible();
+      failPdf = false;
+      await panel.getByRole('button', { name: 'Refresh PDF' }).click();
+      await expect(panel.getByText(/^PDF ready/)).toBeVisible();
+      assert.equal(requests.at(-1).companyName, 'QA revised company');
       assert.deepEqual(await page.evaluate(() => window.qaBlockedFrames), [],
         'Production CSP must allow the inline PDF to load');
       assert.equal(await page.locator('.pbk-doc-workbench').evaluate(

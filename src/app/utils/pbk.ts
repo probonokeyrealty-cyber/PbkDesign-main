@@ -771,6 +771,11 @@ export function buildLOIText(deal: DealData, branding: PBKBranding = DEFAULT_BRA
   return sanitizeLegacyCopy(lines.join('\n'));
 }
 
+// Zero is an unset default for price, floor area, and year, but valid for counts/DOM.
+function hasPropertyNumber(value: number | undefined, allowZero = false): value is number {
+  return typeof value === 'number' && Number.isFinite(value) && (allowZero ? value >= 0 : value > 0);
+}
+
 export function buildPathPackageText(
   deal: DealData,
   branding: PBKBranding = DEFAULT_BRANDING
@@ -799,12 +804,12 @@ export function buildPathPackageText(
     '',
     'Property Snapshot',
     `Property type: ${doc.propertyType}`,
-    `List price: ${formatCurrency(valueOrZero(deal.price))}`,
-    `Bedrooms: ${Number.isFinite(deal.beds) ? deal.beds : 'Not provided'}`,
-    `Bathrooms: ${Number.isFinite(deal.baths) ? deal.baths : 'Not provided'}`,
-    `Square footage: ${Number.isFinite(deal.sqft) ? deal.sqft.toLocaleString('en-US') : 'Not provided'}`,
-    `Year built: ${Number.isFinite(deal.year) ? deal.year : 'Not provided'}`,
-    `Days on market: ${Number.isFinite(deal.dom) ? deal.dom : 'Not provided'}`,
+    `List price: ${hasPropertyNumber(deal.price) ? formatCurrency(deal.price) : 'Not provided'}`,
+    `Bedrooms: ${hasPropertyNumber(deal.beds, true) ? deal.beds : 'Not provided'}`,
+    `Bathrooms: ${hasPropertyNumber(deal.baths, true) ? deal.baths : 'Not provided'}`,
+    `Square footage: ${hasPropertyNumber(deal.sqft) ? deal.sqft.toLocaleString('en-US') : 'Not provided'}`,
+    `Year built: ${hasPropertyNumber(deal.year) ? deal.year : 'Not provided'}`,
+    `Days on market: ${hasPropertyNumber(deal.dom, true) ? deal.dom : 'Not provided'}`,
     `ZIP code: ${nonEmpty(deal.zipCode) || 'Not provided'}`,
     `Occupancy: ${nonEmpty(deal.vacantStatus) || 'Not verified'}`,
   ];
@@ -1121,10 +1126,10 @@ export function buildMasterPackageParams(
   params.set('sellerPhone', nonEmpty(deal.sellerPhone));
   params.set('address', nonEmpty(deal.address));
   for (const field of ['beds', 'baths', 'sqft', 'year', 'dom'] as const) {
-    params.set(field, Number.isFinite(deal[field]) ? String(deal[field]) : '');
+    params.set(field, hasPropertyNumber(deal[field], ['beds', 'baths', 'dom'].includes(field)) ? String(deal[field]) : '');
   }
   params.set('propertyType', deal.type === 'land' ? 'Land/Lot' : 'House');
-  params.set('listPrice', String(valueOrZero(deal.price)));
+  params.set('listPrice', hasPropertyNumber(deal.price) ? String(deal.price) : '');
   params.set('zipCode', nonEmpty(deal.zipCode));
   params.set('vacantStatus', nonEmpty(deal.vacantStatus));
   params.set('notes', nonEmpty(deal.notes));

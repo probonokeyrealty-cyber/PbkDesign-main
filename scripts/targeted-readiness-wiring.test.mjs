@@ -16,8 +16,37 @@ function declaration(name) {
 
 for (const name of ['buildProductionReadinessSnapshot', 'buildAgentOrchestrationSnapshot']) {
   test(`${name} uses validated latency policy rather than an empty matrix`, () => {
-    const text = declaration(name).getText(ast);
-    assert.match(text, /getAgentLatencyPolicy\(process\.env\)/);
+    const node = declaration(name);
+    const text = node.getText(ast);
+    const calls = [];
+    const visit = child => {
+      if (ts.isCallExpression(child)) calls.push(child);
+      ts.forEachChild(child, visit);
+    };
+    visit(node);
+    const call = callee => {
+      const matches = calls.filter(item => item.expression.getText(ast) === callee);
+      assert.equal(matches.length, 1, `${name}: exactly one ${callee}`);
+      return matches[0];
+    };
+    const assertOptions = (options, expected) => {
+      assert(ts.isObjectLiteralExpression(options));
+      for (const [key, value] of Object.entries(expected)) {
+        const property = options.properties.find(item => item.name?.getText(ast) === key);
+        assert(property, `${name}: missing ${key}`);
+        const actual = ts.isShorthandPropertyAssignment(property) ? property.name.getText(ast)
+          : property.initializer?.getText(ast);
+        assert.equal(actual, value, `${name}: ${key}`);
+      }
+    };
+    const policy = call('getAgentLatencyPolicy');
+    assert.equal(policy.arguments[0].getText(ast), 'process.env');
+    assertOptions(policy.arguments[1], { requireVersion2: 'true' });
+    assertOptions(call('collectAgentFleetEvidence').arguments[1], { now: 'measurementNow', policy: 'latencyPolicy',
+      secret: 'BRIDGE_API_KEY', revision: 'revision', requireTimingV2: 'true' });
+    assertOptions(call('buildStableAgentFleetMeasurement').arguments[1], { now: 'measurementNow',
+      latencyPolicy: 'latencyPolicy', timingEvidenceSecret: 'BRIDGE_API_KEY', revision: 'revision',
+      requireTimingV2: 'true', requireSourceProvenance: 'true' });
     assert.doesNotMatch(text, /latencyBudgetsMs:\s*\{\s*\}/);
     assert.match(text, /latencyBudgetsMs:\s*latencyPolicy\.budgets/);
   });

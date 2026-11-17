@@ -54,8 +54,9 @@ jobs:
           NEON_PROJECT_ID: ${{ secrets.NEON_PROJECT_ID || secrets.PBK_NEON_PROJECT_ID || vars.NEON_PROJECT_ID || vars.PBK_NEON_PROJECT_ID }}
           PBK_NEON_PROJECT_ID: ${{ secrets.PBK_NEON_PROJECT_ID || secrets.NEON_PROJECT_ID || vars.PBK_NEON_PROJECT_ID || vars.NEON_PROJECT_ID }}
         run: >-
-          npm run neon:evaluation -- --ttl-hours 1 --
-          node --experimental-vm-modules node_modules/jest/bin/jest.js
+          npm run neon:evaluation -- --ttl-hours 1
+          --branch-name pbk-eval-targeted-readiness-qualification-${{ github.run_id }}-${{ github.run_attempt }} --
+          node --experimental-vm-modules scripts/readiness-postgres-qualification.mjs
           --config jest.config.mjs --runInBand
           --runTestsByPath scripts/conversation-store.test.mjs scripts/provider-action-dispatch.test.mjs
           scripts/release-qualification.test.mjs scripts/operational-audit-store.test.mjs

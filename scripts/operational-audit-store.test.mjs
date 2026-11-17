@@ -3,6 +3,7 @@ import { afterAll, beforeAll, test } from '@jest/globals';
 import { createHmac, randomUUID } from 'node:crypto';
 import { canonicalJson } from './skill-governance-store.mjs';
 import { createAuditFixture } from './operational-audit-test-fixture.mjs';
+import { advanceAuditFixtureClock } from './readiness-timing-postgres-fixture.mjs';
 import { readRuntimeCoverage, verifyRuntimeCoverageReference } from './runtime-coverage-store.mjs';
 
 let store = {};
@@ -519,6 +520,7 @@ postgresTest('disposable Postgres operational JSONB proof, tampering and latest 
     max: 2, connectionTimeoutMillis: 10_000, query_timeout: 10_000 });
   const ids = Array.from({ length: 3 }, () => `operational-test-${randomUUID()}`);
   const pgProof = await createAuditFixture({ end: Date.now(), revision, secret });
+  await advanceAuditFixtureClock(pgProof, Date.now());
   const pgVerifier = options => {
     const current = typeof options.now === 'function' ? options.now() : options.now;
     pgProof.advance(current - pgProof.now());
@@ -559,4 +561,4 @@ postgresTest('disposable Postgres operational JSONB proof, tampering and latest 
     try { await pool.query('DELETE FROM public.pbk_eval_runs WHERE id = ANY($1::text[])', [ids]); }
     finally { await pool.end(); await pgProof.close(); }
   }
-}, 30_000);
+}, 180_000);

@@ -153,6 +153,12 @@ COPY scripts/pbk-deepgram-client.mjs ./scripts/pbk-deepgram-client.mjs
 COPY scripts/qa-agent.mjs ./scripts/qa-agent.mjs
 COPY scripts/agent-registry.mjs ./scripts/agent-registry.mjs
 COPY scripts/agent-latency-policy.mjs ./scripts/agent-latency-policy.mjs
+COPY scripts/agent-timing-proof.mjs ./scripts/agent-timing-proof.mjs
+COPY scripts/agent-timing-adapters.mjs ./scripts/agent-timing-adapters.mjs
+COPY scripts/runtime-evidence-context.mjs ./scripts/runtime-evidence-context.mjs
+COPY scripts/runtime-source-evidence.mjs ./scripts/runtime-source-evidence.mjs
+COPY scripts/runtime-coverage-store.mjs ./scripts/runtime-coverage-store.mjs
+COPY scripts/runtime-coverage-sampler.mjs ./scripts/runtime-coverage-sampler.mjs
 COPY scripts/agent-fleet-measurement.mjs ./scripts/agent-fleet-measurement.mjs
 COPY scripts/controlled-execution-scope.mjs ./scripts/controlled-execution-scope.mjs
 COPY scripts/controlled-agent-storage.mjs ./scripts/controlled-agent-storage.mjs

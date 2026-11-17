@@ -6,6 +6,13 @@ important open questions. This document is not
 authorization to publish, merge, deploy, change production configuration, or start
 production collection.
 
+Local implementation and testing completed on 2026-11-17 on
+`codex/readiness-timing-coverage`. The six task reviews and final scoped review
+passed; implementation `36d4e76` has 80 passing unit suites and separately verified
+disposable Postgres proof. Exact results, limitations and controller decisions are
+recorded in `docs/operations/readiness-timing-coverage-local-validation.md`.
+This completion does not change the authorization boundary above.
+
 ## Intent And Decisions
 
 Repair the timing-policy and collection-coverage gaps in PBK's existing readiness

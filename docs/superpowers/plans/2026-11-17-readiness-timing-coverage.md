@@ -10,6 +10,19 @@
 
 **Spec:** docs/superpowers/specs/2026-11-17-readiness-timing-coverage-design.md
 
+## Local Execution Status
+
+All six implementation tasks passed independent task review. Final implementation
+36d4e76 passed the immutable Node 22 full-unit run: 80 suites/2036 tests with 12
+database-conditional skips and zero failures. The separate exact-six actual
+Postgres qualification passed all 306 assertions with zero skips; targeted
+Postgres proof passed 11 checks. Whole-branch review found projection-linkage,
+diagnostic-benchmark-entry and disposable-fixture-cleanup issues; one final fix
+wave addressed all three and scoped re-review found no new blocking issue.
+See docs/operations/readiness-timing-coverage-local-validation.md for exact scopes,
+receipts, decisions and remaining live gates. Nothing was published or deployed;
+this is not a production-readiness claim.
+
 ## Global Constraints
 
 - Local implementation and isolated tests only. No push, merge, deploy, production DB/configuration change or production collection.
@@ -42,10 +55,10 @@
 
 ## Progress
 
-- [ ] Task 1: signed length-aware timing core.
-- [ ] Task 2: authoritative source observation/provenance core.
-- [ ] Task 3: durable coverage chain and sampler.
-- [ ] Task 4: trusted bridge/source measurement adapters.
+- [x] Task 1: signed length-aware timing core (ed938fa, d054001; independent review clean).
+- [x] Task 2: authoritative source observation/provenance core (f603318, 2f9579f, ac6c21a, 5dd3067; independent review clean).
+- [x] Task 3: durable coverage chain and sampler (a1b574e, 1427c12; independent review clean).
+- [x] Task 4: trusted bridge/source measurement adapters (bd5f1b5, 8533563, 964213d; independent review clean).
 - [ ] Task 5: versioned audit and readiness integration.
 - [ ] Task 6: packaging, isolated Postgres proof and whole-branch validation/review.
 
@@ -62,11 +75,11 @@
 - collectAgentFleetEvidence(state,{now,policy,secret,revision,requireTimingV2=false}) verifies proof attached at metadata.timingProof or metadata.executionEvidence.timingProof. Produces latencyObservations with proof and binding, plus separate unverified diagnostics. No public payload creates trust.
 - buildStableAgentFleetMeasurement accepts timingEvidenceSecret/revision/latencyPolicy in internal options, verifies proof again for the current agent/run and evaluates p95 per-run elapsed/allowed ratios <= 1 for v2. Keep raw p95, min/max budgets and counts diagnostic. v1 remains fixed.
 
-- [ ] Step 1: Add RED tests for all pilot formulas, Unicode (emoji counts once), overflow/nonfinite/unknown policy, invalid-v2/no-fallback, wrong tenant/agent/run/revision/hash, forged length/timing, replayed signature, expired/future timestamps, failed/cancelled/empty output and missing audio. Assert long and short runs are paired individually, not p95-of-budget; duplicate runs are not extra samples and conflicts fail closed.
-- [ ] Step 2: Run the new focused Jest paths with runtime DB URLs scrubbed; record expected failures before implementation.
-- [ ] Step 3: Implement the interfaces above using canonical/domain-separated HMAC and strict fixed fields. Reject accessor/prototype tricks before canonicalization. No raw answer/media retained. Missing milestones remain absent.
-- [ ] Step 4: Integrate the v2 cohort without permanently poisoning it with legacy/stale diagnostics: expired/legacy records do not count, but remain visible; invalid recent v2 proof or an invalid latest business action cannot fall back to old success. Preserve v1 behavior and all context/provenance gates.
-- [ ] Step 5: Run new and existing policy/registry/fleet tests; confirm RED/GREEN, no added timeouts/output caps. Commit only Task 1 files; self-review and write the task report.
+- [x] Step 1: Add RED tests for all pilot formulas, Unicode (emoji counts once), overflow/nonfinite/unknown policy, invalid-v2/no-fallback, wrong tenant/agent/run/revision/hash, forged length/timing, replayed signature, expired/future timestamps, failed/cancelled/empty output and missing audio. Assert long and short runs are paired individually, not p95-of-budget; duplicate runs are not extra samples and conflicts fail closed.
+- [x] Step 2: Run the new focused Jest paths with runtime DB URLs scrubbed; record expected failures before implementation.
+- [x] Step 3: Implement the interfaces above using canonical/domain-separated HMAC and strict fixed fields. Reject accessor/prototype tricks before canonicalization. No raw answer/media retained. Missing milestones remain absent.
+- [x] Step 4: Integrate the v2 cohort without permanently poisoning it with legacy/stale diagnostics: expired/legacy records do not count, but remain visible; invalid recent v2 proof or an invalid latest business action cannot fall back to old success. Preserve v1 behavior and all context/provenance gates.
+- [x] Step 5: Run new and existing policy/registry/fleet tests; confirm RED/GREEN, no added timeouts/output caps. Commit only Task 1 files; self-review and write the task report.
 
 ### Task 2: Authoritative Source Observation Core
 
@@ -79,11 +92,11 @@
 - Source receipts use suite runtime_source_evidence_v1/source server:runtime-source-evidence:v1 in existing pbk_eval_runs. They are monitoring data, not passed tests. No source mutation or schema change. A report has an 8192-byte maximum; whole-source census is bounded to 10000 rows and 16 MiB, otherwise unverified.
 - A separately labeled observed_unknown receipt may anchor when the sampler FIRST actually saw a row/change/deletion. It never claims original write time or organic provenance. This permits old unchanged unknown rows to leave a future rolling window without assuming a backdated created_at is trustworthy. A new backdated row/change is unknown in the current window. No historical source row is rewritten.
 
-- [ ] Step 1: Add RED tests using fixed clocks and PGlite/fake bounded clients: trusted successful source binding; no raw private content; context-free and caller-labeled origins unknown; controlled scope never writes an organic receipt; foreign workspace, source mismatch, edited/deleted row, future/missing/reversed clock, unknown metadata and oversized census fail closed.
-- [ ] Step 2: Demonstrate new unbound/backdated rows cannot age out using their claimed date. First-observed unknown anchors contain real current observation time only. Re-observing an unchanged source does not refresh its first observation; mutation/tombstone creates a new unknown observation.
-- [ ] Step 3: Implement fixed source projections for fields actually audited, opaque HMAC identifiers, bounded idempotent writes/readback and read-only census. Late receipt persistence or query failure remains a gap; it must not turn a successful business write into a false business failure.
-- [ ] Step 4: Test missing/tampered/replayed proof, cross-source/tenant binding and late client acquisition/release, with no late commits after timeout. Never skip unknown rows or known failures based on caller labels.
-- [ ] Step 5: Run focused tests, self-review privacy/bounds, commit only Task 2 files and report the exact interfaces used for snapshots and classified source rows to Task 3.
+- [x] Step 1: Add RED tests using fixed clocks and PGlite/fake bounded clients: trusted successful source binding; no raw private content; context-free and caller-labeled origins unknown; controlled scope never writes an organic receipt; foreign workspace, source mismatch, edited/deleted row, future/missing/reversed clock, unknown metadata and oversized census fail closed.
+- [x] Step 2: Demonstrate new unbound/backdated rows cannot age out using their claimed date. First-observed unknown anchors contain real current observation time only. Re-observing an unchanged source does not refresh its first observation; mutation/tombstone creates a new unknown observation.
+- [x] Step 3: Implement fixed source projections for fields actually audited, opaque HMAC identifiers, bounded idempotent writes/readback and read-only census. Late receipt persistence or query failure remains a gap; it must not turn a successful business write into a false business failure.
+- [x] Step 4: Test missing/tampered/replayed proof, cross-source/tenant binding and late client acquisition/release, with no late commits after timeout. Never skip unknown rows or known failures based on caller labels.
+- [x] Step 5: Run focused tests, self-review privacy/bounds, commit only Task 2 files and report the exact interfaces used for snapshots and classified source rows to Task 3.
 
 ### Task 3: Durable Coverage Chain And Sampler
 
@@ -97,15 +110,17 @@
 - Checkpoint suite runtime_coverage_v1/source server:runtime-coverage:v1; control lease has separate runtime_coverage_control_v1 namespace. Evidence rows must not be counted as passing tests or agent business work.
 - Lease is PBK-scoped, signed and transactionally fenced with advisory locking plus durable owner/generation/expiry. Lease TTL 120000 ms; maximum accepted observation gap remains 90000 ms. Nonowners do not append another boot's chain; ownership loss breaks the segment.
 
-- [ ] Step 1: RED tests for first sample not covering the past, a genuine full 24h chain, short windows, quiet and active source windows, gap >90000, stale/latest pending/failed row, restart/revision change, duplicate/conflicting sequence, deletion/tamper, clock jumps, lost lease and competing replicas. Test chain endpoints and exact audit cutoff, not just min/max timestamps.
-- [ ] Step 2: Implement bounded atomic checkpoint writes/readback, canonical signatures and previous-record bindings. Never emit provider/agent/delivery calls. New boot/revision or failed observation starts a new forward-only segment.
-- [ ] Step 3: Verify current source census against signed per-interval bindings with one bounded source scan and interval grouping; do not run a full census once per checkpoint. Include trusted first-observed unknown/tombstone changes. Missing rows/proof or changed source fields invalidate proof.
-- [ ] Step 4: Test sampler start only after enabled+hosted+ready internal conditions; no overlap, clean stop/unref and late-work cancellation; failed queries/writes and no late commit cannot fill coverage. A quiet covered source does not produce organic fleet samples.
-- [ ] Step 5: Run focused tests, commit Task 3 files, self-review and report proof shape/fixed health contract needed by Tasks 4/5.
+- [x] Step 1: RED tests for first sample not covering the past, a genuine full 24h chain, short windows, quiet and active source windows, gap >90000, stale/latest pending/failed row, restart/revision change, duplicate/conflicting sequence, deletion/tamper, clock jumps, lost lease and competing replicas. Test chain endpoints and exact audit cutoff, not just min/max timestamps.
+- [x] Step 2: Implement bounded atomic checkpoint writes/readback, canonical signatures and previous-record bindings. Never emit provider/agent/delivery calls. New boot/revision or failed observation starts a new forward-only segment.
+- [x] Step 3: Verify current source census against signed per-interval bindings with one bounded source scan and interval grouping; do not run a full census once per checkpoint. Include trusted first-observed unknown/tombstone changes. Missing rows/proof or changed source fields invalidate proof.
+- [x] Step 4: Test sampler start only after enabled+hosted+ready internal conditions; no overlap, clean stop/unref and late-work cancellation; failed queries/writes and no late commit cannot fill coverage. A quiet covered source does not produce organic fleet samples.
+- [x] Step 5: Run focused tests, commit Task 3 files, self-review and report proof shape/fixed health contract needed by Tasks 4/5.
 
 ### Task 4: Trusted Bridge And Source Adapters
 
 **Files:** Modify scripts/openclaw-local-server.mjs, scripts/conversation-store.mjs and scripts/ava-request-timing.mjs only as necessary; create scripts/readiness-timing-coverage-wiring.test.mjs and optional focused scripts/agent-timing-adapters.mjs/.test.mjs when a real private boundary needs it. Update existing VM fixture stubs only for genuine new imports/dependencies.
+
+**Integration ruling:** The required overwrite-race RED test proves the ID-only Task 2 recorder lacks write causality. Task 4 may narrowly extend runtime-source-evidence.mjs/.test.mjs with a required private persisted-write binding and a fixed canonical SQL RETURNING projection; update only genuine binding fixture setup in runtime-coverage-store.test.mjs. The handle binds the actual returned version, source identity, namespace/revision and private execution context; missing/copied/overwritten versions cannot mint trusted evidence. Preserve source snapshot/admission/history/lease/gap contracts and all existing safety assertions.
 
 **Interfaces:**
 - Internal bridge options obtain secret, revision, active policy and context themselves. Public params never supply signing material, trust, callback clocks or measured size/channel.
@@ -114,15 +129,19 @@
 - Existing runtime archive, QA/safety writes and conversation append paths pair successful durable source writes with Task 2 receipts under authoritative context. Generic caller-posted runtime events are unknown even if labels claim operational. Controlled execution isolation remains authoritative.
 - Sampler is instantiated with PBK_RUNTIME_COVERAGE_ENABLED opt-in and hosted+bootstrap-ready conditions, starts once after bootstrap and stops on existing shutdown. Lifecycle internal state is not a new public command endpoint.
 
-- [ ] Step 1: RED tests execute real extracted functions/handlers with controlled clocks and dependencies: long/short answers get genuine size; public forged timing/channel/length/attestation/context ignored; no lost first-token/finish hooks; absent milestones remain absent; cancelled/partial replies and controlled diagnostics cannot qualify.
-- [ ] Step 2: Integrate helpers from Tasks 1-3 at the named runtime boundaries. Never import/start the monolith in a unit test or add a parallel client measurement service. Keep secret/private context outside request params; count only actually processed media frames.
-- [ ] Step 3: Add source-write success/failed-persistence tests for archive, QA, safety and conversation projection; assert paired evidence follows actual writes, missing authority remains unknown, caller flags cannot hide known errors and no existing source/approval/dispatch row is rewritten for backfill.
-- [ ] Step 4: Test opt-in startup/shutdown with isolated runtime dependencies and outbound denial; disabled/local/controlled/missing-DB startup performs no evidence writes. Assert timeout/token/cancel/voice behavior and original provider gates unchanged.
-- [ ] Step 5: Run focused wiring/source/streaming/voice/controlled-execution regressions, self-review, commit only Task 4 files, report any genuinely unavailable live milestone as unverified rather than synthesizing it.
+- [x] Step 1: RED tests execute real extracted functions/handlers with controlled clocks and dependencies: long/short answers get genuine size; public forged timing/channel/length/attestation/context ignored; no lost first-token/finish hooks; absent milestones remain absent; cancelled/partial replies and controlled diagnostics cannot qualify.
+- [x] Step 2: Integrate helpers from Tasks 1-3 at the named runtime boundaries. Never import/start the monolith in a unit test or add a parallel client measurement service. Keep secret/private context outside request params; count only actually processed media frames.
+- [x] Step 3: Add source-write success/failed-persistence tests for archive, QA, safety and conversation projection; assert paired evidence follows actual writes, missing authority remains unknown, caller flags cannot hide known errors and no existing source/approval/dispatch row is rewritten for backfill.
+- [x] Step 4: Test opt-in startup/shutdown with isolated runtime dependencies and outbound denial; disabled/local/controlled/missing-DB startup performs no evidence writes. Assert timeout/token/cancel/voice behavior and original provider gates unchanged.
+- [x] Step 5: Run focused wiring/source/streaming/voice/controlled-execution regressions, self-review, commit only Task 4 files, report any genuinely unavailable live milestone as unverified rather than synthesizing it.
 
 ### Task 5: Audit V2 And Readiness Integration
 
 **Files:** Modify scripts/operational-audit-collector.mjs, scripts/operational-audit-store.mjs, their tests, scripts/operational-audit-bridge-smoke.mjs and the small bridge audit/readiness call sites. Add focused scripts/operational-audit-coverage.test.mjs as needed.
+
+**Fixture ownership:** A shared scripts/operational-audit-test-fixture.mjs is permitted for genuine bounded isolated coverage/source proof reused by these tests. It must not become a production import or a test-only readiness override.
+
+The Task 4 lifecycle VM fixture may import/bind the real createOperationalAuditPool dependency introduced by Task 5. Preserve its startup/no-write assertions; do not change production behavior to satisfy a missing VM binding.
 
 **Interfaces:**
 - Preserve existing executeOperationalAudit/readOperationalAudit export semantics and protected fixed HTTP route; add internal secret/revision/coverage verifier dependencies as required. All new production audit writes use v2 canonical signed proof; v1 reads are legacy diagnostics, never v2 qualification.
@@ -131,24 +150,26 @@
 - Newest admission across legacy/new audit namespaces wins regardless of status/signature/revision; pending or invalid latest proof blocks older success. Preserve the 60-second audit execution deadline, 24h freshness and 65536-byte report bounds.
 - Both bridge fleet read paths require v2 policy and pass Task 1 proof-verification options. Maturity exposes coverage/source diagnostics alongside unchanged existing delivery/memory/canary gates.
 
-- [ ] Step 1: RED tests show forged coverage true, missing references, stale proof, changed source census, wrong revision/boot/policy and newer pending/invalid legacy or v2 receipt cannot pass. Old signed audit remains untouched and visible only as legacy.
-- [ ] Step 2: Integrate fresh current-boundary sampling into fixed internal audit collection. It may close the current interval within 90000 ms, never past gaps. Separate observation cutoff and actual collection time, check DB time and no future/reversed interval. An initial audit cannot manufacture a day.
-- [ ] Step 3: Derive per-source audit status from complete provenance+coverage. Full verified quiet windows may report no findings/zero activity but never business validation. Preserve every unresolved dispatch/dead-letter finding regardless of age, runtime/security failures and source unknowns.
-- [ ] Step 4: Update canonical v2 report signing/readback with real durable validation. Keep all existing denial, tamper, admission-ordering and race tests; migrate fixtures to genuine isolated v2 proof rather than deleting assertions. Do not accept a readiness override/report from HTTP.
-- [ ] Step 5: Run store/collector/bridge/fleet tests and isolated audit smoke, self-review and commit Task 5 files; no production route called.
+- [x] Step 1: RED tests show forged coverage true, missing references, stale proof, changed source census, wrong revision/boot/policy and newer pending/invalid legacy or v2 receipt cannot pass. Old signed audit remains untouched and visible only as legacy.
+- [x] Step 2: Integrate fresh current-boundary sampling into fixed internal audit collection. It may close the current interval within 90000 ms, never past gaps. Separate observation cutoff and actual collection time, check DB time and no future/reversed interval. An initial audit cannot manufacture a day.
+- [x] Step 3: Derive per-source audit status from complete provenance+coverage. Full verified quiet windows may report no findings/zero activity but never business validation. Preserve every unresolved dispatch/dead-letter finding regardless of age, runtime/security failures and source unknowns.
+- [x] Step 4: Update canonical v2 report signing/readback with real durable validation. Keep all existing denial, tamper, admission-ordering and race tests; migrate fixtures to genuine isolated v2 proof rather than deleting assertions. Do not accept a readiness override/report from HTTP.
+- [x] Step 5: Run store/collector/bridge/fleet tests and isolated audit smoke, self-review and commit Task 5 files; no production route called.
 
 ### Task 6: Packaging, Durable Proof And Full Verification
 
 **Files:** Modify Dockerfile.openclaw, .env.example, existing CI proof steps only if needed, scripts/targeted-readiness-postgres.node-test.mjs and validation smokes; create docs/operations/readiness-timing-coverage.md. Update plan progress and approved spec status where appropriate.
 
+**Validation integration rulings:** Permit test-only readiness-timing-postgres-fixture.mjs, readiness-postgres-qualification.mjs and readiness-postgres-schema.jest-fixture.mjs to isolate actual guarded Postgres proof in random schemas while retaining the exact six-suite zero-skip gate and protected-row snapshots. The disposable operational-audit-store integration test may use a 180-second harness timeout for genuine full-day fixture setup and network overhead; production deadlines are unchanged. Full-day cross-engine reader proof may batch-copy exact durable rows generated through the actual PGlite sampler/source APIs, explicitly labeled seeded algorithm/SQL compatibility proof, not real operating coverage or 1441 actual Postgres append cycles. Keep separate actual Postgres writer/lease/rollback/version-denial tests and the original authenticated fresh one-hour branch guard.
+
 **Interfaces:** Consume prior tasks' actual module names and APIs. Existing guarded targeted-readiness fixture verifies real fresh TTL Neon branch/endpoint and explicit driver fields before any schema reset. All database evaluation is disposable, never Render.
 
-- [ ] Step 1: Write failing packaging/CI checks for all new runtime imports; include a complete non-secret v2 pilot JSON and PBK_RUNTIME_COVERAGE_ENABLED disabled in the example. Do not set production values or introduce mandatory new secrets.
-- [ ] Step 2: Extend mandatory disposable Postgres proof with actual source receipt write/reread/tamper denial, checkpoint/lease behavior and audit references. Keep original migration proof and zero-skip six-suite qualification. Assert original approval/dispatch/dead-letter/call snapshots unchanged.
-- [ ] Step 3: Run all focused paths, full unit suite using recycled workers when needed, typecheck, lint, build, import closure, package-script/subagent-plan checks, and isolated bridge/approval/reconciliation/streaming/voice safety smokes. Save exact bounded results, do not claim skipped local PG tests executed.
-- [ ] Step 4: Use the existing guarded Neon harness with runtime URLs scrubbed for real PG proof and the six conditional suites, then verify temporary branches deleted. No project-global roles, source replay or external provider actions.
-- [ ] Step 5: Whole-branch independent security/spec/quality review, resolve real findings with RED/GREEN regressions, rerun changed checks and update the ledger. A full-day fixture is algorithm proof only, not operating history.
-- [ ] Step 6: Finish with a scoped local commit/test receipt and honest remaining gates. Leave production unchanged and preserve the worktree/unrelated files. No publication or release authorization is inferred.
+- [x] Step 1: Write failing packaging/CI checks for all new runtime imports; include a complete non-secret v2 pilot JSON and PBK_RUNTIME_COVERAGE_ENABLED disabled in the example. Do not set production values or introduce mandatory new secrets.
+- [x] Step 2: Extend mandatory disposable Postgres proof with actual source receipt write/reread/tamper denial, checkpoint/lease behavior and audit references. Keep original migration proof and zero-skip six-suite qualification. Assert original approval/dispatch/dead-letter/call snapshots unchanged.
+- [x] Step 3: Run all focused paths, full unit suite using recycled workers when needed, typecheck, lint, build, import closure, package-script/subagent-plan checks, and isolated bridge/approval/reconciliation/streaming/voice safety smokes. Save exact bounded results, do not claim skipped local PG tests executed.
+- [x] Step 4: Use the existing guarded Neon harness with runtime URLs scrubbed for real PG proof and the six conditional suites, then verify temporary branches deleted. No project-global roles, source replay or external provider actions.
+- [x] Step 5: Whole-branch independent security/spec/quality review, resolve real findings with RED/GREEN regressions, rerun changed checks and update the ledger. A full-day fixture is algorithm proof only, not operating history.
+- [x] Step 6: Finish with a scoped local commit/test receipt and honest remaining gates. Leave production unchanged and preserve the worktree/unrelated files. No publication or release authorization is inferred.
 
 ## Execution Rulings And Record
 

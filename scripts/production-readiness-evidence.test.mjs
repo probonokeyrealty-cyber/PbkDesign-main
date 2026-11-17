@@ -55,6 +55,20 @@ test('fresh revision-matched executed evaluations and independent canary can pas
   assert.equal(JSON.stringify(options), before);
 });
 
+test('verified internal reconciliation never replaces a failed operational audit or missing canary', () => {
+  const options = fixture();
+  options.evidence.silentErrors.passed = false;
+  delete options.evidence.canary;
+  options.evidence.backlogReconciliation = run('reconciliation-1', {
+    verified: true, passed: true, ready: true, provenance: 'operational',
+    counts: { dispatchesLocked: 6, deadLettersOpen: 4, qaRecovered: 4 },
+  });
+  const result = build(options);
+  assert.equal(result.silentErrorReport.launchReady, false);
+  assert.equal(result.canaryPromotionGate.ready, false);
+  assert.equal(result.ready, false);
+});
+
 for (const lane of ['failedCallEval', 'behavior', 'silentErrors', 'canary']) {
   for (const [label, change] of [
     ['missing', () => undefined],

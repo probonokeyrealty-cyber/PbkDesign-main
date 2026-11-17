@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from '@jest/globals';
 import { createFetchProxyFixture, createProxyFixture } from './fixtures/netlify-proxy-qa.mjs';
 
-const founderPaths = ['/api/agents/controlled-qualification', '/api/admin/qualification/run', '/api/admin/operational-audit/run'];
+const founderPaths = ['/api/agents/controlled-qualification', '/api/admin/qualification/run', '/api/admin/operational-audit/run', '/api/admin/reconciliation/run'];
 const elevatedPermissions = {
   canDeleteLeads: true,
   canDeleteData: true,

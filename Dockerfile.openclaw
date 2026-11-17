@@ -157,6 +157,9 @@ COPY scripts/agent-timing-proof.mjs ./scripts/agent-timing-proof.mjs
 COPY scripts/agent-timing-adapters.mjs ./scripts/agent-timing-adapters.mjs
 COPY scripts/runtime-evidence-context.mjs ./scripts/runtime-evidence-context.mjs
 COPY scripts/runtime-source-evidence.mjs ./scripts/runtime-source-evidence.mjs
+COPY scripts/runtime-paged-census.mjs ./scripts/runtime-paged-census.mjs
+COPY scripts/bounded-census-migration.mjs ./scripts/bounded-census-migration.mjs
+COPY scripts/migrations/20261117-bounded-census.sql ./scripts/migrations/20261117-bounded-census.sql
 COPY scripts/runtime-coverage-store.mjs ./scripts/runtime-coverage-store.mjs
 COPY scripts/runtime-coverage-sampler.mjs ./scripts/runtime-coverage-sampler.mjs
 COPY scripts/agent-fleet-measurement.mjs ./scripts/agent-fleet-measurement.mjs

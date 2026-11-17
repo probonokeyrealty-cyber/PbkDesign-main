@@ -3,6 +3,7 @@ import { appendRuntimeCoverageCheckpoint, RUNTIME_COVERAGE_POLICY, runtimeCovera
 import { getRuntimeEvidenceContext } from './runtime-evidence-context.mjs';
 
 export function createRuntimeCoverageSampler({ pool, secret, revision, enabled = false, hosted = false,
+  protocol = process.env.PBK_RUNTIME_CENSUS_PROTOCOL ?? 'legacy-v1',
   health, now = Date.now, monotonicNow = () => performance.now(), setTimer = setTimeout,
   clearTimer = clearTimeout, bootId = randomUUID() } = {}) {
   let running = false, stopped = false, inFlight = false, timer, controller, previous = null;
@@ -31,7 +32,7 @@ export function createRuntimeCoverageSampler({ pool, secret, revision, enabled =
     inFlight = true;
     controller = new AbortController();
     try {
-      const result = await appendRuntimeCoverageCheckpoint({ pool, secret, revision, now,
+      const result = await appendRuntimeCoverageCheckpoint({ pool, secret, revision, now, protocol,
         cutoff, monotonicNow, bootId, previous, health: getHealth(), signal: controller.signal });
       if (stopped || controller.signal.aborted) {
         previous = null; lastResult = 'coverage_operation_abandoned';

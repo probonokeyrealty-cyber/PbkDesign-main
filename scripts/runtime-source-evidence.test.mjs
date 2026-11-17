@@ -67,8 +67,10 @@ test('trusted persisted binding is opaque, read back, idempotent and never a pas
   assert.equal(result.verified, true);
   assert.equal(result.classification, 'operational');
   await run('operator_chat', () => record());
-  const proof = (await db.query('SELECT * FROM pbk_eval_runs')).rows;
+  const allProof = (await db.query('SELECT * FROM pbk_eval_runs')).rows;
+  const proof = allProof.filter(row => row.report.recordRef);
   assert.equal(proof.length, 1);
+  assert.equal(allProof.length, 2, 'one source history and one signed inventory');
   assert.equal(proof[0].ok, false);
   assert.equal(proof[0].passed, 0);
   assert.equal(proof[0].suite_name, SUITE);
@@ -81,7 +83,7 @@ test('trusted persisted binding is opaque, read back, idempotent and never a pas
   assert.equal(source(snapshot).rows[0].observedAt, iso(NOW));
   assert.match(source(snapshot).fingerprint, /^[a-f0-9]{64}$/);
   for (const privateValue of ['private-source-id', 'private seller answer', 'private-contact', secret]) {
-    assert.equal(JSON.stringify([proof, snapshot, result]).includes(privateValue), false);
+    assert.equal(JSON.stringify([allProof, snapshot, result]).includes(privateValue), false);
   }
 });
 
@@ -158,12 +160,13 @@ test.each(['signature', 'tenant', 'kind', 'revision', 'id', 'extra', 'replay'])(
   if (mode === 'tenant') await db.exec(`UPDATE pbk_eval_runs SET tenant_id='foreign'`);
   if (mode === 'kind') await db.exec(`UPDATE pbk_eval_runs SET report=jsonb_set(report,'{sourceKind}','"qa"')`);
   if (mode === 'revision') await db.exec(`UPDATE pbk_eval_runs SET report=jsonb_set(report,'{revision}','"wrong"')`);
-  if (mode === 'id') await db.exec(`UPDATE pbk_eval_runs SET id='transplanted'`);
+  if (mode === 'id') await db.exec(`UPDATE pbk_eval_runs SET id='transplanted' WHERE report->>'recordRef' IS NOT NULL`);
   if (mode === 'extra') await db.exec(`UPDATE pbk_eval_runs SET report=report || '{"private":"forbidden"}'::jsonb`);
   if (mode === 'replay') await db.exec(`UPDATE activity_log SET id='different-row'`);
   const snapshot = await collect();
   assert.equal(snapshot.eligible, false);
-  assert.equal(snapshot.sources?.find(s => s.sourceKind === 'runtime_archive').counts.operational ?? 0, 0);
+  assert.equal(snapshot.sources?.find(s => s.sourceKind === 'runtime_archive').rows.some(row =>
+    row.classification === 'operational' && row.eligible) ?? false, false);
 });
 
 test.each(['future', 'missing', 'reversed', 'status'])('invalid source clock/outcome cannot qualify: %s', async mode => {
@@ -318,7 +321,7 @@ test('revision rollover does not accumulate permanent stale proof or refresh unc
   assert.equal(source(snapshot).rows[0].observedAt, iso(NOW));
   snapshot = await collect(next);
   assert.equal(snapshot.invalidReceipts, 0);
-  assert.equal((await db.query('SELECT * FROM pbk_eval_runs')).rows.length, 1);
+  assert.equal((await db.query('SELECT * FROM pbk_eval_runs')).rows.length, 2);
 });
 
 test('an abandoned monitoring insert is rolled back by client destruction, never late committed', async () => {
@@ -412,4 +415,285 @@ test('coverage windows cannot exceed the approved day and outcome aggregates ret
   assert.equal(source(snapshot).counts.warning, 1);
   assert.equal(source(snapshot).counts.success, 0);
   assert.equal(source(snapshot).counts.eligible, 0);
+});
+
+test('recorded failure followed by recorded success between samples retains the active failure', async () => {
+  await db.exec(`UPDATE activity_log SET status='error'`);
+  await run('operator_chat', () => record());
+  await db.exec(`UPDATE activity_log SET status='success'`);
+  await run('operator_chat', () => record({ now: NOW + 1 }));
+  const snapshot = await collect({ now: NOW + 2, windowStart: NOW - 10000, windowEnd: NOW + 2 });
+  assert.equal(source(snapshot).rows[0].outcome, 'success');
+  assert.equal(source(snapshot).counts.failed, 1);
+  assert.equal(source(snapshot).history[0].outcome, 'failed');
+  assert.equal(snapshot.eligible, false);
+});
+
+test('an observed tombstone survives recorded reappearance before the next sample', async () => {
+  await run('operator_chat', () => record());
+  await db.exec('DELETE FROM activity_log');
+  await collect();
+  await db.query(`INSERT INTO activity_log(id,created_at,updated_at) VALUES ('private-source-id',$1,$1)`, [iso(NOW - 1000)]);
+  await run('operator_chat', () => record({ now: NOW + 1 }));
+  const snapshot = await collect({ now: NOW + 2, windowStart: NOW - 10000, windowEnd: NOW + 2 });
+  assert.equal(source(snapshot).rows[0].presence, 'present');
+  assert.equal(source(snapshot).history.some(row => row.presence === 'deleted'), true);
+  assert.equal(source(snapshot).counts.unknown, 1);
+  assert.equal(snapshot.eligible, false);
+});
+
+test('observed mutation and reversion retain separate transitions and unchanged anchors', async () => {
+  const initial = source(await collect()).rows[0];
+  await db.exec(`UPDATE activity_log SET text='private mutation'`);
+  await collect({ now: NOW + 1, windowStart: NOW - 10000, windowEnd: NOW + 1 });
+  await db.exec(`UPDATE activity_log SET text='private seller answer'`);
+  let snapshot = await collect({ now: NOW + 2, windowStart: NOW - 10000, windowEnd: NOW + 2 });
+  assert.equal(source(snapshot).history.length, 2);
+  assert.equal(source(snapshot).rows[0].sequence, 3);
+  assert.equal(source(snapshot).rows[0].sourceBinding, initial.sourceBinding);
+  assert.equal(source(snapshot).rows[0].observedAt, iso(NOW + 2));
+  snapshot = await collect({ now: NOW + 3, windowStart: NOW - 10000, windowEnd: NOW + 3 });
+  assert.equal(source(snapshot).history.length, 2);
+  assert.equal(source(snapshot).rows[0].observedAt, iso(NOW + 2));
+});
+
+test('deleting an identity proof or rolling back its history breaks authenticated inventory completeness', async () => {
+  await db.exec(`UPDATE activity_log SET status='error'`);
+  await run('operator_chat', () => record());
+  const old = (await db.query(`SELECT * FROM pbk_eval_runs WHERE report->>'recordRef' IS NOT NULL`)).rows[0];
+  await db.exec(`UPDATE activity_log SET status='success'`);
+  await run('operator_chat', () => record({ now: NOW + 1 }));
+  assert.equal((await collect({ now: NOW + 2, windowStart: NOW - 10000, windowEnd: NOW + 2 })).verified, true);
+  await db.query('UPDATE pbk_eval_runs SET report=$1::jsonb,created_at=$2 WHERE id=$3',
+    [JSON.stringify(old.report), old.created_at, old.id]);
+  assert.equal((await collect({ now: NOW + 2, windowStart: NOW - 10000, windowEnd: NOW + 2 })).verified, false);
+  await db.query('DELETE FROM pbk_eval_runs WHERE id=$1', [old.id]);
+  assert.equal((await collect({ now: NOW + 2, windowStart: NOW - 10000, windowEnd: NOW + 2 })).verified, false);
+});
+
+test('active history overflow is unverified without discarding earlier transitions', async () => {
+  let overflow = false;
+  for (let n = 0; n < 40; n++) {
+    await db.query('UPDATE activity_log SET text=$1', [`private transition ${n}`]);
+    const result = await run('operator_chat', () => record({ now: NOW + n }));
+    if (!result.verified) { overflow = true; break; }
+  }
+  assert.equal(overflow, true);
+  const stored = (await db.query(`SELECT report FROM pbk_eval_runs WHERE report->>'recordRef' IS NOT NULL`)).rows;
+  assert.equal(stored.length, 1);
+  assert.ok(stored[0].report.history.length > 0);
+  assert.ok(Buffer.byteLength(JSON.stringify(stored[0].report)) <= 8192);
+  assert.equal((await collect({ now: NOW + 100, windowStart: NOW - 10000, windowEnd: NOW + 100 })).verified, false);
+});
+
+function inheritedFence(extra = {}) {
+  return { deadlineAt: performance.now() + 15000, signal: new AbortController().signal,
+    onAbort() {}, ...extra };
+}
+const collectInTransaction = (extra = {}) => api('collectRuntimeSourceSnapshotInTransaction')({
+  client, secret, revision, windowStart: NOW - DAY, windowEnd: NOW, now: NOW,
+  fence: inheritedFence(), ...extra,
+});
+
+test('transaction-aware core leaves all writes pending in the actual caller PGlite transaction', async () => {
+  const sql = [];
+  const trackedClient = { query: config => { sql.push(config); return client.query(config); } };
+  await db.query('BEGIN');
+  try {
+    const result = await collectInTransaction({ client: trackedClient });
+    assert.equal(result.verified, true);
+    assert.equal(result.transactionPending, true);
+    assert.equal(sql.some(c => /^(BEGIN|COMMIT|ROLLBACK)/.test(c.text)), false);
+    assert.ok(sql.every(c => c.query_timeout > 0 && c.query_timeout <= 2000));
+    assert.ok((await db.query('SELECT * FROM pbk_eval_runs')).rows.length > 0);
+  } finally { await db.query('ROLLBACK'); }
+  assert.equal((await db.query('SELECT * FROM pbk_eval_runs')).rows.length, 0);
+});
+
+test('inherited cancellation of a deferred read fences continuation instead of merely racing it', async () => {
+  const abort = new AbortController(), sql = [], aborted = [];
+  let resume, entered;
+  const enteredPromise = new Promise(resolve => { entered = resolve; });
+  const paused = new Promise(resolve => { resume = resolve; });
+  const trackedClient = { query: async config => {
+    sql.push(config.text);
+    if (config.text.includes('FROM public.activity_log')) { entered(); await paused; }
+    return client.query(config);
+  } };
+  await db.query('BEGIN');
+  try {
+    const work = collectInTransaction({ client: trackedClient,
+      fence: inheritedFence({ signal: abort.signal, onAbort: () => aborted.push(true) }) });
+    await enteredPromise;
+    abort.abort();
+    const result = await work;
+    assert.equal(result.verified, false);
+    resume();
+    await new Promise(resolve => setTimeout(resolve, 10));
+    assert.equal(sql.some(s => /INSERT|COMMIT|ROLLBACK|^BEGIN/.test(s)), false);
+    assert.deepEqual(aborted, [true]);
+  } finally { resume(); await db.query('ROLLBACK'); }
+  assert.equal((await db.query('SELECT * FROM pbk_eval_runs')).rows.length, 0);
+});
+
+test('expired inherited deadline never submits SQL and deferred query timeout is at most two seconds', async () => {
+  const sql = [], aborted = [];
+  const expired = await collectInTransaction({ client: { query: config => { sql.push(config); } },
+    fence: inheritedFence({ deadlineAt: performance.now() - 1, onAbort: () => aborted.push(true) }) });
+  assert.equal(expired.verified, false);
+  assert.equal(sql.length, 0);
+  assert.deepEqual(aborted, [true]);
+  jest.useFakeTimers();
+  try {
+    let resume;
+    const delayed = new Promise(resolve => { resume = resolve; });
+    const work = collectInTransaction({ client: { query: config => { sql.push(config); return delayed; } },
+      fence: inheritedFence() });
+    await jest.advanceTimersByTimeAsync(2001);
+    assert.equal((await work).verified, false);
+    resume({ rows: [] });
+    await jest.advanceTimersByTimeAsync(15000);
+    assert.equal(sql.length, 1);
+    assert.ok(sql[0].query_timeout <= 2000);
+  } finally { jest.useRealTimers(); }
+});
+
+test('cancellation after an actual pending insert prevents readback/commit and caller rollback removes it', async () => {
+  const abort = new AbortController(), sql = [];
+  let resume, entered, poisoned = false;
+  const pending = new Promise(resolve => { resume = resolve; });
+  const inserted = new Promise(resolve => { entered = resolve; });
+  const tracked = { query: async config => {
+    sql.push(config.text);
+    const result = await client.query(config);
+    if (/INSERT INTO public.pbk_eval_runs/.test(config.text)) { entered(); await pending; }
+    return result;
+  } };
+  await db.query('BEGIN');
+  try {
+    const work = collectInTransaction({ client: tracked,
+      fence: inheritedFence({ signal: abort.signal, onAbort: () => { poisoned = true; } }) });
+    await inserted;
+    assert.ok((await db.query('SELECT * FROM pbk_eval_runs')).rows.length > 0);
+    const beforeAbort = sql.length;
+    abort.abort();
+    assert.equal((await work).verified, false);
+    assert.equal(poisoned, true);
+    await db.query('ROLLBACK');
+    resume();
+    await new Promise(resolve => setTimeout(resolve, 10));
+    assert.equal(sql.length, beforeAbort, 'no readback, inventory write or commit can follow the abandoned insert');
+    assert.equal((await db.query('SELECT * FROM pbk_eval_runs')).rows.length, 0);
+  } finally { resume(); await db.query('ROLLBACK'); }
+});
+
+test('expired history is compacted without refreshing current first observation or pretending old windows are complete', async () => {
+  await db.exec(`UPDATE activity_log SET updated_at=NULL`);
+  await collect();
+  await db.query('UPDATE activity_log SET updated_at=$1', [iso(NOW - 1000)]);
+  await run('operator_chat', () => record({ now: NOW + 1 }));
+  const later = { now: NOW + 3 * DAY, windowStart: NOW + 2 * DAY, windowEnd: NOW + 3 * DAY };
+  const snapshot = await collect(later);
+  assert.equal(snapshot.verified, true);
+  assert.equal(source(snapshot).rows[0].observedAt, iso(NOW + 1));
+  assert.equal(source(snapshot).history.length, 0);
+  assert.equal(source(snapshot).counts.invalidClock, 0);
+  assert.equal((await collect({ ...later, windowStart: NOW, windowEnd: NOW + DAY })).verified, false);
+});
+
+test('removing only the signed inventory cannot turn retained source histories into a complete census', async () => {
+  await run('operator_chat', () => record());
+  await db.exec(`DELETE FROM pbk_eval_runs WHERE report->>'ledgerKind'='inventory'`);
+  assert.equal((await collect()).verified, false);
+});
+
+test('the inherited deadline is shared across queries rather than renewed per query', async () => {
+  jest.useFakeTimers();
+  try {
+    const statements = [], aborted = [];
+    const client = { query: config => {
+      statements.push(config);
+      return new Promise(resolve => setTimeout(() => resolve({ rows: [{ acquired: true }] }), 600));
+    } };
+    const work = collectInTransaction({ client,
+      fence: inheritedFence({ deadlineAt: performance.now() + 1000, onAbort: () => aborted.push(true) }) });
+    await jest.advanceTimersByTimeAsync(1001);
+    assert.equal((await work).verified, false);
+    await jest.advanceTimersByTimeAsync(3000);
+    assert.equal(statements.length, 2);
+    assert.ok(statements[0].query_timeout <= 1000);
+    assert.ok(statements[1].query_timeout <= 400);
+    assert.equal(statements.some(c => /INSERT|COMMIT/.test(c.text)), false);
+    assert.deepEqual(aborted, [true]);
+  } finally { jest.useRealTimers(); }
+});
+
+test('mutating the supplied fence cannot extend the deadline captured by the core', async () => {
+  jest.useFakeTimers();
+  const abort = new AbortController();
+  let work;
+  try {
+    let settled = false;
+    const fence = inheritedFence({ deadlineAt: performance.now() + 1000, signal: abort.signal });
+    const client = { query: () => new Promise(resolve =>
+      setTimeout(() => resolve({ rows: [{ acquired: true }] }), 600)) };
+    work = collectInTransaction({ client, fence }).then(result => { settled = true; return result; });
+    await jest.advanceTimersByTimeAsync(400);
+    fence.deadlineAt = performance.now() + 15000;
+    await jest.advanceTimersByTimeAsync(601);
+    assert.equal(settled, true);
+    assert.equal((await work).verified, false);
+  } finally {
+    abort.abort();
+    await jest.advanceTimersByTimeAsync(2000);
+    await work;
+    jest.useRealTimers();
+  }
+});
+
+test('inventory readback must detect a history receipt disappearing during persistence', async () => {
+  const brokenPool = { connect: async () => ({ release() {}, query: async config => {
+    const result = await client.query(config);
+    if (/INSERT INTO public.pbk_eval_runs/.test(config.text)
+      && config.values[0].startsWith('runtime-source-inventory-')) {
+      await db.exec(`DELETE FROM pbk_eval_runs WHERE report->>'recordRef' IS NOT NULL`);
+    }
+    return result;
+  } }) };
+  const result = await run('operator_chat', () => record({ pool: brokenPool }));
+  assert.equal(result.verified, false);
+  assert.equal((await db.query('SELECT * FROM pbk_eval_runs')).rows.length, 0);
+  assert.equal((await db.query('SELECT * FROM activity_log')).rows.length, 1);
+});
+
+test('a still-fresh earlier 24h audit window retains its history after a sample 23h later', async () => {
+  await db.query('UPDATE activity_log SET created_at=$1,updated_at=$1', [iso(NOW - 2 * DAY)]);
+  await run('diagnostic', () => record({ now: NOW - 23 * 3600000 }));
+  await db.exec(`UPDATE activity_log SET text='private new operational binding'`);
+  await run('operator_chat', () => record({ now: NOW - 22 * 3600000 }));
+  const original = await collect();
+  assert.equal(original.verified, true);
+  assert.equal(original.eligible, true);
+  assert.equal(source(original).history.length, 1);
+  const laterNow = NOW + 23 * 3600000;
+  assert.equal((await collect({ now: laterNow, windowStart: laterNow - DAY, windowEnd: laterNow })).verified, true);
+  const reread = await collect({ now: laterNow });
+  assert.equal(reread.verified, true);
+  assert.equal(reread.eligible, true);
+  assert.equal(source(reread).history.length, 1);
+  assert.equal(source(reread).rows[0].observedAt, source(original).rows[0].observedAt);
+  assert.equal(reread.fingerprint, original.fingerprint);
+});
+
+test('48h retention does not expand the 24h window blockers for superseded invalid-clock history', async () => {
+  await db.query('UPDATE activity_log SET created_at=$1,updated_at=NULL', [iso(NOW - 2 * DAY)]);
+  const early = NOW - 36 * 3600000;
+  assert.equal((await collect({ now: early, windowStart: early - DAY, windowEnd: early })).verified, true);
+  await db.query('UPDATE activity_log SET updated_at=$1', [iso(NOW - 2 * DAY)]);
+  assert.equal((await run('operator_chat', () => record({ now: NOW - 12 * 3600000 }))).verified, true);
+  const snapshot = await collect();
+  assert.equal(snapshot.verified, true);
+  assert.equal(source(snapshot).history.length, 1, '36h-old evidence remains available for earlier fresh audits');
+  assert.equal(source(snapshot).counts.invalidClock, 0, 'superseded evidence outside this window is not a 48h blocker');
+  assert.equal(snapshot.eligible, true);
 });

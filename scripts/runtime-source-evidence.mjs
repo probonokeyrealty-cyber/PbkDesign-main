@@ -10,6 +10,7 @@ const MAX_BYTES = 16 * 1024 * 1024;
 const MAX_REPORT = 8192;
 const DEADLINE_MS = 30000;
 const WINDOW_MS = 86400000;
+const HISTORY_REACH_MS = 2 * WINDOW_MS;
 const FORMAT = 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"';
 const stamp = column => `to_char(${column} AT TIME ZONE 'UTC', '${FORMAT}') AS ${column}`;
 
@@ -127,13 +128,52 @@ function binding(row, kind, secret) {
 }
 
 function makeReport({ revision, sourceKind, recordRef, sourceBinding, presence = 'present',
-  context, outcome, clockValid, observedAt, secret }) {
+  context, outcome, clockValid, observedAt, sequence = 1, history = [], historyFloor = null, secret }) {
   const report = { schemaVersion: SCHEMA, tenantId: 'pbk', revision, sourceKind, recordRef, sourceBinding,
     presence, receiptKind: context.classification === 'unknown' ? 'observed_unknown' : 'source_write',
-    origin: context.origin, classification: context.classification, outcome, clockValid, observedAt: iso(observedAt) };
+    origin: context.origin, classification: context.classification, outcome, clockValid, observedAt: iso(observedAt),
+    sequence, history, historyFloor };
   report.signature = signature(report, secret);
   if (bytes(report) > MAX_REPORT) throw new Error('Source receipt oversized');
   return report;
+}
+
+function eventOf(report) {
+  const { revision, sourceBinding, presence, receiptKind, origin, classification,
+    outcome, clockValid, observedAt, sequence } = report;
+  return { revision, sourceBinding, presence, receiptKind, origin, classification,
+    outcome, clockValid, observedAt, sequence };
+}
+
+function advanceReport(prior, input) {
+  if (!prior) return makeReport(input);
+  const cutoff = input.observedAt - HISTORY_REACH_MS;
+  const all = [...prior.history, eventOf(prior)];
+  const history = all.filter(event => time(event.observedAt) >= cutoff);
+  return makeReport({ ...input, sequence: prior.sequence + 1, history,
+    historyFloor: history.length < all.length ? iso(cutoff) : prior.historyFloor });
+}
+
+function compactReport(report, now, secret) {
+  const cutoff = now - HISTORY_REACH_MS;
+  const history = report.history.filter(event => time(event.observedAt) >= cutoff);
+  return history.length === report.history.length ? report : makeReport({ ...report,
+    context: { origin: report.origin, classification: report.classification },
+    observedAt: time(report.observedAt), history, historyFloor: iso(cutoff), secret });
+}
+
+function validEvent(event, now) {
+  const originClass = { operator_chat: 'operational', phone_turn: 'operational', registered_business: 'operational',
+    runtime_circuit: 'operational', diagnostic: 'diagnostic', controlled: 'controlled', unknown: 'unknown' };
+  return plain(event) && validRevision(event.revision) && hex(event.sourceBinding)
+    && ['present', 'deleted'].includes(event.presence) && typeof event.clockValid === 'boolean'
+    && Number.isSafeInteger(event.sequence) && event.sequence > 0
+    && Number.isFinite(time(event.observedAt)) && iso(time(event.observedAt)) === event.observedAt
+    && time(event.observedAt) <= now && originClass[event.origin] === event.classification
+    && typeof event.classification === 'string'
+    && event.receiptKind === (event.classification === 'unknown' ? 'observed_unknown' : 'source_write')
+    && (event.presence !== 'deleted' || event.classification === 'unknown' && event.outcome === 'deleted')
+    && ['success', 'warning', 'failed', 'cancelled', 'skipped', 'blocked', 'allowed', 'pending', 'unknown', 'deleted'].includes(event.outcome);
 }
 
 function verifyReceipt(row, { secret, revision, now }) {
@@ -147,12 +187,17 @@ function verifyReceipt(row, { secret, revision, now }) {
     || row.id !== receiptId(secret, r.sourceKind, r.recordRef)) return null;
   const stored = row.created_at instanceof Date ? row.created_at.getTime() : Date.parse(row.created_at);
   if (stored !== time(r.observedAt)) return null;
-  const originClass = { operator_chat: 'operational', phone_turn: 'operational', registered_business: 'operational',
-    runtime_circuit: 'operational', diagnostic: 'diagnostic', controlled: 'controlled', unknown: 'unknown' };
-  if (originClass[r.origin] !== r.classification || !originClass[r.origin]
-    || r.receiptKind !== (r.classification === 'unknown' ? 'observed_unknown' : 'source_write')
-    || r.presence === 'deleted' && (r.classification !== 'unknown' || r.outcome !== 'deleted')
-    || !['success', 'warning', 'failed', 'cancelled', 'skipped', 'blocked', 'allowed', 'pending', 'unknown', 'deleted'].includes(r.outcome)) return null;
+  if (!validEvent(r, now) || !Array.isArray(r.history) || r.history.length >= MAX_ROWS
+    || r.historyFloor !== null && (!Number.isFinite(time(r.historyFloor))
+      || iso(time(r.historyFloor)) !== r.historyFloor || time(r.historyFloor) > now)) return null;
+  const events = [...r.history, eventOf(r)];
+  for (let i = 0; i < events.length; i++) {
+    const event = events[i];
+    if (!validEvent(event, now) || i < events.length - 1 && canonicalJson(event) !== canonicalJson(eventOf(event))
+      || i > 0 && (event.sequence !== events[i - 1].sequence + 1
+        || time(event.observedAt) < time(events[i - 1].observedAt))) return null;
+  }
+  if (events[0].sequence !== 1 && r.historyFloor === null) return null;
   const expected = makeReport({ ...r, context: { origin: r.origin, classification: r.classification },
     observedAt: time(r.observedAt), secret });
   return canonicalJson(expected) === canonicalJson(r)
@@ -161,7 +206,7 @@ function verifyReceipt(row, { secret, revision, now }) {
 
 const receiptSelect = `SELECT id, tenant_id, suite_name, ok, total, passed, failed, report, source, created_at
   FROM public.pbk_eval_runs`;
-async function save(query, report, secret) {
+async function save(query, report, secret, now) {
   const id = receiptId(secret, report.sourceKind, report.recordRef);
   const result = await query(`INSERT INTO public.pbk_eval_runs
     (id,tenant_id,suite_name,ok,total,passed,failed,report,source,created_at)
@@ -171,8 +216,92 @@ async function save(query, report, secret) {
   [id, SUITE, JSON.stringify(report), SOURCE, report.observedAt]);
   if (result.rowCount !== 1 && result.affectedRows !== 1) throw new Error('Source evidence not saved');
   const row = (await query(`${receiptSelect} WHERE id=$1`, [id])).rows?.[0];
-  const verified = verifyReceipt(row, { secret, revision: report.revision, now: time(report.observedAt) });
+  const verified = verifyReceipt(row, { secret, revision: report.revision, now });
   if (!verified || canonicalJson(verified) !== canonicalJson(report)) throw new Error('Source evidence readback failed');
+}
+
+const inventoryId = secret => `runtime-source-inventory-${opaque(secret, 'inventory-id', 'pbk')}`;
+const inventoryDigest = (reports, secret) => opaque(secret, 'inventory-bindings', [...reports.values()]
+  .sort((a, b) => `${a.sourceKind}:${a.recordRef}`.localeCompare(`${b.sourceKind}:${b.recordRef}`)));
+const inventorySign = (report, secret) => {
+  const { signature: _ignored, ...unsigned } = report;
+  return opaque(secret, 'inventory-signature', unsigned);
+};
+
+async function proofCensus(query, sourceBytes = 0) {
+  const where = "tenant_id='pbk' AND (suite_name=$1 OR source=$2)";
+  const size = (await query(`SELECT COUNT(*) AS count, COALESCE(SUM(octet_length(to_jsonb(p)::text)),0) AS bytes
+    FROM (${receiptSelect} WHERE ${where}) p`, [SUITE, SOURCE])).rows?.[0];
+  const n = Number(size?.count), b = Number(size?.bytes);
+  if (!Number.isSafeInteger(n) || n < 0 || n > MAX_ROWS + 1 || !Number.isSafeInteger(b) || b < 0
+    || sourceBytes + b > MAX_BYTES) throw new Error('Proof census oversized');
+  const rows = (await query(`${receiptSelect} WHERE ${where} ORDER BY id LIMIT 10002`, [SUITE, SOURCE])).rows;
+  if (!Array.isArray(rows) || rows.length !== n || bytes(rows) + sourceBytes > MAX_BYTES) {
+    throw new Error('Proof census incomplete');
+  }
+  return rows;
+}
+
+function readLedger(rows, secret, now) {
+  const reports = new Map();
+  let inventory;
+  for (const row of rows) {
+    if (row.id === inventoryId(secret)) { if (inventory) throw new Error('Duplicate inventory'); inventory = row; continue; }
+    const report = validRevision(row.report?.revision)
+      ? verifyReceipt(row, { secret, revision: row.report.revision, now }) : null;
+    if (!report) throw new Error('History receipt unverified');
+    const key = `${report.sourceKind}:${report.recordRef}`;
+    if (reports.has(key)) throw new Error('Duplicate source history');
+    reports.set(key, report);
+  }
+  if (!rows.length) return { reports, inventory: null };
+  const r = inventory?.report;
+  if (!plain(r) || bytes(r) > MAX_REPORT || r.schemaVersion !== SCHEMA || r.ledgerKind !== 'inventory'
+    || r.tenantId !== 'pbk' || !Number.isSafeInteger(r.generation) || r.generation < 1
+    || r.receiptCount !== reports.size || r.fingerprint !== inventoryDigest(reports, secret)
+    || !hex(r.signature) || !Number.isFinite(time(r.observedAt)) || iso(time(r.observedAt)) !== r.observedAt
+    || time(r.observedAt) > now || inventory.tenant_id !== 'pbk' || inventory.suite_name !== SUITE
+    || inventory.source !== SOURCE || inventory.ok !== false || inventory.total !== 0
+    || inventory.passed !== 0 || inventory.failed !== 0
+    || new Date(inventory.created_at).getTime() !== time(r.observedAt)) throw new Error('History inventory unverified');
+  const expected = { schemaVersion: SCHEMA, ledgerKind: 'inventory', tenantId: 'pbk', generation: r.generation,
+    receiptCount: reports.size, fingerprint: inventoryDigest(reports, secret), observedAt: r.observedAt };
+  expected.signature = inventorySign(expected, secret);
+  if (canonicalJson(expected) !== canonicalJson(r)
+    || !timingSafeEqual(Buffer.from(r.signature, 'hex'), Buffer.from(expected.signature, 'hex'))) {
+    throw new Error('History inventory signature invalid');
+  }
+  if ([...reports.values()].reduce((n, report) => n + report.history.length + 1, 0) > MAX_ROWS) {
+    throw new Error('History census oversized');
+  }
+  return { reports, inventory: r };
+}
+
+async function saveLedger(query, ledger, reports, secret, now, sourceBytes = 0) {
+  const fingerprint = inventoryDigest(reports, secret);
+  const count = [...reports.values()].reduce((n, report) => n + report.history.length + 1, 0);
+  if (count > MAX_ROWS || reports.size > MAX_ROWS || bytes([...reports.values()]) + sourceBytes + MAX_REPORT > MAX_BYTES) {
+    throw new Error('History census oversized');
+  }
+  if (ledger.inventory?.fingerprint === fingerprint) return ledger.inventory;
+  const inventory = { schemaVersion: SCHEMA, ledgerKind: 'inventory', tenantId: 'pbk',
+    generation: (ledger.inventory?.generation || 0) + 1, receiptCount: reports.size, fingerprint, observedAt: iso(now) };
+  inventory.signature = inventorySign(inventory, secret);
+  if (bytes(inventory) > MAX_REPORT) throw new Error('Inventory oversized');
+  for (const [key, report] of reports) {
+    if (canonicalJson(ledger.reports.get(key) || null) !== canonicalJson(report)) await save(query, report, secret, now);
+  }
+  const id = inventoryId(secret);
+  const result = await query(`INSERT INTO public.pbk_eval_runs
+    (id,tenant_id,suite_name,ok,total,passed,failed,report,source,created_at)
+    VALUES ($1,'pbk',$2,false,0,0,0,$3::jsonb,$4,$5::timestamptz)
+    ON CONFLICT (id) DO UPDATE SET report=EXCLUDED.report,created_at=EXCLUDED.created_at
+    WHERE pbk_eval_runs.tenant_id='pbk' AND pbk_eval_runs.suite_name=$2 AND pbk_eval_runs.source=$4`,
+  [id, SUITE, JSON.stringify(inventory), SOURCE, inventory.observedAt]);
+  if (result.rowCount !== 1 && result.affectedRows !== 1) throw new Error('Inventory not saved');
+  const readback = readLedger(await proofCensus(query, sourceBytes), secret, now);
+  if (canonicalJson(readback.inventory) !== canonicalJson(inventory)) throw new Error('Inventory readback changed');
+  return inventory;
 }
 
 function observeClock(now, start, previous = start) {
@@ -205,16 +334,19 @@ export async function recordRuntimeSourceEvidence({ pool, secret, revision, sour
       const observedAt = observeClock(now, start);
       const outcome = outcomeOf(row, sourceKind);
       if (!sourceClockValid(row, sourceKind, observedAt) || outcome === 'unknown') throw new Error('Source unverified');
-      const id = receiptId(secret, sourceKind, refs.recordRef);
-      const prior = verifyReceipt((await query(`${receiptSelect} WHERE id=$1`, [id])).rows?.[0],
-        { secret, revision, now: observedAt });
+      const ledger = readLedger(await proofCensus(query), secret, observedAt);
+      const key = `${sourceKind}:${refs.recordRef}`;
+      const prior = ledger.reports.get(key);
       if (prior?.classification === 'operational' && context.classification !== 'operational') {
         throw new Error('Source context mismatch');
       }
       // A delayed duplicate must not move the first observation forward or upgrade its origin.
-      const report = prior?.presence === 'present' && prior.sourceBinding === refs.sourceBinding ? prior
-        : makeReport({ revision, sourceKind, ...refs, context, outcome, clockValid: true, observedAt, secret });
-      await save(query, report, secret);
+      const next = prior?.presence === 'present' && prior.sourceBinding === refs.sourceBinding
+        && prior.revision === revision ? prior
+        : advanceReport(prior, { revision, sourceKind, ...refs, context, outcome, clockValid: true, observedAt, secret });
+      const report = compactReport(next, observedAt, secret);
+      const reports = new Map(ledger.reports).set(key, report);
+      await saveLedger(query, ledger, reports, secret, observedAt);
       observeClock(now, start, observedAt);
       return { ok: true, verified: true, readbackVerified: true, eligible: false, result: 'source_receipt_verified',
         sourceKind, recordRef: refs.recordRef, sourceBinding: refs.sourceBinding,
@@ -243,38 +375,31 @@ async function census(query) {
     if (!Array.isArray(selected) || selected.length !== n) throw new Error('Census incomplete');
     rows.set(kind, selected.map(value => value.row));
   }
-  const where = "tenant_id='pbk' AND (suite_name=$1 OR source=$2)";
-  const size = (await query(`SELECT COUNT(*) AS count, COALESCE(SUM(octet_length(to_jsonb(p)::text)),0) AS bytes
-    FROM (${receiptSelect} WHERE ${where}) p`, [SUITE, SOURCE])).rows?.[0];
-  const n = Number(size?.count), b = Number(size?.bytes);
-  if (!Number.isSafeInteger(n) || n < 0 || n > MAX_ROWS || !Number.isSafeInteger(b) || b < 0
-    || totalBytes + b > MAX_BYTES) throw new Error('Proof census oversized');
-  const receipts = (await query(`${receiptSelect} WHERE ${where} ORDER BY id LIMIT 10001`, [SUITE, SOURCE])).rows;
-  if (!Array.isArray(receipts) || receipts.length !== n || bytes(receipts) + totalBytes > MAX_BYTES) {
-    throw new Error('Proof census incomplete');
-  }
+  const receipts = await proofCensus(query, totalBytes);
   return { rows, receipts, sourceBytes: totalBytes };
 }
 
-function classify(report, windowStart, windowEnd) {
+function classify(report, windowStart, windowEnd, historical = false) {
   const inWindow = time(report.observedAt) >= windowStart && time(report.observedAt) <= windowEnd;
   return { sourceKind: report.sourceKind, recordRef: report.recordRef, sourceBinding: report.sourceBinding,
     presence: report.presence, classification: report.classification, origin: report.origin,
     receiptKind: report.receiptKind, outcome: report.outcome, clockValid: report.clockValid,
-    observedAt: report.observedAt, inWindow,
-    eligible: inWindow && report.classification === 'operational' && report.presence === 'present'
+    observedAt: report.observedAt, sequence: report.sequence, revision: report.revision, historical, inWindow,
+    eligible: !historical && inWindow && report.classification === 'operational' && report.presence === 'present'
       && report.clockValid && report.outcome === 'success' };
 }
 
-function summarize(sourceKind, rows, secret, windowEnd) {
+function summarize(sourceKind, rows, history, secret, windowEnd) {
   rows.sort((a, b) => a.recordRef.localeCompare(b.recordRef));
-  const counts = { census: rows.length, present: 0, deleted: 0, inWindow: 0, unknown: 0,
+  history.sort((a, b) => a.recordRef.localeCompare(b.recordRef) || a.sequence - b.sequence);
+  const counts = { census: rows.length, history: history.length, observations: rows.length + history.length,
+    present: 0, deleted: 0, inWindow: 0, unknown: 0,
     operational: 0, controlled: 0, diagnostic: 0, lateUnknown: 0, success: 0, warning: 0,
     failed: 0, cancelled: 0, skipped: 0, blocked: 0, allowed: 0, pending: 0,
     unknownOutcome: 0, invalidClock: 0, eligible: 0 };
-  for (const row of rows) {
-    counts[row.presence]++;
-    if (!row.clockValid) counts.invalidClock++;
+  for (const row of rows) counts[row.presence]++;
+  for (const row of [...rows, ...history]) {
+    if (!row.clockValid && (!row.historical || row.inWindow)) counts.invalidClock++;
     if (row.classification === 'unknown' && time(row.observedAt) > windowEnd) counts.lateUnknown++;
     if (row.inWindow) {
       counts.inWindow++;
@@ -284,88 +409,170 @@ function summarize(sourceKind, rows, secret, windowEnd) {
       if (row.eligible) counts.eligible++;
     }
   }
-  const times = rows.map(row => row.observedAt).sort();
-  return { sourceKind, counts, fingerprint: opaque(secret, 'source-census', { sourceKind, rows }),
+  const times = [...rows, ...history].map(row => row.observedAt).sort();
+  return { sourceKind, counts, fingerprint: opaque(secret, 'source-census', { sourceKind, rows, history }),
     observationBounds: { firstObservedAt: times[0] || null, lastObservedAt: times.at(-1) || null },
     eligible: counts.unknown === 0 && counts.lateUnknown === 0 && counts.failed === 0 && counts.cancelled === 0
-      && counts.skipped === 0 && counts.invalidClock === 0, rows };
+      && counts.skipped === 0 && counts.invalidClock === 0, rows, history };
 }
 
-// client must be dedicated and outside any caller transaction. Only monitoring receipts are written.
-export async function collectRuntimeSourceSnapshot({ client, secret, revision, windowStart, windowEnd, now = Date.now } = {}) {
-  if (!client?.query || !validSecret(secret) || !validRevision(revision)
-    || !validClock(windowStart) || !validClock(windowEnd) || windowStart > windowEnd
-    || windowEnd - windowStart > WINDOW_MS) return gap('source_snapshot_input_unverified');
-  const budget = deadline();
-  let destroyed = false;
-  const destroy = () => { if (!destroyed) { destroyed = true; releaseClient(client, true); } };
-  try {
-    const started = clock(now);
-    if (!validClock(started) || windowEnd > started) return gap('source_snapshot_clock_unverified');
-    return await transaction(client, budget, async query => {
-      const { rows, receipts, sourceBytes } = await census(query);
-      const observedAt = observeClock(now, started);
-      const valid = new Map();
-      let invalidReceipts = 0;
-      for (const row of receipts) {
-        const report = validRevision(row.report?.revision)
-          ? verifyReceipt(row, { secret, revision: row.report.revision, now: observedAt }) : null;
-        if (!report) { invalidReceipts++; continue; }
-        const key = `${report.sourceKind}:${report.recordRef}`;
-        if (valid.has(key)) throw new Error('Duplicate source receipt');
-        valid.set(key, report);
-      }
-      const classified = new Map(kinds.map(kind => [kind, []]));
-      const pending = [];
-      for (const kind of kinds) {
-        const seen = new Set();
-        for (const row of rows.get(kind)) {
-          const refs = binding(row, kind, secret);
-          if (seen.has(refs.recordRef)) throw new Error('Duplicate source identity');
-          seen.add(refs.recordRef);
-          const key = `${kind}:${refs.recordRef}`, prior = valid.get(key);
-          valid.delete(key);
-          const clockValid = sourceClockValid(row, kind, observedAt), outcome = outcomeOf(row, kind);
-          const unchanged = prior?.presence === 'present' && prior.sourceBinding === refs.sourceBinding ? prior
-            : makeReport({ revision, sourceKind: kind, ...refs, context: { origin: 'unknown', classification: 'unknown' },
-              outcome, clockValid, observedAt, secret });
-          const report = unchanged.revision === revision ? unchanged : makeReport({ ...unchanged, revision,
-            context: { origin: 'unknown', classification: 'unknown' },
-            observedAt: unchanged.classification === 'unknown' ? time(unchanged.observedAt) : observedAt, secret });
-          if (report !== prior) pending.push(report);
-          classified.get(kind).push(classify(report, windowStart, windowEnd));
-        }
-      }
-      // A tombstone anchors actual observation of absence, never the source's claimed write date.
-      for (const prior of valid.values()) {
-        const report = prior.presence === 'deleted' ? (prior.revision === revision ? prior
-          : makeReport({ ...prior, revision, context: { origin: 'unknown', classification: 'unknown' },
-            observedAt: time(prior.observedAt), secret })) : makeReport({ revision,
-          sourceKind: prior.sourceKind, recordRef: prior.recordRef,
-          sourceBinding: opaque(secret, 'deleted-source', { sourceKind: prior.sourceKind,
-            recordRef: prior.recordRef, previousBinding: prior.sourceBinding, observedAt }),
-          presence: 'deleted', context: { origin: 'unknown', classification: 'unknown' },
-          outcome: 'deleted', clockValid: true, observedAt, secret });
-        if (report !== prior) pending.push(report);
-        classified.get(report.sourceKind).push(classify(report, windowStart, windowEnd));
-      }
-      if ([...classified.values()].reduce((n, values) => n + values.length, 0) > MAX_ROWS) throw new Error('Census oversized');
-      // Reserve the complete next proof footprint before the first monitoring write.
-      const nextReports = [...classified.values()].flat();
-      if (sourceBytes + bytes(receipts) + bytes(nextReports) + bytes(pending) > MAX_BYTES) throw new Error('Observation footprint oversized');
-      for (const report of pending) await save(query, report, secret);
-      const summaries = kinds.map(kind => summarize(kind, classified.get(kind), secret, windowEnd));
-      const completed = observeClock(now, started, observedAt);
-      return { ok: true, verified: true, readbackVerified: true, result: 'source_snapshot_verified',
-        schemaVersion: SCHEMA, revision, windowStart: iso(windowStart), windowEnd: iso(windowEnd),
-        observationBounds: { startedAt: iso(started), completedAt: iso(completed) }, invalidReceipts,
-        eligible: invalidReceipts === 0 && summaries.every(s => s.eligible)
-          && summaries.some(s => s.counts.eligible > 0),
-        fingerprint: opaque(secret, 'whole-census', summaries.map(({ sourceKind, fingerprint }) => ({ sourceKind, fingerprint }))),
-        sources: summaries };
-    }, destroy);
-  } catch (error) {
-    if (error.code === 'SOURCE_TIMEOUT') destroy();
-    return gap(error.code === 'SOURCE_TIMEOUT' ? 'source_snapshot_timed_out' : 'source_snapshot_unverified');
+const snapshotInputValid = ({ client, secret, revision, windowStart, windowEnd }) => client?.query
+  && validSecret(secret) && validRevision(revision) && validClock(windowStart) && validClock(windowEnd)
+  && windowStart <= windowEnd && windowEnd - windowStart <= WINDOW_MS;
+
+// The caller's monotonic deadline and abort signal fence every continuation, not just the outer promise.
+function queryFence(client, fence) {
+  if (!plain(fence) || !Number.isFinite(fence.deadlineAt) || fence.deadlineAt - performance.now() > 15000
+    || typeof fence.signal?.addEventListener !== 'function' || typeof fence.signal.removeEventListener !== 'function'
+    || typeof fence.signal.aborted !== 'boolean' || typeof fence.onAbort !== 'function') {
+    throw new Error('Inherited fence required');
   }
+  const { deadlineAt, signal, onAbort: abortOwner } = fence;
+  let stopped = false;
+  const stop = () => {
+    if (!stopped) {
+      stopped = true;
+      try { abortOwner(); } catch { /* A failed owner callback cannot reopen the fence. */ }
+      releaseClient(client, true);
+    }
+  };
+  const remaining = () => deadlineAt - performance.now();
+  const check = () => {
+    if (stopped || signal.aborted || remaining() <= 0) { stop(); throw timeout(); }
+  };
+  signal.addEventListener('abort', stop, { once: true });
+  return { check, stop, remaining, close: () => signal.removeEventListener('abort', stop),
+    async query(text, values = []) {
+      check();
+      const limit = Math.max(1, Math.floor(Math.min(2000, remaining())));
+      let timer, rejectAbort;
+      const onAbort = () => { stop(); rejectAbort?.(timeout()); };
+      const abandoned = new Promise((_, reject) => {
+        rejectAbort = reject;
+        timer = setTimeout(onAbort, limit);
+        signal.addEventListener('abort', onAbort, { once: true });
+      });
+      const operation = Promise.resolve().then(() => {
+        check();
+        return client.query({ text, values, query_timeout: limit });
+      });
+      try {
+        const result = await Promise.race([operation, abandoned]);
+        check();
+        return result;
+      } catch (error) { if (error.code === 'SOURCE_TIMEOUT') stop(); throw error; }
+      finally { clearTimeout(timer); signal.removeEventListener('abort', onAbort); }
+    } };
+}
+
+async function snapshotCore({ secret, revision, windowStart, windowEnd, now = Date.now }, control) {
+  control.check();
+  const started = clock(now);
+  if (!validClock(started) || windowEnd > started) throw new Error('Source observation clock invalid');
+  const query = control.query;
+  await query(`SELECT set_config('statement_timeout',$1,true), set_config('lock_timeout',$1,true),
+    set_config('idle_in_transaction_session_timeout',$1,true)`,
+  [`${Math.max(1, Math.floor(Math.min(2000, control.remaining())))}ms`]);
+  const lock = await query('SELECT pg_try_advisory_xact_lock(hashtext($1)) AS acquired', [SOURCE]);
+  if (lock.rows?.[0]?.acquired !== true) throw new Error('Source evidence busy');
+  const { rows, receipts, sourceBytes } = await census(query);
+  control.check();
+  const observedAt = observeClock(now, started);
+  const ledger = readLedger(receipts, secret, observedAt);
+  const reports = new Map(ledger.reports), missing = new Map(ledger.reports);
+  const unknown = { origin: 'unknown', classification: 'unknown' };
+  for (const kind of kinds) {
+    const seen = new Set();
+    for (const row of rows.get(kind)) {
+      control.check();
+      const refs = binding(row, kind, secret);
+      if (seen.has(refs.recordRef)) throw new Error('Duplicate source identity');
+      seen.add(refs.recordRef);
+      const key = `${kind}:${refs.recordRef}`, prior = reports.get(key);
+      missing.delete(key);
+      let report = prior?.presence === 'present' && prior.sourceBinding === refs.sourceBinding ? prior
+        : advanceReport(prior, { revision, sourceKind: kind, ...refs, context: unknown,
+          outcome: outcomeOf(row, kind), clockValid: sourceClockValid(row, kind, observedAt), observedAt, secret });
+      if (report.revision !== revision) {
+        report = report.classification === 'unknown'
+          ? makeReport({ ...report, revision, context: unknown, observedAt: time(report.observedAt), secret })
+          : advanceReport(report, { ...report, revision, context: unknown, observedAt, secret });
+      }
+      reports.set(key, compactReport(report, observedAt, secret));
+    }
+  }
+  for (const [key, prior] of missing) {
+    control.check();
+    const report = prior.presence === 'deleted' ? (prior.revision === revision ? prior
+      : makeReport({ ...prior, revision, context: unknown, observedAt: time(prior.observedAt), secret }))
+      : advanceReport(prior, { revision, sourceKind: prior.sourceKind, recordRef: prior.recordRef,
+        sourceBinding: opaque(secret, 'deleted-source', { sourceKind: prior.sourceKind,
+          recordRef: prior.recordRef, previousBinding: prior.sourceBinding, observedAt }),
+        presence: 'deleted', context: unknown, outcome: 'deleted', clockValid: true, observedAt, secret });
+    reports.set(key, compactReport(report, observedAt, secret));
+  }
+  const classified = new Map(kinds.map(kind => [kind, []]));
+  const history = new Map(kinds.map(kind => [kind, []]));
+  let historyCompleteFrom = null;
+  for (const report of reports.values()) {
+    control.check();
+    if (report.historyFloor !== null && windowStart < time(report.historyFloor)) throw new Error('History window unavailable');
+    if (report.historyFloor !== null && (!historyCompleteFrom || report.historyFloor > historyCompleteFrom)) {
+      historyCompleteFrom = report.historyFloor;
+    }
+    classified.get(report.sourceKind).push(classify(report, windowStart, windowEnd));
+    for (const event of report.history) {
+      history.get(report.sourceKind).push(classify({ ...event, sourceKind: report.sourceKind,
+        recordRef: report.recordRef }, windowStart, windowEnd, true));
+    }
+  }
+  control.check();
+  const inventory = await saveLedger(query, ledger, reports, secret, observedAt, sourceBytes);
+  const summaries = kinds.map(kind => summarize(kind, classified.get(kind), history.get(kind), secret, windowEnd));
+  const completed = observeClock(now, started, observedAt);
+  control.check();
+  return { ok: true, verified: true, readbackVerified: true, transactionPending: true,
+    result: 'source_snapshot_verified', schemaVersion: SCHEMA, revision,
+    windowStart: iso(windowStart), windowEnd: iso(windowEnd),
+    observationBounds: { startedAt: iso(started), completedAt: iso(completed) }, invalidReceipts: 0, historyCompleteFrom,
+    inventory: { generation: inventory.generation, fingerprint: inventory.fingerprint, receiptCount: inventory.receiptCount },
+    eligible: summaries.every(s => s.eligible) && summaries.some(s => s.counts.eligible > 0),
+    fingerprint: opaque(secret, 'whole-census', { historyCompleteFrom, inventoryFingerprint: inventory.fingerprint,
+      sources: summaries.map(({ sourceKind, fingerprint }) => ({ sourceKind, fingerprint })) }),
+    sources: summaries };
+}
+
+// Internal composition only: caller owns the already-open fenced transaction and its final commit/readback.
+export async function collectRuntimeSourceSnapshotInTransaction(input = {}) {
+  let control;
+  try {
+    control = queryFence(input.client, input.fence);
+    control.check();
+    if (!snapshotInputValid(input)) throw new Error('Source snapshot input invalid');
+    return await snapshotCore(input, control);
+  } catch (error) {
+    control?.stop();
+    return gap(error.code === 'SOURCE_TIMEOUT' ? 'source_snapshot_timed_out' : 'source_snapshot_unverified');
+  } finally { control?.close(); }
+}
+
+// Standalone wrapper owns its transaction; the same 15s/2s fence guards BEGIN through COMMIT.
+export async function collectRuntimeSourceSnapshot(input = {}) {
+  if (!snapshotInputValid(input)) return gap('source_snapshot_input_unverified');
+  const fence = { deadlineAt: performance.now() + 15000, signal: new AbortController().signal, onAbort() {} };
+  const control = queryFence(input.client, fence);
+  let began = false;
+  try {
+    await control.query('BEGIN ISOLATION LEVEL REPEATABLE READ');
+    began = true;
+    const result = await snapshotCore(input, control);
+    await control.query('COMMIT');
+    return { ...result, transactionPending: false };
+  } catch (error) {
+    if (began && error.code !== 'SOURCE_TIMEOUT') {
+      try { await control.query('ROLLBACK'); } catch { control.stop(); }
+    }
+    control.stop();
+    return gap(error.code === 'SOURCE_TIMEOUT' ? 'source_snapshot_timed_out' : 'source_snapshot_unverified');
+  } finally { control.close(); }
 }

@@ -20,6 +20,7 @@ try {
     for (const width of [1440, 390]) {
       const page = await browser.newPage({ viewport: { width, height: 900 } });
       const requests = [];
+      let failPdf = false;
       await page.addInitScript(() => {
         window.print = () => {};
         window.qaBlockedFrames = [];
@@ -32,6 +33,8 @@ try {
           address: '123 QA Street', type: 'house', contact: 'owner', selectedPath: 'cash',
           sellerName: 'QA Seller', sellerEmail: 'seller@example.invalid', price: 150000,
           timeline: '15-30 Days',
+          beds: 3, baths: 2, sqft: 1234, year: 1990, dom: 0, zipCode: '90210',
+          notes: 'QA manual notes 100% retained',
         }));
       });
       await page.route('**/*', async (route) => {
@@ -45,6 +48,7 @@ try {
         }
         if (url.pathname === '/api/documents/pdf' && req.method() === 'POST') {
           requests.push(req.postDataJSON());
+          if (failPdf) return route.fulfill({ status: 503, json: { error: 'QA PDF unavailable' } });
           return route.fulfill({ contentType: 'application/pdf', body: pdf });
         }
         if (url.origin !== origin || /^\/(api\/|state$|health$|events$|invoke$)/.test(url.pathname)) {
@@ -76,6 +80,20 @@ try {
         assert.equal(url.searchParams.get('address'), '123 QA Street');
         assert.equal(await popup.evaluate(() => window.opener === null), true);
         await expect(popup.locator('[data-preview-action="print"]')).toBeVisible();
+        if (!print) {
+          const longReference = 'https://example.invalid/' + 'W'.repeat(350);
+          url.searchParams.set('compALink', longReference);
+          await popup.goto(url.toString());
+          const reference = popup.locator('.text-block').filter({ hasText: longReference }).first();
+          await expect(reference).toBeVisible();
+          assert.equal(await reference.evaluate(node => {
+            const page = node.closest('.packet-page').getBoundingClientRect();
+            const range = document.createRange();
+            range.selectNodeContents(node);
+            return [...range.getClientRects()].every(rect => rect.right <= page.right && rect.left >= page.left);
+          }), true,
+            'Long comp references must wrap within the printable column');
+        }
         await popup.close();
       };
       await openPackage('Preview Package', false);
@@ -90,6 +108,12 @@ try {
       await expect(panel.getByText(/^PDF ready/)).toBeVisible();
       assert.equal(requests[0].propertyAddress, '123 QA Street');
       assert.equal(requests[0].selectedPathLabel, 'Cash Offer');
+      assert.match(requests[0].content, /Square footage: 1,234/);
+      assert.match(requests[0].content, /QA manual notes 100% retained/);
+      const pdfFields = new URLSearchParams(requests[0].masterPackageQuery);
+      assert.equal(pdfFields.get('beds'), '3');
+      assert.equal(pdfFields.get('dom'), '0');
+      assert.equal(pdfFields.get('zipCode'), '90210');
       const iframe = panel.locator('iframe');
       await expect(iframe).toHaveAttribute('src', /^blob:/);
       const beforeRefresh = await iframe.getAttribute('src');
@@ -100,6 +124,33 @@ try {
         panel.getByRole('link', { name: 'Download PDF' }).click(),
       ]);
       assert.deepEqual(await readFile(await download.path()), pdf);
+      const stablePdfUrl = await iframe.getAttribute('src');
+      await templates.getByRole('button', { name: 'Path Package', exact: true }).click();
+      await page.waitForTimeout(1500);
+      assert.equal(await iframe.getAttribute('src'), stablePdfUrl,
+        'Template-only rerenders must retain the current PDF');
+      failPdf = true;
+      await panel.getByRole('button', { name: 'Refresh PDF' }).click();
+      await expect(panel.getByText('PDF service offline', { exact: true })).toBeVisible();
+      for (const name of ['Download PDF', 'Open PDF']) {
+        const control = panel.locator('a').filter({ hasText: name });
+        await expect(control).toHaveAttribute('aria-disabled', 'true');
+        await expect(control).not.toHaveAttribute('href', /./);
+      }
+      await expect(iframe).toHaveCount(0);
+      failPdf = false;
+      await panel.getByRole('button', { name: 'Refresh PDF' }).click();
+      await expect(panel.getByText(/^PDF ready/)).toBeVisible();
+      failPdf = true;
+      await page.getByRole('textbox', { name: 'Your Company Name', exact: true }).fill('QA revised company');
+      await expect(panel.locator('a').filter({ hasText: 'Download PDF' }))
+        .toHaveAttribute('aria-disabled', 'true');
+      await expect(iframe).toHaveCount(0);
+      await expect(panel.getByText('PDF service offline', { exact: true })).toBeVisible();
+      failPdf = false;
+      await panel.getByRole('button', { name: 'Refresh PDF' }).click();
+      await expect(panel.getByText(/^PDF ready/)).toBeVisible();
+      assert.equal(requests.at(-1).companyName, 'QA revised company');
       assert.deepEqual(await page.evaluate(() => window.qaBlockedFrames), [],
         'Production CSP must allow the inline PDF to load');
       assert.equal(await page.locator('.pbk-doc-workbench').evaluate(

@@ -472,8 +472,9 @@ assert(
   'The existing Analyzer CI gate must also run the draft storage regressions.'
 );
 assert(
-  pkg.scripts?.['test:analyzer-draft-storage'] === 'node --test ./scripts/analyzer-storage.node-test.mjs',
-  'The Analyzer draft gate must run the isolated storage tests.'
+  pkg.scripts?.['test:analyzer-draft-storage'] ===
+    'node --test ./scripts/analyzer-storage.node-test.mjs ./scripts/analyzer-browseros-mobile.node-test.mjs',
+  'The Analyzer draft gate must run both isolated storage and BrowserOS safety tests without live access.'
 );
 
 console.log('[deal-analyzer-modern-mobile-smoke] ok');

@@ -1818,7 +1818,10 @@ const checks = [
   {
     name: 'PDF generation and local config fail loudly on invalid runtime assumptions',
     ok:
-      /function buildRequestUrl/.test(netlifyDocumentsPdfFunction) &&
+      /pathToFileURL\(resolve\(process.cwd\(\), 'public', 'PBK_Master_Deal_Package.html'\)\)/.test(netlifyDocumentsPdfFunction) &&
+      /page\.setRequestInterception\(true\)/.test(netlifyDocumentsPdfFunction) &&
+      netlifyDocumentsPdfFunction.includes("page.waitForSelector('.packet-page'") &&
+      /included_files\s*=\s*\[[^\]]*"public\/PBK_Master_Deal_Package.html"/.test(netlifyConfig) &&
       !/event\.rawUrl/.test(netlifyDocumentsPdfFunction) &&
       /Human BANT\+ fields/.test(readFileSync(resolve(root, 'src/app/routes/Leads.tsx'), 'utf8')) &&
       /buildBantFromLeadForm/.test(readFileSync(resolve(root, 'src/app/routes/Leads.tsx'), 'utf8')) &&

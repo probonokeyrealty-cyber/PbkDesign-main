@@ -677,7 +677,11 @@ a { font: inherit; }
   color: var(--dark);
   font-size: 12px;
   line-height: 1.48;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
+
+.note-text { white-space: pre-wrap; }
 
 .text-card {
   padding: 10px 12px;
@@ -1008,7 +1012,7 @@ a { font: inherit; }
 
   /* â•â•â• PACKET PAGE â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
      Each <section class="packet-page"> = one printed
-     deliverable. display:block is CRITICAL â€” the screen
+     deliverable. display:block is CRITICAL - the screen
      uses display:flex which cannot split across pages
      and creates blank ghost pages in Chrome's PDF engine.
      page-break-before:always starts each deliverable on
@@ -1077,7 +1081,7 @@ a { font: inherit; }
 
   /* â•â•â• DOC-GRID â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
      display:grid cannot split across pages in Chrome.
-     Convert to block â€” children stack vertically with
+     Convert to block - children stack vertically with
      margin-bottom replacing gap. Tightened for print.
   â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */
   .doc-grid {
@@ -1094,7 +1098,7 @@ a { font: inherit; }
   }
 
   /* â•â•â• KPI ROW â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-     display:grid with overflow:hidden â€” both block
+     display:grid with overflow:hidden - both block
      page splitting. Use table layout instead.
   â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */
   .kpi-row {
@@ -1116,7 +1120,7 @@ a { font: inherit; }
   .packet-card .kpi-val   { font-size: 12px !important; }
 
   /* â•â•â• OPTION GRID â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-     display:grid â€” convert to table for reliable split.
+     display:grid - convert to table for reliable split.
   â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */
   .option-grid {
     display: table !important;
@@ -1141,7 +1145,7 @@ a { font: inherit; }
   .packet-card .text-block    { font-size: 8.9px !important; line-height: 1.32 !important; }
 
   /* â•â•â• NOTE-BLOCK â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-     display:flex + overflow:hidden â€” Chrome leaves a gap
+     display:flex + overflow:hidden - Chrome leaves a gap
      where the block "was" when pushed to next sheet.
      Table layout preserves the accent stripe without clipping.
   â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */
@@ -1170,7 +1174,7 @@ a { font: inherit; }
   .packet-card .notes-grid > *:last-child { margin-bottom: 0 !important; }
 
   /* â•â•â• CHECK-LIST & STEPS-LIST â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-     display:grid â€” convert to block.
+     display:grid - convert to block.
      Individual items use flex but are single-line so OK.
   â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */
   .check-list,
@@ -1248,7 +1252,7 @@ a { font: inherit; }
   .note-block     { break-inside: avoid; page-break-inside: avoid; }
 
   /* â•â•â• HEADINGS â€” keep with next sibling â•â•â•â•â•â•â•â•
-     Only h-tags, NOT .sec-hdr â€” sec-hdr causes orphan
+     Only h-tags, NOT .sec-hdr - sec-hdr causes orphan
      heading gaps at page bottoms when break-after:avoid
      is set and the following block can't fit.
   â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */
@@ -1470,10 +1474,10 @@ a { font: inherit; }
 <body>
 <div id="app"></div>
 <script>
-function escapeHtml(value) {
+function escapeHtml(value, literal) {
   var str = String(value == null ? "" : value);
   // Auto-fill [BRACKET] tokens from deal data before HTML-escaping
-  if (window._pbkFill) str = window._pbkFill(str);
+  if (window._pbkFill && !literal) str = window._pbkFill(str);
   return str
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
@@ -1488,7 +1492,7 @@ function escapeHtml(value) {
   function p(key, fallback) {
     try {
       var v = new URLSearchParams(window.location.search).get(key);
-      return (v !== null && v !== '') ? decodeURIComponent(v) : (fallback || '');
+      return (v !== null && v !== '') ? v : (fallback || '');
     } catch(e) { return fallback || ''; }
   }
   function fmt(n) {
@@ -1506,7 +1510,8 @@ function escapeHtml(value) {
     closeTimeline: p('closeTimeline', ''),
     earnestBase:  p('earnestBase', ''),
     arv:          fmt(p('arv'))    || '[ARV]',
-    cashPrice:    fmt(p('maoCash'))|| '[CASH PRICE]',
+    cashPrice:    (p('path', 'cash').indexOf('cash') === 0 ? fmt(p('agreedPrice')) : '') || fmt(p('maoCash')) || '[CASH PRICE]',
+    maoCash:      fmt(p('maoCash')) || '[MAO CASH]',
     rbpPrice:     fmt(p('maoRbp')) || '[RBP PRICE]',
     rbpGain:      (parseFloat(p('maoRbp')) > 0 && parseFloat(p('maoCash')) > 0) ? fmt(parseFloat(p('maoRbp')) - parseFloat(p('maoCash'))) : '[RBP GAIN]',
     agreedPrice:  fmt(p('agreedPrice')) || '[AGREED PRICE]',
@@ -1612,7 +1617,7 @@ function escapeHtml(value) {
       .replace(/\[SAFE CASH PRICE\]/g,     t.safeCash     || '[SAFE CASH PRICE]')
       .replace(/\[STRETCH CASH PRICE\]/g,  t.stretchCash  || '[STRETCH CASH PRICE]')
       .replace(/\[CEILING CASH PRICE\]/g,  t.ceilCash     || '[CEILING CASH PRICE]')
-      .replace(/\[MAO CASH\]/g,            t.cashPrice    || '[MAO CASH]')
+      .replace(/\[MAO CASH\]/g,            t.maoCash      || '[MAO CASH]')
       // Prices â€” RBP path
       .replace(/\[RBP PRICE\]/g,           t.rbpPrice     || '[RBP PRICE]')
       .replace(/\[RBP GAIN\]/g,            t.rbpGain      || '[RBP GAIN]')
@@ -1724,7 +1729,7 @@ function signatureRows(dateLabel) {
   return [
     ["Submitted By", "Probono Key Realty | (949) 204-0072 | info@probonokeyrealty.com"],
     ["Date", (t.date && t.date !== '[DATE]' ? t.date : null) || dateLabel || "[DATE]"],
-    ["Seller Acceptance", (t.sellerName && t.sellerName !== '[SELLER NAME]' ? t.sellerName + " â€” signature and date" : "Seller signature and date")]
+    ["Seller Acceptance", (t.sellerName && t.sellerName !== '[SELLER NAME]' ? t.sellerName + " - signature and date" : "Seller signature and date")]
   ];
 }
 
@@ -1867,7 +1872,7 @@ const packageData = {
           },
           { type: "signature", heading: "Acceptance", rows: signatureRows("[DATE]") },
           { type: "urgencyBar", expiryDays: 3 },
-          { type: "notes", items: [ note("Offer Validity", "This offer has been prepared based on current market data, comparable sales, and your property\'s condition as assessed by PBK. Market conditions can shift â€” the terms above reflect today\'s data. Accepting within the validity window guarantees these exact terms.", "amber") ] }
+          { type: "notes", items: [ note("Offer Validity", "This offer has been prepared based on current market data, comparable sales, and your property\'s condition as assessed by PBK. Market conditions can shift - the terms above reflect today\'s data. Accepting within the validity window guarantees these exact terms.", "amber") ] }
         ]
       },
       c: {
@@ -2380,10 +2385,10 @@ const packageData = {
           {
             type: "plainEnglish",
             steps: [
-              "You agree on a price and a rate. PBK pays you a down payment at closing â€” cash in hand day one.",
-              "PBK makes a monthly payment to you on the 1st of every month â€” just like a bank collecting a mortgage, except you\'re the bank.",
+              "You agree on a price and a rate. PBK pays you a down payment at closing - cash in hand day one.",
+              "PBK makes a monthly payment to you on the 1st of every month - just like a bank collecting a mortgage, except you\'re the bank.",
               "At [BALLOON DATE OR NONE], PBK pays the full remaining balance in one lump sum - your balloon payment.",
-              "If PBK ever misses payments, the deed of trust means the property comes back to you â€” no court required.",
+              "If PBK ever misses payments, the deed of trust means the property comes back to you - no court required.",
               "You can report the income as installment sale under IRS Â§453, spreading your capital gains tax over the term instead of paying it all in year one."
             ]
           }
@@ -2677,9 +2682,9 @@ const packageData = {
             type: "plainEnglish",
             steps: [
               "You stop making mortgage payments on day one. PBK takes over and makes them for you going forward.",
-              "At closing, PBK pays you the agreed equity amount â€” cash wired to you the same day.",
+              "At closing, PBK pays you the agreed equity amount - cash wired to you the same day.",
               "Your name stays on the loan temporarily (sub-to) or transfers completely (formal assumption). PBK handles all lender communication.",
-              "PBK provides a written indemnification â€” if anything goes wrong with payments, it\'s legally PBK\'s problem, not yours.",
+              "PBK provides a written indemnification - if anything goes wrong with payments, it\'s legally PBK\'s problem, not yours.",
               "You receive a written payment confirmation from PBK every month until the loan is paid off or refinanced."
             ]
           },
@@ -2932,7 +2937,7 @@ const packageData = {
             items: [
               note("Higher Gross Price", "RBP is designed to push price materially above direct cash by marketing to a qualified retail buyer."),
               note("PBK Covers the Work", "PBK covers repairs, staging, photography, and standard closing costs so the seller does not fund prep out of pocket.", "green"),
-              note("PBK Advantage", "PBK covers the full agent commission â€” seller pays nothing at closing. should expect a 30-60 day marketing window.", "amber")
+              note("PBK Advantage", "PBK covers the full agent commission - seller pays nothing at closing. should expect a 30-60 day marketing window.", "amber")
             ]
           },
           {
@@ -2943,7 +2948,7 @@ const packageData = {
               row(["Time to close", "30-60 days"]),
               row(["Financing fallout", "0% because PBK delivers a qualified buyer"]),
               row(["Appraisal required", "Yes"]),
-              row(["Agent commissions", "$0 â€” PBK covers all commissions"]),
+              row(["Agent commissions", "$0 - PBK covers all commissions"]),
               row(["Repair costs", "Covered by PBK"])
             ]
           },
@@ -2977,7 +2982,7 @@ const packageData = {
               { title: "LOI issued", desc: "PBK sends the RBP LOI and supporting analysis within 24 hours." },
               { title: "Repair and staging", desc: "PBK manages prep work without requiring seller cash out of pocket." },
               { title: "Marketing launch", desc: "PBK activates listing coordination, buyer qualification, and showings." },
-              { title: "Closing", desc: "Buyer closes and seller receives full agreed proceeds â€” PBK covers all commissions and costs." }
+              { title: "Closing", desc: "Buyer closes and seller receives full agreed proceeds - PBK covers all commissions and costs." }
             ]
           },
           {
@@ -3001,8 +3006,8 @@ const packageData = {
             rows: [
               row(["Property", "[PROPERTY ADDRESS]"]),
               row(["Agreed price", "[AGREED PRICE]"], "hl-green"),
-              row(["Listing period", "Up to 120 days â€” PBK manages entire process"]),
-              row(["Agent commission", "$0 to seller â€” PBK covers all agent commissions"]),
+              row(["Listing period", "Up to 120 days - PBK manages entire process"]),
+              row(["Agent commission", "$0 to seller - PBK covers all agent commissions"]),
               row(["Repair authorization", "PBK manages repairs and staging at PBK expense"]),
               row(["Closing timeline", "[CLOSE TIMELINE]"]),
               row(["Cash alternative", "[CASH ALTERNATIVE]"]),
@@ -3145,7 +3150,7 @@ const packageData = {
                   ["Repairs", "Covered by PBK"],
                   ["Staging", "Covered by PBK"],
                   ["Closing costs", "Covered by PBK"],
-                  ["Commission", "$0 to seller â€” PBK covers"],
+                  ["Commission", "$0 to seller - PBK covers"],
                   ["Appraisal", "Required"]
                 ]
               }
@@ -3158,7 +3163,7 @@ const packageData = {
             rows: [
               row(["Repairs and staging", "Often seller funded", "Covered by PBK"], "hl-blue"),
               row(["Closing costs", "Often shared or seller paid", "Covered by PBK"]),
-              row(["Commission", "5-6% (paid by seller)", "$0 â€” PBK covers all"]),
+              row(["Commission", "5-6% (paid by seller)", "$0 - PBK covers all"]),
               row(["Buyer qualification", "Agent managed", "PBK managed"]),
               row(["Execution style", "Open market with more variability", "PBK-managed retail process"])
             ]
@@ -3209,7 +3214,7 @@ const packageData = {
             type: "notes",
             items: [
               note("Cost Reminder", "PBK covers all repair costs and standard closing costs through this path."),
-              note("Commission", "PBK covers the agent commission â€” $0 to seller at any stage.", "green")
+              note("Commission", "PBK covers the agent commission - $0 to seller at any stage.", "green")
             ]
           }
         ]
@@ -3234,13 +3239,13 @@ const packageData = {
           {
             type: "notes",
             items: [
-              note("Fill Rule", "Fill every [BRACKET] field before presenting to seller. The fill tracker at the top of each deliverable counts remaining brackets â€” do not show a document with a non-zero count.", "red"),
+              note("Fill Rule", "Fill every [BRACKET] field before presenting to seller. The fill tracker at the top of each deliverable counts remaining brackets - do not show a document with a non-zero count.", "red"),
               note("UI Rule", "Only one path should be active at a time, and only one deliverable should be visible inside that active path."),
               note("Export Rule", "The preview and PDF always use the currently selected path only, never all paths and never the wrong path.", "green"),
               note("Urgency Rule", "Every LOI has a validity window. Issue the LOI the same day as the seller meeting. Follow up before expiration. Do not let LOIs expire without a seller response.", "amber"),
-              note("Objection Rule", "If a seller raises an objection, use the Objection Matrix in Deliverable A for the active path. Never improvise â€” the scripts are scripted for a reason.", "blue"),
+              note("Objection Rule", "If a seller raises an objection, use the Objection Matrix in Deliverable A for the active path. Never improvise - the scripts are scripted for a reason.", "blue"),
               note("Routing Rule", "Check the Motivation Score before choosing a presentation strategy. Score 1-2: educate only. Score 3: present all paths. Score 4-5: go directly to LOI on the best-fit path.", "blue"),
-              note("Commission Rule", "Never present RBP without the net proceeds calculator open. The 5-6% commission objection will come â€” get ahead of it with the math, not a verbal explanation.", "amber"),
+              note("Commission Rule", "Never present RBP without the net proceeds calculator open. The 5-6% commission objection will come - get ahead of it with the math, not a verbal explanation.", "amber"),
               note("Communication Rule", "Every seller-facing step should restate the active path, current deliverable, and the next required seller action.", "blue")
             ]
           },
@@ -3459,7 +3464,7 @@ function renderNotesBlock(block) {
         "<div class=\"note-accent" + tone + "\"></div>",
         "<div class=\"note-body" + tone + "\">",
         "<div class=\"note-label" + tone + "\">" + escapeHtml(item.label) + "</div>",
-        "<div class=\"note-text\">" + escapeHtml(item.body) + "</div>",
+        "<div class=\"note-text\">" + escapeHtml(item.body, item.literal) + "</div>",
         "</div>",
         "</div>"
       ].join("");
@@ -3473,7 +3478,7 @@ function renderTextBlock(block) {
     renderHeading(block),
     "<div class=\"text-card\">",
     block.paragraphs.map(function(paragraph) {
-      return "<p class=\"text-block\">" + escapeHtml(paragraph) + "</p>";
+      return "<p class=\"text-block\">" + escapeHtml(paragraph, block.literal) + "</p>";
     }).join(""),
     "</div>"
   ].join("");
@@ -3496,9 +3501,9 @@ function renderFillTracker(blocks) {
   var allText = JSON.stringify(blocks);
   var brackets = (allText.match(/\[[A-Z][A-Z0-9 \-\/]+\]/g) || []).length;
   if (brackets === 0) {
-    return '<div class="fill-tracker clean"><div class="fill-tracker-text"><strong>All fields populated</strong> â€” this document is ready to present to seller.</div><div class="fill-tracker-count">Ready</div></div>';
+    return '<div class="fill-tracker clean"><div class="fill-tracker-text"><strong>All fields populated</strong> - this document is ready to present to seller.</div><div class="fill-tracker-count">Ready</div></div>';
   }
-  return '<div class="fill-tracker"><div class="fill-tracker-icon">!</div><div class="fill-tracker-text"><strong>' + brackets + ' unfilled bracket' + (brackets === 1 ? '' : 's') + ' detected.</strong> Fill all [BRACKETS] before presenting to seller â€” a bracket in front of a seller kills trust instantly.</div><div class="fill-tracker-count">' + brackets + ' brackets</div></div>';
+  return '<div class="fill-tracker"><div class="fill-tracker-icon">!</div><div class="fill-tracker-text"><strong>' + brackets + ' unfilled bracket' + (brackets === 1 ? '' : 's') + ' detected.</strong> Fill all [BRACKETS] before presenting to seller - a bracket in front of a seller kills trust instantly.</div><div class="fill-tracker-count">' + brackets + ' brackets</div></div>';
 }
 
 function renderUrgencyBar(expiryDays) {
@@ -3509,7 +3514,7 @@ function renderUrgencyBar(expiryDays) {
 function renderPlainEnglishBox(steps) {
   return [
     '<div class="plain-english-box">',
-    '<div class="plain-english-header">In Plain English â€” What This Actually Means For You</div>',
+    '<div class="plain-english-header">In Plain English - What This Actually Means For You</div>',
     '<div class="plain-english-body">',
     steps.map(function(step, i) {
       return '<div class="plain-english-step"><div class="plain-english-num">' + (i+1) + '</div><div>' + escapeHtml(step) + '</div></div>';
@@ -3520,13 +3525,13 @@ function renderPlainEnglishBox(steps) {
 
 function renderMotivationRouter() {
   var rows = [
-    { score: "1â€“2", label: "Exploring", cls: "low",  action: "Educate only. Leave the DIR. Set a 7-day follow-up. Do not push an LOI.", path: "No active path yet â€” build trust first." },
+    { score: "1-2", label: "Exploring", cls: "low",  action: "Educate only. Leave the DIR. Set a 7-day follow-up. Do not push an LOI.", path: "No active path yet - build trust first." },
     { score: "3",   label: "Interested", cls: "med",  action: "Present all 4 paths side-by-side. Issue a comparison page. Ask which timeline matters most.", path: "Offer all paths. Let seller self-select." },
-    { score: "4",   label: "Motivated",  cls: "high", action: "Present 1â€“2 best-fit paths. Issue LOI immediately after meeting. Follow up in 24 hrs.", path: "Lead with best-fit path. Cash as anchor." },
-    { score: "5",   label: "Urgent",     cls: "fire", action: "Go directly to LOI on the dominant path. Close in the same meeting if possible. Urgency is already there â€” match it.", path: "Close path only. No path shopping." }
+    { score: "4",   label: "Motivated",  cls: "high", action: "Present 1-2 best-fit paths. Issue LOI immediately after meeting. Follow up in 24 hrs.", path: "Lead with best-fit path. Cash as anchor." },
+    { score: "5",   label: "Urgent",     cls: "fire", action: "Go directly to LOI on the dominant path. Close in the same meeting if possible. Urgency is already there - match it.", path: "Close path only. No path shopping." }
   ];
   return [
-    '<div class="sec-hdr">Motivation Score â€” Action Router</div>',
+    '<div class="sec-hdr">Motivation Score - Action Router</div>',
     '<div class="motivation-router">',
     '<table><colgroup><col/><col/><col/></colgroup>',
     '<thead><tr class="mrt-hdr"><th class="mrt-cell">Score</th><th class="mrt-cell">PBK Action</th><th class="mrt-cell">Path Strategy</th></tr></thead>',
@@ -3541,7 +3546,7 @@ function renderMotivationRouter() {
 
 function renderNetProceedsCalc(pathLabel) {
   return [
-    '<div class="sec-hdr">Net Proceeds Reality Check â€” ' + escapeHtml(pathLabel) + ' vs. Traditional</div>',
+    '<div class="sec-hdr">Net Proceeds Reality Check - ' + escapeHtml(pathLabel) + ' vs. Traditional</div>',
     '<div class="net-proceeds-box">',
     '<div class="net-proceeds-header">',
     '<div class="net-proceeds-header-cell">Item</div>',
@@ -3551,9 +3556,9 @@ function renderNetProceedsCalc(pathLabel) {
     '</div>',
     '<div class="net-proceeds-row"><div class="npc label">Sale / List Price</div><div class="npc">[MARKET PRICE EST.]</div><div class="npc">[PATH PRICE]</div><div class="npc">[DIFFERENCE]</div></div>',
     '<div class="net-proceeds-row"><div class="npc label">Agent Commission (PBK covers)</div><div class="npc red">-[COMMISSION EST.]</div><div class="npc">$0 with PBK</div><div class="npc">+[COMMISSION EST.]</div></div>',
-    '<div class="net-proceeds-row"><div class="npc label">Repairs + Staging</div><div class="npc red">-[REPAIR EST.]</div><div class="npc">$0 â€” PBK covers</div><div class="npc">+[REPAIR EST.]</div></div>',
-    '<div class="net-proceeds-row"><div class="npc label">Closing Costs (seller share)</div><div class="npc red">-[CLOSING COSTS EST.]</div><div class="npc">$0 â€” PBK covers</div><div class="npc">+[CLOSING COSTS EST.]</div></div>',
-    '<div class="net-proceeds-row"><div class="npc label">Carrying Costs During Listing</div><div class="npc red">-[CARRYING COSTS]</div><div class="npc">$0 â€” fast close</div><div class="npc">+[CARRYING COSTS]</div></div>',
+    '<div class="net-proceeds-row"><div class="npc label">Repairs + Staging</div><div class="npc red">-[REPAIR EST.]</div><div class="npc">$0 - PBK covers</div><div class="npc">+[REPAIR EST.]</div></div>',
+    '<div class="net-proceeds-row"><div class="npc label">Closing Costs (seller share)</div><div class="npc red">-[CLOSING COSTS EST.]</div><div class="npc">$0 - PBK covers</div><div class="npc">+[CLOSING COSTS EST.]</div></div>',
+    '<div class="net-proceeds-row"><div class="npc label">Carrying Costs During Listing</div><div class="npc red">-[CARRYING COSTS]</div><div class="npc">$0 - fast close</div><div class="npc">+[CARRYING COSTS]</div></div>',
     '<div class="net-proceeds-row total"><div class="npc label">ESTIMATED NET TO SELLER</div><div class="npc">[NET TRADITIONAL]</div><div class="npc">[NET PBK PATH]</div><div class="npc">[NET ADVANTAGE]</div></div>',
     '</div>'
   ].join('');
@@ -3564,15 +3569,15 @@ function renderAllPathsComparison() {
     { label: "Offer Price",       vals: ["[CASH PRICE]", "[CF PRICE]", "[MT PRICE]", "[RBP PRICE]"],       cls: ["price-cell", "price-cell", "price-cell", "price-cell best"] },
     { label: "Timeline",          vals: ["[CLOSE TIMELINE]", "[CLOSE TIMELINE]", "[CLOSE TIMELINE]", "[CLOSE TIMELINE]"], cls: ["best","","",""] },
     { label: "Monthly Income",    vals: ["None",         "[P&I]/mo",   "None",       "None"],              cls: ["","best","",""] },
-    { label: "Seller Costs",      vals: ["$0",           "$0",         "$0",         "$0 â€” PBK covers all"],cls: ["best","best","best","best"] },
-    { label: "Commission",        vals: ["$0",           "$0",         "$0",         "$0 â€” PBK covers"],   cls: ["best","best","best","best"] },
+    { label: "Seller Costs",      vals: ["$0",           "$0",         "$0",         "$0 - PBK covers all"],cls: ["best","best","best","best"] },
+    { label: "Commission",        vals: ["$0",           "$0",         "$0",         "$0 - PBK covers"],   cls: ["best","best","best","best"] },
     { label: "Loan Stays On Credit",vals:["No","No","Temporarily (sub-to)","No"],                         cls: ["","","",""] },
     { label: "Complexity",        vals: ["Low",          "Medium",     "High",       "Medium"],            cls: ["best","","",""] },
     { label: "Certainty",         vals: ["Very High",    "High",       "High",       "Market-dependent"],  cls: ["best","","",""] },
     { label: "Best For",          vals: ["Speed + certainty","Income + tax benefit","Rate advantage","Max price"], cls: ["","","",""] }
   ];
   return [
-    '<div class="sec-hdr">All 4 Paths â€” Side-by-Side Comparison</div>',
+    '<div class="sec-hdr">All 4 Paths - Side-by-Side Comparison</div>',
     '<div class="all-paths-comparison">',
     '<div class="apc-header">',
     '<div class="apc-header-cell">Factor</div>',
@@ -3593,7 +3598,7 @@ function renderAllPathsComparison() {
 
 function renderObjectionMatrix(objections) {
   return [
-    '<div class="sec-hdr">Objection Matrix â€” Scripts for the Most Common Seller Pushbacks</div>',
+    '<div class="sec-hdr">Objection Matrix - Scripts for the Most Common Seller Pushbacks</div>',
     '<div class="objection-matrix">',
     objections.map(function(obj, i) {
       return [
@@ -3916,7 +3921,32 @@ function getPacketBlocks(deliverableKey, deliverable) {
       return b.type !== 'objectionMatrix';
     });
   }
+  if (deliverableKey === 'c') return deliverable.blocks.concat(getInternalPropertyBlocks());
   return deliverable.blocks;
+}
+
+function getInternalPropertyBlocks() {
+  var params = new URLSearchParams(window.location.search);
+  function known(key) { return params.get(key) || 'Not provided'; }
+  function number(key, money) {
+    var raw = params.get(key);
+    if (raw === null || raw === '') return 'Not provided';
+    var value = Number(raw);
+    return Number.isFinite(value) ? (money ? '$' : '') + value.toLocaleString('en-US') : known(key);
+  }
+  var fields = [
+    ['Property type', known('propertyType')], ['List price', number('listPrice', true)],
+    ['Bedrooms', known('beds')], ['Bathrooms', known('baths')],
+    ['Square footage', number('sqft')], ['Year built', known('year')],
+    ['Days on market', known('dom')], ['ZIP code', known('zipCode')],
+    ['Occupancy', known('vacantStatus')], ['Assignment fee', number('fee', true)]
+  ];
+  var blocks = [{ type: 'infoCols', heading: 'Property snapshot - current Analyzer inputs', tables: [{ rows: fields }] }];
+  ['A', 'B', 'C'].forEach(function(comp) {
+    if (params.get('comp' + comp + 'Link')) blocks.push({ type: 'text', literal: true, heading: 'Comp ' + comp + ' reference', paragraphs: [params.get('comp' + comp + 'Link')] });
+  });
+  if (params.get('notes')) blocks.push({ type: 'notes', heading: 'Internal operator notes', items: [{ label: 'Manual notes', body: params.get('notes'), literal: true }] });
+  return blocks;
 }
 
 const packetMarkupCache = Object.create(null);

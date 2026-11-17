@@ -771,6 +771,11 @@ export function buildLOIText(deal: DealData, branding: PBKBranding = DEFAULT_BRA
   return sanitizeLegacyCopy(lines.join('\n'));
 }
 
+// Zero is an unset default for price, floor area, and year, but valid for counts/DOM.
+function hasPropertyNumber(value: number | undefined, allowZero = false): value is number {
+  return typeof value === 'number' && Number.isFinite(value) && (allowZero ? value >= 0 : value > 0);
+}
+
 export function buildPathPackageText(
   deal: DealData,
   branding: PBKBranding = DEFAULT_BRANDING
@@ -796,6 +801,17 @@ export function buildPathPackageText(
     `ARV: ${formatCurrency(doc.arv)}`,
     `MAO Cash: ${formatCurrency(valueOrZero(deal.mao60))}`,
     `MAO RBP: ${formatCurrency(valueOrZero(deal.maoRBP))}`,
+    '',
+    'Property Snapshot',
+    `Property type: ${doc.propertyType}`,
+    `List price: ${hasPropertyNumber(deal.price) ? formatCurrency(deal.price) : 'Not provided'}`,
+    `Bedrooms: ${hasPropertyNumber(deal.beds, true) ? deal.beds : 'Not provided'}`,
+    `Bathrooms: ${hasPropertyNumber(deal.baths, true) ? deal.baths : 'Not provided'}`,
+    `Square footage: ${hasPropertyNumber(deal.sqft) ? deal.sqft.toLocaleString('en-US') : 'Not provided'}`,
+    `Year built: ${hasPropertyNumber(deal.year) ? deal.year : 'Not provided'}`,
+    `Days on market: ${hasPropertyNumber(deal.dom, true) ? deal.dom : 'Not provided'}`,
+    `ZIP code: ${nonEmpty(deal.zipCode) || 'Not provided'}`,
+    `Occupancy: ${nonEmpty(deal.vacantStatus) || 'Not verified'}`,
   ];
 
   if (doc.propertyType === 'House') {
@@ -1109,6 +1125,16 @@ export function buildMasterPackageParams(
   params.set('sellerEmail', nonEmpty(deal.sellerEmail));
   params.set('sellerPhone', nonEmpty(deal.sellerPhone));
   params.set('address', nonEmpty(deal.address));
+  for (const field of ['beds', 'baths', 'sqft', 'year', 'dom'] as const) {
+    params.set(field, hasPropertyNumber(deal[field], ['beds', 'baths', 'dom'].includes(field)) ? String(deal[field]) : '');
+  }
+  params.set('propertyType', deal.type === 'land' ? 'Land/Lot' : 'House');
+  params.set('listPrice', hasPropertyNumber(deal.price) ? String(deal.price) : '');
+  params.set('zipCode', nonEmpty(deal.zipCode));
+  params.set('vacantStatus', nonEmpty(deal.vacantStatus));
+  params.set('notes', nonEmpty(deal.notes));
+  params.set('fee', String(valueOrZero(deal.fee)));
+  for (const comp of ['A', 'B', 'C'] as const) params.set(`comp${comp}Link`, nonEmpty(deal.comps[comp].link));
   params.set('date', formatDate());
   params.set('timeline', timeline);
   params.set('earnestBase', earnestDeposit);
@@ -1228,12 +1254,12 @@ export function buildMasterPackageParams(
   );
   params.set('domHistory', `${valueOrZero(deal.dom)} days`);
   params.set('assessment', valueOrZero(deal.dom) > 60 || repairs > 15000 ? 'Motivated' : 'Stable');
-  params.set('titleRisk', 'Low');
-  params.set('paymentTolerance', 'Flexible');
+  params.set('titleRisk', 'Not verified');
+  params.set('paymentTolerance', 'Not verified');
   params.set('exitPlan', 'Refinance or Resale');
-  params.set('reinstatementNeed', 'None');
-  params.set('arrearsAmount', '0');
-  params.set('ifAny', 'None');
+  params.set('reinstatementNeed', 'Not verified');
+  params.set('arrearsAmount', 'Not verified');
+  params.set('ifAny', 'Not verified');
   params.set('allocatedCosts', sellerCosts || '$0 - covered by PBK');
   params.set('rbpListingPrice', String(agreedPrice || maoRbp));
   params.set('safeRbpPrice', String(maoRbp > 0 ? Math.round(maoRbp * 0.93) : 0));

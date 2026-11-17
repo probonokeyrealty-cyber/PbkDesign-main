@@ -19,19 +19,21 @@ export const ANALYZER_CURRENT_DEAL_KEY = getAnalyzerStorageKey('current-deal');
 export const ANALYZER_SAVED_DEALS_KEY = getAnalyzerStorageKey('saved-deals');
 export const ANALYZER_ACTIVITY_KEY = getAnalyzerStorageKey('activity');
 
-function encodeAnalyzerStoragePayload(payload: unknown) {
+function encodeAnalyzerStoragePayload(payload: unknown, manualFields?: readonly string[], sharedBaseline?: string | null) {
   const envelope = {
     version: 2,
     namespace: ANALYZER_STORAGE_NAMESPACE,
     savedAt: new Date().toISOString(),
     expiresAt: new Date(Date.now() + ANALYZER_RETENTION_DAYS * 24 * 60 * 60 * 1000).toISOString(),
     payload,
+    ...(manualFields ? { manualFields: [...manualFields] } : {}),
+    ...(sharedBaseline !== undefined ? { sharedBaseline } : {}),
   };
   return btoa(unescape(encodeURIComponent(JSON.stringify(envelope))));
 }
 
-function decodeAnalyzerStoragePayload<T>(raw: string | null, fallback: T): T {
-  if (!raw) return fallback;
+function decodeAnalyzerEnvelope(raw: string | null): unknown {
+  if (!raw) return undefined;
   const decoded = (() => {
     try {
       return decodeURIComponent(escape(atob(raw)));
@@ -42,11 +44,31 @@ function decodeAnalyzerStoragePayload<T>(raw: string | null, fallback: T): T {
 
   try {
     const parsed = JSON.parse(decoded);
-    if (parsed?.expiresAt && Date.parse(parsed.expiresAt) < Date.now()) return fallback;
-    return Object.prototype.hasOwnProperty.call(parsed, 'payload') ? parsed.payload : parsed;
+    if (parsed?.expiresAt && Date.parse(parsed.expiresAt) < Date.now()) return undefined;
+    return parsed;
   } catch {
-    return fallback;
+    return undefined;
   }
+}
+
+export function decodeAnalyzerStoragePayload<T>(raw: string | null, fallback: T): T {
+  const parsed = decodeAnalyzerEnvelope(raw);
+  if (parsed === undefined) return fallback;
+  return parsed && typeof parsed === 'object' && Object.prototype.hasOwnProperty.call(parsed, 'payload')
+    ? (parsed as { payload: T }).payload : parsed as T;
+}
+
+export function analyzerDraftManualFields(raw: string | null): string[] | null {
+  const parsed = decodeAnalyzerEnvelope(raw) as { manualFields?: unknown } | undefined;
+  return Array.isArray(parsed?.manualFields)
+    ? parsed.manualFields.filter((field): field is string => typeof field === 'string') : null;
+}
+
+export function readAnalyzerDraftManualFields(): string[] | null {
+  const key = `${ANALYZER_CURRENT_DEAL_KEY}:session`;
+  const session = storageGet(sessionStorage, key);
+  return analyzerDraftManualFields(decodeAnalyzerEnvelope(session) !== undefined
+    ? session : storageGet(localStorage, ANALYZER_CURRENT_DEAL_KEY));
 }
 
 function sanitizeAnalyzerDealForPersistentStorage(deal: Partial<DealData>) {
@@ -90,6 +112,31 @@ function sanitizeAnalyzerPayloadForLocalStorage(payload: unknown): unknown {
   return sanitizeAnalyzerDealForPersistentStorage(payload as Partial<DealData>);
 }
 
+export function readSharedAnalyzerDraft(): string | null {
+  return storageGet(localStorage, ANALYZER_CURRENT_DEAL_KEY);
+}
+
+export function readAnalyzerDraftBaseline(): string | null | undefined {
+  const shared = readSharedAnalyzerDraft();
+  const sessionRaw = storageGet(sessionStorage, `${ANALYZER_CURRENT_DEAL_KEY}:session`);
+  const envelope = decodeAnalyzerEnvelope(sessionRaw) as { sharedBaseline?: unknown } | undefined;
+  if (envelope && Object.prototype.hasOwnProperty.call(envelope, 'sharedBaseline')) {
+    return envelope.sharedBaseline === shared ? shared : undefined;
+  }
+  const session = decodeAnalyzerStoragePayload<unknown>(
+    sessionRaw, undefined
+  );
+  const persistent = decodeAnalyzerStoragePayload<unknown>(shared, undefined);
+  const canonical = (value: unknown): unknown => value && typeof value === 'object'
+    ? Array.isArray(value) ? value.map(canonical)
+      : Object.fromEntries(Object.entries(value).sort(([left], [right]) => left.localeCompare(right))
+        .map(([key, item]) => [key, canonical(item)])) : value;
+  if (session && (!persistent || JSON.stringify(canonical(sanitizeAnalyzerPayloadForLocalStorage(session))) !== JSON.stringify(canonical(persistent)))) {
+    return undefined;
+  }
+  return shared;
+}
+
 function storageGet(store: Storage, key: string): string | null {
   try {
     return store.getItem(key);
@@ -115,19 +162,19 @@ function storageDel(store: Storage, key: string): void {
 }
 
 export function readAnalyzerStorage<T>(key: string, fallback: T): T {
-  return (
-    decodeAnalyzerStoragePayload(storageGet(sessionStorage, `${key}:session`), fallback) ||
-    decodeAnalyzerStoragePayload(storageGet(localStorage, key), fallback)
-  );
+  const session = decodeAnalyzerStoragePayload<T | undefined>(storageGet(sessionStorage, `${key}:session`), undefined);
+  return session ?? decodeAnalyzerStoragePayload(storageGet(localStorage, key), fallback);
 }
 
-export function writeAnalyzerStorage(key: string, payload: unknown) {
-  storageSet(
-    localStorage,
-    key,
-    encodeAnalyzerStoragePayload(sanitizeAnalyzerPayloadForLocalStorage(payload))
-  );
-  storageSet(sessionStorage, `${key}:session`, encodeAnalyzerStoragePayload(payload));
+export function writeAnalyzerStorage(key: string, payload: unknown, manualFields?: readonly string[]) {
+  const persistent = encodeAnalyzerStoragePayload(sanitizeAnalyzerPayloadForLocalStorage(payload), manualFields);
+  storageSet(localStorage, key, persistent);
+  storageSet(sessionStorage, `${key}:session`, encodeAnalyzerStoragePayload(payload, manualFields,
+    key === ANALYZER_CURRENT_DEAL_KEY ? persistent : undefined));
+}
+
+export function writeAnalyzerSessionDeal(deal: Partial<DealData>, manualFields: readonly string[], sharedBaseline?: string | null) {
+  storageSet(sessionStorage, `${ANALYZER_CURRENT_DEAL_KEY}:session`, encodeAnalyzerStoragePayload(deal, manualFields, sharedBaseline));
 }
 
 export function readAnalyzerDeal(fallback: DealData): DealData {
@@ -145,8 +192,8 @@ export function readAnalyzerDeal(fallback: DealData): DealData {
   return fallback;
 }
 
-export function writeAnalyzerDeal(deal: DealData) {
-  writeAnalyzerStorage(ANALYZER_CURRENT_DEAL_KEY, deal);
+export function writeAnalyzerDeal(deal: DealData, manualFields?: readonly string[]) {
+  writeAnalyzerStorage(ANALYZER_CURRENT_DEAL_KEY, deal, manualFields);
 }
 
 export function clearAnalyzerDeal() {

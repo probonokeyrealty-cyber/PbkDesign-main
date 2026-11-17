@@ -174,8 +174,13 @@ const { outputText: hydrationCode } = ts.transpileModule(hydrationFunctions.map(
 });
 let sampleCurrent = {}, sampleHydrated;
 let sampleStored = {}, storageReads = 0, storageWrites = 0;
+let sampleManualFields = [];
+let sampleBaseline = 'fixture-baseline', privateHydration;
 const hydration = vm.createContext({
   exports: {}, savedLeadComps, latestCallModeNote, ANALYZER_CURRENT_DEAL_KEY: 'sample-only',
+  readAnalyzerDraftManualFields: () => sampleManualFields,
+  readAnalyzerDraftBaseline: () => sampleBaseline,
+  writeAnalyzerSessionDeal: deal => { privateHydration = structuredClone(deal); },
   readAnalyzerStorage: (key) => {
     strictAssert.equal(key, 'sample-only');
     storageReads += 1;
@@ -220,20 +225,44 @@ delete hydration.window.PBKAnalyzer;
 sampleStored = structuredClone(originalManual);
 hydration.hydrateAnalyzerFromLead({ id: 'sample-a' }, 'sample-a');
 strictAssert.equal(storageReads, 1);
-strictAssert.equal(storageWrites, 1, 'Cold-route hydration must persist the hydrated draft');
+strictAssert.equal(storageWrites, 0, 'Same-lead cold restoration must not publish a shared envelope');
+strictAssert.deepEqual(privateHydration, originalManual);
 strictAssert.deepEqual(sampleStored, originalManual, 'Cold hydration must retain same-lead draft values');
 hydration.hydrateAnalyzerFromLead(manualUnanalyzed, 'sample-a');
 strictAssert.equal(storageReads, 2);
-strictAssert.equal(storageWrites, 2);
-strictAssert.equal(sampleStored.isAnalyzed, false);
-strictAssert.equal(sampleStored.notes, originalManual.notes);
-strictAssert.deepEqual(sampleStored.comps, originalManual.comps);
+strictAssert.equal(storageWrites, 0);
+strictAssert.equal(privateHydration.isAnalyzed, false);
+strictAssert.equal(privateHydration.notes, originalManual.notes);
+strictAssert.deepEqual(privateHydration.comps, originalManual.comps);
 hydration.hydrateAnalyzerFromLead({ id: 'sample-a-other' }, 'sample-a-other');
 strictAssert.equal(storageReads, 3);
-strictAssert.equal(storageWrites, 3);
+strictAssert.equal(storageWrites, 1, 'An intentional handoff to another lead may publish its context');
 strictAssert.equal(sampleStored.leadId, 'sample-a-other');
 for (const field of ['arv', 'price', 'comps', 'notes', 'selectedPath', 'type']) strictAssert.equal(sampleStored[field], undefined);
 strictAssert.deepEqual(sampleCurrent, originalManual, 'Storage hydration must not mutate the mounted draft fixture');
+
+// Unsaved manual values, including intentional blanks/zeros, win over a fresh canonical read.
+sampleCurrent = { ...originalManual, beds: 0, notes: '', arv: 510000 };
+sampleManualFields = ['beds', 'notes', 'arv', 'comps'];
+hydration.window.PBKAnalyzer = {
+  getState: () => ({ deal: sampleCurrent }),
+  setState: state => { sampleHydrated = structuredClone(state.deal); },
+};
+hydration.hydrateAnalyzerFromLead({ id: 'sample-a', property: { beds: 2, arv: 300000 }, notes: 'Saved canonical notes' }, 'sample-a');
+for (const field of sampleManualFields) strictAssert.deepEqual(sampleHydrated[field], sampleCurrent[field], `Manual ${field} must survive canonical hydration`);
+sampleManualFields = null;
+hydration.hydrateAnalyzerFromLead({ id: 'sample-a', property: { beds: 2, arv: 300000 } }, 'sample-a');
+strictAssert.equal(sampleHydrated.beds, 0, 'Legacy drafts without provenance are preserved conservatively');
+hydration.hydrateAnalyzerFromLead({ id: 'sample-b', property: { beds: 2, arv: 300000 } }, 'sample-b');
+strictAssert.equal(sampleHydrated.beds, 2, 'Manual fields must never leak to a different lead');
+
+delete hydration.window.PBKAnalyzer;
+sampleStored = structuredClone(originalManual);
+sampleBaseline = undefined;
+const writesBeforeConflict = storageWrites;
+hydration.hydrateAnalyzerFromLead({ id: 'sample-a', property: { beds: 2 } }, 'sample-a');
+strictAssert.equal(storageWrites, writesBeforeConflict, 'A conflicted cold route must not publish over the shared draft');
+strictAssert.equal(privateHydration.notes, originalManual.notes);
 
 assert(
   /window\.PBKAnalyzer\?\.setState/.test(dealView) &&

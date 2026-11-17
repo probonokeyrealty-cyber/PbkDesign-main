@@ -226,6 +226,7 @@ async function handleEvent(event) {
           'upsertCallEmbeddingFromTranscript',
           {
             workspaceId: event.payload.workspaceId || event.payload.workspace_id || 'pbk',
+            eventId: event.id,
             callId: event.payload.callId || event.payload.call_id || '',
             leadId: event.payload.leadId || event.payload.lead_id || '',
             transcript: event.payload.transcript || event.payload.transcriptText || event.payload.transcript_text || '',

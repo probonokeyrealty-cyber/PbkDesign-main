@@ -369,6 +369,11 @@ test('workflow requires full isolated Postgres and default Chromium/WebKit execu
   assert.match(postgres.run, /--runTestsByPath scripts\/conversation-store.test.mjs scripts\/provider-action-dispatch.test.mjs scripts\/release-qualification.test.mjs scripts\/operational-audit-store.test.mjs/);
   assert.match(postgres.run, /scripts\/backlog-reconciliation-store.test.mjs/);
   assert.match(postgres.run, /scripts\/backlog-reconciliation-integration.test.mjs/);
+  const targeted = job.steps.find(step => step.name === 'Run targeted schema and memory Postgres proof');
+  assert(targeted && !targeted.if && !targeted['continue-on-error']);
+  assert.match(targeted.run, /pbk-eval-targeted-readiness-/);
+  assert.match(targeted.run, /node --test scripts\/targeted-readiness-postgres.node-test.mjs/);
+  assert.doesNotMatch(targeted.run, /--inject-runtime-db/);
   assert.match(postgres.env.NEON_API_KEY, /secrets.NEON_API_KEY \|\| secrets.PBK_NEON_API_KEY/);
   assert.match(postgres.env.NEON_PROJECT_ID, /vars.NEON_PROJECT_ID/);
   assert.match(job.steps.find((step) => step.name === names[3]).run, /playwright install --with-deps chromium webkit/);

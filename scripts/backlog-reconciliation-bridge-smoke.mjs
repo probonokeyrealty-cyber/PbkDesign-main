@@ -35,6 +35,13 @@ try {
   assert.equal(maturity.backlogReconciliation.launchQualified, false);
   assert.equal(maturity.backlogReconciliation.providerWritesBlocked, true);
   assert.equal(maturity.backlogReconciliation.noContact, true);
+  assert.equal(maturity.backlogReconciliation.memoryPolicyOutcomes.verified, false);
+  assert.equal(maturity.backlogReconciliation.memoryPolicyOutcomes.launchQualified, false);
+  assert.equal(maturity.backlogReconciliation.memoryPolicyOutcomes.counts, null);
+  const orchestration = (await request('/api/agents/orchestration')).data.orchestration;
+  assert.equal(orchestration.latencyPolicy.ready, false);
+  assert.deepEqual(orchestration.latencyPolicy.budgets, {});
+  assert(orchestration.measurement.blockers.includes('latency_policy_not_ready'));
   assert.equal(maturity.operationalAudit.ready, false);
   assert.equal(maturity.executionEvidence.silentErrorReport.launchReady, false);
   assert.equal(maturity.canaryPromotionGate.ready, false);

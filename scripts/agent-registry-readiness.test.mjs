@@ -247,3 +247,33 @@ test('malformed typed observations fail closed instead of throwing or using lega
   options.latencyObservations.ava = {};
   assert.equal(buildStableAgentFleetMeasurement(registry, options).ready, false);
 });
+
+test('explicit unready latency policy blocks every agent and the fleet summary even with passing timings', () => {
+  const { registry, options } = fixture();
+  options.latencyPolicy = { ready: false, budgets: {}, issues: ['policy_missing'] };
+  const result = buildStableAgentFleetMeasurement(registry, options);
+  assert.equal(result.ready, false);
+  assert.equal(result.measuredCount, 0);
+  assert(result.blockers.includes('latency_policy_not_ready'));
+  assert(result.agents.every((agent) => !agent.ready && agent.blockers.includes('latency_policy_not_ready')));
+});
+
+test('unready latency policy cannot pass an empty fleet selection', () => {
+  const result = buildStableAgentFleetMeasurement([], {
+    requiredIds: [], latencyPolicy: { ready: false, budgets: {}, issues: ['policy_missing'] },
+  });
+  assert.equal(result.ready, false);
+  assert(result.blockers.includes('latency_policy_not_ready'));
+});
+
+test('ready latency policy adds no substitute for evidence and leaves legacy callers unchanged', () => {
+  const { registry, options } = fixture();
+  const legacy = buildStableAgentFleetMeasurement(registry, options);
+  const supplied = buildStableAgentFleetMeasurement(registry, { ...options, latencyPolicy: { ready: true } });
+  assert.deepEqual(supplied, legacy);
+  const missingEvidence = buildStableAgentFleetMeasurement(registry, {
+    ...options, latencySamples: {}, latencyPolicy: { ready: true },
+  });
+  assert.equal(missingEvidence.ready, false);
+  assert(missingEvidence.agents.every((agent) => agent.blockers.includes('latency_not_sampled')));
+});

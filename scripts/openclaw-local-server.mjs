@@ -20,6 +20,7 @@ import { lookupAttomRecentSales } from './attom-recent-sales.mjs';
 import { lookupAddressSuggestions } from './address-suggestions.mjs';
 import { applyAgentVersionRollback, buildAgentRegistrySnapshot, buildAgentVersionSnapshot, buildDefaultAgentRegistry, buildStableAgentFleetMeasurement, findAgentsByCapability, invokeRegisteredAgent, mergeAgentRegistryRecords, normalizeAgentRegistryId, normalizeAgentRegistryRecord, validateAgentVersionSnapshot } from './agent-registry.mjs';
 import { buildAgentExecutionEvidence, collectAgentFleetEvidence, isNonOperationalAgentEvidence, isAgentHandlerCompletion } from './agent-fleet-measurement.mjs';
+import { getAgentLatencyPolicy } from './agent-latency-policy.mjs';
 import { controlledExecution, createControlledPool, createScopedState, assertControlledToolAllowed } from './controlled-execution-scope.mjs';
 import { createControlledAgentStorage, saveControlledAgentResult, readControlledAgentQualification, readControlledWorkflowPredecessor } from './controlled-agent-storage.mjs';
 import { runControlledAgentWorkflow } from './controlled-agent-workflow.mjs';
@@ -32,6 +33,7 @@ import { collectOperationalAudit } from './operational-audit-collector.mjs';
 import { executeOperationalAudit, readOperationalAudit } from './operational-audit-store.mjs';
 import { collectBacklogReconciliation } from './backlog-reconciliation-collector.mjs';
 import { executeBacklogReconciliation, readBacklogReconciliation } from './backlog-reconciliation-store.mjs';
+import { recordCallMemorySkip, readCallMemorySkipSummary } from './call-memory-outcome-store.mjs';
 import { AVA_REAL_CALL_EVAL_SCENARIO_IDS, runAvaRealCallQualification } from './ava-real-call-eval-pack.mjs';
 import { BEHAVIOR_QUALIFICATION_CASE_IDS, runBehaviorQualification } from './behavior-tests.mjs';
 import { SILENT_ERROR_POLICY_CASE_IDS, runSilentErrorPolicyQualification } from './silent-error-governance-smoke.mjs';
@@ -3087,13 +3089,15 @@ async function buildProductionReadinessSnapshot({
     requireIntelligenceContext: false,
   });
   const operationalEvidence = collectAgentFleetEvidence(state);
+  const latencyPolicy = getAgentLatencyPolicy(process.env);
   const stableAgentFleetMeasurement = buildStableAgentFleetMeasurement(getCurrentAgentRegistry(), {
     healthProbes: (state.agents || []).map(buildAgentHealthProbe),
     toolCatalog: buildProductionToolCatalog(),
     intelligenceContext,
     latencySamples: operationalEvidence.latencySamples,
     latencyObservations: operationalEvidence.latencyObservations,
-    latencyBudgetsMs: {},
+    latencyBudgetsMs: latencyPolicy.budgets,
+    latencyPolicy,
     lastActions: operationalEvidence.lastActions,
     evidenceDiagnostics: operationalEvidence.diagnostics,
     unverifiedLatencySamples: operationalEvidence.unverifiedLatencySamples,
@@ -3126,6 +3130,7 @@ async function buildProductionReadinessSnapshot({
     idempotency: productionIdempotencyStore.status(),
     agentCapabilityReadiness: capabilityReadiness,
     stableAgentFleetMeasurement,
+    latencyPolicy,
     summary: {
       ready:
         bridgeConnection.ready &&
@@ -11454,6 +11459,9 @@ async function buildProductionMaturitySnapshot({ runtimeMeta = getRuntimeMeta() 
     pool: getPgPool(), revision: process.env.RENDER_GIT_COMMIT || BUILD_REVISION, secret: BRIDGE_API_KEY,
     collect: ({ now }) => collectBacklogReconciliation({ pool: getPgPool(), secret: BRIDGE_API_KEY, now }),
   });
+  const memoryPolicyOutcomes = await readCallMemorySkipSummary({
+    pool: getPgPool(), revision: process.env.RENDER_GIT_COMMIT || BUILD_REVISION, secret: BRIDGE_API_KEY,
+  });
   const executionEvidence = buildExecutedReadinessEvidence({
     revision: process.env.RENDER_GIT_COMMIT || BUILD_REVISION,
     evidence: { ...qualification.evidence, ...operationalAudit.evidence },
@@ -11511,6 +11519,7 @@ async function buildProductionMaturitySnapshot({ runtimeMeta = getRuntimeMeta() 
       source: backlogReconciliation.source,
       result: backlogReconciliation.result,
       counts: backlogReconciliation.verified ? backlogReconciliation.reconciliation.counts : null,
+      memoryPolicyOutcomes,
       launchQualified: false,
       noContact: true,
       providerWritesBlocked: true,
@@ -28472,7 +28481,25 @@ async function upsertCallEmbeddingFromTranscript(record = {}) {
     callRecord?.transcript,
     callRecord?.notes,
   ]);
-  if (!callId || sourceText.length < 80) return { ok: false, skipped: true, result: 'insufficient_call_memory' };
+  if (!callId || sourceText.length < 80) {
+    let outcome = { verified: false, result: 'memory_skip_event_unbound' };
+    const workspaceId = record.workspaceId || record.workspace_id || callRecord?.workspace_id || 'pbk';
+    if (callId && workspaceId === 'pbk' && typeof record.eventId === 'string' && record.eventId.trim()) {
+      try {
+        outcome = await recordCallMemorySkip({
+          pool: getPgPool(), secret: BRIDGE_API_KEY,
+          revision: process.env.RENDER_GIT_COMMIT || BUILD_REVISION,
+          eventId: record.eventId, callId, sourceText,
+        });
+      } catch {
+        outcome = { verified: false, result: 'memory_skip_receipt_unavailable' };
+      }
+    }
+    return { ok: false, skipped: true, result: 'insufficient_call_memory', memoryPolicyOutcome: {
+      verified: outcome.verified === true, result: outcome.result,
+      embeddingVerified: false, fullRecoveryVerified: false, launchQualified: false,
+    } };
+  }
   const leadId = record.leadId || record.lead_id || callRecord?.lead_id || '';
   const transcriptHash = createHash('sha256').update(sourceText).digest('hex');
   const existing = await queryPgRows(
@@ -45094,12 +45121,14 @@ function buildAgentOrchestrationSnapshot() {
   // Never combine readiness from a different context with this packet.
   const intelligenceContext = state.status?.pbkIntelligenceContext || {};
   const operationalEvidence = collectAgentFleetEvidence(state);
+  const latencyPolicy = getAgentLatencyPolicy(process.env);
   const measurement = buildStableAgentFleetMeasurement(getCurrentAgentRegistry(), {
     healthProbes: probes,
     toolCatalog: buildProductionToolCatalog(),
     latencySamples: operationalEvidence.latencySamples,
     latencyObservations: operationalEvidence.latencyObservations,
-    latencyBudgetsMs: {},
+    latencyBudgetsMs: latencyPolicy.budgets,
+    latencyPolicy,
     lastActions: operationalEvidence.lastActions,
     evidenceDiagnostics: operationalEvidence.diagnostics,
     unverifiedLatencySamples: operationalEvidence.unverifiedLatencySamples,
@@ -45153,6 +45182,7 @@ function buildAgentOrchestrationSnapshot() {
       requiredToolGaps,
     },
     measurement,
+    latencyPolicy,
     communication: {
       pattern: 'hub-and-spoke',
       supervisor: 'ava',

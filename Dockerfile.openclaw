@@ -152,6 +152,7 @@ COPY package.json ./package.json
 COPY scripts/pbk-deepgram-client.mjs ./scripts/pbk-deepgram-client.mjs
 COPY scripts/qa-agent.mjs ./scripts/qa-agent.mjs
 COPY scripts/agent-registry.mjs ./scripts/agent-registry.mjs
+COPY scripts/agent-latency-policy.mjs ./scripts/agent-latency-policy.mjs
 COPY scripts/agent-fleet-measurement.mjs ./scripts/agent-fleet-measurement.mjs
 COPY scripts/controlled-execution-scope.mjs ./scripts/controlled-execution-scope.mjs
 COPY scripts/controlled-agent-storage.mjs ./scripts/controlled-agent-storage.mjs
@@ -242,6 +243,9 @@ COPY scripts/operational-audit-collector.mjs ./scripts/operational-audit-collect
 COPY scripts/operational-audit-store.mjs ./scripts/operational-audit-store.mjs
 COPY scripts/backlog-reconciliation-collector.mjs ./scripts/backlog-reconciliation-collector.mjs
 COPY scripts/backlog-reconciliation-store.mjs ./scripts/backlog-reconciliation-store.mjs
+COPY scripts/call-memory-outcome-store.mjs ./scripts/call-memory-outcome-store.mjs
+COPY scripts/targeted-readiness-migration.mjs ./scripts/targeted-readiness-migration.mjs
+COPY scripts/migrations/20261116-targeted-readiness.sql ./scripts/migrations/20261116-targeted-readiness.sql
 COPY scripts/release-qualification-ci.mjs ./scripts/release-qualification-ci.mjs
 COPY scripts/ava-real-call-eval-pack.mjs ./scripts/ava-real-call-eval-pack.mjs
 COPY scripts/behavior-tests.mjs ./scripts/behavior-tests.mjs

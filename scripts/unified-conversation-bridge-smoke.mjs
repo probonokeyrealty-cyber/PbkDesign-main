@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import ts from 'typescript';
 
 const root = process.cwd();
 const read = (filePath) => readFileSync(resolve(root, filePath), 'utf8');
@@ -20,6 +21,43 @@ const providerDispatchMigration = read(
 function assert(condition, message) {
   if (!condition) throw new Error(message);
 }
+
+function usesConversationStoreFactory(source) {
+  const ast = ts.createSourceFile('bridge.mjs', source, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
+  for (const node of ast.statements) {
+    if (!ts.isImportDeclaration(node) || node.moduleSpecifier.text !== './conversation-store.mjs'
+      || node.importClause?.isTypeOnly || !node.importClause?.namedBindings
+      || !ts.isNamedImports(node.importClause.namedBindings)) continue;
+    for (const binding of node.importClause.namedBindings.elements) {
+      if (binding.isTypeOnly || (binding.propertyName || binding.name).text !== 'createConversationStore') continue;
+      if (binding.name.text === 'createConversationStore') return true;
+      const wrapper = ast.statements.find(item => ts.isFunctionDeclaration(item)
+        && item.name?.text === 'createConversationStore' && item.parameters.length === 1
+        && ts.isIdentifier(item.parameters[0].name));
+      if (wrapper?.body?.statements.some(item => ts.isReturnStatement(item)
+        && item.expression && ts.isCallExpression(item.expression)
+        && ts.isIdentifier(item.expression.expression) && item.expression.expression.text === binding.name.text
+        && item.expression.arguments[0] && ts.isIdentifier(item.expression.arguments[0])
+        && item.expression.arguments[0].text === wrapper.parameters[0].name.text)) return true;
+    }
+  }
+  return false;
+}
+
+assert(usesConversationStoreFactory("import { createConversationStore } from './conversation-store.mjs';"),
+  'The factory check must accept a direct runtime import.');
+const aliasedFactoryFixture = "import { anotherExport, createConversationStore as factory } from './conversation-store.mjs';";
+assert(usesConversationStoreFactory(`${aliasedFactoryFixture}\nfunction createConversationStore(pool) { return factory(pool, {}); }`),
+  'The factory check must accept an alias delegated to by the wrapper.');
+for (const invalid of [
+  "// import { createConversationStore } from './conversation-store.mjs';",
+  "import { createConversationStore } from './another-store.mjs';",
+  "import { anotherExport as createConversationStore } from './conversation-store.mjs';",
+  "import type { createConversationStore } from './conversation-store.mjs';",
+  aliasedFactoryFixture,
+  `${aliasedFactoryFixture}\nfunction createConversationStore(pool) { return anotherFactory(pool); }`,
+  `${aliasedFactoryFixture}\nfunction createConversationStore(pool) { return factory(otherPool); }`,
+]) assert(!usesConversationStoreFactory(invalid), 'The factory check must reject a missing or disconnected runtime factory.');
 
 assert(
   packageJson.scripts?.['test:unified-conversation-bridge'] ===
@@ -48,7 +86,7 @@ assert(
 );
 
 assert(
-  /import\s+\{\s*createConversationStore\s*\}\s+from\s+'\.\/conversation-store\.mjs';/.test(bridge),
+  usesConversationStoreFactory(bridge),
   'Bridge must import createConversationStore from conversation-store.mjs.'
 );
 

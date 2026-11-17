@@ -1,9 +1,12 @@
 import { setTimeout as delay } from 'node:timers/promises';
 import { startIsolatedBridge } from './bridge-smoke-isolation.mjs';
+import { resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 let isolatedBridge;
 let API_KEY;
 let BASE_URL;
+let running = false;
 const fetch = (...args) => isolatedBridge.fetch(...args);
 
 function assert(condition, message) {
@@ -45,7 +48,9 @@ async function waitForHealth(timeoutMs = 15000) {
   throw lastError || new Error('Timed out waiting for bridge health.');
 }
 
-async function main() {
+export async function runIsolatedBridgeSmoke() {
+  if (running) throw new Error('An isolated bridge smoke run is already running.');
+  running = true;
   try {
     isolatedBridge = await startIsolatedBridge();
     API_KEY = isolatedBridge.apiKey;
@@ -1608,13 +1613,21 @@ async function main() {
       pdfBytes: pdfBuffer.length,
       isolation: { state: 'disposable-sample', pdfRenderer: 'offline-fixture', blockedNetwork: isolatedBridge.blockedNetwork },
     }, null, 2));
-  } catch (error) {
-    const message = error instanceof Error ? error.message : 'Unknown smoke test failure';
-    console.error(message);
-    process.exitCode = 1;
   } finally {
-    await isolatedBridge?.stop();
+    try {
+      await isolatedBridge?.stop();
+    } finally {
+      isolatedBridge = undefined;
+      API_KEY = undefined;
+      BASE_URL = undefined;
+      running = false;
+    }
   }
 }
 
-await main();
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  await runIsolatedBridgeSmoke().catch(error => {
+    console.error(error instanceof Error ? error.message : 'Unknown smoke test failure');
+    process.exitCode = 1;
+  });
+}

@@ -1,4 +1,4 @@
-import { createHmac, timingSafeEqual } from 'node:crypto';
+import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 import { canonicalJson } from './skill-governance-store.mjs';
 import { getRuntimeEvidenceContext } from './runtime-evidence-context.mjs';
 
@@ -53,6 +53,16 @@ const signature = (report, secret) => {
 const gap = result => ({ ok: false, verified: false, readbackVerified: false, eligible: false, result });
 const timeout = () => Object.assign(new Error('Source observation deadline'), { code: 'SOURCE_TIMEOUT' });
 const releaseClient = (client, destroy) => { try { client?.release?.(destroy); } catch { /* Monitoring stays non-throwing. */ } };
+const admissionHandles = new WeakMap();
+const runtimeGaps = new Set();
+let runtimeGapOverflow = false;
+const namespaceRef = secret => opaque(secret, 'observation-runtime', 'pbk');
+const hasRuntimeGap = secret => runtimeGapOverflow || runtimeGaps.has(namespaceRef(secret));
+function rememberRuntimeGap(secret) {
+  if (!validSecret(secret)) return;
+  if (runtimeGaps.size >= MAX_ROWS) runtimeGapOverflow = true;
+  else runtimeGaps.add(namespaceRef(secret));
+}
 
 function deadline() {
   const started = performance.now();
@@ -242,7 +252,7 @@ async function proofCensus(query, sourceBytes = 0) {
   return rows;
 }
 
-function readLedger(rows, secret, now) {
+function readLedger(rows, secret, now, activeAdmission = null) {
   const reports = new Map();
   let inventory;
   for (const row of rows) {
@@ -254,7 +264,10 @@ function readLedger(rows, secret, now) {
     if (reports.has(key)) throw new Error('Duplicate source history');
     reports.set(key, report);
   }
-  if (!rows.length) return { reports, inventory: null };
+  if (!rows.length) {
+    if (activeAdmission) throw new Error('Source observation admission missing');
+    return { reports, inventory: null };
+  }
   const r = inventory?.report;
   if (!plain(r) || bytes(r) > MAX_REPORT || r.schemaVersion !== SCHEMA || r.ledgerKind !== 'inventory'
     || r.tenantId !== 'pbk' || !Number.isSafeInteger(r.generation) || r.generation < 1
@@ -266,6 +279,14 @@ function readLedger(rows, secret, now) {
     || new Date(inventory.created_at).getTime() !== time(r.observedAt)) throw new Error('History inventory unverified');
   const expected = { schemaVersion: SCHEMA, ledgerKind: 'inventory', tenantId: 'pbk', generation: r.generation,
     receiptCount: reports.size, fingerprint: inventoryDigest(reports, secret), observedAt: r.observedAt };
+  if (Object.hasOwn(r, 'admission')) expected.admission = r.admission;
+  if (r.admission !== null && r.admission !== undefined) {
+    const a = r.admission;
+    if (!plain(a) || !hex(a.tokenRef) || !validRevision(a.revision) || !Number.isFinite(time(a.startedAt))
+      || iso(time(a.startedAt)) !== a.startedAt || time(a.startedAt) > now
+      || canonicalJson(a) !== canonicalJson({ tokenRef: a.tokenRef, revision: a.revision, startedAt: a.startedAt })
+      || canonicalJson(a) !== canonicalJson(activeAdmission)) throw new Error('Source observation gap pending');
+  } else if (activeAdmission) throw new Error('Source observation admission missing');
   expected.signature = inventorySign(expected, secret);
   if (canonicalJson(expected) !== canonicalJson(r)
     || !timingSafeEqual(Buffer.from(r.signature, 'hex'), Buffer.from(expected.signature, 'hex'))) {
@@ -285,12 +306,20 @@ async function saveLedger(query, ledger, reports, secret, now, sourceBytes = 0) 
   }
   if (ledger.inventory?.fingerprint === fingerprint) return ledger.inventory;
   const inventory = { schemaVersion: SCHEMA, ledgerKind: 'inventory', tenantId: 'pbk',
-    generation: (ledger.inventory?.generation || 0) + 1, receiptCount: reports.size, fingerprint, observedAt: iso(now) };
+    generation: (ledger.inventory?.generation || 0) + 1, receiptCount: reports.size, fingerprint, observedAt: iso(now),
+    admission: ledger.inventory?.admission || null };
   inventory.signature = inventorySign(inventory, secret);
   if (bytes(inventory) > MAX_REPORT) throw new Error('Inventory oversized');
   for (const [key, report] of reports) {
     if (canonicalJson(ledger.reports.get(key) || null) !== canonicalJson(report)) await save(query, report, secret, now);
   }
+  await writeInventory(query, inventory, secret, now, inventory.admission, sourceBytes);
+  return inventory;
+}
+
+async function writeInventory(query, inventory, secret, now, activeAdmission = null, sourceBytes = 0) {
+  inventory.signature = inventorySign(inventory, secret);
+  if (bytes(inventory) > MAX_REPORT) throw new Error('Inventory oversized');
   const id = inventoryId(secret);
   const result = await query(`INSERT INTO public.pbk_eval_runs
     (id,tenant_id,suite_name,ok,total,passed,failed,report,source,created_at)
@@ -299,9 +328,38 @@ async function saveLedger(query, ledger, reports, secret, now, sourceBytes = 0) 
     WHERE pbk_eval_runs.tenant_id='pbk' AND pbk_eval_runs.suite_name=$2 AND pbk_eval_runs.source=$4`,
   [id, SUITE, JSON.stringify(inventory), SOURCE, inventory.observedAt]);
   if (result.rowCount !== 1 && result.affectedRows !== 1) throw new Error('Inventory not saved');
-  const readback = readLedger(await proofCensus(query, sourceBytes), secret, now);
+  const readback = readLedger(await proofCensus(query, sourceBytes), secret, now, activeAdmission);
   if (canonicalJson(readback.inventory) !== canonicalJson(inventory)) throw new Error('Inventory readback changed');
-  return inventory;
+}
+
+// This write commits BEFORE inspection, so rollback cannot erase evidence that an observation was lost.
+async function beginObservation(query, secret, revision, now) {
+  const ledger = readLedger(await proofCensus(query), secret, now);
+  const admission = { tokenRef: opaque(secret, 'observation-admission', randomUUID()), revision, startedAt: iso(now) };
+  const inventory = ledger.inventory ? { ...ledger.inventory, observedAt: iso(now), admission }
+    : { schemaVersion: SCHEMA, ledgerKind: 'inventory', tenantId: 'pbk', generation: 1,
+      receiptCount: 0, fingerprint: inventoryDigest(ledger.reports, secret), observedAt: iso(now), admission };
+  await writeInventory(query, inventory, secret, now, admission);
+  return { admission, blocked: hasRuntimeGap(secret) };
+}
+
+async function finishObservation(query, inventory, secret, now, sourceBytes = 0) {
+  if (hasRuntimeGap(secret)) throw new Error('Source observation runtime gap');
+  await writeInventory(query, { ...inventory, admission: null }, secret, now, null, sourceBytes);
+}
+
+function mintAdmission(admission, secret, deadlineAt) {
+  const handle = Object.freeze({ tokenRef: admission.tokenRef, revision: admission.revision });
+  admissionHandles.set(handle, { admission, namespace: namespaceRef(secret), deadlineAt, claimed: false });
+  return handle;
+}
+
+function claimAdmission(handle, secret, revision, deadlineAt) {
+  const state = admissionHandles.get(handle);
+  if (!state || state.claimed || state.namespace !== namespaceRef(secret) || state.admission.revision !== revision
+    || deadlineAt > state.deadlineAt || hasRuntimeGap(secret)) throw new Error('Committed source admission required');
+  state.claimed = true;
+  return state.admission;
 }
 
 function observeClock(now, start, previous = start) {
@@ -322,7 +380,11 @@ export async function recordRuntimeSourceEvidence({ pool, secret, revision, sour
     const start = clock(now);
     if (!validClock(start)) return gap('source_clock_unverified');
     client = await budget.run(() => pool.connect(), { onLate: late => releaseClient(late, true) });
+    const prepared = await transaction(client, budget, query => beginObservation(query, secret, revision, start),
+      () => release(true));
+    if (prepared.blocked) return gap('source_observation_gap_pending');
     const result = await transaction(client, budget, async query => {
+      const ledger = readLedger(await proofCensus(query), secret, start, prepared.admission);
       const source = sources[sourceKind];
       const sql = `SELECT ${source.fields} FROM public.${source.table} WHERE ${source.scope} AND id::text=$1`;
       const size = (await query(`SELECT octet_length(to_jsonb(p)::text) AS bytes FROM (${sql}) p`, [sourceId])).rows;
@@ -334,7 +396,6 @@ export async function recordRuntimeSourceEvidence({ pool, secret, revision, sour
       const observedAt = observeClock(now, start);
       const outcome = outcomeOf(row, sourceKind);
       if (!sourceClockValid(row, sourceKind, observedAt) || outcome === 'unknown') throw new Error('Source unverified');
-      const ledger = readLedger(await proofCensus(query), secret, observedAt);
       const key = `${sourceKind}:${refs.recordRef}`;
       const prior = ledger.reports.get(key);
       if (prior?.classification === 'operational' && context.classification !== 'operational') {
@@ -346,14 +407,16 @@ export async function recordRuntimeSourceEvidence({ pool, secret, revision, sour
         : advanceReport(prior, { revision, sourceKind, ...refs, context, outcome, clockValid: true, observedAt, secret });
       const report = compactReport(next, observedAt, secret);
       const reports = new Map(ledger.reports).set(key, report);
-      await saveLedger(query, ledger, reports, secret, observedAt);
+      const inventory = await saveLedger(query, ledger, reports, secret, observedAt);
       observeClock(now, start, observedAt);
+      await finishObservation(query, inventory, secret, observedAt);
       return { ok: true, verified: true, readbackVerified: true, eligible: false, result: 'source_receipt_verified',
         sourceKind, recordRef: refs.recordRef, sourceBinding: refs.sourceBinding,
         classification: report.classification, observedAt: report.observedAt };
     }, () => release(true));
     return result;
   } catch (error) {
+    rememberRuntimeGap(secret);
     release(true);
     return gap(error.code === 'SOURCE_TIMEOUT' ? 'source_evidence_timed_out' : 'source_evidence_unverified');
   } finally { release(false); }
@@ -441,7 +504,7 @@ function queryFence(client, fence) {
     if (stopped || signal.aborted || remaining() <= 0) { stop(); throw timeout(); }
   };
   signal.addEventListener('abort', stop, { once: true });
-  return { check, stop, remaining, close: () => signal.removeEventListener('abort', stop),
+  return { check, stop, remaining, deadlineAt, close: () => signal.removeEventListener('abort', stop),
     async query(text, values = []) {
       check();
       const limit = Math.max(1, Math.floor(Math.min(2000, remaining())));
@@ -465,20 +528,26 @@ function queryFence(client, fence) {
     } };
 }
 
-async function snapshotCore({ secret, revision, windowStart, windowEnd, now = Date.now }, control) {
-  control.check();
-  const started = clock(now);
-  if (!validClock(started) || windowEnd > started) throw new Error('Source observation clock invalid');
+async function lockObservation(control) {
   const query = control.query;
   await query(`SELECT set_config('statement_timeout',$1,true), set_config('lock_timeout',$1,true),
     set_config('idle_in_transaction_session_timeout',$1,true)`,
   [`${Math.max(1, Math.floor(Math.min(2000, control.remaining())))}ms`]);
   const lock = await query('SELECT pg_try_advisory_xact_lock(hashtext($1)) AS acquired', [SOURCE]);
   if (lock.rows?.[0]?.acquired !== true) throw new Error('Source evidence busy');
+}
+
+async function snapshotCore({ secret, revision, windowStart, windowEnd, now = Date.now }, control, activeAdmission) {
+  control.check();
+  const started = clock(now);
+  if (!validClock(started) || windowEnd > started) throw new Error('Source observation clock invalid');
+  const query = control.query;
+  await lockObservation(control);
+  readLedger(await proofCensus(query), secret, started, activeAdmission);
   const { rows, receipts, sourceBytes } = await census(query);
   control.check();
   const observedAt = observeClock(now, started);
-  const ledger = readLedger(receipts, secret, observedAt);
+  const ledger = readLedger(receipts, secret, observedAt, activeAdmission);
   const reports = new Map(ledger.reports), missing = new Map(ledger.reports);
   const unknown = { origin: 'unknown', classification: 'unknown' };
   for (const kind of kinds) {
@@ -531,6 +600,7 @@ async function snapshotCore({ secret, revision, windowStart, windowEnd, now = Da
   const summaries = kinds.map(kind => summarize(kind, classified.get(kind), history.get(kind), secret, windowEnd));
   const completed = observeClock(now, started, observedAt);
   control.check();
+  await finishObservation(query, inventory, secret, observedAt, sourceBytes);
   return { ok: true, verified: true, readbackVerified: true, transactionPending: true,
     result: 'source_snapshot_verified', schemaVersion: SCHEMA, revision,
     windowStart: iso(windowStart), windowEnd: iso(windowEnd),
@@ -544,15 +614,43 @@ async function snapshotCore({ secret, revision, windowStart, windowEnd, now = Da
 
 // Internal composition only: caller owns the already-open fenced transaction and its final commit/readback.
 export async function collectRuntimeSourceSnapshotInTransaction(input = {}) {
-  let control;
+  let control, admission;
   try {
     control = queryFence(input.client, input.fence);
     control.check();
     if (!snapshotInputValid(input)) throw new Error('Source snapshot input invalid');
-    return await snapshotCore(input, control);
+    admission = claimAdmission(input.admission, input.secret, input.revision, control.deadlineAt);
+    return await snapshotCore(input, control, admission);
   } catch (error) {
+    if (admission) rememberRuntimeGap(input.secret);
     control?.stop();
     return gap(error.code === 'SOURCE_TIMEOUT' ? 'source_snapshot_timed_out' : 'source_snapshot_unverified');
+  } finally { control?.close(); }
+}
+
+// Must run on a dedicated client BEFORE the caller opens its checkpoint transaction.
+export async function prepareRuntimeSourceObservation(input = {}) {
+  let control, began = false;
+  try {
+    control = queryFence(input.client, input.fence);
+    control.check();
+    if (!input.client?.query || !validSecret(input.secret) || !validRevision(input.revision)) throw new Error('Invalid admission');
+    const now = clock(input.now ?? Date.now);
+    if (!validClock(now)) throw new Error('Invalid admission clock');
+    await control.query('BEGIN ISOLATION LEVEL REPEATABLE READ');
+    began = true;
+    await lockObservation(control);
+    const prepared = await beginObservation(control.query, input.secret, input.revision, now);
+    await control.query('COMMIT');
+    began = false;
+    if (prepared.blocked) return gap('source_observation_gap_pending');
+    return { ok: true, verified: true, readbackVerified: true, eligible: false, transactionPending: false,
+      result: 'source_observation_admitted', admission: mintAdmission(prepared.admission, input.secret, control.deadlineAt) };
+  } catch (error) {
+    rememberRuntimeGap(input.secret);
+    if (began && error.code !== 'SOURCE_TIMEOUT') { try { await control.query('ROLLBACK'); } catch { control.stop(); } }
+    control?.stop();
+    return gap(error.code === 'SOURCE_TIMEOUT' ? 'source_snapshot_timed_out' : 'source_observation_admission_unverified');
   } finally { control?.close(); }
 }
 
@@ -563,12 +661,22 @@ export async function collectRuntimeSourceSnapshot(input = {}) {
   const control = queryFence(input.client, fence);
   let began = false;
   try {
+    const now = clock(input.now ?? Date.now);
+    if (!validClock(now)) throw new Error('Invalid observation admission clock');
     await control.query('BEGIN ISOLATION LEVEL REPEATABLE READ');
     began = true;
-    const result = await snapshotCore(input, control);
+    await lockObservation(control);
+    const prepared = await beginObservation(control.query, input.secret, input.revision, now);
+    await control.query('COMMIT');
+    began = false;
+    if (prepared.blocked) return gap('source_observation_gap_pending');
+    await control.query('BEGIN ISOLATION LEVEL REPEATABLE READ');
+    began = true;
+    const result = await snapshotCore(input, control, prepared.admission);
     await control.query('COMMIT');
     return { ...result, transactionPending: false };
   } catch (error) {
+    rememberRuntimeGap(input.secret);
     if (began && error.code !== 'SOURCE_TIMEOUT') {
       try { await control.query('ROLLBACK'); } catch { control.stop(); }
     }

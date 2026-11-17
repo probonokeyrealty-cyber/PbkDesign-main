@@ -14,7 +14,9 @@ const api = name => {
 };
 const NOW = Date.parse('2026-11-17T12:00:00.000Z');
 const DAY = 86400000;
-const secret = 'explicit-local-runtime-source-test-material';
+let fixtureNumber = 0;
+let secret = 'explicit-local-runtime-source-test-material';
+const freshSecret = () => { secret = `explicit-local-runtime-source-test-material-${++fixtureNumber}`; };
 const revision = 'a'.repeat(40);
 const iso = n => new Date(n).toISOString();
 const SUITE = 'runtime_source_evidence_v1';
@@ -56,6 +58,7 @@ beforeAll(async () => {
 }, 30000);
 afterAll(async () => { await db?.close(); });
 beforeEach(async () => {
+  freshSecret();
   await db.exec('TRUNCATE activity_log, conversation_events, pbk_qa_audit, pbk_safety_audit, pbk_eval_runs');
   await db.query(`INSERT INTO activity_log(id,text,metadata,created_at,updated_at)
     VALUES ('private-source-id','private seller answer', $1::jsonb,$2,$2)`,
@@ -181,6 +184,8 @@ test.each(['future', 'missing', 'reversed', 'status'])('invalid source clock/out
 test('foreign workspace and source mismatch cannot obtain a receipt', async () => {
   await db.exec(`UPDATE activity_log SET workspace_id='foreign'`);
   assert.equal((await run('operator_chat', () => record())).verified, false);
+  freshSecret();
+  await db.exec('TRUNCATE pbk_eval_runs');
   await db.exec(`UPDATE activity_log SET workspace_id='pbk',source='not-runtime'`);
   assert.equal((await run('operator_chat', () => record())).verified, false);
   assert.equal((await record({ sourceKind: 'caller_table' })).verified, false);
@@ -265,7 +270,8 @@ test('controlled retries never persist or return an existing organic receipt as 
   await run('operator_chat', () => record());
   const writes = [];
   const guardedPool = { connect: async () => ({ release() {}, query: (config, values) => {
-    if (/INSERT INTO public.pbk_eval_runs/.test(config.text || config)) writes.push(config);
+    if (/INSERT INTO public.pbk_eval_runs/.test(config.text || config)
+      && JSON.parse(config.values[2]).recordRef) writes.push(config);
     return client.query(config, values);
   } }) };
   const result = await controlledExecution.run({}, () => run('operator_chat', () => record({ pool: guardedPool })));
@@ -276,6 +282,8 @@ test('controlled retries never persist or return an existing organic receipt as 
 test('receipt write/readback failures remain gaps without changing the business row', async () => {
   const before = (await db.query('SELECT * FROM activity_log')).rows;
   for (const failReadback of [false, true]) {
+    freshSecret();
+    await db.exec('TRUNCATE pbk_eval_runs');
     const brokenPool = { connect: async () => ({ release() {}, query: (config, values) => {
       const sql = config.text || config;
       if (!failReadback && /INSERT INTO public.pbk_eval_runs/.test(sql)) throw Error('private persistence failure');
@@ -284,7 +292,10 @@ test('receipt write/readback failures remain gaps without changing the business 
     } }) };
     assert.equal((await run('operator_chat', () => record({ pool: brokenPool }))).verified, false);
     assert.deepEqual((await db.query('SELECT * FROM activity_log')).rows, before);
-    assert.equal((await db.query('SELECT * FROM pbk_eval_runs')).rows.length, 0);
+    const stored = (await db.query('SELECT * FROM pbk_eval_runs')).rows;
+    assert.equal(stored.some(row => row.report.recordRef), false);
+    if (failReadback) assert.ok(stored[0].report.admission, 'committed pending survives receipt readback failure');
+    else assert.equal(stored.length, 0, 'no source inspection is allowed when admission persistence failed');
   }
 });
 
@@ -305,6 +316,7 @@ test('signed receipt namespace, envelope time and excessive reports are not trus
     `UPDATE pbk_eval_runs SET created_at=created_at + interval '1 second'`,
     `UPDATE pbk_eval_runs SET report=report || jsonb_build_object('extra',repeat('x',8193))`,
   ]) {
+    freshSecret();
     await db.exec('TRUNCATE pbk_eval_runs');
     await run('operator_chat', () => record());
     await db.exec(mutation);
@@ -350,6 +362,8 @@ test('an abandoned monitoring insert is rolled back by client destruction, never
 
 test('observation clocks cannot reverse after collection even when still later than start', async () => {
   for (const operation of [record, collect]) {
+    freshSecret();
+    await db.exec('TRUNCATE pbk_eval_runs');
     const ticks = [NOW, NOW + 2, NOW + 1];
     const result = await run('operator_chat', () => operation({ now: () => ticks.shift() ?? NOW + 1 }));
     assert.equal(result.verified, false);
@@ -367,6 +381,8 @@ test('new unknown observations after a historical window cannot silently qualify
 
 test('incomplete census, unavailable schema and nonnumeric bounds never qualify', async () => {
   for (const fault of ['count', 'rows', 'schema']) {
+    freshSecret();
+    await db.exec('TRUNCATE pbk_eval_runs');
     const faulty = { query: (config, values) => {
       if (config.text.includes('FROM public.activity_log')) {
         if (fault === 'schema') throw Error('private missing schema');
@@ -494,20 +510,29 @@ const collectInTransaction = (extra = {}) => api('collectRuntimeSourceSnapshotIn
   client, secret, revision, windowStart: NOW - DAY, windowEnd: NOW, now: NOW,
   fence: inheritedFence(), ...extra,
 });
+async function prepare(extra = {}) {
+  const fence = extra.fence || inheritedFence();
+  const prepared = await api('prepareRuntimeSourceObservation')({ client, secret, revision, now: NOW, ...extra, fence });
+  assert.equal(prepared.verified, true);
+  return { admission: prepared.admission, fence };
+}
 
 test('transaction-aware core leaves all writes pending in the actual caller PGlite transaction', async () => {
   const sql = [];
   const trackedClient = { query: config => { sql.push(config); return client.query(config); } };
+  const prepared = await prepare();
   await db.query('BEGIN');
   try {
-    const result = await collectInTransaction({ client: trackedClient });
+    const result = await collectInTransaction({ ...prepared, client: trackedClient });
     assert.equal(result.verified, true);
     assert.equal(result.transactionPending, true);
     assert.equal(sql.some(c => /^(BEGIN|COMMIT|ROLLBACK)/.test(c.text)), false);
     assert.ok(sql.every(c => c.query_timeout > 0 && c.query_timeout <= 2000));
     assert.ok((await db.query('SELECT * FROM pbk_eval_runs')).rows.length > 0);
   } finally { await db.query('ROLLBACK'); }
-  assert.equal((await db.query('SELECT * FROM pbk_eval_runs')).rows.length, 0);
+  const stored = (await db.query('SELECT * FROM pbk_eval_runs')).rows;
+  assert.equal(stored.length, 1);
+  assert.ok(stored[0].report.admission, 'outer rollback cannot undo precommitted pending admission');
 });
 
 test('inherited cancellation of a deferred read fences continuation instead of merely racing it', async () => {
@@ -520,10 +545,10 @@ test('inherited cancellation of a deferred read fences continuation instead of m
     if (config.text.includes('FROM public.activity_log')) { entered(); await paused; }
     return client.query(config);
   } };
+  const prepared = await prepare({ fence: inheritedFence({ signal: abort.signal, onAbort: () => aborted.push(true) }) });
   await db.query('BEGIN');
   try {
-    const work = collectInTransaction({ client: trackedClient,
-      fence: inheritedFence({ signal: abort.signal, onAbort: () => aborted.push(true) }) });
+    const work = collectInTransaction({ ...prepared, client: trackedClient });
     await enteredPromise;
     abort.abort();
     const result = await work;
@@ -533,7 +558,7 @@ test('inherited cancellation of a deferred read fences continuation instead of m
     assert.equal(sql.some(s => /INSERT|COMMIT|ROLLBACK|^BEGIN/.test(s)), false);
     assert.deepEqual(aborted, [true]);
   } finally { resume(); await db.query('ROLLBACK'); }
-  assert.equal((await db.query('SELECT * FROM pbk_eval_runs')).rows.length, 0);
+  assert.ok((await db.query('SELECT * FROM pbk_eval_runs')).rows[0].report.admission);
 });
 
 test('expired inherited deadline never submits SQL and deferred query timeout is at most two seconds', async () => {
@@ -543,11 +568,12 @@ test('expired inherited deadline never submits SQL and deferred query timeout is
   assert.equal(expired.verified, false);
   assert.equal(sql.length, 0);
   assert.deepEqual(aborted, [true]);
+  const prepared = await prepare();
   jest.useFakeTimers();
   try {
     let resume;
     const delayed = new Promise(resolve => { resume = resolve; });
-    const work = collectInTransaction({ client: { query: config => { sql.push(config); return delayed; } },
+    const work = collectInTransaction({ admission: prepared.admission, client: { query: config => { sql.push(config); return delayed; } },
       fence: inheritedFence() });
     await jest.advanceTimersByTimeAsync(2001);
     assert.equal((await work).verified, false);
@@ -569,10 +595,10 @@ test('cancellation after an actual pending insert prevents readback/commit and c
     if (/INSERT INTO public.pbk_eval_runs/.test(config.text)) { entered(); await pending; }
     return result;
   } };
+  const prepared = await prepare({ fence: inheritedFence({ signal: abort.signal, onAbort: () => { poisoned = true; } }) });
   await db.query('BEGIN');
   try {
-    const work = collectInTransaction({ client: tracked,
-      fence: inheritedFence({ signal: abort.signal, onAbort: () => { poisoned = true; } }) });
+    const work = collectInTransaction({ ...prepared, client: tracked });
     await inserted;
     assert.ok((await db.query('SELECT * FROM pbk_eval_runs')).rows.length > 0);
     const beforeAbort = sql.length;
@@ -583,7 +609,9 @@ test('cancellation after an actual pending insert prevents readback/commit and c
     resume();
     await new Promise(resolve => setTimeout(resolve, 10));
     assert.equal(sql.length, beforeAbort, 'no readback, inventory write or commit can follow the abandoned insert');
-    assert.equal((await db.query('SELECT * FROM pbk_eval_runs')).rows.length, 0);
+    const stored = (await db.query('SELECT * FROM pbk_eval_runs')).rows;
+    assert.equal(stored.length, 1);
+    assert.ok(stored[0].report.admission);
   } finally { resume(); await db.query('ROLLBACK'); }
 });
 
@@ -608,6 +636,7 @@ test('removing only the signed inventory cannot turn retained source histories i
 });
 
 test('the inherited deadline is shared across queries rather than renewed per query', async () => {
+  const prepared = await prepare();
   jest.useFakeTimers();
   try {
     const statements = [], aborted = [];
@@ -615,7 +644,7 @@ test('the inherited deadline is shared across queries rather than renewed per qu
       statements.push(config);
       return new Promise(resolve => setTimeout(() => resolve({ rows: [{ acquired: true }] }), 600));
     } };
-    const work = collectInTransaction({ client,
+    const work = collectInTransaction({ admission: prepared.admission, client,
       fence: inheritedFence({ deadlineAt: performance.now() + 1000, onAbort: () => aborted.push(true) }) });
     await jest.advanceTimersByTimeAsync(1001);
     assert.equal((await work).verified, false);
@@ -629,6 +658,7 @@ test('the inherited deadline is shared across queries rather than renewed per qu
 });
 
 test('mutating the supplied fence cannot extend the deadline captured by the core', async () => {
+  const prepared = await prepare();
   jest.useFakeTimers();
   const abort = new AbortController();
   let work;
@@ -637,7 +667,7 @@ test('mutating the supplied fence cannot extend the deadline captured by the cor
     const fence = inheritedFence({ deadlineAt: performance.now() + 1000, signal: abort.signal });
     const client = { query: () => new Promise(resolve =>
       setTimeout(() => resolve({ rows: [{ acquired: true }] }), 600)) };
-    work = collectInTransaction({ client, fence }).then(result => { settled = true; return result; });
+    work = collectInTransaction({ admission: prepared.admission, client, fence }).then(result => { settled = true; return result; });
     await jest.advanceTimersByTimeAsync(400);
     fence.deadlineAt = performance.now() + 15000;
     await jest.advanceTimersByTimeAsync(601);
@@ -662,7 +692,9 @@ test('inventory readback must detect a history receipt disappearing during persi
   } }) };
   const result = await run('operator_chat', () => record({ pool: brokenPool }));
   assert.equal(result.verified, false);
-  assert.equal((await db.query('SELECT * FROM pbk_eval_runs')).rows.length, 0);
+  const stored = (await db.query('SELECT * FROM pbk_eval_runs')).rows;
+  assert.equal(stored.length, 1);
+  assert.ok(stored[0].report.admission, 'failed readback rolls back receipts, not the precommitted pending admission');
   assert.equal((await db.query('SELECT * FROM activity_log')).rows.length, 1);
 });
 
@@ -696,4 +728,136 @@ test('48h retention does not expand the 24h window blockers for superseded inval
   assert.equal(source(snapshot).history.length, 1, '36h-old evidence remains available for earlier fresh audits');
   assert.equal(source(snapshot).counts.invalidClock, 0, 'superseded evidence outside this window is not a 48h blocker');
   assert.equal(snapshot.eligible, true);
+});
+
+async function fillSuccessfulHistory() {
+  for (let n = 0; n < 100; n++) {
+    await db.query('UPDATE activity_log SET text=$1', [`private successful transition ${n}`]);
+    assert.equal((await run('operator_chat', () => record({ now: NOW + n }))).verified, true);
+    const r = (await db.query(`SELECT report FROM pbk_eval_runs WHERE report->>'recordRef' IS NOT NULL`)).rows[0].report;
+    const { revision, sourceBinding, presence, receiptKind, origin, classification, outcome, clockValid, observedAt, sequence } = r;
+    const next = { ...r, outcome: 'failed', observedAt: iso(NOW + 100), sequence: sequence + 1,
+      history: [...r.history, { revision, sourceBinding, presence, receiptKind, origin,
+        classification, outcome, clockValid, observedAt, sequence }] };
+    if (Buffer.byteLength(JSON.stringify(next)) > 8192) {
+      return (await db.query('SELECT * FROM activity_log')).rows[0];
+    }
+  }
+  assert.fail('fixture must reach the unchanged 8192-byte report bound');
+}
+
+test.each(['recorder', 'standalone'])('overflow followed by exact reversion retains a durable unknown gap: %s', async lane => {
+  const last = await fillSuccessfulHistory();
+  await db.exec(`UPDATE activity_log SET status='error'`);
+  const failure = lane === 'recorder'
+    ? await run('operator_chat', () => record({ now: NOW + 100 }))
+    : await collect({ now: NOW + 100, windowStart: NOW - 1000, windowEnd: NOW + 100 });
+  assert.equal(failure.verified, false);
+  await db.query('UPDATE activity_log SET status=$1,text=$2', [last.status, last.text]);
+  const result = await collect({ now: NOW + 101, windowStart: NOW - 1000, windowEnd: NOW + 101 });
+  assert.equal(result.verified, false, 'rollback must not allow the unchanged-binding shortcut to certify the prior success');
+  assert.equal(result.eligible, false);
+  const inventory = (await db.query(`SELECT report FROM pbk_eval_runs WHERE report->>'ledgerKind'='inventory'`)).rows[0].report;
+  assert.ok(inventory.admission, 'the unknown gap must be authenticated durable state, not a timer or process flag');
+  assert.ok(Buffer.byteLength(JSON.stringify(inventory)) <= 8192);
+  await jest.isolateModulesAsync(async () => {
+    const fresh = await import('./runtime-source-evidence.mjs');
+    const reread = await fresh.collectRuntimeSourceSnapshot({ client, secret, revision,
+      now: NOW + 102, windowStart: NOW - 1000, windowEnd: NOW + 102 });
+    assert.equal(reread.verified, false, 'fresh module state must still see the durable gap');
+  });
+}, 30000);
+
+test('failure to write any later gap/finalization marker cannot clear a separately committed pending admission', async () => {
+  const last = await fillSuccessfulHistory();
+  let admitted = false;
+  const blockedPool = { connect: async () => ({ release() {}, query: async config => {
+    if (admitted && /INSERT|UPDATE|DELETE/.test(config.text)) throw Error('private post-admission write outage');
+    const result = await client.query(config);
+    if (config.text === 'COMMIT') admitted = true;
+    return result;
+  } }) };
+  await db.exec(`UPDATE activity_log SET status='error'`);
+  assert.equal((await run('operator_chat', () => record({ pool: blockedPool, now: NOW + 100 }))).verified, false);
+  assert.equal(admitted, true);
+  await db.query('UPDATE activity_log SET status=$1,text=$2', [last.status, last.text]);
+  assert.equal((await collect({ now: NOW + 101, windowStart: NOW - 1000, windowEnd: NOW + 101 })).verified, false);
+  assert.ok((await db.query(`SELECT report FROM pbk_eval_runs WHERE report->>'ledgerKind'='inventory'`)).rows[0].report.admission);
+}, 30000);
+
+test('the transaction-aware core refuses fabricated admissions without observing sources or committing', async () => {
+  const sql = [];
+  const result = await collectInTransaction({ admission: { tokenRef: 'a'.repeat(64) },
+    client: { query: config => { sql.push(config.text); return client.query(config); } } });
+  assert.equal(result.verified, false);
+  assert.deepEqual(sql, []);
+});
+
+test('caller rollback leaves an independently committed admission and a consumed handle cannot be reused', async () => {
+  const fence = inheritedFence();
+  const prepared = await api('prepareRuntimeSourceObservation')({ client, secret, revision, now: NOW,
+    fence });
+  assert.equal(prepared.verified, true);
+  assert.equal(prepared.transactionPending, false);
+  await db.query('BEGIN');
+  try {
+    const result = await collectInTransaction({ admission: prepared.admission, fence });
+    assert.equal(result.verified, true);
+    assert.equal(result.transactionPending, true);
+  } finally { await db.query('ROLLBACK'); }
+  assert.ok((await db.query(`SELECT report FROM pbk_eval_runs WHERE report->>'ledgerKind'='inventory'`)).rows[0].report.admission);
+  assert.equal((await collectInTransaction({ admission: prepared.admission })).verified, false);
+  assert.equal((await collect()).verified, false);
+});
+
+test('an admission persistence outage prevents inspection and remains fail-closed when storage recovers', async () => {
+  await run('operator_chat', () => record());
+  await db.exec(`UPDATE activity_log SET status='error'`);
+  const inspected = [];
+  const unavailable = { connect: async () => ({ release() {}, query: config => {
+    if (/FROM public.activity_log/.test(config.text)) inspected.push(config.text);
+    if (/INSERT INTO public.pbk_eval_runs/.test(config.text)) throw Error('private admission outage');
+    return client.query(config);
+  } }) };
+  assert.equal((await run('operator_chat', () => record({ pool: unavailable }))).verified, false);
+  assert.deepEqual(inspected, [], 'source observations require a committed admission first');
+  await db.exec(`UPDATE activity_log SET status='success'`);
+  const recoveredClient = { query: config => {
+    if (/FROM public.activity_log/.test(config.text)) inspected.push(config.text);
+    return client.query(config);
+  } };
+  assert.equal((await collect({ client: recoveredClient })).verified, false);
+  assert.deepEqual(inspected, [], 'recovery persists the runtime debt without observing/requalifying the old binding');
+  assert.ok((await db.query(`SELECT report FROM pbk_eval_runs WHERE report->>'ledgerKind'='inventory'`)).rows[0].report.admission);
+  await jest.isolateModulesAsync(async () => {
+    const fresh = await import('./runtime-source-evidence.mjs');
+    assert.equal((await fresh.collectRuntimeSourceSnapshot({ client, secret, revision,
+      now: NOW, windowStart: NOW - DAY, windowEnd: NOW })).verified, false);
+  });
+});
+
+test('only the owner can settle a committed admission, and its original deadline cannot be renewed', async () => {
+  const prepared = await prepare();
+  const extended = inheritedFence({ deadlineAt: prepared.fence.deadlineAt + 1 });
+  assert.equal((await collectInTransaction({ admission: prepared.admission, fence: extended })).verified, false);
+  assert.ok((await db.query(`SELECT report FROM pbk_eval_runs WHERE report->>'ledgerKind'='inventory'`)).rows[0].report.admission);
+  const sql = [];
+  const copied = { ...prepared.admission };
+  assert.equal((await collectInTransaction({ admission: copied, fence: prepared.fence,
+    client: { query: config => { sql.push(config.text); return client.query(config); } } })).verified, false);
+  assert.deepEqual(sql, []);
+});
+
+test('a branded handle is insufficient if its durable admission disappears before source inspection', async () => {
+  const prepared = await prepare();
+  await db.exec('DELETE FROM pbk_eval_runs');
+  const sql = [];
+  await db.query('BEGIN');
+  try {
+    const result = await collectInTransaction({ ...prepared,
+      client: { query: config => { sql.push(config.text); return client.query(config); } } });
+    assert.equal(result.verified, false);
+    assert.equal(sql.some(text => /FROM public.activity_log/.test(text)), false);
+    assert.equal(sql.some(text => /INSERT|COMMIT/.test(text)), false);
+  } finally { await db.query('ROLLBACK'); }
 });

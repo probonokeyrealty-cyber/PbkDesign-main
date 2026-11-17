@@ -20,6 +20,8 @@ import { buildAgentExecutionEvidence, isAgentHandlerCompletion } from './agent-f
 import { registeredAgentTimingChannel, agentTimingResultSucceeded } from './agent-timing-adapters.mjs';
 import { createLiveConversationProjector } from './conversation-live-projector.mjs';
 import { createRuntimeEventArchive, createProviderCircuitBreaker } from './production-maturity-loop.mjs';
+import { createRuntimeCoverageSampler } from './runtime-coverage-sampler.mjs';
+import { readRuntimeCoverage } from './runtime-coverage-store.mjs';
 
 const NOW = Date.parse('2026-11-17T12:00:00.000Z');
 const secret = 'explicit-local-task4-overwrite-fixture-material';
@@ -198,6 +200,62 @@ test('actual AgentOps mirror accepts only the private measurement binding, not f
   });
 });
 
+test.each([
+  ['disconnected', false, false],
+  ['reconnecting', true, false],
+  ['missing-readiness', true, undefined],
+  ['closed-ready-latch', false, true],
+])('actual event-bus health leaves durable coverage pending after %s despite stale connected latch', async (state, isOpen, isReady) => {
+  let wall = NOW, monotonic = 100;
+  const bus = { mode: 'redis', connected: true, redisClient: { isOpen: true, isReady: true } };
+  const context = vm.createContext({ BRIDGE_API_KEY: secret, runtimeStateBootstrap: { ready: true },
+    state: { status: { mode: 'approval' } }, getDefaultEventBus: () => bus,
+    getPbkObservabilityStatus: () => ({ enabled: true, initialized: true, otelReady: true }),
+    getRuntimeEventArchiveStatus: () => ({ ready: true }), getProviderCircuitStatus: () => ({ ready: true }),
+  });
+  vm.runInContext(extract('getRuntimeCoverageHealth'), context);
+  const pool = { connect: async () => ({ release() {}, query: config => {
+    if (config.text.includes('clock_timestamp() AS coverage_now')) return { rows: [{ coverage_now: new Date(wall) }] };
+    return db.query(config.text, config.values);
+  } }) };
+  const fixtureSecret = `explicit-local-eventbus-coverage-${state}`;
+  const sampler = createRuntimeCoverageSampler({ pool, secret: fixtureSecret, revision, enabled: true, hosted: true,
+    health: context.getRuntimeCoverageHealth, now: () => wall, monotonicNow: () => monotonic, bootId: 'eventbus-health-fixture' });
+  const advance = () => { wall += 60000; monotonic += 60000; };
+  try {
+    assert.equal((await sampler.sample()).verified, true);
+    advance();
+    const healthy = await sampler.sample();
+    assert.equal(healthy.verified, true);
+    assert.equal(healthy.report.health.eventBusConnected, true);
+    assert.equal(Object.keys(healthy.report.health).length, 7);
+    assert.equal(healthy.report.health.approvalMode, 'approval');
+    bus.redisClient.isOpen = isOpen;
+    bus.redisClient.isReady = isReady;
+    advance();
+    const lost = await sampler.sample();
+    assert.equal(lost.verified, false, 'stale connected/isOpen cannot certify a disconnected or reconnecting bus');
+    assert.equal(lost.result, 'coverage_health_unready');
+    assert.equal(context.getRuntimeCoverageHealth().eventBusConnected, false);
+    const rows = (await db.query(`SELECT suite_name,report FROM pbk_eval_runs
+      WHERE suite_name IN ('runtime_coverage_v1','runtime_coverage_control_v1')`)).rows;
+    assert.equal(rows.filter(row => row.suite_name === 'runtime_coverage_v1').length, 2);
+    assert.equal(rows.find(row => row.suite_name === 'runtime_coverage_control_v1').report.phase, 'pending');
+    assert.equal(sampler.status().segmentRef, null);
+    const denied = await readRuntimeCoverage({ pool, secret: fixtureSecret, revision, now: () => wall });
+    assert.equal(denied.verified, false);
+    assert.equal(denied.result, 'coverage_latest_unverified');
+    bus.redisClient.isOpen = true;
+    bus.redisClient.isReady = true;
+    advance();
+    const recovered = await sampler.sample();
+    assert.equal(recovered.verified, true);
+    assert.equal(recovered.report.previous, null);
+    assert.equal(recovered.report.intervalStart, recovered.report.cutoff);
+    assert.notEqual(recovered.report.segmentRef, healthy.report.segmentRef, 'recovery must not bridge the unready interval');
+  } finally { sampler.stop(); }
+});
+
 test.each(['missing', 'off', 'local', 'bootstrap', 'database', 'db-url', 'pool', 'secret', 'controlled', 'diagnostic', 'ready'])
 ('actual lifecycle startup gates %s without evidence writes outside admitted startup', async mode => {
   let created = 0, started = 0, stopped = 0;
@@ -214,7 +272,8 @@ test.each(['missing', 'off', 'local', 'bootstrap', 'database', 'db-url', 'pool',
     getRuntimeEvidenceContext: () => ({ classification: ['controlled', 'diagnostic'].includes(mode) ? mode : 'unknown' }),
     getPgPool: () => mode === 'pool' ? null : ({ connect() { throw Error('startup must not connect in this fixture'); } }),
     getRuntimeEventArchiveStatus: () => ({ ready: true }), getProviderCircuitStatus: () => ({ ready: true }),
-    getPbkObservabilityStatus: () => health, getDefaultEventBus: () => ({ connected: true }),
+    getPbkObservabilityStatus: () => health,
+    getDefaultEventBus: () => ({ mode: 'redis', connected: true, redisClient: { isOpen: true, isReady: true } }),
     createRuntimeCoverageSampler: options => {
       created++;
       const fixedHealth = options.health();

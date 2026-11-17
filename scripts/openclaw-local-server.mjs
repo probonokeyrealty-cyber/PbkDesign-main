@@ -11229,7 +11229,8 @@ function getRuntimeCoverageHealth() {
     archiveReady: getRuntimeEventArchiveStatus().ready === true,
     providerCircuitsReady: getProviderCircuitStatus().ready === true,
     observabilityReady: obs.enabled === true && obs.initialized === true && obs.otelReady === true,
-    eventBusConnected: bus.connected === true || bus.redisClient?.isOpen === true,
+    // connected is historical; isOpen alone also stays true during Redis reconnects.
+    eventBusConnected: bus.mode === 'redis' && bus.redisClient?.isOpen === true && bus.redisClient?.isReady === true,
     approvalMode: state.status?.mode,
   };
 }

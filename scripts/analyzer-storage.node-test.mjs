@@ -125,7 +125,7 @@ test('Passive legacy reads never publish; an intentional publication completes m
 test('Unavailable shared coordination never invokes the write callback', async () => {
   const { api } = runtime();
   let called = false;
-  await assert.rejects(api.withAnalyzerDraftLock(() => { called = true; }), /coordination is unavailable/);
+  await assert.rejects(api.commitAnalyzerDraft(sample, [], null, false, () => { called = true; return true; }), /coordination is unavailable/);
   assert.equal(called, false);
 });
 
@@ -171,8 +171,14 @@ function actions() {
     forceDraftPublication: ref(false), initialDealData: {}, activeDeal: sample,
     currentDeal: ref(sample), activeSelectedPath: 'cash',
     writeAnalyzerSessionDeal() {}, readSharedAnalyzerDraft: () => 'newer-peer-draft',
-    writeAnalyzerDeal: deal => published.push(deal), clearAnalyzerDeal() {},
-    withAnalyzerDraftLock: action => new Promise((resolve, reject) => callbacks.push({ run: () => resolve(action()), reject })),
+    commitAnalyzerDraft: (deal, fields, expected, force, isCurrent) => new Promise((resolve, reject) => callbacks.push({
+      run: () => {
+        if (!isCurrent()) return resolve('superseded');
+        if (!force && expected !== 'newer-peer-draft') return resolve('conflict');
+        if (deal) published.push(deal);
+        resolve(deal ? 'published' : 'cleared');
+      }, reject,
+    })),
     setDeal: deal => { context.activeDeal = deal; context.currentDeal.current = deal; },
     setAnalyzeStatus() {}, setActiveTab() {}, getPathLabel: () => 'Cash',
     buildMergedDealState: (base, deal) => ({ ...base, ...deal }),

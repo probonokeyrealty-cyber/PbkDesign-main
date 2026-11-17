@@ -7,10 +7,8 @@ import {
   readAnalyzerDraftBaseline,
   readAnalyzerDraftManualFields,
   readAnalyzerStorage,
-  readSharedAnalyzerDraft,
-  writeAnalyzerStorage,
   writeAnalyzerSessionDeal,
-  withAnalyzerDraftLock,
+  commitAnalyzerDraft,
 } from '../utils/analyzerStorage';
 import { isStaleDynamicImportError, reloadForCurrentDeploy } from '../utils/deployVersion';
 import { fetchLeadFullRequest } from '../utils/runtimeBridge';
@@ -324,14 +322,8 @@ async function hydrateAnalyzerFromLead(payload: BridgeRecord, leadId: string, is
   } else {
     if (publish) {
       try {
-        await withAnalyzerDraftLock(() => {
-          if (!isCurrent()) return;
-          if (readSharedAnalyzerDraft() === baseline) {
-            writeAnalyzerStorage(ANALYZER_CURRENT_DEAL_KEY, mergedDeal, manualFields);
-          } else {
-            writeAnalyzerSessionDeal(mergedDeal, manualFields, undefined, true);
-          }
-        });
+        const result = await commitAnalyzerDraft(mergedDeal as DealData, manualFields, baseline, false, isCurrent);
+        if (result === 'conflict' && isCurrent()) writeAnalyzerSessionDeal(mergedDeal, manualFields, undefined, true);
       } catch {
         if (isCurrent()) writeAnalyzerSessionDeal(mergedDeal, manualFields, baseline, true);
       }

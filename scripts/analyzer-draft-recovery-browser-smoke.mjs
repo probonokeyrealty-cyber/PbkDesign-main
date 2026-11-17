@@ -59,6 +59,11 @@ async function verify(engine, viewport, device = {}) {
       window.__sharedDraftEvents = 0;
       window.addEventListener('storage', event => { if (event.key === key) window.__sharedDraftEvents++; });
       const set = Storage.prototype.setItem;
+      const get = Storage.prototype.getItem;
+      Storage.prototype.getItem = function (name) {
+        if (this === localStorage && name === key && window.__staleDraftRead !== undefined) return window.__staleDraftRead;
+        return get.call(this, name);
+      };
       Storage.prototype.setItem = function (name, value) {
         if (name === key) {
           const envelope = JSON.parse(decodeURIComponent(escape(atob(value))));
@@ -126,6 +131,8 @@ async function verify(engine, viewport, device = {}) {
     assert.deepEqual(await second.evaluate(() => window.__draftWrites), [], 'An overlapping Analyzer tab must be read-only until edited');
 
     const seed = await first.evaluate(() => window.PBKAnalyzer.getState().deal);
+    // Reproduce WebKit's per-process localStorage lag independently of renderer scheduling.
+    await second.evaluate(key => { window.__staleDraftRead = localStorage.getItem(key); }, draftKey);
     await holdDraftLock(first);
     await first.getByRole('spinbutton', { name: 'Bedrooms', exact: true }).fill('5');
     await expect.poll(() => first.evaluate(async () => (await navigator.locks.query()).pending.length)).toBeGreaterThanOrEqual(1);
@@ -140,6 +147,7 @@ async function verify(engine, viewport, device = {}) {
     await expect.poll(() => first.evaluate(async () => (await navigator.locks.query()).pending.length)).toBe(0);
     const publications = [...await first.evaluate(() => window.__draftWrites), ...await second.evaluate(() => window.__draftWrites)];
     assert.equal(publications.length, 1, `Exactly one simultaneous writer may publish from the shared baseline: ${JSON.stringify(publications.map(value => ({ beds: value.beds, arv: value.arv, mao: value.mao, isAnalyzed: value.isAnalyzed })))}`);
+    await second.evaluate(() => { delete window.__staleDraftRead; });
     const winner = (await stored(first)).beds;
     assert.ok([5, 6].includes(winner));
     const loser = winner === 5 ? second : first;
@@ -164,6 +172,37 @@ async function verify(engine, viewport, device = {}) {
     await second.reload();
     await ready(first);
     await ready(second);
+
+    // Cancel after the IDB reservation is written, then prove the original baseline still works.
+    const beforeReservation = await stored(first);
+    const canceledReservation = await first.evaluate(async key => {
+      const put = IDBObjectStore.prototype.put;
+      let current = true;
+      IDBObjectStore.prototype.put = function (...args) {
+        const request = put.apply(this, args);
+        current = false;
+        return request;
+      };
+      try {
+        return await window.__commitSampleDraft({ ...window.PBKAnalyzer.getState().deal, beds: 99 }, [], localStorage.getItem(key), false, () => current);
+      } finally { IDBObjectStore.prototype.put = put; }
+    }, draftKey);
+    assert.equal(canceledReservation, 'superseded');
+    assert.deepEqual(await stored(first), beforeReservation);
+    const failedProjection = await first.evaluate(async key => {
+      const set = Storage.prototype.setItem;
+      Storage.prototype.setItem = function (name, value) {
+        if (this === localStorage && name === key) throw new DOMException('Fixture quota failure', 'QuotaExceededError');
+        return set.call(this, name, value);
+      };
+      try {
+        await window.__commitSampleDraft({ ...window.PBKAnalyzer.getState().deal, beds: 98 }, [], localStorage.getItem(key), false, () => true);
+        return 'unexpected-success';
+      } catch (error) { return error.name; }
+      finally { Storage.prototype.setItem = set; }
+    }, draftKey);
+    assert.equal(failedProjection, 'QuotaExceededError');
+    assert.deepEqual(await stored(first), beforeReservation);
 
     await holdDraftLock(first);
     await first.getByRole('spinbutton', { name: 'Bedrooms', exact: true }).fill('5');
@@ -320,11 +359,24 @@ async function verify(engine, viewport, device = {}) {
     assert.equal(await first.evaluate(() => window.__draftWrites.length), writesAfterRemount, 'An obsolete save completion must not write after a session remount');
     assert.equal((await stored(first)).beds, 10);
     const beforeUnavailable = await stored(first);
-    await first.evaluate(() => Object.defineProperty(navigator, 'locks', { configurable: true, value: undefined }));
+    await first.evaluate(() => {
+      window.__draftCoordinatorPut = IDBObjectStore.prototype.put;
+      IDBObjectStore.prototype.put = function (...args) {
+        const request = window.__draftCoordinatorPut.apply(this, args);
+        this.transaction.abort();
+        return request;
+      };
+    });
     await first.getByRole('spinbutton', { name: 'Bedrooms', exact: true }).fill('11');
     await expect(first.locator('#analyzer-valuation').getByText(/Shared draft coordination is unavailable/)).toBeVisible();
-    assert.deepEqual(await stored(first), beforeUnavailable, 'Unavailable coordination must fail closed without changing shared state');
+    assert.deepEqual(await stored(first), beforeUnavailable, 'An aborted coordination transaction must never project a shared write');
     assert.equal(await first.evaluate(key => JSON.parse(decodeURIComponent(escape(atob(sessionStorage.getItem(`${key}:session`))))).payload.beds, draftKey), 11);
+    await first.evaluate(() => { IDBObjectStore.prototype.put = window.__draftCoordinatorPut; });
+    await first.evaluate(() => Object.defineProperty(navigator, 'locks', { configurable: true, value: undefined }));
+    await first.getByRole('spinbutton', { name: 'Bedrooms', exact: true }).fill('12');
+    await expect(first.locator('#analyzer-valuation').getByText(/Shared draft coordination is unavailable/)).toBeVisible();
+    assert.deepEqual(await stored(first), beforeUnavailable, 'Unavailable coordination must fail closed without changing shared state');
+    assert.equal(await first.evaluate(key => JSON.parse(decodeURIComponent(escape(atob(sessionStorage.getItem(`${key}:session`))))).payload.beds, draftKey), 12);
     await first.evaluate(key => localStorage.removeItem(key), draftKey);
     await second.reload();
     await ready(second);

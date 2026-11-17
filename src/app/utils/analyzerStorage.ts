@@ -118,7 +118,31 @@ export function readSharedAnalyzerDraft(): string | null {
   return storageGet(localStorage, ANALYZER_CURRENT_DEAL_KEY);
 }
 
-export async function withAnalyzerDraftLock<T>(operation: () => T): Promise<T> {
+export type AnalyzerDraftCommit = 'published' | 'cleared' | 'conflict' | 'superseded';
+
+function openDraftCoordinator(): Promise<IDBDatabase> {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open('pbk-analyzer-draft-coordination', 1);
+    let settled = false;
+    const timeout = setTimeout(() => {
+      settled = true;
+      reject(new Error('Shared draft coordination timed out.'));
+    }, 5000);
+    request.onupgradeneeded = () => request.result.createObjectStore('drafts');
+    request.onerror = () => { clearTimeout(timeout); reject(request.error); };
+    request.onsuccess = () => {
+      clearTimeout(timeout);
+      if (settled) { request.result.close(); return; }
+      request.result.onversionchange = () => request.result.close();
+      resolve(request.result);
+    };
+  });
+}
+
+export async function commitAnalyzerDraft(
+  deal: DealData | null, manualFields: readonly string[],
+  expected: string | null | undefined, force: boolean, isCurrent: () => boolean
+): Promise<AnalyzerDraftCommit> {
   if (typeof navigator === 'undefined' || !navigator.locks?.request) {
     throw new Error('Shared draft coordination is unavailable.');
   }
@@ -126,7 +150,67 @@ export async function withAnalyzerDraftLock<T>(operation: () => T): Promise<T> {
   const timeout = setTimeout(() => controller.abort(), 5000);
   try {
     return await navigator.locks.request(ANALYZER_DRAFT_LOCK_NAME,
-      { mode: 'exclusive', signal: controller.signal }, operation);
+      { mode: 'exclusive', signal: controller.signal }, async () => {
+        if (!isCurrent()) return 'superseded';
+        const database = await openDraftCoordinator();
+        try {
+          const persistent = deal === null ? null
+            : encodeAnalyzerStoragePayload(sanitizeAnalyzerPayloadForLocalStorage(deal), manualFields);
+          let previous: { raw: string | null } | undefined;
+          // WebKit may cache localStorage per process. Commit the authoritative pointer first.
+          const result = await new Promise<AnalyzerDraftCommit>((resolve, reject) => {
+            const transaction = database.transaction('drafts', 'readwrite');
+            const store = transaction.objectStore('drafts');
+            const request = store.get(ANALYZER_CURRENT_DEAL_KEY);
+            let outcome: AnalyzerDraftCommit = 'superseded';
+            request.onsuccess = () => {
+              previous = request.result;
+              if (!isCurrent()) return;
+              const local = readSharedAnalyzerDraft();
+              const canonical = request.result ? request.result.raw as string | null : local;
+              if (!force && (expected === undefined || canonical !== expected || local !== expected)) {
+                outcome = 'conflict';
+                return;
+              }
+              store.put({ raw: persistent }, ANALYZER_CURRENT_DEAL_KEY);
+              outcome = deal === null ? 'cleared' : 'published';
+            };
+            transaction.oncomplete = () => resolve(outcome);
+            transaction.onabort = () => reject(transaction.error || new Error('Shared draft coordination failed.'));
+            transaction.onerror = () => reject(transaction.error);
+          });
+          const rollback = () => new Promise<void>((resolve, reject) => {
+            const transaction = database.transaction('drafts', 'readwrite');
+            const store = transaction.objectStore('drafts');
+            if (previous === undefined) store.delete(ANALYZER_CURRENT_DEAL_KEY);
+            else store.put(previous, ANALYZER_CURRENT_DEAL_KEY);
+            transaction.oncomplete = () => resolve();
+            transaction.onabort = () => reject(transaction.error || new Error('Draft reservation rollback failed.'));
+            transaction.onerror = () => reject(transaction.error);
+          });
+          if (result !== 'published' && result !== 'cleared') return result;
+          if (!isCurrent()) { await rollback(); return 'superseded'; }
+          try {
+            if (persistent === null) localStorage.removeItem(ANALYZER_CURRENT_DEAL_KEY);
+            else localStorage.setItem(ANALYZER_CURRENT_DEAL_KEY, persistent);
+          } catch (error) {
+            await rollback();
+            throw error;
+          }
+          if (result === 'cleared') {
+            storageDel(sessionStorage, `${ANALYZER_CURRENT_DEAL_KEY}:session`);
+            storageDel(localStorage, 'pbk-deal-data');
+          }
+          if (result === 'published' && deal !== null && persistent !== null) {
+            storageSet(sessionStorage, `${ANALYZER_CURRENT_DEAL_KEY}:session`,
+              encodeAnalyzerStoragePayload(deal, manualFields, persistent));
+            if (readSharedAnalyzerDraft() === persistent) storageDel(localStorage, 'pbk-deal-data');
+          }
+          return result;
+        } finally {
+          database.close();
+        }
+      });
   } finally {
     clearTimeout(timeout);
   }

@@ -180,8 +180,12 @@ const hydration = vm.createContext({
   exports: {}, savedLeadComps, latestCallModeNote, ANALYZER_CURRENT_DEAL_KEY: 'sample-only',
   readAnalyzerDraftManualFields: () => sampleManualFields,
   readAnalyzerDraftBaseline: () => sampleBaseline,
-  readSharedAnalyzerDraft: () => sampleBaseline,
-  withAnalyzerDraftLock: action => Promise.resolve(action()),
+  commitAnalyzerDraft: (deal, fields, expected, force, isCurrent) => {
+    if (!isCurrent()) return Promise.resolve('superseded');
+    storageWrites += 1;
+    sampleStored = structuredClone(deal);
+    return Promise.resolve('published');
+  },
   writeAnalyzerSessionDeal: (deal, fields, baseline, unpublished) => {
     privateHydration = structuredClone(deal);
     privateUnpublished = unpublished;
@@ -272,7 +276,7 @@ strictAssert.equal(privateHydration.notes, originalManual.notes);
 strictAssert.equal(privateUnpublished, true, 'Same-lead hydration must retain unpublished provenance even when only redacted repairs differ');
 
 sampleBaseline = 'fixture-baseline';
-hydration.withAnalyzerDraftLock = () => Promise.reject(new Error('Fixture lock unavailable'));
+hydration.commitAnalyzerDraft = () => Promise.reject(new Error('Fixture lock unavailable'));
 await hydration.hydrateAnalyzerFromLead({ id: 'sample-b' }, 'sample-b');
 strictAssert.equal(storageWrites, writesBeforeConflict);
 strictAssert.equal(privateHydration.leadId, 'sample-b');
@@ -280,7 +284,7 @@ strictAssert.equal(privateUnpublished, true, 'An unpublished cold handoff must n
 
 assert(
   /window\.PBKAnalyzer\?\.setState/.test(dealView) &&
-    /writeAnalyzerStorage/.test(dealView) &&
+    /commitAnalyzerDraft/.test(dealView) &&
     /ANALYZER_CURRENT_DEAL_KEY/.test(dealView),
   'Lead hydration should use PBKAnalyzer.setState when available and the established analyzer storage fallback otherwise.'
 );

@@ -40,15 +40,13 @@ import {
 import {
   ANALYZER_CURRENT_DEAL_KEY,
   analyzerDraftManualFields,
-  clearAnalyzerDeal,
   decodeAnalyzerStoragePayload,
   readAnalyzerDraftBaseline,
   readAnalyzerDraftManualFields,
   readSharedAnalyzerDraft,
   readAnalyzerDeal,
-  writeAnalyzerDeal,
   writeAnalyzerSessionDeal,
-  withAnalyzerDraftLock,
+  commitAnalyzerDraft,
 } from './utils/analyzerStorage';
 import { buildAgentDealContext, type AgentDealContext } from './utils/agentDealContext';
 import { appendSavedDealActivity, upsertSavedDeal } from './utils/dealStorage';
@@ -225,14 +223,12 @@ export default function App({ engineOnly = false }: AppProps) {
     // Keep the private copy immediately; shared writes may wait behind another tab.
     writeAnalyzerSessionDeal(next, fields, draftBaseline.current, true);
     try {
-      const result = await withAnalyzerDraftLock(() => {
-        if (!mounted.current || version !== draftWriteVersion.current) return 'superseded';
-        if (!force && !forceDraftPublication.current && readSharedAnalyzerDraft() !== draftBaseline.current) return 'conflict';
-        writeAnalyzerDeal(next, fields);
+      const result = await commitAnalyzerDraft(next, fields, draftBaseline.current,
+        force || forceDraftPublication.current, () => mounted.current && version === draftWriteVersion.current);
+      if (mounted.current && version === draftWriteVersion.current && result === 'published') {
         draftBaseline.current = readSharedAnalyzerDraft();
         forceDraftPublication.current = false;
-        return 'published';
-      });
+      }
       if (mounted.current && version === draftWriteVersion.current && result === 'conflict') {
         setAnalyzeStatus('Another tab changed this draft. Your edits are kept in this tab. Review before saving.');
       }
@@ -769,20 +765,20 @@ export default function App({ engineOnly = false }: AppProps) {
   const clearDraft = async (status?: string) => {
     const version = ++draftWriteVersion.current;
     try {
-      await withAnalyzerDraftLock(() => {
-        if (!mounted.current || version !== draftWriteVersion.current) return;
+      const result = await commitAnalyzerDraft(null, [], draftBaseline.current, true,
+        () => mounted.current && version === draftWriteVersion.current);
+      if (mounted.current && version === draftWriteVersion.current && result === 'cleared') {
         publishDraft.current = false;
         cacheIncomingDraft.current = false;
         forceDraftPublication.current = false;
         manualDraftFields.current = new Set();
-        clearAnalyzerDeal();
         draftBaseline.current = null;
         setDeal(initialDealData);
         if (status) {
           setAnalyzeStatus(status);
           setActiveTab('analyzer');
         }
-      });
+      }
     } catch {
       if (mounted.current && version === draftWriteVersion.current) {
         setAnalyzeStatus('Clear was not applied. Your existing draft has been kept.');

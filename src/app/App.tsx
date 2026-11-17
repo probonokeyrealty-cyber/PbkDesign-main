@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { buildAnalyzerLeadPatch } from './utils/analyzerLeadPersistence.mjs';
 import { TopBar } from './components/TopBar';
 import { LeftPanel } from './components/LeftPanel';
@@ -39,9 +39,14 @@ import {
 } from './utils/runtimeBridge';
 import {
   ANALYZER_CURRENT_DEAL_KEY,
-  clearAnalyzerDeal,
+  analyzerDraftManualFields,
+  decodeAnalyzerStoragePayload,
+  readAnalyzerDraftBaseline,
+  readAnalyzerDraftManualFields,
+  readSharedAnalyzerDraft,
   readAnalyzerDeal,
-  writeAnalyzerDeal,
+  writeAnalyzerSessionDeal,
+  commitAnalyzerDraft,
 } from './utils/analyzerStorage';
 import { buildAgentDealContext, type AgentDealContext } from './utils/agentDealContext';
 import { appendSavedDealActivity, upsertSavedDeal } from './utils/dealStorage';
@@ -199,7 +204,41 @@ function getInitialDarkMode() {
 }
 
 export default function App({ engineOnly = false }: AppProps) {
-  const [deal, setDeal] = useState<DealData>(initialDealData);
+  const [deal, setDeal] = useState<DealData>(() => {
+    const saved = readAnalyzerDeal(initialDealData);
+    return { ...saved, selectedPath: normalizeSelectedPath(saved) };
+  });
+  const publishDraft = useRef(false);
+  const cacheIncomingDraft = useRef(false);
+  const forceDraftPublication = useRef(false);
+  const draftWriteVersion = useRef(0);
+  const draftBaseline = useRef<string | null | undefined>(readAnalyzerDraftBaseline());
+  const manualDraftFields = useRef<Set<string> | null>(null);
+  if (!manualDraftFields.current) {
+    manualDraftFields.current = new Set(readAnalyzerDraftManualFields() ?? Object.keys(deal));
+  }
+  const persistDraft = useCallback(async (next: DealData, force = false) => {
+    const version = ++draftWriteVersion.current;
+    const fields = [...(manualDraftFields.current || [])];
+    // Keep the private copy immediately; shared writes may wait behind another tab.
+    writeAnalyzerSessionDeal(next, fields, draftBaseline.current, true);
+    try {
+      const result = await commitAnalyzerDraft(next, fields, draftBaseline.current,
+        force || forceDraftPublication.current, () => mounted.current && version === draftWriteVersion.current);
+      if (mounted.current && version === draftWriteVersion.current && result === 'published') {
+        draftBaseline.current = readSharedAnalyzerDraft();
+        forceDraftPublication.current = false;
+      }
+      if (mounted.current && version === draftWriteVersion.current && result === 'conflict') {
+        setAnalyzeStatus('Another tab changed this draft. Your edits are kept in this tab. Review before saving.');
+      }
+      return result;
+    } catch {
+      if (!mounted.current || version !== draftWriteVersion.current) return 'superseded';
+      setAnalyzeStatus('Shared draft coordination is unavailable. Your edits are kept in this tab.');
+      return 'unavailable';
+    }
+  }, []);
   const [activeTab, setActiveTab] = useState<AppTab>('analyzer');
   const [activeDocument, setActiveDocument] = useState<QuickDocumentType>('report');
   const [leftPanelOpen, setLeftPanelOpen] = useState(false);
@@ -221,6 +260,14 @@ export default function App({ engineOnly = false }: AppProps) {
     }),
     [deal, activeSelectedPath]
   );
+  const currentDeal = useRef(activeDeal);
+  currentDeal.current = activeDeal;
+  const mounted = useRef(false);
+  useEffect(() => {
+    mounted.current = true;
+    const pendingWrites = draftWriteVersion;
+    return () => { mounted.current = false; pendingWrites.current++; };
+  }, []);
   const generatedDocuments = useMemo(
     () => buildDocumentSet(activeDeal, branding),
     [activeDeal, branding]
@@ -278,7 +325,16 @@ export default function App({ engineOnly = false }: AppProps) {
     return next;
   };
 
-  const mergeExternalDeal = useCallback((incoming: Partial<DealData>) => {
+  const mergeExternalDeal = useCallback((incoming: Partial<DealData>, persist = true, manualFields?: string[]) => {
+    draftWriteVersion.current++;
+    forceDraftPublication.current = false;
+    if (persist) draftBaseline.current = readSharedAnalyzerDraft();
+    if (manualFields) manualDraftFields.current = new Set(manualFields);
+    else if (incoming.leadId && incoming.leadId !== currentDeal.current.leadId) {
+      manualDraftFields.current = new Set();
+    }
+    publishDraft.current = persist;
+    cacheIncomingDraft.current = !persist;
     setDeal((prev) => buildMergedDealState(prev, incoming));
   }, []);
 
@@ -290,12 +346,14 @@ export default function App({ engineOnly = false }: AppProps) {
   }, []);
 
   const applyBridgeState = useCallback(
-    (payload: { deal?: Partial<DealData>; activeTab?: AppTab | string }) => {
+    (payload: { deal?: Partial<DealData>; activeTab?: AppTab | string; manualFields?: string[]; persistDraft?: boolean }, persist = true) => {
       if (!payload || typeof payload !== 'object') return;
       const isEditing = isEditingAnalyzerField();
+      const publish = payload.persistDraft ?? persist;
 
       if (payload.deal && !isEditing) {
-        mergeExternalDeal(payload.deal);
+        if (!publish && (publishDraft.current || draftBaseline.current === undefined)) return;
+        mergeExternalDeal(payload.deal, publish, payload.manualFields);
       }
 
       if (
@@ -309,28 +367,8 @@ export default function App({ engineOnly = false }: AppProps) {
     [isEditingAnalyzerField, mergeExternalDeal]
   );
 
-  // Load saved data from localStorage
+  // The draft is hydrated before the first render; restoration must never publish defaults.
   useEffect(() => {
-    const saved = readAnalyzerDeal(initialDealData);
-    if (saved !== initialDealData) {
-      try {
-        const mergedDeal: DealData = {
-          ...initialDealData,
-          ...saved,
-        };
-
-        mergedDeal.selectedPath = normalizeSelectedPath({
-          type: mergedDeal.type,
-          contact: mergedDeal.contact,
-          selectedPath: mergedDeal.selectedPath,
-        });
-
-        setDeal(mergedDeal);
-      } catch (e) {
-        console.error('Failed to load saved data', e);
-      }
-    }
-
     try {
       const prefsTheme = readPbkPrefs().theme;
       setDarkMode(prefsTheme !== 'light');
@@ -351,10 +389,11 @@ export default function App({ engineOnly = false }: AppProps) {
     }
   }, []);
 
-  // Save data to localStorage whenever it changes
+  // Only explicit edits/handoffs publish. Passive tab updates retain a session copy, without echoes.
   useEffect(() => {
-    writeAnalyzerDeal(activeDeal);
-  }, [activeDeal]);
+    if (publishDraft.current) void persistDraft(activeDeal);
+    else if (cacheIncomingDraft.current) writeAnalyzerSessionDeal(activeDeal, [...(manualDraftFields.current || [])], draftBaseline.current);
+  }, [activeDeal, persistDraft]);
 
   useEffect(() => {
     localStorage.setItem(BRANDING_STORAGE_KEY, JSON.stringify(branding));
@@ -377,7 +416,7 @@ export default function App({ engineOnly = false }: AppProps) {
 
       const { type, payload } = event.data;
       if (type === 'pbk:analyzer:set-state' || type === 'pbk:analyzer:shell-state') {
-        applyBridgeState(payload || {});
+        applyBridgeState(payload || {}, type === 'pbk:analyzer:set-state');
       }
     };
 
@@ -385,9 +424,13 @@ export default function App({ engineOnly = false }: AppProps) {
       if (event.key !== ANALYZER_CURRENT_DEAL_KEY || !event.newValue) return;
 
       try {
-        applyBridgeState({
-          deal: readAnalyzerDeal(initialDealData),
-        });
+        const incoming = decodeAnalyzerStoragePayload<Partial<DealData> | null>(event.newValue, null);
+        const current = currentDeal.current;
+        if (!incoming || incoming.leadId !== current.leadId) return;
+        if (!current.leadId && incoming.address !== current.address) return;
+        if (publishDraft.current || draftBaseline.current === undefined || isEditingAnalyzerField()) return;
+        draftBaseline.current = event.newValue;
+        applyBridgeState({ deal: incoming, manualFields: analyzerDraftManualFields(event.newValue) || undefined }, false);
       } catch (error) {
         console.error('Failed to hydrate analyzer bridge state', error);
       }
@@ -421,7 +464,7 @@ export default function App({ engineOnly = false }: AppProps) {
       window.removeEventListener('message', handleMessage);
       window.removeEventListener('storage', handleStorage);
     };
-  }, [activeTab, applyBridgeState]);
+  }, [activeTab, applyBridgeState, isEditingAnalyzerField]);
 
   // Apply dark mode class to body
   useEffect(() => {
@@ -515,11 +558,16 @@ export default function App({ engineOnly = false }: AppProps) {
   }, [deal.type, deal.lotSize, deal.builderPrice, deal.builderTotal, deal.offer]);
 
   const handleDealChange = (updates: Partial<DealData>) => {
+    draftWriteVersion.current++;
+    publishDraft.current = true;
+    cacheIncomingDraft.current = false;
+    Object.keys(updates).forEach(key => manualDraftFields.current?.add(key));
     const shouldResetAnalysis = Object.keys(updates).some((key) =>
       ANALYSIS_IMPACT_FIELDS.includes(key as keyof DealData)
     );
 
     if (shouldResetAnalysis) {
+      manualDraftFields.current?.add('isAnalyzed');
       setAnalyzeStatus('');
     }
 
@@ -551,6 +599,7 @@ export default function App({ engineOnly = false }: AppProps) {
       setActiveTab('analyzer');
       return;
     }
+    publishDraft.current = true;
 
     try {
       const response = await syncDealAnalysis(deal);
@@ -577,6 +626,7 @@ export default function App({ engineOnly = false }: AppProps) {
           mid: nextRepairsMid,
         },
       };
+      ['arv', 'mao60', 'maoRBP', 'offer', 'repairs', 'isAnalyzed'].forEach(key => manualDraftFields.current?.add(key));
       setDeal((prev) => {
         return {
           ...prev,
@@ -712,26 +762,47 @@ export default function App({ engineOnly = false }: AppProps) {
     }
   };
 
+  const clearDraft = async (status?: string) => {
+    const version = ++draftWriteVersion.current;
+    try {
+      const result = await commitAnalyzerDraft(null, [], draftBaseline.current, true,
+        () => mounted.current && version === draftWriteVersion.current);
+      if (mounted.current && version === draftWriteVersion.current && result === 'cleared') {
+        publishDraft.current = false;
+        cacheIncomingDraft.current = false;
+        forceDraftPublication.current = false;
+        manualDraftFields.current = new Set();
+        draftBaseline.current = null;
+        setDeal(initialDealData);
+        if (status) {
+          setAnalyzeStatus(status);
+          setActiveTab('analyzer');
+        }
+      }
+    } catch {
+      if (mounted.current && version === draftWriteVersion.current) {
+        setAnalyzeStatus('Clear was not applied. Your existing draft has been kept.');
+      }
+    }
+  };
+
   const handleReset = () => {
     if (confirm('Are you sure you want to reset all deal data? This cannot be undone.')) {
-      setDeal(initialDealData);
-      clearAnalyzerDeal();
+      void clearDraft();
     }
   };
 
   const handleClearAnalyzer = () => {
     if (confirm('Clear the current analyzer deal? CRM saved deals and notes will stay intact.')) {
-      setDeal(initialDealData);
-      clearAnalyzerDeal();
-      setAnalyzeStatus('Analyzer cleared. Start a new deal when ready.');
-      setActiveTab('analyzer');
+      void clearDraft('Analyzer cleared. Start a new deal when ready.');
     }
   };
 
   const handleSaveDeal = async () => {
     try {
       const saved = upsertSavedDeal(activeDeal);
-      writeAnalyzerDeal(activeDeal);
+      const publication = await persistDraft(activeDeal, true);
+      if (!mounted.current || publication === 'superseded') return;
       window.dispatchEvent(new CustomEvent('pbk:deal-saved', { detail: saved }));
       appendSavedDealActivity(activeDeal, {
         type: 'note',
@@ -743,19 +814,31 @@ export default function App({ engineOnly = false }: AppProps) {
       }
       setAnalyzeStatus(`${saved.address}: Saving lead...`);
       const response = await patchLeadRequest(activeDeal.leadId, buildAnalyzerLeadPatch(activeDeal));
+      if (!mounted.current) return;
       if (response.ok === false) throw new Error('The bridge did not save the lead.');
-      setAnalyzeStatus(`${saved.address}: Lead saved.`);
+      if (currentDeal.current === activeDeal) {
+        manualDraftFields.current = new Set();
+        await persistDraft(activeDeal);
+        if (!mounted.current || currentDeal.current !== activeDeal) return;
+        setAnalyzeStatus(`${saved.address}: Lead saved.`);
+      } else {
+        setAnalyzeStatus(`${saved.address}: Earlier snapshot saved. Newer edits remain in your draft.`);
+      }
       window.dispatchEvent(new CustomEvent('pbk:lead-updated', { detail: { leadId: activeDeal.leadId } }));
     } catch (error) {
+      if (!mounted.current) return;
       setAnalyzeStatus(`Lead not saved. Your local draft remains. ${error instanceof Error ? error.message : 'Try again.'}`);
       setActiveTab('analyzer');
     }
   };
 
   const handleLoadSavedDeal = (savedDeal: DealData) => {
+    draftWriteVersion.current++;
     const merged = buildMergedDealState(initialDealData, savedDeal);
+    publishDraft.current = true;
+    forceDraftPublication.current = true;
+    manualDraftFields.current = new Set(Object.keys(merged));
     setDeal(merged);
-    writeAnalyzerDeal(merged);
     setAnalyzeStatus(`${merged.address || 'Saved deal'} loaded into the analyzer.`);
     setActiveTab('analyzer');
   };
@@ -786,8 +869,9 @@ export default function App({ engineOnly = false }: AppProps) {
     setRightPanelOpen(true);
   };
 
-  const handleCreateLeadFromAnalyzer = useCallback(() => {
-    writeAnalyzerDeal(activeDeal);
+  const handleCreateLeadFromAnalyzer = useCallback(async () => {
+    const publication = await persistDraft(activeDeal, true);
+    if (!mounted.current || publication === 'superseded' || currentDeal.current !== activeDeal) return;
     window.dispatchEvent(
       new CustomEvent('pbk:lead-portal-seed', {
         detail: {
@@ -798,7 +882,7 @@ export default function App({ engineOnly = false }: AppProps) {
     );
     setAnalyzeStatus(`Opening the lead portal with ${getPathLabel(activeSelectedPath)} context.`);
     window.location.assign('/leads?new=1');
-  }, [activeDeal, activeSelectedPath]);
+  }, [activeDeal, activeSelectedPath, persistDraft]);
 
   const handlePreview = () => {
     const popup = openMasterPackageWindow(activeDeal, branding, false);

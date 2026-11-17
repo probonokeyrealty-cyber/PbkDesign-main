@@ -4,8 +4,11 @@ import App from '../App';
 import type { DealData, PBKPath } from '../types';
 import {
   ANALYZER_CURRENT_DEAL_KEY,
+  readAnalyzerDraftBaseline,
+  readAnalyzerDraftManualFields,
   readAnalyzerStorage,
-  writeAnalyzerStorage,
+  writeAnalyzerSessionDeal,
+  commitAnalyzerDraft,
 } from '../utils/analyzerStorage';
 import { isStaleDynamicImportError, reloadForCurrentDeploy } from '../utils/deployVersion';
 import { fetchLeadFullRequest } from '../utils/runtimeBridge';
@@ -281,7 +284,7 @@ function hasDealLeadPayload(payload: unknown) {
   );
 }
 
-function hydrateAnalyzerFromLead(payload: BridgeRecord, leadId: string) {
+async function hydrateAnalyzerFromLead(payload: BridgeRecord, leadId: string, isCurrent = () => true) {
   const mappedDeal = buildAnalyzerDealFromLead(payload, leadId);
   const currentDeal =
     window.PBKAnalyzer?.getState().deal ||
@@ -294,9 +297,18 @@ function hydrateAnalyzerFromLead(payload: BridgeRecord, leadId: string) {
     currentLeadId && currentLeadId === leadId
       ? mergeMeaningfulAnalyzerValues(currentDeal, mappedDeal)
       : mergeMeaningfulAnalyzerValues({}, mappedDeal);
+  const manualFields = currentLeadId === leadId
+    ? readAnalyzerDraftManualFields() ?? Object.keys(currentDeal) : [];
+  for (const key of manualFields) {
+    if (Object.prototype.hasOwnProperty.call(currentDeal, key)) {
+      (mergedDeal as BridgeRecord)[key] = (currentDeal as BridgeRecord)[key];
+    }
+  }
   // Reviewed comp selections replace the whole set, including intentionally emptied slots.
-  if (mappedDeal.comps) mergedDeal.comps = mappedDeal.comps;
+  if (mappedDeal.comps && !manualFields.includes('comps')) mergedDeal.comps = mappedDeal.comps;
   if (mappedDeal.isAnalyzed === false) mergedDeal.isAnalyzed = false;
+  const baseline = readAnalyzerDraftBaseline();
+  const publish = currentLeadId !== leadId && baseline !== undefined;
 
   if (window.PBKAnalyzer?.setState) {
     window.PBKAnalyzer.setState({
@@ -304,9 +316,18 @@ function hydrateAnalyzerFromLead(payload: BridgeRecord, leadId: string) {
       activeTab: 'analyzer',
       analyzeStatus: 'Seller record loaded into Deal Analyzer',
       updatedAt: Date.now(),
+      manualFields,
+      persistDraft: publish,
     });
   } else {
-    writeAnalyzerStorage(ANALYZER_CURRENT_DEAL_KEY, mergedDeal);
+    if (publish) {
+      try {
+        const result = await commitAnalyzerDraft(mergedDeal as DealData, manualFields, baseline, false, isCurrent);
+        if (result === 'conflict' && isCurrent()) writeAnalyzerSessionDeal(mergedDeal, manualFields, undefined, true);
+      } catch {
+        if (isCurrent()) writeAnalyzerSessionDeal(mergedDeal, manualFields, baseline, true);
+      }
+    } else if (isCurrent()) writeAnalyzerSessionDeal(mergedDeal, manualFields, baseline, baseline === undefined);
   }
 }
 
@@ -394,7 +415,8 @@ export function DealView() {
             'The live seller record is not ready yet.'
         );
       }
-      hydrateAnalyzerFromLead(response, leadId);
+      await hydrateAnalyzerFromLead(response, leadId, isCurrent);
+      if (!isCurrent()) return;
       setLoadedLeadId(leadId);
     } catch (nextError) {
       if (isCurrent()) setError(friendlyDealLoadError(nextError));

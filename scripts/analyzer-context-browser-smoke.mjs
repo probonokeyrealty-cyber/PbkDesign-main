@@ -55,7 +55,12 @@ async function verify(engine, compact, device = {}) {
     await page.addInitScript(({ allowedOrigin, key, payload, session }) => {
       if (location.origin !== allowedOrigin) return;
       if (session) localStorage.setItem('pbk:team-session:v1', JSON.stringify(session));
-      if (!sessionStorage.getItem(key)) sessionStorage.setItem(key, JSON.stringify(payload));
+      if (!sessionStorage.getItem(key)) {
+        sessionStorage.setItem(key, JSON.stringify(payload));
+        if (!localStorage.getItem(key.replace(/:session$/, ''))) {
+          localStorage.setItem(key.replace(/:session$/, ''), JSON.stringify(payload));
+        }
+      }
     }, { allowedOrigin: origin, key: storageKey, session: teamSession,
       payload: { leadId, address, type: 'house', arv: 2100000 } });
     await page.routeWebSocket('**/*', (socket) => socket.close());
@@ -212,10 +217,10 @@ async function verify(engine, compact, device = {}) {
     for (const scope of ['persistent', 'session']) {
       assert.deepEqual(draftsAfterReload[scope].payload, draftsBeforeReload[scope].payload,
         `Reload must preserve the ${scope} Analyzer draft payload, independent of envelope timestamps`);
-      assert.notEqual(draftsAfterReload[scope].savedAt, draftsBeforeReload[scope].savedAt,
-        'The fixture must exercise a refreshed autosave envelope');
+      assert.equal(draftsAfterReload[scope].savedAt, draftsBeforeReload[scope].savedAt,
+        'Passive reload must not refresh or publish a restored draft');
     }
-    console.log('Analyzer reload preserves draft payloads while refreshing envelope timestamps');
+    console.log('Analyzer reload preserves draft payloads and envelope timestamps without writes');
     if (compact) await toggle.click();
     await expect(page.getByText('No conversation is linked to this lead.')).toBeVisible();
     await expect(page.getByRole('link', { name: 'Open conversation' })).toHaveCount(0);

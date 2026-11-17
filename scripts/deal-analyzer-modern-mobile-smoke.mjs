@@ -176,10 +176,12 @@ let sampleCurrent = {}, sampleHydrated;
 let sampleStored = {}, storageReads = 0, storageWrites = 0;
 let sampleManualFields = [];
 let sampleBaseline = 'fixture-baseline', privateHydration, privateUnpublished;
+let sampleFresh = false;
 const hydration = vm.createContext({
   exports: {}, savedLeadComps, latestCallModeNote, ANALYZER_CURRENT_DEAL_KEY: 'sample-only',
   readAnalyzerDraftManualFields: () => sampleManualFields,
   readAnalyzerDraftBaseline: () => sampleBaseline,
+  isFreshAnalyzerDraft: () => sampleFresh,
   commitAnalyzerDraft: (deal, fields, expected, force, isCurrent) => {
     if (!isCurrent()) return Promise.resolve('superseded');
     storageWrites += 1;
@@ -282,6 +284,18 @@ strictAssert.equal(storageWrites, writesBeforeConflict);
 strictAssert.equal(privateHydration.leadId, 'sample-b');
 strictAssert.equal(privateUnpublished, true, 'An unpublished cold handoff must not appear clean on remount');
 
+// A previous screen's global API can outlive its DOM during WebKit back navigation.
+sampleFresh = true;
+sampleStored = { ...originalManual, notes: 'Fresh private notes', comps: { A: { address: 'Fresh private comp', price: 420000 } } };
+sampleManualFields = ['notes', 'comps'];
+hydration.window.PBKAnalyzer = {
+  getState: () => ({ deal: originalManual }),
+  setState: () => { throw Error('Fresh hydration reached the previous screen API'); },
+};
+await hydration.hydrateAnalyzerFromLead({ id: 'sample-a' }, 'sample-a');
+strictAssert.equal(privateHydration.notes, sampleStored.notes);
+strictAssert.deepEqual(privateHydration.comps, sampleStored.comps);
+
 assert(
   /window\.PBKAnalyzer\?\.setState/.test(dealView) &&
     /commitAnalyzerDraft/.test(dealView) &&
@@ -310,7 +324,7 @@ assert(
   'Deal route loading and hydration copy should use seller-facing language, not internal canonical lead wording.'
 );
 assert(
-  /if \(!leadId\)/.test(dealView) && /<App engineOnly \/>/.test(dealView),
+  /if \(!leadId\) \{\s*return \([\s\S]*?<App engineOnly key=\{draftIdentity\} \/>/.test(dealView),
   'The plain /deal route should continue to mount the analyzer without fetching a lead.'
 );
 assert(

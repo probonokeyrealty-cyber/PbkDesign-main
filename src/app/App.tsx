@@ -47,6 +47,8 @@ import {
   readAnalyzerDeal,
   writeAnalyzerSessionDeal,
   commitAnalyzerDraft,
+  isFreshAnalyzerDraft,
+  getAnalyzerDraftIdentity,
 } from './utils/analyzerStorage';
 import { buildAgentDealContext, type AgentDealContext } from './utils/agentDealContext';
 import { appendSavedDealActivity, upsertSavedDeal } from './utils/dealStorage';
@@ -211,20 +213,23 @@ export default function App({ engineOnly = false }: AppProps) {
   const publishDraft = useRef(false);
   const cacheIncomingDraft = useRef(false);
   const forceDraftPublication = useRef(false);
+  const draftScope = useRef(getAnalyzerDraftIdentity());
   const draftWriteVersion = useRef(0);
+  const analysisRequestVersion = useRef(0);
   const draftBaseline = useRef<string | null | undefined>(readAnalyzerDraftBaseline());
   const manualDraftFields = useRef<Set<string> | null>(null);
   if (!manualDraftFields.current) {
     manualDraftFields.current = new Set(readAnalyzerDraftManualFields() ?? Object.keys(deal));
   }
   const persistDraft = useCallback(async (next: DealData, force = false) => {
+    if (draftScope.current !== getAnalyzerDraftIdentity()) return 'superseded';
     const version = ++draftWriteVersion.current;
     const fields = [...(manualDraftFields.current || [])];
     // Keep the private copy immediately; shared writes may wait behind another tab.
-    writeAnalyzerSessionDeal(next, fields, draftBaseline.current, true);
     try {
+      writeAnalyzerSessionDeal(next, fields, draftBaseline.current, true);
       const result = await commitAnalyzerDraft(next, fields, draftBaseline.current,
-        force || forceDraftPublication.current, () => mounted.current && version === draftWriteVersion.current);
+        force || forceDraftPublication.current, () => mounted.current && version === draftWriteVersion.current && draftScope.current === getAnalyzerDraftIdentity());
       if (mounted.current && version === draftWriteVersion.current && result === 'published') {
         draftBaseline.current = readSharedAnalyzerDraft();
         forceDraftPublication.current = false;
@@ -326,6 +331,7 @@ export default function App({ engineOnly = false }: AppProps) {
   };
 
   const mergeExternalDeal = useCallback((incoming: Partial<DealData>, persist = true, manualFields?: string[]) => {
+    analysisRequestVersion.current++;
     draftWriteVersion.current++;
     forceDraftPublication.current = false;
     if (persist) draftBaseline.current = readSharedAnalyzerDraft();
@@ -391,6 +397,7 @@ export default function App({ engineOnly = false }: AppProps) {
 
   // Only explicit edits/handoffs publish. Passive tab updates retain a session copy, without echoes.
   useEffect(() => {
+    if (draftScope.current !== getAnalyzerDraftIdentity()) return;
     if (publishDraft.current) void persistDraft(activeDeal);
     else if (cacheIncomingDraft.current) writeAnalyzerSessionDeal(activeDeal, [...(manualDraftFields.current || [])], draftBaseline.current);
   }, [activeDeal, persistDraft]);
@@ -421,6 +428,8 @@ export default function App({ engineOnly = false }: AppProps) {
     };
 
     const handleStorage = (event: StorageEvent) => {
+      if (draftScope.current !== getAnalyzerDraftIdentity()) return;
+      if (isFreshAnalyzerDraft()) return;
       if (event.key !== ANALYZER_CURRENT_DEAL_KEY || !event.newValue) return;
 
       try {
@@ -558,6 +567,7 @@ export default function App({ engineOnly = false }: AppProps) {
   }, [deal.type, deal.lotSize, deal.builderPrice, deal.builderTotal, deal.offer]);
 
   const handleDealChange = (updates: Partial<DealData>) => {
+    analysisRequestVersion.current++;
     draftWriteVersion.current++;
     publishDraft.current = true;
     cacheIncomingDraft.current = false;
@@ -592,6 +602,12 @@ export default function App({ engineOnly = false }: AppProps) {
   };
 
   const handleAnalyzeDeal = useCallback(async () => {
+    if (!mounted.current || draftScope.current !== getAnalyzerDraftIdentity()) return;
+    const deal = currentDeal.current;
+    const snapshot = deal;
+    const version = ++analysisRequestVersion.current;
+    const isCurrentAnalysis = () => mounted.current && analysisRequestVersion.current === version &&
+      draftScope.current === getAnalyzerDraftIdentity();
     const readiness = getAnalyzeReadiness(deal);
 
     if (!readiness.ready) {
@@ -603,6 +619,7 @@ export default function App({ engineOnly = false }: AppProps) {
 
     try {
       const response = await syncDealAnalysis(deal);
+      if (!isCurrentAnalysis() || currentDeal.current !== snapshot) return;
       const result =
         (response as { result?: Record<string, unknown> }).result ||
         (response as Record<string, unknown>);
@@ -613,8 +630,7 @@ export default function App({ engineOnly = false }: AppProps) {
       );
       const nextOffer = Number(result?.targetOffer || deal.offer || 0);
       const nextRepairsMid = Number(result?.repairsMid || deal.repairs.mid || 0);
-      const analyzedDeal = {
-        ...deal,
+      const analysisUpdates = {
         isAnalyzed: true,
         arv: nextArv,
         mao60: nextMao60,
@@ -626,11 +642,12 @@ export default function App({ engineOnly = false }: AppProps) {
           mid: nextRepairsMid,
         },
       };
+      const analyzedDeal = { ...deal, ...analysisUpdates };
       ['arv', 'mao60', 'maoRBP', 'offer', 'repairs', 'isAnalyzed'].forEach(key => manualDraftFields.current?.add(key));
       setDeal((prev) => {
         return {
           ...prev,
-          ...analyzedDeal,
+          ...analysisUpdates,
         };
       });
       let leadSyncStatus = '';
@@ -689,8 +706,10 @@ export default function App({ engineOnly = false }: AppProps) {
               updatedAt: new Date().toISOString(),
             },
           });
+          if (!isCurrentAnalysis()) return;
           leadSyncStatus = ' Lead profile synced.';
         } catch (syncError) {
+          if (!isCurrentAnalysis()) return;
           leadSyncStatus =
             syncError instanceof Error
               ? ` Lead profile sync needs retry: ${syncError.message}`
@@ -702,6 +721,7 @@ export default function App({ engineOnly = false }: AppProps) {
         : `${readiness.successMessage}${leadSyncStatus}`;
       setAnalyzeStatus(bridgeAnalysisStatus);
     } catch (error) {
+      if (!isCurrentAnalysis() || currentDeal.current !== snapshot) return;
       setDeal((prev) => ({
         ...prev,
         isAnalyzed: false,
@@ -715,12 +735,13 @@ export default function App({ engineOnly = false }: AppProps) {
       return;
     }
 
+    if (!isCurrentAnalysis()) return;
     setAnalyzeStatus((prev) =>
       prev
         ? `${prev} Call Mode is ready when you choose a path.`
         : 'Analysis ready. Choose a path or open Call Mode when ready.'
     );
-  }, [deal]);
+  }, []);
 
   const handleSendToAgent = async () => {
     if (!activeDeal.address.trim()) {
@@ -763,10 +784,12 @@ export default function App({ engineOnly = false }: AppProps) {
   };
 
   const clearDraft = async (status?: string) => {
+    if (draftScope.current !== getAnalyzerDraftIdentity()) return;
+    analysisRequestVersion.current++;
     const version = ++draftWriteVersion.current;
     try {
       const result = await commitAnalyzerDraft(null, [], draftBaseline.current, true,
-        () => mounted.current && version === draftWriteVersion.current);
+        () => mounted.current && version === draftWriteVersion.current && draftScope.current === getAnalyzerDraftIdentity());
       if (mounted.current && version === draftWriteVersion.current && result === 'cleared') {
         publishDraft.current = false;
         cacheIncomingDraft.current = false;
@@ -833,6 +856,12 @@ export default function App({ engineOnly = false }: AppProps) {
   };
 
   const handleLoadSavedDeal = (savedDeal: DealData) => {
+    analysisRequestVersion.current++;
+    if (isFreshAnalyzerDraft() && savedDeal.leadId !== currentDeal.current.leadId) {
+      setAnalyzeStatus('Different lead not loaded. This fresh draft has been kept.');
+      setActiveTab('analyzer');
+      return;
+    }
     draftWriteVersion.current++;
     const merged = buildMergedDealState(initialDealData, savedDeal);
     publishDraft.current = true;
@@ -1205,6 +1234,7 @@ export default function App({ engineOnly = false }: AppProps) {
             selectedPath={activeSelectedPath}
             activeTab={activeTab}
             analyzeStatus={analyzeStatus}
+            freshDraft={isFreshAnalyzerDraft()}
             onTabChange={setActiveTab}
             onOpenSnapshot={() => setLeftPanelOpen(true)}
             onOpenWorkflow={handleOpenWorkflowDrawer}

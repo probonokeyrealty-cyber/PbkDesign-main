@@ -22,6 +22,7 @@ type DealAnalyzerChromeProps = {
   selectedPath: PBKPath;
   activeTab: AnalyzerTabId;
   analyzeStatus: string;
+  freshDraft?: boolean;
   onTabChange: (tab: AnalyzerTabId) => void;
   onOpenSnapshot: () => void;
   onOpenWorkflow: () => void;
@@ -110,6 +111,7 @@ export function DealAnalyzerCommandHeader({
   onSaveDeal,
   onOpenDocuments,
   onCreateLead,
+  freshDraft = false,
 }: DealAnalyzerChromeProps) {
   const [mobileControlsOpen, setMobileControlsOpen] = useState(false);
   const verdictMeta = getVerdictMeta(deal.verdict);
@@ -135,7 +137,7 @@ export function DealAnalyzerCommandHeader({
     >
       <div className="pbk-analyzer-command-main">
         <div className="pbk-analyzer-title-block">
-          <span className="pbk-kicker">{workbench?.label || 'Deal Analyzer'}</span>
+          <span className="pbk-kicker">{freshDraft ? 'Fresh Analyzer / Tab-local draft' : workbench?.label || 'Deal Analyzer'}</span>
           {workbench ? (
             <>
               <h1>{workbench.title}</h1>

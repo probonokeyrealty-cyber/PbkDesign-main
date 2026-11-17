@@ -225,6 +225,8 @@
     "test:analyzer-browseros-mobile": "node --test ./scripts/analyzer-browseros-mobile.node-test.mjs",
     "test:analyzer-browseros-mobile-live": "node ./scripts/analyzer-browseros-mobile-live.mjs",
     "test:analyzer-draft-recovery-browser": "node ./scripts/analyzer-draft-recovery-browser-smoke.mjs",
+    "pretest:analyzer-fresh-workspace": "npm run build",
+    "test:analyzer-fresh-workspace": "node ./scripts/analyzer-fresh-workspace-browser-smoke.mjs",
     "dev:analyzer-draft": "node ./scripts/analyzer-draft-recovery-browser-smoke.mjs --serve-fixtures",
     "validate:scripts": "node ./scripts/validate-package-scripts.mjs",
     "test:load:bridge": "node ./scripts/load-bridge-smoke.mjs",

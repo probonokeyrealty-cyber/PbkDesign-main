@@ -1,5 +1,5 @@
 import { Component, useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
-import { useParams } from 'react-router';
+import { useLocation, useParams } from 'react-router';
 import App from '../App';
 import type { DealData, PBKPath } from '../types';
 import {
@@ -9,6 +9,7 @@ import {
   readAnalyzerStorage,
   writeAnalyzerSessionDeal,
   commitAnalyzerDraft,
+  isFreshAnalyzerDraft,
 } from '../utils/analyzerStorage';
 import { isStaleDynamicImportError, reloadForCurrentDeploy } from '../utils/deployVersion';
 import { fetchLeadFullRequest } from '../utils/runtimeBridge';
@@ -286,8 +287,9 @@ function hasDealLeadPayload(payload: unknown) {
 
 async function hydrateAnalyzerFromLead(payload: BridgeRecord, leadId: string, isCurrent = () => true) {
   const mappedDeal = buildAnalyzerDealFromLead(payload, leadId);
+  const fresh = isFreshAnalyzerDraft();
   const currentDeal =
-    window.PBKAnalyzer?.getState().deal ||
+    (!fresh && window.PBKAnalyzer?.getState().deal) ||
     readAnalyzerStorage<Partial<DealData>>(ANALYZER_CURRENT_DEAL_KEY, {});
   const currentLeadId = firstText(
     (currentDeal as BridgeRecord).leadId,
@@ -310,7 +312,7 @@ async function hydrateAnalyzerFromLead(payload: BridgeRecord, leadId: string, is
   const baseline = readAnalyzerDraftBaseline();
   const publish = currentLeadId !== leadId && baseline !== undefined;
 
-  if (window.PBKAnalyzer?.setState) {
+  if (!fresh && window.PBKAnalyzer?.setState) {
     window.PBKAnalyzer.setState({
       deal: mergedDeal,
       activeTab: 'analyzer',
@@ -391,19 +393,26 @@ class DealViewErrorBoundary extends Component<{ children: ReactNode }, DealViewE
 }
 
 export function DealView() {
+  const location = useLocation();
+  return <DealViewContent key={location.pathname + location.search} />;
+}
+
+function DealViewContent() {
   const { id: leadId = '' } = useParams();
+  const location = useLocation();
+  const draftIdentity = location.pathname + location.search;
   const [loading, setLoading] = useState(Boolean(leadId));
   const [error, setError] = useState('');
   const [retryToken, setRetryToken] = useState(0);
-  const [loadedLeadId, setLoadedLeadId] = useState('');
+  const [loadedIdentity, setLoadedIdentity] = useState('');
   const requestVersion = useRef(0);
-  const currentLeadId = useRef(leadId);
-  currentLeadId.current = leadId;
+  const currentIdentity = useRef(draftIdentity);
+  currentIdentity.current = draftIdentity;
 
   const loadLead = useCallback(async () => {
     if (!leadId) return;
     const version = ++requestVersion.current;
-    const isCurrent = () => currentLeadId.current === leadId && requestVersion.current === version;
+    const isCurrent = () => currentIdentity.current === draftIdentity && requestVersion.current === version;
     setLoading(true);
     setError('');
     try {
@@ -415,15 +424,19 @@ export function DealView() {
             'The live seller record is not ready yet.'
         );
       }
+      const returnedLead = record(response.lead || response.profile || response);
+      if (firstText(returnedLead.leadId, returnedLead.id) !== leadId) {
+        throw new Error('The returned seller record did not match the requested lead.');
+      }
       await hydrateAnalyzerFromLead(response, leadId, isCurrent);
       if (!isCurrent()) return;
-      setLoadedLeadId(leadId);
+      setLoadedIdentity(draftIdentity);
     } catch (nextError) {
       if (isCurrent()) setError(friendlyDealLoadError(nextError));
     } finally {
       if (isCurrent()) setLoading(false);
     }
-  }, [leadId]);
+  }, [leadId, draftIdentity]);
 
   useEffect(() => {
     if (!leadId) {
@@ -439,14 +452,14 @@ export function DealView() {
   if (!leadId) {
     return (
       <div className="h-full min-h-[680px]">
-        <DealViewErrorBoundary>
-          <App engineOnly />
+        <DealViewErrorBoundary key={draftIdentity}>
+          <App engineOnly key={draftIdentity} />
         </DealViewErrorBoundary>
       </div>
     );
   }
 
-  if ((loading || loadedLeadId !== leadId) && !error) {
+  if ((loading || loadedIdentity !== draftIdentity) && !error) {
     return (
       <div className="grid h-full min-h-[680px] place-items-center bg-slate-950 p-6 text-slate-100">
         <div role="status" className="text-center">
@@ -485,8 +498,8 @@ export function DealView() {
 
   return (
     <div className="h-full min-h-[680px]">
-      <DealViewErrorBoundary>
-        <App engineOnly />
+      <DealViewErrorBoundary key={draftIdentity}>
+        <App engineOnly key={draftIdentity} />
       </DealViewErrorBoundary>
     </div>
   );

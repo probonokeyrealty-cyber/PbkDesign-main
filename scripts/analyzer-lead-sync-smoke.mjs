@@ -229,7 +229,7 @@ assert(
 );
 
 assert(
-  /const analyzedDeal = \{[\s\S]*isAnalyzed:\s*true[\s\S]*const agentDealContext = buildAgentDealContext\(analyzedDeal/.test(
+  /const analysisUpdates = \{[\s\S]*isAnalyzed:\s*true[\s\S]*const analyzedDeal = \{ \.\.\.deal, \.\.\.analysisUpdates \};[\s\S]*const agentDealContext = buildAgentDealContext\(analyzedDeal/.test(
     app
   ) &&
     /patchLeadRequest\(deal\.leadId, \{[\s\S]*deal:\s*analyzedDeal,[\s\S]*agentDealContext,[\s\S]*call_metadata:/s.test(

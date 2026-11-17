@@ -20,6 +20,25 @@ export const ANALYZER_DRAFT_LOCK_NAME = `${ANALYZER_CURRENT_DEAL_KEY}:write`;
 export const ANALYZER_SAVED_DEALS_KEY = getAnalyzerStorageKey('saved-deals');
 export const ANALYZER_ACTIVITY_KEY = getAnalyzerStorageKey('activity');
 
+export function isFreshAnalyzerDraft() {
+  return /^\/deal\/[^/]+\/?$/.test(window.location.pathname || '') &&
+    new URLSearchParams(window.location.search).has('fresh');
+}
+
+export function freshAnalyzerHref(leadId: string, token = crypto.randomUUID()) {
+  return `/deal/${encodeURIComponent(leadId)}?fresh=${encodeURIComponent(token)}`;
+}
+
+function currentSessionKey() {
+  if (!isFreshAnalyzerDraft()) return `${ANALYZER_CURRENT_DEAL_KEY}:session`;
+  const token = new URLSearchParams(window.location.search).get('fresh') || '';
+  return `${ANALYZER_CURRENT_DEAL_KEY}:fresh:${encodeURIComponent(window.location.pathname)}:${encodeURIComponent(token.slice(0, 128))}:session`;
+}
+
+export function getAnalyzerDraftIdentity() {
+  return isFreshAnalyzerDraft() ? currentSessionKey() : ANALYZER_CURRENT_DEAL_KEY;
+}
+
 function encodeAnalyzerStoragePayload(payload: unknown, manualFields?: readonly string[], sharedBaseline?: string | null, unpublishedEdits = false) {
   const envelope = {
     version: 2,
@@ -67,10 +86,10 @@ export function analyzerDraftManualFields(raw: string | null): string[] | null {
 }
 
 export function readAnalyzerDraftManualFields(): string[] | null {
-  const key = `${ANALYZER_CURRENT_DEAL_KEY}:session`;
+  const key = currentSessionKey();
   const session = storageGet(sessionStorage, key);
   return analyzerDraftManualFields(decodeAnalyzerEnvelope(session) !== undefined
-    ? session : storageGet(localStorage, ANALYZER_CURRENT_DEAL_KEY));
+    ? session : isFreshAnalyzerDraft() ? null : storageGet(localStorage, ANALYZER_CURRENT_DEAL_KEY));
 }
 
 function sanitizeAnalyzerDealForPersistentStorage(deal: Partial<DealData>) {
@@ -115,6 +134,7 @@ function sanitizeAnalyzerPayloadForLocalStorage(payload: unknown): unknown {
 }
 
 export function readSharedAnalyzerDraft(): string | null {
+  if (isFreshAnalyzerDraft()) return null;
   return storageGet(localStorage, ANALYZER_CURRENT_DEAL_KEY);
 }
 
@@ -143,6 +163,13 @@ export async function commitAnalyzerDraft(
   deal: DealData | null, manualFields: readonly string[],
   expected: string | null | undefined, force: boolean, isCurrent: () => boolean
 ): Promise<AnalyzerDraftCommit> {
+  // Fresh Workspace handoffs never reserve or publish the shared draft pointer.
+  if (isFreshAnalyzerDraft()) {
+    if (!isCurrent()) return 'superseded';
+    if (deal === null) sessionStorage.removeItem(currentSessionKey());
+    else sessionStorage.setItem(currentSessionKey(), encodeAnalyzerStoragePayload(deal, manualFields));
+    return deal === null ? 'cleared' : 'published';
+  }
   if (typeof navigator === 'undefined' || !navigator.locks?.request) {
     throw new Error('Shared draft coordination is unavailable.');
   }
@@ -217,6 +244,7 @@ export async function commitAnalyzerDraft(
 }
 
 export function readAnalyzerDraftBaseline(): string | null | undefined {
+  if (isFreshAnalyzerDraft()) return null;
   const shared = readSharedAnalyzerDraft();
   const sessionRaw = storageGet(sessionStorage, `${ANALYZER_CURRENT_DEAL_KEY}:session`);
   const envelope = decodeAnalyzerEnvelope(sessionRaw) as { sharedBaseline?: unknown; unpublishedEdits?: boolean } | undefined;
@@ -263,11 +291,18 @@ function storageDel(store: Storage, key: string): void {
 }
 
 export function readAnalyzerStorage<T>(key: string, fallback: T): T {
+  if (key === ANALYZER_CURRENT_DEAL_KEY && isFreshAnalyzerDraft()) {
+    return decodeAnalyzerStoragePayload(storageGet(sessionStorage, currentSessionKey()), fallback);
+  }
   const session = decodeAnalyzerStoragePayload<T | undefined>(storageGet(sessionStorage, `${key}:session`), undefined);
   return session ?? decodeAnalyzerStoragePayload(storageGet(localStorage, key), fallback);
 }
 
 export function writeAnalyzerStorage(key: string, payload: unknown, manualFields?: readonly string[]) {
+  if (key === ANALYZER_CURRENT_DEAL_KEY && isFreshAnalyzerDraft()) {
+    sessionStorage.setItem(currentSessionKey(), encodeAnalyzerStoragePayload(payload, manualFields));
+    return;
+  }
   const persistent = encodeAnalyzerStoragePayload(sanitizeAnalyzerPayloadForLocalStorage(payload), manualFields);
   storageSet(localStorage, key, persistent);
   storageSet(sessionStorage, `${key}:session`, encodeAnalyzerStoragePayload(payload, manualFields,
@@ -278,12 +313,15 @@ export function writeAnalyzerStorage(key: string, payload: unknown, manualFields
 }
 
 export function writeAnalyzerSessionDeal(deal: Partial<DealData>, manualFields: readonly string[], sharedBaseline?: string | null, unpublishedEdits = false) {
-  storageSet(sessionStorage, `${ANALYZER_CURRENT_DEAL_KEY}:session`, encodeAnalyzerStoragePayload(deal, manualFields, sharedBaseline, unpublishedEdits));
+  const encoded = encodeAnalyzerStoragePayload(deal, manualFields, sharedBaseline, unpublishedEdits);
+  if (isFreshAnalyzerDraft()) sessionStorage.setItem(currentSessionKey(), encoded);
+  else storageSet(sessionStorage, currentSessionKey(), encoded);
 }
 
 export function readAnalyzerDeal(fallback: DealData): DealData {
   const current = readAnalyzerStorage<Partial<DealData> | null>(ANALYZER_CURRENT_DEAL_KEY, null);
   if (current) return { ...fallback, ...current } as DealData;
+  if (isFreshAnalyzerDraft()) return fallback;
 
   const legacy = storageGet(localStorage, 'pbk-deal-data');
   const parsed = decodeAnalyzerStoragePayload<Partial<DealData> | null>(legacy, null);
@@ -299,6 +337,10 @@ export function writeAnalyzerDeal(deal: DealData, manualFields?: readonly string
 }
 
 export function clearAnalyzerDeal() {
+  if (isFreshAnalyzerDraft()) {
+    sessionStorage.removeItem(currentSessionKey());
+    return;
+  }
   storageDel(localStorage, ANALYZER_CURRENT_DEAL_KEY);
   storageDel(sessionStorage, `${ANALYZER_CURRENT_DEAL_KEY}:session`);
   storageDel(localStorage, 'pbk-deal-data');

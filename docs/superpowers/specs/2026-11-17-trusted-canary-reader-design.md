@@ -1,8 +1,8 @@
 # Trusted Canary Evidence Reader
 
-Status: proposed design; reader-only approach selected by the founder. Independent
-builder check completed with no material questions. Local implementation awaits
-approval of this document. No production changes authorized.
+Status: design approved by the founder on 2026-11-17 for local implementation and
+tests. Independent builder check completed with no material questions. Reader-only
+scope selected. No production changes authorized.
 
 ## Intent And Boundary
 

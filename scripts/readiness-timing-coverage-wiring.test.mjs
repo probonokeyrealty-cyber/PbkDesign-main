@@ -22,6 +22,7 @@ import { createLiveConversationProjector } from './conversation-live-projector.m
 import { createRuntimeEventArchive, createProviderCircuitBreaker } from './production-maturity-loop.mjs';
 import { createRuntimeCoverageSampler } from './runtime-coverage-sampler.mjs';
 import { readRuntimeCoverage } from './runtime-coverage-store.mjs';
+import { createOperationalAuditPool } from './operational-audit-store.mjs';
 
 const NOW = Date.parse('2026-11-17T12:00:00.000Z');
 const secret = 'explicit-local-task4-overwrite-fixture-material';
@@ -273,6 +274,7 @@ test.each(['missing', 'off', 'local', 'bootstrap', 'database', 'db-url', 'pool',
     getPgPool: () => mode === 'pool' ? null : ({ connect() { throw Error('startup must not connect in this fixture'); } }),
     getRuntimeEventArchiveStatus: () => ({ ready: true }), getProviderCircuitStatus: () => ({ ready: true }),
     getPbkObservabilityStatus: () => health,
+    createOperationalAuditPool,
     getDefaultEventBus: () => ({ mode: 'redis', connected: true, redisClient: { isOpen: true, isReady: true } }),
     createRuntimeCoverageSampler: options => {
       created++;

@@ -796,6 +796,17 @@ export function buildPathPackageText(
     `ARV: ${formatCurrency(doc.arv)}`,
     `MAO Cash: ${formatCurrency(valueOrZero(deal.mao60))}`,
     `MAO RBP: ${formatCurrency(valueOrZero(deal.maoRBP))}`,
+    '',
+    'Property Snapshot',
+    `Property type: ${doc.propertyType}`,
+    `List price: ${formatCurrency(valueOrZero(deal.price))}`,
+    `Bedrooms: ${Number.isFinite(deal.beds) ? deal.beds : 'Not provided'}`,
+    `Bathrooms: ${Number.isFinite(deal.baths) ? deal.baths : 'Not provided'}`,
+    `Square footage: ${Number.isFinite(deal.sqft) ? deal.sqft.toLocaleString('en-US') : 'Not provided'}`,
+    `Year built: ${Number.isFinite(deal.year) ? deal.year : 'Not provided'}`,
+    `Days on market: ${Number.isFinite(deal.dom) ? deal.dom : 'Not provided'}`,
+    `ZIP code: ${nonEmpty(deal.zipCode) || 'Not provided'}`,
+    `Occupancy: ${nonEmpty(deal.vacantStatus) || 'Not verified'}`,
   ];
 
   if (doc.propertyType === 'House') {
@@ -1109,6 +1120,16 @@ export function buildMasterPackageParams(
   params.set('sellerEmail', nonEmpty(deal.sellerEmail));
   params.set('sellerPhone', nonEmpty(deal.sellerPhone));
   params.set('address', nonEmpty(deal.address));
+  for (const field of ['beds', 'baths', 'sqft', 'year', 'dom'] as const) {
+    params.set(field, Number.isFinite(deal[field]) ? String(deal[field]) : '');
+  }
+  params.set('propertyType', deal.type === 'land' ? 'Land/Lot' : 'House');
+  params.set('listPrice', String(valueOrZero(deal.price)));
+  params.set('zipCode', nonEmpty(deal.zipCode));
+  params.set('vacantStatus', nonEmpty(deal.vacantStatus));
+  params.set('notes', nonEmpty(deal.notes));
+  params.set('fee', String(valueOrZero(deal.fee)));
+  for (const comp of ['A', 'B', 'C'] as const) params.set(`comp${comp}Link`, nonEmpty(deal.comps[comp].link));
   params.set('date', formatDate());
   params.set('timeline', timeline);
   params.set('earnestBase', earnestDeposit);
@@ -1228,12 +1249,12 @@ export function buildMasterPackageParams(
   );
   params.set('domHistory', `${valueOrZero(deal.dom)} days`);
   params.set('assessment', valueOrZero(deal.dom) > 60 || repairs > 15000 ? 'Motivated' : 'Stable');
-  params.set('titleRisk', 'Low');
-  params.set('paymentTolerance', 'Flexible');
+  params.set('titleRisk', 'Not verified');
+  params.set('paymentTolerance', 'Not verified');
   params.set('exitPlan', 'Refinance or Resale');
-  params.set('reinstatementNeed', 'None');
-  params.set('arrearsAmount', '0');
-  params.set('ifAny', 'None');
+  params.set('reinstatementNeed', 'Not verified');
+  params.set('arrearsAmount', 'Not verified');
+  params.set('ifAny', 'Not verified');
   params.set('allocatedCosts', sellerCosts || '$0 - covered by PBK');
   params.set('rbpListingPrice', String(agreedPrice || maoRbp));
   params.set('safeRbpPrice', String(maoRbp > 0 ? Math.round(maoRbp * 0.93) : 0));

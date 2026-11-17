@@ -32,6 +32,8 @@ try {
           address: '123 QA Street', type: 'house', contact: 'owner', selectedPath: 'cash',
           sellerName: 'QA Seller', sellerEmail: 'seller@example.invalid', price: 150000,
           timeline: '15-30 Days',
+          beds: 3, baths: 2, sqft: 1234, year: 1990, dom: 0, zipCode: '90210',
+          notes: 'QA manual notes 100% retained',
         }));
       });
       await page.route('**/*', async (route) => {
@@ -76,6 +78,20 @@ try {
         assert.equal(url.searchParams.get('address'), '123 QA Street');
         assert.equal(await popup.evaluate(() => window.opener === null), true);
         await expect(popup.locator('[data-preview-action="print"]')).toBeVisible();
+        if (!print) {
+          const longReference = 'https://example.invalid/' + 'W'.repeat(350);
+          url.searchParams.set('compALink', longReference);
+          await popup.goto(url.toString());
+          const reference = popup.locator('.text-block').filter({ hasText: longReference }).first();
+          await expect(reference).toBeVisible();
+          assert.equal(await reference.evaluate(node => {
+            const page = node.closest('.packet-page').getBoundingClientRect();
+            const range = document.createRange();
+            range.selectNodeContents(node);
+            return [...range.getClientRects()].every(rect => rect.right <= page.right && rect.left >= page.left);
+          }), true,
+            'Long comp references must wrap within the printable column');
+        }
         await popup.close();
       };
       await openPackage('Preview Package', false);
@@ -90,6 +106,12 @@ try {
       await expect(panel.getByText(/^PDF ready/)).toBeVisible();
       assert.equal(requests[0].propertyAddress, '123 QA Street');
       assert.equal(requests[0].selectedPathLabel, 'Cash Offer');
+      assert.match(requests[0].content, /Square footage: 1,234/);
+      assert.match(requests[0].content, /QA manual notes 100% retained/);
+      const pdfFields = new URLSearchParams(requests[0].masterPackageQuery);
+      assert.equal(pdfFields.get('beds'), '3');
+      assert.equal(pdfFields.get('dom'), '0');
+      assert.equal(pdfFields.get('zipCode'), '90210');
       const iframe = panel.locator('iframe');
       await expect(iframe).toHaveAttribute('src', /^blob:/);
       const beforeRefresh = await iframe.getAttribute('src');

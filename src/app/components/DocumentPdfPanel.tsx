@@ -8,7 +8,7 @@ import {
   RefreshCw,
 } from 'lucide-react';
 import { DealData, PBKPath } from '../types';
-import { PBKBranding, buildMasterPackageParams, getPathLabel } from '../utils/pbk';
+import { PBKBranding, buildMasterPackageParams, buildPathPackageText, getPathLabel } from '../utils/pbk';
 import { bridgeBlobRequest } from '../utils/runtimeBridge';
 
 interface DocumentPdfPanelProps {
@@ -65,6 +65,7 @@ export function DocumentPdfPanel({
             propertyAddress: deal.address,
             selectedPathLabel: getPathLabel(selectedPath),
             companyName: branding.companyName,
+            content: buildPathPackageText({ ...deal, selectedPath }, branding),
             masterPackageQuery: buildMasterPackageParams(
               {
                 ...deal,

@@ -33,7 +33,7 @@ import { createProviderActionBinding, hashProviderActionContext, validateProvide
 import { authorizeQualificationRequest, executeReleaseQualification, isDirectQualificationFounder, readReleaseQualification } from './release-qualification.mjs';
 import { loadQualificationCiEvidence } from './release-qualification-ci.mjs';
 import { collectOperationalAudit } from './operational-audit-collector.mjs';
-import { executeOperationalAudit, readOperationalAudit } from './operational-audit-store.mjs';
+import { executeOperationalAudit, readOperationalAudit, createOperationalAuditPool } from './operational-audit-store.mjs';
 import { collectBacklogReconciliation } from './backlog-reconciliation-collector.mjs';
 import { executeBacklogReconciliation, readBacklogReconciliation } from './backlog-reconciliation-store.mjs';
 import { recordCallMemorySkip, readCallMemorySkipSummary } from './call-memory-outcome-store.mjs';
@@ -3097,8 +3097,11 @@ async function buildProductionReadinessSnapshot({
     lastActions: buildProductionLastAgentActions(),
     requireIntelligenceContext: false,
   });
-  const operationalEvidence = collectAgentFleetEvidence(state);
-  const latencyPolicy = getAgentLatencyPolicy(process.env);
+  const measurementNow = Date.now();
+  const revision = process.env.RENDER_GIT_COMMIT || BUILD_REVISION;
+  const latencyPolicy = getAgentLatencyPolicy(process.env, { requireVersion2: true });
+  const operationalEvidence = collectAgentFleetEvidence(state, { now: measurementNow, policy: latencyPolicy,
+    secret: BRIDGE_API_KEY, revision, requireTimingV2: true });
   const stableAgentFleetMeasurement = buildStableAgentFleetMeasurement(getCurrentAgentRegistry(), {
     healthProbes: (state.agents || []).map(buildAgentHealthProbe),
     toolCatalog: buildProductionToolCatalog(),
@@ -3107,6 +3110,7 @@ async function buildProductionReadinessSnapshot({
     latencyObservations: operationalEvidence.latencyObservations,
     latencyBudgetsMs: latencyPolicy.budgets,
     latencyPolicy,
+    now: measurementNow, timingEvidenceSecret: BRIDGE_API_KEY, revision, requireTimingV2: true,
     lastActions: operationalEvidence.lastActions,
     evidenceDiagnostics: operationalEvidence.diagnostics,
     unverifiedLatencySamples: operationalEvidence.unverifiedLatencySamples,
@@ -11244,7 +11248,7 @@ function startRuntimeCoverageIfReady() {
     if (getPostgresHealthMeta().ready !== true) return false;
     const pool = getPgPool();
     if (!pool || pool.controlled) return false;
-    runtimeCoverageSampler ||= createRuntimeCoverageSampler({ pool, secret: BRIDGE_API_KEY,
+    runtimeCoverageSampler ||= createRuntimeCoverageSampler({ pool: createOperationalAuditPool(pool), secret: BRIDGE_API_KEY,
       revision: process.env.RENDER_GIT_COMMIT || BUILD_REVISION, enabled: true, hosted: IS_HOSTED,
       health: getRuntimeCoverageHealth });
     runtimeCoverageStarted = runtimeCoverageSampler.start() === true;
@@ -11637,6 +11641,9 @@ async function buildProductionMaturitySnapshot({ runtimeMeta = getRuntimeMeta() 
       runId: qualification.runId || null, executedAt: qualification.executedAt || null, source: qualification.source },
     operationalAudit: { ...operationalAudit.audit, ready: operationalAudit.verified === true && operationalAudit.audit?.ready === true,
       verified: operationalAudit.verified, runId: operationalAudit.runId || null,
+      sourceDiagnostics: operationalAudit.sourceDiagnostics || [],
+      coverageDiagnostics: operationalAudit.coverageDiagnostics || { verified: false, result: 'coverage_unverified' },
+      legacy: operationalAudit.legacy || null,
       source: operationalAudit.source, result: operationalAudit.result, executedAt: operationalAudit.executedAt || null },
     // Internal recovery is supplementary evidence, never delivery or launch qualification.
     backlogReconciliation: {
@@ -45272,8 +45279,11 @@ function buildAgentOrchestrationSnapshot() {
   const probes = (state.agents || []).map(buildAgentHealthProbe);
   // Never combine readiness from a different context with this packet.
   const intelligenceContext = state.status?.pbkIntelligenceContext || {};
-  const operationalEvidence = collectAgentFleetEvidence(state);
-  const latencyPolicy = getAgentLatencyPolicy(process.env);
+  const measurementNow = Date.now();
+  const revision = process.env.RENDER_GIT_COMMIT || BUILD_REVISION;
+  const latencyPolicy = getAgentLatencyPolicy(process.env, { requireVersion2: true });
+  const operationalEvidence = collectAgentFleetEvidence(state, { now: measurementNow, policy: latencyPolicy,
+    secret: BRIDGE_API_KEY, revision, requireTimingV2: true });
   const measurement = buildStableAgentFleetMeasurement(getCurrentAgentRegistry(), {
     healthProbes: probes,
     toolCatalog: buildProductionToolCatalog(),
@@ -45281,6 +45291,7 @@ function buildAgentOrchestrationSnapshot() {
     latencyObservations: operationalEvidence.latencyObservations,
     latencyBudgetsMs: latencyPolicy.budgets,
     latencyPolicy,
+    now: measurementNow, timingEvidenceSecret: BRIDGE_API_KEY, revision, requireTimingV2: true,
     lastActions: operationalEvidence.lastActions,
     evidenceDiagnostics: operationalEvidence.diagnostics,
     unverifiedLatencySamples: operationalEvidence.unverifiedLatencySamples,
@@ -73107,18 +73118,10 @@ const server = createServer(async (request, response) => {
       }
       const pool = runtimeStateBootstrap.ready ? getPgPool() : null;
       const result = await executeOperationalAudit({ pool, revision: process.env.RENDER_GIT_COMMIT || BUILD_REVISION,
-        secret: BRIDGE_API_KEY, collect: async ({ now }) => {
-          const obs = getPbkObservabilityStatus();
-          const bus = await getEventBusStatus();
-          return collectOperationalAudit({ pool, now, runtime: {
-            authenticationConfigured: Boolean(BRIDGE_API_KEY), approvalMode: state.status?.mode,
-            bootstrapReady: runtimeStateBootstrap.ready,
-            archiveReady: getRuntimeEventArchiveStatus().ready,
-            providerCircuitsReady: getProviderCircuitStatus().ready,
-            observabilityReady: Boolean(obs.enabled && obs.initialized && obs.otelReady),
-            eventBusConnected: bus.connected === true,
-          } });
-        },
+        secret: BRIDGE_API_KEY, collect: ({ pool: auditPool, now, observationNow, fence }) =>
+          collectOperationalAudit({ pool: auditPool, now, observationNow, fence, secret: BRIDGE_API_KEY,
+            revision: process.env.RENDER_GIT_COMMIT || BUILD_REVISION, sampler: runtimeCoverageSampler,
+            runtime: getRuntimeCoverageHealth() }),
       });
       clearBridgeReadCache('operational_audit_executed');
       json(response, result.ok ? 200 : result.result === 'operational_audit_in_progress' ? 409 : 503, result);

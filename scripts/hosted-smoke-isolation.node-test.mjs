@@ -109,14 +109,19 @@ test('The browser policy blocks real origins, mutations, redirects and non-stati
     assert.equal(classifyHostedSmokeRequest('GET', target), 'blocked-external');
   }
   for (const method of ['POST', 'PUT', 'PATCH', 'DELETE']) {
-    for (const path of ['/invoke', '/events', '/reset', '/api/leads/sample', '/assets/module.js']) {
+    for (const path of ['/invoke', '/events', '/reset', '/api/leads/sample', '/assets/module.js', '/api/conversations/not-a-sample/sender-recommendation', '/api/conversations/sample-thread/sender-recommendation?unexpected=1', '/api/communication-identities/sync', '/api/conversations/sample-thread/messages']) {
       assert.equal(classifyHostedSmokeRequest(method, origin + path), 'blocked-write');
     }
   }
   assert.equal(classifyHostedSmokeRequest('POST', origin + '/api/state/stream/session'), 'stream-fixture');
+  assert.equal(classifyHostedSmokeRequest('POST', origin + '/api/conversations/sample-thread/sender-recommendation'), 'recommendation-fixture');
+  assert.equal(classifyHostedSmokeRequest('PUT', origin + '/api/conversations/sample-thread/sender-recommendation'), 'blocked-write');
   assert.equal(classifyHostedSmokeRequest('GET', origin + '/state'), 'fixture');
   assert.equal(classifyHostedSmokeRequest('GET', origin + '/brain/state'), 'fixture');
-  assert.equal(classifyHostedSmokeRequest('GET', origin + '/api/anything'), 'fixture');
+  for (const path of ['/api/anything', '/api/leads-typo', '/api/leads/not-a-sample/full', '/api/conversations/not-a-sample/timeline', '/brain/anything', '/.netlify/functions/unexpected']) {
+    assert.equal(classifyHostedSmokeRequest('GET', origin + path), 'blocked-read');
+    assert.equal(classifyHostedSmokeRequest('HEAD', origin + path), 'blocked-read');
+  }
   assert.equal(classifyHostedSmokeRequest('GET', origin + '/ava-chat'), 'shell');
   assert.equal(classifyHostedSmokeRequest('GET', origin + '/assets/App-example.js'), 'static');
   assert.equal(classifyHostedSmokeRequest('GET', origin + '/pbk-build-manifest.json'), 'static');
@@ -133,4 +138,32 @@ test('Both CLI entries reject target/profile arguments before starting a smoke r
     assert.match(result.stderr, /accepts no/);
     assert.equal(result.stdout, '');
   }
+});
+
+test('Exported smoke rejects overlap before allocating a child and releases ownership on startup failure', async () => {
+  const script = `
+    import assert from 'node:assert/strict';
+    import { registerHooks } from 'node:module';
+    globalThis.starts = 0;
+    const fake = 'data:text/javascript,' + encodeURIComponent(
+      'export async function startIsolatedBridge() { globalThis.starts++; if (globalThis.starts === 1) return new Promise((resolve, reject) => { globalThis.rejectStartup = reject; }); throw Error("fixture startup failure"); }'
+    );
+    registerHooks({ resolve(specifier, context, next) {
+      if (specifier === './bridge-smoke-isolation.mjs' && context.parentURL?.endsWith('/openclaw-smoke.mjs')) return { url: fake, shortCircuit: true };
+      return next(specifier, context);
+    } });
+    const { runHostedFounderSmoke } = await import(${JSON.stringify(pathToFileURL(entry).href)});
+    const first = runHostedFounderSmoke();
+    first.catch(() => {});
+    await assert.rejects(runHostedFounderSmoke(), /already running/);
+    assert.equal(globalThis.starts, 1);
+    globalThis.rejectStartup(Error('fixture startup failure'));
+    await assert.rejects(first, /fixture startup failure/);
+    await assert.rejects(runHostedFounderSmoke(), /fixture startup failure/);
+    assert.equal(globalThis.starts, 2);
+    console.log('overlap rejected and failed startup released ownership');
+  `;
+  const result = await run(['--input-type=module', '-e', script]);
+  assert.equal(result.code, 0, result.stderr + result.stdout);
+  assert.match(result.stdout, /overlap rejected/);
 });

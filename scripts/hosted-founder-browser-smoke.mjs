@@ -16,6 +16,35 @@ const pages = [
   ['/skills', 'Skill Studio'],
 ];
 const shellPaths = new Set(pages.map(([path]) => path));
+const sampleThreads = ['sample-thread', 'wrong-thread'];
+const recommendationPaths = new Set(sampleThreads.map(id => `/api/conversations/${id}/sender-recommendation`));
+const sampleSender = { id: 'sample-disabled-sender', channel: 'sms', provider: 'telnyx', lifecycleStatus: 'inactive', status: 'inactive', address: '+12025550143', label: 'Sample only - disabled', eligibility: { eligible: false } };
+const fixtures = new Map([
+  ...['/state', '/api/auth/team/status', '/api/leads', '/api/founder/work-queue', '/api/conversations'].map(path =>
+    [path, url => fixtureResponse(url.pathname, url.searchParams)]),
+  ['/brain/state', () => ({ ok: true, items: [] })],
+  ['/api/desktop-sidecar/status', () => ({ ok: true, connected: false })],
+  ['/api/local/commands', () => ({ ok: true, commands: [] })],
+  ['/api/quotas', () => ({ ok: true, quotas: {} })],
+  ['/api/tooling/status', () => ({ ok: true, tooling: {} })],
+  ['/api/campaigns', () => ({ ok: true, campaigns: [] })],
+  ['/api/campaigns/lead-sources', () => ({ ok: true, sources: [] })],
+  ['/api/analytics/campaign-drilldown', () => ({ ok: true, rows: [], campaigns: [], sources: [] })],
+  ['/api/skills/governance/status', () => ({ ok: true, candidates: 0, approvedInactive: 0, canary: 0, active: 0, snapshot: { available: false } })],
+  ['/api/skills/governance/repository', () => ({ ok: true, items: [] })],
+  ['/api/communication-identities', () => ({ ok: true, items: [sampleSender] })],
+  ['/api/replies/templates', () => ({ ok: true, templates: [] })],
+]);
+for (const lead of sampleLeads) {
+  for (const suffix of ['', '/full']) {
+    fixtures.set(`/api/leads/${encodeURIComponent(lead.id)}${suffix}`, () => ({ ok: true, lead }));
+  }
+  fixtures.set(`/api/leads/${encodeURIComponent(lead.id)}/last-call`, () => ({ ok: true, call: null }));
+}
+for (const thread of sampleThreads) {
+  fixtures.set(`/api/conversations/${thread}`, () => ({ ok: true, thread: { id: thread, leadId: thread === 'sample-thread' ? sampleLeads[0].id : sampleLeads[1].id, sellerName: 'Fictional Seller' } }));
+  fixtures.set(`/api/conversations/${thread}/timeline`, url => fixtureResponse(url.pathname, url.searchParams));
+}
 const contentTypes = {
   '.js': 'text/javascript', '.css': 'text/css', '.json': 'application/json',
   '.woff': 'font/woff', '.woff2': 'font/woff2', '.ttf': 'font/ttf',
@@ -32,8 +61,9 @@ export function classifyHostedSmokeRequest(method, target) {
   try { url = new URL(target); } catch { return 'blocked-external'; }
   if (url.origin !== origin || url.username || url.password) return 'blocked-external';
   if (method === 'POST' && url.pathname === '/api/state/stream/session' && !url.search) return 'stream-fixture';
+  if (method === 'POST' && recommendationPaths.has(url.pathname) && !url.search) return 'recommendation-fixture';
   if (!['GET', 'HEAD'].includes(method)) return 'blocked-write';
-  if (/^\/(?:api(?:\/|$)|brain(?:\/|$)|\.netlify\/functions\/|state$|health$|status$|metrics$)/.test(url.pathname)) return 'fixture';
+  if (fixtures.has(url.pathname)) return 'fixture';
   if (shellPaths.has(url.pathname)) return 'shell';
   if (url.pathname === '/pbk-build-manifest.json') return 'static';
   if (/^\/(?:assets|fonts)\/[\w./-]+$/.test(url.pathname) && contentTypes[extname(url.pathname)]) return 'static';
@@ -78,11 +108,9 @@ export async function runHostedFounderBrowserSmoke() {
           return route.fulfill({ status: 403, headers, json: { ok: false, error: 'Sample-only smoke: writes disabled' } });
         }
         if (policy === 'stream-fixture') return route.fulfill({ headers, json: { ok: false } });
+        if (policy === 'recommendation-fixture') return route.fulfill({ headers, json: { ok: true, recommended: null, alternatives: [], reasonCodes: ['sample_sender_disabled'] } });
         if (policy === 'fixture') {
-          let json = fixtureResponse(url.pathname, url.searchParams);
-          if (url.pathname === '/api/desktop-sidecar/status') json = { ok: true, connected: false };
-          if (url.pathname === '/api/local/commands') json = { ok: true, commands: [] };
-          return route.fulfill({ headers, json });
+          return route.fulfill({ headers, json: fixtures.get(url.pathname)(url) });
         }
         if (policy === 'shell') return route.fulfill({ headers, contentType: 'text/html', body: shell });
         if (policy === 'static') {
@@ -115,15 +143,17 @@ export async function runHostedFounderBrowserSmoke() {
         assert.ok(overflow <= 1, `${engine.name()} ${viewport.width} ${path} overflows by ${overflow}px`);
         visited.push(path);
       }
+      assert.deepEqual([...new Set(missing)], [], 'Every API read, asset and document must have an explicit fixture');
       // Prove that fetches to another origin and write-shaped requests cannot escape,
       // even when initiated by a page rather than by the Node test runner.
       const blocked = await page.evaluate(async () => ({
         external: await fetch('https://provider.invalid/smoke-canary').then(() => false, () => true),
         write: await fetch('/invoke', { method: 'POST', body: '{}' }).then(res => res.status),
+        read: await fetch('/api/not-fixtured').then(res => res.status),
       }));
-      assert.deepEqual(blocked, { external: true, write: 403 });
+      assert.deepEqual(blocked, { external: true, write: 403, read: 404 });
       assert.deepEqual(writes, ['POST /invoke'], 'Only the deliberate blocked-write canary may occur');
-      assert.deepEqual(missing, [], 'No asset or document request may fall through to a server');
+      assert.deepEqual(missing, ['/api/not-fixtured'], 'Only the deliberate unknown-read canary may be missing');
       assert.deepEqual(errors, [], 'The sample pages must render without uncaught errors');
       assert.ok(external.every(value => value === 'https://provider.invalid'), 'Unexpected external dependency in built pages');
       reports.push({ engine: engine.name(), viewport, pages: visited, sampleLead: sampleLeads[0].id, writesForwarded: 0, externalForwarded: 0 });

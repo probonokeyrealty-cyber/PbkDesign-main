@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 let isolatedBridge;
 let API_KEY;
 let BASE_URL;
+let running = false;
 const fetch = (...args) => isolatedBridge.fetch(...args);
 
 function assert(condition, message) {
@@ -48,6 +49,8 @@ async function waitForHealth(timeoutMs = 15000) {
 }
 
 export async function runIsolatedBridgeSmoke() {
+  if (running) throw new Error('An isolated bridge smoke run is already running.');
+  running = true;
   try {
     isolatedBridge = await startIsolatedBridge();
     API_KEY = isolatedBridge.apiKey;
@@ -1611,7 +1614,14 @@ export async function runIsolatedBridgeSmoke() {
       isolation: { state: 'disposable-sample', pdfRenderer: 'offline-fixture', blockedNetwork: isolatedBridge.blockedNetwork },
     }, null, 2));
   } finally {
-    await isolatedBridge?.stop();
+    try {
+      await isolatedBridge?.stop();
+    } finally {
+      isolatedBridge = undefined;
+      API_KEY = undefined;
+      BASE_URL = undefined;
+      running = false;
+    }
   }
 }
 

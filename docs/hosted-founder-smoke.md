@@ -30,17 +30,24 @@ registries; application and provider requests are not forwarded.
   add-ons and writes outside that temporary directory. PDF rendering uses the
   existing offline fixture. Startup, shutdown, cancellation and orphan cleanup
   remain owned by the shared isolation harness.
+- The exported bridge smoke rejects overlapping invocations before starting
+  another child. Its ownership guard is released after shutdown or failed startup.
 - The browser proof launches new temporary Chromium/WebKit profiles with an empty
   environment. It never attaches to an operator browser or reads its storage.
   It serves built assets directly from disk at a virtual loopback origin; there
   is no preview server or proxy. Every request is fulfilled from a sample fixture
   or blocked. Missing assets, unknown reads and unexpected writes fail the proof.
+  API reads use an explicit route/sample-ID fixture map; unmatched endpoints do
+  not receive generic empty-success responses.
 - Browser service workers and WebSockets are blocked. Chromium also uses offline
   mode. WebKit cannot navigate fulfilled documents in Playwright offline mode, so
   it relies on the same non-forwarding catch-all router and self-only CSP. Remote
   font/preconnect links are removed from the test shell, not from product files.
-- The only POST answered normally is a synthetic stream-session refusal; all
-  business mutations return 403. A deliberate write canary must be blocked.
+- POST fixtures are limited to a synthetic stream-session refusal and a sender
+  recommendation for the two sample threads. Recommendations always select no
+  sender; the inventory contains a disabled sample identity. All business
+  mutations, including messages and sender inventory sync, return 403. Deliberate
+  write and unknown-read canaries must return 403 and 404 respectively.
 - CLI target/profile arguments are rejected. Legacy `PBK_HOSTED_*` targets,
   credentials and mutation flags cannot opt out of isolation. The workflow has
   no application secrets, and checkout does not persist Git credentials.

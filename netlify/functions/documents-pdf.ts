@@ -155,7 +155,9 @@ async function launchBrowserWithRetry(): Promise<Browser> {
       return await puppeteer.launch({
         args: chromium.args,
         defaultViewport: chromium.defaultViewport,
-        executablePath: localChromePath || (await chromium.executablePath()),
+        executablePath: localChromePath || (await chromium.executablePath(
+          resolve(process.cwd(), 'node_modules', '@sparticuz', 'chromium', 'bin')
+        )),
         headless: true,
       });
     } catch (error) {

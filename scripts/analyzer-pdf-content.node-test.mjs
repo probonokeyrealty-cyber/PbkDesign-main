@@ -66,8 +66,8 @@ test('the template separates an agreed cash offer from MAO and preserves percent
   }
 });
 
-function handlerFixture({ failBrowser = false } = {}) {
-  const seen = { url: '', interception: false, listener: null };
+function handlerFixture({ failBrowser = false, hosted = false } = {}) {
+  const seen = { url: '', interception: false, listener: null, chromiumInput: '' };
   const page = {
     async goto(url) { seen.url = url; }, async emulateMediaType() {}, async evaluate() {},
     async setRequestInterception() { seen.interception = true; }, on(_event, listener) { seen.listener = listener; },
@@ -76,10 +76,14 @@ function handlerFixture({ failBrowser = false } = {}) {
   const source = readFileSync('netlify/functions/documents-pdf.ts', 'utf8');
   const compiled = ts.transpileModule(source, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS, esModuleInterop: true } }).outputText;
   const exports = {};
-  const context = vm.createContext({ exports, Buffer, URL, process: { env: {}, cwd: () => process.cwd() },
+  const context = vm.createContext({ exports, Buffer, URL, process: { env: hosted ? { NETLIFY: 'true' } : {}, cwd: () => process.cwd() },
     console: { warn() {}, error() {} }, setTimeout: callback => { queueMicrotask(callback); },
     require(name) {
-      if (name === '@sparticuz/chromium') return { args: [], executablePath: async () => 'fixture' };
+      if (name === '@sparticuz/chromium') return { args: [], executablePath: async (input) => {
+        seen.chromiumInput = input;
+        if (hosted && !input) throw new TypeError('Bundled import.meta.url is undefined');
+        return 'fixture';
+      } };
       if (name === 'puppeteer-core') return { launch: async () => {
         if (failBrowser) throw Error('fixture browser unavailable');
         return { newPage: async () => page, close: async () => {} };
@@ -107,6 +111,15 @@ test('private-site master rendering uses a bundled document, not a protected net
   seen.listener({ isInterceptResolutionHandled: () => false, url: () => 'https://provider.example/send',
     abort: async () => { denied = true; } });
   assert.equal(denied, true);
+});
+
+test('Netlify Chromium discovery uses the explicitly included binary directory', async () => {
+  const { handler, seen } = handlerFixture({ hosted: true });
+  const result = await handler({ httpMethod: 'POST', headers: {},
+    body: JSON.stringify({ documentType: 'masterPackage', masterPackageQuery: api.buildMasterPackageParams(sample()) }) });
+  assert.equal(result.statusCode, 200);
+  assert.equal(result.headers['X-PBK-PDF-Renderer'], undefined, 'Hosted packaging must not silently fall back');
+  assert.match(seen.chromiumInput.replace(/\\/g, '/'), /\/node_modules\/@sparticuz\/chromium\/bin$/);
 });
 
 test('fallback PDF retains long report content and the final field instead of truncating', async () => {

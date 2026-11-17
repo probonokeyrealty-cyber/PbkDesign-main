@@ -24,8 +24,20 @@ let db;
 const client = { query: (config, values) => db.query(typeof config === 'string' ? config : config.text,
   typeof config === 'string' ? values : config.values) };
 const pool = { connect: async () => ({ ...client, release() {} }) };
-const record = (extra = {}) => api('recordRuntimeSourceEvidence')({ pool, secret, revision,
-  sourceKind: 'runtime_archive', sourceId: 'private-source-id', now: NOW, ...extra });
+const record = async (extra = {}) => {
+  const sourceKind = extra.sourceKind || 'runtime_archive';
+  const sourceId = extra.sourceId || 'private-source-id';
+  let writeBinding = extra.writeBinding;
+  if (!Object.hasOwn(extra, 'writeBinding') && ['runtime_archive', 'conversation_projection', 'qa', 'safety'].includes(sourceKind)) {
+    const table = { runtime_archive: 'activity_log', conversation_projection: 'conversation_events',
+      qa: 'pbk_qa_audit', safety: 'pbk_safety_audit' }[sourceKind];
+    const row = (await db.query(`UPDATE ${table} SET id=id WHERE id::text=$1
+      RETURNING ${api('runtimeSourceWriteReturning')(sourceKind)}`, [sourceId])).rows[0]?.runtime_source_row;
+    writeBinding = api('captureRuntimeSourceWriteBinding')({ secret, revision, sourceKind, row });
+  }
+  return api('recordRuntimeSourceEvidence')({ pool, secret, revision, sourceKind, sourceId,
+    now: NOW, writeBinding, ...extra });
+};
 const collect = (extra = {}) => api('collectRuntimeSourceSnapshot')({ client, secret, revision,
   windowStart: NOW - DAY, windowEnd: NOW, now: NOW, ...extra });
 const run = (origin, fn) => {
@@ -33,6 +45,14 @@ const run = (origin, fn) => {
   return context.withRuntimeEvidenceContext(origin, fn);
 };
 const source = snapshot => snapshot.sources.find(s => s.sourceKind === 'runtime_archive');
+
+async function capturedWrite(extra = {}) {
+  const projection = api('runtimeSourceWriteReturning')('runtime_archive');
+  const row = (await db.query(`UPDATE activity_log SET id=id WHERE id='private-source-id'
+    RETURNING ${projection}`)).rows[0].runtime_source_row;
+  return api('captureRuntimeSourceWriteBinding')({ secret, revision,
+    sourceKind: 'runtime_archive', row, ...extra });
+}
 
 beforeAll(async () => {
   db = new PGlite();
@@ -63,6 +83,72 @@ beforeEach(async () => {
   await db.query(`INSERT INTO activity_log(id,text,metadata,created_at,updated_at)
     VALUES ('private-source-id','private seller answer', $1::jsonb,$2,$2)`,
   [JSON.stringify({ phone: 'private-contact', origin: 'operator_chat' }), iso(NOW - 1000)]);
+});
+
+test.each(['missing', 'copied', 'replayed', 'namespace', 'revision', 'context', 'overwritten', 'identity', 'kind'])
+('persisted-write binding rejects %s before operational attestation', async mode => {
+  await run('operator_chat', async () => {
+    const writeBinding = await capturedWrite();
+    if (mode === 'overwritten') await db.exec(`UPDATE activity_log SET text='another writer version'`);
+    const input = { pool, secret, revision, sourceKind: 'runtime_archive',
+      sourceId: 'private-source-id', now: NOW, writeBinding };
+    if (mode === 'missing') delete input.writeBinding;
+    if (mode === 'copied') input.writeBinding = { ...writeBinding };
+    if (mode === 'namespace') input.secret = 'different-explicit-fixture-material';
+    if (mode === 'revision') input.revision = 'b'.repeat(40);
+    if (mode === 'identity') input.sourceId = 'another-source';
+    if (mode === 'kind') input.sourceKind = 'qa';
+    if (mode === 'replayed') assert.equal((await api('recordRuntimeSourceEvidence')(input)).verified, true);
+    const result = mode === 'context'
+      ? await run('diagnostic', () => api('recordRuntimeSourceEvidence')(input))
+      : await api('recordRuntimeSourceEvidence')(input);
+    assert.equal(result.verified, false);
+    if (mode !== 'replayed') assert.equal((await db.query(`SELECT COUNT(*) AS n FROM pbk_eval_runs
+      WHERE report->>'classification'='operational'`)).rows[0].n, 0);
+  });
+});
+
+test('write bindings are detached and retain exact UTC microseconds, not just updatedAt milliseconds', async () => {
+  await run('operator_chat', async () => {
+    const projection = api('runtimeSourceWriteReturning')('runtime_archive');
+    const row = (await db.query(`UPDATE activity_log SET updated_at=$1 RETURNING ${projection}`,
+      ['2026-11-17T11:59:59.000123Z'])).rows[0].runtime_source_row;
+    assert.equal(row.updated_at, '2026-11-17T11:59:59.000123Z');
+    const writeBinding = api('captureRuntimeSourceWriteBinding')({ secret, revision, sourceKind: 'runtime_archive', row });
+    row.text = 'application-side mutation must not mutate private binding';
+    assert.equal((await record({ writeBinding })).verified, true);
+    const next = await capturedWrite();
+    await db.exec(`UPDATE activity_log SET updated_at=updated_at + interval '0.000001 seconds'`);
+    assert.equal((await record({ writeBinding: next })).verified, false);
+  });
+  assert.throws(() => api('runtimeSourceWriteReturning')('constructor'));
+});
+
+test('a distinct same-origin execution cannot consume another execution write binding', async () => {
+  const writeBinding = await run('operator_chat', () => capturedWrite());
+  const result = await run('operator_chat', () => record({ writeBinding }));
+  assert.equal(result.verified, false);
+  assert.equal((await db.query('SELECT COUNT(*) AS n FROM pbk_eval_runs')).rows[0].n, 0);
+});
+
+test('an identical-value overwrite still cannot be attested as the first durable write', async () => {
+  await run('operator_chat', async () => {
+    const writeBinding = await capturedWrite();
+    await db.exec('UPDATE activity_log SET id=id');
+    assert.equal((await record({ writeBinding })).verified, false);
+    assert.equal((await db.query(`SELECT COUNT(*) AS n FROM pbk_eval_runs
+      WHERE report->>'classification'='operational'`)).rows[0].n, 0);
+  });
+});
+
+test('capture in unknown or controlled scope cannot be upgraded by a later operator context', async () => {
+  const unknown = await capturedWrite();
+  const controlled = await controlledExecution.run({}, () => capturedWrite());
+  for (const writeBinding of [unknown, controlled]) {
+    const result = await run('operator_chat', () => record({ writeBinding }));
+    assert.equal(result.verified, false);
+  }
+  assert.equal((await db.query('SELECT COUNT(*) AS n FROM pbk_eval_runs')).rows[0].n, 0);
 });
 
 test('trusted persisted binding is opaque, read back, idempotent and never a passed evaluation', async () => {

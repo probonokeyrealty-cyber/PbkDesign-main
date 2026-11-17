@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import { test } from '@jest/globals';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
+import { withRuntimeEvidenceContext, getRuntimeEvidenceContext } from './runtime-evidence-context.mjs';
+import { bindAgentTimingToParams } from './agent-timing-adapters.mjs';
 import { summarizeLatency, summarizeBenchmark, runBenchmark, SCENARIOS, buildBenchmarkPlan } from './ava-latency-benchmark.mjs';
 
 test('nearest-rank p95 retains slow observations, with no zero for missing samples', () => {
@@ -49,12 +51,13 @@ test('real operator recorder excludes diagnostic source without changing ordinar
   const end = source.indexOf('\nfunction redactAvaMissionLedgerText', start);
   assert(start >= 0 && end > start);
   let record;
-  const context = vm.createContext({ Date, recordAgentOps: (value) => { record = value; } });
+  const context = vm.createContext({ Date, getRuntimeEvidenceContext, bindAgentTimingToParams,
+    recordAgentOps: (value) => { record = value; } });
   vm.runInContext(source.slice(start, end), context);
-  context.recordAvaAssistantPlanOps({ source: 'ava-latency-diagnostic' });
+  withRuntimeEvidenceContext('diagnostic', () => context.recordAvaAssistantPlanOps({ source: 'ava-latency-diagnostic' }));
   assert.equal(record.metadata.operational, false);
   assert.equal(record.metadata.diagnostic, true);
-  context.recordAvaAssistantPlanOps({ source: 'command-center-assistant' });
+  withRuntimeEvidenceContext('operator_chat', () => context.recordAvaAssistantPlanOps({ source: 'command-center-assistant' }));
   assert.equal(record.metadata.operational, true);
   assert.equal(record.metadata.diagnostic, false);
 });

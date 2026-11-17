@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { afterAll, beforeAll, beforeEach, test } from '@jest/globals';
 import { PGlite } from '@electric-sql/pglite';
-import { recordRuntimeSourceEvidence } from './runtime-source-evidence.mjs';
+import { recordRuntimeSourceEvidence, captureRuntimeSourceWriteBinding, runtimeSourceWriteReturning } from './runtime-source-evidence.mjs';
 import { withRuntimeEvidenceContext } from './runtime-evidence-context.mjs';
 
 let store = {}, samplerModule = {};
@@ -44,6 +44,13 @@ const verifySaved = (reference, options = {}) => api(store, 'verifyRuntimeCovera
   pool, secret, revision, now: () => wall, reference, ...options,
 });
 const advance = (ms = 60000) => { wall += ms; mono += ms; };
+const recordSourceWrite = sourceId => withRuntimeEvidenceContext('operator_chat', async () => {
+  const row = (await db.query(`UPDATE activity_log SET id=id WHERE id=$1
+    RETURNING ${runtimeSourceWriteReturning('runtime_archive')}`, [sourceId])).rows[0].runtime_source_row;
+  const writeBinding = captureRuntimeSourceWriteBinding({ secret, revision, sourceKind: 'runtime_archive', row });
+  return recordRuntimeSourceEvidence({ pool, secret, revision, sourceKind: 'runtime_archive',
+    sourceId, writeBinding, now: () => wall });
+});
 const chain = async (duration = DAY) => {
   const sampler = makeSampler();
   assert.equal((await sampler.sample()).verified, true);
@@ -173,9 +180,7 @@ test('genuine quiet 24h chain verifies compact ordered proof with one fresh cens
   advance(1);
   await db.query('INSERT INTO activity_log(id,text,created_at,updated_at) VALUES ($1,$2,$3,$3)',
     ['private-active-source', 'private answer', new Date(wall).toISOString()]);
-  assert.equal((await withRuntimeEvidenceContext('operator_chat', () => recordRuntimeSourceEvidence({
-    pool, secret, revision, sourceKind: 'runtime_archive', sourceId: 'private-active-source', now: () => wall,
-  }))).verified, true);
+  assert.equal((await recordSourceWrite('private-active-source')).verified, true);
   const historical = await read({ cutoff: wall - 1 });
   assert.equal(historical.verified, true, 'fresh legitimate transition after exact audit cutoff is not old-snapshot equality');
   advance();
@@ -245,9 +250,7 @@ test('active trusted transitions do not invalidate old intervals or fabricate or
   const sampler = await chain(60000);
   await db.query('INSERT INTO activity_log(id,text,created_at,updated_at) VALUES ($1,$2,$3,$3)',
     ['private-source', 'private seller text', new Date(wall).toISOString()]);
-  const record = () => withRuntimeEvidenceContext('operator_chat', () => recordRuntimeSourceEvidence({
-    pool, secret, revision, sourceKind: 'runtime_archive', sourceId: 'private-source', now: () => wall,
-  }));
+  const record = () => recordSourceWrite('private-source');
   advance();
   assert.equal((await record()).verified, true);
   assert.equal((await sampler.sample()).verified, true);

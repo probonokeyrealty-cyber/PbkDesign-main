@@ -1,6 +1,7 @@
 import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 import { canonicalJson } from './skill-governance-store.mjs';
 import { getRuntimeEvidenceContext } from './runtime-evidence-context.mjs';
+import { controlledExecution } from './controlled-execution-scope.mjs';
 
 const SCHEMA = 'pbk-runtime-source-evidence-v1';
 const SUITE = 'runtime_source_evidence_v1';
@@ -54,6 +55,7 @@ const gap = result => ({ ok: false, verified: false, readbackVerified: false, el
 const timeout = () => Object.assign(new Error('Source observation deadline'), { code: 'SOURCE_TIMEOUT' });
 const releaseClient = (client, destroy) => { try { client?.release?.(destroy); } catch { /* Monitoring stays non-throwing. */ } };
 const admissionHandles = new WeakMap();
+const writeBindings = new WeakMap();
 const runtimeGaps = new Map();
 const namespaceRef = secret => opaque(secret, 'observation-runtime', 'pbk');
 const busy = () => Object.assign(new Error('Source observation owner active'), { code: 'SOURCE_BUSY' });
@@ -140,6 +142,30 @@ function binding(row, kind, secret) {
     || (row.workspace_id ?? row.tenant_id) !== 'pbk') throw new Error('Source row invalid');
   return { recordRef: opaque(secret, 'record-reference', { tenantId: 'pbk', sourceKind: kind, id: row.id }),
     sourceBinding: opaque(secret, 'source-binding', { tenantId: 'pbk', sourceKind: kind, row }) };
+}
+
+// Internal SQL only: callers select a fixed source kind, never SQL or column names.
+export function runtimeSourceWriteReturning(sourceKind) {
+  if (!Object.hasOwn(sources, sourceKind)) throw new TypeError('Unknown runtime source kind');
+  return `(SELECT to_jsonb(p) FROM (SELECT ${sources[sourceKind].fields}, xmin::text AS runtime_write_version) p) AS runtime_source_row`;
+}
+
+// Capture the actual RETURNING projection at the write boundary, not an ID reread.
+// The handle contains no row data and is not serializable authority.
+export function captureRuntimeSourceWriteBinding({ secret, revision, sourceKind, row } = {}) {
+  try {
+    if (!validSecret(secret) || !validRevision(revision) || !Object.hasOwn(sources, sourceKind)
+      || !plain(row) || bytes(row) > MAX_BYTES || typeof row.runtime_write_version !== 'string'
+      || !/^\d{1,10}$/.test(row.runtime_write_version)) return null;
+    const { runtime_write_version: version, ...projection } = row;
+    const refs = binding(projection, sourceKind, secret);
+    const handle = Object.freeze({});
+    writeBindings.set(handle, { ...refs, sourceKind, sourceId: projection.id, revision,
+      version: opaque(secret, 'write-version', { sourceKind, recordRef: refs.recordRef, version }),
+      namespace: namespaceRef(secret), context: getRuntimeEvidenceContext(),
+      controlledScope: controlledExecution.getStore() });
+    return handle;
+  } catch { return null; }
 }
 
 function makeReport({ revision, sourceKind, recordRef, sourceBinding, presence = 'present',
@@ -423,8 +449,14 @@ function observeClock(now, start, previous = start) {
   return value;
 }
 
-export async function recordRuntimeSourceEvidence({ pool, secret, revision, sourceKind, sourceId, now = Date.now } = {}) {
+export async function recordRuntimeSourceEvidence({ pool, secret, revision, sourceKind, sourceId,
+  writeBinding, now = Date.now } = {}) {
   const context = getRuntimeEvidenceContext();
+  const write = writeBindings.get(writeBinding);
+  writeBindings.delete(writeBinding);
+  if (!write || write.context !== context || write.controlledScope !== controlledExecution.getStore()
+    || write.sourceKind !== sourceKind || write.sourceId !== sourceId || write.revision !== revision
+    || !validSecret(secret) || write.namespace !== namespaceRef(secret)) return gap('source_write_binding_unverified');
   if (context.classification === 'unknown') return { ...gap('source_context_unknown'), classification: 'unknown' };
   if (!pool?.connect || !validSecret(secret) || !validRevision(revision) || !kinds.includes(sourceKind)
     || typeof sourceId !== 'string' || !sourceId.length || sourceId.length > 512) return gap('source_input_unverified');
@@ -447,8 +479,16 @@ export async function recordRuntimeSourceEvidence({ pool, secret, revision, sour
       if (size?.length !== 1 || !Number.isSafeInteger(Number(size[0].bytes)) || Number(size[0].bytes) > MAX_BYTES) {
         throw new Error('Source missing or oversized');
       }
-      const row = (await query(`SELECT to_jsonb(p) AS row FROM (${sql} FOR SHARE) p`, [sourceId])).rows?.[0]?.row;
+      const versionSql = `SELECT ${source.fields}, xmin::text AS runtime_write_version
+        FROM public.${source.table} WHERE ${source.scope} AND id::text=$1`;
+      const returned = (await query(`SELECT to_jsonb(p) AS row FROM (${versionSql} FOR SHARE) p`, [sourceId])).rows?.[0]?.row;
+      const { runtime_write_version: version, ...row } = returned || {};
       const refs = binding(row, sourceKind, secret);
+      if (refs.sourceBinding !== write.sourceBinding || refs.recordRef !== write.recordRef
+        || typeof version !== 'string' || !/^\d{1,10}$/.test(version)
+        || write.version !== opaque(secret, 'write-version', { sourceKind, recordRef: refs.recordRef, version })) {
+        throw new Error('Source write version mismatch');
+      }
       const observedAt = observeClock(now, start);
       const outcome = outcomeOf(row, sourceKind);
       if (!sourceClockValid(row, sourceKind, observedAt) || outcome === 'unknown') throw new Error('Source unverified');

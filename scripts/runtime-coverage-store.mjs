@@ -2,12 +2,18 @@ import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 import { canonicalJson } from './skill-governance-store.mjs';
 import { prepareRuntimeSourceObservation, collectRuntimeSourceSnapshotInTransaction } from './runtime-source-evidence.mjs';
 import { getRuntimeEvidenceContext } from './runtime-evidence-context.mjs';
+import { preparePagedCensusObservation, collectPagedCensusSnapshotInTransaction,
+  readPagedCensusIntervalRoots, readPagedCensusInventory } from './runtime-paged-census.mjs';
 
 export const RUNTIME_COVERAGE_POLICY = Object.freeze({ version: 'pbk-runtime-coverage-policy-v1',
   sampleMs: 60000, maxGapMs: 90000, windowMs: 86400000, maxCheckpoints: 2000,
   maxReportBytes: 8192, maxBytes: 16777216, operationMs: 15000, queryMs: 2000, leaseMs: 120000 });
 const P = RUNTIME_COVERAGE_POLICY;
 const SCHEMA = 'pbk-runtime-coverage-v1', INSTRUMENTATION = 'runtime-source-evidence-v1';
+const PAGED_INSTRUMENTATION = 'runtime-paged-census-v2';
+const censusProtocol = input => input.protocol ?? process.env.PBK_RUNTIME_CENSUS_PROTOCOL ?? 'legacy-v1';
+const validProtocol = protocol => ['legacy-v1', 'paged-v2'].includes(protocol);
+const instrumentation = protocol => protocol === 'paged-v2' ? PAGED_INSTRUMENTATION : INSTRUMENTATION;
 const REFERENCE_SCHEMA = 'pbk-runtime-coverage-reference-v1';
 const SUITE = 'runtime_coverage_v1', SOURCE = 'server:runtime-coverage:v1';
 const CONTROL_SUITE = 'runtime_coverage_control_v1', CONTROL_SOURCE = 'server:runtime-coverage-control:v1';
@@ -50,11 +56,12 @@ const configValid = ({ pool, secret, revision }) => pool?.connect && typeof secr
   && secret.length > 0 && validRevision(revision);
 
 // One poisoned fence owns acquisition, both admissions, every continuation, COMMIT and readback.
-async function operation({ pool, signal, now = Date.now }, action) {
+async function operation({ pool, signal, now = Date.now, secret, revision, protocol }, action) {
   const controller = new AbortController();
   const monotonicStart = performance.now(), wallStart = clock(now);
   const deadlineAt = monotonicStart + P.operationMs;
   let raw, client, released = false, poisoned = false, lastWall = wallStart;
+  let loadedRows = 0, loadedBytes = 0;
   const release = destroy => {
     if (!released && raw) { released = true; try { raw.release?.(destroy); } catch { /* Monitoring only. */ } }
   };
@@ -73,6 +80,7 @@ async function operation({ pool, signal, now = Date.now }, action) {
   };
   const run = async (fn, limit, onLate) => {
     check();
+    const runDeadlineAt = Math.min(deadlineAt, performance.now() + Math.max(1, Math.floor(limit)));
     let timer, abandoned = false, abortListener;
     const work = Promise.resolve().then(() => { check(); return fn(); });
     work.then(value => { if (abandoned) onLate?.(value); }, () => {}).catch(() => {});
@@ -82,23 +90,49 @@ async function operation({ pool, signal, now = Date.now }, action) {
         controller.signal.addEventListener('abort', abortListener, { once: true });
         timer = setTimeout(() => { abandoned = true; abort(); }, Math.max(1, Math.floor(limit)));
       })]);
-      try { check(); } catch (error) { abandoned = true; onLate?.(result); throw error; }
+      try {
+        check();
+        // Reject late results even when synchronous work delayed the timer callback.
+        if (performance.now() >= runDeadlineAt) { abort(); reject('coverage_operation_abandoned'); }
+      } catch (error) { abandoned = true; onLate?.(result); throw error; }
       return result;
+    } catch (error) {
+      if (performance.now() >= runDeadlineAt) {
+        abandoned = true; abort(); reject('coverage_operation_abandoned');
+      }
+      throw error;
     } finally { clearTimeout(timer); controller.signal.removeEventListener('abort', abortListener); }
+  };
+  const consume = ({ rows = 0, bytes: byteCount = 0 } = {}) => {
+    check();
+    if (!Number.isSafeInteger(rows) || rows < 0 || !Number.isSafeInteger(byteCount) || byteCount < 0
+      || loadedRows + rows > 10000 || loadedBytes + byteCount > P.maxBytes) {
+      abort(); reject('coverage_operation_budget_exceeded');
+    }
+    loadedRows += rows; loadedBytes += byteCount;
   };
   try {
     raw = await run(() => pool.connect(), deadlineAt - performance.now(), late => {
       raw = late; release(true);
     });
     check();
-    client = { query: config => { check(); return raw.query(config); }, release };
+    client = { async query(config) {
+      check();
+      const result = await raw.query(config);
+      check();
+      if (protocol === 'paged-v2' && Array.isArray(result.rows)) {
+        consume({ rows: result.rows.length, bytes: Buffer.byteLength(JSON.stringify(result.rows)) });
+      }
+      return result;
+    }, release };
     const query = (text, values = []) => {
       check();
       const limit = Math.max(1, Math.floor(Math.min(P.queryMs, deadlineAt - performance.now())));
       return run(() => client.query({ text, values, query_timeout: limit }), limit);
     };
-    const fence = { deadlineAt, signal: controller.signal, onAbort: abort };
-    return await action({ client, query, check, fence, abort });
+    const fence = { deadlineAt, signal: controller.signal, onAbort: abort, consume,
+      remainingBudget: () => { check(); return { rows: 10000 - loadedRows, bytes: P.maxBytes - loadedBytes }; } };
+    return await action({ client, query, check, fence, abort, now, secret, revision, protocol });
   } finally {
     signal?.removeEventListener('abort', externalAbort);
     release(poisoned);
@@ -126,7 +160,8 @@ async function transaction(op, action) {
 function verifyRow(row, secret, kind) {
   const r = row?.report;
   if (!r || bytes(r) > P.maxReportBytes || r.kind !== kind || r.schemaVersion !== SCHEMA || r.tenantId !== 'pbk'
-    || r.instrumentation !== INSTRUMENTATION || r.policyHash !== policyHash(secret) || !hex(r.signature)
+    || ![INSTRUMENTATION, PAGED_INSTRUMENTATION].includes(r.instrumentation)
+    || r.policyHash !== policyHash(secret) || !hex(r.signature)
     || !validRevision(r.revision) || !hex(r.bootRef) || !hex(r.segmentRef) || !hex(r.fenceRef)
     || !Number.isSafeInteger(r.generation) || r.generation < 1 || !Number.isSafeInteger(r.sequence) || r.sequence < 1
     || !Number.isFinite(time(r.cutoff)) || !Number.isFinite(time(r.dbObservedAt))
@@ -142,7 +177,8 @@ function verifyRow(row, secret, kind) {
     if (!['pending', 'complete'].includes(r.phase) || !Number.isFinite(time(r.expiresAt))
       || time(r.expiresAt) - time(r.dbObservedAt) !== P.leaseMs
       || r.headSignature !== null && !hex(r.headSignature)) reject('coverage_control_unverified');
-  } else if (!Number.isFinite(time(r.intervalStart)) || time(r.intervalStart) > time(r.cutoff)
+  } else if (r.instrumentation === PAGED_INSTRUMENTATION && r.source?.inventory?.protocol !== 'paged-v2'
+    || !Number.isFinite(time(r.intervalStart)) || time(r.intervalStart) > time(r.cutoff)
     || time(r.cutoff) - time(r.intervalStart) > P.maxGapMs || r.previous !== null && !hex(r.previous)
     || !runtimeCoverageHealthReady(r.health) || !hex(r.source?.intervalRoot)
     || !Number.isFinite(time(r.serverObservedAt)) || time(r.serverObservedAt) < time(r.cutoff)
@@ -189,7 +225,14 @@ function observationEvents(snapshot) {
   })).sort((a, b) => time(a.observedAt) - time(b.observedAt)
     || a.sourceKind.localeCompare(b.sourceKind) || a.recordRef.localeCompare(b.recordRef) || a.sequence - b.sequence);
 }
-function intervalRoots(secret, snapshot, reports, check = () => {}) {
+async function intervalRoots(secret, snapshot, reports, check = () => {}, op) {
+  if (op?.protocol === 'paged-v2') {
+    const roots = await readPagedCensusIntervalRoots({ client: op.client, secret, revision: op.revision,
+      now: op.now, fence: op.fence, reports, snapshot });
+    check();
+    if (!Array.isArray(roots) || roots.length !== reports.length || !roots.every(hex)) reject('coverage_source_binding_unverified');
+    return roots;
+  }
   const events = observationEvents(snapshot), roots = [];
   let cursor = 0;
   for (const r of reports) {
@@ -211,7 +254,8 @@ function sourceSummary(snapshot, intervalRoot) {
     sources: snapshot.sources.map(({ sourceKind, counts, fingerprint }) => ({ sourceKind, counts, fingerprint })) };
 }
 async function snapshot(op, input, start, end, admission) {
-  const result = await collectRuntimeSourceSnapshotInTransaction({ client: op.client, secret: input.secret,
+  const collect = op.protocol === 'paged-v2' ? collectPagedCensusSnapshotInTransaction : collectRuntimeSourceSnapshotInTransaction;
+  const result = await collect({ client: op.client, secret: input.secret,
     revision: input.revision, now: input.now, windowStart: start, windowEnd: end, fence: op.fence, admission });
   op.check();
   if (!result.verified || result.transactionPending !== true || result.invalidReceipts !== 0) {
@@ -220,13 +264,24 @@ async function snapshot(op, input, start, end, admission) {
   return result;
 }
 async function prepare(op, input) {
-  const result = await prepareRuntimeSourceObservation({ client: op.client, secret: input.secret,
+  const admit = op.protocol === 'paged-v2' ? preparePagedCensusObservation : prepareRuntimeSourceObservation;
+  const result = await admit({ client: op.client, secret: input.secret,
     revision: input.revision, now: input.now, fence: op.fence });
   op.check();
-  if (!result.verified || result.transactionPending !== false) reject('coverage_source_admission_unverified');
+  if (!result.verified || result.transactionPending !== false) {
+    reject(op.protocol === 'paged-v2' && result.progressRecorded === true
+      ? 'coverage_source_bootstrap_incomplete' : 'coverage_source_admission_unverified');
+  }
   return result.admission;
 }
 async function inventoryReadback(op, observed, expected) {
+  if (op.protocol === 'paged-v2') {
+    const result = await readPagedCensusInventory({ client: op.client, secret: op.secret, revision: op.revision,
+      now: op.now, fence: op.fence, inventory: observed.inventory, independent: expected !== undefined });
+    op.check();
+    if (!result?.verified || expected && !equal(result, expected)) reject('coverage_source_readback_unverified');
+    return result;
+  }
   const rows = (await op.query(`${SELECT} WHERE tenant_id='pbk' AND suite_name=$1
     AND report->>'ledgerKind'='inventory' LIMIT 2`, ['runtime_source_evidence_v1'])).rows;
   if (rows?.length !== 1 || rows[0].report.admission !== null
@@ -238,6 +293,9 @@ async function inventoryReadback(op, observed, expected) {
 
 // Internal sampler seam only: no caller SQL, provenance labels, source snapshots or business writes.
 export async function appendRuntimeCoverageCheckpoint(input = {}) {
+  const protocol = censusProtocol(input);
+  if (!validProtocol(protocol)) return failure('coverage_protocol_unavailable');
+  input = { ...input, protocol };
   if (!configValid(input)) return failure('coverage_runtime_unavailable');
   if (input.pool.controlled || ['controlled', 'diagnostic'].includes(getRuntimeEvidenceContext().classification)) {
     return failure('coverage_controlled_execution');
@@ -257,13 +315,15 @@ export async function appendRuntimeCoverageCheckpoint(input = {}) {
         const db = await databaseTime(op, now), old = await loadControl(op, secret);
         if (old && time(old.cutoff) > started) reject('coverage_clock_invalid');
         const active = old && db < time(old.expiresAt);
-        if (active && (old.bootRef !== bootRef || old.revision !== revision)) reject('coverage_lease_busy');
+        if (active && (old.bootRef !== bootRef || old.revision !== revision
+          || old.instrumentation !== instrumentation(protocol))) reject('coverage_lease_busy');
         continuing = Boolean(active && old.phase === 'complete' && previous
           && previous.signature === old.headSignature && previous.sequence === old.sequence
-          && previous.bootRef === bootRef && previous.revision === revision && previous.generation === old.generation);
+          && previous.bootRef === bootRef && previous.revision === revision && previous.generation === old.generation
+          && previous.instrumentation === instrumentation(protocol));
         const generation = old ? old.generation + Number(!active) : 1;
         pending = seal(secret, { schemaVersion: SCHEMA, kind: 'control', tenantId: 'pbk', revision,
-          instrumentation: INSTRUMENTATION, policyHash: policyHash(secret), bootRef, generation,
+          instrumentation: instrumentation(protocol), policyHash: policyHash(secret), bootRef, generation,
           sequence: active ? old.sequence + 1 : 1, fenceRef: digest(secret, 'fence', randomUUID()),
           segmentRef: continuing ? previous.segmentRef : digest(secret, 'segment', randomUUID()),
           phase: 'pending', cutoff: iso(started), dbObservedAt: iso(db), expiresAt: iso(db + P.leaseMs),
@@ -301,11 +361,11 @@ export async function appendRuntimeCoverageCheckpoint(input = {}) {
           pending = { ...pending, segmentRef: digest(secret, 'segment', randomUUID()) };
         }
         if (time(observed.coverage.forwardOnlyFrom) > cutoff) reject('coverage_source_forward_only');
-        const root = intervalRoots(secret, observed, [{ intervalStart: iso(start), cutoff: iso(cutoff) }], op.check)[0];
+        const root = (await intervalRoots(secret, observed, [{ intervalStart: iso(start), cutoff: iso(cutoff) }], op.check, op))[0];
         const completed = clock(now);
         if (!validClock(completed) || completed < cutoff || completed - cutoff > P.operationMs) reject('coverage_clock_invalid');
         report = seal(secret, { schemaVersion: SCHEMA, kind: 'checkpoint', tenantId: 'pbk', revision,
-          instrumentation: INSTRUMENTATION, policyHash: policyHash(secret), bootRef,
+          instrumentation: instrumentation(protocol), policyHash: policyHash(secret), bootRef,
           generation: pending.generation, sequence: pending.sequence, fenceRef: pending.fenceRef,
           segmentRef: pending.segmentRef, intervalStart: iso(start), cutoff: iso(cutoff),
           completedAt: iso(completed), serverObservedAt: iso(serverObservedAt), dbObservedAt: iso(db), monotonicAt,
@@ -336,7 +396,7 @@ function coverageReference(secret, proof) {
   return { ...reference, signature: digest(secret, 'coverage-reference-signature', reference) };
 }
 
-function verifyReference(reference, secret, revision, now) {
+function verifyReference(reference, secret, revision, now, protocol) {
   const r = reference;
   const plain = value => value && Object.getPrototypeOf(value) === Object.prototype;
   const keys = ['schemaVersion', 'tenantId', 'policyHash', 'instrumentation', 'revision', 'bootRef', 'generation',
@@ -348,7 +408,7 @@ function verifyReference(reference, secret, revision, now) {
     && Number.isSafeInteger(value.sequence) && value.sequence > 0;
   if (!plain(r) || bytes(r) > P.maxReportBytes || Object.keys(r).length !== keys.length
     || !Object.keys(r).every(key => keys.includes(key)) || r.schemaVersion !== REFERENCE_SCHEMA || r.tenantId !== 'pbk'
-    || r.policyHash !== policyHash(secret) || r.instrumentation !== INSTRUMENTATION || r.revision !== revision
+    || r.policyHash !== policyHash(secret) || r.instrumentation !== instrumentation(protocol) || r.revision !== revision
     || !hex(r.bootRef) || !hex(r.segmentRef) || !hex(r.orderedRoot) || !hex(r.sourceSegmentRef)
     || !hex(r.sourceIntervalRoot) || !hex(r.signature) || !Number.isSafeInteger(r.generation) || r.generation < 1
     || !Number.isSafeInteger(r.checkpointCount) || r.checkpointCount < 2 || r.checkpointCount > P.maxCheckpoints
@@ -394,12 +454,15 @@ export async function verifyRuntimeCoverageReference(input = {}) {
 }
 
 async function readCoverage(input, historical = false) {
+  const protocol = censusProtocol(input);
+  if (!validProtocol(protocol)) return failure('coverage_protocol_unavailable');
+  input = { ...input, protocol };
   if (!configValid(input)) return failure('coverage_runtime_unavailable');
   const { secret, revision, now = Date.now } = input;
   try {
     const started = clock(now);
     if (!validClock(started)) reject('coverage_cutoff_unverified');
-    const reference = historical ? verifyReference(input.reference, secret, revision, started) : null;
+    const reference = historical ? verifyReference(input.reference, secret, revision, started, protocol) : null;
     const cutoff = reference ? time(reference.cutoff) : input.cutoff ?? started;
     if (!validClock(cutoff) || cutoff > started || !historical && started - cutoff > P.maxGapMs) {
       reject('coverage_cutoff_unverified');
@@ -410,6 +473,7 @@ async function readCoverage(input, historical = false) {
       const control = await loadControl(op, secret);
       const db = await databaseTime(op, now);
       if (!control || control.revision !== revision || control.phase !== 'complete'
+        || control.instrumentation !== instrumentation(protocol)
         || time(control.cutoff) > started || started - time(control.cutoff) > P.maxGapMs
         || time(control.cutoff) < cutoff || !historical && time(control.cutoff) !== cutoff
         || db >= time(control.expiresAt)) reject('coverage_latest_unverified');
@@ -431,6 +495,7 @@ async function readCoverage(input, historical = false) {
         op.check();
         const r = chain[i], prior = chain[i - 1];
         if (r.revision !== revision || r.bootRef !== control.bootRef || r.generation !== control.generation
+          || r.instrumentation !== control.instrumentation
           || time(r.cutoff) > cutoff || Math.abs(time(r.serverObservedAt) - time(r.dbObservedAt)) > 1000
           || prior && (r.sequence !== prior.sequence + 1 || r.previous !== prior.signature
             || r.intervalStart !== prior.cutoff || time(r.cutoff) <= time(prior.cutoff)
@@ -465,7 +530,7 @@ async function readCoverage(input, historical = false) {
             && time(observed.historyCompleteFrom) > time(selected[0].intervalStart)) {
           reject('coverage_source_history_unverified');
         }
-        const roots = intervalRoots(secret, observed, selected, op.check);
+        const roots = await intervalRoots(secret, observed, selected, op.check, op);
         if (selected.some((r, i) => r.source.intervalRoot !== roots[i]
           || r.source.coverage.segmentRef !== observed.coverage.segmentRef
           || r.source.historyCompleteFrom !== null && time(r.source.historyCompleteFrom) > time(r.intervalStart))) {
@@ -477,7 +542,7 @@ async function readCoverage(input, historical = false) {
         const sourceIntervalRoot = digest(secret, 'audit-source-intervals', roots);
         if (reference && reference.sourceIntervalRoot !== sourceIntervalRoot) reject('coverage_reference_binding_unverified');
         result = { verified: true, result: 'coverage_verified', proof: {
-          schemaVersion: SCHEMA, policy: P, policyHash: policyHash(secret), instrumentation: INSTRUMENTATION,
+          schemaVersion: SCHEMA, policy: P, policyHash: policyHash(secret), instrumentation: instrumentation(protocol),
           revision, bootRef: control.bootRef, generation: control.generation, segmentRef: control.segmentRef,
           windowStart: iso(windowStart), cutoff: iso(cutoff), checkpointCount: selected.length,
           first: firstEndpoint, last: lastEndpoint, orderedRoot,

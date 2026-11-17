@@ -450,8 +450,12 @@ assert(
 
 assert(
   pkg.scripts?.['test:deal-analyzer-modern-mobile'] ===
-    'node ./scripts/deal-analyzer-modern-mobile-smoke.mjs',
-  'package.json should expose test:deal-analyzer-modern-mobile.'
+    'node ./scripts/deal-analyzer-modern-mobile-smoke.mjs && npm run test:analyzer-draft-storage',
+  'The existing Analyzer CI gate must also run the draft storage regressions.'
+);
+assert(
+  pkg.scripts?.['test:analyzer-draft-storage'] === 'node --test ./scripts/analyzer-storage.node-test.mjs',
+  'The Analyzer draft gate must run the isolated storage tests.'
 );
 
 console.log('[deal-analyzer-modern-mobile-smoke] ok');

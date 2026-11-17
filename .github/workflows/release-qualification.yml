@@ -101,3 +101,6 @@ jobs:
 
       - name: Run Chromium and WebKit qualification
         run: node scripts/ava-design-browser-smoke.mjs
+
+      - name: Verify isolated Analyzer draft recovery
+        run: npm run test:analyzer-draft-recovery-browser

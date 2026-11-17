@@ -1,0 +1,32 @@
+{
+  "version": 1,
+  "mode": "preview_only",
+  "timeZone": "America/Los_Angeles",
+  "coverageLabel": "Minimum intake coverage; not verified underwriting or contact permission",
+  "propertyChecks": [
+    { "key": "street", "label": "Street address", "field": "PBK Property Street Address" },
+    { "key": "city", "label": "City", "field": "PBK Property City" },
+    { "key": "state", "label": "State", "field": "PBK Property State" },
+    { "key": "zip", "label": "ZIP", "field": "PBK Property ZIP" },
+    { "key": "county", "label": "County", "field": "PBK Property County" },
+    { "key": "apn", "label": "APN", "field": "PBK Parcel ID (APN)" },
+    { "key": "propertyType", "label": "Property type", "field": "PBK PropStream Property Type" },
+    { "key": "source", "label": "Research source", "field": "PBK PropStream Record Reference" },
+    { "key": "researchAsOf", "label": "Research as of", "field": "PBK Property Research As Of", "type": "date" }
+  ],
+  "accountability": {
+    "summary": "PBK Handoff Summary & Next Step",
+    "due": "PBK Next Step Due Date",
+    "status": "PBK Next Step Status",
+    "taskId": "PBK Next Step Task ID",
+    "owner": "assignedTo"
+  },
+  "nativeViews": [
+    { "key": "incomplete", "name": "PBK | Research gaps", "purpose": "Missing or invalid minimum intake facts" },
+    { "key": "unassigned", "name": "PBK | Owner needed", "purpose": "Native opportunity owner absent" },
+    { "key": "missingNextStep", "name": "PBK | Next step needed", "purpose": "Next step missing, invalid, or completed without a replacement" },
+    { "key": "overdue", "name": "PBK | Dated step overdue", "purpose": "Saved deadline is overdue in the operating timezone" },
+    { "key": "accountabilityReview", "name": "PBK | Handoff exceptions", "purpose": "Task linkage, owner mismatch, missing task or incomplete task snapshot" },
+    { "key": "duplicateReview", "name": "PBK | Potential duplicate review", "purpose": "Different native IDs share a full address or county/APN; do not merge automatically" }
+  ]
+}

@@ -1,0 +1,491 @@
+{
+  "contacts": [
+    {
+      "id": "contact-a",
+      "name": "Sample Seller",
+      "email": "sample@example.com",
+      "dnd": true,
+      "tags": []
+    },
+    {
+      "id": "contact-qa",
+      "name": "PBK QA Sample",
+      "email": "qa@example.com",
+      "dnd": true,
+      "tags": [
+        "test"
+      ]
+    }
+  ],
+  "opportunities": [
+    {
+      "id": "property-a",
+      "contactId": "contact-a",
+      "name": "Sample property",
+      "status": "open",
+      "assignedTo": "staff-a",
+      "customFields": [
+        {
+          "id": "field-0",
+          "fieldValue": "10 Example Lane"
+        },
+        {
+          "id": "field-1",
+          "fieldValue": "Example City"
+        },
+        {
+          "id": "field-2",
+          "fieldValue": "CA"
+        },
+        {
+          "id": "field-3",
+          "fieldValue": "90001"
+        },
+        {
+          "id": "field-4",
+          "fieldValue": "Example County"
+        },
+        {
+          "id": "field-5",
+          "fieldValue": "001-002"
+        },
+        {
+          "id": "field-6",
+          "fieldValue": "Land"
+        },
+        {
+          "id": "field-7",
+          "fieldValue": "https://example.com/source"
+        },
+        {
+          "id": "field-8",
+          "fieldValue": "2026-11-16"
+        },
+        {
+          "id": "field-9",
+          "fieldValue": "Review the property evidence"
+        },
+        {
+          "id": "field-10",
+          "fieldValue": "2026-11-17"
+        },
+        {
+          "id": "field-11",
+          "fieldValue": "Pending"
+        },
+        {
+          "id": "field-12",
+          "fieldValue": "task-a"
+        }
+      ]
+    },
+    {
+      "id": "property-gaps",
+      "contactId": "contact-a",
+      "name": "Example property property-gaps",
+      "status": "open",
+      "assignedTo": "",
+      "customFields": [
+        {
+          "id": "field-0",
+          "fieldValue": "Unknown"
+        },
+        {
+          "id": "field-1",
+          "fieldValue": "Example City"
+        },
+        {
+          "id": "field-2",
+          "fieldValue": "CA"
+        },
+        {
+          "id": "field-3",
+          "fieldValue": "90001"
+        },
+        {
+          "id": "field-4",
+          "fieldValue": "Example County"
+        },
+        {
+          "id": "field-5",
+          "fieldValue": "002-003"
+        },
+        {
+          "id": "field-6",
+          "fieldValue": "Land"
+        },
+        {
+          "id": "field-7",
+          "fieldValue": "https://example.com/source"
+        },
+        {
+          "id": "field-8",
+          "fieldValue": "2026-11-16"
+        },
+        {
+          "id": "field-9",
+          "fieldValue": ""
+        },
+        {
+          "id": "field-10",
+          "fieldValue": ""
+        },
+        {
+          "id": "field-11",
+          "fieldValue": "Pending"
+        },
+        {
+          "id": "field-12",
+          "fieldValue": ""
+        }
+      ]
+    },
+    {
+      "id": "property-overdue",
+      "contactId": "contact-a",
+      "name": "Example property property-overdue",
+      "status": "open",
+      "assignedTo": "staff-a",
+      "customFields": [
+        {
+          "id": "field-0",
+          "fieldValue": "30 Example Lane"
+        },
+        {
+          "id": "field-1",
+          "fieldValue": "Example City"
+        },
+        {
+          "id": "field-2",
+          "fieldValue": "CA"
+        },
+        {
+          "id": "field-3",
+          "fieldValue": "90001"
+        },
+        {
+          "id": "field-4",
+          "fieldValue": "Example County"
+        },
+        {
+          "id": "field-5",
+          "fieldValue": "003-004"
+        },
+        {
+          "id": "field-6",
+          "fieldValue": "Land"
+        },
+        {
+          "id": "field-7",
+          "fieldValue": "https://example.com/source"
+        },
+        {
+          "id": "field-8",
+          "fieldValue": "2026-11-16"
+        },
+        {
+          "id": "field-9",
+          "fieldValue": "Review the property evidence"
+        },
+        {
+          "id": "field-10",
+          "fieldValue": "2026-11-15"
+        },
+        {
+          "id": "field-11",
+          "fieldValue": "Pending"
+        },
+        {
+          "id": "field-12",
+          "fieldValue": "task-overdue"
+        }
+      ]
+    },
+    {
+      "id": "property-duplicate-a",
+      "contactId": "contact-a",
+      "name": "Example property property-duplicate-a",
+      "status": "open",
+      "assignedTo": "staff-a",
+      "customFields": [
+        {
+          "id": "field-0",
+          "fieldValue": "40 Example Lane"
+        },
+        {
+          "id": "field-1",
+          "fieldValue": "Example City"
+        },
+        {
+          "id": "field-2",
+          "fieldValue": "CA"
+        },
+        {
+          "id": "field-3",
+          "fieldValue": "90001"
+        },
+        {
+          "id": "field-4",
+          "fieldValue": "Example County"
+        },
+        {
+          "id": "field-5",
+          "fieldValue": "004-005"
+        },
+        {
+          "id": "field-6",
+          "fieldValue": "Land"
+        },
+        {
+          "id": "field-7",
+          "fieldValue": "https://example.com/source"
+        },
+        {
+          "id": "field-8",
+          "fieldValue": "2026-11-16"
+        },
+        {
+          "id": "field-9",
+          "fieldValue": "Review the property evidence"
+        },
+        {
+          "id": "field-10",
+          "fieldValue": "2026-11-17"
+        },
+        {
+          "id": "field-11",
+          "fieldValue": "Pending"
+        },
+        {
+          "id": "field-12",
+          "fieldValue": "task-duplicate-a"
+        }
+      ]
+    },
+    {
+      "id": "property-duplicate-b",
+      "contactId": "contact-a",
+      "name": "Example property property-duplicate-b",
+      "status": "open",
+      "assignedTo": "staff-a",
+      "customFields": [
+        {
+          "id": "field-0",
+          "fieldValue": "40 Example Lane"
+        },
+        {
+          "id": "field-1",
+          "fieldValue": "Example City"
+        },
+        {
+          "id": "field-2",
+          "fieldValue": "CA"
+        },
+        {
+          "id": "field-3",
+          "fieldValue": "90001"
+        },
+        {
+          "id": "field-4",
+          "fieldValue": "Example County"
+        },
+        {
+          "id": "field-5",
+          "fieldValue": "004-005"
+        },
+        {
+          "id": "field-6",
+          "fieldValue": "Land"
+        },
+        {
+          "id": "field-7",
+          "fieldValue": "https://example.com/source"
+        },
+        {
+          "id": "field-8",
+          "fieldValue": "2026-11-16"
+        },
+        {
+          "id": "field-9",
+          "fieldValue": "Review the property evidence"
+        },
+        {
+          "id": "field-10",
+          "fieldValue": "2026-11-17"
+        },
+        {
+          "id": "field-11",
+          "fieldValue": "Pending"
+        },
+        {
+          "id": "field-12",
+          "fieldValue": "task-duplicate-b"
+        }
+      ]
+    },
+    {
+      "id": "property-qa",
+      "contactId": "contact-qa",
+      "name": "QA NO OUTREACH",
+      "status": "open",
+      "assignedTo": "staff-a",
+      "customFields": [
+        {
+          "id": "field-0",
+          "fieldValue": "10 Example Lane"
+        },
+        {
+          "id": "field-1",
+          "fieldValue": "Example City"
+        },
+        {
+          "id": "field-2",
+          "fieldValue": "CA"
+        },
+        {
+          "id": "field-3",
+          "fieldValue": "90001"
+        },
+        {
+          "id": "field-4",
+          "fieldValue": "Example County"
+        },
+        {
+          "id": "field-5",
+          "fieldValue": "001-002"
+        },
+        {
+          "id": "field-6",
+          "fieldValue": "Land"
+        },
+        {
+          "id": "field-7",
+          "fieldValue": "https://example.com/source"
+        },
+        {
+          "id": "field-8",
+          "fieldValue": "2026-11-16"
+        },
+        {
+          "id": "field-9",
+          "fieldValue": "Review the property evidence"
+        },
+        {
+          "id": "field-10",
+          "fieldValue": "2026-11-17"
+        },
+        {
+          "id": "field-11",
+          "fieldValue": "Pending"
+        },
+        {
+          "id": "field-12",
+          "fieldValue": "task-a"
+        }
+      ]
+    }
+  ],
+  "fieldDefinitions": [
+    {
+      "id": "field-0",
+      "name": "PBK Property Street Address",
+      "model": "opportunity"
+    },
+    {
+      "id": "field-1",
+      "name": "PBK Property City",
+      "model": "opportunity"
+    },
+    {
+      "id": "field-2",
+      "name": "PBK Property State",
+      "model": "opportunity"
+    },
+    {
+      "id": "field-3",
+      "name": "PBK Property ZIP",
+      "model": "opportunity"
+    },
+    {
+      "id": "field-4",
+      "name": "PBK Property County",
+      "model": "opportunity"
+    },
+    {
+      "id": "field-5",
+      "name": "PBK Parcel ID (APN)",
+      "model": "opportunity"
+    },
+    {
+      "id": "field-6",
+      "name": "PBK PropStream Property Type",
+      "model": "opportunity"
+    },
+    {
+      "id": "field-7",
+      "name": "PBK PropStream Record Reference",
+      "model": "opportunity"
+    },
+    {
+      "id": "field-8",
+      "name": "PBK Property Research As Of",
+      "model": "opportunity"
+    },
+    {
+      "id": "field-9",
+      "name": "PBK Handoff Summary & Next Step",
+      "model": "opportunity"
+    },
+    {
+      "id": "field-10",
+      "name": "PBK Next Step Due Date",
+      "model": "opportunity"
+    },
+    {
+      "id": "field-11",
+      "name": "PBK Next Step Status",
+      "model": "opportunity"
+    },
+    {
+      "id": "field-12",
+      "name": "PBK Next Step Task ID",
+      "model": "opportunity"
+    }
+  ],
+  "tasks": [
+    {
+      "id": "task-a",
+      "contactId": "contact-a",
+      "opportunityId": "property-a",
+      "completed": false,
+      "assignedTo": "staff-a",
+      "dueDate": "2026-11-17"
+    },
+    {
+      "id": "task-overdue",
+      "contactId": "contact-a",
+      "opportunityId": "property-overdue",
+      "completed": false,
+      "assignedTo": "staff-a",
+      "dueDate": "2026-11-15"
+    },
+    {
+      "id": "task-duplicate-a",
+      "contactId": "contact-a",
+      "opportunityId": "property-duplicate-a",
+      "completed": false,
+      "assignedTo": "staff-a",
+      "dueDate": "2026-11-17"
+    },
+    {
+      "id": "task-duplicate-b",
+      "contactId": "contact-a",
+      "opportunityId": "property-duplicate-b",
+      "completed": false,
+      "assignedTo": "staff-a",
+      "dueDate": "2026-11-17"
+    }
+  ],
+  "tasksComplete": true,
+  "fixtureNotice": "Synthetic data modeling normal and QA cases. No source data from real leads."
+}

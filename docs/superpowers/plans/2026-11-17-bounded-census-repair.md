@@ -1,6 +1,6 @@
 # Bounded Census Repair Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development or superpowers:executing-plans. Track each test-first task below.
+> **For agentic workers:** REQUIRED WORKFLOW: Use superpowers:subagent-driven-development. Require test-first tasks and independent review. Track each task below.
 
 **Goal:** Collect prospective coverage over a large retained inventory with bounded pages, authenticated completeness and transactionally ordered mutation tracking.
 

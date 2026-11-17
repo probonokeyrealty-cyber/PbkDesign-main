@@ -1,4 +1,5 @@
 import { normalizeAgentRegistryId } from './agent-registry.mjs';
+import { isAgentTimingPlainData, verifyAgentTimingProof } from './agent-timing-proof.mjs';
 
 export function isNonOperationalAgentEvidence(record = {}) {
   const metadata = record.metadata || {};
@@ -97,7 +98,8 @@ export function buildAgentExecutionEvidence({ agentId, payload = {}, output = {}
   };
 }
 
-export function collectAgentFleetEvidence(state = {}, { now = Date.now() } = {}) {
+export function collectAgentFleetEvidence(state = {}, { now = Date.now(), policy, secret, revision, requireTimingV2 = false } = {}) {
+  if (requireTimingV2 || policy?.version === 2) return collectTimingV2(state, { now, policy, secret, revision });
   const lastActions = {};
   const latencySamples = {};
   const unverifiedLatencySamples = {};
@@ -156,4 +158,74 @@ export function collectAgentFleetEvidence(state = {}, { now = Date.now() } = {})
       : diagnostic.unverifiedRecords ? 'provenance_missing' : 'no_operational_use_observed';
   }
   return { lastActions, latencySamples, unverifiedLatencySamples, latencyObservations, diagnostics };
+}
+
+function collectTimingV2(state, { now, policy, secret, revision }) {
+  const result = { lastActions: {}, latencySamples: {}, unverifiedLatencySamples: {}, latencyObservations: {}, latencyDiagnostics: {}, diagnostics: {} };
+  const runs = new Map();
+  for (const collection of ['agentTasks', 'agentDecisions', 'rexDecisions']) {
+    for (const record of Array.isArray(state[collection]) ? state[collection] : []) {
+      const safe = isAgentTimingPlainData(record);
+      const ownAgent = Object.getOwnPropertyDescriptor(record || {}, 'agentId')?.value;
+      const candidate = safe ? record?.agentId || record?.agent_id || record?.toAgent || record?.to_agent
+        || record?.agentName || record?.agent_name || record?.agent || record?.fromAgent || record?.from_agent : ownAgent;
+      const id = typeof candidate === 'string' ? normalizeAgentRegistryId(candidate) : '';
+      if (!id || ['__proto__', 'constructor', 'prototype'].includes(id)) continue;
+      const diagnostic = result.diagnostics[id] ||= { observedRecords: 0, excludedRecords: 0, unverifiedRecords: 0, missingLatencyRecords: 0, operationalRecords: 0 };
+      diagnostic.observedRecords++;
+      if (safe && isNonOperationalAgentEvidence(record)) { diagnostic.excludedRecords++; continue; }
+      const metadata = safe ? record.metadata || {} : {};
+      const proof = metadata.timingProof ?? metadata.executionEvidence?.timingProof;
+      const runId = safe && typeof record.id === 'string' ? record.id : '';
+      const check = verifyAgentTimingProof(proof, { secret, revision, policy, agentId: id, runId, now });
+      const signedExpired = check.reason === 'time_expired';
+      const valid = check.verified;
+      const data = valid ? check.data : null;
+      const at = data?.completedAt || (signedExpired ? proof.completedAt : safe ? record.completedAt || record.completed_at
+        || metadata.executionEvidence?.completedAt || record.updatedAt || record.updated_at || record.createdAt || record.created_at : '');
+      const atMs = typeof at === 'string' ? Date.parse(at) : NaN;
+      const rawStatus = safe ? record.status || record.result : null;
+      const status = typeof rawStatus === 'string' ? rawStatus.toLowerCase() : '';
+      const success = valid && /^(success|succeeded|complete|completed)$/.test(status);
+      const observations = result.latencyObservations[id] ||= [];
+      const diagnostics = result.latencyDiagnostics[id] ||= [];
+      const key = `${id}:${runId}`;
+      const previous = runs.get(key);
+      const signature = valid ? proof.signature : null;
+      const duplicate = Boolean(previous && signature && previous === signature);
+      const conflict = Boolean(previous && signature && previous !== signature);
+      if (valid) runs.set(key, signature);
+      if (valid && success && !conflict && !duplicate) {
+        diagnostic.operationalRecords++;
+        const signedProof = { ...data, signature };
+        for (const [field, kind] of Object.entries(TIMING_KINDS)) {
+          if (!Object.hasOwn(data.timings, field)) continue;
+          observations.push({ kind, channel: data.channel, valueMs: data.timings[field], at: data.completedAt,
+            recordId: runId, source: 'signed_timing_v2', verified: true, proof: signedProof, binding: { agentId: id, runId } });
+        }
+        if (Object.hasOwn(data.timings, 'completionMs')) (result.latencySamples[id] ||= []).push(data.timings.completionMs);
+        else diagnostic.missingLatencyRecords++;
+      } else if (!duplicate || !success) {
+        diagnostic.unverifiedRecords++;
+        diagnostics.push({ recordId: runId, reason: conflict ? 'run_conflict' : valid && !success ? 'business_result_unverified' : check.reason, at: Number.isFinite(atMs) ? new Date(atMs).toISOString() : '' });
+        const duration = safe ? record.latencyMs ?? record.latency_ms ?? record.durationMs ?? metadata.executionEvidence?.durationMs : null;
+        if (latencyNumber(duration) !== null) (result.unverifiedLatencySamples[id] ||= []).push(latencyNumber(duration));
+        if (conflict || (valid && !success) || (!signedExpired && (proof !== undefined || !safe))) {
+          // Invalid signed claims stay blocking; never use an untrusted timestamp to age them out.
+          observations.push({ timingV2: true, verified: false, recordId: runId, reason: conflict ? 'run_conflict' : 'proof_invalid' });
+        }
+      }
+      const action = { status: success && !conflict ? 'success' : status === 'failed' ? 'failure' : 'unverified',
+        at: Number.isFinite(atMs) ? new Date(atMs).toISOString() : '', recordId: runId,
+        source: valid ? 'signed_timing_v2' : '', ...(valid ? { proof: { ...data, signature }, binding: { agentId: id, runId } } : {}) };
+      const latest = result.lastActions[id];
+      // Invalid/unknown/future latest actions cannot restore an older successful action.
+      if (!latest || !Number.isFinite(atMs) || (latest.at && atMs > Date.parse(latest.at))
+        || (atMs === Date.parse(latest.at) && action.status !== 'success')) result.lastActions[id] = action;
+    }
+  }
+  for (const diagnostic of Object.values(result.diagnostics)) diagnostic.state = diagnostic.operationalRecords
+    ? diagnostic.missingLatencyRecords ? 'instrumentation_gap' : 'observed'
+    : diagnostic.unverifiedRecords ? 'provenance_missing' : 'no_operational_use_observed';
+  return result;
 }

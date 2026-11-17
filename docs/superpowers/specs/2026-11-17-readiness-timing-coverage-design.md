@@ -1,8 +1,10 @@
 # Readiness Timing And Coverage Design
 
-Status: proposed for founder approval after builder review. This document is not
+Status: approved by the founder for local build and testing on 2026-11-17,
+including the pilot targets and collection cadence. Builder review found no
+important open questions. This document is not
 authorization to publish, merge, deploy, change production configuration, or start
-production collection. No product implementation has begun.
+production collection.
 
 ## Intent And Decisions
 
@@ -14,8 +16,8 @@ or manufactured historical activity.
 The founder selected length-aware completion targets over fixed total-completion
 targets. The proposal below also reuses the existing Postgres evidence store,
 bridge runtime, protected readiness routes, and approval system. Numerical pilot
-targets and collection cadence below are engineering proposals for approval, not
-claimed production benchmarks or choices already made by the founder.
+targets and collection cadence below were proposed as engineering pilot settings
+and approved for this local build, not claimed production benchmarks.
 
 ### Approaches
 

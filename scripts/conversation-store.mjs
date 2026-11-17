@@ -2,6 +2,7 @@ import {
   normalizeConversationEmail,
   normalizeConversationPhone,
 } from './conversation-identity.mjs';
+import { runtimeSourceWriteReturning } from './runtime-source-evidence.mjs';
 
 const DEFAULT_PAGE_LIMIT = 50;
 const MAX_PAGE_LIMIT = 100;
@@ -1033,7 +1034,7 @@ async function upsertThreadIdentity(client, identity) {
   );
 }
 
-export function createConversationStore(pool) {
+export function createConversationStore(pool, { captureSourceWrite, onSourceWriteCommitted } = {}) {
   async function resolveThread(input = {}) {
     const workspace = workspaceId(input.workspaceId);
     const leadId =
@@ -1458,7 +1459,7 @@ export function createConversationStore(pool) {
         ? event.direction.trim()
         : 'internal';
 
-    return withTransaction(pool, async (client) => {
+    const committed = await withTransaction(pool, async (client) => {
       const sourceKeyed = Boolean(sourceTable && sourceId);
       if (sourceKeyed) {
         await client.query(`SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, [
@@ -1524,7 +1525,8 @@ export function createConversationStore(pool) {
             occurred_at = EXCLUDED.occurred_at,
             payload = EXCLUDED.payload,
             updated_at = NOW()
-          RETURNING (xmax = 0) AS inserted, public.conversation_events.*
+          RETURNING (xmax = 0) AS inserted, public.conversation_events.*,
+            ${runtimeSourceWriteReturning('conversation_projection')}
         `,
         [
           workspace,
@@ -1552,6 +1554,12 @@ export function createConversationStore(pool) {
       const row = result.rows[0];
       if (!row) throw new Error('Unable to persist conversation event');
       const inserted = row.inserted === true || row.inserted === 't';
+      let writeBinding;
+      try {
+        if (typeof pool?.connect === 'function' && typeof captureSourceWrite === 'function') {
+          writeBinding = captureSourceWrite(row.runtime_source_row);
+        }
+      } catch { /* Optional measurement must not change business persistence. */ }
 
       await recomputeThreadAggregates(
         client,
@@ -1559,8 +1567,14 @@ export function createConversationStore(pool) {
         workspace
       );
 
-      return { ...mapConversationEventRow(row), inserted };
+      return { event: { ...mapConversationEventRow(row), inserted }, writeBinding };
     });
+    // Never read from another connection or release evidence before COMMIT acknowledgement.
+    if (committed.writeBinding && typeof onSourceWriteCommitted === 'function') {
+      try { void Promise.resolve(onSourceWriteCommitted(committed.writeBinding, committed.event.id)).catch(() => {}); }
+      catch { /* A receipt gap cannot fail an already committed conversation event. */ }
+    }
+    return committed.event;
   }
 
   async function getEvent(eventId, options = { workspaceId: 'pbk' }) {

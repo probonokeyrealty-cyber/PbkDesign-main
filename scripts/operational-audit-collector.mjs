@@ -1,3 +1,6 @@
+import { readRuntimeCoverage } from './runtime-coverage-store.mjs';
+import { operationalAuditSourceStatus } from './operational-audit-store.mjs';
+
 export const OPERATIONAL_AUDIT_CHECK_IDS = Object.freeze([
   'runtime_archive', 'provider_dispatch', 'dead_letters', 'conversation_projection',
   'safety_qa', 'database_security', 'runtime_health', 'monitoring_continuity',
@@ -24,7 +27,7 @@ const SOURCES = Object.freeze([
     counts: ['observations', 'errors', 'warnings', 'excludedFixtures', 'futureTimestamps', 'missingTimestamps'],
     failures: ['errors'],
     sql: `WITH evidence AS (
-      SELECT created_at AS at, source = 'runtime-event:controlled-qualification' AS fixture,
+      SELECT created_at AS at, FALSE AS fixture,
         status = 'error' AS error, status = 'warning' AS warning
       FROM public.activity_log
       WHERE workspace_id = 'pbk' AND source LIKE 'runtime-event:%'
@@ -66,7 +69,7 @@ const SOURCES = Object.freeze([
     failures: ['outstanding'],
     // There is no resolution column: old rows remain outstanding rather than aging into a pass.
     sql: `WITH evidence AS (
-      SELECT created_at AS at, COALESCE(source = 'controlled-qualification', FALSE) AS fixture
+      SELECT created_at AS at, FALSE AS fixture
       FROM public.event_dead_letters WHERE tenant_id = 'pbk'
     ) SELECT /* operational_audit:dead_letters */
       COUNT(*) FILTER (WHERE ${observed}) AS observations,
@@ -116,12 +119,12 @@ const SOURCES = Object.freeze([
     // blocked=true describes a working guard, not an unsafe execution. These tables do not
     // authoritatively link validation denial to an actually allowed provider execution.
     sql: `WITH evidence AS (
-      SELECT created_at AS at, COALESCE(source = 'controlled-qualification', FALSE) AS fixture,
+      SELECT created_at AS at, FALSE AS fixture,
         TRUE AS qa, NOT passed AND NOT skipped AS failure, skipped, FALSE AS blocked
       FROM public.pbk_qa_audit WHERE tenant_id = 'pbk'
         AND (created_at >= $1::timestamptz OR created_at IS NULL)
       UNION ALL
-      SELECT created_at, COALESCE(source = 'controlled-qualification', FALSE),
+      SELECT created_at, FALSE,
         FALSE, FALSE, FALSE, blocked
       FROM public.pbk_safety_audit WHERE tenant_id = 'pbk'
         AND (created_at >= $1::timestamptz OR created_at IS NULL)
@@ -191,7 +194,7 @@ function timestamp(value) {
   return date.toISOString();
 }
 
-function summarize(source, rows, windowEnd) {
+function summarize(source, rows, windowEnd, coverage) {
   try {
     if (!Array.isArray(rows) || rows.length !== 1) throw new Error('invalid_aggregate');
     const row = rows[0];
@@ -212,11 +215,22 @@ function summarize(source, rows, windowEnd) {
     const finish = (status, reason) => result(source.id, status, reason, counts, first, last);
     if (counts.futureTimestamps || counts.missingTimestamps) return finish('unverified', 'invalid_timestamps');
     if (source.failures.some(key => counts[key] > 0)) return finish('failed', 'findings_detected');
+    // Monitoring provenance cannot establish approval/seller business linkage.
+    if (source.id === 'conversation_projection' && counts.unverifiableDispatches > 0) {
+      return finish('unverified', 'contamination_unverified');
+    }
     if (source.id === 'database_security') {
       if (counts.missingTables || counts.requiredTables !== 22 || counts.presentTables !== 22) {
         return finish('unverified', 'source_unavailable');
       }
       return finish('passed', 'no_findings');
+    }
+    if (coverage?.verified) {
+      const mapping = { runtime_archive: ['runtime_archive'], conversation_projection: ['conversation_projection'],
+        safety_qa: ['qa', 'safety'] };
+      const status = mapping[source.id] ? operationalAuditSourceStatus(coverage.sources, mapping[source.id]) : 'passed';
+      return finish(status, status === 'passed' ? 'no_findings'
+        : status === 'failed' ? 'findings_detected' : 'contamination_unverified');
     }
     if (counts.observations === 0) return finish('unverified', 'no_observations');
     // Existing sources cannot prove universal fixture exclusion or retrospective coverage.
@@ -295,19 +309,33 @@ function runtimeHealth(runtime, at) {
 }
 
 // now and runtime are internal dependencies, never request fields or caller evidence.
-export async function collectOperationalAudit({ pool, now = Date.now(), runtime = {} } = {}) {
+export async function collectOperationalAudit({ pool, now = Date.now(), observationNow = Date.now,
+  runtime = {}, secret, revision, sampler, fence } = {}) {
   if (!Number.isSafeInteger(now) || now < DAY_MS || !Number.isFinite(new Date(now).getTime())) {
     throw new TypeError('invalid_audit_clock');
   }
   const windowStart = new Date(now - DAY_MS).toISOString();
   const windowEnd = new Date(now).toISOString();
-  const deadline = performance.now() + DEADLINE_MS;
+  const deadline = Math.min(performance.now() + DEADLINE_MS, fence?.deadlineAt ?? Infinity);
+  // Close only the actual current pending boundary. A zero-age head already closes this cutoff.
+  let sampled = Boolean(sampler);
+  if (sampler && sampler.status().cutoff !== windowEnd) {
+    sampled = (await sampler.sample({ cutoff: now })).verified === true;
+  }
+  fence?.check();
+  const coverage = sampled ? await readRuntimeCoverage({ pool, secret, revision, now: observationNow, cutoff: now }) : null;
+  fence?.check();
   const checks = [];
   for (const source of SOURCES) {
     const read = await readSource(pool, source, source.id === 'database_security' ? [] : [windowStart, windowEnd], deadline);
-    checks.push(read.reason ? result(source.id, 'unverified', read.reason) : summarize(source, read.rows, windowEnd));
+    checks.push(read.reason ? result(source.id, 'unverified', read.reason) : summarize(source, read.rows, windowEnd, coverage));
   }
   checks.push(runtimeHealth(runtime, windowEnd));
-  checks.push(result('monitoring_continuity', 'unverified', 'authoritative_source_unavailable'));
-  return { windowStart, windowEnd, checks, coverage: { verified: false } };
+  checks.push(result('monitoring_continuity', coverage?.verified ? 'passed' : 'unverified',
+    coverage?.verified ? 'no_findings' : 'authoritative_source_unavailable'));
+  const reference = coverage?.proof?.reference;
+  return { windowStart, windowEnd, checks, coverage: reference ? { verified: true,
+    schemaVersion: coverage.proof.schemaVersion, policyVersion: coverage.proof.policy.version, policyHash: reference.policyHash,
+    instrumentation: reference.instrumentation, segmentRef: reference.segmentRef, cutoff: reference.cutoff, reference }
+    : { verified: false } };
 }

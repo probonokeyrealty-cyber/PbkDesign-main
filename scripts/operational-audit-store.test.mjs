@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict';
-import { test } from '@jest/globals';
+import { afterAll, beforeAll, test } from '@jest/globals';
 import { createHmac, randomUUID } from 'node:crypto';
 import { canonicalJson } from './skill-governance-store.mjs';
+import { createAuditFixture } from './operational-audit-test-fixture.mjs';
+import { advanceAuditFixtureClock } from './readiness-timing-postgres-fixture.mjs';
+import { readRuntimeCoverage, verifyRuntimeCoverageReference } from './runtime-coverage-store.mjs';
 
 let store = {};
 try { store = await import('./operational-audit-store.mjs'); }
@@ -11,12 +14,18 @@ const revision = 'a'.repeat(40);
 const secret = 'operational-audit-test-signing-material';
 const NOW = Date.parse('2026-11-16T12:00:00.000Z');
 const DAY = 24 * 3600_000;
-const SOURCE = 'server:operational-audit:v1';
-const SUITE = 'operational_audit_v1';
-const SCHEMA = 'pbk-operational-audit-v1';
+const SOURCE = 'server:operational-audit:v2';
+const SUITE = 'operational_audit_v2';
+const SCHEMA = 'pbk-operational-audit-v2';
 const IDS = ['runtime_archive', 'provider_dispatch', 'dead_letters', 'conversation_projection',
   'safety_qa', 'database_security', 'runtime_health', 'monitoring_continuity'];
 const iso = ms => new Date(ms).toISOString();
+let fixture;
+beforeAll(async () => { fixture = await createAuditFixture({ end: NOW, revision, secret }); }, 120000);
+afterAll(async () => { await fixture?.close(); });
+// The audit-row double exercises corruption/CAS. Coverage always uses the real durable validator.
+const coverageVerifier = options => verifyRuntimeCoverageReference({ ...options,
+  pool: store.createOperationalAuditPool(fixture.pool) });
 
 function api(name) {
   assert.equal(typeof store[name], 'function', `${name} must implement durable operational audit receipts`);
@@ -27,7 +36,8 @@ function collection(end = NOW, ready = false) {
   return { windowStart: iso(end - DAY), windowEnd: iso(end),
     checks: IDS.map(id => ({ id, status: ready || id !== 'monitoring_continuity' ? 'passed' : 'unverified',
       reason: ready || id !== 'monitoring_continuity' ? 'no_findings' : 'coverage_unverified',
-      counts: { total: 0 }, firstObservedAt: null, lastObservedAt: null })), coverage: { verified: ready } };
+      counts: { total: 0 }, firstObservedAt: null, lastObservedAt: null })),
+    coverage: ready ? { verified: true, reference: fixture.coverage.proof.reference } : { verified: false } };
 }
 
 function jsonb(value) {
@@ -45,6 +55,7 @@ function database(transactionStarts = []) {
   let clockUs = BigInt(NOW) * 1000n;
   const pool = { rows, statements, busy: false, failRead: false, failWrite: false, failUpdate: false, clockMs: NOW };
   const query = async (sql, values = []) => {
+    if (typeof sql === 'object') { values = sql.values || []; sql = sql.text; }
     statements.push({ sql, values });
     if (sql === 'BEGIN') transactionStart = transactionStarts.shift() ?? NOW;
     if (/pg_try_advisory_xact_lock/.test(sql)) return { rows: [{ acquired: !pool.busy }] };
@@ -75,7 +86,7 @@ function database(transactionStarts = []) {
       const ordered = [...rows].sort((a, b) => a.createdUs === b.createdUs
         ? b.id.localeCompare(a.id) : a.createdUs > b.createdUs ? -1 : 1);
       // Return corrupt matching rows too: verification must not rely on SQL filtering for integrity.
-      return { rows: JSON.parse(JSON.stringify(ordered.filter(row => values.length < 4 || row.id === values[3]).slice(0, 1))) };
+      return { rows: JSON.parse(JSON.stringify(ordered.slice(0, 1))) };
     }
     return { rows: [] };
   };
@@ -90,12 +101,12 @@ function database(transactionStarts = []) {
 
 async function execute(pool = database(), overrides = {}) {
   const result = await api('executeOperationalAudit')({ pool, revision, secret,
-    collect: async () => collection(), now: () => NOW, createId: () => 'operational-test-1', ...overrides });
+    collect: async () => collection(), now: () => NOW, coverageVerifier, createId: () => 'operational-test-1', ...overrides });
   return { pool, result };
 }
-const read = (pool, overrides = {}) => api('readOperationalAudit')({ pool, revision, secret, now: NOW, ...overrides });
+const read = (pool, overrides = {}) => api('readOperationalAudit')({ pool, revision, secret, now: NOW, coverageVerifier, ...overrides });
 
-function resign(row, domain = 'pbk.operational-audit.signing-key.v1') {
+function resign(row, domain = 'pbk.operational-audit.signing-key.v2') {
   const { attestation: _ignored, ...unsigned } = row.report;
   const key = createHmac('sha256', secret).update(domain).digest();
   row.report.attestation = { version: SCHEMA,
@@ -122,7 +133,8 @@ test('JSONB readback verifies an incomplete audit without promoting it', async (
   assert.equal(pool.rows[0].source, SOURCE);
   assert.equal(pool.rows[0].report.windowEnd, undefined, 'window belongs to the signed audit');
   assert.equal(pool.statements.filter(q => /FROM public.pbk_eval_runs/.test(q.sql) && !/INSERT/.test(q.sql)).length, 2);
-  assert(pool.statements.some(q => /id = \$4/.test(q.sql)));
+  assert(pool.statements.filter(q => /^SELECT id/.test(q.sql)).every(q => !/AND id =/.test(q.sql)),
+    'explicit IDs must not filter before newest-admission selection');
   assert(pool.statements.find(q => q.sql === 'COMMIT'));
   assert.equal(JSON.stringify(result).includes(secret), false);
   assert.deepEqual((await read(pool)).audit, result.audit);
@@ -143,6 +155,15 @@ test('only all fixed checks plus verified coverage can derive ready', async () =
   const { result } = await execute(database(), { collect: async () => collection(NOW, true) });
   assert.equal(result.audit.ready, true);
   assert.equal(result.evidence.silentErrors.passed, true);
+});
+
+test('a forged coverage Boolean without the issued reference never derives readiness', async () => {
+  const input = collection(NOW, true);
+  input.coverage = { verified: true };
+  const { result } = await execute(database(), { collect: async () => input });
+  assert.equal(result.verified, true);
+  assert.equal(result.audit.ready, false);
+  assert.equal(result.audit.coverage.verified, false);
 });
 
 test('collection holds no writer connection after durable admission, using the original execution window', async () => {
@@ -166,6 +187,32 @@ test('collection holds no writer connection after durable admission, using the o
   assert.equal(result.audit.windowEnd, iso(NOW));
   assert.equal((await read(pool, { now: NOW + DAY - 1 })).verified, true);
   assert.equal((await read(pool, { now: NOW + DAY })).verified, false, 'TTL starts at observation end, not completion/read');
+});
+
+test('admission time, observation cutoff and actual collection completion are distinct clocks', async () => {
+  const pool = database(), connect = pool.connect;
+  let clock = NOW, commits = 0;
+  pool.connect = async () => {
+    const client = await connect(), query = client.query;
+    client.query = async (...args) => {
+      const result = await query(...args);
+      const text = typeof args[0] === 'string' ? args[0] : args[0].text;
+      if (text === 'COMMIT' && ++commits === 1) clock += 100;
+      return result;
+    };
+    return client;
+  };
+  const { result } = await execute(pool, { now: () => clock, collect: async ({ now, observationNow }) => {
+    assert.equal(now, NOW + 100, 'cutoff is captured after admission');
+    clock += 200;
+    assert.equal(observationNow(), NOW + 300, 'source collection uses the actual current clock');
+    return collection(now);
+  } });
+  assert.equal(result.verified, true);
+  assert.equal(pool.rows[0].report.startedAt, iso(NOW));
+  assert.equal(pool.rows[0].report.observationCutoff, iso(NOW + 100));
+  assert.equal(result.audit.windowEnd, iso(NOW + 100));
+  assert.equal(result.executedAt, iso(NOW + 300));
 });
 
 test('collector exceptions persist a newer sanitized unverified attempt instead of exposing an older pass', async () => {
@@ -328,7 +375,8 @@ test('writer ordering ignores out-of-order transaction starts and lexical identi
   assert.match(insert, /GREATEST\(clock_timestamp\(\)/);
   assert.match(insert, /MAX\(created_at\)\s*\+\s*INTERVAL '1 microsecond'/);
   assert.doesNotMatch(insert, /\bNOW\(\)/i);
-  assert(pool.statements.some(q => /pg_try_advisory_xact_lock/.test(q.sql) && q.values[0] === SOURCE));
+  assert(pool.statements.some(q => /pg_try_advisory_xact_lock/.test(q.sql)
+    && q.values[0] === 'server:operational-audit:v1'), 'v2 admissions retain the cross-version lock namespace');
   pool.rows[1].report.attestation.signature = '0'.repeat(64);
   assert.equal((await read(pool)).verified, false);
 });
@@ -351,8 +399,17 @@ test('missing storage/schema, failed writer, failed readback and busy lock fail 
 });
 
 test('failed independent readback never falls back to an in-memory signed result', async () => {
-  const pool = database(); const query = pool.query;
-  pool.query = async (...args) => { const result = await query(...args); result.rows = []; return result; };
+  const pool = database(); const connect = pool.connect;
+  pool.connect = async () => {
+    const client = await connect(), query = client.query;
+    client.query = async (...args) => {
+      const result = await query(...args);
+      const sql = typeof args[0] === 'string' ? args[0] : args[0].text;
+      if (/^SELECT id/.test(sql)) result.rows = [];
+      return result;
+    };
+    return client;
+  };
   assert.equal((await execute(pool)).result.verified, false);
   assert.equal(pool.rows.length, 1);
 });
@@ -447,7 +504,8 @@ test('production store only inserts/finalizes its own receipt and never mutates 
     }
   }
   const lookup = pool.statements.at(-1);
-  assert.match(lookup.sql, /tenant_id = \$1 AND \(suite_name = \$2 OR source = \$3\)/);
+  assert.match(lookup.sql, /tenant_id = \$1 AND \(suite_name = \$2 OR source = \$3/);
+  assert.match(lookup.sql, /OR suite_name = \$4 OR source = \$5/);
   assert.match(lookup.sql, /ORDER BY created_at DESC, id DESC LIMIT 1/);
 });
 
@@ -461,7 +519,27 @@ postgresTest('disposable Postgres operational JSONB proof, tampering and latest 
   const pool = new pg.Pool({ connectionString: process.env.PBK_TEST_DATABASE_URL,
     max: 2, connectionTimeoutMillis: 10_000, query_timeout: 10_000 });
   const ids = Array.from({ length: 3 }, () => `operational-test-${randomUUID()}`);
-  const run = (id, collect) => api('executeOperationalAudit')({ pool, revision, secret, createId: () => id, collect });
+  const pgProof = await createAuditFixture({ end: Date.now(), revision, secret });
+  await advanceAuditFixtureClock(pgProof, Date.now());
+  const pgVerifier = options => {
+    const current = typeof options.now === 'function' ? options.now() : options.now;
+    pgProof.advance(current - pgProof.now());
+    return verifyRuntimeCoverageReference({ ...options, pool: store.createOperationalAuditPool(pgProof.pool), now: pgProof.now });
+  };
+  const run = (id, collect) => api('executeOperationalAudit')({ pool, revision, secret, createId: () => id,
+    coverageVerifier: pgVerifier, collect: async args => {
+      const data = await collect(args);
+      if (data.coverage.verified) {
+        pgProof.advance(args.now - pgProof.now());
+        if (pgProof.sampler.status().cutoff !== iso(args.now)) {
+          assert.equal((await pgProof.sampler.sample({ cutoff: args.now })).verified, true);
+        }
+        const coverage = await readRuntimeCoverage({ pool: pgProof.pool, secret, revision, now: pgProof.now });
+        assert.equal(coverage.verified, true);
+        data.coverage = { verified: true, reference: coverage.proof.reference };
+      }
+      return data;
+    } });
   try {
     await pool.query(`CREATE TABLE IF NOT EXISTS public.pbk_eval_runs (
       id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL DEFAULT 'pbk', suite_name TEXT NOT NULL,
@@ -481,6 +559,6 @@ postgresTest('disposable Postgres operational JSONB proof, tampering and latest 
     assert.equal(latest.runId, ids[2]); assert.equal(latest.verified, true); assert.equal(latest.audit.ready, false);
   } finally {
     try { await pool.query('DELETE FROM public.pbk_eval_runs WHERE id = ANY($1::text[])', [ids]); }
-    finally { await pool.end(); }
+    finally { await pool.end(); await pgProof.close(); }
   }
-}, 30_000);
+}, 180_000);

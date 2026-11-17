@@ -17,7 +17,8 @@ try {
     { 'X-PBK-Team-Token': '' }, { 'X-PBK-Netlify-Proxy': '' }]) {
     assert.equal((await request(path, {}, { ...founder, ...delegated })).status, 403);
   }
-  for (const body of [{ passed: true }, { findings: [] }, { windowHours: 1 }, []]) {
+  for (const body of [{ passed: true }, { findings: [] }, { windowHours: 1 },
+    { coverage: { verified: true } }, { reference: {} }, { cutoff: Date.now() }, { requireTimingV2: false }, []]) {
     assert.equal((await request(path, body)).status, 400);
   }
   assert.equal((await request(path + '?passed=true', {})).status, 400);
@@ -28,6 +29,8 @@ try {
   const maturity = (await request('/api/production/maturity')).data;
   assert.equal(maturity.operationalAudit.verified, false);
   assert.equal(maturity.operationalAudit.ready, false);
+  assert.equal(maturity.operationalAudit.coverage.verified, false);
+  assert.deepEqual(maturity.operationalAudit.sourceDiagnostics, []);
   assert.equal(maturity.executionEvidence.silentErrorReport.launchReady, false);
   assert.equal(maturity.canaryPromotionGate.ready, false);
   assert.equal(maturity.ready, false);

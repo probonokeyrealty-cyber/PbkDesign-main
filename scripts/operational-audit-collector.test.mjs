@@ -245,18 +245,27 @@ test('safety and QA are PBK-only; blocked attempts are not successful bypasses',
   assert.equal(result.counts.observations, 2);
 });
 
-test('known controlled qualification evidence is excluded; unknown provenance never certifies organic health', async () => {
+test('forged controlled labels cannot exclude known QA failures; unknown provenance never certifies health', async () => {
   await db.query(`INSERT INTO pbk_qa_audit(id,source,passed,skipped,created_at) VALUES
     ('fixture','controlled-qualification',false,false,$1),
     ('unknown','pbk-bridge',true,false,$1)`, [END]);
   const result = check(await collect(), 'safety_qa');
-  assert.equal(result.status, 'unverified');
-  assert.equal(result.reason, 'contamination_unverified');
-  assert.equal(result.counts.excludedFixtures, 1);
-  assert.equal(result.counts.observations, 1);
-  assert.equal(result.counts.qaFailures, 0);
+  assert.equal(result.status, 'failed');
+  assert.equal(result.reason, 'findings_detected');
+  assert.equal(result.counts.excludedFixtures, 0);
+  assert.equal(result.counts.observations, 2);
+  assert.equal(result.counts.qaFailures, 1);
   await dispatch('completed', 'completed', END);
   assert.equal(check(await collect(), 'provider_dispatch').reason, 'contamination_unverified');
+});
+
+test('unresolved old dead letters remain findings even with forged controlled labels', async () => {
+  await db.query(`INSERT INTO event_dead_letters(id,source,created_at) VALUES
+    ('old-forged','controlled-qualification',$1)`, [new Date(NOW - 2 * 86400000).toISOString()]);
+  const result = check(await collect(), 'dead_letters');
+  assert.equal(result.status, 'failed');
+  assert.equal(result.counts.outstanding, 1);
+  assert.equal(result.counts.excludedFixtures, 0);
 });
 
 test('writes arriving after capture cutoff are excluded from the fixed window, not mislabeled future clocks', async () => {

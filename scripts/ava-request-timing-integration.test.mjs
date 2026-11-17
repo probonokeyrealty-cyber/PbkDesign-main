@@ -5,6 +5,8 @@ import { test } from '@jest/globals';
 import { createAvaRequestTiming } from './ava-request-timing.mjs';
 import { sanitizeAvaStreamReply } from './ava-deepseek-stream.mjs';
 import { appendAssistantMessage, normalizeAssistantSession } from './ava-assistant-chat.mjs';
+import { withRuntimeEvidenceContext, getRuntimeEvidenceContext } from './runtime-evidence-context.mjs';
+import { markAgentTimingFirstContent } from './agent-timing-adapters.mjs';
 
 const source = readFileSync(new URL('./openclaw-local-server.mjs', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
 const start = source.indexOf('async function handleInternalAvaAssistantChatRequest(request) {');
@@ -25,6 +27,9 @@ function fixture({ abortRead = false, blockFinal = false, general = false, messa
   controller.abort();
   const context = vm.createContext({
     Date,
+    withRuntimeEvidenceContext, getRuntimeEvidenceContext, markAgentTimingFirstContent,
+    createBridgeAgentTimingTurn: () => null,
+    chatTimingDeliveries: new WeakMap(),
     sanitizeAvaStreamReply,
     process: { env: { RENDER_GIT_COMMIT: 'fixture-commit' } },
     createAvaRequestTiming: () => createAvaRequestTiming({ now: () => clock }),

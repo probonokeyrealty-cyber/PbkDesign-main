@@ -25,12 +25,16 @@ import { controlledExecution, createControlledPool, createScopedState, assertCon
 import { createControlledAgentStorage, saveControlledAgentResult, readControlledAgentQualification, readControlledWorkflowPredecessor } from './controlled-agent-storage.mjs';
 import { runControlledAgentWorkflow } from './controlled-agent-workflow.mjs';
 import { createAvaRequestTiming } from './ava-request-timing.mjs';
+import { runBenchmark, summarizeBenchmark } from './ava-latency-benchmark.mjs';
+import { createAgentTimingTurn, markAgentTimingFirstContent, bindAgentTimingToParams,
+  getTrustedAgentTimingProof, registeredAgentTimingChannel, agentTimingResultSucceeded } from './agent-timing-adapters.mjs';
+import { withRuntimeEvidenceContext, getRuntimeEvidenceContext } from './runtime-evidence-context.mjs';
 import { createBackgroundPersistence, createCoalescedPersistence } from './background-persistence.mjs';
 import { createProviderActionBinding, hashProviderActionContext, validateProviderActionAuthorization, validateNegotiationApproval } from './provider-action-authorization.mjs';
 import { authorizeQualificationRequest, executeReleaseQualification, isDirectQualificationFounder, readReleaseQualification } from './release-qualification.mjs';
 import { loadQualificationCiEvidence } from './release-qualification-ci.mjs';
 import { collectOperationalAudit } from './operational-audit-collector.mjs';
-import { executeOperationalAudit, readOperationalAudit } from './operational-audit-store.mjs';
+import { executeOperationalAudit, readOperationalAudit, createOperationalAuditPool } from './operational-audit-store.mjs';
 import { collectBacklogReconciliation } from './backlog-reconciliation-collector.mjs';
 import { executeBacklogReconciliation, readBacklogReconciliation } from './backlog-reconciliation-store.mjs';
 import { recordCallMemorySkip, readCallMemorySkipSummary } from './call-memory-outcome-store.mjs';
@@ -44,7 +48,8 @@ import { joinAvaSpeechResponses, splitAvaSpeechText } from './ava-speech-chunks.
 import { createAvaDecisionPreview, readDeepSeekStream, sanitizeAvaStreamReply } from './ava-deepseek-stream.mjs';
 import { streamAvaChatResponse } from './ava-chat-events.mjs';
 import { getAvaChatRequiredPermissions } from './ava-team-chat-permissions.mjs';
-import { EventTypes, getEventBusStatus, publishEvent as publishEventBusEvent } from './event-bus/streams.mjs';
+import { EventTypes, getDefaultEventBus, getEventBusStatus, publishEvent as publishEventBusEvent } from './event-bus/streams.mjs';
+import { createRuntimeCoverageSampler } from './runtime-coverage-sampler.mjs';
 import { buildRexKpiSnapshot, proposeAutonomousRexGoals, selectRexProactiveLeadAction } from './rex-autonomy.mjs';
 import { recordScriptOutcomeStats, selectContextAwareScript } from './context-aware-script-rotator.mjs';
 import {
@@ -124,7 +129,8 @@ import {
 } from './conversation-projector.mjs';
 import { createLiveConversationProjector } from './conversation-live-projector.mjs';
 import { ensureConversationSchema } from './conversation-schema.mjs';
-import { createConversationStore } from './conversation-store.mjs';
+import { createConversationStore as createConversationStoreBase } from './conversation-store.mjs';
+import { captureRuntimeSourceWriteBinding, runtimeSourceWriteReturning, recordRuntimeSourceEvidence } from './runtime-source-evidence.mjs';
 import {
   ensureProviderActionDispatchSchema as ensureProviderActionDispatchSchemaCore,
   executeProviderActionWithSharedLease as executeProviderActionWithSharedLeaseCore,
@@ -248,12 +254,12 @@ const runtimeEventArchive = createRuntimeEventArchive({
 });
 const providerCircuitBreaker = createProviderCircuitBreaker({
   onEvent: (event) => {
-    void recordProductionRuntimeEvent({
+    void withRuntimeEvidenceContext('runtime_circuit', () => recordProductionRuntimeEvent({
       eventType: event.eventType || 'provider_circuit_event',
       source: `provider_circuit:${event.provider || 'provider'}`,
       severity: event.eventType === 'circuit_breaker_open' ? 'high' : 'info',
       metadata: event,
-    });
+    }));
   },
 });
 
@@ -988,6 +994,10 @@ let runtimeStateBootstrap = {
   error: '',
   checkedAt: '',
 };
+let runtimeCoverageSampler;
+let runtimeCoverageStarted = false;
+let runtimeCoverageStopped = false;
+const chatTimingDeliveries = new WeakMap();
 let runtimeStateRecoveryPromise = null;
 let lastStateDbLoad = {
   ok: !DATABASE_URL,
@@ -3088,8 +3098,11 @@ async function buildProductionReadinessSnapshot({
     lastActions: buildProductionLastAgentActions(),
     requireIntelligenceContext: false,
   });
-  const operationalEvidence = collectAgentFleetEvidence(state);
-  const latencyPolicy = getAgentLatencyPolicy(process.env);
+  const measurementNow = Date.now();
+  const revision = process.env.RENDER_GIT_COMMIT || BUILD_REVISION;
+  const latencyPolicy = getAgentLatencyPolicy(process.env, { requireVersion2: true });
+  const operationalEvidence = collectAgentFleetEvidence(state, { now: measurementNow, policy: latencyPolicy,
+    secret: BRIDGE_API_KEY, revision, requireTimingV2: true });
   const stableAgentFleetMeasurement = buildStableAgentFleetMeasurement(getCurrentAgentRegistry(), {
     healthProbes: (state.agents || []).map(buildAgentHealthProbe),
     toolCatalog: buildProductionToolCatalog(),
@@ -3098,6 +3111,7 @@ async function buildProductionReadinessSnapshot({
     latencyObservations: operationalEvidence.latencyObservations,
     latencyBudgetsMs: latencyPolicy.budgets,
     latencyPolicy,
+    now: measurementNow, timingEvidenceSecret: BRIDGE_API_KEY, revision, requireTimingV2: true,
     lastActions: operationalEvidence.lastActions,
     evidenceDiagnostics: operationalEvidence.diagnostics,
     unverifiedLatencySamples: operationalEvidence.unverifiedLatencySamples,
@@ -7042,6 +7056,7 @@ function startPostgresKeepAlive() {
       await pool.query('SELECT 1 AS ok');
       markPostgresHealth(true);
       await recoverRuntimeStateAfterBootstrapFailure();
+      startRuntimeCoverageIfReady();
     } catch (error) {
       markPostgresHealth(false, error?.message || error, {
         transient: isTransientPostgresConnectionError(error),
@@ -7085,6 +7100,7 @@ async function projectLiveConversationRecord({
 }) {
   return createLiveConversationProjector({
     pool: getPgPool(),
+    createStore: createConversationStore,
     logger: console,
   }).project({
     record,
@@ -11166,6 +11182,119 @@ async function ensureActivityLogSchema(pool) {
   return true;
 }
 
+function captureBridgeRuntimeSourceWrite(sourceKind, row) {
+  return captureRuntimeSourceWriteBinding({ secret: BRIDGE_API_KEY,
+    revision: process.env.RENDER_GIT_COMMIT || BUILD_REVISION, sourceKind, row });
+}
+
+function createBridgeAgentTimingTurn(channel, agentId = 'ava', runId = `agent-ops-measure-${randomUUID()}`) {
+  try {
+    return createAgentTimingTurn({ secret: BRIDGE_API_KEY, revision: process.env.RENDER_GIT_COMMIT || BUILD_REVISION,
+      policy: getAgentLatencyPolicy(process.env, { requireVersion2: true }), channel, agentId, runId });
+  } catch { return null; }
+}
+
+function observeAvaChatDelivery(request, response, streaming = false) {
+  let settled = false, sawDone = false, sawError = false;
+  const originalWrite = response.write;
+  let resolve;
+  chatTimingDeliveries.set(request, new Promise(done => { resolve = done; }));
+  const settle = delivered => {
+    if (settled) return;
+    settled = true;
+    response.write = originalWrite;
+    response.off('finish', finish);
+    response.off('close', close);
+    request.off('aborted', close);
+    resolve(delivered);
+  };
+  const finish = () => settle(!request.aborted && response.statusCode < 400 && (!streaming || sawDone && !sawError));
+  const close = () => settle(false);
+  if (streaming) {
+    response.write = function (...args) {
+      const result = originalWrite.apply(this, args);
+      if (typeof args[0] === 'string') {
+        sawDone ||= args[0].startsWith('event: done\n');
+        sawError ||= args[0].startsWith('event: error\n');
+      }
+      return result;
+    };
+  }
+  response.once('finish', finish);
+  response.once('close', close);
+  request.once('aborted', close);
+}
+
+function getRuntimeCoverageHealth() {
+  const obs = getPbkObservabilityStatus();
+  const bus = getDefaultEventBus();
+  return {
+    authenticationConfigured: Boolean(BRIDGE_API_KEY),
+    bootstrapReady: runtimeStateBootstrap.ready === true,
+    archiveReady: getRuntimeEventArchiveStatus().ready === true,
+    providerCircuitsReady: getProviderCircuitStatus().ready === true,
+    observabilityReady: obs.enabled === true && obs.initialized === true && obs.otelReady === true,
+    // connected is historical; isOpen alone also stays true during Redis reconnects.
+    eventBusConnected: bus.mode === 'redis' && bus.redisClient?.isOpen === true && bus.redisClient?.isReady === true,
+    approvalMode: state.status?.mode,
+  };
+}
+
+function startRuntimeCoverageIfReady() {
+  if (runtimeCoverageStopped || !/^(true|1)$/i.test(String(process.env.PBK_RUNTIME_COVERAGE_ENABLED || '').trim())
+    || !IS_HOSTED || !DATABASE_URL || !BRIDGE_API_KEY || runtimeStateBootstrap.ready !== true
+    || ['controlled', 'diagnostic'].includes(getRuntimeEvidenceContext().classification)) return false;
+  if (runtimeCoverageStarted) return true;
+  try {
+    if (getPostgresHealthMeta().ready !== true) return false;
+    const pool = getPgPool();
+    if (!pool || pool.controlled) return false;
+    runtimeCoverageSampler ||= createRuntimeCoverageSampler({ pool: createOperationalAuditPool(pool), secret: BRIDGE_API_KEY,
+      revision: process.env.RENDER_GIT_COMMIT || BUILD_REVISION, enabled: true, hosted: IS_HOSTED,
+      health: getRuntimeCoverageHealth });
+    runtimeCoverageStarted = runtimeCoverageSampler.start() === true;
+    return runtimeCoverageStarted;
+  } catch { return false; }
+}
+
+function stopRuntimeCoverage() {
+  if (runtimeCoverageStopped) return;
+  runtimeCoverageStopped = true;
+  runtimeCoverageSampler?.stop();
+}
+
+function wireRuntimeCoverageLifecycle(server) {
+  server.once('listening', startRuntimeCoverageIfReady);
+  server.once('close', stopRuntimeCoverage);
+  // Do not replace default SIGINT/SIGTERM termination with a stop-only listener.
+  process.once('exit', stopRuntimeCoverage);
+}
+
+function queueRuntimeSourceReceipt(sourceKind, sourceId, writeBinding) {
+  if (!writeBinding) return;
+  // Measurement is detached from business success, but retains the originating ALS scope.
+  void Promise.resolve().then(() => {
+    const pool = getPgPool();
+    if (!pool || pool.controlled) return;
+    return recordRuntimeSourceEvidence({ pool, secret: BRIDGE_API_KEY,
+      revision: process.env.RENDER_GIT_COMMIT || BUILD_REVISION, sourceKind, sourceId, writeBinding });
+  }).catch(() => {});
+}
+
+function queueRuntimeSourceWrite(sourceKind, row) {
+  try {
+    const writeBinding = captureBridgeRuntimeSourceWrite(sourceKind, row);
+    queueRuntimeSourceReceipt(sourceKind, row?.id, writeBinding);
+  } catch { /* Missing measurement cannot fail a durable business write. */ }
+}
+
+function createConversationStore(pool) {
+  return createConversationStoreBase(pool, {
+    captureSourceWrite: row => captureBridgeRuntimeSourceWrite('conversation_projection', row),
+    onSourceWriteCommitted: (writeBinding, sourceId) => queueRuntimeSourceReceipt('conversation_projection', sourceId, writeBinding),
+  });
+}
+
 async function persistActivityLogRecord(entry = {}) {
   const pool = getPgPool();
   if (!pool || !entry?.id) return false;
@@ -11179,7 +11308,7 @@ async function persistActivityLogRecord(entry = {}) {
   };
   try {
     await ensureActivityLogSchema(pool);
-    await pool.query(
+    const persisted = await pool.query(
       `INSERT INTO public.activity_log (
         id, workspace_id, lead_id, lead_name, address, actor, category, status,
         text, target, source, metadata, created_at, updated_at
@@ -11200,9 +11329,12 @@ async function persistActivityLogRecord(entry = {}) {
         target = EXCLUDED.target,
         source = EXCLUDED.source,
         metadata = EXCLUDED.metadata,
-        updated_at = EXCLUDED.updated_at`,
+        updated_at = EXCLUDED.updated_at
+      RETURNING ${runtimeSourceWriteReturning('runtime_archive')}`,
       [entry.id, entry.workspaceId || entry.workspace_id || 'pbk', entry.leadId || entry.lead_id || null, entry.leadName || entry.lead_name || '', entry.address || '', entry.actor || 'System', entry.category || 'INFO', entry.status || 'success', entry.text || '', entry.target || '', entry.source || 'runtime', JSON.stringify(metadata), createdAt, entry.updatedAt || entry.updated_at || isoNow()]
     );
+    const row = persisted.rows?.[0]?.runtime_source_row;
+    if (row?.source?.startsWith('runtime-event:')) queueRuntimeSourceWrite('runtime_archive', row);
     return true;
   } catch (error) {
     if (!activityLogPersistenceWarned) {
@@ -11510,6 +11642,9 @@ async function buildProductionMaturitySnapshot({ runtimeMeta = getRuntimeMeta() 
       runId: qualification.runId || null, executedAt: qualification.executedAt || null, source: qualification.source },
     operationalAudit: { ...operationalAudit.audit, ready: operationalAudit.verified === true && operationalAudit.audit?.ready === true,
       verified: operationalAudit.verified, runId: operationalAudit.runId || null,
+      sourceDiagnostics: operationalAudit.sourceDiagnostics || [],
+      coverageDiagnostics: operationalAudit.coverageDiagnostics || { verified: false, result: 'coverage_unverified' },
+      legacy: operationalAudit.legacy || null,
       source: operationalAudit.source, result: operationalAudit.result, executedAt: operationalAudit.executedAt || null },
     // Internal recovery is supplementary evidence, never delivery or launch qualification.
     backlogReconciliation: {
@@ -13014,6 +13149,7 @@ async function recoverRuntimeStateAfterBootstrapFailure() {
         ok: true, ready: true, status: 'ready', code: '', error: '', checkedAt: isoNow(),
       };
       scheduleRuntimeStateBroadcast('state_bootstrap_recovered');
+      startRuntimeCoverageIfReady();
       console.log('[pbk-local-openclaw] Postgres runtime state restored after startup failure.');
       return true;
     } catch (error) {
@@ -13095,7 +13231,8 @@ function compactAgentOpsPayload(value, maxChars = 8000) {
 }
 
 async function recordAgentOps(params = {}) {
-  mirrorAgentOpsMeasurementToState(params);
+  const measurement = mirrorAgentOpsMeasurementToState(params);
+  const measuredMetadata = { ...params.metadata, timingProof: measurement.metadata.timingProof, executionEvidence: undefined };
   const pool = getPgPool();
   if (!pool) return { ok: false, reason: 'postgres_unavailable' };
   try {
@@ -13105,7 +13242,7 @@ async function recordAgentOps(params = {}) {
         input, output, latency_ms, success, error, metadata, created_at
       )
       VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb,$8::jsonb,$9,$10,$11,$12::jsonb,$13)`,
-      [params.id || `agent-ops-${Date.now()}-${Math.abs(hashString(JSON.stringify(params).slice(0, 500)))}`, normalizeTenantId(params.tenantId || params.tenant_id || 'pbk'), normalizeAgentName(params.agentName || params.agent_name || params.agent || 'PBK'), String(params.sessionId || params.session_id || params.callId || params.call_id || params.leadId || params.lead_id || '').slice(0, 160), String(params.step || 'tool_call').slice(0, 120), String(params.toolName || params.tool_name || '').slice(0, 160), JSON.stringify(compactAgentOpsPayload(params.input || {})), JSON.stringify(compactAgentOpsPayload(params.output || {})), Math.max(0, Math.round(toNumber(params.latencyMs ?? params.latency_ms, 0))), Boolean(params.success), String(params.error || '').slice(0, 1000), JSON.stringify(compactAgentOpsPayload(params.metadata || {}, 4000)), params.createdAt || params.created_at || isoNow()]
+      [params.id || `agent-ops-${Date.now()}-${Math.abs(hashString(JSON.stringify(params).slice(0, 500)))}`, normalizeTenantId(params.tenantId || params.tenant_id || 'pbk'), normalizeAgentName(params.agentName || params.agent_name || params.agent || 'PBK'), String(params.sessionId || params.session_id || params.callId || params.call_id || params.leadId || params.lead_id || '').slice(0, 160), String(params.step || 'tool_call').slice(0, 120), String(params.toolName || params.tool_name || '').slice(0, 160), JSON.stringify(compactAgentOpsPayload(params.input || {})), JSON.stringify(compactAgentOpsPayload(params.output || {})), Math.max(0, Math.round(toNumber(params.latencyMs ?? params.latency_ms, 0))), Boolean(params.success), String(params.error || '').slice(0, 1000), JSON.stringify(compactAgentOpsPayload(measuredMetadata, 4000)), params.createdAt || params.created_at || isoNow()]
     );
     return { ok: true };
   } catch (error) {
@@ -13115,6 +13252,8 @@ async function recordAgentOps(params = {}) {
 }
 
 function mirrorAgentOpsMeasurementToState(params = {}) {
+  const timingProof = getTrustedAgentTimingProof(params);
+  const measurementContext = getRuntimeEvidenceContext();
   ensureAgentFleetCollections();
   const createdAt = params.createdAt || params.created_at || isoNow();
   const agentName = normalizeAgentName(params.agentName || params.agent_name || params.agent || 'PBK');
@@ -13128,7 +13267,7 @@ function mirrorAgentOpsMeasurementToState(params = {}) {
   ).slice(0, 160);
   const idBase = params.id || `${agentId || slugify(agentName) || 'agent'}-${toolName || 'tool'}-${sessionId || createdAt}`;
   const record = {
-    id: `agent-ops-measure-${Math.abs(hashString(String(idBase)))}`,
+    id: timingProof?.runId || `agent-ops-measure-${Math.abs(hashString(String(idBase)))}`,
     tenantId: normalizeTenantId(params.tenantId || params.tenant_id || 'pbk'),
     agentId,
     agentName,
@@ -13145,13 +13284,14 @@ function mirrorAgentOpsMeasurementToState(params = {}) {
     metadata: {
       source: 'agent_ops',
       requestTiming: params.metadata?.requestTiming || null,
-      channel: params.metadata?.requestTiming?.metricKind === 'operator_request' ? 'chat' : 'unknown',
+      channel: timingProof?.channel || 'unknown',
       latencyKind: 'completion',
-      timings: params.metadata?.requestTiming?.firstTokenMs === undefined ? {} : {
-        firstTokenMs: params.metadata.requestTiming.firstTokenMs,
-      },
+      timings: timingProof?.timings || {},
+      ...(timingProof ? { timingProof } : {}),
       metricKind: params.metadata?.requestTiming?.metricKind || 'tool_execution',
-      operational: !isNonOperationalAgentEvidence(params),
+      operational: measurementContext.classification === 'operational',
+      diagnostic: measurementContext.classification === 'diagnostic',
+      controlled: measurementContext.classification === 'controlled',
       toolName,
       latencyMs,
       durationMs: latencyMs,
@@ -13165,6 +13305,7 @@ function mirrorAgentOpsMeasurementToState(params = {}) {
   state.agentTasks = sortNewest(state.agentTasks).slice(0, LIMITS.agentTasks);
   state.status.agentTasks = state.agentTasks.length;
   persistStateInBackground('agent ops measurement');
+  return record;
 }
 
 async function recordPbkQaAudit(record = {}) {
@@ -13173,14 +13314,16 @@ async function recordPbkQaAudit(record = {}) {
   const pool = getPgPool();
   if (!pool) return { ok: false, reason: 'postgres_unavailable' };
   try {
-    await pool.query(
+    const persisted = await pool.query(
       `INSERT INTO public.pbk_qa_audit (
         id, tenant_id, tool_name, passed, skipped, reason, validator,
         retry_count, params, result, qa, source, created_at
       )
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10::jsonb,$11::jsonb,$12,$13)`,
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10::jsonb,$11::jsonb,$12,$13)
+      RETURNING ${runtimeSourceWriteReturning('qa')}`,
       [record.id || `pbk-qa-${Date.now()}-${Math.abs(hashString(`${toolName}\n${JSON.stringify(record.qa || {})}`))}`, normalizeTenantId(record.tenantId || record.tenant_id || 'pbk'), toolName, Boolean(record.passed), Boolean(record.skipped), String(record.reason || '').slice(0, 500), String(record.validator || '').slice(0, 120), Math.max(0, Math.round(toNumber(record.retryCount ?? record.retry_count, 0))), JSON.stringify(record.params && typeof record.params === 'object' ? record.params : {}), JSON.stringify(record.result && typeof record.result === 'object' ? record.result : {}), JSON.stringify(record.qa && typeof record.qa === 'object' ? record.qa : {}), String(record.source || 'pbk-bridge').slice(0, 120), record.createdAt || record.created_at || isoNow()]
     );
+    queueRuntimeSourceWrite('qa', persisted.rows?.[0]?.runtime_source_row);
     return { ok: true };
   } catch (error) {
     console.warn('[pbk-local-openclaw] PBK QA audit persistence skipped:', error?.message || error);
@@ -13319,14 +13462,16 @@ async function recordPbkSafetyAudit(record = {}) {
   const pool = getPgPool();
   if (!pool) return { ok: false, reason: 'postgres_unavailable' };
   try {
-    await pool.query(
+    const persisted = await pool.query(
       `INSERT INTO public.pbk_safety_audit (
         id, tenant_id, tool_name, blocked, approval_required,
         params, validation, source, created_at
       )
-      VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7::jsonb,$8,$9)`,
+      VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7::jsonb,$8,$9)
+      RETURNING ${runtimeSourceWriteReturning('safety')}`,
       [record.id || `pbk-safety-${Date.now()}-${Math.abs(hashString(`${toolName}\n${JSON.stringify(validation)}`))}`, normalizeTenantId(record.tenantId || record.tenant_id || 'pbk'), toolName, Boolean(record.blocked ?? validation.blocked), Boolean(record.approvalRequired ?? record.approval_required ?? validation.approvalRequired), JSON.stringify(record.params && typeof record.params === 'object' ? record.params : {}), JSON.stringify(validation), String(record.source || 'pbk-bridge').slice(0, 120), record.createdAt || record.created_at || isoNow()]
     );
+    queueRuntimeSourceWrite('safety', persisted.rows?.[0]?.runtime_source_row);
     return { ok: true };
   } catch (error) {
     console.warn('[pbk-local-openclaw] PBK safety audit persistence skipped:', error?.message || error);
@@ -43103,6 +43248,9 @@ function recordAvaAssistantPlanOps({
   additiveIntelligence = null,
   startedAt = Date.now(),
   requestTiming = null,
+  timingTurn = null,
+  signal,
+  delivery = null,
 } = {}) {
   const toolPlan = assistantPlan?.toolPlan && typeof assistantPlan.toolPlan === 'object'
     ? assistantPlan.toolPlan
@@ -43113,7 +43261,7 @@ function recordAvaAssistantPlanOps({
   const qaOk = !qa || qa.ok !== false;
   const safetyBlocked = safety?.blocked === true;
   const toolOk = !toolResult || toolResult.ok !== false;
-  void recordAgentOps({
+  const opsParams = {
     agentName: 'Ava',
     sessionId,
     leadId,
@@ -43160,8 +43308,8 @@ function recordAvaAssistantPlanOps({
     error: toolOk && qaOk && !safetyBlocked ? '' : (toolResult?.error || qa?.reason || safety?.result || 'assistant_plan_not_completed'),
     metadata: {
       source: 'ava-assistant-chat',
-      diagnostic: source === 'ava-latency-diagnostic',
-      operational: source !== 'ava-latency-diagnostic',
+      diagnostic: getRuntimeEvidenceContext().classification === 'diagnostic',
+      operational: getRuntimeEvidenceContext().classification === 'operational',
       requestTiming,
       publicMode,
       assistantAction,
@@ -43171,7 +43319,19 @@ function recordAvaAssistantPlanOps({
       traceContract: 'intent_plan_guardrail_proof_outcome',
       researchBasis: ['openai_traces_evals', 'deepseek_function_calling_json', 'google_sre_golden_signals'],
     },
-  });
+  };
+  const record = (delivered = true) => {
+    if (!delivered) {
+      opsParams.success = false;
+      opsParams.error = 'assistant_delivery_unverified';
+    }
+    bindAgentTimingToParams(opsParams, timingTurn, { answer,
+      successful: Boolean(delivered && toolOk && qaOk && !safetyBlocked && assistantAction !== 'approval_required'
+        && (!toolResult || agentTimingResultSucceeded(toolResult))), signal });
+    void recordAgentOps(opsParams);
+  };
+  if (delivery) void delivery.then(record, () => record(false)).catch(() => {});
+  else record();
 }
 
 function redactAvaMissionLedgerText(value = '', maxLength = 320) {
@@ -45120,8 +45280,11 @@ function buildAgentOrchestrationSnapshot() {
   const probes = (state.agents || []).map(buildAgentHealthProbe);
   // Never combine readiness from a different context with this packet.
   const intelligenceContext = state.status?.pbkIntelligenceContext || {};
-  const operationalEvidence = collectAgentFleetEvidence(state);
-  const latencyPolicy = getAgentLatencyPolicy(process.env);
+  const measurementNow = Date.now();
+  const revision = process.env.RENDER_GIT_COMMIT || BUILD_REVISION;
+  const latencyPolicy = getAgentLatencyPolicy(process.env, { requireVersion2: true });
+  const operationalEvidence = collectAgentFleetEvidence(state, { now: measurementNow, policy: latencyPolicy,
+    secret: BRIDGE_API_KEY, revision, requireTimingV2: true });
   const measurement = buildStableAgentFleetMeasurement(getCurrentAgentRegistry(), {
     healthProbes: probes,
     toolCatalog: buildProductionToolCatalog(),
@@ -45129,6 +45292,7 @@ function buildAgentOrchestrationSnapshot() {
     latencyObservations: operationalEvidence.latencyObservations,
     latencyBudgetsMs: latencyPolicy.budgets,
     latencyPolicy,
+    now: measurementNow, timingEvidenceSecret: BRIDGE_API_KEY, revision, requireTimingV2: true,
     lastActions: operationalEvidence.lastActions,
     evidenceDiagnostics: operationalEvidence.diagnostics,
     unverifiedLatencySamples: operationalEvidence.unverifiedLatencySamples,
@@ -46177,6 +46341,7 @@ async function executeControlledAgentQualification() {
 }
 
 async function invokeAgentFromRegistry(params = {}) {
+  return withRuntimeEvidenceContext('registered_business', async () => {
   const invocationStartedAt = performance.now();
   const registry = getCurrentAgentRegistry();
   const requestedId = normalizeAgentRegistryId(params.agentId || params.id || params.agent || '');
@@ -46202,6 +46367,8 @@ async function invokeAgentFromRegistry(params = {}) {
   });
   const scope = controlledExecution.getStore();
   if (scope) workOrder.payload = { ...scope.workflowInput, leadId: scope.fixture.leadId, callId: scope.fixture.callId, runId: scope.runId, diagnostic: true, operational: false };
+  const localHandlers = getLocalAgentRegistryHandlers();
+  const timingTurn = createBridgeAgentTimingTurn(registeredAgentTimingChannel(agent, localHandlers), agent.id, workOrder.id);
   let agentTask = null;
   try {
     agentTask = await recordAgentHandoffTask({
@@ -46231,7 +46398,7 @@ async function invokeAgentFromRegistry(params = {}) {
           : { workOrder, pbkIntelligenceContext: agentContext },
     };
     const output = await invokeRegisteredAgent(agent, payloadWithContext, {
-      localHandlers: getLocalAgentRegistryHandlers(),
+      localHandlers,
       timeoutMs: params.timeoutMs || params.timeout_ms || 5000,
     });
     const routedTo = `invokeRegisteredAgent:${agent.id}`;
@@ -46243,6 +46410,12 @@ async function invokeAgentFromRegistry(params = {}) {
       output,
       agentContext
     );
+    const measuredResult = bindAgentTimingToParams({}, timingTurn, {
+      answer: [output?.answer, output?.nextBestPhrase, output?.strategy, output?.closing?.nextBestPhrase,
+        output?.recommendation?.reason, output?.intervention].find(value => typeof value === 'string' && value.trim()),
+      successful: isAgentHandlerCompletion(agent.id, output) && agentTimingResultSucceeded(output),
+    });
+    const timingProof = getTrustedAgentTimingProof(measuredResult);
     agentTask = await recordAgentHandoffTask({
       id: workOrder.id,
       correlationId: workOrder.id,
@@ -46259,14 +46432,14 @@ async function invokeAgentFromRegistry(params = {}) {
         approvalPolicy: workOrder.approvalPolicy,
         routedTo,
         outputResult: output?.result || output?.status || '',
-        executionEvidence: buildAgentExecutionEvidence({
+        executionEvidence: { ...buildAgentExecutionEvidence({
           agentId: agent.id,
           payload,
           output,
           durationMs: performance.now() - invocationStartedAt,
           completedAt: isoNow(),
           workOrderId: workOrder.id,
-        }),
+        }), ...(timingProof ? { timingProof } : {}) },
         pbkIntelligenceContext: summarizeRuntimePBKIntelligenceContext(agentContext),
       },
     });
@@ -46317,6 +46490,7 @@ async function invokeAgentFromRegistry(params = {}) {
       error: error?.message || String(error),
     };
   }
+  });
 }
 
 function normalizeRexTool(value = '') {
@@ -65018,8 +65192,10 @@ function enforceAvaControlEnvelope(missionController = {}, assistantPlan = {}) {
 }
 
 async function handleInternalAvaAssistantChatRequest(request) {
+  return withRuntimeEvidenceContext('operator_chat', async () => {
   const assistantOpsStartedAt = Date.now();
   const requestTiming = createAvaRequestTiming();
+  const timingTurn = createBridgeAgentTimingTurn('chat');
   const body = await requestTiming.measure('body_read', () => readBody(request));
   const messages = normalizeConversationMessages(body.messages, { assistantMaxChars: 256_000 });
   const sanitizedInput = sanitizePublicAvaChatTurn(getLastUserMessage(messages, body.message || body.query || body.text || body.prompt || ''));
@@ -65340,7 +65516,10 @@ async function handleInternalAvaAssistantChatRequest(request) {
         ...request.avaStream,
         onAnswer: async preview => {
           await request.avaStream.onAnswer(preview);
-          if (preview.trim()) requestTiming.markFirstToken();
+          if (preview.trim()) {
+            requestTiming.markFirstToken();
+            markAgentTimingFirstContent(timingTurn, preview);
+          }
         },
         check: async preview => {
           if (!isPublicAvaBrainAnswerSafe(preview)) return false;
@@ -65532,6 +65711,9 @@ async function handleInternalAvaAssistantChatRequest(request) {
     additiveIntelligence,
     startedAt: assistantOpsStartedAt,
     requestTiming: requestTiming.snapshot(),
+    timingTurn,
+    signal: request.avaStream?.signal,
+    delivery: chatTimingDeliveries.get(request),
   });
   persistStateInBackground('ava-assistant-chat');
 
@@ -65541,8 +65723,8 @@ async function handleInternalAvaAssistantChatRequest(request) {
       ok: true,
       mode: 'command-center-assistant',
       measurementClassification: {
-        diagnostic: body.source === 'ava-latency-diagnostic',
-        operational: body.source !== 'ava-latency-diagnostic',
+        diagnostic: getRuntimeEvidenceContext().classification === 'diagnostic',
+        operational: getRuntimeEvidenceContext().classification === 'operational',
       },
       releaseCommit: process.env.RENDER_GIT_COMMIT || '',
       usagePersistence,
@@ -65569,6 +65751,7 @@ async function handleInternalAvaAssistantChatRequest(request) {
       warning: sanitizedInput.warning || '',
     },
   };
+  });
 }
 
 function createTelnyxPublicKeyObject(publicKeyValue = TELNYX_PUBLIC_KEY) {
@@ -71374,6 +71557,7 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
   };
 
   const maybeSpeakTelnyxAvaReply = async (item) => {
+    return withRuntimeEvidenceContext('phone_turn', async () => {
     if (!PBK_TELNYX_BRIDGE_AVA_REPLY_ENABLED) return;
     if (session.telnyxAiAssistantStarted && !PBK_TELNYX_BRIDGE_AVA_REPLY_FORCE) return;
     if (session.avaReplySuppressed || !isCurrentTelnyxMediaSession(session)) {
@@ -71386,6 +71570,7 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
       return;
     }
     if (!session.callId || !(item.speechFinal || item.finalOnlyFallback)) return;
+    const timingTurn = createBridgeAgentTimingTurn('phone');
     const replyTurnVersion = Number(item.turnVersion || session.sellerTranscriptVersion || 0);
     const expandedOptionAnswer = expandAvaLiveOptionLetterAnswer(session, item.transcript || '');
     if (expandedOptionAnswer) {
@@ -71965,8 +72150,18 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
       });
     }
     await persistState(state);
+    const phoneOps = bindAgentTimingToParams({ agentName: 'Ava', toolName: 'phone_reply',
+      sessionId: session.callId, success: speakResult.ok === true,
+      metadata: { source: 'ava-phone-turn', fullReplySpokenVerified: false,
+        operational: getRuntimeEvidenceContext().classification === 'operational' } }, timingTurn, {
+      answer: spoken,
+      successful: agentTimingResultSucceeded(speakResult) && guardedReply.blocked !== true && isCurrentTelnyxMediaSession(session)
+        && Number(session.sellerTranscriptVersion || 0) === replyTurnVersion,
+    });
+    void recordAgentOps(phoneOps);
     void syncTelnyxSessionToRedis(session, 'active', { force: true });
     scheduleRuntimeStateBroadcast('telnyx-ava-reply');
+    });
   };
 
   const noteTelnyxCallerSpeechDuringAva = () => {
@@ -72924,21 +73119,41 @@ const server = createServer(async (request, response) => {
       }
       const pool = runtimeStateBootstrap.ready ? getPgPool() : null;
       const result = await executeOperationalAudit({ pool, revision: process.env.RENDER_GIT_COMMIT || BUILD_REVISION,
-        secret: BRIDGE_API_KEY, collect: async ({ now }) => {
-          const obs = getPbkObservabilityStatus();
-          const bus = await getEventBusStatus();
-          return collectOperationalAudit({ pool, now, runtime: {
-            authenticationConfigured: Boolean(BRIDGE_API_KEY), approvalMode: state.status?.mode,
-            bootstrapReady: runtimeStateBootstrap.ready,
-            archiveReady: getRuntimeEventArchiveStatus().ready,
-            providerCircuitsReady: getProviderCircuitStatus().ready,
-            observabilityReady: Boolean(obs.enabled && obs.initialized && obs.otelReady),
-            eventBusConnected: bus.connected === true,
-          } });
-        },
+        secret: BRIDGE_API_KEY, collect: ({ pool: auditPool, now, observationNow, fence }) =>
+          collectOperationalAudit({ pool: auditPool, now, observationNow, fence, secret: BRIDGE_API_KEY,
+            revision: process.env.RENDER_GIT_COMMIT || BUILD_REVISION, sampler: runtimeCoverageSampler,
+            runtime: getRuntimeCoverageHealth() }),
       });
       clearBridgeReadCache('operational_audit_executed');
       json(response, result.ok ? 200 : result.result === 'operational_audit_in_progress' ? 409 : 503, result);
+      return;
+    }
+
+    if (pathname === '/api/admin/ava-latency/run') {
+      const authority = authorizeQualificationRequest({ method: request.method, search: url.search,
+        headers: request.headers, body: {} }, BRIDGE_API_KEY);
+      if (!authority.ok) {
+        json(response, authority.status, { ok: false, result: authority.result });
+        return;
+      }
+      const allowed = authorizeQualificationRequest({ method: request.method, search: url.search,
+        headers: request.headers, body: await readBody(request) }, BRIDGE_API_KEY);
+      if (!allowed.ok) {
+        json(response, allowed.status, { ok: false, result: allowed.result });
+        return;
+      }
+      // Only this fixed founder runner establishes diagnostic authority. The
+      // ordinary assistant entry inherits ALS, never a payload's source/flags.
+      const samples = await withRuntimeEvidenceContext('diagnostic', () => runBenchmark({
+        count: 24, stopOnExecutionError: true,
+        fetchRequest: async payload => {
+          const result = await handleInternalAvaAssistantChatRequest({
+            headers: {}, [RAW_BODY_BUFFER_SYMBOL]: Buffer.from(JSON.stringify(payload)),
+          });
+          return { status: result.statusCode || 200, body: result.body || {} };
+        },
+      }));
+      json(response, 200, { ...summarizeBenchmark(samples), execution: 'server_fixed_read_only', complete: true });
       return;
     }
 
@@ -73432,9 +73647,11 @@ const server = createServer(async (request, response) => {
 
     if (request.method === 'POST' && matchesPath(pathname, ['/api/assistant/chat', '/api/v1/assistant/chat'])) {
       if (String(request.headers.accept || '').includes('text/event-stream')) {
+        observeAvaChatDelivery(request, response, true);
         await streamAvaChatResponse(request, response, () => handleInternalAvaAssistantChatRequest(request), getResponseCorsHeaders(response));
         return;
       }
+      observeAvaChatDelivery(request, response);
       const result = await handleInternalAvaAssistantChatRequest(request);
       json(response, result.statusCode || 200, result.body || {});
       return;
@@ -82668,6 +82885,7 @@ function startAgentRegistryHealthScheduler() {
   interval.unref?.();
 }
 
+wireRuntimeCoverageLifecycle(server);
 server.listen(PORT, HOST, () => {
   startPostgresKeepAlive();
   startContractTemplateWatcher();

@@ -153,6 +153,12 @@ COPY scripts/pbk-deepgram-client.mjs ./scripts/pbk-deepgram-client.mjs
 COPY scripts/qa-agent.mjs ./scripts/qa-agent.mjs
 COPY scripts/agent-registry.mjs ./scripts/agent-registry.mjs
 COPY scripts/agent-latency-policy.mjs ./scripts/agent-latency-policy.mjs
+COPY scripts/agent-timing-proof.mjs ./scripts/agent-timing-proof.mjs
+COPY scripts/agent-timing-adapters.mjs ./scripts/agent-timing-adapters.mjs
+COPY scripts/runtime-evidence-context.mjs ./scripts/runtime-evidence-context.mjs
+COPY scripts/runtime-source-evidence.mjs ./scripts/runtime-source-evidence.mjs
+COPY scripts/runtime-coverage-store.mjs ./scripts/runtime-coverage-store.mjs
+COPY scripts/runtime-coverage-sampler.mjs ./scripts/runtime-coverage-sampler.mjs
 COPY scripts/agent-fleet-measurement.mjs ./scripts/agent-fleet-measurement.mjs
 COPY scripts/controlled-execution-scope.mjs ./scripts/controlled-execution-scope.mjs
 COPY scripts/controlled-agent-storage.mjs ./scripts/controlled-agent-storage.mjs
@@ -165,6 +171,7 @@ COPY scripts/ava-speech-chunks.mjs ./scripts/ava-speech-chunks.mjs
 COPY scripts/ava-deepseek-stream.mjs ./scripts/ava-deepseek-stream.mjs
 COPY scripts/ava-chat-events.mjs ./scripts/ava-chat-events.mjs
 COPY scripts/ava-request-timing.mjs ./scripts/ava-request-timing.mjs
+COPY scripts/ava-latency-benchmark.mjs ./scripts/ava-latency-benchmark.mjs
 COPY scripts/rex-autonomy.mjs ./scripts/rex-autonomy.mjs
 COPY scripts/context-aware-script-rotator.mjs ./scripts/context-aware-script-rotator.mjs
 COPY scripts/ava-governed-skill-router.mjs ./scripts/ava-governed-skill-router.mjs

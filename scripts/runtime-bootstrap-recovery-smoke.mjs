@@ -10,6 +10,7 @@ const functions = new Map(ast.statements.filter(ts.isFunctionDeclaration).map((n
 let unavailable = true;
 let loads = 0;
 let writes = 0;
+let coverageSamplerCreations = 0;
 let releaseLoad;
 const durable = { status: {}, leads: [{ id: 'existing-seller' }] };
 const context = vm.createContext({
@@ -17,6 +18,9 @@ const context = vm.createContext({
   DATABASE_URL: 'isolated-test', IS_HOSTED: true, PG_KEEPALIVE_INTERVAL_MS: 10,
   postgresKeepAliveTimer: null, runtimeStateRecoveryPromise: null,
   runtimeStateBootstrap: { ready: false }, runtimeStateProvenance: {},
+  runtimeCoverageStopped: false, runtimeCoverageStarted: false,
+  process: { env: { PBK_RUNTIME_COVERAGE_ENABLED: 'false' } },
+  createRuntimeCoverageSampler() { coverageSamplerCreations += 1; throw new Error('Coverage must stay disabled in this fixture.'); },
   state: { status: {}, leads: [] }, console: { warn() {}, error() {}, log() {} },
   isoNow: () => new Date().toISOString(),
   loadState: async () => {
@@ -34,7 +38,7 @@ const context = vm.createContext({
   setInterval(callback) { context.tick = callback; return { unref() {} }; },
 });
 for (const name of ['bootstrapRuntimeStateForLiveness', 'recoverRuntimeStateAfterBootstrapFailure',
-  'startPostgresKeepAlive', 'persistState', 'matchesPath', 'isRuntimeStateBootstrapProbe', 'shouldBlockForRuntimeStateBootstrap']) {
+  'startPostgresKeepAlive', 'startRuntimeCoverageIfReady', 'persistState', 'matchesPath', 'isRuntimeStateBootstrapProbe', 'shouldBlockForRuntimeStateBootstrap']) {
   if (functions.has(name)) vm.runInContext(functions.get(name), context);
 }
 
@@ -82,4 +86,6 @@ assert.equal(context.shouldBlockForRuntimeStateBootstrap('POST', '/invoke'), tru
 context.syncAgentRegistryFromPg = async () => ({ persistence: { ok: true } });
 assert.equal(await context.recoverRuntimeStateAfterBootstrapFailure(), true);
 assert.equal(writes, 0);
+assert.equal(context.runtimeCoverageStarted, false, 'Recovering state must not enable opt-in coverage collection.');
+assert.equal(coverageSamplerCreations, 0, 'Disabled coverage must not construct a sampler during recovery or keepalive.');
 console.log('PASS: startup outage recovery, durable state reload, auth gating, coalescing, and no placeholder writes.');

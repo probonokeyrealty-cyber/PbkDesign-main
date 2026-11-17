@@ -1,5 +1,6 @@
 import { normalizeAgentRegistryId } from './agent-registry.mjs';
 import { isAgentTimingPlainData, verifyAgentTimingProof } from './agent-timing-proof.mjs';
+import { REQUIRED_AGENT_LATENCY_MILESTONES } from './agent-latency-policy.mjs';
 
 export function isNonOperationalAgentEvidence(record = {}) {
   const metadata = record.metadata || {};
@@ -173,20 +174,25 @@ function collectTimingV2(state, { now, policy, secret, revision }) {
       if (!id || ['__proto__', 'constructor', 'prototype'].includes(id)) continue;
       const diagnostic = result.diagnostics[id] ||= { observedRecords: 0, excludedRecords: 0, unverifiedRecords: 0, missingLatencyRecords: 0, operationalRecords: 0 };
       diagnostic.observedRecords++;
-      if (safe && isNonOperationalAgentEvidence(record)) { diagnostic.excludedRecords++; continue; }
       const metadata = safe ? record.metadata || {} : {};
       const proof = metadata.timingProof ?? metadata.executionEvidence?.timingProof;
       const runId = safe && typeof record.id === 'string' ? record.id : '';
       const check = verifyAgentTimingProof(proof, { secret, revision, policy, agentId: id, runId, now });
+      const nonOperational = safe && isNonOperationalAgentEvidence(record);
+      // Unsigned classifications cannot suppress contradictory signed organic evidence.
+      if (nonOperational && proof === undefined) { diagnostic.excludedRecords++; continue; }
       const signedExpired = check.reason === 'time_expired';
       const valid = check.verified;
       const data = valid ? check.data : null;
+      const classificationConflict = valid && nonOperational;
+      const missingMilestones = valid && REQUIRED_AGENT_LATENCY_MILESTONES[data.channel].some(kind =>
+        !Object.entries(TIMING_KINDS).some(([field, timingKind]) => timingKind === kind && Object.hasOwn(data.timings, field)));
       const at = data?.completedAt || (signedExpired ? proof.completedAt : safe ? record.completedAt || record.completed_at
         || metadata.executionEvidence?.completedAt || record.updatedAt || record.updated_at || record.createdAt || record.created_at : '');
       const atMs = typeof at === 'string' ? Date.parse(at) : NaN;
       const rawStatus = safe ? record.status || record.result : null;
       const status = typeof rawStatus === 'string' ? rawStatus.toLowerCase() : '';
-      const success = valid && /^(success|succeeded|complete|completed)$/.test(status);
+      const success = valid && !classificationConflict && !missingMilestones && /^(success|succeeded|complete|completed)$/.test(status);
       const observations = result.latencyObservations[id] ||= [];
       const diagnostics = result.latencyDiagnostics[id] ||= [];
       const key = `${id}:${runId}`;
@@ -207,12 +213,15 @@ function collectTimingV2(state, { now, policy, secret, revision }) {
         else diagnostic.missingLatencyRecords++;
       } else if (!duplicate || !success) {
         diagnostic.unverifiedRecords++;
-        diagnostics.push({ recordId: runId, reason: conflict ? 'run_conflict' : valid && !success ? 'business_result_unverified' : check.reason, at: Number.isFinite(atMs) ? new Date(atMs).toISOString() : '' });
+        if (missingMilestones) diagnostic.missingLatencyRecords++;
+        const reason = conflict ? 'run_conflict' : classificationConflict ? 'classification_conflict'
+          : missingMilestones ? 'milestones_missing' : valid && !success ? 'business_result_unverified' : check.reason;
+        diagnostics.push({ recordId: runId, reason, at: Number.isFinite(atMs) ? new Date(atMs).toISOString() : '' });
         const duration = safe ? record.latencyMs ?? record.latency_ms ?? record.durationMs ?? metadata.executionEvidence?.durationMs : null;
         if (latencyNumber(duration) !== null) (result.unverifiedLatencySamples[id] ||= []).push(latencyNumber(duration));
         if (conflict || (valid && !success) || (!signedExpired && (proof !== undefined || !safe))) {
           // Invalid signed claims stay blocking; never use an untrusted timestamp to age them out.
-          observations.push({ timingV2: true, verified: false, recordId: runId, reason: conflict ? 'run_conflict' : 'proof_invalid' });
+          observations.push({ timingV2: true, verified: false, recordId: runId, reason });
         }
       }
       const action = { status: success && !conflict ? 'success' : status === 'failed' ? 'failure' : 'unverified',

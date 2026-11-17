@@ -239,3 +239,58 @@ test('structured channel/kind/status claims fail closed without object coercion'
   const s = setup([record('bad-kind')]); s.options.latencyObservations.ava[0].kind = malformed;
   assert.equal(measure(s).ready, false);
 });
+
+test('round1: an empty signed timing run cannot disappear behind a complete run', () => {
+  const empty = record('empty-timings');
+  empty.metadata.timingProof = timing.buildAgentTimingProof({ secret, revision, policy: policyFor(), agentId: 'ava',
+    runId: empty.id, channel: 'chat', startedAt: now - 3000, completedAt: now, timings: {},
+    answer: 'Answer', provenance: 'organic', successful: true, origin: 'accepted_turn' });
+  for (const records of [[record('complete'), empty], [empty, record('complete')]]) {
+    const s = setup(records);
+    assert.equal(measure(s).ready, false);
+    assert(s.evidence.latencyObservations.ava.some(row => row.recordId === empty.id && row.timingV2 === true && !row.verified));
+    assert.equal(s.evidence.latencySamples.ava.length, 1);
+  }
+});
+
+test('round1: independent scoring cannot omit a slow signed milestone row', () => {
+  const slow = record('slow-first-token');
+  slow.metadata.timingProof = timing.buildAgentTimingProof({ secret, revision, policy: policyFor(), agentId: 'ava',
+    runId: slow.id, channel: 'chat', startedAt: now - 3000, completedAt: now,
+    timings: { firstTokenMs: 2000, completionMs: 3000 }, answer: 'Answer', provenance: 'organic', successful: true, origin: 'accepted_turn' });
+  const s = setup([record('fast'), slow]);
+  assert.equal(measure(s).ready, false);
+  s.options.latencyObservations.ava = s.options.latencyObservations.ava.filter(row => row.recordId !== slow.id || row.kind !== 'first_token');
+  const result = measure(s);
+  assert.equal(result.ready, false);
+  assert(result.agents[0].blockers.includes('latency_milestone_missing:chat:first_token'));
+});
+
+for (const [label, classify] of [
+  ['record source', item => { item.source = 'diagnostic'; }],
+  ['metadata source', item => { item.metadata.source = 'diagnostic'; }],
+  ['payload preview', item => { item.metadata.workOrder = { payload: { preview: true } }; }],
+  ['controlled provenance', item => { item.metadata.provenance = 'controlled'; }],
+  ['execution operational flag', item => { item.metadata.executionEvidence = { operational: false }; }],
+]) {
+  for (const status of ['complete', 'cancelled']) test(`round1: unsigned ${label} cannot hide signed organic ${status} work`, () => {
+    const contradictory = record('contradictory', 10, status === 'complete' ? 4000 : 3000, { status });
+    classify(contradictory);
+    for (const records of [[record('old-success'), contradictory], [contradictory, record('old-success')]]) {
+      const s = setup(records);
+      assert.equal(measure(s).ready, false);
+      assert(s.evidence.latencyDiagnostics.ava.some(row => row.recordId === contradictory.id && row.reason === 'classification_conflict'));
+      assert.equal(s.evidence.latencySamples.ava.length, 1);
+    }
+  });
+
+  test(`round1: unsigned ${label} without an organic proof remains isolated`, () => {
+    const controlled = record('isolated'); delete controlled.metadata.timingProof;
+    classify(controlled);
+    const s = setup([record('organic'), controlled]);
+    assert.equal(measure(s).ready, true);
+    assert.equal(s.evidence.diagnostics.ava.excludedRecords, 1);
+    assert.equal(s.evidence.latencySamples.ava.length, 1);
+    assert(!s.evidence.latencyObservations.ava.some(row => row.recordId === controlled.id));
+  });
+}

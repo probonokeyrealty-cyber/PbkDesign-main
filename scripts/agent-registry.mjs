@@ -618,6 +618,7 @@ function measureLatencyV2(observations, options, nowMs, minSamples, agentId) {
   const byKind = {};
   const blockers = [];
   const runs = new Map();
+  const runMilestones = new Map();
   const fields = { first_token: 'firstTokenMs', completion: 'completionMs', speech_start: 'speechStartMs', speech_completion: 'speechCompletionMs' };
   let ignored = 0;
   let invalid = 0;
@@ -646,6 +647,9 @@ function measureLatencyV2(observations, options, nowMs, minSamples, agentId) {
     const previous = runs.get(runId);
     if (previous && previous !== row.proof.signature) { invalid++; blockers.push('latency_run_conflict'); continue; }
     runs.set(runId, row.proof.signature);
+    const captured = runMilestones.get(runId) || { channel: data.channel, kinds: new Set() };
+    captured.kinds.add(row.kind);
+    runMilestones.set(runId, captured);
     for (const kind of REQUIRED_AGENT_LATENCY_MILESTONES[data.channel]) {
       if (!Object.hasOwn(data.timings, fields[kind])) {
         invalid++;
@@ -661,6 +665,12 @@ function measureLatencyV2(observations, options, nowMs, minSamples, agentId) {
     const ratio = row.valueMs / budget.budgetMs;
     if (!Number.isFinite(ratio)) { invalid++; blockers.push(`latency_ratio_overflow:${data.channel}:${row.kind}`); continue; }
     group.samples.set(runId, { valueMs: row.valueMs, budgetMs: budget.budgetMs, ratio });
+  }
+  // Each signed run must be represented completely, not just each cohort's kinds.
+  for (const { channel, kinds } of runMilestones.values()) {
+    for (const kind of REQUIRED_AGENT_LATENCY_MILESTONES[channel]) {
+      if (!kinds.has(kind)) { invalid++; blockers.push(`latency_milestone_missing:${channel}:${kind}`); }
+    }
   }
   if (!runs.size) blockers.push('latency_not_sampled');
   let measured = runs.size > 0 && invalid === 0;

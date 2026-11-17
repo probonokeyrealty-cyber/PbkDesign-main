@@ -1,6 +1,6 @@
 # Evidence-Bound Reconciliation Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox syntax for tracking.
+> **For agentic workers:** REQUIRED WORKFLOW: Use superpowers:subagent-driven-development. Require regression tests and independent review. Steps use checkbox syntax for tracking.
 
 **Goal:** Persist source-bound internal recovery receipts without unlocking unknown deliveries or weakening launch gates.
 

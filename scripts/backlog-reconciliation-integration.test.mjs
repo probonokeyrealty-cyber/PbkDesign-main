@@ -51,6 +51,7 @@ function maturityFixture() {
     readOperationalAudit: async () => ({ verified: true, runId: 'audit-failed', audit: { ready: false },
       evidence: { silentErrors: { runId: 'audit-failed', revision, executedAt: new Date(now).toISOString(),
         executed: true, passed: false, provenance: 'operational', scope: 'durable_operational_audit' } } }),
+    readCallMemorySkipSummary: async () => ({ verified: false, counts: null, launchQualified: false }),
     readBacklogReconciliation: async options => {
       assert.equal(options.pool, pool);
       assert.equal(options.revision, revision);
@@ -76,6 +77,7 @@ test('actual maturity snapshot displays recovery but never merges it into audit 
   assert.equal(result.executionEvidence.silentErrorReport.launchReady, false);
   assert.equal(result.canaryPromotionGate.ready, false);
   assert.equal(result.ready, false);
+  assert.equal(result.backlogReconciliation.memoryPolicyOutcomes.verified, false);
   assert.equal(f.calls.length, 1);
   assert.equal(f.calls[0].pool, f.pool);
   assert.equal(f.calls[0].now, f.now);

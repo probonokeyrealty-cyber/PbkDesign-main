@@ -54,14 +54,19 @@ const gap = result => ({ ok: false, verified: false, readbackVerified: false, el
 const timeout = () => Object.assign(new Error('Source observation deadline'), { code: 'SOURCE_TIMEOUT' });
 const releaseClient = (client, destroy) => { try { client?.release?.(destroy); } catch { /* Monitoring stays non-throwing. */ } };
 const admissionHandles = new WeakMap();
-const runtimeGaps = new Set();
-let runtimeGapOverflow = false;
+const runtimeGaps = new Map();
 const namespaceRef = secret => opaque(secret, 'observation-runtime', 'pbk');
-const hasRuntimeGap = secret => runtimeGapOverflow || runtimeGaps.has(namespaceRef(secret));
-function rememberRuntimeGap(secret) {
-  if (!validSecret(secret)) return;
-  if (runtimeGaps.size >= MAX_ROWS) runtimeGapOverflow = true;
-  else runtimeGaps.add(namespaceRef(secret));
+const busy = () => Object.assign(new Error('Source observation owner active'), { code: 'SOURCE_BUSY' });
+const stale = () => Object.assign(new Error('Source observation owner stale'), { code: 'SOURCE_STALE' });
+function rememberRuntimeGap(secret, now) {
+  if (!validSecret(secret) || !validClock(now)) return;
+  const key = namespaceRef(secret), previous = runtimeGaps.get(key);
+  if (previous || runtimeGaps.size < MAX_ROWS) {
+    runtimeGaps.set(key, { startedAt: Math.min(previous?.startedAt ?? now, now) });
+  }
+}
+function forgetRuntimeGap(secret, debt) {
+  if (debt && runtimeGaps.get(namespaceRef(secret)) === debt) runtimeGaps.delete(namespaceRef(secret));
 }
 
 function deadline() {
@@ -95,7 +100,7 @@ async function transaction(client, budget, action, destroy) {
     await query(`SELECT set_config('statement_timeout',$1,true), set_config('lock_timeout',$1,true),
       set_config('idle_in_transaction_session_timeout',$1,true)`, [`${Math.max(1, Math.floor(budget.remaining()))}ms`]);
     const lock = await query('SELECT pg_try_advisory_xact_lock(hashtext($1)) AS acquired', [SOURCE]);
-    if (lock.rows?.[0]?.acquired !== true) throw new Error('Source evidence busy');
+    if (lock.rows?.[0]?.acquired !== true) throw busy();
     const value = await action(query);
     budget.check();
     await query('COMMIT');
@@ -252,7 +257,12 @@ async function proofCensus(query, sourceBytes = 0) {
   return rows;
 }
 
-function readLedger(rows, secret, now, activeAdmission = null) {
+const admissionExpiry = admission => Object.hasOwn(admission, 'expiresAt')
+  ? admission.expiresAt : iso(time(admission.startedAt) + DEADLINE_MS);
+const inventoryContext = inventory => ({ gaps: inventory.gaps, gapFloor: inventory.gapFloor,
+  segmentRef: inventory.segmentRef, segmentRevision: inventory.segmentRevision, forwardOnlyFrom: inventory.forwardOnlyFrom });
+
+function readLedger(rows, secret, now, activeAdmission = null, inspectPending = false) {
   const reports = new Map();
   let inventory;
   for (const row of rows) {
@@ -282,32 +292,58 @@ function readLedger(rows, secret, now, activeAdmission = null) {
   if (Object.hasOwn(r, 'admission')) expected.admission = r.admission;
   if (r.admission !== null && r.admission !== undefined) {
     const a = r.admission;
+    const expectedAdmission = { tokenRef: a.tokenRef, revision: a.revision, startedAt: a.startedAt };
+    if (Object.hasOwn(a, 'expiresAt')) expectedAdmission.expiresAt = a.expiresAt;
     if (!plain(a) || !hex(a.tokenRef) || !validRevision(a.revision) || !Number.isFinite(time(a.startedAt))
       || iso(time(a.startedAt)) !== a.startedAt || time(a.startedAt) > now
-      || canonicalJson(a) !== canonicalJson({ tokenRef: a.tokenRef, revision: a.revision, startedAt: a.startedAt })
-      || canonicalJson(a) !== canonicalJson(activeAdmission)) throw new Error('Source observation gap pending');
-  } else if (activeAdmission) throw new Error('Source observation admission missing');
+      || !Number.isFinite(time(admissionExpiry(a))) || iso(time(admissionExpiry(a))) !== admissionExpiry(a)
+      || time(admissionExpiry(a)) <= time(a.startedAt) || time(admissionExpiry(a)) - time(a.startedAt) > DEADLINE_MS
+      || canonicalJson(a) !== canonicalJson(expectedAdmission)) throw new Error('Source admission unverified');
+  }
+  if (Object.hasOwn(r, 'gaps')) {
+    Object.assign(expected, inventoryContext(r));
+    if (!Array.isArray(r.gaps) || r.gaps.length > MAX_ROWS || !hex(r.segmentRef) || !validRevision(r.segmentRevision)
+      || !Number.isFinite(time(r.forwardOnlyFrom)) || iso(time(r.forwardOnlyFrom)) !== r.forwardOnlyFrom
+      || time(r.forwardOnlyFrom) > now || r.gapFloor !== null && (!Number.isFinite(time(r.gapFloor))
+        || iso(time(r.gapFloor)) !== r.gapFloor || time(r.gapFloor) > now)) throw new Error('Gap history invalid');
+    const references = new Set();
+    for (const event of r.gaps) {
+      if (!plain(event) || !hex(event.gapRef) || references.has(event.gapRef) || event.classification !== 'unknown'
+        || !['observation_abandoned', 'storage_unverified'].includes(event.reason)
+        || !Number.isFinite(time(event.startedAt)) || !Number.isFinite(time(event.endedAt))
+        || iso(time(event.startedAt)) !== event.startedAt || iso(time(event.endedAt)) !== event.endedAt
+        || time(event.startedAt) > time(event.endedAt) || time(event.endedAt) > now
+        || canonicalJson(event) !== canonicalJson({ gapRef: event.gapRef, classification: 'unknown',
+          reason: event.reason, startedAt: event.startedAt, endedAt: event.endedAt })) throw new Error('Gap history invalid');
+      references.add(event.gapRef);
+    }
+  }
   expected.signature = inventorySign(expected, secret);
   if (canonicalJson(expected) !== canonicalJson(r)
     || !timingSafeEqual(Buffer.from(r.signature, 'hex'), Buffer.from(expected.signature, 'hex'))) {
     throw new Error('History inventory signature invalid');
   }
-  if ([...reports.values()].reduce((n, report) => n + report.history.length + 1, 0) > MAX_ROWS) {
+  if ([...reports.values()].reduce((n, report) => n + report.history.length + 1, r.gaps?.length || 0) > MAX_ROWS) {
     throw new Error('History census oversized');
+  }
+  if (!inspectPending) {
+    if (r.admission && !activeAdmission) throw busy();
+    if (activeAdmission && (!r.admission || canonicalJson(r.admission) !== canonicalJson(activeAdmission)
+      || now >= time(admissionExpiry(r.admission)))) throw stale();
   }
   return { reports, inventory: r };
 }
 
 async function saveLedger(query, ledger, reports, secret, now, sourceBytes = 0) {
   const fingerprint = inventoryDigest(reports, secret);
-  const count = [...reports.values()].reduce((n, report) => n + report.history.length + 1, 0);
+  const count = [...reports.values()].reduce((n, report) => n + report.history.length + 1, ledger.inventory?.gaps?.length || 0);
   if (count > MAX_ROWS || reports.size > MAX_ROWS || bytes([...reports.values()]) + sourceBytes + MAX_REPORT > MAX_BYTES) {
     throw new Error('History census oversized');
   }
   if (ledger.inventory?.fingerprint === fingerprint) return ledger.inventory;
   const inventory = { schemaVersion: SCHEMA, ledgerKind: 'inventory', tenantId: 'pbk',
     generation: (ledger.inventory?.generation || 0) + 1, receiptCount: reports.size, fingerprint, observedAt: iso(now),
-    admission: ledger.inventory?.admission || null };
+    admission: ledger.inventory?.admission || null, ...inventoryContext(ledger.inventory) };
   inventory.signature = inventorySign(inventory, secret);
   if (bytes(inventory) > MAX_REPORT) throw new Error('Inventory oversized');
   for (const [key, report] of reports) {
@@ -333,18 +369,37 @@ async function writeInventory(query, inventory, secret, now, activeAdmission = n
 }
 
 // This write commits BEFORE inspection, so rollback cannot erase evidence that an observation was lost.
-async function beginObservation(query, secret, revision, now) {
-  const ledger = readLedger(await proofCensus(query), secret, now);
-  const admission = { tokenRef: opaque(secret, 'observation-admission', randomUUID()), revision, startedAt: iso(now) };
-  const inventory = ledger.inventory ? { ...ledger.inventory, observedAt: iso(now), admission }
+async function beginObservation(query, secret, revision, now, expiresAt) {
+  const ledger = readLedger(await proofCensus(query), secret, now, null, true);
+  const old = ledger.inventory;
+  if (old?.admission && now < time(admissionExpiry(old.admission))) throw busy();
+  const debt = runtimeGaps.get(namespaceRef(secret));
+  if (!debt && runtimeGaps.size >= MAX_ROWS) throw new Error('Runtime gap bound exceeded');
+  const admission = { tokenRef: opaque(secret, 'observation-admission', randomUUID()), revision,
+    startedAt: iso(now), expiresAt: iso(expiresAt) };
+  const previousGaps = old?.gaps || [];
+  const gaps = previousGaps.filter(event => time(event.endedAt) >= now - HISTORY_REACH_MS);
+  const gapFloor = gaps.length < previousGaps.length ? iso(now - HISTORY_REACH_MS) : old?.gapFloor ?? null;
+  const hasGap = Boolean(old?.admission || debt);
+  if (hasGap) {
+    const startedAt = Math.min(old?.admission ? time(old.admission.startedAt) : now, debt?.startedAt ?? now);
+    gaps.push({ gapRef: opaque(secret, 'observation-gap', { tokenRef: admission.tokenRef, startedAt, endedAt: now }),
+      classification: 'unknown', reason: old?.admission ? 'observation_abandoned' : 'storage_unverified',
+      startedAt: iso(startedAt), endedAt: iso(now) });
+  }
+  const reset = !old?.segmentRef || hasGap || old.segmentRevision !== revision;
+  const context = { gaps, gapFloor,
+    segmentRef: reset ? opaque(secret, 'observation-segment', admission.tokenRef) : old.segmentRef,
+    segmentRevision: revision, forwardOnlyFrom: reset ? iso(now) : old.forwardOnlyFrom };
+  const inventory = old ? { ...old, observedAt: iso(now), admission, ...context }
     : { schemaVersion: SCHEMA, ledgerKind: 'inventory', tenantId: 'pbk', generation: 1,
-      receiptCount: 0, fingerprint: inventoryDigest(ledger.reports, secret), observedAt: iso(now), admission };
+      receiptCount: 0, fingerprint: inventoryDigest(ledger.reports, secret), observedAt: iso(now), admission, ...context };
   await writeInventory(query, inventory, secret, now, admission);
-  return { admission, blocked: hasRuntimeGap(secret) };
+  return { admission, debt };
 }
 
 async function finishObservation(query, inventory, secret, now, sourceBytes = 0) {
-  if (hasRuntimeGap(secret)) throw new Error('Source observation runtime gap');
+  if (!inventory.admission || now >= time(admissionExpiry(inventory.admission))) throw stale();
   await writeInventory(query, { ...inventory, admission: null }, secret, now, null, sourceBytes);
 }
 
@@ -357,7 +412,7 @@ function mintAdmission(admission, secret, deadlineAt) {
 function claimAdmission(handle, secret, revision, deadlineAt) {
   const state = admissionHandles.get(handle);
   if (!state || state.claimed || state.namespace !== namespaceRef(secret) || state.admission.revision !== revision
-    || deadlineAt > state.deadlineAt || hasRuntimeGap(secret)) throw new Error('Committed source admission required');
+    || deadlineAt > state.deadlineAt) throw stale();
   state.claimed = true;
   return state.admission;
 }
@@ -374,15 +429,16 @@ export async function recordRuntimeSourceEvidence({ pool, secret, revision, sour
   if (!pool?.connect || !validSecret(secret) || !validRevision(revision) || !kinds.includes(sourceKind)
     || typeof sourceId !== 'string' || !sourceId.length || sourceId.length > 512) return gap('source_input_unverified');
   const budget = deadline();
-  let client, released = false;
+  let client, released = false, attemptAt;
   const release = destroy => { if (client && !released) { released = true; releaseClient(client, destroy); } };
   try {
     const start = clock(now);
     if (!validClock(start)) return gap('source_clock_unverified');
+    attemptAt = start;
     client = await budget.run(() => pool.connect(), { onLate: late => releaseClient(late, true) });
-    const prepared = await transaction(client, budget, query => beginObservation(query, secret, revision, start),
+    const prepared = await transaction(client, budget, query => beginObservation(query, secret, revision, start, start + DEADLINE_MS),
       () => release(true));
-    if (prepared.blocked) return gap('source_observation_gap_pending');
+    forgetRuntimeGap(secret, prepared.debt);
     const result = await transaction(client, budget, async query => {
       const ledger = readLedger(await proofCensus(query), secret, start, prepared.admission);
       const source = sources[sourceKind];
@@ -416,7 +472,8 @@ export async function recordRuntimeSourceEvidence({ pool, secret, revision, sour
     }, () => release(true));
     return result;
   } catch (error) {
-    rememberRuntimeGap(secret);
+    if (error.code === 'SOURCE_BUSY') return gap('source_observation_busy');
+    if (error.code !== 'SOURCE_STALE') rememberRuntimeGap(secret, attemptAt);
     release(true);
     return gap(error.code === 'SOURCE_TIMEOUT' ? 'source_evidence_timed_out' : 'source_evidence_unverified');
   } finally { release(false); }
@@ -534,7 +591,7 @@ async function lockObservation(control) {
     set_config('idle_in_transaction_session_timeout',$1,true)`,
   [`${Math.max(1, Math.floor(Math.min(2000, control.remaining())))}ms`]);
   const lock = await query('SELECT pg_try_advisory_xact_lock(hashtext($1)) AS acquired', [SOURCE]);
-  if (lock.rows?.[0]?.acquired !== true) throw new Error('Source evidence busy');
+  if (lock.rows?.[0]?.acquired !== true) throw busy();
 }
 
 async function snapshotCore({ secret, revision, windowStart, windowEnd, now = Date.now }, control, activeAdmission) {
@@ -548,6 +605,9 @@ async function snapshotCore({ secret, revision, windowStart, windowEnd, now = Da
   control.check();
   const observedAt = observeClock(now, started);
   const ledger = readLedger(receipts, secret, observedAt, activeAdmission);
+  if (ledger.inventory.gapFloor !== null && windowStart < time(ledger.inventory.gapFloor)) {
+    throw new Error('Gap history window unavailable');
+  }
   const reports = new Map(ledger.reports), missing = new Map(ledger.reports);
   const unknown = { origin: 'unknown', classification: 'unknown' };
   for (const kind of kinds) {
@@ -582,7 +642,7 @@ async function snapshotCore({ secret, revision, windowStart, windowEnd, now = Da
   }
   const classified = new Map(kinds.map(kind => [kind, []]));
   const history = new Map(kinds.map(kind => [kind, []]));
-  let historyCompleteFrom = null;
+  let historyCompleteFrom = ledger.inventory.gapFloor;
   for (const report of reports.values()) {
     control.check();
     if (report.historyFloor !== null && windowStart < time(report.historyFloor)) throw new Error('History window unavailable');
@@ -598,6 +658,11 @@ async function snapshotCore({ secret, revision, windowStart, windowEnd, now = Da
   control.check();
   const inventory = await saveLedger(query, ledger, reports, secret, observedAt, sourceBytes);
   const summaries = kinds.map(kind => summarize(kind, classified.get(kind), history.get(kind), secret, windowEnd));
+  const gaps = inventory.gaps;
+  const intersectingGaps = gaps.filter(event => time(event.startedAt) <= windowEnd && time(event.endedAt) >= windowStart).length;
+  const coverage = { segmentRef: inventory.segmentRef, forwardOnlyFrom: inventory.forwardOnlyFrom,
+    gapFloor: inventory.gapFloor, gaps, intersectingGaps, continuous: intersectingGaps === 0,
+    gapFingerprint: opaque(secret, 'observation-gap-history', { gaps, gapFloor: inventory.gapFloor }) };
   const completed = observeClock(now, started, observedAt);
   control.check();
   await finishObservation(query, inventory, secret, observedAt, sourceBytes);
@@ -606,8 +671,10 @@ async function snapshotCore({ secret, revision, windowStart, windowEnd, now = Da
     windowStart: iso(windowStart), windowEnd: iso(windowEnd),
     observationBounds: { startedAt: iso(started), completedAt: iso(completed) }, invalidReceipts: 0, historyCompleteFrom,
     inventory: { generation: inventory.generation, fingerprint: inventory.fingerprint, receiptCount: inventory.receiptCount },
-    eligible: summaries.every(s => s.eligible) && summaries.some(s => s.counts.eligible > 0),
+    coverage,
+    eligible: intersectingGaps === 0 && summaries.every(s => s.eligible) && summaries.some(s => s.counts.eligible > 0),
     fingerprint: opaque(secret, 'whole-census', { historyCompleteFrom, inventoryFingerprint: inventory.fingerprint,
+      gapFingerprint: coverage.gapFingerprint, segmentRef: coverage.segmentRef,
       sources: summaries.map(({ sourceKind, fingerprint }) => ({ sourceKind, fingerprint })) }),
     sources: summaries };
 }
@@ -622,7 +689,8 @@ export async function collectRuntimeSourceSnapshotInTransaction(input = {}) {
     admission = claimAdmission(input.admission, input.secret, input.revision, control.deadlineAt);
     return await snapshotCore(input, control, admission);
   } catch (error) {
-    if (admission) rememberRuntimeGap(input.secret);
+    if (admission && !['SOURCE_BUSY', 'SOURCE_STALE'].includes(error.code)) rememberRuntimeGap(input.secret, time(admission.startedAt));
+    if (error.code === 'SOURCE_BUSY') return gap('source_observation_busy');
     control?.stop();
     return gap(error.code === 'SOURCE_TIMEOUT' ? 'source_snapshot_timed_out' : 'source_snapshot_unverified');
   } finally { control?.close(); }
@@ -630,25 +698,28 @@ export async function collectRuntimeSourceSnapshotInTransaction(input = {}) {
 
 // Must run on a dedicated client BEFORE the caller opens its checkpoint transaction.
 export async function prepareRuntimeSourceObservation(input = {}) {
-  let control, began = false;
+  let control, began = false, attemptAt;
   try {
     control = queryFence(input.client, input.fence);
     control.check();
     if (!input.client?.query || !validSecret(input.secret) || !validRevision(input.revision)) throw new Error('Invalid admission');
     const now = clock(input.now ?? Date.now);
     if (!validClock(now)) throw new Error('Invalid admission clock');
+    attemptAt = now;
     await control.query('BEGIN ISOLATION LEVEL REPEATABLE READ');
     began = true;
     await lockObservation(control);
-    const prepared = await beginObservation(control.query, input.secret, input.revision, now);
+    const prepared = await beginObservation(control.query, input.secret, input.revision, now,
+      now + Math.max(1, Math.ceil(control.remaining())));
     await control.query('COMMIT');
     began = false;
-    if (prepared.blocked) return gap('source_observation_gap_pending');
+    forgetRuntimeGap(input.secret, prepared.debt);
     return { ok: true, verified: true, readbackVerified: true, eligible: false, transactionPending: false,
       result: 'source_observation_admitted', admission: mintAdmission(prepared.admission, input.secret, control.deadlineAt) };
   } catch (error) {
-    rememberRuntimeGap(input.secret);
+    if (!['SOURCE_BUSY', 'SOURCE_STALE'].includes(error.code)) rememberRuntimeGap(input.secret, attemptAt);
     if (began && error.code !== 'SOURCE_TIMEOUT') { try { await control.query('ROLLBACK'); } catch { control.stop(); } }
+    if (error.code === 'SOURCE_BUSY') return gap('source_observation_busy');
     control?.stop();
     return gap(error.code === 'SOURCE_TIMEOUT' ? 'source_snapshot_timed_out' : 'source_observation_admission_unverified');
   } finally { control?.close(); }
@@ -659,27 +730,30 @@ export async function collectRuntimeSourceSnapshot(input = {}) {
   if (!snapshotInputValid(input)) return gap('source_snapshot_input_unverified');
   const fence = { deadlineAt: performance.now() + 15000, signal: new AbortController().signal, onAbort() {} };
   const control = queryFence(input.client, fence);
-  let began = false;
+  let began = false, attemptAt;
   try {
     const now = clock(input.now ?? Date.now);
     if (!validClock(now)) throw new Error('Invalid observation admission clock');
+    attemptAt = now;
     await control.query('BEGIN ISOLATION LEVEL REPEATABLE READ');
     began = true;
     await lockObservation(control);
-    const prepared = await beginObservation(control.query, input.secret, input.revision, now);
+    const prepared = await beginObservation(control.query, input.secret, input.revision, now,
+      now + Math.max(1, Math.ceil(control.remaining())));
     await control.query('COMMIT');
     began = false;
-    if (prepared.blocked) return gap('source_observation_gap_pending');
+    forgetRuntimeGap(input.secret, prepared.debt);
     await control.query('BEGIN ISOLATION LEVEL REPEATABLE READ');
     began = true;
     const result = await snapshotCore(input, control, prepared.admission);
     await control.query('COMMIT');
     return { ...result, transactionPending: false };
   } catch (error) {
-    rememberRuntimeGap(input.secret);
+    if (!['SOURCE_BUSY', 'SOURCE_STALE'].includes(error.code)) rememberRuntimeGap(input.secret, attemptAt);
     if (began && error.code !== 'SOURCE_TIMEOUT') {
       try { await control.query('ROLLBACK'); } catch { control.stop(); }
     }
+    if (error.code === 'SOURCE_BUSY') return gap('source_observation_busy');
     control.stop();
     return gap(error.code === 'SOURCE_TIMEOUT' ? 'source_snapshot_timed_out' : 'source_snapshot_unverified');
   } finally { control.close(); }

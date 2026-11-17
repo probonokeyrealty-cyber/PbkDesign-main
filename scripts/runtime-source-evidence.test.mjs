@@ -766,6 +766,11 @@ test.each(['recorder', 'standalone'])('overflow followed by exact reversion reta
       now: NOW + 102, windowStart: NOW - 1000, windowEnd: NOW + 102 });
     assert.equal(reread.verified, false, 'fresh module state must still see the durable gap');
   });
+  const resumed = await collect({ now: NOW + 60000, windowStart: NOW + 60000 - DAY, windowEnd: NOW + 60000 });
+  assert.equal(resumed.verified, true, 'lease expiry admits a new observation even after the actual overflow repro');
+  assert.equal(resumed.eligible, false, 'exact reversion cannot retrospectively cover the lost transition');
+  assert.equal(resumed.coverage.intersectingGaps, 1);
+  assert.equal(resumed.coverage.gaps[0].classification, 'unknown');
 }, 30000);
 
 test('failure to write any later gap/finalization marker cannot clear a separately committed pending admission', async () => {
@@ -810,7 +815,7 @@ test('caller rollback leaves an independently committed admission and a consumed
   assert.equal((await collect()).verified, false);
 });
 
-test('an admission persistence outage prevents inspection and remains fail-closed when storage recovers', async () => {
+test('an admission outage resumes collection with a durable unknown interval instead of permanent disablement', async () => {
   await run('operator_chat', () => record());
   await db.exec(`UPDATE activity_log SET status='error'`);
   const inspected = [];
@@ -826,13 +831,20 @@ test('an admission persistence outage prevents inspection and remains fail-close
     if (/FROM public.activity_log/.test(config.text)) inspected.push(config.text);
     return client.query(config);
   } };
-  assert.equal((await collect({ client: recoveredClient })).verified, false);
-  assert.deepEqual(inspected, [], 'recovery persists the runtime debt without observing/requalifying the old binding');
-  assert.ok((await db.query(`SELECT report FROM pbk_eval_runs WHERE report->>'ledgerKind'='inventory'`)).rows[0].report.admission);
+  const recovered = await collect({ client: recoveredClient });
+  assert.equal(recovered.verified, true);
+  assert.equal(recovered.eligible, false);
+  assert.ok(inspected.length > 0, 'new collection can inspect current state without retrospectively covering the outage');
+  assert.equal(recovered.coverage.intersectingGaps, 1);
+  assert.equal(recovered.coverage.gaps[0].reason, 'storage_unverified');
+  assert.equal((await db.query(`SELECT report FROM pbk_eval_runs WHERE report->>'ledgerKind'='inventory'`)).rows[0].report.admission, null);
   await jest.isolateModulesAsync(async () => {
     const fresh = await import('./runtime-source-evidence.mjs');
-    assert.equal((await fresh.collectRuntimeSourceSnapshot({ client, secret, revision,
-      now: NOW, windowStart: NOW - DAY, windowEnd: NOW })).verified, false);
+    const reread = await fresh.collectRuntimeSourceSnapshot({ client, secret, revision,
+      now: NOW, windowStart: NOW - DAY, windowEnd: NOW });
+    assert.equal(reread.verified, true);
+    assert.equal(reread.eligible, false);
+    assert.equal(reread.coverage.intersectingGaps, 1);
   });
 });
 
@@ -861,3 +873,156 @@ test('a branded handle is insufficient if its durable admission disappears befor
     assert.equal(sql.some(text => /INSERT|COMMIT/.test(text)), false);
   } finally { await db.query('ROLLBACK'); }
 });
+
+test('a second real client contends without poisoning the healthy prepared owner', async () => {
+  const a = { query: config => client.query(config) };
+  const bSql = [], releases = [];
+  const b = { query: config => { bSql.push(config.text); return client.query(config); }, release: flag => releases.push(flag) };
+  const fence = inheritedFence();
+  const owner = await api('prepareRuntimeSourceObservation')({ client: a, secret, revision, now: NOW, fence });
+  assert.equal(owner.verified, true);
+  const bAborts = [];
+  const competingPreparation = await api('prepareRuntimeSourceObservation')({ client: b, secret, revision, now: NOW,
+    fence: inheritedFence({ onAbort: () => bAborts.push(true) }) });
+  assert.equal(competingPreparation.result, 'source_observation_busy');
+  assert.deepEqual(bAborts, [], 'a busy preparation does not abandon an owner or destroy a healthy client');
+  const competing = await run('operator_chat', () => record({ pool: { connect: async () => b } }));
+  assert.equal(bSql.some(sql => /FROM public.activity_log/.test(sql)), false);
+  await db.query('BEGIN');
+  try {
+    const result = await collectInTransaction({ client: a, admission: owner.admission, fence });
+    assert.equal(result.verified, true, 'contention is not monitoring abandonment and must not poison A');
+    await db.query('COMMIT');
+  } catch (error) { await db.query('ROLLBACK'); throw error; }
+  assert.equal(competing.result, 'source_observation_busy');
+  assert.deepEqual(releases, [false]);
+  const inventory = (await db.query(`SELECT report FROM pbk_eval_runs WHERE report->>'ledgerKind'='inventory'`)).rows[0].report;
+  assert.equal(inventory.admission, null);
+  assert.deepEqual(inventory.gaps, []);
+});
+
+test('abandoned observation permits new forward work without retrospectively covering its signed gap', async () => {
+  await run('operator_chat', () => record());
+  const original = (await db.query('SELECT * FROM activity_log')).rows[0];
+  const prepared = await prepare({ now: NOW + 1 });
+  await db.exec(`UPDATE activity_log SET status='error'`);
+  await db.query('BEGIN');
+  try {
+    const failed = await collectInTransaction({ ...prepared, now: NOW + 1, windowStart: NOW - 1000, windowEnd: NOW + 1,
+      client: { query: config => {
+        if (/INSERT INTO public.pbk_eval_runs/.test(config.text)) throw Error('private lost observation');
+        return client.query(config);
+      } } });
+    assert.equal(failed.verified, false);
+  } finally { await db.query('ROLLBACK'); }
+  await db.query('UPDATE activity_log SET status=$1,text=$2', [original.status, original.text]);
+  const resume = NOW + 60000;
+  const snapshot = await collect({ now: resume, windowStart: resume - DAY, windowEnd: resume });
+  assert.equal(snapshot.verified, true, 'a gap must not disable all later collection');
+  assert.equal(snapshot.eligible, false);
+  assert.equal(snapshot.coverage.intersectingGaps, 1);
+  assert.equal(snapshot.coverage.gaps[0].classification, 'unknown');
+  assert.equal(snapshot.coverage.gaps[0].startedAt, iso(NOW + 1));
+  assert.equal(snapshot.coverage.gaps[0].endedAt, iso(resume));
+  assert.equal(snapshot.coverage.forwardOnlyFrom, iso(resume));
+  assert.equal(source(snapshot).rows[0].observedAt, iso(NOW), 'exact reversion does not refresh the old anchor');
+  assert.equal(source(snapshot).counts.failed, 0, 'an unknown observation gap is not an invented business failure');
+  await db.exec(`UPDATE activity_log SET text='private genuinely new forward business'`);
+  assert.equal((await run('operator_chat', () => record({ now: resume + 1 }))).verified, true);
+  const covered = await collect({ now: resume + 2, windowStart: resume - DAY + 2, windowEnd: resume + 2 });
+  assert.equal(covered.verified, true);
+  assert.equal(covered.eligible, false, 'new success cannot bridge a window that intersects the gap');
+  const future = resume + DAY + 10;
+  await db.exec(`UPDATE activity_log SET text='private future business'`);
+  assert.equal((await run('operator_chat', () => record({ now: future }))).verified, true);
+  const healthy = await collect({ now: future, windowStart: future - DAY, windowEnd: future });
+  assert.equal(healthy.verified, true);
+  assert.equal(healthy.eligible, true);
+  assert.equal(healthy.coverage.intersectingGaps, 0);
+  assert.equal(healthy.coverage.gaps.length, 1, 'the gap remains available to earlier still-fresh audits');
+});
+
+test('an expired old owner cannot read sources or settle a fresh owner admission', async () => {
+  const a = { query: config => client.query(config) }, b = { query: config => client.query(config) };
+  const oldFence = inheritedFence();
+  const old = await api('prepareRuntimeSourceObservation')({ client: a, secret, revision, now: NOW, fence: oldFence });
+  const newFence = inheritedFence();
+  const fresh = await api('prepareRuntimeSourceObservation')({ client: b, secret, revision,
+    now: NOW + 60000, fence: newFence });
+  assert.equal(fresh.verified, true);
+  const sql = [];
+  await db.query('BEGIN');
+  try {
+    const late = await collectInTransaction({ admission: old.admission, fence: oldFence, now: NOW + 60000,
+      windowStart: NOW - 1000, windowEnd: NOW + 60000,
+      client: { query: config => { sql.push(config.text); return client.query(config); } } });
+    assert.equal(late.verified, false);
+    assert.equal(sql.some(text => /FROM public.activity_log|INSERT|COMMIT/.test(text)), false);
+  } finally { await db.query('ROLLBACK'); }
+  await db.query('BEGIN');
+  try {
+    const result = await collectInTransaction({ client: b, admission: fresh.admission, fence: newFence,
+      now: NOW + 60000, windowStart: NOW - 1000, windowEnd: NOW + 60000 });
+    assert.equal(result.verified, true);
+    await db.query('COMMIT');
+  } catch (error) { await db.query('ROLLBACK'); throw error; }
+});
+
+test('signed gaps survive earlier cutoffs for 48h and pruned windows never regain retrospective credit', async () => {
+  await run('operator_chat', () => record());
+  await prepare({ now: NOW + 1 });
+  const resumed = NOW + 60000;
+  assert.equal((await collect({ now: resumed, windowStart: resumed - DAY, windowEnd: resumed })).verified, true);
+  const boundary = resumed + 2 * DAY;
+  const earlier = await collect({ now: boundary, windowStart: resumed, windowEnd: resumed + DAY });
+  assert.equal(earlier.verified, true);
+  assert.equal(earlier.eligible, false);
+  assert.equal(earlier.coverage.intersectingGaps, 1);
+  assert.equal(earlier.coverage.gaps[0].endedAt, iso(resumed));
+  const later = await collect({ now: boundary + 1, windowStart: resumed + DAY + 1, windowEnd: boundary + 1 });
+  assert.equal(later.verified, true);
+  assert.equal(later.coverage.gaps.length, 0);
+  assert.equal(later.coverage.gapFloor, iso(resumed + 1));
+  assert.equal((await collect({ now: boundary + 1, windowStart: resumed, windowEnd: resumed + DAY })).verified, false);
+});
+
+test('fresh process state and a new revision can collect after lease abandonment while retaining the gap', async () => {
+  await prepare();
+  await jest.isolateModulesAsync(async () => {
+    const fresh = await import('./runtime-source-evidence.mjs');
+    const nextRevision = 'b'.repeat(40), resume = NOW + 60000;
+    const snapshot = await fresh.collectRuntimeSourceSnapshot({ client, secret, revision: nextRevision,
+      now: resume, windowStart: resume - DAY, windowEnd: resume });
+    assert.equal(snapshot.verified, true);
+    assert.equal(snapshot.eligible, false);
+    assert.equal(snapshot.coverage.intersectingGaps, 1);
+    assert.equal(snapshot.coverage.forwardOnlyFrom, iso(resume));
+    const next = await fresh.collectRuntimeSourceSnapshot({ client, secret, revision: nextRevision,
+      now: resume + 1, windowStart: resume - DAY + 1, windowEnd: resume + 1 });
+    assert.equal(next.verified, true);
+    assert.equal(next.coverage.segmentRef, snapshot.coverage.segmentRef);
+    assert.equal(next.coverage.gaps.length, 1, 'successful new collection does not erase or duplicate the old gap');
+  });
+});
+
+test('active gap-history overflow fails closed and cannot trim gaps to fit the inventory report', async () => {
+  let now = NOW, last, overflow = false;
+  for (let n = 0; n < 80; n++) {
+    const result = await api('prepareRuntimeSourceObservation')({ client, secret, revision, now, fence: inheritedFence() });
+    if (!result.verified) { overflow = true; break; }
+    last = (await db.query(`SELECT report FROM pbk_eval_runs WHERE report->>'ledgerKind'='inventory'`)).rows[0].report;
+    now += 60000;
+  }
+  assert.equal(overflow, true);
+  const stored = (await db.query(`SELECT report FROM pbk_eval_runs WHERE report->>'ledgerKind'='inventory'`)).rows[0].report;
+  assert.deepEqual(stored.gaps, last.gaps);
+  assert.deepEqual(stored.admission, last.admission);
+  assert.ok(stored.gaps.length > 0);
+  assert.ok(Buffer.byteLength(JSON.stringify(stored)) <= 8192);
+  const future = now + 3 * DAY;
+  const resumed = await collect({ now: future, windowStart: future - DAY, windowEnd: future });
+  assert.equal(resumed.verified, true, 'expiry of old history may permit a bounded new forward segment');
+  assert.equal(resumed.eligible, false);
+  assert.equal(resumed.coverage.gaps.length, 1);
+  assert.equal(resumed.coverage.intersectingGaps, 1, 'the abandoned interval through the new start is not lost');
+}, 30000);

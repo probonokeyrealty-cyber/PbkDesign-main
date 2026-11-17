@@ -2,6 +2,8 @@ import type { Handler } from '@netlify/functions';
 import chromium from '@sparticuz/chromium';
 import puppeteer, { Browser } from 'puppeteer-core';
 import { existsSync } from 'node:fs';
+import { resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 type DocumentRequest = {
   documentType?: string;
@@ -54,37 +56,28 @@ function getRequestId(event: Parameters<Handler>[0]) {
     || `pbk-documents-pdf-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
-function buildRequestUrl(event: Parameters<Handler>[0]) {
-  const host = getHeader(event, 'x-forwarded-host') || getHeader(event, 'host');
-  const proto = getHeader(event, 'x-forwarded-proto') || 'https';
-  const path = event.path || '/api/documents/pdf';
-  if (!host) return `https://pbkcommandcenter.netlify.app${path}`;
-  return `${proto}://${host}${path}`;
-}
-
 function pdfEscape(value: string) {
   return String(value || '')
     .replace(/\\/g, '\\\\')
     .replace(/\(/g, '\\(')
     .replace(/\)/g, '\\)')
-    .replace(/[^\x09\x0A\x0D\x20-\x7E]/g, '');
+    .replace(/[^\x20-\x7E]/g, '');
 }
 
-function wrapPdfText(value: string, width = 88) {
-  const words = String(value || '').replace(/\r/g, '').split(/\s+/).filter(Boolean);
-  const lines: string[] = [];
-  let line = '';
-  for (const word of words) {
-    const next = line ? `${line} ${word}` : word;
-    if (next.length > width && line) {
-      lines.push(line);
-      line = word;
-    } else {
-      line = next;
+function wrapPdfText(value: string, width = 76): string[] {
+  return String(value || '').replace(/\r/g, '').split('\n').flatMap((paragraph) => {
+    const lines: string[] = [];
+    let line = '';
+    const words = paragraph.split(/\s+/).filter(Boolean)
+      .flatMap((word) => word.match(new RegExp('.{1,' + width + '}', 'g')) || []);
+    for (const word of words) {
+      const next = line ? line + ' ' + word : word;
+      if (next.length > width && line) { lines.push(line); line = word; }
+      else line = next;
     }
-  }
-  if (line) lines.push(line);
-  return lines.length ? lines : ['No document content available.'];
+    lines.push(line);
+    return lines;
+  });
 }
 
 function buildSimplePdf(payload: DocumentRequest) {
@@ -92,49 +85,49 @@ function buildSimplePdf(payload: DocumentRequest) {
   const company = payload.companyName || 'Probono Key Realty';
   const address = payload.propertyAddress || 'No property loaded';
   const pathLabel = payload.selectedPathLabel || 'Selected Path';
-  const bodyLines = wrapPdfText(payload.content || 'No document content available.');
   const lines = [
-    { size: 18, text: title },
-    { size: 10, text: company },
-    { size: 10, text: `${pathLabel} | ${address} | ${new Date().toLocaleDateString('en-US')}` },
+    ...wrapPdfText(title, 40).map((text) => ({ size: 18, text })),
+    ...wrapPdfText(company).map((text) => ({ size: 10, text })),
+    ...wrapPdfText(pathLabel + ' | ' + address).map((text) => ({ size: 10, text })),
     { size: 10, text: '' },
-    ...bodyLines.slice(0, 48).map((text) => ({ size: 10, text })),
+    ...wrapPdfText(payload.content || 'Document content is unavailable. Reopen the deal and refresh the PDF before sharing.')
+      .map((text) => ({ size: 10, text })),
   ];
-
-  const commands = ['BT', '72 760 Td'];
-  let previousSize = 0;
-  lines.forEach((line, index) => {
-    if (line.size !== previousSize) {
-      commands.push(`/F1 ${line.size} Tf`);
-      previousSize = line.size;
+  const streams: string[] = [];
+  let commands = ['BT', '72 750 Td'], y = 750, previousSize = 0, first = true;
+  for (const line of lines) {
+    const step = line.size + 6;
+    if (y - step < 50) {
+      streams.push(commands.concat('ET').join('\n'));
+      commands = ['BT', '72 750 Td']; y = 750; previousSize = 0; first = true;
     }
-    if (index > 0) commands.push(`0 -${line.size + 6} Td`);
-    commands.push(`(${pdfEscape(line.text)}) Tj`);
-  });
-  commands.push('ET');
-
-  const stream = commands.join('\n');
+    if (line.size !== previousSize) { commands.push('/F1 ' + line.size + ' Tf'); previousSize = line.size; }
+    if (!first) commands.push('0 -' + step + ' Td');
+    commands.push('(' + pdfEscape(line.text) + ') Tj');
+    first = false; y -= step;
+  }
+  streams.push(commands.concat('ET').join('\n'));
+  const kids = streams.map((_, index) => (4 + index * 2) + ' 0 R').join(' ');
   const objects = [
-    '1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n',
-    '2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n',
-    '3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>\nendobj\n',
-    `4 0 obj\n<< /Length ${Buffer.byteLength(stream, 'ascii')} >>\nstream\n${stream}\nendstream\nendobj\n`,
-    '5 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n',
+    '<< /Type /Catalog /Pages 2 0 R >>',
+    '<< /Type /Pages /Kids [' + kids + '] /Count ' + streams.length + ' >>',
+    '<< /Type /Font /Subtype /Type1 /BaseFont /Courier >>',
   ];
-
+  streams.forEach((stream, index) => {
+    const contentId = 5 + index * 2;
+    objects.push('<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R >> >> /Contents ' + contentId + ' 0 R >>');
+    objects.push('<< /Length ' + Buffer.byteLength(stream, 'ascii') + ' >>\nstream\n' + stream + '\nendstream');
+  });
   let pdf = '%PDF-1.4\n';
   const offsets = [0];
-  for (const object of objects) {
+  objects.forEach((object, index) => {
     offsets.push(Buffer.byteLength(pdf, 'ascii'));
-    pdf += object;
-  }
-  const xrefOffset = Buffer.byteLength(pdf, 'ascii');
-  pdf += `xref\n0 ${objects.length + 1}\n`;
-  pdf += '0000000000 65535 f \n';
-  offsets.slice(1).forEach((offset) => {
-    pdf += `${String(offset).padStart(10, '0')} 00000 n \n`;
+    pdf += (index + 1) + ' 0 obj\n' + object + '\nendobj\n';
   });
-  pdf += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xrefOffset}\n%%EOF\n`;
+  const xrefOffset = Buffer.byteLength(pdf, 'ascii');
+  pdf += 'xref\n0 ' + (objects.length + 1) + '\n0000000000 65535 f \n';
+  offsets.slice(1).forEach((offset) => { pdf += String(offset).padStart(10, '0') + ' 00000 n \n'; });
+  pdf += 'trailer\n<< /Size ' + (objects.length + 1) + ' /Root 1 0 R >>\nstartxref\n' + xrefOffset + '\n%%EOF\n';
   return Buffer.from(pdf, 'ascii');
 }
 
@@ -260,10 +253,10 @@ function renderDocumentHtml(payload: DocumentRequest) {
 </html>`;
 }
 
-function buildMasterPackageUrl(requestUrl: string, payload: DocumentRequest) {
+function buildMasterPackageUrl(payload: DocumentRequest) {
   if (!payload.masterPackageQuery) return '';
 
-  const url = new URL('/PBK_Master_Deal_Package.html', requestUrl || 'https://pbkcommandcenter.netlify.app');
+  const url = pathToFileURL(resolve(process.cwd(), 'public', 'PBK_Master_Deal_Package.html'));
   url.search = payload.masterPackageQuery.startsWith('?') ? payload.masterPackageQuery : `?${payload.masterPackageQuery}`;
   url.searchParams.set('pbk_preview', '1');
   url.searchParams.delete('pbk_print');
@@ -271,16 +264,25 @@ function buildMasterPackageUrl(requestUrl: string, payload: DocumentRequest) {
   return url.toString();
 }
 
-async function generatePdf(payload: DocumentRequest, requestUrl: string) {
+async function generatePdf(payload: DocumentRequest) {
   let browser: Browser | undefined;
 
   try {
     browser = await launchBrowserWithRetry();
     const page = await browser.newPage();
-    const masterPackageUrl = buildMasterPackageUrl(requestUrl, payload);
+    const masterPackageUrl = buildMasterPackageUrl(payload);
+
+    // The bundled template needs no site cookies, private-site bypass, or provider requests.
+    await page.setRequestInterception(true);
+    page.on('request', (request) => {
+      if (request.isInterceptResolutionHandled()) return;
+      if (request.url() === masterPackageUrl || request.url().startsWith('data:')) void request.continue();
+      else void request.abort();
+    });
 
     if (masterPackageUrl) {
       await page.goto(masterPackageUrl, { waitUntil: 'networkidle0', timeout: 20000 });
+      await page.waitForSelector('.packet-page', { timeout: 5000 });
       await page.emulateMediaType('print');
       await page.evaluate(() => document.fonts?.ready);
       await sleep(500);
@@ -341,11 +343,10 @@ export const handler: Handler = async (event) => {
 
   try {
     const payload = JSON.parse(event.body || '{}') as DocumentRequest;
-    const requestUrl = buildRequestUrl(event);
     let pdf: Buffer | Uint8Array;
     let fallbackRenderer = false;
     try {
-      pdf = await enqueuePdf(() => generatePdf(payload, requestUrl));
+      pdf = await enqueuePdf(() => generatePdf(payload));
     } catch (error) {
       fallbackRenderer = true;
       console.warn('PBK Documents PDF chromium renderer unavailable; using simple PDF fallback', error);

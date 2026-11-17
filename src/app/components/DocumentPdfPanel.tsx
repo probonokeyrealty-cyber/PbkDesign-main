@@ -8,7 +8,7 @@ import {
   RefreshCw,
 } from 'lucide-react';
 import { DealData, PBKPath } from '../types';
-import { PBKBranding, buildMasterPackageParams, getPathLabel } from '../utils/pbk';
+import { PBKBranding, buildMasterPackageParams, buildPathPackageText, getPathLabel } from '../utils/pbk';
 import { bridgeBlobRequest } from '../utils/runtimeBridge';
 
 interface DocumentPdfPanelProps {
@@ -33,10 +33,23 @@ export function DocumentPdfPanel({
 }: DocumentPdfPanelProps) {
   const [status, setStatus] = useState<SyncStatus>('queued');
   const [pdfUrl, setPdfUrl] = useState('');
+  const [pdfKey, setPdfKey] = useState('');
   const [error, setError] = useState('');
   const [updatedAt, setUpdatedAt] = useState('');
   const abortRef = useRef<AbortController | null>(null);
   const objectUrlRef = useRef('');
+  const requestKey = JSON.stringify({
+    documentType: 'masterPackage',
+    documentTitle: 'PBK Master Deal Package',
+    propertyAddress: deal.address,
+    selectedPathLabel: getPathLabel(selectedPath),
+    companyName: branding.companyName,
+    content: buildPathPackageText({ ...deal, selectedPath }, branding),
+    masterPackageQuery: buildMasterPackageParams({ ...deal, selectedPath }, branding, false),
+  });
+  const currentPdfUrl = status === 'ready' && pdfKey === requestKey ? pdfUrl : '';
+  const actionRef = useRef(onPdfAction);
+  useEffect(() => { actionRef.current = onPdfAction; }, [onPdfAction]);
 
   const revokeCurrentUrl = useCallback(() => {
     if (objectUrlRef.current) {
@@ -51,6 +64,8 @@ export function DocumentPdfPanel({
       const controller = new AbortController();
       abortRef.current = controller;
 
+      revokeCurrentUrl();
+      setPdfUrl('');
       setStatus('syncing');
       setError('');
 
@@ -59,43 +74,35 @@ export function DocumentPdfPanel({
           method: 'POST',
           path: '/api/documents/pdf',
           accept: 'application/pdf',
-          body: {
-            documentType: 'masterPackage',
-            documentTitle: 'PBK Master Deal Package',
-            propertyAddress: deal.address,
-            selectedPathLabel: getPathLabel(selectedPath),
-            companyName: branding.companyName,
-            masterPackageQuery: buildMasterPackageParams(
-              {
-                ...deal,
-                selectedPath,
-              },
-              branding,
-              false
-            ),
-          },
+          body: JSON.parse(requestKey),
           signal: controller.signal,
         });
 
+        if (controller.signal.aborted) return;
         const nextUrl = URL.createObjectURL(blob);
         revokeCurrentUrl();
         objectUrlRef.current = nextUrl;
         setPdfUrl(nextUrl);
+        setPdfKey(requestKey);
         setUpdatedAt(new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }));
         setStatus('ready');
         if (source === 'refresh') {
-          onPdfAction?.('refresh');
+          actionRef.current?.('refresh');
         }
       } catch (err) {
+        if (controller.signal.aborted) return;
         if (err instanceof DOMException && err.name === 'AbortError') return;
         setStatus('error');
         setError(err instanceof Error ? err.message : 'PDF generation failed');
       }
     },
-    [branding, deal, onPdfAction, revokeCurrentUrl, selectedPath]
+    [requestKey, revokeCurrentUrl]
   );
 
   useEffect(() => {
+    revokeCurrentUrl();
+    setPdfUrl('');
+    setError('');
     setStatus('queued');
     const timer = window.setTimeout(() => {
       void generatePdf();
@@ -105,7 +112,7 @@ export function DocumentPdfPanel({
       window.clearTimeout(timer);
       abortRef.current?.abort();
     };
-  }, [generatePdf]);
+  }, [generatePdf, revokeCurrentUrl]);
 
   useEffect(() => () => revokeCurrentUrl(), [revokeCurrentUrl]);
 
@@ -170,33 +177,33 @@ export function DocumentPdfPanel({
           Refresh PDF
         </button>
         <a
-          href={pdfUrl || undefined}
+          href={currentPdfUrl || undefined}
           download={downloadName}
           onClick={(event) => {
-            if (!pdfUrl) {
+            if (!currentPdfUrl) {
               event.preventDefault();
               return;
             }
             onPdfAction?.('download');
           }}
-          aria-disabled={!pdfUrl}
+          aria-disabled={!currentPdfUrl}
           className="pbk-btn pbk-btn-primary"
         >
           <Download size={14} />
           Download PDF
         </a>
         <a
-          href={pdfUrl || undefined}
+          href={currentPdfUrl || undefined}
           target="_blank"
           rel="noreferrer"
           onClick={(event) => {
-            if (!pdfUrl) {
+            if (!currentPdfUrl) {
               event.preventDefault();
               return;
             }
             onPdfAction?.('open');
           }}
-          aria-disabled={!pdfUrl}
+          aria-disabled={!currentPdfUrl}
           className="pbk-btn pbk-btn-ghost"
         >
           <ExternalLink size={14} />
@@ -205,10 +212,10 @@ export function DocumentPdfPanel({
       </div>
 
       <div className="mt-3 overflow-hidden rounded-md border border-gray-200 bg-gray-50 dark:border-slate-700 dark:bg-slate-900">
-        {pdfUrl ? (
+        {currentPdfUrl ? (
           <iframe
             title="PBK Master Deal Package PDF preview"
-            src={pdfUrl}
+            src={currentPdfUrl}
             className="h-[360px] w-full bg-white"
           />
         ) : (

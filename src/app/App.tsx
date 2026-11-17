@@ -238,9 +238,8 @@ export default function App({ engineOnly = false }: AppProps) {
       }
       return result;
     } catch {
-      if (mounted.current && version === draftWriteVersion.current) {
-        setAnalyzeStatus('Shared draft coordination is unavailable. Your edits are kept in this tab.');
-      }
+      if (!mounted.current || version !== draftWriteVersion.current) return 'superseded';
+      setAnalyzeStatus('Shared draft coordination is unavailable. Your edits are kept in this tab.');
       return 'unavailable';
     }
   }, []);

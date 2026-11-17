@@ -151,7 +151,7 @@ test('Storage failures do not throw or delete an existing draft', () => {
 function actions() {
   const app = readFileSync(new URL('../src/app/App.tsx', import.meta.url), 'utf8');
   const ast = ts.createSourceFile('App.tsx', app, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
-  const wanted = new Set(['persistDraft', 'clearDraft', 'handleLoadSavedDeal', 'handleCreateLeadFromAnalyzer']);
+  const wanted = new Set(['persistDraft', 'clearDraft', 'handleLoadSavedDeal', 'handleCreateLeadFromAnalyzer', 'handleSaveDeal']);
   const snippets = [];
   let persistenceEffect;
   function visit(node) {
@@ -162,7 +162,7 @@ function actions() {
   visit(ast);
   assert.equal(snippets.length, wanted.size);
   assert.ok(persistenceEffect);
-  const callbacks = [], published = [], navigations = [];
+  const callbacks = [], published = [], navigations = [], patches = [];
   const ref = current => ({ current });
   const context = vm.createContext({
     useCallback: action => action, useEffect: action => action(),
@@ -172,18 +172,22 @@ function actions() {
     currentDeal: ref(sample), activeSelectedPath: 'cash',
     writeAnalyzerSessionDeal() {}, readSharedAnalyzerDraft: () => 'newer-peer-draft',
     writeAnalyzerDeal: deal => published.push(deal), clearAnalyzerDeal() {},
-    withAnalyzerDraftLock: action => new Promise(resolve => callbacks.push(() => resolve(action()))),
+    withAnalyzerDraftLock: action => new Promise((resolve, reject) => callbacks.push({ run: () => resolve(action()), reject })),
     setDeal: deal => { context.activeDeal = deal; context.currentDeal.current = deal; },
     setAnalyzeStatus() {}, setActiveTab() {}, getPathLabel: () => 'Cash',
     buildMergedDealState: (base, deal) => ({ ...base, ...deal }),
+    upsertSavedDeal: deal => deal, appendSavedDealActivity() {},
+    buildAnalyzerLeadPatch: deal => deal,
+    patchLeadRequest: async (...args) => { patches.push(args); return { ok: true }; },
     window: { dispatchEvent: event => navigations.push(event.type), location: { assign: url => navigations.push(url) } },
     CustomEvent: class { constructor(type) { this.type = type; } },
   });
   const transpile = code => ts.transpileModule(code, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
-  vm.runInContext(transpile(snippets.join('\n') + '\nObject.assign(globalThis, { handleCreateLeadFromAnalyzer, handleLoadSavedDeal, clearDraft });'), context);
-  return { context, published, navigations,
+  vm.runInContext(transpile(snippets.join('\n') + '\nObject.assign(globalThis, { handleCreateLeadFromAnalyzer, handleLoadSavedDeal, handleSaveDeal, clearDraft });'), context);
+  return { context, published, navigations, patches,
     effect: () => vm.runInContext(transpile(persistenceEffect), context),
-    flush: async () => { while (callbacks.length) { callbacks.shift()(); await new Promise(resolve => setImmediate(resolve)); } },
+    flush: async () => { while (callbacks.length) { callbacks.shift().run(); await new Promise(resolve => setImmediate(resolve)); } },
+    reject: async () => { while (callbacks.length) { callbacks.shift().reject(new Error('Fixture lock timed out')); await new Promise(resolve => setImmediate(resolve)); } },
   };
 }
 
@@ -205,3 +209,15 @@ test('Loading a saved draft retains its intentional publication through the rend
   assert.equal(published.length, 1);
   assert.equal(published[0].address, loaded.address);
 });
+
+for (const action of ['handleCreateLeadFromAnalyzer', 'handleSaveDeal']) {
+  test(`A timed-out lock must not revive a canceled ${action}`, async () => {
+    const { context, reject, navigations, patches } = actions();
+    const pending = context[action]();
+    const cleared = context.clearDraft();
+    await reject();
+    await Promise.all([pending, cleared]);
+    assert.deepEqual(navigations, []);
+    assert.deepEqual(patches, []);
+  });
+}

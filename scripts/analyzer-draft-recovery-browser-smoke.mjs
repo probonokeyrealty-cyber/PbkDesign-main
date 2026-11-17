@@ -139,7 +139,7 @@ async function verify(engine, viewport, device = {}) {
     await releaseDraftLock(first);
     await expect.poll(() => first.evaluate(async () => (await navigator.locks.query()).pending.length)).toBe(0);
     const publications = [...await first.evaluate(() => window.__draftWrites), ...await second.evaluate(() => window.__draftWrites)];
-    assert.equal(publications.length, 1, 'Exactly one simultaneous writer may publish from the shared baseline');
+    assert.equal(publications.length, 1, `Exactly one simultaneous writer may publish from the shared baseline: ${JSON.stringify(publications.map(value => ({ beds: value.beds, arv: value.arv, mao: value.mao, isAnalyzed: value.isAnalyzed })))}`);
     const winner = (await stored(first)).beds;
     assert.ok([5, 6].includes(winner));
     const loser = winner === 5 ? second : first;
@@ -152,6 +152,7 @@ async function verify(engine, viewport, device = {}) {
     await expect(loser.getByRole('spinbutton', { name: 'Bedrooms', exact: true })).toHaveValue(String(privateBeds));
     assert.deepEqual(await loser.evaluate(() => window.__draftWrites), []);
     console.log(`Simultaneous draft writers: ${engine.name()} ${viewport.width}px passed`);
+    if (process.argv.includes('--stress-contention')) return;
 
     await first.evaluate(deal => {
       document.activeElement?.blur();
@@ -347,9 +348,13 @@ try {
       process.once('SIGTERM', resolve);
     });
   } else {
-    await verify(chromium, { width: 1440, height: 960 });
-    await verify(webkit, { width: 390, height: 844 }, devices['iPhone 13']);
-    await verify(webkit, { width: 320, height: 844 }, devices['iPhone 13']);
+    if (process.argv.includes('--stress-contention')) {
+      for (let attempt = 0; attempt < 6; attempt++) await verify(webkit, { width: 390, height: 844 }, devices['iPhone 13']);
+    } else {
+      if (!process.argv.includes('--webkit-only')) await verify(chromium, { width: 1440, height: 960 });
+      await verify(webkit, { width: 390, height: 844 }, devices['iPhone 13']);
+      await verify(webkit, { width: 320, height: 844 }, devices['iPhone 13']);
+    }
   }
 } finally {
   await server.close();

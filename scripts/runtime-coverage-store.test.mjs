@@ -17,7 +17,7 @@ const DAY = 86400000, START = Date.parse('2026-11-17T12:00:00.000Z');
 const revision = 'a'.repeat(40);
 const health = () => ({ authenticationConfigured: true, bootstrapReady: true, archiveReady: true,
   providerCircuitsReady: true, observabilityReady: true, eventBusConnected: true, approvalMode: 'approval' });
-let db, wall, mono, secret, serial = 0, statements, releases, fail, dbOffset;
+let db, wall, mono, secret, serial = 0, statements, releases, fail, dbOffset, loadedCheckpoints;
 const pool = { connect: async () => ({
   async query(config, values) {
     const text = typeof config === 'string' ? config : config.text;
@@ -27,7 +27,9 @@ const pool = { connect: async () => ({
     if (text.includes('clock_timestamp() AS coverage_now')) {
       return { rows: [{ coverage_now: new Date(wall + dbOffset) }] };
     }
-    return db.query(text, values);
+    const result = await db.query(text, values);
+    loadedCheckpoints += result.rows?.filter(row => row.suite_name === 'runtime_coverage_v1').length || 0;
+    return result;
   }, release: destroy => {
     releases.push(destroy);
     if (destroy) void db.exec('ROLLBACK').catch(() => {});
@@ -38,6 +40,9 @@ const makeSampler = (options = {}) => api(samplerModule, 'createRuntimeCoverageS
   monotonicNow: () => mono, bootId: 'local-fixture-boot', ...options,
 });
 const read = (options = {}) => api(store, 'readRuntimeCoverage')({ pool, secret, revision, now: () => wall, ...options });
+const verifySaved = (reference, options = {}) => api(store, 'verifyRuntimeCoverageReference')({
+  pool, secret, revision, now: () => wall, reference, ...options,
+});
 const advance = (ms = 60000) => { wall += ms; mono += ms; };
 const chain = async (duration = DAY) => {
   const sampler = makeSampler();
@@ -70,6 +75,7 @@ afterAll(async () => { await db?.close(); });
 beforeEach(async () => {
   await db.exec('TRUNCATE activity_log,conversation_events,pbk_qa_audit,pbk_safety_audit,pbk_eval_runs');
   wall = START; mono = 100; dbOffset = 0; fail = null; statements = []; releases = [];
+  loadedCheckpoints = 0;
   secret = `explicit-local-coverage-fixture-material-${++serial}`;
 });
 
@@ -112,6 +118,57 @@ test('genuine quiet 24h chain verifies compact ordered proof with one fresh cens
   assert.equal(rolling.verified, true, 'non-aligned rolling cutoff still has a genuine left endpoint');
   assert.equal(rolling.proof.windowStart, new Date(START + 30001).toISOString());
 
+  const savedReference = result.proof.reference;
+  const rollingReference = rolling.proof.reference;
+  for (let i = 0; i < 2; i++) { advance(); assert.equal((await sampler.sample()).verified, true); }
+  assert.equal((await read({ cutoff: Date.parse(result.proof.cutoff) })).verified, false,
+    'ordinary latest mode must retain its current-cutoff/freshness contract');
+  loadedCheckpoints = 0;
+  const reverified = await verifySaved(savedReference);
+  assert.equal(reverified.verified, true, JSON.stringify(reverified));
+  assert.deepEqual(reverified.proof.reference, savedReference);
+  assert.equal(loadedCheckpoints, 1442, 'load only saved window+left endpoint+one current head, not the intervening tail');
+  assert.equal((await verifySaved(rollingReference)).verified, true, 'saved non-aligned window retains its actual left endpoint');
+  assert.equal((await verifySaved(savedReference, { now: () => Date.parse(savedReference.cutoff) + DAY + 1 })).result,
+    'coverage_reference_expired');
+  assert.equal((await verifySaved(savedReference, { now: () => Date.parse(savedReference.cutoff) + DAY })).result,
+    'coverage_reference_expired');
+  for (const field of ['orderedRoot', 'bootRef', 'segmentRef', 'revision', 'windowStart', 'cutoff', 'signature']) {
+    const changed = { ...savedReference, [field]: field === 'revision' ? 'b'.repeat(40) : '0'.repeat(64) };
+    assert.equal((await verifySaved(changed)).verified, false, field);
+  }
+  for (const changed of [{ ...savedReference, verified: true }, { ...savedReference, first: { ...savedReference.first, id: 'wrong-reference' } },
+    { ...savedReference, last: { ...savedReference.last, sequence: 9999 } }, { ...savedReference, checkpointCount: 2001 }]) {
+    assert.equal((await verifySaved(changed)).verified, false);
+  }
+  assert.equal((await verifySaved(savedReference, { revision: 'b'.repeat(40) })).verified, false);
+  assert.equal((await verifySaved(savedReference, { cutoff: wall })).verified, false, 'reference mode has no caller range override');
+  await db.query(`INSERT INTO pbk_eval_runs(id,tenant_id,suite_name,ok,total,passed,failed,report,source,created_at)
+    SELECT 'post-cutoff-junk-' || n,'pbk','runtime_coverage_v1',false,0,0,0,'{}','server:runtime-coverage:v1',$1
+    FROM generate_series(1,2001) n`, [new Date(Date.parse(savedReference.cutoff) + 1).toISOString()]);
+  loadedCheckpoints = 0;
+  assert.equal((await verifySaved(savedReference)).verified, true, 'unrelated post-cutoff rows are not loaded as two days of proof');
+  assert.equal(loadedCheckpoints, 1442);
+  await db.exec("DELETE FROM pbk_eval_runs WHERE id LIKE 'post-cutoff-junk-%'");
+  await db.query(`INSERT INTO pbk_eval_runs(id,tenant_id,suite_name,ok,total,passed,failed,report,source,created_at)
+    SELECT 'in-window-junk-' || n,'pbk','runtime_coverage_v1',false,0,0,0,'{}','server:runtime-coverage:v1',$1
+    FROM generate_series(1,559) n`, [new Date(Date.parse(savedReference.cutoff) - 1).toISOString()]);
+  loadedCheckpoints = 0;
+  assert.equal((await verifySaved(savedReference)).result, 'coverage_census_unverified', 'the extra current head counts toward the 2000 total');
+  assert.equal(loadedCheckpoints, 0, 'over-bound metadata rejects before loading reports');
+  await db.exec("DELETE FROM pbk_eval_runs WHERE id LIKE 'in-window-junk-%'");
+  const oldRow = (await db.query('SELECT * FROM pbk_eval_runs WHERE id=$1', [savedReference.first.id])).rows[0];
+  await db.query("UPDATE pbk_eval_runs SET report=report || '{\"sequence\":9999}'::jsonb WHERE id=$1", [oldRow.id]);
+  assert.equal((await verifySaved(savedReference)).verified, false, 'tampered historical row must block saved proof');
+  await db.query('UPDATE pbk_eval_runs SET report=$2::jsonb WHERE id=$1', [oldRow.id, JSON.stringify(oldRow.report)]);
+  await db.query('DELETE FROM pbk_eval_runs WHERE id=$1', [oldRow.id]);
+  assert.equal((await verifySaved(savedReference)).verified, false, 'deleted historical endpoint must block saved proof');
+  await db.query(`INSERT INTO pbk_eval_runs SELECT * FROM jsonb_populate_record(NULL::pbk_eval_runs,$1::jsonb)`, [JSON.stringify(oldRow)]);
+  const controlRow = (await db.query("SELECT * FROM pbk_eval_runs WHERE suite_name='runtime_coverage_control_v1'")).rows[0];
+  await db.query("UPDATE pbk_eval_runs SET report=report || '{\"phase\":\"pending\"}'::jsonb WHERE id=$1", [controlRow.id]);
+  assert.equal((await verifySaved(savedReference)).verified, false, 'invalid current control cannot fall back to a saved proof');
+  await db.query('UPDATE pbk_eval_runs SET report=$2::jsonb WHERE id=$1', [controlRow.id, JSON.stringify(controlRow.report)]);
+
   // New, genuinely recorded source transitions must not alter already-closed interval bindings.
   advance(1);
   await db.query('INSERT INTO activity_log(id,text,created_at,updated_at) VALUES ($1,$2,$3,$3)',
@@ -127,6 +184,11 @@ test('genuine quiet 24h chain verifies compact ordered proof with one fresh cens
   assert.equal(active.verified, true, JSON.stringify(active));
   assert.equal(active.diagnostics.organicCompletions, 1);
   assert.equal(active.diagnostics.fleetQualified, false);
+  const afterSourceChange = await verifySaved(savedReference);
+  assert.equal(afterSourceChange.verified, true, JSON.stringify(afterSourceChange));
+  assert.deepEqual(afterSourceChange.proof.reference, savedReference);
+  assert.notDeepEqual(afterSourceChange.proof.census.inventory, result.proof.census.inventory,
+    'dynamic census metadata is not part of immutable saved-reference equality');
 
   advance(1);
   await db.exec("UPDATE activity_log SET text='unattributed mutation'");
@@ -147,18 +209,37 @@ test('genuine quiet 24h chain verifies compact ordered proof with one fresh cens
   assert.equal(tombstone.verified, true, JSON.stringify(tombstone));
   assert.equal(tombstone.sources[0].counts.deleted, 1);
   assert.equal(tombstone.diagnostics.sourceProvenanceVerified, false);
+  assert.equal((await verifySaved(savedReference)).verified, true, 'post-cutoff unknown/tombstone transitions preserve old interval bindings');
 
   const saved = (await db.query("SELECT * FROM pbk_eval_runs WHERE suite_name='runtime_coverage_v1' ORDER BY created_at DESC LIMIT 1")).rows[0];
   await db.query("UPDATE pbk_eval_runs SET report=report || '{\"sequence\":9999}'::jsonb WHERE id=$1", [saved.id]);
   assert.equal((await read()).result, 'coverage_record_unverified');
+  assert.equal((await verifySaved(savedReference)).verified, false, 'invalid current head cannot certify a saved historical window');
   await db.query('UPDATE pbk_eval_runs SET report=$2::jsonb WHERE id=$1', [saved.id, JSON.stringify(saved.report)]);
+  await db.query('DELETE FROM pbk_eval_runs WHERE id=$1', [saved.id]);
+  assert.equal((await verifySaved(savedReference)).verified, false, 'missing current head cannot certify a saved historical window');
+  await db.query(`INSERT INTO pbk_eval_runs SELECT * FROM jsonb_populate_record(NULL::pbk_eval_runs,$1::jsonb)`, [JSON.stringify(saved)]);
   assert.equal((await read()).verified, true);
 
   const endpoint = (await db.query("SELECT * FROM pbk_eval_runs WHERE suite_name='runtime_coverage_v1' AND created_at <= $1 ORDER BY created_at DESC LIMIT 1",
     [new Date(wall - DAY).toISOString()])).rows[0];
   await db.query('DELETE FROM pbk_eval_runs WHERE id=$1', [endpoint.id]);
   assert.equal((await read()).verified, false, 'deleting the actual left endpoint cannot be hidden by min/max bounds');
-}, 180000);
+  await db.query(`INSERT INTO pbk_eval_runs SELECT * FROM jsonb_populate_record(NULL::pbk_eval_runs,$1::jsonb)`, [JSON.stringify(endpoint)]);
+  advance(); fail = text => text.includes('FROM public.activity_log');
+  assert.equal((await sampler.sample()).verified, false);
+  fail = null;
+  assert.equal((await verifySaved(savedReference)).verified, false, 'a real signed pending current control blocks saved proof');
+  advance(16000);
+  const afterGap = await sampler.sample();
+  assert.equal(afterGap.verified, true);
+  assert.notEqual(afterGap.report.segmentRef, savedReference.segmentRef);
+  assert.equal((await verifySaved(savedReference)).verified, false, 'new healthy segment after a source gap cannot certify the old proof');
+  advance(120001);
+  const replacement = makeSampler({ bootId: 'replacement-historical-boot', revision: 'b'.repeat(40) });
+  assert.equal((await replacement.sample()).verified, true);
+  assert.equal((await verifySaved(savedReference)).verified, false, 'new boot/revision cannot certify saved prior-boot proof');
+}, 240000);
 
 test('active trusted transitions do not invalidate old intervals or fabricate organic results', async () => {
   const sampler = await chain(60000);

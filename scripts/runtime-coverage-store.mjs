@@ -8,6 +8,7 @@ export const RUNTIME_COVERAGE_POLICY = Object.freeze({ version: 'pbk-runtime-cov
   maxReportBytes: 8192, maxBytes: 16777216, operationMs: 15000, queryMs: 2000, leaseMs: 120000 });
 const P = RUNTIME_COVERAGE_POLICY;
 const SCHEMA = 'pbk-runtime-coverage-v1', INSTRUMENTATION = 'runtime-source-evidence-v1';
+const REFERENCE_SCHEMA = 'pbk-runtime-coverage-reference-v1';
 const SUITE = 'runtime_coverage_v1', SOURCE = 'server:runtime-coverage:v1';
 const CONTROL_SUITE = 'runtime_coverage_control_v1', CONTROL_SOURCE = 'server:runtime-coverage-control:v1';
 const CONTROL_ID = 'runtime-coverage-control-pbk-v1';
@@ -325,9 +326,51 @@ export async function appendRuntimeCoverageCheckpoint(input = {}) {
   } catch (error) { return failure(errorResult(error, 'coverage_observation_failed')); }
 }
 
-async function coverageRows(op, secret, cutoff) {
-  const where = "tenant_id='pbk' AND (suite_name=$1 OR source=$2) AND created_at >= $3::timestamptz";
-  const values = [SUITE, SOURCE, iso(cutoff - P.windowMs - P.maxGapMs)];
+function coverageReference(secret, proof) {
+  const reference = { schemaVersion: REFERENCE_SCHEMA, tenantId: 'pbk', policyHash: proof.policyHash,
+    instrumentation: proof.instrumentation, revision: proof.revision, bootRef: proof.bootRef,
+    generation: proof.generation, segmentRef: proof.segmentRef, windowStart: proof.windowStart,
+    cutoff: proof.cutoff, checkpointCount: proof.checkpointCount, first: proof.first, last: proof.last,
+    orderedRoot: proof.orderedRoot, sourceSegmentRef: proof.census.coverage.segmentRef,
+    sourceIntervalRoot: proof.census.intervalRoot };
+  return { ...reference, signature: digest(secret, 'coverage-reference-signature', reference) };
+}
+
+function verifyReference(reference, secret, revision, now) {
+  const r = reference;
+  const plain = value => value && Object.getPrototypeOf(value) === Object.prototype;
+  const keys = ['schemaVersion', 'tenantId', 'policyHash', 'instrumentation', 'revision', 'bootRef', 'generation',
+    'segmentRef', 'windowStart', 'cutoff', 'checkpointCount', 'first', 'last', 'orderedRoot', 'sourceSegmentRef',
+    'sourceIntervalRoot', 'signature'];
+  const endpoint = value => plain(value) && Object.keys(value).length === 3
+    && Object.keys(value).every(key => ['id', 'digest', 'sequence'].includes(key))
+    && /^runtime-coverage-[a-f0-9]{64}$/.test(value.id) && hex(value.digest)
+    && Number.isSafeInteger(value.sequence) && value.sequence > 0;
+  if (!plain(r) || bytes(r) > P.maxReportBytes || Object.keys(r).length !== keys.length
+    || !Object.keys(r).every(key => keys.includes(key)) || r.schemaVersion !== REFERENCE_SCHEMA || r.tenantId !== 'pbk'
+    || r.policyHash !== policyHash(secret) || r.instrumentation !== INSTRUMENTATION || r.revision !== revision
+    || !hex(r.bootRef) || !hex(r.segmentRef) || !hex(r.orderedRoot) || !hex(r.sourceSegmentRef)
+    || !hex(r.sourceIntervalRoot) || !hex(r.signature) || !Number.isSafeInteger(r.generation) || r.generation < 1
+    || !Number.isSafeInteger(r.checkpointCount) || r.checkpointCount < 2 || r.checkpointCount > P.maxCheckpoints
+    || !Number.isFinite(time(r.cutoff)) || !Number.isFinite(time(r.windowStart))
+    || time(r.cutoff) - time(r.windowStart) !== P.windowMs || !endpoint(r.first) || !endpoint(r.last)
+    || r.last.sequence - r.first.sequence + 1 !== r.checkpointCount) reject('coverage_reference_unverified');
+  const { signature, ...unsigned } = r;
+  if (!timingSafeEqual(Buffer.from(signature, 'hex'),
+    Buffer.from(digest(secret, 'coverage-reference-signature', unsigned), 'hex'))) reject('coverage_reference_unverified');
+  if (time(r.cutoff) > now || now - time(r.cutoff) >= P.windowMs) reject('coverage_reference_expired');
+  return r;
+}
+
+async function coverageRows(op, secret, cutoff, control) {
+  // One total bound includes the saved window, its actual left endpoint, AND the current head.
+  // No intervening post-cutoff tail or second day of checkpoint reports is loaded.
+  const scope = "tenant_id='pbk' AND (suite_name=$1 OR source=$2)";
+  const where = `${scope} AND ((created_at > $3::timestamptz AND created_at <= $4::timestamptz)
+    OR created_at=(SELECT MAX(created_at) FROM public.pbk_eval_runs WHERE ${scope}
+      AND created_at <= $3::timestamptz AND created_at >= $5::timestamptz) OR id=$6)`;
+  const values = [SUITE, SOURCE, iso(cutoff - P.windowMs), iso(cutoff),
+    iso(cutoff - P.windowMs - P.maxGapMs), control.headId];
   const size = (await op.query(`SELECT COUNT(*) AS count,COALESCE(SUM(octet_length(to_jsonb(p)::text)),0) AS bytes
     FROM (${SELECT} WHERE ${where}) p`, values)).rows?.[0];
   if (!Number.isSafeInteger(Number(size?.count)) || Number(size.count) < 1 || Number(size.count) > P.maxCheckpoints
@@ -340,27 +383,50 @@ async function coverageRows(op, secret, cutoff) {
 }
 
 export async function readRuntimeCoverage(input = {}) {
+  return readCoverage(input);
+}
+
+// INTERNAL signed-audit seam: only a reference issued by a verified read selects a saved window.
+// The caller must first authenticate the latest audit admission; sampling control is NOT audit admission.
+export async function verifyRuntimeCoverageReference(input = {}) {
+  if (Object.hasOwn(input, 'cutoff')) return failure('coverage_reference_unverified');
+  return readCoverage(input, true);
+}
+
+async function readCoverage(input, historical = false) {
   if (!configValid(input)) return failure('coverage_runtime_unavailable');
   const { secret, revision, now = Date.now } = input;
-  const started = clock(now), cutoff = input.cutoff ?? started;
-  if (!validClock(started) || !validClock(cutoff) || cutoff > started || started - cutoff > P.maxGapMs) {
-    return failure('coverage_cutoff_unverified');
-  }
   try {
+    const started = clock(now);
+    if (!validClock(started)) reject('coverage_cutoff_unverified');
+    const reference = historical ? verifyReference(input.reference, secret, revision, started) : null;
+    const cutoff = reference ? time(reference.cutoff) : input.cutoff ?? started;
+    if (!validClock(cutoff) || cutoff > started || !historical && started - cutoff > P.maxGapMs) {
+      reject('coverage_cutoff_unverified');
+    }
     return await operation(input, async op => {
       // Validate immutable checkpoint references before admitting a new source observation.
       // Ordinary short windows and invalid old proof must not manufacture source-abandonment gaps.
       const control = await loadControl(op, secret);
       const db = await databaseTime(op, now);
       if (!control || control.revision !== revision || control.phase !== 'complete'
-        || time(control.cutoff) !== cutoff || db >= time(control.expiresAt)) reject('coverage_latest_unverified');
-      const all = await coverageRows(op, secret, cutoff);
+        || time(control.cutoff) > started || started - time(control.cutoff) > P.maxGapMs
+        || time(control.cutoff) < cutoff || !historical && time(control.cutoff) !== cutoff
+        || db >= time(control.expiresAt)) reject('coverage_latest_unverified');
+      if (reference && (control.bootRef !== reference.bootRef || control.generation !== reference.generation
+        || control.segmentRef !== reference.segmentRef)) reject('coverage_reference_context_unverified');
+      const newer = (await op.query(`SELECT EXISTS(SELECT 1 FROM public.pbk_eval_runs WHERE tenant_id='pbk'
+        AND (suite_name=$1 OR source=$2) AND created_at > $3::timestamptz) AS newer`,
+      [SUITE, SOURCE, control.cutoff])).rows?.[0]?.newer;
+      if (newer !== false) reject('coverage_head_unverified');
+      const all = await coverageRows(op, secret, cutoff, control);
       const latest = all.at(-1);
       if (latest.signature !== control.headSignature || checkpointId(secret, latest) !== control.headId
         || latest.sequence !== control.sequence || latest.fenceRef !== control.fenceRef
-        || latest.bootRef !== control.bootRef || latest.generation !== control.generation) reject('coverage_head_unverified');
-      const chain = all.filter(r => r.segmentRef === control.segmentRef);
-      if (!chain.length || chain.at(-1).signature !== latest.signature) reject('coverage_chain_unverified');
+        || latest.bootRef !== control.bootRef || latest.generation !== control.generation
+        || latest.segmentRef !== control.segmentRef || latest.cutoff !== control.cutoff) reject('coverage_head_unverified');
+      const chain = all.filter(r => time(r.cutoff) <= cutoff && r.segmentRef === control.segmentRef);
+      if (!chain.length || time(chain.at(-1).cutoff) !== cutoff) reject('coverage_chain_unverified');
       for (let i = 0; i < chain.length; i++) {
         op.check();
         const r = chain[i], prior = chain[i - 1];
@@ -379,6 +445,14 @@ export async function readRuntimeCoverage(input = {}) {
       const anchor = chain.findLastIndex(r => time(r.cutoff) <= windowStart);
       if (anchor < 0) reject('coverage_window_incomplete');
       const selected = chain.slice(anchor);
+      const last = selected.at(-1);
+      const orderedRoot = digest(secret, 'ordered-checkpoint-references', selected.map(r =>
+        [checkpointId(secret, r), r.signature]));
+      const firstEndpoint = { id: checkpointId(secret, selected[0]), digest: selected[0].signature, sequence: selected[0].sequence };
+      const lastEndpoint = { id: checkpointId(secret, last), digest: last.signature, sequence: last.sequence };
+      if (reference && (reference.windowStart !== iso(windowStart) || reference.checkpointCount !== selected.length
+        || !equal(reference.first, firstEndpoint) || !equal(reference.last, lastEndpoint)
+        || reference.orderedRoot !== orderedRoot)) reject('coverage_reference_binding_unverified');
       const admission = await prepare(op, { ...input, now });
       let result, observed, inventory;
       await transaction(op, async () => {
@@ -386,6 +460,7 @@ export async function readRuntimeCoverage(input = {}) {
           || await databaseTime(op, now) >= time(control.expiresAt)) reject('coverage_lease_lost');
         observed = await snapshot(op, { ...input, now }, windowStart, cutoff, admission);
         if (!observed.coverage.continuous || time(observed.coverage.forwardOnlyFrom) > windowStart
+          || reference && observed.coverage.segmentRef !== reference.sourceSegmentRef
           || observed.historyCompleteFrom !== null
             && time(observed.historyCompleteFrom) > time(selected[0].intervalStart)) {
           reject('coverage_source_history_unverified');
@@ -399,17 +474,18 @@ export async function readRuntimeCoverage(input = {}) {
         const sources = observed.sources.map(({ sourceKind, counts, fingerprint, eligible }) =>
           ({ sourceKind, counts, fingerprint, provenanceEligible: eligible }));
         const organicCompletions = sources.reduce((sum, s) => sum + s.counts.eligible, 0);
-        const orderedRoot = digest(secret, 'ordered-checkpoint-references', selected.map(r =>
-          [checkpointId(secret, r), r.signature]));
+        const sourceIntervalRoot = digest(secret, 'audit-source-intervals', roots);
+        if (reference && reference.sourceIntervalRoot !== sourceIntervalRoot) reject('coverage_reference_binding_unverified');
         result = { verified: true, result: 'coverage_verified', proof: {
           schemaVersion: SCHEMA, policy: P, policyHash: policyHash(secret), instrumentation: INSTRUMENTATION,
           revision, bootRef: control.bootRef, generation: control.generation, segmentRef: control.segmentRef,
           windowStart: iso(windowStart), cutoff: iso(cutoff), checkpointCount: selected.length,
-          first: { id: checkpointId(secret, selected[0]), digest: selected[0].signature, sequence: selected[0].sequence },
-          last: { id: control.headId, digest: control.headSignature, sequence: control.sequence }, orderedRoot,
-          census: sourceSummary(observed, digest(secret, 'audit-source-intervals', roots)),
+          first: firstEndpoint, last: lastEndpoint, orderedRoot,
+          census: sourceSummary(observed, sourceIntervalRoot),
         }, sources, diagnostics: { quiet: sources.every(s => s.counts.inWindow === 0), organicCompletions,
           sourceProvenanceVerified: sources.every(s => s.provenanceEligible), fleetQualified: false } };
+        result.proof.reference = coverageReference(secret, result.proof);
+        if (reference && !equal(result.proof.reference, reference)) reject('coverage_reference_binding_unverified');
         inventory = await inventoryReadback(op, observed);
       });
       if (!equal(await loadControl(op, secret), control)) reject('coverage_readback_unverified');

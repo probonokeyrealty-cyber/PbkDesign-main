@@ -21,6 +21,38 @@ function denied(f, expected) {
   return result;
 }
 
+test('admission-only verification authenticates without dependencies or canary proof', () => {
+  const f = makeCanaryFixture();
+  const { comparison, secret, revision, policyHash, now } = f;
+  assert.deepEqual(protocol.verifyCanaryAdmission({ comparison, secret, revision, policyHash, now }), {
+    verified: true, result: 'canary_admission_verified', evidence: {}, diagnostics: { codes: [] },
+  });
+  assert.equal(protocol.verifyCanaryChain({ comparison, secret, revision, policyHash, now, runs: [], observations: [], admissionOnly: true }).verified, false);
+});
+
+for (const [label, change, code] of [
+  ['unsigned', (f) => { f.comparison.report.attestation.signature = '0'.repeat(64); }, 'canary_evidence_invalid'],
+  ['physical labels', (f) => { f.comparison.source = 'damaged'; }, 'canary_evidence_invalid'],
+  ['unknown schema key', (f) => { f.comparison.report.extra = true; resignCanaryRow(f.comparison, f.secret); }, 'canary_evidence_invalid'],
+  ['wrong candidate revision', (f) => { f.revision = 'c'.repeat(40); }, 'canary_evidence_invalid'],
+  ['stale', (f) => { f.now += 86_400_000; }, 'canary_evidence_stale'],
+  ['future', (f) => { f.now -= 86_400_000; }, 'canary_evidence_future'],
+  ['missing', (f) => { f.comparison = null; }, 'canary_evidence_missing'],
+  ['pending', (f) => { Object.assign(f.comparison.report, { status: 'pending', executed: false, completedAt: null, baseline: null, candidate: null }); resignCanaryRow(f.comparison, f.secret); }, 'canary_evidence_pending'],
+  ['oversized', (f) => { f.comparison.report.extra = 'x'.repeat(8192); }, 'canary_evidence_invalid'],
+]) test(`admission-only check denies ${label} without evidence`, () => {
+  const f = makeCanaryFixture(); change(f);
+  const result = protocol.verifyCanaryAdmission(f);
+  assert.equal(result.verified, false); assert.equal(result.result, code); assert.deepEqual(result.evidence, {});
+});
+
+test('admission-only check never touches dependency getters', () => {
+  const f = makeCanaryFixture();
+  Object.defineProperty(f, 'runs', { get() { throw new Error('must not inspect runs'); } });
+  Object.defineProperty(f, 'observations', { get() { throw new Error('must not inspect observations'); } });
+  assert.equal(protocol.verifyCanaryAdmission(f).verified, true);
+});
+
 test('authentic independent versions yield only recomputed nearest-rank metrics and run facts', () => {
   const f = makeCanaryFixture();
   const rows = obs(f);

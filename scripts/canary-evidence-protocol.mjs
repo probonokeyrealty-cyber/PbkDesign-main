@@ -107,17 +107,25 @@ function checkCounters(row, total, passed) {
 
 function failure(result) { return { verified: false, result, evidence: {}, diagnostics: { codes: [result] } }; }
 
-export function verifyCanaryChain(input = {}) {
+export function verifyCanaryChain(input = {}) { return verify(input, false); }
+
+// This check authorizes following authenticated admission references, not a
+// canary proof. Only verifyCanaryChain can emit evidence.canary.
+export function verifyCanaryAdmission(input = {}) { return verify(input, true); }
+
+function verify(input, admissionOnly) {
   try {
     // Dependencies are server-owned; inspect their descriptors as well, without
     // traversing arbitrary caller context or allowing an input getter to run.
     requireThat(input !== null && typeof input === 'object' && !types.isProxy(input));
     const args = {};
-    for (const key of ['comparison', 'runs', 'observations', 'secret', 'revision', 'policyHash', 'now']) {
+    for (const key of (admissionOnly ? ['comparison', 'secret', 'revision', 'policyHash', 'now']
+      : ['comparison', 'runs', 'observations', 'secret', 'revision', 'policyHash', 'now'])) {
       const descriptor = Object.getOwnPropertyDescriptor(input, key);
       requireThat(descriptor && Object.hasOwn(descriptor, 'value'));
       args[key] = descriptor.value;
     }
+    if (admissionOnly) { args.runs = []; args.observations = []; }
     const { comparison, runs, observations, secret, revision, policyHash, now } = args;
     requireThat(typeof secret === 'string' && secret.length > 0 && secret.length <= 4096);
     requireThat(isRevision(revision) && isHex(policyHash));
@@ -199,6 +207,7 @@ export function verifyCanaryChain(input = {}) {
     }
     const c = receipt(comparison, 'comparison');
     if (c.pending) return failure('canary_evidence_pending');
+    if (admissionOnly) return { verified: true, result: 'canary_admission_verified', evidence: {}, diagnostics: { codes: [] } };
     requireThat(runs.length === 2);
     const runMap = new Map();
     let pendingRun = false;

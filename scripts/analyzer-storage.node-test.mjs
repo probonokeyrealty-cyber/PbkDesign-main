@@ -100,6 +100,35 @@ test('Passive canonical enrichment remembers its shared baseline without publish
   assert.equal(api.readAnalyzerDraftBaseline(), undefined, 'A later shared clear invalidates that baseline');
 });
 
+test('Unpublished edits remain private after remount even when their shared baseline is unchanged', () => {
+  const { api, shared } = runtime();
+  api.writeAnalyzerDeal(sample, []);
+  const baseline = shared.get(api.ANALYZER_CURRENT_DEAL_KEY);
+  api.writeAnalyzerSessionDeal({ ...sample, arv: 0 }, ['arv'], baseline, true);
+  assert.equal(api.readAnalyzerDraftBaseline(), undefined);
+  assert.equal(api.readAnalyzerDeal({}).arv, 0);
+  assert.equal(shared.get(api.ANALYZER_CURRENT_DEAL_KEY), baseline);
+  api.writeAnalyzerDeal({ ...sample, arv: 0 }, ['arv']);
+  assert.equal(api.readAnalyzerDraftBaseline(), shared.get(api.ANALYZER_CURRENT_DEAL_KEY));
+});
+
+test('Passive legacy reads never publish; an intentional publication completes migration', () => {
+  const { api, shared } = runtime();
+  shared.set('pbk-deal-data', JSON.stringify(sample));
+  assert.equal(api.readAnalyzerDeal({}).arv, sample.arv);
+  assert.equal(shared.has(api.ANALYZER_CURRENT_DEAL_KEY), false);
+  assert.equal(shared.has('pbk-deal-data'), true);
+  api.writeAnalyzerDeal(sample, []);
+  assert.equal(shared.has('pbk-deal-data'), false);
+});
+
+test('Unavailable shared coordination never invokes the write callback', async () => {
+  const { api } = runtime();
+  let called = false;
+  await assert.rejects(api.withAnalyzerDraftLock(() => { called = true; }), /coordination is unavailable/);
+  assert.equal(called, false);
+});
+
 test('Legacy drafts without edit provenance are distinguishable from a clean canonical draft', () => {
   const { api } = runtime();
   api.writeAnalyzerDeal(sample);
@@ -116,4 +145,63 @@ test('Storage failures do not throw or delete an existing draft', () => {
   assert.doesNotThrow(() => api.writeAnalyzerDeal({ ...sample, notes: 'Changed sample' }, ['notes']));
   assert.equal(shared.get(api.ANALYZER_CURRENT_DEAL_KEY), before);
   assert.equal(api.readAnalyzerDeal({}).notes, 'Changed sample');
+});
+
+// Execute the real handlers with a held in-memory lock, never the bridge or a browser profile.
+function actions() {
+  const app = readFileSync(new URL('../src/app/App.tsx', import.meta.url), 'utf8');
+  const ast = ts.createSourceFile('App.tsx', app, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  const wanted = new Set(['persistDraft', 'clearDraft', 'handleLoadSavedDeal', 'handleCreateLeadFromAnalyzer']);
+  const snippets = [];
+  let persistenceEffect;
+  function visit(node) {
+    if (ts.isVariableStatement(node) && node.declarationList.declarations.some(d => wanted.has(d.name.getText(ast)))) snippets.push(node.getText(ast));
+    if (ts.isExpressionStatement(node) && ts.isCallExpression(node.expression) && node.expression.expression.getText(ast) === 'useEffect' && node.getText(ast).includes('if (publishDraft.current) void persistDraft(activeDeal)')) persistenceEffect = node.getText(ast);
+    ts.forEachChild(node, visit);
+  }
+  visit(ast);
+  assert.equal(snippets.length, wanted.size);
+  assert.ok(persistenceEffect);
+  const callbacks = [], published = [], navigations = [];
+  const ref = current => ({ current });
+  const context = vm.createContext({
+    useCallback: action => action, useEffect: action => action(),
+    draftWriteVersion: ref(0), manualDraftFields: ref(new Set(['notes'])),
+    draftBaseline: ref('stale'), mounted: ref(true), publishDraft: ref(false), cacheIncomingDraft: ref(false),
+    forceDraftPublication: ref(false), initialDealData: {}, activeDeal: sample,
+    currentDeal: ref(sample), activeSelectedPath: 'cash',
+    writeAnalyzerSessionDeal() {}, readSharedAnalyzerDraft: () => 'newer-peer-draft',
+    writeAnalyzerDeal: deal => published.push(deal), clearAnalyzerDeal() {},
+    withAnalyzerDraftLock: action => new Promise(resolve => callbacks.push(() => resolve(action()))),
+    setDeal: deal => { context.activeDeal = deal; context.currentDeal.current = deal; },
+    setAnalyzeStatus() {}, setActiveTab() {}, getPathLabel: () => 'Cash',
+    buildMergedDealState: (base, deal) => ({ ...base, ...deal }),
+    window: { dispatchEvent: event => navigations.push(event.type), location: { assign: url => navigations.push(url) } },
+    CustomEvent: class { constructor(type) { this.type = type; } },
+  });
+  const transpile = code => ts.transpileModule(code, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
+  vm.runInContext(transpile(snippets.join('\n') + '\nObject.assign(globalThis, { handleCreateLeadFromAnalyzer, handleLoadSavedDeal, clearDraft });'), context);
+  return { context, published, navigations,
+    effect: () => vm.runInContext(transpile(persistenceEffect), context),
+    flush: async () => { while (callbacks.length) { callbacks.shift()(); await new Promise(resolve => setImmediate(resolve)); } },
+  };
+}
+
+test('Clear cancels a queued Create Lead before it can navigate', async () => {
+  const { context, flush, navigations } = actions();
+  const pending = context.handleCreateLeadFromAnalyzer();
+  const cleared = context.clearDraft();
+  await flush();
+  await Promise.all([pending, cleared]);
+  assert.deepEqual(navigations, []);
+});
+
+test('Loading a saved draft retains its intentional publication through the render effect', async () => {
+  const { context, flush, published, effect } = actions();
+  const loaded = { ...sample, address: '22 Loaded Fixture Lane' };
+  context.handleLoadSavedDeal(loaded);
+  effect();
+  await flush();
+  assert.equal(published.length, 1);
+  assert.equal(published[0].address, loaded.address);
 });

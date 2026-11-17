@@ -29,6 +29,21 @@ const draftKey = 'pbk:prod:analyzer:current-deal';
 const sessionKey = 'pbk:team-session:v1';
 const session = { token: 'fixture-analyzer-session', role: 'team', expiresAt: new Date(Date.now() + 3600000).toISOString() };
 
+async function holdDraftLock(page) {
+  await page.evaluate(key => {
+    window.__draftLockHeld = false;
+    window.__draftLockRequest = navigator.locks.request(`${key}:write`, () => {
+      window.__draftLockHeld = true;
+      return new Promise(resolve => { window.__releaseDraftLock = resolve; });
+    });
+  }, draftKey);
+  await expect.poll(() => page.evaluate(() => window.__draftLockHeld)).toBe(true);
+}
+
+async function releaseDraftLock(page) {
+  await page.evaluate(async () => { window.__releaseDraftLock(); await window.__draftLockRequest; });
+}
+
 async function verify(engine, viewport, device = {}) {
   const browser = await engine.launch();
   try {
@@ -109,6 +124,109 @@ async function verify(engine, viewport, device = {}) {
     await second.goto(hosted + fixture);
     await ready(second);
     assert.deepEqual(await second.evaluate(() => window.__draftWrites), [], 'An overlapping Analyzer tab must be read-only until edited');
+
+    const seed = await first.evaluate(() => window.PBKAnalyzer.getState().deal);
+    await holdDraftLock(first);
+    await first.getByRole('spinbutton', { name: 'Bedrooms', exact: true }).fill('5');
+    await expect.poll(() => first.evaluate(async () => (await navigator.locks.query()).pending.length)).toBeGreaterThanOrEqual(1);
+    await second.getByRole('spinbutton', { name: 'Bedrooms', exact: true }).fill('6');
+    await expect.poll(() => second.evaluate(key => {
+      const envelope = JSON.parse(decodeURIComponent(escape(atob(sessionStorage.getItem(`${key}:session`)))));
+      return envelope.unpublishedEdits && envelope.payload.beds;
+    }, draftKey)).toBe(6);
+    assert.equal((await stored(first)).beds, 4, 'Neither contender may publish while another context holds the shared draft lock');
+    await expect.poll(() => first.evaluate(async () => (await navigator.locks.query()).pending.length)).toBeGreaterThanOrEqual(2);
+    await releaseDraftLock(first);
+    await expect.poll(() => first.evaluate(async () => (await navigator.locks.query()).pending.length)).toBe(0);
+    const publications = [...await first.evaluate(() => window.__draftWrites), ...await second.evaluate(() => window.__draftWrites)];
+    assert.equal(publications.length, 1, 'Exactly one simultaneous writer may publish from the shared baseline');
+    const winner = (await stored(first)).beds;
+    assert.ok([5, 6].includes(winner));
+    const loser = winner === 5 ? second : first;
+    const privateBeds = winner === 5 ? 6 : 5;
+    await expect(loser.locator('#analyzer-valuation').getByText(/Another tab changed this draft/)).toBeVisible();
+    assert.equal(await loser.evaluate(key => JSON.parse(decodeURIComponent(escape(atob(sessionStorage.getItem(`${key}:session`))))).payload.beds, draftKey), privateBeds,
+      'The losing simultaneous writer must retain its private edit');
+    await loser.reload();
+    await ready(loser);
+    await expect(loser.getByRole('spinbutton', { name: 'Bedrooms', exact: true })).toHaveValue(String(privateBeds));
+    assert.deepEqual(await loser.evaluate(() => window.__draftWrites), []);
+    console.log(`Simultaneous draft writers: ${engine.name()} ${viewport.width}px passed`);
+
+    await first.evaluate(deal => {
+      document.activeElement?.blur();
+      window.PBKAnalyzer.setState({ deal, manualFields: ['notes', 'repairs'] });
+    }, seed);
+    await expect.poll(async () => (await stored(first))?.beds).toBe(4);
+    await second.evaluate(key => sessionStorage.removeItem(`${key}:session`), draftKey);
+    await first.reload();
+    await second.reload();
+    await ready(first);
+    await ready(second);
+
+    await holdDraftLock(first);
+    await first.getByRole('spinbutton', { name: 'Bedrooms', exact: true }).fill('5');
+    await expect.poll(() => first.evaluate(async () => (await navigator.locks.query()).pending.length)).toBeGreaterThanOrEqual(1);
+    await first.getByRole('spinbutton', { name: 'Bedrooms', exact: true }).fill('8');
+    await expect.poll(() => first.evaluate(async () => (await navigator.locks.query()).pending.length)).toBeGreaterThanOrEqual(2);
+    assert.equal((await stored(first)).beds, 4);
+    await releaseDraftLock(first);
+    await expect.poll(async () => (await stored(first))?.beds).toBe(8);
+    assert.deepEqual(await first.evaluate(() => window.__draftWrites.map(value => value.beds)), [8], 'Only the latest queued edit may publish');
+    await expect(second.getByRole('spinbutton', { name: 'Bedrooms', exact: true })).toHaveValue('8');
+
+    // The lock holder survives while a different tab's Analyzer is unmounted by sign-in.
+    await holdDraftLock(second);
+    await first.getByRole('spinbutton', { name: 'Bedrooms', exact: true }).fill('9');
+    await expect.poll(() => second.evaluate(async () => (await navigator.locks.query()).pending.length)).toBeGreaterThanOrEqual(1);
+    await first.evaluate(() => window.dispatchEvent(new CustomEvent('pbk:runtime-access-error', {
+      detail: { code: 'team_session_rejected', sessionWasCurrent: true },
+    })));
+    await first.getByRole('textbox', { name: 'Team passcode' }).fill('fixture-passcode');
+    await first.getByRole('button', { name: 'Open command center' }).click();
+    await ready(first);
+    await expect(first.getByRole('spinbutton', { name: 'Bedrooms', exact: true })).toHaveValue('9');
+    await releaseDraftLock(second);
+    await expect.poll(() => second.evaluate(async () => (await navigator.locks.query()).pending.length)).toBe(0);
+    assert.equal((await stored(first)).beds, 8, 'An unmounted publisher must not flush a queued edit');
+    await second.getByRole('spinbutton', { name: 'Bedrooms', exact: true }).fill('7');
+    await expect.poll(async () => (await stored(second))?.beds).toBe(7);
+    await first.bringToFront();
+    await first.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    await expect(first.getByRole('spinbutton', { name: 'Bedrooms', exact: true })).toHaveValue('9');
+
+    await holdDraftLock(second);
+    await first.getByRole('spinbutton', { name: 'Bedrooms', exact: true }).fill('12');
+    await expect.poll(() => second.evaluate(async () => (await navigator.locks.query()).pending.length)).toBeGreaterThanOrEqual(1);
+    first.once('dialog', dialog => dialog.accept());
+    await first.getByRole('button', { name: 'Clear', exact: true }).click();
+    await releaseDraftLock(second);
+    await expect.poll(() => stored(first)).toBe(null);
+    await expect(address(first)).toHaveValue('');
+    assert.ok(!(await first.evaluate(() => window.__draftWrites)).some(value => value.beds === 12), 'Clear must cancel queued edits before removing shared state');
+
+    await holdDraftLock(first);
+    const third = await context.newPage();
+    await third.goto(hosted + fixture + '?lead=qa-draft');
+    await expect.poll(() => first.evaluate(async () => (await navigator.locks.query()).pending.length)).toBeGreaterThan(0);
+    await third.goto(hosted + fixture);
+    await ready(third);
+    await releaseDraftLock(first);
+    await expect.poll(() => first.evaluate(async () => (await navigator.locks.query()).pending.length)).toBe(0);
+    assert.equal(await stored(first), null, 'A canceled cold lead handoff must not publish after navigation');
+    await third.close();
+
+    await first.evaluate(deal => {
+      document.activeElement?.blur();
+      window.PBKAnalyzer.setState({ deal, manualFields: ['notes', 'repairs'] });
+    }, seed);
+    await expect.poll(async () => (await stored(first))?.beds).toBe(4);
+    await second.evaluate(key => sessionStorage.removeItem(`${key}:session`), draftKey);
+    await first.reload();
+    await second.reload();
+    await ready(first);
+    await ready(second);
+    console.log(`Queued draft lifecycle: ${engine.name()} ${viewport.width}px passed`);
     await second.getByRole('spinbutton', { name: 'Bedrooms', exact: true }).fill('6');
     await expect.poll(async () => (await stored(second))?.beds).toBe(6);
     await expect(first.getByRole('spinbutton', { name: 'Bedrooms', exact: true })).toHaveValue('6');
@@ -200,6 +318,12 @@ async function verify(engine, viewport, device = {}) {
     await first.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
     assert.equal(await first.evaluate(() => window.__draftWrites.length), writesAfterRemount, 'An obsolete save completion must not write after a session remount');
     assert.equal((await stored(first)).beds, 10);
+    const beforeUnavailable = await stored(first);
+    await first.evaluate(() => Object.defineProperty(navigator, 'locks', { configurable: true, value: undefined }));
+    await first.getByRole('spinbutton', { name: 'Bedrooms', exact: true }).fill('11');
+    await expect(first.locator('#analyzer-valuation').getByText(/Shared draft coordination is unavailable/)).toBeVisible();
+    assert.deepEqual(await stored(first), beforeUnavailable, 'Unavailable coordination must fail closed without changing shared state');
+    assert.equal(await first.evaluate(key => JSON.parse(decodeURIComponent(escape(atob(sessionStorage.getItem(`${key}:session`))))).payload.beds, draftKey), 11);
     await first.evaluate(key => localStorage.removeItem(key), draftKey);
     await second.reload();
     await ready(second);

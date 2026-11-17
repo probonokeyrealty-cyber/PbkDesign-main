@@ -7,8 +7,10 @@ import {
   readAnalyzerDraftBaseline,
   readAnalyzerDraftManualFields,
   readAnalyzerStorage,
+  readSharedAnalyzerDraft,
   writeAnalyzerStorage,
   writeAnalyzerSessionDeal,
+  withAnalyzerDraftLock,
 } from '../utils/analyzerStorage';
 import { isStaleDynamicImportError, reloadForCurrentDeploy } from '../utils/deployVersion';
 import { fetchLeadFullRequest } from '../utils/runtimeBridge';
@@ -284,7 +286,7 @@ function hasDealLeadPayload(payload: unknown) {
   );
 }
 
-function hydrateAnalyzerFromLead(payload: BridgeRecord, leadId: string) {
+async function hydrateAnalyzerFromLead(payload: BridgeRecord, leadId: string, isCurrent = () => true) {
   const mappedDeal = buildAnalyzerDealFromLead(payload, leadId);
   const currentDeal =
     window.PBKAnalyzer?.getState().deal ||
@@ -320,8 +322,20 @@ function hydrateAnalyzerFromLead(payload: BridgeRecord, leadId: string) {
       persistDraft: publish,
     });
   } else {
-    if (publish) writeAnalyzerStorage(ANALYZER_CURRENT_DEAL_KEY, mergedDeal, manualFields);
-    else writeAnalyzerSessionDeal(mergedDeal, manualFields, baseline);
+    if (publish) {
+      try {
+        await withAnalyzerDraftLock(() => {
+          if (!isCurrent()) return;
+          if (readSharedAnalyzerDraft() === baseline) {
+            writeAnalyzerStorage(ANALYZER_CURRENT_DEAL_KEY, mergedDeal, manualFields);
+          } else {
+            writeAnalyzerSessionDeal(mergedDeal, manualFields, undefined, true);
+          }
+        });
+      } catch {
+        if (isCurrent()) writeAnalyzerSessionDeal(mergedDeal, manualFields, baseline, true);
+      }
+    } else if (isCurrent()) writeAnalyzerSessionDeal(mergedDeal, manualFields, baseline, baseline === undefined);
   }
 }
 
@@ -409,7 +423,8 @@ export function DealView() {
             'The live seller record is not ready yet.'
         );
       }
-      hydrateAnalyzerFromLead(response, leadId);
+      await hydrateAnalyzerFromLead(response, leadId, isCurrent);
+      if (!isCurrent()) return;
       setLoadedLeadId(leadId);
     } catch (nextError) {
       if (isCurrent()) setError(friendlyDealLoadError(nextError));

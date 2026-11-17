@@ -175,12 +175,17 @@ const { outputText: hydrationCode } = ts.transpileModule(hydrationFunctions.map(
 let sampleCurrent = {}, sampleHydrated;
 let sampleStored = {}, storageReads = 0, storageWrites = 0;
 let sampleManualFields = [];
-let sampleBaseline = 'fixture-baseline', privateHydration;
+let sampleBaseline = 'fixture-baseline', privateHydration, privateUnpublished;
 const hydration = vm.createContext({
   exports: {}, savedLeadComps, latestCallModeNote, ANALYZER_CURRENT_DEAL_KEY: 'sample-only',
   readAnalyzerDraftManualFields: () => sampleManualFields,
   readAnalyzerDraftBaseline: () => sampleBaseline,
-  writeAnalyzerSessionDeal: deal => { privateHydration = structuredClone(deal); },
+  readSharedAnalyzerDraft: () => sampleBaseline,
+  withAnalyzerDraftLock: action => Promise.resolve(action()),
+  writeAnalyzerSessionDeal: (deal, fields, baseline, unpublished) => {
+    privateHydration = structuredClone(deal);
+    privateUnpublished = unpublished;
+  },
   readAnalyzerStorage: (key) => {
     strictAssert.equal(key, 'sample-only');
     storageReads += 1;
@@ -209,12 +214,12 @@ strictAssert.equal(mapLead(manualUnanalyzed).arv, 245000);
 sampleCurrent = { leadId: 'sample-a', type: 'land', selectedPath: 'land-owner', arv: 245000,
   price: 120000, notes: 'Manual wording', isAnalyzed: true, comps: { A: { address: 'Sample comp', price: 260000 } } };
 const originalManual = structuredClone(sampleCurrent);
-hydration.hydrateAnalyzerFromLead({ id: 'sample-a' }, 'sample-a');
+await hydration.hydrateAnalyzerFromLead({ id: 'sample-a' }, 'sample-a');
 strictAssert.deepEqual(sampleHydrated, originalManual);
-hydration.hydrateAnalyzerFromLead(manualUnanalyzed, 'sample-a');
+await hydration.hydrateAnalyzerFromLead(manualUnanalyzed, 'sample-a');
 strictAssert.equal(sampleHydrated.isAnalyzed, false);
 strictAssert.deepEqual(sampleCurrent, originalManual, 'Hydration must not mutate the current draft');
-hydration.hydrateAnalyzerFromLead({ id: 'sample-b' }, 'sample-b');
+await hydration.hydrateAnalyzerFromLead({ id: 'sample-b' }, 'sample-b');
 strictAssert.equal(sampleHydrated.leadId, 'sample-b');
 for (const field of ['arv', 'price', 'comps', 'notes', 'selectedPath', 'type']) strictAssert.equal(sampleHydrated[field], undefined);
 strictAssert.equal(storageReads, 0, 'Mounted hydration must not read fallback storage');
@@ -223,18 +228,19 @@ strictAssert.equal(storageWrites, 0, 'Mounted hydration must not write fallback 
 // Cold route loads hydrate storage before the Analyzer API has mounted.
 delete hydration.window.PBKAnalyzer;
 sampleStored = structuredClone(originalManual);
-hydration.hydrateAnalyzerFromLead({ id: 'sample-a' }, 'sample-a');
+await hydration.hydrateAnalyzerFromLead({ id: 'sample-a' }, 'sample-a');
 strictAssert.equal(storageReads, 1);
 strictAssert.equal(storageWrites, 0, 'Same-lead cold restoration must not publish a shared envelope');
 strictAssert.deepEqual(privateHydration, originalManual);
 strictAssert.deepEqual(sampleStored, originalManual, 'Cold hydration must retain same-lead draft values');
-hydration.hydrateAnalyzerFromLead(manualUnanalyzed, 'sample-a');
+await hydration.hydrateAnalyzerFromLead(manualUnanalyzed, 'sample-a');
 strictAssert.equal(storageReads, 2);
 strictAssert.equal(storageWrites, 0);
 strictAssert.equal(privateHydration.isAnalyzed, false);
 strictAssert.equal(privateHydration.notes, originalManual.notes);
+
 strictAssert.deepEqual(privateHydration.comps, originalManual.comps);
-hydration.hydrateAnalyzerFromLead({ id: 'sample-a-other' }, 'sample-a-other');
+await hydration.hydrateAnalyzerFromLead({ id: 'sample-a-other' }, 'sample-a-other');
 strictAssert.equal(storageReads, 3);
 strictAssert.equal(storageWrites, 1, 'An intentional handoff to another lead may publish its context');
 strictAssert.equal(sampleStored.leadId, 'sample-a-other');
@@ -248,21 +254,29 @@ hydration.window.PBKAnalyzer = {
   getState: () => ({ deal: sampleCurrent }),
   setState: state => { sampleHydrated = structuredClone(state.deal); },
 };
-hydration.hydrateAnalyzerFromLead({ id: 'sample-a', property: { beds: 2, arv: 300000 }, notes: 'Saved canonical notes' }, 'sample-a');
+await hydration.hydrateAnalyzerFromLead({ id: 'sample-a', property: { beds: 2, arv: 300000 }, notes: 'Saved canonical notes' }, 'sample-a');
 for (const field of sampleManualFields) strictAssert.deepEqual(sampleHydrated[field], sampleCurrent[field], `Manual ${field} must survive canonical hydration`);
 sampleManualFields = null;
-hydration.hydrateAnalyzerFromLead({ id: 'sample-a', property: { beds: 2, arv: 300000 } }, 'sample-a');
+await hydration.hydrateAnalyzerFromLead({ id: 'sample-a', property: { beds: 2, arv: 300000 } }, 'sample-a');
 strictAssert.equal(sampleHydrated.beds, 0, 'Legacy drafts without provenance are preserved conservatively');
-hydration.hydrateAnalyzerFromLead({ id: 'sample-b', property: { beds: 2, arv: 300000 } }, 'sample-b');
+await hydration.hydrateAnalyzerFromLead({ id: 'sample-b', property: { beds: 2, arv: 300000 } }, 'sample-b');
 strictAssert.equal(sampleHydrated.beds, 2, 'Manual fields must never leak to a different lead');
 
 delete hydration.window.PBKAnalyzer;
 sampleStored = structuredClone(originalManual);
 sampleBaseline = undefined;
 const writesBeforeConflict = storageWrites;
-hydration.hydrateAnalyzerFromLead({ id: 'sample-a', property: { beds: 2 } }, 'sample-a');
+await hydration.hydrateAnalyzerFromLead({ id: 'sample-a', property: { beds: 2 } }, 'sample-a');
 strictAssert.equal(storageWrites, writesBeforeConflict, 'A conflicted cold route must not publish over the shared draft');
 strictAssert.equal(privateHydration.notes, originalManual.notes);
+strictAssert.equal(privateUnpublished, true, 'Same-lead hydration must retain unpublished provenance even when only redacted repairs differ');
+
+sampleBaseline = 'fixture-baseline';
+hydration.withAnalyzerDraftLock = () => Promise.reject(new Error('Fixture lock unavailable'));
+await hydration.hydrateAnalyzerFromLead({ id: 'sample-b' }, 'sample-b');
+strictAssert.equal(storageWrites, writesBeforeConflict);
+strictAssert.equal(privateHydration.leadId, 'sample-b');
+strictAssert.equal(privateUnpublished, true, 'An unpublished cold handoff must not appear clean on remount');
 
 assert(
   /window\.PBKAnalyzer\?\.setState/.test(dealView) &&

@@ -215,6 +215,10 @@ function summarize(source, rows, windowEnd, coverage) {
     const finish = (status, reason) => result(source.id, status, reason, counts, first, last);
     if (counts.futureTimestamps || counts.missingTimestamps) return finish('unverified', 'invalid_timestamps');
     if (source.failures.some(key => counts[key] > 0)) return finish('failed', 'findings_detected');
+    // Monitoring provenance cannot establish approval/seller business linkage.
+    if (source.id === 'conversation_projection' && counts.unverifiableDispatches > 0) {
+      return finish('unverified', 'contamination_unverified');
+    }
     if (source.id === 'database_security') {
       if (counts.missingTables || counts.requiredTables !== 22 || counts.presentTables !== 22) {
         return finish('unverified', 'source_unavailable');

@@ -42,9 +42,9 @@ export async function advanceAuditFixtureClock(fixture, target) {
 }
 
 export async function createTimingPostgresFixture(connectionConfig, { start = Date.now() - 86400000,
-  initialMonotonic = 100 } = {}) {
+  initialMonotonic = 100, createPool = config => new pg.Pool(config) } = {}) {
   const schema = `pbk_proof_${randomUUID().replaceAll('-', '')}`;
-  const raw = new pg.Pool({ ...connectionConfig, max: 4, connectionTimeoutMillis: 10000 });
+  const raw = createPool({ ...connectionConfig, max: 4, connectionTimeoutMillis: 10000 });
   let wall = start, mono = initialMonotonic, intercept;
   const stats = { queries: 0, virtualClockQueries: 0 };
   const queryWith = target => async (config, values) => {
@@ -67,9 +67,11 @@ export async function createTimingPostgresFixture(connectionConfig, { start = Da
       if (!released) { released = true; client.release(destroy); }
     } };
   } };
-  const inheritedBefore = await readProtectedFixtureFingerprints(raw);
-  await raw.query(`CREATE SCHEMA ${schema}`);
+  let inheritedBefore, schemaCreated = false;
   try {
+    inheritedBefore = await readProtectedFixtureFingerprints(raw);
+    await raw.query(`CREATE SCHEMA ${schema}`);
+    schemaCreated = true;
     await pool.query(`
       CREATE TABLE public.activity_log(id text PRIMARY KEY,workspace_id text DEFAULT 'pbk',source text DEFAULT 'runtime-event:pbk',
         status text DEFAULT 'success',category text DEFAULT 'EVENT',text text DEFAULT '',metadata jsonb DEFAULT '{}',
@@ -96,8 +98,13 @@ export async function createTimingPostgresFixture(connectionConfig, { start = Da
     const tables = (await raw.query('SELECT tablename FROM pg_tables WHERE schemaname=$1', [schema])).rows;
     for (const { tablename } of tables) await raw.query(`ALTER TABLE ${schema}.${tablename} ENABLE ROW LEVEL SECURITY`);
   } catch (error) {
-    await raw.query(`DROP SCHEMA ${schema} CASCADE`);
-    await raw.end();
+    try {
+      if (schemaCreated) await raw.query(`DROP SCHEMA ${schema} CASCADE`);
+    } catch (cleanupError) { error.cleanupError = cleanupError; }
+    finally {
+      try { await raw.end(); }
+      catch (poolEndError) { error.poolEndError = poolEndError; }
+    }
     throw error;
   }
   return { pool, stats, now: () => wall, monotonicNow: () => mono,

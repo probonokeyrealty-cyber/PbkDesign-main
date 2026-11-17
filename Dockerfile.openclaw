@@ -171,6 +171,7 @@ COPY scripts/ava-speech-chunks.mjs ./scripts/ava-speech-chunks.mjs
 COPY scripts/ava-deepseek-stream.mjs ./scripts/ava-deepseek-stream.mjs
 COPY scripts/ava-chat-events.mjs ./scripts/ava-chat-events.mjs
 COPY scripts/ava-request-timing.mjs ./scripts/ava-request-timing.mjs
+COPY scripts/ava-latency-benchmark.mjs ./scripts/ava-latency-benchmark.mjs
 COPY scripts/rex-autonomy.mjs ./scripts/rex-autonomy.mjs
 COPY scripts/context-aware-script-rotator.mjs ./scripts/context-aware-script-rotator.mjs
 COPY scripts/ava-governed-skill-router.mjs ./scripts/ava-governed-skill-router.mjs

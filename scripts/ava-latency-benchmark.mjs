@@ -98,7 +98,7 @@ export function summarizeBenchmark(samples) {
   };
 }
 
-export async function runBenchmark({ count = 24, runId = randomUUID(), fetchRequest, onSample = () => {} }) {
+export async function runBenchmark({ count = 24, runId = randomUUID(), fetchRequest, onSample = () => {}, stopOnExecutionError = false }) {
   if (!Number.isInteger(count) || count < 20 || count > 40) throw new Error('Use 20 to 40 controlled requests');
   const samples = [];
   const plan = buildBenchmarkPlan(count);
@@ -112,7 +112,8 @@ export async function runBenchmark({ count = 24, runId = randomUUID(), fetchRequ
         message: scenario.message, sessionId: `pbk-latency-${runId}-${scenario.id}`,
         source: 'ava-latency-diagnostic', diagnostic: true, metadata: { diagnostic: true, operational: false },
       });
-    } catch {
+    } catch (error) {
+      if (stopOnExecutionError) throw error;
       const sample = { index, scenario: scenario.id, startedAt, elapsedMs: performance.now() - started, ok: false, error: 'transport_failure' };
       samples.push(sample);
       await onSample(sample, samples);
@@ -168,19 +169,23 @@ async function main() {
   const deploymentBefore = identity(before.body);
   const countArg = args.indexOf('--count');
   const count = countArg < 0 ? 24 : Number(args[countArg + 1]);
+  if (count !== 24) throw new Error('The fixed founder runner uses exactly 24 server-owned cases');
   await mkdir(dirname(output), { recursive: true });
   const startedAt = new Date().toISOString();
-  const samples = await runBenchmark({ count, runId, fetchRequest: (payload) => request('/api/assistant/chat', payload),
-    onSample: async (sample, current) => {
-      await writeFile(output, JSON.stringify({ ...summarizeBenchmark(current), runId, startedAt, deploymentBefore, complete: false }, null, 2));
-      console.log(JSON.stringify({ index: sample.index, scenario: sample.scenario, elapsedMs: sample.elapsedMs, ok: sample.ok, timing: sample.timing }));
-    },
-  });
+  await writeFile(output, JSON.stringify({ runId, startedAt, deploymentBefore, complete: false }, null, 2));
+  const result = await request('/api/admin/ava-latency/run', {});
+  if (result.status !== 200 || result.body.execution !== 'server_fixed_read_only' || result.body.complete !== true
+    || result.body.diagnostic !== true || result.body.organicReadinessEligible !== false
+    || result.body.sampleCount !== 24 || !Array.isArray(result.body.samples) || result.body.samples.length !== 24) {
+    throw new Error('Server has not confirmed fixed diagnostic execution; stop benchmark');
+  }
+  const samples = result.body.samples;
   const after = await request('/health');
   const deploymentAfter = identity(after.body);
   const summary = summarizeBenchmark(samples);
   const deploymentStable = summary.versionBound && deploymentBefore.revision === deploymentAfter.revision && deploymentBefore.commit === deploymentAfter.commit;
-  const report = { ...summarizeBenchmark(samples), runId, startedAt, completedAt: new Date().toISOString(), deploymentBefore, deploymentAfter, deploymentStable, complete: true };
+  const report = { ...summarizeBenchmark(samples), execution: 'server_fixed_read_only',
+    runId, startedAt, completedAt: new Date().toISOString(), deploymentBefore, deploymentAfter, deploymentStable, complete: true };
   report.budgetProven = report.budgetProven && deploymentStable;
   await writeFile(output, JSON.stringify(report, null, 2));
   console.log(JSON.stringify({ output, sampleCount: samples.length, overall: report.overall, failedRequests: report.failedRequests, budgetProven: report.budgetProven, phoneLatencyProven: false }));

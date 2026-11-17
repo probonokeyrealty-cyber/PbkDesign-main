@@ -10,6 +10,8 @@ import { createAuditFixture, auditFixtureHealth } from './operational-audit-test
 import { readRuntimeCoverage } from './runtime-coverage-store.mjs';
 import { createRuntimeCoverageSampler } from './runtime-coverage-sampler.mjs';
 import { collectRuntimeSourceSnapshot } from './runtime-source-evidence.mjs';
+import { runtimeSourceWriteReturning, captureRuntimeSourceWriteBinding, recordRuntimeSourceEvidence } from './runtime-source-evidence.mjs';
+import { withRuntimeEvidenceContext } from './runtime-evidence-context.mjs';
 import { AGENT_LATENCY_PILOT_V2, getAgentLatencyPolicy } from './agent-latency-policy.mjs';
 import { collectAgentFleetEvidence } from './agent-fleet-measurement.mjs';
 import { buildDefaultAgentRegistry, buildStableAgentFleetMeasurement } from './agent-registry.mjs';
@@ -60,6 +62,52 @@ test('a genuine covered quiet day passes monitoring only; saved reference surviv
   assert.deepEqual(later.audit.coverage.reference, result.audit.coverage.reference);
   assert.equal(JSON.stringify(later).includes(secret), false);
 }, 30000);
+
+test('verified coverage cannot bless missing business linkage in the actual collector and signed store', async () => {
+  const f = await createAuditFixture({ end, revision, secret: secret + '-linkage' });
+  const linkageSecret = secret + '-linkage';
+  const execute = () => store.executeOperationalAudit({ pool: f.pool, secret: linkageSecret, revision, now: f.now,
+    collect: ({ pool, now, observationNow }) => collectOperationalAudit({ pool, now, observationNow,
+      secret: linkageSecret, revision, sampler: f.sampler, runtime: auditFixtureHealth() }) });
+  try {
+    for (const mode of ['unmapped_campaign', 'approval_without_seller', 'linked', 'missing_projection']) {
+      f.advance(1);
+      const at = new Date(f.now()).toISOString();
+      await f.db.query(`INSERT INTO provider_action_dispatches
+        (approval_id,status,created_at,updated_at,dispatch_started_at,completed_at)
+        VALUES ($1,'completed',$2,$2,$2,$2)`, [mode, at]);
+      if (mode !== 'unmapped_campaign') await f.db.query('INSERT INTO approvals(id,lead_id) VALUES ($1,$2)',
+        [mode, mode === 'approval_without_seller' ? '' : 'isolated-lead']);
+      if (mode === 'linked') await withRuntimeEvidenceContext('operator_chat', async () => {
+        const id = '00000000-0000-4000-8000-000000000001';
+        const row = (await f.db.query(`INSERT INTO conversation_events
+          (id,source_table,source_id,event_type,status,created_at,updated_at,occurred_at)
+          VALUES ($1,'approvals',$2,'approval.decided','completed',$3,$3,$3)
+          RETURNING ${runtimeSourceWriteReturning('conversation_projection')}`, [id, mode, at])).rows[0].runtime_source_row;
+        const writeBinding = captureRuntimeSourceWriteBinding({ secret: linkageSecret, revision,
+          sourceKind: 'conversation_projection', row });
+        assert.equal((await recordRuntimeSourceEvidence({ pool: f.pool, secret: linkageSecret, revision,
+          sourceKind: 'conversation_projection', sourceId: id, writeBinding, now: f.now() })).verified, true);
+      });
+      const result = await execute();
+      assert.equal(result.verified, true, mode);
+      assert.equal(result.audit.coverage.verified, true, mode);
+      const projection = result.audit.checks.find(c => c.id === 'conversation_projection');
+      assert.equal(projection.status, mode === 'linked' ? 'passed'
+        : mode === 'missing_projection' ? 'failed' : 'unverified', mode);
+      assert.equal(projection.counts.unverifiableDispatches,
+        ['unmapped_campaign', 'approval_without_seller'].includes(mode) ? 1 : 0, mode);
+      assert.equal(projection.counts.linkedDispatches, mode === 'linked' ? 1 : 0, mode);
+      assert.equal(result.audit.ready, mode === 'linked', mode);
+      const saved = await store.readOperationalAudit({ pool: f.pool, secret: linkageSecret, revision, now: f.now() });
+      assert.equal(saved.verified, true, mode);
+      assert.equal(saved.audit.ready, mode === 'linked', mode);
+      assert.equal(saved.audit.checks.find(c => c.id === 'conversation_projection').status, projection.status);
+      await f.db.query('DELETE FROM provider_action_dispatches WHERE approval_id=$1', [mode]);
+      await f.db.query('DELETE FROM approvals WHERE id=$1', [mode]);
+    }
+  } finally { await f.close(); }
+}, 120000);
 
 test('a signed Boolean or malformed/missing reference cannot qualify, including signed re-tampering', async () => {
   const genuine = await collect();

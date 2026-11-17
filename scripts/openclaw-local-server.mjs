@@ -25,6 +25,7 @@ import { controlledExecution, createControlledPool, createScopedState, assertCon
 import { createControlledAgentStorage, saveControlledAgentResult, readControlledAgentQualification, readControlledWorkflowPredecessor } from './controlled-agent-storage.mjs';
 import { runControlledAgentWorkflow } from './controlled-agent-workflow.mjs';
 import { createAvaRequestTiming } from './ava-request-timing.mjs';
+import { runBenchmark, summarizeBenchmark } from './ava-latency-benchmark.mjs';
 import { createAgentTimingTurn, markAgentTimingFirstContent, bindAgentTimingToParams,
   getTrustedAgentTimingProof, registeredAgentTimingChannel, agentTimingResultSucceeded } from './agent-timing-adapters.mjs';
 import { withRuntimeEvidenceContext, getRuntimeEvidenceContext } from './runtime-evidence-context.mjs';
@@ -73125,6 +73126,34 @@ const server = createServer(async (request, response) => {
       });
       clearBridgeReadCache('operational_audit_executed');
       json(response, result.ok ? 200 : result.result === 'operational_audit_in_progress' ? 409 : 503, result);
+      return;
+    }
+
+    if (pathname === '/api/admin/ava-latency/run') {
+      const authority = authorizeQualificationRequest({ method: request.method, search: url.search,
+        headers: request.headers, body: {} }, BRIDGE_API_KEY);
+      if (!authority.ok) {
+        json(response, authority.status, { ok: false, result: authority.result });
+        return;
+      }
+      const allowed = authorizeQualificationRequest({ method: request.method, search: url.search,
+        headers: request.headers, body: await readBody(request) }, BRIDGE_API_KEY);
+      if (!allowed.ok) {
+        json(response, allowed.status, { ok: false, result: allowed.result });
+        return;
+      }
+      // Only this fixed founder runner establishes diagnostic authority. The
+      // ordinary assistant entry inherits ALS, never a payload's source/flags.
+      const samples = await withRuntimeEvidenceContext('diagnostic', () => runBenchmark({
+        count: 24, stopOnExecutionError: true,
+        fetchRequest: async payload => {
+          const result = await handleInternalAvaAssistantChatRequest({
+            headers: {}, [RAW_BODY_BUFFER_SYMBOL]: Buffer.from(JSON.stringify(payload)),
+          });
+          return { status: result.statusCode || 200, body: result.body || {} };
+        },
+      }));
+      json(response, 200, { ...summarizeBenchmark(samples), execution: 'server_fixed_read_only', complete: true });
       return;
     }
 

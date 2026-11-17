@@ -87,6 +87,37 @@ freshness, business-result, organic sample, memory, delivery, independent canary
 database-security, approval, or unresolved-dispatch/dead-letter gates. A virtual
 trusted clock over durable SQL proves the algorithm only, never operating history.
 
+### Fixed Diagnostic Benchmark
+
+The existing latency CLI now invokes `POST /api/admin/ava-latency/run` with an
+empty JSON object. The route reuses the direct-founder qualification-runner
+authorization and existing admin protections. Delegated team/proxy callers,
+nonfounders, query strings and nonempty/selector/override payloads are denied.
+It is not an arbitrary diagnostic prompt or tool entry. Ordinary assistant
+`diagnostic`, `source`, metadata, channel or signature claims confer no authority.
+
+The server owns the fixed 24-case plan: six varied model cases and 18 deterministic
+cases, including six absent-lead negative controls. Private diagnostic context
+survives the actual assistant entry; each returned case must confirm diagnostic
+isolation or the runner stops. Exceptions remain execution failures; fallbacks,
+controller denials and missing model completions cannot certify the speed budget.
+The CLI accepts only its default 24 cases (or explicit `--count 24`). No benchmark
+was run against a hosted service, real model or seller in this local build.
+
+Reported case elapsed time measures server-side assistant execution, not a
+client HTTP round trip; the enclosing fixed-runner HTTP request is not an organic
+sample. Existing request/model deadlines, generation, streaming and Stop behavior
+are unchanged, including the CLI's 60000-ms transport timeout. A timed-out batch
+is incomplete, never passing proof. Diagnostic timings and source receipts cannot
+become organic fleet samples. Network-denied HTTP fixtures use a read-only model
+stub; the isolated real bridge without external keys correctly retains fallbacks
+and a false speed-budget result.
+
+The test-only disposable Postgres fixture owns cleanup from its initial protected
+snapshot through schema initialization. Failed snapshot/CREATE/init paths end the
+pool exactly once; failed DROP/end cleanup retains the original initialization
+error. Successful SQL, target guards and healthy fixture behavior are unchanged.
+
 ## Local Verification
 
 Use supported Node 22.23.5 explicitly; leave default Node 24 unchanged. On this

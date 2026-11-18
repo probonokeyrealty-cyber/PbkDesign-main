@@ -22,6 +22,12 @@ photos, image fallback and failed-photo removal while open, and no business
 writes. Chrome visual inspection also used existing public source photos through
 a read-only local fixture.
 
+Final live screenshot review exposed an intrinsic CSS Grid sizing issue: the
+image could force its grid row taller than the fit canvas. Explicit zero-minimum
+tracks and image minimum sizes keep the whole photo contained at 100%, including
+after resetting from 400%. The new fit-area overflow assertion failed before
+this correction. Zoomed overflow remains intentional for panning.
+
 Release follows the existing protected PR and Netlify/Render main-branch deploy
 pipeline. Keep all-deployment staff SSO intact. Live verification should only
 read an existing CRM property and exercise local viewer controls.

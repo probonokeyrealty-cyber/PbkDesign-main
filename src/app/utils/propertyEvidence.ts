@@ -9,6 +9,10 @@ const cleanText = (value: unknown, limit = 500) =>
   typeof value === 'string' ? value.trim().slice(0, limit) : '';
 const number = (value: unknown) =>
   typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
+const recordDate = (value: unknown) =>
+  /^\d{4}-\d{2}-\d{2}$/.test(cleanText(value)) && Number.isFinite(Date.parse(cleanText(value)))
+    ? cleanText(value)
+    : null;
 const addressKey = (value: unknown) => {
   const address = typeof value === 'string' ? value.trim() : '';
   return address.length > 500
@@ -115,6 +119,7 @@ export function readPropertyEvidence(deal: unknown, address: string) {
     address: string;
     retrievedAt: string;
     facts: AttomPropertyFacts;
+    fieldRetrievedAt?: Record<string, string>;
   } | null = null;
   if (
     addressKey(address) &&
@@ -129,6 +134,43 @@ export function readPropertyEvidence(deal: unknown, address: string) {
       facts: {
         address: cleanText(facts.address) || cleanText(item.address),
         apn: cleanText(facts.apn, 100) || null,
+        attomId: cleanText(facts.attomId, 500) || null,
+        fips: cleanText(facts.fips, 500) || null,
+        county: cleanText(facts.county, 500) || null,
+        subdivision: cleanText(facts.subdivision, 500) || null,
+        zoning: cleanText(facts.zoning, 500) || null,
+        propertyClass: cleanText(facts.propertyClass, 500) || null,
+        condition: cleanText(facts.condition, 500) || null,
+        constructionType: cleanText(facts.constructionType, 500) || null,
+        ownerName: cleanText(facts.ownerName, 500) || null,
+        owner2Name: cleanText(facts.owner2Name, 500) || null,
+        owner3Name: cleanText(facts.owner3Name, 500) || null,
+        owner4Name: cleanText(facts.owner4Name, 500) || null,
+        ownerMailingAddress: cleanText(facts.ownerMailingAddress, 500) || null,
+        absenteeOwnerStatus: cleanText(facts.absenteeOwnerStatus, 500) || null,
+        corporateOwnerIndicator: cleanText(facts.corporateOwnerIndicator, 500) || null,
+        saleDocumentNumber: cleanText(facts.saleDocumentNumber, 500) || null,
+        saleDocumentType: cleanText(facts.saleDocumentType, 500) || null,
+        saleTransactionType: cleanText(facts.saleTransactionType, 500) || null,
+        originalMortgageLender: cleanText(facts.originalMortgageLender, 500) || null,
+        originalMortgageDocumentNumber:
+          cleanText(facts.originalMortgageDocumentNumber, 500) || null,
+        secondOriginalMortgageLender: cleanText(facts.secondOriginalMortgageLender, 500) || null,
+        secondOriginalMortgageDocumentNumber:
+          cleanText(facts.secondOriginalMortgageDocumentNumber, 500) || null,
+        buildingSqft: number(facts.buildingSqft),
+        levels: number(facts.levels),
+        unitsCount: number(facts.unitsCount),
+        assessedLandValue: number(facts.assessedLandValue),
+        assessedImprovementValue: number(facts.assessedImprovementValue),
+        assessedTotalValue: number(facts.assessedTotalValue),
+        assessmentMarketTotalValue: number(facts.assessmentMarketTotalValue),
+        taxDelinquentYear: number(facts.taxDelinquentYear),
+        originalMortgageAmount: number(facts.originalMortgageAmount),
+        secondOriginalMortgageAmount: number(facts.secondOriginalMortgageAmount),
+        saleTransactionDate: recordDate(facts.saleTransactionDate),
+        sourcePublishedDate: recordDate(facts.sourcePublishedDate),
+        sourceLastModified: recordDate(facts.sourceLastModified),
         propertyType: cleanText(facts.propertyType, 100) || null,
         lotSqft: number(facts.lotSqft),
         lotAcres: number(facts.lotAcres),
@@ -139,9 +181,17 @@ export function readPropertyEvidence(deal: unknown, address: string) {
         taxAmount: number(facts.taxAmount),
         taxYear: number(facts.taxYear),
         recordedSaleAmount: number(facts.recordedSaleAmount),
-        recordedSaleDate: cleanText(facts.recordedSaleDate, 30) || null,
+        recordedSaleDate: recordDate(facts.recordedSaleDate),
       },
     };
+  }
+  if (records) {
+    const dates: Record<string, string> = {};
+    for (const key of Object.keys(records.facts)) {
+      const value = record(item.fieldRetrievedAt)[key];
+      if (Number.isFinite(Date.parse(cleanText(value)))) dates[key] = cleanText(value);
+    }
+    if (Object.keys(dates).length) records.fieldRetrievedAt = dates;
   }
   return { listing: listingSnapshot(root.listingSnapshot, address), records };
 }

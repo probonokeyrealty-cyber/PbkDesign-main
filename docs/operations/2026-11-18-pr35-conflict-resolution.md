@@ -45,7 +45,7 @@ Prior callback/closure results remain historical, not proof of this tree.
 The prior full-suite failures and isolated rerun caveat remain in
 `2026-11-18-callback-authorization-parity.md`; they are not erased by this merge.
 
-## Verification Status
+## First Integration Verification
 
 Fresh local checks on the integrated tree:
 - Five focused authorization/closure/proxy/founder/canary suites: 286 passes,
@@ -61,3 +61,43 @@ Fresh local checks on the integrated tree:
 Branch push and fresh CI observation are the next steps. No production readiness
 or clean full-suite claim is made by these local checks. CI status will be recorded
 on PR 35 without treating this branch integration as a merge into main or a release.
+
+## Concurrent Main Advancement
+
+The first integration was committed and pushed as
+`3a08f37dddedd009e85f4375b563cd17663dfa24`. During verification, PR 34 landed on
+main at `2ed71dd5474ed7779c1208409925a3d455107ca2`. The new main changed the same
+fingerprint baseline, so GitHub still reported conflicts and did not start normal
+PR verification. The skipped auto-merge job did not enable merging.
+
+Integrate that exact new main without rebase/force-push. Again the only text
+conflict is the fingerprint expectation. Keep main's lead-intelligence identity,
+enrichment, evidence, UI and test changes; do not alter or invoke its provider/CRM
+paths. Callback/closure/auth/dispatch/retry logic must remain the PR parent's.
+
+The prior combined pin produced the expected RED: 20 passes, one fingerprint
+failure. PowerShell and actual Jest extraction agreed on the new combined digest:
+
+| Source | Outside-Builder SHA256 |
+| --- | --- |
+| First integration | `8f4c75d02168d6afe84a319c5e399d957d4b6498b08e4a83ed3ad26a17cc3ce1` |
+| New main | `a0b0dad9228d17e3bc382d010577b705730e95c16e7f42fc18259adcc6d1ee55` |
+| New combined | `804677cab703eaa5fea4018525660c51e6bce3c3c8b90d0bfe4587625d09c395` |
+
+Independent incremental review found no actionable findings. Incoming-only files
+match new main and overlapping source/Docker changes preserve both parents.
+The reviewer verified 99 safety-related function ASTs and the global bearer/team/
+TOTP gate are unchanged, plus exact extraction and all three digests. The maturity
+builder is AST-identical to the first integration.
+
+Fresh second-tree checks:
+- Six focused suites (prior five plus ATTOM preview): 293 passes, no failures/skips.
+- Seven analyzer/property node-test files: 33 passes, no failures/skips.
+- Typecheck, lint, production build and whitespace checks passed.
+- Isolated callback HTTP, dead-letter closure and approval-action safety smokes
+  passed with no contact/provider writes.
+- Docker import/package smoke passed: 195 imports, 123 files.
+
+No local full-suite or native database rerun is claimed for these integrations.
+The historical full-unit and native-clock caveats remain unchanged. Fresh CI
+after this second branch push is required; record its actual result on PR 35.

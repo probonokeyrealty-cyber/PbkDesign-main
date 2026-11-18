@@ -6,6 +6,7 @@ export function buildAnalyzerLeadPatch(deal) {
   if (!text(deal?.leadId)) throw Error('Choose a saved lead before saving property facts.');
   const address = text(deal.address).match(/^(.+),\s*([^,]+),\s*([A-Z]{2})\s+(\d{5}(?:-\d{4})?)$/i);
   return {
+    ...(address ? {expectedPropertyAddress:{street:address[1].trim(),city:address[2].trim(),state:address[3].toUpperCase(),zip:address[4]}} : {}),
     actor: 'PBK operator', actionSource: 'deal-analyzer-save', selectedPath: deal.selectedPath,
     seller: {
       ...(deal.sellerName !== undefined ? { name: text(deal.sellerName) } : {}),
@@ -21,7 +22,7 @@ export function buildAnalyzerLeadPatch(deal) {
       estimatedRepairs: fact(deal.repairs?.mid), condition: text(deal.repairs?.condition),
       mortgageBalance: fact(deal.balance), mortgageRate: fact(deal.rate), rent: fact(deal.rent),
     },
-    analyzer: { comps: deal.comps }, deal: { ...deal },
+    analyzer: { comps: deal.comps, ...(deal.recordedSales ? {recordedSales:deal.recordedSales} : {}) }, deal: { ...deal },
   };
 }
 

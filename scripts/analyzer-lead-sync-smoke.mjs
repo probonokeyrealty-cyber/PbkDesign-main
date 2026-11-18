@@ -259,7 +259,7 @@ assert(
   'body.call_metadata || body.callMetadata || body.callContext || body.call_context',
   'callContext: callContextPatch',
   'call_context: callContextPatch',
-  "persistLeadProfileRowToDb(patched || nextLead, 'lead-detail-edit')",
+  "persistLeadProfileRowToDb(patched || nextLead, 'lead-detail-edit', {exactIdentity:Boolean(body.expectedPropertyAddress)})",
   'leadCommitEnvelope: (patched || nextLead).leadCommitEnvelope',
   'forceNew: true',
 ].forEach((expected) => {

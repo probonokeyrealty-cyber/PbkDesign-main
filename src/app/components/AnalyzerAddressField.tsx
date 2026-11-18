@@ -42,7 +42,7 @@ export function AnalyzerAddressField({
     let current = true;
     setSuggestions([]);
     setActive(-1);
-    if (!focused || deal.address.trim().length < 4) return;
+    if (automaticLookup || !focused || deal.address.trim().length < 4) return;
     if (
       automaticLookup &&
       /^\d[^,]+,\s*[^,]+,\s*[a-z]{2}\s+\d{5}(?:-\d{4})?$/i.test(deal.address.trim())

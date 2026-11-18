@@ -181,10 +181,10 @@ test('unapproved v2 policy is not replaced with a pilot or legacy policy', async
 test('reviewed non-maturity bridge baseline retains its exact integration surface', () => {
   const unchanged = (source.slice(0, start) + source.slice(end))
     .replace("import { readCanaryEvidence } from './canary-evidence-reader.mjs';\n", '');
-  // Combined callback/closure and main address/CRM integration baseline.
+  // Combined callback/closure and main property-intelligence integration baseline.
   // See docs/operations/2026-11-18-pr35-conflict-resolution.md for both parents.
   assert.equal(createHash('sha256').update(unchanged).digest('hex'),
-    '8f4c75d02168d6afe84a319c5e399d957d4b6498b08e4a83ed3ad26a17cc3ce1');
+    '804677cab703eaa5fea4018525660c51e6bce3c3c8b90d0bfe4587625d09c395');
 });
 
 test('production distribution includes reader and protocol, never the fixture signer', () => {

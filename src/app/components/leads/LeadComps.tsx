@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router';
 import { AlertCircle, Loader2, RefreshCw } from 'lucide-react';
-import { fetchAttomRecentSales, patchLeadRequest, type AttomPreviewAddress, type RecentSalesResult } from '../../utils/runtimeBridge';
+import { patchLeadRequest, type AttomPreviewAddress, type RecentSalesResult } from '../../utils/runtimeBridge';
 import { selectedCompPatch } from '../../utils/leadComps.mjs';
 import { hasLookupAddress } from './AttomPropertyPreview';
 import '../../../styles/property-intelligence.css';
@@ -17,46 +17,46 @@ const messages: Record<string, string> = {
   unavailable: 'Could not reach the record source. Your lead is unchanged.',
 };
 
-export function LeadComps({ address, leadId = '' }: { address: AttomPreviewAddress; leadId?: string }) {
-  const { street, city, state, zip } = address;
-  const lookupAddress = useMemo(() => ({ street, city, state, zip }), [street, city, state, zip]);
-  const [radius, setRadius] = useState(1);
+export function LeadComps({ address, leadId = '', savedSales, onRefresh, refreshing = false, onSaved, onSavingChange }: {
+  address: AttomPreviewAddress;
+  leadId?: string;
+  savedSales?: RecentSalesResult | null;
+  onRefresh?: (radiusMiles: number) => void | Promise<void>;
+  refreshing?: boolean;
+  onSaved?: (leadId: string) => Promise<void>;
+  onSavingChange?: (saving: boolean) => void;
+}) {
+  const [radius, setRadius] = useState(savedSales?.radiusMiles || 1);
   const [sort, setSort] = useState('date');
-  const [refresh, setRefresh] = useState(0);
   const [selected, setSelected] = useState<string[]>([]);
   const [saving, setSaving] = useState(false);
   const [saveStatus, setSaveStatus] = useState('');
-  const [result, setResult] = useState<{ key: string; data: RecentSalesResult } | null>(null);
-  const queryKey = JSON.stringify([address.street, address.city, address.state, address.zip, radius, refresh]);
+  const queryKey = JSON.stringify([address.street, address.city, address.state, address.zip]);
   const scope = useRef(''); scope.current = leadId + queryKey;
   const complete = hasLookupAddress(address) || /^.+,\s*[^,]+,\s*[A-Z]{2}\s+\d{5}(?:-\d{4})?$/i.test(address.street);
   useEffect(() => {
-    let current = true;
+    scope.current = leadId + queryKey;
     setSelected([]); setSaveStatus(''); setSaving(false);
-    if (complete) {
-      void fetchAttomRecentSales(lookupAddress, radius).then(
-        data => { if (current) setResult({ key: queryKey, data }); },
-        () => { if (current) setResult({ key: queryKey, data: { status: 'unavailable' } }); },
-      );
-    }
-    return () => { current = false; };
-  }, [queryKey, complete, lookupAddress, radius, leadId]);
-  const data = result?.key === queryKey ? result.data : null;
-  const loading = complete && !data;
+  }, [queryKey, leadId]);
+  useEffect(() => { setSelected([]); }, [savedSales]);
+  useEffect(() => () => { scope.current = ''; }, []);
+  const data = savedSales;
+  const loading = refreshing;
   const rows = useMemo(() => [...(data?.sales || [])].sort((a, b) => sort === 'price'
     ? b.price - a.price : sort === 'distance' ? a.distanceMiles - b.distanceMiles : b.soldDate.localeCompare(a.soldDate)), [data, sort]);
   async function saveSelection() {
-    if (!leadId || !data || saving) return;
+    if (!leadId || !data || saving || refreshing) return;
     const current = scope.current;
-    setSaving(true); setSaveStatus('');
+    setSaving(true); setSaveStatus(''); onSavingChange?.(true);
     try {
       const patch = selectedCompPatch(data, selected, address);
       const response = await patchLeadRequest(leadId, patch);
       if (response.ok === false) throw Error('The bridge did not save the selected comps.');
+      if (scope.current === current) await onSaved?.(leadId);
       if (scope.current === current) setSaveStatus('Selected comps saved to this lead.');
     } catch (error) {
       if (scope.current === current) setSaveStatus(error instanceof Error ? error.message : 'Unable to save comps. Retry when the bridge is available.');
-    } finally { if (scope.current === current) setSaving(false); }
+    } finally { onSavingChange?.(false); if (scope.current === current) setSaving(false); }
   }
   return <section className="pbk-lead-comps" aria-label="Recent comparable sales" aria-busy={loading}>
     <header>
@@ -68,14 +68,16 @@ export function LeadComps({ address, leadId = '' }: { address: AttomPreviewAddre
         <label>Sort <select value={sort} onChange={e => setSort(e.target.value)}>
           <option value="date">Newest sold</option><option value="distance">Nearest</option><option value="price">Highest price</option>
         </select></label>
-        <button type="button" className="pbk-btn pbk-btn-ghost pbk-btn-sm" title="Refresh recorded sales" aria-label="Refresh recorded sales" disabled={loading || !complete} onClick={() => setRefresh(n => n + 1)}><RefreshCw size={16} /></button>
+        <button type="button" className="pbk-btn pbk-btn-ghost pbk-btn-sm" title="Refresh property intelligence with selected radius" aria-label="Refresh property intelligence with selected radius" disabled={loading || saving || !complete || !onRefresh} onClick={() => void onRefresh?.(radius)}><RefreshCw size={16} /></button>
       </div>
     </header>
     {!complete ? <p role="status">Complete the property address to find nearby sales.</p>
       : loading ? <div role="status" className="pbk-comps-loading"><Loader2 size={18} className="animate-spin" /> Looking up recorded sales...</div>
-      : data?.status !== 'matched' ? <div role="alert" className="pbk-comps-error"><AlertCircle size={18} /><p>{messages[data?.status || 'unavailable'] || messages.unavailable}</p><button type="button" className="pbk-btn pbk-btn-ghost pbk-btn-sm" onClick={() => setRefresh(n => n + 1)}>Retry</button></div>
+      : !data ? <p role="status">No saved recorded sales. Refresh property intelligence to find nearby sales.</p>
+      : data.status !== 'matched' ? <div role="alert" className="pbk-comps-error"><AlertCircle size={18} /><p>{messages[data.status] || messages.unavailable}</p><button type="button" className="pbk-btn pbk-btn-ghost pbk-btn-sm" disabled={!onRefresh || saving} onClick={() => void onRefresh?.(radius)}>Retry property intelligence</button></div>
       : <>
-        <p role="status">{rows.length ? `${rows.length} sales` : `No recorded sales within ${radius} ${radius === 1 ? 'mile' : 'miles'} in the last 30 days.`}</p>
+        <p role="status">{rows.length ? `${rows.length} saved sales · Suggestions requiring review` : `No recorded sales within ${data.radiusMiles ?? radius} miles in the saved search window.`}</p>
+        {data.radiusMiles !== radius && <p className="pbk-comps-source">Choose refresh to search the selected radius. The saved results remain visible until then.</p>}
         {rows.length > 0 && <div className="pbk-comps-table-scroll"><table>
           <caption className="sr-only">Recent sales from {data.windowStart} to {data.windowEnd}</caption>
           <thead><tr><th scope="col">Property</th><th scope="col">Sold</th><th scope="col">Price</th><th scope="col">Distance</th><th scope="col">Beds / baths</th><th scope="col">Sq ft</th><th scope="col">$/sq ft</th></tr></thead>

@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import { intelligenceRequest, mergeAnalyzerIntelligence, propertyContextFields, resetChangedProperty } from './utils/analyzerIntelligence.mjs';
 import { buildAnalyzerLeadPatch } from './utils/analyzerLeadPersistence.mjs';
 import { TopBar } from './components/TopBar';
 import { LeftPanel } from './components/LeftPanel';
@@ -37,6 +38,7 @@ import {
   sendDealToAgent,
   sendSellerDocsRequest,
   syncDealAnalysis,
+  fetchPropertyIntelligenceRequest,
 } from './utils/runtimeBridge';
 import {
   ANALYZER_CURRENT_DEAL_KEY,
@@ -220,7 +222,7 @@ export default function App({ engineOnly = false }: AppProps) {
   const draftBaseline = useRef<string | null | undefined>(readAnalyzerDraftBaseline());
   const manualDraftFields = useRef<Set<string> | null>(null);
   if (!manualDraftFields.current) {
-    manualDraftFields.current = new Set(readAnalyzerDraftManualFields() ?? Object.keys(deal));
+    manualDraftFields.current = new Set(readAnalyzerDraftManualFields() ?? (deal.address.trim() ? Object.keys(deal) : []));
   }
   const persistDraft = useCallback(async (next: DealData, force = false) => {
     if (draftScope.current !== getAnalyzerDraftIdentity()) return 'superseded';
@@ -546,7 +548,7 @@ export default function App({ engineOnly = false }: AppProps) {
   useEffect(() => {
     // Prefer comp-backed ARV when comps exist, but do not wipe a manual or bridge-fed ARV.
     const compArv = calculateARV(deal.comps);
-    const arv = compArv > 0 ? compArv : deal.arv;
+    const arv = manualDraftFields.current?.has('arv') && deal.arv > 0 ? deal.arv : compArv > 0 ? compArv : deal.arv;
 
     // Calculate MAO values using corrected formulas
     const mao60 = calculateMAO.wholesale(
@@ -611,6 +613,9 @@ export default function App({ engineOnly = false }: AppProps) {
     publishDraft.current = true;
     cacheIncomingDraft.current = false;
     Object.keys(updates).forEach((key) => manualDraftFields.current?.add(key));
+    if (updates.address !== undefined && Object.keys(resetChangedProperty(currentDeal.current, updates.address)).length) {
+      propertyContextFields.forEach(key => manualDraftFields.current?.delete(key));
+    }
     const shouldResetAnalysis = Object.keys(updates).some((key) =>
       ANALYSIS_IMPACT_FIELDS.includes(key as keyof DealData)
     );
@@ -642,23 +647,30 @@ export default function App({ engineOnly = false }: AppProps) {
 
   const handleAnalyzeDeal = useCallback(async () => {
     if (!mounted.current || draftScope.current !== getAnalyzerDraftIdentity()) return;
-    const deal = currentDeal.current;
+    let deal = currentDeal.current;
     const snapshot = deal;
     const version = ++analysisRequestVersion.current;
     const isCurrentAnalysis = () =>
       mounted.current &&
       analysisRequestVersion.current === version &&
       draftScope.current === getAnalyzerDraftIdentity();
-    const readiness = getAnalyzeReadiness(deal);
-
-    if (!readiness.ready) {
-      setAnalyzeStatus(readiness.message);
-      setActiveTab('analyzer');
-      return;
-    }
     publishDraft.current = true;
-
+    let readiness = getAnalyzeReadiness(deal);
     try {
+      setAnalyzeStatus('Gathering property records, photos and sale candidates...');
+      const evidence = await fetchPropertyIntelligenceRequest(intelligenceRequest(deal));
+      if (!isCurrentAnalysis() || currentDeal.current !== snapshot) return;
+      const updates = mergeAnalyzerIntelligence(deal, evidence, manualDraftFields.current || new Set());
+      deal = {...deal, ...updates};
+      if (!manualDraftFields.current?.has('arv') && !deal.arv) deal.arv = calculateARV(deal.comps);
+      readiness = getAnalyzeReadiness(deal);
+      if (evidence.saved && evidence.leadId) window.dispatchEvent(new CustomEvent('pbk:lead-updated', {detail:{leadId:evidence.leadId}}));
+      if (!readiness.ready) {
+        setDeal(deal);
+        setAnalyzeStatus(`Property evidence kept${deal.leadId ? ' in this lead' : ' in your draft'}. ${readiness.message}`);
+        setActiveTab('analyzer');
+        return;
+      }
       const response = await syncDealAnalysis(deal);
       if (!isCurrentAnalysis() || currentDeal.current !== snapshot) return;
       const result =
@@ -690,6 +702,7 @@ export default function App({ engineOnly = false }: AppProps) {
       setDeal((prev) => {
         return {
           ...prev,
+          ...deal,
           ...analysisUpdates,
         };
       });
@@ -701,6 +714,7 @@ export default function App({ engineOnly = false }: AppProps) {
           });
           await patchLeadRequest(deal.leadId, {
             actor: 'Deal Analyzer',
+            expectedPropertyAddress: intelligenceRequest(deal).expectedPropertyAddress,
             selectedPath: deal.selectedPath,
             selected_path: deal.selectedPath,
             property: {
@@ -738,6 +752,7 @@ export default function App({ engineOnly = false }: AppProps) {
             },
             analyzer: {
               comps: analyzedDeal.comps,
+              ...(deal.recordedSales ? {recordedSales:deal.recordedSales} : {}),
               runId: result?.id,
               address: result?.address || deal.address,
               arv: nextArv,
@@ -762,11 +777,12 @@ export default function App({ engineOnly = false }: AppProps) {
       const bridgeAnalysisStatus = result?.mao
         ? `Analysis saved. ARV ${Number(result.arv || 0).toLocaleString()} / MAO ${Number(result.mao || 0).toLocaleString()}.${leadSyncStatus}`
         : `${readiness.successMessage}${leadSyncStatus}`;
-      setAnalyzeStatus(bridgeAnalysisStatus);
+      setAnalyzeStatus(`${bridgeAnalysisStatus}${deal.recordedSales?.review === 'suggested-unreviewed' ? ' Provisional analysis: review the auto-filled sale candidates before making an offer.' : ''}`);
     } catch (error) {
       if (!isCurrentAnalysis() || currentDeal.current !== snapshot) return;
       setDeal((prev) => ({
         ...prev,
+        ...deal,
         isAnalyzed: false,
         verdict: calculateVerdict(prev.price, prev.arv, prev.maoRBP),
       }));

@@ -100,7 +100,7 @@ async function verify(engine, config, label) {
       await expect(workspace.getByText('1,900 sq ft', { exact: true })).toBeVisible();
       await expect(workspace.locator('time[datetime="2026-11-18T12:00:00Z"]').first()).toBeVisible();
       await tab('Comps');
-      await expect(workspace.getByRole('cell', { name: '$410,000', exact: true })).toBeVisible();
+      await expect(workspace.locator('td[data-label="Price"]').filter({hasText:/^\$410,000$/})).toBeVisible();
       await noOverflow();
     };
     await page.goto(origin + '/leads/' + fixture.id);
@@ -116,7 +116,7 @@ async function verify(engine, config, label) {
     await expect(workspace.getByText('Saved ATTOM snapshot', { exact: true })).toBeVisible();
     await expect(workspace.getByText('1,700 sq ft', { exact: true })).toBeVisible();
     await noOverflow(); await tab('Photos'); await noOverflow(); await tab('Comps');
-    await expect(workspace.getByRole('cell', { name: '$400,000', exact: true })).toBeVisible();
+    await expect(workspace.locator('td[data-label="Price"]').filter({hasText:/^\$400,000$/})).toBeVisible();
     await workspace.getByRole('combobox', { name: 'Radius' }).selectOption('2');
     await workspace.getByRole('combobox', { name: 'Sort' }).selectOption('price');
     await noOverflow();
@@ -157,8 +157,8 @@ async function verify(engine, config, label) {
     await expect(workspace.getByRole('tabpanel', {name:'Property record',exact:true}).locator('dd').filter({hasText:/^OTHER-LEAD-SAME-ADDRESS$/})).toBeVisible();
     await expect(workspace.getByText('2,100 sq ft', { exact: true })).toBeVisible();
     await tab('Comps');
-    await expect(workspace.getByRole('cell', { name: '$520,000', exact: true })).toBeVisible();
-    await expect(workspace.getByRole('cell', { name: '$410,000', exact: true })).toHaveCount(0);
+    await expect(workspace.locator('td[data-label="Price"]').filter({hasText:/^\$520,000$/})).toBeVisible();
+    await expect(workspace.locator('td[data-label="Price"]').filter({hasText:/^\$410,000$/})).toHaveCount(0);
     assert.equal(mutations.length, beforeSwitch, 'Switching duplicate-address leads must not save');
     assert.deepEqual(providerReads, [], 'Only explicit unified refresh may access providers');
     assert.deepEqual(unexpectedWrites, []); assert.deepEqual(errors, []); await noOverflow();

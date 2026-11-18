@@ -173,6 +173,7 @@
     "test:lead-property-workspaces-browser": "node ./scripts/lead-property-workspaces-browser-smoke.mjs",
     "test:crm-property-evidence": "node --test scripts/property-evidence.node-test.mjs && node scripts/crm-property-evidence-browser-smoke.mjs",
     "test:property-photo-quality": "node --test scripts/property-photo-quality.node-test.mjs && node scripts/property-photo-quality-browser-smoke.mjs",
+    "test:property-photo-viewer": "node scripts/property-photo-quality-browser-smoke.mjs --viewer",
     "test:lead-workspace-guidance-browser": "node ./scripts/lead-workspace-guidance-browser-smoke.mjs",
     "test:leads-design-browser": "node ./scripts/leads-design-browser-smoke.mjs",
     "test:batch-review": "node --experimental-strip-types --test ./scripts/batch-review-unit.mjs",

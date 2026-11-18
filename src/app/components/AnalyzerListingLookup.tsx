@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ExternalLink, Image as ImageIcon, RefreshCw, Search } from 'lucide-react';
+import { ExternalLink, Image as ImageIcon, Maximize2, RefreshCw, Search } from 'lucide-react';
+import { PropertyPhotoViewer } from './PropertyPhotoViewer';
 import type { DealData, PropertyListingSnapshot } from '../types';
 import { formatCurrency } from '../utils/formatting';
 import { fetchApifyListingRequest, type AttomPreviewResult } from '../utils/runtimeBridge';
@@ -461,6 +462,16 @@ export function AnalyzerListingPhotos({ result }: { result: AnalyzerPhotoResult 
       ? fullSizePhotoUrl(currentPhoto)
       : currentPhoto;
   const loadedWidth = loadedWidths[displayPhoto];
+  const handleLoad = (source: string, width: number) => {
+    setLoadedWidths((loaded) =>
+      loaded[source] === width ? loaded : { ...loaded, [source]: width }
+    );
+  };
+  const handleError = (photo: string, source: string) => {
+    if (source !== photo)
+      setFailedRenditions((failed) => (failed.includes(photo) ? failed : [...failed, photo]));
+    else setFailedPhotos((failed) => (failed.includes(photo) ? failed : [...failed, photo]));
+  };
   const status = result?.status ?? 'idle';
   return (
     <section className="pbk-analyzer-context-section" aria-label="Listing photos">
@@ -473,28 +484,40 @@ export function AnalyzerListingPhotos({ result }: { result: AnalyzerPhotoResult 
       </header>
       {currentPhoto ? (
         <>
-          <div className="pbk-analyzer-photo-stage">
-            <img
-              key={displayPhoto}
-              src={displayPhoto}
-              alt={`Listing photo ${urls.indexOf(currentPhoto) + 1}`}
-              loading="lazy"
-              referrerPolicy="no-referrer"
-              onLoad={(event) => {
-                const width = event.currentTarget.naturalWidth;
-                setLoadedWidths((loaded) =>
-                  loaded[displayPhoto] === width ? loaded : { ...loaded, [displayPhoto]: width }
-                );
-              }}
-              onError={() => {
-                if (displayPhoto !== currentPhoto) {
-                  setFailedRenditions((failed) =>
-                    failed.includes(currentPhoto) ? failed : [...failed, currentPhoto]
-                  );
-                } else setFailedPhotos((failed) => [...failed, currentPhoto]);
-              }}
-            />
-          </div>
+          <PropertyPhotoViewer
+            photos={photos}
+            photo={currentPhoto}
+            imageSrc={displayPhoto}
+            preview={loadedWidth !== undefined && loadedWidth < 480}
+            onSelect={setSelectedPhoto}
+            onLoad={handleLoad}
+            onError={handleError}
+            trigger={
+              <button
+                type="button"
+                className="pbk-analyzer-photo-stage pbk-photo-viewer-trigger"
+                aria-label="Open photo viewer"
+              >
+                <img
+                  key={displayPhoto}
+                  src={displayPhoto}
+                  alt={`Listing photo ${urls.indexOf(currentPhoto) + 1}`}
+                  loading="lazy"
+                  referrerPolicy="no-referrer"
+                  onLoad={(event) => {
+                    handleLoad(displayPhoto, event.currentTarget.naturalWidth);
+                  }}
+                  onError={() => {
+                    handleError(currentPhoto, displayPhoto);
+                  }}
+                />
+                <span className="pbk-photo-viewer-open">
+                  <Maximize2 size={14} aria-hidden />
+                  View full screen
+                </span>
+              </button>
+            }
+          />
           {loadedWidth !== undefined && loadedWidth < 480 && (
             <p className="pbk-property-evidence-note" role="status">
               Low-resolution source preview. Open the listing for more detail.

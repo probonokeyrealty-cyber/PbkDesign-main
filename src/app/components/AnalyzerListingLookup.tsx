@@ -3,14 +3,15 @@ import { ExternalLink, Image as ImageIcon, Maximize2, RefreshCw, Search } from '
 import { PropertyPhotoViewer } from './PropertyPhotoViewer';
 import type { DealData, PropertyListingSnapshot } from '../types';
 import { formatCurrency } from '../utils/formatting';
-import { fetchApifyListingRequest, type AttomPreviewResult } from '../utils/runtimeBridge';
+import { fetchApifyListingRequest, fetchPropertyIntelligenceRequest, type AttomPreviewResult } from '../utils/runtimeBridge';
 import {
-  captureListingSnapshot,
   fullSizePhotoUrl,
   listingSources,
   photoLinks,
   readPropertyEvidence,
 } from '../utils/propertyEvidence';
+
+import { intelligenceRequest, mergeAnalyzerIntelligence } from '../utils/analyzerIntelligence.mjs';
 
 type LookupState =
   | { status: 'idle' | 'loading' | 'missing' | 'error' }
@@ -61,41 +62,13 @@ function listingUpdates(
   return updates;
 }
 
-function recordUpdates(
-  deal: DealData,
-  records: AttomPreviewResult | undefined,
-  protectedFields?: ReadonlySet<keyof DealData>
-): Partial<DealData> {
-  if (records?.status !== 'matched') return {};
-  const facts = records.profile;
-  return listingUpdates(
-    deal,
-    {
-      status: 'found',
-      price: 0,
-      sources: [],
-      photos: [],
-      facts: {
-        beds: facts.beds,
-        baths: facts.baths,
-        sqft: facts.livingSqft,
-        year: facts.yearBuilt,
-        lotSqft: facts.lotSqft,
-      },
-    },
-    protectedFields
-  );
-}
-
 export function AnalyzerListingLookup({
   deal,
-  autoLookup = false,
   protectedFields,
   onFill,
   onPhotoResult,
 }: {
   deal: DealData;
-  autoLookup?: boolean;
   protectedFields?: ReadonlySet<keyof DealData>;
   onFill: (updates: Partial<DealData>) => void;
   onPhotoResult: (result: AnalyzerPhotoResult) => void;
@@ -115,7 +88,6 @@ export function AnalyzerListingLookup({
   current.current = { deal, onFill, protectedFields };
   const mounted = useRef(true);
   const pending = useRef(false);
-  const started = useRef(false);
 
   useEffect(() => {
     mounted.current = true;
@@ -132,99 +104,33 @@ export function AnalyzerListingLookup({
     });
   }, [address, lookup, onPhotoResult, photoEvidence]);
 
-  const lookUp = useCallback(
-    async (fill = false) => {
-      if (pending.current) return;
-      pending.current = true;
-      started.current = true;
-      setFilledCount(0);
-      setLookup({ status: 'loading' });
-      try {
-        const response = await fetchApifyListingRequest(address, true);
-        if (!mounted.current || current.current.deal.address.trim() !== address) return;
-        setRecords(response.records ?? null);
-        const publicFields = recordUpdates(
-          current.current.deal,
-          response.records,
-          current.current.protectedFields
-        );
-        if (response.records?.status === 'matched') {
-          publicFields.propertyRecordSnapshot = {
-            source: 'attom',
-            address,
-            retrievedAt: new Date().toISOString(),
-            facts: { ...response.records.profile },
-          };
-        }
-        // A recorded sale is historical evidence, never an asking price or ARV.
-        delete publicFields.price;
-        const record = response?.propertyData;
-        const listingSnapshot = captureListingSnapshot(address, response);
-        if (listingSnapshot) {
-          setCapturedListing(listingSnapshot);
-          publicFields.listingSnapshot = listingSnapshot;
-        }
-        if (!fill) {
-          const snapshots: Partial<DealData> = {
-            ...(publicFields.propertyRecordSnapshot
-              ? { propertyRecordSnapshot: publicFields.propertyRecordSnapshot }
-              : {}),
-            ...(listingSnapshot ? { listingSnapshot } : {}),
-          };
-          if (Object.keys(snapshots).length) current.current.onFill(snapshots);
-        }
-        const price = record?.data?.askingPriceUsd;
-        if (
-          !response?.cache?.hit ||
-          record?.source !== 'apify-for-sale' ||
-          record.data?.priceBasis !== 'asking_price' ||
-          !positiveNumber(price)
-        ) {
-          setLookup({ status: 'missing' });
-          if (fill && Object.keys(publicFields).length) {
-            current.current.onFill(publicFields);
-            setFilledCount(Object.keys(publicFields).length);
-          }
-          return;
-        }
-        const found: Extract<LookupState, { status: 'found' }> = {
-          status: 'found',
-          price,
-          sources: listingSources(record.data.sourceLinks),
-          facts: record.data.listingFacts ?? {},
-          propertyType: record.data.propertyType,
-          photos: photoLinks(record.data.photoUrls),
-        };
-        setLookup(found);
-        if (fill) {
-          const fields = {
-            ...publicFields,
-            ...listingUpdates(current.current.deal, found, current.current.protectedFields),
-          };
-          if (Object.keys(fields).length) current.current.onFill(fields);
-          setFilledCount(
-            Object.keys(fields).filter(
-              (key) => !['propertyRecordSnapshot', 'listingSnapshot'].includes(key)
-            ).length
-          );
-        }
-      } catch {
-        if (mounted.current) setLookup({ status: 'error' });
-      } finally {
-        pending.current = false;
+  const lookUp = useCallback(async () => {
+    if (pending.current) return;
+    pending.current = true;
+    const before = current.current.deal;
+    setLookup({ status: 'loading' });
+    try {
+      const response = await fetchPropertyIntelligenceRequest(intelligenceRequest(before));
+      if (!mounted.current || current.current.deal.address.trim() !== address || current.current.deal.leadId !== before.leadId) return;
+      const protectedNow = new Set(current.current.protectedFields);
+      for (const field of Object.keys(current.current.deal) as (keyof DealData)[]) {
+        if (JSON.stringify(current.current.deal[field]) !== JSON.stringify(before[field])) protectedNow.add(field);
       }
-    },
-    [address]
-  );
-
-  useEffect(() => {
-    // Only an operator edit starts lookup; opening/reloading a saved deal is read-only.
-    if (!autoLookup || !/^\d[^,]+,\s*[^,]+,\s*[a-z]{2}\s+\d{5}(?:-\d{4})?$/i.test(address)) return;
-    const timer = window.setTimeout(() => {
-      if (!started.current) void lookUp(true);
-    }, 800);
-    return () => window.clearTimeout(timer);
-  }, [address, autoLookup, lookUp]);
+      const updates = mergeAnalyzerIntelligence(current.current.deal, response, protectedNow);
+      current.current.onFill(updates);
+      setFilledCount(Object.keys(updates).filter(key => !/Snapshot|recordedSales/.test(key)).length);
+      setRecords(response.records);
+      const listing = response.listing;
+      const snapshot = readPropertyEvidence(response.patch.deal, address).listing;
+      if (snapshot) setCapturedListing(snapshot);
+      const data = listing?.propertyData?.data;
+      setLookup(listing?.cache?.hit && data?.priceBasis === 'asking_price' && positiveNumber(data.askingPriceUsd)
+        ? { status:'found',price:data.askingPriceUsd,sources:listingSources(data.sourceLinks),facts:data.listingFacts || {},photos:photoLinks(data.photoUrls),propertyType:data.propertyType }
+        : {status:'missing'});
+      if (response.saved && response.leadId) window.dispatchEvent(new CustomEvent('pbk:lead-updated', {detail:{leadId:response.leadId}}));
+    } catch { if (mounted.current) setLookup({status:'error'}); }
+    finally { pending.current=false; }
+  }, [address]);
 
   const updates = lookup.status === 'found' ? listingUpdates(deal, lookup, protectedFields) : {};
   const fillableCount = Object.keys(updates).length;
@@ -232,8 +138,8 @@ export function AnalyzerListingLookup({
   return (
     <div className="pbk-analyzer-listing">
       <p className="pbk-analyzer-lookup-hint">
-        Enter a full address to load available listing facts and photos in one lookup. Review the
-        numbers, then Save Deal for the CRM handoff.
+        Refresh or Analyze to gather records, photos and suggested sales. Linked leads save evidence to
+        the CRM; unlinked addresses stay in your draft. Existing entries are preserved.
       </p>
       <button
         type="button"
@@ -242,13 +148,13 @@ export function AnalyzerListingLookup({
         className="pbk-btn pbk-btn-ghost pbk-btn-sm"
       >
         <Search size={14} aria-hidden="true" />
-        Look up asking price
+        Refresh property intelligence
       </button>
       <div role="status">
         {lookup.status === 'loading' && <p className="mt-2">Looking up listing...</p>}
         {lookup.status === 'missing' && (
           <p className="mt-2">
-            No current cached listing found. Enter any missing listing details manually.
+            No current cached asking price found. Available records and sale candidates were kept; enter missing details manually.
           </p>
         )}
         {lookup.status === 'error' && (
@@ -257,7 +163,7 @@ export function AnalyzerListingLookup({
         {lookup.status === 'found' && (
           <div className="pbk-analyzer-listing-result">
             <p>
-              Apify asking price <strong>{formatCurrency(lookup.price)}</strong>
+              Listing asking price <strong>{formatCurrency(lookup.price)}</strong>
             </p>
             {(lookup.propertyType || positiveNumber(lookup.facts.lotSqft)) && (
               <p className="mt-1">
@@ -363,7 +269,7 @@ export function AnalyzerListingLookup({
   );
 }
 
-function useApifyPhotos(address: string, automatic = false) {
+function useApifyPhotos(address: string) {
   const generation = useRef(0);
   const [stored, setStored] = useState<AnalyzerPhotoResult>({ address, status: 'idle', urls: [] });
   const result: AnalyzerPhotoResult = useMemo(
@@ -389,24 +295,28 @@ function useApifyPhotos(address: string, automatic = false) {
   }, [address]);
   useEffect(() => {
     const requests = generation;
-    if (automatic && address.trim()) void lookup();
     return () => {
       requests.current++;
     };
-  }, [address, automatic, lookup]);
+  }, [address]);
   return { result, lookup };
 }
 
 export function LeadListingPhotos({
   address,
   snapshot,
+  onRefresh,
+  refreshing = false,
 }: {
   address: string;
   snapshot?: PropertyListingSnapshot | null;
+  onRefresh?: () => void | Promise<void>;
+  refreshing?: boolean;
 }) {
   const saved = snapshot?.photoUrls ?? [];
-  const { result, lookup } = useApifyPhotos(address, !saved.length);
-  const showingSaved = saved.length > 0 && result.status !== 'found';
+  const { result: localResult, lookup } = useApifyPhotos(address);
+  const result: AnalyzerPhotoResult = onRefresh ? { address, status: refreshing ? 'loading' : 'idle', urls: [] } : localResult;
+  const showingSaved = saved.length > 0 && (Boolean(onRefresh) || result.status !== 'found');
   const display = showingSaved ? { address, status: 'found' as const, urls: saved } : result;
   return (
     <div>
@@ -417,9 +327,9 @@ export function LeadListingPhotos({
         <button
           type="button"
           className="pbk-btn pbk-btn-ghost pbk-btn-sm"
-          aria-label="Refresh Apify photos"
-          disabled={!address.trim() || result.status === 'loading'}
-          onClick={() => void lookup()}
+          aria-label={onRefresh ? 'Refresh property intelligence' : 'Refresh listing photos'}
+          disabled={!address.trim() || refreshing || result.status === 'loading'}
+          onClick={() => void (onRefresh ? onRefresh() : lookup())}
         >
           <RefreshCw size={16} aria-hidden />
         </button>

@@ -17,6 +17,7 @@ import { AnalyzerAddressField } from './AnalyzerAddressField';
 import { formatCurrency } from '../utils/formatting';
 import { readAnalyzerDraftManualFields } from '../utils/analyzerStorage';
 import { calculateARV } from '../utils/dealCalculations';
+import { resetChangedProperty } from '../utils/analyzerIntelligence.mjs';
 import { getAnalyzeReadiness } from '../utils/pbk';
 import { PbkDataSource } from '../../components/pbk/index';
 
@@ -50,21 +51,24 @@ export function AnalyzerTab({
   const operatorFields = useRef(
     new Set<keyof DealData>((readAnalyzerDraftManualFields() || []) as (keyof DealData)[])
   );
-  const [editedAddress, setEditedAddress] = useState<string | null>(null);
   const handleInputChange = (field: keyof DealData, value: DealData[keyof DealData]) => {
     operatorFields.current.add(field);
     onDealChange({ [field]: value });
   };
 
   const handleCompChange = (comp: 'A' | 'B' | 'C', field: string, value: string | number) => {
+    operatorFields.current.add('comps');
+    operatorFields.current.add('arv');
+    const comps = {
+      ...deal.comps,
+      [comp]: { ...deal.comps[comp], [field]: value },
+    };
     onDealChange({
-      comps: {
-        ...deal.comps,
-        [comp]: {
-          ...deal.comps[comp],
-          [field]: value,
-        },
-      },
+      compManualSlots: [...new Set([...(deal.compManualSlots || []), comp])],
+      comps,
+      // A deliberate comp edit updates the existing mean-ARV calculation.
+      // Automatic evidence fills preserve an operator's ARV override instead.
+      arv: calculateARV(comps),
     });
   };
 
@@ -155,7 +159,6 @@ export function AnalyzerTab({
               onClick={async () => {
                 if (await onClearDeal()) {
                   operatorFields.current.clear();
-                  setEditedAddress(null);
                 }
               }}
               className="pbk-btn pbk-btn-ghost pbk-btn-sm"
@@ -177,13 +180,16 @@ export function AnalyzerTab({
             automaticLookup
             onChange={(patch) => {
               if (patch.address !== undefined) {
-                setEditedAddress(patch.address.trim());
+                const reset = resetChangedProperty(deal,patch.address);
+                if (Object.keys(reset).length) operatorFields.current.clear();
                 onDealChange({
+                  ...reset,
                   ...patch,
                   leadId: undefined,
                   crmCreateKey: undefined,
                   propertyRecordSnapshot: undefined,
                   listingSnapshot: undefined,
+                  recordedSales: undefined,
                   ...(deal.leadId || deal.crmCreateKey
                     ? {
                         sellerName: '',
@@ -199,7 +205,6 @@ export function AnalyzerTab({
           <AnalyzerListingLookup
             key={address}
             deal={deal}
-            autoLookup={editedAddress === address}
             protectedFields={operatorFields.current}
             onFill={onDealChange}
             onPhotoResult={setPhotoResult}
@@ -541,6 +546,13 @@ export function AnalyzerTab({
         <h2 id="analyzer-comps-heading" className="pbk-analyzer-section-title mb-3">
           Comparable Sales (Mean = ARV)
         </h2>
+        {deal.recordedSales?.review === 'suggested-unreviewed' && (
+          <p role="status" className="pbk-property-evidence-note mb-3">
+            ATTOM sale candidates · Not yet reviewed. Auto-filled comps and their mean ARV are
+            provisional. Review property similarity and sale terms before making an offer.
+            Select and save reviewed sales in this lead’s Property → Comps tab.
+          </p>
+        )}
         <div>
           {(['A', 'B', 'C'] as const).map((comp) => (
             <div

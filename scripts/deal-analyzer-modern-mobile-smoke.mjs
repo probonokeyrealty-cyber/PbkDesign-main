@@ -5,6 +5,7 @@ import vm from 'node:vm';
 import ts from 'typescript';
 import { savedLeadComps } from '../src/app/utils/leadComps.mjs';
 import { latestCallModeNote } from '../src/app/utils/analyzerLeadPersistence.mjs';
+import { samePropertyAddress } from '../src/app/utils/analyzerIntelligence.mjs';
 
 const root = process.cwd();
 
@@ -28,6 +29,10 @@ const runtimeBridge = read('src/app/utils/runtimeBridge.ts');
 const leadsRoute = read('src/app/routes/Leads.tsx');
 const bridgeServer = read('scripts/openclaw-local-server.mjs');
 const pkg = JSON.parse(read('package.json'));
+const evidenceCode = ts.transpileModule(read('src/app/utils/propertyEvidence.ts'), {
+  compilerOptions: {module:ts.ModuleKind.ESNext,target:ts.ScriptTarget.ES2022},
+}).outputText;
+const {readPropertyEvidence} = await import('data:text/javascript;base64,'+Buffer.from(evidenceCode).toString('base64'));
 
 assert(
   /readPbkPrefs/.test(app) && /applyPbkTheme/.test(app),
@@ -178,7 +183,7 @@ let sampleManualFields = [];
 let sampleBaseline = 'fixture-baseline', privateHydration, privateUnpublished;
 let sampleFresh = false;
 const hydration = vm.createContext({
-  exports: {}, savedLeadComps, latestCallModeNote, ANALYZER_CURRENT_DEAL_KEY: 'sample-only',
+  exports: {}, savedLeadComps, latestCallModeNote, readPropertyEvidence, samePropertyAddress, ANALYZER_CURRENT_DEAL_KEY: 'sample-only',
   readAnalyzerDraftManualFields: () => sampleManualFields,
   readAnalyzerDraftBaseline: () => sampleBaseline,
   isFreshAnalyzerDraft: () => sampleFresh,
@@ -210,6 +215,14 @@ const hydration = vm.createContext({
 vm.runInContext(hydrationCode, hydration, { timeout: 1000 });
 const mapLead = payload => structuredClone(hydration.buildAnalyzerDealFromLead(payload, 'sample-a'));
 const blankDeal = mapLead({ id: 'sample-a' });
+const evidenceAddress='24 Sample Oak Lane, Example City, CA 90210';
+const evidenceLead=mapLead({id:'sample-a',property:{address:'24 Sample Oak Lane',city:'Example City',state:'CA',zip:'90210'},deal:{
+  listingSnapshot:{source:'apify-for-sale',address:evidenceAddress,retrievedAt:'2026-11-18T12:00:00Z',photoUrls:['https://ap.rdcpix.com/fixture-front.jpg'],facts:{beds:3},sourceLinks:[],askingPrice:400000},
+  propertyRecordSnapshot:{source:'attom',address:evidenceAddress,retrievedAt:'2026-11-18T12:00:00Z',facts:{address:evidenceAddress,apn:'QA-PARCEL'}},
+},analyzer:{recordedSales:{provider:'ATTOM',review:'suggested-unreviewed',address:{street:'24 Sample Oak Lane',city:'Example City',state:'CA',zip:'90210'},sales:[]}}});
+strictAssert.equal(evidenceLead.propertyRecordSnapshot.facts.apn,'QA-PARCEL');
+strictAssert.equal(evidenceLead.listingSnapshot.photoUrls.length,1);
+strictAssert.equal(evidenceLead.recordedSales.review,'suggested-unreviewed');
 for (const field of ['type', 'selectedPath', 'isAnalyzed']) strictAssert.equal(blankDeal[field], undefined);
 for (const field of ['arv', 'mao', 'maoRBP']) {
   strictAssert.equal(mapLead({ id: 'sample-a', property: { [field]: 0 } }).isAnalyzed, true);

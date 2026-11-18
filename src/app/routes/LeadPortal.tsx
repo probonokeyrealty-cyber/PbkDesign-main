@@ -186,6 +186,18 @@ export function LeadPortal() {
   };
   currentLeadIdRef.current = leadId;
 
+  const refreshSavedProperty = async (savedLeadId: string) => {
+    if (currentLeadIdRef.current !== savedLeadId) return;
+    const requestId = requestSequence.current;
+    const response = await fetchLeadFullRequest(savedLeadId);
+    if (response.ok === false) throw new Error(String(response.error || 'Unable to reload saved property intelligence.'));
+    if (currentLeadIdRef.current !== savedLeadId || requestSequence.current !== requestId) return;
+    const canonical = unwrapLead(response);
+    const canonicalId = String(canonical.leadId || canonical.id || '').trim();
+    if (canonicalId !== savedLeadId) throw new Error('The bridge returned a different lead. Reopen this workspace to reload.');
+    setLeadPayload(response);
+  };
+
   useEffect(() => {
     if (loading || !lead) return;
     const frame = requestAnimationFrame(() => {
@@ -779,7 +791,7 @@ export function LeadPortal() {
         </div>
       </div>
 
-      <LeadPortalProperty key={lead.id || leadId} lead={lead} onEdit={startEdit} />
+      <LeadPortalProperty key={`${lead.id || leadId}:${lead.address}:${lead.city}:${lead.state}:${lead.zip}`} lead={lead} onEdit={startEdit} onSaved={refreshSavedProperty} />
 
       <details className="pbk-portal-source-details">
         <summary>Data sources</summary>

@@ -213,7 +213,7 @@ documented receipt contract, honest local validation and residual limitations.
 - [x] Document missing-producer behavior, schema/counter/digest/signature contract,
   limits, invalid/newest denial rules and the distinction between verified evidence
   and passing canary/readiness. No fixture or evaluation run is live launch proof.
-- [ ] Request an independent whole-branch security/behavior review; reproduce and
+- [x] Request an independent whole-branch security/behavior review; reproduce and
   resolve findings, rerun affected tests, and leave publication/deployment unperformed.
 
 ## Self-Review

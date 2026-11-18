@@ -51,6 +51,7 @@ function harness(options = {}) {
     readBacklogReconciliation: async () => ({ verified: true, reconciliation: { counts: {} } }),
     collectBacklogReconciliation: () => { throw new Error('Maturity must not run reconciliation'); },
     readCallMemorySkipSummary: async () => ({ verified: true, launchQualified: false }),
+    readDeadLetterClosures: async () => ({ verified: false, counts: null, cases: [], result: 'closure_unavailable' }),
     getAgentLatencyPolicy: (input, config) => { policyCalls.push({ input, config }); return getAgentLatencyPolicy(input, config); },
     readCanaryEvidence: async (input) => {
       calls.push(input);
@@ -177,13 +178,13 @@ test('unapproved v2 policy is not replaced with a pilot or legacy policy', async
   assert.equal(result.ready, false);
 });
 
-test('approval, auth, delivery and dispatch code outside maturity remains byte-for-byte unchanged', () => {
+test('reviewed non-maturity bridge baseline retains its exact integration surface', () => {
   const unchanged = (source.slice(0, start) + source.slice(end))
     .replace("import { readCanaryEvidence } from './canary-evidence-reader.mjs';\n", '');
-  // Independently reviewed lead intelligence integration; bridge baseline is 43c0066.
-  // Hash refresh review: docs/operations/2026-11-18-lead-intelligence-hash-refresh.md.
+  // Combined callback/closure and main property-intelligence integration baseline.
+  // See docs/operations/2026-11-18-pr35-conflict-resolution.md for both parents.
   assert.equal(createHash('sha256').update(unchanged).digest('hex'),
-    'a0b0dad9228d17e3bc382d010577b705730e95c16e7f42fc18259adcc6d1ee55');
+    '804677cab703eaa5fea4018525660c51e6bce3c3c8b90d0bfe4587625d09c395');
 });
 
 test('production distribution includes reader and protocol, never the fixture signer', () => {

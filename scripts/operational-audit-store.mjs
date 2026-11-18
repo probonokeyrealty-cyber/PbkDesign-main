@@ -2,10 +2,15 @@ import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { canonicalJson, withPgTransaction } from './skill-governance-store.mjs';
 import { RUNTIME_COVERAGE_POLICY, verifyRuntimeCoverageReference } from './runtime-coverage-store.mjs';
+import { captureDeadLetterAuditBoundary, validateDeadLetterAuditBoundary,
+  verifyDeadLetterClosureReference } from './dead-letter-closure-store.mjs';
 
-const SCHEMA = 'pbk-operational-audit-v2';
-const SUITE = 'operational_audit_v2';
-const SOURCE = 'server:operational-audit:v2';
+const SCHEMA = 'pbk-operational-audit-v3';
+const SUITE = 'operational_audit_v3';
+const SOURCE = 'server:operational-audit:v3';
+const VERSIONS = Object.freeze(Object.fromEntries(['v1', 'v2', 'v3'].map(version =>
+  [`pbk-operational-audit-${version}`, { suite: `operational_audit_${version}`,
+    source: `server:operational-audit:${version}`, key: `pbk.operational-audit.signing-key.${version}` }])));
 const LEGACY_SUITE = 'operational_audit_v1', LEGACY_SOURCE = 'server:operational-audit:v1';
 const DAY_MS = 24 * 3600_000;
 const MAX_DURATION_MS = 60_000;
@@ -13,8 +18,8 @@ const MAX_REPORT_BYTES = 65_536;
 const auditScope = new AsyncLocalStorage();
 const wrappedPools = new WeakMap();
 
-function auditFence() {
-  const deadlineAt = performance.now() + MAX_DURATION_MS;
+function auditFence(duration = MAX_DURATION_MS) {
+  const deadlineAt = Math.min(performance.now() + duration, auditScope.getStore()?.deadlineAt ?? Infinity);
   const controller = new AbortController(), clients = new Set();
   let poisoned = false;
   const error = () => Object.assign(new Error('audit_deadline'), { code: 'AUDIT_TIMEOUT' });
@@ -59,7 +64,7 @@ export function createOperationalAuditPool(pool) {
         raw.release(destroy);
       };
       fence.clients.add(release);
-      return { release, query(config, values) {
+      return { release, on: raw.on?.bind(raw), removeListener: raw.removeListener?.bind(raw), query(config, values) {
         fence.check();
         if (released) throw new Error('audit_client_released');
         const text = typeof config === 'string' ? config : config.text;
@@ -83,6 +88,13 @@ async function inAuditScope(pool, action) {
   if (auditScope.getStore()) return action(createOperationalAuditPool(pool));
   const fence = auditFence();
   try { return await auditScope.run(fence, () => fence.run(() => action(createOperationalAuditPool(pool)))); }
+  finally { fence.abort(); }
+}
+
+// The sampler's already-wrapped pool also inherits this child scope at checkout.
+export async function withOperationalAuditCollection(pool, action) {
+  const fence = auditFence(15_000);
+  try { return await auditScope.run(fence, () => fence.run(() => action(createOperationalAuditPool(pool)), 15_000)); }
   finally { fence.abort(); }
 }
 export const OPERATIONAL_AUDIT_CHECK_IDS = Object.freeze(['runtime_archive', 'provider_dispatch',
@@ -118,7 +130,8 @@ function unavailable(result, source = 'postgres:pbk_eval_runs') {
 function sign(report, secret) {
   const { attestation: _ignored, ...unsigned } = report;
   const schema = report.schemaVersion;
-  const key = createHmac('sha256', secret).update(`pbk.operational-audit.signing-key.${schema === 'pbk-operational-audit-v1' ? 'v1' : 'v2'}`).digest();
+  if (!Object.hasOwn(VERSIONS, schema)) throw new Error('unsupported_audit_schema');
+  const key = createHmac('sha256', secret).update(VERSIONS[schema].key).digest();
   return createHmac('sha256', key).update(`${schema}\n${canonicalJson(unsigned)}`).digest('hex');
 }
 
@@ -126,11 +139,11 @@ function emptyCheck(id, reason) {
   return { id, status: 'unverified', reason, counts: {}, firstObservedAt: null, lastObservedAt: null };
 }
 
-function normalizeCheck(input, id, windowEnd) {
+function normalizeCheck(input, id, windowEnd, v3) {
   if (!plain(input)) return emptyCheck(id, 'invalid_check');
   const counts = {};
   let invalidCounts = !plain(input.counts) || Object.keys(input.counts).length > 32;
-  for (const key of COUNT_KEYS) {
+  for (const key of v3 && id === 'dead_letters' ? [...COUNT_KEYS, 'totalOriginals', 'resolvedInternal', 'invalidatedClosures'] : COUNT_KEYS) {
     if (!plain(input.counts) || !Object.hasOwn(input.counts, key)) continue;
     const value = input.counts[key];
     if (Number.isSafeInteger(value) && value >= 0) counts[key] = value;
@@ -162,7 +175,49 @@ function normalizeCoverage(coverage) {
     instrumentation: r.instrumentation, segmentRef: r.segmentRef, cutoff: r.cutoff, reference: r };
 }
 
-function normalizeAudit(input, cutoff, failureReason = 'invalid_collection') {
+function normalizeClosures(input, cutoff) {
+  const r = input?.reference;
+  if (input?.verified !== true || !plain(r) || Buffer.byteLength(JSON.stringify(r)) > MAX_REPORT_BYTES
+    || r.schemaVersion !== 'pbk-dead-letter-closure-reference-v1' || r.tenantId !== 'pbk'
+    || !validRevision(r.revision) || r.cutoff !== iso(cutoff)
+    || !validateDeadLetterAuditBoundary(r.boundary, r.cutoff)
+    || !plain(r.counts) || !Array.isArray(r.cases) || r.cases.length > 64
+    || !['total', 'closedInternal', 'open', 'invalidated'].every(k => Number.isSafeInteger(r.counts[k]) && r.counts[k] >= 0)
+    || r.counts.total !== r.cases.length || r.counts.total !== r.counts.closedInternal + r.counts.open + r.counts.invalidated
+    || new Set(r.cases.map(c => c?.recordRef)).size !== r.cases.length
+    || !['closed_internal', 'open', 'invalidated'].every((status, i) =>
+      r.cases.filter(c => c?.status === status).length === r.counts[['closedInternal', 'open', 'invalidated'][i]])) {
+    return { verified: false };
+  }
+  return { verified: true, reference: r };
+}
+
+function normalizeDeadLetters(check, closures) {
+  const c = check.counts;
+  if (check.status === 'unverified' && Object.keys(c).length === 0) return;
+  const keys = ['totalOriginals', 'resolvedInternal', 'outstanding', 'invalidatedClosures'];
+  const valid = keys.every(k => Number.isSafeInteger(c[k]) && c[k] >= 0)
+    && c.resolvedInternal <= c.totalOriginals && c.invalidatedClosures <= c.totalOriginals - c.resolvedInternal
+    && c.outstanding === c.totalOriginals - c.resolvedInternal
+    && (!closures.verified ? c.resolvedInternal === 0 : closures.reference.counts.total === c.totalOriginals
+      && closures.reference.counts.closedInternal === c.resolvedInternal
+      && closures.reference.counts.invalidated === c.invalidatedClosures);
+  if (!valid || !closures.verified) {
+    if (Number.isSafeInteger(c.totalOriginals)) {
+      c.resolvedInternal = 0; c.outstanding = c.totalOriginals;
+      c.invalidatedClosures = Math.min(c.invalidatedClosures ?? 0, c.totalOriginals);
+    }
+    check.status = 'unverified';
+    if (!valid) check.reason = 'invalid_counts';
+    else if (check.reason === 'no_findings' || check.reason === 'findings_detected') check.reason = 'source_unavailable';
+  } else if (check.status !== 'unverified') {
+    check.status = c.outstanding ? 'failed' : 'passed';
+    check.reason = c.outstanding ? 'findings_detected' : 'no_findings';
+  }
+}
+
+function normalizeAudit(input, cutoff, failureReason = 'invalid_collection', schema = SCHEMA) {
+  const v3 = schema === SCHEMA;
   const windowStart = iso(cutoff - DAY_MS);
   const windowEnd = iso(cutoff);
   const rows = input?.checks;
@@ -172,14 +227,16 @@ function normalizeAudit(input, cutoff, failureReason = 'invalid_collection') {
     && new Set(rows.map(row => row?.id)).size === OPERATIONAL_AUDIT_CHECK_IDS.length
     && OPERATIONAL_AUDIT_CHECK_IDS.every(id => rows.some(row => row?.id === id));
   const checks = OPERATIONAL_AUDIT_CHECK_IDS.map(id => complete
-    ? normalizeCheck(rows.find(row => row?.id === id), id, cutoff) : emptyCheck(id, failureReason));
+    ? normalizeCheck(rows.find(row => row?.id === id), id, cutoff, v3) : emptyCheck(id, failureReason));
   const coverage = complete ? normalizeCoverage(input.coverage) : { verified: false };
+  const closures = v3 ? normalizeClosures(input?.closures, cutoff) : undefined;
+  if (v3 && complete) normalizeDeadLetters(checks.find(c => c.id === 'dead_letters'), closures);
   if (coverage.verified && (coverage.reference.cutoff !== windowEnd || coverage.reference.windowStart !== windowStart)) {
-    return { ready: false, windowStart, windowEnd, checks, coverage: { verified: false } };
+    return { ready: false, windowStart, windowEnd, checks, coverage: { verified: false }, ...(v3 ? { closures } : {}) };
   }
-  const ready = checks.every(check => check.status === 'passed') && coverage.verified
+  const ready = checks.every(check => check.status === 'passed') && coverage.verified && (!v3 || closures.verified)
     && checks.find(check => check.id === 'monitoring_continuity').status === 'passed';
-  return { ready, windowStart, windowEnd, checks, coverage };
+  return { ready, windowStart, windowEnd, checks, coverage, ...(v3 ? { closures } : {}) };
 }
 
 function reportGuard() {
@@ -189,7 +246,7 @@ function reportGuard() {
 function verifyRecord(row, { revision, secret, now }) {
   const report = row?.report;
   if (!plain(report) || !validSecret(secret) || !validRevision(revision) || !validClock(now)
-    || Buffer.byteLength(JSON.stringify(report)) > MAX_REPORT_BYTES) {
+    || Buffer.byteLength(JSON.stringify(report)) > MAX_REPORT_BYTES || !Object.hasOwn(VERSIONS, report.schemaVersion)) {
     return unavailable('operational_audit_record_unverified');
   }
   // A committed admission blocks all older proof even if collection/finalization never completes.
@@ -205,24 +262,28 @@ function verifyRecord(row, { revision, secret, now }) {
     || !Number.isFinite(stored) || stored > now || Math.abs(stored - started) > MAX_DURATION_MS) {
     return unavailable('operational_audit_record_expired_or_undated');
   }
-  if (row.tenant_id !== 'pbk' || row.suite_name !== (legacy ? LEGACY_SUITE : SUITE)
-    || row.source !== (legacy ? LEGACY_SOURCE : SOURCE)
+  const version = VERSIONS[report.schemaVersion];
+  if (row.tenant_id !== 'pbk' || row.suite_name !== version.suite
+    || row.source !== version.source
     || row.id !== report.runId || !safeId(report.runId) || !validRevision(report.revision)
     || !legacy && report.revision !== revision) {
     return unavailable('operational_audit_record_unverified');
   }
   const supplied = report.attestation;
-  if (!plain(supplied) || supplied.version !== (legacy ? 'pbk-operational-audit-v1' : SCHEMA) || !/^[a-f0-9]{64}$/.test(supplied.signature || '')
+  if (!plain(supplied) || supplied.version !== report.schemaVersion || !/^[a-f0-9]{64}$/.test(supplied.signature || '')
     || Object.keys(supplied).length !== 2
     || !timingSafeEqual(Buffer.from(supplied.signature, 'hex'), Buffer.from(sign(report, secret), 'hex'))) {
     return unavailable('operational_audit_signature_invalid');
   }
-  const audit = normalizeAudit(report.audit, cutoff);
+  const audit = normalizeAudit(report.audit, cutoff, 'invalid_collection', report.schemaVersion);
+  if (report.schemaVersion === SCHEMA && audit.closures.verified
+    && (audit.closures.reference.revision !== report.revision
+      || timeOf(audit.closures.reference.boundary.databaseCapturedAt) < started)) return unavailable('operational_audit_record_unverified');
   if (legacy) {
     audit.coverage = { verified: report.audit?.coverage?.verified === true };
     audit.ready = audit.checks.every(check => check.status === 'passed') && audit.coverage.verified;
   }
-  const expected = { schemaVersion: legacy ? 'pbk-operational-audit-v1' : SCHEMA, tenantId: 'pbk', runId: report.runId,
+  const expected = { schemaVersion: report.schemaVersion, tenantId: 'pbk', runId: report.runId,
     revision: report.revision,
     startedAt: iso(started), completedAt: iso(completed), ...(!legacy ? { observationCutoff: iso(cutoff) } : {}),
     provenance: 'operational', guard: reportGuard(), audit };
@@ -245,14 +306,31 @@ function verifyRecord(row, { revision, secret, now }) {
 const latestSql = `SELECT id, tenant_id, suite_name, ok, total, passed, failed, report, source, created_at,
   created_at::text AS admission_order
   FROM public.pbk_eval_runs WHERE tenant_id = $1 AND (suite_name = $2 OR source = $3
-    OR suite_name = $4 OR source = $5) ORDER BY created_at DESC, id DESC LIMIT 1`;
-const latestValues = ['pbk', SUITE, SOURCE, LEGACY_SUITE, LEGACY_SOURCE];
+    OR suite_name = $4 OR source = $5 OR suite_name = $6 OR source = $7) ORDER BY created_at DESC, id DESC LIMIT 1`;
+const latestValues = ['pbk', SUITE, SOURCE, LEGACY_SUITE, LEGACY_SOURCE, 'operational_audit_v2', 'server:operational-audit:v2'];
 
 async function verifyCoverage({ pool, secret, revision, now, coverage, coverageVerifier }) {
   if (!coverage?.verified || !coverage.reference) return null;
   const result = await coverageVerifier({ pool, secret, revision, now, reference: coverage.reference });
   return result?.verified === true
     && canonicalJson(result.proof?.reference) === canonicalJson(coverage.reference) ? result : null;
+}
+
+async function revalidateClosures({ pool, secret, revision, now, audit, boundary }) {
+  if (!audit.closures?.verified) return;
+  const reference = audit.closures.reference;
+  const current = boundary && canonicalJson(reference.boundary) !== canonicalJson(boundary) ? null
+    : await verifyDeadLetterClosureReference({ pool, secret, revision,
+      now: typeof now === 'function' ? now() : now, reference });
+  if (current?.verified === true && canonicalJson(current.reference) === canonicalJson(reference)) return;
+  audit.closures = { verified: false }; audit.ready = false;
+  const check = audit.checks.find(c => c.id === 'dead_letters');
+  if (Number.isSafeInteger(check.counts.totalOriginals)) {
+    check.counts.invalidatedClosures = Math.min(check.counts.totalOriginals,
+      check.counts.invalidatedClosures + check.counts.resolvedInternal);
+    check.counts.resolvedInternal = 0; check.counts.outstanding = check.counts.totalOriginals;
+  }
+  check.status = 'unverified'; check.reason = 'source_unavailable';
 }
 
 // A verified quiet census need not be eligible business work. Unknown/failing source states still block.
@@ -276,14 +354,18 @@ export async function readOperationalAudit({ pool, revision, secret, now = Date.
       if (!row) return unavailable('operational_audit_run_missing');
       if (id !== undefined && row.id !== id) return unavailable('operational_audit_superseded');
       const result = verifyRecord(row, { revision, secret, now });
-      if (!result.verified || !result.audit.coverage.verified) return result;
+      if (!result.verified) return result;
+      await revalidateClosures({ pool: boundedPool, secret, revision, now, audit: result.audit });
+      const hadCoverage = result.audit.coverage.verified;
       const coverage = await verifyCoverage({ pool: boundedPool, secret, revision, now,
         coverage: result.audit.coverage, coverageVerifier });
       const latest = (await boundedPool.query(latestSql, latestValues)).rows?.[0];
       if (!latest || latest.id !== row.id || canonicalJson(latest) !== canonicalJson(row)) {
         return unavailable('operational_audit_superseded');
       }
-      if (!coverage) {
+      if (!hadCoverage) {
+        // Closure readback and newest-admission check above still run on uncovered audits.
+      } else if (!coverage) {
         result.audit.coverage = { verified: false }; result.audit.ready = false;
         const continuity = result.audit.checks.find(check => check.id === 'monitoring_continuity');
         if (continuity.status === 'passed') { continuity.status = 'unverified'; continuity.reason = 'coverage_unverified'; }
@@ -343,7 +425,8 @@ export async function executeOperationalAudit({ pool, revision, secret, collect,
            GREATEST(clock_timestamp(), COALESCE((
              SELECT MAX(created_at) + INTERVAL '1 microsecond' FROM public.pbk_eval_runs
              WHERE tenant_id = $2 AND (suite_name = $3 OR source = $9
-               OR suite_name = 'operational_audit_v1' OR source = 'server:operational-audit:v1')
+               OR suite_name = 'operational_audit_v1' OR source = 'server:operational-audit:v1'
+               OR suite_name = 'operational_audit_v2' OR source = 'server:operational-audit:v2')
            ), clock_timestamp())))`,
         [runId, 'pbk', SUITE, false, OPERATIONAL_AUDIT_CHECK_IDS.length, 0,
           OPERATIONAL_AUDIT_CHECK_IDS.length, JSON.stringify(pending), SOURCE]);
@@ -351,16 +434,21 @@ export async function executeOperationalAudit({ pool, revision, secret, collect,
       return true;
     });
     if (!admitted) return unavailable('operational_audit_in_progress');
+    const captured = await captureDeadLetterAuditBoundary({ pool, now });
+    if (!captured.verified) return unavailable('operational_audit_boundary_unavailable');
+    const closureBoundary = captured.boundary;
     const cutoff = now();
-    if (!validClock(cutoff) || cutoff < started || cutoff - started >= MAX_DURATION_MS) {
+    if (!validClock(cutoff) || cutoff < started || cutoff - started >= MAX_DURATION_MS
+      || !validateDeadLetterAuditBoundary(closureBoundary, iso(cutoff))) {
       return unavailable('operational_audit_execution_undated');
     }
     let audit;
     // Admission commits and releases its connection before collection can use a one-client pool.
     try {
       const input = await auditScope.getStore().run(() => collect({ pool, now: cutoff, observationNow: now,
-        fence: auditScope.getStore(), windowStart: iso(cutoff - DAY_MS), windowEnd: iso(cutoff) }));
+        closureBoundary, fence: auditScope.getStore(), windowStart: iso(cutoff - DAY_MS), windowEnd: iso(cutoff) }));
       audit = normalizeAudit(input, cutoff);
+      await revalidateClosures({ pool, secret, revision, now, audit, boundary: closureBoundary });
       if (audit.coverage.verified) {
         const verified = await verifyCoverage({ pool, secret, revision, now, coverage: audit.coverage, coverageVerifier });
         if (verified) audit.coverage = normalizeCoverage({ verified: true, reference: verified.proof.reference });

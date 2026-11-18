@@ -47,6 +47,14 @@ jobs:
       - name: Verify qualification CI reader
         run: node --experimental-vm-modules node_modules/jest/bin/jest.js --config jest.config.mjs --runInBand --runTestsByPath scripts/release-qualification-ci.test.mjs
 
+      - name: Run isolated native audit proof
+        env:
+          PBK_CLOSURE_TEST_ENABLE: '1'
+        run: |
+          node --test scripts/dead-letter-closure-postgres-local.node-test.mjs
+          docker --context default pull pgvector/pgvector@sha256:b513c48566e4777cd3370451400000c78eda6a08131d68f4c31d4a76f27bd8fd
+          npm run test:dead-letter-closure-postgres
+
       - name: Run disposable Postgres tests
         env:
           NEON_API_KEY: ${{ secrets.NEON_API_KEY || secrets.PBK_NEON_API_KEY }}

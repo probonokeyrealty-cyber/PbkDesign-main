@@ -25,8 +25,8 @@ const collect = (options = {}) => collectOperationalAudit({ pool: fixture.pool, 
   now: fixture.now(), observationNow: fixture.now, sampler: fixture.sampler, runtime: auditFixtureHealth(), ...options });
 const read = options => store.readOperationalAudit({ pool: fixture.pool, secret, revision, now: fixture.now(), ...options });
 const run = options => store.executeOperationalAudit({ pool: fixture.pool, secret, revision, now: fixture.now,
-  collect: ({ pool, now, observationNow }) => collect({ pool, now, observationNow }), ...options });
-function resign(report, version = 'v2') {
+  collect: ({ pool, now, observationNow, closureBoundary }) => collect({ pool, now, observationNow, closureBoundary }), ...options });
+function resign(report, version = 'v3') {
   const { attestation: _ignored, ...unsigned } = report;
   const key = createHmac('sha256', secret).update(`pbk.operational-audit.signing-key.${version}`).digest();
   report.attestation = { version: `pbk-operational-audit-${version}`, signature: createHmac('sha256', key)
@@ -63,11 +63,49 @@ test('a genuine covered quiet day passes monitoring only; saved reference surviv
   assert.equal(JSON.stringify(later).includes(secret), false);
 }, 30000);
 
+test('v2 retains original normalized shape, 22-table receipt, signing domain and current coverage semantics', async () => {
+  const current = await run();
+  const report = (await fixture.db.query('SELECT report FROM pbk_eval_runs WHERE id=$1', [current.runId])).rows[0].report;
+  report.schemaVersion = 'pbk-operational-audit-v2'; report.runId = 'signed-v2';
+  delete report.audit.closures;
+  const dead = report.audit.checks.find(c => c.id === 'dead_letters');
+  delete dead.counts.totalOriginals; delete dead.counts.resolvedInternal; delete dead.counts.invalidatedClosures;
+  Object.assign(report.audit.checks.find(c => c.id === 'database_security').counts, { requiredTables: 22, presentTables: 22 });
+  resign(report, 'v2');
+  const original = canonicalJson(report);
+  await fixture.db.query(`INSERT INTO pbk_eval_runs(id,tenant_id,suite_name,source,created_at,report,ok,total,passed,failed)
+    VALUES ('signed-v2','pbk','operational_audit_v2','server:operational-audit:v2',$1,$2,true,8,8,0)`,
+  [new Date(fixture.now() + 1).toISOString(), report]);
+  fixture.advance(1);
+  try {
+    const readV2 = () => read({ now: fixture.now() });
+    const result = await readV2();
+    assert.equal(result.verified, true, JSON.stringify(result));
+    assert.equal(result.audit.ready, true);
+    assert.equal(result.audit.closures, undefined);
+    assert.equal(result.audit.checks.find(c => c.id === 'database_security').counts.requiredTables, 22);
+    assert.equal((await read({ now: fixture.now(), revision: 'b'.repeat(40) })).verified, false);
+    for (const mutate of [
+      r => { r.audit.checks[0].counts.errors = 99; },
+      r => { r.audit.closures = { verified: true }; resign(r, 'v2'); },
+      r => { resign(r, 'v3'); r.attestation.version = 'pbk-operational-audit-v2'; },
+      r => { r.schemaVersion = 'pbk-operational-audit-v9'; resign(r, 'v2'); },
+    ]) {
+      const corrupt = JSON.parse(original); mutate(corrupt);
+      await fixture.db.query("UPDATE pbk_eval_runs SET report=$1 WHERE id='signed-v2'", [corrupt]);
+      assert.equal((await readV2()).verified, false, 'legacy corruption must not fall through to v3 or older passing audit');
+    }
+    await fixture.db.query("UPDATE pbk_eval_runs SET report=$1 WHERE id='signed-v2'", [JSON.parse(original)]);
+    assert.equal((await readV2()).audit.ready, true);
+    assert.equal(canonicalJson((await fixture.db.query("SELECT report FROM pbk_eval_runs WHERE id='signed-v2'")).rows[0].report), original);
+  } finally { await fixture.db.exec("DELETE FROM pbk_eval_runs WHERE id='signed-v2'"); }
+}, 30000);
+
 test('verified coverage cannot bless missing business linkage in the actual collector and signed store', async () => {
   const f = await createAuditFixture({ end, revision, secret: secret + '-linkage' });
   const linkageSecret = secret + '-linkage';
   const execute = () => store.executeOperationalAudit({ pool: f.pool, secret: linkageSecret, revision, now: f.now,
-    collect: ({ pool, now, observationNow }) => collectOperationalAudit({ pool, now, observationNow,
+    collect: ({ pool, now, observationNow, closureBoundary }) => collectOperationalAudit({ pool, now, observationNow, closureBoundary,
       secret: linkageSecret, revision, sampler: f.sampler, runtime: auditFixtureHealth() }) });
   try {
     for (const mode of ['unmapped_campaign', 'approval_without_seller', 'linked', 'missing_projection']) {
@@ -151,7 +189,7 @@ test('known failures cannot hide behind controlled/diagnostic labels; changed ce
   assert.equal(tombstone.checks.find(c => c.id === 'runtime_archive').status, 'failed', 'retained failure cannot disappear behind a tombstone');
 }, 30000);
 
-test.each(['v1', 'v2'])('newest %s pending/invalid admission wins even on explicit old-id reads', async version => {
+test.each(['v1', 'v2', 'v3'])('newest %s pending/invalid admission wins even on explicit old-id reads', async version => {
   const old = await run();
   const id = `newer-${version}`;
   await fixture.db.query(`INSERT INTO pbk_eval_runs(id,tenant_id,suite_name,source,created_at,report)
@@ -172,6 +210,9 @@ test('a genuinely signed legacy audit remains untouched and visible only as lega
   const original = (await fixture.db.query('SELECT * FROM pbk_eval_runs WHERE id=$1', [result.runId])).rows[0];
   const report = structuredClone(original.report);
   report.schemaVersion = 'pbk-operational-audit-v1'; report.runId = 'signed-legacy';
+  delete report.audit.closures;
+  const dead = report.audit.checks.find(c => c.id === 'dead_letters');
+  delete dead.counts.totalOriginals; delete dead.counts.resolvedInternal; delete dead.counts.invalidatedClosures;
   delete report.observationCutoff;
   report.audit.coverage = { verified: true };
   for (const check of report.audit.checks) { check.status = 'passed'; check.reason = 'no_findings'; }
@@ -230,6 +271,8 @@ test.each(['callback', 'coverage', 'sampler', 'source'])('parent expiry prevents
       if (text === 'COMMIT') writes++;
       if (text.includes('pg_try_advisory_xact_lock')) return Promise.resolve({ rows: [{ acquired: true }] });
       if (text.includes('INSERT INTO public.pbk_eval_runs')) return Promise.resolve({ rows: [], rowCount: 1 });
+      if (text.includes('pg_current_snapshot()')) return Promise.resolve({ rows: [{ snapshot: '1:2:',
+        database_captured_at: new Date(end).toISOString() }] });
       if (text.includes('FROM public.pbk_eval_runs') || kind === 'sampler' && text.includes('AS coverage_now')) {
         return new Promise(resolve => { deliverQuery = resolve; });
       }

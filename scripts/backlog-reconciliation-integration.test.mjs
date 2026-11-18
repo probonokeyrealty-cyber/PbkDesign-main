@@ -52,6 +52,7 @@ function maturityFixture() {
       evidence: { silentErrors: { runId: 'audit-failed', revision, executedAt: new Date(now).toISOString(),
         executed: true, passed: false, provenance: 'operational', scope: 'durable_operational_audit' } } }),
     readCallMemorySkipSummary: async () => ({ verified: false, counts: null, launchQualified: false }),
+    readDeadLetterClosures: async () => ({ verified: false, counts: null, cases: [], result: 'closure_unavailable' }),
     readBacklogReconciliation: async options => {
       assert.equal(options.pool, pool);
       assert.equal(options.revision, revision);

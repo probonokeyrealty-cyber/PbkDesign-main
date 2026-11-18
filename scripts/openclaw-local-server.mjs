@@ -41,6 +41,10 @@ import { executeOperationalAudit, readOperationalAudit, createOperationalAuditPo
 import { collectBacklogReconciliation } from './backlog-reconciliation-collector.mjs';
 import { executeBacklogReconciliation, readBacklogReconciliation } from './backlog-reconciliation-store.mjs';
 import { recordCallMemorySkip, readCallMemorySkipSummary } from './call-memory-outcome-store.mjs';
+import { executeDeadLetterClosure, readDeadLetterClosures, admitDeadLetterClosureProposal } from './dead-letter-closure-store.mjs';
+import { isDeadLetterClosureApproval, authorizeClosureProposalRequest, prepareDeadLetterClosureProposal,
+  validateDeadLetterClosureApproval } from './dead-letter-closure-approval.mjs';
+import { closureBinding } from './dead-letter-closure-protocol.mjs';
 import { AVA_REAL_CALL_EVAL_SCENARIO_IDS, runAvaRealCallQualification } from './ava-real-call-eval-pack.mjs';
 import { BEHAVIOR_QUALIFICATION_CASE_IDS, runBehaviorQualification } from './behavior-tests.mjs';
 import { SILENT_ERROR_POLICY_CASE_IDS, runSilentErrorPolicyQualification } from './silent-error-governance-smoke.mjs';
@@ -11597,6 +11601,9 @@ async function buildProductionMaturitySnapshot({ runtimeMeta = getRuntimeMeta() 
   const memoryPolicyOutcomes = await readCallMemorySkipSummary({
     pool: getPgPool(), revision: process.env.RENDER_GIT_COMMIT || BUILD_REVISION, secret: BRIDGE_API_KEY,
   });
+  const deadLetterClosures = await readDeadLetterClosures({
+    pool: getPgPool(), revision: process.env.RENDER_GIT_COMMIT || BUILD_REVISION, secret: BRIDGE_API_KEY,
+  });
   let canary;
   try {
     canary = await readCanaryEvidence({
@@ -11677,6 +11684,14 @@ async function buildProductionMaturitySnapshot({ runtimeMeta = getRuntimeMeta() 
       launchQualified: false,
       noContact: true,
       providerWritesBlocked: true,
+    },
+    deadLetterClosures: {
+      verified: deadLetterClosures.verified === true,
+      result: deadLetterClosures.result,
+      counts: deadLetterClosures.verified ? deadLetterClosures.counts : null,
+      cases: deadLetterClosures.verified ? deadLetterClosures.cases : [],
+      noContact: true, providerWritesBlocked: true, deliveryRetries: false,
+      providerDeliveryVerified: false, launchQualified: false,
     },
     shadowCanaryComparison: {
       ...shadowCanaryComparison,
@@ -15482,19 +15497,39 @@ async function persistApprovalRecordToPg(approval = {}) {
   return writeApprovalRecordToPg(approval);
 }
 
-async function writeApprovalRecordToPg(approval, claimPending = false) {
+async function writeApprovalRecordToPg(approval, claimPending = false, closureExpected = null, closureCreateQuery = null, decisionExpected = null) {
   const approvalId = String(approval.id || '').trim();
   if (!approvalId) {
     return { ok: false, reason: 'missing_approval_id', rows: [] };
   }
   const status = String(approval.status || 'pending').trim().toLowerCase() || 'pending';
-  return queryPgRows(
+  if (claimPending && closureExpected) {
+    // Closure authority must already be durable, unchanged and pending. Unlike
+    // legacy approvals, a missing row cannot be created from the queue cache.
+    return queryPgRows({ text: `UPDATE public.approvals SET status=$2,payload=$3::jsonb,
+      decided_at=$4,updated_at=$4 WHERE id=$1 AND workspace_id='pbk' AND type='admin'
+      AND status='pending' AND decided_at IS NULL AND COALESCE(lead_id,'')=''
+      AND COALESCE(contract_id,'')='' AND payload=$5::jsonb RETURNING id,status,updated_at`,
+      query_timeout: 2000 }, [approvalId, status, JSON.stringify(approval), approval.actedAt,
+      JSON.stringify(closureExpected.payload)]);
+  }
+  if (claimPending && decisionExpected) {
+    return queryPgRows({ text: `UPDATE public.approvals SET status=$2,payload=$3::jsonb,
+      decided_at=$4,updated_at=$4 WHERE id=$1 AND workspace_id='pbk' AND type=$5
+      AND status='pending' AND decided_at IS NULL AND payload=$6::jsonb
+      AND COALESCE(lead_id,'')=$7 AND COALESCE(contract_id,'')=$8 RETURNING id,status,updated_at`,
+      query_timeout: 2000 }, [approvalId, status, JSON.stringify(approval), approval.actedAt,
+      decisionExpected.type, JSON.stringify(decisionExpected.payload),
+      decisionExpected.lead_id || '', decisionExpected.contract_id || '']);
+  }
+  const write = closureCreateQuery || queryPgRows;
+  return write(
     `INSERT INTO public.approvals (
        id, workspace_id, type, status, lead_id, contract_id, requested_by,
        summary, risk, payload, decided_at, created_at, updated_at
      )
      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11,$12,$13)
-     ON CONFLICT (id) DO UPDATE SET
+     ON CONFLICT (id) ${closureCreateQuery ? 'DO NOTHING' : `DO UPDATE SET
        workspace_id = EXCLUDED.workspace_id,
        type = EXCLUDED.type,
        status = EXCLUDED.status,
@@ -15507,7 +15542,7 @@ async function writeApprovalRecordToPg(approval, claimPending = false) {
        decided_at = EXCLUDED.decided_at,
        updated_at = EXCLUDED.updated_at
      WHERE approvals.workspace_id = EXCLUDED.workspace_id
-       AND approvals.status = ${claimPending ? "'pending'" : 'EXCLUDED.status'}
+       AND approvals.status = ${claimPending ? "'pending'" : 'EXCLUDED.status'}`}
      RETURNING id, status, updated_at`,
     [
       approvalId,
@@ -15538,14 +15573,56 @@ function replayApprovalDecision(approval, status) {
       };
 }
 
-async function claimPendingApprovalDecision(approval, decision) {
+async function claimPendingApprovalDecision(approval, decision, { closureExpected = null, decisionExpected = null, decisionContext = null } = {}) {
+  if (decisionExpected) {
+    if (!isCanonicalApprovalCallbackTarget(decisionExpected, approval.id)
+      || normalizeApprovalDecisionStatus(decisionExpected.status) !== 'pending') {
+      return { claimed: false, result: { ok: false, statusCode: 409, code: 'approval_decision_target_changed', error: 'The approval decision target changed. Reload before deciding.' } };
+    }
+    const authorization = authorizeApprovalCallbackDecision(normalizePgApprovalRecord(decisionExpected), decision.status, decisionContext);
+    if (!authorization.ok) return { claimed: false, result: authorization };
+  }
   const proposed = { ...approval, ...decision };
-  // A conditional UPSERT covers approvals that predate the normalized table.
-  const claimed = await writeApprovalRecordToPg(proposed, true);
-  if (!IS_HOSTED && STATE_BACKEND === 'file' && claimed.reason === 'no_database') {
+  // Existing canonical targets use snapshot-pinned updates; the legacy UPSERT
+  // remains only for approvals that predate the normalized table/file backend.
+  const claimed = await writeApprovalRecordToPg(proposed, true, closureExpected, null, decisionExpected);
+  if (!closureExpected && !IS_HOSTED && STATE_BACKEND === 'file' && claimed.reason === 'no_database') {
     return { claimed: true, local: true };
   }
   if (claimed.ok && claimed.rows.length) return { claimed: true };
+  if (claimed.ok && closureExpected) {
+    // A lost closure claim must not inherit the legacy status-only replay or
+    // replace cached authority before the exact canonical decision is verified.
+    const current = await readCanonicalClosureApproval(approval.id);
+    if (current?.id === closureExpected.id && current.id === approval.id
+      && validateDeadLetterClosureApproval({ approval: current, secret: BRIDGE_API_KEY,
+        revision: process.env.RENDER_GIT_COMMIT || BUILD_REVISION, now: Date.now() })
+      && closureBinding(BRIDGE_API_KEY, 'intent', current.payload.metadata.deadLetterClosureIntent)
+        === closureBinding(BRIDGE_API_KEY, 'intent', closureExpected.payload.metadata.deadLetterClosureIntent)) {
+      const canonical = normalizePgApprovalRecord(current);
+      if (canonical.status === decision.status && canonical.actor === decision.actor && canonical.actedAt === decision.actedAt) {
+        Object.assign(approval, canonical);
+        return { claimed: false, result: { ok: true, replayed: true, approval } };
+      }
+    }
+    return { claimed: false, result: { ok: false, statusCode: 409, result: 'closure_approval_mismatch' } };
+  }
+  if (claimed.ok && decisionExpected) {
+    const target = await readCanonicalClosureApproval(approval.id, { withStatus: true });
+    if (!target.ok || (target.found && !target.approval)) {
+      return { claimed: false, result: { ok: false, statusCode: 503, code: 'approval_decision_unavailable', error: 'Could not verify the approval decision target.' } };
+    }
+    if (isCanonicalApprovalCallbackTarget(target.approval, approval.id)) {
+      const canonical = normalizePgApprovalRecord(target.approval);
+      const authorization = authorizeApprovalCallbackDecision(canonical, decision.status, decisionContext);
+      if (!authorization.ok) return { claimed: false, result: authorization };
+      if (!isDeadLetterClosureApproval(target.approval) && normalizeApprovalDecisionStatus(canonical.status) !== 'pending') {
+        cacheCanonicalApprovalCallbackTarget(approval, canonical);
+        return { claimed: false, result: replayApprovalDecision(canonical, decision.status) };
+      }
+    }
+    return { claimed: false, result: { ok: false, statusCode: 409, code: 'approval_decision_target_changed', error: 'The approval decision target changed. Reload before deciding.' } };
+  }
   if (claimed.ok) {
     const current = await queryPgRows(
       'SELECT * FROM public.approvals WHERE id = $1 AND workspace_id = $2',
@@ -57929,6 +58006,18 @@ const toolHandlers = {
         ? { ...metadata, campaignStartDispatchVersion: 2 }
         : metadata;
     }
+    let closureAdmission = null;
+    if (isDeadLetterClosureApproval(approval)) {
+      closureAdmission = await admitDeadLetterClosureProposal({ pool: getPgPool(), secret: BRIDGE_API_KEY,
+        revision: process.env.RENDER_GIT_COMMIT || BUILD_REVISION, approval,
+        persist: async query => {
+          const r = await writeApprovalRecordToPg(approval, false, null, query);
+          return { ...r, ok: true };
+        } });
+      if (!closureAdmission.ok) return closureAdmission;
+      if (closureAdmission.reused) return { ok: true, result: 'queued_for_approval',
+        approval: closureAdmission.approval, reused: true };
+    }
     addApproval(state, approval);
     addActivity(
       state,
@@ -57941,7 +58030,7 @@ const toolHandlers = {
       })
     );
 
-    let approvalPersistence = await persistApprovalRecordToPg(approval);
+    let approvalPersistence = closureAdmission ? { ok: true } : await persistApprovalRecordToPg(approval);
     let statePersist = { ok: true };
     try {
       await persistState(state);
@@ -60939,18 +61028,19 @@ async function handleManualLeadCreate(payload = {}) {
 }
 
 const approvalDecisionLocks = new Map();
+const closureSlackAuthority = Symbol('verified Slack closure decision');
 
-async function handleEvent(eventType, payload = {}) {
+async function handleEvent(eventType, payload = {}, decisionContext = null) {
   const normalizedEvent = String(eventType || '')
     .trim()
     .toLowerCase();
 
   if (normalizedEvent !== 'approval-callback') {
-    return handleRuntimeEvent(normalizedEvent, payload);
+    return handleRuntimeEvent(normalizedEvent, payload, decisionContext);
   }
   const approvalId = String(payload.id || '');
   const previous = approvalDecisionLocks.get(approvalId) || Promise.resolve();
-  const current = previous.catch(() => {}).then(() => handleRuntimeEvent(normalizedEvent, payload));
+  const current = previous.catch(() => {}).then(() => handleRuntimeEvent(normalizedEvent, payload, decisionContext));
   approvalDecisionLocks.set(approvalId, current);
   try {
     return await current;
@@ -60959,7 +61049,109 @@ async function handleEvent(eventType, payload = {}) {
   }
 }
 
-async function handleRuntimeEvent(normalizedEvent, payload) {
+async function readCanonicalClosureApproval(approvalId, { withStatus = false } = {}) {
+  const result = await queryPgRows({ text: `SELECT CASE WHEN octet_length(to_jsonb(a)::text)<=65536
+    THEN to_jsonb(a) || jsonb_build_object('decided_at',
+      to_char(a.decided_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"')) ELSE NULL END AS approval
+    FROM public.approvals a WHERE a.id=$1 LIMIT 65`, query_timeout: 2000 }, [approvalId]);
+  const rows = Array.isArray(result.rows) ? result.rows : [];
+  const approval = result.ok && rows.length === 1 ? rows[0].approval : null;
+  return withStatus ? { ok: result.ok === true, found: rows.length > 0, approval, reason: result.reason } : approval;
+}
+
+function authorizeApprovalCallbackDecision(approval, status, context) {
+  if (context === closureSlackAuthority) return { ok: true, team: false };
+  const request = context?.request;
+  const deny = error => ({ ok: false, statusCode: 403, code: 'approval_decision_forbidden', error });
+  if (!request) return deny('Verified approval request authority is required.');
+  const body = context.authBody || {};
+  const headers = request.headers || {};
+  if (request.pbkDirectTeamAuth || hasTeamAuthCredentials(request, body) || Object.hasOwn(headers, 'x-pbk-netlify-proxy')) {
+    const team = request.pbkDirectTeamAuth ? request.pbkTeamAuth : getTeamAuthMeta(request, body);
+    if (team?.ok !== true) return deny('A valid PBK team session is required.');
+    const permissions = getTeamPermissions();
+    const restriction = getTeamApprovalRestriction(approval, status, permissions);
+    return restriction ? { ...deny(restriction), adminRequired: true, permissions } : { ok: true, team: true };
+  }
+  if (BRIDGE_API_KEY && String(headers.authorization || '').trim() !== `Bearer ${BRIDGE_API_KEY}`) {
+    return deny('Verified approval request authority is required.');
+  }
+  return { ok: true, team: false };
+}
+
+function isCanonicalApprovalCallbackTarget(raw, approvalId) {
+  if (!raw || raw.id !== approvalId || raw.workspace_id !== 'pbk'
+    || typeof raw.type !== 'string' || !raw.type.trim()
+    || !raw.payload || typeof raw.payload !== 'object' || Array.isArray(raw.payload)) return false;
+  const payload = raw.payload;
+  return (!Object.hasOwn(payload, 'id') || payload.id === raw.id)
+    && ['workspaceId', 'workspace_id', 'tenantId', 'tenant_id'].every(key => !Object.hasOwn(payload, key) || payload[key] === 'pbk')
+    && (!Object.hasOwn(payload, 'type') || String(payload.type).trim().toLowerCase() === raw.type.trim().toLowerCase())
+    && (!Object.hasOwn(payload, 'status') || normalizeApprovalDecisionStatus(payload.status) === normalizeApprovalDecisionStatus(raw.status));
+}
+
+function cacheCanonicalApprovalCallbackTarget(approval, canonical) {
+  const index = state.approvals.indexOf(approval);
+  if (index >= 0) state.approvals[index] = canonical;
+  return canonical;
+}
+
+function authorizeClosureApprovalDecision(approval, status, context) {
+  if (context === closureSlackAuthority) return true;
+  const request = context?.request;
+  if (!request) return false;
+  const body = context.authBody || {};
+  if (request.pbkDirectTeamAuth || hasTeamAuthCredentials(request, body) || Object.hasOwn(request.headers, 'x-pbk-netlify-proxy')) {
+    const team = request.pbkDirectTeamAuth ? request.pbkTeamAuth : getTeamAuthMeta(request, body);
+    return team?.ok === true
+      && !getTeamApprovalRestriction(approval, status, getTeamPermissions());
+  }
+  const direct = authorizeClosureProposalRequest({ method: 'POST', search: '', headers: request.headers,
+    rawHeaders: request.rawHeaders, body: {} }, BRIDGE_API_KEY);
+  return direct.ok && (!TOTP_REQUIRED || (Boolean(TOTP_SECRET)
+    && verifyTotpCode(String(request.headers['x-pbk-totp'] || request.headers['x-otp'] || '').trim())));
+}
+
+async function handleDeadLetterClosureDecision(approval, raw, payload, context) {
+  const deny = (result, statusCode = 403) => ({ ok: false, result, statusCode });
+  const status = normalizeApprovalDecisionStatus(payload.status || 'pending');
+  if (!['approved', 'rejected', 'needs_revision', 'cancelled'].includes(status)) return deny('closure_decision_invalid', 400);
+  if (!validateDeadLetterClosureApproval({ approval: raw, secret: BRIDGE_API_KEY,
+    revision: process.env.RENDER_GIT_COMMIT || BUILD_REVISION, now: Date.now() })) return deny('closure_approval_invalid');
+  if (approval.id !== raw.id || approval.type !== raw.type || approval.approvalAction !== raw.payload.approvalAction
+    || closureBinding(BRIDGE_API_KEY, 'intent', approval.metadata?.deadLetterClosureIntent ?? null)
+      !== closureBinding(BRIDGE_API_KEY, 'intent', raw.payload.metadata.deadLetterClosureIntent)) return deny('closure_approval_mismatch', 409);
+  const canonical = normalizePgApprovalRecord(raw);
+  if (!authorizeClosureApprovalDecision(canonical, status, context)) return deny('closure_admin_decision_required');
+  Object.assign(approval, canonical);
+  const actor = payload.actor || approval.actor || 'api';
+  const actedAt = payload.actedAt || approval.actedAt || isoNow();
+  if (approval.status !== 'pending') {
+    if (approval.status !== status || approval.actor !== actor || approval.actedAt !== actedAt) {
+      return deny('closure_approval_mismatch', 409);
+    }
+  } else {
+    const decisionAt = String(actedAt).replace(/(\.\d{3})000Z$/, '$1Z');
+    const decisionTime = Date.parse(decisionAt);
+    if (!Number.isSafeInteger(decisionTime) || new Date(decisionTime).toISOString() !== decisionAt
+      || decisionTime < Date.parse(raw.payload.metadata.deadLetterClosureIntent.createdAt)
+      || decisionTime > Date.now()) return deny('closure_decision_invalid', 400);
+    const claim = await claimPendingApprovalDecision(approval, { status, actor, actedAt }, { closureExpected: raw });
+    if (!claim.claimed) return claim.result;
+    if (claim.local) return deny('closure_durable_decision_required', 503);
+    Object.assign(approval, { status, actor, actedAt });
+  }
+  if (status !== 'approved') return { ok: true, approval };
+  // Only canonical signed intent is executable. The store independently reloads
+  // it and exact replays; neither delivery handlers nor payload overrides run.
+  const closure = await executeDeadLetterClosure({ pool: getPgPool(), secret: BRIDGE_API_KEY,
+    revision: process.env.RENDER_GIT_COMMIT || BUILD_REVISION, approvalId: approval.id });
+  clearBridgeReadCache('dead_letter_closure_decided');
+  // Keep approved: changing it to executed would invalidate its stable decision.
+  return { ok: closure.ok, statusCode: closure.ok ? 200 : 503, approval, deadLetterClosure: closure };
+}
+
+async function handleRuntimeEvent(normalizedEvent, payload, decisionContext = null) {
   if (normalizedEvent === 'lead-intake' || normalizedEvent === 'lead-import') {
     const fromN8nLeadIntake = payload?._source === 'n8n-lead-intake';
     const eventId = payload?.eventId || payload?.event_id || null;
@@ -61103,12 +61295,20 @@ async function handleRuntimeEvent(normalizedEvent, payload) {
   }
 
   if (normalizedEvent === 'approval-callback') {
-    const approval = state.approvals.find((item) => item.id === payload.id);
+    let approval = state.approvals.find((item) => item.id === payload.id);
     if (!approval) {
       return {
         ok: false,
         error: `Approval ${payload.id} was not found.`,
       };
+    }
+
+    // Classify durable and cached identity before claim; payload source/actor/
+    // teamAuth cannot confer authority on alternate event transports.
+    const target = await readCanonicalClosureApproval(approval.id, { withStatus: true });
+    const canonicalClosureApproval = target.approval;
+    if (isDeadLetterClosureApproval(approval) || isDeadLetterClosureApproval(canonicalClosureApproval)) {
+      return handleDeadLetterClosureDecision(approval, canonicalClosureApproval, payload, decisionContext);
     }
 
     // Replay short-circuit: if status/actor/actedAt already match incoming
@@ -61119,6 +61319,20 @@ async function handleRuntimeEvent(normalizedEvent, payload) {
     if (!['approved', 'rejected', 'needs_revision', 'cancelled'].includes(incomingStatus)) {
       return { ok: false, statusCode: 400, error: 'Unsupported approval decision.' };
     }
+    const localFileTarget = !IS_HOSTED && STATE_BACKEND === 'file' && target.reason === 'no_database';
+    if ((!target.ok && !localFileTarget) || (target.found && !canonicalClosureApproval)) {
+      return { ok: false, statusCode: 503, code: 'approval_decision_unavailable', error: 'Could not verify the approval decision target.' };
+    }
+    if (canonicalClosureApproval && !isCanonicalApprovalCallbackTarget(canonicalClosureApproval, approval.id)) {
+      return { ok: false, statusCode: 409, code: 'approval_decision_target_changed', error: 'The approval decision target changed. Reload before deciding.' };
+    }
+    const canonical = canonicalClosureApproval ? normalizePgApprovalRecord(canonicalClosureApproval) : approval;
+    const authorization = authorizeApprovalCallbackDecision(canonical, incomingStatus, decisionContext);
+    if (!authorization.ok) return authorization;
+    if (authorization.team && !canonicalClosureApproval && !localFileTarget) {
+      return { ok: false, statusCode: 503, code: 'approval_decision_unavailable', error: 'Could not verify the approval decision target.' };
+    }
+    if (canonicalClosureApproval) approval = cacheCanonicalApprovalCallbackTarget(approval, canonical);
     const incomingActor = payload.actor || approval.actor || 'n8n';
     const incomingActedAt = payload.actedAt || approval.actedAt || isoNow();
     const currentStatus = normalizeApprovalDecisionStatus(approval.status || 'pending');
@@ -61129,7 +61343,7 @@ async function handleRuntimeEvent(normalizedEvent, payload) {
         status: incomingStatus,
         actor: incomingActor,
         actedAt: incomingActedAt,
-      });
+      }, { decisionExpected: canonicalClosureApproval, decisionContext });
       if (!claim.claimed) return claim.result;
       localClaim = claim.local === true;
     }
@@ -66002,7 +66216,7 @@ async function readSlackEventRequest(request) {
   }
 }
 
-async function handleSlackApprovalInteraction(payload = {}) {
+async function handleSlackApprovalInteraction(payload = {}, decisionContext = null) {
   const action = Array.isArray(payload.actions) ? payload.actions[0] : null;
   const actionId = String(action?.action_id || '').trim();
   const valueCandidates = [action?.value, action?.selected_option?.value, Array.isArray(action?.selected_options) ? action.selected_options[0]?.value : '', payload.private_metadata, payload.view?.private_metadata, payload.message?.metadata?.event_payload?.approvalId].filter((value) => value !== undefined && value !== null && String(value).trim());
@@ -66057,7 +66271,7 @@ async function handleSlackApprovalInteraction(payload = {}) {
     reviewReason: isModify ? 'slack_needs_review' : '',
     source: 'slack-interaction',
     skipSlackSync: true,
-  });
+  }, decisionContext);
   const canonicalStatus = result.approval?.status;
   const update = canonicalStatus ? await updateSlackApprovalMessage({
     channel: payload.channel?.id || payload.container?.channel_id || payload.message?.channel || '',
@@ -73141,6 +73355,59 @@ const server = createServer(async (request, response) => {
       return;
     }
 
+    if (pathname === '/api/admin/reconciliation/dead-letters'
+      || pathname.startsWith('/api/admin/reconciliation/dead-letters/')) {
+      const authority = authorizeClosureProposalRequest({ method: 'POST', search: url.search,
+        headers: request.headers, rawHeaders: request.rawHeaders, body: {} }, BRIDGE_API_KEY);
+      if (!authority.ok) {
+        json(response, authority.status, authority); return;
+      }
+      const match = /^\/api\/admin\/reconciliation\/dead-letters\/([a-f0-9]{64})\/(preview|propose|propose-revocation)$/.exec(url.pathname);
+      // Match the original request too: do not normalize a trailing/encoded/dot
+      // path or an empty query into an authorized proposal endpoint.
+      if (!match || request.url !== url.pathname) {
+        json(response, 404, { ok: false, result: 'closure_route_not_found' }); return;
+      }
+      const [, recordRef, operation] = match;
+      if (request.method !== (operation === 'preview' ? 'GET' : 'POST')) {
+        json(response, 400, { ok: false, result: 'closure_fixed_proposal_only' }); return;
+      }
+      const allowed = authorizeClosureProposalRequest({ method: 'POST', search: url.search,
+        headers: request.headers, rawHeaders: request.rawHeaders, body: await readBody(request) }, BRIDGE_API_KEY);
+      if (!allowed.ok) { json(response, allowed.status, allowed); return; }
+      const pool = runtimeStateBootstrap.ready ? getPgPool() : null;
+      const revision = process.env.RENDER_GIT_COMMIT || BUILD_REVISION;
+      if (operation === 'preview') {
+        const summary = await readDeadLetterClosures({ pool, secret: BRIDGE_API_KEY, revision });
+        if (!summary.verified) { json(response, 503, summary); return; }
+        const selected = summary.cases.find(item => item.recordRef === recordRef);
+        json(response, selected ? 200 : 404, { ok: Boolean(selected), verified: true, result: 'closure_preview',
+          case: selected || null, noContact: true, providerWritesBlocked: true, deliveryRetries: false,
+          providerDeliveryVerified: false, launchQualified: false }); return;
+      }
+      const prepared = await prepareDeadLetterClosureProposal({ pool, secret: BRIDGE_API_KEY, revision,
+        recordRef, action: operation === 'propose' ? 'close_internal' : 'revoke_internal', approvalId: randomUUID() });
+      if (!prepared.ok) { json(response, 503, prepared); return; }
+      const created = await toolHandlers.createApprovalTask(prepared.params);
+      if (!created.ok || !created.approval) {
+        json(response, 503, { ok: false, result: 'closure_pending_approval_unconfirmed' }); return;
+      }
+      const expected = created.approval;
+      const canonical = await readCanonicalClosureApproval(expected.id);
+      if (!validateDeadLetterClosureApproval({ approval: canonical, secret: BRIDGE_API_KEY,
+        revision, now: Date.now(), pendingOnly: true })
+        || canonical.id !== expected.id
+        || closureBinding(BRIDGE_API_KEY, 'intent', canonical.payload.metadata.deadLetterClosureIntent)
+          !== closureBinding(BRIDGE_API_KEY, 'intent', expected.metadata.deadLetterClosureIntent)) {
+        json(response, 503, { ok: false, result: 'closure_pending_approval_unconfirmed', noContact: true,
+          providerWritesBlocked: true, deliveryRetries: false, providerDeliveryVerified: false, launchQualified: false }); return;
+      }
+      clearBridgeReadCache('dead_letter_closure_proposed');
+      json(response, 200, { ok: true, result: 'closure_pending_approval_confirmed', approvalId: canonical.id,
+        noContact: true, providerWritesBlocked: true, deliveryRetries: false,
+        providerDeliveryVerified: false, launchQualified: false }); return;
+    }
+
     if (pathname === '/api/admin/reconciliation/run') {
       const authority = authorizeQualificationRequest({ method: request.method, search: url.search,
         headers: request.headers, body: {} }, BRIDGE_API_KEY);
@@ -73179,8 +73446,8 @@ const server = createServer(async (request, response) => {
       }
       const pool = runtimeStateBootstrap.ready ? getPgPool() : null;
       const result = await executeOperationalAudit({ pool, revision: process.env.RENDER_GIT_COMMIT || BUILD_REVISION,
-        secret: BRIDGE_API_KEY, collect: ({ pool: auditPool, now, observationNow, fence }) =>
-          collectOperationalAudit({ pool: auditPool, now, observationNow, fence, secret: BRIDGE_API_KEY,
+        secret: BRIDGE_API_KEY, collect: ({ pool: auditPool, now, observationNow, fence, closureBoundary }) =>
+          collectOperationalAudit({ pool: auditPool, now, observationNow, fence, closureBoundary, secret: BRIDGE_API_KEY,
             revision: process.env.RENDER_GIT_COMMIT || BUILD_REVISION, sampler: runtimeCoverageSampler,
             runtime: getRuntimeCoverageHealth() }),
       });
@@ -75898,7 +76165,8 @@ const server = createServer(async (request, response) => {
         return;
       }
       const slackPayload = slackRequest.payload || {};
-      void handleSlackApprovalInteraction(slackPayload)
+      void handleSlackApprovalInteraction(slackPayload, slackRequest.signature?.ok === true
+        && !slackRequest.signature?.skipped ? closureSlackAuthority : { request })
         .then((result) => {
           console.log('[pbk-local-openclaw] Slack interaction processed:', {
             ok: result.ok,
@@ -79289,8 +79557,11 @@ const server = createServer(async (request, response) => {
         return;
       }
 
-      const result = await handleEvent(eventType, payload);
-      json(response, result.ok === false ? 404 : 200, {
+      const result = await handleEvent(eventType, payload, { request, authBody: body });
+      const closureFailure = result.deadLetterClosure || String(result.result || '').startsWith('closure_');
+      const decisionFailure = String(result.code || '').startsWith('approval_decision_');
+      const status = result.ok === false ? (closureFailure || decisionFailure ? result.statusCode || 403 : 404) : 200;
+      json(response, status, {
         ...result,
         state: buildStateSnapshot(),
       });
@@ -79683,7 +79954,6 @@ const server = createServer(async (request, response) => {
       }
 
       const body = await readBody(request);
-      const approval = state.approvals.find((item) => item.id === approvalDecisionMatch.groups.id);
       const teamAuthPresented = hasTeamAuthCredentials(request, body);
       if (teamAuthPresented) {
         const teamAuth = getTeamAuthMeta(request, body);
@@ -79692,16 +79962,6 @@ const server = createServer(async (request, response) => {
             ok: false,
             error: teamAuth.error || 'Team passcode required.',
             configured: Boolean(TEAM_PASSCODE),
-            permissions: getTeamPermissions(),
-          });
-          return;
-        }
-        const restriction = getTeamApprovalRestriction(approval || {}, status, getTeamPermissions());
-        if (restriction) {
-          json(response, 403, {
-            ok: false,
-            error: restriction,
-            adminRequired: true,
             permissions: getTeamPermissions(),
           });
           return;
@@ -79723,7 +79983,7 @@ const server = createServer(async (request, response) => {
         reviewReason: body.reviewReason || '',
         falsePositiveTag: body.falsePositiveTag || body.reviewReason || '',
         teamAuth: body.teamAuth || null,
-      });
+      }, { request, authBody: body });
       json(response, result.ok === false ? result.statusCode || 404 : 200, {
         ...result,
         state: buildStateSnapshot(),
@@ -79734,7 +79994,6 @@ const server = createServer(async (request, response) => {
     const approvalMatch = matchPath(pathname, '/api/approvals/:id');
     if (approvalMatch && request.method === 'PUT') {
       const body = await readBody(request);
-      const approval = state.approvals.find((item) => item.id === approvalMatch.groups.id);
       const requestedStatus = normalizeApprovalDecisionStatus(body.status || body.action || 'approved');
       const teamAuthPresented = hasTeamAuthCredentials(request, body);
       if (teamAuthPresented) {
@@ -79744,16 +80003,6 @@ const server = createServer(async (request, response) => {
             ok: false,
             error: teamAuth.error || 'Team passcode required.',
             configured: Boolean(TEAM_PASSCODE),
-            permissions: getTeamPermissions(),
-          });
-          return;
-        }
-        const restriction = getTeamApprovalRestriction(approval || {}, requestedStatus, getTeamPermissions());
-        if (restriction) {
-          json(response, 403, {
-            ok: false,
-            error: restriction,
-            adminRequired: true,
             permissions: getTeamPermissions(),
           });
           return;
@@ -79774,7 +80023,7 @@ const server = createServer(async (request, response) => {
         reviewReason: body.reviewReason || '',
         falsePositiveTag: body.falsePositiveTag || body.reviewReason || '',
         teamAuth: body.teamAuth || null,
-      });
+      }, { request, authBody: body });
       json(response, result.ok === false ? result.statusCode || 404 : 200, {
         ...result,
         state: buildStateSnapshot(),

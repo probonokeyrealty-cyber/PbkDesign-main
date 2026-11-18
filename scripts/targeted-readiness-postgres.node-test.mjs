@@ -6,7 +6,7 @@ import pg from 'pg';
 import { applyTargetedReadinessMigration } from './targeted-readiness-migration.mjs';
 import { recordCallMemorySkip, readCallMemorySkipSummary } from './call-memory-outcome-store.mjs';
 import { validateTargetedEvalTarget } from './targeted-readiness-eval-guard.mjs';
-import { createTimingPostgresFixture, seedTimingPostgresDay } from './readiness-timing-postgres-fixture.mjs';
+import { createTimingPostgresFixture, seedTimingPostgresDay, assertCoverageOnlyAudit } from './readiness-timing-postgres-fixture.mjs';
 import { withRuntimeEvidenceContext } from './runtime-evidence-context.mjs';
 import { captureRuntimeSourceWriteBinding, runtimeSourceWriteReturning, recordRuntimeSourceEvidence,
   prepareRuntimeSourceObservation, collectRuntimeSourceSnapshotInTransaction,
@@ -318,14 +318,12 @@ test('seeded cross-engine algorithm and actual Postgres reference/audit proof is
       const result = await executeOperationalAudit({ pool, secret, revision, now,
         createId: () => 'postgres-durable-audit', collect: args => collectOperationalAudit({ ...args,
           secret, revision, sampler, runtime: health() }) });
-      assert.equal(result.verified, true, result.result);
-      assert.equal(result.audit.coverage.verified, true);
-      assert.equal(result.audit.ready, true, 'quiet algorithm fixture, not business or fleet readiness');
+      assertCoverageOnlyAudit(result);
       f.advance();
       const appended = await sampler.sample();
       assert.equal(appended.verified, true, appended.result);
       assert.deepEqual((await verify(reference)).proof.reference, reference);
-      assert.equal((await auditRead()).audit.ready, true);
+      assertCoverageOnlyAudit(await auditRead());
       const control = (await pool.query("SELECT * FROM public.pbk_eval_runs WHERE suite_name='runtime_coverage_control_v1'")).rows[0];
       for (const id of [reference.first.id, control.report.headId, control.id]) {
         const row = (await pool.query('SELECT * FROM public.pbk_eval_runs WHERE id=$1', [id])).rows[0];
@@ -334,9 +332,7 @@ test('seeded cross-engine algorithm and actual Postgres reference/audit proof is
         await assertAuditDenied();
         await pool.query('UPDATE public.pbk_eval_runs SET report=$2::jsonb WHERE id=$1', [id, JSON.stringify(row.report)]);
         const restored = await auditRead();
-        assert.equal(restored.audit.ready, true, 'exact restored SQL proof must restore actual coverage qualification');
-        assert.equal(restored.audit.coverage.verified, true);
-        assert.equal(restored.coverageDiagnostics.verified, true);
+        assertCoverageOnlyAudit(restored);
       }
       assert.equal((await verify({ ...reference, orderedRoot: '0'.repeat(64) })).verified, false);
       const receipt = (await pool.query("SELECT * FROM public.pbk_eval_runs WHERE suite_name='runtime_source_evidence_v1'")).rows[0];

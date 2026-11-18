@@ -1,5 +1,6 @@
 import { readRuntimeCoverage } from './runtime-coverage-store.mjs';
-import { operationalAuditSourceStatus } from './operational-audit-store.mjs';
+import { operationalAuditSourceStatus, withOperationalAuditCollection } from './operational-audit-store.mjs';
+import { readDeadLetterClosures, validateDeadLetterAuditBoundary } from './dead-letter-closure-store.mjs';
 
 export const OPERATIONAL_AUDIT_CHECK_IDS = Object.freeze([
   'runtime_archive', 'provider_dispatch', 'dead_letters', 'conversation_projection',
@@ -65,15 +66,15 @@ const SOURCES = Object.freeze([
   },
   {
     id: 'dead_letters',
-    counts: ['observations', 'outstanding', 'excludedFixtures', 'futureTimestamps', 'missingTimestamps'],
+    counts: ['observations', 'outstanding', 'totalOriginals', 'excludedFixtures', 'futureTimestamps', 'missingTimestamps'],
     failures: ['outstanding'],
-    // There is no resolution column: old rows remain outstanding rather than aging into a pass.
+    // Every original is retained, including old, undated and concurrent rows. Only verified closures discount it.
     sql: `WITH evidence AS (
       SELECT created_at AS at, FALSE AS fixture
       FROM public.event_dead_letters WHERE tenant_id = 'pbk'
     ) SELECT /* operational_audit:dead_letters */
       COUNT(*) FILTER (WHERE ${observed}) AS observations,
-      COUNT(*) FILTER (WHERE NOT fixture AND at <= $2::timestamptz) AS outstanding,
+      COUNT(*) AS outstanding, COUNT(*) AS "totalOriginals",
       ${bounds}, ${times('NOT fixture AND at <= $2::timestamptz')} FROM evidence`,
   },
   {
@@ -147,7 +148,8 @@ const SOURCES = Object.freeze([
       ('bridge_state'), ('lead_profiles'), ('lead_imports'), ('calls'), ('contracts'),
       ('unified_messages'), ('pbk_memories'), ('pbk_knowledge'), ('pbk_feedback'),
       ('pbk_intent_events'), ('pbk_local_commands'), ('pbk_eval_runs'),
-      ('conversation_threads'), ('conversation_thread_identities'), ('communication_sender_identities')
+      ('conversation_threads'), ('conversation_thread_identities'), ('communication_sender_identities'),
+      ('pbk_dead_letter_closure_ledger')
     ), tables AS (
       SELECT c.oid, c.relrowsecurity, c.relacl, c.relowner
       FROM required r LEFT JOIN pg_catalog.pg_namespace n ON n.nspname = 'public'
@@ -220,7 +222,7 @@ function summarize(source, rows, windowEnd, coverage) {
       return finish('unverified', 'contamination_unverified');
     }
     if (source.id === 'database_security') {
-      if (counts.missingTables || counts.requiredTables !== 22 || counts.presentTables !== 22) {
+      if (counts.missingTables || counts.requiredTables !== 23 || counts.presentTables !== 23) {
         return finish('unverified', 'source_unavailable');
       }
       return finish('passed', 'no_findings');
@@ -258,6 +260,7 @@ async function readSource(pool, source, values, deadline) {
   let client;
   let abandoned = false;
   let destroy = false;
+  let skipCleanup = false;
   let outcome;
   const remaining = () => Math.max(1, Math.min(QUERY_MS, Math.floor(deadline - performance.now())));
   try {
@@ -280,9 +283,13 @@ async function readSource(pool, source, values, deadline) {
   } catch (error) {
     destroy = true;
     const code = error?.code;
+    skipCleanup = code === 'AUDIT_TIMEOUT';
     outcome = { reason: ['42P01', '42703', '3F000'].includes(code) ? 'source_unavailable' : 'query_failed' };
   } finally {
-    if (client) {
+    if (client && skipCleanup) {
+      // Do not queue cleanup behind a timed-out/abandoned query.
+      try { client.release(true); } catch { outcome = { reason: 'query_failed' }; }
+    } else if (client) {
       try {
         await bounded(() => client.query({ text: 'ROLLBACK', values: [], query_timeout: 500 }), 500);
       } catch {
@@ -309,8 +316,12 @@ function runtimeHealth(runtime, at) {
 }
 
 // now and runtime are internal dependencies, never request fields or caller evidence.
-export async function collectOperationalAudit({ pool, now = Date.now(), observationNow = Date.now,
-  runtime = {}, secret, revision, sampler, fence } = {}) {
+export async function collectOperationalAudit(input = {}) {
+  return withOperationalAuditCollection(input.pool, pool => collectWithinFence({ ...input, pool }));
+}
+
+async function collectWithinFence({ pool, now = Date.now(), observationNow = Date.now,
+  runtime = {}, secret, revision, sampler, fence, closureBoundary } = {}) {
   if (!Number.isSafeInteger(now) || now < DAY_MS || !Number.isFinite(new Date(now).getTime())) {
     throw new TypeError('invalid_audit_clock');
   }
@@ -330,11 +341,29 @@ export async function collectOperationalAudit({ pool, now = Date.now(), observat
     const read = await readSource(pool, source, source.id === 'database_security' ? [] : [windowStart, windowEnd], deadline);
     checks.push(read.reason ? result(source.id, 'unverified', read.reason) : summarize(source, read.rows, windowEnd, coverage));
   }
+  // The closure store's query/acquisition timers share the remaining collection budget.
+  const summary = validateDeadLetterAuditBoundary(closureBoundary, windowEnd)
+    ? await readDeadLetterClosures({ pool, secret, revision, now: observationNow(), cutoff: windowEnd,
+      boundary: closureBoundary, deadlineAt: deadline }) : null;
+  fence?.check();
+  const dead = checks.find(c => c.id === 'dead_letters');
+  const matching = summary?.verified === true && summary.counts.total === dead.counts.totalOriginals;
+  const closures = matching ? { verified: true, reference: summary.reference } : { verified: false };
+  if (Number.isSafeInteger(dead.counts.totalOriginals)) {
+    dead.counts.resolvedInternal = matching ? summary.counts.closedInternal : 0;
+    dead.counts.invalidatedClosures = matching ? summary.counts.invalidated : 0;
+    dead.counts.outstanding = dead.counts.totalOriginals - dead.counts.resolvedInternal;
+    if (!matching) { dead.status = 'unverified'; dead.reason = 'source_unavailable'; }
+    else if (!dead.counts.futureTimestamps && !dead.counts.missingTimestamps) {
+      dead.status = dead.counts.outstanding ? 'failed' : 'passed';
+      dead.reason = dead.counts.outstanding ? 'findings_detected' : 'no_findings';
+    }
+  }
   checks.push(runtimeHealth(runtime, windowEnd));
   checks.push(result('monitoring_continuity', coverage?.verified ? 'passed' : 'unverified',
     coverage?.verified ? 'no_findings' : 'authoritative_source_unavailable'));
   const reference = coverage?.proof?.reference;
-  return { windowStart, windowEnd, checks, coverage: reference ? { verified: true,
+  return { windowStart, windowEnd, checks, closures, coverage: reference ? { verified: true,
     schemaVersion: coverage.proof.schemaVersion, policyVersion: coverage.proof.policy.version, policyHash: reference.policyHash,
     instrumentation: reference.instrumentation, segmentRef: reference.segmentRef, cutoff: reference.cutoff, reference }
     : { verified: false } };

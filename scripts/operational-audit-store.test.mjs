@@ -5,6 +5,9 @@ import { canonicalJson } from './skill-governance-store.mjs';
 import { createAuditFixture } from './operational-audit-test-fixture.mjs';
 import { advanceAuditFixtureClock } from './readiness-timing-postgres-fixture.mjs';
 import { readRuntimeCoverage, verifyRuntimeCoverageReference } from './runtime-coverage-store.mjs';
+import { captureDeadLetterAuditBoundary, readDeadLetterClosures } from './dead-letter-closure-store.mjs';
+import { closureBinding } from './dead-letter-closure-protocol.mjs';
+import { DEAD_LETTER_CLOSURE_SQL, verifyDeadLetterClosureInstallation } from './dead-letter-closure-migration.mjs';
 
 let store = {};
 try { store = await import('./operational-audit-store.mjs'); }
@@ -14,14 +17,20 @@ const revision = 'a'.repeat(40);
 const secret = 'operational-audit-test-signing-material';
 const NOW = Date.parse('2026-11-16T12:00:00.000Z');
 const DAY = 24 * 3600_000;
-const SOURCE = 'server:operational-audit:v2';
-const SUITE = 'operational_audit_v2';
-const SCHEMA = 'pbk-operational-audit-v2';
+const SOURCE = 'server:operational-audit:v3';
+const SUITE = 'operational_audit_v3';
+const SCHEMA = 'pbk-operational-audit-v3';
 const IDS = ['runtime_archive', 'provider_dispatch', 'dead_letters', 'conversation_projection',
   'safety_qa', 'database_security', 'runtime_health', 'monitoring_continuity'];
 const iso = ms => new Date(ms).toISOString();
-let fixture;
-beforeAll(async () => { fixture = await createAuditFixture({ end: NOW, revision, secret }); }, 120000);
+let fixture, closureReference;
+beforeAll(async () => {
+  fixture = await createAuditFixture({ end: NOW, revision, secret });
+  const b = await captureDeadLetterAuditBoundary({ pool: fixture.pool, now: fixture.now });
+  assert.equal(b.verified, true);
+  const r = await readDeadLetterClosures({ pool: fixture.pool, secret, revision, now: NOW, boundary: b.boundary });
+  assert.equal(r.verified, true); closureReference = r.reference;
+}, 120000);
 afterAll(async () => { await fixture?.close(); });
 // The audit-row double exercises corruption/CAS. Coverage always uses the real durable validator.
 const coverageVerifier = options => verifyRuntimeCoverageReference({ ...options,
@@ -33,10 +42,16 @@ function api(name) {
 }
 
 function collection(end = NOW, ready = false) {
+  const { attestation: _, ...body } = closureReference;
+  const unsigned = { ...body, cutoff: iso(end), boundary: { ...body.boundary, serverObservedAt: iso(end) } };
+  const reference = { ...unsigned, attestation: { version: body.schemaVersion,
+    signature: closureBinding(secret, 'audit-reference', unsigned) } };
   return { windowStart: iso(end - DAY), windowEnd: iso(end),
     checks: IDS.map(id => ({ id, status: ready || id !== 'monitoring_continuity' ? 'passed' : 'unverified',
       reason: ready || id !== 'monitoring_continuity' ? 'no_findings' : 'coverage_unverified',
-      counts: { total: 0 }, firstObservedAt: null, lastObservedAt: null })),
+      counts: id === 'dead_letters' ? { totalOriginals: 0, resolvedInternal: 0, outstanding: 0, invalidatedClosures: 0 }
+        : { total: 0 }, firstObservedAt: null, lastObservedAt: null })),
+    closures: { verified: true, reference },
     coverage: ready ? { verified: true, reference: fixture.coverage.proof.reference } : { verified: false } };
 }
 
@@ -57,6 +72,8 @@ function database(transactionStarts = []) {
   const query = async (sql, values = []) => {
     if (typeof sql === 'object') { values = sql.values || []; sql = sql.text; }
     statements.push({ sql, values });
+    if (sql.startsWith('SELECT pg_current_snapshot()')) return { rows: [{ snapshot: closureReference.boundary.snapshot,
+      database_captured_at: iso(pool.clockMs) }] };
     if (sql === 'BEGIN') transactionStart = transactionStarts.shift() ?? NOW;
     if (/pg_try_advisory_xact_lock/.test(sql)) return { rows: [{ acquired: !pool.busy }] };
     if (/INSERT INTO public.pbk_eval_runs/.test(sql)) {
@@ -81,13 +98,14 @@ function database(transactionStarts = []) {
         report: jsonb(JSON.parse(values[7])) });
       return { rows: [], rowCount: 1 };
     }
-    if (/FROM public.pbk_eval_runs/.test(sql)) {
+    if (/^SELECT id, tenant_id/.test(sql)) {
       if (pool.failRead) throw new Error('private-read-error');
       const ordered = [...rows].sort((a, b) => a.createdUs === b.createdUs
         ? b.id.localeCompare(a.id) : a.createdUs > b.createdUs ? -1 : 1);
       // Return corrupt matching rows too: verification must not rely on SQL filtering for integrity.
       return { rows: JSON.parse(JSON.stringify(ordered.slice(0, 1))) };
     }
+    if (/^(SELECT|WITH)/.test(sql)) return fixture.pool.query(sql, values);
     return { rows: [] };
   };
   pool.query = async (...args) => { assert.equal(acquired, false, 'readback/collector must not hold the writer connection'); return query(...args); };
@@ -106,7 +124,7 @@ async function execute(pool = database(), overrides = {}) {
 }
 const read = (pool, overrides = {}) => api('readOperationalAudit')({ pool, revision, secret, now: NOW, coverageVerifier, ...overrides });
 
-function resign(row, domain = 'pbk.operational-audit.signing-key.v2') {
+function resign(row, domain = 'pbk.operational-audit.signing-key.v3') {
   const { attestation: _ignored, ...unsigned } = row.report;
   const key = createHmac('sha256', secret).update(domain).digest();
   row.report.attestation = { version: SCHEMA,
@@ -132,7 +150,7 @@ test('JSONB readback verifies an incomplete audit without promoting it', async (
   assert.equal(pool.rows[0].suite_name, SUITE);
   assert.equal(pool.rows[0].source, SOURCE);
   assert.equal(pool.rows[0].report.windowEnd, undefined, 'window belongs to the signed audit');
-  assert.equal(pool.statements.filter(q => /FROM public.pbk_eval_runs/.test(q.sql) && !/INSERT/.test(q.sql)).length, 2);
+  assert.equal(pool.statements.filter(q => /^SELECT id, tenant_id/.test(q.sql)).length, 4);
   assert(pool.statements.filter(q => /^SELECT id/.test(q.sql)).every(q => !/AND id =/.test(q.sql)),
     'explicit IDs must not filter before newest-admission selection');
   assert(pool.statements.find(q => q.sql === 'COMMIT'));
@@ -153,7 +171,7 @@ test.each(['failed', 'unverified', 'coverage', 'continuity'])('readiness is deri
 
 test('only all fixed checks plus verified coverage can derive ready', async () => {
   const { result } = await execute(database(), { collect: async () => collection(NOW, true) });
-  assert.equal(result.audit.ready, true);
+  assert.equal(result.audit.ready, true, JSON.stringify(result));
   assert.equal(result.evidence.silentErrors.passed, true);
 });
 
@@ -170,7 +188,7 @@ test('collection holds no writer connection after durable admission, using the o
   const pool = database();
   let clock = NOW;
   const { result } = await execute(pool, { now: () => clock, collect: async () => {
-    assert.equal(pool.statements.at(-1).sql, 'COMMIT');
+    assert.equal(pool.statements.at(-1).sql, 'ROLLBACK', 'snapshot capture releases its read-only transaction');
     assert.equal(pool.rows[0].report.completedAt, null);
     assert.equal(pool.rows[0].ok, false);
     const signature = pool.rows[0].report.attestation.signature;
@@ -197,7 +215,7 @@ test('admission time, observation cutoff and actual collection completion are di
     client.query = async (...args) => {
       const result = await query(...args);
       const text = typeof args[0] === 'string' ? args[0] : args[0].text;
-      if (text === 'COMMIT' && ++commits === 1) clock += 100;
+      if (text === 'COMMIT' && ++commits === 1) { clock += 100; pool.clockMs = clock; }
       return result;
     };
     return client;
@@ -257,7 +275,8 @@ test('real collector contract retains every known aggregate through signed readb
     runtime_archive: ['observations', 'errors', 'warnings', 'excludedFixtures', 'futureTimestamps', 'missingTimestamps'],
     provider_dispatch: ['observations', 'completed', 'dispatching', 'reconciliationRequired', 'unknownStatuses',
       'excludedFixtures', 'futureTimestamps', 'missingTimestamps'],
-    dead_letters: ['observations', 'outstanding', 'excludedFixtures', 'futureTimestamps', 'missingTimestamps'],
+    dead_letters: ['observations', 'outstanding', 'totalOriginals', 'resolvedInternal', 'invalidatedClosures',
+      'excludedFixtures', 'futureTimestamps', 'missingTimestamps'],
     conversation_projection: ['observations', 'events', 'dispatches', 'linkedDispatches', 'missingProjections',
       'unverifiableDispatches', 'excludedFixtures', 'futureTimestamps', 'missingTimestamps'],
     safety_qa: ['observations', 'qaObservations', 'safetyObservations', 'qaFailures', 'qaSkipped',
@@ -266,6 +285,7 @@ test('real collector contract retains every known aggregate through signed readb
   };
   const expected = Object.fromEntries(Object.entries(keysByCheck).map(([id, keys]) =>
     [id, Object.fromEntries(keys.map((key, index) => [key, index + 1]))]));
+  Object.assign(expected.dead_letters, { totalOriginals: 3, outstanding: 3, resolvedInternal: 0, invalidatedClosures: 0 });
   expected.runtime_health = { checked: 7, unhealthy: 0 };
   expected.monitoring_continuity = {};
   const collectorPool = { connect: async () => ({ release() {}, async query({ text }) {
@@ -495,8 +515,8 @@ test('late older completion cannot bypass a newer pending attempt', async () => 
 test('production store only inserts/finalizes its own receipt and never mutates schemas or admission order', async () => {
   const { pool } = await execute();
   for (const { sql } of pool.statements) {
-    assert.match(sql.trim(), /^(SELECT|INSERT INTO public\.pbk_eval_runs|UPDATE public\.pbk_eval_runs|BEGIN|COMMIT|ROLLBACK)\b/);
-    assert.doesNotMatch(sql, /\b(CREATE|ALTER|DELETE|TRUNCATE)\b/i);
+    assert.match(sql.trim(), /^(SELECT|WITH|SET LOCAL|INSERT INTO public\.pbk_eval_runs|UPDATE public\.pbk_eval_runs|BEGIN|COMMIT|ROLLBACK)\b/);
+    if (/^(INSERT|UPDATE)/.test(sql)) assert.doesNotMatch(sql, /\b(CREATE|ALTER|DELETE|TRUNCATE)\b/i);
     if (/^UPDATE/.test(sql.trim())) {
       assert.doesNotMatch(sql, /created_at\s*=/);
       assert.match(sql, /WHERE id = \$1 AND tenant_id = \$2 AND suite_name = \$3 AND source = \$9/);
@@ -515,37 +535,97 @@ postgresTest('disposable Postgres operational JSONB proof, tampering and latest 
     'Run only through the disposable evaluation harness');
   assert(new URL(process.env.PBK_TEST_DATABASE_URL).hostname.endsWith('.neon.tech'),
     'Integration is restricted to the disposable Neon lane');
+  const proofSchema = JSON.parse(process.env.PBK_QUALIFICATION_SCHEMA_MAP || '{}')['operational-audit-store.test.mjs'];
+  assert.match(proofSchema || '', /^pbk_proof_[a-f0-9]{32}$/, 'The guarded qualification runner must own this isolated schema');
   const { default: pg } = await import('pg');
   const pool = new pg.Pool({ connectionString: process.env.PBK_TEST_DATABASE_URL,
     max: 2, connectionTimeoutMillis: 10_000, query_timeout: 10_000 });
   const ids = Array.from({ length: 3 }, () => `operational-test-${randomUUID()}`);
-  const pgProof = await createAuditFixture({ end: Date.now(), revision, secret });
-  await advanceAuditFixtureClock(pgProof, Date.now());
+  let pgProof, receiptTableReady = false, nativeClosureVerified = false;
   const pgVerifier = options => {
     const current = typeof options.now === 'function' ? options.now() : options.now;
     pgProof.advance(current - pgProof.now());
     return verifyRuntimeCoverageReference({ ...options, pool: store.createOperationalAuditPool(pgProof.pool), now: pgProof.now });
   };
-  const run = (id, collect) => api('executeOperationalAudit')({ pool, revision, secret, createId: () => id,
-    coverageVerifier: pgVerifier, collect: async args => {
-      const data = await collect(args);
-      if (data.coverage.verified) {
-        pgProof.advance(args.now - pgProof.now());
-        if (pgProof.sampler.status().cutoff !== iso(args.now)) {
-          assert.equal((await pgProof.sampler.sample({ cutoff: args.now })).verified, true);
-        }
-        const coverage = await readRuntimeCoverage({ pool: pgProof.pool, secret, revision, now: pgProof.now });
-        assert.equal(coverage.verified, true);
-        data.coverage = { verified: true, reference: coverage.proof.reference };
-      }
-      return data;
-    } });
+  const run = async (id, collect, expectCollectorFailure = false) => {
+    let collectionError;
+    const result = await api('executeOperationalAudit')({ pool, revision, secret, createId: () => id,
+      coverageVerifier: pgVerifier, collect: async args => {
+        try {
+          const data = await collect(args);
+          const closures = await readDeadLetterClosures({ pool, secret, revision,
+            now: Date.now(), cutoff: args.windowEnd, boundary: args.closureBoundary });
+          assert.equal(closures.verified, nativeClosureVerified, closures.result);
+          if (nativeClosureVerified) assert.deepEqual(closures.reference.boundary, args.closureBoundary);
+          else assert.equal(closures.result, 'closure_installation_invalid', 'managed-role access must remain fail-closed');
+          data.closures = nativeClosureVerified ? { verified: true, reference: closures.reference } : { verified: false };
+          if (data.coverage.verified) {
+            pgProof.advance(args.now - pgProof.now());
+            if (pgProof.sampler.status().cutoff !== iso(args.now)) {
+              assert.equal((await pgProof.sampler.sample({ cutoff: args.now })).verified, true);
+            }
+            const coverage = await readRuntimeCoverage({ pool: pgProof.pool, secret, revision, now: pgProof.now });
+            assert.equal(coverage.verified, true);
+            data.coverage = { verified: true, reference: coverage.proof.reference };
+          }
+          return data;
+        } catch (error) { collectionError = error; throw error; }
+      } });
+    // The store deliberately signs failed collection attempts. Test assertions
+    // inside its collector must still fail the test, not masquerade as proof.
+    if (collectionError && !expectCollectorFailure) throw collectionError;
+    if (expectCollectorFailure) assert(collectionError, 'expected collector failure must actually occur');
+    return result;
+  };
   try {
+    await pool.query(`CREATE TABLE public.event_dead_letters(id text PRIMARY KEY,tenant_id text,created_at timestamptz)`);
+    await pool.query(DEAD_LETTER_CLOSURE_SQL);
+    const catalog = [];
+    const installation = await verifyDeadLetterClosureInstallation(async (...args) => {
+      const result = await pool.query(...args);
+      for (const row of result.rows) {
+        if (row.kind && row.detail) {
+          const { body: _body, ...detail } = row.detail;
+          catalog.push({ kind: row.kind, name: row.name, detail });
+        }
+      }
+      return result;
+    });
+    nativeClosureVerified = installation.verified === true;
+    if (!nativeClosureVerified) {
+      assert.equal(installation.result, 'closure_installation_invalid');
+      assert.equal(catalog.find(row => row.kind === 'table')?.detail.role_access_safe, false,
+        `unexpected installation drift: ${JSON.stringify(catalog).slice(0, 8192)}`);
+      // Diagnostic only: isolate the one expected failure using the SAME exact
+      // verifier. Never use this counterfactual result as readiness evidence.
+      const otherInvariants = (query = pool.query.bind(pool)) => verifyDeadLetterClosureInstallation(async (...args) => {
+        const result = await query(...args);
+        return { ...result, rows: result.rows.map(row => row.kind === 'table'
+          ? { ...row, detail: { ...row.detail, role_access_safe: true } } : row) };
+      });
+      assert.equal((await otherInvariants()).verified, true, 'all other installation invariants must match');
+      const driftClient = await pool.connect();
+      try {
+        for (const ddl of ['DISABLE ROW LEVEL SECURITY', 'DISABLE TRIGGER pbk_closure_immutable']) {
+          await driftClient.query('BEGIN');
+          try {
+            await driftClient.query(`ALTER TABLE public.pbk_dead_letter_closure_ledger ${ddl}`);
+            assert.equal((await otherInvariants(driftClient.query.bind(driftClient))).verified, false,
+              'managed-role exception must not hide other drift');
+          } finally { await driftClient.query('ROLLBACK'); }
+        }
+      } finally { driftClient.release(); }
+    }
+    assert.equal((await pool.query(`SELECT count(*)::int AS n FROM information_schema.tables
+      WHERE table_schema=$1 AND table_name='pbk_dead_letter_closure_ledger'`, [proofSchema])).rows[0].n, 1);
     await pool.query(`CREATE TABLE IF NOT EXISTS public.pbk_eval_runs (
       id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL DEFAULT 'pbk', suite_name TEXT NOT NULL,
       ok BOOLEAN NOT NULL DEFAULT FALSE, total INT NOT NULL DEFAULT 0, passed INT NOT NULL DEFAULT 0,
       failed INT NOT NULL DEFAULT 0, report JSONB NOT NULL DEFAULT '{}'::jsonb,
       source TEXT NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`);
+    receiptTableReady = true;
+    pgProof = await createAuditFixture({ end: Date.now(), revision, secret });
+    await advanceAuditFixtureClock(pgProof, Date.now());
     const report = await run(ids[0], async ({ windowEnd }) => collection(Date.parse(windowEnd)));
     assert.equal(report.readbackVerified, true);
     assert.equal(report.audit.ready, false, 'synthetic unknown monitoring coverage never passes');
@@ -553,12 +633,23 @@ postgresTest('disposable Postgres operational JSONB proof, tampering and latest 
     await pool.query(`UPDATE public.pbk_eval_runs SET report = jsonb_set(report,
       '{audit,checks,0,counts,total}', '99'::jsonb) WHERE id = $1`, [ids[0]]);
     assert.equal((await read(pool, { id: ids[0], now: Date.now() })).verified, false);
-    assert.equal((await run(ids[1], async ({ windowEnd }) => collection(Date.parse(windowEnd), true))).audit.ready, true);
-    assert.equal((await run(ids[2], async () => { throw new Error('private-collector-error'); })).audit.ready, false);
+    const completeCoverage = await run(ids[1], async ({ windowEnd }) => collection(Date.parse(windowEnd), true));
+    assert.equal(completeCoverage.verified, true);
+    assert.equal(completeCoverage.audit.ready, nativeClosureVerified,
+      'coverage cannot grant readiness to an unsafe managed-role installation; the separate mandatory native proof supplies the positive case');
+    if (!nativeClosureVerified) {
+      assert.equal(completeCoverage.audit.closures.verified, false);
+      assert.equal(completeCoverage.audit.coverage.verified, true);
+      for (const check of completeCoverage.audit.checks) {
+        assert.equal(check.status, check.id === 'dead_letters' ? 'unverified' : 'passed', check.id);
+        assert.equal(check.reason, check.id === 'dead_letters' ? 'source_unavailable' : 'no_findings', check.id);
+      }
+    }
+    assert.equal((await run(ids[2], async () => { throw new Error('private-collector-error'); }, true)).audit.ready, false);
     const latest = await read(pool, { now: Date.now() });
     assert.equal(latest.runId, ids[2]); assert.equal(latest.verified, true); assert.equal(latest.audit.ready, false);
   } finally {
-    try { await pool.query('DELETE FROM public.pbk_eval_runs WHERE id = ANY($1::text[])', [ids]); }
-    finally { await pool.end(); await pgProof.close(); }
+    try { if (receiptTableReady) await pool.query('DELETE FROM public.pbk_eval_runs WHERE id = ANY($1::text[])', [ids]); }
+    finally { try { await pool.end(); } finally { await pgProof?.close(); } }
   }
 }, 180_000);

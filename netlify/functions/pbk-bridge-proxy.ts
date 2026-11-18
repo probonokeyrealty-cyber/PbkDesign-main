@@ -681,8 +681,9 @@ async function proxyRequest(event: Parameters<Handler>[0], options: {
     );
   }
   const targetUrl = new URL(targetPath, `${BRIDGE_URL}/`);
-  // Never lend the proxy's founder bearer to qualification routes.
-  if (['/api/agents/controlled-qualification', '/api/admin/qualification/run', '/api/admin/operational-audit/run', '/api/admin/reconciliation/run'].includes(targetUrl.pathname.replace(/\/+$/, ''))) {
+  // Never lend the proxy's founder bearer to qualification or internal closure routes.
+  if (['/api/agents/controlled-qualification', '/api/admin/qualification/run', '/api/admin/operational-audit/run', '/api/admin/reconciliation/run'].includes(targetUrl.pathname.replace(/\/+$/, ''))
+    || /^\/api\/admin\/reconciliation\/dead-letters(?:\/|$)/.test(targetUrl.pathname)) {
     return json({
       ok: false,
       error: 'Qualification requires direct founder authentication.',

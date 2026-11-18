@@ -2,6 +2,34 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import pg from 'pg';
 import { createAuditFixture } from './operational-audit-test-fixture.mjs';
+import { OPERATIONAL_AUDIT_CHECK_IDS } from './operational-audit-store.mjs';
+
+// Coverage fixtures do not install a closure ledger. Prove the coverage lane
+// without mistaking it for whole-audit readiness or accepting collector failure.
+export function assertCoverageOnlyAudit(result) {
+  assert.equal(result.verified, true, result.result);
+  assert.equal(result.result, 'operational_audit_incomplete_or_failed');
+  assert.equal(result.audit.ready, false);
+  assert.equal(result.audit.coverage.verified, true);
+  assert.equal(result.audit.closures.verified, false);
+  assert.equal(result.coverageDiagnostics.verified, true);
+  assert.equal(result.evidence.silentErrors.passed, false);
+  assert.deepEqual(result.audit.checks.map(c => c.id).sort(), [...OPERATIONAL_AUDIT_CHECK_IDS].sort());
+  for (const check of result.audit.checks) {
+    const missingLedger = ['dead_letters', 'database_security'].includes(check.id);
+    assert.equal(check.status, missingLedger ? 'unverified' : 'passed', check.id);
+    assert.equal(check.reason, missingLedger ? 'source_unavailable' : 'no_findings', check.id);
+    if (check.id === 'database_security') {
+      assert.deepEqual(check.counts, { requiredTables: 23, presentTables: 22,
+        missingTables: 1, rlsDisabled: 0, publicRoleGrants: 0 });
+    }
+    if (check.id === 'dead_letters') {
+      for (const key of ['totalOriginals', 'resolvedInternal', 'outstanding', 'invalidatedClosures']) {
+        assert.equal(check.counts[key], 0, key);
+      }
+    }
+  }
+}
 
 // Test-only SQL remapping. Every query still executes on the real disposable Postgres.
 export function mapReadinessFixtureSql(text, schema) {
@@ -9,11 +37,30 @@ export function mapReadinessFixtureSql(text, schema) {
   return text.replace(/\bpublic\./g, `${schema}.`).replaceAll("'public'", `'${schema}'`);
 }
 
-export function createReadinessFixtureQuery(query, schema) {
+export function createReadinessFixtureQuery(query, schema, { closureCatalog = false } = {}) {
   mapReadinessFixtureSql('', schema);
+  assert.equal(typeof closureCatalog, 'boolean');
+  const map = text => {
+    let mapped = mapReadinessFixtureSql(text, schema);
+    if (!closureCatalog) return mapped;
+    // Only catalog identities/renderings need a schema alias. Parameter data and
+    // returned rows stay untouched; the exact production verifier still runs.
+    const identity = parameter => `pg_catalog.replace(${parameter},'public.','${schema}.')`;
+    for (const parameter of ['$1', '$2']) {
+      mapped = mapped.replaceAll(`pg_catalog.to_regclass(${parameter})`,
+        `pg_catalog.to_regclass(${identity(parameter)})`);
+    }
+    mapped = mapped.replaceAll("pg_catalog.pg_get_serial_sequence($1,'ordinal')=$2",
+      `pg_catalog.pg_get_serial_sequence(${identity('$1')},'ordinal')=${identity('$2')}`);
+    for (const expression of ['pg_catalog.pg_get_constraintdef(k.oid)',
+      'pg_catalog.pg_get_indexdef(i.indexrelid)', 'pg_catalog.pg_get_triggerdef(t.oid)']) {
+      mapped = mapped.replaceAll(expression, `pg_catalog.replace(${expression},'${schema}.','public.')`);
+    }
+    return mapped;
+  };
   return function (config, ...args) {
-    const mapped = typeof config === 'string' ? mapReadinessFixtureSql(config, schema)
-      : { ...config, text: mapReadinessFixtureSql(config.text, schema) };
+    const mapped = typeof config === 'string' ? map(config)
+      : { ...config, text: map(config.text) };
     return query.call(this, mapped, ...args);
   };
 }

@@ -9,4 +9,5 @@ const schema = JSON.parse(process.env.PBK_QUALIFICATION_SCHEMA_MAP || '{}')[base
 assert.match(schema || '', /^pbk_proof_[a-f0-9]{32}$/);
 assert.equal(process.env.PBK_TEST_DATABASE_URL, process.env.PBK_EVAL_DATABASE_URL);
 assert(!process.env.PBK_DATABASE_URL && !process.env.DATABASE_URL);
-pg.Client.prototype.query = createReadinessFixtureQuery(pg.Client.prototype.query, schema);
+pg.Client.prototype.query = createReadinessFixtureQuery(pg.Client.prototype.query, schema,
+  { closureCatalog: basename(expect.getState().testPath) === 'operational-audit-store.test.mjs' });

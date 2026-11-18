@@ -11855,8 +11855,8 @@ html[data-theme='light']
 .pbk-photo-viewer button { min-width: 44px; min-height: 44px; }
 .pbk-photo-viewer button[aria-disabled='true'] { opacity: .45; cursor: not-allowed; }
 .pbk-photo-viewer-stage { position: relative; min-width: 0; min-height: 0; overflow: hidden; border: 1px solid var(--border-dim); border-radius: var(--radius); }
-.pbk-photo-viewer-viewport { width: 100%; height: 100%; overflow: auto; overscroll-behavior: contain; touch-action: pan-y pinch-zoom; }
-.pbk-photo-viewer-viewport[data-zoomed='true'] { cursor: grab; touch-action: pan-x pan-y pinch-zoom; }
+.pbk-photo-viewer-viewport { width: 100%; height: 100%; overflow: auto; overscroll-behavior: contain; touch-action: none; }
+.pbk-photo-viewer-viewport[data-zoomed='true'] { cursor: grab; }
 .pbk-photo-viewer-viewport[data-dragging='true'] { cursor: grabbing; user-select: none; }
 .pbk-photo-viewer-viewport:focus-visible { outline: 2px solid var(--sky); outline-offset: -3px; }
 .pbk-photo-viewer-canvas { display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); place-items: center; min-width: 100%; min-height: 100%; }

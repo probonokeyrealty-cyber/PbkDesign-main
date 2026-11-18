@@ -59,12 +59,13 @@ async function verify(engine,config,label){const browser=await engine.launch();c
      if(multi)send('pointerup',12,x+20,y,false);
     },{dx,dy,cancel,multi});
    };
-   let nativeSwipe;
+   let nativeSwipe,touchSession;
    if(process.argv.includes('--swipe')){
     // Browser-native touch input proves touch-action routing; synthetic events
     // below cover cancellation/multiple contacts consistently in both engines.
     if(label==='narrow'){
      const cdp=await page.context().newCDPSession(page);
+     touchSession=cdp;
      await cdp.send('Emulation.setTouchEmulationEnabled',{enabled:true});
      nativeSwipe=async(dx,dy)=>{
       const b=await fitArea.boundingBox(),x=b.x+b.width/2,y=b.y+b.height/2;
@@ -81,7 +82,13 @@ async function verify(engine,config,label){const browser=await engine.launch();c
     for(const [dx,dy,options] of [[-30,0],[-100,95],[5,100],[-100,0,{cancel:true}],[-100,0,{multi:true}]]){
      await gesture(dx,dy,options);await expect(viewer.getByRole('img',{name:'Property photo 1 of 4',exact:true})).toBeVisible();
     }
+    // Two contacts may now pinch, but must never navigate. Restore fit for swipes.
+    await viewer.getByRole('button',{name:'Reset zoom',exact:true}).click();
     if(nativeSwipe){await nativeSwipe(0,-100);await expect(viewer.getByRole('img',{name:'Property photo 1 of 4',exact:true})).toBeVisible();}
+   }
+   if(process.argv.includes('--touch-zoom')){
+    const {verifyPhotoTouchZoom}=await import('./photo-touch-zoom-browser-cases.mjs');
+    await verifyPhotoTouchZoom({page,area:fitArea,viewer,session:touchSession});
    }
    await viewer.getByRole('button',{name:'Zoom in',exact:true}).click();
    await viewer.getByRole('button',{name:'Zoom in',exact:true}).click();
@@ -112,11 +119,13 @@ async function verify(engine,config,label){const browser=await engine.launch();c
    await expect(viewer.getByRole('img',{name:'Property photo 1 of 4',exact:true})).toBeVisible();
    await page.keyboard.press('ArrowRight');await page.keyboard.press('ArrowLeft');
    await expect(viewer.getByRole('img',{name:'Property photo 1 of 4',exact:true})).toBeVisible();
+   await viewer.getByRole('button',{name:'Zoom in',exact:true}).focus();
    for(let i=0;i<12;i++)await viewer.getByRole('button',{name:'Zoom in',exact:true}).click();
    await expect(viewer.getByLabel('Zoom level',{exact:true})).toHaveText('400%');
    await expect(viewer.getByRole('button',{name:'Zoom in',exact:true})).toBeDisabled();
+   await expect(viewer.getByRole('button',{name:'Zoom in',exact:true})).toBeFocused();
    await page.keyboard.press('0');
-   await expect.poll(()=>fitArea.evaluate(x=>x.scrollWidth<=x.clientWidth+1&&x.scrollHeight<=x.clientHeight+1)).toBe(true);
+   await expect.poll(()=>fitArea.evaluate(x=>({zoom:document.querySelector('[aria-label="Zoom level"]')?.textContent,fit:x.scrollWidth<=x.clientWidth+1&&x.scrollHeight<=x.clientHeight+1,active:document.activeElement?.getAttribute('aria-label')}))).toMatchObject({zoom:'100%',fit:true});
    await page.keyboard.press('+');
    await expect(viewer.getByLabel('Zoom level',{exact:true})).toHaveText('125%');
    await page.keyboard.press('-');
@@ -160,4 +169,9 @@ async function verify(engine,config,label){const browser=await engine.launch();c
   assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1));
   console.log(label+': larger source image, full-size link, fallback, broken thumbnail isolation, rapid switching and no writes passed');
  }finally{await browser.close();}}
-try{await verify(chromium,{viewport:{width:1440,height:960}},'desktop');await verify(webkit,devices['iPhone 13'],'mobile-webkit');await verify(chromium,{viewport:{width:320,height:800},isMobile:true},'narrow');}finally{await new Promise(resolve=>server.httpServer.close(resolve));}
+try{
+ const cases=[[chromium,{viewport:{width:1440,height:960}},'desktop'],[webkit,devices['iPhone 13'],'mobile-webkit'],[chromium,{viewport:{width:320,height:800},isMobile:true},'narrow']];
+ const selected=process.argv.find(arg=>arg.startsWith('--engine='))?.slice('--engine='.length);
+ if(selected&&!cases.some(([, ,label])=>label===selected))throw new Error('Unknown browser engine: '+selected);
+ for(const [engine,config,label] of cases)if(!selected||selected===label)await verify(engine,config,label);
+}finally{await new Promise(resolve=>server.httpServer.close(resolve));}

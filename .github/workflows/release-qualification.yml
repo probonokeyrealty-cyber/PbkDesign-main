@@ -114,6 +114,16 @@ jobs:
           --branch-name pbk-eval-targeted-readiness-bounded-${{ github.run_id }}-${{ github.run_attempt }} --
           node --test scripts/bounded-census-postgres.node-test.mjs
 
+      - name: Run trusted canary Postgres proof
+        env:
+          NEON_API_KEY: ${{ secrets.NEON_API_KEY || secrets.PBK_NEON_API_KEY }}
+          PBK_NEON_API_KEY: ${{ secrets.PBK_NEON_API_KEY || secrets.NEON_API_KEY }}
+          NEON_PROJECT_ID: ${{ secrets.NEON_PROJECT_ID || secrets.PBK_NEON_PROJECT_ID || vars.NEON_PROJECT_ID || vars.PBK_NEON_PROJECT_ID }}
+        run: >-
+          npm run neon:evaluation -- --ttl-hours 1
+          --branch-name pbk-eval-targeted-readiness-canary-${{ github.run_id }}-${{ github.run_attempt }} --
+          node --test scripts/canary-evidence-postgres.node-test.mjs
+
       - name: Build isolated browser fixtures
         run: npm run build
 

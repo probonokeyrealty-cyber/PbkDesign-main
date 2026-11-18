@@ -115,6 +115,10 @@ function operation() {
   }
   return {
     check,
+    allowance() { check(); return { bytes: limits.maxBytes - bytes, rows: limits.maxRows - rows }; },
+    ensureCapacity(requiredBytes, requiredRows) {
+      check(); requireThat(bytes + requiredBytes <= limits.maxBytes && rows + requiredRows <= limits.maxRows, LIMIT);
+    },
     async acquire(pool) {
       const late = (client) => { try { client.release(true); } catch { /* Late resources cannot rejoin the pool. */ } };
       const client = await bounded(() => pool.connect(), limits.operationTimeoutMs, late);
@@ -128,7 +132,7 @@ function operation() {
         throw error;
       }
     },
-    chargeReportTransfer(extra) { bytes += extra; if (bytes > limits.maxBytes) throw poison(LIMIT); check(); },
+    chargeProjectionTransfer(extra) { bytes += extra; if (bytes > limits.maxBytes) throw poison(LIMIT); check(); },
     async finish() {
       if (poisoned) return;
       await this.query('ROLLBACK');
@@ -140,28 +144,57 @@ function operation() {
   };
 }
 
-const projection = (capParameter) => `id, tenant_id, suite_name, source, ok, total, passed, failed,
+const projection = `id, tenant_id, suite_name, source, ok, total, passed, failed,
   to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS created_at_exact,
-  CASE WHEN octet_length(report::text) <= $${capParameter} THEN report ELSE NULL END AS report,
-  octet_length(report::text) AS report_bytes`;
-const newestSql = `SELECT ${projection(4)} FROM public.pbk_eval_runs
+  report`;
+const envelopeOverhead = Buffer.byteLength('{"physical":,"physical_bytes":,"report_bytes":}');
+const denialBytes = serializedBytes({ physical: null, physical_bytes: limits.maxBytes + 1,
+  report_bytes: limits.maxRunReportBytes + 1 });
+
+// Selection precedes admission: never filter an oversized newest row into an
+// older pass. Admit the ENTIRE batch (including envelope metadata) or return one
+// capped size-only denial. No physical field is returned outside this guard.
+function admittedSql(selection, cap) {
+  const fits = `batch_bytes <= $${cap + 1}::bigint AND batch_rows <= $${cap + 2}::int AND reports_fit`;
+  return `WITH selected AS MATERIALIZED (
+  ${selection}
+), projected AS MATERIALIZED (
+  SELECT row_to_json(selected) AS physical, COALESCE(octet_length(report::text), 4) AS report_bytes FROM selected
+), sized AS MATERIALIZED (
+  SELECT physical, report_bytes, octet_length(physical::text) AS physical_bytes FROM projected
+), batch AS MATERIALIZED (
+  SELECT COALESCE(sum(physical_bytes::bigint + octet_length(physical_bytes::text)
+    + octet_length(report_bytes::text) + ${envelopeOverhead}), 0) AS batch_bytes,
+    count(*) AS batch_rows, COALESCE(bool_and(report_bytes <= $${cap}), true) AS reports_fit,
+    COALESCE(max(report_bytes), 0) AS max_report_bytes FROM sized
+)
+SELECT physical, physical_bytes, report_bytes FROM sized CROSS JOIN batch WHERE ${fits}
+UNION ALL
+SELECT NULL::json AS physical, LEAST(batch_bytes, ${limits.maxBytes + 1})::int AS physical_bytes,
+  LEAST(max_report_bytes, ${limits.maxRunReportBytes + 1})::int AS report_bytes FROM batch WHERE NOT (${fits})`;
+}
+const newestSql = admittedSql(`SELECT ${projection} FROM public.pbk_eval_runs
   WHERE tenant_id = $1 AND (suite_name = $2 OR source = $3)
-  ORDER BY created_at DESC, id DESC LIMIT 1`;
-const dependencySql = (count) => `SELECT ${projection(3)} FROM public.pbk_eval_runs
-  WHERE tenant_id = $1 AND id = ANY($2::text[]) ORDER BY id LIMIT ${count + 1}`;
+  ORDER BY created_at DESC, id DESC LIMIT 1`, 4);
+const dependencySql = (count) => admittedSql(`SELECT ${projection} FROM public.pbk_eval_runs
+  WHERE tenant_id = $1 AND id = ANY($2::text[]) ORDER BY id LIMIT ${count + 1}`, 3);
 
 function physicalRows(raw, kind, op) {
   return raw.map((row) => {
-    requireThat(row && typeof row === 'object' && Object.hasOwn(row, 'report_bytes'));
-    const { report_bytes, ...physical } = row;
+    requireThat(row && typeof row === 'object' && Object.keys(row).length === 3
+      && ['physical', 'physical_bytes', 'report_bytes'].every((key) => Object.hasOwn(row, key)));
+    const { report_bytes, physical_bytes, physical } = row;
+    requireThat(Number.isSafeInteger(physical_bytes) && physical_bytes >= 0);
     requireThat(Number.isSafeInteger(report_bytes) && report_bytes >= 0);
+    requireThat(physical !== null && physical_bytes <= limits.maxBytes, LIMIT);
     requireThat(report_bytes <= kinds[kind].maxReportBytes, LIMIT);
+    requireThat(physical && typeof physical === 'object');
     requireThat(physical.report !== null);
-    const actual = serializedBytes(physical.report);
-    requireThat(actual <= report_bytes);
-    // pg parses JSONB text: its whitespace still crossed the wire even though
-    // canonical JSON no longer contains it. SQL size metadata is charged too.
-    op.chargeReportTransfer(report_bytes - actual);
+    const actual = serializedBytes(physical), reportActual = serializedBytes(physical.report);
+    requireThat(reportActual <= report_bytes && actual + report_bytes - reportActual <= physical_bytes);
+    // pg parses the physical JSON envelope. Charge whitespace/escaping removed
+    // by parsing, across ALL fields, in addition to already charged metadata.
+    op.chargeProjectionTransfer(physical_bytes - actual);
     canaryRowDigest(physical);
     return physical;
   });
@@ -202,8 +235,11 @@ export async function readCanaryEvidence(input = {}) {
         await op.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
         async function select(text, values) {
           const ms = Math.max(1, Math.floor(Math.min(limits.queryTimeoutMs, op.check())));
+          op.ensureCapacity(serializedBytes({ statement_timeout: `${ms}ms`, lock_timeout: `${ms}ms` }), 1);
           await op.query("SELECT set_config('statement_timeout', $1, true) AS statement_timeout, set_config('lock_timeout', $1, true) AS lock_timeout", [`${ms}ms`]);
-          return op.query(text, values);
+          op.ensureCapacity(denialBytes, 1);
+          const remaining = op.allowance();
+          return op.query(text, [...values, remaining.bytes, remaining.rows]);
         }
         const comparisons = physicalRows(await select(newestSql,
           ['pbk', kinds.comparison.suite, kinds.comparison.source, kinds.comparison.maxReportBytes]), 'comparison', op);

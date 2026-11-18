@@ -37,10 +37,29 @@ function fakeStore(f = makeCanaryFixture(), options = {}) {
             rows = source.filter((r) => r.tenant_id === config.values[0] && config.values[1].includes(r.id))
               .sort((a, b) => a.id.localeCompare(b.id));
           }
-          const cap = config.values.at(-1);
-          rows = rows.map((r) => { const report_bytes = Buffer.byteLength(JSON.stringify(r.report));
-            return { ...r, report: report_bytes <= cap ? r.report : null, report_bytes }; });
-          rows = options.rows?.(rows, call) ?? rows;
+          const capIndex = /ORDER BY created_at DESC, id DESC/.test(config.text) ? 3 : 2;
+          const cap = config.values[capIndex];
+          if (/row_to_json\(selected\)/.test(config.text)) {
+            // A SQL-shape model, NOT evidence of actual PostgreSQL wire behavior.
+            // Explicit emitted-SQL assertions below constrain its admission semantics.
+            const envelopes = rows.map((physical) => ({ physical,
+              physical_bytes: Buffer.byteLength(canonicalJson(physical)) + (options.wirePadding ?? 0),
+              report_bytes: Buffer.byteLength(canonicalJson(physical.report)) + (options.wirePadding ?? 0) }));
+            const total = envelopes.reduce((n, r) => n + transferCost(r), 0);
+            if (total > config.values[capIndex + 1] || rows.length > config.values[capIndex + 2]
+              || envelopes.some((r) => r.report_bytes > cap)) {
+              rows = [{ physical: null, physical_bytes: Math.min(total, limits.maxBytes + 1),
+                report_bytes: Math.min(Math.max(0, ...envelopes.map((r) => r.report_bytes)), limits.maxRunReportBytes + 1) }];
+            } else {
+              const changed = options.rows?.(envelopes.map(({ physical, report_bytes }) => ({ ...physical, report_bytes })), call);
+              rows = changed ? changed.map(({ report_bytes, ...physical }, i) => ({ physical, report_bytes,
+                physical_bytes: envelopes[i]?.physical_bytes ?? Buffer.byteLength(canonicalJson(physical)) })) : envelopes;
+            }
+          } else {
+            rows = rows.map((r) => { const report_bytes = Buffer.byteLength(JSON.stringify(r.report));
+              return { ...r, report: report_bytes <= cap ? r.report : null, report_bytes }; });
+            rows = options.rows?.(rows, call) ?? rows;
+          }
         } else if (/set_config/.test(config.text)) rows = [{ statement_timeout: config.values[0], lock_timeout: config.values[0] }];
         transfers.push(...clone(rows));
         return { rows };
@@ -52,6 +71,11 @@ function fakeStore(f = makeCanaryFixture(), options = {}) {
   const read = (extra = {}) => reader.readCanaryEvidence({ pool, secret: f.secret, revision: f.revision,
     policy: { ready: true, version: 2, hash: f.policyHash }, now: () => f.now, ...extra });
   return { pool, clients, calls, transfers, read, f };
+}
+
+function transferCost(row) {
+  return Buffer.byteLength(canonicalJson(row)) + (row.physical
+    ? row.physical_bytes - Buffer.byteLength(canonicalJson(row.physical)) : 0);
 }
 
 function denied(result, code) {
@@ -91,8 +115,8 @@ test('authentic chain reads every dependency twice on independent max:1 snapshot
     expect(selects[1].values[1].sort()).toEqual(store.f.runs.map((r) => r.id).sort());
     expect(selects[2].values[1].sort()).toEqual(store.f.observations.map((r) => r.id).sort());
     for (const select of selects) {
-      expect(select.text).toMatch(/CASE WHEN octet_length\(report::text\) <= \$/);
-      expect(select.text).toMatch(/ELSE NULL END AS report/);
+      expect(select.text).toMatch(/bool_and\(report_bytes <= \$/);
+      expect(select.text).toMatch(/UNION ALL\s+SELECT NULL::json AS physical/);
       expect(select.text).toMatch(/to_char\(created_at AT TIME ZONE 'UTC'/);
       expect(select.text).not.toMatch(/SELECT \*/);
     }
@@ -176,11 +200,16 @@ test.each(['comparison', 'run', 'observation'])('SQL withholds oversized %s repo
   const f = makeCanaryFixture(); const row = kind === 'comparison' ? f.comparison : kind === 'run' ? f.runs[0] : f.observations[0];
   row.report.payload = 'x'.repeat(kind === 'run' ? 65536 : kind === 'comparison' ? 8192 : 2048);
   const store = fakeStore(f); denied(await store.read(), overflow);
-  expect(store.transfers.find((r) => r.id === row.id).report).toBeNull(); released(store, false);
+  expect(store.transfers.at(-1).physical).toBeNull();
+  expect(store.transfers.some((r) => r.physical?.id === row.id)).toBe(false);
+  expect(JSON.stringify(store.transfers)).not.toContain('payload'); released(store, false);
 });
-test('strips only SQL report_bytes before exact physical-row verification', async () => {
+test('unwraps SQL admission metadata before exact physical-row verification', async () => {
   const store = fakeStore(); expect((await store.read()).verified).toBe(true);
-  expect(store.transfers.filter((r) => r.id).every((r) => Number.isInteger(r.report_bytes))).toBe(true);
+  const envelopes = store.transfers.filter((r) => r.physical);
+  expect(envelopes).toHaveLength(86);
+  expect(envelopes.every((r) => Number.isInteger(r.report_bytes) && Number.isInteger(r.physical_bytes))).toBe(true);
+  expect(envelopes.every((r) => Object.keys(r.physical).length === 10)).toBe(true);
 });
 test('unexpected physical SQL fields are not silently stripped', async () => {
   const store = fakeStore(undefined, { rows: (rows) => rows.map((r) => ({ ...r, injected: true })) });
@@ -356,13 +385,13 @@ test('JSONB wire whitespace is charged cumulatively, not discarded by the parser
   const receiptBytes = plain.transfers.reduce((n, r) => n + Buffer.byteLength(canonicalJson(r)), 0);
   let emitted = false;
   const store = fakeStore(f, {
+    wirePadding: 200,
     query: (c) => {
       if (/set_config/.test(c.text)) {
         if (emitted) return { rows: [] }; emitted = true;
         return { rows: [{ metadata: 'x'.repeat(limits.maxBytes - receiptBytes - Buffer.byteLength(canonicalJson({ metadata: '' })) - 100) }] };
       }
     },
-    rows: (rows) => rows.map((r) => ({ ...r, report_bytes: r.report_bytes + 200 })),
   });
   denied(await store.read(), overflow); released(store);
 });
@@ -401,4 +430,103 @@ test('freshness is sampled again after final verification, not only before its C
 test('fractional remaining millisecond never issues a query_timeout exceeding the operation budget', async () => {
   const mono = monotonic(); const store = fakeStore(undefined, { connect: (client) => { mono.advance(14999.5); return client; } });
   denied(await store.read(), timeout); released(store, true); expect(store.calls).toHaveLength(0);
+});
+
+test.each(['source', 'suite_name', 'id'])('I1 newest poisoned %s is withheld before transfer and still masks an older pass', async (field) => {
+  const f = makeCanaryFixture(), poison = clone(f.comparison);
+  poison[field] = 'x'.repeat(3 * 1024 * 1024);
+  poison.created_at_exact = poison.created_at_exact.replace('.000000Z', '.001000Z');
+  const store = fakeStore(f, { snapshots: [[...allRows(f), poison]] });
+  denied(await store.read(), overflow);
+  const evidenceRows = store.transfers.filter((r) => 'physical' in r || 'report_bytes' in r);
+  expect(evidenceRows).toHaveLength(1); expect(evidenceRows[0].physical).toBeNull();
+  expect(evidenceRows[0].physical_bytes).toBeGreaterThan(limits.maxBytes);
+  expect(store.transfers.reduce((n, r) => n + transferCost(r), 0)).toBeLessThanOrEqual(limits.maxBytes);
+  expect(store.calls.filter((c) => /FROM public/.test(c.text))).toHaveLength(1);
+  released(store, false);
+});
+
+test.each(['run', 'observation'])('I1 oversized %s label withholds the entire dependency batch', async (kind) => {
+  const f = makeCanaryFixture(); (kind === 'run' ? f.runs[0] : f.observations[0]).source = 'x'.repeat(3 * 1024 * 1024);
+  const store = fakeStore(f); denied(await store.read(), overflow);
+  const last = store.transfers.at(-1); expect(last.physical).toBeNull();
+  expect(last.physical_bytes).toBeGreaterThan(limits.maxBytes);
+  expect(JSON.stringify(store.transfers)).not.toContain('x'.repeat(1024));
+  released(store, false);
+});
+
+test.each([[0, 'runs'], [0, 'observations'], [1, 'runs'], [1, 'observations']])('I1 snapshot %i entire %s batch must fit the remaining allowance before transfer', async (snapshot, group) => {
+  const f = makeCanaryFixture({ sampleCount: 2 });
+  const expected = f[group].map((physical) => ({ physical,
+    physical_bytes: Buffer.byteLength(canonicalJson(physical)), report_bytes: Buffer.byteLength(canonicalJson(physical.report)) }));
+  const allowance = Math.max(...expected.map(transferCost)) + 50;
+  expect(expected.every((r) => transferCost(r) < allowance)).toBe(true);
+  expect(expected.reduce((n, r) => n + transferCost(r), 0)).toBeGreaterThan(allowance);
+  let configCount = 0, usedBeforeBatch, store;
+  store = fakeStore(f, { query: (c) => {
+    if (c.index === snapshot && /set_config/.test(c.text) && ++configCount === (group === 'runs' ? 2 : 3)) {
+      const used = store.transfers.reduce((n, r) => n + transferCost(r), 0);
+      const padding = { metadata: 'x'.repeat(limits.maxBytes - used - allowance - Buffer.byteLength(canonicalJson({ metadata: '' }))) };
+      usedBeforeBatch = used + transferCost(padding); return { rows: [padding] };
+    }
+  } });
+  denied(await store.read(), overflow);
+  expect(store.transfers.at(-1).physical).toBeNull();
+  expect(store.transfers.reduce((n, r) => n + transferCost(r), 0)).toBeLessThanOrEqual(limits.maxBytes);
+  const batch = store.calls.filter((c) => c.index === snapshot && /FROM public/.test(c.text)).at(-1);
+  expect(batch.values.at(-2)).toBe(limits.maxBytes - usedBeforeBatch);
+  expect(store.pool.connect).toHaveBeenCalledTimes(snapshot + 1); released(store, false);
+});
+
+test('I1 emitted SQL admits all selected physical fields and the complete batch server-side', async () => {
+  const store = fakeStore(); expect((await store.read()).verified).toBe(true);
+  const selects = store.calls.filter((c) => /FROM public/.test(c.text));
+  for (const c of selects) {
+    expect(c.text).toMatch(/^WITH selected AS MATERIALIZED/);
+    expect(c.text).toMatch(/row_to_json\(selected\) AS physical/);
+    expect(c.text).toMatch(/octet_length\(physical::text\) AS physical_bytes/);
+    expect(c.text).toMatch(/sum\(physical_bytes::bigint/);
+    expect(c.text).toMatch(/bool_and\(report_bytes <= \$/);
+    expect(c.text).toMatch(/batch_bytes <= \$\d+::bigint AND batch_rows <= \$\d+::int AND reports_fit/);
+    expect(c.text).toMatch(/UNION ALL\s+SELECT NULL::json AS physical/);
+    expect(c.text).toMatch(/FROM batch WHERE NOT \(batch_bytes <= \$\d+::bigint AND batch_rows <= \$\d+::int AND reports_fit\)/);
+    const selected = c.text.split('), projected AS MATERIALIZED')[0];
+    expect(selected).not.toMatch(/octet_length|batch_bytes|report_bytes/);
+    expect(c.values.at(-2)).toBeGreaterThan(0); expect(c.values.at(-2)).toBeLessThan(limits.maxBytes);
+  }
+});
+
+test('I1 JSON escaping, not only raw text length, controls physical admission', async () => {
+  const f = makeCanaryFixture(); f.comparison.source = '"\n\\'.repeat(400_000);
+  expect(Buffer.byteLength(f.comparison.source)).toBeLessThan(limits.maxBytes);
+  const store = fakeStore(f); denied(await store.read(), overflow);
+  expect(store.transfers.at(-1).physical).toBeNull();
+  expect(store.transfers.at(-1).physical_bytes).toBeGreaterThan(limits.maxBytes); released(store, false);
+});
+
+test('I1 individually bounded poisoned labels cannot overflow the fixed cap as a batch', async () => {
+  const f = makeCanaryFixture();
+  for (const row of f.observations) row.source = 'x'.repeat(60_000);
+  expect(f.observations.every((r) => Buffer.byteLength(canonicalJson(r)) < limits.maxBytes)).toBe(true);
+  const store = fakeStore(f); denied(await store.read(), overflow);
+  expect(store.transfers.at(-1).physical).toBeNull();
+  expect(store.transfers.filter((r) => r.physical?.report.kind === 'observation')).toHaveLength(0);
+  expect(store.transfers.reduce((n, r) => n + transferCost(r), 0)).toBeLessThanOrEqual(limits.maxBytes); released(store, false);
+});
+
+test('I1 admitted wire whitespace remains charged without changing exact physical digests', async () => {
+  const store = fakeStore(undefined, { wirePadding: 200 });
+  const result = await store.read(); expect(result.verified).toBe(true);
+  expect(result.evidence).toEqual(verifyCanaryChain(store.f).evidence);
+  const envelopes = store.transfers.filter((r) => r.physical);
+  expect(envelopes.every((r) => r.physical_bytes - Buffer.byteLength(canonicalJson(r.physical)) === 200)).toBe(true);
+  released(store, false);
+});
+
+test('I1 insufficient room for bounded denial metadata stops before any physical query', async () => {
+  let store;
+  store = fakeStore(undefined, { query: (c) => /set_config/.test(c.text)
+    ? { rows: [{ metadata: 'x'.repeat(limits.maxBytes - 10 - Buffer.byteLength(canonicalJson({ metadata: '' }))) }] } : undefined });
+  denied(await store.read(), overflow);
+  expect(store.calls.filter((c) => /FROM public/.test(c.text))).toHaveLength(0); released(store, false);
 });

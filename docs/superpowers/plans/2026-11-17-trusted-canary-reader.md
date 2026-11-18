@@ -125,19 +125,19 @@ and no reused executionRef, observation id or run id across the sides.
 `makeCanaryFixture(overrides?) -> {secret,revision,policyHash,now,comparison,runs,observations}`
 with test-only rebuild/resign helpers for deliberate tampering cases.
 
-- [ ] Write a positive two-version fixture test; assert verified, separate run ids,
+- [x] Write a positive two-version fixture test; assert verified, separate run ids,
   sample counts, nearest-rank numeric p95 and independently recomputed ratios.
-- [ ] Run the new suite and confirm RED from absent production protocol.
-- [ ] Implement exact protocol checks and private signature verification. On valid
+- [x] Run the new suite and confirm RED from absent production protocol.
+- [x] Implement exact protocol checks and private signature verification. On valid
   input return only the existing evidence.canary comparison/baseline/candidate
   fact shape; no caller aggregate ratios or report pass flag is trusted.
-- [ ] Add rejection matrices for every binding/shape/provenance/freshness/size
+- [x] Add rejection matrices for every binding/shape/provenance/freshness/size
   condition in the spec, including microsecond boundary cases and shared executions.
-- [ ] Assert error and fallback rates from all admitted samples; authenticate a
+- [x] Assert error and fallback rates from all admitted samples; authenticate a
   slow/high-error fixture and assert the existing buildExecutedReadinessEvidence
   still blocks it. Valid bad metrics must not be relabeled corrupt evidence.
-- [ ] Run protocol and existing production-readiness-evidence suites to GREEN.
-- [ ] Independent task review, resolve findings, then commit only owned files.
+- [x] Run protocol and existing production-readiness-evidence suites to GREEN.
+- [x] Independent task review, resolve findings, then commit only owned files.
 
 ### Task 2: Poisoned, Bounded Read-Only Store Reader
 
@@ -145,24 +145,24 @@ with test-only rebuild/resign helpers for deliberate tampering cases.
 **Consumes:** Task 1 exports and fixture factory; server-owned pg pool.
 **Produces:** readCanaryEvidence interface above; no storage writes or caches.
 
-- [ ] Write failing fake-pool tests proving no record is missing/unverified, a
+- [x] Write failing fake-pool tests proving no record is missing/unverified, a
   complete chain is read twice, and a newer invalid admission masks an older pass.
-- [ ] Confirm RED before creating the reader implementation.
-- [ ] Implement the fixed projections and suite-OR-source newest admission query,
+- [x] Confirm RED before creating the reader implementation.
+- [x] Implement the fixed projections and suite-OR-source newest admission query,
   exact dependency batches, repeatable-read/read-only transactions and native
   protocol verifier. Admit report sizes in SQL before transferring JSON bodies.
-- [ ] Implement one cumulative operation budget over both snapshots: 15s deadline,
+- [x] Implement one cumulative operation budget over both snapshots: 15s deadline,
   query limit min(2s, remaining), 1,100 rows, 2 MiB; charge metadata/duplicate reads.
   Check monotonic time after resolved AND rejected continuations; destroy on poison.
-- [ ] Release the first transaction before independently reacquiring/re-reading
+- [x] Release the first transaction before independently reacquiring/re-reading
   newest admission plus dependencies. Compare exact canonical projections and
   reverify chain/freshness with current wall clock; never revive prior objects.
-- [ ] Exercise pool max:1, delayed acquisitions, hanging/rejected/resolved queries,
+- [x] Exercise pool max:1, delayed acquisitions, hanging/rejected/resolved queries,
   event-loop stalls before timer callbacks, shutdown/rollback errors, backward or
   invalid clocks, fresh-read deletions/edits/supersession, exact limits and overflow.
-- [ ] Verify all failure paths release/destroy once, return redacted codes, and
+- [x] Verify all failure paths release/destroy once, return redacted codes, and
   never issue INSERT/UPDATE/DELETE/DDL or enqueue rollback after abandonment.
-- [ ] Run Task 1/2 suites GREEN; independent review and owned-file commit.
+- [x] Run Task 1/2 suites GREEN; independent review and owned-file commit.
 
 ### Task 3: Bridge Readiness And Distribution Wiring
 
@@ -172,21 +172,21 @@ with test-only rebuild/resign helpers for deliberate tampering cases.
 **Produces:** read-only `canaryEvidence` maturity diagnostics and verified canary
 proof integrated with existing qualification/audit evidence.
 
-- [ ] Write a behavioral VM harness around the actual maturity builder with mocked
+- [x] Write a behavioral VM harness around the actual maturity builder with mocked
   dependencies. Assert the new reader is called with existing pool/revision/key,
   and a verified chain reaches the existing gate. Confirm RED on old wiring.
-- [ ] Import the reader and obtain the approved v2 policy via getAgentLatencyPolicy.
+- [x] Import the reader and obtain the approved v2 policy via getAgentLatencyPolicy.
   Merge canary.evidence ONLY when canary.verified===true; expose bounded safe
   diagnostics separately. No endpoint, tool, payload flag or auth route is added.
-- [ ] Replace unconditional shadow mode/note with truthful verified-versus-unverified
+- [x] Replace unconditional shadow mode/note with truthful verified-versus-unverified
   state. Verified metric regressions are still blocked by existing thresholds.
-- [ ] Add Docker COPY entries for both production modules; exclude fixture signers.
-- [ ] Assert a malicious unverified mock containing a passing evidence.canary is
+- [x] Add Docker COPY entries for both production modules; exclude fixture signers.
+- [x] Assert a malicious unverified mock containing a passing evidence.canary is
   ignored, missing storage does not crash readiness, and fleet/audit/qualification/
   delivery blockers remain independent. Pin unchanged approval/auth/dispatch seams.
-- [ ] Run the behavioral wiring, reader/protocol, existing maturity/evidence/
+- [x] Run the behavioral wiring, reader/protocol, existing maturity/evidence/
   qualification/audit/reconciliation suites and Docker closure smoke GREEN.
-- [ ] Independent task review, fix findings and commit only owned files.
+- [x] Independent task review, fix findings and commit only owned files.
 
 ### Task 4: Real Database Proof And Release Documentation
 
@@ -198,19 +198,19 @@ guarded step in `.github/workflows/release-qualification.yml`,
 **Produces:** actual PostgreSQL snapshot/identity/row-precision/read-only proof,
 documented receipt contract, honest local validation and residual limitations.
 
-- [ ] Add guarded test-first disposable-DB cases for authentic-chain readback,
+- [x] Add guarded test-first disposable-DB cases for authentic-chain readback,
   actual microsecond mismatches, other-tenant/deleted/dependency-tampered records,
   latest invalid admission, separate snapshot change detection and no DB writes.
-- [ ] Run only through the existing authenticated evaluation harness on a fresh
+- [x] Run only through the existing authenticated evaluation harness on a fresh
   nondefault/nonprotected TTL branch, with runtime URLs scrubbed. Use a uniquely
   generated empty database as in bounded-census-postgres.node-test; preserve parent
   fingerprints, drop only the verified generated DB and independently verify cleanup.
-- [ ] Add a separate guarded canary node-test step in Release Qualification; do not
+- [x] Add a separate guarded canary node-test step in Release Qualification; do not
   alter the existing six-suite no-skip assertions, weaken the harness, or deploy.
-- [ ] Run focused Jest suites, actual Postgres proof, typecheck, production build,
+- [x] Run focused Jest suites, actual Postgres proof, typecheck, production build,
   MCP tests, relevant isolated bridge/founder smokes, CI-hardening/alignment and
   Docker closure. Use Node 22.23.5; record exact pass/fail/skip counts and commands.
-- [ ] Document missing-producer behavior, schema/counter/digest/signature contract,
+- [x] Document missing-producer behavior, schema/counter/digest/signature contract,
   limits, invalid/newest denial rules and the distinction between verified evidence
   and passing canary/readiness. No fixture or evaluation run is live launch proof.
 - [ ] Request an independent whole-branch security/behavior review; reproduce and

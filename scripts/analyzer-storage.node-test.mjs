@@ -201,7 +201,7 @@ function actions() {
   visit(ast);
   assert.equal(snippets.length, wanted.size);
   assert.ok(persistenceEffect);
-  const callbacks = [], published = [], navigations = [], patches = [], analyses = [];
+  const callbacks = [], published = [], navigations = [], patches = [], analyses = [], creates = [], statuses = [];
   const ref = current => ({ current });
   const context = vm.createContext({
     useCallback: action => action, useEffect: action => action(),
@@ -213,7 +213,10 @@ function actions() {
     getAnalyzeReadiness: () => ({ ready: true, successMessage: 'Ready' }),
     syncDealAnalysis: deal => new Promise((resolve, reject) => analyses.push({ deal, resolve, reject })),
     calculateVerdict: () => 'green', buildAgentDealContext: () => ({}),
-    currentDeal: ref(sample), activeSelectedPath: 'cash',
+    currentDeal: ref(sample), activeSelectedPath: 'cash', savePending: ref(false),
+    crypto: { randomUUID: () => 'fixture-create-key' },
+    createLeadRequest: body => new Promise(resolve => creates.push({ body, resolve })),
+    isApprovalQueuedResponse: response => response.result === 'queued_for_approval',
     writeAnalyzerSessionDeal() {}, readSharedAnalyzerDraft: () => 'newer-peer-draft',
     commitAnalyzerDraft: (deal, fields, expected, force, isCurrent) => new Promise((resolve, reject) => callbacks.push({
       run: () => {
@@ -225,7 +228,7 @@ function actions() {
     })),
     setDeal: next => { const deal = typeof next === 'function' ? next(context.activeDeal) : next;
       context.activeDeal = deal; context.currentDeal.current = deal; },
-    setAnalyzeStatus() {}, setActiveTab() {}, getPathLabel: () => 'Cash',
+    setAnalyzeStatus: value => statuses.push(value), setActiveTab() {}, getPathLabel: () => 'Cash',
     buildMergedDealState: (base, deal) => ({ ...base, ...deal }),
     upsertSavedDeal: deal => deal, appendSavedDealActivity() {},
     buildAnalyzerLeadPatch: deal => deal,
@@ -235,12 +238,39 @@ function actions() {
   });
   const transpile = code => ts.transpileModule(code, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
   vm.runInContext(transpile(snippets.join('\n') + '\nObject.assign(globalThis, { handleCreateLeadFromAnalyzer, handleLoadSavedDeal, handleSaveDeal, handleAnalyzeDeal, clearDraft });'), context);
-  return { context, published, navigations, patches, analyses,
+  return { context, published, navigations, patches, analyses, creates, statuses,
     effect: () => vm.runInContext(transpile(persistenceEffect), context),
     flush: async () => { while (callbacks.length) { callbacks.shift().run(); await new Promise(resolve => setImmediate(resolve)); } },
     reject: async () => { while (callbacks.length) { callbacks.shift().reject(new Error('Fixture lock timed out')); await new Promise(resolve => setImmediate(resolve)); } },
   };
 }
+
+test('A cleared and reentered address cannot revive an earlier CRM creation', async () => {
+  const { context, flush, creates, patches } = actions();
+  context.activeDeal = context.currentDeal.current = { ...sample, leadId: undefined,
+    sellerName: 'Fixture Owner', sellerEmail: 'fixture@example.invalid' };
+  const pending = context.handleSaveDeal();
+  await flush();
+  assert.equal(creates.length, 1);
+  context.activeDeal = context.currentDeal.current = { ...context.currentDeal.current, crmCreateKey: undefined };
+  creates[0].resolve({ ok: true, lead: { leadId: 'earlier-fixture' } });
+  await pending;
+  assert.equal(patches.length, 0);
+  assert.equal(context.currentDeal.current.leadId, undefined);
+});
+
+test('A queued snapshot still reports approval and newly added unsaved fields', async () => {
+  const { context, flush, statuses } = actions();
+  context.patchLeadRequest = async () => {
+    context.currentDeal.current = { ...sample, sellerEmail: 'new-draft@example.invalid' };
+    return { ok: true, result: 'queued_for_approval' };
+  };
+  const pending = context.handleSaveDeal();
+  await flush();
+  await pending;
+  assert.match(statuses.at(-1), /queued approval/);
+  assert.match(statuses.at(-1), /Newer edits remain/);
+});
 
 for (const obsolete of ['unmounted', 'scope', 'edited', 'newer-analysis']) {
   test(`An ${obsolete} analysis cannot replace notes/comps or issue a lead PATCH`, async () => {

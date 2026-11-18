@@ -32,6 +32,13 @@ export interface DealData {
   selectedPath?: PBKPath;
   isAnalyzed?: boolean;
   leadId?: string;
+  crmCreateKey?: string;
+  propertyRecordSnapshot?: {
+    source: 'attom';
+    address: string;
+    retrievedAt: string;
+    facts: Record<string, string | number | null>;
+  };
 
   // Seller Information (for PDFs)
   sellerName?: string;

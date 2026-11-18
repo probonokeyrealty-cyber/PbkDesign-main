@@ -271,6 +271,12 @@ COPY scripts/attom-property-preview.mjs ./scripts/attom-property-preview.mjs
 COPY scripts/attom-recent-sales.mjs ./scripts/attom-recent-sales.mjs
 COPY scripts/address-suggestions.mjs ./scripts/address-suggestions.mjs
 COPY scripts/openclaw-local-server.mjs ./scripts/openclaw-local-server.mjs
+COPY scripts/dead-letter-closure-protocol.mjs ./scripts/dead-letter-closure-protocol.mjs
+COPY scripts/dead-letter-closure-evidence.mjs ./scripts/dead-letter-closure-evidence.mjs
+COPY scripts/dead-letter-closure-migration.mjs ./scripts/dead-letter-closure-migration.mjs
+COPY scripts/dead-letter-closure-store.mjs ./scripts/dead-letter-closure-store.mjs
+COPY scripts/dead-letter-closure-approval.mjs ./scripts/dead-letter-closure-approval.mjs
+COPY scripts/migrations/20261117-dead-letter-closure.sql ./scripts/migrations/20261117-dead-letter-closure.sql
 COPY scripts/ava-team-chat-permissions.mjs ./scripts/ava-team-chat-permissions.mjs
 COPY scripts/neon-auth-mail.mjs ./scripts/neon-auth-mail.mjs
 COPY scripts/neon-auth-microsoft.mjs ./scripts/neon-auth-microsoft.mjs

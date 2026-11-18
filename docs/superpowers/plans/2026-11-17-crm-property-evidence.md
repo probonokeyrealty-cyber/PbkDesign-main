@@ -1,5 +1,7 @@
 # CRM Property Evidence Implementation Plan
 
+REQUIRED WORKFLOW: Use `superpowers:subagent-driven-development` with one focused implementation pass per task and independent review between tasks.
+
 **Goal:** Make saved address lookup photos and important source details visible in the existing CRM property workspace.
 
 **Architecture:** Keep the PBK shell, bridge lookup, Save Deal API and property tabs. Persist a bounded, address-scoped listing snapshot beside the existing ATTOM snapshot in the serialized deal. Reuse the gallery and property-record comparison rather than creating another CRM or provider integration.

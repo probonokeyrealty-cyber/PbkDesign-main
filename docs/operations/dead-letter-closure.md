@@ -59,6 +59,42 @@ database/role identity and reviewed SQL checksum. This local work authorizes non
 of those production actions. Do not run the migration or close live records based
 on a build, PGlite run, or disposable native result alone.
 
+## Proposal And Preview Behavior
+
+Identical proposals reuse one durable, currently valid pending approval only when
+case, action, complete original/evidence bindings, policy, current revision and
+predecessor agree. A bounded per-case database lock serializes proposal creation;
+the existing approval creation service performs an insert-only admission. Reuse
+does not refresh expiry, rewrite a payload or repeat queue/notification fanout.
+Missing storage, overflow, ambiguous candidates, lock timeout or failed durable
+readback blocks confirmation. Cached/file-only approvals never qualify. Approved
+payloads are not rewritten; approved execution still independently reloads every
+authority/evidence binding and cannot obtain authority from proposal reuse.
+
+Current preview cases include `eligibility: { eligible, reasons }`. The bounded
+reason vocabulary is `source_ambiguous`, `source_unverified`, `qa_unverified`,
+`memory_skip_unverified`, `memory_unverified`, `script_proof_unsupported`. No raw
+rows, notes, errors, IDs or seller data are exposed. Incomplete proof never creates
+an approvable intent. These diagnostics do not alter the frozen v1 audit-reference
+case shape or signing domain; audit readback can still only downgrade signed credit.
+
+Already-decided closure callbacks require exact canonical identity, signed intent,
+status, actor and decision time. Mismatches return sanitized HTTP409, not status-only
+success. Exact approved replay still requires independent closure verification.
+Slack's transport acknowledgement is not proof of successful closure; verified
+Slack decisions use the same mismatch rule, and forged Slack requests stay denied.
+
+## Inherited Security Release Blocker
+
+HIGH PRIORITY: nonclosure raw approval callbacks lack the standard route's
+canonical decision-role parity. Global bearer/team authentication exists, but it
+does not replace authorization for the particular approval. This inherited P1 is
+unchanged by the closure work and is NOT certified safe. A separate security owner
+must disposition and resolve it, with transport-parity tests, before broad safety
+or release certification. The closure lane's own canonical admin/verified-Slack
+gate does not repair or certify other callback actions. Do not interpret local
+closure test results as approval to release the wider runtime.
+
 ## Local Verification
 
 Use Node 22 first in PATH. Remove ambient DB URLs/native opt-ins before unit tests.

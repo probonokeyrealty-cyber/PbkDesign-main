@@ -181,10 +181,10 @@ test('unapproved v2 policy is not replaced with a pilot or legacy policy', async
 test('reviewed non-maturity bridge baseline retains its exact integration surface', () => {
   const unchanged = (source.slice(0, start) + source.slice(end))
     .replace("import { readCanaryEvidence } from './canary-evidence-reader.mjs';\n", '');
-  // Task6 adds approval transport guards and founder closure routes outside this
-  // builder. Exact reviewed changes and old/new digests are in the Task6 report.
+  // Task6 and the final closure fix wave change approval transport/proposal seams
+  // outside this builder. Old/new digests and scoped diff are in final-fix-report.
   assert.equal(createHash('sha256').update(unchanged).digest('hex'),
-    '3d15e1e05d28b5f7d4e9dbfc28fe01fd09e2e0c38e0f727a966fbb1868389400');
+    'b1a7fdf1a0e274422deede7c730b521c4d74e42ff2ba54204c5a055cfb77758a');
 });
 
 test('production distribution includes reader and protocol, never the fixture signer', () => {

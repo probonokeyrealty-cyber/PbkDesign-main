@@ -110,6 +110,54 @@ test('complete embedding evidence eligible, protocol signing accepts exact appli
     manifest: r.manifest, predecessor: null, secret, revision, createdAt: new Date(NOW).toISOString() }).recordRef, r.recordRef);
   assert.equal(JSON.stringify(f), before);
 });
+
+test.each(['v3:ABC/def+ghi==', 'C'.repeat(121), 'C'.repeat(240), 'C'.repeat(256)])(
+  'opaque source IDs preserve complete embedding and census: %s', async callId => {
+    const f = fixture();
+    f.original.id = 'D'.repeat(256); f.original.event_id = 'E'.repeat(256);
+    f.original.payload.callId = callId;
+    f.qa[0].id = `call-qa-event-${f.original.event_id}`; f.qa[0].call_id = callId; f.memory[0].call_id = callId;
+    f.calls = [{ id: callId.length <= 240 ? 'K'.repeat(256) : callId, workspace_id: 'pbk', provider: 'telnyx',
+      ...(callId.length <= 240 ? { telnyx_call_control_id: callId } : {}),
+      transcript: [], notes: f.original.payload.transcript, metadata: {}, synthetic: false, created_at: AT, updated_at: AT }];
+    assert.equal(check(f).eligible, true);
+    await seed(f);
+    const before = await fingerprint(), r = await collect();
+    assert.equal(r.ok, true); assert.equal(r.cases[0].eligible, true, JSON.stringify(r)); guards(r);
+    assert.equal(await fingerprint(), before);
+    assert(queries.some(q => q.values?.[0]?.includes(callId)));
+    assert(queries.every(q => !q.text.includes(callId)));
+  });
+
+test('provider punctuation and long original/event IDs preserve genuine executed skip', async () => {
+  const f = fixture('Please call back after lunch.'); f.memory = [];
+  f.original.id = 'D'.repeat(256); f.original.event_id = 'E'.repeat(256);
+  const callId = 'V3:/+' + 'C'.repeat(232) + '==';
+  f.original.payload.callId = callId; f.qa[0].call_id = callId;
+  f.qa[0].id = `call-qa-event-${f.original.event_id}`;
+  f.calls = [{ id: 'canonical', workspace_id: 'pbk', provider: 'telnyx', telnyx_call_control_id: callId,
+    transcript: [], notes: f.original.payload.transcript, metadata: {}, synthetic: false, created_at: AT, updated_at: AT }];
+  await signedSkip(f);
+  const before = await fingerprint(), r = await collect();
+  assert.equal(r.cases[0]?.eligible, true, JSON.stringify(r)); guards(r);
+  assert.equal(r.cases[0].manifest.steps[1].outcome, 'skipped_short_source');
+  assert.equal(await fingerprint(), before);
+  f.calls.push({ ...f.calls[0], id: 'ambiguous' });
+  denied(check(f), 'source_ambiguous');
+});
+
+test.each(['x'.repeat(257), 'bad id', 'bad\u0000id', 'bad\u007fid'])('invalid opaque source remains blocked: %j', callId => {
+  const f = fixture(); f.original.payload.callId = callId;
+  denied(check(f), 'source_unverified');
+});
+
+test('provider aliases retain the upstream 240-character bound without canonical fallback', () => {
+  const f = fixture(); f.original.payload.callId = 'A'.repeat(241); f.qa[0].call_id = f.original.payload.callId;
+  f.memory[0].call_id = f.original.payload.callId;
+  f.calls = [{ id: 'canonical', workspace_id: 'pbk', provider: 'telnyx', telnyx_call_control_id: f.original.payload.callId,
+    transcript: [], notes: TEXT, metadata: {}, created_at: AT, updated_at: AT }];
+  denied(check(f), 'source_unverified');
+});
 test('short source without executed skip blocked even with a claimed embedding', () => {
   const f = fixture('A short source.'); denied(check(f), 'memory_skip_unverified');
 });

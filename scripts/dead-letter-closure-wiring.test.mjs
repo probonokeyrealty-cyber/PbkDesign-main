@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { createHmac, timingSafeEqual, randomUUID } from 'node:crypto';
 import vm from 'node:vm';
+import { createServer } from 'node:http';
+import { once } from 'node:events';
 import ts from 'typescript';
 import { test } from '@jest/globals';
 import { PGlite } from '@electric-sql/pglite';
@@ -10,7 +12,7 @@ import { makeClosureFixture } from './fixtures/dead-letter-closure-fixture.mjs';
 import { closureBinding, createClosureIntent } from './dead-letter-closure-protocol.mjs';
 import { buildExecutedReadinessEvidence } from './production-maturity-loop.mjs';
 import { DEAD_LETTER_CLOSURE_SQL } from './dead-letter-closure-migration.mjs';
-import { executeDeadLetterClosure, readDeadLetterClosures } from './dead-letter-closure-store.mjs';
+import { executeDeadLetterClosure, readDeadLetterClosures, admitDeadLetterClosureProposal } from './dead-letter-closure-store.mjs';
 import { CLOSURE_SOURCE_FIXTURE_SQL, seedClosureSources } from './fixtures/dead-letter-closure-store-fixture.mjs';
 
 const source = readFileSync(new URL('./openclaw-local-server.mjs', import.meta.url), 'utf8');
@@ -76,7 +78,10 @@ function harness({ status = 'pending', canonicalChange, cachedChange, claimLocal
     updateSlackApprovalMessage: async () => ({ ok: true }),
     readRawBodyBuffer: async req => Buffer.from(JSON.stringify(req.body)),
     readBody: async req => req.body || {}, buildStateSnapshot: () => ({}),
-    json: (res, code, body) => { res.status = code; res.body = body; },
+    json: (res, code, body) => {
+      if (res.writeHead) { res.writeHead(code, { 'content-type': 'application/json' }); res.end(JSON.stringify(body)); }
+      else { res.status = code; res.body = body; }
+    },
     matchesPath: (p, paths) => paths.includes(p),
     matchPath: (p, template) => {
       const names = [...template.matchAll(/:([a-z]+)/g)].map(m => m[1]);
@@ -101,7 +106,27 @@ function harness({ status = 'pending', canonicalChange, cachedChange, claimLocal
     await fn({ method, headers, url: path, body }, response, url, url.pathname.replace(/\/+$/, ''));
     return response;
   };
-  return { context, f, row, cached, calls, decide, founder, runRoute };
+  const runHttpRoute = async (fragment, path, body = {}, headers = founder.headers, method = 'POST') => {
+    const fn = vm.runInContext(`(async function(request,response,url,pathname) {
+      const approvalDecisionMatch = matchPath(pathname, '/api/approvals/:id/:decision');
+      const approvalMatch = matchPath(pathname, '/api/approvals/:id');
+      ${route(fragment)} })`, context);
+    const server = createServer(async (req, res) => {
+      try {
+        const chunks = []; for await (const chunk of req) chunks.push(chunk);
+        req.body = JSON.parse(Buffer.concat(chunks).toString() || '{}');
+        const url = new URL(req.url, 'http://127.0.0.1');
+        await fn(req, res, url, url.pathname);
+      } catch { res.writeHead(500); res.end('{}'); }
+    });
+    server.listen(0, '127.0.0.1'); await once(server, 'listening');
+    try {
+      const r = await fetch(`http://127.0.0.1:${server.address().port}${path}`, {
+        method, headers, body: JSON.stringify(body) });
+      return { status: r.status, body: await r.json() };
+    } finally { await new Promise(resolve => server.close(resolve)); }
+  };
+  return { context, f, row, cached, calls, decide, founder, runRoute, runHttpRoute };
 }
 
 test('forged Slack/source/actor/teamAuth cannot grant raw callback authority before claim', async () => {
@@ -137,6 +162,50 @@ test('canonical status remains approved on exact replay without a second decisio
   const r = await h.decide({ actedAt: h.row.decided_at, actor: h.row.payload.actor });
   assert.equal(r.ok, true); assert.equal(h.calls.claim, 0); assert.equal(h.calls.execute.length, 1);
   assert.equal(h.row.status, 'approved'); assert.deepEqual(h.calls.forbidden, []);
+});
+
+for (const fragment of ["['/events', '/api/events']", 'approvalDecisionMatch &&', 'approvalMatch &&']) {
+  test(`already-nonpending mismatch returns HTTP 409 through ${fragment}`, async () => {
+    for (const mismatch of [{ actor: 'different' }, { actedAt: new Date(1).toISOString() }, { status: 'rejected' }]) {
+      const h = harness({ status: 'approved' });
+      const event = fragment.startsWith('[');
+      const path = event ? '/api/events' : `/api/approvals/${h.f.approvalId}${fragment.startsWith('approvalDecision') ? '/approve' : ''}`;
+      const decision = { id: h.f.approvalId, status: 'approved', actor: h.row.payload.actor, actedAt: h.row.decided_at, ...mismatch };
+      // The explicit /approve route fixes status; actor/time still must match.
+      if (fragment.startsWith('approvalDecision') && mismatch.status) continue;
+      const r = await h.runHttpRoute(fragment, path, event ? { eventType: 'approval-callback', payload: decision } : decision,
+        h.founder.headers, event || fragment.startsWith('approvalDecision') ? 'POST' : 'PUT');
+      assert.equal(r.status, 409, JSON.stringify(r.body)); assert.equal(r.body.ok, false);
+      assert.equal(h.calls.claim, 0); assert.equal(h.calls.execute.length, 0); assert.deepEqual(h.calls.forbidden, []);
+    }
+  });
+}
+
+test('verified Slack nonpending mismatch returns 409; forged Slack remains denied', async () => {
+  const h = harness({ status: 'approved' });
+  const payload = { user: { id: 'different-slack-actor' }, actions: [{ action_id: 'pbk_approval_approve', value: h.f.approvalId }] };
+  const results = [], actual = h.context.handleSlackApprovalInteraction;
+  h.context.handleSlackApprovalInteraction = async (...args) => { const r = await actual(...args); results.push(r); return r; };
+  const ts = String(Math.floor(h.f.now / 1000));
+  const signature = 'v0=' + createHmac('sha256', 'fixture-slack-only').update(`v0:${ts}:${JSON.stringify(payload)}`).digest('hex');
+  assert.equal((await h.runHttpRoute("['/api/slack/interactions'", '/api/slack/interactions', payload,
+    { 'x-slack-request-timestamp': ts, 'x-slack-signature': 'forged' })).status, 401);
+  await h.runHttpRoute("['/api/slack/interactions'", '/api/slack/interactions', payload,
+    { 'x-slack-request-timestamp': ts, 'x-slack-signature': signature });
+  await new Promise(resolve => setTimeout(resolve, 0));
+  assert.equal(results[0].status, 409); assert.equal(results[0].ok, false);
+  assert.equal(h.calls.claim, 0); assert.equal(h.calls.execute.length, 0); assert.deepEqual(h.calls.forbidden, []);
+});
+
+test('already-nonpending canonical identity and intent mismatch returns sanitized 409 without fallback', async () => {
+  for (const change of [p => { p.id = 'other'; }, p => { p.metadata.deadLetterClosureIntent.recordRef = '0'.repeat(64); }]) {
+    const h = harness({ status: 'approved', cachedChange: change });
+    const result = await h.context.handleDeadLetterClosureDecision(h.cached, h.row, {
+      id: h.f.approvalId, status: 'approved', actor: h.row.payload.actor, actedAt: h.row.decided_at,
+    }, { request: h.founder });
+    assert.equal(result.statusCode, 409); assert.equal(result.result, 'closure_approval_mismatch');
+    assert.equal(result.approval, undefined); assert.equal(h.calls.execute.length, 0); assert.deepEqual(h.calls.forbidden, []);
+  }
 });
 test('rejected internal decision replays stay isolated and cannot become approved', async () => {
   const h = harness();
@@ -473,6 +542,7 @@ test('real isolated approval service -> durable pending -> protected claim -> cl
       fetch: () => assert.fail('All network denied in lifecycle VM'),
       prepareDeadLetterClosureProposal: o => approvalApi.prepareDeadLetterClosureProposal({ ...a,
         recordRef: o.recordRef, action: o.action, approvalId: o.approvalId }),
+      admitDeadLetterClosureProposal: o => admitDeadLetterClosureProposal({ ...a, approval: clone(o.approval), persist: o.persist }),
       readDeadLetterClosures: () => readDeadLetterClosures(a),
       executeDeadLetterClosure: o => executeDeadLetterClosure({ ...a, approvalId: o.approvalId }),
     });
@@ -490,6 +560,13 @@ test('real isolated approval service -> durable pending -> protected claim -> cl
     const proposal = await h.runRoute(closureRoute, base + '/propose');
     assert.equal(proposal.status, 200, JSON.stringify(proposal.body));
     const approvalId = proposal.body.approvalId;
+    const pendingBefore = (await db.query('SELECT to_jsonb(a) row FROM approvals a')).rows;
+    const repeated = await h.runRoute(closureRoute, base + '/propose');
+    assert.equal(repeated.status, 200, JSON.stringify(repeated.body));
+    assert.equal(repeated.body.approvalId, approvalId, 'Durable identical pending proposal must be reused');
+    assert.deepEqual((await db.query('SELECT to_jsonb(a) row FROM approvals a')).rows, pendingBefore,
+      'Reuse must not refresh or rewrite the pending intent');
+    assert.equal(h.context.state.approvals.length, 1, 'No duplicate queue insertion/fanout');
     for (const path of ['/events', '/api/events']) {
       const denied = await h.runRoute("['/events', '/api/events']", path, { eventType: 'approval-callback',
         payload: { id: approvalId, status: 'approved', source: 'slack-interaction', teamAuth: { role: 'admin' } } },

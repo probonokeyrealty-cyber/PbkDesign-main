@@ -39,7 +39,7 @@ import { executeOperationalAudit, readOperationalAudit, createOperationalAuditPo
 import { collectBacklogReconciliation } from './backlog-reconciliation-collector.mjs';
 import { executeBacklogReconciliation, readBacklogReconciliation } from './backlog-reconciliation-store.mjs';
 import { recordCallMemorySkip, readCallMemorySkipSummary } from './call-memory-outcome-store.mjs';
-import { executeDeadLetterClosure, readDeadLetterClosures } from './dead-letter-closure-store.mjs';
+import { executeDeadLetterClosure, readDeadLetterClosures, admitDeadLetterClosureProposal } from './dead-letter-closure-store.mjs';
 import { isDeadLetterClosureApproval, authorizeClosureProposalRequest, prepareDeadLetterClosureProposal,
   validateDeadLetterClosureApproval } from './dead-letter-closure-approval.mjs';
 import { closureBinding } from './dead-letter-closure-protocol.mjs';
@@ -15495,7 +15495,7 @@ async function persistApprovalRecordToPg(approval = {}) {
   return writeApprovalRecordToPg(approval);
 }
 
-async function writeApprovalRecordToPg(approval, claimPending = false, closureExpected = null) {
+async function writeApprovalRecordToPg(approval, claimPending = false, closureExpected = null, closureCreateQuery = null) {
   const approvalId = String(approval.id || '').trim();
   if (!approvalId) {
     return { ok: false, reason: 'missing_approval_id', rows: [] };
@@ -15511,13 +15511,14 @@ async function writeApprovalRecordToPg(approval, claimPending = false, closureEx
       query_timeout: 2000 }, [approvalId, status, JSON.stringify(approval), approval.actedAt,
       JSON.stringify(closureExpected.payload)]);
   }
-  return queryPgRows(
+  const write = closureCreateQuery || queryPgRows;
+  return write(
     `INSERT INTO public.approvals (
        id, workspace_id, type, status, lead_id, contract_id, requested_by,
        summary, risk, payload, decided_at, created_at, updated_at
      )
      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11,$12,$13)
-     ON CONFLICT (id) DO UPDATE SET
+     ON CONFLICT (id) ${closureCreateQuery ? 'DO NOTHING' : `DO UPDATE SET
        workspace_id = EXCLUDED.workspace_id,
        type = EXCLUDED.type,
        status = EXCLUDED.status,
@@ -15530,7 +15531,7 @@ async function writeApprovalRecordToPg(approval, claimPending = false, closureEx
        decided_at = EXCLUDED.decided_at,
        updated_at = EXCLUDED.updated_at
      WHERE approvals.workspace_id = EXCLUDED.workspace_id
-       AND approvals.status = ${claimPending ? "'pending'" : 'EXCLUDED.status'}
+       AND approvals.status = ${claimPending ? "'pending'" : 'EXCLUDED.status'}`}
      RETURNING id, status, updated_at`,
     [
       approvalId,
@@ -57969,6 +57970,18 @@ const toolHandlers = {
         ? { ...metadata, campaignStartDispatchVersion: 2 }
         : metadata;
     }
+    let closureAdmission = null;
+    if (isDeadLetterClosureApproval(approval)) {
+      closureAdmission = await admitDeadLetterClosureProposal({ pool: getPgPool(), secret: BRIDGE_API_KEY,
+        revision: process.env.RENDER_GIT_COMMIT || BUILD_REVISION, approval,
+        persist: async query => {
+          const r = await writeApprovalRecordToPg(approval, false, null, query);
+          return { ...r, ok: true };
+        } });
+      if (!closureAdmission.ok) return closureAdmission;
+      if (closureAdmission.reused) return { ok: true, result: 'queued_for_approval',
+        approval: closureAdmission.approval, reused: true };
+    }
     addApproval(state, approval);
     addActivity(
       state,
@@ -57981,7 +57994,7 @@ const toolHandlers = {
       })
     );
 
-    let approvalPersistence = await persistApprovalRecordToPg(approval);
+    let approvalPersistence = closureAdmission ? { ok: true } : await persistApprovalRecordToPg(approval);
     let statePersist = { ok: true };
     try {
       await persistState(state);
@@ -60992,9 +61005,9 @@ async function handleDeadLetterClosureDecision(approval, raw, payload, context) 
   if (!['approved', 'rejected', 'needs_revision', 'cancelled'].includes(status)) return deny('closure_decision_invalid', 400);
   if (!validateDeadLetterClosureApproval({ approval: raw, secret: BRIDGE_API_KEY,
     revision: process.env.RENDER_GIT_COMMIT || BUILD_REVISION, now: Date.now() })) return deny('closure_approval_invalid');
-  if (approval.type !== raw.type || approval.approvalAction !== raw.payload.approvalAction
+  if (approval.id !== raw.id || approval.type !== raw.type || approval.approvalAction !== raw.payload.approvalAction
     || closureBinding(BRIDGE_API_KEY, 'intent', approval.metadata?.deadLetterClosureIntent ?? null)
-      !== closureBinding(BRIDGE_API_KEY, 'intent', raw.payload.metadata.deadLetterClosureIntent)) return deny('closure_approval_mismatch');
+      !== closureBinding(BRIDGE_API_KEY, 'intent', raw.payload.metadata.deadLetterClosureIntent)) return deny('closure_approval_mismatch', 409);
   const canonical = normalizePgApprovalRecord(raw);
   if (!authorizeClosureApprovalDecision(canonical, status, context)) return deny('closure_admin_decision_required');
   Object.assign(approval, canonical);
@@ -61002,7 +61015,7 @@ async function handleDeadLetterClosureDecision(approval, raw, payload, context) 
   const actedAt = payload.actedAt || approval.actedAt || isoNow();
   if (approval.status !== 'pending') {
     if (approval.status !== status || approval.actor !== actor || approval.actedAt !== actedAt) {
-      return replayApprovalDecision(approval, status);
+      return deny('closure_approval_mismatch', 409);
     }
   } else {
     const decisionAt = String(actedAt).replace(/(\.\d{3})000Z$/, '$1Z');
@@ -73247,13 +73260,17 @@ const server = createServer(async (request, response) => {
       const prepared = await prepareDeadLetterClosureProposal({ pool, secret: BRIDGE_API_KEY, revision,
         recordRef, action: operation === 'propose' ? 'close_internal' : 'revoke_internal', approvalId: randomUUID() });
       if (!prepared.ok) { json(response, 503, prepared); return; }
-      await toolHandlers.createApprovalTask(prepared.params);
-      const canonical = await readCanonicalClosureApproval(prepared.params.id);
+      const created = await toolHandlers.createApprovalTask(prepared.params);
+      if (!created.ok || !created.approval) {
+        json(response, 503, { ok: false, result: 'closure_pending_approval_unconfirmed' }); return;
+      }
+      const expected = created.approval;
+      const canonical = await readCanonicalClosureApproval(expected.id);
       if (!validateDeadLetterClosureApproval({ approval: canonical, secret: BRIDGE_API_KEY,
         revision, now: Date.now(), pendingOnly: true })
-        || canonical.id !== prepared.params.id
+        || canonical.id !== expected.id
         || closureBinding(BRIDGE_API_KEY, 'intent', canonical.payload.metadata.deadLetterClosureIntent)
-          !== closureBinding(BRIDGE_API_KEY, 'intent', prepared.params.metadata.deadLetterClosureIntent)) {
+          !== closureBinding(BRIDGE_API_KEY, 'intent', expected.metadata.deadLetterClosureIntent)) {
         json(response, 503, { ok: false, result: 'closure_pending_approval_unconfirmed', noContact: true,
           providerWritesBlocked: true, deliveryRetries: false, providerDeliveryVerified: false, launchQualified: false }); return;
       }

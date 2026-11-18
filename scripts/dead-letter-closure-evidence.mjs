@@ -16,7 +16,10 @@ const COMPONENTS = Object.freeze({ painProbe: [8, 20], objectionHandling: [10, 1
 const fail = reason => { throw new Error(reason); };
 const requireThat = (condition, reason = 'invalid_source') => { if (!condition) fail(reason); };
 const plain = v => v !== null && typeof v === 'object' && Object.getPrototypeOf(v) === Object.prototype;
-const id = v => typeof v === 'string' && /^[a-zA-Z0-9_:-]{1,120}$/.test(v);
+// Upstream identities are opaque, unlike private generated approval/receipt IDs.
+const sourceId = v => typeof v === 'string' && /^\S{1,256}$/.test(v)
+  && [...v].every(c => c.charCodeAt(0) >= 32 && c.charCodeAt(0) !== 127);
+const providerAlias = v => sourceId(v) && v.length <= 240;
 const hex = v => typeof v === 'string' && /^[a-f0-9]{64}$/.test(v);
 const reason = e => REASONS.has(e?.message) ? e.message : 'source_unavailable';
 const unavailable = result => ({ ok: false, verified: false, result, counts: null, cases: [], ...GUARD });
@@ -75,7 +78,7 @@ function operational(row) {
 }
 function alias(row, keys) {
   const values = keys.filter(k => Object.hasOwn(row, k)).map(k => row[k]);
-  requireThat(values.length > 0 && values.every(id) && values.every(v => v === values[0]), 'source_unverified');
+  requireThat(values.length > 0 && values.every(sourceId) && values.every(v => v === values[0]), 'source_unverified');
   return values[0];
 }
 function scope(row) {
@@ -83,7 +86,7 @@ function scope(row) {
     .every(k => !Object.hasOwn(row, k) || row[k] === 'pbk'), 'source_unverified');
 }
 function context(original, now) {
-  requireThat(original.tenant_id === 'pbk' && id(original.id) && id(original.event_id)
+  requireThat(original.tenant_id === 'pbk' && sourceId(original.id) && sourceId(original.event_id)
     && original.event_type === 'call.completed' && PROVIDERS.has(original.source)
     && plain(original.payload) && operational(original), 'source_unverified');
   time(original.created_at, now);
@@ -108,7 +111,9 @@ function selection(original, calls, c, now) {
   requireThat(rows.length <= 1, 'source_ambiguous');
   const call = rows[0] || null;
   if (call) {
-    requireThat(call.workspace_id === 'pbk' && id(call.id) && call.provider === 'telnyx'
+    requireThat(call.workspace_id === 'pbk' && sourceId(call.id) && call.provider === 'telnyx'
+      && ['telnyx_call_control_id', 'telnyx_call_leg_id', 'telnyx_call_session_id']
+        .every(k => call[k] == null || call[k] === '' || providerAlias(call[k]))
       && operational(call) && !isExcludedEpisodicCall(call), 'source_unverified');
     scope(call);
     requireThat(time(call.updated_at, now).micros >= time(call.created_at, now).micros, 'source_unverified');
@@ -311,14 +316,14 @@ export async function collectDeadLetterClosureEvidence(input) {
     });
     const originals = await rows(DEAD_SQL, [], 'original');
     for (const row of originals) {
-      requireThat(row.tenant_id === 'pbk' && id(row.id) && id(row.event_id) && plain(row.payload));
+      requireThat(row.tenant_id === 'pbk' && sourceId(row.id) && sourceId(row.event_id) && plain(row.payload));
       time(row.created_at, now);
     }
     requireThat(new Set(originals.map(r => r.event_id)).size === originals.length
       && new Set(originals.map(r => r.id)).size === originals.length, 'source_ambiguous');
     const selected = recordRefs === undefined ? originals : originals.filter(row =>
       recordRefs.includes(closureBinding(secret, 'dead-letter-ref', row.id)));
-    const calls = [...new Set(selected.flatMap(r => ['callId', 'call_id'].map(k => r.payload[k]).filter(id)))];
+    const calls = [...new Set(selected.flatMap(r => ['callId', 'call_id'].map(k => r.payload[k]).filter(sourceId)))];
     const qaIds = selected.map(r => `call-qa-event-${r.event_id}`);
     const slots = selected.map(r => skipSlot(secret, r.event_id));
     if (!selected.length) return { ok: true, verified: false, result: 'handler_evidence_collected',

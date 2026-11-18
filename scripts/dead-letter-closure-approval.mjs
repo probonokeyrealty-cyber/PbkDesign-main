@@ -1,6 +1,7 @@
 import { types } from 'node:util';
 import { isDirectQualificationFounder } from './release-qualification.mjs';
-import { closureBinding, createClosureIntent, projectClosureApproval, verifyClosureIntent } from './dead-letter-closure-protocol.mjs';
+import { createClosureIntent } from './dead-letter-closure-protocol.mjs';
+export { validateDeadLetterClosureApproval } from './dead-letter-closure-protocol.mjs';
 import { readDeadLetterClosureProposalContext } from './dead-letter-closure-store.mjs';
 
 const ACTION = 'dead_letter_internal_closure';
@@ -32,33 +33,6 @@ export function authorizeClosureProposalRequest(request, apiKey) {
     return denied('closure_fixed_proposal_only');
   }
   return { ok: true };
-}
-
-// Raw canonical DB rows only, not queue/cache projections. Pending rows are
-// checked using the same identity/association contract as approved decisions.
-export function validateDeadLetterClosureApproval({ approval: r, secret, revision, now, pendingOnly = false }) {
-  try {
-    closureBinding(secret, 'validate-approval-input', r);
-    if (!r || !['pending', 'approved', 'rejected', 'needs_revision', 'cancelled'].includes(r.status)
-      || (pendingOnly && r.status !== 'pending')) return false;
-    const p = r.payload;
-    if (!p || p.status !== r.status || p.approvalAction !== ACTION) return false;
-    for (const v of [r, p, p.metadata]) {
-      if (!v) return false;
-      for (const key of ['action', 'approvalAction', 'toolName', 'requestedTool']) {
-        if (v[key] && v[key] !== ACTION) return false;
-      }
-    }
-    let projected;
-    if (r.status === 'pending') {
-      if (r.decided_at != null || p.actedAt || p.decidedAt) return false;
-      const at = new Date(now).toISOString();
-      projected = projectClosureApproval({ ...r, status: 'approved', decided_at: at,
-        payload: { ...p, status: 'approved', actedAt: at } });
-    } else projected = projectClosureApproval({ ...r, status: 'approved', payload: { ...p, status: 'approved' } });
-    return Boolean(projected && verifyClosureIntent({ intent: projected.intent, approvalId: r.id,
-      secret, revision, now: r.status === 'pending' ? now : Date.parse(projected.decidedAt) }).verified);
-  } catch { return false; }
 }
 
 export async function prepareDeadLetterClosureProposal(input) {

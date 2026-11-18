@@ -1,7 +1,7 @@
 import { randomUUID, timingSafeEqual } from 'node:crypto';
 import { types } from 'node:util';
 import { canonicalJson } from './skill-governance-store.mjs';
-import { closureBinding, projectClosureApproval, verifyClosureIntent, signClosureReceipt,
+import { closureBinding, projectClosureApproval, verifyClosureIntent, signClosureReceipt, validateDeadLetterClosureApproval,
   verifyClosureReceipt, DEAD_LETTER_CLOSURE_LIMITS as LIMITS } from './dead-letter-closure-protocol.mjs';
 import { collectDeadLetterClosureEvidence } from './dead-letter-closure-evidence.mjs';
 import { verifyDeadLetterClosureInstallation } from './dead-letter-closure-migration.mjs';
@@ -12,6 +12,8 @@ const SCHEMA = 'pbk-dead-letter-closure-reference-v1';
 const TABLE = 'public.pbk_dead_letter_closure_ledger';
 const SEQUENCE = 'public.pbk_dead_letter_closure_ledger_ordinal_seq';
 const BOUNDARY_SCHEMA = 'pbk-dead-letter-audit-boundary-v1';
+const PROOF_REASONS = new Set(['source_ambiguous', 'source_unverified', 'qa_unverified',
+  'memory_skip_unverified', 'memory_unverified', 'script_proof_unsupported']);
 const REASONS = new Set(['closure_invalid_input', 'closure_unavailable', 'closure_timeout',
   'closure_installation_invalid', 'closure_source_unavailable', 'closure_history_overflow',
   'closure_original_missing', 'closure_approval_invalid', 'closure_approval_ambiguous',
@@ -143,7 +145,8 @@ async function transaction(a, f, write, work) {
   let c; let started = false;
   try {
     c = await connection(a.pool, f);
-    await c.query(write ? 'BEGIN ISOLATION LEVEL SERIALIZABLE' : 'BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
+    await c.query(write === 'proposal' ? 'BEGIN ISOLATION LEVEL READ COMMITTED'
+      : write ? 'BEGIN ISOLATION LEVEL SERIALIZABLE' : 'BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
     started = true;
     await c.query("SET LOCAL statement_timeout = '2000ms'");
     await c.query("SET LOCAL lock_timeout = '2000ms'");
@@ -320,7 +323,13 @@ async function readWithFence(a, f, now) {
     if (reference) { const { attestation: _, ...prior } = reference;
       need(same(prior, body), 'closure_reference_changed'); }
     const signed = { ...body, attestation: { version: SCHEMA, signature: bind(a, 'audit-reference', body) } };
-    const result = { ok: true, verified: true, result: 'closure_summary_verified', counts, cases: statuses, reference: signed, ...GUARD };
+    // Current diagnostics are not part of the frozen v1 audit-reference contract.
+    const diagnostics = statuses.map((s, i) => ({ ...s, eligibility: {
+      eligible: cases[i].eligible === true,
+      reasons: cases[i].eligible ? [] : [...new Set(cases[i].reasons.length
+        ? cases[i].reasons.filter(r => PROOF_REASONS.has(r)) : ['source_unverified'])],
+    } }));
+    const result = { ok: true, verified: true, result: 'closure_summary_verified', counts, cases: diagnostics, reference: signed, ...GUARD };
     json(a, result); need(Buffer.byteLength(canonicalJson(signed)) <= LIMITS.maxBytes, 'closure_reference_invalid'); return result;
   });
 }
@@ -367,6 +376,43 @@ export async function readDeadLetterClosureProposalContext(input) {
       }
       return { ok: true, verified: true, result: 'closure_proposal_context_verified',
         manifest, predecessor: headRef(a, chain.head), ...GUARD };
+    });
+  } catch (e) { return failure(e); }
+}
+
+// Internal creation-service seam only. The callback is the existing approval
+// INSERT, on this bounded client; no cache/file fallback, fanout or new producer.
+export async function admitDeadLetterClosureProposal(input) {
+  try {
+    const a = options(input, ['pool', 'secret', 'revision', 'approval', 'persist', 'now']);
+    const now = a.now ?? Date.now(); authority(a, now);
+    const approval = json(a, a.approval);
+    const valid = raw => validateDeadLetterClosureApproval({ approval: raw, secret: a.secret,
+      revision: a.revision, now, pendingOnly: true });
+    need(typeof a.persist === 'function' && valid({ id: approval.id, workspace_id: 'pbk', type: approval.type,
+      status: approval.status, decided_at: null, payload: approval }), 'closure_approval_invalid');
+    const intent = approval.metadata.deadLetterClosureIntent;
+    const bindings = ['action', 'recordRef', 'originalBinding', 'manifestBinding', 'policyVersion', 'revision', 'predecessor'];
+    return await transaction(a, fence(LIMITS.collectionMs), 'proposal', async c => {
+      await c.query('SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended($1,0))',
+        [`pbk:dead-letter-closure-proposal:${intent.recordRef}`]);
+      // READ COMMITTED deliberately observes a competitor's commit AFTER the
+      // advisory lock, rather than using a pre-lock serializable snapshot.
+      const rows = bounded((await c.query(`${APPROVAL_SELECT} WHERE a.workspace_id='pbk' AND a.status='pending'
+        AND a.payload #>> '{metadata,deadLetterClosureIntent,recordRef}'=$1 ORDER BY a.id LIMIT 65 FOR UPDATE`,
+      [intent.recordRef])).rows, 'closure_approval_ambiguous');
+      need(rows.reduce((n, r) => n + r.bytes, 0) <= LIMITS.maxBytes, 'closure_approval_ambiguous');
+      const matches = rows.map(r => rawApproval(a, r)).filter(r => valid(r) && bindings.every(k =>
+        same(r.payload.metadata.deadLetterClosureIntent[k], intent[k])));
+      need(matches.length <= 1, 'closure_approval_ambiguous');
+      if (matches.length) return { ok: true, reused: true, approval: matches[0].payload, ...GUARD };
+      const persisted = await a.persist(c.query);
+      need(persisted?.ok && persisted.rows?.length === 1 && persisted.rows[0].id === approval.id, 'closure_approval_invalid');
+      const saved = (await c.query(`${APPROVAL_SELECT} WHERE a.id=$1 LIMIT 65`, [approval.id])).rows;
+      need(saved.length === 1, 'closure_approval_invalid');
+      const raw = rawApproval(a, saved[0]);
+      need(valid(raw) && same(raw.payload, approval), 'closure_approval_invalid');
+      return { ok: true, reused: false, approval, ...GUARD };
     });
   } catch (e) { return failure(e); }
 }

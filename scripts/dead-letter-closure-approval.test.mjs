@@ -2,8 +2,8 @@ import assert from 'node:assert/strict';
 import { afterAll, beforeAll, beforeEach, test } from '@jest/globals';
 import { PGlite } from '@electric-sql/pglite';
 import { DEAD_LETTER_CLOSURE_SQL } from './dead-letter-closure-migration.mjs';
-import { executeDeadLetterClosure } from './dead-letter-closure-store.mjs';
-import { verifyClosureIntent } from './dead-letter-closure-protocol.mjs';
+import { executeDeadLetterClosure, admitDeadLetterClosureProposal } from './dead-letter-closure-store.mjs';
+import { verifyClosureIntent, createClosureIntent } from './dead-letter-closure-protocol.mjs';
 import { CLOSURE_SOURCE_FIXTURE_SQL, seedClosureSources, seedClosureApproval,
   closureTestAuthority } from './fixtures/dead-letter-closure-store-fixture.mjs';
 
@@ -72,6 +72,80 @@ test('prepare signs current complete manifest, returns pending admin params and 
   assert(!/dead-private|owner discussed|original failure/.test(JSON.stringify(r)));
   assert(log.every(sql => /^(SELECT|BEGIN|SET LOCAL|ROLLBACK)\b/.test(sql.trim())));
   assert.equal((await query('SELECT count(*)::int n FROM approvals')).rows[0].n, 1);
+});
+
+test('durable pending reuse binds evidence/action/revision/predecessor, never edits approved rows', async () => {
+  const { manifest } = await seedClosureApproval(query, authority);
+  let writes = 0;
+  const admit = async (id, changes = {}) => {
+    const intent = createClosureIntent({ ...authority, approvalId: id, action: 'close_internal', recordRef: manifest.recordRef,
+      manifest, predecessor: null, createdAt: new Date().toISOString(), ...changes });
+    const approval = { id, type: 'admin', status: 'pending', approvalAction: 'dead_letter_internal_closure',
+      metadata: { deadLetterClosureIntent: intent } };
+    return admitDeadLetterClosureProposal({ pool, ...authority, approval, persist: async q => {
+      writes++;
+      const r = await q(`INSERT INTO approvals(id,workspace_id,type,status,payload) VALUES($1,'pbk','admin','pending',$2)
+        ON CONFLICT(id) DO NOTHING RETURNING id`, [id, JSON.stringify(approval)]);
+      return { ok: true, rows: r.rows };
+    } });
+  };
+  const protectedRows = async () => (await query('SELECT to_jsonb(a) row FROM approvals a ORDER BY id')).rows;
+  const immutable = await protectedRows();
+  assert.equal((await admit('approval-private')).ok, false, 'ID conflict cannot replace canonical approved payload');
+  assert.deepEqual(await protectedRows(), immutable); writes = 0;
+  const first = await admit('pending-first'); assert.equal(first.ok, true);
+  const before = await protectedRows();
+  const again = await admit('pending-second'); assert.equal(again.reused, true); assert.equal(again.approval.id, 'pending-first');
+  assert.deepEqual(await protectedRows(), before); assert.equal(writes, 1);
+  const predecessor = { id: 'prior', hash: 'a'.repeat(64) };
+  assert.equal((await admit('pending-predecessor', { predecessor })).reused, false);
+  assert.equal((await admit('pending-revoke', { action: 'revoke_internal', predecessor })).reused, false);
+  assert.equal((await admit('wrong-revision', { revision: 'c'.repeat(40) })).ok, false);
+  // A changed QA row gives a genuinely new manifest, never substituted into the old intent.
+  await query(`UPDATE pbk_call_qa_scores SET metadata='{"repair":true}'`);
+  const fresh = await ref()({ pool, ...authority, recordRef: manifest.recordRef, action: 'close_internal', approvalId: 'changed-evidence' });
+  const changed = await admitDeadLetterClosureProposal({ pool, ...authority, approval: fresh.params, persist: async q => {
+    const r = await q(`INSERT INTO approvals(id,workspace_id,type,status,payload) VALUES($1,'pbk','admin','pending',$2) RETURNING id`,
+      [fresh.params.id, JSON.stringify(fresh.params)]); return { ok: true, rows: r.rows };
+  } });
+  assert.equal(changed.ok, true); assert.equal(changed.reused, false);
+});
+
+test('pending admission denies missing durable insert/readback and candidate overflow', async () => {
+  const { manifest } = await seedClosureApproval(query, authority);
+  const prepared = await ref()({ pool, ...authority, recordRef: manifest.recordRef, action: 'close_internal', approvalId: 'pending' });
+  const args = { pool, ...authority, approval: prepared.params };
+  for (const persist of [async () => ({ ok: true, rows: [] }), async () => ({ ok: true, rows: [{ id: 'pending' }] })]) {
+    assert.equal((await admitDeadLetterClosureProposal({ ...args, persist })).ok, false);
+  }
+  await query(`INSERT INTO approvals(id,workspace_id,type,status,payload) SELECT 'p-'||n,'pbk','admin','pending',$1
+    FROM generate_series(1,65) n`, [JSON.stringify(prepared.params)]);
+  let writes = 0;
+  const r = await admitDeadLetterClosureProposal({ ...args, persist: async () => { writes++; } });
+  assert.equal(r.ok, false); assert.equal(r.result, 'closure_approval_ambiguous'); assert.equal(writes, 0);
+});
+
+test('expired pending authority is not reused and multiple exact durable candidates block admission', async () => {
+  const { manifest } = await seedClosureApproval(query, authority);
+  const at = Date.now(), now = at + 86400000 + 1000;
+  const pending = (id, createdAt) => ({ id, type: 'admin', status: 'pending', approvalAction: 'dead_letter_internal_closure',
+    metadata: { deadLetterClosureIntent: createClosureIntent({ ...authority, approvalId: id, action: 'close_internal',
+      recordRef: manifest.recordRef, manifest, predecessor: null, createdAt: new Date(createdAt).toISOString() }) } });
+  const insert = async p => query(`INSERT INTO approvals(id,workspace_id,type,status,payload) VALUES($1,'pbk','admin','pending',$2)`,
+    [p.id, JSON.stringify(p)]);
+  await insert(pending('expired', at));
+  const fresh = pending('fresh', now); let writes = 0;
+  const result = await admitDeadLetterClosureProposal({ pool, ...authority, now, approval: fresh, persist: async q => {
+    writes++; const r = await q(`INSERT INTO approvals(id,workspace_id,type,status,payload) VALUES($1,'pbk','admin','pending',$2) RETURNING id`,
+      [fresh.id, JSON.stringify(fresh)]); return { ok: true, rows: r.rows };
+  } });
+  assert.equal(result.ok, true); assert.equal(result.reused, false); assert.equal(writes, 1);
+  await insert(pending('duplicate', now));
+  const before = (await query('SELECT to_jsonb(a) row FROM approvals a ORDER BY id')).rows;
+  const denied = await admitDeadLetterClosureProposal({ pool, ...authority, now, approval: pending('retry', now),
+    persist: async () => { writes++; } });
+  assert.equal(denied.ok, false); assert.equal(denied.result, 'closure_approval_ambiguous'); assert.equal(writes, 1);
+  assert.deepEqual((await query('SELECT to_jsonb(a) row FROM approvals a ORDER BY id')).rows, before);
 });
 test('revoke proposal uses authenticated prior manifest after current proof loss', async () => {
   const approved = await seedClosureApproval(query, authority);

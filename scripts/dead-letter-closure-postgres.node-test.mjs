@@ -4,14 +4,19 @@ import { createHash } from 'node:crypto';
 import net from 'node:net';
 import http from 'node:http';
 import https from 'node:https';
+import { readFileSync } from 'node:fs';
+import vm from 'node:vm';
+import ts from 'typescript';
 import pg from 'pg';
 import {
   validateClosureMigrationConfig, applyDeadLetterClosureMigration, verifyDeadLetterClosureInstallation,
 } from './dead-letter-closure-migration.mjs';
-import { captureDeadLetterAuditBoundary, executeDeadLetterClosure, readDeadLetterClosures,
+import { captureDeadLetterAuditBoundary, executeDeadLetterClosure, readDeadLetterClosures, admitDeadLetterClosureProposal,
   verifyDeadLetterClosureReference } from './dead-letter-closure-store.mjs';
 import { CLOSURE_SOURCE_FIXTURE_SQL, seedClosureSources, seedClosureApproval,
   closureTestAuthority, closureHead } from './fixtures/dead-letter-closure-store-fixture.mjs';
+import { createClosureIntent } from './dead-letter-closure-protocol.mjs';
+import { isDeadLetterClosureApproval } from './dead-letter-closure-approval.mjs';
 
 const fingerprint = rows => createHash('sha256').update(JSON.stringify(rows)).digest('hex');
 
@@ -365,6 +370,64 @@ async function nativeStoreCoverage(t, config, query) {
       assert.equal((await readDeadLetterClosures({ pool, ...authority })).counts.closedInternal, 0);
       assert.equal((await verifyDeadLetterClosureReference({ pool, ...authority, reference: closed.reference })).ok, false);
       assert.equal(fingerprint((await ledgerRows()).slice(0, before.length)), fingerprint(before));
+    });
+    await t.test('two-client creation service reuses one durable pending proposal without duplicate queue/fanout', async () => {
+      await query(`ALTER TABLE public.approvals ADD COLUMN lead_id text, ADD COLUMN contract_id text,
+        ADD COLUMN requested_by text, ADD COLUMN summary text, ADD COLUMN risk text`);
+      const source = readFileSync(new URL('./openclaw-local-server.mjs', import.meta.url), 'utf8');
+      const ast = ts.createSourceFile('bridge.mjs', source, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
+      const writer = ast.statements.find(n => ts.isFunctionDeclaration(n) && n.name?.text === 'writeApprovalRecordToPg').getText(ast);
+      const methods = [];
+      const visit = n => {
+        if (ts.isMethodDeclaration(n) && ['createApproval', 'createApprovalTask'].includes(n.name?.getText(ast))) methods.push(n.getText(ast));
+        ts.forEachChild(n, visit);
+      }; visit(ast);
+      const counts = { queues: 0, fanout: 0, writes: 0 };
+      const service = base => {
+        const context = vm.createContext({ Date, process: { env: {} }, BUILD_REVISION: authority.revision,
+          BRIDGE_API_KEY: authority.secret, getPgPool: () => base, isDeadLetterClosureApproval,
+          admitDeadLetterClosureProposal: o => admitDeadLetterClosureProposal({ ...o, approval: JSON.parse(JSON.stringify(o.approval)) }),
+          state: { approvals: [] }, recordToolUse() {}, toNumber: x => Number(x) || 0,
+          normalizeTenantId: x => x, buildApprovalSummary: () => 'PBK internal recovery', isoNow: () => new Date().toISOString(),
+          isCampaignStartApproval: () => false, addApproval: () => { counts.queues++; }, addActivity() {}, makeActivity: x => x,
+          persistState: async () => {}, projectLiveConversationRecord: async () => {}, projectApprovalEvent: () => ({}),
+          APPROVAL_WEBHOOK_URL: '', withTimeout: p => p,
+          fireWebhook: async () => { counts.fanout++; return { ok: false }; }, postSlackApproval: async () => ({ ok: false }),
+          persistApprovalRecordToPg: () => assert.fail('Closure creation must use bounded transaction, not an unguarded upsert'),
+          queryPgRows: () => assert.fail('No ambient database fallback'),
+        });
+        vm.runInContext(writer, context);
+        return vm.runInContext(`toolHandlers = ({${methods.join(',\n')}})`, context);
+      };
+      const manifest = approval.manifest, predecessor = closureHead(authority, (await ledgerRows()).at(-1));
+      const params = id => ({ id, type: 'admin', status: 'pending', approvalAction: 'dead_letter_internal_closure',
+        metadata: { deadLetterClosureIntent: createClosureIntent({ ...authority, approvalId: id, manifest,
+          recordRef: manifest.recordRef, action: 'close_internal', predecessor, createdAt: new Date().toISOString() }) } });
+      const before = (await query('SELECT to_jsonb(a) row FROM public.approvals a ORDER BY id')).rows;
+      let arrived, secondStarted;
+      const atInsert = new Promise(resolve => { arrived = resolve; });
+      const atLock = new Promise(resolve => { secondStarted = resolve; });
+      const firstPool = wrappedPool(pool, async c => {
+        if (c.text.startsWith('INSERT INTO public.approvals')) { counts.writes++; arrived(); await atLock; }
+      });
+      const secondPool = wrappedPool(other, async c => {
+        if (c.text.includes('pg_advisory_xact_lock')) secondStarted();
+        if (c.text.startsWith('INSERT INTO public.approvals')) counts.writes++;
+      });
+      const first = service(firstPool).createApprovalTask(params('proposal-race-first'));
+      await Promise.race([atInsert, first.then(r => { throw new Error(`Proposal did not reach insert: ${r.result}`); })]);
+      const second = service(secondPool).createApprovalTask(params('proposal-race-second'));
+      const results = await Promise.all([first, second]);
+      assert(results.every(r => r.ok), JSON.stringify(results));
+      assert.equal(results[0].approval.id, results[1].approval.id);
+      assert.equal(results[1].reused, true); assert.deepEqual(counts, { queues: 1, fanout: 1, writes: 1 });
+      const after = (await query('SELECT to_jsonb(a) row FROM public.approvals a ORDER BY id')).rows;
+      assert.equal(after.length, before.length + 1);
+      assert.equal(fingerprint(after.filter(r => r.row.id !== results[0].approval.id)), fingerprint(before));
+      const replay = await service(other).createApprovalTask(params('proposal-race-third'));
+      assert.equal(replay.reused, true); assert.equal(replay.approval.id, results[0].approval.id);
+      assert.equal(fingerprint((await query('SELECT to_jsonb(a) row FROM public.approvals a ORDER BY id')).rows), fingerprint(after));
+      assert.deepEqual(counts, { queues: 1, fanout: 1, writes: 1 });
     });
     await t.test('native lost original denies usable summary and frozen reference', async () => {
       assert.equal(fingerprint((await query('SELECT to_jsonb(d) AS row FROM public.event_dead_letters d ORDER BY id')).rows), fingerprint(originalsBefore));

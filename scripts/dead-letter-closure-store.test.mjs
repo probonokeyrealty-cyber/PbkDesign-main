@@ -80,6 +80,23 @@ test('exact approved append and independent readback, native pg.Result, max:1 po
   assert(!log.some(s => /^\s*(UPDATE|DELETE|TRUNCATE)\b|provider_action_dispatches/.test(s)));
 });
 
+test('preview diagnostics expose fixed current proof reasons without changing frozen reference cases', async () => {
+  const complete = await read();
+  assert.deepEqual(complete.cases[0].eligibility, { eligible: true, reasons: [] });
+  assert.equal(Object.hasOwn(complete.reference.cases[0], 'eligibility'), false);
+  assert.equal((await reverify(complete.reference)).verified, true);
+  await query(`UPDATE event_dead_letters SET payload=jsonb_set(payload,'{transcript}','"short"')`);
+  await query(`UPDATE pbk_call_qa_scores SET transcript_snippet='short'`);
+  const short = await read(); guards(short);
+  assert.deepEqual(short.cases[0].eligibility, { eligible: false, reasons: ['memory_skip_unverified'] });
+  await query(`UPDATE event_dead_letters SET payload=jsonb_set(payload,'{scriptId}','"private-script"')`);
+  const script = await read(); guards(script);
+  assert.deepEqual(script.cases[0].eligibility, { eligible: false, reasons: ['script_proof_unsupported', 'memory_skip_unverified'] });
+  assert.equal((await api('readDeadLetterClosureProposalContext')({ pool: pool(), ...authority,
+    recordRef: script.cases[0].recordRef, action: 'close_internal' })).ok, false);
+  assert(!/private-script|short/.test(JSON.stringify(script).replaceAll('memory_skip_unverified', '')));
+});
+
 async function boundary() {
   const r = await api('captureDeadLetterAuditBoundary')({ pool: pool() });
   assert.equal(r.verified, true, JSON.stringify(r));

@@ -5,6 +5,57 @@ base `0e79b24`. This document contains aggregate evidence only. It does not auth
 release, production schema changes, live closures, provider actions or delivery.
 Independent task/full-branch reviews remain controller-owned.
 
+## Final Review Fix Wave (2026-11-18)
+
+Whole-branch review at `3b772f4` identified four introduced compatibility,
+acknowledgement, proposal-idempotency and diagnostic findings. One coherent local
+fix wave addresses findings1,2,4,5 with test-first evidence. Source IDs now accept
+the upstream opaque256 contract and provider aliases retain240; nonpending
+closure callback mismatches return409; exact durable pending proposals are reused
+under a bounded per-case database transaction through the existing creation service;
+preview exposes fixed proof reasons outside the unchanged frozen audit reference.
+No schema, auth settings, producer, provider retry/lease or UI changes were made.
+
+Focused amended-tree verification passed205/205 across six suites (71.741s):
+evidence89,store53,approval9,wiring37,protocol7,audit-v3 10. Two later boundary tests
+also passed individually (expired/ambiguous pending authority; canonical callback
+identity/intent mismatch). Name-filtered iterations are not full-suite evidence.
+The guarded local native command passed15/15,zero skips (8557.2711ms), including
+two concurrent creation-service requests returning one durable pending ID with
+exactly one insert/queue/fanout. Existing real pgvector, replica, max1, source/
+approval/ledger races and snapshot-cutoff proofs also passed. Four expected losing
+race SQLSTATE40001 diagnostics occurred; zero external connections/provider sender
+attempts. Owned container removal and generated database drop were confirmed.
+
+ONE full amended-runtime `npm run test:unit` completed under Node22.23.5 with
+ambient database URLs/native opt-ins removed: exit1,98 suites passed/1 failed,
+3001 tests passed/1 failed/12 existing native opt-in skips,1509.904s. Source was
+unchanged throughout. The sole failure was the exact non-maturity bridge source
+digest in `canary-evidence-wiring.test.mjs`: it still pinned the pre-wave approval
+surface. After inspecting the entire scoped bridge diff, only that test's digest
+and comment were updated; its full covering suite passed21/21 (2.061s), including
+all existing canary/maturity behavior checks. No runtime edit followed the full run.
+This is NOT a claim that the full command passed. Earlier99/99 evidence below is
+historical, not post-fix full-green evidence. The12 skips remain remote/native
+opt-in bodies, not passes; dedicated closure-native15/15 is separate proof.
+
+Fresh isolated closure, reconciliation, audit and hosted-compatibility smokes all
+passed. Typecheck, zero-warning lint, packaged imports (192 imports/121 files),
+build (1844 modules,14.29s), and packaging/cleanup guards19/19 all passed. No UI
+changes or mobile/BrowserOS visual-verification claim. Details, exact commands,
+RED/GREEN iterations, skipped test names and source fingerprints are retained in
+the ignored local `final-fix-report.md` under the dead-letter-closure scratch path.
+
+**Inherited P1 release blocker:** nonclosure raw approval callbacks still lack
+canonical decision-role parity. This is unchanged and NOT certified safe; separate
+security-owner disposition/resolution and transport-parity tests are required
+before broad runtime safety/release certification. Closure-specific protection and
+passing local tests do not clear this high-priority inherited security risk.
+
+Production installation, live eligibility/delivery, owner/signing-authority trust,
+clock synchronization and all other declined-to-judge boundaries remain explicit.
+No push, PR, deployment, production migration or live closure is authorized.
+
 ## Environment And Isolation
 
 - Test scripts use pinned Node 22.23.5 first in PATH.

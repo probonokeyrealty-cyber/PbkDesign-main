@@ -249,6 +249,33 @@ export function projectClosureApproval(row) {
   } catch { return null; }
 }
 
+// Raw canonical DB rows only, not queue/cache projections. Pending rows use the
+// same identity/association contract as approved decisions, without granting one.
+export function validateDeadLetterClosureApproval({ approval: r, secret, revision, now, pendingOnly = false }) {
+  try {
+    closureBinding(secret, 'validate-approval-input', r);
+    if (!r || !['pending', 'approved', 'rejected', 'needs_revision', 'cancelled'].includes(r.status)
+      || (pendingOnly && r.status !== 'pending')) return false;
+    const p = r.payload;
+    if (!p || p.status !== r.status || p.approvalAction !== 'dead_letter_internal_closure') return false;
+    for (const v of [r, p, p.metadata]) {
+      if (!v) return false;
+      for (const key of ['action', 'approvalAction', 'toolName', 'requestedTool']) {
+        if (v[key] && v[key] !== 'dead_letter_internal_closure') return false;
+      }
+    }
+    let projected;
+    if (r.status === 'pending') {
+      if (r.decided_at != null || p.actedAt || p.decidedAt) return false;
+      const at = new Date(now).toISOString();
+      projected = projectClosureApproval({ ...r, status: 'approved', decided_at: at,
+        payload: { ...p, status: 'approved', actedAt: at } });
+    } else projected = projectClosureApproval({ ...r, status: 'approved', payload: { ...p, status: 'approved' } });
+    return Boolean(projected && verifyClosureIntent({ intent: projected.intent, approvalId: r.id,
+      secret, revision, now: r.status === 'pending' ? now : Date.parse(projected.decidedAt) }).verified);
+  } catch { return false; }
+}
+
 function reportBody(report, secret) {
   const signed = Object.hasOwn(report, 'attestation');
   exact(report, signed ? [...REPORT_KEYS, 'attestation'] : REPORT_KEYS);

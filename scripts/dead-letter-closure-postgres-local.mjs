@@ -7,9 +7,29 @@ import pg from 'pg';
 import { validateClosureMigrationConfig } from './dead-letter-closure-migration.mjs';
 
 const IMAGE = 'pgvector/pgvector@sha256:b513c48566e4777cd3370451400000c78eda6a08131d68f4c31d4a76f27bd8fd';
-const CONTEXT = 'desktop-linux';
-const ENDPOINT = 'npipe:////./pipe/dockerDesktopLinuxEngine';
 const generated = value => /^pbk_closure_test_[a-f0-9]{32}$/.test(value);
+
+export function closureNativeDockerTarget(platform, env) {
+  if (env.PBK_CLOSURE_TEST_ENABLE !== '1') throw new Error('Explicit PBK_CLOSURE_TEST_ENABLE=1 opt-in required');
+  for (const key of ['DOCKER_HOST', 'DOCKER_CONTEXT', 'DOCKER_CONFIG', 'DOCKER_TLS_VERIFY', 'DOCKER_CERT_PATH']) {
+    assert(!env[key], 'Docker environment overrides are not allowed');
+  }
+  if (platform === 'win32') {
+    return { context: 'desktop-linux', endpoint: 'npipe:////./pipe/dockerDesktopLinuxEngine' };
+  }
+  if (platform === 'linux') {
+    assert(env.CI === 'true' && env.GITHUB_ACTIONS === 'true' && env.RUNNER_OS === 'Linux',
+      'Linux native proof is restricted to GitHub Actions CI');
+    return { context: 'default', endpoint: 'unix:///var/run/docker.sock' };
+  }
+  throw new Error('Unsupported native proof platform');
+}
+
+export function validateClosureDockerContext(info, { context, endpoint }) {
+  assert(Array.isArray(info) && info.length === 1, 'exactly one fixed Docker context required');
+  assert.equal(info[0].Name, context);
+  assert.equal(info[0].Endpoints.docker.Host, endpoint);
+}
 
 // Mapping is for this test child only, never the runtime's ambient pool selector.
 export function closureNativeEnvironment(env) {
@@ -48,17 +68,18 @@ function cleanEnvironment() {
 
 export async function runLocalClosurePostgresProof() {
   if (process.env.PBK_CLOSURE_TEST_ENABLE !== '1') throw new Error('Explicit PBK_CLOSURE_TEST_ENABLE=1 opt-in required; native proof NOT run');
+  const target = closureNativeDockerTarget(process.platform, process.env);
   const env = cleanEnvironment();
   const docker = (args, extraEnv = {}) => {
-    const result = spawnSync('docker', ['--context', CONTEXT, ...args], {
+    const result = spawnSync('docker', ['--context', target.context, ...args], {
       env: { ...env, ...extraEnv }, encoding: 'utf8', timeout: 60000, windowsHide: true,
     });
     if (result.status !== 0) throw new Error(`Local Docker ${args[0]} failed (output withheld)`);
     return result.stdout.trim();
   };
   const checkContext = () => {
-    const context = JSON.parse(docker(['context', 'inspect', CONTEXT]));
-    assert.equal(context[0].Endpoints.docker.Host, ENDPOINT);
+    const context = JSON.parse(docker(['context', 'inspect', target.context]));
+    validateClosureDockerContext(context, target);
   };
   checkContext();
   const version = docker(['info', '--format', '{{.ServerVersion}}']);

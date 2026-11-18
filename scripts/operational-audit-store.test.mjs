@@ -541,31 +541,42 @@ postgresTest('disposable Postgres operational JSONB proof, tampering and latest 
   const pool = new pg.Pool({ connectionString: process.env.PBK_TEST_DATABASE_URL,
     max: 2, connectionTimeoutMillis: 10_000, query_timeout: 10_000 });
   const ids = Array.from({ length: 3 }, () => `operational-test-${randomUUID()}`);
-  let pgProof, receiptTableReady = false;
+  let pgProof, receiptTableReady = false, nativeClosureVerified = false;
   const pgVerifier = options => {
     const current = typeof options.now === 'function' ? options.now() : options.now;
     pgProof.advance(current - pgProof.now());
     return verifyRuntimeCoverageReference({ ...options, pool: store.createOperationalAuditPool(pgProof.pool), now: pgProof.now });
   };
-  const run = (id, collect) => api('executeOperationalAudit')({ pool, revision, secret, createId: () => id,
-    coverageVerifier: pgVerifier, collect: async args => {
-      const data = await collect(args);
-      const closures = await readDeadLetterClosures({ pool, secret, revision,
-        now: Date.now(), cutoff: args.windowEnd, boundary: args.closureBoundary });
-      assert.equal(closures.verified, true, closures.result);
-      assert.deepEqual(closures.reference.boundary, args.closureBoundary);
-      data.closures = { verified: true, reference: closures.reference };
-      if (data.coverage.verified) {
-        pgProof.advance(args.now - pgProof.now());
-        if (pgProof.sampler.status().cutoff !== iso(args.now)) {
-          assert.equal((await pgProof.sampler.sample({ cutoff: args.now })).verified, true);
-        }
-        const coverage = await readRuntimeCoverage({ pool: pgProof.pool, secret, revision, now: pgProof.now });
-        assert.equal(coverage.verified, true);
-        data.coverage = { verified: true, reference: coverage.proof.reference };
-      }
-      return data;
-    } });
+  const run = async (id, collect, expectCollectorFailure = false) => {
+    let collectionError;
+    const result = await api('executeOperationalAudit')({ pool, revision, secret, createId: () => id,
+      coverageVerifier: pgVerifier, collect: async args => {
+        try {
+          const data = await collect(args);
+          const closures = await readDeadLetterClosures({ pool, secret, revision,
+            now: Date.now(), cutoff: args.windowEnd, boundary: args.closureBoundary });
+          assert.equal(closures.verified, nativeClosureVerified, closures.result);
+          if (nativeClosureVerified) assert.deepEqual(closures.reference.boundary, args.closureBoundary);
+          else assert.equal(closures.result, 'closure_installation_invalid', 'managed-role access must remain fail-closed');
+          data.closures = nativeClosureVerified ? { verified: true, reference: closures.reference } : { verified: false };
+          if (data.coverage.verified) {
+            pgProof.advance(args.now - pgProof.now());
+            if (pgProof.sampler.status().cutoff !== iso(args.now)) {
+              assert.equal((await pgProof.sampler.sample({ cutoff: args.now })).verified, true);
+            }
+            const coverage = await readRuntimeCoverage({ pool: pgProof.pool, secret, revision, now: pgProof.now });
+            assert.equal(coverage.verified, true);
+            data.coverage = { verified: true, reference: coverage.proof.reference };
+          }
+          return data;
+        } catch (error) { collectionError = error; throw error; }
+      } });
+    // The store deliberately signs failed collection attempts. Test assertions
+    // inside its collector must still fail the test, not masquerade as proof.
+    if (collectionError && !expectCollectorFailure) throw collectionError;
+    if (expectCollectorFailure) assert(collectionError, 'expected collector failure must actually occur');
+    return result;
+  };
   try {
     await pool.query(`CREATE TABLE public.event_dead_letters(id text PRIMARY KEY,tenant_id text,created_at timestamptz)`);
     await pool.query(DEAD_LETTER_CLOSURE_SQL);
@@ -580,8 +591,31 @@ postgresTest('disposable Postgres operational JSONB proof, tampering and latest 
       }
       return result;
     });
-    assert.equal(installation.verified, true,
-      `${installation.result}: ${JSON.stringify(catalog).slice(0, 8192)}`);
+    nativeClosureVerified = installation.verified === true;
+    if (!nativeClosureVerified) {
+      assert.equal(installation.result, 'closure_installation_invalid');
+      assert.equal(catalog.find(row => row.kind === 'table')?.detail.role_access_safe, false,
+        `unexpected installation drift: ${JSON.stringify(catalog).slice(0, 8192)}`);
+      // Diagnostic only: isolate the one expected failure using the SAME exact
+      // verifier. Never use this counterfactual result as readiness evidence.
+      const otherInvariants = (query = pool.query.bind(pool)) => verifyDeadLetterClosureInstallation(async (...args) => {
+        const result = await query(...args);
+        return { ...result, rows: result.rows.map(row => row.kind === 'table'
+          ? { ...row, detail: { ...row.detail, role_access_safe: true } } : row) };
+      });
+      assert.equal((await otherInvariants()).verified, true, 'all other installation invariants must match');
+      const driftClient = await pool.connect();
+      try {
+        for (const ddl of ['DISABLE ROW LEVEL SECURITY', 'DISABLE TRIGGER pbk_closure_immutable']) {
+          await driftClient.query('BEGIN');
+          try {
+            await driftClient.query(`ALTER TABLE public.pbk_dead_letter_closure_ledger ${ddl}`);
+            assert.equal((await otherInvariants(driftClient.query.bind(driftClient))).verified, false,
+              'managed-role exception must not hide other drift');
+          } finally { await driftClient.query('ROLLBACK'); }
+        }
+      } finally { driftClient.release(); }
+    }
     assert.equal((await pool.query(`SELECT count(*)::int AS n FROM information_schema.tables
       WHERE table_schema=$1 AND table_name='pbk_dead_letter_closure_ledger'`, [proofSchema])).rows[0].n, 1);
     await pool.query(`CREATE TABLE IF NOT EXISTS public.pbk_eval_runs (
@@ -599,8 +633,19 @@ postgresTest('disposable Postgres operational JSONB proof, tampering and latest 
     await pool.query(`UPDATE public.pbk_eval_runs SET report = jsonb_set(report,
       '{audit,checks,0,counts,total}', '99'::jsonb) WHERE id = $1`, [ids[0]]);
     assert.equal((await read(pool, { id: ids[0], now: Date.now() })).verified, false);
-    assert.equal((await run(ids[1], async ({ windowEnd }) => collection(Date.parse(windowEnd), true))).audit.ready, true);
-    assert.equal((await run(ids[2], async () => { throw new Error('private-collector-error'); })).audit.ready, false);
+    const completeCoverage = await run(ids[1], async ({ windowEnd }) => collection(Date.parse(windowEnd), true));
+    assert.equal(completeCoverage.verified, true);
+    assert.equal(completeCoverage.audit.ready, nativeClosureVerified,
+      'coverage cannot grant readiness to an unsafe managed-role installation; the separate mandatory native proof supplies the positive case');
+    if (!nativeClosureVerified) {
+      assert.equal(completeCoverage.audit.closures.verified, false);
+      assert.equal(completeCoverage.audit.coverage.verified, true);
+      for (const check of completeCoverage.audit.checks) {
+        assert.equal(check.status, check.id === 'dead_letters' ? 'unverified' : 'passed', check.id);
+        assert.equal(check.reason, check.id === 'dead_letters' ? 'source_unavailable' : 'no_findings', check.id);
+      }
+    }
+    assert.equal((await run(ids[2], async () => { throw new Error('private-collector-error'); }, true)).audit.ready, false);
     const latest = await read(pool, { now: Date.now() });
     assert.equal(latest.runId, ids[2]); assert.equal(latest.verified, true); assert.equal(latest.audit.ready, false);
   } finally {

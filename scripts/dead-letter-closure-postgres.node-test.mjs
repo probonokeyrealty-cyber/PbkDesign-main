@@ -17,7 +17,10 @@ import { CLOSURE_SOURCE_FIXTURE_SQL, seedClosureSources, seedClosureApproval,
   closureTestAuthority, closureHead } from './fixtures/dead-letter-closure-store-fixture.mjs';
 import { createClosureIntent } from './dead-letter-closure-protocol.mjs';
 import { isDeadLetterClosureApproval } from './dead-letter-closure-approval.mjs';
-import { createReadinessFixtureQuery } from './readiness-timing-postgres-fixture.mjs';
+import { createReadinessFixtureQuery, advanceAuditFixtureClock } from './readiness-timing-postgres-fixture.mjs';
+import { createAuditFixture } from './operational-audit-test-fixture.mjs';
+import { readRuntimeCoverage, verifyRuntimeCoverageReference } from './runtime-coverage-store.mjs';
+import { executeOperationalAudit, readOperationalAudit, OPERATIONAL_AUDIT_CHECK_IDS } from './operational-audit-store.mjs';
 
 const fingerprint = rows => createHash('sha256').update(JSON.stringify(rows)).digest('hex');
 
@@ -83,12 +86,7 @@ test('empty-database preflight detects standalone schema objects (local PGlite g
   } finally { await db.close(); }
 });
 
-test('guarded real Postgres schema and store (native max:1 and two-client races)', {
-  skip: Object.hasOwn(process.env, 'PBK_CLOSURE_PG_TEST_ENABLE') ? false
-    : 'Real PostgreSQL unavailable/not opted in; no replica or concurrent-transaction proof claimed',
-  timeout: 120000,
-}, async t => {
-  const config = validateLocalClosurePostgresTestConfig(process.env);
+function observeNativeNetwork(t, config) {
   const expectedHost = config.host.replace(/^\[|\]$/g, '');
   let externalAttempts = 0, senderAttempts = 0;
   const connect = net.Socket.prototype.connect;
@@ -112,6 +110,18 @@ test('guarded real Postgres schema and store (native max:1 and two-client races)
     assert.equal(externalAttempts, 0); assert.equal(senderAttempts, 0);
     t.diagnostic('network observer: zero external connections; zero HTTP/provider sender accesses');
   });
+}
+
+const nativeTestOptions = {
+  skip: Object.hasOwn(process.env, 'PBK_CLOSURE_PG_TEST_ENABLE') ? false
+    : 'Real PostgreSQL unavailable/not opted in; no replica or concurrent-transaction proof claimed',
+  timeout: 120000,
+};
+
+test('guarded real Postgres schema and store (native max:1 and two-client races)', nativeTestOptions, async t => {
+  const config = validateLocalClosurePostgresTestConfig(process.env);
+  const expectedHost = config.host.replace(/^\[|\]$/g, '');
+  observeNativeNetwork(t, config);
   const url = new URL(config.databaseUrl);
   const client = new pg.Client({ host: config.host.replace(/^\[|\]$/g, ''), port: config.port,
     database: config.expectedDatabase, user: config.expectedRole, password: decodeURIComponent(url.password),
@@ -194,18 +204,18 @@ test('guarded real Postgres schema and store (native max:1 and two-client races)
   }
 });
 
-// Only reached after the existing empty-disposable-DB/identity/owner guards.
-async function nativeStoreCoverage(t, config, query) {
+function nativeConnection(config) {
   const url = new URL(config.databaseUrl);
-  const connection = { host: config.host.replace(/^\[|\]$/g, ''), port: config.port,
+  return { host: config.host.replace(/^\[|\]$/g, ''), port: config.port,
     database: config.expectedDatabase, user: config.expectedRole, password: decodeURIComponent(url.password),
     ssl: false, connectionTimeoutMillis: 2000, query_timeout: 2000,
     options: '-c search_path=pg_catalog,pg_temp -c statement_timeout=2000', application_name: 'pbk-closure-local-store-test' };
-  const pool = new pg.Pool({ ...connection, max: 1 });
-  const other = new pg.Pool({ ...connection, max: 1 });
+}
+
+function observeNativeClocks(t, pools) {
   let bufferedResponses = 0, maximumDatabaseLeadMs = 0;
   // SQLSTATE/routine only: native failures must be diagnosable without row/SQL data.
-  for (const base of [pool, other]) {
+  for (const base of pools) {
     base.on('connect', c => {
       const run = c.query.bind(c);
       c.query = async (...args) => {
@@ -249,6 +259,94 @@ async function nativeStoreCoverage(t, config, query) {
       };
     });
   }
+  return () => t.diagnostic(`native clock fixture: bufferedResponses=${bufferedResponses}; maximumDatabaseLeadMs=${maximumDatabaseLeadMs}; capMs=100; timestamps unchanged`);
+}
+
+// A separate bounded test keeps the real 24-hour synthetic seed out of the race
+// suite's deadline. Both tests and the provisioning controller retain their caps.
+test('native isolated audit persists passing JSONB and rejects tampering and stale-good fallback', nativeTestOptions, async t => {
+  const config = validateLocalClosurePostgresTestConfig(process.env);
+  observeNativeNetwork(t, config);
+  const pool = new pg.Pool({ ...nativeConnection(config), max: 1 });
+  const reportClocks = observeNativeClocks(t, [pool]);
+  const schema = `pbk_proof_${randomUUID().replaceAll('-', '')}`;
+  const mapped = c => createReadinessFixtureQuery(c.query.bind(c), schema, { closureCatalog: true });
+  const auditPool = { query: mapped(pool), async connect() {
+    const client = await pool.connect();
+    return { query: mapped(client), release: client.release.bind(client),
+      on: client.on.bind(client), removeListener: client.removeListener.bind(client) };
+  } };
+  const authority = closureTestAuthority();
+  let created = false, day;
+  try {
+    const identity = (await pool.query(`SELECT current_database() AS database,current_user AS role,
+      (SELECT rolsuper OR rolbypassrls FROM pg_catalog.pg_roles WHERE rolname=current_user) AS privileged`)).rows[0];
+    assert.equal(identity.database, config.expectedDatabase);
+    assert.equal(identity.role, config.expectedRole);
+    assert.equal(identity.privileged, false);
+    await pool.query(`CREATE SCHEMA ${schema}`); created = true;
+    await auditPool.query(`CREATE TABLE public.event_dead_letters(id text PRIMARY KEY,tenant_id text,created_at timestamptz);
+      CREATE TABLE public.provider_action_dispatches(id text PRIMARY KEY,payload jsonb);
+      INSERT INTO public.provider_action_dispatches SELECT 'locked-'||n,jsonb_build_object('state','unknown','lane',n)
+        FROM generate_series(1,6) n;
+      CREATE TABLE public.pbk_eval_runs(id text PRIMARY KEY,tenant_id text,suite_name text,
+        ok boolean,total int,passed int,failed int,report jsonb,source text,created_at timestamptz)`);
+    const dispatchRows = async () => (await auditPool.query('SELECT to_jsonb(d) row FROM public.provider_action_dispatches d ORDER BY id')).rows;
+    const before = fingerprint(await dispatchRows());
+    await auditPool.query(DEAD_LETTER_CLOSURE_SQL);
+    const installation = await verifyDeadLetterClosureInstallation(auditPool.query);
+    assert.equal(installation.verified, true, installation.result);
+    day = await createAuditFixture({ end: Date.now(), ...authority });
+    await advanceAuditFixtureClock(day, Date.now());
+    const coverageVerifier = options => {
+      const current = typeof options.now === 'function' ? options.now() : options.now;
+      day.advance(current - day.now());
+      return verifyRuntimeCoverageReference({ ...options, pool: day.pool, now: day.now });
+    };
+    const collect = async args => {
+      await advanceAuditFixtureClock(day, args.now);
+      const coverage = await readRuntimeCoverage({ pool: day.pool, ...authority, now: day.now });
+      assert.equal(coverage.verified, true, coverage.result);
+      const closures = await readDeadLetterClosures({ pool: auditPool, ...authority, now: Date.now(),
+        cutoff: args.windowEnd, boundary: args.closureBoundary });
+      assert.equal(closures.verified, true, closures.result);
+      assert.deepEqual(closures.reference.boundary, args.closureBoundary);
+      return { windowStart: args.windowStart, windowEnd: args.windowEnd,
+        checks: OPERATIONAL_AUDIT_CHECK_IDS.map(id => ({ id, status: 'passed', reason: 'no_findings',
+          counts: id === 'dead_letters' ? { totalOriginals: 0, resolvedInternal: 0, outstanding: 0, invalidatedClosures: 0 }
+            : { total: 0 }, firstObservedAt: null, lastObservedAt: null })),
+        closures: { verified: true, reference: closures.reference },
+        coverage: { verified: true, reference: coverage.proof.reference } };
+    };
+    const ids = Array.from({ length: 3 }, () => `native-audit-${randomUUID()}`);
+    const run = (id, collector = collect) => executeOperationalAudit({ pool: auditPool, ...authority,
+      createId: () => id, collect: collector, coverageVerifier });
+    const passing = await run(ids[0]);
+    assert.equal(passing.verified, true, JSON.stringify(passing));
+    assert.equal(passing.audit.ready, true);
+    await auditPool.query(`UPDATE public.pbk_eval_runs SET report=jsonb_set(report,
+      '{audit,checks,0,counts,total}','99'::jsonb) WHERE id=$1`, [ids[0]]);
+    const load = options => readOperationalAudit({ pool: auditPool, ...authority, now: Date.now(), coverageVerifier, ...options });
+    assert.equal((await load({ id: ids[0] })).verified, false, 'native JSONB tampering must fail signature verification');
+    assert.equal((await run(ids[1])).audit.ready, true, 'a genuine audit can pass after a tampered older receipt');
+    const failed = await run(ids[2], async () => { throw new Error('fixture-collector-failure'); });
+    assert.equal(failed.audit.ready, false);
+    const latest = await load();
+    assert.equal(latest.runId, ids[2]); assert.equal(latest.verified, true); assert.equal(latest.audit.ready, false);
+    assert.equal(fingerprint(await dispatchRows()), before, 'six unknown dispatches stay unchanged');
+    t.diagnostic('native audit: genuine passing JSONB receipt, tamper rejection, newest failed attempt; synthetic quiet coverage only; six unknown dispatches unchanged');
+  } finally {
+    try { await day?.close(); }
+    finally { try { if (created) await pool.query(`DROP SCHEMA ${schema} CASCADE`); }
+      finally { await pool.end(); reportClocks(); } }
+  }
+});
+
+// Only reached after the existing empty-disposable-DB/identity/owner guards.
+async function nativeStoreCoverage(t, config, query) {
+  const pool = new pg.Pool({ ...nativeConnection(config), max: 1 });
+  const other = new pg.Pool({ ...nativeConnection(config), max: 1 });
+  const reportClocks = observeNativeClocks(t, [pool, other]);
   const authority = closureTestAuthority();
   const ledgerRows = async () => (await query(`SELECT id,tenant_id,ordinal::text,
     to_char(admitted_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS admitted_at,
@@ -556,7 +654,7 @@ async function nativeStoreCoverage(t, config, query) {
     });
   } finally {
     try { await pool.end(); } finally { await other.end(); }
-    t.diagnostic(`native clock fixture: bufferedResponses=${bufferedResponses}; maximumDatabaseLeadMs=${maximumDatabaseLeadMs}; capMs=100; timestamps unchanged`);
+    reportClocks();
     if (sourcesCreated) {
       await query(`DROP TABLE public.provider_action_dispatches,public.approvals,public.pbk_eval_runs,
         public.call_embeddings,public.pbk_call_qa_scores,public.calls,public.event_dead_letters`);

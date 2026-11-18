@@ -6,7 +6,8 @@ Base: `77d9e4c726ec5df4d5a4bbcd73426438648c33bb`.
 Fix the plan-document and native audit-fixture CI failures and rerun CI. Keep the
 PR draft; do not merge into main, deploy or migrate production. Preserve unknown
 dispatch locks and auth/approval policy. No seller contact or delivery retries.
-Production runtime, validators, migrations and CI gates are unchanged.
+Production runtime, validators and migrations are unchanged. Existing CI gates
+remain mandatory; a separate positive native audit proof is additionally required.
 
 ## Plan Contract
 
@@ -62,7 +63,7 @@ capture and ordinal allocation, within the existing 100ms fixture cap. It does
 not change clocks, rewrite timestamps, raise limits or alter runtime ordering.
 The existing response buffer and reverse-clock negative case remain intact.
 
-Final native result: 17 passed, zero failed/skipped. The reverse-clock case still
+Initial native result: 17 passed, zero failed/skipped. The reverse-clock case still
 rejects; all six unknown dispatch rows and originals remain unchanged. The network
 observer recorded zero external connections and zero HTTP/provider sender access.
 Owned database/container cleanup succeeded; unrelated resources were untouched.
@@ -82,3 +83,66 @@ smoke, typecheck, lint, changed-test syntax and whitespace checks passed.
 Fresh remote CI must still run the mandatory native Neon case with zero skips
 and the full founder workflow. Record actual CI results on PR 35, not by waiving
 checks or repeatedly committing result-only receipts.
+
+## Managed-Role Isolation And Positive Proof
+
+The plan repair passed Founder Verify on `889be6d`. Release runs on `889be6d`
+and `5a5498d` exposed a second fixture problem after cleanup stopped masking
+setup failures. Bounded catalog diagnostics on `aa06ea4` identified the exact
+cause: the managed Neon installation has `role_access_safe=false`. Ownership,
+RLS, direct ACL, trusted-role and read/insert checks passed. The strict production
+validator correctly rejects this context; its security rule is not relaxed.
+
+The managed-role integration now asserts that rejection and a blocked audit,
+while retaining signed JSONB tamper and newest-failed-attempt checks. If a future
+disposable installation genuinely passes the validator, the positive path still
+requires actual snapshot-bound closure evidence. No unsafe installation becomes
+verified just to satisfy a test.
+
+Independent review identified two negative-test masking risks. The test now
+requires all other exact installation invariants, including rollback-scoped RLS
+and trigger drift rejection. Its diagnostic isolates only the known role flag;
+the resulting counterfactual is never evidence. Collector assertions are also
+surfaced outside the store's intentional signed-failure catch, and complete
+coverage must still verify with only the dead-letter check blocked for the
+specific source-unavailable reason.
+
+Release Qualification also requires the existing disposable native runner, now
+supported on GitHub Actions Linux with an explicitly opted-in fixed `default`
+Docker context and local Unix socket. Windows retains its `desktop-linux` named
+pipe. Remote/alternate contexts and Docker environment overrides are rejected.
+The image remains digest-pinned; generated identity, loopback publication, tmpfs,
+least-privilege role, empty-database preflight, ownership-checked cleanup and all
+timeouts remain intact. The original six-suite Neon zero-skip gate is unchanged.
+
+The additional positive audit test uses actual native PostgreSQL installation,
+snapshot capture, closure readback, JSONB persistence and signature verification.
+Its controlled collector and signed quiet-day coverage fixture are synthetic
+test inputs, not live operational readiness evidence. It requires a genuinely
+passing receipt, rejects JSONB tampering, and refuses an older-good fallback
+after a newer signed failed attempt. Six synthetic unknown dispatches remain
+unchanged and a network observer denies external/sender access.
+
+The expensive quiet-day fixture has its own bounded native test rather than
+consuming the race suite's deadline. The 120-second per-test and 180-second
+controller limits are not raised. An intermediate combined-parent run timed out
+after its positive assertions; that run is not counted as a native pass.
+An initial separated run also failed under concurrent fixture load, including
+the existing 100ms clock-convergence guard. These failed runs remain caveats,
+not successful native verification or justification to increase limits.
+
+Fresh focused rerun: three suites passed, 182 tests passed, zero failed and one
+ordinary Neon opt-in skip (625.675 seconds). The CI wrapper/reader contract and
+cross-platform provisioning guards passed 96 and 33 tests respectively. Typecheck,
+lint, changed-script syntax, plan alignment and whitespace checks passed. Review
+confirmed both masking findings resolved with no new static findings; real native
+execution and fresh current-head CI remain mandatory before any all-green claim.
+
+The serial native rerun completed in 108.637 seconds: 17 passed, one failed,
+zero skipped/cancelled. The new audit case took 101.162 seconds, within its
+unchanged budget, but failed snapshot capture at the existing 100ms clock guard
+after the Docker/Windows clock lead reached 134ms. This is not a native pass.
+Both network observers recorded zero external/sender access, six protected
+dispatches and originals were unchanged, and owned cleanup succeeded. No clock,
+timestamp or limit was changed; the mandatory Linux native CI run must establish
+the positive same-host proof before considering qualification green.

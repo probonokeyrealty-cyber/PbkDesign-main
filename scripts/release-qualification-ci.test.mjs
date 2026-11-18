@@ -343,6 +343,19 @@ function workflow() {
   return parse(readFileSync(new URL('../.github/workflows/release-qualification.yml', import.meta.url), 'utf8'));
 }
 
+test('qualification additionally requires the owned least-privilege native audit proof', () => {
+  const steps = workflow().jobs['release-qualification'].steps;
+  const step = steps.find(item => item.name === 'Run isolated native audit proof');
+  assert(step, 'positive native audit proof must not be replaced by the managed-role negative case');
+  assert.equal(step.if, undefined);
+  assert.equal(step['continue-on-error'], undefined);
+  assert.equal(step.env.PBK_CLOSURE_TEST_ENABLE, '1');
+  assert.match(step.run, /docker --context default pull pgvector\/pgvector@sha256:b513c48566e4777cd3370451400000c78eda6a08131d68f4c31d4a76f27bd8fd/);
+  assert.match(step.run, /npm run test:dead-letter-closure-postgres/);
+  assert.doesNotMatch(step.run, /\|\|\s*true|--passWithNoTests|--testNamePattern/);
+  assert.match(step.run, /node --test scripts\/dead-letter-closure-postgres-local.node-test.mjs/);
+});
+
 test('workflow requires full isolated Postgres and default Chromium/WebKit execution without conditional steps', () => {
   const config = workflow();
   assert.deepEqual(config.on, { pull_request: { branches: ['main'] }, push: { branches: ['main'] }, workflow_dispatch: null });

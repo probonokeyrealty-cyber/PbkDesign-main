@@ -2020,6 +2020,7 @@ export type RecordedSale = {
   id: string; address: string; soldDate: string; price: number; distanceMiles: number;
   beds: number | null; baths: number | null; sqft: number | null;
   pricePerSqft: number | null; propertyType: string | null;
+  photoEvidence?: { source: 'apify-for-sale'; address: string; retrievedAt: string; photoUrls: string[]; sourceLinks: string[] };
 };
 export type AddressSuggestionResult = { status: string; suggestions?: { id: string; label: string }[]; address?: AttomPreviewAddress };
 export function fetchAddressSuggestions(input: { query?: string; placeId?: string; sessionToken: string }) {
@@ -2028,6 +2029,7 @@ export function fetchAddressSuggestions(input: { query?: string; placeId?: strin
 export type RecentSalesResult = {
   status: string; source?: string; retrievedAt?: string; windowStart?: string;
   windowEnd?: string; radiusMiles?: number; partial?: boolean; sales?: RecordedSale[];
+  review?: string; selectedIds?: string[];
 };
 export function fetchAttomRecentSales(address: AttomPreviewAddress, radius = 1) {
   return bridgeRequest<RecentSalesResult>({ method: 'POST', path: '/api/property-data/attom-sales',

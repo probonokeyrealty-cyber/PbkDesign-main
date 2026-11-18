@@ -27,6 +27,64 @@ function listingSnapshot(address, result, now, previous) {
   return { source: 'apify-for-sale', address: label(address), retrievedAt: validTime(fetchedAt) ? fetchedAt : now, photoUrls, sourceLinks, facts, askingPrice };
 }
 
+const salesCandidates = (result, address) => (Array.isArray(result?.sales) ? result.sales : []).filter(s =>
+  typeof s?.address === 'string' && parseAttomAddress({ street: s.address }) &&
+  attomStreetKey(s.address.split(',')[0]) !== attomStreetKey(address.street) &&
+  Number.isFinite(s.price) && s.price > 0 && /^\d{4}-\d{2}-\d{2}$/.test(s.soldDate)).slice(0, 20);
+
+function compPhotoEvidence(address, result, now) {
+  // getPropertyData's top-level address echoes the request. Only the cache
+  // entry's own address proves that these photos belong to this candidate.
+  if (!sameAttomAddress({ street: result?.propertyData?.address }, address)) return undefined;
+  const property = object(result?.propertyData);
+  if (![property.data?.capturedAt, property.fetchedAt, property.fetched_at, property.updatedAt, property.createdAt].some(validTime)) return undefined;
+  const snapshot = listingSnapshot(address, result, now);
+  if (!snapshot?.photoUrls.length) return undefined;
+  const { source, address: boundAddress, retrievedAt, photoUrls, sourceLinks } = snapshot;
+  return { source, address: boundAddress, retrievedAt, photoUrls, sourceLinks };
+}
+
+function savedCompPhotoEvidence(address, evidence) {
+  if (evidence?.source !== 'apify-for-sale' || !validTime(evidence.retrievedAt)) return undefined;
+  return compPhotoEvidence(address, { cache: { hit: true }, propertyData: {
+    address: evidence.address, source: evidence.source,
+    data: { ...evidence, capturedAt: evidence.retrievedAt },
+  } }, evidence.retrievedAt);
+}
+
+async function loadCompPhotos(result, address, listing, now, reviewedCandidates = []) {
+  if (result?.status !== 'matched' || result.source !== 'ATTOM') return result;
+  const candidates = salesCandidates(result, address);
+  // Prioritize selected saved comps so an expired sales search window does not
+  // prevent the operator's reviewed comparison from receiving cached photos.
+  const seen = new Set();
+  const photoCandidates = [...reviewedCandidates, ...candidates].filter(sale => {
+    const parsed = parseAttomAddress({ street: sale.address });
+    const key = `${attomStreetKey(parsed.street)}|${parsed.city.toUpperCase()}|${parsed.state}|${parsed.zip.slice(0, 5)}`;
+    if (seen.has(key)) return false;
+    seen.add(key); return true;
+  }).slice(0, 20);
+  const captures = new Map();
+  let cursor = 0;
+  await Promise.all(Array.from({ length: Math.min(4, photoCandidates.length) }, async () => {
+    while (cursor < photoCandidates.length) {
+      const sale = photoCandidates[cursor++];
+      if (captures.has(sale.address)) continue;
+      captures.set(sale.address, undefined);
+      try {
+        const cached = await listing({ address: sale.address, queueBrowserResearch: false, source: 'property-intelligence' });
+        captures.set(sale.address, compPhotoEvidence(parseAttomAddress({ street: sale.address }), cached, now));
+      } catch { /* A cache failure must not discard the sales candidate. */ }
+    }
+  }));
+  const captureFor = sale => [...captures.values()].find(evidence => sameAttomAddress({ street: evidence?.address }, { street: sale.address }));
+  const { reviewedPhotoEvidence: _untrustedCaptures, ...salesResult } = result;
+  return { ...salesResult, ...(reviewedCandidates.length ? { reviewedPhotoEvidence: reviewedCandidates.map(captureFor).filter(Boolean) } : {}), sales: candidates.map(({ photoEvidence: _untrusted, ...sale }) => {
+    const photoEvidence = captureFor(sale);
+    return { ...sale, ...(photoEvidence ? { photoEvidence } : {}) };
+  }) };
+}
+
 export function propertyIntelligencePatch(lead, address, evidence, now = new Date().toISOString()) {
   const deal = { ...object(lead?.deal) }, analyzer = { ...object(lead?.analyzer) };
   const oldRecord = belongs(deal.propertyRecordSnapshot, address) ? deal.propertyRecordSnapshot : undefined;
@@ -45,9 +103,23 @@ export function propertyIntelligencePatch(lead, address, evidence, now = new Dat
   const reviewed = prior.review === 'operator-selected';
   const priorCurrent = sameAttomAddress(prior.address, address);
   if (salesResult?.status === 'matched' && salesResult.source === 'ATTOM' && Array.isArray(salesResult.sales)) {
-    const sales = salesResult.sales.filter(s => typeof s.address === 'string' && attomStreetKey(s.address.split(',')[0]) !== attomStreetKey(address.street) && Number.isFinite(s.price) && s.price > 0 && /^\d{4}-\d{2}-\d{2}$/.test(s.soldDate)).slice(0, 20);
+    const sales = salesCandidates(salesResult, address).map(({ photoEvidence: incoming, ...sale }) => {
+      const compAddress = parseAttomAddress({ street: sale.address });
+      const oldSale = priorCurrent && Array.isArray(prior.sales) ? prior.sales.find(s => sameAttomAddress({ street: s?.address }, compAddress)) : undefined;
+      const photoEvidence = savedCompPhotoEvidence(compAddress, incoming) || savedCompPhotoEvidence(compAddress, oldSale?.photoEvidence);
+      return { ...sale, ...(photoEvidence ? { photoEvidence } : {}) };
+    });
     if (!(reviewed || (salesResult.partial && priorCurrent && Array.isArray(prior.sales) && prior.sales.length))) {
       analyzer.recordedSales = { provider: 'ATTOM', review: 'suggested-unreviewed', address, retrievedAt: salesResult.retrievedAt, windowStart: salesResult.windowStart, windowEnd: salesResult.windowEnd, radiusMiles: salesResult.radiusMiles, partial: Boolean(salesResult.partial), selectedIds: [], sales };
+    } else if (priorCurrent && Array.isArray(prior.sales)) {
+      // An explicit refresh may improve photo evidence without replacing the
+      // reviewed selection, saved underwriting metrics or sales capture time.
+      analyzer.recordedSales = { ...prior, sales: prior.sales.map(sale => {
+        const savedPhoto = (Array.isArray(salesResult.reviewedPhotoEvidence) ? salesResult.reviewedPhotoEvidence : []).find(photo => sameAttomAddress({ street: photo?.address }, { street: sale?.address }));
+        const freshPhoto = savedCompPhotoEvidence(parseAttomAddress({ street: sale?.address }), savedPhoto);
+        const fresh = sales.find(s => sameAttomAddress({ street: s.address }, { street: sale?.address }));
+        return freshPhoto || fresh?.photoEvidence ? { ...sale, photoEvidence: freshPhoto || fresh.photoEvidence } : sale;
+      }) };
     }
     if (!reviewed) {
       const comps = Object.fromEntries(['A', 'B', 'C'].map(slot => [slot, occupied(analyzer.comps?.[slot]) ? analyzer.comps[slot] : object(deal.comps?.[slot])]));
@@ -83,14 +155,19 @@ export function createPropertyIntelligence({ getLead, saveLead, listing, records
       if (!sameAttomAddress(input.expectedPropertyAddress, address) || !sameAttomAddress(leadAddress(lead), address)) throw fail('property_context_changed', 409, 'The lead property changed. Refresh the lead before enriching.');
       return lead;
     };
-    await check();
-    const key = `${attomStreetKey(address.street)}|${address.city.toUpperCase()}|${address.state}|${address.zip.slice(0, 5)}|${radius}`;
+    const initial = await check();
+    const priorSales = initial?.analyzer?.recordedSales;
+    const reviewedCandidates = priorSales?.review === 'operator-selected' && sameAttomAddress(priorSales.address, address) && Array.isArray(priorSales.sales) ? priorSales.sales.filter(sale =>
+      Array.isArray(priorSales.selectedIds) && priorSales.selectedIds.includes(sale?.id) &&
+      parseAttomAddress({ street: sale?.address }) && attomStreetKey(sale.address.split(',')[0]) !== attomStreetKey(address.street)
+    ).slice(0, 20) : [];
+    const key = `${attomStreetKey(address.street)}|${address.city.toUpperCase()}|${address.state}|${address.zip.slice(0, 5)}|${radius}|${JSON.stringify(reviewedCandidates.map(s => s.address))}`;
     if (!pending.has(key)) {
       const work = Promise.allSettled([
         Promise.resolve().then(() => listing({ address: label(address), queueBrowserResearch: false, source: 'property-intelligence' })),
         Promise.resolve().then(() => records(address)),
         Promise.resolve().then(() => sales({ ...address, radius })),
-      ]).then(([l, r, s]) => ({ listing: l.status === 'fulfilled' ? l.value : { cache: { hit: false }, propertyData: null }, records: r.status === 'fulfilled' ? r.value : { status: 'unavailable' }, sales: s.status === 'fulfilled' ? s.value : { status: 'unavailable' } })).finally(() => pending.delete(key));
+      ]).then(async ([l, r, s]) => ({ listing: l.status === 'fulfilled' ? l.value : { cache: { hit: false }, propertyData: null }, records: r.status === 'fulfilled' ? r.value : { status: 'unavailable' }, sales: s.status === 'fulfilled' ? await loadCompPhotos(s.value, address, listing, now(), reviewedCandidates) : { status: 'unavailable' } })).finally(() => pending.delete(key));
       pending.set(key, work);
     }
     const evidence = await pending.get(key);

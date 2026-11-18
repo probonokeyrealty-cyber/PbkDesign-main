@@ -112,6 +112,7 @@ export async function verifyAnalyzerPublicationGuards(page, key, olderRaw) {
             : authoritative === (['canonical-mismatch', 'canonical-between'].includes(name) ? peerRaw : original),
           privatePreserved: privateDeal?.beds === 66 && privateDeal?.notes === base.notes
             && Boolean(privateEnvelope?.unpublishedEdits) === !empty
+            && JSON.stringify(privateEnvelope?.manualFields) === JSON.stringify(fields)
             && JSON.stringify(privateDeal?.comps) === JSON.stringify(base.comps)
             && JSON.stringify(privateDeal?.repairs) === JSON.stringify(base.repairs),
         });

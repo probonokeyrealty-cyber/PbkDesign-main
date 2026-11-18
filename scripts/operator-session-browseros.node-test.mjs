@@ -4,6 +4,7 @@ import { EventEmitter } from 'node:events';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { readFileSync } from 'node:fs';
+import { parse as parseYaml } from 'yaml';
 import ts from 'typescript';
 import { analyzerPublicationTrace } from './fixtures/analyzer-publication-trace.mjs';
 import * as publicationDiagnostics from './fixtures/analyzer-publication-trace.mjs';
@@ -21,6 +22,22 @@ const pins = new Map([
   ['/fonts/pbk-core/Geist.woff2', Buffer.from('sample font')],
 ]);
 const paths = new Set(pins.keys());
+
+test('release qualification requires controlled publication coverage on pull requests', () => {
+  const workflow = parseYaml(readFileSync(new URL('../.github/workflows/release-qualification.yml', import.meta.url), 'utf8'));
+  assert.ok(workflow.on.pull_request.branches.includes('main'));
+  assert.equal(workflow.permissions.contents, 'read');
+  const job = workflow.jobs['release-qualification'];
+  assert.equal(job['continue-on-error'] ?? false, false);
+  const command = 'node scripts/analyzer-draft-recovery-browser-smoke.mjs --controlled-publication';
+  const index = job.steps.findIndex(step => step.run?.trim() === command);
+  assert.ok(index >= 0, 'CI must exercise the controlled publication regression, not only the uninjected matrix');
+  const step = job.steps[index];
+  assert.equal(step.if, undefined, 'Controlled coverage must not be gated off');
+  assert.equal(step['continue-on-error'] ?? false, false);
+  const browsers = job.steps.findIndex(step => step.run?.includes('playwright install') && step.run.includes('chromium webkit'));
+  assert.ok(browsers >= 0 && browsers < index, 'Install both proof browsers before controlled coverage');
+});
 
 test('controlled publication guards reject production and non-fixture pages before evaluation', async () => {
   let evaluated = false;

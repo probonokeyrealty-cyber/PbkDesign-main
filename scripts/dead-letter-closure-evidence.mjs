@@ -94,10 +94,10 @@ function context(original, now) {
     && !isExcludedEpisodicCall({ ...p, id: callId }), 'source_unverified');
   const texts = ['transcript', 'transcriptText', 'transcript_text']
     .filter(key => Object.hasOwn(p, key)).map(key => p[key]);
-  requireThat(texts.length > 0 && texts.every(text => typeof text === 'string')
-    && texts.every(text => text === texts[0]) && texts[0].trim().length > 0, 'source_unverified');
+  requireThat(texts.every(text => typeof text === 'string')
+    && texts.every(text => text === texts[0]), 'source_unverified');
   // The worker only passes payload.transcript to QA, but uses aliases for memory.
-  return { callId, qaText: (p.transcript || '').trim(), eventText: texts[0] };
+  return { callId, qaText: (p.transcript || '').trim(), eventText: texts[0] ?? '' };
 }
 function matches(call, callId) {
   return ['id', 'telnyx_call_control_id', 'telnyx_call_leg_id', 'telnyx_call_session_id']

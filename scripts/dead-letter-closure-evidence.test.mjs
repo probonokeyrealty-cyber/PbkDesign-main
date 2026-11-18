@@ -152,6 +152,60 @@ test('event transcript alias feeds memory but never substitutes for the actual e
   f.qa[0].transcript_snippet = TEXT;
   denied(check(f), 'qa_unverified');
 });
+test.each([
+  ['missing', 'transcript'], ['empty', 'transcript'], ['blank', 'transcript'],
+  ['missing', 'notes'], ['empty', 'notes'], ['blank', 'notes'],
+])('%s event text allows valid canonical %s embedding with actual empty QA input', async (mode, source) => {
+  const f = fixture();
+  if (mode === 'missing') delete f.original.payload.transcript;
+  else f.original.payload.transcript = mode === 'empty' ? '' : ' \t\n ';
+  f.qa[0].transcript_snippet = '';
+  f.calls = [{ id: 'canonical-private', workspace_id: 'pbk', provider: 'telnyx',
+    telnyx_call_control_id: 'call-private', transcript: source === 'transcript' ? [TEXT] : [],
+    notes: source === 'notes' ? TEXT : '', metadata: {}, synthetic: false,
+    created_at: AT, updated_at: PROOF }];
+  const pureBefore = JSON.stringify(f);
+  const value = check(f); guards(value);
+  assert.equal(value.eligible, true);
+  assert.equal(validateClosureManifest(value.manifest), true);
+  assert.deepEqual(value.manifest.steps.slice(0, 2).map(s => [s.id, s.outcome, s.executedAt]),
+    [['qa', 'completed', PROOF], ['memory', 'completed', PROOF]]);
+  assert.equal(JSON.stringify(f), pureBefore);
+  await seed(f);
+  const before = await fingerprint();
+  const collected = await collect();
+  assert.equal(collected.ok, true); assert.equal(collected.cases[0].eligible, true);
+  assert.equal(await fingerprint(), before);
+  f.qa[0].transcript_snippet = TEXT;
+  denied(check(f), 'qa_unverified');
+});
+test.each(['missing', 'empty', 'blank'])('%s event text still requires nonempty selected memory', mode => {
+  const f = fixture();
+  if (mode === 'missing') delete f.original.payload.transcript;
+  else f.original.payload.transcript = mode === 'empty' ? '' : ' \t\n ';
+  f.qa[0].transcript_snippet = '';
+  denied(check(f), 'source_unverified');
+});
+test('blank event text cannot hide contradictory transcript aliases behind canonical fallback', () => {
+  const f = fixture(''); f.original.payload.transcript_text = TEXT;
+  f.calls = [{ id: 'call-private', workspace_id: 'pbk', provider: 'telnyx',
+    transcript: [TEXT], notes: '', created_at: AT, updated_at: PROOF }];
+  denied(check(f), 'source_unverified');
+});
+test.each(['missing', 'empty', 'blank'])('%s event with short canonical fallback cannot reuse an earlier skip execution', async mode => {
+  const text = 'Please call back after lunch.';
+  const f = fixture(text); f.memory = [];
+  f.calls = [{ id: 'call-private', workspace_id: 'pbk', provider: 'telnyx',
+    transcript: [], notes: text, metadata: {}, synthetic: false, created_at: AT, updated_at: AT }];
+  await signedSkip(f);
+  assert.equal(check(f).eligible, true);
+  if (mode === 'missing') delete f.original.payload.transcript;
+  else f.original.payload.transcript = mode === 'empty' ? '' : ' \t\n ';
+  f.qa[0].transcript_snippet = '';
+  denied(check(f), 'memory_skip_unverified');
+  f.skipReceipt = null;
+  denied(check(f), 'memory_skip_unverified');
+});
 test.each(['original', 'qa', 'memory', 'precision', 'canonical'])('changed %s invalidates manifest binding', part => {
   const f = fixture(); const first = check(f).manifest;
   if (part === 'original') f.original.error = 'changed';

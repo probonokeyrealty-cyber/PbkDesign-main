@@ -168,6 +168,23 @@ test('pure skip adapter verifies genuine receipt without SQL and retains exact s
   assert(!/private|Please call/.test(JSON.stringify(value)));
 });
 
+test.each(['missing', 'empty', 'blank'])('pure skip adapter preserves rejection of %s event text despite short canonical fallback', async mode => {
+  await dead(); await call({ notes: TEXT }); verified(await record());
+  const original = (await db.query('SELECT to_jsonb(d) AS row FROM event_dead_letters d')).rows[0].row;
+  const calls = (await db.query('SELECT to_jsonb(c) AS row FROM calls c')).rows.map(r => r.row);
+  const receipt = (await db.query(`SELECT to_jsonb(r) || jsonb_build_object('created_at_exact',
+    to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')) AS row FROM pbk_eval_runs r`)).rows[0].row;
+  const input = { original, calls, receipt, secret, revision, now: NOW };
+  assert.equal(api('verifyCallMemorySkipEvidence')(input).verified, true);
+  if (mode === 'missing') delete original.payload.transcript;
+  else original.payload.transcript = mode === 'empty' ? '' : ' \t\n ';
+  const before = JSON.stringify(input);
+  const queryCount = queries.length;
+  const value = api('verifyCallMemorySkipEvidence')(input);
+  assert.equal(value.verified, false); assert.equal(value.result, 'source_unverified');
+  assert.equal(JSON.stringify(input), before); assert.equal(queries.length, queryCount);
+});
+
 test('historical 34/35/44-character rows never become skips just by being read', async () => {
   for (const size of [34, 35, 44]) await dead({ id: `dead-${size}`, eventId: `event-${size}`, callId: `call-${size}`, text: 'x'.repeat(size) });
   const value = await read();

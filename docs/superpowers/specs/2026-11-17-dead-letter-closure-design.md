@@ -2,15 +2,15 @@
 
 ## Status And Authority
 
-Design finalized for founder review; implementation is not yet approved by this
-document. The founder selected a dedicated append-only Postgres ledger after
+The founder approved this design for local implementation and tests on 2026-11-17.
+The founder selected a dedicated append-only Postgres ledger after
 considering signed receipts in the existing evaluation store. All other technical
-choices below are proposed engineering decisions, not previously granted authority.
+choices below were included in the reviewed design.
 
 This is a backend project extending the existing reconciliation, approval and
-readiness lanes. This task writes and reviews the design only. Implementation,
-production migration, push, deployment and live closure each remain outside this
-task. The pasted prior-release transcript is historical reference, not new release
+readiness lanes. Local planning, implementation and isolated testing are authorized;
+production migration, push, deployment and live closure remain outside this task.
+The pasted prior-release transcript is historical reference, not new release
 authorization.
 
 ## Intent And Existing Evidence

@@ -17,7 +17,7 @@ const lead = { id: 'crm-evidence-fixture', leadId: 'crm-evidence-fixture', selle
   analyzer: { recordedSales: { provider: 'ATTOM', review: 'suggested', address: structuredAddress, retrievedAt: captured, windowStart: '2026-10-18', windowEnd: '2026-11-17', radiusMiles: 1, sales: [sale,...alternateSales] } },
   deal: {
     listingSnapshot: { source: 'apify-for-sale', address, retrievedAt: captured, askingPrice: 450000, photoUrls: photos, sourceLinks: ['https://www.realtor.com/realestateandhomes-detail/fixture'], facts: { beds: 3, baths: 2, sqft: 1800, year: 1995, dom: 12 } },
-    propertyRecordSnapshot: { source: 'attom', address, retrievedAt: captured, facts: { address, apn: 'FIXTURE-24', propertyType: 'Single family', livingSqft: 1700, beds: 4, baths: 2, yearBuilt: 1995, lotSqft: 6000, taxAmount: 2500, taxYear: 2025, recordedSaleAmount: 250000, recordedSaleDate: '2020-01-01' } },
+    propertyRecordSnapshot: { source: 'attom', address, retrievedAt: captured, fieldRetrievedAt: {legalDescription:'2026-11-16T12:00:00Z'}, facts: { address, latitude:34.1, longitude:-118.4, legalDescription:'Fixture legal description', coolingType:'Central', taxPerSizeUnit:2.5, grossSqft:2100, apn: 'FIXTURE-24', propertyType: 'Single family', livingSqft: 1700, beds: 4, baths: 2, yearBuilt: 1995, lotSqft: 6000, taxAmount: 2500, taxYear: 2025, recordedSaleAmount: 250000, recordedSaleDate: '2020-01-01' } },
   },
 };
 
@@ -101,7 +101,7 @@ async function verify(engine, config, label) {
       await expect(workspace.getByRole('img', { name: 'Listing photo 1', exact: true })).toHaveAttribute('src', photos[1]);
       await expect(workspace.getByRole('tabpanel', {name:'Photos',exact:true}).locator('time[datetime="2026-11-18T12:00:00Z"]').first()).toBeVisible();
       await tab('Property record');
-      await expect(workspace.getByText('1,900 sq ft', { exact: true })).toBeVisible();
+      await expect(workspace.locator('.pbk-attom-rows').getByText('1,900 sq ft', { exact: true })).toBeVisible();
       await expect(workspace.locator('time[datetime="2026-11-18T12:00:00Z"]').first()).toBeVisible();
       await tab('Comps');
       await expect(workspace.locator('td[data-label="Price"]').filter({hasText:/^\$410,000$/})).toBeVisible();
@@ -117,8 +117,31 @@ async function verify(engine, config, label) {
     await expect(overview.getByRole('img', { name: 'Listing photo 2', exact: true })).toHaveAttribute('src', photos[1]);
     await expect(overview.getByRole('link', { name: 'Realtor.com', exact: true })).toHaveAttribute('href', lead.deal.listingSnapshot.sourceLinks[0]);
     await tab('Property record');
-    await expect(workspace.getByText('Saved ATTOM snapshot', { exact: true })).toBeVisible();
-    await expect(workspace.getByText('1,700 sq ft', { exact: true })).toBeVisible();
+    await expect(workspace.getByText('ATTOM | Saved snapshot', { exact: true })).toBeVisible();
+    await expect(workspace.locator('.pbk-attom-rows').getByText('1,700 sq ft', { exact: true })).toBeVisible();
+    const recordPanel=workspace.getByRole('tabpanel',{name:'Property record',exact:true});
+    const recordSearch=recordPanel.getByRole('searchbox',{name:'Search property record',exact:true});
+    await recordSearch.fill('longitude');
+    await expect(recordPanel.locator('.pbk-attom-facts dt')).toHaveText(['Longitude']);
+    await expect(recordPanel.locator('.pbk-attom-facts').getByText('-118.4',{exact:true})).toBeVisible();
+    await recordSearch.fill('legal description');
+    await expect(recordPanel.getByText('Fixture legal description',{exact:true})).toBeVisible();
+    await expect(recordPanel.locator('.pbk-attom-record-groups time[datetime="2026-11-16T12:00:00Z"]')).toBeVisible();
+    await recordSearch.fill('Tax per sq ft');
+    await expect(recordPanel.locator('.pbk-attom-facts').getByText('$2.50 / sq ft',{exact:true})).toBeVisible();
+    await recordSearch.fill('Heating fuel');
+    await expect(recordPanel.locator('.pbk-attom-facts dt')).toHaveText(['Heating fuel']);
+    await expect(recordPanel.locator('.pbk-attom-facts').getByText('Not provided',{exact:true})).toBeVisible();
+    await recordSearch.fill('no-such-record-field');
+    await expect(recordPanel.getByText('No record fields match this search.',{exact:true})).toBeVisible();
+    await recordSearch.fill('');
+    const missing=recordPanel.getByRole('checkbox',{name:'Show missing fields',exact:true});
+    await missing.check();await missing.uncheck();
+    const parcelGroup=recordPanel.locator('summary').filter({hasText:'Parcel and building'});
+    await parcelGroup.click();await parcelGroup.click();
+    await noOverflow();
+    await recordPanel.locator('.pbk-record-masthead').scrollIntoViewIfNeeded();
+    await page.screenshot({path:`output/property-record-${label}.png`,fullPage:false});
     await noOverflow(); await tab('Photos'); await noOverflow(); await tab('Comps');
     await expect(workspace.locator('td[data-label="Price"]').filter({hasText:/^\$400,000$/})).toBeVisible();
     await workspace.getByRole('combobox', { name: 'Radius' }).selectOption('2');
@@ -185,7 +208,7 @@ async function verify(engine, config, label) {
     await page.goto(origin + '/leads/' + other.id); await expect(workspace).toBeVisible();
     await tab('Property record');
     await expect(workspace.getByRole('tabpanel', {name:'Property record',exact:true}).locator('dd').filter({hasText:/^OTHER-LEAD-SAME-ADDRESS$/})).toBeVisible();
-    await expect(workspace.getByText('2,100 sq ft', { exact: true })).toBeVisible();
+    await expect(workspace.locator('.pbk-attom-rows').getByText('2,100 sq ft', { exact: true })).toBeVisible();
     await tab('Comps');
     await expect(workspace.locator('td[data-label="Price"]').filter({hasText:/^\$520,000$/})).toBeVisible();
     await expect(workspace.locator('td[data-label="Price"]').filter({hasText:/^\$410,000$/})).toHaveCount(0);

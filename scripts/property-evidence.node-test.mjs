@@ -7,9 +7,15 @@ const source = readFileSync(
   new URL('../src/app/utils/propertyEvidence.ts', import.meta.url),
   'utf8'
 );
-const code = ts.transpileModule(source, {
-  compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
-}).outputText;
+const code = ts.transpileModule(
+  source.replace(
+    "'./attomRecordFields.mjs'",
+    JSON.stringify(new URL('../src/app/utils/attomRecordFields.mjs', import.meta.url).href)
+  ),
+  {
+    compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
+  }
+).outputText;
 const { captureListingSnapshot, readPropertyEvidence, photoLinks } = await import(
   'data:text/javascript;base64,' + Buffer.from(code).toString('base64')
 );
@@ -172,4 +178,76 @@ test('expanded parcel evidence retains identities and field timestamps through s
   assert.equal(records.facts.arv, undefined);
   assert.equal(records.facts.secret, undefined);
   assert.deepEqual(records.fieldRetrievedAt, { ownerName: old, assessedTotalValue: recent });
+});
+
+test('expanded BasicProfile facts survive save/reopen with signed coordinates and per-field provenance', () => {
+  const capturedAt = '2026-11-18T12:00:00Z';
+  const propertyRecordSnapshot = {
+    source: 'attom',
+    address,
+    retrievedAt: capturedAt,
+    fieldRetrievedAt: { latitude: capturedAt, lotNumber: capturedAt },
+    facts: {
+      address,
+      latitude: -33.8,
+      longitude: -118.4,
+      elevation: -12,
+      lotNumber: '0007',
+      subdivisionTractNumber: '00123',
+      censusTractIdentifier: '000101',
+      fullBaths: 2,
+      basementFinishedPercent: 50,
+      assessmentMarketLandValue: 120000,
+      lastQuitClaimDate: '2024-02-29',
+    },
+  };
+  const saved = buildAnalyzerLeadPatch({ leadId: 'fixture', address, propertyRecordSnapshot }).deal;
+  const { records } = readPropertyEvidence(saved, address);
+  for (const [key, value] of Object.entries(propertyRecordSnapshot.facts))
+    assert.equal(records.facts[key], value, key);
+  assert.deepEqual(records.fieldRetrievedAt, propertyRecordSnapshot.fieldRetrievedAt);
+});
+
+test('saved additional facts reject out-of-range numbers, coercion, identifiers and impossible dates', () => {
+  const { records } = readPropertyEvidence(
+    {
+      propertyRecordSnapshot: {
+        source: 'attom',
+        address,
+        retrievedAt: '2026-11-18T12:00:00Z',
+        facts: {
+          latitude: -91,
+          longitude: 181,
+          elevation: -Infinity,
+          fullBaths: '2',
+          basementFinishedPercent: 101,
+          lotNumber: 7,
+          viewCode: 'x'.repeat(101),
+          lastQuitClaimDate: '2025-02-29',
+          recordedSaleDate: '2024-02-31',
+          apn: 'x'.repeat(101),
+          fips: 'x'.repeat(101),
+          attomId: 'x'.repeat(101),
+          secret: 'discard',
+        },
+      },
+    },
+    address
+  );
+  for (const key of [
+    'latitude',
+    'longitude',
+    'elevation',
+    'fullBaths',
+    'basementFinishedPercent',
+    'lotNumber',
+    'viewCode',
+    'lastQuitClaimDate',
+    'recordedSaleDate',
+    'apn',
+    'fips',
+    'attomId',
+  ])
+    assert.equal(records.facts[key], null, key);
+  assert.equal(records.facts.secret, undefined);
 });

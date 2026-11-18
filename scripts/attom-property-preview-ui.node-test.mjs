@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import ts from 'typescript';
+import { attomExtraRecordFields } from '../src/app/utils/attomRecordFields.mjs';
 const require = createRequire(import.meta.url);
 const source = readFileSync(new URL('../src/app/components/leads/AttomPropertyPreview.tsx', import.meta.url), 'utf8');
 const code = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX } }).outputText;
@@ -12,6 +13,7 @@ function mount(props, fetchPreview) {
   const exported = {};
   const fakeRequire = (name) => name === 'react' ? { useState: value => [value, () => {}] }
     : name === 'lucide-react' ? new Proxy({}, { get: (_, key) => String(key) })
+      : name.includes('attomRecordFields') ? { attomExtraRecordFields }
       : name.includes('runtimeBridge') ? { fetchAttomPropertyPreview: fetchPreview } : require(name);
   new Function('require', 'exports', code)(fakeRequire, exported);
   const shell = exported.AttomPropertyPreview({ address, saved: {}, mode: 'workspace', ...props });

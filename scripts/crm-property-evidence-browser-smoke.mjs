@@ -5,22 +5,32 @@ import { readFileSync } from 'node:fs';
 process.env.PBK_DEV_BRIDGE_URL = 'http://127.0.0.1:1';
 const server = await preview({ build: { outDir: 'dist' }, preview: { host: '127.0.0.1', port: 0 } });
 const origin = 'http://127.0.0.1:' + server.httpServer.address().port;
+const structuredAddress = { street: '24 Sample Oak Lane', city: 'Example City', state: 'CA', zip: '90210' };
 const address = '24 Sample Oak Lane, Example City, CA 90210';
 const photos = ['front', 'yard', 'broken'].map(x => `https://ap.rdcpix.com/crm-fixture-${x}.jpg`);
 const captured = '2026-11-17T12:00:00Z';
+const sale = { id: 'sale-fixture', address: '86 Sample Cedar Drive, Example City, CA 90210', soldDate: '2026-11-12', price: 400000, distanceMiles: 0.5, beds: 3, baths: 2, sqft: 1600, pricePerSqft: 250, propertyType: 'Single family' };
 const lead = { id: 'crm-evidence-fixture', leadId: 'crm-evidence-fixture', seller: { name: 'Fixture Seller' },
-  property: { address: '24 Sample Oak Lane', city: 'Example City', state: 'CA', zip: '90210', askingPrice: 450000, beds: 3, baths: 2, sqft: 1800, yearBuilt: 1995 },
+  property: { address: structuredAddress.street, city: structuredAddress.city, state: structuredAddress.state, zip: structuredAddress.zip, askingPrice: 450000, beds: 3, baths: 2, sqft: 1800, yearBuilt: 1995 },
+  analyzer: { recordedSales: { provider: 'ATTOM', review: 'suggested', address: structuredAddress, retrievedAt: captured, windowStart: '2026-10-18', windowEnd: '2026-11-17', radiusMiles: 1, sales: [sale] } },
   deal: {
     listingSnapshot: { source: 'apify-for-sale', address, retrievedAt: captured, askingPrice: 450000, photoUrls: photos, sourceLinks: ['https://www.realtor.com/realestateandhomes-detail/fixture'], facts: { beds: 3, baths: 2, sqft: 1800, year: 1995, dom: 12 } },
     propertyRecordSnapshot: { source: 'attom', address, retrievedAt: captured, facts: { address, apn: 'FIXTURE-24', propertyType: 'Single family', livingSqft: 1700, beds: 4, baths: 2, yearBuilt: 1995, lotSqft: 6000, taxAmount: 2500, taxYear: 2025, recordedSaleAmount: 250000, recordedSaleDate: '2020-01-01' } },
   },
 };
+
+// Intercept every API and remote image request; these checks never touch real leads or providers.
 async function verify(engine, config, label) {
   const browser = await engine.launch();
   const page = await browser.newPage(config);
-  const writes = [], reads = [], errors = [];
-  const fixture = structuredClone(lead);
-  let freshPhotos = false;
+  const mutations = [], providerReads = [], canonicalReads = [], errors = [], unexpectedWrites = [];
+  const fixture = structuredClone(lead), other = structuredClone(lead);
+  other.id = other.leadId = 'crm-evidence-other';
+  other.seller.name = 'Other Fixture Seller';
+  other.deal.propertyRecordSnapshot.facts.apn = 'OTHER-LEAD-SAME-ADDRESS';
+  other.deal.propertyRecordSnapshot.facts.livingSqft = 2100;
+  other.analyzer.recordedSales.sales = [{ ...sale, id: 'other-sale', price: 520000 }];
+  let mode = 'success';
   try {
     await page.addInitScript(() => {
       const config = { endpoint: location.origin, apiKey: 'local-fixture' };
@@ -30,26 +40,70 @@ async function verify(engine, config, label) {
     });
     page.on('pageerror', e => errors.push(e.message));
     await page.routeWebSocket('**/*', socket => socket.close());
-    await page.route('**/*', route => {
-      const r = route.request(), u = new URL(r.url());
-      if (photos.includes(u.href)) return u.href.includes('broken') ? route.abort() : route.fulfill({ contentType: 'image/svg+xml', body: `<svg xmlns="http://www.w3.org/2000/svg" width="${u.href.includes('front') ? 120 : 800}" height="480"><rect width="800" height="480" fill="#253848"/><path d="M120 320V180l180-100 180 100v140Z" fill="#7dd3fc"/></svg>` });
-      if (u.origin !== origin) return route.abort();
-      if (r.isNavigationRequest() && u.pathname.startsWith('/leads/')) return route.fulfill({ contentType: 'text/html', body: readFileSync('dist/index.shell.html', 'utf8') });
-      if (!/^\/(api\/|state$|events$|invoke$|health$|\.netlify\/functions\/)/.test(u.pathname)) return route.continue();
+    await page.route('**/*', async route => {
+      const request = route.request(), url = new URL(request.url()), path = url.pathname;
+      if (photos.includes(url.href)) return url.href.includes('broken') ? route.abort() : route.fulfill({ contentType: 'image/svg+xml', body: `<svg xmlns="http://www.w3.org/2000/svg" width="${url.href.includes('front') ? 120 : 800}" height="480"><rect width="800" height="480" fill="#253848"/></svg>` });
+      if (url.origin !== origin) return route.abort();
+      if (request.isNavigationRequest() && path.startsWith('/leads/')) return route.fulfill({ contentType: 'text/html', body: readFileSync('dist/index.shell.html', 'utf8') });
+      if (!/^\/(api\/|state$|status$|events$|invoke$|health$|metrics$|\.netlify\/functions\/)/.test(path)) return route.continue();
       const send = json => route.fulfill({ json });
-      if (u.pathname === '/api/state/stream/session') return send({ ok: false });
-      if (u.pathname === '/api/property-data/attom-preview' && r.method() === 'POST') { reads.push(u.pathname); return send({ status: 'unavailable' }); }
-      if (r.method() !== 'GET') { writes.push(u.pathname); return route.abort(); }
-      reads.push(u.pathname);
-      if (u.pathname === '/api/auth/team/status') return send({ ok: true, configured: false, authRequired: false });
-      if (u.pathname === '/api/leads') return send({ ok: true, leads: [lead] });
-      if (u.pathname.includes('/api/leads/' + lead.id)) return send({ ok: true, lead: fixture });
-      if (u.pathname === '/api/property-data') return send(freshPhotos ? { cache: { hit: true }, propertyData: { source: 'apify-for-sale', data: { photoUrls: [photos[1]] } } } : { cache: { hit: false }, propertyData: null });
-      if (u.pathname === '/state') return send({ leadImports: [lead] });
+      if (path === '/api/state/stream/session') return send({ ok: false });
+      if (path === '/api/property-data/enrich') {
+        assert.equal(request.method(), 'POST');
+        const body = request.postDataJSON();
+        mutations.push({ path, body });
+        assert.equal(body.leadId, fixture.id, 'Refresh captures exact lead ID even with duplicate addresses');
+        assert.equal(body.address, address);
+        assert.deepEqual(body.expectedPropertyAddress, structuredAddress);
+        if (mode === 'failure') return route.fulfill({ status: 503, json: { ok: false, error: 'Controlled enrichment failure' } });
+        if (mode === 'success') {
+          fixture.deal.listingSnapshot.photoUrls = [photos[1]];
+          fixture.deal.listingSnapshot.retrievedAt = '2026-11-18T12:00:00Z';
+          fixture.deal.propertyRecordSnapshot.facts.livingSqft = 1900;
+          fixture.deal.propertyRecordSnapshot.retrievedAt = '2026-11-18T12:00:00Z';
+          fixture.analyzer.recordedSales = { ...fixture.analyzer.recordedSales, radiusMiles: body.radiusMiles, retrievedAt: '2026-11-18T12:00:00Z', sales: [{ ...sale, price: 410000 }] };
+        }
+        // Only canonical full-lead reload contains authoritative new snapshots.
+        return send({ ok: true, saved: true, leadId: fixture.id, address, patch: {},
+          records: mode === 'partial' ? { status: 'unavailable' } : { status: 'matched', profile: fixture.deal.propertyRecordSnapshot.facts },
+          listing: { cache: { hit: mode !== 'partial' }, propertyData: null },
+          sales: mode === 'partial' ? { status: 'timed_out' } : { status: 'matched', source: 'ATTOM', ...fixture.analyzer.recordedSales },
+        });
+      }
+      if (path.startsWith('/api/property-data')) { providerReads.push({ path, method: request.method() }); return send({ status: 'unavailable' }); }
+      if (path === '/api/leads/' + fixture.id && request.method() === 'PATCH') {
+        const body = request.postDataJSON(); mutations.push({ path, body });
+        assert.equal(body.actionSource, 'lead-comps-reviewed');
+        assert.deepEqual(body.expectedPropertyAddress, structuredAddress);
+        assert.deepEqual(body.analyzer.recordedSales.selectedIds, [sale.id]);
+        assert.equal(body.deal.comps.A.price, 410000);
+        fixture.deal = { ...fixture.deal, ...body.deal };
+        fixture.analyzer = { ...fixture.analyzer, ...body.analyzer };
+        return send({ ok: true, lead: fixture });
+      }
+      if (request.method() !== 'GET') { unexpectedWrites.push(path); return route.abort(); }
+      if (path === '/api/auth/team/status') return send({ ok: true, configured: false, authRequired: false });
+      if (path === '/api/leads') return send({ ok: true, leads: [fixture, other] });
+      if (path === `/api/leads/${fixture.id}/full`) { canonicalReads.push(fixture.id); return send({ ok: true, lead: fixture }); }
+      if (path === `/api/leads/${other.id}/full`) { canonicalReads.push(other.id); return send({ ok: true, lead: other }); }
+      if (path === '/state') return send({ leadImports: [fixture, other] });
       return send({ ok: true, items: [] });
     });
-    await page.goto(origin + '/leads/' + lead.id);
     const workspace = page.getByRole('region', { name: 'Property', exact: true });
+    const tab = name => workspace.getByRole('tab', { name, exact: true }).click();
+    const noOverflow = async () => assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), label + ' horizontal overflow');
+    const assertSaved = async () => {
+      await tab('Photos');
+      await expect(workspace.getByRole('img', { name: 'Listing photo 1', exact: true })).toHaveAttribute('src', photos[1]);
+      await expect(workspace.getByRole('tabpanel', {name:'Photos',exact:true}).locator('time[datetime="2026-11-18T12:00:00Z"]').first()).toBeVisible();
+      await tab('Property record');
+      await expect(workspace.getByText('1,900 sq ft', { exact: true })).toBeVisible();
+      await expect(workspace.locator('time[datetime="2026-11-18T12:00:00Z"]').first()).toBeVisible();
+      await tab('Comps');
+      await expect(workspace.getByRole('cell', { name: '$410,000', exact: true })).toBeVisible();
+      await noOverflow();
+    };
+    await page.goto(origin + '/leads/' + fixture.id);
     await expect(workspace).toBeVisible({ timeout: 20000 });
     const overview = workspace.getByRole('tabpanel', { name: 'Overview' });
     await expect(overview.getByRole('img', { name: 'Listing photo 1', exact: true })).toBeVisible();
@@ -57,44 +111,58 @@ async function verify(engine, config, label) {
     await expect(overview.getByText('Low-resolution source preview. Open the listing for more detail.', { exact: true })).toBeVisible();
     await overview.getByRole('button', { name: 'View photo 2', exact: true }).click();
     await expect(overview.getByRole('img', { name: 'Listing photo 2', exact: true })).toHaveAttribute('src', photos[1]);
-    await expect(overview.getByText('Low-resolution source preview. Open the listing for more detail.', { exact: true })).toHaveCount(0);
-    await expect(overview.getByText('Saved listing snapshot', { exact: true })).toBeVisible();
-    await expect(overview.getByText('FIXTURE-24', { exact: true })).toBeVisible();
     await expect(overview.getByRole('link', { name: 'Realtor.com', exact: true })).toHaveAttribute('href', lead.deal.listingSnapshot.sourceLinks[0]);
-    await workspace.getByRole('tab', { name: 'Property record' }).click();
+    await tab('Property record');
     await expect(workspace.getByText('Saved ATTOM snapshot', { exact: true })).toBeVisible();
     await expect(workspace.getByText('1,700 sq ft', { exact: true })).toBeVisible();
-    await expect(workspace.getByText('Differs', { exact: true }).first()).toBeVisible();
-    assert.ok(!reads.includes('/api/property-data/attom-preview'));
-    await workspace.getByText('Taxes and recorded transfer', { exact: true }).click();
-    await expect(workspace.getByText('$2,500', { exact: true })).toBeVisible();
-    await workspace.getByRole('button', { name: 'Run lookup again' }).click();
-    await expect(workspace.getByText('Refresh unavailable. Showing the saved ATTOM snapshot.', { exact: true })).toBeVisible();
-    await expect(workspace.getByText('1,700 sq ft', { exact: true })).toBeVisible();
-    await workspace.getByRole('tab', { name: 'Photos', exact: true }).click();
-    await workspace.getByRole('button', { name: 'Refresh Apify photos' }).click();
-    await expect(workspace.getByText('Showing saved photos. No newer photos were returned.', { exact: true })).toBeVisible();
-    await expect(workspace.getByRole('img', { name: 'Listing photo 1', exact: true })).toBeVisible();
-    freshPhotos = true;
-    await workspace.getByRole('button', { name: 'Refresh Apify photos' }).click();
-    await expect(workspace.getByText('Latest cached listing photos. Refresh does not replace the saved snapshot.', { exact: true })).toBeVisible();
-    await expect(workspace.getByRole('img', { name: 'Listing photo 1', exact: true })).toHaveAttribute('src', photos[1]);
-    await expect(workspace.getByText(/^Captured /)).toHaveCount(0);
-    fixture.deal.propertyRecordSnapshot.facts.livingSqft = 1900;
-    fixture.deal.propertyRecordSnapshot.retrievedAt = '2026-11-17T13:00:00Z';
-    await page.getByRole('button', { name: 'Refresh', exact: true }).click();
-    await workspace.getByRole('tab', { name: 'Property record', exact: true }).click();
-    await expect(workspace.getByText('1,900 sq ft', { exact: true })).toBeVisible();
-    await expect(workspace.getByText('1,700 sq ft', { exact: true })).toHaveCount(0);
-    assert.equal(writes.length, 0, 'Viewing evidence must never save or dispatch');
-    assert.deepEqual(errors, []);
-    assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), label + ' horizontal overflow');
-    if (process.env.PBK_CRM_EVIDENCE_SHOTS) {
-      await workspace.getByRole('tab', { name: 'Overview', exact: true }).click();
-      await workspace.scrollIntoViewIfNeeded();
-      await page.screenshot({ path: '.pbk-local/crm-property-' + label + '.png', fullPage: false });
-    }
-    console.log(label + ': CRM saved gallery, source details, parcel comparison, refresh fallback and no writes passed');
+    await noOverflow(); await tab('Photos'); await noOverflow(); await tab('Comps');
+    await expect(workspace.getByRole('cell', { name: '$400,000', exact: true })).toBeVisible();
+    await workspace.getByRole('combobox', { name: 'Radius' }).selectOption('2');
+    await workspace.getByRole('combobox', { name: 'Sort' }).selectOption('price');
+    await noOverflow();
+    await workspace.getByRole('button', { name: 'Edit lead', exact: true }).click();
+    const edit = page.getByRole('dialog', { name: 'Edit complete seller profile' });
+    await edit.getByRole('textbox', { name: 'Property address', exact: true }).fill('99 Unsubmitted Edit Street');
+    await page.waitForTimeout(1000); // Cross the previous lookup debounce.
+    await edit.getByRole('button', { name: 'Cancel', exact: true }).click();
+    assert.deepEqual(providerReads, [], 'Tabs, radius, sort and address edits must not read providers');
+    assert.deepEqual(mutations, [], 'Passive browsing and cancelled edits must not persist');
+    let fullReadCount = canonicalReads.length;
+    await workspace.getByRole('button', { name: 'Refresh property intelligence with selected radius', exact: true }).click();
+    await expect(workspace.getByText('Property intelligence saved. Review suggested sales before underwriting.', { exact: true })).toBeVisible();
+    assert.equal(mutations.length, 1); assert.equal(mutations[0].body.radiusMiles, 2);
+    assert.ok(canonicalReads.length > fullReadCount, 'Refresh reloads canonical saved lead');
+    await assertSaved();
+    fullReadCount = canonicalReads.length;
+    await workspace.getByRole('checkbox', { name: 'Select comp ' + sale.address }).check();
+    await workspace.getByRole('button', { name: 'Save selected comps', exact: true }).click();
+    await expect(workspace.getByText('Selected comps saved to this lead.', { exact: true })).toBeVisible();
+    assert.ok(canonicalReads.length > fullReadCount, 'Reviewed comps reload canonical saved lead');
+    assert.equal(fixture.analyzer.recordedSales.review, 'operator-selected');
+    await page.reload(); await expect(workspace).toBeVisible(); await assertSaved();
+    assert.equal(mutations.length, 2, 'Reloading evidence performs no enrichment or writes');
+    mode = 'failure';
+    const beforeFailure = structuredClone(fixture);
+    await workspace.locator('.pbk-property-header').getByRole('button', { name: 'Refresh property intelligence', exact: true }).click();
+    await expect(workspace.getByText(/Controlled enrichment failure/)).toBeVisible();
+    assert.deepEqual(fixture, beforeFailure); await assertSaved();
+    mode = 'partial';
+    await workspace.locator('.pbk-property-header').getByRole('button', { name: 'Refresh property intelligence', exact: true }).click();
+    await expect(workspace.getByText('Property intelligence refreshed. Some sources were unavailable; previously saved evidence is retained.', { exact: true })).toBeVisible();
+    await assertSaved();
+    assert.deepEqual(fixture, beforeFailure, 'Partial failure retains snapshots, timestamps and reviewed comps');
+    const beforeSwitch = mutations.length;
+    await page.goto(origin + '/leads/' + other.id); await expect(workspace).toBeVisible();
+    await tab('Property record');
+    await expect(workspace.getByRole('tabpanel', {name:'Property record',exact:true}).locator('dd').filter({hasText:/^OTHER-LEAD-SAME-ADDRESS$/})).toBeVisible();
+    await expect(workspace.getByText('2,100 sq ft', { exact: true })).toBeVisible();
+    await tab('Comps');
+    await expect(workspace.getByRole('cell', { name: '$520,000', exact: true })).toBeVisible();
+    await expect(workspace.getByRole('cell', { name: '$410,000', exact: true })).toHaveCount(0);
+    assert.equal(mutations.length, beforeSwitch, 'Switching duplicate-address leads must not save');
+    assert.deepEqual(providerReads, [], 'Only explicit unified refresh may access providers');
+    assert.deepEqual(unexpectedWrites, []); assert.deepEqual(errors, []); await noOverflow();
+    console.log(label + ': explicit refresh, canonical persistence, reviewed comps, failure retention, duplicate-address isolation and passive browsing passed');
   } finally { await browser.close(); }
 }
 try {

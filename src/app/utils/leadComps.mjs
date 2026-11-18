@@ -35,7 +35,9 @@ export function savedLeadComps(lead) {
   for (const key of ['A', 'B', 'C']) {
     const comp = record(source[key]);
     comps[key] = { address: text(comp.address), price: typeof comp.price === 'number' && Number.isFinite(comp.price) && comp.price > 0 ? comp.price : 0,
-      date: text(comp.date), link: /^https:\/\//i.test(text(comp.link)) ? text(comp.link) : '' };
+      date: text(comp.date), link: /^https:\/\//i.test(text(comp.link)) ? text(comp.link) : '',
+      ...(comp.source === 'ATTOM' ? {source:'ATTOM'} : {}),
+      ...(['suggested-unreviewed','operator-selected'].includes(comp.review) ? {review:comp.review} : {}) };
   }
   return comps;
 }

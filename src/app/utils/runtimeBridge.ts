@@ -1956,6 +1956,41 @@ export type AttomPropertyFacts = {
   taxYear: number | null;
   recordedSaleAmount: number | null;
   recordedSaleDate: string | null;
+  attomId?: string | null;
+  fips?: string | null;
+  county?: string | null;
+  subdivision?: string | null;
+  zoning?: string | null;
+  propertyClass?: string | null;
+  condition?: string | null;
+  constructionType?: string | null;
+  ownerName?: string | null;
+  owner2Name?: string | null;
+  owner3Name?: string | null;
+  owner4Name?: string | null;
+  ownerMailingAddress?: string | null;
+  absenteeOwnerStatus?: string | null;
+  corporateOwnerIndicator?: string | null;
+  saleDocumentNumber?: string | null;
+  saleDocumentType?: string | null;
+  saleTransactionType?: string | null;
+  originalMortgageLender?: string | null;
+  originalMortgageDocumentNumber?: string | null;
+  secondOriginalMortgageLender?: string | null;
+  secondOriginalMortgageDocumentNumber?: string | null;
+  buildingSqft?: number | null;
+  levels?: number | null;
+  unitsCount?: number | null;
+  assessedLandValue?: number | null;
+  assessedImprovementValue?: number | null;
+  assessedTotalValue?: number | null;
+  assessmentMarketTotalValue?: number | null;
+  taxDelinquentYear?: number | null;
+  originalMortgageAmount?: number | null;
+  secondOriginalMortgageAmount?: number | null;
+  saleTransactionDate?: string | null;
+  sourcePublishedDate?: string | null;
+  sourceLastModified?: string | null;
 };
 
 export type AttomPreviewResult =
@@ -1997,6 +2032,27 @@ export type RecentSalesResult = {
 export function fetchAttomRecentSales(address: AttomPreviewAddress, radius = 1) {
   return bridgeRequest<RecentSalesResult>({ method: 'POST', path: '/api/property-data/attom-sales',
     body: { ...address, radius }, keepalive: false });
+}
+
+export type PropertyIntelligenceResult = {
+  ok: boolean;
+  address: string;
+  records: AttomPreviewResult;
+  listing: Awaited<ReturnType<typeof fetchApifyListingRequest>>;
+  sales: RecentSalesResult;
+  patch: { deal?: Partial<DealData>; analyzer?: Record<string, unknown> };
+  saved: boolean;
+  leadId?: string;
+};
+
+export function fetchPropertyIntelligenceRequest(input: {
+  address: string;
+  leadId?: string;
+  expectedPropertyAddress?: AttomPreviewAddress;
+  radiusMiles?: number;
+}) {
+  return bridgeRequest<PropertyIntelligenceResult>({ method: 'POST',
+    path: '/api/property-data/enrich', body: input, keepalive: false });
 }
 
 export async function fetchApifyListingRequest(address: string, includeRecords = false) {

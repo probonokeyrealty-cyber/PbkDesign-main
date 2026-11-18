@@ -17,6 +17,7 @@ import { DeleteObjectCommand, GetObjectCommand, HeadBucketCommand, PutObjectComm
 import { getSignedUrl as getS3SignedUrl } from '@aws-sdk/s3-request-presigner';
 import { lookupAttomPropertyPreview, sameAttomAddress } from './attom-property-preview.mjs';
 import { analyzerPropertyPreview } from './analyzer-property-preview.mjs';
+import { createPropertyIntelligence } from './property-intelligence.mjs';
 import { lookupAttomRecentSales } from './attom-recent-sales.mjs';
 import { lookupAddressSuggestions } from './address-suggestions.mjs';
 import { applyAgentVersionRollback, buildAgentRegistrySnapshot, buildAgentVersionSnapshot, buildDefaultAgentRegistry, buildStableAgentFleetMeasurement, findAgentsByCapability, invokeRegisteredAgent, mergeAgentRegistryRecords, normalizeAgentRegistryId, normalizeAgentRegistryRecord, validateAgentVersionSnapshot } from './agent-registry.mjs';
@@ -14978,7 +14979,7 @@ function patchLeadImport(stateRef, matcher = {}, patch = {}) {
   const normalizedPhone = normalizePhone(matcher.phone || patch.phone || patch.seller?.phone || '');
   let matchedByInboundPlaceholderPhone = false;
   const existingIndex = stateRef.leadImports.findIndex((item) => {
-    if (normalizedLeadId && String(item.leadId || '').trim() === normalizedLeadId) return true;
+    if (normalizedLeadId) return String(item.leadId || item.id || '').trim() === normalizedLeadId;
     if (
       normalizedEmail &&
       String(item?.seller?.email || '')
@@ -37172,13 +37173,13 @@ async function persistPropertyCacheRowToDb(item = {}, source = 'property-data') 
   );
 }
 
-async function persistLeadProfileRowToDb(lead = {}, source = 'property-data') {
+async function persistLeadProfileRowToDb(lead = {}, source = 'property-data', { exactIdentity = false } = {}) {
   const property = lead.property || {};
   const seller = lead.seller || {};
   let leadId = String(lead.leadId || lead.id || '').trim();
   if (!leadId) return { ok: false, reason: 'missing_lead_id' };
   const phone = normalizePhone(seller.phone || lead.phone || '');
-  if (phone) {
+  if (phone && !exactIdentity) {
     const existingByPhone = await queryPgRows(
       `SELECT id, source, lead_name, address, raw
        FROM public.lead_profiles
@@ -60767,6 +60768,39 @@ const toolHandlers = {
   },
 };
 
+async function loadExactPropertyLead(leadId) {
+  const hot = (state.leadImports || []).find(item => String(item.leadId || item.id || '').trim() === leadId);
+  if (hot) return hot;
+  if (!IS_HOSTED && !getPgPool()) return null;
+  const [durable] = await loadAppliedBatchLeads(queryPgRows, leadId);
+  // A manual edit may have hydrated this row while the database read awaited.
+  // Prefer that current canonical record over the earlier durable snapshot.
+  const current = (state.leadImports || []).find(item => String(item.leadId || item.id || '').trim() === leadId);
+  if (current) return current;
+  if (!durable || String(durable.leadId || durable.id || '') !== leadId) return null;
+  // Keep the requested durable row available until its synchronous patch. The
+  // normal newest-first intake limiter would immediately drop an older import.
+  // This is only a bounded hot-cache replacement; source timestamps stay intact.
+  state.leadImports = [durable, ...(state.leadImports || [])].slice(0, LIMITS.leadImports);
+  return durable;
+}
+
+const enrichPropertyIntelligence = createPropertyIntelligence({
+  getLead: loadExactPropertyLead,
+  listing: params => toolHandlers.getPropertyData(params),
+  records: lookupAttomPropertyPreview,
+  sales: lookupAttomRecentSales,
+  saveLead: async (leadId, patch) => {
+    // The coordinator re-read the exact record after providers settled. This
+    // synchronous patch preserves concurrent manual edits and acquisition source.
+    const next = patchLeadImport(state, { leadId }, patch);
+    if (!next) throw Object.assign(new Error('Lead not found.'), { status: 404, code: 'lead_not_found' });
+    const persisted = await persistLeadProfileRowToDb(next, next.source || 'property-intelligence', { exactIdentity: true });
+    if (DATABASE_URL && !persisted.ok) throw new Error('Property evidence profile persistence failed.');
+    await persistState(state);
+  },
+});
+
 function findDuplicateLeadImport(leadImport = {}) {
   const leadAddressKey = slugify(leadImport.property?.address || leadImport.address || '');
   const leadPhoneKey = normalizePhone(leadImport.seller?.phone || leadImport.phone || '');
@@ -76439,6 +76473,17 @@ const server = createServer(async (request, response) => {
       return;
     }
 
+    if (request.method === 'POST' && pathname === '/api/property-data/enrich') {
+      response.setHeader('Cache-Control', 'no-store');
+      try {
+        const result = await enrichPropertyIntelligence(await readBody(request));
+        json(response, 200, result);
+      } catch (error) {
+        json(response, error.status || 503, { ok: false, saved: false, code: error.code || 'property_enrichment_failed', error: error.status ? error.message : 'Property intelligence could not be saved. Please retry.' });
+      }
+      return;
+    }
+
     if (request.method === 'POST' && pathname === '/api/property-data/attom-sales') {
       const result = await lookupAttomRecentSales(await readBody(request));
       response.setHeader('Cache-Control', 'no-store');
@@ -81199,7 +81244,13 @@ const server = createServer(async (request, response) => {
 
     if (leadPatchMatch && request.method === 'PATCH') {
       const body = await readBody(request);
-      const existing = findLeadImportByLookup(leadPatchMatch.groups.id);
+      let existing = findLeadImportByLookup(leadPatchMatch.groups.id);
+      if (body.expectedPropertyAddress) {
+        let exactId;
+        try { exactId = decodeURIComponent(leadPatchMatch.groups.id); } catch { json(response, 400, {ok:false,error:'Invalid lead ID.'}); return; }
+        existing = await loadExactPropertyLead(exactId);
+        if (existing && !(state.leadImports || []).some(item => (item.leadId || item.id) === exactId)) addLeadImport(state, existing);
+      }
       if (body.expectedPropertyAddress) {
         if (!existing) { json(response, 404, { ok: false, error: 'Lead not found.' }); return; }
         const p = existing.property || {};
@@ -81496,7 +81547,8 @@ const server = createServer(async (request, response) => {
           )
         : (addLeadImport(state, nextLead), nextLead);
 
-      await persistLeadProfileRowToDb(patched || nextLead, 'lead-detail-edit');
+      const profileSave = await persistLeadProfileRowToDb(patched || nextLead, 'lead-detail-edit', {exactIdentity:Boolean(body.expectedPropertyAddress)});
+      if (body.expectedPropertyAddress && DATABASE_URL && !profileSave.ok) { json(response, 503, {ok:false,error:'Lead profile could not be saved. Retry shortly.'}); return; }
       const activity = makeActivity({
         actor: body.actor || 'Lead Detail',
         category: 'CRM',

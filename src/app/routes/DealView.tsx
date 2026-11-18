@@ -13,6 +13,8 @@ import {
 } from '../utils/analyzerStorage';
 import { isStaleDynamicImportError, reloadForCurrentDeploy } from '../utils/deployVersion';
 import { fetchLeadFullRequest } from '../utils/runtimeBridge';
+import { readPropertyEvidence } from '../utils/propertyEvidence';
+import { samePropertyAddress } from '../utils/analyzerIntelligence.mjs';
 import { savedLeadComps } from '../utils/leadComps.mjs';
 import { latestCallModeNote } from '../utils/analyzerLeadPersistence.mjs';
 
@@ -234,6 +236,13 @@ export function buildAnalyzerDealFromLead(payload: BridgeRecord, requestedLeadId
     vacantStatus: firstText(property.occupancy, lead.occupancy),
     isAnalyzed: record(lead.deal).isAnalyzed === false ? false : arv !== undefined || mao !== undefined || maoRBP !== undefined ? true : undefined,
   };
+  const evidence = readPropertyEvidence(lead.deal, deal.address || '');
+  if (evidence.records) deal.propertyRecordSnapshot = evidence.records;
+  if (evidence.listing) deal.listingSnapshot = evidence.listing;
+  const savedSales = record(record(lead.analyzer).recordedSales || record(lead.deal).recordedSales);
+  if (samePropertyAddress(savedSales.address, deal.address)) deal.recordedSales = savedSales as DealData['recordedSales'];
+  const manualSlots = record(lead.deal).compManualSlots;
+  if (Array.isArray(manualSlots)) deal.compManualSlots = manualSlots.filter((slot): slot is 'A'|'B'|'C' => ['A','B','C'].includes(slot));
   const comps = savedLeadComps(lead);
   if (comps) deal.comps = comps;
   else if (record(record(lead.analyzer).recordedSales).address) {

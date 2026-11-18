@@ -44,10 +44,17 @@ export interface DealData {
   leadId?: string;
   crmCreateKey?: string;
   listingSnapshot?: PropertyListingSnapshot;
+  recordedSales?: {
+    address: string | {street:string;city:string;state:string;zip:string};
+    retrievedAt?: string;
+    review?: string;
+    [key: string]: unknown;
+  };
   propertyRecordSnapshot?: {
     source: 'attom';
     address: string;
     retrievedAt: string;
+    fieldRetrievedAt?: Record<string, string>;
     facts: Record<string, string | number | null>;
   };
 
@@ -86,6 +93,7 @@ export interface DealData {
   landLotSizeSqFt?: number;
 
   // Comps
+  compManualSlots?: Array<'A' | 'B' | 'C'>;
   comps: {
     A: { address: string; price: number; date: string; link: string };
     B: { address: string; price: number; date: string; link: string };

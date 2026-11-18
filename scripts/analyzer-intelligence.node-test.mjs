@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { intelligenceRequest, mergeAnalyzerIntelligence } from '../src/app/utils/analyzerIntelligence.mjs';
+import { intelligenceRequest, mergeAnalyzerIntelligence, resetChangedProperty } from '../src/app/utils/analyzerIntelligence.mjs';
 const address = '24 Sample Oak Lane, Example City, CA 90210';
 const blank = { address, leadId: 'lead-a', beds: 0, price: 0, comps: { A: {address:'',price:0}, B: {address:'Manual',price:42}, C: {address:'',price:0} } };
 test('captures exact linked identity and complete address without creating an unlinked lead', () => {
@@ -29,4 +29,13 @@ test('retains structured-address sales provenance and respects intentionally cle
   const next=mergeAnalyzerIntelligence({...blank,compManualSlots:['A']},{...response,patch:{...response.patch,analyzer:{recordedSales:sales}}});
   assert.equal(next.recordedSales,sales);
   assert.equal(next.comps,undefined);
+});
+test('changing a linked property releases inherited subject facts and comps without mutating the saved lead', () => {
+  const prior=structuredClone(blank);
+  const reset=resetChangedProperty(blank,'99 Different Lane, Example City, CA 90210');
+  assert.equal(reset.comps.B.address,''); assert.equal(reset.price,0);
+  assert.equal(reset.repairs.mid,0); assert.equal(reset.rent,0); assert.equal(reset.zipCode,''); assert.deepEqual(reset.confirmedTerms,{}); assert.equal(reset.agreedPrice,0);
+  assert.deepEqual(blank,prior);
+  assert.deepEqual(resetChangedProperty(blank,address),{});
+  assert.deepEqual(resetChangedProperty({...blank,leadId:undefined},'New typing'),{});
 });

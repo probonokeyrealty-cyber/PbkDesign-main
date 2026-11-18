@@ -17,6 +17,7 @@ import { AnalyzerAddressField } from './AnalyzerAddressField';
 import { formatCurrency } from '../utils/formatting';
 import { readAnalyzerDraftManualFields } from '../utils/analyzerStorage';
 import { calculateARV } from '../utils/dealCalculations';
+import { resetChangedProperty } from '../utils/analyzerIntelligence.mjs';
 import { getAnalyzeReadiness } from '../utils/pbk';
 import { PbkDataSource } from '../../components/pbk/index';
 
@@ -177,7 +178,10 @@ export function AnalyzerTab({
             automaticLookup
             onChange={(patch) => {
               if (patch.address !== undefined) {
+                const reset = resetChangedProperty(deal,patch.address);
+                if (Object.keys(reset).length) operatorFields.current.clear();
                 onDealChange({
+                  ...reset,
                   ...patch,
                   leadId: undefined,
                   crmCreateKey: undefined,

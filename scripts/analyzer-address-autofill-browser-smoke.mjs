@@ -52,7 +52,7 @@ try {
           const photoUrls = [enrichments.length === 1 ? 'https://ap.rdcpix.com/fixture-front.jpg' : 'https://ap.rdcpix.com/fixture-refresh.jpg'];
           const listing = { cache: { hit: true }, propertyData: { source: 'apify-for-sale', data: { priceBasis: 'asking_price', askingPriceUsd: 450000, listingFacts: { beds: 3, sqft: 1800, year: 1995, dom: 12 }, photoUrls } } };
           const candidate = { id: 'fixture-sale-1', address: '46 Fixture Avenue, Example City, CA 90210', soldDate: '2026-07-01', price: 440000, distanceMiles: 0.3, beds: 4, baths: 2, sqft: 1700, pricePerSqft: 258.82, propertyType: 'Single family' };
-          const recordedSales = { source: 'attom', address: full, retrievedAt, radiusMiles: 1, sales: [candidate] };
+          const recordedSales = { provider: 'ATTOM', review:'suggested-unreviewed', address: {street:'42 Fixture Avenue',city:'Example City',state:'CA',zip:'90210'}, retrievedAt, radiusMiles: 1, sales: [candidate] };
           return route.fulfill({ json: { ok: true, address: full, records: { status: 'matched', profile }, listing,
             sales: { status: 'found', sales: [candidate] }, saved: Boolean(body.leadId), ...(body.leadId ? { leadId: body.leadId } : {}),
             patch: { deal: { propertyRecordSnapshot: { source: 'attom', address: full, retrievedAt, facts: profile },
@@ -154,9 +154,18 @@ try {
       await expect(page.getByRole('spinbutton', { name: 'Comp A sold price' })).toHaveValue('499999');
       await expect(beds).toHaveValue('7');
       await expect(arv).toHaveValue('600000');
+      await expect(page.getByText(/Auto-filled comps and their mean ARV are/)).toBeVisible();
       await page.screenshot({ path: `output/address-autofill-${width}.png` });
       assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `${width}px overflow`);
       assert.deepEqual(unexpectedPropertyRequests, []);
+      await expect(page.getByRole('button', {name:/^(Analyze Deal|Open Call Mode)/}).first()).toBeEnabled();
+      const beforeAddressChange = enrichments.length;
+      await address.fill('99 Different Lane, Example City, CA 90210');
+      await expect(page.getByRole('textbox', { name: 'Comp A address' })).toHaveValue('');
+      await expect(beds).toHaveValue('');
+      await page.waitForTimeout(900);
+      assert.equal(enrichments.length,beforeAddressChange,'Changing a linked address clears inherited facts without a provider request');
+      assert.equal(writes.filter(write=>write.method==='PATCH').at(-1).body.deal.comps.A.price,499999,'Changing the draft address leaves the saved lead unchanged');
       console.log(`Explicit property intelligence passed: ${width}px`);
     } finally { await browser.close(); }
   }

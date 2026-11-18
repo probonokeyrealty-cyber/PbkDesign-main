@@ -1,6 +1,23 @@
 const key = value => String(value && typeof value === 'object' ? [value.street,value.city,[value.state,value.zip].filter(Boolean).join(' ')].filter(Boolean).join(', ') : value || '').trim().toLowerCase().replace(/[.,]/g, '').replace(/\s+/g, ' ');
 const positive = value => typeof value === 'number' && Number.isFinite(value) && value > 0;
 export const samePropertyAddress = (a,b) => Boolean(key(a)) && key(a) === key(b);
+const propertyContextDefaults = {
+  price:0,agreedPrice:0,beds:0,baths:0,sqft:0,year:0,dom:0,arv:0,mao60:0,maoRBP:0,offer:0,balance:0,rate:0,rent:0,
+  lotSize:'',landLotSizeSqFt:0,landPriceSqFt:0,builderPrice:0,builderTotal:0,zipCode:'',
+  repairs:{low:0,mid:0,high:0,condition:''},confirmedTerms:{},
+  cfDownPayment:0,cfRate:5,cfTerm:30,cfMonthlyPayment:0,cfType:'carry',
+  mtUpfront:0,mtBalanceConfirm:0,mtRateConfirm:0,mtType:'subto',
+  rbpPriceConfirm:0,rbpBuyerType:'',rbpSellerCosts:'',rbpCashAlternative:0,
+  landLotSizeConfirm:'',landBuyerType:'',landSellerCosts:'',cashAsIs:'yes',cashClosePeriod:'21',
+  notes:'',timeline:'',motivationScore:0,motivationLevel:'',vacantStatus:'',reductions:0,
+  investorCashFlow:0,investorCOC:0,investorROI:0,investorIRR:0,
+  comps:Object.fromEntries(['A','B','C'].map(slot=>[slot,{address:'',price:0,date:'',link:''}])),compManualSlots:[],isAnalyzed:false,verdict:'none'
+};
+export const propertyContextFields = Object.keys(propertyContextDefaults);
+export function resetChangedProperty(deal, nextAddress) {
+  if (samePropertyAddress(deal.address,nextAddress) || !(deal.leadId || deal.propertyRecordSnapshot || deal.listingSnapshot || deal.recordedSales)) return {};
+  return structuredClone(propertyContextDefaults);
+}
 
 export function intelligenceRequest(deal) {
   const match = String(deal.address || '').trim().match(/^(\d[^,]+),\s*([^,]+),\s*([a-z]{2})\s+(\d{5}(?:-\d{4})?)$/i);

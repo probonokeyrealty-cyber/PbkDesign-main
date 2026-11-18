@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
-import { intelligenceRequest, mergeAnalyzerIntelligence } from './utils/analyzerIntelligence.mjs';
+import { intelligenceRequest, mergeAnalyzerIntelligence, propertyContextFields, resetChangedProperty } from './utils/analyzerIntelligence.mjs';
 import { buildAnalyzerLeadPatch } from './utils/analyzerLeadPersistence.mjs';
 import { TopBar } from './components/TopBar';
 import { LeftPanel } from './components/LeftPanel';
@@ -613,6 +613,9 @@ export default function App({ engineOnly = false }: AppProps) {
     publishDraft.current = true;
     cacheIncomingDraft.current = false;
     Object.keys(updates).forEach((key) => manualDraftFields.current?.add(key));
+    if (updates.address !== undefined && Object.keys(resetChangedProperty(currentDeal.current, updates.address)).length) {
+      propertyContextFields.forEach(key => manualDraftFields.current?.delete(key));
+    }
     const shouldResetAnalysis = Object.keys(updates).some((key) =>
       ANALYSIS_IMPACT_FIELDS.includes(key as keyof DealData)
     );

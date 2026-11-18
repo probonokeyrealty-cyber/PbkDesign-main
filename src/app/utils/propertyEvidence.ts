@@ -11,7 +11,9 @@ const number = (value: unknown) =>
   typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
 const addressKey = (value: unknown) => {
   const address = typeof value === 'string' ? value.trim() : '';
-  return address.length > 500 ? '' : address.toLowerCase().replace(/[.,]/g, '').replace(/\s+/g, ' ');
+  return address.length > 500
+    ? ''
+    : address.toLowerCase().replace(/[.,]/g, '').replace(/\s+/g, ' ');
 };
 const sourceNames = new Map([
   ['realtor.com', 'Realtor.com'],
@@ -45,6 +47,14 @@ export function photoLinks(value: unknown): string[] {
       )
     ),
   ].slice(0, 24);
+}
+
+// The same public CDN photo identity, requested at gallery size. Keep saved
+// source URLs unchanged; the gallery falls back if this rendition is absent.
+export function fullSizePhotoUrl(url: string): string {
+  if (url.length > 2048) return url;
+  const thumbnail = url.match(/^https:\/\/ap\.rdcpix\.com\/([a-z0-9_-]+-m\d+)s\.jpg$/i);
+  return thumbnail ? `https://ap.rdcpix.com/${thumbnail[1]}od-w1920_h1440.webp` : url;
 }
 
 function listingSnapshot(value: unknown, address: string): PropertyListingSnapshot | null {

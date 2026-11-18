@@ -5,6 +5,7 @@ import { formatCurrency } from '../utils/formatting';
 import { fetchApifyListingRequest, type AttomPreviewResult } from '../utils/runtimeBridge';
 import {
   captureListingSnapshot,
+  fullSizePhotoUrl,
   listingSources,
   photoLinks,
   readPropertyEvidence,
@@ -449,10 +450,17 @@ export function LeadListingPhotos({
 export function AnalyzerListingPhotos({ result }: { result: AnalyzerPhotoResult | null }) {
   const [failedPhotos, setFailedPhotos] = useState<string[]>([]);
   const [selectedPhoto, setSelectedPhoto] = useState('');
-  const [smallPhotos, setSmallPhotos] = useState<string[]>([]);
+  const [failedRenditions, setFailedRenditions] = useState<string[]>([]);
+  const [failedThumbnails, setFailedThumbnails] = useState<string[]>([]);
+  const [loadedWidths, setLoadedWidths] = useState<Record<string, number>>({});
   const urls = result?.urls ?? [];
   const photos = urls.filter((url) => !failedPhotos.includes(url));
   const currentPhoto = photos.includes(selectedPhoto) ? selectedPhoto : photos[0];
+  const displayPhoto =
+    currentPhoto && !failedRenditions.includes(currentPhoto)
+      ? fullSizePhotoUrl(currentPhoto)
+      : currentPhoto;
+  const loadedWidth = loadedWidths[displayPhoto];
   const status = result?.status ?? 'idle';
   return (
     <section className="pbk-analyzer-context-section" aria-label="Listing photos">
@@ -467,21 +475,27 @@ export function AnalyzerListingPhotos({ result }: { result: AnalyzerPhotoResult 
         <>
           <div className="pbk-analyzer-photo-stage">
             <img
-              src={currentPhoto}
+              key={displayPhoto}
+              src={displayPhoto}
               alt={`Listing photo ${urls.indexOf(currentPhoto) + 1}`}
               loading="lazy"
               referrerPolicy="no-referrer"
               onLoad={(event) => {
-                if (event.currentTarget.naturalWidth < 480) {
-                  setSmallPhotos((small) =>
-                    small.includes(currentPhoto) ? small : [...small, currentPhoto]
-                  );
-                }
+                const width = event.currentTarget.naturalWidth;
+                setLoadedWidths((loaded) =>
+                  loaded[displayPhoto] === width ? loaded : { ...loaded, [displayPhoto]: width }
+                );
               }}
-              onError={() => setFailedPhotos((failed) => [...failed, currentPhoto])}
+              onError={() => {
+                if (displayPhoto !== currentPhoto) {
+                  setFailedRenditions((failed) =>
+                    failed.includes(currentPhoto) ? failed : [...failed, currentPhoto]
+                  );
+                } else setFailedPhotos((failed) => [...failed, currentPhoto]);
+              }}
             />
           </div>
-          {smallPhotos.includes(currentPhoto) && (
+          {loadedWidth !== undefined && loadedWidth < 480 && (
             <p className="pbk-property-evidence-note" role="status">
               Low-resolution source preview. Open the listing for more detail.
             </p>
@@ -496,13 +510,21 @@ export function AnalyzerListingPhotos({ result }: { result: AnalyzerPhotoResult 
                     aria-pressed={currentPhoto === url}
                     onClick={() => setSelectedPhoto(url)}
                   >
-                    <img
-                      src={url}
-                      alt=""
-                      loading="lazy"
-                      referrerPolicy="no-referrer"
-                      onError={() => setFailedPhotos((failed) => [...failed, url])}
-                    />
+                    {failedThumbnails.includes(url) ? (
+                      <ImageIcon size={16} aria-hidden />
+                    ) : (
+                      <img
+                        src={url}
+                        alt=""
+                        loading="lazy"
+                        referrerPolicy="no-referrer"
+                        onError={() =>
+                          setFailedThumbnails((failed) =>
+                            failed.includes(url) ? failed : [...failed, url]
+                          )
+                        }
+                      />
+                    )}
                   </button>
                 </li>
               ))}
@@ -510,11 +532,12 @@ export function AnalyzerListingPhotos({ result }: { result: AnalyzerPhotoResult 
           )}
           <a
             className="pbk-analyzer-context-link"
-            href={currentPhoto}
+            href={displayPhoto}
             target="_blank"
             rel="noopener noreferrer"
           >
-            Open source photo <ExternalLink size={13} aria-hidden />
+            {loadedWidth >= 480 ? 'Open full-size photo' : 'Open source photo'}{' '}
+            <ExternalLink size={13} aria-hidden />
           </a>
         </>
       ) : (

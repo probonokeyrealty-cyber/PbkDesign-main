@@ -1,4 +1,7 @@
 import { afterEach, expect, jest, test } from '@jest/globals';
+import { EventEmitter } from 'node:events';
+import { spawnSync } from 'node:child_process';
+import pg from 'pg';
 import * as reader from './canary-evidence-reader.mjs';
 import { CANARY_EVIDENCE_LIMITS as limits, verifyCanaryChain } from './canary-evidence-protocol.mjs';
 import { canonicalJson } from './skill-governance-store.mjs';
@@ -20,7 +23,7 @@ function fakeStore(f = makeCanaryFixture(), options = {}) {
     const index = clients.length;
     if (active) throw new Error('max:1 client is still held');
     active = true;
-    const client = {
+    const client = Object.assign(new EventEmitter(), {
       release: jest.fn((destroy) => { active = false; options.release?.(index, destroy); }),
       query: jest.fn(async (config) => {
         const call = { ...config, index }; calls.push(call);
@@ -64,7 +67,7 @@ function fakeStore(f = makeCanaryFixture(), options = {}) {
         transfers.push(...clone(rows));
         return { rows };
       }),
-    };
+    });
     clients.push(client);
     return options.connect ? options.connect(client, index) : client;
   }) };
@@ -97,6 +100,195 @@ function monotonic() {
 afterEach(() => { jest.restoreAllMocks(); jest.useRealTimers(); });
 
 test('exports only the read-only reader', () => { expect(Object.keys(reader)).toEqual(['readCanaryEvidence']); });
+
+test.each(['immediate', 'handoff', 'nextTick'])('FR-I1 native offline pg socket error at %s cannot crash the reader', (timing) => {
+  // Real installed pool checkout, query queue and socket-error path; no socket is opened.
+  const source = `
+    import assert from 'node:assert/strict';
+    import pg from 'pg';
+    import { readCanaryEvidence } from './scripts/canary-evidence-reader.mjs';
+    import { makeCanaryFixture } from './scripts/fixtures/canary-evidence-fixture.mjs';
+    const timing = process.argv[1];
+    class OfflineClient extends pg.Client {
+      connect(callback) {
+        process.nextTick(() => {
+          callback(null);
+          const fail = () => this._handleErrorEvent(new Error('LOCAL_CANARY_SOCKET_FAILURE'));
+          if (timing === 'handoff') fail();
+          else if (timing === 'nextTick') process.nextTick(fail);
+          else setImmediate(fail);
+        });
+      }
+    }
+    const pool = new pg.Pool({ Client: OfflineClient, max: 1 });
+    let destroys = 0, client;
+    const queries = [];
+    pool.on('connect', (value) => {
+      client = value;
+      const query = client.query.bind(client);
+      client.query = (config) => { queries.push(config.text); return query(config); };
+    });
+    pool.on('release', (destroy) => { assert.equal(destroy, true); destroys++; });
+    pool.on('error', () => {});
+    const f = makeCanaryFixture();
+    const result = await readCanaryEvidence({ pool, secret: f.secret, revision: f.revision,
+      policy: { ready: true, version: 2, hash: f.policyHash }, now: () => f.now });
+    assert.deepEqual(result, { ok: false, verified: false, readbackVerified: false,
+      source: 'postgres:pbk_eval_runs', result: 'canary_evidence_unavailable', runId: null,
+      evidence: {}, diagnostics: { codes: ['canary_evidence_unavailable'] } });
+    assert.equal(destroys, 1);
+    assert(!queries.includes('ROLLBACK'));
+    client._handleErrorEvent(new Error('LATE_DESTROYED_FAILURE'));
+    await pool.end();
+    client._handleErrorEvent(new Error('AFTER_POOL_END_FAILURE'));
+    console.log('native-offline-unavailable');
+  `;
+  const child = spawnSync(process.execPath, ['--unhandled-rejections=strict', '--input-type=module', '-e', source, timing],
+    { cwd: process.cwd(), encoding: 'utf8', timeout: 10_000, windowsHide: true });
+  expect({ status: child.status, stderr: child.stderr, error: child.error?.message })
+    .toEqual({ status: 0, stderr: '', error: undefined });
+  expect(child.stdout.trim()).toBe('native-offline-unavailable');
+});
+
+test.each([0, 1].flatMap((snapshot) => ['begin', 'configure', 'select', 'rollback'].map((step) => [snapshot, step])))
+('FR-I1 snapshot %i pending %s event settles promptly and never queues rollback', async (snapshot, step) => {
+  jest.useFakeTimers({ doNotFake: ['hrtime'] });
+  const waiting = deferred(), started = deferred();
+  const matches = (text) => step === 'begin' ? /^BEGIN/.test(text) : step === 'configure' ? /set_config/.test(text)
+    : step === 'select' ? /FROM public/.test(text) : text === 'ROLLBACK';
+  const store = fakeStore(undefined, { query: (c) => {
+    if (c.index === snapshot && matches(c.text)) { started.resolve(); return waiting.promise; }
+  } });
+  let result;
+  const pending = store.read().then((value) => { result = value; });
+  await started.promise;
+  const client = store.clients[snapshot], count = store.calls.length;
+  expect(() => client.emit('error', new Error('private socket / credential detail'))).not.toThrow();
+  await jest.advanceTimersByTimeAsync(1);
+  denied(result, unavailable);
+  await pending;
+  expect(client.release).toHaveBeenCalledTimes(1); expect(client.release).toHaveBeenCalledWith(true);
+  expect(store.calls).toHaveLength(count);
+  expect(() => client.emit('error', new Error('late destroyed client'))).not.toThrow();
+  waiting.reject(new Error('late query rejection'));
+  await jest.advanceTimersByTimeAsync(1);
+  expect(client.release).toHaveBeenCalledTimes(1); expect(store.calls).toHaveLength(count);
+  if (snapshot === 1) expect(store.clients[0].release).toHaveBeenCalledWith(false);
+});
+
+test.each([0, 1])('FR-I1 snapshot %i between-query event poisons before any more dispatch', async (snapshot) => {
+  let emitted = false, count;
+  const store = fakeStore();
+  const result = await store.read({ now: () => {
+    if (!emitted && store.clients.length === snapshot + 1
+      && store.calls.some((c) => c.index === snapshot && /FROM public/.test(c.text))) {
+      emitted = true; count = store.calls.length;
+      store.clients[snapshot].emit('error', new Error('private between queries'));
+    }
+    return store.f.now;
+  } });
+  denied(result, unavailable); expect(emitted).toBe(true); expect(store.calls).toHaveLength(count);
+  expect(store.clients[snapshot].release).toHaveBeenCalledTimes(1);
+  expect(store.clients[snapshot].release).toHaveBeenCalledWith(true);
+});
+
+test('FR-I1 late acquired client has error ownership before destructive release and afterward', async () => {
+  jest.useFakeTimers({ doNotFake: ['hrtime'] }); const waiting = deferred();
+  const store = fakeStore(undefined, { connect: () => waiting.promise,
+    release: (index) => { store.clients[index].emit('error', new Error('during destruction')); } });
+  const pending = store.read(); await jest.advanceTimersByTimeAsync(15001); denied(await pending, timeout);
+  waiting.resolve(store.clients[0]); await jest.advanceTimersByTimeAsync(1);
+  released(store, true); expect(store.calls).toHaveLength(0);
+  expect(() => store.clients[0].emit('error', new Error('after destruction'))).not.toThrow();
+  released(store, true);
+});
+
+test('FR-I1 native max:1 readback returns error ownership to the pool without listener accumulation', async () => {
+  const f = makeCanaryFixture(), clients = [], releases = [], idleErrors = [];
+  class OfflineClient extends pg.Client {
+    connect(callback) { clients.push(this); process.nextTick(() => callback(null)); }
+    query(config) {
+      expect(this.listenerCount('error')).toBe(1);
+      let rows = [];
+      if (/FROM public/.test(config.text)) {
+        const selected = /ORDER BY created_at/.test(config.text) ? [f.comparison]
+          : allRows(f).filter((row) => config.values[1].includes(row.id));
+        rows = selected.map((physical) => ({ physical,
+          physical_bytes: Buffer.byteLength(canonicalJson(physical)),
+          report_bytes: Buffer.byteLength(canonicalJson(physical.report)) }));
+      }
+      return Promise.resolve({ rows });
+    }
+  }
+  const pool = new pg.Pool({ Client: OfflineClient, max: 1 });
+  pool.on('release', (destroy, client) => releases.push({ destroy, client }));
+  pool.on('error', (error) => idleErrors.push(error.message));
+  const read = () => reader.readCanaryEvidence({ pool, secret: f.secret, revision: f.revision,
+    policy: { ready: true, version: 2, hash: f.policyHash }, now: () => f.now });
+  try {
+    for (let i = 0; i < 2; i++) {
+      const result = await read(); expect(result.verified).toBe(true); expect(result.readbackVerified).toBe(true);
+      expect(result.evidence.canary.candidate.sampleCount).toBe(20);
+      expect(pool.idleCount).toBe(1); expect(clients).toHaveLength(1);
+      expect(clients[0].listenerCount('error')).toBe(1);
+    }
+    expect(releases).toHaveLength(4); expect(releases.every((r) => r.destroy === false)).toBe(true);
+    clients[0]._handleErrorEvent(new Error('idle pool-owned failure'));
+    expect(idleErrors).toEqual(['idle pool-owned failure']); expect(pool.totalCount).toBe(0);
+    expect(() => clients[0]._handleErrorEvent(new Error('late retired native failure'))).not.toThrow();
+    expect((await read()).verified).toBe(true); expect(clients).toHaveLength(2);
+    expect(idleErrors).toHaveLength(1);
+  } finally { await pool.end(); }
+});
+
+test.each(['resolve', 'reject'])('FR-I1 destroyed client late query %s and reentrant release errors cannot revive proof', async (mode) => {
+  jest.useFakeTimers({ doNotFake: ['hrtime'] }); const waiting = deferred(), started = deferred();
+  const store = fakeStore(undefined, { query: (c) => {
+    if (/FROM public/.test(c.text)) { started.resolve(); return waiting.promise; }
+  }, release: (index) => { store.clients[index].emit('error', new Error('reentrant destroy')); } });
+  const pending = store.read(); await started.promise;
+  store.clients[0].emit('error', new Error('initial socket failure'));
+  denied(await pending, unavailable); const count = store.calls.length;
+  if (mode === 'resolve') waiting.resolve({ rows: [] }); else waiting.reject(new Error('late rejection'));
+  await jest.advanceTimersByTimeAsync(1);
+  released(store, true); expect(store.calls).toHaveLength(count);
+  expect(() => store.clients[0].emit('error', new Error('after result'))).not.toThrow();
+});
+
+test.each([0, 1])('FR-I1 native late checkout in snapshot %i owns same-stack and post-destroy events', async (snapshot) => {
+  jest.useFakeTimers({ doNotFake: ['hrtime', 'nextTick'] });
+  const f = makeCanaryFixture(), started = deferred(), releases = [];
+  let accept, late, creates = 0, queries = 0;
+  class OfflineClient extends pg.Client {
+    connect(callback) {
+      if (creates++ === snapshot) { late = this; accept = callback; started.resolve(); }
+      else process.nextTick(() => callback(null));
+    }
+    query(config) {
+      queries++;
+      const selected = /ORDER BY created_at/.test(config.text) ? [f.comparison]
+        : /FROM public/.test(config.text) ? allRows(f).filter((r) => config.values[1].includes(r.id)) : [];
+      return Promise.resolve({ rows: selected.map((physical) => ({ physical,
+        physical_bytes: Buffer.byteLength(canonicalJson(physical)),
+        report_bytes: Buffer.byteLength(canonicalJson(physical.report)) })) });
+    }
+  }
+  const pool = new pg.Pool({ Client: OfflineClient, max: 1, maxUses: 1 });
+  pool.on('error', () => {}); pool.on('release', (destroy) => releases.push(destroy));
+  try {
+    const pending = reader.readCanaryEvidence({ pool, secret: f.secret, revision: f.revision,
+      policy: { ready: true, version: 2, hash: f.policyHash }, now: () => f.now });
+    await started.promise;
+    await jest.advanceTimersByTimeAsync(15001); denied(await pending, timeout);
+    const count = queries;
+    accept(null);
+    expect(() => late._handleErrorEvent(new Error('same-stack late checkout failure'))).not.toThrow();
+    await jest.advanceTimersByTimeAsync(1);
+    expect(releases).toEqual(snapshot === 0 ? [true] : [false, true]);
+    expect(queries).toBe(count); expect(pool.totalCount).toBe(0);
+    expect(() => late._handleErrorEvent(new Error('late native destroyed error'))).not.toThrow();
+  } finally { await pool.end(); }
+});
 
 test('authentic chain reads every dependency twice on independent max:1 snapshots', async () => {
   const store = fakeStore(); const result = await store.read();

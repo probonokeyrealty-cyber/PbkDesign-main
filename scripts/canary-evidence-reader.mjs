@@ -17,6 +17,7 @@ const failure = (result) => ({ ok: false, verified: false, readbackVerified: fal
 const hex = (value, length) => typeof value === 'string' && new RegExp(`^[0-9a-f]{${length}}$`).test(value);
 const isId = (value, kind) => typeof value === 'string' && value.startsWith(kinds[kind].idPrefix)
   && hex(value.slice(kinds[kind].idPrefix.length), 64);
+function clientError() { this.fail?.(); }
 
 // Count the transferred projection, including auxiliary/control metadata, before
 // stripping anything. Never run a row's getters, proxy traps or toJSON method.
@@ -58,16 +59,34 @@ function operation() {
   let last = process.hrtime.bigint();
   requireThat(typeof last === 'bigint' && last >= 0n, TIMEOUT);
   const end = last + BigInt(limits.operationTimeoutMs) * 1_000_000n;
-  let poisoned = null, lease = null, rows = 0, bytes = 0;
-  function release(destroy) {
-    if (!lease || lease.released) return;
-    lease.released = true;
-    lease.client.release(destroy);
+  let poisoned = null, lease = null, cancelWait = null, rows = 0, bytes = 0;
+  function release(destroy, owned = lease) {
+    if (!owned || owned.released) return;
+    owned.released = true;
+    try {
+      owned.client.release(destroy);
+      // pg-pool reinstalls its idle listener synchronously on normal release.
+      if (!destroy) owned.client.removeListener('error', owned.onError);
+    } finally {
+      // Keep a retired listener on destroyed/failed-release clients for late
+      // driver events, without retaining the operation or poisoning a new lease.
+      owned.fail = null;
+    }
   }
   function poison(code) {
     poisoned ??= code;
+    const error = new Error(poisoned);
+    cancelWait?.(error);
     try { release(true); } catch { /* Destruction is best effort; never release twice. */ }
-    return new Error(poisoned);
+    return error;
+  }
+  function own(client) {
+    const owned = { client, released: false, fail: () => poison(UNAVAILABLE) };
+    owned.onError = clientError.bind(owned);
+    client.on('error', owned.onError);
+    if (poisoned) {
+      try { release(true, owned); } catch { /* Late resources cannot rejoin the pool. */ }
+    } else lease = owned;
   }
   function check(until = end) {
     if (poisoned) throw new Error(poisoned);
@@ -76,24 +95,29 @@ function operation() {
     last = current;
     return Number(end - current) / 1_000_000;
   }
-  async function bounded(start, maximum, lateValue) {
+  async function bounded(start, maximum) {
     const remaining = check();
     const ms = Math.floor(Math.min(maximum, remaining));
     if (ms < 1) throw poison(TIMEOUT);
     const until = last + BigInt(ms) * 1_000_000n;
     return new Promise((resolve, reject) => {
       let settled = false;
-      const timer = setTimeout(() => { if (!settled) { settled = true; reject(poison(TIMEOUT)); } }, ms);
+      const timer = setTimeout(() => { if (!settled) poison(TIMEOUT); }, ms);
+      const cancel = (error) => {
+        if (settled) return;
+        settled = true; clearTimeout(timer); cancelWait = null; reject(error);
+      };
+      cancelWait = cancel;
       Promise.resolve().then(() => { check(until); return start(ms); }).then((value) => {
-        if (settled) { lateValue?.(value); return; }
-        try { check(until); } catch (error) { lateValue?.(value); settled = true; clearTimeout(timer); reject(error); return; }
-        settled = true; clearTimeout(timer); resolve(value);
+        if (settled) return;
+        try { check(until); } catch (error) { cancel(error); return; }
+        settled = true; clearTimeout(timer); cancelWait = null; resolve(value);
       }, () => {
         if (settled) return;
         // A rejection may run before an overdue timer callback after a stall.
         let error;
         try { check(until); error = poison(UNAVAILABLE); } catch (caught) { error = caught; }
-        settled = true; clearTimeout(timer); reject(error);
+        cancel(error);
       });
     });
   }
@@ -120,9 +144,17 @@ function operation() {
       check(); requireThat(bytes + requiredBytes <= limits.maxBytes && rows + requiredRows <= limits.maxRows, LIMIT);
     },
     async acquire(pool) {
-      const late = (client) => { try { client.release(true); } catch { /* Late resources cannot rejoin the pool. */ } };
-      const client = await bounded(() => pool.connect(), limits.operationTimeoutMs, late);
-      lease = { client, released: false };
+      await bounded(() => new Promise((resolve, reject) => {
+        const acquired = (error, client) => {
+          if (error) { reject(error); return; }
+          try { own(client); resolve(); } catch (caught) { reject(caught); }
+        };
+        // Native pg removes its idle listener before invoking this callback.
+        // Own the event channel here, not in a later promise continuation.
+        const pending = pool.connect(acquired);
+        // Preserve promise-only pool adapters used by the reader's callers.
+        pending?.then((client) => acquired(null, client), reject);
+      }), limits.operationTimeoutMs);
       check();
     },
     async query(text, values = []) {

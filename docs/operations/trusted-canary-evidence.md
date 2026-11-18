@@ -123,6 +123,16 @@ freshness. Each query has at most 2 seconds with server/client limits. Late or
 abandoned clients are destroyed; no stale snapshot/cache or queued rollback may
 resurrect a poisoned operation.
 
+The reader owns the checked-out client's `error` channel from the native pool
+checkout callback, before promise continuations or query dispatch. A client event
+poisons the operation as unavailable, cancels its active bounded wait and destroys
+the lease once; no rollback is queued behind that query. Normal release hands
+error ownership back to the pool's idle listener before removing the reader's
+listener. Destroyed, failed-release and late-acquired clients retain a retired
+listener for late driver events, detached from operation state. Pool-level idle
+error handling remains the server pool's responsibility. No global exception
+handler or retry is installed.
+
 | Limit | Value |
 | --- | --- |
 | Observations per side | 256 |

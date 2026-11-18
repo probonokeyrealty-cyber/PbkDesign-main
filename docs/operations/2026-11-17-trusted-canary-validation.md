@@ -214,3 +214,71 @@ No engine reader defect surfaced in the first run; if one surfaces in subsequent
 proof, Task 4 must report `NEEDS_CONTEXT` to the controller before any broader
 production edit. Independent task and whole-branch security/behavior review is
 requested from the controller after the Task 4 report. No production-ready claim.
+
+## Final Review Fix FR-I1
+
+This separate fix wave starts at `db28c2588421bd65f7dedcc50b4a1c454526466e`.
+The authoritative finding is final-review.md, **FR-I1 / P1: Handle checked-out
+PostgreSQL client error events**. Only the reader, its existing test file and
+these two operations documents changed. No bridge/hash, SQL, admission, budget,
+clock, policy, auth, approval, dispatch or delivery code changed. User `output/`
+was preserved. The ignored final-fix-report.md is not force-added.
+
+All commands used Node `v22.23.5` with the process-local PATH prefix above.
+Before each executable verification, runtime/test database, PG and Supabase
+environment variables (or values containing PostgreSQL/Supabase URLs) were
+removed without printing values. No actual PostgreSQL, remote network, provider
+or Neon harness was used. Isolated bridge smokes use only their guarded loopback
+server, fresh temporary state, no provider credentials and existing cleanup.
+
+RED: the report's exact `canary-client-error-event` offline probe reproduced the
+failure at fixbase: unhandled child exit **1**, zero client listeners, unhandled
+`error`, no reader result; diagnostic listener control exit **0**, unavailable,
+empty stderr. The first FR-I1-only Jest run then had **14 expected failures**
+(115 existing tests excluded by the name filter). All three native timing
+children crashed, pending-event cases lacked handlers, between-query cases queued
+rollback, and the late client lacked safe event ownership.
+
+GREEN: the same original probe's unhandled mode now has **one reader listener**,
+exit **0**, `canary_evidence_unavailable`, empty stderr. The unchanged diagnostic
+control has two listeners and also exits 0; that control is not production code.
+Installed `pg` **8.13.1** / `pg-pool` **3.13.0** are used with an offline
+`pg.Client` subclass overriding connect; real pool checkout, query queue and
+socket-error handler run without opening a database socket.
+
+Final focused command (the same five-suite command in Focused Regression above):
+exit **0**, **5/5 suites / 555/555 tests**, zero failures/skips, **23.571 s**.
+The reader has **134 tests**, including **19 FR-I1 cases**. Coverage includes
+same-stack/nextTick/immediate native checkout errors, pending BEGIN/config/select/
+rollback in both snapshots, between-query poison, late query completion/rejection,
+late native acquisitions in both snapshots, reentrant destruction, late destroyed
+errors and native max:1 success/reuse/idle-listener ownership. Denials have exact
+empty proof and fixed redacted codes. Poisoned waits settle within a 1-ms fake
+timer turn, not the 2-second query timeout; destruction is once and no further
+query or rollback is dispatched after poison.
+
+Additional fresh commands, each exit **0**:
+
+```powershell
+node scripts/render-docker-imports-smoke.mjs
+node scripts/release-qualification-bridge-smoke.mjs
+node scripts/operational-audit-bridge-smoke.mjs
+node scripts/backlog-reconciliation-bridge-smoke.mjs
+```
+
+Docker closure: **173 imports / 116 files / 2 frontend voice inputs**. The three
+smokes ran serially and passed their founder-only/no-provider-write, no-contact,
+readiness-blocked and no-source-mutation assertions with automatic child cleanup.
+Only the expected VM Modules experimental warning and its standard hint occurred
+in Jest; no warning suppression was added. Git's LF-to-CRLF advisories are
+repository line-ending notices, not new runtime warnings.
+
+The **20/20 actual PostgreSQL** receipt earlier in this document is historical at
+`57fc511`, not an execution of this fix. SQL remains byte-for-byte unchanged;
+this wave adds native-driver failure/lifecycle proof, not fresh engine/network
+failure injection or operational canary provenance. Existing broader build and
+integration receipts remain attributed to their original revisions. No long
+20-suite/founder run, image build, live DB check, push, PR, deployment, migration,
+producer, runner, seller contact, retry or approval/auth change was performed.
+Missing producer/live evidence remains blocked; scoped controller re-review is
+still required before merge. No production-readiness claim is made.

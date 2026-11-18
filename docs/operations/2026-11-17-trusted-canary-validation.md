@@ -499,3 +499,137 @@ full-unit/founder/UI run is claimed in this round. No production migration,
 contact, provider write, delivery retry, subagent, push, merge or deployment.
 Controller owns the one scoped re-review, CI and publication; review is pending,
 not replaced by this worker's self-review or controlled verification.
+
+## PR23 Latest-Main Hash Baseline Integration
+
+### Scope And Controller RED
+
+This bounded test-only integration started at controller merge
+`0d51120153ffff5467a0b24dac36faf30518d423` on
+`codex/trusted-canary-evidence`. The extracted
+`pr23-main-integration-brief.md` was read first. No merge, checkout, rebase,
+subagent, push, deployment, provider operation, seller contact or delivery retry
+was performed by this worker. Existing untracked `output/` remains untouched.
+
+The controller already ran the actual wiring Jest on this combined tree:
+**20 passed / 1 failed**, **1.394 s**, with only the broad outside-maturity hash
+assertion failing. That is supplied controller RED evidence, not a worker-run
+RED or a newly discovered production defect. It expected the old digest below
+and received the new one. No artificial RED or redundant failure run is claimed.
+
+Only the hash expectation and its baseline comment in
+`scripts/canary-evidence-wiring.test.mjs`, plus this dated record, are changed.
+The extraction, normalization, test name, assertions, thresholds and production
+code are unchanged. The detailed ignored handoff report is
+`.superpowers/sdd/2026-11-17-trusted-canary-reader/pr23-main-integration-report.md`;
+it is not force-added. Controller owns independent review and publication/CI.
+
+### Complete Bridge Delta Review
+
+Reviewed the entire bridge diff from
+`6b7412195be787e01f45b7c89ddefd644ae3c73f` to
+`0d51120153ffff5467a0b24dac36faf30518d423`: **10 hunks, 12 additions /
+10 deletions** in `scripts/openclaw-local-server.mjs`. Every changed hunk is
+outside the maturity builder and belongs to already-merged PR22:
+
+| Target location | Complete outside-builder change | Boundary impact |
+| --- | --- | --- |
+| `updateDerivedStatus`, 12806 | Replace assignment to stored `nextState.calls` with a local normalized `calls` projection and explanatory comment. | Preserves call history/lead context; no authority or action change. |
+| `updateDerivedStatus`, 12821 | Count active calls from that projection. | Derived status only. |
+| `updateDerivedStatus`, 12908 | Read `lastCallAt` from that projection, retaining legacy timestamp aliases. | Derived timestamp only. |
+| `buildAgentStatusBundle`, 49057 | Normalize the local call view. | Agent call metrics only; no agent invocation change. |
+| `buildNotificationSnapshot`, 52674 | Normalize the five selected calls before building notifications. | Display projection only; no notification send. |
+| `buildStateSnapshot`, 62621 | Normalize calls before snapshot limiting/compaction. | Response projection only; stored calls remain intact. |
+| `buildFounderWorkQueueSnapshot`, 63641 | Introduce local normalized `calls` and use it to select queue items. | Read-only queue presentation; no dispatch or approval action. |
+| `buildFounderWorkQueueSnapshot`, 63812 | Count active calls using the same projection. | Queue summary only. |
+| GET calls summary route, 79762 | Sort normalized calls for `/api/calls/summary` and `/api/v1/calls/summary`. | Existing GET response only; auth routing unchanged. |
+| GET calls route, 79784 | Sort normalized calls for `/api/calls` pagination. | Existing GET response only; auth routing unchanged. |
+
+The existing normalization helpers are unchanged: array mapping and returned
+object copies project stale calls as ended and redact legacy display context
+without changing source records. For **every** hunk above, authentication,
+approval/admin gates, dispatch locks, contact/provider operations and retry
+behavior are unchanged. Queue/status changes affect reads, not execution.
+
+Reviewed commits are PR22 implementation
+`b810b71db62464da2643d18a090476a4abc9c9a4` and
+`5d9e1e4d0f91605895c46493e9bd821bfce9c273`, canonical main merge
+`78b47068ec329a9b4c58d09d8d68f98ce2277f52`, and integration merge `0d51120`
+above. The complete integration delta contains six files: the bridge and the
+PR22 Jest config, chat-events test, call-read test, progress reporter and its test.
+An explicit `git diff --exit-code 78b4706 0d51120 --` over those five non-bridge
+files passed: all are exactly canonical main. The normalized full bridge checks
+below establish no hidden outside-builder divergence. No PR22 change is reverted.
+
+### Independent Canonical Digest Verification
+
+Read Git objects directly, not just the local working file. Exact test algorithm:
+replace CRLF with LF; find `async function buildProductionMaturitySnapshot(`;
+take the first following `\n}` plus two as the end; concatenate the prefix and
+suffix; remove exactly the reader import plus LF; SHA256 the resulting UTF-8
+string. Independently parsed each revision with TypeScript and required the
+extracted slice to equal the **entire** AST function text, so canonical main's
+different maturity builder is fully excluded too.
+
+| Reviewed source | Normalized bytes | SHA256 |
+| --- | --- | --- |
+| Common main base `82c2f5f86893acb1e36756c81931e0806a99e68a` | 3,482,924 | `f501d5f5575ea2b675bf1e75b9f77dfe7c247c4d9fe84ae543e5d050aed040c2` |
+| Prior tested head `6b7412195be787e01f45b7c89ddefd644ae3c73f` | 3,482,924 | `f501d5f5575ea2b675bf1e75b9f77dfe7c247c4d9fe84ae543e5d050aed040c2` |
+| Canonical main `78b47068ec329a9b4c58d09d8d68f98ce2277f52` | 3,483,068 | `6b2373b2587f84c64e4630ae2f5c89e08e6030dd03ceea8603467b87c44bd9e5` |
+| Integrated head `0d51120153ffff5467a0b24dac36faf30518d423` and working bridge | 3,483,068 | `6b2373b2587f84c64e4630ae2f5c89e08e6030dd03ceea8603467b87c44bd9e5` |
+
+Also asserted full normalized **string equality**, not only digest equality:
+old head equals common main base; integrated head and working bridge equal
+canonical main. The independently checked new baseline is therefore justified
+by reviewed main changes, not chosen merely to silence the failing assertion.
+Exact executed verification code is retained in the ignored handoff report.
+
+### Fresh Offline GREEN
+
+Used pinned Node `v22.23.5` at
+`D:/pbk-npm-cache/_npx/52027bd8fc0022aa/node_modules/node/bin/node.exe`.
+All executable tests ran in children with an OS/path-only environment allowlist;
+all inherited database/PG/Supabase/test/eval URLs, provider credentials, network
+configuration, application flags and `NODE_OPTIONS` were absent. PATH was prefixed
+with the pinned Node directory for descendant processes. No environment file was
+loaded by the wrapper. Exact wrapper is in the ignored report.
+
+```powershell
+node --experimental-vm-modules node_modules/jest/bin/jest.js --config jest.config.mjs --runInBand --runTestsByPath scripts/canary-postgres-observer.test.mjs scripts/canary-evidence-protocol.test.mjs scripts/canary-evidence-reader.test.mjs scripts/canary-evidence-wiring.test.mjs scripts/production-readiness-evidence.test.mjs scripts/release-qualification-ci.test.mjs scripts/bridge-state-call-read.test.mjs scripts/ava-chat-events.test.mjs scripts/unit-progress-reporter.test.mjs
+```
+
+Exit **0**, **9/9 suites / 586/586 tests**, **28.960 s**, zero failures/skips;
+wrapper elapsed **29,969 ms**. Per-suite counts: observer **7**, protocol **237**,
+reader **134**, wiring **21**, readiness **68**, CI **95**, PR22 call-read **17**,
+chat-events **6**, progress reporter **1**. These are actual Jest executions,
+including the unmodified behavioral safety assertions and new-main coverage.
+Only the documented VM Modules ExperimentalWarning and standard hint appeared;
+stderr was retained and no warnings were suppressed.
+
+The following commands then ran **serially, once each**, in the same scrubbed
+environment, using the existing temporary-state/guarded loopback isolation:
+
+```powershell
+node scripts/release-qualification-bridge-smoke.mjs
+node scripts/operational-audit-bridge-smoke.mjs
+node scripts/backlog-reconciliation-bridge-smoke.mjs
+node scripts/render-docker-imports-smoke.mjs
+```
+
+All exit **0**. Wrapper times respectively **19,560 / 3,029 / 2,762 / 400 ms**.
+Qualification passed founder-only/no-provider-write assertions; audit passed
+no-contact/readiness-blocked assertions; reconciliation passed no-delivery-tools,
+provider-writes-blocked and source-preservation assertions. Each isolated bridge
+was stopped and its allocated temporary state cleaned by the existing helper.
+Docker closure: **173 imports / 116 files / 2 frontend voice inputs**.
+
+`node --check scripts/canary-evidence-wiring.test.mjs` and `git diff --check`
+passed. LF-to-CRLF Git advisories are line-ending notices, not runtime warnings.
+Self-review is limited to the two owned tracked files and preservation of every
+other assertion. No production, DB schema, policy, auth/approval/dispatch or
+workflow change was made. No actual PostgreSQL, external network, provider or
+Neon harness was used; loopback fixture HTTP is not remote runtime validation.
+Prior live-PG evidence belongs to the earlier observer repair and is not counted
+as a fresh local run here. No full-unit/build/UI/hosted/remote CI pass is claimed.
+Independent controller review and fresh combined-head CI remain pending; real
+producer evidence and production-readiness gates remain open.

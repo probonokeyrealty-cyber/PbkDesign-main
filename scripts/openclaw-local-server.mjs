@@ -21,6 +21,7 @@ import { lookupAddressSuggestions } from './address-suggestions.mjs';
 import { applyAgentVersionRollback, buildAgentRegistrySnapshot, buildAgentVersionSnapshot, buildDefaultAgentRegistry, buildStableAgentFleetMeasurement, findAgentsByCapability, invokeRegisteredAgent, mergeAgentRegistryRecords, normalizeAgentRegistryId, normalizeAgentRegistryRecord, validateAgentVersionSnapshot } from './agent-registry.mjs';
 import { buildAgentExecutionEvidence, collectAgentFleetEvidence, isNonOperationalAgentEvidence, isAgentHandlerCompletion } from './agent-fleet-measurement.mjs';
 import { getAgentLatencyPolicy } from './agent-latency-policy.mjs';
+import { readCanaryEvidence } from './canary-evidence-reader.mjs';
 import { controlledExecution, createControlledPool, createScopedState, assertControlledToolAllowed } from './controlled-execution-scope.mjs';
 import { createControlledAgentStorage, saveControlledAgentResult, readControlledAgentQualification, readControlledWorkflowPredecessor } from './controlled-agent-storage.mjs';
 import { runControlledAgentWorkflow } from './controlled-agent-workflow.mjs';
@@ -11594,9 +11595,19 @@ async function buildProductionMaturitySnapshot({ runtimeMeta = getRuntimeMeta() 
   const memoryPolicyOutcomes = await readCallMemorySkipSummary({
     pool: getPgPool(), revision: process.env.RENDER_GIT_COMMIT || BUILD_REVISION, secret: BRIDGE_API_KEY,
   });
+  let canary;
+  try {
+    canary = await readCanaryEvidence({
+      pool: getPgPool(), revision: process.env.RENDER_GIT_COMMIT || BUILD_REVISION, secret: BRIDGE_API_KEY,
+      policy: getAgentLatencyPolicy(process.env, { requireVersion2: true }), now: Date.now,
+    });
+  } catch {
+    canary = { verified: false, readbackVerified: false, source: 'postgres:pbk_eval_runs',
+      result: 'canary_evidence_unavailable', runId: null, diagnostics: { codes: ['canary_evidence_unavailable'] } };
+  }
   const executionEvidence = buildExecutedReadinessEvidence({
     revision: process.env.RENDER_GIT_COMMIT || BUILD_REVISION,
-    evidence: { ...qualification.evidence, ...operationalAudit.evidence },
+    evidence: { ...qualification.evidence, ...operationalAudit.evidence, ...(canary.verified === true ? canary.evidence : {}) },
     requiredScenarioIds: AVA_REAL_CALL_EVAL_SCENARIOS, sloStatus,
   });
   const { failedCallEvalGate, shadowCanaryComparison, canaryPromotionGate } = executionEvidence;
@@ -11646,6 +11657,12 @@ async function buildProductionMaturitySnapshot({ runtimeMeta = getRuntimeMeta() 
       coverageDiagnostics: operationalAudit.coverageDiagnostics || { verified: false, result: 'coverage_unverified' },
       legacy: operationalAudit.legacy || null,
       source: operationalAudit.source, result: operationalAudit.result, executedAt: operationalAudit.executedAt || null },
+    // Reader diagnostics are bounded/redacted; never expose receipts or authority here.
+    canaryEvidence: {
+      verified: canary.verified === true, readbackVerified: canary.readbackVerified === true,
+      source: canary.source, result: canary.result, runId: canary.verified === true ? canary.runId : null,
+      diagnostics: canary.diagnostics,
+    },
     // Internal recovery is supplementary evidence, never delivery or launch qualification.
     backlogReconciliation: {
       verified: backlogReconciliation.verified === true,
@@ -11661,8 +11678,10 @@ async function buildProductionMaturitySnapshot({ runtimeMeta = getRuntimeMeta() 
     },
     shadowCanaryComparison: {
       ...shadowCanaryComparison,
-      mode: 'unverified',
-      note: 'No independent, versioned live comparison has been verified.',
+      mode: canary.verified === true ? 'verified' : 'unverified',
+      note: canary.verified === true
+        ? 'Independent, versioned canary receipts verified; existing performance thresholds and promotion gates still apply.'
+        : 'No independent, versioned live comparison has been verified.',
     },
     canaryPromotionGate,
   };

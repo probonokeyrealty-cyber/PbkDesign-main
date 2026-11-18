@@ -65,6 +65,10 @@ try {
         }
         if (req.method() !== 'GET') {
           writes.push({ method: req.method(), path: url.pathname, body: req.postDataJSON() });
+          if (req.method() === 'POST' && url.pathname === '/invoke') {
+            assert.equal(req.postDataJSON().toolName,'analyzeDeal');
+            return route.fulfill({json:{ok:true,result:{arv:600000,mao:352000,maoRbp:528000,targetOffer:340000,repairsMid:0}}});
+          }
           if (req.method() === 'POST' && url.pathname === '/api/leads') return route.fulfill({ json: { ok: true, lead: { leadId: 'qa-address-save' } } });
           if (req.method() === 'PATCH' && url.pathname === '/api/leads/qa-address-save') return route.fulfill({ json: { ok: true, result: 'queued_for_approval', approval: { id: 'fixture-approval' } } });
           return route.abort();
@@ -159,6 +163,9 @@ try {
       assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `${width}px overflow`);
       assert.deepEqual(unexpectedPropertyRequests, []);
       await expect(page.getByRole('button', {name:/^(Analyze Deal|Open Call Mode)/}).first()).toBeEnabled();
+      await expect.poll(()=>writes.filter(write=>write.method==='PATCH').length).toBe(3);
+      assert.deepEqual(writes.filter(write=>write.method==='PATCH').at(-1).body.expectedPropertyAddress,{street:'42 Fixture Avenue',city:'Example City',state:'CA',zip:'90210'});
+      assert.equal(writes.filter(write=>write.method==='PATCH').at(-1).body.deal.recordedSales.review,'suggested-unreviewed');
       const beforeAddressChange = enrichments.length;
       await address.fill('99 Different Lane, Example City, CA 90210');
       await expect(page.getByRole('textbox', { name: 'Comp A address' })).toHaveValue('');

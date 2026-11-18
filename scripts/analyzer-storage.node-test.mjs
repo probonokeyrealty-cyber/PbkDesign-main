@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import vm from 'node:vm';
 import ts from 'typescript';
+import { intelligenceRequest, mergeAnalyzerIntelligence } from '../src/app/utils/analyzerIntelligence.mjs';
 
 const source = readFileSync(new URL('../src/app/utils/analyzerStorage.ts', import.meta.url), 'utf8');
 const { outputText } = ts.transpileModule(source, {
@@ -25,7 +26,7 @@ function runtime(pathname = '/analyzer', search = '') {
   return { api: context.exports, shared, privateDraft, context };
 }
 const decode = value => JSON.parse(decodeURIComponent(escape(atob(value))));
-const sample = { leadId: 'fixture', address: '11 Fixture Avenue', arv: 500000,
+const sample = { leadId: 'fixture', address: '11 Fixture Avenue, Example City, CA 90210', arv: 500000,
   notes: 'Unsent sample notes', repairs: { condition: 'C3', mid: 15000 }, repairsMid: 15000 };
 
 const freshToken = 'c94d11e1-6aa5-46b8-9a9b-119481e34888';
@@ -211,6 +212,8 @@ function actions() {
     draftScope: ref('sample-scope'), getAnalyzerDraftIdentity: () => 'sample-scope',
     analysisRequestVersion: ref(0), isFreshAnalyzerDraft: () => false, deal: sample,
     getAnalyzeReadiness: () => ({ ready: true, successMessage: 'Ready' }),
+    intelligenceRequest, mergeAnalyzerIntelligence,
+    fetchPropertyIntelligenceRequest: async input => ({ok:true,address:input.address,patch:{deal:{}},records:{status:'unavailable'},listing:{cache:{hit:false}},sales:{status:'unavailable'},saved:false}),
     syncDealAnalysis: deal => new Promise((resolve, reject) => analyses.push({ deal, resolve, reject })),
     calculateVerdict: () => 'green', buildAgentDealContext: () => ({}),
     currentDeal: ref(sample), activeSelectedPath: 'cash', savePending: ref(false),
@@ -273,9 +276,27 @@ test('A queued snapshot still reports approval and newly added unsaved fields', 
 });
 
 for (const obsolete of ['unmounted', 'scope', 'edited', 'newer-analysis']) {
+  test(`An ${obsolete} enrichment cannot start analysis or issue a lead PATCH`, async () => {
+    const {context,analyses,patches}=actions();
+    let release;
+    context.fetchPropertyIntelligenceRequest=()=>new Promise(resolve=>{release=resolve;});
+    const pending=context.handleAnalyzeDeal();
+    assert.equal(typeof release,'function');
+    if (obsolete==='unmounted') context.mounted.current=false;
+    if (obsolete==='scope') context.getAnalyzerDraftIdentity=()=>'other-scope';
+    if (obsolete==='edited') context.currentDeal.current={...sample,notes:'Newer draft during lookup'};
+    if (obsolete==='newer-analysis') context.analysisRequestVersion.current++;
+    const before=context.currentDeal.current;
+    release({ok:true,address:sample.address,patch:{deal:{}},records:{status:'unavailable'},listing:{cache:{hit:false}},sales:{status:'unavailable'},saved:false});
+    await pending;
+    assert.deepEqual(analyses,[]);assert.deepEqual(patches,[]);
+    assert.equal(context.currentDeal.current,before);
+  });
   test(`An ${obsolete} analysis cannot replace notes/comps or issue a lead PATCH`, async () => {
     const { context, analyses, patches } = actions();
     const pending = context.handleAnalyzeDeal();
+    await new Promise(resolve=>setImmediate(resolve));
+    assert.equal(analyses.length,1);
     if (obsolete === 'unmounted') context.mounted.current = false;
     if (obsolete === 'scope') context.getAnalyzerDraftIdentity = () => 'other-scope';
     if (obsolete === 'edited') context.currentDeal.current = { ...sample, notes: 'New notes', comps: { A: { price: 765432 } } };
@@ -291,6 +312,8 @@ for (const obsolete of ['unmounted', 'scope', 'edited', 'newer-analysis']) {
 test('A stale analysis failure cannot reset a newer draft', async () => {
   const { context, analyses, patches } = actions();
   const pending = context.handleAnalyzeDeal();
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(analyses.length,1);
   context.currentDeal.current = { ...sample, notes: 'New notes', isAnalyzed: true };
   context.analysisRequestVersion.current++;
   const before = context.currentDeal.current;
@@ -303,6 +326,8 @@ test('A stale analysis failure cannot reset a newer draft', async () => {
 test('A current analysis still applies its result and retains manual notes', async () => {
   const { context, analyses, patches } = actions();
   const pending = context.handleAnalyzeDeal();
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(analyses.length,1);
   analyses[0].resolve({ result: { arv: 700000, mao: 350000 } });
   await pending;
   assert.equal(patches.length, 1, 'Only the stubbed sample lead request is recorded');
@@ -315,6 +340,8 @@ test('Analysis reads the latest draft even when invoked through an older callbac
   const { context, analyses, patches } = actions();
   context.currentDeal.current = context.activeDeal = { ...sample, notes: 'Latest manual wording' };
   const pending = context.handleAnalyzeDeal();
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(analyses.length,1);
   assert.equal(analyses[0].deal.notes, 'Latest manual wording');
   analyses[0].resolve({ result: { arv: 700000 } });
   await pending;

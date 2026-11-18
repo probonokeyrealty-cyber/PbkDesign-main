@@ -59,7 +59,117 @@ test('provider failures preserve old snapshots, timestamp, reviewed comps and ot
 test('concurrent same-property requests dedupe reads while saving each exact lead', async () => {
   const s = setup();
   await Promise.all(['one', 'two'].map(leadId => s.enrich({ address, leadId, expectedPropertyAddress })));
-  assert.equal(s.reads(), 1); assert.deepEqual(s.saves.sort(), ['one', 'two']);
+  assert.equal(s.reads(), 2); assert.deepEqual(s.saves.sort(), ['one', 'two']);
+});
+
+const compAddress = '456 Sample Avenue, Example, CA 90210';
+const compPhoto = 'https://ap.rdcpix.com/comp-front.jpg';
+const captured = '2026-11-02T00:00:00Z';
+const cachedListing = (boundAddress = compAddress) => ({ cache: { hit: true }, propertyData: { address: boundAddress, source: 'apify-for-sale', data: {
+  capturedAt: captured, photoUrls: [compPhoto, compPhoto, 'javascript:bad', 'https://example.invalid/photo.jpg'], sourceLinks: ['https://www.realtor.com/comp', 'https://evil.invalid/comp'],
+} } });
+
+test('explicit refresh attaches sanitized comp-owned cache evidence without subject photos', async () => {
+  const calls = [];
+  const s = setup({ listing: async params => { calls.push(params); return cachedListing(params.address); } });
+  const result = await s.enrich({ address });
+  const evidence = result.patch.analyzer.recordedSales.sales[0].photoEvidence;
+  assert.deepEqual(evidence, { source: 'apify-for-sale', address: compAddress, retrievedAt: captured, photoUrls: [compPhoto], sourceLinks: ['https://www.realtor.com/comp'] });
+  assert.deepEqual(calls.map(p => p.address), [address, compAddress]);
+  assert.ok(calls.every(p => p.queueBrowserResearch === false));
+});
+
+test('comp cache requires own exact address, trusted source and cache hit', async () => {
+  for (const response of [cachedListing(address), cachedListing('456 Sample Avenue, Elsewhere, CA 90210'),
+    { ...cachedListing(), cache: { hit: false } },
+    { ...cachedListing(), propertyData: { ...cachedListing().propertyData, source: 'manual' } },
+    { ...cachedListing(), propertyData: { ...cachedListing().propertyData, address: undefined } }]) {
+    const s = setup({ listing: async () => response });
+    const result = await s.enrich({ address });
+    assert.equal(result.patch.analyzer.recordedSales.sales[0].photoEvidence, undefined);
+  }
+});
+
+test('comp photos require actual cache capture time and use valid cache timestamp fallback', async () => {
+  for (const capturedAt of [undefined, 'invalid']) {
+    const response = cachedListing(); response.propertyData.data.capturedAt = capturedAt;
+    const s = setup({ listing: async () => response });
+    assert.equal((await s.enrich({ address })).patch.analyzer.recordedSales.sales[0].photoEvidence, undefined);
+    response.propertyData.updatedAt = captured;
+    assert.equal((await s.enrich({ address })).patch.analyzer.recordedSales.sales[0].photoEvidence.retrievedAt, captured);
+  }
+});
+
+test('reviewed selected comp outside current sales window can refresh photos within twenty reads', async () => {
+  const savedAddress = '999 Saved Avenue, Example, CA 90210'; const calls = [];
+  const rows = Array.from({ length: 25 }, (_, i) => ({ id: String(i), address: `${500 + i} Sample Avenue, Example, CA 90210`, price: 400000, soldDate: '2026-11-17' }));
+  let available = true;
+  const s = setup({ sales: async () => ({ status: 'matched', source: 'ATTOM', sales: rows }), listing: async p => { calls.push(p.address); return available ? cachedListing(p.address) : null; } });
+  const reviewed = { address: expectedPropertyAddress, review: 'operator-selected', selectedIds: ['saved'], retrievedAt: captured, sales: [{ id: 'saved', address: savedAddress, price: 123, soldDate: '2025-10-01' }] };
+  s.leads[1].analyzer.recordedSales = reviewed;
+  const first = await s.enrich({ address, leadId: 'two', expectedPropertyAddress });
+  assert.equal(first.patch.analyzer.recordedSales.sales[0].photoEvidence.address, savedAddress);
+  assert.equal(calls.length, 21); assert.equal(calls[1], savedAddress);
+  assert.equal(first.patch.analyzer.recordedSales.sales[0].price, 123);
+  assert.equal(first.patch.analyzer.recordedSales.retrievedAt, captured);
+  available = false;
+  const second = await s.enrich({ address, leadId: 'two', expectedPropertyAddress });
+  assert.deepEqual(second.patch.analyzer.recordedSales, first.patch.analyzer.recordedSales);
+});
+
+test('reviewed refresh improves matching photos while preserving saved selections, metrics and capture time', async () => {
+  const s = setup({ listing: async params => cachedListing(params.address) });
+  const reviewed = { address: expectedPropertyAddress, review: 'operator-selected', retrievedAt: captured, selectedIds: ['saved'], sales: [{ id: 'saved', address: compAddress, price: 123, soldDate: '2026-10-01' }, { id: 'absent', address: '789 Other Street, Example, CA 90210', price: 456 }] };
+  const manual = { A: { address: 'Manual comp', price: 999 } };
+  s.leads[1].analyzer.recordedSales = reviewed;
+  s.leads[1].deal.comps = manual;
+  const result = await s.enrich({ address, leadId: 'two', expectedPropertyAddress });
+  const saved = result.patch.analyzer.recordedSales;
+  assert.equal(saved.sales[0].photoEvidence.address, compAddress);
+  assert.deepEqual(saved, { ...reviewed, sales: [{ ...reviewed.sales[0], photoEvidence: saved.sales[0].photoEvidence }, reviewed.sales[1]] });
+  assert.deepEqual(result.patch.deal.comps, manual);
+});
+
+test('invalid sales elements cannot abort otherwise valid candidates', async () => {
+  const s = setup({ sales: async () => ({ status: 'matched', source: 'ATTOM', sales: [null, undefined, {}, { address: compAddress, price: 400000, soldDate: '2026-11-17' }] }) });
+  assert.equal((await s.enrich({ address })).patch.analyzer.recordedSales.sales.length, 1);
+});
+
+test('untrusted sales photos and previous subject context cannot supply comp evidence', async () => {
+  const untrusted = { source: 'apify-for-sale', address: compAddress, retrievedAt: captured, photoUrls: [compPhoto], sourceLinks: [] };
+  const s = setup({ sales: async () => ({ status: 'matched', source: 'ATTOM', sales: [{ id: 'comp', address: compAddress, price: 400000, soldDate: '2026-11-17', photoEvidence: untrusted }] }) });
+  s.leads[1].analyzer.recordedSales = { address: { ...expectedPropertyAddress, street: '999 Other Street' }, sales: [{ address: compAddress, photoEvidence: untrusted }] };
+  const result = await s.enrich({ address, leadId: 'two', expectedPropertyAddress });
+  assert.equal(result.patch.analyzer.recordedSales.sales[0].photoEvidence, undefined);
+});
+
+test('cache miss, throw, mismatch and empty evidence preserve same-comp photo capture only', async () => {
+  for (const response of [null, Error('offline'), cachedListing(address), { ...cachedListing(), propertyData: { ...cachedListing().propertyData, data: {} } }]) {
+    const s = setup({ listing: async () => { if (response instanceof Error) throw response; return response; } });
+    const previous = { source: 'apify-for-sale', address: compAddress, retrievedAt: captured, photoUrls: [compPhoto], sourceLinks: [] };
+    s.leads[1].analyzer.recordedSales = { address: expectedPropertyAddress, review: 'suggested-unreviewed', sales: [{ id: 'old-id', address: compAddress, photoEvidence: previous }] };
+    const result = await s.enrich({ address, leadId: 'two', expectedPropertyAddress });
+    assert.deepEqual(result.patch.analyzer.recordedSales.sales[0].photoEvidence, previous);
+    s.leads[1].analyzer.recordedSales.sales[0].photoEvidence.address = address;
+    assert.equal((await s.enrich({ address, leadId: 'two', expectedPropertyAddress })).patch.analyzer.recordedSales.sales[0].photoEvidence, undefined);
+  }
+});
+
+test('candidate cache reads are bounded to twenty, with limited concurrency and isolated failures', async () => {
+  let active = 0, peak = 0; const calls = [];
+  const rows = Array.from({ length: 25 }, (_, i) => ({ id: String(i), address: `${500 + i} Sample Avenue, Example, CA 90210`, price: 400000, soldDate: '2026-11-17' }));
+  const s = setup({ sales: async () => ({ status: 'matched', source: 'ATTOM', sales: rows }), listing: async params => {
+    if (params.address === address) return null;
+    calls.push(params.address); active++; peak = Math.max(peak, active);
+    await new Promise(r => setTimeout(r, 2)); active--;
+    if (params.address === rows[0].address) throw Error('offline');
+    return cachedListing(params.address);
+  } });
+  const result = await s.enrich({ address });
+  assert.equal(calls.length, 20); assert.ok(peak > 1 && peak <= 4);
+  assert.equal(result.patch.analyzer.recordedSales.sales.length, 20);
+  assert.equal(result.patch.analyzer.recordedSales.sales[0].photoEvidence, undefined);
+  assert.equal(result.patch.analyzer.recordedSales.sales[1].photoEvidence.address, rows[1].address);
 });
 
 test('empty analyzer aliases cannot erase occupied deal slots while adding suggestions', async () => {

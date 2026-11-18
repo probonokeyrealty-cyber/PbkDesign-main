@@ -2,11 +2,11 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router';
 import { AlertCircle, Loader2, RefreshCw } from 'lucide-react';
 import { patchLeadRequest, type AttomPreviewAddress, type RecentSalesResult } from '../../utils/runtimeBridge';
-import { selectedCompPatch } from '../../utils/leadComps.mjs';
+import { compDate, compNumber, reviewedCompIds, selectedCompPatch } from '../../utils/leadComps.mjs';
+import { CompComparison, compMoney, compMetric, compDistance } from './CompComparison';
 import { hasLookupAddress } from './AttomPropertyPreview';
 import '../../../styles/property-intelligence.css';
 
-const money = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 });
 const messages: Record<string, string> = {
   invalid_address: 'Complete the property address, city, state and ZIP to find sales.',
   invalid_radius: 'Choose a supported search radius.',
@@ -38,12 +38,12 @@ export function LeadComps({ address, leadId = '', savedSales, onRefresh, refresh
     scope.current = leadId + queryKey;
     setSelected([]); setSaveStatus(''); setSaving(false);
   }, [queryKey, leadId]);
-  useEffect(() => { setSelected([]); }, [savedSales]);
+  useEffect(() => { setSelected(reviewedCompIds(savedSales)); }, [savedSales]);
   useEffect(() => () => { scope.current = ''; }, []);
   const data = savedSales;
   const loading = refreshing;
   const rows = useMemo(() => [...(data?.sales || [])].sort((a, b) => sort === 'price'
-    ? b.price - a.price : sort === 'distance' ? a.distanceMiles - b.distanceMiles : b.soldDate.localeCompare(a.soldDate)), [data, sort]);
+    ? (compNumber(b.price) ?? -1) - (compNumber(a.price) ?? -1) : sort === 'distance' ? (compNumber(a.distanceMiles) ?? Infinity) - (compNumber(b.distanceMiles) ?? Infinity) : compDate(b.soldDate).localeCompare(compDate(a.soldDate))), [data, sort]);
   async function saveSelection() {
     if (!leadId || !data || saving || refreshing) return;
     const current = scope.current;
@@ -52,8 +52,12 @@ export function LeadComps({ address, leadId = '', savedSales, onRefresh, refresh
       const patch = selectedCompPatch(data, selected, address);
       const response = await patchLeadRequest(leadId, patch);
       if (response.ok === false) throw Error('The bridge did not save the selected comps.');
-      if (scope.current === current) await onSaved?.(leadId);
-      if (scope.current === current) setSaveStatus('Selected comps saved to this lead.');
+      if (scope.current === current) {
+        setSaveStatus('Selected comps saved to this lead.');
+        try { await onSaved?.(leadId); } catch {
+          if (scope.current === current) setSaveStatus('Selected comps saved. Reopen the lead to reload the saved view.');
+        }
+      }
     } catch (error) {
       if (scope.current === current) setSaveStatus(error instanceof Error ? error.message : 'Unable to save comps. Retry when the bridge is available.');
     } finally { onSavingChange?.(false); if (scope.current === current) setSaving(false); }
@@ -78,13 +82,14 @@ export function LeadComps({ address, leadId = '', savedSales, onRefresh, refresh
       : <>
         <p role="status">{rows.length ? `${rows.length} saved sales · Suggestions requiring review` : `No recorded sales within ${data.radiusMiles ?? radius} miles in the saved search window.`}</p>
         {data.radiusMiles !== radius && <p className="pbk-comps-source">Choose refresh to search the selected radius. The saved results remain visible until then.</p>}
+        <CompComparison sales={selected.flatMap(id => data.sales?.find(sale => sale.id === id) ?? [])} disabled={saving || refreshing} onRemove={id => { setSaveStatus(''); setSelected(ids => ids.filter(value => value !== id)); }} />
         {rows.length > 0 && <div className="pbk-comps-table-scroll"><table>
           <caption className="sr-only">Recent sales from {data.windowStart} to {data.windowEnd}</caption>
           <thead><tr><th scope="col">Property</th><th scope="col">Sold</th><th scope="col">Price</th><th scope="col">Distance</th><th scope="col">Beds / baths</th><th scope="col">Sq ft</th><th scope="col">$/sq ft</th></tr></thead>
-          <tbody>{rows.map(row => <tr key={row.id}><th scope="row">{leadId && <input type="checkbox" aria-label={`Select comp ${row.address}`} checked={selected.includes(row.id)} disabled={saving || (!selected.includes(row.id) && selected.length >= 3)} onChange={e => { setSaveStatus(''); setSelected(ids => e.target.checked ? [...ids, row.id] : ids.filter(id => id !== row.id)); }} />} {row.address}<small>{row.propertyType || 'Type not reported'}</small></th><td data-label="Sold">{row.soldDate}</td><td data-label="Price">{money.format(row.price)}</td><td data-label="Distance">{row.distanceMiles.toFixed(2)} mi</td><td data-label="Beds / baths">{row.beds ?? '-'} / {row.baths ?? '-'}</td><td data-label="Sq ft">{row.sqft?.toLocaleString() ?? '-'}</td><td data-label="$/sq ft">{row.pricePerSqft == null ? '-' : money.format(row.pricePerSqft)}</td></tr>)}</tbody>
+          <tbody>{rows.map(row => <tr key={row.id}><th scope="row">{leadId && <input type="checkbox" aria-label={`Select comp ${row.address}`} checked={selected.includes(row.id)} disabled={saving || (!selected.includes(row.id) && selected.length >= 3)} onChange={e => { setSaveStatus(''); setSelected(ids => e.target.checked ? [...ids, row.id] : ids.filter(id => id !== row.id)); }} />} {row.address}<small>{row.propertyType || 'Type not reported'}</small></th><td data-label="Sold">{compDate(row.soldDate) || 'Not reported'}</td><td data-label="Price">{compMoney(row.price)}</td><td data-label="Distance">{compDistance(row.distanceMiles)}</td><td data-label="Beds / baths">{compMetric(row.beds)} / {compMetric(row.baths)}</td><td data-label="Sq ft">{compMetric(row.sqft)}</td><td data-label="$/sq ft">{compMoney(row.pricePerSqft)}</td></tr>)}</tbody>
         </table></div>}
         {!rows.length && radius < 5 && <button type="button" className="pbk-btn pbk-btn-ghost pbk-btn-sm" onClick={() => setRadius(radius < 2 ? 2 : 5)}>Widen to {radius < 2 ? 2 : 5} miles</button>}
-        <p className="pbk-comps-source">{data.windowStart} - {data.windowEnd} · Retrieved {data.retrievedAt ? new Date(data.retrievedAt).toLocaleString() : 'just now'}{data.partial ? ' · Provider result window limited' : ''}</p>
+        <p className="pbk-comps-source">{data.windowStart} - {data.windowEnd} · Retrieved {data.retrievedAt && Number.isFinite(Date.parse(data.retrievedAt)) ? new Date(data.retrievedAt).toLocaleString() : 'time unavailable'}{data.partial ? ' · Provider result window limited' : ''}</p>
         {leadId && <div className="pbk-comps-selection">
           <span>{selected.length}/3 selected{selected.length ? ' · replaces saved comp set' : ''}</span>
           <button type="button" className="pbk-btn pbk-btn-primary pbk-btn-sm" disabled={!selected.length || saving} onClick={() => void saveSelection()}>{saving ? 'Saving...' : 'Save selected comps'}</button>

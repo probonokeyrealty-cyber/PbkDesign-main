@@ -10,9 +10,11 @@ const address = '24 Sample Oak Lane, Example City, CA 90210';
 const photos = ['front', 'yard', 'broken'].map(x => `https://ap.rdcpix.com/crm-fixture-${x}.jpg`);
 const captured = '2026-11-17T12:00:00Z';
 const sale = { id: 'sale-fixture', address: '86 Sample Cedar Drive, Example City, CA 90210', soldDate: '2026-11-12', price: 400000, distanceMiles: 0.5, beds: 3, baths: 2, sqft: 1600, pricePerSqft: 250, propertyType: 'Single family' };
+sale.photoEvidence = { source: 'apify-for-sale', address: sale.address, retrievedAt: captured, photoUrls: ['https://ap.rdcpix.com/comp-fixture-front.jpg'], sourceLinks: [] };
+const alternateSales = [2,3,4].map(n => ({...sale,id:`sale-${n}`,address:`${86+n} Sample Cedar Drive, Example City, CA 90210`,price:400000+n*10000,photoEvidence:n===2?{...sale.photoEvidence,address:sale.address}:undefined}));
 const lead = { id: 'crm-evidence-fixture', leadId: 'crm-evidence-fixture', seller: { name: 'Fixture Seller' },
   property: { address: structuredAddress.street, city: structuredAddress.city, state: structuredAddress.state, zip: structuredAddress.zip, askingPrice: 450000, beds: 3, baths: 2, sqft: 1800, yearBuilt: 1995 },
-  analyzer: { recordedSales: { provider: 'ATTOM', review: 'suggested', address: structuredAddress, retrievedAt: captured, windowStart: '2026-10-18', windowEnd: '2026-11-17', radiusMiles: 1, sales: [sale] } },
+  analyzer: { recordedSales: { provider: 'ATTOM', review: 'suggested', address: structuredAddress, retrievedAt: captured, windowStart: '2026-10-18', windowEnd: '2026-11-17', radiusMiles: 1, sales: [sale,...alternateSales] } },
   deal: {
     listingSnapshot: { source: 'apify-for-sale', address, retrievedAt: captured, askingPrice: 450000, photoUrls: photos, sourceLinks: ['https://www.realtor.com/realestateandhomes-detail/fixture'], facts: { beds: 3, baths: 2, sqft: 1800, year: 1995, dom: 12 } },
     propertyRecordSnapshot: { source: 'attom', address, retrievedAt: captured, facts: { address, apn: 'FIXTURE-24', propertyType: 'Single family', livingSqft: 1700, beds: 4, baths: 2, yearBuilt: 1995, lotSqft: 6000, taxAmount: 2500, taxYear: 2025, recordedSaleAmount: 250000, recordedSaleDate: '2020-01-01' } },
@@ -42,6 +44,7 @@ async function verify(engine, config, label) {
     await page.routeWebSocket('**/*', socket => socket.close());
     await page.route('**/*', async route => {
       const request = route.request(), url = new URL(request.url()), path = url.pathname;
+      if (url.href === sale.photoEvidence.photoUrls[0]) return route.fulfill({ contentType: 'image/svg+xml', body: '<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="800"><rect width="1200" height="800" fill="#253848"/></svg>' });
       if (photos.includes(url.href)) return url.href.includes('broken') ? route.abort() : route.fulfill({ contentType: 'image/svg+xml', body: `<svg xmlns="http://www.w3.org/2000/svg" width="${url.href.includes('front') ? 120 : 800}" height="480"><rect width="800" height="480" fill="#253848"/></svg>` });
       if (url.origin !== origin) return route.abort();
       if (request.isNavigationRequest() && path.startsWith('/leads/')) return route.fulfill({ contentType: 'text/html', body: readFileSync('dist/index.shell.html', 'utf8') });
@@ -61,7 +64,7 @@ async function verify(engine, config, label) {
           fixture.deal.listingSnapshot.retrievedAt = '2026-11-18T12:00:00Z';
           fixture.deal.propertyRecordSnapshot.facts.livingSqft = 1900;
           fixture.deal.propertyRecordSnapshot.retrievedAt = '2026-11-18T12:00:00Z';
-          fixture.analyzer.recordedSales = { ...fixture.analyzer.recordedSales, radiusMiles: body.radiusMiles, retrievedAt: '2026-11-18T12:00:00Z', sales: [{ ...sale, price: 410000 }] };
+          fixture.analyzer.recordedSales = { ...fixture.analyzer.recordedSales, radiusMiles: body.radiusMiles, retrievedAt: '2026-11-18T12:00:00Z', sales: [{ ...sale, price: 410000 },...alternateSales] };
         }
         // Only canonical full-lead reload contains authoritative new snapshots.
         return send({ ok: true, saved: true, leadId: fixture.id, address, patch: {},
@@ -77,6 +80,7 @@ async function verify(engine, config, label) {
         assert.deepEqual(body.expectedPropertyAddress, structuredAddress);
         assert.deepEqual(body.analyzer.recordedSales.selectedIds, [sale.id]);
         assert.equal(body.deal.comps.A.price, 410000);
+        assert.deepEqual(body.analyzer.recordedSales.sales[0].photoEvidence, sale.photoEvidence, 'Comp-specific photo evidence persists in the reviewed envelope');
         fixture.deal = { ...fixture.deal, ...body.deal };
         fixture.analyzer = { ...fixture.analyzer, ...body.analyzer };
         return send({ ok: true, lead: fixture });
@@ -135,12 +139,34 @@ async function verify(engine, config, label) {
     await assertSaved();
     fullReadCount = canonicalReads.length;
     await workspace.getByRole('checkbox', { name: 'Select comp ' + sale.address }).check();
+    const comparison = workspace.getByRole('region', { name: 'Selected comp comparison' });
+    await expect(comparison).toBeVisible();
+    await expect(comparison.getByText('$410,000', {exact:true})).toBeVisible();
+    await expect(comparison.getByText('1,600', {exact:true})).toBeVisible();
+    await expect(comparison.getByText('0.50 mi', {exact:true})).toBeVisible();
+    await expect(comparison.getByRole('img')).toHaveAttribute('src', sale.photoEvidence.photoUrls[0]);
+    await comparison.getByRole('button', {name:'View photos for '+sale.address}).click();
+    const photoViewer=page.getByRole('dialog',{name:'Property photos'});
+    await expect(photoViewer).toBeVisible();
+    await photoViewer.getByRole('button',{name:'Zoom in',exact:true}).click();
+    await expect(photoViewer.getByLabel('Zoom level')).toHaveText('125%');
+    await photoViewer.getByRole('button',{name:'Close photo viewer'}).click();
+    assert.equal(mutations.length, 1, 'Selecting and viewing a comp must not save or refresh');
+    for (const candidate of alternateSales.slice(0,2)) await workspace.getByRole('checkbox',{name:'Select comp '+candidate.address}).check();
+    await expect(comparison.locator('article')).toHaveCount(3);
+    await expect(workspace.getByRole('checkbox',{name:'Select comp '+alternateSales[2].address})).toBeDisabled();
+    await expect(comparison.getByRole('img')).toHaveCount(1);
+    await comparison.screenshot({path:`output/comp-comparison-${label}.png`});
+    for (const candidate of alternateSales.slice(0,2)) await workspace.getByRole('checkbox',{name:'Select comp '+candidate.address}).uncheck();
+    await noOverflow();
     await workspace.getByRole('button', { name: 'Save selected comps', exact: true }).click();
     await expect(workspace.getByText('Selected comps saved to this lead.', { exact: true })).toBeVisible();
     assert.ok(canonicalReads.length > fullReadCount, 'Reviewed comps reload canonical saved lead');
     assert.equal(fixture.analyzer.recordedSales.review, 'operator-selected');
     await page.reload(); await expect(workspace).toBeVisible(); await assertSaved();
     assert.equal(mutations.length, 2, 'Reloading evidence performs no enrichment or writes');
+    await expect(workspace.getByRole('checkbox', { name: 'Select comp ' + sale.address })).toBeChecked();
+    await expect(workspace.getByRole('region', { name: 'Selected comp comparison' }).getByRole('img')).toHaveAttribute('src', sale.photoEvidence.photoUrls[0]);
     mode = 'failure';
     const beforeFailure = structuredClone(fixture);
     await workspace.locator('.pbk-property-header').getByRole('button', { name: 'Refresh property intelligence', exact: true }).click();

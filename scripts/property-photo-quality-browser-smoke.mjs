@@ -48,6 +48,41 @@ async function verify(engine,config,label){const browser=await engine.launch();c
    await expect(viewer.getByRole('img',{name:'Property photo 1 of 4',exact:true})).toHaveAttribute('src',large(101));
    const fitArea=viewer.getByRole('region',{name:'Photo zoom area',exact:true});
    await expect.poll(()=>fitArea.evaluate(x=>x.scrollWidth<=x.clientWidth+1&&x.scrollHeight<=x.clientHeight+1)).toBe(true);
+   const gesture=async(dx,dy,{cancel=false,multi=false}={})=>{
+    await fitArea.evaluate((area,{dx,dy,cancel,multi})=>{
+     const b=area.getBoundingClientRect(),x=b.x+b.width/2,y=b.y+b.height/2;
+     const send=(type,id,px,py,primary=true)=>area.dispatchEvent(new PointerEvent(type,{bubbles:true,pointerType:'touch',pointerId:id,isPrimary:primary,clientX:px,clientY:py,button:0,buttons:type==='pointerup'?0:1}));
+     send('pointerdown',11,x,y);
+     if(multi)send('pointerdown',12,x+20,y,false);
+     send('pointermove',11,x+dx/2,y+dy/2);send('pointermove',11,x+dx,y+dy);
+     send(cancel?'pointercancel':'pointerup',11,x+dx,y+dy);
+     if(multi)send('pointerup',12,x+20,y,false);
+    },{dx,dy,cancel,multi});
+   };
+   let nativeSwipe;
+   if(process.argv.includes('--swipe')){
+    // Browser-native touch input proves touch-action routing; synthetic events
+    // below cover cancellation/multiple contacts consistently in both engines.
+    if(label==='narrow'){
+     const cdp=await page.context().newCDPSession(page);
+     await cdp.send('Emulation.setTouchEmulationEnabled',{enabled:true});
+     nativeSwipe=async(dx,dy)=>{
+      const b=await fitArea.boundingBox(),x=b.x+b.width/2,y=b.y+b.height/2;
+      await cdp.send('Input.dispatchTouchEvent',{type:'touchStart',touchPoints:[{x,y,id:1}]});
+      for(let step=1;step<=4;step++)await cdp.send('Input.dispatchTouchEvent',{type:'touchMove',touchPoints:[{x:x+dx*step/4,y:y+dy*step/4,id:1}]});
+      await cdp.send('Input.dispatchTouchEvent',{type:'touchEnd',touchPoints:[]});
+     };
+    }
+    const swipe=nativeSwipe??gesture;
+    await swipe(-100,0);await expect(viewer.getByRole('img',{name:'Property photo 2 of 4',exact:true})).toBeVisible();
+    await swipe(100,0);await expect(viewer.getByRole('img',{name:'Property photo 1 of 4',exact:true})).toBeVisible();
+    await swipe(100,0);await expect(viewer.getByRole('img',{name:'Property photo 4 of 4',exact:true})).toBeVisible();
+    await swipe(-100,0);await expect(viewer.getByRole('img',{name:'Property photo 1 of 4',exact:true})).toBeVisible();
+    for(const [dx,dy,options] of [[-30,0],[-100,95],[5,100],[-100,0,{cancel:true}],[-100,0,{multi:true}]]){
+     await gesture(dx,dy,options);await expect(viewer.getByRole('img',{name:'Property photo 1 of 4',exact:true})).toBeVisible();
+    }
+    if(nativeSwipe){await nativeSwipe(0,-100);await expect(viewer.getByRole('img',{name:'Property photo 1 of 4',exact:true})).toBeVisible();}
+   }
    await viewer.getByRole('button',{name:'Zoom in',exact:true}).click();
    await viewer.getByRole('button',{name:'Zoom in',exact:true}).click();
    await expect(viewer.getByLabel('Zoom level',{exact:true})).toHaveText('150%');
@@ -55,6 +90,12 @@ async function verify(engine,config,label){const browser=await engine.launch();c
    await expect.poll(()=>pan.evaluate(x=>x.scrollWidth>x.clientWidth)).toBe(true);
    await pan.evaluate(x=>{x.scrollLeft=30;x.scrollTop=30;});
    assert.ok(await pan.evaluate(x=>x.scrollLeft>0&&x.scrollTop>0));
+   if(process.argv.includes('--swipe')){
+    const before=await pan.evaluate(x=>x.scrollLeft);
+    await (nativeSwipe??gesture)(-100,0);
+    await expect(viewer.getByRole('img',{name:'Property photo 1 of 4',exact:true})).toBeVisible();
+    if(nativeSwipe)await expect.poll(()=>pan.evaluate(x=>x.scrollLeft)).toBeGreaterThan(before);
+   }
    if(label==='desktop'){
     const area=await pan.boundingBox(),before=await pan.evaluate(x=>x.scrollLeft);
     await page.mouse.move(area.x+area.width/2,area.y+area.height/2);await page.mouse.down();
@@ -90,6 +131,7 @@ async function verify(engine,config,label){const browser=await engine.launch();c
    await page.getByRole('button',{name:'Refresh',exact:true}).click();await trigger.click();
    await expect(viewer.getByRole('button',{name:'Previous photo',exact:true})).toBeDisabled();
    await expect(viewer.getByRole('button',{name:'Next photo',exact:true})).toBeDisabled();
+   if(process.argv.includes('--swipe')){await gesture(-100,0);await expect(viewer.getByRole('img',{name:'Property photo 1 of 1',exact:true})).toBeVisible();}
    await page.keyboard.press('Escape');fixture.deal.listingSnapshot.photoUrls=[];
    await page.getByRole('button',{name:'Refresh',exact:true}).click();await expect(trigger).toHaveCount(0);
    fixture.deal.listingSnapshot.photoUrls=[...photos];await page.getByRole('button',{name:'Refresh',exact:true}).click();

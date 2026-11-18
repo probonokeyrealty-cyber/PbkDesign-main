@@ -31,17 +31,20 @@ function ViewerContent({ photos, photo, imageSrc, preview, onSelect, onLoad, onE
   const viewport = useRef<HTMLDivElement>(null);
   const previousZoom = useRef(1);
   const drag = useRef<{ x: number; y: number; left: number; top: number } | null>(null);
+  const swipe = useRef<{ id: number; x: number; y: number } | null>(null);
   const index = Math.max(0, photos.indexOf(photo));
 
   useLayoutEffect(() => {
     setZoom(1);
     drag.current = null;
+    swipe.current = null;
     setDragging(false);
     previousZoom.current = 1;
     viewport.current?.scrollTo(0, 0);
   }, [photo]);
 
   useLayoutEffect(() => {
+    swipe.current = null;
     const area = viewport.current;
     if (area) {
       const ratio = zoom / previousZoom.current;
@@ -100,6 +103,12 @@ function ViewerContent({ photos, photo, imageSrc, preview, onSelect, onLoad, onE
           data-zoomed={zoom > 1}
           data-dragging={dragging}
           onPointerDown={(event) => {
+            if (event.pointerType === 'touch') {
+              swipe.current = zoom === 1 && photos.length > 1 && event.isPrimary
+                ? { id: event.pointerId, x: event.clientX, y: event.clientY }
+                : null;
+              return;
+            }
             if (zoom <= 1 || event.pointerType !== 'mouse' || event.button !== 0) return;
             event.preventDefault();
             drag.current = {
@@ -112,17 +121,33 @@ function ViewerContent({ photos, photo, imageSrc, preview, onSelect, onLoad, onE
             setDragging(true);
           }}
           onPointerMove={(event) => {
+            const gesture = swipe.current;
+            if (gesture && event.pointerId === gesture.id) {
+              const dx = Math.abs(event.clientX - gesture.x);
+              const dy = Math.abs(event.clientY - gesture.y);
+              // Once a touch becomes a vertical gesture, leave it to the browser.
+              if (dy > 12 && dy >= dx) swipe.current = null;
+            }
             if (!drag.current) return;
             event.currentTarget.scrollLeft = drag.current.left + drag.current.x - event.clientX;
             event.currentTarget.scrollTop = drag.current.top + drag.current.y - event.clientY;
           }}
           onPointerUp={(event) => {
+            const gesture = swipe.current;
+            swipe.current = null;
+            if (gesture && event.pointerId === gesture.id && zoom === 1) {
+              const dx = event.clientX - gesture.x;
+              const dy = event.clientY - gesture.y;
+              if (Math.abs(dx) >= 48 && Math.abs(dx) > Math.abs(dy) * 1.5)
+                move(dx < 0 ? 1 : -1);
+            }
             drag.current = null;
             setDragging(false);
             if (event.currentTarget.hasPointerCapture(event.pointerId))
               event.currentTarget.releasePointerCapture(event.pointerId);
           }}
           onPointerCancel={() => {
+            swipe.current = null;
             drag.current = null;
             setDragging(false);
           }}
@@ -195,8 +220,8 @@ function ViewerContent({ photos, photo, imageSrc, preview, onSelect, onLoad, onE
           </button>
         </div>
         <Dialog.Description>
-          Arrow keys change photos. + / − zoom, 0 fits the screen, Esc closes. Drag or scroll to pan
-          when zoomed.
+          Swipe left or right at 100% to change photos, or use the arrow keys. + / − zoom, 0 fits
+          the screen, Esc closes. Drag or scroll to pan when zoomed.
         </Dialog.Description>
         {preview && (
           <p className="pbk-property-evidence-note">

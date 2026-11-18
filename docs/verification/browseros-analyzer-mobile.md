@@ -49,6 +49,9 @@ new blank page and will not close an unverified native context. Cookie reads
 use the source tab's actual native
 context, including an already-open incognito QA tab. Only cookies applicable to
 the approved PBK hostname are copied, in memory; none are printed or exported.
+Host-only parent-domain cookies are excluded rather than treated as domain cookies.
+Partitioned cookies retain their top-level site and cross-site-ancestor flag in
+Playwright's cookie shape; CDP-only metadata is not passed through unchanged.
 
 If BrowserOS attachment fails before a page loads, that is an incomplete proof,
 not a passing test. Use a separate authorized Chrome QA session with local CDP

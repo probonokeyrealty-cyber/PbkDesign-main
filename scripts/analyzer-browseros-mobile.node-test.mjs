@@ -98,6 +98,7 @@ function cookieFixture(contextId, error = false) {
         if (error) throw Error('Read failed');
         return { cookies: [{ domain: 'pbkcenter.netlify.app', name: 'site', value: 'sample' },
           { domain: '.netlify.app', name: 'parent', value: 'sample' },
+          { domain: 'netlify.app', name: 'host-only-parent', value: 'sample' },
           { domain: 'notpbkcenter.netlify.app', name: 'foreign', value: 'sample' },
           { domain: 'example.com', name: 'foreign', value: 'sample' }] };
       }, detach: async () => detached.push('browser'),
@@ -118,6 +119,24 @@ test('default native cookie reads omit the context override and detach on failur
   await assert.rejects(() => runner.readSourceCookies(fixture.browser, fixture.source, base), /Read failed/);
   assert.deepEqual(fixture.calls[1], ['Storage.getCookies', {}]);
   assert.deepEqual(fixture.detached, ['page', 'browser']);
+});
+
+test('partitioned source cookies preserve their site and ancestor metadata in Playwright shape', async () => {
+  for (const hasCrossSiteAncestor of [false, true]) {
+    const fixture = cookieFixture('sample-partition');
+    fixture.browser.newBrowserCDPSession = async () => ({
+      send: async () => ({ cookies: [{ name: 'partitioned', value: 'sample', domain: 'pbkcenter.netlify.app',
+        path: '/', expires: -1, httpOnly: true, secure: true, sameSite: 'None', priority: 'Medium',
+        partitionKey: { topLevelSite: base, hasCrossSiteAncestor } }] }),
+      detach: async () => {},
+    });
+    const [cookie] = await runner.readSourceCookies(fixture.browser, fixture.source, base);
+    assert.equal(cookie.partitionKey, base, 'Playwright expects a string partition key');
+    assert.equal(cookie._crHasCrossSiteAncestor, hasCrossSiteAncestor);
+    assert.equal(cookie.priority, undefined, 'CDP-only fields should not leak into the Playwright cookie shape');
+    assert.equal(cookie.sameSite, 'None');
+    assert.equal(cookie.secure, true);
+  }
 });
 
 test('cookie reads reject a foreign source before touching its context', async () => {

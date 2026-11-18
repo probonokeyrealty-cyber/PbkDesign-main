@@ -151,7 +151,15 @@ export async function readSourceCookies(browser, source, base) {
     const { cookies } = await session.send('Storage.getCookies', contextId ? { browserContextId: contextId } : {});
     const hostname = new URL(base).hostname;
     return cookies.filter(cookie => hostname === cookie.domain.replace(/^\./, '')
-      || hostname.endsWith(cookie.domain.startsWith('.') ? cookie.domain : '.' + cookie.domain));
+      || (cookie.domain.startsWith('.') && hostname.endsWith(cookie.domain))).map(cookie => {
+      const { name, value, domain, path, expires, httpOnly, secure, sameSite } = cookie;
+      const result = { name, value, domain, path, expires, httpOnly, secure, sameSite: sameSite ?? 'Lax' };
+      if (cookie.partitionKey) {
+        result.partitionKey = cookie.partitionKey.topLevelSite;
+        result._crHasCrossSiteAncestor = cookie.partitionKey.hasCrossSiteAncestor;
+      }
+      return result;
+    });
   } finally { await session.detach(); }
 }
 

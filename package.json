@@ -176,6 +176,7 @@
     "test:property-photo-viewer": "node scripts/property-photo-quality-browser-smoke.mjs --viewer",
     "test:property-photo-swipe": "node scripts/property-photo-quality-browser-smoke.mjs --viewer --swipe",
     "test:property-photo-touch-zoom": "node scripts/property-photo-quality-browser-smoke.mjs --viewer --swipe --touch-zoom",
+    "test:property-photo-dismiss": "node scripts/property-photo-quality-browser-smoke.mjs --viewer --swipe --touch-zoom --dismiss",
     "test:lead-workspace-guidance-browser": "node ./scripts/lead-workspace-guidance-browser-smoke.mjs",
     "test:leads-design-browser": "node ./scripts/leads-design-browser-smoke.mjs",
     "test:batch-review": "node --experimental-strip-types --test ./scripts/batch-review-unit.mjs",

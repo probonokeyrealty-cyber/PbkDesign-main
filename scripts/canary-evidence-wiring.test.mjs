@@ -51,6 +51,7 @@ function harness(options = {}) {
     readBacklogReconciliation: async () => ({ verified: true, reconciliation: { counts: {} } }),
     collectBacklogReconciliation: () => { throw new Error('Maturity must not run reconciliation'); },
     readCallMemorySkipSummary: async () => ({ verified: true, launchQualified: false }),
+    readDeadLetterClosures: async () => ({ verified: false, counts: null, cases: [], result: 'closure_unavailable' }),
     getAgentLatencyPolicy: (input, config) => { policyCalls.push({ input, config }); return getAgentLatencyPolicy(input, config); },
     readCanaryEvidence: async (input) => {
       calls.push(input);
@@ -177,13 +178,13 @@ test('unapproved v2 policy is not replaced with a pilot or legacy policy', async
   assert.equal(result.ready, false);
 });
 
-test('approval, auth, delivery and dispatch code outside maturity remains byte-for-byte unchanged', () => {
+test('reviewed non-maturity bridge baseline retains its exact integration surface', () => {
   const unchanged = (source.slice(0, start) + source.slice(end))
     .replace("import { readCanaryEvidence } from './canary-evidence-reader.mjs';\n", '');
-  // Reviewed PR22 call-read integration; outside-builder baseline is canonical main 78b4706.
-  // Hash refresh review and old/new digests: docs/operations/2026-11-17-trusted-canary-validation.md.
+  // Task6 adds approval transport guards and founder closure routes outside this
+  // builder. Exact reviewed changes and old/new digests are in the Task6 report.
   assert.equal(createHash('sha256').update(unchanged).digest('hex'),
-    '6b2373b2587f84c64e4630ae2f5c89e08e6030dd03ceea8603467b87c44bd9e5');
+    '18c8b9635d0a308cfc55a09b9d741c6bae50feb9ac2ecf4dd7c5469e9b2a9268');
 });
 
 test('production distribution includes reader and protocol, never the fixture signer', () => {

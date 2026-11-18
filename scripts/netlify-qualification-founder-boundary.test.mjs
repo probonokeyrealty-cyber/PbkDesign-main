@@ -2,7 +2,9 @@ import assert from 'node:assert/strict';
 import { test } from '@jest/globals';
 import { createFetchProxyFixture, createProxyFixture } from './fixtures/netlify-proxy-qa.mjs';
 
-const founderPaths = ['/api/agents/controlled-qualification', '/api/admin/qualification/run', '/api/admin/operational-audit/run', '/api/admin/reconciliation/run'];
+const closureRoot = '/api/admin/reconciliation/dead-letters';
+const founderPaths = ['/api/agents/controlled-qualification', '/api/admin/qualification/run', '/api/admin/operational-audit/run', '/api/admin/reconciliation/run',
+  closureRoot, ...['preview', 'propose', 'propose-revocation', 'execute', 'apply'].map(action => `${closureRoot}/${'a'.repeat(64)}/${action}`)];
 const elevatedPermissions = {
   canDeleteLeads: true,
   canDeleteData: true,
@@ -46,7 +48,7 @@ for (const path of founderPaths) {
     }
   }
 
-  for (const target of [path, `${path}/`, `${path}?runId=fixture-run`, path.replaceAll('/', '%2F')]) {
+  for (const target of [path, `${path}/`, `${path}?runId=fixture-run`, path.replaceAll('/', '%2F'), path.replaceAll('/', '%252F')]) {
     test(`legacy proxy rejects elevated team delegation of normalized ${target}`, async () => {
       const f = fixture(elevatedPermissions, false);
       const response = await f.handler({
@@ -75,7 +77,8 @@ for (const path of founderPaths) {
   });
 }
 
-for (const path of ['/api/agents/controlled-qualification-history', '/api/admin/qualification/runs']) {
+for (const path of ['/api/agents/controlled-qualification-history', '/api/admin/qualification/runs',
+  '/api/admin/reconciliation/dead-letters-history', '/api/admin/reconciliation/dead-lettersfoo']) {
   test(`qualification boundary does not block adjacent route ${path}`, async () => {
     const f = fixture(elevatedPermissions);
     const response = await f.handler(new Request(`https://proxy-fixture.invalid${path}`, {

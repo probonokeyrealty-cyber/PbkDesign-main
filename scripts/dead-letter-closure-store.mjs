@@ -342,6 +342,35 @@ export async function verifyDeadLetterClosureReference(input) {
   } catch (e) { return failure(e); }
 }
 
+// Trusted proposal preparation only. Reuse the reader's bounded snapshot and
+// authenticated chain; never return raw originals, approvals, or ledger rows.
+export async function readDeadLetterClosureProposalContext(input) {
+  try {
+    const a = options(input, ['pool', 'secret', 'revision', 'recordRef', 'action', 'now']);
+    const now = a.now ?? Date.now(); authority(a, now);
+    need(hex(a.recordRef) && ['close_internal', 'revoke_internal'].includes(a.action));
+    return await transaction(a, fence(LIMITS.collectionMs), false, async c => {
+      const cases = await evidence(c, a, now);
+      const source = cases.find(s => s.recordRef === a.recordRef);
+      need(source, 'closure_original_missing');
+      const ledger = await history(c, a, cases, now);
+      const chain = ledger.chains.get(a.recordRef);
+      need(chain.valid, 'closure_predecessor_invalid');
+      need(ledger.rows.length < LIMITS.maxRecords, 'closure_history_overflow');
+      let manifest;
+      if (a.action === 'revoke_internal') {
+        need(chain.head?.action === 'close_internal', 'closure_predecessor_invalid');
+        manifest = chain.head.report.manifest;
+        need(manifest.originalBinding === source.originalBinding, 'closure_source_changed');
+      } else {
+        need(source.eligible, 'closure_source_changed'); manifest = source.manifest;
+      }
+      return { ok: true, verified: true, result: 'closure_proposal_context_verified',
+        manifest, predecessor: headRef(a, chain.head), ...GUARD };
+    });
+  } catch (e) { return failure(e); }
+}
+
 export async function executeDeadLetterClosure(input) {
   try {
     const a = options(input, ['pool', 'secret', 'revision', 'approvalId', 'now']);

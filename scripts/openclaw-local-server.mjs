@@ -12803,7 +12803,8 @@ function limitStateArrays(nextState) {
 }
 
 function updateDerivedStatus(nextState) {
-  nextState.calls = normalizeStaleLiveCalls(nextState.calls || []);
+  // Status reads must not rewrite stored call history or its lead context.
+  const calls = normalizeStaleLiveCalls(nextState.calls || []);
   const settings = nextState.settings && typeof nextState.settings === 'object' ? nextState.settings : {};
   const operatingMode = String(settings.operatingMode || settings.ui?.operatingMode || nextState.status.mode || 'approval').trim();
   nextState.status.mode = ['autopilot', 'approval', 'manual'].includes(operatingMode) ? operatingMode : 'approval';
@@ -12817,7 +12818,7 @@ function updateDerivedStatus(nextState) {
   nextState.status.systemAuditReports = (nextState.systemAuditReports || []).length;
   nextState.status.pendingApprovals = getPendingRuntimeApprovals(nextState.approvals).length;
   nextState.status.pendingAdminTasks = getPendingAdminTasks(nextState.adminTasks).length;
-  nextState.status.activeCalls = nextState.calls.filter((call) => isActiveLiveCall(call)).length;
+  nextState.status.activeCalls = calls.filter((call) => isActiveLiveCall(call)).length;
   nextState.status.appointmentsScheduled = nextState.appointments.filter((appointment) => ['scheduled', 'confirmed'].includes(String(appointment.status || '').toLowerCase())).length;
   nextState.status.pendingBookingRequests = nextState.appointments.filter((appointment) => ['requested', 'call-now', 'pending-confirmation'].includes(String(appointment.status || '').toLowerCase())).length;
   nextState.status.leadStageTransitionsToday = nextState.leadStageTransitions.filter((transition) => String(transition.createdAt || '').slice(0, 10) === isoNow().slice(0, 10)).length;
@@ -12904,7 +12905,7 @@ function updateDerivedStatus(nextState) {
   nextState.status.lastImportAt = nextState.leadImports[0]?.createdAt || null;
   nextState.status.lastAnalyzerAt = nextState.analyzerRuns[0]?.createdAt || null;
   nextState.status.lastPropertyCacheAt = getItemTimestamp((nextState.propertyCache || [])[0] || {}) || null;
-  nextState.status.lastCallAt = getItemTimestamp(nextState.calls[0] || {}) || null;
+  nextState.status.lastCallAt = getItemTimestamp(calls[0] || {}) || null;
   nextState.status.lastMessageAt = getItemTimestamp(nextState.messages[0] || {}) || null;
   nextState.status.lastAppointmentAt = getItemTimestamp(nextState.appointments[0] || {}) || null;
   nextState.status.lastLeadTransitionAt = getItemTimestamp(nextState.leadStageTransitions[0] || {}) || null;
@@ -49053,7 +49054,7 @@ function buildAgentStatusBundle() {
   const today = isoNow().slice(0, 10);
   const decisions = state.agentDecisions || [];
   const rexDecisions = state.rexDecisions || [];
-  const calls = state.calls || [];
+  const calls = normalizeStaleLiveCalls(state.calls || []);
   const callEmotions = state.callEmotions || [];
   const agents = (state.agents || buildDefaultAgentFleet()).map((agent) => {
     const agentId = normalizeAgentDebugId(agent.id || agent.name);
@@ -52670,7 +52671,7 @@ function buildNotificationSnapshot() {
       at: task.createdAt,
       unread: true,
     }));
-  const calls = (state.calls || []).slice(0, 5).map((call) => ({
+  const calls = (state.calls || []).slice(0, 5).map(normalizeStaleLiveCall).map((call) => ({
     id: call.id,
     type: 'call',
     title: `${call.status || 'Call'} - ${call.leadName || call.phone || 'Unknown lead'}`,
@@ -62617,7 +62618,7 @@ function buildStateSnapshot(options = {}) {
     analyzerRuns: list(state.analyzerRuns, 80),
     propertyCache: list(state.propertyCache || [], 120),
     dncEntries: list(state.dncEntries, 160),
-    calls: list(state.calls, 80),
+    calls: list(normalizeStaleLiveCalls(state.calls), 80),
     messages: list(state.messages, 120),
     messageCounts: getMessageCounts(),
     notifications: buildNotificationSnapshot(),
@@ -63637,8 +63638,9 @@ function getFounderMessageRecipient(message = {}) {
 function buildFounderWorkQueueSnapshot({ limit = 8 } = {}) {
   const safeLimit = Math.max(1, Math.min(24, Number(limit) || 8));
   const items = [];
+  const calls = normalizeStaleLiveCalls(state.calls || []);
 
-  (state.calls || [])
+  calls
     .filter(
       (call) =>
         isActiveLiveCall(call) ||
@@ -63807,7 +63809,7 @@ function buildFounderWorkQueueSnapshot({ limit = 8 } = {}) {
     summary: {
       approvals: getPendingRuntimeApprovals(state.approvals || []).length,
       adminTasks: getPendingAdminTasks(state.adminTasks || []).length,
-      activeCalls: (state.calls || []).filter((call) => isActiveLiveCall(call)).length,
+      activeCalls: calls.filter((call) => isActiveLiveCall(call)).length,
       failedMessages: (state.messages || []).filter((message) =>
         ['failed', 'delivery_failed', 'error'].includes(String(message.status || '').toLowerCase())
       ).length,
@@ -79757,7 +79759,7 @@ const server = createServer(async (request, response) => {
         targetMonthlyRevenue: url.searchParams.get('targetMonthlyRevenue') || url.searchParams.get('target_monthly_revenue') || undefined,
         revenueDays: url.searchParams.get('revenueDays') || url.searchParams.get('revenue_days') || 30,
       });
-      const allCalls = sortNewest(Array.isArray(state.calls) ? state.calls : []);
+      const allCalls = sortNewest(normalizeStaleLiveCalls(state.calls));
       json(response, 200, {
         ok: true,
         result: 'calls_summary',
@@ -79779,7 +79781,7 @@ const server = createServer(async (request, response) => {
     if (request.method === 'GET' && pathname === '/api/calls') {
       const limit = Math.max(1, Math.min(200, Number(url.searchParams.get('limit') || 80)));
       const offset = Math.max(0, Number(url.searchParams.get('offset') || 0));
-      const allCalls = sortNewest(Array.isArray(state.calls) ? state.calls : []);
+      const allCalls = sortNewest(normalizeStaleLiveCalls(state.calls));
       json(response, 200, {
         ok: true,
         result: 'live',

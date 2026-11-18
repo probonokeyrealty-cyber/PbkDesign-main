@@ -11,6 +11,7 @@ const GUARD = Object.freeze({ noContact: true, providerWritesBlocked: true, deli
 const SCHEMA = 'pbk-dead-letter-closure-reference-v1';
 const TABLE = 'public.pbk_dead_letter_closure_ledger';
 const SEQUENCE = 'public.pbk_dead_letter_closure_ledger_ordinal_seq';
+const BOUNDARY_SCHEMA = 'pbk-dead-letter-audit-boundary-v1';
 const REASONS = new Set(['closure_invalid_input', 'closure_unavailable', 'closure_timeout',
   'closure_installation_invalid', 'closure_source_unavailable', 'closure_history_overflow',
   'closure_original_missing', 'closure_approval_invalid', 'closure_approval_ambiguous',
@@ -50,6 +51,46 @@ function bounded(rows, reason = 'closure_history_overflow') {
 function iso(value) {
   need(typeof value === 'string' && /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/.test(value));
   need(Number.isFinite(Date.parse(value)) && new Date(Date.parse(value)).toISOString() === value); return value;
+}
+export function validateDeadLetterAuditBoundary(boundary, cutoff) {
+  try {
+    options(boundary, ['databaseCapturedAt', 'schemaVersion', 'serverObservedAt', 'snapshot']);
+    need(boundary && Object.getPrototypeOf(boundary) === Object.prototype
+      && same(Object.keys(boundary).sort(), ['databaseCapturedAt', 'schemaVersion', 'serverObservedAt', 'snapshot']));
+    need(boundary.schemaVersion === BOUNDARY_SCHEMA && typeof boundary.snapshot === 'string'
+      && Buffer.byteLength(boundary.snapshot) <= 8192 && /^\d{1,20}:\d{1,20}:(?:\d{1,20}(?:,\d{1,20})*)?$/.test(boundary.snapshot));
+    const [min, max, pending] = boundary.snapshot.split(':');
+    const lo = BigInt(min), hi = BigInt(max), xips = pending ? pending.split(',').map(BigInt) : [];
+    need(lo > 0n && lo <= hi && hi <= 18446744073709551615n
+      && xips.every((x, i) => x >= lo && x < hi && (i === 0 || xips[i - 1] < x)));
+    iso(boundary.databaseCapturedAt); iso(boundary.serverObservedAt); iso(cutoff);
+    need(boundary.databaseCapturedAt <= boundary.serverObservedAt && boundary.serverObservedAt <= cutoff);
+    return true;
+  } catch { return false; }
+}
+
+export async function captureDeadLetterAuditBoundary(input) {
+  let c;
+  try {
+    const a = options(input, ['pool', 'now']);
+    const clock = a.now ?? Date.now; need(typeof clock === 'function' && a.pool?.connect);
+    const started = clock(); need(Number.isSafeInteger(started) && started >= 0);
+    c = await connection(a.pool, fence(LIMITS.collectionMs));
+    await c.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
+    const { rows } = await c.query(`SELECT pg_current_snapshot()::text AS snapshot,
+      to_char(date_trunc('milliseconds',clock_timestamp()) AT TIME ZONE 'UTC',
+        'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS database_captured_at`);
+    need(rows.length === 1, 'closure_unavailable');
+    const observed = clock(); need(Number.isSafeInteger(observed) && observed >= 0);
+    const boundary = { schemaVersion: BOUNDARY_SCHEMA, snapshot: rows[0].snapshot,
+      databaseCapturedAt: rows[0].database_captured_at, serverObservedAt: new Date(observed).toISOString() };
+    need(validateDeadLetterAuditBoundary(boundary, boundary.serverObservedAt), 'closure_cutoff_changed');
+    need(boundary.databaseCapturedAt >= new Date(started).toISOString(), 'closure_cutoff_changed');
+    await c.query('ROLLBACK');
+    return { ok: true, verified: true, result: 'closure_boundary_captured', boundary, ...GUARD };
+  } catch (e) {
+    c?.destroy(); return { ...failure(e), boundary: null };
+  } finally { c?.release(); }
 }
 function fence(ms) { return { deadline: performance.now() + ms, abandoned: false }; }
 function remaining(f) {
@@ -236,18 +277,43 @@ async function readWithFence(a, f, now) {
   const cutoff = iso(reference?.cutoff ?? a.cutoff ?? new Date(now).toISOString());
   need(Date.parse(cutoff) <= now);
   const boundary = json(a, reference ? reference.boundary : a.boundary ?? null);
+  const auditBoundary = boundary?.schemaVersion === BOUNDARY_SCHEMA;
+  if (auditBoundary) need(validateDeadLetterAuditBoundary(boundary, cutoff), 'closure_cutoff_changed');
   if (reference && a.cutoff !== undefined) need(a.cutoff === cutoff, 'closure_reference_invalid');
   if (reference && a.boundary !== undefined) need(same(json(a, a.boundary), boundary), 'closure_reference_invalid');
   const readFence = { deadline: Math.min(f.deadline, performance.now() + LIMITS.collectionMs), abandoned: false };
   return transaction(a, readFence, false, async c => {
-    const cases = await evidence(c, a, now);
+    // Require both current freshness (notably skip TTL) and source/proof times at cutoff.
+    // Both collectors use this same read-only transaction and remaining query fence.
+    let cases = await evidence(c, a, now);
+    if (auditBoundary) {
+      const atCutoff = new Map((await evidence(c, a, Date.parse(cutoff))).map(s => [s.recordRef, s]));
+      cases = cases.map(s => s.eligible && atCutoff.get(s.recordRef)?.eligible
+        && same(s.manifest, atCutoff.get(s.recordRef).manifest) ? s : { ...s, eligible: false, manifest: null });
+    }
     const { rows, chains } = await history(c, a, cases, now);
     // Timestamp cutoffs are observations only, never a commit/snapshot visibility claim.
-    need(rows.every(r => typeof r.admitted_at === 'string'
+    if (!auditBoundary) need(rows.every(r => typeof r.admitted_at === 'string'
       && r.admitted_at <= `${cutoff.slice(0, 23)}000Z`), 'closure_cutoff_changed');
+    const heads = [...chains.values()].map(v => v.head).filter(Boolean);
+    let visible;
+    if (auditBoundary && heads.length) {
+      const checked = bounded((await c.query(`SELECT id,pg_visible_in_snapshot(insert_xid,$1::pg_snapshot) AS visible
+        FROM public.pbk_dead_letter_closure_ledger WHERE tenant_id='pbk' AND id=ANY($2::text[])
+        ORDER BY ordinal LIMIT 65`, [boundary.snapshot, heads.map(h => h.id)])).rows);
+      need(checked.length === heads.length && new Set(checked.map(r => r.id)).size === heads.length
+        && checked.every(r => heads.some(h => h.id === r.id) && typeof r.visible === 'boolean'), 'closure_cutoff_changed');
+      visible = new Set(checked.filter(r => r.visible).map(r => r.id));
+    }
     const current = await decisions(c, a, [...chains.values()].map(v => v.head).filter(Boolean));
     const statuses = cases.map(s => { const chain = chains.get(s.recordRef);
-      return caseStatus(a, s, chain, chain.head ? current.get(chain.head.approval_ref) : null); });
+      const status = caseStatus(a, s, chain, chain.head ? current.get(chain.head.approval_ref) : null);
+      if (auditBoundary && chain.head && (!visible.has(chain.head.id)
+        || chain.head.admitted_at > `${cutoff.slice(0, 23)}000Z`
+        || chain.head.report?.observedAt > cutoff || chain.head.report?.completedAt > cutoff)) {
+        status.status = 'invalidated'; status.reason = 'cutoff_ineligible';
+      }
+      return status; });
     const counts = { total: statuses.length, closedInternal: statuses.filter(s => s.status === 'closed_internal').length,
       open: statuses.filter(s => s.status === 'open').length, invalidated: statuses.filter(s => s.status === 'invalidated').length };
     const body = { schemaVersion: SCHEMA, tenantId: 'pbk', revision: a.revision, cutoff, boundary, counts, cases: statuses };
@@ -255,20 +321,22 @@ async function readWithFence(a, f, now) {
       need(same(prior, body), 'closure_reference_changed'); }
     const signed = { ...body, attestation: { version: SCHEMA, signature: bind(a, 'audit-reference', body) } };
     const result = { ok: true, verified: true, result: 'closure_summary_verified', counts, cases: statuses, reference: signed, ...GUARD };
-    json(a, result); return result;
+    json(a, result); need(Buffer.byteLength(canonicalJson(signed)) <= LIMITS.maxBytes, 'closure_reference_invalid'); return result;
   });
 }
 
 export async function readDeadLetterClosures(input) {
   try {
-    const a = options(input, ['pool', 'secret', 'revision', 'now', 'cutoff', 'reference', 'boundary']);
+    const a = options(input, ['pool', 'secret', 'revision', 'now', 'cutoff', 'reference', 'boundary', 'deadlineAt']);
     const now = a.now ?? Date.now(); authority(a, now);
-    return await readWithFence(a, fence(LIMITS.collectionMs), now);
+    const f = fence(LIMITS.collectionMs);
+    if (a.deadlineAt !== undefined) { need(Number.isFinite(a.deadlineAt)); f.deadline = Math.min(f.deadline, a.deadlineAt); }
+    return await readWithFence(a, f, now);
   } catch (e) { return failure(e); }
 }
 export async function verifyDeadLetterClosureReference(input) {
   try {
-    const a = options(input, ['pool', 'secret', 'revision', 'now', 'reference']);
+    const a = options(input, ['pool', 'secret', 'revision', 'now', 'reference', 'deadlineAt']);
     need(a.reference !== undefined, 'closure_reference_invalid');
     return await readDeadLetterClosures(a);
   } catch (e) { return failure(e); }

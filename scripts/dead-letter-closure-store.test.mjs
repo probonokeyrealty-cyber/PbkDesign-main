@@ -79,6 +79,99 @@ test('exact approved append and independent readback, native pg.Result, max:1 po
   const v = await reverify(r.reference); assert.equal(v.verified, true, JSON.stringify(v));
   assert(!log.some(s => /^\s*(UPDATE|DELETE|TRUNCATE)\b|provider_action_dispatches/.test(s)));
 });
+
+async function boundary() {
+  const r = await api('captureDeadLetterAuditBoundary')({ pool: pool() });
+  assert.equal(r.verified, true, JSON.stringify(r));
+  return r.boundary;
+}
+test('audit boundary captures a real bounded snapshot and database/server ordering', async () => {
+  const b = await boundary();
+  assert.match(b.snapshot, /^\d+:\d+:[\d,]*$/);
+  assert(Date.parse(b.databaseCapturedAt) <= Date.parse(b.serverObservedAt));
+  assert(log.some(s => s.includes('pg_current_snapshot()')));
+  assert(log.some(s => /READ ONLY/.test(s)));
+  guards(await api('captureDeadLetterAuditBoundary')({ pool: pool(), now: () => 0 }));
+  assert.equal((await api('captureDeadLetterAuditBoundary')({ pool: pool(), now: () => 0 })).verified, false);
+});
+test('post-cutoff commit denied despite earlier timestamp and no older-good fallback', async () => {
+  assert.equal((await execute()).verified, true);
+  const b = await boundary();
+  const first = await read({ boundary: b });
+  assert.equal(first.counts.closedInternal, 1, JSON.stringify(first));
+  hook = text => text.startsWith('SELECT id,pg_visible_in_snapshot')
+    ? { rows: [{ id: first.cases[0].head.id, visible: false }] } : undefined;
+  const r = await read({ boundary: b });
+  assert.equal(r.verified, true, JSON.stringify(r));
+  assert.equal(r.counts.closedInternal, 0);
+  assert.equal(r.counts.invalidated, 1);
+  assert.equal(r.cases[0].reason, 'cutoff_ineligible');
+});
+test('audit cutoff constrains current proof times as well as receipt xid', async () => {
+  assert.equal((await execute()).verified, true);
+  const b = await boundary();
+  const cutoff = new Date().toISOString();
+  await query("UPDATE call_embeddings SET updated_at=$1", [new Date(Date.parse(cutoff) + 1000).toISOString()]);
+  const r = await read({ boundary: b, cutoff, now: Date.parse(cutoff) + 2000 });
+  assert.equal(r.counts.closedInternal, 0, JSON.stringify(r));
+});
+test.each(['snapshot', 'overflow', 'clock', 'cutoff'])('audit boundary rejects %s tamper', async kind => {
+  const b = await boundary();
+  if (kind === 'snapshot') b.snapshot = 'not-a-snapshot';
+  if (kind === 'overflow') b.snapshot = '1:2:' + '1,'.repeat(5000);
+  if (kind === 'clock') b.databaseCapturedAt = new Date(Date.parse(b.serverObservedAt) + 1).toISOString();
+  const r = await read({ boundary: b, ...(kind === 'cutoff' ? { cutoff: '2020-01-01T00:00:00.000Z' } : {}) });
+  failure(r);
+});
+test('snapshot text is authenticated, unsupported capture/overflow fail closed without raw details', async () => {
+  const b = await boundary();
+  const r = await read({ boundary: b });
+  assert.equal(r.verified, true);
+  const changed = JSON.parse(JSON.stringify(r.reference));
+  changed.boundary.snapshot = '1:2:';
+  failure(await reverify(changed));
+  for (const mode of ['unsupported', 'overflow']) {
+    hook = text => {
+      if (!text.startsWith('SELECT pg_current_snapshot()')) return;
+      if (mode === 'unsupported') throw new Error('private unavailable snapshot SQL');
+      return { rows: [{ snapshot: '1:2:' + '1,'.repeat(5000), database_captured_at: b.databaseCapturedAt }] };
+    };
+    const unavailable = await api('captureDeadLetterAuditBoundary')({ pool: pool() });
+    assert.equal(unavailable.verified, false); assert.equal(unavailable.boundary, null); guards(unavailable);
+    assert(!JSON.stringify(unavailable).includes('private'));
+  }
+});
+test('boundary capture rejects server clock ahead of database capture, not just database ahead', async () => {
+  const r = await api('captureDeadLetterAuditBoundary')({ pool: pool(), now: () => Date.now() + 10000 });
+  assert.equal(r.verified, false);
+  assert.equal(r.boundary, null);
+});
+test('a visible signed receipt with completion after cutoff remains ineligible', async () => {
+  assert.equal((await execute()).verified, true);
+  const b = await boundary(); const cutoff = new Date().toISOString();
+  const ledger = JSON.parse(JSON.stringify(await rows()));
+  ledger[0].report.completedAt = new Date(Date.parse(cutoff) + 1000).toISOString();
+  ledger[0].report.attestation.signature = signClosureReceipt({ report: ledger[0].report, secret: authority.secret });
+  hook = text => text.startsWith('SELECT id,tenant_id,ordinal::text') ? { rows: ledger } : undefined;
+  const r = await read({ boundary: b, cutoff, now: Date.parse(cutoff) + 2000 });
+  assert.equal(r.verified, true, JSON.stringify(r));
+  assert.equal(r.counts.closedInternal, 0);
+});
+test('audit pool wrapper preserves native client errors during boundary capture', async () => {
+  const { createOperationalAuditPool, withOperationalAuditCollection } = await import('./operational-audit-store.mjs');
+  const raw = new EventEmitter(); let atSnapshot; let discarded = false;
+  const started = new Promise(resolve => { atSnapshot = resolve; });
+  raw.release = destroy => { discarded = destroy === true; };
+  raw.query = async ({ text }) => {
+    if (text.startsWith('SELECT pg_current_snapshot()')) { atSnapshot(); return new Promise(() => {}); }
+    return { rows: [] };
+  };
+  const p = withOperationalAuditCollection(createOperationalAuditPool({ connect: async () => raw }),
+    pool => api('captureDeadLetterAuditBoundary')({ pool }));
+  await started;
+  try { assert.doesNotThrow(() => raw.emit('error', new Error('private native client failure'))); }
+  finally { const r = await p; assert.equal(r.verified, false); assert(discarded); }
+});
 test.each(['pending', 'denied', 'missing', 'expired'])('%s canonical approval blocked', async status => {
   if (status === 'missing') await query('DELETE FROM approvals');
   else if (status !== 'expired') await query('UPDATE approvals SET status=$1', [status]);

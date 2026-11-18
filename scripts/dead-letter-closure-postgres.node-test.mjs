@@ -4,7 +4,8 @@ import pg from 'pg';
 import {
   validateClosureMigrationConfig, applyDeadLetterClosureMigration, verifyDeadLetterClosureInstallation,
 } from './dead-letter-closure-migration.mjs';
-import { executeDeadLetterClosure, readDeadLetterClosures, verifyDeadLetterClosureReference } from './dead-letter-closure-store.mjs';
+import { captureDeadLetterAuditBoundary, executeDeadLetterClosure, readDeadLetterClosures,
+  verifyDeadLetterClosureReference } from './dead-letter-closure-store.mjs';
 import { CLOSURE_SOURCE_FIXTURE_SQL, seedClosureSources, seedClosureApproval,
   closureTestAuthority, closureHead } from './fixtures/dead-letter-closure-store-fixture.mjs';
 
@@ -156,6 +157,39 @@ async function nativeStoreCoverage(t, config, query) {
       assert.equal((await verifyDeadLetterClosureReference({ pool, ...authority, reference: closed.reference })).verified, true);
       assert.deepEqual((await query('SELECT to_jsonb(d) AS row FROM public.event_dead_letters d')).rows, before);
       assert.deepEqual((await query('SELECT payload FROM public.provider_action_dispatches')).rows, [{ payload: { state: 'unknown' } }]);
+    });
+    await t.test('held transaction commits after audit snapshot despite earlier admission timestamp: no older-good fallback', async () => {
+      const before = await ledgerRows();
+      const next = await seedClosureApproval(query, authority,
+        { id: 'cutoff-held-close', predecessor: closureHead(authority, before.at(-1)) });
+      let atCommit, releaseCommit;
+      const held = new Promise(resolve => { atCommit = resolve; });
+      const resume = new Promise(resolve => { releaseCommit = resolve; });
+      const writer = wrappedPool(pool, async command => {
+        if (command.text === 'COMMIT') { atCommit(); await resume; }
+      });
+      const writing = executeDeadLetterClosure({ pool: writer, ...authority, approvalId: next.approvalId });
+      let captured, cutoff, written;
+      try {
+        await Promise.race([held, writing.then(r => { throw new Error(`Held transaction never reached commit: ${r.result}`); })]);
+        captured = await captureDeadLetterAuditBoundary({ pool: other });
+        assert.equal(captured.verified, true, JSON.stringify(captured));
+        cutoff = new Date().toISOString();
+      } finally { releaseCommit(); written = await writing; }
+      assert.equal(written.verified, true, JSON.stringify(written));
+      const after = await ledgerRows();
+      assert(after.at(-1).admitted_at <= `${cutoff.slice(0, 23)}000Z`, 'timestamp alone would incorrectly credit this close');
+      assert.deepEqual(after.slice(0, before.length), before);
+      const read = await readDeadLetterClosures({ pool: other, ...authority,
+        boundary: captured.boundary, cutoff });
+      assert.equal(read.verified, true, JSON.stringify(read));
+      assert.equal(read.counts.closedInternal, 0);
+      assert.equal(read.counts.invalidated, 1);
+      assert.equal(read.cases[0].head.id, after.at(-1).id, 'never select older visible close');
+      assert.equal(read.cases[0].reason, 'cutoff_ineligible');
+      assert.equal((await verifyDeadLetterClosureReference({ pool: other, ...authority, reference: read.reference })).verified, true);
+      assert.equal((await readDeadLetterClosures({ pool: other, ...authority })).counts.closedInternal, 1,
+        'current closure validity does not imply historical snapshot visibility');
     });
     await t.test('two-client source change after snapshot aborts admission without retry', async () => {
       const before = await ledgerRows();

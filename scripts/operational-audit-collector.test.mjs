@@ -14,7 +14,7 @@ const TABLES = ['activity_log', 'provider_action_dispatches', 'event_dead_letter
   'conversation_events', 'approvals', 'pbk_qa_audit', 'pbk_safety_audit', 'bridge_state',
   'lead_profiles', 'lead_imports', 'calls', 'contracts', 'unified_messages', 'pbk_memories',
   'pbk_knowledge', 'pbk_feedback', 'pbk_intent_events', 'pbk_local_commands', 'pbk_eval_runs',
-  'conversation_threads', 'conversation_thread_identities', 'communication_sender_identities'];
+  'conversation_threads', 'conversation_thread_identities', 'communication_sender_identities', 'pbk_dead_letter_closure_ledger'];
 let db;
 let module;
 let queries;
@@ -106,7 +106,7 @@ test('empty durable sources and healthy zero SLO/archive counters never establis
   const report = await collect({ runtime: { ...HEALTH, archiveCount: 0, sloCount: 0 } });
   for (const id of IDS.slice(0, 5)) {
     assert.equal(check(report, id).status, 'unverified', id);
-    assert.equal(check(report, id).reason, 'no_observations', id);
+    assert.equal(check(report, id).reason, id === 'dead_letters' ? 'source_unavailable' : 'no_observations', id);
     assert.equal(check(report, id).firstObservedAt, null);
     assert.equal(check(report, id).lastObservedAt, null);
   }
@@ -203,7 +203,8 @@ test('dead letters retain old PBK failures because the schema has no resolved fl
   await db.query(`INSERT INTO event_dead_letters(id,tenant_id,created_at) VALUES
     ('old','pbk','2026-01-01'),('other','other',$1)`, [END]);
   const result = check(await collect(), 'dead_letters');
-  assert.equal(result.status, 'failed');
+  assert.equal(result.status, 'unverified', 'unreadable closure summary denies credit');
+  assert.equal(result.counts.totalOriginals, 1);
   assert.equal(result.counts.outstanding, 1);
 });
 
@@ -263,7 +264,7 @@ test('unresolved old dead letters remain findings even with forged controlled la
   await db.query(`INSERT INTO event_dead_letters(id,source,created_at) VALUES
     ('old-forged','controlled-qualification',$1)`, [new Date(NOW - 2 * 86400000).toISOString()]);
   const result = check(await collect(), 'dead_letters');
-  assert.equal(result.status, 'failed');
+  assert.equal(result.status, 'unverified');
   assert.equal(result.counts.outstanding, 1);
   assert.equal(result.counts.excludedFixtures, 0);
 });
@@ -314,7 +315,7 @@ test('writes arriving after capture cutoff are excluded from the fixed window, n
   assert.equal(check(report, 'provider_dispatch').counts.observations, 1);
   assert.equal(check(report, 'provider_dispatch').counts.completed, 1);
   assert.equal(check(report, 'dead_letters').counts.observations, 0);
-  assert.equal(check(report, 'dead_letters').counts.outstanding, 0);
+  assert.equal(check(report, 'dead_letters').counts.outstanding, 1, 'every original remains in the v3 census');
   assert.equal(check(report, 'conversation_projection').counts.observations, 2);
   assert.equal(check(report, 'safety_qa').counts.observations, 1);
   assert.equal(check(report, 'safety_qa').counts.qaFailures, 0);
@@ -418,6 +419,21 @@ test('database security detects disabled RLS and PUBLIC, anon, authenticated and
   finally { await db.exec('ALTER TABLE public.activity_log ENABLE ROW LEVEL SECURITY'); }
 });
 
+test('security inventory retains all original 22 tables and the closure ledger as the 23rd guarded table', async () => {
+  const initial = check(await collect(), 'database_security');
+  assert.equal(initial.counts.requiredTables, 23); assert.equal(initial.counts.presentTables, 23);
+  for (const name of TABLES) {
+    await db.exec(`ALTER TABLE public.${name} DISABLE ROW LEVEL SECURITY`);
+    try {
+      const result = check(await collect(), 'database_security');
+      assert.equal(result.status, 'failed', name); assert.equal(result.counts.rlsDisabled, 1, name);
+    } finally { await db.exec(`ALTER TABLE public.${name} ENABLE ROW LEVEL SECURITY`); }
+  }
+  await db.exec('GRANT SELECT(id) ON public.pbk_dead_letter_closure_ledger TO authenticated');
+  try { assert.equal(check(await collect(), 'database_security').counts.publicRoleGrants, 1); }
+  finally { await db.exec('REVOKE SELECT(id) ON public.pbk_dead_letter_closure_ledger FROM authenticated'); }
+});
+
 test('health accepts only the exact internal booleans and approval mode; absent means unverified', async () => {
   assert.equal(check(await collect(), 'runtime_health').status, 'passed');
   for (const key of Object.keys(HEALTH).filter(key => key !== 'approvalMode')) {
@@ -456,7 +472,7 @@ test('query failures, unexpected rows and unsafe counts cannot leak payloads or 
 
 test('all output is an allowlisted aggregate shape, with safe integers and normalized times only', async () => {
   const report = await collect();
-  assert.deepEqual(Object.keys(report).sort(), ['checks', 'coverage', 'windowEnd', 'windowStart']);
+  assert.deepEqual(Object.keys(report).sort(), ['checks', 'closures', 'coverage', 'windowEnd', 'windowStart']);
   for (const item of report.checks) {
     assert.deepEqual(Object.keys(item).sort(), ['counts', 'firstObservedAt', 'id', 'lastObservedAt', 'reason', 'status']);
     assert.match(item.reason, /^[a-z_]+$/);
@@ -519,7 +535,7 @@ test('a working safety guard alone is not an unsafe execution finding', async ()
   assert.equal(result.counts.qaFailures, 0);
 });
 
-test('stalled aggregate and rollback are bounded and the poisoned connection is released', async () => {
+test('stalled aggregate destroys the connection without queuing rollback behind abandoned work', async () => {
   jest.useFakeTimers({ doNotFake: ['performance'] });
   let connects = 0;
   let rollbackAttempted = false;
@@ -539,7 +555,7 @@ test('stalled aggregate and rollback are bounded and the poisoned connection is 
     const report = await pending;
     assert.equal(check(report, 'runtime_archive').reason, 'query_failed');
     assert.equal(report.checks.length, 8);
-    assert(rollbackAttempted);
+    assert.equal(rollbackAttempted, false);
     assert(destroyed);
     assert.equal(connects, 6);
   } finally { jest.useRealTimers(); }
@@ -563,5 +579,30 @@ test('checkout deadlines retain all checks and release clients which arrive afte
     deliver({ release(destroy) { lateReleased = destroy === true; } });
     await jest.advanceTimersByTimeAsync(0);
     assert(lateReleased);
+  } finally { jest.useRealTimers(); }
+});
+
+test('sampler and closure work share one 15s collection fence; late source continuation cannot query', async () => {
+  jest.useFakeTimers({ doNotFake: ['performance'] });
+  let continueSample, lateQueries = 0, destroyed = 0;
+  try {
+    const raw = { connect: async () => ({ query: async () => { lateQueries++; return { rows: [] }; },
+      release(value) { destroyed += Number(value === true); } }) };
+    const { createOperationalAuditPool } = await import('./operational-audit-store.mjs');
+    const pool = createOperationalAuditPool(raw);
+    const sampler = { status: () => ({ cutoff: null }), async sample() {
+      const client = await pool.connect();
+      await new Promise(resolve => { continueSample = resolve; });
+      try { await client.query('SELECT 1'); } catch { /* Child fence must reject before native SQL. */ }
+      finally { client.release(false); }
+      return { verified: false };
+    } };
+    const pending = collect({ pool, sampler });
+    const settled = pending.then(() => 'returned', () => 'aborted');
+    await jest.advanceTimersByTimeAsync(15001);
+    assert.equal(await Promise.race([settled, Promise.resolve('still_running')]), 'aborted');
+    continueSample(); await jest.advanceTimersByTimeAsync(0);
+    assert.equal(lateQueries, 0);
+    assert.equal(destroyed, 1);
   } finally { jest.useRealTimers(); }
 });

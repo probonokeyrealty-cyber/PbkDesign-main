@@ -308,6 +308,11 @@ The accidentally tracked scratch report was untracked, and only this plan's
 ignored scratch directory is eligible for cleanup. Existing user output and
 operational receipts remain untouched.
 
+The final automated scratch-cleanup command was rejected by execution policy
+before running. The ignored plan scratch directory and its review reports are
+therefore left intact; no alternate deletion path was attempted. This does not
+affect the committed implementation, test results or preserved user output.
+
 Branch `codex/trusted-canary-evidence` and its worktree are retained locally.
 No merge, push, pull request, deployment, production migration, producer, seller
 contact or delivery retry was performed. Unknown dispatch locks, authentication

@@ -12784,7 +12784,8 @@ function limitStateArrays(nextState) {
 }
 
 function updateDerivedStatus(nextState) {
-  nextState.calls = normalizeStaleLiveCalls(nextState.calls || []);
+  // Status reads must not rewrite stored call history or its lead context.
+  const calls = normalizeStaleLiveCalls(nextState.calls || []);
   const settings = nextState.settings && typeof nextState.settings === 'object' ? nextState.settings : {};
   const operatingMode = String(settings.operatingMode || settings.ui?.operatingMode || nextState.status.mode || 'approval').trim();
   nextState.status.mode = ['autopilot', 'approval', 'manual'].includes(operatingMode) ? operatingMode : 'approval';
@@ -12798,7 +12799,7 @@ function updateDerivedStatus(nextState) {
   nextState.status.systemAuditReports = (nextState.systemAuditReports || []).length;
   nextState.status.pendingApprovals = getPendingRuntimeApprovals(nextState.approvals).length;
   nextState.status.pendingAdminTasks = getPendingAdminTasks(nextState.adminTasks).length;
-  nextState.status.activeCalls = nextState.calls.filter((call) => isActiveLiveCall(call)).length;
+  nextState.status.activeCalls = calls.filter((call) => isActiveLiveCall(call)).length;
   nextState.status.appointmentsScheduled = nextState.appointments.filter((appointment) => ['scheduled', 'confirmed'].includes(String(appointment.status || '').toLowerCase())).length;
   nextState.status.pendingBookingRequests = nextState.appointments.filter((appointment) => ['requested', 'call-now', 'pending-confirmation'].includes(String(appointment.status || '').toLowerCase())).length;
   nextState.status.leadStageTransitionsToday = nextState.leadStageTransitions.filter((transition) => String(transition.createdAt || '').slice(0, 10) === isoNow().slice(0, 10)).length;
@@ -12885,7 +12886,7 @@ function updateDerivedStatus(nextState) {
   nextState.status.lastImportAt = nextState.leadImports[0]?.createdAt || null;
   nextState.status.lastAnalyzerAt = nextState.analyzerRuns[0]?.createdAt || null;
   nextState.status.lastPropertyCacheAt = getItemTimestamp((nextState.propertyCache || [])[0] || {}) || null;
-  nextState.status.lastCallAt = getItemTimestamp(nextState.calls[0] || {}) || null;
+  nextState.status.lastCallAt = getItemTimestamp(calls[0] || {}) || null;
   nextState.status.lastMessageAt = getItemTimestamp(nextState.messages[0] || {}) || null;
   nextState.status.lastAppointmentAt = getItemTimestamp(nextState.appointments[0] || {}) || null;
   nextState.status.lastLeadTransitionAt = getItemTimestamp(nextState.leadStageTransitions[0] || {}) || null;
@@ -52651,7 +52652,7 @@ function buildNotificationSnapshot() {
       at: task.createdAt,
       unread: true,
     }));
-  const calls = (state.calls || []).slice(0, 5).map((call) => ({
+  const calls = (state.calls || []).slice(0, 5).map(normalizeStaleLiveCall).map((call) => ({
     id: call.id,
     type: 'call',
     title: `${call.status || 'Call'} - ${call.leadName || call.phone || 'Unknown lead'}`,
@@ -62598,7 +62599,7 @@ function buildStateSnapshot(options = {}) {
     analyzerRuns: list(state.analyzerRuns, 80),
     propertyCache: list(state.propertyCache || [], 120),
     dncEntries: list(state.dncEntries, 160),
-    calls: list(state.calls, 80),
+    calls: list(normalizeStaleLiveCalls(state.calls), 80),
     messages: list(state.messages, 120),
     messageCounts: getMessageCounts(),
     notifications: buildNotificationSnapshot(),

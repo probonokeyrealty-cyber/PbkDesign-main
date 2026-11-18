@@ -4,6 +4,66 @@ import { EventEmitter, once } from 'node:events';
 import { jest, test } from '@jest/globals';
 import * as chat from './ava-chat-events.mjs';
 
+async function withDeadline(work, label, milliseconds = 2000) {
+  let timer;
+  try {
+    return await Promise.race([work, new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error(`Timed out waiting for ${label}`)), milliseconds);
+    })]);
+  } finally { clearTimeout(timer); }
+}
+
+test('disconnect waits time out and release their timer when the server never acknowledges', async () => {
+  jest.useFakeTimers();
+  try {
+    let outcome;
+    const wait = withDeadline(new Promise(() => {}), 'server disconnect', 2000)
+      .then(() => { outcome = 'resolved'; }, error => { outcome = error.message; });
+    await jest.advanceTimersByTimeAsync(2000);
+    assert.equal(outcome, 'Timed out waiting for server disconnect');
+    await wait;
+    assert.equal(jest.getTimerCount(), 0);
+    assert.equal(await withDeadline(Promise.resolve('acknowledged'), 'server disconnect'), 'acknowledged');
+    await assert.rejects(withDeadline(Promise.reject(new Error('sample failure')), 'server disconnect'), /sample failure/);
+    assert.equal(jest.getTimerCount(), 0);
+  } finally { jest.useRealTimers(); }
+});
+
+async function readUntil(reader, expected) {
+  let text = '';
+  while (!text.includes(expected)) {
+    const { done, value } = await reader.read();
+    assert.equal(done, false, `Stream ended before receiving ${JSON.stringify(expected)}`);
+    text += new TextDecoder().decode(value);
+  }
+  return text;
+}
+
+test.each(['', 'event: status\ndata: {"phase":"thinking"}\n\nFirst safe'])
+('first-answer reader rejects premature EOF (%j)', async chunk => {
+  const reader = new ReadableStream({
+    start(controller) {
+      if (chunk) controller.enqueue(new TextEncoder().encode(chunk));
+      controller.close();
+    },
+  }).getReader();
+  let reads = 0;
+  const guardedReader = {
+    read() {
+      // Bound the old microtask spin without relying on a timer it would starve.
+      assert.ok(++reads <= (chunk ? 2 : 1), 'Reader retried after EOF');
+      return reader.read();
+    },
+  };
+  try {
+    await assert.rejects(readUntil(guardedReader, 'First safe words.'),
+      /Stream ended before.*First safe words\./);
+  } finally {
+    await reader.cancel();
+    reader.releaseLock();
+  }
+});
+
 test('quiet streams get one-second transport comments, respecting backpressure and disconnect', async () => {
   jest.useFakeTimers();
   const request = new EventEmitter();
@@ -61,11 +121,12 @@ test('the real HTTP chat stream flushes an answer before the final result', asyn
   await once(server, 'listening');
   let reader;
   try {
-    const response = await fetch(`http://127.0.0.1:${server.address().port}`, { method: 'POST', body: '{}' });
+    const response = await fetch(`http://127.0.0.1:${server.address().port}`, {
+      method: 'POST', body: '{}', signal: AbortSignal.timeout(2000),
+    });
     assert.match(response.headers.get('content-type'), /text\/event-stream/);
     reader = response.body.getReader();
-    let first = '';
-    while (!first.includes('First safe words.')) first += new TextDecoder().decode((await reader.read()).value);
+    const first = await readUntil(reader, 'First safe words.');
     assert.ok(!first.includes('event: done'));
     finish();
     let rest = '';
@@ -74,9 +135,13 @@ test('the real HTTP chat stream flushes an answer before the final result', asyn
     assert.match(rest, /The ending/);
   } finally {
     finish();
-    await reader?.cancel();
-    server.closeAllConnections();
-    await new Promise(resolve => server.close(resolve));
+    try {
+      await reader?.cancel();
+    } finally {
+      reader?.releaseLock();
+      server.closeAllConnections();
+      await new Promise(resolve => server.close(resolve));
+    }
   }
 });
 
@@ -92,14 +157,22 @@ test('disconnect aborts work and an exception never sends a successful completio
   }));
   server.listen(0, '127.0.0.1');
   await once(server, 'listening');
+  const controller = new AbortController();
+  let reader;
   try {
-    const response = await fetch(`http://127.0.0.1:${server.address().port}`, { method: 'POST', body: '{}' });
-    const reader = response.body.getReader();
-    await reader.read();
-    await reader.cancel();
-    await aborted;
+    const response = await fetch(`http://127.0.0.1:${server.address().port}`, {
+      method: 'POST', body: '{}', signal: AbortSignal.any([controller.signal, AbortSignal.timeout(2000)]),
+    });
+    reader = response.body.getReader();
+    await withDeadline(reader.read(), 'first stream chunk');
+    await withDeadline(reader.cancel(), 'reader cancellation');
+    await withDeadline(aborted, 'server disconnect');
   } finally {
-    server.closeAllConnections();
-    await new Promise(resolve => server.close(resolve));
+    controller.abort();
+    try { reader?.releaseLock(); }
+    finally {
+      server.closeAllConnections();
+      await new Promise(resolve => server.close(resolve));
+    }
   }
 });

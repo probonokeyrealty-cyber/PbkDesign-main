@@ -52,12 +52,13 @@ try {
           const photoUrls = [enrichments.length === 1 ? 'https://ap.rdcpix.com/fixture-front.jpg' : 'https://ap.rdcpix.com/fixture-refresh.jpg'];
           const listing = { cache: { hit: true }, propertyData: { source: 'apify-for-sale', data: { priceBasis: 'asking_price', askingPriceUsd: 450000, listingFacts: { beds: 3, sqft: 1800, year: 1995, dom: 12 }, photoUrls } } };
           const candidate = { id: 'fixture-sale-1', address: '46 Fixture Avenue, Example City, CA 90210', soldDate: '2026-07-01', price: 440000, distanceMiles: 0.3, beds: 4, baths: 2, sqft: 1700, pricePerSqft: 258.82, propertyType: 'Single family' };
-          const recordedSales = { provider: 'ATTOM', review:'suggested-unreviewed', address: {street:'42 Fixture Avenue',city:'Example City',state:'CA',zip:'90210'}, retrievedAt, radiusMiles: 1, sales: [candidate] };
+          const newCandidate={...candidate,id:'fixture-sale-2',address:'48 Fixture Avenue, Example City, CA 90210',price:460000};
+          const recordedSales = { provider: 'ATTOM', review:'suggested-unreviewed', address: {street:'42 Fixture Avenue',city:'Example City',state:'CA',zip:'90210'}, retrievedAt, radiusMiles: 1, sales: body.leadId?[candidate,newCandidate]:[candidate] };
           return route.fulfill({ json: { ok: true, address: full, records: { status: 'matched', profile }, listing,
-            sales: { status: 'found', sales: [candidate] }, saved: Boolean(body.leadId), ...(body.leadId ? { leadId: body.leadId } : {}),
+            sales: { status: 'matched', sales: recordedSales.sales }, saved: Boolean(body.leadId), ...(body.leadId ? { leadId: body.leadId } : {}),
             patch: { deal: { propertyRecordSnapshot: { source: 'attom', address: full, retrievedAt, facts: profile },
               listingSnapshot: { source: 'apify-for-sale', address: full, retrievedAt, askingPrice: 450000, photoUrls, sourceLinks: [], facts: { beds: 3, sqft: 1800, year: 1995, dom: 12 } },
-              comps: { A: { address: candidate.address, price: 440000, sqft: 1700, date: candidate.soldDate, suggested: true, reviewed: false, source: 'attom', sourceId: candidate.id } } }, analyzer: { recordedSales } } } });
+              comps: { A: { address: candidate.address, price: 440000, sqft: 1700, date: candidate.soldDate, review:'suggested-unreviewed', source: 'ATTOM' }, ...(body.leadId?{B:{address:newCandidate.address,price:newCandidate.price,date:newCandidate.soldDate,link:'',review:'suggested-unreviewed',source:'ATTOM'}}:{}) } }, analyzer: { recordedSales } } } });
         }
         if (url.pathname.startsWith('/api/property-data')) {
           unexpectedPropertyRequests.push({ path: url.pathname, method: req.method() });
@@ -149,11 +150,13 @@ try {
       sync = writes.filter(write => write.method === 'PATCH').at(-1);
       assert.deepEqual(sync.body.deal.listingSnapshot.photoUrls, ['https://ap.rdcpix.com/fixture-refresh.jpg']);
       assert.equal(sync.body.deal.comps.A.price, 499999);
+      assert.equal(sync.body.deal.comps.B.price,460000,'An edited A slot must not prevent B from filling and persisting');
       assert.equal(writes.filter(write => write.path === '/api/leads').length, 1, 'Repeated save reuses canonical lead');
       await page.reload();
       await expect(address).toHaveValue(full); await expect(beds).toHaveValue('7');
       await expect(page.getByRole('spinbutton', { name: 'Comp A sold price' })).toHaveValue('499999');
       assert.equal(enrichments.length, 2, 'Linked draft reload hydrates without provider requests');
+      await expect(page.getByRole('spinbutton', { name: 'Comp B sold price' })).toHaveValue('460000');
       await page.getByRole('button', { name: /^Analyze Deal/ }).click();
       await expect.poll(() => enrichments.length).toBe(3);
       assert.equal(enrichments[2].leadId, 'qa-address-save', 'Analyze gathers evidence for the captured linked lead before readiness checks');
@@ -168,6 +171,7 @@ try {
       await expect.poll(()=>writes.filter(write=>write.method==='PATCH').length).toBe(3);
       assert.deepEqual(writes.filter(write=>write.method==='PATCH').at(-1).body.expectedPropertyAddress,{street:'42 Fixture Avenue',city:'Example City',state:'CA',zip:'90210'});
       assert.equal(writes.filter(write=>write.method==='PATCH').at(-1).body.deal.recordedSales.review,'suggested-unreviewed');
+      assert.equal(writes.filter(write=>write.method==='PATCH').at(-1).body.deal.comps.B.price,460000,'Analyze must retain the auto-filled B slot in its final CRM patch');
       const beforeAddressChange = enrichments.length;
       await address.fill('99 Different Lane, Example City, CA 90210');
       await expect(page.getByRole('textbox', { name: 'Comp A address' })).toHaveValue('');

@@ -39,3 +39,12 @@ test('changing a linked property releases inherited subject facts and comps with
   assert.deepEqual(resetChangedProperty(blank,address),{});
   assert.deepEqual(resetChangedProperty({...blank,leadId:undefined},'New typing'),{});
 });
+test('protects a manually edited slot while filling other empty slots and preserving an ARV override', () => {
+  const deal={...blank,arv:600000,compManualSlots:['A'],comps:{A:{address:'Manual',price:499999},B:{address:'',price:0},C:{address:'',price:0}}};
+  const evidence={...response,patch:{deal:{comps:{A:{address:'Replacement',price:440000},B:{address:'New candidate',price:460000,date:'2026-11-01',link:''}}}}};
+  const next=mergeAnalyzerIntelligence(deal,evidence,new Set(['comps','arv']));
+  assert.equal(next.comps.A.price,499999);
+  assert.equal(next.comps.B.price,460000);
+  assert.deepEqual(next.compManualSlots,['A']);
+  assert.equal(next.arv,undefined);
+});

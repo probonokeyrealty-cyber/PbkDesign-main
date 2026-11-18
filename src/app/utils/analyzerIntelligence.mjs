@@ -50,17 +50,18 @@ export function mergeAnalyzerIntelligence(deal, response, protectedFields = new 
   }
   if (deal.type === 'land' && positive(records.lotSqft) && !deal.landLotSizeSqFt && !protectedFields.has('landLotSizeSqFt')) updates.landLotSizeSqFt=records.lotSqft;
   if (deal.type === 'land' && positive(records.lotAcres) && !deal.lotSize && !protectedFields.has('lotSize')) updates.lotSize=String(records.lotAcres);
-  if (!protectedFields.has('comps') && evidence.comps) {
+  if ((!protectedFields.has('comps') || Array.isArray(deal.compManualSlots)) && evidence.comps) {
     const comps = {...deal.comps};
+    const used = new Set(Object.values(comps).map(comp=>key(comp?.address)).filter(Boolean));
     let changed = false;
     for (const slot of ['A','B','C']) {
       const current = comps[slot] || {};
       const candidate = evidence.comps[slot];
-      if (!deal.compManualSlots?.includes(slot) && !current.address && !current.price && !current.date && !current.link && candidate?.address && positive(candidate.price)) {
-        comps[slot] = {...candidate}; changed = true;
+      if (!deal.compManualSlots?.includes(slot) && !current.address && !current.price && !current.date && !current.link && typeof candidate?.address === 'string' && key(candidate.address) && !used.has(key(candidate.address)) && positive(candidate.price)) {
+        comps[slot] = {...candidate}; used.add(key(candidate.address)); changed = true;
       }
     }
-    if (changed) { updates.comps = comps; updates.isAnalyzed=false; }
+    if (changed) { updates.comps = comps; updates.compManualSlots=[...(deal.compManualSlots || [])]; updates.isAnalyzed=false; }
   }
   return updates;
 }

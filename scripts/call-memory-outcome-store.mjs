@@ -1,5 +1,7 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
+import { types } from 'node:util';
 import { canonicalJson } from './skill-governance-store.mjs';
+import { closureBinding } from './dead-letter-closure-protocol.mjs';
 import { isExcludedEpisodicCall, selectBestEpisodicTranscript } from './ava-episodic-memory.mjs';
 
 /* Integration/provenance contract:
@@ -156,6 +158,32 @@ function verify(row, source, { secret, revision, now }) {
   const { attestation: _ignored, ...unsigned } = r;
   return canonicalJson(unsigned) === canonicalJson(unsignedReceipt(source, revision, r.executedAt))
     ? null : 'receipt_unverified';
+}
+
+/** Pure current-source adapter. A read authenticates an existing execution; it never records one. */
+export function verifyCallMemorySkipEvidence(input) {
+  const guard = { counts: null, noContact: true, providerWritesBlocked: true, deliveryRetries: false,
+    providerDeliveryVerified: false, launchQualified: false };
+  const denied = result => ({ ok: false, verified: false, result, ...guard });
+  try {
+    if (types.isProxy(input) || !plain(input)) return denied('invalid_input');
+    const descriptors = Object.getOwnPropertyDescriptors(input);
+    if (Reflect.ownKeys(descriptors).some(k => typeof k !== 'string'
+      || !descriptors[k].enumerable || !Object.hasOwn(descriptors[k], 'value'))) return denied('invalid_input');
+    const { original, calls, receipt, secret, revision, now } = input;
+    if (typeof secret !== 'string' || !secret.trim() || secret.length > 4096
+      || typeof revision !== 'string' || !/^[a-f0-9]{40}$/.test(revision) || !clock(now)) return denied('invalid_input');
+    // Reuse the protocol's descriptor-safe, depth/node/byte-bounded JSON validation.
+    closureBinding(secret, 'skip-evidence-input', { original, calls, receipt, revision, now });
+    if (!Array.isArray(calls) || calls.length > LIMIT || !calls.every(plain)) return denied('invalid_input');
+    const source = currentSource(original, calls, { secret, now });
+    const issue = verify(receipt, source, { secret, revision, now });
+    if (issue) return denied(issue);
+    return { ok: true, verified: true, result: 'call_memory_skip_verified', ...guard,
+      outcome: 'skipped_short_source', executedAt: receipt.report.executedAt,
+      artifactRef: closureBinding(secret, 'memory-skip-artifact-ref', receipt.id),
+      binding: closureBinding(secret, 'memory-skip-artifact', receipt) };
+  } catch (error) { return denied(reason(error)); }
 }
 
 async function withTransaction(pool, readOnly, action) {

@@ -143,6 +143,31 @@ test('genuine invocation writes a bounded signed source-bound receipt into exist
   assert.deepEqual(summary.issues, []);
 });
 
+test('pure skip adapter verifies genuine receipt without SQL and retains exact source/freshness checks', async () => {
+  await dead(); await call(); verified(await record());
+  const original = (await db.query('SELECT to_jsonb(d) AS row FROM event_dead_letters d')).rows[0].row;
+  const calls = (await db.query('SELECT to_jsonb(c) AS row FROM calls c')).rows.map(r => r.row);
+  const receipt = (await db.query(`SELECT to_jsonb(r) || jsonb_build_object('created_at_exact',
+    to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')) AS row FROM pbk_eval_runs r`)).rows[0].row;
+  const input = { original, calls, receipt, secret, revision, now: NOW };
+  const before = JSON.stringify(input);
+  const check = options => api('verifyCallMemorySkipEvidence')({ ...input, ...options });
+  const value = check();
+  assert.equal(value.verified, true);
+  assert.equal(value.executedAt, new Date(NOW).toISOString());
+  assert.match(value.binding, /^[a-f0-9]{64}$/);
+  assert.match(value.artifactRef, /^[a-f0-9]{64}$/);
+  for (const options of [
+    { now: NOW + DAY }, { now: NOW - 1 }, { revision: 'b'.repeat(40) },
+    { secret: 'different-test-material' }, { receipt: null },
+    { receipt: { ...receipt, created_at_exact: receipt.created_at_exact.replace('000Z', '001Z') } },
+    { calls: [{ ...calls[0], notes: 'Long canonical transcript. '.repeat(8) }] },
+    { original: { ...original, error: 'changed error' } },
+  ]) assert.equal(check(options).verified, false);
+  assert.equal(JSON.stringify(input), before);
+  assert(!/private|Please call/.test(JSON.stringify(value)));
+});
+
 test('historical 34/35/44-character rows never become skips just by being read', async () => {
   for (const size of [34, 35, 44]) await dead({ id: `dead-${size}`, eventId: `event-${size}`, callId: `call-${size}`, text: 'x'.repeat(size) });
   const value = await read();

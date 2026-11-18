@@ -14,6 +14,7 @@ type PreviewProps = {
   address: AttomPreviewAddress;
   saved: SavedFacts;
   mode: 'workspace' | 'draft';
+  snapshot?: { retrievedAt: string; facts: AttomPropertyFacts } | null;
 };
 type FactRow = {
   label: string;
@@ -79,13 +80,19 @@ function propertyTypeKey(value: string | null | undefined) {
 }
 
 export function AttomPropertyPreview(props: PreviewProps) {
-  return <PropertyLookup key={JSON.stringify(props.address)} {...props} />;
+  return <PropertyLookup key={JSON.stringify([props.address, props.snapshot])} {...props} />;
 }
 
-function PropertyLookup({ address, saved, mode }: PreviewProps) {
-  const [result, setResult] = useState<AttomPreviewResult | null>(null);
+function PropertyLookup({ address, saved, mode, snapshot }: PreviewProps) {
+  const [result, setResult] = useState<AttomPreviewResult | null>(
+    snapshot ? { status: 'matched', profile: snapshot.facts } : null
+  );
   const [loading, setLoading] = useState(false);
-  const [lookedUpAt, setLookedUpAt] = useState<Date | null>(null);
+  const [lookedUpAt, setLookedUpAt] = useState<Date | null>(
+    snapshot ? new Date(snapshot.retrievedAt) : null
+  );
+  const [savedSnapshot, setSavedSnapshot] = useState(Boolean(snapshot));
+  const [refreshFailed, setRefreshFailed] = useState(false);
   const [differencesOnly, setDifferencesOnly] = useState(false);
   const isDraft = mode === 'draft';
   const typedAddress = propertyAddressLabel(address);
@@ -94,13 +101,28 @@ function PropertyLookup({ address, saved, mode }: PreviewProps) {
   async function lookup() {
     if (loading || !completeAddress) return;
     setLoading(true);
-    setResult(null);
+    if (!snapshot) setResult(null);
+    setRefreshFailed(false);
     setDifferencesOnly(false);
     try {
-      setResult((await fetchAttomPropertyPreview(address)) || { status: 'unavailable' });
-      setLookedUpAt(new Date());
+      const next = (await fetchAttomPropertyPreview(address)) || { status: 'unavailable' };
+      if (next.status !== 'matched' && snapshot) {
+        setResult({ status: 'matched', profile: snapshot.facts });
+        setSavedSnapshot(true);
+        setLookedUpAt(new Date(snapshot.retrievedAt));
+        setRefreshFailed(true);
+      } else {
+        setResult(next);
+        setSavedSnapshot(false);
+        setLookedUpAt(new Date());
+      }
     } catch {
-      setResult({ status: 'unavailable' });
+      if (snapshot) {
+        setResult({ status: 'matched', profile: snapshot.facts });
+        setSavedSnapshot(true);
+        setLookedUpAt(new Date(snapshot.retrievedAt));
+        setRefreshFailed(true);
+      } else setResult({ status: 'unavailable' });
     } finally {
       setLoading(false);
     }
@@ -153,8 +175,15 @@ function PropertyLookup({ address, saved, mode }: PreviewProps) {
           <Database size={16} aria-hidden />
           <h3>{isDraft ? 'Address lookup preview' : 'ATTOM property records'}</h3>
         </div>
-        <span className="pbk-property-label">Read only</span>
+        <span className="pbk-property-label">
+          {savedSnapshot ? 'Saved ATTOM snapshot' : 'Read only'}
+        </span>
       </div>
+      {refreshFailed && (
+        <p className="pbk-property-evidence-note" role="status">
+          Refresh unavailable. Showing the saved ATTOM snapshot.
+        </p>
+      )}
       <div className="pbk-attom-layout" data-matched={Boolean(profile)}>
         <div className="pbk-attom-lookup">
           <div className="pbk-attom-lookup-top">

@@ -487,8 +487,8 @@ assert(
 );
 assert(
   pkg.scripts?.['test:analyzer-draft-storage'] ===
-    'node --test ./scripts/analyzer-storage.node-test.mjs ./scripts/analyzer-browseros-mobile.node-test.mjs',
-  'The Analyzer draft gate must run both isolated storage and BrowserOS safety tests without live access.'
+    'node --test ./scripts/analyzer-storage.node-test.mjs ./scripts/analyzer-browseros-mobile.node-test.mjs ./scripts/operator-session-browseros.node-test.mjs',
+  'The Analyzer draft gate must run isolated storage, Analyzer safety, and operator-session safety tests without live access.'
 );
 
 console.log('[deal-analyzer-modern-mobile-smoke] ok');

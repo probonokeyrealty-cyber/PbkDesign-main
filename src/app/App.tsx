@@ -242,7 +242,7 @@ export default function App({ engineOnly = false }: AppProps) {
           draftScope.current === getAnalyzerDraftIdentity()
       );
       if (mounted.current && version === draftWriteVersion.current && result === 'published') {
-        draftBaseline.current = readSharedAnalyzerDraft();
+        draftBaseline.current = readAnalyzerDraftBaseline({ requirePrivateBaseline: true });
         forceDraftPublication.current = false;
       }
       if (mounted.current && version === draftWriteVersion.current && result === 'conflict') {

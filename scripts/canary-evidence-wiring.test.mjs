@@ -181,10 +181,10 @@ test('unapproved v2 policy is not replaced with a pilot or legacy policy', async
 test('reviewed non-maturity bridge baseline retains its exact integration surface', () => {
   const unchanged = (source.slice(0, start) + source.slice(end))
     .replace("import { readCanaryEvidence } from './canary-evidence-reader.mjs';\n", '');
-  // Callback authorization parity changes only the approval boundary outside this
-  // builder. See docs/operations/2026-11-18-callback-authorization-parity.md.
+  // Combined callback/closure and main address/CRM integration baseline.
+  // See docs/operations/2026-11-18-pr35-conflict-resolution.md for both parents.
   assert.equal(createHash('sha256').update(unchanged).digest('hex'),
-    'b512d5e45f896beb77cd5383ab1219a047b70c11ba204c9ba23728134c145274');
+    '8f4c75d02168d6afe84a319c5e399d957d4b6498b08e4a83ed3ad26a17cc3ce1');
 });
 
 test('production distribution includes reader and protocol, never the fixture signer', () => {

@@ -98,6 +98,19 @@ test('Matching redacted and private copies establish a safe shared baseline', ()
   assert.equal(api.readAnalyzerDraftBaseline(), shared.get(api.ANALYZER_CURRENT_DEAL_KEY));
 });
 
+test('post-publication baseline requires readable private provenance, unlike initial hydration', () => {
+  const { api, shared, privateDraft, context } = runtime();
+  api.writeAnalyzerDeal(sample, ['notes']);
+  const key = api.ANALYZER_CURRENT_DEAL_KEY, own = shared.get(key);
+  assert.equal(api.readAnalyzerDraftBaseline({ requirePrivateBaseline: true }), own);
+  privateDraft.clear();
+  shared.set(key, JSON.stringify({ payload: { ...sample, beds: 8 } }));
+  assert.equal(api.readAnalyzerDraftBaseline(), shared.get(key), 'Initial hydration still accepts shared-only storage');
+  assert.equal(api.readAnalyzerDraftBaseline({ requirePrivateBaseline: true }), undefined);
+  context.sessionStorage.getItem = () => { throw Error('Sample private storage blocked'); };
+  assert.equal(api.readAnalyzerDraftBaseline({ requirePrivateBaseline: true }), undefined);
+});
+
 test('A changed shared draft does not become the base of a stale private draft', () => {
   const { api, shared } = runtime();
   api.writeAnalyzerDeal(sample, ['arv']);
@@ -201,7 +214,7 @@ function actions() {
   visit(ast);
   assert.equal(snippets.length, wanted.size);
   assert.ok(persistenceEffect);
-  const callbacks = [], published = [], navigations = [], patches = [], analyses = [];
+  const callbacks = [], published = [], navigations = [], patches = [], analyses = [], creates = [], statuses = [];
   const ref = current => ({ current });
   const context = vm.createContext({
     useCallback: action => action, useEffect: action => action(),
@@ -213,7 +226,10 @@ function actions() {
     getAnalyzeReadiness: () => ({ ready: true, successMessage: 'Ready' }),
     syncDealAnalysis: deal => new Promise((resolve, reject) => analyses.push({ deal, resolve, reject })),
     calculateVerdict: () => 'green', buildAgentDealContext: () => ({}),
-    currentDeal: ref(sample), activeSelectedPath: 'cash',
+    currentDeal: ref(sample), activeSelectedPath: 'cash', savePending: ref(false),
+    crypto: { randomUUID: () => 'fixture-create-key' },
+    createLeadRequest: body => new Promise(resolve => creates.push({ body, resolve })),
+    isApprovalQueuedResponse: response => response.result === 'queued_for_approval',
     writeAnalyzerSessionDeal() {}, readSharedAnalyzerDraft: () => 'newer-peer-draft',
     commitAnalyzerDraft: (deal, fields, expected, force, isCurrent) => new Promise((resolve, reject) => callbacks.push({
       run: () => {
@@ -225,7 +241,7 @@ function actions() {
     })),
     setDeal: next => { const deal = typeof next === 'function' ? next(context.activeDeal) : next;
       context.activeDeal = deal; context.currentDeal.current = deal; },
-    setAnalyzeStatus() {}, setActiveTab() {}, getPathLabel: () => 'Cash',
+    setAnalyzeStatus: value => statuses.push(value), setActiveTab() {}, getPathLabel: () => 'Cash',
     buildMergedDealState: (base, deal) => ({ ...base, ...deal }),
     upsertSavedDeal: deal => deal, appendSavedDealActivity() {},
     buildAnalyzerLeadPatch: deal => deal,
@@ -234,13 +250,98 @@ function actions() {
     CustomEvent: class { constructor(type) { this.type = type; } },
   });
   const transpile = code => ts.transpileModule(code, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
-  vm.runInContext(transpile(snippets.join('\n') + '\nObject.assign(globalThis, { handleCreateLeadFromAnalyzer, handleLoadSavedDeal, handleSaveDeal, handleAnalyzeDeal, clearDraft });'), context);
-  return { context, published, navigations, patches, analyses,
+  context.readAnalyzerDraftBaseline = () => 'newer-peer-draft';
+  vm.runInContext(transpile(snippets.join('\n') + '\nObject.assign(globalThis, { persistDraft, handleCreateLeadFromAnalyzer, handleLoadSavedDeal, handleSaveDeal, handleAnalyzeDeal, clearDraft });'), context);
+  return { context, published, navigations, patches, analyses, creates, statuses,
     effect: () => vm.runInContext(transpile(persistenceEffect), context),
     flush: async () => { while (callbacks.length) { callbacks.shift().run(); await new Promise(resolve => setImmediate(resolve)); } },
     reject: async () => { while (callbacks.length) { callbacks.shift().reject(new Error('Fixture lock timed out')); await new Promise(resolve => setImmediate(resolve)); } },
   };
 }
+
+test('a completed publication cannot adopt a peer pointer before its continuation runs', async () => {
+  const { context } = actions();
+  context.draftBaseline.current = 'original-baseline';
+  context.readSharedAnalyzerDraft = () => 'peer-published-pointer';
+  context.readAnalyzerDraftBaseline = () => undefined;
+  const publications = [];
+  context.commitAnalyzerDraft = async (deal, fields, expected) => {
+    if (!publications.length || expected === 'peer-published-pointer') {
+      publications.push(deal);
+      return 'published';
+    }
+    return 'conflict';
+  };
+  await context.persistDraft({ ...sample, beds: 7 });
+  const result = await context.persistDraft({ ...sample, beds: 9 });
+  assert.equal(result, 'conflict', 'Retaining an older deal must not authorize overwriting a peer');
+  assert.equal(publications.length, 1);
+  assert.equal(context.draftBaseline.current, undefined);
+});
+
+test('an uncontended publication retains its verified private-copy baseline', async () => {
+  const { context } = actions();
+  context.readAnalyzerDraftBaseline = () => 'own-published-pointer';
+  context.readSharedAnalyzerDraft = () => 'own-published-pointer';
+  context.commitAnalyzerDraft = async () => 'published';
+  assert.equal(await context.persistDraft(sample), 'published');
+  assert.equal(context.draftBaseline.current, 'own-published-pointer');
+});
+
+test('publication continuation with missing private storage cannot adopt a peer through the real reader', async () => {
+  const { context } = actions();
+  const { api, shared, privateDraft } = runtime();
+  api.writeAnalyzerDeal(sample, ['notes']);
+  const key = api.ANALYZER_CURRENT_DEAL_KEY;
+  context.draftBaseline.current = shared.get(key);
+  context.readSharedAnalyzerDraft = () => api.readSharedAnalyzerDraft();
+  context.readAnalyzerDraftBaseline = options => api.readAnalyzerDraftBaseline(options);
+  let publications = 0;
+  context.commitAnalyzerDraft = async (deal, fields, expected) => {
+    if (!publications) {
+      publications++;
+      api.writeAnalyzerDeal(deal, fields);
+      privateDraft.clear();
+      shared.set(key, JSON.stringify({ payload: { ...sample, beds: 8 } }));
+      return 'published';
+    }
+    if (expected !== shared.get(key)) return 'conflict';
+    publications++;
+    return 'published';
+  };
+  await context.persistDraft({ ...sample, beds: 7 });
+  assert.equal(await context.persistDraft({ ...sample, beds: 9 }), 'conflict');
+  assert.equal(publications, 1);
+  assert.equal(context.draftBaseline.current, undefined);
+  assert.equal(api.readAnalyzerDeal({}).beds, 8, 'Peer data remains untouched');
+});
+
+test('A cleared and reentered address cannot revive an earlier CRM creation', async () => {
+  const { context, flush, creates, patches } = actions();
+  context.activeDeal = context.currentDeal.current = { ...sample, leadId: undefined,
+    sellerName: 'Fixture Owner', sellerEmail: 'fixture@example.invalid' };
+  const pending = context.handleSaveDeal();
+  await flush();
+  assert.equal(creates.length, 1);
+  context.activeDeal = context.currentDeal.current = { ...context.currentDeal.current, crmCreateKey: undefined };
+  creates[0].resolve({ ok: true, lead: { leadId: 'earlier-fixture' } });
+  await pending;
+  assert.equal(patches.length, 0);
+  assert.equal(context.currentDeal.current.leadId, undefined);
+});
+
+test('A queued snapshot still reports approval and newly added unsaved fields', async () => {
+  const { context, flush, statuses } = actions();
+  context.patchLeadRequest = async () => {
+    context.currentDeal.current = { ...sample, sellerEmail: 'new-draft@example.invalid' };
+    return { ok: true, result: 'queued_for_approval' };
+  };
+  const pending = context.handleSaveDeal();
+  await flush();
+  await pending;
+  assert.match(statuses.at(-1), /queued approval/);
+  assert.match(statuses.at(-1), /Newer edits remain/);
+});
 
 for (const obsolete of ['unmounted', 'scope', 'edited', 'newer-analysis']) {
   test(`An ${obsolete} analysis cannot replace notes/comps or issue a lead PATCH`, async () => {

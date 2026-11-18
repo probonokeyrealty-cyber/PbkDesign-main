@@ -1999,9 +1999,11 @@ export function fetchAttomRecentSales(address: AttomPreviewAddress, radius = 1) 
     body: { ...address, radius }, keepalive: false });
 }
 
-export async function fetchApifyListingRequest(address: string) {
+export async function fetchApifyListingRequest(address: string, includeRecords = false) {
   const query = new URLSearchParams({ address });
+  if (includeRecords) query.set('includeRecords', 'true');
   return bridgeRequest<{
+    records?: AttomPreviewResult;
     cache?: { hit?: boolean };
     propertyData?: {
       source?: string;

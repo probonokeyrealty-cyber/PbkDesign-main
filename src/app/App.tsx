@@ -33,6 +33,7 @@ import {
 } from './utils/pbk';
 import {
   patchLeadRequest,
+  createLeadRequest,
   sendDealToAgent,
   sendSellerDocsRequest,
   syncDealAnalysis,
@@ -228,19 +229,31 @@ export default function App({ engineOnly = false }: AppProps) {
     // Keep the private copy immediately; shared writes may wait behind another tab.
     try {
       writeAnalyzerSessionDeal(next, fields, draftBaseline.current, true);
-      const result = await commitAnalyzerDraft(next, fields, draftBaseline.current,
-        force || forceDraftPublication.current, () => mounted.current && version === draftWriteVersion.current && draftScope.current === getAnalyzerDraftIdentity());
+      const result = await commitAnalyzerDraft(
+        next,
+        fields,
+        draftBaseline.current,
+        force || forceDraftPublication.current,
+        () =>
+          mounted.current &&
+          version === draftWriteVersion.current &&
+          draftScope.current === getAnalyzerDraftIdentity()
+      );
       if (mounted.current && version === draftWriteVersion.current && result === 'published') {
-        draftBaseline.current = readSharedAnalyzerDraft();
+        draftBaseline.current = readAnalyzerDraftBaseline({ requirePrivateBaseline: true });
         forceDraftPublication.current = false;
       }
       if (mounted.current && version === draftWriteVersion.current && result === 'conflict') {
-        setAnalyzeStatus('Another tab changed this draft. Your edits are kept in this tab. Review before saving.');
+        setAnalyzeStatus(
+          'Another tab changed this draft. Your edits are kept in this tab. Review before saving.'
+        );
       }
       return result;
     } catch {
       if (!mounted.current || version !== draftWriteVersion.current) return 'superseded';
-      setAnalyzeStatus('Shared draft coordination is unavailable. Your edits are kept in this tab.');
+      setAnalyzeStatus(
+        'Shared draft coordination is unavailable. Your edits are kept in this tab.'
+      );
       return 'unavailable';
     }
   }, []);
@@ -271,7 +284,10 @@ export default function App({ engineOnly = false }: AppProps) {
   useEffect(() => {
     mounted.current = true;
     const pendingWrites = draftWriteVersion;
-    return () => { mounted.current = false; pendingWrites.current++; };
+    return () => {
+      mounted.current = false;
+      pendingWrites.current++;
+    };
   }, []);
   const generatedDocuments = useMemo(
     () => buildDocumentSet(activeDeal, branding),
@@ -330,19 +346,22 @@ export default function App({ engineOnly = false }: AppProps) {
     return next;
   };
 
-  const mergeExternalDeal = useCallback((incoming: Partial<DealData>, persist = true, manualFields?: string[]) => {
-    analysisRequestVersion.current++;
-    draftWriteVersion.current++;
-    forceDraftPublication.current = false;
-    if (persist) draftBaseline.current = readSharedAnalyzerDraft();
-    if (manualFields) manualDraftFields.current = new Set(manualFields);
-    else if (incoming.leadId && incoming.leadId !== currentDeal.current.leadId) {
-      manualDraftFields.current = new Set();
-    }
-    publishDraft.current = persist;
-    cacheIncomingDraft.current = !persist;
-    setDeal((prev) => buildMergedDealState(prev, incoming));
-  }, []);
+  const mergeExternalDeal = useCallback(
+    (incoming: Partial<DealData>, persist = true, manualFields?: string[]) => {
+      analysisRequestVersion.current++;
+      draftWriteVersion.current++;
+      forceDraftPublication.current = false;
+      if (persist) draftBaseline.current = readSharedAnalyzerDraft();
+      if (manualFields) manualDraftFields.current = new Set(manualFields);
+      else if (incoming.leadId && incoming.leadId !== currentDeal.current.leadId) {
+        manualDraftFields.current = new Set();
+      }
+      publishDraft.current = persist;
+      cacheIncomingDraft.current = !persist;
+      setDeal((prev) => buildMergedDealState(prev, incoming));
+    },
+    []
+  );
 
   const isEditingAnalyzerField = useCallback(() => {
     const activeElement = document.activeElement;
@@ -352,7 +371,15 @@ export default function App({ engineOnly = false }: AppProps) {
   }, []);
 
   const applyBridgeState = useCallback(
-    (payload: { deal?: Partial<DealData>; activeTab?: AppTab | string; manualFields?: string[]; persistDraft?: boolean }, persist = true) => {
+    (
+      payload: {
+        deal?: Partial<DealData>;
+        activeTab?: AppTab | string;
+        manualFields?: string[];
+        persistDraft?: boolean;
+      },
+      persist = true
+    ) => {
       if (!payload || typeof payload !== 'object') return;
       const isEditing = isEditingAnalyzerField();
       const publish = payload.persistDraft ?? persist;
@@ -399,7 +426,12 @@ export default function App({ engineOnly = false }: AppProps) {
   useEffect(() => {
     if (draftScope.current !== getAnalyzerDraftIdentity()) return;
     if (publishDraft.current) void persistDraft(activeDeal);
-    else if (cacheIncomingDraft.current) writeAnalyzerSessionDeal(activeDeal, [...(manualDraftFields.current || [])], draftBaseline.current);
+    else if (cacheIncomingDraft.current)
+      writeAnalyzerSessionDeal(
+        activeDeal,
+        [...(manualDraftFields.current || [])],
+        draftBaseline.current
+      );
   }, [activeDeal, persistDraft]);
 
   useEffect(() => {
@@ -433,13 +465,20 @@ export default function App({ engineOnly = false }: AppProps) {
       if (event.key !== ANALYZER_CURRENT_DEAL_KEY || !event.newValue) return;
 
       try {
-        const incoming = decodeAnalyzerStoragePayload<Partial<DealData> | null>(event.newValue, null);
+        const incoming = decodeAnalyzerStoragePayload<Partial<DealData> | null>(
+          event.newValue,
+          null
+        );
         const current = currentDeal.current;
         if (!incoming || incoming.leadId !== current.leadId) return;
         if (!current.leadId && incoming.address !== current.address) return;
-        if (publishDraft.current || draftBaseline.current === undefined || isEditingAnalyzerField()) return;
+        if (publishDraft.current || draftBaseline.current === undefined || isEditingAnalyzerField())
+          return;
         draftBaseline.current = event.newValue;
-        applyBridgeState({ deal: incoming, manualFields: analyzerDraftManualFields(event.newValue) || undefined }, false);
+        applyBridgeState(
+          { deal: incoming, manualFields: analyzerDraftManualFields(event.newValue) || undefined },
+          false
+        );
       } catch (error) {
         console.error('Failed to hydrate analyzer bridge state', error);
       }
@@ -571,7 +610,7 @@ export default function App({ engineOnly = false }: AppProps) {
     draftWriteVersion.current++;
     publishDraft.current = true;
     cacheIncomingDraft.current = false;
-    Object.keys(updates).forEach(key => manualDraftFields.current?.add(key));
+    Object.keys(updates).forEach((key) => manualDraftFields.current?.add(key));
     const shouldResetAnalysis = Object.keys(updates).some((key) =>
       ANALYSIS_IMPACT_FIELDS.includes(key as keyof DealData)
     );
@@ -606,7 +645,9 @@ export default function App({ engineOnly = false }: AppProps) {
     const deal = currentDeal.current;
     const snapshot = deal;
     const version = ++analysisRequestVersion.current;
-    const isCurrentAnalysis = () => mounted.current && analysisRequestVersion.current === version &&
+    const isCurrentAnalysis = () =>
+      mounted.current &&
+      analysisRequestVersion.current === version &&
       draftScope.current === getAnalyzerDraftIdentity();
     const readiness = getAnalyzeReadiness(deal);
 
@@ -643,7 +684,9 @@ export default function App({ engineOnly = false }: AppProps) {
         },
       };
       const analyzedDeal = { ...deal, ...analysisUpdates };
-      ['arv', 'mao60', 'maoRBP', 'offer', 'repairs', 'isAnalyzed'].forEach(key => manualDraftFields.current?.add(key));
+      ['arv', 'mao60', 'maoRBP', 'offer', 'repairs', 'isAnalyzed'].forEach((key) =>
+        manualDraftFields.current?.add(key)
+      );
       setDeal((prev) => {
         return {
           ...prev,
@@ -784,12 +827,20 @@ export default function App({ engineOnly = false }: AppProps) {
   };
 
   const clearDraft = async (status?: string) => {
-    if (draftScope.current !== getAnalyzerDraftIdentity()) return;
+    if (draftScope.current !== getAnalyzerDraftIdentity()) return false;
     analysisRequestVersion.current++;
     const version = ++draftWriteVersion.current;
     try {
-      const result = await commitAnalyzerDraft(null, [], draftBaseline.current, true,
-        () => mounted.current && version === draftWriteVersion.current && draftScope.current === getAnalyzerDraftIdentity());
+      const result = await commitAnalyzerDraft(
+        null,
+        [],
+        draftBaseline.current,
+        true,
+        () =>
+          mounted.current &&
+          version === draftWriteVersion.current &&
+          draftScope.current === getAnalyzerDraftIdentity()
+      );
       if (mounted.current && version === draftWriteVersion.current && result === 'cleared') {
         publishDraft.current = false;
         cacheIncomingDraft.current = false;
@@ -801,12 +852,14 @@ export default function App({ engineOnly = false }: AppProps) {
           setAnalyzeStatus(status);
           setActiveTab('analyzer');
         }
+        return true;
       }
     } catch {
       if (mounted.current && version === draftWriteVersion.current) {
         setAnalyzeStatus('Clear was not applied. Your existing draft has been kept.');
       }
     }
+    return false;
   };
 
   const handleReset = () => {
@@ -817,41 +870,133 @@ export default function App({ engineOnly = false }: AppProps) {
 
   const handleClearAnalyzer = () => {
     if (confirm('Clear the current analyzer deal? CRM saved deals and notes will stay intact.')) {
-      void clearDraft('Analyzer cleared. Start a new deal when ready.');
+      return clearDraft('Analyzer cleared. Start a new deal when ready.');
     }
+    return false;
   };
 
+  const savePending = useRef(false);
   const handleSaveDeal = async () => {
+    if (savePending.current) return;
+    savePending.current = true;
+    let savedLabel = '';
+    let operationIsCurrent = () => mounted.current;
     try {
-      const saved = upsertSavedDeal(activeDeal);
-      const publication = await persistDraft(activeDeal, true);
-      if (!mounted.current || publication === 'superseded') return;
+      const original = currentDeal.current;
+      const scope = draftScope.current;
+      let snapshot = { ...original };
+      let requiresCreateIdentity = false;
+      if (!snapshot.leadId && !snapshot.crmCreateKey) snapshot.crmCreateKey = crypto.randomUUID();
+      const inScope = () =>
+        mounted.current &&
+        scope === getAnalyzerDraftIdentity() &&
+        currentDeal.current.address === snapshot.address &&
+        (!requiresCreateIdentity || currentDeal.current.crmCreateKey === snapshot.crmCreateKey) &&
+        (original.leadId
+          ? currentDeal.current.leadId === original.leadId
+          : !currentDeal.current.leadId || currentDeal.current.leadId === snapshot.leadId);
+      operationIsCurrent = inScope;
+      const saved = upsertSavedDeal(snapshot);
+      savedLabel = saved.address;
+      const publication = await persistDraft(snapshot, true);
+      if (!inScope() || publication === 'superseded') return;
+      if (!snapshot.leadId)
+        setDeal((current) =>
+          current.address === snapshot.address
+            ? { ...current, crmCreateKey: snapshot.crmCreateKey }
+            : current
+        );
+
       window.dispatchEvent(new CustomEvent('pbk:deal-saved', { detail: saved }));
-      appendSavedDealActivity(activeDeal, {
-        type: 'note',
-        content: `Analyzer deal saved with path ${getPathLabel(activeSelectedPath)}.`,
-      });
-      if (!activeDeal.leadId) {
-        setAnalyzeStatus(`${saved.address}: Draft saved on this device. Create or open a lead to save it to the CRM.`);
-        return;
+      if (!snapshot.leadId) {
+        if (
+          !snapshot.sellerName?.trim() ||
+          (!snapshot.sellerPhone?.trim() && !snapshot.sellerEmail?.trim())
+        ) {
+          setAnalyzeStatus(
+            `${saved.address}: Saved locally. Add the seller name and a phone or email under CRM handoff, then Save Deal.`
+          );
+          return;
+        }
+        setAnalyzeStatus(`${saved.address}: Creating CRM lead...`);
+        requiresCreateIdentity = true;
+        const created = await createLeadRequest({
+          eventId: snapshot.crmCreateKey,
+          source: 'analyzer-save',
+          seller: {
+            name: snapshot.sellerName,
+            phone: snapshot.sellerPhone || '',
+            email: snapshot.sellerEmail || '',
+          },
+          property: {
+            address: snapshot.address,
+            propertyType: snapshot.type,
+            askingPrice: snapshot.price,
+            beds: snapshot.beds,
+            baths: snapshot.baths,
+            sqft: snapshot.sqft,
+            yearBuilt: snapshot.year,
+          },
+          selectedPath: snapshot.selectedPath,
+        });
+        const lead = (created.lead || created.leadImport || created) as Record<string, unknown>;
+        const leadId =
+          typeof lead.leadId === 'string'
+            ? lead.leadId
+            : typeof lead.id === 'string'
+              ? lead.id
+              : '';
+        if (created.ok === false || !leadId.trim())
+          throw new Error(
+            'Lead creation was not confirmed. Keep the local save and review CRM before retrying.'
+          );
+        snapshot = { ...snapshot, leadId: leadId.trim() };
+        upsertSavedDeal(snapshot);
+        if (!inScope()) return;
+        setDeal((current) =>
+          current.address === snapshot.address && current.crmCreateKey === snapshot.crmCreateKey
+            ? { ...current, leadId: snapshot.leadId }
+            : current
+        );
       }
+      if (!inScope()) return;
       setAnalyzeStatus(`${saved.address}: Saving lead...`);
-      const response = await patchLeadRequest(activeDeal.leadId, buildAnalyzerLeadPatch(activeDeal));
-      if (!mounted.current) return;
+      const response = await patchLeadRequest(snapshot.leadId!, buildAnalyzerLeadPatch(snapshot));
+      if (!inScope()) return;
       if (response.ok === false) throw new Error('The bridge did not save the lead.');
-      if (currentDeal.current === activeDeal) {
-        manualDraftFields.current = new Set();
-        await persistDraft(activeDeal);
-        if (!mounted.current || currentDeal.current !== activeDeal) return;
-        setAnalyzeStatus(`${saved.address}: Lead saved.`);
-      } else {
-        setAnalyzeStatus(`${saved.address}: Earlier snapshot saved. Newer edits remain in your draft.`);
-      }
-      window.dispatchEvent(new CustomEvent('pbk:lead-updated', { detail: { leadId: activeDeal.leadId } }));
+      const queued = isApprovalQueuedResponse(response);
+      appendSavedDealActivity(snapshot, {
+        type: 'note',
+        content: queued
+          ? 'CRM handoff queued for approval.'
+          : 'Analyzer snapshot saved to team CRM.',
+      });
+      const newerEdits = [
+        ...new Set([...Object.keys(snapshot), ...Object.keys(currentDeal.current)]),
+      ].some(
+        (key) =>
+          !['leadId', 'crmCreateKey'].includes(key) &&
+          JSON.stringify(currentDeal.current[key as keyof DealData]) !==
+            JSON.stringify(snapshot[key as keyof DealData])
+      );
+      setAnalyzeStatus(
+        queued
+          ? `${saved.address}: Saved locally. Ava queued approval for the CRM handoff.${newerEdits ? ' Newer edits remain in your draft.' : ''}`
+          : newerEdits
+            ? `${saved.address}: Earlier snapshot saved. Newer edits remain in your draft.`
+            : `${saved.address}: Lead saved.`
+      );
+      window.dispatchEvent(
+        new CustomEvent('pbk:lead-updated', { detail: { leadId: snapshot.leadId } })
+      );
     } catch (error) {
-      if (!mounted.current) return;
-      setAnalyzeStatus(`Lead not saved. Your local draft remains. ${error instanceof Error ? error.message : 'Try again.'}`);
+      if (!operationIsCurrent()) return;
+      setAnalyzeStatus(
+        `${savedLabel ? savedLabel + ': Saved locally. ' : ''}Lead not saved. Your local draft remains. CRM handoff pending. ${error instanceof Error ? error.message : 'Try again.'}`
+      );
       setActiveTab('analyzer');
+    } finally {
+      savePending.current = false;
     }
   };
 
@@ -900,7 +1045,8 @@ export default function App({ engineOnly = false }: AppProps) {
 
   const handleCreateLeadFromAnalyzer = useCallback(async () => {
     const publication = await persistDraft(activeDeal, true);
-    if (!mounted.current || publication === 'superseded' || currentDeal.current !== activeDeal) return;
+    if (!mounted.current || publication === 'superseded' || currentDeal.current !== activeDeal)
+      return;
     window.dispatchEvent(
       new CustomEvent('pbk:lead-portal-seed', {
         detail: {

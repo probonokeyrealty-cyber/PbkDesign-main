@@ -184,8 +184,9 @@ export async function commitAnalyzerDraft(
           const persistent = deal === null ? null
             : encodeAnalyzerStoragePayload(sanitizeAnalyzerPayloadForLocalStorage(deal), manualFields);
           let previous: { raw: string | null } | undefined;
+          let projectionMayBeLagging = false;
           // WebKit may cache localStorage per process. Commit the authoritative pointer first.
-          const result = await new Promise<AnalyzerDraftCommit>((resolve, reject) => {
+          const reserve = () => new Promise<AnalyzerDraftCommit>((resolve, reject) => {
             const transaction = database.transaction('drafts', 'readwrite');
             const store = transaction.objectStore('drafts');
             const request = store.get(ANALYZER_CURRENT_DEAL_KEY);
@@ -196,6 +197,7 @@ export async function commitAnalyzerDraft(
               const local = readSharedAnalyzerDraft();
               const canonical = request.result ? request.result.raw as string | null : local;
               if (!force && (expected === undefined || canonical !== expected || local !== expected)) {
+                projectionMayBeLagging = expected !== undefined && canonical === expected && local !== expected;
                 outcome = 'conflict';
                 return;
               }
@@ -206,6 +208,12 @@ export async function commitAnalyzerDraft(
             transaction.onabort = () => reject(transaction.error || new Error('Shared draft coordination failed.'));
             transaction.onerror = () => reject(transaction.error);
           });
+          let result = await reserve();
+          // Revalidate once after a completed read; never adopt a peer's baseline or skip either guard.
+          if (projectionMayBeLagging) {
+            if (!isCurrent()) return 'superseded';
+            result = await reserve();
+          }
           const rollback = () => new Promise<void>((resolve, reject) => {
             const transaction = database.transaction('drafts', 'readwrite');
             const store = transaction.objectStore('drafts');
@@ -243,15 +251,20 @@ export async function commitAnalyzerDraft(
   }
 }
 
-export function readAnalyzerDraftBaseline(): string | null | undefined {
+export function readAnalyzerDraftBaseline(
+  options: { requirePrivateBaseline?: boolean } = {},
+): string | null | undefined {
   if (isFreshAnalyzerDraft()) return null;
   const shared = readSharedAnalyzerDraft();
   const sessionRaw = storageGet(sessionStorage, `${ANALYZER_CURRENT_DEAL_KEY}:session`);
   const envelope = decodeAnalyzerEnvelope(sessionRaw) as { sharedBaseline?: unknown; unpublishedEdits?: boolean } | undefined;
   if (envelope?.unpublishedEdits) return undefined;
   if (envelope && Object.prototype.hasOwnProperty.call(envelope, 'sharedBaseline')) {
-    return envelope.sharedBaseline === shared ? shared : undefined;
+    return envelope.sharedBaseline === shared
+      && (!options.requirePrivateBaseline || typeof envelope.sharedBaseline === 'string') ? shared : undefined;
   }
+  // A publication continuation must not adopt an unrelated peer's shared pointer.
+  if (options.requirePrivateBaseline) return undefined;
   const session = decodeAnalyzerStoragePayload<unknown>(
     sessionRaw, undefined
   );

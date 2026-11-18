@@ -135,6 +135,8 @@ try {
       assert.deepEqual(sync.body.deal.listingSnapshot.photoUrls, ['https://ap.rdcpix.com/fixture-front.jpg']);
       await expect.poll(async () => (await storedDraft(page))?.leadId).toBe('qa-address-save');
       await page.getByRole('spinbutton', { name: 'Comp A sold price' }).fill('499999');
+      await expect(arv).toHaveValue('499999');
+      await arv.fill('600000'); // Explicit underwriting override survives provider refresh.
       const writeCount = writes.length;
       await refresh.click();
       await expect.poll(() => enrichments.length).toBe(2);

@@ -13,13 +13,14 @@
 - Expand current basic-profile fields only where returned: parcel/building, ownership/mailing, taxes/assessment, recorded transfer and original mortgage. Unknown means unknown; loan original amount is never current payoff and assessed values never become ARV.
 - Refresh property intelligence is explicit and saves evidence for one captured lead/address. Analyze also gathers evidence before readiness/math. No background enrichment on tab open, radius edit or address edit.
 - Keep saved photos and records on provider failure. Retain prior snapshot timestamps for retained facts; label automatic sale candidates as suggestions requiring review. Never use subject transfers or asking prices as sold comps.
+- Manual comp edits recalculate mean ARV through the existing calculator; an explicit ARV override survives automatic provider fills. Changing an evidenced address clears inherited subject facts and terms from the new draft without changing the prior saved lead.
 - Unlinked addresses remain saved drafts (confirmed by user), with no address-only CRM lead creation.
 - Preserve photo gestures, original design tokens, existing approvals and Rex/Brain boundaries.
 
 ## Tasks
-- [ ] Bridge coordinator: exact-ID/address validation, dedupe, persisted partial evidence, recent sales and safe comp suggestions; regression tests for races/duplicates/failures.
-- [ ] Records: extend verified basic-profile projection and strict snapshot hydration; useful grouped record UI with honest source labels; adapter/evidence tests.
-- [ ] Client integration: explicit-only requests, saved CRM refresh, persistent comps/photos, draft/analyzer enrichment and hydration, in-flight identity/manual-edit protection.
+- [x] Bridge coordinator: exact-ID/address validation, dedupe, persisted partial evidence, recent sales and safe comp suggestions; regression tests for races/duplicates/failures.
+- [x] Records: extend verified basic-profile projection and strict snapshot hydration; useful grouped record UI with honest source labels; adapter/evidence tests.
+- [x] Client integration: explicit-only requests, saved CRM refresh, persistent comps/photos, draft/analyzer enrichment and hydration, in-flight identity/manual-edit protection.
 - [ ] Independent review; focused node tests, typecheck/build, runtime/hosted smoke and BrowserOS mobile containment; release using existing CI and deployment protections.
 
 ## Validation

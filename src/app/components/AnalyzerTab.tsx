@@ -58,15 +58,17 @@ export function AnalyzerTab({
 
   const handleCompChange = (comp: 'A' | 'B' | 'C', field: string, value: string | number) => {
     operatorFields.current.add('comps');
+    operatorFields.current.add('arv');
+    const comps = {
+      ...deal.comps,
+      [comp]: { ...deal.comps[comp], [field]: value },
+    };
     onDealChange({
       compManualSlots: [...new Set([...(deal.compManualSlots || []), comp])],
-      comps: {
-        ...deal.comps,
-        [comp]: {
-          ...deal.comps[comp],
-          [field]: value,
-        },
-      },
+      comps,
+      // A deliberate comp edit updates the existing mean-ARV calculation.
+      // Automatic evidence fills preserve an operator's ARV override instead.
+      arv: calculateARV(comps),
     });
   };
 

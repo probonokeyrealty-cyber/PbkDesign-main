@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { EventEmitter } from 'node:events';
-import { observeAnalyzerBuild, parseOptions, requestDisposition } from './analyzer-browseros-mobile-live.mjs';
+import { createHash } from 'node:crypto';
+import { runInNewContext } from 'node:vm';
+import * as runner from './analyzer-browseros-mobile-live.mjs';
+const { observeAnalyzerBuild, parseOptions, requestDisposition } = runner;
 
 const base = 'https://pbkcenter.netlify.app';
 const build = 'a'.repeat(40);
@@ -19,6 +22,142 @@ test('live execution requires explicit opt-in and a pinned build', () => {
 
 test('help does not require a connection or live opt-in', () => {
   assert.equal(parseOptions(['--help']).help, true);
+});
+
+test('desktop proof is explicit and does not replace the mobile default', () => {
+  assert.equal(parseOptions(args).desktop, false);
+  assert.equal(parseOptions([...args, '--desktop']).desktop, true);
+  assert.throws(() => parseOptions(['--desktop']), /run-live/);
+  assert.throws(() => parseOptions([...args, '--desktop', '--desktop']), /duplicate/);
+});
+
+function contextFixture(sourceId = 'source', qaId = 'qa') {
+  const detached = [];
+  const context = id => ({ newCDPSession: async () => ({
+    send: async method => { assert.equal(method, 'Target.getTargetInfo'); return { targetInfo: { browserContextId: id } }; },
+    detach: async () => { detached.push(id); },
+  }) });
+  const source = context(sourceId), qa = context(qaId);
+  return { source: { context: () => source }, page: { context: () => qa }, detached };
+}
+
+test('native isolation rejects the same Playwright context before any CDP reads', async () => {
+  const context = { newCDPSession: () => assert.fail('Same-context proof must stop immediately') };
+  await assert.rejects(() => runner.verifyContextIsolation({ context: () => context }, { context: () => context }), /isolated/);
+});
+
+test('native isolation rejects distinct wrappers for the same native context', async () => {
+  for (const id of ['shared', '']) {
+    const fixture = contextFixture(id, id);
+    await assert.rejects(() => runner.verifyContextIsolation(fixture.source, fixture.page), /Native/);
+    assert.equal(fixture.detached.length, 2);
+  }
+});
+
+test('native isolation permits a distinct native QA context and detaches both readers', async () => {
+  const fixture = contextFixture();
+  await runner.verifyContextIsolation(fixture.source, fixture.page);
+  assert.deepEqual(fixture.detached, ['source', 'qa']);
+});
+
+test('QA setup fails before seeding storage and cannot close a colliding source context', async () => {
+  const fixture = contextFixture('shared', 'shared');
+  let closedPage = 0;
+  const page = { ...fixture.page, close: async () => { closedPage++; } };
+  const context = page.context();
+  context.newPage = async () => page;
+  context.addCookies = () => assert.fail('Do not seed an unverified context');
+  context.close = () => assert.fail('Do not close an unverified native context');
+  await assert.rejects(() => runner.openIsolatedQaContext({ newContext: async () => context }, fixture.source, {}), /Native/);
+  assert.equal(closedPage, 1);
+});
+
+test('QA setup returns a verified blank page before authentication is seeded', async () => {
+  const fixture = contextFixture();
+  const context = fixture.page.context();
+  context.newPage = async () => fixture.page;
+  const options = { viewport: { width: 320, height: 844 }, isMobile: true, hasTouch: true };
+  const result = await runner.openIsolatedQaContext({ newContext: async actual => {
+    assert.equal(actual, options);
+    return context;
+  } }, fixture.source, options);
+  assert.equal(result.context, context);
+  assert.equal(result.page, fixture.page);
+});
+
+function cookieFixture(contextId, error = false) {
+  const calls = [], detached = [];
+  return { calls, detached,
+    source: { url: () => base + '/analyzer', context: () => ({ newCDPSession: async () => ({
+      send: async method => { calls.push([method]); return { targetInfo: { browserContextId: contextId } }; },
+      detach: async () => detached.push('page'),
+    }) }) },
+    browser: { newBrowserCDPSession: async () => ({
+      send: async (method, params) => {
+        calls.push([method, params]);
+        if (error) throw Error('Read failed');
+        return { cookies: [{ domain: 'pbkcenter.netlify.app', name: 'site', value: 'sample' },
+          { domain: '.netlify.app', name: 'parent', value: 'sample' },
+          { domain: 'notpbkcenter.netlify.app', name: 'foreign', value: 'sample' },
+          { domain: 'example.com', name: 'foreign', value: 'sample' }] };
+      }, detach: async () => detached.push('browser'),
+    }) },
+  };
+}
+
+test('cookie reads use the actual native source context and only matching domains', async () => {
+  const fixture = cookieFixture('actual-incognito');
+  const cookies = await runner.readSourceCookies(fixture.browser, fixture.source, base);
+  assert.deepEqual(fixture.calls, [['Target.getTargetInfo'], ['Storage.getCookies', { browserContextId: 'actual-incognito' }]]);
+  assert.deepEqual(cookies.map(cookie => cookie.name), ['site', 'parent']);
+  assert.deepEqual(fixture.detached, ['page', 'browser']);
+});
+
+test('default native cookie reads omit the context override and detach on failure', async () => {
+  const fixture = cookieFixture(undefined, true);
+  await assert.rejects(() => runner.readSourceCookies(fixture.browser, fixture.source, base), /Read failed/);
+  assert.deepEqual(fixture.calls[1], ['Storage.getCookies', {}]);
+  assert.deepEqual(fixture.detached, ['page', 'browser']);
+});
+
+test('cookie reads reject a foreign source before touching its context', async () => {
+  const source = { url: () => 'https://example.com/analyzer', context: () => assert.fail('Foreign source must not be read') };
+  await assert.rejects(() => runner.readSourceCookies({}, source, base), /origin/);
+});
+
+test('draft fingerprint captures all protected values before hashing and excludes authentication', async () => {
+  const values = { 'pbk:prod:analyzer:current-deal': 'old', 'pbk:compose:draft:v1': 'note', 'pbk:team-session:v1': 'private-auth' };
+  const localStorage = { ...values };
+  const sessionStorage = { 'pbk:prod:analyzer:current-deal:session': 'private-note' };
+  for (const storage of [localStorage, sessionStorage]) Object.defineProperty(storage, 'getItem', { value: key => storage[key] ?? null });
+  let hashes = 0;
+  const result = await runner.fingerprintDrafts({ evaluate: (fn, argument) => runInNewContext('(' + fn.toString() + ')(base)', {
+    base: argument, location: { origin: base }, localStorage, sessionStorage, TextEncoder, Uint8Array,
+    crypto: { subtle: { digest: async (_, bytes) => {
+      if (++hashes === 1) localStorage['pbk:compose:draft:v1'] = 'peer-update';
+      return Uint8Array.from(createHash('sha256').update(bytes).digest()).buffer;
+    } } },
+  }) }, base);
+  assert.equal(Object.keys(result).length, 3);
+  assert.equal(result['local:pbk:compose:draft:v1'], createHash('sha256').update('note').digest('hex'));
+  assert.equal(result['session:pbk:prod:analyzer:current-deal:session'], createHash('sha256').update('private-note').digest('hex'));
+  assert.ok(!JSON.stringify(result).includes('private-auth'));
+  assert.ok(!JSON.stringify(result).includes('private-note'));
+});
+
+test('legacy Analyzer draft modification and removal cannot pass preservation checks', async () => {
+  const localStorage = { 'pbk-deal-data': 'original legacy sample' };
+  Object.defineProperty(localStorage, 'getItem', { value: key => localStorage[key] ?? null });
+  const page = { evaluate: (fn, argument) => runInNewContext('(' + fn.toString() + ')(base)', {
+    base: argument, location: { origin: base }, localStorage, sessionStorage: {}, TextEncoder, Uint8Array,
+    crypto: { subtle: { digest: async (_, bytes) => Uint8Array.from(createHash('sha256').update(bytes).digest()).buffer } },
+  }) };
+  const before = await runner.fingerprintDrafts(page, base);
+  assert.ok(before['local:pbk-deal-data'], 'Legacy Analyzer data must be protected');
+  localStorage['pbk-deal-data'] = 'changed legacy sample';
+  assert.notEqual(JSON.stringify(await runner.fingerprintDrafts(page, base)), JSON.stringify(before));
+  delete localStorage['pbk-deal-data'];
+  assert.notEqual(JSON.stringify(await runner.fingerprintDrafts(page, base)), JSON.stringify(before));
 });
 
 test('reject remote, credential-bearing, or non-HTTP CDP endpoints', () => {

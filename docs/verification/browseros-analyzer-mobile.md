@@ -1,6 +1,6 @@
 # BrowserOS Analyzer Mobile Proof
 
-This manual test attaches to an already unlocked BrowserOS session. It does not
+This manual test attaches to an already unlocked Chromium/BrowserOS session. It does not
 deploy, change site protection, revoke the operator session, save CRM leads, or
 send outreach. The default CI command runs offline safety checks only.
 
@@ -37,6 +37,25 @@ live run or establish a new hosted, session, mobile, or screenshot result.
 npm run test:analyzer-browseros-mobile-live -- --run-live --cdp-url $BrowserOsCdpOrigin --expected-build $DeployedCommit --asset-dir $MatchingDist
 ```
 
+For desktop coverage, run the same command with `--desktop`. This selects a
+1440x844 non-touch viewport; the default still tests both 390x844 and 320x844
+touch-mobile viewports. Run both modes to cover overlapping tabs, simultaneous
+writes, private conflict drafts, reloads and verifier recovery on every width.
+
+The runner attaches without overriding the operator browser's default settings.
+It checks native browser context IDs before seeding auth or navigating a QA
+page, not only Playwright wrapper identity. On a collision, it closes only the
+new blank page and will not close an unverified native context. Cookie reads
+use the source tab's actual native
+context, including an already-open incognito QA tab. Only cookies applicable to
+the approved PBK hostname are copied, in memory; none are printed or exported.
+
+If BrowserOS attachment fails before a page loads, that is an incomplete proof,
+not a passing test. Use a separate authorized Chrome QA session with local CDP
+and browser-only sign-in; do not clear the working profile or weaken Netlify.
+Machine-specific launch/download helpers, credentials and captured artifacts do
+not belong in this test-only change.
+
 Optional `--base-url` accepts only the PBK Netlify production origin or a PBK
 deploy URL. Optional `--output-dir` changes the artifact destination. By default,
 reports and sample-only screenshots stay under ignored `.pbk-local/`.
@@ -47,10 +66,14 @@ reports and sample-only screenshots stay under ignored `.pbk-local/`.
   enabled; asserts the actual viewport, rather than trusting window dimensions.
 - Keeps only same-site authentication in memory. Never exports cookies,
   `storageState`, raw operator drafts, or authorization headers to artifacts.
-- Reads the source tab's shared/private draft fingerprints before and after,
-  including failed runs. Does not modify or close the operator's context.
+- Reads source local/session entries matching draft, Analyzer and Compose
+  storage before and after, including saved deals, Analyzer activity and the
+  explicit legacy `pbk-deal-data` key. All
+  values are captured synchronously before hashing, and only the entry count
+  and preservation result reach the report. It never restores or overwrites a
+  changed source draft, and does not modify or close the operator's context.
 - Uses unlinked fictional data, verifies empty QA draft storage before seeding,
-  and disposes every QA context on completion or failure.
+  and disposes every verified QA context on completion or failure.
 - Allows real team status/verification only. CRM/property/runtime reads are
   fixtures; business mutations, direct providers, and WebSockets are blocked.
   Stream-session creation is stubbed. External reads are limited to font hosts.
@@ -75,7 +98,7 @@ Screenshot capture warnings are reported separately from functional assertions.
 Screenshots were verified during the original proof; a capture timeout must not
 be described as a successful new visual inspection.
 
-This is Chromium-based BrowserOS mobile emulation, not a physical iPhone or a
+This is Chromium mobile emulation, not a physical iPhone or a
 live Safari/WebKit claim. The existing isolated WebKit suite remains separate.
 Never wire the live runner into unattended CI, reset the working bridge, clear
 operator storage, weaken Netlify protection, or use Hosted Founder Smoke as a

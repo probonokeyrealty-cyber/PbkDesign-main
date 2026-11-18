@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { spawnSync } from 'node:child_process';
-import { closureNativeEnvironment, validateOwnedClosureContainer } from './dead-letter-closure-postgres-local.mjs';
+import childProcess, { spawnSync } from 'node:child_process';
+import { syncBuiltinESMExports } from 'node:module';
+import { closureNativeEnvironment, validateOwnedClosureContainer, runLocalClosurePostgresProof } from './dead-letter-closure-postgres-local.mjs';
 
 test('requested native command fails, rather than skipping, without opt-in', () => {
   const result = spawnSync(process.execPath, ['./scripts/dead-letter-closure-postgres-local.mjs'], {
@@ -36,5 +37,105 @@ test('cleanup identity requires owned label, exact ID/image, tmpfs and literal l
   for (const changed of [{ Id: 'd'.repeat(64) }, { Image: 'wrong' }, { Config: { Labels: {} } },
     { NetworkSettings: { Ports: { '5432/tcp': [{ HostIp: '0.0.0.0', HostPort: '54321' }] } } }]) {
     assert.throws(() => validateOwnedClosureContainer({ ...info, ...changed }, { id, token, imageId }));
+  }
+});
+
+async function ambiguousRun(t, { result, changeInfo = () => {}, absent = false, changedContext = false }) {
+  const calls = [], id = 'b'.repeat(64), imageId = `sha256:${'c'.repeat(64)}`;
+  const image = 'pgvector/pgvector@sha256:b513c48566e4777cd3370451400000c78eda6a08131d68f4c31d4a76f27bd8fd';
+  let info, name, token, running = false, stopped = false, contextChecks = 0;
+  const mockErrors = [], summaries = [];
+  const ok = value => ({ status: 0, stdout: typeof value === 'string' ? value : JSON.stringify(value), stderr: '' });
+  const original = childProcess.spawnSync, optIn = process.env.PBK_CLOSURE_TEST_ENABLE;
+  t.mock.method(console, 'log', summary => summaries.push(JSON.parse(summary)));
+  t.mock.method(childProcess, 'spawnSync', (command, args) => {
+    try {
+      assert.equal(command, 'docker', 'no database/native child may run after ambiguous provisioning');
+      assert.deepEqual(args.slice(0, 2), ['--context', 'desktop-linux']);
+      const action = args.slice(2); calls.push(action);
+      if (action[0] === 'context') {
+        contextChecks++;
+        return ok([{ Endpoints: { docker: { Host: changedContext && contextChecks > 1
+          ? 'tcp://remote.invalid:2375' : 'npipe:////./pipe/dockerDesktopLinuxEngine' } } }]);
+      }
+      if (action[0] === 'info') return ok('29.4.0');
+      if (action[0] === 'image') return ok([{ Id: imageId, RepoDigests: [image] }]);
+      if (action[0] === 'run') {
+        name = action[action.indexOf('--name') + 1];
+        token = action[action.indexOf('--label') + 1].split('=')[1];
+        assert.match(token, /^[a-f0-9]{32}$/); assert.equal(name, `pbk-closure-${token}`);
+        info = { Id: id, Name: `/${name}`, Image: imageId, Config: { Labels: { 'pbk.closure-test': token } },
+          HostConfig: { AutoRemove: true, Tmpfs: { '/var/lib/postgresql/data': 'rw,noexec,nosuid,size=256m' } },
+          NetworkSettings: { Ports: { '5432/tcp': [{ HostIp: '127.0.0.1', HostPort: '54321' }] } } };
+        changeInfo(info); running = !absent;
+        return result;
+      }
+      if (action[0] === 'ps') {
+        assert.deepEqual(action, ['ps', '--all', '--no-trunc', '--filter', `name=^/${name}$`,
+          '--filter', `label=pbk.closure-test=${token}`, '--format', '{{.ID}}'], 'lookup must not broaden beyond exact generated owner');
+        return ok(running ? id : '');
+      }
+      if (action[0] === 'inspect') {
+        assert.deepEqual(action, ['inspect', id]);
+        return ok([info]);
+      }
+      if (action[0] === 'stop') {
+        assert.deepEqual(action, ['stop', '--time', '5', id]);
+        running = false; stopped = true;
+        return ok(id);
+      }
+      assert.fail('unexpected Docker operation');
+    } catch (error) { mockErrors.push(error.message); throw error; }
+  });
+  syncBuiltinESMExports();
+  process.env.PBK_CLOSURE_TEST_ENABLE = '1';
+  try {
+    await assert.rejects(runLocalClosurePostgresProof());
+    assert.deepEqual(mockErrors, [], 'wrapper must not swallow unexpected process operations or unsafe lookup arguments');
+    return { calls, running, stopped, contextChecks, summaries };
+  } finally {
+    childProcess.spawnSync = original; syncBuiltinESMExports();
+    if (optIn === undefined) delete process.env.PBK_CLOSURE_TEST_ENABLE;
+    else process.env.PBK_CLOSURE_TEST_ENABLE = optIn;
+  }
+}
+
+test('ambiguous run timeout or nonzero status reconciles and stops only the exact owned container', async t => {
+  for (const result of [{ status: null, stdout: '', stderr: '', error: { code: 'ETIMEDOUT' } },
+    { status: 1, stdout: '', stderr: 'acknowledgement lost' }]) {
+    await t.test(result.status === null ? 'ETIMEDOUT after creation' : 'nonzero after creation', async child => {
+      const proof = await ambiguousRun(child, { result });
+      assert.equal(proof.stopped, true, 'created container must be stopped even when run acknowledgement is lost');
+      assert.equal(proof.running, false);
+      assert(proof.contextChecks >= 2, 'cleanup must revalidate local context');
+      assert(proof.calls.some(call => call[0] === 'inspect'), 'cleanup must verify actual identity before stop');
+      assert.deepEqual(proof.summaries, [{ ownedContainerRemoved: true, generatedDatabaseDropped: false,
+        unrelatedResourcesTouched: false }]);
+    });
+  }
+});
+
+test('ambiguous run absence or unverifiable ownership never broadens cleanup', async t => {
+  const result = { status: null, stdout: '', stderr: '', error: { code: 'ETIMEDOUT' } };
+  for (const [name, options] of [
+    ['absent exact resource', { absent: true }],
+    ['changed local context', { changedContext: true }],
+    ['wrong ID', { changeInfo: info => { info.Id = 'd'.repeat(64); } }],
+    ['wrong exact name', { changeInfo: info => { info.Name = '/unrelated'; } }],
+    ['wrong image', { changeInfo: info => { info.Image = 'wrong'; } }],
+    ['wrong ownership label', { changeInfo: info => { info.Config.Labels = {}; } }],
+    ['not auto-removed', { changeInfo: info => { info.HostConfig.AutoRemove = false; } }],
+    ['missing tmpfs', { changeInfo: info => { info.HostConfig.Tmpfs = {}; } }],
+    ['nonloopback publication', { changeInfo: info => { info.NetworkSettings.Ports['5432/tcp'][0].HostIp = '0.0.0.0'; } }],
+    ['invalid port', { changeInfo: info => { info.NetworkSettings.Ports['5432/tcp'][0].HostPort = '0'; } }],
+  ]) {
+    await t.test(name, async child => {
+      const proof = await ambiguousRun(child, { result, ...options });
+      assert.equal(proof.stopped, false); assert.deepEqual(proof.summaries, []);
+      assert.equal(proof.running, !options.absent);
+      assert(proof.contextChecks >= 2, 'reconciliation must revalidate context even without an acknowledged ID');
+      assert.equal(proof.calls.some(call => call[0] === 'ps'), !options.changedContext);
+      assert.equal(proof.calls.some(call => call[0] === 'inspect'), !options.changedContext && !options.absent);
+    });
   }
 });

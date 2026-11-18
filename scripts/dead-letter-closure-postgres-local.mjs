@@ -67,13 +67,15 @@ export async function runLocalClosurePostgresProof() {
   const token = randomBytes(16).toString('hex');
   const database = `pbk_closure_test_${token}`, owner = `closure_test_owner_${token}`;
   const adminPassword = randomBytes(32).toString('hex'), password = randomBytes(32).toString('hex');
-  const owned = { id: null, token, imageId: image.Id };
+  const owned = { id: null, name: `pbk-closure-${token}`, token, imageId: image.Id };
   let admin, databaseCreated = false, emptyVerified = false, databaseDropped = false;
   const inspect = () => JSON.parse(docker(['inspect', owned.id]))[0];
+  const findOwned = () => docker(['ps', '--all', '--no-trunc', '--filter', `name=^/${owned.name}$`,
+    '--filter', `label=pbk.closure-test=${token}`, '--format', '{{.ID}}']);
   const redact = value => String(value).replaceAll(adminPassword, '[redacted]').replaceAll(password, '[redacted]')
     .replace(/postgres(?:ql)?:\/\/[^\s'"<>]+/gi, '[redacted-db-url]');
   try {
-    owned.id = docker(['run', '--detach', '--rm', '--pull=never', '--name', `pbk-closure-${token}`,
+    owned.id = docker(['run', '--detach', '--rm', '--pull=never', '--name', owned.name,
       '--label', `pbk.closure-test=${token}`, '--publish', '127.0.0.1::5432',
       '--tmpfs', '/var/lib/postgresql/data:rw,noexec,nosuid,size=256m',
       '--env', 'POSTGRES_PASSWORD', IMAGE], { POSTGRES_PASSWORD: adminPassword });
@@ -130,11 +132,23 @@ export async function runLocalClosurePostgresProof() {
     } finally {
       try { if (admin) await admin.end(); }
       finally {
+        // A timed-out CLI may have started the container without returning its ID.
+        if (!owned.id) {
+          checkContext();
+          const id = findOwned();
+          if (id) {
+            assert.match(id, /^[a-f0-9]{64}$/);
+            const info = JSON.parse(docker(['inspect', id]))[0];
+            assert.equal(info.Name, `/${owned.name}`);
+            validateOwnedClosureContainer(info, { ...owned, id });
+            owned.id = id;
+          }
+        }
         if (owned.id) {
           checkContext();
           validateOwnedClosureContainer(inspect(), owned);
           docker(['stop', '--time', '5', owned.id]);
-          assert.equal(docker(['ps', '--all', '--filter', `label=pbk.closure-test=${token}`, '--format', '{{.ID}}']), '');
+          assert.equal(findOwned(), '');
           console.log(JSON.stringify({ ownedContainerRemoved: true, generatedDatabaseDropped: databaseDropped,
             unrelatedResourcesTouched: false }));
         }

@@ -98,6 +98,19 @@ test('Matching redacted and private copies establish a safe shared baseline', ()
   assert.equal(api.readAnalyzerDraftBaseline(), shared.get(api.ANALYZER_CURRENT_DEAL_KEY));
 });
 
+test('post-publication baseline requires readable private provenance, unlike initial hydration', () => {
+  const { api, shared, privateDraft, context } = runtime();
+  api.writeAnalyzerDeal(sample, ['notes']);
+  const key = api.ANALYZER_CURRENT_DEAL_KEY, own = shared.get(key);
+  assert.equal(api.readAnalyzerDraftBaseline({ requirePrivateBaseline: true }), own);
+  privateDraft.clear();
+  shared.set(key, JSON.stringify({ payload: { ...sample, beds: 8 } }));
+  assert.equal(api.readAnalyzerDraftBaseline(), shared.get(key), 'Initial hydration still accepts shared-only storage');
+  assert.equal(api.readAnalyzerDraftBaseline({ requirePrivateBaseline: true }), undefined);
+  context.sessionStorage.getItem = () => { throw Error('Sample private storage blocked'); };
+  assert.equal(api.readAnalyzerDraftBaseline({ requirePrivateBaseline: true }), undefined);
+});
+
 test('A changed shared draft does not become the base of a stale private draft', () => {
   const { api, shared } = runtime();
   api.writeAnalyzerDeal(sample, ['arv']);
@@ -237,13 +250,71 @@ function actions() {
     CustomEvent: class { constructor(type) { this.type = type; } },
   });
   const transpile = code => ts.transpileModule(code, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
-  vm.runInContext(transpile(snippets.join('\n') + '\nObject.assign(globalThis, { handleCreateLeadFromAnalyzer, handleLoadSavedDeal, handleSaveDeal, handleAnalyzeDeal, clearDraft });'), context);
+  context.readAnalyzerDraftBaseline = () => 'newer-peer-draft';
+  vm.runInContext(transpile(snippets.join('\n') + '\nObject.assign(globalThis, { persistDraft, handleCreateLeadFromAnalyzer, handleLoadSavedDeal, handleSaveDeal, handleAnalyzeDeal, clearDraft });'), context);
   return { context, published, navigations, patches, analyses, creates, statuses,
     effect: () => vm.runInContext(transpile(persistenceEffect), context),
     flush: async () => { while (callbacks.length) { callbacks.shift().run(); await new Promise(resolve => setImmediate(resolve)); } },
     reject: async () => { while (callbacks.length) { callbacks.shift().reject(new Error('Fixture lock timed out')); await new Promise(resolve => setImmediate(resolve)); } },
   };
 }
+
+test('a completed publication cannot adopt a peer pointer before its continuation runs', async () => {
+  const { context } = actions();
+  context.draftBaseline.current = 'original-baseline';
+  context.readSharedAnalyzerDraft = () => 'peer-published-pointer';
+  context.readAnalyzerDraftBaseline = () => undefined;
+  const publications = [];
+  context.commitAnalyzerDraft = async (deal, fields, expected) => {
+    if (!publications.length || expected === 'peer-published-pointer') {
+      publications.push(deal);
+      return 'published';
+    }
+    return 'conflict';
+  };
+  await context.persistDraft({ ...sample, beds: 7 });
+  const result = await context.persistDraft({ ...sample, beds: 9 });
+  assert.equal(result, 'conflict', 'Retaining an older deal must not authorize overwriting a peer');
+  assert.equal(publications.length, 1);
+  assert.equal(context.draftBaseline.current, undefined);
+});
+
+test('an uncontended publication retains its verified private-copy baseline', async () => {
+  const { context } = actions();
+  context.readAnalyzerDraftBaseline = () => 'own-published-pointer';
+  context.readSharedAnalyzerDraft = () => 'own-published-pointer';
+  context.commitAnalyzerDraft = async () => 'published';
+  assert.equal(await context.persistDraft(sample), 'published');
+  assert.equal(context.draftBaseline.current, 'own-published-pointer');
+});
+
+test('publication continuation with missing private storage cannot adopt a peer through the real reader', async () => {
+  const { context } = actions();
+  const { api, shared, privateDraft } = runtime();
+  api.writeAnalyzerDeal(sample, ['notes']);
+  const key = api.ANALYZER_CURRENT_DEAL_KEY;
+  context.draftBaseline.current = shared.get(key);
+  context.readSharedAnalyzerDraft = () => api.readSharedAnalyzerDraft();
+  context.readAnalyzerDraftBaseline = options => api.readAnalyzerDraftBaseline(options);
+  let publications = 0;
+  context.commitAnalyzerDraft = async (deal, fields, expected) => {
+    if (!publications) {
+      publications++;
+      api.writeAnalyzerDeal(deal, fields);
+      privateDraft.clear();
+      shared.set(key, JSON.stringify({ payload: { ...sample, beds: 8 } }));
+      return 'published';
+    }
+    if (expected !== shared.get(key)) return 'conflict';
+    publications++;
+    return 'published';
+  };
+  await context.persistDraft({ ...sample, beds: 7 });
+  assert.equal(await context.persistDraft({ ...sample, beds: 9 }), 'conflict');
+  assert.equal(publications, 1);
+  assert.equal(context.draftBaseline.current, undefined);
+  assert.equal(api.readAnalyzerDeal({}).beds, 8, 'Peer data remains untouched');
+});
 
 test('A cleared and reentered address cannot revive an earlier CRM creation', async () => {
   const { context, flush, creates, patches } = actions();

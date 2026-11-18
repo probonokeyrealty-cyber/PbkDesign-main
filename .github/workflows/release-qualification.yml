@@ -135,3 +135,6 @@ jobs:
 
       - name: Verify isolated Analyzer draft recovery
         run: npm run test:analyzer-draft-recovery-browser
+
+      - name: Verify controlled Analyzer publication timing
+        run: node scripts/analyzer-draft-recovery-browser-smoke.mjs --controlled-publication

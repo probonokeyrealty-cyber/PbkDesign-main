@@ -7,6 +7,7 @@ import { advanceAuditFixtureClock } from './readiness-timing-postgres-fixture.mj
 import { readRuntimeCoverage, verifyRuntimeCoverageReference } from './runtime-coverage-store.mjs';
 import { captureDeadLetterAuditBoundary, readDeadLetterClosures } from './dead-letter-closure-store.mjs';
 import { closureBinding } from './dead-letter-closure-protocol.mjs';
+import { DEAD_LETTER_CLOSURE_SQL, verifyDeadLetterClosureInstallation } from './dead-letter-closure-migration.mjs';
 
 let store = {};
 try { store = await import('./operational-audit-store.mjs'); }
@@ -534,12 +535,13 @@ postgresTest('disposable Postgres operational JSONB proof, tampering and latest 
     'Run only through the disposable evaluation harness');
   assert(new URL(process.env.PBK_TEST_DATABASE_URL).hostname.endsWith('.neon.tech'),
     'Integration is restricted to the disposable Neon lane');
+  const proofSchema = JSON.parse(process.env.PBK_QUALIFICATION_SCHEMA_MAP || '{}')['operational-audit-store.test.mjs'];
+  assert.match(proofSchema || '', /^pbk_proof_[a-f0-9]{32}$/, 'The guarded qualification runner must own this isolated schema');
   const { default: pg } = await import('pg');
   const pool = new pg.Pool({ connectionString: process.env.PBK_TEST_DATABASE_URL,
     max: 2, connectionTimeoutMillis: 10_000, query_timeout: 10_000 });
   const ids = Array.from({ length: 3 }, () => `operational-test-${randomUUID()}`);
-  const pgProof = await createAuditFixture({ end: Date.now(), revision, secret });
-  await advanceAuditFixtureClock(pgProof, Date.now());
+  let pgProof;
   const pgVerifier = options => {
     const current = typeof options.now === 'function' ? options.now() : options.now;
     pgProof.advance(current - pgProof.now());
@@ -548,6 +550,11 @@ postgresTest('disposable Postgres operational JSONB proof, tampering and latest 
   const run = (id, collect) => api('executeOperationalAudit')({ pool, revision, secret, createId: () => id,
     coverageVerifier: pgVerifier, collect: async args => {
       const data = await collect(args);
+      const closures = await readDeadLetterClosures({ pool, secret, revision,
+        now: Date.now(), cutoff: args.windowEnd, boundary: args.closureBoundary });
+      assert.equal(closures.verified, true, closures.result);
+      assert.deepEqual(closures.reference.boundary, args.closureBoundary);
+      data.closures = { verified: true, reference: closures.reference };
       if (data.coverage.verified) {
         pgProof.advance(args.now - pgProof.now());
         if (pgProof.sampler.status().cutoff !== iso(args.now)) {
@@ -560,6 +567,14 @@ postgresTest('disposable Postgres operational JSONB proof, tampering and latest 
       return data;
     } });
   try {
+    pgProof = await createAuditFixture({ end: Date.now(), revision, secret });
+    await advanceAuditFixtureClock(pgProof, Date.now());
+    await pool.query(`CREATE TABLE public.event_dead_letters(id text PRIMARY KEY,tenant_id text,created_at timestamptz)`);
+    await pool.query(DEAD_LETTER_CLOSURE_SQL);
+    const installation = await verifyDeadLetterClosureInstallation(pool.query.bind(pool));
+    assert.equal(installation.verified, true, installation.result);
+    assert.equal((await pool.query(`SELECT count(*)::int AS n FROM information_schema.tables
+      WHERE table_schema=$1 AND table_name='pbk_dead_letter_closure_ledger'`, [proofSchema])).rows[0].n, 1);
     await pool.query(`CREATE TABLE IF NOT EXISTS public.pbk_eval_runs (
       id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL DEFAULT 'pbk', suite_name TEXT NOT NULL,
       ok BOOLEAN NOT NULL DEFAULT FALSE, total INT NOT NULL DEFAULT 0, passed INT NOT NULL DEFAULT 0,
@@ -578,6 +593,6 @@ postgresTest('disposable Postgres operational JSONB proof, tampering and latest 
     assert.equal(latest.runId, ids[2]); assert.equal(latest.verified, true); assert.equal(latest.audit.ready, false);
   } finally {
     try { await pool.query('DELETE FROM public.pbk_eval_runs WHERE id = ANY($1::text[])', [ids]); }
-    finally { await pool.end(); await pgProof.close(); }
+    finally { try { await pool.end(); } finally { await pgProof?.close(); } }
   }
 }, 180_000);

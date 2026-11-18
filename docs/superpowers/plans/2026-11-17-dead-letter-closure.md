@@ -1,6 +1,6 @@
 # Evidence-Bound Dead-Letter Closure Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED WORKFLOW: Use `superpowers:subagent-driven-development`, as chosen by the founder, with one focused implementation pass per task and independent review between tasks. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Close only approved, completely proven internal dead-letter recoveries through an append-only ledger, with independent current readback before readiness credit.
 
@@ -162,8 +162,10 @@ Task 6. Privacy, local-only real proof, packaging and release boundary are in Ta
 All five Review Focus conditions have named owning tests. Function/result names
 above are the cross-task contracts; implementation must not silently rename them.
 
-Recommended execution: subagent-driven, with a fresh implementer and independent
-review for each task, then a full-branch security review. These components share
+Required execution: subagent-driven, with a fresh implementer and independent
+spec-compliance and code-quality review for each task, then a full-branch security
+review. Use `superpowers:verification-before-completion` and run the required
+task-specific and final verification commands before claiming success. These components share
 security-sensitive evidence interfaces, so catching contract drift between tasks
 is worth the additional review contexts. Tasks 1-7 are implemented and independently
 reviewed through `4c06153`, with final review fixes at `83d4b5d`. Final re-review

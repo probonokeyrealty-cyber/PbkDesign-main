@@ -7,6 +7,8 @@ import ts from 'typescript';
 import * as fixtures from './readiness-timing-postgres-fixture.mjs';
 import { createAuditFixture } from './operational-audit-test-fixture.mjs';
 import { readRuntimeCoverage } from './runtime-coverage-store.mjs';
+import { DEAD_LETTER_CLOSURE_SQL, verifyDeadLetterClosureInstallation } from './dead-letter-closure-migration.mjs';
+import { captureDeadLetterAuditBoundary, readDeadLetterClosures } from './dead-letter-closure-store.mjs';
 
 const schema = `pbk_proof_${'a'.repeat(32)}`;
 let runner = {};
@@ -60,6 +62,42 @@ test('schema remapping executes real SQL while preserving parameter data and gen
     assert.deepEqual((await query({ text: 'SELECT * FROM public.fixture WHERE id=$1', values: [7] })).rows,
       inserted.rows);
     assert.equal((await db.query("SELECT to_regclass('public.fixture') AS relation")).rows[0].relation, null);
+  } finally { await db.close(); }
+}, 30000);
+
+test('isolated native audit catalog retains exact closure validation and genuine snapshot evidence', async () => {
+  const db = new PGlite();
+  try {
+    await db.exec(`CREATE SCHEMA ${schema}; CREATE TABLE public.fixture_guard(id text PRIMARY KEY);
+      INSERT INTO public.fixture_guard VALUES ('untouched');
+      CREATE TABLE public.pbk_dead_letter_closure_ledger(id text PRIMARY KEY);
+      INSERT INTO public.pbk_dead_letter_closure_ledger VALUES ('public-impostor')`);
+    const query = fixtures.createReadinessFixtureQuery((config, values) => typeof config === 'string'
+      ? db.query(config, values) : db.query(config.text, config.values), schema, { closureCatalog: true });
+    const payload = { literal: 'public.calls', physical: `${schema}.calls`, nested: ['public', schema] };
+    assert.deepEqual((await query('SELECT $1::jsonb AS payload', [payload])).rows, [{ payload }]);
+    await query(`CREATE TABLE public.event_dead_letters(id text PRIMARY KEY,tenant_id text,created_at timestamptz)`);
+    await db.exec(fixtures.mapReadinessFixtureSql(DEAD_LETTER_CLOSURE_SQL, schema));
+    const installation = await verifyDeadLetterClosureInstallation(query);
+    assert.equal(installation.verified, true, installation.result);
+    const pool = { query, connect: async () => ({ query, release() {} }) };
+    const boundary = await captureDeadLetterAuditBoundary({ pool });
+    assert.equal(boundary.verified, true, boundary.result);
+    const evidence = await readDeadLetterClosures({ pool, secret: 'isolated-native-audit-fixture',
+      revision: 'a'.repeat(40), now: Date.now(), boundary: boundary.boundary,
+      cutoff: boundary.boundary.serverObservedAt });
+    assert.equal(evidence.verified, true, evidence.result);
+    assert.deepEqual(evidence.reference.boundary, boundary.boundary);
+    assert.equal(evidence.counts.total, 0);
+    assert.deepEqual((await db.query('SELECT * FROM public.pbk_dead_letter_closure_ledger')).rows, [{ id: 'public-impostor' }]);
+    assert.deepEqual((await db.query('SELECT * FROM public.fixture_guard')).rows, [{ id: 'untouched' }]);
+    await query('ALTER TABLE public.pbk_dead_letter_closure_ledger DISABLE TRIGGER pbk_closure_immutable');
+    assert.equal((await verifyDeadLetterClosureInstallation(query)).verified, false, 'catalog drift is never normalized away');
+    await query('ALTER TABLE public.pbk_dead_letter_closure_ledger ENABLE ALWAYS TRIGGER pbk_closure_immutable');
+    assert.equal((await verifyDeadLetterClosureInstallation(query)).verified, true);
+    await query('ALTER TABLE public.pbk_dead_letter_closure_ledger DROP CONSTRAINT pbk_closure_tenant_check');
+    await query("ALTER TABLE public.pbk_dead_letter_closure_ledger ADD CONSTRAINT pbk_closure_tenant_check CHECK (tenant_id IN ('pbk','other'))");
+    assert.equal((await verifyDeadLetterClosureInstallation(query)).verified, false, 'weaker constraints remain invalid');
   } finally { await db.close(); }
 }, 30000);
 

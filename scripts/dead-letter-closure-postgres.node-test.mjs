@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import net from 'node:net';
 import http from 'node:http';
 import https from 'node:https';
@@ -9,7 +9,7 @@ import vm from 'node:vm';
 import ts from 'typescript';
 import pg from 'pg';
 import {
-  validateClosureMigrationConfig, applyDeadLetterClosureMigration, verifyDeadLetterClosureInstallation,
+  validateClosureMigrationConfig, applyDeadLetterClosureMigration, verifyDeadLetterClosureInstallation, DEAD_LETTER_CLOSURE_SQL,
 } from './dead-letter-closure-migration.mjs';
 import { captureDeadLetterAuditBoundary, executeDeadLetterClosure, readDeadLetterClosures, admitDeadLetterClosureProposal,
   verifyDeadLetterClosureReference } from './dead-letter-closure-store.mjs';
@@ -17,6 +17,7 @@ import { CLOSURE_SOURCE_FIXTURE_SQL, seedClosureSources, seedClosureApproval,
   closureTestAuthority, closureHead } from './fixtures/dead-letter-closure-store-fixture.mjs';
 import { createClosureIntent } from './dead-letter-closure-protocol.mjs';
 import { isDeadLetterClosureApproval } from './dead-letter-closure-approval.mjs';
+import { createReadinessFixtureQuery } from './readiness-timing-postgres-fixture.mjs';
 
 const fingerprint = rows => createHash('sha256').update(JSON.stringify(rows)).digest('hex');
 
@@ -210,6 +211,21 @@ async function nativeStoreCoverage(t, config, query) {
       c.query = async (...args) => {
         try {
           const queryStarted = Date.now();
+          const statement = typeof args[0] === 'string' ? args[0] : args[0]?.text || '';
+          const ordersDatabaseClock = statement.startsWith('SELECT pg_current_snapshot()') && statement.includes('AS database_captured_at')
+            || statement.includes('nextval') && statement.includes('AS admitted_at');
+          if (ordersDatabaseClock) {
+            // Wait for Docker's actual clock, within the existing fixture cap;
+            // never rewrite timestamps or loosen the production boundary check.
+            const until = performance.now() + 100;
+            let databaseNow;
+            do {
+              const observed = await run({ text: 'SELECT floor(extract(epoch FROM clock_timestamp())*1000)::text AS fixture_clock',
+                query_timeout: 100 });
+              databaseNow = Number(observed.rows[0].fixture_clock);
+            } while (databaseNow < queryStarted && performance.now() < until);
+            assert(databaseNow >= queryStarted, 'fixture clocks failed to converge within 100ms');
+          }
           const result = await run(...args);
           const timestamp = result?.rows?.[0]?.admitted_at || result?.rows?.[0]?.database_captured_at;
           if (timestamp) {
@@ -432,6 +448,32 @@ async function nativeStoreCoverage(t, config, query) {
       assert.equal(replay.reused, true); assert.equal(replay.approval.id, results[0].approval.id);
       assert.equal(fingerprint((await query('SELECT to_jsonb(a) row FROM public.approvals a ORDER BY id')).rows), fingerprint(after));
       assert.deepEqual(counts, { queues: 1, fanout: 1, writes: 1 });
+    });
+    await t.test('native isolated audit schema verifies exact closure installation and snapshot-bound readback', async () => {
+      const schema = `pbk_proof_${randomUUID().replaceAll('-', '')}`;
+      const mapped = c => createReadinessFixtureQuery(c.query.bind(c), schema, { closureCatalog: true });
+      const auditPool = { query: mapped(pool), async connect() {
+        const client = await pool.connect();
+        return { query: mapped(client), release: client.release.bind(client),
+          on: client.on.bind(client), removeListener: client.removeListener.bind(client) };
+      } };
+      await query(`CREATE SCHEMA ${schema}`);
+      try {
+        await auditPool.query('CREATE TABLE public.event_dead_letters(id text PRIMARY KEY,tenant_id text,created_at timestamptz)');
+        await auditPool.query(DEAD_LETTER_CLOSURE_SQL);
+        const installation = await verifyDeadLetterClosureInstallation(auditPool.query);
+        assert.equal(installation.verified, true, installation.result);
+        const captured = await captureDeadLetterAuditBoundary({ pool: auditPool });
+        assert.equal(captured.verified, true, captured.result);
+        const read = await readDeadLetterClosures({ pool: auditPool, ...authority, now: Date.now(),
+          cutoff: captured.boundary.serverObservedAt, boundary: captured.boundary });
+        assert.equal(read.verified, true, read.result);
+        assert.deepEqual(read.reference.boundary, captured.boundary);
+        assert.equal(read.counts.total, 0);
+        assert.equal(fingerprint((await query('SELECT to_jsonb(d) row FROM public.provider_action_dispatches d ORDER BY id')).rows), fingerprint(dispatchBefore));
+        await auditPool.query('ALTER TABLE public.pbk_dead_letter_closure_ledger DISABLE TRIGGER pbk_closure_immutable');
+        assert.equal((await verifyDeadLetterClosureInstallation(auditPool.query)).verified, false);
+      } finally { await query(`DROP SCHEMA ${schema} CASCADE`); }
     });
     await t.test('native callback claims preserve role authorization across canonical target races', async () => {
       const source = readFileSync(new URL('./openclaw-local-server.mjs', import.meta.url), 'utf8');

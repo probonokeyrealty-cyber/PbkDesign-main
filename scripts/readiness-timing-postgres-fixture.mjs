@@ -9,11 +9,30 @@ export function mapReadinessFixtureSql(text, schema) {
   return text.replace(/\bpublic\./g, `${schema}.`).replaceAll("'public'", `'${schema}'`);
 }
 
-export function createReadinessFixtureQuery(query, schema) {
+export function createReadinessFixtureQuery(query, schema, { closureCatalog = false } = {}) {
   mapReadinessFixtureSql('', schema);
+  assert.equal(typeof closureCatalog, 'boolean');
+  const map = text => {
+    let mapped = mapReadinessFixtureSql(text, schema);
+    if (!closureCatalog) return mapped;
+    // Only catalog identities/renderings need a schema alias. Parameter data and
+    // returned rows stay untouched; the exact production verifier still runs.
+    const identity = parameter => `pg_catalog.replace(${parameter},'public.','${schema}.')`;
+    for (const parameter of ['$1', '$2']) {
+      mapped = mapped.replaceAll(`pg_catalog.to_regclass(${parameter})`,
+        `pg_catalog.to_regclass(${identity(parameter)})`);
+    }
+    mapped = mapped.replaceAll("pg_catalog.pg_get_serial_sequence($1,'ordinal')=$2",
+      `pg_catalog.pg_get_serial_sequence(${identity('$1')},'ordinal')=${identity('$2')}`);
+    for (const expression of ['pg_catalog.pg_get_constraintdef(k.oid)',
+      'pg_catalog.pg_get_indexdef(i.indexrelid)', 'pg_catalog.pg_get_triggerdef(t.oid)']) {
+      mapped = mapped.replaceAll(expression, `pg_catalog.replace(${expression},'${schema}.','public.')`);
+    }
+    return mapped;
+  };
   return function (config, ...args) {
-    const mapped = typeof config === 'string' ? mapReadinessFixtureSql(config, schema)
-      : { ...config, text: mapReadinessFixtureSql(config.text, schema) };
+    const mapped = typeof config === 'string' ? map(config)
+      : { ...config, text: map(config.text) };
     return query.call(this, mapped, ...args);
   };
 }

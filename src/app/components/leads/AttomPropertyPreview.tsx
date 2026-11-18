@@ -1,12 +1,27 @@
 import { useState } from 'react';
-import { Check, CircleAlert, Database, Loader2, Minus, Search } from 'lucide-react';
+import {
+  Check,
+  ChevronDown,
+  CircleAlert,
+  Database,
+  FileClock,
+  Home,
+  Landmark,
+  Loader2,
+  MapPin,
+  Minus,
+  Search,
+  ShieldCheck,
+  Users,
+  Wrench,
+} from 'lucide-react';
+import { attomExtraRecordFields } from '../../utils/attomRecordFields.mjs';
 import {
   fetchAttomPropertyPreview,
   type AttomPreviewAddress,
   type AttomPreviewResult,
   type AttomPropertyFacts,
 } from '../../utils/runtimeBridge';
-
 type SavedFacts = Partial<
   Pick<AttomPropertyFacts, 'propertyType' | 'beds' | 'baths' | 'livingSqft' | 'yearBuilt'>
 >;
@@ -45,6 +60,14 @@ const money = new Intl.NumberFormat('en-US', {
   currency: 'USD',
   maximumFractionDigits: 0,
 });
+const moneyPerSqft = new Intl.NumberFormat('en-US', {
+  style: 'currency',
+  currency: 'USD',
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2,
+});
+const validDate = (value: string | undefined) =>
+  value && Number.isFinite(Date.parse(value)) ? value : undefined;
 const area = (value: number | null, unit: string) =>
   value == null ? null : `${value.toLocaleString()} ${unit}`;
 const rowStatuses = {
@@ -54,13 +77,11 @@ const rowStatuses = {
   lead: 'Only in lead',
   missing: 'Not available',
 } as const;
-
 export function propertyAddressLabel({ street, city, state, zip }: AttomPreviewAddress) {
   return [street.trim(), city.trim(), [state.trim(), zip.trim()].filter(Boolean).join(' ')]
     .filter(Boolean)
     .join(', ');
 }
-
 export function hasLookupAddress({ street, city, state, zip }: AttomPreviewAddress) {
   return Boolean(
     street.trim() &&
@@ -69,13 +90,11 @@ export function hasLookupAddress({ street, city, state, zip }: AttomPreviewAddre
     /^\d{5}(?:-\d{4})?$/.test(zip.trim())
   );
 }
-
 function rowStatus({ saved, value, equivalent }: FactRow): keyof typeof rowStatuses {
   if (saved == null) return value == null ? 'missing' : 'record';
   if (value == null) return 'lead';
   return saved === value || equivalent ? 'match' : 'different';
 }
-
 function propertyTypeKey(value: string | null | undefined) {
   const type = value
     ?.trim()
@@ -85,11 +104,9 @@ function propertyTypeKey(value: string | null | undefined) {
     ? 'single family'
     : type;
 }
-
 export function AttomPropertyPreview(props: PreviewProps) {
   return <PropertyLookup key={JSON.stringify([props.address, props.snapshot])} {...props} />;
 }
-
 function PropertyLookup({
   address,
   saved,
@@ -104,7 +121,7 @@ function PropertyLookup({
   const [localLoading, setLoading] = useState(false);
   const loading = localLoading || refreshing;
   const [lookedUpAt, setLookedUpAt] = useState<Date | null>(
-    snapshot ? new Date(snapshot.retrievedAt) : null
+    snapshot && validDate(snapshot.retrievedAt) ? new Date(snapshot.retrievedAt) : null
   );
   const [savedSnapshot, setSavedSnapshot] = useState(Boolean(snapshot));
   const [refreshFailed, setRefreshFailed] = useState(false);
@@ -112,7 +129,6 @@ function PropertyLookup({
   const isDraft = mode === 'draft';
   const typedAddress = propertyAddressLabel(address);
   const completeAddress = hasLookupAddress(address);
-
   async function lookup() {
     if (loading || !completeAddress) return;
     setLoading(true);
@@ -128,7 +144,7 @@ function PropertyLookup({
       if (next.status !== 'matched' && snapshot) {
         setResult({ status: 'matched', profile: snapshot.facts });
         setSavedSnapshot(true);
-        setLookedUpAt(new Date(snapshot.retrievedAt));
+        setLookedUpAt(validDate(snapshot.retrievedAt) ? new Date(snapshot.retrievedAt) : null);
         setRefreshFailed(true);
       } else {
         setResult(next);
@@ -139,14 +155,13 @@ function PropertyLookup({
       if (snapshot) {
         setResult({ status: 'matched', profile: snapshot.facts });
         setSavedSnapshot(true);
-        setLookedUpAt(new Date(snapshot.retrievedAt));
+        setLookedUpAt(validDate(snapshot.retrievedAt) ? new Date(snapshot.retrievedAt) : null);
         setRefreshFailed(true);
       } else setResult({ status: 'unavailable' });
     } finally {
       setLoading(false);
     }
   }
-
   const profile = result?.status === 'matched' ? result.profile : null;
   const checkedAt = (key: keyof AttomPropertyFacts) =>
     snapshot?.fieldRetrievedAt?.[key] ?? snapshot?.retrievedAt;
@@ -199,14 +214,54 @@ function PropertyLookup({
           {enteredFacts && <p>{enteredFacts}</p>}
         </div>
       )}
-      <div className="pbk-attom-preview-head">
-        <div className="pbk-attom-title">
-          <Database size={16} aria-hidden />
-          <h3>{isDraft ? 'Address lookup preview' : 'ATTOM property records'}</h3>
+      <div className="pbk-attom-preview-head pbk-record-masthead">
+        <img
+          className="pbk-record-survey"
+          src="/assets/pbk-survey-plate.png"
+          alt=""
+          aria-hidden="true"
+          width="220"
+          height="88"
+          loading="lazy"
+          decoding="async"
+        />
+        <div className="pbk-record-masthead-copy">
+          <div className="pbk-attom-title">
+            <Database size={16} aria-hidden />
+            <h3>
+              {isDraft ? (
+                'Address lookup preview'
+              ) : (
+                <>
+                  The property <em>record.</em>
+                </>
+              )}
+            </h3>
+          </div>
+          {!isDraft && <p className="pbk-record-address">{typedAddress || 'No address entered'}</p>}
+          <div className="pbk-record-source-chips">
+            <span className="pbk-property-label">
+              ATTOM | {savedSnapshot ? 'Saved snapshot' : 'Read only'}
+            </span>
+            {profile && (
+              <span className="pbk-record-count">
+                {recordGroups.reduce(
+                  (total, group) =>
+                    total + group.entries.filter(([key]) => profile[key] != null).length,
+                  0
+                )}{' '}
+                captured / {recordGroups.reduce((total, group) => total + group.entries.length, 0)}{' '}
+                supported fields
+              </span>
+            )}
+            {lookedUpAt && (
+              <span className="pbk-record-capture">
+                Captured{' '}
+                <time dateTime={lookedUpAt.toISOString()}>{lookedUpAt.toLocaleDateString()}</time>
+              </span>
+            )}
+          </div>
         </div>
-        <span className="pbk-property-label">
-          {savedSnapshot ? 'Saved ATTOM snapshot' : 'Read only'}
-        </span>
       </div>
       {refreshFailed && (
         <p className="pbk-property-evidence-note" role="status">
@@ -314,7 +369,6 @@ function PropertyLookup({
     </section>
   );
 }
-
 function ComparisonRow({ fact, isDraft }: { fact: FactRow; isDraft: boolean }) {
   const status = rowStatus(fact);
   const Icon = status === 'match' ? Check : status === 'different' ? CircleAlert : Minus;
@@ -328,10 +382,10 @@ function ComparisonRow({ fact, isDraft }: { fact: FactRow; isDraft: boolean }) {
       <dd>
         <small>ATTOM record</small>
         <strong>{fact.value ?? 'Not on record'}</strong>
-        {fact.value != null && fact.checkedAt && (
+        {fact.value != null && validDate(fact.checkedAt) && (
           <small className="pbk-record-checked">
             Checked{' '}
-            <time dateTime={fact.checkedAt}>{new Date(fact.checkedAt).toLocaleDateString()}</time>
+            <time dateTime={fact.checkedAt}>{new Date(fact.checkedAt!).toLocaleDateString()}</time>
           </small>
         )}
       </dd>
@@ -342,23 +396,141 @@ function ComparisonRow({ fact, isDraft }: { fact: FactRow; isDraft: boolean }) {
     </div>
   );
 }
-
 function Fact({ label, value, checkedAt }: FactRow) {
   return (
     <div>
       <dt>{label}</dt>
       <dd>
-        <strong>{value ?? 'Not on record'}</strong>
-        {checkedAt && (
+        <strong>{value ?? 'Not provided'}</strong>
+        {validDate(checkedAt) && (
           <small className="pbk-record-checked">
-            Checked <time dateTime={checkedAt}>{new Date(checkedAt).toLocaleDateString()}</time>
+            ATTOM | Captured{' '}
+            <time dateTime={checkedAt}>{new Date(checkedAt!).toLocaleDateString()}</time>
           </small>
         )}
       </dd>
     </div>
   );
 }
-
+type Entry = [
+  keyof AttomPropertyFacts,
+  string,
+  ('money' | 'area' | 'ft' | 'percent' | 'currency-per-sqft')?,
+];
+const recordGroups: { title: string; note?: string; entries: Entry[] }[] = [
+  {
+    title: 'Parcel and building',
+    entries: [
+      ['propertyType', 'Property type'],
+      ['beds', 'Bedrooms'],
+      ['baths', 'Bathrooms'],
+      ['livingSqft', 'Living area', 'area'],
+      ['yearBuilt', 'Year built'],
+      ['lotSqft', 'Lot area', 'area'],
+      ['lotAcres', 'Lot acres'],
+      ['attomId', 'ATTOM parcel ID'],
+      ['fips', 'County FIPS'],
+      ['apn', 'Parcel (APN)'],
+      ['county', 'County'],
+      ['subdivision', 'Subdivision'],
+      ['zoning', 'Zoning code'],
+      ['propertyClass', 'Property class'],
+      ['buildingSqft', 'Total building area', 'area'],
+      ['levels', 'Stories'],
+      ['unitsCount', 'Units'],
+      ['condition', 'Recorded condition'],
+      ['constructionType', 'Construction'],
+    ],
+  },
+  {
+    title: 'Ownership and mailing',
+    note: 'Public-record names and logic-based owner-status codes; verify ownership and occupancy independently.',
+    entries: [
+      ['ownerName', 'Owner 1'],
+      ['owner2Name', 'Owner 2'],
+      ['owner3Name', 'Owner 3'],
+      ['owner4Name', 'Owner 4'],
+      ['ownerMailingAddress', 'Mailing address'],
+      ['absenteeOwnerStatus', 'Absentee owner status (code)'],
+      ['corporateOwnerIndicator', 'Corporate owner indicator (code)'],
+    ],
+  },
+  {
+    title: 'Taxes and assessment',
+    note: 'Tax-roll values are not ARV or an appraisal. A delinquent tax year is a reported record, not a current payoff.',
+    entries: [
+      ['taxAmount', 'Annual property tax', 'money'],
+      ['taxYear', 'Tax year'],
+      ['taxDelinquentYear', 'Reported delinquent tax year'],
+      ['assessedLandValue', 'Assessed land', 'money'],
+      ['assessedImprovementValue', 'Assessed improvements', 'money'],
+      ['assessedTotalValue', 'Total assessed value', 'money'],
+      ['assessmentMarketTotalValue', 'Assessor market value', 'money'],
+    ],
+  },
+  {
+    title: 'Recorded transfer',
+    note: 'Subject-property transfer; not a comparable sale or verification that the parties were independent. Document and transaction types are source codes.',
+    entries: [
+      ['recordedSaleAmount', 'Reported transfer amount (not a comp)', 'money'],
+      ['recordedSaleDate', 'Transfer recorded on'],
+      ['saleTransactionDate', 'Document signed on'],
+      ['saleDocumentNumber', 'Document number'],
+      ['saleDocumentType', 'Document type code'],
+      ['saleTransactionType', 'Transaction type code'],
+    ],
+  },
+  {
+    title: 'Original mortgages',
+    note: 'Original recorded loan amounts are not current balances or payoff quotes. These records do not establish current liens or guarantee title.',
+    entries: [
+      ['originalMortgageAmount', 'First original loan amount', 'money'],
+      ['originalMortgageLender', 'First recorded lender'],
+      ['originalMortgageDocumentNumber', 'First loan document'],
+      ['secondOriginalMortgageAmount', 'Second original loan amount', 'money'],
+      ['secondOriginalMortgageLender', 'Second recorded lender'],
+      ['secondOriginalMortgageDocumentNumber', 'Second loan document'],
+    ],
+  },
+  {
+    title: 'Record provenance',
+    entries: [
+      ['sourcePublishedDate', 'Source published'],
+      ['sourceLastModified', 'Source last modified'],
+    ],
+  },
+];
+const extraGroupTitles: Record<string, string> = {
+  'Parcel & location': 'Parcel and building',
+  'Building & rooms': 'Building and rooms',
+  'Utilities & construction': 'Utilities and construction',
+  'Assessment & taxes': 'Taxes and assessment',
+  'Recorded transfer': 'Recorded transfer',
+};
+for (const field of attomExtraRecordFields) {
+  const title = extraGroupTitles[field.group] ?? field.group;
+  let group = recordGroups.find((candidate) => candidate.title === title);
+  if (!group) {
+    group = { title, entries: [] };
+    recordGroups.push(group);
+  }
+  if (!recordGroups.some((candidate) => candidate.entries.some(([key]) => key === field.key))) {
+    group.entries.push([
+      field.key as keyof AttomPropertyFacts,
+      field.label,
+      field.unit === 'currency-per-sqft'
+        ? 'currency-per-sqft'
+        : field.unit === 'currency'
+          ? 'money'
+          : field.unit === 'sqft'
+            ? 'area'
+            : field.unit === 'ft' || field.unit === 'percent'
+              ? field.unit
+              : undefined,
+    ]);
+  }
+}
+const groupIcons = [MapPin, Users, Landmark, FileClock, ShieldCheck, Database, Home, Wrench];
 function RecordGroups({
   profile,
   snapshot,
@@ -366,100 +538,84 @@ function RecordGroups({
   profile: AttomPropertyFacts;
   snapshot?: PreviewProps['snapshot'];
 }) {
-  type Entry = [keyof AttomPropertyFacts, string, ('money' | 'area')?];
-  const groups: { title: string; note?: string; entries: Entry[] }[] = [
-    {
-      title: 'Parcel and building',
-      entries: [
-        ['attomId', 'ATTOM parcel ID'],
-        ['fips', 'County FIPS'],
-        ['apn', 'Parcel (APN)'],
-        ['county', 'County'],
-        ['subdivision', 'Subdivision'],
-        ['zoning', 'Zoning code'],
-        ['propertyClass', 'Property class'],
-        ['buildingSqft', 'Total building area', 'area'],
-        ['levels', 'Stories'],
-        ['unitsCount', 'Units'],
-        ['condition', 'Recorded condition'],
-        ['constructionType', 'Construction'],
-      ],
-    },
-    {
-      title: 'Ownership and mailing',
-      note: 'Public-record names and logic-based owner-status codes; verify ownership and occupancy independently.',
-      entries: [
-        ['ownerName', 'Owner 1'],
-        ['owner2Name', 'Owner 2'],
-        ['owner3Name', 'Owner 3'],
-        ['owner4Name', 'Owner 4'],
-        ['ownerMailingAddress', 'Mailing address'],
-        ['absenteeOwnerStatus', 'Absentee owner status (code)'],
-        ['corporateOwnerIndicator', 'Corporate owner indicator (code)'],
-      ],
-    },
-    {
-      title: 'Taxes and assessment',
-      note: 'Tax-roll values are not ARV or an appraisal. A delinquent tax year is a reported record, not a current payoff.',
-      entries: [
-        ['taxAmount', 'Annual property tax', 'money'],
-        ['taxYear', 'Tax year'],
-        ['taxDelinquentYear', 'Reported delinquent tax year'],
-        ['assessedLandValue', 'Assessed land', 'money'],
-        ['assessedImprovementValue', 'Assessed improvements', 'money'],
-        ['assessedTotalValue', 'Total assessed value', 'money'],
-        ['assessmentMarketTotalValue', 'Assessor market value', 'money'],
-      ],
-    },
-    {
-      title: 'Recorded transfer',
-      note: 'Subject-property transfer; not a comparable sale or verification that the parties were independent. Document and transaction types are source codes.',
-      entries: [
-        ['recordedSaleAmount', 'Reported transfer amount (not a comp)', 'money'],
-        ['recordedSaleDate', 'Transfer recorded on'],
-        ['saleTransactionDate', 'Document signed on'],
-        ['saleDocumentNumber', 'Document number'],
-        ['saleDocumentType', 'Document type code'],
-        ['saleTransactionType', 'Transaction type code'],
-      ],
-    },
-    {
-      title: 'Original mortgages',
-      note: 'Original recorded loan amounts are not current balances or payoff quotes. These records do not establish current liens or guarantee title.',
-      entries: [
-        ['originalMortgageAmount', 'First original loan amount', 'money'],
-        ['originalMortgageLender', 'First recorded lender'],
-        ['originalMortgageDocumentNumber', 'First loan document'],
-        ['secondOriginalMortgageAmount', 'Second original loan amount', 'money'],
-        ['secondOriginalMortgageLender', 'Second recorded lender'],
-        ['secondOriginalMortgageDocumentNumber', 'Second loan document'],
-      ],
-    },
-    {
-      title: 'Record provenance',
-      entries: [
-        ['sourcePublishedDate', 'Source published'],
-        ['sourceLastModified', 'Source last modified'],
-      ],
-    },
-  ];
+  const [query, setQuery] = useState('');
+  const [showMissing, setShowMissing] = useState(false);
+  const search = query.trim().toLocaleLowerCase();
+  const visibleGroups = recordGroups
+    .map((group, index) => ({
+      ...group,
+      Icon: groupIcons[index % groupIcons.length],
+      captured: group.entries.filter(([key]) => profile[key] != null).length,
+      visible: group.entries.filter(([key, label]) => {
+        const raw = profile[key];
+        const matches = !search || `${label} ${raw ?? ''}`.toLocaleLowerCase().includes(search);
+        return matches && (raw != null || showMissing || Boolean(search));
+      }),
+    }))
+    .filter((group) => group.visible.length);
   return (
     <div className="pbk-attom-record-groups">
-      {groups.map((group) => (
-        <details className="pbk-attom-record-details" key={group.title} open>
-          <summary>{group.title}</summary>
+      <div className="pbk-record-tools">
+        <label className="pbk-record-search">
+          <Search size={15} aria-hidden />
+          <input
+            type="search"
+            aria-label="Search property record"
+            placeholder="Search record fields or values"
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+          />
+        </label>
+        <label className="pbk-record-missing-toggle">
+          <input
+            type="checkbox"
+            checked={showMissing}
+            onChange={(event) => setShowMissing(event.target.checked)}
+          />
+          Show missing fields
+        </label>
+      </div>
+      {search && (
+        <p className="pbk-record-search-result" role="status">
+          {visibleGroups.reduce((total, group) => total + group.visible.length, 0)} matching fields
+          | searching this saved record
+        </p>
+      )}
+      {!visibleGroups.length && (
+        <p className="pbk-property-evidence-note">
+          {search
+            ? 'No record fields match this search.'
+            : 'No supported fields captured yet. Show missing fields to inspect coverage.'}
+        </p>
+      )}
+      {visibleGroups.map((group) => (
+        <details className="pbk-attom-record-details" key={`${group.title}:${search}`} open>
+          <summary>
+            <group.Icon size={16} aria-hidden />
+            <span>{group.title}</span>
+            <small>
+              {group.captured} captured / {group.entries.length} supported
+            </small>
+            <ChevronDown className="pbk-record-chevron" size={14} aria-hidden />
+          </summary>
           {group.note && <p className="pbk-property-evidence-note">{group.note}</p>}
           <dl className="pbk-attom-facts">
-            {group.entries.map(([key, label, format]) => {
+            {group.visible.map(([key, label, format]) => {
               const raw = profile[key];
               const value =
                 raw == null
                   ? null
-                  : format === 'money' && typeof raw === 'number'
-                    ? money.format(raw)
-                    : format === 'area' && typeof raw === 'number'
-                      ? area(raw, 'sq ft')
-                      : raw;
+                  : format === 'currency-per-sqft' && typeof raw === 'number'
+                    ? `${moneyPerSqft.format(raw)} / sq ft`
+                    : format === 'money' && typeof raw === 'number'
+                      ? money.format(raw)
+                      : format === 'area' && typeof raw === 'number'
+                        ? area(raw, 'sq ft')
+                        : format === 'ft' && typeof raw === 'number'
+                          ? area(raw, 'ft')
+                          : format === 'percent' && typeof raw === 'number'
+                            ? `${raw}%`
+                            : raw;
               return (
                 <Fact
                   key={key}

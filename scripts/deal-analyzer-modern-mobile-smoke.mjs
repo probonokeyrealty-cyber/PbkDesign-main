@@ -29,7 +29,11 @@ const runtimeBridge = read('src/app/utils/runtimeBridge.ts');
 const leadsRoute = read('src/app/routes/Leads.tsx');
 const bridgeServer = read('scripts/openclaw-local-server.mjs');
 const pkg = JSON.parse(read('package.json'));
-const evidenceCode = ts.transpileModule(read('src/app/utils/propertyEvidence.ts'), {
+const evidenceSource = read('src/app/utils/propertyEvidence.ts').replace(
+  "'./attomRecordFields.mjs'",
+  JSON.stringify(new URL('../src/app/utils/attomRecordFields.mjs', import.meta.url).href),
+);
+const evidenceCode = ts.transpileModule(evidenceSource, {
   compilerOptions: {module:ts.ModuleKind.ESNext,target:ts.ScriptTarget.ES2022},
 }).outputText;
 const {readPropertyEvidence} = await import('data:text/javascript;base64,'+Buffer.from(evidenceCode).toString('base64'));

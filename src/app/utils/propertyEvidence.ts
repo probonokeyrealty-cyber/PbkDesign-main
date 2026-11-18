@@ -1,3 +1,8 @@
+import {
+  hydrateAttomExtraFields,
+  strictAttomDate,
+  boundedAttomIdentifier,
+} from './attomRecordFields.mjs';
 import type { PropertyListingSnapshot } from '../types';
 import type { AttomPropertyFacts } from './runtimeBridge';
 
@@ -9,10 +14,7 @@ const cleanText = (value: unknown, limit = 500) =>
   typeof value === 'string' ? value.trim().slice(0, limit) : '';
 const number = (value: unknown) =>
   typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
-const recordDate = (value: unknown) =>
-  /^\d{4}-\d{2}-\d{2}$/.test(cleanText(value)) && Number.isFinite(Date.parse(cleanText(value)))
-    ? cleanText(value)
-    : null;
+const recordDate = strictAttomDate;
 const addressKey = (value: unknown) => {
   const address = typeof value === 'string' ? value.trim() : '';
   return address.length > 500
@@ -132,10 +134,11 @@ export function readPropertyEvidence(deal: unknown, address: string) {
       address: cleanText(item.address),
       retrievedAt: cleanText(item.retrievedAt),
       facts: {
+        ...hydrateAttomExtraFields(facts),
         address: cleanText(facts.address) || cleanText(item.address),
-        apn: cleanText(facts.apn, 100) || null,
-        attomId: cleanText(facts.attomId, 500) || null,
-        fips: cleanText(facts.fips, 500) || null,
+        apn: boundedAttomIdentifier(facts.apn),
+        attomId: boundedAttomIdentifier(facts.attomId),
+        fips: boundedAttomIdentifier(facts.fips),
         county: cleanText(facts.county, 500) || null,
         subdivision: cleanText(facts.subdivision, 500) || null,
         zoning: cleanText(facts.zoning, 500) || null,

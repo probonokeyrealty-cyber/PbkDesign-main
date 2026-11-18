@@ -1,3 +1,4 @@
+import type { AttomExtraPropertyFacts } from './attomRecordFields.mjs';
 import { DealData } from '../types';
 import { buildAgentDealContext, type AgentDealContext } from './agentDealContext';
 import { readAvaChatResponse, type AvaChatStreamOptions } from './avaChatStream';
@@ -1942,7 +1943,7 @@ export async function startLeadCallRequest(body: Record<string, unknown>) {
 
 export type AttomPreviewAddress = { street: string; city: string; state: string; zip: string };
 
-export type AttomPropertyFacts = {
+export type AttomPropertyFacts = AttomExtraPropertyFacts & {
   address: string;
   apn: string | null;
   propertyType: string | null;

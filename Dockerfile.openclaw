@@ -204,6 +204,7 @@ COPY scripts/ava-assistant-chat.mjs ./scripts/ava-assistant-chat.mjs
 COPY scripts/lead-raw-proof-job.mjs ./scripts/lead-raw-proof-job.mjs
 COPY scripts/lead-field-provenance.mjs ./scripts/lead-field-provenance.mjs
 COPY scripts/attom-property-preview.mjs ./scripts/attom-property-preview.mjs
+COPY src/app/utils/attomRecordFields.mjs ./src/app/utils/attomRecordFields.mjs
 COPY scripts/analyzer-property-preview.mjs ./scripts/analyzer-property-preview.mjs
 COPY scripts/property-intelligence.mjs ./scripts/property-intelligence.mjs
 COPY scripts/batch-review-roster.mjs ./scripts/batch-review-roster.mjs
@@ -270,6 +271,7 @@ COPY scripts/invoke-rate-limit.mjs ./scripts/invoke-rate-limit.mjs
 COPY scripts/event-bus ./scripts/event-bus
 COPY scripts/property-data-adapter.mjs ./scripts/property-data-adapter.mjs
 COPY scripts/attom-property-preview.mjs ./scripts/attom-property-preview.mjs
+COPY src/app/utils/attomRecordFields.mjs ./src/app/utils/attomRecordFields.mjs
 COPY scripts/attom-recent-sales.mjs ./scripts/attom-recent-sales.mjs
 COPY scripts/address-suggestions.mjs ./scripts/address-suggestions.mjs
 COPY scripts/openclaw-local-server.mjs ./scripts/openclaw-local-server.mjs

@@ -1,9 +1,14 @@
+import {
+  projectAttomExtraFields,
+  strictAttomDate,
+  boundedAttomIdentifier,
+} from '../src/app/utils/attomRecordFields.mjs';
 const endpoint = 'https://api.gateway.attomdata.com/propertyapi/v1.0.0/property/basicprofile';
 const text = (value) => (typeof value === 'string' ? value.trim() : '');
 const normalized = (value) => text(value).toUpperCase().replace(/[.]/g, '').replace(/\s+/g, ' ');
 const zip5 = (value) => (/^\d{5}(?:-\d{4})?$/.test(text(value)) ? text(value).slice(0, 5) : '');
 const identifier = (value) =>
-  Number.isSafeInteger(value) && value > 0 ? String(value) : text(value) || null;
+  typeof value === 'number' && value <= 0 ? null : boundedAttomIdentifier(value, true);
 const suffix = {
   STREET: 'ST',
   AVENUE: 'AVE',
@@ -78,10 +83,7 @@ function number(value, min = 0) {
 }
 
 const nullableText = (value) => text(value).slice(0, 500) || null;
-const date = (value) =>
-  /^\d{4}-\d{2}-\d{2}$/.test(text(value)) && Number.isFinite(Date.parse(text(value)))
-    ? text(value)
-    : null;
+const date = strictAttomDate;
 const person = (value) =>
   [text(value?.firstnameandmi), text(value?.lastname)].filter(Boolean).join(' ').slice(0, 500) ||
   null;
@@ -103,6 +105,7 @@ function project(row) {
   const first = assessment?.mortgage?.FirstConcurrent;
   const second = assessment?.mortgage?.SecondConcurrent;
   return {
+    ...projectAttomExtraFields(row),
     address: `${text(address.line1)}, ${text(address.locality)}, ${text(address.countrySubd)} ${zip5(address.postal1)}`,
     attomId: identifier(id.attomId),
     fips: identifier(id.fips),

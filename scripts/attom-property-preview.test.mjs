@@ -239,3 +239,157 @@ test('missing or malformed new records remain unknown rather than zero or inferr
   assert.equal(profile.sourcePublishedDate, null);
   assert.equal(profile.buildingSqft, 1700);
 });
+
+test('projects additional documented BasicProfile paths with signed geography and string identifiers', async () => {
+  const row = structuredClone(parcel);
+  row.lot = { ...row.lot, depth: '125.5', frontage: '60', lotNum: '0007' };
+  row.area = { subdTractNum: '00123', censusTractIdent: '000101', censusBlockGroup: '02' };
+  row.location = { latitude: '-33.8', longitude: '-118.4', accuracy: 'Rooftop', elevation: '-12' };
+  row.summary = { ...row.summary, propSubType: 'Detached', dateOfLastQuitClaim: '2024-02-29' };
+  row.building.interior = {
+    bsmtSize: '400',
+    bsmttype: 'Partial',
+    bsmtFinishedPercent: '50',
+    fplcCount: 0,
+  };
+  row.building.rooms = { ...row.building.rooms, bathsFull: '2', roomsTotal: '7' };
+  row.assessment.market = { mktLandValue: '100000', mktImprValue: '120000' };
+  row.assessment.tax.taxPerSizeUnit = '2.5';
+  row.assessment.improvementPercent = '60';
+  const { profile } = await lookupAttomPropertyPreview(
+    input,
+    config(async () => reply([row]))
+  );
+  for (const [key, value] of Object.entries({
+    lotDepth: 125.5,
+    lotFrontage: 60,
+    lotNumber: '0007',
+    subdivisionTractNumber: '00123',
+    censusTractIdentifier: '000101',
+    censusBlockGroup: '02',
+    latitude: -33.8,
+    longitude: -118.4,
+    elevation: -12,
+    locationAccuracy: 'Rooftop',
+    propertySubType: 'Detached',
+    lastQuitClaimDate: '2024-02-29',
+    basementSqft: 400,
+    basementType: 'Partial',
+    basementFinishedPercent: 50,
+    fireplaceCount: 0,
+    fullBaths: 2,
+    totalRooms: 7,
+    assessmentMarketLandValue: 100000,
+    assessmentMarketImprovementValue: 120000,
+    taxPerSizeUnit: 2.5,
+    assessmentImprovementPercent: 60,
+  }))
+    assert.equal(profile[key], value, key);
+});
+
+test('rejects invalid ranges, malformed scalars and impossible dates', async () => {
+  const row = structuredClone(parcel);
+  row.location = { latitude: 91, longitude: -181, elevation: Infinity };
+  row.lot.lotNum = 'x'.repeat(101);
+  row.building.interior = { bsmtFinishedPercent: 101, fplcCount: -1 };
+  row.summary.dateOfLastQuitClaim = '2025-02-29';
+  row.sale.saleAmountData.saleRecDate = '2024-02-31';
+  const { profile } = await lookupAttomPropertyPreview(
+    input,
+    config(async () => reply([row]))
+  );
+  for (const key of [
+    'latitude',
+    'longitude',
+    'elevation',
+    'lotNumber',
+    'basementFinishedPercent',
+    'fireplaceCount',
+    'lastQuitClaimDate',
+    'recordedSaleDate',
+  ])
+    assert.equal(profile[key], null, key);
+});
+
+test('projects the remaining documented utilities, construction, room, area and sale fields', async () => {
+  const row = structuredClone(parcel);
+  row.summary = { ...row.summary, propLandUse: 'SFR', propIndicator: '10', legal1: 'LOT 7' };
+  row.utilities = {
+    coolingType: 'Central',
+    heatingType: 'Forced air',
+    heatingFuel: 'Gas',
+    energyType: 'Electric',
+    sewerType: 'Public',
+    wallType: 'Brick',
+  };
+  row.building.size = {
+    ...row.building.size,
+    grossSize: 2100,
+    grossSizeAdjusted: 2000,
+    groundFloorSize: 1200,
+    atticSize: 300,
+    sizeInd: 'Living',
+  };
+  row.building.rooms = { ...row.building.rooms, bathsPartial: 1, bathFixtures: 7 };
+  row.building.interior = { floors: 'Carpet', fplcInd: 'Y', fplcType: 'Masonry' };
+  row.building.construction = {
+    foundationType: 'Slab',
+    frameType: 'Wood',
+    buildingShapeType: 'R',
+    buildingShapeDescription: 'Rectangle',
+  };
+  row.building.parking = { garageType: 'Attached', prkgSize: 400, prkgType: 'Garage' };
+  row.building.summary = { storyDesc: 'Two story', view: 'Valley', viewCode: '001' };
+  row.sale.saleAmountData = {
+    ...row.sale.saleAmountData,
+    saleCode: '001',
+    saleDisclosureType: 'Full',
+  };
+  row.currentBalance = 1;
+  row.waterType = 'invented';
+  let calls = 0;
+  const { profile } = await lookupAttomPropertyPreview(
+    input,
+    config(async () => {
+      calls++;
+      return reply([row]);
+    })
+  );
+  assert.equal(calls, 1);
+  const expected = {
+    propertyLandUse: 'SFR',
+    propertyIndicator: '10',
+    legalDescription: 'LOT 7',
+    coolingType: 'Central',
+    heatingType: 'Forced air',
+    heatingFuel: 'Gas',
+    energyType: 'Electric',
+    sewerType: 'Public',
+    wallType: 'Brick',
+    grossSqft: 2100,
+    adjustedGrossSqft: 2000,
+    groundFloorSqft: 1200,
+    atticSqft: 300,
+    sizeIndicator: 'Living',
+    partialBaths: 1,
+    bathFixtures: 7,
+    floors: 'Carpet',
+    fireplaceIndicator: 'Y',
+    fireplaceType: 'Masonry',
+    foundationType: 'Slab',
+    frameType: 'Wood',
+    buildingShapeType: 'R',
+    buildingShapeDescription: 'Rectangle',
+    garageType: 'Attached',
+    parkingSqft: 400,
+    parkingType: 'Garage',
+    storyDescription: 'Two story',
+    view: 'Valley',
+    viewCode: '001',
+    saleCode: '001',
+    saleDisclosureType: 'Full',
+  };
+  for (const [key, value] of Object.entries(expected)) assert.equal(profile[key], value, key);
+  assert.equal(profile.waterType, undefined);
+  assert.equal(profile.currentBalance, undefined);
+});

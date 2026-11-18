@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import ts from 'typescript';
-const code=ts.transpileModule(readFileSync('src/app/utils/propertyEvidence.ts','utf8'),{compilerOptions:{module:ts.ModuleKind.ESNext,target:ts.ScriptTarget.ES2022}}).outputText;
+const code=ts.transpileModule(readFileSync('src/app/utils/propertyEvidence.ts','utf8').replace("'./attomRecordFields.mjs'", JSON.stringify(new URL('../src/app/utils/attomRecordFields.mjs', import.meta.url).href)),{compilerOptions:{module:ts.ModuleKind.ESNext,target:ts.ScriptTarget.ES2022}}).outputText;
 const {fullSizePhotoUrl}=await import('data:text/javascript;base64,'+Buffer.from(code).toString('base64'));
 test('request a larger rendition of the same trusted listing photo',()=>{
  assert.equal(fullSizePhotoUrl('https://ap.rdcpix.com/fixture-m101s.jpg'),'https://ap.rdcpix.com/fixture-m101od-w1920_h1440.webp');

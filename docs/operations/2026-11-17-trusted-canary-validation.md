@@ -431,3 +431,71 @@ shared publication, push, CI recheck, merge or deployment was performed.
 Full unit/founder/build/hosted/UI runs were not rerun for this bounded test-only
 repair. Controller independently reviews the diff and owns push/recheck/merge.
 Missing operational producer/evidence and production-readiness gates remain open.
+
+## PR23 Scoped Review Fix Round 1
+
+Fix base `b276b386919396108225bc96a73eaa5d80ef1327`. Read the full scoped review
+and SDD fix-loop guidance before this round. Important finding I1 demonstrated
+that the earlier helper still violated native per-lease release semantics:
+`client.release` is replaced on each checkout, so an old saved observed release
+could silently release a new lease on the reused client. Earlier double-release
+coverage only checked the handle before reacquisition; it did not cover this gap.
+
+The helper now invokes the per-checkout `release` supplied by pg's native pool
+callback, rather than looking up `client.release` later. This is one executable
+line changed. Callback timing, native event ownership, query forwarding and all
+existing SQL/size/OID/read-only/fingerprint assertions are unchanged. No production,
+guard, harness, workflow, budget, retry or no-skip gate changed.
+
+Added the offline regression `actual observer stale callback release cannot
+release a reacquired native client` to `scripts/canary-postgres-observer.test.mjs`.
+It saves A's callback release, releases A normally, reacquires the same max:1
+native client as B, and requires the saved A handle to throw the native already-
+released error without making B idle or emitting another native release event.
+It then releases B successfully. No database socket or evidence-envelope fixture
+is involved in this regression.
+
+Pinned Node/PATH prefix and offline environment scrub are unchanged. Covering
+RED/GREEN command:
+
+```powershell
+node --experimental-vm-modules node_modules/jest/bin/jest.js --config jest.config.mjs --runInBand --runTestsByPath scripts/canary-postgres-observer.test.mjs
+```
+
+RED before correction: exit **1**, **1 failed / 6 passed / 7 total**, zero skips,
+**2.368 s**; `Missing expected exception: stale native callback release must throw
+without returning the current lease`. GREEN after the one-line helper change:
+exit **0**, **7/7**, zero failed/skipped, **0.530 s**.
+
+The six-file focused command recorded in Offline RED And GREEN above was rerun:
+exit **0**, **6/6 suites / 562/562 tests**, zero failed/skipped, **30.934 s**.
+The amended observer plus reader/protocol/wiring, production-readiness and CI
+gate coverage all passed. Review M1 remains disclosed: the existing VM Modules
+ExperimentalWarning and hint appeared; no warning suppression or pristine-output
+claim. Warning-free runner support is separate from this bounded repair.
+
+Because release binding also affects real snapshot cleanup, the exact guarded
+wrapper from the ignored report was rerun with the same whole-file harness
+arguments and a fresh branch name:
+
+```text
+--ttl-hours 1 --branch-name pbk-eval-targeted-readiness-canary-a0ecd732-186e-4f5e-92e0-c6b3a02dcd06 -- node --test scripts/canary-evidence-postgres.node-test.mjs
+```
+
+Exit **0**, **20/20 tests**, zero failed/cancelled/skipped/todo,
+**43,260.2773 ms**; first execution, no retries or filtering. The existing guard
+authenticated fresh nondefault/nonprotected TTL1h branch `br-quiet-breeze-ajitr1o5`
+before DDL. Runtime URLs were scrubbed; injected child test/eval URLs preserved.
+Only the UUID-generated empty canary database received synthetic fixtures.
+Inherited protected fingerprints remained unchanged; generated database dropped
+and independently catalog-verified absent. Harness DELETE completed and independent
+authenticated branch **GET 404** confirmed cleanup. No URI or secret was printed.
+
+`node --check` passed for both amended JavaScript modules; `git diff --check`
+passed. Only the helper, its offline test and this validation record changed in
+this round; the ignored report was appended, not force-added. Existing output
+and earlier receipts are preserved. No new CI-hardening/harness-smoke/Docker/build/
+full-unit/founder/UI run is claimed in this round. No production migration,
+contact, provider write, delivery retry, subagent, push, merge or deployment.
+Controller owns the one scoped re-review, CI and publication; review is pending,
+not replaced by this worker's self-review or controlled verification.

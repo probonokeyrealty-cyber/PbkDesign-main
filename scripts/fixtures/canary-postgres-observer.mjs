@@ -35,7 +35,7 @@ export function observeCanaryPostgres(pool, afterFirstSnapshot) {
           }
           if (text === 'ROLLBACK' && ++trace.snapshots === 1) await afterFirstSnapshot?.();
           return result;
-        }, release(destroy) { trace.released.push(Boolean(destroy)); return client.release(destroy); },
+        }, release(destroy) { trace.released.push(Boolean(destroy)); return release(destroy); },
       };
       callback(null, observed, observed.release);
     });

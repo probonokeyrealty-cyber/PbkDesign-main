@@ -139,6 +139,30 @@ test('actual observer preserves callback release and promise checkout across rep
   } finally { await raw.close(); }
 });
 
+test('actual observer stale callback release cannot release a reacquired native client', async () => {
+  const raw = offlinePool();
+  try {
+    const { pool } = observeCanaryPostgres(raw.pool);
+    const firstRelease = await new Promise((resolve, reject) => {
+      pool.connect((error, client, release) => error ? reject(error) : resolve(release));
+    });
+    firstRelease(false);
+    const second = await pool.connect();
+    assert.equal(raw.clients.length, 1, 'max:1 must reuse the same native client');
+    assert.equal(raw.pool.idleCount, 0);
+    assert.deepEqual(raw.releases, [false]);
+    assert.throws(() => firstRelease(false), /Release called on client which has already been released to the pool\./,
+      'stale native callback release must throw without returning the current lease');
+    assert.equal(raw.pool.idleCount, 0, 'second lease remains owned');
+    assert.equal(raw.pool.totalCount, 1);
+    assert.equal(raw.pool.waitingCount, 0);
+    assert.deepEqual(raw.releases, [false], 'stale handle cannot release the new lease');
+    second.release(false);
+    assert.deepEqual(raw.releases, [false, false]);
+    assert.equal(raw.pool.idleCount, 1);
+  } finally { await raw.close(); }
+});
+
 test('actual observer forwards native checkout errors without creating leases', async () => {
   const raw = offlinePool();
   await raw.close();

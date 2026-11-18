@@ -9,8 +9,37 @@ import { createAuditFixture } from './operational-audit-test-fixture.mjs';
 import { readRuntimeCoverage } from './runtime-coverage-store.mjs';
 import { DEAD_LETTER_CLOSURE_SQL, verifyDeadLetterClosureInstallation } from './dead-letter-closure-migration.mjs';
 import { captureDeadLetterAuditBoundary, readDeadLetterClosures } from './dead-letter-closure-store.mjs';
+import { OPERATIONAL_AUDIT_CHECK_IDS } from './operational-audit-store.mjs';
 
 const schema = `pbk_proof_${'a'.repeat(32)}`;
+
+test('coverage-only audit assertions require genuine coverage and exactly the missing-closure blocker', () => {
+  assert.equal(typeof fixtures.assertCoverageOnlyAudit, 'function');
+  const good = { verified: true, result: 'operational_audit_incomplete_or_failed',
+    audit: { ready: false, coverage: { verified: true }, closures: { verified: false },
+      checks: OPERATIONAL_AUDIT_CHECK_IDS.map(id => ({ id,
+        status: ['dead_letters', 'database_security'].includes(id) ? 'unverified' : 'passed',
+        reason: ['dead_letters', 'database_security'].includes(id) ? 'source_unavailable' : 'no_findings',
+        counts: id === 'database_security' ? { requiredTables: 23, presentTables: 22,
+          missingTables: 1, rlsDisabled: 0, publicRoleGrants: 0 } : id === 'dead_letters'
+          ? { totalOriginals: 0, resolvedInternal: 0, outstanding: 0, invalidatedClosures: 0 } : {} })) },
+    coverageDiagnostics: { verified: true }, evidence: { silentErrors: { passed: false } } };
+  fixtures.assertCoverageOnlyAudit(good);
+  for (const change of [x => { x.verified = false; }, x => { x.audit.ready = true; },
+    x => { x.audit.coverage.verified = false; }, x => { x.audit.closures.verified = true; },
+    x => { x.audit.checks.pop(); }, x => { x.audit.checks.push(x.audit.checks[0]); },
+    x => { x.audit.checks.forEach(c => { c.status = 'unverified'; c.reason = 'collector_failed'; }); },
+    x => { x.audit.checks.find(c => c.id !== 'dead_letters').status = 'failed'; },
+    x => { x.audit.checks.find(c => c.id === 'dead_letters').reason = 'collector_failed'; },
+    x => { x.audit.checks.find(c => c.id === 'database_security').counts.missingTables = 2; },
+    x => { x.audit.checks.find(c => c.id === 'database_security').counts.rlsDisabled = 1; },
+    x => { x.audit.checks.find(c => c.id === 'database_security').counts.publicRoleGrants = 1; },
+    x => { x.audit.checks.find(c => c.id === 'dead_letters').counts.outstanding = 1; },
+    x => { x.coverageDiagnostics.verified = false; }, x => { x.evidence.silentErrors.passed = true; }]) {
+    const bad = structuredClone(good); change(bad);
+    assert.throws(() => fixtures.assertCoverageOnlyAudit(bad));
+  }
+});
 let runner = {};
 try { runner = await import('./readiness-postgres-qualification.mjs'); }
 catch (error) { if (!String(error.message).includes('mandatory six qualification')) throw error; }

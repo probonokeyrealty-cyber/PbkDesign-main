@@ -146,3 +146,27 @@ Both network observers recorded zero external/sender access, six protected
 dispatches and originals were unchanged, and owned cleanup succeeded. No clock,
 timestamp or limit was changed; the mandatory Linux native CI run must establish
 the positive same-host proof before considering qualification green.
+
+## Coverage-Only Native Fixture Follow-Up
+
+Release run `44401441320` on `9173e51` passed the mandatory native proof (18/18,
+zero skips) and exact six-suite Neon qualification (306/306, zero skips), with
+owned cleanup and protected rows intact. It then reached a stale expectation in
+`targeted-readiness-postgres.node-test.mjs:323`: a coverage-only fixture without
+any closure ledger expected whole-audit readiness. The real collector correctly
+kept both dead letters and database security unverified.
+
+The follow-up keeps native coverage-reference, head-advancement, historical/
+current/control/source tamper, restored-proof and atomic-failure assertions. A
+shared test assertion now requires actual verified coverage while whole-audit
+readiness stays false. Only dead letters and database security may be unverified,
+both specifically source-unavailable. Security counts must be exactly 23 required,
+22 present, one missing, zero RLS-disabled tables and zero public-role grants;
+dead-letter counts remain zero. All other checks must pass. A signed collector
+failure, extra drift or false readiness cannot masquerade as this expected case.
+The separate mandatory native proof still requires a genuinely passing full audit.
+
+The new assertion regression was run RED-to-GREEN and includes missing-check,
+duplicate-check, caught-collector, coverage, privilege, extra-table and outstanding-
+dead-letter mutations. This corrects test scope, not runtime authorization or
+readiness requirements. No fixture table is added to manufacture readiness.

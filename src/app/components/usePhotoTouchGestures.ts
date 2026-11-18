@@ -2,7 +2,7 @@ import { useCallback, useLayoutEffect, useRef, type PointerEvent, type RefObject
 
 export type PhotoZoomAnchor = { contentX: number; contentY: number; x: number; y: number };
 type Point = { x: number; y: number };
-type Single = Point & { id: number; left: number; top: number; time: number; zoom: number; moved: boolean; vertical: boolean };
+type Single = Point & { id: number; left: number; top: number; time: number; zoom: number; moved: boolean; vertical: boolean; horizontal: boolean };
 type Pinch = { distance: number; zoom: number; contentX: number; contentY: number };
 type Options = {
   viewport: RefObject<HTMLDivElement | null>;
@@ -10,9 +10,10 @@ type Options = {
   zoom: number;
   onZoom: (zoom: number, anchor: PhotoZoomAnchor) => void;
   onMove: (direction: number) => void;
+  onClose: () => void;
 };
 
-export function usePhotoTouchGestures({ viewport, photo, zoom, onZoom, onMove }: Options) {
+export function usePhotoTouchGestures({ viewport, photo, zoom, onZoom, onMove, onClose }: Options) {
   const contacts = useRef(new Map<number, Point>());
   const single = useRef<Single | null>(null);
   const pinch = useRef<Pinch | null>(null);
@@ -60,7 +61,7 @@ export function usePhotoTouchGestures({ viewport, photo, zoom, onZoom, onMove }:
       lastTap.current = null;
       beginPinch(event.currentTarget);
     } else {
-      single.current = { id: event.pointerId, x: event.clientX, y: event.clientY, left: event.currentTarget.scrollLeft, top: event.currentTarget.scrollTop, time: event.timeStamp, zoom, moved: false, vertical: false };
+      single.current = { id: event.pointerId, x: event.clientX, y: event.clientY, left: event.currentTarget.scrollLeft, top: event.currentTarget.scrollTop, time: event.timeStamp, zoom, moved: false, vertical: false, horizontal: false };
     }
   };
   const onPointerMove = (event: PointerEvent<HTMLDivElement>) => {
@@ -79,6 +80,7 @@ export function usePhotoTouchGestures({ viewport, photo, zoom, onZoom, onMove }:
     const dx = event.clientX - start.x, dy = event.clientY - start.y;
     if (Math.hypot(dx, dy) > 10) { start.moved = true; lastTap.current = null; }
     if (Math.abs(dy) > 12 && Math.abs(dy) >= Math.abs(dx)) start.vertical = true;
+    if (Math.abs(dx) > 12 && Math.abs(dx) >= Math.abs(dy)) start.horizontal = true;
     if (start.zoom > 1) {
       event.currentTarget.scrollLeft = start.left - dx;
       event.currentTarget.scrollTop = start.top - dy;
@@ -106,8 +108,11 @@ export function usePhotoTouchGestures({ viewport, photo, zoom, onZoom, onMove }:
       } else lastTap.current = { x: event.clientX, y: event.clientY, time: now };
     } else {
       lastTap.current = null;
-      if (start.zoom === 1 && zoom === 1 && !start.vertical && Math.abs(dx) >= 48 && Math.abs(dx) > Math.abs(dy) * 1.5)
-        onMove(dx < 0 ? 1 : -1);
+      if (start.zoom === 1 && zoom === 1) {
+        if (!start.horizontal && dy >= 80 && dy > Math.abs(dx) * 1.5) onClose();
+        else if (!start.vertical && Math.abs(dx) >= 48 && Math.abs(dx) > Math.abs(dy) * 1.5)
+          onMove(dx < 0 ? 1 : -1);
+      }
     }
   };
   return { onPointerDown, onPointerMove, onPointerUp, onPointerCancel: clear };

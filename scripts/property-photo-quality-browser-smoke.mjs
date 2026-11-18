@@ -79,7 +79,7 @@ async function verify(engine,config,label){const browser=await engine.launch();c
     await swipe(100,0);await expect(viewer.getByRole('img',{name:'Property photo 1 of 4',exact:true})).toBeVisible();
     await swipe(100,0);await expect(viewer.getByRole('img',{name:'Property photo 4 of 4',exact:true})).toBeVisible();
     await swipe(-100,0);await expect(viewer.getByRole('img',{name:'Property photo 1 of 4',exact:true})).toBeVisible();
-    for(const [dx,dy,options] of [[-30,0],[-100,95],[5,100],[-100,0,{cancel:true}],[-100,0,{multi:true}]]){
+    for(const [dx,dy,options] of [[-30,0],[-100,95],[5,-100],[-100,0,{cancel:true}],[-100,0,{multi:true}]]){
      await gesture(dx,dy,options);await expect(viewer.getByRole('img',{name:'Property photo 1 of 4',exact:true})).toBeVisible();
     }
     // Two contacts may now pinch, but must never navigate. Restore fit for swipes.
@@ -89,6 +89,10 @@ async function verify(engine,config,label){const browser=await engine.launch();c
    if(process.argv.includes('--touch-zoom')){
     const {verifyPhotoTouchZoom}=await import('./photo-touch-zoom-browser-cases.mjs');
     await verifyPhotoTouchZoom({page,area:fitArea,viewer,session:touchSession});
+   }
+   if(process.argv.includes('--dismiss')){
+    const {verifyPhotoDismiss}=await import('./photo-dismiss-browser-cases.mjs');
+    await verifyPhotoDismiss({page,area:fitArea,viewer,trigger,gesture,nativeSwipe});
    }
    await viewer.getByRole('button',{name:'Zoom in',exact:true}).click();
    await viewer.getByRole('button',{name:'Zoom in',exact:true}).click();
@@ -141,6 +145,7 @@ async function verify(engine,config,label){const browser=await engine.launch();c
    await expect(viewer.getByRole('button',{name:'Previous photo',exact:true})).toBeDisabled();
    await expect(viewer.getByRole('button',{name:'Next photo',exact:true})).toBeDisabled();
    if(process.argv.includes('--swipe')){await gesture(-100,0);await expect(viewer.getByRole('img',{name:'Property photo 1 of 1',exact:true})).toBeVisible();}
+   if(process.argv.includes('--dismiss')){await (nativeSwipe??gesture)(0,100);await expect(viewer).toHaveCount(0);await expect(trigger).toBeFocused();await trigger.click();}
    await page.keyboard.press('Escape');fixture.deal.listingSnapshot.photoUrls=[];
    await page.getByRole('button',{name:'Refresh',exact:true}).click();await expect(trigger).toHaveCount(0);
    fixture.deal.listingSnapshot.photoUrls=[...photos];await page.getByRole('button',{name:'Refresh',exact:true}).click();

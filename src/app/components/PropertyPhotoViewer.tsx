@@ -15,18 +15,19 @@ type Props = {
 };
 
 export function PropertyPhotoViewer(props: Props) {
+  const [open, setOpen] = useState(false);
   return (
-    <Dialog.Root>
+    <Dialog.Root open={open} onOpenChange={setOpen}>
       <Dialog.Trigger asChild>{props.trigger}</Dialog.Trigger>
       <Dialog.Portal>
         <Dialog.Overlay className="pbk-photo-viewer-backdrop" />
-        <ViewerContent {...props} />
+        <ViewerContent {...props} onClose={() => setOpen(false)} />
       </Dialog.Portal>
     </Dialog.Root>
   );
 }
 
-function ViewerContent({ photos, photo, imageSrc, preview, onSelect, onLoad, onError }: Props) {
+function ViewerContent({ photos, photo, imageSrc, preview, onSelect, onLoad, onError, onClose }: Props & { onClose: () => void }) {
   const [zoom, setZoom] = useState(1);
   const [dragging, setDragging] = useState(false);
   const viewport = useRef<HTMLDivElement>(null);
@@ -66,7 +67,7 @@ function ViewerContent({ photos, photo, imageSrc, preview, onSelect, onLoad, onE
     if (photos.length > 1) onSelect(photos[(index + direction + photos.length) % photos.length]);
   };
   const touch = usePhotoTouchGestures({
-    viewport, photo, zoom, onMove: move,
+    viewport, photo, zoom, onMove: move, onClose,
     onZoom: (value, anchor) => {
       const next = Math.max(1, Math.min(4, Math.round(value * 1000) / 1000));
       zoomAnchor.current = anchor;
@@ -225,8 +226,8 @@ function ViewerContent({ photos, photo, imageSrc, preview, onSelect, onLoad, onE
           </button>
         </div>
         <Dialog.Description>
-          Pinch to zoom. Double-tap for 200% or fit. Swipe at 100% to change photos; drag to pan
-          when zoomed. Arrow keys change photos, + / − zoom, 0 fits, Esc closes.
+          Pinch to zoom. Double-tap for 200% or fit. At 100%, swipe sideways for photos or down
+          to close. Drag to pan when zoomed. Arrow keys change photos, + / − zoom, 0 fits, Esc closes.
         </Dialog.Description>
         {preview && (
           <p className="pbk-property-evidence-note">

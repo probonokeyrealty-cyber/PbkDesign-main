@@ -567,12 +567,21 @@ postgresTest('disposable Postgres operational JSONB proof, tampering and latest 
       return data;
     } });
   try {
-    pgProof = await createAuditFixture({ end: Date.now(), revision, secret });
-    await advanceAuditFixtureClock(pgProof, Date.now());
     await pool.query(`CREATE TABLE public.event_dead_letters(id text PRIMARY KEY,tenant_id text,created_at timestamptz)`);
     await pool.query(DEAD_LETTER_CLOSURE_SQL);
-    const installation = await verifyDeadLetterClosureInstallation(pool.query.bind(pool));
-    assert.equal(installation.verified, true, installation.result);
+    const catalog = [];
+    const installation = await verifyDeadLetterClosureInstallation(async (...args) => {
+      const result = await pool.query(...args);
+      for (const row of result.rows) {
+        if (row.kind && row.detail) {
+          const { body: _body, ...detail } = row.detail;
+          catalog.push({ kind: row.kind, name: row.name, detail });
+        }
+      }
+      return result;
+    });
+    assert.equal(installation.verified, true,
+      `${installation.result}: ${JSON.stringify(catalog).slice(0, 8192)}`);
     assert.equal((await pool.query(`SELECT count(*)::int AS n FROM information_schema.tables
       WHERE table_schema=$1 AND table_name='pbk_dead_letter_closure_ledger'`, [proofSchema])).rows[0].n, 1);
     await pool.query(`CREATE TABLE IF NOT EXISTS public.pbk_eval_runs (
@@ -581,6 +590,8 @@ postgresTest('disposable Postgres operational JSONB proof, tampering and latest 
       failed INT NOT NULL DEFAULT 0, report JSONB NOT NULL DEFAULT '{}'::jsonb,
       source TEXT NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`);
     receiptTableReady = true;
+    pgProof = await createAuditFixture({ end: Date.now(), revision, secret });
+    await advanceAuditFixtureClock(pgProof, Date.now());
     const report = await run(ids[0], async ({ windowEnd }) => collection(Date.parse(windowEnd)));
     assert.equal(report.readbackVerified, true);
     assert.equal(report.audit.ready, false, 'synthetic unknown monitoring coverage never passes');

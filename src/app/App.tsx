@@ -992,7 +992,7 @@ export default function App({ engineOnly = false }: AppProps) {
     } catch (error) {
       if (!operationIsCurrent()) return;
       setAnalyzeStatus(
-        `${savedLabel ? savedLabel + ': Saved locally. ' : ''}CRM handoff pending. ${error instanceof Error ? error.message : 'Try again.'}`
+        `${savedLabel ? savedLabel + ': Saved locally. ' : ''}Lead not saved. Your local draft remains. CRM handoff pending. ${error instanceof Error ? error.message : 'Try again.'}`
       );
       setActiveTab('analyzer');
     } finally {

@@ -156,6 +156,10 @@ async function verify(engine, config, label) {
     await expect(comparison.locator('article')).toHaveCount(3);
     await expect(workspace.getByRole('checkbox',{name:'Select comp '+alternateSales[2].address})).toBeDisabled();
     await expect(comparison.getByRole('img')).toHaveCount(1);
+    if(config.viewport.width>720){
+      const tops=await comparison.locator('article dl').evaluateAll(nodes=>nodes.map(n=>n.getBoundingClientRect().top));
+      assert.ok(Math.max(...tops)-Math.min(...tops)<2,'Comparison metrics align across cards with and without photos');
+    }
     await comparison.screenshot({path:`output/comp-comparison-${label}.png`});
     for (const candidate of alternateSales.slice(0,2)) await workspace.getByRole('checkbox',{name:'Select comp '+candidate.address}).uncheck();
     await noOverflow();

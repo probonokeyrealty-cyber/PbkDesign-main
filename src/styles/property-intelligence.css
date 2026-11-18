@@ -6,18 +6,18 @@
 .pbk-comp-comparison h4 { font-size: 14px; margin: 0 0 10px; }
 .pbk-comp-comparison-grid { display: grid; gap: 12px; min-width: 0; }
 .pbk-comp-comparison-card {
-  min-width: 0; padding: 12px; background: var(--bg-panel);
+  display: flex; flex-direction: column; min-width: 0; padding: 12px; background: var(--bg-panel);
   border: 1px solid var(--sky-dim); border-radius: var(--radius-lg, 10px);
 }
 .pbk-comp-card-heading { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
 .pbk-comp-card-heading > span { color: var(--sky); font: 11px var(--font-mono); text-transform: uppercase; }
-.pbk-comp-comparison-card h5 { font-size: 14px; line-height: 1.5; overflow-wrap: anywhere; margin: 8px 0 12px; }
-.pbk-comp-photo { position: relative; display: flex; width: 100%; height: 170px; padding: 0; overflow: hidden; border: 1px solid var(--border-dim); border-radius: 6px; background: var(--bg-console); color: var(--text-secondary); }
+.pbk-comp-comparison-card h5 { min-height: 42px; font-size: 14px; line-height: 1.5; overflow-wrap: anywhere; margin: 8px 0 12px; }
+.pbk-comp-photo { position: relative; display: flex; flex-shrink: 0; width: 100%; height: 170px; padding: 0; overflow: hidden; border: 1px solid var(--border-dim); border-radius: 6px; background: var(--bg-console); color: var(--text-secondary); }
 button.pbk-comp-photo { cursor: zoom-in; }
 .pbk-comp-photo img { width: 100%; height: 100%; object-fit: cover; }
 button.pbk-comp-photo span { position: absolute; bottom: 0; left: 0; right: 0; padding: 6px; background: var(--bg-console); color: var(--sky); font: 11px var(--font-mono); }
 .pbk-comp-photo-empty { flex-direction: column; gap: 10px; align-items: center; justify-content: center; font-size: 12px; }
-.pbk-comp-metrics { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 8px; margin: 14px 0 0; }
+.pbk-comp-metrics { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 8px; margin: auto 0 0; padding-top: 14px; }
 .pbk-comp-metrics div { min-width: 0; }
 .pbk-comp-metrics dt { color: var(--text-secondary); font-size: 11px; }
 .pbk-comp-metrics dd { font: 12px var(--font-mono); margin: 5px 0 0; overflow-wrap: anywhere; }

@@ -143,3 +143,20 @@ boundary. Release authorization and controller reviews are still required.
 The packaged verifier SQL asset SHA256 is
 `efb4896662b5bb4375968d5b0f36228c3818545bf202a3bd1a49b0a9ae096572`.
 This checksum is evidence, not permission to apply it anywhere.
+
+## Supplemental Cleanup Review Fix
+
+Independent Task7 review found that a lost Docker run acknowledgement could leave
+the test's own container running. Commit `4c06153` preserves the exact owner/name
+handle before creation and reconciles only a fully verified owned resource.
+The wrapper and packaging Node tests passed19/19 with zero skips, covering both
+ambiguous creation and refusal to stop unverifiable or unrelated resources.
+Scoped re-review found the issue addressed with no new breakage.
+
+Only the test wrapper and its Node tests changed. The99-suite Jest run and native
+14/14 results above were not rerun or represented as fresh post-fix native proof.
+Runtime code, migration SQL, query/collection limits and approval settings did not
+change in this fix. Whole-branch review and separate release approval remain open.
+
+The original schema-stage evidence is retained in the
+[historical schema checkpoint](2026-11-17-dead-letter-closure-schema-checkpoint.md).

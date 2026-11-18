@@ -1,4 +1,11 @@
-# Task 2 Implementer Report
+# Dead-Letter Closure Schema Checkpoint
+
+This is the retained historical Task2 report. Its unavailable-native-proof status
+describes that checkpoint only. Subsequent isolated native proof passed14/14;
+see [final local validation](2026-11-17-dead-letter-closure-validation.md).
+The original report and failed/skipped checkpoint evidence are preserved below.
+
+## Original Task2 Implementer Report
 
 Status: DONE_WITH_CONCERNS (implementation/local verification complete; real PostgreSQL proof unavailable).
 

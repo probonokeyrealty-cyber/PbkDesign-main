@@ -58,10 +58,10 @@ Shared result convention: failures are `{ok:false, verified:false, result:<fixed
 
 `Manifest` has exactly `{schemaVersion:'pbk-dead-letter-handler-manifest-v1',recordRef,originalBinding,selectionBinding,policyVersion,steps}`. Steps are ordered qa/memory/scriptOutcome, each exactly `{id,outcome,artifactRef,binding,executedAt}`. qa uses `completed`; memory uses `completed|skipped_short_source`; scriptOutcome uses `not_applicable` with null artifactRef/executedAt and a keyed applicability binding. Completed/skip steps require hex64 artifactRef/binding and valid true execution time. All other combinations are invalid. `selectionBinding` binds canonical/event source resolution, including absent rows. Revoke intents carry the exact prior closure manifest and identify its head; no new handler proof is needed to withdraw credit, but current original identity and fresh revocation approval must verify. This permits safe revocation even when the original closure's proof is no longer complete.
 
-- [ ] Write tests named `strict shapes and scope`, `tampered binding denied`, `expiry controls admission not committed receipt lifetime`, `execution metadata is not decision authority`, `revoked or changed intent denied`, `manifest privacy`, `invalid clocks and hostile objects denied`. Assert unknown properties, ambiguous aliases, accessors/proxies, cycles, NaN, oversized values and cross-tenant rows cannot sign/verify; receipt lifetime never overrides step-proof current freshness rules.
-- [ ] Run `node --experimental-vm-modules node_modules/jest/bin/jest.js --config jest.config.mjs --runInBand --runTestsByPath scripts/dead-letter-closure-protocol.test.mjs`; confirm expected missing-module/export failure.
-- [ ] Implement the named pure interfaces using existing canonical JSON conventions and domain-separated HMACs. Reject shapes before traversing data; bound depth/bytes and compare signatures in constant time. No source rows in public values.
-- [ ] Repeat the same command; require zero failures/skips. Commit only protocol/fixture/tests.
+- [x] Write tests named `strict shapes and scope`, `tampered binding denied`, `expiry controls admission not committed receipt lifetime`, `execution metadata is not decision authority`, `revoked or changed intent denied`, `manifest privacy`, `invalid clocks and hostile objects denied`. Assert unknown properties, ambiguous aliases, accessors/proxies, cycles, NaN, oversized values and cross-tenant rows cannot sign/verify; receipt lifetime never overrides step-proof current freshness rules.
+- [x] Run `node --experimental-vm-modules node_modules/jest/bin/jest.js --config jest.config.mjs --runInBand --runTestsByPath scripts/dead-letter-closure-protocol.test.mjs`; confirm expected missing-module/export failure.
+- [x] Implement the named pure interfaces using existing canonical JSON conventions and domain-separated HMACs. Reject shapes before traversing data; bound depth/bytes and compare signatures in constant time. No source rows in public values.
+- [x] Repeat the same command; require zero failures/skips. Commit only protocol/fixture/tests.
 
 ### Task 2: Guarded Immutable Ledger Migration
 
@@ -73,10 +73,11 @@ Table `public.pbk_dead_letter_closure_ledger`: `id text PRIMARY KEY`, `tenant_id
 
 Allocate ordinal with the verified identity sequence, fetch database admission time/current xid, sign, and use `INSERT ... OVERRIDING SYSTEM VALUE`; never insert an unsigned row and update it later. Encode bigint ordinal/xid as bounded positive decimal strings, not lossy JavaScript numbers. Constraint/readback checks bind the columns to the signed report.
 
-- [ ] Write `migration refuses wrong target and drift`, `repeat apply preserves rows`, `immutable in normal and replica modes`, `browser roles denied`, `missing trigger blocks verification`, `owner trust boundary explicit`. Assert UPDATE/DELETE/TRUNCATE rejection, RLS, actual column/table/sequence privileges, exact trigger/function definitions and no source schema changes. Assert missing required xid/snapshot SQL functions fails preflight closed.
-- [ ] Run the new Jest migration test and observe the expected missing-module failure.
-- [ ] Implement transactional migration and exact installation readback using existing targeted/census migration patterns. Deny PUBLIC/browser access, grant only required existing trusted-server privileges; no role creation, global grants, secrets or startup schema installation. Reject conflicting existing installation rather than overwrite it. Runtime-owner DDL is outside the claimed tamper boundary.
-- [ ] Run Jest migration tests to zero failures/skips. Prove replica immutability and concurrent behavior later in Task 7's isolated real Postgres, not only PGlite. Commit migration and tests.
+- [x] Write `migration refuses wrong target and drift`, `repeat apply preserves rows`, `immutable in normal and replica modes`, `browser roles denied`, `missing trigger blocks verification`, `owner trust boundary explicit`. Assert UPDATE/DELETE/TRUNCATE rejection, RLS, actual column/table/sequence privileges, exact trigger/function definitions and no source schema changes. Assert missing required xid/snapshot SQL functions fails preflight closed.
+- [x] Run the new Jest migration test and observe the expected missing-module failure.
+- [x] Implement transactional migration and exact installation readback using existing targeted/census migration patterns. Deny PUBLIC/browser access, grant only required existing trusted-server privileges; no role creation, global grants, secrets or startup schema installation. Reject conflicting existing installation rather than overwrite it. Runtime-owner DDL is outside the claimed tamper boundary.
+- [x] Run Jest migration tests to zero failures/skips. Commit migration and tests (`647a175`, independent review clean).
+- [x] Prove native replica immutability, catalog compatibility and concurrent behavior in Task7's isolated real Postgres. Dedicated local proof passed14/14 repeatedly, with actual pgvector and preserved originals/dispatch fingerprints; not a PGlite-only claim.
 
 ### Task 3: Read-Only Complete Handler Evidence
 
@@ -84,10 +85,10 @@ Allocate ordinal with the verified identity sequence, fetch database admission t
 
 **Interfaces:** Add `verifyCallMemorySkipEvidence({original,calls,receipt,secret,revision,now}):Result` as a pure adapter over existing skip context/source/verify functions. Export `collectDeadLetterClosureEvidence({query,secret,revision,now,recordRefs}):Promise<Result>`, returning bounded cases with keyed refs/bindings, `eligible:boolean`, fixed reasons and strict manifest. Export `verifyDeadLetterHandlerEvidence({original,calls,qa,memory,skipReceipt,secret,revision,now}):Result` for pure fixture tests. Raw rows stay within this module/transaction; success manifests contain only keyed references, outcomes and true proof times.
 
-- [ ] Write `complete embedding evidence eligible`, `short source without executed skip blocked`, `canonical longer than event rejects skip`, `genuine signed skip accepted then stale rejected`, `script selector always blocks v1`, `contradictory aliases blocked`, `low valid QA is completion not quality pass`, `changed original or artifacts invalidates manifest`, `65th row or oversize denies all`. Assert no write/tool/worker/skip-writer import or invocation.
-- [ ] Run new evidence and existing memory-outcome Jest tests; observe intended new-interface failure, retaining existing behavior expectations.
-- [ ] Implement fixed PBK-only bounded SELECTs for originals, canonical aliases, QA, real embeddings and skip rows. Verify cross-tenant identity collisions without returning foreign content. Use existing canonical transcript/exclusion helpers and unchanged skip verifier. Do not reuse reconciliation-v1 summary as complete handler proof. All script selectors require unsupported-proof blocker, not guessed completion.
-- [ ] Run both test files to zero failures/skips. Assert fixture fingerprints before/after collection identical. Commit shared adapter, evidence module and tests.
+- [x] Write `complete embedding evidence eligible`, `short source without executed skip blocked`, `canonical longer than event rejects skip`, `genuine signed skip accepted then stale rejected`, `script selector always blocks v1`, `contradictory aliases blocked`, `low valid QA is completion not quality pass`, `changed original or artifacts invalidates manifest`, `65th row or oversize denies all`. Assert no write/tool/worker/skip-writer import or invocation.
+- [x] Run new evidence and existing memory-outcome Jest tests; observe intended new-interface failure, retaining existing behavior expectations.
+- [x] Implement fixed PBK-only bounded SELECTs for originals, canonical aliases, QA, real embeddings and skip rows. Verify cross-tenant identity collisions without returning foreign content. Use existing canonical transcript/exclusion helpers and unchanged skip verifier. Do not reuse reconciliation-v1 summary as complete handler proof. All script selectors require unsupported-proof blocker, not guessed completion.
+- [x] Run both test files to zero failures/skips. Assert fixture fingerprints before/after collection identical. Commit shared adapter, evidence module and tests (`a1877dc`, canonical fallback fix `5fa4a6f`; independent re-review clean).
 
 ### Task 4: Append, Revoke And Independently Read Back
 
@@ -95,11 +96,12 @@ Allocate ordinal with the verified identity sequence, fetch database admission t
 
 **Interfaces:** Export `executeDeadLetterClosure({pool,secret,revision,approvalId,now=Date.now}):Promise<Result>`, `readDeadLetterClosures({pool,secret,revision,now=Date.now(),cutoff,reference,boundary}):Promise<Result>` and `verifyDeadLetterClosureReference({pool,secret,revision,now,reference}):Promise<Result>`. Reads return `counts:{total,closedInternal,open,invalidated}`, bounded per-case statuses, and authenticated audit reference; failure counts are null. A reference binds exact ledger heads, original/manifest/decision bindings, cutoff and optional Task 5 boundary. Reference revalidation never selects a newer beneficial closure.
 
-- [ ] Write `exact approved append and readback`, `pending denied missing expired approval blocked`, `same intent single use`, `newest bad receipt never falls back`, `revocation requires fresh approval and append`, `source or decision drift blocks`, `temporary outage restores only identical proof`, `late client and timeout destroy without commit`, `pool max one does not deadlock`, `global history overflow denies all`. Assert originals/dispatches/unrelated approvals unchanged; ledger rows never updated/deleted.
-- [ ] Run new store Jest tests and confirm the expected missing-module failure.
-- [ ] Implement bounded serializable write transaction: validate installation, acquire per-case advisory lock, reload/lock canonical approval, re-read sources/predecessor and approved intent, allocate order/time/current xid, sign and INSERT. Do not retry serialization errors. Read-only repeatable-read verification uses the independent protocol/evidence validators, full bounded chain and current canonical approval; explicit revocation blocks credit. Exact replay returns existing verified receipt only, including after proposal expiry if it was valid at original admission. Release transaction connection before independent readback to support max:1 pools.
-- [ ] Implement shared end-to-end fences (15s reads, 60s write plus readback, <=2s queries), client error handling, rollback/destruction and late acquisition disposal. No COMMIT after abandonment. Current summaries can regain proof after transient failure but never overwrite durable history.
-- [ ] Run new store/protocol/evidence tests to zero failures/skips; extend real tests with two-client source/approval/ledger races. Commit store and tests.
+- [x] Write `exact approved append and readback`, `pending denied missing expired approval blocked`, `same intent single use`, `newest bad receipt never falls back`, `revocation requires fresh approval and append`, `source or decision drift blocks`, `temporary outage restores only identical proof`, `late client and timeout destroy without commit`, `pool max one does not deadlock`, `global history overflow denies all`. Assert originals/dispatches/unrelated approvals unchanged; ledger rows never updated/deleted.
+- [x] Run new store Jest tests and confirm the expected missing-module failure.
+- [x] Implement bounded serializable write transaction: validate installation, acquire per-case advisory lock, reload/lock canonical approval, re-read sources/predecessor and approved intent, allocate order/time/current xid, sign and INSERT. Do not retry serialization errors. Read-only repeatable-read verification uses the independent protocol/evidence validators, full bounded chain and current canonical approval; explicit revocation blocks credit. Exact replay returns existing verified receipt only, including after proposal expiry if it was valid at original admission. Release transaction connection before independent readback to support max:1 pools.
+- [x] Implement shared end-to-end fences (15s reads, 60s write plus readback, <=2s queries), client error handling, rollback/destruction and late acquisition disposal. No COMMIT after abandonment. Current summaries can regain proof after transient failure but never overwrite durable history.
+- [x] Run new store/protocol/evidence tests to zero failures/skips; extend real tests with two-client source/approval/ledger races. Commit store and tests (`632994d`, independent review clean).
+- [x] Execute native PostgreSQL source/approval/ledger races and pool lifecycle proof in Task7's dedicated14/14 local proof, including independent max:1 readback and guarded cleanup.
 
 ### Task 5: Closure-Aware Operational Audit v3
 
@@ -109,12 +111,13 @@ Allocate ordinal with the verified identity sequence, fetch database admission t
 
 Use schema `pbk-operational-audit-v3`, suite `operational_audit_v3`, source `server:operational-audit:v3`, domain-separated v3 signing key. Newest admission query spans v1/v2/v3 without success filtering; explicit supported schema/key mapping, no unknown-version fallback. Legacy rows retain signatures/semantics and never gain closure credit. New dead-letter counts include `totalOriginals`, `resolvedInternal`, `outstanding`, `invalidatedClosures`; strict normalizer recomputes their relationship. Reference size shares 65536-byte report limit.
 
-- [ ] Write `post-cutoff commit denied despite earlier timestamp`, `closure after signed audit cannot improve it`, `revocation downgrades stored audit`, `coverage unverified still validates closures`, `legacy schema never gains closure credit`, `newest pending or invalid v3 blocks older pass`, `unavailable ledger never means zero outstanding`, `originals total retained and exact subset subtracted`. Pin boundary text tamper/clock skew/overflow rejection.
-- [ ] Run audit/store/coverage and new cutoff tests, confirming expected new-schema/interface failures.
-- [ ] Capture a read-only database snapshot after pending audit admission and before choosing the server observation cutoff, within the existing audit fence; retain the original audit start/admission behavior. Keep signed boundary with reference. A ledger transaction in progress or absent at that snapshot is ineligible even if its admission timestamp is older. Snapshot xid visibility is a conservative committed-before-cutoff witness; no new clock/ordinal shortcut. Refuse unavailable snapshot support or impossible clock ordering. This is the chosen implementation of the spec's commit-cutoff rule, not an expanded collection window.
-- [ ] In the dead-letter scan, count every original and discount only the bounded complete verified subset eligible at cutoff. Missing current sources, unsupported cases or invalidated closures stay outstanding; unreadable summary makes check unverified. Add ledger to fixed security inventory (22 existing tables + ledger = 23), retaining all existing tables/checks and expected privileges.
-- [ ] Revalidate signed closure reference on every audit read, before the current coverage early-return path; recheck newest audit admission after async work. Current failures may downgrade only; successful identical revalidation restores at most signed result. Do not mutate stored audit or let new closures improve old counts. Keep independent gates untouched.
-- [ ] Run audit regression tests and real two-client held-transaction cutoff test to zero failures/skips. Commit versioned audit integration and tests.
+- [x] Write `post-cutoff commit denied despite earlier timestamp`, `closure after signed audit cannot improve it`, `revocation downgrades stored audit`, `coverage unverified still validates closures`, `legacy schema never gains closure credit`, `newest pending or invalid v3 blocks older pass`, `unavailable ledger never means zero outstanding`, `originals total retained and exact subset subtracted`. Pin boundary text tamper/clock skew/overflow rejection.
+- [x] Run audit/store/coverage and new cutoff tests, confirming expected new-schema/interface failures.
+- [x] Capture a read-only database snapshot after pending audit admission and before choosing the server observation cutoff, within the existing audit fence; retain the original audit start/admission behavior. Keep signed boundary with reference. A ledger transaction in progress or absent at that snapshot is ineligible even if its admission timestamp is older. Snapshot xid visibility is a conservative committed-before-cutoff witness; no new clock/ordinal shortcut. Refuse unavailable snapshot support or impossible clock ordering. This is the chosen implementation of the spec's commit-cutoff rule, not an expanded collection window.
+- [x] In the dead-letter scan, count every original and discount only the bounded complete verified subset eligible at cutoff. Missing current sources, unsupported cases or invalidated closures stay outstanding; unreadable summary makes check unverified. Add ledger to fixed security inventory (22 existing tables + ledger = 23), retaining all existing tables/checks and expected privileges.
+- [x] Revalidate signed closure reference on every audit read, before the current coverage early-return path; recheck newest audit admission after async work. Current failures may downgrade only; successful identical revalidation restores at most signed result. Do not mutate stored audit or let new closures improve old counts. Keep independent gates untouched.
+- [x] Run audit regression tests and commit versioned audit integration (`77369e1`, independent review clean;381 Jest passes,1 explicit existing native skip).
+- [x] Execute the real two-client held-transaction cutoff proof in Task7; real xid snapshot rejects the post-snapshot commit despite its earlier timestamp. Dedicated local proof passed14/14.
 
 ### Task 6: Existing Approval Lane, Founder Routes And Readiness
 
@@ -122,12 +125,12 @@ Use schema `pbk-operational-audit-v3`, suite `operational_audit_v3`, source `ser
 
 **Interfaces:** Export `isDeadLetterClosureApproval(value):boolean`, `authorizeClosureProposalRequest(request,apiKey):Result`, `prepareDeadLetterClosureProposal({pool,secret,revision,recordRef,action,approvalId,now}):Promise<Result>`. Prepare returns pending approval params, not a persisted/approved decision. Action is fixed by route: close proposal or revoke proposal. Params use existing type `admin`, action `dead_letter_internal_closure`, signed intent in `metadata.deadLetterClosureIntent`; no lead/contract association, no provider flags. Server generates approval ID before signing, then calls existing `createApprovalTask` and confirms exact durable pending intent before reporting success. No cached-only or local-file authority accepted.
 
-- [ ] Write `team denied existing admin approval rules`, `protected passcode and Slack checks retained`, `founder bearer cannot apply without approval`, `proposal cannot inject evidence or approval status`, `internal approval never touches dispatch or generic tool fallback`, `maturity cannot merge closure diagnostics into other gates`, `proxy denies all founder closure routes`. Test GET preview read-only; POSTs empty-body/no-query; reject duplicate/proxy/delegated headers, wrong methods, malformed refs and trailing/encoded route bypasses.
-- [ ] Run new wiring tests and existing founder/proxy tests; confirm new routing expectations fail first.
-- [ ] Implement preview/propose/propose-revocation under approved paths. Use existing direct-founder header checks and all existing admin approval gates; type `admin` ensures team/admin protection is inherited. No apply/execute HTTP route or invoke tool. Deny proxy access to the exact closure route family before lending bridge credentials; adjacent unrelated paths retain behavior.
-- [ ] Add internal approval handling in existing approval-callback after durable decision claim and before provider lease/contract/generic fallback. Exact internal decision replays may read the existing receipt but never invoke other handlers. Ignore execution overrides; only canonical signed intent is authority. Any internal-action/type mismatch fails before fallback. Proposal approval creation uses existing pending service; any normal operator notification is stubbed in local tests, never seller-facing.
-- [ ] Add `deadLetterClosures` summary to existing production maturity response while retaining reconciliation-v1 and memory-policy diagnostics. Use closure-aware `readOperationalAudit` for audit evidence only; direct closure diagnostics never become execution/coverage/canary/delivery qualification.
-- [ ] Run focused plus existing reconciliation, approval dispatch, founder authorization, Netlify boundary and maturity tests to zero failures/skips. Run isolated bridge smoke with all provider/network side effects stubbed/denied. Commit only integration/test files.
+- [x] Write `team denied existing admin approval rules`, `protected passcode and Slack checks retained`, `founder bearer cannot apply without approval`, `proposal cannot inject evidence or approval status`, `internal approval never touches dispatch or generic tool fallback`, `maturity cannot merge closure diagnostics into other gates`, `proxy denies all founder closure routes`. Test GET preview read-only; POSTs empty-body/no-query; reject duplicate/proxy/delegated headers, wrong methods, malformed refs and trailing/encoded route bypasses.
+- [x] Run new wiring tests and existing founder/proxy tests; confirm new routing expectations fail first.
+- [x] Implement preview/propose/propose-revocation under approved paths. Use existing direct-founder header checks and all existing admin approval gates; type `admin` ensures team/admin protection is inherited. No apply/execute HTTP route or invoke tool. Deny proxy access to the exact closure route family before lending bridge credentials; adjacent unrelated paths retain behavior.
+- [x] Add internal approval handling in existing approval-callback after durable decision claim and before provider lease/contract/generic fallback. Exact internal decision replays may read the existing receipt but never invoke other handlers. Ignore execution overrides; only canonical signed intent is authority. Any internal-action/type mismatch fails before fallback. Proposal approval creation uses existing pending service; any normal operator notification is stubbed in local tests, never seller-facing.
+- [x] Add `deadLetterClosures` summary to existing production maturity response while retaining reconciliation-v1 and memory-policy diagnostics. Use closure-aware `readOperationalAudit` for audit evidence only; direct closure diagnostics never become execution/coverage/canary/delivery qualification.
+- [x] Run focused plus existing reconciliation, approval dispatch, founder authorization, Netlify boundary and maturity tests; zero failures with four pre-existing explicit DB opt-in skips (not native proof). Isolated bridge smoke passed with side effects stubbed/denied. Integration `83b3bc9`, reviewed replay fix `0e79b24`; scoped review clean. Deferred replay observation tracked for whole-branch review.
 
 ### Task 7: Isolated Postgres Proof, Packaging And Whole-Branch Review
 
@@ -135,18 +138,18 @@ Use schema `pbk-operational-audit-v3`, suite `operational_audit_v3`, source `ser
 
 **Interfaces:** New npm scripts `test:dead-letter-closure`, `test:dead-letter-closure-bridge`, `test:dead-letter-closure-postgres`. Real proof uses only dedicated `PBK_CLOSURE_TEST_*` target variables, never ambient runtime URLs. Require loopback host, explicit expected database/role and unique disposable database name `pbk_closure_test_<random hex>`; verify generated empty DB before any fixtures/migration. Drop only that verified generated DB in finally. No remote Neon/Render provisioning or writes under this local authorization; absence of a local server is a reported verification gap, not a successful skipped proof.
 
-- [ ] Add packaging tests for new runtime imports and migration verifier SQL asset. No startup migration runner or new production workflow action. Add local operations instructions explaining effective closure, revocation, current-proof failures, owner trust boundary and separate release authorization.
-- [ ] Run new tests to expected missing-packaging failure; add only needed Docker COPY/package script entries, preserving node22 and existing build settings.
-- [ ] Run guarded local real Postgres proof, including normal/replica immutability, exact installation drift detection, single-use concurrency, original/dispatch fingerprint preservation, max:1 pool, held-transaction cutoff and independent readback. Fixture approvals may be created/decided only in generated disposable DB. Network observer asserts zero external calls and sender stubs throw on access. Save aggregate redacted results, not source rows/secrets.
-- [ ] With pinned Node22 first in PATH, run `npm run test:dead-letter-closure`, `npm run test:dead-letter-closure-bridge`, `npm run test:backlog-reconciliation-bridge`, `npm run test:operational-audit-bridge`, `npm run test:provider-action-dispatch`, `npm run test:render-docker-imports`, `npm run typecheck`, `npm run lint`, `npm run build`, and `git diff --check`. Run targeted existing memory/audit/canary/approval/proxy Jest suites too. Inspect build-generated files and preserve unrelated existing work; do not blindly revert them.
+- [x] Add packaging tests for new runtime imports and migration verifier SQL asset. No startup migration runner or new production workflow action. Add local operations instructions explaining effective closure, revocation, current-proof failures, owner trust boundary and separate release authorization.
+- [x] Run new tests to expected missing-packaging failure; add only needed Docker COPY/package script entries, preserving node22 and existing build settings.
+- [x] Run guarded local real Postgres proof, including normal/replica immutability, exact installation drift detection, single-use concurrency, original/dispatch fingerprint preservation, max:1 pool, held-transaction cutoff and independent readback. Dedicated proof14/14, zero external/sender attempts; generated DB/container cleanup confirmed. Only aggregate redacted evidence retained.
+- [x] Run all listed focused/smoke/import/typecheck/lint/build checks with pinned Node22. Full unfiltered unit run99/99 suites,2983 passed,12 explicitly listed pre-existing native opt-in skips,0 failures. No build-generated product changes. Supplemental Docker-ack cleanup fix19/19 Node tests; runtime/Jest unchanged. Validation details in operations documentation.
 - [ ] Obtain independent correctness/security review of full diff, fixing findings with regression tests. Recheck proof replay, trust boundaries, privacy, cutoff race, auth/admin classification and dispatch noninterference. Record exact commands/results, failures/skips and remaining gaps. Do not claim production readiness from a build or PGlite-only proof.
-- [ ] Commit scoped code/tests/docs locally. No push, PR, production migration, deployment or live closure. Report local results and remaining genuine blockers without changing production.
+- [x] Commit scoped code/tests/docs locally (`4286ea4`, reviewed cleanup fix `4c06153`). No push, PR, production migration, deployment or live closure. Remaining full-branch review/release boundaries stay explicit.
 
 ## Execution Checkpoints
 
-- [ ] Founder reviews this plan and chooses execution method before product edits.
-- [ ] Check linked-worktree isolation via using-git-worktrees; preserve `output/`; create `codex/dead-letter-closure` branch for execution.
-- [ ] Follow test-first tasks above, committing/reviewing each independently testable unit.
+- [x] Founder reviews this plan and chooses execution method before product edits.
+- [x] Check linked-worktree isolation via using-git-worktrees; preserve `output/`; create `codex/dead-letter-closure` branch for execution.
+- [x] Follow test-first tasks above, committing/reviewing each independently testable unit. Seven task gates complete; full-branch review remains separate.
 - [ ] Whole-branch review and honest local validation summary complete; production unchanged.
 
 ## Plan Self-Review
@@ -162,4 +165,25 @@ above are the cross-task contracts; implementation must not silently rename them
 Recommended execution: subagent-driven, with a fresh implementer and independent
 review for each task, then a full-branch security review. These components share
 security-sensitive evidence interfaces, so catching contract drift between tasks
-is worth the additional review contexts. No implementation has started yet.
+is worth the additional review contexts. Tasks 1-7 are implemented and independently
+reviewed through `4c06153`; dedicated native Postgres proof passed14/14. Whole-branch
+review remains pending as tracked above; no production change is authorized.
+
+## Execution Decisions
+
+These controller decisions preserve the approved scope. Their failure costs are
+explicit so they can be reconsidered during final review.
+
+1. Inherit the session model for subagents, as required by developer tool rules.
+   If its review quality is unsuitable, an additional review is needed.
+2. Centralize the full unit suite in Task7; earlier tasks run focused regressions.
+   Shared regressions may therefore be found later and must still be resolved.
+3. Keep revision matching strict, without cross-release closure credit. Legitimate
+   older closures may require fresh evidence and approval after a release.
+4. Start Task1's disjoint pure module while the unchanged baseline runs. A failed
+   baseline would require investigation before integration; it subsequently passed.
+5. Pin one strict cross-task protocol contract. A wrong field choice requires a
+   localized adaptation, never weaker authentication or evidence validation.
+6. Permit a narrow read-only proposal-context helper in the existing store so
+   proposal generation can reuse bounded validators and current/prior manifests.
+   Incorrect helper behavior requires tests and repair, not new apply authority.

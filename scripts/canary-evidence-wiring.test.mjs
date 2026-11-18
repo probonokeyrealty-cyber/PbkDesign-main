@@ -180,10 +180,10 @@ test('unapproved v2 policy is not replaced with a pilot or legacy policy', async
 test('approval, auth, delivery and dispatch code outside maturity remains byte-for-byte unchanged', () => {
   const unchanged = (source.slice(0, start) + source.slice(end))
     .replace("import { readCanaryEvidence } from './canary-evidence-reader.mjs';\n", '');
-  // Independently reviewed address/CRM integration; bridge baseline is c6151bb.
-  // Hash refresh review and old/new digests: docs/operations/2026-11-17-address-crm-hash-refresh.md.
+  // Independently reviewed lead intelligence integration; bridge baseline is 43c0066.
+  // Hash refresh review: docs/operations/2026-11-18-lead-intelligence-hash-refresh.md.
   assert.equal(createHash('sha256').update(unchanged).digest('hex'),
-    'a0ca25e800b8c6d9f02a8a66df1d0f0057d75df518e596414593d071e6b59353');
+    'a0b0dad9228d17e3bc382d010577b705730e95c16e7f42fc18259adcc6d1ee55');
 });
 
 test('production distribution includes reader and protocol, never the fixture signer', () => {

@@ -36,7 +36,6 @@ function harness(state) {
     COMPACT_STATE_ARRAY_LIMIT: 24, COMPACT_STATE_RECORD_BYTES: 6000, COMPACT_STATE_NESTED_BYTES: 2500,
     Buffer, BANT_FIELDS: [], process: { env: {} }, contractTemplateCache: { templates: [], errors: [] },
     isoNow: () => new Date(now).toISOString(),
-    getItemTimestamp: item => item.updatedAt || item.createdAt || item.startedAt || '',
     getPendingRuntimeApprovals: items => items.filter(item => item.status === 'pending'),
     getPendingAdminTasks: items => items.filter(item => item.status === 'pending'),
     buildToolUsageSeed: () => ({}), getRuntimeMeta: () => ({}),
@@ -50,7 +49,7 @@ function harness(state) {
     sanitizeAvaAssistantSessionSnapshot: value => value, sanitizeAvaAssistantExchangeSnapshot: value => value,
     formatMoneyCompact: String, getRuntimeOperatingMode: () => 'approval',
     buildManualControlStatus: () => ({}), normalizeAgentDebugId: String, agentDebugMatches: () => false,
-    sortNewest: items => [...items].sort((a, b) => String(b.at || '').localeCompare(String(a.at || ''))),
+    getRuntimeStateSource: () => 'isolated-sample', formatRelativeTime: String,
     isDemoActivity: () => false,
   });
   for (const name of [
@@ -64,9 +63,11 @@ function harness(state) {
   ]) context[name] = () => ({});
   for (const name of [
     'callTimeMs', 'hasLegacyDemoLeadContext', 'sanitizeLegacyInboundCallContext', 'normalizeStaleLiveCall',
-    'normalizeStaleLiveCalls', 'isActiveLiveCall', 'averageNumeric', 'updateDerivedStatus',
+    'normalizeStaleLiveCalls', 'isActiveLiveCall', 'getItemTimestamp', 'sortNewest', 'averageNumeric', 'updateDerivedStatus',
     'estimateSnapshotBytes', 'compactSnapshotText', 'compactSnapshotNestedValue', 'compactSnapshotRecord',
     'limitSnapshotArray', 'buildNotificationSnapshot', 'buildStateSnapshot', 'buildAgentStatusBundle',
+    'toNumber', 'clampFounderWorkScore', 'getFounderLeadScore', 'getFounderLeadDisplayName',
+    'getFounderLeadAddress', 'getFounderMessageRecipient', 'buildFounderWorkQueueSnapshot',
   ]) {
     expect(functions.has(name)).toBe(true);
     vm.runInContext('"use strict";\n' + functions.get(name), context);
@@ -82,7 +83,76 @@ function expectPreserved(state, before, calls) {
   expect(copy(state.approvals)).toEqual(before.approvals);
 }
 
+function readCallRoute(context, path, query = '') {
+  const routes = [];
+  function visit(node) {
+    if (ts.isIfStatement(node)) {
+      const condition = node.expression.getText(ast);
+      if ((condition === "request.method === 'GET' && pathname === '/api/calls'" && path === '/api/calls') ||
+          (condition === "request.method === 'GET' && matchesPath(pathname, ['/api/calls/summary', '/api/v1/calls/summary'])" && path !== '/api/calls')) {
+        routes.push(node);
+      }
+    }
+    ts.forEachChild(node, visit);
+  }
+  visit(ast);
+  expect(routes).toHaveLength(1);
+  let reply;
+  Object.assign(context, {
+    request: { method: 'GET' }, response: {}, pathname: path,
+    url: new URL(`http://sample.invalid${path}${query}`),
+    matchesPath: (pathname, paths) => paths.includes(pathname),
+    buildRexAutonomyKpiSnapshot: () => ({ totalCalls: context.state.calls.length, acceptedOffers: 0, conversionRate: 0 }),
+    json: (_response, status, body) => { reply = { status, body: copy(body) }; },
+  });
+  vm.runInContext(`(() => { "use strict"; ${routes[0].getText(ast)} })()`, context);
+  return reply;
+}
+
 describe('bridge call history read isolation', () => {
+  test('founder queue excludes stale connected calls without changing history', () => {
+    const state = sampleState(), calls = state.calls;
+    calls[0].status = 'connected';
+    const before = copy(state), context = harness(state);
+    const queue = context.buildFounderWorkQueueSnapshot();
+    expect(copy(queue.items.filter(item => item.recordKind === 'call').map(item => item.recordId))).toEqual(['sample-active']);
+    expect(queue.summary.activeCalls).toBe(context.buildStateSnapshot().status.activeCalls);
+    expect(queue.summary.approvals).toBe(1);
+    expectPreserved(state, before, calls);
+  });
+
+  test.each(['/api/calls', '/api/calls/summary', '/api/v1/calls/summary'])('%s agrees with state projections while preserving frozen history', path => {
+    const state = sampleState(), calls = state.calls;
+    calls[0].status = 'connected';
+    const before = copy(state);
+    calls.forEach(Object.freeze);
+    Object.freeze(calls);
+    Object.defineProperty(state, 'calls', { value: calls, writable: false, enumerable: true });
+    const context = harness(state), snapshot = context.buildStateSnapshot();
+    const reply = readCallRoute(context, path);
+    const projected = path === '/api/calls' ? reply.body.calls : reply.body.calls.recent;
+    expect(reply.status).toBe(200);
+    expect(reply.body.count).toBe(4);
+    for (const call of projected) expect(call).toEqual(copy(snapshot.calls.find(item => item.id === call.id)));
+    expect(projected.find(call => call.id === 'sample-stale').status).toBe('ended');
+    expect(projected.find(call => call.id === 'sample-legacy')).toMatchObject({
+      leadId: 'lead-diane-kowalski', leadName: '', address: '', legacyContextSanitized: true,
+    });
+    expectPreserved(state, before, calls);
+  });
+
+  test('call pagination uses normalized timestamps and exact record IDs', () => {
+    const state = sampleState(), calls = state.calls;
+    calls[0].updated_at = calls[0].updatedAt;
+    delete calls[0].updatedAt;
+    const before = copy(state), context = harness(state);
+    const reply = readCallRoute(context, '/api/calls', '?limit=1&offset=1');
+    expect(reply.body).toMatchObject({ count: 4, limit: 1, offset: 1 });
+    expect(reply.body.calls).toHaveLength(1);
+    expect(reply.body.calls[0]).toMatchObject({ id: 'sample-stale', status: 'ended', leadId: 'sample-lead' });
+    expectPreserved(state, before, calls);
+  });
+
   test('derived status counts stale calls without replacing stored records', () => {
     const state = sampleState(), before = copy(state), calls = state.calls;
     const context = harness(state);
@@ -111,6 +181,18 @@ describe('bridge call history read isolation', () => {
     context.updateDerivedStatus(state);
     expectPreserved(state, before, calls);
     expect(state.status.lastCallAt).toBe('2026-11-17T15:00:00.000Z');
+  });
+
+  test('agent daily counts retain legacy timestamps without changing call history', () => {
+    const state = sampleState(), calls = state.calls;
+    state.agents = [{ id: 'ava', name: 'Sample supervisor' }];
+    calls[0].updated_at = calls[0].updatedAt;
+    delete calls[0].updatedAt;
+    const before = copy(state), context = harness(state);
+    const status = context.buildAgentStatusBundle();
+    expectPreserved(state, before, calls);
+    expect(status.agents[0].callsToday).toBe(2);
+    expect(status.agents[0].activeCalls).toBe(1);
   });
 
   test.each([undefined, null, []])('empty or missing history (%j) is not replaced during reads', calls => {

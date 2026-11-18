@@ -49035,7 +49035,7 @@ function buildAgentStatusBundle() {
   const today = isoNow().slice(0, 10);
   const decisions = state.agentDecisions || [];
   const rexDecisions = state.rexDecisions || [];
-  const calls = state.calls || [];
+  const calls = normalizeStaleLiveCalls(state.calls || []);
   const callEmotions = state.callEmotions || [];
   const agents = (state.agents || buildDefaultAgentFleet()).map((agent) => {
     const agentId = normalizeAgentDebugId(agent.id || agent.name);
@@ -63619,8 +63619,9 @@ function getFounderMessageRecipient(message = {}) {
 function buildFounderWorkQueueSnapshot({ limit = 8 } = {}) {
   const safeLimit = Math.max(1, Math.min(24, Number(limit) || 8));
   const items = [];
+  const calls = normalizeStaleLiveCalls(state.calls || []);
 
-  (state.calls || [])
+  calls
     .filter(
       (call) =>
         isActiveLiveCall(call) ||
@@ -63789,7 +63790,7 @@ function buildFounderWorkQueueSnapshot({ limit = 8 } = {}) {
     summary: {
       approvals: getPendingRuntimeApprovals(state.approvals || []).length,
       adminTasks: getPendingAdminTasks(state.adminTasks || []).length,
-      activeCalls: (state.calls || []).filter((call) => isActiveLiveCall(call)).length,
+      activeCalls: calls.filter((call) => isActiveLiveCall(call)).length,
       failedMessages: (state.messages || []).filter((message) =>
         ['failed', 'delivery_failed', 'error'].includes(String(message.status || '').toLowerCase())
       ).length,
@@ -79739,7 +79740,7 @@ const server = createServer(async (request, response) => {
         targetMonthlyRevenue: url.searchParams.get('targetMonthlyRevenue') || url.searchParams.get('target_monthly_revenue') || undefined,
         revenueDays: url.searchParams.get('revenueDays') || url.searchParams.get('revenue_days') || 30,
       });
-      const allCalls = sortNewest(Array.isArray(state.calls) ? state.calls : []);
+      const allCalls = sortNewest(normalizeStaleLiveCalls(state.calls));
       json(response, 200, {
         ok: true,
         result: 'calls_summary',
@@ -79761,7 +79762,7 @@ const server = createServer(async (request, response) => {
     if (request.method === 'GET' && pathname === '/api/calls') {
       const limit = Math.max(1, Math.min(200, Number(url.searchParams.get('limit') || 80)));
       const offset = Math.max(0, Number(url.searchParams.get('offset') || 0));
-      const allCalls = sortNewest(Array.isArray(state.calls) ? state.calls : []);
+      const allCalls = sortNewest(normalizeStaleLiveCalls(state.calls));
       json(response, 200, {
         ok: true,
         result: 'live',

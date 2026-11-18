@@ -183,6 +183,7 @@ export function AnalyzerTab({
                   leadId: undefined,
                   crmCreateKey: undefined,
                   propertyRecordSnapshot: undefined,
+                  listingSnapshot: undefined,
                   ...(deal.leadId || deal.crmCreateKey
                     ? {
                         sellerName: '',

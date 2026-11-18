@@ -3,7 +3,7 @@ import { preview } from 'vite';
 import { chromium, webkit, expect } from '@playwright/test';
 
 const server = await preview({
-  build: { outDir: 'output/address-autofill-build' },
+  build: { outDir: process.env.PBK_ANALYZER_BUILD_DIR || 'output/address-autofill-build' },
   preview: { host: '127.0.0.1', port: 0 },
 });
 const origin = `http://127.0.0.1:${server.httpServer.address().port}`;
@@ -86,7 +86,7 @@ try {
                   priceBasis: 'asking_price',
                   askingPriceUsd: 450000,
                   listingFacts: { beds: 3, sqft: 1800, year: 1995, dom: 12 },
-                  photoUrls: [],
+                  photoUrls: [lookups.length === 1 ? 'https://ap.rdcpix.com/fixture-front.jpg' : 'https://ap.rdcpix.com/fixture-refresh.jpg'],
                 },
               },
             },
@@ -139,6 +139,9 @@ try {
       assert.equal(sync.body.deal.year, 0);
       assert.equal(sync.body.deal.arv, 600000);
       assert.equal(sync.body.deal.propertyRecordSnapshot.facts.apn, 'FIXTURE-42');
+      assert.deepEqual(sync.body.deal.listingSnapshot.photoUrls, ['https://ap.rdcpix.com/fixture-front.jpg']);
+      assert.equal(sync.body.deal.listingSnapshot.address, full);
+      assert.equal(sync.body.deal.listingSnapshot.askingPrice, 450000);
       await expect(
         page.locator('#analyzer-valuation').getByText(/Saved locally\. Ava queued approval/)
       ).toBeVisible();
@@ -157,19 +160,29 @@ try {
         [full],
         'Filling fields and switching views must not repeat the request'
       );
+      await page.getByRole('button', { name: 'Look up asking price', exact: true }).click();
+      await expect.poll(() => lookups.length).toBe(2);
+      releaseLookup();
+      await expect(page.getByRole('button', { name: 'Look up asking price', exact: true })).toBeEnabled();
+      saving = true;
+      await page.getByRole('button', { name: 'Save Deal', exact: true }).click();
+      await expect.poll(() => writes.filter(write => write.method === 'PATCH').length).toBe(1);
+      assert.deepEqual(writes.find(write => write.method === 'PATCH').body.deal.listingSnapshot.photoUrls, ['https://ap.rdcpix.com/fixture-refresh.jpg'], 'Manual lookup must persist refreshed photo evidence even without filling scalar fields');
+      writes.length = 0;
+      saving = false;
       await price.fill('');
       await address.fill('43 Fixture Avenue, Example City, CA 90210');
       await expect(page.getByRole('textbox', { name: 'Seller phone', exact: true })).toHaveValue(
         ''
       );
-      await expect.poll(() => lookups.length).toBe(2);
+      await expect.poll(() => lookups.length).toBe(3);
       await address.fill('44 Unfinished');
       releaseLookup();
       await page.waitForTimeout(1200);
       await expect(price).toHaveValue('');
       assert.equal(
         lookups.length,
-        2,
+        3,
         'Old results and unfinished addresses must not cause extra lookups'
       );
       assert.deepEqual(writes, [], 'Typing and lookup must not save to CRM or dispatch work');
@@ -177,7 +190,7 @@ try {
       await page.getByRole('button', { name: 'Clear', exact: true }).click();
       await expect(address).toHaveValue('');
       await address.fill('45 Fresh Avenue, Example City, CA 90210');
-      await expect.poll(() => lookups.length).toBe(3);
+      await expect.poll(() => lookups.length).toBe(4);
       releaseLookup();
       await expect(beds).toHaveValue('3');
       await expect(page.getByRole('spinbutton', { name: 'Square footage' })).toHaveValue('1800');

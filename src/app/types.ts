@@ -17,6 +17,16 @@ export interface UnderwritingSettings {
   assignFeePct: number;
 }
 
+export interface PropertyListingSnapshot {
+  source: 'apify-for-sale';
+  address: string;
+  retrievedAt: string;
+  askingPrice: number | null;
+  photoUrls: string[];
+  sourceLinks: string[];
+  facts: Record<string, number>;
+}
+
 export interface DealData {
   // Property details
   address: string;
@@ -33,6 +43,7 @@ export interface DealData {
   isAnalyzed?: boolean;
   leadId?: string;
   crmCreateKey?: string;
+  listingSnapshot?: PropertyListingSnapshot;
   propertyRecordSnapshot?: {
     source: 'attom';
     address: string;

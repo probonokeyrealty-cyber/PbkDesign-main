@@ -1,31 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ExternalLink, Image as ImageIcon, RefreshCw, Search } from 'lucide-react';
-import type { DealData } from '../types';
+import type { DealData, PropertyListingSnapshot } from '../types';
 import { formatCurrency } from '../utils/formatting';
 import { fetchApifyListingRequest, type AttomPreviewResult } from '../utils/runtimeBridge';
-
-const sourceNames = new Map([
-  ['realtor.com', 'Realtor.com'],
-  ['redfin.com', 'Redfin'],
-  ['zillow.com', 'Zillow'],
-]);
-
-function listingSources(links: unknown) {
-  const sources = new Map<string, string>();
-  for (const link of Array.isArray(links) ? links : []) {
-    if (typeof link !== 'string') continue;
-    try {
-      const url = new URL(link);
-      const name = sourceNames.get(url.hostname.replace(/^www\./, ''));
-      if (name && url.protocol === 'https:' && !url.username && !url.password && !url.port) {
-        sources.set(url.href, name);
-      }
-    } catch {
-      // Ignore malformed source URLs.
-    }
-  }
-  return [...sources];
-}
+import {
+  captureListingSnapshot,
+  listingSources,
+  photoLinks,
+  readPropertyEvidence,
+} from '../utils/propertyEvidence';
 
 type LookupState =
   | { status: 'idle' | 'loading' | 'missing' | 'error' }
@@ -48,19 +31,6 @@ const numericFields = ['beds', 'baths', 'sqft', 'year', 'dom'] as const;
 
 function positiveNumber(value: unknown): value is number {
   return typeof value === 'number' && Number.isFinite(value) && value > 0;
-}
-
-function photoLinks(value: unknown): string[] {
-  if (!Array.isArray(value)) return [];
-  return [
-    ...new Set(
-      value.filter(
-        (url): url is string =>
-          typeof url === 'string' &&
-          /^https:\/\/ap\.rdcpix\.com\/[a-z0-9_-]+\.(?:jpe?g|png|webp)$/i.test(url)
-      )
-    ),
-  ].slice(0, 6);
 }
 
 function listingUpdates(
@@ -132,6 +102,13 @@ export function AnalyzerListingLookup({
   const [lookup, setLookup] = useState<LookupState>({ status: 'idle' });
   const [filledCount, setFilledCount] = useState(0);
   const [records, setRecords] = useState<AttomPreviewResult | null>(null);
+  const [capturedListing, setCapturedListing] = useState<PropertyListingSnapshot | null>(null);
+  const storedListingSnapshot = deal.listingSnapshot;
+  const savedListing = useMemo(
+    () => readPropertyEvidence({ listingSnapshot: storedListingSnapshot }, address).listing,
+    [storedListingSnapshot, address]
+  );
+  const photoEvidence = capturedListing?.address === address ? capturedListing : savedListing;
   const current = useRef({ deal, onFill, protectedFields });
   current.current = { deal, onFill, protectedFields };
   const mounted = useRef(true);
@@ -148,10 +125,10 @@ export function AnalyzerListingLookup({
   useEffect(() => {
     onPhotoResult({
       address,
-      status: lookup.status,
-      urls: lookup.status === 'found' ? lookup.photos : [],
+      status: photoEvidence?.photoUrls.length ? 'found' : lookup.status,
+      urls: photoEvidence?.photoUrls ?? (lookup.status === 'found' ? lookup.photos : []),
     });
-  }, [address, lookup, onPhotoResult]);
+  }, [address, lookup, onPhotoResult, photoEvidence]);
 
   const lookUp = useCallback(
     async (fill = false) => {
@@ -161,7 +138,7 @@ export function AnalyzerListingLookup({
       setFilledCount(0);
       setLookup({ status: 'loading' });
       try {
-        const response = await fetchApifyListingRequest(address, fill);
+        const response = await fetchApifyListingRequest(address, true);
         if (!mounted.current || current.current.deal.address.trim() !== address) return;
         setRecords(response.records ?? null);
         const publicFields = recordUpdates(
@@ -180,6 +157,20 @@ export function AnalyzerListingLookup({
         // A recorded sale is historical evidence, never an asking price or ARV.
         delete publicFields.price;
         const record = response?.propertyData;
+        const listingSnapshot = captureListingSnapshot(address, response);
+        if (listingSnapshot) {
+          setCapturedListing(listingSnapshot);
+          publicFields.listingSnapshot = listingSnapshot;
+        }
+        if (!fill) {
+          const snapshots: Partial<DealData> = {
+            ...(publicFields.propertyRecordSnapshot
+              ? { propertyRecordSnapshot: publicFields.propertyRecordSnapshot }
+              : {}),
+            ...(listingSnapshot ? { listingSnapshot } : {}),
+          };
+          if (Object.keys(snapshots).length) current.current.onFill(snapshots);
+        }
         const price = record?.data?.askingPriceUsd;
         if (
           !response?.cache?.hit ||
@@ -210,7 +201,9 @@ export function AnalyzerListingLookup({
           };
           if (Object.keys(fields).length) current.current.onFill(fields);
           setFilledCount(
-            Object.keys(fields).filter((key) => key !== 'propertyRecordSnapshot').length
+            Object.keys(fields).filter(
+              (key) => !['propertyRecordSnapshot', 'listingSnapshot'].includes(key)
+            ).length
           );
         }
       } catch {
@@ -402,12 +395,23 @@ function useApifyPhotos(address: string, automatic = false) {
   return { result, lookup };
 }
 
-export function LeadListingPhotos({ address }: { address: string }) {
-  const { result, lookup } = useApifyPhotos(address, true);
+export function LeadListingPhotos({
+  address,
+  snapshot,
+}: {
+  address: string;
+  snapshot?: PropertyListingSnapshot | null;
+}) {
+  const saved = snapshot?.photoUrls ?? [];
+  const { result, lookup } = useApifyPhotos(address, !saved.length);
+  const showingSaved = saved.length > 0 && result.status !== 'found';
+  const display = showingSaved ? { address, status: 'found' as const, urls: saved } : result;
   return (
     <div>
       <div className="flex items-center justify-between gap-3 mb-3">
-        <span className="pbk-property-label">Apify</span>
+        <span className="pbk-property-label">
+          {showingSaved ? 'Saved listing snapshot' : 'Listing photos · Apify'}
+        </span>
         <button
           type="button"
           className="pbk-btn pbk-btn-ghost pbk-btn-sm"
@@ -418,7 +422,26 @@ export function LeadListingPhotos({ address }: { address: string }) {
           <RefreshCw size={16} aria-hidden />
         </button>
       </div>
-      <AnalyzerListingPhotos key={address} result={result} />
+      {snapshot && showingSaved && (
+        <p className="pbk-property-evidence-note">
+          Captured{' '}
+          <time dateTime={snapshot.retrievedAt}>
+            {new Date(snapshot.retrievedAt).toLocaleString()}
+          </time>
+          . Listing photography; condition and availability may have changed.
+        </p>
+      )}
+      {!showingSaved && result.status === 'found' && (
+        <p className="pbk-property-evidence-note">
+          Latest cached listing photos. Refresh does not replace the saved snapshot.
+        </p>
+      )}
+      {showingSaved && ['missing', 'error'].includes(result.status) && (
+        <p className="pbk-property-evidence-note" role="status">
+          Showing saved photos. No newer photos were returned.
+        </p>
+      )}
+      <AnalyzerListingPhotos key={address} result={display} />
     </div>
   );
 }
@@ -426,6 +449,7 @@ export function LeadListingPhotos({ address }: { address: string }) {
 export function AnalyzerListingPhotos({ result }: { result: AnalyzerPhotoResult | null }) {
   const [failedPhotos, setFailedPhotos] = useState<string[]>([]);
   const [selectedPhoto, setSelectedPhoto] = useState('');
+  const [smallPhotos, setSmallPhotos] = useState<string[]>([]);
   const urls = result?.urls ?? [];
   const photos = urls.filter((url) => !failedPhotos.includes(url));
   const currentPhoto = photos.includes(selectedPhoto) ? selectedPhoto : photos[0];
@@ -447,9 +471,21 @@ export function AnalyzerListingPhotos({ result }: { result: AnalyzerPhotoResult 
               alt={`Listing photo ${urls.indexOf(currentPhoto) + 1}`}
               loading="lazy"
               referrerPolicy="no-referrer"
+              onLoad={(event) => {
+                if (event.currentTarget.naturalWidth < 480) {
+                  setSmallPhotos((small) =>
+                    small.includes(currentPhoto) ? small : [...small, currentPhoto]
+                  );
+                }
+              }}
               onError={() => setFailedPhotos((failed) => [...failed, currentPhoto])}
             />
           </div>
+          {smallPhotos.includes(currentPhoto) && (
+            <p className="pbk-property-evidence-note" role="status">
+              Low-resolution source preview. Open the listing for more detail.
+            </p>
+          )}
           {photos.length > 1 && (
             <ul className="pbk-analyzer-photo-strip" aria-label="Listing photo choices">
               {photos.map((url) => (
@@ -478,18 +514,20 @@ export function AnalyzerListingPhotos({ result }: { result: AnalyzerPhotoResult 
             target="_blank"
             rel="noopener noreferrer"
           >
-            Full-size photo <ExternalLink size={13} aria-hidden />
+            Open source photo <ExternalLink size={13} aria-hidden />
           </a>
         </>
       ) : (
         <p className="pbk-analyzer-context-meta" role="status">
-          {status === 'idle'
-            ? 'No photos loaded.'
-            : status === 'loading'
-              ? 'Loading Apify photos...'
-              : status === 'error'
-                ? 'Photo lookup unavailable. Try refreshing.'
-                : 'No saved Apify photos for this address.'}
+          {urls.length && !photos.length
+            ? 'Listing photos could not be displayed. Check the source listing.'
+            : status === 'idle'
+              ? 'No photos loaded.'
+              : status === 'loading'
+                ? 'Loading Apify photos...'
+                : status === 'error'
+                  ? 'Photo lookup unavailable. Try refreshing.'
+                  : 'No saved Apify photos for this address.'}
         </p>
       )}
     </section>

@@ -2,11 +2,23 @@ import assert from 'node:assert/strict';
 import { mkdirSync } from 'node:fs';
 import { chromium, devices, expect, webkit } from '@playwright/test';
 import { createServer } from 'vite';
+import { analyzerBrowserFixtureOptions, warmAnalyzerBrowserFixture } from './fixtures/analyzer-browser-warmup.mjs';
+import { analyzerPublicationTrace, observeAnalyzerFixtureStartup } from './fixtures/analyzer-publication-trace.mjs';
+import { verifyAnalyzerPublicationGuards } from './fixtures/analyzer-publication-timing.mjs';
 
+const chromiumOnly = process.argv.includes('--chromium-only');
+const webkitOnly = process.argv.includes('--webkit-only');
+assert.ok(!(chromiumOnly && webkitOnly), 'Choose only one browser filter');
+const stressPublication = process.argv.includes('--stress-publication');
+const controlledPublication = process.argv.includes('--controlled-publication');
+assert.ok(!(chromiumOnly && (process.argv.includes('--stress-contention') || stressPublication)), 'Stress contention uses WebKit; remove the Chromium-only filter');
+assert.ok(!(stressPublication && process.argv.includes('--stress-contention')), 'Choose only one stress scenario');
+assert.ok(!(controlledPublication && (stressPublication || process.argv.includes('--stress-contention'))), 'Choose controlled timing or stress repetition');
 process.env.PBK_DEV_BRIDGE_URL = 'http://127.0.0.1:1';
 const serving = process.argv.includes('--serve-fixtures');
 const server = await createServer({
-  plugins: [{ name: 'read-only-analyzer-preview', configureServer(server) {
+  ...analyzerBrowserFixtureOptions(),
+  plugins: [analyzerPublicationTrace(process.env.PBK_DRAFT_DIAGNOSTICS === '1' || controlledPublication), { name: 'read-only-analyzer-preview', configureServer(server) {
     if (!serving) return;
     server.middlewares.use((req, res, next) => {
       const path = new URL(req.url, 'http://127.0.0.1').pathname;
@@ -18,7 +30,8 @@ const server = await createServer({
     });
   } }],
   server: { host: '127.0.0.1', port: serving ? 5213 : 0, strictPort: serving,
-    ...(serving ? { hmr: false, headers: { 'Content-Security-Policy': "default-src 'self'; connect-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:" } } : {}),
+    hmr: false,
+    ...(serving ? { headers: { 'Content-Security-Policy': "default-src 'self'; connect-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:" } } : {}),
   },
 });
 await server.listen();
@@ -53,15 +66,55 @@ async function verify(engine, viewport, device = {}) {
     const sampleSaves = [];
     const mutations = [];
     await context.routeWebSocket('**/*', socket => socket.close());
-    await context.addInitScript(({ key, authKey, auth }) => {
+    await context.addInitScript(({ key, authKey, auth, origin }) => {
+      if (location.origin !== origin) return;
       if (!localStorage.getItem(authKey)) localStorage.setItem(authKey, JSON.stringify(auth));
       window.__draftWrites = [];
       window.__sharedDraftEvents = 0;
+      window.__draftPublicationTrace = [];
+      let traceSequence = 0;
+      const activePublications = new Map();
+      window.__recordDraftPublication = (phase, data) => {
+        const beds = raw => {
+          try { return JSON.parse(decodeURIComponent(escape(atob(raw))))?.payload?.beds; } catch { return null; }
+        };
+        const hash = raw => typeof raw === 'string'
+          ? [...raw].reduce((value, char) => Math.imul(value ^ char.charCodeAt(0), 16777619), 2166136261) >>> 0 : raw === null ? 'empty' : 'undefined';
+        const expectedHash = hash(data.expected);
+        let traceId = data.traceId;
+        if (phase === 'start') {
+          traceId = ++traceSequence;
+          activePublications.set(traceId, { beds: data.beds, expectedHash });
+        } else if (phase === 'conflict' || phase === 'compare') {
+          const matches = [...activePublications].filter(([, value]) => value.beds === data.beds && value.expectedHash === expectedHash);
+          traceId = matches.length === 1 ? matches[0][0] : null;
+        } else if (traceId) activePublications.delete(traceId);
+        window.__draftPublicationTrace.push({ phase, traceId, at: performance.now(), version: data.version, currentVersion: data.currentVersion,
+          beds: data.beds, result: data.result, expectedDefined: data.expected !== undefined,
+          expectedHash, sharedHash: hash(data.shared),
+          canonicalHash: hash(data.canonical), expectedBeds: beds(data.expected), sharedBeds: beds(data.shared),
+          canonicalBeds: beds(data.canonical) });
+        if (window.__draftPublicationTrace.length > 100) window.__draftPublicationTrace.shift();
+        return traceId;
+      };
       window.addEventListener('storage', event => { if (event.key === key) window.__sharedDraftEvents++; });
       const set = Storage.prototype.setItem;
       const get = Storage.prototype.getItem;
       Storage.prototype.getItem = function (name) {
-        if (this === localStorage && name === key && window.__staleDraftRead !== undefined) return window.__staleDraftRead;
+        if (this === localStorage && name === key && window.__staleDraftRead !== undefined) {
+          const stale = window.__staleDraftRead;
+          if (window.__staleDraftReadOnce) {
+            delete window.__staleDraftReadOnce;
+            window.__controlledStaleReads = (window.__controlledStaleReads || 0) + 1;
+            queueMicrotask(() => {
+              delete window.__staleDraftRead;
+              const caughtUp = window.__onControlledCacheCatchup;
+              delete window.__onControlledCacheCatchup;
+              caughtUp?.();
+            });
+          }
+          return stale;
+        }
         return get.call(this, name);
       };
       Storage.prototype.setItem = function (name, value) {
@@ -72,7 +125,7 @@ async function verify(engine, viewport, device = {}) {
         }
         return set.call(this, name, value);
       };
-    }, { key: draftKey, authKey: sessionKey, auth: session });
+    }, { key: draftKey, authKey: sessionKey, auth: session, origin: hosted });
     await context.route('**/*', async route => {
       const req = route.request(), url = new URL(req.url());
       if (url.origin !== hosted) return route.abort();
@@ -112,7 +165,15 @@ async function verify(engine, viewport, device = {}) {
       const raw = localStorage.getItem(key);
       return raw ? JSON.parse(decodeURIComponent(escape(atob(raw)))).payload : null;
     }, draftKey);
-    await first.goto(hosted + fixture);
+    const startup = observeAnalyzerFixtureStartup(first, hosted);
+    try {
+      await first.goto(hosted + fixture);
+    } catch (error) {
+      if (process.env.PBK_DRAFT_DIAGNOSTICS === '1') {
+        console.log(JSON.stringify({ sampleStartup: { engine: engine.name(), width: viewport.width, ...startup.snapshot() } }));
+      }
+      throw error;
+    } finally { startup.dispose(); }
     await ready(first);
     await first.evaluate(() => window.PBKAnalyzer.setState({ deal: {
       leadId: 'qa-draft', address: '11 Fixture Avenue', beds: 4, arv: 500000,
@@ -175,6 +236,8 @@ async function verify(engine, viewport, device = {}) {
 
     // Cancel after the IDB reservation is written, then prove the original baseline still works.
     const beforeReservation = await stored(first);
+    const beforeReservationRaw = controlledPublication
+      ? await first.evaluate(key => localStorage.getItem(key), draftKey) : undefined;
     const canceledReservation = await first.evaluate(async key => {
       const put = IDBObjectStore.prototype.put;
       let current = true;
@@ -229,11 +292,85 @@ async function verify(engine, viewport, device = {}) {
     await releaseDraftLock(second);
     await expect.poll(() => second.evaluate(async () => (await navigator.locks.query()).pending.length)).toBe(0);
     assert.equal((await stored(first)).beds, 8, 'An unmounted publisher must not flush a queued edit');
+    if (controlledPublication) await holdDraftLock(second);
     await second.getByRole('spinbutton', { name: 'Bedrooms', exact: true }).fill('7');
-    await expect.poll(async () => (await stored(second))?.beds).toBe(7);
+    if (controlledPublication) {
+      await expect.poll(() => second.evaluate(async () => (await navigator.locks.query()).pending.length)).toBeGreaterThanOrEqual(1);
+      await second.evaluate(({ raw, key }) => {
+        const get = IDBObjectStore.prototype.get;
+        IDBObjectStore.prototype.get = function (...args) {
+          const request = get.apply(this, args);
+          if (args[0] === key) {
+            IDBObjectStore.prototype.get = get;
+            request.addEventListener('success', () => {
+              window.__staleDraftRead = raw;
+              window.__staleDraftReadOnce = true;
+            }, { once: true });
+          }
+          return request;
+        };
+      }, { raw: beforeReservationRaw, key: draftKey });
+      await releaseDraftLock(second);
+    }
+    try {
+      await expect.poll(async () => (await stored(second))?.beds).toBe(7);
+    } catch (error) {
+      if (process.env.PBK_DRAFT_DIAGNOSTICS === '1') {
+        const diagnostic = page => page.evaluate(async key => {
+          const decode = raw => raw ? JSON.parse(decodeURIComponent(escape(atob(raw)))) : null;
+          const raw = localStorage.getItem(key), shared = decode(raw);
+          const privateDraft = decode(sessionStorage.getItem(key + ':session'));
+          const database = await new Promise((resolve, reject) => {
+            const request = indexedDB.open('pbk-analyzer-draft-coordination', 1);
+            request.onsuccess = () => resolve(request.result);
+            request.onerror = () => reject(request.error);
+          });
+          try {
+            const coordinator = await new Promise((resolve, reject) => {
+              const request = database.transaction('drafts', 'readonly').objectStore('drafts').get(key);
+              request.onsuccess = () => resolve(request.result);
+              request.onerror = () => reject(request.error);
+            });
+            return { sharedBeds: shared?.payload?.beds, privateBeds: privateDraft?.payload?.beds,
+              baselineMatches: privateDraft?.sharedBaseline === raw, unpublished: privateDraft?.unpublishedEdits === true,
+              coordinatorMatches: coordinator?.raw === raw, status: window.PBKAnalyzer?.getState().analyzeStatus,
+              trace: window.__draftPublicationTrace };
+          } finally { database.close(); }
+        }, draftKey);
+        try { console.log(JSON.stringify({ sampleWriter: await diagnostic(second), samplePeer: await diagnostic(first) })); }
+        catch { console.log('Sample coordinator diagnostics unavailable'); }
+      }
+      throw error;
+    }
     await first.bringToFront();
     await first.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
     await expect(first.getByRole('spinbutton', { name: 'Bedrooms', exact: true })).toHaveValue('9');
+    if (stressPublication || controlledPublication) {
+      const publicationTrace = await second.evaluate(() => window.__draftPublicationTrace.filter(item => item.beds === 7 && item.traceId));
+      if (controlledPublication) {
+        assert.equal(await second.evaluate(() => window.__controlledStaleReads), 1);
+        const mismatch = publicationTrace.find(item => item.phase === 'conflict' && item.expectedBeds === 8 && item.canonicalBeds === 8 && item.sharedBeds === 4);
+        const recheck = publicationTrace.find(item => item.phase === 'compare' && item.expectedBeds === 8 && item.canonicalBeds === 8 && item.sharedBeds === 8);
+        assert.ok(mismatch && recheck, 'Controlled timing must hit the comparison, then converge');
+        assert.equal(recheck.traceId, mismatch.traceId);
+        assert.equal(recheck.expectedHash, mismatch.expectedHash, 'Revalidation must retain the original baseline');
+        assert.equal(recheck.expectedHash, recheck.canonicalHash);
+        assert.equal(recheck.expectedHash, recheck.sharedHash);
+        assert.equal(await second.evaluate(() => window.__draftWrites.filter(deal => deal.beds === 7).length), 1);
+        const peerDraft = await first.evaluate(() => window.PBKAnalyzer.getState().deal);
+        const guards = await verifyAnalyzerPublicationGuards(second, draftKey, beforeReservationRaw);
+        assert.deepEqual(await first.evaluate(() => window.PBKAnalyzer.getState().deal), peerDraft, 'Controlled guard tests must preserve the peer draft');
+        console.log(`Controlled publication safety: ${engine.name()} ${viewport.width}px ${guards.length} cases passed`);
+      }
+      if (process.env.PBK_DRAFT_DIAGNOSTICS === '1') {
+        console.log(JSON.stringify({ samplePublication: publicationTrace }));
+      }
+      assert.deepEqual(mutations, [], 'Controlled draft tests must not contact business writers');
+      assert.equal(sampleSaves.length, 0, 'Controlled publication must not save a lead');
+      assert.ok(await second.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
+      console.log(`Writer publication after queued cancellation${controlledPublication ? ' with one delayed cache read' : ''}: ${engine.name()} ${viewport.width}px passed`);
+      return;
+    }
 
     await holdDraftLock(second);
     await first.getByRole('spinbutton', { name: 'Bedrooms', exact: true }).fill('12');
@@ -388,6 +525,7 @@ async function verify(engine, viewport, device = {}) {
     assert.ok(await first.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
     console.log(`Analyzer draft restoration, overlapping tabs and session recovery: ${engine.name()} ${viewport.width}px passed`);
   } finally {
+    for (const context of browser.contexts()) await context.unrouteAll({ behavior: 'ignoreErrors' });
     await browser.close();
   }
 }
@@ -400,12 +538,19 @@ try {
       process.once('SIGTERM', resolve);
     });
   } else {
-    if (process.argv.includes('--stress-contention')) {
+    await warmAnalyzerBrowserFixture(server);
+    if (stressPublication) {
+      for (let attempt = 0; attempt < 6; attempt++) await verify(webkit, { width: 390, height: 844 }, devices['iPhone 13']);
+    } else if (process.argv.includes('--stress-contention')) {
       for (let attempt = 0; attempt < 6; attempt++) await verify(webkit, { width: 390, height: 844 }, devices['iPhone 13']);
     } else {
-      if (!process.argv.includes('--webkit-only')) await verify(chromium, { width: 1440, height: 960 });
-      await verify(webkit, { width: 390, height: 844 }, devices['iPhone 13']);
-      await verify(webkit, { width: 320, height: 844 }, devices['iPhone 13']);
+      if (!webkitOnly) await verify(chromium, { width: 1440, height: 960 });
+      if (chromiumOnly) {
+        await verify(chromium, { width: 390, height: 844 }, { isMobile: true, hasTouch: true });
+      } else {
+        await verify(webkit, { width: 390, height: 844 }, devices['iPhone 13']);
+        await verify(webkit, { width: 320, height: 844 }, devices['iPhone 13']);
+      }
     }
   }
 } finally {

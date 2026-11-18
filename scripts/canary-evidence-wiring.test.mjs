@@ -181,10 +181,10 @@ test('unapproved v2 policy is not replaced with a pilot or legacy policy', async
 test('reviewed non-maturity bridge baseline retains its exact integration surface', () => {
   const unchanged = (source.slice(0, start) + source.slice(end))
     .replace("import { readCanaryEvidence } from './canary-evidence-reader.mjs';\n", '');
-  // Task6 and the final closure fix wave change approval transport/proposal seams
-  // outside this builder. Old/new digests and scoped diff are in final-fix-report.
+  // Callback authorization parity changes only the approval boundary outside this
+  // builder. See docs/operations/2026-11-18-callback-authorization-parity.md.
   assert.equal(createHash('sha256').update(unchanged).digest('hex'),
-    'b1a7fdf1a0e274422deede7c730b521c4d74e42ff2ba54204c5a055cfb77758a');
+    'b512d5e45f896beb77cd5383ab1219a047b70c11ba204c9ba23728134c145274');
 });
 
 test('production distribution includes reader and protocol, never the fixture signer', () => {

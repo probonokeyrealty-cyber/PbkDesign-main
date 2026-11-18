@@ -157,6 +157,18 @@ test('trusted founder internal approval never touches dispatch or generic fallba
   assert.equal(h.row.status, 'approved'); assert.equal(h.cached.status, 'approved');
   assert.deepEqual(h.calls.forbidden, []);
 });
+
+test('body-based team credentials never inherit a founder bearer for internal approval decisions', async () => {
+  for (const fragment of ['approvalDecisionMatch &&', 'approvalMatch &&']) {
+    const h = harness();
+    h.context.hasTeamAuthCredentials = (request, body = {}) => Boolean(request.headers['x-pbk-team-token'] || body.teamToken);
+    h.context.getTeamAuthMeta = (request, body = {}) => ({ ok: (request.headers['x-pbk-team-token'] || body.teamToken) === 'valid-team', role: 'team' });
+    const response = await h.runRoute(fragment, `/api/approvals/${h.f.approvalId}${fragment.startsWith('approvalDecision') ? '/approve' : ''}`,
+      { status: 'approved', teamToken: 'valid-team' }, h.founder.headers, fragment.startsWith('approvalDecision') ? 'POST' : 'PUT');
+    assert.equal(response.status, 403);
+    assert.equal(h.calls.claim, 0); assert.equal(h.calls.execute.length, 0);
+  }
+});
 test('canonical status remains approved on exact replay without a second decision claim', async () => {
   const h = harness({ status: 'approved' });
   const r = await h.decide({ actedAt: h.row.decided_at, actor: h.row.payload.actor });

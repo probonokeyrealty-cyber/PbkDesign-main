@@ -15495,7 +15495,7 @@ async function persistApprovalRecordToPg(approval = {}) {
   return writeApprovalRecordToPg(approval);
 }
 
-async function writeApprovalRecordToPg(approval, claimPending = false, closureExpected = null, closureCreateQuery = null) {
+async function writeApprovalRecordToPg(approval, claimPending = false, closureExpected = null, closureCreateQuery = null, decisionExpected = null) {
   const approvalId = String(approval.id || '').trim();
   if (!approvalId) {
     return { ok: false, reason: 'missing_approval_id', rows: [] };
@@ -15510,6 +15510,15 @@ async function writeApprovalRecordToPg(approval, claimPending = false, closureEx
       AND COALESCE(contract_id,'')='' AND payload=$5::jsonb RETURNING id,status,updated_at`,
       query_timeout: 2000 }, [approvalId, status, JSON.stringify(approval), approval.actedAt,
       JSON.stringify(closureExpected.payload)]);
+  }
+  if (claimPending && decisionExpected) {
+    return queryPgRows({ text: `UPDATE public.approvals SET status=$2,payload=$3::jsonb,
+      decided_at=$4,updated_at=$4 WHERE id=$1 AND workspace_id='pbk' AND type=$5
+      AND status='pending' AND decided_at IS NULL AND payload=$6::jsonb
+      AND COALESCE(lead_id,'')=$7 AND COALESCE(contract_id,'')=$8 RETURNING id,status,updated_at`,
+      query_timeout: 2000 }, [approvalId, status, JSON.stringify(approval), approval.actedAt,
+      decisionExpected.type, JSON.stringify(decisionExpected.payload),
+      decisionExpected.lead_id || '', decisionExpected.contract_id || '']);
   }
   const write = closureCreateQuery || queryPgRows;
   return write(
@@ -15562,10 +15571,19 @@ function replayApprovalDecision(approval, status) {
       };
 }
 
-async function claimPendingApprovalDecision(approval, decision, { closureExpected = null } = {}) {
+async function claimPendingApprovalDecision(approval, decision, { closureExpected = null, decisionExpected = null, decisionContext = null } = {}) {
+  if (decisionExpected) {
+    if (!isCanonicalApprovalCallbackTarget(decisionExpected, approval.id)
+      || normalizeApprovalDecisionStatus(decisionExpected.status) !== 'pending') {
+      return { claimed: false, result: { ok: false, statusCode: 409, code: 'approval_decision_target_changed', error: 'The approval decision target changed. Reload before deciding.' } };
+    }
+    const authorization = authorizeApprovalCallbackDecision(normalizePgApprovalRecord(decisionExpected), decision.status, decisionContext);
+    if (!authorization.ok) return { claimed: false, result: authorization };
+  }
   const proposed = { ...approval, ...decision };
-  // A conditional UPSERT covers approvals that predate the normalized table.
-  const claimed = await writeApprovalRecordToPg(proposed, true, closureExpected);
+  // Existing canonical targets use snapshot-pinned updates; the legacy UPSERT
+  // remains only for approvals that predate the normalized table/file backend.
+  const claimed = await writeApprovalRecordToPg(proposed, true, closureExpected, null, decisionExpected);
   if (!closureExpected && !IS_HOSTED && STATE_BACKEND === 'file' && claimed.reason === 'no_database') {
     return { claimed: true, local: true };
   }
@@ -15586,6 +15604,22 @@ async function claimPendingApprovalDecision(approval, decision, { closureExpecte
       }
     }
     return { claimed: false, result: { ok: false, statusCode: 409, result: 'closure_approval_mismatch' } };
+  }
+  if (claimed.ok && decisionExpected) {
+    const target = await readCanonicalClosureApproval(approval.id, { withStatus: true });
+    if (!target.ok || (target.found && !target.approval)) {
+      return { claimed: false, result: { ok: false, statusCode: 503, code: 'approval_decision_unavailable', error: 'Could not verify the approval decision target.' } };
+    }
+    if (isCanonicalApprovalCallbackTarget(target.approval, approval.id)) {
+      const canonical = normalizePgApprovalRecord(target.approval);
+      const authorization = authorizeApprovalCallbackDecision(canonical, decision.status, decisionContext);
+      if (!authorization.ok) return { claimed: false, result: authorization };
+      if (!isDeadLetterClosureApproval(target.approval) && normalizeApprovalDecisionStatus(canonical.status) !== 'pending') {
+        cacheCanonicalApprovalCallbackTarget(approval, canonical);
+        return { claimed: false, result: replayApprovalDecision(canonical, decision.status) };
+      }
+    }
+    return { claimed: false, result: { ok: false, statusCode: 409, code: 'approval_decision_target_changed', error: 'The approval decision target changed. Reload before deciding.' } };
   }
   if (claimed.ok) {
     const current = await queryPgRows(
@@ -60976,20 +61010,60 @@ async function handleEvent(eventType, payload = {}, decisionContext = null) {
   }
 }
 
-async function readCanonicalClosureApproval(approvalId) {
+async function readCanonicalClosureApproval(approvalId, { withStatus = false } = {}) {
   const result = await queryPgRows({ text: `SELECT CASE WHEN octet_length(to_jsonb(a)::text)<=65536
     THEN to_jsonb(a) || jsonb_build_object('decided_at',
       to_char(a.decided_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"')) ELSE NULL END AS approval
     FROM public.approvals a WHERE a.id=$1 LIMIT 65`, query_timeout: 2000 }, [approvalId]);
-  return result.ok && result.rows.length === 1 ? result.rows[0].approval : null;
+  const rows = Array.isArray(result.rows) ? result.rows : [];
+  const approval = result.ok && rows.length === 1 ? rows[0].approval : null;
+  return withStatus ? { ok: result.ok === true, found: rows.length > 0, approval, reason: result.reason } : approval;
+}
+
+function authorizeApprovalCallbackDecision(approval, status, context) {
+  if (context === closureSlackAuthority) return { ok: true, team: false };
+  const request = context?.request;
+  const deny = error => ({ ok: false, statusCode: 403, code: 'approval_decision_forbidden', error });
+  if (!request) return deny('Verified approval request authority is required.');
+  const body = context.authBody || {};
+  const headers = request.headers || {};
+  if (request.pbkDirectTeamAuth || hasTeamAuthCredentials(request, body) || Object.hasOwn(headers, 'x-pbk-netlify-proxy')) {
+    const team = request.pbkDirectTeamAuth ? request.pbkTeamAuth : getTeamAuthMeta(request, body);
+    if (team?.ok !== true) return deny('A valid PBK team session is required.');
+    const permissions = getTeamPermissions();
+    const restriction = getTeamApprovalRestriction(approval, status, permissions);
+    return restriction ? { ...deny(restriction), adminRequired: true, permissions } : { ok: true, team: true };
+  }
+  if (BRIDGE_API_KEY && String(headers.authorization || '').trim() !== `Bearer ${BRIDGE_API_KEY}`) {
+    return deny('Verified approval request authority is required.');
+  }
+  return { ok: true, team: false };
+}
+
+function isCanonicalApprovalCallbackTarget(raw, approvalId) {
+  if (!raw || raw.id !== approvalId || raw.workspace_id !== 'pbk'
+    || typeof raw.type !== 'string' || !raw.type.trim()
+    || !raw.payload || typeof raw.payload !== 'object' || Array.isArray(raw.payload)) return false;
+  const payload = raw.payload;
+  return (!Object.hasOwn(payload, 'id') || payload.id === raw.id)
+    && ['workspaceId', 'workspace_id', 'tenantId', 'tenant_id'].every(key => !Object.hasOwn(payload, key) || payload[key] === 'pbk')
+    && (!Object.hasOwn(payload, 'type') || String(payload.type).trim().toLowerCase() === raw.type.trim().toLowerCase())
+    && (!Object.hasOwn(payload, 'status') || normalizeApprovalDecisionStatus(payload.status) === normalizeApprovalDecisionStatus(raw.status));
+}
+
+function cacheCanonicalApprovalCallbackTarget(approval, canonical) {
+  const index = state.approvals.indexOf(approval);
+  if (index >= 0) state.approvals[index] = canonical;
+  return canonical;
 }
 
 function authorizeClosureApprovalDecision(approval, status, context) {
   if (context === closureSlackAuthority) return true;
   const request = context?.request;
   if (!request) return false;
-  if (request.pbkDirectTeamAuth || hasTeamAuthCredentials(request, {}) || Object.hasOwn(request.headers, 'x-pbk-netlify-proxy')) {
-    const team = request.pbkDirectTeamAuth ? request.pbkTeamAuth : getTeamAuthMeta(request, {});
+  const body = context.authBody || {};
+  if (request.pbkDirectTeamAuth || hasTeamAuthCredentials(request, body) || Object.hasOwn(request.headers, 'x-pbk-netlify-proxy')) {
+    const team = request.pbkDirectTeamAuth ? request.pbkTeamAuth : getTeamAuthMeta(request, body);
     return team?.ok === true
       && !getTeamApprovalRestriction(approval, status, getTeamPermissions());
   }
@@ -61182,7 +61256,7 @@ async function handleRuntimeEvent(normalizedEvent, payload, decisionContext = nu
   }
 
   if (normalizedEvent === 'approval-callback') {
-    const approval = state.approvals.find((item) => item.id === payload.id);
+    let approval = state.approvals.find((item) => item.id === payload.id);
     if (!approval) {
       return {
         ok: false,
@@ -61192,7 +61266,8 @@ async function handleRuntimeEvent(normalizedEvent, payload, decisionContext = nu
 
     // Classify durable and cached identity before claim; payload source/actor/
     // teamAuth cannot confer authority on alternate event transports.
-    const canonicalClosureApproval = await readCanonicalClosureApproval(approval.id);
+    const target = await readCanonicalClosureApproval(approval.id, { withStatus: true });
+    const canonicalClosureApproval = target.approval;
     if (isDeadLetterClosureApproval(approval) || isDeadLetterClosureApproval(canonicalClosureApproval)) {
       return handleDeadLetterClosureDecision(approval, canonicalClosureApproval, payload, decisionContext);
     }
@@ -61205,6 +61280,20 @@ async function handleRuntimeEvent(normalizedEvent, payload, decisionContext = nu
     if (!['approved', 'rejected', 'needs_revision', 'cancelled'].includes(incomingStatus)) {
       return { ok: false, statusCode: 400, error: 'Unsupported approval decision.' };
     }
+    const localFileTarget = !IS_HOSTED && STATE_BACKEND === 'file' && target.reason === 'no_database';
+    if ((!target.ok && !localFileTarget) || (target.found && !canonicalClosureApproval)) {
+      return { ok: false, statusCode: 503, code: 'approval_decision_unavailable', error: 'Could not verify the approval decision target.' };
+    }
+    if (canonicalClosureApproval && !isCanonicalApprovalCallbackTarget(canonicalClosureApproval, approval.id)) {
+      return { ok: false, statusCode: 409, code: 'approval_decision_target_changed', error: 'The approval decision target changed. Reload before deciding.' };
+    }
+    const canonical = canonicalClosureApproval ? normalizePgApprovalRecord(canonicalClosureApproval) : approval;
+    const authorization = authorizeApprovalCallbackDecision(canonical, incomingStatus, decisionContext);
+    if (!authorization.ok) return authorization;
+    if (authorization.team && !canonicalClosureApproval && !localFileTarget) {
+      return { ok: false, statusCode: 503, code: 'approval_decision_unavailable', error: 'Could not verify the approval decision target.' };
+    }
+    if (canonicalClosureApproval) approval = cacheCanonicalApprovalCallbackTarget(approval, canonical);
     const incomingActor = payload.actor || approval.actor || 'n8n';
     const incomingActedAt = payload.actedAt || approval.actedAt || isoNow();
     const currentStatus = normalizeApprovalDecisionStatus(approval.status || 'pending');
@@ -61215,7 +61304,7 @@ async function handleRuntimeEvent(normalizedEvent, payload, decisionContext = nu
         status: incomingStatus,
         actor: incomingActor,
         actedAt: incomingActedAt,
-      });
+      }, { decisionExpected: canonicalClosureApproval, decisionContext });
       if (!claim.claimed) return claim.result;
       localClaim = claim.local === true;
     }
@@ -76038,7 +76127,7 @@ const server = createServer(async (request, response) => {
       }
       const slackPayload = slackRequest.payload || {};
       void handleSlackApprovalInteraction(slackPayload, slackRequest.signature?.ok === true
-        && !slackRequest.signature?.skipped ? closureSlackAuthority : null)
+        && !slackRequest.signature?.skipped ? closureSlackAuthority : { request })
         .then((result) => {
           console.log('[pbk-local-openclaw] Slack interaction processed:', {
             ok: result.ok,
@@ -79409,9 +79498,10 @@ const server = createServer(async (request, response) => {
         return;
       }
 
-      const result = await handleEvent(eventType, payload, { request });
+      const result = await handleEvent(eventType, payload, { request, authBody: body });
       const closureFailure = result.deadLetterClosure || String(result.result || '').startsWith('closure_');
-      const status = result.ok === false ? (closureFailure ? result.statusCode || 403 : 404) : 200;
+      const decisionFailure = String(result.code || '').startsWith('approval_decision_');
+      const status = result.ok === false ? (closureFailure || decisionFailure ? result.statusCode || 403 : 404) : 200;
       json(response, status, {
         ...result,
         state: buildStateSnapshot(),
@@ -79805,7 +79895,6 @@ const server = createServer(async (request, response) => {
       }
 
       const body = await readBody(request);
-      const approval = state.approvals.find((item) => item.id === approvalDecisionMatch.groups.id);
       const teamAuthPresented = hasTeamAuthCredentials(request, body);
       if (teamAuthPresented) {
         const teamAuth = getTeamAuthMeta(request, body);
@@ -79814,16 +79903,6 @@ const server = createServer(async (request, response) => {
             ok: false,
             error: teamAuth.error || 'Team passcode required.',
             configured: Boolean(TEAM_PASSCODE),
-            permissions: getTeamPermissions(),
-          });
-          return;
-        }
-        const restriction = getTeamApprovalRestriction(approval || {}, status, getTeamPermissions());
-        if (restriction) {
-          json(response, 403, {
-            ok: false,
-            error: restriction,
-            adminRequired: true,
             permissions: getTeamPermissions(),
           });
           return;
@@ -79845,7 +79924,7 @@ const server = createServer(async (request, response) => {
         reviewReason: body.reviewReason || '',
         falsePositiveTag: body.falsePositiveTag || body.reviewReason || '',
         teamAuth: body.teamAuth || null,
-      }, { request });
+      }, { request, authBody: body });
       json(response, result.ok === false ? result.statusCode || 404 : 200, {
         ...result,
         state: buildStateSnapshot(),
@@ -79856,7 +79935,6 @@ const server = createServer(async (request, response) => {
     const approvalMatch = matchPath(pathname, '/api/approvals/:id');
     if (approvalMatch && request.method === 'PUT') {
       const body = await readBody(request);
-      const approval = state.approvals.find((item) => item.id === approvalMatch.groups.id);
       const requestedStatus = normalizeApprovalDecisionStatus(body.status || body.action || 'approved');
       const teamAuthPresented = hasTeamAuthCredentials(request, body);
       if (teamAuthPresented) {
@@ -79866,16 +79944,6 @@ const server = createServer(async (request, response) => {
             ok: false,
             error: teamAuth.error || 'Team passcode required.',
             configured: Boolean(TEAM_PASSCODE),
-            permissions: getTeamPermissions(),
-          });
-          return;
-        }
-        const restriction = getTeamApprovalRestriction(approval || {}, requestedStatus, getTeamPermissions());
-        if (restriction) {
-          json(response, 403, {
-            ok: false,
-            error: restriction,
-            adminRequired: true,
             permissions: getTeamPermissions(),
           });
           return;
@@ -79896,7 +79964,7 @@ const server = createServer(async (request, response) => {
         reviewReason: body.reviewReason || '',
         falsePositiveTag: body.falsePositiveTag || body.reviewReason || '',
         teamAuth: body.teamAuth || null,
-      }, { request });
+      }, { request, authBody: body });
       json(response, result.ok === false ? result.statusCode || 404 : 200, {
         ...result,
         state: buildStateSnapshot(),

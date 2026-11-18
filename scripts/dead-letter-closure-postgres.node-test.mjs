@@ -209,9 +209,13 @@ async function nativeStoreCoverage(t, config, query) {
       const run = c.query.bind(c);
       c.query = async (...args) => {
         try {
+          const queryStarted = Date.now();
           const result = await run(...args);
           const timestamp = result?.rows?.[0]?.admitted_at || result?.rows?.[0]?.database_captured_at;
           if (timestamp) {
+            if (result.rows[0].database_captured_at) {
+              t.diagnostic(`native capture clocks: database-minus-query-start-ms=${Date.parse(timestamp) - queryStarted}`);
+            }
             // Docker's clock can lead Windows by a few ms. Buffer the real response,
             // never edit its timestamp or weaken strict runtime/signature ordering.
             const delta = Date.parse(timestamp) - Date.now();
@@ -428,6 +432,77 @@ async function nativeStoreCoverage(t, config, query) {
       assert.equal(replay.reused, true); assert.equal(replay.approval.id, results[0].approval.id);
       assert.equal(fingerprint((await query('SELECT to_jsonb(a) row FROM public.approvals a ORDER BY id')).rows), fingerprint(after));
       assert.deepEqual(counts, { queues: 1, fanout: 1, writes: 1 });
+    });
+    await t.test('native callback claims preserve role authorization across canonical target races', async () => {
+      const source = readFileSync(new URL('./openclaw-local-server.mjs', import.meta.url), 'utf8');
+      const ast = ts.createSourceFile('bridge.mjs', source, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
+      const names = ['buildApprovalSummary', 'writeApprovalRecordToPg', 'replayApprovalDecision',
+        'claimPendingApprovalDecision', 'normalizePgApprovalRecord', 'normalizeApprovalDecisionStatus',
+        'readCanonicalClosureApproval', 'authorizeApprovalCallbackDecision', 'isCanonicalApprovalCallbackTarget',
+        'cacheCanonicalApprovalCallbackTarget', 'getTeamApprovalRestriction'];
+      const declarations = names.map(name => {
+        const node = ast.statements.find(n => ts.isFunctionDeclaration(n) && n.name?.text === name);
+        assert(node, `Missing callback declaration ${name}`); return node.getText(ast);
+      }).join('\n');
+      for (const mode of ['unchanged', 'missing', 'admin', 'amount', 'descriptor', 'lead', 'contract', 'reread-failure', 'already-admin', 'exact-replay']) {
+        const id = `callback-native-${mode}`;
+        const payload = { id, workspaceId: 'pbk', type: 'offer', status: 'pending', offerPrice: 90000, summary: 'Native authorization fixture' };
+        await query(`INSERT INTO public.approvals(id,workspace_id,type,status,lead_id,contract_id,payload)
+          VALUES($1,'pbk','offer','pending','','',$2)`, [id, JSON.stringify(payload)]);
+        const expected = (await query('SELECT to_jsonb(a) row FROM public.approvals a WHERE id=$1', [id])).rows[0].row;
+        const cached = { ...payload }, request = { headers: {}, pbkDirectTeamAuth: true, pbkTeamAuth: { ok: true, role: 'team' } };
+        const decision = { status: 'approved', actor: 'native fixture', actedAt: new Date().toISOString() };
+        let injected = false, afterRace;
+        const context = vm.createContext({ Date, Object, state: { approvals: [cached] },
+          BRIDGE_API_KEY: authority.secret, IS_HOSTED: true, STATE_BACKEND: 'postgres', TEAM_APPROVAL_LIMIT: 100000,
+          getTeamPermissions: () => ({ canApproveProviderActions: false }), isDeadLetterClosureApproval,
+          normalizeTenantId: x => x || 'pbk', toNumber: (x, fallback = 0) => Number.isFinite(Number(x)) ? Number(x) : fallback,
+          currency: x => String(x), isoNow: () => new Date().toISOString(),
+          queryPgRows: async (statement, values = []) => {
+            const text = typeof statement === 'string' ? statement : statement.text;
+            if (!injected && /^(?:INSERT INTO|UPDATE) public\.approvals/.test(text)) {
+              injected = true;
+              if (mode === 'missing') await query('DELETE FROM public.approvals WHERE id=$1', [id]);
+              else if (mode !== 'unchanged') {
+                const changed = { ...payload,
+                  ...(mode === 'admin' || mode === 'already-admin' ? { type: 'admin', approvalAction: 'admin_update_env_var' } : {}),
+                  ...(mode === 'amount' ? { offerPrice: 100001 } : {}),
+                  ...(mode === 'descriptor' || mode === 'reread-failure' ? { offerPrice: 90001 } : {}),
+                  ...(mode === 'already-admin' || mode === 'exact-replay' ? decision : {}) };
+                await query('UPDATE public.approvals SET type=$2,status=$3,payload=$4 WHERE id=$1',
+                  [id, changed.type, changed.status, JSON.stringify(changed)]);
+                if (mode === 'lead' || mode === 'contract') {
+                  await query(`UPDATE public.approvals SET ${mode === 'lead' ? 'lead_id' : 'contract_id'}=$2 WHERE id=$1`,
+                    [id, 'changed-association']);
+                }
+              }
+              afterRace = fingerprint((await query('SELECT to_jsonb(a) row FROM public.approvals a WHERE id=$1', [id])).rows);
+            }
+            if (mode === 'reread-failure' && injected && /^SELECT CASE/.test(text)) {
+              return { ok: false, reason: 'query_failed', rows: [] };
+            }
+            const result = await pool.query(typeof statement === 'string' ? { text, values, query_timeout: 2000 } : { ...statement, values });
+            return { ok: true, rows: result.rows };
+          },
+        });
+        vm.runInContext(`const closureSlackAuthority = Symbol('verified Slack');\n${declarations}`, context);
+        const result = await context.claimPendingApprovalDecision(cached, decision,
+          { decisionExpected: expected, decisionContext: { request } });
+        assert.equal(injected, true, mode);
+        assert.equal(result.claimed, mode === 'unchanged', mode);
+        if (mode !== 'unchanged') {
+          assert.equal(result.result.ok, mode === 'exact-replay', mode);
+          if (['admin', 'amount', 'already-admin'].includes(mode)) assert.equal(result.result.statusCode, 403, mode);
+          if (mode === 'reread-failure') assert.equal(result.result.statusCode, 503, mode);
+          if (mode !== 'exact-replay') assert.equal(JSON.stringify(context.state.approvals), JSON.stringify([payload]), mode);
+          assert.equal(fingerprint((await query('SELECT to_jsonb(a) row FROM public.approvals a WHERE id=$1', [id])).rows), afterRace, mode);
+        } else {
+          const accepted = (await query('SELECT status,payload FROM public.approvals WHERE id=$1', [id])).rows[0];
+          assert.equal(accepted.status, 'approved'); assert.equal(accepted.payload.actor, decision.actor);
+        }
+        assert.equal(fingerprint((await query('SELECT to_jsonb(d) row FROM public.provider_action_dispatches d ORDER BY id')).rows), fingerprint(dispatchBefore));
+      }
+      t.diagnostic('callback authorization: native canonical CAS/reread, six dispatch rows unchanged; no sender path');
     });
     await t.test('native lost original denies usable summary and frozen reference', async () => {
       assert.equal(fingerprint((await query('SELECT to_jsonb(d) AS row FROM public.event_dead_letters d ORDER BY id')).rows), fingerprint(originalsBefore));

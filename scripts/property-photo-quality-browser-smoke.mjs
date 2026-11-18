@@ -46,6 +46,8 @@ async function verify(engine,config,label){const browser=await engine.launch();c
    const box=await viewer.boundingBox(),viewport=page.viewportSize();
    assert.ok(Math.abs(box.x)<1&&Math.abs(box.y)<1&&Math.abs(box.width-viewport.width)<2&&Math.abs(box.height-viewport.height)<2,'Viewer must fill the viewport');
    await expect(viewer.getByRole('img',{name:'Property photo 1 of 4',exact:true})).toHaveAttribute('src',large(101));
+   const fitArea=viewer.getByRole('region',{name:'Photo zoom area',exact:true});
+   await expect.poll(()=>fitArea.evaluate(x=>x.scrollWidth<=x.clientWidth+1&&x.scrollHeight<=x.clientHeight+1)).toBe(true);
    await viewer.getByRole('button',{name:'Zoom in',exact:true}).click();
    await viewer.getByRole('button',{name:'Zoom in',exact:true}).click();
    await expect(viewer.getByLabel('Zoom level',{exact:true})).toHaveText('150%');
@@ -72,7 +74,9 @@ async function verify(engine,config,label){const browser=await engine.launch();c
    for(let i=0;i<12;i++)await viewer.getByRole('button',{name:'Zoom in',exact:true}).click();
    await expect(viewer.getByLabel('Zoom level',{exact:true})).toHaveText('400%');
    await expect(viewer.getByRole('button',{name:'Zoom in',exact:true})).toBeDisabled();
-   await page.keyboard.press('0');await page.keyboard.press('+');
+   await page.keyboard.press('0');
+   await expect.poll(()=>fitArea.evaluate(x=>x.scrollWidth<=x.clientWidth+1&&x.scrollHeight<=x.clientHeight+1)).toBe(true);
+   await page.keyboard.press('+');
    await expect(viewer.getByLabel('Zoom level',{exact:true})).toHaveText('125%');
    await page.keyboard.press('-');
    await expect(viewer.getByRole('button',{name:'Zoom out',exact:true})).toBeDisabled();

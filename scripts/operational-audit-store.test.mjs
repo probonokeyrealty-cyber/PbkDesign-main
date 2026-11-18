@@ -541,7 +541,7 @@ postgresTest('disposable Postgres operational JSONB proof, tampering and latest 
   const pool = new pg.Pool({ connectionString: process.env.PBK_TEST_DATABASE_URL,
     max: 2, connectionTimeoutMillis: 10_000, query_timeout: 10_000 });
   const ids = Array.from({ length: 3 }, () => `operational-test-${randomUUID()}`);
-  let pgProof;
+  let pgProof, receiptTableReady = false;
   const pgVerifier = options => {
     const current = typeof options.now === 'function' ? options.now() : options.now;
     pgProof.advance(current - pgProof.now());
@@ -580,6 +580,7 @@ postgresTest('disposable Postgres operational JSONB proof, tampering and latest 
       ok BOOLEAN NOT NULL DEFAULT FALSE, total INT NOT NULL DEFAULT 0, passed INT NOT NULL DEFAULT 0,
       failed INT NOT NULL DEFAULT 0, report JSONB NOT NULL DEFAULT '{}'::jsonb,
       source TEXT NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`);
+    receiptTableReady = true;
     const report = await run(ids[0], async ({ windowEnd }) => collection(Date.parse(windowEnd)));
     assert.equal(report.readbackVerified, true);
     assert.equal(report.audit.ready, false, 'synthetic unknown monitoring coverage never passes');
@@ -592,7 +593,7 @@ postgresTest('disposable Postgres operational JSONB proof, tampering and latest 
     const latest = await read(pool, { now: Date.now() });
     assert.equal(latest.runId, ids[2]); assert.equal(latest.verified, true); assert.equal(latest.audit.ready, false);
   } finally {
-    try { await pool.query('DELETE FROM public.pbk_eval_runs WHERE id = ANY($1::text[])', [ids]); }
+    try { if (receiptTableReady) await pool.query('DELETE FROM public.pbk_eval_runs WHERE id = ANY($1::text[])', [ids]); }
     finally { try { await pool.end(); } finally { await pgProof?.close(); } }
   }
 }, 180_000);

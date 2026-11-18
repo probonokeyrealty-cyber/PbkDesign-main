@@ -15569,6 +15569,23 @@ async function claimPendingApprovalDecision(approval, decision, { closureExpecte
     return { claimed: true, local: true };
   }
   if (claimed.ok && claimed.rows.length) return { claimed: true };
+  if (claimed.ok && closureExpected) {
+    // A lost closure claim must not inherit the legacy status-only replay or
+    // replace cached authority before the exact canonical decision is verified.
+    const current = await readCanonicalClosureApproval(approval.id);
+    if (current?.id === closureExpected.id && current.id === approval.id
+      && validateDeadLetterClosureApproval({ approval: current, secret: BRIDGE_API_KEY,
+        revision: process.env.RENDER_GIT_COMMIT || BUILD_REVISION, now: Date.now() })
+      && closureBinding(BRIDGE_API_KEY, 'intent', current.payload.metadata.deadLetterClosureIntent)
+        === closureBinding(BRIDGE_API_KEY, 'intent', closureExpected.payload.metadata.deadLetterClosureIntent)) {
+      const canonical = normalizePgApprovalRecord(current);
+      if (canonical.status === decision.status && canonical.actor === decision.actor && canonical.actedAt === decision.actedAt) {
+        Object.assign(approval, canonical);
+        return { claimed: false, result: { ok: true, replayed: true, approval } };
+      }
+    }
+    return { claimed: false, result: { ok: false, statusCode: 409, result: 'closure_approval_mismatch' } };
+  }
   if (claimed.ok) {
     const current = await queryPgRows(
       'SELECT * FROM public.approvals WHERE id = $1 AND workspace_id = $2',

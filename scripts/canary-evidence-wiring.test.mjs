@@ -184,7 +184,7 @@ test('reviewed non-maturity bridge baseline retains its exact integration surfac
   // Task6 adds approval transport guards and founder closure routes outside this
   // builder. Exact reviewed changes and old/new digests are in the Task6 report.
   assert.equal(createHash('sha256').update(unchanged).digest('hex'),
-    '18c8b9635d0a308cfc55a09b9d741c6bae50feb9ac2ecf4dd7c5469e9b2a9268');
+    '3d15e1e05d28b5f7d4e9dbfc28fe01fd09e2e0c38e0f727a966fbb1868389400');
 });
 
 test('production distribution includes reader and protocol, never the fixture signer', () => {

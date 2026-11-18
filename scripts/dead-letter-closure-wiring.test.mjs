@@ -281,6 +281,82 @@ test('closure durable claim cannot insert missing rows or overwrite concurrently
   } finally { await db.close(); }
 }, 30000);
 
+test('conditional claim miss revalidates closure authority through the real shared helper before replay or cache mutation', async () => {
+  const db = new PGlite();
+  try {
+    await db.exec(`CREATE TABLE approvals(id text PRIMARY KEY, workspace_id text,type text,status text,
+      lead_id text,contract_id text,requested_by text,summary text,risk text,payload jsonb,
+      decided_at timestamptz,created_at timestamptz,updated_at timestamptz)`);
+    for (const change of ['generic-provider', 'type', 'action', 'intent', 'signature', 'association',
+      'status', 'actor', 'time', 'pending', 'missing', 'unavailable', 'oversize', 'exact-approved', 'exact-rejected']) {
+      const h = harness();
+      await db.exec('TRUNCATE approvals');
+      await db.query(`INSERT INTO approvals(id,workspace_id,type,status,payload) VALUES($1,'pbk','admin','pending',$2)`,
+        [h.row.id, JSON.stringify(h.row.payload)]);
+      let updates = 0, boundedReadbacks = 0;
+      h.context.normalizeTenantId = x => x; h.context.buildApprovalSummary = () => 'Internal';
+      vm.runInContext(['writeApprovalRecordToPg', 'claimPendingApprovalDecision',
+        'normalizePgApprovalRecord', 'replayApprovalDecision'].map(declaration).join('\n'), h.context);
+      h.context.queryPgRows = async (config, values) => {
+        const sql = typeof config === 'string' ? config : config.text;
+        if (sql.startsWith('UPDATE public.approvals')) {
+          updates++;
+          const p = clone(h.row.payload);
+          const at = new Date(h.f.now - (change === 'time' ? 1000 : 0)).toISOString();
+          p.status = ['status', 'exact-rejected'].includes(change) ? 'rejected' : 'approved';
+          p.actor = change === 'actor' ? 'different-operator' : 'operator'; p.actedAt = at;
+          let type = 'admin';
+          if (change === 'generic-provider') {
+            type = p.type = 'provider-action'; p.approvalAction = 'telnyx_call'; delete p.metadata.deadLetterClosureIntent;
+          }
+          if (change === 'type') type = 'provider-action';
+          if (change === 'action') p.approvalAction = 'telnyx_call';
+          if (change === 'intent') p.metadata.deadLetterClosureIntent = createClosureIntent({
+            secret: h.f.secret, revision: h.f.revision, approvalId: h.row.id, action: 'close_internal',
+            recordRef: h.f.manifest.recordRef, manifest: h.f.manifest, predecessor: null,
+            createdAt: new Date(Date.parse(h.f.intent.createdAt) + 1000).toISOString(),
+          });
+          if (change === 'signature') p.metadata.deadLetterClosureIntent.attestation.signature = '0'.repeat(64);
+          if (change === 'oversize') p.notes = 'x'.repeat(65536);
+          if (change === 'pending') { p.status = 'pending'; delete p.actedAt; p.notes = 'concurrent edit'; }
+          await db.query(`UPDATE approvals SET type=$2,status=$3,payload=$4,decided_at=$5,lead_id=$6 WHERE id=$1`,
+            [h.row.id, type, p.status, JSON.stringify(p), change === 'pending' ? null : at,
+              change === 'association' ? 'seller' : null]);
+          if (change === 'missing') await db.exec('DELETE FROM approvals');
+        } else if (updates && sql.includes('octet_length(to_jsonb(a)::text)<=65536')) {
+          boundedReadbacks++; assert.equal(config.query_timeout, 2000);
+        }
+        if (updates && !sql.startsWith('UPDATE') && change === 'unavailable') return { ok: false, rows: [] };
+        const r = await db.query(sql, values); return { ok: true, rows: r.rows };
+      };
+      const r = await h.decide({ status: change === 'exact-rejected' ? 'rejected' : 'approved' });
+      const exact = change.startsWith('exact-');
+      assert.equal(r.ok, exact, change);
+      assert.equal(updates, 1, 'Exercise actual conditional UPDATE and claimPendingApprovalDecision');
+      assert.equal(boundedReadbacks, 1, change + ': independently reread bounded canonical authority after miss');
+      if (exact) { assert.equal(r.replayed, true); assert.equal(h.cached.status, change.slice(6)); }
+      else {
+        assert.equal(h.cached.status, 'pending', change + ': failed race cannot replace cached authority');
+        assert.equal(h.cached.type, 'admin');
+        assert.deepEqual(h.cached.metadata.deadLetterClosureIntent, h.row.payload.metadata.deadLetterClosureIntent);
+      }
+      assert.equal(h.calls.execute.length, 0); assert.deepEqual(h.calls.forbidden, []);
+    }
+  } finally { await db.close(); }
+}, 60000);
+
+test('unrelated shared claim miss retains its existing status-only replay behavior', async () => {
+  const h = harness(); h.context.normalizeTenantId = x => x; h.context.buildApprovalSummary = () => 'Unrelated';
+  vm.runInContext(['claimPendingApprovalDecision', 'normalizePgApprovalRecord', 'replayApprovalDecision'].map(declaration).join('\n'), h.context);
+  h.context.writeApprovalRecordToPg = async () => ({ ok: true, rows: [] });
+  h.context.queryPgRows = async () => ({ ok: true, rows: [{ id: 'generic', workspace_id: 'pbk',
+    type: 'offer', status: 'approved', payload: { actor: 'different-operator' } }] });
+  const approval = { id: 'generic', type: 'offer', status: 'pending' };
+  const r = await h.context.claimPendingApprovalDecision(approval, { status: 'approved', actor: 'operator', actedAt: h.context.isoNow() });
+  assert.equal(r.claimed, false); assert.equal(r.result.ok, true); assert.equal(r.result.replayed, true);
+  assert.equal(approval.actor, 'different-operator');
+});
+
 test('maturity cannot merge closure diagnostics into execution, coverage, canary, fleet or delivery gates', async () => {
   const h = harness(), reads = [];
   const closure = { verified: true, result: 'closure_summary_verified',

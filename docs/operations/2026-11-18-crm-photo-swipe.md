@@ -22,3 +22,7 @@ cases. This is browser emulation, not a physical-device test.
 Release uses the existing protected PR/main pipeline and private Netlify site.
 Verify the published viewer with read-only photo gestures; retain staff SSO and
 the existing approval gates.
+
+The touch-zoom follow-up in `2026-11-18-crm-photo-touch-zoom.md` supersedes the
+native touch-action/pan implementation above with viewport-scoped custom pinch,
+double-tap and pan, while retaining fit-only swipe navigation.

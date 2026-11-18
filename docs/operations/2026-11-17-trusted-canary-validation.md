@@ -318,3 +318,116 @@ No merge, push, pull request, deployment, production migration, producer, seller
 contact or delivery retry was performed. Unknown dispatch locks, authentication
 and approval controls remain unchanged. Genuine independent operational evidence
 and every other readiness gate are still required before launch.
+
+## PR23 CI Observation Adapter Repair
+
+This bounded repair starts at `125c458de581b39cce1d71d45a66c48afbbf6f29`
+on `codex/trusted-canary-evidence`. Earlier receipts above remain historical;
+the fresh evidence below does not relabel those runs or claim production readiness.
+The failing Release Qualification run was `44215335448`, job `134503639887`.
+
+Cause: the actual-Postgres observation adapter returned only query/release and
+ignored native callback checkout. FR-I1 requires `on`/`removeListener` and owns
+the error channel synchronously inside pg's acquisition callback. The old adapter
+lost both contracts: listener installation failed before ownership was recorded,
+leaking the acquired lease; subsequent assertions and pool starvation followed.
+The production reader was correct to fail closed and is unchanged in this repair.
+
+The original adapter was extracted unchanged into the test-only
+`scripts/fixtures/canary-postgres-observer.mjs` before fixing it. The guarded PG
+proof and offline regressions now import that same helper. The repair forwards
+callback acquisition without a promise turn, delegates the two native event
+methods to the actual client and retains promise checkout for test consumers.
+Query configs/SQL, native query errors and native release/double-release behavior
+are forwarded without rewriting results. All existing OID, size, read-only,
+query-timeout, full-row fingerprint and protected-fixture assertions are retained.
+
+### Offline RED And GREEN
+
+All commands use the pinned Node `v22.23.5` and process-local PATH prefix above.
+Before correction, the initial node-test form of the new adapter regression ran:
+
+```powershell
+node --test scripts/canary-postgres-observer.node-test.mjs
+```
+
+Exit **1**, **0 passed / 3 failed / 0 skipped**, **300.8635 ms**. Expected failures:
+missing evidence incorrectly became unavailable; a same-stack native checkout
+error had no owner; the acquired lease was never released. RED cleanup explicitly
+released orphaned offline clients, so reproduction did not hang or use a database.
+After the adapter-only correction, that same command passed **3/3**, exit **0**,
+**251.1251 ms**. No production hardening or deadline was changed to obtain GREEN.
+
+The regression was then moved to `scripts/canary-postgres-observer.test.mjs`
+using the repository's Jest convention, so the normal unit-test discovery includes
+it. Three additional lifecycle characterizations passed on their first execution:
+callback release plus promise reuse/native double-release guard; checkout errors
+without leases; and inspection-hook failure destroying its lease once. Offline
+tests use installed pg/pg-pool with a no-socket pg.Client subclass, empty selections
+and transaction inspection only, not substituted physical evidence envelopes.
+Real SQL admission and full signed-chain success are established by PG below.
+
+```powershell
+node --experimental-vm-modules node_modules/jest/bin/jest.js --config jest.config.mjs --runInBand --runTestsByPath scripts/canary-postgres-observer.test.mjs scripts/canary-evidence-protocol.test.mjs scripts/canary-evidence-reader.test.mjs scripts/canary-evidence-wiring.test.mjs scripts/production-readiness-evidence.test.mjs scripts/release-qualification-ci.test.mjs
+```
+
+Exit **0**, **6/6 suites / 561/561 tests**, zero failed/skipped, **23.743 s**.
+The adapter-only Jest command also passed **6/6**, **0.655 s**. Only the expected
+VM Modules experimental warning and its standard hint occurred; no suppression.
+Offline focused commands scrubbed database/PG/Supabase environment values.
+
+### Fresh Guarded PostgreSQL And Cleanup
+
+The unchanged evaluation harness ran the entire existing PG file, without a
+test-name filter or optional skip. Exact harness arguments:
+
+```text
+--ttl-hours 1 --branch-name pbk-eval-targeted-readiness-canary-9730ea6b-d212-40e1-9b6d-78606bbac4cf -- node --test scripts/canary-evidence-postgres.node-test.mjs
+```
+
+The guarded wrapper followed Actual PostgreSQL Command And Cleanup above, with
+additional parent database/PG/Supabase URL scrubbing, disabled inherited dry-run /
+runtime-injection flags and output URI/key redaction. It retained the harness's
+injected child test/eval URLs and PBK API alias, omitted the connection summary,
+and independently authenticated the final branch GET. Keys came only from the
+existing environment; no secret, database URI or environment file was printed.
+The exact executed wrapper is retained in the ignored `pr23-ci-fix-report.md`.
+
+Exit **0**, **20/20 tests**, zero failed/cancelled/skipped/todo, **37,095.972 ms**.
+This is the workflow contract, the DB parent and all 18 unchanged DB subtests.
+Signed positive readback, missing producer, microsecond precision, authenticated
+denials, independent snapshots, exact numeric OIDs and both size-admission limits
+all passed on this fresh execution. No actual-PG failure or retry occurred.
+
+- Fresh TTL1h branch: `br-frosty-rain-ajjkdm4d`; unique name suffix
+  `9730ea6b-d212-40e1-9b6d-78606bbac4cf`.
+- Existing authenticated guard verified fresh nondefault/nonprotected identity
+  and matching endpoint before any DDL. No operational database was used.
+- Only a UUID-generated empty `pbk_canary_<32-hex>` database received synthetic
+  fixtures. Inherited protected-table fingerprints remained unchanged.
+- Generated database dropped in finally and independently catalog-verified absent.
+- Harness branch DELETE completed; independent authenticated branch **GET 404**.
+- No cleanup failure, provider contact, delivery retry or production migration.
+
+### Additional Checks And Ownership
+
+```powershell
+node --test scripts/ci-hardening-smoke.mjs
+node scripts/neon-evaluation-harness-smoke.mjs
+node scripts/render-docker-imports-smoke.mjs
+```
+
+All exit **0**. CI hardening: **6/6**, no failures/skips, **9,060.7439 ms**.
+Harness smoke: `ok`. Docker import closure: **173 imports / 116 files /
+2 frontend voice inputs**. No runtime authority or fixture signer was added.
+`node --check` passed for all three changed JavaScript modules; `git diff --check`
+passed. Git's LF-to-CRLF notices are repository line-ending advisories.
+
+Only the PG test, its extracted helper, the offline adapter test and this
+validation document are owned by this repair. Production reader/protocol/bridge,
+SQL, fixed budgets, guard/harness, original six-suite no-skip gate and workflow
+are unchanged. User `output/` and ignored receipts remain untouched. No subagents,
+shared publication, push, CI recheck, merge or deployment was performed.
+Full unit/founder/build/hosted/UI runs were not rerun for this bounded test-only
+repair. Controller independently reviews the diff and owns push/recheck/merge.
+Missing operational producer/evidence and production-readiness gates remain open.

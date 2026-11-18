@@ -9,6 +9,7 @@ import { readProtectedFixtureFingerprints } from './readiness-timing-postgres-fi
 import { readCanaryEvidence } from './canary-evidence-reader.mjs';
 import { CANARY_EVIDENCE_LIMITS as limits, canaryRowDigest } from './canary-evidence-protocol.mjs';
 import { makeCanaryFixture, rebuildCanaryFixture, resignCanaryRow } from './fixtures/canary-evidence-fixture.mjs';
+import { observeCanaryPostgres } from './fixtures/canary-postgres-observer.mjs';
 
 test('Release Qualification adds a separate guarded canary Postgres proof', () => {
   const workflow = parse(readFileSync(new URL('../.github/workflows/release-qualification.yml', import.meta.url), 'utf8'));
@@ -78,31 +79,7 @@ test('guarded disposable Postgres proves trusted canary SQL and read-only readba
     // Observe actual pg results; never substitute rows, rewrite SQL, or change reader budgets.
     async function read(f, afterFirstSnapshot) {
       const before = await fingerprint();
-      const trace = { queries: [], envelopes: [], transactions: [], released: [], snapshots: 0 };
-      const audited = { async connect() {
-        const client = await pool.connect();
-        return { async query(config) {
-          const text = typeof config === 'string' ? config : config.text;
-          if (typeof config === 'object') assert(config.query_timeout > 0 && config.query_timeout <= limits.queryTimeoutMs);
-          trace.queries.push(text);
-          assert(/^(BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY|ROLLBACK|SELECT set_config\(|WITH selected AS MATERIALIZED)/.test(text));
-          const result = await client.query(config);
-          if (text.startsWith('BEGIN')) {
-            trace.transactions.push((await client.query(`SELECT current_setting('transaction_read_only') AS ro,
-              current_setting('transaction_isolation') AS isolation`)).rows[0]);
-          }
-          if (text.startsWith('WITH selected')) {
-            assert.deepEqual(result.fields.map(field => field.dataTypeID), [114, 23, 23], 'JSON and int4, not bigint strings');
-            for (const row of result.rows) {
-              assert(Number.isSafeInteger(row.physical_bytes));
-              assert(Number.isSafeInteger(row.report_bytes));
-            }
-            trace.envelopes.push({ config, rows: result.rows });
-          }
-          if (text === 'ROLLBACK' && ++trace.snapshots === 1) await afterFirstSnapshot?.();
-          return result;
-        }, release(destroy) { trace.released.push(Boolean(destroy)); client.release(destroy); } };
-      } };
+      const { pool: audited, trace } = observeCanaryPostgres(pool, afterFirstSnapshot);
       const result = await readCanaryEvidence({ pool: audited, secret: f.secret, revision: f.revision,
         policy: { ready: true, version: 2, hash: f.policyHash }, now: () => f.now });
       assert(trace.transactions.every(row => row.ro === 'on' && row.isolation === 'repeatable read'));

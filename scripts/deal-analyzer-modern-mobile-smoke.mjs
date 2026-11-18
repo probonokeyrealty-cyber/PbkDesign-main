@@ -73,7 +73,7 @@ assert(
 assert(
   /isApprovalQueuedResponse/.test(app) &&
     /Analyzer snapshot queued for approval/.test(app) &&
-    /patchLeadRequest\(activeDeal.leadId, buildAnalyzerLeadPatch\(activeDeal\)\)/.test(app) &&
+    /patchLeadRequest\(snapshot.leadId!, buildAnalyzerLeadPatch\(snapshot\)\)/.test(app) &&
     /if \(response.ok === false\) throw new Error/.test(app) &&
     /Lead saved\./.test(app) && /Lead not saved\./.test(app),
   'Agent handoffs must label approvals while manual saves require canonical write confirmation.'

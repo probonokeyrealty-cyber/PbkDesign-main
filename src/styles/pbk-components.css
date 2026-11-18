@@ -11986,6 +11986,45 @@ html[data-theme='light']
   font-size: 12px;
 }
 
+.pbk-analyzer-lookup-hint {
+  margin: 0 0 var(--s-2);
+  padding-inline-start: var(--s-3);
+  border-inline-start: 2px solid var(--sky-dim);
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+.pbk-analyzer-records {
+  margin-top: var(--s-2);
+  padding: var(--s-3);
+  border: 1px solid var(--border-dim);
+  border-radius: var(--radius-lg);
+  background: var(--bg-panel);
+  overflow-wrap: anywhere;
+}
+
+.pbk-analyzer-records summary {
+  color: var(--sky);
+  cursor: pointer;
+  min-height: 32px;
+  font-family: var(--font-mono);
+}
+
+.pbk-analyzer-records dl > div {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: var(--s-2);
+  padding-block: var(--s-1);
+  border-bottom: 1px solid var(--border-dim);
+}
+
+.pbk-analyzer-records dd {
+  margin: 0;
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+}
+
 .pbk-analyzer-listing-result {
   margin-top: var(--s-2);
   padding: var(--s-3);

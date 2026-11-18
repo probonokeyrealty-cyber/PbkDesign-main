@@ -16,6 +16,7 @@ import { createClient as createRedisClient } from 'redis';
 import { DeleteObjectCommand, GetObjectCommand, HeadBucketCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { getSignedUrl as getS3SignedUrl } from '@aws-sdk/s3-request-presigner';
 import { lookupAttomPropertyPreview, sameAttomAddress } from './attom-property-preview.mjs';
+import { analyzerPropertyPreview } from './analyzer-property-preview.mjs';
 import { lookupAttomRecentSales } from './attom-recent-sales.mjs';
 import { lookupAddressSuggestions } from './address-suggestions.mjs';
 import { applyAgentVersionRollback, buildAgentRegistrySnapshot, buildAgentVersionSnapshot, buildDefaultAgentRegistry, buildStableAgentFleetMeasurement, findAgentsByCapability, invokeRegisteredAgent, mergeAgentRegistryRecords, normalizeAgentRegistryId, normalizeAgentRegistryRecord, validateAgentVersionSnapshot } from './agent-registry.mjs';
@@ -60817,13 +60818,17 @@ async function handleManualLeadCreate(payload = {}) {
     stage: payload.stage || payload.status || 'new',
   });
   if (eventId) leadImport.eventId = eventId;
+  if (payload.source === 'analyzer-save' && findDuplicateLeadImport(leadImport)) {
+    return { ok: false, result: 'analyzer_lead_match_requires_review',
+      error: 'A matching CRM lead already exists. Open it from Leads before syncing this address.' };
+  }
   ensureLeadCommitEnvelope(leadImport, payload.source || payload.leadSource || 'manual-lead-create', {
     actorType: payload.actor || payload.requestedBy || 'PBK operator',
     reason: 'Manual lead create saved to the canonical lead profile.',
     patch: buildLeadCommitPatch(leadImport),
   });
 
-  const patched = patchLeadImport(
+  const patched = payload.source === 'analyzer-save' ? null : patchLeadImport(
     state,
     {
       leadId: leadImport.leadId,
@@ -76449,6 +76454,15 @@ const server = createServer(async (request, response) => {
     }
 
     if (request.method === 'GET' && pathname === '/api/property-data') {
+      if (url.searchParams.get('includeRecords') === 'true') {
+        const result = await analyzerPropertyPreview(url.searchParams.get('address'), {
+          listing: (params) => toolHandlers.getPropertyData(params), records: lookupAttomPropertyPreview,
+        });
+        response.setHeader('Cache-Control', 'no-store');
+        json(response, 200, result);
+        return;
+      }
+
       const result = await toolHandlers.getPropertyData({
         address: url.searchParams.get('address') || '',
         queueBrowserResearch: /^(1|true|yes)$/i.test(String(url.searchParams.get('queueBrowserResearch') || '').trim()),

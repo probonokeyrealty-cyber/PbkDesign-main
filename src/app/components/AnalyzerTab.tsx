@@ -15,6 +15,7 @@ import {
 import { AnalyzerSellerHistory } from './AnalyzerSellerHistory';
 import { AnalyzerAddressField } from './AnalyzerAddressField';
 import { formatCurrency } from '../utils/formatting';
+import { readAnalyzerDraftManualFields } from '../utils/analyzerStorage';
 import { calculateARV } from '../utils/dealCalculations';
 import { getAnalyzeReadiness } from '../utils/pbk';
 import { PbkDataSource } from '../../components/pbk/index';
@@ -26,7 +27,7 @@ interface AnalyzerTabProps {
   onAnalyze: () => void | Promise<void>;
   onSendToAgent: () => void | Promise<void>;
   onSaveDeal: () => void | Promise<void>;
-  onClearDeal: () => void;
+  onClearDeal: () => boolean | Promise<boolean>;
   onSelectPath: (path: PBKPath) => void;
   onOpenCallMode: (path: PBKPath) => void;
   analyzeStatus: string;
@@ -46,7 +47,12 @@ export function AnalyzerTab({
   onOpenCallMode,
   analyzeStatus,
 }: AnalyzerTabProps) {
+  const operatorFields = useRef(
+    new Set<keyof DealData>((readAnalyzerDraftManualFields() || []) as (keyof DealData)[])
+  );
+  const [editedAddress, setEditedAddress] = useState<string | null>(null);
   const handleInputChange = (field: keyof DealData, value: DealData[keyof DealData]) => {
+    operatorFields.current.add(field);
     onDealChange({ [field]: value });
   };
 
@@ -146,7 +152,12 @@ export function AnalyzerTab({
             </button>
             <button
               type="button"
-              onClick={onClearDeal}
+              onClick={async () => {
+                if (await onClearDeal()) {
+                  operatorFields.current.clear();
+                  setEditedAddress(null);
+                }
+              }}
               className="pbk-btn pbk-btn-ghost pbk-btn-sm"
             >
               Clear
@@ -161,12 +172,66 @@ export function AnalyzerTab({
           >
             Address
           </label>
-          <AnalyzerAddressField deal={deal} onChange={onDealChange} />
+          <AnalyzerAddressField
+            deal={deal}
+            automaticLookup
+            onChange={(patch) => {
+              if (patch.address !== undefined) {
+                setEditedAddress(patch.address.trim());
+                onDealChange({
+                  ...patch,
+                  leadId: undefined,
+                  crmCreateKey: undefined,
+                  propertyRecordSnapshot: undefined,
+                  ...(deal.leadId || deal.crmCreateKey
+                    ? {
+                        sellerName: '',
+                        sellerPhone: '',
+                        sellerEmail: '',
+                        sellerPhoneVerified: false,
+                      }
+                    : {}),
+                });
+              } else onDealChange(patch);
+            }}
+          />
           <AnalyzerListingLookup
             key={address}
             deal={deal}
+            autoLookup={editedAddress === address}
+            protectedFields={operatorFields.current}
+            onFill={onDealChange}
             onPhotoResult={setPhotoResult}
           />
+          <details className="pbk-analyzer-records">
+            <summary>CRM handoff · {leadId ? 'Linked lead' : 'New lead'}</summary>
+            <p className="mb-2">
+              Save Deal keeps a local copy and syncs to the team record. New leads need a seller
+              name and a phone or email.
+            </p>
+            {leadId && <p className="mb-2">Lead ID: {leadId}</p>}
+            {(
+              [
+                ['sellerName', 'Seller name', 'text'],
+                ['sellerPhone', 'Seller phone', 'tel'],
+                ['sellerEmail', 'Seller email', 'email'],
+              ] as const
+            ).map(([field, label, type]) => (
+              <label key={field} className="block mb-2">
+                <span className="block mb-1">{label}</span>
+                <input
+                  type={type}
+                  value={deal[field] || ''}
+                  onChange={(event) => handleInputChange(field, event.target.value)}
+                  className="w-full min-w-0 h-10 px-3 border border-gray-200 dark:border-slate-700 rounded-lg bg-gray-50 dark:bg-slate-900 text-gray-900 dark:text-gray-100"
+                />
+              </label>
+            ))}
+            <p>
+              Contact details do not grant permission to call, text or email. Existing approval
+              checks still apply.
+            </p>
+          </details>
         </div>
 
         <div className="pbk-analyzer-segments" role="group" aria-label="Contact type">
@@ -270,6 +335,8 @@ export function AnalyzerTab({
                 aria-label="Lot size in acres"
                 value={deal.lotSize || ''}
                 onChange={(e) => {
+                  operatorFields.current.add('lotSize');
+                  operatorFields.current.add('landLotSizeSqFt');
                   const lotSize = e.target.value;
                   const acres = Number(lotSize);
                   onDealChange({

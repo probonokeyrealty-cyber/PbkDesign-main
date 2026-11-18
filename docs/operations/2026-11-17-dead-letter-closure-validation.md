@@ -5,6 +5,38 @@ base `0e79b24`. This document contains aggregate evidence only. It does not auth
 release, production schema changes, live closures, provider actions or delivery.
 Independent task/full-branch reviews remain controller-owned.
 
+## Final Consolidated Verification (2026-11-18)
+
+After the reviewed source changes and the canary digest-only correction, the
+controller ran the complete unfiltered unit command again on the unchanged
+runtime/test tree at `83d4b5d`:
+
+```text
+npm run test:unit -- --json --outputFile=.superpowers/sdd/2026-11-17-dead-letter-closure/final-consolidated-unit-results.json
+```
+
+Pinned Node 22 PATH and process-only ambient DB/native opt-in scrubbing were retained.
+Command completed exit 0: 99/99 suites passed; 3,002 tests passed, 12 existing opt-in
+skips, 0 failures; 3,014 total; 2,222.773s. JSON `success:true`, failed suites 0 and
+failed assertions 0 were read independently after command completion. Run start:
+2026-11-18T14:09:14.223Z; last suite end: 2026-11-18T14:46:16.991Z.
+Raw result SHA256:
+`0abd607d59823632e16d0fe572ad0ab53fa739cd9af9d15b63f7dd0d94142a0f`.
+
+No runtime, test, package, Docker or proxy source changed during or after this run;
+subsequent handoff edits are documentation only. All command sessions completed;
+a fresh exact task-label Docker query returned no leftover test containers.
+The 12 skips are the existing inventory retained below, not native passes.
+The latest dedicated guarded local closure Postgres run separately passed 15/15,
+with actual creation-service concurrency and zero external/sender attempts.
+
+Independent final re-review accepted all four introduced findings with no new
+breakage. The [review outcome](2026-11-18-dead-letter-closure-review-outcome.md)
+retains every declined-judgment boundary. The inherited nonclosure callback-role
+parity P1 remains unresolved and release-blocking. No push, integration, production
+migration/deployment, live closure, seller contact, retry or dispatch unlock occurred.
+Historical failed/partial runs below are preserved, not replaced by this pass.
+
 ## Final Review Fix Wave (2026-11-18)
 
 Whole-branch review at `3b772f4` identified four introduced compatibility,

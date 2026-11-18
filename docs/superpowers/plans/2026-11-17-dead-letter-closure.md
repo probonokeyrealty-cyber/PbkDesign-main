@@ -142,7 +142,7 @@ Use schema `pbk-operational-audit-v3`, suite `operational_audit_v3`, source `ser
 - [x] Run new tests to expected missing-packaging failure; add only needed Docker COPY/package script entries, preserving node22 and existing build settings.
 - [x] Run guarded local real Postgres proof, including normal/replica immutability, exact installation drift detection, single-use concurrency, original/dispatch fingerprint preservation, max:1 pool, held-transaction cutoff and independent readback. Dedicated proof14/14, zero external/sender attempts; generated DB/container cleanup confirmed. Only aggregate redacted evidence retained.
 - [x] Run all listed focused/smoke/import/typecheck/lint/build checks with pinned Node22. Full unfiltered unit run99/99 suites,2983 passed,12 explicitly listed pre-existing native opt-in skips,0 failures. No build-generated product changes. Supplemental Docker-ack cleanup fix19/19 Node tests; runtime/Jest unchanged. Validation details in operations documentation.
-- [ ] Obtain independent correctness/security review of full diff, fixing findings with regression tests. Recheck proof replay, trust boundaries, privacy, cutoff race, auth/admin classification and dispatch noninterference. Record exact commands/results, failures/skips and remaining gaps. Do not claim production readiness from a build or PGlite-only proof.
+- [x] Obtain independent whole-branch review and one scoped fix-wave re-review. Four introduced findings fixed in `83d4b5d`; no new breakage found. Retain the inherited nonclosure callback-role parity P1 as an unresolved, separately scoped release blocker. Exact tests, failures/skips, trust boundaries and remaining limits are recorded; no production-readiness claim.
 - [x] Commit scoped code/tests/docs locally (`4286ea4`, reviewed cleanup fix `4c06153`). No push, PR, production migration, deployment or live closure. Remaining full-branch review/release boundaries stay explicit.
 
 ## Execution Checkpoints
@@ -150,7 +150,7 @@ Use schema `pbk-operational-audit-v3`, suite `operational_audit_v3`, source `ser
 - [x] Founder reviews this plan and chooses execution method before product edits.
 - [x] Check linked-worktree isolation via using-git-worktrees; preserve `output/`; create `codex/dead-letter-closure` branch for execution.
 - [x] Follow test-first tasks above, committing/reviewing each independently testable unit. Seven task gates complete; full-branch review remains separate.
-- [ ] Whole-branch review and honest local validation summary complete; production unchanged.
+- [x] Whole-branch review and honest local validation summary complete; production unchanged. Final consolidated run: 99/99 suites, 3,002 passed, 12 explicit skips, 0 failures; dedicated local native 15/15. Inherited P1 remains unresolved, so no broad safety/release certification or integration is authorized.
 
 ## Plan Self-Review
 
@@ -166,8 +166,9 @@ Recommended execution: subagent-driven, with a fresh implementer and independent
 review for each task, then a full-branch security review. These components share
 security-sensitive evidence interfaces, so catching contract drift between tasks
 is worth the additional review contexts. Tasks 1-7 are implemented and independently
-reviewed through `4c06153`; dedicated native Postgres proof passed14/14. Whole-branch
-review remains pending as tracked above; no production change is authorized.
+reviewed through `4c06153`, with final review fixes at `83d4b5d`. Final re-review
+accepts all introduced fixes; native 15/15 and consolidated 99-suite verification
+passed. The inherited P1 remains release-blocking; no production change is authorized.
 
 ## Execution Decisions
 
@@ -187,3 +188,8 @@ explicit so they can be reconsidered during final review.
 6. Permit a narrow read-only proposal-context helper in the existing store so
    proposal generation can reuse bounded validators and current/prior manifests.
    Incorrect helper behavior requires tests and repair, not new apply authority.
+7. Keep the inherited nonclosure callback authorization repair separately scoped.
+   The closure lane enforces existing canonical admin restrictions, but broader
+   callback parity requires security-owner disposition and its own tests. The
+   command center cannot receive blanket safety/release certification until that
+   high-priority inherited issue is resolved.

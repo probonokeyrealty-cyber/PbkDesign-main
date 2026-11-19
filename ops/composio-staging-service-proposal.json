@@ -1,5 +1,5 @@
 {
-  "status": "proposed-not-created",
+  "status": "created-free-service-build-refinement",
   "workspaceName": "PBK",
   "service": {
     "name": "pbk-composio-staging",
@@ -9,7 +9,7 @@
     "repo": "https://github.com/probonokeyrealty-cyber/PbkDesign-main",
     "branch": "codex/composio-readonly-staging",
     "autoDeploy": "no",
-    "buildCommand": "npm ci --omit=dev --ignore-scripts --legacy-peer-deps --no-audit --no-fund",
+    "buildCommand": "npm ci --include=dev --ignore-scripts --legacy-peer-deps --no-audit --no-fund && npm run build:composio-staging",
     "startCommand": "node --experimental-strip-types scripts/openclaw-local-server.mjs --public",
     "envVars": [
       { "key": "NODE_ENV", "value": "production" },

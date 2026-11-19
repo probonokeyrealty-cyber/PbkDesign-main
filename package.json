@@ -10,6 +10,7 @@
     "typecheck": "tsc --noEmit",
     "prebuild": "node ./scripts/sync-master-template.mjs",
     "build": "vite build",
+    "build:composio-staging": "node scripts/build-composio-staging.mjs",
     "build:investor-staging": "vite build --config vite.investor-staging.config.ts",
     "build:investor-live": "vite build --config vite.investor-live.config.ts",
     "build:staff-staging": "node scripts/build-investor-staff-staging.mjs",

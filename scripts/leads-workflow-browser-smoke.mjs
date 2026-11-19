@@ -15,6 +15,87 @@ const analyzerKey = 'pbk:local:analyzer:current-deal:session';
 const visibleRows = page => page.locator('button[data-lead-queue-id]').filter({ visible: true });
 const ids = page => visibleRows(page).evaluateAll(nodes => nodes.map(n => n.dataset.leadQueueId));
 const selectedIds = page => visibleRows(page).evaluateAll(nodes => nodes.filter(n => n.getAttribute('aria-pressed') === 'true').map(n => n.dataset.leadQueueId));
+
+async function assertManualEvidence(page) {
+  await expect(page).toHaveURL(origin + '/leads/SYN-WORK-022');
+  await expect(page.getByRole('heading', { name: 'Synthetic Seller 22', level: 1, exact: true })).toBeVisible();
+  await expect(page.getByRole('region', { name: 'Workspace lead context' }).locator('code')).toHaveText('SYN-WORK-022');
+  const numbers = page.locator('#lead-numbers');
+  await expect(numbers.getByText('$287,123', { exact: true })).toBeVisible();
+  await expect(numbers.getByText('$151,234', { exact: true })).toBeVisible();
+  await expect(numbers.getByText('$17,345', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Edit', exact: true }).click();
+  const edit = page.getByRole('dialog', { name: 'Edit complete seller profile', exact: true });
+  try {
+    await expect(edit.getByLabel('Property address', { exact: true })).toHaveValue('22 Synthetic Avenue');
+    for (const [name, value] of [['ARV', '287123'], ['MAO', '151234'], ['Estimated repairs', '17345'], ['Sq ft', '1644']]) {
+      await expect(edit.getByLabel(name, { exact: true })).toHaveValue(value);
+    }
+  } finally { await edit.getByRole('button', { name: 'Cancel', exact: true }).click(); }
+}
+
+async function assertParcelEvidence(page) {
+  const property = page.getByRole('region', { name: 'Property', exact: true });
+  await property.getByRole('tab', { name: 'Overview', exact: true }).click();
+  const overview = property.getByRole('tabpanel', { name: 'Overview', exact: true });
+  await expect(overview.getByText('SYN-PARCEL-022', { exact: true })).toBeVisible();
+  await expect(overview.getByText('6,222 sq ft', { exact: true })).toBeVisible();
+  await property.getByRole('tab', { name: 'Property record', exact: true }).click();
+  const record = property.getByRole('tabpanel', { name: 'Property record', exact: true });
+  await expect(record.getByText('ATTOM | Saved snapshot', { exact: true })).toBeVisible();
+  await expect(record.locator('.pbk-attom-rows').getByText('1,722 sq ft', { exact: true })).toBeVisible();
+  await expect(record.locator('time[datetime="2026-11-17T12:22:00Z"]').first()).toBeVisible();
+}
+
+async function assertCompEvidence(page) {
+  const property = page.getByRole('region', { name: 'Property', exact: true });
+  await property.getByRole('tab', { name: 'Comps', exact: true }).click();
+  const comps = property.getByRole('region', { name: 'Recent comparable sales', exact: true });
+  const checked = comps.getByRole('checkbox', { name: 'Select comp 122 Synthetic Comp Lane, Example City, CA 90210', exact: true });
+  await expect(checked).toBeChecked();
+  await expect(comps.getByRole('checkbox', { name: 'Select comp 222 Synthetic Comp Lane, Example City, CA 90210', exact: true })).not.toBeChecked();
+  const row = comps.getByRole('row').filter({ has: page.getByRole('checkbox', { name: 'Select comp 122 Synthetic Comp Lane, Example City, CA 90210', exact: true }) });
+  await expect(row.locator('[data-label="Price"]')).toHaveText('$312,345');
+  await expect(row.locator('[data-label="Sold"]')).toHaveText('2026-11-12');
+  await expect(row.locator('[data-label="Sq ft"]')).toHaveText('1,655');
+  const comparison = comps.getByRole('region', { name: 'Selected comp comparison', exact: true });
+  await expect(comparison.getByRole('heading', { name: '122 Synthetic Comp Lane, Example City, CA 90210', exact: true })).toBeVisible();
+  await expect(comparison.getByText('$312,345', { exact: true })).toBeVisible();
+  await expect(comps.getByText('1/3 selected', { exact: false })).toBeVisible();
+}
+
+async function assertSelectedLeadEvidence(page) {
+  await assertManualEvidence(page);
+  await assertParcelEvidence(page);
+  await assertCompEvidence(page);
+  await page.getByRole('region', { name: 'Property', exact: true }).getByRole('tab', { name: 'Overview', exact: true }).click();
+}
+
+async function verifyEvidenceNegativeControls(page) {
+  const canonical = initial.find(lead => lead.id === 'SYN-WORK-022');
+  const endpoint = origin + '/api/leads/SYN-WORK-022/full';
+  for (const [name, corrupt, check, failure] of [
+    ['manual ARV', lead => { lead.property.arv = 987654; }, assertManualEvidence, '$287,123'],
+    ['parcel snapshot', lead => { delete lead.deal.propertyRecordSnapshot; }, assertParcelEvidence, 'SYN-PARCEL-022'],
+    ['reviewed comp selection', lead => { lead.analyzer.recordedSales.selectedIds = []; }, assertCompEvidence, 'toBeChecked'],
+  ]) {
+    const handler = route => {
+      if (route.request().method() !== 'GET') return route.fallback();
+      const lead = structuredClone(canonical);
+      corrupt(lead);
+      return route.fulfill({ json: { ok: true, lead } });
+    };
+    await page.route(endpoint, handler);
+    try {
+      await page.goto(origin + '/leads/SYN-WORK-022');
+      await assert.rejects(() => check(page), error => error.message.includes(failure), `${name} loss must fail browser evidence checks`);
+      assert.deepEqual(operatorLeadFixtures, initial, 'Browser evidence fails even while the server array stays unchanged');
+      console.log(`negative control: detected ${name} loss in browser; server array unchanged`);
+    } finally { await page.unroute(endpoint, handler); }
+  }
+  await page.goto(origin + '/leads/SYN-WORK-022');
+  await assertSelectedLeadEvidence(page);
+}
 async function checkTargets(page, root) {
   const undersized = await page.locator(`${root} button, ${root} a, ${root} input, ${root} select`).evaluateAll(nodes => nodes.filter(node => {
     const rect = node.getBoundingClientRect();
@@ -229,6 +310,7 @@ async function verify(type, width) {
     await expect(nav.getByRole('link', { name: 'Next step', exact: true })).toHaveAttribute('aria-current', 'location');
     assert.equal(await page.evaluate(() => history.length), historyBefore, 'Section jumps must not add history');
     assert.equal(detailReads.length, workspaceReads, 'Section jumps must not fetch lead details');
+    await assertSelectedLeadEvidence(page);
     await page.screenshot({ path: `${evidence}/workspace-${type.name()}-${width}.png` });
     await page.getByRole('button', { name: 'Back to leads', exact: true }).click();
     await expect(search).toHaveValue('Synthetic');
@@ -236,6 +318,12 @@ async function verify(type, width) {
     await expect(page.getByText('Page 2 of 4', { exact: false })).toBeVisible();
     await expect(rowB).toBeFocused();
     await expect(rowB).toHaveAttribute('aria-pressed', 'true');
+    // Reopen the exact returned selection and check real hydration, not server memory.
+    if (width < 721) await page.getByRole('link', { name: 'Open workspace for Synthetic Seller 22', exact: true }).click();
+    else await page.getByRole('button', { name: 'Open lead', exact: true }).click();
+    await assertSelectedLeadEvidence(page);
+    await page.getByRole('button', { name: 'Back to leads', exact: true }).click();
+    await expect(rowB).toBeFocused();
     // A disappearing owned row may recover focus, but filtering from search must not steal it.
     await search.fill('no-synthetic-match'); await expect(visibleRows(page)).toHaveCount(0);
     await expect(search).toBeFocused();
@@ -261,11 +349,12 @@ async function verify(type, width) {
     const rejections = await verifyRejections(page, writes);
     assert.equal(rejections, 5);
     assert.deepEqual(denied.splice(0), [[403, '/api/leads'], [403, '/api/lead/send-message'], [403, '/api/leads/SYN-WORK-000'], [403, '/invoke'], [403, '/api/contract/send']]);
+    if (type === chromium && width === 1440) await verifyEvidenceNegativeControls(page);
     assert.equal(await page.evaluate(() => localStorage.getItem('pbk:compose:draft')), compose);
     assert.equal(await page.evaluate(key => sessionStorage.getItem(key), analyzerKey), analyzer);
-    assert.deepEqual(operatorLeadFixtures, initial);
+    assert.deepEqual(operatorLeadFixtures, initial, 'Additional server-fixture immutability check only');
     assert.deepEqual({ foreign, writes, errors, denied, lookups }, { foreign: [], writes: [], errors: [], denied: [], lookups: [] });
-    console.log(`${type.name()} ${width}px: membership, focus, selection, anchors, return, recovery, drafts; 5 cancellations + 5 exact mocked rejections; zero unexpected/foreign/provider/write/page-error traffic`);
+    console.log(`${type.name()} ${width}px: membership, focus, selection, anchors, return, recovery, browser manual/comps/parcel evidence before+after return, raw drafts; 5 cancellations + 5 exact mocked rejections; zero unexpected/foreign/provider/write/page-error traffic`);
   } catch (error) { console.error(error.stack); throw new Error(error.message); }
   finally { await browser.close(); }
 }

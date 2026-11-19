@@ -1,5 +1,21 @@
 import { createServer } from 'vite';
 import { createServer as createSocketServer } from 'node:net';
+import { selectedCompPatch } from '../../src/app/utils/leadComps.mjs';
+
+function savedEvidence(index) {
+  if (index !== 20 && index !== 22) return {};
+  const address = { street: `${index} Synthetic Avenue`, city: 'Example City', state: 'CA', zip: '90210' };
+  const captured = `2026-11-17T12:${index}:00Z`;
+  const sales = [
+    { id: `SYN-COMP-${index}-A`, address: `${100 + index} Synthetic Comp Lane, Example City, CA 90210`, soldDate: '2026-11-12', price: index === 22 ? 312345 : 260000, sqft: 1655, beds: 3, baths: 2, distanceMiles: 0.5 },
+    { id: `SYN-COMP-${index}-B`, address: `${200 + index} Synthetic Comp Lane, Example City, CA 90210`, soldDate: '2026-11-11', price: 398765, sqft: 1800, beds: 4, baths: 2, distanceMiles: 0.7 },
+  ];
+  const reviewed = selectedCompPatch({ source: 'ATTOM', status: 'matched', retrievedAt: captured, windowStart: '2026-10-18', windowEnd: '2026-11-17', radiusMiles: 1, sales }, [sales[0].id], address);
+  return { analyzer: reviewed.analyzer, deal: { ...reviewed.deal,
+    propertyRecordSnapshot: { source: 'attom', address: `${address.street}, Example City, CA 90210`, retrievedAt: captured,
+      facts: { address: `${address.street}, Example City, CA 90210`, apn: `SYN-PARCEL-0${index}`, livingSqft: index === 22 ? 1722 : 1700, lotSqft: index === 22 ? 6222 : 6000, propertyType: 'Single family' } },
+  } };
+}
 
 export const operatorLeadFixtures = Array.from({ length: 64 }, (_, i) => ({
   id: i === 63 ? `SYN-${'long-id-'.repeat(24)}` : `SYN-WORK-${String(i).padStart(3, '0')}`,
@@ -8,9 +24,9 @@ export const operatorLeadFixtures = Array.from({ length: 64 }, (_, i) => ({
     phone: i % 2 === 0 ? '+12025550101' : '123',
     email: i % 3 === 0 ? `seller${i}@example.invalid` : '' },
   property: { address: `${i} Synthetic Avenue`, city: 'Example City', state: 'CA', zip: '90210',
-    arv: 245000, mao: 140000, sqft: 1600, manualValue: 'operator-kept',
-    attomSnapshot: { apn: 'SYN-APN', source: 'synthetic', livingSqft: 1600 } },
-  soldComps: [{ id: 'SYN-REVIEWED-COMP', soldPrice: 245000, reviewed: true }],
+    arv: 245000, mao: 140000, sqft: 1600,
+    ...(i === 22 ? { arv: 287123, mao: 151234, estimatedRepairs: 17345, sqft: 1644 } : {}) },
+  ...savedEvidence(i),
   bant: { nextStep: i === 63 ? 'UnbrokenLongValue'.repeat(35) : 'Confirm synthetic availability.' },
   selectedPath: 'cash', score: i < 40 ? 90 : 70,
   updatedAt: '2026-11-15T10:34:00Z',

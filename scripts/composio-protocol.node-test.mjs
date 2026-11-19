@@ -24,8 +24,8 @@ for (const json of [true, false]) {
       }
       const server = new McpServer({ name: 'composio-fixture', version: '1' });
       server.registerTool(
-        'HIGHLEVEL_MCP_CONTACTS_GET_CONTACT',
-        { inputSchema: { path_contactId: z.string() } },
+        'HIGHLEVEL_LOCATION_CONTACTS_GET_CONTACT',
+        { inputSchema: { contact_id: z.string() } },
         async (args) => {
           calls.push(args);
           const result = {
@@ -86,16 +86,16 @@ for (const json of [true, false]) {
             mcp: { url: 'https://backend.composio.dev/api/v3/mcp/fixture' },
             config: {
               user_id: 'user',
-              connected_accounts: { highlevel_mcp: ['account'] },
-              toolkits: { enabled: ['highlevel_mcp'] },
-              tools: { highlevel_mcp: { enabled: ['HIGHLEVEL_MCP_CONTACTS_GET_CONTACT'] } },
-              preload: { tools: ['HIGHLEVEL_MCP_CONTACTS_GET_CONTACT'] },
+              connected_accounts: { highlevel_location: ['account'] },
+              toolkits: { enabled: ['highlevel_location'] },
+              tools: { highlevel_location: { enabled: ['HIGHLEVEL_LOCATION_CONTACTS_GET_CONTACT'] } },
+              preload: { tools: ['HIGHLEVEL_LOCATION_CONTACTS_GET_CONTACT'] },
             },
           },
           '/api/v3.1/connected_accounts/account': {
             status: 'ACTIVE',
             is_disabled: false,
-            toolkit: { slug: 'highlevel_mcp' },
+            toolkit: { slug: 'highlevel_location' },
           },
         };
         if (metadata[url.pathname]) {
@@ -125,7 +125,7 @@ for (const json of [true, false]) {
       const result = await connection.read({ operation: 'qa-contact', agentId: 'ava' });
       assert.equal(result.ok, true, JSON.stringify(result));
       assert.equal(connection.status().ready, true);
-      assert.deepEqual(calls, [{ path_contactId: 'qa-fixture' }]);
+      assert.deepEqual(calls, [{ contact_id: 'qa-fixture' }]);
       assert.ok(forwarded >= 3);
       assert.doesNotMatch(JSON.stringify(result), /MUST NOT LEAK/);
     } finally {
@@ -147,23 +147,23 @@ test('authoritative scope proof rejects identity, policy, URL, version and revok
       mcp: { url: 'https://backend.composio.dev/api/v3/mcp/fixture' },
       config: {
         user_id: 'user',
-        connected_accounts: { highlevel_mcp: ['account'] },
-        toolkits: { enabled: ['highlevel_mcp'] },
-        tools: { highlevel_mcp: { enabled: ['HIGHLEVEL_MCP_CONTACTS_GET_CONTACT'] } },
-        preload: { tools: ['HIGHLEVEL_MCP_CONTACTS_GET_CONTACT'] },
+        connected_accounts: { highlevel_location: ['account'] },
+        toolkits: { enabled: ['highlevel_location'] },
+        tools: { highlevel_location: { enabled: ['HIGHLEVEL_LOCATION_CONTACTS_GET_CONTACT'] } },
+        preload: { tools: ['HIGHLEVEL_LOCATION_CONTACTS_GET_CONTACT'] },
       },
     },
-    account: { status: 'ACTIVE', is_disabled: false, toolkit: { slug: 'highlevel_mcp' } },
+    account: { status: 'ACTIVE', is_disabled: false, toolkit: { slug: 'highlevel_location' } },
   };
   const mutations = [
     (b) => (b.identity.project.nano_id = 'other'),
     (b) => (b.identity.api_key.project_id = 'other'),
     (b) => (b.session.config.user_id = 'other'),
-    (b) => (b.session.config.connected_accounts.highlevel_mcp = ['other']),
+    (b) => (b.session.config.connected_accounts.highlevel_location = ['other']),
     (b) => (b.session.config_version = 2),
     (b) => (b.session.mcp.url = 'https://evil.example/mcp'),
     (b) =>
-      b.session.config.tools.highlevel_mcp.enabled.push('HIGHLEVEL_MCP_CONTACTS_UPDATE_CONTACT'),
+      b.session.config.tools.highlevel_location.enabled.push('HIGHLEVEL_LOCATION_CONTACTS_UPDATE_CONTACT'),
     (b) => (b.account.status = 'REVOKED'),
     (b) => (b.account.is_disabled = true),
   ];

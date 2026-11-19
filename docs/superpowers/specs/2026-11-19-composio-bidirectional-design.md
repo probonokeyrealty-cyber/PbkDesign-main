@@ -1,6 +1,6 @@
 # PBK ↔ Composio connection design
 
-Status: founder approved staging implementation on November 19, 2026; local implementation completed, hosted activation pending isolated staging resources and authorization. Not deployed.
+Status: founder approved staging implementation and a separate free Render service on November 19, 2026. Local implementation and isolated hosting completed; Composio account/session activation remains pending.
 
 ## Intent and agreed scope
 
@@ -36,6 +36,8 @@ Use a project-scoped Composio session/config for PBK. A local consumer CLI accou
 Expose only explicitly configured tools. Discovery, tool execution and result handling are separate checks. Provider risk must come from PBK-maintained policy, not a provider's readOnly annotation or the agent's claim. Unknown tools and generic proxy/execute, account-linking, script-execution and session-management tools are denied by default. Do not give the agent a broad router that can discover and call unreviewed write tools indirectly.
 
 First-release outbound verification is limited to explicitly allowlisted HighLevel read tools bound to the existing sandbox location and QA record IDs. Exact tool names and input schemas must be inspected before implementation; the builder may select equivalent read-only operations, not broaden scope. No record creation/update or HighLevel custom-field write is needed to prove the connection. DND, QA exclusion and all contact/property values remain unchanged.
+
+Builder selection after inspecting the existing project configuration: use `HIGHLEVEL_LOCATION_CONTACTS_GET_CONTACT` from the already-approved `highlevel_location` auth configuration, with only its `contact_id` input. The inspected schema is `20261101_00`. All scope, QA, DND and schema checks still apply; this does not authorize writes or broader permissions.
 
 Integrate discovery/execution into Ava/Rex's existing bridge-backed tool dispatch so a read result can be used by the agent and displayed in the existing Command Center. Do not stop at adding an unused connection helper. Reuse the current MCP call gate; never relax it globally. Where necessary, introduce an explicit policy-checked read path. Writes remain denied in this release even if an approval ID is supplied.
 

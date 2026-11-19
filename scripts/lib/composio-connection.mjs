@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 
-const CONTACT_TOOL = 'HIGHLEVEL_MCP_CONTACTS_GET_CONTACT';
+const CONTACT_TOOL = 'HIGHLEVEL_LOCATION_CONTACTS_GET_CONTACT';
 const SAFE_STATES = new Set([
   'disabled',
   'configuration_missing',
@@ -130,9 +130,9 @@ export async function verifyComposioSessionScope(config, signal) {
     session.config_version !== config.configVersion ||
     session.mcp?.url !== config.url ||
     cfg?.user_id !== config.userId ||
-    !only(cfg.connected_accounts?.highlevel_mcp, config.accountId) ||
-    !only(cfg.toolkits?.enabled, 'highlevel_mcp') ||
-    !only(cfg.tools?.highlevel_mcp?.enabled, CONTACT_TOOL) ||
+    !only(cfg.connected_accounts?.highlevel_location, config.accountId) ||
+    !only(cfg.toolkits?.enabled, 'highlevel_location') ||
+    !only(cfg.tools?.highlevel_location?.enabled, CONTACT_TOOL) ||
     !only(cfg.preload?.tools, CONTACT_TOOL)
   )
     return false;
@@ -140,7 +140,7 @@ export async function verifyComposioSessionScope(config, signal) {
   return (
     account.status === 'ACTIVE' &&
     account.is_disabled === false &&
-    account.toolkit?.slug === 'highlevel_mcp'
+    account.toolkit?.slug === 'highlevel_location'
   );
 }
 
@@ -347,7 +347,7 @@ export function createComposioConnection({
         throw Error('schema_changed');
       const result = await bounded((signal) =>
         c.callTool(
-          { name: CONTACT_TOOL, arguments: { path_contactId: config.contactId } },
+          { name: CONTACT_TOOL, arguments: { contact_id: config.contactId } },
           undefined,
           { signal, timeout: timeoutMs }
         )

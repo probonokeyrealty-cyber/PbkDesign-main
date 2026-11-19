@@ -7,11 +7,11 @@ if (process.argv.includes('--outbound-fixture')) {
   const { schemaFingerprint } = await import('../lib/composio-connection.mjs');
   const schema = {
     type: 'object',
-    properties: { path_contactId: { type: 'string' } },
-    required: ['path_contactId'],
+    properties: { contact_id: { type: 'string' } },
+    required: ['contact_id'],
     additionalProperties: false,
   };
-  const tool = 'HIGHLEVEL_MCP_CONTACTS_GET_CONTACT';
+  const tool = 'HIGHLEVEL_LOCATION_CONTACTS_GET_CONTACT';
   const url = 'https://backend.composio.dev/api/v3/mcp/fixture';
   Object.assign(process.env, {
     PBK_COMPOSIO_MCP_URL: url,
@@ -41,9 +41,9 @@ if (process.argv.includes('--outbound-fixture')) {
         mcp: { url },
         config: {
           user_id: 'user',
-          connected_accounts: { highlevel_mcp: ['account'] },
-          toolkits: { enabled: ['highlevel_mcp'] },
-          tools: { highlevel_mcp: { enabled: [tool] } },
+          connected_accounts: { highlevel_location: ['account'] },
+          toolkits: { enabled: ['highlevel_location'] },
+          tools: { highlevel_location: { enabled: [tool] } },
           preload: { tools: [tool] },
         },
       });
@@ -51,7 +51,7 @@ if (process.argv.includes('--outbound-fixture')) {
       return Response.json({
         status: 'ACTIVE',
         is_disabled: false,
-        toolkit: { slug: 'highlevel_mcp' },
+        toolkit: { slug: 'highlevel_location' },
       });
     if (target !== url) return new Response(null, { status: 404 });
     const body = JSON.parse(init.body);
@@ -73,7 +73,7 @@ if (process.argv.includes('--outbound-fixture')) {
           ? { tools: [{ name: tool, inputSchema: schema }] }
           : body.method === 'tools/call' &&
               body.params.name === tool &&
-              body.params.arguments?.path_contactId === 'qa-fixture'
+              body.params.arguments?.contact_id === 'qa-fixture'
             ? {
                 structuredContent: { contact },
                 content: [{ type: 'text', text: JSON.stringify({ contact }) }],

@@ -1,11 +1,11 @@
 # PBK bidirectional Composio implementation
 
-Status: implemented and tested locally, default disabled. **Not deployed or connected to hosted Composio.** Production and CRM records have not been changed.
+Status: deployed to a separate free staging backend, default disabled. **Hosted Composio authorization and end-to-end connection are still pending.** Production and CRM records have not been changed.
 
 ## What is implemented
 
 - Ava/Rex can request `Ava check the Composio QA contact` or `Rex check the Composio QA contact` through the existing `runAgentCommand` bridge lane. An explicit `composioOperation: "qa-contact"` is also accepted there. Unsupported agents, operations, nested routing overrides and approval overrides are denied. There is no new arbitrary tool execution endpoint.
-- The outbound MCP client permits only `HIGHLEVEL_MCP_CONTACTS_GET_CONTACT` with the one server-configured QA contact ID. Before every call, it checks authoritative Composio project identity, pinned session/user/account/config version, exact toolkit/tool/preload policy and Active account status, then rechecks the advertised schema fingerprint. Returned contact ID, sandbox location, DND and `pbk-qa-no-outreach` must match before selected boolean evidence leaves the adapter.
+- The outbound MCP client permits only `HIGHLEVEL_LOCATION_CONTACTS_GET_CONTACT` with the one server-configured QA contact ID. Before every call, it checks authoritative Composio project identity, pinned session/user/account/config version, exact toolkit/tool/preload policy and Active account status, then rechecks the advertised schema fingerprint. Returned contact ID, sandbox location, DND and `pbk-qa-no-outreach` must match before selected boolean evidence leaves the adapter.
 - `/mcp/pbk-readonly` is a separate authenticated, stateless JSON Streamable HTTP endpoint. It lists only `pbk_health`, `pbk_agent_registry` and `pbk_connection_readiness`. It never exposes the bridge's master key, arbitrary `/invoke`, approval decisions, CRM writes, communications or full state. Shared factory also supports the existing stdio wrapper's `PBK_MCP_PROFILE=readonly` profile; normal stdio behavior is preserved.
 - Existing Settings tooling cards and legacy runtime summary show the directions independently, with safe status and last-read evidence. Configuration alone does not mark a connection ready. Readiness expires after two minutes without new successful evidence.
 - Credential collisions are rejected after whitespace normalization. Origins/hosts, strict tool inputs, request/response size and time bounds are enforced. Writes and generic proxy/router/code-execution tools are unavailable.
@@ -13,13 +13,15 @@ Status: implemented and tested locally, default disabled. **Not deployed or conn
 
 ## Hosted prerequisites verified
 
-Read-only inspection of the founder-confirmed Render workspace **PBK** found only the production bridge and production worker/cron services. Previews are off, and no isolated staging backend exists. No service was created, reconfigured or deployed.
+Initial read-only inspection of the founder-confirmed Render workspace **PBK** found only production services. The founder subsequently approved a new free staging service and non-production branch. `pbk-composio-staging` was created at [the isolated staging host](https://pbk-composio-staging.onrender.com), with auto-deploy off, fresh distinct staging credentials and file-backed state. No production database, provider credentials or environment group was copied. Initial authenticated hosted checks verified health, 11-agent registry, team-auth configuration and disabled Composio directions.
 
 The Composio developer project `probonokeyrealty_workspace_first_project` has Active connections for other toolkits but **no Active HighLevel connection**. The existing `pbk-sandbox-no-outreach` HighLevel connection belongs to the separate consumer CLI context. It was not copied, reauthorized or silently treated as a developer-project credential.
 
 Therefore hosted proof and Custom MCP registration remain pending. Local fixtures do not prove live account authorization. The earlier HighLevel custom-field schema support issue remains separate and unresolved by this work.
 
-A concrete new-resource proposal is prepared in `ops/composio-staging-service-proposal.json`: a separate free Render Node service, a new non-production Git branch, auto-deploy off, feature disabled until credentials are provisioned, ephemeral isolated state, no production environment inheritance and no paid upgrade. It is not applied. Hosted installation and free-tier resource sufficiency are still unverified; failure must not trigger an automatic paid upgrade.
+The approved resource settings are recorded in `ops/composio-staging-service-proposal.json`. The source branch is `codex/composio-readonly-staging`. The first deployment ran the backend successfully. A subsequent staging-only build refinement compiles the existing Command Center assets for the native Node service; it does not introduce a second frontend. The CLI reported success without persisting its nested build change, so the dashboard was used and the saved build command was independently confirmed through the service API. No paid upgrade is allowed.
+
+The existing developer-project sandbox auth configuration is for `highlevel_location`. The builder selected its equivalent native read tool `HIGHLEVEL_LOCATION_CONTACTS_GET_CONTACT`, inspected schema version `20261101_00` and fixed its input to `contact_id`. This reuses the existing restricted auth configuration instead of creating a new permission grant. It still needs an Active developer-project sandbox account; the consumer connection is not reused silently.
 
 ## Server-only staging configuration
 
@@ -42,7 +44,7 @@ Set these only on a separately isolated staging backend. Never set them on the c
 | `PBK_COMPOSIO_INBOUND_URL` | Final staging URL ending in `/mcp/pbk-readonly`; no redirect |
 | `PBK_COMPOSIO_INBOUND_TOKEN` | Dedicated revocable secret of at least 24 characters, distinct from outbound/master keys |
 
-The Composio session must explicitly pin exactly one `highlevel_mcp` connected account, enable only that toolkit and contact-read tool, and preload only that tool. Do not grant arbitrary execution, proxy, connection management or workbench capabilities. Use deny when approval elicitation is unsupported. The adapter performs metadata-only GET requests to `/api/v3.1/auth/session/info`, `/api/v3.1/tool_router/session/{id}` and `/api/v3.1/connected_accounts/{id}`; unavailable or unexpected metadata blocks execution. Project secret needs the corresponding metadata-read and session-execution access, not CRM write permissions.
+The Composio session must explicitly pin exactly one `highlevel_location` connected account, enable only that toolkit and contact-read tool, and preload only that tool. Do not grant arbitrary execution, proxy, connection management or workbench capabilities. Use deny when approval elicitation is unsupported. The adapter performs metadata-only GET requests to `/api/v3.1/auth/session/info`, `/api/v3.1/tool_router/session/{id}` and `/api/v3.1/connected_accounts/{id}`; unavailable or unexpected metadata blocks execution. Project secret needs the corresponding metadata-read and session-execution access, not CRM write permissions.
 
 After a staging host and protected secrets are available, register the limited PBK endpoint as a private PBK Custom MCP toolkit in the intended developer project/session. Do not use the broad PBK master credential or a shared-for-all-users registration. Credentials must be provisioned in protected provider settings, not chat, source, browser local storage or CLI-cache extraction.
 

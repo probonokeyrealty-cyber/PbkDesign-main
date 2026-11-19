@@ -10,8 +10,8 @@ const createComposioConnection = (options) =>
 
 const schema = {
   type: 'object',
-  properties: { path_contactId: { type: 'string' } },
-  required: ['path_contactId'],
+  properties: { contact_id: { type: 'string' } },
+  required: ['contact_id'],
 };
 const secret = 'synthetic-fixture-credential';
 function config(extra = {}) {
@@ -35,7 +35,7 @@ function fixture(extra = {}) {
   let connections = 0;
   const client = {
     listTools: async () => ({
-      tools: [{ name: 'HIGHLEVEL_MCP_CONTACTS_GET_CONTACT', inputSchema: schema }],
+      tools: [{ name: 'HIGHLEVEL_LOCATION_CONTACTS_GET_CONTACT', inputSchema: schema }],
     }),
     callTool: async (input) => {
       calls.push(input);
@@ -85,8 +85,8 @@ test('configuration alone is not connected, concurrent reads initialize once and
   assert.equal(f.count(), 1);
   assert.ok(reads.every((r) => r.ok && r.contact.dnd && r.contact.qaExcluded));
   assert.deepEqual(f.calls[0], {
-    name: 'HIGHLEVEL_MCP_CONTACTS_GET_CONTACT',
-    arguments: { path_contactId: 'fixture-contact' },
+    name: 'HIGHLEVEL_LOCATION_CONTACTS_GET_CONTACT',
+    arguments: { contact_id: 'fixture-contact' },
   });
   assert.equal(c.status().ready, true);
   assert.doesNotMatch(
@@ -127,7 +127,7 @@ test('changed tool schema or missing exact tool fails before execution', async (
   for (const tools of [
     [],
     [{ name: 'COMPOSIO_MULTI_EXECUTE_TOOL', inputSchema: schema }],
-    [{ name: 'HIGHLEVEL_MCP_CONTACTS_GET_CONTACT', inputSchema: { type: 'object' } }],
+    [{ name: 'HIGHLEVEL_LOCATION_CONTACTS_GET_CONTACT', inputSchema: { type: 'object' } }],
   ]) {
     const f = fixture({ listTools: async () => ({ tools }) });
     const c = createComposioConnection({ env: config(), connect: f.connect });

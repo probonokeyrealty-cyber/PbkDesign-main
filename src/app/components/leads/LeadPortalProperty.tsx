@@ -6,6 +6,7 @@ import { LeadListingPhotos } from '../AnalyzerListingLookup';
 import type { LeadPortalModel } from './leadPortalModel';
 import { formatLeadValue } from './leadPortalModel';
 import { LeadComps } from './LeadComps';
+import { PropertyEvidenceBrief, type PropertyEvidenceTab } from './PropertyEvidenceBrief';
 import { listingSources, readPropertyEvidence } from '../../utils/propertyEvidence';
 import { formatCurrency } from '../../utils/formatting';
 import {
@@ -49,6 +50,12 @@ export function LeadPortalProperty({
   const mounted = useRef(true);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const recordTabRef = useRef<HTMLButtonElement>(null);
+  const photoTabRef = useRef<HTMLButtonElement>(null);
+  const compTabRef = useRef<HTMLButtonElement>(null);
+  function openEvidenceTab(next: PropertyEvidenceTab) {
+    setTab(next);
+    ({ record: recordTabRef, photos: photoTabRef, comps: compTabRef })[next].current?.focus();
+  }
   const locality = [lead.city, [lead.state, lead.zip].filter(Boolean).join(' ')]
     .filter(Boolean)
     .join(', ');
@@ -177,8 +184,8 @@ export function LeadPortalProperty({
           <Tabs.Trigger ref={recordTabRef} value="record">
             Property record
           </Tabs.Trigger>
-          <Tabs.Trigger value="photos">Photos</Tabs.Trigger>
-          <Tabs.Trigger value="comps">Comps</Tabs.Trigger>
+          <Tabs.Trigger ref={photoTabRef} value="photos">Photos</Tabs.Trigger>
+          <Tabs.Trigger ref={compTabRef} value="comps">Comps</Tabs.Trigger>
         </Tabs.List>
         <Tabs.Content value="overview" className="pbk-property-tab-panel">
           <div className="pbk-property-evidence-grid">
@@ -256,6 +263,7 @@ export function LeadPortalProperty({
               )}
             </div>
           </div>
+          <PropertyEvidenceBrief records={evidence.records} listing={evidence.listing} sales={savedSales} onOpen={openEvidenceTab} />
           <div className="pbk-property-group-heading">
             <Building2 size={16} aria-hidden />
             <h3>Saved lead facts</h3>

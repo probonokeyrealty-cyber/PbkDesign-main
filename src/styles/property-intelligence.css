@@ -610,7 +610,33 @@ button.pbk-comp-photo span { position: absolute; bottom: 0; left: 0; right: 0; p
 .pbk-record-dataset-table tbody tr:hover {
   background: var(--bg-hover);
 }
+.pbk-evidence-brief {
+  min-width: 0;
+  margin-bottom: 20px;
+  border: 1px solid var(--border-dim);
+  border-top: 2px solid var(--sky);
+  border-radius: var(--radius-lg);
+  background: var(--bg-panel);
+  overflow: hidden;
+}
+.pbk-evidence-brief header { display: flex; align-items: end; justify-content: space-between; flex-wrap: wrap; gap: 12px; padding: 18px; }
+.pbk-evidence-brief h3 { margin: 4px 0 0; font: 26px var(--font-display); }
+.pbk-evidence-brief h3 em { color: var(--sky); }
+.pbk-evidence-brief p { margin: 6px 0; overflow-wrap: anywhere; font-size: 12px; }
+.pbk-evidence-brief-eyebrow, .pbk-evidence-brief-label { font: 10px var(--font-mono); letter-spacing: .07em; text-transform: uppercase; color: var(--sky); }
+.pbk-evidence-brief-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border-top: 1px solid var(--border-dim); }
+.pbk-evidence-brief-grid article { min-width: 0; padding: 18px; display: flex; align-items: start; flex-direction: column; }
+.pbk-evidence-brief-grid article + article { border-left: 1px solid var(--border-dim); }
+.pbk-evidence-brief-grid strong { display: block; margin: 12px 0 4px; font: 24px var(--font-display); overflow-wrap: anywhere; }
+.pbk-evidence-brief-grid button { margin-top: auto; padding-top: 10px; white-space: normal; }
+.pbk-evidence-brief .pbk-evidence-brief-time { font: 10px/1.6 var(--font-mono); margin-bottom: 12px; }
+.pbk-evidence-brief .pbk-evidence-brief-caution { color: var(--amber); }
+.pbk-evidence-brief-follow-up { padding: 14px 18px; border-top: 1px solid var(--border-dim); background: var(--bg-console); }
+.pbk-evidence-brief-follow-up h4 { margin: 0; font: 11px var(--font-mono); text-transform: uppercase; }
+.pbk-evidence-brief-follow-up ul { padding-left: 18px; margin: 8px 0; font-size: 12px; line-height: 1.7; overflow-wrap: anywhere; }
 @media (max-width: 720px) {
+  .pbk-evidence-brief-grid { grid-template-columns: minmax(0, 1fr); }
+  .pbk-evidence-brief-grid article + article { border-left: 0; border-top: 1px solid var(--border-dim); }
   .pbk-record-group-filter {
     flex: 1 1 100%;
   }

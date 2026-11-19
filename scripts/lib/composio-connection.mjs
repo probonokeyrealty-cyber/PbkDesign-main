@@ -29,7 +29,7 @@ function readConfig(env) {
   const keys = [
     'MCP_URL',
     'API_KEY',
-    'PROJECT_ID',
+    'AUTH_CONFIG_ID',
     'USER_ID',
     'ACCOUNT_ID',
     'SESSION_ID',
@@ -73,7 +73,7 @@ function readConfig(env) {
       enabled: true,
       url: url.href,
       key,
-      projectId: env.PBK_COMPOSIO_PROJECT_ID,
+      authConfigId: env.PBK_COMPOSIO_AUTH_CONFIG_ID,
       userId: env.PBK_COMPOSIO_USER_ID,
       accountId: env.PBK_COMPOSIO_ACCOUNT_ID,
       sessionId: env.PBK_COMPOSIO_SESSION_ID,
@@ -114,10 +114,19 @@ export async function verifyComposioSessionScope(config, signal) {
     );
     return new Response(body).json();
   }
-  const identity = await get('/api/v3.1/auth/session/info');
+  // Project API keys cannot call the user-only auth/session/info route (908).
+  // Provision these immutable resource IDs in the independently verified project.
+  // Authenticated access to both exact resources proves the project-key boundary;
+  // never substitute a user/org key or accept caller-supplied scope overrides.
+  const account = await get('/api/v3.1/connected_accounts/' + encodeURIComponent(config.accountId));
   if (
-    identity.project?.nano_id !== config.projectId ||
-    identity.api_key?.project_id !== config.projectId
+    account.id !== config.accountId ||
+    account.user_id !== config.userId ||
+    account.auth_config?.id !== config.authConfigId ||
+    account.auth_config?.is_disabled !== false ||
+    account.status !== 'ACTIVE' ||
+    account.is_disabled !== false ||
+    account.toolkit?.slug !== 'highlevel_location'
   )
     return false;
   const session = await get(
@@ -136,12 +145,7 @@ export async function verifyComposioSessionScope(config, signal) {
     !only(cfg.preload?.tools, CONTACT_TOOL)
   )
     return false;
-  const account = await get('/api/v3.1/connected_accounts/' + encodeURIComponent(config.accountId));
-  return (
-    account.status === 'ACTIVE' &&
-    account.is_disabled === false &&
-    account.toolkit?.slug === 'highlevel_location'
-  );
+  return true;
 }
 
 export async function connectComposioHttp(config, signal) {
@@ -346,11 +350,10 @@ export function createComposioConnection({
       if (!tool || schemaFingerprint(tool.inputSchema) !== config.schemaHash)
         throw Error('schema_changed');
       const result = await bounded((signal) =>
-        c.callTool(
-          { name: CONTACT_TOOL, arguments: { contact_id: config.contactId } },
-          undefined,
-          { signal, timeout: timeoutMs }
-        )
+        c.callTool({ name: CONTACT_TOOL, arguments: { contact_id: config.contactId } }, undefined, {
+          signal,
+          timeout: timeoutMs,
+        })
       );
       if (ownGeneration !== generation) throw Error('connection_obsolete');
       if (result.isError) throw Error('provider_error');

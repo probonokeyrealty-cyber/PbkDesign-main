@@ -19,7 +19,7 @@ function config(extra = {}) {
     PBK_COMPOSIO_STAGING_ENABLED: 'true',
     PBK_COMPOSIO_MCP_URL: 'https://backend.composio.dev/api/v3/mcp/fixture',
     PBK_COMPOSIO_API_KEY: secret,
-    PBK_COMPOSIO_PROJECT_ID: 'fixture-project',
+    PBK_COMPOSIO_AUTH_CONFIG_ID: 'fixture-auth-config',
     PBK_COMPOSIO_USER_ID: 'fixture-user',
     PBK_COMPOSIO_ACCOUNT_ID: 'fixture-account',
     PBK_COMPOSIO_SESSION_ID: 'fixture-session',
@@ -115,6 +115,7 @@ test('invalid destinations and incomplete configuration fail before any connecti
     { PBK_COMPOSIO_MCP_URL: 'https://backend.composio.dev/mcp?key=secret' },
     { PBK_COMPOSIO_MCP_URL: 'https://backend.composio.dev/api/v3/mcp/pbk-readonly' },
     { PBK_COMPOSIO_ACCOUNT_ID: '' },
+    { PBK_COMPOSIO_AUTH_CONFIG_ID: '' },
     { PBK_COMPOSIO_API_KEY: '' },
   ]) {
     const f = fixture();

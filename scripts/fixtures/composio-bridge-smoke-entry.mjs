@@ -16,7 +16,7 @@ if (process.argv.includes('--outbound-fixture')) {
   Object.assign(process.env, {
     PBK_COMPOSIO_MCP_URL: url,
     PBK_COMPOSIO_API_KEY: 'synthetic-project-fixture',
-    PBK_COMPOSIO_PROJECT_ID: 'project',
+    PBK_COMPOSIO_AUTH_CONFIG_ID: 'auth-config',
     PBK_COMPOSIO_USER_ID: 'user',
     PBK_COMPOSIO_ACCOUNT_ID: 'account',
     PBK_COMPOSIO_SESSION_ID: 'session',
@@ -33,7 +33,7 @@ if (process.argv.includes('--outbound-fixture')) {
       return new Response(null, { status: 401 });
     const path = new URL(target).pathname;
     if (path === '/api/v3.1/auth/session/info')
-      return Response.json({ project: { nano_id: 'project' }, api_key: { project_id: 'project' } });
+      return Response.json({ error: { code: 908 } }, { status: 403 });
     if (path === '/api/v3.1/tool_router/session/session')
       return Response.json({
         session_id: 'session',
@@ -49,6 +49,9 @@ if (process.argv.includes('--outbound-fixture')) {
       });
     if (path === '/api/v3.1/connected_accounts/account')
       return Response.json({
+        id: 'account',
+        user_id: 'user',
+        auth_config: { id: 'auth-config', is_disabled: false },
         status: 'ACTIVE',
         is_disabled: false,
         toolkit: { slug: 'highlevel_location' },

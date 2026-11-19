@@ -352,9 +352,21 @@ test('operator workflow proof is unconditional after browser installation and fo
   assert.equal(step['continue-on-error'], undefined);
   assert.equal(step.run, 'npm run test:operator-workflow-browser');
   const scripts = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).scripts;
-  assert.equal(scripts['test:operator-workflow-unit'], 'node --test scripts/worklist-focus.node-test.mjs scripts/skill-evidence-display.node-test.mjs');
+  assert.equal(scripts['test:operator-workflow-unit'], 'node --test scripts/worklist-focus.node-test.mjs scripts/skill-evidence-display.node-test.mjs scripts/operator-workflow-local-preview.node-test.mjs');
   assert.equal(scripts['test:operator-workflow-browser'], 'node scripts/leads-workflow-browser-smoke.mjs && node scripts/skill-studio-workflow-browser-smoke.mjs');
   assert.match(scripts['test:founder'], /npm run test:unit && npm run test:operator-workflow-unit &&/);
+  const founder = parse(readFileSync(new URL('../.github/workflows/founder-verify.yml', import.meta.url), 'utf8'));
+  const founderJob = founder.jobs['founder-verify'];
+  const founderGate = founderJob.steps.find(item => item.name === 'Run founder gate');
+  assert.equal(founderJob.if, undefined);
+  assert.equal(founderJob['continue-on-error'], undefined);
+  assert.equal(founderGate.if, undefined);
+  assert.equal(founderGate['continue-on-error'], undefined);
+  assert.equal(founderGate.run, 'npm run test:founder');
+  assert.deepEqual(founder.on, { pull_request: { branches: ['main'] }, push: { branches: ['main'] }, workflow_dispatch: null });
+  assert.deepEqual(founder.permissions, { contents: 'read' });
+  assert.equal(founderJob['timeout-minutes'], 30);
+  assert.equal(founderJob.steps.find(item => item.uses === 'actions/setup-node@v6').with['node-version'], 22);
   assert.doesNotMatch(step.run + scripts['test:operator-workflow-browser'] + scripts['test:operator-workflow-unit'], /skip|continue-on-error|grep|test-name-pattern|\|\|/i);
 });
 

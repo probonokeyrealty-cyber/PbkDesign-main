@@ -166,6 +166,37 @@ async function checkTargets(page, root) {
   assert.deepEqual(undersized, [], 'Visible page controls keep 44px targets');
 }
 
+async function checkPropertyTabWords(page, engine, width) {
+  const tabs = page.getByRole('tablist', { name: 'Property workspace sections', exact: true });
+  const labels = ['Overview', 'Property record', 'Photos', 'Comps'];
+  assert.deepEqual(await tabs.getByRole('tab').allTextContents(), labels);
+  await expect(tabs.getByRole('tab', { name: 'Overview', exact: true })).toHaveAttribute('aria-selected', 'true');
+  await expect(page.getByRole('tabpanel', { name: 'Overview', exact: true })).toBeVisible();
+  const measured = await tabs.getByRole('tab').evaluateAll(nodes => nodes.map(node => {
+    const box = node.getBoundingClientRect(), style = getComputedStyle(node);
+    const words = [], walker = document.createTreeWalker(node, NodeFilter.SHOW_TEXT);
+    let text;
+    while ((text = walker.nextNode())) {
+      for (const match of text.textContent.matchAll(/\S+/g)) {
+        const range = document.createRange();
+        range.setStart(text, match.index); range.setEnd(text, match.index + match[0].length);
+        const rects = [...range.getClientRects()].filter(rect => rect.width && rect.height);
+        words.push({ word: match[0], rects: rects.length, fits: rects.length === 1 && rects.every(rect =>
+          rect.left >= box.left + parseFloat(style.paddingLeft) - 0.5 &&
+          rect.right <= box.right - parseFloat(style.paddingRight) + 0.5 &&
+          rect.top >= box.top && rect.bottom <= box.bottom) });
+      }
+    }
+    return { label: node.textContent.trim(), width: box.width, height: box.height,
+      inViewport: box.left >= 0 && box.right <= innerWidth, words };
+  }));
+  assert.equal(measured.flatMap(tab => tab.words).length, 5, 'Measure all five visible tab words');
+  assert.deepEqual(measured.filter(tab => tab.width < 44 || tab.height < 44 || !tab.inViewport ||
+    tab.words.some(word => !word.fits)), [], `Property tabs keep whole words, 44px targets and viewport fit: ${engine} ${width}`);
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, 'Property tabs do not overflow the viewport');
+  console.log(`Property tab words ${engine} ${width}: 5 measured, zero fragmented/clipped; 4 targets >=44px; Overview semantics retained`);
+}
+
 // Hand-specified wire expectations; never import a production payload builder.
 function createExpectation() {
   const seller = { name: 'Synthetic New Seller', phone: '', email: '', preferredChannel: 'unknown', bestTimeToCall: '', relationshipToProperty: 'unknown', notes: '' };
@@ -420,6 +451,7 @@ async function verify(type, width) {
     assert.ok(missingWords.count > 0, 'Measure visible Property missing values, not an empty locator');
     assert.deepEqual(missingWords.fragments, [], 'Property missing-value words must not fragment');
     console.log(`Property missing-value words ${type.name()} ${width}: ${missingWords.count} measured, zero fragmented`);
+    await checkPropertyTabWords(page, type.name(), width);
     await page.locator('#lead-next-step').evaluate(section => section.scrollIntoView({ block: 'start' }));
     await expect(nav.getByRole('link', { name: 'Next step', exact: true })).toHaveAttribute('aria-current', 'location');
     assert.equal(await page.evaluate(() => history.length), historyBefore, 'Section jumps must not add history');

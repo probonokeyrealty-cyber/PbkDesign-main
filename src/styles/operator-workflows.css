@@ -29,6 +29,14 @@
 .pbk-lead-portal .pbk-portal-sections a[aria-current='location'] { color: var(--sky); border-bottom-color: var(--sky); }
 .pbk-lead-portal .pbk-lead-portal-actions .danger { margin-inline-start: 12px; border-color: var(--crimson); }
 .pbk-lead-portal .pbk-lead-portal-actions > :is(a, button) { min-height: 44px; }
+@media (max-width: 720px) {
+  :is(.pbk-leads-surface, .pbk-lead-portal) .pbk-property-tabs > button {
+    flex: 1 1 auto;
+    min-width: min-content;
+    overflow-wrap: normal;
+    word-break: normal;
+  }
+}
 @media (max-width: 480px) {
   .pbk-lead-portal .pbk-property-key-facts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }

@@ -6,6 +6,10 @@ The appended **Task 6 Fix Round 1** section records the current corrections and
 supersedes the SMS readability and three legacy-regression dispositions. It does
 not claim independent re-review or release acceptance.
 
+The appended **Final Whole-Branch P3 Fix Wave** records the later local repair
+of both deferred minors from source `eed9bc7`; it supersedes their DEFERRED
+disposition only, not the historical runs or outstanding release qualifications.
+
 ## Source And Boundary
 
 - Worktree: `C:/Users/Dell/.codex/worktrees/ava-detailed-chat-release/PbkDesign-main`.
@@ -444,3 +448,97 @@ temporary test processes/servers ended; matching-process inventory was empty
 after excluding controllerPID30224, which was deliberately left untouched.
 This is fix evidence and implementer self-review only. Archimedes scoped
 re-review and independent whole-branch review remain required before acceptance.
+
+## Final Whole-Branch P3 Fix Wave
+
+Source/base: `eed9bc7b102cec402792fbe6b9de2ec87f0d8bdf`. Whole-branch review
+reported no Critical/Important findings and two P3s. This single local fix wave
+addresses both, without new features or a second whole-branch review. The commit
+containing this section identifies the fix head; its full hash is recorded in
+the ignored SDD `final-fix-report.md` after commit. One controller-owned scoped
+re-review remains required; implementer self-review is not that verdict.
+
+### Mandatory Launcher Safety
+
+`test:operator-workflow-unit` now appends
+`scripts/operator-workflow-local-preview.node-test.mjs` after the two existing
+helper suites. The existing founder chain already invokes this command after
+full Jest. The actual package/YAML reader regression now requires all three
+suites and verifies the actual founder job/gate has no conditional or
+continue-on-error escape. Node22, read-only permissions, main/dispatch triggers,
+30-minute timeout, all existing workflow steps and the six-suite zero-skipped
+Postgres report assertions remain intact. No YAML/dependency/lockfile change.
+
+The focused regression was RED before the package edit:95 passed/1failed,
+96total; the failure expected the launcher path but received only the two
+helpers. After adding it, focused Jest passed96/96, zero skips. The mandatory
+package command passed90/90 Node tests, zero failed/skipped/cancelled/todo.
+The three launcher tests include142direct denial assertions, immutable fixture
+roster/repository, startup/clean shutdown and occupied-listener preservation.
+Existing browser-core denial assertions were neither removed nor changed.
+
+### Scoped Property Tab Fit
+
+The inherited <=720px equal-flex rule made Overview and Property each split
+into two word Range rectangles at Chromium320; the tabs were63.25px wide.
+Only Leads/Portal Property-tab buttons in `operator-workflows.css` now use auto
+flex basis, min-content minimum and normal word wrapping at that breakpoint.
+No shared `pbk-components.css`, font size, navigation, tab label/value/handler,
+active view, TSX or Skills behavior changed.
+
+The existing six-cell Leads smoke now measures all five rendered tab-word
+ranges, padded-button containment, four >=44px targets, tab/document overflow,
+exact labels and default Overview tab/panel semantics in every cell.
+Its RED was the real fragmented words before CSS. Its final GREEN passed all
+six original Chromium/WebKit320/390/1440 cells:30tab-word measurements,
+24tab targets,24header-clearance measurements,10ownership scenarios and3expected
+negative controls. Every cell retained5cancellations+5exact mocked rejections
+and zero unexpected/foreign/provider/business-write/page-error traffic.
+Fresh `after/workspace-webkit-320.png` was visually inspected: whole words,
+Property record wrapping only at its space, existing active underline retained.
+
+### Exact Covering Commands And Results
+
+All commands use Node22.23.5 at
+`D:/pbk-npm-cache/_npx/52027bd8fc0022aa/node_modules/node/bin/node.exe`, with its
+bin prepended to session PATH. `npmCLI` below is
+`C:/Program Files/nodejs/node_modules/npm/bin/npm-cli.js`. DB opt-ins were
+cleared session-only without printing values for the focused CI/Node checks.
+Logs below are in `.pbk-local/operator-workflow/`.
+
+| Command | Actual result / log |
+| --- | --- |
+| `node scripts/leads-workflow-browser-smoke.mjs` before CSS | exit1, fragmented Overview/Property at Chromium320; final-fix-leads-red.log |
+| Same full command after CSS | exit0, six cells and all counts above; final-fix-leads-green.log |
+| `node --experimental-vm-modules node_modules/jest/bin/jest.js --config jest.config.mjs --runInBand --runTestsByPath scripts/release-qualification-ci.test.mjs` before package edit | exit1,95pass/1fail/96total, missing mandatory launcher path; final-fix-ci-red.log |
+| Same focused Jest command after package edit | exit0,96pass/0fail/0skip,1suite; final-fix-ci-green.log |
+| `node npmCLI run test:operator-workflow-unit` | exit0, actual `node --test scripts/worklist-focus.node-test.mjs scripts/skill-evidence-display.node-test.mjs scripts/operator-workflow-local-preview.node-test.mjs`;90pass/0skip,142direct denials; final-fix-node-green.log |
+| `node npmCLI run typecheck` | exit0; final-fix-typecheck.log |
+| `node npmCLI run lint` | exit0; final-fix-lint.log |
+| `node npmCLI run build` | exit0, ordinary prebuild included,14.51s; final-fix-build.log |
+| `git diff --check` | exit0 |
+
+Separate parent/controller evidence: full Jest session1123 at core `eed9bc7`
+ended exit0 with92suites,2618passed/12existing DB-guarded skips/2630total,
+1320.655s; `controller-final-unit.log`. Controller explicitly confirmed its
+exit before package/Jest-source edits began. This is fresh parent full-unit
+evidence, not a post-wiring full-Jest rerun or zero-skip SQL qualification.
+No duplicate full Jest or Skills132-ownership matrix was run in this wave.
+
+### Scope And Cleanup
+
+Five tracked files only: package.json, release-qualification CI regression,
+Leads workflow smoke, operator-workflows.css and this receipt. No TSX/helpers,
+backend/API/math/ranking/approvals/auth/provider configuration/dependencies/
+lockfile/migrations changed. No assertions/deadlines reduced, force clicks,
+retries, skip bypass, paid lookups, provider/DB operations, seller contact,
+dispatch unlock or remote push/PR/merge/deployment. No BrowserOS/native use.
+
+All owned test sessions/listeners ended; controller preview PID30224/port52796
+was deliberately untouched. Parent owns the final persistent-preview fresh-URL
+and asset smoke, not duplicated here. User output inventory56regular files
+matches the prior output-relative path/size/mtimeMs SHA256
+`0d1b7d85b5d54882c66b562487431f6875eeb18f6c60ca6a3ba93afb247b3584`.
+No user output was modified, reverted or staged. Publication, live provider/SQL,
+native/Electron/OS-clipboard/manual and full-founder release qualifications
+remain held or unverified as previously documented.

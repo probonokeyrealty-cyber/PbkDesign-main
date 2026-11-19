@@ -1,7 +1,11 @@
 import assert from 'node:assert/strict';
 import { chromium, devices, expect, webkit } from '@playwright/test';
 import { createServer } from 'vite';
+import { resolve } from 'node:path';
 
+const evidenceDir = process.env.PBK_OPERATOR_EVIDENCE_DIR || '.pbk-local';
+
+process.env.PBK_DEV_BRIDGE_URL = 'http://127.0.0.1:1';
 const server = await createServer({ server: { host: '127.0.0.1', port: 0 } });
 await server.listen();
 const origin = `http://127.0.0.1:${server.httpServer.address().port}`;
@@ -21,6 +25,15 @@ const leadB = {
 };
 const analyzerKey = 'pbk:local:analyzer:current-deal';
 
+async function assertWorkspaceJump(page, id) {
+  const heading = page.locator(`#${id} h2`).first();
+  await expect(heading).toBeFocused();
+  await expect.poll(() => heading.evaluate(node => {
+    const rect = node.getBoundingClientRect(), header = document.querySelector('.pbk-shell-topbar').getBoundingClientRect();
+    return rect.top >= header.bottom && rect.bottom <= innerHeight;
+  })).toBe(true);
+}
+
 async function verify(browserType, viewport, device = {}) {
   const browser = await browserType.launch();
   try {
@@ -29,6 +42,8 @@ async function verify(browserType, viewport, device = {}) {
     const writes = [];
     const unexpectedWrites = [];
     const previews = [];
+    const enrichments = [];
+    await page.routeWebSocket('**/*', socket => socket.close());
     await page.addInitScript(({ key, value }) => {
       if (!sessionStorage.getItem(key)) sessionStorage.setItem(key, JSON.stringify(value));
     }, { key: `${analyzerKey}:session`, value: {
@@ -42,6 +57,18 @@ async function verify(browserType, viewport, device = {}) {
       const path = url.pathname;
       if (url.origin !== origin) return route.abort();
       const leadPath = path.match(/^\/api\/leads\/([^/]+)(?:\/full)?$/);
+      if (path === '/api/property-data/enrich' && method === 'POST') {
+        const body = request.postDataJSON();
+        assert.deepEqual(body, { address: '123 Fixture Avenue, Example City, CA 90210', leadId: leadA.id,
+          expectedPropertyAddress: { street: property.address, city: property.city, state: property.state, zip: property.zip }, radiusMiles: 1 });
+        enrichments.push(body);
+        const existing = rows.get(leadA.id);
+        const facts = { address: body.address, apn: '001-02', propertyType: 'Single family', livingSqft: 1850, lotSqft: 5200,
+          taxAmount: 3600, taxYear: 2025, recordedSaleAmount: 430000 };
+        rows.set(leadA.id, { ...existing, deal: { propertyRecordSnapshot: { source: 'attom', address: body.address,
+          retrievedAt: '2026-11-18T12:00:00Z', facts } } });
+        return route.fulfill({ json: { ok: true, saved: true, records: { status: 'matched', profile: facts }, sales: { status: 'unavailable', sales: [] } } });
+      }
       if (path === '/api/property-data/attom-preview' && method === 'POST') {
         const address = request.postDataJSON();
         previews.push(address);
@@ -81,7 +108,7 @@ async function verify(browserType, viewport, device = {}) {
         }
         return route.fulfill({ json: { ok: true, lead: existing } });
       }
-      if (/^\/(api\/|health$|events$|invoke$)/.test(path)) {
+      if (/^\/(api(?:\/|$)|\.netlify\/functions\/|health$|status$|events$|invoke$|metrics$)/.test(path)) {
         if (method !== 'GET' && !/\/(auth\/|state\/stream\/session)/.test(path)) {
           unexpectedWrites.push([method, path]);
         }
@@ -106,7 +133,7 @@ async function verify(browserType, viewport, device = {}) {
     await expect(south).toBeVisible();
     assert(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth));
     if (process.env.PBK_LEADS_DESIGN_SCREENSHOTS === '1') {
-      await page.screenshot({ path: `.pbk-local/leads-${browserType.name()}-${viewport.width}.png` });
+      await page.screenshot({ path: resolve(evidenceDir, `leads-${browserType.name()}-${viewport.width}.png`) });
     }
 
     await page.getByRole('button', { name: 'Add seller', exact: true }).click();
@@ -126,9 +153,13 @@ async function verify(browserType, viewport, device = {}) {
     await expect(page.getByPlaceholder('Seller full name')).toHaveValue('Fixture Analyzer');
     assert.equal(previews.length, 1, 'A timeout must not automatically repeat the lookup');
     await page.getByRole('button', { name: 'Retry lookup', exact: true }).click();
-    await expect(page.getByText('1,850 sq ft', { exact: true })).toBeVisible();
+    const previewLivingArea = page.getByRole('region', { name: 'ATTOM property preview', exact: true }).locator('.pbk-attom-rows > div').filter({ has: page.getByText('Living area', { exact: true }) });
+    await expect(previewLivingArea.getByText('1,850 sq ft', { exact: true })).toBeVisible();
+    await expect(page.getByText('$430,000', { exact: true })).toBeVisible();
+    const draftTransfer = page.getByRole('region', { name: 'ATTOM property preview', exact: true }).locator('details').filter({ has: page.locator('summary').getByText('Recorded transfer', { exact: true }) });
+    await draftTransfer.locator('summary').click();
     await expect(page.getByText('$430,000', { exact: true })).toBeHidden();
-    await page.getByText('Taxes and recorded transfer', { exact: true }).click();
+    await draftTransfer.locator('summary').click();
     await expect(page.getByText('$430,000', { exact: true })).toBeVisible();
     await expect(createAddress).toHaveValue('47 Analyzer Fixture Road');
     await expect(page.getByPlaceholder('Seller full name')).toHaveValue('Fixture Analyzer');
@@ -154,7 +185,8 @@ async function verify(browserType, viewport, device = {}) {
     await expect(page.getByRole('navigation', { name: 'Lead workspace sections' })).toBeVisible();
     const propertyPanel = page.getByRole('region', { name: 'Property', exact: true });
     await page.getByRole('navigation', { name: 'Lead workspace sections' }).getByRole('link', { name: 'Property' }).click();
-    await expect(page).toHaveURL(/#lead-property$/);
+    await expect(page).toHaveURL(`${origin}/leads/fixture-north`);
+    await assertWorkspaceJump(page, 'lead-property');
     const overviewTab = propertyPanel.getByRole('tab', { name: 'Overview', exact: true });
     const recordTab = propertyPanel.getByRole('tab', { name: 'Property record', exact: true });
     const photosTab = propertyPanel.getByRole('tab', { name: 'Photos', exact: true });
@@ -168,48 +200,52 @@ async function verify(browserType, viewport, device = {}) {
     await expect(recordTab).toBeFocused();
     await page.keyboard.press('Enter');
     const record = propertyPanel.getByRole('tabpanel', { name: 'Property record' });
-    await record.getByRole('button', { name: 'Look up property' }).click();
-    await expect(record.getByText('1,850 sq ft', { exact: true })).toBeVisible();
-    const differences = record.getByRole('region', { name: 'Differences from saved lead' });
+    await record.getByRole('button', { name: 'Refresh property intelligence' }).click();
+    const differences = record.locator('.pbk-attom-rows > div[data-status="different"]');
+    await expect(differences.getByText('1,850 sq ft', { exact: true })).toBeVisible();
     await expect(differences.getByText('1,600 sq ft', { exact: true })).toBeVisible();
-    await expect(differences.getByText('Differs from saved', { exact: true })).toBeVisible();
+    await expect(differences.getByText('Differs', { exact: true })).toBeVisible();
     await expect(differences.locator('dt').first()).toHaveText('Living area');
-    await expect(record.getByRole('region', { name: 'Building', exact: true }).getByText('House', { exact: true })).toBeVisible();
+    await expect(record.locator('.pbk-attom-rows > div[data-status="match"]').getByText('House', { exact: true })).toBeVisible();
     await expect(differences.getByText('Property type', { exact: true })).toHaveCount(0);
     const saved = await differences.getByText('1,600 sq ft', { exact: true }).boundingBox();
     const sourced = await differences.getByText('1,850 sq ft', { exact: true }).boundingBox();
     assert.ok(saved && sourced && (viewport.width > 720 ? sourced.x > saved.x : sourced.y > saved.y));
-    await expect(record.getByText('$430,000', { exact: true })).toBeHidden();
-    await record.getByText('Taxes and recorded transfer', { exact: true }).click();
+    const recordTransfer = record.locator('details').filter({ has: page.locator('summary').getByText('Recorded transfer', { exact: true }) });
     await expect(record.getByText('$430,000', { exact: true })).toBeVisible();
-    await record.getByText('Taxes and recorded transfer', { exact: true }).click();
+    await recordTransfer.locator('summary').click();
+    await expect(record.getByText('$430,000', { exact: true })).toBeHidden();
+    await recordTransfer.locator('summary').click();
+    await expect(record.getByText('$430,000', { exact: true })).toBeVisible();
     await photosTab.click();
-    await expect(propertyPanel.getByRole('tabpanel', { name: 'Photos' }).getByText('MLS not connected')).toBeVisible();
+    await expect(propertyPanel.getByRole('tabpanel', { name: 'Photos' }).getByText('No photos loaded.', { exact: true })).toBeVisible();
     await expect(propertyPanel.getByRole('tabpanel', { name: 'Photos' }).getByRole('img')).toHaveCount(0);
     await expect(record).toBeHidden();
     await recordTab.click();
-    await expect(record.getByText('1,850 sq ft', { exact: true })).toBeVisible();
+    await expect(differences.getByText('1,850 sq ft', { exact: true })).toBeVisible();
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
     if (process.env.PBK_LEADS_DESIGN_SCREENSHOTS === '1') {
-      await propertyPanel.screenshot({ path: `.pbk-local/property-workspace-${browserType.name()}-${viewport.width}.png` });
+      await propertyPanel.screenshot({ path: resolve(evidenceDir, `property-workspace-${browserType.name()}-${viewport.width}.png`) });
     }
-    assert.equal(writes.length, 1, 'The existing lead lookup must not write');
+    assert.equal(writes.length, 1, 'Property evidence refresh must not write lead CRUD or dispatch');
+    assert.deepEqual(enrichments, [{ address: '123 Fixture Avenue, Example City, CA 90210', leadId: leadA.id,
+      expectedPropertyAddress: { street: property.address, city: property.city, state: property.state, zip: property.zip }, radiusMiles: 1 }], 'One explicit mocked evidence refresh, exact existing lead and address');
     assert.deepEqual(previews, [
       { street: '47 Analyzer Fixture Road', city: 'Example City', state: 'CA', zip: '90210' },
       { street: '47 Analyzer Fixture Road', city: 'Example City', state: 'CA', zip: '90210' },
-      { street: '123 Fixture Avenue', city: 'Example City', state: 'CA', zip: '90210' },
     ]);
-    await expect(page.getByText('Confirm the closing date')).toBeVisible();
+    await expect(page.locator('#lead-next-step').getByText('Confirm the closing date', { exact: true })).toBeVisible();
     assert.equal(await page.evaluate(() =>
       document.querySelector('#lead-timeline').getBoundingClientRect().left <
       document.querySelector('#lead-numbers').getBoundingClientRect().left
     ), viewport.width >= 981, 'Underwriting sits beside the timeline on desktop only');
     if (process.env.PBK_LEADS_DESIGN_SCREENSHOTS === '1') {
-      await page.screenshot({ path: `.pbk-local/lead-portal-${browserType.name()}-${viewport.width}.png` });
+      await page.screenshot({ path: resolve(evidenceDir, `lead-portal-${browserType.name()}-${viewport.width}.png`) });
     }
     const timeline = page.getByRole('link', { name: 'Timeline', exact: true });
     await timeline.click();
-    await expect(page).toHaveURL(/#lead-timeline$/);
+    await expect(page).toHaveURL(`${origin}/leads/fixture-north`);
+    await assertWorkspaceJump(page, 'lead-timeline');
     await expect(page.getByRole('heading', { name: 'Seller timeline' })).toBeVisible();
     assert(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth));
 

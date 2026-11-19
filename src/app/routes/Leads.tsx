@@ -944,7 +944,7 @@ function LeadsDataSourceDetails({ children }: { children: ReactNode }) {
 function LeadsStatRibbon({ stats, sourceLabel }: { stats: LeadsStats; sourceLabel: string }) {
   const cards = [
     {
-      label: 'Total leads',
+      label: 'Loaded leads',
       value: String(stats.total),
       detail: sourceLabel,
       tone: 'sky',
@@ -3538,7 +3538,7 @@ export function Leads() {
       )}
 
       {quickSmsDraft && (
-        <div className="fixed inset-0 z-[60] grid place-items-center bg-slate-950/85 p-4 backdrop-blur-sm">
+        <div className="pbk-lead-sms-modal-backdrop fixed inset-0 z-[60] grid place-items-center bg-slate-950/85 p-4 backdrop-blur-sm">
           <div
             role="dialog"
             aria-modal="true"

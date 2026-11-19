@@ -1601,7 +1601,9 @@ export function SkillStudio() {
                     </span>
                     <strong>{item.name}</strong>
                     <span className="pbk-skill-card-badges">
-                      <span>v{item.versionNumber || 1}</span>
+                      <span>
+                        {item.versionNumber == null ? 'Version Not recorded' : `v${item.versionNumber}`}
+                      </span>
                       <span>{item.agentId || 'Unassigned'}</span>
                       <span>{item.riskClass || 'medium'} risk</span>
                     </span>
@@ -1671,7 +1673,7 @@ export function SkillStudio() {
                     <span className={`pbk-skill-state state-${selected.lifecycleState}`}>
                       {selectedStage.label}
                     </span>
-                    <span>Version {selected.versionNumber || 1}</span>
+                    <span>Version {selected.versionNumber ?? 'Not recorded'}</span>
                     <span>Saved version</span>
                   </div>
                   <h2 tabIndex={-1} ref={versionHeadingRef}>
@@ -2076,7 +2078,7 @@ export function SkillStudio() {
                   </div>
                   <div>
                     <dt>Reviewer</dt>
-                    <dd>{selected.approvedBy || 'Not approved'}</dd>
+                    <dd>{selected.approvedBy || 'Not recorded'}</dd>
                   </div>
                 </dl>
               </section>

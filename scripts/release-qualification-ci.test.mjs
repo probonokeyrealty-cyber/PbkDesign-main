@@ -343,6 +343,21 @@ function workflow() {
   return parse(readFileSync(new URL('../.github/workflows/release-qualification.yml', import.meta.url), 'utf8'));
 }
 
+test('operator workflow proof is unconditional after browser installation and founder unit gate', () => {
+  const steps = workflow().jobs['release-qualification'].steps;
+  const index = steps.findIndex(step => step.name === 'Run operator workflow browser proof');
+  assert.ok(index > steps.findIndex(step => step.name === 'Install Playwright browsers'));
+  const step = steps[index];
+  assert.equal(step.if, undefined);
+  assert.equal(step['continue-on-error'], undefined);
+  assert.equal(step.run, 'npm run test:operator-workflow-browser');
+  const scripts = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).scripts;
+  assert.equal(scripts['test:operator-workflow-unit'], 'node --test scripts/worklist-focus.node-test.mjs scripts/skill-evidence-display.node-test.mjs');
+  assert.equal(scripts['test:operator-workflow-browser'], 'node scripts/leads-workflow-browser-smoke.mjs && node scripts/skill-studio-workflow-browser-smoke.mjs');
+  assert.match(scripts['test:founder'], /npm run test:unit && npm run test:operator-workflow-unit &&/);
+  assert.doesNotMatch(step.run + scripts['test:operator-workflow-browser'] + scripts['test:operator-workflow-unit'], /skip|continue-on-error|grep|test-name-pattern|\|\|/i);
+});
+
 test('workflow requires full isolated Postgres and default Chromium/WebKit execution without conditional steps', () => {
   const config = workflow();
   assert.deepEqual(config.on, { pull_request: { branches: ['main'] }, push: { branches: ['main'] }, workflow_dispatch: null });

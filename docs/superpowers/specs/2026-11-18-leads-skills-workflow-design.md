@@ -1,7 +1,9 @@
 # Leads And Skill Studio Workflow-First Design
 
-Status: detailed design approved for local implementation planning after the
-independent builder check. Implementation plan review is still required.
+Status: detailed design and subsequent local plan execution approved by the
+founder's continue. Task 6 local execution from `baa8812` is DONE_WITH_CONCERNS;
+controller receipt/manual handoff, independent task/whole-branch review and the full founder release
+gate remain pending. No publication or live operations are authorized.
 Base: main `5cb15fb69851406126a6faff2d5e0c13f47f8920` (includes PR #38).
 Local branch: `codex/leads-skills-workflow-design`.
 
@@ -16,7 +18,8 @@ The founder selected **workflow-first in-place design** rather than visual-only
 polish. Selection of this direction is not approval of this document or of code,
 publication, merging, migration, deployment, or live business actions.
 The founder subsequently approved this detailed document and requested a local
-implementation plan. That approval does not authorize executing the plan yet.
+implementation plan. The later continue authorized local implementation and
+isolated synthetic checks only, not publication or live business actions.
 
 Claude's original design conversation supplied the advisory scan-and-act proposal:
 [original conversation](https://claude.ai/chat/1f94828f-e766-4a2c-82c7-82463c84b05e).

@@ -1,5 +1,10 @@
 .pbk-leads-surface :is(button, a, input, select),
-.pbk-lead-portal :is(button, a, input, select) { min-height: 44px; min-width: 44px; }
+.pbk-lead-portal :is(button, a, input, select),
+.pbk-lead-portal-edit :is(button, input, select, textarea),
+.pbk-lead-portal-confirm button { min-height: 44px; min-width: 44px; }
+.pbk-lead-portal-edit [data-slot='dialog-header'] { padding-inline-end: 44px; }
+.pbk-lead-portal-edit > button { display: grid; place-items: center; }
+.pbk-leads-surface .pbk-lead-sms-modal-backdrop { z-index: 130; }
 .pbk-leads-surface .pbk-lead-ledger-row,
 .pbk-leads-surface .lead-mobile-card { gap: 12px; padding: 16px; }
 .pbk-leads-surface .pbk-leads-detail-shell { padding: 16px; }
@@ -23,6 +28,9 @@
 .pbk-lead-portal .pbk-portal-sections a[aria-current='location'] { color: var(--sky); border-bottom-color: var(--sky); }
 .pbk-lead-portal .pbk-lead-portal-actions .danger { margin-inline-start: 12px; border-color: var(--crimson); }
 .pbk-lead-portal .pbk-lead-portal-actions > :is(a, button) { min-height: 44px; }
+@media (max-width: 480px) {
+  .pbk-lead-portal .pbk-property-key-facts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
 
 .pbk-skill-studio :is(button, a, input, select, summary, textarea) {
   min-height: 44px;
@@ -60,6 +68,12 @@
 .pbk-skill-studio .pbk-skill-dialog-footer-left { flex-wrap: wrap; }
 .pbk-skill-studio .pbk-skill-wizard-steps button { overflow-wrap: anywhere; }
 .pbk-skill-studio .pbk-skill-wizard-preview pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+@media (min-width: 761px) and (max-width: 1100px) {
+  .pbk-skill-studio .pbk-skill-status-ribbon { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+@media (max-width: 480px) {
+  .pbk-skill-studio .pbk-skill-status-ribbon > div { padding-inline: 12px; }
+}
 @media (max-width: 760px) {
   .pbk-skill-studio .pbk-skill-lifecycle { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 }

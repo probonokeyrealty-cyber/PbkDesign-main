@@ -157,7 +157,9 @@ async function verifyEvidenceNegativeControls(page) {
   await assertSelectedLeadEvidence(page);
 }
 async function checkTargets(page, root) {
-  const undersized = await page.locator(`${root} button, ${root} a, ${root} input, ${root} select`).evaluateAll(nodes => nodes.filter(node => {
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, 'No viewport overflow');
+  await page.locator(root).evaluateAll(nodes => Promise.all(nodes.flatMap(node => node.getAnimations().filter(animation => animation.effect?.getComputedTiming().iterations !== Infinity).map(animation => animation.finished))));
+  const undersized = await page.locator(`${root} :is(button,a,input,select,textarea)`).evaluateAll(nodes => nodes.filter(node => {
     const rect = node.getBoundingClientRect();
     return node.getClientRects().length && getComputedStyle(node).visibility !== 'hidden' && (rect.height < 44 || rect.width < 44);
   }).map(node => [node.getAttribute('aria-label') || node.textContent?.trim() || node.tagName, Math.round(node.getBoundingClientRect().height)]));
@@ -204,6 +206,19 @@ const target = { leadId: 'SYN-WORK-000', leadName: 'Synthetic Seller 00', phone:
 
 async function verifyRejections(page, writes) {
   let rejected = 0;
+  async function pointerCancel(dialog, name) {
+    await expect(page.locator('.ui-toast-critical')).toBeVisible();
+    const cancel = dialog.getByRole('button', { name: 'Cancel', exact: true });
+    await cancel.scrollIntoViewIfNeeded();
+    if (page.viewportSize().width === 320) await page.screenshot({ path: `${evidence}/rejection-${name}-${page.context().browser().browserType().name()}-320.png` });
+    const reachable = await cancel.evaluate(button => {
+      const r = button.getBoundingClientRect();
+      return button.contains(document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2));
+    });
+    assert.equal(reachable, true, `${name} Cancel center must be pointer-reachable while critical toast exists`);
+    await cancel.click();
+    await expect(dialog).toBeHidden();
+  }
   async function rejectExact(method, path, expected, execute, errorText) {
     const seen = [];
     const matcher = url => url.origin === origin && url.pathname === path;
@@ -228,6 +243,7 @@ async function verifyRejections(page, writes) {
   const add = page.getByRole('button', { name: 'Add seller', exact: true });
   await add.click();
   let create = page.getByRole('dialog', { name: 'Create lead', exact: true });
+  await checkTargets(page, '[role="dialog"]');
   await create.getByPlaceholder('Seller full name').fill('Synthetic New Seller');
   await create.getByPlaceholder('Property street address').fill('99 Synthetic Avenue');
   await create.getByRole('button', { name: 'Cancel', exact: true }).click();
@@ -237,35 +253,36 @@ async function verifyRejections(page, writes) {
   await create.getByPlaceholder('Property street address').fill('99 Synthetic Avenue');
   await rejectExact('POST', '/api/leads', createExpectation(), () => create.getByRole('button', { name: 'Create lead', exact: true }).click(), 'Lead create failed');
   await expect(create.getByPlaceholder('Seller full name')).toHaveValue('Synthetic New Seller');
-  // Critical toasts and older custom dialogs overlap at narrow widths. Keep native
-  // keyboard cancellation, then dismiss the existing persistent error notification.
-  await create.getByRole('button', { name: 'Cancel', exact: true }).press('Enter');
+  await pointerCancel(create, 'create');
   await page.getByRole('button', { name: 'Dismiss', exact: true }).click();
   const smsButton = page.getByRole('button', { name: 'Text Synthetic Seller 00', exact: true }).filter({ visible: true });
   const sms = page.getByRole('dialog', { name: 'Text Synthetic Seller 00', exact: true });
   await smsButton.click(); await sms.getByRole('textbox').fill('Synthetic unsent text');
+  await checkTargets(page, '[role="dialog"]');
   await sms.getByRole('button', { name: 'Cancel', exact: true }).click(); assert.deepEqual(writes, []);
   await smsButton.click(); await sms.getByRole('textbox').fill('Synthetic unsent text');
   await rejectExact('POST', '/api/lead/send-message', { ...target, channel: 'sms', message: 'Synthetic unsent text', body: 'Synthetic unsent text', actor: 'PBK operator', requestedBy: 'PBK operator', source: 'leads_page_manual', manual: true, manualSend: true },
     () => sms.getByRole('button', { name: 'Send SMS', exact: true }).click(), 'SMS failed');
   await expect(sms.getByRole('textbox')).toHaveValue('Synthetic unsent text');
-  await sms.getByRole('button', { name: 'Cancel', exact: true }).press('Enter');
+  await pointerCancel(sms, 'sms');
   await page.getByRole('button', { name: 'Dismiss', exact: true }).click();
   await page.goto(origin + '/leads/SYN-WORK-000');
   const title = page.getByRole('heading', { name: 'Synthetic Seller 00', level: 1, exact: true });
   await expect(title).toBeVisible();
   const edit = page.getByRole('dialog', { name: 'Edit complete seller profile', exact: true });
   await page.getByRole('button', { name: 'Edit', exact: true }).click();
+  await checkTargets(page, '[role="dialog"]');
   await edit.getByLabel('Seller name', { exact: true }).fill('Synthetic Edited Seller');
   await edit.getByRole('button', { name: 'Cancel', exact: true }).click(); await expect(title).toBeVisible(); assert.deepEqual(writes, []);
   await page.getByRole('button', { name: 'Edit', exact: true }).click();
   await edit.getByLabel('Seller name', { exact: true }).fill('Synthetic Edited Seller');
   await rejectExact('PATCH', '/api/leads/SYN-WORK-000', editExpectation(), () => edit.getByRole('button', { name: 'Save seller profile', exact: true }).click(), 'Seller profile not saved');
   await expect(edit.getByLabel('Seller name', { exact: true })).toHaveValue('Synthetic Edited Seller');
-  await edit.getByRole('button', { name: 'Cancel', exact: true }).press('Enter');
+  await pointerCancel(edit, 'edit');
   await page.getByRole('button', { name: 'Dismiss', exact: true }).click();
   await page.getByRole('button', { name: 'Call', exact: true }).click();
   let confirm = page.getByRole('alertdialog');
+  await checkTargets(page, '[role="alertdialog"]');
   await confirm.getByRole('button', { name: 'Cancel', exact: true }).click(); assert.deepEqual(writes, []);
   await page.getByRole('button', { name: 'Call', exact: true }).click();
   await rejectExact('POST', '/invoke', { toolName: 'telnyx_call', params: { ...target, source: 'lead_portal_manual', manual: true, manualSend: true, forceApproval: false, requestApproval: false, requestedBy: 'PBK operator' } },
@@ -318,6 +335,10 @@ async function verify(type, width) {
     await page.getByRole('searchbox', { name: /Search leads/ }).fill('Synthetic');
     await expect(visibleRows(page)).toHaveCount(10);
     await expect(page.locator('button[data-lead-queue-id]')).toHaveCount(20);
+    await expect(page.getByText('Loaded leads', { exact: true })).toBeVisible();
+    await expect(page.locator('.pbk-leads-stat').filter({ has: page.getByText('Loaded leads', { exact: true }) }).locator('.v')).toHaveText('64');
+    await expect(page.getByText('Total leads', { exact: true })).toHaveCount(0);
+    await page.screenshot({ path: `${evidence}/loaded-roster-${type.name()}-${width}.png` });
     await checkTargets(page, '.pbk-leads-surface');
     // RED: syntax labels must keep their original predicates, not imply consent/readiness.
     await page.getByRole('button', { name: 'Phone format OK', exact: true }).click();
@@ -366,7 +387,28 @@ async function verify(type, width) {
       await link.click();
       await expect(page.locator(`#${id} h2`).first()).toBeFocused();
       await expect(link).toHaveAttribute('aria-current', 'location');
+      const geometry = await page.locator(`#${id} h2`).first().evaluate(heading => {
+        const h = heading.getBoundingClientRect();
+        const header = document.querySelector('.pbk-shell-topbar').getBoundingClientRect();
+        return { headingTop: h.top, headingBottom: h.bottom, headerBottom: header.bottom, viewport: innerHeight };
+      });
+      assert.ok(geometry.headingTop >= geometry.headerBottom && geometry.headingBottom <= geometry.viewport,
+        `${type.name()} ${width} ${id} heading clears real fixed header: ${JSON.stringify(geometry)}`);
+      console.log(`Anchor geometry ${type.name()} ${width} ${id}: ${JSON.stringify(geometry)}`);
     }
+    const missingWords = await page.locator('#lead-property :is(dd,strong)').evaluateAll(nodes => {
+      const checked = nodes.filter(node => node.textContent.trim() === 'Not captured' && node.getClientRects().length);
+      return { count: checked.length, fragments: checked.flatMap(node => {
+      const text = [...node.childNodes].find(n => n.nodeType === Node.TEXT_NODE && n.textContent.includes('captured'));
+      if (!text) return [];
+      const start = text.textContent.indexOf('captured'), range = document.createRange();
+      range.setStart(text, start); range.setEnd(text, start + 8);
+      return [...range.getClientRects()].length > 1 ? [node.outerHTML] : [];
+      }) };
+    });
+    assert.ok(missingWords.count > 0, 'Measure visible Property missing values, not an empty locator');
+    assert.deepEqual(missingWords.fragments, [], 'Property missing-value words must not fragment');
+    console.log(`Property missing-value words ${type.name()} ${width}: ${missingWords.count} measured, zero fragmented`);
     await page.locator('#lead-next-step').evaluate(section => section.scrollIntoView({ block: 'start' }));
     await expect(nav.getByRole('link', { name: 'Next step', exact: true })).toHaveAttribute('aria-current', 'location');
     assert.equal(await page.evaluate(() => history.length), historyBefore, 'Section jumps must not add history');
@@ -407,7 +449,9 @@ async function verify(type, width) {
     await page.screenshot({ path: `${evidence}/long-id-${type.name()}-${width}.png` });
     assert.equal(await page.evaluate(() => localStorage.getItem('pbk:compose:draft')), compose);
     assert.equal(await page.evaluate(key => sessionStorage.getItem(key), analyzerKey), analyzer);
+    if (width === 320) await page.setViewportSize({ width, height: 568 });
     const rejections = await verifyRejections(page, writes);
+    if (width === 320) await page.setViewportSize({ width, height: 900 });
     assert.equal(rejections, 5);
     assert.deepEqual(denied.splice(0), [[403, '/api/leads'], [403, '/api/lead/send-message'], [403, '/api/leads/SYN-WORK-000'], [403, '/invoke'], [403, '/api/contract/send']]);
     if (type === chromium && width === 1440) await verifyEvidenceNegativeControls(page);
@@ -424,5 +468,5 @@ try {
   for (const [method, path, status] of [['GET', '/api/not-allowlisted', 404], ['GET', '/api/leads/foreign/full', 404], ['POST', '/invoke', 403], ['POST', '/api/leads', 403], ['PATCH', '/api/leads/SYN-WORK-000', 403], ['POST', '/api/property-data/attom-preview', 403]]) {
     assert.equal((await fetch(origin + path, { method })).status, status, `Preview denies ${method} ${path}`);
   }
-  for (const type of [chromium, webkit]) for (const width of [1440, 390, 320]) await verify(type, width);
+  for (const type of [chromium, webkit]) for (const width of [320, 390, 1440]) await verify(type, width);
 } finally { server.httpServer?.closeAllConnections(); await server.close(); }

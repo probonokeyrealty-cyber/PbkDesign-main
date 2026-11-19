@@ -30,7 +30,7 @@ async function selectVersion(page, index) {
   await expect(page.locator('.pbk-skill-version-head h2')).toBeFocused();
 }
 async function contained(page, scope = '.pbk-skill-studio') {
-  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), true, 'No viewport overflow');
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, 'No viewport overflow');
   const undersized = await page.locator(`${scope} :is(button,a,input,select,summary,textarea)`).evaluateAll(elements => elements.filter(el => {
     const r = el.getBoundingClientRect(); return r.width && r.height && (r.width < 43.5 || r.height < 43.5);
   }).map(el => [el.tagName, el.textContent, el.getBoundingClientRect().width, el.getBoundingClientRect().height]));
@@ -53,6 +53,52 @@ async function filterLabelFit(page) {
   }));
   assert.deepEqual(measurements.filter(item => !item.fits), [], 'Rendered filter labels, including longest option, fit clear of icons/native chevrons');
   return measurements;
+}
+async function statusWordFit(page) {
+  await page.evaluate(() => document.fonts.ready);
+  const measured = await page.locator('.pbk-skill-status-ribbon strong').evaluateAll(values => values.flatMap(value => {
+    const text = value.firstChild, bounds = value.getBoundingClientRect();
+    return [...text.textContent.matchAll(/\S+/g)].map(match => {
+      const range = document.createRange();
+      range.setStart(text, match.index); range.setEnd(text, match.index + match[0].length);
+      const rects = [...range.getClientRects()];
+      return { word: match[0], lines: rects.length, available: bounds.width,
+        fits: rects.length === 1 && rects[0].left >= bounds.left - 0.5 && rects[0].right <= bounds.right + 0.5 };
+    });
+  }));
+  assert.ok(measured.length >= 5, 'Measure all five real status values');
+  assert.deepEqual(measured.filter(word => !word.fits), [], 'Status value words fit without midword fragmentation or clipping');
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, 'No status-strip viewport overflow');
+  return measured.length;
+}
+async function verifyTabletStatus(engine, width) {
+  const browser = await engine.launch();
+  try {
+    const page = await browser.newPage({ viewport: { width, height: 851 }, reducedMotion: 'reduce' });
+    const foreign = [], writes = [], errors = [];
+    let status = { ok: true };
+    page.on('pageerror', error => errors.push(error.message));
+    await page.routeWebSocket('**/*', socket => { if (new URL(socket.url()).hostname !== '127.0.0.1') foreign.push(socket.url()); socket.close(); });
+    await page.route('**/*', route => {
+      const req = route.request(), url = new URL(req.url());
+      if (url.origin !== origin) { foreign.push(req.url()); return route.abort(); }
+      if (req.method() !== 'GET' && url.pathname !== '/api/state/stream/session') { writes.push([req.method(), url.pathname]); return route.abort(); }
+      if (url.pathname === '/api/skills/governance/status') return route.fulfill({ json: status });
+      return route.continue();
+    });
+    await page.goto(origin + '/skills');
+    const values = page.locator('.pbk-skill-status-ribbon strong');
+    await expect(values).toHaveText(Array(5).fill('Not recorded'));
+    await expect(page.getByRole('button', { name: 'Refresh', exact: true })).toBeEnabled();
+    await page.screenshot({ path: `${evidence}/skill-status-${engine.name()}-${width}.png` });
+    const missingWords = await statusWordFit(page);
+    status = { ok: true, candidates: 0, approvedInactive: 0, canary: 0, active: 0, outbox: { pending: 0, deadLettered: 0 } };
+    await page.getByRole('button', { name: 'Refresh', exact: true }).click();
+    await expect(values).toHaveText(Array(5).fill('0'));
+    const zeroWords = await statusWordFit(page);
+    assert.deepEqual({ foreign, writes, errors }, { foreign: [], writes: [], errors: [] });
+    console.log(`PASS status-strip ${engine.name()} ${width}x851: ${missingWords} missing-value + ${zeroWords} zero-value word ranges; no fragmentation, clipping, overflow, writes or errors`);
+  } finally { await browser.close(); }
 }
 async function wizardPreservation(page, width) {
   await page.getByRole('button', { name: 'Teach Ava', exact: true }).click();
@@ -191,6 +237,16 @@ async function verifyReadOwnership(engine) {
   }
   try {
     const approved = structuredClone(operatorSkillFixtures[3]);
+    for (const [label, versionNumber, expected] of [['missing', undefined, 'Not recorded'], ['zero', 0, '0'], ['positive', 7, '7']]) {
+      await scenario(`optional ${label} version and absent reviewer stay truthful`, async h => {
+        await h.loaded(active.versionId);
+        await expect(h.page.locator('.pbk-skill-version-head')).toContainText(`Version ${expected}`);
+        await expect(h.page.locator('dl > div').filter({ has: h.page.getByText('Reviewer', { exact: true }) }).locator('dd')).toHaveText('Not recorded');
+        await repository(h.page);
+        await expect(rows(h.page).first()).toContainText(versionNumber === undefined ? 'Version Not recorded' : `v${expected}`);
+        assert.deepEqual(h.governancePosts, []);
+      }, pair([{ ...active, versionNumber, approvedBy: undefined }]));
+    }
     const malformedItems = [
       ['empty hash', { contentHash: '' }], ['missing hash', { contentHash: undefined }],
       ['blank hash', { contentHash: '  ' }], ['object hash', { contentHash: {} }],
@@ -454,6 +510,7 @@ async function verify(engine, width) {
     await expect(page.locator('.pbk-skill-version-id code')).toHaveText('SYN-SKILL-000');
     const ribbon = page.getByRole('region', { name: 'Skill governance status' });
     for (const label of ['Review queue', 'Ready to test', 'Small test', 'Live now', 'Sync health']) await expect(ribbon.locator('div').filter({ has: page.getByText(label, { exact: true }) }).locator('strong')).toHaveText('Not recorded');
+    await statusWordFit(page);
     await repository(page);
     await expect(rows(page)).toHaveCount(10);
     console.log(`Filter label fit ${engine.name()} ${width}: ${JSON.stringify(await filterLabelFit(page))}`);
@@ -650,6 +707,7 @@ try {
     assert.equal((await fetch(origin + path, { method })).status, status);
   }
   for (const engine of [chromium,webkit]) {
+    for (const width of [1024,824,768,761,760]) await verifyTabletStatus(engine,width);
     await verifyReadOwnership(engine);
     for (const width of [1440,390,320]) await verify(engine,width);
   }

@@ -10,6 +10,15 @@
 
 **Spec:** `docs/superpowers/specs/2026-11-18-leads-skills-workflow-design.md` (founder approved for planning).
 
+**Local execution status (2026-11-18):** The founder's continue authorized local
+implementation and isolated synthetic proof. Tasks 1-5 are recorded in the SDD
+ledger; Task 6 local execution from `baa8812` is DONE_WITH_CONCERNS, with exact
+results in `docs/operations/2026-11-18-operator-workflow-validation.md`.
+For Task 6 the founder explicitly
+requested self-review with no subagents/reviewers. Final whole-branch review,
+controller receipt/manual handoff and the full founder release gate remain
+pending; this is not publication or live-operation approval.
+
 ## Global Constraints
 
 - Work locally on `codex/leads-skills-workflow-design`, based on main `5cb15fb69851406126a6faff2d5e0c13f47f8920` plus design-only commit `545ae36`. Never copy the unmerged PR #35 runtime into this branch.

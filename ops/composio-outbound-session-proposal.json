@@ -1,0 +1,44 @@
+{
+  "status": "prepared-not-created",
+  "projectName": "probonokeyrealty_workspace_first_project",
+  "provisioningKey": {
+    "name": "PBK Staging Session Setup - TEMPORARY",
+    "permissions": [{"resource": "Session management", "access": "Write only"}],
+    "installOnRender": false,
+    "purpose": "Create the explicitly pinned read-only sandbox session without broadening the existing runtime key",
+    "revokeAfterProvisioning": true
+  },
+  "sessionCreatePath": "/api/v3.1/tool_router/session",
+  "sessionCreateBody": {
+    "user_id": "pbk-composio-staging",
+    "toolkits": {"enable": ["highlevel_location"]},
+    "tools": {"highlevel_location": {"enable": ["HIGHLEVEL_LOCATION_CONTACTS_GET_CONTACT"]}},
+    "auth_configs": {"highlevel_location": "ac_FQxH8GPSX4DK"},
+    "connected_accounts": {"highlevel_location": ["ca_0sb6c-6lP1UF"]},
+    "preload": {"tools": ["HIGHLEVEL_LOCATION_CONTACTS_GET_CONTACT"]},
+    "instant": false,
+    "manage_connections": {"enable": false},
+    "workbench": {"enable": false, "enable_proxy_execution": false},
+    "proxy_execute": {"enable": false},
+    "search": {"enable": false},
+    "execute": {"enable_multi_execute": false},
+    "multi_account": {"enable": false, "require_explicit_selection": true},
+    "experimental": {"no_elicitation_support_fallback": "deny"}
+  },
+  "verification": "Read authoritative session metadata with the existing scoped runtime key; discover and review only the pinned tool's schema before installing server-side pins on isolated staging.",
+  "constraints": {
+    "productionChanges": false,
+    "crmWrites": false,
+    "outreach": false,
+    "taskCreation": false,
+    "paidUpgrade": false,
+    "sharedCustomToolkitFallback": false
+  },
+  "privateReturnConnection": {
+    "status": "blocked-by-plan",
+    "observedPlan": "Hobby",
+    "observedProPriceUsdPerMonth": 29,
+    "requiredCapability": "Private Custom MCP toolkit for pbk-composio-staging only",
+    "reference": "https://docs.composio.dev/docs/extending-sessions/custom-mcp"
+  }
+}

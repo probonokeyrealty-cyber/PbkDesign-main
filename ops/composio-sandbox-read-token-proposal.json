@@ -1,0 +1,35 @@
+{
+  "status": "created-connected-and-verified",
+  "integrationName": "PBK Composio QA Read - NO OUTREACH",
+  "highLevelLocationId": "OXa5iejsMPm7I7JsrEge",
+  "locationName": "PBK SANDBOX - NO OUTREACH",
+  "scopes": ["contacts.readonly", "locations.readonly"],
+  "scopePurpose": {
+    "contacts.readonly": "Read the existing DND-enabled QA contact through the fixed backend operation",
+    "locations.readonly": "Composio's existing connection validation reads the sandbox location"
+  },
+  "composioDestination": {
+    "projectName": "probonokeyrealty_workspace_first_project",
+    "authConfigId": "ac_FQxH8GPSX4DK",
+    "userId": "pbk-composio-staging",
+    "connectedAccountId": "ca_0sb6c-6lP1UF",
+    "connectedAccountStatus": "ACTIVE"
+  },
+  "constraints": {
+    "existingIntegrationRotation": false,
+    "productionChanges": false,
+    "crmWrites": false,
+    "outreach": false,
+    "taskCreation": false
+  },
+  "verification": {
+    "sandboxLocationRead": 200,
+    "existingQaContactRead": 200,
+    "qaContactDnd": true,
+    "qaExclusionTagPresent": true,
+    "composioAccountMetadataRead": 200,
+    "projectUserAuthConfigToolkitAndAccountEnabledVerified": true,
+    "transientHighLevelTokenClearedAfterConnection": true
+  },
+  "note": "The founder approved this exact two-scope token. Existing Property Guard integration preserved. The new token is stored only in the intended Composio connection; no credential value belongs in this proposal. This verifies account authorization, not a completed hosted session or bidirectional connection."
+}

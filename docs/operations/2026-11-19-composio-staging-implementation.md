@@ -1,6 +1,17 @@
 # PBK bidirectional Composio implementation
 
-Status: deployed to a separate free staging backend, default disabled. **Hosted Composio authorization and end-to-end connection are still pending.** Production and CRM records have not been changed.
+Status: deployed to a separate free staging backend, default disabled. **HighLevel sandbox authorization is now verified Active; the pinned hosted session and private return connection remain pending.** Production and CRM records have not been changed.
+
+## Current activation checkpoint
+
+- Founder-approved integration `PBK Composio QA Read - NO OUTREACH` was created in sandbox `OXa5iejsMPm7I7JsrEge` with exactly `contacts.readonly` and `locations.readonly`. The existing Property Guard integration was preserved.
+- New connected account `ca_0sb6c-6lP1UF` is Active under the intended developer project, user `pbk-composio-staging`, auth config `ac_FQxH8GPSX4DK` and `highlevel_location` toolkit. Authenticated account metadata independently returned200 and matched every policy pin.
+- At23:14UTC, an explicitly account/project/user-bound `composio dev playground-execute HIGHLEVEL_LOCATION_CONTACTS_GET_CONTACT` read succeeded. Its selected evidence confirmed the existing QA contact and sandbox location, DNDtrue and `pbk-qa-no-outreach`. Output was sanitized before display; no CRM record values, credential values or provider payloads were saved. No CRM write, outreach or task operation was called.
+- The newly approved HighLevel token was supplied only to that Composio connection, then cleared from transient orchestration memory after authorization became Active. The existing scoped runtime project key remains installed only on the isolated staging service.
+- The runtime key cannot create sessions. A separate uncreated key draft, `PBK Staging Session Setup - TEMPORARY`, has only Session management write selected. Its prepared session policy is in `ops/composio-outbound-session-proposal.json`; creation/use/revocation requires the requested founder approval. It must never be installed on Render or used for tool execution.
+- The authenticated Composio billing page shows **Hobby** as Current Plan and Pro at **$29/month**. [Composio's private Custom MCP documentation](https://docs.composio.dev/docs/extending-sessions/custom-mcp) requires Pro for a toolkit private to one user. No upgrade or shared-for-all fallback was performed. The private return registration remains blocked by that plan restriction.
+- The successful operator CLI read does **not** prove the hosted Ava/Rex session or the Composio-to-PBK return path. Both staging feature flags remain false pending their separate setup and hosted verification.
+- Hosted checks at23:15UTC returned200 for health, tooling status,11-agent registry and configured team authentication. Both Composio directions correctly reported disabled/not ready, and the limited endpoint returned404. The first cold-start probe timed out; a bounded retry succeeded. Render still reports the isolated free service, auto-deploy off and the same live deployment. The sandbox integration list independently showed both the original Property Guard and the new read-only integration, with no token displayed.
 
 ## What is implemented
 
@@ -15,13 +26,13 @@ Status: deployed to a separate free staging backend, default disabled. **Hosted 
 
 Initial read-only inspection of the founder-confirmed Render workspace **PBK** found only production services. The founder subsequently approved a new free staging service and non-production branch. `pbk-composio-staging` was created at [the isolated staging host](https://pbk-composio-staging.onrender.com), with auto-deploy off, fresh distinct staging credentials and file-backed state. No production database, provider credentials or environment group was copied. Initial authenticated hosted checks verified health, 11-agent registry, team-auth configuration and disabled Composio directions.
 
-The Composio developer project `probonokeyrealty_workspace_first_project` has Active connections for other toolkits but **no Active HighLevel connection**. The existing `pbk-sandbox-no-outreach` HighLevel connection belongs to the separate consumer CLI context. It was not copied, reauthorized or silently treated as a developer-project credential.
+The Composio developer project `probonokeyrealty_workspace_first_project` now has the independently verified Active HighLevel connection `ca_0sb6c-6lP1UF`, for user `pbk-composio-staging` and auth configuration `ac_FQxH8GPSX4DK`. This uses the newly approved sandbox token with only `contacts.readonly` and `locations.readonly`. The existing consumer CLI connection was not copied or silently reused.
 
-Therefore hosted proof and Custom MCP registration remain pending. Local fixtures do not prove live account authorization. The earlier HighLevel custom-field schema support issue remains separate and unresolved by this work.
+Hosted session execution and Custom MCP registration remain pending. Direct read-only provider checks proved the correct sandbox location and existing QA contact, with DND and the QA exclusion tag intact. Authenticated Composio account metadata proved the intended user/auth-config/toolkit and Active, non-disabled state. These checks prove authorization, not execution through the hosted PBK adapter. The earlier HighLevel custom-field schema support issue remains separate and unresolved by this work.
 
 The approved resource settings are recorded in `ops/composio-staging-service-proposal.json`. The source branch is `codex/composio-readonly-staging`. The first deployment ran the backend successfully. A subsequent staging-only build refinement compiles the existing Command Center assets for the native Node service; it does not introduce a second frontend. The CLI reported success without persisting its nested build change, so the dashboard was used and the saved build command was independently confirmed through the service API. No paid upgrade is allowed.
 
-The existing developer-project sandbox auth configuration is for `highlevel_location`. The builder selected its equivalent native read tool `HIGHLEVEL_LOCATION_CONTACTS_GET_CONTACT`, inspected schema version `20261101_00` and fixed its input to `contact_id`. This reuses the existing restricted auth configuration instead of creating a new permission grant. It still needs an Active developer-project sandbox account; the consumer connection is not reused silently.
+The existing developer-project sandbox auth configuration is for `highlevel_location`. The builder selected its equivalent native read tool `HIGHLEVEL_LOCATION_CONTACTS_GET_CONTACT`, inspected schema version `20261101_00` and fixed its input to `contact_id`. This reuses the existing restricted auth configuration. The founder subsequently approved a separate two-scope sandbox token; its developer-project account is now Active, and the consumer connection was not reused.
 
 ## Server-only staging configuration
 

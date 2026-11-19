@@ -1,11 +1,13 @@
 import assert from 'node:assert/strict';
 import { mkdirSync } from 'node:fs';
+import { join } from 'node:path';
 import { chromium, webkit, expect as playwrightExpect } from '@playwright/test';
 import { createTriagePreview, sampleLeads } from './fixtures/faster-triage-fixture.mjs';
 
 const { server, origin } = await createTriagePreview();
 const expect = playwrightExpect.configure({ timeout: 20000 });
 const initialLeads = structuredClone(sampleLeads);
+const evidenceDir = process.env.PBK_OPERATOR_EVIDENCE_DIR || 'output/faster-triage';
 async function verify(type, width) {
   const browser = await type.launch();
   try {
@@ -42,8 +44,8 @@ async function verify(type, width) {
       return result;
     });
     assert(loadedFonts.every(count => count > 0), 'Existing PBK and Nerd Fonts must actually load locally');
-    mkdirSync('output/faster-triage', { recursive: true });
-    await page.screenshot({ path: `output/faster-triage/today-${type.name()}-${width}.png` });
+    mkdirSync(evidenceDir, { recursive: true });
+    await page.screenshot({ path: join(evidenceDir, `today-${type.name()}-${width}.png`) });
     const composeDraft = JSON.stringify({ channel: 'sms', recipient: '+12025550101', leadId: 'SYN-L-2291', message: 'Unsent manual text stays unchanged', sendLater: false, sendAt: '' });
     await page.evaluate(value => localStorage.setItem('pbk:compose:draft', value), composeDraft);
     await row.click();
@@ -76,7 +78,7 @@ async function verify(type, width) {
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
     assert.deepEqual(writes, []); assert.deepEqual(errors, []); assert.deepEqual(foreignTimelineReads, []);
     assert.deepEqual(sampleLeads, initialLeads, 'No saved manual fields, ARV or sold comps changed');
-    await page.screenshot({ path: `output/faster-triage/workspace-${type.name()}-${width}.png` });
+    await page.screenshot({ path: join(evidenceDir, `workspace-${type.name()}-${width}.png`) });
     await page.goto(origin + '/inbox', { waitUntil: 'domcontentloaded' });
     await page.getByRole('button', { name: 'Compose', exact: true }).click();
     const compose = page.getByRole('dialog', { name: 'Compose message', exact: true });

@@ -1,4 +1,5 @@
 import { createServer } from 'vite';
+import { join } from 'node:path';
 
 export const sampleLeads = [
   { id: 'SYN-L-2291', seller: { name: 'Fictional Seller' }, property: { address: '88 Sample Oak Dr', city: 'Example City', state: 'CA', zip: '90210', arv: 245000 }, bant: { nextStep: 'Confirm seller availability for a walkthrough.' }, soldComps: [{ id: 'SYN-COMP', soldPrice: 245000 }], score: 90 },
@@ -32,7 +33,7 @@ export function fixtureResponse(path, params) {
 export async function createTriagePreview(port = 0) {
   process.env.PBK_DEV_BRIDGE_URL = 'http://127.0.0.1:1';
   const server = await createServer({
-    cacheDir: `output/faster-triage/vite-cache-${port ? 'preview' : 'test'}`,
+    cacheDir: join(process.env.PBK_OPERATOR_EVIDENCE_DIR || 'output/faster-triage', `vite-cache-${port ? 'preview' : 'test'}`),
     server: { host: '127.0.0.1', port, strictPort: true },
     plugins: [{
       name: 'pbk-faster-triage-read-only-fixture',

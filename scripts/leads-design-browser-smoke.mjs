@@ -91,7 +91,7 @@ async function verify(browserType, viewport, device = {}) {
     });
 
     await page.goto(`${origin}/leads`);
-    await expect(page.getByRole('heading', { name: 'Leads.', exact: true })).toBeVisible({ timeout: 12000 });
+    await expect(page.getByRole('heading', { name: 'Seller leads.', exact: true })).toBeVisible({ timeout: 12000 });
     const roster = page.getByRole('region', { name: 'Seller roster', exact: true });
     const north = roster.getByRole('button', { name: /^Open lead Fixture North/ });
     const south = roster.getByRole('button', { name: /^Open lead Fixture South/ });
@@ -109,7 +109,7 @@ async function verify(browserType, viewport, device = {}) {
       await page.screenshot({ path: `.pbk-local/leads-${browserType.name()}-${viewport.width}.png` });
     }
 
-    await page.getByRole('button', { name: 'New PBK lead', exact: true }).click();
+    await page.getByRole('button', { name: 'Add seller', exact: true }).click();
     await expect(page.getByPlaceholder('Seller full name')).toHaveValue('Fixture Analyzer');
     const createAddress = page.getByPlaceholder('Property street address');
     await page.getByPlaceholder('Columbus').fill('Example City');

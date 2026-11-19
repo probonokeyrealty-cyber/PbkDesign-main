@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Link, useLocation, useNavigate, useSearchParams } from 'react-router';
 import { readLeadQueueReturn, type LeadQueueReturn } from '../utils/leadQueueReturn';
+import { focusWorklistRow } from '../utils/worklistFocus.mjs';
+import '../../styles/operator-workflows.css';
 import {
   AlertCircle,
   ArrowUpRight,
@@ -1191,6 +1193,16 @@ export function Leads() {
     () => getPageSlice(filteredLeads, leadPage, OPERATOR_LIST_PAGE_SIZE),
     [filteredLeads, leadPage]
   );
+  const worklistRoot = useRef<HTMLDivElement>(null);
+  const ownedFocusedRow = useRef<HTMLButtonElement | null>(null);
+  useEffect(() => {
+    const owned = ownedFocusedRow.current;
+    if (!owned || owned.isConnected || restorePending.current) return;
+    ownedFocusedRow.current = null;
+    if (document.activeElement === document.body) {
+      worklistRoot.current?.querySelector<HTMLInputElement>('.pbk-leads-search input')?.focus();
+    }
+  }, [visibleLeads]);
   const leadsStats = useMemo(() => buildLeadsStats(leads), [leads]);
   const activeLead =
     selectedLead && leadDetail && getLeadId(leadDetail) === selectedLeadId
@@ -1932,7 +1944,13 @@ export function Leads() {
   const activeLeadTemplateName = TEMPLATE_NAMES[activeLeadPath];
 
   return (
-    <div className="pbk-leads-surface">
+    <div className="pbk-leads-surface" ref={worklistRoot}
+      onFocusCapture={event => {
+        const target = event.target;
+        ownedFocusedRow.current = target instanceof HTMLButtonElement && target.matches('[data-pbk-worklist-row]') ? target : null;
+      }}
+      onBlurCapture={event => { if (event.relatedTarget) ownedFocusedRow.current = null; }}
+    >
       <LeadsHero
         loading={loading || leadRosterStatus === 'loading'}
         error={error}
@@ -1990,8 +2008,8 @@ export function Leads() {
               {[
                 ['all', 'All'],
                 ['hot', 'Hot 80+'],
-                ['callable', 'Callable'],
-                ['contract', 'Contract ready'],
+                ['callable', 'Phone format OK'],
+                ['contract', 'Email format OK'],
               ].map(([value, label]) => (
                 <button
                   key={value}
@@ -2005,11 +2023,12 @@ export function Leads() {
               ))}
             </div>
             <div className="pbk-leads-result-count" aria-live="polite">
-              {filteredLeads.length} matching lead{filteredLeads.length === 1 ? '' : 's'}
+              <span>{filteredLeads.length} matching lead{filteredLeads.length === 1 ? '' : 's'}</span>
+              <span> / {leads.length} loaded / {visibleLeads.length} on this page</span>
             </div>
           </div>
 
-          <div className="pbk-leads-roster-list" aria-label="Seller roster results">
+          <div className="pbk-leads-roster-list" aria-label="Seller roster results" data-pbk-worklist="leads">
             <div className="leads-mobile-cards">
               {visibleLeads.map((lead) => {
                 const id = getLeadId(lead);
@@ -2024,6 +2043,8 @@ export function Leads() {
                       type="button"
                       className="pbk-lead-mobile-select"
                       data-lead-queue-id={id}
+                      data-pbk-worklist-row={id}
+                      onKeyDown={focusWorklistRow}
                       aria-label={`Open lead ${sellerName} at ${getLeadAddress(lead)}`}
                       aria-pressed={isSelected}
                       onClick={() => setSelectedLeadId(id)}
@@ -2157,6 +2178,8 @@ export function Leads() {
                     <button
                       type="button"
                       data-lead-queue-id={id}
+                      data-pbk-worklist-row={id}
+                      onKeyDown={focusWorklistRow}
                       aria-label={`Open lead ${sellerName} at ${getLeadAddress(lead)}`}
                       aria-pressed={isSelected}
                       onClick={() => setSelectedLeadId(id)}

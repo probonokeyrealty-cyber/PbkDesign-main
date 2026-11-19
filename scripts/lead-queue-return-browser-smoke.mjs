@@ -38,7 +38,7 @@ try {
       await page.goto(origin + '/leads?search=Initial');
       const search = page.getByRole('searchbox', { name: /Search leads/ });
       await search.fill('Queue Sample');
-      await page.getByRole('button', { name: 'Contract ready', exact: true }).click();
+      await page.getByRole('button', { name: 'Email format OK', exact: true }).click();
       // No fixture emails: confirm that the filter really changes the roster.
       await expect(page.getByText('0 matching leads', { exact: true })).toBeVisible();
       await page.getByRole('button', { name: 'Hot 80+', exact: true }).click();
@@ -62,7 +62,7 @@ try {
         mkdirSync('.pbk-local/queue-return', { recursive: true });
         await page.screenshot({ path: `.pbk-local/queue-return/queue-${width}.png` });
       }
-      await page.getByRole('button', { name: 'Contract ready', exact: true }).click();
+      await page.getByRole('button', { name: 'Email format OK', exact: true }).click();
       await expect(page.getByText('0 matching leads', { exact: true })).toBeVisible();
       await page.goto(origin + '/command-center');
       const todayItem = page.locator('[data-today-queue-id="demo-today-item"]');

@@ -43,6 +43,21 @@ const STATUS_LABELS: Record<CatalogStatus, string> = {
   not_found: 'No catalog match',
 };
 
+const STATUS_GUIDANCE: Record<CatalogStatus, string> = {
+  matched: 'Review the read-only preview below. Running research is not available here.',
+  not_configured:
+    'An administrator needs to configure research access. Local PBK options remain available below.',
+  disabled:
+    'An administrator needs to enable catalog inspection. Local PBK options remain available below.',
+  authorization_failed: 'An administrator needs to review research access before another inspection.',
+  rate_limited: 'Wait a moment, then choose Find research tools to try again.',
+  timed_out: 'The inspection took too long. Choose Find research tools to try again.',
+  unavailable:
+    'Catalog inspection is temporarily unavailable. Choose Find research tools to try again.',
+  not_found:
+    'The approved research tool version was not found. An administrator needs to review the catalog.',
+};
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value && typeof value === 'object' && !Array.isArray(value));
 }
@@ -177,6 +192,22 @@ export function AgentResearchTools({
     catalog?.checkedAt && Number.isFinite(Date.parse(catalog.checkedAt))
       ? catalog.checkedAt
       : undefined;
+  const checkedLabel = checkedAt
+    ? new Intl.DateTimeFormat(undefined, {
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric',
+        hour: 'numeric',
+        minute: '2-digit',
+        timeZoneName: 'short',
+      }).format(new Date(checkedAt))
+    : undefined;
+  const tone = catalog?.status === 'matched' ? 'matched' : result ? 'warning' : 'neutral';
+  const guidance = catalog
+    ? STATUS_GUIDANCE[catalog.status]
+    : result
+      ? 'Catalog details could not be verified. Choose Find research tools to inspect again.'
+      : 'Choose Find research tools to inspect available options. Nothing runs automatically.';
   const tool =
     catalog?.source === 'composio' && catalog.discoveryOnly === true && catalog.status === 'matched'
       ? catalog.tools?.find(
@@ -191,7 +222,11 @@ export function AgentResearchTools({
   return (
     <details className="pbk-agent-research">
       <summary>Research tools</summary>
-      <div className="pbk-agent-research-body">
+      <div className="pbk-agent-research-body" aria-busy={busy}>
+        <div className="pbk-agent-research-heading">
+          <span className="pbk-agent-research-eyebrow">Agent research</span>
+          <span className="pbk-agent-research-badge">Read-only inspection</span>
+        </div>
         <p>
           Inspect advisory research options for {agentName}. Ava supervises PBK work; Rex research
           stays in Brain. Use the existing call and message controls for follow-up.
@@ -209,13 +244,20 @@ export function AgentResearchTools({
           {(busy || error) && result && <p>Showing the previous inspection for this selection.</p>}
           <section className="pbk-agent-research-catalog" aria-label="Composio catalog metadata">
             <h4>Composio catalog</h4>
-            <span className="pbk-agent-research-state">
+            <span className="pbk-agent-research-state" data-tone={tone}>
               {status || (result ? 'Catalog metadata unavailable' : 'Not inspected')}
             </span>
             <p className="pbk-agent-research-mono">
-              {checkedAt ? <time dateTime={checkedAt}>{checkedAt}</time> : 'Never checked'}
+              {checkedAt ? (
+                <>
+                  Checked <time dateTime={checkedAt} title={checkedAt}>{checkedLabel}</time>
+                </>
+              ) : (
+                'Never checked'
+              )}
             </p>
-            <p>
+            <p className="pbk-agent-research-guidance">{guidance}</p>
+            <p className="pbk-agent-research-boundary">
               Catalog metadata only. Account access, agent readiness and execution are unverified.
             </p>
           </section>

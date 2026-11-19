@@ -73,8 +73,8 @@ after(async () => {
   await new Promise((resolve) => server?.close(resolve));
 });
 
-async function open(t) {
-  const page = await browser.newPage();
+async function open(t, options = {}) {
+  const page = await browser.newPage(options);
   t.after(() => page.close());
   page.setDefaultTimeout(1500);
   await page.addInitScript(() => {
@@ -309,4 +309,45 @@ test('an unmounted inspector ignores completed discovery', async (t) => {
   await page.evaluate(() => window.unmountSubject());
   await page.evaluate((result) => window.resolveDiscovery(result), { ...local, composio: catalog });
   await expect(page.locator('#root')).toBeEmpty();
+});
+
+test('inspection provides local time, timezone and exact original timestamp without a refresh', async (t) => {
+  const page = await open(t, { locale: 'en-US', timezoneId: 'America/Los_Angeles' });
+  await find(page);
+  await expect(page.locator('.pbk-agent-research-body')).toHaveAttribute('aria-busy', 'true');
+  await page.evaluate((result) => window.resolveDiscovery(result), { ...local, composio: catalog });
+  await expect(page.locator('.pbk-agent-research-body')).toHaveAttribute('aria-busy', 'false');
+  await expect(page.locator('time')).toHaveAttribute('datetime', catalog.checkedAt);
+  await expect(page.locator('time')).toHaveAttribute('title', catalog.checkedAt);
+  await expect(page.locator('time')).toContainText('Nov 19, 2026');
+  await expect(page.locator('time')).toContainText('4:00 AM PST');
+  await expect(page.locator('.pbk-agent-research-state')).toHaveAttribute('data-tone', 'matched');
+  await expect(page.getByText('Review the read-only preview below. Running research is not available here.', { exact: true })).toBeVisible();
+  assert.equal((await page.evaluate(() => window.invokes)).length, 1);
+});
+
+test('uninspected guidance and each blocked state explain the next step without creating new actions', async (t) => {
+  const page = await open(t);
+  await page.locator('summary').first().click();
+  await expect(page.locator('.pbk-agent-research-state')).toHaveAttribute('data-tone', 'neutral');
+  await expect(page.getByText('Choose Find research tools to inspect available options. Nothing runs automatically.', { exact: true })).toBeVisible();
+  assert.deepEqual(await page.evaluate(() => window.invokes), []);
+  const guidance = {
+    not_configured: 'An administrator needs to configure research access. Local PBK options remain available below.',
+    disabled: 'An administrator needs to enable catalog inspection. Local PBK options remain available below.',
+    authorization_failed: 'An administrator needs to review research access before another inspection.',
+    rate_limited: 'Wait a moment, then choose Find research tools to try again.',
+    timed_out: 'The inspection took too long. Choose Find research tools to try again.',
+    unavailable: 'Catalog inspection is temporarily unavailable. Choose Find research tools to try again.',
+    not_found: 'The approved research tool version was not found. An administrator needs to review the catalog.',
+  };
+  let count = 0;
+  for (const [status, text] of Object.entries(guidance)) {
+    await page.getByRole('button', { name: 'Find research tools', exact: true }).click();
+    await page.evaluate((result) => window.resolveDiscovery(result), { ...local, composio: { ...catalog, status, tools: [] } });
+    await expect(page.getByText(text, { exact: true })).toBeVisible();
+    await expect(page.locator('.pbk-agent-research-state')).toHaveAttribute('data-tone', 'warning');
+    assert.equal(await page.getByRole('button').count(), 1);
+    assert.equal((await page.evaluate(() => window.invokes)).length, ++count);
+  }
 });

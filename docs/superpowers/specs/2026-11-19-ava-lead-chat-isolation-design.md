@@ -18,6 +18,8 @@ Split the exported route into a scope-reading wrapper and a keyed existing sessi
 
 The session component uses only its scope's keys. Preserve existing completed-only normalization,30-exchange retention, bounded draft-memory behavior and explicit Resume draft control. Old global history stays accessible only in the general operator chat; do not copy it into linked lead storage. Gate persistence with restored state, not a ref set synchronously before stale initial write effects run, so initial empty state cannot erase saved conversation history. Browser storage getter/get/remove/set failures must leave chat usable in memory, with no cross-scope fallback. A slot whose initial read throws must remain unwriteable for that session mount, avoiding a later successful write erasing unseen saved data.
 
+For validation, controls include C0, DEL and C1. For an actual browser storage access failure, show a short nonblocking status using the existing PBK status pattern: some chat details could not be restored or saved in this browser, and the operator should keep the chat open. Do not imply that in-memory-only state is durable or add warning UI when storage works normally.
+
 Navigating or resuming a draft must never submit a command, invoke research, save CRM data, request microphone permission or play speech. A pending assistant stream must be aborted on lead change; its late result cannot populate the new scope or persist under its keys. Already accepted backend actions remain governed by existing runtime and approvals. The global operational command/approval queue remains unchanged; it is not a lead-specific chat history and must not be silently filtered or deleted.
 
 ## UX and limits

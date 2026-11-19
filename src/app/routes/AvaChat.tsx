@@ -34,7 +34,7 @@ import {
   VolumeX,
   X,
 } from 'lucide-react';
-import { Link, useSearchParams } from 'react-router';
+import { Link, useLocation } from 'react-router';
 import { PbkButton, PbkDataSource, PbkEmpty, PbkPulseDot } from '../../components/pbk/index';
 import { useRuntimeSnapshot } from '../hooks/useRuntimeSnapshot';
 import {
@@ -51,6 +51,7 @@ import {
 import { showUiToast } from '../utils/uiFeedback';
 import { getApprovalResolutionKeys } from './inboxRuntimeLogic.js';
 import { createAvaAudioPlayer, createAvaReplySpeech, type AvaVoiceProgress } from '../utils/avaReplySpeech';
+import { resolveAvaChatScope, type AvaChatScope } from '../utils/avaChatScope.mjs';
 
 type SpeechRecognitionResultEvent = Event & {
   results: SpeechRecognitionResultList;
@@ -129,9 +130,6 @@ type AvaAssistantExchange = {
   deepSeekDecision?: Record<string, unknown> | null;
 };
 
-const AVA_OPERATOR_MEMORY_KEY = 'pbk:ava-chat:operator-memory';
-const AVA_ASSISTANT_SESSION_KEY = 'pbk:ava-chat:assistant-session';
-const AVA_ASSISTANT_EXCHANGES_KEY = 'pbk:ava-chat:assistant-exchanges';
 const DEFAULT_CHAT_COMMAND_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 const LOCAL_CONTROL_ACTIONS = new Set<AvaCommandAction>([
   'clickui',
@@ -1070,9 +1068,51 @@ function getAvaSystemStatus({
   };
 }
 
+function readAvaChatStorage(key: string) {
+  try {
+    return window.localStorage.getItem(key);
+  } catch {
+    return undefined;
+  }
+}
+
+function writeAvaChatStorage(key: string, value: string | null) {
+  try {
+    if (value === null) window.localStorage.removeItem(key);
+    else window.localStorage.setItem(key, value);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export function AvaChat() {
-  const [searchParams] = useSearchParams();
-  const linkedLeadId = searchParams.get('leadId') || searchParams.get('lead_id') || '';
+  const scope = resolveAvaChatScope(useLocation().search);
+  if (!scope.valid) {
+    return (
+      <section className="pbk-ava-chat-surface h-full min-w-0 bg-[var(--ava-bg)] text-[var(--ava-text)]">
+        <div className="mx-auto w-full max-w-4xl px-3 py-5 sm:px-6 lg:px-8">
+          <div role="alert" className="flex items-start gap-3 rounded-lg border border-[var(--ava-warning-border)] bg-[var(--ava-warning-soft)] p-3 text-sm">
+            <AlertTriangle size={18} className="mt-0.5 shrink-0 text-[var(--ava-warning)]" aria-hidden="true" />
+            <div className="min-w-0">
+              <p className="font-semibold">This link has invalid lead context.</p>
+              <Link className="pbk-ava-evidence-link mt-2" to="/ava-chat">Open general Ava chat</Link>
+            </div>
+          </div>
+        </div>
+      </section>
+    );
+  }
+  return <AvaChatSession key={scope.identity} scope={scope} />;
+}
+
+function AvaChatSession({ scope }: { scope: AvaChatScope }) {
+  const { leadId: linkedLeadId, storageKeys } = scope;
+  const {
+    operatorMemory: operatorMemoryKey,
+    assistantSession: sessionKey,
+    assistantExchanges: exchangesKey,
+  } = storageKeys;
   const { snapshot, refresh } = useRuntimeSnapshot(30000);
   const [draft, setDraft] = useState('');
   const [transcript, setTranscript] = useState('');
@@ -1093,6 +1133,8 @@ export function AvaChat() {
   const contextRef = useRef<HTMLDialogElement | null>(null);
   const [decidingApprovalId, setDecidingApprovalId] = useState('');
   const [operatorMemory, setOperatorMemory] = useState<OperatorMemory | null>(null);
+  const [writableStorage, setWritableStorage] = useState<Record<keyof AvaChatScope['storageKeys'], boolean> | null>(null);
+  const [storageUnavailable, setStorageUnavailable] = useState(false);
   const [resolvedApprovalIds, setResolvedApprovalIds] = useState<Set<string>>(() => new Set());
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
@@ -1378,29 +1420,32 @@ export function AvaChat() {
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
-    try {
-      const raw = window.localStorage.getItem(AVA_OPERATOR_MEMORY_KEY);
-      if (!raw) return;
-      const parsed = JSON.parse(raw) as OperatorMemory;
-      if (!parsed?.draft || !ACTIONS.some((item) => item.id === parsed.action)) return;
-      setOperatorMemory(parsed);
-    } catch {
-      window.localStorage.removeItem(AVA_OPERATOR_MEMORY_KEY);
+    const rawMemory = readAvaChatStorage(operatorMemoryKey);
+    const rawSessionId = readAvaChatStorage(sessionKey);
+    const rawExchanges = readAvaChatStorage(exchangesKey);
+    const writable = {
+      operatorMemory: rawMemory !== undefined,
+      assistantSession: rawSessionId !== undefined,
+      assistantExchanges: rawExchanges !== undefined,
+    };
+    if (!writable.operatorMemory || !writable.assistantSession || !writable.assistantExchanges) {
+      setStorageUnavailable(true);
     }
-  }, []);
 
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-    const storedSessionId = String(
-      window.localStorage.getItem(AVA_ASSISTANT_SESSION_KEY) || ''
-    ).trim();
+    try {
+      const parsed = rawMemory ? JSON.parse(rawMemory) as OperatorMemory : null;
+      if (parsed?.draft && ACTIONS.some((item) => item.id === parsed.action)) {
+        setOperatorMemory(parsed);
+      }
+    } catch {
+      if (!writeAvaChatStorage(operatorMemoryKey, null)) setStorageUnavailable(true);
+    }
+
+    const storedSessionId = (rawSessionId ?? '').trim();
     if (storedSessionId) setAssistantSessionId(storedSessionId);
     try {
-      const raw = window.localStorage.getItem(AVA_ASSISTANT_EXCHANGES_KEY);
-      if (!raw) return;
-      const parsed = JSON.parse(raw);
-      if (!Array.isArray(parsed)) return;
-      setAssistantExchanges(
+      const parsed = rawExchanges ? JSON.parse(rawExchanges) : null;
+      if (Array.isArray(parsed)) setAssistantExchanges(
         parsed
           .filter((item) => item?.status === 'completed')
           .map(
@@ -1441,25 +1486,26 @@ export function AvaChat() {
           .slice(-30)
       );
     } catch {
-      window.localStorage.removeItem(AVA_ASSISTANT_EXCHANGES_KEY);
+      if (!writeAvaChatStorage(exchangesKey, null)) setStorageUnavailable(true);
     }
-  }, []);
+
+    // Publish restored state before allowing writes. A failed read protects its unseen slot.
+    setWritableStorage(writable);
+  }, [exchangesKey, operatorMemoryKey, sessionKey]);
 
   useEffect(() => {
-    if (typeof window === 'undefined' || !assistantSessionId) return;
-    window.localStorage.setItem(AVA_ASSISTANT_SESSION_KEY, assistantSessionId);
-  }, [assistantSessionId]);
+    if (!writableStorage?.assistantSession || !assistantSessionId) return;
+    if (!writeAvaChatStorage(sessionKey, assistantSessionId)) setStorageUnavailable(true);
+  }, [assistantSessionId, sessionKey, writableStorage]);
 
   useEffect(() => {
-    if (typeof window === 'undefined') return;
-    window.localStorage.setItem(
-      AVA_ASSISTANT_EXCHANGES_KEY,
-      JSON.stringify(assistantExchanges.filter((exchange) => exchange.status === 'completed').slice(-30))
-    );
-  }, [assistantExchanges]);
+    if (!writableStorage?.assistantExchanges) return;
+    const completed = assistantExchanges.filter((exchange) => exchange.status === 'completed').slice(-30);
+    if (!writeAvaChatStorage(exchangesKey, JSON.stringify(completed))) setStorageUnavailable(true);
+  }, [assistantExchanges, exchangesKey, writableStorage]);
 
   useEffect(() => {
-    if (typeof window === 'undefined') return;
+    if (!writableStorage) return;
     const trimmedDraft = draft.trim();
     if (!trimmedDraft) return;
     const nextMemory: OperatorMemory = {
@@ -1468,8 +1514,10 @@ export function AvaChat() {
       updatedAt: new Date().toISOString(),
     };
     setOperatorMemory(nextMemory);
-    window.localStorage.setItem(AVA_OPERATOR_MEMORY_KEY, JSON.stringify(nextMemory));
-  }, [action, draft]);
+    if (writableStorage.operatorMemory && !writeAvaChatStorage(operatorMemoryKey, JSON.stringify(nextMemory))) {
+      setStorageUnavailable(true);
+    }
+  }, [action, draft, operatorMemoryKey, writableStorage]);
 
   useEffect(() => {
     const timeline = timelineRef.current;
@@ -1761,6 +1809,7 @@ export function AvaChat() {
           pendingApprovals={pendingApprovals}
           loading={loading}
           systemStatus={systemStatus}
+          storageUnavailable={storageUnavailable}
           onRefresh={() => void load()}
           onOpenContext={() => contextRef.current?.showModal()}
         />
@@ -1921,6 +1970,7 @@ function AvaIdentityBar({
   pendingApprovals,
   loading,
   systemStatus,
+  storageUnavailable,
   onRefresh,
   onOpenContext,
 }: {
@@ -1929,6 +1979,7 @@ function AvaIdentityBar({
   pendingApprovals: number;
   loading: boolean;
   systemStatus: AvaSystemStatus;
+  storageUnavailable: boolean;
   onRefresh: () => void;
   onOpenContext: () => void;
 }) {
@@ -2000,6 +2051,17 @@ function AvaIdentityBar({
             </Link>
           )}
         </div>
+      )}
+      {storageUnavailable && (
+        <p
+          role="status"
+          className="flex min-w-0 basis-full items-start gap-2 rounded-lg border border-[var(--ava-warning-border)] bg-[var(--ava-warning-soft)] p-2 text-xs"
+        >
+          <AlertTriangle size={16} className="shrink-0 text-[var(--ava-warning)]" aria-hidden="true" />
+          <span className="min-w-0">
+            Some chat details could not be restored or saved in this browser. Keep this chat open.
+          </span>
+        </p>
       )}
     </header>
   );

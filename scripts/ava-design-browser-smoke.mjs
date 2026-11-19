@@ -4,11 +4,15 @@ import { createServer, request as httpRequest } from 'node:http';
 import { chromium, devices, expect, webkit } from '@playwright/test';
 import { preview } from 'vite';
 import { streamAvaChatResponse } from './ava-chat-events.mjs';
+import { resolveAvaChatScope } from '../src/app/utils/avaChatScope.mjs';
 
 const shellHtml = readFileSync(new URL('../dist/index.shell.html', import.meta.url), 'utf8');
 const server = await preview({ preview: { host: '127.0.0.1', port: 0, strictPort: true } });
 const previewOrigin = `http://127.0.0.1:${server.httpServer.address().port}`;
 const leadId = 'qa-ava-lead';
+const leadScope = resolveAvaChatScope(`?leadId=${leadId}`);
+const generalScope = resolveAvaChatScope('');
+assert.ok(leadScope.valid && generalScope.valid);
 const answer = `I found the latest seller note.\n\n${Array.from({ length: 42 }, (_, index) => `Step ${index + 1}: compare the seller's timeline, property condition, and confirmed deal facts before recommending the next action.`).join('\n\n')}\n\nFinal required detail: the complete explanation is preserved.`;
 const approval = { id: 'qa-ava-review', type: 'local_command', status: 'pending' };
 const command = {
@@ -216,7 +220,7 @@ async function verify(engine, viewport, device = {}) {
       answer
     );
 
-    const persisted = () => page.evaluate(() => JSON.parse(localStorage.getItem('pbk:ava-chat:assistant-exchanges') || '[]'));
+    const persisted = () => page.evaluate((key) => JSON.parse(localStorage.getItem(key) || '[]'), leadScope.storageKeys.assistantExchanges);
     const streamAsk = 'Stream fixture: complete';
     await composer.fill(streamAsk);
     await page.getByRole('button', { name: 'Send to Ava' }).click();
@@ -299,6 +303,24 @@ async function verify(engine, viewport, device = {}) {
     await expect(page.getByRole('article').filter({ hasText: completedAnswer }).getByRole('link', { name: 'Open lead used in this reply' })).toHaveAttribute('href', `/leads/${leadId}`);
     await expect(page.getByText(/^Partial Stream fixture:/)).toHaveCount(0);
     assert.equal(chatRequests.length, 7, 'no duplicate POST or automatic retry');
+    for (const key of Object.values(generalScope.storageKeys)) {
+      assert.equal(await page.evaluate((key) => localStorage.getItem(key), key), null,
+        'Linked chat must not create or overwrite general operator continuity');
+    }
+    await page.evaluate((key) => {
+      const original = Storage.prototype.setItem;
+      Storage.prototype.setItem = function (target, value) {
+        if (target === key) throw new DOMException('Fixture storage quota', 'QuotaExceededError');
+        return original.call(this, target, value);
+      };
+    }, leadScope.storageKeys.operatorMemory);
+    await composer.fill('Fixture draft kept in memory only');
+    const storageNotice = page.getByRole('status').filter({ hasText: 'Some chat details could not be restored or saved in this browser.' });
+    await expect(storageNotice).toContainText('Keep this chat open.');
+    await expect(storageNotice).toBeInViewport({ ratio: 1 });
+    await expect(composer).toBeInViewport({ ratio: 1 });
+    await expect(page.getByRole('button', { name: 'Send to Ava', exact: true })).toBeInViewport({ ratio: 1 });
+    assert.equal(chatRequests.length, 7, 'A browser storage failure must not submit a draft');
     assert.equal(
       await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1),
       true

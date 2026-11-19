@@ -36,6 +36,16 @@ assert(
   'AvaChat route file must exist.'
 );
 const avaChat = read('src/app/routes/AvaChat.tsx');
+const { resolveAvaChatScope } = await import('../src/app/utils/avaChatScope.mjs');
+const generalScope = resolveAvaChatScope('');
+const leadScope = resolveAvaChatScope('?leadId=qa-local-command-scope');
+assert(
+  generalScope.valid && leadScope.valid &&
+    generalScope.storageKeys.assistantExchanges === 'pbk:ava-chat:assistant-exchanges' &&
+    leadScope.storageKeys.assistantExchanges !== generalScope.storageKeys.assistantExchanges &&
+    avaChat.includes('resolveAvaChatScope'),
+  'Ava must keep general chat storage compatible and resolve separate linked-lead history storage.'
+);
 
 [
   'SpeechRecognition',
@@ -50,7 +60,6 @@ const avaChat = read('src/app/routes/AvaChat.tsx');
   'Search past chats',
   'Replay',
   'AssistantExchange',
-  'AVA_ASSISTANT_EXCHANGES_KEY',
   'DEFAULT_CHAT_COMMAND_MAX_AGE_MS',
   'shouldUseAssistantChatRoute',
   'shouldShowCommandInDefaultChat',

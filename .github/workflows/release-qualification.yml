@@ -138,6 +138,9 @@ jobs:
       - name: Run Chromium and WebKit qualification
         run: node scripts/ava-design-browser-smoke.mjs
 
+      - name: Verify lead-linked chat continuity
+        run: npm run test:ava-chat-scope-ui
+
       - name: Verify explicit agent research inspection
         run: |
           npm run test:composio-research-ui

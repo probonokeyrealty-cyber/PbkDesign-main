@@ -61,6 +61,12 @@ The local end-to-end fixture proves both Ava and Rex receive selected QA/DND evi
 
 ## Activation acceptance still required
 
-An actual staging read in each direction, hosted sign-in/Settings check, sandbox scope/DND/QA verification and denied write probes must pass after isolated hosting and authorization are provisioned. Until then the feature must stay disabled and be described as not connected. No production release is included in this approval.
+The isolated staging deployment `dep-dbvke5cipgvc73dg0lr0` is live on commit `599e740ef828eba5dcb962545198e48bcb7adba4`. Authenticated checks at 19:03 UTC verified health, file state, 11 agents, configured team auth and both integration directions disabled. The limited endpoint returns 404 while disabled. Runtime service plan is free and auto-deploy remains off.
+
+Hosted UI checks at 19:05 UTC passed sign-in, session reload, Settings refresh and separate disabled connection cards on desktop Chromium, iPhone WebKit and 320px WebKit. Settings scroll/client widths matched (1199/1199, 381/381 and 311/311). The test allowed only staging reads, team authentication/verification, read-stream session setup and font assets; it observed no business mutations or unexpected external requests. Screenshots and sanitized reports are retained in the private local audit directory. The initial reload probe incorrectly blocked the authentication verifier's POST; correcting that test allowlist resolved the probe without a product change.
+
+A developer-project connection for user `pbk-composio-staging` was initiated through the existing restricted auth configuration. It is not Active yet. A project-scoped Composio API key must be supplied through protected staging environment settings; no CLI credential cache was read or copied.
+
+An actual Composio staging read in each direction, sandbox scope/DND/QA verification and denied write probes remain pending those credentials and pinned session setup. Until then the feature must stay disabled and be described as not connected. No production release is included in this approval.
 
 Reference API shapes were checked against Composio's published client 2.1.36 and [session configuration documentation](https://docs.composio.dev/docs/configuring-sessions). Remote transport and registration follow [sessions via MCP](https://docs.composio.dev/docs/sessions-via-mcp) and [Custom MCP](https://docs.composio.dev/docs/extending-sessions/custom-mcp).

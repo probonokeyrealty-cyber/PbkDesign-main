@@ -1,5 +1,5 @@
 {
-  "status": "created-free-service-build-refinement",
+  "status": "deployed-disabled-awaiting-protected-authorization",
   "workspaceName": "PBK",
   "service": {
     "name": "pbk-composio-staging",

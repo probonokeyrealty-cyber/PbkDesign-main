@@ -198,7 +198,7 @@ export function AgentResearchTools({
         </p>
         <button
           type="button"
-          className="btn btn-ghost"
+          className="pbk-btn pbk-btn-ghost"
           disabled={busy}
           onClick={() => void findResearchTools()}
         >

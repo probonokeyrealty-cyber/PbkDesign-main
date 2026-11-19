@@ -43,6 +43,8 @@
 }
 
 .pbk-agent-research button {
+  color: var(--sky);
+  border-color: var(--sky-dim);
   justify-self: start;
   min-height: 44px;
   max-width: 100%;

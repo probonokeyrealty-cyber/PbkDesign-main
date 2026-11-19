@@ -1,3 +1,5 @@
+import { AttomRecordDatasets } from './AttomRecordDatasets';
+import type { AttomMcpSection } from '../../utils/attomMcpSections.mjs';
 import { useState } from 'react';
 import {
   Check,
@@ -33,6 +35,7 @@ type PreviewProps = {
     retrievedAt: string;
     facts: AttomPropertyFacts;
     fieldRetrievedAt?: Record<string, string>;
+    sections?: AttomMcpSection[];
   } | null;
   onRefresh?: () => void | Promise<void>;
   refreshing?: boolean;
@@ -116,7 +119,7 @@ function PropertyLookup({
   refreshing = false,
 }: PreviewProps) {
   const [result, setResult] = useState<AttomPreviewResult | null>(
-    snapshot ? { status: 'matched', profile: snapshot.facts } : null
+    snapshot ? { status: 'matched', profile: snapshot.facts, sections: snapshot.sections } : null
   );
   const [localLoading, setLoading] = useState(false);
   const loading = localLoading || refreshing;
@@ -142,7 +145,7 @@ function PropertyLookup({
       }
       const next = (await fetchAttomPropertyPreview(address)) || { status: 'unavailable' };
       if (next.status !== 'matched' && snapshot) {
-        setResult({ status: 'matched', profile: snapshot.facts });
+        setResult({ status: 'matched', profile: snapshot.facts, sections: snapshot.sections });
         setSavedSnapshot(true);
         setLookedUpAt(validDate(snapshot.retrievedAt) ? new Date(snapshot.retrievedAt) : null);
         setRefreshFailed(true);
@@ -153,7 +156,7 @@ function PropertyLookup({
       }
     } catch {
       if (snapshot) {
-        setResult({ status: 'matched', profile: snapshot.facts });
+        setResult({ status: 'matched', profile: snapshot.facts, sections: snapshot.sections });
         setSavedSnapshot(true);
         setLookedUpAt(validDate(snapshot.retrievedAt) ? new Date(snapshot.retrievedAt) : null);
         setRefreshFailed(true);
@@ -363,6 +366,7 @@ function PropertyLookup({
               <p className="pbk-attom-no-differences">No conflicting values.</p>
             )}
             <RecordGroups profile={profile} snapshot={snapshot} />
+            <AttomRecordDatasets sections={result?.sections ?? snapshot?.sections} />
           </div>
         )}
       </div>

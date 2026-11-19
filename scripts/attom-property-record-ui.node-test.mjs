@@ -42,6 +42,7 @@ function mount(invalidTime = false) {
         ? new Proxy({}, { get: (_, key) => String(key) })
         : name.includes('attomRecordFields')
           ? { attomExtraRecordFields }
+          : name.includes('AttomRecordDatasets') ? { AttomRecordDatasets: () => null }
           : name.includes('runtimeBridge')
             ? {
                 fetchAttomPropertyPreview: () => {

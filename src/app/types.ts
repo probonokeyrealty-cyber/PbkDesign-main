@@ -55,6 +55,7 @@ export interface DealData {
     address: string;
     retrievedAt: string;
     fieldRetrievedAt?: Record<string, string>;
+    sections?: import('./utils/attomMcpSections.mjs').AttomMcpSection[];
     facts: Record<string, string | number | null>;
   };
 

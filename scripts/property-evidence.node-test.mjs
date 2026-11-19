@@ -8,10 +8,15 @@ const source = readFileSync(
   'utf8'
 );
 const code = ts.transpileModule(
-  source.replace(
-    "'./attomRecordFields.mjs'",
-    JSON.stringify(new URL('../src/app/utils/attomRecordFields.mjs', import.meta.url).href)
-  ),
+  source
+    .replaceAll(
+      "'./attomMcpSections.mjs'",
+      JSON.stringify(new URL('../src/app/utils/attomMcpSections.mjs', import.meta.url).href)
+    )
+    .replace(
+      "'./attomRecordFields.mjs'",
+      JSON.stringify(new URL('../src/app/utils/attomRecordFields.mjs', import.meta.url).href)
+    ),
   {
     compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
   }
@@ -250,4 +255,54 @@ test('saved additional facts reject out-of-range numbers, coercion, identifiers 
   ])
     assert.equal(records.facts[key], null, key);
   assert.equal(records.facts.secret, undefined);
+});
+
+test('saved dataset sections are strictly hydrated only behind valid record identity', () => {
+  const propertyRecordSnapshot = {
+    source: 'attom',
+    address,
+    retrievedAt: '2026-11-18T12:00:00Z',
+    facts: { address },
+    sections: [
+      {
+        id: 'equity',
+        status: 'ok',
+        checkedAt: '2026-10-01T12:00:00Z',
+        retrievedAt: '2026-10-01T12:00:00Z',
+        facts: { estimatedValue: 250000, secret: 'discard' },
+        rows: [],
+        caveats: [],
+        refreshStatus: { status: 'timed_out', checkedAt: '2026-11-18T12:00:00Z' },
+      },
+      {
+        id: 'unknown',
+        status: 'ok',
+        checkedAt: '2026-10-01T12:00:00Z',
+        facts: { secret: 'discard' },
+        rows: [],
+        caveats: [],
+      },
+    ],
+  };
+  const reopened = readPropertyEvidence({ propertyRecordSnapshot }, address).records;
+  assert.equal(reopened.sections?.length, 1);
+  assert.equal(reopened.sections[0].facts.estimatedValue, 250000);
+  assert.equal(reopened.sections[0].facts.secret, undefined);
+  assert.equal(reopened.sections[0].retrievedAt, '2026-10-01T12:00:00Z');
+  assert.deepEqual(reopened.sections[0].refreshStatus, {
+    status: 'timed_out',
+    checkedAt: '2026-11-18T12:00:00Z',
+  });
+  for (const patch of [
+    { source: 'unknown' },
+    { address: '86 Other Street, Example City, CA 90210' },
+    { retrievedAt: 'invalid' },
+  ])
+    assert.equal(
+      readPropertyEvidence(
+        { propertyRecordSnapshot: { ...propertyRecordSnapshot, ...patch } },
+        address
+      ).records,
+      null
+    );
 });

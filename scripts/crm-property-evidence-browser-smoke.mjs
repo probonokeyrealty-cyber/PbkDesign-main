@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { chromium, webkit, devices, expect } from '@playwright/test';
 import { preview } from 'vite';
 import { readFileSync } from 'node:fs';
+import { projectAttomMcpSection } from '../src/app/utils/attomMcpSections.mjs';
 process.env.PBK_DEV_BRIDGE_URL = 'http://127.0.0.1:1';
 const server = await preview({ build: { outDir: 'dist' }, preview: { host: '127.0.0.1', port: 0 } });
 const origin = 'http://127.0.0.1:' + server.httpServer.address().port;
@@ -9,6 +10,13 @@ const structuredAddress = { street: '24 Sample Oak Lane', city: 'Example City', 
 const address = '24 Sample Oak Lane, Example City, CA 90210';
 const photos = ['front', 'yard', 'broken'].map(x => `https://ap.rdcpix.com/crm-fixture-${x}.jpg`);
 const captured = '2026-11-17T12:00:00Z';
+const sectionCaptured = '2026-11-15T12:00:00Z';
+const savedDatasets = [
+  projectAttomMcpSection('tax-history', [{ taxYear: 2025, tax: 2500, totalValue: 300000 }, { taxYear: 2024, tax: 2400, totalValue: 290000 }], 'ok', sectionCaptured),
+  { ...projectAttomMcpSection('ownership', { names: ['Owner fixture alpha'], mailingAddress: 'Fictional mailing record', ownerOccupied: false }, 'ok', sectionCaptured), refreshStatus: { status: 'timed_out', checkedAt: captured } },
+  projectAttomMcpSection('valuation', { valuation: { value: 375000, estimatedDate: '2026-10-01' } }, 'ok', captured),
+  projectAttomMcpSection('permits', undefined, 'not_entitled', captured),
+];
 const sale = { id: 'sale-fixture', address: '86 Sample Cedar Drive, Example City, CA 90210', soldDate: '2026-11-12', price: 400000, distanceMiles: 0.5, beds: 3, baths: 2, sqft: 1600, pricePerSqft: 250, propertyType: 'Single family' };
 sale.photoEvidence = { source: 'apify-for-sale', address: sale.address, retrievedAt: captured, photoUrls: ['https://ap.rdcpix.com/comp-fixture-front.jpg'], sourceLinks: [] };
 const alternateSales = [2,3,4].map(n => ({...sale,id:`sale-${n}`,address:`${86+n} Sample Cedar Drive, Example City, CA 90210`,price:400000+n*10000,photoEvidence:n===2?{...sale.photoEvidence,address:sale.address}:undefined}));
@@ -20,6 +28,7 @@ const lead = { id: 'crm-evidence-fixture', leadId: 'crm-evidence-fixture', selle
     propertyRecordSnapshot: { source: 'attom', address, retrievedAt: captured, fieldRetrievedAt: {legalDescription:'2026-11-16T12:00:00Z'}, facts: { address, latitude:34.1, longitude:-118.4, legalDescription:'Fixture legal description', coolingType:'Central', taxPerSizeUnit:2.5, grossSqft:2100, apn: 'FIXTURE-24', propertyType: 'Single family', livingSqft: 1700, beds: 4, baths: 2, yearBuilt: 1995, lotSqft: 6000, taxAmount: 2500, taxYear: 2025, recordedSaleAmount: 250000, recordedSaleDate: '2020-01-01' } },
   },
 };
+lead.deal.propertyRecordSnapshot.sections = savedDatasets;
 
 // Intercept every API and remote image request; these checks never touch real leads or providers.
 async function verify(engine, config, label) {
@@ -31,6 +40,7 @@ async function verify(engine, config, label) {
   other.seller.name = 'Other Fixture Seller';
   other.deal.propertyRecordSnapshot.facts.apn = 'OTHER-LEAD-SAME-ADDRESS';
   other.deal.propertyRecordSnapshot.facts.livingSqft = 2100;
+  other.deal.propertyRecordSnapshot.sections = [projectAttomMcpSection('ownership', { names: ['Other lead owner only'] }, 'ok', captured)];
   other.analyzer.recordedSales.sales = [{ ...sale, id: 'other-sale', price: 520000 }];
   let mode = 'success';
   try {
@@ -110,6 +120,25 @@ async function verify(engine, config, label) {
     await page.goto(origin + '/leads/' + fixture.id);
     await expect(workspace).toBeVisible({ timeout: 20000 });
     const overview = workspace.getByRole('tabpanel', { name: 'Overview' });
+    const brief = workspace.getByRole('region', { name: 'Evidence brief.' });
+    await expect(brief).toBeVisible();
+    await expect(brief.getByText('3 populated datasets', { exact: true })).toBeVisible();
+    await expect(brief.getByText('0 reviewed selections', { exact: true })).toBeVisible();
+    await expect(brief.getByText('3 saved photos', { exact: true })).toBeVisible();
+    await expect(brief.getByText('1 retained after a later refresh', { exact: true })).toBeVisible();
+    await brief.getByRole('button', { name: 'Review records', exact: true }).click();
+    await expect(workspace.getByRole('tab', { name: 'Property record', exact: true })).toBeFocused();
+    await tab('Overview');
+    await brief.getByRole('button', { name: 'Review photos', exact: true }).click();
+    await expect(workspace.getByRole('tab', { name: 'Photos', exact: true })).toBeFocused();
+    await tab('Overview');
+    await brief.getByRole('button', { name: 'Review comps', exact: true }).click();
+    await expect(workspace.getByRole('tab', { name: 'Comps', exact: true })).toBeFocused();
+    assert.deepEqual(mutations, [], 'Evidence brief navigation must not save or refresh');
+    assert.deepEqual(providerReads, [], 'Evidence brief uses saved evidence only');
+    await tab('Overview');
+    await noOverflow();
+    await brief.screenshot({ path: `output/property-evidence-brief-${label}.png` });
     await expect(overview.getByRole('img', { name: 'Listing photo 1', exact: true })).toBeVisible();
     await overview.getByRole('img', { name: 'Listing photo 1', exact: true }).scrollIntoViewIfNeeded();
     await expect(overview.getByText('Low-resolution source preview. Open the listing for more detail.', { exact: true })).toBeVisible();
@@ -122,16 +151,16 @@ async function verify(engine, config, label) {
     const recordPanel=workspace.getByRole('tabpanel',{name:'Property record',exact:true});
     const recordSearch=recordPanel.getByRole('searchbox',{name:'Search property record',exact:true});
     await recordSearch.fill('longitude');
-    await expect(recordPanel.locator('.pbk-attom-facts dt')).toHaveText(['Longitude']);
-    await expect(recordPanel.locator('.pbk-attom-facts').getByText('-118.4',{exact:true})).toBeVisible();
+    await expect(recordPanel.locator('.pbk-attom-record-groups:not(.pbk-record-datasets) .pbk-attom-facts dt')).toHaveText(['Longitude']);
+    await expect(recordPanel.locator('.pbk-attom-record-groups:not(.pbk-record-datasets) .pbk-attom-facts').getByText('-118.4',{exact:true})).toBeVisible();
     await recordSearch.fill('legal description');
     await expect(recordPanel.getByText('Fixture legal description',{exact:true})).toBeVisible();
     await expect(recordPanel.locator('.pbk-attom-record-groups time[datetime="2026-11-16T12:00:00Z"]')).toBeVisible();
     await recordSearch.fill('Tax per sq ft');
-    await expect(recordPanel.locator('.pbk-attom-facts').getByText('$2.50 / sq ft',{exact:true})).toBeVisible();
+    await expect(recordPanel.locator('.pbk-attom-record-groups:not(.pbk-record-datasets) .pbk-attom-facts').getByText('$2.50 / sq ft',{exact:true})).toBeVisible();
     await recordSearch.fill('Heating fuel');
-    await expect(recordPanel.locator('.pbk-attom-facts dt')).toHaveText(['Heating fuel']);
-    await expect(recordPanel.locator('.pbk-attom-facts').getByText('Not provided',{exact:true})).toBeVisible();
+    await expect(recordPanel.locator('.pbk-attom-record-groups:not(.pbk-record-datasets) .pbk-attom-facts dt')).toHaveText(['Heating fuel']);
+    await expect(recordPanel.locator('.pbk-attom-record-groups:not(.pbk-record-datasets) .pbk-attom-facts').getByText('Not provided',{exact:true})).toBeVisible();
     await recordSearch.fill('no-such-record-field');
     await expect(recordPanel.getByText('No record fields match this search.',{exact:true})).toBeVisible();
     await recordSearch.fill('');
@@ -139,6 +168,29 @@ async function verify(engine, config, label) {
     await missing.check();await missing.uncheck();
     const parcelGroup=recordPanel.locator('summary').filter({hasText:'Parcel and building'});
     await parcelGroup.click();await parcelGroup.click();
+    const datasets=recordPanel.getByRole('region',{name:'Saved property datasets',exact:true});
+    const datasetSearch=datasets.getByRole('searchbox',{name:'Search saved datasets',exact:true});
+    await datasetSearch.fill('Tax history');
+    await expect(datasets.locator('details')).toHaveCount(1);
+    await expect(datasets.getByText('$2,500',{exact:true})).toBeVisible();
+    await expect(datasets.locator('time[datetime="2026-11-15T12:00:00Z"]').first()).toBeVisible();
+    await datasets.getByRole('combobox',{name:'Filter saved dataset group'}).selectOption('History');
+    await expect(datasets.locator('details')).toHaveCount(1);
+    await datasets.getByRole('combobox',{name:'Filter saved dataset group'}).selectOption('all');
+    await datasetSearch.fill('Ownership');
+    await expect(datasets.getByText('Owner fixture alpha',{exact:true})).toBeVisible();
+    await expect(datasets.getByText('Retained snapshot',{exact:true})).toBeVisible();
+    await expect(datasets.getByText(/Earlier evidence retained; capture time unchanged/)).toBeVisible();
+    await datasetSearch.fill('Permits');
+    await expect(datasets.getByText('Not included in access',{exact:true})).toBeVisible();
+    await datasetSearch.fill('no-such-dataset');
+    await expect(datasets.getByText('No saved datasets match these filters.',{exact:true})).toBeVisible();
+    await datasetSearch.fill('Valuation estimates');
+    await expect(datasets.getByText('$375,000',{exact:true})).toBeVisible();
+    await noOverflow();
+    await datasets.scrollIntoViewIfNeeded();
+    await page.screenshot({path:`output/property-datasets-${label}.png`,fullPage:false});
+    await datasetSearch.fill('');
     await noOverflow();
     await recordPanel.locator('.pbk-record-masthead').scrollIntoViewIfNeeded();
     await page.screenshot({path:`output/property-record-${label}.png`,fullPage:false});
@@ -194,6 +246,11 @@ async function verify(engine, config, label) {
     assert.equal(mutations.length, 2, 'Reloading evidence performs no enrichment or writes');
     await expect(workspace.getByRole('checkbox', { name: 'Select comp ' + sale.address })).toBeChecked();
     await expect(workspace.getByRole('region', { name: 'Selected comp comparison' }).getByRole('img')).toHaveAttribute('src', sale.photoEvidence.photoUrls[0]);
+    await tab('Overview');
+    await expect(brief.getByText('1 reviewed selection', { exact: true })).toBeVisible();
+    await expect(brief.getByText('1 saved photo', { exact: true })).toBeVisible();
+    assert.equal(mutations.length, 2, 'Viewing updated brief must not save or refresh');
+    await tab('Comps');
     mode = 'failure';
     const beforeFailure = structuredClone(fixture);
     await workspace.locator('.pbk-property-header').getByRole('button', { name: 'Refresh property intelligence', exact: true }).click();
@@ -206,12 +263,20 @@ async function verify(engine, config, label) {
     assert.deepEqual(fixture, beforeFailure, 'Partial failure retains snapshots, timestamps and reviewed comps');
     const beforeSwitch = mutations.length;
     await page.goto(origin + '/leads/' + other.id); await expect(workspace).toBeVisible();
+    await expect(brief.getByText('1 populated dataset', { exact: true })).toBeVisible();
+    await expect(brief.getByText('1 saved sale candidate', { exact: true })).toBeVisible();
+    await expect(brief.getByText('0 reviewed selections', { exact: true })).toBeVisible();
     await tab('Property record');
     await expect(workspace.getByRole('tabpanel', {name:'Property record',exact:true}).locator('dd').filter({hasText:/^OTHER-LEAD-SAME-ADDRESS$/})).toBeVisible();
     await expect(workspace.locator('.pbk-attom-rows').getByText('2,100 sq ft', { exact: true })).toBeVisible();
     await tab('Comps');
     await expect(workspace.locator('td[data-label="Price"]').filter({hasText:/^\$520,000$/})).toBeVisible();
     await expect(workspace.locator('td[data-label="Price"]').filter({hasText:/^\$410,000$/})).toHaveCount(0);
+    await tab('Property record');
+    const otherDatasets=workspace.getByRole('region',{name:'Saved property datasets',exact:true});
+    await otherDatasets.getByRole('searchbox',{name:'Search saved datasets',exact:true}).fill('Ownership');
+    await expect(otherDatasets.getByText('Other lead owner only',{exact:true})).toBeVisible();
+    await expect(otherDatasets.getByText('Owner fixture alpha',{exact:true})).toHaveCount(0);
     assert.equal(mutations.length, beforeSwitch, 'Switching duplicate-address leads must not save');
     assert.deepEqual(providerReads, [], 'Only explicit unified refresh may access providers');
     assert.deepEqual(unexpectedWrites, []); assert.deepEqual(errors, []); await noOverflow();

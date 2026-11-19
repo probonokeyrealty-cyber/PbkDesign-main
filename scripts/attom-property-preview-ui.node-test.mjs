@@ -14,6 +14,7 @@ function mount(props, fetchPreview) {
   const fakeRequire = (name) => name === 'react' ? { useState: value => [value, () => {}] }
     : name === 'lucide-react' ? new Proxy({}, { get: (_, key) => String(key) })
       : name.includes('attomRecordFields') ? { attomExtraRecordFields }
+      : name.includes('AttomRecordDatasets') ? { AttomRecordDatasets: () => null }
       : name.includes('runtimeBridge') ? { fetchAttomPropertyPreview: fetchPreview } : require(name);
   new Function('require', 'exports', code)(fakeRequire, exported);
   const shell = exported.AttomPropertyPreview({ address, saved: {}, mode: 'workspace', ...props });

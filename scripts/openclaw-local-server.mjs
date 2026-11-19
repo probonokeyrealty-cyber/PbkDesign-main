@@ -1,5 +1,6 @@
 import { execFileSync } from 'node:child_process';
 import { createNeonMailRouter } from './neon-auth-mail.mjs';
+import { createComposioResearchDiscovery } from './composio-research-discovery.mjs';
 import { createServer, globalAgent as httpGlobalAgent } from 'node:http';
 import { globalAgent as httpsGlobalAgent } from 'node:https';
 import { createHash, createHmac, createPrivateKey, createPublicKey, createSign as __dsCreateSign, randomUUID, timingSafeEqual, verify as verifySignature } from 'node:crypto';
@@ -231,6 +232,7 @@ void initializeObservability({ serviceName: 'pbk-openclaw-bridge' });
 
 const productionReadinessMonitor = createProductionReadinessMonitor();
 const productionIdempotencyStore = createIdempotencyStore();
+const discoverComposioResearchTools = createComposioResearchDiscovery();
 const AVA_REAL_CALL_EVAL_SCENARIOS = AVA_REAL_CALL_EVAL_SCENARIO_IDS;
 const RELEASE_QUALIFICATION_CASES = Object.freeze({
   failedCall: AVA_REAL_CALL_EVAL_SCENARIO_IDS,
@@ -55234,6 +55236,9 @@ const toolHandlers = {
       toolNames: Object.keys(toolHandlers),
       env: process.env,
     });
+    if (params.includeComposio === true) {
+      result.composio = await discoverComposioResearchTools();
+    }
     void recordResearchAdditiveRun('tool_universe', 'discoverExternalTool', params, result, {
       providerWrites: 'none',
       executionRequiresInvoke: true,

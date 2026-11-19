@@ -1,3 +1,4 @@
+import type { AttomMcpSection } from './attomMcpSections.mjs';
 import type { AttomExtraPropertyFacts } from './attomRecordFields.mjs';
 import { DealData } from '../types';
 import { buildAgentDealContext, type AgentDealContext } from './agentDealContext';
@@ -1711,19 +1712,32 @@ export async function bridgeRequest<T = unknown>({
   keepalive,
   acceptErrorResponse,
 }: BridgeRequestOptions): Promise<T> {
-  assertRuntimeAuthConfigured(path);
   const serializedBody = body !== undefined && method !== 'GET' ? JSON.stringify(body) : undefined;
   const canKeepalive =
     method !== 'GET' && method !== 'DELETE' && (!serializedBody || serializedBody.length < 60000);
-  const requestUrl = buildUrl(path);
+  const configuredUrl = buildUrl(path);
+  const fullPropertyRead = method === 'POST' && path === '/api/property-data/enrich';
+  const directPropertyUrl = fullPropertyRead ? buildHostedRuntimeFallbackUrl(configuredUrl) : '';
+  const headers = buildHeaders(body !== undefined && method !== 'GET');
+  if (directPropertyUrl) {
+    if (!headers['X-PBK-Team-Token']) {
+      throw new RuntimeBridgeError('Your PBK team session is missing or expired. Sign in again.', 401, 'missing_team_session');
+    }
+    // Full property reads can exceed the Netlify synchronous proxy deadline.
+    // The existing Render CORS/team-auth boundary handles this explicit POST.
+    delete headers.Authorization;
+  } else {
+    assertRuntimeAuthConfigured(path);
+  }
+  const requestUrl = directPropertyUrl || configuredUrl;
+
   const timeoutController = new AbortController();
-  const requestTimeoutMs = /^\/api\/(?:v1\/)?assistant\/chat$/.test(path)
-    ? 45_000
-    : BRIDGE_REQUEST_TIMEOUT_MS;
+  const requestTimeoutMs = fullPropertyRead ? 210_000 : /^\/api\/(?:v1\/)?assistant\/chat$/.test(path)
+    ? 45_000 : BRIDGE_REQUEST_TIMEOUT_MS;
   const timeoutId = setTimeout(() => timeoutController.abort(), requestTimeoutMs);
   const init = {
     method,
-    headers: buildHeaders(body !== undefined && method !== 'GET'),
+    headers,
     body: serializedBody,
     keepalive: keepalive ?? canKeepalive,
     signal: timeoutController.signal,
@@ -1751,6 +1765,10 @@ export async function bridgeRequest<T = unknown>({
   }
 
   if (!response.ok && !(method === 'GET' && acceptErrorResponse?.(parsed, response.status))) {
+    const record = parsed && typeof parsed === 'object' ? parsed as Record<string, unknown> : null;
+    if (directPropertyUrl && response.status === 401 && !record?.code) {
+      parsed = { ...record, error: extractBridgeErrorMessage(parsed, response.status), code: 'invalid_team_session' };
+    }
     throw bridgeResponseError(response, parsed, requestUrl, init.headers['X-PBK-Team-Token']);
   }
 
@@ -1995,7 +2013,7 @@ export type AttomPropertyFacts = AttomExtraPropertyFacts & {
 };
 
 export type AttomPreviewResult =
-  | { status: 'matched'; profile: AttomPropertyFacts }
+  | { status: 'matched'; profile: AttomPropertyFacts; sections?: AttomMcpSection[]; partial?: boolean }
   | {
       status:
         | 'invalid_address'
@@ -2006,6 +2024,7 @@ export type AttomPreviewResult =
         | 'authorization_failed'
         | 'rate_limited'
         | 'timed_out';
+      sections?: AttomMcpSection[];
     };
 
 export function fetchAttomPropertyPreview(address: AttomPreviewAddress) {

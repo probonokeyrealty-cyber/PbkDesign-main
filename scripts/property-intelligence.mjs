@@ -1,4 +1,6 @@
 import { parseAttomAddress, sameAttomAddress, attomStreetKey } from './attom-property-preview.mjs';
+import { createConfiguredAttomMcpReader } from './attom-mcp-source.mjs';
+import { attomMcpDatasetDefinitions, hydrateAttomMcpSections, mergeAttomMcpSections, projectAttomMcpSection } from '../src/app/utils/attomMcpSections.mjs';
 
 const object = v => v && typeof v === 'object' && !Array.isArray(v) ? v : {};
 const fail = (code, status, message) => Object.assign(new Error(message), { code, status });
@@ -10,6 +12,19 @@ const leadAddress = lead => {
 const belongs = (snapshot, address) => sameAttomAddress({ street: snapshot?.address }, address);
 const occupied = comp => Object.values(object(comp)).some(v => typeof v === 'number' ? v !== 0 : typeof v === 'string' ? v.trim() : Boolean(v));
 const validTime = v => typeof v === 'string' && Number.isFinite(Date.parse(v));
+const scalarKey = value => typeof value === 'string' || typeof value === 'number' ? String(value).trim().toUpperCase().replace(/[^A-Z0-9]/g, '') : '';
+const parcelConflict = (a, b) => ['attomId', 'apn', 'fips'].some(key => scalarKey(a?.[key]) && scalarKey(b?.[key]) && scalarKey(a[key]) !== scalarKey(b[key]));
+
+function combinedRecords(rest, mcp, address, checkedAt) {
+  const restMatched = rest?.status === 'matched' && sameAttomAddress({ street: rest.profile?.address }, address);
+  const accepted = mcp?.status === 'matched' && sameAttomAddress({ street: mcp.profile?.address }, address) && !(restMatched && parcelConflict(rest.profile, mcp.profile));
+  const attemptStatus = mcp?.status === 'matched' && !accepted ? 'ambiguous' : mcp?.status || 'unavailable';
+  const sections = accepted ? hydrateAttomMcpSections(mcp.sections) : attomMcpDatasetDefinitions.map(({ id }) => projectAttomMcpSection(id, undefined, attemptStatus, checkedAt));
+  const partial = !accepted || !restMatched || sections.length !== attomMcpDatasetDefinitions.length || sections.some(section => section.status !== 'ok');
+  if (!restMatched && !accepted) return { records: { ...rest, status: rest?.status || attemptStatus, sections, partial: true }, accepted: false };
+  const profile = { ...(accepted ? mcp.profile : {}), ...(restMatched ? Object.fromEntries(Object.entries(rest.profile).filter(([, value]) => value !== null && value !== undefined)) : {}) };
+  return { records: { status: 'matched', profile, sections, partial }, accepted };
+}
 
 function listingSnapshot(address, result, now, previous) {
   const property = object(result?.propertyData), data = object(property.data);
@@ -95,6 +110,11 @@ export function propertyIntelligencePatch(lead, address, evidence, now = new Dat
     for (const [key, value] of Object.entries(profile)) if (value !== null && value !== undefined) { facts[key] = value; fieldRetrievedAt[key] = now; }
     deal.propertyRecordSnapshot = { source: 'attom', address: label(address), retrievedAt: now, facts, fieldRetrievedAt };
   }
+  if (Array.isArray(evidence.records?.sections)) {
+    const sections = mergeAttomMcpSections(oldRecord?.sections, evidence.records.sections);
+    const snapshot = deal.propertyRecordSnapshot || oldRecord;
+    if (sections.length && snapshot) deal.propertyRecordSnapshot = { ...snapshot, sections };
+  }
   const oldListing = belongs(deal.listingSnapshot, address) ? deal.listingSnapshot : undefined;
   const listing = listingSnapshot(address, evidence.listing, now, oldListing);
   if (listing) deal.listingSnapshot = listing;
@@ -139,7 +159,7 @@ export function propertyIntelligencePatch(lead, address, evidence, now = new Dat
   return { deal, analyzer };
 }
 
-export function createPropertyIntelligence({ getLead, saveLead, listing, records, sales, now = () => new Date().toISOString() }) {
+export function createPropertyIntelligence({ getLead, saveLead, listing, records, sales, now = () => new Date().toISOString(), mcpRecords = createConfiguredAttomMcpReader({ now }) }) {
   const pending = new Map();
   return async function enrich(input = {}) {
     const address = typeof input.address === 'string' && input.address.length <= 500 ? parseAttomAddress({ street: input.address }) : null;
@@ -166,8 +186,23 @@ export function createPropertyIntelligence({ getLead, saveLead, listing, records
       const work = Promise.allSettled([
         Promise.resolve().then(() => listing({ address: label(address), queueBrowserResearch: false, source: 'property-intelligence' })),
         Promise.resolve().then(() => records(address)),
-        Promise.resolve().then(() => sales({ ...address, radius })),
-      ]).then(async ([l, r, s]) => ({ listing: l.status === 'fulfilled' ? l.value : { cache: { hit: false }, propertyData: null }, records: r.status === 'fulfilled' ? r.value : { status: 'unavailable' }, sales: s.status === 'fulfilled' ? await loadCompPhotos(s.value, address, listing, now(), reviewedCandidates) : { status: 'unavailable' } })).finally(() => pending.delete(key));
+        Promise.resolve().then(() => mcpRecords ? mcpRecords(address, { radius }) : sales({ ...address, radius })),
+      ]).then(async ([l, r, s]) => {
+        let recordResult = r.status === 'fulfilled' ? r.value : { status: 'unavailable' };
+        let salesResult = s.status === 'fulfilled' ? s.value : { status: 'unavailable' };
+        if (mcpRecords) {
+          const combined = combinedRecords(recordResult, salesResult, address, now());
+          recordResult = combined.records;
+          const mcpSales = combined.accepted && salesResult.sales?.status === 'matched' ? salesResult.sales : null;
+          if (mcpSales?.sales?.length && mcpSales.radiusMiles >= radius) salesResult = mcpSales;
+          else {
+            try { salesResult = await sales({ ...address, radius }); }
+            catch { salesResult = { status: 'unavailable' }; }
+            if (salesResult?.status !== 'matched' && mcpSales) salesResult = mcpSales;
+          }
+        }
+        return { listing: l.status === 'fulfilled' ? l.value : { cache: { hit: false }, propertyData: null }, records: recordResult, sales: await loadCompPhotos(salesResult, address, listing, now(), reviewedCandidates) };
+      }).finally(() => pending.delete(key));
       pending.set(key, work);
     }
     const evidence = await pending.get(key);

@@ -61,10 +61,10 @@ test('renders exact replacement IDs without an action', () => {
   );
 });
 
-test('null change keeps an empty paragraph without visible spacing', () => {
+test('null change keeps the empty live paragraph accessibility-exposed; CSS owns spacing', () => {
   const html = renderNotice(null);
   assert.match(html, /^<p\b[^>]*><\/p>$/);
-  assert.match(html, /\bhidden=""/);
+  assert.doesNotMatch(html, /\bhidden(?:=|\s|>)|aria-hidden="true"|display:\s*none|visibility:\s*hidden/);
 });
 
 test('empty results name only the previous ID without inventing a replacement', () => {

@@ -9,7 +9,6 @@ export function SkillReviewNotice({ change }: { change: SkillReviewChange | null
       role="status"
       aria-live="polite"
       aria-atomic="true"
-      hidden={change === null}
     >
       {change && (
         <>

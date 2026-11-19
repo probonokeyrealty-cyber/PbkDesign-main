@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdir } from 'node:fs/promises';
+import { mkdir, writeFile } from 'node:fs/promises';
 import { request } from 'node:http';
 import { chromium, webkit, expect } from '@playwright/test';
 import { createOperatorWorkflowPreview, operatorSkillFixtures } from './fixtures/operator-workflow-fixture.mjs';
@@ -7,6 +7,8 @@ import { createOperatorWorkflowPreview, operatorSkillFixtures } from './fixtures
 const evidence = '.pbk-local/operator-workflow';
 await mkdir(evidence, { recursive: true });
 const { server, origin } = await createOperatorWorkflowPreview();
+assert.equal(server.config.server.proxy, undefined, 'Synthetic fixture proxy is disabled');
+console.log('Synthetic safety: loopback fixture; proxy disabled; no runtime fallback');
 const ids = items => items.map(item => item.versionId);
 const rows = page => page.locator('[data-pbk-worklist="skills"] button[data-pbk-worklist-row]');
 const rowIds = page => rows(page).evaluateAll(elements => elements.map(el => el.dataset.skillVersionId));
@@ -220,12 +222,17 @@ async function verifyReadOwnership(engine) {
   const pair = (items = [a,b,operatorSkillFixtures[3],active], count = 11) => ({
     repository: { ok: true, items }, status: { ok: true, candidates: count },
   });
-  async function scenario(name, execute, initial = pair()) {
-    const page = await browser.newPage({ viewport: { width: 1440, height: 900 }, reducedMotion: 'reduce' });
+  async function scenario(name, execute, initial = pair(), viewport = { width: 1440, height: 900 }) {
+    const started = performance.now(), boot = {};
+    const page = await browser.newPage({ viewport, reducedMotion: 'reduce' });
     page.setDefaultTimeout(3000);
     const plans = [initial], counts = { repository: 0, status: 0 }, requests = [], posts = [], unexpected = [];
     const errors = [], governancePosts = [];
+    let noticeChecks = 0;
     page.on('pageerror', error => errors.push(error.message));
+    page.on('response', response => {
+      if (new URL(response.url()).pathname === '/src/app/routes/SkillStudio.tsx') boot.routeModuleMs = Math.round(performance.now() - started);
+    });
     page.on('request', req => {
       if (req.method() === 'POST' && new URL(req.url()).pathname.startsWith('/api/skills/')) governancePosts.push(req.url());
     });
@@ -233,10 +240,32 @@ async function verifyReadOwnership(engine) {
     await page.route('**/*', async route => {
       const req = route.request(), url = new URL(req.url());
       if (url.origin !== origin) { unexpected.push(req.url()); return route.abort(); }
+      // Only these synthetic pages wrap the unchanged product router in real StrictMode.
+      if (name.startsWith('notice StrictMode') && url.pathname === '/src/main.shell.tsx') {
+        const response = await route.fetch();
+        let body = await response.text();
+        const runtime = body.match(/"([^"\n]*\/react_jsx-dev-runtime\.js[^"\n]*)"/);
+        assert.ok(runtime, 'Find the local transformed React runtime');
+        assert.equal((body.match(/jsxDEV\(ParadiseRouter,/g) || []).length, 1, 'One product router mount');
+        body = body.replace('jsxDEV(ParadiseRouter,', 'jsxDEV(PbkSyntheticStrictRoot,');
+        body += `\nimport PbkSyntheticReact from ${JSON.stringify(runtime[1].replace('react_jsx-dev-runtime.js', 'react.js'))};
+function PbkStrictProbe() {
+  PbkSyntheticReact.useEffect(() => {
+    window.pbkSyntheticStrictProbe.mounts++;
+    return () => { window.pbkSyntheticStrictProbe.cleanups++; };
+  }, []);
+  return null;
+}
+function PbkSyntheticStrictRoot() {
+  return PbkSyntheticReact.createElement(PbkSyntheticReact.StrictMode, null,
+    PbkSyntheticReact.createElement(PbkStrictProbe), PbkSyntheticReact.createElement(ParadiseRouter));
+}\n`;
+        return route.fulfill({ response, body });
+      }
       const part = url.pathname === '/api/skills/governance/repository' ? 'repository' : url.pathname === '/api/skills/governance/status' ? 'status' : null;
       if (part && req.method() === 'GET') {
         const index = counts[part]++;
-        requests.push({ part, index, search: url.searchParams.get('search'), lifecycle: url.searchParams.get('lifecycleState'), limit: url.searchParams.get('limit') });
+        requests.push({ part, index, search: url.searchParams.get('search'), lifecycle: url.searchParams.get('lifecycleState'), limit: url.searchParams.get('limit'), atMs: Math.round(performance.now() - started) });
         const plan = plans[index];
         if (!plan) { unexpected.push(`Unplanned ${part} read ${index}`); return route.abort(); }
         if (plan.hold?.includes(part)) await new Promise(resolve => { (plan.release ||= {})[part] = resolve; });
@@ -248,6 +277,21 @@ async function verifyReadOwnership(engine) {
     const refresh = page.getByRole('button', { name: 'Refresh', exact: true });
     const search = page.getByRole('textbox', { name: 'Search skill repository' });
     const id = page.locator('.pbk-skill-version-id code');
+    const review = page.locator('[data-pbk-skill-review-notice]');
+    const announcement = (oldId, newId = null) => `Version ${oldId} is not in the current results.${newId === null ? '' : ` Showing ${newId}.`}`;
+    async function notice(text = '') {
+      await expect(review).toHaveCount(1);
+      await expect(review).toHaveText(text);
+      noticeChecks++;
+    }
+    await page.addInitScript(() => {
+      window.pbkSyntheticStrictProbe = { mounts: 0, cleanups: 0 };
+      window.syntheticClipboardDenied = false;
+      Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: async () => {
+        if (window.syntheticClipboardDenied) throw new Error('Synthetic permission denied');
+      } } });
+      document.execCommand = () => false;
+    });
     const status = page.getByRole('region', { name: 'Skill governance status' }).locator('div').filter({ has: page.getByText('Review queue', { exact: true }) }).locator('strong');
     const flush = () => page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
     const waitRead = index => expect.poll(() => requests.filter(r => r.index === index).length).toBe(2);
@@ -271,13 +315,204 @@ async function verifyReadOwnership(engine) {
     }
     try {
       await page.goto(origin + '/skills');
-      await execute({ page, plans, pair, refresh, search, id, status, flush, waitRead, release, loaded, exactPost, posts, requests, governancePosts });
+      boot.navigationMs = Math.round(performance.now() - started);
+      // Navigation load is not lazy route readiness. Data assertions keep their original deadlines.
+      await expect(page.getByRole('heading', { name: 'Skill Studio', exact: true })).toBeVisible({ timeout: 15000 });
+      boot.routeReadyMs = Math.round(performance.now() - started);
+      await execute({ page, plans, pair, refresh, search, id, review, notice, announcement, status, flush, waitRead, release, loaded, exactPost, posts, requests, governancePosts });
       assert.deepEqual({ unexpected, errors }, { unexpected: [], errors: [] });
-      passed++; console.log(`PASS ownership ${engine.name()}: ${name}`);
-    } catch (error) { failures.push(name); console.error(`FAIL ownership ${engine.name()}: ${name}\n${error.message}`); }
-    finally { await page.close(); }
+      assert.equal(governancePosts.length, posts.length, 'Every governance POST is exact-target mocked in memory');
+      passed++; console.log(`PASS ownership ${engine.name()}: ${name}; noticeChecks=${noticeChecks}; safety foreign/unplanned/errors=0; governancePOSTs=${governancePosts.length}; mockedExactPOSTs=${posts.length}`);
+    } catch (error) {
+      failures.push(name); console.error(`FAIL ownership ${engine.name()}: ${name}\n${error.message}`);
+      console.error('Scenario safety:', JSON.stringify({ unexpected, errors, noticeChecks, governancePosts: governancePosts.length, mockedExactPOSTs: posts.length, boot, requests }));
+      await page.screenshot({ path: `${evidence}/skill-ownership-failure-${engine.name()}-${failures.length}.png` });
+    }
+    finally {
+      console.log(`Ownership timing ${engine.name()}: ${name}; ${JSON.stringify({ elapsedMs: Math.round(performance.now() - started), ...boot, reads: requests.map(r => [r.part,r.index,r.atMs]) })}`);
+      await page.close();
+    }
   }
   try {
+    const c = structuredClone(operatorSkillFixtures[2]);
+    for (const intent of ['refresh', 'search', 'lifecycle', 'request-limit']) await scenario(`notice replacement from owned ${intent}`, async h => {
+      await h.loaded();
+      // On the unwired route the committed replacement below has no notice paragraph.
+      await h.page.getByRole('button', { name: 'Review and approve this skill', exact: true }).click();
+      await expect(h.page.getByRole('button', { name: 'Confirm', exact: true })).toBeVisible();
+      const items = intent === 'request-limit' ? Array.from({ length: 150 }, (_, i) => ({ ...b, versionId: i ? `SYN-LIMIT-${i}` : b.versionId })) : [b];
+      const next = { ...pair(items), hold: ['repository'] }; h.plans.push(next);
+      const control = intent === 'search' ? h.search : intent === 'lifecycle' ? h.page.getByLabel('Filter by lifecycle state') : h.refresh;
+      await control.focus();
+      await expect(control).toBeFocused();
+      if (intent === 'search') await control.fill('owned replacement');
+      else if (intent === 'lifecycle') await control.selectOption('candidate');
+      else await control.click();
+      await h.waitRead(1); await expect(h.refresh).toBeDisabled(); await h.flush();
+      const focus = await h.page.evaluateHandle(() => document.activeElement);
+      const scroll = await h.page.evaluate(() => ({ x: scrollX, y: scrollY }));
+      console.log(`Loading focus baseline ${engine.name()} ${intent}: ${JSON.stringify(await focus.evaluate(el => ({ tag: el.tagName, label: el.getAttribute('aria-label') })))}; scroll=${JSON.stringify(scroll)}`);
+      await h.release(next); await h.loaded(b.versionId);
+      await h.notice(h.announcement(a.versionId, b.versionId));
+      assert.deepEqual(await h.page.evaluate(() => ({ x: scrollX, y: scrollY })), scroll, 'Owned replacement preserves scroll');
+      await expect(h.page.getByRole('button', { name: 'Confirm', exact: true })).toHaveCount(0);
+      await expect(h.page.getByRole('button', { name: 'Review and approve this skill', exact: true })).toBeEnabled();
+      assert.equal(h.requests.find(r => r.index === 1 && r.part === 'repository').limit, '150');
+      if (intent === 'request-limit') await expect(rows(h.page)).toHaveCount(10);
+      assert.deepEqual(h.governancePosts, []);
+      assert.equal(await focus.evaluate(el => el === document.activeElement),true,'Owned notice commit preserves actual loading-state focus');
+      if (intent === 'search' || intent === 'lifecycle') await expect(control).toBeFocused();
+    }, pair([a,b]));
+    await scenario('notice initial empty, empty read, retained-selection reload, row and queue clearing', async h => {
+      await h.loaded(); await h.notice();
+      h.plans.push(pair([])); await h.refresh.click(); await h.waitRead(1); await expect(h.refresh).toBeEnabled();
+      await expect(h.id).toHaveCount(0); await h.notice(h.announcement(a.versionId));
+      await expect(h.review.locator('code')).toHaveText([a.versionId]);
+      await expect(h.page.getByRole('heading', { name: 'Select a skill version', exact: true })).toBeVisible();
+      h.plans.push(pair([b,c])); await h.refresh.click(); await h.waitRead(2); await h.loaded(b.versionId); await h.notice();
+      h.plans.push(pair([a,c])); await h.refresh.click(); await h.waitRead(3); await h.loaded(); await h.notice(h.announcement(b.versionId,a.versionId));
+      h.plans.push(pair([a,c])); await h.refresh.click(); await h.waitRead(4); await h.loaded(); await h.notice();
+      h.plans.push(pair([b,c])); await h.refresh.click(); await h.waitRead(5); await h.loaded(b.versionId);
+      await rows(h.page).nth(1).click(); await expect(h.id).toHaveText(c.versionId); await h.notice();
+      await expect(h.page.locator('.pbk-skill-version-head h2')).toBeFocused();
+      h.plans.push(pair([a,b])); await h.search.fill('queue replacement'); await h.waitRead(6); await h.loaded();
+      await h.notice(h.announcement(c.versionId,a.versionId));
+      await h.page.getByRole('region', { name: "Today's Training Queue" }).getByRole('button').nth(1).click();
+      await expect(h.id).toHaveText(b.versionId); await h.notice();
+      assert.deepEqual(h.governancePosts, []);
+    }, pair([a,b]));
+    for (const retain of [true,false]) await scenario(`notice held read compares latest manual B: ${retain ? 'retained' : 'replaced'}`, async h => {
+      await h.loaded(); await h.notice();
+      const next = { ...pair(retain ? [b,c] : [c]), hold: ['repository'] }; h.plans.push(next);
+      await h.refresh.click(); await h.waitRead(1); await rows(h.page).nth(1).click();
+      await expect(h.id).toHaveText(b.versionId); await expect(h.page.locator('.pbk-skill-version-head h2')).toBeFocused();
+      await h.release(next); await h.loaded(retain ? b.versionId : c.versionId);
+      await h.notice(retain ? '' : h.announcement(b.versionId,c.versionId));
+      assert.deepEqual(h.governancePosts, []);
+    }, pair([a,b]));
+    for (const part of ['repository','status']) for (const invalid of [false,true]) await scenario(`notice retains last-good on ${invalid ? 'malformed' : 'rejected'} ${part}`, async h => {
+      await h.loaded(); h.plans.push(pair([b])); await h.refresh.click(); await h.waitRead(1); await h.loaded(b.versionId);
+      await h.notice(h.announcement(a.versionId,b.versionId));
+      h.plans.push({ ...pair([c]), [part]: invalid ? null : { ok: false, error: 'Synthetic notice read rejected' } });
+      await h.refresh.click(); await h.waitRead(2); await expect(h.page.getByRole('alert')).toBeVisible(); await h.loaded(b.versionId);
+      await h.notice(h.announcement(a.versionId,b.versionId));
+      await expect(h.page.getByRole('button', { name: 'Review and approve this skill', exact: true })).toBeDisabled();
+      assert.deepEqual(h.governancePosts, []);
+    }, pair([a,b]));
+    for (const part of ['repository','status']) for (const outcome of ['success','error']) await scenario(`notice ignores older held ${part} ${outcome}`, async h => {
+      await h.loaded();
+      const old = { ...pair([b]), hold: [part], ...(outcome === 'error' ? { [part]: { ok: false, error: 'Old synthetic failure' }, http: { [part]: 503 } } : {}) };
+      h.plans.push(old, pair([c])); await h.refresh.click(); await h.waitRead(1);
+      await h.search.fill('new notice owner'); await h.waitRead(2); await h.loaded(c.versionId); await h.notice(h.announcement(a.versionId,c.versionId));
+      await h.release(old); await h.flush(); await h.loaded(c.versionId); await h.notice(h.announcement(a.versionId,c.versionId));
+      await expect(h.page.getByRole('alert')).toHaveCount(0); assert.deepEqual(h.governancePosts, []);
+    }, pair([a,b]));
+    await scenario('notice held unmount cannot contaminate remounted empty region', async h => {
+      await h.loaded(); h.plans.push(pair([b])); await h.refresh.click(); await h.waitRead(1); await h.loaded(b.versionId); await h.notice(h.announcement(a.versionId,b.versionId));
+      const old = { ...pair([c]), hold: ['repository'] }; h.plans.push(old, pair([a])); await h.refresh.click(); await h.waitRead(2);
+      await h.page.getByRole('link', { name: 'Leads', exact: true }).filter({ visible: true }).first().click();
+      await expect(h.review).toHaveCount(0);
+      await h.page.getByRole('link', { name: 'Skill Studio', exact: true }).filter({ visible: true }).first().click();
+      await h.waitRead(3); await h.loaded(); await h.notice(); await h.release(old); await h.loaded(); await h.notice();
+      assert.deepEqual(h.governancePosts, []);
+    }, pair([a,b]));
+    await scenario('notice local paging and agent risk performance filters create none', async h => {
+      await h.loaded(); await h.notice();
+      await h.page.getByRole('button', { name: 'Next skills page' }).click(); await h.notice();
+      for (const [label,value] of [['Filter by agent','rex'],['Filter by risk','medium'],['Sort by performance','top']]) {
+        await h.page.getByLabel(label).selectOption(value); await h.notice(); await expect(h.id).toHaveText(a.versionId);
+      }
+      assert.equal(h.requests.filter(r => r.part === 'repository').length,1); assert.deepEqual(h.governancePosts, []);
+    }, pair(operatorSkillFixtures));
+    for (const patch of [{ contentHash: 'SYN-CHANGED-HASH' },{ lifecycleState: 'approved_inactive' }]) await scenario(`notice same-ID ${patch.contentHash ? 'hash' : 'lifecycle'} change is not replacement`, async h => {
+      await h.loaded(); await h.page.getByRole('button', { name: 'Review and approve this skill', exact: true }).click();
+      await expect(h.page.getByRole('button', { name: 'Confirm', exact: true })).toBeVisible();
+      h.plans.push(pair([{ ...a,...patch }])); await h.refresh.click(); await h.waitRead(1); await h.loaded(); await h.notice();
+      await expect(h.page.getByRole('button', { name: 'Confirm', exact: true })).toHaveCount(0); assert.deepEqual(h.governancePosts, []);
+    }, pair([a,b]));
+    await scenario('notice copy feedback and dismissal remain independent', async h => {
+      await h.loaded(); h.plans.push(pair([b])); await h.refresh.click(); await h.waitRead(1); await h.loaded(b.versionId);
+      for (const denied of [false,true]) {
+        await h.page.evaluate(value => { window.syntheticClipboardDenied = value; }, denied);
+        await h.page.getByRole('button', { name: 'Copy ID', exact: true }).click();
+        if (denied) await expect(h.page.getByRole('alert')).toContainText('Could not copy version ID. Clipboard access was denied or unavailable.');
+        else await expect(h.page.locator('.pbk-skill-banner[role="status"]')).toHaveText('Version ID copied');
+        await h.notice(h.announcement(a.versionId,b.versionId));
+        await h.page.getByRole('button', { name: 'Dismiss skill notification', exact: true }).click();
+        await h.notice(h.announcement(a.versionId,b.versionId));
+      }
+      assert.deepEqual(h.governancePosts, []);
+    }, pair([a,b]));
+    for (const ok of [true,false]) await scenario(`notice mocked action ${ok ? 'success with held reload' : 'error'} does not overwrite review`, async h => {
+      await h.loaded(); h.plans.push(pair([b])); await h.refresh.click(); await h.waitRead(1); await h.loaded(b.versionId);
+      const control = await h.exactPost(`/api/skills/versions/${b.versionId}/approve`, { expectedHash: b.contentHash, decision: 'approved', evidenceSnapshot: { reviewedIn: 'PBK Skill Studio', riskClass: b.riskClass, safetyScan: {} } }, ok ? { ok: true } : { ok: false, error: 'Synthetic notice action rejected' }, true);
+      const next = { ...pair([b]), hold: ['repository'] }; if (ok) h.plans.push(next);
+      await h.page.getByRole('button', { name: 'Review and approve this skill', exact: true }).click();
+      await h.page.getByRole('button', { name: 'Confirm', exact: true }).click(); await expect.poll(() => h.posts.length).toBe(1);
+      await h.notice(h.announcement(a.versionId,b.versionId)); control.release();
+      if (ok) {
+        await h.waitRead(2); await expect(h.page.locator('.pbk-skill-banner[role="status"]')).toContainText('approved');
+        await h.notice(h.announcement(a.versionId,b.versionId)); await h.release(next); await h.loaded(b.versionId); await h.notice();
+      } else {
+        await expect(h.page.getByRole('alert')).toContainText('Synthetic notice action rejected'); await h.notice(h.announcement(a.versionId,b.versionId));
+        assert.equal(h.requests.filter(r => r.part === 'repository').length,2,'Rejected action does not reload');
+      }
+      assert.equal(h.governancePosts.length,1); assert.equal(h.posts.length,1);
+    }, pair([a,b]));
+    const literalA = { ...a, versionId: `SYN-<script>& ${'LONG-'.repeat(45)}` };
+    const literalB = { ...b, versionId: `SYN-<a href="x">& ${'EXACT-'.repeat(45)}` };
+    for (const width of [1440,390,320]) await scenario(`notice StrictMode literal IDs ${width}`, async h => {
+      await h.loaded(literalA.versionId); await h.notice();
+      const probe = await h.page.evaluate(() => window.pbkSyntheticStrictProbe);
+      assert.deepEqual(probe,{ mounts: 2, cleanups: 1 },'Real React StrictMode effect replay is enabled');
+      console.log(`StrictMode ${engine.name()} ${width}: bounded local shell transform; probe=${JSON.stringify(probe)}`);
+      await expect(h.page.getByRole('status').filter({ has: h.page.locator('[data-pbk-skill-review-notice] code') })).toHaveCount(0);
+      const node = await h.review.elementHandle();
+      assert.equal(await node.evaluate(el => {
+        window.pbkNoticeChanges = []; window.pbkNoticeNode = el;
+        new MutationObserver(() => {
+          const text = el.textContent;
+          if (text) window.pbkNoticeChanges.push(text);
+        }).observe(el, { childList: true, subtree: true, characterData: true });
+        const style = getComputedStyle(el);
+        return !el.hidden && el.getAttribute('aria-hidden') !== 'true' && style.display !== 'none' && style.visibility !== 'hidden';
+      }),true,'Empty live region is not hidden from accessibility');
+      assert.match(await h.review.ariaSnapshot(), /status/, 'Empty live region remains accessibility-exposed');
+      assert.equal(await h.review.evaluate(el => el.getBoundingClientRect().height === 0 && getComputedStyle(el).marginBlockStart === '0px' && getComputedStyle(el).marginBlockEnd === '0px'),true,'Empty paragraph adds no spacing');
+      await writeFile(`${evidence}/skill-notice-${engine.name()}-${width}-empty.a11y.txt`,await h.review.ariaSnapshot());
+      const next = { ...pair([literalB]), hold: ['repository'] }; h.plans.push(next);
+      await h.refresh.focus(); await expect(h.refresh).toBeFocused(); await h.refresh.click(); await h.waitRead(1);
+      await expect(h.refresh).toBeDisabled(); await h.flush();
+      const focus = await h.page.evaluateHandle(() => document.activeElement);
+      const scroll = await h.page.evaluate(() => ({ x: scrollX, y: scrollY }));
+      await h.release(next); await h.loaded(literalB.versionId);
+      const text = h.announcement(literalA.versionId,literalB.versionId); await h.notice(text); await h.flush();
+      assert.deepEqual(await h.page.evaluate(() => window.pbkNoticeChanges),[text],'One committed nonempty text update');
+      assert.equal(await node.evaluate(el => el.isConnected && el === document.querySelector('[data-pbk-skill-review-notice]')),true,'Stable paragraph identity');
+      assert.equal(await focus.evaluate(el => el === document.activeElement),true,'StrictMode notice does not steal loading-state focus');
+      assert.deepEqual(await h.page.evaluate(() => ({ x: scrollX, y: scrollY })),scroll,'StrictMode notice does not scroll');
+      await expect(h.review.locator('code')).toHaveText([literalA.versionId,literalB.versionId]);
+      await expect(h.review.locator('*')).toHaveCount(2); await expect(h.review.locator('script,a,button,input')).toHaveCount(0);
+      const geometry = await h.review.evaluate(el => {
+        const bounds = el.getBoundingClientRect(), range = document.createRange(); range.selectNodeContents(el);
+        const rects = [...range.getClientRects()];
+        return { overflow: el.scrollWidth > el.clientWidth, clipped: rects.some(r => r.left < bounds.left - 1 || r.right > bounds.right + 1 || r.top < bounds.top - 1 || r.bottom > bounds.bottom + 1), display: getComputedStyle(el).display };
+      });
+      assert.equal(geometry.overflow,false); assert.equal(geometry.clipped,false); await contained(h.page);
+      await h.page.screenshot({ path: `${evidence}/skill-notice-${engine.name()}-${width}-${width < 720 ? 'detail' : 'repository'}.png` });
+      await writeFile(`${evidence}/skill-notice-${engine.name()}-${width}-replacement.a11y.txt`,await h.review.ariaSnapshot());
+      if (width < 720) {
+        await expect(h.page.getByRole('button', { name: 'Repository', exact: true })).toBeVisible();
+        await h.page.getByRole('button', { name: 'Repository', exact: true }).click(); await h.notice();
+        await expect(h.id).toHaveCount(0); await expect(h.search).toBeVisible(); await expect(h.search).toBeFocused();
+        assert.match(await h.review.ariaSnapshot(), /status/); await contained(h.page);
+        await h.page.screenshot({ path: `${evidence}/skill-notice-${engine.name()}-${width}-repository.png` });
+        h.plans.push(pair([literalB])); await h.search.fill('after Repository return'); await h.waitRead(2); await h.loaded(literalB.versionId); await h.notice();
+        await expect(h.page.getByRole('button', { name: 'Repository', exact: true })).toBeVisible();
+      }
+      assert.deepEqual(h.governancePosts, []);
+      console.log(`Notice geometry ${engine.name()} ${width}: ${JSON.stringify(geometry)}; stable node; one committed update; DOM/accessibility only, not AT speech`);
+    }, pair([literalA,literalB]), { width, height: 900 });
     const approved = structuredClone(operatorSkillFixtures[3]);
     for (const [label, versionNumber, expected] of [['missing', undefined, 'Not recorded'], ['zero', 0, '0'], ['positive', 7, '7']]) {
       await scenario(`optional ${label} version and absent reviewer stay truthful`, async h => {
@@ -458,7 +693,7 @@ async function verifyReadOwnership(engine) {
           await h.exactPost(`/api/skills/versions/${a.versionId}/approve`, { expectedHash: patch.contentHash, decision: 'approved', evidenceSnapshot: { reviewedIn: 'PBK Skill Studio', riskClass: a.riskClass, safetyScan: {} } });
           await h.page.getByRole('button', { name: 'Review and approve this skill', exact: true }).click(); await h.page.getByRole('button', { name: 'Confirm', exact: true }).click();
           await expect(h.page.getByRole('alert')).toContainText('Synthetic exact target rejected'); assert.equal(h.posts.length, 1);
-          await expect(h.page.getByRole('status')).toHaveCount(0);
+          await expect(h.page.locator('.pbk-skill-banner[role="status"]')).toHaveCount(0);
         }
       });
     }
@@ -619,7 +854,7 @@ async function verify(engine, width) {
     await expect(page.locator('#skill-record')).toContainText('Synthetic provenance 21');
     if (width < 1281) await page.getByRole('button', { name: 'Close inspector', exact: true }).click();
     await page.getByRole('button', { name: 'Copy ID', exact: true }).click();
-    await expect(page.getByRole('status')).toContainText('Version ID copied');
+    await expect(page.locator('.pbk-skill-banner[role="status"]')).toContainText('Version ID copied');
     assert.deepEqual(await page.evaluate(() => window.syntheticClipboard), ['SYN-SKILL-021']);
     await page.evaluate(() => { window.syntheticClipboardDenied = true; });
     await page.getByRole('button', { name: 'Copy ID', exact: true }).click();
@@ -728,6 +963,7 @@ async function verify(engine, width) {
       for (const label of ['Review queue','Ready to test','Small test','Live now','Sync health']) await expect(ribbon.locator('div').filter({ has: page.getByText(label, { exact: true }) }).locator('strong')).toHaveText(count);
       await repository(page);
       await rows(page).first().click();
+      await expect(page.locator('.pbk-skill-version-head h2')).toBeFocused();
       if (width < 1281) await page.getByRole('button', { name: 'Inspect', exact: true }).click();
       await expect(sync('Snapshot')).toHaveText(snapshot); await expect(sync('Sync')).toHaveText(health);
       if (width < 1281) await page.getByRole('button', { name: 'Close inspector', exact: true }).click();
@@ -759,9 +995,17 @@ try {
   for (const [method,path,status] of [['GET','/api/skills/unplanned',404],['POST','/api/skills/candidates',403],['POST','/invoke',403]]) {
     assert.equal((await fetch(origin + path, { method })).status, status);
   }
-  for (const engine of [chromium,webkit]) {
-    for (const width of [1024,824,768,761,760]) await verifyTabletStatus(engine,width);
-    await verifyReadOwnership(engine);
-    for (const width of [1440,390,320]) await verify(engine,width);
+  const failedPhases = [];
+  async function phase(name, execute) {
+    const started = performance.now();
+    try { await execute(); }
+    catch (error) { failedPhases.push(name); console.error(`FAIL phase ${name}: ${error.message}`); }
+    finally { console.log(`Phase timing ${name}: ${Math.round(performance.now() - started)}ms`); }
   }
+  for (const engine of [chromium,webkit]) {
+    for (const width of [1024,824,768,761,760]) await phase(`status ${engine.name()} ${width}`, () => verifyTabletStatus(engine,width));
+    await phase(`ownership ${engine.name()}`, () => verifyReadOwnership(engine));
+    for (const width of [1440,390,320]) await phase(`workflow ${engine.name()} ${width}`, () => verify(engine,width));
+  }
+  assert.deepEqual(failedPhases, [], 'All engines and widths pass; no failed phase is suppressed');
 } finally { server.httpServer?.closeAllConnections(); await server.close(); }

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router';
 import '../../styles/operator-workflows.css';
 import {
@@ -27,6 +27,11 @@ import {
   X,
 } from 'lucide-react';
 import { CompactPager, getPageSlice, OPERATOR_LIST_PAGE_SIZE } from '../components/CompactPager';
+import { SkillReviewNotice } from '../components/skills/SkillReviewNotice';
+import {
+  EMPTY_SKILL_REVIEW_SELECTION,
+  reduceSkillReviewSelection,
+} from '../utils/skillReviewSelection.mjs';
 import { copyToClipboard } from '../utils/fileExport';
 import { focusWorklistRow } from '../utils/worklistFocus.mjs';
 import {
@@ -1055,7 +1060,11 @@ export function SkillStudio() {
   const [searchParams, setSearchParams] = useSearchParams();
   const [status, setStatus] = useState<SkillGovernanceStatusResponse | null>(null);
   const [items, setItems] = useState<SkillGovernanceItem[]>([]);
-  const [selectedId, setSelectedId] = useState('');
+  const [reviewSelection, dispatchReviewSelection] = useReducer(
+    reduceSkillReviewSelection,
+    EMPTY_SKILL_REVIEW_SELECTION
+  );
+  const selectedId = reviewSelection.selectedId;
   const [search, setSearch] = useState('');
   const [lifecycleFilter, setLifecycleFilter] = useState('');
   const [agentFilter, setAgentFilter] = useState('');
@@ -1184,11 +1193,7 @@ export function SkillStudio() {
       hasGoodRepository.current = true;
       setStatus(statusResult);
       setItems(nextItems);
-      setSelectedId((current) =>
-        nextItems.some((item) => item.versionId === current)
-          ? current
-          : nextItems[0]?.versionId || ''
-      );
+      dispatchReviewSelection({ type: 'repository', versionIds: nextItems.map(item => item.versionId) });
       setRepositoryViewState('ready');
     } catch (loadError) {
       if (!ownsRead()) return;
@@ -1297,7 +1302,7 @@ export function SkillStudio() {
   };
 
   const openSkillVersion = (versionId: string) => {
-    setSelectedId(versionId);
+    dispatchReviewSelection({ type: 'select', versionId });
     setInspectorOpen(false);
     window.requestAnimationFrame(() => versionHeadingRef.current?.focus());
   };
@@ -1455,6 +1460,8 @@ export function SkillStudio() {
           </button>
         </div>
       )}
+
+      <SkillReviewNotice change={reviewSelection.change} />
 
       {trainingQueue.length > 0 && (
         <section className="pbk-skill-training-queue" aria-label="Today's Training Queue">
@@ -1649,7 +1656,7 @@ export function SkillStudio() {
                 <button
                   type="button"
                   onClick={() => {
-                    setSelectedId('');
+                    dispatchReviewSelection({ type: 'select', versionId: '' });
                     setInspectorOpen(false);
                     window.requestAnimationFrame(() => repositorySearchRef.current?.focus());
                   }}

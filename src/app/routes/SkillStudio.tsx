@@ -138,6 +138,30 @@ function readRecord(value: unknown): Record<string, unknown> {
     : {};
 }
 
+function isReadableSkillItem(value: unknown) {
+  const item = readRecord(value);
+  if (!['versionId', 'contentHash', 'name'].every(key =>
+    typeof item[key] === 'string' && item[key].trim()
+  )) return false;
+
+  // Evidence stays optional; guard only identity and inputs used directly by the renderer.
+  const displayFields = [
+    'lifecycleState', 'versionNumber', 'riskClass', 'instructions', 'agentId',
+    'activationStatus', 'rolloutPercent', 'priority', 'createdBy', 'approvedBy',
+  ];
+  if (displayFields.some(key =>
+    item[key] != null && !['string', 'number', 'boolean'].includes(typeof item[key])
+  )) return false;
+  if (item.activationId != null && typeof item.activationId !== 'string') return false;
+  if (item.toolAllowlist != null && (
+    !Array.isArray(item.toolAllowlist) || item.toolAllowlist.some(tool => typeof tool !== 'string')
+  )) return false;
+  return ['createdAt', 'approvedAt', 'activatedAt'].every(key => {
+    const date = item[key];
+    return !date || (typeof date === 'string' && Number.isFinite(Date.parse(date)));
+  });
+}
+
 function firstNumber(...values: unknown[]) {
   for (const value of values) {
     const numeric = readNumber(value);
@@ -1149,9 +1173,7 @@ export function SkillStudio() {
       if (!ownsRead()) return;
       if (
         !repositoryResult || repositoryResult.ok !== true || !Array.isArray(repositoryResult.items) ||
-        repositoryResult.items.some(item =>
-          !item || typeof item !== 'object' || typeof item.versionId !== 'string' || !item.versionId.trim()
-        )
+        repositoryResult.items.some(item => !isReadableSkillItem(item))
       ) {
         throw new Error(repositoryResult?.error || 'Repository response unavailable.');
       }
@@ -1236,9 +1258,7 @@ export function SkillStudio() {
     agentId, rolloutPercent, search, lifecycleFilter, agentFilter, riskFilter, performanceFilter,
   ]);
   const targetVerified = repositoryViewState === 'ready' && Boolean(
-    selected?.versionId && (
-      !selectedIsReviewable || (typeof selected.contentHash === 'string' && selected.contentHash.trim())
-    )
+    selected?.versionId && typeof selected.contentHash === 'string' && selected.contentHash.trim()
   );
   const confirmingPrimaryAction = confirmation?.owner === actionOwner && targetVerified;
 

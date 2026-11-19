@@ -136,8 +136,11 @@ async function verifyReadOwnership(engine) {
     const page = await browser.newPage({ viewport: { width: 1440, height: 900 }, reducedMotion: 'reduce' });
     page.setDefaultTimeout(3000);
     const plans = [initial], counts = { repository: 0, status: 0 }, requests = [], posts = [], unexpected = [];
-    const errors = [];
+    const errors = [], governancePosts = [];
     page.on('pageerror', error => errors.push(error.message));
+    page.on('request', req => {
+      if (req.method() === 'POST' && new URL(req.url()).pathname.startsWith('/api/skills/')) governancePosts.push(req.url());
+    });
     await page.routeWebSocket('**/*', socket => { if (new URL(socket.url()).hostname !== '127.0.0.1') unexpected.push(socket.url()); socket.close(); });
     await page.route('**/*', async route => {
       const req = route.request(), url = new URL(req.url());
@@ -180,13 +183,69 @@ async function verifyReadOwnership(engine) {
     }
     try {
       await page.goto(origin + '/skills');
-      await execute({ page, plans, pair, refresh, search, id, status, flush, waitRead, release, loaded, exactPost, posts, requests });
+      await execute({ page, plans, pair, refresh, search, id, status, flush, waitRead, release, loaded, exactPost, posts, requests, governancePosts });
       assert.deepEqual({ unexpected, errors }, { unexpected: [], errors: [] });
       passed++; console.log(`PASS ownership ${engine.name()}: ${name}`);
     } catch (error) { failures.push(name); console.error(`FAIL ownership ${engine.name()}: ${name}\n${error.message}`); }
     finally { await page.close(); }
   }
   try {
+    const approved = structuredClone(operatorSkillFixtures[3]);
+    const malformedItems = [
+      ['empty hash', { contentHash: '' }], ['missing hash', { contentHash: undefined }],
+      ['blank hash', { contentHash: '  ' }], ['object hash', { contentHash: {} }],
+      ['blank ID', { versionId: '  ' }], ['missing ID', { versionId: undefined }],
+      ['blank name', { name: '  ' }], ['missing name', { name: undefined }],
+      ['object name', { name: { text: 'Not a rendered name' } }], ['array name', { name: ['Not a canonical name'] }],
+      ['object instructions', { instructions: { text: 'Not rendered instructions' } }],
+      ['object version number', { versionNumber: {} }], ['object risk', { riskClass: {} }],
+      ['object agent', { agentId: {} }], ['object activation status', { activationStatus: {} }],
+      ['non-array allowed actions', { toolAllowlist: {} }], ['object allowed action', { toolAllowlist: [{}] }],
+      ['invalid audit date', { createdAt: 'not-a-date' }], ['object audit author', { createdBy: {} }],
+      ['object rollout', { rolloutPercent: {} }], ['object priority', { priority: {} }],
+      ['object activation ID', { activationId: {} }], ['object lifecycle', { lifecycleState: { state: 'approved_inactive' } }],
+    ];
+    for (const [label, patch] of malformedItems) await scenario(`malformed ${label} refresh retains approved target and disables activation`, async h => {
+      await h.loaded(approved.versionId);
+      await expect(h.page.getByRole('button', { name: 'Start a small test', exact: true })).toBeEnabled();
+      await h.page.getByLabel('Seller says').fill('Exact approved target unsaved preview');
+      h.plans.push(pair([{ ...approved, versionId: 'SYN-MALFORMED-READ', name: 'Malformed replacement', ...patch }], 99));
+      await h.refresh.click(); await h.waitRead(1); await expect(h.refresh).toBeEnabled();
+      await expect(h.page.getByRole('button', { name: 'Start a small test', exact: true })).toBeDisabled();
+      await h.loaded(approved.versionId);
+      await expect(h.page.locator('.pbk-skill-version-head h2')).toHaveText(approved.name);
+      await expect(h.page.locator('.pbk-skill-saved-instructions p')).toHaveText(approved.instructions);
+      await expect(h.page.getByLabel('Seller says')).toHaveValue('Exact approved target unsaved preview');
+      await expect(h.page.getByRole('alert')).toContainText('Repository response unavailable');
+      await expect(h.page.getByText(/Saved.*retained/i)).toBeVisible();
+      await expect(h.page.getByRole('button', { name: 'Confirm', exact: true })).toHaveCount(0);
+      assert.deepEqual(h.governancePosts, [], 'Malformed reads must not issue any governance POST');
+    }, pair([approved]));
+    for (const [label, patch] of malformedItems.filter(([label]) => ['empty hash','missing hash','blank name','object name','object instructions','non-array allowed actions'].includes(label))) {
+      await scenario(`initial malformed ${label} is unavailable without a write target`, async h => {
+        await expect(h.page.getByRole('alert')).toContainText('Repository response unavailable');
+        await expect(h.page.getByText('Repository unavailable', { exact: true })).toBeVisible();
+        await expect(h.id).toHaveCount(0); await expect(h.status).toHaveText('Not recorded');
+        await expect(rows(h.page)).toHaveCount(0); await expect(h.refresh).toBeEnabled();
+        await expect(h.page.getByRole('button', { name: 'Start a small test', exact: true })).toHaveCount(0);
+        assert.deepEqual(h.governancePosts, []);
+      }, pair([{ ...approved, ...patch }], 99));
+    }
+    await scenario('canonical strings stay exact and missing optional fields remain readable', async h => {
+      const exact = { versionId: ' exact version /? ', contentHash: ' exact hash ', name: ' Exact minimal skill ', lifecycleState: 'approved_inactive' };
+      await h.loaded(exact.versionId);
+      await expect(h.page.locator('.pbk-skill-version-head h2')).toHaveText(exact.name);
+      for (const label of ['Recorded uses','Success rate','Confidence','Change']) await expect(metric(h.page, label)).toHaveText('Not recorded');
+      await h.exactPost(`/api/skills/versions/${encodeURIComponent(exact.versionId)}/activate`, { agentId: 'ava', rolloutMode: 'canary', rolloutPercent: 10, scope: { type: 'global' }, rollbackThresholds: { complianceFailure: 1, sellerComplaint: 1, toolErrorRate: 0.1 } });
+      await h.page.getByRole('button', { name: 'Start a small test', exact: true }).click();
+      await h.page.getByRole('button', { name: 'Confirm', exact: true }).click();
+      await expect(h.page.getByRole('alert')).toContainText('Synthetic exact target rejected'); assert.equal(h.governancePosts.length, 1);
+      h.plans.push(pair([{ ...exact, lifecycleState: 'candidate' }])); await h.refresh.click(); await h.waitRead(1); await h.loaded(exact.versionId);
+      await h.exactPost(`/api/skills/versions/${encodeURIComponent(exact.versionId)}/approve`, { expectedHash: exact.contentHash, decision: 'approved', evidenceSnapshot: { reviewedIn: 'PBK Skill Studio', safetyScan: {} } });
+      await h.page.getByRole('button', { name: 'Review and approve this skill', exact: true }).click();
+      await h.page.getByRole('button', { name: 'Confirm', exact: true }).click();
+      await expect(h.page.getByRole('alert')).toContainText('Synthetic exact target rejected'); assert.equal(h.governancePosts.length, 2);
+    }, pair([{ versionId: ' exact version /? ', contentHash: ' exact hash ', name: ' Exact minimal skill ', lifecycleState: 'approved_inactive' }]));
     for (const part of ['repository','status']) for (const outcome of ['success','error']) {
       await scenario(`late ${part} ${outcome} after newer success`, async h => {
         await h.loaded();
@@ -320,7 +379,11 @@ async function verifyReadOwnership(engine) {
       await off.click(); await confirm.click(); await expect(h.page.getByRole('alert')).toContainText('Synthetic exact target rejected'); assert.equal(h.posts.length, 2);
     });
     await scenario('missing hash cannot submit unverifiable approval', async h => {
-      await h.loaded(); await expect(h.page.getByRole('button', { name: 'Review and approve this skill', exact: true })).toBeDisabled();
+      await expect(h.page.getByRole('alert')).toContainText('Repository response unavailable');
+      await expect(h.page.getByText('Repository unavailable', { exact: true })).toBeVisible();
+      await expect(h.id).toHaveCount(0);
+      await expect(h.page.getByRole('button', { name: 'Review and approve this skill', exact: true })).toHaveCount(0);
+      assert.deepEqual(h.governancePosts, []);
     }, pair([{ ...a, contentHash: '' }]));
     await scenario('delayed action reload uses current search/filter intent, not captured load', async h => {
       await h.loaded();

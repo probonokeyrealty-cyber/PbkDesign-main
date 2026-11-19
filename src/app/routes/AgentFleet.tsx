@@ -38,6 +38,7 @@ import {
   type QaAuditRecord,
 } from '../utils/runtimeBridge';
 import { AGENT_REGISTRY, type RegistryAgent } from '../utils/agentRegistry';
+import { AgentResearchTools } from '../components/agents/AgentResearchTools';
 
 type AgentSkill = {
   name: string;
@@ -2281,6 +2282,13 @@ export function AgentFleet() {
                   </span>
                 ))}
               </div>
+
+              <AgentResearchTools
+                key={JSON.stringify([activeAgent.id, selectedLeadCanonicalId])}
+                agentId={activeAgent.id}
+                agentName={activeAgent.name}
+                leadId={selectedLeadCanonicalId || undefined}
+              />
 
               <div className="border-b border-slate-800 px-4 py-4">
                 <div className="grid gap-3 lg:grid-cols-[1fr_auto] lg:items-end">

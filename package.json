@@ -316,7 +316,7 @@
     "conversations:backfill:dry": "node ./scripts/backfill-conversations.mjs",
     "conversations:backfill": "node ./scripts/backfill-conversations.mjs --apply",
     "preview:final": "npm run build && npm run test:parity && npm run test:tooling && npm run doctor:browser-use",
-    "test:release-ui": "npm run build && npm run test:root-shell-promotion && npm run test:shell-production-boot && npm run test:shell-prototype-modern && npm run test:shell-route-aliases && npm run test:shell-global-search-bridge && npm run test:shell-favorites-bridge && npm run test:shell-prefs-bridge && npm run test:command-approval-preview && npm run test:command-battlefield-ranking && npm run test:command-widgets-bridge && npm run test:founder-work-queue-bridge && npm run test:system-source-labels-bridge && npm run test:command-center-lead-roster && npm run test:leads-full-roster-bridge && npm run test:lead-portal-route && npm run test:attom-mcp-records && npm run test:composio-research && npm run test:campaigns-prototype-modern && npm run test:campaign-drilldown-bridge && npm run test:unified-inbox-ui && npm run test:manual-ux-gaps && npm run test:mobile-workspace-regression && npm run test:deal-analyzer-modern-mobile && npm run test:ava-chat-local-command && npm run test:netlify-cache-headers && npm run test:production-hardening",
+    "test:release-ui": "npm run build && npm run test:root-shell-promotion && npm run test:shell-production-boot && npm run test:shell-prototype-modern && npm run test:shell-route-aliases && npm run test:shell-global-search-bridge && npm run test:shell-favorites-bridge && npm run test:shell-prefs-bridge && npm run test:command-approval-preview && npm run test:command-battlefield-ranking && npm run test:command-widgets-bridge && npm run test:founder-work-queue-bridge && npm run test:system-source-labels-bridge && npm run test:command-center-lead-roster && npm run test:leads-full-roster-bridge && npm run test:lead-portal-route && npm run test:attom-mcp-records && npm run test:composio-research && npm run test:campaigns-prototype-modern && npm run test:campaign-drilldown-bridge && npm run test:unified-inbox-ui && npm run test:manual-ux-gaps && npm run test:mobile-workspace-regression && npm run test:deal-analyzer-modern-mobile && npm run test:ava-chat-local-command && npm run test:ava-chat-scope && npm run test:netlify-cache-headers && npm run test:production-hardening",
     "test:production-readiness-command-layer": "node ./scripts/production-readiness-command-layer-smoke.mjs",
     "test:silent-error-governance": "node ./scripts/silent-error-governance-smoke.mjs",
     "test:production-gap-labels": "node ./scripts/production-gap-labels-smoke.mjs",
@@ -346,7 +346,9 @@
     "format:check": "prettier --check \"**/*.{js,mjs,ts,tsx,json,md,css}\"",
     "test:unit": "node --experimental-vm-modules ./node_modules/jest/bin/jest.js --config ./jest.config.mjs --runInBand",
     "prepare": "node ./.husky/install.mjs",
-    "test:ava-gemini-live-router": "node ./scripts/ava-gemini-live-router-smoke.mjs"
+    "test:ava-gemini-live-router": "node ./scripts/ava-gemini-live-router-smoke.mjs",
+    "test:ava-chat-scope": "node --test ./scripts/ava-chat-scope.node-test.mjs",
+    "test:ava-chat-scope-ui": "node --test ./scripts/ava-chat-scope-browser.node-test.mjs"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1056.0",

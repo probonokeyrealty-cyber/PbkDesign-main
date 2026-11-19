@@ -1,5 +1,21 @@
 # Operator Workflow Local Validation
 
+## Current Local Status
+
+Application core: `eed9bc7`; final CSS/test-wiring source: `78fa003`.
+All six tasks passed independent local review. Whole-branch review found no
+Critical/Important issues; its two P3s were fixed together and both cleared the
+single scoped re-review, with no new findings. Historical RED results below
+are preserved for audit; later fix sections supersede them, including all three
+legacy browser matrices. This is local acceptance, not release signoff.
+
+The branch and linked worktree remain local under the existing hold. No push,
+PR, merge, deployment, production migration, seller contact, delivery retry,
+dispatch unlock or auth/approval policy change occurred. Full founder release
+qualification, native SQL and manual/native/Electron/OS clipboard checks remain
+pending or unverified. The synthetic preview uses fallback fonts under its
+unchanged same-origin CSP.
+
 Revision note: the initial execution tables and remaining-failure descriptions
 below are historical evidence for 0888d93 and the controller's doc-only 4dc0fd3.
 The appended **Task 6 Fix Round 1** section records the current corrections and
@@ -299,6 +315,91 @@ No permissions, extensions, auth or security settings were changed. Successful
 manual/native search, preview editing, anchors and clipboard verification remain
 pending; headless fixture results are separate. The user was asked whether to
 leave interactive verification to them.
+
+## Final Controller Evidence
+
+The fresh full project unit command on application core `eed9bc7` completed
+with exit0:92 suites passed,2618 tests passed,12 existing database-guarded skips
+of2630total,1320.655s. The log is
+`.pbk-local/operator-workflow/controller-final-unit.log`. Final-wave package
+and Jest-source edits were held until that process exited. Application TSX and
+helpers did not change afterward; final CSS and mandatory test-wiring changes
+received the separately recorded six-cell browser,90Node and96focusedCI checks.
+This is not a post-wiring repeat of the full suite or native SQL qualification.
+
+The controller ran a fresh, read-only headless Chromium startup smoke against
+the deliberately retained preview after final source commit `78fa003`:
+
+| Route | HTTP | Viewport / scrollWidth | Synthetic data | Application errors | Foreign requests |
+| --- | --- | --- | --- | --- | --- |
+| http://127.0.0.1:52796/leads | 200 | 1280x900 /1280 | Synthetic Seller00 | 0 | 0 |
+| http://127.0.0.1:52796/skills | 200 | 1280x900 /1280 | Synthetic Skill00 | 0 | 0 |
+
+Both literal page headings/titles and visible synthetic data were asserted;
+fresh `final-preview-leads.png` and `final-preview-skills.png` were saved under
+the owned artifact root and visually inspected. The isolated browser closed in
+`finally`; the preview remains PID30224, with its original actual URLs above.
+No interaction with a real seller record, provider or live browser profile was
+used for this proof. No preview restart, proxy/auth change or CSP bypass occurred.
+
+The first strict zero-console-error attempt exited1 after the Leads render
+checks because two existing Google Fonts stylesheet loads were blocked by the
+fixture's same-origin CSP. The existing font declarations are in `index.html`
+and `src/styles/fonts.css`, not changed by this branch. A second bounded smoke
+kept CSP and network restrictions intact, classified only those exact Google
+Fonts CSP messages separately, and required zero page errors, other console
+errors and foreign requests. It exited0 for both routes, with two blocked font
+stylesheet messages per page. Therefore this receipt does not claim a clean
+all-console log or exact production-font fidelity: preview typography uses
+fallback fonts. Manual/native and production-asset qualification remain pending.
+
+The controller subsequently re-ran the final mandatory operator-unit command:
+90/90 passed,0skipped,5962.3783ms (`controller-final-operator-unit.log`), including
+all three suites and142 direct denial assertions. The actual package/YAML
+focused CI regression also passed96/96,0skipped,1.453s. All controller test
+sessions ended; the retained preview is not an unfinished test session.
+
+## Final Review And Preservation
+
+Kuhn reviewed `5cb15fb..eed9bc7` independently, then reviewed only the single
+`eed9bc7..78fa003` fix wave. Both launcher-safety wiring and narrow Property-tab
+word fragmentation are ADDRESSED. No remaining in-scope finding was reported.
+Earlier Task6 SMS-feedback and legacy-fixture repairs independently cleared
+Archimedes' scoped re-review. No second final fix wave or fresh review cycle
+was used. Production/native/manual limitations remain explicit above.
+
+Final controller metadata inventory still matches56 regular user `output/`
+files and the original SHA256 tuple digest. Callback branch ref remains
+`96b0aced65b582065e48e2957cdf836c7d480753`. Listener52796 remains bound only to
+127.0.0.1, owned by previewPID30224. No global process/browser cleanup was used.
+
+Review briefs, reports, ledger and diff packages remain in the original local
+`.superpowers/sdd/2026-11-18-leads-skills-workflow/` workspace. The environment
+rejected the proposed archive-and-scratch-cleanup command before execution;
+no archive or deletion occurred and no alternate deletion was attempted.
+The original records, sibling plans, linked worktree and branch are preserved.
+
+## Rulings And Costs
+
+In chronological order, these are the controller's execution decisions and
+their cost if mistaken:
+
+1. Interpret continue as approval for the reviewed local plan only: reversible
+   local implementation, never publication or live operations.
+2. Inherit the required agent model instead of an override: possibly more
+   review/implementation time, no scope change.
+3. Repair source-verified stale Leads test selectors: one extra existing test
+   file, no production-copy rollback or discarded behavior assertion.
+4. Redirect legacy test artifacts away from user output/: focused test fixture
+   infrastructure changes; defaults and all user history preserved.
+5. Replace unsupported this-week queue display copy with time-free wording:
+   presentation-only copy; internal priority/reason computation unchanged.
+6. Enforce canonical required skill read fields before promoting fresh data:
+   malformed reads retain labeled old data or become unavailable; optional
+   metrics/unknown lifecycle remain supported, no new eligibility policy.
+7. Repair the two listed legacy Property fixture contracts/selectors alongside
+   Analyzer readiness synchronization: two additional test files and synthetic
+   mocks, no new production endpoint, deadline increase or weakened assertion.
 
 ## Task 6 Fix Round 1
 

@@ -1,3 +1,4 @@
+import { hydrateAttomMcpSections, type AttomMcpSection } from './attomMcpSections.mjs';
 import {
   hydrateAttomExtraFields,
   strictAttomDate,
@@ -122,6 +123,7 @@ export function readPropertyEvidence(deal: unknown, address: string) {
     retrievedAt: string;
     facts: AttomPropertyFacts;
     fieldRetrievedAt?: Record<string, string>;
+    sections?: AttomMcpSection[];
   } | null = null;
   if (
     addressKey(address) &&
@@ -189,6 +191,8 @@ export function readPropertyEvidence(deal: unknown, address: string) {
     };
   }
   if (records) {
+    const sections = hydrateAttomMcpSections(item.sections);
+    if (sections.length) records.sections = sections;
     const dates: Record<string, string> = {};
     for (const key of Object.keys(records.facts)) {
       const value = record(item.fieldRetrievedAt)[key];

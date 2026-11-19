@@ -32,6 +32,9 @@ const pkg = JSON.parse(read('package.json'));
 const evidenceSource = read('src/app/utils/propertyEvidence.ts').replace(
   "'./attomRecordFields.mjs'",
   JSON.stringify(new URL('../src/app/utils/attomRecordFields.mjs', import.meta.url).href),
+).replace(
+  "'./attomMcpSections.mjs'",
+  JSON.stringify(new URL('../src/app/utils/attomMcpSections.mjs', import.meta.url).href),
 );
 const evidenceCode = ts.transpileModule(evidenceSource, {
   compilerOptions: {module:ts.ModuleKind.ESNext,target:ts.ScriptTarget.ES2022},

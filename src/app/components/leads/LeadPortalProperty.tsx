@@ -79,7 +79,7 @@ export function LeadPortalProperty({
       if (!response.ok || !response.saved) throw new Error('Property intelligence was not saved. Refresh again when the bridge is available.');
       await onSaved(lead.id);
       if (active()) setRefreshStatus(
-        response.records.status === 'matched' && response.sales.status === 'matched'
+        response.records.status === 'matched' && !response.records.partial && response.sales.status === 'matched'
           ? 'Property intelligence saved. Review suggested sales before underwriting.'
           : 'Property intelligence refreshed. Some sources were unavailable; previously saved evidence is retained.'
       );

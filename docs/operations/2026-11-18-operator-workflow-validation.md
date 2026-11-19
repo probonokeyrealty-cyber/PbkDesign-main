@@ -248,3 +248,44 @@ logs are `task6-browser-final.log` (completed Leads child),
 `task6-old-leads-accepted.log`, `task6-fleet-accepted.log`,
 `task6-build-qualified.log`, `final-unit.log`, `final-governance-ci.log`,
 `final-helpers.log`, and `final-preview.log`.
+
+## Controller Follow-Up
+
+The controller independently verified commit `0888d93` with pinned Node22:
+`npm run test:operator-workflow-unit` passed87/87 with no skips;
+`node --test scripts/operator-workflow-local-preview.node-test.mjs` passed3/3
+with142 direct server denial assertions and no skips; `npm run typecheck`,
+`npm run lint`, `npm run build` and `git diff --check` each exited0. The ordinary
+build completed in10.01s. These focused checks do not replace the full-unit
+result above or turn its12 guarded skips into native database verification.
+
+The controller started a hidden detached synthetic-only preview, PID30224.
+Readiness JSON reported `mode: synthetic_read_only` and the actual URLs:
+
+- Leads: <http://127.0.0.1:52796/leads>
+- Skills: <http://127.0.0.1:52796/skills>
+
+The preview is deliberately retained for local review, not published. Its logs
+are `controller-preview-20261118.stdout.log` and the corresponding stderr file
+under `.pbk-local/operator-workflow/`. It requires no provider credentials and
+has no provider/runtime fallback. Closing it later must target its own process,
+not unrelated Node services.
+
+BrowserOS initially observed both synthetic routes in new QA tabs at824x851:
+correct titles/headings, scrollWidth824 and zero console errors. Initial
+`browseros-leads-desktop.png` and `browseros-skills-desktop.png` were inspected;
+the latter exposed the pre-fix status-strip word-fragmentation defect. Final
+fixed-tablet evidence is the isolated Playwright proof, not those initial images.
+
+Interactive BrowserOS verification did not succeed. Search-fill commands
+reported success but the DOM values stayed empty after two Leads attempts and
+one Skills attempt. Inputs were stopped. A later reload using the previously
+returned Skills page ID reached an unrelated existing Apify category tab after
+page-ID drift; no form submission/provider operation was performed by that
+reload. All BrowserOS automation then stopped. Only the newly created unrelated
+capture was removed; no user artifact was removed or restored. One unrelated
+tab was reloaded, so this receipt does not claim all browser tabs were untouched.
+No permissions, extensions, auth or security settings were changed. Successful
+manual/native search, preview editing, anchors and clipboard verification remain
+pending; headless fixture results are separate. The user was asked whether to
+leave interactive verification to them.

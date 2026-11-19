@@ -1,0 +1,112 @@
+.pbk-agent-research {
+  min-width: 0;
+  max-width: 100%;
+  border-bottom: 1px solid var(--border-dim);
+  background: var(--bg-panel);
+  color: var(--text-secondary);
+  font-family: var(--font-ui);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.pbk-agent-research summary {
+  box-sizing: border-box;
+  min-height: 44px;
+  padding: 14px 16px;
+  cursor: pointer;
+  color: var(--sky);
+}
+
+.pbk-agent-research summary:focus-visible,
+.pbk-agent-research button:focus-visible {
+  outline: 2px solid var(--sky);
+  outline-offset: -2px;
+}
+
+.pbk-agent-research-body {
+  display: grid;
+  min-width: 0;
+  gap: 12px;
+  padding: 0 16px 16px;
+}
+
+.pbk-agent-research p {
+  margin: 6px 0;
+  line-height: 1.5;
+}
+
+.pbk-agent-research h4 {
+  margin: 0 0 8px;
+  color: var(--text-primary);
+  font-family: var(--font-display);
+  font-size: 15px;
+}
+
+.pbk-agent-research button {
+  color: var(--sky);
+  border-color: var(--sky-dim);
+  justify-self: start;
+  min-height: 44px;
+  max-width: 100%;
+  height: auto;
+  white-space: normal;
+}
+
+.pbk-agent-research section,
+.pbk-agent-research-preview {
+  min-width: 0;
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px solid var(--border-dim);
+  border-radius: var(--radius-lg);
+  background: var(--bg-console);
+}
+
+.pbk-agent-research-state,
+.pbk-agent-research-warning {
+  color: var(--amber);
+}
+
+.pbk-agent-research-mono,
+.pbk-agent-research-state,
+.pbk-agent-research dt,
+.pbk-agent-research dd {
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.pbk-agent-research ul {
+  margin: 0;
+  padding-left: 16px;
+}
+
+.pbk-agent-research li + li {
+  margin-top: 10px;
+}
+
+.pbk-agent-research-preview summary {
+  padding: 12px 0;
+}
+
+.pbk-agent-research dl {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 2fr);
+  gap: 8px;
+}
+
+.pbk-agent-research dd {
+  min-width: 0;
+  margin: 0;
+  color: var(--sky);
+}
+
+@media (max-width: 390px) {
+  .pbk-agent-research button {
+    width: 100%;
+    justify-self: stretch;
+  }
+
+  .pbk-agent-research dl {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

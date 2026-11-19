@@ -180,10 +180,10 @@ test('unapproved v2 policy is not replaced with a pilot or legacy policy', async
 test('approval, auth, delivery and dispatch code outside maturity remains byte-for-byte unchanged', () => {
   const unchanged = (source.slice(0, start) + source.slice(end))
     .replace("import { readCanaryEvidence } from './canary-evidence-reader.mjs';\n", '');
-  // Independently reviewed lead intelligence integration; bridge baseline is 43c0066.
-  // Hash refresh review: docs/operations/2026-11-18-lead-intelligence-hash-refresh.md.
+  // Independently reviewed catalog-only discovery extension; base is 491bb65.
+  // Hash refresh review: docs/operations/2026-11-19-composio-discovery-hash-refresh.md.
   assert.equal(createHash('sha256').update(unchanged).digest('hex'),
-    'a0b0dad9228d17e3bc382d010577b705730e95c16e7f42fc18259adcc6d1ee55');
+    '6f5fb343c4e8ecaa1c40ca85db9c875ed981442080c35fee5c866eafb09f7627');
 });
 
 test('production distribution includes reader and protocol, never the fixture signer', () => {

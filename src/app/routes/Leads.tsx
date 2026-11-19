@@ -129,6 +129,7 @@ type QuickSmsDraft = {
   sellerName: string;
   phone: string;
   body: string;
+  error?: string;
 };
 
 type DetailStatus = {
@@ -1706,6 +1707,9 @@ export function Leads() {
     if (!quickSmsDraft || !quickSmsDraft.body.trim()) return;
     const { lead, leadId } = quickSmsDraft;
     if (!beginLeadAction(`sms:${leadId}`)) return;
+    setQuickSmsDraft((current) =>
+      current?.leadId === leadId ? { ...current, error: undefined } : current
+    );
     try {
       const response = await sendMessageRequest({
         leadId,
@@ -1739,11 +1743,15 @@ export function Leads() {
         loadLeadRoster(),
       ]);
     } catch (nextError) {
+      const reason =
+        nextError instanceof Error ? nextError.message : 'Ava could not send that SMS request.';
+      setQuickSmsDraft((current) =>
+        current?.leadId === leadId ? { ...current, error: reason } : current
+      );
       showUiToast({
         tone: 'error',
         title: 'SMS failed',
-        desc:
-          nextError instanceof Error ? nextError.message : 'Ava could not send that SMS request.',
+        desc: reason,
         critical: true,
       });
     } finally {
@@ -3543,6 +3551,7 @@ export function Leads() {
             role="dialog"
             aria-modal="true"
             aria-labelledby="lead-quick-sms-title"
+            aria-describedby={quickSmsDraft.error ? 'lead-quick-sms-error' : undefined}
             className={`${softPanelClass} flex max-h-[min(92vh,720px)] w-full max-w-lg flex-col overflow-hidden`}
           >
             <div className="flex items-start justify-between gap-4 border-b border-slate-800 px-5 py-4">
@@ -3584,6 +3593,12 @@ export function Leads() {
               </p>
             </div>
             <div className="shrink-0 border-t border-slate-800 px-5 py-4">
+              {quickSmsDraft.error && (
+                <div id="lead-quick-sms-error" className="pbk-lead-sms-error" role="alert">
+                  <strong>SMS failed</strong>
+                  <span>{quickSmsDraft.error}</span>
+                </div>
+              )}
               <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
                 <button
                   type="button"

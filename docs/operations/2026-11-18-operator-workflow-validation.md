@@ -1,5 +1,11 @@
 # Operator Workflow Local Validation
 
+Revision note: the initial execution tables and remaining-failure descriptions
+below are historical evidence for 0888d93 and the controller's doc-only 4dc0fd3.
+The appended **Task 6 Fix Round 1** section records the current corrections and
+supersedes the SMS readability and three legacy-regression dispositions. It does
+not claim independent re-review or release acceptance.
+
 ## Source And Boundary
 
 - Worktree: `C:/Users/Dell/.codex/worktrees/ava-detailed-chat-release/PbkDesign-main`.
@@ -289,3 +295,152 @@ No permissions, extensions, auth or security settings were changed. Successful
 manual/native search, preview editing, anchors and clipboard verification remain
 pending; headless fixture results are separate. The user was asked whether to
 leave interactive verification to them.
+
+## Task 6 Fix Round 1
+
+Fix base: `4dc0fd3` (doc-only parent after implementer commit `0888d93`). Fix head
+is the local commit containing this section; the local SDD report records its
+actual hash after commit. Status: implemented and self-reviewed, awaiting scoped
+Archimedes re-review. No subagent/reviewer dispatch was performed by this implementer.
+
+### Important Finding And Bounded Repair
+
+Archimedes found that the SMS backdrop130 concealed the toast90, including the
+only rejection explanation. Prior native Cancel success and `toBeVisible` were
+not proof that the error was readable. The previous receipt's Cancel evidence
+must not be interpreted as rejection-feedback visibility acceptance.
+
+The SMS draft now retains a local optional error string. The same existing
+failure reason is displayed as an inline `role=alert` in the composer footer,
+with its title/reason announced through the dialog description. It resets when
+a new permitted send starts; new composers start without a previous error.
+Failure attaches only to the matching current lead ID. Draft body/target remain
+unchanged; request fields, dispatch/approval guards and toast behavior are
+unchanged. Only the SMS error text uses scoped wrapping/height styling. No
+global z-index escalation, global toast redesign, provider or API change.
+
+`scripts/leads-workflow-browser-smoke.mjs` now checks the inline title and reason
+inside the still-open dialog using every rendered text rectangle: viewport
+bounds plus left/center/right hit-tests must resolve to that text element.
+It also retains the exact403 request body, unsent draft, native pointer Cancel
+and later toast Dismiss assertions. No forced click/DOM removal/keyboard-only
+fallback, assertion weakening, timeout change or automatic retry was added.
+
+The bounded local probe reproduced both engines at320x568 before the fix:
+toast title/reason/Dismiss centers hit the composer instead, readable inline
+feedback failed in both engines, while draft and pointer recovery passed.
+After the repair, the same probe passed title/reason hit-testing, exact rejected
+body, retained text, Cancel and Dismiss in both engines. The global toast is
+still behind the open composer; the new inline alert is the readable feedback.
+Inspected fixed captures: `fix1-sms-chromium-320.png` and
+`fix1-sms-webkit-320.png` under `.pbk-local/operator-workflow/`.
+
+### Required Legacy Regressions
+
+The old Leads script now waits for the actual rendered Analyzer Property
+details and the exact loaded address before its existing exact storage tuple
+assertion. Its reader uses the canonical current-deal key, preferring the
+session envelope and falling back to the shared local key as the existing
+reader does. The tuple remains
+`["fixture-north","Fixture North Updated",250000]`; confirmed-delete, exact
+CRUD ordering and unrelated lead preservation assertions remain intact.
+`DealView.tsx`, hydration, `analyzerStorage.ts` and storage behavior were not
+changed. The old mobile comparison assertion assumed vertically stacked
+values; current source CSS uses separate ordered saved/record columns on both
+layouts, so the geometry assertion now checks those actual non-overlapping
+columns rather than changing production UI.
+
+The first readiness attempt entered the Analyzer error boundary while Vite
+reported dependency re-optimization; it was exit1, not a pass. A subsequent
+diagnostic run passed desktop handoff/delete but stopped on the stale mobile
+geometry expectation. Final full execution passed all three cells after the
+source-backed test correction. Logs retain blocked-resource/HMR/ref warnings;
+no zero-console-error claim is made for this legacy script. The historical
+timeout cause remains unproven. Reviewer-reported bounded passes, including a
+1.195s pass within the original deadline, and this final full matrix do not
+constitute a causal product-handoff fix claim.
+
+The controller explicitly expanded this fix's test scope to guidance and
+property-workspaces. Guidance now targets Refresh property intelligence within
+the actual Property record panel, distinguishing it from the separate header
+refresh. It tracks both enrich and draft lookup paths to preserve zero automatic
+lookups during navigation. All contactability/consent/DNC, Edit Cancel, focus,
+saved-value, overflow and zero-write assertions remain.
+
+Property-workspaces now mocks one explicit exact-target enrich request and its
+saved-snapshot/reload contract in memory. Draft ATTOM lookups stay separate:
+four exact address requests cover normal lookup, held stale response, changed-
+address timeout and explicit retry. No navigation-triggered enrichment occurs.
+Comparison filters are asserted within the real comparison rows (not the
+independent full-record groups); photo controls/idle state follow current source.
+The draft snapshot checks all canonical business form fields, with a non-vacuous
+>=20-field guard, rather than including the newly added record-search/filter
+utility inputs. Downstream draft-value, timeout, stale-response, footer reach,
+Cancel, media/no-write/error assertions remain. No production enrichment or
+endpoint was modified. Both newly authorized artifact writers honor the existing
+test-only evidence override while preserving defaults.
+
+### Commands, Output And Counts
+
+Same pinned Node22.23.5, session PATH, npmCLI and DB-opt-in scrub as above. All
+enabled legacy screenshots used
+`PBK_OPERATOR_EVIDENCE_DIR=.pbk-local/operator-workflow/legacy-proof`;
+`PBK_LEADS_DESIGN_SCREENSHOTS=1`, `PBK_GUIDANCE_SHOTS=1`, and
+`PBK_PROPERTY_QA_SHOTS=1` were session-only test flags.
+
+| Covering command | Actual result |
+| --- | --- |
+| `node .pbk-local/operator-workflow/fix1-sms-probe.mjs` before production fix | exit1; both engines fail readable feedback; both retain exact draft/request and pointer recovery |
+| Same bounded command after fix | exit0; Chromium/WebKit320x568 readable title/reason and native recovery pass; zero unexpected writes/foreign requests |
+| `node scripts/leads-workflow-browser-smoke.mjs` | exit0; all six original Chromium/WebKit1440/390/320 cells, ten ownership scenarios, three expected evidence-loss negative controls; SMS hit-tests/error/draft/Cancel covered in all six cells,320 cells at568px height |
+| `node scripts/leads-design-browser-smoke.mjs` | final exit0; Chromium1440/390 and WebKit390,3/3 cells, exact Analyzer tuple and confirmed delete in every cell |
+| `node scripts/lead-workspace-guidance-browser-smoke.mjs` | final exit0; Chromium1440/390 and WebKit390,3/3 cells |
+| `node scripts/lead-property-workspaces-browser-smoke.mjs --webkit` | final exit0; desktop, mobile and webkit-mobile,3/3 cells; all downstream assertions reached |
+| `node npmCLI run typecheck` | exit0 |
+| `node npmCLI run lint` | exit0 |
+| `node npmCLI run test:lead-controls-safety` | exit0 |
+| `node npmCLI run build` | exit0, normal prebuild included; built in8.91s |
+| `git diff --check` | exit0 |
+
+Final stdout includes:
+
+```text
+chromium 1440px: roster, lead creation, save, Analyzer sync, and exact confirmed delete passed.
+chromium 390px: roster, lead creation, save, Analyzer sync, and exact confirmed delete passed.
+webkit 390px: roster, lead creation, save, Analyzer sync, and exact confirmed delete passed.
+desktop: property workspace, draft preservation, timeout recovery, and stale lookup isolation passed
+mobile: property workspace, draft preservation, timeout recovery, and stale lookup isolation passed
+webkit-mobile: property workspace, draft preservation, timeout recovery, and stale lookup isolation passed
+```
+
+The initial fixture-repair attempts were also RED on ambiguous Refresh controls
+and a nested locator scoping mistake; both were corrected against the actual
+Property record panel/comparison row. They are not relabeled passes. Final logs:
+`fix1-sms-{red,green}.log`, `fix1-leads-workflow.log`,
+`fix1-legacy-leads-qualified.log`, `fix1-guidance-final.log`,
+`fix1-property-qualified.log`, `fix1-typecheck.log`, `fix1-lint.log`,
+`fix1-safety.log`, `fix1-build.log` in `.pbk-local/operator-workflow/`.
+
+The historical92-suite full-unit result above was not rerun for this bounded
+UI-error/test-only round, as explicitly instructed. It is not represented as a
+fresh full-Jest run of the fix. Hosted/runtime evidence, BrowserOS/manual gaps,
+12 DB-opt-in skips and pending full founder release qualification remain as
+previously recorded. No BrowserOS or remote operation was attempted.
+
+### Boundaries And Remaining Review
+
+Only Leads UI error presentation, its scoped CSS, the covering smoke, the three
+authorized legacy test scripts and this receipt changed. No Analyzer hydration/
+storage, business data/media/math, provider API, approval/auth/dispatch locks,
+dependencies, launcher or CI wiring changed in this round. Launcher-safety
+mandatory wiring and inherited narrow Property-tab word fragmentation remain
+explicitly DEFERRED minors for final whole-branch review, not silently accepted.
+
+Final round1 user-output inventory is56 regular files with the same sorted
+path/size/mtimeMs metadata SHA256
+`0d1b7d85b5d54882c66b562487431f6875eeb18f6c60ca6a3ba93afb247b3584`;
+zero observed metadata differences, no user output touched/reverted. All owned
+temporary test processes/servers ended; matching-process inventory was empty
+after excluding controllerPID30224, which was deliberately left untouched.
+This is fix evidence and implementer self-review only. Archimedes scoped
+re-review and independent whole-branch review remain required before acceptance.

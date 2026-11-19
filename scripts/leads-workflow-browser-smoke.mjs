@@ -264,6 +264,17 @@ async function verifyRejections(page, writes) {
   await rejectExact('POST', '/api/lead/send-message', { ...target, channel: 'sms', message: 'Synthetic unsent text', body: 'Synthetic unsent text', actor: 'PBK operator', requestedBy: 'PBK operator', source: 'leads_page_manual', manual: true, manualSend: true },
     () => sms.getByRole('button', { name: 'Send SMS', exact: true }).click(), 'SMS failed');
   await expect(sms.getByRole('textbox')).toHaveValue('Synthetic unsent text');
+  const smsFeedback = sms.getByRole('alert');
+  for (const locator of [smsFeedback.getByText('SMS failed', { exact: true }), smsFeedback.getByText('Synthetic server rejection; no write performed', { exact: true })]) {
+    await expect(locator).toBeVisible();
+    const readable = await locator.evaluate(element => {
+      const range = document.createRange(); range.selectNodeContents(element);
+      const rects = [...range.getClientRects()].filter(rect => rect.width && rect.height);
+      return rects.length > 0 && rects.every(rect => rect.top >= 0 && rect.bottom <= innerHeight && rect.left >= 0 && rect.right <= innerWidth &&
+        [rect.left + 1, rect.x + rect.width / 2, rect.right - 1].every(x => element.contains(document.elementFromPoint(x, rect.y + rect.height / 2))));
+    });
+    assert.equal(readable, true, 'SMS rejection title/reason must be readable and unoccluded while draft stays open');
+  }
   await pointerCancel(sms, 'sms');
   await page.getByRole('button', { name: 'Dismiss', exact: true }).click();
   await page.goto(origin + '/leads/SYN-WORK-000');

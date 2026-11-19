@@ -5,6 +5,7 @@
 .pbk-lead-portal-edit [data-slot='dialog-header'] { padding-inline-end: 44px; }
 .pbk-lead-portal-edit > button { display: grid; place-items: center; }
 .pbk-leads-surface .pbk-lead-sms-modal-backdrop { z-index: 130; }
+.pbk-leads-surface .pbk-lead-sms-error { display: grid; gap: 4px; max-height: min(24vh, 160px); margin-bottom: 12px; overflow: auto; overflow-wrap: anywhere; color: var(--crimson); font: 13px/1.4 var(--font-ui); }
 .pbk-leads-surface .pbk-lead-ledger-row,
 .pbk-leads-surface .lead-mobile-card { gap: 12px; padding: 16px; }
 .pbk-leads-surface .pbk-leads-detail-shell { padding: 16px; }

@@ -38,6 +38,8 @@ async function verify(browserType, viewport, device = {}) {
   const browser = await browserType.launch();
   try {
     const page = await browser.newPage({ ...device, viewport });
+    page.on('console', message => { if (message.type() === 'error') console.error('Synthetic browser console:', message.text()); });
+    page.on('pageerror', error => console.error('Synthetic page error:', error.message));
     const rows = new Map([[leadA.id, leadA], [leadB.id, leadB]]);
     const writes = [];
     const unexpectedWrites = [];
@@ -210,7 +212,8 @@ async function verify(browserType, viewport, device = {}) {
     await expect(differences.getByText('Property type', { exact: true })).toHaveCount(0);
     const saved = await differences.getByText('1,600 sq ft', { exact: true }).boundingBox();
     const sourced = await differences.getByText('1,850 sq ft', { exact: true }).boundingBox();
-    assert.ok(saved && sourced && (viewport.width > 720 ? sourced.x > saved.x : sourced.y > saved.y));
+    assert.ok(saved && sourced && sourced.x >= saved.x + saved.width,
+      'Current comparison grid keeps saved lead and ATTOM values in separate ordered columns at desktop and mobile widths');
     const recordTransfer = record.locator('details').filter({ has: page.locator('summary').getByText('Recorded transfer', { exact: true }) });
     await expect(record.getByText('$430,000', { exact: true })).toBeVisible();
     await recordTransfer.locator('summary').click();
@@ -259,13 +262,15 @@ async function verify(browserType, viewport, device = {}) {
 
     await page.getByRole('button', { name: 'Analyze', exact: true }).click();
     await expect(page).toHaveURL(/\/deal\/fixture-north$/);
+    await expect(page.getByRole('heading', { name: '01 / Property details', exact: true })).toBeVisible();
+    await expect(page.getByRole('combobox', { name: 'Address', exact: true })).toHaveValue('123 Fixture Avenue, Example City, CA 90210');
     await expect.poll(() => page.evaluate((key) => {
-      const raw = sessionStorage.getItem(key) || '{}';
+      const raw = sessionStorage.getItem(`${key}:session`) || localStorage.getItem(key) || '{}';
       let stored;
       try { stored = JSON.parse(atob(raw)); } catch { stored = JSON.parse(raw); }
       const deal = stored.payload || stored;
       return [deal?.leadId, deal?.sellerName, deal?.arv];
-    }, `${analyzerKey}:session`)).toEqual(['fixture-north', 'Fixture North Updated', 250000]);
+    }, analyzerKey)).toEqual(['fixture-north', 'Fixture North Updated', 250000]);
     await page.goto(`${origin}/leads/fixture-north`);
     const deleteButton = page.getByRole('button', { name: 'Delete lead', exact: true });
     await deleteButton.click();

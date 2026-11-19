@@ -1,9 +1,13 @@
 import assert from 'node:assert/strict';
 import { chromium, devices, expect, webkit } from '@playwright/test';
-import { createServer } from 'vite';
+import { preview } from 'vite';
+import { execFileSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 
-const server = await createServer({ server: { host: '127.0.0.1', port: 0, hmr: false } });
-await server.listen();
+// Exercise this checkout's current source even when invoked on its own.
+execFileSync(process.execPath, [fileURLToPath(new URL('../node_modules/vite/bin/vite.js', import.meta.url)), 'build'], { stdio: 'pipe' });
+
+const server = await preview({ preview: { host: '127.0.0.1', port: 0 } });
 const localOrigin = `http://127.0.0.1:${server.httpServer.address().port}`;
 const hostedOrigin = 'https://pbk-settings-fixture.netlify.app';
 
@@ -83,7 +87,11 @@ async function verify(engine, options, label) {
                 instantly: { ready: emailReady, note: 'Fixture email account' },
               },
             },
-            '/api/tooling/status': { ok: true, tooling: { summary: { requiredCount: 1 } } },
+            '/api/tooling/status': { ok: true, tooling: { summary: { requiredCount: 1 }, composio: {
+              ready: false,
+              outbound: { ready: true, state: 'connected', note: 'Sandbox QA read verified; DND on and QA excluded.', lastSuccessAt: '2026-11-19T18:00:00.000Z' },
+              inbound: { ready: false, state: 'configuration_missing', note: 'Limited staging endpoint. An authenticated tool read is required.' },
+            } } },
             '/api/settings': { ok: true, settings: { operatingMode } },
             '/api/release/status': { ok: true, source: 'fixture' },
             '/api/vector/capacity': { ok: true, source: 'fixture' },
@@ -91,7 +99,8 @@ async function verify(engine, options, label) {
         );
       }
       if (method !== 'GET') return answer({ ok: false }, 405);
-      const response = await route.fetch({ url: `${localOrigin}${path}${url.search}` });
+      const assetPath = path === '/settings' ? '/index.shell.html' : path;
+      const response = await route.fetch({ url: `${localOrigin}${assetPath}${url.search}` });
       return route.fulfill({ response });
     });
 
@@ -156,6 +165,13 @@ async function verify(engine, options, label) {
     await expect(page.getByRole('heading', { name: 'Agent tools' })).toBeHidden();
     await diagnostics.click();
     await expect(page.getByRole('heading', { name: 'Agent tools' })).toBeVisible();
+    const outbound = page.locator('.pbk-settings-tool-card').filter({ hasText: 'PBK agents to Composio' });
+    const inbound = page.locator('.pbk-settings-tool-card').filter({ hasText: 'Composio to PBK' });
+    await expect(outbound).toContainText('Read verified');
+    await expect(outbound).toContainText('DND on and QA excluded');
+    await expect(outbound).toContainText('Last verified read:');
+    await expect(inbound).toContainText('Needs staging setup');
+    await expect(inbound).not.toContainText('Read verified');
     await expect(page.getByRole('heading', { name: 'Vector capacity' })).toBeVisible();
     await expect(page.getByRole('heading', { name: 'Production deploy readiness' })).toBeVisible();
     assert(
@@ -184,6 +200,7 @@ async function verify(engine, options, label) {
 try {
   await verify(chromium, { viewport: { width: 1440, height: 900 } }, 'desktop');
   await verify(webkit, devices['iPhone 13'], 'iphone');
+  await verify(webkit, { ...devices['iPhone SE'], viewport: { width: 320, height: 568 } }, 'iphone-320');
 } finally {
-  await server.close();
+  await new Promise(resolve => server.httpServer.close(resolve));
 }

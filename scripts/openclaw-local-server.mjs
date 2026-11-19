@@ -7,9 +7,24 @@ import { mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { gzipSync } from 'node:zlib';
+import { createComposioConnection, routeComposioAgentRead } from './lib/composio-connection.mjs';
+import { createPbkReadOnlyMcpEndpoint } from '../mcp-server/runtime/pbk-readonly-mcp.mjs';
 import chromium from '@sparticuz/chromium';
 import { WebSocket, WebSocketServer } from 'ws';
 import puppeteer from 'puppeteer-core';
+
+// Default-off staging adapters; no network calls occur during construction/status reads.
+const auditComposioPolicy = (event) => console.info('[pbk-composio-policy]', JSON.stringify(event));
+const composioConnection = createComposioConnection({ onAudit: auditComposioPolicy });
+const composioReadOnlyEndpoint = createPbkReadOnlyMcpEndpoint({
+  onAudit: auditComposioPolicy,
+  readStatus: async (kind) => {
+    if (kind === 'registry') return { registry: buildAgentRegistrySnapshot(getCurrentAgentRegistry()) };
+    if (kind === 'readiness') return { outbound: composioConnection.status(), inbound: composioReadOnlyEndpoint.status() };
+    const runtime = getRuntimeMeta();
+    return { ok: true, features: { authRequired: runtime.authRequired, stateBackend: runtime.stateBackend } };
+  },
+});
 import pg from 'pg';
 import { createClient as createRedisClient } from 'redis';
 import { DeleteObjectCommand, GetObjectCommand, HeadBucketCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
@@ -37068,6 +37083,13 @@ async function buildToolingStatus() {
   const agentReachStatus = detectAgentReachStatus();
 
   const sections = {
+    composio: {
+      optional: true,
+      ready: composioConnection.status().ready && composioReadOnlyEndpoint.status().ready,
+      outbound: composioConnection.status(),
+      inbound: composioReadOnlyEndpoint.status(),
+      note: 'Read-only Composio staging connections; each direction is verified separately.',
+    },
     commandIntentRouter: {
       optional: false,
       ready: COMMAND_INTENT_ROUTER_ENABLED,
@@ -60058,6 +60080,8 @@ const toolHandlers = {
   async runAgentCommand(params = {}) {
     recordToolUse('runAgentCommand');
     const command = String(params.command || params.text || '').trim();
+    const composioRead = await routeComposioAgentRead(composioConnection, params);
+    if (composioRead) return { command, ...composioRead };
     const fastIntentResult = controlledExecution.getStore() ? null : await routeFastCommandIntent(command, params);
     if (fastIntentResult) {
       return {
@@ -72300,6 +72324,12 @@ const server = createServer(async (request, response) => {
   response.pbkCorsHeaders = buildBridgeCorsHeaders(request);
   const url = new URL(request.url || '/', `http://${request.headers.host || `${HOST}:${PORT}`}`);
   const pathname = url.pathname.replace(/\/+$/, '') || '/';
+
+  // Dedicated limited MCP auth is enforced inside the endpoint, never by the master key.
+  if (pathname === '/mcp/pbk-readonly') {
+    await composioReadOnlyEndpoint.handle(request, response);
+    return;
+  }
 
   if (request.method === 'OPTIONS') {
     response.writeHead(204, {

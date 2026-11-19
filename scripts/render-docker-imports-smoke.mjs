@@ -4,6 +4,9 @@ import { dirname, join, normalize, resolve, sep } from 'node:path';
 const root = process.cwd();
 const dockerfile = readFileSync(resolve(root, 'Dockerfile.openclaw'), 'utf8');
 const entrypoint = 'openclaw-local-server.mjs';
+if (!dockerfile.includes('COPY mcp-server/runtime ./mcp-server/runtime') || !existsSync(resolve(root, 'mcp-server/runtime/pbk-readonly-mcp.mjs'))) {
+  throw new Error('Dockerfile.openclaw must include the shared limited MCP runtime.');
+}
 
 function getRelativeScriptImports(relativeFile) {
   const absoluteFile = resolve(root, 'scripts', relativeFile);

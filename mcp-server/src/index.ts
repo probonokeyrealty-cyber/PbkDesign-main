@@ -28,31 +28,14 @@
  *   }
  */
 
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-
-import { registerDealTools } from "./tools/deals.js";
-import { registerApprovalTools } from "./tools/approvals.js";
-import { registerBrainTools } from "./tools/brain.js";
-import { registerCommsTools } from "./tools/comms.js";
-import { registerAdminTools } from "./tools/admin.js";
-import { registerMetaTools } from "./tools/meta.js";
+import { createPbkMcpServer } from "./server.js";
 
 const SERVER_NAME = "pbk-openclaw-mcp-server";
 const SERVER_VERSION = "0.1.0";
 
 async function main(): Promise<void> {
-  const server = new McpServer({
-    name: SERVER_NAME,
-    version: SERVER_VERSION,
-  });
-
-  registerMetaTools(server);
-  registerDealTools(server);
-  registerApprovalTools(server);
-  registerBrainTools(server);
-  registerCommsTools(server);
-  registerAdminTools(server);
+  const server = createPbkMcpServer({ readOnly: process.env.PBK_MCP_PROFILE === 'readonly' });
 
   const transport = new StdioServerTransport();
   await server.connect(transport);

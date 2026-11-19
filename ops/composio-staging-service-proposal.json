@@ -1,0 +1,44 @@
+{
+  "status": "proposed-not-created",
+  "workspaceName": "PBK",
+  "service": {
+    "name": "pbk-composio-staging",
+    "runtime": "node",
+    "plan": "free",
+    "region": "ohio",
+    "repo": "https://github.com/probonokeyrealty-cyber/PbkDesign-main",
+    "branch": "codex/composio-readonly-staging",
+    "autoDeploy": "no",
+    "buildCommand": "npm ci --omit=dev --ignore-scripts --legacy-peer-deps --no-audit --no-fund",
+    "startCommand": "node --experimental-strip-types scripts/openclaw-local-server.mjs --public",
+    "envVars": [
+      { "key": "NODE_ENV", "value": "production" },
+      { "key": "NODE_VERSION", "value": "22" },
+      { "key": "PBK_OPENCLAW_HOST", "value": "0.0.0.0" },
+      { "key": "PBK_OPENCLAW_STATE_DIR", "value": "/tmp/pbk-composio-staging" },
+      { "key": "PBK_COMPOSIO_STAGING_ENABLED", "value": "false" },
+      { "key": "PBK_COMPOSIO_INBOUND_ENABLED", "value": "false" },
+      { "key": "PBK_VOICE_PREWARM_ENABLED", "value": "false" },
+      { "key": "PBK_CAMPAIGN_WORKER_ENABLED", "value": "false" },
+      { "key": "PBK_EMOTION_WORLD_MODEL_RETRAIN_ENABLED", "value": "false" },
+      { "key": "PBK_REPLY_AUTO_DIAL_IMMEDIATE", "value": "false" },
+      { "key": "PBK_AUTO_SEND_REPLY_FOLLOWUPS", "value": "false" },
+      { "key": "PBK_REDIS_ENABLED", "value": "false" },
+      { "key": "PBK_BATCH_APPLY_ENABLED", "value": "false" }
+    ]
+  },
+  "limits": {
+    "paidUpgradeAllowed": false,
+    "productionServiceChangesAllowed": false,
+    "productionEnvironmentInheritanceAllowed": false,
+    "productionDatabaseAllowed": false,
+    "providerWritesAllowed": false
+  },
+  "activationPrerequisites": [
+    "Publish only the reviewed integration changes on the new non-production Git branch.",
+    "Provision distinct staging bridge, inbound and Composio credentials through protected provider settings.",
+    "Authorize the restricted HighLevel sandbox account in the Composio developer project.",
+    "Create and verify the pinned read-only session and its reviewed schema fingerprint.",
+    "Verify isolated state and resource health before enabling either connection."
+  ]
+}

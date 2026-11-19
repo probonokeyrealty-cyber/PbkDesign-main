@@ -104,6 +104,7 @@
     "test:hosted": "node ./scripts/openclaw-hosted-smoke.mjs",
     "test:brain-outside-in": "node ./scripts/brain-outside-in-smoke.mjs",
     "test:mcp": "npm --prefix ./mcp-server run typecheck",
+    "test:composio": "node --test scripts/composio-connection.node-test.mjs scripts/pbk-readonly-mcp.node-test.mjs scripts/composio-protocol.node-test.mjs scripts/composio-bridge.node-test.mjs",
     "test:strategy": "node ./scripts/test-negotiation-intelligence.mjs",
     "test:snn": "node ./scripts/snn-worker-smoke.mjs",
     "test:x-factor": "node ./scripts/agent-decision-smoke.mjs",

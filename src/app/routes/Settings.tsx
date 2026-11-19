@@ -56,6 +56,9 @@ function describeProvider(meta: Record<string, unknown> | undefined) {
 }
 
 function describeTooling(meta: Record<string, unknown> | undefined) {
+  if (meta?.state && ['disabled', 'configuration_missing', 'connecting', 'connected', 'unavailable', 'error'].includes(String(meta.state))) {
+    return ({ disabled: 'Disabled', configuration_missing: 'Needs staging setup', connecting: 'Connecting', connected: 'Read verified', unavailable: 'Read not verified', error: 'Connection unavailable' } as Record<string, string>)[String(meta.state)];
+  }
   const state = readinessFor(meta);
   if (state === 'unknown') return 'Waiting on bridge';
   if (state === 'ready') return 'Ready';
@@ -107,7 +110,7 @@ const DOT_CLASS: Record<ReadinessState, string> = {
   unknown: 'bg-slate-500',
 };
 const PROVIDER_ICONS = { telnyx: Phone, instantly: Mail, docs: FileText };
-const TOOLING_CARD_FALLBACK_COUNT = 11;
+const TOOLING_CARD_FALLBACK_COUNT = 13;
 
 type SettingsAdminDecisionDraft = {
   taskId: string;
@@ -259,6 +262,7 @@ function SettingsToolCard({ card }: { card: SettingsRuntimeCard }) {
       </div>
       <strong>{describeTooling(card.meta)}</strong>
       <p>{String(card.meta?.note || 'Bridge-backed tooling surface.')}</p>
+      {typeof card.meta?.lastSuccessAt === 'string' && <p>Last verified read: {new Date(card.meta.lastSuccessAt).toLocaleString()}</p>}
     </section>
   );
 }
@@ -712,6 +716,8 @@ export function Settings() {
     { id: 'docs', label: 'Document Sends', meta: quotas?.docs },
   ];
   const toolingCards: SettingsRuntimeCard[] = [
+    { id: 'composio-outbound', label: 'PBK agents to Composio', meta: tooling?.composio?.outbound },
+    { id: 'composio-inbound', label: 'Composio to PBK', meta: tooling?.composio?.inbound },
     {
       id: 'meta-agent',
       label: 'Meta-Agent Lab',

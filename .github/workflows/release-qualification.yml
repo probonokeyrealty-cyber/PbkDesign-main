@@ -138,6 +138,11 @@ jobs:
       - name: Run Chromium and WebKit qualification
         run: node scripts/ava-design-browser-smoke.mjs
 
+      - name: Verify explicit agent research inspection
+        run: |
+          npm run test:composio-research-ui
+          PBK_FLEET_BUILT=1 node scripts/agent-fleet-design-browser-smoke.mjs
+
       - name: Verify isolated Analyzer draft recovery
         run: npm run test:analyzer-draft-recovery-browser
 

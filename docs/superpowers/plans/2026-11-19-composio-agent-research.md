@@ -20,18 +20,26 @@ Untrusted catalog data, missing keys, errors and body limits; synchronous local 
 
 ### Task 1: Lazy bounded catalog adapter
 
-- [ ] Create `scripts/composio-research-discovery.mjs` exporting `createComposioResearchDiscovery({env=process.env,fetchImpl=globalThis.fetch,now=()=>new Date().toISOString()}={})`, returning an async zero-argument reader with the exact shared response in the spec.
-- [ ] TDD in `scripts/composio-research-discovery.node-test.mjs`: disabled/missing-key zero fetch; exact fixed request; strict projection; timeout, redirect, HTTP failure redaction and pre-parse body bounds. No live credential usage or source calls.
+- [x] Create `scripts/composio-research-discovery.mjs` exporting `createComposioResearchDiscovery({env=process.env,fetchImpl=globalThis.fetch,now=()=>new Date().toISOString()}={})`, returning an async zero-argument reader with the exact shared response in the spec.
+- [x] TDD in `scripts/composio-research-discovery.node-test.mjs`: disabled/missing-key zero fetch; exact fixed request; strict projection; timeout, redirect, HTTP failure redaction and pre-parse body bounds. No live credential usage or source calls.
 
 ### Task 2: Original-design inline research plans
 
-- [ ] Create `src/app/components/agents/AgentResearchTools.tsx` and focused CSS. Props `{agentId:string,agentName:string,leadId?:string}`; invoke existing `invokeRuntimeTool('discoverExternalTool',{query:'public web research',includeComposio:true})` only on explicit Find research tools.
-- [ ] Integrate the component in `src/app/routes/AgentFleet.tsx` below existing capabilities, keyed by both active agent ID and canonical selected lead identity; preserve current controls/navigation/readiness. No new route, drawer or composer. Shared backend DTO comes from the spec; add frontend types locally without editing runtimeBridge.ts.
-- [ ] Add focused tests for passive controls, truthful status/preview, disabled run behavior (no such control), and late-response selection isolation. Do not alter backend/bridge files.
+- [x] Create `src/app/components/agents/AgentResearchTools.tsx` and focused CSS. Props `{agentId:string,agentName:string,leadId?:string}`; invoke existing `invokeRuntimeTool('discoverExternalTool',{query:'public web research',includeComposio:true})` only on explicit Find research tools.
+- [x] Integrate the component in `src/app/routes/AgentFleet.tsx` below existing capabilities, keyed by both active agent ID and canonical selected lead identity; preserve current controls/navigation/readiness. No new route, drawer or composer. Shared backend DTO comes from the spec; add frontend types locally without editing runtimeBridge.ts.
+- [x] Add focused tests for passive controls, truthful status/preview, disabled run behavior (no such control), and late-response selection isolation. Do not alter backend/bridge files.
 
 ### Task 3: Bridge integration and review
 
-- [ ] Coordinator wires the adapter into existing discovery handler only when includeComposio is strictly true; await before existing audit. Keep synchronous local discovery core and existing callers unchanged.
-- [ ] Add Docker copy and required bridge source fingerprint updates through existing proof tooling. Wire focused tests into existing release gate without changing exact-script contracts.
+- [x] Coordinator wires the adapter into existing discovery handler only when includeComposio is strictly true; await before existing audit. Keep synchronous local discovery core and existing callers unchanged.
+- [x] Add Docker copy and required bridge source fingerprint updates through existing proof tooling. Wire focused tests into existing release gate without changing exact-script contracts.
 - [ ] Run backend/UI/type/lint/build, full UI release and isolated Fleet desktop/WebKit390/Chromium320 proofs; independent task and whole-branch review.
 - [ ] Prepare a concrete production credential/activation step if needed; never copy workstation auth or treat playground credentials as production authorization. Use approved task-branch/PR/deployment flow after gates.
+
+## Verification receipt
+
+- Adapter and bridge task review clear;15 backend tests pass. Guard baseline21tests pass after independently reviewed five-line source extension, reverse-patch equality and documented fingerprint refresh.
+- UI task review cleared retention/malformed-data fixes;24 component browser tests, typecheck and lint pass. Full UI release gate, MCP typecheck, isolated bridge smoke and Docker import proof181imports/122files pass.
+- Final build and full Fleet Chromium1440/WebKit390/Chromium320 fixture pass, including actual PBK button border, passive zero invokes, explicit fixed request, retained metadata, identity reset, no page overflow and existing approval-backed controls. Fixture data/calls are fictional.
+- Browser-dependent tests run in Release Qualification after browser installation; the default release-UI gate includes backend tests without requiring browser binaries.
+- Live Composio backend remains unconfigured until a dedicated backend credential is approved and stored securely. The existing project playground public-search proof is not a production authorization.

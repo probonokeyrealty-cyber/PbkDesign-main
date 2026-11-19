@@ -1,6 +1,8 @@
 # Research Inspector UX Implementation Plan
 
-> REQUIRED WORKFLOW: Use superpowers:executing-plans inline and request an independent whole-branch review at completion.
+> REQUIRED WORKFLOW: Use `superpowers:subagent-driven-development` with one focused implementation pass per task and independent spec-compliance and code-quality review between tasks.
+
+**Workflow history:** The initial implementation was performed inline. The independent whole-branch review found no actionable issues and independently passed all 26 browser tests. Founder CI then exposed this plan's mandatory workflow misalignment. This documentation correction uses delegated implementation and independent review before commit; it does not retroactively describe the original implementation as subagent-driven.
 
 **Goal:** Make explicit research inspection easier to understand inside the original PBK UI.
 

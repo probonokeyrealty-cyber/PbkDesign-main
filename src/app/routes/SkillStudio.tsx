@@ -1037,7 +1037,14 @@ export function SkillStudio() {
   const [agentFilter, setAgentFilter] = useState('');
   const [riskFilter, setRiskFilter] = useState('');
   const [performanceFilter, setPerformanceFilter] = useState('');
-  const [loading, setLoading] = useState(true);
+  const [repositoryViewState, setRepositoryViewState] = useState<
+    'loading' | 'ready' | 'retained' | 'unavailable'
+  >('loading');
+  const loading = repositoryViewState === 'loading';
+  const mounted = useRef(false);
+  const readRequestId = useRef(0);
+  const hasGoodRepository = useRef(false);
+  const latestLoad = useRef<(() => Promise<void>) | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
@@ -1045,10 +1052,17 @@ export function SkillStudio() {
   const [createOpen, setCreateOpen] = useState(searchParams.get('create') === '1');
   const [agentId, setAgentId] = useState('ava');
   const [rolloutPercent, setRolloutPercent] = useState(10);
-  const [confirmingPrimaryAction, setConfirmingPrimaryAction] = useState(false);
+  const [confirmation, setConfirmation] = useState<{
+    owner: string;
+    title: string;
+    copy: string;
+    run: () => Promise<unknown>;
+  } | null>(null);
   const [skillPage, setSkillPage] = useState(0);
   const versionHeadingRef = useRef<HTMLHeadingElement>(null);
   const repositorySearchRef = useRef<HTMLInputElement>(null);
+  const ownedFocusedRow = useRef<HTMLButtonElement | null>(null);
+  const previewVersionId = useRef('');
   const [simulationText, setSimulationText] = useState(
     'Seller says the offer feels low and asks why PBK is different from another buyer.'
   );
@@ -1115,9 +1129,14 @@ export function SkillStudio() {
     [skillPage, visibleItems]
   );
 
-  const load = useCallback(async () => {
-    setLoading(true);
+  const load = useCallback(async (): Promise<void> => {
+    if (!mounted.current || latestLoad.current !== load) return;
+    const requestId = ++readRequestId.current;
+    const ownsRead = () =>
+      mounted.current && requestId === readRequestId.current && latestLoad.current === load;
+    setRepositoryViewState('loading');
     setError('');
+    setConfirmation(null);
     try {
       const [statusResult, repositoryResult] = await Promise.all([
         fetchSkillGovernanceStatusRequest(),
@@ -1127,7 +1146,20 @@ export function SkillStudio() {
           limit: 150,
         }),
       ]);
-      const nextItems = repositoryResult.items || [];
+      if (!ownsRead()) return;
+      if (
+        !repositoryResult || repositoryResult.ok !== true || !Array.isArray(repositoryResult.items) ||
+        repositoryResult.items.some(item =>
+          !item || typeof item !== 'object' || typeof item.versionId !== 'string' || !item.versionId.trim()
+        )
+      ) {
+        throw new Error(repositoryResult?.error || 'Repository response unavailable.');
+      }
+      if (!statusResult || statusResult.ok !== true) {
+        throw new Error(statusResult?.error || 'Governance status unavailable.');
+      }
+      const nextItems = repositoryResult.items;
+      hasGoodRepository.current = true;
       setStatus(statusResult);
       setItems(nextItems);
       setSelectedId((current) =>
@@ -1135,25 +1167,56 @@ export function SkillStudio() {
           ? current
           : nextItems[0]?.versionId || ''
       );
+      setRepositoryViewState('ready');
     } catch (loadError) {
+      if (!ownsRead()) return;
       setError(loadError instanceof Error ? loadError.message : String(loadError));
-    } finally {
-      setLoading(false);
+      setRepositoryViewState(hasGoodRepository.current ? 'retained' : 'unavailable');
     }
   }, [lifecycleFilter, search]);
+  latestLoad.current = load;
 
   useEffect(() => {
+    const requestTracker = readRequestId;
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      ++requestTracker.current;
+    };
+  }, []);
+
+  useEffect(() => {
+    const requestTracker = readRequestId;
+    // A new query owns the view immediately, including its debounce window.
+    ++requestTracker.current;
+    setRepositoryViewState('loading');
+    setError('');
+    setConfirmation(null);
     const timer = window.setTimeout(() => void load(), 180);
-    return () => window.clearTimeout(timer);
+    return () => {
+      window.clearTimeout(timer);
+      ++requestTracker.current;
+    };
   }, [load]);
 
   useEffect(() => {
-    setConfirmingPrimaryAction(false);
+    const versionId = selected?.versionId || '';
+    if (previewVersionId.current === versionId) return;
+    previewVersionId.current = versionId;
     const seed = buildSkillSimulationSeed(selected);
     setSimulationText(
       seed || 'Seller says the offer feels low and asks why PBK is different from another buyer.'
     );
-  }, [selected, selectedId]);
+  }, [selected]);
+
+  useEffect(() => {
+    const owned = ownedFocusedRow.current;
+    if (!owned || owned.isConnected) return;
+    ownedFocusedRow.current = null;
+    if (document.hasFocus() && document.activeElement === document.body) {
+      repositorySearchRef.current?.focus();
+    }
+  }, [pagedVisibleItems]);
 
   useEffect(() => {
     setSkillPage(0);
@@ -1168,6 +1231,20 @@ export function SkillStudio() {
     selected &&
     ['candidate', 'needs_review', 'ready_for_approval'].includes(selected.lifecycleState)
   );
+  const actionOwner = JSON.stringify([
+    selected?.versionId, selected?.contentHash, selected?.lifecycleState, selected?.activationId,
+    agentId, rolloutPercent, search, lifecycleFilter, agentFilter, riskFilter, performanceFilter,
+  ]);
+  const targetVerified = repositoryViewState === 'ready' && Boolean(
+    selected?.versionId && (
+      !selectedIsReviewable || (typeof selected.contentHash === 'string' && selected.contentHash.trim())
+    )
+  );
+  const confirmingPrimaryAction = confirmation?.owner === actionOwner && targetVerified;
+
+  useEffect(() => {
+    setConfirmation(null);
+  }, [actionOwner]);
 
   const runAction = async <T,>(
     action: () => Promise<T>,
@@ -1178,13 +1255,14 @@ export function SkillStudio() {
     setNotice('');
     try {
       const result = await action();
+      if (!mounted.current) return result;
       setNotice(typeof success === 'function' ? success(result) : success);
-      await load();
+      await latestLoad.current?.();
       return result;
     } catch (actionError) {
-      setError(actionError instanceof Error ? actionError.message : String(actionError));
+      if (mounted.current) setError(actionError instanceof Error ? actionError.message : String(actionError));
     } finally {
-      setBusy(false);
+      if (mounted.current) setBusy(false);
     }
     return null;
   };
@@ -1277,7 +1355,14 @@ export function SkillStudio() {
           : null;
 
   return (
-    <div className="pbk-skill-studio">
+    <div
+      className="pbk-skill-studio"
+      onFocusCapture={event => {
+        const target = event.target;
+        ownedFocusedRow.current = target instanceof HTMLButtonElement && target.matches('[data-pbk-worklist-row]') ? target : null;
+      }}
+      onBlurCapture={event => { if (event.relatedTarget) ownedFocusedRow.current = null; }}
+    >
       <header className="pbk-skill-studio-header">
         <div>
           <span className="pbk-eyebrow">Ava learning</span>
@@ -1304,6 +1389,11 @@ export function SkillStudio() {
           </button>
         </div>
       </header>
+
+      {(repositoryViewState === 'retained' || (loading && hasGoodRepository.current)) && (
+        <p className="pbk-skill-muted">Saved repository and status retained{loading ? ' while loading.' : '.'}</p>
+      )}
+      {repositoryViewState === 'unavailable' && <p className="pbk-skill-muted">Repository unavailable</p>}
 
       <section className="pbk-skill-status-ribbon" aria-label="Skill governance status">
         <div>
@@ -1472,7 +1562,7 @@ export function SkillStudio() {
                 <RefreshCw className="animate-spin" />
                 Loading authority...
               </div>
-            ) : visibleItems.length ? (
+            ) : repositoryViewState === 'unavailable' ? null : visibleItems.length ? (
               pagedVisibleItems.map((item) => {
                 const metrics = readSkillEvidenceDisplay(item);
                 return (
@@ -1809,7 +1899,7 @@ export function SkillStudio() {
                       <strong>{primaryAction.label}</strong>
                       {confirmingPrimaryAction && (
                         <small>
-                          {primaryAction.confirmTitle} {primaryAction.confirmCopy}
+                          {confirmation?.title} {confirmation?.copy}
                         </small>
                       )}
                     </div>
@@ -1818,7 +1908,7 @@ export function SkillStudio() {
                         <button
                           type="button"
                           className="pbk-btn pbk-btn-ghost"
-                          onClick={() => setConfirmingPrimaryAction(false)}
+                          onClick={() => setConfirmation(null)}
                           disabled={busy}
                         >
                           Cancel
@@ -1829,10 +1919,11 @@ export function SkillStudio() {
                             primaryAction.danger ? 'pbk-btn-danger' : 'pbk-btn-primary'
                           }`}
                           onClick={() => {
-                            setConfirmingPrimaryAction(false);
-                            void primaryAction.run();
+                            if (!confirmation || confirmation.owner !== actionOwner || !targetVerified || busy) return;
+                            setConfirmation(null);
+                            void confirmation.run();
                           }}
-                          disabled={busy}
+                          disabled={busy || !targetVerified}
                         >
                           <primaryAction.icon size={16} />
                           {busy ? 'Working' : 'Confirm'}
@@ -1844,8 +1935,13 @@ export function SkillStudio() {
                         className={`pbk-btn ${
                           primaryAction.danger ? 'pbk-btn-danger' : 'pbk-btn-primary'
                         }`}
-                        onClick={() => setConfirmingPrimaryAction(true)}
-                        disabled={busy}
+                        onClick={() => setConfirmation({
+                          owner: actionOwner,
+                          title: primaryAction.confirmTitle,
+                          copy: primaryAction.confirmCopy,
+                          run: primaryAction.run,
+                        })}
+                        disabled={busy || !targetVerified}
                       >
                         <primaryAction.icon size={16} />
                         {busy ? 'Working' : primaryAction.label}

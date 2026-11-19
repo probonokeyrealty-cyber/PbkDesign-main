@@ -26,6 +26,8 @@ async function selectVersion(page, index) {
   await expect(rows(page).first()).toHaveAttribute('data-skill-version-id', operatorSkillFixtures[index].versionId);
   await rows(page).first().click();
   await expect(page.locator('.pbk-skill-version-id code')).toHaveText(operatorSkillFixtures[index].versionId);
+  // Deliberate selection hands focus to detail on the next animation frame.
+  await expect(page.locator('.pbk-skill-version-head h2')).toBeFocused();
 }
 async function contained(page, scope = '.pbk-skill-studio') {
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), true, 'No viewport overflow');
@@ -118,6 +120,240 @@ async function wizardPreservation(page, width) {
   await page.getByRole('button', { name: 'Teach Ava', exact: true }).click();
   await expect(wizard.locator('pre')).toContainText('Synthetic draft response.');
   await wizard.getByRole('button', { name: 'Cancel', exact: true }).click();
+}
+
+async function verifyReadOwnership(engine) {
+  const browser = await engine.launch();
+  const failures = [];
+  let passed = 0;
+  const a = structuredClone(operatorSkillFixtures[0]);
+  const b = structuredClone(operatorSkillFixtures[1]);
+  const active = { ...operatorSkillFixtures[8], activationId: 'SYN-ACTIVATION-8' };
+  const pair = (items = [a,b,operatorSkillFixtures[3],active], count = 11) => ({
+    repository: { ok: true, items }, status: { ok: true, candidates: count },
+  });
+  async function scenario(name, execute, initial = pair()) {
+    const page = await browser.newPage({ viewport: { width: 1440, height: 900 }, reducedMotion: 'reduce' });
+    page.setDefaultTimeout(3000);
+    const plans = [initial], counts = { repository: 0, status: 0 }, requests = [], posts = [], unexpected = [];
+    const errors = [];
+    page.on('pageerror', error => errors.push(error.message));
+    await page.routeWebSocket('**/*', socket => { if (new URL(socket.url()).hostname !== '127.0.0.1') unexpected.push(socket.url()); socket.close(); });
+    await page.route('**/*', async route => {
+      const req = route.request(), url = new URL(req.url());
+      if (url.origin !== origin) { unexpected.push(req.url()); return route.abort(); }
+      const part = url.pathname === '/api/skills/governance/repository' ? 'repository' : url.pathname === '/api/skills/governance/status' ? 'status' : null;
+      if (part && req.method() === 'GET') {
+        const index = counts[part]++;
+        requests.push({ part, index, search: url.searchParams.get('search'), lifecycle: url.searchParams.get('lifecycleState'), limit: url.searchParams.get('limit') });
+        const plan = plans[index];
+        if (!plan) { unexpected.push(`Unplanned ${part} read ${index}`); return route.abort(); }
+        if (plan.hold?.includes(part)) await new Promise(resolve => { (plan.release ||= {})[part] = resolve; });
+        return route.fulfill({ status: plan.http?.[part] || 200, json: plan[part] });
+      }
+      if (req.method() !== 'GET' && url.pathname !== '/api/state/stream/session') { unexpected.push([req.method(), url.pathname]); return route.abort(); }
+      return route.continue();
+    });
+    const refresh = page.getByRole('button', { name: 'Refresh', exact: true });
+    const search = page.getByRole('textbox', { name: 'Search skill repository' });
+    const id = page.locator('.pbk-skill-version-id code');
+    const status = page.getByRole('region', { name: 'Skill governance status' }).locator('div').filter({ has: page.getByText('Review queue', { exact: true }) }).locator('strong');
+    const flush = () => page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    const waitRead = index => expect.poll(() => requests.filter(r => r.index === index).length).toBe(2);
+    async function release(plan) {
+      for (const resolve of Object.values(plan.release || {})) resolve();
+      await flush();
+    }
+    async function loaded(expected = a.versionId, count = '11') {
+      await expect(id).toHaveText(expected); await expect(status).toHaveText(count); await expect(refresh).toBeEnabled();
+    }
+    async function exactPost(path, body, result = { ok: false, error: 'Synthetic exact target rejected' }, delayed = false) {
+      const control = {};
+      await page.route(url => url.origin === origin && url.pathname === path, async route => {
+        if (route.request().method() !== 'POST') return route.fallback();
+        const captured = route.request().postDataJSON(); posts.push({ path, body: captured });
+        assert.deepEqual(captured, body, name);
+        if (delayed) await new Promise(resolve => { control.release = resolve; });
+        return route.fulfill({ status: result.ok ? 200 : 403, json: result });
+      });
+      return control;
+    }
+    try {
+      await page.goto(origin + '/skills');
+      await execute({ page, plans, pair, refresh, search, id, status, flush, waitRead, release, loaded, exactPost, posts, requests });
+      assert.deepEqual({ unexpected, errors }, { unexpected: [], errors: [] });
+      passed++; console.log(`PASS ownership ${engine.name()}: ${name}`);
+    } catch (error) { failures.push(name); console.error(`FAIL ownership ${engine.name()}: ${name}\n${error.message}`); }
+    finally { await page.close(); }
+  }
+  try {
+    for (const part of ['repository','status']) for (const outcome of ['success','error']) {
+      await scenario(`late ${part} ${outcome} after newer success`, async h => {
+        await h.loaded();
+        const old = { ...pair([a], 91), hold: [part], ...(outcome === 'error' ? { http: { [part]: 503 }, [part]: { ok: false, error: 'Old read failure' } } : {}) };
+        h.plans.push(old, pair([b], 22));
+        await h.refresh.click(); await h.waitRead(1);
+        await h.search.fill('new intent'); await h.waitRead(2); await h.loaded(b.versionId, '22');
+        await h.page.getByLabel('Seller says').fill('Current version unsaved preview');
+        await h.page.getByRole('button', { name: 'Review and approve this skill', exact: true }).click();
+        await h.release(old); await h.flush();
+        await h.loaded(b.versionId, '22'); await expect(h.page.getByRole('alert')).toHaveCount(0);
+        await expect(h.page.getByLabel('Seller says')).toHaveValue('Current version unsaved preview');
+        await expect(h.page.getByRole('button', { name: 'Confirm', exact: true })).toBeVisible();
+        await h.exactPost(`/api/skills/versions/${b.versionId}/approve`, { expectedHash: b.contentHash, decision: 'approved', evidenceSnapshot: { reviewedIn: 'PBK Skill Studio', riskClass: b.riskClass, safetyScan: {} } });
+        await h.page.getByRole('button', { name: 'Confirm', exact: true }).click();
+        await expect(h.page.getByRole('alert')).toContainText('Synthetic exact target rejected'); assert.equal(h.posts.length, 1);
+        assert.equal(h.requests.find(r => r.index === 2 && r.part === 'repository').search, 'new intent');
+      });
+    }
+    await scenario('old finally cannot settle a pending newer read or clear its failure', async h => {
+      await h.loaded();
+      const old = { ...pair([a], 91), hold: ['repository'] }, next = { ...pair([b], 22), hold: ['repository'] };
+      h.plans.push(old, next); await h.refresh.click(); await h.waitRead(1);
+      await h.search.fill('pending intent'); await h.waitRead(2);
+      await h.release(old); await h.flush(); await expect(h.refresh).toBeDisabled(); await expect(h.id).toHaveText(a.versionId);
+      await expect(h.page.getByRole('button', { name: 'Review and approve this skill', exact: true })).toBeDisabled();
+      next.repository = { ok: false, error: 'Latest read failed' };
+      await h.release(next); await expect(h.page.getByRole('alert')).toContainText('Latest read failed');
+      await expect(h.id).toHaveText(a.versionId); await expect(h.page.getByText(/Saved.*retained/i)).toBeVisible();
+    });
+    for (const outcome of ['success','error']) await scenario(`old ${outcome} cannot overwrite newer failed read and retained identity`, async h => {
+      await h.loaded();
+      const old = { ...pair([b],91), hold: ['repository'], ...(outcome === 'error' ? { http: { repository: 503 }, repository: { ok: false, error: 'Old failed read' } } : {}) };
+      h.plans.push(old, { ...pair([b],22), repository: { ok: false, error: 'Current failure owns this view' } });
+      await h.refresh.click(); await h.waitRead(1); await h.search.fill('failed new intent'); await h.waitRead(2);
+      await expect(h.page.getByRole('alert')).toContainText('Current failure owns this view');
+      await h.release(old); await h.loaded(); await expect(h.page.getByRole('alert')).toContainText('Current failure owns this view');
+      await expect(h.page.getByText(/Saved.*retained/i)).toBeVisible();
+      await expect(h.page.getByRole('button', { name: 'Review and approve this skill', exact: true })).toBeDisabled();
+    });
+    await scenario('invalidate during 180ms debounce before the next fetch', async h => {
+      await h.loaded();
+      await h.page.clock.install(); await h.page.clock.pauseAt(new Date());
+      const old = { ...pair([b], 91), hold: ['repository'] };
+      h.plans.push(old, pair([a], 22)); await h.refresh.click(); await h.waitRead(1);
+      await h.search.fill('debounced intent');
+      for (const resolve of Object.values(old.release)) resolve();
+      await h.page.clock.runFor(32);
+      await expect(h.id).toHaveText(a.versionId); await expect(h.status).toHaveText('11'); await expect(h.refresh).toBeDisabled();
+      await h.page.clock.runFor(180); await h.waitRead(2); await h.loaded(a.versionId, '22');
+    });
+    await scenario('query change cancels confirmation inside debounce, before any new GET', async h => {
+      await h.loaded(); await h.page.clock.install(); await h.page.clock.pauseAt(new Date());
+      await h.page.getByRole('button', { name: 'Review and approve this skill', exact: true }).click();
+      await h.search.fill('pending confirmation query'); await h.page.clock.runFor(32);
+      await expect(h.page.getByRole('button', { name: 'Confirm', exact: true })).toHaveCount(0);
+      await expect(h.page.getByRole('button', { name: 'Review and approve this skill', exact: true })).toBeDisabled();
+      await expect(h.page.getByText(/Saved.*retained/i)).toBeVisible();
+      assert.equal(h.requests.filter(r => r.part === 'repository').length, 1);
+      assert.deepEqual(h.posts, []);
+    });
+    for (const [label, part, value] of [
+      ['ok false repository','repository',{ ok: false, error: 'Repository rejected', items: [] }],
+      ['missing items','repository',{ ok: true }], ['non-array items','repository',{ ok: true, items: {} }],
+      ['null repository','repository',null], ['null item','repository',{ ok: true, items: [null] }],
+      ['ok false status','status',{ ok: false, error: 'Status rejected', candidates: 99 }], ['malformed status','status',null],
+    ]) await scenario(`${label} retains labeled exact last-good data`, async h => {
+      await h.loaded();
+      await h.page.getByLabel('Seller says').fill('Retained version owned preview');
+      h.plans.push({ ...pair([b], 22), [part]: value }); await h.refresh.click();
+      await expect(h.page.getByRole('alert')).toBeVisible(); await h.loaded();
+      await expect(h.page.getByLabel('Seller says')).toHaveValue('Retained version owned preview');
+      await expect(h.page.getByText(/Saved.*retained/i)).toBeVisible();
+      await expect(h.page.getByRole('button', { name: 'Review and approve this skill', exact: true })).toBeDisabled();
+      await expect(h.page.getByRole('button', { name: 'Confirm', exact: true })).toHaveCount(0);
+      await expect(h.page.locator('.pbk-skill-studio')).not.toContainText(/last refreshed|refreshed at/i);
+      if (label === 'ok false repository') for (const width of [1440,390,320]) {
+        await h.page.setViewportSize({ width, height: 900 }); await contained(h.page);
+        await expect(h.page.getByText(/Saved.*retained/i)).toBeVisible();
+        await h.page.screenshot({ path: `${evidence}/task5-retained-${engine.name()}-${width}.png` });
+      }
+    });
+    await scenario('initial malformed read is unavailable, not empty or ready', async h => {
+      await expect(h.page.getByRole('alert')).toBeVisible();
+      await expect(h.page.getByText('Repository unavailable', { exact: true })).toBeVisible();
+      await expect(h.id).toHaveCount(0); await expect(h.status).toHaveText('Not recorded'); await expect(h.refresh).toBeEnabled();
+    }, { ...pair(), repository: { ok: true } });
+    await scenario('same version object refresh preserves typed preview; different version seeds', async h => {
+      await h.loaded(); const input = h.page.getByLabel('Seller says'); await input.fill('Owned unsaved preview');
+      h.plans.push(pair()); await h.refresh.click(); await h.waitRead(1); await h.loaded();
+      await expect(input).toHaveValue('Owned unsaved preview');
+      await rows(h.page).nth(1).click(); await expect(h.id).toHaveText(b.versionId); await expect(input).toHaveValue('Synthetic scenario 1.');
+    });
+    for (const [label, change] of [
+      ['selection', async h => rows(h.page).nth(1).click()],
+      ['search', async h => { h.plans.push(pair()); await h.search.fill('new query'); }],
+      ['lifecycle filter', async h => { h.plans.push(pair()); await h.page.getByLabel('Filter by lifecycle state').selectOption('candidate'); }],
+      ['agent filter', async h => h.page.getByLabel('Filter by agent').selectOption('rex')],
+      ['risk filter', async h => h.page.getByLabel('Filter by risk').selectOption('medium')],
+      ['sort', async h => h.page.getByLabel('Sort by performance').selectOption('top')],
+    ]) await scenario(`confirmation cancels on ${label} ownership change`, async h => {
+      await h.loaded(); await h.page.getByRole('button', { name: 'Review and approve this skill', exact: true }).click();
+      await expect(h.page.getByRole('button', { name: 'Confirm', exact: true })).toBeVisible(); await change(h);
+      await expect(h.page.getByRole('button', { name: 'Confirm', exact: true })).toHaveCount(0); assert.deepEqual(h.posts, []);
+    });
+    for (const [label, patch] of [['same ID changed hash',{ contentHash: 'synthetic-revised-hash' }],['same ID changed lifecycle',{ lifecycleState: 'approved_inactive' }]]) {
+      await scenario(`confirmation cancels on ${label}`, async h => {
+        await h.loaded(); await h.page.getByRole('button', { name: 'Review and approve this skill', exact: true }).click();
+        h.plans.push(pair([{ ...a, ...patch }])); await h.refresh.click(); await h.waitRead(1); await h.loaded();
+        await expect(h.page.getByRole('button', { name: 'Confirm', exact: true })).toHaveCount(0);
+        if (patch.contentHash) {
+          await h.exactPost(`/api/skills/versions/${a.versionId}/approve`, { expectedHash: patch.contentHash, decision: 'approved', evidenceSnapshot: { reviewedIn: 'PBK Skill Studio', riskClass: a.riskClass, safetyScan: {} } });
+          await h.page.getByRole('button', { name: 'Review and approve this skill', exact: true }).click(); await h.page.getByRole('button', { name: 'Confirm', exact: true }).click();
+          await expect(h.page.getByRole('alert')).toContainText('Synthetic exact target rejected'); assert.equal(h.posts.length, 1);
+          await expect(h.page.getByRole('status')).toHaveCount(0);
+        }
+      });
+    }
+    await scenario('rollout/agent and activation confirmation retain exact captured bodies', async h => {
+      await h.loaded(); await rows(h.page).nth(2).click();
+      const start = h.page.getByRole('button', { name: 'Start a small test', exact: true });
+      const confirm = h.page.getByRole('button', { name: 'Confirm', exact: true });
+      await start.click(); await h.page.getByLabel('Rollout agent').selectOption('rex'); await expect(confirm).toHaveCount(0);
+      await start.click(); await h.page.getByLabel('Rollout percentage').fill('25'); await expect(confirm).toHaveCount(0);
+      await h.exactPost('/api/skills/versions/SYN-SKILL-003/activate', { agentId: 'rex', rolloutMode: 'canary', rolloutPercent: 25, scope: { type: 'global' }, rollbackThresholds: { complianceFailure: 1, sellerComplaint: 1, toolErrorRate: 0.1 } });
+      await start.click(); await confirm.click(); await expect(h.page.getByRole('alert')).toContainText('Synthetic exact target rejected'); assert.equal(h.posts.length, 1);
+      await rows(h.page).nth(3).click(); const off = h.page.getByRole('button', { name: 'Turn this skill off', exact: true }); await off.click();
+      h.plans.push(pair([a,b,operatorSkillFixtures[3],{ ...active, activationId: 'SYN-ACTIVATION-CHANGED' }])); await h.refresh.click(); await h.waitRead(1); await h.loaded(active.versionId);
+      await expect(confirm).toHaveCount(0);
+      await h.exactPost('/api/skills/activations/SYN-ACTIVATION-CHANGED/rollback', { reason: 'Operator rollback from PBK Skill Studio.' });
+      await off.click(); await confirm.click(); await expect(h.page.getByRole('alert')).toContainText('Synthetic exact target rejected'); assert.equal(h.posts.length, 2);
+    });
+    await scenario('missing hash cannot submit unverifiable approval', async h => {
+      await h.loaded(); await expect(h.page.getByRole('button', { name: 'Review and approve this skill', exact: true })).toBeDisabled();
+    }, pair([{ ...a, contentHash: '' }]));
+    await scenario('delayed action reload uses current search/filter intent, not captured load', async h => {
+      await h.loaded();
+      const control = await h.exactPost(`/api/skills/versions/${a.versionId}/approve`, { expectedHash: a.contentHash, decision: 'approved', evidenceSnapshot: { reviewedIn: 'PBK Skill Studio', riskClass: a.riskClass, safetyScan: {} } }, { ok: true }, true);
+      await h.page.getByRole('button', { name: 'Review and approve this skill', exact: true }).click(); await h.page.getByRole('button', { name: 'Confirm', exact: true }).click();
+      await expect.poll(() => h.posts.length).toBe(1);
+      h.plans.push(pair([b], 22)); await h.search.fill('current action intent'); await h.page.getByLabel('Filter by lifecycle state').selectOption('needs_review'); await h.waitRead(1); await h.loaded(b.versionId, '22');
+      h.plans.push(pair([b], 23)); control.release(); await h.waitRead(2); await h.loaded(b.versionId, '23');
+      assert.deepEqual(h.requests.filter(r => r.part === 'repository').map(r => [r.search,r.lifecycle,r.limit]), [[null,null,'150'],['current action intent','needs_review','150'],['current action intent','needs_review','150']]);
+      assert.equal(h.posts.length, 1);
+    });
+    await scenario('unmount invalidates old read without contaminating a new mount', async h => {
+      await h.loaded(); const old = { ...pair([a], 91), hold: ['repository'] }; h.plans.push(old, pair([b],22));
+      await h.refresh.click(); await h.waitRead(1);
+      await h.page.getByRole('link', { name: 'Leads', exact: true }).filter({ visible: true }).first().click();
+      await expect(h.page.locator('.pbk-skill-studio')).toHaveCount(0);
+      await h.page.getByRole('link', { name: 'Skill Studio', exact: true }).filter({ visible: true }).first().click();
+      await h.waitRead(2); await h.loaded(b.versionId,'22'); await h.release(old); await h.loaded(b.versionId,'22');
+    });
+    for (const transfer of ['owned','another control','outside page']) await scenario(`vanished row focus recovery: ${transfer}`, async h => {
+      await h.loaded();
+      const next = { ...pair([b],22), hold: ['repository'] }; h.plans.push(next); await h.refresh.click(); await h.waitRead(1); await rows(h.page).first().focus();
+      const other = h.page.getByLabel('Filter by risk');
+      if (transfer === 'another control') await other.focus();
+      if (transfer === 'outside page') await h.page.locator('.pbk-skill-studio').evaluate(el => { const outside = document.createElement('button'); outside.textContent = 'Synthetic outside control'; el.before(outside); outside.focus(); });
+      await h.release(next); await h.loaded(b.versionId,'22');
+      if (transfer === 'owned') await expect(h.search).toBeFocused();
+      if (transfer === 'another control') await expect(other).toBeFocused();
+      if (transfer === 'outside page') await expect(h.page.getByRole('button', { name: 'Synthetic outside control' })).toBeFocused();
+    });
+  } finally { await browser.close(); }
+  console.log(`Ownership scenarios ${engine.name()}: ${passed} passed, ${failures.length} failed`);
+  assert.deepEqual(failures, [], 'All ownership scenarios pass');
 }
 
 async function verify(engine, width) {
@@ -350,5 +586,8 @@ try {
   for (const [method,path,status] of [['GET','/api/skills/unplanned',404],['POST','/api/skills/candidates',403],['POST','/invoke',403]]) {
     assert.equal((await fetch(origin + path, { method })).status, status);
   }
-  for (const engine of [chromium,webkit]) for (const width of [1440,390,320]) await verify(engine,width);
+  for (const engine of [chromium,webkit]) {
+    await verifyReadOwnership(engine);
+    for (const width of [1440,390,320]) await verify(engine,width);
+  }
 } finally { server.httpServer?.closeAllConnections(); await server.close(); }

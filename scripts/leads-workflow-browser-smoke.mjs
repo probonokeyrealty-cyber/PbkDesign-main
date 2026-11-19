@@ -16,6 +16,66 @@ const visibleRows = page => page.locator('button[data-lead-queue-id]').filter({ 
 const ids = page => visibleRows(page).evaluateAll(nodes => nodes.map(n => n.dataset.leadQueueId));
 const selectedIds = page => visibleRows(page).evaluateAll(nodes => nodes.filter(n => n.getAttribute('aria-pressed') === 'true').map(n => n.dataset.leadQueueId));
 
+async function verifyLeadReadOwnership(page) {
+  const failures = [];
+  let passed = 0;
+  for (const mode of ['URL-seeded explicit selection', 'old success', 'old failure', 'old finally while newer pending', 'unmount']) {
+    const held = new Map(), fullReads = [];
+    const matcher = url => url.origin === origin && /^\/api\/leads\/SYN-WORK-00[01]\/full$/.test(url.pathname);
+    const handler = async route => {
+      const id = new URL(route.request().url()).pathname.split('/')[3];
+      fullReads.push(id);
+      if (mode === 'URL-seeded explicit selection' && id === 'SYN-WORK-000') return route.fallback();
+      await new Promise(resolve => held.set(id, resolve));
+      if (mode === 'old failure' && id === 'SYN-WORK-000') return route.abort();
+      const lead = structuredClone(operatorLeadFixtures.find(item => item.id === id));
+      lead.seller.name = id === 'SYN-WORK-001' ? 'Synthetic Seller 01 hydrated' : 'Synthetic Seller 00 old result';
+      lead.property.address = id === 'SYN-WORK-001' ? '1 Exact Hydrated Avenue' : '0 Old Result Avenue';
+      return route.fulfill({ json: { ok: true, lead } });
+    };
+    await page.route(matcher, handler);
+    const flush = () => page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    try {
+      await page.goto(origin + '/leads' + (mode === 'URL-seeded explicit selection' ? '?search=Synthetic' : ''));
+      await expect(visibleRows(page)).toHaveCount(10);
+      await expect.poll(() => fullReads.includes('SYN-WORK-000')).toBe(true);
+      if (mode === 'URL-seeded explicit selection') await expect(page.getByText('Lead synced from bridge.', { exact: true })).toHaveCount(1);
+      await visibleRows(page).nth(1).click();
+      await expect.poll(() => held.has('SYN-WORK-001')).toBe(true);
+      assert.deepEqual(await selectedIds(page), ['SYN-WORK-001']);
+      if (mode === 'old finally while newer pending') {
+        held.get('SYN-WORK-000')(); await flush();
+        await expect(page.getByText('Loading lead detail...', { exact: true })).toHaveCount(1);
+        assert.deepEqual(await selectedIds(page), ['SYN-WORK-001']);
+      }
+      if (mode === 'unmount') {
+        await page.getByRole('link', { name: 'Skill Studio', exact: true }).filter({ visible: true }).first().click();
+        await expect(page.getByRole('heading', { name: 'Skill Studio', exact: true })).toBeVisible();
+        for (const resolve of held.values()) resolve(); await flush();
+        await expect(page.locator('.pbk-leads-surface')).toHaveCount(0);
+        await expect(page.locator('.pbk-skill-studio')).not.toContainText('Old Result Avenue');
+      } else {
+        held.get('SYN-WORK-001')();
+        await expect(visibleRows(page).nth(1)).toContainText('Synthetic Seller 01 hydrated');
+        await expect(visibleRows(page).nth(1)).toContainText('1 Exact Hydrated Avenue');
+        await flush(); assert.deepEqual(await selectedIds(page), ['SYN-WORK-001'], mode);
+        if (mode !== 'URL-seeded explicit selection') { held.get('SYN-WORK-000')(); await flush(); }
+        assert.deepEqual(await selectedIds(page), ['SYN-WORK-001'], mode);
+        await expect(page.getByText('Lead synced from bridge.', { exact: true })).toHaveCount(1);
+        await expect(page.getByText(/Bridge detail unavailable/)).toHaveCount(0);
+        if (mode === 'URL-seeded explicit selection') assert.equal(new URL(page.url()).search, '?search=Synthetic');
+      }
+      passed++; console.log(`PASS Leads ownership: ${mode}`);
+    } catch (error) { failures.push(mode); console.error(`FAIL Leads ownership: ${mode}\n${error.message}`); }
+    finally {
+      for (const resolve of held.values()) resolve();
+      await page.unroute(matcher, handler);
+    }
+  }
+  console.log(`Leads ownership: ${passed} passed, ${failures.length} failed`);
+  assert.deepEqual(failures, [], 'Leads exact selection/read ownership');
+}
+
 async function assertManualEvidence(page) {
   await expect(page).toHaveURL(origin + '/leads/SYN-WORK-022');
   await expect(page.getByRole('heading', { name: 'Synthetic Seller 22', level: 1, exact: true })).toBeVisible();
@@ -252,6 +312,7 @@ async function verify(type, width) {
       if (!localStorage.getItem('pbk:compose:draft')) localStorage.setItem('pbk:compose:draft', compose);
       if (!sessionStorage.getItem(analyzerKey)) sessionStorage.setItem(analyzerKey, analyzer);
     }, { compose, analyzer, analyzerKey });
+    if (width === 1440) await verifyLeadReadOwnership(page);
     console.log(`${type.name()} ${width}px: loading synthetic roster`);
     await page.goto(origin + '/leads?search=Initial&keep=sentinel', { waitUntil: 'domcontentloaded', timeout: 30000 });
     await page.getByRole('searchbox', { name: /Search leads/ }).fill('Synthetic');

@@ -1102,6 +1102,7 @@ export function Leads() {
   const initialFilters = useRef(true);
   const [searchParams, setSearchParams] = useSearchParams();
   const previousUrlSearch = useRef(searchParams.get('search'));
+  const initializedUrlSearch = useRef<string | null>(null);
   const snapshotLeads = useMemo(
     () => (Array.isArray(snapshot?.leadImports) ? (snapshot.leadImports as BridgeRecord[]) : []),
     [snapshot?.leadImports]
@@ -1228,6 +1229,7 @@ export function Leads() {
     const requestedSearch = searchParams.get('search');
     if (previousUrlSearch.current !== requestedSearch) {
       previousUrlSearch.current = requestedSearch;
+      initializedUrlSearch.current = null;
       setLeadQuery(requestedSearch || '');
     }
   }, [searchParams]);
@@ -1242,7 +1244,10 @@ export function Leads() {
         state: location.state,
       });
       return;
-    } else if (requestedSearch && leads.length && !restoredQueue?.queue) {
+    } else if (
+      requestedSearch && leads.length && !restoredQueue?.queue &&
+      initializedUrlSearch.current !== requestedSearch
+    ) {
       if (leadQuery !== requestedSearch) return;
       const needle = requestedSearch.toLowerCase();
       const match = leads.find((lead) =>
@@ -1251,7 +1256,10 @@ export function Leads() {
           .toLowerCase()
           .includes(needle)
       );
-      if (match) setSelectedLeadId(getLeadId(match));
+      if (match) {
+        initializedUrlSearch.current = requestedSearch;
+        setSelectedLeadId(getLeadId(match));
+      }
     }
 
     if (searchParams.get('new') === '1') {

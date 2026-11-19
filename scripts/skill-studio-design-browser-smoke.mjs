@@ -98,7 +98,7 @@ async function verify(engine, viewport, device = {}) {
     assert.equal(writes[0].body.triggerPolicy.nextQuestion, nextQuestion);
 
     const evidence = page.getByRole('navigation', { name: 'Skill evidence' });
-    await evidence.getByRole('link', { name: 'Simulator', exact: true }).click();
+    await evidence.getByRole('link', { name: 'Response preview', exact: true }).click();
     const simulator = page.getByRole('region', { name: 'Skill simulator' });
     await expect(simulator.getByText('Simulation only', { exact: true })).toBeVisible();
     const sellerLine = 'I need time to think about this.';
@@ -111,7 +111,7 @@ async function verify(engine, viewport, device = {}) {
     await expect(page.getByText('Outcome proof:', { exact: true })).toBeVisible();
     const outcomes = page.getByRole('region', { name: 'Skill performance dashboard' });
     await expect(outcomes.getByRole('article').filter({ hasText: 'Success rate' })).toContainText(
-      'N/A'
+      'Not recorded'
     );
     if (process.env.PBK_SKILL_SCREENSHOTS === '1') {
       await page.screenshot({

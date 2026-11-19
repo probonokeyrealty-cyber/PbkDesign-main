@@ -148,9 +148,12 @@ assert(
 assert(
   leads.includes('pbk-leads-search') &&
     leads.includes('leadFilter') &&
-    leads.includes('Contract ready') &&
-    leads.includes('filteredLeads'),
-  'Leads and contracts must expose interactive roster search and smart filters.'
+    leads.includes('filteredLeads') &&
+    leads.includes("['callable', 'Phone format OK']") &&
+    leads.includes("['contract', 'Email format OK']") &&
+    leads.includes("if (leadFilter === 'callable') return isCallablePhone(getLeadPhone(lead));") &&
+    leads.includes("if (leadFilter === 'contract') return isValidEmail(getLeadEmail(lead));"),
+  'Lead roster search and format-only filters must preserve their existing phone and email predicates.'
 );
 assert(
   leads.includes('onClick={() => setSelectedLeadId(id)}') &&

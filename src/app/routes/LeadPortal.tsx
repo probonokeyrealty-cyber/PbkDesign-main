@@ -6,6 +6,7 @@ import { fleetHref, readFleetReturn } from '../utils/fleetContext';
 import { readStoredNextStep } from '../utils/leadTriage';
 import '../../styles/fleet-context.css';
 import '../../styles/faster-triage.css';
+import '../../styles/operator-workflows.css';
 import { PbkDataSource } from '../../components/pbk/index';
 import { LeadPortalContactability } from '../components/leads/LeadPortalContactability';
 import { LeadPortalDealContext } from '../components/leads/LeadPortalDealContext';
@@ -169,6 +170,25 @@ export function LeadPortal() {
   const [note, setNote] = useState('');
   const [pendingAction, setPendingAction] = useState('');
   const [confirmAction, setConfirmAction] = useState<PortalAction>('');
+  const [activeSection, setActiveSection] = useState('lead-next-step');
+
+  useEffect(() => {
+    const root = workspaceRootRef.current;
+    if (!root || loading || !leadPayload) return;
+    const visible = new Set<string>();
+    const observer = new IntersectionObserver(entries => {
+      for (const entry of entries) {
+        if (entry.isIntersecting) visible.add(entry.target.id);
+        else visible.delete(entry.target.id);
+      }
+      setActiveSection(current => visible.has(current) ? current : Array.from(visible)[0] || current);
+    }, { rootMargin: '-80px 0px -35% 0px' });
+    for (const id of ['lead-next-step', 'lead-timeline', 'lead-numbers', 'lead-property']) {
+      const section = root.querySelector(`#${id}`);
+      if (section) observer.observe(section);
+    }
+    return () => observer.disconnect();
+  }, [loading, leadPayload]);
 
   const lead = useMemo<LeadPortalModel | null>(
     () => (leadPayload ? buildLeadPortalModel(leadPayload) : null),
@@ -179,6 +199,7 @@ export function LeadPortal() {
     event.preventDefault();
     const section = workspaceRootRef.current?.querySelector<HTMLElement>(`#${id}`);
     if (!section) return;
+    setActiveSection(id);
     const heading = section.querySelector<HTMLElement>('h2') || section;
     heading.tabIndex = -1;
     heading.focus({ preventScroll: true });
@@ -752,10 +773,10 @@ export function LeadPortal() {
       </section>
 
       <nav className="pbk-portal-sections" aria-label="Lead workspace sections">
-        <a href="#lead-next-step" onClick={event => jumpToSection(event, 'lead-next-step')}>Next step</a>
-        <a href="#lead-timeline" onClick={event => jumpToSection(event, 'lead-timeline')}>Timeline</a>
-        <a href="#lead-numbers" onClick={event => jumpToSection(event, 'lead-numbers')}>Numbers</a>
-        <a href="#lead-property" onClick={event => jumpToSection(event, 'lead-property')}>Property</a>
+        <a href="#lead-next-step" aria-current={activeSection === 'lead-next-step' ? 'location' : undefined} onClick={event => jumpToSection(event, 'lead-next-step')}>Next step</a>
+        <a href="#lead-timeline" aria-current={activeSection === 'lead-timeline' ? 'location' : undefined} onClick={event => jumpToSection(event, 'lead-timeline')}>Timeline</a>
+        <a href="#lead-numbers" aria-current={activeSection === 'lead-numbers' ? 'location' : undefined} onClick={event => jumpToSection(event, 'lead-numbers')}>Numbers</a>
+        <a href="#lead-property" aria-current={activeSection === 'lead-property' ? 'location' : undefined} onClick={event => jumpToSection(event, 'lead-property')}>Property</a>
       </nav>
 
         <section id="lead-next-step" className="pbk-portal-next-step" aria-labelledby="lead-next-step-heading" data-next-step-state={nextStep.state}>

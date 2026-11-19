@@ -2,6 +2,9 @@ import assert from 'node:assert/strict';
 import { mkdirSync } from 'node:fs';
 import { chromium, webkit, expect } from '@playwright/test';
 import { createServer } from 'vite';
+import { join } from 'node:path';
+
+const evidenceDir = process.env.PBK_OPERATOR_EVIDENCE_DIR || '.pbk-local';
 
 process.env.PBK_DEV_BRIDGE_URL = 'http://127.0.0.1:1';
 const server = await createServer({ server: { host: '127.0.0.1', port: 0 } });
@@ -24,7 +27,7 @@ async function verify(browserType, width) {
     const request = route.request(), url = new URL(request.url()), path = url.pathname;
     if (url.origin !== origin) return route.abort();
     if (!/^\/(?:api(?:\/|$)|\.netlify\/functions\/|state$|status$|health$|events$|invoke$|metrics$)/.test(path)) return route.continue();
-    if (path === '/api/property-data/attom-preview') lookups.push(path);
+    if (path === '/api/property-data/attom-preview' || path === '/api/property-data/enrich') lookups.push(path);
     if (path === '/api/state/stream/session') return route.fulfill({ json: { ok: false } });
     if (request.method() !== 'GET') { writes.push(path); return route.abort(); }
     return route.fulfill({ json: path === '/api/auth/team/status' ? { ok: true, configured: false, authRequired: false }
@@ -66,16 +69,16 @@ async function verify(browserType, width) {
     const tab = property.getByRole('tab', { name: 'Property record', exact: true });
     await expect(tab).toHaveAttribute('aria-selected', 'true');
     await expect(tab).toBeFocused();
-    await expect(property.getByRole('button', { name: 'Look up property', exact: true })).toBeEnabled();
+    await expect(property.getByRole('tabpanel', { name: 'Property record', exact: true }).getByRole('button', { name: 'Refresh property intelligence', exact: true })).toBeEnabled();
     await expect(property.getByText('1,480 sq ft', { exact: true })).toBeVisible();
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
     assert.deepEqual(writes, []);
     assert.deepEqual(lookups, []);
     assert.deepEqual(errors, []);
     if (process.env.PBK_GUIDANCE_SHOTS === '1') {
-      mkdirSync('.pbk-local', { recursive: true });
+      mkdirSync(evidenceDir, { recursive: true });
       await property.scrollIntoViewIfNeeded();
-      await page.screenshot({ path: `.pbk-local/lead-guidance-${browserType.name()}-${width}.png`, scale: 'css' });
+      await page.screenshot({ path: join(evidenceDir, `lead-guidance-${browserType.name()}-${width}.png`), scale: 'css' });
     }
     console.log(`${browserType.name()} ${width}px: address guidance, edit Cancel, conservative consent labels, record focus, zero writes/lookups passed`);
   } finally { await browser.close(); }

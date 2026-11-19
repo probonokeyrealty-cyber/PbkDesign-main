@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Link, useLocation, useNavigate, useSearchParams } from 'react-router';
 import { readLeadQueueReturn, type LeadQueueReturn } from '../utils/leadQueueReturn';
+import { focusWorklistRow } from '../utils/worklistFocus.mjs';
+import '../../styles/operator-workflows.css';
 import {
   AlertCircle,
   ArrowUpRight,
@@ -127,6 +129,7 @@ type QuickSmsDraft = {
   sellerName: string;
   phone: string;
   body: string;
+  error?: string;
 };
 
 type DetailStatus = {
@@ -942,7 +945,7 @@ function LeadsDataSourceDetails({ children }: { children: ReactNode }) {
 function LeadsStatRibbon({ stats, sourceLabel }: { stats: LeadsStats; sourceLabel: string }) {
   const cards = [
     {
-      label: 'Total leads',
+      label: 'Loaded leads',
       value: String(stats.total),
       detail: sourceLabel,
       tone: 'sky',
@@ -1100,6 +1103,7 @@ export function Leads() {
   const initialFilters = useRef(true);
   const [searchParams, setSearchParams] = useSearchParams();
   const previousUrlSearch = useRef(searchParams.get('search'));
+  const initializedUrlSearch = useRef<string | null>(null);
   const snapshotLeads = useMemo(
     () => (Array.isArray(snapshot?.leadImports) ? (snapshot.leadImports as BridgeRecord[]) : []),
     [snapshot?.leadImports]
@@ -1191,6 +1195,16 @@ export function Leads() {
     () => getPageSlice(filteredLeads, leadPage, OPERATOR_LIST_PAGE_SIZE),
     [filteredLeads, leadPage]
   );
+  const worklistRoot = useRef<HTMLDivElement>(null);
+  const ownedFocusedRow = useRef<HTMLButtonElement | null>(null);
+  useEffect(() => {
+    const owned = ownedFocusedRow.current;
+    if (!owned || owned.isConnected || restorePending.current) return;
+    ownedFocusedRow.current = null;
+    if (document.activeElement === document.body) {
+      worklistRoot.current?.querySelector<HTMLInputElement>('.pbk-leads-search input')?.focus();
+    }
+  }, [visibleLeads]);
   const leadsStats = useMemo(() => buildLeadsStats(leads), [leads]);
   const activeLead =
     selectedLead && leadDetail && getLeadId(leadDetail) === selectedLeadId
@@ -1216,6 +1230,7 @@ export function Leads() {
     const requestedSearch = searchParams.get('search');
     if (previousUrlSearch.current !== requestedSearch) {
       previousUrlSearch.current = requestedSearch;
+      initializedUrlSearch.current = null;
       setLeadQuery(requestedSearch || '');
     }
   }, [searchParams]);
@@ -1230,7 +1245,10 @@ export function Leads() {
         state: location.state,
       });
       return;
-    } else if (requestedSearch && leads.length && !restoredQueue?.queue) {
+    } else if (
+      requestedSearch && leads.length && !restoredQueue?.queue &&
+      initializedUrlSearch.current !== requestedSearch
+    ) {
       if (leadQuery !== requestedSearch) return;
       const needle = requestedSearch.toLowerCase();
       const match = leads.find((lead) =>
@@ -1239,7 +1257,10 @@ export function Leads() {
           .toLowerCase()
           .includes(needle)
       );
-      if (match) setSelectedLeadId(getLeadId(match));
+      if (match) {
+        initializedUrlSearch.current = requestedSearch;
+        setSelectedLeadId(getLeadId(match));
+      }
     }
 
     if (searchParams.get('new') === '1') {
@@ -1686,6 +1707,9 @@ export function Leads() {
     if (!quickSmsDraft || !quickSmsDraft.body.trim()) return;
     const { lead, leadId } = quickSmsDraft;
     if (!beginLeadAction(`sms:${leadId}`)) return;
+    setQuickSmsDraft((current) =>
+      current?.leadId === leadId ? { ...current, error: undefined } : current
+    );
     try {
       const response = await sendMessageRequest({
         leadId,
@@ -1719,11 +1743,15 @@ export function Leads() {
         loadLeadRoster(),
       ]);
     } catch (nextError) {
+      const reason =
+        nextError instanceof Error ? nextError.message : 'Ava could not send that SMS request.';
+      setQuickSmsDraft((current) =>
+        current?.leadId === leadId ? { ...current, error: reason } : current
+      );
       showUiToast({
         tone: 'error',
         title: 'SMS failed',
-        desc:
-          nextError instanceof Error ? nextError.message : 'Ava could not send that SMS request.',
+        desc: reason,
         critical: true,
       });
     } finally {
@@ -1932,7 +1960,13 @@ export function Leads() {
   const activeLeadTemplateName = TEMPLATE_NAMES[activeLeadPath];
 
   return (
-    <div className="pbk-leads-surface">
+    <div className="pbk-leads-surface" ref={worklistRoot}
+      onFocusCapture={event => {
+        const target = event.target;
+        ownedFocusedRow.current = target instanceof HTMLButtonElement && target.matches('[data-pbk-worklist-row]') ? target : null;
+      }}
+      onBlurCapture={event => { if (event.relatedTarget) ownedFocusedRow.current = null; }}
+    >
       <LeadsHero
         loading={loading || leadRosterStatus === 'loading'}
         error={error}
@@ -1990,8 +2024,8 @@ export function Leads() {
               {[
                 ['all', 'All'],
                 ['hot', 'Hot 80+'],
-                ['callable', 'Callable'],
-                ['contract', 'Contract ready'],
+                ['callable', 'Phone format OK'],
+                ['contract', 'Email format OK'],
               ].map(([value, label]) => (
                 <button
                   key={value}
@@ -2005,11 +2039,12 @@ export function Leads() {
               ))}
             </div>
             <div className="pbk-leads-result-count" aria-live="polite">
-              {filteredLeads.length} matching lead{filteredLeads.length === 1 ? '' : 's'}
+              <span>{filteredLeads.length} matching lead{filteredLeads.length === 1 ? '' : 's'}</span>
+              <span> / {leads.length} loaded / {visibleLeads.length} on this page</span>
             </div>
           </div>
 
-          <div className="pbk-leads-roster-list" aria-label="Seller roster results">
+          <div className="pbk-leads-roster-list" aria-label="Seller roster results" data-pbk-worklist="leads">
             <div className="leads-mobile-cards">
               {visibleLeads.map((lead) => {
                 const id = getLeadId(lead);
@@ -2024,6 +2059,8 @@ export function Leads() {
                       type="button"
                       className="pbk-lead-mobile-select"
                       data-lead-queue-id={id}
+                      data-pbk-worklist-row={id}
+                      onKeyDown={focusWorklistRow}
                       aria-label={`Open lead ${sellerName} at ${getLeadAddress(lead)}`}
                       aria-pressed={isSelected}
                       onClick={() => setSelectedLeadId(id)}
@@ -2157,6 +2194,8 @@ export function Leads() {
                     <button
                       type="button"
                       data-lead-queue-id={id}
+                      data-pbk-worklist-row={id}
+                      onKeyDown={focusWorklistRow}
                       aria-label={`Open lead ${sellerName} at ${getLeadAddress(lead)}`}
                       aria-pressed={isSelected}
                       onClick={() => setSelectedLeadId(id)}
@@ -3507,11 +3546,12 @@ export function Leads() {
       )}
 
       {quickSmsDraft && (
-        <div className="fixed inset-0 z-[60] grid place-items-center bg-slate-950/85 p-4 backdrop-blur-sm">
+        <div className="pbk-lead-sms-modal-backdrop fixed inset-0 z-[60] grid place-items-center bg-slate-950/85 p-4 backdrop-blur-sm">
           <div
             role="dialog"
             aria-modal="true"
             aria-labelledby="lead-quick-sms-title"
+            aria-describedby={quickSmsDraft.error ? 'lead-quick-sms-error' : undefined}
             className={`${softPanelClass} flex max-h-[min(92vh,720px)] w-full max-w-lg flex-col overflow-hidden`}
           >
             <div className="flex items-start justify-between gap-4 border-b border-slate-800 px-5 py-4">
@@ -3553,6 +3593,12 @@ export function Leads() {
               </p>
             </div>
             <div className="shrink-0 border-t border-slate-800 px-5 py-4">
+              {quickSmsDraft.error && (
+                <div id="lead-quick-sms-error" className="pbk-lead-sms-error" role="alert">
+                  <strong>SMS failed</strong>
+                  <span>{quickSmsDraft.error}</span>
+                </div>
+              )}
               <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
                 <button
                   type="button"

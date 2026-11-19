@@ -6,7 +6,8 @@ import { chromium, webkit, expect } from '@playwright/test';
 import { build } from 'vite';
 
 process.env.PBK_DEV_BRIDGE_URL = 'http://127.0.0.1:1';
-const outDir = resolve('output/context-hub-build');
+const evidenceDir = process.env.PBK_OPERATOR_EVIDENCE_DIR || 'output';
+const outDir = resolve(evidenceDir, 'context-hub-build');
 if (process.env.PBK_CONTEXT_SKIP_BUILD !== '1') {
   console.log('Building isolated static UI assets...');
   await build({ logLevel: 'warn', build: { outDir, emptyOutDir: false } });
@@ -156,6 +157,7 @@ async function verify(engine, width) {
     const writes = [],
       errors = [];
     const pendingPreviews = [];
+    const enrichments = [];
     let delayedLead = '';
     let pendingLeadRead;
     let mode = 'normal';
@@ -184,6 +186,14 @@ async function verify(engine, width) {
       if (path === '/api/state/stream/session') return route.fulfill({ json: { ok: false } });
       if (path === '/api/property-data/address-suggestions' && request.method() === 'POST') {
         return route.fulfill({ json: { status: 'unavailable', suggestions: [] } });
+      }
+      if (path === '/api/property-data/enrich' && request.method() === 'POST') {
+        const body = request.postDataJSON();
+        assert.deepEqual(body, { address: '47 Fictional Way, Example City, CA 90210' });
+        enrichments.push(body);
+        return route.fulfill({ json: { ok: true, address: body.address, saved: false, patch: {},
+          records: { status: 'unavailable' }, sales: { status: 'unavailable', sales: [] },
+          listing: apiFixture('/api/property-data').json } });
       }
       if (path === '/invoke' && request.postDataJSON()?.toolName === 'previewAgentDealContext') {
         pendingPreviews.push({ route, params: request.postDataJSON().params });
@@ -214,11 +224,18 @@ async function verify(engine, width) {
     const listPrice = page.getByRole('spinbutton', { name: 'List price in dollars' });
     const baths = page.getByRole('spinbutton', { name: 'Bathrooms', exact: true });
     const sqft = page.getByRole('spinbutton', { name: 'Square footage', exact: true });
+    for (const field of [listPrice, baths, sqft]) { await field.fill('1'); await field.fill(''); }
     const factsBefore = await Promise.all([listPrice, baths, sqft].map(field => field.inputValue()));
-    await page.getByRole('button', { name: 'Find listing photos', exact: true }).click();
-    await expect(page.getByRole('region', { name: /Property details/i })
+    await page.getByRole('button', { name: 'Refresh property intelligence', exact: true }).click();
+    const contextSwitch = page.getByRole('button', { name: 'Context', exact: true });
+    const switchable = await contextSwitch.isVisible();
+    if (switchable) await contextSwitch.click();
+    await expect(page.locator('#analyzer-deal-context')).toBeVisible();
+    await expect(page.locator('#analyzer-deal-context')
       .getByText('No saved Apify photos for this address.', { exact: true })).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Fill empty fields', exact: true })).toHaveCount(0);
+    if (switchable) await page.getByRole('button', { name: 'Valuation', exact: true }).click();
+    await expect(page.locator('#analyzer-valuation')).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Fill empty fields', exact: true })).toBeDisabled();
     for (const [index, field] of [listPrice, baths, sqft].entries()) {
       await expect(field).toHaveValue(factsBefore[index]);
     }
@@ -254,7 +271,7 @@ async function verify(engine, width) {
       page.getByRole('heading', { name: 'Sample 47', level: 1, exact: true })
     ).toBeVisible();
     await expect(page.getByText('Wrong seller', { exact: true })).toHaveCount(0);
-    await page.screenshot({ path: `output/context-hub-workspace-${engine.name()}-${width}.png` });
+    await page.screenshot({ path: resolve(evidenceDir, `context-hub-workspace-${engine.name()}-${width}.png`) });
     await page.getByRole('button', { name: 'Back to fleet', exact: true }).click();
     await expect(picker).toHaveValue('sample-47');
     await expect(search).toHaveValue('Sample 47');
@@ -265,7 +282,7 @@ async function verify(engine, width) {
       )
       .toBeLessThanOrEqual(1);
     await expect(page).toHaveURL(/agent=rex/);
-    await page.screenshot({ path: `output/context-hub-fleet-${engine.name()}-${width}.png` });
+    await page.screenshot({ path: resolve(evidenceDir, `context-hub-fleet-${engine.name()}-${width}.png`) });
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1));
     await page.reload({ waitUntil: 'domcontentloaded' });
     await expect(picker).toHaveValue('sample-47');
@@ -458,6 +475,7 @@ async function verify(engine, width) {
     await expect(compA).toHaveValue('2200000');
     await expect(compB).toHaveValue('2800000');
     assert.deepEqual(writes, [], 'Navigation must never write business data');
+    assert.deepEqual(enrichments, [{ address: '47 Fictional Way, Example City, CA 90210' }], 'One explicit mocked unlinked lookup; no lead write or lookup during navigation');
     assert.deepEqual(errors, []);
     console.log(
       `${engine.name()} ${width}px: full roster, exact context, returns/focus, unknown IDs and zero writes passed`

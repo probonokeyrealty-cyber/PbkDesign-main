@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router';
+import '../../styles/operator-workflows.css';
 import {
   Activity,
   AlertTriangle,
@@ -8,6 +9,7 @@ import {
   ChevronDown,
   ChevronLeft,
   CircleDot,
+  Copy,
   Database,
   FileCheck2,
   FileText,
@@ -25,6 +27,14 @@ import {
   X,
 } from 'lucide-react';
 import { CompactPager, getPageSlice, OPERATOR_LIST_PAGE_SIZE } from '../components/CompactPager';
+import { copyToClipboard } from '../utils/fileExport';
+import { focusWorklistRow } from '../utils/worklistFocus.mjs';
+import {
+  formatSkillMetric,
+  getSkillStageDisplay,
+  readRecordedCount,
+  readSkillEvidenceDisplay,
+} from '../utils/skillEvidenceDisplay.mjs';
 import {
   activateSkillVersionRequest,
   approveSkillVersionRequest,
@@ -128,6 +138,30 @@ function readRecord(value: unknown): Record<string, unknown> {
     : {};
 }
 
+function isReadableSkillItem(value: unknown) {
+  const item = readRecord(value);
+  if (!['versionId', 'contentHash', 'name'].every(key =>
+    typeof item[key] === 'string' && item[key].trim()
+  )) return false;
+
+  // Evidence stays optional; guard only identity and inputs used directly by the renderer.
+  const displayFields = [
+    'lifecycleState', 'versionNumber', 'riskClass', 'instructions', 'agentId',
+    'activationStatus', 'rolloutPercent', 'priority', 'createdBy', 'approvedBy',
+  ];
+  if (displayFields.some(key =>
+    item[key] != null && !['string', 'number', 'boolean'].includes(typeof item[key])
+  )) return false;
+  if (item.activationId != null && typeof item.activationId !== 'string') return false;
+  if (item.toolAllowlist != null && (
+    !Array.isArray(item.toolAllowlist) || item.toolAllowlist.some(tool => typeof tool !== 'string')
+  )) return false;
+  return ['createdAt', 'approvedAt', 'activatedAt'].every(key => {
+    const date = item[key];
+    return !date || (typeof date === 'string' && Number.isFinite(Date.parse(date)));
+  });
+}
+
 function firstNumber(...values: unknown[]) {
   for (const value of values) {
     const numeric = readNumber(value);
@@ -142,19 +176,6 @@ function firstText(...values: unknown[]) {
     if (textValue) return textValue;
   }
   return '';
-}
-
-function percentLabel(value: number | null) {
-  if (value === null) return 'N/A';
-  const normalized = value <= 1 ? value * 100 : value;
-  return `${Math.max(0, Math.min(100, normalized)).toFixed(0)}%`;
-}
-
-function signedPercentLabel(value: number | null) {
-  if (value === null) return 'No delta';
-  const normalized = value <= 1 && value >= -1 ? value * 100 : value;
-  const clamped = Math.max(-100, Math.min(100, normalized));
-  return `${clamped > 0 ? '+' : ''}${clamped.toFixed(0)}% wk`;
 }
 
 function getSkillPerformance(item: SkillGovernanceItem) {
@@ -272,30 +293,12 @@ function buildSkillTrainingQueue(items: SkillGovernanceItem[]) {
 }
 
 function buildSkillOutcomeProof(item: SkillGovernanceItem) {
-  const metrics = getSkillPerformance(item);
-  if (metrics.usageCount <= 0) {
-    return 'No live outcome proof yet. Practice this in the simulator or start a small rollout after review.';
-  }
-  const success =
-    metrics.successRate === null
-      ? 'success rate not recorded yet'
-      : `${percentLabel(metrics.successRate)} success`;
-  const confidence =
-    metrics.confidence === null
-      ? 'confidence not recorded yet'
-      : `${percentLabel(metrics.confidence)} confidence`;
-  const delta = signedPercentLabel(metrics.confidenceDelta);
-  const normalizedSuccess =
-    metrics.successRate === null
-      ? null
-      : metrics.successRate <= 1
-        ? metrics.successRate * 100
-        : metrics.successRate;
+  const metrics = readSkillEvidenceDisplay(item);
   const coaching =
-    normalizedSuccess !== null && normalizedSuccess < 60
+    metrics.successPercent !== null && metrics.successPercent < 60
       ? 'Needs coaching before a wider rollout.'
       : 'Keep watching seller outcomes before widening rollout.';
-  return `Used ${metrics.usageCount} time${metrics.usageCount === 1 ? '' : 's'}; ${success}; ${confidence}; ${delta}. ${coaching}`;
+  return `Recorded uses: ${formatSkillMetric(metrics.usageCount, 'count')}; success: ${formatSkillMetric(metrics.successPercent, 'percent')}; confidence: ${formatSkillMetric(metrics.confidencePercent, 'percent')}; change: ${formatSkillMetric(metrics.changePercent, 'change')}. ${coaching}`;
 }
 
 function buildSkillSimulation(item: SkillGovernanceItem, sellerLine: string) {
@@ -1058,7 +1061,14 @@ export function SkillStudio() {
   const [agentFilter, setAgentFilter] = useState('');
   const [riskFilter, setRiskFilter] = useState('');
   const [performanceFilter, setPerformanceFilter] = useState('');
-  const [loading, setLoading] = useState(true);
+  const [repositoryViewState, setRepositoryViewState] = useState<
+    'loading' | 'ready' | 'retained' | 'unavailable'
+  >('loading');
+  const loading = repositoryViewState === 'loading';
+  const mounted = useRef(false);
+  const readRequestId = useRef(0);
+  const hasGoodRepository = useRef(false);
+  const latestLoad = useRef<(() => Promise<void>) | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
@@ -1066,10 +1076,17 @@ export function SkillStudio() {
   const [createOpen, setCreateOpen] = useState(searchParams.get('create') === '1');
   const [agentId, setAgentId] = useState('ava');
   const [rolloutPercent, setRolloutPercent] = useState(10);
-  const [confirmingPrimaryAction, setConfirmingPrimaryAction] = useState(false);
+  const [confirmation, setConfirmation] = useState<{
+    owner: string;
+    title: string;
+    copy: string;
+    run: () => Promise<unknown>;
+  } | null>(null);
   const [skillPage, setSkillPage] = useState(0);
   const versionHeadingRef = useRef<HTMLHeadingElement>(null);
   const repositorySearchRef = useRef<HTMLInputElement>(null);
+  const ownedFocusedRow = useRef<HTMLButtonElement | null>(null);
+  const previewVersionId = useRef('');
   const [simulationText, setSimulationText] = useState(
     'Seller says the offer feels low and asks why PBK is different from another buyer.'
   );
@@ -1078,8 +1095,10 @@ export function SkillStudio() {
     () => items.find((item) => item.versionId === selectedId) || null,
     [items, selectedId]
   );
-  const currentStep = STATE_STEP[selected?.lifecycleState || 'candidate'] || 0;
-  const selectedPerformance = selected ? getSkillPerformance(selected) : null;
+  const selectedStage = getSkillStageDisplay(selected?.lifecycleState, STATE_LABELS, STATE_STEP);
+  const currentStep = selectedStage.index;
+  const selectedPerformance = selected ? readSkillEvidenceDisplay(selected) : null;
+  const deadLettered = readRecordedCount(status?.outbox?.deadLettered);
   const selectedOutcomeProof = selected ? buildSkillOutcomeProof(selected) : '';
   const trainingQueue = useMemo(() => buildSkillTrainingQueue(items), [items]);
   const simulation = useMemo(
@@ -1134,9 +1153,14 @@ export function SkillStudio() {
     [skillPage, visibleItems]
   );
 
-  const load = useCallback(async () => {
-    setLoading(true);
+  const load = useCallback(async (): Promise<void> => {
+    if (!mounted.current || latestLoad.current !== load) return;
+    const requestId = ++readRequestId.current;
+    const ownsRead = () =>
+      mounted.current && requestId === readRequestId.current && latestLoad.current === load;
+    setRepositoryViewState('loading');
     setError('');
+    setConfirmation(null);
     try {
       const [statusResult, repositoryResult] = await Promise.all([
         fetchSkillGovernanceStatusRequest(),
@@ -1146,7 +1170,18 @@ export function SkillStudio() {
           limit: 150,
         }),
       ]);
-      const nextItems = repositoryResult.items || [];
+      if (!ownsRead()) return;
+      if (
+        !repositoryResult || repositoryResult.ok !== true || !Array.isArray(repositoryResult.items) ||
+        repositoryResult.items.some(item => !isReadableSkillItem(item))
+      ) {
+        throw new Error(repositoryResult?.error || 'Repository response unavailable.');
+      }
+      if (!statusResult || statusResult.ok !== true) {
+        throw new Error(statusResult?.error || 'Governance status unavailable.');
+      }
+      const nextItems = repositoryResult.items;
+      hasGoodRepository.current = true;
       setStatus(statusResult);
       setItems(nextItems);
       setSelectedId((current) =>
@@ -1154,25 +1189,56 @@ export function SkillStudio() {
           ? current
           : nextItems[0]?.versionId || ''
       );
+      setRepositoryViewState('ready');
     } catch (loadError) {
+      if (!ownsRead()) return;
       setError(loadError instanceof Error ? loadError.message : String(loadError));
-    } finally {
-      setLoading(false);
+      setRepositoryViewState(hasGoodRepository.current ? 'retained' : 'unavailable');
     }
   }, [lifecycleFilter, search]);
+  latestLoad.current = load;
 
   useEffect(() => {
+    const requestTracker = readRequestId;
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      ++requestTracker.current;
+    };
+  }, []);
+
+  useEffect(() => {
+    const requestTracker = readRequestId;
+    // A new query owns the view immediately, including its debounce window.
+    ++requestTracker.current;
+    setRepositoryViewState('loading');
+    setError('');
+    setConfirmation(null);
     const timer = window.setTimeout(() => void load(), 180);
-    return () => window.clearTimeout(timer);
+    return () => {
+      window.clearTimeout(timer);
+      ++requestTracker.current;
+    };
   }, [load]);
 
   useEffect(() => {
-    setConfirmingPrimaryAction(false);
+    const versionId = selected?.versionId || '';
+    if (previewVersionId.current === versionId) return;
+    previewVersionId.current = versionId;
     const seed = buildSkillSimulationSeed(selected);
     setSimulationText(
       seed || 'Seller says the offer feels low and asks why PBK is different from another buyer.'
     );
-  }, [selected, selectedId]);
+  }, [selected]);
+
+  useEffect(() => {
+    const owned = ownedFocusedRow.current;
+    if (!owned || owned.isConnected) return;
+    ownedFocusedRow.current = null;
+    if (document.hasFocus() && document.activeElement === document.body) {
+      repositorySearchRef.current?.focus();
+    }
+  }, [pagedVisibleItems]);
 
   useEffect(() => {
     setSkillPage(0);
@@ -1187,6 +1253,18 @@ export function SkillStudio() {
     selected &&
     ['candidate', 'needs_review', 'ready_for_approval'].includes(selected.lifecycleState)
   );
+  const actionOwner = JSON.stringify([
+    selected?.versionId, selected?.contentHash, selected?.lifecycleState, selected?.activationId,
+    agentId, rolloutPercent, search, lifecycleFilter, agentFilter, riskFilter, performanceFilter,
+  ]);
+  const targetVerified = repositoryViewState === 'ready' && Boolean(
+    selected?.versionId && typeof selected.contentHash === 'string' && selected.contentHash.trim()
+  );
+  const confirmingPrimaryAction = confirmation?.owner === actionOwner && targetVerified;
+
+  useEffect(() => {
+    setConfirmation(null);
+  }, [actionOwner]);
 
   const runAction = async <T,>(
     action: () => Promise<T>,
@@ -1197,13 +1275,14 @@ export function SkillStudio() {
     setNotice('');
     try {
       const result = await action();
+      if (!mounted.current) return result;
       setNotice(typeof success === 'function' ? success(result) : success);
-      await load();
+      await latestLoad.current?.();
       return result;
     } catch (actionError) {
-      setError(actionError instanceof Error ? actionError.message : String(actionError));
+      if (mounted.current) setError(actionError instanceof Error ? actionError.message : String(actionError));
     } finally {
-      setBusy(false);
+      if (mounted.current) setBusy(false);
     }
     return null;
   };
@@ -1296,7 +1375,14 @@ export function SkillStudio() {
           : null;
 
   return (
-    <div className="pbk-skill-studio">
+    <div
+      className="pbk-skill-studio"
+      onFocusCapture={event => {
+        const target = event.target;
+        ownedFocusedRow.current = target instanceof HTMLButtonElement && target.matches('[data-pbk-worklist-row]') ? target : null;
+      }}
+      onBlurCapture={event => { if (event.relatedTarget) ownedFocusedRow.current = null; }}
+    >
       <header className="pbk-skill-studio-header">
         <div>
           <span className="pbk-eyebrow">Ava learning</span>
@@ -1324,26 +1410,31 @@ export function SkillStudio() {
         </div>
       </header>
 
+      {(repositoryViewState === 'retained' || (loading && hasGoodRepository.current)) && (
+        <p className="pbk-skill-muted">Saved repository and status retained{loading ? ' while loading.' : '.'}</p>
+      )}
+      {repositoryViewState === 'unavailable' && <p className="pbk-skill-muted">Repository unavailable</p>}
+
       <section className="pbk-skill-status-ribbon" aria-label="Skill governance status">
         <div>
           <span>Review queue</span>
-          <strong>{status?.candidates || 0}</strong>
+          <strong>{formatSkillMetric(readRecordedCount(status?.candidates), 'count')}</strong>
         </div>
         <div>
           <span>Ready to test</span>
-          <strong>{status?.approvedInactive || 0}</strong>
+          <strong>{formatSkillMetric(readRecordedCount(status?.approvedInactive), 'count')}</strong>
         </div>
         <div>
           <span>Small test</span>
-          <strong>{status?.canary || 0}</strong>
+          <strong>{formatSkillMetric(readRecordedCount(status?.canary), 'count')}</strong>
         </div>
         <div>
           <span>Live now</span>
-          <strong>{status?.active || 0}</strong>
+          <strong>{formatSkillMetric(readRecordedCount(status?.active), 'count')}</strong>
         </div>
-        <div className={status?.outbox?.deadLettered ? 'warning' : ''}>
+        <div className={deadLettered !== null && deadLettered > 0 ? 'warning' : ''}>
           <span>Sync health</span>
-          <strong>{status?.outbox?.pending || 0}</strong>
+          <strong>{formatSkillMetric(readRecordedCount(status?.outbox?.pending), 'count')}</strong>
           <small>learning records</small>
         </div>
       </section>
@@ -1374,22 +1465,33 @@ export function SkillStudio() {
             </div>
           </div>
           <div className="pbk-skill-training-queue-grid">
-            {trainingQueue.map(({ item, metrics, reason, action }) => (
-              <button
-                type="button"
-                key={item.versionId}
-                className="pbk-skill-training-card"
-                onClick={() => openSkillVersion(item.versionId)}
-              >
-                <span>{action}</span>
-                <strong>{item.name}</strong>
-                <p>{reason}</p>
-                <small>
-                  {STATE_LABELS[item.lifecycleState] || item.lifecycleState} - {metrics.usageCount}{' '}
-                  uses - {percentLabel(metrics.confidence)} confidence
-                </small>
-              </button>
-            ))}
+            {trainingQueue.map(({ item, reason, action }) => {
+              const evidence = readSkillEvidenceDisplay(item);
+              const displayReason =
+                reason === 'Confidence is slipping this week. Check what changed.'
+                  ? 'Confidence is slipping. Check what changed.'
+                  : reason === 'No outcome proof yet. Test it with a seller scenario.' &&
+                      evidence.usageCount === null
+                    ? 'Outcome evidence is not recorded. Review before rollout.'
+                    : reason;
+              return (
+                <button
+                  type="button"
+                  key={item.versionId}
+                  className="pbk-skill-training-card"
+                  onClick={() => openSkillVersion(item.versionId)}
+                >
+                  <span>{action}</span>
+                  <strong>{item.name}</strong>
+                  <p>{displayReason}</p>
+                  <small>
+                    {getSkillStageDisplay(item.lifecycleState, STATE_LABELS, STATE_STEP).label} -
+                    Recorded uses: {formatSkillMetric(evidence.usageCount, 'count')}
+                    {' - '}Confidence: {formatSkillMetric(evidence.confidencePercent, 'percent')}
+                  </small>
+                </button>
+              );
+            })}
           </div>
         </section>
       )}
@@ -1474,43 +1576,50 @@ export function SkillStudio() {
               </select>
             </label>
           </div>
-          <div className="pbk-skill-list">
+          <div className="pbk-skill-list" data-pbk-worklist="skills">
             {loading && !items.length ? (
               <div className="pbk-skill-empty">
                 <RefreshCw className="animate-spin" />
                 Loading authority...
               </div>
-            ) : visibleItems.length ? (
+            ) : repositoryViewState === 'unavailable' ? null : visibleItems.length ? (
               pagedVisibleItems.map((item) => {
-                const metrics = getSkillPerformance(item);
+                const metrics = readSkillEvidenceDisplay(item);
                 return (
                   <button
                     type="button"
                     key={item.versionId}
+                    data-pbk-worklist-row
+                    data-skill-version-id={item.versionId}
+                    aria-pressed={selected?.versionId === item.versionId}
+                    onKeyDown={focusWorklistRow}
                     className={`pbk-skill-list-item ${selected?.versionId === item.versionId ? 'selected' : ''}`}
                     onClick={() => openSkillVersion(item.versionId)}
                   >
                     <span className={`pbk-skill-state state-${item.lifecycleState}`}>
-                      {STATE_LABELS[item.lifecycleState] || item.lifecycleState}
+                      {getSkillStageDisplay(item.lifecycleState, STATE_LABELS, STATE_STEP).label}
                     </span>
                     <strong>{item.name}</strong>
                     <span className="pbk-skill-card-badges">
-                      <span>v{item.versionNumber || 1}</span>
+                      <span>
+                        {item.versionNumber == null ? 'Version Not recorded' : `v${item.versionNumber}`}
+                      </span>
                       <span>{item.agentId || 'Unassigned'}</span>
                       <span>{item.riskClass || 'medium'} risk</span>
                     </span>
                     <span className="pbk-skill-card-metrics">
                       <span>
-                        <strong>{metrics.usageCount}</strong>
-                        <small>uses</small>
+                        <strong>{formatSkillMetric(metrics.usageCount, 'count')}</strong>
+                        <small>Recorded uses</small>
                       </span>
                       <span>
-                        <strong>{percentLabel(metrics.successRate)}</strong>
+                        <strong>{formatSkillMetric(metrics.successPercent, 'percent')}</strong>
                         <small>success</small>
                       </span>
-                      <span className={`trend-${metrics.trendTone}`}>
-                        <strong>{percentLabel(metrics.confidence)}</strong>
-                        <small>{signedPercentLabel(metrics.confidenceDelta)}</small>
+                      <span>
+                        <strong>{formatSkillMetric(metrics.confidencePercent, 'percent')}</strong>
+                        <small>Confidence</small>
+                        <small>Change: {formatSkillMetric(metrics.changePercent, 'change')}</small>
                       </span>
                     </span>
                     <small>Last triggered: {displayDate(metrics.lastTriggeredAt)}</small>
@@ -1562,20 +1671,42 @@ export function SkillStudio() {
                 <div>
                   <div className="pbk-skill-version-kicker">
                     <span className={`pbk-skill-state state-${selected.lifecycleState}`}>
-                      {STATE_LABELS[selected.lifecycleState] || selected.lifecycleState}
+                      {selectedStage.label}
                     </span>
-                    <span>Version {selected.versionNumber || 1}</span>
+                    <span>Version {selected.versionNumber ?? 'Not recorded'}</span>
                     <span>Saved version</span>
                   </div>
                   <h2 tabIndex={-1} ref={versionHeadingRef}>
                     {selected.name}
                   </h2>
+                  <div className="pbk-skill-version-id">
+                    <span>Version ID</span>
+                    <code>{selected.versionId}</code>
+                    <button
+                      type="button"
+                      className="pbk-btn pbk-btn-ghost"
+                      title="Copy exact version ID"
+                      onClick={async () => {
+                        setError('');
+                        setNotice('');
+                        const copied = await copyToClipboard(selected.versionId);
+                        if (copied) setNotice('Version ID copied');
+                        else
+                          setError(
+                            'Could not copy version ID. Clipboard access was denied or unavailable.'
+                          );
+                      }}
+                    >
+                      <Copy size={16} aria-hidden="true" />
+                      Copy ID
+                    </button>
+                  </div>
                 </div>
               </div>
 
               <nav className="pbk-skill-evidence-nav" aria-label="Skill evidence">
-                {simulation && <a href="#skill-simulator">Simulator</a>}
                 <a href="#skill-outcome-proof">Outcome evidence</a>
+                {simulation && <a href="#skill-simulator">Response preview</a>}
                 <a href="#skill-decision">Decision</a>
               </nav>
               <details className="pbk-skill-saved-instructions">
@@ -1590,13 +1721,59 @@ export function SkillStudio() {
                   <li
                     key={step}
                     aria-current={index === currentStep ? 'step' : undefined}
-                    className={`${index < currentStep ? 'complete' : ''} ${index === currentStep ? 'current' : ''}`}
+                    className={index === currentStep ? 'current' : ''}
                   >
-                    <span>{index < currentStep ? <Check size={13} /> : index + 1}</span>
+                    <span>{index + 1}</span>
                     <strong>{step}</strong>
                   </li>
                 ))}
               </ol>
+
+              <section
+                id="skill-outcome-proof"
+                className="pbk-skill-performance-dashboard"
+                aria-label="Skill performance dashboard"
+              >
+                <header>
+                  <Activity size={17} />
+                  <div>
+                    <h3>Recorded outcomes</h3>
+                  </div>
+                </header>
+                <div>
+                  <article>
+                    <span>Recorded uses</span>
+                    <strong>
+                      {formatSkillMetric(selectedPerformance?.usageCount ?? null, 'count')}
+                    </strong>
+                  </article>
+                  <article>
+                    <span>Success rate</span>
+                    <strong>
+                      {formatSkillMetric(selectedPerformance?.successPercent ?? null, 'percent')}
+                    </strong>
+                  </article>
+                  <article>
+                    <span>Confidence</span>
+                    <strong>
+                      {formatSkillMetric(selectedPerformance?.confidencePercent ?? null, 'percent')}
+                    </strong>
+                  </article>
+                  <article>
+                    <span>Change</span>
+                    <strong>
+                      {formatSkillMetric(selectedPerformance?.changePercent ?? null, 'change')}
+                    </strong>
+                  </article>
+                  <article>
+                    <span>Last triggered</span>
+                    <strong>{displayDate(selectedPerformance?.lastTriggeredAt)}</strong>
+                  </article>
+                </div>
+                <p className="pbk-skill-outcome-proof">
+                  <strong>Outcome proof:</strong> {selectedOutcomeProof}
+                </p>
+              </section>
 
               {simulation && (
                 <section
@@ -1607,7 +1784,7 @@ export function SkillStudio() {
                   <header>
                     <Sparkles size={17} />
                     <div>
-                      <h3>Skill simulator</h3>
+                      <h3>Response preview</h3>
                     </div>
                     <span className="pbk-skill-simulation-label">Simulation only</span>
                   </header>
@@ -1641,49 +1818,12 @@ export function SkillStudio() {
                 </section>
               )}
 
-              <section
-                id="skill-outcome-proof"
-                className="pbk-skill-performance-dashboard"
-                aria-label="Skill performance dashboard"
-              >
-                <header>
-                  <Activity size={17} />
-                  <div>
-                    <h3>Recorded outcomes</h3>
-                  </div>
-                </header>
-                <div>
-                  <article>
-                    <span>30d uses</span>
-                    <strong>{selectedPerformance?.usageCount || 0}</strong>
-                  </article>
-                  <article>
-                    <span>Success rate</span>
-                    <strong>{percentLabel(selectedPerformance?.successRate ?? null)}</strong>
-                  </article>
-                  <article className={`trend-${selectedPerformance?.trendTone || 'neutral'}`}>
-                    <span>Confidence</span>
-                    <strong>{percentLabel(selectedPerformance?.confidence ?? null)}</strong>
-                    <small>
-                      {signedPercentLabel(selectedPerformance?.confidenceDelta ?? null)}
-                    </small>
-                  </article>
-                  <article>
-                    <span>Last triggered</span>
-                    <strong>{displayDate(selectedPerformance?.lastTriggeredAt)}</strong>
-                  </article>
-                </div>
-                <p className="pbk-skill-outcome-proof">
-                  <strong>Outcome proof:</strong> {selectedOutcomeProof}
-                </p>
-              </section>
-
               <section className="pbk-skill-stage">
                 <header>
                   <CircleDot size={17} />
                   <div>
                     <span>Current decision</span>
-                    <h3>{LIFECYCLE_STEPS[currentStep]}</h3>
+                    <h3>{currentStep === null ? 'Unknown' : LIFECYCLE_STEPS[currentStep]}</h3>
                   </div>
                 </header>
                 <div className="pbk-skill-stage-grid">
@@ -1781,7 +1921,7 @@ export function SkillStudio() {
                       <strong>{primaryAction.label}</strong>
                       {confirmingPrimaryAction && (
                         <small>
-                          {primaryAction.confirmTitle} {primaryAction.confirmCopy}
+                          {confirmation?.title} {confirmation?.copy}
                         </small>
                       )}
                     </div>
@@ -1790,7 +1930,7 @@ export function SkillStudio() {
                         <button
                           type="button"
                           className="pbk-btn pbk-btn-ghost"
-                          onClick={() => setConfirmingPrimaryAction(false)}
+                          onClick={() => setConfirmation(null)}
                           disabled={busy}
                         >
                           Cancel
@@ -1801,10 +1941,11 @@ export function SkillStudio() {
                             primaryAction.danger ? 'pbk-btn-danger' : 'pbk-btn-primary'
                           }`}
                           onClick={() => {
-                            setConfirmingPrimaryAction(false);
-                            void primaryAction.run();
+                            if (!confirmation || confirmation.owner !== actionOwner || !targetVerified || busy) return;
+                            setConfirmation(null);
+                            void confirmation.run();
                           }}
-                          disabled={busy}
+                          disabled={busy || !targetVerified}
                         >
                           <primaryAction.icon size={16} />
                           {busy ? 'Working' : 'Confirm'}
@@ -1816,8 +1957,13 @@ export function SkillStudio() {
                         className={`pbk-btn ${
                           primaryAction.danger ? 'pbk-btn-danger' : 'pbk-btn-primary'
                         }`}
-                        onClick={() => setConfirmingPrimaryAction(true)}
-                        disabled={busy}
+                        onClick={() => setConfirmation({
+                          owner: actionOwner,
+                          title: primaryAction.confirmTitle,
+                          copy: primaryAction.confirmCopy,
+                          run: primaryAction.run,
+                        })}
+                        disabled={busy || !targetVerified}
                       >
                         <primaryAction.icon size={16} />
                         {busy ? 'Working' : primaryAction.label}
@@ -1932,7 +2078,7 @@ export function SkillStudio() {
                   </div>
                   <div>
                     <dt>Reviewer</dt>
-                    <dd>{selected.approvedBy || 'Not approved'}</dd>
+                    <dd>{selected.approvedBy || 'Not recorded'}</dd>
                   </div>
                 </dl>
               </section>
@@ -1956,11 +2102,23 @@ export function SkillStudio() {
               </div>
               <div>
                 <dt>Snapshot</dt>
-                <dd>{status?.snapshot?.available ? 'Validated' : 'Unavailable'}</dd>
+                <dd>
+                  {status?.snapshot?.available === true
+                    ? 'Validated'
+                    : status?.snapshot?.available === false
+                      ? 'Unavailable'
+                      : 'Not recorded'}
+                </dd>
               </div>
               <div>
                 <dt>Sync</dt>
-                <dd>{status?.outbox?.deadLettered ? 'Needs attention' : 'Healthy'}</dd>
+                <dd>
+                  {deadLettered === null
+                    ? 'Not recorded'
+                    : deadLettered > 0
+                      ? 'Needs attention'
+                      : 'Healthy'}
+                </dd>
               </div>
             </dl>
           </section>

@@ -44,3 +44,12 @@ test('unverified loan to value scale is reported without a normalized ratio or p
  const d=attomMcpDatasetDefinitions.find(d=>d.id==='equity');const f=d.fields.find(f=>f.key==='loanToValueRatio');assert.equal(f.unit,undefined);assert.equal(f.label,'Loan to value (provider reported)');assert.match(d.note,/scale|meaning/i);
  const s=projectAttomMcpSection('equity',{loanToValueRatio:56.2},'ok',time);assert.equal(s.facts.loanToValueRatio,56.2);
 });
+test('underwater equity remains signed in projection and saved hydration without admitting negative debt or prices',()=>{
+ const s=projectAttomMcpSection('equity',{estimatedValue:100,estimatedDebt:150,availableEquity:-50,equityPercent:-50,loanToValueRatio:-1},'ok',time);
+ assert.equal(s.facts.availableEquity,-50);assert.equal(s.facts.equityPercent,-50);assert.equal(s.facts.loanToValueRatio,undefined);
+ const saved=hydrateAttomMcpSections([s])[0];assert.equal(saved.facts.availableEquity,-50);assert.equal(saved.facts.equityPercent,-50);
+ const nested=projectAttomMcpSection('valuation',{equity:{availableEquity:-50,equityPercent:-50,estimatedDebt:-100,estimatedValue:-100},valuation:{value:-100}},'ok',time);
+ assert.equal(nested.facts['equity.availableEquity'],-50);assert.equal(nested.facts['equity.equityPercent'],-50);assert.equal(nested.facts['equity.estimatedDebt'],undefined);assert.equal(nested.facts['equity.estimatedValue'],undefined);assert.equal(nested.facts['valuation.value'],undefined);
+ assert.equal(hydrateAttomMcpSections([nested])[0].facts['equity.equityPercent'],-50);
+ const sale=projectAttomMcpSection('sales-history',[{saleDate:'2026-01-01',price:-10}],'ok',time);assert.equal(sale.rows[0].price,undefined);
+});

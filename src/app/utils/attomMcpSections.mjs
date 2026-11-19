@@ -26,7 +26,7 @@ export const attomMcpDatasetDefinitions = Object.freeze([
   def('ownership', 'Ownership', 'Ownership', [field('names', 'Owner names', 'names'), ...strings('mailingAddress'), field('ownerOccupied', 'Owner occupied', 'boolean')]),
   def('ownership-periods', 'Ownership periods', 'Ownership', [...nums('summary.totalOwnershipPeriods'), ...dates('summary.latestOwnershipChangeDate')], [...strings('label', 'anchorState'), field('ownerNames', 'Owner names', 'names'), ...dates('startDate', 'endDate'), field('isCurrentOwnerPeriod', 'Current period', 'boolean')], 'ownershipPeriods', 'Ownership periods are inferred from available recorded evidence; gaps and unanchored periods may exist.'),
   def('mortgage-history', 'Recorded financing', 'History', [], [...dates('recordingDate', 'mortgageDate'), field('originalAmount', 'Original loan amount', 'number', 'USD'), ...nums('position'), ...strings('lender', 'documentNumber', 'loanType', 'lenderType')], '', 'Original recorded financing amounts are not current balances or payoff quotes.'),
-  def('valuation', 'Valuation estimates', 'Estimates', [...nums('valuation.value', 'valuation.valueMin', 'valuation.valueMax', 'valuation.confidenceScore', 'rentalValuation.value', 'equity.estimatedValue', 'equity.estimatedDebt', 'equity.availableEquity'), ...dates('valuation.estimatedDate', 'valuation.updateDate')], [], '', estimate),
+  def('valuation', 'Valuation estimates', 'Estimates', [...nums('valuation.value', 'valuation.valueMin', 'valuation.valueMax', 'valuation.confidenceScore', 'rentalValuation.value', 'equity.estimatedValue', 'equity.estimatedDebt', 'equity.availableEquity', 'equity.equityPercent'), ...dates('valuation.estimatedDate', 'valuation.updateDate')], [], '', estimate),
   def('rental-valuation', 'Rental estimate', 'Estimates', [...nums('value', 'valueMin', 'valueMax'), ...dates('estimatedDate', 'updateDate')], [], '', estimate),
   def('equity', 'Equity estimates', 'Estimates', nums('estimatedValue', 'estimatedDebt', 'availableEquity', 'equityPercent', 'loanToValueRatio'), [], '', `${estimate} Loan to value is provider reported with unverified scale and meaning; verify with the source before interpretation. No normalization is applied.`),
   def('market-context', 'Market context', 'Market', [...nums('zipContext.saleCount', 'zipContext.medianSalePrice', 'zipContext.medianPricePerSqFt', 'nearbyContext.radiusMiles', 'nearbyContext.saleCount', 'nearbyContext.medianSalePrice', 'nearbyContext.medianPricePerSqFt'), ...dates('zipContext.latestSaleDate', 'nearbyContext.latestSaleDate')]),
@@ -55,7 +55,9 @@ function scalar(v, f, saved) {
   if (f.kind === 'boolean') return typeof v === 'boolean' ? v : undefined;
   if (['number', 'latitude', 'longitude'].includes(f.kind)) {
     const max = f.kind === 'latitude' ? 90 : f.kind === 'longitude' ? 180 : /(?:yearBuilt|taxYear)$/i.test(f.key) ? 3000 : /(?:bedrooms|bathrooms|rooms|garageSpaces|position)$/i.test(f.key) ? 10000 : 1e15;
-    return typeof v === 'number' && Number.isFinite(v) && v >= (f.kind === 'latitude' ? -90 : f.kind === 'longitude' ? -180 : 0) && v <= max ? v : undefined;
+    const signedEquity = ['availableEquity', 'equityPercent', 'equity.availableEquity', 'equity.equityPercent'].includes(f.key);
+    const min = f.kind === 'latitude' ? -90 : f.kind === 'longitude' ? -180 : signedEquity ? -1e15 : 0;
+    return typeof v === 'number' && Number.isFinite(v) && v >= min && v <= max ? v : undefined;
   }
   if (f.kind === 'names' && !saved) return Array.isArray(v) && v.length <= 8 && v.every(n => safeString(n)) ? safeString(v.join('; ')) : undefined;
   return safeString(v);

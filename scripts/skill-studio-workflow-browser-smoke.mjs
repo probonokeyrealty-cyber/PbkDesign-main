@@ -19,15 +19,56 @@ async function repository(page) {
 async function selectVersion(page, index) {
   await repository(page);
   const search = page.getByRole('textbox', { name: 'Search skill repository' });
-  await search.fill(operatorSkillFixtures[index].name);
-  await expect(rows(page)).toHaveCount(1);
-  await expect(rows(page).first().locator(':scope > strong')).toHaveText(operatorSkillFixtures[index].name);
-  await repository(page);
-  await expect(rows(page).first()).toHaveAttribute('data-skill-version-id', operatorSkillFixtures[index].versionId);
-  await rows(page).first().click();
-  await expect(page.locator('.pbk-skill-version-id code')).toHaveText(operatorSkillFixtures[index].versionId);
-  // Deliberate selection hands focus to detail on the next animation frame.
-  await expect(page.locator('.pbk-skill-version-head h2')).toBeFocused();
+  const network = [];
+  const record = (kind, request, status) => {
+    const url = new URL(request.url());
+    if (url.origin === new URL(page.url()).origin && url.pathname === '/api/skills/governance/repository') {
+      network.push({ kind, search: url.searchParams.get('search')?.slice(0, 120), status });
+      if (network.length > 24) network.shift();
+    }
+  };
+  const onRequest = request => record('request', request);
+  const onResponse = response => record('response', response.request(), response.status());
+  page.on('request', onRequest);
+  page.on('response', onResponse);
+  await page.evaluate(() => { window.syntheticSearchEvents = []; });
+  try {
+    await search.fill(operatorSkillFixtures[index].name);
+    try {
+      const state = await page.evaluate(() => ({
+        value: document.querySelector('[aria-label="Search skill repository"]')?.value?.slice(0, 120),
+        events: window.syntheticSearchEvents,
+      }));
+      console.log('Skill search input:', JSON.stringify({ expected: operatorSkillFixtures[index].name, ...state }));
+    } catch {
+      console.log('Skill search input diagnostics unavailable.');
+    }
+    await expect(rows(page)).toHaveCount(1);
+    await expect(rows(page).first().locator(':scope > strong')).toHaveText(operatorSkillFixtures[index].name);
+    await repository(page);
+    await expect(rows(page).first()).toHaveAttribute('data-skill-version-id', operatorSkillFixtures[index].versionId);
+    await rows(page).first().click();
+    await expect(page.locator('.pbk-skill-version-id code')).toHaveText(operatorSkillFixtures[index].versionId);
+    // Deliberate selection hands focus to detail on the next animation frame.
+    await expect(page.locator('.pbk-skill-version-head h2')).toBeFocused();
+  } catch (error) {
+    try {
+      const state = await page.evaluate(() => ({
+        value: document.querySelector('[aria-label="Search skill repository"]')?.value?.slice(0, 120),
+        events: window.syntheticSearchEvents,
+        rowIds: [...document.querySelectorAll('[data-pbk-worklist="skills"] button[data-pbk-worklist-row]')]
+          .slice(0, 10).map(row => row.dataset.skillVersionId?.slice(0, 120)),
+        alerts: [...document.querySelectorAll('[role="alert"]')].slice(0, 3).map(el => el.textContent.slice(0, 300)),
+      }));
+      console.error('Skill search failure:', JSON.stringify({ expected: operatorSkillFixtures[index].name, ...state, network }));
+    } catch {
+      console.error('Skill search diagnostics unavailable; preserving original failure.');
+    }
+    throw error;
+  } finally {
+    page.off('request', onRequest);
+    page.off('response', onResponse);
+  }
 }
 async function contained(page, scope = '.pbk-skill-studio') {
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, 'No viewport overflow');
@@ -495,6 +536,17 @@ async function verify(engine, width) {
     });
     page.on('response', response => { if (response.status() >= 400) denied.push([response.status(), new URL(response.url()).pathname]); });
     await page.addInitScript(() => {
+      window.syntheticSearchEvents = [];
+      document.addEventListener('input', event => {
+        if (event.target.getAttribute?.('aria-label') !== 'Search skill repository') return;
+        window.syntheticSearchEvents.push({ type: 'input', time: performance.now(), value: event.target.value.slice(0, 120), trusted: event.isTrusted });
+        window.syntheticSearchEvents = window.syntheticSearchEvents.slice(-12);
+      }, true);
+      document.addEventListener('focusin', event => {
+        window.syntheticSearchEvents.push({ type: 'focus', time: performance.now(), tag: event.target.tagName,
+          label: event.target.getAttribute?.('aria-label')?.slice(0, 120), text: event.target.textContent?.slice(0, 120) });
+        window.syntheticSearchEvents = window.syntheticSearchEvents.slice(-12);
+      }, true);
       window.syntheticClipboard = [];
       window.syntheticClipboardDenied = false;
       Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: async text => {

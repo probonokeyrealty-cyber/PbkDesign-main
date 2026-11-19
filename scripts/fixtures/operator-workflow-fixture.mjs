@@ -32,6 +32,25 @@ export const operatorLeadFixtures = Array.from({ length: 64 }, (_, i) => ({
   updatedAt: '2026-11-15T10:34:00Z',
 }));
 
+export const operatorSkillFixtures = Array.from({ length: 64 }, (_, i) => ({
+  versionId: i === 63 ? `SYN-version /?#%"-[]-${'long-id-'.repeat(24)}` : i === 26 ? '0' : `SYN-SKILL-${String(i).padStart(3, '0')}`,
+  skillKey: i === 20 || i === 21 ? 'synthetic-shared-key' : `synthetic-key-${i}`,
+  name: i >= 60 && i <= 62 ? `Synthetic Trend ${i}` : `Synthetic Skill ${String(i).padStart(2, '0')}`,
+  versionNumber: i === 21 ? 2 : 1,
+  lifecycleState: i < 3 ? 'candidate' : i === 3 ? 'approved_inactive' : i === 4 ? 'failed' : i === 5 ? 'rolled_back' :
+    i === 6 ? 'needs_review' : i === 7 ? 'ready_for_approval' : i === 20 ? 'unrecognized_state' :
+      i === 23 ? 'constructor' : i === 24 ? null : i === 25 ? undefined : i === 26 ? 0 : 'active',
+  agentId: i % 2 ? 'rex' : 'ava', riskClass: i % 3 ? 'medium' : 'high',
+  instructions: `Response: Synthetic response ${i}.\n\nNext question: Synthetic question ${i}?\n\nDo not use when: Synthetic boundary ${i}.`,
+  sourceProvenance: { note: `Synthetic provenance ${i}` },
+  triggerPolicy: { liveCallPattern: `Synthetic scenario ${i}.`, nextQuestion: `Synthetic question ${i}?` },
+  contentHash: `synthetic-hash-${i}`,
+  ...(i === 20 ? {} : i === 21 ? { usageCount: 0, successRate: 0, confidence: 0, confidenceDelta: 0 } :
+    i === 22 ? { usageCount: -4, successRate: -3, confidence: 101, confidenceDelta: 'bad', lastTriggeredAt: 'invalid' } :
+      { usageCount: i + 1, successRate: i >= 60 ? 90 : 60 + i % 30, confidence: 90, confidenceDelta: i >= 60 ? -0.1 : 0.05,
+        lastTriggeredAt: `2026-11-17T12:${String(i % 60).padStart(2, '0')}:00Z` }),
+}));
+
 // Explicit method/path allowlist. No invoke fallback, provider routes or business writes.
 const reads = new Map([
   ['/api/auth/team/status', { ok: true, configured: false, authRequired: false }],
@@ -40,12 +59,20 @@ const reads = new Map([
   ['/api/conversations', { ok: true, items: [] }],
   ['/health', { ok: true, status: 'synthetic' }],
   ['/status', { ok: true, status: 'synthetic' }],
+  ['/api/skills/governance/status', { ok: true }],
 ]);
-export function operatorFixtureResponse(method, path) {
+export function operatorFixtureResponse(method, path, query = new URLSearchParams()) {
   if (method === 'POST' && path === '/api/state/stream/session') return { ok: false };
   if (method !== 'GET') return null;
   if (path === '/state') return { leadImports: operatorLeadFixtures, activity: [], calls: [], messages: [], contracts: [], approvals: [] };
   if (path === '/api/leads') return { ok: true, leads: operatorLeadFixtures };
+  if (path === '/api/skills/governance/repository') {
+    const search = (query.get('search') || '').toLowerCase();
+    const state = query.get('lifecycleState');
+    return { ok: true, items: operatorSkillFixtures.filter(item =>
+      (!state || item.lifecycleState === state) &&
+      (!search || `${item.name} ${item.instructions}`.toLowerCase().includes(search))) };
+  }
   const match = path.match(/^\/api\/leads\/([^/]+)\/(full|last-call)$/);
   if (match) {
     const lead = operatorLeadFixtures.find(l => l.id === decodeURIComponent(match[1]));
@@ -82,7 +109,7 @@ export async function createOperatorWorkflowPreview(port = 0) {
             res.end('{"ok":false,"error":"Synthetic fixtures are loopback-origin only"}');
             return;
           }
-          const response = operatorFixtureResponse(req.method, url.pathname);
+          const response = operatorFixtureResponse(req.method, url.pathname, url.searchParams);
           res.statusCode = response ? 200 : req.method === 'GET' ? 404 : 403;
           res.setHeader('Content-Type', 'application/json');
           res.setHeader('Cache-Control', 'no-store');

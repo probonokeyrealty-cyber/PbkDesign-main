@@ -23,3 +23,43 @@
 .pbk-lead-portal .pbk-portal-sections a[aria-current='location'] { color: var(--sky); border-bottom-color: var(--sky); }
 .pbk-lead-portal .pbk-lead-portal-actions .danger { margin-inline-start: 12px; border-color: var(--crimson); }
 .pbk-lead-portal .pbk-lead-portal-actions > :is(a, button) { min-height: 44px; }
+
+.pbk-skill-studio :is(button, a, input, select, summary, textarea) {
+  min-height: 44px;
+  min-width: 44px;
+}
+.pbk-skill-studio :is(button, a, summary):focus-visible {
+  outline: 2px solid var(--sky);
+  outline-offset: -2px;
+}
+.pbk-skill-studio :is(.pbk-skill-version-head > div, .pbk-skill-dialog header > div) { min-width: 0; }
+.pbk-skill-studio .pbk-skill-canvas { padding: 16px; }
+.pbk-skill-studio :is(.pbk-skill-version-head, .pbk-skill-version-id, .pbk-skill-primary-confirm, .pbk-skill-dialog footer) { flex-wrap: wrap; }
+.pbk-skill-studio .pbk-skill-version-id {
+  display: flex;
+  align-items: center;
+  gap: 8px 12px;
+  margin-top: 12px;
+  font: 11px var(--font-mono);
+  color: var(--text-secondary);
+}
+.pbk-skill-studio .pbk-skill-version-id code { min-width: 0; overflow-wrap: anywhere; color: var(--text-primary); }
+.pbk-skill-studio :is(.pbk-skill-card-metrics, .pbk-skill-performance-dashboard > div) { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.pbk-skill-studio :is(.pbk-skill-card-metrics > span, .pbk-skill-performance-dashboard article, .pbk-skill-dialog footer > *, .pbk-skill-dialog-footer-left) { min-width: 0; }
+.pbk-skill-studio :is(.pbk-skill-status-ribbon, .pbk-skill-card-metrics, .pbk-skill-performance-dashboard, .pbk-skill-training-card, .pbk-skill-dialog, .pbk-skill-version-head) { overflow-wrap: anywhere; }
+.pbk-skill-studio .pbk-skill-card-metrics small { white-space: normal; }
+.pbk-skill-studio .pbk-skill-filter-grid { grid-template-columns: minmax(0, 1fr); }
+.pbk-skill-studio .pbk-skill-filter svg { flex-shrink: 0; }
+.pbk-skill-studio .pbk-skill-filter select { flex: 1; padding-inline-end: 32px; }
+.pbk-skill-studio .pbk-skill-lifecycle { grid-template-columns: repeat(7, minmax(0, 1fr)); overflow: visible; }
+.pbk-skill-studio .pbk-skill-lifecycle li { min-width: 0; }
+.pbk-skill-studio .pbk-skill-lifecycle strong { overflow-wrap: anywhere; letter-spacing: 0; }
+.pbk-skill-studio .pbk-skill-dialog header { align-items: flex-start; }
+.pbk-skill-studio .pbk-skill-dialog header button { flex-shrink: 0; }
+.pbk-skill-studio .pbk-skill-dialog footer .pbk-btn { white-space: normal; }
+.pbk-skill-studio .pbk-skill-dialog-footer-left { flex-wrap: wrap; }
+.pbk-skill-studio .pbk-skill-wizard-steps button { overflow-wrap: anywhere; }
+.pbk-skill-studio .pbk-skill-wizard-preview pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+@media (max-width: 760px) {
+  .pbk-skill-studio .pbk-skill-lifecycle { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+}

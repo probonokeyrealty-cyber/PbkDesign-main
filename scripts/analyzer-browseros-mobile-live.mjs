@@ -12,7 +12,7 @@ export function parseOptions(argv) {
   for (let index = 0; index < argv.length; index++) {
     const flag = argv[index];
     if (flags.has(flag)) throw new Error('duplicate option: ' + flag);
-    if (flag === '--run-live') flags.set(flag, true);
+    if (flag === '--run-live' || flag === '--desktop') flags.set(flag, true);
     else if (valued.has(flag)) {
       const value = argv[++index];
       if (!value || value.startsWith('--')) throw new Error('Missing value for ' + flag);
@@ -34,7 +34,7 @@ export function parseOptions(argv) {
     throw new Error('Only the private PBK Netlify site or its deploy URLs may be tested.');
   }
   const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-  return { base: site.origin, cdpUrl: cdp.origin, revision: revision.toLowerCase(),
+  return { base: site.origin, cdpUrl: cdp.origin, revision: revision.toLowerCase(), desktop: flags.has('--desktop'),
     dist: resolve(flags.get('--asset-dir') || resolve(root, 'dist')),
     output: resolve(flags.get('--output-dir') || resolve(root, '.pbk-local', 'browseros-mobile-' + Date.now())) };
 }
@@ -96,13 +96,71 @@ export function observeAnalyzerBuild(page, expectedAssets, base) {
   };
 }
 
-async function fingerprintDrafts(page, key) {
-  return page.evaluate(async key => {
-    const hash = async value => value === null ? null : Array.from(new Uint8Array(
-      await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value))
-    )).map(byte => byte.toString(16).padStart(2, '0')).join('');
-    return { shared: await hash(localStorage.getItem(key)), private: await hash(sessionStorage.getItem(key + ':session')) };
-  }, key);
+export async function fingerprintDrafts(page, base) {
+  return page.evaluate(async base => {
+    if (location.origin !== base) throw Error('Source tab moved; preservation cannot be verified');
+    // Snapshot synchronously so a peer update during hashing cannot change the captured values.
+    const entries = [];
+    for (const [scope, storage] of [['local', localStorage], ['session', sessionStorage]]) {
+      for (const name of Object.keys(storage).filter(name => name === 'pbk-deal-data' || /draft|analyzer|compose/i.test(name)).sort()) {
+        entries.push([scope + ':' + name, storage.getItem(name) || '']);
+      }
+    }
+    const result = {};
+    for (const [name, value] of entries) {
+      const hash = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value));
+      result[name] = Array.from(new Uint8Array(hash), byte => byte.toString(16).padStart(2, '0')).join('');
+    }
+    return result;
+  }, base);
+}
+
+export async function verifyContextIsolation(source, page) {
+  assert.notEqual(source.context(), page.context(), 'QA context must be isolated from the source');
+  const contextId = async target => {
+    const session = await target.context().newCDPSession(target);
+    try { return (await session.send('Target.getTargetInfo')).targetInfo.browserContextId || 'default'; }
+    finally { await session.detach(); }
+  };
+  assert.notEqual(await contextId(source), await contextId(page), 'Native QA storage must be isolated from the source');
+}
+
+export async function openIsolatedQaContext(browser, source, options) {
+  const context = await browser.newContext(options);
+  let page;
+  try {
+    page = await context.newPage();
+    await verifyContextIsolation(source, page);
+    return { context, page };
+  } catch (error) {
+    // Only our blank tab is safe to close when native context ownership is unverified.
+    if (page) await page.close().catch(() => {});
+    throw error;
+  }
+}
+
+export async function readSourceCookies(browser, source, base) {
+  assert.equal(new URL(source.url()).origin, base, 'Source origin must match the approved PBK site');
+  const pageSession = await source.context().newCDPSession(source);
+  let contextId;
+  try { contextId = (await pageSession.send('Target.getTargetInfo')).targetInfo.browserContextId; }
+  finally { await pageSession.detach(); }
+  const session = await browser.newBrowserCDPSession();
+  try {
+    // CDP attachment can wrap an existing incognito page in Playwright's default context.
+    const { cookies } = await session.send('Storage.getCookies', contextId ? { browserContextId: contextId } : {});
+    const hostname = new URL(base).hostname;
+    return cookies.filter(cookie => hostname === cookie.domain.replace(/^\./, '')
+      || (cookie.domain.startsWith('.') && hostname.endsWith(cookie.domain))).map(cookie => {
+      const { name, value, domain, path, expires, httpOnly, secure, sameSite } = cookie;
+      const result = { name, value, domain, path, expires, httpOnly, secure, sameSite: sameSite ?? 'Lax' };
+      if (cookie.partitionKey) {
+        result.partitionKey = cookie.partitionKey.topLevelSite;
+        result._crHasCrossSiteAncestor = cookie.partitionKey.hasCrossSiteAncestor;
+      }
+      return result;
+    });
+  } finally { await session.detach(); }
 }
 
 async function run(options) {
@@ -315,10 +373,10 @@ async function prove(context, state, name) {
       assert.equal([...pinnedAssets.keys()].filter(path => analyzerAsset.exec(path)?.[1] === family).length,
         1, 'Require exactly one local pinned Analyzer bundle for ' + family);
     }
-    const browser = await chromium.connectOverCDP(cdpUrl);
+    const browser = await chromium.connectOverCDP(cdpUrl, { noDefaults: true });
     source = browser.contexts().flatMap(context => context.pages()).find(page => new URL(page.url()).origin === base);
     assert.ok(source, 'Open an authenticated PBK tab in BrowserOS before this manual test.');
-    sourceBefore = await fingerprintDrafts(source, key);
+    sourceBefore = await fingerprintDrafts(source, base);
     const liveManifest = await source.evaluate(async () => {
       const response = await fetch('/pbk-build-manifest.json', { cache: 'no-store' });
       if (!response.ok) throw new Error('Private-site access must already be unlocked in BrowserOS.');
@@ -328,24 +386,24 @@ async function prove(context, state, name) {
     // Transfer only this site's auth into ephemeral contexts; never serialize credentials or storageState.
     const session = await source.evaluate(key => localStorage.getItem(key), authKey);
     assert.ok(session, 'Unlock the existing PBK team session before testing.');
-    const cookies = await source.context().cookies(base);
+    const cookies = await readSourceCookies(browser, source, base);
     assert.ok(cookies.length, 'Private-site access cookie missing.');
-    for (const width of [390, 320]) {
-      const context = await browser.newContext({ viewport: { width, height: 844 }, isMobile: true,
-        hasTouch: true, deviceScaleFactor: 3, serviceWorkers: 'block' });
+    for (const width of options.desktop ? [1440] : [390, 320]) {
+      const mobile = width < 720;
+      const { context, page } = await openIsolatedQaContext(browser, source, { viewport: { width, height: 844 }, isMobile: mobile,
+        hasTouch: mobile, deviceScaleFactor: mobile ? 3 : 1, serviceWorkers: 'block' });
       try {
         await context.addCookies(cookies);
         await context.addInitScript(({ key, value, base }) => {
           if (location.origin === base) localStorage.setItem(key, value);
         }, { key: authKey, value: session, base });
         const state = await protect(context);
-        const page = await context.newPage();
         await loadAnalyzer(page);
         const viewport = await page.evaluate(() => ({ width: innerWidth, height: innerHeight, touch: navigator.maxTouchPoints }));
         assert.equal(viewport.width, width);
-        assert.ok(viewport.touch > 0);
-        console.log('BrowserOS actual mobile viewport: ' + JSON.stringify(viewport));
-        await prove(context, state, 'browseros-mobile-chromium-' + width);
+        assert.equal(viewport.touch > 0, mobile);
+        console.log('Chromium actual ' + (mobile ? 'mobile' : 'desktop') + ' viewport: ' + JSON.stringify(viewport));
+        await prove(context, state, (mobile ? 'mobile' : 'desktop') + '-chromium-' + width);
       } finally { await context.close(); }
     }
     report.ok = true;
@@ -356,8 +414,9 @@ async function prove(context, state, name) {
   } finally {
     if (source && sourceBefore) {
       try {
-        const after = await fingerprintDrafts(source, key);
-        report.originalDraftsUnchanged = after.shared === sourceBefore.shared && after.private === sourceBefore.private;
+        const after = await fingerprintDrafts(source, base);
+        report.originalDraftsUnchanged = JSON.stringify(after) === JSON.stringify(sourceBefore);
+        report.sourceDraftEntriesChecked = Object.keys(sourceBefore).length;
         if (!report.originalDraftsUnchanged) { report.ok = false; report.error = 'Original draft fingerprints changed during the run.'; }
       } catch { report.ok = false; report.error = 'Could not verify original draft preservation.'; }
     }
@@ -373,7 +432,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     if (options.help) {
       console.log('Manual BrowserOS mobile proof (no deployments or business writes).\n' +
         'node scripts/analyzer-browseros-mobile-live.mjs --run-live --cdp-url http://LOOPBACK:PORT --expected-build FULL_SHA\n' +
-        'Optional: --base-url PBK_HTTPS_ORIGIN --asset-dir MATCHING_DIST --output-dir IGNORED_ARTIFACT_DIR');
+        'Optional: --desktop (1440px instead of mobile widths), --base-url PBK_HTTPS_ORIGIN --asset-dir MATCHING_DIST --output-dir IGNORED_ARTIFACT_DIR');
       process.exit(0);
     }
     // Disconnect only this client on exit. Never close the attached user BrowserOS instance.

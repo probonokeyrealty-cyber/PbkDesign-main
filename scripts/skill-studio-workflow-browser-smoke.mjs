@@ -34,6 +34,7 @@ async function selectVersion(page, index) {
   await page.evaluate(() => { window.syntheticSearchEvents = []; });
   try {
     await search.fill(operatorSkillFixtures[index].name);
+    await expect(search).toHaveValue(operatorSkillFixtures[index].name);
     try {
       const state = await page.evaluate(() => ({
         value: document.querySelector('[aria-label="Search skill repository"]')?.value?.slice(0, 120),
@@ -628,7 +629,7 @@ async function verify(engine, width) {
     for (const label of ['Recorded uses', 'Success rate', 'Confidence', 'Change', 'Last triggered']) await expect(metric(page, label)).toHaveText('Not recorded');
     await repository(page);
     await expect(rows(page).first().locator('.pbk-skill-card-metrics > span strong')).toHaveText(['Not recorded','Not recorded','Not recorded']);
-    await rows(page).first().click();
+    // Already selected by selectVersion; another click queues focus during the next search.
     for (const index of [23,24,25,26]) {
       await selectVersion(page, index);
       await expect(lifecycle.locator('[aria-current]')).toHaveCount(0);

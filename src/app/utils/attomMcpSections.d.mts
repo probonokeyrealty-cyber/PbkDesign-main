@@ -1,0 +1,11 @@
+export type AttomMcpScalar = string | number | boolean;
+export type AttomMcpSectionStatus = 'ok' | 'partial' | 'not_entitled' | 'not_available' | 'unavailable' | 'timed_out' | 'unsupported' | 'authorization_failed' | 'rate_limited' | 'not_found';
+export type AttomMcpField = Readonly<{ key: string; label: string; kind: 'string' | 'number' | 'date' | 'boolean' | 'names' | 'latitude' | 'longitude'; unit?: string }>;
+export type AttomMcpDatasetDefinition = Readonly<{ id: string; title: string; group: string; note: string; fields: readonly AttomMcpField[]; columns: readonly AttomMcpField[]; rowsPath: string }>;
+export type AttomMcpSection = { id: string; status: AttomMcpSectionStatus; checkedAt: string; retrievedAt?: string; sourceGeneratedAt?: string; facts: Record<string, AttomMcpScalar>; rows: Record<string, AttomMcpScalar>[]; caveats: string[]; sourceRowCount?: number; truncated?: boolean; refreshStatus?: { status: AttomMcpSectionStatus; checkedAt: string } };
+export const attomMcpDatasetDefinitions: readonly AttomMcpDatasetDefinition[];
+export const attomMcpSectionStatuses: readonly AttomMcpSectionStatus[];
+export function strictAttomMcpDate(value: unknown): string | undefined;
+export function projectAttomMcpSection(id: string, data: unknown, status: string, checkedAt: string): AttomMcpSection;
+export function hydrateAttomMcpSections(input: unknown): AttomMcpSection[];
+export function mergeAttomMcpSections(previous: unknown, incoming: unknown): AttomMcpSection[];

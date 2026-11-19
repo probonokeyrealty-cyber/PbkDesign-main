@@ -64,7 +64,7 @@ export function LeadComps({ address, leadId = '', savedSales, onRefresh, refresh
   }
   return <section className="pbk-lead-comps" aria-label="Recent comparable sales" aria-busy={loading}>
     <header>
-      <div><h3>Recorded sales</h3><p>ATTOM public records · Last 30 days · Not MLS listings</p></div>
+      <div><h3>Recorded sales</h3><p>ATTOM public records · Saved search window · Not MLS listings</p></div>
       <div className="pbk-comps-controls">
         <label>Radius <select value={radius} onChange={e => setRadius(Number(e.target.value))}>
           {[0.5, 1, 2, 5].map(r => <option key={r} value={r}>{r} {r === 1 ? 'mile' : 'miles'}</option>)}

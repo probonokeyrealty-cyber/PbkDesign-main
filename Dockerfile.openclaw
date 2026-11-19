@@ -207,6 +207,10 @@ COPY scripts/attom-property-preview.mjs ./scripts/attom-property-preview.mjs
 COPY src/app/utils/attomRecordFields.mjs ./src/app/utils/attomRecordFields.mjs
 COPY scripts/analyzer-property-preview.mjs ./scripts/analyzer-property-preview.mjs
 COPY scripts/property-intelligence.mjs ./scripts/property-intelligence.mjs
+COPY scripts/attom-mcp-client.mjs ./scripts/attom-mcp-client.mjs
+COPY scripts/attom-mcp-source.mjs ./scripts/attom-mcp-source.mjs
+COPY scripts/attom-mcp-property-records.mjs ./scripts/attom-mcp-property-records.mjs
+COPY src/app/utils/attomMcpSections.mjs ./src/app/utils/attomMcpSections.mjs
 COPY scripts/batch-review-roster.mjs ./scripts/batch-review-roster.mjs
 COPY scripts/batch-phone-dispatch.mjs ./scripts/batch-phone-dispatch.mjs
 COPY scripts/batch-apply.mjs ./scripts/batch-apply.mjs

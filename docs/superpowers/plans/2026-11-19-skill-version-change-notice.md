@@ -12,7 +12,7 @@
 
 ## Global Constraints
 
-- Current authorization: the founder approved the browser-free local phase using PBK's subagent workflow. Task 1 and Task 2 Steps 1-4 may proceed, including local candidate commits and Node-only tests. Task 2 browser-proof authorship, route/CSS wiring, browser execution, push, merge and deployment remain outside this phase.
+- Current authorization: after completion of the browser-free phase, the founder approved local integration and synthetic Chromium/WebKit tests, including mobile checks and independent review. Remaining Task 2 steps may proceed locally. No production access, push, PR changes, merge, deployment, seller contact or delivery retries.
 - Base future isolated execution on `8bb21d63ba758cd4f688d8f161c35a674a57a31c`, or an explicitly verified successor containing PR #41. Main does not yet contain PR #41; do not silently substitute it. Keep PR #41 draft and unmerged.
 - Before authorized execution, use the git-worktree skill and a separate `codex/skill-version-change-notice` task branch. Carry only these approved documents; do not copy or modify user-owned `output/`.
 - Preserve automatic selection, repository limit `150`, debounce `180ms`, request ownership, last-good reads and existing focus behavior.
@@ -22,7 +22,7 @@
 - Use polite, atomic live-region semantics; do not announce the same transition repeatedly, move focus, scroll, open a dialog or add an action.
 - Render exact IDs as text with wrapping at `320px`, `390px` and desktop widths. Preserve PBK tokens and typography; add no panel, new palette or replacement layout.
 - Pending, stale, failed or invalid reads do not create, overwrite or clear the notice. A successful unchanged-selection read clears obsolete notice copy; explicit selection and mobile Repository return clear it too.
-- Browser automation remains on hold, including headless synthetic local runs. A `.node-test.mjs` suffix is not proof of browser-free execution. Do not run broad suites without checking their transitive commands and output paths.
+- Only isolated synthetic loopback Chromium/WebKit automation is authorized. Authenticated profiles, production tabs and runtime/provider traffic remain off. A `.node-test.mjs` suffix is not proof of isolation. Audit transitive commands and output paths before execution.
 
 ## Review Focus
 
@@ -143,7 +143,7 @@ Required new browser assertions (synthetic only, zero real provider writes):
 
 ## Completion And Release Boundary
 
-The founder approved only the browser-free phase: Task 1 and Task 2 Steps 1-4. Execution progress and review evidence live in this plan's SDD ledger. Task 2 Step 5 and all route integration remain unstarted until the appropriate scope is approved; browser regression verification still needs explicit authorization. Keep that distinction in every task report.
+The browser-free phase (Task 1 and Task 2 Steps 1-4) is accepted. The founder subsequently approved remaining local integration and synthetic browser tests. Historical hold steps above are satisfied by that later approval, not bypassed. Execution progress and review evidence live in this plan's SDD ledger. Publication remains unauthorized.
 
 No remote CI runs, disposable database branches or live checks are needed for planning. Later publication requires a separate user decision, then the existing Founder Verify, Tooling Verify, Release Qualification, Neon Auth Mail Verify and PBK Agent Evals gates on the exact published head, with disposable Neon evaluation state only. Do not replace required checks with old-head results or relax them to fit this feature.
 
@@ -158,4 +158,4 @@ PR #41's release remains a separate decision. This plan neither merges that depe
 
 ## Execution Handoff
 
-PBK requires subagent-driven development with a fresh task reviewer and an independent review of the completed browser-free phase. This phase's approval leaves browser automation, browser-proof authorship, route integration, push, merge, deployment and seller-contact holds intact. The remaining whole-plan review follows only after the later integration/verification phase is authorized and completed.
+PBK requires subagent-driven development with a fresh task reviewer and independent whole-plan review after the now-authorized local integration/verification phase. Production access, push, PR changes, merge, deployment, seller contact and retry holds stay intact.

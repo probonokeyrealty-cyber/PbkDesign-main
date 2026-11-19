@@ -1,9 +1,9 @@
 # Skill Studio Version-Change Notice Design
 
-Status: design and local plan approved; the founder subsequently approved only
-the browser-free reducer/unmounted-component phase with Node-only tests. Route
-integration, browser testing, push, merge, deployment and production actions
-remain unauthorized.
+Status: browser-free reducer/unmounted-component phase accepted. The founder
+subsequently approved local integration and isolated synthetic Chromium/WebKit
+tests, mobile checks and independent review. Production access, push, PR changes,
+merge, deployment, seller contact and delivery retries remain unauthorized.
 Source baseline: `8bb21d63ba758cd4f688d8f161c35a674a57a31c` (draft PR #41).
 
 ## Intent
@@ -90,11 +90,10 @@ no new backend, endpoint, storage, dependency or telemetry is needed.
 
 Verification in a later authorized build should extend the existing isolated
 operator unit/browser proofs, including delayed reads and mobile/desktop cases.
-No PBK browser automation is authorized now. Unknown dispatches remain locked;
+Only isolated synthetic loopback browser automation is authorized. Unknown dispatches remain locked;
 auth/approval rules, seller-contact and delivery-retry holds remain unchanged.
 
 ## Next Gate
 
-Review the local implementation plan before authorizing execution. Local
-build/testing and any publication require their own subsequent scope decisions;
-this document does not authorize them.
+Complete the approved local integration and synthetic regression checks, then
+independent review. Any publication still requires a separate scope decision.

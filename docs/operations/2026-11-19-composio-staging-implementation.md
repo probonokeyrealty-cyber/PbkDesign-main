@@ -63,6 +63,8 @@ The local end-to-end fixture proves both Ava and Rex receive selected QA/DND evi
 
 Credential correction: a key with the prepared staging name was observed created with Full access. Read-only permission probes confirmed access beyond the four approved areas. It was never installed on Render. With explicit founder approval it was revoked through the official revocation endpoint (HTTP 200), and its previously successful tool-definition read then returned HTTP 401. No credential values are retained in this document. A correctly scoped replacement remains required.
 
+Project-key compatibility correction is deployed only on isolated staging: commit `7f38a14599e2b34598f9131f7cca1b1a6bdbdb68`, deployment `dep-dbvmjp3l550s738apd60` live at 21:30 UTC. All 31 focused tests and the existing bridge isolation/offline smoke passed; provider delivery remains unverified. Fresh authenticated hosted checks at 21:30 UTC returned healthy HTTP 200, file-backed state, 11 registered agents, configured team auth and both integration directions disabled. The limited endpoint remains 404 while disabled. No production deployment or CRM/business write occurred.
+
 ## Activation acceptance still required
 
 The isolated staging deployment `dep-dbvke5cipgvc73dg0lr0` is live on commit `599e740ef828eba5dcb962545198e48bcb7adba4`. Authenticated checks at 19:03 UTC verified health, file state, 11 agents, configured team auth and both integration directions disabled. The limited endpoint returns 404 while disabled. Runtime service plan is free and auto-deploy remains off.

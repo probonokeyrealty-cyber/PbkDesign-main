@@ -1,7 +1,7 @@
 # Leads And Skill Studio Workflow-First Design
 
-Status: direction selected; independent builder check complete; detailed design
-approval pending. Documentation only.
+Status: detailed design approved for local implementation planning after the
+independent builder check. Implementation plan review is still required.
 Base: main `5cb15fb69851406126a6faff2d5e0c13f47f8920` (includes PR #38).
 Local branch: `codex/leads-skills-workflow-design`.
 
@@ -15,6 +15,8 @@ new CRM, learning backend, approval policy, or desktop/browser experience.
 The founder selected **workflow-first in-place design** rather than visual-only
 polish. Selection of this direction is not approval of this document or of code,
 publication, merging, migration, deployment, or live business actions.
+The founder subsequently approved this detailed document and requested a local
+implementation plan. That approval does not authorize executing the plan yet.
 
 Claude's original design conversation supplied the advisory scan-and-act proposal:
 [original conversation](https://claude.ai/chat/1f94828f-e766-4a2c-82c7-82463c84b05e).
@@ -295,8 +297,7 @@ source and reported no material unanswered planning questions. Document structur
 ASCII encoding and named source/test references were checked locally. Product
 code and UI were not changed; build/browser tests have not been run for a new UI.
 
-This document needs founder approval before implementation planning. Approval of
-this design would authorize writing a plan,
-not live operations. The next artifact is a separately reviewed implementation
-plan; no product code, dependency installation or prototype scaffold is part of
-the current design-writing step.
+The founder approved the design for implementation planning, not live operations.
+The next artifact is an implementation plan for the founder to review before
+execution; no product code, dependency installation or prototype scaffold is part
+of the design/planning steps.

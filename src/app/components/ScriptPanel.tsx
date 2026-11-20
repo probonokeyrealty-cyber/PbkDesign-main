@@ -4,12 +4,9 @@ import { DealData, PBKPath } from '../types';
 import { buildPbkPathScripts, PbkLegacyScriptPath } from '../templates/pbkPathScripts';
 import { sanitizeLegacyCopy } from '../utils/formatting';
 import { downloadTextFile } from '../utils/fileExport';
-import {
-  buildAgentDealContext,
-  type AgentDealContext,
-  type AgentScriptTab,
-} from '../utils/agentDealContext';
+import { buildAgentDealContext, type AgentDealContext } from '../utils/agentDealContext';
 import { fetchCurrentScriptRequest, type RuntimeScriptCandidate } from '../utils/runtimeBridge';
+import { showUiToast } from '../utils/uiFeedback';
 
 type ScriptVariant = 'owner' | 'agent';
 type ScriptTab = 'opening' | 'acquisition' | 'objections';
@@ -110,41 +107,20 @@ export function ScriptPanel({
 }: ScriptPanelProps) {
   const [activeTab, setActiveTab] = useState<ScriptTab>('opening');
   const [openObjectionIndex, setOpenObjectionIndex] = useState(0);
-  const [copied, setCopied] = useState(false);
-  const [bridgeScript, setBridgeScript] = useState<RuntimeScriptCandidate | null>(null);
-  const [bridgeReasonCodes, setBridgeReasonCodes] = useState<string[]>([]);
+  const [copiedBody, setCopiedBody] = useState('');
   const pathScripts = useMemo(() => buildPbkPathScripts(deal), [deal]);
   const scriptPath = getScriptPath(activePath);
   const currentPath = pathScripts[scriptPath];
   const currentScripts = currentPath[scriptVariant];
   const activeBody = buildActiveScriptBody(currentScripts, activeTab);
-  const displayBody = bridgeScript?.content || activeBody;
-  const safeBody = sanitizeLegacyCopy(displayBody);
   const accentClasses = getAccentClasses(currentPath.color);
   const objections = useMemo(
     () => parseObjections(currentScripts.objections),
     [currentScripts.objections]
   );
 
-  useEffect(() => {
-    setActiveTab('opening');
-    setOpenObjectionIndex(0);
-    setBridgeScript(null);
-    setBridgeReasonCodes([]);
-  }, [activePath, scriptVariant]);
-
-  useEffect(() => {
-    let cancelled = false;
-    const localCandidate = buildScriptCandidate({
-      content: activeBody,
-      scriptPath,
-      scriptVariant,
-      activeTab,
-      title: `${currentPath.name} ${TAB_LABELS[activeTab]}`,
-    });
-    setBridgeScript(null);
-    setBridgeReasonCodes([]);
-    fetchCurrentScriptRequest({
+  const request = useMemo(
+    () => ({
       pathKey: scriptPath,
       selectedPath: activePath,
       callerRole: scriptVariant,
@@ -153,50 +129,77 @@ export function ScriptPanel({
       address: deal.address || '',
       leadName: deal.sellerName || '',
       persistExposure: false,
-      scripts: [localCandidate],
-    })
+      scripts: [
+        buildScriptCandidate({
+          content: activeBody,
+          scriptPath,
+          scriptVariant,
+          activeTab,
+          title: `${currentPath.name} ${TAB_LABELS[activeTab]}`,
+        }),
+      ],
+    }),
+    [
+      activeBody,
+      activePath,
+      activeTab,
+      currentPath.name,
+      deal.address,
+      deal.leadId,
+      deal.sellerName,
+      deal.sellerPhone,
+      scriptPath,
+      scriptVariant,
+    ]
+  );
+  const [selection, setSelection] = useState<{
+    request: typeof request;
+    script: RuntimeScriptCandidate | null;
+    reasonCodes: string[];
+  } | null>(null);
+  const currentSelection = selection?.request === request ? selection : null;
+  const bridgeScript = currentSelection?.script;
+  const safeBody = sanitizeLegacyCopy(bridgeScript?.content || activeBody);
+  const showObjectionCards =
+    activeTab === 'objections' && safeBody === sanitizeLegacyCopy(activeBody);
+  const copied = Boolean(safeBody && copiedBody === safeBody);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchCurrentScriptRequest(request)
       .then((response) => {
-        if (cancelled || response.ok === false) return;
-        const selected = response.selectedScript || response.selected || null;
-        if (selected?.content) setBridgeScript(selected);
-        setBridgeReasonCodes(Array.isArray(response.reasonCodes) ? response.reasonCodes : []);
+        if (cancelled) return;
+        const script = response.ok ? response.selectedScript || response.selected : null;
+        setSelection({
+          request,
+          script: script?.content?.trim() ? script : null,
+          reasonCodes: Array.isArray(response.reasonCodes) ? response.reasonCodes : [],
+        });
       })
       .catch(() => {
-        if (!cancelled) {
-          setBridgeScript(null);
-          setBridgeReasonCodes([]);
-        }
+        if (!cancelled) setSelection({ request, script: null, reasonCodes: [] });
       });
     return () => {
       cancelled = true;
     };
-  }, [
-    activeBody,
-    activePath,
-    activeTab,
-    currentPath.name,
-    deal.address,
-    deal.leadId,
-    deal.sellerName,
-    deal.sellerPhone,
-    scriptPath,
-    scriptVariant,
-  ]);
+  }, [request]);
 
   useEffect(() => {
-    if (!copied) return;
-    const timeout = window.setTimeout(() => setCopied(false), 1500);
+    if (!copiedBody) return;
+    const timeout = window.setTimeout(() => setCopiedBody(''), 1500);
     return () => window.clearTimeout(timeout);
-  }, [copied]);
+  }, [copiedBody]);
 
   const copyScript = async () => {
     try {
-      if (navigator.clipboard?.writeText) {
-        await navigator.clipboard.writeText(safeBody);
-      }
-      setCopied(true);
-    } catch (error) {
-      console.error('Copy failed', error);
+      await navigator.clipboard.writeText(safeBody);
+      setCopiedBody(safeBody);
+    } catch {
+      showUiToast({
+        tone: 'error',
+        title: 'Script could not be copied',
+        desc: 'Use Download to save the script.',
+      });
     }
   };
 
@@ -205,22 +208,21 @@ export function ScriptPanel({
   };
 
   const pushScriptToAgent = async () => {
-    await onPushScriptToAgent?.(
-      buildAgentDealContext(deal, {
-        activePath,
-        scriptVariant,
-        activeScriptTab: activeTab as AgentScriptTab,
-        requestedBy: 'Call Mode Script Panel',
-        runtimeSelectedScript: bridgeScript
-          ? {
-              id: bridgeScript.id,
-              title: bridgeScript.title,
-              content: bridgeScript.content,
-              reasonCodes: bridgeReasonCodes,
-            }
-          : undefined,
-      })
-    );
+    const context = buildAgentDealContext(deal, {
+      activePath,
+      scriptVariant,
+      activeScriptTab: activeTab,
+      requestedBy: 'Call Mode Script Panel',
+      runtimeSelectedScript: bridgeScript
+        ? {
+            id: bridgeScript.id,
+            title: bridgeScript.title,
+            content: safeBody,
+            reasonCodes: currentSelection?.reasonCodes,
+          }
+        : undefined,
+    });
+    await onPushScriptToAgent?.({ ...context, activeScript: safeBody });
   };
 
   return (
@@ -295,7 +297,19 @@ export function ScriptPanel({
 
       <div className="pt-3">
         <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-          <div className="pbk-call-active-path">{TAB_LABELS[activeTab]} Script</div>
+          <div>
+            <div className="pbk-call-active-path">{TAB_LABELS[activeTab]} Script</div>
+            <div
+              role="status"
+              className="mt-1 break-words text-xs text-gray-600 dark:text-gray-300"
+            >
+              {bridgeScript
+                ? `Runtime script · ${sanitizeLegacyCopy(bridgeScript.title || TAB_LABELS[activeTab])}`
+                : currentSelection
+                  ? 'Script library'
+                  : 'Script library · checking for an Ava recommendation'}
+            </div>
+          </div>
           <div className="flex w-full flex-wrap gap-2 sm:w-auto">
             <button
               type="button"
@@ -326,7 +340,7 @@ export function ScriptPanel({
           </div>
         </div>
 
-        {activeTab === 'objections' ? (
+        {showObjectionCards ? (
           <div className="space-y-2">
             {objections.map((objection, index) => {
               const isOpen = openObjectionIndex === index;
@@ -337,6 +351,7 @@ export function ScriptPanel({
                 >
                   <button
                     type="button"
+                    aria-expanded={isOpen}
                     onClick={() => setOpenObjectionIndex(isOpen ? -1 : index)}
                     className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left transition hover:bg-white dark:hover:bg-slate-900"
                   >
@@ -361,20 +376,9 @@ export function ScriptPanel({
           </div>
         ) : (
           <div className="max-h-[58dvh] overflow-auto rounded-[20px] border border-gray-200 bg-gray-50 px-4 py-4 text-sm leading-7 text-gray-800 dark:border-slate-700 dark:bg-slate-950/70 dark:text-gray-100">
-            <div className="whitespace-pre-wrap">{safeBody}</div>
+            <div className="whitespace-pre-wrap break-words">{safeBody}</div>
           </div>
         )}
-
-        <div className="mt-3 rounded-2xl border border-sky-200 bg-sky-50 px-3 py-2 text-[11px] leading-5 text-sky-800 dark:border-sky-800/60 dark:bg-sky-900/10 dark:text-sky-200">
-          Ava doctrine: these five paths are the PBK sales engine. Do not blend scripts; qualify the
-          lead, choose the path, handle the objection, and secure the contract.
-          {bridgeScript ? (
-            <span className="ml-1 font-semibold">
-              Rotator selected {sanitizeLegacyCopy(bridgeScript.title || bridgeScript.id)}
-              {bridgeReasonCodes.length ? ` (${bridgeReasonCodes.slice(0, 3).join(', ')})` : ''}.
-            </span>
-          ) : null}
-        </div>
       </div>
     </section>
   );

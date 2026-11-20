@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { isAbsolute, join, relative } from 'node:path';
 import { buildAgentRuntimeSmokeEnv } from './agent-runtime-smoke-isolation.mjs';
@@ -124,6 +124,21 @@ function assertWorkOrderProof(label, payload, { agentId, providerWriteIntent }) 
 
 async function main() {
   const stateDir = await mkdtemp(join(tmpdir(), 'pbk-ava-agent-delegation-'));
+  await writeFile(join(stateDir, 'openclaw-state.json'), JSON.stringify({
+    approvals: [],
+    appointments: [],
+    leadImports: [{ id: 'lead-morgan', leadName: 'Morgan Test', address: '12 Test Street' }],
+    calls: [
+      { id: 'call-other', leadId: 'lead-other', leadName: 'Other Seller', status: 'ended',
+        createdAt: '2026-11-20T10:01:00Z', transcript: [{ text: 'Other seller private note' }] },
+      { id: 'call-morgan', leadId: 'lead-morgan', leadName: 'Morgan Test', status: 'ended',
+        createdAt: '2026-11-20T10:00:00Z', transcript: [{ text: 'Needs repairs before deciding.' }] },
+    ],
+    callQaScores: [
+      { id: 'qa-other', callId: 'call-other', leadId: 'lead-other', score: 92 },
+      { id: 'qa-morgan', callId: 'call-morgan', leadId: 'lead-morgan', score: 76 },
+    ],
+  }));
   const baseUrl = `http://127.0.0.1:${port}`;
   const child = spawn(process.execPath, [
     '--import',
@@ -191,6 +206,41 @@ async function main() {
       providerWriteIntent: true,
     });
 
+    const chat = async (sessionId, message, leadId) => {
+      const response = await requestJson(baseUrl, '/api/assistant/chat', {
+        method: 'POST', body: { sessionId, message, ...(leadId ? { leadId } : {}) },
+      });
+      assert.equal(response.status, 200, message);
+      return response.json;
+    };
+    const review = await chat('ava-runtime-review', 'Review the latest call.', 'lead-morgan');
+    assert.equal(review.toolResult?.call?.id, 'call-morgan');
+    assert.equal(review.toolResult?.qaScore, 76);
+    assert.match(review.answer, /Needs repairs before deciding/);
+    assert.doesNotMatch(review.answer, /Other seller private note|\[object Object\]/);
+    const noCall = await chat('ava-runtime-no-call', 'Review the latest call.', 'lead-unrecorded');
+    assert.equal(noCall.toolResult?.result, 'no_call_available');
+    assert.doesNotMatch(noCall.answer, /Morgan|Other Seller/);
+
+    const nurtureUnavailable = await chat(
+      'ava-runtime-nurture', 'Send an email to this lead saying we can talk tomorrow.', 'lead-morgan'
+    );
+    assert.equal(nurtureUnavailable.toolPlan?.toolName, 'consultNurtureAgent');
+    assert.match(nurtureUnavailable.answer, /could not recommend a channel or time/);
+
+    const scheduleSession = 'ava-runtime-follow-up';
+    const followUp = await chat(scheduleSession, 'Schedule a follow-up for Morgan Test on 2099-04-03T14:00:00-07:00.');
+    assert.equal(followUp.toolPlan?.toolName, 'confirmLeadMatch');
+    assert.equal(followUp.toolPlan?.params?.leadId, 'lead-morgan');
+    const confirmed = await chat(scheduleSession, 'Yes.');
+    assert.equal(confirmed.toolPlan?.toolName, 'scheduleAppointment');
+    assert.equal(confirmed.toolPlan?.params?.leadId, 'lead-morgan');
+    assert.equal(confirmed.toolPlan?.params?.startTime, '2099-04-03T21:00:00.000Z');
+    const followUpApprovalId = confirmed.toolResult?.approval?.id || confirmed.toolResult?.approvalId;
+    assert.ok(followUpApprovalId, JSON.stringify(confirmed.toolResult));
+    const repeated = await chat(scheduleSession, 'Yes.');
+    assert.equal(repeated.toolPlan, null, 'A confirmed request should not be queued again on another yes.');
+
     const state = await requestJson(baseUrl, '/state');
     assert.equal(state.status, 200, `state returned HTTP ${state.status}`);
     const stateText = JSON.stringify(state.json || {});
@@ -198,6 +248,34 @@ async function main() {
       stateText.includes(readOnlyWorkOrderId) && stateText.includes(providerWriteWorkOrderId),
       'Bridge state should include both Ava-fired work-order ids in the agent task ledger.'
     );
+    const followUpApprovals = state.json.approvals.filter((item) =>
+      item.metadata?.requestedTool === 'scheduleAppointment');
+    assert.deepEqual(followUpApprovals.map((item) => item.id), [followUpApprovalId]);
+    assert.equal(followUpApprovals[0].status, 'pending');
+    assert.equal(state.json.appointments.length, 0, 'The follow-up remains pending approval.');
+
+    const approveFollowUp = () => requestJson(baseUrl, `/api/approvals/${followUpApprovalId}/approve`, {
+      method: 'POST', body: { actor: 'QA operator' },
+    });
+    const decisions = await Promise.all([approveFollowUp(), approveFollowUp()]);
+    assert.ok(decisions.some(({ json }) => json.providerActionResult?.ok === true),
+      JSON.stringify(decisions.map(({ status, json }) => ({
+        status, result: json.providerActionResult, error: json.error,
+      }))));
+    const finalState = await requestJson(baseUrl, '/state');
+    assert.equal(finalState.status, 200);
+    assert.equal(finalState.json.appointments.length, 1);
+    const [appointment] = finalState.json.appointments;
+    assert.equal(appointment.leadId, 'lead-morgan');
+    assert.equal(appointment.startTime, '2099-04-03T21:00:00.000Z');
+    const persisted = JSON.parse(await readFile(join(stateDir, 'openclaw-state.json'), 'utf8'));
+    assert.equal(persisted.appointments.length, 1);
+    assert.equal(persisted.appointments[0].id, appointment.id);
+    const persistedApproval = persisted.approvals.find((item) => item.id === followUpApprovalId);
+    assert.equal(persistedApproval?.status, 'approved');
+    assert.equal(persistedApproval?.metadata?.providerActionResult?.ok, true);
+    assert.equal(persistedApproval?.metadata?.providerActionResult?.appointmentId, appointment.id);
+    assert.equal(persistedApproval?.metadata?.providerActionResult?.appointmentStatus, 'scheduled');
 
     console.log(
       JSON.stringify(

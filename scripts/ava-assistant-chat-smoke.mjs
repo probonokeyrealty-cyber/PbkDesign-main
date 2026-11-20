@@ -99,6 +99,8 @@ assert.equal(contractSendIntent.intent, 'contract_send', 'Assistant should disti
 const scheduleIntent = detectAssistantIntent('Schedule a follow-up for this lead tomorrow.');
 assert.equal(scheduleIntent.intent, 'schedule_follow_up', 'Assistant should detect follow-up scheduling requests.');
 assert.equal(scheduleIntent.when, 'tomorrow', 'Follow-up scheduling should extract simple timing hints.');
+assert.equal(detectAssistantIntent('Help me schedule a follow-up for this lead tomorrow.').intent, 'schedule_follow_up');
+assert.equal(detectAssistantIntent('What are your capabilities?').intent, 'help');
 
 const memoryIntent = detectAssistantIntent('Remember this note: seller needs spouse approval.');
 assert.equal(memoryIntent.intent, 'remember_note', 'Assistant should detect memory capture requests.');
@@ -106,6 +108,40 @@ assert.match(memoryIntent.note, /spouse approval/i, 'Memory capture should retai
 
 const callReviewIntent = detectAssistantIntent('Review the latest call and tell me what Ava missed.');
 assert.equal(callReviewIntent.intent, 'call_review', 'Assistant should detect latest-call review requests.');
+const leadReviewOptions = {
+  publicMode: false, authenticated: true,
+  leads: [{ id: 'test-lead', name: 'Morgan Test' }, { id: 'other-lead', name: 'Casey Test' }],
+};
+assert.equal(planAssistantIntent(callReviewIntent, { ...leadReviewOptions, leadId: 'test-lead' }).leadId, 'test-lead');
+assert.equal(planAssistantIntent(detectAssistantIntent('Review the latest call for Morgan Test.'), leadReviewOptions).leadId, 'test-lead');
+assert.equal(planAssistantIntent(detectAssistantIntent('Review the latest call for Casey Test.'), {
+  ...leadReviewOptions, leadId: 'test-lead',
+}).action, 'missing_required_info');
+
+for (const [request, nextToolName, expectedToolName, approvalRequired] of [
+  ['Prepare the contract for Morgan Test.', 'prepareContract', 'prepareContract', false],
+  ['Send DocuSign contract for Morgan Test.', 'prepare_and_send_contract', 'prepare_and_send_contract', true],
+  ['Schedule a follow-up for Morgan Test on 2099-04-03T14:00:00-07:00.', 'scheduleAppointment', 'scheduleAppointment', true],
+  ['Draft an email for Morgan Test saying we can talk tomorrow.', 'sendColdEmail', 'draftSellerMessage', false],
+  ['Send an email to Morgan Test saying we can talk tomorrow.', 'sendColdEmail', 'consultNurtureAgent', false],
+  ['Start a nurture sequence for Morgan Test.', 'startNurtureSequence', 'startNurtureSequence', true],
+]) {
+  const confirmed = planAssistantIntent(detectAssistantIntent('yes'), {
+    ...leadReviewOptions,
+    session: { pendingAction: { leadId: 'test-lead', nextToolName, userRequest: request } },
+  });
+  assert.equal(confirmed.toolPlan?.toolName, expectedToolName, request);
+  assert.equal(confirmed.toolPlan?.params?.leadId, 'test-lead');
+  assert.equal(Boolean(confirmed.toolPlan?.approvalRequired), approvalRequired);
+  if (expectedToolName === 'consultNurtureAgent') assert.equal(confirmed.toolPlan.params.approvalRequiredAfterConsult, true);
+}
+assert.equal(planAssistantIntent(detectAssistantIntent('yes'), {
+  ...leadReviewOptions, leadId: 'other-lead',
+  session: { pendingAction: {
+    leadId: 'test-lead', nextToolName: 'scheduleAppointment',
+    userRequest: 'Schedule a follow-up for Morgan Test tomorrow.',
+  } },
+}).toolPlan, null);
 
 const additiveIntent = detectAssistantIntent('Use all frontier additives and sync the whole system intelligence.');
 assert.equal(
@@ -357,13 +393,19 @@ assert.equal(
 );
 assert.equal(internalContractSendPlan.toolPlan?.params?.forceApproval, true, 'DocuSign sends should force approval.');
 
-const internalSchedulePlan = planAssistantIntent(scheduleIntent, {
+const scheduleOptions = {
   publicMode: false,
   authenticated: true,
   leadId: 'lead-follow-up-1',
-});
+};
+assert.equal(planAssistantIntent(scheduleIntent, scheduleOptions).toolPlan, null);
+const internalSchedulePlan = planAssistantIntent(
+  detectAssistantIntent('Schedule a follow-up for this lead on 2099-04-03T14:00:00-07:00.'),
+  scheduleOptions
+);
 assert.equal(internalSchedulePlan.action, 'approval_required', 'Follow-up scheduling from Ava should be approval-gated.');
 assert.equal(internalSchedulePlan.toolPlan?.toolName, 'scheduleAppointment', 'Follow-up scheduling should route to scheduleAppointment.');
+assert.equal(internalSchedulePlan.toolPlan.params.startTime, '2099-04-03T21:00:00.000Z');
 
 const internalMemoryPlan = planAssistantIntent(memoryIntent, {
   publicMode: false,

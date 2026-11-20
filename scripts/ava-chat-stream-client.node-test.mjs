@@ -398,6 +398,31 @@ test('a generic 401 at an explicit custom endpoint is not reclassified as a team
   assert.equal(calls.length, 1);
 });
 
+for (const streaming of [true, false]) {
+  test(`hosted state bootstrap rejection is actionable without replay (streaming: ${streaming})`, async () => {
+    hostedSession();
+    globalThis.fetch = async (url, init) => {
+      calls.push({ url, ...init });
+      return Response.json({
+        result: 'state_bootstrap_unavailable',
+        code: 'postgres_schema_required',
+        error: 'Fixture Postgres diagnostic',
+      }, { status: 503 });
+    };
+    const request = streaming ? invoke : () => bridge.sendAvaAssistantChatRequest({ message: 'Review this lead' });
+    await assert.rejects(request, (error) => {
+      assert.ok(error instanceof bridge.RuntimeBridgeError);
+      assert.equal(error.status, 503);
+      assert.equal(error.code, 'state_bootstrap_unavailable');
+      assert.match(error.message, /restoring saved data.*try again/i);
+      assert.doesNotMatch(error.message, /Postgres diagnostic/);
+      return true;
+    });
+    assert.equal(calls.length, 1);
+    assert.equal(bridge.getRuntimeTeamSession()?.token, 'fixture-only-team');
+  });
+}
+
 for (const failure of ['proxy', 'explicit auth code', 'permission', 'transport']) {
   test(`hosted ${failure} failure is not retried and does not clear team auth`, async () => {
     hostedSession();

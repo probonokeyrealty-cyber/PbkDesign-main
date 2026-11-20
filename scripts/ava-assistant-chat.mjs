@@ -466,6 +466,17 @@ function extractFollowUpWhen(message = '') {
   return cleanText(match?.[0] || '', 80);
 }
 
+function extractFollowUpStartTime(message = '') {
+  const match = message.match(/\b(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2}(?::\d{2})?)(Z|[+-]\d{2}:\d{2})(?![\d:])/i);
+  if (!match) return '';
+  const [, date, time, offset] = match;
+  const calendarDay = new Date(`${date}T00:00:00Z`);
+  const instant = new Date(`${date}T${time}${offset}`);
+  if (!Number.isFinite(instant.getTime()) || !Number.isFinite(calendarDay.getTime()) ||
+    !calendarDay.toISOString().startsWith(date)) return '';
+  return instant.toISOString();
+}
+
 function normalizeComparableText(value = '') {
   return cleanText(value, 320)
     .toLowerCase()
@@ -653,7 +664,8 @@ export function detectAssistantIntent(message = '') {
   );
   if (localIntent) return localIntent;
 
-  if (/\b(what can you (?:do|help(?:\s+(?:with|my team|my agents))?)|how can you help|help|capabilities|commands?)\b/i.test(lower)) {
+  if (/^(?:help|capabilities|commands?)[.!?]?$/.test(lower) ||
+    /\b(?:what can you (?:do|help)|how can you help|what are your (?:capabilities|commands))\b/.test(lower)) {
     return { intent: 'help', message: text, classifierSource: 'regex' };
   }
 
@@ -742,6 +754,7 @@ export function detectAssistantIntent(message = '') {
       message: text,
       leadQuery: extractProviderLeadQuery(text),
       when: extractFollowUpWhen(text),
+      startTime: extractFollowUpStartTime(text),
       classifierSource: 'regex',
     };
   }
@@ -883,6 +896,16 @@ function getAssistantPendingAction(options = {}) {
     null;
   return pending && typeof pending === 'object' && !Array.isArray(pending) ? pending : null;
 }
+
+const CONFIRMABLE_ASSISTANT_INTENTS = {
+  prepareContract: 'contract_prepare',
+  prepare_and_send_contract: 'contract_send',
+  scheduleAppointment: 'schedule_follow_up',
+  sendColdEmail: 'seller_message',
+  telnyx_sms: 'seller_message',
+  startNurtureSequence: 'nurture_start',
+  consultNurtureAgent: 'nurture_consult',
+};
 
 function looksLikeBareLeadIdentifier(message = '') {
   const text = cleanText(message, 120);
@@ -1063,11 +1086,19 @@ export function planAssistantIntent(detected = {}, options = {}) {
         pendingAction.params?.leadId ||
         pendingLead.leadId ||
         pendingLead.id ||
-        options.leadId ||
-        options.session?.leadId ||
         '',
       120
     );
+    const selectedLeadId = cleanText(options.leadId || options.session?.leadId || '', 120);
+    if (selectedLeadId && leadId !== selectedLeadId) {
+      return {
+        action: 'missing_confirmation_context',
+        answer: 'The selected lead changed. Tell me the action you want for this lead.',
+        suggestions,
+        toolPlan: null,
+        usedIntent: intent,
+      };
+    }
     const phone = extractPhone(
       pendingAction.phone ||
         pendingAction.to ||
@@ -1108,6 +1139,14 @@ export function planAssistantIntent(detected = {}, options = {}) {
         usedIntent: intent,
       };
     }
+    if (leadId && Object.hasOwn(CONFIRMABLE_ASSISTANT_INTENTS, nextToolName)) {
+      const original = detectAssistantIntent(pendingAction.userRequest || pendingAction.params?.userRequest || '');
+      const matchesChannel = original.intent !== 'seller_message'
+        || nextToolName === (original.channel === 'email' ? 'sendColdEmail' : 'telnyx_sms');
+      if (original.intent === CONFIRMABLE_ASSISTANT_INTENTS[nextToolName] && matchesChannel) {
+        return planAssistantIntent(original, { ...options, leadId });
+      }
+    }
     return {
       action: 'confirmation_context_found',
       answer:
@@ -1121,8 +1160,16 @@ export function planAssistantIntent(detected = {}, options = {}) {
   if (!publicMode && intent === 'help') {
     return {
       action: 'internal_help',
-      answer:
-        'Tell me what you need in plain English. I can find leads, pull seller context, run deal math, draft follow-ups, summarize calls, prepare approvals, and help decide the next clean seller move.',
+      answer: [
+        'I can work with you on leads, deal analysis, seller follow-up, call review, contracts, and approvals in the Command Center.',
+        '',
+        '• Find leads by name, address, or phone, or ask me to review the latest call from the lead’s Ava Chat.',
+        '• Give me a property address to run the deal math or ask for a contract draft.',
+        '• Ask me to prepare a call, schedule a follow-up, or set up a nurture sequence. I can check the channel and timing for a seller message.',
+        '• Ask what’s waiting for approval or delegate a specific task to Rex, Max, or another registered PBK agent.',
+        '',
+        'Calls, sends, scheduling, and other provider actions go through the Command Center approval flow.',
+      ].join('\n'),
       suggestions,
       toolPlan: null,
       usedIntent: intent,
@@ -1252,7 +1299,7 @@ export function planAssistantIntent(detected = {}, options = {}) {
     }
     return {
       action: 'tool_plan',
-      answer: `I will have Nurture Agent check the timing, channel, and wording first. If it agrees, I will prepare the ${channel === 'email' ? 'email' : 'text'} for approval; nothing sends until the approval path releases it.`,
+      answer: 'I will ask Nurture Agent to recommend a channel and timing for this follow-up.',
       suggestions,
       toolPlan: {
         toolName: 'consultNurtureAgent',
@@ -1392,6 +1439,15 @@ export function planAssistantIntent(detected = {}, options = {}) {
         usedIntent: intent,
       };
     }
+    if (!detected.startTime) {
+      return {
+        action: 'missing_required_info',
+        answer: 'Include the date, time, and time-zone offset in the scheduling request (YYYY-MM-DDTHH:MM-07:00) so I can prepare the exact appointment for approval.',
+        suggestions,
+        toolPlan: null,
+        usedIntent: intent,
+      };
+    }
     return {
       action: 'approval_required',
       answer: 'I will prepare the follow-up for approval. Nothing is scheduled until it is approved.',
@@ -1401,6 +1457,7 @@ export function planAssistantIntent(detected = {}, options = {}) {
         params: {
           leadId,
           notes: detected.message,
+          startTime: detected.startTime,
           requestedWhen: detected.when || '',
           forceApproval: true,
           source: 'ava-assistant-chat',
@@ -1435,9 +1492,29 @@ export function planAssistantIntent(detected = {}, options = {}) {
   }
 
   if (!publicMode && intent === 'call_review') {
+    let leadId = cleanText(options.leadId || options.session?.leadId || '', 120);
+    if (detected.leadQuery) {
+      const query = normalizeComparableText(detected.leadQuery);
+      const matches = new Set((Array.isArray(options.leads) ? options.leads : [])
+        .map(getLeadIdentity)
+        .filter((lead) => lead.leadId && [lead.leadId, lead.name, lead.address]
+          .some((value) => query && normalizeComparableText(value) === query))
+        .map((lead) => lead.leadId));
+      if (matches.size !== 1 || (leadId && !matches.has(leadId))) {
+        return {
+          action: 'missing_required_info',
+          answer: 'Open the seller’s lead in Ava Chat, then ask me to review the latest call for that lead.',
+          suggestions,
+          toolPlan: null,
+          usedIntent: intent,
+        };
+      }
+      [leadId] = matches;
+    }
     return {
       action: 'call_review_summary',
-      answer: 'I will review the latest seller interaction and pull the clean next coaching move.',
+      answer: 'I will look up the latest recorded seller call.',
+      leadId,
       suggestions,
       toolPlan: null,
       usedIntent: intent,

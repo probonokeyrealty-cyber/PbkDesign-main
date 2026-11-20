@@ -992,9 +992,9 @@ const runtimeStateProvenance = {
   lastPersistAt: '',
 };
 let runtimeStateBootstrap = {
-  ok: !DATABASE_URL,
-  ready: !DATABASE_URL,
-  status: DATABASE_URL ? 'pending' : 'ready',
+  ok: !IS_HOSTED && !DATABASE_URL,
+  ready: !IS_HOSTED && !DATABASE_URL,
+  status: IS_HOSTED || DATABASE_URL ? 'pending' : 'ready',
   code: '',
   error: '',
   checkedAt: '',
@@ -2868,7 +2868,7 @@ function buildLivenessHealthSnapshot(runtimeMeta = getRuntimeMeta()) {
       label: 'Runtime state bootstrap',
       status: runtimeStateBootstrap.ready ? 'up' : runtimeStateBootstrap.status || 'degraded',
       ready: Boolean(runtimeStateBootstrap.ready),
-      configured: Boolean(STATE_BACKEND),
+      configured: !IS_HOSTED || Boolean(DATABASE_URL),
       optional: !IS_HOSTED,
       code: runtimeStateBootstrap.code || '',
       error: runtimeStateBootstrap.error || '',
@@ -11878,6 +11878,9 @@ async function loadStateFromRuntimeFile() {
 }
 
 async function persistState(nextState, { allowBootstrap = false } = {}) {
+  if (IS_HOSTED && !DATABASE_URL) {
+    throw Object.assign(new Error('Hosted runtime state requires Postgres.'), { code: 'hosted_postgres_not_configured' });
+  }
   if (controlledExecution.getStore()) {
     await getPgPool().query(`INSERT INTO bridge_state(id,data,updated_at) VALUES('singleton',$1::jsonb,NOW()) ON CONFLICT(id) DO UPDATE SET data=EXCLUDED.data,updated_at=NOW()`, [postgresJsonStringify(nextState)]);
     return;
@@ -13053,6 +13056,9 @@ function hydrateState(raw = {}) {
 }
 
 async function loadState() {
+  if (IS_HOSTED && !DATABASE_URL) {
+    throw Object.assign(new Error('Hosted runtime state requires Postgres.'), { code: 'hosted_postgres_not_configured' });
+  }
   if (DATABASE_URL) {
     const schemaReady = await ensurePgSchema();
     if (!schemaReady) {
@@ -13143,7 +13149,7 @@ async function bootstrapRuntimeStateForLiveness() {
       error: detail,
       checkedAt: isoNow(),
     };
-    runtimeStateProvenance.source = DATABASE_URL ? 'render-postgres-unavailable' : 'local-state-unavailable';
+    runtimeStateProvenance.source = IS_HOSTED || DATABASE_URL ? 'render-postgres-unavailable' : 'local-state-unavailable';
     runtimeStateProvenance.loadedFrom = 'bootstrap-fallback';
     runtimeStateProvenance.fallbackReason = detail;
     runtimeStateProvenance.lastLoadAt = isoNow();
@@ -23578,12 +23584,16 @@ function buildAvaScriptRotationSnapshot(params = {}) {
   ensureAgentFleetCollections();
   const query = String(params.query || params.transcript || params.text || '').toLowerCase();
   const contextScripts = buildContextAwareScriptLibrary(params);
+  const callFlow = params.activeListening?.callFlow;
   const contextAwareSelection = selectContextAwareScript({
     scripts: contextScripts,
     pathKey: params.pathKey || params.path_key || params.selectedPath || params.selected_path || params.pathDecision?.selectedPath || '',
     sentiment: params.sentiment ?? params.sellerSentiment ?? params.seller_sentiment ?? params.session?.sellerSentiment ?? 0,
     callerRole: params.callerRole || params.caller_role || params.session?.callerRole || '',
     lastObjection: params.lastObjection || params.last_objection || params.objectionTag || params.objection_tag || params.warManual?.objection?.tag || '',
+    callFlowStepId: callFlow?.reason === 'compliance_boundary_acknowledge_only'
+      ? ''
+      : callFlow?.nextStepId || params.callFlowStepId || params.call_flow_step_id || '',
     transcript: query,
     recentScriptIds: params.recentScriptIds || params.recent_script_ids || params.session?.recentScriptIds || [],
     recentAvaLines: params.recentAvaLines || params.recent_ava_lines || params.session?.recentAvaLines || [],
@@ -24923,29 +24933,6 @@ function buildAvaCallArchitectureContext(params = {}) {
     selectedPath: pathDecision.selectedPath,
     turnCount: params.turnCount || params.turn_count || session.turnCount || (Array.isArray(session.transcript) ? session.transcript.length : 0),
   });
-  scripts = buildAvaScriptRotationSnapshot({
-    ...params,
-    session,
-    contextCall,
-    query: intelligenceTranscript,
-    pathDecision,
-    pathKey: pathDecision.selectedPath,
-    selectedPath: pathDecision.selectedPath,
-    callerRole: callerRole.role,
-    lastObjection: warManual.objection?.tag || '',
-    warManual,
-  });
-  const contextScriptId = scripts.contextAwareSelection?.selectedScript?.id || scripts.selectedScript?.id || '';
-  if (contextScriptId) {
-    session.contextAwareScriptSelection = scripts.contextAwareSelection;
-  }
-  if (scripts.governedSkillSelection?.action === 'clear') {
-    delete session.activeGovernedSkillId;
-    session.governedSkillSelection = scripts.governedSkillSelection;
-  } else if (scripts.governedSkillSelection?.selectedSkill?.id) {
-    session.activeGovernedSkillId = scripts.governedSkillSelection.selectedSkill.id;
-    session.governedSkillSelection = scripts.governedSkillSelection;
-  }
   const activeListening = buildAvaActiveListeningContext({
     ...params,
     session,
@@ -24960,6 +24947,30 @@ function buildAvaCallArchitectureContext(params = {}) {
     selectedPath: pathDecision.selectedPath,
     turnCount: params.turnCount || params.turn_count || session.turnCount || (Array.isArray(session.transcript) ? session.transcript.length : 0),
   });
+  scripts = buildAvaScriptRotationSnapshot({
+    ...params,
+    session,
+    contextCall,
+    query: intelligenceTranscript,
+    pathDecision,
+    pathKey: pathDecision.selectedPath,
+    selectedPath: pathDecision.selectedPath,
+    callerRole: callerRole.role,
+    lastObjection: warManual.objection?.tag || '',
+    warManual,
+    activeListening,
+  });
+  const contextScriptId = scripts.contextAwareSelection?.selectedScript?.id || scripts.selectedScript?.id || '';
+  if (contextScriptId) {
+    session.contextAwareScriptSelection = scripts.contextAwareSelection;
+  }
+  if (scripts.governedSkillSelection?.action === 'clear') {
+    delete session.activeGovernedSkillId;
+    session.governedSkillSelection = scripts.governedSkillSelection;
+  } else if (scripts.governedSkillSelection?.selectedSkill?.id) {
+    session.activeGovernedSkillId = scripts.governedSkillSelection.selectedSkill.id;
+    session.governedSkillSelection = scripts.governedSkillSelection;
+  }
   const fullIntelligence = buildAvaFullIntelligenceContext({
     ...params,
     session,
@@ -43254,6 +43265,10 @@ function summarizeProviderActionResult(result = {}) {
     callProvider: result.call?.provider || result.provider || '',
     telnyxLive: Boolean(result.telnyx?.live),
     telnyxStatus: result.telnyx?.status || null,
+    ...(result.appointment?.id ? {
+      appointmentId: result.appointment.id,
+      appointmentStatus: result.appointment.status || '',
+    } : {}),
   };
 }
 
@@ -65449,12 +65464,23 @@ async function handleInternalAvaAssistantChatRequest(request) {
       ? `I could not save that memory yet. ${toolResult?.error || toolResult?.message || ''}`.trim()
       : 'Saved. I added that note to PBK memory for future Ava context.';
   } else if (assistantPlan.action === 'tool_plan' && assistantPlan.toolPlan?.toolName === 'consultNurtureAgent') {
-    const execution = await executeToolHandlerWithQa('consultNurtureAgent', assistantPlan.toolPlan.params || {}, 'ava-assistant-chat');
-    toolResult = execution.result;
-    qa = execution.qaValidation?.qa || null;
-    safety = execution.safetyValidation || null;
-    const recommendation = toolResult?.recommendation || {};
-    answer = [`Best next touch: ${recommendation.channel || 'sms'} ${recommendation.urgency || 'now'}.`, recommendation.reason ? `Reason: ${recommendation.reason}` : '', 'Confirm when you want me to prepare the sequence for approval.'].filter(Boolean).join(' ');
+    try {
+      const execution = await executeToolHandlerWithQa('consultNurtureAgent', assistantPlan.toolPlan.params || {}, 'ava-assistant-chat');
+      toolResult = execution.result;
+      qa = execution.qaValidation?.qa || null;
+      safety = execution.safetyValidation || null;
+    } catch (error) {
+      console.warn('[ava-assistant-chat] Nurture consultation unavailable:', error?.code || error?.name);
+      toolResult = { ok: false, result: 'nurture_consultation_unavailable' };
+    }
+    const recommendation = toolResult?.recommendation;
+    answer = toolResult?.ok && recommendation?.channel && recommendation?.urgency
+      ? [
+          `Nurture Agent recommends ${recommendation.channel} (timing: ${recommendation.urgency}).`,
+          recommendation.reason,
+          'This is outreach advice. Ask to start a nurture sequence if you want Ava to prepare one for approval.',
+        ].filter(Boolean).join(' ')
+      : 'Nurture Agent could not recommend a channel or time for this lead. The follow-up is still open.';
   } else if (assistantPlan.action === 'approval_required' && ['telnyx_call', 'startNurtureSequence', 'telnyx_sms', 'sendColdEmail', 'prepare_and_send_contract', 'scheduleAppointment'].includes(assistantPlan.toolPlan?.toolName)) {
     const approvalToolName = assistantPlan.toolPlan.toolName;
     toolResult = await invokeToolWithOperatingGuard(approvalToolName, {
@@ -65464,7 +65490,8 @@ async function handleInternalAvaAssistantChatRequest(request) {
       forceApproval: true,
     });
     const approvalId = toolResult?.approval?.id || toolResult?.approvalId || '';
-    const queued = ['queued_for_approval', 'approval_required'].includes(String(toolResult?.result || toolResult?.outcome || '').toLowerCase());
+    const queued = Boolean(approvalId) && toolResult?.ok !== false &&
+      ['queued_for_approval', 'approval_required'].includes(String(toolResult?.result || toolResult?.outcome || '').toLowerCase());
     const actionLabels = {
       startNurtureSequence: 'nurture sequence',
       telnyx_call: 'call request',
@@ -65530,7 +65557,9 @@ async function handleInternalAvaAssistantChatRequest(request) {
     answer = lead
       ? nextToolName === 'telnyx_call'
         ? `I found ${displayName}${lead.address ? ` at ${lead.address}` : ''}. Confirm this is the right seller and I will prepare the approval-gated call request.`
-        : `I found ${displayName}${lead.address ? ` at ${lead.address}` : ''}. I can open the profile, summarize the latest timeline, or prepare the next seller step.`
+        : pendingAssistantAction
+          ? `I found ${displayName}${lead.address ? ` at ${lead.address}` : ''}. Confirm this is the right seller and I will continue the request.`
+          : `I found ${displayName}${lead.address ? ` at ${lead.address}` : ''}. I can open the profile, summarize the latest timeline, or prepare the next seller step.`
       : `I could not find a lead matching "${assistantPlan.toolPlan.params?.query || ''}" in the current Command Center snapshot.`;
     toolResult = {
       ok: Boolean(lead),
@@ -65540,17 +65569,32 @@ async function handleInternalAvaAssistantChatRequest(request) {
       pendingAction: pendingAssistantAction,
     };
   } else if (assistantPlan.action === 'call_review_summary') {
-    const latestCall = sortNewest(state.calls || [])[0] || null;
+    const leadId = assistantPlan.leadId || '';
+    const latestCall = sortNewest((state.calls || []).filter(
+      (call) => !leadId || String(call.leadId || call.lead_id || '').trim() === leadId
+    ))[0] || null;
     if (latestCall) {
-      const transcript = String(latestCall.transcript || latestCall.summary || latestCall.notes || '').trim();
+      const callId = String(latestCall.id || latestCall.callId || latestCall.call_id || '').trim();
+      const summary = summarizeTranscriptForLead(latestCall,
+        latestCall.summary || (typeof latestCall.transcript === 'string' ? latestCall.transcript : '') || latestCall.notes || ''
+      ).slice(0, 420);
+      const qaScore = callId && (state.callQaScores || []).find((record) =>
+        String(record.callId || record.call_id || '').trim() === callId &&
+        typeof record.score === 'number' && record.score >= 0 && record.score <= 100
+      )?.score;
       answer = [
         `Latest call: ${latestCall.leadName || latestCall.phone || 'seller'}${latestCall.status ? ` (${latestCall.status})` : ''}.`,
-        transcript ? `Signal: ${transcript.slice(0, 180)}` : '',
-        'Next move: confirm motivation, timeline, decision maker, and the clean follow-up before sending anything.',
+        summary,
+        typeof qaScore === 'number' ? `Call QA: ${qaScore}/100.` : '',
       ].filter(Boolean).join(' ');
-      toolResult = { ok: true, result: 'latest_call_review', call: latestCall };
+      toolResult = {
+        ok: true, result: 'latest_call_review', call: latestCall,
+        ...(typeof qaScore === 'number' ? { qaScore } : {}),
+      };
     } else {
-      answer = 'I do not see a recorded call yet. Once a call lands, I can review the transcript, missed objections, and next seller move.';
+      answer = leadId
+        ? 'I could not find a recorded call for this lead.'
+        : 'I could not find a recorded seller call in the Command Center.';
       toolResult = { ok: false, result: 'no_call_available' };
     }
   } else if (assistantPlan.action === 'summary_plan') {
@@ -65695,10 +65739,8 @@ async function handleInternalAvaAssistantChatRequest(request) {
       source: 'ava-assistant-chat',
     };
   }
-  if (pendingAssistantAction) {
-    assistantContextSession.pendingAction = pendingAssistantAction;
-    assistantSession.pendingAction = pendingAssistantAction;
-  }
+  assistantContextSession.pendingAction = pendingAssistantAction;
+  assistantSession.pendingAction = pendingAssistantAction;
 
   const missionLedgerRecord = recordAvaMissionLedger({
     missionController,
@@ -66332,7 +66374,7 @@ function isRuntimeStateBootstrapProbe(method = 'GET', pathname = '') {
 }
 
 function shouldBlockForRuntimeStateBootstrap(method = 'GET', pathname = '') {
-  return Boolean(IS_HOSTED && DATABASE_URL && runtimeStateBootstrap.ready !== true && !isRuntimeStateBootstrapProbe(method, pathname));
+  return IS_HOSTED && runtimeStateBootstrap.ready !== true && !isRuntimeStateBootstrapProbe(method, pathname);
 }
 
 function sendRuntimeStateBootstrapUnavailable(response) {
@@ -70165,6 +70207,7 @@ function buildFastTelnyxLiveAvaReplyText({ session = {}, transcript = '', contex
     callerRole: callerRole.role,
     lastObjection: warManual.objection?.tag || '',
     warManual,
+    activeListening,
   });
   if (scripts.governedSkillSelection?.action === 'clear') {
     delete session.activeGovernedSkillId;
@@ -82716,6 +82759,10 @@ runtimeWsHeartbeatTimer.unref?.();
 server.on('upgrade', (request, socket, head) => {
   const upgradeUrl = new URL(request.url || '/', `http://${request.headers.host || `${HOST}:${PORT}`}`);
   const upgradePath = upgradeUrl.pathname.replace(/\/+$/, '') || '/';
+  if (shouldBlockForRuntimeStateBootstrap('UPGRADE', upgradePath)) {
+    socket.end('HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\nContent-Length: 0\r\n\r\n');
+    return;
+  }
   if (matchesPath(upgradePath, ['/api/webhooks/telnyx/media', '/webhooks/telnyx/media'])) {
     if (TELNYX_MEDIA_STREAM_TOKEN) {
       const providedToken =

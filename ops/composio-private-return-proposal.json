@@ -1,0 +1,46 @@
+{
+  "status": "prepared-not-registered-pro-required",
+  "projectName": "probonokeyrealty_workspace_first_project",
+  "createPath": "/api/v3.1/custom/toolkits",
+  "createBody": {
+    "name": "PBK Staging Read-only",
+    "mcp_url": "https://pbk-composio-staging.onrender.com/mcp/pbk-readonly",
+    "user_id": "pbk-composio-staging",
+    "auth_schemes": [{
+      "mode": "API_KEY",
+      "headers": {"Authorization": "Bearer {{generic_api_key}}"},
+      "api_key_field": {
+        "display_name": "PBK staging read-only credential",
+        "description": "Dedicated staging inbound credential only. Never use the PBK bridge master or Composio project API key."
+      }
+    }]
+  },
+  "expectedRemoteTools": ["pbk_health", "pbk_agent_registry", "pbk_connection_readiness"],
+  "requiredChecksBeforeEnablement": [
+    "Authenticated workspace billing confirms the private Custom MCP capability",
+    "No existing private registration for this exact user and MCP URL; reuse a verified existing registration instead of creating a duplicate",
+    "Exact isolated staging host, strict three-tool server and distinct dedicated inbound credential",
+    "Private toolkit access is user-only; never substitute user_id all",
+    "Connected account belongs to the intended project, user and returned private auth configuration",
+    "Synchronized tools are exactly the expected three metadata tools with strict zero-input schemas",
+    "Create a separate session restricted to the returned private toolkit/account/three actual tool slugs; disable search, connection management, workbench, proxy, multi-account and multi-execute",
+    "Perform actual metadata reads through Composio and verify hosted readiness, denied writes/extra arguments, no secret or raw state exposure, and unchanged business collections"
+  ],
+  "credentialPolicy": {
+    "valueInThisFile": false,
+    "source": "Existing separately generated staging inbound credential through protected server configuration",
+    "provisioningCredentialCreated": false,
+    "persistentAccessChangesRequireConcreteApproval": true,
+    "runtimeProjectKeyBroadening": false
+  },
+  "constraints": {
+    "outboundSessionChanges": false,
+    "sharedToolkitFallback": false,
+    "productionChanges": false,
+    "crmWrites": false,
+    "outreach": false,
+    "tasksCreated": false,
+    "paidPurchaseSubmitted": false
+  },
+  "reference": "https://docs.composio.dev/docs/extending-sessions/custom-mcp"
+}

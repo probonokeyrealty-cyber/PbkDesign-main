@@ -1,45 +1,44 @@
-# Public market worker staging candidate
+# Public market worker — verified staging pilot
 
-This code is default-off. Existing E2B inventory and QA sessions are unchanged. The worker formats public search evidence for Rex; it does not host Rex inference or perform underwriting.
+The founder approved the separate credentials, isolated staging Postgres at $6.30/month before tax, and one Tampa public-market brief. The pilot completed. Production was not promoted.
 
 ## Operator flow
 
-1. In Rex's existing Brain lane, enter `Rex prepare cloud market brief for Tampa, FL`.
-2. Review and approve the sealed public-market task in the existing Settings approval queue. Preparation, opening pages, refreshing status and **Prepare another** perform no provider work.
-3. The bridge claims the job permanently in Postgres, searches once, runs a fixed network-disabled E2B program and confirms termination. Review its summary, citations and limitations in Brain.
-4. Failure or uncertainty never returns a successful brief. A new attempt requires a fresh approval. Starts are separated by a conservative five-minute lease, including after restart.
+1. Rex's existing command `Rex prepare cloud market brief for Tampa, FL` prepares a sealed request only. It performs no search or sandbox work.
+2. A protected administrator approves the exact pending task through the existing approval seam. Ordinary team sessions cannot perform protected admin writes. Never put the bridge master key in client code or relax this boundary.
+3. One pinned public Composio search supplies bounded evidence to one fixed, network-disabled E2B worker. The worker prepares evidence for Rex; it does not host Rex inference, browse autonomously or perform underwriting.
+4. On staging, open **Settings → Admin approvals → View public market brief** to read the saved result, five source links and limitations. The receipt binds to its approval task ID. Opening, expanding, refreshing or reloading it only reads saved state.
+5. A further run requires a fresh request and approval. Permanent one-use Postgres claims and a five-minute safety interval prevent replay and overlapping starts. Worker code remains default-off unless explicitly configured.
 
-## Credential activation approved; storage approval pending
+## Live acceptance
 
-The founder approved the separate staging credentials and one Tampa public-market brief. Revision `e3f547aa20a49bc5a8ea02d47ce768d97dbff63c` deployed live to the isolated service in deployment `dep-dc00pc6c6qcc73ar06j0` at `2026-11-20T09:04:50.69162Z`.
+- Service: `srv-dbvk7tv40ujc73e0d8gg`, [staging Settings](https://pbk-composio-staging.onrender.com/settings). Branch `codex/e2b-research-worker`, auto-deploy off.
+- Deployed implementation: `e3e6c21d8d3254efc8853417ee7f4465a8ba7f7b`, deployment `dep-dc0190rrjlhs7381g83g`, live `2026-11-20T09:38:12.96139Z`. Later commits updating this runbook do not require a product redeploy.
+- Exactly one approved market job: `market-b2a303ad-75a2-4240-8f19-ab0bf6fec800`, completed `2026-11-20T09:25:41.515Z`. One public search and one bounded sandbox; no automatic retry. The initial team-session approval was denied before any execution; the authorized protected staging administrator then approved that same pending request.
+- Result: complete, five citations, consumed approval, cleanup confirmed. Subsequent independent Ava/Rex inventory reads each returned zero active sandboxes.
+- The saved result and consumed marker survived both the receipt deployment and an explicit staging restart. An eight-collection canonical hash comparison across the explicit restart passed. During the approved job, all eight business collections were unchanged. Raw JSON hashes are unsuitable across JSONB reloads because object-key order can change; the acceptance checker uses field-order-independent hashes for restart proof.
+- Actual hosted Settings checks passed desktop Chromium, iPhone WebKit and 320px WebKit: exact citation destinations, both limitations, correct approval binding, reload retention, no overflow, no passive provider calls and no business mutations. Signed-in BrowserOS inspection also confirmed the saved receipt.
+- Focused worker/controller/claim/search/bridge suite:24/24. Existing Composio suite:41/41. App/MCP typechecks, lint, build, Docker closure and existing bridge gates passed during qualification. Receipt delta had a fresh independent review with no critical or important findings.
 
-The new E2B worker and Composio runtime keys are stored only in staging's protected environment settings. One restricted public-search session `trs_ZwQwm-ErumOd`, config1, user `pbk-public-market-research`, was created and independently read back. MCP exposes exactly `COMPOSIO_SEARCH_WEB`; actual input-schema SHA256 is `adcbb7d8695565f037b8aa16447b0ae074146d34c6d2788e7075cd8696e1388f`. No search was executed during inspection. The temporary Session management write key was revoked; its row disappeared and authentication returned HTTP401. Transient credential references were cleared.
+## Storage
 
-Both new execution flags remain **false**. Authenticated hosted status, unchanged business collections, existing Ava/Rex E2B inventory reads, signed-in BrowserOS Settings and hosted desktop/iPhone/320px browser checks passed. No market job, public search or sandbox was started. Production settings were not changed.
+Dedicated database **pbk-composio-staging-db**, ID `dpg-dc010uei0phs73bd3ohg-a`, Ohio, PostgreSQL18, compute `0.1c-256mb`, fixed1GB, autoscaling/HA off. Database `pbk_composio_staging`, dedicated user `pbk_composio_staging_user`. Dashboard-confirmed recurring cost: **$6.30/month before tax** ($6 compute + $0.30 storage), prorated by the second.
 
-The missing dependency is isolated staging Postgres. Staging currently uses file-backed state. The worker intentionally refuses durable claims without Postgres; do not weaken that guard or point staging at production CRM data. The initial release plan assumed this dependency existed and that assumption was disproved during live preflight.
+External IP allowlist is empty, blocking public connections. Only the internal URL was installed, solely in staging's protected `PBK_DATABASE_URL`; pool max3, min0. No production/customer rows were copied and the production database, credentials, network rules and plans were unchanged. No Neon resource was created or modified. Future storage/compute increases require separate approval.
 
-### Concrete storage proposal — not executed
+## Credentials and session scope
 
-Create **pbk-composio-staging-db** in the existing PBK Render workspace, Ohio, PostgreSQL18, compute `0.1c-256mb`, fixed1GB storage, autoscaling and HA off. Database `pbk_composio_staging`, dedicated user `pbk_composio_staging_user`. The prepared Dashboard form confirms **$6.30/month before tax** ($6 compute + $0.30 storage), prorated by the second. Do not submit until the founder approves this new recurring resource.
+- Separate **PBK Render public market worker** E2B key, stored only as staging secret `PBK_E2B_MARKET_WORKER_API_KEY`. The existing Composio E2B provider key was not extracted or reused. Backend credentials never enter the sandbox.
+- Separate **PBK public market search runtime** Composio key: Tools read, Session management read, Session tool execution write only, stored only as staging `PBK_COMPOSIO_MARKET_SEARCH_API_KEY`.
+- One no-auth session: `trs_ZwQwm-ErumOd`, config1, user `pbk-public-market-research`, only toolkit `composio_search` and tool/preload `COMPOSIO_SEARCH_WEB`. Instant, connection management, workbench, proxy execution, search helper, multi-account and multi-execute are disabled. No connected account/auth-config pins. Independently inspected metadata and actual MCP listing before activation.
+- Actual input-schema SHA256: `adcbb7d8695565f037b8aa16447b0ae074146d34c6d2788e7075cd8696e1388f`. Scope/schema mismatch fails closed. No native/private Brain/model search fallback exists in this lane.
+- Temporary setup key had Session management write only. It created exactly one session, was revoked, disappeared from the Dashboard and returned HTTP401. Transient credentials were cleared. Secrets were not printed, committed, logged, screenshotted or stored in local files.
+- The two new staging flags are enabled. No automatic schedules or provider writes were added. Existing QA-contact and E2B inventory scopes were preserved.
 
-After that approval: configure the new database for private access, store its internal connection only in the existing staging service's `PBK_DATABASE_URL`, keep staging's small connection pool bounded, initialize staging-only schema, and verify persistence/restart safety. Preserve production's database, credentials, network restrictions and plans. Do not copy production/customer rows. Then enable the two already-approved worker/search flags, redeploy staging and perform the already-approved single Tampa job. Stop on provider failure instead of spending the approved job again. Further compute/storage increases require separate approval.
+## Verification notes
 
-An existing Neon evaluation project was inspected read-only as an alternative; no Neon branch, role, compute or database was created or modified. Persistent isolated Render Postgres is proposed to retain staging records across restarts without a disposable database expiring beneath the service.
+`npm run test:public-market-worker`, `npm run test:public-market-browser`, `npm run test:composio`, `npm run test:bridge`, `npm run test:render-docker-imports`, app/MCP typechecks, lint, build and Settings browser smoke are the local qualification commands. Actual hosted proof is separate from fixtures.
 
-## Approved credential/job scope
+Only isolated bridge test startup was extended from15 to45 seconds after Windows cold-start timeouts under build/typecheck load. Provider and job deadlines were unchanged; this can delay genuine test-bootstrap failure feedback by at most30 seconds. Additional fixture-only exact-link/limitation assertions were deferred as optional review polish; those exact values were asserted against the actual hosted result on all three viewports.
 
-Only the existing isolated staging service `pbk-composio-staging` is proposed. No production settings, plans, CRM records, signing, outreach or autonomous schedules are included.
-
-- Create a separate E2B backend key named **PBK Render public market worker** in the existing PBK project. E2B has no per-key scopes. Store it only as staging secret `PBK_E2B_MARKET_WORKER_API_KEY`; never retrieve/copy the existing Composio E2B credential.
-- Create **PBK public market search runtime** in the PBK Composio project: Tools read, Session management read and Session tool execution write only. Store only as staging `PBK_COMPOSIO_MARKET_SEARCH_API_KEY`.
-- Create one temporary Session management write key, provision exactly one no-auth session for `pbk-public-market-research`, then revoke that setup key. Pin only toolkit `composio_search` and tool/preload `COMPOSIO_SEARCH_WEB`. Disable instant, connection management, workbench, proxy execution, search, multi-account and multi-execute. No connected accounts/auth configs. Inspect actual metadata/schema and record non-secret session ID, user, config version and SHA256 pins in staging env. Do not use CLI playground auto-sessions.
-- Configure `PBK_COMPOSIO_MARKET_SEARCH_ENABLED=true` and `PBK_E2B_MARKET_WORKER_ENABLED=true` only after pins and secret placement are verified. Requires reachable staging Postgres, the exact SDK and supported Node22.19+.
-- Deploy this reviewed revision only to staging. Run **one** explicitly approved Tampa, FL public-market job, at most one 60-second sandbox and one search, within existing provider billing limits. No upgrades/limit changes. Verify completion, cleanup, source binding, reload and unchanged business collections. Stop on failure; do not retry paid work automatically.
-- Revoke the temporary setup key and clear transient secret references before reporting completion. Secrets must never appear in chat, git, logs, screenshots or sandbox environment.
-
-## Release checks
-
-`npm run test:public-market-worker`, `npm run test:public-market-browser`, `npm run test:composio`, `npm run test:bridge`, `npm run test:render-docker-imports`, app/MCP typechecks, lint, build, Settings desktop/iPhone/320px smoke. Local fixtures are not proof of a live provider job. Hosted proof remains pending activation.
-
-Rollback: disable both new flags on staging. Keep consumed claims; never reset them to retry. Preserve existing inventory keys/session and production services.
+Rollback: disable the two new staging flags. Retain consumed claims and the saved result; do not reset approvals to retry. Database deletion, plan changes, production activation and further paid research jobs need their applicable approval. Full founder production qualification and production promotion are not claimed.

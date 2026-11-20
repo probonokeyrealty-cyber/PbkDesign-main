@@ -65739,8 +65739,11 @@ async function handleInternalAvaAssistantChatRequest(request) {
       source: 'ava-assistant-chat',
     };
   }
-  assistantContextSession.pendingAction = pendingAssistantAction;
-  assistantSession.pendingAction = pendingAssistantAction;
+  const priorPendingAction = assistantContextSession.pendingAction;
+  if (pendingAssistantAction || (priorPendingAction?.source === 'ava-assistant-chat' && priorPendingAction.nextToolName)) {
+    assistantContextSession.pendingAction = pendingAssistantAction;
+    assistantSession.pendingAction = pendingAssistantAction;
+  }
 
   const missionLedgerRecord = recordAvaMissionLedger({
     missionController,
@@ -65768,7 +65771,7 @@ async function handleInternalAvaAssistantChatRequest(request) {
     trace: missionController.trace,
     controlEnvelope: missionController.controlEnvelope,
     missionLedger: missionLedgerRecord,
-    pendingAction: pendingAssistantAction || null,
+    pendingAction: assistantContextSession.pendingAction || null,
     deepSeekDecision: getAvaDeepSeekDecisionFromToolResult(toolResult),
     confidence:
       missionController?.trace?.turnDecision?.confidence ??

@@ -70,6 +70,7 @@ function chatFixture({ answer = 'Actual answer', cancel = false, source = 'forge
   const ops = [], previews = [];
   const controller = new AbortController();
   const context = vm.createContext({ Date, console, process: { env: {} },
+    OUTLOOK_LEAD_EMAIL_ENABLED: false,
     withRuntimeEvidenceContext, getRuntimeEvidenceContext,
     createBridgeAgentTimingTurn: () => createAgentTimingTurn({ secret, revision,
       policy: policyReady ? getAgentLatencyPolicy({ PBK_AGENT_LATENCY_POLICY_V2: JSON.stringify(AGENT_LATENCY_PILOT_V2) }) : null,

@@ -190,6 +190,8 @@ async function verify(browserType, viewport, device = {}) {
     }).click();
     await expect(other.getByText('Decision unconfirmed.')).toBeVisible();
     await expect(reviewOther).toBeDisabled();
+    await expect(page.getByRole('region', { name: 'Start here', exact: true })
+      .getByRole('link', { name: 'Review approvals', exact: true })).toHaveCount(0);
     await expect(rail.locator('[data-state="blocked"]')).toContainText('Receipt');
     await expect(review.getByText('Outcome unknown. Check approval history before retrying.', { exact: true })).toBeVisible();
     await expect(receipt).toHaveCount(0);

@@ -37,7 +37,7 @@ export async function createTriagePreview(port = 0) {
     plugins: [{
       name: 'pbk-faster-triage-read-only-fixture',
       transformIndexHtml: { order: 'pre', handler: () => [{ tag: 'script', injectTo: 'head-prepend', children:
-        "const config={endpoint:location.origin,apiKey:'sample-only'};window.PBK={openclaw:{getConfig:()=>config}};if(!localStorage.getItem('pbk:prefs:v1'))localStorage.setItem('pbk:prefs:v1',JSON.stringify({theme:'dark',railCollapsed:false,lastPage:'/',tourCompleted:true}));" }] },
+        "const config={endpoint:location.origin,apiKey:'sample-only'};window.PBK={openclaw:{getConfig:()=>config}};localStorage.setItem('pbk:local:openclaw-config',JSON.stringify(config));if(!localStorage.getItem('pbk:prefs:v1'))localStorage.setItem('pbk:prefs:v1',JSON.stringify({theme:'dark',railCollapsed:false,lastPage:'/',tourCompleted:true}));" }] },
       configureServer(vite) {
         vite.middlewares.use((req, res, next) => {
           res.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self'; frame-src 'none'; form-action 'none'; base-uri 'none'");

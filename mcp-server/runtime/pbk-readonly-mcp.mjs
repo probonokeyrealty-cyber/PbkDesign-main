@@ -2,6 +2,20 @@ import { createHash, timingSafeEqual, randomUUID } from 'node:crypto';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { z } from 'zod';
+import { ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
+
+const READ_TOOLS = [
+  ['pbk_health', 'health'],
+  ['pbk_agent_registry', 'registry'],
+  ['pbk_connection_readiness', 'readiness'],
+];
+const READ_DESCRIPTION = 'Read sanitized PBK staging metadata. No business records or provider writes.';
+const READ_ANNOTATIONS = {
+  readOnlyHint: true,
+  destructiveHint: false,
+  idempotentHint: true,
+  openWorldHint: false,
+};
 
 const AGENTS = new Set([
   'Ava',
@@ -57,22 +71,13 @@ export function selectPbkReadOnlyStatus(kind, value = {}) {
 }
 export function createPbkReadOnlyMcpServer({ readStatus, onRead = () => {} }) {
   const server = new McpServer({ name: 'pbk-readonly', version: '1.0.0' });
-  for (const [name, kind] of [
-    ['pbk_health', 'health'],
-    ['pbk_agent_registry', 'registry'],
-    ['pbk_connection_readiness', 'readiness'],
-  ]) {
+  for (const [name, kind] of READ_TOOLS) {
     server.registerTool(
       name,
       {
-        description: 'Read sanitized PBK staging metadata. No business records or provider writes.',
+        description: READ_DESCRIPTION,
         inputSchema: z.object({}).strict().default({}),
-        annotations: {
-          readOnlyHint: true,
-          destructiveHint: false,
-          idempotentHint: true,
-          openWorldHint: false,
-        },
+        annotations: READ_ANNOTATIONS,
       },
       async (args) => {
         if (Object.keys(args).length)
@@ -105,6 +110,17 @@ export function createPbkReadOnlyMcpServer({ readStatus, onRead = () => {} }) {
       }
     );
   }
+  // The SDK's default-wrapper fallback omits additionalProperties in discovery.
+  // Declare the fixed inventory explicitly while keeping optional arguments and
+  // strict runtime validation identical for HTTP and the packaged stdio profile.
+  server.server.setRequestHandler(ListToolsRequestSchema, async () => ({
+    tools: READ_TOOLS.map(([name]) => ({
+      name,
+      description: READ_DESCRIPTION,
+      inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+      annotations: { ...READ_ANNOTATIONS },
+    })),
+  }));
   return server;
 }
 function configFrom(env, allowLoopback) {

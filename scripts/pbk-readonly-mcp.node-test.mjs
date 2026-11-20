@@ -72,11 +72,17 @@ test('real MCP client sees only permitted tools and receives selected metadata',
   const f = await fixture(t);
   assert.equal(f.endpoint.status().ready, false);
   const c = await f.client();
-  assert.deepEqual((await c.listTools()).tools.map((t) => t.name).sort(), [
+  const listed = (await c.listTools()).tools;
+  assert.deepEqual(listed.map((t) => t.name).sort(), [
     'pbk_agent_registry',
     'pbk_connection_readiness',
     'pbk_health',
   ]);
+  for (const tool of listed) {
+    assert.equal(tool.inputSchema.type, 'object');
+    assert.deepEqual(tool.inputSchema.properties, {});
+    assert.equal(tool.inputSchema.additionalProperties, false);
+  }
   for (const name of ['pbk_health', 'pbk_agent_registry', 'pbk_connection_readiness']) {
     const result = await c.callTool({ name, arguments: {} });
     assert.ok(!result.isError);
@@ -177,6 +183,9 @@ test('shared restricted factory also rejects extra arguments without relying on 
     });
     assert.equal(result.isError, true);
     assert.equal(calls, 0);
+    const omitted = await c.callTool({ name: 'pbk_health' });
+    assert.ok(!omitted.isError);
+    assert.equal(calls, 1);
   } finally {
     await c.close();
     await server.close();

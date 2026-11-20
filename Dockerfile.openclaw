@@ -152,6 +152,7 @@ COPY package.json ./package.json
 COPY scripts/pbk-deepgram-client.mjs ./scripts/pbk-deepgram-client.mjs
 COPY scripts/qa-agent.mjs ./scripts/qa-agent.mjs
 COPY scripts/agent-registry.mjs ./scripts/agent-registry.mjs
+COPY scripts/ava-rex-handoff.mjs ./scripts/ava-rex-handoff.mjs
 COPY scripts/agent-latency-policy.mjs ./scripts/agent-latency-policy.mjs
 COPY scripts/canary-evidence-reader.mjs ./scripts/canary-evidence-reader.mjs
 COPY scripts/canary-evidence-protocol.mjs ./scripts/canary-evidence-protocol.mjs

@@ -492,6 +492,7 @@ export type AvaAssistantChatResponse = {
   safety?: Record<string, unknown> | null;
   warning?: string;
   error?: string;
+  rexHandoff?: { id?: string; requestId?: string; status: string; citations?: string[] };
 };
 
 export type GlobalSearchResult = {
@@ -2303,6 +2304,8 @@ export async function fetchLocalCommandsRequest({
 
 export async function sendAvaAssistantChatRequest(body: {
   message: string;
+  researchRequestId?: string;
+  rexStatusOnly?: boolean;
   sessionId?: string;
   historyMode?: 'completed-only';
   source?: string;

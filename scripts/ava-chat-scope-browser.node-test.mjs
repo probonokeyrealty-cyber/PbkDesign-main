@@ -65,7 +65,7 @@ before(async () => {
                  window.fixture.queueReads++;
                  return { ok: true, commands: [] };
                };
-               export const streamAvaAssistantChatRequest = (payload, { signal, onAnswer }) =>
+               export const streamAvaAssistantChatRequest = (payload, { signal, onAnswer } = {}) =>
                  new Promise((resolve) => window.fixture.streams.push({ payload, signal, onAnswer, resolve }));
                export const queueLocalCommandRequest = (...args) => window.fixture.blocked('queue', args);
                export const updateApprovalDecision = (...args) => window.fixture.blocked('approval', args);
@@ -233,6 +233,52 @@ async function assertNoActions(page, submits = 0) {
 function storageNotice(page) {
   return page.getByRole('status').filter({ hasText: /chat details could not be restored or saved/i });
 }
+
+test('Rex requests start only on submit and status checks hide stale sources at 320px', async t => {
+  const { page, errors } = await open(t, aUrl, {}, {}, { viewport: { width: 320, height: 780 }, isMobile: true, hasTouch: true });
+  await assertNoActions(page);
+  await composer(page).fill('Ask Rex to research Tampa, FL');
+  const submitted = await submit(page);
+  assert.equal(submitted.leadId, 'sample-a');
+  assert.match(submitted.researchRequestId, /^ava-/);
+  await page.evaluate(() => window.fixture.streams[0].resolve({
+    ok: true, answer: 'Public market evidence.', activeLeadId: 'sample-a',
+    rexHandoff: { status: 'complete', citations: ['https://example.com/county-data'] },
+  }));
+  await expect(page.getByText('Research complete', { exact: true })).toBeVisible();
+  await expect(page.getByRole('link', { name: /Source 1/ })).toHaveAttribute('href', 'https://example.com/county-data');
+  await page.reload();
+  await expect(page.getByText('Saved request', { exact: true })).toBeVisible();
+  await expect(page.getByText('Public market evidence.')).toHaveCount(0);
+  await assertNoActions(page);
+  await page.getByRole('button', { name: 'Check research status' }).click();
+  const lookup = await page.evaluate(() => window.fixture.streams[0].payload);
+  assert.deepEqual(lookup, { message: '', rexStatusOnly: true, researchRequestId: submitted.researchRequestId, leadId: 'sample-a' });
+  await page.evaluate(() => window.fixture.streams[0].resolve({
+    ok: false, answer: 'The linked record changed.', activeLeadId: 'sample-a', rexHandoff: { status: 'stale' },
+  }));
+  await expect(page.getByText('Research stale', { exact: true })).toBeVisible();
+  await expect(page.getByRole('link', { name: /Source 1/ })).toHaveCount(0);
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
+  await assertNoActions(page, 1);
+  assert.deepEqual(errors, []);
+});
+
+test('an unconfirmed Rex result offers status lookup and keeps its reference within the chat card', async t => {
+  const { page } = await open(t, '/ava-chat', {}, {}, { viewport: { width: 320, height: 780 }, isMobile: true, hasTouch: true });
+  await composer(page).fill('Ask Rex to research Tampa, FL');
+  await submit(page);
+  const reference = `rex-handoff-${'a'.repeat(64)}`;
+  await page.evaluate(id => window.fixture.streams[0].resolve({
+    ok: false, answer: 'The research may have run.', rexHandoff: { status: 'reconciliation_required', id },
+  }), reference);
+  await expect(page.getByText('Outcome unconfirmed', { exact: true })).toBeVisible();
+  await expect(page.getByText(reference, { exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Check research status' })).toBeEnabled();
+  await expect(page.getByRole('button', { name: 'Ask again' })).toHaveCount(0);
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
+  await assertNoActions(page, 1);
+});
 
 test('changing lead within Ava Chat replaces draft, history and the session sent on explicit submit', async (t) => {
   // The legacy data mirrors A so the original component loads A successfully before the switch.

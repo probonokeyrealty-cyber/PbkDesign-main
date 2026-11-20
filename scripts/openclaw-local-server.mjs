@@ -51,6 +51,7 @@ import { buildAvaDecisionMessages, isAvaCompactDecisionSafe } from './ava-decisi
 import { joinAvaSpeechResponses, splitAvaSpeechText } from './ava-speech-chunks.mjs';
 import { createAvaDecisionPreview, readDeepSeekStream, sanitizeAvaStreamReply } from './ava-deepseek-stream.mjs';
 import { streamAvaChatResponse } from './ava-chat-events.mjs';
+import { parseRexResearch, postgresRexHandoffStore, readRexHandoff, rexLeadVersion, runRexHandoff } from './ava-rex-handoff.mjs';
 import { getAvaChatRequiredPermissions } from './ava-team-chat-permissions.mjs';
 import { EventTypes, getDefaultEventBus, getEventBusStatus, publishEvent as publishEventBusEvent } from './event-bus/streams.mjs';
 import { createRuntimeCoverageSampler } from './runtime-coverage-sampler.mjs';
@@ -29130,25 +29131,43 @@ async function runOpenAiWebSearch(query = '', params = {}) {
     ],
   };
 
-  const toolTypes = ['web_search', 'web_search_preview'];
+  const toolTypes = params.singleAttempt ? ['web_search'] : ['web_search', 'web_search_preview'];
   let lastError = null;
   for (const toolType of toolTypes) {
     try {
       const response = await fetch(`${OPENAI_BASE_URL}/v1/responses`, {
         method: 'POST',
+        ...(params.singleAttempt ? { signal: AbortSignal.timeout(20_000), redirect: 'error' } : {}),
         headers: {
           Authorization: `Bearer ${OPENAI_API_KEY}`,
           'Content-Type': 'application/json',
+          ...(params.clientRequestId ? { 'X-Client-Request-Id': params.clientRequestId } : {}),
         },
         body: JSON.stringify({
           ...bodyBase,
+          ...(params.singleAttempt ? { max_tool_calls: 1, max_output_tokens: 850 } : {}),
           tools: [{ type: toolType }],
         }),
       });
       const payload = await response.json().catch(() => null);
       if (!response.ok) {
+        if (params.singleAttempt && response.status === 429 &&
+          (payload?.error?.type === 'insufficient_quota' || payload?.error?.code === 'credit_balance_exhausted')) {
+          return { ok: false, result: 'provider_quota_exhausted' };
+        }
+        if (params.singleAttempt && (response.status === 408 || response.status >= 500)) {
+          return { ok: false, result: 'reconciliation_required' };
+        }
         lastError = new Error(payload?.error?.message || payload?.message || `OpenAI web search returned ${response.status}`);
         continue;
+      }
+      if (params.singleAttempt) {
+        if (!payload || ['queued', 'in_progress'].includes(payload.status)) {
+          return { ok: false, result: 'reconciliation_required' };
+        }
+        if (payload.status !== 'completed' || !payload.output?.some(item => item.type === 'web_search_call' && item.status === 'completed')) {
+          return { ok: false, result: 'uncited_research' };
+        }
       }
       const answer = extractOpenAiResponseText(payload);
       const citations = extractOpenAiCitations(payload);
@@ -29160,7 +29179,7 @@ async function runOpenAiWebSearch(query = '', params = {}) {
         ok: true,
         result: 'live',
         query: cleanQuery,
-        answer: answer || 'OpenAI web search completed, but no readable answer text was returned.',
+        answer: answer || (params.singleAttempt ? '' : 'OpenAI web search completed, but no readable answer text was returned.'),
         citations,
         provider: {
           ...meta,
@@ -29169,6 +29188,7 @@ async function runOpenAiWebSearch(query = '', params = {}) {
         responseId: payload?.id || '',
       };
     } catch (error) {
+      if (params.singleAttempt) return { ok: false, result: 'reconciliation_required' };
       lastError = error;
     }
   }
@@ -46469,8 +46489,9 @@ async function invokeAgentFromRegistry(params = {}) {
     });
     await persistState(state);
     return {
-      ok: true,
-      result: 'agent_invoked',
+      ok: output?.ok !== false,
+      result: output?.ok === false ? 'agent_handler_failed' : 'agent_invoked',
+      ...(output?.ok === false ? { error: 'The assigned agent could not finish that request.' } : {}),
       routedTo: `invokeRegisteredAgent:${agent.id}`,
       agent,
       output,
@@ -65256,12 +65277,72 @@ function enforceAvaControlEnvelope(missionController = {}, assistantPlan = {}) {
   };
 }
 
+async function handleAvaRexResearch(request, body, market) {
+  const pool = getPgPool();
+  const leadId = String(body.leadId || '').trim().slice(0, 120);
+  const team = getTeamAuthMeta(request);
+  const owner = team.source === 'session-token' ? `team:${team.actor}` : 'pbk:bridge';
+  let handoff = { status: 'unavailable' };
+  if (body.rexStatusOnly !== true && !market) handoff = { status: 'invalid_market' };
+  else if (pool && typeof body.researchRequestId === 'string') {
+    const readVersion = async id => {
+      const { rows } = await pool.query(`
+        SELECT lead.record FROM public.bridge_state AS snapshot
+        CROSS JOIN LATERAL jsonb_array_elements(COALESCE(snapshot.data->'leadImports', '[]'::jsonb)) AS lead(record)
+        WHERE snapshot.id = 'singleton'
+          AND ($1 IN (lead.record->>'id', lead.record->>'leadId', lead.record->>'lead_id')) LIMIT 1`, [id]);
+      const current = findInternalAssistantLeadById(id);
+      const persisted = rexLeadVersion(rows[0]?.record);
+      return persisted && current ? `${persisted}:${rexLeadVersion(current)}` : null;
+    };
+    const input = { owner, requestId: body.researchRequestId, leadId, store: postgresRexHandoffStore(pool), readVersion };
+    try {
+      handoff = body.rexStatusOnly === true
+        ? await readRexHandoff(input)
+        : await runRexHandoff({ ...input, market,
+          research: (location, clientRequestId) => runOpenAiWebSearch(
+            `Summarize current public housing market conditions for ${location}. Link to the sources for the key facts and state what's uncertain.`,
+            { singleAttempt: true, fallback: false, clientRequestId }
+          ),
+        });
+    } catch {
+      // In particular, a failed receipt write cannot turn into a success or a second research call.
+      handoff = { status: 'unavailable' };
+    }
+  }
+  const answers = {
+    running: 'Rex is researching in Brain. Check research status for the saved result.',
+    reconciliation_required: 'Outcome unconfirmed. The research may have run. Use the request reference to reconcile the outcome before another run.',
+    stale: 'The linked lead or its property evidence changed. Ask Rex to research again to get a current result.',
+    failed: 'Rex could not return a cited market brief.',
+    conflict: 'This request already belongs to different research.',
+    invalid_market: 'Give Rex a city and state, for example: Ask Rex to research Tampa, FL.',
+    missing_lead: 'I could not verify the linked lead. Open the lead and try again.',
+    missing: 'I could not find a saved research request.',
+    unavailable: 'I could not confirm the saved research status. Check status before submitting it again.',
+  };
+  return { statusCode: 200, body: {
+    ok: ['running', 'complete'].includes(handoff.status),
+    mode: 'rex_research',
+    answer: handoff.failureReason === 'provider_quota_exhausted'
+      ? 'Research credits are unavailable. Ask your PBK administrator to check the search provider before starting a new brief.'
+      : handoff.answer || answers[handoff.status] || 'A new research request is required.',
+    activeLeadId: handoff.leadId || '',
+    sessionId: getPublicAvaAssistantSessionId(request, body),
+    rexHandoff: handoff,
+  } };
+}
+
 async function handleInternalAvaAssistantChatRequest(request) {
   return withRuntimeEvidenceContext('operator_chat', async () => {
   const assistantOpsStartedAt = Date.now();
   const requestTiming = createAvaRequestTiming();
   const timingTurn = createBridgeAgentTimingTurn('chat');
   const body = await requestTiming.measure('body_read', () => readBody(request));
+  const rexMarket = typeof body.message === 'string' ? parseRexResearch(body.message) : null;
+  if (body.rexStatusOnly === true || rexMarket || (typeof body.message === 'string' && /^ask rex to research\s/i.test(body.message.trim()))) {
+    return handleAvaRexResearch(request, body, rexMarket);
+  }
   const messages = normalizeConversationMessages(body.messages, { assistantMaxChars: 256_000 });
   const sanitizedInput = sanitizePublicAvaChatTurn(getLastUserMessage(messages, body.message || body.query || body.text || body.prompt || ''));
   const text = sanitizedInput.content;
@@ -65379,7 +65460,9 @@ async function handleInternalAvaAssistantChatRequest(request) {
     });
     const agentName = toolResult?.agent?.name || assistantIntent.agentName || assistantPlan.toolPlan.params?.agentId || 'the assigned agent';
     const workOrderId = toolResult?.workOrder?.id || '';
-    if (toolResult?.ok === false) {
+    if (toolResult?.result === 'agent_handler_failed') {
+      answer = `${agentName} received the work order but could not finish the request.`;
+    } else if (toolResult?.ok === false) {
       answer = `I could not assign ${agentName} yet. ${toolResult?.error || 'The agent registry did not return a usable worker.'}`.trim();
     } else {
       answer = [

@@ -128,6 +128,7 @@ type AvaAssistantExchange = {
   trace?: Record<string, unknown> | null;
   controlEnvelope?: Record<string, unknown> | null;
   deepSeekDecision?: Record<string, unknown> | null;
+  rexHandoff?: AvaAssistantChatResponse['rexHandoff'];
 };
 
 const DEFAULT_CHAT_COMMAND_MAX_AGE_MS = 24 * 60 * 60 * 1000;
@@ -590,12 +591,16 @@ function buildAssistantExchange(
     trace: response.trace,
     controlEnvelope: response.controlEnvelope,
     deepSeekDecision: getAssistantDeepSeekDecision(response),
+    rexHandoff: response.rexHandoff && {
+      ...response.rexHandoff,
+      requestId: response.rexHandoff.requestId || pendingExchange?.rexHandoff?.requestId,
+    },
   };
 }
 
 function buildAssistantRequestMessages(exchanges: AvaAssistantExchange[], command: string) {
   const messages = exchanges
-    .filter((exchange) => exchange.status === 'completed')
+    .filter((exchange) => exchange.status === 'completed' && !exchange.rexHandoff)
     .slice(-8)
     .flatMap((exchange) => [
       { role: 'user', content: exchange.request.slice(0, 1200) },
@@ -1447,12 +1452,12 @@ function AvaChatSession({ scope }: { scope: AvaChatScope }) {
       const parsed = rawExchanges ? JSON.parse(rawExchanges) : null;
       if (Array.isArray(parsed)) setAssistantExchanges(
         parsed
-          .filter((item) => item?.status === 'completed')
+          .filter((item) => item?.status === 'completed' || item?.rexHandoff)
           .map(
             (item): AvaAssistantExchange => ({
               id: String(item?.id || createAvaAssistantExchangeId()),
               request: String(item?.request || '').slice(0, 1200),
-              answer: String(item?.answer || ''),
+              answer: item?.rexHandoff ? 'Check the saved research status to see the current result.' : String(item?.answer || ''),
               status: 'completed',
               createdAt: String(item?.createdAt || item?.updatedAt || new Date().toISOString()),
               updatedAt: String(item?.updatedAt || item?.createdAt || new Date().toISOString()),
@@ -1462,6 +1467,7 @@ function AvaChatSession({ scope }: { scope: AvaChatScope }) {
               activeLeadId: String(item?.activeLeadId || ''),
               toolResult: asRecord(item?.toolResult),
               warning: String(item?.warning || ''),
+              rexHandoff: item?.rexHandoff ? { status: 'saved', requestId: item.rexHandoff.requestId } : undefined,
               mission:
                 item?.mission && typeof item.mission === 'object' && !Array.isArray(item.mission)
                   ? (item.mission as Record<string, unknown>)
@@ -1500,7 +1506,10 @@ function AvaChatSession({ scope }: { scope: AvaChatScope }) {
 
   useEffect(() => {
     if (!writableStorage?.assistantExchanges) return;
-    const completed = assistantExchanges.filter((exchange) => exchange.status === 'completed').slice(-30);
+    const completed = assistantExchanges.filter((exchange) => exchange.status === 'completed' || exchange.rexHandoff)
+      .slice(-30).map(exchange => exchange.rexHandoff
+        ? { ...exchange, answer: '', warning: '', rexHandoff: { status: 'saved', requestId: exchange.rexHandoff.requestId } }
+        : exchange);
     if (!writeAvaChatStorage(exchangesKey, JSON.stringify(completed))) setStorageUnavailable(true);
   }, [assistantExchanges, exchangesKey, writableStorage]);
 
@@ -1553,11 +1562,12 @@ function AvaChatSession({ scope }: { scope: AvaChatScope }) {
       let assistantController: AbortController | undefined;
       let replySpeech: ReturnType<typeof createAvaReplySpeech> | undefined;
       try {
+        const research = /^ask rex to research\s/i.test(command);
         const routed = classifyConversationalCommand(command, action);
         const nextAction = routed.action;
         const nextRequiresApproval =
           routed.requiresApproval === undefined ? requiresApproval : routed.requiresApproval;
-        useAssistantChat = shouldUseAssistantChatRoute({
+        useAssistantChat = research || shouldUseAssistantChatRoute({
           action: nextAction,
           selectedAction: action,
           requiresApproval: nextRequiresApproval,
@@ -1570,6 +1580,7 @@ function AvaChatSession({ scope }: { scope: AvaChatScope }) {
           pendingExchange = {
             id: createAvaAssistantExchangeId(), request: command, answer: '', status: 'pending',
             createdAt: now, updatedAt: now, suggestions: [],
+            ...(research ? { rexHandoff: { status: 'running' } } : {}),
           };
           const exchangeId = pendingExchange.id;
           setAssistantExchanges((current) => [...current, pendingExchange!].slice(-30));
@@ -1577,6 +1588,7 @@ function AvaChatSession({ scope }: { scope: AvaChatScope }) {
           setTranscript(command);
           const response = await streamAvaAssistantChatRequest({
             message: command,
+            ...(research ? { researchRequestId: exchangeId } : {}),
             sessionId: assistantSessionId || undefined,
             historyMode: 'completed-only',
             source: 'ava-chat-page',
@@ -1644,6 +1656,10 @@ function AvaChatSession({ scope }: { scope: AvaChatScope }) {
                 ...exchange,
                 status: cancelled ? 'cancelled' : 'failed',
                 interrupted: !cancelled,
+                ...(exchange.rexHandoff ? {
+                  rexHandoff: { status: 'unavailable' },
+                  answer: 'Outcome unconfirmed. Check the saved research status.',
+                } : {}),
                 updatedAt: new Date().toISOString(),
                 warning: cancelled
                   ? 'Response stopped. This reply is incomplete.'
@@ -1858,6 +1874,16 @@ function AvaChatSession({ scope }: { scope: AvaChatScope }) {
                           onReplay={() => {
                             setDraft(item.exchange.request);
                             window.requestAnimationFrame(() => composerRef.current?.focus());
+                          }}
+                          onCheckResearch={async () => {
+                            const exchange = item.exchange;
+                            const response = await streamAvaAssistantChatRequest({
+                              message: '', rexStatusOnly: true, researchRequestId: exchange.rexHandoff?.requestId || exchange.id,
+                              leadId: linkedLeadId || undefined,
+                            });
+                            if (!response.rexHandoff) throw new Error('Research status is unavailable.');
+                            setAssistantExchanges(current => current.map(entry => entry.id === exchange.id
+                              ? buildAssistantExchange(entry.request, response, entry) : entry));
                           }}
                           onUseSuggestion={(suggestion) => {
                             setDraft(suggestion);
@@ -2159,14 +2185,23 @@ function AvaThinkingBubble() {
 function AssistantExchange({
   exchange,
   onReplay,
+  onCheckResearch,
   onUseSuggestion,
 }: {
   exchange: AvaAssistantExchange;
   onReplay: () => void;
+  onCheckResearch: () => Promise<void>;
   onUseSuggestion: (suggestion: string) => void;
 }) {
+  const [checkingResearch, setCheckingResearch] = useState(false);
+  const [researchCheckError, setResearchCheckError] = useState('');
+  const research = exchange.rexHandoff;
   const failed = exchange.status === 'failed' || exchange.status === 'cancelled';
   const pending = exchange.status === 'pending';
+  const researchStatus = research && ({
+    saved: 'Saved request', running: 'Research in progress', complete: 'Research complete',
+    stale: 'Research stale', reconciliation_required: 'Outcome unconfirmed', unavailable: 'Status unavailable',
+  }[research.status] || 'Research needs review');
   return (
     <article className="space-y-3 [overflow-wrap:anywhere]" data-exchange-id={exchange.id} data-status={exchange.status} aria-busy={pending}>
       <div className="flex justify-end">
@@ -2204,6 +2239,21 @@ function AssistantExchange({
               </p>
             )}
             <p className="whitespace-pre-wrap break-words">{exchange.answer || (pending ? 'I am checking that now.' : '')}</p>
+            {research?.status === 'reconciliation_required' && research.id && (
+              <p className="mt-2 text-xs text-[var(--ava-text-muted)]">Request reference <code>{research.id}</code></p>
+            )}
+            {research?.citations?.length ? (
+              <ul className="mt-2 space-y-1" aria-label="Rex research sources">
+                {research.citations.map((source, index) => (
+                  <li key={source}>
+                    <a className="pbk-ava-evidence-link" href={source} target="_blank" rel="noreferrer">
+                      <ExternalLink size={14} aria-hidden="true" /> Source {index + 1} · {new URL(source).hostname}
+                    </a>
+                  </li>
+                ))}
+              </ul>
+            ) : null}
+            {researchCheckError && <p role="status" className="text-[var(--ava-warning)]">{researchCheckError}</p>}
             {exchange.activeLeadId && (
               <Link
                 className="pbk-ava-evidence-link mt-1"
@@ -2233,20 +2283,26 @@ function AssistantExchange({
             <span
               className={[
                 'inline-flex items-center gap-1.5 font-semibold',
-                failed ? 'text-[var(--ava-danger)]' : pending ? 'text-[var(--ava-text-muted)]' : 'text-[var(--ava-success)]',
+                failed ? 'text-[var(--ava-danger)]' : pending || (research && research.status !== 'complete') ? 'text-[var(--ava-text-muted)]' : 'text-[var(--ava-success)]',
               ].join(' ')}
             >
-              {failed ? <AlertTriangle size={14} /> : pending ? <Loader2 size={14} className="animate-spin" /> : <CheckCircle2 size={14} />}
-              {exchange.status === 'cancelled' ? 'Cancelled' : exchange.interrupted ? 'Interrupted' : failed ? 'Needs review' : pending ? 'Responding' : 'Answered'}
+              {failed ? <AlertTriangle size={14} /> : pending ? <Loader2 size={14} className="animate-spin" /> : !research || research.status === 'complete' ? <CheckCircle2 size={14} /> : null}
+              {researchStatus || (exchange.status === 'cancelled' ? 'Cancelled' : exchange.interrupted ? 'Interrupted' : failed ? 'Needs review' : pending ? 'Responding' : 'Answered')}
             </span>
             <button
               type="button"
               className="inline-flex min-h-8 items-center gap-1.5 rounded-md px-2 font-semibold text-[var(--ava-sky)] transition hover:bg-[var(--ava-sky-soft)]"
-              onClick={onReplay}
-              disabled={pending}
+              onClick={research ? async () => {
+                setCheckingResearch(true);
+                setResearchCheckError('');
+                try { await onCheckResearch(); }
+                catch { setResearchCheckError('Could not check research status. Try checking again.'); }
+                finally { setCheckingResearch(false); }
+              } : onReplay}
+              disabled={pending || checkingResearch}
             >
               <RotateCcw size={14} />
-              Ask again
+              {research ? checkingResearch ? 'Checking status…' : 'Check research status' : 'Ask again'}
             </button>
           </div>
         </div>

@@ -161,8 +161,9 @@ assert(
 );
 assert(
   commandCenter.includes('CALL_QUALITY_REVIEWED_KEY') &&
-    commandCenter.includes('persistReviewedCallId') &&
-    commandCenter.includes('reviewedCallRef.current.has(callId)'),
+    commandCenter.includes('useState(readReviewedCallIds)') &&
+    commandCenter.includes('persistReviewedCallId(reviewedCallId, nextReviewed)') &&
+    commandCenter.includes('onMarkReviewed={reviewedCallIds.has(reviewedCallId) ? undefined : markCallReviewed}'),
   'Reviewed call-quality dialogs must persist across dashboard reloads.'
 );
 

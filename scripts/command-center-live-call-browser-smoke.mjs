@@ -162,6 +162,11 @@ try {
       await reviewLastCall.click();
       await review.getByRole('button', { name: 'Mark reviewed' }).click();
       await expect(today.getByRole('button', { name: 'View review' })).toBeFocused();
+      await page.reload();
+      assert.deepEqual(
+        await page.evaluate(() => JSON.parse(localStorage.getItem('pbk:call-quality-reviewed:v1'))),
+        ['call-second']
+      );
       console.log(`Command Center live-call controls and guidance passed at ${width}px.`);
       await page.close();
     }

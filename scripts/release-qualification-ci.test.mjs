@@ -343,6 +343,20 @@ function workflow() {
   return parse(readFileSync(new URL('../.github/workflows/release-qualification.yml', import.meta.url), 'utf8'));
 }
 
+test('release qualification runs the staff and investor packet browser fixtures', () => {
+  const { steps } = workflow().jobs['release-qualification'];
+  const packetCheck = steps.findIndex((step) => step.name === 'Verify private Property Log and investor packets');
+  const browserInstall = steps.findIndex((step) => step.name === 'Install Playwright browsers');
+  assert.ok(browserInstall >= 0 && packetCheck > browserInstall);
+  const step = steps[packetCheck];
+  assert.equal(step.if, undefined);
+  assert.equal(step['continue-on-error'], undefined);
+  assert.equal(step.run.trim(), [
+    'node scripts/staff-property-log-browser-smoke.mjs',
+    'npm run test:investor-packet-browser',
+  ].join('\n'));
+});
+
 test('workflow requires full isolated Postgres and default Chromium/WebKit execution without conditional steps', () => {
   const config = workflow();
   assert.deepEqual(config.on, { pull_request: { branches: ['main'] }, push: { branches: ['main'] }, workflow_dispatch: null });

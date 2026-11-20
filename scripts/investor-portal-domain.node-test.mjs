@@ -85,6 +85,54 @@ test('draft changes do not overwrite published snapshot and stale saves fail', (
   assert.equal(run(s, 'alice', 'property', { id }).result.property.title, data.title);
   assert.throws(() => run(s, 'editor', 'save', { id, revision: 2, draft: data }), /changed/);
 });
+test('private packet attachments appear only in the reviewed release and to approved investors', () => {
+  const initial = fixture();
+  initial.members.pending.email = 'packet-review@example.invalid';
+  const saved = run(initial, 'editor', 'save', { draft: data });
+  let s = saved.state;
+  const { id } = saved.result.property;
+  function attach(name, mime) {
+    s = run(s, 'editor', 'asset', {
+      id,
+      revision: s.properties[id].revision,
+      asset: {
+        id: name,
+        title: name,
+        path: `${id}/${name}`,
+        kind: mime === 'application/pdf' ? 'packet' : 'photo',
+        mime,
+        alt: 'Synthetic property fixture',
+        rights: 'PBK-owned synthetic fixture',
+        buyerVisible: true,
+      },
+    }).state;
+  }
+  const names = ['packet.pdf', 'exterior.png', 'interior.png'];
+  attach(names[0], 'application/pdf');
+  attach(names[1], 'image/png');
+  s = run(s, 'reviewer', 'preview', { id }).state;
+  attach(names[2], 'image/png');
+  assert.equal(run(s, 'editor', 'property', { id }).result.property.assets.length, 3);
+  assert.throws(() => run(s, 'alice', 'property', { id }), /not available/);
+  assert.throws(
+    () => run(s, 'reviewer', 'release', { id, revision: s.properties[id].revision }),
+    /Preview/
+  );
+  s = run(s, 'reviewer', 'preview', { id }).state;
+  s = run(s, 'reviewer', 'release', { id, revision: s.properties[id].revision }).state;
+  assert.throws(() => run(s, 'pending', 'property', { id }), /not approved/);
+  s = run(s, 'reviewer', 'approveInvestor', { email: initial.members.pending.email }).state;
+  const packet = run(s, 'pending', 'property', { id }).result.property;
+  assert.deepEqual(
+    packet.assets.map(({ title }) => title),
+    names
+  );
+  assert.ok(packet.assets.every((asset) => !('path' in asset) && !('rights' in asset)));
+  attach('updated-packet.pdf', 'application/pdf');
+  assert.deepEqual(run(s, 'pending', 'property', { id }).result.property, packet);
+  s = run(s, 'reviewer', 'revokeInvestor', { email: initial.members.pending.email }).state;
+  assert.throws(() => run(s, 'pending', 'property', { id }), /not approved/);
+});
 test('inquiry retries create one record; payload mismatch fails; history is private', () => {
   let { s, id } = released();
   const payload = {

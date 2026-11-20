@@ -2,6 +2,7 @@ import { PORTAL_IS_STAGING } from './portalEnvironment';
 import { displayFact } from './displayFact.mjs';
 import { clearPrivateSession } from './clientState.mjs';
 import { useCallback, useEffect, useRef, useState } from 'react';
+import PacketFiles, { type QueuedPacketFile } from './PacketFiles';
 import {
   completeEmailCallback,
   isPasswordRecovery,
@@ -269,9 +270,10 @@ export function InvestorWorkspace({
     [timing, setTiming] = useState(''),
     [requestKey, setRequestKey] = useState(() => crypto.randomUUID()),
     [receipt, setReceipt] = useState<any>(null);
-  const [file, setFile] = useState<File | null>(null),
-    [rights, setRights] = useState(''),
-    [alt, setAlt] = useState('');
+  const [packetFiles, setPacketFiles] = useState<QueuedPacketFile[]>([]);
+  const hasQueuedFiles = packetFiles.length > 0;
+  const hasUnsavedChanges = dirty || hasQueuedFiles;
+  const sessionGeneration = useRef(0);
   const [accessMembers, setAccessMembers] = useState<any[]>([]),
     [investorEmail, setInvestorEmail] = useState(''),
     [contactId, setContactId] = useState('');
@@ -279,6 +281,7 @@ export function InvestorWorkspace({
     null
   );
   const clearPrivateState = useCallback(() => {
+    sessionGeneration.current++;
     clearPrivateSession(
       {
         member: setMember,
@@ -301,9 +304,7 @@ export function InvestorWorkspace({
         draft: setDraft,
         editing: setEditing,
         dirty: setDirty,
-        file: setFile,
-        rights: setRights,
-        alt: setAlt,
+        packetFiles: setPacketFiles,
         confirmation: setConfirmation,
         search: setSearch,
         filter: setFilter,
@@ -370,15 +371,15 @@ export function InvestorWorkspace({
     };
   }, [clearPrivateState, enterWorkspace]);
   useEffect(() => {
-    if (!dirty) return;
+    if (!hasUnsavedChanges) return;
     const protect = (event: BeforeUnloadEvent) => {
       event.preventDefault();
       event.returnValue = '';
     };
     window.addEventListener('beforeunload', protect);
     return () => window.removeEventListener('beforeunload', protect);
-  }, [dirty]);
-  useEffect(() => onDirtyChange?.(dirty), [dirty, onDirtyChange]);
+  }, [hasUnsavedChanges]);
+  useEffect(() => onDirtyChange?.(hasUnsavedChanges), [hasUnsavedChanges, onDirtyChange]);
   useEffect(() => {
     const expired = () => {
       clearPrivateState();
@@ -423,9 +424,16 @@ export function InvestorWorkspace({
     }
   }
   function leaveEditor() {
-    if (dirty && !window.confirm('Discard unsaved property changes?')) return false;
+    if (busy) return false;
+    if (hasUnsavedChanges) {
+      const changes = [dirty && 'unsaved property changes', hasQueuedFiles && 'queued files']
+        .filter(Boolean)
+        .join(' and ');
+      if (!window.confirm(`Discard ${changes}?`)) return false;
+    }
     setEditing(false);
     setDirty(false);
+    setPacketFiles([]);
     return true;
   }
   function edit(p: Property | null) {
@@ -435,9 +443,6 @@ export function InvestorWorkspace({
     setEditing(true);
     setPreview(null);
     setHistory(null);
-    setFile(null);
-    setRights('');
-    setAlt('');
   }
   function change(key: string, value: unknown) {
     setDraft((d) => ({ ...d, [key]: value }));
@@ -464,6 +469,42 @@ export function InvestorWorkspace({
     const r = await portalRequest('preview', { id: selected?.id });
     setPreview(r.property);
     setNotice('Investor preview recorded. Review the packet before releasing.');
+  }
+  async function uploadPacketFiles(property: Property) {
+    const generation = sessionGeneration.current;
+    let revision = property.revision;
+    for (const entry of packetFiles) {
+      const form = new FormData();
+      form.set('id', property.id);
+      form.set('revision', String(revision));
+      form.set('file', entry.file);
+      form.set('title', entry.file.name);
+      form.set('rights', entry.rights.trim());
+      form.set('alt', entry.alt.trim());
+      form.set('buyerVisible', 'true');
+      try {
+        const { property: updated } = (await uploadPortalAsset(form)) as { property: Property };
+        if (generation !== sessionGeneration.current) return;
+        revision = updated.revision;
+        setSelected(updated);
+        setProperties((current) => current.map((p) => (p.id === updated.id ? updated : p)));
+        setPacketFiles((current) => current.filter((file) => file.id !== entry.id));
+        setPreview(null);
+      } catch (cause) {
+        if (generation !== sessionGeneration.current) return;
+        const message =
+          cause instanceof TypeError ||
+          cause instanceof DOMException ||
+          cause instanceof SyntaxError
+            ? 'Upload could not be confirmed. Retry uses the same draft revision. If it changed, reopen the draft to check its attachments.'
+            : (cause as Error).message;
+        setPacketFiles((current) =>
+          current.map((file) => (file.id === entry.id ? { ...file, error: message } : file))
+        );
+        return;
+      }
+    }
+    setNotice('Files attached privately. Review and release a new version to share them.');
   }
   async function transition(command: string, status?: string) {
     if (dirty) throw new Error('Save or discard your changes first.');
@@ -930,7 +971,7 @@ export function InvestorWorkspace({
             <form
               onSubmit={(e) => {
                 e.preventDefault();
-                void act(save);
+                if (!busy) void act(save);
               }}
             >
               <fieldset disabled={busy}>
@@ -1039,7 +1080,11 @@ export function InvestorWorkspace({
                   Back to property log
                 </button>
                 {selected && (
-                  <button type="button" disabled={busy || dirty} onClick={() => act(doPreview)}>
+                  <button
+                    type="button"
+                    disabled={busy || hasUnsavedChanges}
+                    onClick={() => act(doPreview)}
+                  >
                     Preview as investor
                   </button>
                 )}
@@ -1047,7 +1092,7 @@ export function InvestorWorkspace({
                   <>
                     <button
                       type="button"
-                      disabled={busy || dirty || !preview}
+                      disabled={busy || hasUnsavedChanges || !preview}
                       onClick={() => act(() => transition('release'))}
                     >
                       Release reviewed version
@@ -1102,60 +1147,18 @@ export function InvestorWorkspace({
             </form>
           </section>
           {selected && (
-            <section className="portal-panel">
-              <h2>Private photos and packet files</h2>
-              <p>PDF, JPG, PNG or WebP, up to 10 MB. Save draft changes before uploading.</p>
-              <div className="portal-grid">
-                <label>
-                  Choose file
-                  <input
-                    type="file"
-                    accept="application/pdf,image/jpeg,image/png,image/webp"
-                    onChange={(e) => setFile(e.target.files?.[0] || null)}
-                  />
-                </label>
-                <label>
-                  Rights basis and rights holder
-                  <input value={rights} onChange={(e) => setRights(e.target.value)} />
-                </label>
-                <label>
-                  Photo alt text
-                  <input value={alt} onChange={(e) => setAlt(e.target.value)} />
-                </label>
-              </div>
-              <button
-                disabled={busy || dirty || !file || !rights}
-                onClick={() =>
-                  act(async () => {
-                    const form = new FormData();
-                    form.set('id', selected.id);
-                    form.set('revision', String(selected.revision));
-                    form.set('file', file!);
-                    form.set('title', file!.name);
-                    form.set('rights', rights);
-                    form.set('alt', alt);
-                    form.set('buyerVisible', 'true');
-                    const r = await uploadPortalAsset(form);
-                    setSelected(r.property);
-                    setFile(null);
-                    setPreview(null);
-                    await refresh();
-                    setNotice(
-                      'Private file uploaded. Review and release a new version to share it.'
-                    );
-                  })
-                }
-              >
-                Upload private file
-              </button>
-              <ul>
-                {selected.assets.map((a) => (
-                  <li key={a.id}>
-                    {a.title} · {a.kind} · Rights recorded
-                  </li>
-                ))}
-              </ul>
-            </section>
+            <PacketFiles
+              propertyLabel={
+                [selected.draft?.title, selected.draft?.address].filter(Boolean).join(' · ') ||
+                selected.id
+              }
+              assets={selected.assets}
+              files={packetFiles}
+              setFiles={setPacketFiles}
+              busy={busy}
+              dirty={dirty}
+              onUpload={() => void act(() => uploadPacketFiles(selected))}
+            />
           )}
           {preview && (
             <Packet

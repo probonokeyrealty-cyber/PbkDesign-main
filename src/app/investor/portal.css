@@ -151,6 +151,30 @@
   margin: 24px 0;
   box-shadow: 0 8px 26px #102f4206;
 }
+.portal-packet-files {
+  overflow-wrap: anywhere;
+}
+.portal-packet-list,
+.portal-packet-queue {
+  display: grid;
+  gap: 12px;
+  padding: 0;
+}
+.portal-packet-list li,
+.portal-packet-queue fieldset {
+  padding: 12px;
+  border: 1px solid var(--portal-border);
+  border-radius: 10px;
+}
+.portal-packet-queue legend {
+  max-width: 100%;
+  margin: 0;
+  padding: 0 4px;
+}
+.portal-packet-files > h3,
+.portal-packet-files .portal-actions {
+  margin: 16px 0;
+}
 .portal-header,
 .portal-line {
   display: flex;

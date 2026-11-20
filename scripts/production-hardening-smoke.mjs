@@ -228,14 +228,13 @@ assert(
   'Team-auth bridge access must model explicit call/SMS/email permissions for manual operator actions.'
 );
 assert(
-  /status:\s*delivery\?\.ok \? 'sent' : delivery\?\.result === 'provider_missing' \|\| !delivery \? 'provider_missing' : 'failed'/.test(
-    bridge
-  ) &&
-    /status:\s*telnyxMeta\.voiceReady && fromNumber \? 'local_preview' : 'provider_missing'/.test(
-      bridge
-    ) &&
+  /status:\s*delivery\?\.ok\s*\?\s*\(useOutlook\s*\?\s*'queued'\s*:\s*'sent'\)\s*:\s*delivery\?\.result === 'provider_missing' \|\| !delivery\s*\?\s*'provider_missing'\s*:\s*'failed'/.test(bridge),
+  'Only accepted Outlook mail may be queued; missing email providers must remain provider_missing.'
+);
+assert(
+  /status:\s*telnyxMeta\.voiceReady && fromNumber \? 'local_preview' : 'provider_missing'/.test(bridge) &&
     /Telnyx voice provider missing - no live call was placed/.test(bridge),
-  'Provider-missing manual call/email artifacts must not be labeled queued or live.'
+  'Provider-missing manual call artifacts must not be labeled queued or live.'
 );
 assert(
   approvalFanoutWorkflow.includes("const decisionPath = '/webhook/pbk-approval-decision'") &&

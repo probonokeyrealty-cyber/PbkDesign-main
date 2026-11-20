@@ -134,6 +134,7 @@ jobs:
         run: |
           node --test scripts/property-intelligence.node-test.mjs scripts/analyzer-intelligence.node-test.mjs scripts/lead-comps.node-test.mjs scripts/property-evidence.node-test.mjs
           node scripts/crm-property-evidence-browser-smoke.mjs
+          npm run test:property-intelligence-browser
 
       - name: Run Chromium and WebKit qualification
         run: node scripts/ava-design-browser-smoke.mjs

@@ -19,7 +19,7 @@ before(async () => {
         import { AvaChat } from './src/app/routes/AvaChat';
 
         function Fixture() {
-          const { pathname, search } = useLocation();
+          const { pathname, search, state } = useLocation();
           const navigate = useNavigate();
           React.useLayoutEffect(() => {
             history.replaceState({}, '', pathname + search);
@@ -28,7 +28,7 @@ before(async () => {
               navigate(url);
             };
           }, [pathname, search, navigate]);
-          return <main className="h-dvh" data-fixture-route={pathname + search}><AvaChat /></main>;
+          return <main className="h-dvh" data-fixture-route={pathname + search} data-fixture-lead-search={state?.avaLeadSearch}><AvaChat /></main>;
         }
 
         createRoot(document.getElementById('root')).render(
@@ -250,6 +250,15 @@ test('a spoken browser command opens its linked lead without a model or automati
   const { page, errors } = await open(t, aUrl, {}, { voice: true });
   await speak(page, 'Hey Ava, open the current lead.');
   await expect(page.locator('main')).toHaveAttribute('data-fixture-route', '/leads/sample-a');
+  await assertNoActions(page);
+  assert.deepEqual(errors, []);
+});
+
+test('spoken lead lookup passes the literal term to Leads without putting it in the URL', async t => {
+  const { page, errors } = await open(t, '/ava-chat', {}, { voice: true });
+  await speak(page, 'Search leads for Avery O’Neil.');
+  await expect(page.locator('main')).toHaveAttribute('data-fixture-route', '/leads');
+  await expect(page.locator('main')).toHaveAttribute('data-fixture-lead-search', 'Avery O’Neil');
   await assertNoActions(page);
   assert.deepEqual(errors, []);
 });

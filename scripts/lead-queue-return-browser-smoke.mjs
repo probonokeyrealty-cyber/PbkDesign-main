@@ -35,6 +35,18 @@ try {
             : path === '/state' ? { leadImports: leads } : { ok: true, items: [] } });
     });
     try {
+      await page.goto(origin + '/ava-chat', { waitUntil: 'domcontentloaded', timeout: 60_000 });
+      await page.getByRole('textbox', { name: 'Ask Ava anything' }).fill('Search leads for Queue Sample 12');
+      await page.getByRole('button', { name: 'Send to Ava', exact: true }).click();
+      await expect(page).toHaveURL(origin + '/leads');
+      const avaSearch = page.getByRole('searchbox', { name: /Search leads/ });
+      await expect(avaSearch).toHaveValue('Queue Sample 12');
+      await expect(page.getByRole('button', { name: /^Open lead Queue Sample 12 at / }).filter({ visible: true })).toBeVisible();
+      await expect(page.getByRole('button', { name: /^Open lead Queue Sample 13 at / }).filter({ visible: true })).toHaveCount(0);
+      await page.goBack();
+      await expect(page).toHaveURL(origin + '/ava-chat');
+      await page.goForward();
+      await expect(avaSearch).toHaveValue('Queue Sample 12');
       await page.goto(origin + '/leads?search=Initial');
       const search = page.getByRole('searchbox', { name: /Search leads/ });
       await search.fill('Queue Sample');

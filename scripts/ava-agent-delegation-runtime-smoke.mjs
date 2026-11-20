@@ -320,6 +320,24 @@ async function main() {
     assert.equal(outlookLead.status, 200);
     assert.deepEqual(outlookLead.json.outlookDelivery.map(({ state }) => state), ['accepted', 'recovery']);
     assert.equal(outlookLead.json.outlookDelivery[0].receiptId, 'fixture-outlook-1');
+    const receiptUrl = 'https://mail.google.com/mail/u/0/#inbox/1234567890abcdef';
+    const confirmationPath = `/api/approvals/${outlookApprovalId}/outlook-delivery`;
+    const noAttestation = await requestJson(baseUrl, confirmationPath, { method: 'PUT', body: { receiptUrl } });
+    assert.equal(noAttestation.status, 400);
+    const confirm = () => requestJson(baseUrl, confirmationPath, { method: 'PUT', body: { receiptUrl, matchedReceipt: true } });
+    const confirmedDelivery = await confirm();
+    assert.equal(confirmedDelivery.status, 200, confirmedDelivery.text);
+    assert.equal(confirmedDelivery.json.record.state, 'delivered');
+    assert.equal((await confirm()).json.record.confirmation.confirmedAt, confirmedDelivery.json.record.confirmation.confirmedAt);
+    const otherReceipt = await requestJson(baseUrl, confirmationPath, {
+      method: 'PUT', body: { matchedReceipt: true, receiptUrl: 'https://mail.google.com/mail/u/0/#inbox/abcdef1234567890' },
+    });
+    assert.equal(otherReceipt.status, 409);
+    const confirmedLead = await requestJson(baseUrl, '/api/leads/lead-morgan/full');
+    assert.equal(confirmedLead.json.outlookDelivery[0].confirmation.receiptUrl, receiptUrl);
+    const confirmedState = JSON.parse(await readFile(join(stateDir, 'openclaw-state.json'), 'utf8'));
+    assert.equal(confirmedState.messages.filter((item) => item.provider === 'Outlook').length, 1);
+    assert.equal(confirmedState.approvals.find((item) => item.id === outlookApprovalId).metadata.providerActionDispatch.status, 'completed');
 
     console.log(
       JSON.stringify(

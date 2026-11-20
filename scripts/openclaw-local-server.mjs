@@ -2,7 +2,7 @@ import { execFileSync } from 'node:child_process';
 import { createNeonMailRouter } from './neon-auth-mail.mjs';
 import { createComposioResearchDiscovery } from './composio-research-discovery.mjs';
 import { sendAvaOutlookMail } from './ava-outlook-mail.mjs';
-import { readOutlookDelivery } from '../src/app/utils/outlookDelivery.mjs';
+import { normalizeOutlookReceiptUrl, readOutlookDelivery } from '../src/app/utils/outlookDelivery.mjs';
 import { createServer, globalAgent as httpGlobalAgent } from 'node:http';
 import { globalAgent as httpsGlobalAgent } from 'node:https';
 import { createHash, createHmac, createPrivateKey, createPublicKey, createSign as __dsCreateSign, randomUUID, timingSafeEqual, verify as verifySignature } from 'node:crypto';
@@ -3906,6 +3906,9 @@ function authorizeDirectTeamBridgeRequest({
 
   if (chatPermissions.has('canApproveProviderActions') && permissions.canApproveProviderActions !== true) {
     return deny('canApproveProviderActions', 'approve provider actions');
+  }
+  if (normalizedMethod === 'PUT' && /^\/api\/approvals\/[^/]+\/outlook-delivery$/.test(normalizedPath) && permissions.canApproveProviderActions !== true) {
+    return deny('canApproveProviderActions', 'confirm Outlook delivery');
   }
 
   const killSwitchTool = /^(?:pbk_kill_switch|killswitch|togglekillswitch)$/i.test(toolName);
@@ -15651,6 +15654,53 @@ async function loadOutlookDeliveryForLead(leadId) {
   }
   return [...records.values()].map(readOutlookDelivery).filter(Boolean)
     .sort((left, right) => right.at.localeCompare(left.at));
+}
+
+async function confirmOutlookDelivery(approvalId, receiptUrl, actor) {
+  const cached = (state.approvals || []).find((item) => item.id === approvalId && (item.workspaceId || 'pbk') === 'pbk');
+  const unavailable = { status: 503, error: 'Could not save delivery confirmation. Refresh this record and try again.' };
+  const useDatabase = Boolean(getPgPool());
+  if (!useDatabase && IS_HOSTED) return unavailable;
+
+  let approval = cached;
+  if (useDatabase) {
+    const saved = await queryPgRows('SELECT * FROM public.approvals WHERE id = $1 AND workspace_id = $2', [approvalId, 'pbk']);
+    if (!saved.ok) return unavailable;
+    approval = saved.rows[0] && normalizePgApprovalRecord(saved.rows[0]);
+  }
+  const record = readOutlookDelivery(approval);
+  if (!record) return { status: 404, error: 'Outlook approval not found.' };
+  if (record.confirmation?.receiptUrl === receiptUrl) return { status: 200, record };
+  if (!record.canConfirm) return { status: 409, error: 'This Outlook approval cannot accept a new delivery confirmation.' };
+
+  const confirmation = { receiptUrl, confirmedAt: isoNow(), confirmedBy: actor };
+  const previousMetadata = approval.metadata;
+  const metadata = { ...previousMetadata, outlookDeliveryConfirmation: confirmation };
+  if (useDatabase) {
+    const updated = await queryPgRows(
+      `UPDATE public.approvals
+          SET payload = jsonb_set(payload, '{metadata,outlookDeliveryConfirmation}', $4::jsonb), updated_at = NOW()
+        WHERE id = $1 AND workspace_id = $2 AND status = 'approved'
+          AND payload->'metadata' = $3::jsonb
+        RETURNING id`,
+      [approvalId, 'pbk', JSON.stringify(approval.metadata), JSON.stringify(confirmation)]
+    );
+    if (!updated.ok) return unavailable;
+    if (!updated.rows.length) return { status: 409, error: 'The approval changed. Refresh it before confirming delivery.' };
+  }
+
+  const updatedApproval = { ...approval, metadata };
+  if (cached) Object.assign(cached, updatedApproval);
+  else addApproval(state, updatedApproval);
+  try {
+    await persistState(state);
+  } catch {
+    if (!useDatabase) {
+      if (cached) cached.metadata = previousMetadata;
+      return unavailable;
+    }
+  }
+  return { status: 200, record: readOutlookDelivery(updatedApproval) };
 }
 
 async function backfillContractRecordsToPg(contracts = state.contracts || []) {
@@ -79866,6 +79916,25 @@ const server = createServer(async (request, response) => {
         ...result,
         state: buildStateSnapshot(),
       });
+      return;
+    }
+
+    const outlookDeliveryMatch = matchPath(pathname, '/api/approvals/:id/outlook-delivery');
+    if (outlookDeliveryMatch && request.method === 'PUT') {
+      const body = await readBody(request);
+      const teamAuth = request.pbkTeamAuth || getTeamAuthMeta(request);
+      if (hasTeamAuthCredentials(request) && (!teamAuth.ok || !getTeamPermissions().canApproveProviderActions)) {
+        json(response, 403, { ok: false, error: 'This team session cannot confirm Outlook delivery.' });
+        return;
+      }
+      const receiptUrl = normalizeOutlookReceiptUrl(body.receiptUrl);
+      if (!receiptUrl || body.matchedReceipt !== true) {
+        json(response, 400, { ok: false, error: 'Provide a Gmail or Outlook message link and confirm it matches this email.' });
+        return;
+      }
+      const actor = teamAuth.ok ? teamAuth.actor || 'PBK team' : 'PBK operator';
+      const { status, ...result } = await confirmOutlookDelivery(outlookDeliveryMatch.groups.id, receiptUrl, actor);
+      json(response, status, { ok: status === 200, ...result });
       return;
     }
 

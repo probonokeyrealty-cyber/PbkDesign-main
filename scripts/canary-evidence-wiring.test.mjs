@@ -183,10 +183,11 @@ test('approval, auth, delivery and dispatch code outside maturity remains byte-f
   // Outlook lead mail binds the saved address to an approval and persists the provider receipt.
   // The Outlook adapter and isolated agent smoke exercise the approval dispatch lease.
   // Lead detail exposes only the selected lead's Outlook delivery projection.
+  // Delivery confirmation is a metadata-only write and cannot start dispatch.
   // Telnyx receipt mapping and the scoped outbound media policy are covered by the
   // unified conversation bridge smoke test.
   assert.equal(createHash('sha256').update(unchanged).digest('hex'),
-    'd47b6500d45906e0dec92842fffff7a1d94f5b7076978e1e1394e3cfb9a8c942');
+    '5845adba92eb5f25bd2485bc40fd83b69f8675048203ff805754aec22d9c65d7');
 });
 
 test('production distribution includes reader and protocol, never the fixture signer', () => {

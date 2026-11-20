@@ -10,7 +10,7 @@ const lifetime = createSessionLifetime(() => {
   accessToken = '';
   window.dispatchEvent(new Event('pbk-portal-expired'));
 });
-export type PortalMember = { id: string; email: string; role: 'investor' | 'editor' | 'reviewer' };
+export type PortalMember = { id: string; email: string; role: 'investor' | 'editor' | 'reviewer'; consultationEnabled?: boolean };
 function expireRejectedSession(response: Response) {
   if (response.status !== 401 || !accessToken) return;
   accessToken = '';

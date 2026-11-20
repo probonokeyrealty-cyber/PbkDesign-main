@@ -1,5 +1,6 @@
 import { PORTAL_IS_STAGING } from './portalEnvironment';
 import { displayFact } from './displayFact.mjs';
+import { PropertyConsultation } from './PropertyConsultation';
 import { clearPrivateSession } from './clientState.mjs';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
@@ -62,12 +63,14 @@ const checkLabels: Record<string, string> = {
 };
 function Packet({
   p,
+  consultationEnabled,
   busy,
   packetTab,
   setPacketTab,
   act,
 }: {
   p: any;
+  consultationEnabled?: boolean;
   busy: boolean;
   packetTab: string;
   setPacketTab: (value: string) => void;
@@ -164,6 +167,9 @@ function Packet({
             Unknown means no verified fact was supplied. Values and estimates are informational, not
             a guarantee.
           </p>
+          {consultationEnabled && (
+            <PropertyConsultation key={`${p.id}:${p.version}`} id={p.id} version={p.version} />
+          )}
         </>
       ) : (
         <div className="portal-empty">
@@ -343,7 +349,7 @@ export function InvestorWorkspace({
           : 'Use the staff property log for this staff identity.'
       );
     }
-    setMember(r.member);
+    setMember({ ...r.member, consultationEnabled: r.consultationEnabled === true });
     await refresh();
   }, [staffMode, refresh]);
   useEffect(() => {
@@ -1157,6 +1163,16 @@ export function InvestorWorkspace({
               </ul>
             </section>
           )}
+          {member.consultationEnabled && selected?.published &&
+            ['Available', 'Under review'].includes(selected.published.status) && (
+              <section className="portal-panel" aria-label="Released property consultation">
+                <PropertyConsultation
+                  key={`${selected.id}:${selected.published.version}`}
+                  id={selected.id}
+                  version={selected.published.version}
+                />
+              </section>
+            )}
           {preview && (
             <Packet
               p={preview}
@@ -1415,6 +1431,7 @@ export function InvestorWorkspace({
             <>
               <Packet
                 p={selected}
+                consultationEnabled={member.consultationEnabled}
                 busy={busy}
                 packetTab={packetTab}
                 setPacketTab={setPacketTab}

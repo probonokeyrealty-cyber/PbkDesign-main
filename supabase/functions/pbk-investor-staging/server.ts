@@ -3,12 +3,20 @@ import { readLimitedBody } from './bodyLimit.mjs';
 import { execute, membership, verificationInput } from './domain.mjs';
 import { authRedirectUrl, registerVerifiedSession } from './authSession.mjs';
 import { isAllowedOrigin, assertEntryCommand, assertEntryMember } from './entryPolicy.mjs';
+import { consultationInput, reserveConsultation, consultProperty } from './propertyConsult.mjs';
 
 export function createPortalHandler(profile: any) {
   const URL = Deno.env.get('SUPABASE_URL')!;
   const SERVICE = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
   const ANON = Deno.env.get('SUPABASE_ANON_KEY')!;
   const BUCKET = profile.bucket;
+  const consultKey = Deno.env.get('PBK_PORTAL_DEEPSEEK_API_KEY')?.trim();
+  const consultModel = Deno.env.get('PBK_PORTAL_DEEPSEEK_MODEL')?.trim();
+  const consultationEnabled = Boolean(
+    consultKey &&
+    consultModel &&
+    Deno.env.get(`PBK_PORTAL_DEEPSEEK_${profile.environment.toUpperCase()}_ENABLED`) === 'true'
+  );
   const providerHeaders = {
     apikey: SERVICE,
     Authorization: `Bearer ${SERVICE}`,
@@ -431,6 +439,27 @@ export function createPortalHandler(profile: any) {
       const current = await read();
       const { uid, hash } = await identity(req, current.data);
       assertEntryMember(origin, membership(current.data, uid), profile);
+      if (command === 'consultProperty') {
+        if (!consultationEnabled)
+          return json({ error: 'Property consultation is unavailable.' }, 503, origin);
+        const input = await mutate((data) => {
+          const session = data.sessions?.[hash];
+          if (!session || session.uid !== uid || session.expiresAt <= Date.now())
+            throw Object.assign(Error('Sign in again.'), { status: 401 });
+          assertEntryMember(origin, membership(data, uid), profile);
+          const context = consultationInput(data, payload);
+          reserveConsultation(data, uid);
+          return { changed: true, state: data, result: context };
+        });
+        const answer = await consultProperty({ key: consultKey, model: consultModel, input });
+        const latest = await read();
+        const session = latest.data.sessions?.[hash];
+        if (!session || session.uid !== uid || session.expiresAt <= Date.now())
+          throw Object.assign(Error('Sign in again.'), { status: 401 });
+        assertEntryMember(origin, membership(latest.data, uid), profile);
+        consultationInput(latest.data, payload);
+        return json({ answer, version: payload.version }, 200, origin);
+      }
       if (command === 'setPassword') {
         const password = typeof payload.password === 'string' ? payload.password : '';
         if (password.length < 12 || password.length > 128)
@@ -477,7 +506,9 @@ export function createPortalHandler(profile: any) {
         return execute(data, uid, command, payload);
       });
       return json(
-        command === 'session' ? { ...result, staging: profile.environment === 'staging' } : result,
+        command === 'session'
+          ? { ...result, staging: profile.environment === 'staging', consultationEnabled }
+          : result,
         200,
         origin
       );

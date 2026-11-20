@@ -37,11 +37,12 @@ const property = {
 };
 try {
   await mkdir('output/playwright', { recursive: true });
-  for (const width of [390, 1440]) {
+  for (const width of [320, 390, 1440]) {
     const page = await browser.newPage({ viewport: { width, height: 900 } });
     let expired = false;
     let unavailable = false;
     const errors = [];
+    const consultations = [];
     page.on('pageerror', (e) => errors.push(e.message));
     await page.route('**/*', async (route) => {
       const url = new URL(route.request().url());
@@ -58,6 +59,12 @@ try {
           });
         if (command === 'authPassword' && payload.password !== 'fixture-only-password')
           return route.fulfill({ status: 401, json: { error: 'Email or password is incorrect.' } });
+        if (command === 'consultProperty') {
+          consultations.push(payload);
+          return route.fulfill({
+            json: { version: 1, answer: 'Verify repair bids and recent comparable sales.' },
+          });
+        }
         const results = {
           authCallback: { expiresIn: 3600 },
           authPassword: { token: 'fixture-native', expiresIn: 3600 },
@@ -65,6 +72,7 @@ try {
           authStart: { message: 'If approved, a link will arrive.' },
           session: {
             member: { id: 'fixture-investor', email: 'fixture@example.invalid', role: 'investor' },
+            consultationEnabled: true,
           },
           list: { properties: [property] },
           inquiries: { inquiries: [] },
@@ -101,6 +109,12 @@ try {
     await expect(packet.getByText('After-repair value · estimate', { exact: true })).toBeVisible();
     await expect(packet.getByText('Not provided. Complete your own due diligence.')).toBeVisible();
     await packet.getByRole('tab', { name: 'Property record', exact: true }).click();
+    assert.equal(consultations.length, 0);
+    await packet.getByLabel('Review question').selectOption('renovation');
+    assert.equal(consultations.length, 0);
+    await packet.getByRole('button', { name: 'Ask DeepSeek' }).click();
+    await expect(packet.getByText('Verify repair bids and recent comparable sales.')).toBeVisible();
+    assert.deepEqual(consultations, [{ id: property.id, version: 1, topic: 'renovation' }]);
     await expect(packet.getByText('Unknown', { exact: true }).first()).toBeVisible();
     await expect(packet.getByText('0', { exact: true })).toBeVisible();
     await packet.getByRole('tab', { name: 'Photos', exact: true }).click();

@@ -79,3 +79,94 @@ test('live handler uses only live state and bucket for real multipart upload', a
     globalThis.fetch = original;
   }
 });
+
+test('consultation uses only current released facts, reserves quota, and checks access after the model responds', async () => {
+  const profile = portalProfile('live');
+  const token = 'fixture-consultation-session';
+  const hash = Buffer.from(
+    await crypto.subtle.digest('SHA-256', new TextEncoder().encode(token))
+  ).toString('hex');
+  let state = emptyState();
+  state.members.buyer = { role: 'investor', approved: true };
+  state.sessions = { [hash]: { uid: 'buyer', expiresAt: Date.now() + 60000 } };
+  state.properties.house = {
+    draft: { sqft: 9999, internalNotes: 'DRAFT PRIVATE' },
+    published: {
+      version: 4,
+      status: 'Available',
+      sqft: 1200,
+      askingCents: 10000,
+      priceOnRequest: true,
+      address: 'PRIVATE STREET',
+      summary: 'UNTRUSTED TEXT',
+      assets: [{ url: 'https://example.test/private' }],
+    },
+  };
+  const originalFetch = globalThis.fetch;
+  const originalGet = Deno.env.get;
+  Deno.env.get = (key) =>
+    ({
+      PBK_PORTAL_DEEPSEEK_API_KEY: 'fixture-provider-only',
+      PBK_PORTAL_DEEPSEEK_MODEL: 'fixture-model',
+      PBK_PORTAL_DEEPSEEK_LIVE_ENABLED: 'true',
+    })[key] ?? originalGet(key);
+  let modelCalls = 0;
+  let withdraw = false;
+  globalThis.fetch = async (url, options = {}) => {
+    const target = new URL(url);
+    if (target.hostname === 'api.deepseek.com') {
+      modelCalls++;
+      const body = JSON.parse(options.body);
+      assert.equal(body.tools, undefined);
+      const { facts } = JSON.parse(body.messages[1].content);
+      assert.equal(facts.sqft, 1200);
+      assert.equal(facts.askingCents, null);
+      assert.doesNotMatch(options.body, /9999|PRIVATE|UNTRUSTED|example\.test|buyer/);
+      if (withdraw) state.properties.house.published.status = 'Withdrawn';
+      return Response.json({ choices: [{ message: { content: 'Verify property dimensions.' } }] });
+    }
+    if (target.pathname === '/rest/v1/' + profile.table)
+      return Response.json([{ revision: 0, data: structuredClone(state) }]);
+    if (target.pathname === '/auth/v1/user') return Response.json({ id: 'buyer' });
+    if (target.pathname === '/rest/v1/rpc/' + profile.commitRpc) {
+      state = JSON.parse(options.body).next_data;
+      return Response.json(true);
+    }
+    throw Error('Unexpected fixture endpoint');
+  };
+  const request = (handler, payload, authenticate = true) =>
+    handler(
+      new Request('https://qa-provider.example/functions/v1/' + profile.functionName, {
+        method: 'POST',
+        headers: {
+          Origin: profile.publicOrigin,
+          ...(authenticate ? { Authorization: 'Bearer ' + token } : {}),
+        },
+        body: JSON.stringify({ command: 'consultProperty', payload }),
+      })
+    );
+  try {
+    const handler = createPortalHandler(profile);
+    const payload = { id: 'house', version: 4, topic: 'renovation' };
+    assert.equal((await request(handler, payload, false)).status, 401);
+    assert.equal((await request(handler, { ...payload, version: 3 })).status, 409);
+    assert.equal((await request(handler, { ...payload, facts: { sqft: 9000 } })).status, 400);
+    assert.equal(modelCalls, 0);
+    const response = await request(handler, payload);
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), { answer: 'Verify property dimensions.', version: 4 });
+    assert.equal(state.consultationUsage.total, 1);
+    state.consultationUsage.users.buyer = 6;
+    assert.equal((await request(handler, payload)).status, 429);
+    assert.equal(modelCalls, 1);
+    state.consultationUsage.users.buyer = 1;
+    withdraw = true;
+    assert.equal((await request(handler, payload)).status, 404);
+    assert.equal(modelCalls, 2);
+    assert.equal((await request(handler, payload)).status, 404);
+    assert.equal(modelCalls, 2);
+  } finally {
+    globalThis.fetch = originalFetch;
+    Deno.env.get = originalGet;
+  }
+});

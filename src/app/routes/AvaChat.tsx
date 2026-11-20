@@ -191,7 +191,7 @@ const PBK_COMPANION_ACTIONS: CompanionAction[] = [
   {
     id: 'open-page',
     label: 'Go to page',
-    description: 'Open a page or say “Search leads for” and a name or address.',
+    description: 'Open a page, search leads, or say “Show saved comps” in a lead’s chat.',
     prompt: 'Open Leads',
     action: 'operator_command',
     icon: ExternalLink,

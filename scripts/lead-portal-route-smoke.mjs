@@ -109,8 +109,8 @@ assert(
 );
 assert(
   portal.includes('canonicalLeadId') &&
-    /navigate\(`\/leads\/\$\{encodeURIComponent\(canonicalLeadId\)\}`/.test(portal),
-  'Alias lead URLs must normalize before resolving the canonical conversation thread.'
+    /navigate\(`\/leads\/\$\{encodeURIComponent\(canonicalLeadId\)\}\$\{location\.hash\}`/.test(portal),
+  'Alias lead URLs must preserve the requested evidence section when they normalize.'
 );
 assert(
   portal.includes('toolResult') &&

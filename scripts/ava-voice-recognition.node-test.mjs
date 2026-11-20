@@ -73,6 +73,24 @@ test('browser commands resolve exact existing destinations and the bound lead', 
   assert.equal(resolveAvaBrowserCommand('Open Leads and export all records'), null);
 });
 
+test('Ava opens saved lead evidence only for the lead bound to the conversation', () => {
+  assert.deepEqual(resolveAvaBrowserCommand('Show saved analysis', 'lead-42'), { path: '/leads/lead-42#lead-numbers' });
+  assert.deepEqual(resolveAvaBrowserCommand('Show saved comps', 'lead-42'), { path: '/leads/lead-42#lead-comps' });
+  assert.deepEqual(resolveAvaBrowserCommand('Open property photos', 'lead-42'), { path: '/leads/lead-42#lead-photos' });
+  assert.deepEqual(resolveAvaBrowserCommand('Show property record', 'lead-42'), { path: '/leads/lead-42#lead-record' });
+  assert.deepEqual(resolveAvaBrowserCommand('Show saved comps'), { path: null });
+  assert.equal(resolveAvaBrowserCommand('Refresh comps', 'lead-42'), null);
+  const linked = fixture();
+  linked.context.linkedLeadId = 'lead-42';
+  const event = { results: [Object.assign([{ transcript: 'Show saved comps' }], { isFinal: true })] };
+  linked.callback(event);
+  assert.deepEqual(linked.submitted, ['Show saved comps']);
+  const general = fixture();
+  general.callback(event);
+  assert.deepEqual(general.submitted, []);
+  assert.deepEqual(general.drafts, ['Show saved comps']);
+});
+
 test('an explicit lead search keeps the term in navigation state, preserves case, and supports voice', () => {
   const command = 'Hey Ava, please search leads for Avery O’Neil.';
   assert.deepEqual(resolveAvaBrowserCommand(command), { path: '/leads', state: { avaLeadSearch: 'Avery O’Neil' } });

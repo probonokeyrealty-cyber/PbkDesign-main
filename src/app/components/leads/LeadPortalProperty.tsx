@@ -34,14 +34,16 @@ function ZillowLink({ href }: { href: string }) {
 
 export function LeadPortalProperty({
   lead,
+  initialTab = 'overview',
   onEdit,
   onSaved,
 }: {
   lead: LeadPortalModel;
+  initialTab?: 'overview' | PropertyEvidenceTab;
   onEdit: () => void;
   onSaved: (leadId: string) => Promise<void>;
 }) {
-  const [tab, setTab] = useState('overview');
+  const [tab, setTab] = useState<string>(initialTab);
   const [refreshing, setRefreshing] = useState(false);
   const [compSaving, setCompSaving] = useState(false);
   const [refreshStatus, setRefreshStatus] = useState('');

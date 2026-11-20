@@ -1,0 +1,68 @@
+{
+  "status": "reviewed-implementation-awaiting-scoped-session-provisioning",
+  "environment": "isolated Composio staging only",
+  "projectName": "probonokeyrealty_workspace_first_project",
+  "connection": {
+    "userId": "pbk-cloud-research",
+    "accountId": "ca_r5HmRJD9k_-7",
+    "authConfigId": "ac_WxNF28Po0Sxv",
+    "status": "ACTIVE",
+    "automaticToolRouterDiscoveryEnabled": false,
+    "directAccountBoundListReadVerified": true
+  },
+  "runtimeCredentialProposal": {
+    "name": "PBK E2B inventory runtime",
+    "permissions": [
+      {"resource": "Tools", "access": "Read only"},
+      {"resource": "Session management", "access": "Read only"},
+      {"resource": "Connected accounts", "access": "Read only"},
+      {"resource": "Session tool execution", "access": "Write only"}
+    ],
+    "installOnlyOnService": "srv-dbvk7tv40ujc73e0d8gg",
+    "environmentVariable": "PBK_COMPOSIO_E2B_API_KEY",
+    "created": false
+  },
+  "setupCredentialProposal": {
+    "name": "PBK E2B session setup - TEMPORARY",
+    "permissions": [{"resource": "Session management", "access": "Write only"}],
+    "installOnRender": false,
+    "revokeAfterCreatingOnePinnedSession": true,
+    "created": false
+  },
+  "sessionCreatePath": "/api/v3.1/tool_router/session",
+  "sessionCreateBody": {
+    "user_id": "pbk-cloud-research",
+    "toolkits": {"enable": ["e2b"]},
+    "tools": {"e2b": {"enable": ["E2B_LIST_SANDBOXES"]}},
+    "auth_configs": {"e2b": "ac_WxNF28Po0Sxv"},
+    "connected_accounts": {"e2b": ["ca_r5HmRJD9k_-7"]},
+    "preload": {"tools": ["E2B_LIST_SANDBOXES"]},
+    "instant": false,
+    "manage_connections": {"enable": false},
+    "workbench": {"enable": false, "enable_proxy_execution": false},
+    "proxy_execute": {"enable": false},
+    "search": {"enable": false},
+    "execute": {"enable_multi_execute": false},
+    "multi_account": {"enable": false},
+    "experimental": {"no_elicitation_support_fallback": "deny"}
+  },
+  "toolDefinitionObservedVersion": "20261118_00",
+  "fixedArguments": {"limit": 100},
+  "nextChecks": [
+    "Independently verify saved credential scope before capturing/installing values",
+    "Revalidate current provider session schema before creation",
+    "Read back exact session policy, ID, version and URL",
+    "MCP tools/list must advertise only E2B_LIST_SANDBOXES without another page",
+    "Pin actual MCP input schema fingerprint before activation",
+    "Deploy reviewed code to existing free staging with cloud flag off first",
+    "Explicit Ava/Rex checks and denial probes must leave all business collections unchanged"
+  ],
+  "constraints": {
+    "productionChanges": false,
+    "sandboxCreationOrExecution": false,
+    "outreach": false,
+    "paidUpgrade": false,
+    "crmWrites": false,
+    "inboundActivation": false
+  }
+}

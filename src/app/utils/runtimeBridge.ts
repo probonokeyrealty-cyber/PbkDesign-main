@@ -285,7 +285,7 @@ export type RuntimeQuotas = {
 };
 
 export type RuntimeToolingStatus = {
-  composio?: { ready?: boolean; outbound?: Record<string, unknown>; inbound?: Record<string, unknown> };
+  composio?: { ready?: boolean; outbound?: Record<string, unknown>; inbound?: Record<string, unknown>; cloud?: Record<string, unknown> };
   metaAgent?: Record<string, unknown>;
   browserOs?: Record<string, unknown>;
   agentReach?: Record<string, unknown>;

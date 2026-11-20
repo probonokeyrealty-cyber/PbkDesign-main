@@ -34740,8 +34740,9 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       const names = { disabled: 'disabled', configuration_missing: 'needs setup', connecting: 'connecting', connected: 'read verified', unavailable: 'not verified', error: 'unavailable' };
       bits.push(`PBK to Composio ${names[tooling.composio.outbound?.state] || 'not verified'}`);
       bits.push(`Composio to PBK ${names[tooling.composio.inbound?.state] || 'not verified'}`);
+      bits.push(`E2B cloud inventory ${names[tooling.composio.cloud?.state] || 'not verified'} (not agent deployment)`);
       const reasons = { disabled: 'disabled', configuration_missing: 'needs staging setup', read_verified: 'read verified', read_not_verified: 'needs a verified read', composio_read_unavailable: 'read unavailable', composio_connection_closed: 'connection closed' };
-      for (const [label, direction] of [['Outbound', tooling.composio.outbound], ['Inbound', tooling.composio.inbound]]) {
+      for (const [label, direction] of [['Outbound', tooling.composio.outbound], ['Inbound', tooling.composio.inbound], ['Cloud inventory', tooling.composio.cloud]]) {
         if (direction?.reason && reasons[direction.reason]) bits.push(`${label}: ${reasons[direction.reason]}`);
         const lastRead = direction?.lastSuccessAt && new Date(direction.lastSuccessAt);
         if (lastRead && Number.isFinite(lastRead.getTime())) bits.push(`${label} last read ${lastRead.toLocaleString()}`);

@@ -86,4 +86,78 @@ if (process.argv.includes('--outbound-fixture')) {
     return Response.json({ jsonrpc: '2.0', id: body.id, result });
   };
 }
+if (process.argv.includes('--cloud-fixture')) {
+  const { schemaFingerprint } = await import('../lib/composio-connection.mjs');
+  const tool = 'E2B_LIST_SANDBOXES';
+  const schema = { type: 'object', properties: { limit: { type: 'integer' } } };
+  const url = 'https://backend.composio.dev/tool_router/trs_cloud/mcp';
+  Object.assign(process.env, {
+    PBK_COMPOSIO_E2B_ENABLED: 'true',
+    PBK_COMPOSIO_E2B_API_KEY: 'synthetic-cloud-project',
+    PBK_COMPOSIO_E2B_MCP_URL: url,
+    PBK_COMPOSIO_E2B_AUTH_CONFIG_ID: 'cloud-auth',
+    PBK_COMPOSIO_E2B_USER_ID: 'cloud-user',
+    PBK_COMPOSIO_E2B_ACCOUNT_ID: 'cloud-account',
+    PBK_COMPOSIO_E2B_SESSION_ID: 'trs_cloud',
+    PBK_COMPOSIO_E2B_SESSION_CONFIG_VERSION: '1',
+    PBK_COMPOSIO_E2B_SCHEMA_SHA256: schemaFingerprint(schema),
+  });
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input, init = {}) => {
+    const target = String(input);
+    if (!target.startsWith('https://backend.composio.dev/')) return originalFetch(input, init);
+    if (new Headers(init.headers).get('x-api-key') !== 'synthetic-cloud-project')
+      return new Response(null, { status: 401 });
+    const path = new URL(target).pathname;
+    if (path === '/api/v3.1/connected_accounts/cloud-account')
+      return Response.json({
+        id: 'cloud-account',
+        user_id: 'cloud-user',
+        auth_config: { id: 'cloud-auth', is_disabled: false },
+        status: 'ACTIVE',
+        is_disabled: false,
+        toolkit: { slug: 'e2b' },
+      });
+    if (path === '/api/v3.1/tool_router/session/trs_cloud')
+      return Response.json({
+        session_id: 'trs_cloud',
+        config_version: 1,
+        mcp: { url },
+        config: {
+          user_id: 'cloud-user',
+          connected_accounts: { e2b: ['cloud-account'] },
+          toolkits: { enabled: ['e2b'] },
+          tools: { e2b: { enabled: [tool] } },
+          preload: { tools: [tool] },
+        },
+      });
+    if (target !== url) return new Response(null, { status: 404 });
+    const body = JSON.parse(init.body);
+    if (body.method === 'notifications/initialized') return new Response(null, { status: 202 });
+    const result =
+      body.method === 'initialize'
+        ? {
+            protocolVersion: body.params.protocolVersion,
+            capabilities: { tools: {} },
+            serverInfo: { name: 'cloud-fixture', version: '1' },
+          }
+        : body.method === 'tools/list'
+          ? { tools: [{ name: tool, inputSchema: schema }] }
+          : body.method === 'tools/call' &&
+              body.params.name === tool &&
+              JSON.stringify(body.params.arguments) === JSON.stringify({ limit: 100 })
+            ? {
+                content: [
+                  {
+                    type: 'text',
+                    text: JSON.stringify({ successful: true, data: { sandboxes: [] } }),
+                  },
+                ],
+              }
+            : null;
+    return result
+      ? Response.json({ jsonrpc: '2.0', id: body.id, result })
+      : new Response(null, { status: 400 });
+  };
+}
 await import('../openclaw-local-server.mjs');

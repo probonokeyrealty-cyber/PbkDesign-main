@@ -76549,7 +76549,19 @@ const server = createServer(async (request, response) => {
     if (request.method === 'GET' && matchesPath(pathname, ['/api/tooling/status', '/tooling/status'])) {
       json(response, 200, {
         ok: true,
-        tooling: await buildToolingStatus(),
+        tooling: {
+          ...await buildToolingStatus(),
+          // This bridge does not ship the staging E2B worker.
+          publicMarketWorker: {
+            kind: 'public_market_worker',
+            optional: true,
+            enabled: false,
+            configured: false,
+            ready: false,
+            state: 'disabled',
+            note: 'E2B cloud execution is not enabled on this bridge.',
+          },
+        },
       });
       return;
     }

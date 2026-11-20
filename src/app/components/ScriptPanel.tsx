@@ -4,7 +4,10 @@ import { DealData, PBKPath } from '../types';
 import { buildPbkPathScripts, PbkLegacyScriptPath } from '../templates/pbkPathScripts';
 import { sanitizeLegacyCopy } from '../utils/formatting';
 import { downloadTextFile } from '../utils/fileExport';
-import { buildAgentDealContext, type AgentDealContext } from '../utils/agentDealContext';
+import {
+  buildAgentDealContext,
+  type AgentDealContext,
+} from '../utils/agentDealContext';
 import { fetchCurrentScriptRequest, type RuntimeScriptCandidate } from '../utils/runtimeBridge';
 import { showUiToast } from '../utils/uiFeedback';
 
@@ -129,27 +132,17 @@ export function ScriptPanel({
       address: deal.address || '',
       leadName: deal.sellerName || '',
       persistExposure: false,
-      scripts: [
-        buildScriptCandidate({
-          content: activeBody,
-          scriptPath,
-          scriptVariant,
-          activeTab,
-          title: `${currentPath.name} ${TAB_LABELS[activeTab]}`,
-        }),
-      ],
+      scripts: [buildScriptCandidate({
+        content: activeBody,
+        scriptPath,
+        scriptVariant,
+        activeTab,
+        title: `${currentPath.name} ${TAB_LABELS[activeTab]}`,
+      })],
     }),
     [
-      activeBody,
-      activePath,
-      activeTab,
-      currentPath.name,
-      deal.address,
-      deal.leadId,
-      deal.sellerName,
-      deal.sellerPhone,
-      scriptPath,
-      scriptVariant,
+      activeBody, activePath, activeTab, currentPath.name, deal.address,
+      deal.leadId, deal.sellerName, deal.sellerPhone, scriptPath, scriptVariant,
     ]
   );
   const [selection, setSelection] = useState<{
@@ -160,8 +153,7 @@ export function ScriptPanel({
   const currentSelection = selection?.request === request ? selection : null;
   const bridgeScript = currentSelection?.script;
   const safeBody = sanitizeLegacyCopy(bridgeScript?.content || activeBody);
-  const showObjectionCards =
-    activeTab === 'objections' && safeBody === sanitizeLegacyCopy(activeBody);
+  const showObjectionCards = activeTab === 'objections' && safeBody === sanitizeLegacyCopy(activeBody);
   const copied = Boolean(safeBody && copiedBody === safeBody);
 
   useEffect(() => {
@@ -299,10 +291,7 @@ export function ScriptPanel({
         <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
           <div>
             <div className="pbk-call-active-path">{TAB_LABELS[activeTab]} Script</div>
-            <div
-              role="status"
-              className="mt-1 break-words text-xs text-gray-600 dark:text-gray-300"
-            >
+            <div role="status" className="mt-1 break-words text-xs text-gray-600 dark:text-gray-300">
               {bridgeScript
                 ? `Runtime script · ${sanitizeLegacyCopy(bridgeScript.title || TAB_LABELS[activeTab])}`
                 : currentSelection

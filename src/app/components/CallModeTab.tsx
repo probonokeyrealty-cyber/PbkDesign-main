@@ -306,18 +306,8 @@ export function CallModeTab({
   return (
     <div className="pbk-analyzer-main pbk-call-workbench">
       <header className="pbk-call-context-header">
-        <div>
-          <strong>{deal.sellerName || 'Seller'}</strong>
-          <span>{deal.address || 'Property not selected'}</span>
-        </div>
-        {deal.leadId && (
-          <Link
-            className="pbk-btn pbk-btn-ghost pbk-btn-sm"
-            to={`/leads/${encodeURIComponent(deal.leadId)}`}
-          >
-            Open lead
-          </Link>
-        )}
+        <div><strong>{deal.sellerName || 'Seller'}</strong><span>{deal.address || 'Property not selected'}</span></div>
+        {deal.leadId && <Link className="pbk-btn pbk-btn-ghost pbk-btn-sm" to={`/leads/${encodeURIComponent(deal.leadId)}`}>Open lead</Link>}
       </header>
       <Tabs.Root value={callView} onValueChange={setCallView} activationMode="manual">
         <Tabs.List className="pbk-call-view-tabs" aria-label="Call workbench views">
@@ -325,140 +315,123 @@ export function CallModeTab({
           <Tabs.Trigger value="numbers">Numbers</Tabs.Trigger>
           <Tabs.Trigger value="followup">Follow-up</Tabs.Trigger>
         </Tabs.List>
-        <Tabs.Content
-          value="talk"
-          forceMount
-          hidden={callView !== 'talk'}
-          className="pbk-call-view-panel"
-        >
-          <section
-            aria-labelledby="call-path-heading"
-            className="pbk-analyzer-card pbk-analyzer-workbench-section"
+        <Tabs.Content value="talk" forceMount hidden={callView !== 'talk'} className="pbk-call-view-panel">
+      <section
+        aria-labelledby="call-path-heading"
+        className="pbk-analyzer-card pbk-analyzer-workbench-section"
+      >
+        <div className="flex items-center justify-between gap-3 mb-3 flex-wrap">
+          <h2 id="call-path-heading" className="pbk-analyzer-section-title">
+            Path selector
+          </h2>
+          <span className="pbk-call-active-path">Active packet: {getPathLabel(activePath)}</span>
+        </div>
+
+        <div className="pbk-call-path-grid" role="group" aria-label="Deal path">
+          {pathOptions.map((option) => (
+            <button
+              key={option.id}
+              type="button"
+              aria-pressed={option.id === activePath}
+              onClick={() => onSelectPath(option.id)}
+              className="pbk-btn pbk-btn-ghost"
+            >
+              {option.label}
+            </button>
+          ))}
+        </div>
+      </section>
+
+      <ScriptPanel
+        key={JSON.stringify([noteScope, activePath, activeScriptVariant])}
+        deal={deal}
+        activePath={activePath}
+        scriptVariant={activeScriptVariant}
+        forcedVariant={forcedVariant}
+        onScriptVariantChange={setScriptVariant}
+        onPushScriptToAgent={onPushScriptToAgent}
+      />
+
+      <section
+        aria-labelledby="call-notes-heading"
+        className="pbk-analyzer-card pbk-analyzer-workbench-section"
+      >
+        <h2 id="call-notes-heading" className="pbk-analyzer-section-title mb-3">
+          Call notes
+        </h2>
+
+        <textarea
+          aria-label="Call notes"
+          value={callNotes}
+          onChange={(event) => {
+            setCallNotes(event.target.value);
+            onDealChange({ notes: event.target.value });
+          }}
+          onBlur={() => void saveCallNotes()}
+          placeholder="Take notes during your call..."
+          className="w-full h-32 px-3 py-2 border border-gray-200 dark:border-slate-700 rounded-lg bg-gray-50 dark:bg-slate-900 text-gray-900 dark:text-gray-100 text-[12.5px] outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 transition-all resize-vertical"
+        />
+      </section>
+      </Tabs.Content>
+      <Tabs.Content value="numbers" forceMount hidden={callView !== 'numbers'} className="pbk-call-view-panel">
+      {isCoCPath(activePath) ? (
+        <div className="mb-3">
+          <InvestorYield deal={deal} onDealChange={onDealChange} activePath={activePath} />
+        </div>
+      ) : null}
+      <LiveDealTrackerPanel deal={deal} activePath={activePath} />
+      <LiveCallInputs
+        deal={deal}
+        onDealChange={onDealChange}
+        selectedPath={getLiveInputPath(activePath)}
+        canonicalPath={activePath}
+      />
+      </Tabs.Content>
+      <Tabs.Content value="followup" forceMount hidden={callView !== 'followup'} className="pbk-call-view-panel">
+      <section
+        aria-labelledby="call-actions-heading"
+        className="pbk-analyzer-card pbk-analyzer-workbench-section"
+      >
+        <h2 id="call-actions-heading" className="pbk-analyzer-section-title mb-3">
+          Post-call actions
+        </h2>
+
+        <div className="space-y-2">
+          {postCallStatus && (
+            <div
+              role="status"
+              className="rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-[11px] text-sky-800 dark:border-sky-700 dark:bg-sky-950/30 dark:text-sky-200"
+            >
+              {postCallStatus}
+            </div>
+          )}
+          <button
+            type="button"
+            disabled={Boolean(pendingPostCallAction)}
+            onClick={() => void handleScheduleFollowUp()}
+            className="w-full px-4 py-2 rounded-lg bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-700 text-green-800 dark:text-green-300 text-[12px] font-medium text-left hover:bg-green-100 dark:hover:bg-green-900/30 transition-all disabled:cursor-wait disabled:opacity-60"
           >
-            <div className="flex items-center justify-between gap-3 mb-3 flex-wrap">
-              <h2 id="call-path-heading" className="pbk-analyzer-section-title">
-                Path selector
-              </h2>
-              <span className="pbk-call-active-path">
-                Active packet: {getPathLabel(activePath)}
-              </span>
-            </div>
-
-            <div className="pbk-call-path-grid" role="group" aria-label="Deal path">
-              {pathOptions.map((option) => (
-                <button
-                  key={option.id}
-                  type="button"
-                  aria-pressed={option.id === activePath}
-                  onClick={() => onSelectPath(option.id)}
-                  className="pbk-btn pbk-btn-ghost"
-                >
-                  {option.label}
-                </button>
-              ))}
-            </div>
-          </section>
-
-          <ScriptPanel
-            key={JSON.stringify([noteScope, activePath, activeScriptVariant])}
-            deal={deal}
-            activePath={activePath}
-            scriptVariant={activeScriptVariant}
-            forcedVariant={forcedVariant}
-            onScriptVariantChange={setScriptVariant}
-            onPushScriptToAgent={onPushScriptToAgent}
-          />
-
-          <section
-            aria-labelledby="call-notes-heading"
-            className="pbk-analyzer-card pbk-analyzer-workbench-section"
+            {pendingPostCallAction === 'schedule' ? 'Scheduling...' : 'Schedule Follow-up Call'}
+          </button>
+          <button
+            type="button"
+            disabled={Boolean(pendingPostCallAction)}
+            onClick={() => void handleSendOfferEmail()}
+            className="w-full px-4 py-2 rounded-lg bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-700 text-blue-800 dark:text-blue-300 text-[12px] font-medium text-left hover:bg-blue-100 dark:hover:bg-blue-900/30 transition-all disabled:cursor-wait disabled:opacity-60"
           >
-            <h2 id="call-notes-heading" className="pbk-analyzer-section-title mb-3">
-              Call notes
-            </h2>
-
-            <textarea
-              aria-label="Call notes"
-              value={callNotes}
-              onChange={(event) => {
-                setCallNotes(event.target.value);
-                onDealChange({ notes: event.target.value });
-              }}
-              onBlur={() => void saveCallNotes()}
-              placeholder="Take notes during your call..."
-              className="w-full h-32 px-3 py-2 border border-gray-200 dark:border-slate-700 rounded-lg bg-gray-50 dark:bg-slate-900 text-gray-900 dark:text-gray-100 text-[12.5px] outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 transition-all resize-vertical"
-            />
-          </section>
-        </Tabs.Content>
-        <Tabs.Content
-          value="numbers"
-          forceMount
-          hidden={callView !== 'numbers'}
-          className="pbk-call-view-panel"
-        >
-          {isCoCPath(activePath) ? (
-            <div className="mb-3">
-              <InvestorYield deal={deal} onDealChange={onDealChange} activePath={activePath} />
-            </div>
-          ) : null}
-          <LiveDealTrackerPanel deal={deal} activePath={activePath} />
-          <LiveCallInputs
-            deal={deal}
-            onDealChange={onDealChange}
-            selectedPath={getLiveInputPath(activePath)}
-            canonicalPath={activePath}
-          />
-        </Tabs.Content>
-        <Tabs.Content
-          value="followup"
-          forceMount
-          hidden={callView !== 'followup'}
-          className="pbk-call-view-panel"
-        >
-          <section
-            aria-labelledby="call-actions-heading"
-            className="pbk-analyzer-card pbk-analyzer-workbench-section"
+            {pendingPostCallAction === 'email' ? 'Sending...' : 'Send Offer Email'}
+          </button>
+          <button
+            type="button"
+            disabled={Boolean(pendingPostCallAction)}
+            onClick={() => void handleAddToCrm()}
+            className="w-full px-4 py-2 rounded-lg bg-gray-50 dark:bg-slate-900 border border-gray-200 dark:border-slate-700 text-gray-800 dark:text-gray-300 text-[12px] font-medium text-left hover:bg-gray-100 dark:hover:bg-slate-800 transition-all disabled:cursor-wait disabled:opacity-60"
           >
-            <h2 id="call-actions-heading" className="pbk-analyzer-section-title mb-3">
-              Post-call actions
-            </h2>
-
-            <div className="space-y-2">
-              {postCallStatus && (
-                <div
-                  role="status"
-                  className="rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-[11px] text-sky-800 dark:border-sky-700 dark:bg-sky-950/30 dark:text-sky-200"
-                >
-                  {postCallStatus}
-                </div>
-              )}
-              <button
-                type="button"
-                disabled={Boolean(pendingPostCallAction)}
-                onClick={() => void handleScheduleFollowUp()}
-                className="w-full px-4 py-2 rounded-lg bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-700 text-green-800 dark:text-green-300 text-[12px] font-medium text-left hover:bg-green-100 dark:hover:bg-green-900/30 transition-all disabled:cursor-wait disabled:opacity-60"
-              >
-                {pendingPostCallAction === 'schedule' ? 'Scheduling...' : 'Schedule Follow-up Call'}
-              </button>
-              <button
-                type="button"
-                disabled={Boolean(pendingPostCallAction)}
-                onClick={() => void handleSendOfferEmail()}
-                className="w-full px-4 py-2 rounded-lg bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-700 text-blue-800 dark:text-blue-300 text-[12px] font-medium text-left hover:bg-blue-100 dark:hover:bg-blue-900/30 transition-all disabled:cursor-wait disabled:opacity-60"
-              >
-                {pendingPostCallAction === 'email' ? 'Sending...' : 'Send Offer Email'}
-              </button>
-              <button
-                type="button"
-                disabled={Boolean(pendingPostCallAction)}
-                onClick={() => void handleAddToCrm()}
-                className="w-full px-4 py-2 rounded-lg bg-gray-50 dark:bg-slate-900 border border-gray-200 dark:border-slate-700 text-gray-800 dark:text-gray-300 text-[12px] font-medium text-left hover:bg-gray-100 dark:hover:bg-slate-800 transition-all disabled:cursor-wait disabled:opacity-60"
-              >
-                {pendingPostCallAction === 'crm' ? 'Syncing...' : 'Add to CRM'}
-              </button>
-            </div>
-          </section>
-        </Tabs.Content>
+            {pendingPostCallAction === 'crm' ? 'Syncing...' : 'Add to CRM'}
+          </button>
+        </div>
+      </section>
+      </Tabs.Content>
       </Tabs.Root>
     </div>
   );

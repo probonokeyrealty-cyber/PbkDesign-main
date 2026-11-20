@@ -301,10 +301,10 @@ export function LiveCallWidget({
   const controlTitle = controlsBusy
     ? 'Waiting for the current workspace action to finish'
     : canControlCall
-      ? 'Send this command to the live bridge call'
-      : hasBridgeCallId
-        ? 'Call controls are available after the call connects'
-        : 'Waiting for the bridge call id before controls are enabled';
+    ? 'Send this command to the live bridge call'
+    : hasBridgeCallId
+      ? 'Call controls are available after the call connects'
+      : 'Waiting for the bridge call id before controls are enabled';
 
   return (
     <div
@@ -375,18 +375,12 @@ export function LiveCallWidget({
       </div>
 
       {showAvaGuidance && (
-        <section
-          aria-label="Ava guidance"
-          className="border-b border-emerald-400/20 bg-emerald-500/5 px-4 py-3"
-        >
+        <section aria-label="Ava guidance" className="border-b border-emerald-400/20 bg-emerald-500/5 px-4 py-3">
           <div className="rounded-md border border-slate-800 bg-slate-950/70 px-2.5 py-2">
             <div className="text-[10px] uppercase tracking-[0.12em] text-sky-300">
               Ava’s next question
             </div>
-            <div
-              role="status"
-              className="mt-1 break-words text-[12px] leading-relaxed text-slate-100"
-            >
+            <div role="status" className="mt-1 break-words text-[12px] leading-relaxed text-slate-100">
               {cockpit?.nextBestQuestion || 'Waiting for Ava’s next question.'}
             </div>
           </div>
@@ -407,9 +401,7 @@ export function LiveCallWidget({
                       className="rounded-md border border-slate-800 bg-slate-950/60 px-2.5 py-1.5"
                     >
                       <div className="flex items-center justify-between gap-2">
-                        <span className="text-[11px] font-semibold text-slate-100">
-                          {step.label}
-                        </span>
+                        <span className="text-[11px] font-semibold text-slate-100">{step.label}</span>
                         <span className="text-[9px] uppercase tracking-[0.12em] text-emerald-300">
                           {step.status}
                         </span>

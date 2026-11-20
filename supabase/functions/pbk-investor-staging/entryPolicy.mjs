@@ -12,6 +12,7 @@ const investorCommands = new Set([
   'session',
   'list',
   'property',
+  'consultProperty',
   'file',
   'saved',
   'toggleSaved',

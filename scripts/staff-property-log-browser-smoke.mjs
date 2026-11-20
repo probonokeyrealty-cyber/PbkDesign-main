@@ -25,6 +25,12 @@ try {
         if (url.pathname === '/functions/v1/pbk-investor-portal') {
           const { command, payload } = route.request().postDataJSON();
           commands.push(command);
+          if (command === 'consultProperty') {
+            assert.deepEqual(payload, { id: 'staff-packet', version: 2, topic: 'wholesale' });
+            return route.fulfill({
+              json: { version: 2, answer: 'Verify assignment terms with counsel.' },
+            });
+          }
           if (command === 'authPassword' && payload.password !== 'fixture-only-password')
             return route.fulfill({
               status: 401,
@@ -41,8 +47,21 @@ try {
             recoverPassword: { message: 'If approved, a recovery email will arrive.' },
             verifyRecovery: { token: 'fixture-only-staff', expiresIn: 3600 },
             authPassword: { token: 'fixture-only-staff', expiresIn: 3600 },
-            session: { member: { id: 'fixture-staff', email: 'staff@example.invalid', role } },
-            list: { properties: [] },
+            session: {
+              member: { id: 'fixture-staff', email: 'staff@example.invalid', role },
+              consultationEnabled: true,
+            },
+            list: {
+              properties: [
+                {
+                  id: 'staff-packet',
+                  revision: 3,
+                  draft: { title: 'Example property', checks: {} },
+                  published: { status: 'Available', version: 2 },
+                  assets: [],
+                },
+              ],
+            },
             inquiries: { inquiries: [] },
             saved: { ids: [] },
             logout: { signedOut: true },
@@ -105,6 +124,16 @@ try {
         ).toBeVisible();
         await expect(page.getByRole('button', { name: 'Add property', exact: true })).toBeVisible();
         assert.ok(commands.includes('list'));
+        await page.getByRole('button', { name: 'Open draft', exact: true }).click();
+        const consultation = page.getByRole('region', { name: 'Released property consultation' });
+        await consultation.getByLabel('Review question').selectOption('wholesale');
+        assert.ok(!commands.includes('consultProperty'));
+        await consultation.getByRole('button', { name: 'Ask DeepSeek' }).click();
+        await expect(consultation.getByText('Verify assignment terms with counsel.')).toBeVisible();
+        assert.equal(
+          await page.evaluate(() => document.documentElement.scrollWidth > innerWidth + 1),
+          false
+        );
         await page.screenshot({
           path: `output/playwright/staff-property-log-${role}-${width}.png`,
           fullPage: true,

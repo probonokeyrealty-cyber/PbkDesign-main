@@ -9,6 +9,7 @@ const origin = 'http://127.0.0.1:' + server.httpServer.address().port;
 const structuredAddress = { street: '24 Sample Oak Lane', city: 'Example City', state: 'CA', zip: '90210' };
 const address = '24 Sample Oak Lane, Example City, CA 90210';
 const photos = ['front', 'yard', 'broken'].map(x => `https://ap.rdcpix.com/crm-fixture-${x}.jpg`);
+const otherPhoto = 'https://ap.rdcpix.com/crm-fixture-other.jpg';
 const captured = '2026-11-17T12:00:00Z';
 const sectionCaptured = '2026-11-15T12:00:00Z';
 const savedDatasets = [
@@ -42,22 +43,37 @@ async function verify(engine, config, label) {
   other.deal.propertyRecordSnapshot.facts.livingSqft = 2100;
   other.deal.propertyRecordSnapshot.sections = [projectAttomMcpSection('ownership', { names: ['Other lead owner only'] }, 'ok', captured)];
   other.analyzer.recordedSales.sales = [{ ...sale, id: 'other-sale', price: 520000 }];
+  other.deal.listingSnapshot.photoUrls = [otherPhoto];
   let mode = 'success';
+  let expectedRefreshLead = fixture;
   try {
     await page.addInitScript(() => {
       const config = { endpoint: location.origin, apiKey: 'local-fixture' };
       localStorage.setItem('pbk:local:openclaw-config', JSON.stringify(config));
       window.PBK = { openclaw: { getConfig: () => config } };
       localStorage.setItem('pbk:prefs:v1', JSON.stringify({ theme: 'dark', tourCompleted: true }));
+      // Exercise Ava's speech callback without a microphone or network speech service.
+      window.SpeechRecognition = class {
+        start() { window.deliverFixtureSpeech = transcript => this.onresult({
+          results: [Object.assign([{ transcript }], { isFinal: true })],
+        }); }
+        stop() { delete window.deliverFixtureSpeech; }
+      };
     });
     page.on('pageerror', e => errors.push(e.message));
     await page.routeWebSocket('**/*', socket => socket.close());
     await page.route('**/*', async route => {
       const request = route.request(), url = new URL(request.url()), path = url.pathname;
+      const bridgePath = url.searchParams.get('path') || path;
+      const propertyLookup = /^\/api\/(?:v1\/)?property-data(?:\/|$)/.test(bridgePath) || /(^|\.)attom(?:data)?\.com$/i.test(url.hostname);
+      if (propertyLookup && (url.origin !== origin || path !== '/api/property-data/enrich')) {
+        providerReads.push({ path: bridgePath, method: request.method() });
+        return route.fulfill({ json: { status: 'unavailable' } });
+      }
       if (url.href === sale.photoEvidence.photoUrls[0]) return route.fulfill({ contentType: 'image/svg+xml', body: '<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="800"><rect width="1200" height="800" fill="#253848"/></svg>' });
-      if (photos.includes(url.href)) return url.href.includes('broken') ? route.abort() : route.fulfill({ contentType: 'image/svg+xml', body: `<svg xmlns="http://www.w3.org/2000/svg" width="${url.href.includes('front') ? 120 : 800}" height="480"><rect width="800" height="480" fill="#253848"/></svg>` });
+      if (photos.includes(url.href) || url.href === otherPhoto) return url.href.includes('broken') ? route.abort() : route.fulfill({ contentType: 'image/svg+xml', body: `<svg xmlns="http://www.w3.org/2000/svg" width="${url.href.includes('front') ? 120 : 800}" height="480"><rect width="800" height="480" fill="#253848"/></svg>` });
       if (url.origin !== origin) return route.abort();
-      if (request.isNavigationRequest() && path.startsWith('/leads/')) return route.fulfill({ contentType: 'text/html', body: readFileSync('dist/index.shell.html', 'utf8') });
+      if (request.isNavigationRequest() && (path.startsWith('/leads/') || path === '/ava-chat')) return route.fulfill({ contentType: 'text/html', body: readFileSync('dist/index.shell.html', 'utf8') });
       if (!/^\/(api\/|state$|status$|events$|invoke$|health$|metrics$|\.netlify\/functions\/)/.test(path)) return route.continue();
       const send = json => route.fulfill({ json });
       if (path === '/api/state/stream/session') return send({ ok: false });
@@ -65,7 +81,7 @@ async function verify(engine, config, label) {
         assert.equal(request.method(), 'POST');
         const body = request.postDataJSON();
         mutations.push({ path, body });
-        assert.equal(body.leadId, fixture.id, 'Refresh captures exact lead ID even with duplicate addresses');
+        assert.equal(body.leadId, expectedRefreshLead.id, 'Refresh captures exact lead ID even with duplicate addresses');
         assert.equal(body.address, address);
         assert.deepEqual(body.expectedPropertyAddress, structuredAddress);
         if (mode === 'failure') return route.fulfill({ status: 503, json: { ok: false, error: 'Controlled enrichment failure' } });
@@ -77,13 +93,12 @@ async function verify(engine, config, label) {
           fixture.analyzer.recordedSales = { ...fixture.analyzer.recordedSales, radiusMiles: body.radiusMiles, retrievedAt: '2026-11-18T12:00:00Z', sales: [{ ...sale, price: 410000 },...alternateSales] };
         }
         // Only canonical full-lead reload contains authoritative new snapshots.
-        return send({ ok: true, saved: true, leadId: fixture.id, address, patch: {},
+        return send({ ok: true, saved: true, leadId: expectedRefreshLead.id, address, patch: {},
           records: mode === 'partial' ? { status: 'unavailable' } : { status: 'matched', profile: fixture.deal.propertyRecordSnapshot.facts },
           listing: { cache: { hit: mode !== 'partial' }, propertyData: null },
           sales: mode === 'partial' ? { status: 'timed_out' } : { status: 'matched', source: 'ATTOM', ...fixture.analyzer.recordedSales },
         });
       }
-      if (path.startsWith('/api/property-data')) { providerReads.push({ path, method: request.method() }); return send({ status: 'unavailable' }); }
       if (path === '/api/leads/' + fixture.id && request.method() === 'PATCH') {
         const body = request.postDataJSON(); mutations.push({ path, body });
         assert.equal(body.actionSource, 'lead-comps-reviewed');
@@ -278,9 +293,55 @@ async function verify(engine, config, label) {
     await expect(otherDatasets.getByText('Other lead owner only',{exact:true})).toBeVisible();
     await expect(otherDatasets.getByText('Owner fixture alpha',{exact:true})).toHaveCount(0);
     assert.equal(mutations.length, beforeSwitch, 'Switching duplicate-address leads must not save');
+
+    async function speak(command) {
+      await page.getByRole('button', { name: 'Speak to Ava', exact: true }).click();
+      await page.evaluate(transcript => window.deliverFixtureSpeech(transcript), command);
+    }
+
+    const savedPhoto = () => workspace.getByRole('tabpanel', { name: 'Photos', exact: true })
+      .getByRole('img', { name: 'Listing photo 1', exact: true });
+
+    for (const [current, price, absentPrice, photoUrl] of [
+      [fixture, '$410,000', '$520,000', photos[1]],
+      [other, '$520,000', '$410,000', otherPhoto],
+    ]) {
+      const leadUrl = `${origin}/leads/${current.id}`;
+      const chatUrl = `${origin}/ava-chat?leadId=${current.id}`;
+      await page.getByRole('button', { name: 'Back to leads', exact: true }).click();
+      await page.getByRole('button', { name: `Open lead ${current.seller.name} at ${structuredAddress.street}`, exact: true })
+        .filter({ visible: true }).click();
+      await page.getByRole('button', { name: 'Open lead', exact: true }).click();
+      await expect(page).toHaveURL(leadUrl);
+      await page.getByRole('link', { name: 'Ask Ava about this lead' }).click();
+      await expect(page).toHaveURL(chatUrl);
+      await speak('Show saved comps');
+      await expect(page).toHaveURL(`${leadUrl}#lead-comps`);
+      const comps = workspace.getByRole('tabpanel', { name: 'Comps', exact: true });
+      await expect(comps.getByText(price, { exact: true }).first()).toBeVisible();
+      await expect(comps.getByText(absentPrice, { exact: true })).toHaveCount(0);
+      assert.equal(mutations.length, beforeSwitch, 'Spoken Comps must not refresh or save');
+
+      await page.goBack();
+      await expect(page).toHaveURL(chatUrl);
+      await speak('Open property photos');
+      await expect(page).toHaveURL(`${leadUrl}#lead-photos`);
+      await expect(savedPhoto()).toHaveAttribute('src', photoUrl);
+      await expect.poll(() => savedPhoto().evaluate(image => image.complete && image.naturalWidth > 0)).toBe(true);
+      assert.equal(mutations.length, beforeSwitch, 'Spoken Photos must not refresh or save');
+    }
+
+    expectedRefreshLead = other;
+    await workspace.getByRole('tabpanel', { name: 'Photos', exact: true })
+      .getByRole('button', { name: 'Refresh property intelligence', exact: true }).click();
+    await expect(workspace.getByText('Property intelligence refreshed. Some sources were unavailable; previously saved evidence is retained.', { exact: true })).toBeVisible();
+    assert.deepEqual(mutations.slice(beforeSwitch), [{ path: '/api/property-data/enrich', body: {
+      address, leadId: other.id, expectedPropertyAddress: structuredAddress, radiusMiles: 1,
+    } }], 'Only Refresh sends one enrichment request for the currently open lead');
+    await expect(savedPhoto()).toHaveAttribute('src', otherPhoto);
     assert.deepEqual(providerReads, [], 'Only explicit unified refresh may access providers');
     assert.deepEqual(unexpectedWrites, []); assert.deepEqual(errors, []); await noOverflow();
-    console.log(label + ': explicit refresh, canonical persistence, reviewed comps, failure retention, duplicate-address isolation and passive browsing passed');
+    console.log(label + ': saved evidence, Ava voice lead switching and explicit refresh passed');
   } finally { await browser.close(); }
 }
 try {

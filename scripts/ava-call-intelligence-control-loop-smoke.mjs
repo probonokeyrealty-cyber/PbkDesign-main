@@ -111,10 +111,14 @@ assert(
 
 const liveCallWidget = readFileSync('src/app/components/shell/LiveCallWidget.tsx', 'utf8');
 assert(
-  liveCallWidget.includes('avaLiveCockpit') &&
-    liveCallWidget.includes('readAvaLiveCockpit') &&
-    liveCallWidget.includes('Ava mission'),
-  'Command Center live call widget must receive and render the Ava cockpit.'
+  liveCallWidget.includes('readAvaLiveCockpit(live.avaLiveCockpit)') &&
+    liveCallWidget.includes('aria-label="Ava guidance"') &&
+    liveCallWidget.includes('cockpit?.nextBestQuestion') &&
+    liveCallWidget.includes('cockpit.timeline.slice(') &&
+    liveCallWidget.includes('cockpit.leadCommitProof.fieldCount') &&
+    liveCallWidget.includes('cockpit.memoryProof.hotMemory') &&
+    liveCallWidget.includes('cockpit.skillOutcomeProof.skillId'),
+  'Command Center live call guidance must render the next question, timeline, and CRM, memory, and skill proof from the Ava cockpit.'
 );
 
 const commandCenter = readFileSync('src/app/routes/CommandCenter.tsx', 'utf8');

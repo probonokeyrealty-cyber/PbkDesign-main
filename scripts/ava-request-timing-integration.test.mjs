@@ -32,6 +32,7 @@ function fixture({ abortRead = false, blockFinal = false, general = false, messa
     chatTimingDeliveries: new WeakMap(),
     sanitizeAvaStreamReply,
     process: { env: { RENDER_GIT_COMMIT: 'fixture-commit' } },
+    OUTLOOK_LEAD_EMAIL_ENABLED: false,
     createAvaRequestTiming: () => createAvaRequestTiming({ now: () => clock }),
     readBody: async () => ({ message: 'find absent fixture', sessionId: 'isolated', messages, historyMode }),
     normalizeConversationMessages: () => [],

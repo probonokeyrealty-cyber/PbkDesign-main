@@ -6,6 +6,9 @@ import { startIsolatedBridge } from './bridge-smoke-isolation.mjs';
 async function exercise(enabled) {
   const bridge = await startIsolatedBridge({
     entry: fileURLToPath(new URL('./fixtures/public-market-bridge-entry.mjs', import.meta.url)),
+    // Cold Windows module loading can exceed 15s under build/typecheck load.
+    // This only bounds isolated test boot; provider/job deadlines stay unchanged.
+    startupMs: 45000,
     args: enabled ? ['--enabled'] : [],
   });
   const headers = { Authorization: `Bearer ${bridge.apiKey}`, 'content-type': 'application/json' };

@@ -270,6 +270,7 @@ export type RuntimeSnapshot = {
   callQaScores?: Array<Record<string, unknown>>;
   skillOutcomes?: Array<Record<string, unknown>>;
   adminTasks?: AdminTask[];
+  browserResearchJobs?: Array<Record<string, unknown>>;
   adminAudit?: Array<Record<string, unknown>>;
   campaigns?: CampaignRecord[];
   campaignLeads?: CampaignLeadRecord[];

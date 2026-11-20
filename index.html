@@ -23552,15 +23552,16 @@ Authority close: "What matters most to your seller: number, timeline, or certain
           const status = String(job.status || 'queued');
           const state = /complete|success/i.test(status) ? 'good' : /fail|error/i.test(status) ? 'warning' : '';
           const jobId = job.id || job.jobId || '';
+          const researchProviderLabel = job.provider === 'e2b' ? 'E2B worker' : 'BrowserOS';
           const summary = job.resultSummary || job.summary || job.answer || job.error || 'Waiting for BrowserOS output. Completed jobs will show summaries, sources, and screenshots here.';
           return `
             <div class="brain-status-item" data-state="${escapeHtml(state)}" data-browser-research-job-id="${escapeHtml(jobId)}">
               <div class="brain-status-title">${escapeHtml(job.targetLabel || job.target || job.url || job.query || 'Browser research job')}</div>
-              <div class="brain-status-meta">BrowserOS ${escapeHtml(status)} - ${escapeHtml(formatRelativeTime(job.updatedAt || job.completedAt || job.createdAt))}</div>
+              <div class="brain-status-meta">${escapeHtml(researchProviderLabel)} ${escapeHtml(status)} - ${escapeHtml(formatRelativeTime(job.updatedAt || job.completedAt || job.createdAt))}</div>
               <div class="brain-status-summary">${escapeHtml(summary)}</div>
               <div class="brain-status-actions">
                 <button class="chip-btn" type="button" data-browser-research-action="view" data-job-id="${escapeHtml(jobId)}">View</button>
-                <button class="chip-btn" type="button" data-browser-research-action="retry" data-job-id="${escapeHtml(jobId)}">Retry</button>
+                <button class="chip-btn" type="button" data-browser-research-action="retry" data-job-id="${escapeHtml(jobId)}">${job.provider === 'e2b' ? 'Prepare another' : 'Retry'}</button>
               </div>
             </div>
           `;
@@ -32051,12 +32052,13 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     const screenshots = Array.isArray(job.screenshots) ? job.screenshots : [];
     const tags = Array.isArray(job.tags) ? job.tags : [];
     const resultData = job.resultData || job.results || job.data || {};
-    const resultPreview = Object.keys(resultData || {}).length ? JSON.stringify(resultData, null, 2).slice(0, 5000) : '';
+    const resultPreview = job.provider !== 'e2b' && Object.keys(resultData || {}).length ? JSON.stringify(resultData, null, 2).slice(0, 5000) : '';
+    const marketLimitations = job.provider === 'e2b' && Array.isArray(resultData.limitations) ? resultData.limitations.slice(0, 2) : [];
     const sourceList = sources.length
       ? `<ul class="blog-takeaways">${sources.slice(0, 8).map((source) => {
           const url = typeof source === 'string' ? source : source.url || source.href || '';
           const label = typeof source === 'string' ? source : source.title || source.label || source.url || 'Source';
-          return `<li>${url ? `<a href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(label)}</a>` : escapeHtml(label)}</li>`;
+          return `<li style="overflow-wrap:anywhere;">${url ? `<a href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(label)}</a>` : escapeHtml(label)}</li>`;
         }).join('')}</ul>`
       : '<p style="color:var(--text-tertiary); margin:0;">No source links were attached to this result.</p>';
     const modal = showUtilityModal(
@@ -32068,6 +32070,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
             ${(tags || []).slice(0, 6).map((tag) => `<span class="chip">${escapeHtml(tag)}</span>`).join('')}
           </div>
           <p style="color:var(--text-secondary); line-height:1.6; margin:0;">${escapeHtml(job.resultSummary || job.summary || job.answer || job.error || 'This BrowserOS job has not produced a summary yet.')}</p>
+          ${marketLimitations.length ? `<ul class="blog-takeaways">${marketLimitations.map(note => `<li>${escapeHtml(note)}</li>`).join('')}</ul>` : ''}
           <div>
             <div style="font-family:var(--font-mono); font-size:10px; text-transform:uppercase; letter-spacing:0.08em; color:var(--sky); margin-bottom:8px;">Sources</div>
             ${sourceList}
@@ -32081,7 +32084,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
           ${resultPreview ? `<pre style="max-height:260px; overflow:auto; white-space:pre-wrap; padding:var(--s-3); border:1px solid var(--border-dim); border-radius:var(--radius-md); background:var(--bg-console); color:var(--text-secondary); font-size:11px; line-height:1.5;">${escapeHtml(resultPreview)}</pre>` : ''}
         </div>
       `,
-      `<button type="button" class="btn btn-ghost" data-browser-research-action="retry" data-job-id="${escapeHtml(job.id || job.jobId || '')}">Retry</button>`
+      `<button type="button" class="btn btn-ghost" data-browser-research-action="retry" data-job-id="${escapeHtml(job.id || job.jobId || '')}">${job.provider === 'e2b' ? 'Prepare another' : 'Retry'}</button>`
     );
     modal.addEventListener('click', (event) => {
       const retryButton = event.target.closest('[data-browser-research-action="retry"]');
@@ -32103,7 +32106,9 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     const target = job.target || job.targetLabel || job.url || job.query || 'PBK research target';
     const goal = job.goal || 'Retry the previous BrowserOS research job and return a concise result summary, source list, and useful tags.';
     try {
-      const response = await PBK.openclaw.invoke('launchBrowserResearch', {
+      const response = job.provider === 'e2b'
+        ? await PBK.openclaw.invoke('runAgentCommand', { agentId: 'rex', cloudResearchOperation: 'prepare-market-brief', market: job.market })
+        : await PBK.openclaw.invoke('launchBrowserResearch', {
         query: `${goal}\n\nTarget: ${target}`,
         target,
         goal,
@@ -32116,7 +32121,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       toastOutcome({
         outcome: getRuntimeOutcome(response, 'queued_for_approval'),
         title: 'Research retry queued',
-        desc: 'Rex accepted the BrowserOS retry request. Watch the Brain status panel for updates.',
+        desc: job.provider === 'e2b' ? 'A fresh public-market request needs approval before any search or cloud work.' : 'Rex accepted the BrowserOS retry request. Watch the Brain status panel for updates.',
         response
       });
     } catch (error) {
@@ -34748,6 +34753,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
         if (lastRead && Number.isFinite(lastRead.getTime())) bits.push(`${label} last read ${lastRead.toLocaleString()}`);
       }
     }
+    if (tooling.publicMarketWorker) bits.push(`Public market worker: ${tooling.publicMarketWorker.ready ? 'completed and cleaned' : tooling.publicMarketWorker.state || 'not verified'}; approval required`);
     if (tooling.metaAgent?.scenarioLeads) {
       bits.push(`Meta-agent ${Number(tooling.metaAgent.scenarioLeads || 0)} leads exported`);
     }

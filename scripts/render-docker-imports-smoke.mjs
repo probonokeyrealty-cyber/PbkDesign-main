@@ -4,6 +4,9 @@ import { dirname, join, normalize, resolve, sep } from 'node:path';
 const root = process.cwd();
 const dockerfile = readFileSync(resolve(root, 'Dockerfile.openclaw'), 'utf8');
 const entrypoint = 'openclaw-local-server.mjs';
+if (!dockerfile.includes('e2b@2.64.0') || !dockerfile.includes('COPY scripts/fixtures/public-market-program.mjs ./scripts/fixtures/public-market-program.mjs')) {
+  throw new Error('Dockerfile.openclaw must install the public E2B SDK and package the fixed market worker program.');
+}
 if (!dockerfile.includes('COPY mcp-server/runtime ./mcp-server/runtime') || !existsSync(resolve(root, 'mcp-server/runtime/pbk-readonly-mcp.mjs'))) {
   throw new Error('Dockerfile.openclaw must include the shared limited MCP runtime.');
 }

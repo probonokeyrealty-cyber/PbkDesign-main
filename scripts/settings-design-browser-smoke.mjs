@@ -89,7 +89,7 @@ async function verify(engine, options, label) {
                 instantly: { ready: emailReady, note: 'Fixture email account' },
               },
             },
-            '/api/tooling/status': { ok: true, tooling: { summary: { requiredCount: 1 }, composio: {
+            '/api/tooling/status': { ok: true, tooling: { publicMarketWorker: { kind: 'public_market_worker', enabled: false, ready: false, state: 'disabled', note: 'Approval-backed public evidence worker. No automatic jobs.' }, summary: { requiredCount: 1 }, composio: {
               ready: false,
               outbound: { ready: true, state: 'connected', note: 'Sandbox QA read verified; DND on and QA excluded.', lastSuccessAt: '2026-11-19T18:00:00.000Z' },
               inbound: { ready: false, state: 'configuration_missing', note: 'Limited staging endpoint. An authenticated tool read is required.' },
@@ -174,6 +174,9 @@ async function verify(engine, options, label) {
     const cloud = page.locator('.pbk-settings-tool-card').filter({ hasText: 'E2B cloud inventory' });
     await expect(cloud).toContainText('Disabled');
     await expect(cloud).toContainText('agents are not verified in E2B');
+    const marketWorker = page.locator('.pbk-settings-tool-card').filter({ hasText: 'Public market worker' });
+    await expect(marketWorker).toContainText('Disabled');
+    await expect(marketWorker).toContainText('Approval-backed public evidence worker');
     await expect(outbound).toContainText('Read verified');
     await expect(outbound).toContainText('DND on and QA excluded');
     await expect(outbound).toContainText('Last verified read:');

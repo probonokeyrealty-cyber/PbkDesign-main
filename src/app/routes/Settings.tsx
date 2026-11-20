@@ -56,6 +56,10 @@ function describeProvider(meta: Record<string, unknown> | undefined) {
 }
 
 function describeTooling(meta: Record<string, unknown> | undefined) {
+  if (meta?.kind === 'public_market_worker') {
+    if (meta.state === 'verified') return meta.ready ? 'Completed and cleaned' : 'Not recently verified';
+    return ({ disabled: 'Disabled', configuration_missing: 'Needs setup', unverified: 'Approval required', running: 'Running', unavailable: 'Job unavailable', cleanup_unconfirmed: 'Cleanup unconfirmed' } as Record<string, string>)[String(meta.state)] || 'Waiting on bridge';
+  }
   if (meta?.state && ['disabled', 'configuration_missing', 'connecting', 'connected', 'unavailable', 'error'].includes(String(meta.state))) {
     return ({ disabled: 'Disabled', configuration_missing: 'Needs staging setup', connecting: 'Connecting', connected: 'Read verified', unavailable: 'Read not verified', error: 'Connection unavailable' } as Record<string, string>)[String(meta.state)];
   }
@@ -719,6 +723,7 @@ export function Settings() {
     { id: 'composio-outbound', label: 'PBK agents to Composio', meta: tooling?.composio?.outbound },
     { id: 'composio-inbound', label: 'Composio to PBK', meta: tooling?.composio?.inbound },
     { id: 'composio-cloud', label: 'E2B cloud inventory', meta: tooling?.composio?.cloud },
+    { id: 'public-market-worker', label: 'Public market worker', meta: tooling?.publicMarketWorker },
     {
       id: 'meta-agent',
       label: 'Meta-Agent Lab',

@@ -66,8 +66,19 @@ test('interim capture preserves the typed draft and an unavailable microphone fa
 
 test('browser commands resolve exact existing destinations and the bound lead', () => {
   assert.deepEqual(resolveAvaBrowserCommand('Hey Ava, please go to the Deal Analyzer.'), { path: '/deals/analyzer' });
+  assert.deepEqual(resolveAvaBrowserCommand('Open\nthe Deal Analyzer'), { path: '/deals/analyzer' });
   assert.deepEqual(resolveAvaBrowserCommand('Open current lead', 'lead:sample-1'), { path: '/leads/lead%3Asample-1' });
   assert.deepEqual(resolveAvaBrowserCommand('Open current lead', '..'), { path: null });
   assert.equal(resolveAvaBrowserCommand('Open https://example.org'), null);
   assert.equal(resolveAvaBrowserCommand('Open Leads and export all records'), null);
+});
+
+test('an explicit lead search keeps the term in navigation state, preserves case, and supports voice', () => {
+  const command = 'Hey Ava, please search leads for Avery O’Neil.';
+  assert.deepEqual(resolveAvaBrowserCommand(command), { path: '/leads', state: { avaLeadSearch: 'Avery O’Neil' } });
+  assert.equal(resolveAvaBrowserCommand('Search leads for'), null);
+  assert.equal(resolveAvaBrowserCommand('Search leads for A\nSend a message'), null);
+  const f = fixture();
+  f.callback({ results: [Object.assign([{ transcript: command }], { isFinal: true })] });
+  assert.deepEqual(f.submitted, [command]);
 });

@@ -9,9 +9,21 @@ const pages = new Map([
   ['property log', '/property-log'],
 ]);
 
+export function readAvaLeadSearch(value) {
+  if (typeof value !== 'string' || value.length > 160 || /\p{Cc}/u.test(value)) return '';
+  return value.trim();
+}
+
 export function resolveAvaBrowserCommand(text, leadId = '') {
-  const command = text.trim().toLowerCase().replace(/\s+/g, ' ').replace(/[.!]$/, '');
-  const match = /^(?:(?:hey )?ava,? )?(?:please )?(?:open|go to|show me) (?:the )?(.+)$/.exec(command);
+  const command = text.trim().replace(/\s+/g, ' ').replace(/[.!]$/, '')
+    .replace(/^(?:(?:hey )?ava,? )?(?:please )?/i, '');
+  const leadSearch = /^search (?:the )?leads for (.+)$/i.exec(command);
+  if (leadSearch) {
+    if (/\p{Cc}/u.test(text)) return null;
+    const query = readAvaLeadSearch(leadSearch[1]);
+    return query ? { path: '/leads', state: { avaLeadSearch: query } } : null;
+  }
+  const match = /^(?:open|go to|show me) (?:the )?(.+)$/.exec(command.toLowerCase());
   if (!match) return null;
   const page = match[1];
   if (page === 'current lead' || page === 'this lead') {

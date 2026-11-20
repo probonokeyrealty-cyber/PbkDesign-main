@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Link, useLocation, useNavigate, useSearchParams } from 'react-router';
 import { readLeadQueueReturn, type LeadQueueReturn } from '../utils/leadQueueReturn';
+import { readAvaLeadSearch } from '../utils/avaBrowserCommand.mjs';
 import {
   AlertCircle,
   ArrowUpRight,
@@ -1136,7 +1137,7 @@ export function Leads() {
   const [leadPage, setLeadPage] = useState(restoredQueue?.queue?.page || 0);
   const [leadActivityPage, setLeadActivityPage] = useState(0);
   const [leadQuery, setLeadQuery] = useState(
-    () => restoredQueue?.queue?.query ?? searchParams.get('search') ?? ''
+    () => restoredQueue?.queue?.query ?? searchParams.get('search') ?? readAvaLeadSearch(location.state?.avaLeadSearch)
   );
   const [leadFilter, setLeadFilter] = useState<'all' | 'hot' | 'callable' | 'contract'>(
     restoredQueue?.queue?.filter || 'all'

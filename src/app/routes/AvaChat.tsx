@@ -191,7 +191,7 @@ const PBK_COMPANION_ACTIONS: CompanionAction[] = [
   {
     id: 'open-page',
     label: 'Go to page',
-    description: 'Open Leads, Inbox, or the Deal Analyzer from chat.',
+    description: 'Open a page or say “Search leads for” and a name or address.',
     prompt: 'Open Leads',
     action: 'operator_command',
     icon: ExternalLink,
@@ -1568,7 +1568,7 @@ function AvaChatSession({ scope }: { scope: AvaChatScope }) {
         stopReplySpeech();
         setDraft('');
         setSubmitError('');
-        void navigate(page.path);
+        void navigate(page.path, page.state ? { state: page.state } : undefined);
         return;
       }
       submitInFlightRef.current = true;

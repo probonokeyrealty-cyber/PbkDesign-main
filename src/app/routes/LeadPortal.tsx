@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AlertCircle, ArrowRight, Loader2, Save, StickyNote } from 'lucide-react';
-import { useLocation, useNavigate, useParams, useSearchParams } from 'react-router';
+import { Link, useLocation, useNavigate, useParams, useSearchParams } from 'react-router';
 import { readLeadQueueReturn } from '../utils/leadQueueReturn';
+import { readLeadEvidenceTarget } from '../utils/avaBrowserCommand.mjs';
 import { fleetHref, readFleetReturn } from '../utils/fleetContext';
 import { readStoredNextStep } from '../utils/leadTriage';
 import '../../styles/fleet-context.css';
@@ -146,6 +147,8 @@ export function LeadPortal() {
       });
   };
   const workspaceRootRef = useRef<HTMLElement>(null);
+  const focusedEvidenceEntry = useRef('');
+  const { sectionId, propertyTab } = readLeadEvidenceTarget(location.hash) ?? {};
   const [searchParams, setSearchParams] = useSearchParams();
   const requestSequence = useRef(0);
   const timelineRequestSequence = useRef(0);
@@ -175,14 +178,17 @@ export function LeadPortal() {
     [leadPayload]
   );
   const nextStep = readStoredNextStep(lead?.id === leadId ? leadPayload : null);
-  const jumpToSection = (event: React.MouseEvent<HTMLAnchorElement>, id: string) => {
-    event.preventDefault();
+  const focusSection = useCallback((id: string, smooth: boolean) => {
     const section = workspaceRootRef.current?.querySelector<HTMLElement>(`#${id}`);
     if (!section) return;
     const heading = section.querySelector<HTMLElement>('h2') || section;
     heading.tabIndex = -1;
     heading.focus({ preventScroll: true });
-    section.scrollIntoView({ block: 'start', behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
+    section.scrollIntoView({ block: 'start', behavior: smooth && !window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'smooth' : 'auto' });
+  }, []);
+  const jumpToSection = (event: React.MouseEvent<HTMLAnchorElement>, id: string) => {
+    event.preventDefault();
+    focusSection(id, true);
   };
   currentLeadIdRef.current = leadId;
 
@@ -201,6 +207,13 @@ export function LeadPortal() {
   useEffect(() => {
     if (loading || !lead) return;
     const frame = requestAnimationFrame(() => {
+      if (sectionId) {
+        if (lead.id !== leadId || focusedEvidenceEntry.current === location.key) return;
+        focusedEvidenceEntry.current = location.key;
+        focusSection(sectionId, false);
+        return;
+      }
+      focusedEvidenceEntry.current = '';
       const target = location.state?.focusAgentLink
         ? workspaceRootRef.current?.querySelector<HTMLElement>('[data-inspect-agent]')
         : workspaceRootRef.current?.querySelector<HTMLElement>('h1');
@@ -210,7 +223,7 @@ export function LeadPortal() {
       }
     });
     return () => cancelAnimationFrame(frame);
-  }, [loading, lead, location.key, location.state]);
+  }, [loading, lead, leadId, location.key, location.state, sectionId, focusSection]);
 
   const beginAction = (name: string) => {
     const token = ++actionSequence.current;
@@ -288,7 +301,7 @@ export function LeadPortal() {
       const canonicalLead = unwrapLead(fullResponse);
       const canonicalLeadId = String(canonicalLead.leadId || canonicalLead.id || leadId).trim();
       if (canonicalLeadId && canonicalLeadId !== leadId) {
-        navigate(`/leads/${encodeURIComponent(canonicalLeadId)}`, {
+        navigate(`/leads/${encodeURIComponent(canonicalLeadId)}${location.hash}`, {
           replace: true,
           state: location.state,
         });
@@ -319,7 +332,7 @@ export function LeadPortal() {
     } finally {
       if (requestId === requestSequence.current) setLoading(false);
     }
-  }, [leadId, loadTimeline, navigate, location.state]);
+  }, [leadId, loadTimeline, navigate, location.state, location.hash]);
 
   useEffect(() => {
     actionSequence.current += 1;
@@ -749,6 +762,9 @@ export function LeadPortal() {
           <code>{lead.id || leadId}</code>
         </div>
         <span>{fleetReturn ? `Agent context: ${fleetReturn.agentId}` : 'Seller workspace'}</span>
+        {lead.id === leadId && (
+          <Link className="pbk-btn pbk-btn-ghost pbk-btn-sm min-h-11" to={`/ava-chat?leadId=${encodeURIComponent(leadId)}`} aria-label="Ask Ava about this lead">Ask Ava</Link>
+        )}
       </section>
 
       <nav className="pbk-portal-sections" aria-label="Lead workspace sections">
@@ -791,7 +807,7 @@ export function LeadPortal() {
         </div>
       </div>
 
-      <LeadPortalProperty key={`${lead.id || leadId}:${lead.address}:${lead.city}:${lead.state}:${lead.zip}`} lead={lead} onEdit={startEdit} onSaved={refreshSavedProperty} />
+      <LeadPortalProperty key={`${lead.id || leadId}:${lead.address}:${lead.city}:${lead.state}:${lead.zip}:${propertyTab || 'overview'}`} initialTab={propertyTab} lead={lead} onEdit={startEdit} onSaved={refreshSavedProperty} />
 
       <details className="pbk-portal-source-details">
         <summary>Data sources</summary>

@@ -10,18 +10,25 @@ const origin = 'http://127.0.0.1:' + server.httpServer.address().port;
 const leads = Array.from({ length: 24 }, (_, i) => ({
   id: 'queue-demo-' + i, leadId: 'queue-demo-' + i,
   seller: { name: 'Queue Sample ' + i }, score: 90,
-  property: { address: i + ' Demo Street', city: 'Example City', state: 'CA', zip: '90210' },
+  property: { address: i + ' Demo Street', city: 'Example City', state: 'CA', zip: '90210', arv: 310000 },
+  ...(i === 12 ? { analyzer: { recordedSales: {
+    provider: 'ATTOM', address: { street: '12 Demo Street', city: 'Example City', state: 'CA', zip: '90210' },
+    windowStart: '2026-05-01', windowEnd: '2026-11-20', radiusMiles: 1,
+    sales: [{ id: 'saved-comp-12', address: '16 Example Court', soldDate: '2026-09-01', price: 289000 }],
+  } } } : {}),
 }));
 const browser = await chromium.launch();
 try {
   for (const width of [1440, 390]) {
     const page = await browser.newPage({ viewport: { width, height: 900 } });
     const writes = [];
+    const evidenceRefreshes = [];
     await page.routeWebSocket('**/*', socket => socket.close());
     await page.route('**/*', async route => {
       const request = route.request(), url = new URL(request.url()), path = url.pathname;
       if (url.origin !== origin) return route.abort();
       if (!/^\/(?:api\/|\.netlify\/functions\/|state$|status$|health$|events$|invoke$|metrics$)/.test(path)) return route.continue();
+      if (/property[-/](?:intelligence|data)|recent[-/]sales|\/api\/analy[sz]e/i.test(path)) evidenceRefreshes.push(path);
       if (path === '/api/state/stream/session') return route.fulfill({ json: { ok: false } });
       if (request.method() !== 'GET') { writes.push(path); return route.abort(); }
       const id = path.match(/^\/api\/leads\/([^/]+)/)?.[1];
@@ -47,6 +54,37 @@ try {
       await expect(page).toHaveURL(origin + '/ava-chat');
       await page.goForward();
       await expect(avaSearch).toHaveValue('Queue Sample 12');
+      const currentLeadChat = origin + '/ava-chat?leadId=queue-demo-12';
+      await page.getByRole('button', { name: /^Open lead Queue Sample 12 at / }).filter({ visible: true }).click();
+      await page.getByRole('button', { name: 'Open lead', exact: true }).click();
+      await page.getByRole('link', { name: 'Ask Ava about this lead' }).click();
+      await expect(page).toHaveURL(currentLeadChat);
+      await page.getByRole('textbox', { name: 'Ask Ava anything' }).fill('Show saved comps');
+      await page.getByRole('button', { name: 'Send to Ava', exact: true }).click();
+      await expect(page).toHaveURL(origin + '/leads/queue-demo-12#lead-comps');
+      await expect(page.getByRole('tab', { name: 'Comps', exact: true })).toHaveAttribute('aria-selected', 'true');
+      await expect(page.getByRole('rowheader', { name: /16 Example Court/ })).toBeVisible();
+      await expect(page.getByRole('heading', { name: 'Property', exact: true })).toBeFocused();
+      await page.goBack();
+      await expect(page).toHaveURL(currentLeadChat);
+      await page.getByRole('textbox', { name: 'Ask Ava anything' }).fill('Show saved analysis');
+      await page.getByRole('button', { name: 'Send to Ava', exact: true }).click();
+      await expect(page).toHaveURL(origin + '/leads/queue-demo-12#lead-numbers');
+      const underwriting = page.getByRole('region', { name: 'Underwriting', exact: true });
+      await expect(underwriting.getByText('$310,000', { exact: true })).toBeVisible();
+      await expect(underwriting.getByRole('heading')).toBeFocused();
+      for (const [command, hash, tab] of [
+        ['Show property record', '#lead-record', 'Property record'],
+        ['Open property photos', '#lead-photos', 'Photos'],
+      ]) {
+        await page.goBack();
+        await expect(page).toHaveURL(currentLeadChat);
+        await page.getByRole('textbox', { name: 'Ask Ava anything' }).fill(command);
+        await page.getByRole('button', { name: 'Send to Ava', exact: true }).click();
+        await expect(page).toHaveURL(origin + '/leads/queue-demo-12' + hash);
+        await expect(page.getByRole('tab', { name: tab, exact: true })).toHaveAttribute('aria-selected', 'true');
+      }
+      assert.deepEqual(evidenceRefreshes, []);
       await page.goto(origin + '/leads?search=Initial');
       const search = page.getByRole('searchbox', { name: /Search leads/ });
       await search.fill('Queue Sample');
@@ -95,7 +133,7 @@ try {
       await page.getByRole('button', { name: 'Back to leads', exact: true }).click();
       await expect(page).toHaveURL(origin + '/leads');
       assert.deepEqual(writes, []);
-      console.log(width + 'px: Leads context, Today return, focus and direct-link fallback passed; zero writes');
+      console.log(width + 'px: Ava saved evidence, Leads context, Today return and focus passed; zero writes');
     } catch (error) {
       console.error((await page.locator('body').innerText()).slice(-2200));
       throw error;

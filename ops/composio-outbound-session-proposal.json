@@ -1,5 +1,5 @@
 {
-  "status": "session-created-and-locally-verified-hosted-activation-pending",
+  "status": "outbound-verified-on-isolated-staging-private-return-disabled",
   "projectName": "probonokeyrealty_workspace_first_project",
   "provisioningKey": {
     "name": "PBK Staging Session Setup - TEMPORARY",
@@ -29,7 +29,13 @@
     "multi_account": {"enable": false},
     "experimental": {"no_elicitation_support_fallback": "deny"}
   },
-  "verification": "Authoritative session metadata returned200 with the existing scoped runtime key. Real MCP discovery advertised only the pinned tool. Both Ava and Rex operations passed through the local real adapter with sandbox identity, DND and QA exclusion verified. Hosted activation remains pending.",
+  "verification": "Authoritative session metadata returned200 with the existing scoped runtime key. Real MCP discovery advertised only the pinned tool. Hosted staging Ava and Rex commands passed the existing bridge and real MCP read with sandbox identity, DND and QA exclusion verified. Override/write requests were denied; leads/tasks/adminTasks/approvals/calls/messages/contracts remained identical before and after. Private return connection remains disabled.",
+  "stagingDeployment": {
+    "id": "dep-dbvpvqijnfac7382b6rg",
+    "commit": "881fd5a9b6fe7ce590aff60dfced56142eec099d",
+    "liveAt": "2026-11-20T01:20:43Z",
+    "hostedAcceptanceAt": "2026-11-20T01:21:10Z"
+  },
   "createdSession": {
     "id": "trs_QDYbCcd_gMjx",
     "configVersion": 1,

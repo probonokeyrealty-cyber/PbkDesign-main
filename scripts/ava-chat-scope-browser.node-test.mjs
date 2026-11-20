@@ -194,7 +194,12 @@ async function open(t, url, seed = {}, faults = {}, options = {}) {
       rawRemove.call(this, key);
     };
     window.SpeechRecognition = class {
-      constructor() { window.fixture.blocked('microphone'); }
+      constructor() {
+        if (!faults.voice) window.fixture.blocked('microphone');
+        window.fixture.recognition = this;
+      }
+      start() {}
+      stop() {}
     };
   }, { seed, faults });
   await page.goto(origin + url);
@@ -233,6 +238,43 @@ async function assertNoActions(page, submits = 0) {
 function storageNotice(page) {
   return page.getByRole('status').filter({ hasText: /chat details could not be restored or saved/i });
 }
+
+async function speak(page, text) {
+  await page.getByRole('button', { name: 'Speak to Ava' }).click();
+  await page.evaluate(transcript => window.fixture.recognition.onresult({
+    results: [Object.assign([{ transcript }], { isFinal: true })],
+  }), text);
+}
+
+test('a spoken browser command opens its linked lead without a model or automation request', async t => {
+  const { page, errors } = await open(t, aUrl, {}, { voice: true });
+  await speak(page, 'Hey Ava, open the current lead.');
+  await expect(page.locator('main')).toHaveAttribute('data-fixture-route', '/leads/sample-a');
+  await assertNoActions(page);
+  assert.deepEqual(errors, []);
+});
+
+test('voice research stays in the composer until Send and typed navigation stays local at 320px', async t => {
+  const { page, errors } = await open(t, aUrl, {}, { voice: true }, { viewport: { width: 320, height: 780 }, isMobile: true, hasTouch: true });
+  await speak(page, 'Ask Rex to research Tampa, FL');
+  await expect(composer(page)).toHaveValue('Ask Rex to research Tampa, FL');
+  await expect(page.getByRole('status').filter({ hasText: 'Voice draft ready' })).toBeVisible();
+  await assertNoActions(page);
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
+  if (await page.getByRole('button', { name: 'Turn off spoken replies' }).isVisible()) {
+    await page.getByRole('button', { name: 'Turn off spoken replies' }).click();
+  }
+  const submitted = await submit(page);
+  assert.equal(submitted.leadId, 'sample-a');
+  assert.match(submitted.researchRequestId, /^ava-/);
+  await page.evaluate(() => window.fixture.streams[0].resolve({ ok: true, answer: 'Research saved.' }));
+  await expect(page.getByText('Research saved.', { exact: true })).toBeVisible();
+  await composer(page).fill('Open Deal Analyzer');
+  await page.getByRole('button', { name: 'Send to Ava', exact: true }).click();
+  await expect(page.locator('main')).toHaveAttribute('data-fixture-route', '/deals/analyzer');
+  await assertNoActions(page, 1);
+  assert.deepEqual(errors, []);
+});
 
 test('Rex requests start only on submit and status checks hide stale sources at 320px', async t => {
   const { page, errors } = await open(t, aUrl, {}, {}, { viewport: { width: 320, height: 780 }, isMobile: true, hasTouch: true });

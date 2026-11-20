@@ -14,6 +14,7 @@ import { createPublicMarketWorker } from './lib/public-market-worker.mjs';
 import { createPublicMarketController, recoverPublicMarketJob } from './lib/public-market-controller.mjs';
 import { createPublicMarketClaims } from './lib/public-market-claims.mjs';
 import { createComposioMarketSearch } from './lib/composio-market-search.mjs';
+import { createInvestorQaStagingSource, INVESTOR_QA_LEAD_PATH } from './lib/investor-qa-staging-source.mjs';
 import { createPbkReadOnlyMcpEndpoint } from '../mcp-server/runtime/pbk-readonly-mcp.mjs';
 import chromium from '@sparticuz/chromium';
 import { WebSocket, WebSocketServer } from 'ws';
@@ -73137,11 +73138,19 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
 }
 
 const neonAuthMailRouter = createNeonMailRouter();
+const investorQaStagingSource = createInvestorQaStagingSource({ getPool: getPgPool });
 const server = createServer(async (request, response) => {
   response.pbkAcceptsGzip = /\bgzip\b/i.test(String(request.headers['accept-encoding'] || ''));
   response.pbkCorsHeaders = buildBridgeCorsHeaders(request);
   const url = new URL(request.url || '/', `http://${request.headers.host || `${HOST}:${PORT}`}`);
   const pathname = url.pathname.replace(/\/+$/, '') || '/';
+
+  if (pathname === INVESTOR_QA_LEAD_PATH) {
+    const result = await investorQaStagingSource.handle(request);
+    response.setHeader('Cache-Control', 'no-store');
+    json(response, result.status, result.body);
+    return;
+  }
 
   // Dedicated limited MCP auth is enforced inside the endpoint, never by the master key.
   if (pathname === '/mcp/pbk-readonly') {
@@ -83160,6 +83169,9 @@ function startAgentRegistryHealthScheduler() {
 
 wireRuntimeCoverageLifecycle(server);
 server.listen(PORT, HOST, () => {
+  void investorQaStagingSource.discover().then(result => {
+    if (result) console.info('[pbk-investor-qa-probe]', JSON.stringify(result));
+  });
   startPostgresKeepAlive();
   startContractTemplateWatcher();
   refreshContextAwareScriptCatalog()

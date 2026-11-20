@@ -1,6 +1,6 @@
 # PBK daily workflow UX
 
-The founder chose the daily workflow and asked to focus its first release on Today. This revision covers that release. Implementation awaits design approval.
+The founder chose the daily workflow and approved Today as its first release slice.
 
 ## Goal
 

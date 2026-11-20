@@ -47,12 +47,16 @@ export function resolveTriageLead(
   const reference = item.recordKind === 'lead' ? item.recordId : undefined;
   if (item.recordKind === 'lead' && !validId(reference)) return null;
   const match = item.targetPath.match(/^\/leads\/([^/?#]+)(?:[?#].*)?$/);
-  let leadId: string;
+  let leadId: unknown;
   if (match) {
     try { leadId = decodeURIComponent(match[1]); } catch { return null; }
-  } else if (/^\/leads(?:[?#].*)?$/.test(item.targetPath) && validId(reference)) {
-    leadId = reference;
-  } else return null;
+  } else {
+    const legacy = item.targetPath.match(/^\/leads(?:\?([^#]*))?(?:#.*)?$/);
+    if (!legacy) return null;
+    const queryIds = new URLSearchParams(legacy[1]).getAll('lead');
+    if (queryIds.length > 1) return null;
+    leadId = queryIds[0] ?? reference;
+  }
   if (!validId(leadId) || (item.leadId !== undefined && item.leadId !== leadId)
     || (reference !== undefined && reference !== leadId)) return null;
   const matches = roster.map(record).filter(lead => {

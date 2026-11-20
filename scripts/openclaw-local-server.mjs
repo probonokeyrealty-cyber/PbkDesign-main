@@ -1,6 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import { createNeonMailRouter } from './neon-auth-mail.mjs';
 import { createComposioResearchDiscovery } from './composio-research-discovery.mjs';
+import { createPublicMarketConnectionCheck } from './public-market-connection.mjs';
 import { sendAvaOutlookMail } from './ava-outlook-mail.mjs';
 import { normalizeOutlookReceiptUrl, readOutlookDelivery } from '../src/app/utils/outlookDelivery.mjs';
 import { createServer, globalAgent as httpGlobalAgent } from 'node:http';
@@ -37409,6 +37410,8 @@ async function deleteLeadProfileRowFromDb(lead = {}, fallbackId = '') {
     params
   );
 }
+
+let checkPublicMarketConnection;
 
 async function buildToolingStatus() {
   const [scenario, researchJobs, upgradeManifest, propertyDataLocalStatus, voiceFallbackLocalStatus, mcpRegistry, mcpResearchCandidates, dashboard, streakPipelineStatus] = await Promise.all([
@@ -76551,16 +76554,7 @@ const server = createServer(async (request, response) => {
         ok: true,
         tooling: {
           ...await buildToolingStatus(),
-          // This bridge does not ship the staging E2B worker.
-          publicMarketWorker: {
-            kind: 'public_market_worker',
-            optional: true,
-            enabled: false,
-            configured: false,
-            ready: false,
-            state: 'disabled',
-            note: 'E2B cloud execution is not enabled on this bridge.',
-          },
+          publicMarketWorker: await (checkPublicMarketConnection ??= createPublicMarketConnectionCheck())(),
         },
       });
       return;

@@ -97,7 +97,7 @@ async function verify(engine, options, label) {
             },
             '/api/tooling/status': { ok: true, tooling: {
               summary: { requiredCount: 1 },
-              ...(savedCloudFixture ? { publicMarketWorker: { kind: 'public_market_worker', configured: true, ready: false, state: 'unverified' } } : {}),
+              ...(savedCloudFixture ? { publicMarketWorker: { kind: 'public_market_worker', configured: true, ready: false, state: 'connected_unverified' } } : {}),
             } },
             '/api/settings': { ok: true, settings: { operatingMode } },
             '/api/release/status': { ok: true, source: 'fixture' },
@@ -177,7 +177,7 @@ async function verify(engine, options, label) {
     await expect(marketWorker).toContainText('No saved E2B run reported');
     savedCloudFixture = true;
     await refresh.click();
-    await expect(marketWorker).toContainText('Current readiness: Approval required');
+    await expect(marketWorker).toContainText('Current readiness: Connected, execution unverified');
     await expect(marketWorker.locator('time')).toHaveAttribute('datetime', completedAt);
     await expect(marketWorker).toContainText('This does not verify current readiness.');
     await expect(page.getByRole('heading', { name: 'Vector capacity' })).toBeVisible();
@@ -197,7 +197,7 @@ async function verify(engine, options, label) {
     assert.equal(saves.length, 1);
     assert.deepEqual(decisions, ['approved']);
     await diagnostics.click();
-    await expect(marketWorker).toContainText('Current readiness: Approval required');
+    await expect(marketWorker).toContainText('Current readiness: Connected, execution unverified');
     await expect(marketWorker.locator('time')).toHaveAttribute('datetime', completedAt);
     assert.deepEqual(passiveCloudRequests, []);
     if (process.env.PBK_SETTINGS_SCREENSHOTS === '1') {

@@ -61,6 +61,15 @@
   color: var(--text-secondary);
 }
 .pbk-skill-studio .pbk-skill-version-id code { min-width: 0; overflow-wrap: anywhere; color: var(--text-primary); }
+.pbk-skill-studio .pbk-skill-review-notice {
+  max-width: 1680px;
+  margin: 0 auto 12px;
+  overflow-wrap: anywhere;
+  color: var(--text-secondary);
+  font: 13px/1.5 var(--font-ui);
+}
+.pbk-skill-studio .pbk-skill-review-notice:empty { margin: 0; }
+.pbk-skill-studio .pbk-skill-review-notice code { font-family: var(--font-mono); color: var(--text-primary); }
 .pbk-skill-studio :is(.pbk-skill-card-metrics, .pbk-skill-performance-dashboard > div) { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .pbk-skill-studio :is(.pbk-skill-card-metrics > span, .pbk-skill-performance-dashboard article, .pbk-skill-dialog footer > *, .pbk-skill-dialog-footer-left) { min-width: 0; }
 .pbk-skill-studio :is(.pbk-skill-status-ribbon, .pbk-skill-card-metrics, .pbk-skill-performance-dashboard, .pbk-skill-training-card, .pbk-skill-dialog, .pbk-skill-version-head) { overflow-wrap: anywhere; }

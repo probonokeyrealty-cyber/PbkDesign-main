@@ -352,7 +352,7 @@ test('operator workflow proof is unconditional after browser installation and fo
   assert.equal(step['continue-on-error'], undefined);
   assert.equal(step.run, 'npm run test:operator-workflow-browser');
   const scripts = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).scripts;
-  assert.equal(scripts['test:operator-workflow-unit'], 'node --test scripts/worklist-focus.node-test.mjs scripts/skill-evidence-display.node-test.mjs scripts/operator-workflow-local-preview.node-test.mjs');
+  assert.equal(scripts['test:operator-workflow-unit'], 'node --test scripts/worklist-focus.node-test.mjs scripts/skill-evidence-display.node-test.mjs scripts/operator-workflow-local-preview.node-test.mjs scripts/skill-review-selection.node-test.mjs scripts/skill-review-notice.node-test.mjs');
   assert.equal(scripts['test:operator-workflow-browser'], 'node scripts/leads-workflow-browser-smoke.mjs && node scripts/skill-studio-workflow-browser-smoke.mjs');
   assert.match(scripts['test:founder'], /npm run test:unit && npm run test:operator-workflow-unit &&/);
   const founder = parse(readFileSync(new URL('../.github/workflows/founder-verify.yml', import.meta.url), 'utf8'));

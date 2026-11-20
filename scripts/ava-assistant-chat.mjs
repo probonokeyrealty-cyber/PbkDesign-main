@@ -700,7 +700,7 @@ export function detectAssistantIntent(message = '') {
   }
 
   const delegatedAgent = detectAssistantAgentDelegation(text);
-  if (delegatedAgent) {
+  if (delegatedAgent && !/^send (?:an? )?email\b/i.test(text)) {
     return {
       intent: 'agent_delegation',
       message: text,
@@ -1297,11 +1297,11 @@ export function planAssistantIntent(detected = {}, options = {}) {
         usedIntent: intent,
       };
     }
-    if (channel === 'email' && /^send (?:an? )?email via outlook\b/i.test(detected.message)) {
+    if (channel === 'email' && (options.outlookLeadEmailEnabled || /^send (?:an? )?email via outlook\b/i.test(detected.message))) {
       if (!leadId) {
         return {
           action: 'missing_required_info',
-          answer: 'Select the PBK test lead before preparing the Outlook email.',
+          answer: 'Select the lead before preparing the Outlook email.',
           suggestions,
           toolPlan: null,
           usedIntent: intent,
@@ -1309,14 +1309,14 @@ export function planAssistantIntent(detected = {}, options = {}) {
       }
       return {
         action: 'approval_required',
-        answer: 'I can prepare this Outlook test email for approval.',
+        answer: 'I can prepare this Outlook email for approval.',
         suggestions,
         toolPlan: {
           toolName: 'sendColdEmail',
           params: {
             provider: 'outlook',
             leadId,
-            subject: 'PBK Ava Outlook test',
+            subject: options.outlookLeadEmailEnabled ? 'Follow-up from Probono Key Realty' : 'PBK Ava Outlook test',
             customBody: detected.messageBody,
           },
           providerWrite: true,

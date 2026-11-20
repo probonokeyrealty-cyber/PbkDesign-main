@@ -728,6 +728,7 @@ let __slackBotValidation = {
 };
 const RESEND_API_KEY = String(process.env.PBK_RESEND_API_KEY || process.env.RESEND_API_KEY || '').trim();
 const OUTLOOK_APPROVAL_DISPATCH = Symbol('outlook-approval-dispatch');
+const OUTLOOK_LEAD_EMAIL_ENABLED = process.env.PBK_AVA_OUTLOOK_LEAD_EMAIL_ENABLED === '1';
 const MAIN_BUSINESS_EMAIL = String(process.env.PBK_MAIN_BUSINESS_EMAIL || process.env.MAIN_BUSINESS_EMAIL || 'jordan@pbk.capital').trim();
 const COLD_CAMPAIGN_EMAIL = String(process.env.PBK_COLD_CAMPAIGN_EMAIL || process.env.COLD_CAMPAIGN_EMAIL || 'offers@pbkoutreach.local').trim();
 const INSTANTLY_API_KEY = String(process.env.PBK_INSTANTLY_API_KEY || process.env.INSTANTLY_API_KEY || '').trim();
@@ -43229,6 +43230,10 @@ function buildProviderActionReplayParams(params = {}) {
   return redactApprovalParamPreview(params || {});
 }
 
+function savedOutlookLeadEmail(lead) {
+  return String(lead?.seller?.email || lead?.email || '').trim();
+}
+
 function resolveProviderActionReplayParams(toolName, params = {}) {
   const resolved = { ...params };
   const context = findLeadContext(params);
@@ -43239,6 +43244,10 @@ function resolveProviderActionReplayParams(toolName, params = {}) {
   if (toolName === 'telnyx_sms') resolved.body = String(params.body || params.message || '').trim();
   if (toolName === 'sendColdEmail') {
     resolved.email = params.email || params.to || context.email || inferSkipTraceContact(context).email;
+    if (OUTLOOK_LEAD_EMAIL_ENABLED && params.provider === 'outlook') {
+      const lead = (state.leadImports || []).find((item) => (item.leadId || item.id) === params.leadId);
+      resolved.email = savedOutlookLeadEmail(lead);
+    }
     const outlookSender = params.provider === 'outlook' ? process.env.PBK_AVA_OUTLOOK_SENDER : '';
     resolved.fromEmail = getSenderAddress('cold', params.fromEmail || params.from_email || params.instantlySender || params.senderEmail || outlookSender || '');
     const body = String(params.customBody || params.body || params.message || '').trim();
@@ -43273,6 +43282,12 @@ function summarizeProviderActionResult(result = {}) {
     error: result.error || '',
     status: result.status || '',
     reconciliationRequired: Boolean(result.reconciliationRequired),
+    ...(result.provider === 'Outlook' ? {
+      provider: result.provider,
+      providerRequestId: result.delivery?.providerRequestId || '',
+      deliveryStatus: result.delivery?.deliveryStatus || result.message?.status || '',
+      messageId: result.message?.id || '',
+    } : {}),
     callId: result.call?.id || result.callId || '',
     callStatus: result.call?.status || result.status || '',
     callProvider: result.call?.provider || result.provider || '',
@@ -43705,6 +43720,12 @@ async function enforceOperatingModeForTool(toolName, params = {}) {
   }
   const mode = getRuntimeOperatingMode();
   const approvalReplayId = String(params.approvalId || params.approval_id || '').trim();
+  if (OUTLOOK_LEAD_EMAIL_ENABLED && toolName === 'sendColdEmail' && params.provider === 'outlook') {
+    const lead = params.leadId ? await loadExactPropertyLead(params.leadId) : null;
+    if (!savedOutlookLeadEmail(lead)) {
+      return { ok: false, result: 'outlook_saved_email_required', message: 'Select a saved lead with an email address before requesting approval.' };
+    }
+  }
   const forceApproval = params.forceApproval === true || params.force_approval === true ||
     (toolName === 'sendColdEmail' && params.provider === 'outlook');
   const label = toolName.replace(/_/g, ' ');
@@ -58881,6 +58902,13 @@ const toolHandlers = {
     if (useOutlook && !params[OUTLOOK_APPROVAL_DISPATCH]) {
       return { ok: false, result: 'approval_required', providerAttempted: false };
     }
+    if (useOutlook && OUTLOOK_LEAD_EMAIL_ENABLED) {
+      const lead = params.leadId ? await loadExactPropertyLead(params.leadId) : null;
+      const savedEmail = savedOutlookLeadEmail(lead);
+      if (!savedEmail || savedEmail !== params.email) {
+        return { ok: false, result: 'outlook_recipient_changed', providerAttempted: false };
+      }
+    }
     recordToolUse('sendColdEmail');
     const context = findLeadContext(params);
     const leadImport = findLatestLeadImport(params);
@@ -58991,7 +59019,7 @@ const toolHandlers = {
     }
 
     const message = createMessageRecord({
-      id: delivery?.id || delivery?.body?.id || `msg-cold-email-${Date.now()}`,
+      id: useOutlook ? `msg-outlook-${params.approvalId}` : delivery?.id || delivery?.body?.id || `msg-cold-email-${Date.now()}`,
       leadId: context.leadId,
       leadName: context.leadName,
       address: context.address,
@@ -59003,6 +59031,7 @@ const toolHandlers = {
       subject: content.subject,
       body: content.text,
       deliveryStatus: delivery?.deliveryStatus,
+      providerAttemptId: delivery?.providerRequestId,
       status: delivery?.ok ? (useOutlook ? 'queued' : 'sent') : delivery?.result === 'provider_missing' || !delivery ? 'provider_missing' : 'failed',
       provider,
     });
@@ -65362,6 +65391,7 @@ async function handleInternalAvaAssistantChatRequest(request) {
   const assistantPlan = requestTiming.measureSync('intent_plan', () => planAssistantIntent(assistantIntent, {
     publicMode: false,
     authenticated: true,
+    outlookLeadEmailEnabled: OUTLOOK_LEAD_EMAIL_ENABLED,
     session: assistantContextSession,
     leadId: assistantContextSession.leadId,
     leads: state.leadImports || [],

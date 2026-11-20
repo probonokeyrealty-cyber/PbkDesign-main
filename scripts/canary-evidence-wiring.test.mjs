@@ -180,12 +180,12 @@ test('unapproved v2 policy is not replaced with a pilot or legacy policy', async
 test('approval, auth, delivery and dispatch code outside maturity remains byte-for-byte unchanged', () => {
   const unchanged = (source.slice(0, start) + source.slice(end))
     .replace("import { readCanaryEvidence } from './canary-evidence-reader.mjs';\n", '');
-  // Outlook is explicit and requires the existing approval dispatch lease. The mailbox
-  // check and test-recipient allowlist live in the separately exercised Outlook adapter.
+  // Outlook lead mail binds the saved address to an approval and persists the provider receipt.
+  // The Outlook adapter and isolated agent smoke exercise the approval dispatch lease.
   // Telnyx receipt mapping and the scoped outbound media policy are covered by the
   // unified conversation bridge smoke test.
   assert.equal(createHash('sha256').update(unchanged).digest('hex'),
-    '88261b21a0cd294d963c2b4044fb89bdc933f9e4cc07a6cc5841924fc84153c6');
+    '3f8c316bfc2de29f0d9b7cbd311da8971f8edba086dc7a65e8496543be3b68e6');
 });
 
 test('production distribution includes reader and protocol, never the fixture signer', () => {

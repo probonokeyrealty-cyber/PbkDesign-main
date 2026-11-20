@@ -73,3 +73,21 @@ test('provider details and existing neural-output contract remain available', ()
   assert.equal(result.statusEndpoint, '/api/brain/web-search/status');
   assert(result.missing.length > 0);
 });
+
+const summaryStart = source.indexOf('function summarizeProviderComponent(');
+const summaryEnd = source.indexOf('\nfunction summarizeHealthComponents', summaryStart);
+const summaryBody = source.slice(summaryStart, summaryEnd);
+const summaryCalls = [...source.matchAll(/webSearch: (summarizeProviderComponent\(providers\.webSearch, \{[\s\S]*?\n    \}\))/g)];
+assert.equal(summaryCalls.length, 2, 'Exercise both detailed and liveness health consumers');
+for (const [index, match] of summaryCalls.entries()) {
+  for (const ready of [false, true]) {
+    test(`health consumer ${index + 1} preserves external retrieval readiness ${ready}`, () => {
+      const metadata = status(ready ? { openAi: available } : {});
+      const context = vm.createContext({ providers: { webSearch: metadata } });
+      const result = vm.runInContext(`${summaryBody}\n${match[1]}`, context);
+      assert.equal(result.ready, ready);
+      assert.equal(result.configured, ready);
+      assert.equal(result.status, ready ? 'up' : 'missing');
+    });
+  }
+}

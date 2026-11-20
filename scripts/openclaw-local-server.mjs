@@ -2810,8 +2810,6 @@ async function buildCommandCenterHealthSnapshot(runtimeMeta = getRuntimeMeta()) 
     }),
     webSearch: summarizeProviderComponent(providers.webSearch, {
       label: 'Ava/Rex web-search cognition',
-      ready: true,
-      configured: true,
       note: providers.webSearch?.note || 'Web search returns answer text, SNN spikes, symbolic facts, and provider telemetry.',
     }),
     openAiWebSearch: summarizeProviderComponent(providers.openAiWebSearch, {
@@ -2975,8 +2973,6 @@ function buildLivenessHealthSnapshot(runtimeMeta = getRuntimeMeta()) {
     }),
     webSearch: summarizeProviderComponent(providers.webSearch, {
       label: 'Ava/Rex web-search cognition',
-      ready: true,
-      configured: true,
       note: providers.webSearch?.note || 'Web search lane is available.',
     }),
     deepSeek: summarizeProviderComponent(providers.deepSeek, {

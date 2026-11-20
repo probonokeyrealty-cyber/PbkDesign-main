@@ -13,8 +13,11 @@ import {
   type AnalyzerPhotoResult,
 } from './AnalyzerListingLookup';
 import { AnalyzerSellerHistory } from './AnalyzerSellerHistory';
+import { AnalyzerAddressField } from './AnalyzerAddressField';
 import { formatCurrency } from '../utils/formatting';
+import { readAnalyzerDraftManualFields } from '../utils/analyzerStorage';
 import { calculateARV } from '../utils/dealCalculations';
+import { resetChangedProperty } from '../utils/analyzerIntelligence.mjs';
 import { getAnalyzeReadiness } from '../utils/pbk';
 import { PbkDataSource } from '../../components/pbk/index';
 
@@ -25,7 +28,7 @@ interface AnalyzerTabProps {
   onAnalyze: () => void | Promise<void>;
   onSendToAgent: () => void | Promise<void>;
   onSaveDeal: () => void | Promise<void>;
-  onClearDeal: () => void;
+  onClearDeal: () => boolean | Promise<boolean>;
   onSelectPath: (path: PBKPath) => void;
   onOpenCallMode: (path: PBKPath) => void;
   analyzeStatus: string;
@@ -45,19 +48,27 @@ export function AnalyzerTab({
   onOpenCallMode,
   analyzeStatus,
 }: AnalyzerTabProps) {
+  const operatorFields = useRef(
+    new Set<keyof DealData>((readAnalyzerDraftManualFields() || []) as (keyof DealData)[])
+  );
   const handleInputChange = (field: keyof DealData, value: DealData[keyof DealData]) => {
+    operatorFields.current.add(field);
     onDealChange({ [field]: value });
   };
 
   const handleCompChange = (comp: 'A' | 'B' | 'C', field: string, value: string | number) => {
+    operatorFields.current.add('comps');
+    operatorFields.current.add('arv');
+    const comps = {
+      ...deal.comps,
+      [comp]: { ...deal.comps[comp], [field]: value },
+    };
     onDealChange({
-      comps: {
-        ...deal.comps,
-        [comp]: {
-          ...deal.comps[comp],
-          [field]: value,
-        },
-      },
+      compManualSlots: [...new Set([...(deal.compManualSlots || []), comp])],
+      comps,
+      // A deliberate comp edit updates the existing mean-ARV calculation.
+      // Automatic evidence fills preserve an operator's ARV override instead.
+      arv: calculateARV(comps),
     });
   };
 
@@ -145,7 +156,11 @@ export function AnalyzerTab({
             </button>
             <button
               type="button"
-              onClick={onClearDeal}
+              onClick={async () => {
+                if (await onClearDeal()) {
+                  operatorFields.current.clear();
+                }
+              }}
               className="pbk-btn pbk-btn-ghost pbk-btn-sm"
             >
               Clear
@@ -160,23 +175,69 @@ export function AnalyzerTab({
           >
             Address
           </label>
-          <input
-            id="deal-property-address"
-            type="text"
-            inputMode="text"
-            enterKeyHint="next"
-            autoComplete="street-address"
-            value={deal.address}
-            onChange={(e) => handleInputChange('address', e.target.value)}
-            placeholder="123 Main St, City, ST 12345"
-            className="w-full h-9 px-3 border border-gray-200 dark:border-slate-700 rounded-lg bg-gray-50 dark:bg-slate-900 text-gray-900 dark:text-gray-100 text-[12.5px] outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 transition-all"
+          <AnalyzerAddressField
+            deal={deal}
+            automaticLookup
+            onChange={(patch) => {
+              if (patch.address !== undefined) {
+                const reset = resetChangedProperty(deal,patch.address);
+                if (Object.keys(reset).length) operatorFields.current.clear();
+                onDealChange({
+                  ...reset,
+                  ...patch,
+                  leadId: undefined,
+                  crmCreateKey: undefined,
+                  propertyRecordSnapshot: undefined,
+                  listingSnapshot: undefined,
+                  recordedSales: undefined,
+                  ...(deal.leadId || deal.crmCreateKey
+                    ? {
+                        sellerName: '',
+                        sellerPhone: '',
+                        sellerEmail: '',
+                        sellerPhoneVerified: false,
+                      }
+                    : {}),
+                });
+              } else onDealChange(patch);
+            }}
           />
           <AnalyzerListingLookup
             key={address}
             deal={deal}
+            protectedFields={operatorFields.current}
             onFill={onDealChange}
             onPhotoResult={setPhotoResult}
           />
+          <details className="pbk-analyzer-records">
+            <summary>CRM handoff · {leadId ? 'Linked lead' : 'New lead'}</summary>
+            <p className="mb-2">
+              Save Deal keeps a local copy and syncs to the team record. New leads need a seller
+              name and a phone or email.
+            </p>
+            {leadId && <p className="mb-2">Lead ID: {leadId}</p>}
+            {(
+              [
+                ['sellerName', 'Seller name', 'text'],
+                ['sellerPhone', 'Seller phone', 'tel'],
+                ['sellerEmail', 'Seller email', 'email'],
+              ] as const
+            ).map(([field, label, type]) => (
+              <label key={field} className="block mb-2">
+                <span className="block mb-1">{label}</span>
+                <input
+                  type={type}
+                  value={deal[field] || ''}
+                  onChange={(event) => handleInputChange(field, event.target.value)}
+                  className="w-full min-w-0 h-10 px-3 border border-gray-200 dark:border-slate-700 rounded-lg bg-gray-50 dark:bg-slate-900 text-gray-900 dark:text-gray-100"
+                />
+              </label>
+            ))}
+            <p>
+              Contact details do not grant permission to call, text or email. Existing approval
+              checks still apply.
+            </p>
+          </details>
         </div>
 
         <div className="pbk-analyzer-segments" role="group" aria-label="Contact type">
@@ -280,6 +341,8 @@ export function AnalyzerTab({
                 aria-label="Lot size in acres"
                 value={deal.lotSize || ''}
                 onChange={(e) => {
+                  operatorFields.current.add('lotSize');
+                  operatorFields.current.add('landLotSizeSqFt');
                   const lotSize = e.target.value;
                   const acres = Number(lotSize);
                   onDealChange({
@@ -483,6 +546,13 @@ export function AnalyzerTab({
         <h2 id="analyzer-comps-heading" className="pbk-analyzer-section-title mb-3">
           Comparable Sales (Mean = ARV)
         </h2>
+        {deal.recordedSales?.review === 'suggested-unreviewed' && (
+          <p role="status" className="pbk-property-evidence-note mb-3">
+            ATTOM sale candidates · Not yet reviewed. Auto-filled comps and their mean ARV are
+            provisional. Review property similarity and sale terms before making an offer.
+            Select and save reviewed sales in this lead’s Property → Comps tab.
+          </p>
+        )}
         <div>
           {(['A', 'B', 'C'] as const).map((comp) => (
             <div

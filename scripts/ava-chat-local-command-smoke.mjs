@@ -27,7 +27,7 @@ const migrations = fs
 
 assert(
   pkg.scripts?.['test:ava-chat-local-command'] ===
-    'npm run test:ava-intent-router && node ./scripts/ava-chat-local-command-smoke.mjs',
+    'npm run test:ava-intent-router && node ./scripts/ava-chat-local-command-smoke.mjs && node --test ./scripts/ava-chat-stream-client.node-test.mjs',
   'package.json must expose test:ava-chat-local-command.'
 );
 
@@ -36,6 +36,16 @@ assert(
   'AvaChat route file must exist.'
 );
 const avaChat = read('src/app/routes/AvaChat.tsx');
+const { resolveAvaChatScope } = await import('../src/app/utils/avaChatScope.mjs');
+const generalScope = resolveAvaChatScope('');
+const leadScope = resolveAvaChatScope('?leadId=qa-local-command-scope');
+assert(
+  generalScope.valid && leadScope.valid &&
+    generalScope.storageKeys.assistantExchanges === 'pbk:ava-chat:assistant-exchanges' &&
+    leadScope.storageKeys.assistantExchanges !== generalScope.storageKeys.assistantExchanges &&
+    avaChat.includes('resolveAvaChatScope'),
+  'Ava must keep general chat storage compatible and resolve separate linked-lead history storage.'
+);
 
 [
   'SpeechRecognition',
@@ -43,14 +53,13 @@ const avaChat = read('src/app/routes/AvaChat.tsx');
   'queueLocalCommandRequest',
   'fetchLocalCommandsRequest',
   'fetchDesktopSidecarStatusRequest',
-  'sendAvaAssistantChatRequest',
+  'streamAvaAssistantChatRequest',
   'updateApprovalDecision',
   'requiresApproval',
   'Promise.allSettled',
   'Search past chats',
   'Replay',
   'AssistantExchange',
-  'AVA_ASSISTANT_EXCHANGES_KEY',
   'DEFAULT_CHAT_COMMAND_MAX_AGE_MS',
   'shouldUseAssistantChatRoute',
   'shouldShowCommandInDefaultChat',
@@ -74,6 +83,12 @@ const avaChat = read('src/app/routes/AvaChat.tsx');
 ].forEach((token) => {
   assert(avaChat.includes(token), `AvaChat.tsx must include ${token}.`);
 });
+assert(
+  /await streamAvaAssistantChatRequest\([\s\S]*historyMode: 'completed-only'[\s\S]*signal: assistantController.signal[\s\S]*onAnswer:/.test(avaChat) &&
+    /assistantRequestRef.current !== assistantController \|\| assistantController.signal.aborted/.test(avaChat) &&
+    /status: cancelled \? 'cancelled' : 'failed'/.test(avaChat),
+  'Ava must stream incremental replies with cancellation, stale-request isolation, and honest interrupted states.'
+);
 [
   'pbk-ava-chat-quick-strip',
   'AvaComposerModePicker',
@@ -189,11 +204,14 @@ assert(
   'Ava Chat Enter-to-send must ignore IME composition events.'
 );
 assert(
-  /\.pbk-ava-chat-submit-row[\s\S]*grid-template-columns:\s*44px minmax\(0,\s*1fr\)/.test(
-    pbkComponentsCss
-  ) &&
-    /\.pbk-ava-chat-send-button[\s\S]*width:\s*100%/.test(pbkComponentsCss),
-  'Ava Chat mobile composer must keep Send as a full-width tappable control.'
+  /className="pbk-ava-chat-submit-row flex min-w-0 flex-wrap/.test(avaChat) &&
+    /pbk-ava-chat-send-button min-h-11 min-w-11 w-24 shrink-0/.test(avaChat) &&
+    avaChat.includes("aria-label={onStopResponse ? 'Stop Ava response' : 'Send to Ava'}") &&
+    /@media \(max-width: 640px\)[\s\S]*?\.pbk-ava-chat-submit-row\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)\s+96px/.test(
+      pbkComponentsCss
+    ) &&
+    /\.pbk-ava-chat-send-button\s*\{[^}]*width:\s*100%/.test(pbkComponentsCss),
+  'Ava Chat mobile composer must reserve a stable 96px column for Send/Stop.'
 );
 
 assert(

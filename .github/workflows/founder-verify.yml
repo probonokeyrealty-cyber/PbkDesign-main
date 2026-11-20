@@ -84,6 +84,8 @@ jobs:
           npm run test:batch-review
           npm run test:batch-apply
           npm run test:batch-phone-dispatch
+          npm run test:backlog-reconciliation-bridge
+          npm run test:targeted-readiness-migration
 
       - name: Verify Redis outage recovery
         run: npm run test:redis-recovery

@@ -1,0 +1,153 @@
+name: Release Qualification
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  release-qualification:
+    name: Release qualification
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      POSTGRES_REPORT: release-qualification-postgres.json
+      PBK_DATABASE_URL: ''
+      DATABASE_URL: ''
+      SUPABASE_DB_URL: ''
+      PBK_MIGRATION_DATABASE_URL: ''
+      PBK_TEST_DATABASE_URL: ''
+      PBK_EVAL_DATABASE_URL: ''
+      PBK_NEON_EVAL_INJECT_RUNTIME_DB: 'false'
+      PBK_NEON_EVAL_DRY_RUN: 'false'
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Verify qualification CI reader
+        run: node --experimental-vm-modules node_modules/jest/bin/jest.js --config jest.config.mjs --runInBand --runTestsByPath scripts/release-qualification-ci.test.mjs
+
+      - name: Run disposable Postgres tests
+        env:
+          NEON_API_KEY: ${{ secrets.NEON_API_KEY || secrets.PBK_NEON_API_KEY }}
+          PBK_NEON_API_KEY: ${{ secrets.PBK_NEON_API_KEY || secrets.NEON_API_KEY }}
+          NEON_PROJECT_ID: ${{ secrets.NEON_PROJECT_ID || secrets.PBK_NEON_PROJECT_ID || vars.NEON_PROJECT_ID || vars.PBK_NEON_PROJECT_ID }}
+          PBK_NEON_PROJECT_ID: ${{ secrets.PBK_NEON_PROJECT_ID || secrets.NEON_PROJECT_ID || vars.PBK_NEON_PROJECT_ID || vars.NEON_PROJECT_ID }}
+        run: >-
+          npm run neon:evaluation -- --ttl-hours 1
+          --branch-name pbk-eval-targeted-readiness-qualification-${{ github.run_id }}-${{ github.run_attempt }} --
+          node --experimental-vm-modules scripts/readiness-postgres-qualification.mjs
+          --config jest.config.mjs --runInBand
+          --runTestsByPath scripts/conversation-store.test.mjs scripts/provider-action-dispatch.test.mjs
+          scripts/release-qualification.test.mjs scripts/operational-audit-store.test.mjs
+          scripts/backlog-reconciliation-store.test.mjs
+          scripts/backlog-reconciliation-integration.test.mjs
+          --json --outputFile=$POSTGRES_REPORT
+
+      - name: Assert zero skipped or failed Postgres tests
+        shell: bash
+        run: |
+          node --input-type=module <<'NODE'
+          import assert from 'node:assert/strict';
+          import { readFileSync } from 'node:fs';
+          const report = JSON.parse(readFileSync(process.env.POSTGRES_REPORT, 'utf8'));
+          assert.equal(report.success, true);
+          for (const key of ['numFailedTests', 'numPendingTests', 'numTodoTests', 'numFailedTestSuites', 'numPendingTestSuites', 'numRuntimeErrorTestSuites']) {
+            assert.equal(report[key], 0, key);
+          }
+          assert.equal(report.numTotalTestSuites, 6);
+          assert.equal(report.numPassedTestSuites, 6);
+          assert.ok(report.numTotalTests > 0);
+          assert.equal(report.numPassedTests, report.numTotalTests);
+          assert.equal(report.testResults.length, 6);
+          const expected = ['backlog-reconciliation-integration.test.mjs', 'backlog-reconciliation-store.test.mjs', 'conversation-store.test.mjs', 'operational-audit-store.test.mjs', 'provider-action-dispatch.test.mjs', 'release-qualification.test.mjs'];
+          const actual = report.testResults.map((suite) => suite.name.replaceAll('\\', '/').split('/').pop()).sort();
+          assert.deepEqual(actual, expected);
+          let assertions = 0;
+          for (const suite of report.testResults) {
+            assert.equal(suite.status, 'passed');
+            assert.ok(suite.assertionResults.length > 0);
+            for (const assertion of suite.assertionResults) assert.equal(assertion.status, 'passed');
+            assertions += suite.assertionResults.length;
+          }
+          assert.equal(assertions, report.numTotalTests);
+          console.log(`Postgres qualification: ${assertions} passed, zero skipped or failed.`);
+          NODE
+
+      - name: Run targeted schema and memory Postgres proof
+        env:
+          NEON_API_KEY: ${{ secrets.NEON_API_KEY || secrets.PBK_NEON_API_KEY }}
+          PBK_NEON_API_KEY: ${{ secrets.PBK_NEON_API_KEY || secrets.NEON_API_KEY }}
+          NEON_PROJECT_ID: ${{ secrets.NEON_PROJECT_ID || secrets.PBK_NEON_PROJECT_ID || vars.NEON_PROJECT_ID || vars.PBK_NEON_PROJECT_ID }}
+        run: >-
+          npm run neon:evaluation -- --ttl-hours 1
+          --branch-name pbk-eval-targeted-readiness-${{ github.run_id }}-${{ github.run_attempt }} --
+          node --test scripts/targeted-readiness-postgres.node-test.mjs
+
+      - name: Run bounded census Postgres proof
+        env:
+          NEON_API_KEY: ${{ secrets.NEON_API_KEY || secrets.PBK_NEON_API_KEY }}
+          PBK_NEON_API_KEY: ${{ secrets.PBK_NEON_API_KEY || secrets.NEON_API_KEY }}
+          NEON_PROJECT_ID: ${{ secrets.NEON_PROJECT_ID || secrets.PBK_NEON_PROJECT_ID || vars.NEON_PROJECT_ID || vars.PBK_NEON_PROJECT_ID }}
+        run: >-
+          npm run neon:evaluation -- --ttl-hours 1
+          --branch-name pbk-eval-targeted-readiness-bounded-${{ github.run_id }}-${{ github.run_attempt }} --
+          node --test scripts/bounded-census-postgres.node-test.mjs
+
+      - name: Run trusted canary Postgres proof
+        env:
+          NEON_API_KEY: ${{ secrets.NEON_API_KEY || secrets.PBK_NEON_API_KEY }}
+          PBK_NEON_API_KEY: ${{ secrets.PBK_NEON_API_KEY || secrets.NEON_API_KEY }}
+          NEON_PROJECT_ID: ${{ secrets.NEON_PROJECT_ID || secrets.PBK_NEON_PROJECT_ID || vars.NEON_PROJECT_ID || vars.PBK_NEON_PROJECT_ID }}
+        run: >-
+          npm run neon:evaluation -- --ttl-hours 1
+          --branch-name pbk-eval-targeted-readiness-canary-${{ github.run_id }}-${{ github.run_attempt }} --
+          node --test scripts/canary-evidence-postgres.node-test.mjs
+
+      - name: Build isolated browser fixtures
+        run: npm run build
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium webkit
+
+      - name: Verify comp evidence and explicit CRM comparison
+        run: |
+          node --test scripts/property-intelligence.node-test.mjs scripts/analyzer-intelligence.node-test.mjs scripts/lead-comps.node-test.mjs scripts/property-evidence.node-test.mjs
+          node scripts/crm-property-evidence-browser-smoke.mjs
+
+      - name: Run Chromium and WebKit qualification
+        run: node scripts/ava-design-browser-smoke.mjs
+
+      - name: Verify lead-linked chat continuity
+        run: npm run test:ava-chat-scope-ui
+
+      - name: Verify explicit agent research inspection
+        run: |
+          npm run test:composio-research-ui
+          PBK_FLEET_BUILT=1 node scripts/agent-fleet-design-browser-smoke.mjs
+
+      - name: Verify isolated Analyzer draft recovery
+        run: npm run test:analyzer-draft-recovery-browser
+
+      - name: Verify controlled Analyzer publication timing
+        run: node scripts/analyzer-draft-recovery-browser-smoke.mjs --controlled-publication

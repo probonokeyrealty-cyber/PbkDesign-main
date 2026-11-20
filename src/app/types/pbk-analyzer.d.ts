@@ -2,6 +2,8 @@ import type { DealData } from '../types';
 import type { PBKBranding } from '../utils/pbk';
 
 export interface PBKAnalyzerStatePayload {
+  manualFields?: string[];
+  persistDraft?: boolean;
   deal?: Partial<DealData>;
   activeTab?: 'analyzer' | 'callmode' | 'documents' | 'crm' | string;
   analyzeStatus?: string;

@@ -30,11 +30,15 @@ Expected:
 
 - the current PR has `Founder Verify` as `completed success`
 - the current PR has `Tooling Verify` as `completed success`
-- the current PR has `Hosted Founder Smoke` as `completed success`, including protected mobile proof
+- the release commit has `Hosted Founder Smoke` as `completed success` for isolated sample bridge and desktop/mobile checks (not production health or sign-in proof)
 - the current PR has `PBK Agent Evals` as `completed success` when the release touches Ava, approvals, CRM, memory, skills, provider actions, or migrations
 
 Do not launch over a fresh failing workflow unless the failure is understood,
 documented, and unrelated to the release.
+
+See [Hosted Founder Smoke isolation](../hosted-founder-smoke.md) for its safety
+boundaries. Live production verification is separate and requires explicit
+approval; do not add credentials or real targets to the isolated workflow.
 
 ## 3. Hosted Bridge Health
 

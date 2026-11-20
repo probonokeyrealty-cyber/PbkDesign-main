@@ -2,6 +2,18 @@ import assert from 'node:assert/strict';
 import { test } from '@jest/globals';
 import { createAvaRequestTiming } from './ava-request-timing.mjs';
 
+test('first emitted answer timing remains distinct from a long completion', () => {
+  let clock = 0;
+  const timing = createAvaRequestTiming({ now: () => clock });
+  clock = 1700;
+  timing.markFirstToken();
+  clock = 70000;
+  timing.markFirstToken();
+  assert.equal(timing.snapshot().firstTokenMs, 1700);
+  assert.equal(timing.snapshot().durationMs, 70000);
+  assert.equal(createAvaRequestTiming().snapshot().firstTokenMs, undefined);
+});
+
 test('attributes elapsed time without treating returned failures as success', async () => {
   let clock = 0;
   const timer = createAvaRequestTiming({ now: () => clock });

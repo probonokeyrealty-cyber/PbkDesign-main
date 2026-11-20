@@ -30,16 +30,19 @@ import {
   Sparkles,
   Square,
   Terminal,
+  Volume2,
+  VolumeX,
   X,
 } from 'lucide-react';
-import { Link, useSearchParams } from 'react-router';
+import { Link, useLocation } from 'react-router';
 import { PbkButton, PbkDataSource, PbkEmpty, PbkPulseDot } from '../../components/pbk/index';
 import { useRuntimeSnapshot } from '../hooks/useRuntimeSnapshot';
 import {
+  bridgeBlobRequest,
   fetchDesktopSidecarStatusRequest,
   fetchLocalCommandsRequest,
   queueLocalCommandRequest,
-  sendAvaAssistantChatRequest,
+  streamAvaAssistantChatRequest,
   updateApprovalDecision,
   type AvaAssistantChatResponse,
   type DesktopSidecarStatusResponse,
@@ -47,6 +50,8 @@ import {
 } from '../utils/runtimeBridge';
 import { showUiToast } from '../utils/uiFeedback';
 import { getApprovalResolutionKeys } from './inboxRuntimeLogic.js';
+import { createAvaAudioPlayer, createAvaReplySpeech, type AvaVoiceProgress } from '../utils/avaReplySpeech';
+import { resolveAvaChatScope, type AvaChatScope } from '../utils/avaChatScope.mjs';
 
 type SpeechRecognitionResultEvent = Event & {
   results: SpeechRecognitionResultList;
@@ -109,7 +114,8 @@ type AvaAssistantExchange = {
   id: string;
   request: string;
   answer: string;
-  status: 'completed' | 'failed';
+  status: 'pending' | 'completed' | 'failed' | 'cancelled';
+  interrupted?: boolean;
   createdAt: string;
   updatedAt: string;
   suggestions: string[];
@@ -122,11 +128,9 @@ type AvaAssistantExchange = {
   trace?: Record<string, unknown> | null;
   controlEnvelope?: Record<string, unknown> | null;
   deepSeekDecision?: Record<string, unknown> | null;
+  rexHandoff?: AvaAssistantChatResponse['rexHandoff'];
 };
 
-const AVA_OPERATOR_MEMORY_KEY = 'pbk:ava-chat:operator-memory';
-const AVA_ASSISTANT_SESSION_KEY = 'pbk:ava-chat:assistant-session';
-const AVA_ASSISTANT_EXCHANGES_KEY = 'pbk:ava-chat:assistant-exchanges';
 const DEFAULT_CHAT_COMMAND_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 const LOCAL_CONTROL_ACTIONS = new Set<AvaCommandAction>([
   'clickui',
@@ -566,16 +570,16 @@ function getAssistantDeepSeekDecision(response: AvaAssistantChatResponse) {
 function buildAssistantExchange(
   request: string,
   response: AvaAssistantChatResponse,
-  fallbackAnswer = ''
+  pendingExchange?: AvaAssistantExchange
 ): AvaAssistantExchange {
   const now = new Date().toISOString();
-  const answer = String(response.answer || response.result || fallbackAnswer || '').trim();
+  const answer = String(response.answer || response.result || '').trim();
   return {
-    id: createAvaAssistantExchangeId(),
+    id: pendingExchange?.id || createAvaAssistantExchangeId(),
     request,
     answer: answer || 'Ava answered, but no readable message came back.',
     status: response.ok === false ? 'failed' : 'completed',
-    createdAt: now,
+    createdAt: pendingExchange?.createdAt || now,
     updatedAt: now,
     suggestions: normalizeAssistantSuggestions(response.suggestions),
     usedIntent: response.usedIntent,
@@ -587,15 +591,20 @@ function buildAssistantExchange(
     trace: response.trace,
     controlEnvelope: response.controlEnvelope,
     deepSeekDecision: getAssistantDeepSeekDecision(response),
+    rexHandoff: response.rexHandoff && {
+      ...response.rexHandoff,
+      requestId: response.rexHandoff.requestId || pendingExchange?.rexHandoff?.requestId,
+    },
   };
 }
 
 function buildAssistantRequestMessages(exchanges: AvaAssistantExchange[], command: string) {
   const messages = exchanges
+    .filter((exchange) => exchange.status === 'completed' && !exchange.rexHandoff)
     .slice(-8)
     .flatMap((exchange) => [
       { role: 'user', content: exchange.request.slice(0, 1200) },
-      { role: 'assistant', content: exchange.answer.slice(0, 2400) },
+      { role: 'assistant', content: exchange.answer },
     ])
     .filter((message) => message.content.trim());
   messages.push({ role: 'user', content: command.slice(0, 1200) });
@@ -1064,9 +1073,51 @@ function getAvaSystemStatus({
   };
 }
 
+function readAvaChatStorage(key: string) {
+  try {
+    return window.localStorage.getItem(key);
+  } catch {
+    return undefined;
+  }
+}
+
+function writeAvaChatStorage(key: string, value: string | null) {
+  try {
+    if (value === null) window.localStorage.removeItem(key);
+    else window.localStorage.setItem(key, value);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export function AvaChat() {
-  const [searchParams] = useSearchParams();
-  const linkedLeadId = searchParams.get('leadId') || searchParams.get('lead_id') || '';
+  const scope = resolveAvaChatScope(useLocation().search);
+  if (!scope.valid) {
+    return (
+      <section className="pbk-ava-chat-surface h-full min-w-0 bg-[var(--ava-bg)] text-[var(--ava-text)]">
+        <div className="mx-auto w-full max-w-4xl px-3 py-5 sm:px-6 lg:px-8">
+          <div role="alert" className="flex items-start gap-3 rounded-lg border border-[var(--ava-warning-border)] bg-[var(--ava-warning-soft)] p-3 text-sm">
+            <AlertTriangle size={18} className="mt-0.5 shrink-0 text-[var(--ava-warning)]" aria-hidden="true" />
+            <div className="min-w-0">
+              <p className="font-semibold">This link has invalid lead context.</p>
+              <Link className="pbk-ava-evidence-link mt-2" to="/ava-chat">Open general Ava chat</Link>
+            </div>
+          </div>
+        </div>
+      </section>
+    );
+  }
+  return <AvaChatSession key={scope.identity} scope={scope} />;
+}
+
+function AvaChatSession({ scope }: { scope: AvaChatScope }) {
+  const { leadId: linkedLeadId, storageKeys } = scope;
+  const {
+    operatorMemory: operatorMemoryKey,
+    assistantSession: sessionKey,
+    assistantExchanges: exchangesKey,
+  } = storageKeys;
   const { snapshot, refresh } = useRuntimeSnapshot(30000);
   const [draft, setDraft] = useState('');
   const [transcript, setTranscript] = useState('');
@@ -1087,12 +1138,73 @@ export function AvaChat() {
   const contextRef = useRef<HTMLDialogElement | null>(null);
   const [decidingApprovalId, setDecidingApprovalId] = useState('');
   const [operatorMemory, setOperatorMemory] = useState<OperatorMemory | null>(null);
+  const [writableStorage, setWritableStorage] = useState<Record<keyof AvaChatScope['storageKeys'], boolean> | null>(null);
+  const [storageUnavailable, setStorageUnavailable] = useState(false);
   const [resolvedApprovalIds, setResolvedApprovalIds] = useState<Set<string>>(() => new Set());
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
   const timelineRef = useRef<HTMLDivElement | null>(null);
   const loadInFlightRef = useRef(false);
   const submitInFlightRef = useRef(false);
+  const assistantRequestRef = useRef<AbortController | null>(null);
+  const voicePlayerRef = useRef<ReturnType<typeof createAvaAudioPlayer> | null>(null);
+  const replySpeechRef = useRef<ReturnType<typeof createAvaReplySpeech> | null>(null);
+  const voiceEnabledRef = useRef(false);
+  const voiceMountedRef = useRef(true);
+  const voiceSettingRef = useRef(0);
+  const [voiceEnabled, setVoiceEnabled] = useState(false);
+  const [voiceProgress, setVoiceProgress] = useState<AvaVoiceProgress>({ state: 'idle', spokenCharacters: 0, queuedCharacters: 0 });
+  const [voiceError, setVoiceError] = useState('');
+  const voiceBusy = voiceProgress.state === 'preparing' || voiceProgress.state === 'speaking';
+
+  const getVoicePlayer = useCallback(() => {
+    voicePlayerRef.current ??= createAvaAudioPlayer((text, signal) => bridgeBlobRequest({
+      method: 'POST', path: '/api/voice/tts', accept: 'audio/mpeg', signal,
+      body: { text, source: 'ava-chat-stream-speech', noLeadCapture: true },
+    }));
+    return voicePlayerRef.current;
+  }, []);
+
+  const stopReplySpeech = useCallback(() => {
+    replySpeechRef.current?.stop();
+    replySpeechRef.current = null;
+  }, []);
+
+  const setVoiceOutput = useCallback((enabled: boolean) => {
+    stopReplySpeech();
+    const setting = ++voiceSettingRef.current;
+    voiceEnabledRef.current = enabled;
+    setVoiceEnabled(enabled);
+    setVoiceError('');
+    if (enabled) void getVoicePlayer().prepare().catch(() => {
+      if (!voiceMountedRef.current || setting !== voiceSettingRef.current) return;
+      voiceEnabledRef.current = false;
+      setVoiceEnabled(false);
+      setVoiceError('Voice playback is unavailable. Ava\'s text is still available.');
+    });
+  }, [getVoicePlayer, stopReplySpeech]);
+
+  const beginReplySpeech = useCallback(() => {
+    const queue = createAvaReplySpeech(getVoicePlayer().play,
+      progress => { if (voiceMountedRef.current && replySpeechRef.current === queue) setVoiceProgress(progress); },
+      error => { if (voiceMountedRef.current && replySpeechRef.current === queue) setVoiceError(error.code === 'reply_changed'
+        ? 'Ava revised this reply. Voice stopped; the final text is available.'
+        : 'Voice playback failed. Ava\'s text is still available.'); });
+    replySpeechRef.current = queue;
+    setVoiceProgress({ state: 'idle', spokenCharacters: 0, queuedCharacters: 0 });
+    return queue;
+  }, [getVoicePlayer]);
+
+  useEffect(() => {
+    voiceMountedRef.current = true;
+    return () => {
+      voiceMountedRef.current = false;
+      replySpeechRef.current?.stop();
+      replySpeechRef.current = null;
+      void voicePlayerRef.current?.close().catch(() => {});
+      voicePlayerRef.current = null;
+    };
+  }, []);
 
   const pendingApprovals = useMemo(
     () =>
@@ -1163,8 +1275,8 @@ export function AvaChat() {
   const filteredAssistantExchanges = useMemo(() => {
     const query = searchQuery.trim().toLowerCase();
     return assistantExchanges.filter((exchange) => {
-      if (historyFilter === 'active') return false;
-      if (historyFilter === 'failed' && exchange.status !== 'failed') return false;
+      if (historyFilter === 'active' && exchange.status !== 'pending') return false;
+      if (historyFilter === 'failed' && !['failed', 'cancelled'].includes(exchange.status)) return false;
       if (historyFilter === 'completed' && exchange.status !== 'completed') return false;
       if (!query) return true;
       return [
@@ -1296,47 +1408,66 @@ export function AvaChat() {
   }, [load]);
 
   useEffect(() => {
-    return () => recognitionRef.current?.stop();
+    return () => {
+      const recognition = recognitionRef.current;
+      recognitionRef.current = null;
+      if (recognition) {
+        recognition.onstart = null;
+        recognition.onend = null;
+        recognition.onerror = null;
+        recognition.onresult = null;
+        try { recognition.stop(); } catch { /* Recognition may already have ended. */ }
+      }
+      assistantRequestRef.current?.abort();
+      assistantRequestRef.current = null;
+    };
   }, []);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
-    try {
-      const raw = window.localStorage.getItem(AVA_OPERATOR_MEMORY_KEY);
-      if (!raw) return;
-      const parsed = JSON.parse(raw) as OperatorMemory;
-      if (!parsed?.draft || !ACTIONS.some((item) => item.id === parsed.action)) return;
-      setOperatorMemory(parsed);
-    } catch {
-      window.localStorage.removeItem(AVA_OPERATOR_MEMORY_KEY);
+    const rawMemory = readAvaChatStorage(operatorMemoryKey);
+    const rawSessionId = readAvaChatStorage(sessionKey);
+    const rawExchanges = readAvaChatStorage(exchangesKey);
+    const writable = {
+      operatorMemory: rawMemory !== undefined,
+      assistantSession: rawSessionId !== undefined,
+      assistantExchanges: rawExchanges !== undefined,
+    };
+    if (!writable.operatorMemory || !writable.assistantSession || !writable.assistantExchanges) {
+      setStorageUnavailable(true);
     }
-  }, []);
 
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-    const storedSessionId = String(
-      window.localStorage.getItem(AVA_ASSISTANT_SESSION_KEY) || ''
-    ).trim();
+    try {
+      const parsed = rawMemory ? JSON.parse(rawMemory) as OperatorMemory : null;
+      if (parsed?.draft && ACTIONS.some((item) => item.id === parsed.action)) {
+        setOperatorMemory(parsed);
+      }
+    } catch {
+      if (!writeAvaChatStorage(operatorMemoryKey, null)) setStorageUnavailable(true);
+    }
+
+    const storedSessionId = (rawSessionId ?? '').trim();
     if (storedSessionId) setAssistantSessionId(storedSessionId);
     try {
-      const raw = window.localStorage.getItem(AVA_ASSISTANT_EXCHANGES_KEY);
-      if (!raw) return;
-      const parsed = JSON.parse(raw);
-      if (!Array.isArray(parsed)) return;
-      setAssistantExchanges(
+      const parsed = rawExchanges ? JSON.parse(rawExchanges) : null;
+      if (Array.isArray(parsed)) setAssistantExchanges(
         parsed
+          .filter((item) => item?.status === 'completed' || item?.rexHandoff)
           .map(
             (item): AvaAssistantExchange => ({
               id: String(item?.id || createAvaAssistantExchangeId()),
               request: String(item?.request || '').slice(0, 1200),
-              answer: String(item?.answer || '').slice(0, 4000),
-              status: item?.status === 'failed' ? 'failed' : 'completed',
+              answer: item?.rexHandoff ? 'Check the saved research status to see the current result.' : String(item?.answer || ''),
+              status: 'completed',
               createdAt: String(item?.createdAt || item?.updatedAt || new Date().toISOString()),
               updatedAt: String(item?.updatedAt || item?.createdAt || new Date().toISOString()),
               suggestions: normalizeAssistantSuggestions(item?.suggestions),
               usedIntent: String(item?.usedIntent || ''),
               assistantAction: String(item?.assistantAction || ''),
+              activeLeadId: String(item?.activeLeadId || ''),
+              toolResult: asRecord(item?.toolResult),
               warning: String(item?.warning || ''),
+              rexHandoff: item?.rexHandoff ? { status: 'saved', requestId: item.rexHandoff.requestId } : undefined,
               mission:
                 item?.mission && typeof item.mission === 'object' && !Array.isArray(item.mission)
                   ? (item.mission as Record<string, unknown>)
@@ -1361,25 +1492,29 @@ export function AvaChat() {
           .slice(-30)
       );
     } catch {
-      window.localStorage.removeItem(AVA_ASSISTANT_EXCHANGES_KEY);
+      if (!writeAvaChatStorage(exchangesKey, null)) setStorageUnavailable(true);
     }
-  }, []);
+
+    // Publish restored state before allowing writes. A failed read protects its unseen slot.
+    setWritableStorage(writable);
+  }, [exchangesKey, operatorMemoryKey, sessionKey]);
 
   useEffect(() => {
-    if (typeof window === 'undefined' || !assistantSessionId) return;
-    window.localStorage.setItem(AVA_ASSISTANT_SESSION_KEY, assistantSessionId);
-  }, [assistantSessionId]);
+    if (!writableStorage?.assistantSession || !assistantSessionId) return;
+    if (!writeAvaChatStorage(sessionKey, assistantSessionId)) setStorageUnavailable(true);
+  }, [assistantSessionId, sessionKey, writableStorage]);
 
   useEffect(() => {
-    if (typeof window === 'undefined') return;
-    window.localStorage.setItem(
-      AVA_ASSISTANT_EXCHANGES_KEY,
-      JSON.stringify(assistantExchanges.slice(-30))
-    );
-  }, [assistantExchanges]);
+    if (!writableStorage?.assistantExchanges) return;
+    const completed = assistantExchanges.filter((exchange) => exchange.status === 'completed' || exchange.rexHandoff)
+      .slice(-30).map(exchange => exchange.rexHandoff
+        ? { ...exchange, answer: '', warning: '', rexHandoff: { status: 'saved', requestId: exchange.rexHandoff.requestId } }
+        : exchange);
+    if (!writeAvaChatStorage(exchangesKey, JSON.stringify(completed))) setStorageUnavailable(true);
+  }, [assistantExchanges, exchangesKey, writableStorage]);
 
   useEffect(() => {
-    if (typeof window === 'undefined') return;
+    if (!writableStorage) return;
     const trimmedDraft = draft.trim();
     if (!trimmedDraft) return;
     const nextMemory: OperatorMemory = {
@@ -1388,49 +1523,74 @@ export function AvaChat() {
       updatedAt: new Date().toISOString(),
     };
     setOperatorMemory(nextMemory);
-    window.localStorage.setItem(AVA_OPERATOR_MEMORY_KEY, JSON.stringify(nextMemory));
-  }, [action, draft]);
+    if (writableStorage.operatorMemory && !writeAvaChatStorage(operatorMemoryKey, JSON.stringify(nextMemory))) {
+      setStorageUnavailable(true);
+    }
+  }, [action, draft, operatorMemoryKey, writableStorage]);
 
   useEffect(() => {
     const timeline = timelineRef.current;
     if (!timeline || searchQuery || historyFilter !== 'all') return;
     timeline.scrollTop = timeline.scrollHeight;
-  }, [conversationCount, historyFilter, searchQuery]);
+  }, [assistantExchanges, conversationCount, historyFilter, searchQuery]);
 
   const stopListening = () => {
-    recognitionRef.current?.stop();
+    const recognition = recognitionRef.current;
     recognitionRef.current = null;
+    try { recognition?.stop(); } catch { /* Recognition may already have ended. */ }
     setListening(false);
   };
 
   const submitCommand = useCallback(
     async (value = draft) => {
       const command = value.trim();
-      if (!command || submitting || submitInFlightRef.current) return;
+      if (!voiceMountedRef.current || !command || submitting || submitInFlightRef.current) return;
       submitInFlightRef.current = true;
       const releaseSubmit = () => {
         submitInFlightRef.current = false;
+        assistantRequestRef.current = null;
         setSubmitting(false);
       };
       setSubmitting(true);
       setSubmitError('');
+      stopReplySpeech();
+      setVoiceError('');
 
       let result;
       let useAssistantChat = false;
+      let pendingExchange: AvaAssistantExchange | undefined;
+      let assistantController: AbortController | undefined;
+      let replySpeech: ReturnType<typeof createAvaReplySpeech> | undefined;
       try {
+        const research = /^ask rex to research\s/i.test(command);
         const routed = classifyConversationalCommand(command, action);
         const nextAction = routed.action;
         const nextRequiresApproval =
           routed.requiresApproval === undefined ? requiresApproval : routed.requiresApproval;
-        useAssistantChat = shouldUseAssistantChatRoute({
+        useAssistantChat = research || shouldUseAssistantChatRoute({
           action: nextAction,
           selectedAction: action,
           requiresApproval: nextRequiresApproval,
         });
         if (useAssistantChat) {
-          const response = await sendAvaAssistantChatRequest({
+          assistantController = new AbortController();
+          assistantRequestRef.current = assistantController;
+          if (voiceEnabledRef.current) replySpeech = beginReplySpeech();
+          const now = new Date().toISOString();
+          pendingExchange = {
+            id: createAvaAssistantExchangeId(), request: command, answer: '', status: 'pending',
+            createdAt: now, updatedAt: now, suggestions: [],
+            ...(research ? { rexHandoff: { status: 'running' } } : {}),
+          };
+          const exchangeId = pendingExchange.id;
+          setAssistantExchanges((current) => [...current, pendingExchange!].slice(-30));
+          setDraft('');
+          setTranscript(command);
+          const response = await streamAvaAssistantChatRequest({
             message: command,
+            ...(research ? { researchRequestId: exchangeId } : {}),
             sessionId: assistantSessionId || undefined,
+            historyMode: 'completed-only',
             source: 'ava-chat-page',
             leadId: linkedLeadId || undefined,
             action: nextAction,
@@ -1441,13 +1601,25 @@ export function AvaChat() {
               path: typeof window === 'undefined' ? '' : window.location.pathname,
               search: typeof window === 'undefined' ? '' : window.location.search,
             },
+          }, {
+            signal: assistantController.signal,
+            onAnswer: (text) => {
+              if (assistantRequestRef.current !== assistantController || assistantController.signal.aborted) return;
+              replySpeech?.update(text);
+              setAssistantExchanges((current) => current.map((exchange) => exchange.id === exchangeId
+                ? { ...exchange, answer: text, updatedAt: new Date().toISOString() }
+                : exchange));
+            },
           });
+          if (assistantRequestRef.current !== assistantController) return;
+          if (response.ok === false) replySpeech?.stop();
+          else replySpeech?.finish(String(response.answer || response.result || '').trim());
           if (response.sessionId) setAssistantSessionId(response.sessionId);
           setAssistantExchanges((current) =>
-            [...current, buildAssistantExchange(command, response)].slice(-30)
+            current.map((exchange) => exchange.id === exchangeId
+              ? buildAssistantExchange(command, response, exchange)
+              : exchange)
           );
-          setDraft('');
-          setTranscript(command);
           if (response.ok === false || response.warning) {
             showUiToast({
               tone: 'warning',
@@ -1471,30 +1643,39 @@ export function AvaChat() {
         };
         result = await queueLocalCommandRequest(payload);
       } catch (err) {
+        replySpeech?.stop();
+        if (useAssistantChat && assistantRequestRef.current !== assistantController) return;
+        const cancelled = Boolean(assistantController?.signal.aborted);
         const message = err instanceof Error ? err.message : 'Ava could not start that request.';
-        setSubmitError(message);
-        if (useAssistantChat) {
+        if (!cancelled) setSubmitError(message);
+        if (useAssistantChat && pendingExchange) {
+          const exchangeId = pendingExchange.id;
           setAssistantExchanges((current) =>
-            [
-              ...current,
-              {
-                id: createAvaAssistantExchangeId(),
-                request: command,
-                answer: message,
-                status: 'failed',
-                createdAt: new Date().toISOString(),
+            current.map((exchange): AvaAssistantExchange => exchange.id === exchangeId
+              ? {
+                ...exchange,
+                status: cancelled ? 'cancelled' : 'failed',
+                interrupted: !cancelled,
+                ...(exchange.rexHandoff ? {
+                  rexHandoff: { status: 'unavailable' },
+                  answer: 'Outcome unconfirmed. Check the saved research status.',
+                } : {}),
                 updatedAt: new Date().toISOString(),
-                suggestions: ['Try again', 'Ask a simpler question'],
-              } satisfies AvaAssistantExchange,
-            ].slice(-30)
+                warning: cancelled
+                  ? 'Response stopped. This reply is incomplete.'
+                  : `Response interrupted. ${message}`,
+              }
+              : exchange)
           );
         }
-        showUiToast({
-          tone: 'error',
-          title: 'Ava could not start that',
-          desc: message,
-          critical: true,
-        });
+        if (!useAssistantChat) {
+          showUiToast({
+            tone: 'error',
+            title: 'Ava could not start that',
+            desc: message,
+            critical: true,
+          });
+        }
         releaseSubmit();
         return;
       }
@@ -1534,6 +1715,8 @@ export function AvaChat() {
       refresh,
       requiresApproval,
       submitting,
+      beginReplySpeech,
+      stopReplySpeech,
     ]
   );
 
@@ -1576,22 +1759,26 @@ export function AvaChat() {
   );
 
   const startListening = () => {
+    if (!voiceMountedRef.current) return;
     const SpeechRecognition = getSpeechRecognitionConstructor();
     if (!SpeechRecognition) {
       setSubmitError('This browser does not expose SpeechRecognition or webkitSpeechRecognition.');
       return;
     }
+    setVoiceOutput(true);
     const recognition = new SpeechRecognition();
     recognition.continuous = false;
     recognition.interimResults = true;
     recognition.lang = 'en-US';
-    recognition.onstart = () => setListening(true);
-    recognition.onend = () => setListening(false);
+    recognition.onstart = () => { if (voiceMountedRef.current && recognitionRef.current === recognition) setListening(true); };
+    recognition.onend = () => { if (voiceMountedRef.current && recognitionRef.current === recognition) setListening(false); };
     recognition.onerror = (event) => {
+      if (!voiceMountedRef.current || recognitionRef.current !== recognition) return;
       setSubmitError(event.error || 'Voice recognition stopped.');
       setListening(false);
     };
     recognition.onresult = (event) => {
+      if (!voiceMountedRef.current || recognitionRef.current !== recognition) return;
       const text = Array.from(event.results)
         .map((result) => result[0]?.transcript || '')
         .join(' ')
@@ -1638,6 +1825,7 @@ export function AvaChat() {
           pendingApprovals={pendingApprovals}
           loading={loading}
           systemStatus={systemStatus}
+          storageUnavailable={storageUnavailable}
           onRefresh={() => void load()}
           onOpenContext={() => contextRef.current?.showModal()}
         />
@@ -1687,6 +1875,16 @@ export function AvaChat() {
                             setDraft(item.exchange.request);
                             window.requestAnimationFrame(() => composerRef.current?.focus());
                           }}
+                          onCheckResearch={async () => {
+                            const exchange = item.exchange;
+                            const response = await streamAvaAssistantChatRequest({
+                              message: '', rexStatusOnly: true, researchRequestId: exchange.rexHandoff?.requestId || exchange.id,
+                              leadId: linkedLeadId || undefined,
+                            });
+                            if (!response.rexHandoff) throw new Error('Research status is unavailable.');
+                            setAssistantExchanges(current => current.map(entry => entry.id === exchange.id
+                              ? buildAssistantExchange(entry.request, response, entry) : entry));
+                          }}
                           onUseSuggestion={(suggestion) => {
                             setDraft(suggestion);
                             window.requestAnimationFrame(() => composerRef.current?.focus());
@@ -1717,7 +1915,7 @@ export function AvaChat() {
                   />
                 )}
 
-                {submitting && <AvaThinkingBubble />}
+                {submitting && !assistantExchanges.some((exchange) => exchange.status === 'pending') && <AvaThinkingBubble />}
               </div>
             </div>
 
@@ -1730,11 +1928,19 @@ export function AvaChat() {
               listening={listening}
               submitting={submitting}
               speechSupported={speechSupported}
+              voiceEnabled={voiceEnabled}
+              voiceProgress={voiceProgress}
+              voiceError={voiceError}
+              onToggleVoice={() => setVoiceOutput(!voiceEnabledRef.current)}
               submitError={submitError}
               textareaRef={composerRef}
               onStartListening={startListening}
               onStopListening={stopListening}
               onSubmit={() => void submitCommand()}
+              onStopResponse={assistantRequestRef.current || voiceBusy ? () => {
+                assistantRequestRef.current?.abort();
+                stopReplySpeech();
+              } : undefined}
               onSelectCompanionAction={selectCompanionAction}
             />
           </div>
@@ -1790,6 +1996,7 @@ function AvaIdentityBar({
   pendingApprovals,
   loading,
   systemStatus,
+  storageUnavailable,
   onRefresh,
   onOpenContext,
 }: {
@@ -1798,6 +2005,7 @@ function AvaIdentityBar({
   pendingApprovals: number;
   loading: boolean;
   systemStatus: AvaSystemStatus;
+  storageUnavailable: boolean;
   onRefresh: () => void;
   onOpenContext: () => void;
 }) {
@@ -1869,6 +2077,17 @@ function AvaIdentityBar({
             </Link>
           )}
         </div>
+      )}
+      {storageUnavailable && (
+        <p
+          role="status"
+          className="flex min-w-0 basis-full items-start gap-2 rounded-lg border border-[var(--ava-warning-border)] bg-[var(--ava-warning-soft)] p-2 text-xs"
+        >
+          <AlertTriangle size={16} className="shrink-0 text-[var(--ava-warning)]" aria-hidden="true" />
+          <span className="min-w-0">
+            Some chat details could not be restored or saved in this browser. Keep this chat open.
+          </span>
+        </p>
       )}
     </header>
   );
@@ -1966,15 +2185,25 @@ function AvaThinkingBubble() {
 function AssistantExchange({
   exchange,
   onReplay,
+  onCheckResearch,
   onUseSuggestion,
 }: {
   exchange: AvaAssistantExchange;
   onReplay: () => void;
+  onCheckResearch: () => Promise<void>;
   onUseSuggestion: (suggestion: string) => void;
 }) {
-  const failed = exchange.status === 'failed';
+  const [checkingResearch, setCheckingResearch] = useState(false);
+  const [researchCheckError, setResearchCheckError] = useState('');
+  const research = exchange.rexHandoff;
+  const failed = exchange.status === 'failed' || exchange.status === 'cancelled';
+  const pending = exchange.status === 'pending';
+  const researchStatus = research && ({
+    saved: 'Saved request', running: 'Research in progress', complete: 'Research complete',
+    stale: 'Research stale', reconciliation_required: 'Outcome unconfirmed', unavailable: 'Status unavailable',
+  }[research.status] || 'Research needs review');
   return (
-    <article className="space-y-3">
+    <article className="space-y-3 [overflow-wrap:anywhere]" data-exchange-id={exchange.id} data-status={exchange.status} aria-busy={pending}>
       <div className="flex justify-end">
         <div className="max-w-[88%] sm:max-w-[72%]">
           <div className="rounded-[16px_16px_4px_16px] border border-[var(--ava-user-border)] bg-[var(--ava-user-bubble)] px-4 py-3 text-sm leading-6 shadow-sm">
@@ -1988,7 +2217,7 @@ function AssistantExchange({
       </div>
 
       <div className="flex items-start gap-3">
-        <AvaPresenceOrb state={failed ? 'offline' : 'ready'} compact />
+        <AvaPresenceOrb state={failed ? 'offline' : pending ? 'thinking' : 'ready'} compact />
         <div className="min-w-0 max-w-[88%] sm:max-w-[76%]">
           <div className="mb-1.5 flex items-center gap-2 text-xs">
             <span className="font-semibold">Ava</span>
@@ -2009,7 +2238,22 @@ function AssistantExchange({
                 {exchange.warning}
               </p>
             )}
-            <p className="whitespace-pre-wrap break-words">{exchange.answer}</p>
+            <p className="whitespace-pre-wrap break-words">{exchange.answer || (pending ? 'I am checking that now.' : '')}</p>
+            {research?.status === 'reconciliation_required' && research.id && (
+              <p className="mt-2 text-xs text-[var(--ava-text-muted)]">Request reference <code>{research.id}</code></p>
+            )}
+            {research?.citations?.length ? (
+              <ul className="mt-2 space-y-1" aria-label="Rex research sources">
+                {research.citations.map((source, index) => (
+                  <li key={source}>
+                    <a className="pbk-ava-evidence-link" href={source} target="_blank" rel="noreferrer">
+                      <ExternalLink size={14} aria-hidden="true" /> Source {index + 1} · {new URL(source).hostname}
+                    </a>
+                  </li>
+                ))}
+              </ul>
+            ) : null}
+            {researchCheckError && <p role="status" className="text-[var(--ava-warning)]">{researchCheckError}</p>}
             {exchange.activeLeadId && (
               <Link
                 className="pbk-ava-evidence-link mt-1"
@@ -2039,19 +2283,26 @@ function AssistantExchange({
             <span
               className={[
                 'inline-flex items-center gap-1.5 font-semibold',
-                failed ? 'text-[var(--ava-danger)]' : 'text-[var(--ava-success)]',
+                failed ? 'text-[var(--ava-danger)]' : pending || (research && research.status !== 'complete') ? 'text-[var(--ava-text-muted)]' : 'text-[var(--ava-success)]',
               ].join(' ')}
             >
-              {failed ? <AlertTriangle size={14} /> : <CheckCircle2 size={14} />}
-              {failed ? 'Needs review' : 'Answered'}
+              {failed ? <AlertTriangle size={14} /> : pending ? <Loader2 size={14} className="animate-spin" /> : !research || research.status === 'complete' ? <CheckCircle2 size={14} /> : null}
+              {researchStatus || (exchange.status === 'cancelled' ? 'Cancelled' : exchange.interrupted ? 'Interrupted' : failed ? 'Needs review' : pending ? 'Responding' : 'Answered')}
             </span>
             <button
               type="button"
               className="inline-flex min-h-8 items-center gap-1.5 rounded-md px-2 font-semibold text-[var(--ava-sky)] transition hover:bg-[var(--ava-sky-soft)]"
-              onClick={onReplay}
+              onClick={research ? async () => {
+                setCheckingResearch(true);
+                setResearchCheckError('');
+                try { await onCheckResearch(); }
+                catch { setResearchCheckError('Could not check research status. Try checking again.'); }
+                finally { setCheckingResearch(false); }
+              } : onReplay}
+              disabled={pending || checkingResearch}
             >
               <RotateCcw size={14} />
-              Ask again
+              {research ? checkingResearch ? 'Checking status…' : 'Check research status' : 'Ask again'}
             </button>
           </div>
         </div>
@@ -2306,11 +2557,16 @@ function AvaComposer({
   listening,
   submitting,
   speechSupported,
+  voiceEnabled,
+  voiceProgress,
+  voiceError,
+  onToggleVoice,
   submitError,
   textareaRef,
   onStartListening,
   onStopListening,
   onSubmit,
+  onStopResponse,
   onSelectCompanionAction,
 }: {
   draft: string;
@@ -2321,11 +2577,16 @@ function AvaComposer({
   listening: boolean;
   submitting: boolean;
   speechSupported: boolean;
+  voiceEnabled: boolean;
+  voiceProgress: AvaVoiceProgress;
+  voiceError: string;
+  onToggleVoice: () => void;
   submitError: string;
   textareaRef: React.RefObject<HTMLTextAreaElement | null>;
   onStartListening: () => void;
   onStopListening: () => void;
   onSubmit: () => void;
+  onStopResponse?: () => void;
   onSelectCompanionAction: (item: CompanionAction) => void;
 }) {
   const actionConfig = ACTIONS.find((item) => item.id === action) || ACTIONS[0];
@@ -2354,6 +2615,7 @@ function AvaComposer({
               <span className="break-words">{submitError}</span>
             </div>
           )}
+          {voiceError && <p role="status" className="mb-2 text-xs text-[var(--ava-danger)]">{voiceError}</p>}
           <label className="sr-only" htmlFor="ava-command-input">
             Ask Ava anything
           </label>
@@ -2431,6 +2693,27 @@ function AvaComposer({
                 {listening ? <Square size={17} /> : <Mic size={18} />}
               </button>
 
+              <button
+                type="button"
+                onClick={onToggleVoice}
+                disabled={submitting && !voiceEnabled}
+                aria-pressed={voiceEnabled}
+                aria-label={voiceEnabled ? 'Turn off spoken replies' : 'Read replies aloud'}
+                title={voiceEnabled ? 'Turn off spoken replies' : 'Read replies aloud'}
+                className="grid size-11 shrink-0 place-items-center rounded-full border border-[var(--ava-border)] bg-[var(--ava-panel)] text-[var(--ava-sky)] disabled:opacity-50"
+              >
+                {voiceEnabled ? <Volume2 size={18} /> : <VolumeX size={18} />}
+              </button>
+              <span
+                role="status"
+                data-ava-voice-state={voiceProgress.state}
+                data-ava-spoken-characters={voiceProgress.spokenCharacters}
+                data-ava-queued-characters={voiceProgress.queuedCharacters}
+                className="min-w-0 flex-1 break-words text-xs leading-4 text-[var(--ava-text-muted)] sm:flex-none"
+              >
+                {voiceProgress.state === 'speaking' ? 'Speaking' : voiceProgress.state === 'preparing' ? 'Preparing voice...' : voiceEnabled ? 'Voice on' : ''}
+              </span>
+
               <div className="hidden min-h-11 min-w-0 flex-1 items-center gap-2 rounded-lg border border-[var(--ava-border)] bg-[var(--ava-panel)] px-3 text-xs font-semibold text-[var(--ava-text-muted)] sm:flex sm:flex-none">
                 <ShieldCheck size={15} className="text-[var(--ava-sky)]" />
                 <span className="truncate">
@@ -2450,13 +2733,16 @@ function AvaComposer({
               <PbkButton
                 type="button"
                 variant="sky-gradient"
-                className="pbk-ava-chat-send-button min-h-11 min-w-11 justify-center px-3"
-                disabled={!draft.trim() || submitting}
-                onClick={onSubmit}
-                aria-label="Send to Ava"
+                className="pbk-ava-chat-send-button min-h-11 min-w-11 w-24 shrink-0 justify-center px-3"
+                disabled={onStopResponse ? false : !draft.trim() || submitting}
+                onClick={onStopResponse || onSubmit}
+                aria-label={onStopResponse ? 'Stop Ava response' : 'Send to Ava'}
+                title={onStopResponse ? 'Stop Ava response' : 'Send to Ava'}
               >
-                {submitting ? <Loader2 className="animate-spin" size={17} /> : <Send size={17} />}
-                <span className="hidden sm:inline">{submitting ? 'Sending' : 'Send'}</span>
+                {onStopResponse ? <Square size={17} aria-hidden="true" /> : <>
+                  {submitting ? <Loader2 className="animate-spin" size={17} /> : <Send size={17} />}
+                  <span className="hidden sm:inline">{submitting ? 'Sending' : 'Send'}</span>
+                </>}
               </PbkButton>
             </div>
           </div>

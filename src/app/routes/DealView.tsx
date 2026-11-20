@@ -1,14 +1,22 @@
-import { Component, useCallback, useEffect, useState, type ReactNode } from 'react';
-import { useParams } from 'react-router';
+import { Component, useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { useLocation, useParams } from 'react-router';
 import App from '../App';
 import type { DealData, PBKPath } from '../types';
 import {
   ANALYZER_CURRENT_DEAL_KEY,
+  readAnalyzerDraftBaseline,
+  readAnalyzerDraftManualFields,
   readAnalyzerStorage,
-  writeAnalyzerStorage,
+  writeAnalyzerSessionDeal,
+  commitAnalyzerDraft,
+  isFreshAnalyzerDraft,
 } from '../utils/analyzerStorage';
 import { isStaleDynamicImportError, reloadForCurrentDeploy } from '../utils/deployVersion';
 import { fetchLeadFullRequest } from '../utils/runtimeBridge';
+import { readPropertyEvidence } from '../utils/propertyEvidence';
+import { samePropertyAddress } from '../utils/analyzerIntelligence.mjs';
+import { savedLeadComps } from '../utils/leadComps.mjs';
+import { latestCallModeNote } from '../utils/analyzerLeadPersistence.mjs';
 
 type BridgeRecord = Record<string, unknown>;
 
@@ -169,7 +177,8 @@ export function buildAnalyzerDealFromLead(payload: BridgeRecord, requestedLeadId
   const city = firstText(property.city, lead.city);
   const state = firstText(property.state, lead.state);
   const zipCode = firstText(property.zip, property.zipCode, lead.zip, lead.zipCode);
-  const fullAddress = address ? [address, city, state, zipCode].filter(Boolean).join(', ') : '';
+  const fullAddress = address ? (/[,].*\b[A-Z]{2}\s+\d{5}(?:-\d{4})?$/i.test(address)
+    ? address : [address, city, [state, zipCode].filter(Boolean).join(' ')].filter(Boolean).join(', ')) : '';
   const arv = firstNumber(property.arv, callContext.arv, analysis.arv, lead.arv);
   const mao = firstNumber(
     property.mao,
@@ -215,6 +224,8 @@ export function buildAnalyzerDealFromLead(payload: BridgeRecord, requestedLeadId
     zipCode,
     timeline: firstText(motivation.timeline, callContext.timeline, lead.timeline),
     notes: firstText(
+      latestCallModeNote(payload, firstText(lead.leadId, lead.id, requestedLeadId)),
+      record(lead.deal).notes,
       callContext.summary,
       callContext.callSummary,
       seller.notes,
@@ -223,8 +234,21 @@ export function buildAnalyzerDealFromLead(payload: BridgeRecord, requestedLeadId
       typeof lead.notes === 'string' ? lead.notes : ''
     ),
     vacantStatus: firstText(property.occupancy, lead.occupancy),
-    isAnalyzed: arv !== undefined || mao !== undefined || maoRBP !== undefined ? true : undefined,
+    isAnalyzed: record(lead.deal).isAnalyzed === false ? false : arv !== undefined || mao !== undefined || maoRBP !== undefined ? true : undefined,
   };
+  const evidence = readPropertyEvidence(lead.deal, deal.address || '');
+  if (evidence.records) deal.propertyRecordSnapshot = evidence.records;
+  if (evidence.listing) deal.listingSnapshot = evidence.listing;
+  const savedSales = record(record(lead.analyzer).recordedSales || record(lead.deal).recordedSales);
+  if (samePropertyAddress(savedSales.address, deal.address)) deal.recordedSales = savedSales as DealData['recordedSales'];
+  const manualSlots = record(lead.deal).compManualSlots;
+  if (Array.isArray(manualSlots)) deal.compManualSlots = manualSlots.filter((slot): slot is 'A'|'B'|'C' => ['A','B','C'].includes(slot));
+  const comps = savedLeadComps(lead);
+  if (comps) deal.comps = comps;
+  else if (record(record(lead.analyzer).recordedSales).address) {
+    deal.comps = Object.fromEntries(['A', 'B', 'C'].map(key => [key, { address: '', price: 0, date: '', link: '' }])) as DealData['comps'];
+    deal.isAnalyzed = false;
+  }
 
   if (repairEstimate !== undefined || condition) {
     deal.repairs = {
@@ -270,10 +294,11 @@ function hasDealLeadPayload(payload: unknown) {
   );
 }
 
-function hydrateAnalyzerFromLead(payload: BridgeRecord, leadId: string) {
+async function hydrateAnalyzerFromLead(payload: BridgeRecord, leadId: string, isCurrent = () => true) {
   const mappedDeal = buildAnalyzerDealFromLead(payload, leadId);
+  const fresh = isFreshAnalyzerDraft();
   const currentDeal =
-    window.PBKAnalyzer?.getState().deal ||
+    (!fresh && window.PBKAnalyzer?.getState().deal) ||
     readAnalyzerStorage<Partial<DealData>>(ANALYZER_CURRENT_DEAL_KEY, {});
   const currentLeadId = firstText(
     (currentDeal as BridgeRecord).leadId,
@@ -283,16 +308,37 @@ function hydrateAnalyzerFromLead(payload: BridgeRecord, leadId: string) {
     currentLeadId && currentLeadId === leadId
       ? mergeMeaningfulAnalyzerValues(currentDeal, mappedDeal)
       : mergeMeaningfulAnalyzerValues({}, mappedDeal);
+  const manualFields = currentLeadId === leadId
+    ? readAnalyzerDraftManualFields() ?? Object.keys(currentDeal) : [];
+  for (const key of manualFields) {
+    if (Object.prototype.hasOwnProperty.call(currentDeal, key)) {
+      (mergedDeal as BridgeRecord)[key] = (currentDeal as BridgeRecord)[key];
+    }
+  }
+  // Reviewed comp selections replace the whole set, including intentionally emptied slots.
+  if (mappedDeal.comps && !manualFields.includes('comps')) mergedDeal.comps = mappedDeal.comps;
+  if (mappedDeal.isAnalyzed === false) mergedDeal.isAnalyzed = false;
+  const baseline = readAnalyzerDraftBaseline();
+  const publish = currentLeadId !== leadId && baseline !== undefined;
 
-  if (window.PBKAnalyzer?.setState) {
+  if (!fresh && window.PBKAnalyzer?.setState) {
     window.PBKAnalyzer.setState({
       deal: mergedDeal,
       activeTab: 'analyzer',
       analyzeStatus: 'Seller record loaded into Deal Analyzer',
       updatedAt: Date.now(),
+      manualFields,
+      persistDraft: publish,
     });
   } else {
-    writeAnalyzerStorage(ANALYZER_CURRENT_DEAL_KEY, mergedDeal);
+    if (publish) {
+      try {
+        const result = await commitAnalyzerDraft(mergedDeal as DealData, manualFields, baseline, false, isCurrent);
+        if (result === 'conflict' && isCurrent()) writeAnalyzerSessionDeal(mergedDeal, manualFields, undefined, true);
+      } catch {
+        if (isCurrent()) writeAnalyzerSessionDeal(mergedDeal, manualFields, baseline, true);
+      }
+    } else if (isCurrent()) writeAnalyzerSessionDeal(mergedDeal, manualFields, baseline, baseline === undefined);
   }
 }
 
@@ -356,30 +402,50 @@ class DealViewErrorBoundary extends Component<{ children: ReactNode }, DealViewE
 }
 
 export function DealView() {
+  const location = useLocation();
+  return <DealViewContent key={location.pathname + location.search} />;
+}
+
+function DealViewContent() {
   const { id: leadId = '' } = useParams();
+  const location = useLocation();
+  const draftIdentity = location.pathname + location.search;
   const [loading, setLoading] = useState(Boolean(leadId));
   const [error, setError] = useState('');
   const [retryToken, setRetryToken] = useState(0);
+  const [loadedIdentity, setLoadedIdentity] = useState('');
+  const requestVersion = useRef(0);
+  const currentIdentity = useRef(draftIdentity);
+  currentIdentity.current = draftIdentity;
 
   const loadLead = useCallback(async () => {
     if (!leadId) return;
+    const version = ++requestVersion.current;
+    const isCurrent = () => currentIdentity.current === draftIdentity && requestVersion.current === version;
     setLoading(true);
     setError('');
     try {
       const response = await fetchLeadFullRequest(leadId);
+      if (!isCurrent()) return;
       if (response.ok === false || !hasDealLeadPayload(response)) {
         throw new Error(
           firstText(response.error, response.message, response.verbiage) ||
             'The live seller record is not ready yet.'
         );
       }
-      hydrateAnalyzerFromLead(response, leadId);
+      const returnedLead = record(response.lead || response.profile || response);
+      if (firstText(returnedLead.leadId, returnedLead.id) !== leadId) {
+        throw new Error('The returned seller record did not match the requested lead.');
+      }
+      await hydrateAnalyzerFromLead(response, leadId, isCurrent);
+      if (!isCurrent()) return;
+      setLoadedIdentity(draftIdentity);
     } catch (nextError) {
-      setError(friendlyDealLoadError(nextError));
+      if (isCurrent()) setError(friendlyDealLoadError(nextError));
     } finally {
-      setLoading(false);
+      if (isCurrent()) setLoading(false);
     }
-  }, [leadId]);
+  }, [leadId, draftIdentity]);
 
   useEffect(() => {
     if (!leadId) {
@@ -388,19 +454,21 @@ export function DealView() {
       return;
     }
     void loadLead();
+    const version = requestVersion.current;
+    return () => { requestVersion.current = version + 1; };
   }, [leadId, loadLead, retryToken]);
 
   if (!leadId) {
     return (
       <div className="h-full min-h-[680px]">
-        <DealViewErrorBoundary>
-          <App engineOnly />
+        <DealViewErrorBoundary key={draftIdentity}>
+          <App engineOnly key={draftIdentity} />
         </DealViewErrorBoundary>
       </div>
     );
   }
 
-  if (loading) {
+  if ((loading || loadedIdentity !== draftIdentity) && !error) {
     return (
       <div className="grid h-full min-h-[680px] place-items-center bg-slate-950 p-6 text-slate-100">
         <div role="status" className="text-center">
@@ -439,8 +507,8 @@ export function DealView() {
 
   return (
     <div className="h-full min-h-[680px]">
-      <DealViewErrorBoundary>
-        <App engineOnly />
+      <DealViewErrorBoundary key={draftIdentity}>
+        <App engineOnly key={draftIdentity} />
       </DealViewErrorBoundary>
     </div>
   );

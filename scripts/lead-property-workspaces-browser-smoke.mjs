@@ -96,12 +96,8 @@ async function verify(browser, config, label) {
     }
     await workspace.getByRole('tab', { name: 'Photos' }).click();
     const photos = workspace.getByRole('tabpanel');
-    await expect(photos.getByText('MLS not connected')).toBeVisible();
-    const zillow = photos.getByRole('link', { name: 'Open on Zillow' });
-    await expect(zillow).toHaveAttribute('target', '_blank');
-    const link = new URL(await zillow.getAttribute('href'));
-    assert.equal(link.origin, 'https://www.zillow.com');
-    assert.match(decodeURIComponent(link.pathname), /24.Sample.Oak.Lane.*90210/);
+    await expect(photos.getByText('No saved Apify photos for this address.')).toBeVisible();
+    await expect(photos.getByRole('button', { name: 'Refresh Apify photos' })).toBeEnabled();
     await expect(photos.getByRole('img')).toHaveCount(0);
     await expect(photos.getByText('Exact address match')).toHaveCount(0);
     await record.click();
@@ -110,7 +106,7 @@ async function verify(browser, config, label) {
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
 
     await page.goto(origin + '/leads');
-    await page.getByRole('button', { name: 'New PBK lead', exact: true }).first().click();
+    await page.getByRole('button', { name: 'Add seller', exact: true }).first().click();
     const form = page.getByRole('dialog', { name: 'Create lead' });
     const preview = form.getByRole('region', { name: 'ATTOM property preview' });
     await expect(form.getByText('Unsaved draft', { exact: true })).toBeVisible();

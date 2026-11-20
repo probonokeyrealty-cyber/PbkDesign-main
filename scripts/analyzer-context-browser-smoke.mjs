@@ -55,7 +55,12 @@ async function verify(engine, compact, device = {}) {
     await page.addInitScript(({ allowedOrigin, key, payload, session }) => {
       if (location.origin !== allowedOrigin) return;
       if (session) localStorage.setItem('pbk:team-session:v1', JSON.stringify(session));
-      if (!sessionStorage.getItem(key)) sessionStorage.setItem(key, JSON.stringify(payload));
+      if (!sessionStorage.getItem(key)) {
+        sessionStorage.setItem(key, JSON.stringify(payload));
+        if (!localStorage.getItem(key.replace(/:session$/, ''))) {
+          localStorage.setItem(key.replace(/:session$/, ''), JSON.stringify(payload));
+        }
+      }
     }, { allowedOrigin: origin, key: storageKey, session: teamSession,
       payload: { leadId, address, type: 'house', arv: 2100000 } });
     await page.routeWebSocket('**/*', (socket) => socket.close());
@@ -72,6 +77,9 @@ async function verify(engine, compact, device = {}) {
       if (hosted && url.pathname === '/api/auth/team/verify' && req.method() === 'POST') return route.continue();
       // The existing shell negotiates a read-only stream session on mount.
       if (url.pathname === '/api/state/stream/session') return route.fulfill({ json: { ok: false } });
+      if (url.pathname === '/api/property-data/address-suggestions' && req.method() === 'POST') {
+        return route.fulfill({ json: { status: 'unavailable', suggestions: [] } });
+      }
       if (req.method() !== 'GET') {
         writes.push([req.method(), url.pathname]);
         return route.abort();
@@ -81,7 +89,7 @@ async function verify(engine, compact, device = {}) {
         return route.fulfill({ json: { ok: true, cache: { hit: true }, propertyData: {
           source: 'apify-for-sale', data: {
             askingPriceUsd: 1980000, priceBasis: 'asking_price', propertyType: 'house',
-            listingFacts: { beds: 3, baths: 2 }, photoUrls: listingPhotos,
+            listingFacts: { beds: 3, baths: 2, sqft: 9138, year: 1989, dom: 38, lotSqft: 46129 }, photoUrls: listingPhotos,
           },
         } } });
       }
@@ -104,20 +112,26 @@ async function verify(engine, compact, device = {}) {
 
     await page.goto(origin + '/analyzer');
     const workbench = page.getByRole('region', { name: 'Comparable Sales (Mean = ARV)' });
-    const askingPrice = page.getByRole('region', { name: /Property details/i })
-      .getByText('$1,980,000', { exact: true });
+    const listPrice = page.getByRole('spinbutton', { name: 'List price in dollars' });
     const panel = page.getByRole('complementary', { name: 'Deal context' });
     const toggle = page.getByRole('button', { name: 'Context', exact: true });
     const form = page.getByRole('button', { name: 'Valuation', exact: true });
     const beds = page.getByRole('spinbutton', { name: 'Bedrooms' });
     const arv = page.locator('#deal-arv');
     const comp = page.getByRole('spinbutton', { name: 'Comp A sold price' });
-    await expect(page.getByRole('textbox', { name: 'Address', exact: true })).toHaveValue(address, { timeout: 20_000 });
+    await expect(page.getByRole('combobox', { name: 'Address', exact: true })).toHaveValue(address, { timeout: 20_000 });
     await expect(arv).toHaveValue('2100000');
     await beds.fill('4');
-    await page.getByRole('button', { name: 'Look up asking price' }).click();
-    await expect(askingPrice).toBeVisible();
-    await page.getByRole('button', { name: 'Fill empty fields' }).click();
+    const facts = ['Bathrooms', 'Square footage', 'Year built', 'Days on market']
+      .map(name => page.getByRole('spinbutton', { name, exact: true }));
+    const factsBefore = await Promise.all(facts.map(field => field.inputValue()));
+    const priceBefore = await listPrice.inputValue();
+    await page.getByRole('button', { name: 'Find listing photos' }).click();
+    await expect(page.getByText('Apify · 6 listing photos', { exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Fill empty fields' })).toHaveCount(0);
+    await expect(page.getByText('$1,980,000', { exact: true })).toHaveCount(0);
+    await expect(listPrice).toHaveValue(priceBefore);
+    for (let i = 0; i < facts.length; i++) await expect(facts[i]).toHaveValue(factsBefore[i]);
     await expect(beds).toHaveValue('4');
     await expect(arv).toHaveValue('2100000');
     await expect(comp).toHaveValue('');
@@ -127,9 +141,10 @@ async function verify(engine, compact, device = {}) {
     if (compact) {
       await expect(panel).toBeHidden();
       const scroll = page.locator('.pbk-deal-content');
+      await toggle.focus();
+      await scroll.evaluate(node => { node.scrollTop = Math.min(300, node.scrollHeight - node.clientHeight); });
       const oldTop = await scroll.evaluate((node) => node.scrollTop);
       assert.ok(oldTop > 0, 'Fixture should begin scrolled into valuation');
-      await toggle.focus();
       await page.keyboard.press('Enter');
       await expect(panel).toBeVisible();
       await expect(toggle).toBeFocused();
@@ -175,18 +190,37 @@ async function verify(engine, compact, device = {}) {
     await expect(comp).toHaveValue('2200000');
     await expect(arv).toHaveValue('2200000');
 
-    await page.getByRole('textbox', { name: 'Address', exact: true }).fill('43 Fixture Avenue');
-    await page.getByRole('button', { name: 'Look up asking price' }).click();
-    await expect(askingPrice).toBeVisible();
+    await page.getByRole('combobox', { name: 'Address', exact: true }).fill('43 Fixture Avenue');
+    await page.getByRole('button', { name: 'Find listing photos' }).click();
+    await expect(page.getByRole('region', { name: /Property details/i }).getByText('No saved Apify photos for this address.', { exact: true })).toBeVisible();
+    await expect(listPrice).toHaveValue(priceBefore);
+    for (let i = 0; i < facts.length; i++) await expect(facts[i]).toHaveValue(factsBefore[i]);
     if (compact) await toggle.click();
-    await expect(page.getByText('No listing photos available.')).toBeVisible();
+    await expect(panel.getByText('No saved Apify photos for this address.')).toBeVisible();
     await expect(panel.getByRole('img', { name: /^Listing photo / })).toHaveCount(0);
 
     exact = false;
     const priorTimelines = reads.filter((url) => url.includes('/timeline')).length;
+    const readDraftEnvelopes = () => page.evaluate((key) => {
+      const decode = (raw) => JSON.parse(decodeURIComponent(escape(atob(raw))));
+      return {
+        persistent: decode(localStorage.getItem(key.replace(/:session$/, ''))),
+        session: decode(sessionStorage.getItem(key)),
+      };
+    }, storageKey);
+    const draftsBeforeReload = await readDraftEnvelopes();
     await page.reload();
+    await expect(page.getByRole('combobox', { name: 'Address', exact: true })).toHaveValue('43 Fixture Avenue', { timeout: 20_000 });
     await expect(beds).toHaveValue('4');
     await expect(comp).toHaveValue('2200000');
+    const draftsAfterReload = await readDraftEnvelopes();
+    for (const scope of ['persistent', 'session']) {
+      assert.deepEqual(draftsAfterReload[scope].payload, draftsBeforeReload[scope].payload,
+        `Reload must preserve the ${scope} Analyzer draft payload, independent of envelope timestamps`);
+      assert.equal(draftsAfterReload[scope].savedAt, draftsBeforeReload[scope].savedAt,
+        'Passive reload must not refresh or publish a restored draft');
+    }
+    console.log('Analyzer reload preserves draft payloads and envelope timestamps without writes');
     if (compact) await toggle.click();
     await expect(page.getByText('No conversation is linked to this lead.')).toBeVisible();
     await expect(page.getByRole('link', { name: 'Open conversation' })).toHaveCount(0);

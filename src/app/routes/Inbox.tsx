@@ -793,6 +793,8 @@ function ComposeModal({
   const [sending, setSending] = useState(false);
   const sendingRef = useRef(false);
   const openedRef = useRef(false);
+  const restoringDraftRef = useRef<ComposeDraft | null>(null);
+  const persistedDraftRef = useRef<ComposeDraft | null>(null);
   const [sendError, setSendError] = useState('');
   const [draftSaveFailed, setDraftSaveFailed] = useState(false);
 
@@ -804,6 +806,8 @@ function ComposeModal({
     if (sendingRef.current || (openedRef.current && !initialDraft)) return;
     openedRef.current = true;
     const nextDraft = initialDraft ? { ...EMPTY_DRAFT, ...initialDraft } : readComposeDraft();
+    restoringDraftRef.current = nextDraft;
+    persistedDraftRef.current = initialDraft ? null : nextDraft;
     setDraft(nextDraft);
     setPickerOpen(false);
     setSendError('');
@@ -826,7 +830,13 @@ function ComposeModal({
 
   useEffect(() => {
     if (!open) return;
-    setDraftSaveFailed(!writeComposeDraft(draft));
+    // The opening render still holds the previous draft; restoration must not write it back.
+    if (restoringDraftRef.current && restoringDraftRef.current !== draft) return;
+    restoringDraftRef.current = null;
+    if (persistedDraftRef.current === draft) return;
+    const saved = writeComposeDraft(draft);
+    setDraftSaveFailed(!saved);
+    if (saved) persistedDraftRef.current = draft;
   }, [draft, open]);
 
   useEffect(() => {

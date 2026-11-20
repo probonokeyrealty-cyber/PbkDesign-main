@@ -78,6 +78,7 @@ async function verify(engine, viewport, device = {}) {
     });
     const requests = [];
     let measurementMode = 'failure';
+    let catalogMode = 'matched';
     await page.route('**/*', (route) => {
       const req = route.request();
       const url = new URL(req.url());
@@ -140,6 +141,18 @@ async function verify(engine, viewport, device = {}) {
       if (req.method() === 'POST' && path === '/invoke') {
         const { toolName, params } = req.postDataJSON();
         requests.push({ action: toolName, params });
+        if (toolName === 'discoverExternalTool') {
+          assert.deepEqual(params, { query: 'public web research', includeComposio: true });
+          if (catalogMode === 'bridge-failure') return route.fulfill({ status: 503, json: { error: 'Fixture research bridge unavailable' } });
+          return route.fulfill({ json: { ok: true, result: {
+            matches: [{ toolName: 'launchBrowserResearch', risk: 'readonly', source: 'pbk-local-tool-universe' }],
+            composio: { source: 'composio', status: catalogMode, discoveryOnly: true,
+              ...(catalogMode === 'matched' ? { checkedAt: '2026-11-19T12:00:00Z' } : {}),
+              tools: catalogMode === 'matched' ? [{ slug: 'COMPOSIO_SEARCH_WEB', name: 'Public web research', version: '20261119_00', inputFields: ['query'], scope: 'public_web', runnable: false }] : [],
+              note: 'Catalog metadata only; no account access or execution is established.',
+            },
+          } } });
+        }
         const responses = {
           previewAgentDealContext: {
             result: 'agent_deal_context_preview',
@@ -296,6 +309,43 @@ async function verify(engine, viewport, device = {}) {
     console.log(
       `Agent roster, health evidence, manual runs and approval requests: ${engine.name()} ${viewport.width}px`
     );
+    const research = detail.locator('.pbk-agent-research');
+    await expect(research).not.toHaveAttribute('open');
+    await research.getByText('Research tools', { exact: true }).click();
+    assert.equal(requests.length, 4, 'Opening research inspection does not invoke or save');
+    assert.ok(await research.getByRole('button', { name: 'Find research tools', exact: true }).evaluate(button => Number.parseFloat(getComputedStyle(button).borderTopWidth) > 0), 'Explicit discovery must have the existing PBK button affordance');
+    await research.getByRole('button', { name: 'Find research tools', exact: true }).click();
+    await expect(research.getByText('Catalog matched', { exact: true })).toBeVisible();
+    await expect(research.locator('time')).toHaveAttribute('datetime', '2026-11-19T12:00:00Z');
+    await research.getByText('Preview public web research', { exact: true }).click();
+    await expect(research.getByText('COMPOSIO_SEARCH_WEB', { exact: true })).toBeVisible();
+    assert.equal(requests.length, 5, 'Tool preview is local and read-only');
+    await expect(research.getByRole('button')).toHaveCount(1);
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), true);
+    if (process.env.PBK_FLEET_SCREENSHOTS === '1' && viewport.width > 720) {
+      await expect(page.locator('.ui-toast-stack')).toHaveCount(0, { timeout: 10000 });
+      await research.screenshot({ path: 'output/playwright/fleet-research-desktop.png' });
+    }
+    catalogMode = 'bridge-failure';
+    await research.getByRole('button', { name: 'Find research tools', exact: true }).click();
+    await expect(research.locator('.pbk-agent-research-warning')).toContainText(/fail|unavailable/i);
+    await expect(research.getByText('Catalog matched', { exact: true })).toBeVisible();
+    await expect(research.locator('time')).toHaveAttribute('datetime', '2026-11-19T12:00:00Z');
+    assert.equal(requests.length, 6);
+    await roster.getByRole('button', { name: 'Inspect Rex', exact: true }).click();
+    await research.getByText('Research tools', { exact: true }).click();
+    await expect(research.getByText('Not inspected', { exact: true })).toBeVisible();
+    await expect(research.locator('time')).toHaveCount(0);
+    assert.equal(requests.length, 6, 'Changing agent clears old inspection without invoking');
+    await roster.getByRole('button', { name: 'Inspect Ava', exact: true }).click();
+    await research.getByText('Research tools', { exact: true }).click();
+    catalogMode = 'not_configured';
+    await research.getByRole('button', { name: 'Find research tools', exact: true }).click();
+    await expect(research.getByText('Not configured', { exact: true })).toBeVisible();
+    await expect(research.getByText('Never checked', { exact: true })).toBeVisible();
+    await expect(research.getByText('Preview public web research', { exact: true })).toHaveCount(0);
+    await expect(research.getByRole('button')).toHaveCount(1);
+    console.log(`Explicit research inspection, retained metadata, identity isolation and honest setup: ${engine.name()} ${viewport.width}px`);
     measurementMode = 'newer-health';
     await page.reload({ waitUntil: 'domcontentloaded' });
     await expect(roster.getByRole('button', { name: 'Inspect Ava', exact: true })).toContainText(
@@ -337,6 +387,7 @@ async function verify(engine, viewport, device = {}) {
 try {
   await verify(chromium, { width: 1440, height: 900 });
   await verify(webkit, { width: 390, height: 844 }, devices['iPhone 13']);
+  await verify(chromium, { width: 320, height: 844 });
 } finally {
   if (built) await new Promise((resolve) => server.httpServer.close(resolve));
   else await server.close();

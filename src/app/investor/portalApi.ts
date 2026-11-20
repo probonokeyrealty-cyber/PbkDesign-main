@@ -11,6 +11,12 @@ const lifetime = createSessionLifetime(() => {
   window.dispatchEvent(new Event('pbk-portal-expired'));
 });
 export type PortalMember = { id: string; email: string; role: 'investor' | 'editor' | 'reviewer' };
+function expireRejectedSession(response: Response) {
+  if (response.status !== 401 || !accessToken) return;
+  accessToken = '';
+  lifetime.clear();
+  window.dispatchEvent(new Event('pbk-portal-expired'));
+}
 export async function portalRequest(
   command: string,
   payload: Record<string, unknown> = {},
@@ -28,12 +34,12 @@ export async function portalRequest(
     cache: 'no-store',
     signal: AbortSignal.timeout(20000),
   });
+  expireRejectedSession(response);
   const result = await response.json();
   if (!response.ok) {
-    if (response.status === 401) accessToken = '';
     throw new Error(result.error || 'Unable to complete this action.');
   }
-  if (command === 'authVerify' || command === 'authCallback') {
+  if (['authVerify', 'authCallback', 'authPassword', 'verifyRecovery'].includes(command)) {
     accessToken = command === 'authCallback' ? callbackToken! : result.token;
     lifetime.arm(result.expiresIn);
   }
@@ -57,6 +63,9 @@ export function completeEmailCallback() {
     })();
   return callbackAttempt;
 }
+export function isPasswordRecovery() {
+  return emailCallback?.recovery === true;
+}
 export async function uploadPortalAsset(form: FormData) {
   const response = await fetch(PORTAL_API, {
     method: 'POST',
@@ -65,6 +74,7 @@ export async function uploadPortalAsset(form: FormData) {
     cache: 'no-store',
     signal: AbortSignal.timeout(60000),
   });
+  expireRejectedSession(response);
   const result = await response.json();
   if (!response.ok) throw new Error(result.error || 'Upload failed.');
   return result;

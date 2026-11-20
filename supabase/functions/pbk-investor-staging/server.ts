@@ -302,7 +302,37 @@ export function createPortalHandler(profile: any) {
       const command = String(input.command || '');
       const payload = input.payload || {};
       assertEntryCommand(origin, command, profile);
-      if (command === 'authStart') {
+      if (command === 'authPassword') {
+        const email = String(payload.email || '')
+          .trim()
+          .toLowerCase();
+        const password = typeof payload.password === 'string' ? payload.password : '';
+        if (!email || email.length > 254 || !password || password.length > 256)
+          return json({ error: 'Enter your email and password.' }, 400, origin);
+        const response = await fetch(`${URL}/auth/v1/token?grant_type=password`, {
+          method: 'POST',
+          headers: { apikey: ANON, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email, password }),
+          signal: AbortSignal.timeout(10000),
+        });
+        if (!response.ok) {
+          const status = response.status === 429 ? 429 : response.status >= 500 ? 503 : 401;
+          return json(
+            {
+              error:
+                status === 401
+                  ? 'Email or password is incorrect. Use an email link if you have not set a password.'
+                  : 'Sign-in is temporarily unavailable. Please try again shortly.',
+            },
+            status,
+            origin
+          );
+        }
+        const auth = await response.json();
+        const session = await beginVerifiedSession(auth.access_token, origin);
+        return json({ token: auth.access_token, ...session }, 200, origin);
+      }
+      if (command === 'authStart' || command === 'recoverPassword') {
         const email = String(payload.email || '')
           .trim()
           .toLowerCase();
@@ -317,12 +347,14 @@ export function createPortalHandler(profile: any) {
           );
         if (found && !email.endsWith('@example.com')) {
           // Provider rate-limits OTP delivery. Unknown/pending members get the same response.
+          const recovering = command === 'recoverPassword';
           const sent = await fetch(
-            `${URL}/auth/v1/otp?redirect_to=${encodeURIComponent(authRedirectUrl(origin, profile))}`,
+            `${URL}/auth/v1/${recovering ? 'recover' : 'otp'}?redirect_to=${encodeURIComponent(authRedirectUrl(origin, profile))}`,
             {
               method: 'POST',
               headers: { apikey: ANON, 'Content-Type': 'application/json' },
-              body: JSON.stringify({ email, create_user: true }),
+              body: JSON.stringify(recovering ? { email } : { email, create_user: true }),
+              signal: AbortSignal.timeout(10000),
             }
           );
           if (!sent.ok)
@@ -333,10 +365,47 @@ export function createPortalHandler(profile: any) {
             );
         }
         return json(
-          { message: 'If your access is approved, a sign-in link will arrive by email.' },
+          {
+            message:
+              command === 'recoverPassword'
+                ? 'If your account is approved and registered, a password reset link will arrive by email.'
+                : 'If your access is approved, a sign-in link will arrive by email.',
+          },
           200,
           origin
         );
+      }
+      if (command === 'verifyRecovery') {
+        const email = String(payload.email || '')
+          .trim()
+          .toLowerCase();
+        const code = String(payload.code || '').trim();
+        if (!email || email.length > 254 || !/^[0-9]{6,10}$/.test(code))
+          return json(
+            { error: 'Enter your email and the recovery code from the newest PBK email.' },
+            400,
+            origin
+          );
+        const response = await fetch(`${URL}/auth/v1/verify`, {
+          method: 'POST',
+          headers: { apikey: ANON, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email, token: code, type: 'recovery' }),
+          signal: AbortSignal.timeout(10000),
+        });
+        if (!response.ok)
+          return json(
+            {
+              error:
+                response.status === 429
+                  ? 'Too many attempts. Wait before trying again.'
+                  : 'That recovery code is invalid or expired. Request a new recovery code and use the newest email.',
+            },
+            response.status === 429 ? 429 : 401,
+            origin
+          );
+        const auth = await response.json();
+        const session = await beginVerifiedSession(auth.access_token, origin);
+        return json({ token: auth.access_token, ...session }, 200, origin);
       }
       if (command === 'authVerify') {
         const response = await fetch(`${URL}/auth/v1/verify`, {
@@ -362,6 +431,31 @@ export function createPortalHandler(profile: any) {
       const current = await read();
       const { uid, hash } = await identity(req, current.data);
       assertEntryMember(origin, membership(current.data, uid), profile);
+      if (command === 'setPassword') {
+        const password = typeof payload.password === 'string' ? payload.password : '';
+        if (password.length < 12 || password.length > 128)
+          return json({ error: 'Use a password between 12 and 128 characters.' }, 400, origin);
+        const updated = await fetch(`${URL}/auth/v1/user`, {
+          method: 'PUT',
+          headers: {
+            apikey: ANON,
+            Authorization: req.headers.get('Authorization')!,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ password }),
+          signal: AbortSignal.timeout(10000),
+        });
+        if (!updated.ok)
+          return json(
+            {
+              error:
+                'Password could not be updated. Use a different strong password or request a fresh reset link.',
+            },
+            updated.status === 429 ? 429 : 400,
+            origin
+          );
+        return json({ passwordUpdated: true }, 200, origin);
+      }
       if (command === 'logout') {
         await mutate((data) => {
           data.endedSessions ||= {};

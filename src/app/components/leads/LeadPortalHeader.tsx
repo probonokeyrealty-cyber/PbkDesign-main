@@ -1,7 +1,10 @@
+import { useMemo } from 'react';
 import {
   ArrowLeft,
   BadgeDollarSign,
+  Bot,
   Edit3,
+  ExternalLink,
   FileSignature,
   MessageSquare,
   Phone,
@@ -11,6 +14,7 @@ import {
   Trash2,
 } from 'lucide-react';
 import type { LeadPortalModel } from './leadPortalModel';
+import { freshAnalyzerHref } from '../../utils/analyzerStorage';
 
 type LeadPortalHeaderProps = {
   lead: LeadPortalModel;
@@ -27,6 +31,9 @@ type LeadPortalHeaderProps = {
   onNote: () => void;
   onContract: () => void;
   onAnalyze: () => void;
+  freshAnalyzerAvailable?: boolean;
+  onInspectAgent?: () => void;
+  inspectAgentAvailable?: boolean;
   onDelete: () => void;
 };
 
@@ -45,14 +52,23 @@ export function LeadPortalHeader({
   onNote,
   onContract,
   onAnalyze,
+  freshAnalyzerAvailable = true,
+  onInspectAgent,
+  inspectAgentAvailable = true,
   onDelete,
 }: LeadPortalHeaderProps) {
   const hasCallablePhone = lead.phone.replace(/\D/g, '').length >= 10;
+  const freshHref = useMemo(() => freshAnalyzerHref(lead.id), [lead.id]);
 
   return (
     <header className="pbk-lead-portal-header">
       <div className="pbk-lead-portal-heading">
-        <button type="button" className="back" aria-label={`Back to ${backLabel.toLowerCase()}`} onClick={onBack}>
+        <button
+          type="button"
+          className="back"
+          aria-label={`Back to ${backLabel.toLowerCase()}`}
+          onClick={onBack}
+        >
           <ArrowLeft size={16} />
           {backLabel}
         </button>
@@ -81,6 +97,22 @@ export function LeadPortalHeader({
           <BadgeDollarSign size={16} />
           Analyze
         </button>
+        {!loading && lead.id && freshAnalyzerAvailable && (
+          <a className="pbk-fresh-analyzer" href={freshHref} target="_blank" rel="noopener noreferrer">
+            <ExternalLink size={16} aria-hidden="true" />
+            Open in fresh Analyzer
+          </a>
+        )}
+        {onInspectAgent && (
+          <button
+            type="button"
+            onClick={onInspectAgent}
+            disabled={loading || !inspectAgentAvailable}
+            data-inspect-agent
+          >
+            <Bot size={16} aria-hidden="true" /> Inspect agent
+          </button>
+        )}
         <button type="button" onClick={onEdit}>
           <Edit3 size={16} />
           Edit

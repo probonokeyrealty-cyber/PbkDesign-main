@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import {
   buildAvaLiveTurnContract,
@@ -21,25 +22,6 @@ import {
   normalizeConversationPhone,
   rankEligibleSenderIdentities,
 } from './conversation-identity.mjs';
-
-const BRIDGE_URL = String(
-  process.env.PBK_BEHAVIOR_BRIDGE_URL ||
-    process.env.PBK_HOSTED_BRIDGE_URL ||
-    process.env.PBK_BRIDGE_URL ||
-    'https://pbk-openclaw-bridge.onrender.com'
-).replace(/\/+$/g, '');
-const FRONTEND_URL = String(
-  process.env.PBK_BEHAVIOR_FRONTEND_URL ||
-    process.env.PBK_FRONTEND_URL ||
-    'https://pbkcommandcenter.netlify.app'
-).replace(/\/+$/g, '');
-const API_KEY = String(process.env.PBK_BRIDGE_API_KEY || '').trim();
-const RUN_HOSTED = /^(1|true|yes)$/i.test(String(process.env.PBK_BEHAVIOR_HOSTED || '').trim());
-
-const root = process.cwd();
-const read = (filePath) => readFileSync(resolve(root, filePath), 'utf8');
-const bridgeSource = read('scripts/openclaw-local-server.mjs');
-const packageJson = JSON.parse(read('package.json'));
 
 function assertIncludesAll(source, values, label) {
   for (const value of values) {
@@ -64,10 +46,23 @@ async function fetchJson(url, options = {}) {
   return { response, parsed, text };
 }
 
-async function testHostedBridgeHealth() {
+async function testHostedBridgeHealth(RUN_HOSTED) {
   if (!RUN_HOSTED) {
     return { skipped: true, reason: 'Set PBK_BEHAVIOR_HOSTED=1 to run hosted bridge checks.' };
   }
+
+  const BRIDGE_URL = String(
+    process.env.PBK_BEHAVIOR_BRIDGE_URL ||
+      process.env.PBK_HOSTED_BRIDGE_URL ||
+      process.env.PBK_BRIDGE_URL ||
+      'https://pbk-openclaw-bridge.onrender.com'
+  ).replace(/\/+$/g, '');
+  const FRONTEND_URL = String(
+    process.env.PBK_BEHAVIOR_FRONTEND_URL ||
+      process.env.PBK_FRONTEND_URL ||
+      'https://pbkcommandcenter.netlify.app'
+  ).replace(/\/+$/g, '');
+  const API_KEY = String(process.env.PBK_BRIDGE_API_KEY || '').trim();
 
   const { response, parsed } = await fetchJson(`${BRIDGE_URL}/health`);
   assert.equal(response.status, 200, `Hosted bridge /health returned ${response.status}.`);
@@ -194,6 +189,7 @@ function testConversationIdentityAndSenderRanking() {
 }
 
 function testManualMessageBridgeContract() {
+  const bridgeSource = readFileSync(new URL('./openclaw-local-server.mjs', import.meta.url), 'utf8');
   assertIncludesAll(
     bridgeSource,
     [
@@ -390,6 +386,7 @@ function testPBKIntelligenceContextAndFleetReadiness() {
 }
 
 function testBehaviorSuiteIsInReleaseGate() {
+  const packageJson = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
   assert.equal(packageJson.scripts?.['test:behavior'], 'node ./scripts/behavior-tests.mjs');
   assert(
     packageJson.scripts?.['test:founder']?.includes('test:behavior'),
@@ -397,24 +394,41 @@ function testBehaviorSuiteIsInReleaseGate() {
   );
 }
 
+const behaviorChecks = [
+  ['conversation_identity_and_sender_ranking', testConversationIdentityAndSenderRanking],
+  ['manual_message_bridge_contract', testManualMessageBridgeContract],
+  ['ava_intent_router_behavior', testAvaIntentRouterBehavior],
+  ['ava_turn_contract_behavior', testAvaTurnContractBehavior],
+  ['pbk_intelligence_context_and_fleet_readiness', testPBKIntelligenceContextAndFleetReadiness],
+  ['behavior_suite_release_gate', testBehaviorSuiteIsInReleaseGate],
+];
+
+export const BEHAVIOR_QUALIFICATION_CASE_IDS = Object.freeze(behaviorChecks.map(([id]) => id));
+
+export function runBehaviorQualification() {
+  const results = behaviorChecks.map(([id, check]) => {
+    try {
+      check();
+      return { id, executed: true, passed: true, reason: 'Local non-hosted behavior assertions passed.' };
+    } catch {
+      return { id, executed: true, passed: false, reason: `${id}: local non-hosted behavior check failed.` };
+    }
+  });
+  const passed = results.filter((row) => row.passed).length;
+  return { ok: passed === results.length, total: results.length, passed, failed: results.length - passed, results };
+}
+
 async function main() {
-  const results = [];
-
-  const tests = [
-    ['conversation_identity_and_sender_ranking', testConversationIdentityAndSenderRanking],
-    ['manual_message_bridge_contract', testManualMessageBridgeContract],
-    ['ava_intent_router_behavior', testAvaIntentRouterBehavior],
-    ['ava_turn_contract_behavior', testAvaTurnContractBehavior],
-    ['pbk_intelligence_context_and_fleet_readiness', testPBKIntelligenceContextAndFleetReadiness],
-    ['behavior_suite_release_gate', testBehaviorSuiteIsInReleaseGate],
-  ];
-
-  for (const [name, test] of tests) {
-    await test();
-    results.push({ name, ok: true });
+  const report = runBehaviorQualification();
+  if (!report.ok) {
+    console.log(JSON.stringify(report, null, 2));
+    process.exitCode = 1;
+    return;
   }
+  const results = report.results.map(({ id, passed }) => ({ name: id, ok: passed }));
+  const RUN_HOSTED = /^(1|true|yes)$/i.test(String(process.env.PBK_BEHAVIOR_HOSTED || '').trim());
 
-  const hosted = await testHostedBridgeHealth();
+  const hosted = await testHostedBridgeHealth(RUN_HOSTED);
   results.push({ name: 'hosted_bridge_health', ok: true, ...hosted });
 
   console.log(
@@ -432,7 +446,9 @@ async function main() {
   );
 }
 
-main().catch((error) => {
-  console.error(error instanceof Error ? error.stack || error.message : String(error));
-  process.exitCode = 1;
-});
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  main().catch((error) => {
+    console.error(error instanceof Error ? error.stack || error.message : String(error));
+    process.exitCode = 1;
+  });
+}

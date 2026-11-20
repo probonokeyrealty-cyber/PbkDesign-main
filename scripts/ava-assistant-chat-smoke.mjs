@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
+import { resolveAvaChatScope } from '../src/app/utils/avaChatScope.mjs';
 import {
   appendAssistantMessage,
   buildAssistantPrompt,
@@ -511,7 +512,7 @@ assert(
     avaChatRoute.includes('AssistantExchange') &&
     avaChatRoute.includes('AvaMissionTimeline') &&
     avaChatRoute.includes('pbk-ava-mission-timeline') &&
-    avaChatRoute.includes('sendAvaAssistantChatRequest') &&
+    avaChatRoute.includes('streamAvaAssistantChatRequest') &&
     avaChatRoute.includes('shouldUseAssistantChatRoute') &&
     avaChatRoute.includes('pbk-ava-inline-approval') &&
     avaChatRoute.includes('Review before Ava continues') &&
@@ -579,9 +580,34 @@ assert(
     !avaChatRoute.includes('pbk-ava-companion-actions'),
   'Ava Chat must not render the old menu-style companion action grid or mode picker.'
 );
+const generalChatScope = resolveAvaChatScope('');
+assert.equal(generalChatScope.valid, true, 'General Ava Chat must remain available.');
+assert.deepEqual(
+  generalChatScope.storageKeys,
+  {
+    operatorMemory: 'pbk:ava-chat:operator-memory',
+    assistantSession: 'pbk:ava-chat:assistant-session',
+    assistantExchanges: 'pbk:ava-chat:assistant-exchanges',
+  },
+  'General Ava Chat must keep all original storage keys.'
+);
+const scopedStorageKeys = Object.values(generalChatScope.storageKeys);
+for (const leadId of ['fixture-a', 'fixture-b']) {
+  const leadScope = resolveAvaChatScope(`?leadId=${leadId}`);
+  assert.equal(leadScope.valid, true, 'A valid linked lead must have its own Ava Chat scope.');
+  assert.equal(leadScope.leadId, leadId, 'The chat scope must preserve its linked lead.');
+  assert.deepEqual(
+    Object.keys(leadScope.storageKeys).sort(),
+    Object.keys(generalChatScope.storageKeys).sort(),
+    'Each linked chat must own a draft, session, and history slot.'
+  );
+  scopedStorageKeys.push(...Object.values(leadScope.storageKeys));
+}
+assert.equal(new Set(scopedStorageKeys).size, 9, 'General, lead A, and lead B must never share storage keys.');
 assert(
-  avaChatRoute.includes('AVA_OPERATOR_MEMORY_KEY') &&
-    avaChatRoute.includes('AVA_ASSISTANT_EXCHANGES_KEY') &&
+  avaChatRoute.includes('resolveAvaChatScope(useLocation().search)') &&
+    avaChatRoute.includes('key={scope.identity} scope={scope}') &&
+    avaChatRoute.includes('} = storageKeys;') &&
     avaChatRoute.includes('window.localStorage.setItem') &&
     avaChatRoute.includes('window.localStorage.getItem') &&
     avaChatRoute.includes('Resume last ask'),
@@ -599,7 +625,7 @@ assert(
 );
 assert(
   avaChatRoute.includes('pbk-ava-chat-send-button') &&
-    /aria-label="Send to Ava"/.test(avaChatRoute),
+    avaChatRoute.includes("'Send to Ava'") && avaChatRoute.includes("'Stop Ava response'"),
   'Ava Chat send button must have a stable mobile-safe selector and accessible label.'
 );
 assert(
@@ -674,8 +700,8 @@ assert(
   /import \{[\s\S]*buildAssistantPrompt[\s\S]*\} from '\.\/ava-assistant-chat\.mjs'/.test(bridge) &&
     /normalizeAssistantSession\(\{\s*history:\s*messages\s*\}\)/.test(bridge) &&
     /const requestedHistory =/.test(bridge) &&
-    /assistantContextSession[\s\S]*history:\s*mergeAssistantHistories/.test(bridge),
-  'Authenticated Ava chat must merge browser-supplied chat history into the server session before planning.'
+    /assistantContextSession[\s\S]*history: completedHistorySnapshot[\s\S]*\? requestedHistory[\s\S]*: mergeAssistantHistories/.test(bridge),
+  'Authenticated Ava chat must honor completed-only browser history and retain legacy session merging.'
 );
 assert(
   /async function runInternalAvaDeepSeekChat/.test(bridge) &&
@@ -734,7 +760,7 @@ assert(
     /runInternalAvaDeepSeekChat[\s\S]*responseFormat:\s*'json'[\s\S]*tools:\s*buildAvaDeepSeekDecisionTools\(\)[\s\S]*deepSeekDecision/.test(bridge) &&
     /source\.reply \|\| source\.answer \|\| source\.response \|\| source\.message/.test(bridge) &&
     /source\.reply \|\| source\.answer \|\| source\.response \|\| source\.message \|\| source\.question/.test(bridge) &&
-    /answer = normalizeAvaAssistantAnswer\(answer\)/.test(bridge) &&
+    /answer = normalizeAvaAssistantAnswer\(/.test(bridge) &&
     /deepSeekDecision:\s*getAvaDeepSeekDecisionFromToolResult\(toolResult\)/.test(bridge) &&
     /return null;[\s\S]*async function runInternalAvaDeepSeekChat/.test(bridge) &&
     /reasoningPolicy:\s*deepSeek\.reasoningPolicy/.test(bridge),

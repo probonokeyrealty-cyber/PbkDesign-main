@@ -80,10 +80,15 @@ assert(
   'Ava Chat mobile quick actions must wrap instead of overflowing the viewport.'
 );
 assert(
-  /\.pbk-ava-chat-controls[\s\S]*width:\s*100%/.test(styles) &&
-    /placeholder="Ask Ava anything\.\.\."/.test(avaChat) &&
-    /aria-label="Send to Ava"/.test(avaChat),
+  /className="pbk-ava-chat-controls\b[^"\n]*\bw-full\b[^"\n]*\bmin-w-0\b/.test(avaChat) &&
+    /placeholder="Ask Ava anything\.\.\."/.test(avaChat),
   'Ava Chat composer controls must stay compact and readable on narrow mobile screens.'
+);
+assert(
+  /aria-label=\{onStopResponse \? 'Stop Ava response' : 'Send to Ava'\}/.test(avaChat) &&
+    /onClick=\{onStopResponse \|\| onSubmit\}/.test(avaChat) &&
+    /disabled=\{onStopResponse \? false : !draft\.trim\(\) \|\| submitting\}/.test(avaChat),
+  'Ava Chat must label and route Send/Stop correctly, block empty or pending sends, and keep Stop enabled.'
 );
 
 const contextValueCss = extractCssBlock(styles, '.pbk-lead-context-row strong');

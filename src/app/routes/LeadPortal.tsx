@@ -2,6 +2,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AlertCircle, ArrowRight, Loader2, Save, StickyNote } from 'lucide-react';
 import { useLocation, useNavigate, useParams, useSearchParams } from 'react-router';
 import { readLeadQueueReturn } from '../utils/leadQueueReturn';
+import { fleetHref, readFleetReturn } from '../utils/fleetContext';
+import { readStoredNextStep } from '../utils/leadTriage';
+import '../../styles/fleet-context.css';
+import '../../styles/faster-triage.css';
 import { PbkDataSource } from '../../components/pbk/index';
 import { LeadPortalContactability } from '../components/leads/LeadPortalContactability';
 import { LeadPortalDealContext } from '../components/leads/LeadPortalDealContext';
@@ -125,10 +129,23 @@ export function LeadPortal() {
   const navigate = useNavigate();
   const location = useLocation();
   const returnContext = readLeadQueueReturn(location.state?.leadReturn);
-  const backLabel = returnContext && returnContext.path !== '/leads' ? 'Today' : 'Leads';
-  const returnToQueue = () => navigate(returnContext ? returnContext.path + returnContext.search : '/leads', {
-    state: returnContext ? { queueReturn: returnContext } : null,
-  });
+  const fleetReturn = readFleetReturn(location.state?.fleetReturn, leadId);
+  const backLabel = fleetReturn
+    ? 'Fleet'
+    : returnContext && returnContext.path !== '/leads'
+      ? 'Today'
+      : 'Leads';
+  const returnToQueue = () => {
+    if (fleetReturn) {
+      navigate(fleetHref(fleetReturn.leadId, fleetReturn.agentId), {
+        state: { fleetEntry: { ...fleetReturn, restoreFocus: true } },
+      });
+    } else
+      navigate(returnContext ? returnContext.path + returnContext.search : '/leads', {
+        state: returnContext ? { queueReturn: returnContext } : null,
+      });
+  };
+  const workspaceRootRef = useRef<HTMLElement>(null);
   const [searchParams, setSearchParams] = useSearchParams();
   const requestSequence = useRef(0);
   const timelineRequestSequence = useRef(0);
@@ -157,7 +174,43 @@ export function LeadPortal() {
     () => (leadPayload ? buildLeadPortalModel(leadPayload) : null),
     [leadPayload]
   );
+  const nextStep = readStoredNextStep(lead?.id === leadId ? leadPayload : null);
+  const jumpToSection = (event: React.MouseEvent<HTMLAnchorElement>, id: string) => {
+    event.preventDefault();
+    const section = workspaceRootRef.current?.querySelector<HTMLElement>(`#${id}`);
+    if (!section) return;
+    const heading = section.querySelector<HTMLElement>('h2') || section;
+    heading.tabIndex = -1;
+    heading.focus({ preventScroll: true });
+    section.scrollIntoView({ block: 'start', behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
+  };
   currentLeadIdRef.current = leadId;
+
+  const refreshSavedProperty = async (savedLeadId: string) => {
+    if (currentLeadIdRef.current !== savedLeadId) return;
+    const requestId = requestSequence.current;
+    const response = await fetchLeadFullRequest(savedLeadId);
+    if (response.ok === false) throw new Error(String(response.error || 'Unable to reload saved property intelligence.'));
+    if (currentLeadIdRef.current !== savedLeadId || requestSequence.current !== requestId) return;
+    const canonical = unwrapLead(response);
+    const canonicalId = String(canonical.leadId || canonical.id || '').trim();
+    if (canonicalId !== savedLeadId) throw new Error('The bridge returned a different lead. Reopen this workspace to reload.');
+    setLeadPayload(response);
+  };
+
+  useEffect(() => {
+    if (loading || !lead) return;
+    const frame = requestAnimationFrame(() => {
+      const target = location.state?.focusAgentLink
+        ? workspaceRootRef.current?.querySelector<HTMLElement>('[data-inspect-agent]')
+        : workspaceRootRef.current?.querySelector<HTMLElement>('h1');
+      if (target) {
+        if (target.tagName === 'H1') target.tabIndex = -1;
+        target.focus({ preventScroll: true });
+      }
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [loading, lead, location.key, location.state]);
 
   const beginAction = (name: string) => {
     const token = ++actionSequence.current;
@@ -235,7 +288,10 @@ export function LeadPortal() {
       const canonicalLead = unwrapLead(fullResponse);
       const canonicalLeadId = String(canonicalLead.leadId || canonicalLead.id || leadId).trim();
       if (canonicalLeadId && canonicalLeadId !== leadId) {
-        navigate(`/leads/${encodeURIComponent(canonicalLeadId)}`, { replace: true, state: location.state });
+        navigate(`/leads/${encodeURIComponent(canonicalLeadId)}`, {
+          replace: true,
+          state: location.state,
+        });
         return;
       }
       const conversationResponse = await fetchConversationsRequest({
@@ -621,7 +677,7 @@ export function LeadPortal() {
           };
 
   return (
-    <main className="pbk-lead-portal">
+    <main className="pbk-lead-portal" ref={workspaceRootRef}>
       <LeadPortalHeader
         lead={lead}
         loading={loading}
@@ -667,24 +723,48 @@ export function LeadPortal() {
           setConfirmAction('contract');
         }}
         onAnalyze={() => navigate(`/deal/${encodeURIComponent(lead.id || leadId)}`)}
+        freshAnalyzerAvailable={lead.id === leadId}
+        inspectAgentAvailable={lead.id === leadId}
+        onInspectAgent={() => {
+          if (loading || lead.id !== leadId) return;
+          navigate(fleetHref(leadId, fleetReturn?.agentId || 'ava'), {
+            state: {
+              fleetEntry: {
+                leadId,
+                agentId: fleetReturn?.agentId || 'ava',
+                query: fleetReturn?.query || '',
+                scrollY: 0,
+                workspaceEntry: true,
+                restoreFocus: false,
+                leadReturn: fleetReturn?.leadReturn || returnContext,
+              },
+            },
+          });
+        }}
         onDelete={() => setConfirmAction('delete')}
       />
+      <section className="pbk-context-strip" aria-label="Workspace lead context">
+        <div className="pbk-context-identity">
+          <span className="pbk-kicker">Current lead</span>
+          <code>{lead.id || leadId}</code>
+        </div>
+        <span>{fleetReturn ? `Agent context: ${fleetReturn.agentId}` : 'Seller workspace'}</span>
+      </section>
 
       <nav className="pbk-portal-sections" aria-label="Lead workspace sections">
-        <a href="#lead-timeline">Timeline</a>
-        <a href="#lead-numbers">Numbers</a>
-        <a href="#lead-property">Property</a>
+        <a href="#lead-next-step" onClick={event => jumpToSection(event, 'lead-next-step')}>Next step</a>
+        <a href="#lead-timeline" onClick={event => jumpToSection(event, 'lead-timeline')}>Timeline</a>
+        <a href="#lead-numbers" onClick={event => jumpToSection(event, 'lead-numbers')}>Numbers</a>
+        <a href="#lead-property" onClick={event => jumpToSection(event, 'lead-property')}>Property</a>
       </nav>
 
-      {lead.bantNextStep && (
-        <section className="pbk-portal-next-step" aria-labelledby="lead-next-step-heading">
+        <section id="lead-next-step" className="pbk-portal-next-step" aria-labelledby="lead-next-step-heading" data-next-step-state={nextStep.state}>
           <ArrowRight size={18} aria-hidden="true" />
           <div>
             <h2 id="lead-next-step-heading">Next step</h2>
-            <p>{lead.bantNextStep}</p>
+            <p>{nextStep.text}</p>
           </div>
         </section>
-      )}
 
       <div className="pbk-lead-portal-grid">
         <div className="pbk-portal-main-column">
@@ -711,7 +791,7 @@ export function LeadPortal() {
         </div>
       </div>
 
-      <LeadPortalProperty key={lead.id || leadId} lead={lead} onEdit={startEdit} />
+      <LeadPortalProperty key={`${lead.id || leadId}:${lead.address}:${lead.city}:${lead.state}:${lead.zip}`} lead={lead} onEdit={startEdit} onSaved={refreshSavedProperty} />
 
       <details className="pbk-portal-source-details">
         <summary>Data sources</summary>

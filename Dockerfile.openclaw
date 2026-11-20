@@ -26,12 +26,15 @@ RUN if [ -f package-lock.json ]; then npm ci --legacy-peer-deps --ignore-scripts
 COPY index.html ./index.html
 COPY analyzer.html ./analyzer.html
 COPY index.shell.html ./index.shell.html
+COPY investor-portal.html ./investor-portal.html
 COPY vite.config.ts ./vite.config.ts
 COPY tsconfig.json ./tsconfig.json
 COPY postcss.config.mjs ./postcss.config.mjs
 COPY tailwind.pbk.config.ts ./tailwind.pbk.config.ts
 COPY src ./src
 COPY public ./public
+COPY scripts/ava-speech-chunks.mjs scripts/ava-speech-chunks.d.mts ./scripts/
+COPY supabase/functions/pbk-investor-staging/releaseProfile.mjs ./supabase/functions/pbk-investor-staging/releaseProfile.mjs
 RUN npm run build --ignore-scripts
 
 FROM node:22-slim
@@ -99,6 +102,8 @@ ENV NPM_CONFIG_FETCH_RETRY_MAXTIMEOUT=120000
 RUN npm install --legacy-peer-deps --no-save --no-audit --no-fund --loglevel=warn --timeout=600000 \
       @sparticuz/chromium@147.0.1 \
       @deepgram/sdk@5.1.0 \
+      @streamparser/json@0.0.26 \
+      eventsource-parser@3.1.1 \
       @huggingface/transformers@4.2.0 \
       @langchain/langgraph@1.3.2 \
       @modelcontextprotocol/sdk@1.29.0 \
@@ -115,6 +120,8 @@ RUN npm install --legacy-peer-deps --no-save --no-audit --no-fund --loglevel=war
       @opentelemetry/sdk-node@0.218.0 \
       puppeteer-core@24.41.0 \
       pg@8.13.1 \
+      nodemailer@10.6.0 \
+      @azure/msal-node@7.2.2 \
       pgsql-ast-parser@12.0.1 \
       redis@5.10.0 \
       ws@8.20.1 \
@@ -143,17 +150,36 @@ RUN python3 -m venv /app/.venv \
 ENV PATH="/app/.venv/bin:${PATH}"
 
 # Copy the bridge source last so dependency installation caches across rebuilds.
+COPY package.json ./package.json
 COPY scripts/pbk-deepgram-client.mjs ./scripts/pbk-deepgram-client.mjs
 COPY scripts/qa-agent.mjs ./scripts/qa-agent.mjs
 COPY scripts/agent-registry.mjs ./scripts/agent-registry.mjs
+COPY scripts/ava-rex-handoff.mjs ./scripts/ava-rex-handoff.mjs
+COPY scripts/agent-latency-policy.mjs ./scripts/agent-latency-policy.mjs
+COPY scripts/canary-evidence-reader.mjs ./scripts/canary-evidence-reader.mjs
+COPY scripts/canary-evidence-protocol.mjs ./scripts/canary-evidence-protocol.mjs
+COPY scripts/agent-timing-proof.mjs ./scripts/agent-timing-proof.mjs
+COPY scripts/agent-timing-adapters.mjs ./scripts/agent-timing-adapters.mjs
+COPY scripts/runtime-evidence-context.mjs ./scripts/runtime-evidence-context.mjs
+COPY scripts/runtime-source-evidence.mjs ./scripts/runtime-source-evidence.mjs
+COPY scripts/runtime-paged-census.mjs ./scripts/runtime-paged-census.mjs
+COPY scripts/bounded-census-migration.mjs ./scripts/bounded-census-migration.mjs
+COPY scripts/migrations/20261117-bounded-census.sql ./scripts/migrations/20261117-bounded-census.sql
+COPY scripts/runtime-coverage-store.mjs ./scripts/runtime-coverage-store.mjs
+COPY scripts/runtime-coverage-sampler.mjs ./scripts/runtime-coverage-sampler.mjs
 COPY scripts/agent-fleet-measurement.mjs ./scripts/agent-fleet-measurement.mjs
 COPY scripts/controlled-execution-scope.mjs ./scripts/controlled-execution-scope.mjs
 COPY scripts/controlled-agent-storage.mjs ./scripts/controlled-agent-storage.mjs
+COPY scripts/controlled-agent-workflow.mjs ./scripts/controlled-agent-workflow.mjs
 COPY scripts/background-persistence.mjs ./scripts/background-persistence.mjs
 COPY scripts/pool-schema-initializer.mjs ./scripts/pool-schema-initializer.mjs
 COPY scripts/ava-accounting-status.mjs ./scripts/ava-accounting-status.mjs
 COPY scripts/ava-decision-messages.mjs ./scripts/ava-decision-messages.mjs
+COPY scripts/ava-speech-chunks.mjs ./scripts/ava-speech-chunks.mjs
+COPY scripts/ava-deepseek-stream.mjs ./scripts/ava-deepseek-stream.mjs
+COPY scripts/ava-chat-events.mjs ./scripts/ava-chat-events.mjs
 COPY scripts/ava-request-timing.mjs ./scripts/ava-request-timing.mjs
+COPY scripts/ava-latency-benchmark.mjs ./scripts/ava-latency-benchmark.mjs
 COPY scripts/rex-autonomy.mjs ./scripts/rex-autonomy.mjs
 COPY scripts/context-aware-script-rotator.mjs ./scripts/context-aware-script-rotator.mjs
 COPY scripts/ava-governed-skill-router.mjs ./scripts/ava-governed-skill-router.mjs
@@ -173,6 +199,7 @@ COPY scripts/connection-strength-check.mjs ./scripts/connection-strength-check.m
 COPY scripts/production-gap-labels.mjs ./scripts/production-gap-labels.mjs
 COPY scripts/primary-path-reliability.mjs ./scripts/primary-path-reliability.mjs
 COPY scripts/ava-latency-status.mjs ./scripts/ava-latency-status.mjs
+COPY scripts/ava-phone-latency.mjs ./scripts/ava-phone-latency.mjs
 COPY scripts/coworker-heartbeat.mjs ./scripts/coworker-heartbeat.mjs
 COPY scripts/slack-mention-router.mjs ./scripts/slack-mention-router.mjs
 COPY scripts/youtube-training.mjs ./scripts/youtube-training.mjs
@@ -180,6 +207,13 @@ COPY scripts/ava-assistant-chat.mjs ./scripts/ava-assistant-chat.mjs
 COPY scripts/lead-raw-proof-job.mjs ./scripts/lead-raw-proof-job.mjs
 COPY scripts/lead-field-provenance.mjs ./scripts/lead-field-provenance.mjs
 COPY scripts/attom-property-preview.mjs ./scripts/attom-property-preview.mjs
+COPY src/app/utils/attomRecordFields.mjs ./src/app/utils/attomRecordFields.mjs
+COPY scripts/analyzer-property-preview.mjs ./scripts/analyzer-property-preview.mjs
+COPY scripts/property-intelligence.mjs ./scripts/property-intelligence.mjs
+COPY scripts/attom-mcp-client.mjs ./scripts/attom-mcp-client.mjs
+COPY scripts/attom-mcp-source.mjs ./scripts/attom-mcp-source.mjs
+COPY scripts/attom-mcp-property-records.mjs ./scripts/attom-mcp-property-records.mjs
+COPY src/app/utils/attomMcpSections.mjs ./src/app/utils/attomMcpSections.mjs
 COPY scripts/batch-review-roster.mjs ./scripts/batch-review-roster.mjs
 COPY scripts/batch-phone-dispatch.mjs ./scripts/batch-phone-dispatch.mjs
 COPY scripts/batch-apply.mjs ./scripts/batch-apply.mjs
@@ -204,6 +238,7 @@ COPY scripts/auto-skill-learner.mjs ./scripts/auto-skill-learner.mjs
 COPY scripts/nurture-agent.mjs ./scripts/nurture-agent.mjs
 COPY scripts/onnx-training-worker.mjs ./scripts/onnx-training-worker.mjs
 COPY scripts/research-additives.mjs ./scripts/research-additives.mjs
+COPY scripts/composio-research-discovery.mjs ./scripts/composio-research-discovery.mjs
 COPY scripts/rex-research-memory.mjs ./scripts/rex-research-memory.mjs
 COPY scripts/vector-embedding.mjs ./scripts/vector-embedding.mjs
 COPY scripts/skill-governance-schema.mjs ./scripts/skill-governance-schema.mjs
@@ -225,10 +260,28 @@ COPY scripts/conversation-store.mjs ./scripts/conversation-store.mjs
 COPY scripts/backfill-conversations.mjs ./scripts/backfill-conversations.mjs
 COPY scripts/provider-action-dispatch-policy.mjs ./scripts/provider-action-dispatch-policy.mjs
 COPY scripts/provider-action-dispatch.mjs ./scripts/provider-action-dispatch.mjs
+COPY scripts/provider-action-authorization.mjs ./scripts/provider-action-authorization.mjs
+COPY scripts/release-qualification.mjs ./scripts/release-qualification.mjs
+COPY scripts/operational-audit-collector.mjs ./scripts/operational-audit-collector.mjs
+COPY scripts/operational-audit-store.mjs ./scripts/operational-audit-store.mjs
+COPY scripts/backlog-reconciliation-collector.mjs ./scripts/backlog-reconciliation-collector.mjs
+COPY scripts/backlog-reconciliation-store.mjs ./scripts/backlog-reconciliation-store.mjs
+COPY scripts/call-memory-outcome-store.mjs ./scripts/call-memory-outcome-store.mjs
+COPY scripts/targeted-readiness-migration.mjs ./scripts/targeted-readiness-migration.mjs
+COPY scripts/migrations/20261116-targeted-readiness.sql ./scripts/migrations/20261116-targeted-readiness.sql
+COPY scripts/release-qualification-ci.mjs ./scripts/release-qualification-ci.mjs
+COPY scripts/ava-real-call-eval-pack.mjs ./scripts/ava-real-call-eval-pack.mjs
+COPY scripts/behavior-tests.mjs ./scripts/behavior-tests.mjs
+COPY scripts/silent-error-governance-smoke.mjs ./scripts/silent-error-governance-smoke.mjs
+COPY scripts/silent-error-governance.mjs ./scripts/silent-error-governance.mjs
 COPY scripts/provider-proof-ledger.mjs ./scripts/provider-proof-ledger.mjs
 COPY scripts/invoke-rate-limit.mjs ./scripts/invoke-rate-limit.mjs
 COPY scripts/event-bus ./scripts/event-bus
 COPY scripts/property-data-adapter.mjs ./scripts/property-data-adapter.mjs
+COPY scripts/attom-property-preview.mjs ./scripts/attom-property-preview.mjs
+COPY src/app/utils/attomRecordFields.mjs ./src/app/utils/attomRecordFields.mjs
+COPY scripts/attom-recent-sales.mjs ./scripts/attom-recent-sales.mjs
+COPY scripts/address-suggestions.mjs ./scripts/address-suggestions.mjs
 COPY scripts/openclaw-local-server.mjs ./scripts/openclaw-local-server.mjs
 COPY scripts/lib/composio-connection.mjs ./scripts/lib/composio-connection.mjs
 COPY scripts/lib/composio-market-search.mjs ./scripts/lib/composio-market-search.mjs
@@ -237,6 +290,9 @@ COPY scripts/lib/public-market-controller.mjs ./scripts/lib/public-market-contro
 COPY scripts/lib/public-market-claims.mjs ./scripts/lib/public-market-claims.mjs
 COPY scripts/fixtures/public-market-program.mjs ./scripts/fixtures/public-market-program.mjs
 COPY mcp-server/runtime ./mcp-server/runtime
+COPY scripts/ava-team-chat-permissions.mjs ./scripts/ava-team-chat-permissions.mjs
+COPY scripts/neon-auth-mail.mjs ./scripts/neon-auth-mail.mjs
+COPY scripts/neon-auth-microsoft.mjs ./scripts/neon-auth-microsoft.mjs
 COPY --from=frontend /frontend/dist/index.html ./index.html
 COPY --from=frontend /frontend/dist/analyzer.html ./analyzer.html
 COPY --from=frontend /frontend/dist/index.shell.html ./index.shell.html

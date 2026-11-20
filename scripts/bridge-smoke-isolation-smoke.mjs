@@ -83,6 +83,19 @@ test('failed child startup cleans up its disposable root without contacting an e
   assert.deepEqual((await readdir(tmpdir())).filter(name => name.startsWith('pbk-bridge-smoke-')).sort(), before);
 });
 
+test('startup timeout reports child stderr and cleans up its disposable root', async () => {
+  const before = (await readdir(tmpdir())).filter(name => name.startsWith('pbk-bridge-smoke-')).sort();
+  await assert.rejects(startIsolatedBridge({
+    entry: fileURLToPath(new URL('./fixtures/bridge-smoke-startup-timeout.mjs', import.meta.url)),
+    startupMs: 2000,
+  }), error => {
+    assert.match(error.message, /Isolated bridge startup timed out/);
+    assert.match(error.message, /Sample startup failure before listening/);
+    return true;
+  });
+  assert.deepEqual((await readdir(tmpdir())).filter(name => name.startsWith('pbk-bridge-smoke-')).sort(), before);
+});
+
 test('bind collision does not send health or reset requests to another listener', async () => {
   let requests = 0;
   const existing = createServer((_req, res) => { requests++; res.end('working bridge sentinel'); });

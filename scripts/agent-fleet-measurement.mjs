@@ -1,12 +1,14 @@
 import { normalizeAgentRegistryId } from './agent-registry.mjs';
+import { isAgentTimingPlainData, verifyAgentTimingProof } from './agent-timing-proof.mjs';
+import { REQUIRED_AGENT_LATENCY_MILESTONES } from './agent-latency-policy.mjs';
 
 export function isNonOperationalAgentEvidence(record = {}) {
   const metadata = record.metadata || {};
   const payload = metadata.workOrder?.payload || {};
   const substantiveBant = metadata.outputResult === 'bant_enforcer_status'
     && metadata.executionEvidence?.handlerCompletionVerified === true;
-  return [record, metadata, payload].some((item) =>
-    item.operational === false || ['synthetic', 'smoke', 'dryRun', 'dry_run', 'preview', 'diagnostic', 'qualification', 'controlledQualification'].some((key) => item[key] === true)
+  return [record, metadata, payload, metadata.executionEvidence || {}].some((item) =>
+    item.operational === false || ['controlled', 'synthetic'].includes(item.provenance) || ['synthetic', 'smoke', 'dryRun', 'dry_run', 'preview', 'diagnostic', 'qualification', 'controlledQualification'].some((key) => item[key] === true)
   ) || /(?:^|[_\s-])(synthetic|smoke|preview|heartbeat|diagnostic|health|status|qualification)(?:$|[_\s-])/i.test(
     [record.taskType, record.source, metadata.source, substantiveBant ? '' : metadata.outputResult].filter(Boolean).join(' ')
   ) || metadata.operational === false;
@@ -72,7 +74,12 @@ export function isAgentHandlerCompletion(agentId, output = {}) {
   }
 }
 
-export function buildAgentExecutionEvidence({ agentId, payload = {}, output = {}, durationMs, completedAt, workOrderId } = {}) {
+const TIMING_KINDS = { firstTokenMs: 'first_token', completionMs: 'completion', speechStartMs: 'speech_start', speechCompletionMs: 'speech_completion' };
+const CHANNELS = ['chat', 'phone', 'research', 'provider'];
+const latencyNumber = (value) => (typeof value === 'number' || (typeof value === 'string' && value.trim()))
+  && Number.isFinite(Number(value)) && Number(value) >= 0 ? Number(value) : null;
+
+export function buildAgentExecutionEvidence({ agentId, payload = {}, output = {}, durationMs, completedAt, workOrderId, channel, timings = {} } = {}) {
   const handlerComplete = isAgentHandlerCompletion(agentId, output);
   const nonOperational = isNonOperationalAgentEvidence({ ...payload, metadata: { ...payload.metadata, outputResult: handlerComplete ? '' : output.result } })
     || output.skipped === true || output.dryRun === true || output.preview === true
@@ -85,14 +92,19 @@ export function buildAgentExecutionEvidence({ agentId, payload = {}, output = {}
     // A returned handler or a readiness response is not completed business work.
     success: !nonOperational && handlerComplete,
     durationMs: Number.isFinite(durationMs) && durationMs >= 0 ? durationMs : null,
+    latencyKind: 'completion',
+    channel: CHANNELS.includes(channel) ? channel : 'unknown',
+    timings: Object.fromEntries(Object.keys(TIMING_KINDS).filter((key) => Object.hasOwn(timings, key)).map((key) => [key, latencyNumber(timings[key])])),
     completedAt,
   };
 }
 
-export function collectAgentFleetEvidence(state = {}, { now = Date.now() } = {}) {
+export function collectAgentFleetEvidence(state = {}, { now = Date.now(), policy, secret, revision, requireTimingV2 = false } = {}) {
+  if (requireTimingV2 || policy?.version === 2) return collectTimingV2(state, { now, policy, secret, revision });
   const lastActions = {};
   const latencySamples = {};
   const unverifiedLatencySamples = {};
+  const latencyObservations = {};
   const diagnostics = {};
   const seen = new Set();
   for (const collection of ['agentTasks', 'agentDecisions', 'rexDecisions']) {
@@ -122,6 +134,20 @@ export function collectAgentFleetEvidence(state = {}, { now = Date.now() } = {})
         const target = sourceVerified ? latencySamples : unverifiedLatencySamples;
         (target[id] ||= []).push(Number(duration));
       } else diagnostic.missingLatencyRecords++;
+      const channel = record.channel || evidence.channel || metadata.channel;
+      const rawKind = record.latencyKind || evidence.latencyKind || metadata.latencyKind;
+      const kind = Object.values(TIMING_KINDS).includes(rawKind) ? rawKind : 'unknown';
+      const observation = (timingKind, value) => ({
+        kind: timingKind, channel: CHANNELS.includes(channel) ? channel : 'unknown', valueMs: latencyNumber(value),
+        at: Number.isFinite(atMs) ? new Date(atMs).toISOString() : '', recordId: record.id || '',
+        source: evidence.source || '', verified: sourceVerified,
+      });
+      const observations = latencyObservations[id] ||= [];
+      observations.push(observation(kind, duration));
+      const timings = evidence.timings || metadata.timings || {};
+      for (const [field, timingKind] of Object.entries(TIMING_KINDS)) {
+        if (Object.hasOwn(timings, field)) observations.push(observation(timingKind, timings[field]));
+      }
       const status = String(record.status || record.result || '').toLowerCase();
       const success = sourceVerified && evidence.success === true && /^(success|succeeded|complete|completed)$/.test(status);
       const action = { status: success ? 'success' : status === 'failed' ? 'failure' : 'unverified', at: Number.isFinite(atMs) ? new Date(atMs).toISOString() : '', source: sourceVerified ? evidence.source : '', recordId: record.id || '' };
@@ -132,5 +158,83 @@ export function collectAgentFleetEvidence(state = {}, { now = Date.now() } = {})
     diagnostic.state = diagnostic.operationalRecords ? (diagnostic.missingLatencyRecords ? 'instrumentation_gap' : 'observed')
       : diagnostic.unverifiedRecords ? 'provenance_missing' : 'no_operational_use_observed';
   }
-  return { lastActions, latencySamples, unverifiedLatencySamples, diagnostics };
+  return { lastActions, latencySamples, unverifiedLatencySamples, latencyObservations, diagnostics };
+}
+
+function collectTimingV2(state, { now, policy, secret, revision }) {
+  const result = { lastActions: {}, latencySamples: {}, unverifiedLatencySamples: {}, latencyObservations: {}, latencyDiagnostics: {}, diagnostics: {} };
+  const runs = new Map();
+  for (const collection of ['agentTasks', 'agentDecisions', 'rexDecisions']) {
+    for (const record of Array.isArray(state[collection]) ? state[collection] : []) {
+      const safe = isAgentTimingPlainData(record);
+      const ownAgent = Object.getOwnPropertyDescriptor(record || {}, 'agentId')?.value;
+      const candidate = safe ? record?.agentId || record?.agent_id || record?.toAgent || record?.to_agent
+        || record?.agentName || record?.agent_name || record?.agent || record?.fromAgent || record?.from_agent : ownAgent;
+      const id = typeof candidate === 'string' ? normalizeAgentRegistryId(candidate) : '';
+      if (!id || ['__proto__', 'constructor', 'prototype'].includes(id)) continue;
+      const diagnostic = result.diagnostics[id] ||= { observedRecords: 0, excludedRecords: 0, unverifiedRecords: 0, missingLatencyRecords: 0, operationalRecords: 0 };
+      diagnostic.observedRecords++;
+      const metadata = safe ? record.metadata || {} : {};
+      const proof = metadata.timingProof ?? metadata.executionEvidence?.timingProof;
+      const runId = safe && typeof record.id === 'string' ? record.id : '';
+      const check = verifyAgentTimingProof(proof, { secret, revision, policy, agentId: id, runId, now });
+      const nonOperational = safe && isNonOperationalAgentEvidence(record);
+      // Unsigned classifications cannot suppress contradictory signed organic evidence.
+      if (nonOperational && proof === undefined) { diagnostic.excludedRecords++; continue; }
+      const signedExpired = check.reason === 'time_expired';
+      const valid = check.verified;
+      const data = valid ? check.data : null;
+      const classificationConflict = valid && nonOperational;
+      const missingMilestones = valid && REQUIRED_AGENT_LATENCY_MILESTONES[data.channel].some(kind =>
+        !Object.entries(TIMING_KINDS).some(([field, timingKind]) => timingKind === kind && Object.hasOwn(data.timings, field)));
+      const at = data?.completedAt || (signedExpired ? proof.completedAt : safe ? record.completedAt || record.completed_at
+        || metadata.executionEvidence?.completedAt || record.updatedAt || record.updated_at || record.createdAt || record.created_at : '');
+      const atMs = typeof at === 'string' ? Date.parse(at) : NaN;
+      const rawStatus = safe ? record.status || record.result : null;
+      const status = typeof rawStatus === 'string' ? rawStatus.toLowerCase() : '';
+      const success = valid && !classificationConflict && !missingMilestones && /^(success|succeeded|complete|completed)$/.test(status);
+      const observations = result.latencyObservations[id] ||= [];
+      const diagnostics = result.latencyDiagnostics[id] ||= [];
+      const key = `${id}:${runId}`;
+      const previous = runs.get(key);
+      const signature = valid ? proof.signature : null;
+      const duplicate = Boolean(previous && signature && previous === signature);
+      const conflict = Boolean(previous && signature && previous !== signature);
+      if (valid) runs.set(key, signature);
+      if (valid && success && !conflict && !duplicate) {
+        diagnostic.operationalRecords++;
+        const signedProof = { ...data, signature };
+        for (const [field, kind] of Object.entries(TIMING_KINDS)) {
+          if (!Object.hasOwn(data.timings, field)) continue;
+          observations.push({ kind, channel: data.channel, valueMs: data.timings[field], at: data.completedAt,
+            recordId: runId, source: 'signed_timing_v2', verified: true, proof: signedProof, binding: { agentId: id, runId } });
+        }
+        if (Object.hasOwn(data.timings, 'completionMs')) (result.latencySamples[id] ||= []).push(data.timings.completionMs);
+        else diagnostic.missingLatencyRecords++;
+      } else if (!duplicate || !success) {
+        diagnostic.unverifiedRecords++;
+        if (missingMilestones) diagnostic.missingLatencyRecords++;
+        const reason = conflict ? 'run_conflict' : classificationConflict ? 'classification_conflict'
+          : missingMilestones ? 'milestones_missing' : valid && !success ? 'business_result_unverified' : check.reason;
+        diagnostics.push({ recordId: runId, reason, at: Number.isFinite(atMs) ? new Date(atMs).toISOString() : '' });
+        const duration = safe ? record.latencyMs ?? record.latency_ms ?? record.durationMs ?? metadata.executionEvidence?.durationMs : null;
+        if (latencyNumber(duration) !== null) (result.unverifiedLatencySamples[id] ||= []).push(latencyNumber(duration));
+        if (conflict || (valid && !success) || (!signedExpired && (proof !== undefined || !safe))) {
+          // Invalid signed claims stay blocking; never use an untrusted timestamp to age them out.
+          observations.push({ timingV2: true, verified: false, recordId: runId, reason });
+        }
+      }
+      const action = { status: success && !conflict ? 'success' : status === 'failed' ? 'failure' : 'unverified',
+        at: Number.isFinite(atMs) ? new Date(atMs).toISOString() : '', recordId: runId,
+        source: valid ? 'signed_timing_v2' : '', ...(valid ? { proof: { ...data, signature }, binding: { agentId: id, runId } } : {}) };
+      const latest = result.lastActions[id];
+      // Invalid/unknown/future latest actions cannot restore an older successful action.
+      if (!latest || !Number.isFinite(atMs) || (latest.at && atMs > Date.parse(latest.at))
+        || (atMs === Date.parse(latest.at) && action.status !== 'success')) result.lastActions[id] = action;
+    }
+  }
+  for (const diagnostic of Object.values(result.diagnostics)) diagnostic.state = diagnostic.operationalRecords
+    ? diagnostic.missingLatencyRecords ? 'instrumentation_gap' : 'observed'
+    : diagnostic.unverifiedRecords ? 'provenance_missing' : 'no_operational_use_observed';
+  return result;
 }

@@ -1,4 +1,6 @@
 import { execFileSync } from 'node:child_process';
+import { createNeonMailRouter } from './neon-auth-mail.mjs';
+import { createComposioResearchDiscovery } from './composio-research-discovery.mjs';
 import { createServer, globalAgent as httpGlobalAgent } from 'node:http';
 import { globalAgent as httpsGlobalAgent } from 'node:https';
 import { createHash, createHmac, createPrivateKey, createPublicKey, createSign as __dsCreateSign, randomUUID, timingSafeEqual, verify as verifySignature } from 'node:crypto';
@@ -71,17 +73,45 @@ import pg from 'pg';
 import { createClient as createRedisClient } from 'redis';
 import { DeleteObjectCommand, GetObjectCommand, HeadBucketCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { getSignedUrl as getS3SignedUrl } from '@aws-sdk/s3-request-presigner';
-import { lookupAttomPropertyPreview } from './attom-property-preview.mjs';
+import { lookupAttomPropertyPreview, sameAttomAddress } from './attom-property-preview.mjs';
+import { analyzerPropertyPreview } from './analyzer-property-preview.mjs';
+import { createPropertyIntelligence } from './property-intelligence.mjs';
+import { lookupAttomRecentSales } from './attom-recent-sales.mjs';
+import { lookupAddressSuggestions } from './address-suggestions.mjs';
 import { applyAgentVersionRollback, buildAgentRegistrySnapshot, buildAgentVersionSnapshot, buildDefaultAgentRegistry, buildStableAgentFleetMeasurement, findAgentsByCapability, invokeRegisteredAgent, mergeAgentRegistryRecords, normalizeAgentRegistryId, normalizeAgentRegistryRecord, validateAgentVersionSnapshot } from './agent-registry.mjs';
 import { buildAgentExecutionEvidence, collectAgentFleetEvidence, isNonOperationalAgentEvidence, isAgentHandlerCompletion } from './agent-fleet-measurement.mjs';
+import { getAgentLatencyPolicy } from './agent-latency-policy.mjs';
+import { readCanaryEvidence } from './canary-evidence-reader.mjs';
 import { controlledExecution, createControlledPool, createScopedState, assertControlledToolAllowed } from './controlled-execution-scope.mjs';
-import { createControlledAgentStorage, saveControlledAgentResult, readControlledAgentQualification } from './controlled-agent-storage.mjs';
+import { createControlledAgentStorage, saveControlledAgentResult, readControlledAgentQualification, readControlledWorkflowPredecessor } from './controlled-agent-storage.mjs';
+import { runControlledAgentWorkflow } from './controlled-agent-workflow.mjs';
 import { createAvaRequestTiming } from './ava-request-timing.mjs';
-import { createBackgroundPersistence } from './background-persistence.mjs';
+import { runBenchmark, summarizeBenchmark } from './ava-latency-benchmark.mjs';
+import { createAgentTimingTurn, markAgentTimingFirstContent, bindAgentTimingToParams,
+  getTrustedAgentTimingProof, registeredAgentTimingChannel, agentTimingResultSucceeded } from './agent-timing-adapters.mjs';
+import { withRuntimeEvidenceContext, getRuntimeEvidenceContext } from './runtime-evidence-context.mjs';
+import { createBackgroundPersistence, createCoalescedPersistence } from './background-persistence.mjs';
+import { createProviderActionBinding, hashProviderActionContext, validateProviderActionAuthorization, validateNegotiationApproval } from './provider-action-authorization.mjs';
+import { authorizeQualificationRequest, executeReleaseQualification, isDirectQualificationFounder, readReleaseQualification } from './release-qualification.mjs';
+import { loadQualificationCiEvidence } from './release-qualification-ci.mjs';
+import { collectOperationalAudit } from './operational-audit-collector.mjs';
+import { executeOperationalAudit, readOperationalAudit, createOperationalAuditPool } from './operational-audit-store.mjs';
+import { collectBacklogReconciliation } from './backlog-reconciliation-collector.mjs';
+import { executeBacklogReconciliation, readBacklogReconciliation } from './backlog-reconciliation-store.mjs';
+import { recordCallMemorySkip, readCallMemorySkipSummary } from './call-memory-outcome-store.mjs';
+import { AVA_REAL_CALL_EVAL_SCENARIO_IDS, runAvaRealCallQualification } from './ava-real-call-eval-pack.mjs';
+import { BEHAVIOR_QUALIFICATION_CASE_IDS, runBehaviorQualification } from './behavior-tests.mjs';
+import { SILENT_ERROR_POLICY_CASE_IDS, runSilentErrorPolicyQualification } from './silent-error-governance-smoke.mjs';
 import { createPoolSchemaInitializer } from './pool-schema-initializer.mjs';
 import { observeUsagePersistence } from './ava-accounting-status.mjs';
-import { buildAvaDecisionMessages } from './ava-decision-messages.mjs';
-import { EventTypes, getEventBusStatus, publishEvent as publishEventBusEvent } from './event-bus/streams.mjs';
+import { buildAvaDecisionMessages, isAvaCompactDecisionSafe } from './ava-decision-messages.mjs';
+import { joinAvaSpeechResponses, splitAvaSpeechText } from './ava-speech-chunks.mjs';
+import { createAvaDecisionPreview, readDeepSeekStream, sanitizeAvaStreamReply } from './ava-deepseek-stream.mjs';
+import { streamAvaChatResponse } from './ava-chat-events.mjs';
+import { parseRexResearch, postgresRexHandoffStore, readRexHandoff, rexLeadVersion, runRexHandoff } from './ava-rex-handoff.mjs';
+import { getAvaChatRequiredPermissions } from './ava-team-chat-permissions.mjs';
+import { EventTypes, getDefaultEventBus, getEventBusStatus, publishEvent as publishEventBusEvent } from './event-bus/streams.mjs';
+import { createRuntimeCoverageSampler } from './runtime-coverage-sampler.mjs';
 import { buildRexKpiSnapshot, proposeAutonomousRexGoals, selectRexProactiveLeadAction } from './rex-autonomy.mjs';
 import { recordScriptOutcomeStats, selectContextAwareScript } from './context-aware-script-rotator.mjs';
 import {
@@ -119,6 +149,7 @@ import { isYouTubeUrl, processYouTubeTraining, runYouTubeTrainingEvalSuite } fro
 import { SYNTHETIC_EDGE_CASE_SOURCE, buildSyntheticEdgeCaseObjections } from './synthetic-edge-cases.mjs';
 import { getObservabilityStatus as getPbkObservabilityStatus, incrementObservabilityCounter, initializeObservability, recordEventBusBacklogMetric, recordGuardrailViolationMetric, recordLatencyMetric, withObservabilitySpan } from './observability.mjs';
 import { recordAvaResponseLatencyStatus } from './ava-latency-status.mjs';
+import { readPhoneTtsAudio, summarizePhoneTurnTiming } from './ava-phone-latency.mjs';
 import { appendAssistantMessage, buildAssistantPrompt, createAssistantSessionId, detectAssistantIntent, findAssistantLeadMatch, normalizeAssistantSession, planAssistantIntent, sanitizeAssistantTurn } from './ava-assistant-chat.mjs';
 import { runAvaMissionController } from './ava-mission-controller.mjs';
 import { buildLeadCommitEnvelope } from './lead-field-provenance.mjs';
@@ -140,7 +171,7 @@ import {
 } from './warmth-dominance.mjs';
 import { listTeamWorkflowTemplates, runAgentTeamWorkflow } from './agent-teams.mjs';
 import { runAutoSkillLearner as runAutoSkillLearnerCore } from './auto-skill-learner.mjs';
-import { buildNurtureComplianceHealth, consultNurtureAgentCore, ensureNurtureSchema, executeApprovedSequence as executeApprovedNurtureSequenceCore, processDueNurtureInstances, startNurtureSequenceCore } from './nurture-agent.mjs';
+import { buildNurtureComplianceHealth, buildNurtureProviderParams, consultNurtureAgentCore, ensureNurtureSchema, executeApprovedSequence as executeApprovedNurtureSequenceCore, processDueNurtureInstances, startNurtureSequenceCore } from './nurture-agent.mjs';
 import { getEmotionTrainingStatus } from './onnx-training-worker.mjs';
 import { buildResearchAdditivesStatus, buildSafetyTransparencyReport, checkResearchAdditiveProviders as checkResearchAdditiveProvidersCore, compactLongHorizonMemory as compactLongHorizonMemoryCore, discoverExternalTool as discoverExternalToolCore, evaluateStoppingAgent as evaluateStoppingAgentCore, induceWorkflowMemory as induceWorkflowMemoryCore, inferProactiveHumanState as inferProactiveHumanStateCore, planDeterministicGuiAutomation as planDeterministicGuiAutomationCore, planExecutionPathSearch as planExecutionPathSearchCore, planMasterAgentMission as planMasterAgentMissionCore, routeAcpMessage as routeAcpMessageCore, runProviderAugmentedAdditiveIntelligence as runProviderAugmentedAdditiveIntelligenceCore, runUnifiedAdditiveIntelligence as runUnifiedAdditiveIntelligenceCore } from './research-additives.mjs';
 import { buildDeclarativeActionIntent, curateEpisodicMemories as curateEpisodicMemoriesCore, reconcileDeclarativeActionIntent, runMissionResilienceEval as runMissionResilienceEvalCore, selectBacktrackingStrategy as selectBacktrackingStrategyCore, updateGoalBeliefsBayesian as updateGoalBeliefsBayesianCore } from './mission-resilience.mjs';
@@ -160,7 +191,8 @@ import {
 } from './conversation-projector.mjs';
 import { createLiveConversationProjector } from './conversation-live-projector.mjs';
 import { ensureConversationSchema } from './conversation-schema.mjs';
-import { createConversationStore } from './conversation-store.mjs';
+import { createConversationStore as createConversationStoreBase } from './conversation-store.mjs';
+import { captureRuntimeSourceWriteBinding, runtimeSourceWriteReturning, recordRuntimeSourceEvidence } from './runtime-source-evidence.mjs';
 import {
   ensureProviderActionDispatchSchema as ensureProviderActionDispatchSchemaCore,
   executeProviderActionWithSharedLease as executeProviderActionWithSharedLeaseCore,
@@ -185,9 +217,7 @@ import {
   prewarmEmbeddingProvider,
 } from './vector-embedding.mjs';
 import {
-  buildCanaryPromotionGate,
-  buildFailedCallEvalGate,
-  buildShadowCanaryComparison,
+  buildExecutedReadinessEvidence,
   classifySellerFinalOutcome,
   createProviderCircuitBreaker,
   createRuntimeEventArchive,
@@ -260,38 +290,13 @@ void initializeObservability({ serviceName: 'pbk-openclaw-bridge' });
 
 const productionReadinessMonitor = createProductionReadinessMonitor();
 const productionIdempotencyStore = createIdempotencyStore();
-const AVA_REAL_CALL_EVAL_SCENARIOS = Object.freeze([
-  'already-gave-price-no-repeat',
-  'repeat-complaint-advance',
-  'make-offer-before-facts',
-  'make-offer-after-price-address',
-  'friday-close-with-price',
-  'fast-sale-needs-price',
-  'fast-sale-known-price-and-timeline',
-  'competing-offer-terms',
-  'price-too-low-net-question',
-  'need-to-think-specific-hesitation',
-  'spouse-decision-maker',
-  'trust-scam-proof',
-  'probate-handoff',
-  'attorney-review-handoff',
-  'trustee-bankruptcy-handoff',
-  'stop-contact-no-question',
-  'seller-max-net-rbp',
-  'subject-to-path-signal',
-  'seller-finance-path-signal',
-  'land-path-signal',
-  'caller-is-agent',
-  'agent-top-dollar-not-cash-default',
-  'partial-address-needs-canonical-address',
-  'full-facts-advance-to-timeline',
-  'tenant-pain-do-not-jump-offer',
-  'emotional-loss-handoff',
-  'ambiguous-yes-clarifies',
-  'send-contract-confirm-before-action',
-  'agent-cash-does-not-work',
-  'governed-trust-skill-cockpit',
-]);
+const discoverComposioResearchTools = createComposioResearchDiscovery();
+const AVA_REAL_CALL_EVAL_SCENARIOS = AVA_REAL_CALL_EVAL_SCENARIO_IDS;
+const RELEASE_QUALIFICATION_CASES = Object.freeze({
+  failedCall: AVA_REAL_CALL_EVAL_SCENARIO_IDS,
+  behavior: BEHAVIOR_QUALIFICATION_CASE_IDS,
+  silentPolicy: SILENT_ERROR_POLICY_CASE_IDS,
+});
 const runtimeEventArchiveFallbackEvents = [];
 const runtimeEventArchiveStats = {
   attempted: 0,
@@ -312,12 +317,12 @@ const runtimeEventArchive = createRuntimeEventArchive({
 });
 const providerCircuitBreaker = createProviderCircuitBreaker({
   onEvent: (event) => {
-    void recordProductionRuntimeEvent({
+    void withRuntimeEvidenceContext('runtime_circuit', () => recordProductionRuntimeEvent({
       eventType: event.eventType || 'provider_circuit_event',
       source: `provider_circuit:${event.provider || 'provider'}`,
       severity: event.eventType === 'circuit_breaker_open' ? 'high' : 'info',
       metadata: event,
-    });
+    }));
   },
 });
 
@@ -1052,6 +1057,10 @@ let runtimeStateBootstrap = {
   error: '',
   checkedAt: '',
 };
+let runtimeCoverageSampler;
+let runtimeCoverageStarted = false;
+let runtimeCoverageStopped = false;
+const chatTimingDeliveries = new WeakMap();
 let runtimeStateRecoveryPromise = null;
 let lastStateDbLoad = {
   ok: !DATABASE_URL,
@@ -3152,12 +3161,20 @@ async function buildProductionReadinessSnapshot({
     lastActions: buildProductionLastAgentActions(),
     requireIntelligenceContext: false,
   });
-  const operationalEvidence = collectAgentFleetEvidence(state);
+  const measurementNow = Date.now();
+  const revision = process.env.RENDER_GIT_COMMIT || BUILD_REVISION;
+  const latencyPolicy = getAgentLatencyPolicy(process.env, { requireVersion2: true });
+  const operationalEvidence = collectAgentFleetEvidence(state, { now: measurementNow, policy: latencyPolicy,
+    secret: BRIDGE_API_KEY, revision, requireTimingV2: true });
   const stableAgentFleetMeasurement = buildStableAgentFleetMeasurement(getCurrentAgentRegistry(), {
     healthProbes: (state.agents || []).map(buildAgentHealthProbe),
     toolCatalog: buildProductionToolCatalog(),
     intelligenceContext,
     latencySamples: operationalEvidence.latencySamples,
+    latencyObservations: operationalEvidence.latencyObservations,
+    latencyBudgetsMs: latencyPolicy.budgets,
+    latencyPolicy,
+    now: measurementNow, timingEvidenceSecret: BRIDGE_API_KEY, revision, requireTimingV2: true,
     lastActions: operationalEvidence.lastActions,
     evidenceDiagnostics: operationalEvidence.diagnostics,
     unverifiedLatencySamples: operationalEvidence.unverifiedLatencySamples,
@@ -3175,7 +3192,7 @@ async function buildProductionReadinessSnapshot({
     requireTurnContract: false,
   });
   const slo = productionReadinessMonitor.getSloStatus();
-  const maturity = buildProductionMaturitySnapshot({ runtimeMeta });
+  const maturity = await buildProductionMaturitySnapshot({ runtimeMeta });
   return {
     ok: true,
     result:
@@ -3190,6 +3207,7 @@ async function buildProductionReadinessSnapshot({
     idempotency: productionIdempotencyStore.status(),
     agentCapabilityReadiness: capabilityReadiness,
     stableAgentFleetMeasurement,
+    latencyPolicy,
     summary: {
       ready:
         bridgeConnection.ready &&
@@ -3881,6 +3899,7 @@ function authorizeDirectTeamBridgeRequest({
   const normalizedPath = String(pathname || '').toLowerCase();
   const toolName = String(body.toolName || body.tool || body.name || '').trim();
   const normalizedToolName = toolName.toLowerCase();
+  const chatPermissions = getAvaChatRequiredPermissions(normalizedPath, body);
   const confirmedLeadDelete =
     normalizedMethod === 'DELETE' &&
     /^\/api\/leads\/[^/]+$/.test(normalizedPath) &&
@@ -3918,7 +3937,7 @@ function authorizeDirectTeamBridgeRequest({
     normalizedMethod !== 'GET' &&
     /(?:\/api\/messages|\/api\/conversation|\/api\/conversations|\/api\/sms|\/api\/inbox)/.test(normalizedPath) &&
     /sms|message|conversation|inbox/.test(normalizedPath);
-  if ((smsTool || smsRoute) && permissions.canSendSms !== true) {
+  if ((smsTool || smsRoute || chatPermissions.has('canSendSms')) && permissions.canSendSms !== true) {
     return deny('canSendSms', 'send SMS messages');
   }
 
@@ -3927,7 +3946,7 @@ function authorizeDirectTeamBridgeRequest({
     normalizedMethod !== 'GET' &&
     /(?:\/api\/cold-email|\/api\/messages|\/api\/conversation|\/api\/conversations|\/api\/email|\/api\/inbox)/.test(normalizedPath) &&
     /email|message|conversation|inbox/.test(normalizedPath);
-  if ((emailTool || emailRoute) && permissions.canSendEmail !== true) {
+  if ((emailTool || emailRoute || chatPermissions.has('canSendEmail')) && permissions.canSendEmail !== true) {
     return deny('canSendEmail', 'send emails');
   }
 
@@ -3935,8 +3954,12 @@ function authorizeDirectTeamBridgeRequest({
   const callRoute =
     normalizedMethod !== 'GET' &&
     /(?:\/api\/calls|\/api\/operator\/call|\/api\/call)/.test(normalizedPath);
-  if ((callTool || callRoute) && permissions.canPlaceCalls !== true) {
+  if ((callTool || callRoute || chatPermissions.has('canPlaceCalls')) && permissions.canPlaceCalls !== true) {
     return deny('canPlaceCalls', 'place calls');
+  }
+
+  if (chatPermissions.has('canApproveProviderActions') && permissions.canApproveProviderActions !== true) {
+    return deny('canApproveProviderActions', 'approve provider actions');
   }
 
   const killSwitchTool = /^(?:pbk_kill_switch|killswitch|togglekillswitch)$/i.test(toolName);
@@ -7096,6 +7119,7 @@ function startPostgresKeepAlive() {
       await pool.query('SELECT 1 AS ok');
       markPostgresHealth(true);
       await recoverRuntimeStateAfterBootstrapFailure();
+      startRuntimeCoverageIfReady();
     } catch (error) {
       markPostgresHealth(false, error?.message || error, {
         transient: isTransientPostgresConnectionError(error),
@@ -7139,6 +7163,7 @@ async function projectLiveConversationRecord({
 }) {
   return createLiveConversationProjector({
     pool: getPgPool(),
+    createStore: createConversationStore,
     logger: console,
   }).project({
     record,
@@ -11220,6 +11245,119 @@ async function ensureActivityLogSchema(pool) {
   return true;
 }
 
+function captureBridgeRuntimeSourceWrite(sourceKind, row) {
+  return captureRuntimeSourceWriteBinding({ secret: BRIDGE_API_KEY,
+    revision: process.env.RENDER_GIT_COMMIT || BUILD_REVISION, sourceKind, row });
+}
+
+function createBridgeAgentTimingTurn(channel, agentId = 'ava', runId = `agent-ops-measure-${randomUUID()}`) {
+  try {
+    return createAgentTimingTurn({ secret: BRIDGE_API_KEY, revision: process.env.RENDER_GIT_COMMIT || BUILD_REVISION,
+      policy: getAgentLatencyPolicy(process.env, { requireVersion2: true }), channel, agentId, runId });
+  } catch { return null; }
+}
+
+function observeAvaChatDelivery(request, response, streaming = false) {
+  let settled = false, sawDone = false, sawError = false;
+  const originalWrite = response.write;
+  let resolve;
+  chatTimingDeliveries.set(request, new Promise(done => { resolve = done; }));
+  const settle = delivered => {
+    if (settled) return;
+    settled = true;
+    response.write = originalWrite;
+    response.off('finish', finish);
+    response.off('close', close);
+    request.off('aborted', close);
+    resolve(delivered);
+  };
+  const finish = () => settle(!request.aborted && response.statusCode < 400 && (!streaming || sawDone && !sawError));
+  const close = () => settle(false);
+  if (streaming) {
+    response.write = function (...args) {
+      const result = originalWrite.apply(this, args);
+      if (typeof args[0] === 'string') {
+        sawDone ||= args[0].startsWith('event: done\n');
+        sawError ||= args[0].startsWith('event: error\n');
+      }
+      return result;
+    };
+  }
+  response.once('finish', finish);
+  response.once('close', close);
+  request.once('aborted', close);
+}
+
+function getRuntimeCoverageHealth() {
+  const obs = getPbkObservabilityStatus();
+  const bus = getDefaultEventBus();
+  return {
+    authenticationConfigured: Boolean(BRIDGE_API_KEY),
+    bootstrapReady: runtimeStateBootstrap.ready === true,
+    archiveReady: getRuntimeEventArchiveStatus().ready === true,
+    providerCircuitsReady: getProviderCircuitStatus().ready === true,
+    observabilityReady: obs.enabled === true && obs.initialized === true && obs.otelReady === true,
+    // connected is historical; isOpen alone also stays true during Redis reconnects.
+    eventBusConnected: bus.mode === 'redis' && bus.redisClient?.isOpen === true && bus.redisClient?.isReady === true,
+    approvalMode: state.status?.mode,
+  };
+}
+
+function startRuntimeCoverageIfReady() {
+  if (runtimeCoverageStopped || !/^(true|1)$/i.test(String(process.env.PBK_RUNTIME_COVERAGE_ENABLED || '').trim())
+    || !IS_HOSTED || !DATABASE_URL || !BRIDGE_API_KEY || runtimeStateBootstrap.ready !== true
+    || ['controlled', 'diagnostic'].includes(getRuntimeEvidenceContext().classification)) return false;
+  if (runtimeCoverageStarted) return true;
+  try {
+    if (getPostgresHealthMeta().ready !== true) return false;
+    const pool = getPgPool();
+    if (!pool || pool.controlled) return false;
+    runtimeCoverageSampler ||= createRuntimeCoverageSampler({ pool: createOperationalAuditPool(pool), secret: BRIDGE_API_KEY,
+      revision: process.env.RENDER_GIT_COMMIT || BUILD_REVISION, enabled: true, hosted: IS_HOSTED,
+      health: getRuntimeCoverageHealth });
+    runtimeCoverageStarted = runtimeCoverageSampler.start() === true;
+    return runtimeCoverageStarted;
+  } catch { return false; }
+}
+
+function stopRuntimeCoverage() {
+  if (runtimeCoverageStopped) return;
+  runtimeCoverageStopped = true;
+  runtimeCoverageSampler?.stop();
+}
+
+function wireRuntimeCoverageLifecycle(server) {
+  server.once('listening', startRuntimeCoverageIfReady);
+  server.once('close', stopRuntimeCoverage);
+  // Do not replace default SIGINT/SIGTERM termination with a stop-only listener.
+  process.once('exit', stopRuntimeCoverage);
+}
+
+function queueRuntimeSourceReceipt(sourceKind, sourceId, writeBinding) {
+  if (!writeBinding) return;
+  // Measurement is detached from business success, but retains the originating ALS scope.
+  void Promise.resolve().then(() => {
+    const pool = getPgPool();
+    if (!pool || pool.controlled) return;
+    return recordRuntimeSourceEvidence({ pool, secret: BRIDGE_API_KEY,
+      revision: process.env.RENDER_GIT_COMMIT || BUILD_REVISION, sourceKind, sourceId, writeBinding });
+  }).catch(() => {});
+}
+
+function queueRuntimeSourceWrite(sourceKind, row) {
+  try {
+    const writeBinding = captureBridgeRuntimeSourceWrite(sourceKind, row);
+    queueRuntimeSourceReceipt(sourceKind, row?.id, writeBinding);
+  } catch { /* Missing measurement cannot fail a durable business write. */ }
+}
+
+function createConversationStore(pool) {
+  return createConversationStoreBase(pool, {
+    captureSourceWrite: row => captureBridgeRuntimeSourceWrite('conversation_projection', row),
+    onSourceWriteCommitted: (writeBinding, sourceId) => queueRuntimeSourceReceipt('conversation_projection', sourceId, writeBinding),
+  });
+}
+
 async function persistActivityLogRecord(entry = {}) {
   const pool = getPgPool();
   if (!pool || !entry?.id) return false;
@@ -11233,7 +11371,7 @@ async function persistActivityLogRecord(entry = {}) {
   };
   try {
     await ensureActivityLogSchema(pool);
-    await pool.query(
+    const persisted = await pool.query(
       `INSERT INTO public.activity_log (
         id, workspace_id, lead_id, lead_name, address, actor, category, status,
         text, target, source, metadata, created_at, updated_at
@@ -11254,9 +11392,12 @@ async function persistActivityLogRecord(entry = {}) {
         target = EXCLUDED.target,
         source = EXCLUDED.source,
         metadata = EXCLUDED.metadata,
-        updated_at = EXCLUDED.updated_at`,
+        updated_at = EXCLUDED.updated_at
+      RETURNING ${runtimeSourceWriteReturning('runtime_archive')}`,
       [entry.id, entry.workspaceId || entry.workspace_id || 'pbk', entry.leadId || entry.lead_id || null, entry.leadName || entry.lead_name || '', entry.address || '', entry.actor || 'System', entry.category || 'INFO', entry.status || 'success', entry.text || '', entry.target || '', entry.source || 'runtime', JSON.stringify(metadata), createdAt, entry.updatedAt || entry.updated_at || isoNow()]
     );
+    const row = persisted.rows?.[0]?.runtime_source_row;
+    if (row?.source?.startsWith('runtime-event:')) queueRuntimeSourceWrite('runtime_archive', row);
     return true;
   } catch (error) {
     if (!activityLogPersistenceWarned) {
@@ -11497,62 +11638,47 @@ async function buildProductionPerformanceStatusSnapshot() {
   });
 }
 
-function buildAvaFailedCallEvalGateSnapshot() {
-  return buildFailedCallEvalGate({
-    scenarios: AVA_REAL_CALL_EVAL_SCENARIOS.map((id) => ({
-      id,
-      passed: true,
-      source: 'scripts/ava-real-call-eval-pack.mjs',
-    })),
-  });
-}
-
-function buildProductionMaturitySnapshot({ runtimeMeta = getRuntimeMeta() } = {}) {
+async function buildProductionMaturitySnapshot({ runtimeMeta = getRuntimeMeta() } = {}) {
   const archive = getRuntimeEventArchiveStatus();
   const providerCircuits = getProviderCircuitStatus();
-  const failedCallEvalGate = buildAvaFailedCallEvalGateSnapshot();
   const stableAgentFleetMeasurement = buildAgentOrchestrationSnapshot().measurement;
   const sloStatus = productionReadinessMonitor.getSloStatus();
-  const shadowCanaryComparison = buildShadowCanaryComparison({
-    baseline: {
-      version: runtimeMeta.commit || runtimeMeta.version || 'current',
-      behaviorPassRate: 1,
-      p95LatencyMs: Number(process.env.PBK_CURRENT_P95_LATENCY_MS || 900),
-      errorRate: Number(process.env.PBK_CURRENT_ERROR_RATE || 0.01),
-      fallbackRate: Number(process.env.PBK_CURRENT_FALLBACK_RATE || 0.08),
-    },
-    candidate: {
-      version: process.env.PBK_CANARY_COMMIT || runtimeMeta.commit || runtimeMeta.version || 'current',
-      behaviorPassRate: Number(process.env.PBK_CANARY_BEHAVIOR_PASS_RATE || 1),
-      p95LatencyMs: Number(process.env.PBK_CANARY_P95_LATENCY_MS || process.env.PBK_CURRENT_P95_LATENCY_MS || 900),
-      errorRate: Number(process.env.PBK_CANARY_ERROR_RATE || process.env.PBK_CURRENT_ERROR_RATE || 0.01),
-      fallbackRate: Number(process.env.PBK_CANARY_FALLBACK_RATE || process.env.PBK_CURRENT_FALLBACK_RATE || 0.08),
-    },
+  const qualification = await readReleaseQualification({
+    pool: getPgPool(), revision: process.env.RENDER_GIT_COMMIT || BUILD_REVISION,
+    secret: BRIDGE_API_KEY, requiredCases: RELEASE_QUALIFICATION_CASES,
   });
-  const canaryPromotionGate = buildCanaryPromotionGate({
-    canaryHealth: {
-      ready: runtimeMeta.productionReady !== false,
-      result: runtimeMeta.productionReady === false ? 'runtime_not_ready' : 'runtime_ready',
-      stateBackend: runtimeMeta.stateBackend,
-    },
-    behaviorGate: {
-      ready: true,
-      result: 'founder_behavior_gate_packaged',
-      evidence: ['test:founder', 'test:production-hardening', 'test:ava-governed-skill-router'],
-    },
-    failedCallEvalGate,
-    silentErrorReport: {
-      launchReady: true,
-      result: 'silent_error_governance_packaged',
-      evidence: ['test:silent-error-governance', 'test:production-gap-labels'],
-      blockers: [],
-    },
-    sloStatus,
+  const operationalAudit = await readOperationalAudit({
+    pool: getPgPool(), revision: process.env.RENDER_GIT_COMMIT || BUILD_REVISION, secret: BRIDGE_API_KEY,
   });
+  const backlogReconciliation = await readBacklogReconciliation({
+    pool: getPgPool(), revision: process.env.RENDER_GIT_COMMIT || BUILD_REVISION, secret: BRIDGE_API_KEY,
+    collect: ({ now }) => collectBacklogReconciliation({ pool: getPgPool(), secret: BRIDGE_API_KEY, now }),
+  });
+  const memoryPolicyOutcomes = await readCallMemorySkipSummary({
+    pool: getPgPool(), revision: process.env.RENDER_GIT_COMMIT || BUILD_REVISION, secret: BRIDGE_API_KEY,
+  });
+  let canary;
+  try {
+    canary = await readCanaryEvidence({
+      pool: getPgPool(), revision: process.env.RENDER_GIT_COMMIT || BUILD_REVISION, secret: BRIDGE_API_KEY,
+      policy: getAgentLatencyPolicy(process.env, { requireVersion2: true }), now: Date.now,
+    });
+  } catch {
+    canary = { verified: false, readbackVerified: false, source: 'postgres:pbk_eval_runs',
+      result: 'canary_evidence_unavailable', runId: null, diagnostics: { codes: ['canary_evidence_unavailable'] } };
+  }
+  const executionEvidence = buildExecutedReadinessEvidence({
+    revision: process.env.RENDER_GIT_COMMIT || BUILD_REVISION,
+    evidence: { ...qualification.evidence, ...operationalAudit.evidence, ...(canary.verified === true ? canary.evidence : {}) },
+    requiredScenarioIds: AVA_REAL_CALL_EVAL_SCENARIOS, sloStatus,
+  });
+  const { failedCallEvalGate, shadowCanaryComparison, canaryPromotionGate } = executionEvidence;
   const blockers = [
     ...(archive.ready ? [] : ['runtime_event_archive']),
     ...(providerCircuits.ready ? [] : providerCircuits.openProviders.map((provider) => `provider_circuit:${provider}`)),
     ...(failedCallEvalGate.ready ? [] : ['failed_call_eval']),
+    ...(qualification.qualification.ready ? [] : ['no_contact_qualification']),
+    ...(executionEvidence.ready ? [] : ['executed_release_evidence']),
     ...(stableAgentFleetMeasurement?.ready ? [] : ['stable_agent_fleet_measurement']),
     ...(shadowCanaryComparison.ready ? [] : shadowCanaryComparison.blockers.map((item) => `shadow:${item}`)),
     ...(canaryPromotionGate.ready ? [] : canaryPromotionGate.blockers.map((item) => `canary:${item}`)),
@@ -11568,6 +11694,9 @@ function buildProductionMaturitySnapshot({ runtimeMeta = getRuntimeMeta() } = {}
       runtimeArchiveReady: archive.ready,
       providerCircuitsReady: providerCircuits.ready,
       failedCallEvalReady: failedCallEvalGate.ready,
+      controlledQualificationReady: qualification.qualification.ready,
+      operationalAuditReady: operationalAudit.audit?.ready === true && operationalAudit.verified === true,
+      backlogReconciliationVerified: backlogReconciliation.verified === true,
       stableAgentFleetMeasured: Boolean(stableAgentFleetMeasurement?.ready),
       shadowCanaryReady: shadowCanaryComparison.ready,
       canaryPromotionReady: canaryPromotionGate.ready,
@@ -11576,12 +11705,45 @@ function buildProductionMaturitySnapshot({ runtimeMeta = getRuntimeMeta() } = {}
     providerCircuits,
     failedCallEvalGate,
     stableAgentFleetMeasurement,
+    executionEvidence: { ...executionEvidence, source: qualification.source,
+      verified: qualification.verified, qualificationRunId: qualification.runId || null,
+      qualificationStatus: qualification.result,
+      operationalAuditVerified: operationalAudit.verified,
+      operationalAuditRunId: operationalAudit.runId || null,
+      note: 'Only signed server-executed Postgres readback qualifies. Operational audit coverage is separate from controlled policy checks; neither certifies seller delivery or independent canary performance.' },
+    qualification: { ...qualification.qualification, verified: qualification.verified,
+      runId: qualification.runId || null, executedAt: qualification.executedAt || null, source: qualification.source },
+    operationalAudit: { ...operationalAudit.audit, ready: operationalAudit.verified === true && operationalAudit.audit?.ready === true,
+      verified: operationalAudit.verified, runId: operationalAudit.runId || null,
+      sourceDiagnostics: operationalAudit.sourceDiagnostics || [],
+      coverageDiagnostics: operationalAudit.coverageDiagnostics || { verified: false, result: 'coverage_unverified' },
+      legacy: operationalAudit.legacy || null,
+      source: operationalAudit.source, result: operationalAudit.result, executedAt: operationalAudit.executedAt || null },
+    // Reader diagnostics are bounded/redacted; never expose receipts or authority here.
+    canaryEvidence: {
+      verified: canary.verified === true, readbackVerified: canary.readbackVerified === true,
+      source: canary.source, result: canary.result, runId: canary.verified === true ? canary.runId : null,
+      diagnostics: canary.diagnostics,
+    },
+    // Internal recovery is supplementary evidence, never delivery or launch qualification.
+    backlogReconciliation: {
+      verified: backlogReconciliation.verified === true,
+      runId: backlogReconciliation.verified ? backlogReconciliation.runId : null,
+      executedAt: backlogReconciliation.verified ? backlogReconciliation.executedAt : null,
+      source: backlogReconciliation.source,
+      result: backlogReconciliation.result,
+      counts: backlogReconciliation.verified ? backlogReconciliation.reconciliation.counts : null,
+      memoryPolicyOutcomes,
+      launchQualified: false,
+      noContact: true,
+      providerWritesBlocked: true,
+    },
     shadowCanaryComparison: {
       ...shadowCanaryComparison,
-      mode: process.env.PBK_CANARY_COMMIT ? 'candidate_metrics' : 'same_version_reference',
-      note: process.env.PBK_CANARY_COMMIT
-        ? 'Candidate metrics supplied through PBK_CANARY_* env vars.'
-        : 'No separate candidate metrics supplied; comparison machinery is ready but not shadowing live traffic.',
+      mode: canary.verified === true ? 'verified' : 'unverified',
+      note: canary.verified === true
+        ? 'Independent, versioned canary receipts verified; existing performance thresholds and promotion gates still apply.'
+        : 'No independent, versioned live comparison has been verified.',
     },
     canaryPromotionGate,
   };
@@ -11705,7 +11867,13 @@ function getStatePersistRetryDelayMs(attempt = 1) {
   return Math.min(3000, base * 2 ** (safeAttempt - 1));
 }
 
-async function persistStateToDb(nextState) {
+const stateDbWriteQueue = createCoalescedPersistence({ persist: writeStateToDb });
+
+function persistStateToDb(nextState) {
+  return stateDbWriteQueue.schedule(nextState);
+}
+
+async function writeStateToDb(nextState) {
   const pool = getPgPool();
   if (!pool) return false;
   let serialized = '';
@@ -12697,7 +12865,8 @@ function limitStateArrays(nextState) {
 }
 
 function updateDerivedStatus(nextState) {
-  nextState.calls = normalizeStaleLiveCalls(nextState.calls || []);
+  // Status reads must not rewrite stored call history or its lead context.
+  const calls = normalizeStaleLiveCalls(nextState.calls || []);
   const settings = nextState.settings && typeof nextState.settings === 'object' ? nextState.settings : {};
   const operatingMode = String(settings.operatingMode || settings.ui?.operatingMode || nextState.status.mode || 'approval').trim();
   nextState.status.mode = ['autopilot', 'approval', 'manual'].includes(operatingMode) ? operatingMode : 'approval';
@@ -12711,7 +12880,7 @@ function updateDerivedStatus(nextState) {
   nextState.status.systemAuditReports = (nextState.systemAuditReports || []).length;
   nextState.status.pendingApprovals = getPendingRuntimeApprovals(nextState.approvals).length;
   nextState.status.pendingAdminTasks = getPendingAdminTasks(nextState.adminTasks).length;
-  nextState.status.activeCalls = nextState.calls.filter((call) => isActiveLiveCall(call)).length;
+  nextState.status.activeCalls = calls.filter((call) => isActiveLiveCall(call)).length;
   nextState.status.appointmentsScheduled = nextState.appointments.filter((appointment) => ['scheduled', 'confirmed'].includes(String(appointment.status || '').toLowerCase())).length;
   nextState.status.pendingBookingRequests = nextState.appointments.filter((appointment) => ['requested', 'call-now', 'pending-confirmation'].includes(String(appointment.status || '').toLowerCase())).length;
   nextState.status.leadStageTransitionsToday = nextState.leadStageTransitions.filter((transition) => String(transition.createdAt || '').slice(0, 10) === isoNow().slice(0, 10)).length;
@@ -12798,7 +12967,7 @@ function updateDerivedStatus(nextState) {
   nextState.status.lastImportAt = nextState.leadImports[0]?.createdAt || null;
   nextState.status.lastAnalyzerAt = nextState.analyzerRuns[0]?.createdAt || null;
   nextState.status.lastPropertyCacheAt = getItemTimestamp((nextState.propertyCache || [])[0] || {}) || null;
-  nextState.status.lastCallAt = getItemTimestamp(nextState.calls[0] || {}) || null;
+  nextState.status.lastCallAt = getItemTimestamp(calls[0] || {}) || null;
   nextState.status.lastMessageAt = getItemTimestamp(nextState.messages[0] || {}) || null;
   nextState.status.lastAppointmentAt = getItemTimestamp(nextState.appointments[0] || {}) || null;
   nextState.status.lastLeadTransitionAt = getItemTimestamp(nextState.leadStageTransitions[0] || {}) || null;
@@ -13062,6 +13231,7 @@ async function recoverRuntimeStateAfterBootstrapFailure() {
         ok: true, ready: true, status: 'ready', code: '', error: '', checkedAt: isoNow(),
       };
       scheduleRuntimeStateBroadcast('state_bootstrap_recovered');
+      startRuntimeCoverageIfReady();
       console.log('[pbk-local-openclaw] Postgres runtime state restored after startup failure.');
       return true;
     } catch (error) {
@@ -13143,7 +13313,8 @@ function compactAgentOpsPayload(value, maxChars = 8000) {
 }
 
 async function recordAgentOps(params = {}) {
-  mirrorAgentOpsMeasurementToState(params);
+  const measurement = mirrorAgentOpsMeasurementToState(params);
+  const measuredMetadata = { ...params.metadata, timingProof: measurement.metadata.timingProof, executionEvidence: undefined };
   const pool = getPgPool();
   if (!pool) return { ok: false, reason: 'postgres_unavailable' };
   try {
@@ -13153,7 +13324,7 @@ async function recordAgentOps(params = {}) {
         input, output, latency_ms, success, error, metadata, created_at
       )
       VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb,$8::jsonb,$9,$10,$11,$12::jsonb,$13)`,
-      [params.id || `agent-ops-${Date.now()}-${Math.abs(hashString(JSON.stringify(params).slice(0, 500)))}`, normalizeTenantId(params.tenantId || params.tenant_id || 'pbk'), normalizeAgentName(params.agentName || params.agent_name || params.agent || 'PBK'), String(params.sessionId || params.session_id || params.callId || params.call_id || params.leadId || params.lead_id || '').slice(0, 160), String(params.step || 'tool_call').slice(0, 120), String(params.toolName || params.tool_name || '').slice(0, 160), JSON.stringify(compactAgentOpsPayload(params.input || {})), JSON.stringify(compactAgentOpsPayload(params.output || {})), Math.max(0, Math.round(toNumber(params.latencyMs ?? params.latency_ms, 0))), Boolean(params.success), String(params.error || '').slice(0, 1000), JSON.stringify(compactAgentOpsPayload(params.metadata || {}, 4000)), params.createdAt || params.created_at || isoNow()]
+      [params.id || `agent-ops-${Date.now()}-${Math.abs(hashString(JSON.stringify(params).slice(0, 500)))}`, normalizeTenantId(params.tenantId || params.tenant_id || 'pbk'), normalizeAgentName(params.agentName || params.agent_name || params.agent || 'PBK'), String(params.sessionId || params.session_id || params.callId || params.call_id || params.leadId || params.lead_id || '').slice(0, 160), String(params.step || 'tool_call').slice(0, 120), String(params.toolName || params.tool_name || '').slice(0, 160), JSON.stringify(compactAgentOpsPayload(params.input || {})), JSON.stringify(compactAgentOpsPayload(params.output || {})), Math.max(0, Math.round(toNumber(params.latencyMs ?? params.latency_ms, 0))), Boolean(params.success), String(params.error || '').slice(0, 1000), JSON.stringify(compactAgentOpsPayload(measuredMetadata, 4000)), params.createdAt || params.created_at || isoNow()]
     );
     return { ok: true };
   } catch (error) {
@@ -13163,6 +13334,8 @@ async function recordAgentOps(params = {}) {
 }
 
 function mirrorAgentOpsMeasurementToState(params = {}) {
+  const timingProof = getTrustedAgentTimingProof(params);
+  const measurementContext = getRuntimeEvidenceContext();
   ensureAgentFleetCollections();
   const createdAt = params.createdAt || params.created_at || isoNow();
   const agentName = normalizeAgentName(params.agentName || params.agent_name || params.agent || 'PBK');
@@ -13176,7 +13349,7 @@ function mirrorAgentOpsMeasurementToState(params = {}) {
   ).slice(0, 160);
   const idBase = params.id || `${agentId || slugify(agentName) || 'agent'}-${toolName || 'tool'}-${sessionId || createdAt}`;
   const record = {
-    id: `agent-ops-measure-${Math.abs(hashString(String(idBase)))}`,
+    id: timingProof?.runId || `agent-ops-measure-${Math.abs(hashString(String(idBase)))}`,
     tenantId: normalizeTenantId(params.tenantId || params.tenant_id || 'pbk'),
     agentId,
     agentName,
@@ -13193,8 +13366,14 @@ function mirrorAgentOpsMeasurementToState(params = {}) {
     metadata: {
       source: 'agent_ops',
       requestTiming: params.metadata?.requestTiming || null,
+      channel: timingProof?.channel || 'unknown',
+      latencyKind: 'completion',
+      timings: timingProof?.timings || {},
+      ...(timingProof ? { timingProof } : {}),
       metricKind: params.metadata?.requestTiming?.metricKind || 'tool_execution',
-      operational: !isNonOperationalAgentEvidence(params),
+      operational: measurementContext.classification === 'operational',
+      diagnostic: measurementContext.classification === 'diagnostic',
+      controlled: measurementContext.classification === 'controlled',
       toolName,
       latencyMs,
       durationMs: latencyMs,
@@ -13208,6 +13387,7 @@ function mirrorAgentOpsMeasurementToState(params = {}) {
   state.agentTasks = sortNewest(state.agentTasks).slice(0, LIMITS.agentTasks);
   state.status.agentTasks = state.agentTasks.length;
   persistStateInBackground('agent ops measurement');
+  return record;
 }
 
 async function recordPbkQaAudit(record = {}) {
@@ -13216,14 +13396,16 @@ async function recordPbkQaAudit(record = {}) {
   const pool = getPgPool();
   if (!pool) return { ok: false, reason: 'postgres_unavailable' };
   try {
-    await pool.query(
+    const persisted = await pool.query(
       `INSERT INTO public.pbk_qa_audit (
         id, tenant_id, tool_name, passed, skipped, reason, validator,
         retry_count, params, result, qa, source, created_at
       )
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10::jsonb,$11::jsonb,$12,$13)`,
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10::jsonb,$11::jsonb,$12,$13)
+      RETURNING ${runtimeSourceWriteReturning('qa')}`,
       [record.id || `pbk-qa-${Date.now()}-${Math.abs(hashString(`${toolName}\n${JSON.stringify(record.qa || {})}`))}`, normalizeTenantId(record.tenantId || record.tenant_id || 'pbk'), toolName, Boolean(record.passed), Boolean(record.skipped), String(record.reason || '').slice(0, 500), String(record.validator || '').slice(0, 120), Math.max(0, Math.round(toNumber(record.retryCount ?? record.retry_count, 0))), JSON.stringify(record.params && typeof record.params === 'object' ? record.params : {}), JSON.stringify(record.result && typeof record.result === 'object' ? record.result : {}), JSON.stringify(record.qa && typeof record.qa === 'object' ? record.qa : {}), String(record.source || 'pbk-bridge').slice(0, 120), record.createdAt || record.created_at || isoNow()]
     );
+    queueRuntimeSourceWrite('qa', persisted.rows?.[0]?.runtime_source_row);
     return { ok: true };
   } catch (error) {
     console.warn('[pbk-local-openclaw] PBK QA audit persistence skipped:', error?.message || error);
@@ -13362,14 +13544,16 @@ async function recordPbkSafetyAudit(record = {}) {
   const pool = getPgPool();
   if (!pool) return { ok: false, reason: 'postgres_unavailable' };
   try {
-    await pool.query(
+    const persisted = await pool.query(
       `INSERT INTO public.pbk_safety_audit (
         id, tenant_id, tool_name, blocked, approval_required,
         params, validation, source, created_at
       )
-      VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7::jsonb,$8,$9)`,
+      VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7::jsonb,$8,$9)
+      RETURNING ${runtimeSourceWriteReturning('safety')}`,
       [record.id || `pbk-safety-${Date.now()}-${Math.abs(hashString(`${toolName}\n${JSON.stringify(validation)}`))}`, normalizeTenantId(record.tenantId || record.tenant_id || 'pbk'), toolName, Boolean(record.blocked ?? validation.blocked), Boolean(record.approvalRequired ?? record.approval_required ?? validation.approvalRequired), JSON.stringify(record.params && typeof record.params === 'object' ? record.params : {}), JSON.stringify(validation), String(record.source || 'pbk-bridge').slice(0, 120), record.createdAt || record.created_at || isoNow()]
     );
+    queueRuntimeSourceWrite('safety', persisted.rows?.[0]?.runtime_source_row);
     return { ok: true };
   } catch (error) {
     console.warn('[pbk-local-openclaw] PBK safety audit persistence skipped:', error?.message || error);
@@ -14855,7 +15039,7 @@ function patchLeadImport(stateRef, matcher = {}, patch = {}) {
   const normalizedPhone = normalizePhone(matcher.phone || patch.phone || patch.seller?.phone || '');
   let matchedByInboundPlaceholderPhone = false;
   const existingIndex = stateRef.leadImports.findIndex((item) => {
-    if (normalizedLeadId && String(item.leadId || '').trim() === normalizedLeadId) return true;
+    if (normalizedLeadId) return String(item.leadId || item.id || '').trim() === normalizedLeadId;
     if (
       normalizedEmail &&
       String(item?.seller?.email || '')
@@ -16151,23 +16335,20 @@ function parseBantPayload(value, fallback = {}) {
 }
 
 function getLeadActivityItems(context = {}) {
-  const search = [context.leadId, context.leadName, context.address].filter(Boolean).join(' ').toLowerCase();
-  return sortNewest(state.activity || []).filter((item) => {
-    if (!search) return false;
-    const haystack = [item.leadId, item.leadName, item.target, item.address, item.text, item.category].filter(Boolean).join(' ').toLowerCase();
-    return (context.leadId && haystack.includes(String(context.leadId).toLowerCase())) || (context.leadName && haystack.includes(String(context.leadName).toLowerCase().split(/\s+/)[0])) || (context.address && haystack.includes(String(context.address).toLowerCase().split(',')[0]));
-  });
+  return sortNewest(state.activity || []).filter((item) => Boolean(context.leadId) && item.leadId === context.leadId);
 }
 
 function buildLeadFullView(leadOrId = {}) {
   const lead = typeof leadOrId === 'string' ? findLeadImportByLookup(leadOrId) : leadOrId;
   if (!lead) return null;
+  const leadId = lead.leadId || lead.id;
+  if (typeof leadId !== 'string' || !leadId) return null;
   const seller = lead.seller || {};
   const property = lead.property || {};
-  const selectedPath = inferLeadSelectedPath(lead);
+  const ownedCallContext = getLeadOwnedCallContext(lead, leadId);
+  const selectedPath = inferLeadSelectedPath({ ...lead, callContext: ownedCallContext, call_context: ownedCallContext });
   const callContext = {
-    ...(lead.call_context || {}),
-    ...(lead.callContext || {}),
+    ...ownedCallContext,
     selected_path: selectedPath,
     selectedPath,
     selectedPathLabel: getPathDisplayLabel(selectedPath),
@@ -16181,11 +16362,12 @@ function buildLeadFullView(leadOrId = {}) {
     phone: seller.phone || lead.phone,
     email: seller.email || lead.email,
   });
-  const calls = sortNewest(state.calls || []).filter((call) => (context.leadId && call.leadId === context.leadId) || (context.address && String(call.address || '').toLowerCase() === String(context.address).toLowerCase()) || (context.phone && normalizePhone(call.phone) === normalizePhone(context.phone)) || (context.leadName && String(call.leadName || '').toLowerCase() === String(context.leadName).toLowerCase()));
-  const messages = sortNewest(state.messages || []).filter((message) => (context.leadId && message.leadId === context.leadId) || (context.address && String(message.address || '').toLowerCase() === String(context.address).toLowerCase()) || (context.email && String(message.email || '').toLowerCase() === String(context.email).toLowerCase()) || (context.phone && normalizePhone(message.phone) === normalizePhone(context.phone)));
-  const contracts = sortNewest(state.contracts || []).filter((contract) => (context.leadId && contract.leadId === context.leadId) || (context.address && String(contract.address || '').toLowerCase() === String(context.address).toLowerCase()) || (context.email && String(contract.email || '').toLowerCase() === String(context.email).toLowerCase()));
-  const analyzerRuns = sortNewest(state.analyzerRuns || []).filter((run) => (context.leadId && run.leadId === context.leadId) || (context.address && String(run.address || '').toLowerCase() === String(context.address).toLowerCase()));
-  const activity = getLeadActivityItems(context);
+  const exactHistory = (items = []) => sortNewest(items.filter((item) => item.leadId === leadId));
+  const calls = exactHistory(state.calls);
+  const messages = exactHistory(state.messages);
+  const contracts = exactHistory(state.contracts);
+  const analyzerRuns = exactHistory(state.analyzerRuns);
+  const activity = getLeadActivityItems({ leadId });
   const fullLead = {
     ...lead,
     id: lead.id || context.leadId,
@@ -16239,26 +16421,39 @@ function summarizeTranscriptForLead(call = {}, fallbackSummary = '') {
   return String(call.body || call.script || 'No summary captured yet.').slice(0, 420);
 }
 
-function buildLeadLastCallDetails(leadId = '') {
-  const full = buildLeadFullView(leadId);
-  if (!full) return null;
-  const lead = full.lead || {};
-  const callContext = lead.callContext || {};
-  const latestCall = full.calls?.[0] || full.messages?.find((message) => String(message.channel || '').toLowerCase() === 'call') || null;
-  if (!latestCall && !Object.keys(callContext).length) {
+function getLeadOwnedCallContext(lead = {}, leadId = lead.leadId || lead.id) {
+  const owned = (value) => {
+    const context = plainRecord(value);
+    return Object.hasOwn(context, 'leadId') && context.leadId !== leadId ? {} : context;
+  };
+  return { ...owned(lead.call_context), ...owned(lead.callContext) };
+}
+
+function buildLeadLastCallDetails(leadId = '', durableLead = null) {
+  if (typeof leadId !== 'string' || !leadId.trim() || leadId !== leadId.trim()) return null;
+  const lead = durableLead || (state.leadImports || []).find((item) => (item.leadId || item.id) === leadId);
+  if (!lead || (lead.leadId || lead.id) !== leadId) return null;
+  // Do not use the full-view/contact lookup: shared contact details are not identity.
+  const callContext = getLeadOwnedCallContext(lead, leadId);
+  const calls = (state.calls || []).filter((call) => call.leadId === leadId);
+  const callMessages = (state.messages || []).filter((message) => message.leadId === leadId && String(message.channel || '').toLowerCase() === 'call');
+  const latestCall = sortNewest(calls)[0] || sortNewest(callMessages)[0] || null;
+  const hasCallContext = ['summary', 'callSummary', 'sentiment', 'sentimentScore', 'last_offer', 'lastOffer', 'offer']
+    .some((key) => callContext[key] !== undefined && callContext[key] !== null && callContext[key] !== '');
+  if (!latestCall && !hasCallContext) {
     return {
       ok: true,
-      leadId: lead.leadId || lead.id || leadId,
+      leadId,
       call: null,
     };
   }
   const transcript = Array.isArray(latestCall?.transcript) ? latestCall.transcript : [];
   const sentiment = callContext.sentiment ?? callContext.sentimentScore ?? latestCall?.sentiment ?? null;
-  const lastOffer = callContext.last_offer ?? callContext.lastOffer ?? callContext.offer ?? latestCall?.lastOffer ?? null;
+  const lastOffer = callContext.last_offer ?? callContext.lastOffer ?? callContext.offer ?? latestCall?.last_offer ?? latestCall?.lastOffer ?? null;
   const summary = summarizeTranscriptForLead(latestCall || {}, callContext.summary || callContext.callSummary || '');
   return {
     ok: true,
-    leadId: lead.leadId || lead.id || leadId,
+    leadId,
     call: latestCall
       ? {
           ...latestCall,
@@ -16268,7 +16463,8 @@ function buildLeadLastCallDetails(leadId = '') {
           last_offer: lastOffer,
         }
       : {
-          id: `call-context-${lead.leadId || lead.id || leadId}`,
+          id: `call-context-${leadId}`,
+          leadId,
           status: 'context-only',
           transcript,
           summary,
@@ -16616,15 +16812,34 @@ async function executeToolFirstIntent(detected = {}, command = '', params = {}, 
 function buildAnalyzerSummary(params = {}) {
   const deal = params.deal || {};
   const address = params.address || deal.address || 'Unknown address';
-  const seed = hashString(address);
-  const propertyValues = getPropertyAnalysisValues(params.propertyData || deal.propertyData || {});
-  const fallbackArv = Math.round((120000 + (seed % 150000)) / 5000) * 5000;
-  const fallbackRepairs = Math.round((16000 + (seed % 42000)) / 500) * 500;
-  const arv = toMoneyNumber(params.arv, 0) || toMoneyNumber(deal.arv, 0) || propertyValues.arv || averagePrices({ comps: propertyValues.compObject }) || averagePrices(deal) || fallbackArv;
-  const repairsMid = toMoneyNumber(params.repairsMid, 0) || toMoneyNumber(params.repairs, 0) || toMoneyNumber(deal?.repairs?.mid, 0) || propertyValues.repairsMid || fallbackRepairs;
-  const fee = toNumber(params.fee, 0) || toNumber(deal.fee, 9000) || 9000;
-  const mao = toMoneyNumber(params.mao, 0) || toMoneyNumber(deal.mao60, 0) || propertyValues.mao || Math.max(0, Math.round((arv - repairsMid) * 0.68 - fee));
-  const targetOffer = toMoneyNumber(params.offerPrice, 0) || toMoneyNumber(deal.offer, 0) || toMoneyNumber(deal.agreedPrice, 0) || propertyValues.targetOffer || Math.max(0, Math.round(mao * 0.85));
+  const propertyData = params.propertyData || deal.propertyData || {};
+  const propertyValues = getPropertyAnalysisValues(propertyData);
+  const raw = propertyData.data || propertyData.values || propertyData;
+  const firstInput = (...values) => {
+    const value = values.find((item) => item !== undefined && item !== null && item !== '');
+    if (!['number', 'string'].includes(typeof value)) return null;
+    const normalized = String(value).trim().replace(/^\$/, '');
+    if (!/^(?:\d+|\d{1,3}(?:,\d{3})+)(?:\.\d+)?$/.test(normalized)) return null;
+    const number = Number(normalized.replace(/,/g, ''));
+    return Number.isFinite(number) && number >= 0 ? number : null;
+  };
+  const arv = firstInput(params.arv, deal.arv, propertyValues.arv || undefined,
+    averagePrices({ comps: propertyValues.compObject }) || averagePrices(deal) || undefined);
+  const repairsMid = firstInput(params.repairsMid, params.repairs, deal?.repairs?.mid,
+    raw.repairsMid, raw.estimatedRepairs, raw.repairs, raw.rehabEstimate);
+  const missingInputs = [arv > 0 ? '' : 'arv', repairsMid !== null ? '' : 'repairs'].filter(Boolean);
+  if (missingInputs.length) {
+    return {
+      ok: false, result: 'analysis_incomplete', status: 'incomplete', address,
+      missingInputs, enrichment: params.enrichment || null,
+      error: `Analysis needs valid ${missingInputs.join(' and ')} inputs before calculating an offer.`,
+    };
+  }
+  const fee = firstInput(params.fee, deal.fee, 9000);
+  const mao = firstInput(params.mao, deal.mao60, propertyValues.mao || undefined)
+    ?? Math.max(0, Math.round((arv - repairsMid) * 0.68 - (fee ?? 9000)));
+  const targetOffer = firstInput(params.offerPrice, deal.offer, deal.agreedPrice, propertyValues.targetOffer || undefined)
+    ?? Math.max(0, Math.round(mao * 0.85));
   const estProfit = Math.max(0, mao - targetOffer);
 
   return {
@@ -28494,7 +28709,25 @@ async function upsertCallEmbeddingFromTranscript(record = {}) {
     callRecord?.transcript,
     callRecord?.notes,
   ]);
-  if (!callId || sourceText.length < 80) return { ok: false, skipped: true, result: 'insufficient_call_memory' };
+  if (!callId || sourceText.length < 80) {
+    let outcome = { verified: false, result: 'memory_skip_event_unbound' };
+    const workspaceId = record.workspaceId || record.workspace_id || callRecord?.workspace_id || 'pbk';
+    if (callId && workspaceId === 'pbk' && typeof record.eventId === 'string' && record.eventId.trim()) {
+      try {
+        outcome = await recordCallMemorySkip({
+          pool: getPgPool(), secret: BRIDGE_API_KEY,
+          revision: process.env.RENDER_GIT_COMMIT || BUILD_REVISION,
+          eventId: record.eventId, callId, sourceText,
+        });
+      } catch {
+        outcome = { verified: false, result: 'memory_skip_receipt_unavailable' };
+      }
+    }
+    return { ok: false, skipped: true, result: 'insufficient_call_memory', memoryPolicyOutcome: {
+      verified: outcome.verified === true, result: outcome.result,
+      embeddingVerified: false, fullRecoveryVerified: false, launchQualified: false,
+    } };
+  }
   const leadId = record.leadId || record.lead_id || callRecord?.lead_id || '';
   const transcriptHash = createHash('sha256').update(sourceText).digest('hex');
   const existing = await queryPgRows(
@@ -28956,25 +29189,43 @@ async function runOpenAiWebSearch(query = '', params = {}) {
     ],
   };
 
-  const toolTypes = ['web_search', 'web_search_preview'];
+  const toolTypes = params.singleAttempt ? ['web_search'] : ['web_search', 'web_search_preview'];
   let lastError = null;
   for (const toolType of toolTypes) {
     try {
       const response = await fetch(`${OPENAI_BASE_URL}/v1/responses`, {
         method: 'POST',
+        ...(params.singleAttempt ? { signal: AbortSignal.timeout(20_000), redirect: 'error' } : {}),
         headers: {
           Authorization: `Bearer ${OPENAI_API_KEY}`,
           'Content-Type': 'application/json',
+          ...(params.clientRequestId ? { 'X-Client-Request-Id': params.clientRequestId } : {}),
         },
         body: JSON.stringify({
           ...bodyBase,
+          ...(params.singleAttempt ? { max_tool_calls: 1, max_output_tokens: 850 } : {}),
           tools: [{ type: toolType }],
         }),
       });
       const payload = await response.json().catch(() => null);
       if (!response.ok) {
+        if (params.singleAttempt && response.status === 429 &&
+          (payload?.error?.type === 'insufficient_quota' || payload?.error?.code === 'credit_balance_exhausted')) {
+          return { ok: false, result: 'provider_quota_exhausted' };
+        }
+        if (params.singleAttempt && (response.status === 408 || response.status >= 500)) {
+          return { ok: false, result: 'reconciliation_required' };
+        }
         lastError = new Error(payload?.error?.message || payload?.message || `OpenAI web search returned ${response.status}`);
         continue;
+      }
+      if (params.singleAttempt) {
+        if (!payload || ['queued', 'in_progress'].includes(payload.status)) {
+          return { ok: false, result: 'reconciliation_required' };
+        }
+        if (payload.status !== 'completed' || !payload.output?.some(item => item.type === 'web_search_call' && item.status === 'completed')) {
+          return { ok: false, result: 'uncited_research' };
+        }
       }
       const answer = extractOpenAiResponseText(payload);
       const citations = extractOpenAiCitations(payload);
@@ -28986,7 +29237,7 @@ async function runOpenAiWebSearch(query = '', params = {}) {
         ok: true,
         result: 'live',
         query: cleanQuery,
-        answer: answer || 'OpenAI web search completed, but no readable answer text was returned.',
+        answer: answer || (params.singleAttempt ? '' : 'OpenAI web search completed, but no readable answer text was returned.'),
         citations,
         provider: {
           ...meta,
@@ -28995,6 +29246,7 @@ async function runOpenAiWebSearch(query = '', params = {}) {
         responseId: payload?.id || '',
       };
     } catch (error) {
+      if (params.singleAttempt) return { ok: false, result: 'reconciliation_required' };
       lastError = error;
     }
   }
@@ -29018,7 +29270,7 @@ async function runOpenAiWebSearch(query = '', params = {}) {
   };
 }
 
-function answerBrainQuery(stateRef, query = '') {
+function answerBrainQuery(stateRef, query = '', { storedEvidenceOnly = false } = {}) {
   const trimmed = String(query || '').trim();
   const blogDocs = (stateRef.brainBlogPosts || []).map(brainBlogPostToDoc);
   const matches = [...(stateRef.brainDocs || []), ...blogDocs]
@@ -29030,7 +29282,7 @@ function answerBrainQuery(stateRef, query = '') {
     .sort((left, right) => right.score - left.score || String(right.createdAt).localeCompare(String(left.createdAt)))
     .slice(0, 3);
 
-  if (looksLikePbkDoctrineQuery(trimmed)) {
+  if (!storedEvidenceOnly && looksLikePbkDoctrineQuery(trimmed)) {
     return buildRexDoctrineAnswer(stateRef, trimmed, matches);
   }
 
@@ -29328,14 +29580,14 @@ function buildRexTroubleshootingAnswer(stateRef, query = '') {
   };
 }
 
-function normalizeConversationMessages(messages = []) {
+function normalizeConversationMessages(messages = [], { assistantMaxChars = 4000 } = {}) {
   if (!Array.isArray(messages)) return [];
   return messages
     .map((message) => ({
       role: ['user', 'assistant', 'system'].includes(String(message?.role || '').toLowerCase()) ? String(message.role).toLowerCase() : 'user',
       content: String(message?.content || '')
         .trim()
-        .slice(0, 4000),
+        .slice(0, String(message?.role || '').toLowerCase() === 'assistant' ? assistantMaxChars : 4000),
       at: message?.at || message?.createdAt || null,
     }))
     .filter((message) => message.content)
@@ -30199,7 +30451,7 @@ function looksLikeStrategistMetaText(value = '') {
   return /\b(we need to generate|we are asked to|given a transcript|based on the given situation|generate (?:a )?json|json response|immediatescript|nextquestion|returntobusiness|approvalneeded|pbk strategist|operatorread)\b/i.test(text) || /^\s*\{[\s\S]*"(?:strategy|risk|rule|nextQuestion|immediateScript)"/i.test(text);
 }
 
-function sanitizeAvaSpokenOutput(value = '', fallback = '') {
+function sanitizeAvaSpokenOutput(value = '', fallback = '', { preserveFormatting = false } = {}) {
   const cleanCandidate = (candidate = '') =>
     String(candidate || '')
       .replace(/```(?:json|text)?/gi, '')
@@ -30219,12 +30471,12 @@ function sanitizeAvaSpokenOutput(value = '', fallback = '') {
       .replace(/\b(?:call|stream|session|lead|req|request)[-_]?[a-z0-9]{10,}\b/gi, ' ')
       .replace(/\b(?:internal\s+)?(?:m\s*number|model\s+number|debug\s+number|system\s+number)\b[^,.?!]*(?:[,.?!]|\s|$)/gi, ' ')
       .replace(/\[(?:laughs|whispers|excited|sighs|sad|softly|focused)\]/gi, '')
-      .replace(/\s+/g, ' ')
+      .replace(preserveFormatting ? /[^\S\r\n]+/g : /\s+/g, ' ')
       .trim();
 
-  const primary = cleanCandidate(normalizeAvaSpokenScript(value) || String(value || '').trim());
+  const primary = cleanCandidate(normalizeAvaSpokenScript(value, { preserveFormatting }) || String(value || '').trim());
   if (primary && !looksLikeStrategistMetaText(primary)) return primary;
-  const backup = cleanCandidate(normalizeAvaSpokenScript(fallback) || String(fallback || '').trim());
+  const backup = cleanCandidate(normalizeAvaSpokenScript(fallback, { preserveFormatting }) || String(fallback || '').trim());
   if (backup && !looksLikeStrategistMetaText(backup)) return backup;
   return '';
 }
@@ -30259,7 +30511,7 @@ function recordAvaSpokenOutputDiagnostics(record = {}) {
   return lastAvaSpokenOutput;
 }
 
-function normalizeAvaSpokenScript(value = '') {
+function normalizeAvaSpokenScript(value = '', { preserveFormatting = false } = {}) {
   let text = String(value || '').trim();
   if (!text) return '';
   const parsed = extractJsonObjectFromText(text);
@@ -30269,7 +30521,7 @@ function normalizeAvaSpokenScript(value = '') {
   text = text
     .replace(/```(?:json)?/gi, '')
     .replace(/```/g, '')
-    .replace(/\s+/g, ' ')
+    .replace(preserveFormatting ? /[^\S\r\n]+/g : /\s+/g, ' ')
     .trim();
   if (!text || looksLikeStrategistMetaText(text)) return '';
   return text;
@@ -30834,6 +31086,7 @@ async function runDeepSeekChatCompletion(messages = [], params = {}) {
   const retryAttempts = Math.max(0, Math.min(3, toNumber(params.retryAttempts ?? params.retries, 0)));
   const retryDelayMs = Math.max(0, Math.min(2000, toNumber(params.retryDelayMs ?? params.retry_delay_ms, 0)));
   const attemptTimeoutMs = Math.max(1000, toNumber(params.attemptTimeoutMs ?? params.attempt_timeout_ms ?? params.timeoutMs, DEEPSEEK_TIMEOUT_MS));
+  const deadlineAt = Number.isFinite(params.deadlineAt) ? params.deadlineAt : Infinity;
   const requestedDeepSeekTools = normalizeDeepSeekToolsForStrictMode(params.tools || []);
   const hasDeepSeekTools = requestedDeepSeekTools.length > 0;
   const deepSeekTools = hasDeepSeekTools && DEEPSEEK_STRICT_TOOL_MODE === 'enabled' ? requestedDeepSeekTools : [];
@@ -30845,12 +31098,15 @@ async function runDeepSeekChatCompletion(messages = [], params = {}) {
   const runAttempt = async (attemptIndex = 0) => {
     let controller = null;
     let timeout = null;
+    const streamPreview = params.streamPreviewFactory?.();
+    const remainingTimeoutMs = Math.max(0, Math.min(attemptTimeoutMs, deadlineAt - Date.now()));
     const requestBody = {
       model,
       messages: requestMessages,
       temperature: params.temperature ?? 0.25,
-      max_tokens: Math.max(128, Math.min(4096, toNumber(params.maxTokens || params.max_tokens, 1200))),
+      max_tokens: Math.max(128, Math.min(params.longReply === true ? 32_768 : 4096, toNumber(params.maxTokens || params.max_tokens, 1200))),
       thinking: { type: thinkingMode },
+      ...(streamPreview ? { stream: true, stream_options: { include_usage: true } } : {}),
       ...(params.responseFormat === 'json' ? { response_format: { type: 'json_object' } } : {}),
       ...(deepSeekTools.length ? { tools: deepSeekTools } : {}),
       ...(deepSeekTools.length && params.toolChoice ? { tool_choice: params.toolChoice } : {}),
@@ -30862,7 +31118,7 @@ async function runDeepSeekChatCompletion(messages = [], params = {}) {
       model,
       thinkingMode,
       attempt: attemptIndex + 1,
-      attemptTimeoutMs,
+      attemptTimeoutMs: remainingTimeoutMs,
       jsonMode: params.responseFormat === 'json',
       toolCallsRequested: hasDeepSeekTools,
       toolCallsSent: deepSeekTools.length > 0,
@@ -30954,6 +31210,16 @@ async function runDeepSeekChatCompletion(messages = [], params = {}) {
               leadId: params.leadId || params.lead_id || '',
               responseId: payload?.id || '',
             })));
+            if (payload?.choices?.[0]?.finish_reason === 'length' || payload?.choices?.[0]?.finish_reason === 'content_filter') {
+              return {
+                ok: false,
+                result: 'provider_incomplete_response',
+                provider: buildProviderMeta({ finishReason: payload.choices[0].finish_reason }),
+                error: 'DeepSpec did not finish a complete response.',
+                usage: payload?.usage || null,
+                responseId: payload?.id || '',
+              };
+            }
             if (!answer && reasoning) {
               speculativeMeta.used = false;
               speculativeMeta.reason = 'reasoning_only';
@@ -31040,7 +31306,14 @@ async function runDeepSeekChatCompletion(messages = [], params = {}) {
         }
       }
       controller = new AbortController();
-      timeout = setTimeout(() => controller.abort(), attemptTimeoutMs);
+      const attemptDeadlineAt = Date.now() + remainingTimeoutMs;
+      const armTimeout = () => {
+        if (timeout) clearTimeout(timeout);
+        const remaining = Math.max(0, attemptDeadlineAt - Date.now());
+        const idle = streamPreview ? Math.max(1000, toNumber(params.streamIdleTimeoutMs, remaining)) : remaining;
+        timeout = setTimeout(() => controller.abort(), Math.min(remaining, idle));
+      };
+      armTimeout();
       const { response, payload } = await measure('llm_request', async () => {
         const response = await executeProviderCircuitGuard(
           'deepseek',
@@ -31051,7 +31324,7 @@ async function runDeepSeekChatCompletion(messages = [], params = {}) {
                 Authorization: `Bearer ${DEEPSEEK_API_KEY}`,
                 'Content-Type': 'application/json',
               },
-              signal: controller.signal,
+              signal: params.signal ? AbortSignal.any([controller.signal, params.signal]) : controller.signal,
               body: JSON.stringify(requestBody),
             }),
           async () =>
@@ -31060,7 +31333,12 @@ async function runDeepSeekChatCompletion(messages = [], params = {}) {
               headers: { 'Content-Type': 'application/json' },
             })
         );
-        const payload = await response.json().catch((error) => {
+        const payload = streamPreview && response.ok ? await readDeepSeekStream(response, {
+          signal: params.signal ? AbortSignal.any([controller.signal, params.signal]) : controller.signal,
+          onDelta: delta => streamPreview.write(delta),
+          onActivity: armTimeout,
+          maxContentCharacters: params.longReply === true ? 1_048_576 : 128_000,
+        }) : await response.json().catch((error) => {
           if (controller.signal.aborted) controller.signal.throwIfAborted();
           if (error?.name === 'AbortError') throw error;
           return null;
@@ -31068,6 +31346,8 @@ async function runDeepSeekChatCompletion(messages = [], params = {}) {
         return { response, payload };
       });
       if (!response.ok) {
+        if (Date.now() >= deadlineAt) controller.abort();
+        controller.signal.throwIfAborted();
         return {
           ok: false,
           result: 'provider_error',
@@ -31087,6 +31367,20 @@ async function runDeepSeekChatCompletion(messages = [], params = {}) {
         leadId: params.leadId || params.lead_id || '',
         responseId: payload?.id || '',
       })));
+      if (Number.isFinite(deadlineAt)) {
+        if (Date.now() >= deadlineAt) controller.abort();
+        controller.signal.throwIfAborted();
+      }
+      if (payload?.choices?.[0]?.finish_reason === 'length' || payload?.choices?.[0]?.finish_reason === 'content_filter') {
+        return {
+          ok: false,
+          result: 'provider_incomplete_response',
+          provider: buildProviderMeta({ finishReason: payload.choices[0].finish_reason }),
+          error: 'DeepSeek did not finish a complete response.',
+          usage: payload?.usage || null,
+          responseId: payload?.id || '',
+        };
+      }
       if (!answer && reasoning) {
         return {
           ok: false,
@@ -31124,8 +31418,17 @@ async function runDeepSeekChatCompletion(messages = [], params = {}) {
         responseId: payload?.id || '',
       };
     } catch (error) {
+      if (error.providerUsage && !usagePersistence) {
+        usagePersistence = await measure('llm_usage', () => observeUsagePersistence(() => recordTokenUsage('deepseek', model, error.providerUsage, {
+          source: params.source || 'deepseek-strategist',
+          callId: params.callId || params.call_id || '', leadId: params.leadId || params.lead_id || '',
+          responseId: error.responseId || '',
+        })));
+      }
+      if (params.signal?.aborted) params.signal.throwIfAborted();
       return {
         ok: false,
+        streamInterrupted: Boolean(streamPreview?.emitted),
         result: error?.name === 'AbortError' ? 'provider_timeout' : 'provider_error',
         provider: buildProviderMeta(),
         error: error?.name === 'AbortError' ? 'DeepSeek request timed out.' : error?.message || 'DeepSeek request failed.',
@@ -31137,6 +31440,13 @@ async function runDeepSeekChatCompletion(messages = [], params = {}) {
 
   let lastResult = null;
   for (let attemptIndex = 0; attemptIndex <= retryAttempts; attemptIndex++) {
+    if (Date.now() >= deadlineAt) {
+      return {
+        ok: false, result: 'provider_timeout', error: 'DeepSeek overall request budget exhausted.',
+        provider: { ...meta, model, thinkingMode, attemptTimeoutMs: 0 },
+        attempts, retryAttempts, attemptTimeoutMs,
+      };
+    }
     const result = await runAttempt(attemptIndex);
     attempts.push({
       attempt: attemptIndex + 1,
@@ -31146,9 +31456,9 @@ async function runDeepSeekChatCompletion(messages = [], params = {}) {
       status: result.status || null,
       error: result.error || '',
       retry: attemptIndex > 0 ? 'provider_retry' : '',
-      attemptTimeoutMs,
+      attemptTimeoutMs: result.provider?.attemptTimeoutMs ?? attemptTimeoutMs,
     });
-    if (result.ok || !isRetryableDeepSeekResult(result) || attemptIndex >= retryAttempts) {
+    if (result.ok || result.streamInterrupted || !isRetryableDeepSeekResult(result) || attemptIndex >= retryAttempts) {
       return {
         ...result,
         attempts,
@@ -31157,7 +31467,15 @@ async function runDeepSeekChatCompletion(messages = [], params = {}) {
       };
     }
     lastResult = result;
-    await sleep(retryDelayMs * (attemptIndex + 1));
+    const delayMs = retryDelayMs * (attemptIndex + 1);
+    if (delayMs >= deadlineAt - Date.now()) {
+      return {
+        ...result, ok: false, result: 'provider_timeout',
+        error: 'DeepSeek overall request budget exhausted before retry.',
+        attempts, retryAttempts, attemptTimeoutMs,
+      };
+    }
+    await sleep(delayMs);
   }
 
   return {
@@ -32510,13 +32828,6 @@ async function persistOfferOverrideToPg(record = {}) {
   }
 }
 
-function isApprovalApproved(approvalId = '') {
-  const id = String(approvalId || '').trim();
-  if (!id) return false;
-  const approval = (state.approvals || []).find((item) => item.id === id);
-  return Boolean(approval && String(approval.status || '').toLowerCase() === 'approved');
-}
-
 async function avaOverrideOfferRecord(params = {}) {
   const context = findLeadContext(params);
   const tenantId = normalizeTenantId(params.tenantId || params.tenant_id || 'pbk');
@@ -32538,13 +32849,20 @@ async function avaOverrideOfferRecord(params = {}) {
       message: 'Offer override was queued because no approved approvalId or protected passcode was provided.',
     };
   }
-  if (approvalId && !isApprovalApproved(approvalId) && !passcodeValid) {
+  const approval = (state.approvals || []).find((item) => item.id === approvalId);
+  if (approvalId && !passcodeValid && !validateNegotiationApproval({
+    approval, leadId, tenantId, finalOffer, avaScript: String(params.avaScript || '').trim(),
+  })) {
     return {
       ok: false,
-      result: 'approval_required',
+      result: 'approval_binding_mismatch',
       approvalId,
-      error: 'Offer override requires an approved approvalId or protected admin passcode.',
+      error: 'The approval must authorize this exact lead and offer amount, or use the protected admin passcode.',
     };
+  }
+  const priorOverride = approvalId && (state.offerOverrides || []).find((item) => item.approvalId === approvalId);
+  if (priorOverride && !passcodeValid) {
+    return { ok: true, result: 'offer_override_recorded', override: priorOverride, avaScript: priorOverride.avaScript, replayed: true };
   }
   const mao = Math.max(0, toNumber(params.mao ?? params.originalMao, 0));
   const repairItems = getRepairItemsForLead(leadId, tenantId);
@@ -32560,10 +32878,10 @@ async function avaOverrideOfferRecord(params = {}) {
       .slice(0, 3)
       .map((item) => item.itemName)
       .join(', ') || 'the current repair scope';
-  const avaScript = String(params.avaScript || '').trim() || `My team came back at ${currency(finalOffer)}. That is the absolute max we can do with ${repairHighlights} and the as-is risk. We can keep it clean: cash, as-is, and a simple close. Does that work for you?`;
+  const avaScript = String(params.avaScript || (!passcodeValid && approval?.metadata?.avaFinalScript) || '').trim() || `My team came back at ${currency(finalOffer)}. That is the absolute max we can do with ${repairHighlights} and the as-is risk. We can keep it clean: cash, as-is, and a simple close. Does that work for you?`;
   const now = isoNow();
   const override = {
-    id: params.id || `offer-override-${slugify(leadId || context.address || 'lead')}-${Date.now()}`,
+    id: !passcodeValid && approvalId ? `offer-override-${approvalId}` : params.id || `offer-override-${slugify(leadId || context.address || 'lead')}-${Date.now()}`,
     tenantId,
     leadId,
     leadName: params.leadName || context.leadName || '',
@@ -33898,8 +34216,8 @@ function normalizeLeadIntake(payload = {}) {
     score: payload.score === undefined ? null : toNumber(payload.score, null),
     seller: {
       name: seller.name || payload.name || payload.sellerName || 'Unknown seller',
-      phone: seller.phone || payload.phone || '',
-      email: seller.email || payload.email || '',
+      phone: seller.phone ?? payload.phone ?? '',
+      email: seller.email ?? payload.email ?? '',
       preferredChannel: seller.preferredChannel || payload.preferredChannel || 'unknown',
       bestTimeToCall: seller.bestTimeToCall || payload.bestTimeToCall || '',
       relationshipToProperty: seller.relationshipToProperty || payload.relationshipToProperty || '',
@@ -33919,6 +34237,9 @@ function normalizeLeadIntake(payload = {}) {
       estimatedRepairs: property.estimatedRepairs ?? payload.estimatedRepairs ?? null,
       arv: property.arv ?? payload.arv ?? null,
       mao: property.mao ?? payload.mao ?? null,
+      maoRbp: property.maoRbp ?? property.maoRBP ?? payload.maoRbp ?? null,
+      rent: property.rent ?? payload.rent ?? null,
+      mortgageRate: property.mortgageRate ?? payload.mortgageRate ?? null,
       mortgageBalance: property.mortgageBalance ?? payload.mortgageBalance ?? null,
       askingPrice: property.askingPrice ?? payload.askingPrice ?? motivation.askingPrice ?? null,
       propertyType: property.propertyType || property.type || payload.property_type || payload.propertyType || payload.type || '',
@@ -34442,11 +34763,14 @@ function buildBrainEmailContext(params = {}) {
   const propertyCity = leadImport?.property?.city || '';
   const propertyState = leadImport?.property?.state || '';
   const propertyType = /multi|duplex|triplex|fourplex/i.test(context.address) ? 'Small multifamily' : 'Single family';
-  const estimatedEquity = Math.max(0, analyzer.arv - analyzer.targetOffer);
+  // ARV minus our offer is not homeowner equity; no verified debt/equity input is available here.
+  const estimatedEquity = null;
   const probateStatus = tags.includes('probate') || /probate|inherited|estate/i.test(params.templateId || '');
   const absenteeOwner = tags.includes('absentee') || /absentee|out[- ]of[- ]state/i.test(context.address);
   const taxDelinquent = tags.includes('tax-delinquent') || tags.includes('delinquent');
-  const recentComps = [`${currency(Math.max(0, analyzer.arv - 7000))} nearby comp`, `${currency(analyzer.arv)} stretch comp`, `${currency(analyzer.arv + 9000)} renovated comp`];
+  const recentComps = analyzer.ok === false ? [] : (analyzer.comps || [])
+    .filter((comp) => comp.price > 0 && comp.source && comp.date)
+    .map((comp) => `${currency(comp.price)} ${comp.label} (${comp.source}, ${comp.date})`);
   const motivationSignals = [];
   if (probateStatus) motivationSignals.push('inherited property');
   if (absenteeOwner) motivationSignals.push('absentee ownership');
@@ -34461,12 +34785,13 @@ function buildBrainEmailContext(params = {}) {
     propertyState,
     propertyType,
     estimatedEquity,
-    marketValue: analyzer.arv,
-    targetOffer: analyzer.targetOffer,
-    mao: analyzer.mao,
-    estimatedProfit: analyzer.estProfit,
-    repairsMid: analyzer.repairsMid,
-    lastSaleDate: params.lastSaleDate || leadImport?.createdAt?.slice(0, 10) || '',
+    analysisStatus: analyzer.ok === false ? 'incomplete' : analyzer.status,
+    marketValue: analyzer.arv ?? null,
+    targetOffer: analyzer.targetOffer ?? null,
+    mao: analyzer.mao ?? null,
+    estimatedProfit: analyzer.estProfit ?? null,
+    repairsMid: analyzer.repairsMid ?? null,
+    lastSaleDate: params.lastSaleDate || leadImport?.property?.lastSaleDate || '',
     recentComps,
     taxDelinquent,
     probateStatus,
@@ -34483,8 +34808,6 @@ function buildColdEmailContent(templateId = 'generic', lead = {}, brainInfo = {}
   const safeTemplate = String(templateId || 'generic').toLowerCase();
   const firstName = String(lead.firstName || lead.name || brainInfo.ownerName || 'there').split(/\s+/)[0];
   const address = brainInfo.propertyAddress || lead.address || 'your property';
-  const equityText = brainInfo.estimatedEquity ? currency(brainInfo.estimatedEquity) : 'strong equity';
-  const compText = Array.isArray(brainInfo.recentComps) && brainInfo.recentComps.length ? brainInfo.recentComps[0] : 'recent nearby sales';
   const motivationText = Array.isArray(brainInfo.motivationSignals) && brainInfo.motivationSignals.length ? brainInfo.motivationSignals.join(', ') : 'an off-market sale path';
 
   let subject = `Quick question about ${address}`;
@@ -34498,18 +34821,18 @@ function buildColdEmailContent(templateId = 'generic', lead = {}, brainInfo = {}
     intro = `I noticed ${address} may be an absentee-owned property and wanted to see if a simple off-market sale would help.`;
   } else if (safeTemplate === 'high-equity' || safeTemplate === 'high_equity') {
     subject = `Equity options for ${address}`;
-    intro = `With properties like ${compText} trading nearby, ${address} looks like it may have solid equity to work with.`;
+    intro = `I wanted to understand your plans for ${address} and whether an as-is sale would be useful.`;
   }
 
   const html = `
     <p>Hi ${escapeHtml(firstName)},</p>
     <p>${escapeHtml(intro)}</p>
-    <p>From our side it looks like there may be about <strong>${escapeHtml(equityText)}</strong> in equity, and we are seeing comps around <strong>${escapeHtml(compText)}</strong>. We buy as-is and can move quickly if that would make life easier.</p>
+    <p>We buy as-is and can discuss a timeline that works for you.</p>
     <p>If ${escapeHtml(motivationText)} is relevant for you, would you be open to a quick 10-15 minute conversation this week?</p>
     <p>Best,<br />Probono Key Realty</p>
   `.trim();
 
-  const text = [`Hi ${firstName},`, '', intro, `It looks like there may be about ${equityText} in equity, and we are seeing comps around ${compText}. We buy as-is and can move quickly if that helps.`, `If ${motivationText} is relevant for you, would you be open to a quick 10-15 minute conversation this week?`, '', 'Best,', 'Probono Key Realty'].join('\n');
+  const text = [`Hi ${firstName},`, '', intro, 'We buy as-is and can discuss a timeline that works for you.', `If ${motivationText} is relevant for you, would you be open to a quick 10-15 minute conversation this week?`, '', 'Best,', 'Probono Key Realty'].join('\n');
 
   return {
     templateId: safeTemplate,
@@ -36941,13 +37264,13 @@ async function persistPropertyCacheRowToDb(item = {}, source = 'property-data') 
   );
 }
 
-async function persistLeadProfileRowToDb(lead = {}, source = 'property-data') {
+async function persistLeadProfileRowToDb(lead = {}, source = 'property-data', { exactIdentity = false } = {}) {
   const property = lead.property || {};
   const seller = lead.seller || {};
   let leadId = String(lead.leadId || lead.id || '').trim();
   if (!leadId) return { ok: false, reason: 'missing_lead_id' };
   const phone = normalizePhone(seller.phone || lead.phone || '');
-  if (phone) {
+  if (phone && !exactIdentity) {
     const existingByPhone = await queryPgRows(
       `SELECT id, source, lead_name, address, raw
        FROM public.lead_profiles
@@ -42981,6 +43304,41 @@ function buildProviderActionReplayParams(params = {}) {
   return redactApprovalParamPreview(params || {});
 }
 
+function resolveProviderActionReplayParams(toolName, params = {}) {
+  const resolved = { ...params };
+  const context = findLeadContext(params);
+  if (['telnyx_sms', 'telnyx_call', 'send_verification_sms'].includes(toolName)) {
+    resolved.phone = normalizePhone(params.phone || params.to || context.phone || inferSkipTraceContact(context).phone);
+    resolved.from = getTelnyxFromNumber(params);
+  }
+  if (toolName === 'telnyx_sms') resolved.body = String(params.body || params.message || '').trim();
+  if (toolName === 'sendColdEmail') {
+    resolved.email = params.email || params.to || context.email || inferSkipTraceContact(context).email;
+    resolved.fromEmail = getSenderAddress('cold', params.fromEmail || params.from_email || params.instantlySender || params.senderEmail || '');
+    const body = String(params.customBody || params.body || params.message || '').trim();
+    const content = body ? { text: body, subject: params.subject || 'Message from Probono Key Realty' }
+      : buildColdEmailContent(params.templateId, { name: context.leadName, address: context.address }, buildBrainEmailContext(params));
+    resolved.customBody = content.text;
+    resolved.subject = content.subject;
+  }
+  return buildProviderActionReplayParams(resolved);
+}
+
+function buildProviderActionContextHash(toolName, params = {}) {
+  const lead = findLatestLeadImport(params);
+  const leadId = params.leadId || lead?.leadId || '';
+  const address = params.address || params.propertyAddress || lead?.property?.address || '';
+  const contracts = (state.contracts || []).filter((item) =>
+    item.id === (params.contractId || params.id) || (leadId && item.leadId === leadId)
+      || (address && item.address === address)).sort((a, b) => String(a.id).localeCompare(String(b.id)));
+  // Approval-derived fallback context would change merely by creating this card.
+  return hashProviderActionContext({
+    toolName, lead, contracts, revision: process.env.RENDER_GIT_COMMIT || BUILD_REVISION,
+    senderPhone: getTelnyxFromNumber(params),
+    senderEmail: getSenderAddress('cold', params.fromEmail || params.senderEmail || ''),
+  });
+}
+
 function summarizeProviderActionResult(result = {}) {
   if (!result || typeof result !== 'object') return { ok: Boolean(result), result };
   return {
@@ -43012,6 +43370,9 @@ function recordAvaAssistantPlanOps({
   additiveIntelligence = null,
   startedAt = Date.now(),
   requestTiming = null,
+  timingTurn = null,
+  signal,
+  delivery = null,
 } = {}) {
   const toolPlan = assistantPlan?.toolPlan && typeof assistantPlan.toolPlan === 'object'
     ? assistantPlan.toolPlan
@@ -43022,7 +43383,7 @@ function recordAvaAssistantPlanOps({
   const qaOk = !qa || qa.ok !== false;
   const safetyBlocked = safety?.blocked === true;
   const toolOk = !toolResult || toolResult.ok !== false;
-  void recordAgentOps({
+  const opsParams = {
     agentName: 'Ava',
     sessionId,
     leadId,
@@ -43069,8 +43430,8 @@ function recordAvaAssistantPlanOps({
     error: toolOk && qaOk && !safetyBlocked ? '' : (toolResult?.error || qa?.reason || safety?.result || 'assistant_plan_not_completed'),
     metadata: {
       source: 'ava-assistant-chat',
-      diagnostic: source === 'ava-latency-diagnostic',
-      operational: source !== 'ava-latency-diagnostic',
+      diagnostic: getRuntimeEvidenceContext().classification === 'diagnostic',
+      operational: getRuntimeEvidenceContext().classification === 'operational',
       requestTiming,
       publicMode,
       assistantAction,
@@ -43080,7 +43441,19 @@ function recordAvaAssistantPlanOps({
       traceContract: 'intent_plan_guardrail_proof_outcome',
       researchBasis: ['openai_traces_evals', 'deepseek_function_calling_json', 'google_sre_golden_signals'],
     },
-  });
+  };
+  const record = (delivered = true) => {
+    if (!delivered) {
+      opsParams.success = false;
+      opsParams.error = 'assistant_delivery_unverified';
+    }
+    bindAgentTimingToParams(opsParams, timingTurn, { answer,
+      successful: Boolean(delivered && toolOk && qaOk && !safetyBlocked && assistantAction !== 'approval_required'
+        && (!toolResult || agentTimingResultSucceeded(toolResult))), signal });
+    void recordAgentOps(opsParams);
+  };
+  if (delivery) void delivery.then(record, () => record(false)).catch(() => {});
+  else record();
 }
 
 function redactAvaMissionLedgerText(value = '', maxLength = 320) {
@@ -43408,7 +43781,27 @@ async function enforceOperatingModeForTool(toolName, params = {}) {
   if (safetyValidation?.blocked) {
     return buildSafetyBlockedToolResult(toolName, safetyValidation);
   }
-  if (approvalReplayId && isApprovalApproved(approvalReplayId)) return null;
+  if (approvalReplayId) {
+    const approval = (state.approvals || []).find((item) => item.id === approvalReplayId);
+    const authorization = validateProviderActionAuthorization({
+      approval, toolName, params: resolveProviderActionReplayParams(toolName, params),
+      contextHash: buildProviderActionContextHash(toolName, resolveProviderActionReplayParams(toolName, params)),
+    });
+    if (!authorization.ok) return authorization;
+    // Approved actions execute only through the decision callback's shared lease.
+    // Direct invokes can read their prior outcome, never consume the ID again.
+    if (approval.metadata?.providerActionResult) {
+      return {
+        ...approval.metadata.providerActionResult, replayed: true, skipped: true,
+        providerAttempted: false, providerProof: approval.metadata.providerProof || null,
+        approvalId: approval.id,
+      };
+    }
+    return {
+      ok: false, result: 'approval_dispatch_required', blocked: true, providerAttempted: false,
+      approvalId: approval.id, message: 'Use the original approval decision to dispatch or reconcile this action.',
+    };
+  }
 
   const safetyReviewRequired = Boolean(
     safetyValidation?.approvalRequired &&
@@ -45009,11 +45402,19 @@ function buildAgentOrchestrationSnapshot() {
   const probes = (state.agents || []).map(buildAgentHealthProbe);
   // Never combine readiness from a different context with this packet.
   const intelligenceContext = state.status?.pbkIntelligenceContext || {};
-  const operationalEvidence = collectAgentFleetEvidence(state);
+  const measurementNow = Date.now();
+  const revision = process.env.RENDER_GIT_COMMIT || BUILD_REVISION;
+  const latencyPolicy = getAgentLatencyPolicy(process.env, { requireVersion2: true });
+  const operationalEvidence = collectAgentFleetEvidence(state, { now: measurementNow, policy: latencyPolicy,
+    secret: BRIDGE_API_KEY, revision, requireTimingV2: true });
   const measurement = buildStableAgentFleetMeasurement(getCurrentAgentRegistry(), {
     healthProbes: probes,
     toolCatalog: buildProductionToolCatalog(),
     latencySamples: operationalEvidence.latencySamples,
+    latencyObservations: operationalEvidence.latencyObservations,
+    latencyBudgetsMs: latencyPolicy.budgets,
+    latencyPolicy,
+    now: measurementNow, timingEvidenceSecret: BRIDGE_API_KEY, revision, requireTimingV2: true,
     lastActions: operationalEvidence.lastActions,
     evidenceDiagnostics: operationalEvidence.diagnostics,
     unverifiedLatencySamples: operationalEvidence.unverifiedLatencySamples,
@@ -45067,6 +45468,7 @@ function buildAgentOrchestrationSnapshot() {
       requiredToolGaps,
     },
     measurement,
+    latencyPolicy,
     communication: {
       pattern: 'hub-and-spoke',
       supervisor: 'ava',
@@ -45850,13 +46252,18 @@ async function checkAgentRegistryHealth({ persist = false } = {}) {
 
 function getLocalAgentRegistryHandlers() {
   return {
-    ava: async (payload = {}) =>
-      toolHandlers.runAgentCommand({
+    ava: async (payload = {}) => {
+      if (controlledExecution.getStore()) {
+        const response = await toolHandlers.getAvaConversationIntelligence(payload);
+        return { ok: response?.ok === true, routedTo: 'ava_conversation_intelligence', response };
+      }
+      return toolHandlers.runAgentCommand({
         ...payload,
         command: payload.command || payload.query || 'Summarize Ava live-call readiness.',
         actor: payload.actor || 'Agent Registry',
         source: payload.source || 'agent-registry',
-      }),
+      });
+    },
     max: async (payload = {}) => {
       const query = String(payload.query || payload.command || payload.transcript || '').trim();
       const closing = await toolHandlers.retrieveClosingIntelligence({
@@ -45888,6 +46295,8 @@ function getLocalAgentRegistryHandlers() {
     hermes: async (payload = {}) => {
       if (payload.action === 'analyze_patterns') {
         const pattern = induceWorkflowMemoryCore({ transcript: payload.transcript });
+        if (controlledExecution.getStore() && payload.stoppingResult?.result === 'halt')
+          pattern.workflow.steps.unshift(payload.stoppingResult.intervention);
         return { ok: pattern.ok === true, result: 'hermes_pattern_analysis', provider: 'pbk-local-pattern-analysis', pattern,
           strategy: pattern.workflow.steps.join(' '), safety: { suggestOnly: true, providerWrites: 'blocked' } };
       }
@@ -46018,7 +46427,7 @@ async function executeControlledAgentQualification() {
     const fixture = storage.fixture;
     const marker = { diagnostic: true, operational: false, source: 'controlled-qualification', runId: storage.runId };
     const lead = { id: fixture.leadId, leadId: fixture.leadId, name: fixture.leadName, leadName: fixture.leadName,
-      phone: '', email: '', address: '', bant: fixture.bant, stage: 'warm', updatedAt: fixture.sourceUpdatedAt, ...marker };
+      phone: '', email: '', address: '', bant: fixture.bant, updatedAt: fixture.sourceUpdatedAt, ...marker };
     fixtureState.leads = [lead];
     fixtureState.leadImports = [lead];
     fixtureState.calls = [{ id: fixture.callId, leadId: fixture.leadId, leadName: fixture.leadName, transcript: fixture.transcript,
@@ -46026,56 +46435,35 @@ async function executeControlledAgentQualification() {
     fixtureState.brainDocs = [{ id: `${storage.runId}-source`, title: 'Controlled seller relocation deadline', source: 'controlled-qualification',
       citation: `controlled-qualification:${storage.runId}`, summary: fixture.transcript, content: fixture.transcript, createdAt: fixture.sourceUpdatedAt }];
     const common = { ...marker, leadId: fixture.leadId, callId: fixture.callId, leadName: fixture.leadName,
-      transcript: fixture.transcript, bant: fixture.bant, selectedPath: 'cash', seller_type: 'seller',
-      readOnly: true, noProviderWrites: true, remember: false, synthesize: false, stage: 'warm', phone: '', email: '', score: 65 };
-    const cases = [
-      ['ava', { command: 'Ava, explain BANT before giving an offer.' }],
-      ['bant-enforcer', {}],
-      ['max', { query: 'I need to understand the cash sale process before deciding.' }],
-      ['script-rotator', { query: 'I need to think about the cash sale process.' }],
-      ['prosody-tuner', { text: 'I am worried about moving in thirty days.', emotion: 'worried' }],
-      ['call-analyzer', { limit: 1 }],
-      ['hermes', { action: 'analyze_patterns' }],
-      ['research-orchestrator', { query: 'Evaluate safety and stop risk.', transcript: 'Seller: Stop calling and remove me.' }],
-      ['nurture-agent', {}],
-      ['rex', { query: 'Explain the controlled seller relocation deadline.', conversational: false }],
-    ];
-    let nurtureOutput = null;
-    for (const [agentId, payload] of cases) {
-      const scope = { ...storage, agentId, state: fixtureState, blockedNetwork: 0, blockedSql: 0 };
+      selectedPath: 'cash', seller_type: 'seller',
+      readOnly: true, noProviderWrites: true, remember: false, synthesize: false, phone: '', email: '' };
+    await runControlledAgentWorkflow({ fixture,
+      readPrevious: agentId => readControlledWorkflowPredecessor(pool, storage, agentId),
+      execute: async (agentId, payload, workflowLink) => {
+      const scope = { ...storage, agentId, workflowInput: payload, state: fixtureState, blockedNetwork: 0, blockedSql: 0 };
       scope.pool = createControlledPool(pool, scope);
-      await controlledExecution.run(scope, async () => {
+      return controlledExecution.run(scope, async () => {
+        // The call analyzer reads the fixture call, rather than payload.transcript.
+        if (agentId === 'call-analyzer') fixtureState.calls[0].transcript = payload.transcript;
         const result = await invokeAgentFromRegistry({ agentId, payload: { ...common, ...payload } });
         await scope.pool.drain();
-        if (agentId === 'nurture-agent') nurtureOutput = result.output;
-        if (agentId === 'bant-enforcer' && result.output?.complete) common.bant = result.output.bant;
         const evidence = result.agentTask?.metadata?.executionEvidence || {};
         const data = { agentId, runId: storage.runId, leadId: fixture.leadId, callId: fixture.callId,
           sourceUpdatedAt: fixture.sourceUpdatedAt, contextId: result.pbkIntelligenceContext?.contextId || '',
           workOrderId: result.workOrder?.id || '', completedAt: evidence.completedAt || isoNow(),
-          outputResult: [result.output?.result, result.output?.routedTo, result.output?.status].find(value => typeof value === 'string' && value.trim()) || (agentId === 'rex' && isAgentHandlerCompletion(agentId, result.output) ? 'rex_sourced_answer' : 'handler_failed'),
+          outputResult: [result.output?.result, result.output?.routedTo, result.output?.status, result.output?.qa?.validator].find(value => typeof value === 'string' && value.trim()) || (agentId === 'rex' && isAgentHandlerCompletion(agentId, result.output) ? 'rex_sourced_answer' : 'handler_failed'),
+          workflowLink,
           blockedSql: scope.blockedSql, blockedNetwork: scope.blockedNetwork, operational: false };
         await controlledExecution.exit(() => saveControlledAgentResult(pool, storage, agentId, data, result.output || {}, result.pbkIntelligenceContext || {}));
+        return { output: result.output, workOrderId: data.workOrderId };
       });
-    }
-    // QA validates an actual preceding handler result, not a fabricated success payload.
-    const scope = { ...storage, agentId: 'qa-agent', state: fixtureState, blockedNetwork: 0, blockedSql: 0 };
-    scope.pool = createControlledPool(pool, scope);
-    await controlledExecution.run(scope, async () => {
-      const result = await invokeAgentFromRegistry({ agentId: 'qa-agent', payload: { ...common, toolName: 'consultNurtureAgent', params: common, result: nurtureOutput } });
-      await scope.pool.drain();
-      const evidence = result.agentTask?.metadata?.executionEvidence || {};
-      const data = { agentId: 'qa-agent', runId: storage.runId, leadId: fixture.leadId, callId: fixture.callId, sourceUpdatedAt: fixture.sourceUpdatedAt,
-        contextId: result.pbkIntelligenceContext?.contextId || '', workOrderId: result.workOrder?.id || '',
-        completedAt: evidence.completedAt || isoNow(), outputResult: result.output?.result?.result || result.output?.qa?.validator || 'handler_failed',
-        blockedSql: scope.blockedSql, blockedNetwork: scope.blockedNetwork, operational: false };
-      await controlledExecution.exit(() => saveControlledAgentResult(pool, storage, 'qa-agent', data, result.output || {}, result.pbkIntelligenceContext || {}));
-    });
+    } });
     return await readControlledAgentQualification(pool, storage.runId);
   } finally { controlledQualificationRunning = false; }
 }
 
 async function invokeAgentFromRegistry(params = {}) {
+  return withRuntimeEvidenceContext('registered_business', async () => {
   const invocationStartedAt = performance.now();
   const registry = getCurrentAgentRegistry();
   const requestedId = normalizeAgentRegistryId(params.agentId || params.id || params.agent || '');
@@ -46100,7 +46488,9 @@ async function invokeAgentFromRegistry(params = {}) {
     requestedId,
   });
   const scope = controlledExecution.getStore();
-  if (scope) workOrder.payload = { leadId: scope.fixture.leadId, callId: scope.fixture.callId, runId: scope.runId, diagnostic: true, operational: false };
+  if (scope) workOrder.payload = { ...scope.workflowInput, leadId: scope.fixture.leadId, callId: scope.fixture.callId, runId: scope.runId, diagnostic: true, operational: false };
+  const localHandlers = getLocalAgentRegistryHandlers();
+  const timingTurn = createBridgeAgentTimingTurn(registeredAgentTimingChannel(agent, localHandlers), agent.id, workOrder.id);
   let agentTask = null;
   try {
     agentTask = await recordAgentHandoffTask({
@@ -46130,7 +46520,7 @@ async function invokeAgentFromRegistry(params = {}) {
           : { workOrder, pbkIntelligenceContext: agentContext },
     };
     const output = await invokeRegisteredAgent(agent, payloadWithContext, {
-      localHandlers: getLocalAgentRegistryHandlers(),
+      localHandlers,
       timeoutMs: params.timeoutMs || params.timeout_ms || 5000,
     });
     const routedTo = `invokeRegisteredAgent:${agent.id}`;
@@ -46142,6 +46532,12 @@ async function invokeAgentFromRegistry(params = {}) {
       output,
       agentContext
     );
+    const measuredResult = bindAgentTimingToParams({}, timingTurn, {
+      answer: [output?.answer, output?.nextBestPhrase, output?.strategy, output?.closing?.nextBestPhrase,
+        output?.recommendation?.reason, output?.intervention].find(value => typeof value === 'string' && value.trim()),
+      successful: isAgentHandlerCompletion(agent.id, output) && agentTimingResultSucceeded(output),
+    });
+    const timingProof = getTrustedAgentTimingProof(measuredResult);
     agentTask = await recordAgentHandoffTask({
       id: workOrder.id,
       correlationId: workOrder.id,
@@ -46158,21 +46554,22 @@ async function invokeAgentFromRegistry(params = {}) {
         approvalPolicy: workOrder.approvalPolicy,
         routedTo,
         outputResult: output?.result || output?.status || '',
-        executionEvidence: buildAgentExecutionEvidence({
+        executionEvidence: { ...buildAgentExecutionEvidence({
           agentId: agent.id,
           payload,
           output,
           durationMs: performance.now() - invocationStartedAt,
           completedAt: isoNow(),
           workOrderId: workOrder.id,
-        }),
+        }), ...(timingProof ? { timingProof } : {}) },
         pbkIntelligenceContext: summarizeRuntimePBKIntelligenceContext(agentContext),
       },
     });
     await persistState(state);
     return {
-      ok: true,
-      result: 'agent_invoked',
+      ok: output?.ok !== false,
+      result: output?.ok === false ? 'agent_handler_failed' : 'agent_invoked',
+      ...(output?.ok === false ? { error: 'The assigned agent could not finish that request.' } : {}),
       routedTo: `invokeRegisteredAgent:${agent.id}`,
       agent,
       output,
@@ -46216,6 +46613,7 @@ async function invokeAgentFromRegistry(params = {}) {
       error: error?.message || String(error),
     };
   }
+  });
 }
 
 function normalizeRexTool(value = '') {
@@ -48759,7 +49157,7 @@ function buildAgentStatusBundle() {
   const today = isoNow().slice(0, 10);
   const decisions = state.agentDecisions || [];
   const rexDecisions = state.rexDecisions || [];
-  const calls = state.calls || [];
+  const calls = normalizeStaleLiveCalls(state.calls || []);
   const callEmotions = state.callEmotions || [];
   const agents = (state.agents || buildDefaultAgentFleet()).map((agent) => {
     const agentId = normalizeAgentDebugId(agent.id || agent.name);
@@ -52377,7 +52775,7 @@ function buildNotificationSnapshot() {
       at: task.createdAt,
       unread: true,
     }));
-  const calls = (state.calls || []).slice(0, 5).map((call) => ({
+  const calls = (state.calls || []).slice(0, 5).map(normalizeStaleLiveCall).map((call) => ({
     id: call.id,
     type: 'call',
     title: `${call.status || 'Call'} - ${call.leadName || call.phone || 'Unknown lead'}`,
@@ -52528,27 +52926,33 @@ function getNetlifyProviderMeta() {
     ).trim();
   const url =
     String(
-      process.env.URL ||
-        process.env.DEPLOY_PRIME_URL ||
-        process.env.PBK_NETLIFY_URL ||
+      process.env.PBK_NETLIFY_URL ||
         process.env.PBK_FRONTEND_URL ||
-        'https://pbkcommandcenter.netlify.app'
+        process.env.URL ||
+        process.env.DEPLOY_PRIME_URL ||
+        'https://pbkcenter.netlify.app'
     ).trim();
   const netlifyEnvPresent = Boolean(process.env.NETLIFY || deployId || site);
-  const knownFrontendUrl = /^https:\/\/(?:[a-z0-9-]+\.)?pbkcommandcenter\.netlify\.app\b/i.test(url);
-  const configured = Boolean(netlifyEnvPresent || knownFrontendUrl);
-  const ready = Boolean(configured && url);
+  let validUrl = false;
+  try {
+    const parsed = new URL(url);
+    validUrl = ['https:', 'http:'].includes(parsed.protocol) && !parsed.username && !parsed.password;
+  } catch {
+    // An invalid frontend link cannot be used by the operator.
+  }
+  const configured = validUrl;
+  const ready = configured;
   return {
     configured,
     ready,
     provider: 'Netlify',
     mode: netlifyEnvPresent ? 'netlify-deploy-env' : 'configured-frontend-url',
-    url,
+    url: validUrl ? url : '',
     deployId,
     site,
     missing: ready ? [] : ['NETLIFY deployment env or PBK_NETLIFY_URL/PBK_FRONTEND_URL'],
     note: ready
-      ? `Agent dashboard is available at ${url}.`
+      ? `Agent dashboard is linked at ${url}; team sign-in is required.`
       : 'Set Netlify deployment env or PBK_NETLIFY_URL/PBK_FRONTEND_URL so the bridge can report dashboard readiness.',
   };
 }
@@ -54086,9 +54490,13 @@ function buildAnalyzerCacheKey(params = {}) {
     address: normalizeAddressKey(params.address || deal.address || params.propertyAddress || ''),
     selectedPath: params.selectedPath || deal.selectedPath || deal.path || '',
     price: params.price || deal.price || deal.agreedPrice || '',
-    arv: params.arv || deal.arv || '',
-    mao: params.mao || deal.mao60 || '',
-    repairs: params.repairs || params.repairsMid || deal?.repairs?.mid || '',
+    leadId: params.leadId || deal.leadId || '',
+    arv: params.arv ?? deal.arv ?? null,
+    mao: params.mao ?? deal.mao60 ?? null,
+    repairs: params.repairsMid ?? params.repairs ?? deal?.repairs?.mid ?? null,
+    fee: params.fee ?? deal.fee ?? null,
+    offer: params.offerPrice ?? deal.offer ?? deal.agreedPrice ?? null,
+    comps: deal.comps || null,
     beds: params.beds || deal.beds || '',
     baths: params.baths || deal.baths || '',
     sqft: params.sqft || deal.sqft || '',
@@ -54928,6 +55336,9 @@ const toolHandlers = {
       toolNames: Object.keys(toolHandlers),
       env: process.env,
     });
+    if (params.includeComposio === true) {
+      result.composio = await discoverComposioResearchTools();
+    }
     void recordResearchAdditiveRun('tool_universe', 'discoverExternalTool', params, result, {
       providerWrites: 'none',
       executionRequiresInvoke: true,
@@ -55040,7 +55451,7 @@ const toolHandlers = {
       useLLMPersonalization: params.useLLMPersonalization ?? params.use_llm_personalization,
       personalizeMessage:
         params.useLLMPersonalization || params.use_llm_personalization ? personalizeNurtureMessageWithStrategist : null,
-      invokeTool: (toolName, toolParams) => invokeToolWithOperatingGuard(toolName, toolParams),
+      invokeTool: (toolName, toolParams) => invokeToolWithOperatingGuard(toolName, buildNurtureProviderParams(toolParams)),
     });
   },
 
@@ -55056,7 +55467,7 @@ const toolHandlers = {
       useLLMPersonalization: params.useLLMPersonalization ?? params.use_llm_personalization,
       personalizeMessage:
         params.useLLMPersonalization || params.use_llm_personalization ? personalizeNurtureMessageWithStrategist : null,
-      invokeTool: (toolName, toolParams) => invokeToolWithOperatingGuard(toolName, toolParams),
+      invokeTool: (toolName, toolParams) => invokeToolWithOperatingGuard(toolName, buildNurtureProviderParams(toolParams)),
     });
   },
 
@@ -56190,15 +56601,17 @@ const toolHandlers = {
         return result;
       }
     }
-    const cached = getAnalyzerResultCache(params);
-    if (cached) return cached.result;
-
     const propertyResolution = await resolvePropertyDataForAnalyzer(params);
+    const effectivePropertyData = propertyResolution.propertyData || params.deal?.propertyData || {};
+    const cacheParams = { ...params, propertyData: effectivePropertyData };
+    const cached = getAnalyzerResultCache(cacheParams);
+    if (cached) return cached.result;
     const run = buildAnalyzerSummary({
       ...params,
-      propertyData: propertyResolution.propertyData,
+      propertyData: effectivePropertyData,
       enrichment: propertyResolution.enrichment,
     });
+    if (run.ok === false) return run;
     const bant = normalizeBantInfo(params.bant || {}, params);
     if (Object.keys(bant).length) {
       run.bant = bant;
@@ -56229,7 +56642,7 @@ const toolHandlers = {
       })
     );
     await persistState(state);
-    setAnalyzerResultCache(params, run);
+    setAnalyzerResultCache(cacheParams, run);
     return {
       ...run,
       leadSynced: Boolean(syncedLead),
@@ -57601,6 +58014,18 @@ const toolHandlers = {
       createdAt: params.createdAt || isoNow(),
     };
 
+    if (approval.type === 'provider-action') {
+      const toolName = approval.approvalAction || approval.metadata.requestedTool;
+      const executionParams = resolveProviderActionReplayParams(toolName, approval.metadata.executionParams || {});
+      approval.phone = executionParams.phone || approval.phone;
+      approval.email = executionParams.email || approval.email;
+      approval.metadata = { ...approval.metadata, actionBinding: createProviderActionBinding({
+        approvalId: approval.id, workspaceId: 'pbk',
+        toolName, params: executionParams, createdAt: approval.createdAt,
+        contextHash: buildProviderActionContextHash(toolName, executionParams),
+      }), executionParams };
+    }
+
     if (isCampaignStartApproval(approval)) {
       const campaignId = getApprovalCampaignId(approval);
       const campaign = campaignId && (state.campaigns || []).find((item) => item.id === campaignId);
@@ -58221,6 +58646,8 @@ const toolHandlers = {
     recordToolUse('getBrainState');
     const messages = normalizeConversationMessages(params.messages);
     const query = getLastUserMessage(messages, params.query || params.q || '');
+    // Controlled handoff data is retrieval input, never an operator intent command.
+    if (controlledExecution.getStore()) return answerBrainQuery(state, query, { storedEvidenceOnly: true });
     const isReadableSummaryIntent = looksLikeReadableSummaryQuery(query);
     const isBrowserResearchIntent = looksLikeBrowserResearchIntent(query);
     const isTroubleshootingIntent = !isReadableSummaryIntent && !isBrowserResearchIntent && looksLikeRexTroubleshootingQuery(query);
@@ -60453,6 +60880,39 @@ const toolHandlers = {
   },
 };
 
+async function loadExactPropertyLead(leadId) {
+  const hot = (state.leadImports || []).find(item => String(item.leadId || item.id || '').trim() === leadId);
+  if (hot) return hot;
+  if (!IS_HOSTED && !getPgPool()) return null;
+  const [durable] = await loadAppliedBatchLeads(queryPgRows, leadId);
+  // A manual edit may have hydrated this row while the database read awaited.
+  // Prefer that current canonical record over the earlier durable snapshot.
+  const current = (state.leadImports || []).find(item => String(item.leadId || item.id || '').trim() === leadId);
+  if (current) return current;
+  if (!durable || String(durable.leadId || durable.id || '') !== leadId) return null;
+  // Keep the requested durable row available until its synchronous patch. The
+  // normal newest-first intake limiter would immediately drop an older import.
+  // This is only a bounded hot-cache replacement; source timestamps stay intact.
+  state.leadImports = [durable, ...(state.leadImports || [])].slice(0, LIMITS.leadImports);
+  return durable;
+}
+
+const enrichPropertyIntelligence = createPropertyIntelligence({
+  getLead: loadExactPropertyLead,
+  listing: params => toolHandlers.getPropertyData(params),
+  records: lookupAttomPropertyPreview,
+  sales: lookupAttomRecentSales,
+  saveLead: async (leadId, patch) => {
+    // The coordinator re-read the exact record after providers settled. This
+    // synchronous patch preserves concurrent manual edits and acquisition source.
+    const next = patchLeadImport(state, { leadId }, patch);
+    if (!next) throw Object.assign(new Error('Lead not found.'), { status: 404, code: 'lead_not_found' });
+    const persisted = await persistLeadProfileRowToDb(next, next.source || 'property-intelligence', { exactIdentity: true });
+    if (DATABASE_URL && !persisted.ok) throw new Error('Property evidence profile persistence failed.');
+    await persistState(state);
+  },
+});
+
 function findDuplicateLeadImport(leadImport = {}) {
   const leadAddressKey = slugify(leadImport.property?.address || leadImport.address || '');
   const leadPhoneKey = normalizePhone(leadImport.seller?.phone || leadImport.phone || '');
@@ -60478,6 +60938,11 @@ async function handleManualLeadCreate(payload = {}) {
   if (eventId) {
     const prior = (state.leadImports || []).find((item) => item && item.eventId === eventId);
     if (prior) {
+      // A prior attempt may have reached memory but failed its durable write.
+      await persistState(state);
+      void persistLeadProfileRowToDb(prior, 'manual-lead-replay').catch((error) => {
+        console.warn('[pbk-local-openclaw] manual lead replay projection failed:', error?.message || 'unknown error');
+      });
       return {
         ok: true,
         replayed: true,
@@ -60499,13 +60964,17 @@ async function handleManualLeadCreate(payload = {}) {
     stage: payload.stage || payload.status || 'new',
   });
   if (eventId) leadImport.eventId = eventId;
+  if (payload.source === 'analyzer-save' && findDuplicateLeadImport(leadImport)) {
+    return { ok: false, result: 'analyzer_lead_match_requires_review',
+      error: 'A matching CRM lead already exists. Open it from Leads before syncing this address.' };
+  }
   ensureLeadCommitEnvelope(leadImport, payload.source || payload.leadSource || 'manual-lead-create', {
     actorType: payload.actor || payload.requestedBy || 'PBK operator',
     reason: 'Manual lead create saved to the canonical lead profile.',
     patch: buildLeadCommitPatch(leadImport),
   });
 
-  const patched = patchLeadImport(
+  const patched = payload.source === 'analyzer-save' ? null : patchLeadImport(
     state,
     {
       leadId: leadImport.leadId,
@@ -61126,11 +61595,16 @@ async function handleRuntimeEvent(normalizedEvent, payload) {
             summarizeProviderActionResult(providerActionResult);
         } else {
           const executionParams = approval.metadata.executionParams && typeof approval.metadata.executionParams === 'object' ? approval.metadata.executionParams : {};
-          const bindingValidation = validateConversationApprovalBinding(
+          const actionAuthorization = validateProviderActionAuthorization({
+            approval, toolName, params: executionParams,
+            contextHash: buildProviderActionContextHash(toolName, executionParams),
+          });
+          const conversationBindingValidation = validateConversationApprovalBinding(
             approval,
             toolName,
             executionParams
           );
+          const bindingValidation = actionAuthorization.ok ? conversationBindingValidation : actionAuthorization;
           if (!bindingValidation.ok) {
             providerActionResult = {
               ok: false,
@@ -61148,11 +61622,13 @@ async function handleRuntimeEvent(normalizedEvent, payload) {
                 workspaceId:
                   approval.workspaceId || approval.workspace_id || 'pbk',
                 toolName,
-                bindingHash:
-                  approval.metadata.conversationSendBinding?.bindingHash ||
-                  bindingValidation.binding?.bindingHash ||
-                  '',
+                bindingHash: actionAuthorization.bindingHash,
                 execute: async ({ attemptToken, dispatchStartedAt }) => {
+                  const currentAuthorization = validateProviderActionAuthorization({
+                    approval, toolName, params: executionParams,
+                    contextHash: buildProviderActionContextHash(toolName, executionParams),
+                  });
+                  if (!currentAuthorization.ok) return { providerActionResult: currentAuthorization };
                   approval.metadata.providerActionDispatch = {
                     attemptToken,
                     status: 'dispatching',
@@ -61228,6 +61704,7 @@ async function handleRuntimeEvent(normalizedEvent, payload) {
               summarizeProviderActionResult(providerActionResult);
             approval.metadata.providerActionQa =
               sharedDispatchValue.providerActionQa || null;
+            approval.metadata.providerProof = sharedDispatchValue.providerProof || null;
             approval.metadata.providerActionBindingValidation =
               sharedDispatchValue.providerActionBindingValidation ||
               bindingValidation;
@@ -61368,10 +61845,10 @@ async function handleRuntimeEvent(normalizedEvent, payload) {
             {
               approvalId: approval.id,
               invokeTool: (toolName, toolParams) =>
-                invokeToolWithOperatingGuard(toolName, {
+                invokeToolWithOperatingGuard(toolName, buildNurtureProviderParams({
                   ...toolParams,
                   approvalId: approval.id,
-                }),
+                })),
             }
           );
         } catch (error) {
@@ -62292,7 +62769,7 @@ function buildStateSnapshot(options = {}) {
     analyzerRuns: list(state.analyzerRuns, 80),
     propertyCache: list(state.propertyCache || [], 120),
     dncEntries: list(state.dncEntries, 160),
-    calls: list(state.calls, 80),
+    calls: list(normalizeStaleLiveCalls(state.calls), 80),
     messages: list(state.messages, 120),
     messageCounts: getMessageCounts(),
     notifications: buildNotificationSnapshot(),
@@ -62421,7 +62898,7 @@ function sendBinary(response, statusCode, body, headers = {}) {
   response.end(body);
 }
 
-const BRIDGE_DEFAULT_ALLOWED_ORIGINS = ['https://pbkcommandcenter.netlify.app', 'https://pbk-openclaw-bridge.onrender.com', 'http://localhost:3000', 'http://localhost:5173', 'http://127.0.0.1:3000', 'http://127.0.0.1:5173', `http://${HOST}:${PORT}`];
+const BRIDGE_DEFAULT_ALLOWED_ORIGINS = ['https://pbkcenter.netlify.app', 'https://pbkcommandcenter.netlify.app', 'https://pbk-openclaw-bridge.onrender.com', 'http://localhost:3000', 'http://localhost:5173', 'http://127.0.0.1:3000', 'http://127.0.0.1:5173', `http://${HOST}:${PORT}`];
 
 function getBridgeAllowedOrigins() {
   const configured = String(process.env.PBK_ALLOWED_ORIGINS || process.env.PBK_CORS_ALLOWED_ORIGINS || '')
@@ -62431,14 +62908,32 @@ function getBridgeAllowedOrigins() {
   return new Set([...BRIDGE_DEFAULT_ALLOWED_ORIGINS, ...configured]);
 }
 
+function isBridgeOriginAllowed(origin = '') {
+  const allowed = getBridgeAllowedOrigins();
+  if (allowed.has(origin)) return true;
+  try {
+    const candidate = new URL(origin);
+    if (candidate.protocol !== 'https:' || candidate.port || candidate.origin !== origin) return false;
+    for (const trusted of allowed) {
+      const site = new URL(trusted);
+      if (site.protocol !== 'https:' || site.port || site.hostname.includes('--')
+        || !/^[a-z0-9-]+\.netlify\.app$/.test(site.hostname)) continue;
+      const suffix = `--${site.hostname}`;
+      if (candidate.hostname.endsWith(suffix)
+        && /^[a-z0-9][a-z0-9-]*$/.test(candidate.hostname.slice(0, -suffix.length))) return true;
+    }
+  } catch { /* Malformed origins are never trusted. */ }
+  return false;
+}
+
 function buildBridgeCorsHeaders(request) {
   const headers = {
     'Access-Control-Allow-Methods': 'GET,POST,PUT,PATCH,DELETE,OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type, Authorization, Idempotency-Key, X-Idempotency-Key, X-PBK-Webhook-Secret, X-Webhook-Secret, X-PBK-Signature, X-Public-Ava-Key, X-Public-Key, X-Request-ID, X-PBK-TOTP, X-OTP, X-PBK-Local-Callback-Token',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-PBK-Team-Token, Idempotency-Key, X-Idempotency-Key, X-PBK-Webhook-Secret, X-Webhook-Secret, X-PBK-Signature, X-Public-Ava-Key, X-Public-Key, X-Request-ID, X-PBK-TOTP, X-OTP, X-PBK-Local-Callback-Token',
     Vary: 'Origin',
   };
   const origin = String(request?.headers?.origin || '').trim();
-  if (origin && getBridgeAllowedOrigins().has(origin)) {
+  if (origin && isBridgeOriginAllowed(origin)) {
     headers['Access-Control-Allow-Origin'] = origin;
   }
   return headers;
@@ -62448,7 +62943,7 @@ function getResponseCorsHeaders(response) {
   return (
     response?.pbkCorsHeaders || {
       'Access-Control-Allow-Methods': 'GET,POST,PUT,PATCH,DELETE,OPTIONS',
-      'Access-Control-Allow-Headers': 'Content-Type, Authorization, Idempotency-Key, X-Idempotency-Key, X-PBK-Webhook-Secret, X-Webhook-Secret, X-PBK-Signature, X-Public-Ava-Key, X-Public-Key, X-Request-ID, X-PBK-TOTP, X-OTP, X-PBK-Local-Callback-Token',
+      'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-PBK-Team-Token, Idempotency-Key, X-Idempotency-Key, X-PBK-Webhook-Secret, X-Webhook-Secret, X-PBK-Signature, X-Public-Ava-Key, X-Public-Key, X-Request-ID, X-PBK-TOTP, X-OTP, X-PBK-Local-Callback-Token',
       Vary: 'Origin',
     }
   );
@@ -62594,7 +63089,7 @@ function buildElevenLabsTtsRequest(body = {}, text = '', { stream = false } = {}
         });
   const textControls = applyProsodyTextControls(safeText, prosody || {}, { modelId });
   const payload = {
-    text: String(textControls.text || safeText || '').slice(0, 1800),
+    text: String(textControls.text || safeText || ''),
     model_id: modelId,
     voice_settings: {
       stability: Number(body.stability ?? prosody?.stability ?? ELEVENLABS_STABILITY),
@@ -62619,6 +63114,20 @@ function buildElevenLabsTtsRequest(body = {}, text = '', { stream = false } = {}
 }
 
 async function fetchElevenLabsTts(body = {}, text = '', options = {}) {
+  const speechText = sanitizeAvaSpokenOutput(text || body.text || body.input || '', body.fallbackText || body.fallback_text || '');
+  const chunks = splitAvaSpeechText(speechText);
+  if (chunks.length > 1) {
+    const first = await fetchElevenLabsTts(body, chunks[0], options);
+    return {
+      ...first,
+      sanitizedText: speechText,
+      response: joinAvaSpeechResponses(first.response, chunks.slice(1), async (chunk, signal) => {
+        const chunkSignal = options.signal ? AbortSignal.any([options.signal, signal]) : signal;
+        const next = await fetchElevenLabsTts({ ...body, voiceId: first.voiceId }, chunk, { ...options, signal: chunkSignal });
+        return next.response;
+      }),
+    };
+  }
   const request = buildElevenLabsTtsRequest(body, text, options);
   const timeoutMs = Math.max(0, Number(options.timeoutMs || 0));
   const fireRequest = (ttsRequest) =>
@@ -62626,6 +63135,9 @@ async function fetchElevenLabsTts(body = {}, text = '', options = {}) {
       'elevenlabs',
       async () => {
         const controller = timeoutMs > 0 ? new AbortController() : null;
+        const signal = controller
+          ? (options.signal ? AbortSignal.any([options.signal, controller.signal]) : controller.signal)
+          : options.signal;
         let timeout = null;
         try {
           if (controller) {
@@ -62641,7 +63153,7 @@ async function fetchElevenLabsTts(body = {}, text = '', options = {}) {
               'xi-api-key': ELEVENLABS_API_KEY,
             },
             body: JSON.stringify(ttsRequest.payload),
-            ...(controller ? { signal: controller.signal } : {}),
+            ...(signal ? { signal } : {}),
           });
         } finally {
           if (timeout) clearTimeout(timeout);
@@ -62850,6 +63362,7 @@ async function sendElevenLabsTtsToTelnyxMediaStream(session = {}, text = '', opt
   const cooldownRemaining = TELNYX_ELEVENLABS_MEDIA_REPLY_MIN_MS - (now - Number(session.lastMediaReplyAt || 0));
   if (cooldownRemaining > 0) await sleep(cooldownRemaining);
 
+  if (options.phoneTurnTiming) options.phoneTurnTiming.ttsRequestedAt = Date.now();
   const tts = await fetchElevenLabsTts(
     {
       outputFormat: TELNYX_ELEVENLABS_OUTPUT_FORMAT,
@@ -62911,7 +63424,10 @@ async function sendElevenLabsTtsToTelnyxMediaStream(session = {}, text = '', opt
     };
   }
 
-  const audioBuffer = Buffer.from(await tts.response.arrayBuffer());
+  const audioBuffer = await readPhoneTtsAudio(tts.response, () => {
+    if (options.phoneTurnTiming) options.phoneTurnTiming.ttsFirstAudioByteAt = Date.now();
+  });
+  if (options.phoneTurnTiming) options.phoneTurnTiming.ttsAudioReadyAt = Date.now();
   if (!audioBuffer.length) {
     return {
       ok: false,
@@ -62953,6 +63469,7 @@ async function sendElevenLabsTtsToTelnyxMediaStream(session = {}, text = '', opt
     },
   };
   socket.send(JSON.stringify(mediaMessage));
+  if (options.phoneTurnTiming) options.phoneTurnTiming.mediaEnqueuedAt = Date.now();
   session.lastMediaReplyAt = Date.now();
   recordElevenLabsValidation({ ok: true, status: 200, voiceId: tts.voiceId });
   return {
@@ -62995,6 +63512,7 @@ async function sendAvaPhoneReplyAudio(session = {}, text = '', options = {}) {
   }
 
   const fallback = await speakTelnyxCall(session.callId, safeText);
+  if (fallback.ok && options.phoneTurnTiming) options.phoneTurnTiming.fallbackAcceptedAt = Date.now();
   return {
     ...fallback,
     provider: fallback.ok ? 'Telnyx' : fallback.provider || 'Telnyx',
@@ -63056,10 +63574,13 @@ async function sendElevenLabsTtsStream(response, body = {}, text = '') {
 
   let bytes = 0;
   let chunks = 0;
+  let reader = null;
+  const cancelAudio = () => { void reader?.cancel().catch(() => {}); };
+  response.once('close', cancelAudio);
   try {
-    const reader = tts.response.body?.getReader?.();
+    reader = tts.response.body?.getReader?.();
     if (!reader) throw new Error('ElevenLabs streaming response did not expose a readable body.');
-    while (true) {
+    while (!response.destroyed && !response.writableEnded) {
       const { done, value } = await reader.read();
       if (done) break;
       if (!value?.byteLength) continue;
@@ -63068,6 +63589,7 @@ async function sendElevenLabsTtsStream(response, body = {}, text = '') {
       if (response.destroyed || response.writableEnded) break;
       response.write(Buffer.from(value));
     }
+    if (response.destroyed) return;
     recordElevenLabsValidation({
       ok: true,
       status: 200,
@@ -63096,6 +63618,8 @@ async function sendElevenLabsTtsStream(response, body = {}, text = '') {
     }
     return;
   } finally {
+    response.off('close', cancelAudio);
+    await reader?.cancel().catch(() => {});
     if (!response.destroyed && !response.writableEnded) response.end();
   }
   if (!bytes || !chunks) {
@@ -63265,8 +63789,9 @@ function getFounderMessageRecipient(message = {}) {
 function buildFounderWorkQueueSnapshot({ limit = 8 } = {}) {
   const safeLimit = Math.max(1, Math.min(24, Number(limit) || 8));
   const items = [];
+  const calls = normalizeStaleLiveCalls(state.calls || []);
 
-  (state.calls || [])
+  calls
     .filter(
       (call) =>
         isActiveLiveCall(call) ||
@@ -63435,7 +63960,7 @@ function buildFounderWorkQueueSnapshot({ limit = 8 } = {}) {
     summary: {
       approvals: getPendingRuntimeApprovals(state.approvals || []).length,
       adminTasks: getPendingAdminTasks(state.adminTasks || []).length,
-      activeCalls: (state.calls || []).filter((call) => isActiveLiveCall(call)).length,
+      activeCalls: calls.filter((call) => isActiveLiveCall(call)).length,
       failedMessages: (state.messages || []).filter((message) =>
         ['failed', 'delivery_failed', 'error'].includes(String(message.status || '').toLowerCase())
       ).length,
@@ -64386,7 +64911,7 @@ function parseAvaDeepSeekDecisionAnswer(answer = '') {
   const source = parsed && typeof parsed === 'object' ? parsed : {};
   const allowed = new Set(['answer', 'ask', 'act', 'approval_required', 'delegate', 'log_only', 'block']);
   const decision = allowed.has(String(source.decision || '').trim()) ? String(source.decision).trim() : 'answer';
-  const reply = sanitizeAvaSpokenOutput(source.reply || source.answer || source.response || source.message || source.question || answer || '', '').slice(0, 1200);
+  const reply = sanitizeAvaSpokenOutput(source.reply || source.answer || source.response || source.message || source.question || answer || '', '', { preserveFormatting: true });
   const nextAction = sanitizeAvaSpokenOutput(source.nextAction || source.next_action || '', '').slice(0, 260);
   const missionTimeline = Array.isArray(source.missionTimeline || source.mission_timeline)
     ? (source.missionTimeline || source.mission_timeline)
@@ -64419,10 +64944,10 @@ function normalizeAvaAssistantAnswer(answer = '') {
   const parsed = extractJsonObjectFromText(text);
   if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
     const candidate = parsed.reply || parsed.answer || parsed.response || parsed.message || parsed.question || '';
-    const normalized = sanitizeAvaSpokenOutput(candidate, '').slice(0, 1600);
+    const normalized = sanitizeAvaSpokenOutput(candidate, '', { preserveFormatting: true });
     if (normalized) return normalized;
   }
-  return sanitizeAvaSpokenOutput(text, text).slice(0, 1600);
+  return sanitizeAvaSpokenOutput(text, text, { preserveFormatting: true });
 }
 
 function getAvaDeepSeekDecisionFromToolResult(toolResult = null) {
@@ -64538,46 +65063,77 @@ async function runInternalAvaDeepSeekChat({
   missionController = null,
   memories = [],
   requestTiming = null,
+  stream = null,
 } = {}) {
+  // Operator explanations need a larger budget than short seller phone turns.
+  // Long staff streams use Render directly; phone turns retain their own budgets.
+  // Every retry/fallback still shares one deadline and an inactivity watchdog.
+  const liveBudgetMs = 600_000;
+  const elapsedMs = requestTiming?.snapshot?.().durationMs || 0;
+  const deadlineAt = Date.now() + Math.max(0, liveBudgetMs - elapsedMs);
   const prompt = buildAssistantPrompt(assistantContextSession, {
     extraContext: buildInternalAssistantDeepSeekContext(body, {
       missionController,
       memories,
     }),
   });
-  const deepSeekMessages = buildAvaDecisionMessages(prompt, text);
+  const deepSeekMessages = buildAvaDecisionMessages(prompt, text, { streaming: Boolean(stream), maxOutputTokens: 32_768 });
+  let streamedAnswer = false;
+  const streamingOptions = stream ? {
+    signal: stream.signal,
+    streamPreviewFactory: () => createAvaDecisionPreview({
+      sanitize: value => {
+        if (value.length > 256_000) throw new Error('Ava reply exceeded the response safety budget.');
+        return normalizeAvaAssistantAnswer(sanitizeAssistantTurn(value, 256_000, { preserveFormatting: true }).content);
+      },
+      check: stream.check,
+      onAnswer: async value => { await stream.onAnswer(value); streamedAnswer = true; },
+    }),
+  } : {};
   let deepSeek = await runDeepSeekChatCompletion(deepSeekMessages, {
+    ...streamingOptions,
     source: 'ava-assistant-chat',
     requestTiming,
+    deadlineAt,
+    speculative: false,
     sessionId,
     leadId,
     model: DEEPSEEK_LIVE_MODEL,
     temperature: 0.45,
-    maxTokens: 700,
+    maxTokens: 32_768,
+    longReply: true,
+    streamIdleTimeoutMs: 90_000,
     responseFormat: 'json',
     tools: buildAvaDeepSeekDecisionTools(),
     toolChoice: 'auto',
     thinkingMode: body.deepSeekThinkingMode || body.thinkingMode || DEEPSEEK_THINKING_MODE,
-    attemptTimeoutMs: DEEPSEEK_LIVE_ATTEMPT_TIMEOUT_MS,
+    attemptTimeoutMs: liveBudgetMs,
     retryAttempts: DEEPSEEK_LIVE_RETRY_ATTEMPTS,
     retryDelayMs: DEEPSEEK_LIVE_RETRY_DELAY_MS,
   });
+  if (!deepSeek.ok && streamedAnswer) throw new Error('Ava response stream was interrupted.');
   if (!deepSeek.ok && isAvaDeepSeekJsonModeFallbackCandidate(deepSeek)) {
     const jsonModeResult = deepSeek;
     const textFallback = await runDeepSeekChatCompletion(ensureDeepSeekJsonModeMessages(deepSeekMessages), {
+      ...streamingOptions,
       source: 'ava-assistant-chat-json-mode-fallback',
       requestTiming,
+      deadlineAt,
+      speculative: false,
       sessionId,
       leadId,
       model: DEEPSEEK_LIVE_MODEL,
       temperature: 0.35,
-      maxTokens: 700,
+      maxTokens: 32_768,
+      longReply: true,
+      streamIdleTimeoutMs: 90_000,
       responseFormat: 'text',
       thinkingMode: body.deepSeekThinkingMode || body.thinkingMode || DEEPSEEK_THINKING_MODE,
-      attemptTimeoutMs: DEEPSEEK_LIVE_ATTEMPT_TIMEOUT_MS,
+      attemptTimeoutMs: liveBudgetMs,
       retryAttempts: 0,
       retryDelayMs: 0,
     });
+    if (!textFallback.ok && streamedAnswer) throw new Error('Ava response stream was interrupted.');
     deepSeek = {
       ...textFallback,
       provider: {
@@ -64601,19 +65157,25 @@ async function runInternalAvaDeepSeekChat({
     );
     for (const model of retryModels) {
       const modelFallback = await runDeepSeekChatCompletion(ensureDeepSeekJsonModeMessages(deepSeekMessages), {
+        ...streamingOptions,
         source: 'ava-assistant-chat-model-fallback',
         requestTiming,
+        deadlineAt,
+        speculative: false,
         sessionId,
         leadId,
         model,
         temperature: 0.35,
-        maxTokens: 700,
+        maxTokens: 32_768,
+        longReply: true,
+        streamIdleTimeoutMs: 90_000,
         responseFormat: 'text',
         thinkingMode: body.deepSeekThinkingMode || body.thinkingMode || DEEPSEEK_THINKING_MODE,
-        attemptTimeoutMs: Math.max(DEEPSEEK_LIVE_ATTEMPT_TIMEOUT_MS, 2200),
+        attemptTimeoutMs: liveBudgetMs,
         retryAttempts: 0,
         retryDelayMs: 0,
       });
+      if (!modelFallback.ok && streamedAnswer) throw new Error('Ava response stream was interrupted.');
       deepSeek = {
         ...modelFallback,
         provider: {
@@ -64634,8 +65196,44 @@ async function runInternalAvaDeepSeekChat({
     }
   }
   const deepSeekDecision = parseAvaDeepSeekDecisionAnswer(deepSeek.answer);
-  const finalAnswer = deepSeekDecision.reply || deepSeek.answer || '';
+  if (stream) deepSeekDecision.reply = normalizeAvaAssistantAnswer(sanitizeAvaStreamReply(deepSeekDecision.reply));
+  const finalAnswer = stream ? deepSeekDecision.reply : deepSeekDecision.reply || deepSeek.answer || '';
+  if (finalAnswer.length > 256_000) throw new Error('Ava reply exceeded the response safety budget.');
   const usagePersistence = deepSeek.provider?.usagePersistence || null;
+  if (deepSeek.ok && !isAvaCompactDecisionSafe(deepSeek.answer)) {
+    if (streamedAnswer) throw new Error('Ava response stream did not finish a valid decision.');
+    return {
+      ok: false, answer: '', usagePersistence,
+      toolResult: {
+        ok: false, result: 'provider_invalid_decision',
+        provider: deepSeek.provider || null,
+        error: 'DeepSeek did not return a valid safe decision contract.',
+        attempts: deepSeek.attempts || [],
+      },
+    };
+  }
+  if (deepSeek.ok && (
+    !['answer', 'ask', 'log_only'].includes(deepSeekDecision.decision)
+    || deepSeekDecision.needsApproval
+    || deepSeekDecision.toolIntent?.name
+    || deepSeekDecision.toolIntent?.providerWrite
+    || deepSeek.toolCalls?.length
+  )) {
+    return {
+      ok: false, controllerRejected: true, usagePersistence,
+      answer: deepSeekDecision.needsApproval
+        ? 'That proposed action requires approval. Nothing was sent or changed.'
+        : 'I paused that response for safety. Nothing was sent or changed.',
+      toolResult: {
+        ok: false, result: 'ava_control_model_decision',
+        modelDecision: deepSeekDecision.decision,
+        deepSeekDecision, approvalRequired: Boolean(deepSeekDecision.needsApproval),
+        providerWritesBlocked: true,
+        provider: deepSeek.provider || null,
+        usagePersistence, attempts: deepSeek.attempts || [],
+      },
+    };
+  }
   if (deepSeek.ok && isPublicAvaBrainAnswerSafe(finalAnswer)) {
     return {
       ok: true,
@@ -64765,11 +65363,73 @@ function enforceAvaControlEnvelope(missionController = {}, assistantPlan = {}) {
   };
 }
 
+async function handleAvaRexResearch(request, body, market) {
+  const pool = getPgPool();
+  const leadId = String(body.leadId || '').trim().slice(0, 120);
+  const team = getTeamAuthMeta(request);
+  const owner = team.source === 'session-token' ? `team:${team.actor}` : 'pbk:bridge';
+  let handoff = { status: 'unavailable' };
+  if (body.rexStatusOnly !== true && !market) handoff = { status: 'invalid_market' };
+  else if (pool && typeof body.researchRequestId === 'string') {
+    const readVersion = async id => {
+      const { rows } = await pool.query(`
+        SELECT lead.record FROM public.bridge_state AS snapshot
+        CROSS JOIN LATERAL jsonb_array_elements(COALESCE(snapshot.data->'leadImports', '[]'::jsonb)) AS lead(record)
+        WHERE snapshot.id = 'singleton'
+          AND ($1 IN (lead.record->>'id', lead.record->>'leadId', lead.record->>'lead_id')) LIMIT 1`, [id]);
+      const current = findInternalAssistantLeadById(id);
+      const persisted = rexLeadVersion(rows[0]?.record);
+      return persisted && current ? `${persisted}:${rexLeadVersion(current)}` : null;
+    };
+    const input = { owner, requestId: body.researchRequestId, leadId, store: postgresRexHandoffStore(pool), readVersion };
+    try {
+      handoff = body.rexStatusOnly === true
+        ? await readRexHandoff(input)
+        : await runRexHandoff({ ...input, market,
+          research: (location, clientRequestId) => runOpenAiWebSearch(
+            `Summarize current public housing market conditions for ${location}. Link to the sources for the key facts and state what's uncertain.`,
+            { singleAttempt: true, fallback: false, clientRequestId }
+          ),
+        });
+    } catch {
+      // In particular, a failed receipt write cannot turn into a success or a second research call.
+      handoff = { status: 'unavailable' };
+    }
+  }
+  const answers = {
+    running: 'Rex is researching in Brain. Check research status for the saved result.',
+    reconciliation_required: 'Outcome unconfirmed. The research may have run. Use the request reference to reconcile the outcome before another run.',
+    stale: 'The linked lead or its property evidence changed. Ask Rex to research again to get a current result.',
+    failed: 'Rex could not return a cited market brief.',
+    conflict: 'This request already belongs to different research.',
+    invalid_market: 'Give Rex a city and state, for example: Ask Rex to research Tampa, FL.',
+    missing_lead: 'I could not verify the linked lead. Open the lead and try again.',
+    missing: 'I could not find a saved research request.',
+    unavailable: 'I could not confirm the saved research status. Check status before submitting it again.',
+  };
+  return { statusCode: 200, body: {
+    ok: ['running', 'complete'].includes(handoff.status),
+    mode: 'rex_research',
+    answer: handoff.failureReason === 'provider_quota_exhausted'
+      ? 'Research credits are unavailable. Ask your PBK administrator to check the search provider before starting a new brief.'
+      : handoff.answer || answers[handoff.status] || 'A new research request is required.',
+    activeLeadId: handoff.leadId || '',
+    sessionId: getPublicAvaAssistantSessionId(request, body),
+    rexHandoff: handoff,
+  } };
+}
+
 async function handleInternalAvaAssistantChatRequest(request) {
+  return withRuntimeEvidenceContext('operator_chat', async () => {
   const assistantOpsStartedAt = Date.now();
   const requestTiming = createAvaRequestTiming();
+  const timingTurn = createBridgeAgentTimingTurn('chat');
   const body = await requestTiming.measure('body_read', () => readBody(request));
-  const messages = normalizeConversationMessages(body.messages);
+  const rexMarket = typeof body.message === 'string' ? parseRexResearch(body.message) : null;
+  if (body.rexStatusOnly === true || rexMarket || (typeof body.message === 'string' && /^ask rex to research\s/i.test(body.message.trim()))) {
+    return handleAvaRexResearch(request, body, rexMarket);
+  }
+  const messages = normalizeConversationMessages(body.messages, { assistantMaxChars: 256_000 });
   const sanitizedInput = sanitizePublicAvaChatTurn(getLastUserMessage(messages, body.message || body.query || body.text || body.prompt || ''));
   const text = sanitizedInput.content;
   if (!text) {
@@ -64788,15 +65448,19 @@ async function handleInternalAvaAssistantChatRequest(request) {
     normalizeAssistantSession({ history: messages }).history,
     text
   );
+  const completedHistorySnapshot = body.historyMode === 'completed-only' && Array.isArray(body.messages);
   const assistantIntent = detectAssistantIntent(text);
   const readOnlyAuditRequest = Boolean(assistantIntent.readOnly || isAvaReadOnlyAuditRequest(text));
   const assistantContextSession = {
     ...normalizeAssistantSession(priorAssistantSession),
     leadId: body.leadId || body.lead_id || priorAssistantSession?.leadId || priorAssistantSession?.lead_id || '',
-    history: mergeAssistantHistories(
-      normalizeAssistantSession(priorAssistantSession).history,
-      requestedHistory
-    ),
+    // A hosted stream may finish after Stop; only the browser knows which replies it completed.
+    history: completedHistorySnapshot
+      ? requestedHistory
+      : mergeAssistantHistories(
+        normalizeAssistantSession(priorAssistantSession).history,
+        requestedHistory
+      ),
   };
   const assistantMemories = getCleanAvaActiveMemories(12);
   const initialMissionController = await requestTiming.measure('controller_intake', () => runAvaMissionController({
@@ -64856,6 +65520,7 @@ async function handleInternalAvaAssistantChatRequest(request) {
     memories: assistantMemories,
   }));
   const controlGate = enforceAvaControlEnvelope(missionController, assistantPlan);
+  request.avaStream?.signal.throwIfAborted();
 
   if (readOnlyAuditRequest && assistantPlan.action === 'general') {
     const auditFallback = buildAvaReadOnlyAuditFallback({
@@ -64881,7 +65546,9 @@ async function handleInternalAvaAssistantChatRequest(request) {
     });
     const agentName = toolResult?.agent?.name || assistantIntent.agentName || assistantPlan.toolPlan.params?.agentId || 'the assigned agent';
     const workOrderId = toolResult?.workOrder?.id || '';
-    if (toolResult?.ok === false) {
+    if (toolResult?.result === 'agent_handler_failed') {
+      answer = `${agentName} received the work order but could not finish the request.`;
+    } else if (toolResult?.ok === false) {
       answer = `I could not assign ${agentName} yet. ${toolResult?.error || 'The agent registry did not return a usable worker.'}`.trim();
     } else {
       answer = [
@@ -65079,9 +65746,34 @@ async function handleInternalAvaAssistantChatRequest(request) {
       leadId: activeAssistantLeadId || assistantContextSession.leadId || '',
       missionController,
       memories: assistantMemories,
+      stream: request.avaStream ? {
+        ...request.avaStream,
+        onAnswer: async preview => {
+          await request.avaStream.onAnswer(preview);
+          if (preview.trim()) {
+            requestTiming.markFirstToken();
+            markAgentTimingFirstContent(timingTurn, preview);
+          }
+        },
+        check: async preview => {
+          if (!isPublicAvaBrainAnswerSafe(preview)) return false;
+          const previewController = await runAvaMissionController({
+            controllerStage: 'stream_preview', sessionId, text,
+            source: body.source || 'command-center-assistant',
+            leadId: activeAssistantLeadId || '', assistantIntent, assistantPlan, assistantSession,
+            answer: preview, toolResult: { ok: true, result: 'deepseek_chat_preview' },
+            state, memories: assistantMemories,
+          });
+          return previewController.trace?.guard?.result === 'passed'
+            && enforceAvaControlEnvelope(previewController, assistantPlan).ok;
+        },
+      } : null,
     }));
     usagePersistence = deepSeekChat.usagePersistence || null;
     if (deepSeekChat.ok) {
+      answer = deepSeekChat.answer;
+      toolResult = deepSeekChat.toolResult;
+    } else if (deepSeekChat.controllerRejected) {
       answer = deepSeekChat.answer;
       toolResult = deepSeekChat.toolResult;
     } else if (readOnlyAuditRequest) {
@@ -65128,9 +65820,22 @@ async function handleInternalAvaAssistantChatRequest(request) {
   const finalControlGate = enforceAvaControlEnvelope(missionController, assistantPlan);
   const preserveReadOnlyAuditAnswer =
     readOnlyAuditRequest && assistantPlan.action === 'general' && toolResult?.result === 'ava_read_only_audit';
+  if (request.avaStream && finalControlGate.ok && missionController.trace?.guard?.result === 'rewritten') {
+    answer = missionController.trace.turnDecision?.answer || 'I paused that reply for review. Nothing was sent or changed.';
+    if (toolResult?.deepSeekDecision) {
+      toolResult = { ...toolResult, deepSeekDecision: { ...toolResult.deepSeekDecision, reply: answer } };
+    }
+  }
   if (!finalControlGate.ok && !preserveReadOnlyAuditAnswer) {
     answer = finalControlGate.answer;
-    toolResult = finalControlGate.toolResult;
+    toolResult = {
+      ...finalControlGate.toolResult,
+      controllerRejection: {
+        decision: finalControlGate.decision,
+        reason: finalControlGate.controlEnvelope?.reason || '',
+        guardReasons: missionController?.trace?.guard?.reasons || [],
+      },
+    };
     missionController = await requestTiming.measure('controller_final_recheck', () => runAvaMissionController({
       controllerStage: 'final',
       sessionId,
@@ -65150,7 +65855,7 @@ async function handleInternalAvaAssistantChatRequest(request) {
     }));
   }
 
-  answer = normalizeAvaAssistantAnswer(answer);
+  answer = normalizeAvaAssistantAnswer(request.avaStream ? sanitizeAvaStreamReply(answer) : answer);
 
   if (!pendingAssistantAction && assistantPlan.action === 'lead_confirmation_required' && assistantPlan.toolPlan?.toolName === 'confirmLeadMatch') {
     pendingAssistantAction = {
@@ -65200,6 +65905,18 @@ async function handleInternalAvaAssistantChatRequest(request) {
       assistantPlan.action === 'approval_required' ||
       Boolean(assistantPlan.toolPlan?.approvalRequired || assistantPlan.toolPlan?.params?.forceApproval),
   });
+  request.avaStream?.signal.throwIfAborted();
+  if (completedHistorySnapshot) {
+    // The snapshot controls this turn's context, not the shared durable conversation record.
+    const durableHistory = normalizeAssistantSession(priorAssistantSession).history;
+    assistantSession = normalizeAssistantSession({
+      ...assistantSession,
+      history: [
+        ...(durableHistory.length ? durableHistory : requestedHistory),
+        ...assistantSession.history.slice(-2),
+      ],
+    });
+  }
   await requestTiming.measure('session_write', () => writePublicAvaAssistantSession(sessionId, assistantSession));
 
   addActivity(
@@ -65228,6 +65945,9 @@ async function handleInternalAvaAssistantChatRequest(request) {
     additiveIntelligence,
     startedAt: assistantOpsStartedAt,
     requestTiming: requestTiming.snapshot(),
+    timingTurn,
+    signal: request.avaStream?.signal,
+    delivery: chatTimingDeliveries.get(request),
   });
   persistStateInBackground('ava-assistant-chat');
 
@@ -65237,8 +65957,8 @@ async function handleInternalAvaAssistantChatRequest(request) {
       ok: true,
       mode: 'command-center-assistant',
       measurementClassification: {
-        diagnostic: body.source === 'ava-latency-diagnostic',
-        operational: body.source !== 'ava-latency-diagnostic',
+        diagnostic: getRuntimeEvidenceContext().classification === 'diagnostic',
+        operational: getRuntimeEvidenceContext().classification === 'operational',
       },
       releaseCommit: process.env.RENDER_GIT_COMMIT || '',
       usagePersistence,
@@ -65265,6 +65985,7 @@ async function handleInternalAvaAssistantChatRequest(request) {
       warning: sanitizedInput.warning || '',
     },
   };
+  });
 }
 
 function createTelnyxPublicKeyObject(publicKeyValue = TELNYX_PUBLIC_KEY) {
@@ -71070,6 +71791,7 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
   };
 
   const maybeSpeakTelnyxAvaReply = async (item) => {
+    return withRuntimeEvidenceContext('phone_turn', async () => {
     if (!PBK_TELNYX_BRIDGE_AVA_REPLY_ENABLED) return;
     if (session.telnyxAiAssistantStarted && !PBK_TELNYX_BRIDGE_AVA_REPLY_FORCE) return;
     if (session.avaReplySuppressed || !isCurrentTelnyxMediaSession(session)) {
@@ -71082,6 +71804,7 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
       return;
     }
     if (!session.callId || !(item.speechFinal || item.finalOnlyFallback)) return;
+    const timingTurn = createBridgeAgentTimingTurn('phone');
     const replyTurnVersion = Number(item.turnVersion || session.sellerTranscriptVersion || 0);
     const expandedOptionAnswer = expandAvaLiveOptionLetterAnswer(session, item.transcript || '');
     if (expandedOptionAnswer) {
@@ -71268,6 +71991,10 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
       item.transcript || transcriptForReply,
       now
     );
+    const phoneTurnTiming = {
+      sttFinalReceivedAt: Date.parse(item.capturedAt || '') || null,
+      replyBuildStartedAt: Date.now(),
+    };
     let reply;
     try {
       reply = await buildTelnyxLiveAvaReply({
@@ -71275,6 +72002,7 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
         transcript: item.transcript,
         contextCall,
       });
+      phoneTurnTiming.replyBuildCompletedAt = Date.now();
     } catch (error) {
       delete session.pendingAvaReplyTranscript;
       delete session.pendingAvaReplyTurnVersion;
@@ -71474,6 +72202,17 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
       replyTurnVersion,
       replyStartedAt: replyStartAt,
       transcript: item.transcript || transcriptForReply,
+      phoneTurnTiming,
+    });
+    const phoneLatency = summarizePhoneTurnTiming(phoneTurnTiming);
+    recordCallTrace('ava_phone_latency', {
+      callId: session.callId || '',
+      streamId: session.streamId || '',
+      turnVersion: replyTurnVersion,
+      status: speakResult.ok ? 'bridge_observed' : 'warning',
+      result: speakResult.result || '',
+      turnTiming: phoneLatency,
+      stage: 'maybeSpeakTelnyxAvaReply.latency',
     });
     const turnCompletionMs = Math.max(0, Date.now() - speechFinalAt);
     recordLatencyMetric('speech_final_to_reply_start_ms', speechFinalToReplyStartMs, {
@@ -71498,6 +72237,7 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
       ok: Boolean(speakResult.ok),
       labels: {
         path: session.selectedPath || contextCall?.selectedPath || '',
+        phoneLatency,
         result: speakResult.result || '',
         llmProvider: reply.strategist?.provider?.provider || reply.strategist?.provider?.id || STRATEGIST_PROVIDER || '',
         llmModel: reply.strategist?.provider?.model || (STRATEGIST_PROVIDER === 'gemini' ? GEMINI_LIVE_MODEL : DEEPSEEK_LIVE_MODEL),
@@ -71644,8 +72384,18 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
       });
     }
     await persistState(state);
+    const phoneOps = bindAgentTimingToParams({ agentName: 'Ava', toolName: 'phone_reply',
+      sessionId: session.callId, success: speakResult.ok === true,
+      metadata: { source: 'ava-phone-turn', fullReplySpokenVerified: false,
+        operational: getRuntimeEvidenceContext().classification === 'operational' } }, timingTurn, {
+      answer: spoken,
+      successful: agentTimingResultSucceeded(speakResult) && guardedReply.blocked !== true && isCurrentTelnyxMediaSession(session)
+        && Number(session.sellerTranscriptVersion || 0) === replyTurnVersion,
+    });
+    void recordAgentOps(phoneOps);
     void syncTelnyxSessionToRedis(session, 'active', { force: true });
     scheduleRuntimeStateBroadcast('telnyx-ava-reply');
+    });
   };
 
   const noteTelnyxCallerSpeechDuringAva = () => {
@@ -72381,6 +73131,7 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
   });
 }
 
+const neonAuthMailRouter = createNeonMailRouter();
 const server = createServer(async (request, response) => {
   response.pbkAcceptsGzip = /\bgzip\b/i.test(String(request.headers['accept-encoding'] || ''));
   response.pbkCorsHeaders = buildBridgeCorsHeaders(request);
@@ -72392,6 +73143,9 @@ const server = createServer(async (request, response) => {
     await composioReadOnlyEndpoint.handle(request, response);
     return;
   }
+
+  if (['/api/webhooks/neon-auth-mail', '/api/admin/neon-auth-mail', '/api/webhooks/neon-auth-mail/oauth/callback'].includes(pathname)
+    && await neonAuthMailRouter(request, response)) return;
 
   if (request.method === 'OPTIONS') {
     response.writeHead(204, {
@@ -72561,10 +73315,117 @@ const server = createServer(async (request, response) => {
     }
 
     if (request.method === 'GET' && matchesPath(pathname, ['/api/production/maturity', '/api/maturity/status'])) {
-      const maturity = await getCachedReadResponse('production-maturity', BRIDGE_READ_CACHE_TTL_MS.productionMaturity, () =>
-        buildProductionMaturitySnapshot({ runtimeMeta: getRuntimeMeta() })
-      );
+      // Always read the newest signed run; a cached prior pass cannot hide a newer failure.
+      const maturity = await buildProductionMaturitySnapshot({ runtimeMeta: getRuntimeMeta() });
       json(response, maturity.ready ? 200 : 202, maturity);
+      return;
+    }
+
+    if (pathname === '/api/admin/reconciliation/run') {
+      const authority = authorizeQualificationRequest({ method: request.method, search: url.search,
+        headers: request.headers, body: {} }, BRIDGE_API_KEY);
+      if (!authority.ok) {
+        json(response, authority.status, { ok: false, result: authority.result });
+        return;
+      }
+      const allowed = authorizeQualificationRequest({ method: request.method, search: url.search,
+        headers: request.headers, body: await readBody(request) }, BRIDGE_API_KEY);
+      if (!allowed.ok) {
+        json(response, allowed.status, { ok: false, result: allowed.result });
+        return;
+      }
+      const pool = runtimeStateBootstrap.ready ? getPgPool() : null;
+      const result = await executeBacklogReconciliation({
+        pool, revision: process.env.RENDER_GIT_COMMIT || BUILD_REVISION, secret: BRIDGE_API_KEY,
+        collect: ({ now }) => collectBacklogReconciliation({ pool, secret: BRIDGE_API_KEY, now }),
+      });
+      clearBridgeReadCache('backlog_reconciliation_executed');
+      json(response, result.ok ? 200 : result.result === 'backlog_reconciliation_in_progress' ? 409 : 503, result);
+      return;
+    }
+
+    if (pathname === '/api/admin/operational-audit/run') {
+      const authority = authorizeQualificationRequest({ method: request.method, search: url.search,
+        headers: request.headers, body: {} }, BRIDGE_API_KEY);
+      if (!authority.ok) {
+        json(response, authority.status, { ok: false, result: authority.result });
+        return;
+      }
+      const allowed = authorizeQualificationRequest({ method: request.method, search: url.search,
+        headers: request.headers, body: await readBody(request) }, BRIDGE_API_KEY);
+      if (!allowed.ok) {
+        json(response, allowed.status, { ok: false, result: allowed.result });
+        return;
+      }
+      const pool = runtimeStateBootstrap.ready ? getPgPool() : null;
+      const result = await executeOperationalAudit({ pool, revision: process.env.RENDER_GIT_COMMIT || BUILD_REVISION,
+        secret: BRIDGE_API_KEY, collect: ({ pool: auditPool, now, observationNow, fence }) =>
+          collectOperationalAudit({ pool: auditPool, now, observationNow, fence, secret: BRIDGE_API_KEY,
+            revision: process.env.RENDER_GIT_COMMIT || BUILD_REVISION, sampler: runtimeCoverageSampler,
+            runtime: getRuntimeCoverageHealth() }),
+      });
+      clearBridgeReadCache('operational_audit_executed');
+      json(response, result.ok ? 200 : result.result === 'operational_audit_in_progress' ? 409 : 503, result);
+      return;
+    }
+
+    if (pathname === '/api/admin/ava-latency/run') {
+      const authority = authorizeQualificationRequest({ method: request.method, search: url.search,
+        headers: request.headers, body: {} }, BRIDGE_API_KEY);
+      if (!authority.ok) {
+        json(response, authority.status, { ok: false, result: authority.result });
+        return;
+      }
+      const allowed = authorizeQualificationRequest({ method: request.method, search: url.search,
+        headers: request.headers, body: await readBody(request) }, BRIDGE_API_KEY);
+      if (!allowed.ok) {
+        json(response, allowed.status, { ok: false, result: allowed.result });
+        return;
+      }
+      // Only this fixed founder runner establishes diagnostic authority. The
+      // ordinary assistant entry inherits ALS, never a payload's source/flags.
+      const samples = await withRuntimeEvidenceContext('diagnostic', () => runBenchmark({
+        count: 24, stopOnExecutionError: true,
+        fetchRequest: async payload => {
+          const result = await handleInternalAvaAssistantChatRequest({
+            headers: {}, [RAW_BODY_BUFFER_SYMBOL]: Buffer.from(JSON.stringify(payload)),
+          });
+          return { status: result.statusCode || 200, body: result.body || {} };
+        },
+      }));
+      json(response, 200, { ...summarizeBenchmark(samples), execution: 'server_fixed_read_only', complete: true });
+      return;
+    }
+
+    if (pathname === '/api/admin/qualification/run') {
+      const authority = authorizeQualificationRequest({ method: request.method, search: url.search,
+        headers: request.headers, body: {} }, BRIDGE_API_KEY);
+      if (!authority.ok) {
+        json(response, authority.status, { ok: false, result: authority.result });
+        return;
+      }
+      const allowed = authorizeQualificationRequest({ method: request.method, search: url.search,
+        headers: request.headers, body: await readBody(request) }, BRIDGE_API_KEY);
+      if (!allowed.ok) {
+        json(response, allowed.status, { ok: false, result: allowed.result });
+        return;
+      }
+      const revision = process.env.RENDER_GIT_COMMIT || BUILD_REVISION;
+      const result = await executeReleaseQualification({
+        pool: runtimeStateBootstrap.ready ? getPgPool() : null, revision, secret: BRIDGE_API_KEY,
+        requiredCases: RELEASE_QUALIFICATION_CASES,
+        loadCi: () => loadQualificationCiEvidence({ revision, token: process.env.GITHUB_TOKEN || process.env.GITHUB_PAT || '' }),
+        runChecks: async () => {
+          const checks = {};
+          for (const [id, run] of [['failedCall', runAvaRealCallQualification], ['behavior', runBehaviorQualification],
+            ['silentPolicy', runSilentErrorPolicyQualification]]) {
+            try { checks[id] = await run(); } catch { checks[id] = null; }
+          }
+          return checks;
+        },
+      });
+      clearBridgeReadCache('release_qualification_executed');
+      json(response, result.ok ? 200 : result.result === 'qualification_run_in_progress' ? 409 : 503, result);
       return;
     }
 
@@ -72737,7 +73598,7 @@ const server = createServer(async (request, response) => {
     }
 
     if (pathname === '/api/agents/controlled-qualification') {
-      if (!BRIDGE_API_KEY || request.headers.authorization !== `Bearer ${BRIDGE_API_KEY}`) {
+      if (!isDirectQualificationFounder(request.headers, BRIDGE_API_KEY)) {
         json(response, 403, { ok: false, result: 'controlled_founder_auth_required' });
         return;
       }
@@ -73025,6 +73886,12 @@ const server = createServer(async (request, response) => {
     }
 
     if (request.method === 'POST' && matchesPath(pathname, ['/api/assistant/chat', '/api/v1/assistant/chat'])) {
+      if (String(request.headers.accept || '').includes('text/event-stream')) {
+        observeAvaChatDelivery(request, response, true);
+        await streamAvaChatResponse(request, response, () => handleInternalAvaAssistantChatRequest(request), getResponseCorsHeaders(response));
+        return;
+      }
+      observeAvaChatDelivery(request, response);
       const result = await handleInternalAvaAssistantChatRequest(request);
       json(response, result.statusCode || 200, result.body || {});
       return;
@@ -75779,6 +76646,31 @@ const server = createServer(async (request, response) => {
       return;
     }
 
+    if (request.method === 'POST' && pathname === '/api/property-data/address-suggestions') {
+      const result = await lookupAddressSuggestions(await readBody(request));
+      response.setHeader('Cache-Control', 'no-store');
+      json(response, 200, { ok: true, ...result });
+      return;
+    }
+
+    if (request.method === 'POST' && pathname === '/api/property-data/enrich') {
+      response.setHeader('Cache-Control', 'no-store');
+      try {
+        const result = await enrichPropertyIntelligence(await readBody(request));
+        json(response, 200, result);
+      } catch (error) {
+        json(response, error.status || 503, { ok: false, saved: false, code: error.code || 'property_enrichment_failed', error: error.status ? error.message : 'Property intelligence could not be saved. Please retry.' });
+      }
+      return;
+    }
+
+    if (request.method === 'POST' && pathname === '/api/property-data/attom-sales') {
+      const result = await lookupAttomRecentSales(await readBody(request));
+      response.setHeader('Cache-Control', 'no-store');
+      json(response, 200, { ok: true, ...result });
+      return;
+    }
+
     if (request.method === 'POST' && pathname === '/api/property-data/attom-preview') {
       const result = await lookupAttomPropertyPreview(await readBody(request));
       response.setHeader('Cache-Control', 'no-store');
@@ -75787,6 +76679,15 @@ const server = createServer(async (request, response) => {
     }
 
     if (request.method === 'GET' && pathname === '/api/property-data') {
+      if (url.searchParams.get('includeRecords') === 'true') {
+        const result = await analyzerPropertyPreview(url.searchParams.get('address'), {
+          listing: (params) => toolHandlers.getPropertyData(params), records: lookupAttomPropertyPreview,
+        });
+        response.setHeader('Cache-Control', 'no-store');
+        json(response, 200, result);
+        return;
+      }
+
       const result = await toolHandlers.getPropertyData({
         address: url.searchParams.get('address') || '',
         queueBrowserResearch: /^(1|true|yes)$/i.test(String(url.searchParams.get('queueBrowserResearch') || '').trim()),
@@ -79098,7 +79999,7 @@ const server = createServer(async (request, response) => {
         targetMonthlyRevenue: url.searchParams.get('targetMonthlyRevenue') || url.searchParams.get('target_monthly_revenue') || undefined,
         revenueDays: url.searchParams.get('revenueDays') || url.searchParams.get('revenue_days') || 30,
       });
-      const allCalls = sortNewest(Array.isArray(state.calls) ? state.calls : []);
+      const allCalls = sortNewest(normalizeStaleLiveCalls(state.calls));
       json(response, 200, {
         ok: true,
         result: 'calls_summary',
@@ -79120,7 +80021,7 @@ const server = createServer(async (request, response) => {
     if (request.method === 'GET' && pathname === '/api/calls') {
       const limit = Math.max(1, Math.min(200, Number(url.searchParams.get('limit') || 80)));
       const offset = Math.max(0, Number(url.searchParams.get('offset') || 0));
-      const allCalls = sortNewest(Array.isArray(state.calls) ? state.calls : []);
+      const allCalls = sortNewest(normalizeStaleLiveCalls(state.calls));
       json(response, 200, {
         ok: true,
         result: 'live',
@@ -80389,17 +81290,42 @@ const server = createServer(async (request, response) => {
 
     const leadFullMatch = matchPath(pathname, '/api/leads/:id/full');
     if (leadFullMatch && request.method === 'GET') {
-      const [durableBatchLead] = await loadAppliedBatchLeads(queryPgRows, leadFullMatch.groups.id);
+      response.setHeader('Cache-Control', 'no-store');
+      let leadId;
+      try {
+        leadId = decodeURIComponent(leadFullMatch.groups.id);
+        if (!leadId.trim() || leadId !== leadId.trim()) throw new Error('Invalid lead ID');
+      } catch {
+        json(response, 400, { ok: false, error: 'Invalid lead ID.' });
+        return;
+      }
+      let durableBatchLead;
+      try {
+        if (IS_HOSTED || getPgPool()) [durableBatchLead] = await loadAppliedBatchLeads(queryPgRows, leadId);
+      } catch {
+        response.setHeader('Retry-After', '1');
+        json(response, 503, { ok: false, code: 'lead_roster_unavailable', error: 'The saved lead record is unavailable. Try again shortly.' });
+        return;
+      }
       if (durableBatchLead) {
+        if ((durableBatchLead.leadId || durableBatchLead.id) !== leadId) {
+          json(response, 404, { ok: false, error: 'Lead not found.' });
+          return;
+        }
         const exactHistory = (items = []) => sortNewest(items.filter(({ leadId }) => leadId === durableBatchLead.id));
+        const history = {
+          calls: exactHistory(state.calls), messages: exactHistory(state.messages),
+          contracts: exactHistory(state.contracts), analyzerRuns: exactHistory(state.analyzerRuns),
+          activity: exactHistory(state.activity),
+        };
+        const callContext = getLeadOwnedCallContext(durableBatchLead, leadId);
         json(response, 200, {
-          ok: true, lead: durableBatchLead, calls: exactHistory(state.calls),
-          messages: exactHistory(state.messages), contracts: exactHistory(state.contracts),
-          analyzerRuns: exactHistory(state.analyzerRuns), activity: exactHistory(state.activity),
+          ok: true, lead: { ...durableBatchLead, ...history, callContext, call_context: callContext }, ...history,
         });
         return;
       }
-      const full = buildLeadFullView(leadFullMatch.groups.id);
+      const exactLead = (state.leadImports || []).find((item) => (item.leadId || item.id) === leadId);
+      const full = exactLead ? buildLeadFullView(exactLead) : null;
       if (!full) {
         json(response, 404, {
           ok: false,
@@ -80413,7 +81339,23 @@ const server = createServer(async (request, response) => {
 
     const leadLastCallMatch = matchPath(pathname, '/api/leads/:id/last-call');
     if (leadLastCallMatch && request.method === 'GET') {
-      const details = buildLeadLastCallDetails(leadLastCallMatch.groups.id);
+      let leadId;
+      try {
+        leadId = decodeURIComponent(leadLastCallMatch.groups.id);
+        if (!leadId.trim() || leadId !== leadId.trim()) throw new Error('Invalid lead ID');
+      } catch {
+        json(response, 400, { ok: false, error: 'Invalid lead ID.' });
+        return;
+      }
+      let durableLead;
+      try {
+        if (IS_HOSTED || getPgPool()) [durableLead] = await loadAppliedBatchLeads(queryPgRows, leadId);
+      } catch (error) {
+        if (error?.code !== 'lead_roster_unavailable') throw error;
+        json(response, 503, { ok: false, error: 'Lead call history is unavailable.', code: 'lead_roster_unavailable' });
+        return;
+      }
+      const details = buildLeadLastCallDetails(leadId, durableLead);
       if (!details) {
         json(response, 404, {
           ok: false,
@@ -80483,7 +81425,24 @@ const server = createServer(async (request, response) => {
 
     if (leadPatchMatch && request.method === 'PATCH') {
       const body = await readBody(request);
-      const existing = findLeadImportByLookup(leadPatchMatch.groups.id);
+      let existing = findLeadImportByLookup(leadPatchMatch.groups.id);
+      if (body.expectedPropertyAddress) {
+        let exactId;
+        try { exactId = decodeURIComponent(leadPatchMatch.groups.id); } catch { json(response, 400, {ok:false,error:'Invalid lead ID.'}); return; }
+        existing = await loadExactPropertyLead(exactId);
+        if (existing && !(state.leadImports || []).some(item => (item.leadId || item.id) === exactId)) addLeadImport(state, existing);
+      }
+      if (body.expectedPropertyAddress) {
+        if (!existing) { json(response, 404, { ok: false, error: 'Lead not found.' }); return; }
+        const p = existing.property || {};
+        if (!sameAttomAddress(body.expectedPropertyAddress, {
+          street: p.address || existing.address, city: p.city || existing.city,
+          state: p.state || existing.state, zip: p.zip || p.zipCode || existing.zip || existing.zipCode,
+        })) {
+          json(response, 409, { ok: false, error: 'The lead property changed. Refresh the lead before saving comps.', code: 'property_context_changed' });
+          return;
+        }
+      }
       const sellerPatch =
         body.seller && typeof body.seller === 'object' && !Array.isArray(body.seller)
           ? body.seller
@@ -80769,7 +81728,8 @@ const server = createServer(async (request, response) => {
           )
         : (addLeadImport(state, nextLead), nextLead);
 
-      await persistLeadProfileRowToDb(patched || nextLead, 'lead-detail-edit');
+      const profileSave = await persistLeadProfileRowToDb(patched || nextLead, 'lead-detail-edit', {exactIdentity:Boolean(body.expectedPropertyAddress)});
+      if (body.expectedPropertyAddress && DATABASE_URL && !profileSave.ok) { json(response, 503, {ok:false,error:'Lead profile could not be saved. Retry shortly.'}); return; }
       const activity = makeActivity({
         actor: body.actor || 'Lead Detail',
         category: 'CRM',
@@ -80857,12 +81817,24 @@ const server = createServer(async (request, response) => {
     }
 
     if (request.method === 'GET' && matchesPath(pathname, ['/api/leads', '/api/leads/import'])) {
-      const batchLeads = await loadAppliedBatchLeads(queryPgRows);
+      response.setHeader('Cache-Control', 'no-store');
+      let batchLeads;
+      try {
+        batchLeads = !IS_HOSTED && !getPgPool() ? [] : await loadAppliedBatchLeads(queryPgRows);
+      } catch {
+        response.setHeader('Retry-After', '1');
+        json(response, 503, {
+          ok: false, complete: false, code: 'lead_roster_unavailable',
+          error: 'The saved lead roster is unavailable. Try again shortly.',
+        });
+        return;
+      }
       const leads = new Map(state.leadImports.map((lead) => [lead.leadId || lead.id, lead]));
       for (const lead of batchLeads) leads.set(lead.id, { ...leads.get(lead.id), ...lead });
       const combined = [...leads.values()];
       json(response, 200, {
         ok: true,
+        complete: true,
         leadImports: combined,
         leads: combined,
       });
@@ -82181,6 +83153,7 @@ function startAgentRegistryHealthScheduler() {
   interval.unref?.();
 }
 
+wireRuntimeCoverageLifecycle(server);
 server.listen(PORT, HOST, () => {
   startPostgresKeepAlive();
   startContractTemplateWatcher();

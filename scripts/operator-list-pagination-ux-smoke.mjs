@@ -77,7 +77,7 @@ for (const harshCopy of [
 }
 for (const friendlyCopy of [
   'Approval board',
-  'Next best steps',
+  'Work queue',
   'Workspace readiness',
   'Support tools',
   'Market and web research',

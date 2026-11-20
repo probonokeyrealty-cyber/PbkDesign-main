@@ -249,7 +249,10 @@ function getCallContext(lead: BridgeRecord): BridgeRecord {
     record.callContext && typeof record.callContext === 'object' ? record.callContext : {};
   const fallback =
     record.call_context && typeof record.call_context === 'object' ? record.call_context : {};
-  return { ...(fallback as BridgeRecord), ...(primary as BridgeRecord) };
+  const leadId = pickFirstText(record.leadId, record.id);
+  const owned = (context: BridgeRecord) =>
+    Object.hasOwn(context, 'leadId') && context.leadId !== leadId ? {} : context;
+  return { ...owned(fallback as BridgeRecord), ...owned(primary as BridgeRecord) };
 }
 
 function getSellerName(lead: BridgeRecord) {
@@ -945,9 +948,9 @@ function LeadsStatRibbon({ stats, sourceLabel }: { stats: LeadsStats; sourceLabe
       tone: 'sky',
     },
     {
-      label: 'Callable',
+      label: 'Phone on file',
       value: String(stats.callable),
-      detail: 'valid phone ready',
+      detail: 'number format checked; consent checked at send',
       tone: 'lime',
     },
     {
@@ -957,7 +960,7 @@ function LeadsStatRibbon({ stats, sourceLabel }: { stats: LeadsStats; sourceLabe
       tone: 'sky',
     },
     {
-      label: 'Hot scores',
+      label: 'High-priority leads',
       value: String(stats.hot),
       detail: 'score 80 or higher',
       tone: stats.hot ? 'amber' : 'sky',
@@ -1004,7 +1007,7 @@ function LeadsHero({
                 ? 'connection needs attention'
                 : `${stats.total} leads`}
           </div>
-          <h1 className="pbk-display">Leads.</h1>
+          <h1 className="pbk-display">Seller leads.</h1>
         </div>
         <div className="pbk-leads-hero-actions">
           <Link to="/leads/batch-review" className="pbk-leads-refresh">
@@ -1012,7 +1015,7 @@ function LeadsHero({
           </Link>
           <button type="button" className="pbk-leads-create" onClick={onCreateLead}>
             <Plus size={15} />
-            New PBK lead
+            Add seller
           </button>
           <button
             type="button"
@@ -1089,7 +1092,10 @@ export function Leads() {
   const { snapshot, loading, error, refresh } = useRuntimeSnapshot();
   const navigate = useNavigate();
   const location = useLocation();
-  const restoredQueue = useMemo(() => readLeadQueueReturn(location.state?.queueReturn), [location.state]);
+  const restoredQueue = useMemo(
+    () => readLeadQueueReturn(location.state?.queueReturn),
+    [location.state]
+  );
   const restorePending = useRef(restoredQueue?.path === '/leads');
   const initialFilters = useRef(true);
   const [searchParams, setSearchParams] = useSearchParams();
@@ -1098,14 +1104,17 @@ export function Leads() {
     () => (Array.isArray(snapshot?.leadImports) ? (snapshot.leadImports as BridgeRecord[]) : []),
     [snapshot?.leadImports]
   );
-  const [leadRoster, setLeadRoster] = useState<BridgeRecord[]>([]);
+  const [leadRoster, setLeadRoster] = useState<BridgeRecord[] | null>(null);
   const [leadRosterStatus, setLeadRosterStatus] = useState<'idle' | 'loading' | 'ready' | 'error'>(
     'idle'
   );
   const [leadRosterError, setLeadRosterError] = useState('');
   const [selectedLeadId, setSelectedLeadId] = useState(restoredQueue?.leadId || '');
   const [leadDetail, setLeadDetail] = useState<BridgeRecord | null>(null);
-  const [lastCall, setLastCall] = useState<BridgeRecord | null>(null);
+  const [lastCallResponse, setLastCall] = useState<BridgeRecord | null>(null);
+  const detailRequestRef = useRef(0);
+  const selectedLeadIdRef = useRef(selectedLeadId);
+  selectedLeadIdRef.current = selectedLeadId;
   const [detailStatus, setDetailStatus] = useState<DetailStatus | null>(null);
   const [leadDetailLoading, setLeadDetailLoading] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
@@ -1126,10 +1135,17 @@ export function Leads() {
   const [contractStatus, setContractStatus] = useState('');
   const [leadPage, setLeadPage] = useState(restoredQueue?.queue?.page || 0);
   const [leadActivityPage, setLeadActivityPage] = useState(0);
-  const [leadQuery, setLeadQuery] = useState(() => restoredQueue?.queue?.query ?? searchParams.get('search') ?? '');
-  const [leadFilter, setLeadFilter] = useState<'all' | 'hot' | 'callable' | 'contract'>(restoredQueue?.queue?.filter || 'all');
+  const [leadQuery, setLeadQuery] = useState(
+    () => restoredQueue?.queue?.query ?? searchParams.get('search') ?? ''
+  );
+  const [leadFilter, setLeadFilter] = useState<'all' | 'hot' | 'callable' | 'contract'>(
+    restoredQueue?.queue?.filter || 'all'
+  );
   const leadReturnContext = (leadId: string): LeadQueueReturn => ({
-    path: '/leads', search: location.search, scrollY: window.scrollY, leadId,
+    path: '/leads',
+    search: location.search,
+    scrollY: window.scrollY,
+    leadId,
     queue: { query: leadQuery, filter: leadFilter, page: leadPage },
   });
   const reloadTimerRef = useRef<number | null>(null);
@@ -1137,13 +1153,10 @@ export function Leads() {
   const leadActionLockRef = useRef(false);
   const selectedLeadRef = useRef<BridgeRecord | null>(null);
   const isLeadActionBusy = saving || Boolean(leadActionPending);
-  const leads = useMemo(
-    () => (leadRoster.length ? leadRoster : snapshotLeads),
-    [leadRoster, snapshotLeads]
-  );
+  const leads = useMemo(() => leadRoster ?? snapshotLeads, [leadRoster, snapshotLeads]);
 
   const selectedLead = useMemo(
-    () => leads.find((lead) => getLeadId(lead) === selectedLeadId) || leads[0] || null,
+    () => leads.find((lead) => getLeadId(lead) === selectedLeadId) || null,
     [leads, selectedLeadId]
   );
   useEffect(() => {
@@ -1180,8 +1193,19 @@ export function Leads() {
   );
   const leadsStats = useMemo(() => buildLeadsStats(leads), [leads]);
   const activeLead =
-    leadDetail && getLeadId(leadDetail) === selectedLeadId ? leadDetail : selectedLead;
+    selectedLead && leadDetail && getLeadId(leadDetail) === selectedLeadId
+      ? leadDetail
+      : selectedLead;
   const activeLeadId = activeLead ? getLeadId(activeLead) : '';
+  const lastCall =
+    activeLeadId &&
+    activeLeadId === pickFirstText(activeLead?.leadId, activeLead?.id) &&
+    lastCallResponse?.ok !== false &&
+    lastCallResponse?.leadId === activeLeadId &&
+    (lastCallResponse.call === null ||
+      asBridgeRecord(lastCallResponse.call).leadId === activeLeadId)
+      ? lastCallResponse
+      : null;
   const seller1EmailError = useMemo(() => getSeller1EmailError(contractForm), [contractForm]);
   const contractLiveValidation = useMemo(
     () => getContractLiveValidation(contractForm),
@@ -1201,7 +1225,10 @@ export function Leads() {
     const requestedSearch = searchParams.get('search');
 
     if (requestedLeadId) {
-      navigate(`/leads/${encodeURIComponent(requestedLeadId)}`, { replace: true, state: location.state });
+      navigate(`/leads/${encodeURIComponent(requestedLeadId)}`, {
+        replace: true,
+        state: location.state,
+      });
       return;
     } else if (requestedSearch && leads.length && !restoredQueue?.queue) {
       if (leadQuery !== requestedSearch) return;
@@ -1234,12 +1261,16 @@ export function Leads() {
   }, [leads, navigate, searchParams, setSearchParams, location.state, restoredQueue, leadQuery]);
 
   useEffect(() => {
-    if (initialFilters.current) { initialFilters.current = false; return; }
+    if (initialFilters.current) {
+      initialFilters.current = false;
+      return;
+    }
     setLeadPage(0);
   }, [leadFilter, leadQuery]);
 
   useEffect(() => {
-    if (restorePending.current && leadRosterStatus !== 'ready' && leadRosterStatus !== 'error') return;
+    if (restorePending.current && leadRosterStatus !== 'ready' && leadRosterStatus !== 'error')
+      return;
     const pageCount = Math.max(1, Math.ceil(filteredLeads.length / OPERATOR_LIST_PAGE_SIZE));
     setLeadPage((current) => Math.min(current, pageCount - 1));
   }, [filteredLeads.length, leadRosterStatus]);
@@ -1248,12 +1279,15 @@ export function Leads() {
     if (!restorePending.current || leadRosterStatus !== 'ready') return;
     const frame = requestAnimationFrame(() => {
       const candidates = document.querySelectorAll<HTMLButtonElement>('[data-lead-queue-id]');
-      const target = Array.from(candidates).find(node => node.dataset.leadQueueId === restoredQueue?.leadId && node.getClientRects().length);
+      const target = Array.from(candidates).find(
+        (node) => node.dataset.leadQueueId === restoredQueue?.leadId && node.getClientRects().length
+      );
       if (target) target.focus({ preventScroll: true });
       window.scrollTo(0, restoredQueue?.scrollY || 0);
       if (target) {
         const bounds = target.getBoundingClientRect();
-        if (bounds.top < 80 || bounds.bottom > window.innerHeight - 80) target.scrollIntoView({ block: 'center' });
+        if (bounds.top < 80 || bounds.bottom > window.innerHeight - 80)
+          target.scrollIntoView({ block: 'center' });
       }
       if (!target) document.querySelector<HTMLInputElement>('.pbk-leads-search input')?.focus();
       restorePending.current = false;
@@ -1297,7 +1331,9 @@ export function Leads() {
       : leadRosterStatus === 'loading'
         ? 'Syncing lead roster'
         : leadRosterStatus === 'error'
-          ? 'Saved roster fallback'
+          ? leadRoster === null
+            ? 'Saved roster fallback'
+            : 'Last confirmed roster'
           : 'Roster pending';
   const rosterSourceNote =
     leadRosterStatus === 'ready'
@@ -1305,31 +1341,21 @@ export function Leads() {
       : leadRosterStatus === 'loading'
         ? 'loading GET /api/leads'
         : leadRosterStatus === 'error'
-          ? 'GET /api/leads unavailable; using runtime snapshot fallback'
+          ? leadRoster === null
+            ? 'GET /api/leads unavailable; using runtime snapshot fallback'
+            : 'GET /api/leads unavailable; retaining last confirmed roster'
           : 'pending full roster';
   const handleRefreshLeads = useCallback(() => {
     void Promise.all([refresh().catch(() => null), loadLeadRoster()]);
   }, [loadLeadRoster, refresh]);
   const leadActivity = useMemo(
     () =>
-      Array.isArray(activeLead?.activity)
+      (Array.isArray(activeLead?.activity)
         ? (activeLead.activity as BridgeRecord[])
         : Array.isArray(snapshot?.activity)
-          ? (snapshot.activity as BridgeRecord[]).filter((item) => {
-              const haystack = [item.leadId, item.leadName, item.target, item.text]
-                .filter(Boolean)
-                .join(' ')
-                .toLowerCase();
-              return (
-                haystack.includes(activeLeadId.toLowerCase()) ||
-                haystack.includes(
-                  getLeadAddress(activeLead || {})
-                    .toLowerCase()
-                    .split(',')[0]
-                )
-              );
-            })
-          : [],
+          ? (snapshot.activity as BridgeRecord[])
+          : []
+      ).filter((item) => Boolean(activeLeadId) && item.leadId === activeLeadId),
     [activeLead, activeLeadId, snapshot?.activity]
   );
   const visibleLeadActivity = useMemo(
@@ -1349,7 +1375,7 @@ export function Leads() {
   useEffect(() => {
     if (!leads.length) return;
     if (restorePending.current && leadRosterStatus !== 'ready') return;
-    if (!selectedLeadId || !leads.some((lead) => getLeadId(lead) === selectedLeadId)) {
+    if (!selectedLeadId) {
       setSelectedLeadId(getLeadId(leads[0]));
     }
   }, [leads, selectedLeadId, leadRosterStatus]);
@@ -1359,6 +1385,9 @@ export function Leads() {
   }, [loadLeadRoster]);
 
   useEffect(() => {
+    const requestTracker = detailRequestRef;
+    const requestId = ++requestTracker.current;
+    setLastCall(null);
     if (!selectedLeadId) return;
     let cancelled = false;
     const loadDetail = async () => {
@@ -1375,14 +1404,18 @@ export function Leads() {
           fetchLeadFullRequest(selectedLeadId),
           fetchLeadLastCallRequest(selectedLeadId).catch(() => null),
         ]);
-        if (cancelled) return;
+        if (cancelled || requestId !== requestTracker.current) return;
         const lead = unwrapLeadResponse(fullResponse);
         setLeadDetail(lead);
-        setLeadRoster((current) => mergeVisibleLeadDetail(current, lead));
+        setLeadRoster((current) =>
+          current?.some((item) => getLeadId(item) === selectedLeadId)
+            ? mergeVisibleLeadDetail(current, lead)
+            : current
+        );
         setLastCall(callResponse as BridgeRecord | null);
         setDetailStatus({ tone: 'success', text: 'Lead synced from bridge.' });
       } catch (nextError) {
-        if (cancelled) return;
+        if (cancelled || requestId !== requestTracker.current) return;
         const fallbackLead = selectedLeadRef.current;
         setLeadDetail(
           fallbackLead && getLeadId(fallbackLead) === selectedLeadId ? fallbackLead : null
@@ -1397,19 +1430,21 @@ export function Leads() {
           retry: 'detail',
         });
       } finally {
-        if (!cancelled) setLeadDetailLoading(false);
+        if (!cancelled && requestId === requestTracker.current) setLeadDetailLoading(false);
       }
     };
     void loadDetail();
     return () => {
       cancelled = true;
+      ++requestTracker.current;
     };
   }, [selectedLeadId]);
 
   const reloadLeadDetailNow = useCallback(async () => {
-    if (!selectedLeadId) return;
+    if (!selectedLeadId || selectedLeadIdRef.current !== selectedLeadId) return;
     if (reloadInFlightRef.current) return;
     reloadInFlightRef.current = true;
+    const requestId = ++detailRequestRef.current;
     setReloading(true);
     setDetailStatus({ tone: 'info', text: 'Refreshing lead detail...' });
     try {
@@ -1417,13 +1452,21 @@ export function Leads() {
         fetchLeadFullRequest(selectedLeadId),
         fetchLeadLastCallRequest(selectedLeadId).catch(() => null),
       ]);
+      if (requestId !== detailRequestRef.current || selectedLeadIdRef.current !== selectedLeadId)
+        return;
       const lead = unwrapLeadResponse(fullResponse);
       setLeadDetail(lead);
-      setLeadRoster((current) => mergeVisibleLeadDetail(current, lead));
+      setLeadRoster((current) =>
+        current?.some((item) => getLeadId(item) === selectedLeadId)
+          ? mergeVisibleLeadDetail(current, lead)
+          : current
+      );
       setLastCall(callResponse as BridgeRecord | null);
       setDetailStatus({ tone: 'success', text: 'Lead refreshed.' });
       await Promise.all([refresh().catch(() => null), loadLeadRoster()]);
     } catch (nextError) {
+      if (requestId !== detailRequestRef.current || selectedLeadIdRef.current !== selectedLeadId)
+        return;
       setDetailStatus({
         tone: 'error',
         text:
@@ -1433,6 +1476,7 @@ export function Leads() {
     } finally {
       reloadInFlightRef.current = false;
       setReloading(false);
+      if (requestId === detailRequestRef.current) setLeadDetailLoading(false);
     }
   }, [loadLeadRoster, refresh, selectedLeadId]);
 
@@ -1530,10 +1574,6 @@ export function Leads() {
       setNewLeadStatus({ tone: 'error', text: 'Seller name is required.' });
       return;
     }
-    if (!newLeadForm.phone.trim() && !newLeadForm.email.trim()) {
-      setNewLeadStatus({ tone: 'error', text: 'Add a phone or email before creating the lead.' });
-      return;
-    }
     if (!newLeadForm.propertyAddress.trim()) {
       setNewLeadStatus({ tone: 'error', text: 'Property address is required.' });
       return;
@@ -1544,7 +1584,7 @@ export function Leads() {
       const response = await createLeadRequest(buildNewLeadPayload(newLeadForm));
       const lead = unwrapLeadResponse(response);
       const nextLeadId = getLeadId(lead);
-      setLeadRoster((current) => upsertVisibleLead(current, lead));
+      setLeadRoster((current) => upsertVisibleLead(current ?? [], lead));
       setLeadDetail(lead);
       setSelectedLeadId(nextLeadId);
       setLeadQuery('');
@@ -1995,13 +2035,13 @@ export function Leads() {
                       />
                       <span className="mt-3 grid grid-cols-2 gap-2 text-[11px] text-slate-400">
                         <span>
-                          ARV{' '}
+                          After-repair value{' '}
                           <strong className="text-slate-100">
                             {getLeadFinancial(lead, 'arv')}
                           </strong>
                         </span>
                         <span>
-                          MAO{' '}
+                          Max. offer{' '}
                           <strong className="text-slate-100">
                             {getLeadFinancial(lead, 'mao')}
                           </strong>
@@ -2235,7 +2275,11 @@ export function Leads() {
                 <div className="flex flex-wrap gap-2">
                   <button
                     type="button"
-                    onClick={() => navigate(`/leads/${encodeURIComponent(activeLeadId)}`, { state: { leadReturn: leadReturnContext(activeLeadId) } })}
+                    onClick={() =>
+                      navigate(`/leads/${encodeURIComponent(activeLeadId)}`, {
+                        state: { leadReturn: leadReturnContext(activeLeadId) },
+                      })
+                    }
                     className="inline-flex items-center gap-2 rounded-lg bg-sky-300 px-3 py-2 text-xs font-bold text-slate-950 transition hover:bg-sky-200"
                   >
                     Open lead <ArrowUpRight size={14} aria-hidden="true" />
@@ -2261,7 +2305,7 @@ export function Leads() {
                       className="inline-flex items-center gap-2 rounded-full border border-amber-300/40 bg-amber-300/10 px-3 py-2 text-xs font-semibold text-amber-100 transition hover:border-amber-200 hover:bg-amber-300/15 disabled:cursor-wait disabled:opacity-60"
                     >
                       <Plus size={14} />
-                      Add canonical phone
+                      Add phone number
                     </button>
                   )}
                   <button
@@ -2916,8 +2960,8 @@ export function Leads() {
                   <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
                     {[
                       ['Est. repairs', 'estimatedRepairs', '$28,000'],
-                      ['ARV', 'arv', '$220,000'],
-                      ['MAO', 'mao', '$118,000'],
+                      ['After-repair value (ARV)', 'arv', '$220,000'],
+                      ['Maximum allowable offer (MAO)', 'mao', '$118,000'],
                       ['Mortgage balance', 'mortgageBalance', '$82,000'],
                       ['Lead score', 'leadScore', '78'],
                     ].map(([label, key, placeholder]) => (

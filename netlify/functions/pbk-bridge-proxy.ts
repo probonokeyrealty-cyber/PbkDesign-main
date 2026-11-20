@@ -1,4 +1,7 @@
-import type { Handler } from '@netlify/functions';
+import type { Handler, HandlerResponse } from '@netlify/functions';
+import { getAvaChatRequiredPermissions } from '../../scripts/ava-team-chat-permissions.mjs';
+
+const MAX_BODY_BYTES = 5 * 1024 * 1024; // Headroom under Netlify's buffered request limit.
 
 const BRIDGE_URL = String(
   process.env.PBK_BRIDGE_URL
@@ -166,21 +169,6 @@ function isAssistantChatPath(path = '') {
   return path === '/api/assistant/chat' || path === '/api/v1/assistant/chat';
 }
 
-function getAssistantChatText(path = '', body: Record<string, unknown>) {
-  if (!isAssistantChatPath(path)) return '';
-  return collectBodyText(body, [
-    'message',
-    'prompt',
-    'command',
-    'request',
-    'input',
-    'text',
-    'action',
-    'assistantAction',
-    'usedIntent',
-  ]).toLowerCase();
-}
-
 function isApprovalDecisionRequest(method = 'GET', path = '', body: Record<string, unknown>) {
   const normalizedMethod = String(method || 'GET').toUpperCase();
   if (!['POST', 'PUT', 'PATCH'].includes(normalizedMethod)) return false;
@@ -212,10 +200,10 @@ function authorizeTeamRequest({
   const normalizedPath = String(targetPath || '').toLowerCase();
   const toolName = getToolName(body);
   const normalizedToolName = toolName.toLowerCase();
-  const assistantChatText = getAssistantChatText(normalizedPath, body);
+  const chatPermissions = getAvaChatRequiredPermissions(normalizedPath, body);
 
   const deny = (permission: string, action: string) => ({
-    ok: false,
+    ok: false as const,
     statusCode: 403,
     error: `This team session is not permitted to ${action}.`,
     code: 'team_permission_denied',
@@ -247,10 +235,7 @@ function authorizeTeamRequest({
     normalizedMethod !== 'GET'
     && /(?:\/api\/messages|\/api\/conversation|\/api\/conversations|\/api\/sms|\/api\/inbox)/.test(normalizedPath)
     && /sms|message|conversation|inbox/.test(normalizedPath);
-  const assistantSmsIntent = Boolean(
-    assistantChatText
-      && /\b(?:(?:send|draft|compose|write|prepare|queue).{0,48}(?:sms|text|message)|(?:sms|text)\s+(?:seller|owner|lead|to))\b/i.test(assistantChatText),
-  );
+  const assistantSmsIntent = chatPermissions.has('canSendSms');
   if ((smsTool || smsRoute || assistantSmsIntent) && permissions.canSendSms !== true) {
     return deny('canSendSms', 'send SMS messages');
   }
@@ -260,10 +245,7 @@ function authorizeTeamRequest({
     normalizedMethod !== 'GET'
     && /(?:\/api\/cold-email|\/api\/messages|\/api\/conversation|\/api\/conversations|\/api\/email|\/api\/inbox)/.test(normalizedPath)
     && /email|mail|message|conversation|inbox/.test(normalizedPath);
-  const assistantEmailIntent = Boolean(
-    assistantChatText
-      && /\b(?:(?:send|draft|compose|write|prepare|queue).{0,48}(?:email|mail)|email\s+(?:seller|owner|lead|to))\b/i.test(assistantChatText),
-  );
+  const assistantEmailIntent = chatPermissions.has('canSendEmail');
   if ((emailTool || emailRoute || assistantEmailIntent) && permissions.canSendEmail !== true) {
     return deny('canSendEmail', 'send emails');
   }
@@ -272,11 +254,7 @@ function authorizeTeamRequest({
   const callRoute =
     normalizedMethod !== 'GET'
     && /(?:\/api\/calls|\/api\/operator\/call|\/api\/call)/.test(normalizedPath);
-  const assistantCallIntent = Boolean(
-    assistantChatText
-      && !/\b(?:review|summarize|score|transcribe|transcript|recording|qa|quality).{0,32}call\b/i.test(assistantChatText)
-      && /\b(?:(?:place|make|start|launch|initiate|dial|ring|connect|prepare|queue|set up).{0,48}call|call.{0,48}(?:seller|owner|lead|prospect|now|for approval|request|before dialing|dial))\b/i.test(assistantChatText),
-  );
+  const assistantCallIntent = chatPermissions.has('canPlaceCalls');
   if ((callTool || callRoute || assistantCallIntent) && permissions.canPlaceCalls !== true) {
     return deny('canPlaceCalls', 'place calls');
   }
@@ -288,10 +266,7 @@ function authorizeTeamRequest({
       normalizedMethod !== 'GET'
       && /(?:\/api\/provider-writes|\/api\/outbound|\/api\/nurture|\/api\/campaigns\/[^/]+\/approval)/.test(normalizedPath)
     );
-  const assistantProviderApprovalIntent = Boolean(
-    assistantChatText
-      && /\b(?:nurture|sequence|provider|approval|approve|approved|launch campaign|start campaign)\b/i.test(assistantChatText),
-  );
+  const assistantProviderApprovalIntent = chatPermissions.has('canApproveProviderActions');
   if (
     (providerApprovalTool || providerApprovalRoute || assistantProviderApprovalIntent)
     && permissions.canApproveProviderActions !== true
@@ -326,7 +301,7 @@ function authorizeTeamRequest({
     return deny('canChangeGuardrails', 'change infrastructure or security guardrails');
   }
 
-  return { ok: true, statusCode: 200 };
+  return { ok: true as const, statusCode: 200 };
 }
 
 function appendQueryParams(url: URL, event: Parameters<Handler>[0]) {
@@ -364,6 +339,7 @@ function buildRequestHeaders(event: Parameters<Handler>[0], requestId: string) {
   for (const [name, value] of Object.entries(event.headers || {})) {
     const lower = name.toLowerCase();
     if (!FORWARDED_REQUEST_HEADERS.has(lower) || value == null) continue;
+    if (lower === 'x-request-id') continue; // Set one canonical key below, not two differently cased keys.
     headers[name] = value;
   }
   const bridgeApiKey = String(process.env.PBK_BRIDGE_API_KEY || '').trim();
@@ -397,6 +373,7 @@ function isPublicProxyRequest(method = 'GET', targetPath = '') {
 async function verifyTeamSession(
   event: Parameters<Handler>[0],
   requestId: string,
+  signal?: AbortSignal,
 ) {
   const token = getHeader(event, 'x-pbk-team-token');
   if (!token || token.length > 4096) {
@@ -418,6 +395,9 @@ async function verifyTeamSession(
   }
 
   const controller = new AbortController();
+  const onDisconnect = () => controller.abort(signal?.reason);
+  signal?.addEventListener('abort', onDisconnect, { once: true });
+  if (signal?.aborted) onDisconnect();
   const timeout = setTimeout(() => controller.abort(), 5000);
   try {
     const response = await fetch(`${BRIDGE_URL}/api/auth/team/verify`, {
@@ -465,6 +445,7 @@ async function verifyTeamSession(
     };
   } finally {
     clearTimeout(timeout);
+    signal?.removeEventListener('abort', onDisconnect);
   }
 }
 
@@ -606,7 +587,70 @@ function compactCampaignPayload(payload: Record<string, any>) {
   return compact;
 }
 
-export const handler: Handler = async (event) => {
+function bodyTooLarge(event: Parameters<Handler>[0], requestId: string) {
+  return {
+    statusCode: 413,
+    headers: { 'Content-Type': 'application/json', ...buildCorsHeaders(event), 'X-Request-ID': requestId },
+    body: JSON.stringify({ ok: false, error: 'Request body too large', maxBytes: MAX_BODY_BYTES, requestId }),
+  };
+}
+
+// Relay bytes unchanged; the bridge alone owns answer/done events and their payloads.
+function forwardStream(body: ReadableStream<Uint8Array>, abort: AbortController, cleanup: () => void) {
+  const reader = body.getReader();
+  let ended = false;
+  let output: ReadableStreamDefaultController<Uint8Array>;
+  const finish = () => {
+    if (ended) return false;
+    ended = true;
+    abort.signal.removeEventListener('abort', onAbort);
+    cleanup();
+    return true;
+  };
+  const cancelReader = (reason: unknown) => reader.cancel(reason).catch(() => {}).finally(() => reader.releaseLock());
+  const onAbort = () => {
+    if (!finish()) return;
+    const error = abort.signal.reason || new Error('PBK bridge proxy stream aborted.');
+    output.error(error);
+    void cancelReader(error);
+  };
+  return new ReadableStream<Uint8Array>({
+    start(controller) {
+      output = controller;
+      abort.signal.addEventListener('abort', onAbort, { once: true });
+      if (abort.signal.aborted) onAbort();
+    },
+    async pull(controller) {
+      try {
+        const chunk = await reader.read();
+        if (ended) return;
+        if (chunk.done) {
+          finish();
+          reader.releaseLock();
+          controller.close();
+        } else {
+          controller.enqueue(chunk.value);
+        }
+      } catch (error) {
+        if (!finish()) return;
+        controller.error(error);
+        abort.abort(error);
+        reader.releaseLock();
+      }
+    },
+    cancel(reason) {
+      if (!finish()) return;
+      abort.abort(reason);
+      return cancelReader(reason);
+    },
+  }, { highWaterMark: 0 });
+}
+
+async function proxyRequest(event: Parameters<Handler>[0], options: {
+  streaming?: boolean;
+  signal?: AbortSignal;
+  body?: Buffer<ArrayBuffer>;
+} = {}): Promise<HandlerResponse | Response> {
   const requestId = getRequestId(event);
 
   if (event.httpMethod === 'OPTIONS') {
@@ -637,27 +681,30 @@ export const handler: Handler = async (event) => {
     );
   }
   const targetUrl = new URL(targetPath, `${BRIDGE_URL}/`);
+  // Never lend the proxy's founder bearer to qualification routes.
+  if (['/api/agents/controlled-qualification', '/api/admin/qualification/run', '/api/admin/operational-audit/run', '/api/admin/reconciliation/run'].includes(targetUrl.pathname.replace(/\/+$/, ''))) {
+    return json({
+      ok: false,
+      error: 'Qualification requires direct founder authentication.',
+      code: 'qualification_founder_auth_required',
+    }, 403, { 'X-Request-ID': requestId }, event);
+  }
   if (targetUrl.pathname.replace(/\/+$/, '') === '/api/leads/batch-apply') {
     return json({ ok: false, error: 'Batch apply requires direct operator authentication.' }, 403, {}, event);
   }
   appendQueryParams(targetUrl, event);
 
-  const hasBody = !['GET', 'HEAD'].includes(String(event.httpMethod || 'GET').toUpperCase()) && event.body != null;
+  const hasBody = !['GET', 'HEAD'].includes(String(event.httpMethod || 'GET').toUpperCase()) && (event.body != null || options.body != null);
   const body = hasBody
-    ? Buffer.from(event.body || '', event.isBase64Encoded ? 'base64' : 'utf8')
+    ? options.body ?? Buffer.from(event.body || '', event.isBase64Encoded ? 'base64' : 'utf8')
     : undefined;
 
-  const MAX_BODY_BYTES = 5 * 1024 * 1024; // 5 MB - headroom under Netlify's 6 MB function limit
   if (body && body.byteLength > MAX_BODY_BYTES) {
-    return {
-      statusCode: 413,
-      headers: { 'Content-Type': 'application/json', ...buildCorsHeaders(event), 'X-Request-ID': requestId },
-      body: JSON.stringify({ ok: false, error: 'Request body too large', maxBytes: MAX_BODY_BYTES, requestId }),
-    };
+    return bodyTooLarge(event, requestId);
   }
 
   if (!isPublicProxyRequest(event.httpMethod, targetPath)) {
-    const teamSession = await verifyTeamSession(event, requestId);
+    const teamSession = await verifyTeamSession(event, requestId, options.signal);
     if (!teamSession.ok) {
       return json(
         {
@@ -693,22 +740,33 @@ export const handler: Handler = async (event) => {
     }
   }
 
-  const PROXY_TIMEOUT_MS = Math.max(
+  const PROXY_TIMEOUT_MS = isAssistantChatPath(targetPath) ? 40_000 : Math.max(
     5000,
     Math.min(25000, Number(process.env.PBK_BRIDGE_PROXY_TIMEOUT_MS || 20000)),
   );
   const abortController = new AbortController();
-  const timeoutHandle = setTimeout(() => abortController.abort(), PROXY_TIMEOUT_MS);
+  const onDisconnect = () => abortController.abort(options.signal?.reason);
+  options.signal?.addEventListener('abort', onDisconnect, { once: true });
+  if (options.signal?.aborted) onDisconnect();
+  let timedOut = false;
+  let streamOwnsCleanup = false;
+  const timeoutHandle = setTimeout(() => {
+    timedOut = true;
+    abortController.abort(new Error('PBK bridge proxy timed out.'));
+  }, PROXY_TIMEOUT_MS);
+  const cleanup = () => {
+    clearTimeout(timeoutHandle);
+    options.signal?.removeEventListener('abort', onDisconnect);
+  };
 
   try {
+    abortController.signal.throwIfAborted();
     const response = await fetch(targetUrl, {
       method: event.httpMethod,
       headers: buildRequestHeaders(event, requestId),
       body,
       signal: abortController.signal,
     });
-    clearTimeout(timeoutHandle);
-
     const responseHeaders: Record<string, string> = {
       ...buildCorsHeaders(event),
       'Cache-Control': response.headers.get('cache-control') || 'no-store',
@@ -719,8 +777,31 @@ export const handler: Handler = async (event) => {
       if (FORWARDED_RESPONSE_HEADERS.has(name.toLowerCase())) responseHeaders[name] = value;
     }
 
-    const bytes = Buffer.from(await response.arrayBuffer());
     const contentType = responseHeaders['content-type'] || responseHeaders['Content-Type'] || '';
+    if (options.streaming && event.httpMethod === 'POST' && isAssistantChatPath(targetPath)
+      && getHeader(event, 'accept').toLowerCase().includes('text/event-stream')
+      && parseJsonBody(body).stream === true && /^text\/event-stream\b/i.test(contentType) && response.body) {
+      const streamed = new Response(forwardStream(response.body, abortController, cleanup), {
+        status: response.status,
+        headers: webHeaders(responseHeaders),
+      });
+      streamOwnsCleanup = true;
+      return streamed;
+    }
+
+    const bytes = Buffer.from(await response.arrayBuffer());
+    if (['/api/leads', '/api/leads/import'].includes(targetPath) && isTextResponse(contentType)) {
+      try {
+        // The full roster's pretty-printed JSON can exceed Netlify's response limit.
+        // Preserve every record, field, and alias; remove only transport whitespace.
+        return json(JSON.parse(bytes.toString('utf8')), response.status, {
+          'X-PBK-Bridge-Proxy': 'netlify',
+          'X-Request-ID': responseHeaders['X-Request-ID'] || requestId,
+        }, event);
+      } catch {
+        // Preserve upstream error bodies that are not JSON.
+      }
+    }
     if (shouldCompactHealthResponse(targetPath) && isTextResponse(contentType)) {
       try {
         const payload = JSON.parse(bytes.toString('utf8'));
@@ -763,8 +844,7 @@ export const handler: Handler = async (event) => {
       isBase64Encoded: !textResponse,
     };
   } catch (error) {
-    clearTimeout(timeoutHandle);
-    const timedOut = error instanceof Error && error.name === 'AbortError';
+    timedOut ||= error instanceof Error && error.name === 'AbortError' && !options.signal?.aborted;
     return json(
       {
         ok: false,
@@ -777,5 +857,97 @@ export const handler: Handler = async (event) => {
       { 'X-Request-ID': requestId },
       event,
     );
+  } finally {
+    if (!streamOwnsCleanup) cleanup();
   }
-};
+}
+
+// Keep the Lambda-compatible helper for fixtures without forcing Netlify API v1.
+export const legacyHandler: Handler = (event) => proxyRequest(event) as Promise<HandlerResponse>;
+
+function webHeaders(headers: HandlerResponse['headers'] = {}) {
+  const result = new Headers();
+  // Legacy responses may have differently cased keys; set instead of combining them.
+  for (const [name, value] of Object.entries(headers)) {
+    if (value != null) result.set(name, String(value));
+  }
+  return result;
+}
+
+function webResponse(result: HandlerResponse | Response, method: string) {
+  if (result instanceof Response) return result;
+  const noBody = method === 'HEAD' || [204, 205, 304].includes(result.statusCode);
+  return new Response(noBody ? null : result.isBase64Encoded
+    ? Buffer.from(result.body || '', 'base64') : result.body, {
+    status: result.statusCode,
+    headers: webHeaders(result.headers),
+  });
+}
+
+async function readRequestBody(request: Request): Promise<Buffer<ArrayBuffer> | null> {
+  if (!request.body) return Buffer.alloc(0);
+  const reader = request.body.getReader();
+  const onDisconnect = () => { void reader.cancel(request.signal.reason).catch(() => {}); };
+  request.signal.addEventListener('abort', onDisconnect, { once: true });
+  if (request.signal.aborted) onDisconnect();
+  const chunks: Buffer[] = [];
+  let size = 0;
+  try {
+    while (true) {
+      request.signal.throwIfAborted();
+      const { done, value } = await reader.read();
+      request.signal.throwIfAborted();
+      if (done) return Buffer.concat(chunks, size);
+      size += value.byteLength;
+      if (size > MAX_BODY_BYTES) {
+        void reader.cancel('Request body too large').catch(() => {});
+        return null;
+      }
+      chunks.push(Buffer.from(value));
+    }
+  } finally {
+    request.signal.removeEventListener('abort', onDisconnect);
+    reader.releaseLock();
+  }
+}
+
+// Modern Netlify Functions stream a web Response body without Lambda buffering.
+export default async function fetchHandler(request: Request): Promise<Response> {
+  const url = new URL(request.url);
+  const query: Record<string, string> = Object.create(null);
+  const multi: Record<string, string[]> = Object.create(null);
+  for (const [name, value] of url.searchParams) {
+    query[name] ??= value;
+    (multi[name] ??= []).push(value);
+  }
+  const event: Parameters<Handler>[0] = {
+    httpMethod: request.method,
+    path: url.pathname,
+    rawUrl: request.url,
+    rawQuery: url.search.slice(1),
+    headers: Object.fromEntries(request.headers),
+    multiValueHeaders: {},
+    queryStringParameters: query,
+    multiValueQueryStringParameters: multi,
+    body: null,
+    isBase64Encoded: false,
+  };
+  const requestId = getRequestId(event);
+  event.headers['x-request-id'] = requestId;
+  let body: Buffer<ArrayBuffer> | undefined;
+  if (!['GET', 'HEAD', 'OPTIONS'].includes(request.method)) {
+    if (Number(request.headers.get('content-length')) > MAX_BODY_BYTES) {
+      void request.body?.cancel('Request body too large').catch(() => {});
+      return webResponse(bodyTooLarge(event, requestId), request.method);
+    }
+    try {
+      const bytes = await readRequestBody(request);
+      if (bytes === null) return webResponse(bodyTooLarge(event, requestId), request.method);
+      body = bytes;
+    } catch {
+      return webResponse(json({ ok: false, error: 'Could not read request body.', requestId }, 400,
+        { 'X-Request-ID': requestId }, event), request.method);
+    }
+  }
+  return webResponse(await proxyRequest(event, { streaming: true, signal: request.signal, body }), request.method);
+}

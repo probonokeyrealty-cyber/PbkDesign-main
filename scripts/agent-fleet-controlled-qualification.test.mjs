@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from '@jest/globals';
 import { requiredAgentRegistryIds } from './agent-registry.mjs';
+import { controlledWorkflowOrder } from './controlled-agent-workflow.mjs';
 import { qualificationCriteria, validateQualificationReport, validateQualificationAging, createQualificationRequest, runControlledQualification, summarizeQualificationResponse } from './agent-fleet-controlled-qualification.mjs';
 
 const at = '2026-11-14T12:00:00.000Z';
@@ -10,11 +11,13 @@ function fixture() {
     productionReadinessVerified: false, organicReadinessPromoted: false,
     guard: { atomic: true, noContact: true, externalWritesBlocked: true, fixtureOnly: true },
     storage: { backend: 'postgres', readbackVerified: true },
+    workflow: { order: [...controlledWorkflowOrder], linkedAgentCount: 11, crossAgentWorkflowVerified: true },
     fixture: { leadId: 'qualification-lead', callId: 'qualification-call', sourceUpdatedAt: at },
     agents: requiredAgentRegistryIds.map((agentId, index) => ({
       agentId, completed: true, outputResult: 'actual_handler_result', workOrderId: `task-${index}`,
       contextId: `context-${index}`, runId: 'test-run', leadId: 'qualification-lead', callId: 'qualification-call',
-      sourceUpdatedAt: at, completedAt: at, durable: true, operational: false,
+      sourceUpdatedAt: at, completedAt: at, durable: true, operational: false, workflowLinkVerified: true,
+      workflowLink: { sequence: controlledWorkflowOrder.indexOf(agentId) },
       criteria: Object.fromEntries(qualificationCriteria[agentId].map((key) => [key, true])),
       evidenceRecordIds: [`record-${index}`],
     })),

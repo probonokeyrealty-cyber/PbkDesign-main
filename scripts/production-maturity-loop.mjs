@@ -503,6 +503,143 @@ export function buildCanaryPromotionGate({
   };
 }
 
+const hasText = (value) => typeof value === 'string' && value.trim().length > 0;
+const asRecord = (value) => value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+
+// The bridge must load these run records from trusted execution storage, not invoke input
+// or environment defaults. This validates evidence; it does not execute or attest a run.
+export function buildExecutedReadinessEvidence({
+  revision,
+  evidence = {},
+  requiredScenarioIds = [],
+  now = Date.now(),
+  maxAgeMs = 86_400_000,
+  sloStatus = {},
+} = {}) {
+  evidence = asRecord(evidence);
+  const nowMs = typeof now === 'function' ? now() : now;
+  const validClock = Number.isFinite(nowMs) && Number.isFinite(new Date(nowMs).getTime());
+  const inputBlockers = [];
+  if (!hasText(revision)) inputBlockers.push('input:revision_missing');
+  if (!validClock) inputBlockers.push('input:clock_invalid');
+  if (!Number.isFinite(maxAgeMs) || maxAgeMs < 0) inputBlockers.push('input:max_age_invalid');
+  const required = Array.isArray(requiredScenarioIds) ? requiredScenarioIds : [];
+  if (!required.length || !required.every(hasText) || new Set(required).size !== required.length) {
+    inputBlockers.push('input:required_scenarios_missing_or_invalid');
+  }
+  function proofBlockers(value, expectedRevision) {
+    const proof = asRecord(value);
+    const blockers = inputBlockers.length ? ['verification_inputs_invalid'] : [];
+    if (!hasText(proof.runId)) blockers.push('run_id_missing');
+    if (proof.executed !== true) blockers.push('not_executed');
+    if (!hasText(expectedRevision) || proof.revision !== expectedRevision) blockers.push('revision_mismatch');
+    const time = hasText(proof.executedAt) ? Date.parse(proof.executedAt) : NaN;
+    if (!Number.isFinite(time)) blockers.push('execution_time_missing_or_invalid');
+    else if (time > nowMs) blockers.push('execution_time_future');
+    else if (nowMs - time > maxAgeMs) blockers.push('execution_time_stale');
+    if (!['controlled', 'operational'].includes(proof.provenance)) blockers.push('provenance_unknown');
+    if (proof.provenance === 'operational' && proof.operational === false) blockers.push('provenance_contradiction');
+    if (['synthetic', 'preview', 'dryRun', 'dry_run', 'packaged'].some((key) => proof[key] === true)) blockers.push('not_execution_proof');
+    if (proof.passed === false) blockers.push('evaluation_failed');
+    return blockers;
+  }
+  const evalProof = asRecord(evidence.failedCallEval);
+  const evalBlockers = proofBlockers(evalProof, revision);
+  const rows = (Array.isArray(evalProof.scenarios) ? evalProof.scenarios : []).map((value) => {
+    const row = asRecord(value);
+    return row.executed === false || row.synthetic === true || row.packaged === true
+      ? { ...row, passed: false, reason: 'scenario_not_executed' } : row;
+  });
+  const ids = rows.map((row) => row.id);
+  if (rows.some((row) => row.executed === false || row.synthetic === true || row.packaged === true)) evalBlockers.push('scenario_not_executed');
+  if (ids.some((id) => !hasText(id)) || new Set(ids).size !== ids.length) evalBlockers.push('scenario_ids_invalid_or_duplicated');
+  for (const id of required) {
+    if (!ids.includes(id)) evalBlockers.push(`scenario_missing:${id}`);
+  }
+  // Invalid run metadata cannot turn an entire packaged scenario list into passes.
+  const evalGate = buildFailedCallEvalGate({ scenarios: proofBlockers(evalProof, revision).length ? [] : rows });
+  if (!evalGate.ready) evalBlockers.push('scenario_failed');
+  const failedCallEvalGate = {
+    ...evalGate,
+    ready: evalBlockers.length === 0,
+    result: evalBlockers.length ? 'failed_call_eval_unverified_or_failed' : evalGate.result,
+    blockers: evalBlockers,
+  };
+  function passedGate(value) {
+    const proof = asRecord(value);
+    const blockers = proofBlockers(proof, revision);
+    if (proof.passed !== true) blockers.push('pass_not_proven');
+    return { ready: blockers.length === 0, runId: proof.runId || '', blockers };
+  }
+  const behaviorGate = passedGate(evidence.behavior);
+  const silentGate = passedGate(evidence.silentErrors);
+  if (evidence.silentErrors?.provenance !== 'operational'
+    || evidence.silentErrors?.scope !== 'durable_operational_audit') {
+    silentGate.blockers.push('durable_operational_audit_required');
+    silentGate.ready = false;
+  }
+  const silentErrorReport = { ...silentGate, launchReady: silentGate.ready };
+  const canary = asRecord(evidence.canary);
+  const baseline = asRecord(canary.baseline);
+  const candidate = asRecord(canary.candidate);
+  const canaryBlockers = proofBlockers(canary, revision);
+  if (canary.provenance !== 'operational') canaryBlockers.push('operational_comparison_required');
+  if (canary.mode === 'same_version_reference' || baseline.revision === candidate.revision) canaryBlockers.push('independent_versions_required');
+  if (!hasText(baseline.runId) || baseline.runId === candidate.runId) canaryBlockers.push('independent_runs_required');
+  for (const [side, proof] of [['baseline', baseline], ['candidate', candidate]]) {
+    canaryBlockers.push(...proofBlockers(proof, side === 'candidate' ? revision : baseline.revision).map((item) => `${side}:${item}`));
+    if (proof.provenance !== 'operational') canaryBlockers.push(`${side}:operational_samples_required`);
+    if (!Number.isInteger(proof.sampleCount) || proof.sampleCount <= 0) canaryBlockers.push(`${side}:samples_missing`);
+    for (const key of ['behaviorPassRate', 'p95LatencyMs', 'errorRate', 'fallbackRate']) {
+      const value = proof[key];
+      if (typeof value !== 'number' || !Number.isFinite(value) || value < 0 || (key !== 'p95LatencyMs' && value > 1)) {
+        canaryBlockers.push(`${side}:metric_invalid:${key}`);
+      }
+    }
+  }
+  const comparison = buildShadowCanaryComparison({
+    baseline: { ...baseline, version: baseline.revision },
+    candidate: { ...candidate, version: candidate.revision },
+  });
+  const shadowCanaryComparison = {
+    ...comparison,
+    ready: comparison.ready && canaryBlockers.length === 0,
+    result: comparison.ready && canaryBlockers.length === 0 ? 'shadow_canary_comparison_ready' : 'shadow_canary_comparison_blocked',
+    blockers: [...canaryBlockers, ...comparison.blockers],
+  };
+  const canaryPromotionGate = buildCanaryPromotionGate({
+    canaryHealth: { ready: shadowCanaryComparison.ready },
+    behaviorGate, failedCallEvalGate, silentErrorReport, sloStatus,
+  });
+  const blockers = [
+    ...inputBlockers,
+    ...evalBlockers.map((item) => `failedCallEval:${item}`),
+    ...behaviorGate.blockers.map((item) => `behavior:${item}`),
+    ...silentGate.blockers.map((item) => `silentErrors:${item}`),
+    ...shadowCanaryComparison.blockers.map((item) => `canary:${item}`),
+    ...canaryPromotionGate.blockers.map((item) => `promotion:${item}`),
+  ];
+  const runSummary = (value) => {
+    const proof = asRecord(value);
+    return { runId: proof.runId || null, revision: proof.revision || null, executedAt: proof.executedAt || null,
+      executed: proof.executed === true, provenance: proof.provenance || 'unknown' };
+  };
+  return {
+    ok: true,
+    ready: blockers.length === 0,
+    result: blockers.length ? 'executed_readiness_evidence_not_ready' : 'executed_readiness_evidence_ready',
+    revision,
+    checkedAt: validClock ? new Date(nowMs).toISOString() : null,
+    blockers,
+    provenance: Object.fromEntries(['failedCallEval', 'behavior', 'silentErrors', 'canary'].map((key) => [key, asRecord(evidence[key]).provenance || 'unknown'])),
+    runs: {
+      failedCallEval: runSummary(evidence.failedCallEval), behavior: runSummary(evidence.behavior), silentErrors: runSummary(evidence.silentErrors),
+      canary: { ...runSummary(canary), baseline: runSummary(baseline), candidate: runSummary(candidate) },
+    },
+    failedCallEvalGate, behaviorGate, silentErrorReport, shadowCanaryComparison, canaryPromotionGate,
+  };
+}
+
 function metricNumber(source = {}, key = '', fallback = null) {
   const value = Number(source?.[key]);
   return Number.isFinite(value) ? value : fallback;

@@ -155,3 +155,125 @@ test('reported live latency gaps remain blockers with a healthy context', () => 
   assert.equal(ava.metrics.latencyP95Ms, 6544);
   assert(ava.blockers.includes('latency_p95_above_budget'));
 });
+
+test('absent legacy latency is unknown, not zero or within budget', () => {
+  const { registry, options } = fixture();
+  options.latencySamples.ava = [];
+  const ava = buildStableAgentFleetMeasurement(registry, options).agents[0];
+  assert.equal(ava.metrics.latencyP95Ms, null);
+  assert.equal(ava.metrics.unverifiedLatencyP95Ms, null);
+  assert.equal(ava.measurement.latencyWithinBudget, null);
+});
+
+function typedFixture() {
+  const { registry, options } = fixture();
+  options.requiredIds = ['ava'];
+  options.latencySamples.ava = [71_660];
+  const observation = (kind, valueMs) => ({ kind, valueMs, channel: 'chat', verified: true,
+    source: 'agent_ops', recordId: 'ops-1', at: new Date(options.now).toISOString() });
+  options.latencyObservations = { ava: [observation('completion', 71_660), observation('first_token', 800)] };
+  options.latencyBudgetsMs = { chat: { first_token: 2500 } };
+  return { registry, options, observation };
+}
+
+test('valid first token cannot hide long completion or manufacture an unknown completion budget', () => {
+  const { registry, options } = typedFixture();
+  const ava = buildStableAgentFleetMeasurement(registry, options).agents[0];
+  assert.equal(ava.ready, false);
+  assert.equal(ava.metrics.latencyP95Ms, 71_660);
+  assert(!ava.blockers.includes('latency_p95_above_budget'));
+  assert(ava.blockers.includes('latency_budget_unknown:chat:completion'));
+  assert.equal(ava.metrics.latencyByKind.chat.first_token.withinBudget, true);
+  assert.equal(ava.metrics.latencyByKind.chat.completion.p95Ms, 71_660);
+  assert.equal(ava.metrics.latencyByKind.chat.completion.withinBudget, null);
+});
+
+test('explicit per-kind budgets compare completion separately from startup', () => {
+  const { registry, options } = typedFixture();
+  options.latencyBudgetsMs.chat.completion = 80_000;
+  const result = buildStableAgentFleetMeasurement(registry, options);
+  assert.equal(result.ready, true);
+  options.latencyBudgetsMs.chat.completion = 60_000;
+  assert(buildStableAgentFleetMeasurement(registry, options).agents[0].blockers.includes('latency_p95_above_budget:chat:completion'));
+});
+
+test('unknown, missing, stale, future and unverified timings cannot be dropped to improve gates', () => {
+  for (const extra of [
+    { kind: 'unknown', valueMs: 90_000 }, { kind: 'completion', valueMs: null },
+    { kind: 'completion', valueMs: 90_000, verified: false },
+    { kind: 'completion', valueMs: 90_000, at: '2020-01-01T00:00:00Z' },
+    { kind: 'completion', valueMs: 90_000, at: '2030-01-01T00:00:00Z' },
+  ]) {
+    const { registry, options, observation } = typedFixture();
+    options.latencyBudgetsMs.chat.completion = 80_000;
+    options.latencyObservations.ava.push({ ...observation('completion', 1), ...extra });
+    const ava = buildStableAgentFleetMeasurement(registry, options).agents[0];
+    assert.equal(ava.ready, false, JSON.stringify(extra));
+    assert.equal(ava.metrics.latencyObservationCount, 3);
+  }
+});
+
+test('typed mode does not silently fall back to legacy or health latency when observations are absent', () => {
+  const { registry, options } = typedFixture();
+  options.latencyObservations = {};
+  options.healthProbes[0].latencyMs = 1;
+  const ava = buildStableAgentFleetMeasurement(registry, options).agents[0];
+  assert.equal(ava.ready, false);
+  assert.equal(ava.measurement.latencyMeasured, false);
+  assert(ava.blockers.includes('latency_not_sampled'));
+});
+
+test('typed first-token summaries cannot omit retained slow or unverified elapsed samples', () => {
+  const { registry, options } = typedFixture();
+  options.latencyObservations.ava = [options.latencyObservations.ava[1]];
+  const ava = buildStableAgentFleetMeasurement(registry, options).agents[0];
+  assert.equal(ava.ready, false);
+  assert(ava.blockers.includes('latency_observations_incomplete'));
+  assert.equal(ava.measurement.latencyWithinBudget, null);
+});
+
+test('multiple observations from one run cannot inflate independent per-kind sample counts', () => {
+  const { registry, options, observation } = typedFixture();
+  options.minLatencySamples = 2;
+  options.latencyBudgetsMs.chat.completion = 80_000;
+  options.latencyObservations.ava.push(observation('completion', 71_660), observation('first_token', 800));
+  const ava = buildStableAgentFleetMeasurement(registry, options).agents[0];
+  assert.equal(ava.ready, false);
+  assert.equal(ava.metrics.latencyByKind.chat.completion.samples, 1);
+});
+
+test('malformed typed observations fail closed instead of throwing or using legacy samples', () => {
+  const { registry, options } = typedFixture();
+  options.latencyObservations.ava = {};
+  assert.equal(buildStableAgentFleetMeasurement(registry, options).ready, false);
+});
+
+test('explicit unready latency policy blocks every agent and the fleet summary even with passing timings', () => {
+  const { registry, options } = fixture();
+  options.latencyPolicy = { ready: false, budgets: {}, issues: ['policy_missing'] };
+  const result = buildStableAgentFleetMeasurement(registry, options);
+  assert.equal(result.ready, false);
+  assert.equal(result.measuredCount, 0);
+  assert(result.blockers.includes('latency_policy_not_ready'));
+  assert(result.agents.every((agent) => !agent.ready && agent.blockers.includes('latency_policy_not_ready')));
+});
+
+test('unready latency policy cannot pass an empty fleet selection', () => {
+  const result = buildStableAgentFleetMeasurement([], {
+    requiredIds: [], latencyPolicy: { ready: false, budgets: {}, issues: ['policy_missing'] },
+  });
+  assert.equal(result.ready, false);
+  assert(result.blockers.includes('latency_policy_not_ready'));
+});
+
+test('ready latency policy adds no substitute for evidence and leaves legacy callers unchanged', () => {
+  const { registry, options } = fixture();
+  const legacy = buildStableAgentFleetMeasurement(registry, options);
+  const supplied = buildStableAgentFleetMeasurement(registry, { ...options, latencyPolicy: { ready: true } });
+  assert.deepEqual(supplied, legacy);
+  const missingEvidence = buildStableAgentFleetMeasurement(registry, {
+    ...options, latencySamples: {}, latencyPolicy: { ready: true },
+  });
+  assert.equal(missingEvidence.ready, false);
+  assert(missingEvidence.agents.every((agent) => agent.blockers.includes('latency_not_sampled')));
+});

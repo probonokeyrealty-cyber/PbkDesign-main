@@ -4,6 +4,7 @@ import { resolve } from 'node:path';
 
 const root = process.cwd();
 const source = readFileSync(resolve(root, 'netlify/functions/pbk-bridge-proxy.ts'), 'utf8');
+const chatPermissions = readFileSync(resolve(root, 'scripts/ava-team-chat-permissions.mjs'), 'utf8');
 
 assert(
   /process\.env\.PBK_BRIDGE_API_KEY/.test(source),
@@ -54,7 +55,9 @@ assert(
   'Netlify proxy team sessions must not approve, activate, roll back, import, reload, or write governed skills before bridge authority is attached.',
 );
 assert(
-  /getAssistantChatText/.test(source) &&
+  /getAvaChatRequiredPermissions\(normalizedPath, body\)/.test(source) &&
+    ['canSendSms', 'canSendEmail', 'canPlaceCalls', 'canApproveProviderActions'].every(permission =>
+      chatPermissions.includes(`required.add('${permission}')`) && source.includes(`chatPermissions.has('${permission}')`)) &&
     /\/api\/assistant\/chat/.test(source) &&
     /return deny\('canSendSms', 'send SMS messages'\)/.test(source) &&
     /return deny\('canSendEmail', 'send emails'\)/.test(source) &&

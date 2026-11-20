@@ -37,12 +37,12 @@
   font-family: Fraunces, Georgia, serif;
   font-weight: 500;
   line-height: 1.15;
-  letter-spacing: -0.025em;
+  letter-spacing: 0;
   margin: 0 0 18px;
   color: var(--portal-ink);
 }
 .pbk-portal h1 {
-  font-size: clamp(32px, 4.2vw, 58px);
+  font-size: 40px;
   max-width: 760px;
 }
 .pbk-portal h2 {
@@ -50,6 +50,13 @@
 }
 .pbk-portal h3 {
   font-size: 23px;
+}
+.pbk-portal .portal-section-label {
+  margin: 20px 0 6px;
+  font:
+    600 15px/1.5 Geist,
+    Arial,
+    sans-serif;
 }
 .pbk-portal p {
   margin: 0 0 16px;

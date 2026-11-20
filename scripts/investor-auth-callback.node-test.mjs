@@ -7,6 +7,24 @@ const server = await import('../supabase/functions/pbk-investor-staging/authSess
 const buyer = 'https://pbk-investors-staging.netlify.app';
 const staff = 'https://pbk-investor-staging--pbkcenter.netlify.app';
 
+test('password recovery callbacks retain only the recovery intent and scrub credentials', () => {
+  let cleared = false;
+  const callback = client.consumeEmailCallback(
+    {
+      pathname: '/',
+      search: '',
+      hash: '#access_token=fixture&refresh_token=discard&type=recovery',
+    },
+    {
+      replaceState: () => {
+        cleared = true;
+      },
+    }
+  );
+  assert.deepEqual(callback, { token: 'fixture', recovery: true });
+  assert.equal(cleared, true);
+});
+
 test('email callbacks remove all credentials before returning a token and never retain refresh tokens', () => {
   assert.equal(typeof client.consumeEmailCallback, 'function');
   const replaced = [];
@@ -38,10 +56,26 @@ test('used, expired and malformed email links display a safe retry message witho
       }
     );
     assert.equal(cleared, true);
-    assert.match(result.error, /fresh sign-in link/i);
+    assert.match(result.error, /new recovery code/i);
     assert.equal(JSON.stringify(result).includes('private-provider-detail'), false);
   }
   assert.equal(client.consumeEmailCallback({ hash: '#inventory' }, {}), null);
+});
+
+test('query-string expired callbacks are scrubbed and visible instead of silently ignored', () => {
+  const replaced = [];
+  const result = client.consumeEmailCallback(
+    {
+      pathname: '/property-log',
+      search:
+        '?error=access_denied&error_code=otp_expired&error_description=private-detail&view=staff',
+      hash: '',
+    },
+    { replaceState: (...args) => replaced.push(args) }
+  );
+  assert.match(result.error, /Forgot password/);
+  assert.doesNotMatch(JSON.stringify(result), /private-detail/);
+  assert.deepEqual(replaced, [[null, '', '/property-log?view=staff']]);
 });
 test('sign-in redirects use exact staging entries and reject unrecognized origins', () => {
   assert.equal(typeof server.authRedirectUrl, 'function');

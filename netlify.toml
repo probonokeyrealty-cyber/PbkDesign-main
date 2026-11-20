@@ -9,12 +9,10 @@ included_files = ["node_modules/@sparticuz/chromium/bin/**"]
 
 [functions.documents-pdf]
 timeout = 26
+included_files = ["node_modules/@sparticuz/chromium/bin/**", "public/PBK_Master_Deal_Package.html"]
 
 [functions.public-ava-chat]
 timeout = 15
-
-[functions.pbk-bridge-proxy]
-timeout = 25
 
 [[headers]]
   for = "/*"

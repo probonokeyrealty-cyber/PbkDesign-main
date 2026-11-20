@@ -1,5 +1,11 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import strictAssert from 'node:assert/strict';
+import vm from 'node:vm';
+import ts from 'typescript';
+import { savedLeadComps } from '../src/app/utils/leadComps.mjs';
+import { latestCallModeNote } from '../src/app/utils/analyzerLeadPersistence.mjs';
+import { samePropertyAddress } from '../src/app/utils/analyzerIntelligence.mjs';
 
 const root = process.cwd();
 
@@ -23,6 +29,17 @@ const runtimeBridge = read('src/app/utils/runtimeBridge.ts');
 const leadsRoute = read('src/app/routes/Leads.tsx');
 const bridgeServer = read('scripts/openclaw-local-server.mjs');
 const pkg = JSON.parse(read('package.json'));
+const evidenceSource = read('src/app/utils/propertyEvidence.ts').replace(
+  "'./attomRecordFields.mjs'",
+  JSON.stringify(new URL('../src/app/utils/attomRecordFields.mjs', import.meta.url).href),
+).replace(
+  "'./attomMcpSections.mjs'",
+  JSON.stringify(new URL('../src/app/utils/attomMcpSections.mjs', import.meta.url).href),
+);
+const evidenceCode = ts.transpileModule(evidenceSource, {
+  compilerOptions: {module:ts.ModuleKind.ESNext,target:ts.ScriptTarget.ES2022},
+}).outputText;
+const {readPropertyEvidence} = await import('data:text/javascript;base64,'+Buffer.from(evidenceCode).toString('base64'));
 
 assert(
   /readPbkPrefs/.test(app) && /applyPbkTheme/.test(app),
@@ -68,8 +85,10 @@ assert(
 assert(
   /isApprovalQueuedResponse/.test(app) &&
     /Analyzer snapshot queued for approval/.test(app) &&
-    /Ava queued approval/.test(app),
-  'Deal Analyzer send/save actions must distinguish queued approval from completed CRM/provider sync.'
+    /patchLeadRequest\(snapshot.leadId!, buildAnalyzerLeadPatch\(snapshot\)\)/.test(app) &&
+    /if \(response.ok === false\) throw new Error/.test(app) &&
+    /Lead saved\./.test(app) && /Lead not saved\./.test(app),
+  'Agent handoffs must label approvals while manual saves require canonical write confirmation.'
 );
 assert(
   !/Analyzer snapshot sent to Ava and the runtime CRM queue|runtime CRM synced|Bridge sync pending/.test(
@@ -146,14 +165,160 @@ assert(
 assert(
   /propertyTypeSource/.test(dealView) &&
     /selectedPathSource/.test(dealView) &&
-    /isAnalyzed:\s*arv !== undefined \|\| mao !== undefined \|\| maoRBP !== undefined\s*\? true\s*:\s*undefined/.test(
+    /isAnalyzed:\s*record\(lead\.deal\)\.isAnalyzed === false\s*\? false\s*:\s*arv !== undefined \|\| mao !== undefined \|\| maoRBP !== undefined\s*\? true\s*:\s*undefined/.test(
       dealView
-    ),
-  'Lead hydration should not replace existing type, path, or analyzed state with guessed defaults.'
+    ) && /if \(mappedDeal\.isAnalyzed === false\) mergedDeal\.isAnalyzed = false/.test(dealView),
+  'Lead hydration must preserve explicit unanalyzed state and avoid guessed type, path, or analyzed defaults.'
 );
+
+// Execute only the hydration functions with sample state, never the React route or bridge.
+const hydrationNames = [
+  'record', 'firstText', 'firstNumber', 'normalizePropertyType', 'normalizeContact',
+  'normalizePath', 'isMeaningfulAnalyzerValue', 'mergeMeaningfulAnalyzerValues',
+  'buildAnalyzerDealFromLead', 'hydrateAnalyzerFromLead',
+];
+const hydrationAst = ts.createSourceFile('DealView.tsx', dealView, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+const hydrationFunctions = hydrationAst.statements.filter(node =>
+  ts.isFunctionDeclaration(node) && hydrationNames.includes(node.name?.text));
+strictAssert.equal(hydrationFunctions.length, hydrationNames.length);
+const { outputText: hydrationCode } = ts.transpileModule(hydrationFunctions.map(node => node.getText(hydrationAst)).join('\n'), {
+  compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },
+});
+let sampleCurrent = {}, sampleHydrated;
+let sampleStored = {}, storageReads = 0, storageWrites = 0;
+let sampleManualFields = [];
+let sampleBaseline = 'fixture-baseline', privateHydration, privateUnpublished;
+let sampleFresh = false;
+const hydration = vm.createContext({
+  exports: {}, savedLeadComps, latestCallModeNote, readPropertyEvidence, samePropertyAddress, ANALYZER_CURRENT_DEAL_KEY: 'sample-only',
+  readAnalyzerDraftManualFields: () => sampleManualFields,
+  readAnalyzerDraftBaseline: () => sampleBaseline,
+  isFreshAnalyzerDraft: () => sampleFresh,
+  commitAnalyzerDraft: (deal, fields, expected, force, isCurrent) => {
+    if (!isCurrent()) return Promise.resolve('superseded');
+    storageWrites += 1;
+    sampleStored = structuredClone(deal);
+    return Promise.resolve('published');
+  },
+  writeAnalyzerSessionDeal: (deal, fields, baseline, unpublished) => {
+    privateHydration = structuredClone(deal);
+    privateUnpublished = unpublished;
+  },
+  readAnalyzerStorage: (key) => {
+    strictAssert.equal(key, 'sample-only');
+    storageReads += 1;
+    return structuredClone(sampleStored);
+  },
+  writeAnalyzerStorage: (key, deal) => {
+    strictAssert.equal(key, 'sample-only');
+    storageWrites += 1;
+    sampleStored = structuredClone(deal);
+  },
+  window: { PBKAnalyzer: {
+    getState: () => ({ deal: sampleCurrent }),
+    setState: state => { sampleHydrated = structuredClone(state.deal); },
+  } },
+});
+vm.runInContext(hydrationCode, hydration, { timeout: 1000 });
+const mapLead = payload => structuredClone(hydration.buildAnalyzerDealFromLead(payload, 'sample-a'));
+const blankDeal = mapLead({ id: 'sample-a' });
+const evidenceAddress='24 Sample Oak Lane, Example City, CA 90210';
+const evidenceLead=mapLead({id:'sample-a',property:{address:'24 Sample Oak Lane',city:'Example City',state:'CA',zip:'90210'},deal:{
+  listingSnapshot:{source:'apify-for-sale',address:evidenceAddress,retrievedAt:'2026-11-18T12:00:00Z',photoUrls:['https://ap.rdcpix.com/fixture-front.jpg'],facts:{beds:3},sourceLinks:[],askingPrice:400000},
+  propertyRecordSnapshot:{source:'attom',address:evidenceAddress,retrievedAt:'2026-11-18T12:00:00Z',facts:{address:evidenceAddress,apn:'QA-PARCEL'}},
+},analyzer:{recordedSales:{provider:'ATTOM',review:'suggested-unreviewed',address:{street:'24 Sample Oak Lane',city:'Example City',state:'CA',zip:'90210'},sales:[]}}});
+strictAssert.equal(evidenceLead.propertyRecordSnapshot.facts.apn,'QA-PARCEL');
+strictAssert.equal(evidenceLead.listingSnapshot.photoUrls.length,1);
+strictAssert.equal(evidenceLead.recordedSales.review,'suggested-unreviewed');
+for (const field of ['type', 'selectedPath', 'isAnalyzed']) strictAssert.equal(blankDeal[field], undefined);
+for (const field of ['arv', 'mao', 'maoRBP']) {
+  strictAssert.equal(mapLead({ id: 'sample-a', property: { [field]: 0 } }).isAnalyzed, true);
+}
+const manualUnanalyzed = { id: 'sample-a', deal: { isAnalyzed: false }, property: { arv: 245000 } };
+strictAssert.equal(mapLead(manualUnanalyzed).isAnalyzed, false);
+strictAssert.equal(mapLead(manualUnanalyzed).arv, 245000);
+sampleCurrent = { leadId: 'sample-a', type: 'land', selectedPath: 'land-owner', arv: 245000,
+  price: 120000, notes: 'Manual wording', isAnalyzed: true, comps: { A: { address: 'Sample comp', price: 260000 } } };
+const originalManual = structuredClone(sampleCurrent);
+await hydration.hydrateAnalyzerFromLead({ id: 'sample-a' }, 'sample-a');
+strictAssert.deepEqual(sampleHydrated, originalManual);
+await hydration.hydrateAnalyzerFromLead(manualUnanalyzed, 'sample-a');
+strictAssert.equal(sampleHydrated.isAnalyzed, false);
+strictAssert.deepEqual(sampleCurrent, originalManual, 'Hydration must not mutate the current draft');
+await hydration.hydrateAnalyzerFromLead({ id: 'sample-b' }, 'sample-b');
+strictAssert.equal(sampleHydrated.leadId, 'sample-b');
+for (const field of ['arv', 'price', 'comps', 'notes', 'selectedPath', 'type']) strictAssert.equal(sampleHydrated[field], undefined);
+strictAssert.equal(storageReads, 0, 'Mounted hydration must not read fallback storage');
+strictAssert.equal(storageWrites, 0, 'Mounted hydration must not write fallback storage');
+
+// Cold route loads hydrate storage before the Analyzer API has mounted.
+delete hydration.window.PBKAnalyzer;
+sampleStored = structuredClone(originalManual);
+await hydration.hydrateAnalyzerFromLead({ id: 'sample-a' }, 'sample-a');
+strictAssert.equal(storageReads, 1);
+strictAssert.equal(storageWrites, 0, 'Same-lead cold restoration must not publish a shared envelope');
+strictAssert.deepEqual(privateHydration, originalManual);
+strictAssert.deepEqual(sampleStored, originalManual, 'Cold hydration must retain same-lead draft values');
+await hydration.hydrateAnalyzerFromLead(manualUnanalyzed, 'sample-a');
+strictAssert.equal(storageReads, 2);
+strictAssert.equal(storageWrites, 0);
+strictAssert.equal(privateHydration.isAnalyzed, false);
+strictAssert.equal(privateHydration.notes, originalManual.notes);
+
+strictAssert.deepEqual(privateHydration.comps, originalManual.comps);
+await hydration.hydrateAnalyzerFromLead({ id: 'sample-a-other' }, 'sample-a-other');
+strictAssert.equal(storageReads, 3);
+strictAssert.equal(storageWrites, 1, 'An intentional handoff to another lead may publish its context');
+strictAssert.equal(sampleStored.leadId, 'sample-a-other');
+for (const field of ['arv', 'price', 'comps', 'notes', 'selectedPath', 'type']) strictAssert.equal(sampleStored[field], undefined);
+strictAssert.deepEqual(sampleCurrent, originalManual, 'Storage hydration must not mutate the mounted draft fixture');
+
+// Unsaved manual values, including intentional blanks/zeros, win over a fresh canonical read.
+sampleCurrent = { ...originalManual, beds: 0, notes: '', arv: 510000 };
+sampleManualFields = ['beds', 'notes', 'arv', 'comps'];
+hydration.window.PBKAnalyzer = {
+  getState: () => ({ deal: sampleCurrent }),
+  setState: state => { sampleHydrated = structuredClone(state.deal); },
+};
+await hydration.hydrateAnalyzerFromLead({ id: 'sample-a', property: { beds: 2, arv: 300000 }, notes: 'Saved canonical notes' }, 'sample-a');
+for (const field of sampleManualFields) strictAssert.deepEqual(sampleHydrated[field], sampleCurrent[field], `Manual ${field} must survive canonical hydration`);
+sampleManualFields = null;
+await hydration.hydrateAnalyzerFromLead({ id: 'sample-a', property: { beds: 2, arv: 300000 } }, 'sample-a');
+strictAssert.equal(sampleHydrated.beds, 0, 'Legacy drafts without provenance are preserved conservatively');
+await hydration.hydrateAnalyzerFromLead({ id: 'sample-b', property: { beds: 2, arv: 300000 } }, 'sample-b');
+strictAssert.equal(sampleHydrated.beds, 2, 'Manual fields must never leak to a different lead');
+
+delete hydration.window.PBKAnalyzer;
+sampleStored = structuredClone(originalManual);
+sampleBaseline = undefined;
+const writesBeforeConflict = storageWrites;
+await hydration.hydrateAnalyzerFromLead({ id: 'sample-a', property: { beds: 2 } }, 'sample-a');
+strictAssert.equal(storageWrites, writesBeforeConflict, 'A conflicted cold route must not publish over the shared draft');
+strictAssert.equal(privateHydration.notes, originalManual.notes);
+strictAssert.equal(privateUnpublished, true, 'Same-lead hydration must retain unpublished provenance even when only redacted repairs differ');
+
+sampleBaseline = 'fixture-baseline';
+hydration.commitAnalyzerDraft = () => Promise.reject(new Error('Fixture lock unavailable'));
+await hydration.hydrateAnalyzerFromLead({ id: 'sample-b' }, 'sample-b');
+strictAssert.equal(storageWrites, writesBeforeConflict);
+strictAssert.equal(privateHydration.leadId, 'sample-b');
+strictAssert.equal(privateUnpublished, true, 'An unpublished cold handoff must not appear clean on remount');
+
+// A previous screen's global API can outlive its DOM during WebKit back navigation.
+sampleFresh = true;
+sampleStored = { ...originalManual, notes: 'Fresh private notes', comps: { A: { address: 'Fresh private comp', price: 420000 } } };
+sampleManualFields = ['notes', 'comps'];
+hydration.window.PBKAnalyzer = {
+  getState: () => ({ deal: originalManual }),
+  setState: () => { throw Error('Fresh hydration reached the previous screen API'); },
+};
+await hydration.hydrateAnalyzerFromLead({ id: 'sample-a' }, 'sample-a');
+strictAssert.equal(privateHydration.notes, sampleStored.notes);
+strictAssert.deepEqual(privateHydration.comps, sampleStored.comps);
+
 assert(
   /window\.PBKAnalyzer\?\.setState/.test(dealView) &&
-    /writeAnalyzerStorage/.test(dealView) &&
+    /commitAnalyzerDraft/.test(dealView) &&
     /ANALYZER_CURRENT_DEAL_KEY/.test(dealView),
   'Lead hydration should use PBKAnalyzer.setState when available and the established analyzer storage fallback otherwise.'
 );
@@ -179,7 +344,7 @@ assert(
   'Deal route loading and hydration copy should use seller-facing language, not internal canonical lead wording.'
 );
 assert(
-  /if \(!leadId\)/.test(dealView) && /<App engineOnly \/>/.test(dealView),
+  /if \(!leadId\) \{\s*return \([\s\S]*?<App engineOnly key=\{draftIdentity\} \/>/.test(dealView),
   'The plain /deal route should continue to mount the analyzer without fetching a lead.'
 );
 assert(
@@ -337,8 +502,13 @@ assert(
 
 assert(
   pkg.scripts?.['test:deal-analyzer-modern-mobile'] ===
-    'node ./scripts/deal-analyzer-modern-mobile-smoke.mjs',
-  'package.json should expose test:deal-analyzer-modern-mobile.'
+    'node ./scripts/deal-analyzer-modern-mobile-smoke.mjs && npm run test:analyzer-draft-storage',
+  'The existing Analyzer CI gate must also run the draft storage regressions.'
+);
+assert(
+  pkg.scripts?.['test:analyzer-draft-storage'] ===
+    'node --test ./scripts/analyzer-storage.node-test.mjs ./scripts/analyzer-browseros-mobile.node-test.mjs ./scripts/operator-session-browseros.node-test.mjs',
+  'The Analyzer draft gate must run isolated storage, Analyzer safety, and operator-session safety tests without live access.'
 );
 
 console.log('[deal-analyzer-modern-mobile-smoke] ok');

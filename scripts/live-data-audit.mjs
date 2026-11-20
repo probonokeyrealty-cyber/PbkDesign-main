@@ -134,6 +134,9 @@ const emotionPipelineSmoke = existsSync(resolve(root, 'scripts/emotion-pipeline-
 const emotionWorldModelSmoke = existsSync(resolve(root, 'scripts/emotion-world-model-smoke.mjs'))
   ? readFileSync(resolve(root, 'scripts/emotion-world-model-smoke.mjs'), 'utf8')
   : '';
+const emotionWorldModelFixture = readFileSync(
+  resolve(root, 'scripts/fixtures/emotion-world-model-bridge-fixture.mjs'), 'utf8'
+);
 const emotionWorldModelTrainingSmoke = existsSync(
   resolve(root, 'scripts/emotion-world-model-training-smoke.mjs')
 )
@@ -991,7 +994,9 @@ const checks = [
       /\/api\/emotion\/predict/.test(emotionPipelineSmoke) &&
       /\/api\/leads\/smoke-emotion-lead\/emotional-state/.test(emotionPipelineSmoke) &&
       /emotion_world_model_provider_ready/.test(emotionWorldModelSmoke) &&
-      /PBK_EMOTION_WORLD_MODEL_ENDPOINT/.test(emotionWorldModelSmoke) &&
+      /emotion-world-model-bridge-fixture\.mjs/.test(emotionWorldModelSmoke) &&
+      /startIsolatedBridge/.test(emotionWorldModelSmoke) &&
+      /PBK_EMOTION_WORLD_MODEL_ENDPOINT/.test(emotionWorldModelFixture) &&
       /mock-emotional-onnx-v0/.test(emotionWorldModelSmoke) &&
       /emotion_world_model_training_pipeline_ready/.test(emotionWorldModelTrainingSmoke) &&
       /emotion_world_model_training_ready/.test(emotionWorldModelTrainer) &&
@@ -1813,7 +1818,10 @@ const checks = [
   {
     name: 'PDF generation and local config fail loudly on invalid runtime assumptions',
     ok:
-      /function buildRequestUrl/.test(netlifyDocumentsPdfFunction) &&
+      /pathToFileURL\(resolve\(process.cwd\(\), 'public', 'PBK_Master_Deal_Package.html'\)\)/.test(netlifyDocumentsPdfFunction) &&
+      /page\.setRequestInterception\(true\)/.test(netlifyDocumentsPdfFunction) &&
+      netlifyDocumentsPdfFunction.includes("page.waitForSelector('.packet-page'") &&
+      /included_files\s*=\s*\[[^\]]*"public\/PBK_Master_Deal_Package.html"/.test(netlifyConfig) &&
       !/event\.rawUrl/.test(netlifyDocumentsPdfFunction) &&
       /Human BANT\+ fields/.test(readFileSync(resolve(root, 'src/app/routes/Leads.tsx'), 'utf8')) &&
       /buildBantFromLeadForm/.test(readFileSync(resolve(root, 'src/app/routes/Leads.tsx'), 'utf8')) &&
@@ -1846,7 +1854,10 @@ const checks = [
   {
     name: 'Netlify hosted app proxies operational bridge routes through same-origin functions',
     ok:
-      /export\s+const\s+handler/.test(netlifyBridgeProxyFunction) &&
+      /export\s+default\s+async\s+function\s+fetchHandler\(request: Request\): Promise<Response>/.test(netlifyBridgeProxyFunction) &&
+      /export\s+const\s+legacyHandler:\s*Handler\s*=\s*\(event\)\s*=>\s*proxyRequest\(event\)/.test(netlifyBridgeProxyFunction) &&
+      !/export\s+const\s+handler\s*:/.test(netlifyBridgeProxyFunction) &&
+      /webResponse\(await proxyRequest\(event, \{ streaming: true, signal: request.signal, body \}\)/.test(netlifyBridgeProxyFunction) &&
       /PBK_BRIDGE_URL/.test(netlifyBridgeProxyFunction) &&
       /process\.env\.PBK_BRIDGE_API_KEY/.test(netlifyBridgeProxyFunction) &&
       /verifyTeamSession/.test(netlifyBridgeProxyFunction) &&

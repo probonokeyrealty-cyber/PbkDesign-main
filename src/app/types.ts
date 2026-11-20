@@ -17,6 +17,16 @@ export interface UnderwritingSettings {
   assignFeePct: number;
 }
 
+export interface PropertyListingSnapshot {
+  source: 'apify-for-sale';
+  address: string;
+  retrievedAt: string;
+  askingPrice: number | null;
+  photoUrls: string[];
+  sourceLinks: string[];
+  facts: Record<string, number>;
+}
+
 export interface DealData {
   // Property details
   address: string;
@@ -32,6 +42,22 @@ export interface DealData {
   selectedPath?: PBKPath;
   isAnalyzed?: boolean;
   leadId?: string;
+  crmCreateKey?: string;
+  listingSnapshot?: PropertyListingSnapshot;
+  recordedSales?: {
+    address: string | {street:string;city:string;state:string;zip:string};
+    retrievedAt?: string;
+    review?: string;
+    [key: string]: unknown;
+  };
+  propertyRecordSnapshot?: {
+    source: 'attom';
+    address: string;
+    retrievedAt: string;
+    fieldRetrievedAt?: Record<string, string>;
+    sections?: import('./utils/attomMcpSections.mjs').AttomMcpSection[];
+    facts: Record<string, string | number | null>;
+  };
 
   // Seller Information (for PDFs)
   sellerName?: string;
@@ -68,6 +94,7 @@ export interface DealData {
   landLotSizeSqFt?: number;
 
   // Comps
+  compManualSlots?: Array<'A' | 'B' | 'C'>;
   comps: {
     A: { address: string; price: number; date: string; link: string };
     B: { address: string; price: number; date: string; link: string };

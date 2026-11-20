@@ -1,5 +1,8 @@
+import type { AttomMcpSection } from './attomMcpSections.mjs';
+import type { AttomExtraPropertyFacts } from './attomRecordFields.mjs';
 import { DealData } from '../types';
 import { buildAgentDealContext, type AgentDealContext } from './agentDealContext';
+import { readAvaChatResponse, type AvaChatStreamOptions } from './avaChatStream';
 import {
   createPbkSnnWorker,
   injectSearchCognition,
@@ -24,15 +27,24 @@ export const RUNTIME_TEAM_SESSION_KEY = 'pbk:team-session:v1';
 export const RUNTIME_ACCESS_ERROR_EVENT = 'pbk:runtime-access-error';
 
 export class RuntimeBridgeError extends Error {
-  constructor(message: string, public status: number, public code = '') {
+  constructor(
+    message: string,
+    public status: number,
+    public code = ''
+  ) {
     super(message);
     this.name = 'RuntimeBridgeError';
   }
 }
 
 function isTeamSessionRejection(error: unknown): error is RuntimeBridgeError {
-  return error instanceof RuntimeBridgeError && error.status === 401
-    && /^(?:team_auth_required|invalid_team_session|invalid_team_session_payload|expired_team_session|missing_team_session)$/.test(error.code);
+  return (
+    error instanceof RuntimeBridgeError &&
+    error.status === 401 &&
+    /^(?:team_auth_required|invalid_team_session|invalid_team_session_payload|expired_team_session|missing_team_session)$/.test(
+      error.code
+    )
+  );
 }
 const BRIDGE_REQUEST_TIMEOUT_MS = Math.max(
   5_000,
@@ -483,6 +495,7 @@ export type AvaAssistantChatResponse = {
   safety?: Record<string, unknown> | null;
   warning?: string;
   error?: string;
+  rexHandoff?: { id?: string; requestId?: string; status: string; citations?: string[] };
 };
 
 export type GlobalSearchResult = {
@@ -1533,34 +1546,115 @@ function extractBridgeErrorMessage(parsed: unknown, status: number) {
   return fallback;
 }
 
-function bridgeResponseError(response: Response, parsed: unknown, requestUrl: string, requestTeamToken = '') {
-  const record = parsed && typeof parsed === 'object' ? parsed as Record<string, unknown> : null;
-  const privateSiteRejected = response.status === 401
-    && !record
-    && isNetlifyHostedRuntimeShell()
-    && new URL(requestUrl).origin === window.location.origin
-    && !response.headers.has('X-PBK-Bridge-Proxy');
+function bridgeResponseError(
+  response: Response,
+  parsed: unknown,
+  requestUrl: string,
+  requestTeamToken = ''
+) {
+  const record = parsed && typeof parsed === 'object' ? (parsed as Record<string, unknown>) : null;
+  const privateSiteRejected =
+    response.status === 401 &&
+    !record &&
+    isNetlifyHostedRuntimeShell() &&
+    new URL(requestUrl).origin === window.location.origin &&
+    !response.headers.has('X-PBK-Bridge-Proxy');
   const error = new RuntimeBridgeError(
     privateSiteRejected
       ? 'Netlify private-site access is required. Restore site access, then verify again.'
       : extractBridgeErrorMessage(parsed, response.status),
     response.status,
-    privateSiteRejected ? 'private_site_auth_required' : String(record?.code || ''),
+    privateSiteRejected ? 'private_site_auth_required' : String(record?.code || '')
   );
   const currentSession = getRuntimeTeamSession();
-  const sessionRejected = isTeamSessionRejection(error) && Boolean(requestTeamToken)
-    && (!currentSession || currentSession.token === requestTeamToken);
+  const sessionRejected =
+    isTeamSessionRejection(error) &&
+    Boolean(requestTeamToken) &&
+    (!currentSession || currentSession.token === requestTeamToken);
   if (sessionRejected) clearRuntimeTeamSession();
   if (privateSiteRejected || sessionRejected) {
-    window.dispatchEvent(new CustomEvent(RUNTIME_ACCESS_ERROR_EVENT, {
-      detail: {
-        code: sessionRejected ? 'team_session_rejected' : error.code,
-        message: sessionRejected ? 'Your PBK team session expired or was rejected. Sign in again.' : error.message,
-        sessionWasCurrent: currentSession?.token === requestTeamToken,
-      },
-    }));
+    window.dispatchEvent(
+      new CustomEvent(RUNTIME_ACCESS_ERROR_EVENT, {
+        detail: {
+          code: sessionRejected ? 'team_session_rejected' : error.code,
+          message: sessionRejected
+            ? 'Your PBK team session expired or was rejected. Sign in again.'
+            : error.message,
+          sessionWasCurrent: currentSession?.token === requestTeamToken,
+        },
+      })
+    );
   }
   return error;
+}
+
+function canRecoverRuntimeRead(method = 'GET', path = '') {
+  const verb = method.toUpperCase();
+  if (verb === 'POST') return path === '/api/auth/team/verify';
+  return (
+    ['GET', 'HEAD'].includes(verb) &&
+    /^(?:\/state|\/health|\/status|\/api\/(?:health|status)|\/api\/auth\/team\/status|\/api\/leads(?:\/import|\/[^/?]+\/(?:full|last-call))?)$/.test(
+      path
+    )
+  );
+}
+
+async function fetchRuntimeResponse(requestUrl: string, init: RequestInit, path: string) {
+  const safeRead = canRecoverRuntimeRead(init.method, path);
+  const requestToken = new Headers(init.headers).get('X-PBK-Team-Token') || '';
+  for (let attempt = 0; ; attempt++) {
+    let response: Response | undefined;
+    let failure: unknown;
+    try {
+      response = await fetch(requestUrl, init);
+      if (
+        safeRead &&
+        (getRuntimeTeamSession()?.token || '') === requestToken &&
+        (await shouldRetryRuntimeViaHosted(response, requestUrl, path, init.method))
+      ) {
+        const fallbackUrl = buildHostedRuntimeFallbackUrl(requestUrl);
+        if (
+          fallbackUrl &&
+          !init.signal?.aborted &&
+          (getRuntimeTeamSession()?.token || '') === requestToken
+        ) {
+          response = await fetch(fallbackUrl, init);
+        }
+      }
+      if (![502, 503, 504].includes(response.status)) return response;
+    } catch (error) {
+      failure = error;
+    }
+    // Only known reads may be replayed, with the original deadline and authority.
+    if (
+      !safeRead ||
+      attempt >= 2 ||
+      init.signal?.aborted ||
+      (getRuntimeTeamSession()?.token || '') !== requestToken
+    ) {
+      if (response) return response;
+      throw failure;
+    }
+    await new Promise<void>((resolve, reject) => {
+      const abort = () => {
+        clearTimeout(timer);
+        reject(new DOMException('The operation was aborted.', 'AbortError'));
+      };
+      const timer = setTimeout(
+        () => {
+          init.signal?.removeEventListener('abort', abort);
+          resolve();
+        },
+        250 * (attempt + 1)
+      );
+      init.signal?.addEventListener('abort', abort, { once: true });
+      if (init.signal?.aborted) abort();
+    });
+    if ((getRuntimeTeamSession()?.token || '') !== requestToken) {
+      if (response) return response;
+      throw failure;
+    }
+  }
 }
 
 export async function bridgeBlobRequest({
@@ -1576,6 +1670,7 @@ export async function bridgeBlobRequest({
   const timeoutController = new AbortController();
   const onAbort = () => timeoutController.abort();
   signal?.addEventListener('abort', onAbort, { once: true });
+  if (signal?.aborted) onAbort();
   const timeoutId = setTimeout(() => timeoutController.abort(), BRIDGE_REQUEST_TIMEOUT_MS);
   const init = {
     method,
@@ -1588,11 +1683,7 @@ export async function bridgeBlobRequest({
   };
 
   try {
-    let response = await fetch(requestUrl, init);
-    if (await shouldRetryRuntimeViaHosted(response, requestUrl, path, method)) {
-      const fallbackUrl = buildHostedRuntimeFallbackUrl(requestUrl);
-      if (fallbackUrl) response = await fetch(fallbackUrl, init);
-    }
+    const response = await fetchRuntimeResponse(requestUrl, init, path);
     if (!response.ok) {
       const text = await response.text();
       let payload: unknown = text;
@@ -1625,16 +1716,32 @@ export async function bridgeRequest<T = unknown>({
   keepalive,
   acceptErrorResponse,
 }: BridgeRequestOptions): Promise<T> {
-  assertRuntimeAuthConfigured(path);
   const serializedBody = body !== undefined && method !== 'GET' ? JSON.stringify(body) : undefined;
   const canKeepalive =
     method !== 'GET' && method !== 'DELETE' && (!serializedBody || serializedBody.length < 60000);
-  const requestUrl = buildUrl(path);
+  const configuredUrl = buildUrl(path);
+  const fullPropertyRead = method === 'POST' && path === '/api/property-data/enrich';
+  const directPropertyUrl = fullPropertyRead ? buildHostedRuntimeFallbackUrl(configuredUrl) : '';
+  const headers = buildHeaders(body !== undefined && method !== 'GET');
+  if (directPropertyUrl) {
+    if (!headers['X-PBK-Team-Token']) {
+      throw new RuntimeBridgeError('Your PBK team session is missing or expired. Sign in again.', 401, 'missing_team_session');
+    }
+    // Full property reads can exceed the Netlify synchronous proxy deadline.
+    // The existing Render CORS/team-auth boundary handles this explicit POST.
+    delete headers.Authorization;
+  } else {
+    assertRuntimeAuthConfigured(path);
+  }
+  const requestUrl = directPropertyUrl || configuredUrl;
+
   const timeoutController = new AbortController();
-  const timeoutId = setTimeout(() => timeoutController.abort(), BRIDGE_REQUEST_TIMEOUT_MS);
+  const requestTimeoutMs = fullPropertyRead ? 210_000 : /^\/api\/(?:v1\/)?assistant\/chat$/.test(path)
+    ? 45_000 : BRIDGE_REQUEST_TIMEOUT_MS;
+  const timeoutId = setTimeout(() => timeoutController.abort(), requestTimeoutMs);
   const init = {
     method,
-    headers: buildHeaders(body !== undefined && method !== 'GET'),
+    headers,
     body: serializedBody,
     keepalive: keepalive ?? canKeepalive,
     signal: timeoutController.signal,
@@ -1642,11 +1749,7 @@ export async function bridgeRequest<T = unknown>({
   let response: Response;
   let parsed: unknown;
   try {
-    response = await fetch(requestUrl, init);
-    if (await shouldRetryRuntimeViaHosted(response, requestUrl, path, method)) {
-      const fallbackUrl = buildHostedRuntimeFallbackUrl(requestUrl);
-      if (fallbackUrl) response = await fetch(fallbackUrl, init);
-    }
+    response = await fetchRuntimeResponse(requestUrl, init, path);
     const text = await response.text();
     parsed = text;
     try {
@@ -1657,7 +1760,7 @@ export async function bridgeRequest<T = unknown>({
   } catch (error) {
     if (timeoutController.signal.aborted) {
       throw new Error(
-        `PBK bridge request timed out after ${Math.round(BRIDGE_REQUEST_TIMEOUT_MS / 1000)} seconds.`
+        `PBK bridge request timed out after ${Math.round(requestTimeoutMs / 1000)} seconds.`
       );
     }
     throw error;
@@ -1666,6 +1769,10 @@ export async function bridgeRequest<T = unknown>({
   }
 
   if (!response.ok && !(method === 'GET' && acceptErrorResponse?.(parsed, response.status))) {
+    const record = parsed && typeof parsed === 'object' ? parsed as Record<string, unknown> : null;
+    if (directPropertyUrl && response.status === 401 && !record?.code) {
+      parsed = { ...record, error: extractBridgeErrorMessage(parsed, response.status), code: 'invalid_team_session' };
+    }
     throw bridgeResponseError(response, parsed, requestUrl, init.headers['X-PBK-Team-Token']);
   }
 
@@ -1719,7 +1826,12 @@ function buildHostedRuntimeFallbackUrl(url = '') {
   }
 }
 
-async function shouldRetryRuntimeViaHosted(response: Response, url = '', path = '', method = 'GET') {
+async function shouldRetryRuntimeViaHosted(
+  response: Response,
+  url = '',
+  path = '',
+  method = 'GET'
+) {
   if (!['GET', 'HEAD'].includes(method.toUpperCase())) return false;
   const canRetryProtectedWithTeamToken = Boolean(getRuntimeTeamSession()?.token);
   if (!isAuthOptionalRuntimePath(path) && !canRetryProtectedWithTeamToken) return false;
@@ -1746,7 +1858,7 @@ export async function fetchTeamAuthStatusRequest() {
 
 export async function authenticateTeamSessionRequest(
   body: { passcode: string; actor?: string },
-  isCurrentRequest: () => boolean = () => true,
+  isCurrentRequest: () => boolean = () => true
 ) {
   const response = await bridgeRequest<RuntimeTeamSession & { ok: boolean }>({
     method: 'POST',
@@ -1783,7 +1895,8 @@ export async function verifyRuntimeTeamSessionRequest() {
       path: '/api/auth/team/verify',
       body: {},
     });
-    if (!verified || verified.ok !== true) throw new Error('Team session verification is unavailable.');
+    if (!verified || verified.ok !== true)
+      throw new Error('Team session verification is unavailable.');
     if (getRuntimeTeamSession()?.token !== session.token) {
       throw new Error('The PBK team session changed during verification. Verify access again.');
     }
@@ -1852,7 +1965,7 @@ export async function startLeadCallRequest(body: Record<string, unknown>) {
 
 export type AttomPreviewAddress = { street: string; city: string; state: string; zip: string };
 
-export type AttomPropertyFacts = {
+export type AttomPropertyFacts = AttomExtraPropertyFacts & {
   address: string;
   apn: string | null;
   propertyType: string | null;
@@ -1866,10 +1979,45 @@ export type AttomPropertyFacts = {
   taxYear: number | null;
   recordedSaleAmount: number | null;
   recordedSaleDate: string | null;
+  attomId?: string | null;
+  fips?: string | null;
+  county?: string | null;
+  subdivision?: string | null;
+  zoning?: string | null;
+  propertyClass?: string | null;
+  condition?: string | null;
+  constructionType?: string | null;
+  ownerName?: string | null;
+  owner2Name?: string | null;
+  owner3Name?: string | null;
+  owner4Name?: string | null;
+  ownerMailingAddress?: string | null;
+  absenteeOwnerStatus?: string | null;
+  corporateOwnerIndicator?: string | null;
+  saleDocumentNumber?: string | null;
+  saleDocumentType?: string | null;
+  saleTransactionType?: string | null;
+  originalMortgageLender?: string | null;
+  originalMortgageDocumentNumber?: string | null;
+  secondOriginalMortgageLender?: string | null;
+  secondOriginalMortgageDocumentNumber?: string | null;
+  buildingSqft?: number | null;
+  levels?: number | null;
+  unitsCount?: number | null;
+  assessedLandValue?: number | null;
+  assessedImprovementValue?: number | null;
+  assessedTotalValue?: number | null;
+  assessmentMarketTotalValue?: number | null;
+  taxDelinquentYear?: number | null;
+  originalMortgageAmount?: number | null;
+  secondOriginalMortgageAmount?: number | null;
+  saleTransactionDate?: string | null;
+  sourcePublishedDate?: string | null;
+  sourceLastModified?: string | null;
 };
 
 export type AttomPreviewResult =
-  | { status: 'matched'; profile: AttomPropertyFacts }
+  | { status: 'matched'; profile: AttomPropertyFacts; sections?: AttomMcpSection[]; partial?: boolean }
   | {
       status:
         | 'invalid_address'
@@ -1880,6 +2028,7 @@ export type AttomPreviewResult =
         | 'authorization_failed'
         | 'rate_limited'
         | 'timed_out';
+      sections?: AttomMcpSection[];
     };
 
 export function fetchAttomPropertyPreview(address: AttomPreviewAddress) {
@@ -1891,9 +2040,52 @@ export function fetchAttomPropertyPreview(address: AttomPreviewAddress) {
   });
 }
 
-export async function fetchApifyListingRequest(address: string) {
+export type RecordedSale = {
+  id: string; address: string; soldDate: string; price: number; distanceMiles: number;
+  beds: number | null; baths: number | null; sqft: number | null;
+  pricePerSqft: number | null; propertyType: string | null;
+  photoEvidence?: { source: 'apify-for-sale'; address: string; retrievedAt: string; photoUrls: string[]; sourceLinks: string[] };
+};
+export type AddressSuggestionResult = { status: string; suggestions?: { id: string; label: string }[]; address?: AttomPreviewAddress };
+export function fetchAddressSuggestions(input: { query?: string; placeId?: string; sessionToken: string }) {
+  return bridgeRequest<AddressSuggestionResult>({ method: 'POST', path: '/api/property-data/address-suggestions', body: input, keepalive: false });
+}
+export type RecentSalesResult = {
+  status: string; source?: string; retrievedAt?: string; windowStart?: string;
+  windowEnd?: string; radiusMiles?: number; partial?: boolean; sales?: RecordedSale[];
+  review?: string; selectedIds?: string[];
+};
+export function fetchAttomRecentSales(address: AttomPreviewAddress, radius = 1) {
+  return bridgeRequest<RecentSalesResult>({ method: 'POST', path: '/api/property-data/attom-sales',
+    body: { ...address, radius }, keepalive: false });
+}
+
+export type PropertyIntelligenceResult = {
+  ok: boolean;
+  address: string;
+  records: AttomPreviewResult;
+  listing: Awaited<ReturnType<typeof fetchApifyListingRequest>>;
+  sales: RecentSalesResult;
+  patch: { deal?: Partial<DealData>; analyzer?: Record<string, unknown> };
+  saved: boolean;
+  leadId?: string;
+};
+
+export function fetchPropertyIntelligenceRequest(input: {
+  address: string;
+  leadId?: string;
+  expectedPropertyAddress?: AttomPreviewAddress;
+  radiusMiles?: number;
+}) {
+  return bridgeRequest<PropertyIntelligenceResult>({ method: 'POST',
+    path: '/api/property-data/enrich', body: input, keepalive: false });
+}
+
+export async function fetchApifyListingRequest(address: string, includeRecords = false) {
   const query = new URLSearchParams({ address });
+  if (includeRecords) query.set('includeRecords', 'true');
   return bridgeRequest<{
+    records?: AttomPreviewResult;
     cache?: { hit?: boolean };
     propertyData?: {
       source?: string;
@@ -2115,7 +2307,10 @@ export async function fetchLocalCommandsRequest({
 
 export async function sendAvaAssistantChatRequest(body: {
   message: string;
+  researchRequestId?: string;
+  rexStatusOnly?: boolean;
   sessionId?: string;
+  historyMode?: 'completed-only';
   source?: string;
   leadId?: string;
   action?: string;
@@ -2129,6 +2324,57 @@ export async function sendAvaAssistantChatRequest(body: {
     path: '/api/assistant/chat',
     body,
   });
+}
+
+export async function streamAvaAssistantChatRequest(
+  body: Parameters<typeof sendAvaAssistantChatRequest>[0],
+  { onAnswer, signal }: AvaChatStreamOptions = {},
+) {
+  signal?.throwIfAborted();
+  const path = '/api/assistant/chat';
+  const configuredUrl = buildUrl(path);
+  const directRenderUrl = buildHostedRuntimeFallbackUrl(configuredUrl);
+  const headers = buildRuntimeHeaders({ json: true, accept: 'text/event-stream' });
+  if (directRenderUrl) {
+    if (!headers['X-PBK-Team-Token']) {
+      throw new RuntimeBridgeError('Your PBK team session is missing or expired. Sign in again.', 401, 'missing_team_session');
+    }
+    // Netlify cannot carry long chat streams. Render already accepts team auth.
+    delete headers.Authorization;
+  } else {
+    assertRuntimeAuthConfigured(path);
+  }
+  const requestUrl = directRenderUrl || configuredUrl;
+  const controller = new AbortController();
+  const onAbort = () => controller.abort();
+  signal?.addEventListener('abort', onAbort, { once: true });
+  const timeoutMs = 11 * 60_000;
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    // POSTs are never replayed, including when the proxy is unavailable.
+    const response = await fetch(requestUrl, {
+      method: 'POST', headers, body: JSON.stringify({ ...body, stream: true }),
+      signal: controller.signal,
+    });
+    if (!response.ok) {
+      const text = await response.text();
+      let parsed: unknown = text;
+      try { parsed = JSON.parse(text); } catch { /* Preserve non-JSON site/auth errors. */ }
+      const record = parsed && typeof parsed === 'object' ? parsed as Record<string, unknown> : null;
+      if (directRenderUrl && response.status === 401 && !record?.code) {
+        parsed = { ...record, error: extractBridgeErrorMessage(parsed, response.status), code: 'invalid_team_session' };
+      }
+      throw bridgeResponseError(response, parsed, requestUrl, headers['X-PBK-Team-Token']);
+    }
+    return await readAvaChatResponse(response, { onAnswer, signal: controller.signal });
+  } catch (error) {
+    if (signal?.aborted) throw new DOMException('The operation was aborted.', 'AbortError');
+    if (controller.signal.aborted) throw new Error(`PBK bridge request timed out after ${timeoutMs / 1000} seconds.`);
+    throw error;
+  } finally {
+    clearTimeout(timeoutId);
+    signal?.removeEventListener('abort', onAbort);
+  }
 }
 
 export async function queueLocalCommandRequest(body: Record<string, unknown>) {
@@ -2325,11 +2571,26 @@ export async function updateApprovalDecision(approvalId: string, status: string)
 export async function fetchLeadsRequest() {
   const response = await bridgeRequest<{
     ok: boolean;
+    complete?: boolean;
     leads?: LeadImport[];
     leadImports?: LeadImport[];
   }>({
     path: '/api/leads',
   });
+  if (
+    !response ||
+    response.ok === false ||
+    response.complete === false ||
+    (response.leads !== undefined && !Array.isArray(response.leads)) ||
+    (response.leadImports !== undefined && !Array.isArray(response.leadImports)) ||
+    (!Array.isArray(response.leads) && !Array.isArray(response.leadImports))
+  ) {
+    throw new RuntimeBridgeError(
+      'The saved lead roster is incomplete or unavailable. Try again shortly.',
+      503,
+      'lead_roster_unavailable'
+    );
+  }
   return response.leads || response.leadImports || [];
 }
 

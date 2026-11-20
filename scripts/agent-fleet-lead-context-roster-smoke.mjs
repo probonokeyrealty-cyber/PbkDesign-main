@@ -45,13 +45,18 @@ assert(
 );
 
 assert(
-  /setLeadOptions\((?:fullRoster|rosterLeads)\.slice\(0,\s*25\)\)/.test(agentFleet),
+  /setLeadOptions\(fullRoster\.filter\(/.test(agentFleet),
   'Agent Fleet lead context picker must prefer the full /api/leads roster.'
 );
 
 assert(
-  /setLeadOptions\(snapshotLeads\.slice\(0,\s*25\)\)/.test(agentFleet),
+  /setLeadOptions\(snapshotLeads\.filter\(/.test(agentFleet),
   'Agent Fleet must keep snapshot.leadImports as explicit fallback only.'
+);
+
+assert(
+  !/setLeadOptions\([^;]*\.slice\(0,\s*25\)/.test(agentFleet),
+  'Agent Fleet must not silently truncate its searchable lead collection to 25 records.'
 );
 
 assert(

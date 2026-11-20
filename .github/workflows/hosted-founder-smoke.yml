@@ -13,27 +13,12 @@ jobs:
   hosted-founder-smoke:
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    env:
-      PBK_BRIDGE_API_KEY: ${{ secrets.PBK_BRIDGE_API_KEY }}
-      PBK_HOSTED_BRIDGE_URL: ${{ secrets.PBK_HOSTED_BRIDGE_URL }}
-      PBK_MOBILE_PROOF_BASE_URL: https://pbk-openclaw-bridge.onrender.com
-      PBK_MOBILE_PROOF_TEAM_PASSCODE: ${{ secrets.PBK_MOBILE_PROOF_TEAM_PASSCODE || secrets.PBK_TEAM_PASSCODE }}
 
     steps:
-      - name: Check hosted smoke secrets
-        shell: bash
-        run: |
-          if [ -z "$PBK_BRIDGE_API_KEY" ]; then
-            echo "PBK_BRIDGE_API_KEY is required; hosted smoke cannot be skipped on main."
-            exit 1
-          fi
-          if [ -z "$PBK_MOBILE_PROOF_TEAM_PASSCODE" ]; then
-            echo "PBK_MOBILE_PROOF_TEAM_PASSCODE is required; protected production page proof cannot run."
-            exit 1
-          fi
-
       - name: Check out repository
         uses: actions/checkout@v6
+        with:
+          persist-credentials: false
 
       - name: Set up Node
         uses: actions/setup-node@v6
@@ -41,42 +26,20 @@ jobs:
           node-version: 22
           cache: npm
 
-      - name: Confirm hosted smoke readiness strategy
-        run: echo "Readiness is handled by scripts/openclaw-hosted-smoke.mjs."
-
       - name: Install dependencies
         run: npm ci
 
-      - name: Install browser for protected mobile proof
-        run: npx playwright install --with-deps chromium
+      - name: Verify smoke isolation boundaries
+        run: npm run test:hosted-isolation
 
-      - name: Run hosted founder smoke
-        shell: bash
-        env:
-          HOSTED_SMOKE_ATTEMPTS: 2
-          HOSTED_SMOKE_RETRY_SECONDS: 30
-          HOSTED_SMOKE_READY_TIMEOUT_SECONDS: 720
-          HOSTED_SMOKE_READY_INTERVAL_SECONDS: 15
-        run: |
-          set +e
-          for attempt in $(seq 1 "$HOSTED_SMOKE_ATTEMPTS"); do
-            echo "::group::Hosted founder smoke attempt ${attempt}/${HOSTED_SMOKE_ATTEMPTS}"
-            node ./scripts/openclaw-hosted-smoke.mjs
-            status=$?
-            echo "::endgroup::"
+      - name: Run disposable sample bridge smoke
+        run: npm run test:hosted
 
-            if [ "$status" -eq 0 ]; then
-              exit 0
-            fi
+      - name: Build frontend assets
+        run: npm run build
 
-            if [ "$attempt" -eq "$HOSTED_SMOKE_ATTEMPTS" ]; then
-              echo "Hosted founder smoke failed after ${HOSTED_SMOKE_ATTEMPTS} attempts."
-              exit "$status"
-            fi
+      - name: Install isolated proof browsers
+        run: npx playwright install --with-deps chromium webkit
 
-            echo "Hosted founder smoke failed with exit ${status}; retrying in ${HOSTED_SMOKE_RETRY_SECONDS}s."
-            sleep "$HOSTED_SMOKE_RETRY_SECONDS"
-          done
-
-      - name: Run protected production mobile proof
-        run: npm run test:mobile-browser-proof
+      - name: Run sample-only desktop and mobile proof
+        run: npm run test:hosted-browser

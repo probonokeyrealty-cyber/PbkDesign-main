@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { test } from '@jest/globals';
 import { createProxyFixture } from './fixtures/netlify-proxy-qa.mjs';
 
@@ -8,6 +9,50 @@ const event = (method = 'GET') => ({
   queryStringParameters: { path: method === 'GET' ? '/api/leads' : '/api/approvals/fixture' },
   headers: { 'x-pbk-team-token': 'fixture-team-session' },
   body: method === 'GET' ? null : JSON.stringify({ status: 'approved' }),
+});
+
+test('the proxy uses the platform execution limit instead of an obsolete shorter timeout', () => {
+  const config = readFileSync(new URL('../netlify.toml', import.meta.url), 'utf8');
+  const proxyConfig = config.match(/\[functions\.pbk-bridge-proxy\]([^]*?)(?=\n\[|$)/)?.[1] || '';
+  assert.doesNotMatch(proxyConfig, /\btimeout\s*=/);
+});
+
+test('operator chat has enough proxy time for a complete detailed response', async () => {
+  const deadlines = [];
+  const answer = `${'A detailed explanation. '.repeat(300)}Final required detail.`;
+  const handler = createProxyFixture(async target => Response.json(
+    new URL(target).pathname === '/api/auth/team/verify'
+      ? { ok: true, permissions: {} } : { ok: true, answer },
+  ), {
+    setTimeout: (_, ms) => { deadlines.push(ms); return deadlines.length; },
+    clearTimeout: () => {},
+  });
+  const request = { ...event('POST'), queryStringParameters: { path: '/api/assistant/chat' }, body: JSON.stringify({ message: 'Explain your role in detail.' }) };
+  const response = await handler(request);
+  assert.equal(response.statusCode, 200);
+  assert.equal(JSON.parse(response.body).answer, answer);
+  assert.ok(deadlines.some((ms) => ms > 30_000 && ms < 60_000), 'Proxy must outlast the operator model budget within the function deadline');
+});
+
+test('large lead rosters are serialized compactly without losing records or fields', async () => {
+  const leads = Array.from({ length: 1256 }, (_, id) => ({
+    id: `lead-${id}`,
+    name: `Seller ${id}`,
+    notes: 'x'.repeat(1900),
+    facts: Object.fromEntries(Array.from({ length: 20 }, (_, i) => [`field${i}`, i])),
+  }));
+  const payload = { ok: true, leads, leadImports: leads };
+  const pretty = JSON.stringify(payload, null, 2);
+  assert.ok(Buffer.byteLength(pretty) > 6_000_000, 'Fixture must reproduce the oversized transport');
+  const handler = createProxyFixture(async target => new Response(
+    new URL(target).pathname === '/api/auth/team/verify'
+      ? JSON.stringify({ ok: true, permissions: {} }) : pretty,
+    { headers: { 'content-type': 'application/json' } },
+  ));
+  const response = await handler(event());
+  assert.equal(response.statusCode, 200);
+  assert.ok(Buffer.byteLength(response.body) < 6_000_000, 'Roster must fit the hosted response limit');
+  assert.deepEqual(JSON.parse(response.body), payload, 'Keep every lead and compatibility alias');
 });
 
 for (const status of [429, 500, 502, 503, 504]) {

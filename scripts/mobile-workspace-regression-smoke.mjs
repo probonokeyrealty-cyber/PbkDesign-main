@@ -132,11 +132,15 @@ assert(
     /@media \(max-width: 640px\)[\s\S]*?\.pbk-ava-chat-toolbar\s*\{[\s\S]*?grid-template-columns:\s*minmax\(0,\s*1fr\)\s+44px/.test(
       css
     ) &&
-    /@media \(max-width: 420px\)[\s\S]*?\.pbk-ava-chat-controls\s*\{[\s\S]*?display:\s*flex[\s\S]*?width:\s*100%/.test(
+    /className="pbk-ava-chat-controls\b[^"\n]*\bw-full\b[^"\n]*\bmin-w-0\b/.test(avaChat) &&
+    /@media \(max-width: 640px\)[\s\S]*?\.pbk-ava-chat-submit-row\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)\s+96px/.test(
       css
     ) &&
-    avaChat.includes('aria-label="Send to Ava"') &&
-    avaChat.includes('className="pbk-ava-chat-send-button min-h-11 min-w-11 justify-center px-3"') &&
+    /@media \(max-width: 420px\)[\s\S]*?\.pbk-ava-chat-controls\s*\{[^}]*display:\s*flex\s*!important;[^}]*width:\s*auto\s*!important;/.test(
+      css
+    ) &&
+    /aria-label=\{onStopResponse \? 'Stop Ava response' : 'Send to Ava'\}/.test(avaChat) &&
+    /className="pbk-ava-chat-send-button\b[^"]*\bmin-h-11\b[^"]*\bmin-w-11\b[^"]*\bshrink-0\b/.test(avaChat) &&
     !avaChat.includes('pbk-ava-lane-toggle'),
   'Ava Chat composer controls must fit 320px mobile viewports with a reachable send button.'
 );

@@ -93,7 +93,7 @@ export async function startIsolatedBridge({ entry = defaultEntry, args = [], sta
     child.once('error', invalidate);
     child.stderr.on('data', chunk => { stderr = (stderr + chunk).slice(-6000); });
     await new Promise((resolve, reject) => {
-      startupTimer = setTimeout(() => reject(new Error('Isolated bridge startup timed out')), startupMs);
+      startupTimer = setTimeout(() => reject(new Error(`Isolated bridge startup timed out (${startupMs}ms): ${stderr || '(no child stderr)'}`)), startupMs);
       child.once('error', reject);
       child.once('close', code => reject(new Error(`Isolated bridge exited during startup (${code}): ${stderr}`)));
       child.on('message', message => {
@@ -110,7 +110,7 @@ export async function startIsolatedBridge({ entry = defaultEntry, args = [], sta
     return {
       origin, apiKey, stateDir, blockedNetwork, stop,
       fetch: async (target, options = {}) => {
-        if (!active || child.exitCode !== null || child.signalCode !== null) throw new Error('Isolated bridge is stopped');
+        if (!active || child.exitCode !== null || child.signalCode !== null) throw new Error(`Isolated bridge is stopped (exit=${child.exitCode}, signal=${child.signalCode}): ${stderr || '(no child stderr)'}`);
         if (new URL(target).origin !== origin) throw new Error('Smoke request origin is not the isolated child');
         const signals = [requests.signal, AbortSignal.timeout(20000)];
         if (options.signal) signals.push(options.signal);

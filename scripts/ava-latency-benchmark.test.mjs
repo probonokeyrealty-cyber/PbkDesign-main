@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import { test } from '@jest/globals';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
+import { withRuntimeEvidenceContext, getRuntimeEvidenceContext } from './runtime-evidence-context.mjs';
+import { bindAgentTimingToParams } from './agent-timing-adapters.mjs';
 import { summarizeLatency, summarizeBenchmark, runBenchmark, SCENARIOS, buildBenchmarkPlan } from './ava-latency-benchmark.mjs';
 
 test('nearest-rank p95 retains slow observations, with no zero for missing samples', () => {
@@ -49,12 +51,13 @@ test('real operator recorder excludes diagnostic source without changing ordinar
   const end = source.indexOf('\nfunction redactAvaMissionLedgerText', start);
   assert(start >= 0 && end > start);
   let record;
-  const context = vm.createContext({ Date, recordAgentOps: (value) => { record = value; } });
+  const context = vm.createContext({ Date, getRuntimeEvidenceContext, bindAgentTimingToParams,
+    recordAgentOps: (value) => { record = value; } });
   vm.runInContext(source.slice(start, end), context);
-  context.recordAvaAssistantPlanOps({ source: 'ava-latency-diagnostic' });
+  withRuntimeEvidenceContext('diagnostic', () => context.recordAvaAssistantPlanOps({ source: 'ava-latency-diagnostic' }));
   assert.equal(record.metadata.operational, false);
   assert.equal(record.metadata.diagnostic, true);
-  context.recordAvaAssistantPlanOps({ source: 'command-center-assistant' });
+  withRuntimeEvidenceContext('operator_chat', () => context.recordAvaAssistantPlanOps({ source: 'command-center-assistant' }));
   assert.equal(record.metadata.operational, true);
   assert.equal(record.metadata.diagnostic, false);
 });
@@ -88,4 +91,16 @@ test('24 plan has six varied model requests; blocked responses never supply comp
   assert.equal(report.modelBacked.completed.count, 0);
   assert.equal(report.budgetProven, false);
   assert.equal(report.latencyWithinBudget, false);
+});
+
+test('every planned model request needs completion timing, not merely six observed successes', () => {
+  const samples = buildBenchmarkPlan(32).map(({ id }, index) => ({
+    scenario: id, elapsedMs: 100, httpStatus: 200, ok: true, toolOk: true,
+    result: id === 'model_chat' ? 'deepseek_chat_answer' : 'success',
+    usagePersistence: id === 'model_chat' ? { ok: true } : null, releaseCommit: 'same',
+    timing: { metricKind: 'operator_request', durationMs: 80,
+      stages: id === 'model_chat' && index < 24 ? [{ stage: 'llm_request', durationMs: 60 }] : [] },
+  }));
+  assert.equal(summarizeBenchmark(samples).budgetProven, false);
+  assert.equal(summarizeBenchmark(samples).latencyWithinBudget, false);
 });

@@ -289,6 +289,7 @@ COPY scripts/lib/public-market-worker.mjs ./scripts/lib/public-market-worker.mjs
 COPY scripts/lib/public-market-controller.mjs ./scripts/lib/public-market-controller.mjs
 COPY scripts/lib/public-market-claims.mjs ./scripts/lib/public-market-claims.mjs
 COPY scripts/lib/investor-qa-staging-source.mjs ./scripts/lib/investor-qa-staging-source.mjs
+COPY scripts/lib/investor-qa-fixture-seed.mjs ./scripts/lib/investor-qa-fixture-seed.mjs
 COPY scripts/fixtures/public-market-program.mjs ./scripts/fixtures/public-market-program.mjs
 COPY mcp-server/runtime ./mcp-server/runtime
 COPY scripts/ava-team-chat-permissions.mjs ./scripts/ava-team-chat-permissions.mjs

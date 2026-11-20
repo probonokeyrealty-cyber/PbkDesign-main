@@ -15,6 +15,7 @@ import { createPublicMarketController, recoverPublicMarketJob } from './lib/publ
 import { createPublicMarketClaims } from './lib/public-market-claims.mjs';
 import { createComposioMarketSearch } from './lib/composio-market-search.mjs';
 import { createInvestorQaStagingSource, INVESTOR_QA_LEAD_PATH } from './lib/investor-qa-staging-source.mjs';
+import { seedInvestorQaLead } from './lib/investor-qa-fixture-seed.mjs';
 import { createPbkReadOnlyMcpEndpoint } from '../mcp-server/runtime/pbk-readonly-mcp.mjs';
 import chromium from '@sparticuz/chromium';
 import { WebSocket, WebSocketServer } from 'ws';
@@ -83169,6 +83170,9 @@ function startAgentRegistryHealthScheduler() {
 
 wireRuntimeCoverageLifecycle(server);
 server.listen(PORT, HOST, () => {
+  void seedInvestorQaLead({ getPool: getPgPool }).then(result => {
+    if (result) console.info('[pbk-investor-qa-seed]', JSON.stringify(result));
+  });
   void investorQaStagingSource.discover().then(result => {
     if (result) console.info('[pbk-investor-qa-probe]', JSON.stringify(result));
   });

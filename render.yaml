@@ -334,6 +334,8 @@ services:
         sync: false
       - key: PBK_DEEPGRAM_STREAM_CALLS
         value: "false"
+      - key: PBK_AVA_ELEVENLABS_PHONE_LINES
+        value: "+18883315307"
       - key: PBK_DEEPGRAM_STREAM_TRACK
         value: inbound_track
       - key: PBK_DEEPGRAM_STREAM_CODEC

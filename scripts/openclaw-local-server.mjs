@@ -37641,6 +37641,16 @@ function getTelnyxFromNumber(params = {}) {
   return normalizePhone(params.from || params.fromNumber || params.selectedFromNumber || params.selected_from_number || getEffectiveTelnyxFromNumber());
 }
 
+function shouldStreamTelnyxOutboundCall(fromNumber, params = {}) {
+  return Boolean(
+    params.deepgramSentiment ||
+    params.streamSentiment ||
+    DEEPGRAM_STREAM_CALLS_ENABLED ||
+    (fromNumber && normalizeStringList(process.env.PBK_AVA_ELEVENLABS_PHONE_LINES)
+      .some((line) => normalizePhone(line) === fromNumber))
+  );
+}
+
 function getTelnyxWebhookUrl(params = {}) {
   return String(params.webhookUrl || TELNYX_WEBHOOK_URL || '').trim();
 }
@@ -59129,7 +59139,7 @@ const toolHandlers = {
         requestPayload.webhook_url = webhookUrl;
         requestPayload.webhook_url_method = 'POST';
       }
-      const shouldStreamSentiment = Boolean(params.deepgramSentiment || params.streamSentiment || DEEPGRAM_STREAM_CALLS_ENABLED);
+      const shouldStreamSentiment = shouldStreamTelnyxOutboundCall(fromNumber, params);
       const deepgramMeta = getDeepgramProviderMeta(process.env);
       const deepgramStreamUrl = shouldStreamSentiment && deepgramMeta.ready ? getTelnyxDeepgramStreamUrl(params) : '';
       if (deepgramStreamUrl) {
@@ -68143,7 +68153,9 @@ function mapTelnyxWebhook(body = {}) {
     providerDirection === 'outbound';
 
   if (eventType.includes('message')) {
+    const recipient = Array.isArray(payload.to) ? payload.to[0] : payload.to;
     const mappedMessageStatus =
+      (eventType === 'message.finalized' ? recipient?.status : '') ||
       payload.status ||
       (eventType.includes('delivered')
         ? 'delivered'
@@ -68224,6 +68236,14 @@ function mapTelnyxWebhook(body = {}) {
 
   if (eventType.includes('call')) {
     const callDirection = inbound ? 'inbound' : outbound ? 'outbound' : '';
+    const hasEnded = eventType.includes('hangup');
+    const startedAt = payload.started_at || payload.startedAt || payload.start_time || '';
+    const carrierEndedAt = payload.ended_at || payload.endedAt || payload.end_time || '';
+    const startedAtMs = Date.parse(startedAt);
+    const endedAtMs = Date.parse(carrierEndedAt);
+    const elapsedSeconds = hasEnded && Number.isFinite(startedAtMs) && endedAtMs >= startedAtMs
+      ? Math.floor((endedAtMs - startedAtMs) / 1000)
+      : 0;
     return {
       eventType: 'call-status',
       payload: {
@@ -68251,7 +68271,7 @@ function mapTelnyxWebhook(body = {}) {
         from: payloadFrom || '',
         to: payloadTo || '',
         direction: callDirection,
-        status: eventType.includes('hangup') ? 'ended' : eventType.includes('answered') ? 'live' : eventType.includes('bridged') ? 'transferred' : 'queued',
+        status: hasEnded ? 'ended' : eventType.includes('answered') ? 'live' : eventType.includes('bridged') ? 'transferred' : 'queued',
         leadName: payload.contact_name || '',
         address: payload.address || '',
         actor: 'Telnyx',
@@ -68259,8 +68279,8 @@ function mapTelnyxWebhook(body = {}) {
         call_leg_id: payload.call_leg_id || payload.callLegId || '',
         call_session_id: payload.call_session_id || payload.callSessionId || '',
         durationSeconds: toNumber(
-          payload.durationSeconds || payload.duration_seconds || payload.duration_secs || payload.duration,
-          0
+          payload.durationSeconds ?? payload.duration_seconds ?? payload.duration_secs ?? payload.duration ?? elapsedSeconds,
+          elapsedSeconds
         ),
         summary: payload.summary || payload.call_summary || payload.callSummary || '',
         sentiment:
@@ -68271,8 +68291,8 @@ function mapTelnyxWebhook(body = {}) {
           payload.sentiment_label ||
           payload.sentimentLabel ||
           (typeof payload.sentiment === 'string' ? payload.sentiment : ''),
-        startedAt: payload.started_at || payload.startedAt || payload.start_time || '',
-        endedAt: eventType.includes('hangup') ? isoNow() : '',
+        startedAt,
+        endedAt: hasEnded ? carrierEndedAt || isoNow() : '',
       },
     };
   }

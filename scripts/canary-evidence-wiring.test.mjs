@@ -182,8 +182,10 @@ test('approval, auth, delivery and dispatch code outside maturity remains byte-f
     .replace("import { readCanaryEvidence } from './canary-evidence-reader.mjs';\n", '');
   // Outlook is explicit and requires the existing approval dispatch lease. The mailbox
   // check and test-recipient allowlist live in the separately exercised Outlook adapter.
+  // Telnyx receipt mapping and the scoped outbound media policy are covered by the
+  // unified conversation bridge smoke test.
   assert.equal(createHash('sha256').update(unchanged).digest('hex'),
-    '6e99f04dc4bbe0b97f1f2c8a075947cc0b80a0d1a1b082760d9e6cf8a26d669b');
+    '88261b21a0cd294d963c2b4044fb89bdc933f9e4cc07a6cc5841924fc84153c6');
 });
 
 test('production distribution includes reader and protocol, never the fixture signer', () => {

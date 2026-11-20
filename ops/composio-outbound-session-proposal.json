@@ -1,12 +1,16 @@
 {
-  "status": "prepared-not-created",
+  "status": "session-created-and-locally-verified-hosted-activation-pending",
   "projectName": "probonokeyrealty_workspace_first_project",
   "provisioningKey": {
     "name": "PBK Staging Session Setup - TEMPORARY",
     "permissions": [{"resource": "Session management", "access": "Write only"}],
     "installOnRender": false,
     "purpose": "Create the explicitly pinned read-only sandbox session without broadening the existing runtime key",
-    "revokeAfterProvisioning": true
+    "revokeAfterProvisioning": true,
+    "createdWithExactApprovedScope": true,
+    "revoked": true,
+    "revocationHttp": 200,
+    "postRevocationAuthenticationHttp": 401
   },
   "sessionCreatePath": "/api/v3.1/tool_router/session",
   "sessionCreateBody": {
@@ -22,10 +26,16 @@
     "proxy_execute": {"enable": false},
     "search": {"enable": false},
     "execute": {"enable_multi_execute": false},
-    "multi_account": {"enable": false, "require_explicit_selection": true},
+    "multi_account": {"enable": false},
     "experimental": {"no_elicitation_support_fallback": "deny"}
   },
-  "verification": "Read authoritative session metadata with the existing scoped runtime key; discover and review only the pinned tool's schema before installing server-side pins on isolated staging.",
+  "verification": "Authoritative session metadata returned200 with the existing scoped runtime key. Real MCP discovery advertised only the pinned tool. Both Ava and Rex operations passed through the local real adapter with sandbox identity, DND and QA exclusion verified. Hosted activation remains pending.",
+  "createdSession": {
+    "id": "trs_QDYbCcd_gMjx",
+    "configVersion": 1,
+    "toolCount": 1,
+    "schemaSha256": "f81de072074d5277dd91e6af7736157f64bc5f7084aa4a33f1793303a5534366"
+  },
   "constraints": {
     "productionChanges": false,
     "crmWrites": false,
@@ -35,7 +45,7 @@
     "sharedCustomToolkitFallback": false
   },
   "privateReturnConnection": {
-    "status": "blocked-by-plan",
+    "status": "pro-checkout-prepared-for-founder-review-not-purchased",
     "observedPlan": "Hobby",
     "observedProPriceUsdPerMonth": 29,
     "requiredCapability": "Private Custom MCP toolkit for pbk-composio-staging only",

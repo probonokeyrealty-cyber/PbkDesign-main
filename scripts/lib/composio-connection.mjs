@@ -57,7 +57,7 @@ function readConfig(env) {
       url.password ||
       url.search ||
       url.hash ||
-      !/^\/(?:api\/v3(?:\.1)?\/mcp\/|v3\/mcp\/|tool_router\/v3\/)[A-Za-z0-9_/-]+$/.test(
+      !/^\/(?:(?:api\/v3(?:\.1)?\/mcp\/|v3\/mcp\/|tool_router\/v3\/)[A-Za-z0-9_/-]+|tool_router\/trs_[A-Za-z0-9_-]+\/mcp)$/.test(
         url.pathname
       ) ||
       /pbk-readonly/i.test(url.pathname)

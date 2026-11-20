@@ -124,6 +124,32 @@ test('invalid destinations and incomplete configuration fail before any connecti
     assert.equal(f.count(), 0);
   }
 });
+
+test('the current Composio session MCP path is accepted without loosening destination guards', async () => {
+  const f = fixture();
+  const c = createComposioConnection({
+    env: config({
+      PBK_COMPOSIO_MCP_URL: 'https://backend.composio.dev/tool_router/trs_fixture-session/mcp',
+    }),
+    connect: f.connect,
+  });
+  assert.equal((await c.read({ operation: 'qa-contact', agentId: 'ava' })).ok, true);
+  assert.equal(f.count(), 1);
+  await c.close();
+  for (const url of [
+    'https://backend.composio.dev/tool_router/not-a-session/mcp',
+    'https://backend.composio.dev/tool_router/trs_fixture-session/proxy',
+    'https://backend.composio.dev/tool_router/trs_fixture-session/mcp?key=secret',
+    'https://evil.example/tool_router/trs_fixture-session/mcp',
+  ]) {
+    const blocked = fixture();
+    const connection = createComposioConnection({
+      env: config({ PBK_COMPOSIO_MCP_URL: url }), connect: blocked.connect,
+    });
+    assert.equal((await connection.read({ operation: 'qa-contact', agentId: 'ava' })).ok, false);
+    assert.equal(blocked.count(), 0);
+  }
+});
 test('changed tool schema or missing exact tool fails before execution', async () => {
   for (const tools of [
     [],

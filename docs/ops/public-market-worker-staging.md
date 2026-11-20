@@ -32,7 +32,7 @@ External IP allowlist is empty, blocking public connections. Only the internal U
 - Separate **PBK public market search runtime** Composio key: Tools read, Session management read, Session tool execution write only, stored only as staging `PBK_COMPOSIO_MARKET_SEARCH_API_KEY`.
 - One no-auth session: `trs_ZwQwm-ErumOd`, config1, user `pbk-public-market-research`, only toolkit `composio_search` and tool/preload `COMPOSIO_SEARCH_WEB`. Instant, connection management, workbench, proxy execution, search helper, multi-account and multi-execute are disabled. No connected account/auth-config pins. Independently inspected metadata and actual MCP listing before activation.
 - Actual input-schema SHA256: `adcbb7d8695565f037b8aa16447b0ae074146d34c6d2788e7075cd8696e1388f`. Scope/schema mismatch fails closed. No native/private Brain/model search fallback exists in this lane.
-- Temporary setup key had Session management write only. It created exactly one session, was revoked, disappeared from the Dashboard and returned HTTP401. Transient credentials were cleared. Secrets were not printed, committed, logged, screenshotted or stored in local files.
+- Temporary setup key had Session management write only. It created exactly one session, was revoked, disappeared from the Dashboard and returned HTTP401. Transient credentials were cleared. Secrets were not printed, committed, logged or stored in local files; no secret-bearing screenshots were saved or shared.
 - The two new staging flags are enabled. No automatic schedules or provider writes were added. Existing QA-contact and E2B inventory scopes were preserved.
 
 ## Verification notes

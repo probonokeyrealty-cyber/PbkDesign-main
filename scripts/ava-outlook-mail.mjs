@@ -11,13 +11,17 @@ export async function sendAvaOutlookMail({
   const userId = env.PBK_AVA_OUTLOOK_USER_ID?.trim();
   const allowedSender = env.PBK_AVA_OUTLOOK_SENDER?.trim().toLowerCase();
   const allowedRecipient = env.PBK_AVA_OUTLOOK_TEST_RECIPIENT?.trim().toLowerCase();
+  const leadEmailEnabled = env.PBK_AVA_OUTLOOK_LEAD_EMAIL_ENABLED === '1';
+  const to = recipient?.trim();
 
-  if (!apiKey || !accountId || !userId || !ADDRESS.test(allowedSender || '') || !ADDRESS.test(allowedRecipient || '')) {
+  if (!apiKey || !accountId || !userId || !ADDRESS.test(allowedSender || '') ||
+    (!leadEmailEnabled && !ADDRESS.test(allowedRecipient || ''))) {
     return failed('provider_missing', 'The Ava Outlook connection is not configured.');
   }
-  if (sender?.trim().toLowerCase() !== allowedSender || recipient?.trim().toLowerCase() !== allowedRecipient ||
+  if (sender?.trim().toLowerCase() !== allowedSender || !ADDRESS.test(to || '') ||
+    (!leadEmailEnabled && to.toLowerCase() !== allowedRecipient) ||
     !subject?.trim() || subject.length > 255 || !text?.trim()) {
-    return failed('outlook_test_scope_mismatch', 'The Outlook request must match the authorized test sender and recipient.');
+    return failed('outlook_address_or_content_invalid', 'Check the approved Outlook sender, recipient, subject, and message.');
   }
 
   async function execute(tool, args) {
@@ -43,7 +47,7 @@ export async function sendAvaOutlookMail({
 
   try {
     const response = await execute('OUTLOOK_SEND_EMAIL', {
-      to: allowedRecipient, subject, body: text, is_html: false, user_id: 'me', save_to_sent_items: true,
+      to, subject, body: text, is_html: false, user_id: 'me', save_to_sent_items: true,
     });
     if ([400, 401, 403, 404].includes(response.status)) {
       return failed('outlook_send_rejected', 'Composio rejected the Outlook send request.');

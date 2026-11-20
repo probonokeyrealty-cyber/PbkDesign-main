@@ -2,6 +2,7 @@ import { execFileSync } from 'node:child_process';
 import { createNeonMailRouter } from './neon-auth-mail.mjs';
 import { createComposioResearchDiscovery } from './composio-research-discovery.mjs';
 import { sendAvaOutlookMail } from './ava-outlook-mail.mjs';
+import { normalizeOutlookReceiptUrl, readOutlookDelivery } from '../src/app/utils/outlookDelivery.mjs';
 import { createServer, globalAgent as httpGlobalAgent } from 'node:http';
 import { globalAgent as httpsGlobalAgent } from 'node:https';
 import { createHash, createHmac, createPrivateKey, createPublicKey, createSign as __dsCreateSign, randomUUID, timingSafeEqual, verify as verifySignature } from 'node:crypto';
@@ -728,6 +729,7 @@ let __slackBotValidation = {
 };
 const RESEND_API_KEY = String(process.env.PBK_RESEND_API_KEY || process.env.RESEND_API_KEY || '').trim();
 const OUTLOOK_APPROVAL_DISPATCH = Symbol('outlook-approval-dispatch');
+const OUTLOOK_LEAD_EMAIL_ENABLED = process.env.PBK_AVA_OUTLOOK_LEAD_EMAIL_ENABLED === '1';
 const MAIN_BUSINESS_EMAIL = String(process.env.PBK_MAIN_BUSINESS_EMAIL || process.env.MAIN_BUSINESS_EMAIL || 'jordan@pbk.capital').trim();
 const COLD_CAMPAIGN_EMAIL = String(process.env.PBK_COLD_CAMPAIGN_EMAIL || process.env.COLD_CAMPAIGN_EMAIL || 'offers@pbkoutreach.local').trim();
 const INSTANTLY_API_KEY = String(process.env.PBK_INSTANTLY_API_KEY || process.env.INSTANTLY_API_KEY || '').trim();
@@ -3904,6 +3906,9 @@ function authorizeDirectTeamBridgeRequest({
 
   if (chatPermissions.has('canApproveProviderActions') && permissions.canApproveProviderActions !== true) {
     return deny('canApproveProviderActions', 'approve provider actions');
+  }
+  if (normalizedMethod === 'PUT' && /^\/api\/approvals\/[^/]+\/outlook-delivery$/.test(normalizedPath) && permissions.canApproveProviderActions !== true) {
+    return deny('canApproveProviderActions', 'confirm Outlook delivery');
   }
 
   const killSwitchTool = /^(?:pbk_kill_switch|killswitch|togglekillswitch)$/i.test(toolName);
@@ -15598,13 +15603,17 @@ function normalizePgApprovalRecord(row = {}) {
   };
 }
 
-async function loadApprovalRecordsFromPg({ statusFilter = '', limit = 60 } = {}) {
+async function loadApprovalRecordsFromPg({ statusFilter = '', leadId = '', limit = 60 } = {}) {
   const normalizedStatus = String(statusFilter || '').trim().toLowerCase();
   const params = [Math.max(1, Math.min(200, Number(limit) || 60))];
   const where = ["COALESCE(workspace_id, 'pbk') = 'pbk'"];
   if (normalizedStatus) {
     params.push(normalizedStatus);
     where.push(`LOWER(status) = $${params.length}`);
+  }
+  if (leadId) {
+    params.push(leadId);
+    where.push(`lead_id = $${params.length}`);
   }
   const result = await queryPgRows(
     `SELECT
@@ -15632,6 +15641,66 @@ async function loadApprovalRecordsFromPg({ statusFilter = '', limit = 60 } = {})
     ok: true,
     rows: result.rows.map(normalizePgApprovalRecord),
   };
+}
+
+async function loadOutlookDeliveryForLead(leadId) {
+  const scoped = (state.approvals || []).filter((item) => item.leadId === leadId);
+  const records = new Map(scoped.map((item) => [item.id, item]));
+  if (getPgPool()) {
+    const saved = await loadApprovalRecordsFromPg({ leadId, limit: 100 });
+    for (const item of saved.rows || []) {
+      if (item.leadId === leadId) records.set(item.id, { ...records.get(item.id), ...item });
+    }
+  }
+  return [...records.values()].map(readOutlookDelivery).filter(Boolean)
+    .sort((left, right) => right.at.localeCompare(left.at));
+}
+
+async function confirmOutlookDelivery(approvalId, receiptUrl, actor) {
+  const cached = (state.approvals || []).find((item) => item.id === approvalId && (item.workspaceId || 'pbk') === 'pbk');
+  const unavailable = { status: 503, error: 'Could not save delivery confirmation. Refresh this record and try again.' };
+  const useDatabase = Boolean(getPgPool());
+  if (!useDatabase && IS_HOSTED) return unavailable;
+
+  let approval = cached;
+  if (useDatabase) {
+    const saved = await queryPgRows('SELECT * FROM public.approvals WHERE id = $1 AND workspace_id = $2', [approvalId, 'pbk']);
+    if (!saved.ok) return unavailable;
+    approval = saved.rows[0] && normalizePgApprovalRecord(saved.rows[0]);
+  }
+  const record = readOutlookDelivery(approval);
+  if (!record) return { status: 404, error: 'Outlook approval not found.' };
+  if (record.confirmation?.receiptUrl === receiptUrl) return { status: 200, record };
+  if (!record.canConfirm) return { status: 409, error: 'This Outlook approval cannot accept a new delivery confirmation.' };
+
+  const confirmation = { receiptUrl, confirmedAt: isoNow(), confirmedBy: actor };
+  const previousMetadata = approval.metadata;
+  const metadata = { ...previousMetadata, outlookDeliveryConfirmation: confirmation };
+  if (useDatabase) {
+    const updated = await queryPgRows(
+      `UPDATE public.approvals
+          SET payload = jsonb_set(payload, '{metadata,outlookDeliveryConfirmation}', $4::jsonb), updated_at = NOW()
+        WHERE id = $1 AND workspace_id = $2 AND status = 'approved'
+          AND payload->'metadata' = $3::jsonb
+        RETURNING id`,
+      [approvalId, 'pbk', JSON.stringify(approval.metadata), JSON.stringify(confirmation)]
+    );
+    if (!updated.ok) return unavailable;
+    if (!updated.rows.length) return { status: 409, error: 'The approval changed. Refresh it before confirming delivery.' };
+  }
+
+  const updatedApproval = { ...approval, metadata };
+  if (cached) Object.assign(cached, updatedApproval);
+  else addApproval(state, updatedApproval);
+  try {
+    await persistState(state);
+  } catch {
+    if (!useDatabase) {
+      if (cached) cached.metadata = previousMetadata;
+      return unavailable;
+    }
+  }
+  return { status: 200, record: readOutlookDelivery(updatedApproval) };
 }
 
 async function backfillContractRecordsToPg(contracts = state.contracts || []) {
@@ -43229,6 +43298,10 @@ function buildProviderActionReplayParams(params = {}) {
   return redactApprovalParamPreview(params || {});
 }
 
+function savedOutlookLeadEmail(lead) {
+  return String(lead?.seller?.email || lead?.email || '').trim();
+}
+
 function resolveProviderActionReplayParams(toolName, params = {}) {
   const resolved = { ...params };
   const context = findLeadContext(params);
@@ -43239,6 +43312,10 @@ function resolveProviderActionReplayParams(toolName, params = {}) {
   if (toolName === 'telnyx_sms') resolved.body = String(params.body || params.message || '').trim();
   if (toolName === 'sendColdEmail') {
     resolved.email = params.email || params.to || context.email || inferSkipTraceContact(context).email;
+    if (OUTLOOK_LEAD_EMAIL_ENABLED && params.provider === 'outlook') {
+      const lead = (state.leadImports || []).find((item) => (item.leadId || item.id) === params.leadId);
+      resolved.email = savedOutlookLeadEmail(lead);
+    }
     const outlookSender = params.provider === 'outlook' ? process.env.PBK_AVA_OUTLOOK_SENDER : '';
     resolved.fromEmail = getSenderAddress('cold', params.fromEmail || params.from_email || params.instantlySender || params.senderEmail || outlookSender || '');
     const body = String(params.customBody || params.body || params.message || '').trim();
@@ -43273,6 +43350,12 @@ function summarizeProviderActionResult(result = {}) {
     error: result.error || '',
     status: result.status || '',
     reconciliationRequired: Boolean(result.reconciliationRequired),
+    ...(result.provider === 'Outlook' ? {
+      provider: result.provider,
+      providerRequestId: result.delivery?.providerRequestId || '',
+      deliveryStatus: result.delivery?.deliveryStatus || result.message?.status || '',
+      messageId: result.message?.id || '',
+    } : {}),
     callId: result.call?.id || result.callId || '',
     callStatus: result.call?.status || result.status || '',
     callProvider: result.call?.provider || result.provider || '',
@@ -43705,6 +43788,12 @@ async function enforceOperatingModeForTool(toolName, params = {}) {
   }
   const mode = getRuntimeOperatingMode();
   const approvalReplayId = String(params.approvalId || params.approval_id || '').trim();
+  if (OUTLOOK_LEAD_EMAIL_ENABLED && toolName === 'sendColdEmail' && params.provider === 'outlook') {
+    const lead = params.leadId ? await loadExactPropertyLead(params.leadId) : null;
+    if (!savedOutlookLeadEmail(lead)) {
+      return { ok: false, result: 'outlook_saved_email_required', message: 'Select a saved lead with an email address before requesting approval.' };
+    }
+  }
   const forceApproval = params.forceApproval === true || params.force_approval === true ||
     (toolName === 'sendColdEmail' && params.provider === 'outlook');
   const label = toolName.replace(/_/g, ' ');
@@ -58881,6 +58970,13 @@ const toolHandlers = {
     if (useOutlook && !params[OUTLOOK_APPROVAL_DISPATCH]) {
       return { ok: false, result: 'approval_required', providerAttempted: false };
     }
+    if (useOutlook && OUTLOOK_LEAD_EMAIL_ENABLED) {
+      const lead = params.leadId ? await loadExactPropertyLead(params.leadId) : null;
+      const savedEmail = savedOutlookLeadEmail(lead);
+      if (!savedEmail || savedEmail !== params.email) {
+        return { ok: false, result: 'outlook_recipient_changed', providerAttempted: false };
+      }
+    }
     recordToolUse('sendColdEmail');
     const context = findLeadContext(params);
     const leadImport = findLatestLeadImport(params);
@@ -58991,7 +59087,7 @@ const toolHandlers = {
     }
 
     const message = createMessageRecord({
-      id: delivery?.id || delivery?.body?.id || `msg-cold-email-${Date.now()}`,
+      id: useOutlook ? `msg-outlook-${params.approvalId}` : delivery?.id || delivery?.body?.id || `msg-cold-email-${Date.now()}`,
       leadId: context.leadId,
       leadName: context.leadName,
       address: context.address,
@@ -59003,6 +59099,7 @@ const toolHandlers = {
       subject: content.subject,
       body: content.text,
       deliveryStatus: delivery?.deliveryStatus,
+      providerAttemptId: delivery?.providerRequestId,
       status: delivery?.ok ? (useOutlook ? 'queued' : 'sent') : delivery?.result === 'provider_missing' || !delivery ? 'provider_missing' : 'failed',
       provider,
     });
@@ -65362,6 +65459,7 @@ async function handleInternalAvaAssistantChatRequest(request) {
   const assistantPlan = requestTiming.measureSync('intent_plan', () => planAssistantIntent(assistantIntent, {
     publicMode: false,
     authenticated: true,
+    outlookLeadEmailEnabled: OUTLOOK_LEAD_EMAIL_ENABLED,
     session: assistantContextSession,
     leadId: assistantContextSession.leadId,
     leads: state.leadImports || [],
@@ -79821,6 +79919,25 @@ const server = createServer(async (request, response) => {
       return;
     }
 
+    const outlookDeliveryMatch = matchPath(pathname, '/api/approvals/:id/outlook-delivery');
+    if (outlookDeliveryMatch && request.method === 'PUT') {
+      const body = await readBody(request);
+      const teamAuth = request.pbkTeamAuth || getTeamAuthMeta(request);
+      if (hasTeamAuthCredentials(request) && (!teamAuth.ok || !getTeamPermissions().canApproveProviderActions)) {
+        json(response, 403, { ok: false, error: 'This team session cannot confirm Outlook delivery.' });
+        return;
+      }
+      const receiptUrl = normalizeOutlookReceiptUrl(body.receiptUrl);
+      if (!receiptUrl || body.matchedReceipt !== true) {
+        json(response, 400, { ok: false, error: 'Provide a Gmail or Outlook message link and confirm it matches this email.' });
+        return;
+      }
+      const actor = teamAuth.ok ? teamAuth.actor || 'PBK team' : 'PBK operator';
+      const { status, ...result } = await confirmOutlookDelivery(outlookDeliveryMatch.groups.id, receiptUrl, actor);
+      json(response, status, { ok: status === 200, ...result });
+      return;
+    }
+
     const approvalMatch = matchPath(pathname, '/api/approvals/:id');
     if (approvalMatch && request.method === 'PUT') {
       const body = await readBody(request);
@@ -81230,6 +81347,7 @@ const server = createServer(async (request, response) => {
         const callContext = getLeadOwnedCallContext(durableBatchLead, leadId);
         json(response, 200, {
           ok: true, lead: { ...durableBatchLead, ...history, callContext, call_context: callContext }, ...history,
+          outlookDelivery: await loadOutlookDeliveryForLead(leadId),
         });
         return;
       }
@@ -81242,7 +81360,7 @@ const server = createServer(async (request, response) => {
         });
         return;
       }
-      json(response, 200, full);
+      json(response, 200, { ...full, outlookDelivery: await loadOutlookDeliveryForLead(leadId) });
       return;
     }
 

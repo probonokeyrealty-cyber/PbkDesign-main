@@ -1,5 +1,6 @@
 import type { AttomMcpSection } from './attomMcpSections.mjs';
 import type { AttomExtraPropertyFacts } from './attomRecordFields.mjs';
+import type { OutlookDelivery } from './outlookDelivery.mjs';
 import { DealData } from '../types';
 import { buildAgentDealContext, type AgentDealContext } from './agentDealContext';
 import { readAvaChatResponse, type AvaChatStreamOptions } from './avaChatStream';
@@ -282,6 +283,7 @@ export type RuntimeSnapshot = {
   callQaScores?: Array<Record<string, unknown>>;
   skillOutcomes?: Array<Record<string, unknown>>;
   adminTasks?: AdminTask[];
+  browserResearchJobs?: Array<Record<string, unknown>>;
   adminAudit?: Array<Record<string, unknown>>;
   campaigns?: CampaignRecord[];
   campaignLeads?: CampaignLeadRecord[];
@@ -297,6 +299,7 @@ export type RuntimeQuotas = {
 };
 
 export type RuntimeToolingStatus = {
+  publicMarketWorker?: Record<string, unknown>;
   metaAgent?: Record<string, unknown>;
   browserOs?: Record<string, unknown>;
   agentReach?: Record<string, unknown>;
@@ -2537,6 +2540,18 @@ function collectApprovalDecisionIds(approvalId: string, result: Record<string, u
     addApprovalRecordTokens(tokens, value);
   });
   return [...tokens];
+}
+
+export async function confirmOutlookDeliveryRequest(approvalId: string, receiptUrl: string) {
+  const response = await bridgeRequest<{ ok: boolean; record?: OutlookDelivery; error?: string }>({
+    method: 'PUT',
+    path: `/api/approvals/${encodeURIComponent(approvalId)}/outlook-delivery`,
+    body: { receiptUrl, matchedReceipt: true },
+  });
+  if (!response.ok || response.record?.id !== approvalId || !response.record.confirmation) {
+    throw new Error(response.error || 'The bridge did not confirm Outlook delivery.');
+  }
+  return response.record;
 }
 
 export async function updateApprovalDecision(approvalId: string, status: string) {

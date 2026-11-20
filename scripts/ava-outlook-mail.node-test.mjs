@@ -42,6 +42,26 @@ test('blocks a recipient mismatch before opening a provider connection', async (
   assert.equal(result.ok, false);
 });
 
+test('lead email mode uses the approved recipient and preserves the acceptance receipt', async () => {
+  const leadEmail = 'seller@example.net';
+  const calls = [];
+  const result = await sendAvaOutlookMail({
+    ...options,
+    env: { ...env, PBK_AVA_OUTLOOK_LEAD_EMAIL_ENABLED: '1' },
+    recipient: leadEmail,
+    fetchImpl: async (_url, request) => {
+      calls.push(JSON.parse(request.body).arguments);
+      return Response.json(calls.length === 1
+        ? { successful: true, data: { mail: sender } }
+        : { successful: true, log_id: 'accepted-outlook-receipt' });
+    },
+  });
+  assert.equal(calls.length, 2);
+  assert.equal(calls[1].to, leadEmail);
+  assert.equal(result.deliveryStatus, 'accepted');
+  assert.equal(result.providerRequestId, 'accepted-outlook-receipt');
+});
+
 test('does not send if the authenticated Outlook mailbox is different', async () => {
   let requests = 0;
   const result = await sendAvaOutlookMail({

@@ -11,6 +11,8 @@ import {
 } from 'lucide-react';
 import { Link, useLocation, useNavigate } from 'react-router';
 import { DecisionRail, type DecisionProgress } from '../components/DecisionRail';
+import { OutlookDeliveryStatus } from '../components/OutlookDeliveryStatus';
+import { readOutlookDelivery, type OutlookDelivery } from '../utils/outlookDelivery.mjs';
 import '../../styles/decision-rail.css';
 import { readLeadQueueReturn } from '../utils/leadQueueReturn';
 import { resolveTriageLead } from '../utils/leadTriage';
@@ -1970,6 +1972,10 @@ export function CommandCenter() {
     () => getPageSlice(pendingApprovals, approvalPage, OPERATOR_LIST_PAGE_SIZE),
     [approvalPage, pendingApprovals]
   );
+  const outlookHistory = useMemo(() => approvals.map(readOutlookDelivery)
+    .filter((record): record is OutlookDelivery => record !== null && record.state !== 'pending' && record.state !== 'closed')
+    .sort((left, right) => Number(right.state === 'recovery') - Number(left.state === 'recovery') || right.at.localeCompare(left.at))
+    .slice(0, 5), [approvals]);
   const visibleAdminTasks = useMemo(
     () => getPageSlice(adminTasks, adminPage, OPERATOR_LIST_PAGE_SIZE),
     [adminPage, adminTasks]
@@ -3086,6 +3092,7 @@ export function CommandCenter() {
                       >
                         {getApprovalPreview(approval)}
                       </div>
+                      <OutlookDeliveryStatus record={readOutlookDelivery(approval)} />
                       {approvalRecordKeys(approval).some((key) =>
                         uncertainApprovalKeys.current.has(key)
                       ) && (
@@ -3148,6 +3155,12 @@ export function CommandCenter() {
                   itemLabel="reviews"
                   onPageChange={setApprovalPage}
                 />
+                {outlookHistory.length > 0 && (
+                  <section className="mt-4" aria-label="Recent Outlook email approvals">
+                    <h3 className="text-sm font-semibold text-slate-200">Recent Outlook email approvals</h3>
+                    {outlookHistory.map((record) => <OutlookDeliveryStatus key={record.id} record={record} showSubject showLead />)}
+                  </section>
+                )}
                 <DataSourceCaption
                   endpoint="snapshot.approvals payload + PUT /api/approvals/:id"
                   note="preview uses message/body/text/content/payload/metadata fields"

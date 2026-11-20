@@ -14,6 +14,7 @@ import { LeadPortalHeader } from '../components/leads/LeadPortalHeader';
 import { LeadPortalOverview } from '../components/leads/LeadPortalOverview';
 import { LeadPortalProperty } from '../components/leads/LeadPortalProperty';
 import { LeadPortalTimeline } from '../components/leads/LeadPortalTimeline';
+import type { OutlookDelivery } from '../utils/outlookDelivery.mjs';
 import {
   buildLeadPortalModel,
   buildLeadPortalPatch,
@@ -787,6 +788,7 @@ export function LeadPortal() {
           <LeadPortalTimeline
             thread={thread}
             events={events}
+            outlookDelivery={lead.id === leadId && Array.isArray(leadPayload?.outlookDelivery) ? leadPayload.outlookDelivery as OutlookDelivery[] : []}
             loading={timelineLoading}
             loadingMore={timelineLoadingMore}
             error={timelineError}

@@ -19,7 +19,8 @@ import { buildDefaultAgentRegistry, buildStableAgentFleetMeasurement } from './a
 const end = Date.parse('2026-11-17T12:00:00.000Z'), revision = 'a'.repeat(40);
 const secret = 'explicit-isolated-task-five-material';
 let fixture;
-beforeAll(async () => { fixture = await createAuditFixture({ end, revision, secret }); }, 120000);
+// Replay all 1,441 real signed checkpoints; allow bounded setup time on local WASM Postgres.
+beforeAll(async () => { fixture = await createAuditFixture({ end, revision, secret }); }, 600000);
 afterAll(async () => { await fixture?.close(); });
 const collect = (options = {}) => collectOperationalAudit({ pool: fixture.pool, secret, revision,
   now: fixture.now(), observationNow: fixture.now, sampler: fixture.sampler, runtime: auditFixtureHealth(), ...options });
@@ -107,7 +108,7 @@ test('verified coverage cannot bless missing business linkage in the actual coll
       await f.db.query('DELETE FROM approvals WHERE id=$1', [mode]);
     }
   } finally { await f.close(); }
-}, 120000);
+}, 600000);
 
 test('a signed Boolean or malformed/missing reference cannot qualify, including signed re-tampering', async () => {
   const genuine = await collect();

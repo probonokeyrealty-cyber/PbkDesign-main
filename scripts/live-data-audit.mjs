@@ -1734,7 +1734,8 @@ const checks = [
       /scheduleRuntimeStateBroadcast\('telnyx-transcript'\)/.test(bridge) &&
       /telnyxCallControlId === payload\.call_control_id/.test(bridge) &&
       /telnyxCallLegId === payload\.call_leg_id/.test(bridge) &&
-      /endedAt:\s*eventType\.includes\('hangup'\)/.test(bridge) &&
+      /const hasEnded = eventType\.includes\('hangup'\)/.test(bridge) &&
+      /endedAt:\s*hasEnded\s*\?\s*carrierEndedAt\s*\|\|\s*isoNow\(\)/.test(bridge) &&
       /function\s+getSafeLiveCallNextMove/.test(index) &&
       /unsafePattern/.test(index) &&
       /getSafeLiveCallNextMove\(active\)/.test(index) &&

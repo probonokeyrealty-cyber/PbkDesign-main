@@ -41451,17 +41451,19 @@ function getWebSearchProviderStatus() {
   const tavily = getTavilyProviderMeta();
   const openAi = getOpenAiWebSearchProviderMeta();
   const deepSeek = getDeepSeekProviderMeta();
-  const fallbackProvider = deepSeek.ready ? 'deepseek' : openAi.ready ? 'openai_legacy' : 'pbk_brain';
+  const liveReady = Boolean(tavily.ready || openAi.ready);
+  const fallbackProvider = openAi.ready ? 'openai' : deepSeek.ready ? 'deepseek' : 'pbk_brain';
   return {
-    configured: true,
-    ready: true,
+    configured: Boolean(tavily.configured || openAi.configured),
+    ready: liveReady,
     provider: 'PBK Web Search',
-    mode: tavily.ready ? 'tavily-live' : `${fallbackProvider}-fallback`,
+    mode: tavily.ready ? 'tavily-live' : openAi.ready ? 'openai-live' : `${fallbackProvider}-fallback`,
     primaryProvider: tavily.ready ? 'tavily' : fallbackProvider,
-    liveReady: Boolean(tavily.ready),
+    liveReady,
     tavilySecretPresent: Boolean(tavily.ready),
     fallbackProvider,
     fallbackReady: Boolean(deepSeek.ready || openAi.ready),
+    knowledgeFallbackAvailable: true,
     logEvent: 'pbk_web_search_provider',
     endpoint: '/api/brain/web-search',
     statusEndpoint: '/api/brain/web-search/status',
@@ -41471,13 +41473,15 @@ function getWebSearchProviderStatus() {
       exposesSymbolicFacts: true,
       targetAgents: ['ava', 'rex'],
     },
-    missing: tavily.ready ? [] : tavily.missing,
+    missing: liveReady ? [] : [...new Set([...(tavily.missing || []), ...(openAi.missing || [])])],
     providers: {
       tavily,
       openAiWebSearch: openAi,
       deepSeek,
     },
-    note: tavily.ready ? 'Tavily live search is active; Ava/Rex receive live search spikes and symbolic facts.' : `Tavily live search is not installed yet; Ava/Rex are using ${fallbackProvider.replace(/_/g, ' ')} with PBK Brain plus spike/fact output.`,
+    note: liveReady
+      ? `${tavily.ready ? 'Tavily' : 'OpenAI'} web retrieval is configured; successful retrieval is verified per request.`
+      : 'Live web retrieval is not configured or ready. PBK knowledge fallback remains available; it is not verified current web research.',
   };
 }
 

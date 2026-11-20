@@ -1,0 +1,93 @@
+{
+  "status": "isolated-staging-inventory-read-enabled-and-hosted-verified",
+  "environment": "isolated Composio staging only",
+  "projectName": "probonokeyrealty_workspace_first_project",
+  "connection": {
+    "userId": "pbk-cloud-research",
+    "accountId": "ca_r5HmRJD9k_-7",
+    "authConfigId": "ac_WxNF28Po0Sxv",
+    "status": "ACTIVE",
+    "automaticToolRouterDiscoveryEnabled": false,
+    "directAccountBoundListReadVerified": true
+  },
+  "runtimeCredentialProposal": {
+    "name": "PBK E2B inventory runtime",
+    "permissions": [
+      {"resource": "Tools", "access": "Read only"},
+      {"resource": "Session management", "access": "Read only"},
+      {"resource": "Connected accounts", "access": "Read only"},
+      {"resource": "Session tool execution", "access": "Write only"}
+    ],
+    "installOnlyOnService": "srv-dbvk7tv40ujc73e0d8gg",
+    "environmentVariable": "PBK_COMPOSIO_E2B_API_KEY",
+    "created": true,
+    "savedScopeIndependentlyVerified": true,
+    "installedOnlyOnApprovedStagingService": true
+  },
+  "setupCredentialProposal": {
+    "name": "PBK E2B session setup - TEMPORARY",
+    "permissions": [{"resource": "Session management", "access": "Write only"}],
+    "installOnRender": false,
+    "revokeAfterCreatingOnePinnedSession": true,
+    "created": true,
+    "creationSubmissionSent": true,
+    "state": "revoked-after-single-session-provisioning",
+    "savedScopeIndependentlyVerified": true,
+    "revoked": true,
+    "postRevocationAuthenticationHttp": 401
+  },
+  "sessionCreatePath": "/api/v3.1/tool_router/session",
+  "sessionCreateBody": {
+    "user_id": "pbk-cloud-research",
+    "toolkits": {"enable": ["e2b"]},
+    "tools": {"e2b": {"enable": ["E2B_LIST_SANDBOXES"]}},
+    "auth_configs": {"e2b": "ac_WxNF28Po0Sxv"},
+    "connected_accounts": {"e2b": ["ca_r5HmRJD9k_-7"]},
+    "preload": {"tools": ["E2B_LIST_SANDBOXES"]},
+    "instant": false,
+    "manage_connections": {"enable": false},
+    "workbench": {"enable": false, "enable_proxy_execution": false},
+    "proxy_execute": {"enable": false},
+    "search": {"enable": false},
+    "execute": {"enable_multi_execute": false},
+    "multi_account": {"enable": false},
+    "experimental": {"no_elicitation_support_fallback": "deny"}
+  },
+  "stagingDeployment": {
+    "id": "dep-dbvv6od9fdbs73c4tisg",
+    "commit": "4551820f5e0229a4a432c53c57dbc207dabc2cf9",
+    "liveAt": "2026-11-20T07:16:49.841761Z",
+    "cloudEnabled": true,
+    "disabledAgentCommandsAndDenialsVerified": true,
+    "businessCollectionsUnchanged": true,
+    "hostedSettingsVerified": ["desktop Chromium", "iPhone WebKit", "320px WebKit"]
+  },
+  "createdSession": {
+    "id": "trs_0lhD-TXMNvGT",
+    "configVersion": 1,
+    "toolCount": 1,
+    "schemaSha256": "bd571a6649dea4713ada93407982b291777c186d008a854933b283263cbd230c",
+    "hostedAvaRexInventoryReadsVerified": true,
+    "hostedDenialProbesPassed": true,
+    "returnedSandboxCount": 0
+  },
+  "toolDefinitionObservedVersion": "20261118_00",
+  "fixedArguments": {"limit": 100},
+  "completedChecks": [
+    "Independently verify saved credential scope before capturing/installing values",
+    "Revalidate current provider session schema before creation",
+    "Read back exact session policy, ID, version and URL",
+    "MCP tools/list must advertise only E2B_LIST_SANDBOXES without another page",
+    "Pin actual MCP input schema fingerprint before activation",
+    "Deploy reviewed code to existing free staging with cloud flag off first",
+    "Explicit Ava/Rex checks and denial probes must leave all business collections unchanged"
+  ],
+  "constraints": {
+    "productionChanges": false,
+    "sandboxCreationOrExecution": false,
+    "outreach": false,
+    "paidUpgrade": false,
+    "crmWrites": false,
+    "inboundActivation": false
+  }
+}

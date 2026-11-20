@@ -23,6 +23,19 @@ test(
       const tooling = await get('/api/tooling/status');
       assert.equal(tooling.tooling.composio.outbound.state, 'configuration_missing');
       assert.equal(tooling.tooling.composio.inbound.ready, false);
+      assert.equal(tooling.tooling.composio.cloud.state, 'disabled');
+      const cloudCheck = await bridge
+        .fetch(bridge.origin + '/invoke', {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({
+            toolName: 'runAgentCommand',
+            params: { agent: 'rex', command: 'rex check E2B sandboxes' },
+          }),
+        })
+        .then((r) => r.json());
+      assert.equal(cloudCheck.result.routedTo, 'tool_first:composio_cloud_read');
+      assert.equal(cloudCheck.result.response.result, 'disabled');
       for (const agent of ['ava', 'rex']) {
         const r = await bridge.fetch(bridge.origin + '/invoke', {
           method: 'POST',
@@ -79,6 +92,67 @@ test(
         );
     } finally {
       await client?.close();
+      await bridge.stop();
+    }
+  }
+);
+
+test(
+  'cloud inventory uses the real agent bridge and MCP SDK, denies overrides and changes no business collections',
+  { timeout: 60000 },
+  async () => {
+    const bridge = await startIsolatedBridge({
+      entry: fileURLToPath(new URL('./fixtures/composio-bridge-smoke-entry.mjs', import.meta.url)),
+      args: ['--cloud-fixture'],
+    });
+    const headers = {
+      Authorization: `Bearer ${bridge.apiKey}`,
+      'Content-Type': 'application/json',
+    };
+    const get = async (path) =>
+      bridge.fetch(bridge.origin + path, { headers }).then((r) => r.json());
+    const invoke = async (params) =>
+      bridge
+        .fetch(bridge.origin + '/invoke', {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({ toolName: 'runAgentCommand', params }),
+        })
+        .then((r) => r.json());
+    try {
+      const before = await get('/state');
+      assert.equal((await get('/api/tooling/status')).tooling.composio.cloud.ready, false);
+      for (const agentId of ['ava', 'rex']) {
+        const body = await invoke({ agentId, command: `${agentId} check E2B sandboxes` });
+        assert.equal(body.result.ok, true);
+        assert.equal(body.result.response.result, 'composio_cloud_inventory_verified');
+        assert.deepEqual(body.result.response.inventory, {
+          returnedCount: 0,
+          hasMore: false,
+          complete: true,
+        });
+      }
+      for (const params of [
+        { agentId: 'hermes', cloudOperation: 'cloud-sandboxes' },
+        { agentId: 'ava', cloudOperation: 'cloud-sandboxes', arguments: { code: 'arbitrary' } },
+        { agentId: 'rex', cloudOperation: 'create-sandbox' },
+      ])
+        assert.equal((await invoke(params)).result.ok, false);
+      const status = (await get('/api/tooling/status')).tooling.composio;
+      assert.equal(status.cloud.ready, true);
+      assert.equal(status.outbound.ready, false);
+      const after = await get('/state');
+      for (const key of [
+        'leads',
+        'tasks',
+        'adminTasks',
+        'approvals',
+        'calls',
+        'messages',
+        'contracts',
+      ])
+        assert.deepEqual(after.state?.[key] ?? after[key], before.state?.[key] ?? before[key], key);
+    } finally {
       await bridge.stop();
     }
   }

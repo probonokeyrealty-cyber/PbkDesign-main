@@ -1,6 +1,16 @@
 import { createHash, randomUUID } from 'node:crypto';
 
 const CONTACT_TOOL = 'HIGHLEVEL_LOCATION_CONTACTS_GET_CONTACT';
+const QA_PROFILE = Object.freeze({
+  id: 'qa-contact',
+  toolkit: 'highlevel_location',
+  tool: CONTACT_TOOL,
+});
+const CLOUD_PROFILE = Object.freeze({
+  id: 'cloud-sandboxes',
+  toolkit: 'e2b',
+  tool: 'E2B_LIST_SANDBOXES',
+});
 const SAFE_STATES = new Set([
   'disabled',
   'configuration_missing',
@@ -24,7 +34,24 @@ export function schemaFingerprint(value) {
     .update(JSON.stringify(canonical(value)))
     .digest('hex');
 }
-function readConfig(env) {
+function readConfig(input, profile) {
+  // Cloud pins are a separate namespace; never inherit the QA session or credential.
+  const env =
+    profile === CLOUD_PROFILE
+      ? {
+          ...Object.fromEntries(
+            Object.entries(input).filter(([key]) => !key.startsWith('PBK_COMPOSIO_'))
+          ),
+          ...Object.fromEntries(
+            Object.entries(input)
+              .filter(([key]) => key.startsWith('PBK_COMPOSIO_E2B_'))
+              .map(([key, value]) => [key.replace('PBK_COMPOSIO_E2B_', 'PBK_COMPOSIO_'), value])
+          ),
+          PBK_COMPOSIO_STAGING_ENABLED: input.PBK_COMPOSIO_E2B_ENABLED,
+          PBK_COMPOSIO_CONTACT_SCHEMA_SHA256: input.PBK_COMPOSIO_E2B_SCHEMA_SHA256,
+          PBK_COMPOSIO_INBOUND_TOKEN: input.PBK_COMPOSIO_INBOUND_TOKEN,
+        }
+      : input;
   if (env.PBK_COMPOSIO_STAGING_ENABLED !== 'true') return { enabled: false, reason: 'disabled' };
   const keys = [
     'MCP_URL',
@@ -34,8 +61,7 @@ function readConfig(env) {
     'ACCOUNT_ID',
     'SESSION_ID',
     'SESSION_CONFIG_VERSION',
-    'SANDBOX_LOCATION_ID',
-    'QA_CONTACT_ID',
+    ...(profile === QA_PROFILE ? ['SANDBOX_LOCATION_ID', 'QA_CONTACT_ID'] : []),
     'CONTACT_SCHEMA_SHA256',
   ];
   if (keys.some((k) => !String(env[`PBK_COMPOSIO_${k}`] || '').trim()))
@@ -71,6 +97,7 @@ function readConfig(env) {
       throw Error();
     return {
       enabled: true,
+      profile: profile.id,
       url: url.href,
       key,
       authConfigId: env.PBK_COMPOSIO_AUTH_CONFIG_ID,
@@ -89,6 +116,7 @@ function readConfig(env) {
 
 // Authenticated metadata reads, never connection creation or session mutation.
 export async function verifyComposioSessionScope(config, signal) {
+  const policy = config.profile === CLOUD_PROFILE.id ? CLOUD_PROFILE : QA_PROFILE;
   async function get(path) {
     const response = await fetch('https://backend.composio.dev' + path, {
       headers: { 'x-api-key': config.key, Accept: 'application/json' },
@@ -126,7 +154,7 @@ export async function verifyComposioSessionScope(config, signal) {
     account.auth_config?.is_disabled !== false ||
     account.status !== 'ACTIVE' ||
     account.is_disabled !== false ||
-    account.toolkit?.slug !== 'highlevel_location'
+    account.toolkit?.slug !== policy.toolkit
   )
     return false;
   const session = await get(
@@ -139,10 +167,10 @@ export async function verifyComposioSessionScope(config, signal) {
     session.config_version !== config.configVersion ||
     session.mcp?.url !== config.url ||
     cfg?.user_id !== config.userId ||
-    !only(cfg.connected_accounts?.highlevel_location, config.accountId) ||
-    !only(cfg.toolkits?.enabled, 'highlevel_location') ||
-    !only(cfg.tools?.highlevel_location?.enabled, CONTACT_TOOL) ||
-    !only(cfg.preload?.tools, CONTACT_TOOL)
+    !only(cfg.connected_accounts?.[policy.toolkit], config.accountId) ||
+    !only(cfg.toolkits?.enabled, policy.toolkit) ||
+    !only(cfg.tools?.[policy.toolkit]?.enabled, policy.tool) ||
+    !only(cfg.preload?.tools, policy.tool)
   )
     return false;
   return true;
@@ -205,15 +233,27 @@ export async function connectComposioHttp(config, signal) {
   }
 }
 
-export function createComposioConnection({
-  env = process.env,
-  connect = connectComposioHttp,
-  verifyScope = verifyComposioSessionScope,
-  onAudit = () => {},
-  now = Date.now,
-  timeoutMs = 10_000,
-} = {}) {
-  const config = readConfig({ ...env });
+function createConnection(
+  {
+    env = process.env,
+    connect = connectComposioHttp,
+    verifyScope = verifyComposioSessionScope,
+    onAudit = () => {},
+    now = Date.now,
+    timeoutMs = 10_000,
+  } = {},
+  profile = QA_PROFILE
+) {
+  const config = readConfig({ ...env }, profile);
+  const matchesTool = (listing) => {
+    const tools = listing?.tools;
+    const tool = tools?.find((t) => t.name === profile.tool);
+    return (
+      tool &&
+      schemaFingerprint(tool.inputSchema) === config.schemaHash &&
+      (profile !== CLOUD_PROFILE || (tools.length === 1 && !listing.nextCursor))
+    );
+  };
   let client = null,
     connecting = null,
     phase = config.reason || 'unavailable',
@@ -226,7 +266,7 @@ export function createComposioConnection({
   function record(decision, correlationId) {
     const event = {
       direction: 'outbound',
-      toolName: CONTACT_TOOL,
+      toolName: profile.tool,
       decision,
       correlationId,
       at: new Date(now()).toISOString(),
@@ -269,9 +309,7 @@ export function createComposioConnection({
       }
       try {
         const listing = await candidate.listTools({}, { signal, timeout: timeoutMs });
-        const tool = listing?.tools?.find((t) => t.name === CONTACT_TOOL);
-        if (!tool || schemaFingerprint(tool.inputSchema) !== config.schemaHash)
-          throw Error('schema_mismatch');
+        if (!matchesTool(listing)) throw Error('schema_mismatch');
         if (signal.aborted || startedGeneration !== generation) throw Error('connection_obsolete');
         client = candidate;
         candidate.onclose = () => {
@@ -312,8 +350,12 @@ export function createComposioConnection({
       lastSuccessAt: lastSuccess === null ? null : new Date(lastSuccess).toISOString(),
       reason: lastError || config.reason || (ready ? 'read_verified' : 'read_not_verified'),
       note: ready
-        ? 'Sandbox QA read verified; DND on and QA excluded.'
-        : 'Read-only staging connection. A verified sandbox read is required.',
+        ? profile === CLOUD_PROFILE
+          ? 'Cloud inventory read verified; this does not prove agent deployment.'
+          : 'Sandbox QA read verified; DND on and QA excluded.'
+        : profile === CLOUD_PROFILE
+          ? 'Explicit cloud inventory check only; agents are not verified in E2B.'
+          : 'Read-only staging connection. A verified sandbox read is required.',
     };
   }
   async function read(request = {}) {
@@ -323,7 +365,7 @@ export function createComposioConnection({
       typeof request !== 'object' ||
       Array.isArray(request) ||
       Object.keys(request).some((k) => !['operation', 'agentId'].includes(k)) ||
-      request.operation !== 'qa-contact' ||
+      request.operation !== profile.id ||
       !['ava', 'rex'].includes(request.agentId)
     ) {
       record('denied', correlationId);
@@ -346,14 +388,20 @@ export function createComposioConnection({
       ownClient = c;
       ownGeneration = generation;
       const listing = await bounded((signal) => c.listTools({}, { signal, timeout: timeoutMs }));
-      const tool = listing?.tools?.find((t) => t.name === CONTACT_TOOL);
-      if (!tool || schemaFingerprint(tool.inputSchema) !== config.schemaHash)
-        throw Error('schema_changed');
+      if (!matchesTool(listing)) throw Error('schema_changed');
       const result = await bounded((signal) =>
-        c.callTool({ name: CONTACT_TOOL, arguments: { contact_id: config.contactId } }, undefined, {
-          signal,
-          timeout: timeoutMs,
-        })
+        c.callTool(
+          {
+            name: profile.tool,
+            arguments:
+              profile === CLOUD_PROFILE ? { limit: 100 } : { contact_id: config.contactId },
+          },
+          undefined,
+          {
+            signal,
+            timeout: timeoutMs,
+          }
+        )
       );
       if (ownGeneration !== generation) throw Error('connection_obsolete');
       if (result.isError) throw Error('provider_error');
@@ -368,14 +416,30 @@ export function createComposioConnection({
         data = JSON.parse(text);
       }
       if (data?.successful === false || data?.success === false) throw Error('provider_error');
+      let inventory;
+      if (profile === CLOUD_PROFILE) {
+        const payload = data?.data;
+        if (
+          !Array.isArray(payload?.sandboxes) ||
+          payload.sandboxes.length > 100 ||
+          (payload.nextToken != null && typeof payload.nextToken !== 'string')
+        )
+          throw Error('invalid_inventory');
+        inventory = {
+          returnedCount: payload.sandboxes.length,
+          hasMore: Boolean(payload.nextToken),
+          complete: !payload.nextToken,
+        };
+      }
       const contact = data?.data?.contact || data?.contact || data?.data?.data?.contact;
       if (
-        !contact ||
-        contact.id !== config.contactId ||
-        contact.locationId !== config.locationId ||
-        contact.dnd !== true ||
-        !Array.isArray(contact.tags) ||
-        !contact.tags.includes('pbk-qa-no-outreach')
+        profile === QA_PROFILE &&
+        (!contact ||
+          contact.id !== config.contactId ||
+          contact.locationId !== config.locationId ||
+          contact.dnd !== true ||
+          !Array.isArray(contact.tags) ||
+          !contact.tags.includes('pbk-qa-no-outreach'))
       )
         throw Error('scope_not_verified');
       lastSuccess = now();
@@ -384,8 +448,20 @@ export function createComposioConnection({
       record('allowed', correlationId);
       return {
         ok: true,
-        result: 'composio_qa_read_verified',
-        contact: { dnd: true, qaExcluded: true, identityVerified: true, locationVerified: true },
+        result:
+          profile === CLOUD_PROFILE
+            ? 'composio_cloud_inventory_verified'
+            : 'composio_qa_read_verified',
+        ...(profile === CLOUD_PROFILE
+          ? { inventory }
+          : {
+              contact: {
+                dnd: true,
+                qaExcluded: true,
+                identityVerified: true,
+                locationVerified: true,
+              },
+            }),
         readOnly: true,
       };
     } catch {
@@ -416,6 +492,54 @@ export function createComposioConnection({
     close,
     audit: () => events.map((e) => ({ ...e })),
     deny: () => record('denied', randomUUID()),
+  };
+}
+
+export function createComposioConnection(options) {
+  return createConnection(options, QA_PROFILE);
+}
+export function createComposioCloudConnection(options) {
+  return createConnection(options, CLOUD_PROFILE);
+}
+
+export async function routeComposioCloudRead(connection, params = {}) {
+  const command = String(params.command || params.text || '').trim();
+  const explicit = params.cloudOperation !== undefined;
+  if (
+    !explicit &&
+    !/^(?:(?:ava|rex|hermes)[,:]?\s+)?(?:check|verify|list)\s+(?:the\s+)?e2b\s+sandboxes[.!?]?$/i.test(
+      command
+    )
+  )
+    return null;
+  const agentId = String(
+    params.agentId || params.agent || (/^(rex|hermes)\b/i.exec(command)?.[1] ?? 'ava')
+  ).toLowerCase();
+  const override = (value, depth = 0) =>
+    depth > 8 ||
+    (value &&
+      typeof value === 'object' &&
+      Object.entries(value).some(
+        ([key, child]) =>
+          /^(?:arguments|toolName|headers|url|accountId|locationId|approvalId|composioArguments|connected_accounts|connectedAccounts|account_id|location_id|sandboxId|sandbox_id|code|envVars)$/i.test(
+            key
+          ) || override(child, depth + 1)
+      ));
+  const result = override(params)
+    ? (connection.deny?.(), { ok: false, result: 'composio_read_denied' })
+    : await connection.read({
+        operation: explicit ? params.cloudOperation : CLOUD_PROFILE.id,
+        agentId,
+      });
+  return {
+    ok: result.ok,
+    routedTo: 'tool_first:composio_cloud_read',
+    response: {
+      ...result,
+      answer: result.ok
+        ? `The cloud inventory returned ${result.inventory.returnedCount} sandboxes${result.inventory.hasMore ? ' on this page, with more pages available' : ''}. This is not proof of agent deployment.`
+        : 'The cloud inventory check is unavailable. Check its connection status in Settings.',
+    },
   };
 }
 

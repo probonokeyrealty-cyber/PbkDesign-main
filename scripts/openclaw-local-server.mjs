@@ -7,7 +7,7 @@ import { mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { gzipSync } from 'node:zlib';
-import { createComposioConnection, routeComposioAgentRead } from './lib/composio-connection.mjs';
+import { createComposioConnection, routeComposioAgentRead, createComposioCloudConnection, routeComposioCloudRead } from './lib/composio-connection.mjs';
 import { createPbkReadOnlyMcpEndpoint } from '../mcp-server/runtime/pbk-readonly-mcp.mjs';
 import chromium from '@sparticuz/chromium';
 import { WebSocket, WebSocketServer } from 'ws';
@@ -16,6 +16,7 @@ import puppeteer from 'puppeteer-core';
 // Default-off staging adapters; no network calls occur during construction/status reads.
 const auditComposioPolicy = (event) => console.info('[pbk-composio-policy]', JSON.stringify(event));
 const composioConnection = createComposioConnection({ onAudit: auditComposioPolicy });
+const composioCloudConnection = createComposioCloudConnection({ onAudit: auditComposioPolicy });
 const composioReadOnlyEndpoint = createPbkReadOnlyMcpEndpoint({
   onAudit: auditComposioPolicy,
   readStatus: async (kind) => {
@@ -37088,6 +37089,7 @@ async function buildToolingStatus() {
       ready: composioConnection.status().ready && composioReadOnlyEndpoint.status().ready,
       outbound: composioConnection.status(),
       inbound: composioReadOnlyEndpoint.status(),
+      cloud: composioCloudConnection.status(),
       note: 'Read-only Composio staging connections; each direction is verified separately.',
     },
     commandIntentRouter: {
@@ -60080,6 +60082,8 @@ const toolHandlers = {
   async runAgentCommand(params = {}) {
     recordToolUse('runAgentCommand');
     const command = String(params.command || params.text || '').trim();
+    const cloudRead = await routeComposioCloudRead(composioCloudConnection, params);
+    if (cloudRead) return { command, ...cloudRead };
     const composioRead = await routeComposioAgentRead(composioConnection, params);
     if (composioRead) return { command, ...composioRead };
     const fastIntentResult = controlledExecution.getStore() ? null : await routeFastCommandIntent(command, params);

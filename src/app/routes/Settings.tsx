@@ -718,6 +718,7 @@ export function Settings() {
   const toolingCards: SettingsRuntimeCard[] = [
     { id: 'composio-outbound', label: 'PBK agents to Composio', meta: tooling?.composio?.outbound },
     { id: 'composio-inbound', label: 'Composio to PBK', meta: tooling?.composio?.inbound },
+    { id: 'composio-cloud', label: 'E2B cloud inventory', meta: tooling?.composio?.cloud },
     {
       id: 'meta-agent',
       label: 'Meta-Agent Lab',

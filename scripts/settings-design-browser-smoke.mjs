@@ -17,6 +17,7 @@ async function verify(engine, options, label) {
     const page = await browser.newPage({ ...options, serviceWorkers: 'block' });
     const saves = [];
     const decisions = [];
+    const passiveCloudRequests = [];
     let stateReads = 0;
     let verifies = 0;
     let operatingMode = 'approval';
@@ -38,6 +39,7 @@ async function verify(engine, options, label) {
       const request = route.request();
       const url = new URL(request.url());
       const path = url.pathname;
+      if (/e2b|composio|\/invoke(?:$|\/)/i.test(path)) passiveCloudRequests.push(path);
       const method = request.method();
       const answer = (json, status = 200) => route.fulfill({ status, json });
       if (url.origin !== hostedOrigin) return route.abort();
@@ -91,6 +93,7 @@ async function verify(engine, options, label) {
               ready: false,
               outbound: { ready: true, state: 'connected', note: 'Sandbox QA read verified; DND on and QA excluded.', lastSuccessAt: '2026-11-19T18:00:00.000Z' },
               inbound: { ready: false, state: 'configuration_missing', note: 'Limited staging endpoint. An authenticated tool read is required.' },
+              cloud: { ready: false, state: 'disabled', note: 'Explicit cloud inventory check only; agents are not verified in E2B.' },
             } } },
             '/api/settings': { ok: true, settings: { operatingMode } },
             '/api/release/status': { ok: true, source: 'fixture' },
@@ -159,6 +162,7 @@ async function verify(engine, options, label) {
     await expect(queue.getByText('Approved', { exact: true })).toBeVisible();
     await expect(queue.getByRole('heading')).toBeFocused();
     assert.deepEqual(decisions, ['approved']);
+    assert.deepEqual(passiveCloudRequests, [], 'Settings must not trigger cloud inventory or agent execution');
     await expect(approve).toHaveCount(0);
 
     const diagnostics = page.getByText('System diagnostics', { exact: true });
@@ -167,6 +171,9 @@ async function verify(engine, options, label) {
     await expect(page.getByRole('heading', { name: 'Agent tools' })).toBeVisible();
     const outbound = page.locator('.pbk-settings-tool-card').filter({ hasText: 'PBK agents to Composio' });
     const inbound = page.locator('.pbk-settings-tool-card').filter({ hasText: 'Composio to PBK' });
+    const cloud = page.locator('.pbk-settings-tool-card').filter({ hasText: 'E2B cloud inventory' });
+    await expect(cloud).toContainText('Disabled');
+    await expect(cloud).toContainText('agents are not verified in E2B');
     await expect(outbound).toContainText('Read verified');
     await expect(outbound).toContainText('DND on and QA excluded');
     await expect(outbound).toContainText('Last verified read:');
@@ -188,6 +195,7 @@ async function verify(engine, options, label) {
     assert.equal(verifies, 1);
     assert.equal(saves.length, 1);
     assert.deepEqual(decisions, ['approved']);
+    assert.deepEqual(passiveCloudRequests, [], 'Reloading Settings must not trigger cloud execution');
     if (process.env.PBK_SETTINGS_SCREENSHOTS === '1') {
       await page.screenshot({ path: `.pbk-local/settings-${label}.png`, fullPage: true });
     }

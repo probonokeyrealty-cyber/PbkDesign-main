@@ -96,6 +96,56 @@ assert.equal(semanticSelection.selectedScript.id, 'cash-trust-proof', 'Embedding
 assert(semanticSelection.reasonCodes.includes('embedding_similarity'), 'Selection should explain embedding similarity scoring.');
 assert(semanticSelection.reasonCodes.includes('learned_weight'), 'Selection should explain learned weight scoring.');
 
+const callFlowScripts = [
+  { ...scripts[0], id: 'generic' },
+  {
+    ...scripts[0],
+    id: 'price-step',
+    metadata: { callFlowStepIds: ['objection.price_too_low'], learnedWeight: 1 },
+    allowedRoles: ['owner'],
+  },
+  {
+    ...scripts[0],
+    id: 'commit-step',
+    metadata: { callFlowStepIds: ['close.path_commit'], learnedWeight: 1 },
+  },
+];
+const callFlowContext = {
+  scripts: callFlowScripts,
+  pathKey: 'cash_offer',
+  callerRole: 'owner',
+  explorationRate: 0,
+};
+const priceStep = selectContextAwareScript({
+  ...callFlowContext,
+  call_flow_step_id: 'objection.price_too_low',
+});
+assert.equal(priceStep.selectedScript.id, 'price-step');
+assert(priceStep.reasonCodes.includes('call_flow_step_match'));
+assert(!priceStep.scoredScripts.some(({ id }) => id === 'commit-step'));
+assert.equal(selectContextAwareScript({ ...callFlowContext, explorationRate: 1 }).selectedScript.id, 'generic');
+assert.equal(selectContextAwareScript({
+  ...callFlowContext,
+  callFlowStepId: 'objection.price_too_low',
+  callerRole: 'agent',
+}).selectedScript.id, 'generic');
+assert.equal(selectContextAwareScript({
+  ...callFlowContext,
+  callFlowStepId: 'objection.price_too_low',
+  pathKey: 'creative_finance',
+}).selectedScript.id, 'generic');
+assert.equal(selectContextAwareScript({
+  ...callFlowContext,
+  scripts: callFlowScripts.slice(1),
+  callFlowStepId: 'listen.mirror_label',
+}).result, 'no_scripts');
+assert.equal(selectContextAwareScript({
+  ...callFlowContext,
+  callFlowStepId: 'objection.price_too_low',
+  lastObjection: 'price_too_low',
+  recentScriptIds: ['price-step'],
+}).selectedScript.id, 'generic');
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const bridgeSource = readFileSync(path.resolve(__dirname, './openclaw-local-server.mjs'), 'utf8');

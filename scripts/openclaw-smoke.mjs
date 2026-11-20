@@ -52,7 +52,7 @@ export async function runIsolatedBridgeSmoke() {
   if (running) throw new Error('An isolated bridge smoke run is already running.');
   running = true;
   try {
-    isolatedBridge = await startIsolatedBridge();
+    isolatedBridge = await startIsolatedBridge({ startupMs: 30_000 });
     API_KEY = isolatedBridge.apiKey;
     BASE_URL = isolatedBridge.origin;
     const health = await waitForHealth();

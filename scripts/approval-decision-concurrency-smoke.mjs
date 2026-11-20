@@ -123,9 +123,12 @@ function runDue(options) {
 }
 
 try {
-  for (let attempt = 0; ; attempt++) {
-    if (await fetch(origin + '/health').then((res) => res.ok).catch(() => false)) break;
-    assert(attempt < 100, `Fixture bridge did not start: ${stderr}`);
+  const startupDeadline = Date.now() + 30_000;
+  for (;;) {
+    if (await fetch(origin + '/health', { signal: AbortSignal.timeout(2_000) })
+      .then((res) => res.ok).catch(() => false)) break;
+    assert(child.exitCode === null && Date.now() < startupDeadline,
+      `Fixture bridge did not start (exit code: ${child.exitCode}): ${stderr}`);
     await delay(100);
   }
   const approvalId = 'qa-campaign-approval';

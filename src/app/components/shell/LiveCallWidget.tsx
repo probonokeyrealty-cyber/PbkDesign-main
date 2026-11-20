@@ -106,6 +106,7 @@ function text(value: unknown, fallback = '') {
 }
 
 function number(value: unknown) {
+  if (value == null || value === '') return null;
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : null;
 }
@@ -242,6 +243,8 @@ function renderHighlightedTranscript(text: string, userQuery = '') {
 
 export interface LiveCallWidgetProps {
   state?: LiveCallState;
+  controlsBusy?: boolean;
+  controlFeedback?: { tone: 'pending' | 'success' | 'error'; text: string } | null;
   onTakeOver?: (state: LiveCallState) => void;
   onMute?: (state: LiveCallState) => void;
   onEnd?: (state: LiveCallState) => void;
@@ -250,6 +253,8 @@ export interface LiveCallWidgetProps {
 
 export function LiveCallWidget({
   state,
+  controlsBusy = false,
+  controlFeedback,
   onTakeOver,
   onMute,
   onEnd,
@@ -291,8 +296,11 @@ export function LiveCallWidget({
   const isLive =
     live.status === 'connected' || live.status === 'on-hold' || live.status === 'dialing';
   const hasBridgeCallId = Boolean(live.callId);
-  const canControlCall = isLive && hasBridgeCallId;
-  const controlTitle = canControlCall
+  const canControlCall = isLive && hasBridgeCallId && !controlsBusy;
+  const showAvaGuidance = live.status === 'connected' && live.agentMode !== 'human';
+  const controlTitle = controlsBusy
+    ? 'Waiting for the current workspace action to finish'
+    : canControlCall
     ? 'Send this command to the live bridge call'
     : hasBridgeCallId
       ? 'Call controls are available after the call connects'
@@ -303,7 +311,7 @@ export function LiveCallWidget({
       className={[
         'rounded-lg border border-slate-800 bg-slate-950 overflow-hidden',
         'flex flex-col',
-        compact ? 'h-[360px]' : 'h-[440px]',
+        compact ? 'min-h-[360px]' : 'min-h-[440px]',
       ].join(' ')}
       data-testid="live-call-widget"
     >
@@ -311,9 +319,9 @@ export function LiveCallWidget({
       <div className="flex items-center justify-between px-4 py-2.5 border-b border-slate-800 bg-slate-900/60">
         <div className="flex items-center gap-2 min-w-0">
           <Phone className="h-3.5 w-3.5 text-slate-400 shrink-0" />
-          <div className="text-[11px] uppercase tracking-wider font-medium text-slate-300">
+          <h2 className="text-[11px] uppercase tracking-wider font-medium text-slate-300">
             Live Call
-          </div>
+          </h2>
           <span
             className={`ml-2 inline-flex items-center gap-1.5 text-[10px] font-semibold ${status.color}`}
           >
@@ -366,68 +374,72 @@ export function LiveCallWidget({
         </div>
       </div>
 
-      {cockpit && (
-        <div className="border-b border-emerald-400/20 bg-emerald-500/5 px-4 py-3">
-          <div className="flex items-center justify-between gap-3 text-[10px] uppercase tracking-[0.14em]">
-            <span className="text-emerald-300">Ava mission</span>
-            <span className="text-slate-500">
-              {cockpit.phase}
-              {cockpit.latencyMs == null ? '' : ` - ${cockpit.latencyMs}ms`}
-            </span>
-          </div>
-          <div className="mt-2 rounded-md border border-slate-800 bg-slate-950/70 px-2.5 py-2">
+      {showAvaGuidance && (
+        <section aria-label="Ava guidance" className="border-b border-emerald-400/20 bg-emerald-500/5 px-4 py-3">
+          <div className="rounded-md border border-slate-800 bg-slate-950/70 px-2.5 py-2">
             <div className="text-[10px] uppercase tracking-[0.12em] text-sky-300">
-              Next best action
+              Ava’s next question
             </div>
-            <div className="mt-1 text-[12px] leading-relaxed text-slate-100">
-              {cockpit.nextBestQuestion || 'Ava is tracking the seller turn and waiting for proof.'}
+            <div role="status" className="mt-1 break-words text-[12px] leading-relaxed text-slate-100">
+              {cockpit?.nextBestQuestion || 'Waiting for Ava’s next question.'}
             </div>
           </div>
-          {cockpit.timeline.length > 0 && (
-            <div className="mt-2 grid gap-1.5">
-              {cockpit.timeline.slice(0, 3).map((step) => (
-                <div
-                  key={step.id || step.label}
-                  className="rounded-md border border-slate-800 bg-slate-950/60 px-2.5 py-1.5"
-                >
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="text-[11px] font-semibold text-slate-100">{step.label}</span>
-                    <span className="text-[9px] uppercase tracking-[0.12em] text-emerald-300">
-                      {step.status}
-                    </span>
-                  </div>
-                  {step.detail && (
-                    <div className="mt-0.5 line-clamp-2 text-[10px] leading-snug text-slate-500">
-                      {step.detail}
+          {cockpit && (
+            <details className="mt-2 text-slate-300">
+              <summary className="cursor-pointer rounded py-1 text-xs focus-visible:outline focus-visible:outline-2 focus-visible:outline-sky-400">
+                Call details
+              </summary>
+              <div className="mt-1 break-words text-xs text-slate-400">
+                {cockpit.phase}
+                {cockpit.latencyMs == null ? '' : ` · ${cockpit.latencyMs} ms`}
+              </div>
+              {cockpit.timeline.length > 0 && (
+                <div className="mt-2 grid gap-1.5">
+                  {cockpit.timeline.slice(0, 3).map((step) => (
+                    <div
+                      key={step.id || step.label}
+                      className="rounded-md border border-slate-800 bg-slate-950/60 px-2.5 py-1.5"
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-[11px] font-semibold text-slate-100">{step.label}</span>
+                        <span className="text-[9px] uppercase tracking-[0.12em] text-emerald-300">
+                          {step.status}
+                        </span>
+                      </div>
+                      {step.detail && (
+                        <div className="mt-0.5 line-clamp-2 text-[10px] leading-snug text-slate-500">
+                          {step.detail}
+                        </div>
+                      )}
                     </div>
-                  )}
+                  ))}
                 </div>
-              ))}
-            </div>
+              )}
+              <div className="mt-2 grid grid-cols-3 gap-1.5 text-[10px]">
+                <div className="rounded-md border border-slate-800 bg-slate-950/60 px-2 py-1.5">
+                  <span className="block uppercase tracking-[0.12em] text-slate-500">CRM</span>
+                  <b className="mt-0.5 block text-slate-200">
+                    {number(cockpit.leadCommitProof.fieldCount) ?? '—'} fields
+                  </b>
+                </div>
+                <div className="rounded-md border border-slate-800 bg-slate-950/60 px-2 py-1.5">
+                  <span className="block uppercase tracking-[0.12em] text-slate-500">Memory</span>
+                  <b className="mt-0.5 block truncate text-slate-200">
+                    {(text(cockpit.memoryProof.hotMemory) || 'Waiting').replace(/_/g, ' ')}
+                  </b>
+                </div>
+                <div className="rounded-md border border-slate-800 bg-slate-950/60 px-2 py-1.5">
+                  <span className="block uppercase tracking-[0.12em] text-slate-500">Skill</span>
+                  <b className="mt-0.5 block truncate text-slate-200">
+                    {text(cockpit.skillOutcomeProof.skillName) ||
+                      text(cockpit.skillOutcomeProof.skillId) ||
+                      'Waiting'}
+                  </b>
+                </div>
+              </div>
+            </details>
           )}
-          <div className="mt-2 grid grid-cols-3 gap-1.5 text-[10px]">
-            <div className="rounded-md border border-slate-800 bg-slate-950/60 px-2 py-1.5">
-              <span className="block uppercase tracking-[0.12em] text-slate-500">CRM</span>
-              <b className="mt-0.5 block text-slate-200">
-                {number(cockpit.leadCommitProof.fieldCount) || 0} fields
-              </b>
-            </div>
-            <div className="rounded-md border border-slate-800 bg-slate-950/60 px-2 py-1.5">
-              <span className="block uppercase tracking-[0.12em] text-slate-500">Memory</span>
-              <b className="mt-0.5 block truncate text-slate-200">
-                {text(cockpit.memoryProof.hotMemory, 'Ready').replace(/_/g, ' ')}
-              </b>
-            </div>
-            <div className="rounded-md border border-slate-800 bg-slate-950/60 px-2 py-1.5">
-              <span className="block uppercase tracking-[0.12em] text-slate-500">Skill</span>
-              <b className="mt-0.5 block truncate text-slate-200">
-                {text(cockpit.skillOutcomeProof.skillName) ||
-                  text(cockpit.skillOutcomeProof.skillId) ||
-                  'Waiting'}
-              </b>
-            </div>
-          </div>
-        </div>
+        </section>
       )}
 
       <div className="border-b border-slate-800 px-4 py-2">
@@ -450,7 +462,7 @@ export function LiveCallWidget({
       {/* Transcript */}
       <div
         ref={scrollRef}
-        className="flex-1 overflow-y-auto px-4 py-3 space-y-2 text-[12px] leading-relaxed"
+        className="min-h-24 max-h-48 flex-1 overflow-y-auto px-4 py-3 space-y-2 text-[12px] leading-relaxed"
       >
         {live.transcript.length === 0 ? (
           <div className="h-full flex items-center justify-center text-slate-600 text-[11px]">
@@ -467,7 +479,7 @@ export function LiveCallWidget({
                 >
                   {sp.label}
                 </span>
-                <span className={`${sp.text}`}>
+                <span className={`min-w-0 break-words ${sp.text}`}>
                   {renderHighlightedTranscript(line.text, transcriptQuery)}
                 </span>
               </div>
@@ -482,7 +494,17 @@ export function LiveCallWidget({
           Waiting for bridge call id before call controls can send commands.
         </div>
       )}
-      <div className="px-3 py-2.5 border-t border-slate-800 bg-slate-900/60 flex items-center gap-2">
+      {controlFeedback && (
+        <div
+          role={controlFeedback.tone === 'error' ? 'alert' : 'status'}
+          className={`break-words border-t border-slate-800 px-3 py-2 text-xs ${
+            controlFeedback.tone === 'error' ? 'text-rose-300' : 'text-slate-200'
+          }`}
+        >
+          {controlFeedback.text}
+        </div>
+      )}
+      <div className="px-3 py-2.5 border-t border-slate-800 bg-slate-900/60 flex flex-wrap items-center gap-2">
         <button
           type="button"
           disabled={!canControlCall}

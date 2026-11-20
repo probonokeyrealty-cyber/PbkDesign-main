@@ -1549,6 +1549,12 @@ function bridgeResponseError(
   requestTeamToken = ''
 ) {
   const record = parsed && typeof parsed === 'object' ? (parsed as Record<string, unknown>) : null;
+  if (response.status === 503 && record?.result === 'state_bootstrap_unavailable') {
+    const message = record.code === 'hosted_postgres_not_configured'
+      ? 'Command Center storage is unavailable. Your request hasn’t started. Try again once service is restored.'
+      : 'Command Center is restoring saved data. Your request hasn’t started. Try again in a moment.';
+    return new RuntimeBridgeError(message, 503, 'state_bootstrap_unavailable');
+  }
   const privateSiteRejected =
     response.status === 401 &&
     !record &&

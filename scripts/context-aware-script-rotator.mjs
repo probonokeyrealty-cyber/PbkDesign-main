@@ -7,6 +7,24 @@ function slug(value = '') {
   return String(value || '').trim().toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
 }
 
+function normalizeStepId(value) {
+  return typeof value === 'string' ? value.trim().toLowerCase() : '';
+}
+
+function matchesCallFlowStep(script, context) {
+  const stepIds = script.metadata.callFlowStepIds ?? script.metadata.call_flow_step_ids;
+  if (stepIds == null) return true;
+
+  const stepId = normalizeStepId(context.callFlowStepId || context.call_flow_step_id);
+  const role = slug(context.callerRole || context.role || '');
+  const pathKey = slug(context.pathKey || context.path_key || context.selectedPath || context.selected_path || '');
+  return Boolean(stepId)
+    && Array.isArray(stepIds)
+    && stepIds.some((candidate) => normalizeStepId(candidate) === stepId)
+    && (!script.allowedRoles.length || script.allowedRoles.includes(role))
+    && (!script.pathKey || script.pathKey === pathKey || script.tags.includes(pathKey));
+}
+
 function hashString(value = '') {
   let hash = 0;
   const text = String(value || '');
@@ -93,6 +111,12 @@ function scoreScript(script = {}, context = {}) {
     score += 4;
   }
 
+  // Scoped scripts reach scoring only after their step, role, and path match.
+  if (script.metadata.callFlowStepIds ?? script.metadata.call_flow_step_ids) {
+    score += 24;
+    reasons.push('call_flow_step_match');
+  }
+
   if (sentiment <= -0.25 && (script.tags.some((tag) => ['empathetic', 'empathy', 'trust', 'calm', 'proof'].includes(tag)) || containsAny(scriptText, ['hear you', 'slow down', 'safe', 'comfortable', 'trust']))) {
     score += 28;
     reasons.push('sentiment_low');
@@ -150,7 +174,7 @@ function scoreScript(script = {}, context = {}) {
 export function selectContextAwareScript(params = {}) {
   const scripts = (Array.isArray(params.scripts) ? params.scripts : [])
     .map(normalizeScript)
-    .filter((script) => script.content);
+    .filter((script) => script.content && matchesCallFlowStep(script, params));
   if (!scripts.length) {
     return {
       ok: false,

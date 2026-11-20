@@ -88,4 +88,40 @@ assert.equal(await context.recoverRuntimeStateAfterBootstrapFailure(), true);
 assert.equal(writes, 0);
 assert.equal(context.runtimeCoverageStarted, false, 'Recovering state must not enable opt-in coverage collection.');
 assert.equal(coverageSamplerCreations, 0, 'Disabled coverage must not construct a sampler during recovery or keepalive.');
-console.log('PASS: startup outage recovery, durable state reload, auth gating, coalescing, and no placeholder writes.');
+
+context.DATABASE_URL = '';
+context.loadStateFromRuntimeFile = async () => { throw new Error('Hosted startup must not read a runtime file.'); };
+context.ensureRuntimeDir = async () => { throw new Error('Hosted startup must not initialize file storage.'); };
+vm.runInContext(functions.get('loadState'), context);
+context.state = await context.bootstrapRuntimeStateForLiveness();
+assert.equal(context.runtimeStateBootstrap.ready, false);
+assert.equal(context.runtimeStateBootstrap.code, 'hosted_postgres_not_configured');
+assert.equal(context.shouldBlockForRuntimeStateBootstrap('GET', '/health'), false);
+assert.equal(context.shouldBlockForRuntimeStateBootstrap('GET', '/state'), true);
+assert.equal(context.shouldBlockForRuntimeStateBootstrap('POST', '/api/assistant/chat'), true);
+assert.equal(context.shouldBlockForRuntimeStateBootstrap('UPGRADE', '/ws/state'), true);
+const upgradeRegistration = ast.statements.find((node) => ts.isExpressionStatement(node)
+  && ts.isCallExpression(node.expression)
+  && node.expression.expression.getText(ast) === 'server.on'
+  && node.expression.arguments[0]?.text === 'upgrade');
+assert.ok(upgradeRegistration, 'The bridge must register a WebSocket upgrade handler.');
+let upgradeHandler;
+context.server = { on(_event, handler) { upgradeHandler = handler; } };
+context.URL = URL;
+vm.runInContext(upgradeRegistration.getText(ast), context);
+for (const url of ['/ws/state', '/api/voice/browser/stream', '/api/webhooks/telnyx/media', '/ws/sidecar']) {
+  let response = '';
+  upgradeHandler({ url, headers: { host: 'localhost' } }, { end(value) { response = value; } });
+  assert.match(response, /^HTTP\/1\.1 503 Service Unavailable\r\n/);
+}
+await assert.rejects(context.persistState({ status: {} }, { allowBootstrap: true }), {
+  code: 'hosted_postgres_not_configured',
+});
+
+context.IS_HOSTED = false;
+context.ensureRuntimeDir = async () => {};
+context.SHOULD_RESET = false;
+context.loadStateFromRuntimeFile = async () => durable;
+assert.equal((await context.loadState()).leads, durable.leads, 'Local mode may still load its file.');
+assert.equal(context.shouldBlockForRuntimeStateBootstrap('GET', '/state'), false);
+console.log('PASS: startup recovery, durable reload, hosted Postgres requirement, HTTP/WebSocket gating, and no placeholder writes.');

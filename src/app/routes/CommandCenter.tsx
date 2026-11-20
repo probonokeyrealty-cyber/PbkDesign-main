@@ -6,6 +6,7 @@ import {
   ClipboardCheck,
   Inbox as InboxIcon,
   Loader2,
+  Phone,
   Users,
 } from 'lucide-react';
 import { useLocation, useNavigate } from 'react-router';
@@ -78,12 +79,12 @@ function toNumber(value: unknown, fallback: number | null = null) {
 function mapCallStatus(status: unknown): LiveCallState['status'] {
   const normalized = String(status || '').toLowerCase();
   if (
-    /^(active|answered|bridged|connected|in[_ -]?progress|live|media|ringing|transferring)$/.test(
+    /^(active|answered|bridged|connected|in[_ -]?progress|live|media|transferring)$/.test(
       normalized
     )
   )
     return 'connected';
-  if (normalized === 'initiated' || normalized === 'dialing' || normalized === 'queued')
+  if (/^(initiated|dialing|queued|ringing)$/.test(normalized))
     return 'dialing';
   if (normalized === 'hold' || normalized === 'on-hold' || normalized === 'on_hold')
     return 'on-hold';
@@ -231,16 +232,7 @@ function mapRuntimeCall(call: Record<string, unknown> | undefined): LiveCallStat
     : [];
 
   return {
-    callId: String(
-      call.id ||
-        call.callId ||
-        call.call_id ||
-        call.telnyxCallControlId ||
-        call.telnyx_call_control_id ||
-        call.callControlId ||
-        call.call_control_id ||
-        ''
-    ),
+    callId: getCallId(call),
     dealId: call.dealId || call.deal_id ? String(call.dealId || call.deal_id) : null,
     status: mapCallStatus(call.status),
     agentMode:
@@ -318,6 +310,13 @@ function approvalRecipient(approval: Record<string, unknown>) {
 type ActionStatus = {
   tone: 'pending' | 'success' | 'error';
   text: string;
+  callId?: string;
+};
+
+const LIVE_CALL_ACTIONS = {
+  takeover: { pending: 'Waiting for takeover confirmation…', success: 'Call transfer requested.' },
+  mute: { pending: 'Waiting for mute confirmation…', success: 'Ava mute confirmed.' },
+  end: { pending: 'Waiting for hang-up confirmation…', success: 'Call ended.' },
 };
 
 type CommandWidgetId =
@@ -412,7 +411,10 @@ function writeCommandWidgetPrefs(prefs: CommandWidgetPrefs) {
 }
 
 function getCallId(call: Record<string, unknown>) {
-  return String(call.id || call.callId || call.call_id || '');
+  return String(
+    call.id || call.callId || call.call_id || call.telnyxCallControlId ||
+    call.telnyx_call_control_id || call.callControlId || call.call_control_id || ''
+  );
 }
 
 const CALL_QUALITY_REVIEWED_KEY = 'pbk:call-quality-reviewed:v1';
@@ -441,7 +443,8 @@ function persistReviewedCallId(callId: string, reviewed: Set<string>) {
 }
 
 function getCallQualityScore(call: Record<string, unknown>) {
-  return toNumber(call.qualityScore ?? call.qaScore ?? call.callQualityScore ?? call.score, null);
+  const score = call.qualityScore ?? call.qaScore ?? call.callQualityScore ?? call.score;
+  return score == null || score === '' ? null : toNumber(score);
 }
 
 function getCallOutcome(call: Record<string, unknown>) {
@@ -1773,7 +1776,7 @@ function FounderBattlefield({
       ? `${approvalCount} review items / ${failedCount} follow-ups need review / ${urgentCount} high priority`
       : loading
         ? 'updating your workspace'
-        : 'no urgent work right now';
+        : '';
   const bridgeTone = loading ? 'amber' : error ? 'crimson' : 'lime';
   const bridgeLabel = loading
     ? toOperatorCopy('dispatching')
@@ -1789,7 +1792,7 @@ function FounderBattlefield({
           <div className="pbk-battlefield-count">
             <em>{items.length}</em> work items
           </div>
-          <div className="pbk-battlefield-sub">{sub}</div>
+          {sub && <div className="pbk-battlefield-sub">{sub}</div>}
         </div>
         <div className="pbk-battlefield-center" aria-label="Ranked work queue">
           {items.length ? (
@@ -1840,7 +1843,7 @@ function FounderBattlefield({
                   <PbkPulseDot color="sky" />
                   <span className="pbk-bf-chip-tag">{loading ? 'Loading' : error ? 'Unavailable' : 'Clear'}</span>
                   <span className="pbk-bf-chip-body">
-                    {loading ? 'Loading work queue' : error ? 'Work queue unavailable' : 'No urgent approvals, live calls, or failed sends right now'}
+                    {loading ? 'Loading work queue' : error ? 'Work queue unavailable' : 'No work items in this queue'}
                   </span>
                 </span>
                 <span className="pbk-bf-reason">
@@ -1934,13 +1937,13 @@ export function CommandCenter() {
     useState<PrimaryPathReliabilityReport | null>(null);
   const [productionGapsSource, setProductionGapsSource] = useState('GET /api/production/gaps');
   const [productionGapsLoading, setProductionGapsLoading] = useState(false);
-  const [qualityReviewCall, setQualityReviewCall] = useState<Record<string, unknown> | null>(null);
+  const [openedReviewCall, setOpenedReviewCall] = useState<Record<string, unknown> | null>(null);
+  const [completedCallId, setCompletedCallId] = useState('');
   const [bridgeLeadRoster, setBridgeLeadRoster] = useState<RuntimeRecord[]>([]);
   const [leadRosterSource, setLeadRosterSource] = useState('GET /api/leads pending');
   const announcedCallRef = useRef('');
-  const reviewedCallRef = useRef(readReviewedCallIds());
-  const promptedCallRef = useRef('');
-  const previousActiveCallStatusRef = useRef('');
+  const [reviewedCallIds, setReviewedCallIds] = useState(readReviewedCallIds);
+  const previousActiveCallIdRef = useRef('');
 
   const approvals = useMemo(
     () => (Array.isArray(snapshot?.approvals) ? snapshot.approvals : []),
@@ -1995,6 +1998,20 @@ export function CommandCenter() {
     () => (Array.isArray(snapshot?.calls) ? snapshot.calls : []),
     [snapshot?.calls]
   );
+  const reviewedCallId = openedReviewCall ? getCallId(openedReviewCall) : '';
+  const qualityReviewCall: Record<string, unknown> | null = openedReviewCall
+    ? calls.find((call) => getCallId(call) === reviewedCallId && mapCallStatus(call.status) === 'ended')
+      || openedReviewCall
+    : null;
+  const reviewCallIds = getRuntimeCallIdentityCandidates(qualityReviewCall || undefined);
+  const qaRecord = reviewCallIds.length && Array.isArray(snapshot?.callQaScores)
+    ? snapshot.callQaScores.find((record) =>
+      reviewCallIds.includes(String(record.callId || record.call_id || '').trim())
+      && typeof record.score === 'number' && record.score >= 0 && record.score <= 100
+    )
+    : undefined;
+  const qaScore = typeof qaRecord?.score === 'number' ? qaRecord.score : undefined;
+  const reviewLeadId = String(qualityReviewCall?.leadId || qualityReviewCall?.lead_id || '').trim();
   const messages = useMemo(
     () => (Array.isArray(snapshot?.messages) ? snapshot.messages : []),
     [snapshot?.messages]
@@ -2047,13 +2064,23 @@ export function CommandCenter() {
   const activeCall = mapRuntimeCall(
     calls.find((call) => isRuntimeCallEligibleForLiveWidget(call, liveCallDiagnostics))
   );
-  const endedCallForReview = useMemo(
-    () =>
-      calls.find((call) =>
-        ['ended', 'completed', 'failed'].includes(String(call.status || '').toLowerCase())
-      ) || null,
-    [calls]
-  );
+  const liveCallActionStatus =
+    actionStatus?.callId && actionStatus.callId === activeCall?.callId ? actionStatus : null;
+  const completedCall = completedCallId
+    ? calls.find((call) => getCallId(call) === completedCallId && mapCallStatus(call.status) === 'ended')
+    : undefined;
+  const todayLiveCall = isWidgetVisible('liveCall') ? activeCall : undefined;
+  const todayCompletedCall = activeCall ? null : completedCall;
+  const todayCallLabel = todayLiveCall
+    ? todayLiveCall.status === 'dialing'
+      ? 'Dialing'
+      : todayLiveCall.status === 'on-hold' ? 'Call on hold' : 'Call connected'
+    : String(todayCompletedCall?.status || '').toLowerCase() === 'failed'
+      ? 'Call failed'
+      : 'Call ended';
+  const todayCaller = todayLiveCall?.caller.name
+    || todayCompletedCall?.leadName
+    || 'Unknown caller';
 
   const toggleWidget = (id: CommandWidgetId) => {
     const next = writeCommandWidgetPrefs({
@@ -2370,43 +2397,25 @@ export function CommandCenter() {
         });
       }
     }
-    if (activeCall.status === 'ended') {
-      showUiToast({
-        tone: 'success',
-        title: 'Call ended',
-        desc: 'Outcome summary will appear here when the provider event includes disposition.',
-      });
-    }
   }, [activeCall?.callId, activeCall?.status, activeCall?.caller.name, activeCall?.caller.phone]);
 
   useEffect(() => {
-    const activeCallStatus = String(activeCall?.status || '').toLowerCase();
-    if (!activeCallStatus || activeCallStatus === 'idle' || activeCallStatus === 'ended') return;
-    previousActiveCallStatusRef.current = activeCallStatus;
-  }, [activeCall?.status]);
-
-  useEffect(() => {
-    if (!endedCallForReview) return;
-    const activeCallStatus = String(activeCall?.status || '').toLowerCase();
-    const previousActiveCallStatus = previousActiveCallStatusRef.current;
-    const callEndedDuringThisSession =
-      activeCallStatus === 'ended' &&
-      Boolean(previousActiveCallStatus) &&
-      previousActiveCallStatus !== 'ended';
-    if (!callEndedDuringThisSession) return;
-    const callId = getCallId(endedCallForReview);
-    if (!callId || reviewedCallRef.current.has(callId) || promptedCallRef.current === callId) {
-      return;
+    const previousId = previousActiveCallIdRef.current;
+    if (previousId && calls.some(
+      (call) => getCallId(call) === previousId && mapCallStatus(call.status) === 'ended'
+    )) {
+      setCompletedCallId(previousId);
+      previousActiveCallIdRef.current = '';
     }
-    promptedCallRef.current = callId;
-    setQualityReviewCall(endedCallForReview);
-  }, [activeCall?.status, endedCallForReview]);
+    if (activeCall?.callId) previousActiveCallIdRef.current = activeCall.callId;
+  }, [activeCall?.callId, calls]);
 
-  const closeQualityReview = useCallback(() => {
-    const callId = qualityReviewCall ? getCallId(qualityReviewCall) : '';
-    persistReviewedCallId(callId, reviewedCallRef.current);
-    setQualityReviewCall(null);
-  }, [qualityReviewCall]);
+  const markCallReviewed = () => {
+    const nextReviewed = new Set(reviewedCallIds);
+    persistReviewedCallId(reviewedCallId, nextReviewed);
+    setReviewedCallIds(nextReviewed);
+    setOpenedReviewCall(null);
+  };
   const toolingSummary = (tooling?.summary || {}) as Record<string, unknown>;
   const toolingCoreReady =
     toNumber(toolingSummary.requiredReadyCount, toNumber(toolingSummary.readyCount, 0)) || 0;
@@ -2608,19 +2617,24 @@ export function CommandCenter() {
   const runRuntimeAction = async (
     key: string,
     successMessage: string,
-    action: () => Promise<void>
+    action: () => Promise<void>,
+    scope?: { callId: string; pendingMessage: string }
   ) => {
     if (runtimeActionLock.current || pendingAction) return;
     runtimeActionLock.current = true;
     setPendingAction(key);
-    setActionStatus({ tone: 'pending', text: 'Working on that request...' });
+    setActionStatus({
+      tone: 'pending',
+      text: scope?.pendingMessage || 'Working on that request...',
+      callId: scope?.callId,
+    });
     try {
       await action();
       await refresh().catch((err) => {
         console.warn('[PBK] State refresh failed after runtime action:', err);
         return null;
       });
-      setActionStatus({ tone: 'success', text: successMessage });
+      setActionStatus({ tone: 'success', text: successMessage, callId: scope?.callId });
       showUiToast({
         tone: 'success',
         title: 'Ava updated the workspace',
@@ -2630,6 +2644,7 @@ export function CommandCenter() {
       setActionStatus({
         tone: 'error',
         text: nextError instanceof Error ? nextError.message : 'Ava could not finish that action.',
+        callId: scope?.callId,
       });
     } finally {
       runtimeActionLock.current = false;
@@ -2637,7 +2652,27 @@ export function CommandCenter() {
     }
   };
 
+  const runLiveCallAction = (state: LiveCallState, action: keyof typeof LIVE_CALL_ACTIONS) => {
+    const callId = state.callId;
+    if (!callId) return;
+    const messages = LIVE_CALL_ACTIONS[action];
+    void runRuntimeAction(
+      `call:${callId}:${action}`,
+      messages.success,
+      async () => {
+        const result = await controlRuntimeCall(callId, action);
+        if (result.ok !== true) {
+          throw new Error(friendlyRuntimeText(result.error, 'The bridge did not confirm the call action.'));
+        }
+        if (action === 'takeover') navigate(state.dealId ? `/deal/${state.dealId}` : '/deal');
+      },
+      { callId, pendingMessage: messages.pending }
+    );
+  };
+
   const runWebSearchProbe = async () => {
+    if (runtimeActionLock.current || pendingAction) return;
+    runtimeActionLock.current = true;
     setPendingAction('web-search:probe');
     setActionStatus({ tone: 'pending', text: 'Checking market research connection...' });
     setWebSearchProbeFailed(false);
@@ -2662,6 +2697,7 @@ export function CommandCenter() {
       setWebSearchProbeError(message);
       setActionStatus({ tone: 'error', text: message });
     } finally {
+      runtimeActionLock.current = false;
       setPendingAction('');
     }
   };
@@ -2852,7 +2888,42 @@ export function CommandCenter() {
           </div>
         </section>
 
-        {actionStatus && (
+        {(todayLiveCall || todayCompletedCall) && (
+          <section
+            aria-label="Call status"
+            className={`pbk-today-call${todayLiveCall ? ' is-live' : ''}`}
+          >
+            <div className="pbk-today-call-context">
+              {todayLiveCall
+                ? <Phone size={16} aria-hidden="true" />
+                : <ClipboardCheck size={16} aria-hidden="true" />}
+              <div className="pbk-today-call-copy" role="status">
+                <span>{todayCallLabel}</span>{' '}
+                <strong>{todayCaller}</strong>
+              </div>
+            </div>
+            {todayLiveCall ? (
+              <a
+                className="pbk-today-call-action"
+                href="#live-call"
+                onClick={(event) => jumpToTodaySection(event, 'live-call')}
+              >
+                Open call
+              </a>
+            ) : todayCompletedCall && (
+              <button
+                className="pbk-today-call-action"
+                type="button"
+                aria-haspopup="dialog"
+                onClick={() => setOpenedReviewCall(todayCompletedCall)}
+              >
+                {reviewedCallIds.has(getCallId(todayCompletedCall)) ? 'View review' : 'Review call'}
+              </button>
+            )}
+          </section>
+        )}
+
+        {actionStatus && !(liveCallActionStatus && isWidgetVisible('liveCall')) && (
           <div
             role="status"
             aria-live="polite"
@@ -3201,45 +3272,20 @@ export function CommandCenter() {
               id="live-call"
               className={
                 activeCall?.status && activeCall.status !== 'idle'
-                  ? 'pbk-priority-live rounded-lg'
-                  : 'rounded-lg'
+                  ? 'pbk-priority-live scroll-mt-20 rounded-lg'
+                  : 'scroll-mt-20 rounded-lg'
               }
             >
               <LiveCallWidget
+                key={activeCall?.callId || 'idle'}
                 state={activeCall}
-                onTakeOver={(state) => {
-                  const callId = state.callId || '';
-                  void runRuntimeAction(
-                    `call:${callId}:takeover`,
-                    'Human takeover sent to the bridge.',
-                    async () => {
-                      if (callId) await controlRuntimeCall(callId, 'takeover');
-                      navigate(state.dealId ? `/deal/${state.dealId}` : '/deal');
-                    }
-                  );
-                }}
-                onMute={(state) => {
-                  const callId = state.callId || '';
-                  if (!callId) return;
-                  void runRuntimeAction(
-                    `call:${callId}:mute`,
-                    'Ava mute command sent to the bridge.',
-                    async () => {
-                      await controlRuntimeCall(callId, 'mute');
-                    }
-                  );
-                }}
-                onEnd={(state) => {
-                  const callId = state.callId || '';
-                  if (!callId) return;
-                  void runRuntimeAction(
-                    `call:${callId}:end`,
-                    'Call end command sent to the bridge.',
-                    async () => {
-                      await controlRuntimeCall(callId, 'end');
-                    }
-                  );
-                }}
+                controlsBusy={Boolean(pendingAction)}
+                controlFeedback={liveCallActionStatus
+                  ? { ...liveCallActionStatus, text: friendlyRuntimeText(liveCallActionStatus.text) }
+                  : null}
+                onTakeOver={(state) => runLiveCallAction(state, 'takeover')}
+                onMute={(state) => runLiveCallAction(state, 'mute')}
+                onEnd={(state) => runLiveCallAction(state, 'end')}
               />
               <DataSourceCaption endpoint="snapshot.calls + GET /api/debug/live-call-status + POST /api/calls/:id/action" />
             </div>
@@ -3401,7 +3447,7 @@ export function CommandCenter() {
                   {webSearchProbeFailed && (
                     <button
                       type="button"
-                      disabled={pendingAction === 'web-search:probe'}
+                      disabled={Boolean(pendingAction)}
                       onClick={() => {
                         void runWebSearchProbe();
                       }}
@@ -3412,7 +3458,7 @@ export function CommandCenter() {
                   )}
                   <button
                     type="button"
-                    disabled={pendingAction === 'web-search:probe'}
+                    disabled={Boolean(pendingAction)}
                     onClick={() => {
                       void runWebSearchProbe();
                     }}
@@ -3492,13 +3538,16 @@ export function CommandCenter() {
           leadName={String(
             qualityReviewCall?.leadName || qualityReviewCall?.name || qualityReviewCall?.phone || ''
           )}
-          score={qualityReviewCall ? getCallQualityScore(qualityReviewCall) : null}
+          score={qaScore ?? (qualityReviewCall ? getCallQualityScore(qualityReviewCall) : null)}
+          scoreScale={qaScore === undefined ? undefined : 100}
           outcome={qualityReviewCall ? getCallOutcome(qualityReviewCall) : ''}
           sentiment={qualityReviewCall ? toNumber(qualityReviewCall.sentiment, null) : null}
           transcriptCount={
             Array.isArray(qualityReviewCall?.transcript) ? qualityReviewCall.transcript.length : 0
           }
-          onClose={closeQualityReview}
+          leadHref={reviewLeadId ? `/leads/${encodeURIComponent(reviewLeadId)}` : undefined}
+          onClose={() => setOpenedReviewCall(null)}
+          onMarkReviewed={reviewedCallIds.has(reviewedCallId) ? undefined : markCallReviewed}
         />
 
         {adminDecisionDraft && (

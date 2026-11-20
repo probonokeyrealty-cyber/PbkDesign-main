@@ -82,6 +82,7 @@ const offerContract = buildAvaLiveTurnContract({
 assert.equal(offerContract.intent, 'make_offer');
 assert.equal(offerContract.knownFacts.sellerTargetPrice, '300k');
 assert.equal(offerContract.nextBestQuestionCategory, 'condition');
+assert.equal(offerContract.nextBestQuestion, "What would you expect an inspection to turn up about the property's condition?");
 assert(!offerContract.nextBestQuestion.toLowerCase().includes('full street address'));
 
 const trustContract = buildAvaLiveTurnContract({
@@ -112,6 +113,8 @@ const fastTimelineContract = buildAvaLiveTurnContract({
 assert.equal(fastTimelineContract.intent, 'seller_wants_speed');
 assert.equal(fastTimelineContract.knownFacts.timeline, 'fast');
 assert.equal(fastTimelineContract.nextBestQuestionCategory, 'target_price');
+assert.match(renderAvaLiveContractReply(fastTimelineContract), /walk away with after costs/);
+assert(isAvaLiveReplyAlignedWithContract(renderAvaLiveContractReply(fastTimelineContract), fastTimelineContract));
 assert(!fastTimelineContract.forbiddenRepeats.includes('target_price'));
 assert(fastTimelineContract.forbiddenRepeats.includes('timeline'));
 assert.doesNotMatch(renderAvaLiveContractReply(fastTimelineContract), /days|weeks|flexible/i);
@@ -166,6 +169,7 @@ const spouseContract = buildAvaLiveTurnContract({
 
 assert.equal(spouseContract.intent, 'spouse_partner');
 assert.equal(spouseContract.nextBestQuestionCategory, 'decision_maker');
+assert.equal(spouseContract.nextBestQuestion, 'What would the other decision maker want to understand before deciding together?');
 assert.match(renderAvaLiveContractReply(spouseContract), /decision maker|need to hear/i);
 
 const stopContactContract = buildAvaLiveTurnContract({

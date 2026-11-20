@@ -318,15 +318,18 @@ function chooseNextQuestionCategory({ intent = '', missingFacts = [], forbiddenR
 }
 
 function buildQuestion(category = '', knownFacts = {}) {
+  // Adapted from the PBK sales training timeline's condition, net needs,
+  // decision makers, remaining concerns, and competing options branches.
+  // https://miro.com/app/board/uXjVESuOPu0=/
   switch (normalizeQuestionCategory(category)) {
     case 'full_address':
       return knownFacts.partialAddress
         ? `I have ${knownFacts.partialAddress}. What is the full street address so I price the right property?`
         : 'What is the full street address so I price the right property?';
     case 'condition':
-      return 'Walk me through condition: roof, HVAC, foundation, tenants, and anything a buyer would complain about.';
+      return "What would you expect an inspection to turn up about the property's condition?";
     case 'target_price':
-      return 'What number would make this worth saying yes today?';
+      return 'What number would you need to walk away with after costs?';
     case 'timeline':
       return knownFacts.sellerTargetPrice
         ? 'Are you trying to close in days, a few weeks, or is timing flexible?'
@@ -338,11 +341,11 @@ function buildQuestion(category = '', knownFacts = {}) {
     case 'trust_proof':
       return 'What proof would make you comfortable enough to keep talking?';
     case 'specific_hesitation':
-      return 'What specifically do you need to think through: the number, timing, or confidence in the process?';
+      return 'What specifically would you want to think through before deciding on a next step?';
     case 'decision_maker':
-      return 'What would that decision maker need to hear for this to feel like a yes?';
+      return 'What would the other decision maker want to understand before deciding together?';
     case 'competing_offer_terms':
-      return 'Does the other offer include repairs, fees, and a guaranteed closing date, or is it just a headline number?';
+      return 'What do you like about the other offer besides the price?';
     case 'net_comparison':
       return 'Is the highest net more important than speed, or do you need both to work?';
     case 'approval_confirmation':

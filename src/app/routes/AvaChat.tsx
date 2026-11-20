@@ -42,6 +42,7 @@ import {
   fetchDesktopSidecarStatusRequest,
   fetchLocalCommandsRequest,
   queueLocalCommandRequest,
+  RuntimeBridgeError,
   streamAvaAssistantChatRequest,
   updateApprovalDecision,
   type AvaAssistantChatResponse,
@@ -1660,20 +1661,26 @@ function AvaChatSession({ scope }: { scope: AvaChatScope }) {
         replySpeech?.stop();
         if (useAssistantChat && assistantRequestRef.current !== assistantController) return;
         const cancelled = Boolean(assistantController?.signal.aborted);
+        const rejectedDuringStartup =
+          !cancelled && err instanceof RuntimeBridgeError &&
+          err.status === 503 && err.code === 'state_bootstrap_unavailable';
         const message = err instanceof Error ? err.message : 'Ava could not start that request.';
         if (!cancelled) setSubmitError(message);
         if (useAssistantChat && pendingExchange) {
+          if (rejectedDuringStartup) setDraft((current) => current || command);
           const exchangeId = pendingExchange.id;
           setAssistantExchanges((current) =>
             current.map((exchange): AvaAssistantExchange => exchange.id === exchangeId
               ? {
                 ...exchange,
                 status: cancelled ? 'cancelled' : 'failed',
-                interrupted: !cancelled,
+                interrupted: !cancelled && !rejectedDuringStartup,
                 updatedAt: new Date().toISOString(),
                 warning: cancelled
                   ? 'Response stopped. This reply is incomplete.'
-                  : `Response interrupted. ${message}`,
+                  : rejectedDuringStartup
+                    ? 'Request wasn’t started.'
+                    : `Response interrupted. ${message}`,
               }
               : exchange)
           );

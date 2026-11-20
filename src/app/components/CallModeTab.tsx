@@ -104,6 +104,7 @@ export function CallModeTab({
   );
   const pathOptions = getPathOptions({ type: deal.type, contact: deal.contact });
   const forcedVariant = getForcedVariant(activePath);
+  const activeScriptVariant = forcedVariant ?? scriptVariant;
 
   useEffect(() => {
     setScriptVariant(deal.contact === 'realtor' ? 'agent' : 'owner');
@@ -342,9 +343,10 @@ export function CallModeTab({
       </section>
 
       <ScriptPanel
+        key={JSON.stringify([noteScope, activePath, activeScriptVariant])}
         deal={deal}
         activePath={activePath}
-        scriptVariant={scriptVariant}
+        scriptVariant={activeScriptVariant}
         forcedVariant={forcedVariant}
         onScriptVariantChange={setScriptVariant}
         onPushScriptToAgent={onPushScriptToAgent}

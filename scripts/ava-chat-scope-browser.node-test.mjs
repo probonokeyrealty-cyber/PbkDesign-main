@@ -57,7 +57,10 @@ before(async () => {
                  window.fixture.snapshotReads++;
                  return { snapshot: null, refresh };
                };`
-            : `export const fetchDesktopSidecarStatusRequest = async () => {
+            : `export class RuntimeBridgeError extends Error {
+                 constructor(message, status, code) { super(message); this.status = status; this.code = code; }
+               }
+               export const fetchDesktopSidecarStatusRequest = async () => {
                  window.fixture.sidecarReads++;
                  return { ok: true, connected: true };
                };
@@ -66,7 +69,12 @@ before(async () => {
                  return { ok: true, commands: [] };
                };
                export const streamAvaAssistantChatRequest = (payload, { signal, onAnswer }) =>
-                 new Promise((resolve) => window.fixture.streams.push({ payload, signal, onAnswer, resolve }));
+                 new Promise((resolve, reject) => window.fixture.streams.push({
+                   payload, signal, onAnswer, resolve,
+                   rejectBootstrap: () => reject(new RuntimeBridgeError(
+                     'Command Center is restoring saved data. Your request hasn’t started. Try again in a moment.',
+                     503, 'state_bootstrap_unavailable'))
+                 }));
                export const queueLocalCommandRequest = (...args) => window.fixture.blocked('queue', args);
                export const updateApprovalDecision = (...args) => window.fixture.blocked('approval', args);
                export const bridgeBlobRequest = (...args) => window.fixture.blocked('speech', args);`,
@@ -407,6 +415,23 @@ test('ambiguous lead context exposes a general-chat link without mounting any se
   await generalLink.click();
   await expect(page.getByText('Previous reply for general chat', { exact: true })).toBeVisible();
   await assertNoActions(page);
+});
+
+test('a startup rejection restores the message and leaves retry in the operator’s hands on mobile', async (t) => {
+  const { page } = await open(t, aUrl, {}, {}, { viewport: { width: 390, height: 844 } });
+  const message = 'Review the latest seller call';
+  await composer(page).fill(message);
+  await submit(page);
+  await page.evaluate(() => window.fixture.streams[0].rejectBootstrap());
+  await expect(page.getByRole('alert')).toContainText('Command Center is restoring saved data');
+  await expect(composer(page)).toHaveValue(message);
+  assert.equal(await page.evaluate(() => window.fixture.streams.length), 1);
+  const retry = await submit(page);
+  assert.equal(retry.message, message);
+  assert.equal(retry.leadId, 'sample-a');
+  await page.evaluate(() => window.fixture.streams[1].resolve({ ok: true, answer: 'Seller call reviewed.' }));
+  await expect(page.getByText('Seller call reviewed.', { exact: true })).toBeVisible();
+  await expect(page.getByRole('alert')).toHaveCount(0);
 });
 
 test('switching leads aborts an active stream and ignores callbacks arriving after abort', async (t) => {

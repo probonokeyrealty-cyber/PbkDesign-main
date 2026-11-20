@@ -180,10 +180,10 @@ test('unapproved v2 policy is not replaced with a pilot or legacy policy', async
 test('approval, auth, delivery and dispatch code outside maturity remains byte-for-byte unchanged', () => {
   const unchanged = (source.slice(0, start) + source.slice(end))
     .replace("import { readCanaryEvidence } from './canary-evidence-reader.mjs';\n", '');
-  // Independently reviewed catalog-only discovery extension; base is 491bb65.
-  // Hash refresh review: docs/operations/2026-11-19-composio-discovery-hash-refresh.md.
+  // Ava release review against c41391e covered Postgres startup gating, call script selection,
+  // appointment receipts, and scoped chat planning. Provider dispatch and auth handlers were unchanged.
   assert.equal(createHash('sha256').update(unchanged).digest('hex'),
-    '6f5fb343c4e8ecaa1c40ca85db9c875ed981442080c35fee5c866eafb09f7627');
+    'b8bf3f10a5c6133cbc441879e05a1c3a6567a9a5eba3e37d6146a97f32b99493');
 });
 
 test('production distribution includes reader and protocol, never the fixture signer', () => {

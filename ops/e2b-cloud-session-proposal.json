@@ -1,5 +1,5 @@
 {
-  "status": "staging-code-live-cloud-disabled-session-provisioning-pending",
+  "status": "isolated-staging-inventory-read-enabled-and-hosted-verified",
   "environment": "isolated Composio staging only",
   "projectName": "probonokeyrealty_workspace_first_project",
   "connection": {
@@ -29,9 +29,12 @@
     "permissions": [{"resource": "Session management", "access": "Write only"}],
     "installOnRender": false,
     "revokeAfterCreatingOnePinnedSession": true,
-    "created": null,
+    "created": true,
     "creationSubmissionSent": true,
-    "state": "one-time-dialog-retrieval-pending-browser-availability"
+    "state": "revoked-after-single-session-provisioning",
+    "savedScopeIndependentlyVerified": true,
+    "revoked": true,
+    "postRevocationAuthenticationHttp": 401
   },
   "sessionCreatePath": "/api/v3.1/tool_router/session",
   "sessionCreateBody": {
@@ -51,17 +54,26 @@
     "experimental": {"no_elicitation_support_fallback": "deny"}
   },
   "stagingDeployment": {
-    "id": "dep-dbvuuabm8hqs73938lug",
-    "commit": "dd40ba6b85b7033c058afc1ac88c155b0c02fa9b",
-    "liveAt": "2026-11-20T06:58:56.088374Z",
-    "cloudEnabled": false,
+    "id": "dep-dbvv6od9fdbs73c4tisg",
+    "commit": "4551820f5e0229a4a432c53c57dbc207dabc2cf9",
+    "liveAt": "2026-11-20T07:16:49.841761Z",
+    "cloudEnabled": true,
     "disabledAgentCommandsAndDenialsVerified": true,
     "businessCollectionsUnchanged": true,
     "hostedSettingsVerified": ["desktop Chromium", "iPhone WebKit", "320px WebKit"]
   },
+  "createdSession": {
+    "id": "trs_0lhD-TXMNvGT",
+    "configVersion": 1,
+    "toolCount": 1,
+    "schemaSha256": "bd571a6649dea4713ada93407982b291777c186d008a854933b283263cbd230c",
+    "hostedAvaRexInventoryReadsVerified": true,
+    "hostedDenialProbesPassed": true,
+    "returnedSandboxCount": 0
+  },
   "toolDefinitionObservedVersion": "20261118_00",
   "fixedArguments": {"limit": 100},
-  "nextChecks": [
+  "completedChecks": [
     "Independently verify saved credential scope before capturing/installing values",
     "Revalidate current provider session schema before creation",
     "Read back exact session policy, ID, version and URL",

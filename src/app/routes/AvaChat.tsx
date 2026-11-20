@@ -34,7 +34,7 @@ import {
   VolumeX,
   X,
 } from 'lucide-react';
-import { Link, useLocation } from 'react-router';
+import { Link, useLocation, useNavigate } from 'react-router';
 import { PbkButton, PbkDataSource, PbkEmpty, PbkPulseDot } from '../../components/pbk/index';
 import { useRuntimeSnapshot } from '../hooks/useRuntimeSnapshot';
 import {
@@ -52,6 +52,7 @@ import { showUiToast } from '../utils/uiFeedback';
 import { getApprovalResolutionKeys } from './inboxRuntimeLogic.js';
 import { createAvaAudioPlayer, createAvaReplySpeech, type AvaVoiceProgress } from '../utils/avaReplySpeech';
 import { resolveAvaChatScope, type AvaChatScope } from '../utils/avaChatScope.mjs';
+import { resolveAvaBrowserCommand } from '../utils/avaBrowserCommand.mjs';
 
 type SpeechRecognitionResultEvent = Event & {
   results: SpeechRecognitionResultList;
@@ -184,6 +185,15 @@ const PBK_COMPANION_ACTIONS: CompanionAction[] = [
     prompt: 'Open the current seller lead and summarize the latest timeline context.',
     action: 'search_leads',
     icon: Search,
+    requiresApproval: false,
+  },
+  {
+    id: 'open-page',
+    label: 'Go to page',
+    description: 'Open Leads, Inbox, or the Deal Analyzer from chat.',
+    prompt: 'Open Leads',
+    action: 'operator_command',
+    icon: ExternalLink,
     requiresApproval: false,
   },
   {
@@ -1107,6 +1117,7 @@ export function AvaChat() {
 }
 
 function AvaChatSession({ scope }: { scope: AvaChatScope }) {
+  const navigate = useNavigate();
   const { leadId: linkedLeadId, storageKeys } = scope;
   const {
     operatorMemory: operatorMemoryKey,
@@ -1117,6 +1128,7 @@ function AvaChatSession({ scope }: { scope: AvaChatScope }) {
   const [draft, setDraft] = useState('');
   const [transcript, setTranscript] = useState('');
   const [listening, setListening] = useState(false);
+  const [voiceDraft, setVoiceDraft] = useState(false);
   const [status, setStatus] = useState<DesktopSidecarStatusResponse | null>(null);
   const [commands, setCommands] = useState<LocalCommandRecord[]>([]);
   const [assistantExchanges, setAssistantExchanges] = useState<AvaAssistantExchange[]>([]);
@@ -1525,17 +1537,31 @@ function AvaChatSession({ scope }: { scope: AvaChatScope }) {
     timeline.scrollTop = timeline.scrollHeight;
   }, [assistantExchanges, conversationCount, historyFilter, searchQuery]);
 
-  const stopListening = () => {
+  const stopListening = useCallback(() => {
     const recognition = recognitionRef.current;
     recognitionRef.current = null;
     try { recognition?.stop(); } catch { /* Recognition may already have ended. */ }
     setListening(false);
-  };
+  }, []);
 
   const submitCommand = useCallback(
     async (value = draft) => {
       const command = value.trim();
       if (!voiceMountedRef.current || !command || submitting || submitInFlightRef.current) return;
+      if (recognitionRef.current) stopListening();
+      setVoiceDraft(false);
+      const page = resolveAvaBrowserCommand(command, linkedLeadId);
+      if (page) {
+        if (!page.path) {
+          setSubmitError('Open Ava Chat from a lead to use this command.');
+          return;
+        }
+        stopReplySpeech();
+        setDraft('');
+        setSubmitError('');
+        void navigate(page.path);
+        return;
+      }
       submitInFlightRef.current = true;
       const releaseSubmit = () => {
         submitInFlightRef.current = false;
@@ -1695,12 +1721,14 @@ function AvaChatSession({ scope }: { scope: AvaChatScope }) {
       assistantSessionId,
       draft,
       linkedLeadId,
+      navigate,
       load,
       refresh,
       requiresApproval,
       submitting,
       beginReplySpeech,
       stopReplySpeech,
+      stopListening,
     ]
   );
 
@@ -1746,34 +1774,59 @@ function AvaChatSession({ scope }: { scope: AvaChatScope }) {
     if (!voiceMountedRef.current) return;
     const SpeechRecognition = getSpeechRecognitionConstructor();
     if (!SpeechRecognition) {
-      setSubmitError('This browser does not expose SpeechRecognition or webkitSpeechRecognition.');
+      setSubmitError('Voice capture is unavailable in this browser. You can type your request.');
       return;
     }
     setVoiceOutput(true);
-    const recognition = new SpeechRecognition();
+    setVoiceDraft(false);
+    setSubmitError('');
+    setTranscript('');
+    let recognition;
+    try { recognition = new SpeechRecognition(); }
+    catch {
+      setSubmitError('The microphone could not start. You can type your request.');
+      return;
+    }
+    const finish = () => {
+      if (!voiceMountedRef.current || recognitionRef.current !== recognition) return false;
+      recognitionRef.current = null;
+      setListening(false);
+      return true;
+    };
     recognition.continuous = false;
     recognition.interimResults = true;
     recognition.lang = 'en-US';
-    recognition.onstart = () => { if (voiceMountedRef.current && recognitionRef.current === recognition) setListening(true); };
-    recognition.onend = () => { if (voiceMountedRef.current && recognitionRef.current === recognition) setListening(false); };
-    recognition.onerror = (event) => {
-      if (!voiceMountedRef.current || recognitionRef.current !== recognition) return;
-      setSubmitError(event.error || 'Voice recognition stopped.');
-      setListening(false);
+    recognition.onend = () => {
+      if (finish()) setSubmitError('No speech was captured. Try the microphone again or type your request.');
+    };
+    recognition.onerror = () => {
+      if (finish()) setSubmitError('Voice capture stopped. Try the microphone again or type your request.');
     };
     recognition.onresult = (event) => {
       if (!voiceMountedRef.current || recognitionRef.current !== recognition) return;
-      const text = Array.from(event.results)
+      const results = Array.from(event.results);
+      const text = results
         .map((result) => result[0]?.transcript || '')
         .join(' ')
         .trim();
       setTranscript(text);
-      setDraft(text);
-      const last = event.results[event.results.length - 1];
-      if (last?.isFinal && text) void submitCommand(text);
+      if (!text || !results.every(result => result.isFinal) || !finish()) return;
+      try { recognition.stop(); } catch { /* Capture may already have ended. */ }
+      if (resolveAvaBrowserCommand(text, linkedLeadId)?.path) {
+        void submitCommand(text);
+      } else {
+        setDraft(text);
+        setVoiceDraft(true);
+      }
     };
+    const previous = recognitionRef.current;
     recognitionRef.current = recognition;
-    recognition.start();
+    try { previous?.stop(); } catch { /* A previous capture may already have ended. */ }
+    setListening(true);
+    try { recognition.start(); }
+    catch {
+      if (finish()) setSubmitError('The microphone could not start. You can type your request.');
+    }
   };
 
   const replayCommand = (command: LocalCommandRecord) => {
@@ -1787,6 +1840,7 @@ function AvaChatSession({ scope }: { scope: AvaChatScope }) {
   };
 
   const selectCompanionAction = (item: CompanionAction) => {
+    setVoiceDraft(false);
     setAction(item.action);
     setRequiresApproval(item.requiresApproval);
     setDraft(item.prompt);
@@ -1795,6 +1849,7 @@ function AvaChatSession({ scope }: { scope: AvaChatScope }) {
 
   const resumeOperatorMemory = () => {
     if (!operatorMemory) return;
+    setVoiceDraft(false);
     setAction(operatorMemory.action);
     setDraft(operatorMemory.draft);
     window.requestAnimationFrame(() => composerRef.current?.focus());
@@ -1905,6 +1960,7 @@ function AvaChatSession({ scope }: { scope: AvaChatScope }) {
               voiceEnabled={voiceEnabled}
               voiceProgress={voiceProgress}
               voiceError={voiceError}
+              voiceDraft={voiceDraft}
               onToggleVoice={() => setVoiceOutput(!voiceEnabledRef.current)}
               submitError={submitError}
               textareaRef={composerRef}
@@ -2504,6 +2560,7 @@ function AvaComposer({
   voiceEnabled,
   voiceProgress,
   voiceError,
+  voiceDraft,
   onToggleVoice,
   submitError,
   textareaRef,
@@ -2524,6 +2581,7 @@ function AvaComposer({
   voiceEnabled: boolean;
   voiceProgress: AvaVoiceProgress;
   voiceError: string;
+  voiceDraft: boolean;
   onToggleVoice: () => void;
   submitError: string;
   textareaRef: React.RefObject<HTMLTextAreaElement | null>;
@@ -2560,11 +2618,14 @@ function AvaComposer({
             </div>
           )}
           {voiceError && <p role="status" className="mb-2 text-xs text-[var(--ava-danger)]">{voiceError}</p>}
+          {voiceDraft && draft.trim() && (
+            <p role="status" className="mb-2 text-xs text-[var(--ava-text-muted)]">Voice draft ready. Review it, then send.</p>
+          )}
           <label className="sr-only" htmlFor="ava-command-input">
             Ask Ava anything
           </label>
           <div className="pbk-ava-chat-action-rail" aria-label="Ava starter prompts">
-            {PBK_COMPANION_ACTIONS.slice(0, 4).map((item) => {
+            {PBK_COMPANION_ACTIONS.slice(0, 5).map((item) => {
               const QuickIcon = item.icon;
               return (
                 <button key={item.id} type="button" onClick={() => onSelectCompanionAction(item)}>

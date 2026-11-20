@@ -1,5 +1,5 @@
 {
-  "status": "reviewed-implementation-awaiting-scoped-session-provisioning",
+  "status": "staging-code-live-cloud-disabled-session-provisioning-pending",
   "environment": "isolated Composio staging only",
   "projectName": "probonokeyrealty_workspace_first_project",
   "connection": {
@@ -20,14 +20,18 @@
     ],
     "installOnlyOnService": "srv-dbvk7tv40ujc73e0d8gg",
     "environmentVariable": "PBK_COMPOSIO_E2B_API_KEY",
-    "created": false
+    "created": true,
+    "savedScopeIndependentlyVerified": true,
+    "installedOnlyOnApprovedStagingService": true
   },
   "setupCredentialProposal": {
     "name": "PBK E2B session setup - TEMPORARY",
     "permissions": [{"resource": "Session management", "access": "Write only"}],
     "installOnRender": false,
     "revokeAfterCreatingOnePinnedSession": true,
-    "created": false
+    "created": null,
+    "creationSubmissionSent": true,
+    "state": "one-time-dialog-retrieval-pending-browser-availability"
   },
   "sessionCreatePath": "/api/v3.1/tool_router/session",
   "sessionCreateBody": {
@@ -45,6 +49,15 @@
     "execute": {"enable_multi_execute": false},
     "multi_account": {"enable": false},
     "experimental": {"no_elicitation_support_fallback": "deny"}
+  },
+  "stagingDeployment": {
+    "id": "dep-dbvuuabm8hqs73938lug",
+    "commit": "dd40ba6b85b7033c058afc1ac88c155b0c02fa9b",
+    "liveAt": "2026-11-20T06:58:56.088374Z",
+    "cloudEnabled": false,
+    "disabledAgentCommandsAndDenialsVerified": true,
+    "businessCollectionsUnchanged": true,
+    "hostedSettingsVerified": ["desktop Chromium", "iPhone WebKit", "320px WebKit"]
   },
   "toolDefinitionObservedVersion": "20261118_00",
   "fixedArguments": {"limit": 100},

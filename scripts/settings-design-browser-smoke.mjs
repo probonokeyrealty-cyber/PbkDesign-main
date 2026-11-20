@@ -1,24 +1,34 @@
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { chromium, devices, expect, webkit } from '@playwright/test';
-import { createServer } from 'vite';
+import { preview } from 'vite';
 
-const server = await createServer({ server: { host: '127.0.0.1', port: 0, hmr: false } });
-await server.listen();
+execFileSync(process.execPath, [fileURLToPath(new URL('../node_modules/vite/bin/vite.js', import.meta.url)), 'build'], { stdio: 'pipe' });
+const server = await preview({ preview: { host: '127.0.0.1', port: 0 } });
 const localOrigin = `http://127.0.0.1:${server.httpServer.address().port}`;
 const hostedOrigin = 'https://pbk-settings-fixture.netlify.app';
 
 async function verify(engine, options, label) {
-  const browser = await engine.launch();
+  const browser = await engine.launch(engine === chromium && process.env.PBK_SETTINGS_CHROME === '1' ? { channel: 'chrome' } : {});
   try {
     const page = await browser.newPage({ ...options, serviceWorkers: 'block' });
     const saves = [];
     const decisions = [];
+    const passiveCloudRequests = [];
     let stateReads = 0;
     let verifies = 0;
     let operatingMode = 'approval';
     let taskStatus = 'pending';
     let emailReady = false;
     let offline = false;
+    let savedCloudFixture = false;
+    const completedAt = '2026-11-20T09:25:41.515Z';
+    const marketTask = { id: 'market-complete', provider: 'e2b', action: 'public_market_brief', status: 'complete' };
+    const marketJob = {
+      approvalTaskId: marketTask.id, provider: 'e2b', source: 'public-market-brief', status: 'complete',
+      consumed: true, cleanupConfirmed: true, completedAt,
+    };
     const task = {
       id: 'fixture-task',
       provider: 'Rex',
@@ -34,6 +44,7 @@ async function verify(engine, options, label) {
       const request = route.request();
       const url = new URL(request.url());
       const path = url.pathname;
+      if (/e2b|composio|\/invoke(?:$|\/)/i.test(path)) passiveCloudRequests.push(path);
       const method = request.method();
       const answer = (json, status = 200) => route.fulfill({ status, json });
       if (url.origin !== hostedOrigin) return route.abort();
@@ -59,7 +70,8 @@ async function verify(engine, options, label) {
             ok: true,
             settings: { operatingMode },
             status: { stateBackend: 'postgres', pendingApprovals: 2 },
-            adminTasks: [{ ...task, status: taskStatus }],
+            adminTasks: [{ ...task, status: taskStatus }, ...(savedCloudFixture ? [marketTask] : [])],
+            ...(savedCloudFixture ? { browserResearchJobs: [marketJob] } : {}),
           });
         }
         if (path === '/api/settings' && method === 'PATCH') {
@@ -83,7 +95,10 @@ async function verify(engine, options, label) {
                 instantly: { ready: emailReady, note: 'Fixture email account' },
               },
             },
-            '/api/tooling/status': { ok: true, tooling: { summary: { requiredCount: 1 } } },
+            '/api/tooling/status': { ok: true, tooling: {
+              summary: { requiredCount: 1 },
+              ...(savedCloudFixture ? { publicMarketWorker: { kind: 'public_market_worker', configured: true, ready: false, state: 'unverified' } } : {}),
+            } },
             '/api/settings': { ok: true, settings: { operatingMode } },
             '/api/release/status': { ok: true, source: 'fixture' },
             '/api/vector/capacity': { ok: true, source: 'fixture' },
@@ -91,7 +106,8 @@ async function verify(engine, options, label) {
         );
       }
       if (method !== 'GET') return answer({ ok: false }, 405);
-      const response = await route.fetch({ url: `${localOrigin}${path}${url.search}` });
+      const assetPath = path === '/settings' ? '/index.shell.html' : path;
+      const response = await route.fetch({ url: `${localOrigin}${assetPath}${url.search}` });
       return route.fulfill({ response });
     });
 
@@ -156,6 +172,14 @@ async function verify(engine, options, label) {
     await expect(page.getByRole('heading', { name: 'Agent tools' })).toBeHidden();
     await diagnostics.click();
     await expect(page.getByRole('heading', { name: 'Agent tools' })).toBeVisible();
+    const marketWorker = page.locator('.pbk-settings-tool-card').filter({ hasText: 'Public market worker' });
+    await expect(marketWorker).toContainText('Current readiness: Not reported by this bridge');
+    await expect(marketWorker).toContainText('No saved E2B run reported');
+    savedCloudFixture = true;
+    await refresh.click();
+    await expect(marketWorker).toContainText('Current readiness: Approval required');
+    await expect(marketWorker.locator('time')).toHaveAttribute('datetime', completedAt);
+    await expect(marketWorker).toContainText('This does not verify current readiness.');
     await expect(page.getByRole('heading', { name: 'Vector capacity' })).toBeVisible();
     await expect(page.getByRole('heading', { name: 'Production deploy readiness' })).toBeVisible();
     assert(
@@ -172,6 +196,10 @@ async function verify(engine, options, label) {
     assert.equal(verifies, 1);
     assert.equal(saves.length, 1);
     assert.deepEqual(decisions, ['approved']);
+    await diagnostics.click();
+    await expect(marketWorker).toContainText('Current readiness: Approval required');
+    await expect(marketWorker.locator('time')).toHaveAttribute('datetime', completedAt);
+    assert.deepEqual(passiveCloudRequests, []);
     if (process.env.PBK_SETTINGS_SCREENSHOTS === '1') {
       await page.screenshot({ path: `.pbk-local/settings-${label}.png`, fullPage: true });
     }
@@ -185,5 +213,5 @@ try {
   await verify(chromium, { viewport: { width: 1440, height: 900 } }, 'desktop');
   await verify(webkit, devices['iPhone 13'], 'iphone');
 } finally {
-  await server.close();
+  await new Promise((resolve) => server.httpServer.close(resolve));
 }

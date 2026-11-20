@@ -282,6 +282,7 @@ export type RuntimeSnapshot = {
   callQaScores?: Array<Record<string, unknown>>;
   skillOutcomes?: Array<Record<string, unknown>>;
   adminTasks?: AdminTask[];
+  browserResearchJobs?: Array<Record<string, unknown>>;
   adminAudit?: Array<Record<string, unknown>>;
   campaigns?: CampaignRecord[];
   campaignLeads?: CampaignLeadRecord[];
@@ -297,6 +298,7 @@ export type RuntimeQuotas = {
 };
 
 export type RuntimeToolingStatus = {
+  publicMarketWorker?: Record<string, unknown>;
   metaAgent?: Record<string, unknown>;
   browserOs?: Record<string, unknown>;
   agentReach?: Record<string, unknown>;

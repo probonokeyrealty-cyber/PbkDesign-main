@@ -1,6 +1,6 @@
 # Today start action implementation plan
 
-> **For agentic workers:** Use superpowers:executing-plans and track each step below.
+> **For agentic workers:** REQUIRED WORKFLOW: Use superpowers:subagent-driven-development for implementation with independent review. Track each step below.
 
 **Goal:** Make the first useful action on Today clear without changing the existing call, approval, or CRM workflow.
 

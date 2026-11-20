@@ -56,6 +56,10 @@ function describeProvider(meta: Record<string, unknown> | undefined) {
 }
 
 function describeTooling(meta: Record<string, unknown> | undefined) {
+  if (meta?.kind === 'public_market_worker') {
+    if (meta.state === 'verified') return meta.ready ? 'Completed and cleaned' : 'Not recently verified';
+    return ({ disabled: 'Disabled', configuration_missing: 'Needs setup', unverified: 'Approval required', running: 'Running', unavailable: 'Job unavailable', cleanup_unconfirmed: 'Cleanup unconfirmed' } as Record<string, string>)[String(meta.state)] || 'Waiting on bridge';
+  }
   if (meta?.state && ['disabled', 'configuration_missing', 'connecting', 'connected', 'unavailable', 'error'].includes(String(meta.state))) {
     return ({ disabled: 'Disabled', configuration_missing: 'Needs staging setup', connecting: 'Connecting', connected: 'Read verified', unavailable: 'Read not verified', error: 'Connection unavailable' } as Record<string, string>)[String(meta.state)];
   }
@@ -264,6 +268,31 @@ function SettingsToolCard({ card }: { card: SettingsRuntimeCard }) {
       <p>{String(card.meta?.note || 'Bridge-backed tooling surface.')}</p>
       {typeof card.meta?.lastSuccessAt === 'string' && <p>Last verified read: {new Date(card.meta.lastSuccessAt).toLocaleString()}</p>}
     </section>
+  );
+}
+
+function SettingsMarketReceipt({ job }: { job?: Record<string, unknown> }) {
+  if (job?.provider !== 'e2b' || job.source !== 'public-market-brief' || job.status !== 'complete' || job.cleanupConfirmed !== true) return null;
+  const summary = typeof job.resultSummary === 'string' ? job.resultSummary.slice(0, 8000) : '';
+  const data = job.resultData && typeof job.resultData === 'object' ? job.resultData as Record<string, unknown> : {};
+  const limitations = Array.isArray(data.limitations) ? data.limitations.filter((note): note is string => typeof note === 'string').slice(0, 2) : [];
+  const sources = (Array.isArray(job.sources) ? job.sources : []).flatMap((source) => {
+    try {
+      if (typeof source !== 'string' || source.length > 1000) return [];
+      const url = new URL(source);
+      return url.protocol === 'https:' && !url.username && !url.password ? [{ href:url.href, label:url.hostname }] : [];
+    } catch { return []; }
+  }).slice(0, 5);
+  return (
+    <details className="pbk-settings-market-receipt" data-market-job-id={String(job.id || '')}>
+      <summary>View public market brief</summary>
+      <p className="receipt-status">{String(job.market || 'Public market').slice(0, 80)} · Cleanup confirmed</p>
+      <p>{summary}</p>
+      <ol aria-label="Public market sources">
+        {sources.map((source, index) => <li key={source.href}><a href={source.href} target="_blank" rel="noopener noreferrer">Source {index + 1}: {source.label}</a></li>)}
+      </ol>
+      {limitations.map((note, index) => <p className="receipt-note" key={index}>{note.slice(0, 200)}</p>)}
+    </details>
   );
 }
 
@@ -719,6 +748,7 @@ export function Settings() {
     { id: 'composio-outbound', label: 'PBK agents to Composio', meta: tooling?.composio?.outbound },
     { id: 'composio-inbound', label: 'Composio to PBK', meta: tooling?.composio?.inbound },
     { id: 'composio-cloud', label: 'E2B cloud inventory', meta: tooling?.composio?.cloud },
+    { id: 'public-market-worker', label: 'Public market worker', meta: tooling?.publicMarketWorker },
     {
       id: 'meta-agent',
       label: 'Meta-Agent Lab',
@@ -989,6 +1019,7 @@ export function Settings() {
                   <div className="admin-summary">
                     {String(task.summary || task.command || 'Administrative action')}
                   </div>
+                  {task.provider === 'e2b' && task.action === 'public_market_brief' && <SettingsMarketReceipt job={snapshot?.browserResearchJobs?.find(job => job.approvalTaskId === task.id)} />}
                   {String(task.status || '').toLowerCase() === 'pending' && (
                     <div className="admin-actions">
                       <button

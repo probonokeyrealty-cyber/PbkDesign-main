@@ -65,7 +65,11 @@ async function verify(engine, options, label) {
             ok: true,
             settings: { operatingMode },
             status: { stateBackend: 'postgres', pendingApprovals: 2 },
-            adminTasks: [{ ...task, status: taskStatus }],
+            adminTasks: [{ ...task, status: taskStatus }, { id:'market-complete',provider:'e2b',action:'public_market_brief',status:'complete',summary:'Public market brief for Tampa, FL' }],
+            browserResearchJobs: [
+              {id:'other-job',provider:'e2b',source:'public-market-brief',approvalTaskId:'another-task',status:'complete',cleanupConfirmed:true,resultSummary:'UNRELATED BRIEF MUST NOT APPEAR'},
+              {id:'market-job',provider:'e2b',source:'public-market-brief',approvalTaskId:'market-complete',market:'Tampa, FL',status:'complete',cleanupConfirmed:true,resultSummary:'Public inventory evidence. Review publication dates.',sources:['https://example.org/'+ 'market-report-'.repeat(18),'javascript:alert(1)','https://user:password@example.org/private'],resultData:{limitations:['Review source dates before making an offer.','No lead records or underwriting values were changed.']}}
+            ],
           });
         }
         if (path === '/api/settings' && method === 'PATCH') {
@@ -89,7 +93,7 @@ async function verify(engine, options, label) {
                 instantly: { ready: emailReady, note: 'Fixture email account' },
               },
             },
-            '/api/tooling/status': { ok: true, tooling: { summary: { requiredCount: 1 }, composio: {
+            '/api/tooling/status': { ok: true, tooling: { publicMarketWorker: { kind: 'public_market_worker', enabled: false, ready: false, state: 'disabled', note: 'Approval-backed public evidence worker. No automatic jobs.' }, summary: { requiredCount: 1 }, composio: {
               ready: false,
               outbound: { ready: true, state: 'connected', note: 'Sandbox QA read verified; DND on and QA excluded.', lastSuccessAt: '2026-11-19T18:00:00.000Z' },
               inbound: { ready: false, state: 'configuration_missing', note: 'Limited staging endpoint. An authenticated tool read is required.' },
@@ -120,6 +124,15 @@ async function verify(engine, options, label) {
     await passcode.fill('fixture-only');
     await signIn.click();
     await expect(title).toBeVisible();
+
+    const savedBrief = page.locator('.pbk-settings-market-receipt');
+    await expect(savedBrief.getByText('View public market brief', { exact:true })).toBeVisible();
+    await savedBrief.locator('summary').click();
+    await expect(savedBrief).toContainText('Public inventory evidence. Review publication dates.');
+    await expect(savedBrief).toContainText('Cleanup confirmed');
+    await expect(savedBrief).not.toContainText('UNRELATED BRIEF');
+    await expect(savedBrief.locator('a')).toHaveCount(1);
+    assert(await savedBrief.evaluate(el=>el.scrollWidth<=el.clientWidth+1));
 
     const providers = page.getByRole('region', { name: 'Provider connections' });
     const provider = (name) => providers.locator('section').filter({ hasText: name });
@@ -174,6 +187,9 @@ async function verify(engine, options, label) {
     const cloud = page.locator('.pbk-settings-tool-card').filter({ hasText: 'E2B cloud inventory' });
     await expect(cloud).toContainText('Disabled');
     await expect(cloud).toContainText('agents are not verified in E2B');
+    const marketWorker = page.locator('.pbk-settings-tool-card').filter({ hasText: 'Public market worker' });
+    await expect(marketWorker).toContainText('Disabled');
+    await expect(marketWorker).toContainText('Approval-backed public evidence worker');
     await expect(outbound).toContainText('Read verified');
     await expect(outbound).toContainText('DND on and QA excluded');
     await expect(outbound).toContainText('Last verified read:');

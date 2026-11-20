@@ -102,6 +102,7 @@ RUN npm install --legacy-peer-deps --no-save --no-audit --no-fund --loglevel=war
       @huggingface/transformers@4.2.0 \
       @langchain/langgraph@1.3.2 \
       @modelcontextprotocol/sdk@1.29.0 \
+      e2b@2.64.0 \
       zod@3.25.76 \
       @aws-sdk/client-s3@3.1056.0 \
       @aws-sdk/s3-request-presigner@3.1056.0 \
@@ -230,6 +231,11 @@ COPY scripts/event-bus ./scripts/event-bus
 COPY scripts/property-data-adapter.mjs ./scripts/property-data-adapter.mjs
 COPY scripts/openclaw-local-server.mjs ./scripts/openclaw-local-server.mjs
 COPY scripts/lib/composio-connection.mjs ./scripts/lib/composio-connection.mjs
+COPY scripts/lib/composio-market-search.mjs ./scripts/lib/composio-market-search.mjs
+COPY scripts/lib/public-market-worker.mjs ./scripts/lib/public-market-worker.mjs
+COPY scripts/lib/public-market-controller.mjs ./scripts/lib/public-market-controller.mjs
+COPY scripts/lib/public-market-claims.mjs ./scripts/lib/public-market-claims.mjs
+COPY scripts/fixtures/public-market-program.mjs ./scripts/fixtures/public-market-program.mjs
 COPY mcp-server/runtime ./mcp-server/runtime
 COPY --from=frontend /frontend/dist/index.html ./index.html
 COPY --from=frontend /frontend/dist/analyzer.html ./analyzer.html

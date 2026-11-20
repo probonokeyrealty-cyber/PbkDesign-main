@@ -13264,6 +13264,34 @@ html[data-theme='light'] .pbk-lead-edit-modal-footer {
   font-size: 12px;
 }
 
+.pbk-settings-market-receipt {
+  min-width: 0;
+  margin-top: 10px;
+  border-top: 1px solid var(--border);
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+.pbk-settings-market-receipt summary {
+  display: list-item;
+  min-height: 44px;
+  padding: 10px 0;
+  color: var(--sky);
+  cursor: pointer;
+}
+
+.pbk-settings-market-receipt p {
+  margin: 0 0 10px;
+  white-space: pre-wrap;
+}
+
+.pbk-settings-market-receipt a { color: var(--sky); }
+.pbk-settings-market-receipt ol { padding-left: 20px; margin: 0 0 12px; }
+.pbk-settings-market-receipt .receipt-status { color: var(--text-primary); font-weight: 600; }
+.pbk-settings-market-receipt .receipt-note { color: var(--text-tertiary); font-size: 12px; }
+
 .pbk-settings-admin-card .admin-actions {
   display: flex;
   flex-wrap: wrap;

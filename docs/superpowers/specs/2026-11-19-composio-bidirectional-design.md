@@ -1,6 +1,6 @@
 # PBK ↔ Composio connection design
 
-Status: founder approved staging implementation and a separate free Render service on November 19, 2026. Local implementation and isolated hosting completed; Composio account/session activation remains pending.
+Status: founder approved staging implementation and a separate free Render service on November 19, 2026. Local implementation, isolated hosting and both read-only account/session directions are now hosted-verified. Production remains untouched. See the operations implementation runbook for acceptance and credential-revocation evidence.
 
 ## Intent and agreed scope
 

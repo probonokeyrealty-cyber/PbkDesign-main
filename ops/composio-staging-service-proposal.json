@@ -1,5 +1,5 @@
 {
-  "status": "deployed-disabled-awaiting-protected-authorization",
+  "status": "deployed-isolated-free-staging-both-read-only-directions-verified",
   "workspaceName": "PBK",
   "service": {
     "name": "pbk-composio-staging",
@@ -12,20 +12,60 @@
     "buildCommand": "npm ci --include=dev --ignore-scripts --legacy-peer-deps --no-audit --no-fund && npm run build:composio-staging",
     "startCommand": "node --experimental-strip-types scripts/openclaw-local-server.mjs --public",
     "envVars": [
-      { "key": "NODE_ENV", "value": "production" },
-      { "key": "NODE_VERSION", "value": "22" },
-      { "key": "PBK_OPENCLAW_HOST", "value": "0.0.0.0" },
-      { "key": "PBK_OPENCLAW_STATE_DIR", "value": "/tmp/pbk-composio-staging" },
-      { "key": "PBK_COMPOSIO_STAGING_ENABLED", "value": "false" },
-      { "key": "PBK_COMPOSIO_INBOUND_ENABLED", "value": "false" },
-      { "key": "PBK_VOICE_PREWARM_ENABLED", "value": "false" },
-      { "key": "PBK_CAMPAIGN_WORKER_ENABLED", "value": "false" },
-      { "key": "PBK_EMOTION_WORLD_MODEL_RETRAIN_ENABLED", "value": "false" },
-      { "key": "PBK_REPLY_AUTO_DIAL_IMMEDIATE", "value": "false" },
-      { "key": "PBK_AUTO_SEND_REPLY_FOLLOWUPS", "value": "false" },
-      { "key": "PBK_REDIS_ENABLED", "value": "false" },
-      { "key": "PBK_BATCH_APPLY_ENABLED", "value": "false" }
-    ]
+      {
+        "key": "NODE_ENV",
+        "value": "production"
+      },
+      {
+        "key": "NODE_VERSION",
+        "value": "22"
+      },
+      {
+        "key": "PBK_OPENCLAW_HOST",
+        "value": "0.0.0.0"
+      },
+      {
+        "key": "PBK_OPENCLAW_STATE_DIR",
+        "value": "/tmp/pbk-composio-staging"
+      },
+      {
+        "key": "PBK_COMPOSIO_STAGING_ENABLED",
+        "value": "false"
+      },
+      {
+        "key": "PBK_COMPOSIO_INBOUND_ENABLED",
+        "value": "false"
+      },
+      {
+        "key": "PBK_VOICE_PREWARM_ENABLED",
+        "value": "false"
+      },
+      {
+        "key": "PBK_CAMPAIGN_WORKER_ENABLED",
+        "value": "false"
+      },
+      {
+        "key": "PBK_EMOTION_WORLD_MODEL_RETRAIN_ENABLED",
+        "value": "false"
+      },
+      {
+        "key": "PBK_REPLY_AUTO_DIAL_IMMEDIATE",
+        "value": "false"
+      },
+      {
+        "key": "PBK_AUTO_SEND_REPLY_FOLLOWUPS",
+        "value": "false"
+      },
+      {
+        "key": "PBK_REDIS_ENABLED",
+        "value": "false"
+      },
+      {
+        "key": "PBK_BATCH_APPLY_ENABLED",
+        "value": "false"
+      }
+    ],
+    "envVarsNote": "Initial disabled provisioning profile retained below as history. Active flags are recorded in currentActivation; this file contains no credential values."
   },
   "limits": {
     "paidUpgradeAllowed": false,
@@ -40,5 +80,16 @@
     "Authorize the restricted HighLevel sandbox account in the Composio developer project.",
     "Create and verify the pinned read-only session and its reviewed schema fingerprint.",
     "Verify isolated state and resource health before enabling either connection."
-  ]
+  ],
+  "currentActivation": {
+    "outboundEnabled": true,
+    "inboundEnabled": true,
+    "verifiedAt": "2026-11-20T06:43:37Z",
+    "deployment": "dep-dbvuchl9fdbs73c2iuqg",
+    "commit": "04ce33b5e548afe8997bdf8bf8bda55ff4c76b06",
+    "runtimeKey": "Existing independently verified four-scope v2 key; unchanged",
+    "temporarySetupKeysRevoked": true,
+    "productionUntouched": true,
+    "businessCollectionsUnchanged": true
+  }
 }

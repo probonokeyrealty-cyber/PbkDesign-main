@@ -1,8 +1,31 @@
 # PBK bidirectional Composio implementation
 
-Status: deployed to a separate free staging backend. **PBK agents → Composio is enabled and verified with real hosted sandbox reads. Composio → PBK remains disabled pending the private-toolkit plan capability and registration.** Production and CRM records have not been changed.
+Status: **both read-only directions are connected and hosted-verified on isolated staging.** Ava/Rex can read the pinned HighLevel sandbox QA contact through Composio, and Composio can read only PBK health, agent-registry metadata and connection readiness. Production and CRM records remain untouched.
 
-## Current activation checkpoint
+## Final acceptance — November 19, 2026 Pacific
+
+The evidence timestamps below are UTC on November 20 (November 19 Pacific). The deployed service remains free, auto-deploy off, with isolated file-backed state and no production environment/database inheritance.
+
+- Render deployment `dep-dbvuchl9fdbs73c2iuqg` went live at `2026-11-20T06:20:57Z` on commit `04ce33b5e548afe8997bdf8bf8bda55ff4c76b06`. Both read-only integration flags are enabled only on `pbk-composio-staging`.
+- Real hosted Ava/Rex bridge commands passed at `06:43:37Z`: existing sandbox QA identity, DND on and QA exclusion verified. No contact or property was created or updated. The existing outbound account/session and scoped runtime key remain unchanged.
+- Private toolkit `CUSTOM_BK4BZ` (catalog `custom_bk4bz`) is limited to user `pbk-composio-staging`, absent from another user's catalog, and connected through Active account `ca_X2gFI0n6KGUf` / auth config `ac_jDp21kGlty-i`. Sync version `20261120_01` contains exactly three metadata tools. Final duplicate inspection at `06:49:11Z` found exactly one matching private account and no additional page.
+- Restricted return session `trs_8VqAK02WUHHK`, configuration 1, pins that one account/toolkit and only `CUSTOM_BK4BZ_PBK_AGENT_REGISTRY`, `CUSTOM_BK4BZ_PBK_CONNECTION_READINESS` and `CUSTOM_BK4BZ_PBK_HEALTH`. Search, connection management, workbench, proxy, multi-account and multi-execute are disabled. Real Composio reads passed all three. Registry metadata lists 11 agents and explicitly sets `executionVerified: false`; this does not claim integration execution by all 11 agents.
+- Extra arguments, unknown write tools and an existing HighLevel tool outside the private toolkit were denied. Before/after leads, tasks, admin tasks, approvals, calls, messages and contracts were identical. CRM writes, outreach and task creation: zero.
+- Hosted signed-in Settings checks at `06:44:39Z` passed desktop Chromium, iPhone WebKit and 320px WebKit, refresh and session reload. Both directions displayed **Read verified**; surface scroll/client widths matched 1199/1199, 381/381 and 311/311, with no unexpected external requests or business mutations. Readiness correctly expires after two minutes without a successful read; there is no recurring scheduler.
+- The Pro plan was confirmed after founder completion; no duplicate purchase was submitted. Composio's private-registration route rejected the approved scoped setup key with 403/error 812 because no scoped-key permission covers that route. The founder separately approved a temporary full-project bootstrap key solely for the private staging registration/account/session setup. It was never used for tool execution or installed on Render.
+- All temporary session/private-setup/bootstrap project keys were revoked, each verified by successful revocation and subsequent authentication 401. Transient values were cleared. The independently verified four-scope runtime v2 key remains unchanged; the dedicated inbound token stays in protected provider settings only.
+
+### Strict-input correction and provider presentation limit
+
+The MCP SDK's normalization of a defaulted strict empty object did not advertise `additionalProperties: false`. The shared HTTP/stdio factory now advertises one fixed three-tool inventory with explicit strict schemas while preserving omitted-argument compatibility and server validation. Regression reproduced the defect before correction; 32/32 focused tests and the MCP build passed. A fresh narrow reviewer found no important issues. The actual hosted endpoint advertises strict schemas and rejects extra arguments.
+
+Composio's tools catalog preserves the strict schema; its session MCP discovery omits that one display flag. Actual execution still rejects extra arguments. No runtime policy was weakened to accommodate that presentation difference. This work does not repair the separate HighLevel opportunity custom-field connector defect or activate the address/APN write guard.
+
+Sanitized private evidence is retained under `.pbk-local/composio-command-center-audit/2026-11-19/`: `bidirectional-hosted-report.json`, `hosted-ui-bidirectional-report.json` and `private-duplicate-report.json`. No credentials or raw CRM records are in this runbook or those reports.
+
+## Historical activation checkpoints
+
+The following checkpoints preserve the sequence of deployment and approval evidence. Their pending/disabled statements describe earlier states and are superseded by final acceptance above.
 
 - Founder-approved integration `PBK Composio QA Read - NO OUTREACH` was created in sandbox `OXa5iejsMPm7I7JsrEge` with exactly `contacts.readonly` and `locations.readonly`. The existing Property Guard integration was preserved.
 - New connected account `ca_0sb6c-6lP1UF` is Active under the intended developer project, user `pbk-composio-staging`, auth config `ac_FQxH8GPSX4DK` and `highlevel_location` toolkit. Authenticated account metadata independently returned200 and matched every policy pin.
@@ -32,7 +55,7 @@ Initial read-only inspection of the founder-confirmed Render workspace **PBK** f
 
 The Composio developer project `probonokeyrealty_workspace_first_project` now has the independently verified Active HighLevel connection `ca_0sb6c-6lP1UF`, for user `pbk-composio-staging` and auth configuration `ac_FQxH8GPSX4DK`. This uses the newly approved sandbox token with only `contacts.readonly` and `locations.readonly`. The existing consumer CLI connection was not copied or silently reused.
 
-Hosted outbound session execution is verified; private Custom MCP registration remains pending. Direct provider reads, authoritative Composio metadata, actual MCP discovery and hosted adapter execution all confirmed the intended sandbox QA scope. The earlier HighLevel custom-field schema support issue remains separate and unresolved by this work.
+Hosted outbound execution and the private return metadata session are now verified. Direct provider reads, authoritative Composio metadata, actual MCP discovery and hosted adapter execution all confirmed the intended sandbox QA scope. The earlier HighLevel custom-field schema support issue remains separate and unresolved by this work.
 
 The approved resource settings are recorded in `ops/composio-staging-service-proposal.json`. The source branch is `codex/composio-readonly-staging`. The first deployment ran the backend successfully. A subsequent staging-only build refinement compiles the existing Command Center assets for the native Node service; it does not introduce a second frontend. The CLI reported success without persisting its nested build change, so the dashboard was used and the saved build command was independently confirmed through the service API. No paid upgrade is allowed.
 
@@ -92,6 +115,6 @@ Hosted UI checks at 19:05 UTC passed sign-in, session reload, Settings refresh a
 
 At that earlier checkpoint, the developer-project connection was initiated but not Active, and the runtime key was not provisioned. Both prerequisites have since been satisfied as described above; no CLI credential cache was read or copied.
 
-Current acceptance: outbound sandbox scope/DND/QA reads and safe denial probes pass. Inbound remains disabled until a private toolkit can be provisioned and its actual read is verified. Overall bidirectional readiness remains false. No production release is included in this approval.
+Final acceptance: both read-only directions passed actual hosted reads and denial probes, with all business collections unchanged. The private return session is active and verified. No production release is included in this approval.
 
 Reference API shapes were checked against Composio's published client 2.1.36 and [session configuration documentation](https://docs.composio.dev/docs/configuring-sessions). Remote transport and registration follow [sessions via MCP](https://docs.composio.dev/docs/sessions-via-mcp) and [Custom MCP](https://docs.composio.dev/docs/extending-sessions/custom-mcp).

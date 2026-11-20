@@ -1,9 +1,14 @@
 {
-  "status": "outbound-verified-on-isolated-staging-private-return-disabled",
+  "status": "both-read-only-directions-hosted-verified-on-isolated-staging",
   "projectName": "probonokeyrealty_workspace_first_project",
   "provisioningKey": {
     "name": "PBK Staging Session Setup - TEMPORARY",
-    "permissions": [{"resource": "Session management", "access": "Write only"}],
+    "permissions": [
+      {
+        "resource": "Session management",
+        "access": "Write only"
+      }
+    ],
     "installOnRender": false,
     "purpose": "Create the explicitly pinned read-only sandbox session without broadening the existing runtime key",
     "revokeAfterProvisioning": true,
@@ -15,26 +20,61 @@
   "sessionCreatePath": "/api/v3.1/tool_router/session",
   "sessionCreateBody": {
     "user_id": "pbk-composio-staging",
-    "toolkits": {"enable": ["highlevel_location"]},
-    "tools": {"highlevel_location": {"enable": ["HIGHLEVEL_LOCATION_CONTACTS_GET_CONTACT"]}},
-    "auth_configs": {"highlevel_location": "ac_FQxH8GPSX4DK"},
-    "connected_accounts": {"highlevel_location": ["ca_0sb6c-6lP1UF"]},
-    "preload": {"tools": ["HIGHLEVEL_LOCATION_CONTACTS_GET_CONTACT"]},
+    "toolkits": {
+      "enable": [
+        "highlevel_location"
+      ]
+    },
+    "tools": {
+      "highlevel_location": {
+        "enable": [
+          "HIGHLEVEL_LOCATION_CONTACTS_GET_CONTACT"
+        ]
+      }
+    },
+    "auth_configs": {
+      "highlevel_location": "ac_FQxH8GPSX4DK"
+    },
+    "connected_accounts": {
+      "highlevel_location": [
+        "ca_0sb6c-6lP1UF"
+      ]
+    },
+    "preload": {
+      "tools": [
+        "HIGHLEVEL_LOCATION_CONTACTS_GET_CONTACT"
+      ]
+    },
     "instant": false,
-    "manage_connections": {"enable": false},
-    "workbench": {"enable": false, "enable_proxy_execution": false},
-    "proxy_execute": {"enable": false},
-    "search": {"enable": false},
-    "execute": {"enable_multi_execute": false},
-    "multi_account": {"enable": false},
-    "experimental": {"no_elicitation_support_fallback": "deny"}
+    "manage_connections": {
+      "enable": false
+    },
+    "workbench": {
+      "enable": false,
+      "enable_proxy_execution": false
+    },
+    "proxy_execute": {
+      "enable": false
+    },
+    "search": {
+      "enable": false
+    },
+    "execute": {
+      "enable_multi_execute": false
+    },
+    "multi_account": {
+      "enable": false
+    },
+    "experimental": {
+      "no_elicitation_support_fallback": "deny"
+    }
   },
-  "verification": "Authoritative session metadata returned200 with the existing scoped runtime key. Real MCP discovery advertised only the pinned tool. Hosted staging Ava and Rex commands passed the existing bridge and real MCP read with sandbox identity, DND and QA exclusion verified. Override/write requests were denied; leads/tasks/adminTasks/approvals/calls/messages/contracts remained identical before and after. Private return connection remains disabled.",
+  "verification": "Authoritative session metadata returned200 with the existing scoped runtime key. Real MCP discovery advertised only the pinned tool. Hosted staging Ava and Rex commands passed the existing bridge and real MCP read with sandbox identity, DND and QA exclusion verified. Override/write requests were denied; leads/tasks/adminTasks/approvals/calls/messages/contracts remained identical before and after. Private return metadata reads are now verified through a separate restricted session; the outbound session is unchanged.",
   "stagingDeployment": {
-    "id": "dep-dbvpvqijnfac7382b6rg",
-    "commit": "881fd5a9b6fe7ce590aff60dfced56142eec099d",
-    "liveAt": "2026-11-20T01:20:43Z",
-    "hostedAcceptanceAt": "2026-11-20T01:21:10Z"
+    "id": "dep-dbvuchl9fdbs73c2iuqg",
+    "commit": "04ce33b5e548afe8997bdf8bf8bda55ff4c76b06",
+    "liveAt": "2026-11-20T06:20:57Z",
+    "hostedAcceptanceAt": "2026-11-20T06:43:37Z"
   },
   "createdSession": {
     "id": "trs_QDYbCcd_gMjx",
@@ -47,14 +87,18 @@
     "crmWrites": false,
     "outreach": false,
     "taskCreation": false,
-    "paidUpgrade": false,
-    "sharedCustomToolkitFallback": false
+    "sharedCustomToolkitFallback": false,
+    "renderPaidUpgrade": false,
+    "composioProSubscription": "Founder approved and completed; authenticated billing verified Pro"
   },
   "privateReturnConnection": {
-    "status": "pro-checkout-prepared-for-founder-review-not-purchased",
-    "observedPlan": "Hobby",
+    "status": "private-user-registration-active-and-hosted-verified",
+    "observedPlan": "Pro",
     "observedProPriceUsdPerMonth": 29,
     "requiredCapability": "Private Custom MCP toolkit for pbk-composio-staging only",
-    "reference": "https://docs.composio.dev/docs/extending-sessions/custom-mcp"
+    "reference": "https://docs.composio.dev/docs/extending-sessions/custom-mcp",
+    "accountId": "ca_X2gFI0n6KGUf",
+    "sessionId": "trs_8VqAK02WUHHK",
+    "proposal": "ops/composio-private-return-proposal.json"
   }
 }

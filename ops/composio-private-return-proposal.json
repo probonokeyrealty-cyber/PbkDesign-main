@@ -1,21 +1,29 @@
 {
-  "status": "prepared-not-registered-pro-required",
+  "status": "private-read-only-return-registered-and-hosted-verified",
   "projectName": "probonokeyrealty_workspace_first_project",
   "createPath": "/api/v3.1/custom/toolkits",
   "createBody": {
     "name": "PBK Staging Read-only",
     "mcp_url": "https://pbk-composio-staging.onrender.com/mcp/pbk-readonly",
     "user_id": "pbk-composio-staging",
-    "auth_schemes": [{
-      "mode": "API_KEY",
-      "headers": {"Authorization": "Bearer {{generic_api_key}}"},
-      "api_key_field": {
-        "display_name": "PBK staging read-only credential",
-        "description": "Dedicated staging inbound credential only. Never use the PBK bridge master or Composio project API key."
+    "auth_schemes": [
+      {
+        "mode": "API_KEY",
+        "headers": {
+          "Authorization": "Bearer {{generic_api_key}}"
+        },
+        "api_key_field": {
+          "display_name": "PBK staging read-only credential",
+          "description": "Dedicated staging inbound credential only. Never use the PBK bridge master or Composio project API key."
+        }
       }
-    }]
+    ]
   },
-  "expectedRemoteTools": ["pbk_health", "pbk_agent_registry", "pbk_connection_readiness"],
+  "expectedRemoteTools": [
+    "pbk_health",
+    "pbk_agent_registry",
+    "pbk_connection_readiness"
+  ],
   "requiredChecksBeforeEnablement": [
     "Authenticated workspace billing confirms the private Custom MCP capability",
     "No existing private registration for this exact user and MCP URL; reuse a verified existing registration instead of creating a duplicate",
@@ -29,9 +37,101 @@
   "credentialPolicy": {
     "valueInThisFile": false,
     "source": "Existing separately generated staging inbound credential through protected server configuration",
-    "provisioningCredentialCreated": false,
+    "provisioningCredentialCreated": true,
     "persistentAccessChangesRequireConcreteApproval": true,
     "runtimeProjectKeyBroadening": false
+  },
+  "provisioningKeyProposal": {
+    "name": "PBK Private MCP Setup - TEMPORARY",
+    "selectedPermissions": [
+      "Toolkits read",
+      "Toolkits write",
+      "Connected accounts write",
+      "Session management write"
+    ],
+    "executionPermission": false,
+    "installOnRender": false,
+    "revokeAfterProvisioning": true,
+    "status": "created-with-approved-scopes-then-revoked",
+    "permissionExclusionChecksPassed": true,
+    "revocationHttp": 200,
+    "postRevocationAuthenticationHttp": 401
+  },
+  "planVerification": {
+    "currentPlan": "Pro",
+    "evidence": "Authenticated workspace billing after refresh shows Pro / Current plan and the US$29 monthly plan description",
+    "purchaseSubmittedByAgent": false,
+    "userReportedCompletion": true
+  },
+  "providerRouteBlocker": {
+    "path": "POST /api/v3.1/custom/toolkits",
+    "http": 403,
+    "code": 812,
+    "message": "This route is not covered by any scoped-key permission. Use a project API key with full access for this route.",
+    "toolkitCreated": true,
+    "runtimeKeyBroadened": false,
+    "status": "resolved-with-explicitly-approved-temporary-full-project-bootstrap"
+  },
+  "fullProjectBootstrapProposal": {
+    "name": "PBK Private MCP Bootstrap - TEMPORARY FULL PROJECT",
+    "status": "founder-approved-created-used-for-setup-and-revoked",
+    "scope": "Full access to the existing Composio developer project, not a user or organization credential",
+    "purpose": "Only the reviewed private staging toolkit, account and restricted metadata session setup",
+    "memoryOnly": true,
+    "installOnRender": false,
+    "useForToolExecution": false,
+    "revokeImmediatelyAfterSetupOrFailure": true,
+    "runtimeProjectKeyUnchanged": true,
+    "revocationHttp": 200,
+    "postRevocationAuthenticationHttp": 401,
+    "transientCredentialCleared": true
+  },
+  "createdPrivateConnection": {
+    "createdSlug": "CUSTOM_BK4BZ",
+    "catalogSlug": "custom_bk4bz",
+    "access": "user",
+    "userId": "pbk-composio-staging",
+    "accountId": "ca_X2gFI0n6KGUf",
+    "authConfigId": "ac_jDp21kGlty-i",
+    "status": "ACTIVE",
+    "otherUserCatalogExcludesToolkit": true,
+    "privateAccountCount": 1,
+    "synchronizedVersion": "20261120_01",
+    "synchronizedToolCount": 3
+  },
+  "restrictedReturnSession": {
+    "id": "trs_8VqAK02WUHHK",
+    "configVersion": 1,
+    "toolNames": [
+      "CUSTOM_BK4BZ_PBK_AGENT_REGISTRY",
+      "CUSTOM_BK4BZ_PBK_CONNECTION_READINESS",
+      "CUSTOM_BK4BZ_PBK_HEALTH"
+    ],
+    "metadataOnly": true,
+    "searchConnectionManagementWorkbenchProxyMultiAccountMultiExecuteDisabled": true,
+    "outboundSessionChanged": false
+  },
+  "hostedAcceptance": {
+    "observedAt": "2026-11-20T06:43:37Z",
+    "bothDirectionsVerified": true,
+    "avaRexQaDndAndExclusionVerified": true,
+    "agentRegistryCount": 11,
+    "registryExecutionClaim": false,
+    "extraArgumentsUnknownWriteAndOutsideToolkitReadDenied": true,
+    "businessCollectionsUnchanged": [
+      "leads",
+      "tasks",
+      "adminTasks",
+      "approvals",
+      "calls",
+      "messages",
+      "contracts"
+    ],
+    "desktopIphoneAnd320pxSettingsPassed": true,
+    "productionChanges": false,
+    "crmWrites": false,
+    "outreach": false,
+    "tasksCreated": false
   },
   "constraints": {
     "outboundSessionChanges": false,

@@ -1297,6 +1297,34 @@ export function planAssistantIntent(detected = {}, options = {}) {
         usedIntent: intent,
       };
     }
+    if (channel === 'email' && /^send (?:an? )?email via outlook\b/i.test(detected.message)) {
+      if (!leadId) {
+        return {
+          action: 'missing_required_info',
+          answer: 'Select the PBK test lead before preparing the Outlook email.',
+          suggestions,
+          toolPlan: null,
+          usedIntent: intent,
+        };
+      }
+      return {
+        action: 'approval_required',
+        answer: 'I can prepare this Outlook test email for approval.',
+        suggestions,
+        toolPlan: {
+          toolName: 'sendColdEmail',
+          params: {
+            provider: 'outlook',
+            leadId,
+            subject: 'PBK Ava Outlook test',
+            customBody: detected.messageBody,
+          },
+          providerWrite: true,
+          approvalRequired: true,
+        },
+        usedIntent: intent,
+      };
+    }
     return {
       action: 'tool_plan',
       answer: 'I will ask Nurture Agent to recommend a channel and timing for this follow-up.',

@@ -180,10 +180,10 @@ test('unapproved v2 policy is not replaced with a pilot or legacy policy', async
 test('approval, auth, delivery and dispatch code outside maturity remains byte-for-byte unchanged', () => {
   const unchanged = (source.slice(0, start) + source.slice(end))
     .replace("import { readCanaryEvidence } from './canary-evidence-reader.mjs';\n", '');
-  // Ava release review against c41391e covered Postgres startup gating, call script selection,
-  // appointment receipts, and scoped chat planning. Provider dispatch and auth handlers were unchanged.
+  // Outlook is explicit and requires the existing approval dispatch lease. The mailbox
+  // check and test-recipient allowlist live in the separately exercised Outlook adapter.
   assert.equal(createHash('sha256').update(unchanged).digest('hex'),
-    'b8bf3f10a5c6133cbc441879e05a1c3a6567a9a5eba3e37d6146a97f32b99493');
+    '6e99f04dc4bbe0b97f1f2c8a075947cc0b80a0d1a1b082760d9e6cf8a26d669b');
 });
 
 test('production distribution includes reader and protocol, never the fixture signer', () => {

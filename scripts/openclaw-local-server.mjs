@@ -1,6 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import { createNeonMailRouter } from './neon-auth-mail.mjs';
 import { createComposioResearchDiscovery } from './composio-research-discovery.mjs';
+import { sendAvaOutlookMail } from './ava-outlook-mail.mjs';
 import { createServer, globalAgent as httpGlobalAgent } from 'node:http';
 import { globalAgent as httpsGlobalAgent } from 'node:https';
 import { createHash, createHmac, createPrivateKey, createPublicKey, createSign as __dsCreateSign, randomUUID, timingSafeEqual, verify as verifySignature } from 'node:crypto';
@@ -726,6 +727,7 @@ let __slackBotValidation = {
   user: '',
 };
 const RESEND_API_KEY = String(process.env.PBK_RESEND_API_KEY || process.env.RESEND_API_KEY || '').trim();
+const OUTLOOK_APPROVAL_DISPATCH = Symbol('outlook-approval-dispatch');
 const MAIN_BUSINESS_EMAIL = String(process.env.PBK_MAIN_BUSINESS_EMAIL || process.env.MAIN_BUSINESS_EMAIL || 'jordan@pbk.capital').trim();
 const COLD_CAMPAIGN_EMAIL = String(process.env.PBK_COLD_CAMPAIGN_EMAIL || process.env.COLD_CAMPAIGN_EMAIL || 'offers@pbkoutreach.local').trim();
 const INSTANTLY_API_KEY = String(process.env.PBK_INSTANTLY_API_KEY || process.env.INSTANTLY_API_KEY || '').trim();
@@ -43227,7 +43229,8 @@ function resolveProviderActionReplayParams(toolName, params = {}) {
   if (toolName === 'telnyx_sms') resolved.body = String(params.body || params.message || '').trim();
   if (toolName === 'sendColdEmail') {
     resolved.email = params.email || params.to || context.email || inferSkipTraceContact(context).email;
-    resolved.fromEmail = getSenderAddress('cold', params.fromEmail || params.from_email || params.instantlySender || params.senderEmail || '');
+    const outlookSender = params.provider === 'outlook' ? process.env.PBK_AVA_OUTLOOK_SENDER : '';
+    resolved.fromEmail = getSenderAddress('cold', params.fromEmail || params.from_email || params.instantlySender || params.senderEmail || outlookSender || '');
     const body = String(params.customBody || params.body || params.message || '').trim();
     const content = body ? { text: body, subject: params.subject || 'Message from Probono Key Realty' }
       : buildColdEmailContent(params.templateId, { name: context.leadName, address: context.address }, buildBrainEmailContext(params));
@@ -43692,7 +43695,8 @@ async function enforceOperatingModeForTool(toolName, params = {}) {
   }
   const mode = getRuntimeOperatingMode();
   const approvalReplayId = String(params.approvalId || params.approval_id || '').trim();
-  const forceApproval = Boolean(params.forceApproval === true || params.force_approval === true);
+  const forceApproval = params.forceApproval === true || params.force_approval === true ||
+    (toolName === 'sendColdEmail' && params.provider === 'outlook');
   const label = toolName.replace(/_/g, ' ');
   const safetyValidation = await preValidateToolSafety(toolName, params, 'operating-mode-guard');
   if (safetyValidation?.blocked) {
@@ -58863,6 +58867,10 @@ const toolHandlers = {
   },
 
   async sendColdEmail(params = {}) {
+    const useOutlook = params.provider === 'outlook';
+    if (useOutlook && !params[OUTLOOK_APPROVAL_DISPATCH]) {
+      return { ok: false, result: 'approval_required', providerAttempted: false };
+    }
     recordToolUse('sendColdEmail');
     const context = findLeadContext(params);
     const leadImport = findLatestLeadImport(params);
@@ -58921,7 +58929,12 @@ const toolHandlers = {
     const fromEmail = String(params.fromEmail || params.from_email || params.instantlySender || params.senderEmail || '').trim();
     const senderAddress = getSenderAddress('cold', fromEmail);
 
-    if (INSTANTLY_API_KEY) {
+    if (useOutlook) {
+      provider = 'Outlook';
+      delivery = await sendAvaOutlookMail({
+        sender: senderAddress, recipient: email, subject: content.subject, text: content.text,
+      });
+    } else if (INSTANTLY_API_KEY) {
       provider = 'Instantly';
       endpoint = instantlyEndpoint;
       const instantlyPayload = instantlyEndpoint.toLowerCase().includes('/emails/test')
@@ -58952,10 +58965,10 @@ const toolHandlers = {
       delivery = await fireInstantlyRequest(instantlyEndpoint, instantlyPayload);
     }
 
-    if (
+    if (!useOutlook && (
       (!delivery && params.requireSelectedProvider !== true) ||
       (!delivery?.ok && params.allowResendFallback !== false)
-    ) {
+    )) {
       provider = 'Resend';
       endpoint = 'https://api.resend.com/emails';
       delivery = await sendTransactionalEmail({
@@ -58979,7 +58992,8 @@ const toolHandlers = {
       direction: 'outbound',
       subject: content.subject,
       body: content.text,
-      status: delivery?.ok ? 'sent' : delivery?.result === 'provider_missing' || !delivery ? 'provider_missing' : 'failed',
+      deliveryStatus: delivery?.deliveryStatus,
+      status: delivery?.ok ? (useOutlook ? 'queued' : 'sent') : delivery?.result === 'provider_missing' || !delivery ? 'provider_missing' : 'failed',
       provider,
     });
     upsertMessage(state, message);
@@ -58990,8 +59004,10 @@ const toolHandlers = {
       makeActivity({
         actor: provider,
         category: 'EMAIL',
-        status: delivery?.ok ? (delivery.live === false ? 'simulated' : 'sent') : 'warning',
-        text: delivery?.ok ? `Cold email ${delivery.live === false ? 'prepared' : 'sent'} to ${context.leadName || email}.` : `Cold email failed for ${context.leadName || email}: ${delivery?.error || 'unknown error'}`,
+        status: delivery?.ok ? (useOutlook ? 'queued' : delivery.live === false ? 'simulated' : 'sent') : 'warning',
+        text: delivery?.ok
+          ? `Cold email ${useOutlook ? 'accepted by Outlook' : delivery.live === false ? 'prepared' : 'sent'} for ${context.leadName || email}.`
+          : `Cold email failed for ${context.leadName || email}: ${delivery?.error || 'unknown error'}`,
         target: context.address || email || context.leadName,
       })
     );
@@ -59001,7 +59017,9 @@ const toolHandlers = {
     return {
       ok: Boolean(delivery?.ok),
       result,
-      verbiage: delivery?.ok ? 'Email sent' : delivery?.error || 'Email provider not configured - add Instantly or Resend credentials.',
+      verbiage: delivery?.ok
+        ? (useOutlook ? 'Outlook accepted the email. Inbox delivery is unconfirmed.' : 'Email sent')
+        : delivery?.error || 'Email provider not configured - add Instantly or Resend credentials.',
       provider,
       endpoint,
       email,
@@ -61552,6 +61570,7 @@ async function handleRuntimeEvent(normalizedEvent, payload) {
                       {
                         ...executionParams,
                         approvalId: approval.id,
+                        [OUTLOOK_APPROVAL_DISPATCH]: toolName === 'sendColdEmail' && executionParams.provider === 'outlook',
                         actor:
                           incomingActor ||
                           executionParams.actor ||

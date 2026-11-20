@@ -127,7 +127,7 @@ async function main() {
   await writeFile(join(stateDir, 'openclaw-state.json'), JSON.stringify({
     approvals: [],
     appointments: [],
-    leadImports: [{ id: 'lead-morgan', leadName: 'Morgan Test', address: '12 Test Street' }],
+    leadImports: [{ id: 'lead-morgan', leadName: 'Morgan Test', address: '12 Test Street', email: 'test@example.net' }],
     calls: [
       { id: 'call-other', leadId: 'lead-other', leadName: 'Other Seller', status: 'ended',
         createdAt: '2026-11-20T10:01:00Z', transcript: [{ text: 'Other seller private note' }] },
@@ -162,6 +162,8 @@ async function main() {
       RESEND_API_KEY: '',
       TELNYX_API_KEY: '',
       INSTANTLY_API_KEY: '',
+      PBK_AVA_OUTLOOK_COMPOSIO_API_KEY: '',
+      PBK_AVA_OUTLOOK_SENDER: 'acquisition@example.com',
     },
     stdio: ['ignore', 'pipe', 'pipe'],
     windowsHide: true,
@@ -276,6 +278,19 @@ async function main() {
     assert.equal(persistedApproval?.metadata?.providerActionResult?.ok, true);
     assert.equal(persistedApproval?.metadata?.providerActionResult?.appointmentId, appointment.id);
     assert.equal(persistedApproval?.metadata?.providerActionResult?.appointmentStatus, 'scheduled');
+
+    const outlook = await chat('ava-runtime-outlook', 'Send an email via Outlook saying "Fixture only."', 'lead-morgan');
+    assert.equal(outlook.assistantAction, 'approval_required', outlook.answer);
+    assert.equal(outlook.toolPlan?.params?.provider, 'outlook');
+    const outlookApprovalId = outlook.toolResult?.approval?.id || outlook.toolResult?.approvalId;
+    assert.ok(outlookApprovalId, JSON.stringify(outlook.toolResult));
+    const outlookDecision = await requestJson(baseUrl, `/api/approvals/${outlookApprovalId}`, {
+      method: 'PUT', body: { status: 'approved', actor: 'QA operator' },
+    });
+    assert.equal(outlookDecision.json.approval?.status, 'approved');
+    assert.equal(outlookDecision.json.providerActionResult?.provider, 'Outlook');
+    assert.equal(outlookDecision.json.providerActionResult?.result, 'provider_missing');
+    assert.equal(outlookDecision.json.providerActionResult?.ok, false);
 
     console.log(
       JSON.stringify(

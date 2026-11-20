@@ -182,10 +182,11 @@ test('approval, auth, delivery and dispatch code outside maturity remains byte-f
     .replace("import { readCanaryEvidence } from './canary-evidence-reader.mjs';\n", '');
   // Outlook lead mail binds the saved address to an approval and persists the provider receipt.
   // The Outlook adapter and isolated agent smoke exercise the approval dispatch lease.
+  // Lead detail exposes only the selected lead's Outlook delivery projection.
   // Telnyx receipt mapping and the scoped outbound media policy are covered by the
   // unified conversation bridge smoke test.
   assert.equal(createHash('sha256').update(unchanged).digest('hex'),
-    '3f8c316bfc2de29f0d9b7cbd311da8971f8edba086dc7a65e8496543be3b68e6');
+    'd47b6500d45906e0dec92842fffff7a1d94f5b7076978e1e1394e3cfb9a8c942');
 });
 
 test('production distribution includes reader and protocol, never the fixture signer', () => {

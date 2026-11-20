@@ -125,7 +125,17 @@ function assertWorkOrderProof(label, payload, { agentId, providerWriteIntent }) 
 async function main() {
   const stateDir = await mkdtemp(join(tmpdir(), 'pbk-ava-agent-delegation-'));
   await writeFile(join(stateDir, 'openclaw-state.json'), JSON.stringify({
-    approvals: [],
+    approvals: [{
+      id: 'approval-previous-outlook', leadId: 'lead-morgan', status: 'approved', type: 'provider-action',
+      approvalAction: 'sendColdEmail', createdAt: '2026-11-20T10:00:00Z',
+      metadata: {
+        executionParams: { provider: 'outlook', subject: 'Previous fixture email' },
+        providerActionDispatch: { status: 'reconciliation_required' },
+      },
+    }, {
+      id: 'approval-other-outlook', leadId: 'lead-other', status: 'approved', type: 'provider-action',
+      approvalAction: 'sendColdEmail', metadata: { executionParams: { provider: 'outlook' } },
+    }],
     appointments: [],
     leadImports: [{ id: 'lead-morgan', leadName: 'Morgan Test', address: '12 Test Street', email: 'test@example.net' }],
     calls: [
@@ -306,6 +316,10 @@ async function main() {
     assert.equal(outlookMessages.length, 1);
     assert.equal(outlookMessages[0].providerAttemptId, 'fixture-outlook-1');
     assert.equal(outlookMessages[0].deliveryStatus, 'accepted');
+    const outlookLead = await requestJson(baseUrl, '/api/leads/lead-morgan/full');
+    assert.equal(outlookLead.status, 200);
+    assert.deepEqual(outlookLead.json.outlookDelivery.map(({ state }) => state), ['accepted', 'recovery']);
+    assert.equal(outlookLead.json.outlookDelivery[0].receiptId, 'fixture-outlook-1');
 
     console.log(
       JSON.stringify(

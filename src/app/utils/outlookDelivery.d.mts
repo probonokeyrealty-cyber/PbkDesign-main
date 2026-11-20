@@ -1,0 +1,10 @@
+export type OutlookDelivery = {
+  id: string;
+  subject: string;
+  leadName: string;
+  at: string;
+  state: 'pending' | 'approved' | 'dispatching' | 'accepted' | 'delivered' | 'recovery' | 'failed' | 'closed';
+  receiptId: string;
+};
+
+export function readOutlookDelivery(approval: unknown): OutlookDelivery | null;

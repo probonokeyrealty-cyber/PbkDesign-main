@@ -2,6 +2,7 @@ import { execFileSync } from 'node:child_process';
 import { createNeonMailRouter } from './neon-auth-mail.mjs';
 import { createComposioResearchDiscovery } from './composio-research-discovery.mjs';
 import { sendAvaOutlookMail } from './ava-outlook-mail.mjs';
+import { readOutlookDelivery } from '../src/app/utils/outlookDelivery.mjs';
 import { createServer, globalAgent as httpGlobalAgent } from 'node:http';
 import { globalAgent as httpsGlobalAgent } from 'node:https';
 import { createHash, createHmac, createPrivateKey, createPublicKey, createSign as __dsCreateSign, randomUUID, timingSafeEqual, verify as verifySignature } from 'node:crypto';
@@ -15599,13 +15600,17 @@ function normalizePgApprovalRecord(row = {}) {
   };
 }
 
-async function loadApprovalRecordsFromPg({ statusFilter = '', limit = 60 } = {}) {
+async function loadApprovalRecordsFromPg({ statusFilter = '', leadId = '', limit = 60 } = {}) {
   const normalizedStatus = String(statusFilter || '').trim().toLowerCase();
   const params = [Math.max(1, Math.min(200, Number(limit) || 60))];
   const where = ["COALESCE(workspace_id, 'pbk') = 'pbk'"];
   if (normalizedStatus) {
     params.push(normalizedStatus);
     where.push(`LOWER(status) = $${params.length}`);
+  }
+  if (leadId) {
+    params.push(leadId);
+    where.push(`lead_id = $${params.length}`);
   }
   const result = await queryPgRows(
     `SELECT
@@ -15633,6 +15638,19 @@ async function loadApprovalRecordsFromPg({ statusFilter = '', limit = 60 } = {})
     ok: true,
     rows: result.rows.map(normalizePgApprovalRecord),
   };
+}
+
+async function loadOutlookDeliveryForLead(leadId) {
+  const scoped = (state.approvals || []).filter((item) => item.leadId === leadId);
+  const records = new Map(scoped.map((item) => [item.id, item]));
+  if (getPgPool()) {
+    const saved = await loadApprovalRecordsFromPg({ leadId, limit: 100 });
+    for (const item of saved.rows || []) {
+      if (item.leadId === leadId) records.set(item.id, { ...records.get(item.id), ...item });
+    }
+  }
+  return [...records.values()].map(readOutlookDelivery).filter(Boolean)
+    .sort((left, right) => right.at.localeCompare(left.at));
 }
 
 async function backfillContractRecordsToPg(contracts = state.contracts || []) {
@@ -81260,6 +81278,7 @@ const server = createServer(async (request, response) => {
         const callContext = getLeadOwnedCallContext(durableBatchLead, leadId);
         json(response, 200, {
           ok: true, lead: { ...durableBatchLead, ...history, callContext, call_context: callContext }, ...history,
+          outlookDelivery: await loadOutlookDeliveryForLead(leadId),
         });
         return;
       }
@@ -81272,7 +81291,7 @@ const server = createServer(async (request, response) => {
         });
         return;
       }
-      json(response, 200, full);
+      json(response, 200, { ...full, outlookDelivery: await loadOutlookDeliveryForLead(leadId) });
       return;
     }
 

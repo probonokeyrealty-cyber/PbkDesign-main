@@ -13,6 +13,7 @@ import {
 } from 'lucide-react';
 import { PbkDataSource } from '../../components/pbk/index';
 import { useRuntimeSnapshot } from '../hooks/useRuntimeSnapshot';
+import { lastCompletedPublicMarketRun } from '../utils/publicMarketStatus';
 import {
   fetchObservabilityStatusRequest,
   fetchReleaseStatusRequest,
@@ -258,6 +259,8 @@ function SettingsProviderCard({ card }: { card: SettingsProvider }) {
 
 function SettingsToolCard({ card }: { card: SettingsRuntimeCard }) {
   const state = readinessFor(card.meta);
+  const marketWorker = card.id === 'public-market-worker';
+  const savedCompletion = marketWorker ? card.meta?.lastSavedCompletionAt : null;
   return (
     <section className="pbk-settings-tool-card">
       <div className="card-head">
@@ -266,7 +269,13 @@ function SettingsToolCard({ card }: { card: SettingsRuntimeCard }) {
       </div>
       <strong>{describeTooling(card.meta)}</strong>
       <p>{String(card.meta?.note || 'Bridge-backed tooling surface.')}</p>
-      {typeof card.meta?.lastSuccessAt === 'string' && <p>Last verified read: {new Date(card.meta.lastSuccessAt).toLocaleString()}</p>}
+      {typeof card.meta?.lastSuccessAt === 'string' && <p>
+        {marketWorker ? 'Last verified run' : 'Last verified read'}: {new Date(card.meta.lastSuccessAt).toLocaleString()}
+      </p>}
+      {typeof savedCompletion === 'string' && <p>
+        Last completed run (saved evidence): <time dateTime={savedCompletion}>{new Date(savedCompletion).toLocaleString()}</time>.
+        This does not verify current readiness.
+      </p>}
     </section>
   );
 }
@@ -717,6 +726,10 @@ export function Settings() {
   const status = (snapshot?.status || {}) as Record<string, unknown>;
   const runtimeProviders = (status.providers || {}) as Record<string, Record<string, unknown>>;
   const adminTasks = Array.isArray(snapshot?.adminTasks) ? snapshot.adminTasks : [];
+  const lastSavedCompletionAt = lastCompletedPublicMarketRun(snapshot?.browserResearchJobs, adminTasks);
+  const publicMarketWorker = tooling?.publicMarketWorker;
+  const publicMarketWorkerMeta = publicMarketWorker || lastSavedCompletionAt ?
+    { ...publicMarketWorker, lastSavedCompletionAt } : undefined;
   const toolingSummary = (tooling?.summary || {}) as Record<string, unknown>;
   const toolingCoreReady = toNumber(
     toolingSummary.requiredReadyCount,
@@ -748,7 +761,7 @@ export function Settings() {
     { id: 'composio-outbound', label: 'PBK agents to Composio', meta: tooling?.composio?.outbound },
     { id: 'composio-inbound', label: 'Composio to PBK', meta: tooling?.composio?.inbound },
     { id: 'composio-cloud', label: 'E2B cloud inventory', meta: tooling?.composio?.cloud },
-    { id: 'public-market-worker', label: 'Public market worker', meta: tooling?.publicMarketWorker },
+    { id: 'public-market-worker', label: 'Public market worker', meta: publicMarketWorkerMeta },
     {
       id: 'meta-agent',
       label: 'Meta-Agent Lab',

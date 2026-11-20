@@ -24,6 +24,7 @@ async function verify(engine, options, label) {
     let taskStatus = 'pending';
     let emailReady = false;
     let offline = false;
+    const completedAt = '2026-11-20T09:25:41.515Z';
     const task = {
       id: 'fixture-task',
       provider: 'Rex',
@@ -67,8 +68,8 @@ async function verify(engine, options, label) {
             status: { stateBackend: 'postgres', pendingApprovals: 2 },
             adminTasks: [{ ...task, status: taskStatus }, { id:'market-complete',provider:'e2b',action:'public_market_brief',status:'complete',summary:'Public market brief for Tampa, FL' }],
             browserResearchJobs: [
-              {id:'other-job',provider:'e2b',source:'public-market-brief',approvalTaskId:'another-task',status:'complete',cleanupConfirmed:true,resultSummary:'UNRELATED BRIEF MUST NOT APPEAR'},
-              {id:'market-job',provider:'e2b',source:'public-market-brief',approvalTaskId:'market-complete',market:'Tampa, FL',status:'complete',cleanupConfirmed:true,resultSummary:'Public inventory evidence. Review publication dates.',sources:['https://example.org/'+ 'market-report-'.repeat(18),'javascript:alert(1)','https://user:password@example.org/private'],resultData:{limitations:['Review source dates before making an offer.','No lead records or underwriting values were changed.']}}
+              {id:'other-job',provider:'e2b',source:'public-market-brief',approvalTaskId:'another-task',status:'complete',consumed:true,cleanupConfirmed:true,completedAt:'2026-11-20T15:00:00.000Z',resultSummary:'UNRELATED BRIEF MUST NOT APPEAR'},
+              {id:'market-job',provider:'e2b',source:'public-market-brief',approvalTaskId:'market-complete',market:'Tampa, FL',status:'complete',consumed:true,cleanupConfirmed:true,completedAt,resultSummary:'Public inventory evidence. Review publication dates.',sources:['https://example.org/'+ 'market-report-'.repeat(18),'javascript:alert(1)','https://user:password@example.org/private'],resultData:{limitations:['Review source dates before making an offer.','No lead records or underwriting values were changed.']}}
             ],
           });
         }
@@ -190,6 +191,9 @@ async function verify(engine, options, label) {
     const marketWorker = page.locator('.pbk-settings-tool-card').filter({ hasText: 'Public market worker' });
     await expect(marketWorker).toContainText('Disabled');
     await expect(marketWorker).toContainText('Approval-backed public evidence worker');
+    await expect(marketWorker).toContainText('Last completed run (saved evidence)');
+    await expect(marketWorker.locator('time')).toHaveAttribute('datetime', completedAt);
+    await expect(marketWorker).toContainText('This does not verify current readiness.');
     await expect(outbound).toContainText('Read verified');
     await expect(outbound).toContainText('DND on and QA excluded');
     await expect(outbound).toContainText('Last verified read:');
@@ -208,6 +212,9 @@ async function verify(engine, options, label) {
     await expect(passcode).toBeHidden();
     await expect(autopilot).toHaveAttribute('aria-pressed', 'true');
     await expect(queue.getByText('Approved', { exact: true })).toBeVisible();
+    await diagnostics.click();
+    await expect(marketWorker).toContainText('Disabled');
+    await expect(marketWorker.locator('time')).toHaveAttribute('datetime', completedAt);
     assert.equal(verifies, 1);
     assert.equal(saves.length, 1);
     assert.deepEqual(decisions, ['approved']);

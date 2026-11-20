@@ -1,3 +1,4 @@
+import { runInNewContext } from 'node:vm';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import ts from 'typescript';
@@ -150,6 +151,52 @@ const telnyxWebhookMapEnd = bridge.indexOf(
   telnyxWebhookMapStart
 );
 const telnyxWebhookMap = bridge.slice(telnyxWebhookMapStart, telnyxWebhookMapEnd);
+const streamPolicySource = bridge.match(
+  /^function shouldStreamTelnyxOutboundCall\(.*?^\}/ms
+)?.[0];
+assert(streamPolicySource, 'Outbound Telnyx calls must support a line-specific media policy.');
+const shouldStreamTelnyxOutboundCall = runInNewContext(
+  `${streamPolicySource}\nshouldStreamTelnyxOutboundCall`,
+  {
+    DEEPGRAM_STREAM_CALLS_ENABLED: false,
+    normalizePhone: (value) => `+${value.replace(/\D/g, '')}`,
+    normalizeStringList: (value) => String(value || '').split(',').filter(Boolean),
+    process: { env: { PBK_AVA_ELEVENLABS_PHONE_LINES: '+18885555307' } },
+  }
+);
+assert(shouldStreamTelnyxOutboundCall('+18885555307'), 'A configured line must enable outbound media without a per-call override.');
+assert(!shouldStreamTelnyxOutboundCall('+15555558134'), 'Other outbound lines must retain the existing streaming default.');
+assert(shouldStreamTelnyxOutboundCall('+15555558134', { streamSentiment: true }), 'An explicit per-call streaming request must still work.');
+const mapTelnyxWebhook = runInNewContext(`${telnyxWebhookMap}\nmapTelnyxWebhook`, {
+  isoNow: () => '2026-06-01T12:30:00Z',
+  toNumber: (value, fallback) => Number.isFinite(Number(value)) ? Number(value) : fallback,
+});
+const finalizedSms = mapTelnyxWebhook({
+  data: {
+    event_type: 'message.finalized',
+    payload: { id: 'sms-test', to: [{ status: 'delivery_failed' }] },
+  },
+});
+const deliveredSms = mapTelnyxWebhook({
+  data: {
+    event_type: 'message.finalized',
+    payload: { id: 'sms-delivered-test', status: 'sent', to: [{ status: 'delivered' }] },
+  },
+});
+const hangup = mapTelnyxWebhook({
+  data: {
+    event_type: 'call.hangup',
+    payload: {
+      call_control_id: 'call-test',
+      start_time: '2026-06-01T12:00:00Z',
+      end_time: '2026-06-01T12:00:12Z',
+    },
+  },
+});
+assert(finalizedSms.payload.deliveryStatus === 'delivery_failed', 'Final SMS failure must use the recipient delivery status.');
+assert(deliveredSms.payload.deliveryStatus === 'delivered', 'Final recipient delivery status must take precedence over the sent status.');
+assert(hangup.payload.durationSeconds === 12, 'Hangup duration must use carrier timestamps when no duration is supplied.');
+assert(hangup.payload.endedAt === '2026-06-01T12:00:12Z', 'Hangup must use the carrier end timestamp.');
 const callStatusHandlerStart = bridge.indexOf(
   "if (normalizedEvent === 'call-status')"
 );

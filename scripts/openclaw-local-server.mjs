@@ -29203,7 +29203,12 @@ async function runOpenAiWebSearch(query = '', params = {}) {
         },
         body: JSON.stringify({
           ...bodyBase,
-          ...(params.singleAttempt ? { max_tool_calls: 1, max_output_tokens: 850 } : {}),
+          ...(params.singleAttempt ? {
+            reasoning: { effort: 'low' },
+            tool_choice: 'required',
+            max_tool_calls: 1,
+            max_output_tokens: 1600,
+          } : {}),
           tools: [{ type: toolType }],
         }),
       });
@@ -65387,8 +65392,8 @@ async function handleAvaRexResearch(request, body, market) {
         ? await readRexHandoff(input)
         : await runRexHandoff({ ...input, market,
           research: (location, clientRequestId) => runOpenAiWebSearch(
-            `Summarize current public housing market conditions for ${location}. Link to the sources for the key facts and state what's uncertain.`,
-            { singleAttempt: true, fallback: false, clientRequestId }
+            `Summarize current public housing market conditions for ${location} in at most 180 words. Use the first search results, cite key facts, and state what remains uncertain.`,
+            { model: 'gpt-6-luna', singleAttempt: true, fallback: false, clientRequestId }
           ),
         });
     } catch {

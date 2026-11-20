@@ -231,8 +231,12 @@ test('Ava chat starts one cited Rex request through the bridge and rereads its r
     assert.deepEqual((await chat(request)).rexHandoff, completed.rexHandoff);
     assert.equal(calls.length, 1);
     assert.equal(calls[0].requestId, completed.rexHandoff.id);
+    assert.equal(calls[0].body.model, 'gpt-6-luna');
+    assert.deepEqual(calls[0].body.reasoning, { effort: 'low' });
     assert.deepEqual(calls[0].body.tools, [{ type: 'web_search' }]);
+    assert.equal(calls[0].body.tool_choice, 'required');
     assert.equal(calls[0].body.max_tool_calls, 1);
+    assert.equal(calls[0].body.max_output_tokens, 1600);
     const quotaRequest = { message: 'Ask Rex to research Orlando, FL', researchRequestId: 'fixture-req-2' };
     const quotaFailure = await chat(quotaRequest);
     assert.equal(quotaFailure.rexHandoff.status, 'failed');

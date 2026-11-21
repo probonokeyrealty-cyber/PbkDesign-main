@@ -1,6 +1,100 @@
 const TOOL_URL = 'https://backend.composio.dev/api/v3.1/tools/execute/';
 const VERSION = '20261120_00';
 const ADDRESS = /^[^\s@<>,;]+@[^\s@<>,;]+\.[^\s@<>,;]+$/;
+const SEARCH_ADDRESS = /^[a-z0-9._+-]+@[a-z0-9.-]+\.[a-z]{2,}$/i;
+const RECEIPT_CLOCK_SKEW_MS = 5_000;
+const RECEIPT_WINDOW_MS = 48 * 60 * 60 * 1000;
+
+function receiptAddress(value) {
+  const header = typeof value === 'string' ? value.trim() : '';
+  const address = header.match(/^[^<>]*<([^<>]+)>$/)?.[1] || header;
+  return SEARCH_ADDRESS.test(address) ? address.toLowerCase() : '';
+}
+
+function normalizeMailText(value) {
+  return typeof value === 'string' ? value.replace(/\r\n/g, '\n').trim() : '';
+}
+
+export async function findAvaOutlookReceipt({
+  env = process.env, fetchImpl = globalThis.fetch, sender, recipient, subject, text, sentAt,
+} = {}) {
+  const mailbox = env.PBK_AVA_RECEIPT_GMAIL_ADDRESS?.trim().toLowerCase();
+  const accountId = env.PBK_AVA_RECEIPT_GMAIL_ACCOUNT_ID?.trim();
+  const userId = env.PBK_AVA_RECEIPT_GMAIL_USER_ID?.trim();
+  const apiKey = env.PBK_AVA_OUTLOOK_COMPOSIO_API_KEY?.trim();
+  const unavailable = { status: 503, error: 'Ava could not access the PBK inbox. You can still confirm delivery with a receipt link.' };
+  if (!SEARCH_ADDRESS.test(mailbox || '') || !accountId || !userId || !apiKey) return unavailable;
+
+  const to = receiptAddress(recipient);
+  const from = receiptAddress(sender);
+  const approvedSubject = normalizeMailText(subject);
+  const approvedText = normalizeMailText(text);
+  const sentTime = Date.parse(sentAt);
+  const [localPart, domain] = mailbox.split('@');
+  const [recipientLocal, recipientDomain] = to.split('@');
+  if (recipientDomain !== domain || recipientLocal.split('+')[0] !== localPart) {
+    return { status: 422, error: 'This email was not addressed to the PBK inbox or one of its test aliases.' };
+  }
+  if (!from || from !== env.PBK_AVA_OUTLOOK_SENDER?.trim().toLowerCase() ||
+    !approvedSubject || !approvedText || !Number.isFinite(sentTime)) {
+    return { status: 422, error: 'This approval does not have enough send details for inbox matching.' };
+  }
+
+  async function read(tool, args) {
+    const response = await fetchImpl(TOOL_URL + tool, {
+      method: 'POST',
+      redirect: 'error',
+      headers: { 'x-api-key': apiKey, 'Content-Type': 'application/json' },
+      signal: AbortSignal.timeout(8_000),
+      body: JSON.stringify({
+        connected_account_id: accountId, user_id: userId, version: VERSION,
+        arguments: { user_id: 'me', ...args },
+      }),
+    });
+    const result = response.ok ? await response.json() : null;
+    return result?.successful === true && !result.error ? result.data : null;
+  }
+
+  const earliest = sentTime - RECEIPT_CLOCK_SKEW_MS;
+  const latest = sentTime + RECEIPT_WINDOW_MS;
+  const query = [
+    'in:inbox', 'from:' + from, 'to:' + to,
+    'after:' + Math.floor((earliest - 1000) / 1000),
+    'before:' + Math.ceil((latest + 1000) / 1000),
+  ].join(' ');
+
+  try {
+    const profile = await read('GMAIL_GET_PROFILE', {});
+    if (receiptAddress(profile?.emailAddress) !== mailbox) return unavailable;
+    const result = await read('GMAIL_FETCH_EMAILS', {
+      query, label_ids: ['INBOX'], max_results: 25, verbose: true, include_payload: true,
+    });
+    if (!result || !Array.isArray(result.messages)) return unavailable;
+    const matches = new Map();
+    for (const message of result.messages) {
+      const receivedAt = Date.parse(message?.messageTimestamp);
+      if (/^[a-f0-9]{12,}$/i.test(message?.messageId || '') &&
+        /^[a-f0-9]{12,}$/i.test(message?.threadId || '') &&
+        message.labelIds?.includes('INBOX') && receivedAt >= earliest && receivedAt <= latest &&
+        receiptAddress(message.sender) === from && receiptAddress(message.to) === to &&
+        normalizeMailText(message.subject) === approvedSubject &&
+        normalizeMailText(message.messageText) === approvedText) {
+        matches.set(message.messageId, message.threadId);
+      }
+    }
+    if (result.nextPageToken || matches.size > 1) {
+      return { status: 409, error: 'Ava could not narrow the inbox search to one receipt. Check the message before confirming delivery.' };
+    }
+    if (matches.size === 0) return { status: 404, error: 'No matching message was found in the PBK inbox.' };
+    const [threadId] = matches.values();
+    const url = new URL('https://mail.google.com/mail/u/');
+    url.searchParams.set('authuser', mailbox);
+    url.hash = 'all/' + threadId;
+    return { status: 200, receiptUrl: url.href };
+  } catch {
+    return unavailable;
+  }
+}
 
 export async function sendAvaOutlookMail({
   env = process.env, fetchImpl = globalThis.fetch, sender, recipient, subject, text,

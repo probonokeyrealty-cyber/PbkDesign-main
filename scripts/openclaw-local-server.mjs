@@ -2,7 +2,7 @@ import { execFileSync } from 'node:child_process';
 import { createNeonMailRouter } from './neon-auth-mail.mjs';
 import { createComposioResearchDiscovery } from './composio-research-discovery.mjs';
 import { createPublicMarketConnectionCheck } from './public-market-connection.mjs';
-import { sendAvaOutlookMail } from './ava-outlook-mail.mjs';
+import { findAvaOutlookReceipt, sendAvaOutlookMail } from './ava-outlook-mail.mjs';
 import { normalizeOutlookReceiptUrl, readOutlookDelivery } from '../src/app/utils/outlookDelivery.mjs';
 import { createServer, globalAgent as httpGlobalAgent } from 'node:http';
 import { globalAgent as httpsGlobalAgent } from 'node:https';
@@ -3908,8 +3908,8 @@ function authorizeDirectTeamBridgeRequest({
   if (chatPermissions.has('canApproveProviderActions') && permissions.canApproveProviderActions !== true) {
     return deny('canApproveProviderActions', 'approve provider actions');
   }
-  if (normalizedMethod === 'PUT' && /^\/api\/approvals\/[^/]+\/outlook-delivery$/.test(normalizedPath) && permissions.canApproveProviderActions !== true) {
-    return deny('canApproveProviderActions', 'confirm Outlook delivery');
+  if (/^\/api\/approvals\/[^/]+\/outlook-delivery(?:\/receipt)?$/.test(normalizedPath) && permissions.canApproveProviderActions !== true) {
+    return deny('canApproveProviderActions', 'check Outlook delivery');
   }
 
   const killSwitchTool = /^(?:pbk_kill_switch|killswitch|togglekillswitch)$/i.test(toolName);
@@ -15657,18 +15657,38 @@ async function loadOutlookDeliveryForLead(leadId) {
     .sort((left, right) => right.at.localeCompare(left.at));
 }
 
-async function confirmOutlookDelivery(approvalId, receiptUrl, actor) {
+async function loadOutlookApproval(approvalId) {
   const cached = (state.approvals || []).find((item) => item.id === approvalId && (item.workspaceId || 'pbk') === 'pbk');
-  const unavailable = { status: 503, error: 'Could not save delivery confirmation. Refresh this record and try again.' };
   const useDatabase = Boolean(getPgPool());
-  if (!useDatabase && IS_HOSTED) return unavailable;
+  if (!useDatabase) return IS_HOSTED ? null : { approval: cached, cached, useDatabase };
+  const saved = await queryPgRows('SELECT * FROM public.approvals WHERE id = $1 AND workspace_id = $2', [approvalId, 'pbk']);
+  if (!saved.ok) return null;
+  const approval = saved.rows[0] && normalizePgApprovalRecord(saved.rows[0]);
+  return { approval, cached, useDatabase };
+}
 
-  let approval = cached;
-  if (useDatabase) {
-    const saved = await queryPgRows('SELECT * FROM public.approvals WHERE id = $1 AND workspace_id = $2', [approvalId, 'pbk']);
-    if (!saved.ok) return unavailable;
-    approval = saved.rows[0] && normalizePgApprovalRecord(saved.rows[0]);
+async function lookupOutlookDeliveryReceipt(approvalId) {
+  const loaded = await loadOutlookApproval(approvalId);
+  if (!loaded) return { status: 503, error: 'Could not load this Outlook approval. Try again.' };
+  const { approval } = loaded;
+  const record = readOutlookDelivery(approval);
+  if (!record) return { status: 404, error: 'Outlook approval not found.' };
+  if (approval.status !== 'approved' || (!record.canConfirm && record.state !== 'delivered')) {
+    return { status: 409, error: 'Inbox lookup is available after Outlook has attempted this approved email.' };
   }
+  const { executionParams, providerActionDispatch } = approval.metadata;
+  return findAvaOutlookReceipt({
+    sender: executionParams?.fromEmail, recipient: executionParams?.email || executionParams?.to,
+    subject: executionParams?.subject, text: executionParams?.customBody,
+    sentAt: providerActionDispatch?.dispatchStartedAt || approval.actedAt || approval.decidedAt,
+  });
+}
+
+async function confirmOutlookDelivery(approvalId, receiptUrl, actor) {
+  const unavailable = { status: 503, error: 'Could not save delivery confirmation. Refresh this record and try again.' };
+  const loaded = await loadOutlookApproval(approvalId);
+  if (!loaded) return unavailable;
+  const { approval, cached, useDatabase } = loaded;
   const record = readOutlookDelivery(approval);
   if (!record) return { status: 404, error: 'Outlook approval not found.' };
   if (record.confirmation?.receiptUrl === receiptUrl) return { status: 200, record };
@@ -79922,6 +79942,19 @@ const server = createServer(async (request, response) => {
         ...result,
         state: buildStateSnapshot(),
       });
+      return;
+    }
+
+    const outlookReceiptMatch = matchPath(pathname, '/api/approvals/:id/outlook-delivery/receipt');
+    if (outlookReceiptMatch && request.method === 'GET') {
+      response.setHeader('Cache-Control', 'no-store');
+      const teamAuth = request.pbkTeamAuth || getTeamAuthMeta(request);
+      if (hasTeamAuthCredentials(request) && (!teamAuth.ok || !getTeamPermissions().canApproveProviderActions)) {
+        json(response, 403, { ok: false, error: 'This team session cannot look up inbox receipts.' });
+        return;
+      }
+      const { status, ...result } = await lookupOutlookDeliveryReceipt(outlookReceiptMatch.groups.id);
+      json(response, status, { ok: status === 200, ...result });
       return;
     }
 

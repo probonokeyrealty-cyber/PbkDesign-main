@@ -214,8 +214,10 @@ test('bridge code matches the reviewed release fingerprint outside the scoped re
   // Parcel lead creation rechecks the CRM before using the canonical save path.
   // Deepgram opens with the announced Telnyx codec and waits for audio signal before fallback.
   // Database disconnects after Ava sends phone audio are handled in the detached reply task.
+  // Phone turn latency persistence remains best effort during a database disconnect.
+  // Interim transcripts and weak acknowledgments cannot replace a committed Ava reply.
   assert.equal(createHash('sha256').update(unchanged).digest('hex'),
-    '7d0c8c71fc094c04d3e14a9cfedf253288ac4b6a23b51c66f4a2650053ee1c07');
+    '6072863217bf9eabb86953c97672ce10a5b2a0ca90756826df845e398562e549');
 });
 
 test('production distribution includes reader and protocol, never the fixture signer', () => {

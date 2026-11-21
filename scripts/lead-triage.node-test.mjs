@@ -60,6 +60,15 @@ test('the real bridge lead queue shape resolves its exact recordId and workspace
   assert.equal(resolve({ targetPath: '/leads/a', recordKind: 'lead', recordId: 'b' }, []), null);
 });
 
+test('legacy lead query targets resolve the exact ID and reject conflicting references', () => {
+  const leads = [{ id: 'lead-a', bant: { nextStep: 'A only' } }];
+  assert.deepEqual(resolve({ targetPath: '/leads?lead=lead-a' }, leads), {
+    leadId: 'lead-a', href: '/leads/lead-a', nextStep: { state: 'recorded', text: 'A only' },
+  });
+  assert.equal(resolve({ targetPath: '/leads?lead=lead-a&lead=lead-b' }, leads), null);
+  assert.equal(resolve({ targetPath: '/leads?lead=lead-a', recordKind: 'lead', recordId: 'lead-b' }, leads), null);
+});
+
 test('foreign context ownership cannot leak next steps through either alias or nested BANT', () => {
   for (const field of ['callContext', 'call_context']) {
     assert.equal(read({ id: 'a', [field]: { leadId: 'b', nextStep: 'Private foreign instructions' } }).state, 'unavailable');

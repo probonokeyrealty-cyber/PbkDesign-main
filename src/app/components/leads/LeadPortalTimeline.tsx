@@ -1,10 +1,13 @@
 import { MessageSquareText } from 'lucide-react';
 import { ConversationTimeline } from '../inbox/ConversationTimeline';
+import { OutlookDeliveryStatus } from '../OutlookDeliveryStatus';
+import type { OutlookDelivery } from '../../utils/outlookDelivery.mjs';
 import type { ConversationEvent, ConversationThread } from '../../utils/runtimeBridge';
 
 type LeadPortalTimelineProps = {
   thread: ConversationThread | null;
   events: ConversationEvent[];
+  outlookDelivery: OutlookDelivery[];
   loading: boolean;
   loadingMore: boolean;
   error: string;
@@ -17,6 +20,7 @@ type LeadPortalTimelineProps = {
 export function LeadPortalTimeline({
   thread,
   events,
+  outlookDelivery,
   loading,
   loadingMore,
   error,
@@ -37,6 +41,14 @@ export function LeadPortalTimeline({
         </div>
         <MessageSquareText size={20} />
       </header>
+      {outlookDelivery.length > 0 && (
+        <section className="px-4 pb-3" aria-label="Outlook email activity">
+          <h3 className="text-sm font-semibold text-slate-200">Outlook email activity</h3>
+          {outlookDelivery.map((record) => (
+            <OutlookDeliveryStatus key={record.id} record={record} showSubject />
+          ))}
+        </section>
+      )}
       {thread ? (
         <ConversationTimeline
           thread={thread}
@@ -51,12 +63,12 @@ export function LeadPortalTimeline({
           onLatestSeen={() => undefined}
           onEventChanged={onEventChanged}
         />
-      ) : (
+      ) : outlookDelivery.length === 0 ? (
         <div className="pbk-lead-portal-empty">
           <MessageSquareText size={22} />
           <strong>No events in this timeline yet</strong>
         </div>
-      )}
+      ) : null}
     </section>
   );
 }

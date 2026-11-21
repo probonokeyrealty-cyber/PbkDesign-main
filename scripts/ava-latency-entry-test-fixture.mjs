@@ -19,6 +19,7 @@ export function createLatencyEntryFixture({ secret = randomUUID(), onSessionWrit
   const rawSymbol = Symbol.for('pbk.rawBodyBuffer');
   const context = vm.createContext({ Buffer, Date, Symbol, URL, randomUUID,
     process: { env: { RENDER_GIT_COMMIT: revision } },
+    OUTLOOK_LEAD_EMAIL_ENABLED: false,
     BRIDGE_API_KEY: secret, RAW_BODY_BUFFER_SYMBOL: rawSymbol, MAX_REQUEST_BODY_BYTES: 1024 * 1024,
     withRuntimeEvidenceContext, getRuntimeEvidenceContext, runBenchmark, summarizeBenchmark,
     createAvaRequestTiming, bindAgentTimingToParams, agentTimingResultSucceeded,

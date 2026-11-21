@@ -9,8 +9,10 @@ import {
   Phone,
   Users,
 } from 'lucide-react';
-import { useLocation, useNavigate } from 'react-router';
+import { Link, useLocation, useNavigate } from 'react-router';
 import { DecisionRail, type DecisionProgress } from '../components/DecisionRail';
+import { OutlookDeliveryStatus } from '../components/OutlookDeliveryStatus';
+import { readOutlookDelivery, type OutlookDelivery } from '../utils/outlookDelivery.mjs';
 import '../../styles/decision-rail.css';
 import { readLeadQueueReturn } from '../utils/leadQueueReturn';
 import { resolveTriageLead } from '../utils/leadTriage';
@@ -478,6 +480,12 @@ type BattlefieldItem = {
   recordId?: string;
 };
 
+type TodayQueueRow = {
+  item: BattlefieldItem;
+  lead: ReturnType<typeof resolveTriageLead>;
+  destination: string | null;
+};
+
 type MissionQuickAction = {
   label: string;
   description: string;
@@ -797,7 +805,7 @@ function normalizeBridgeBattlefieldItem(
     reason: friendlyBattlefieldReason(item.reason),
     cta: String(item.cta || 'Open'),
     pulse,
-    targetPath: String(item.targetPath || '/'),
+    targetPath: String(item.targetPath || ''),
     recordKind: item.recordKind,
     recordId: item.recordId,
   };
@@ -805,7 +813,6 @@ function normalizeBridgeBattlefieldItem(
 
 function friendlyBattlefieldReason(value: unknown) {
   const text = String(value || '').trim();
-  if (!text) return 'Ava recommends reviewing this next.';
   return text
     .replace(
       /outbound agent action is waiting on approval/gi,
@@ -1746,8 +1753,8 @@ function ProductionGapsRail({
 }
 
 function FounderBattlefield({
-  items,
-  leads,
+  rows,
+  notice,
   loading,
   error,
   agentsReady,
@@ -1757,8 +1764,8 @@ function FounderBattlefield({
   sourceNote,
   onSelect,
 }: {
-  items: BattlefieldItem[];
-  leads: RuntimeRecord[];
+  rows: TodayQueueRow[];
+  notice: string;
   loading: boolean;
   error: string;
   agentsReady: number;
@@ -1768,15 +1775,15 @@ function FounderBattlefield({
   sourceNote: string;
   onSelect: (item: BattlefieldItem) => void;
 }) {
+  const items = rows.map(({ item }) => item);
   const urgentCount = items.filter((item) => item.tone === 'urgent' || item.tone === 'hot').length;
   const approvalCount = items.filter((item) => /approval|contract/i.test(item.tag)).length;
   const failedCount = items.filter((item) => /failed/i.test(item.tag)).length;
-  const sub =
-    items.length > 0
-      ? `${approvalCount} review items / ${failedCount} follow-ups need review / ${urgentCount} high priority`
-      : loading
-        ? 'updating your workspace'
-        : '';
+  const sub = [
+    urgentCount ? `${urgentCount} high priority` : '',
+    approvalCount ? `${approvalCount} ${approvalCount === 1 ? 'item' : 'items'} for review` : '',
+    failedCount ? `${failedCount} failed ${failedCount === 1 ? 'follow-up' : 'follow-ups'}` : '',
+  ].filter(Boolean).join(' · ');
   const bridgeTone = loading ? 'amber' : error ? 'crimson' : 'lime';
   const bridgeLabel = loading
     ? toOperatorCopy('dispatching')
@@ -1789,25 +1796,32 @@ function FounderBattlefield({
       <div className="pbk-battlefield">
         <div className="pbk-battlefield-left">
           <h2 id="battlefield-title" className="pbk-battlefield-label">Work queue</h2>
-          <div className="pbk-battlefield-count">
-            <em>{items.length}</em> work items
-          </div>
+          {items.length > 0 && (
+            <div className="pbk-battlefield-count">
+              <em>{items.length}</em> {items.length === 1 ? 'work item' : 'work items'}
+            </div>
+          )}
           {sub && <div className="pbk-battlefield-sub">{sub}</div>}
         </div>
         <div className="pbk-battlefield-center" aria-label="Ranked work queue">
-          {items.length ? (
-            items.map((item, index) => {
-              const context = resolveTriageLead(item, leads);
-              return (
+          {notice && <p className="pbk-today-queue-notice" role="status">{notice}</p>}
+          {rows.map(({ item, lead, destination }, index) => {
+            const reason = item.reason !== lead?.nextStep.text ? item.reason : '';
+            const action = destination
+              ? lead ? 'Open workspace' : item.cta
+              : item.recordKind === 'lead' ? 'Lead unavailable' : 'Destination unavailable';
+            const accessibilityLabel = [`${item.tag}: ${item.body}`, lead?.leadId, reason, lead?.nextStep.text, action]
+              .filter(Boolean).join('. ');
+            return (
               <button
                 key={item.id}
                 type="button"
                 data-today-queue-id={item.id}
-                disabled={item.recordKind === 'lead' && !context}
+                disabled={!destination}
                 className={`pbk-bf-chip ${item.tone}`}
                 title={`${item.tag}: ${item.body} / ${item.reason}`}
-                aria-label={`Rank ${index + 1}, score ${item.score}, ${item.tag}: ${item.body}. ${context ? context.nextStep.text : item.reason}`}
-                onClick={() => onSelect(context ? { ...item, targetPath: context.href } : item)}
+                aria-label={accessibilityLabel}
+                onClick={() => destination && onSelect({ ...item, targetPath: destination })}
               >
                 <span className="pbk-bf-rank">#{index + 1}</span>
                 <span className="pbk-bf-chip-main">
@@ -1816,11 +1830,10 @@ function FounderBattlefield({
                     <span className="pbk-bf-chip-tag">{item.tag}</span>
                     <span className="pbk-bf-chip-body">{item.body}</span>
                   </span>
-                  {context && <code className="pbk-triage-lead-id" data-triage-lead-id={context.leadId}>{context.leadId}</code>}
-                  {context
-                    ? <span className="pbk-triage-next-step" data-next-step-state={context.nextStep.state}>{context.nextStep.text}</span>
-                    : <span className="pbk-bf-reason">{item.reason}</span>}
-                  <span className="pbk-triage-destination">{context ? 'Open workspace' : item.cta || 'Open'}</span>
+                  {lead && <code className="pbk-triage-lead-id" data-triage-lead-id={lead.leadId}>{lead.leadId}</code>}
+                  {reason && <span className="pbk-bf-reason">{reason}</span>}
+                  {lead && <span className="pbk-triage-next-step" data-next-step-state={lead.nextStep.state}>{lead.nextStep.text}</span>}
+                  <span className="pbk-triage-destination">{action}</span>
                 </span>
                 <span className="pbk-bf-chip-meta">
                   <span className="pbk-bf-score">{item.score}</span>
@@ -1828,35 +1841,8 @@ function FounderBattlefield({
                   <span className="pbk-bf-chip-when">{item.when}</span>
                 </span>
               </button>
-              );
-            })
-          ) : (
-            <button
-              type="button"
-              className="pbk-bf-chip warm"
-              aria-label={loading ? 'Loading work queue' : error ? 'Work queue unavailable' : 'Ranked queue is clear'}
-              onClick={() => undefined}
-            >
-              <span className="pbk-bf-rank">#0</span>
-              <span className="pbk-bf-chip-main">
-                <span className="pbk-bf-chip-line">
-                  <PbkPulseDot color="sky" />
-                  <span className="pbk-bf-chip-tag">{loading ? 'Loading' : error ? 'Unavailable' : 'Clear'}</span>
-                  <span className="pbk-bf-chip-body">
-                    {loading ? 'Loading work queue' : error ? 'Work queue unavailable' : 'No work items in this queue'}
-                  </span>
-                </span>
-                <span className="pbk-bf-reason">
-                  {loading || error ? 'No contact status has been verified.' : 'Ava will surface the next item when it matters.'}
-                </span>
-              </span>
-              <span className="pbk-bf-chip-meta">
-                <span className="pbk-bf-score">0</span>
-                <span className="pbk-bf-source">GET /state</span>
-                <span className="pbk-bf-chip-when">now</span>
-              </span>
-            </button>
-          )}
+            );
+          })}
         </div>
         <div className="pbk-battlefield-right">
           <div className="pbk-bf-mini-stat">
@@ -1913,8 +1899,8 @@ export function CommandCenter() {
   const [bridgeBattlefieldItems, setBridgeBattlefieldItems] = useState<BattlefieldItem[] | null>(
     null
   );
-  const [battlefieldSource, setBattlefieldSource] = useState('client snapshot fallback');
-  const [battlefieldQueueLoading, setBattlefieldQueueLoading] = useState(false);
+  const [battlefieldSource, setBattlefieldSource] = useState('');
+  const [battlefieldQueueLoading, setBattlefieldQueueLoading] = useState(true);
   const [intelligenceStreamItems, setIntelligenceStreamItems] = useState<RuntimeRecord[] | null>(
     null
   );
@@ -1986,6 +1972,10 @@ export function CommandCenter() {
     () => getPageSlice(pendingApprovals, approvalPage, OPERATOR_LIST_PAGE_SIZE),
     [approvalPage, pendingApprovals]
   );
+  const outlookHistory = useMemo(() => approvals.map(readOutlookDelivery)
+    .filter((record): record is OutlookDelivery => record !== null && record.state !== 'pending' && record.state !== 'closed')
+    .sort((left, right) => Number(right.state === 'recovery') - Number(left.state === 'recovery') || right.at.localeCompare(left.at))
+    .slice(0, 5), [approvals]);
   const visibleAdminTasks = useMemo(
     () => getPageSlice(adminTasks, adminPage, OPERATOR_LIST_PAGE_SIZE),
     [adminPage, adminTasks]
@@ -2069,8 +2059,11 @@ export function CommandCenter() {
   const completedCall = completedCallId
     ? calls.find((call) => getCallId(call) === completedCallId && mapCallStatus(call.status) === 'ended')
     : undefined;
-  const todayLiveCall = isWidgetVisible('liveCall') ? activeCall : undefined;
-  const todayCompletedCall = activeCall ? null : completedCall;
+  const showTodayCalls = isWidgetVisible('liveCall') && !error;
+  const todayLiveCall = showTodayCalls && activeCall?.callId ? activeCall : undefined;
+  const todayCompletedCall = showTodayCalls && !activeCall ? completedCall : undefined;
+  const callReviewed = Boolean(todayCompletedCall && reviewedCallIds.has(getCallId(todayCompletedCall)));
+  const callIsStartAction = Boolean(todayLiveCall || (todayCompletedCall && !callReviewed));
   const todayCallLabel = todayLiveCall
     ? todayLiveCall.status === 'dialing'
       ? 'Dialing'
@@ -2469,6 +2462,55 @@ export function CommandCenter() {
     ? 'bridge-ranked founder queue'
     : 'client-ranked snapshot fallback';
   const pendingApprovalCount = pendingApprovals.length;
+  const hasApprovalReviewTarget = (approval: RuntimeRecord) =>
+    Boolean(String(approval.id || '').trim()) &&
+    !approvalRecordKeys(approval).some((key) => uncertainApprovalKeys.current.has(key));
+  const reviewableApprovalCount = isWidgetVisible('approvals') && approvalsAvailable
+    ? pendingApprovals.filter(hasApprovalReviewTarget).length
+    : 0;
+  const queueIsLoading = loading || !battlefieldSource;
+  const hasQueueData = bridgeBattlefieldItems !== null || Boolean(battlefieldSource && snapshot && !error);
+  const queueRows = (battlefieldSource ? battlefieldItems : []).map((item): TodayQueueRow => {
+    const lead = resolveTriageLead(item, leadImports);
+    const { targetPath } = item;
+    let destination = lead?.href ?? null;
+    if (item.recordKind !== 'lead') {
+      if (targetPath === '/inbox' ||
+          (targetPath === '#approvals' && reviewableApprovalCount > 0) ||
+          (targetPath === '#live-call' && todayLiveCall) ||
+          (targetPath === '#admin-activity' && isWidgetVisible('adminActivity'))) {
+        destination = targetPath;
+      }
+    }
+    return { item, lead, destination: hasQueueData ? destination : null };
+  });
+  const hasAvailableWork = queueRows.some(({ destination }) => Boolean(destination));
+  const usingQueueFallback = hasQueueData && bridgeBattlefieldItems === null;
+  let queueNotice = '';
+  if (queueIsLoading && !hasAvailableWork) queueNotice = 'Loading work queue';
+  else if (!hasQueueData || (usingQueueFallback && !queueRows.length)) queueNotice = 'Work queue unavailable';
+  else if (usingQueueFallback) queueNotice = 'Showing work from the latest workspace snapshot.';
+  else if (!queueRows.length) queueNotice = 'No work items in this queue';
+
+  let todayStart = {
+    label: 'Browse leads',
+    href: '/leads',
+    note: queueNotice || 'No work items can be opened right now.',
+  };
+  if (reviewableApprovalCount) {
+    todayStart = {
+      label: 'Review approvals',
+      href: '#approvals',
+      note: `${reviewableApprovalCount} ${reviewableApprovalCount === 1 ? 'item needs' : 'items need'} your decision.`,
+    };
+  } else if (hasAvailableWork) {
+    todayStart = {
+      label: 'Go to work queue',
+      href: '#battlefield-title',
+      note: usingQueueFallback ? 'Work from your latest snapshot is available.' : 'Choose a ranked item to start.',
+    };
+  }
+  const isLoadingStart = queueIsLoading && !reviewableApprovalCount && !hasAvailableWork;
   const pendingAdminCount = adminTasks.filter((item) => item.status === 'pending').length;
   const unreadMessageCount = messages.filter((message) => {
     const status = String(message.status || '').toLowerCase();
@@ -2553,10 +2595,10 @@ export function CommandCenter() {
     fetchFounderWorkQueueRequest({ limit: OPERATOR_LIST_PAGE_SIZE })
       .then((response) => {
         if (cancelled) return;
-        const items = Array.isArray(response.items)
-          ? response.items.map(normalizeBridgeBattlefieldItem)
-          : [];
-        setBridgeBattlefieldItems(items);
+        if (response.ok !== true || !Array.isArray(response.items)) {
+          throw new Error('No verified work queue returned');
+        }
+        setBridgeBattlefieldItems(response.items.map(normalizeBridgeBattlefieldItem));
         setBattlefieldSource(response.source || response.result || 'bridge work queue');
       })
       .catch((queueError) => {
@@ -2592,11 +2634,18 @@ export function CommandCenter() {
     return () => cancelAnimationFrame(frame);
   }, [returnContext, loading, battlefieldQueueLoading, battlefieldItems]);
 
+  const focusTodaySection = (id: string) => {
+    const section = document.getElementById(id);
+    if (!section) return;
+    const heading = section.querySelector<HTMLElement>('h2') || section;
+    heading.tabIndex = -1;
+    heading.focus({ preventScroll: true });
+    section.scrollIntoView({ block: 'start', behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
+  };
+
   const selectBattlefieldItem = (item: BattlefieldItem) => {
     if (item.targetPath.startsWith('#')) {
-      document
-        .querySelector(item.targetPath)
-        ?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      focusTodaySection(item.targetPath.slice(1));
       return;
     }
     navigate(item.targetPath, /^\/leads(?:\/|\?)/.test(item.targetPath) ? {
@@ -2606,12 +2655,7 @@ export function CommandCenter() {
 
   const jumpToTodaySection = (event: React.MouseEvent<HTMLAnchorElement>, id: string) => {
     event.preventDefault();
-    const section = document.getElementById(id);
-    if (!section) return;
-    const heading = section.querySelector<HTMLElement>('h2') || section;
-    heading.tabIndex = -1;
-    heading.focus({ preventScroll: true });
-    section.scrollIntoView({ block: 'start', behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
+    focusTodaySection(id);
   };
 
   const runRuntimeAction = async (
@@ -2845,10 +2889,9 @@ export function CommandCenter() {
   };
 
   const isApprovalDecisionUnavailable = (approval: Record<string, unknown>) =>
-    !approval.id ||
     !approvalsAvailable ||
     Boolean(pendingAction) ||
-    approvalRecordKeys(approval).some((key) => uncertainApprovalKeys.current.has(key));
+    !hasApprovalReviewTarget(approval);
   const isAdminDecisionPending = (taskId: string) => pendingAction.startsWith(`admin:${taskId}:`);
   const isApprovalDecisionPending = (approvalId: string) =>
     pendingAction.startsWith(`approval:${approvalId}:`);
@@ -2888,40 +2931,61 @@ export function CommandCenter() {
           </div>
         </section>
 
-        {(todayLiveCall || todayCompletedCall) && (
-          <section
-            aria-label="Call status"
-            className={`pbk-today-call${todayLiveCall ? ' is-live' : ''}`}
-          >
-            <div className="pbk-today-call-context">
-              {todayLiveCall
-                ? <Phone size={16} aria-hidden="true" />
-                : <ClipboardCheck size={16} aria-hidden="true" />}
-              <div className="pbk-today-call-copy" role="status">
-                <span>{todayCallLabel}</span>{' '}
-                <strong>{todayCaller}</strong>
+        <section className="pbk-today-start" aria-label="Start here">
+          {!callIsStartAction && (
+            <div className="pbk-today-call pbk-today-start-row">
+              <div className="pbk-today-call-copy">
+                <strong>Start here</strong>
+                <p role="status">{todayStart.note}</p>
               </div>
+              <Link
+                to={todayStart.href.startsWith('#')
+                  ? { pathname: location.pathname, search: location.search, hash: todayStart.href }
+                  : todayStart.href}
+                className="pbk-today-call-action"
+                data-today-primary={isLoadingStart ? undefined : ''}
+                onClick={todayStart.href.startsWith('#')
+                  ? (event) => jumpToTodaySection(event, todayStart.href.slice(1))
+                  : undefined}
+              >
+                {todayStart.label}
+              </Link>
             </div>
-            {todayLiveCall ? (
-              <a
-                className="pbk-today-call-action"
-                href="#live-call"
-                onClick={(event) => jumpToTodaySection(event, 'live-call')}
-              >
-                Open call
-              </a>
-            ) : todayCompletedCall && (
-              <button
-                className="pbk-today-call-action"
-                type="button"
-                aria-haspopup="dialog"
-                onClick={() => setOpenedReviewCall(todayCompletedCall)}
-              >
-                {reviewedCallIds.has(getCallId(todayCompletedCall)) ? 'View review' : 'Review call'}
-              </button>
-            )}
-          </section>
-        )}
+          )}
+          {(todayLiveCall || todayCompletedCall) && (
+            <section aria-label="Call status" className={`pbk-today-call${todayLiveCall ? ' is-live' : ''}`}>
+              <div className="pbk-today-call-context">
+                {todayLiveCall
+                  ? <Phone size={16} aria-hidden="true" />
+                  : <ClipboardCheck size={16} aria-hidden="true" />}
+                <div className="pbk-today-call-copy" role="status">
+                  <span>{todayCallLabel}</span>{' '}
+                  <strong>{todayCaller}</strong>
+                </div>
+              </div>
+              {todayLiveCall ? (
+                <a
+                  className="pbk-today-call-action"
+                  data-today-primary=""
+                  href="#live-call"
+                  onClick={(event) => jumpToTodaySection(event, 'live-call')}
+                >
+                  Open call
+                </a>
+              ) : todayCompletedCall && (
+                <button
+                  className="pbk-today-call-action"
+                  data-today-primary={callReviewed ? undefined : ''}
+                  type="button"
+                  aria-haspopup="dialog"
+                  onClick={() => setOpenedReviewCall(todayCompletedCall)}
+                >
+                  {callReviewed ? 'View review' : 'Review call'}
+                </button>
+              )}
+            </section>
+          )}
+        </section>
 
         {actionStatus && !(liveCallActionStatus && isWidgetVisible('liveCall')) && (
           <div
@@ -2954,14 +3018,14 @@ export function CommandCenter() {
         </nav>
         <div className={`pbk-faster-triage${isWidgetVisible('approvals') ? ' has-review' : ''}`}>
         <FounderBattlefield
-          items={battlefieldItems}
-          leads={leadImports}
-          loading={loading || battlefieldQueueLoading}
+          rows={queueRows}
+          notice={queueNotice}
+          loading={queueIsLoading}
           error={error}
           agentsReady={toolingCoreReady}
           agentsTotal={toolingCoreTotal}
           mode={approvalMode}
-          sourceLabel={battlefieldSource}
+          sourceLabel={battlefieldSource || 'Checking work queue'}
           sourceNote={battlefieldSourceNote}
           onSelect={selectBattlefieldItem}
         />
@@ -3028,6 +3092,7 @@ export function CommandCenter() {
                       >
                         {getApprovalPreview(approval)}
                       </div>
+                      <OutlookDeliveryStatus record={readOutlookDelivery(approval)} />
                       {approvalRecordKeys(approval).some((key) =>
                         uncertainApprovalKeys.current.has(key)
                       ) && (
@@ -3090,6 +3155,12 @@ export function CommandCenter() {
                   itemLabel="reviews"
                   onPageChange={setApprovalPage}
                 />
+                {outlookHistory.length > 0 && (
+                  <section className="mt-4" aria-label="Recent Outlook email approvals">
+                    <h3 className="text-sm font-semibold text-slate-200">Recent Outlook email approvals</h3>
+                    {outlookHistory.map((record) => <OutlookDeliveryStatus key={record.id} record={record} showSubject showLead />)}
+                  </section>
+                )}
                 <DataSourceCaption
                   endpoint="snapshot.approvals payload + PUT /api/approvals/:id"
                   note="preview uses message/body/text/content/payload/metadata fields"

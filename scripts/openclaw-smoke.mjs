@@ -254,6 +254,15 @@ export async function runIsolatedBridgeSmoke() {
         Authorization: `Bearer ${API_KEY}`,
       },
     }).then((response) => response.json());
+    const marketWorker = tooling?.tooling?.publicMarketWorker;
+    assert(
+      marketWorker?.kind === 'public_market_worker' &&
+        marketWorker.state === 'disabled' &&
+        marketWorker.enabled === false &&
+        marketWorker.configured === false &&
+        marketWorker.ready === false,
+      'Tooling status must explicitly report the unavailable E2B worker as disabled.',
+    );
     const contractTemplates = await fetch(`${BASE_URL}/api/contracts/templates`, {
       headers: {
         Authorization: `Bearer ${API_KEY}`,

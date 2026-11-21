@@ -125,7 +125,17 @@ function assertWorkOrderProof(label, payload, { agentId, providerWriteIntent }) 
 async function main() {
   const stateDir = await mkdtemp(join(tmpdir(), 'pbk-ava-agent-delegation-'));
   await writeFile(join(stateDir, 'openclaw-state.json'), JSON.stringify({
-    approvals: [],
+    approvals: [{
+      id: 'approval-previous-outlook', leadId: 'lead-morgan', status: 'approved', type: 'provider-action',
+      approvalAction: 'sendColdEmail', createdAt: '2026-11-20T10:00:00Z',
+      metadata: {
+        executionParams: { provider: 'outlook', subject: 'Previous fixture email' },
+        providerActionDispatch: { status: 'reconciliation_required' },
+      },
+    }, {
+      id: 'approval-other-outlook', leadId: 'lead-other', status: 'approved', type: 'provider-action',
+      approvalAction: 'sendColdEmail', metadata: { executionParams: { provider: 'outlook' } },
+    }],
     appointments: [],
     leadImports: [{ id: 'lead-morgan', leadName: 'Morgan Test', address: '12 Test Street', email: 'test@example.net' }],
     calls: [
@@ -162,7 +172,11 @@ async function main() {
       RESEND_API_KEY: '',
       TELNYX_API_KEY: '',
       INSTANTLY_API_KEY: '',
-      PBK_AVA_OUTLOOK_COMPOSIO_API_KEY: '',
+      PBK_AGENT_SMOKE_OUTLOOK_FIXTURE: '1',
+      PBK_AVA_OUTLOOK_LEAD_EMAIL_ENABLED: '1',
+      PBK_AVA_OUTLOOK_COMPOSIO_API_KEY: 'fixture-only',
+      PBK_AVA_OUTLOOK_ACCOUNT_ID: 'fixture-account',
+      PBK_AVA_OUTLOOK_USER_ID: 'fixture-user',
       PBK_AVA_OUTLOOK_SENDER: 'acquisition@example.com',
     },
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -225,7 +239,7 @@ async function main() {
     assert.doesNotMatch(noCall.answer, /Morgan|Other Seller/);
 
     const nurtureUnavailable = await chat(
-      'ava-runtime-nurture', 'Send an email to this lead saying we can talk tomorrow.', 'lead-morgan'
+      'ava-runtime-nurture', 'Send a text to this lead saying we can talk tomorrow.', 'lead-morgan'
     );
     assert.equal(nurtureUnavailable.toolPlan?.toolName, 'consultNurtureAgent');
     assert.match(nurtureUnavailable.answer, /could not recommend a channel or time/);
@@ -279,9 +293,10 @@ async function main() {
     assert.equal(persistedApproval?.metadata?.providerActionResult?.appointmentId, appointment.id);
     assert.equal(persistedApproval?.metadata?.providerActionResult?.appointmentStatus, 'scheduled');
 
-    const outlook = await chat('ava-runtime-outlook', 'Send an email via Outlook saying "Fixture only."', 'lead-morgan');
+    const outlook = await chat('ava-runtime-outlook', 'Send an email saying "Fixture only."', 'lead-morgan');
     assert.equal(outlook.assistantAction, 'approval_required', outlook.answer);
     assert.equal(outlook.toolPlan?.params?.provider, 'outlook');
+    assert.equal(outlook.toolResult?.approval?.metadata?.executionParams?.email, 'test@example.net');
     const outlookApprovalId = outlook.toolResult?.approval?.id || outlook.toolResult?.approvalId;
     assert.ok(outlookApprovalId, JSON.stringify(outlook.toolResult));
     const outlookDecision = await requestJson(baseUrl, `/api/approvals/${outlookApprovalId}`, {
@@ -289,8 +304,40 @@ async function main() {
     });
     assert.equal(outlookDecision.json.approval?.status, 'approved');
     assert.equal(outlookDecision.json.providerActionResult?.provider, 'Outlook');
-    assert.equal(outlookDecision.json.providerActionResult?.result, 'provider_missing');
-    assert.equal(outlookDecision.json.providerActionResult?.ok, false);
+    assert.equal(outlookDecision.json.providerActionResult?.result, 'live');
+    assert.equal(outlookDecision.json.approval?.metadata?.providerActionResult?.deliveryStatus, 'accepted');
+    assert.equal(outlookDecision.json.approval?.metadata?.providerActionResult?.providerRequestId, 'fixture-outlook-1');
+    const repeatedOutlook = await requestJson(baseUrl, `/api/approvals/${outlookApprovalId}`, {
+      method: 'PUT', body: { status: 'approved', actor: 'QA operator' },
+    });
+    assert.ok(repeatedOutlook.status === 200 || repeatedOutlook.status === 409, repeatedOutlook.text);
+    const outlookState = JSON.parse(await readFile(join(stateDir, 'openclaw-state.json'), 'utf8'));
+    const outlookMessages = outlookState.messages.filter((item) => item.provider === 'Outlook');
+    assert.equal(outlookMessages.length, 1);
+    assert.equal(outlookMessages[0].providerAttemptId, 'fixture-outlook-1');
+    assert.equal(outlookMessages[0].deliveryStatus, 'accepted');
+    const outlookLead = await requestJson(baseUrl, '/api/leads/lead-morgan/full');
+    assert.equal(outlookLead.status, 200);
+    assert.deepEqual(outlookLead.json.outlookDelivery.map(({ state }) => state), ['accepted', 'recovery']);
+    assert.equal(outlookLead.json.outlookDelivery[0].receiptId, 'fixture-outlook-1');
+    const receiptUrl = 'https://mail.google.com/mail/u/0/#inbox/1234567890abcdef';
+    const confirmationPath = `/api/approvals/${outlookApprovalId}/outlook-delivery`;
+    const noAttestation = await requestJson(baseUrl, confirmationPath, { method: 'PUT', body: { receiptUrl } });
+    assert.equal(noAttestation.status, 400);
+    const confirm = () => requestJson(baseUrl, confirmationPath, { method: 'PUT', body: { receiptUrl, matchedReceipt: true } });
+    const confirmedDelivery = await confirm();
+    assert.equal(confirmedDelivery.status, 200, confirmedDelivery.text);
+    assert.equal(confirmedDelivery.json.record.state, 'delivered');
+    assert.equal((await confirm()).json.record.confirmation.confirmedAt, confirmedDelivery.json.record.confirmation.confirmedAt);
+    const otherReceipt = await requestJson(baseUrl, confirmationPath, {
+      method: 'PUT', body: { matchedReceipt: true, receiptUrl: 'https://mail.google.com/mail/u/0/#inbox/abcdef1234567890' },
+    });
+    assert.equal(otherReceipt.status, 409);
+    const confirmedLead = await requestJson(baseUrl, '/api/leads/lead-morgan/full');
+    assert.equal(confirmedLead.json.outlookDelivery[0].confirmation.receiptUrl, receiptUrl);
+    const confirmedState = JSON.parse(await readFile(join(stateDir, 'openclaw-state.json'), 'utf8'));
+    assert.equal(confirmedState.messages.filter((item) => item.provider === 'Outlook').length, 1);
+    assert.equal(confirmedState.approvals.find((item) => item.id === outlookApprovalId).metadata.providerActionDispatch.status, 'completed');
 
     console.log(
       JSON.stringify(

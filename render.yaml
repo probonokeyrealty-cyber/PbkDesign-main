@@ -26,6 +26,8 @@ services:
         value: 87711eb9-2a9f-40b4-92c6-0f8075151ff0
       - key: PBK_BATCH_APPLY_ENABLED
         value: "false"
+      - key: PBK_AVA_OUTLOOK_LEAD_EMAIL_ENABLED
+        value: "1"
 
       # ── Core auth + state ───────────────────────────────────────────────
       # Bearer token required on POST endpoints. Same value goes into the PBK
@@ -334,6 +336,8 @@ services:
         sync: false
       - key: PBK_DEEPGRAM_STREAM_CALLS
         value: "false"
+      - key: PBK_AVA_ELEVENLABS_PHONE_LINES
+        value: "+18883315307"
       - key: PBK_DEEPGRAM_STREAM_TRACK
         value: inbound_track
       - key: PBK_DEEPGRAM_STREAM_CODEC

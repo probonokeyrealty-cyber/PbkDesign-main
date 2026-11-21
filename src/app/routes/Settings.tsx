@@ -13,6 +13,7 @@ import {
 } from 'lucide-react';
 import { PbkDataSource } from '../../components/pbk/index';
 import { useRuntimeSnapshot } from '../hooks/useRuntimeSnapshot';
+import { lastCompletedPublicMarketRun } from '../utils/publicMarketStatus';
 import {
   fetchObservabilityStatusRequest,
   fetchReleaseStatusRequest,
@@ -56,6 +57,24 @@ function describeProvider(meta: Record<string, unknown> | undefined) {
 }
 
 function describeTooling(meta: Record<string, unknown> | undefined) {
+  if (meta?.kind === 'public_market_worker') {
+    if (meta.state === 'verified')
+      return meta.ready === true ? 'Completed and cleaned' : 'Not recently verified';
+    return (
+      (
+        {
+          disabled: 'Disabled',
+          configuration_missing: 'Needs setup',
+          unverified: 'Approval required',
+          connected_unverified: 'Connected, execution unverified',
+          connection_unverified: 'Connection unverified',
+          running: 'Running',
+          unavailable: 'Job unavailable',
+          cleanup_unconfirmed: 'Cleanup unconfirmed',
+        } as Record<string, string>
+      )[String(meta.state)] ?? 'Not reported by this bridge'
+    );
+  }
   const state = readinessFor(meta);
   if (state === 'unknown') return 'Waiting on bridge';
   if (state === 'ready') return 'Ready';
@@ -121,6 +140,7 @@ type SettingsRuntimeCard = {
   id: string;
   label: string;
   meta: Record<string, unknown> | undefined;
+  savedCompletion?: { checked: boolean; completedAt: string | null };
 };
 
 type SettingsProvider = SettingsRuntimeCard & { id: keyof typeof PROVIDER_ICONS };
@@ -251,14 +271,34 @@ function SettingsProviderCard({ card }: { card: SettingsProvider }) {
 
 function SettingsToolCard({ card }: { card: SettingsRuntimeCard }) {
   const state = readinessFor(card.meta);
+  const evidence = card.savedCompletion;
   return (
     <section className="pbk-settings-tool-card">
       <div className="card-head">
         <h3>{card.label}</h3>
         <StatusDot state={state} />
       </div>
-      <strong>{describeTooling(card.meta)}</strong>
+      <strong>
+        {evidence
+          ? `Current readiness: ${card.meta ? describeTooling(card.meta) : 'Not reported by this bridge'}`
+          : describeTooling(card.meta)}
+      </strong>
       <p>{String(card.meta?.note || 'Bridge-backed tooling surface.')}</p>
+      {evidence && (
+        <p>
+          Last completed run (saved evidence):{' '}
+          {evidence.completedAt ? (
+            <time dateTime={evidence.completedAt}>
+              {new Date(evidence.completedAt).toLocaleString()}
+            </time>
+          ) : evidence.checked ? (
+            'No saved E2B run reported'
+          ) : (
+            'Saved evidence unavailable'
+          )}
+          . This does not verify current readiness.
+        </p>
+      )}
     </section>
   );
 }
@@ -712,6 +752,15 @@ export function Settings() {
     { id: 'docs', label: 'Document Sends', meta: quotas?.docs },
   ];
   const toolingCards: SettingsRuntimeCard[] = [
+    {
+      id: 'public-market-worker',
+      label: 'Public market worker',
+      meta: tooling?.publicMarketWorker,
+      savedCompletion: {
+        checked: Boolean(snapshot),
+        completedAt: lastCompletedPublicMarketRun(snapshot?.browserResearchJobs, adminTasks),
+      },
+    },
     {
       id: 'meta-agent',
       label: 'Meta-Agent Lab',

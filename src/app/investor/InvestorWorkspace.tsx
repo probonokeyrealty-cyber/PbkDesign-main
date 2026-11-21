@@ -477,6 +477,7 @@ export function InvestorWorkspace({
       const form = new FormData();
       form.set('id', property.id);
       form.set('revision', String(revision));
+      form.set('uploadRequestId', entry.id);
       form.set('file', entry.file);
       form.set('title', entry.file.name);
       form.set('rights', entry.rights.trim());

@@ -51,10 +51,9 @@ export function createPortalHandler(profile: any) {
       body: JSON.stringify({ expected_revision: revision, next_data: data }),
     });
   }
-  async function digest(token: string) {
-    return Array.from(
-      new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(token)))
-    )
+  async function digest(input: string | ArrayBuffer) {
+    const bytes = typeof input === 'string' ? new TextEncoder().encode(input) : input;
+    return Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', bytes)))
       .map((n) => n.toString(16).padStart(2, '0'))
       .join('');
   }
@@ -214,13 +213,21 @@ export function createPortalHandler(profile: any) {
         const rights = String(form.get('rights') || '').trim();
         const title = String(form.get('title') || file.name).slice(0, 200);
         const alt = String(form.get('alt') || '').slice(0, 400);
+        const buyerVisible = form.get('buyerVisible') === 'true';
+        const uploadRequestId = String(form.get('uploadRequestId') || '');
+        if (
+          uploadRequestId &&
+          !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(
+            uploadRequestId
+          )
+        )
+          return json({ error: 'Invalid upload request.' }, 400, origin);
         if (!rights || rights.length > 1000 || (file.type !== 'application/pdf' && !alt))
           return json({ error: 'Media rights and photo alt text are required.' }, 400, origin);
-        if (!before.data.properties[id])
-          return json({ error: 'Staff access is required.' }, 403, origin);
-        if (before.data.properties[id].revision !== revision)
-          return json({ error: 'Property changed. Reload before uploading.' }, 409, origin);
-        const bytes = new Uint8Array(await file.arrayBuffer());
+        const property = before.data.properties[id];
+        if (!property) return json({ error: 'Staff access is required.' }, 403, origin);
+        const content = await file.arrayBuffer();
+        const bytes = new Uint8Array(content);
         const signature = Array.from(bytes.slice(0, 12));
         const valid =
           file.type === 'application/pdf'
@@ -232,6 +239,33 @@ export function createPortalHandler(profile: any) {
                 : String.fromCharCode(...signature.slice(0, 4)) === 'RIFF' &&
                   String.fromCharCode(...signature.slice(8, 12)) === 'WEBP';
         if (!valid) return json({ error: 'File contents do not match its type.' }, 400, origin);
+        const uploadFingerprint = uploadRequestId
+          ? await digest(
+              JSON.stringify([
+                revision,
+                title,
+                file.type,
+                rights,
+                alt,
+                buyerVisible,
+                await digest(content),
+              ])
+            )
+          : null;
+        const recorded = uploadRequestId
+          ? property.assets.find(
+              (asset: any) => asset.uploadRequestId === uploadRequestId && asset.uploadedBy === uid
+            )
+          : null;
+        // Recover a lost success response only when the draft has no intervening edits.
+        if (
+          recorded &&
+          property.revision === revision + 1 &&
+          recorded.uploadFingerprint === uploadFingerprint
+        )
+          return json({ property }, 200, origin);
+        if (recorded || property.revision !== revision)
+          return json({ error: 'Property changed. Reload before uploading.' }, 409, origin);
         const assetId = crypto.randomUUID();
         const path = `${id}/${assetId}`;
         await retryStaleUploads(before.data);
@@ -283,7 +317,8 @@ export function createPortalHandler(profile: any) {
                   kind: file.type === 'application/pdf' ? 'packet' : 'photo',
                   mime: file.type,
                   rights,
-                  buyerVisible: form.get('buyerVisible') === 'true',
+                  buyerVisible,
+                  ...(uploadRequestId ? { uploadRequestId, uploadFingerprint } : {}),
                   uploadedBy: uid,
                   uploadedAt: new Date().toISOString(),
                 },

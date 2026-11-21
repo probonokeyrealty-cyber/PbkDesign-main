@@ -17,6 +17,7 @@ try {
       const commands = [];
       const errors = [];
       const uploads = [];
+      const requestIds = new Map();
       const property = {
         id: 'fixture-property',
         revision: 1,
@@ -40,18 +41,30 @@ try {
             const title = form.get('title');
             uploads.push(title);
             assert.equal(form.get('id'), property.id);
-            assert.equal(form.get('revision'), String(property.revision));
+            const requestId = form.get('uploadRequestId');
+            assert.match(requestId, /^[0-9a-f-]{36}$/);
+            if (requestIds.has(title)) assert.equal(requestId, requestIds.get(title));
+            requestIds.set(title, requestId);
             assert.equal(form.get('buyerVisible'), 'true');
             assert.equal(form.get('rights'), 'PBK-owned synthetic fixture');
             if (title !== 'packet.pdf') assert.ok(form.get('alt'));
-            if (title === 'exterior.png' && uploads.filter((name) => name === title).length === 1)
-              return route.abort('connectionreset');
+            const previous = property.assets.find((asset) => asset.uploadRequestId === requestId);
+            if (previous) {
+              assert.equal(form.get('revision'), String(property.revision - 1));
+              return route.fulfill({ json: { property } });
+            }
+            assert.equal(form.get('revision'), String(property.revision));
+            const interrupt =
+              title === 'exterior.png' && uploads.filter((name) => name === title).length === 1;
+            if (interrupt && width === 390) return route.abort('connectionreset');
             property.assets.push({
               id: String(property.revision++),
+              uploadRequestId: requestId,
               title,
               kind: title === 'packet.pdf' ? 'packet' : 'photo',
               rights: form.get('rights'),
             });
+            if (interrupt) return route.abort('connectionreset');
             return route.fulfill({ json: { property } });
           }
           const { command, payload } = route.request().postDataJSON();

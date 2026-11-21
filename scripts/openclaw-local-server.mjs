@@ -2,6 +2,11 @@ import { execFileSync } from 'node:child_process';
 import { createNeonMailRouter } from './neon-auth-mail.mjs';
 import { createComposioResearchDiscovery } from './composio-research-discovery.mjs';
 import { createPublicMarketConnectionCheck } from './public-market-connection.mjs';
+import { createComposioMarketSearch } from './lib/composio-market-search.mjs';
+import { createPublicMarketClaims } from './lib/public-market-claims.mjs';
+import { createPublicMarketController, recoverPublicMarketJob } from './lib/public-market-controller.mjs';
+import { createPublicMarketWorker } from './lib/public-market-worker.mjs';
+import { createRaleighClaim, isFreshRaleighApproval, isRaleighCanaryArmed, isRaleighCanaryRequest, RALEIGH_CANARY_MARKET } from './lib/production-raleigh-canary.mjs';
 import { findAvaOutlookReceipt, sendAvaOutlookMail } from './ava-outlook-mail.mjs';
 import { normalizeOutlookReceiptUrl, readOutlookDelivery } from '../src/app/utils/outlookDelivery.mjs';
 import { createServer, globalAgent as httpGlobalAgent } from 'node:http';
@@ -12997,7 +13002,7 @@ function hydrateState(raw = {}) {
     contracts: trimArray(raw.contracts || defaults.contracts, LIMITS.contracts),
     documentDeliveries: trimArray(raw.documentDeliveries || defaults.documentDeliveries, LIMITS.documentDeliveries),
     attachments: trimArray(raw.attachments || defaults.attachments, LIMITS.attachments),
-    browserResearchJobs: trimArray(raw.browserResearchJobs || defaults.browserResearchJobs, LIMITS.browserResearchJobs),
+    browserResearchJobs: trimArray(raw.browserResearchJobs || defaults.browserResearchJobs, LIMITS.browserResearchJobs).map(recoverPublicMarketJob),
     campaigns: trimArray(raw.campaigns || defaults.campaigns, LIMITS.campaigns),
     campaignLeads: trimArray(raw.campaignLeads || defaults.campaignLeads, LIMITS.campaignLeads),
     campaignEvents: trimArray(raw.campaignEvents || defaults.campaignEvents, LIMITS.campaignEvents),
@@ -15109,6 +15114,10 @@ function addLeadStageTransition(stateRef, transition) {
 }
 
 function addAdminTask(stateRef, task) {
+  if ((task.provider === 'e2b' || String(task.id || '').startsWith('admin-e2b-market-') || task.action === 'public_market_brief') &&
+      (task[publicMarketApprovalCapability] !== true || stateRef.adminTasks.some((item) => item.id === task.id))) {
+    throw Error('public_market_approval_denied');
+  }
   stateRef.adminTasks.unshift(task);
   limitStateArrays(stateRef);
   updateDerivedStatus(stateRef);
@@ -36539,6 +36548,20 @@ function createAdminTaskRecord(params = {}) {
 }
 
 async function executeAdminTask(task, overrides = {}) {
+  if (task.provider === 'e2b') {
+    if (task.action !== 'public_market_brief' || overrides.payload !== undefined || overrides[publicMarketApprovalCapability] !== true) {
+      task.status = 'warning';
+      return { ok: false, live: false, simulated: false, provider: 'e2b', action: task.action, result: 'public_market_approval_denied', details: 'Approve a fresh sealed public-market request through the approval queue.' };
+    }
+    if ((overrides.dryRun ?? task.dryRun) !== false) return { ok: true, live: false, simulated: true, provider: 'e2b', action: task.action, details: 'Dry run only; no public search or sandbox started.' };
+    const started = await getPublicMarketController().start(task, publicMarketApprovalCapability);
+    if (!started.ok) {
+      task.status = 'warning';
+      return { ...started, live: false, simulated: false, provider: 'e2b', action: task.action, details: 'Raleigh canary did not start. Check its receipt before any further action.' };
+    }
+    task.status = 'executing';
+    return { ok: true, live: true, simulated: false, provider: 'e2b', action: task.action, result: 'queued', jobId: started.jobId, details: 'Approved public market worker queued. Its result and cleanup status will appear in Brain.' };
+  }
   const payload = {
     ...(task.payload || {}),
     ...(overrides.payload || {}),
@@ -37432,6 +37455,73 @@ async function deleteLeadProfileRowFromDb(lead = {}, fallbackId = '') {
 }
 
 let checkPublicMarketConnection;
+const publicMarketApprovalCapability = Symbol('operator-raleigh-canary-approval');
+const isPublicMarketArmed = () => isRaleighCanaryArmed(process.env);
+const publicMarketConnection = () => (checkPublicMarketConnection ??= createPublicMarketConnectionCheck())();
+const publicMarketSearch = createComposioMarketSearch({
+  production: true,
+  env: { ...process.env, PBK_COMPOSIO_MARKET_SEARCH_ENABLED: 'true' },
+});
+const publicMarketWorker = createPublicMarketWorker({
+  env: { ...process.env, PBK_E2B_MARKET_WORKER_ENABLED: 'true' },
+  search: async (query) => {
+    if (!isPublicMarketArmed() || !(await publicMarketConnection()).connected || !isPublicMarketArmed()) {
+      return { ok: false, live: false };
+    }
+    return publicMarketSearch.search(query);
+  },
+});
+let publicMarketController;
+
+function getPublicMarketController() {
+  if (publicMarketController) return publicMarketController;
+  const claims = createPublicMarketClaims({
+    getPool: getPgPool,
+    testDirectory: !IS_HOSTED && process.env.NODE_ENV === 'test' ? RUNTIME_DIR : null,
+  });
+  return publicMarketController = createPublicMarketController({
+    signingKey: BRIDGE_API_KEY,
+    approvalCapability: publicMarketApprovalCapability,
+    worker: publicMarketWorker,
+    claimJob: createRaleighClaim(claims.claim, isPublicMarketArmed),
+    getJob: findBrowserResearchJob,
+    saveJob: async (job) => {
+      upsertBrowserResearchJob(state, job);
+      await persistState(state);
+    },
+    onComplete: async (taskId, jobId, result) => {
+      const task = state.adminTasks.find((item) => item.id === taskId);
+      if (!task) return;
+      const before = task.status;
+      task.status = result.ok ? 'complete' : 'warning';
+      task.updatedAt = isoNow();
+      recordAdminExecution(task, {
+        ok: result.ok,
+        jobId, provider: 'e2b', action: 'public_market_brief', live: true, simulated: false,
+        executedAt: isoNow(),
+        details: result.ok ? 'Raleigh canary saved; worker cleanup confirmed.' : 'Raleigh canary did not complete. Do not retry.',
+      }, { statusBefore: before, statusAfter: task.status, requestedBy: 'Rex' });
+      await persistState(state);
+    },
+  });
+}
+
+async function publicMarketToolingStatus() {
+  const connection = await publicMarketConnection();
+  const executionEnabled = connection.connected && isPublicMarketArmed();
+  const receipt = state.browserResearchJobs.find((job) =>
+    job.provider === 'e2b' && job.source === 'public-market-brief' && job.market === RALEIGH_CANARY_MARKET &&
+    job.status === 'complete' && job.consumed === true && job.cleanupConfirmed === true &&
+    state.adminTasks.some((task) => task.id === job.approvalTaskId && task.provider === 'e2b' &&
+      task.action === 'public_market_brief' && task.status === 'complete'));
+  return {
+    ...connection,
+    executionEnabled,
+    note: receipt
+      ? `Saved Raleigh canary: sandbox cleanup confirmed. Execution is ${executionEnabled ? 'temporarily armed' : 'disabled'}.`
+      : connection.note,
+  };
+}
 
 async function buildToolingStatus() {
   const [scenario, researchJobs, upgradeManifest, propertyDataLocalStatus, voiceFallbackLocalStatus, mcpRegistry, mcpResearchCandidates, dashboard, streakPipelineStatus] = await Promise.all([
@@ -50079,6 +50169,7 @@ function findBrowserResearchJob(jobId = '') {
 
 async function updateBrowserResearchJobFromPayload(payload = {}) {
   const jobId = String(payload.jobId || payload.id || payload.job_id || '').trim();
+  if (jobId.startsWith('market-') || findBrowserResearchJob(jobId)?.provider === 'e2b' || payload.provider === 'e2b' || payload.source === 'public-market-brief') return {ok:false,result:'public_market_callback_denied'};
   if (!jobId) {
     return {
       ok: false,
@@ -60580,6 +60671,7 @@ const toolHandlers = {
 
   async requestAdminAction(params = {}) {
     recordToolUse('requestAdminAction');
+    if (String(params.id||'').startsWith('admin-e2b-market-') || params.provider === 'e2b' || params.action === 'public_market_brief') return {ok:false,result:'public_market_approval_denied'};
     const command = String(params.command || params.query || '').trim();
     const detected = params.detected || detectAdminIntent(command) || {};
     const task = createAdminTaskRecord({
@@ -76574,7 +76666,7 @@ const server = createServer(async (request, response) => {
         ok: true,
         tooling: {
           ...await buildToolingStatus(),
-          publicMarketWorker: await (checkPublicMarketConnection ??= createPublicMarketConnectionCheck())(),
+          publicMarketWorker: await publicMarketToolingStatus(),
         },
       });
       return;
@@ -79420,6 +79512,28 @@ const server = createServer(async (request, response) => {
       const body = await readBody(request);
       const toolName = body.toolName;
       const params = body.params || {};
+      if (toolName === 'runAgentCommand' && params.cloudResearchOperation !== undefined) {
+        if (!isDirectQualificationFounder(request.headers, BRIDGE_API_KEY) ||
+            !isPublicMarketArmed() || !isRaleighCanaryRequest(params)) {
+          json(response, 403, { ok: false, result: 'raleigh_canary_preparation_denied' });
+          return;
+        }
+        const prepared = await getPublicMarketController().prepare({ agentId: 'rex', market: RALEIGH_CANARY_MARKET });
+        if (!prepared.ok) {
+          json(response, 409, prepared);
+          return;
+        }
+        prepared.task[publicMarketApprovalCapability] = true;
+        addAdminTask(state, prepared.task);
+        await persistState(state);
+        json(response, 200, {
+          ok: true,
+          taskId: prepared.task.id,
+          jobId: prepared.job.id,
+          status: prepared.task.status,
+        });
+        return;
+      }
       if (!toolHandlers[toolName]) {
         json(response, 404, {
           ok: false,
@@ -79758,6 +79872,15 @@ const server = createServer(async (request, response) => {
 
       const requestedStatus = normalizeApprovalDecisionStatus(body.status || body.action || task.status);
       const statusBefore = task.status;
+      if (task.provider === 'e2b' && (
+        !isDirectQualificationFounder(request.headers, BRIDGE_API_KEY) ||
+        !isFreshRaleighApproval(task, process.env) || task.action !== 'public_market_brief' ||
+        statusBefore !== 'pending' ||
+        Object.keys(body).join(',') !== 'status' || body.status !== 'approved'
+      )) {
+        json(response, 403, { ok: false, result: 'public_market_approval_denied' });
+        return;
+      }
       task.status = requestedStatus;
       task.updatedAt = isoNow();
       task.actor = body.actor || 'api';
@@ -79769,6 +79892,7 @@ const server = createServer(async (request, response) => {
           ...body,
           dryRun: body.dryRun ?? (String(requestedStatus).toLowerCase() === 'approved' ? false : task.dryRun),
         };
+        if (task.provider === 'e2b') executionOverrides[publicMarketApprovalCapability] = true;
         execution = await executeAdminTask(task, executionOverrides);
         if (String(task.status).toLowerCase() === 'approved') task.status = execution.ok ? 'complete' : 'warning';
         recordAdminExecution(task, execution, {

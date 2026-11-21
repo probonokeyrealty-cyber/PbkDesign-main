@@ -5,6 +5,9 @@ import { build } from 'esbuild';
 const root = process.cwd();
 const dockerfile = readFileSync(resolve(root, 'Dockerfile.openclaw'), 'utf8');
 const entrypoint = 'openclaw-local-server.mjs';
+if (!dockerfile.includes('e2b@2.64.0') || !dockerfile.includes('COPY scripts/lib/public-market-program.mjs ./scripts/lib/public-market-program.mjs')) {
+  throw new Error('Dockerfile.openclaw must install the E2B SDK and package the fixed worker program.');
+}
 
 function getRelativeScriptImports(relativeFile) {
   const absoluteFile = resolve(root, 'scripts', relativeFile);

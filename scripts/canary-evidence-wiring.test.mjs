@@ -177,7 +177,7 @@ test('unapproved v2 policy is not replaced with a pilot or legacy policy', async
   assert.equal(result.ready, false);
 });
 
-test('approval, auth, delivery and dispatch code outside maturity remains byte-for-byte unchanged', () => {
+test('approval, auth, delivery and dispatch code outside maturity stays at the reviewed baseline', () => {
   const unchanged = (source.slice(0, start) + source.slice(end))
     .replace("import { readCanaryEvidence } from './canary-evidence-reader.mjs';\n", '');
   // Outlook lead mail binds the saved address to an approval and persists the provider receipt.
@@ -186,8 +186,9 @@ test('approval, auth, delivery and dispatch code outside maturity remains byte-f
   // Delivery confirmation is a metadata-only write and cannot start dispatch.
   // Telnyx receipt mapping and the scoped outbound media policy are covered by the
   // unified conversation bridge smoke test.
+  // The Raleigh canary adds a separate founder-only approval and durable one-use claim.
   assert.equal(createHash('sha256').update(unchanged).digest('hex'),
-    '12b475c5113455ef6a32711b49d8ea25ca63cbf68bc36372869ce05768658e5d');
+    'ca223c422d30edc899c2581107ab81eee83a670c9e7916ed4b1e6be2601abf0c');
 });
 
 test('production distribution includes reader and protocol, never the fixture signer', () => {

@@ -32,6 +32,30 @@ test('the saved Raleigh cleanup note does not change live readiness or enable ex
   assert.equal(readiness.note, 'Read-only checks passed.');
 });
 
+test('only the audited historical Raleigh run exposes the independently verified provider receipt', () => {
+  const id = 'market-872144f4-f1b0-442d-bb3d-d4934d5ab5fe';
+  const job = { ...savedJob, id, approvalTaskId: `admin-e2b-${id}`, completedAt: '2026-11-21T03:52:24.543Z' };
+  const task = { ...savedApproval, id: job.approvalTaskId };
+  const readiness = { state: 'connected_unverified', executionEnabled: false };
+  const read = (j = job, t = task) => publicMarket.withSavedRaleighCleanup(readiness, [j], [t]);
+  assert.deepEqual(read().savedRaleighReceipt, {
+    jobId: id,
+    completedAt: job.completedAt,
+    exa: { tool: 'EXA_ANSWER', count: 1, logId: 'log_xcDSN0pjmKxa', at: '2026-11-21T03:52:22.526Z' },
+    e2b: {
+      count: 1, sandboxId: 'ijcx2v1hcfq8xhld5200u',
+      createdAt: '2026-11-21T03:52:23.226628858Z', createdEventId: '2c2b93bb-d61a-4fcd-a816-0124d7d4bf55',
+      killedAt: '2026-11-21T03:52:24.494246864Z', killedEventId: '6a26be93-755a-4437-bab0-7b132100bc00',
+      cleanupConfirmed: true,
+    },
+  });
+  for (const change of [{ id: 'another-run' }, { completedAt: savedJob.completedAt }, { cleanupConfirmed: false }]) {
+    assert.equal(read({ ...job, ...change }).savedRaleighReceipt, undefined);
+  }
+  assert.equal(read(job, { ...task, status: 'pending' }).savedRaleighReceipt, undefined);
+  assert.equal(publicMarket.withSavedRaleighCleanup({ executionEnabled: true }, [job], [task]).savedRaleighReceipt, undefined);
+});
+
 test('only a consumed Raleigh run with confirmed cleanup and a completed matching approval is shown', () => {
   const readiness = { state: 'connection_unverified', executionEnabled: false, note: 'Read-only checks unavailable.' };
   const active = { ...readiness, executionEnabled: true };

@@ -13,7 +13,8 @@ import {
 } from 'lucide-react';
 import { PbkDataSource } from '../../components/pbk/index';
 import { useRuntimeSnapshot } from '../hooks/useRuntimeSnapshot';
-import { lastCompletedPublicMarketRun } from '../utils/publicMarketStatus';
+import { lastCompletedPublicMarketRun, readSavedRaleighReceipt } from '../utils/publicMarketStatus';
+import type { SavedRaleighReceipt } from '../utils/publicMarketStatus';
 import {
   fetchObservabilityStatusRequest,
   fetchReleaseStatusRequest,
@@ -269,9 +270,29 @@ function SettingsProviderCard({ card }: { card: SettingsProvider }) {
   );
 }
 
+function RaleighReceipt({ receipt }: { receipt: SavedRaleighReceipt }) {
+  const time = (value: string) => <time dateTime={value}>{new Date(value).toLocaleString()}</time>;
+  return (
+    <details className="pbk-settings-receipt">
+      <summary>View receipt</summary>
+      <h4>Raleigh, NC · Saved canary</h4>
+      <p>Completed {time(receipt.completedAt)}. Historical evidence only; opening this receipt does not run anything.</p>
+      <dl>
+        <dt>Exa: {receipt.exa.count} successful call</dt>
+        <dd><code>{receipt.exa.tool}</code> at {time(receipt.exa.at)}. Composio log: <code>{receipt.exa.logId}</code>.</dd>
+        <dt>E2B: {receipt.e2b.count} sandbox run</dt>
+        <dd>Sandbox <code>{receipt.e2b.sandboxId}</code> created {time(receipt.e2b.createdAt)}. Event: <code>{receipt.e2b.createdEventId}</code>.</dd>
+        <dt>Cleanup confirmed</dt>
+        <dd>The same sandbox was terminated {time(receipt.e2b.killedAt)}. Event: <code>{receipt.e2b.killedEventId}</code>.</dd>
+      </dl>
+    </details>
+  );
+}
+
 function SettingsToolCard({ card }: { card: SettingsRuntimeCard }) {
   const state = readinessFor(card.meta);
   const evidence = card.savedCompletion;
+  const receipt = evidence && readSavedRaleighReceipt(card.meta);
   return (
     <section className="pbk-settings-tool-card">
       <div className="card-head">
@@ -299,6 +320,7 @@ function SettingsToolCard({ card }: { card: SettingsRuntimeCard }) {
           . This does not verify current readiness.
         </p>
       )}
+      {receipt && <RaleighReceipt receipt={receipt} />}
     </section>
   );
 }

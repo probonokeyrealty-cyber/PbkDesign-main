@@ -13271,6 +13271,33 @@ html[data-theme='light'] .pbk-lead-edit-modal-footer {
   font-size: 17px;
 }
 
+.pbk-settings-receipt {
+  margin-top: 10px;
+}
+
+.pbk-settings-receipt summary {
+  width: fit-content;
+  color: var(--sky);
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.pbk-settings-receipt h4,
+.pbk-settings-receipt dl {
+  margin: 10px 0 0;
+}
+
+.pbk-settings-receipt dt {
+  margin-top: 8px;
+  font-weight: 600;
+}
+
+.pbk-settings-receipt dd {
+  margin: 2px 0 0;
+  overflow-wrap: anywhere;
+}
+
 .pbk-settings-metrics {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(260px, 0.8fr);

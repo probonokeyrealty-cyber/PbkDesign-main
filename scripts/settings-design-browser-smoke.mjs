@@ -29,6 +29,15 @@ async function verify(engine, options, label) {
       approvalTaskId: marketTask.id, provider: 'e2b', source: 'public-market-brief', status: 'complete',
       consumed: true, cleanupConfirmed: true, completedAt,
     };
+    const receipt = {
+      jobId: 'fixture-raleigh-run', completedAt,
+      exa: { tool: 'EXA_ANSWER', count: 1, logId: 'fixture-composio-log', at: '2026-11-20T09:25:32.000Z' },
+      e2b: {
+        count: 1, sandboxId: 'fixture-sandbox',
+        createdAt: '2026-11-20T09:25:34.000Z', createdEventId: 'fixture-created',
+        killedAt: '2026-11-20T09:25:41.000Z', killedEventId: 'fixture-killed', cleanupConfirmed: true,
+      },
+    };
     const task = {
       id: 'fixture-task',
       provider: 'Rex',
@@ -44,7 +53,7 @@ async function verify(engine, options, label) {
       const request = route.request();
       const url = new URL(request.url());
       const path = url.pathname;
-      if (/e2b|composio|\/invoke(?:$|\/)/i.test(path)) passiveCloudRequests.push(path);
+      if (/e2b|composio/i.test(url.hostname) || /e2b|composio|\/invoke(?:$|\/)/i.test(path)) passiveCloudRequests.push(path);
       const method = request.method();
       const answer = (json, status = 200) => route.fulfill({ status, json });
       if (url.origin !== hostedOrigin) return route.abort();
@@ -97,7 +106,10 @@ async function verify(engine, options, label) {
             },
             '/api/tooling/status': { ok: true, tooling: {
               summary: { requiredCount: 1 },
-              ...(savedCloudFixture ? { publicMarketWorker: { kind: 'public_market_worker', configured: true, ready: false, state: 'connected_unverified' } } : {}),
+              ...(savedCloudFixture ? { publicMarketWorker: {
+                kind: 'public_market_worker', configured: true, ready: false, state: 'connected_unverified',
+                executionEnabled: false, savedRaleighReceipt: receipt,
+              } } : {}),
             } },
             '/api/settings': { ok: true, settings: { operatingMode } },
             '/api/release/status': { ok: true, source: 'fixture' },
@@ -175,11 +187,21 @@ async function verify(engine, options, label) {
     const marketWorker = page.locator('.pbk-settings-tool-card').filter({ hasText: 'Public market worker' });
     await expect(marketWorker).toContainText('Current readiness: Not reported by this bridge');
     await expect(marketWorker).toContainText('No saved E2B run reported');
+    const viewReceipt = marketWorker.getByText('View receipt', { exact: true });
+    const receiptHeading = marketWorker.getByRole('heading', { name: /Raleigh, NC/ });
+    await expect(viewReceipt).toHaveCount(0);
     savedCloudFixture = true;
     await refresh.click();
     await expect(marketWorker).toContainText('Current readiness: Connected, execution unverified');
-    await expect(marketWorker.locator('time')).toHaveAttribute('datetime', completedAt);
+    await expect(marketWorker.locator(':scope > p > time')).toHaveAttribute('datetime', completedAt);
     await expect(marketWorker).toContainText('This does not verify current readiness.');
+    await expect(receiptHeading).toBeHidden();
+    await viewReceipt.press('Enter');
+    await expect(receiptHeading).toBeVisible();
+    for (const label of ['Exa: 1 successful call', 'E2B: 1 sandbox run', 'Cleanup confirmed', 'fixture-created', 'fixture-killed']) {
+      await expect(marketWorker.getByText(label, { exact: true })).toBeVisible();
+    }
+    assert.deepEqual(passiveCloudRequests, []);
     await expect(page.getByRole('heading', { name: 'Vector capacity' })).toBeVisible();
     await expect(page.getByRole('heading', { name: 'Production deploy readiness' })).toBeVisible();
     assert(
@@ -187,6 +209,8 @@ async function verify(engine, options, label) {
         .locator('.pbk-settings-surface')
         .evaluate((surface) => surface.scrollWidth <= surface.clientWidth + 1)
     );
+    await viewReceipt.click();
+    await expect(receiptHeading).toBeHidden();
 
     await page.reload();
     await expect(title).toBeVisible();
@@ -198,7 +222,7 @@ async function verify(engine, options, label) {
     assert.deepEqual(decisions, ['approved']);
     await diagnostics.click();
     await expect(marketWorker).toContainText('Current readiness: Connected, execution unverified');
-    await expect(marketWorker.locator('time')).toHaveAttribute('datetime', completedAt);
+    await expect(marketWorker.locator(':scope > p > time')).toHaveAttribute('datetime', completedAt);
     assert.deepEqual(passiveCloudRequests, []);
     if (process.env.PBK_SETTINGS_SCREENSHOTS === '1') {
       await page.screenshot({ path: `.pbk-local/settings-${label}.png`, fullPage: true });

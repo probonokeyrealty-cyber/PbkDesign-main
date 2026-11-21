@@ -79,6 +79,9 @@ function sourceBetween(startMarker, endMarker, afterMarker = '') {
 }
 
 const clock = Date.now();
+const mediaStart = sourceBetween("    if (event.event === 'start')", "    if (event.event === 'media' && event.media?.payload)", 'async function handleTelnyxDeepgramMediaSocket(');
+assert.match(mediaStart, /session\.telnyxMediaCodec = normalizeTelnyxMediaCodec\([\s\S]*?\);\s*void openTelnyxDeepgram\(\)/,
+  'Deepgram must wait for the codec announced by the Telnyx start frame');
 const sent = [];
 const forwarded = [];
 const locks = new Map();

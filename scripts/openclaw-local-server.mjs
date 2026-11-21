@@ -73234,6 +73234,7 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
         mediaFormat.encoding || mediaFormat.codec || mediaFormat.format || '',
         DEEPGRAM_STREAM_CODEC
       );
+      void openTelnyxDeepgram();
       recordCallTrace('telnyx_media_start', {
         ...session,
         status: 'started',
@@ -73331,11 +73332,10 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
       void finalize('telnyx-stop');
     }
   };
-  for (const queuedRaw of earlyTelnyxMessages.splice(0)) liveTelnyxMessageHandler(queuedRaw);
-
-  void (async () => {
+  async function openTelnyxDeepgram() {
+    if (finalized || deepgramOpenStarted) return;
+    deepgramOpenStarted = true;
     try {
-      deepgramOpenStarted = true;
       const codecOptions = buildTelnyxDeepgramLiveOptions(
         session.telnyxMediaCodec || DEEPGRAM_STREAM_CODEC
       );
@@ -73408,7 +73408,7 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
       }
       void finalize(deepgramOpenStarted ? 'deepgram-open-failed' : 'deepgram-not-started');
     }
-  })();
+  }
 
   socket.on('close', () => {
     void finalize('websocket-close');
@@ -73417,6 +73417,7 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
     console.warn('[pbk-local-openclaw] Telnyx media socket error:', error?.message || error);
     void finalize('websocket-error');
   });
+  for (const queuedRaw of earlyTelnyxMessages.splice(0)) liveTelnyxMessageHandler(queuedRaw);
 }
 
 const neonAuthMailRouter = createNeonMailRouter();

@@ -203,9 +203,9 @@ test('bridge code matches the reviewed release fingerprint outside the scoped re
   // Telnyx receipt tests cover verified hangups, carrier history and projection replay.
   // Ava's turn contract handles corrected asking prices and stop-contact requests.
   // Parcel lead creation rechecks the CRM before using the canonical save path.
-  // Telnyx silence no longer starts a Deepgram fallback timer.
+  // Deepgram opens with the announced Telnyx codec and waits for audio signal before fallback.
   assert.equal(createHash('sha256').update(unchanged).digest('hex'),
-    '969a6c1621fb185a806d5e51f16c566fb1872c300ece8f2e7165d16b33f71351');
+    '113326d3b647b0e07a9e58267ca545a93493cfdb0fdc631b9b031cb7ef9d7102');
 });
 
 test('production distribution includes reader and protocol, never the fixture signer', () => {

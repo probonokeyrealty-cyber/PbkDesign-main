@@ -72,6 +72,8 @@ test('shell routes are inside the staff-gated layout and recognized for route re
   const layout = read('src/app/shell/ParadiseLayout.tsx');
   assert.match(layout, /<TeamAccessGate onAuthenticated=\{onAuthenticated\}>\{children\}<\/TeamAccessGate>/);
   assert.match(layout, /'\/dialer',/);
+  const viteShellPaths = read('vite.config.ts').match(/const shellHistoryPaths = new Set\(\[([^\]]+)\]\)/)[1];
+  assert.match(viteShellPaths, /'\/dialer',/, 'Vite deep links enter the shell');
   const panel = read('src/app/components/PhoneNumbersPanel.tsx');
   assert.match(panel, /id="phone-numbers"/);
   assert.match(panel, /window\.location\.hash !== '#phone-numbers'/);

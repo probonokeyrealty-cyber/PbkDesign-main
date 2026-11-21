@@ -230,7 +230,7 @@ test('team sessions: phone number management and dialing follow PBK permissions'
 });
 
 test('bridge team gate denies phone-number writes and dialer calls without permission', () => {
-  const bridge = readFileSync(new URL('./openclaw-local-server.mjs', import.meta.url), 'utf8');
+  const bridge = readFileSync(new URL('./openclaw-local-server.mjs', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
   const fn = bridge.match(/^function authorizeDirectTeamBridgeRequest\(\{[\s\S]*?\n\}\n(?=\nfunction getTeamApprovalRestriction)/m)?.[0];
   assert.ok(fn);
   const authorize = runInNewContext(`${fn}\nauthorizeDirectTeamBridgeRequest`, { getAvaChatRequiredPermissions: () => new Set() });

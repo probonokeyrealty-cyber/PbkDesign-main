@@ -333,6 +333,7 @@ async function verify(engine, width) {
     });
     await expect.poll(() => Boolean(pendingLeadRead)).toBe(true);
     await expect(page.getByRole('button', { name: 'Inspect agent', exact: true })).toBeDisabled();
+    await expect(page.getByRole('button', { name: 'Open Analyzer', exact: true })).toBeDisabled();
     const savedEvidence = page.getByRole('group', { name: 'Saved property evidence', exact: true });
     await expect(savedEvidence).toHaveCount(0);
     await expect(page.getByRole('region', { name: 'Property', exact: true })).toHaveCount(0);

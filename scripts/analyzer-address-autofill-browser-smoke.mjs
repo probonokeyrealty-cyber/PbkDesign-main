@@ -158,8 +158,8 @@ try {
       assert.equal(enrichments.length, 2, 'Linked draft reload hydrates without provider requests');
       await expect(page.getByRole('spinbutton', { name: 'Comp B sold price' })).toHaveValue('460000');
       await page.getByRole('button', { name: /^Analyze Deal/ }).click();
-      await expect.poll(() => enrichments.length).toBe(3);
-      assert.equal(enrichments[2].leadId, 'qa-address-save', 'Analyze gathers evidence for the captured linked lead before readiness checks');
+      await expect.poll(() => writes.filter(write => write.method === 'PATCH').length).toBe(3);
+      assert.equal(enrichments.length, 2, 'Analyze uses saved evidence without a property refresh');
       await expect(page.getByRole('spinbutton', { name: 'Comp A sold price' })).toHaveValue('499999');
       await expect(beds).toHaveValue('7');
       await expect(arv).toHaveValue('600000');
@@ -168,7 +168,6 @@ try {
       assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `${width}px overflow`);
       assert.deepEqual(unexpectedPropertyRequests, []);
       await expect(page.getByRole('button', {name:/^(Analyze Deal|Open Call Mode)/}).first()).toBeEnabled();
-      await expect.poll(()=>writes.filter(write=>write.method==='PATCH').length).toBe(3);
       assert.deepEqual(writes.filter(write=>write.method==='PATCH').at(-1).body.expectedPropertyAddress,{street:'42 Fixture Avenue',city:'Example City',state:'CA',zip:'90210'});
       assert.equal(writes.filter(write=>write.method==='PATCH').at(-1).body.deal.recordedSales.review,'suggested-unreviewed');
       assert.equal(writes.filter(write=>write.method==='PATCH').at(-1).body.deal.comps.B.price,460000,'Analyze must retain the auto-filled B slot in its final CRM patch');

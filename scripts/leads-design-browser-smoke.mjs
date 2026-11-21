@@ -10,15 +10,38 @@ const property = {
   address: '123 Fixture Avenue', city: 'Example City', state: 'CA', zip: '90210',
   sqft: 1600, arv: 250000, mao: 152000, type: 'house',
 };
+const propertyAddress = '123 Fixture Avenue, Example City, CA 90210';
+const savedAt = '2026-11-20T12:00:00Z';
+function savedSelection(id, address, price) {
+  const sale = { id, address, price, soldDate: '2026-10-20' };
+  return {
+    comps: {
+      A: { address, price, date: sale.soldDate, link: '' },
+      B: { address: '', price: 0, date: '', link: '' },
+      C: { address: '', price: 0, date: '', link: '' },
+    },
+    recordedSales: {
+      provider: 'ATTOM', review: 'operator-selected', selectedIds: [id], sales: [sale],
+      address: { street: property.address, city: property.city, state: property.state, zip: property.zip },
+      retrievedAt: savedAt,
+    },
+  };
+}
 const leadA = {
   id: 'fixture-north', leadId: 'fixture-north', selectedPath: 'cash', score: 88,
   seller: { name: 'Fixture North', email: 'north@example.invalid' },
   property, assignment: { stage: 'negotiating', assignedAgent: 'Fixture Agent' },
+  analyzer: savedSelection('north-comp', '12 North Fixture Avenue', 250000),
   bant: { nextStep: 'Confirm the closing date' }, updatedAt: '2026-06-08T15:00:00Z',
 };
 const leadB = {
   ...leadA, id: 'fixture-south', leadId: 'fixture-south',
   seller: { name: 'Fixture South', email: 'south@example.invalid' },
+  analyzer: savedSelection('south-comp', '97 South Fixture Avenue', 310000),
+  deal: { propertyRecordSnapshot: {
+    source: 'attom', address: propertyAddress, retrievedAt: savedAt,
+    facts: { apn: '002-03', beds: 3, livingSqft: 1800 },
+  } },
 };
 const analyzerKey = 'pbk:local:analyzer:current-deal';
 
@@ -241,12 +264,43 @@ async function verify(browserType, viewport, device = {}) {
     assert.equal(writes[1].path, '/api/leads/fixture-north');
     assert.equal(writes[1].body.name, 'Fixture North Updated');
 
-    await page.getByRole('button', { name: 'Analyze', exact: true }).click();
+    const beforeAnalyzer = enrichments.length;
+    const openAnalyzer = page.getByRole('button', { name: 'Open Analyzer', exact: true });
+    const analyzerRecord = page.getByText('ATTOM public records · Saved record', { exact: true });
+    const compAddress = page.getByRole('textbox', { name: 'Comp A address', exact: true });
+    await openAnalyzer.click();
     await expect(page).toHaveURL(/\/deal\/fixture-north$/);
     await expect(page.locator('#deal-arv')).toHaveValue('250000');
+    await expect(compAddress).toHaveValue('12 North Fixture Avenue');
+    await analyzerRecord.click();
+    await expect(page.getByText('001-02', { exact: true })).toBeVisible();
     await page.getByText('CRM handoff · Linked lead', { exact: true }).click();
     await expect(page.getByText('Lead ID: fixture-north', { exact: true })).toBeVisible();
     await expect(page.getByLabel('Seller name', { exact: true })).toHaveValue('Fixture North Updated');
+    assert.equal(enrichments.length, beforeAnalyzer, 'Opening North Analyzer must only read saved evidence');
+    await page.goBack();
+    await expect(openAnalyzer).toBeVisible();
+    await page.getByRole('button', { name: 'Back to leads', exact: true }).click();
+    await roster.getByRole('link', { name: 'Open lead Fixture South at 123 Fixture Avenue', exact: true }).click();
+    await openAnalyzer.click();
+    await expect(page).toHaveURL(/\/deal\/fixture-south$/);
+    await expect(compAddress).toHaveValue('97 South Fixture Avenue');
+    await expect(page.getByRole('spinbutton', { name: 'Comp A sold price', exact: true })).toHaveValue('310000');
+    await expect(page.getByRole('spinbutton', { name: 'Bedrooms', exact: true })).toHaveValue('3');
+    await analyzerRecord.click();
+    await expect(page.getByText('002-03', { exact: true })).toBeVisible();
+    await expect(page.getByText('001-02', { exact: true })).toHaveCount(0);
+    await expect(page.getByRole('spinbutton', { name: 'Square footage', exact: true })).toHaveValue('1600');
+    await page.reload();
+    await expect(compAddress).toHaveValue('97 South Fixture Avenue');
+    await analyzerRecord.click();
+    await expect(page.getByText('002-03', { exact: true })).toBeVisible();
+    assert.equal(enrichments.length, beforeAnalyzer, 'Opening South Analyzer must only read saved evidence');
+    assert.equal(previews.length, 2, 'Changing leads must not call property preview');
+    assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
+    if (process.env.PBK_LEADS_DESIGN_SCREENSHOTS === '1') {
+      await page.screenshot({ path: `.pbk-local/lead-analyzer-${browserType.name()}-${viewport.width}.png` });
+    }
     await page.goto(`${origin}/leads/fixture-north`);
     const deleteButton = page.getByRole('button', { name: 'Delete lead', exact: true });
     await deleteButton.click();
@@ -263,7 +317,7 @@ async function verify(browserType, viewport, device = {}) {
       ['POST', '/api/leads'], ['PATCH', '/api/leads/fixture-north'], ['DELETE', '/api/leads/fixture-north'],
     ]);
     assert.deepEqual(unexpectedWrites, []);
-    console.log(`${browserType.name()} ${viewport.width}px: roster, lead creation, save, Analyzer sync, and exact confirmed delete passed.`);
+    console.log(`${browserType.name()} ${viewport.width}px: exact saved Analyzer facts and comps, no passive refresh, roster, and CRM checks passed.`);
   } finally {
     await browser.close();
   }

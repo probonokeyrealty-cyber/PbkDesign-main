@@ -157,12 +157,6 @@ assert(
   'Lead hydration should preserve meaningful analyzer values when the canonical lead contains blanks.'
 );
 assert(
-  /currentLeadId && currentLeadId === leadId[\s\S]*mergeMeaningfulAnalyzerValues\(\{\}, mappedDeal\)/.test(
-    dealView
-  ),
-  'Lead hydration must not preserve analyzer values from a different seller.'
-);
-assert(
   /propertyTypeSource/.test(dealView) &&
     /selectedPathSource/.test(dealView) &&
     /isAnalyzed:\s*record\(lead\.deal\)\.isAnalyzed === false\s*\? false\s*:\s*arv !== undefined \|\| mao !== undefined \|\| maoRBP !== undefined\s*\? true\s*:\s*undefined/.test(
@@ -315,6 +309,43 @@ hydration.window.PBKAnalyzer = {
 await hydration.hydrateAnalyzerFromLead({ id: 'sample-a' }, 'sample-a');
 strictAssert.equal(privateHydration.notes, sampleStored.notes);
 strictAssert.deepEqual(privateHydration.comps, sampleStored.comps);
+
+const selectedLead = {
+  id: 'sample-a',
+  property: { address: '24 Sample Oak Lane', city: 'Example City', state: 'CA', zip: '90210' },
+  analyzer: {
+    recordedSales: {
+      address: { street: '24 Sample Oak Lane', city: 'Example City', state: 'CA', zip: '90210' },
+      review: 'operator-selected',
+    },
+    comps: { A: { address: 'Selected sale', price: 270000 } },
+  },
+};
+sampleFresh = false;
+sampleCurrent = {
+  ...originalManual,
+  address: evidenceAddress,
+  comps: { A: { address: 'Old suggestion', price: 240000 }, B: { address: 'Old second suggestion', price: 300000 } },
+  recordedSales: { address: evidenceAddress, review: 'suggested-unreviewed' },
+  compManualSlots: [],
+};
+sampleManualFields = ['comps', 'compManualSlots', 'notes'];
+hydration.window.PBKAnalyzer = {
+  getState: () => ({ deal: sampleCurrent }),
+  setState: state => { sampleHydrated = structuredClone(state.deal); },
+};
+await hydration.hydrateAnalyzerFromLead(selectedLead, 'sample-a');
+strictAssert.equal(sampleHydrated.comps.A.address, 'Selected sale', 'Current CRM selection must supersede a draft containing only automatic suggestions');
+strictAssert.equal(sampleHydrated.comps.B.price, 0, 'Unused saved comp slots must clear stale suggestions');
+strictAssert.equal(sampleHydrated.notes, originalManual.notes);
+sampleCurrent.compManualSlots = ['A'];
+await hydration.hydrateAnalyzerFromLead(selectedLead, 'sample-a');
+strictAssert.equal(sampleHydrated.comps.A.address, 'Old suggestion', 'An intentional same-property edit survives the handoff');
+sampleCurrent.address = '30 Different Fixture Avenue, Example City, CA 90210';
+await hydration.hydrateAnalyzerFromLead(selectedLead, 'sample-a');
+strictAssert.equal(sampleHydrated.address, evidenceAddress);
+strictAssert.equal(sampleHydrated.comps.A.address, 'Selected sale');
+strictAssert.equal(sampleHydrated.notes, undefined, 'A prior address cannot supply subject-specific draft data');
 
 assert(
   /window\.PBKAnalyzer\?\.setState/.test(dealView) &&

@@ -30,8 +30,8 @@ type LeadPortalHeaderProps = {
   onCall: () => void;
   onNote: () => void;
   onContract: () => void;
-  onAnalyze: () => void;
-  freshAnalyzerAvailable?: boolean;
+  onOpenAnalyzer: () => void;
+  analyzerAvailable: boolean;
   onInspectAgent?: () => void;
   inspectAgentAvailable?: boolean;
   onDelete: () => void;
@@ -51,8 +51,8 @@ export function LeadPortalHeader({
   onCall,
   onNote,
   onContract,
-  onAnalyze,
-  freshAnalyzerAvailable = true,
+  onOpenAnalyzer,
+  analyzerAvailable,
   onInspectAgent,
   inspectAgentAvailable = true,
   onDelete,
@@ -93,11 +93,11 @@ export function LeadPortalHeader({
       </div>
 
       <div className="pbk-lead-portal-actions" aria-label="Lead actions">
-        <button type="button" className="primary" onClick={onAnalyze}>
+        <button type="button" className="primary" onClick={onOpenAnalyzer} disabled={loading || !analyzerAvailable}>
           <BadgeDollarSign size={16} />
-          Analyze
+          Open Analyzer
         </button>
-        {!loading && lead.id && freshAnalyzerAvailable && (
+        {!loading && analyzerAvailable && (
           <a className="pbk-fresh-analyzer" href={freshHref} target="_blank" rel="noopener noreferrer">
             <ExternalLink size={16} aria-hidden="true" />
             Open in fresh Analyzer

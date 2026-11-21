@@ -45,12 +45,8 @@ function friendlyDealLoadError(error: unknown) {
 
 function firstNumber(...values: unknown[]): number | undefined {
   for (const value of values) {
-    const parsed =
-      typeof value === 'number'
-        ? value
-        : typeof value === 'string'
-          ? Number(value.replace(/[$,\s]/g, ''))
-          : Number.NaN;
+    const numericText = typeof value === 'string' ? value.replace(/[$,\s]/g, '') : '';
+    const parsed = typeof value === 'number' ? value : numericText ? Number(numericText) : NaN;
     if (Number.isFinite(parsed)) return parsed;
   }
   return undefined;
@@ -180,6 +176,8 @@ export function buildAnalyzerDealFromLead(payload: BridgeRecord, requestedLeadId
   const fullAddress = address ? (/[,].*\b[A-Z]{2}\s+\d{5}(?:-\d{4})?$/i.test(address)
     ? address : [address, city, [state, zipCode].filter(Boolean).join(' ')].filter(Boolean).join(', ')) : '';
   const arv = firstNumber(property.arv, callContext.arv, analysis.arv, lead.arv);
+  const evidence = readPropertyEvidence(lead.deal, fullAddress || address);
+  const savedFacts = evidence.records?.facts;
   const mao = firstNumber(
     property.mao,
     callContext.mao,
@@ -206,10 +204,14 @@ export function buildAnalyzerDealFromLead(payload: BridgeRecord, requestedLeadId
     sellerPhone: firstText(seller.phone, seller.mobile, lead.phone),
     price: firstNumber(property.askingPrice, motivation.askingPrice, lead.askingPrice),
     agreedPrice: firstNumber(callContext.agreedPrice, callContext.lastOffer, lead.agreedPrice),
-    beds: firstNumber(property.beds, lead.beds),
-    baths: firstNumber(property.baths, lead.baths),
-    sqft: firstNumber(property.sqft, property.squareFeet, lead.sqft),
-    year: firstNumber(property.yearBuilt, property.year, lead.yearBuilt),
+    beds: firstNumber(property.beds, lead.beds, savedFacts?.beds),
+    baths: firstNumber(property.baths, lead.baths, savedFacts?.baths),
+    sqft: firstNumber(property.sqft, property.squareFeet, lead.sqft, savedFacts?.livingSqft),
+    year: firstNumber(property.yearBuilt, property.year, lead.yearBuilt, savedFacts?.yearBuilt),
+    ...(propertyType === 'land' && savedFacts ? {
+      landLotSizeSqFt: savedFacts.lotSqft ?? undefined,
+      lotSize: savedFacts.lotAcres == null ? undefined : String(savedFacts.lotAcres),
+    } : {}),
     arv,
     mao60: mao,
     maoRBP,
@@ -236,7 +238,6 @@ export function buildAnalyzerDealFromLead(payload: BridgeRecord, requestedLeadId
     vacantStatus: firstText(property.occupancy, lead.occupancy),
     isAnalyzed: record(lead.deal).isAnalyzed === false ? false : arv !== undefined || mao !== undefined || maoRBP !== undefined ? true : undefined,
   };
-  const evidence = readPropertyEvidence(lead.deal, deal.address || '');
   if (evidence.records) deal.propertyRecordSnapshot = evidence.records;
   if (evidence.listing) deal.listingSnapshot = evidence.listing;
   const savedSales = record(record(lead.analyzer).recordedSales || record(lead.deal).recordedSales);
@@ -304,12 +305,19 @@ async function hydrateAnalyzerFromLead(payload: BridgeRecord, leadId: string, is
     (currentDeal as BridgeRecord).leadId,
     (currentDeal as BridgeRecord).lead_id
   );
+  const samePropertyDraft = currentLeadId === leadId &&
+    (!currentDeal.address || !mappedDeal.address || samePropertyAddress(currentDeal.address, mappedDeal.address));
   const mergedDeal =
-    currentLeadId && currentLeadId === leadId
+    samePropertyDraft
       ? mergeMeaningfulAnalyzerValues(currentDeal, mappedDeal)
       : mergeMeaningfulAnalyzerValues({}, mappedDeal);
-  const manualFields = currentLeadId === leadId
-    ? readAnalyzerDraftManualFields() ?? Object.keys(currentDeal) : [];
+  const replaceSuggestions = mappedDeal.recordedSales?.review === 'operator-selected' &&
+    currentDeal.recordedSales?.review === 'suggested-unreviewed' &&
+    currentDeal.compManualSlots?.length === 0;
+  const manualFields = samePropertyDraft
+    ? (readAnalyzerDraftManualFields() ?? Object.keys(currentDeal)).filter(
+      (field) => !replaceSuggestions || field !== 'comps'
+    ) : [];
   for (const key of manualFields) {
     if (Object.prototype.hasOwnProperty.call(currentDeal, key)) {
       (mergedDeal as BridgeRecord)[key] = (currentDeal as BridgeRecord)[key];
@@ -317,6 +325,9 @@ async function hydrateAnalyzerFromLead(payload: BridgeRecord, leadId: string, is
   }
   // Reviewed comp selections replace the whole set, including intentionally emptied slots.
   if (mappedDeal.comps && !manualFields.includes('comps')) mergedDeal.comps = mappedDeal.comps;
+  if (mappedDeal.propertyRecordSnapshot) mergedDeal.propertyRecordSnapshot = mappedDeal.propertyRecordSnapshot;
+  if (mappedDeal.listingSnapshot) mergedDeal.listingSnapshot = mappedDeal.listingSnapshot;
+  if (mappedDeal.recordedSales) mergedDeal.recordedSales = mappedDeal.recordedSales;
   if (mappedDeal.isAnalyzed === false) mergedDeal.isAnalyzed = false;
   const baseline = readAnalyzerDraftBaseline();
   const publish = currentLeadId !== leadId && baseline !== undefined;

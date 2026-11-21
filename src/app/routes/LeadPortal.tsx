@@ -739,8 +739,8 @@ export function LeadPortal() {
           }
           setConfirmAction('contract');
         }}
-        onAnalyze={() => navigate(`/deal/${encodeURIComponent(lead.id || leadId)}`)}
-        freshAnalyzerAvailable={lead.id === leadId}
+        onOpenAnalyzer={() => navigate(`/deal/${encodeURIComponent(leadId)}`)}
+        analyzerAvailable={lead.id === leadId}
         inspectAgentAvailable={lead.id === leadId}
         onInspectAgent={() => {
           if (loading || lead.id !== leadId) return;

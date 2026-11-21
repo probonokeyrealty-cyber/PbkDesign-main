@@ -4,7 +4,7 @@ export type LeadQueueReturn = {
   search: string;
   scrollY: number;
   leadId: string;
-  queue?: { query: string; filter: LeadQueueFilter; page: number };
+  queue?: { query: string; filter: LeadQueueFilter; page: number; focus?: 'open'; scrollTop?: number };
 };
 
 export function readLeadQueueReturn(value: unknown): LeadQueueReturn | null {
@@ -23,6 +23,10 @@ export function readLeadQueueReturn(value: unknown): LeadQueueReturn | null {
       !['all', 'hot', 'callable', 'contract'].includes(String(queue.filter)) ||
       !Number.isSafeInteger(queue.page) || Number(queue.page) < 0) return null;
     result.queue = { query: queue.query, filter: queue.filter as LeadQueueFilter, page: Number(queue.page) };
+    if (queue.focus === 'open') result.queue.focus = queue.focus;
+    if (typeof queue.scrollTop === 'number' && Number.isFinite(queue.scrollTop) && queue.scrollTop >= 0) {
+      result.queue.scrollTop = queue.scrollTop;
+    }
   }
   return result;
 }

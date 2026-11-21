@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import * as Tabs from '@radix-ui/react-tabs';
+import type { LinkProps } from 'react-router';
 import { Building2, ExternalLink, FileSearch, Pencil, RefreshCw } from 'lucide-react';
 import { fetchPropertyIntelligenceRequest, type RecentSalesResult } from '../../utils/runtimeBridge';
 import { LeadListingPhotos } from '../AnalyzerListingLookup';
@@ -32,23 +33,23 @@ function ZillowLink({ href }: { href: string }) {
   );
 }
 
+export type LeadPropertyTab = 'overview' | PropertyEvidenceTab;
+
 export function LeadPortalProperty({
   lead,
-  entryKey,
-  initialTab = 'overview',
+  tab,
+  onTabChange,
+  analyzerLink,
   onEdit,
   onSaved,
 }: {
   lead: LeadPortalModel;
-  entryKey: string;
-  initialTab?: 'overview' | PropertyEvidenceTab;
+  tab: LeadPropertyTab;
+  onTabChange: (tab: LeadPropertyTab) => void;
+  analyzerLink: Pick<LinkProps, 'to' | 'state'>;
   onEdit: () => void;
   onSaved: (leadId: string) => Promise<void>;
 }) {
-  const [selection, setSelection] = useState<{ entryKey: string; tab: string } | null>(null);
-  // Each workspace shortcut starts on its linked tab. In-card tabs keep their own choice for that visit.
-  const tab = selection?.entryKey === entryKey ? selection.tab : initialTab;
-  const setTab = (tab: string) => setSelection({ entryKey, tab });
   const [refreshing, setRefreshing] = useState(false);
   const [compSaving, setCompSaving] = useState(false);
   const [refreshStatus, setRefreshStatus] = useState('');
@@ -60,7 +61,7 @@ export function LeadPortalProperty({
   const photoTabRef = useRef<HTMLButtonElement>(null);
   const compTabRef = useRef<HTMLButtonElement>(null);
   function openEvidenceTab(next: PropertyEvidenceTab) {
-    setTab(next);
+    onTabChange(next);
     ({ record: recordTabRef, photos: photoTabRef, comps: compTabRef })[next].current?.focus();
   }
   const locality = [lead.city, [lead.state, lead.zip].filter(Boolean).join(' ')]
@@ -177,7 +178,7 @@ export function LeadPortalProperty({
           onClick={() => {
             if (missing.length) onEdit();
             else {
-              setTab('record');
+              onTabChange('record');
               recordTabRef.current?.focus();
             }
           }}
@@ -185,7 +186,7 @@ export function LeadPortalProperty({
           {missing.length ? 'Complete address' : 'Review property record'}
         </button>
       </div>
-      <Tabs.Root value={tab} onValueChange={setTab} activationMode="manual">
+      <Tabs.Root value={tab} onValueChange={next => onTabChange(next as LeadPropertyTab)} activationMode="manual">
         <Tabs.List aria-label="Property workspace sections" className="pbk-property-tabs">
           <Tabs.Trigger value="overview">Overview</Tabs.Trigger>
           <Tabs.Trigger ref={recordTabRef} value="record">
@@ -315,7 +316,7 @@ export function LeadPortalProperty({
           />
         </Tabs.Content>
         <Tabs.Content value="comps" className="pbk-property-tab-panel">
-          <LeadComps address={address} leadId={lead.id} savedSales={savedSales} onRefresh={refreshIntelligence} refreshing={refreshing} onSaved={onSaved} onSavingChange={saving => { compSavePending.current = saving; setCompSaving(saving); }} />
+          <LeadComps address={address} leadId={lead.id} savedSales={savedSales} analyzerLink={analyzerLink} onRefresh={refreshIntelligence} refreshing={refreshing} onSaved={onSaved} onSavingChange={saving => { compSavePending.current = saving; setCompSaving(saving); }} />
         </Tabs.Content>
         <Tabs.Content value="photos" className="pbk-property-tab-panel">
           <LeadListingPhotos

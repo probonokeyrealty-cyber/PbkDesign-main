@@ -239,6 +239,7 @@ COPY scripts/composio-research-discovery.mjs ./scripts/composio-research-discove
 COPY scripts/public-market-connection.mjs ./scripts/public-market-connection.mjs
 COPY scripts/ava-outlook-mail.mjs ./scripts/ava-outlook-mail.mjs
 COPY src/app/utils/outlookDelivery.mjs ./src/app/utils/outlookDelivery.mjs
+COPY src/app/utils/analyticsEvidence.mjs ./src/app/utils/analyticsEvidence.mjs
 COPY scripts/rex-research-memory.mjs ./scripts/rex-research-memory.mjs
 COPY scripts/vector-embedding.mjs ./scripts/vector-embedding.mjs
 COPY scripts/skill-governance-schema.mjs ./scripts/skill-governance-schema.mjs

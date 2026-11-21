@@ -12,7 +12,7 @@ import { LeadPortalContactability } from '../components/leads/LeadPortalContacta
 import { LeadPortalDealContext } from '../components/leads/LeadPortalDealContext';
 import { LeadPortalHeader } from '../components/leads/LeadPortalHeader';
 import { LeadPortalOverview } from '../components/leads/LeadPortalOverview';
-import { LeadPortalProperty } from '../components/leads/LeadPortalProperty';
+import { LeadPortalProperty, type LeadPropertyTab } from '../components/leads/LeadPortalProperty';
 import { LeadPortalTimeline } from '../components/leads/LeadPortalTimeline';
 import type { OutlookDelivery } from '../utils/outlookDelivery.mjs';
 import {
@@ -132,10 +132,14 @@ export function LeadPortal() {
   const location = useLocation();
   const portalLocationRef = useRef(location);
   portalLocationRef.current = location;
-  const returnContext = readLeadQueueReturn(location.state?.leadReturn);
+  const requestedReturn = readLeadQueueReturn(location.state?.leadReturn);
+  const returnContext = requestedReturn?.path === '/analytics' && requestedReturn.leadId !== leadId
+    ? null : requestedReturn;
   const fleetReturn = readFleetReturn(location.state?.fleetReturn, leadId);
   const backLabel = fleetReturn
     ? 'Fleet'
+    : returnContext?.path === '/analytics'
+      ? 'Analytics'
     : returnContext && returnContext.path !== '/leads'
       ? 'Today'
       : 'Leads';
@@ -152,6 +156,7 @@ export function LeadPortal() {
   const workspaceRootRef = useRef<HTMLElement>(null);
   const focusedEvidenceEntry = useRef('');
   const { sectionId, propertyTab } = readLeadEvidenceTarget(location.hash) ?? {};
+  const [propertySelection, setPropertySelection] = useState<{ entryKey: string; tab: LeadPropertyTab } | null>(null);
   const [searchParams, setSearchParams] = useSearchParams();
   const requestSequence = useRef(0);
   const timelineRequestSequence = useRef(0);
@@ -180,6 +185,17 @@ export function LeadPortal() {
     () => (leadPayload ? buildLeadPortalModel(leadPayload) : null),
     [leadPayload]
   );
+  const propertyIdentity = `${lead?.id || leadId}:${lead?.address}:${lead?.city}:${lead?.state}:${lead?.zip}`;
+  // A manually selected tab takes precedence over the shortcut used to enter this lead.
+  const propertyEntryKey = `${location.key}:${propertyIdentity}`;
+  const selectedPropertyTab = propertySelection?.entryKey === propertyEntryKey ? propertySelection.tab : undefined;
+  const analyzerReturnHash = selectedPropertyTab
+    ? `#lead-${selectedPropertyTab === 'overview' ? 'property' : selectedPropertyTab}`
+    : sectionId ? location.hash : '';
+  const analyzerLink = {
+    to: { pathname: `/deal/${encodeURIComponent(leadId)}`, hash: analyzerReturnHash },
+    state: { leadAnalyzerOrigin: { leadId, search: location.search, leadReturn: returnContext, fleetReturn } },
+  };
   const nextStep = readStoredNextStep(lead?.id === leadId ? leadPayload : null);
   const focusSection = useCallback((id: string, smooth: boolean) => {
     const section = workspaceRootRef.current?.querySelector<HTMLElement>(`#${id}`);
@@ -739,8 +755,9 @@ export function LeadPortal() {
           }
           setConfirmAction('contract');
         }}
-        onAnalyze={() => navigate(`/deal/${encodeURIComponent(lead.id || leadId)}`)}
-        freshAnalyzerAvailable={lead.id === leadId}
+        onOpenAnalyzer={() => navigate(analyzerLink.to, { state: analyzerLink.state })}
+        analyzerAvailable={lead.id === leadId}
+        analyzerReturnHash={analyzerReturnHash}
         inspectAgentAvailable={lead.id === leadId}
         onInspectAgent={() => {
           if (loading || lead.id !== leadId) return;
@@ -832,9 +849,10 @@ export function LeadPortal() {
 
       {(!lead.id || lead.id === leadId) && (
         <LeadPortalProperty
-          key={`${lead.id || leadId}:${lead.address}:${lead.city}:${lead.state}:${lead.zip}`}
-          entryKey={location.key}
-          initialTab={propertyTab}
+          key={propertyIdentity}
+          tab={selectedPropertyTab ?? propertyTab ?? 'overview'}
+          onTabChange={tab => setPropertySelection({ entryKey: propertyEntryKey, tab })}
+          analyzerLink={analyzerLink}
           lead={lead}
           onEdit={startEdit}
           onSaved={refreshSavedProperty}

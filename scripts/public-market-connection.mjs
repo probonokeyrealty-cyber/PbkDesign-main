@@ -6,6 +6,20 @@ const TOOLKIT = 'exa';
 const TOOL = 'EXA_ANSWER';
 const PRODUCTION_USER = 'pbk-public-market-research-production';
 const EXA_REST_SCHEMA_SHA256 = '216c1a2a2d9c9b653a3a308d5c815478be079ed11d8b20f6530b923ffe20ecaa';
+// Historical Composio audit and E2B lifecycle evidence; never infer counts for other runs.
+const RALEIGH_RECEIPT = Object.freeze({
+  jobId: 'market-872144f4-f1b0-442d-bb3d-d4934d5ab5fe',
+  completedAt: '2026-11-21T03:52:24.543Z',
+  exa: Object.freeze({
+    tool: TOOL, count: 1, logId: 'log_xcDSN0pjmKxa', at: '2026-11-21T03:52:22.526Z',
+  }),
+  e2b: Object.freeze({
+    count: 1, sandboxId: 'ijcx2v1hcfq8xhld5200u',
+    createdAt: '2026-11-21T03:52:23.226628858Z', createdEventId: '2c2b93bb-d61a-4fcd-a816-0124d7d4bf55',
+    killedAt: '2026-11-21T03:52:24.494246864Z', killedEventId: '6a26be93-755a-4437-bab0-7b132100bc00',
+    cleanupConfirmed: true,
+  }),
+});
 const only = (values, value) => Array.isArray(values) && values.length === 1 && values[0] === value;
 const empty = (value) => value == null || (typeof value === 'object' && !Object.keys(value).length);
 const single = (page) =>
@@ -56,6 +70,28 @@ function hasActiveAccount(item, { userId, accountId }) {
     item.connected_account?.id === accountId &&
     item.connected_account.user_id === userId &&
     item.connected_account.status === 'ACTIVE';
+}
+
+export function withSavedRaleighCleanup(readiness, jobs = [], tasks = []) {
+  if (readiness.executionEnabled !== false) return readiness;
+  const completedApprovals = new Set(tasks.filter((task) =>
+    task?.provider === 'e2b' && task.action === 'public_market_brief' && task.status === 'complete' &&
+    typeof task.id === 'string' && task.id.length > 0).map((task) => task.id));
+  const completedRaleighRuns = jobs.filter((job) =>
+    job?.provider === 'e2b' && job.source === 'public-market-brief' && job.market === 'Raleigh, NC' &&
+    job.status === 'complete' && job.consumed === true && job.cleanupConfirmed === true &&
+    typeof job.completedAt === 'string' && Number.isFinite(Date.parse(job.completedAt)) &&
+    completedApprovals.has(job.approvalTaskId));
+  if (!completedRaleighRuns.length) return readiness;
+  const audited = completedRaleighRuns.some((job) =>
+    job.id === RALEIGH_RECEIPT.jobId && job.completedAt === RALEIGH_RECEIPT.completedAt &&
+    job.approvalTaskId === `admin-e2b-${RALEIGH_RECEIPT.jobId}`);
+  const note = 'Saved Raleigh canary: sandbox cleanup confirmed. Execution is disabled.';
+  return {
+    ...readiness,
+    note: readiness.state === 'connected_unverified' || !readiness.note ? note : `${note} ${readiness.note}`,
+    ...(audited ? { savedRaleighReceipt: RALEIGH_RECEIPT } : {}),
+  };
 }
 
 async function readSmallJson(response) {

@@ -62,6 +62,12 @@ if (missing.length) {
 
 const streamingImports = readFileSync(resolve(root, 'scripts/ava-deepseek-stream.mjs'), 'utf8');
 const runtimeStage = dockerfile.slice(dockerfile.lastIndexOf('FROM '));
+const bridgeSource = readFileSync(resolve(root, 'scripts', entrypoint), 'utf8');
+for (const match of bridgeSource.matchAll(/from ['"]\.\.\/(src\/[^'"]+\.mjs)['"]/g)) {
+  if (!runtimeStage.includes(`COPY ${match[1]} ./${match[1]}`)) {
+    throw new Error(`Runtime image does not package the shared bridge dependency ${match[1]}`);
+  }
+}
 if (!/^COPY package\.json \.\/package\.json\s*$/m.test(runtimeStage)) {
   throw new Error('Runtime image must package the release manifest read by fixed behavior and silent-policy checks');
 }

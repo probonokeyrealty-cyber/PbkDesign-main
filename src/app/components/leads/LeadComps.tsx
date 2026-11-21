@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Link } from 'react-router';
+import { Link, type LinkProps } from 'react-router';
 import { AlertCircle, Loader2, RefreshCw } from 'lucide-react';
 import { patchLeadRequest, type AttomPreviewAddress, type RecentSalesResult } from '../../utils/runtimeBridge';
 import { compDate, compNumber, reviewedCompIds, selectedCompPatch } from '../../utils/leadComps.mjs';
@@ -17,10 +17,11 @@ const messages: Record<string, string> = {
   unavailable: 'Could not reach the record source. Your lead is unchanged.',
 };
 
-export function LeadComps({ address, leadId = '', savedSales, onRefresh, refreshing = false, onSaved, onSavingChange }: {
+export function LeadComps({ address, leadId = '', savedSales, analyzerLink, onRefresh, refreshing = false, onSaved, onSavingChange }: {
   address: AttomPreviewAddress;
   leadId?: string;
   savedSales?: RecentSalesResult | null;
+  analyzerLink: Pick<LinkProps, 'to' | 'state'>;
   onRefresh?: (radiusMiles: number) => void | Promise<void>;
   refreshing?: boolean;
   onSaved?: (leadId: string) => Promise<void>;
@@ -93,7 +94,7 @@ export function LeadComps({ address, leadId = '', savedSales, onRefresh, refresh
         {leadId && <div className="pbk-comps-selection">
           <span>{selected.length}/3 selected{selected.length ? ' · replaces saved comp set' : ''}</span>
           <button type="button" className="pbk-btn pbk-btn-primary pbk-btn-sm" disabled={!selected.length || saving} onClick={() => void saveSelection()}>{saving ? 'Saving...' : 'Save selected comps'}</button>
-          <Link className="pbk-btn pbk-btn-ghost pbk-btn-sm" to={`/deal/${encodeURIComponent(leadId)}`}>Open analyzer</Link>
+          <Link className="pbk-btn pbk-btn-ghost pbk-btn-sm" {...analyzerLink}>Open Analyzer</Link>
           {saveStatus && <p role="status">{saveStatus}</p>}
         </div>}
       </>}

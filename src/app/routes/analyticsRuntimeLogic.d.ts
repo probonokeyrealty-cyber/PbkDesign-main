@@ -11,7 +11,8 @@ export type AnalyticsLeadMetric = AnalyticsLead & {
   address: string;
   stage: string;
   stageLabel: string;
-  revenue: number;
+  revenue: number | null;
+  revenueBasis: string;
   updatedAt: string;
 };
 
@@ -19,14 +20,16 @@ export type AnalyticsFunnelStage = {
   stage: string;
   label: string;
   total: number;
-  revenue: number;
+  revenue: number | null;
+  revenueBasis: string;
   leads: AnalyticsLeadMetric[];
 };
 
 export type AnalyticsDailyDeal = {
   day: string;
   count: number;
-  revenue: number;
+  revenue: number | null;
+  revenueBasis: string;
   leads: AnalyticsLeadMetric[];
 };
 
@@ -37,12 +40,29 @@ export type AnalyticsAiMetric = {
 };
 
 export type AnalyticsRoi = {
-  aiSpend: number;
-  revenue: number;
-  costPerContactedLead: number;
-  costPerQualifiedLead: number;
-  roiMultiple: number;
-  costPerClosedDeal: number;
+  aiSpend: number | null;
+  revenue: number | null;
+  costPerContactedLead: number | null;
+  costPerQualifiedLead: number | null;
+  roiMultiple: number | null;
+  costPerClosedDeal: number | null;
+};
+
+export type AnalyticsFinancial = {
+  closedDeals: number;
+  rosterLeads: number;
+  rosterClosed: number;
+  revenue: number | null;
+  aiSpend: number | null;
+  estimatedAiSpend: number | null;
+  revenueComplete: boolean;
+  costComplete: boolean;
+  eligible: boolean;
+  reportingPeriod: string;
+  dateBasis: string;
+  status: string;
+  revenueCoverage: { totalRecords: number; recordedRecords: number; missingRecords: number } | null;
+  costEvidence: { totalRecords: number; recordedRecords: number; estimatedRecords: number; missingRecords: number } | null;
 };
 
 export type AnalyticsViewModel = {
@@ -53,6 +73,7 @@ export type AnalyticsViewModel = {
   dailyDeals: AnalyticsDailyDeal[];
   aiMetrics: AnalyticsAiMetric[];
   roi: AnalyticsRoi;
+  financial: AnalyticsFinancial;
 };
 
 export function numberOr(value: unknown, fallback?: number): number;
@@ -61,12 +82,18 @@ export function normalizeAnalyticsLead(item?: Record<string, unknown>): Analytic
 export function normalizeFunnel(stages?: Array<Record<string, unknown>>): AnalyticsFunnelStage[];
 export function normalizeDailyDeals(days?: Array<Record<string, unknown>>): AnalyticsDailyDeal[];
 export function normalizeAiMetrics(metrics?: Record<string, unknown>): AnalyticsAiMetric[];
+export function readCampaignAttributionCost(row?: Record<string, unknown>): {
+  basis: string; amount: number | null;
+};
+export function confirmAnalyticsPeriod(timeline?: DealTimelineResponse, costs?: AiMetricsResponse,
+  period?: { days?: number; range?: string }): boolean;
 export function computeAnalyticsRoi(options?: {
   contacted?: number;
   qualified?: number;
   closed?: number;
-  aiSpend?: number;
-  revenue?: number;
+  aiSpend?: number | null;
+  revenue?: number | null;
+  eligible?: boolean;
 }): AnalyticsRoi;
 export function buildAnalyticsViewModel(options?: {
   stagesResponse?: LeadStagesResponse;

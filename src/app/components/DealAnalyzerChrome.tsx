@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 import {
   BarChart3,
   ChevronDown,
@@ -23,6 +23,7 @@ type DealAnalyzerChromeProps = {
   activeTab: AnalyzerTabId;
   analyzeStatus: string;
   freshDraft?: boolean;
+  backToLead?: ReactNode;
   onTabChange: (tab: AnalyzerTabId) => void;
   onOpenSnapshot: () => void;
   onOpenWorkflow: () => void;
@@ -101,6 +102,7 @@ function getPathControlMetric(deal: DealData, selectedPath: PBKPath) {
 }
 
 export function DealAnalyzerCommandHeader({
+  backToLead,
   deal,
   selectedPath,
   activeTab,
@@ -137,7 +139,10 @@ export function DealAnalyzerCommandHeader({
     >
       <div className="pbk-analyzer-command-main">
         <div className="pbk-analyzer-title-block">
-          <span className="pbk-kicker">{freshDraft ? 'Fresh Analyzer / Tab-local draft' : workbench?.label || 'Deal Analyzer'}</span>
+          <div className="flex flex-wrap items-center gap-2">
+            {backToLead}
+            <span className="pbk-kicker">{freshDraft ? 'Fresh Analyzer / Tab-local draft' : workbench?.label || 'Deal Analyzer'}</span>
+          </div>
           {workbench ? (
             <>
               <h1>{workbench.title}</h1>
@@ -291,7 +296,6 @@ export function DealAnalyzerCommandHeader({
 }
 
 export function DealAnalyzerMobileRail({
-  deal,
   selectedPath,
   analyzeStatus,
   onOpenSnapshot,
@@ -301,7 +305,6 @@ export function DealAnalyzerMobileRail({
   onTabChange,
 }: Pick<
   DealAnalyzerChromeProps,
-  | 'deal'
   | 'selectedPath'
   | 'analyzeStatus'
   | 'onOpenSnapshot'
@@ -319,7 +322,7 @@ export function DealAnalyzerMobileRail({
         </button>
         <button type="button" aria-label="Analyze deal" className="is-primary" onClick={onAnalyze}>
           <BarChart3 size={16} />
-          <span>{deal.isAnalyzed ? 'Refresh' : 'Analyze'}</span>
+          <span>Analyze</span>
         </button>
         <button type="button" aria-label="Save deal" onClick={onSaveDeal}>
           <Save size={16} />

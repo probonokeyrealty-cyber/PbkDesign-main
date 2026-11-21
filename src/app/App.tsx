@@ -1,5 +1,5 @@
-import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
-import { intelligenceRequest, mergeAnalyzerIntelligence, propertyContextFields, resetChangedProperty } from './utils/analyzerIntelligence.mjs';
+import { useState, useEffect, useMemo, useCallback, useRef, type ReactNode } from 'react';
+import { intelligenceRequest, propertyContextFields, resetChangedProperty } from './utils/analyzerIntelligence.mjs';
 import { buildAnalyzerLeadPatch } from './utils/analyzerLeadPersistence.mjs';
 import { TopBar } from './components/TopBar';
 import { LeftPanel } from './components/LeftPanel';
@@ -38,7 +38,6 @@ import {
   sendDealToAgent,
   sendSellerDocsRequest,
   syncDealAnalysis,
-  fetchPropertyIntelligenceRequest,
 } from './utils/runtimeBridge';
 import {
   ANALYZER_CURRENT_DEAL_KEY,
@@ -193,6 +192,7 @@ const BRANDING_STORAGE_KEY = 'pbk-branding';
 
 type AppProps = {
   engineOnly?: boolean;
+  backToLead?: ReactNode;
 };
 
 function getInitialDarkMode() {
@@ -208,7 +208,7 @@ function getInitialDarkMode() {
   return true;
 }
 
-export default function App({ engineOnly = false }: AppProps) {
+export default function App({ engineOnly = false, backToLead }: AppProps) {
   const [deal, setDeal] = useState<DealData>(() => {
     const saved = readAnalyzerDeal(initialDealData);
     return { ...saved, selectedPath: normalizeSelectedPath(saved) };
@@ -647,30 +647,24 @@ export default function App({ engineOnly = false }: AppProps) {
 
   const handleAnalyzeDeal = useCallback(async () => {
     if (!mounted.current || draftScope.current !== getAnalyzerDraftIdentity()) return;
-    let deal = currentDeal.current;
-    const snapshot = deal;
+    const snapshot = currentDeal.current;
     const version = ++analysisRequestVersion.current;
     const isCurrentAnalysis = () =>
       mounted.current &&
       analysisRequestVersion.current === version &&
       draftScope.current === getAnalyzerDraftIdentity();
+    const deal = snapshot.arv || manualDraftFields.current?.has('arv')
+      ? snapshot
+      : { ...snapshot, arv: calculateARV(snapshot.comps) };
+    const readiness = getAnalyzeReadiness(deal);
+    if (!readiness.ready) {
+      setAnalyzeStatus(readiness.message);
+      setActiveTab('analyzer');
+      return;
+    }
     publishDraft.current = true;
-    let readiness = getAnalyzeReadiness(deal);
     try {
-      setAnalyzeStatus('Gathering property records, photos and sale candidates...');
-      const evidence = await fetchPropertyIntelligenceRequest(intelligenceRequest(deal));
-      if (!isCurrentAnalysis() || currentDeal.current !== snapshot) return;
-      const updates = mergeAnalyzerIntelligence(deal, evidence, manualDraftFields.current || new Set());
-      deal = {...deal, ...updates};
-      if (!manualDraftFields.current?.has('arv') && !deal.arv) deal.arv = calculateARV(deal.comps);
-      readiness = getAnalyzeReadiness(deal);
-      if (evidence.saved && evidence.leadId) window.dispatchEvent(new CustomEvent('pbk:lead-updated', {detail:{leadId:evidence.leadId}}));
-      if (!readiness.ready) {
-        setDeal(deal);
-        setAnalyzeStatus(`Property evidence kept${deal.leadId ? ' in this lead' : ' in your draft'}. ${readiness.message}`);
-        setActiveTab('analyzer');
-        return;
-      }
+      setAnalyzeStatus('Analyzing deal...');
       const response = await syncDealAnalysis(deal);
       if (!isCurrentAnalysis() || currentDeal.current !== snapshot) return;
       const result =
@@ -1392,6 +1386,7 @@ export default function App({ engineOnly = false }: AppProps) {
         {/* Main Content */}
         <div className="relative flex-1 min-w-0 flex flex-col overflow-hidden">
           <DealAnalyzerCommandHeader
+            backToLead={backToLead}
             deal={activeDeal}
             selectedPath={activeSelectedPath}
             activeTab={activeTab}
@@ -1407,7 +1402,6 @@ export default function App({ engineOnly = false }: AppProps) {
           />
 
           <DealAnalyzerMobileRail
-            deal={activeDeal}
             selectedPath={activeSelectedPath}
             analyzeStatus={analyzeStatus}
             onOpenSnapshot={() => setLeftPanelOpen(true)}

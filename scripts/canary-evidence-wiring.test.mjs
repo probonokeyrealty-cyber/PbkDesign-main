@@ -177,9 +177,20 @@ test('unapproved v2 policy is not replaced with a pilot or legacy policy', async
   assert.equal(result.ready, false);
 });
 
-test('approval, auth, delivery and dispatch code outside maturity remains byte-for-byte unchanged', () => {
+test('approval, auth, delivery and dispatch code remains unchanged outside reviewed read-only projections', () => {
+  const marketProjection = [
+    'publicMarketWorker: withSavedRaleighCleanup(',
+    '            await (checkPublicMarketConnection ??= createPublicMarketConnectionCheck())(),',
+    '            state.browserResearchJobs,',
+    '            state.adminTasks,',
+    '          ),',
+  ].join('\n');
+  assert(source.includes(marketProjection));
   const unchanged = (source.slice(0, start) + source.slice(end))
-    .replace("import { readCanaryEvidence } from './canary-evidence-reader.mjs';\n", '');
+    .replace("import { readCanaryEvidence } from './canary-evidence-reader.mjs';\n", '')
+    .replace("import { createPublicMarketConnectionCheck, withSavedRaleighCleanup } from './public-market-connection.mjs';",
+      "import { createPublicMarketConnectionCheck } from './public-market-connection.mjs';")
+    .replace(marketProjection, 'publicMarketWorker: await (checkPublicMarketConnection ??= createPublicMarketConnectionCheck())(),');
   // Outlook lead mail binds the saved address to an approval and persists the provider receipt.
   // The Outlook adapter and isolated agent smoke exercise the approval dispatch lease.
   // Lead detail exposes only the selected lead's Outlook delivery projection.

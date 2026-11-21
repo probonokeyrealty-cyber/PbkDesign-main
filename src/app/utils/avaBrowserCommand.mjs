@@ -19,6 +19,7 @@ const leadEvidenceCommands = new Map([
 
 export function readLeadEvidenceTarget(hash) {
   if (hash === '#lead-numbers') return { sectionId: 'lead-numbers' };
+  if (hash === '#lead-property') return { sectionId: 'lead-property', propertyTab: 'overview' };
   const propertyTab = /^#lead-(record|comps|photos)$/.exec(hash)?.[1];
   return propertyTab ? { sectionId: 'lead-property', propertyTab } : null;
 }

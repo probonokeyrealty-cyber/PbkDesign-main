@@ -1,0 +1,28 @@
+name: Staff Release Privacy
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main, codex/staff-release-privacy]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  staff-release-privacy:
+    name: Staff release privacy
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+      - name: Prove a public staff site blocks the Netlify production build
+        run: node --test scripts/netlify-production-privacy.node-test.mjs scripts/staff-netlify-build.node-test.mjs
+      - name: Verify the live staff site requires sign-in
+        run: node scripts/netlify-production-privacy.mjs

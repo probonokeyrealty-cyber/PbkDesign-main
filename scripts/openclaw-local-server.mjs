@@ -6991,6 +6991,13 @@ function getPgPool() {
     // Disable cert validation for managed-DB hostnames; keep it on for localhost.
     ssl: /(localhost|127\.0\.0\.1)/.test(DATABASE_URL) ? false : { rejectUnauthorized: false },
   });
+  // pg-pool handles errors on idle clients. While a client is checked out,
+  // a disconnect between queries would otherwise emit an unhandled error.
+  const onCheckedOutClientError = (error) => {
+    console.warn('[pbk-local-openclaw] checked-out pg client disconnected:', error?.message || error);
+  };
+  __pgPool.on('acquire', (client) => client.on('error', onCheckedOutClientError));
+  __pgPool.on('release', (_error, client) => client.removeListener('error', onCheckedOutClientError));
   const rawConnect = __pgPool.connect.bind(__pgPool);
   // Retry only checkout failures: after dispatch, even ECONNRESET may hide a commit.
   const acquire = (deadlineAt) =>

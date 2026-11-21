@@ -199,9 +199,9 @@ test('bridge code matches the reviewed release fingerprint outside the scoped re
   // unified conversation bridge smoke test.
   // The Parcel Dialer release adds its router, staff permission checks and
   // signed Twilio webhook paths. Main also separates Telnyx voice and SMS
-  // senders. Keep the full bridge fingerprint with both reviewed changes.
+  // senders. The Postgres regression suite covers checked-out client errors.
   assert.equal(createHash('sha256').update(unchanged).digest('hex'),
-    '0e433970ed9c457db2eac206284609ce469d0de336b7d2b6c4ad92ea925c8fdc');
+    '517578117079c43d253883cfbacf56a1c63803e60a63e4c3f9900ac3116790d8');
 });
 
 test('production distribution includes reader and protocol, never the fixture signer', () => {

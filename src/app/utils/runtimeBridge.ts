@@ -1,6 +1,6 @@
 import type { AttomMcpSection } from './attomMcpSections.mjs';
 import type { AttomExtraPropertyFacts } from './attomRecordFields.mjs';
-import type { OutlookDelivery } from './outlookDelivery.mjs';
+import { normalizeOutlookReceiptUrl, type OutlookDelivery } from './outlookDelivery.mjs';
 import { DealData } from '../types';
 import { buildAgentDealContext, type AgentDealContext } from './agentDealContext';
 import { readAvaChatResponse, type AvaChatStreamOptions } from './avaChatStream';
@@ -2540,6 +2540,18 @@ function collectApprovalDecisionIds(approvalId: string, result: Record<string, u
     addApprovalRecordTokens(tokens, value);
   });
   return [...tokens];
+}
+
+export async function findOutlookDeliveryReceipt(approvalId: string) {
+  const response = await bridgeRequest<{ ok: boolean; receiptUrl?: string; error?: string }>({
+    method: 'GET',
+    path: `/api/approvals/${encodeURIComponent(approvalId)}/outlook-delivery/receipt`,
+  });
+  const receipt = normalizeOutlookReceiptUrl(response.receiptUrl);
+  if (!response.ok || !receipt) {
+    throw new Error(response.error || 'Ava could not find a matching inbox receipt.');
+  }
+  return receipt;
 }
 
 export async function confirmOutlookDeliveryRequest(approvalId: string, receiptUrl: string) {

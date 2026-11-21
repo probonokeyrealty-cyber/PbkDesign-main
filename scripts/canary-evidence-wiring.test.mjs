@@ -187,7 +187,7 @@ test('approval, auth, delivery and dispatch code outside maturity remains byte-f
   // Telnyx receipt mapping and the scoped outbound media policy are covered by the
   // unified conversation bridge smoke test.
   assert.equal(createHash('sha256').update(unchanged).digest('hex'),
-    '5845adba92eb5f25bd2485bc40fd83b69f8675048203ff805754aec22d9c65d7');
+    '12b475c5113455ef6a32711b49d8ea25ca63cbf68bc36372869ce05768658e5d');
 });
 
 test('production distribution includes reader and protocol, never the fixture signer', () => {

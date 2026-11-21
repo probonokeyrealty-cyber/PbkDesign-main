@@ -309,9 +309,7 @@ async function verify(engine, config, label) {
       const leadUrl = `${origin}/leads/${current.id}`;
       const chatUrl = `${origin}/ava-chat?leadId=${current.id}`;
       await page.getByRole('button', { name: 'Back to leads', exact: true }).click();
-      await page.getByRole('button', { name: `Open lead ${current.seller.name} at ${structuredAddress.street}`, exact: true })
-        .filter({ visible: true }).click();
-      await page.getByRole('button', { name: 'Open lead', exact: true }).click();
+      await page.getByRole('link', { name: `Open lead ${current.seller.name} at ${structuredAddress.street}`, exact: true }).click();
       await expect(page).toHaveURL(leadUrl);
       await page.getByRole('link', { name: 'Ask Ava about this lead' }).click();
       await expect(page).toHaveURL(chatUrl);

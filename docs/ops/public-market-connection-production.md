@@ -11,7 +11,7 @@ environment settings. Do not copy the staging keys or reuse other PBK keys.
 | ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `PBK_E2B_MARKET_WORKER_API_KEY`             | Dedicated production E2B project key                                                                                                              |
 | `PBK_COMPOSIO_MARKET_SEARCH_API_KEY`        | Dedicated production Composio key: Tools read, Session management read, Session tool execution write only; no other scopes                        |
-| `PBK_COMPOSIO_MARKET_SEARCH_SESSION_ID`     | Independently approved production public-search session ID                                                                                        |
+| `PBK_COMPOSIO_MARKET_SEARCH_SESSION_ID`     | Verified no-account public-search session ID; metadata only                                                                                       |
 | `PBK_COMPOSIO_MARKET_SEARCH_USER_ID`        | Pinned production session user                                                                                                                    |
 | `PBK_COMPOSIO_MARKET_SEARCH_CONFIG_VERSION` | Exact approved session configuration version                                                                                                      |
 | `PBK_COMPOSIO_MARKET_SEARCH_SCHEMA_SHA256`  | SHA-256 of canonical JSON for the approved REST tool's `input_parameters`: object keys sorted recursively, array ordering retained, no whitespace |
@@ -20,7 +20,8 @@ environment settings. Do not copy the staging keys or reuse other PBK keys.
 The session must expose exactly `COMPOSIO_SEARCH_WEB`, with no connected
 accounts, auth-config pins, or optional execution helpers. The probe makes
 three bounded GETs: E2B inventory (one result, discarded), Composio session
-metadata, and Composio tool listing. It does not need a database access change.
+metadata (including the exact advertised tool), and that tool's catalog schema.
+It does not need a database access change.
 No provider calls are made when disabled or missing configuration.
 
 In signed-in production Settings, expand **System diagnostics** and refresh.

@@ -212,9 +212,9 @@ test('bridge code matches the reviewed release fingerprint outside the scoped re
   // Generic Inbox deletion preserves recording pointers; retention scans continue past blocked rows.
   // Ava's turn contract handles corrected asking prices and stop-contact requests.
   // Parcel lead creation rechecks the CRM before using the canonical save path.
-  // Telnyx silence no longer starts a Deepgram fallback timer.
+  // Deepgram opens with the announced Telnyx codec and waits for audio signal before fallback.
   assert.equal(createHash('sha256').update(unchanged).digest('hex'),
-    'f924c6a41872c45d455d66bcf233719d2ad543aebed19ac82912ed6039438e90');
+    '1bb75a8fd16fb78f03b68d7fa22ed1dc574bbd36ffa0d0898435323fa4e788e6');
 });
 
 test('production distribution includes reader and protocol, never the fixture signer', () => {

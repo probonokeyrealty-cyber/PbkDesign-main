@@ -186,8 +186,10 @@ test('approval, auth, delivery and dispatch code outside maturity remains byte-f
   // Delivery confirmation is a metadata-only write and cannot start dispatch.
   // Telnyx receipt mapping and the scoped outbound media policy are covered by the
   // unified conversation bridge smoke test.
+  // dc9bb20 and ff183d4 add tooling status; 82ae0a0 adds exact-version recording
+  // retention, exercised by the disposable Postgres and Storage HTTP test.
   assert.equal(createHash('sha256').update(unchanged).digest('hex'),
-    '5845adba92eb5f25bd2485bc40fd83b69f8675048203ff805754aec22d9c65d7');
+    '244522ab8f93f09cb06d5b0c5814ba13830d56e51c10cf3f9e96b5c19e0cc707');
 });
 
 test('production distribution includes reader and protocol, never the fixture signer', () => {

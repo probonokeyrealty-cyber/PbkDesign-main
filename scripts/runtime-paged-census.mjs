@@ -92,7 +92,12 @@ function context(input) {
       // The coverage owner's query wrapper already charges physical result rows.
       charge({ rows: result.rows?.length || 0, bytes: size(result.rows || []) }, true);
       return result;
-    } catch (error) { checkQuery(); throw error; }
+    } catch (error) {
+      // A poisoned query is already terminal. Preserve its first cause rather than
+      // replacing a missed query deadline with the later operation-abandoned check.
+      if (!budget.poisoned) checkQuery();
+      throw error;
+    }
     finally { clearTimeout(timer); fence.signal.removeEventListener('abort', listener); }
   };
   let last = typeof input.now === 'function' ? input.now() : input.now ?? Date.now();

@@ -1,4 +1,5 @@
 import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
+import { channel } from 'node:diagnostics_channel';
 import { canonicalJson } from './skill-governance-store.mjs';
 import { prepareRuntimeSourceObservation, collectRuntimeSourceSnapshotInTransaction } from './runtime-source-evidence.mjs';
 import { getRuntimeEvidenceContext } from './runtime-evidence-context.mjs';
@@ -35,6 +36,24 @@ const FAILURE = Symbol('coverage-internal-failure');
 const errorFor = result => Object.assign(new Error(result), { result, [FAILURE]: true });
 const reject = result => { throw errorFor(result); };
 const errorResult = (error, fallback) => error?.[FAILURE] === true ? error.result : fallback;
+const failureEvents = channel('pbk.runtime.coverage.failure');
+const pagedFailureCauses = new Map([
+  ['Paged census: query abandoned', 'paged_census_query_abandoned'],
+  ['Paged census: operation abandoned', 'paged_census_operation_abandoned'],
+  ['Paged census: operation budget', 'paged_census_operation_budget'],
+  ['Paged census: batch bytes preflight', 'paged_census_batch_bytes_preflight'],
+]);
+function observedFailure(operation, error, fallback) {
+  const result = errorResult(error, fallback);
+  if (failureEvents.hasSubscribers) {
+    // Internal, opt-in diagnostics only. Never publish SQL, messages, stacks, keys or rows.
+    const sqlState = typeof error?.code === 'string' && /^[A-Z0-9]{5}$/.test(error.code) ? error.code : null;
+    const cause = error?.[FAILURE] === true ? result : pagedFailureCauses.get(error?.message)
+      ?? (sqlState ? 'postgresql_error' : 'unexpected_error');
+    failureEvents.publish(Object.freeze({ operation, result, cause, sqlState }));
+  }
+  return failure(result);
+}
 export const runtimeCoverageHealthReady = health => Boolean(health && HEALTH_KEYS.every(key => health[key] === true)
   && health.approvalMode === 'approval');
 const fixedHealth = health => Object.fromEntries([...HEALTH_KEYS.map(key => [key, health?.[key] === true]),
@@ -383,7 +402,7 @@ export async function appendRuntimeCoverageCheckpoint(input = {}) {
       op.check();
       return { verified: true, result: 'coverage_checkpoint_recorded', report };
     });
-  } catch (error) { return failure(errorResult(error, 'coverage_observation_failed')); }
+  } catch (error) { return observedFailure('append', error, 'coverage_observation_failed'); }
 }
 
 function coverageReference(secret, proof) {
@@ -558,5 +577,5 @@ async function readCoverage(input, historical = false) {
       op.check();
       return result;
     });
-  } catch (error) { return failure(errorResult(error, 'coverage_read_failed')); }
+  } catch (error) { return observedFailure('read', error, 'coverage_read_failed'); }
 }

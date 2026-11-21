@@ -53,8 +53,15 @@ export async function createBoundedCensusFixture({ count = 0, textBytes = 1024 }
     const started = performance.now();
     const text = typeof config === 'string' ? config : config.text;
     values = typeof config === 'string' ? values : config.values;
-    const result = text.includes('clock_timestamp() AS coverage_now')
-      ? { rows: [{ coverage_now: new Date(wall) }] } : await db.query(text, values);
+    let result;
+    try {
+      result = text.includes('clock_timestamp() AS coverage_now')
+        ? { rows: [{ coverage_now: new Date(wall) }] } : await db.query(text, values);
+    } catch (error) {
+      queries.push({ text, rows: 0, bytes: 0, elapsedMs: performance.now() - started,
+        sqlState: typeof error?.code === 'string' && /^[A-Z0-9]{5}$/.test(error.code) ? error.code : null });
+      throw error;
+    }
     const elapsedMs = performance.now() - started;
     if (elapsedMs > 2000) console.info(JSON.stringify({ fixtureSlowQueryMs: elapsedMs,
       statement: text.slice(0, 160) }));

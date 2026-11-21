@@ -1,5 +1,6 @@
 import { Component, useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
-import { useLocation, useParams } from 'react-router';
+import { ArrowLeft } from 'lucide-react';
+import { Link, useLocation, useParams } from 'react-router';
 import App from '../App';
 import type { DealData, PBKPath } from '../types';
 import {
@@ -17,6 +18,7 @@ import { readPropertyEvidence } from '../utils/propertyEvidence';
 import { samePropertyAddress } from '../utils/analyzerIntelligence.mjs';
 import { savedLeadComps } from '../utils/leadComps.mjs';
 import { latestCallModeNote } from '../utils/analyzerLeadPersistence.mjs';
+import { readLeadEvidenceTarget } from '../utils/avaBrowserCommand.mjs';
 
 type BridgeRecord = Record<string, unknown>;
 
@@ -173,8 +175,11 @@ export function buildAnalyzerDealFromLead(payload: BridgeRecord, requestedLeadId
   const city = firstText(property.city, lead.city);
   const state = firstText(property.state, lead.state);
   const zipCode = firstText(property.zip, property.zipCode, lead.zip, lead.zipCode);
-  const fullAddress = address ? (/[,].*\b[A-Z]{2}\s+\d{5}(?:-\d{4})?$/i.test(address)
-    ? address : [address, city, [state, zipCode].filter(Boolean).join(' ')].filter(Boolean).join(', ')) : '';
+  const fullAddress = address
+    ? /[,].*\b[A-Z]{2}\s+\d{5}(?:-\d{4})?$/i.test(address)
+      ? address
+      : [address, city, [state, zipCode].filter(Boolean).join(' ')].filter(Boolean).join(', ')
+    : '';
   const arv = firstNumber(property.arv, callContext.arv, analysis.arv, lead.arv);
   const evidence = readPropertyEvidence(lead.deal, fullAddress || address);
   const savedFacts = evidence.records?.facts;
@@ -208,10 +213,12 @@ export function buildAnalyzerDealFromLead(payload: BridgeRecord, requestedLeadId
     baths: firstNumber(property.baths, lead.baths, savedFacts?.baths),
     sqft: firstNumber(property.sqft, property.squareFeet, lead.sqft, savedFacts?.livingSqft),
     year: firstNumber(property.yearBuilt, property.year, lead.yearBuilt, savedFacts?.yearBuilt),
-    ...(propertyType === 'land' && savedFacts ? {
-      landLotSizeSqFt: savedFacts.lotSqft ?? undefined,
-      lotSize: savedFacts.lotAcres == null ? undefined : String(savedFacts.lotAcres),
-    } : {}),
+    ...(propertyType === 'land' && savedFacts
+      ? {
+          landLotSizeSqFt: savedFacts.lotSqft ?? undefined,
+          lotSize: savedFacts.lotAcres == null ? undefined : String(savedFacts.lotAcres),
+        }
+      : {}),
     arv,
     mao60: mao,
     maoRBP,
@@ -236,18 +243,29 @@ export function buildAnalyzerDealFromLead(payload: BridgeRecord, requestedLeadId
       typeof lead.notes === 'string' ? lead.notes : ''
     ),
     vacantStatus: firstText(property.occupancy, lead.occupancy),
-    isAnalyzed: record(lead.deal).isAnalyzed === false ? false : arv !== undefined || mao !== undefined || maoRBP !== undefined ? true : undefined,
+    isAnalyzed:
+      record(lead.deal).isAnalyzed === false
+        ? false
+        : arv !== undefined || mao !== undefined || maoRBP !== undefined
+          ? true
+          : undefined,
   };
   if (evidence.records) deal.propertyRecordSnapshot = evidence.records;
   if (evidence.listing) deal.listingSnapshot = evidence.listing;
   const savedSales = record(record(lead.analyzer).recordedSales || record(lead.deal).recordedSales);
-  if (samePropertyAddress(savedSales.address, deal.address)) deal.recordedSales = savedSales as DealData['recordedSales'];
+  if (samePropertyAddress(savedSales.address, deal.address))
+    deal.recordedSales = savedSales as DealData['recordedSales'];
   const manualSlots = record(lead.deal).compManualSlots;
-  if (Array.isArray(manualSlots)) deal.compManualSlots = manualSlots.filter((slot): slot is 'A'|'B'|'C' => ['A','B','C'].includes(slot));
+  if (Array.isArray(manualSlots))
+    deal.compManualSlots = manualSlots.filter((slot): slot is 'A' | 'B' | 'C' =>
+      ['A', 'B', 'C'].includes(slot)
+    );
   const comps = savedLeadComps(lead);
   if (comps) deal.comps = comps;
   else if (record(record(lead.analyzer).recordedSales).address) {
-    deal.comps = Object.fromEntries(['A', 'B', 'C'].map(key => [key, { address: '', price: 0, date: '', link: '' }])) as DealData['comps'];
+    deal.comps = Object.fromEntries(
+      ['A', 'B', 'C'].map((key) => [key, { address: '', price: 0, date: '', link: '' }])
+    ) as DealData['comps'];
     deal.isAnalyzed = false;
   }
 
@@ -295,7 +313,11 @@ function hasDealLeadPayload(payload: unknown) {
   );
 }
 
-async function hydrateAnalyzerFromLead(payload: BridgeRecord, leadId: string, isCurrent = () => true) {
+async function hydrateAnalyzerFromLead(
+  payload: BridgeRecord,
+  leadId: string,
+  isCurrent = () => true
+) {
   const mappedDeal = buildAnalyzerDealFromLead(payload, leadId);
   const fresh = isFreshAnalyzerDraft();
   const currentDeal =
@@ -305,19 +327,23 @@ async function hydrateAnalyzerFromLead(payload: BridgeRecord, leadId: string, is
     (currentDeal as BridgeRecord).leadId,
     (currentDeal as BridgeRecord).lead_id
   );
-  const samePropertyDraft = currentLeadId === leadId &&
-    (!currentDeal.address || !mappedDeal.address || samePropertyAddress(currentDeal.address, mappedDeal.address));
-  const mergedDeal =
-    samePropertyDraft
-      ? mergeMeaningfulAnalyzerValues(currentDeal, mappedDeal)
-      : mergeMeaningfulAnalyzerValues({}, mappedDeal);
-  const replaceSuggestions = mappedDeal.recordedSales?.review === 'operator-selected' &&
+  const samePropertyDraft =
+    currentLeadId === leadId &&
+    (!currentDeal.address ||
+      !mappedDeal.address ||
+      samePropertyAddress(currentDeal.address, mappedDeal.address));
+  const mergedDeal = samePropertyDraft
+    ? mergeMeaningfulAnalyzerValues(currentDeal, mappedDeal)
+    : mergeMeaningfulAnalyzerValues({}, mappedDeal);
+  const replaceSuggestions =
+    mappedDeal.recordedSales?.review === 'operator-selected' &&
     currentDeal.recordedSales?.review === 'suggested-unreviewed' &&
     currentDeal.compManualSlots?.length === 0;
   const manualFields = samePropertyDraft
     ? (readAnalyzerDraftManualFields() ?? Object.keys(currentDeal)).filter(
-      (field) => !replaceSuggestions || field !== 'comps'
-    ) : [];
+        (field) => !replaceSuggestions || field !== 'comps'
+      )
+    : [];
   for (const key of manualFields) {
     if (Object.prototype.hasOwnProperty.call(currentDeal, key)) {
       (mergedDeal as BridgeRecord)[key] = (currentDeal as BridgeRecord)[key];
@@ -325,7 +351,8 @@ async function hydrateAnalyzerFromLead(payload: BridgeRecord, leadId: string, is
   }
   // Reviewed comp selections replace the whole set, including intentionally emptied slots.
   if (mappedDeal.comps && !manualFields.includes('comps')) mergedDeal.comps = mappedDeal.comps;
-  if (mappedDeal.propertyRecordSnapshot) mergedDeal.propertyRecordSnapshot = mappedDeal.propertyRecordSnapshot;
+  if (mappedDeal.propertyRecordSnapshot)
+    mergedDeal.propertyRecordSnapshot = mappedDeal.propertyRecordSnapshot;
   if (mappedDeal.listingSnapshot) mergedDeal.listingSnapshot = mappedDeal.listingSnapshot;
   if (mappedDeal.recordedSales) mergedDeal.recordedSales = mappedDeal.recordedSales;
   if (mappedDeal.isAnalyzed === false) mergedDeal.isAnalyzed = false;
@@ -344,12 +371,20 @@ async function hydrateAnalyzerFromLead(payload: BridgeRecord, leadId: string, is
   } else {
     if (publish) {
       try {
-        const result = await commitAnalyzerDraft(mergedDeal as DealData, manualFields, baseline, false, isCurrent);
-        if (result === 'conflict' && isCurrent()) writeAnalyzerSessionDeal(mergedDeal, manualFields, undefined, true);
+        const result = await commitAnalyzerDraft(
+          mergedDeal as DealData,
+          manualFields,
+          baseline,
+          false,
+          isCurrent
+        );
+        if (result === 'conflict' && isCurrent())
+          writeAnalyzerSessionDeal(mergedDeal, manualFields, undefined, true);
       } catch {
         if (isCurrent()) writeAnalyzerSessionDeal(mergedDeal, manualFields, baseline, true);
       }
-    } else if (isCurrent()) writeAnalyzerSessionDeal(mergedDeal, manualFields, baseline, baseline === undefined);
+    } else if (isCurrent())
+      writeAnalyzerSessionDeal(mergedDeal, manualFields, baseline, baseline === undefined);
   }
 }
 
@@ -420,6 +455,24 @@ export function DealView() {
 function DealViewContent() {
   const { id: leadId = '' } = useParams();
   const location = useLocation();
+  const entry = location.state?.leadAnalyzerOrigin;
+  const origin = entry?.leadId === leadId ? entry : null;
+  const backToLead = leadId ? (
+    <Link
+      className="pbk-btn pbk-btn-ghost pbk-btn-sm min-h-11"
+      to={{
+        pathname: `/leads/${encodeURIComponent(leadId)}`,
+        search:
+          typeof origin?.search === 'string' && origin.search.startsWith('?') ? origin.search : '',
+        hash: readLeadEvidenceTarget(location.hash) ? location.hash : '',
+      }}
+      state={origin ? { leadReturn: origin.leadReturn, fleetReturn: origin.fleetReturn } : null}
+      replace
+    >
+      <ArrowLeft size={16} aria-hidden="true" />
+      Back to lead
+    </Link>
+  ) : null;
   const draftIdentity = location.pathname + location.search;
   const [loading, setLoading] = useState(Boolean(leadId));
   const [error, setError] = useState('');
@@ -432,7 +485,8 @@ function DealViewContent() {
   const loadLead = useCallback(async () => {
     if (!leadId) return;
     const version = ++requestVersion.current;
-    const isCurrent = () => currentIdentity.current === draftIdentity && requestVersion.current === version;
+    const isCurrent = () =>
+      currentIdentity.current === draftIdentity && requestVersion.current === version;
     setLoading(true);
     setError('');
     try {
@@ -466,7 +520,9 @@ function DealViewContent() {
     }
     void loadLead();
     const version = requestVersion.current;
-    return () => { requestVersion.current = version + 1; };
+    return () => {
+      requestVersion.current = version + 1;
+    };
   }, [leadId, loadLead, retryToken]);
 
   if (!leadId) {
@@ -511,6 +567,7 @@ function DealViewContent() {
           >
             Retry lead load
           </button>
+          <div className="mt-3">{backToLead}</div>
         </div>
       </div>
     );
@@ -519,7 +576,7 @@ function DealViewContent() {
   return (
     <div className="h-full min-h-[680px]">
       <DealViewErrorBoundary key={draftIdentity}>
-        <App engineOnly key={draftIdentity} />
+        <App engineOnly key={draftIdentity} backToLead={backToLead} />
       </DealViewErrorBoundary>
     </div>
   );

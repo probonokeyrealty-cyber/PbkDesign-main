@@ -266,10 +266,12 @@ async function verify(browserType, viewport, device = {}) {
 
     const beforeAnalyzer = enrichments.length;
     const openAnalyzer = page.getByRole('button', { name: 'Open Analyzer', exact: true });
+    const backToLead = page.getByRole('link', { name: 'Back to lead', exact: true });
     const analyzerRecord = page.getByText('ATTOM public records · Saved record', { exact: true });
     const compAddress = page.getByRole('textbox', { name: 'Comp A address', exact: true });
     await openAnalyzer.click();
-    await expect(page).toHaveURL(/\/deal\/fixture-north$/);
+    await expect(page).toHaveURL(/\/deal\/fixture-north(?:#|$)/);
+    await expect(analyzerRecord).toBeVisible({ timeout: 20_000 });
     await expect(page.locator('#deal-arv')).toHaveValue('250000');
     await expect(compAddress).toHaveValue('12 North Fixture Avenue');
     await analyzerRecord.click();
@@ -278,8 +280,29 @@ async function verify(browserType, viewport, device = {}) {
     await expect(page.getByText('Lead ID: fixture-north', { exact: true })).toBeVisible();
     await expect(page.getByLabel('Seller name', { exact: true })).toHaveValue('Fixture North Updated');
     assert.equal(enrichments.length, beforeAnalyzer, 'Opening North Analyzer must only read saved evidence');
-    await page.goBack();
-    await expect(openAnalyzer).toBeVisible();
+    await expect(backToLead).toBeVisible();
+    await backToLead.click();
+    await expect(page).toHaveURL(/\/leads\/fixture-north#lead-record$/);
+    await expect(recordTab).toHaveAttribute('aria-selected', 'true', { timeout: 20_000 });
+    await expect(propertyPanel.getByRole('heading', { name: 'Property', exact: true })).toBeFocused();
+    await propertyPanel.getByRole('tab', { name: 'Comps', exact: true }).click();
+    await propertyPanel.getByRole('link', { name: 'Open Analyzer', exact: true }).click();
+    await expect(compAddress).toHaveValue('12 North Fixture Avenue');
+    await page.reload();
+    await expect(compAddress).toHaveValue('12 North Fixture Avenue');
+    await backToLead.press('Enter');
+    await expect(page).toHaveURL(/\/leads\/fixture-north#lead-comps$/);
+    await expect(propertyPanel.getByRole('tab', { name: 'Comps', exact: true })).toHaveAttribute('aria-selected', 'true', { timeout: 20_000 });
+    await photosTab.click();
+    await openAnalyzer.click();
+    await backToLead.click();
+    await expect(page).toHaveURL(/\/leads\/fixture-north#lead-photos$/);
+    await expect(photosTab).toHaveAttribute('aria-selected', 'true', { timeout: 20_000 });
+    await overviewTab.click();
+    await openAnalyzer.click();
+    await backToLead.click();
+    await expect(page).toHaveURL(/\/leads\/fixture-north#lead-property$/);
+    await expect(overviewTab).toHaveAttribute('aria-selected', 'true', { timeout: 20_000 });
     await page.getByRole('button', { name: 'Back to leads', exact: true }).click();
     await roster.getByRole('link', { name: 'Open lead Fixture South at 123 Fixture Avenue', exact: true }).click();
     await openAnalyzer.click();
@@ -295,12 +318,15 @@ async function verify(browserType, viewport, device = {}) {
     await expect(compAddress).toHaveValue('97 South Fixture Avenue');
     await analyzerRecord.click();
     await expect(page.getByText('002-03', { exact: true })).toBeVisible();
-    assert.equal(enrichments.length, beforeAnalyzer, 'Opening South Analyzer must only read saved evidence');
-    assert.equal(previews.length, 2, 'Changing leads must not call property preview');
     assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
     if (process.env.PBK_LEADS_DESIGN_SCREENSHOTS === '1') {
       await page.screenshot({ path: `.pbk-local/lead-analyzer-${browserType.name()}-${viewport.width}.png` });
     }
+    await backToLead.click();
+    await expect(page).toHaveURL(/\/leads\/fixture-south$/);
+    await expect(overviewTab).toHaveAttribute('aria-selected', 'true', { timeout: 20_000 });
+    assert.equal(enrichments.length, beforeAnalyzer, 'Opening and returning from Analyzer must only read saved evidence');
+    assert.equal(previews.length, 2, 'Changing leads must not call property preview');
     await page.goto(`${origin}/leads/fixture-north`);
     const deleteButton = page.getByRole('button', { name: 'Delete lead', exact: true });
     await deleteButton.click();
@@ -317,7 +343,7 @@ async function verify(browserType, viewport, device = {}) {
       ['POST', '/api/leads'], ['PATCH', '/api/leads/fixture-north'], ['DELETE', '/api/leads/fixture-north'],
     ]);
     assert.deepEqual(unexpectedWrites, []);
-    console.log(`${browserType.name()} ${viewport.width}px: exact saved Analyzer facts and comps, no passive refresh, roster, and CRM checks passed.`);
+    console.log(`${browserType.name()} ${viewport.width}px: exact Analyzer handoff, lead tab restoration, and explicit refresh checks passed.`);
   } finally {
     await browser.close();
   }

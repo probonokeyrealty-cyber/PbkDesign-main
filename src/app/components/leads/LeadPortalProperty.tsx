@@ -1,7 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import * as Tabs from '@radix-ui/react-tabs';
+import type { LinkProps } from 'react-router';
 import { Building2, ExternalLink, FileSearch, Pencil, RefreshCw } from 'lucide-react';
-import { fetchPropertyIntelligenceRequest, type RecentSalesResult } from '../../utils/runtimeBridge';
+import {
+  fetchPropertyIntelligenceRequest,
+  type RecentSalesResult,
+} from '../../utils/runtimeBridge';
 import { LeadListingPhotos } from '../AnalyzerListingLookup';
 import type { LeadPortalModel } from './leadPortalModel';
 import { formatLeadValue } from './leadPortalModel';
@@ -32,35 +36,40 @@ function ZillowLink({ href }: { href: string }) {
   );
 }
 
+export type LeadPropertyTab = 'overview' | PropertyEvidenceTab;
+
 export function LeadPortalProperty({
   lead,
-  entryKey,
-  initialTab = 'overview',
+  tab,
+  onTabChange,
+  analyzerLink,
   onEdit,
   onSaved,
 }: {
   lead: LeadPortalModel;
-  entryKey: string;
-  initialTab?: 'overview' | PropertyEvidenceTab;
+  tab: LeadPropertyTab;
+  onTabChange: (tab: LeadPropertyTab) => void;
+  analyzerLink: Pick<LinkProps, 'to' | 'state'>;
   onEdit: () => void;
   onSaved: (leadId: string) => Promise<void>;
 }) {
-  const [selection, setSelection] = useState<{ entryKey: string; tab: string } | null>(null);
-  // Each workspace shortcut starts on its linked tab. In-card tabs keep their own choice for that visit.
-  const tab = selection?.entryKey === entryKey ? selection.tab : initialTab;
-  const setTab = (tab: string) => setSelection({ entryKey, tab });
   const [refreshing, setRefreshing] = useState(false);
   const [compSaving, setCompSaving] = useState(false);
   const [refreshStatus, setRefreshStatus] = useState('');
   const pending = useRef(false);
   const compSavePending = useRef(false);
   const mounted = useRef(true);
-  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
   const recordTabRef = useRef<HTMLButtonElement>(null);
   const photoTabRef = useRef<HTMLButtonElement>(null);
   const compTabRef = useRef<HTMLButtonElement>(null);
   function openEvidenceTab(next: PropertyEvidenceTab) {
-    setTab(next);
+    onTabChange(next);
     ({ record: recordTabRef, photos: photoTabRef, comps: compTabRef })[next].current?.focus();
   }
   const locality = [lead.city, [lead.state, lead.zip].filter(Boolean).join(' ')]
@@ -73,32 +82,77 @@ export function LeadPortalProperty({
   const currentIdentity = useRef(identity);
   currentIdentity.current = identity;
   const savedSales = useMemo<RecentSalesResult | null>(() => {
-    const analyzer = lead.raw.analyzer && typeof lead.raw.analyzer === 'object' ? lead.raw.analyzer as Record<string, unknown> : {};
-    const research = analyzer.recordedSales && typeof analyzer.recordedSales === 'object' ? analyzer.recordedSales as Record<string, unknown> : null;
-    const researchAddress = research?.address && typeof research.address === 'object' ? research.address as Record<string, unknown> : {};
-    const savedAddress = {street:lead.address,city:lead.city,state:lead.state,zip:lead.zip};
-    const normalize = (value: unknown) => String(value ?? '').trim().toLowerCase().replace(/[.,]/g, '').replace(/\s+/g, ' ');
-    return research && (research.source === 'ATTOM' || research.provider === 'ATTOM') && ['street', 'city', 'state', 'zip'].every(key => normalize(researchAddress[key]) === normalize(savedAddress[key as keyof typeof savedAddress])) && Array.isArray(research.sales)
-      ? { ...research, source: 'ATTOM', status: 'matched' } as RecentSalesResult : null;
-  }, [lead.raw,lead.address,lead.city,lead.state,lead.zip]);
+    const analyzer =
+      lead.raw.analyzer && typeof lead.raw.analyzer === 'object'
+        ? (lead.raw.analyzer as Record<string, unknown>)
+        : {};
+    const research =
+      analyzer.recordedSales && typeof analyzer.recordedSales === 'object'
+        ? (analyzer.recordedSales as Record<string, unknown>)
+        : null;
+    const researchAddress =
+      research?.address && typeof research.address === 'object'
+        ? (research.address as Record<string, unknown>)
+        : {};
+    const savedAddress = {
+      street: lead.address,
+      city: lead.city,
+      state: lead.state,
+      zip: lead.zip,
+    };
+    const normalize = (value: unknown) =>
+      String(value ?? '')
+        .trim()
+        .toLowerCase()
+        .replace(/[.,]/g, '')
+        .replace(/\s+/g, ' ');
+    return research &&
+      (research.source === 'ATTOM' || research.provider === 'ATTOM') &&
+      ['street', 'city', 'state', 'zip'].every(
+        (key) =>
+          normalize(researchAddress[key]) ===
+          normalize(savedAddress[key as keyof typeof savedAddress])
+      ) &&
+      Array.isArray(research.sales)
+      ? ({ ...research, source: 'ATTOM', status: 'matched' } as RecentSalesResult)
+      : null;
+  }, [lead.raw, lead.address, lead.city, lead.state, lead.zip]);
   async function refreshIntelligence(radiusMiles = 1) {
-    if (pending.current || compSavePending.current || !lead.id || !hasLookupAddress(address)) return;
+    if (pending.current || compSavePending.current || !lead.id || !hasLookupAddress(address))
+      return;
     const requestedIdentity = identity;
     pending.current = true;
-    setRefreshing(true); setRefreshStatus('');
+    setRefreshing(true);
+    setRefreshStatus('');
     const active = () => mounted.current && currentIdentity.current === requestedIdentity;
     try {
-      const response = await fetchPropertyIntelligenceRequest({ address: fullAddress, leadId: lead.id, expectedPropertyAddress: address, radiusMiles });
+      const response = await fetchPropertyIntelligenceRequest({
+        address: fullAddress,
+        leadId: lead.id,
+        expectedPropertyAddress: address,
+        radiusMiles,
+      });
       if (!active()) return;
-      if (!response.ok || !response.saved) throw new Error('Property intelligence was not saved. Refresh again when the bridge is available.');
+      if (!response.ok || !response.saved)
+        throw new Error(
+          'Property intelligence was not saved. Refresh again when the bridge is available.'
+        );
       await onSaved(lead.id);
-      if (active()) setRefreshStatus(
-        response.records.status === 'matched' && !response.records.partial && response.sales.status === 'matched'
-          ? 'Property intelligence saved. Review suggested sales before underwriting.'
-          : 'Property intelligence refreshed. Some sources were unavailable; previously saved evidence is retained.'
-      );
+      if (active())
+        setRefreshStatus(
+          response.records.status === 'matched' &&
+            !response.records.partial &&
+            response.sales.status === 'matched'
+            ? 'Property intelligence saved. Review suggested sales before underwriting.'
+            : 'Property intelligence refreshed. Some sources were unavailable; previously saved evidence is retained.'
+        );
     } catch (error) {
-      if (active()) setRefreshStatus(error instanceof Error ? error.message : 'Unable to refresh property intelligence. Saved evidence is retained.');
+      if (active())
+        setRefreshStatus(
+          error instanceof Error
+            ? error.message
+            : 'Unable to refresh property intelligence. Saved evidence is retained.'
+        );
     } finally {
       pending.current = false;
       if (active()) setRefreshing(false);
@@ -132,7 +186,12 @@ export function LeadPortalProperty({
           </p>
         </div>
         <div className="pbk-property-actions">
-          <button type="button" className="pbk-btn pbk-btn-primary pbk-btn-sm" disabled={busy || !hasLookupAddress(address)} onClick={() => void refresh()}>
+          <button
+            type="button"
+            className="pbk-btn pbk-btn-primary pbk-btn-sm"
+            disabled={busy || !hasLookupAddress(address)}
+            onClick={() => void refresh()}
+          >
             <RefreshCw size={14} aria-hidden className={refreshing ? 'animate-spin' : undefined} />
             {refreshing ? 'Refreshing property intelligence...' : 'Refresh property intelligence'}
           </button>
@@ -142,7 +201,11 @@ export function LeadPortalProperty({
           {zillowHref && <ZillowLink href={zillowHref} />}
         </div>
       </header>
-      {refreshStatus && <p className="pbk-property-evidence-note" role="status">{refreshStatus}</p>}
+      {refreshStatus && (
+        <p className="pbk-property-evidence-note" role="status">
+          {refreshStatus}
+        </p>
+      )}
       <dl className="pbk-property-key-facts" aria-label="Key facts from the saved lead">
         <div>
           <dt>Beds / baths</dt>
@@ -177,7 +240,7 @@ export function LeadPortalProperty({
           onClick={() => {
             if (missing.length) onEdit();
             else {
-              setTab('record');
+              onTabChange('record');
               recordTabRef.current?.focus();
             }
           }}
@@ -185,14 +248,22 @@ export function LeadPortalProperty({
           {missing.length ? 'Complete address' : 'Review property record'}
         </button>
       </div>
-      <Tabs.Root value={tab} onValueChange={setTab} activationMode="manual">
+      <Tabs.Root
+        value={tab}
+        onValueChange={(next) => onTabChange(next as LeadPropertyTab)}
+        activationMode="manual"
+      >
         <Tabs.List aria-label="Property workspace sections" className="pbk-property-tabs">
           <Tabs.Trigger value="overview">Overview</Tabs.Trigger>
           <Tabs.Trigger ref={recordTabRef} value="record">
             Property record
           </Tabs.Trigger>
-          <Tabs.Trigger ref={photoTabRef} value="photos">Photos</Tabs.Trigger>
-          <Tabs.Trigger ref={compTabRef} value="comps">Comps</Tabs.Trigger>
+          <Tabs.Trigger ref={photoTabRef} value="photos">
+            Photos
+          </Tabs.Trigger>
+          <Tabs.Trigger ref={compTabRef} value="comps">
+            Comps
+          </Tabs.Trigger>
         </Tabs.List>
         <Tabs.Content value="overview" className="pbk-property-tab-panel">
           <div className="pbk-property-evidence-grid">
@@ -270,7 +341,12 @@ export function LeadPortalProperty({
               )}
             </div>
           </div>
-          <PropertyEvidenceBrief records={evidence.records} listing={evidence.listing} sales={savedSales} onOpen={openEvidenceTab} />
+          <PropertyEvidenceBrief
+            records={evidence.records}
+            listing={evidence.listing}
+            sales={savedSales}
+            onOpen={openEvidenceTab}
+          />
           <div className="pbk-property-group-heading">
             <Building2 size={16} aria-hidden />
             <h3>Saved lead facts</h3>
@@ -315,7 +391,19 @@ export function LeadPortalProperty({
           />
         </Tabs.Content>
         <Tabs.Content value="comps" className="pbk-property-tab-panel">
-          <LeadComps address={address} leadId={lead.id} savedSales={savedSales} onRefresh={refreshIntelligence} refreshing={refreshing} onSaved={onSaved} onSavingChange={saving => { compSavePending.current = saving; setCompSaving(saving); }} />
+          <LeadComps
+            address={address}
+            leadId={lead.id}
+            savedSales={savedSales}
+            analyzerLink={analyzerLink}
+            onRefresh={refreshIntelligence}
+            refreshing={refreshing}
+            onSaved={onSaved}
+            onSavingChange={(saving) => {
+              compSavePending.current = saving;
+              setCompSaving(saving);
+            }}
+          />
         </Tabs.Content>
         <Tabs.Content value="photos" className="pbk-property-tab-panel">
           <LeadListingPhotos

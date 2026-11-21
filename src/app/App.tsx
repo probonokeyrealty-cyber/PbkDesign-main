@@ -1,5 +1,9 @@
-import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
-import { intelligenceRequest, propertyContextFields, resetChangedProperty } from './utils/analyzerIntelligence.mjs';
+import { useState, useEffect, useMemo, useCallback, useRef, type ReactNode } from 'react';
+import {
+  intelligenceRequest,
+  propertyContextFields,
+  resetChangedProperty,
+} from './utils/analyzerIntelligence.mjs';
 import { buildAnalyzerLeadPatch } from './utils/analyzerLeadPersistence.mjs';
 import { TopBar } from './components/TopBar';
 import { LeftPanel } from './components/LeftPanel';
@@ -192,6 +196,7 @@ const BRANDING_STORAGE_KEY = 'pbk-branding';
 
 type AppProps = {
   engineOnly?: boolean;
+  backToLead?: ReactNode;
 };
 
 function getInitialDarkMode() {
@@ -207,7 +212,7 @@ function getInitialDarkMode() {
   return true;
 }
 
-export default function App({ engineOnly = false }: AppProps) {
+export default function App({ engineOnly = false, backToLead }: AppProps) {
   const [deal, setDeal] = useState<DealData>(() => {
     const saved = readAnalyzerDeal(initialDealData);
     return { ...saved, selectedPath: normalizeSelectedPath(saved) };
@@ -221,7 +226,9 @@ export default function App({ engineOnly = false }: AppProps) {
   const draftBaseline = useRef<string | null | undefined>(readAnalyzerDraftBaseline());
   const manualDraftFields = useRef<Set<string> | null>(null);
   if (!manualDraftFields.current) {
-    manualDraftFields.current = new Set(readAnalyzerDraftManualFields() ?? (deal.address.trim() ? Object.keys(deal) : []));
+    manualDraftFields.current = new Set(
+      readAnalyzerDraftManualFields() ?? (deal.address.trim() ? Object.keys(deal) : [])
+    );
   }
   const persistDraft = useCallback(async (next: DealData, force = false) => {
     if (draftScope.current !== getAnalyzerDraftIdentity()) return 'superseded';
@@ -547,7 +554,12 @@ export default function App({ engineOnly = false }: AppProps) {
   useEffect(() => {
     // Prefer comp-backed ARV when comps exist, but do not wipe a manual or bridge-fed ARV.
     const compArv = calculateARV(deal.comps);
-    const arv = manualDraftFields.current?.has('arv') && deal.arv > 0 ? deal.arv : compArv > 0 ? compArv : deal.arv;
+    const arv =
+      manualDraftFields.current?.has('arv') && deal.arv > 0
+        ? deal.arv
+        : compArv > 0
+          ? compArv
+          : deal.arv;
 
     // Calculate MAO values using corrected formulas
     const mao60 = calculateMAO.wholesale(
@@ -612,8 +624,11 @@ export default function App({ engineOnly = false }: AppProps) {
     publishDraft.current = true;
     cacheIncomingDraft.current = false;
     Object.keys(updates).forEach((key) => manualDraftFields.current?.add(key));
-    if (updates.address !== undefined && Object.keys(resetChangedProperty(currentDeal.current, updates.address)).length) {
-      propertyContextFields.forEach(key => manualDraftFields.current?.delete(key));
+    if (
+      updates.address !== undefined &&
+      Object.keys(resetChangedProperty(currentDeal.current, updates.address)).length
+    ) {
+      propertyContextFields.forEach((key) => manualDraftFields.current?.delete(key));
     }
     const shouldResetAnalysis = Object.keys(updates).some((key) =>
       ANALYSIS_IMPACT_FIELDS.includes(key as keyof DealData)
@@ -652,9 +667,10 @@ export default function App({ engineOnly = false }: AppProps) {
       mounted.current &&
       analysisRequestVersion.current === version &&
       draftScope.current === getAnalyzerDraftIdentity();
-    const deal = snapshot.arv || manualDraftFields.current?.has('arv')
-      ? snapshot
-      : { ...snapshot, arv: calculateARV(snapshot.comps) };
+    const deal =
+      snapshot.arv || manualDraftFields.current?.has('arv')
+        ? snapshot
+        : { ...snapshot, arv: calculateARV(snapshot.comps) };
     const readiness = getAnalyzeReadiness(deal);
     if (!readiness.ready) {
       setAnalyzeStatus(readiness.message);
@@ -745,7 +761,7 @@ export default function App({ engineOnly = false }: AppProps) {
             },
             analyzer: {
               comps: analyzedDeal.comps,
-              ...(deal.recordedSales ? {recordedSales:deal.recordedSales} : {}),
+              ...(deal.recordedSales ? { recordedSales: deal.recordedSales } : {}),
               runId: result?.id,
               address: result?.address || deal.address,
               arv: nextArv,
@@ -770,7 +786,9 @@ export default function App({ engineOnly = false }: AppProps) {
       const bridgeAnalysisStatus = result?.mao
         ? `Analysis saved. ARV ${Number(result.arv || 0).toLocaleString()} / MAO ${Number(result.mao || 0).toLocaleString()}.${leadSyncStatus}`
         : `${readiness.successMessage}${leadSyncStatus}`;
-      setAnalyzeStatus(`${bridgeAnalysisStatus}${deal.recordedSales?.review === 'suggested-unreviewed' ? ' Provisional analysis: review the auto-filled sale candidates before making an offer.' : ''}`);
+      setAnalyzeStatus(
+        `${bridgeAnalysisStatus}${deal.recordedSales?.review === 'suggested-unreviewed' ? ' Provisional analysis: review the auto-filled sale candidates before making an offer.' : ''}`
+      );
     } catch (error) {
       if (!isCurrentAnalysis() || currentDeal.current !== snapshot) return;
       setDeal((prev) => ({
@@ -1385,6 +1403,7 @@ export default function App({ engineOnly = false }: AppProps) {
         {/* Main Content */}
         <div className="relative flex-1 min-w-0 flex flex-col overflow-hidden">
           <DealAnalyzerCommandHeader
+            backToLead={backToLead}
             deal={activeDeal}
             selectedPath={activeSelectedPath}
             activeTab={activeTab}

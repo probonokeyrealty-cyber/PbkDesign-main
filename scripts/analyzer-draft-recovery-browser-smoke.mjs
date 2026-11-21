@@ -153,7 +153,12 @@ async function verify(engine, viewport, device = {}) {
         return route.fulfill({ json: { ok: true, items: [], approvals: [], leads: [] } });
       }
       if (!['document', 'script', 'stylesheet', 'font', 'image'].includes(req.resourceType())) return route.abort();
-      return route.fulfill({ response: await route.fetch({ url: origin + url.pathname + url.search }) });
+      // Do not reuse a stale loopback socket between WebKit tab navigations.
+      const response = await route.fetch({
+        url: origin + url.pathname + url.search,
+        headers: { ...req.headers(), connection: 'close' },
+      });
+      return route.fulfill({ response });
     });
     const first = await context.newPage();
     const address = page => page.getByRole('combobox', { name: 'Address', exact: true });

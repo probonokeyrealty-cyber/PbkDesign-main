@@ -1,4 +1,4 @@
-import { ArrowUpRight } from 'lucide-react';
+import { ArrowRight, ArrowUpRight, FileText, Images, ListChecks } from 'lucide-react';
 import { compDate, compNumber, reviewedCompIds } from '../../utils/leadComps.mjs';
 import type { readPropertyEvidence } from '../../utils/propertyEvidence';
 import type { RecentSalesResult } from '../../utils/runtimeBridge';
@@ -27,49 +27,75 @@ export function PropertyEvidenceBrief({ records, listing, sales, onOpen }: Evide
     ? [...new Map(sales.sales.slice(0, 20).filter(sale => sale && typeof sale.id === 'string' && sale.id.trim() && typeof sale.address === 'string' && sale.address.trim() && (compNumber(sale.price) ?? 0) > 0 && compDate(sale.soldDate)).map(sale => [sale.id, sale])).values()]
     : [];
   const reviewed = reviewedCompIds({ ...sales, sales: candidates }).length;
+  let next: { tab: PropertyEvidenceTab; action: string; detail: string } | undefined;
+  if (!records) {
+    next = { tab: 'record', action: 'Open property record', detail: 'There’s no saved property record for this lead.' };
+  } else if (!reviewed && candidates.length) {
+    next = { tab: 'comps', action: 'Compare saved comps', detail: 'Compare the saved sales and choose which ones to use in Analyzer.' };
+  } else if (!candidates.length) {
+    next = { tab: 'comps', action: 'Check comparable sales', detail: 'There are no recorded sales saved for comparison yet.' };
+  } else if (!photoCount) {
+    next = { tab: 'photos', action: 'Check photo sources', detail: 'There are no saved photos to verify property condition.' };
+  } else if (retained || unavailable) {
+    next = { tab: 'record', action: 'Check record coverage', detail: 'Review datasets kept from an earlier snapshot or marked unavailable.' };
+  } else if (sales?.partial) {
+    next = { tab: 'comps', action: 'Check comp coverage', detail: 'Saved search coverage is limited.' };
+  }
+
   return <section className="pbk-evidence-brief" aria-labelledby="property-evidence-brief-heading">
     <header>
-      <div><p className="pbk-evidence-brief-eyebrow">Saved evidence / Lead review</p><h3 id="property-evidence-brief-heading">Evidence <em>brief.</em></h3></div>
-      <p>See what is saved before your next decision.</p>
+      <h3 id="property-evidence-brief-heading">Evidence <em>brief.</em></h3>
+      <p>Review the evidence saved to this lead.</p>
     </header>
-    <div className="pbk-evidence-brief-grid">
+    {next && <div className="pbk-evidence-brief-next">
+      <div>
+        <h4>Next review</h4>
+        <p>{next.detail}</p>
+      </div>
+      <button type="button" className="pbk-btn pbk-btn-ghost pbk-btn-sm" onClick={() => onOpen(next.tab)}>
+        {next.action} <ArrowRight size={16} aria-hidden />
+      </button>
+    </div>}
+    <div className="pbk-evidence-brief-rows">
       <article>
-        <span className="pbk-evidence-brief-label">01 / Property record</span>
-        <strong>{records ? 'Saved' : 'Not captured'}</strong>
-        <p>{records ? (sections.length ? `${counted(populated, 'populated dataset')}` : 'Saved property record') : 'No saved property record'}</p>
-        {retained > 0 && <p className="pbk-evidence-brief-caution">{retained} retained after a later refresh</p>}
-        {unavailable > 0 && <p>{counted(unavailable, 'dataset')} unavailable</p>}
-        {records && capture(records.retrievedAt, 'Snapshot captured')}
-        {retained > 0 && (retainedCapture ? capture(retainedCapture, 'Oldest retained dataset captured') : <p className="pbk-evidence-brief-time">Retained dataset capture time unavailable.</p>)}
+        <FileText className="pbk-evidence-brief-icon" size={18} aria-hidden />
+        <div>
+          <h4>Property record</h4>
+          <p>{records ? (sections.length ? counted(populated, 'populated dataset') : 'Saved property record') : 'No saved property record'}</p>
+          {retained > 0 && <p className="pbk-evidence-brief-caution">{retained} retained after a later refresh</p>}
+          {unavailable > 0 && <p className="pbk-evidence-brief-caution">{counted(unavailable, 'dataset')} unavailable</p>}
+          {records && capture(records.retrievedAt, 'Snapshot captured')}
+          {retained > 0 && (retainedCapture ? capture(retainedCapture, 'Oldest retained dataset captured') : <p className="pbk-evidence-brief-time">Retained dataset capture time unavailable.</p>)}
+        </div>
         <button type="button" className="pbk-btn pbk-btn-ghost pbk-btn-sm" onClick={() => onOpen('record')}>Review records <ArrowUpRight size={14} aria-hidden /></button>
       </article>
       <article>
-        <span className="pbk-evidence-brief-label">02 / Property photos</span>
-        <strong>{photoCount || 'Not captured'}</strong>
-        <p>{photoCount ? counted(photoCount, 'saved photo') : 'No saved photos'}</p>
-        {listing && capture(listing.retrievedAt)}
+        <Images className="pbk-evidence-brief-icon" size={18} aria-hidden />
+        <div>
+          <h4>Property photos</h4>
+          <p>{photoCount ? counted(photoCount, 'saved photo') : 'No saved photos'}</p>
+          {listing && capture(listing.retrievedAt)}
+        </div>
         <button type="button" className="pbk-btn pbk-btn-ghost pbk-btn-sm" onClick={() => onOpen('photos')}>Review photos <ArrowUpRight size={14} aria-hidden /></button>
       </article>
       <article>
-        <span className="pbk-evidence-brief-label">03 / Comp review</span>
-        <strong>{reviewed} / 3</strong>
-        <p>{counted(reviewed, 'reviewed selection')}</p>
-        <p>{candidates.length ? counted(candidates.length, 'saved sale candidate') : 'No saved recorded sales'}</p>
-        {sales?.partial && <p className="pbk-evidence-brief-caution">Saved search coverage is limited.</p>}
-        {candidates.length > 0 && capture(sales?.retrievedAt)}
+        <ListChecks className="pbk-evidence-brief-icon" size={18} aria-hidden />
+        <div>
+          <h4>Comparable sales</h4>
+          <div className="pbk-evidence-brief-counts">
+            <p>{candidates.length ? counted(candidates.length, 'saved sale candidate') : 'No saved recorded sales'}</p>
+            <p className={candidates.length > 0 && reviewed === 0 ? 'pbk-evidence-brief-caution' : undefined}>
+              {counted(reviewed, 'reviewed selection')}
+            </p>
+          </div>
+          {sales?.partial && <p className="pbk-evidence-brief-caution">Saved search coverage is limited.</p>}
+          {candidates.length > 0 && capture(sales?.retrievedAt)}
+        </div>
         <button type="button" className="pbk-btn pbk-btn-ghost pbk-btn-sm" onClick={() => onOpen('comps')}>Review comps <ArrowUpRight size={14} aria-hidden /></button>
       </article>
     </div>
-    <div className="pbk-evidence-brief-follow-up">
-      <h4>Still to review</h4>
-      <ul>
-        {!records && <li>Capture the property record with Refresh property intelligence when ready.</li>}
-        {!photoCount && <li>Check listing sources for photos, or refresh when ready.</li>}
-        {!reviewed && <li>{candidates.length ? 'Compare the saved sales and save your reviewed selections.' : 'Capture recorded sales when ready, then compare and save your selections.'}</li>}
-        {(retained > 0 || unavailable > 0) && <li>Check retained or unavailable datasets in Property record.</li>}
-        {records && photoCount > 0 && reviewed > 0 && !retained && !unavailable && <li>Verify condition, source dates, and comp fit before underwriting.</li>}
-      </ul>
-      <p>Saved evidence only. Sources run when you trigger Refresh or Analyze. Coverage is not an underwriting approval.</p>
-    </div>
+    <p className="pbk-evidence-brief-note">
+      {next ? 'Use Refresh property intelligence to request new data for this lead.' : 'Verify condition, source dates, and comp fit before underwriting.'}
+    </p>
   </section>;
 }

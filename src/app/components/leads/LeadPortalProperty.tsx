@@ -196,6 +196,7 @@ export function LeadPortalProperty({
           <Tabs.Trigger ref={compTabRef} value="comps">Comps</Tabs.Trigger>
         </Tabs.List>
         <Tabs.Content value="overview" className="pbk-property-tab-panel">
+          <PropertyEvidenceBrief records={evidence.records} listing={evidence.listing} sales={savedSales} onOpen={openEvidenceTab} />
           <div className="pbk-property-evidence-grid">
             <div className="pbk-property-gallery">
               <LeadListingPhotos
@@ -271,7 +272,6 @@ export function LeadPortalProperty({
               )}
             </div>
           </div>
-          <PropertyEvidenceBrief records={evidence.records} listing={evidence.listing} sales={savedSales} onOpen={openEvidenceTab} />
           <div className="pbk-property-group-heading">
             <Building2 size={16} aria-hidden />
             <h3>Saved lead facts</h3>

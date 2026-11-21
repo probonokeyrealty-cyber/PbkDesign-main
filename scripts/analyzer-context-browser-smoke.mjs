@@ -34,6 +34,8 @@ if (hosted) {
 const leadId = 'qa-analyzer-context';
 const threadId = 'qa-context-thread';
 const address = '42 Fixture Avenue, Example City, CA 90210';
+const nextAddress = '43 Fixture Avenue, Example City, CA 90210';
+const retrievedAt = '2026-11-09T12:00:00Z';
 const storageHost = hosted ? 'pbk-openclaw-bridge-onrender-com' : 'local';
 const storageKey = `pbk:${storageHost}:analyzer:current-deal:session`;
 const event = {
@@ -51,6 +53,7 @@ async function verify(engine, compact, device = {}) {
     const page = await browser.newPage({ ...device, viewport: compact ? { width: 390, height: 844 } : wide });
     const reads = [];
     const writes = [];
+    const refreshes = [];
     let exact = true;
     await page.addInitScript(({ allowedOrigin, key, payload, session }) => {
       if (location.origin !== allowedOrigin) return;
@@ -62,7 +65,7 @@ async function verify(engine, compact, device = {}) {
         }
       }
     }, { allowedOrigin: origin, key: storageKey, session: teamSession,
-      payload: { leadId, address, type: 'house', arv: 2100000 } });
+      payload: { leadId, address, type: 'house', arv: 2100000, price: 1900000, baths: 3, sqft: 2100, year: 1995, dom: 12 } });
     await page.routeWebSocket('**/*', (socket) => socket.close());
     await page.route('**/*', async (route) => {
       const req = route.request();
@@ -80,18 +83,30 @@ async function verify(engine, compact, device = {}) {
       if (url.pathname === '/api/property-data/address-suggestions' && req.method() === 'POST') {
         return route.fulfill({ json: { status: 'unavailable', suggestions: [] } });
       }
+      if (url.pathname === '/api/property-data/enrich' && req.method() === 'POST') {
+        const body = req.postDataJSON();
+        refreshes.push(body);
+        const matches = body.address === address;
+        const listingFacts = { beds: 3, baths: 2, sqft: 9138, year: 1989, dom: 38, lotSqft: 46129 };
+        const listing = matches ? {
+          cache: { hit: true },
+          propertyData: { source: 'apify-for-sale', data: { askingPriceUsd: 1980000, priceBasis: 'asking_price', listingFacts, photoUrls: photos } },
+        } : { cache: { hit: false } };
+        const deal = matches ? { listingSnapshot: {
+          source: 'apify-for-sale', address, retrievedAt, askingPrice: 1980000, photoUrls: photos, sourceLinks: [], facts: listingFacts,
+        } } : {};
+        return route.fulfill({ json: {
+          ok: true, address: body.address, listing, records: { status: 'no_match' }, sales: { status: 'unavailable' },
+          patch: { deal }, saved: matches, ...(matches ? { leadId } : {}),
+        } });
+      }
       if (req.method() !== 'GET') {
         writes.push([req.method(), url.pathname]);
         return route.abort();
       }
       if (url.pathname === '/api/property-data') {
-        const listingPhotos = url.searchParams.get('address') === address ? photos : [];
-        return route.fulfill({ json: { ok: true, cache: { hit: true }, propertyData: {
-          source: 'apify-for-sale', data: {
-            askingPriceUsd: 1980000, priceBasis: 'asking_price', propertyType: 'house',
-            listingFacts: { beds: 3, baths: 2, sqft: 9138, year: 1989, dom: 38, lotSqft: 46129 }, photoUrls: listingPhotos,
-          },
-        } } });
+        reads.push(url.pathname);
+        return route.abort();
       }
       if (url.pathname === '/api/conversations') {
         reads.push(url.pathname + url.search);
@@ -119,17 +134,22 @@ async function verify(engine, compact, device = {}) {
     const beds = page.getByRole('spinbutton', { name: 'Bedrooms' });
     const arv = page.locator('#deal-arv');
     const comp = page.getByRole('spinbutton', { name: 'Comp A sold price' });
-    await expect(page.getByRole('combobox', { name: 'Address', exact: true })).toHaveValue(address, { timeout: 20_000 });
+    const addressInput = page.getByRole('combobox', { name: 'Address', exact: true });
+    const refresh = page.getByRole('button', { name: 'Refresh property intelligence', exact: true });
+    await expect(addressInput).toHaveValue(address, { timeout: 20_000 });
     await expect(arv).toHaveValue('2100000');
     await beds.fill('4');
     const facts = ['Bathrooms', 'Square footage', 'Year built', 'Days on market']
       .map(name => page.getByRole('spinbutton', { name, exact: true }));
     const factsBefore = await Promise.all(facts.map(field => field.inputValue()));
     const priceBefore = await listPrice.inputValue();
-    await page.getByRole('button', { name: 'Find listing photos' }).click();
-    await expect(page.getByText('Apify · 6 listing photos', { exact: true })).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Fill empty fields' })).toHaveCount(0);
-    await expect(page.getByText('$1,980,000', { exact: true })).toHaveCount(0);
+    assert.deepEqual(refreshes, [], 'Opening the saved deal must not refresh evidence');
+    await refresh.click();
+    await expect(page.getByText('Listing asking price', { exact: false })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Fill empty fields' })).toBeDisabled();
+    assert.deepEqual(refreshes, [{
+      address, leadId, expectedPropertyAddress: { street: '42 Fixture Avenue', city: 'Example City', state: 'CA', zip: '90210' },
+    }], 'One click refreshes the linked property exactly once');
     await expect(listPrice).toHaveValue(priceBefore);
     for (let i = 0; i < facts.length; i++) await expect(facts[i]).toHaveValue(factsBefore[i]);
     await expect(beds).toHaveValue('4');
@@ -190,15 +210,6 @@ async function verify(engine, compact, device = {}) {
     await expect(comp).toHaveValue('2200000');
     await expect(arv).toHaveValue('2200000');
 
-    await page.getByRole('combobox', { name: 'Address', exact: true }).fill('43 Fixture Avenue');
-    await page.getByRole('button', { name: 'Find listing photos' }).click();
-    await expect(page.getByRole('region', { name: /Property details/i }).getByText('No saved Apify photos for this address.', { exact: true })).toBeVisible();
-    await expect(listPrice).toHaveValue(priceBefore);
-    for (let i = 0; i < facts.length; i++) await expect(facts[i]).toHaveValue(factsBefore[i]);
-    if (compact) await toggle.click();
-    await expect(panel.getByText('No saved Apify photos for this address.')).toBeVisible();
-    await expect(panel.getByRole('img', { name: /^Listing photo / })).toHaveCount(0);
-
     exact = false;
     const priorTimelines = reads.filter((url) => url.includes('/timeline')).length;
     const readDraftEnvelopes = () => page.evaluate((key) => {
@@ -210,7 +221,7 @@ async function verify(engine, compact, device = {}) {
     }, storageKey);
     const draftsBeforeReload = await readDraftEnvelopes();
     await page.reload();
-    await expect(page.getByRole('combobox', { name: 'Address', exact: true })).toHaveValue('43 Fixture Avenue', { timeout: 20_000 });
+    await expect(addressInput).toHaveValue(address, { timeout: 20_000 });
     await expect(beds).toHaveValue('4');
     await expect(comp).toHaveValue('2200000');
     const draftsAfterReload = await readDraftEnvelopes();
@@ -226,6 +237,22 @@ async function verify(engine, compact, device = {}) {
     await expect(page.getByRole('link', { name: 'Open conversation' })).toHaveCount(0);
     assert.equal(reads.filter((url) => url.includes('/timeline')).length, priorTimelines);
     assert.equal(reads.some((url) => url.includes('wrong-thread')), false);
+
+    if (compact) await form.click();
+    await addressInput.fill('43 Fixture Avenue');
+    await expect(refresh).toBeDisabled();
+    await expect(page.getByText('Enter the street address, city, state, and ZIP to refresh property intelligence.')).toBeVisible();
+    await expect(comp).toHaveValue('');
+    assert.equal(refreshes.length, 1, 'Editing the address and reloading are passive');
+    await addressInput.fill(nextAddress);
+    await expect(refresh).toBeEnabled();
+    await refresh.click();
+    await expect(page.getByText(/No current listing asking price/)).toBeVisible();
+    assert.deepEqual(refreshes.slice(1), [{ address: nextAddress }], 'A different address refreshes as an unlinked draft');
+    if (compact) await toggle.click();
+    await expect(panel.getByText('No saved Apify photos for this address.')).toBeVisible();
+    await expect(panel.getByRole('img', { name: /^Listing photo / })).toHaveCount(0);
+    assert.equal(reads.includes('/api/property-data'), false, 'Refresh uses the unified route only');
     assert.deepEqual(writes, []);
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
     console.log('Analyzer context: ' + (hosted ? 'hosted ' : 'local ') +

@@ -60,7 +60,7 @@ html[data-theme='light'] .pbk-dialer-surface { background: var(--bg-void); color
 .pbk-dialer-head h1 { font-family: var(--font-display); font-weight: 500; font-size: clamp(29px, 4vw, 46px); line-height: 1.05; color: var(--text-primary); margin: 0; }
 .pbk-dialer-head h1 em { color: var(--sky); }
 .pbk-dialer-head p { color: var(--text-secondary); font-size: 13px; margin: 8px 0 0; }
-.pbk-dialer-grid { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(300px, 1fr); gap: var(--s-4); align-items: start; }
+.pbk-dialer-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(300px, 360px); gap: var(--s-4); align-items: start; }
 .pbk-dialer-map-card, .pbk-dialer-side {
   border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--bg-panel); padding: var(--s-4); min-width: 0;
 }
@@ -106,12 +106,32 @@ html[data-theme='light'] .pbk-dialer-surface { background: var(--bg-void); color
 .pbk-dialer-steps li[aria-current='step'] { color: var(--sky-bright); border-color: var(--sky); }
 .pbk-dialer-steps li[aria-current='step'] span { border-color: var(--sky-dim); background: var(--sky-glow); }
 .pbk-dialer-steps li[data-complete='true'] { color: var(--text-primary); border-color: var(--sky-dim); }
-.pbk-dialer-brief-empty { display: grid; gap: 6px; justify-items: start; padding: var(--s-4); color: var(--text-secondary); background: var(--bg-console); border: 1px dashed var(--border-dim); border-radius: var(--radius-lg); font-size: 13px; }
-.pbk-dialer-brief-empty svg { color: var(--sky); }
-.pbk-dialer-brief-empty strong { color: var(--text-primary); font-size: 15px; }
+.pbk-parcel-quick-view { display: grid; gap: 10px; margin-top: var(--s-4); padding: var(--s-4); min-width: 0; border: 1px solid var(--border-dim); border-radius: var(--radius-lg); background: var(--bg-console); }
+.pbk-parcel-quick-view h3 { margin: 0; color: var(--text-primary); font: 500 21px var(--font-display); overflow-wrap: anywhere; }
+.pbk-parcel-quick-view p { margin: 4px 0 0; color: var(--text-secondary); font-size: 13px; overflow-wrap: anywhere; }
+.pbk-parcel-phone-link { display: inline-flex; align-items: center; gap: 5px; color: var(--sky); font-size: 12px; text-decoration: underline; }
+.pbk-parcel-facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(95px, 100%), 1fr)); gap: 8px; margin: 12px 0 0; }
+.pbk-parcel-facts > div { min-width: 0; padding: 8px 10px; border: 1px solid var(--border-dim); border-radius: var(--radius); }
+.pbk-parcel-facts dt { color: var(--text-secondary); font-size: 11px; }
+.pbk-parcel-facts dd { margin: 4px 0 0; color: var(--text-primary); font: 12px var(--font-mono); overflow-wrap: anywhere; }
+.pbk-virtual-phone { scroll-margin-top: 85px; }
+.pbk-virtual-phone-display {
+  display: grid; gap: 6px; justify-items: start; padding: var(--s-4); min-width: 0;
+  background: radial-gradient(ellipse at top right, var(--sky-glow), transparent 75%), var(--bg-console);
+  border: 1px solid var(--sky-dim); border-radius: var(--radius-lg);
+}
+.pbk-virtual-phone-display strong { color: var(--text-primary); font: 500 23px var(--font-display); overflow-wrap: anywhere; }
+.pbk-virtual-phone-display .pbk-phone-num { color: var(--sky-bright); font-size: 15px; white-space: normal; overflow-wrap: anywhere; }
+.pbk-virtual-phone-display .pbk-phone-tag { white-space: normal; }
+.pbk-virtual-phone-keypad { padding: 8px 12px; border: 1px solid var(--border-dim); border-radius: var(--radius-lg); background: var(--bg-console); min-width: 0; }
+.pbk-virtual-phone-keypad summary { cursor: pointer; color: var(--text-secondary); font-size: 13px; line-height: 1.7; }
+.pbk-virtual-phone-keys { display: grid; gap: 8px; margin-top: var(--s-3); }
+.pbk-virtual-phone-keys label { font-size: 12px; color: var(--text-secondary); }
+.pbk-virtual-phone-keys input { width: 100%; min-width: 0; font-variant-numeric: tabular-nums; }
+.pbk-keypad-grid { display: grid; gap: 6px; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.pbk-keypad-grid .pbk-btn { justify-content: center; min-height: 44px; font-family: var(--font-mono); }
 .pbk-dialer-contact { border: 1px solid var(--border-dim); border-left: 2px solid var(--sky); border-radius: var(--radius); background: var(--bg-console); padding: var(--s-3); min-width: 0; }
-.pbk-dialer-contact h2 { font-family: var(--font-display); font-size: 20px; font-weight: 500; margin: 2px 0 0; color: var(--text-primary); overflow-wrap: anywhere; }
-.pbk-dialer-kv { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 4px 10px; font-size: 12px; margin-top: 8px; }
+.pbk-dialer-kv { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 4px 10px; font-size: 12px; margin: 0; }
 .pbk-dialer-kv dt { color: var(--text-tertiary); font-family: var(--font-mono); font-size: 10px; text-transform: uppercase; letter-spacing: .06em; padding-top: 2px; }
 .pbk-dialer-kv dd { margin: 0; color: var(--text-secondary); overflow-wrap: anywhere; }
 .pbk-dialer-reasons { display: grid; gap: 4px; margin: 0; padding: 0; list-style: none; }

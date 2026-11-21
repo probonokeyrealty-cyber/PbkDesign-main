@@ -699,6 +699,9 @@ export function projectCallEvent(record, kind) {
         'recordingPath',
         'durationSeconds',
         'duration',
+        'approvalId',
+        'providerReceiptId',
+        'verifiedTelnyxCompletion',
         'summary',
         'callSummary',
         'outcomeSummary',
@@ -724,6 +727,8 @@ export function projectCallEvent(record, kind) {
         storageBucket: firstNonEmpty(record.storageBucket),
         audioContentType: firstNonEmpty(record.audioContentType),
         durationSeconds: firstNonEmpty(record.durationSeconds, record.duration),
+        approvalId: callKind === 'completed' ? firstText(record.approvalId) || undefined : undefined,
+        providerReceiptId: callKind === 'completed' ? firstText(record.providerReceiptId) || undefined : undefined,
         summary: summary || undefined,
         sentiment,
         callDirection:

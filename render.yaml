@@ -22,6 +22,8 @@ services:
         value: /data/openclaw
       - key: PBK_NETLIFY_URL
         value: https://pbkcenter.netlify.app
+      - key: PBK_PARCEL_SOURCE
+        value: denver-gis
       - key: PBK_NETLIFY_SITE_ID
         value: 87711eb9-2a9f-40b4-92c6-0f8075151ff0
       - key: PBK_BATCH_APPLY_ENABLED

@@ -176,10 +176,125 @@ export function createHttpParcelSource({ baseUrl, apiKey = '', license = '', fet
   };
 }
 
+const DENVER_PARCEL_LAYER = 'https://services1.arcgis.com/zdB7qR0BtYrg0Xpl/arcgis/rest/services/ODC_PROP_PARCELS_A/FeatureServer/245';
+const DENVER_PARCEL_SOURCE = 'City and County of Denver · Assessment GIS';
+const DENVER_INITIAL_BOUNDS = [-104.997, 39.738, -104.995, 39.74];
+const DENVER_FIELD_NAMES = [
+  'SCHEDNUM', 'SITUS_ADDR_NBR', 'SITUS_STR_NAME_PRE_DIR',
+  'SITUS_ADDRESS_LINE1', 'SITUS_ADDRESS_LINE2', 'SITUS_CITY', 'SITUS_STATE', 'SITUS_ZIP', 'LAND_AREA',
+].join(',');
+const DENVER_QUERY_LIMIT = 150;
+
+function denverParcel(row) {
+  const p = row.properties || {};
+  const parcelId = normalizeParcelId(p.SCHEDNUM);
+  const zip = String(p.SITUS_ZIP || '').match(/^\d{5}/)?.[0] || '';
+  const line1 = [p.SITUS_ADDRESS_LINE1, p.SITUS_ADDRESS_LINE2].map((part) => String(part || '').trim()).filter(Boolean).join(' ');
+  const squareFeet = Number(p.LAND_AREA);
+  const situs = { line1, city: 'Denver', state: 'CO', zip };
+  return {
+    type: 'Feature', geometry: row.geometry,
+    properties: {
+      parcelId, situs, county: 'Denver', source: DENVER_PARCEL_SOURCE, jurisdiction: '08031',
+      ...(squareFeet > 0 && Number.isFinite(squareFeet) ? { acres: squareFeet / 43560 } : {}),
+    },
+  };
+}
+
+function denverAddressWithoutDirection(row) {
+  const p = row.properties || {};
+  const feature = denverParcel(row);
+  const words = normalizeAddressLine(feature.properties.situs.line1).split(' ');
+  const direction = normalizeAddressLine(p.SITUS_STR_NAME_PRE_DIR);
+  if (!/^[nsew]$/.test(direction) || words[1] !== direction || !/^\d+$/.test(words[0])) return '';
+  return addressKey({ ...feature.properties.situs, line1: [words[0], ...words.slice(2)].join(' ') });
+}
+
+export function createDenverParcelSource({ fetchImpl = globalThis.fetch } = {}) {
+  const read = async (path, parameters) => {
+    const response = await fetchImpl(`${DENVER_PARCEL_LAYER}${path}?${new URLSearchParams(parameters)}`, {
+      headers: { Accept: 'application/json' }, signal: AbortSignal.timeout(6000),
+    });
+    if (!response.ok) throw new Error(`Denver parcel service HTTP ${response.status}.`);
+    const body = await response.json();
+    if (body.error) throw new Error('Denver parcel service rejected the query.');
+    return body;
+  };
+  const query = (parameters) => read('/query', {
+    f: 'geojson', outSR: '4326', outFields: DENVER_FIELD_NAMES, orderByFields: 'OBJECTID',
+    resultRecordCount: String(DENVER_QUERY_LIMIT), ...parameters,
+  });
+  const addressRows = (house, zip, returnGeometry = true) =>
+    query({ where: `SITUS_ADDR_NBR = '${house}' AND SITUS_ZIP LIKE '${zip}%'`, returnGeometry: String(returnGeometry) });
+  const complete = (body) => Array.isArray(body.features) && !body.exceededTransferLimit &&
+    !body.properties?.exceededTransferLimit && body.features.length < DENVER_QUERY_LIMIT;
+  const aliasIsUnique = (body, alias, parcelId) => {
+    if (!alias || !complete(body)) return false;
+    const competing = body.features.filter((row) => {
+      const { situs } = denverParcel(row).properties;
+      return addressKey(situs) === alias || denverAddressWithoutDirection(row) === alias;
+    });
+    return competing.length === 1 && denverParcel(competing[0]).properties.parcelId === parcelId;
+  };
+  return {
+    kind: 'licensed',
+    async coverage() {
+      const data = { licensed: true, source: DENVER_PARCEL_SOURCE, regions: ['City and County of Denver, CO'] };
+      try {
+        const body = await read('', { f: 'json' });
+        const status = body.geometryType === 'esriGeometryPolygon' ? 'licensed' : 'degraded';
+        return { ...data, status, note: 'Denver county coverage. Boundaries are for reference and are not survey-grade.' };
+      } catch {
+        return { ...data, status: 'error', note: 'Denver parcel service is temporarily unavailable.' };
+      }
+    },
+    async getById(value) {
+      const id = normalizeParcelId(value);
+      if (!/^\d{13}$/.test(id)) return null;
+      const body = await query({ where: `SCHEDNUM = '${id}'`, resultRecordCount: '2' });
+      if (body.features?.length !== 1) return null;
+      const row = body.features[0];
+      const feature = denverParcel(row);
+      if (!validateParcelFeature(feature)) return null;
+      const alias = denverAddressWithoutDirection(row);
+      const house = String(row.properties?.SITUS_ADDR_NBR || '');
+      if (alias && /^\d+$/.test(house)) {
+        const candidates = await addressRows(house, feature.properties.situs.zip, false);
+        if (aliasIsUnique(candidates, alias, id)) feature.properties.verifiedAddressAlias = alias;
+      }
+      return feature;
+    },
+    async findByAddress(address) {
+      const key = addressKey(address);
+      const house = normalizeAddressLine(address.line1).match(/^\d+(?= )/)?.[0];
+      if (!key || !house) return [];
+      const zip = key.split('|').at(-1);
+      const body = await addressRows(house, zip);
+      if (!complete(body)) throw new Error('Too many Denver parcel candidates. Look up the parcel ID.');
+      return body.features.flatMap((row) => {
+        const feature = denverParcel(row);
+        if (!validateParcelFeature(feature)) return [];
+        const alias = denverAddressWithoutDirection(row);
+        if (aliasIsUnique(body, alias, feature.properties.parcelId)) feature.properties.verifiedAddressAlias = alias;
+        return addressKey(feature.properties.situs) === key || feature.properties.verifiedAddressAlias === key ? [feature] : [];
+      });
+    },
+    async inBounds(bounds) {
+      const bbox = bounds ?? DENVER_INITIAL_BOUNDS;
+      if (bbox.length !== 4 || !bbox.every(Number.isFinite)) return [];
+      const [w, s, e, n] = bbox;
+      if (w >= e || s >= n || e - w > 0.18 || n - s > 0.18 || w < -180 || e > 180 || s < -90 || n > 90) return [];
+      const body = await query({ where: "SITUS_STATE = 'CO'", geometry: bbox.join(','), geometryType: 'esriGeometryEnvelope', inSR: '4326', spatialRel: 'esriSpatialRelIntersects' });
+      return (body.features || []).map(denverParcel).filter(validateParcelFeature);
+    },
+  };
+}
+
 export function resolveParcelSource(env = {}, { fetchImpl } = {}) {
   const baseUrl = String(env.PBK_PARCEL_SOURCE_URL || '').trim();
   const license = String(env.PBK_PARCEL_SOURCE_LICENSE || '').trim();
   if (baseUrl && license) return createHttpParcelSource({ baseUrl, apiKey: env.PBK_PARCEL_SOURCE_KEY, license, fetchImpl });
+  if (env.PBK_PARCEL_SOURCE === 'denver-gis') return createDenverParcelSource({ fetchImpl });
   const fixturesAllowed = String(env.PBK_PARCEL_FIXTURES || '').trim() !== 'off';
   if (fixturesAllowed) return createFixtureParcelSource();
   return {
@@ -230,16 +345,26 @@ function leadAddressKey(lead = {}) {
 export function matchParcelToLeads(feature, leads = []) {
   const pid = normalizeParcelId(feature?.properties?.parcelId);
   const akey = addressKey(feature?.properties?.situs || {});
+  const denver = feature?.properties?.jurisdiction === '08031';
+  const alias = denver ? feature.properties.verifiedAddressAlias : '';
   const byId = new Map();
   for (const lead of leads) {
     const id = lead.id || lead.leadId;
     if (!id) continue;
-    if ((pid && leadParcelId(lead) === pid) || (akey && leadAddressKey(lead) === akey)) byId.set(id, lead);
+    const address = leadAddressKey(lead);
+    const state = String(lead.property?.state || lead.state || '').trim().toUpperCase();
+    const city = String(lead.property?.city || lead.city || '').trim().toLowerCase();
+    const denverIdentity = state === 'CO' && city === 'denver';
+    const county = String(lead.property?.county || lead.county || '').trim().toLowerCase();
+    const byParcel = pid && leadParcelId(lead) === pid && (!denver || (denverIdentity && /^denver(?: county)?$/.test(county)));
+    const byAddress = akey && address === akey && (!denver || !state || state === 'CO');
+    const byAlias = alias && denverIdentity && address === alias;
+    if (byParcel || byAddress || byAlias) byId.set(id, { lead, mode: byParcel ? 'parcel_id' : byAddress ? 'address' : 'verified_address_alias' });
   }
   const candidates = [...byId.values()];
   if (candidates.length === 0) return { status: 'no_match', lead: null, candidateCount: 0 };
   if (candidates.length > 1) return { status: 'ambiguous', lead: null, candidateCount: candidates.length };
-  return { status: 'matched', lead: candidates[0], candidateCount: 1, matchedOn: pid && leadParcelId(candidates[0]) === pid ? 'parcel_id' : 'address' };
+  return { status: 'matched', lead: candidates[0].lead, candidateCount: 1, matchedOn: candidates[0].mode };
 }
 
 // ---------------------------------------------------------------------------

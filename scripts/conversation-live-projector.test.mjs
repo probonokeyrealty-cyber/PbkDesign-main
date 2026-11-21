@@ -26,6 +26,36 @@ function projectedEvent(overrides = {}) {
 }
 
 describe('live conversation projection adapter', () => {
+  test.each([true, false])('verified historical completion needs an exact call anchor (%s)', async (hasAnchor) => {
+    const resolveThread = jest.fn(async () => { throw new Error('Conversation identity belongs to a different lead on thread other'); });
+    const listThreads = jest.fn(async () => ({ items: [{ id: 'thread-1', leadId: 'lead-1' }] }));
+    const listTimeline = jest.fn(async () => ({
+      items: [{ leadId: 'lead-1', sourceTable: 'activity', eventType: 'system', payload: { callId: hasAnchor ? 'call-1' : 'another-call' } }],
+    }));
+    const upsertEvent = jest.fn(async (event) => event);
+    const adapter = createLiveConversationProjector({
+      pool: {}, createStore: () => ({ resolveThread, listThreads, listTimeline, upsertEvent }),
+      logger: { warn: jest.fn() },
+    });
+    const result = await adapter.project({
+      record: { id: 'call-1' },
+      projector: () => projectedEvent({
+        eventType: 'call.completed', channel: 'call', direction: 'outbound', sourceTable: 'calls', sourceId: 'call-1',
+        payload: { approvalId: 'approval-1', providerReceiptId: 'receipt-1', durationSeconds: 3, transcript: 'private' },
+      }),
+      allowExistingCallThread: true,
+    });
+    expect(result.ok).toBe(hasAnchor);
+    if (!hasAnchor) {
+      expect(upsertEvent).not.toHaveBeenCalled();
+      return;
+    }
+    expect(upsertEvent).toHaveBeenCalledWith(expect.objectContaining({
+      threadId: 'thread-1', expectedLeadThread: 'lead-1', senderAddress: '', recipientAddress: '',
+      payload: { approvalId: 'approval-1', providerReceiptId: 'receipt-1', durationSeconds: 3 },
+    }));
+  });
+
   test('resolves the seller thread and upserts the projected event', async () => {
     const resolveThread = jest.fn(async () => ({ id: 'thread-1' }));
     const upsertEvent = jest.fn(async (event) => ({

@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useState, type KeyboardEvent } from 'react';
 import { Link } from 'react-router';
-import { Check, Layers, Loader2, MapPin, Minus, PhoneCall, Plus, RefreshCw, Search, ShieldCheck } from 'lucide-react';
+import { ArrowDownRight, Check, Layers, Loader2, MapPin, Minus, PhoneCall, Plus, RefreshCw, Search } from 'lucide-react';
 import { ParcelStreetMap } from '../components/ParcelStreetMap';
+import { ParcelPhoneKeypad } from '../components/ParcelPhoneKeypad';
 import {
   decideApproval, dialApprovedRequest, errorText, fetchDialerCalls, fetchDialerCoverage, fetchParcels, requestDialerCall, selectParcel,
   simulateDialerCallbacks, type DialerCall, type DialerCoverage, type DialerSelection, type OutboundLine, type ParcelFeature,
@@ -51,6 +52,7 @@ export function ParcelDialer() {
   const [features, setFeatures] = useState<ParcelFeature[]>([]);
   const [lineId, setLineId] = useState('');
   const [selection, setSelection] = useState<DialerSelection | null>(null);
+  const [quickParcel, setQuickParcel] = useState<ParcelFeature | null>(null);
   const [lookup, setLookup] = useState<{ mode: 'parcel' | 'address'; value: string }>({ mode: 'parcel', value: '' });
   const [busy, setBusy] = useState('');
   const [error, setError] = useState('');
@@ -81,15 +83,18 @@ export function ParcelDialer() {
   useEffect(() => { void load(); }, [load]);
 
   // Read-only: resolves parcel, exact CRM match and eligibility. Never dials.
-  const choose = useCallback(async (input: { parcelId?: string; address?: string }, nextLine = lineId) => {
+  const choose = useCallback(async (input: { parcelId?: string; address?: string }, nextLine = lineId, preview: ParcelFeature | null = null) => {
     setBusy('select');
     setError('');
     setNotice('');
     setRequest(null);
     setCall(null);
+    setSelection(null);
+    setQuickParcel(preview);
     try {
       const next = await selectParcel({ ...input, lineId: nextLine });
       setSelection(next);
+      setQuickParcel(next.parcel);
       if (next.pendingRequest) setRequest(next.pendingRequest);
     } catch (err) {
       setSelection(null);
@@ -100,10 +105,14 @@ export function ParcelDialer() {
   }, [lineId]);
 
   const selectedId = selection?.parcel.properties.parcelId || '';
-  const reselect = (nextLine = lineId) => selectedId && choose({ parcelId: selectedId }, nextLine);
+  const reselect = (nextLine = lineId) => selectedId && choose({ parcelId: selectedId }, nextLine, quickParcel);
+  const chooseFromMap = (parcelId: string) => {
+    const parcel = features.find((feature) => feature.properties.parcelId === parcelId);
+    return choose({ parcelId }, lineId, parcel ?? null);
+  };
 
   const onPolygonKey = (event: KeyboardEvent<SVGPathElement>, parcelId: string) => {
-    if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); void choose({ parcelId }); }
+    if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); void chooseFromMap(parcelId); }
   };
 
   const act = async (key: string, fn: () => Promise<void>) => {
@@ -118,7 +127,9 @@ export function ParcelDialer() {
     return `${(VIEW_W - w) / 2} ${(VIEW_H - h) / 2} ${w} ${h}`;
   }, [zoom]);
 
-  const situs = selection?.parcel.properties.situs;
+  const property = quickParcel?.properties;
+  const situs = property?.situs;
+  const previewId = property?.parcelId || '';
   const contact = selection?.contact;
   const streetMapEnabled = showStreets ?? (coverage?.status === 'licensed');
   const savedActivity = selection?.activity ?? [];
@@ -130,6 +141,12 @@ export function ParcelDialer() {
   const steps = ['Parcel', 'Approval', 'Call', 'Outcome'];
   const blockingReasons = selection?.eligibility.reasons.filter((reason) => !(request && reason.code === 'request_pending')) ?? [];
   const stage = call?.finalizedAt ? 3 : call || approved ? 2 : request || selection?.eligibility.eligible ? 1 : 0;
+  const phoneStatus = call
+    ? (call.outcome || call.status).replace(/[_-]/g, ' ')
+    : busy === 'select' ? 'Checking CRM'
+      : request ? (approved ? 'Approved' : `Approval ${request.approvalStatus || 'pending'}`)
+        : !selection ? 'Select a parcel' : !contact ? 'No verified contact'
+          : selection.eligibility.eligible && canPlaceCalls ? 'Ready to request approval' : 'Call unavailable';
 
   return (
     <div className="pbk-dialer pbk-dialer-surface">
@@ -165,15 +182,15 @@ export function ParcelDialer() {
               </button>
             </div>
           </div>
-          <form className="pbk-phone-form" onSubmit={(e) => { e.preventDefault(); if (lookup.value.trim()) void choose(lookup.mode === 'parcel' ? { parcelId: lookup.value.trim() } : { address: lookup.value.trim() }); }}>
+          <form className="pbk-phone-form" onSubmit={(e) => { e.preventDefault(); if (!busy && lookup.value.trim()) void choose(lookup.mode === 'parcel' ? { parcelId: lookup.value.trim() } : { address: lookup.value.trim() }); }}>
             <label>Lookup<select className="pbk-input" value={lookup.mode} onChange={(e) => setLookup({ mode: e.target.value as 'parcel' | 'address', value: '' })}><option value="parcel">Parcel ID</option><option value="address">Address</option></select></label>
             <label style={{ flex: '1 1 220px' }}>{lookup.mode === 'parcel' ? 'Parcel ID' : 'Street, city, ST ZIP'}<input className="pbk-input" value={lookup.value} onChange={(e) => setLookup((l) => ({ ...l, value: e.target.value }))} /></label>
             <button type="submit" className="pbk-btn pbk-btn-ghost pbk-btn-sm" disabled={Boolean(busy)}><Search size={13} /> Find</button>
           </form>
           <div className="pbk-dialer-map">
             {streetMapEnabled ? (
-              <ParcelStreetMap parcels={features} selected={selection?.parcel} busy={Boolean(busy)} fitParcels={!areaScoped}
-                onSelect={(parcelId) => void choose({ parcelId })}
+              <ParcelStreetMap parcels={features} selected={quickParcel ?? undefined} busy={Boolean(busy)} fitParcels={!areaScoped}
+                onSelect={(parcelId) => void chooseFromMap(parcelId)}
                 onLoadArea={coverage?.licensed ? (bounds) => {
                   setMapNotice('');
                   void act('map', async () => {
@@ -190,13 +207,13 @@ export function ParcelDialer() {
                     <path
                       key={f.properties.parcelId}
                       d={projection.pathFor(f)}
-                      data-selected={f.properties.parcelId === selectedId}
-                      aria-pressed={f.properties.parcelId === selectedId}
+                      data-selected={f.properties.parcelId === previewId}
+                      aria-pressed={f.properties.parcelId === previewId}
                       aria-disabled={Boolean(busy)}
                       tabIndex={0}
                       role="button"
                       aria-label={`Parcel ${f.properties.parcelId}, ${f.properties.situs.line1}`}
-                      onClick={() => { if (!busy) void choose({ parcelId: f.properties.parcelId }); }}
+                      onClick={() => { if (!busy) void chooseFromMap(f.properties.parcelId); }}
                       onKeyDown={(e) => { if (!busy) onPolygonKey(e, f.properties.parcelId); }}
                     >
                       <title>{`${f.properties.parcelId} · ${f.properties.situs.line1}`}</title>
@@ -220,11 +237,35 @@ export function ParcelDialer() {
             {streetMapEnabled && <a href="https://www.openstreetmap.org/fixthemap" target="_blank" rel="noopener noreferrer">Report a street map issue</a>}
           </div>
           {mapNotice && <p className="pbk-phone-note" role="status">{mapNotice}</p>}
+          <section className="pbk-parcel-quick-view" aria-labelledby="pbk-parcel-quick-heading">
+            <div className="pbk-dialer-section-head">
+              <h2 id="pbk-parcel-quick-heading"><MapPin size={16} aria-hidden="true" /> Property quick view</h2>
+              {property && <a className="pbk-parcel-phone-link" href="#pbk-virtual-phone">Virtual phone <ArrowDownRight size={13} aria-hidden="true" /></a>}
+            </div>
+            <div aria-live="polite">
+              {property && situs ? (
+                <>
+                  <h3>{situs.line1}</h3>
+                  <p>{[situs.city, situs.state].filter(Boolean).join(', ')} {situs.zip}</p>
+                  <dl className="pbk-parcel-facts">
+                    <div><dt>Parcel ID</dt><dd>{property.parcelId}</dd></div>
+                    <div><dt>County</dt><dd>{property.county || 'Unavailable'}</dd></div>
+                    <div><dt>Lot size</dt><dd>{typeof property.acres === 'number' && Number.isFinite(property.acres) && property.acres > 0 ? `${property.acres.toLocaleString(undefined, { maximumFractionDigits: 4 })} acres` : 'Unavailable'}</dd></div>
+                  </dl>
+                </>
+              ) : <p>Select a parcel on the map or look up an address.</p>}
+            </div>
+          </section>
         </section>
 
-        <aside className="pbk-dialer-side" aria-label="Selected parcel">
+        <aside className="pbk-dialer-side pbk-virtual-phone" id="pbk-virtual-phone" aria-labelledby="pbk-virtual-phone-heading">
           <div className="pbk-dialer-section-head">
-            <h2><ShieldCheck size={16} aria-hidden="true" /> Call brief</h2>
+            <h2 id="pbk-virtual-phone-heading"><PhoneCall size={16} aria-hidden="true" /> Virtual phone</h2>
+          </div>
+          <div className="pbk-virtual-phone-display" aria-live="polite">
+            <span className={`pbk-phone-tag ${approved ? 'good' : request ? 'warn' : 'sky'}`}>{phoneStatus}</span>
+            <strong>{contact?.name || 'Parcel contact'}</strong>
+            <span className="pbk-phone-num">{contact?.phoneDisplay || 'No number loaded'}</span>
           </div>
           <ol className="pbk-dialer-steps" aria-label="Call progress">
             {steps.map((step, index) => (
@@ -244,46 +285,25 @@ export function ParcelDialer() {
             <p className="pbk-phone-note">No commissioned Twilio line yet. Commission one in <Link to="/settings">Settings → Phone numbers</Link>.</p>
           )}
 
-          {busy === 'select' && <div className="pbk-phone-note" role="status"><Loader2 size={13} className="animate-spin" /> Matching parcel…</div>}
-          {!selection && busy !== 'select' && (
-            <div className="pbk-dialer-brief-empty">
-              <MapPin size={20} aria-hidden="true" />
-              <strong>Select a parcel</strong>
-              <span>Its CRM match, call eligibility, and activity will appear here.</span>
-            </div>
-          )}
-
-          {selection && situs && (
+          {selection && (
             <div className="pbk-dialer-contact">
-              <span className="pbk-kicker">{selection.parcel.properties.parcelId}</span>
-              <h2>{contact ? contact.name : situs.line1}</h2>
               <dl className="pbk-dialer-kv">
-                <dt>Property</dt><dd>{situs.line1}, {situs.city}, {situs.state} {situs.zip}</dd>
                 <dt>CRM match</dt>
                 <dd>
-                  {selection.match.status === 'matched' && <span className="pbk-phone-tag good">exact · {selection.match.matchedOn.replace('_', ' ')}</span>}
+                  {selection.match.status === 'matched' && <span className="pbk-phone-tag good">{selection.match.matchedOn === 'verified_address_alias' ? 'verified address alias' : `exact · ${selection.match.matchedOn.replaceAll('_', ' ')}`}</span>}
                   {selection.match.status === 'ambiguous' && <span className="pbk-phone-tag bad">{selection.match.candidateCount} contacts · rejected</span>}
                   {selection.match.status === 'no_match' && <span className="pbk-phone-tag">no CRM contact</span>}
                 </dd>
                 {!contact && <><dt>Next step</dt><dd>Review the parcel in CRM. A street or parcel match does not supply a phone number.</dd></>}
                 {contact && (<>
-                  <dt>CRM phone</dt><dd className="pbk-phone-num">{contact.phoneDisplay || 'none'}</dd>
-                  <dt>Status</dt><dd>{contact.status || '—'}{contact.synthetic ? ' · synthetic' : ''}</dd>
-                  <dt>Lead</dt><dd>{contact.synthetic ? contact.id : <Link to={`/leads/${encodeURIComponent(contact.id)}`}>{contact.id}</Link>}</dd>
+                  <dt>Lead status</dt><dd>{contact.status || '—'}{contact.synthetic ? ' · synthetic' : ''}</dd>
+                  {!contact.synthetic && <><dt>CRM lead</dt><dd><Link to={`/leads/${encodeURIComponent(contact.id)}`}>Open lead</Link></dd></>}
                 </>)}
               </dl>
             </div>
           )}
-
-          {selection?.contact && (
-            <div>
-              <div className="pbk-phone-subhead">Call activity</div>
-              <div className="pbk-dialer-activity">
-                {activity.length ? activity.map((a) => (
-                  <div key={a.id}><span>{new Date(a.at).toLocaleString()}</span><span>{(a.outcome || a.status).replace(/[_-]/g, ' ')}{a.talkSeconds != null ? ` · ${a.talkSeconds}s talk` : ''}</span></div>
-                )) : <span className="pbk-phone-note">No dialer calls yet.</span>}
-              </div>
-            </div>
+          {contact?.phoneLast4 && /^\d{4}$/.test(contact.phoneLast4) && (
+            <ParcelPhoneKeypad key={`${selectedId}:${contact.id}:${contact.phoneLast4}`} lastFour={contact.phoneLast4} />
           )}
 
           {selection && (
@@ -350,6 +370,16 @@ export function ParcelDialer() {
                 </div>
               )}
               {notice && <div className="pbk-phone-ok" role="status">{notice}</div>}
+            </div>
+          )}
+          {contact && (
+            <div>
+              <div className="pbk-phone-subhead">Call activity</div>
+              <div className="pbk-dialer-activity">
+                {activity.length ? activity.map((a) => (
+                  <div key={a.id}><span>{new Date(a.at).toLocaleString()}</span><span>{(a.outcome || a.status).replace(/[_-]/g, ' ')}{a.talkSeconds != null ? ` · ${a.talkSeconds}s talk` : ''}</span></div>
+                )) : <span className="pbk-phone-note">No dialer calls yet.</span>}
+              </div>
             </div>
           )}
         </aside>

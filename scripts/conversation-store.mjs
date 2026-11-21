@@ -672,11 +672,11 @@ async function findSourceEvent(client, event, { lock = false } = {}) {
   return result.rows[0] ?? null;
 }
 
-async function lockEventThreads(client, threadIds, workspace, requiredThreadId) {
+async function lockEventThreads(client, threadIds, workspace, requiredThreadId, expectedLead = '') {
   const ids = [...new Set(threadIds.filter(Boolean))].sort();
   const result = await client.query(
     `
-      SELECT id, merged_into_thread_id
+      SELECT id, merged_into_thread_id, lead_id
       FROM public.conversation_threads
       WHERE id = ANY($1::uuid[])
         AND workspace_id = $2
@@ -688,6 +688,9 @@ async function lockEventThreads(client, threadIds, workspace, requiredThreadId) 
   const requiredThread = result.rows.find((row) => row.id === requiredThreadId);
   if (!requiredThread || requiredThread.merged_into_thread_id) {
     throw new Error('Conversation thread is missing or already merged');
+  }
+  if (expectedLead && requiredThread.lead_id !== expectedLead) {
+    throw new Error('Conversation thread lead changed during receipt reconciliation');
   }
   return ids;
 }
@@ -1478,9 +1481,13 @@ export function createConversationStore(pool, { captureSourceWrite, onSourceWrit
         client,
         [threadId, previousEvent?.thread_id],
         workspace,
-        threadId
+        threadId,
+        event.expectedLeadThread
       );
       const lockedEvent = await findSourceEvent(client, eventIdentity, { lock: true });
+      if (event.expectedLeadThread && lockedEvent && lockedEvent.thread_id !== threadId) {
+        throw new Error('Call completion already belongs to another conversation thread');
+      }
       if (lockedEvent && !lockedThreadIds.includes(lockedEvent.thread_id)) {
         throw new Error('Conversation event moved during lock acquisition; retry the operation');
       }

@@ -68,6 +68,7 @@ import { EventTypes, getDefaultEventBus, getEventBusStatus, publishEvent as publ
 import { createRuntimeCoverageSampler } from './runtime-coverage-sampler.mjs';
 import { buildRexKpiSnapshot, proposeAutonomousRexGoals, selectRexProactiveLeadAction } from './rex-autonomy.mjs';
 import { recordScriptOutcomeStats, selectContextAwareScript } from './context-aware-script-rotator.mjs';
+import { findTelnyxCallEventCompletion, reconcileTelnyxCallProof } from './provider-proof-ledger.mjs';
 import {
   buildGovernedSkillNextMove,
   isGovernedSkillToolAllowed,
@@ -7160,6 +7161,7 @@ async function projectLiveConversationRecord({
   projector,
   kind,
   source,
+  allowExistingCallThread,
 }) {
   return createLiveConversationProjector({
     pool: getPgPool(),
@@ -7170,6 +7172,7 @@ async function projectLiveConversationRecord({
     projector,
     kind,
     source,
+    allowExistingCallThread,
   });
 }
 
@@ -59659,6 +59662,10 @@ const toolHandlers = {
       }
 
       const providerCall = telnyxResponse.body?.data || {};
+      const completedBeforeAcknowledgement = state.calls.find((item) =>
+        item.verifiedTelnyxCompletion?.callId &&
+        item.verifiedTelnyxCompletion.callId === providerCall.call_control_id
+      );
       const call = createCallRecord({
         ...params,
         id: providerCall.call_control_id || providerCall.call_leg_id || params.id,
@@ -59666,7 +59673,11 @@ const toolHandlers = {
         leadName: context.leadName,
         address: context.address,
         phone,
-        status: 'queued',
+        status: completedBeforeAcknowledgement ? 'ended' : 'queued',
+        ...(completedBeforeAcknowledgement ? {
+          endedAt: completedBeforeAcknowledgement.endedAt,
+          durationSeconds: completedBeforeAcknowledgement.durationSeconds,
+        } : {}),
         startedAt: providerCall.start_time || isoNow(),
         updatedAt: isoNow(),
         provider: 'Telnyx',
@@ -61470,17 +61481,99 @@ async function handleManualLeadCreate(payload = {}) {
 
 const approvalDecisionLocks = new Map();
 
-async function handleEvent(eventType, payload = {}, { directRetentionFounder = false } = {}) {
+async function reconcileTelnyxCallCompletion(call, { projectUnbound = true } = {}) {
+  const completion = call?.verifiedTelnyxCompletion;
+  if (!completion || completion.callId !== call.telnyxCallControlId ||
+      call.status !== 'ended' || String(call.direction).toLowerCase() !== 'outbound') return null;
+  const bindings = state.approvals.flatMap((approval) => {
+    const proof = reconcileTelnyxCallProof(approval, completion);
+    return proof ? [{ approval, proof }] : [];
+  });
+  if (bindings.length !== 1) {
+    if (projectUnbound) {
+      await projectLiveConversationRecord({
+        record: call, projector: projectCallEvent, kind: 'completed', source: 'telnyx-call-status',
+      });
+    }
+    return { ok: false, status: bindings.length ? 'ambiguous_approval' : 'approval_not_bound' };
+  }
+
+  const { approval, proof } = bindings[0];
+  approval.metadata.providerProof = proof;
+  approval.metadata.providerActionResult.callStatus = 'ended';
+  const receipt = proof.receipts.find((item) => item.eventType === 'call.hangup' && item.providerMessageId === completion.callId);
+  let projection = approval.metadata.telnyxCallProjection;
+  if (projection?.status !== 'projected') {
+    const result = await projectLiveConversationRecord({
+      record: { ...call, approvalId: approval.id, providerReceiptId: receipt.receiptId },
+      projector: projectCallEvent,
+      kind: 'completed',
+      source: 'telnyx-call-status',
+      allowExistingCallThread: completion.source === 'telnyx_call_events',
+    });
+    if (approval.metadata.telnyxCallProjection?.status !== 'projected') {
+      approval.metadata.telnyxCallProjection = {
+        status: result.ok ? 'projected' : 'needs_review',
+        result: result.result || '',
+      };
+    }
+    projection = approval.metadata.telnyxCallProjection;
+  }
+  const persisted = await persistApprovalRecordToPg(approval);
+  await persistState(state);
+  const retryable = !persisted.ok || projection.status !== 'projected';
+  return { ok: !retryable, retryable, status: projection.status };
+}
+
+async function handleVerifiedTelnyxEvent(mapped, telnyxRequest) {
+  const data = telnyxRequest.payload?.data;
+  const completion = mapped.eventType === 'call-status' && telnyxRequest.signature.ok &&
+    !telnyxRequest.signature.skipped && data?.event_type === 'call.hangup' &&
+    data.id && data.payload?.call_control_id && Number.isFinite(Date.parse(data.occurred_at))
+    ? {
+      callId: data.payload.call_control_id,
+      eventId: data.id,
+      occurredAt: data.occurred_at,
+      hangupCause: String(data.payload.hangup_cause || '').slice(0, 100),
+    }
+    : null;
+  return handleEvent(mapped.eventType, mapped.payload, { telnyxCompletion: completion });
+}
+
+async function reconcileStoredTelnyxCall(callId) {
+  const call = getCallById(callId);
+  if (!call || callId !== call.telnyxCallControlId || call.provider?.toLowerCase() !== 'telnyx' ||
+      call.direction !== 'outbound' || call.status !== 'ended' || !call.telnyxCallLegId) {
+    return { ok: false, status: 'ended_outbound_call_not_found', httpStatus: 404 };
+  }
+  let completion = call.verifiedTelnyxCompletion;
+  if (!completion) {
+    const carrier = await fireTelnyxRequest('GET', '/call_events', undefined, {
+      query: { 'filter[leg_id]': call.telnyxCallLegId },
+    });
+    if (!carrier.ok) return { ok: false, status: 'carrier_lookup_failed', httpStatus: 502 };
+    completion = findTelnyxCallEventCompletion(call, carrier.body?.data);
+    if (!completion) return { ok: false, status: 'carrier_hangup_unverified', httpStatus: 409 };
+  }
+  if (state.approvals.filter((approval) => reconcileTelnyxCallProof(approval, completion)).length !== 1) {
+    return { ok: false, status: 'single_approval_binding_required', httpStatus: 409 };
+  }
+  call.verifiedTelnyxCompletion = completion;
+  await persistState(state);
+  return reconcileTelnyxCallCompletion(call, { projectUnbound: false });
+}
+
+async function handleEvent(eventType, payload = {}, { directRetentionFounder = false, telnyxCompletion = null } = {}) {
   const normalizedEvent = String(eventType || '')
     .trim()
     .toLowerCase();
 
   if (normalizedEvent !== 'approval-callback') {
-    return handleRuntimeEvent(normalizedEvent, payload);
+    return handleRuntimeEvent(normalizedEvent, payload, { directRetentionFounder, telnyxCompletion });
   }
   const approvalId = String(payload.id || '');
   const previous = approvalDecisionLocks.get(approvalId) || Promise.resolve();
-  const current = previous.catch(() => {}).then(() => handleRuntimeEvent(normalizedEvent, payload, directRetentionFounder));
+  const current = previous.catch(() => {}).then(() => handleRuntimeEvent(normalizedEvent, payload, { directRetentionFounder, telnyxCompletion }));
   approvalDecisionLocks.set(approvalId, current);
   try {
     return await current;
@@ -61489,7 +61582,7 @@ async function handleEvent(eventType, payload = {}, { directRetentionFounder = f
   }
 }
 
-async function handleRuntimeEvent(normalizedEvent, payload, directRetentionFounder = false) {
+async function handleRuntimeEvent(normalizedEvent, payload, { directRetentionFounder = false, telnyxCompletion = null } = {}) {
   if (normalizedEvent === 'lead-intake' || normalizedEvent === 'lead-import') {
     const fromN8nLeadIntake = payload?._source === 'n8n-lead-intake';
     const eventId = payload?.eventId || payload?.event_id || null;
@@ -61737,6 +61830,8 @@ async function handleRuntimeEvent(normalizedEvent, payload, directRetentionFound
       !retryUnavailableProviderLease &&
       !retryApprovedLocalCommandDispatch
     ) {
+      const completedCall = getCallById(approval.metadata?.providerActionResult?.callId);
+      await reconcileTelnyxCallCompletion(completedCall, { projectUnbound: false });
       let slackDecisionSyncResult = null;
       if (!payload.skipSlackSync && String(approval.status || '').toLowerCase() !== 'pending') {
         slackDecisionSyncResult = await reconcileSlackApprovalDecisionMessage(approval, {
@@ -62163,6 +62258,8 @@ async function handleRuntimeEvent(normalizedEvent, payload, directRetentionFound
                   : 'provider_completed'),
             };
             await persistState(state);
+            const completedCall = getCallById(approval.metadata.providerActionResult.callId);
+            await reconcileTelnyxCallCompletion(completedCall, { projectUnbound: false });
           }
         }
       } else {
@@ -62749,8 +62846,14 @@ async function handleRuntimeEvent(normalizedEvent, payload, directRetentionFound
   }
 
   if (normalizedEvent === 'call-status') {
-    const existingCall = state.calls.find((item) => item.id === payload.id || item.id === payload.callId || item.id === payload.call_control_id || item.telnyxCallControlId === payload.call_control_id || item.telnyxCallControlId === payload.id || item.telnyxCallLegId === payload.call_leg_id || item.telnyxCallSessionId === payload.call_session_id || (normalizePhone(item.phone) && normalizePhone(item.phone) === normalizePhone(payload.phone || payload.to || '')));
-    const nextStatus = payload.status || existingCall?.status || 'live';
+    const controlId = telnyxCompletion?.callId || payload.call_control_id;
+    const existingCall = controlId
+      ? state.calls.find((item) => item.telnyxCallControlId === controlId || item.id === controlId)
+      : state.calls.find((item) => [payload.id, payload.callId].filter(Boolean).includes(item.id)
+        || (payload.call_leg_id && item.telnyxCallLegId === payload.call_leg_id)
+        || (payload.call_session_id && item.telnyxCallSessionId === payload.call_session_id));
+    const completion = existingCall?.verifiedTelnyxCompletion || telnyxCompletion;
+    const nextStatus = completion ? 'ended' : payload.status || existingCall?.status || 'live';
     const nextDirection = payload.direction || existingCall?.direction || 'outbound';
     const nextPhone = normalizePhone(existingCall?.phone || payload.phone || payload.to || '');
     const nextFrom = normalizePhone(payload.from || existingCall?.from || existingCall?.fromNumber || '');
@@ -62764,9 +62867,11 @@ async function handleRuntimeEvent(normalizedEvent, payload, directRetentionFound
       existingCall &&
       existingCall.status === nextStatus &&
       String(existingCall.direction || 'outbound').toLowerCase() === String(nextDirection).toLowerCase() &&
-      normalizePhone(existingCall.phone) === nextPhone
+      normalizePhone(existingCall.phone) === nextPhone &&
+      (!completion || existingCall.verifiedTelnyxCompletion)
     ) {
-      await projectLiveConversationRecord({
+      const receiptReconciliation = await reconcileTelnyxCallCompletion(existingCall);
+      if (!receiptReconciliation) await projectLiveConversationRecord({
         record: existingCall,
         projector: projectCallEvent,
         kind: conversationCallKind,
@@ -62776,6 +62881,7 @@ async function handleRuntimeEvent(normalizedEvent, payload, directRetentionFound
         ok: true,
         replayed: true,
         call: existingCall,
+        receiptReconciliation,
       };
     }
 
@@ -62788,11 +62894,12 @@ async function handleRuntimeEvent(normalizedEvent, payload, directRetentionFound
       phone: nextPhone,
       from: nextFrom,
       to: nextTo,
-      endedAt: /ended|hangup|hungup|complete|failed|busy|no[-_]?answer|cancel/i.test(String(nextStatus)) ? payload.endedAt || isoNow() : existingCall?.endedAt || '',
+      endedAt: conversationCallKind === 'completed' ? payload.endedAt || existingCall?.endedAt || isoNow() : existingCall?.endedAt || '',
       telnyxCallControlId: payload.call_control_id || payload.callControlId || existingCall?.telnyxCallControlId || '',
       telnyxCallLegId: payload.call_leg_id || payload.callLegId || existingCall?.telnyxCallLegId || '',
       telnyxCallSessionId: payload.call_session_id || payload.callSessionId || existingCall?.telnyxCallSessionId || '',
     });
+    if (completion) call.verifiedTelnyxCompletion = completion;
     upsertCall(state, call);
     let outboundGreetingResult = null;
     const shouldPlayOutboundGreeting = /^(live|answered)$/i.test(String(nextStatus || '')) && String(call.direction || '').toLowerCase() === 'outbound' && String(call.provider || '').toLowerCase() === 'telnyx' && Boolean(call.telnyxCallControlId) && !call.outboundAvaGreetingSpoken;
@@ -62825,7 +62932,8 @@ async function handleRuntimeEvent(normalizedEvent, payload, directRetentionFound
       })
     );
     await persistState(state);
-    await projectLiveConversationRecord({
+    const receiptReconciliation = await reconcileTelnyxCallCompletion(call);
+    if (!receiptReconciliation) await projectLiveConversationRecord({
       record: call,
       projector: projectCallEvent,
       kind: conversationCallKind,
@@ -62835,6 +62943,7 @@ async function handleRuntimeEvent(normalizedEvent, payload, directRetentionFound
       ok: true,
       call,
       outboundGreetingResult,
+      receiptReconciliation,
     };
   }
 
@@ -76393,8 +76502,8 @@ const server = createServer(async (request, response) => {
           },
           mapped.eventType
         );
-        const result = await handleEvent(mapped.eventType, mapped.payload);
-        const statusCode = result.ok === false ? 404 : 200;
+        const result = await handleVerifiedTelnyxEvent(mapped, telnyxRequest);
+        const statusCode = result.receiptReconciliation?.retryable ? 503 : result.ok === false ? 404 : 200;
         json(response, statusCode, {
           ok: true,
           mappedEvent: mapped.eventType,
@@ -80129,6 +80238,17 @@ const server = createServer(async (request, response) => {
       return;
     }
 
+    const telnyxCallReconcileMatch = matchPath(pathname, '/api/admin/telnyx/calls/:id/reconcile');
+    if (request.method === 'POST' && telnyxCallReconcileMatch) {
+      if (!BRIDGE_API_KEY || request.headers.authorization !== `Bearer ${BRIDGE_API_KEY}`) {
+        json(response, 403, { ok: false, status: 'bridge_admin_required' });
+        return;
+      }
+      const result = await reconcileStoredTelnyxCall(decodeURIComponent(telnyxCallReconcileMatch.groups.id));
+      json(response, result.httpStatus || (result.ok ? 200 : 503), result);
+      return;
+    }
+
     if (request.method === 'POST' && pathname === '/api/admin/route') {
       const body = await readBody(request);
       const result = await toolHandlers.routeAdminCommand(body);
@@ -82932,8 +83052,8 @@ const server = createServer(async (request, response) => {
         },
         mapped.eventType
       );
-      const result = await handleEvent(mapped.eventType, mapped.payload);
-      json(response, result.ok === false ? 404 : 200, {
+      const result = await handleVerifiedTelnyxEvent(mapped, telnyxRequest);
+      json(response, result.receiptReconciliation?.retryable ? 503 : result.ok === false ? 404 : 200, {
         ok: true,
         mappedEvent: mapped.eventType,
         campaignWebhook,

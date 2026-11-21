@@ -61,9 +61,12 @@ All provider calls run in the bridge (`scripts/phone-numbers.mjs`, `scripts/parc
 | `PBK_TWILIO_INBOUND_DESTINATION` | approved E.164 number that PBK's signed inbound webhook forwards to. Required for the self-hosted route. Must not be a PBK-owned line | unset → commissioning refused |
 | `PBK_TOLL_FREE_VERIFIED_LINES`, `PBK_SMS_REGISTERED_LINES` | comma-separated E.164 lines whose SMS registration is complete | unset (SMS blocked) |
 | `PBK_PARCEL_SOURCE_URL`, `PBK_PARCEL_SOURCE_KEY`, `PBK_PARCEL_SOURCE_LICENSE` | licensed parcel polygon source; a URL alone does **not** activate it, a license identifier is also required | unset → fixtures |
+| `PBK_PARCEL_SOURCE=denver-gis` | City and County of Denver Assessment GIS, precedence below a configured licensed HTTP source | enabled for the hosted bridge |
 | `PBK_PARCEL_FIXTURES=off` | hide fixture parcels (coverage reports `unconfigured`) | fixtures on |
 
 ### Licensed parcel source contract (HTTP)
+
+The built-in [Denver parcel service](https://www.arcgis.com/home/item.html?id=7c53bd0894134e80ae1e478c0789bf49) covers the City and County of Denver. It supplies parcel geometry and situs fields without owner names or contact data. If the CRM omits a leading street direction, PBK accepts the alias only when a complete same-house-number and ZIP query proves that it identifies one parcel. CRM alias matching also requires Denver, CO. The map displays the official situs address and is for reference only.
 
 The live source must serve GeoJSON with bearer auth:
 

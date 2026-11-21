@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useState, type KeyboardEvent } from 'react';
 import { Link } from 'react-router';
-import { Loader2, MapPin, Minus, PhoneCall, Plus, RefreshCw, Search } from 'lucide-react';
+import { Check, Layers, Loader2, MapPin, Minus, PhoneCall, Plus, RefreshCw, Search, ShieldCheck } from 'lucide-react';
 import {
-  decideApproval, dialApprovedRequest, errorText, fetchDialerCoverage, fetchParcels, requestDialerCall, selectParcel,
+  decideApproval, dialApprovedRequest, errorText, fetchDialerCalls, fetchDialerCoverage, fetchParcels, requestDialerCall, selectParcel,
   simulateDialerCallbacks, type DialerCall, type DialerCoverage, type DialerSelection, type OutboundLine, type ParcelFeature,
 } from '../utils/phoneDialerApi';
 import '../../styles/phone-dialer.css';
@@ -114,13 +114,22 @@ export function ParcelDialer() {
 
   const situs = selection?.parcel.properties.situs;
   const contact = selection?.contact;
+  const savedActivity = selection?.activity ?? [];
+  const activity = call
+    ? [{ id: call.id, at: call.createdAt, outcome: call.outcome, status: call.status, talkSeconds: call.talkSeconds },
+      ...savedActivity.filter((item) => item.id !== call.id)]
+    : savedActivity;
+  const approved = request?.approvalStatus === 'approved';
+  const steps = ['Parcel', 'Approval', 'Call', 'Outcome'];
+  const blockingReasons = selection?.eligibility.reasons.filter((reason) => !(request && reason.code === 'request_pending')) ?? [];
+  const stage = call?.finalizedAt ? 3 : call || approved ? 2 : request || selection?.eligibility.eligible ? 1 : 0;
 
   return (
     <div className="pbk-dialer pbk-dialer-surface">
       <header className="pbk-dialer-head">
         <div>
-          <span className="pbk-kicker">Parcel dialer</span>
-          <h1>Dial by <em>parcel</em>.</h1>
+          <h1>Parcel <em>dialer</em></h1>
+          <p>Find the property, verify the contact, and request approval for one call.</p>
         </div>
         <div className="pbk-dialer-coverage" aria-live="polite">
           {coverage ? (
@@ -139,10 +148,14 @@ export function ParcelDialer() {
 
       <div className="pbk-dialer-grid">
         <section className="pbk-dialer-map-card" aria-label="Parcel map">
+          <div className="pbk-dialer-section-head">
+            <h2><Layers size={16} aria-hidden="true" /> Parcel map</h2>
+            {coverage && <span className="pbk-phone-tag sky">{features.length} loaded</span>}
+          </div>
           <form className="pbk-phone-form" onSubmit={(e) => { e.preventDefault(); if (lookup.value.trim()) void choose(lookup.mode === 'parcel' ? { parcelId: lookup.value.trim() } : { address: lookup.value.trim() }); }}>
             <label>Lookup<select className="pbk-input" value={lookup.mode} onChange={(e) => setLookup({ mode: e.target.value as 'parcel' | 'address', value: '' })}><option value="parcel">Parcel ID</option><option value="address">Address</option></select></label>
             <label style={{ flex: '1 1 220px' }}>{lookup.mode === 'parcel' ? 'Parcel ID' : 'Street, city, ST ZIP'}<input className="pbk-input" value={lookup.value} onChange={(e) => setLookup((l) => ({ ...l, value: e.target.value }))} /></label>
-            <button type="submit" className="pbk-btn pbk-btn-ghost pbk-btn-sm" disabled={busy === 'select'}><Search size={13} /> Find</button>
+            <button type="submit" className="pbk-btn pbk-btn-ghost pbk-btn-sm" disabled={Boolean(busy)}><Search size={13} /> Find</button>
           </form>
           <div className="pbk-dialer-map">
             {projection && features.length ? (
@@ -153,11 +166,13 @@ export function ParcelDialer() {
                       key={f.properties.parcelId}
                       d={projection.pathFor(f)}
                       data-selected={f.properties.parcelId === selectedId}
+                      aria-pressed={f.properties.parcelId === selectedId}
+                      aria-disabled={Boolean(busy)}
                       tabIndex={0}
                       role="button"
                       aria-label={`Parcel ${f.properties.parcelId}, ${f.properties.situs.line1}`}
-                      onClick={() => void choose({ parcelId: f.properties.parcelId })}
-                      onKeyDown={(e) => onPolygonKey(e, f.properties.parcelId)}
+                      onClick={() => { if (!busy) void choose({ parcelId: f.properties.parcelId }); }}
+                      onKeyDown={(e) => { if (!busy) onPolygonKey(e, f.properties.parcelId); }}
                     >
                       <title>{`${f.properties.parcelId} · ${f.properties.situs.line1}`}</title>
                     </path>
@@ -167,17 +182,33 @@ export function ParcelDialer() {
                   <button type="button" className="pbk-btn pbk-btn-ghost pbk-btn-sm" onClick={() => setZoom((z) => Math.min(z * 1.5, 6))} aria-label="Zoom in"><Plus size={13} /></button>
                   <button type="button" className="pbk-btn pbk-btn-ghost pbk-btn-sm" onClick={() => setZoom((z) => Math.max(z / 1.5, 1))} aria-label="Zoom out"><Minus size={13} /></button>
                 </div>
+                <div className="pbk-dialer-compass" aria-hidden="true">↑ N</div>
               </>
             ) : (
               <div className="pbk-dialer-map-empty">{coverage?.status === 'unconfigured' ? 'No licensed parcel source is configured. Lookups are unavailable.' : coverage ? 'No parcels in coverage.' : 'Loading parcels…'}</div>
             )}
           </div>
-          <div className="pbk-dialer-legend">{features.length} parcels · click or Enter selects · selection never dials</div>
+          <div className="pbk-dialer-legend">
+            <span><i aria-hidden="true" /> Available parcel</span>
+            <span><i aria-hidden="true" /> Selected parcel</span>
+            <span>Click or press Enter to select</span>
+          </div>
         </section>
 
         <aside className="pbk-dialer-side" aria-label="Selected parcel">
+          <div className="pbk-dialer-section-head">
+            <h2><ShieldCheck size={16} aria-hidden="true" /> Call brief</h2>
+          </div>
+          <ol className="pbk-dialer-steps" aria-label="Call progress">
+            {steps.map((step, index) => (
+              <li key={step} aria-current={stage === index ? 'step' : undefined} data-complete={stage > index}>
+                <span aria-hidden="true">{stage > index ? <Check size={12} /> : index + 1}</span>
+                {step}
+              </li>
+            ))}
+          </ol>
           <label>Outbound Twilio line
-            <select className="pbk-input" value={lineId} onChange={(e) => { setLineId(e.target.value); void reselect(e.target.value); }}>
+            <select className="pbk-input" value={lineId} disabled={Boolean(busy) || Boolean(request && !call)} onChange={(e) => { setLineId(e.target.value); void reselect(e.target.value); }}>
               <option value="">Choose a line</option>
               {lines.map((l) => <option key={l.id} value={l.id} disabled={!l.commissioned || !l.callerIdEnabled}>{l.display}{!l.commissioned ? ' · not commissioned' : !l.callerIdEnabled ? ' · caller ID off' : ''}</option>)}
             </select>
@@ -186,15 +217,21 @@ export function ParcelDialer() {
             <p className="pbk-phone-note">No commissioned Twilio line yet. Commission one in <Link to="/settings">Settings → Phone numbers</Link>.</p>
           )}
 
-          {busy === 'select' && <div className="pbk-phone-note"><Loader2 size={13} className="animate-spin" /> Matching parcel…</div>}
-          {!selection && busy !== 'select' && <div className="pbk-phone-note"><MapPin size={13} /> Select a parcel on the map or look one up.</div>}
+          {busy === 'select' && <div className="pbk-phone-note" role="status"><Loader2 size={13} className="animate-spin" /> Matching parcel…</div>}
+          {!selection && busy !== 'select' && (
+            <div className="pbk-dialer-brief-empty">
+              <MapPin size={20} aria-hidden="true" />
+              <strong>Select a parcel</strong>
+              <span>Its CRM match, call eligibility, and activity will appear here.</span>
+            </div>
+          )}
 
           {selection && situs && (
             <div className="pbk-dialer-contact">
               <span className="pbk-kicker">{selection.parcel.properties.parcelId}</span>
               <h2>{contact ? contact.name : situs.line1}</h2>
               <dl className="pbk-dialer-kv">
-                <dt>Situs</dt><dd>{situs.line1}, {situs.city}, {situs.state} {situs.zip}</dd>
+                <dt>Property</dt><dd>{situs.line1}, {situs.city}, {situs.state} {situs.zip}</dd>
                 <dt>CRM match</dt>
                 <dd>
                   {selection.match.status === 'matched' && <span className="pbk-phone-tag good">exact · {selection.match.matchedOn.replace('_', ' ')}</span>}
@@ -212,10 +249,10 @@ export function ParcelDialer() {
 
           {selection?.contact && (
             <div>
-              <div className="pbk-phone-subhead">Activity</div>
+              <div className="pbk-phone-subhead">Call activity</div>
               <div className="pbk-dialer-activity">
-                {selection.activity.length ? selection.activity.map((a) => (
-                  <div key={a.id}><span>{new Date(a.at).toLocaleString()}</span><span>{a.outcome || a.status}{a.talkSeconds != null ? ` · ${a.talkSeconds}s talk` : ''}</span></div>
+                {activity.length ? activity.map((a) => (
+                  <div key={a.id}><span>{new Date(a.at).toLocaleString()}</span><span>{(a.outcome || a.status).replace(/[_-]/g, ' ')}{a.talkSeconds != null ? ` · ${a.talkSeconds}s talk` : ''}</span></div>
                 )) : <span className="pbk-phone-note">No dialer calls yet.</span>}
               </div>
             </div>
@@ -223,12 +260,10 @@ export function ParcelDialer() {
 
           {selection && (
             <div className="pbk-dialer-callbox">
-              <div className="pbk-phone-subhead">Dial eligibility</div>
-              {(() => {
-                const reasons = selection.eligibility.reasons.filter((r) => !(request && r.code === 'request_pending'));
-                if (selection.eligibility.eligible || (request && !reasons.length)) return <span className="pbk-phone-ok">Eligible for one manual call.</span>;
-                return <ul className="pbk-dialer-reasons">{reasons.map((r) => <li key={r.code}>{r.message}</li>)}</ul>;
-              })()}
+              <div className="pbk-phone-subhead">Call eligibility</div>
+              {selection.eligibility.eligible || (request && !blockingReasons.length)
+                ? <span className="pbk-phone-ok">Eligible for one manual call.</span>
+                : <ul className="pbk-dialer-reasons">{blockingReasons.map((r) => <li key={r.code}>{r.message}</li>)}</ul>}
 
               {selection.eligibility.eligible && !request && canPlaceCalls && contact && (
                 <button type="button" className="pbk-btn pbk-btn-primary pbk-btn-sm" disabled={Boolean(busy)}
@@ -242,14 +277,15 @@ export function ParcelDialer() {
               )}
 
               {request && !call && (
-                <div className="pbk-phone-confirm">
+                <div className="pbk-phone-confirm" data-approved={approved}>
                   <span className="pbk-phone-note">One call to the contact ending <strong>{request.toLast4}</strong> from line ending <strong>{request.fromLast4}</strong>. Your phone rings first, then PBK bridges the contact.</span>
                   <span className={`pbk-phone-tag ${request.approvalStatus === 'approved' ? 'good' : 'warn'}`}>approval {request.approvalStatus || 'pending'}</span>
                   <div className="pbk-phone-actions">
-                    {request.approvalStatus === 'approved' ? null : coverage?.mock
+                    {approved ? null : coverage?.mock
                       ? <button type="button" className="pbk-btn pbk-btn-ghost pbk-btn-sm" disabled={Boolean(busy)} onClick={() => act('approve', async () => { await decideApproval(request.approvalId, 'approve'); setRequest({ ...request, approvalStatus: 'approved' }); setNotice('Dev approval recorded.'); })}>Approve (dev)</button>
                       : <Link className="pbk-btn pbk-btn-ghost pbk-btn-sm" to="/inbox">Open approval queue</Link>}
-                    <button type="button" className="pbk-btn pbk-btn-primary pbk-btn-sm" disabled={Boolean(busy)}
+                    {!approved && <button type="button" className="pbk-btn pbk-btn-ghost pbk-btn-sm" disabled={Boolean(busy)} onClick={() => void reselect()}><RefreshCw size={13} /> Refresh approval</button>}
+                    <button type="button" className="pbk-btn pbk-btn-primary pbk-btn-sm" disabled={!approved || !canPlaceCalls || Boolean(blockingReasons.length) || Boolean(busy)}
                       onClick={() => act('dial', async () => { const r = await dialApprovedRequest(request.id); setCall(r.call); setNotice('Call placed. Outcome arrives from signed carrier callbacks.'); })}>
                       <PhoneCall size={13} /> Dial approved call
                     </button>
@@ -258,8 +294,21 @@ export function ParcelDialer() {
               )}
 
               {call && (
-                <div className="pbk-phone-confirm">
-                  <span className="pbk-phone-note">Call {call.status.replace(/_/g, ' ')}{call.outcome ? ` · ${call.outcome}` : ''}{call.talkSeconds != null ? ` · ${call.talkSeconds}s talk` : ''}</span>
+                <div className="pbk-phone-confirm pbk-dialer-outcome" role="status">
+                  <span className="pbk-phone-subhead">{call.finalizedAt ? 'Recorded outcome' : 'Call status'}</span>
+                  <strong>{(call.outcome || call.status).replace(/[_-]/g, ' ')}</strong>
+                  {call.talkSeconds != null && <span className="pbk-phone-note">{call.talkSeconds}s talk time</span>}
+                  {!call.finalizedAt && (
+                    <button type="button" className="pbk-btn pbk-btn-ghost pbk-btn-sm" disabled={Boolean(busy)}
+                      onClick={() => act('outcome', async () => {
+                        const { calls } = await fetchDialerCalls();
+                        const latest = calls.find((item) => item.id === call.id);
+                        if (latest) setCall(latest);
+                        setNotice(latest?.finalizedAt ? 'Call outcome recorded.' : 'Waiting for the carrier outcome.');
+                      })}>
+                      <RefreshCw size={13} /> Refresh call status
+                    </button>
+                  )}
                   {coverage?.mock && !call.finalizedAt && (
                     <div className="pbk-phone-actions">
                       {(['connected', 'no-answer', 'busy'] as const).map((outcome) => (

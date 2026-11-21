@@ -198,10 +198,10 @@ test('bridge code matches the reviewed release fingerprint outside the scoped re
   // Telnyx receipt mapping and the scoped outbound media policy are covered by the
   // unified conversation bridge smoke test.
   // The Parcel Dialer release adds its router, staff permission checks and
-  // signed Twilio webhook paths. The phone-dialer suite exercises those
-  // boundaries. Keep the full bridge fingerprint, including this wiring.
+  // signed Twilio webhook paths. Main also separates Telnyx voice and SMS
+  // senders. Keep the full bridge fingerprint with both reviewed changes.
   assert.equal(createHash('sha256').update(unchanged).digest('hex'),
-    '5755dab16877f62315bc99b3c36edf6d8679327777eb979ba4134416fab050b0');
+    '0e433970ed9c457db2eac206284609ce469d0de336b7d2b6c4ad92ea925c8fdc');
 });
 
 test('production distribution includes reader and protocol, never the fixture signer', () => {

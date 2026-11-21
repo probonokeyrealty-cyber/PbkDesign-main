@@ -7139,6 +7139,7 @@ async function projectLiveConversationRecord({
   projector,
   kind,
   source,
+  allowExistingCallThread,
 }) {
   return createLiveConversationProjector({
     pool: getPgPool(),
@@ -7149,6 +7150,7 @@ async function projectLiveConversationRecord({
     projector,
     kind,
     source,
+    allowExistingCallThread,
   });
 }
 
@@ -61166,6 +61168,7 @@ async function reconcileTelnyxCallCompletion(call, { projectUnbound = true } = {
       projector: projectCallEvent,
       kind: 'completed',
       source: 'telnyx-call-status',
+      allowExistingCallThread: completion.source === 'telnyx_call_events',
     });
     if (approval.metadata.telnyxCallProjection?.status !== 'projected') {
       approval.metadata.telnyxCallProjection = {

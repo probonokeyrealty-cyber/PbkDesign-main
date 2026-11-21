@@ -202,7 +202,7 @@ test('bridge code matches the reviewed release fingerprint outside the scoped re
   // senders. The Postgres regression suite covers checked-out client errors.
   // Telnyx receipt tests cover verified hangups, carrier history and projection replay.
   assert.equal(createHash('sha256').update(unchanged).digest('hex'),
-    '84b3859d1515d8decfdb2b3bb4679ddea69cd51e66fe2f058aa291d6d4c273d4');
+    'c759c37d06ac4bfad2300861622e38aa38052e3c78997a5c3784c45a6c941878');
 });
 
 test('production distribution includes reader and protocol, never the fixture signer', () => {

@@ -38,6 +38,36 @@ export function conversationThreadTitle(record = {}) {
   return [leadName, address].filter(Boolean).join(' - ');
 }
 
+async function projectAnchoredCallCompletion(store, event) {
+  const { approvalId, providerReceiptId, durationSeconds } = event.payload || {};
+  if (event.eventType !== 'call.completed' || event.sourceTable !== 'calls' ||
+      event.direction !== 'outbound' || !event.leadId || !approvalId || !providerReceiptId) return null;
+  const { items: threads } = await store.listThreads({ workspaceId: event.workspaceId, leadId: event.leadId, limit: 2 });
+  if (threads.length !== 1 || threads[0].leadId !== event.leadId) return null;
+  const thread = threads[0];
+  const { items } = await store.listTimeline(thread.id, { workspaceId: event.workspaceId, limit: 100 });
+  const anchored = items.some((item) => item.leadId === event.leadId && (
+    (item.sourceTable === 'calls' && item.sourceId === event.sourceId) ||
+    (item.sourceTable === 'activity' && item.eventType === 'system' && item.payload?.callId === event.sourceId)
+  ));
+  if (!anchored) return null;
+
+  // A known thread can receive the terminal receipt without resolving or
+  // claiming the conflicting phone identity or copying conversation content.
+  const projected = await store.upsertEvent({
+    ...event,
+    threadId: thread.id,
+    expectedLeadThread: event.leadId,
+    senderAddress: '',
+    recipientAddress: '',
+    actorName: '',
+    subject: '',
+    body: 'Telnyx call completed',
+    payload: { approvalId, providerReceiptId, durationSeconds },
+  });
+  return { ok: true, result: 'conversation_event_projected', thread, event: projected };
+}
+
 export function createLiveConversationProjector({
   pool,
   createStore = createConversationStore,
@@ -48,6 +78,7 @@ export function createLiveConversationProjector({
     projector,
     kind,
     source = 'bridge',
+    allowExistingCallThread = false,
   } = {}) {
     if (!pool) {
       return {
@@ -89,6 +120,10 @@ export function createLiveConversationProjector({
       try {
         thread = await store.resolveThread(threadRequest);
       } catch (error) {
+        if (allowExistingCallThread && /^Conversation identity belongs to a different lead on thread /.test(error?.message || '')) {
+          const anchored = await projectAnchoredCallCompletion(store, event);
+          if (anchored) return anchored;
+        }
         const code = String(error?.code || error?.cause?.code || '');
         if (
           code !== '23503' ||

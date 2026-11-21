@@ -39,6 +39,7 @@ export async function createAuditFixture({ end, revision, secret, duration = 864
       approval_required boolean,params jsonb,validation jsonb,source text,created_at timestamptz);
     CREATE TABLE pbk_eval_runs(id text PRIMARY KEY,tenant_id text,suite_name text,ok boolean,total int,passed int,
       failed int,report jsonb,source text,created_at timestamptz);
+    CREATE INDEX pbk_eval_runs_lookup_idx ON pbk_eval_runs (tenant_id, suite_name, created_at DESC);
     CREATE TABLE provider_action_dispatches(approval_id text PRIMARY KEY,workspace_id text DEFAULT 'pbk',status text,
       created_at timestamptz,updated_at timestamptz,dispatch_started_at timestamptz,completed_at timestamptz,
       reconciliation_required_at timestamptz);

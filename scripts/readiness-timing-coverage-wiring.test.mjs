@@ -23,6 +23,7 @@ import { createRuntimeEventArchive, createProviderCircuitBreaker } from './produ
 import { createRuntimeCoverageSampler } from './runtime-coverage-sampler.mjs';
 import { readRuntimeCoverage } from './runtime-coverage-store.mjs';
 import { createOperationalAuditPool } from './operational-audit-store.mjs';
+import { parseRexResearch } from './ava-rex-handoff.mjs';
 
 const NOW = Date.parse('2026-11-17T12:00:00.000Z');
 const secret = 'explicit-local-task4-overwrite-fixture-material';
@@ -70,6 +71,7 @@ function chatFixture({ answer = 'Actual answer', cancel = false, source = 'forge
   const ops = [], previews = [];
   const controller = new AbortController();
   const context = vm.createContext({ Date, console, process: { env: {} },
+    parseRexResearch,
     withRuntimeEvidenceContext, getRuntimeEvidenceContext,
     createBridgeAgentTimingTurn: () => createAgentTimingTurn({ secret, revision,
       policy: policyReady ? getAgentLatencyPolicy({ PBK_AGENT_LATENCY_POLICY_V2: JSON.stringify(AGENT_LATENCY_PILOT_V2) }) : null,

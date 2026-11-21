@@ -21,7 +21,8 @@ const IDS = ['runtime_archive', 'provider_dispatch', 'dead_letters', 'conversati
   'safety_qa', 'database_security', 'runtime_health', 'monitoring_continuity'];
 const iso = ms => new Date(ms).toISOString();
 let fixture;
-beforeAll(async () => { fixture = await createAuditFixture({ end: NOW, revision, secret }); }, 120000);
+// Replay all 1,441 real signed checkpoints; allow bounded setup time on local WASM Postgres.
+beforeAll(async () => { fixture = await createAuditFixture({ end: NOW, revision, secret }); }, 600000);
 afterAll(async () => { await fixture?.close(); });
 // The audit-row double exercises corruption/CAS. Coverage always uses the real durable validator.
 const coverageVerifier = options => verifyRuntimeCoverageReference({ ...options,

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { channel } from 'node:diagnostics_channel';
 import { test } from '@jest/globals';
 import { createBoundedCensusFixture, protectedCensusFingerprints } from './bounded-census-test-fixture.mjs';
 
@@ -15,6 +16,17 @@ test('112693 retained rows over 102 MB bootstrap across bounded operations witho
   const { db, pool, now, monotonicNow } = fixture;
   const secret = 'explicit-local-scale-proof-material', revision = 'c'.repeat(40);
   const options = { pool, secret, revision, now, monotonicNow, bootId: 'scale-proof', protocol: 'paged-v2', health: health() };
+  const failureEvents = [], failures = channel('pbk.runtime.coverage.failure');
+  const collectFailure = event => {
+    if (!['coverage_observation_failed', 'coverage_read_failed'].includes(event.result)) return;
+    failureEvents.push(event);
+    if (failureEvents.length > 4) failureEvents.shift();
+  };
+  failures.subscribe(collectFailure);
+  const diagnostic = (result, observed) => JSON.stringify({ result, failureEvents,
+    operation: { rows: observed.rows, bytes: observed.bytes, elapsedMs: observed.elapsedMs,
+      lastQueries: observed.queries.slice(-8).map(({ text, rows, bytes, elapsedMs, sqlState }) =>
+        ({ statement: text.slice(0, 180), rows, bytes, elapsedMs, sqlState })) } });
   try {
     const before = await protectedCensusFingerprints((...args) => db.query(...args));
     const sourceFingerprint = async () => (await db.query(`SELECT count(*)::int AS count,
@@ -31,7 +43,8 @@ test('112693 retained rows over 102 MB bootstrap across bounded operations witho
       assert(observed.rows <= 10000, `loaded ${observed.rows} rows in one operation`);
       assert(observed.bytes <= 16777216, `loaded ${observed.bytes} bytes in one operation`);
       if (result.verified) { first = result.report; break; }
-      assert.equal(result.result, 'coverage_source_bootstrap_incomplete', JSON.stringify(result));
+      assert.equal(result.result, 'coverage_source_bootstrap_incomplete',
+        result.result === 'coverage_source_bootstrap_incomplete' ? undefined : diagnostic(result, observed));
       assert.equal((await db.query("SELECT count(*)::int AS n FROM pbk_eval_runs WHERE suite_name='runtime_coverage_v1'")).rows[0].n, 0);
       fixture.advance();
     }
@@ -43,8 +56,8 @@ test('112693 retained rows over 102 MB bootstrap across bounded operations witho
     for (let step = 0; step < 3; step++) {
       fixture.advance(); fixture.beginOperation();
       const result = await coverage.appendRuntimeCoverageCheckpoint({ ...options, previous });
-      fixture.endOperation();
-      assert.equal(result.verified, true, JSON.stringify(result));
+      const observed = fixture.endOperation();
+      assert.equal(result.verified, true, result.verified ? undefined : diagnostic(result, observed));
       assert.equal(result.report.previous, previous.signature);
       previous = result.report;
     }
@@ -59,8 +72,8 @@ test('112693 retained rows over 102 MB bootstrap across bounded operations witho
         [`retained-${String(step + 1).padStart(9, '0')}`, `explicit-fixture-change-${step}`]);
       fixture.advance(); fixture.beginOperation();
       const result = await coverage.appendRuntimeCoverageCheckpoint({ ...options, previous });
-      fixture.endOperation();
-      assert.equal(result.verified, true, JSON.stringify(result));
+      const observed = fixture.endOperation();
+      assert.equal(result.verified, true, result.verified ? undefined : diagnostic(result, observed));
       previous = result.report; history.push(previous);
     }
     const controller = new AbortController();
@@ -90,5 +103,5 @@ test('112693 retained rows over 102 MB bootstrap across bounded operations witho
     console.info(JSON.stringify({ fixture: 'bounded-census-scale', retainedRows: retained.count,
       retainedProjectedBytes: Number(retained.bytes), ...fixture.stats, checkpoints: 8,
       baselineHistoryUnchanged: true, explicitFixtureChanges: 4, historicalRootsVerified: history.length }));
-  } finally { await fixture.close(); }
+  } finally { failures.unsubscribe(collectFailure); await fixture.close(); }
 }, 600000);

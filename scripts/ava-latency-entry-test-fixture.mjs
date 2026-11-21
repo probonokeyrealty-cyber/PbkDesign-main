@@ -8,6 +8,7 @@ import { createAgentTimingTurn, bindAgentTimingToParams, agentTimingResultSuccee
 import { AGENT_LATENCY_PILOT_V2, getAgentLatencyPolicy } from './agent-latency-policy.mjs';
 import { appendAssistantMessage, normalizeAssistantSession, detectAssistantIntent, planAssistantIntent } from './ava-assistant-chat.mjs';
 import { runBenchmark, summarizeBenchmark } from './ava-latency-benchmark.mjs';
+import { parseRexResearch } from './ava-rex-handoff.mjs';
 
 // Test-only extraction: actual HTTP route, assistant entry, body reader and recorder;
 // replace external/state services, never the context/measurement implementation.
@@ -18,6 +19,7 @@ export function createLatencyEntryFixture({ secret = randomUUID(), onSessionWrit
   const policy = getAgentLatencyPolicy({ PBK_AGENT_LATENCY_POLICY_V2: JSON.stringify(AGENT_LATENCY_PILOT_V2) });
   const rawSymbol = Symbol.for('pbk.rawBodyBuffer');
   const context = vm.createContext({ Buffer, Date, Symbol, URL, randomUUID,
+    parseRexResearch,
     process: { env: { RENDER_GIT_COMMIT: revision } },
     BRIDGE_API_KEY: secret, RAW_BODY_BUFFER_SYMBOL: rawSymbol, MAX_REQUEST_BODY_BYTES: 1024 * 1024,
     withRuntimeEvidenceContext, getRuntimeEvidenceContext, runBenchmark, summarizeBenchmark,

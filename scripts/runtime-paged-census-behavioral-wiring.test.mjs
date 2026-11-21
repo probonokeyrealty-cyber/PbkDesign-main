@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import * as crypto from 'node:crypto';
+import { channel } from 'node:diagnostics_channel';
 import { readFileSync } from 'node:fs';
 import { SourceTextModule, SyntheticModule, createContext, runInThisContext } from 'node:vm';
 import { beforeAll, test } from '@jest/globals';
@@ -140,6 +141,7 @@ async function createHarness({ seed, budget, swallowBudget = false, failIndepend
   };
   const imports = {
     'node:crypto': crypto,
+    'node:diagnostics_channel': { channel },
     './skill-governance-store.mjs': { canonicalJson },
     './runtime-evidence-context.mjs': { getRuntimeEvidenceContext: () => ({ classification: 'operator_chat' }) },
     './runtime-source-evidence.mjs': {

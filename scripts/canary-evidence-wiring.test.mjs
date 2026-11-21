@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
+import { posix } from 'node:path';
 import vm from 'node:vm';
 import { test } from '@jest/globals';
 import { AGENT_LATENCY_PILOT_V2, getAgentLatencyPolicy } from './agent-latency-policy.mjs';
@@ -177,14 +178,38 @@ test('unapproved v2 policy is not replaced with a pilot or legacy policy', async
   assert.equal(result.ready, false);
 });
 
-test('approval, auth, delivery and dispatch code outside maturity remains byte-for-byte unchanged', () => {
+test('bridge outside maturity matches the independently reviewed staging baseline', () => {
   const unchanged = (source.slice(0, start) + source.slice(end))
     .replace("import { readCanaryEvidence } from './canary-evidence-reader.mjs';\n", '');
-  // Independently reviewed catalog-only discovery extension; base is 491bb65.
-  // Hash refresh review: docs/operations/2026-11-19-composio-discovery-hash-refresh.md.
+  // Reviewed 41f6097 -> 5d32b815 drift includes existing gated research/staging adapters.
+  // Review: docs/operations/2026-11-20-staging-canary-baseline-review.md.
+  // This exact fingerprint is not approval to activate any adapter or provider write.
   assert.equal(createHash('sha256').update(unchanged).digest('hex'),
-    '6f5fb343c4e8ecaa1c40ca85db9c875ed981442080c35fee5c866eafb09f7627');
+    'a6f39aac8bc0959949654e9ad15947329c2bf3c21f20df01305862e06879c048');
 });
+
+const runtimeProgramCopy = 'COPY scripts/fixtures/public-market-program.mjs ./scripts/fixtures/public-market-program.mjs';
+function assertNoTestSignerCopies(runtime) {
+  const directives = runtime.replace(/\\\r?\n\s*/g, ' ').split(/\r?\n/);
+  for (const line of directives) {
+    const directive = line.trim();
+    if (!/^COPY\s/i.test(directive) || directive === runtimeProgramCopy) continue;
+    assert(!/\bfixtures\b/i.test(directive), 'Only the reviewed fixed runtime processor may come from fixtures');
+    const argumentsText = directive.replace(/^COPY\s+/i, '').replace(/^(?:--\S+\s+)*/, '');
+    const paths = argumentsText.startsWith('[') ? JSON.parse(argumentsText)
+      : argumentsText.match(/"(?:[^"\\]|\\.)*"|'[^']*'|\S+/g);
+    assert(Array.isArray(paths) && paths.length >= 2, 'COPY sources must be inspectable');
+    for (const input of paths.slice(0, -1)) {
+      assert.equal(typeof input, 'string');
+      const decoded = input.startsWith('"') ? JSON.parse(input) : input.replace(/^'(.*)'$/, '$1');
+      assert(!/[?*\[\]\\$]/.test(decoded), 'Globs, escapes and variables are not reviewed COPY sources');
+      const normalized = posix.resolve('/', decoded).slice(1);
+      assert(!normalized.toLowerCase().split('/').includes('fixtures'), 'Test fixture sources are excluded');
+      assert(!['', 'scripts'].includes(normalized),
+        'Broad source copies could include test signers');
+    }
+  }
+}
 
 test('production distribution includes reader and protocol, never the fixture signer', () => {
   const docker = readFileSync(new URL('../Dockerfile.openclaw', import.meta.url), 'utf8');
@@ -192,7 +217,24 @@ test('production distribution includes reader and protocol, never the fixture si
   for (const name of ['canary-evidence-reader', 'canary-evidence-protocol']) {
     assert(runtime.includes(`COPY scripts/${name}.mjs ./scripts/${name}.mjs`));
   }
-  assert(!/^COPY .*\bfixtures\b/m.test(runtime));
+  assertNoTestSignerCopies(runtime);
   assert(!source.includes("from './fixtures/canary-evidence-fixture.mjs'"));
   assert(source.includes("import { readCanaryEvidence } from './canary-evidence-reader.mjs';"));
+});
+
+test('runtime processor exception still rejects signers, fixture directories and broad copies', () => {
+  assert.doesNotThrow(() => assertNoTestSignerCopies(runtimeProgramCopy));
+  for (const directive of [
+    'COPY scripts/fixtures/canary-evidence-fixture.mjs ./scripts/fixtures/',
+    'COPY scripts/fixtures ./scripts/fixtures',
+    'COPY . /app',
+    'COPY "." /app',
+    'COPY "scripts/" /app',
+    'COPY scripts/ ./scripts/',
+    'COPY scripts/* ./scripts/',
+    'COPY scripts/[f]ixtures/canary-evidence-fixture.mjs /app/',
+    'COPY ././scripts /app/',
+    'COPY ["scripts/\\u0066ixtures/canary-evidence-fixture.mjs", "/app/"]',
+    'COPY ["scripts/fixtures/canary-evidence-fixture.mjs", "/app/"]',
+  ]) assert.throws(() => assertNoTestSignerCopies(`${runtimeProgramCopy}\n${directive}`));
 });

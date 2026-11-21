@@ -14,21 +14,34 @@ const occupied = comp => Object.values(object(comp)).some(v => typeof v === 'num
 const validTime = v => typeof v === 'string' && Number.isFinite(Date.parse(v));
 const scalarKey = value => typeof value === 'string' || typeof value === 'number' ? String(value).trim().toUpperCase().replace(/[^A-Z0-9]/g, '') : '';
 const parcelConflict = (a, b) => ['attomId', 'apn', 'fips'].some(key => scalarKey(a?.[key]) && scalarKey(b?.[key]) && scalarKey(a[key]) !== scalarKey(b[key]));
+const matchedProfile = (result, address) => result?.status === 'matched' && belongs(result.profile, address);
+const definedFacts = profile => Object.fromEntries(Object.entries(profile).filter(([, value]) => value != null));
+
+function hasCorePropertyFacts(profile) {
+  return Boolean(profile.propertyType) &&
+    Number.isFinite(profile.beds) && Number.isFinite(profile.baths) &&
+    profile.livingSqft > 0 && profile.yearBuilt >= 1000 &&
+    (profile.lotSqft > 0 || profile.lotAcres > 0);
+}
 
 function combinedRecords(rest, mcp, address, checkedAt) {
-  const restMatched = rest?.status === 'matched' && sameAttomAddress({ street: rest.profile?.address }, address);
-  const accepted = mcp?.status === 'matched' && sameAttomAddress({ street: mcp.profile?.address }, address) && !(restMatched && parcelConflict(rest.profile, mcp.profile));
+  const restMatched = matchedProfile(rest, address);
+  const accepted = matchedProfile(mcp, address) && !(restMatched && parcelConflict(rest.profile, mcp.profile));
   const attemptStatus = mcp?.status === 'matched' && !accepted ? 'ambiguous' : mcp?.status || 'unavailable';
   const sections = accepted ? hydrateAttomMcpSections(mcp.sections) : attomMcpDatasetDefinitions.map(({ id }) => projectAttomMcpSection(id, undefined, attemptStatus, checkedAt));
-  const partial = !accepted || !restMatched || sections.length !== attomMcpDatasetDefinitions.length || sections.some(section => section.status !== 'ok');
-  if (!restMatched && !accepted) return { records: { ...rest, status: rest?.status || attemptStatus, sections, partial: true }, accepted: false };
-  const profile = { ...(accepted ? mcp.profile : {}), ...(restMatched ? Object.fromEntries(Object.entries(rest.profile).filter(([, value]) => value !== null && value !== undefined)) : {}) };
+  if (!restMatched && !accepted) {
+    const status = rest?.status === 'matched' ? 'ambiguous' : rest?.status || attemptStatus;
+    return { records: { status, sections, partial: true }, accepted: false };
+  }
+  const profile = { ...(restMatched ? definedFacts(rest.profile) : {}), ...(accepted ? definedFacts(mcp.profile) : {}) };
+  const partial = !accepted || !hasCorePropertyFacts(profile) || sections.length !== attomMcpDatasetDefinitions.length || sections.some(section => section.status !== 'ok');
   return { records: { status: 'matched', profile, sections, partial }, accepted };
 }
 
 function listingSnapshot(address, result, now, previous) {
   const property = object(result?.propertyData), data = object(property.data);
-  if (result?.cache?.hit !== true || property.source !== 'apify-for-sale') return previous;
+  // The cached entry must identify this address. The lookup response also echoes the requested address.
+  if (result?.cache?.hit !== true || property.source !== 'apify-for-sale' || !belongs(property, address)) return previous;
   const photoUrls = [...new Set((Array.isArray(data.photoUrls) ? data.photoUrls : []).filter(v => typeof v === 'string' && /^https:\/\/ap\.rdcpix\.com\/[a-z0-9_-]+\.(?:jpe?g|png|webp)$/i.test(v)))].slice(0, 24);
   const sourceLinks = (Array.isArray(data.sourceLinks) ? data.sourceLinks : []).filter(v => {
     try { const u = new URL(v); return u.protocol === 'https:' && !u.username && !u.password && !u.port && ['realtor.com', 'redfin.com', 'zillow.com'].includes(u.hostname.replace(/^www\./, '')); } catch { return false; }
@@ -48,9 +61,6 @@ const salesCandidates = (result, address) => (Array.isArray(result?.sales) ? res
   Number.isFinite(s.price) && s.price > 0 && /^\d{4}-\d{2}-\d{2}$/.test(s.soldDate)).slice(0, 20);
 
 function compPhotoEvidence(address, result, now) {
-  // getPropertyData's top-level address echoes the request. Only the cache
-  // entry's own address proves that these photos belong to this candidate.
-  if (!sameAttomAddress({ street: result?.propertyData?.address }, address)) return undefined;
   const property = object(result?.propertyData);
   if (![property.data?.capturedAt, property.fetchedAt, property.fetched_at, property.updatedAt, property.createdAt].some(validTime)) return undefined;
   const snapshot = listingSnapshot(address, result, now);
@@ -161,6 +171,34 @@ export function propertyIntelligencePatch(lead, address, evidence, now = new Dat
 
 export function createPropertyIntelligence({ getLead, saveLead, listing, records, sales, now = () => new Date().toISOString(), mcpRecords = createConfiguredAttomMcpReader({ now }) }) {
   const pending = new Map();
+  const read = async (lookup, unavailable = { status: 'unavailable' }) => {
+    try { return await lookup(); }
+    catch { return unavailable; }
+  };
+
+  async function lookupAttom(address, radius) {
+    const readRecords = () => read(() => records(address));
+    const readSales = () => read(() => sales({ ...address, radius }));
+    if (!mcpRecords) {
+      const [recordResult, salesResult] = await Promise.all([readRecords(), readSales()]);
+      return { records: recordResult, sales: salesResult };
+    }
+
+    const mcp = await read(() => mcpRecords(address, { radius }));
+    const matched = matchedProfile(mcp, address);
+    const mcpSales = matched && mcp.sales?.status === 'matched' ? mcp.sales : null;
+    const hasRequestedSales = mcpSales?.sales?.length > 0 && mcpSales.radiusMiles >= radius;
+    const [rest, fallbackSales] = await Promise.all([
+      matched && hasCorePropertyFacts(mcp.profile) ? null : readRecords(),
+      hasRequestedSales ? null : readSales(),
+    ]);
+    const result = combinedRecords(rest, mcp, address, now());
+    if (result.accepted && hasRequestedSales) return { records: result.records, sales: mcpSales };
+    // A conflicting parcel also invalidates its comp set, even if the radius was adequate.
+    const restSales = hasRequestedSales ? await readSales() : fallbackSales;
+    return { records: result.records, sales: restSales?.status !== 'matched' && result.accepted && mcpSales ? mcpSales : restSales };
+  }
+
   return async function enrich(input = {}) {
     const address = typeof input.address === 'string' && input.address.length <= 500 ? parseAttomAddress({ street: input.address }) : null;
     if (!address) throw fail('invalid_address', 400, 'Enter a complete property address.');
@@ -183,25 +221,11 @@ export function createPropertyIntelligence({ getLead, saveLead, listing, records
     ).slice(0, 20) : [];
     const key = `${attomStreetKey(address.street)}|${address.city.toUpperCase()}|${address.state}|${address.zip.slice(0, 5)}|${radius}|${JSON.stringify(reviewedCandidates.map(s => s.address))}`;
     if (!pending.has(key)) {
-      const work = Promise.allSettled([
-        Promise.resolve().then(() => listing({ address: label(address), queueBrowserResearch: false, source: 'property-intelligence' })),
-        Promise.resolve().then(() => records(address)),
-        Promise.resolve().then(() => mcpRecords ? mcpRecords(address, { radius }) : sales({ ...address, radius })),
-      ]).then(async ([l, r, s]) => {
-        let recordResult = r.status === 'fulfilled' ? r.value : { status: 'unavailable' };
-        let salesResult = s.status === 'fulfilled' ? s.value : { status: 'unavailable' };
-        if (mcpRecords) {
-          const combined = combinedRecords(recordResult, salesResult, address, now());
-          recordResult = combined.records;
-          const mcpSales = combined.accepted && salesResult.sales?.status === 'matched' ? salesResult.sales : null;
-          if (mcpSales?.sales?.length && mcpSales.radiusMiles >= radius) salesResult = mcpSales;
-          else {
-            try { salesResult = await sales({ ...address, radius }); }
-            catch { salesResult = { status: 'unavailable' }; }
-            if (salesResult?.status !== 'matched' && mcpSales) salesResult = mcpSales;
-          }
-        }
-        return { listing: l.status === 'fulfilled' ? l.value : { cache: { hit: false }, propertyData: null }, records: recordResult, sales: await loadCompPhotos(salesResult, address, listing, now(), reviewedCandidates) };
+      const work = Promise.all([
+        read(() => listing({ address: label(address), queueBrowserResearch: false, source: 'property-intelligence' }), { cache: { hit: false }, propertyData: null }),
+        lookupAttom(address, radius),
+      ]).then(async ([listingResult, attom]) => {
+        return { listing: listingResult, records: attom.records, sales: await loadCompPhotos(attom.sales, address, listing, now(), reviewedCandidates) };
       }).finally(() => pending.delete(key));
       pending.set(key, work);
     }

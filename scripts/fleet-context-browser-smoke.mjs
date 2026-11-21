@@ -387,14 +387,25 @@ async function verify(engine, width) {
     await expect(queueLead).toBeInViewport();
     await queueLead.click();
     await page.getByRole('button', { name: 'Open lead', exact: true }).click();
+    await expect(page.getByRole('heading', { name: 'Sample 12', level: 1, exact: true })).toBeVisible();
     await page.goBack();
     await expect(rosterSearch).toHaveValue('Sample');
-    await page.goto(`${origin}/fleet`);
+    const isSampleZeroAudit = (response) => {
+      const url = new URL(response.url());
+      return url.pathname === '/api/qa/audit/latest' && url.searchParams.get('leadId') === 'sample-0';
+    };
+    const [initialAudit] = await Promise.all([
+      page.waitForResponse(isSampleZeroAudit),
+      page.goto(`${origin}/fleet`),
+    ]);
+    assert.equal(await initialAudit.finished(), null);
     await expect(picker).toHaveValue('sample-0');
     await search.fill('Fictional');
     await openWorkspace.click();
     await expect(page).toHaveURL(`${origin}/leads/sample-0`);
-    await page.goBack();
+    await expect(page.getByRole('heading', { name: 'Sample 0', level: 1, exact: true })).toBeVisible();
+    const [returnAudit] = await Promise.all([page.waitForResponse(isSampleZeroAudit), page.goBack()]);
+    assert.equal(await returnAudit.finished(), null);
     await expect(page).toHaveURL(/leadId=sample-0/);
     await expect(search).toHaveValue('Fictional');
     await page.goto(`${origin}/fleet?leadId=sample-64&agent=rex`);

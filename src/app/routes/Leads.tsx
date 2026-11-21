@@ -1098,6 +1098,8 @@ export function Leads() {
     [location.state]
   );
   const restorePending = useRef(restoredQueue?.path === '/leads');
+  const rosterSurfaceRef = useRef<HTMLDivElement>(null);
+  const rosterListRef = useRef<HTMLDivElement>(null);
   const initialFilters = useRef(true);
   const [searchParams, setSearchParams] = useSearchParams();
   const previousUrlSearch = useRef(searchParams.get('search'));
@@ -1137,18 +1139,54 @@ export function Leads() {
   const [leadPage, setLeadPage] = useState(restoredQueue?.queue?.page || 0);
   const [leadActivityPage, setLeadActivityPage] = useState(0);
   const [leadQuery, setLeadQuery] = useState(
-    () => restoredQueue?.queue?.query ?? searchParams.get('search') ?? readAvaLeadSearch(location.state?.avaLeadSearch)
+    () =>
+      restoredQueue?.queue?.query ??
+      searchParams.get('search') ??
+      readAvaLeadSearch(location.state?.avaLeadSearch)
   );
   const [leadFilter, setLeadFilter] = useState<'all' | 'hot' | 'callable' | 'contract'>(
     restoredQueue?.queue?.filter || 'all'
   );
-  const leadReturnContext = (leadId: string): LeadQueueReturn => ({
+  const leadReturnContext = (leadId: string, focus?: 'open'): LeadQueueReturn => ({
     path: '/leads',
     search: location.search,
-    scrollY: window.scrollY,
+    scrollY:
+      rosterSurfaceRef.current?.closest<HTMLElement>('.pbk-shell-content')?.scrollTop ||
+      window.scrollY,
     leadId,
-    queue: { query: leadQuery, filter: leadFilter, page: leadPage },
+    queue: {
+      query: leadQuery,
+      filter: leadFilter,
+      page: leadPage,
+      focus,
+      scrollTop: rosterListRef.current?.scrollTop,
+    },
   });
+  const renderOpenLeadLink = (id: string, sellerName: string, address: string) => {
+    const href = `/leads/${encodeURIComponent(id)}`;
+    return (
+      <Link
+        to={href}
+        className="pbk-lead-workspace-link"
+        data-lead-workspace-id={id}
+        aria-label={`Open lead ${sellerName} at ${address}`}
+        onClick={(event) => {
+          if (
+            event.button !== 0 ||
+            event.metaKey ||
+            event.ctrlKey ||
+            event.shiftKey ||
+            event.altKey
+          )
+            return;
+          event.preventDefault();
+          navigate(href, { state: { leadReturn: leadReturnContext(id, 'open') } });
+        }}
+      >
+        Open lead <ArrowUpRight size={14} aria-hidden="true" />
+      </Link>
+    );
+  };
   const reloadTimerRef = useRef<number | null>(null);
   const reloadInFlightRef = useRef(false);
   const leadActionLockRef = useRef(false);
@@ -1279,18 +1317,37 @@ export function Leads() {
   useEffect(() => {
     if (!restorePending.current || leadRosterStatus !== 'ready') return;
     const frame = requestAnimationFrame(() => {
-      const candidates = document.querySelectorAll<HTMLButtonElement>('[data-lead-queue-id]');
+      const surface = rosterSurfaceRef.current;
+      if (!surface || !restoredQueue) return;
+      const queue = restoredQueue.queue;
+      const focusAttribute =
+        queue?.focus === 'open' ? 'data-lead-workspace-id' : 'data-lead-queue-id';
+      const candidates = surface.querySelectorAll<HTMLElement>(`[${focusAttribute}]`);
       const target = Array.from(candidates).find(
-        (node) => node.dataset.leadQueueId === restoredQueue?.leadId && node.getClientRects().length
+        (node) =>
+          node.getAttribute(focusAttribute) === restoredQueue.leadId && node.getClientRects().length
       );
       if (target) target.focus({ preventScroll: true });
-      window.scrollTo(0, restoredQueue?.scrollY || 0);
+      const scrollPanel = surface.closest<HTMLElement>('.pbk-shell-content');
+      if (scrollPanel && scrollPanel.scrollHeight > scrollPanel.clientHeight) {
+        scrollPanel.scrollTop = restoredQueue.scrollY;
+      } else {
+        window.scrollTo(0, restoredQueue.scrollY);
+      }
+      const list = rosterListRef.current;
+      if (list && queue?.scrollTop !== undefined) list.scrollTop = queue.scrollTop;
       if (target) {
         const bounds = target.getBoundingClientRect();
-        if (bounds.top < 80 || bounds.bottom > window.innerHeight - 80)
+        const listBounds = list?.getBoundingClientRect();
+        const visibleTop = Math.max(80, listBounds?.top ?? 0);
+        const visibleBottom = Math.min(
+          window.innerHeight - 80,
+          listBounds?.bottom ?? window.innerHeight
+        );
+        if (bounds.top < visibleTop || bounds.bottom > visibleBottom)
           target.scrollIntoView({ block: 'center' });
       }
-      if (!target) document.querySelector<HTMLInputElement>('.pbk-leads-search input')?.focus();
+      if (!target) surface.querySelector<HTMLInputElement>('.pbk-leads-search input')?.focus();
       restorePending.current = false;
     });
     return () => cancelAnimationFrame(frame);
@@ -1933,7 +1990,7 @@ export function Leads() {
   const activeLeadTemplateName = TEMPLATE_NAMES[activeLeadPath];
 
   return (
-    <div className="pbk-leads-surface">
+    <div className="pbk-leads-surface" ref={rosterSurfaceRef}>
       <LeadsHero
         loading={loading || leadRosterStatus === 'loading'}
         error={error}
@@ -2010,13 +2067,18 @@ export function Leads() {
             </div>
           </div>
 
-          <div className="pbk-leads-roster-list" aria-label="Seller roster results">
+          <div
+            className="pbk-leads-roster-list"
+            ref={rosterListRef}
+            aria-label="Seller roster results"
+          >
             <div className="leads-mobile-cards">
               {visibleLeads.map((lead) => {
                 const id = getLeadId(lead);
                 const score = getLeadScore(lead);
                 const path = normalizePath(lead.selected_path || lead.selectedPath, lead);
                 const sellerName = getSellerName(lead);
+                const address = getLeadAddress(lead);
                 const isSelected = id === activeLeadId;
                 return (
                   <div key={id} className={`lead-mobile-card${isSelected ? ' is-selected' : ''}`}>
@@ -2025,16 +2087,19 @@ export function Leads() {
                       type="button"
                       className="pbk-lead-mobile-select"
                       data-lead-queue-id={id}
-                      aria-label={`Open lead ${sellerName} at ${getLeadAddress(lead)}`}
+                      aria-label={`Preview lead ${sellerName} at ${address}`}
                       aria-pressed={isSelected}
                       onClick={() => setSelectedLeadId(id)}
                     >
                       <SellerRosterIdentity
                         sellerName={sellerName}
-                        address={getLeadAddress(lead)}
+                        address={address}
                         variant="mobile"
                       />
-                      <span className="mt-3 grid grid-cols-2 gap-2 text-[11px] text-slate-400">
+                    </button>
+                    {renderOpenLeadLink(id, sellerName, address)}
+                    <div className="pbk-lead-mobile-summary">
+                      <span className="grid grid-cols-2 gap-2 text-[11px] text-slate-400">
                         <span>
                           After-repair value{' '}
                           <strong className="text-slate-100">
@@ -2062,16 +2127,7 @@ export function Leads() {
                         <span>{text(lead.status || lead.stage, PATH_LABELS[path])}</span>
                         <span>{formatDate(lead.updatedAt || lead.createdAt)}</span>
                       </span>
-                    </button>
-                    <Link
-                      to={`/leads/${encodeURIComponent(id)}`}
-                      state={{ leadReturn: leadReturnContext(id) }}
-                      className="pbk-lead-workspace-link"
-                      aria-label={`Open workspace for ${sellerName}`}
-                      title="Open seller workspace"
-                    >
-                      <ArrowUpRight size={18} aria-hidden="true" />
-                    </Link>
+                    </div>
                     <span className="flex flex-col items-end gap-2">
                       <span
                         className="pbk-lead-quick-actions compact"
@@ -2146,6 +2202,7 @@ export function Leads() {
                 const isSelected = id === activeLeadId;
                 const path = normalizePath(lead.selected_path || lead.selectedPath, lead);
                 const sellerName = getSellerName(lead);
+                const address = getLeadAddress(lead);
                 return (
                   <div
                     key={id}
@@ -2155,27 +2212,27 @@ export function Leads() {
                       isSelected ? 'bg-sky-500/10' : 'hover:bg-slate-900',
                     ].join(' ')}
                   >
-                    <button
-                      type="button"
-                      data-lead-queue-id={id}
-                      aria-label={`Open lead ${sellerName} at ${getLeadAddress(lead)}`}
-                      aria-pressed={isSelected}
-                      onClick={() => setSelectedLeadId(id)}
-                      className="pbk-lead-ledger-identity"
-                    >
-                      <span className="pbk-lead-ledger-avatar" aria-hidden="true">
-                        {getSellerInitial(sellerName)}
-                      </span>
-                      <span className="min-w-0">
-                        <SellerRosterIdentity
-                          sellerName={sellerName}
-                          address={getLeadAddress(lead)}
-                        />
-                        <span className="pbk-lead-ledger-contact">
-                          {getLeadPhone(lead) || getLeadEmail(lead) || 'No contact captured'}
+                    <div className="pbk-lead-ledger-header">
+                      <button
+                        type="button"
+                        data-lead-queue-id={id}
+                        aria-label={`Preview lead ${sellerName} at ${address}`}
+                        aria-pressed={isSelected}
+                        onClick={() => setSelectedLeadId(id)}
+                        className="pbk-lead-ledger-identity"
+                      >
+                        <span className="pbk-lead-ledger-avatar" aria-hidden="true">
+                          {getSellerInitial(sellerName)}
                         </span>
-                      </span>
-                    </button>
+                        <span className="min-w-0">
+                          <SellerRosterIdentity sellerName={sellerName} address={address} />
+                          <span className="pbk-lead-ledger-contact">
+                            {getLeadPhone(lead) || getLeadEmail(lead) || 'No contact captured'}
+                          </span>
+                        </span>
+                      </button>
+                      {renderOpenLeadLink(id, sellerName, address)}
+                    </div>
                     <span className="flex flex-wrap items-center gap-2">
                       <span className="pbk-lead-ledger-score">{getLeadScore(lead)} score</span>
                       <span className="pbk-lead-ledger-stage">

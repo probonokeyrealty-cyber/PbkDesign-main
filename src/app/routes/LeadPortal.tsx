@@ -152,10 +152,7 @@ export function LeadPortal() {
   const workspaceRootRef = useRef<HTMLElement>(null);
   const focusedEvidenceEntry = useRef('');
   const { sectionId, propertyTab } = readLeadEvidenceTarget(location.hash) ?? {};
-  const [propertySelection, setPropertySelection] = useState<{
-    entryKey: string;
-    tab: LeadPropertyTab;
-  } | null>(null);
+  const [propertySelection, setPropertySelection] = useState<{ entryKey: string; tab: LeadPropertyTab } | null>(null);
   const [searchParams, setSearchParams] = useSearchParams();
   const requestSequence = useRef(0);
   const timelineRequestSequence = useRef(0);
@@ -187,23 +184,13 @@ export function LeadPortal() {
   const propertyIdentity = `${lead?.id || leadId}:${lead?.address}:${lead?.city}:${lead?.state}:${lead?.zip}`;
   // A manually selected tab takes precedence over the shortcut used to enter this lead.
   const propertyEntryKey = `${location.key}:${propertyIdentity}`;
-  const selectedPropertyTab =
-    propertySelection?.entryKey === propertyEntryKey ? propertySelection.tab : undefined;
+  const selectedPropertyTab = propertySelection?.entryKey === propertyEntryKey ? propertySelection.tab : undefined;
   const analyzerReturnHash = selectedPropertyTab
     ? `#lead-${selectedPropertyTab === 'overview' ? 'property' : selectedPropertyTab}`
-    : sectionId
-      ? location.hash
-      : '';
+    : sectionId ? location.hash : '';
   const analyzerLink = {
     to: { pathname: `/deal/${encodeURIComponent(leadId)}`, hash: analyzerReturnHash },
-    state: {
-      leadAnalyzerOrigin: {
-        leadId,
-        search: location.search,
-        leadReturn: returnContext,
-        fleetReturn,
-      },
-    },
+    state: { leadAnalyzerOrigin: { leadId, search: location.search, leadReturn: returnContext, fleetReturn } },
   };
   const nextStep = readStoredNextStep(lead?.id === leadId ? leadPayload : null);
   const focusSection = useCallback((id: string, smooth: boolean) => {
@@ -212,13 +199,7 @@ export function LeadPortal() {
     const heading = section.querySelector<HTMLElement>('h2') || section;
     heading.tabIndex = -1;
     heading.focus({ preventScroll: true });
-    section.scrollIntoView({
-      block: 'start',
-      behavior:
-        smooth && !window.matchMedia('(prefers-reduced-motion: reduce)').matches
-          ? 'smooth'
-          : 'auto',
-    });
+    section.scrollIntoView({ block: 'start', behavior: smooth && !window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'smooth' : 'auto' });
   }, []);
   const jumpToSection = (event: React.MouseEvent<HTMLAnchorElement>, id: string) => {
     event.preventDefault();
@@ -230,13 +211,11 @@ export function LeadPortal() {
     if (currentLeadIdRef.current !== savedLeadId) return;
     const requestId = requestSequence.current;
     const response = await fetchLeadFullRequest(savedLeadId);
-    if (response.ok === false)
-      throw new Error(String(response.error || 'Unable to reload saved property intelligence.'));
+    if (response.ok === false) throw new Error(String(response.error || 'Unable to reload saved property intelligence.'));
     if (currentLeadIdRef.current !== savedLeadId || requestSequence.current !== requestId) return;
     const canonical = unwrapLead(response);
     const canonicalId = String(canonical.leadId || canonical.id || '').trim();
-    if (canonicalId !== savedLeadId)
-      throw new Error('The bridge returned a different lead. Reopen this workspace to reload.');
+    if (canonicalId !== savedLeadId) throw new Error('The bridge returned a different lead. Reopen this workspace to reload.');
     setLeadPayload(response);
   };
 
@@ -801,35 +780,17 @@ export function LeadPortal() {
         </div>
         <span>{fleetReturn ? `Agent context: ${fleetReturn.agentId}` : 'Seller workspace'}</span>
         {lead.id === leadId && (
-          <Link
-            className="pbk-btn pbk-btn-ghost pbk-btn-sm min-h-11"
-            to={`/ava-chat?leadId=${encodeURIComponent(leadId)}`}
-            aria-label="Ask Ava about this lead"
-          >
-            Ask Ava
-          </Link>
+          <Link className="pbk-btn pbk-btn-ghost pbk-btn-sm min-h-11" to={`/ava-chat?leadId=${encodeURIComponent(leadId)}`} aria-label="Ask Ava about this lead">Ask Ava</Link>
         )}
       </section>
 
       <nav className="pbk-portal-sections" aria-label="Lead workspace sections">
-        <a href="#lead-next-step" onClick={(event) => jumpToSection(event, 'lead-next-step')}>
-          Next step
-        </a>
-        <a href="#lead-timeline" onClick={(event) => jumpToSection(event, 'lead-timeline')}>
-          Timeline
-        </a>
-        <a href="#lead-numbers" onClick={(event) => jumpToSection(event, 'lead-numbers')}>
-          Numbers
-        </a>
-        <a href="#lead-property" onClick={(event) => jumpToSection(event, 'lead-property')}>
-          Property
-        </a>
+        <a href="#lead-next-step" onClick={event => jumpToSection(event, 'lead-next-step')}>Next step</a>
+        <a href="#lead-timeline" onClick={event => jumpToSection(event, 'lead-timeline')}>Timeline</a>
+        <a href="#lead-numbers" onClick={event => jumpToSection(event, 'lead-numbers')}>Numbers</a>
+        <a href="#lead-property" onClick={event => jumpToSection(event, 'lead-property')}>Property</a>
         {lead.id === leadId && (
-          <div
-            className="pbk-portal-evidence-links"
-            role="group"
-            aria-label="Saved property evidence"
-          >
+          <div className="pbk-portal-evidence-links" role="group" aria-label="Saved property evidence">
             {[
               ['Property record', '#lead-record'],
               ['Saved comps', '#lead-comps'],
@@ -837,11 +798,7 @@ export function LeadPortal() {
             ].map(([label, hash]) => (
               <Link
                 key={hash}
-                to={{
-                  pathname: `/leads/${encodeURIComponent(leadId)}`,
-                  search: location.search,
-                  hash,
-                }}
+                to={{ pathname: `/leads/${encodeURIComponent(leadId)}`, search: location.search, hash }}
                 state={location.state}
                 preventScrollReset
               >
@@ -852,29 +809,20 @@ export function LeadPortal() {
         )}
       </nav>
 
-      <section
-        id="lead-next-step"
-        className="pbk-portal-next-step"
-        aria-labelledby="lead-next-step-heading"
-        data-next-step-state={nextStep.state}
-      >
-        <ArrowRight size={18} aria-hidden="true" />
-        <div>
-          <h2 id="lead-next-step-heading">Next step</h2>
-          <p>{nextStep.text}</p>
-        </div>
-      </section>
+        <section id="lead-next-step" className="pbk-portal-next-step" aria-labelledby="lead-next-step-heading" data-next-step-state={nextStep.state}>
+          <ArrowRight size={18} aria-hidden="true" />
+          <div>
+            <h2 id="lead-next-step-heading">Next step</h2>
+            <p>{nextStep.text}</p>
+          </div>
+        </section>
 
       <div className="pbk-lead-portal-grid">
         <div className="pbk-portal-main-column">
           <LeadPortalTimeline
             thread={thread}
             events={events}
-            outlookDelivery={
-              lead.id === leadId && Array.isArray(leadPayload?.outlookDelivery)
-                ? (leadPayload.outlookDelivery as OutlookDelivery[])
-                : []
-            }
+            outlookDelivery={lead.id === leadId && Array.isArray(leadPayload?.outlookDelivery) ? leadPayload.outlookDelivery as OutlookDelivery[] : []}
             loading={timelineLoading}
             loadingMore={timelineLoadingMore}
             error={timelineError}
@@ -899,7 +847,7 @@ export function LeadPortal() {
         <LeadPortalProperty
           key={propertyIdentity}
           tab={selectedPropertyTab ?? propertyTab ?? 'overview'}
-          onTabChange={(tab) => setPropertySelection({ entryKey: propertyEntryKey, tab })}
+          onTabChange={tab => setPropertySelection({ entryKey: propertyEntryKey, tab })}
           analyzerLink={analyzerLink}
           lead={lead}
           onEdit={startEdit}

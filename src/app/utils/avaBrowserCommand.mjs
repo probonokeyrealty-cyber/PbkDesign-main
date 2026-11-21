@@ -30,10 +30,7 @@ export function readAvaLeadSearch(value) {
 }
 
 export function resolveAvaBrowserCommand(text, leadId = '') {
-  const command = text
-    .trim()
-    .replace(/\s+/g, ' ')
-    .replace(/[.!]$/, '')
+  const command = text.trim().replace(/\s+/g, ' ').replace(/[.!]$/, '')
     .replace(/^(?:(?:hey )?ava,? )?(?:please )?/i, '');
   const leadSearch = /^search (?:the )?leads for (.+)$/i.exec(command);
   if (leadSearch) {
@@ -46,11 +43,7 @@ export function resolveAvaBrowserCommand(text, leadId = '') {
   const page = match[1];
   const hash = leadEvidenceCommands.get(page);
   if (hash || page === 'current lead' || page === 'this lead') {
-    return {
-      path: /^[a-z\d_-][a-z\d_.:-]{0,255}$/i.test(leadId)
-        ? `/leads/${encodeURIComponent(leadId)}${hash || ''}`
-        : null,
-    };
+    return { path: /^[a-z\d_-][a-z\d_.:-]{0,255}$/i.test(leadId) ? `/leads/${encodeURIComponent(leadId)}${hash || ''}` : null };
   }
   const path = pages.get(page);
   return path ? { path } : null;

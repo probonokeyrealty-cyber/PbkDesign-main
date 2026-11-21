@@ -141,11 +141,7 @@ export function DealAnalyzerCommandHeader({
         <div className="pbk-analyzer-title-block">
           <div className="flex flex-wrap items-center gap-2">
             {backToLead}
-            <span className="pbk-kicker">
-              {freshDraft
-                ? 'Fresh Analyzer / Tab-local draft'
-                : workbench?.label || 'Deal Analyzer'}
-            </span>
+            <span className="pbk-kicker">{freshDraft ? 'Fresh Analyzer / Tab-local draft' : workbench?.label || 'Deal Analyzer'}</span>
           </div>
           {workbench ? (
             <>

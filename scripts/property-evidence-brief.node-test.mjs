@@ -78,10 +78,9 @@ test('pure rerender for another lead with empty evidence carries no saved counts
   assert.match(content, /0 reviewed selections/);
   assert.doesNotMatch(content, /populated dataset|saved photo\b|saved sale candidate|1 reviewed selection|Verify condition/);
   assert.equal(flatten(empty).filter(node => node.type === 'time').length, 0);
-  assert.deepEqual(flatten(empty).filter(node => node.type === 'strong').map(text), ['Not captured', 'Not captured', '0 / 3']);
-  assert.match(content, /Capture the property record/);
-  assert.match(content, /Check listing sources for photos/);
-  assert.match(content, /Capture recorded sales when ready/);
+  assert.match(content, /Next review.*There’s no saved property record/);
+  assert.match(text(populated), /Verify condition, source dates, and comp fit/);
+  assert.doesNotMatch(text(populated), /Next review/);
 });
 test('suggestions and duplicate or stale selected IDs do not become reviewed comps', () => {
   const sales = { status: 'matched', source: 'ATTOM', review: 'suggested', sales: ['a', 'b'].map(id => ({ id, address: `${id} Sample Lane`, price: 100000, soldDate: '2026-11-01' })), selectedIds: ['a'], retrievedAt: captured };
@@ -100,5 +99,25 @@ test('each review button only opens its existing local tab', () => {
   const opened = [];
   const buttons = flatten(view({ onOpen: tab => opened.push(tab) })).filter(node => node.type === 'button');
   for (const button of buttons) button.props.onClick();
-  assert.deepEqual(opened, ['record', 'photos', 'comps']);
+  assert.deepEqual(opened, ['record', 'record', 'photos', 'comps']);
+});
+test('next review starts with usable unreviewed comps, then points to the remaining record gap', () => {
+  const opened = [];
+  const props = {
+    records: { retrievedAt: captured, sections: [{ status: 'not_entitled', facts: {}, rows: [] }] },
+    listing: { retrievedAt: captured, photoUrls: ['one'] },
+    sales: {
+      status: 'matched', review: 'suggested', retrievedAt: captured, selectedIds: ['a'],
+      sales: [{ id: 'a', address: 'Sample Lane', price: 100000, soldDate: '2026-11-01' }],
+    },
+    onOpen: tab => opened.push(tab),
+  };
+  const next = (tree, label) => {
+    const button = flatten(tree).find(node => node.type === 'button' && text(node).trim() === label);
+    assert.ok(button, label);
+    button.props.onClick();
+  };
+  next(view(props), 'Compare saved comps');
+  next(view({ ...props, sales: { ...props.sales, review: 'operator-selected' } }), 'Check record coverage');
+  assert.deepEqual(opened, ['comps', 'record']);
 });

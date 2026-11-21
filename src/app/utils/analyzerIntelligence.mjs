@@ -19,8 +19,14 @@ export function resetChangedProperty(deal, nextAddress) {
   return structuredClone(propertyContextDefaults);
 }
 
+const analyzerAddressPattern = /^(\d[^,]+),\s*([^,]+),\s*([a-z]{2})\s+(\d{5}(?:-\d{4})?)$/i;
+
+export function hasCompleteAnalyzerAddress(address) {
+  return analyzerAddressPattern.test(address.trim());
+}
+
 export function intelligenceRequest(deal) {
-  const match = String(deal.address || '').trim().match(/^(\d[^,]+),\s*([^,]+),\s*([a-z]{2})\s+(\d{5}(?:-\d{4})?)$/i);
+  const match = String(deal.address || '').trim().match(analyzerAddressPattern);
   if (!match) throw Error('Enter the complete property address, city, state and ZIP.');
   return { address: deal.address.trim(), ...(deal.leadId ? {
     leadId: deal.leadId,

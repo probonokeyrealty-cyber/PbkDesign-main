@@ -86,8 +86,9 @@ export type EligibilityReason = { code: string; message: string };
 export type DialerSelection = {
   ok: boolean;
   parcel: ParcelFeature;
+  createLeadAvailable?: boolean;
   match: { status: 'matched' | 'no_match' | 'ambiguous'; candidateCount: number; matchedOn: string };
-  contact: { id: string; name: string; address: string; status: string; phoneLast4: string; phoneDisplay: string; synthetic: boolean } | null;
+  contact: { id: string; crmLeadId?: string; name: string; address: string; status: string; phoneLast4: string; phoneDisplay: string; synthetic: boolean } | null;
   activity: Array<{ id: string; at: string; status: string; outcome: string; talkSeconds: number | null; lineLast4: string }>;
   eligibility: { eligible: boolean; reasons: EligibilityReason[] };
   pendingRequest: { id: string; approvalId: string; toLast4: string; fromLast4: string; status: string; approvalStatus?: string } | null;
@@ -101,6 +102,8 @@ export const fetchParcels = (bbox?: number[]) =>
   bridgeRequest<{ ok: boolean; features: ParcelFeature[] }>({ path: `/api/dialer/parcels${bbox ? `?bbox=${bbox.join(',')}` : ''}` });
 export const selectParcel = (body: { parcelId?: string; address?: string; lineId?: string }) =>
   bridgeRequest<DialerSelection>({ method: 'POST', path: '/api/dialer/select', body });
+export const createLeadFromParcel = (parcelId: string) =>
+  bridgeRequest<{ ok: boolean; leadId: string; created: boolean }>({ method: 'POST', path: '/api/dialer/leads', body: { parcelId } });
 export const requestDialerCall = (body: { parcelId: string; leadId: string; lineId: string }) =>
   bridgeRequest<{ ok: boolean; request: { id: string; status: string; approvalId: string; toLast4: string; fromLast4: string }; approvalId: string }>({ method: 'POST', path: '/api/dialer/call-requests', body });
 export const dialApprovedRequest = (requestId: string) =>

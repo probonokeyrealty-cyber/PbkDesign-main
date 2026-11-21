@@ -184,6 +184,8 @@ const DENVER_FIELD_NAMES = [
   'SITUS_ADDRESS_LINE1', 'SITUS_ADDRESS_LINE2', 'SITUS_CITY', 'SITUS_STATE', 'SITUS_ZIP', 'LAND_AREA',
 ].join(',');
 const DENVER_QUERY_LIMIT = 150;
+const DENVER_HINT_LIMIT = 500;
+const DENVER_HINT_TTL_MS = 60_000;
 
 function denverParcel(row) {
   const p = row.properties || {};
@@ -210,15 +212,26 @@ function denverAddressWithoutDirection(row) {
   return addressKey({ ...feature.properties.situs, line1: [words[0], ...words.slice(2)].join(' ') });
 }
 
-export function createDenverParcelSource({ fetchImpl = globalThis.fetch } = {}) {
+export function createDenverParcelSource({ fetchImpl = globalThis.fetch, now = Date.now } = {}) {
+  const parcelHints = new Map();
   const read = async (path, parameters) => {
-    const response = await fetchImpl(`${DENVER_PARCEL_LAYER}${path}?${new URLSearchParams(parameters)}`, {
-      headers: { Accept: 'application/json' }, signal: AbortSignal.timeout(6000),
-    });
-    if (!response.ok) throw new Error(`Denver parcel service HTTP ${response.status}.`);
-    const body = await response.json();
-    if (body.error) throw new Error('Denver parcel service rejected the query.');
-    return body;
+    const url = `${DENVER_PARCEL_LAYER}${path}?${new URLSearchParams(parameters)}`;
+    // Leave room for a slow but healthy county response on the second attempt.
+    for (const [attempt, timeout] of [2400, 7100].entries()) {
+      let response;
+      let body;
+      try {
+        response = await fetchImpl(url, { headers: { Accept: 'application/json' }, signal: AbortSignal.timeout(timeout) });
+        if (response.ok) body = await response.json();
+      } catch (error) {
+        if (attempt === 0 && (error instanceof TypeError || ['TimeoutError', 'AbortError'].includes(error?.name))) continue;
+        throw error;
+      }
+      if (attempt === 0 && [502, 503, 504].includes(response.status)) continue;
+      if (!response.ok) throw new Error(`Denver parcel service HTTP ${response.status}.`);
+      if (body.error) throw new Error('Denver parcel service rejected the query.');
+      return body;
+    }
   };
   const query = (parameters) => read('/query', {
     f: 'geojson', outSR: '4326', outFields: DENVER_FIELD_NAMES, orderByFields: 'OBJECTID',
@@ -236,6 +249,13 @@ export function createDenverParcelSource({ fetchImpl = globalThis.fetch } = {}) 
     });
     return competing.length === 1 && denverParcel(competing[0]).properties.parcelId === parcelId;
   };
+  const withVerifiedAlias = (row, candidates) => {
+    const feature = denverParcel(row);
+    if (!validateParcelFeature(feature)) return null;
+    const alias = denverAddressWithoutDirection(row);
+    if (aliasIsUnique(candidates, alias, feature.properties.parcelId)) feature.properties.verifiedAddressAlias = alias;
+    return feature;
+  };
   return {
     kind: 'licensed',
     async coverage() {
@@ -251,6 +271,16 @@ export function createDenverParcelSource({ fetchImpl = globalThis.fetch } = {}) 
     async getById(value) {
       const id = normalizeParcelId(value);
       if (!/^\d{13}$/.test(id)) return null;
+      const hint = parcelHints.get(id);
+      if (hint && hint.expiresAt > now()) {
+        const candidates = await addressRows(hint.house, hint.zip, false);
+        const matches = candidates.features?.filter((row) => normalizeParcelId(row.properties?.SCHEDNUM) === id) || [];
+        if (complete(candidates) && matches.length === 1) {
+          const feature = withVerifiedAlias({ ...matches[0], geometry: hint.geometry }, candidates);
+          if (feature) return feature;
+        }
+        parcelHints.delete(id);
+      }
       const body = await query({ where: `SCHEDNUM = '${id}'`, resultRecordCount: '2' });
       if (body.features?.length !== 1) return null;
       const row = body.features[0];
@@ -272,10 +302,8 @@ export function createDenverParcelSource({ fetchImpl = globalThis.fetch } = {}) 
       const body = await addressRows(house, zip);
       if (!complete(body)) throw new Error('Too many Denver parcel candidates. Look up the parcel ID.');
       return body.features.flatMap((row) => {
-        const feature = denverParcel(row);
-        if (!validateParcelFeature(feature)) return [];
-        const alias = denverAddressWithoutDirection(row);
-        if (aliasIsUnique(body, alias, feature.properties.parcelId)) feature.properties.verifiedAddressAlias = alias;
+        const feature = withVerifiedAlias(row, body);
+        if (!feature) return [];
         return addressKey(feature.properties.situs) === key || feature.properties.verifiedAddressAlias === key ? [feature] : [];
       });
     },
@@ -285,7 +313,18 @@ export function createDenverParcelSource({ fetchImpl = globalThis.fetch } = {}) 
       const [w, s, e, n] = bbox;
       if (w >= e || s >= n || e - w > 0.18 || n - s > 0.18 || w < -180 || e > 180 || s < -90 || n > 90) return [];
       const body = await query({ where: "SITUS_STATE = 'CO'", geometry: bbox.join(','), geometryType: 'esriGeometryEnvelope', inSR: '4326', spatialRel: 'esriSpatialRelIntersects' });
-      return (body.features || []).map(denverParcel).filter(validateParcelFeature);
+      return (body.features || []).flatMap((row) => {
+        const feature = denverParcel(row);
+        if (!validateParcelFeature(feature)) return [];
+        const { parcelId, situs } = feature.properties;
+        const house = String(row.properties?.SITUS_ADDR_NBR || '');
+        if (/^\d+$/.test(house)) {
+          parcelHints.delete(parcelId);
+          parcelHints.set(parcelId, { house, zip: situs.zip, geometry: feature.geometry, expiresAt: now() + DENVER_HINT_TTL_MS });
+          if (parcelHints.size > DENVER_HINT_LIMIT) parcelHints.delete(parcelHints.keys().next().value);
+        }
+        return [feature];
+      });
     },
   };
 }
@@ -349,7 +388,7 @@ export function matchParcelToLeads(feature, leads = []) {
   const alias = denver ? feature.properties.verifiedAddressAlias : '';
   const byId = new Map();
   for (const lead of leads) {
-    const id = lead.id || lead.leadId;
+    const id = lead.leadId || lead.id;
     if (!id) continue;
     const address = leadAddressKey(lead);
     const state = String(lead.property?.state || lead.state || '').trim().toUpperCase();
@@ -406,6 +445,8 @@ export function createParcelDialer({
   phoneNumbers,
   twilio,
   listLeads,
+  loadParcelLeads,
+  saveParcelLead,
   isDnc,
   readStore,
   writeStore,
@@ -430,11 +471,20 @@ export function createParcelDialer({
     return mock ? [...crm, ...buildFixtureContacts()] : crm;
   };
 
+  const pendingLeadSaves = new Map();
+
+  function hasVerifiedSitus(feature) {
+    const { situs } = feature.properties;
+    return parcelSource.kind === 'licensed' && typeof saveParcelLead === 'function' &&
+      Boolean(situs?.line1?.trim() && situs.city?.trim() && /^[A-Z]{2}$/i.test(situs.state || '') && /^\d{5}(?:-\d{4})?$/.test(situs.zip || ''));
+  }
+
   function leadSummary(lead) {
     if (!lead) return null;
     const phone = normalizeE164(lead.seller?.phone || lead.phone || '');
     return {
       id: lead.id || lead.leadId,
+      crmLeadId: lead.leadId || lead.id,
       name: lead.seller?.name || lead.leadName || lead.name || 'Unnamed contact',
       address: lead.property?.address || lead.address || '',
       status: lead.status || lead.stage || '',
@@ -522,11 +572,19 @@ export function createParcelDialer({
     async selectParcel({ parcelId = '', address = '', canPlaceCalls = false, lineId = '' }) {
       const resolved = await resolveParcel({ parcelId, address });
       if (resolved.status !== 'found') return { ok: false, lookup: resolved.status, error: resolved.error || (resolved.status === 'ambiguous' ? 'More than one parcel matches that address. Use the parcel ID.' : 'No parcel found.') };
-      const match = matchParcelToLeads(resolved.feature, await allLeads());
+      const feature = resolved.feature;
+      const durable = hasVerifiedSitus(feature) && loadParcelLeads ? await loadParcelLeads(feature) : [];
+      const hot = await allLeads();
+      const match = matchParcelToLeads(feature, [...durable, ...hot]);
       const elig = await eligibility(match, { canPlaceCalls, lineId });
+      if (match.lead && !hot.includes(match.lead)) {
+        elig.eligible = false;
+        elig.reasons.push({ code: 'crm_contact_unavailable', message: 'Open the CRM lead to review contact details before calling.' });
+      }
       return {
         ok: true,
         parcel: resolved.feature,
+        createLeadAvailable: hasVerifiedSitus(resolved.feature) && match.status === 'no_match',
         match: { status: match.status, candidateCount: match.candidateCount, matchedOn: match.matchedOn || '' },
         contact: leadSummary(match.lead),
         activity: match.lead ? activityFor(match.lead.id || match.lead.leadId) : [],
@@ -537,6 +595,37 @@ export function createParcelDialer({
     },
 
     outboundLines,
+
+    async createLead({ parcelId, actor }) {
+      if (parcelSource.kind !== 'licensed' || typeof saveParcelLead !== 'function') {
+        return { ok: false, code: 'parcel_unverified', error: 'Lead creation requires a verified parcel source.' };
+      }
+      const key = normalizeParcelId(parcelId);
+      if (!key) return { ok: false, code: 'parcel_required', error: 'Select a parcel first.' };
+      const pending = pendingLeadSaves.get(key);
+      if (pending) return { ...await pending, created: false };
+      const save = (async () => {
+        const resolved = await resolveParcel({ parcelId: key });
+        if (resolved.status !== 'found' || normalizeParcelId(resolved.feature.properties.parcelId) !== key || !hasVerifiedSitus(resolved.feature)) {
+          return { ok: false, code: 'parcel_unverified', error: 'The parcel address could not be verified. Select the parcel again.' };
+        }
+        const feature = resolved.feature;
+        const durable = loadParcelLeads ? await loadParcelLeads(feature) : [];
+        const match = matchParcelToLeads(feature, [...durable, ...(await allLeads())]);
+        if (match.status === 'ambiguous') {
+          return { ok: false, code: 'ambiguous_match', error: 'Multiple CRM leads match. Resolve the duplicates in Leads first.' };
+        }
+        const existing = match.lead;
+        if (existing && !String(existing.eventId || '').startsWith('parcel-dialer:')) {
+          return { ok: true, leadId: existing.leadId || existing.id, created: false };
+        }
+        // Canonical save also rechecks current CRM state and completes any prior interrupted save.
+        return saveParcelLead(feature, durable, actor);
+      })();
+      pendingLeadSaves.set(key, save);
+      try { return await save; }
+      finally { pendingLeadSaves.delete(key); }
+    },
 
     async requestCall({ parcelId, leadId, lineId, canPlaceCalls, actor = 'staff' }) {
       const resolved = await resolveParcel({ parcelId });

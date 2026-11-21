@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useMemo, useState, type KeyboardEvent } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import { Link } from 'react-router';
 import { ArrowDownRight, Check, Layers, Loader2, MapPin, Minus, PhoneCall, Plus, RefreshCw, Search } from 'lucide-react';
 import { ParcelStreetMap } from '../components/ParcelStreetMap';
+import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogTitle, DialogTrigger } from '../components/ui/dialog';
 import { ParcelPhoneKeypad } from '../components/ParcelPhoneKeypad';
 import {
-  decideApproval, dialApprovedRequest, errorText, fetchDialerCalls, fetchDialerCoverage, fetchParcels, requestDialerCall, selectParcel,
+  createLeadFromParcel, decideApproval, dialApprovedRequest, errorText, fetchDialerCalls, fetchDialerCoverage, fetchParcels, requestDialerCall, selectParcel,
   simulateDialerCallbacks, type DialerCall, type DialerCoverage, type DialerSelection, type OutboundLine, type ParcelFeature,
 } from '../utils/phoneDialerApi';
 import '../../styles/phone-dialer.css';
@@ -52,6 +53,10 @@ export function ParcelDialer() {
   const [features, setFeatures] = useState<ParcelFeature[]>([]);
   const [lineId, setLineId] = useState('');
   const [selection, setSelection] = useState<DialerSelection | null>(null);
+  const savedLeadStatus = useRef<HTMLParagraphElement>(null);
+  const [leadReviewOpen, setLeadReviewOpen] = useState(false);
+  const [leadSaveError, setLeadSaveError] = useState('');
+  const [savedLead, setSavedLead] = useState<{ leadId: string; created: boolean } | null>(null);
   const [quickParcel, setQuickParcel] = useState<ParcelFeature | null>(null);
   const [lookup, setLookup] = useState<{ mode: 'parcel' | 'address'; value: string }>({ mode: 'parcel', value: '' });
   const [busy, setBusy] = useState('');
@@ -81,6 +86,7 @@ export function ParcelDialer() {
     }
   }, []);
   useEffect(() => { void load(); }, [load]);
+  useEffect(() => { if (savedLead) savedLeadStatus.current?.focus(); }, [savedLead]);
 
   // Read-only: resolves parcel, exact CRM match and eligibility. Never dials.
   const choose = useCallback(async (input: { parcelId?: string; address?: string }, nextLine = lineId, preview: ParcelFeature | null = null) => {
@@ -90,6 +96,8 @@ export function ParcelDialer() {
     setRequest(null);
     setCall(null);
     setSelection(null);
+    setSavedLead(null);
+    setLeadReviewOpen(false);
     setQuickParcel(preview);
     try {
       const next = await selectParcel({ ...input, lineId: nextLine });
@@ -131,6 +139,19 @@ export function ParcelDialer() {
   const situs = property?.situs;
   const previewId = property?.parcelId || '';
   const contact = selection?.contact;
+  const canCreateLead = selection?.match.status === 'no_match' && selection.createLeadAvailable && !savedLead;
+  const savingLead = busy === 'create-lead';
+
+  const saveLead = () => act('create-lead', async () => {
+    setLeadSaveError('');
+    try {
+      const result = await createLeadFromParcel(selectedId);
+      setSavedLead(result);
+      setLeadReviewOpen(false);
+    } catch (err) {
+      setLeadSaveError(errorText(err));
+    }
+  });
   const streetMapEnabled = showStreets ?? (coverage?.status === 'licensed');
   const savedActivity = selection?.activity ?? [];
   const activity = call
@@ -255,6 +276,43 @@ export function ParcelDialer() {
                 </>
               ) : <p>Select a parcel on the map or look up an address.</p>}
             </div>
+            {canCreateLead && (
+              <Dialog open={leadReviewOpen} onOpenChange={(open) => {
+                if (!savingLead) {
+                  setLeadReviewOpen(open);
+                  setLeadSaveError('');
+                }
+              }}>
+                <div>
+                  <DialogTrigger asChild>
+                    <button type="button" className="pbk-btn pbk-btn-primary pbk-btn-sm" disabled={Boolean(busy)}>
+                      <Plus size={14} aria-hidden="true" /> Create lead
+                    </button>
+                  </DialogTrigger>
+                </div>
+                <DialogContent className="pbk-parcel-lead-dialog" onEscapeKeyDown={(event) => { if (savingLead) event.preventDefault(); }}>
+                  <DialogTitle>Create lead from parcel</DialogTitle>
+                  <DialogDescription>Save the verified property details to CRM. Seller contact fields will be blank.</DialogDescription>
+                  <dl className="pbk-dialer-kv">
+                    <dt>Address</dt><dd>{situs?.line1}, {situs?.city}, {situs?.state} {situs?.zip}</dd>
+                    <dt>Parcel ID</dt><dd>{selectedId}</dd>
+                    {property?.county && <><dt>County</dt><dd>{property.county}</dd></>}
+                    {Boolean(property?.acres && property.acres > 0) && <><dt>Lot size</dt><dd>{property?.acres} acres</dd></>}
+                  </dl>
+                  {leadSaveError && <p role="alert">{leadSaveError}</p>}
+                  <DialogFooter>
+                    <DialogClose asChild><button type="button" className="pbk-btn pbk-btn-ghost" disabled={savingLead}>Cancel</button></DialogClose>
+                    <button type="button" className="pbk-btn pbk-btn-primary" disabled={savingLead} onClick={() => void saveLead()}>
+                      {savingLead ? 'Saving lead…' : 'Save lead'}
+                    </button>
+                  </DialogFooter>
+                </DialogContent>
+              </Dialog>
+            )}
+            {savedLead && <p tabIndex={-1} ref={savedLeadStatus} role="status">
+              {savedLead.created ? 'Lead saved.' : 'A matching lead already exists.'}{' '}
+              <Link to={`/leads/${encodeURIComponent(savedLead.leadId)}`}>Open lead</Link>
+            </p>}
           </section>
         </section>
 
@@ -292,12 +350,12 @@ export function ParcelDialer() {
                 <dd>
                   {selection.match.status === 'matched' && <span className="pbk-phone-tag good">{selection.match.matchedOn === 'verified_address_alias' ? 'verified address alias' : `exact · ${selection.match.matchedOn.replaceAll('_', ' ')}`}</span>}
                   {selection.match.status === 'ambiguous' && <span className="pbk-phone-tag bad">{selection.match.candidateCount} contacts · rejected</span>}
-                  {selection.match.status === 'no_match' && <span className="pbk-phone-tag">no CRM contact</span>}
+                  {selection.match.status === 'no_match' && <span className="pbk-phone-tag">{savedLead ? 'CRM lead available' : 'no CRM contact'}</span>}
                 </dd>
-                {!contact && <><dt>Next step</dt><dd>Review the parcel in CRM. A street or parcel match does not supply a phone number.</dd></>}
+                {!contact && !savedLead && !canCreateLead && <><dt>Next step</dt><dd>Review the parcel in CRM. A street or parcel match does not supply a phone number.</dd></>}
                 {contact && (<>
                   <dt>Lead status</dt><dd>{contact.status || '—'}{contact.synthetic ? ' · synthetic' : ''}</dd>
-                  {!contact.synthetic && <><dt>CRM lead</dt><dd><Link to={`/leads/${encodeURIComponent(contact.id)}`}>Open lead</Link></dd></>}
+                  {!contact.synthetic && <><dt>CRM lead</dt><dd><Link to={`/leads/${encodeURIComponent(contact.crmLeadId || contact.id)}`}>Open lead</Link></dd></>}
                 </>)}
               </dl>
             </div>

@@ -11,7 +11,7 @@ import {
   readPropertyEvidence,
 } from '../utils/propertyEvidence';
 
-import { intelligenceRequest, mergeAnalyzerIntelligence } from '../utils/analyzerIntelligence.mjs';
+import { hasCompleteAnalyzerAddress, intelligenceRequest, mergeAnalyzerIntelligence } from '../utils/analyzerIntelligence.mjs';
 
 type LookupState =
   | { status: 'idle' | 'loading' | 'missing' | 'error' }
@@ -74,6 +74,7 @@ export function AnalyzerListingLookup({
   onPhotoResult: (result: AnalyzerPhotoResult) => void;
 }) {
   const address = deal.address.trim();
+  const completeAddress = hasCompleteAnalyzerAddress(address);
   const [lookup, setLookup] = useState<LookupState>({ status: 'idle' });
   const [filledCount, setFilledCount] = useState(0);
   const [records, setRecords] = useState<AttomPreviewResult | null>(null);
@@ -141,12 +142,13 @@ export function AnalyzerListingLookup({
   return (
     <div className="pbk-analyzer-listing">
       <p className="pbk-analyzer-lookup-hint">
-        Analysis uses the data in this deal. Refresh property intelligence to update records, photos
-        and sale candidates.
+        {completeAddress
+          ? 'Refresh checks for newer records, photos, and comparable sales. Analyzer keeps your existing entries.'
+          : 'Enter the street address, city, state, and ZIP to refresh property intelligence.'}
       </p>
       <button
         type="button"
-        disabled={!address || lookup.status === 'loading'}
+        disabled={!completeAddress || lookup.status === 'loading'}
         onClick={() => void lookUp()}
         className="pbk-btn pbk-btn-ghost pbk-btn-sm"
       >
@@ -154,14 +156,14 @@ export function AnalyzerListingLookup({
         Refresh property intelligence
       </button>
       <div role="status">
-        {lookup.status === 'loading' && <p className="mt-2">Looking up listing...</p>}
+        {lookup.status === 'loading' && <p className="mt-2">Refreshing property intelligence…</p>}
         {lookup.status === 'missing' && (
           <p className="mt-2">
-            No current cached asking price found. Available records and sale candidates were kept; enter missing details manually.
+            No current listing asking price was returned. Review the available property evidence and enter any missing values.
           </p>
         )}
         {lookup.status === 'error' && (
-          <p className="mt-2">Could not look up the listing. Try again.</p>
+          <p className="mt-2">Couldn’t refresh property intelligence. You can keep working with the evidence already in this deal.</p>
         )}
         {lookup.status === 'found' && (
           <div className="pbk-analyzer-listing-result">

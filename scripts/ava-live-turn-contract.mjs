@@ -191,7 +191,7 @@ export function classifyAvaLiveObjectionV2(transcript = '', context = {}) {
   let intent = 'unknown';
 
   if (!text) intent = 'empty';
-  else if (/\b(stop calling|do not call|don't call|remove me|unsubscribe)\b/.test(text)) {
+  else if (/\b(stop (?:calling|contacting)|do not (?:call|contact)|don['’]t (?:call|contact)|remove me|unsubscribe|take me off|no further contact)\b/.test(text)) {
     intent = 'stop_contact';
     objection = 'stop_contact';
   } else if (/^(?:yes|yeah|yep|sure|ok|okay|correct|right)\b[.! ]*$/.test(text)) {
@@ -206,7 +206,7 @@ export function classifyAvaLiveObjectionV2(transcript = '', context = {}) {
     intent = 'repeat_complaint';
     objection = 'repeat_complaint';
   } else if (
-    /\b(i already told you (?:the )?price|i told you (?:the )?price|gave you (?:the )?price|you have (?:the )?price)\b/.test(text) ||
+    /\b(i already told you (?:the )?price|i told you (?:the )?price|gave you (?:the |my )?(?:price|asking price|number)|you have (?:the |my )?price)\b/.test(text) ||
     /\b(i already told you|already told you|i told you)\b.{0,40}\b(?:want|need|take|accept|asking|price|number)\b/.test(text)
   ) {
     intent = 'already_gave_price';
@@ -351,7 +351,7 @@ function buildQuestion(category = '', knownFacts = {}) {
     case 'approval_confirmation':
       return 'Before I send contract paperwork, let me confirm: are you comfortable with the price, property, and closing timeline we just discussed?';
     case 'contact_stop_confirmation':
-      return 'I will mark this number do-not-contact now.';
+      return '';
     case 'yes_clarification':
       return 'When you say yes, which part are you confirming: price, timing, repairs, or decision authority?';
     case 'legal_review_contact':
@@ -476,7 +476,7 @@ function buildAcknowledgement(contract = {}) {
   switch (contract.intent) {
     case 'already_gave_price':
       return facts.sellerTargetPrice
-        ? `You are right, I have your target around ${facts.sellerTargetPrice}.`
+        ? `I have your asking price at ${facts.sellerTargetPrice}.`
         : 'You are right, I heard price matters and I am not going to make you repeat the whole story.';
     case 'repeat_complaint':
       return facts.sellerTargetPrice
@@ -509,7 +509,7 @@ function buildAcknowledgement(contract = {}) {
     case 'ambiguous_yes':
       return 'Got it, I want to make sure I am tracking the right yes.';
     case 'stop_contact':
-      return 'Understood.';
+      return 'Understood. I hear that you don’t want further contact.';
     default:
       return 'I hear you.';
   }
@@ -547,8 +547,11 @@ export function compileAvaLiveSkillAction(contract = {}) {
 }
 
 export function renderAvaLiveContractReply(contract = {}) {
-  const emotionalReply = renderEmotionalSkillReply(contract);
-  if (emotionalReply) return emotionalReply;
+  if (contract.intent === 'stop_contact') return buildAcknowledgement(contract);
+  if (contract.intent !== 'already_gave_price' || !contract.knownFacts?.sellerTargetPrice) {
+    const emotionalReply = renderEmotionalSkillReply(contract);
+    if (emotionalReply) return emotionalReply;
+  }
   const acknowledgement = buildAcknowledgement(contract);
   const question = clean(contract.nextBestQuestion);
   const text = [acknowledgement, question].filter(Boolean).join(' ');
@@ -605,6 +608,7 @@ export function isAvaLiveReplyAlignedWithContract(reply = '', contract = {}) {
   if (!contract?.ok) return true;
   const text = clean(reply);
   if (!text) return false;
+  if (contract.intent === 'stop_contact') return text === buildAcknowledgement(contract);
   const category = normalizeQuestionCategory(contract.nextBestQuestionCategory || '');
   if (category && !textAsksQuestionCategory(text, category)) return false;
   for (const forbidden of contract.forbiddenRepeats || []) {

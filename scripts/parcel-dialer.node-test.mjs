@@ -42,17 +42,66 @@ test('Denver uses a unique county-verified directional alias and rejects conflic
   assert.equal(matchParcelToLeads(await source.getById(sample.properties.SCHEDNUM), [lead]).status, 'no_match');
   assert.deepEqual(await source.inBounds([-110, 30, -100, 40]), []);
 });
+
+test('Denver map selection reuses the viewport locator and retries a timed-out county read once', async () => {
+  const id = '1000000000001';
+  const row = {
+    type: 'Feature', geometry: buildFixtureParcels()[0].geometry,
+    properties: {
+      SCHEDNUM: id, SITUS_ADDR_NBR: '123', SITUS_STR_NAME_PRE_DIR: 'N',
+      SITUS_ADDRESS_LINE1: '123 N SAMPLE ST', SITUS_ZIP: '80212-0001',
+    },
+  };
+  const reads = [];
+  let tick = 0;
+  let timeouts = 0;
+  const source = createDenverParcelSource({ now: () => tick, fetchImpl: async (url) => {
+    const params = new URL(url).searchParams;
+    reads.push(params);
+    if (!params.has('geometry') && timeouts > 0) {
+      timeouts--;
+      throw new DOMException('County read timed out', 'TimeoutError');
+    }
+    return Response.json({ features: [params.get('returnGeometry') === 'false' ? { ...row, geometry: null } : row] });
+  } });
+
+  await source.inBounds(null);
+  reads.length = 0;
+  timeouts = 1;
+  const parcel = await source.getById(id);
+  assert.equal(parcel.properties.verifiedAddressAlias, '123 sample st|80212');
+  assert.deepEqual(parcel.geometry, row.geometry);
+  assert.equal(reads.length, 2);
+  assert.ok(reads.every((params) => params.get('where').startsWith('SITUS_ADDR_NBR')));
+  assert.ok(reads.every((params) => params.get('returnGeometry') === 'false'));
+
+  reads.length = 0;
+  await source.getById(id);
+  assert.equal(reads.length, 1);
+  timeouts = 2;
+  await assert.rejects(source.getById(id), { name: 'TimeoutError' });
+  assert.equal(reads.length, 3);
+
+  reads.length = 0;
+  tick = 60_001;
+  await source.getById(id);
+  assert.match(reads[0].get('where'), /^SCHEDNUM/);
+  assert.equal(reads.length, 2);
+});
 import { createPhoneDialerRouter, createPhoneDialerRuntime, resolvePhoneProviderMode } from './phone-dialer-routes.mjs';
 
 // ---------------------------------------------------------------------------
 // Harness: mock-mode runtime over an in-memory bridge state + approval queue.
 // ---------------------------------------------------------------------------
-function harness({ dnc = [], leads = [], env = {}, state: sharedState } = {}) {
+function harness({ dnc = [], leads = [], env = {}, state: sharedState, fetchImpl, loadParcelLeads, saveParcelLead } = {}) {
   const state = sharedState || { approvals: [], leadImports: leads, activity: [] };
   const runtime = createPhoneDialerRuntime({
     env: { PBK_PHONE_PROVIDER_MODE: 'mock', ...env },
     getState: () => state,
     persistState: async () => {},
+    fetchImpl,
+    loadParcelLeads,
+    saveParcelLead,
     isPhoneDnc: (phone) => dnc.includes(phone),
     logActivity: (entry) => state.activity.push(entry),
   });
@@ -359,4 +408,51 @@ test('inbound voice: missing routing configuration fails closed (no forward) and
   // Calls to lines PBK has not commissioned are rejected.
   const unknown = await inbound(h, { CallSid: 'CAinbound4', From: '+15555550142', To: '+15555550111' });
   assert.match(unknown.body, /<Reject/);
+});
+
+test('only a verified unmatched parcel can be saved, and concurrent retries reuse its CRM lead', async () => {
+  const fixture = harness();
+  const blocked = await fixture.call('POST', '/api/dialer/leads', { parcelId: 'FX-01-002-00' });
+  assert.equal(blocked.code, 'parcel_unverified');
+
+  const row = {
+    type: 'Feature', geometry: buildFixtureParcels()[0].geometry,
+    properties: { SCHEDNUM: '1000000000001', SITUS_ADDR_NBR: '123',
+      SITUS_ADDRESS_LINE1: '123 SAMPLE ST', SITUS_ZIP: '80212', LAND_AREA: 4356 },
+  };
+  let saves = 0;
+  const durable = [];
+  const h = harness({
+    env: { PBK_PARCEL_SOURCE: 'denver-gis' },
+    fetchImpl: async () => Response.json({ features: [row] }),
+    loadParcelLeads: async () => durable,
+    saveParcelLead: async (feature) => {
+      saves++;
+      await new Promise(resolve => setImmediate(resolve));
+      h.state.leadImports.push({ leadId: 'sample-lead', property: { address: feature.properties.situs.line1, zip: '80212' } });
+      assert.equal(feature.properties.acres, 0.1);
+      return { ok: true, leadId: 'sample-lead', created: true };
+    },
+  });
+  const input = { parcelId: '1000000000001', property: { address: 'Do not trust this' } };
+  const selected = await h.call('POST', '/api/dialer/select', input, { team: true });
+  assert.equal(selected.createLeadAvailable, true);
+  const results = await Promise.all(Array.from({ length: 3 }, () => h.call('POST', '/api/dialer/leads', input, { team: true })));
+  assert.ok(results.every(result => result.ok && result.leadId === 'sample-lead'));
+  assert.equal(saves, 1);
+  const repeated = await h.call('POST', '/api/dialer/leads', input, { team: true });
+  assert.equal(repeated.leadId, 'sample-lead');
+  assert.equal(repeated.created, false);
+  assert.equal((await h.call('POST', '/api/dialer/select', input)).createLeadAvailable, false);
+  durable.push({ leadId: 'older-lead', property: { address: '123 Sample Street', zip: '80212', state: 'CO' } });
+  const ambiguous = await h.call('POST', '/api/dialer/select', input);
+  assert.equal(ambiguous.match.status, 'ambiguous');
+  assert.equal(ambiguous.createLeadAvailable, false);
+  assert.equal((await h.call('POST', '/api/dialer/leads', input)).code, 'ambiguous_match');
+  h.state.leadImports.length = 0;
+  const durableOnly = await h.call('POST', '/api/dialer/leads', input);
+  assert.equal(durableOnly.leadId, 'older-lead');
+  assert.equal(durableOnly.created, false);
+  assert.equal(saves, 1);
+  assert.equal(h.state.approvals.length, 0);
 });

@@ -91,7 +91,7 @@ test('guarded disposable Postgres proves trusted canary SQL and read-only readba
       const f = fresh(); await seed(f);
       const before = await fingerprint();
       const { result, trace } = await read(f);
-      assert.equal(result.verified, true);
+      assert.equal(result.verified, true, result.result);
       assert.equal(result.readbackVerified, true);
       assert.equal(result.runId, f.comparison.id);
       assert.equal(result.evidence.canary.candidate.sampleCount, 20);
@@ -118,7 +118,7 @@ test('guarded disposable Postgres proves trusted canary SQL and read-only readba
       }
       rebuildCanaryFixture(f); await seed(f);
       const { result, trace } = await read(f);
-      assert.equal(result.verified, true);
+      assert.equal(result.verified, true, result.result);
       assert(trace.envelopes.every(batch => batch.rows.every(row => row.physical.created_at_exact.endsWith('123Z'))));
     });
 
@@ -127,7 +127,7 @@ test('guarded disposable Postgres proves trusted canary SQL and read-only readba
       Object.assign(f.observations.at(-1).report, { outcome: 'error', fallback: true, behaviorPassed: false });
       rebuildCanaryFixture(f); await seed(f);
       const { result } = await read(f);
-      assert.equal(result.verified, true);
+      assert.equal(result.verified, true, result.result);
       assert.equal(result.evidence.canary.candidate.sampleCount, 20);
       assert.equal(result.evidence.canary.candidate.behaviorPassRate, 19 / 20);
       assert.equal(result.evidence.canary.candidate.errorRate, 1 / 20);
@@ -156,7 +156,9 @@ test('guarded disposable Postgres proves trusted canary SQL and read-only readba
     });
 
     for (const variant of ['invalid signature', 'pending', 'different revision', 'wrong suite']) await t.test(`newest ${variant} admission hides an older passing chain`, async () => {
-      const f = fresh(); await seed(f); assert.equal((await read(f)).result.verified, true);
+      const f = fresh(); await seed(f);
+      const baseline = (await read(f)).result;
+      assert.equal(baseline.verified, true, baseline.result);
       const row = structuredClone(f.comparison);
       row.id = `canary_comparison_${randomBytes(32).toString('hex')}`;
       row.report.id = row.id;
@@ -190,7 +192,9 @@ test('guarded disposable Postgres proves trusted canary SQL and read-only readba
     });
 
     await t.test('I1 newest multi-MiB unindexed source is withheld by SQL, not loaded then rejected in JS', async () => {
-      const f = fresh(); await seed(f); assert.equal((await read(f)).result.verified, true);
+      const f = fresh(); await seed(f);
+      const baseline = (await read(f)).result;
+      assert.equal(baseline.verified, true, baseline.result);
       const row = structuredClone(f.comparison);
       row.id = row.report.id = `canary_comparison_${randomBytes(32).toString('hex')}`;
       row.created_at_exact = row.report.admittedAt = new Date(f.now - 59_000).toISOString().replace('Z', '000Z');

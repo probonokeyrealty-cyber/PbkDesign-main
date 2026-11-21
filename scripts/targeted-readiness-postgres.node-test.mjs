@@ -156,7 +156,8 @@ test('real disposable Postgres source writes, leases and atomic checkpoints are 
         assert.equal(snapshot.verified, true, snapshot.result);
         assert.equal(snapshot.transactionPending, true);
         await a.query('COMMIT');
-        assert.equal((await sourceSnapshot()).verified, true);
+        const readback = await sourceSnapshot();
+        assert.equal(readback.verified, true, readback.result);
       } finally { await a.query('ROLLBACK'); a.release(); b.release(); }
     });
 
@@ -192,7 +193,8 @@ test('real disposable Postgres source writes, leases and atomic checkpoints are 
     });
 
     await t.test('actual Postgres anchor cannot claim a day; competing boot cannot append', async () => {
-      assert.equal((await sampler.sample()).verified, true);
+      const initial = await sampler.sample();
+      assert.equal(initial.verified, true, initial.result);
       const competitor = createRuntimeCoverageSampler({ pool, secret, revision, now, monotonicNow,
         enabled: true, hosted: true, health, bootId: 'competing-boot' });
       try { assert.equal((await competitor.sample()).result, 'coverage_lease_busy'); }

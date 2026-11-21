@@ -207,8 +207,9 @@ test('bridge code matches the reviewed release fingerprint outside the scoped re
   // Database disconnects after Ava sends phone audio are handled in the detached reply task.
   // Phone turn latency persistence remains best effort during a database disconnect.
   // Interim transcripts and weak acknowledgments cannot replace a committed Ava reply.
+  // Bridge snapshots avoid deep copies and respect dashboard backpressure.
   assert.equal(createHash('sha256').update(unchanged).digest('hex'),
-    '5f302e4e9fa4e5be352df0ec99e158275a5075ae581f89af37cb29da905c4349');
+    '9f3ebffd6bf1241991c8048699e03cea028bd49e90f58043252a7354d0ba2245');
 });
 
 test('production distribution includes reader and protocol, never the fixture signer', () => {

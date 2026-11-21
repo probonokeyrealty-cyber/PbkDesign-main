@@ -11,10 +11,10 @@ import { createPhoneDialerRouter, createPhoneDialerRuntime, resolvePhoneProvider
 // ---------------------------------------------------------------------------
 // Harness: mock-mode runtime over an in-memory bridge state + approval queue.
 // ---------------------------------------------------------------------------
-function harness({ dnc = [], leads = [] } = {}) {
-  const state = { approvals: [], leadImports: leads, activity: [] };
+function harness({ dnc = [], leads = [], env = {}, state: sharedState } = {}) {
+  const state = sharedState || { approvals: [], leadImports: leads, activity: [] };
   const runtime = createPhoneDialerRuntime({
-    env: { PBK_PHONE_PROVIDER_MODE: 'mock' },
+    env: { PBK_PHONE_PROVIDER_MODE: 'mock', ...env },
     getState: () => state,
     persistState: async () => {},
     isPhoneDnc: (phone) => dnc.includes(phone),
@@ -37,9 +37,9 @@ function harness({ dnc = [], leads = [] } = {}) {
   const call = async (method, path, body, { team = false, headers = {}, raw } = {}) => {
     const url = new URL(path, 'http://localhost');
     const req = { method, url: path, body, raw, headers, pbkDirectTeamAuth: team, pbkTeamAuth: team ? { actor: 'tester' } : undefined };
-    const res = {};
+    const res = { writeHead(status, h) { this.status = status; this.headers = h; }, end(body) { this.body = body; } };
     const handled = await router(req, res, url.pathname, url);
-    return { handled, status: res.status, ...res.payload };
+    return { handled, status: res.status, body: res.body, headers: res.headers, ...res.payload };
   };
   const approve = (id) => { state.approvals.find((a) => a.id === id).status = 'approved'; };
   return { state, runtime, call, approve };
@@ -143,6 +143,10 @@ test('click-to-call requires an approved, exactly bound approval and places one 
   const dup = await h.call('POST', '/api/dialer/call-requests', { parcelId: 'FX-01-001-00', leadId: 'fixture-lead-01', lineId });
   assert.equal(dup.code, 'request_pending');
 
+  const resumed = await h.call('POST', '/api/dialer/select', { parcelId: 'FX-01-001-00', lineId });
+  assert.equal(resumed.pendingRequest.id, req.request.id, 'selection surfaces the open request for resume');
+  assert.equal(resumed.pendingRequest.approvalStatus, 'pending');
+  assert.equal(h.runtime.adapters._mock.calls.length, 0, 'resuming via selection does not dial');
   const early = await h.call('POST', `/api/dialer/call-requests/${req.request.id}/dial`);
   assert.equal(early.code, 'approval_required');
   assert.equal(h.runtime.adapters._mock.calls.length, 0);
@@ -152,6 +156,7 @@ test('click-to-call requires an approved, exactly bound approval and places one 
   assert.equal((await h.call('POST', `/api/dialer/call-requests/${req.request.id}/dial`)).code, 'approval_binding_mismatch');
   approval.metadata.bindingHash = h.runtime.dialer.getRequest(req.request.id).bindingHash;
 
+  assert.equal((await h.call('POST', '/api/dialer/select', { parcelId: 'FX-01-001-00', lineId })).pendingRequest.approvalStatus, 'approved');
   const dialed = await h.call('POST', `/api/dialer/call-requests/${req.request.id}/dial`);
   assert.equal(dialed.ok, true);
   const again = await h.call('POST', `/api/dialer/call-requests/${req.request.id}/dial`);
@@ -238,7 +243,9 @@ test('bridge team gate denies phone-number writes and dialer calls without permi
   const dial = authorize({ method: 'POST', pathname: '/api/dialer/call-requests/x/dial', permissions: { ...base, canPlaceCalls: false } });
   assert.equal(dial.permission, 'canPlaceCalls');
   assert.equal(authorize({ method: 'POST', pathname: '/api/dialer/select', permissions: { ...base, canPlaceCalls: false } }).ok, true, 'selection stays read-only and allowed');
-  assert.ok(/'\/api\/webhooks\/twilio\/voice-status'/.test(bridge.match(/const PUBLIC_PATHS = new Set\(\[[\s\S]*?\]\);/)[0]));
+  const publicPaths = bridge.match(/const PUBLIC_PATHS = new Set\(\[[\s\S]*?\]\);/)[0];
+  assert.ok(/'\/api\/webhooks\/twilio\/voice-status'/.test(publicPaths));
+  assert.ok(/'\/api\/webhooks\/twilio\/voice'/.test(publicPaths));
   // Purchase/commission approvals are admin-only under the existing restriction rule.
   const restriction = bridge.match(/^function getTeamApprovalRestriction\([\s\S]*?^\}/m)[0];
   const restrict = runInNewContext(`${restriction}\ngetTeamApprovalRestriction`, { toNumber: (v, d) => Number(v) || d, TEAM_APPROVAL_LIMIT: 50000, currency: String, getTeamPermissions: () => ({}) });
@@ -256,4 +263,64 @@ test('twilio signature helper matches the documented algorithm', () => {
   assert.equal(computeTwilioSignature('12345', url, params), '0/KCTR6DLpKmkAf8muzZqo1nDgQ=');
   assert.equal(verifyTwilioSignature({ authToken: '12345', url, params, signature: '0/KCTR6DLpKmkAf8muzZqo1nDgQ=' }), true);
   assert.equal(verifyTwilioSignature({ authToken: '12345', url, params: { ...params, Digits: '9' }, signature: '0/KCTR6DLpKmkAf8muzZqo1nDgQ=' }), false);
+});
+
+// ---------------------------------------------------------------------------
+// Signed Twilio inbound Voice webhook
+// ---------------------------------------------------------------------------
+async function inbound(h, params, { sign = true } = {}) {
+  const path = '/api/webhooks/twilio/voice';
+  const signature = sign ? computeTwilioSignature(h.runtime.twilioAuthToken, `http://localhost${path}`, params) : '';
+  return h.call('POST', path, undefined, { raw: new URLSearchParams(params).toString(), headers: signature ? { 'x-twilio-signature': signature } : {} });
+}
+
+test('inbound voice: a valid signed call to a commissioned line forwards to the configured destination', async () => {
+  const h = harness();
+  await commissionTwilioLine(h);
+  const res = await inbound(h, { CallSid: 'CAinbound1', From: '+15555550142', To: '+15555550150', CallStatus: 'ringing' });
+  assert.equal(res.status, 200);
+  assert.match(res.headers['Content-Type'], /text\/xml/);
+  assert.match(res.body, /<Dial answerOnBridge="true" timeout="25"><Number>\+15555550198<\/Number><\/Dial>/);
+  assert.equal(/8134|5307/.test(res.body), false, 'never forwards to the default or Ava line');
+  assert.equal(h.state.activity.at(-1).status, 'forwarded');
+  // Commissioning wrote exactly the PBK inbound route to the provider.
+  const route = h.runtime.adapters._mock.owned.twilio.get('+15555550150').voiceRoute;
+  assert.equal(route.voiceUrl, 'http://localhost/api/webhooks/twilio/voice');
+});
+
+test('inbound voice: unsigned and forged requests are rejected before routing', async () => {
+  const h = harness();
+  await commissionTwilioLine(h);
+  const params = { CallSid: 'CAinbound2', From: '+15555550142', To: '+15555550150' };
+  const unsigned = await inbound(h, params, { sign: false });
+  assert.equal(unsigned.status, 403);
+  assert.equal(unsigned.code, 'bad_signature');
+  assert.equal(unsigned.body, undefined, 'no TwiML returned');
+  const forged = await h.call('POST', '/api/webhooks/twilio/voice', undefined, { raw: new URLSearchParams(params).toString(), headers: { 'x-twilio-signature': computeTwilioSignature('wrong-token', 'http://localhost/api/webhooks/twilio/voice', params) } });
+  assert.equal(forged.status, 403);
+  const tampered = await h.call('POST', '/api/webhooks/twilio/voice', undefined, { raw: new URLSearchParams({ ...params, To: '+15555550151' }).toString(), headers: { 'x-twilio-signature': computeTwilioSignature(h.runtime.twilioAuthToken, 'http://localhost/api/webhooks/twilio/voice', params) } });
+  assert.equal(tampered.status, 403);
+  assert.equal((await h.call('GET', '/api/webhooks/twilio/voice')).status, 405);
+});
+
+test('inbound voice: missing routing configuration fails closed (no forward) and blocks commissioning', async () => {
+  const h = harness();
+  await commissionTwilioLine(h);
+  // Same bridge state, destination removed from configuration after commissioning.
+  const h2 = harness({ state: h.state, env: { PBK_TWILIO_INBOUND_DESTINATION: '' } });
+  const res = await inbound(h2, { CallSid: 'CAinbound3', From: '+15555550142', To: '+15555550150' });
+  assert.equal(res.status, 200);
+  assert.equal(/<Dial/.test(res.body), false);
+  assert.match(res.body, /<Hangup\/>/);
+  assert.equal(h2.state.activity.at(-1).status, 'inbound_destination_unconfigured');
+  // A fresh workspace without the destination cannot even request commissioning.
+  const h3 = harness({ env: { PBK_TWILIO_INBOUND_DESTINATION: '' } });
+  const imported = await h3.call('POST', '/api/phone-numbers/import', { provider: 'twilio', phoneNumber: '+15555550150' });
+  const req = await h3.call('POST', `/api/phone-numbers/lines/${imported.line.id}/commission`);
+  assert.equal(req.status, 409);
+  assert.equal(req.code, 'inbound_destination_unconfigured');
+  assert.equal(h3.state.approvals.length, 0, 'no approval queued for an unroutable line');
+  // Calls to lines PBK has not commissioned are rejected.
+  const unknown = await inbound(h, { CallSid: 'CAinbound4', From: '+15555550142', To: '+15555550111' });
+  assert.match(unknown.body, /<Reject/);
 });

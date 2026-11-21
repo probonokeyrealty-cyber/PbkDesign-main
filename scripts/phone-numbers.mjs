@@ -342,15 +342,79 @@ function smsStatusFor(e164, env) {
   return { registrationStatus: 'not_registered', sendingAllowed: false, note: '10DLC registration is tracked separately from voice.' };
 }
 
-export function buildVoiceRoute(provider, env = {}) {
-  const base = String(env.PBK_PUBLIC_BASE_URL || '').replace(/\/+$/, '');
-  if (provider === 'twilio') {
-    const voiceUrl = String(env.PBK_TWILIO_VOICE_URL || (base ? `${base}/api/webhooks/twilio/voice` : '')).trim();
-    const statusCallback = base ? `${base}/api/webhooks/twilio/voice-status` : '';
-    return voiceUrl ? { voiceUrl, voiceMethod: 'POST', statusCallback } : null;
+export const TWILIO_INBOUND_VOICE_PATH = '/api/webhooks/twilio/voice';
+export const TWILIO_STATUS_PATH = '/api/webhooks/twilio/voice-status';
+
+function fingerprint(value = '') {
+  return value ? createHash('sha256').update(String(value)).digest('hex').slice(0, 16) : '';
+}
+
+function isAllowedScheme(url, allowLocalHttp) {
+  return url.protocol === 'https:' || (allowLocalHttp && url.protocol === 'http:' && ['localhost', '127.0.0.1'].includes(url.hostname));
+}
+
+// Resolve the inbound destination PBK's own Twilio voice webhook forwards to.
+// It must be explicitly configured; it is never inferred from the default
+// caller ID (8134) or the Ava/ElevenLabs line (5307), and it may not be any
+// PBK-owned line (that would loop the call back into PBK).
+export function resolveInboundDestination(env = {}, { protectedNumbers = [] } = {}) {
+  const raw = String(env.PBK_TWILIO_INBOUND_DESTINATION || '').trim();
+  if (!raw) return { ok: false, code: 'inbound_destination_unconfigured', error: 'No approved PBK inbound destination is configured (PBK_TWILIO_INBOUND_DESTINATION).' };
+  const destination = normalizeE164(raw);
+  if (!destination) return { ok: false, code: 'inbound_destination_invalid', error: 'The configured inbound destination is not a valid E.164 number.' };
+  if (protectedNumbers.map(normalizeE164).includes(destination)) {
+    return { ok: false, code: 'inbound_destination_loop', error: 'The inbound destination cannot be a PBK-owned line.' };
   }
-  const connectionId = String(env.PBK_TELNYX_CONNECTION_ID || '').trim();
-  return connectionId ? { connectionId } : null;
+  return { ok: true, destination };
+}
+
+// Fail-closed voice route resolution. Returns { ok, route, bindingFingerprint }
+// or { ok:false, code, error } and is evaluated before any provider write.
+export function resolveVoiceRoute(provider, env = {}, { allowLocalHttp = false, protectedNumbers = [] } = {}) {
+  if (provider === 'telnyx') {
+    const connectionId = String(env.PBK_TELNYX_CONNECTION_ID || '').trim();
+    return connectionId
+      ? { ok: true, route: { connectionId }, bindingFingerprint: '' }
+      : { ok: false, code: 'route_not_configured', error: 'PBK_TELNYX_CONNECTION_ID is not configured.' };
+  }
+  if (provider !== 'twilio') return { ok: false, code: 'unknown_provider', error: 'Unsupported provider.' };
+  const baseRaw = String(env.PBK_PUBLIC_BASE_URL || '').trim().replace(/\/+$/, '');
+  let base = null;
+  if (baseRaw) {
+    try { base = new URL(baseRaw); } catch { base = null; }
+  }
+  const baseOk = Boolean(base && isAllowedScheme(base, allowLocalHttp));
+  const statusCallback = baseOk ? `${base.origin}${base.pathname.replace(/\/+$/, '')}${TWILIO_STATUS_PATH}` : '';
+  const override = String(env.PBK_TWILIO_VOICE_URL || '').trim();
+  let voiceUrl = '';
+  let selfHosted = false;
+  if (override) {
+    let parsed;
+    try { parsed = new URL(override); } catch {
+      return { ok: false, code: 'voice_url_invalid', error: 'PBK_TWILIO_VOICE_URL is not a valid URL.' };
+    }
+    if (!isAllowedScheme(parsed, allowLocalHttp)) return { ok: false, code: 'voice_url_insecure', error: 'PBK_TWILIO_VOICE_URL must use HTTPS.' };
+    if (baseOk && parsed.origin === base.origin) {
+      // Pointing at the PBK bridge: only the signed inbound webhook is a supported target.
+      const basePath = base.pathname.replace(/\/+$/, '');
+      if (parsed.pathname.replace(/\/+$/, '') !== `${basePath}${TWILIO_INBOUND_VOICE_PATH}` || parsed.search) {
+        return { ok: false, code: 'voice_url_unsupported', error: 'PBK_TWILIO_VOICE_URL points at an unsupported PBK route.' };
+      }
+      selfHosted = true;
+    }
+    voiceUrl = parsed.toString();
+  } else {
+    if (!baseOk) return { ok: false, code: 'public_base_unconfigured', error: 'A public HTTPS PBK_PUBLIC_BASE_URL is required for the PBK inbound voice webhook.' };
+    voiceUrl = `${base.origin}${base.pathname.replace(/\/+$/, '')}${TWILIO_INBOUND_VOICE_PATH}`;
+    selfHosted = true;
+  }
+  let bindingFingerprint = `external:${fingerprint(voiceUrl)}`;
+  if (selfHosted) {
+    const destination = resolveInboundDestination(env, { protectedNumbers });
+    if (!destination.ok) return destination;
+    bindingFingerprint = `pbk:${fingerprint(destination.destination)}`;
+  }
+  return { ok: true, route: { voiceUrl, voiceMethod: 'POST', statusCallback }, bindingFingerprint, selfHosted };
 }
 
 export function routesMatch(expected = {}, actual = {}) {
@@ -621,9 +685,33 @@ export function createPhoneNumberService({
       return line ? decorate(line) : null;
     },
 
-    proposedRoute(lineId) {
-      const line = store().lines.find((l) => l.id === lineId);
-      return line ? buildVoiceRoute(line.provider, env) : null;
+    protectedNumbers() {
+      return [defaultLine, ...elevenLabsLines, ...store().lines.map((l) => l.phoneNumber)].filter(Boolean);
+    },
+
+    resolveRoute(provider) {
+      return resolveVoiceRoute(provider, env, { allowLocalHttp: Boolean(adapters?.twilio?.mock), protectedNumbers: this.protectedNumbers() });
+    },
+
+    // TwiML for a signed inbound call to a commissioned Twilio line. Fails
+    // closed (no forward) for unknown lines or missing routing configuration.
+    inboundVoiceTwiml({ to = '', callSid = '' } = {}) {
+      const e164 = normalizeE164(to);
+      const line = store().lines.find((l) => l.provider === 'twilio' && l.phoneNumber === e164);
+      if (!line || line.commissioning?.status !== 'commissioned') {
+        return { outcome: 'rejected_unknown_line', twiml: '<?xml version="1.0" encoding="UTF-8"?><Response><Reject reason="rejected"/></Response>' };
+      }
+      const destination = resolveInboundDestination(env, { protectedNumbers: this.protectedNumbers() });
+      if (!destination.ok) {
+        return { outcome: destination.code, lineLast4: last4(e164), twiml: '<?xml version="1.0" encoding="UTF-8"?><Response><Say>We are unable to take your call right now. Please try again later.</Say><Hangup/></Response>' };
+      }
+      return {
+        outcome: 'forwarded',
+        lineLast4: last4(e164),
+        destinationLast4: last4(destination.destination),
+        callSid: String(callSid || '').slice(0, 64),
+        twiml: `<?xml version="1.0" encoding="UTF-8"?><Response><Dial answerOnBridge="true" timeout="25"><Number>${destination.destination}</Number></Dial></Response>`,
+      };
     },
 
     async requestCommission({ lineId, actor = 'staff' }) {
@@ -632,9 +720,10 @@ export function createPhoneNumberService({
       if (!line) return { ok: false, code: 'line_not_found', error: 'Line not found.' };
       if (line.source === 'existing_runtime') return { ok: false, code: 'legacy_line', error: 'Existing runtime lines keep their current voice route.' };
       if (!line.providerId) return { ok: false, code: 'not_imported', error: 'Import the owned number before commissioning.' };
-      const route = buildVoiceRoute(line.provider, env);
-      if (!route) return { ok: false, code: 'route_not_configured', error: 'No PBK voice route is configured for this provider.' };
-      const commission = { id: `commission-${randomUUID()}`, lineId, route, routeHash: hashRoute(route), status: 'awaiting_approval', approvalId: '', requestedBy: actor, createdAt: iso() };
+      const resolved = this.resolveRoute(line.provider);
+      if (!resolved.ok) return { ok: false, code: resolved.code, error: resolved.error };
+      const { route, bindingFingerprint } = resolved;
+      const commission = { id: `commission-${randomUUID()}`, lineId, route, routeHash: hashRoute(route), bindingFingerprint, status: 'awaiting_approval', approvalId: '', requestedBy: actor, createdAt: iso() };
       current.commissions.unshift(commission);
       line.commissioning = { status: 'awaiting_approval', commissionId: commission.id, routeHash: commission.routeHash };
       await save(current);
@@ -666,6 +755,13 @@ export function createPhoneNumberService({
       }
       if (hashRoute(commission.route) !== commission.routeHash) return { ok: false, code: 'route_changed', error: 'Approved route no longer matches.' };
       const line = current.lines.find((l) => l.id === commission.lineId);
+      // Re-resolve the live configuration before any provider write: the
+      // approved route must still be supported, configured and identical.
+      const current_route = this.resolveRoute(line.provider);
+      if (!current_route.ok) return { ok: false, code: current_route.code, error: current_route.error };
+      if (hashRoute(current_route.route) !== commission.routeHash || current_route.bindingFingerprint !== (commission.bindingFingerprint || '')) {
+        return { ok: false, code: 'route_changed', error: 'Voice routing configuration changed since approval. Request a new voice route approval.' };
+      }
       const adapter = adapterFor(line.provider);
       await adapter.applyVoiceRoute(line, commission.route);
       const readback = await adapter.readVoiceRoute(line);

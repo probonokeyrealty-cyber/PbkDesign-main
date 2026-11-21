@@ -227,6 +227,11 @@ timeout = 15
     Cache-Control = "no-cache, must-revalidate"
 
 [[headers]]
+  for = "/dialer"
+  [headers.values]
+    Cache-Control = "no-cache, must-revalidate"
+
+[[headers]]
   for = "/campaigns"
   [headers.values]
     Cache-Control = "no-cache, must-revalidate"
@@ -397,6 +402,12 @@ force = true
 
 [[redirects]]
 from = "/settings"
+to = "/index.shell.html"
+status = 200
+force = true
+
+[[redirects]]
+from = "/dialer"
 to = "/index.shell.html"
 status = 200
 force = true

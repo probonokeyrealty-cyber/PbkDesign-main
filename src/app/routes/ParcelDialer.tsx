@@ -54,7 +54,7 @@ export function ParcelDialer() {
   const [busy, setBusy] = useState('');
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
-  const [request, setRequest] = useState<{ id: string; approvalId: string; toLast4: string; fromLast4: string } | null>(null);
+  const [request, setRequest] = useState<{ id: string; approvalId: string; toLast4: string; fromLast4: string; approvalStatus?: string } | null>(null);
   const [call, setCall] = useState<DialerCall | null>(null);
   const [zoom, setZoom] = useState(1);
   const projection = useProjection(features);
@@ -82,7 +82,9 @@ export function ParcelDialer() {
     setRequest(null);
     setCall(null);
     try {
-      setSelection(await selectParcel({ ...input, lineId: nextLine }));
+      const next = await selectParcel({ ...input, lineId: nextLine });
+      setSelection(next);
+      if (next.pendingRequest) setRequest(next.pendingRequest);
     } catch (err) {
       setSelection(null);
       setError(errorText(err));
@@ -222,9 +224,11 @@ export function ParcelDialer() {
           {selection && (
             <div className="pbk-dialer-callbox">
               <div className="pbk-phone-subhead">Dial eligibility</div>
-              {selection.eligibility.eligible
-                ? <span className="pbk-phone-ok">Eligible for one manual call.</span>
-                : <ul className="pbk-dialer-reasons">{selection.eligibility.reasons.map((r) => <li key={r.code}>{r.message}</li>)}</ul>}
+              {(() => {
+                const reasons = selection.eligibility.reasons.filter((r) => !(request && r.code === 'request_pending'));
+                if (selection.eligibility.eligible || (request && !reasons.length)) return <span className="pbk-phone-ok">Eligible for one manual call.</span>;
+                return <ul className="pbk-dialer-reasons">{reasons.map((r) => <li key={r.code}>{r.message}</li>)}</ul>;
+              })()}
 
               {selection.eligibility.eligible && !request && canPlaceCalls && contact && (
                 <button type="button" className="pbk-btn pbk-btn-primary pbk-btn-sm" disabled={Boolean(busy)}
@@ -240,9 +244,10 @@ export function ParcelDialer() {
               {request && !call && (
                 <div className="pbk-phone-confirm">
                   <span className="pbk-phone-note">One call to the contact ending <strong>{request.toLast4}</strong> from line ending <strong>{request.fromLast4}</strong>. Your phone rings first, then PBK bridges the contact.</span>
+                  <span className={`pbk-phone-tag ${request.approvalStatus === 'approved' ? 'good' : 'warn'}`}>approval {request.approvalStatus || 'pending'}</span>
                   <div className="pbk-phone-actions">
-                    {coverage?.mock
-                      ? <button type="button" className="pbk-btn pbk-btn-ghost pbk-btn-sm" disabled={Boolean(busy)} onClick={() => act('approve', async () => { await decideApproval(request.approvalId, 'approve'); setNotice('Dev approval recorded.'); })}>Approve (dev)</button>
+                    {request.approvalStatus === 'approved' ? null : coverage?.mock
+                      ? <button type="button" className="pbk-btn pbk-btn-ghost pbk-btn-sm" disabled={Boolean(busy)} onClick={() => act('approve', async () => { await decideApproval(request.approvalId, 'approve'); setRequest({ ...request, approvalStatus: 'approved' }); setNotice('Dev approval recorded.'); })}>Approve (dev)</button>
                       : <Link className="pbk-btn pbk-btn-ghost pbk-btn-sm" to="/inbox">Open approval queue</Link>}
                     <button type="button" className="pbk-btn pbk-btn-primary pbk-btn-sm" disabled={Boolean(busy)}
                       onClick={() => act('dial', async () => { const r = await dialApprovedRequest(request.id); setCall(r.call); setNotice('Call placed. Outcome arrives from signed carrier callbacks.'); })}>

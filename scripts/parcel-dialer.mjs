@@ -406,6 +406,7 @@ export function createParcelDialer({
         contact: leadSummary(match.lead),
         activity: match.lead ? activityFor(match.lead.id || match.lead.leadId) : [],
         eligibility: { eligible: elig.eligible, reasons: elig.reasons },
+        pendingRequest: match.lead ? this.publicRequest(this.openRequestFor(match.lead.id || match.lead.leadId)) : null,
         lines: await outboundLines(),
       };
     },
@@ -442,6 +443,12 @@ export function createParcelDialer({
       const r = s.callRequests.find((x) => x.id === requestId);
       if (r) { r.approvalId = approvalId; await save(s); }
       return r;
+    },
+
+    // The contact's open (unexpired, undialed) request, so an operator can
+    // approve elsewhere and come back to dial. Read-only.
+    openRequestFor(leadId) {
+      return store().callRequests.find((r) => r.leadId === leadId && r.status === 'awaiting_approval' && Date.parse(r.expiresAt) > now()) || null;
     },
 
     getRequest(requestId) {

@@ -1,8 +1,8 @@
 // Bridge routes for the PBK Phone Numbers manager and parcel dialer.
 // The bridge injects its own state, approval queue, DNC lookup, permissions
 // and persistence so these routes reuse the existing PBK gates.
-import { createMockAdapters, createPhoneNumberService, createTelnyxAdapter, createTwilioAdapter, last4, normalizeE164 } from './phone-numbers.mjs';
-import { createParcelDialer, resolveParcelSource } from './parcel-dialer.mjs';
+import { createMockAdapters, createPhoneNumberService, createTelnyxAdapter, createTwilioAdapter, last4, normalizeE164, TWILIO_INBOUND_VOICE_PATH } from './phone-numbers.mjs';
+import { createParcelDialer, resolveParcelSource, verifyTwilioSignature } from './parcel-dialer.mjs';
 
 const MOCK_TWILIO_AUTH_TOKEN = 'pbk-dev-mock-twilio-signing'; // dev-only, not a credential
 const ALL_PERMISSIONS = { canPlaceCalls: true, canManagePhoneNumbers: true, canApproveProviderActions: true };
@@ -38,6 +38,8 @@ export function createPhoneDialerRuntime({
     if (!effectiveEnv.PBK_AVA_ELEVENLABS_PHONE_LINES) effectiveEnv.PBK_AVA_ELEVENLABS_PHONE_LINES = '+18885555307';
     if (!effectiveEnv.PBK_PUBLIC_BASE_URL) effectiveEnv.PBK_PUBLIC_BASE_URL = 'http://localhost';
     if (!effectiveEnv.PBK_TELNYX_CONNECTION_ID) effectiveEnv.PBK_TELNYX_CONNECTION_ID = 'mock-connection';
+    // Synthetic inbound destination for mock mode only; never a PBK line.
+    if (!effectiveEnv.PBK_TWILIO_INBOUND_DESTINATION && !('PBK_TWILIO_INBOUND_DESTINATION' in env)) effectiveEnv.PBK_TWILIO_INBOUND_DESTINATION = '+15555550198';
     adapters = createMockAdapters({
       seedOwned: [
         { provider: 'telnyx', providerId: 'txmock8134', phoneNumber: effectiveDefault, capabilities: { voice: true, sms: true }, voiceRoute: { connectionId: 'mock-connection' } },
@@ -97,7 +99,7 @@ export function createPhoneDialerRuntime({
     mock,
   });
 
-  return { mode, mock, phoneNumbers, dialer, adapters, twilioAuthToken, publicBase: String(effectiveEnv.PBK_PUBLIC_BASE_URL || '').replace(/\/+$/, '') };
+  return { mode, mock, phoneNumbers, dialer, adapters, twilioAuthToken, logActivity, publicBase: String(effectiveEnv.PBK_PUBLIC_BASE_URL || '').replace(/\/+$/, '') };
 }
 
 function sessionContext(request, getTeamPermissions) {
@@ -115,8 +117,26 @@ export function createPhoneDialerRouter({ runtime, json, readBody, readRawBodyBu
   const fail = (response, result, status = 409) => json(response, status, { ok: false, ...result });
 
   return async function handle(request, response, pathname, url) {
-    if (!pathname.startsWith('/api/phone-numbers') && !pathname.startsWith('/api/dialer') && pathname !== '/api/webhooks/twilio/voice-status') return false;
+    if (!pathname.startsWith('/api/phone-numbers') && !pathname.startsWith('/api/dialer') && pathname !== '/api/webhooks/twilio/voice-status' && pathname !== TWILIO_INBOUND_VOICE_PATH) return false;
     const method = String(request.method || 'GET').toUpperCase();
+
+    // Signed Twilio inbound Voice webhook (public route; signature is the auth).
+    // Unsigned or forged requests are rejected before any routing decision.
+    if (pathname === TWILIO_INBOUND_VOICE_PATH) {
+      if (method !== 'POST') { json(response, 405, { ok: false, code: 'method_not_allowed' }); return true; }
+      const raw = (await readRawBodyBuffer(request)).toString('utf8');
+      const params = Object.fromEntries(new URLSearchParams(raw));
+      const fullUrl = `${runtime.publicBase || 'http://localhost'}${request.url}`;
+      if (!runtime.twilioAuthToken || !verifyTwilioSignature({ url: fullUrl, params, signature: request.headers['x-twilio-signature'], authToken: runtime.twilioAuthToken })) {
+        json(response, 403, { ok: false, code: 'bad_signature' });
+        return true;
+      }
+      const result = phoneNumbers.inboundVoiceTwiml({ to: params.To, callSid: params.CallSid });
+      runtime.logActivity({ category: 'CALL', status: result.outcome, text: `Inbound Twilio call ${result.outcome.replace(/_/g, ' ')}`, target: result.lineLast4 ? `line ending ${result.lineLast4}` : 'unknown line' });
+      response.writeHead(200, { 'Content-Type': 'text/xml; charset=utf-8', 'Cache-Control': 'no-store' });
+      response.end(result.twiml);
+      return true;
+    }
 
     // Signed Twilio status callback (public route; signature is the auth).
     if (pathname === '/api/webhooks/twilio/voice-status' && method === 'POST') {
@@ -228,6 +248,7 @@ export function createPhoneDialerRouter({ runtime, json, readBody, readRawBodyBu
       }
       if (pathname === '/api/dialer/select' && method === 'POST') {
         const result = await dialer.selectParcel({ parcelId: body.parcelId, address: body.address, lineId: body.lineId, canPlaceCalls: ctx.permissions.canPlaceCalls === true });
+        if (result.pendingRequest) result.pendingRequest.approvalStatus = String(findApproval(result.pendingRequest.approvalId)?.status || 'pending');
         json(response, result.ok ? 200 : 404, result);
         return true;
       }

@@ -1,7 +1,8 @@
 /* PBK Phone Numbers manager + parcel dialer. Uses existing PBK tokens only. */
 
 .pbk-phone-panel { display: grid; gap: var(--s-3); min-width: 0; grid-column: 1 / -1; }
-.pbk-phone-panel .pbk-settings-card-head { align-items: flex-start; }
+.pbk-phone-panel .pbk-settings-card-head { align-items: flex-start; flex-wrap: wrap; gap: 8px; }
+.pbk-phone-panel .pbk-settings-card-head > div:first-child { flex: 1 1 260px; }
 .pbk-phone-mode {
   font-family: var(--font-mono); font-size: 10px; letter-spacing: .08em; text-transform: uppercase;
   border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 2px 6px; color: var(--text-secondary);

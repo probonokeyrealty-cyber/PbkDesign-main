@@ -18,7 +18,7 @@
     "deploy:investor-live": "node scripts/deploy-investor-public-staging.mjs --live",
     "deploy:investor-staging-public": "node scripts/deploy-investor-public-staging.mjs",
     "test:investor-portal": "node --test scripts/investor-portal-domain.node-test.mjs scripts/investor-portal-client.node-test.mjs scripts/investor-upload-lifecycle.node-test.mjs scripts/investor-public-entry.node-test.mjs scripts/investor-auth-callback.node-test.mjs scripts/investor-live-profile.node-test.mjs scripts/investor-live-handler.node-test.mjs scripts/investor-password-auth.node-test.mjs",
-    "test:phone-dialer": "node --test scripts/phone-numbers.node-test.mjs scripts/parcel-dialer.node-test.mjs",
+    "test:phone-dialer": "node --test scripts/phone-numbers.node-test.mjs scripts/parcel-dialer.node-test.mjs scripts/phone-dialer-handoff.node-test.mjs",
     "test:investor-entry-hosted": "node scripts/investor-entry-hosted-smoke.mjs",
     "predev": "node ./scripts/sync-master-template.mjs",
     "dev": "vite",

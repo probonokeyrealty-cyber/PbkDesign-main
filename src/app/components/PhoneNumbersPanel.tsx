@@ -45,6 +45,12 @@ export function PhoneNumbersPanel() {
     }
   }, []);
   useEffect(() => { void refresh(); }, [refresh]);
+  // Deep link from the legacy engine / bookmarks: /settings#phone-numbers
+  // Scrolls once the panel has settled (data or an error), so the link lands even when access is denied.
+  useEffect(() => {
+    if ((!inventory && !message) || typeof window === 'undefined' || window.location.hash !== '#phone-numbers') return;
+    document.getElementById('phone-numbers')?.scrollIntoView({ block: 'start' });
+  }, [inventory, message]);
 
   const run = async (key: string, action: () => Promise<string | void>) => {
     setBusy(key);
@@ -67,7 +73,7 @@ export function PhoneNumbersPanel() {
     : <Link className="pbk-btn pbk-btn-ghost pbk-btn-sm" to="/inbox">Open approval queue</Link>);
 
   return (
-    <section className="pbk-settings-band pbk-phone-panel" aria-labelledby="settings-phone-title">
+    <section id="phone-numbers" className="pbk-settings-band pbk-phone-panel" aria-labelledby="settings-phone-title">
       <div className="pbk-settings-card-head">
         <div>
           <span className="pbk-kicker">Voice lines</span>

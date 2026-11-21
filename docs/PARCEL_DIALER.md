@@ -22,6 +22,9 @@ All provider calls run in the bridge (`scripts/phone-numbers.mjs`, `scripts/parc
 | Purchases need an exact-number quote, a confirmed price that matches the quote, and an admin-approved `phone_number_purchase` approval | `quote`, `createOrder`, `executeOrder` |
 | The order is persisted as `submitting` before the provider call. Ambiguous responses (timeout, 5xx, network) are reconciled against owned inventory and the provider order reference before any retry. Retries reuse the same reference, up to 3 attempts | `executeOrder`, `reconcileOrder` |
 | Commissioning applies only the admin-approved route (route hash), then reads it back. A mismatch leaves the line disabled | `executeCommission` |
+| The Twilio voice URL is resolved fail-closed **before any provider write** (at request time and again at execute time). The self-hosted route needs a public HTTPS base and an explicitly configured inbound destination. An override pointing at the PBK host must be exactly `/api/webhooks/twilio/voice`. Insecure, invalid or unsupported targets are refused. A configuration change after approval returns `route_changed` | `resolveVoiceRoute`, `requestCommission`, `executeCommission` |
+| The inbound destination is never inferred. It is never defaulted from the 8134 or 5307 lines, and it may not be any PBK-owned line (loop guard) | `resolveInboundDestination` |
+| `POST /api/webhooks/twilio/voice` is public but signed: `X-Twilio-Signature` is verified over the exact public URL and the form body. Unsigned or forged requests get 403 with no TwiML. Unknown or uncommissioned lines get `<Reject/>`. Missing destination config at call time gets a polite `<Hangup/>` and no forward | `phone-dialer-routes.mjs`, `inboundVoiceTwiml` |
 | Caller ID can only be enabled on a commissioned line, after a fresh readback | `setCallerIdEnabled` |
 | SMS registration status is separate from voice and is never changed by commissioning | `smsStatusFor` |
 | The default caller ID (`PBK_TELNYX_FROM_NUMBER` / bridge default, the 8134 line) is adopted as an existing route, locked, and never re-routed | `ensureLegacyLines`, `default_line_locked` |
@@ -50,7 +53,8 @@ All provider calls run in the bridge (`scripts/phone-numbers.mjs`, `scripts/parc
 | `PBK_TWILIO_DIALER_ENABLED` | must be `true` for live Twilio click-to-call | off |
 | `PBK_DIALER_AGENT_PHONE` | operator phone that rings first (agent-bridge pattern) | unset |
 | `PBK_PUBLIC_BASE_URL` | public HTTPS base for the voice route and signed status callbacks (required for live dialing) | existing |
-| `PBK_TWILIO_VOICE_URL` | optional override for the Twilio inbound voice URL applied during commissioning | `${PBK_PUBLIC_BASE_URL}/api/webhooks/twilio/voice` |
+| `PBK_TWILIO_VOICE_URL` | optional explicit override for the Twilio inbound voice URL. HTTPS only. If it points at the PBK host it must be exactly `/api/webhooks/twilio/voice`; any other PBK path fails closed | `${PBK_PUBLIC_BASE_URL}/api/webhooks/twilio/voice` |
+| `PBK_TWILIO_INBOUND_DESTINATION` | approved E.164 number that PBK's signed inbound webhook forwards to. Required for the self-hosted route. Must not be a PBK-owned line | unset → commissioning refused |
 | `PBK_TOLL_FREE_VERIFIED_LINES`, `PBK_SMS_REGISTERED_LINES` | comma-separated E.164 lines whose SMS registration is complete | unset (SMS blocked) |
 | `PBK_PARCEL_SOURCE_URL`, `PBK_PARCEL_SOURCE_KEY`, `PBK_PARCEL_SOURCE_LICENSE` | licensed parcel polygon source; a URL alone does **not** activate it, a license identifier is also required | unset → fixtures |
 | `PBK_PARCEL_FIXTURES=off` | hide fixture parcels (coverage reports `unconfigured`) | fixtures on |
@@ -80,7 +84,22 @@ The map renders the source's own geometry as SVG and uses no third-party tile se
 - **Contacts**: synthetic CRM contacts with 555-01xx numbers are merged into matching **only in mock mode** and are never written to CRM state. Results for synthetic contacts go to dialer-local activity.
 - **Providers**: mock Twilio/Telnyx adapters with synthetic 555 / 888-555 numbers. Nothing is purchased and no call leaves the container.
 - **Callbacks**: in mock mode, `POST /api/dialer/calls/:id/simulate` produces correctly signed callbacks with a dev-only signing value and runs them through the same verification path.
-- **Legacy engine**: Phase 1 ships in the React shell only. The legacy engine can call the same bridge routes; UI parity is deferred.
+- **Inbound destination**: mock mode uses a synthetic 555 destination. Live has none until an admin sets `PBK_TWILIO_INBOUND_DESTINATION`, so live Twilio commissioning is refused until then.
+
+## Legacy engine and hosted deep links
+
+The legacy Command Center (`index.html`) hands off to the same shell surfaces the way Property log does. It has no provider or dialer logic of its own:
+
+- a **Dialer** rail link to `/dialer`
+- a **Phone Numbers** settings-nav link to `/settings#phone-numbers`
+- the Outbound Identities **Buy number** button, which used to show a demo toast and now opens `/settings#phone-numbers`
+
+Hosted deep links:
+
+- Netlify rewrites `/dialer` (explicit rule, `no-cache`) and `/settings` to `index.shell.html` with status 200, which preserves the `#phone-numbers` hash.
+- The Render bridge fallback lists `/dialer` as a shell app path.
+- Both routes sit inside `TeamAccessGate`, so a staff team session is required. The bridge APIs stay non-public.
+- `Dockerfile.openclaw` copies the three new bridge modules into the Render image.
 
 ## Tests
 
@@ -98,3 +117,5 @@ The suite covers:
 - parcel association
 - one-contact dial eligibility
 - the bridge's own team-permission gate, extracted from `openclaw-local-server.mjs`
+- fail-closed voice routing and the signed inbound webhook (valid, unsigned, forged, missing config, unknown line)
+- legacy and hosted handoff: the Netlify first-match rewrite, the Render fallback paths, the legacy links, the staff gate, and that the Docker image includes the new modules

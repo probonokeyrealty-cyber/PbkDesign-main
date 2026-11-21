@@ -933,6 +933,7 @@ const PUBLIC_PATHS = new Set([
   // open while each handler validates and maps only the expected payload shape.
   '/api/webhooks/telnyx',
   '/api/webhooks/twilio/voice-status',
+  '/api/webhooks/twilio/voice',
   '/api/webhooks/telnyx/inbound',
   '/webhooks/telnyx/inbound',
   '/api/webhooks/telnyx/recording',

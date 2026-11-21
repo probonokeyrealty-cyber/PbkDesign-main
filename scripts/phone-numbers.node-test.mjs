@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createMockAdapters, createPhoneNumberService, createTelnyxAdapter, createTwilioAdapter, ProviderError } from './phone-numbers.mjs';
+import { createMockAdapters, createPhoneNumberService, createTelnyxAdapter, createTwilioAdapter, ProviderError, resolveVoiceRoute } from './phone-numbers.mjs';
 
 const DEFAULT_LINE = '+15555558134';
 const AVA_LINE = '+18885555307';
@@ -21,7 +21,7 @@ function setup({ faults = {}, env = {}, purchasesEnabled = false, clock } = {}) 
     adapters,
     readStore: () => store,
     writeStore: async (next) => { store = JSON.parse(JSON.stringify(next)); writes.push(JSON.parse(JSON.stringify(next))); },
-    env: { PBK_PUBLIC_BASE_URL: 'https://bridge.example.test', PBK_TELNYX_CONNECTION_ID: 'conn-1', PBK_AVA_ELEVENLABS_PHONE_LINES: AVA_LINE, ...env },
+    env: { PBK_PUBLIC_BASE_URL: 'https://bridge.example.test', PBK_TELNYX_CONNECTION_ID: 'conn-1', PBK_AVA_ELEVENLABS_PHONE_LINES: AVA_LINE, PBK_TWILIO_INBOUND_DESTINATION: '+15555550198', ...env },
     now: () => t.now,
     defaultCallerId: DEFAULT_LINE,
     purchasesEnabled,
@@ -208,4 +208,85 @@ test('provider adapters build the documented Twilio and Telnyx requests', async 
   assert.ok(order.url.endsWith('/v2/number_orders'));
   assert.deepEqual(JSON.parse(order.body), { phone_numbers: [{ phone_number: '+18885550111' }], customer_reference: 'pbk-ref' });
   await assert.rejects(createTwilioAdapter({}).listOwned(), /not configured/);
+});
+
+// ---------------------------------------------------------------------------
+// Fail-closed voice routing (live commissioning gap)
+// ---------------------------------------------------------------------------
+function spyApply(adapters) {
+  const writes = [];
+  for (const provider of ['twilio', 'telnyx']) {
+    const real = adapters[provider].applyVoiceRoute;
+    adapters[provider].applyVoiceRoute = async (...args) => { writes.push(provider); return real(...args); };
+  }
+  return writes;
+}
+
+test('commissioning fails closed with no provider write when the inbound destination is missing', async () => {
+  const { service, adapters } = setup({ env: { PBK_TWILIO_INBOUND_DESTINATION: '' } });
+  const writes = spyApply(adapters);
+  const { line } = await service.importOwned({ provider: 'twilio', phoneNumber: TWILIO_OWNED });
+  const result = await service.requestCommission({ lineId: line.id });
+  assert.equal(result.ok, false);
+  assert.equal(result.code, 'inbound_destination_unconfigured');
+  assert.equal(writes.length, 0);
+});
+
+test('destination is never inferred from or allowed to be the 8134 or 5307 lines', () => {
+  const base = { PBK_PUBLIC_BASE_URL: 'https://bridge.example.test' };
+  const protectedNumbers = [DEFAULT_LINE, AVA_LINE];
+  assert.equal(resolveVoiceRoute('twilio', base, { protectedNumbers }).code, 'inbound_destination_unconfigured');
+  for (const dest of [DEFAULT_LINE, AVA_LINE, '(555) 555-8134']) {
+    assert.equal(resolveVoiceRoute('twilio', { ...base, PBK_TWILIO_INBOUND_DESTINATION: dest }, { protectedNumbers }).code, 'inbound_destination_loop');
+  }
+  assert.equal(resolveVoiceRoute('twilio', { ...base, PBK_TWILIO_INBOUND_DESTINATION: 'abc' }, { protectedNumbers }).code, 'inbound_destination_invalid');
+});
+
+test('voice URL selection fails closed for unsupported, insecure or unconfigured routes', () => {
+  const dest = { PBK_TWILIO_INBOUND_DESTINATION: '+15555550198' };
+  const base = 'https://bridge.example.test';
+  const r = (env, opts = {}) => resolveVoiceRoute('twilio', { ...dest, ...env }, opts);
+  assert.equal(r({}).code, 'public_base_unconfigured');
+  assert.equal(r({ PBK_PUBLIC_BASE_URL: 'http://bridge.example.test' }).code, 'public_base_unconfigured');
+  assert.equal(r({ PBK_PUBLIC_BASE_URL: base, PBK_TWILIO_VOICE_URL: `${base}/api/webhooks/telnyx` }).code, 'voice_url_unsupported');
+  assert.equal(r({ PBK_PUBLIC_BASE_URL: base, PBK_TWILIO_VOICE_URL: `${base}/api/webhooks/twilio/voice-status` }).code, 'voice_url_unsupported');
+  assert.equal(r({ PBK_PUBLIC_BASE_URL: base, PBK_TWILIO_VOICE_URL: `${base}/api/webhooks/twilio/voice?x=1` }).code, 'voice_url_unsupported');
+  assert.equal(r({ PBK_TWILIO_VOICE_URL: 'http://voice.example.test/in' }).code, 'voice_url_insecure');
+  assert.equal(r({ PBK_TWILIO_VOICE_URL: 'not a url' }).code, 'voice_url_invalid');
+  const self = r({ PBK_PUBLIC_BASE_URL: base });
+  assert.equal(self.ok, true);
+  assert.equal(self.route.voiceUrl, `${base}/api/webhooks/twilio/voice`);
+  const viaOverride = r({ PBK_PUBLIC_BASE_URL: base, PBK_TWILIO_VOICE_URL: `${base}/api/webhooks/twilio/voice` });
+  assert.equal(viaOverride.ok, true);
+  assert.equal(viaOverride.selfHosted, true);
+  assert.equal(resolveVoiceRoute('twilio', { PBK_PUBLIC_BASE_URL: base, PBK_TWILIO_VOICE_URL: `${base}/api/webhooks/twilio/voice` }).code, 'inbound_destination_unconfigured', 'self-hosted override still needs a destination');
+  const external = resolveVoiceRoute('twilio', { PBK_TWILIO_VOICE_URL: 'https://voice.example.test/pbk-inbound' });
+  assert.equal(external.ok, true, 'explicit external HTTPS override is honored as configured');
+  assert.equal(external.selfHosted, false);
+  assert.equal(resolveVoiceRoute('telnyx', {}).code, 'route_not_configured');
+});
+
+test('a routing change after approval is caught before the provider write', async () => {
+  const env = { PBK_PUBLIC_BASE_URL: 'https://bridge.example.test', PBK_TWILIO_INBOUND_DESTINATION: '+15555550198' };
+  let store = null;
+  const adapters = createMockAdapters({ seedOwned: [{ provider: 'twilio', providerId: 'PN1', phoneNumber: TWILIO_OWNED, voiceRoute: { voiceUrl: '' } }] });
+  const service = createPhoneNumberService({ adapters, env, readStore: () => store, writeStore: async (n) => { store = n; } });
+  const writes = spyApply(adapters);
+  const { line } = await service.importOwned({ provider: 'twilio', phoneNumber: TWILIO_OWNED });
+  const { commission } = await service.requestCommission({ lineId: line.id });
+  await service.attachCommissionApproval(commission.id, 'c1');
+  env.PBK_TWILIO_INBOUND_DESTINATION = '+15555550197'; // reconfigured after approval
+  const changed = await service.executeCommission({ commissionId: commission.id, approval: approved('c1') });
+  assert.equal(changed.code, 'route_changed');
+  env.PBK_TWILIO_INBOUND_DESTINATION = ''; // removed after approval
+  assert.equal((await service.executeCommission({ commissionId: commission.id, approval: approved('c1') })).code, 'inbound_destination_unconfigured');
+  env.PBK_PUBLIC_BASE_URL = 'https://bridge.example.test';
+  env.PBK_TWILIO_VOICE_URL = 'https://bridge.example.test/api/admin/anything';
+  env.PBK_TWILIO_INBOUND_DESTINATION = '+15555550198';
+  assert.equal((await service.executeCommission({ commissionId: commission.id, approval: approved('c1') })).code, 'voice_url_unsupported');
+  assert.equal(writes.length, 0, 'no provider write on any fail-closed path');
+  delete env.PBK_TWILIO_VOICE_URL;
+  const ok = await service.executeCommission({ commissionId: commission.id, approval: approved('c1') });
+  assert.equal(ok.ok, true);
+  assert.equal(writes.length, 1);
 });

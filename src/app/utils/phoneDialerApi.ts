@@ -90,6 +90,7 @@ export type DialerSelection = {
   contact: { id: string; name: string; address: string; status: string; phoneLast4: string; phoneDisplay: string; synthetic: boolean } | null;
   activity: Array<{ id: string; at: string; status: string; outcome: string; talkSeconds: number | null; lineLast4: string }>;
   eligibility: { eligible: boolean; reasons: EligibilityReason[] };
+  pendingRequest: { id: string; approvalId: string; toLast4: string; fromLast4: string; status: string; approvalStatus?: string } | null;
   lines: OutboundLine[];
 };
 export type DialerCall = { id: string; leadId: string; parcelId: string; status: string; outcome: string; talkSeconds: number | null; toLast4: string; fromLast4: string; createdAt: string; finalizedAt: string | null };

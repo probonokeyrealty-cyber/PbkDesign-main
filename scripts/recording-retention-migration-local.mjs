@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import { withRetentionPostgres } from './fixtures/recording-retention-postgres.mjs';
+import { assertRecordingRetentionSchema } from './recording-retention-schema.mjs';
 
 const migration = '20261120016000_pbk_recording_retention_approvals.sql';
 const roles = ['anon', 'authenticated', 'service_role'];
@@ -40,6 +41,40 @@ test('the real runner applies recording retention with no Supabase roles and rev
     await applyRecordingMigration();
     await assertRecorded(pool);
     await assertPrivileges(pool, 'fixture_reader', []);
+  }, { supabaseRoles: false });
+});
+
+test('startup requires an intact pending-and-confirmed retention fence', async () => {
+  await withRetentionPostgres(async ({ pool, applyRecordingSchema }) => {
+    await applyRecordingSchema();
+    await assertRecordingRetentionSchema(pool);
+    const client = await pool.connect();
+    try {
+      for (const replacement of [
+        null,
+        `CREATE INDEX pbk_recording_retention_fenced_key ON public.pbk_recording_retention_attempts (storage_key)
+          WHERE outcome IN ('pending', 'confirmed')`,
+        `CREATE UNIQUE INDEX pbk_recording_retention_fenced_key ON public.pbk_recording_retention_attempts (storage_key)
+          WHERE outcome = 'pending'`,
+        `CREATE UNIQUE INDEX pbk_recording_retention_fenced_key ON public.pbk_recording_retention_attempts (message_id)
+          WHERE outcome IN ('pending', 'confirmed')`,
+        `CREATE UNIQUE INDEX pbk_recording_retention_fenced_key ON public.pbk_recording_retention_attempts (storage_key COLLATE "POSIX")
+          WHERE outcome IN ('pending', 'confirmed')`,
+      ]) {
+        await client.query('BEGIN');
+        try {
+          await client.query('DROP INDEX public.pbk_recording_retention_fenced_key');
+          if (replacement) await client.query(replacement);
+          await assert.rejects(assertRecordingRetentionSchema(client), /schema or runtime-role access is incomplete/,
+            replacement || 'A missing retention fence must fail startup');
+        } finally {
+          await client.query('ROLLBACK');
+        }
+      }
+      await assertRecordingRetentionSchema(client);
+    } finally {
+      client.release();
+    }
   }, { supabaseRoles: false });
 });
 

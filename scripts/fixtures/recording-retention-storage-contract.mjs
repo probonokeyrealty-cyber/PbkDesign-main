@@ -8,6 +8,7 @@ export const retentionWriterFixtureKey = 'fixture/retention-writer.txt';
 const fixtureKeys = new Set([
   'fixture/retention-approved.txt', 'fixture/retention-race.txt',
   'fixture/retention-interrupted.txt', 'fixture/retention-later.txt',
+  'fixture/retention-pointer-rollback.txt',
   retentionWriterFixtureKey,
 ]);
 

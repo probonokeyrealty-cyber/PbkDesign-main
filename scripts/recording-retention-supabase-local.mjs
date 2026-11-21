@@ -224,7 +224,8 @@ async function exerciseRetentionRoute({ http, put, assertBytes, ageObject }) {
   const replacement = { id: 'fixture-retention-race', key: 'fixture/retention-race.txt', text: 'recording about to be replaced' };
   const interrupted = { id: 'fixture-retention-interrupted', key: 'fixture/retention-interrupted.txt', text: 'recording with interrupted readback' };
   const later = { id: 'fixture-retention-later', key: 'fixture/retention-later.txt', text: 'independent recording' };
-  const fixtures = [[target, 90], [replacement, 45], [interrupted, 15], [later, 5]];
+  const rollback = { id: 'fixture-retention-pointer-rollback', key: 'fixture/retention-pointer-rollback.txt', text: 'recording with a rejected pointer update' };
+  const fixtures = [[target, 90], [replacement, 45], [interrupted, 15], [later, 5], [rollback, 1.5]];
   for (const [row, days] of fixtures) {
     row.createdAt = new Date(Date.now() - days * 86_400_000).toISOString();
     await put(row.key, row.text);
@@ -354,9 +355,9 @@ async function exerciseRetentionRoute({ http, put, assertBytes, ageObject }) {
         payload: { storagePath: row.key, s3Archive: archive } };
       messages.push(message);
       await pool.query(`INSERT INTO public.unified_messages
-        (id, workspace_id, channel, direction, status, storage_path, storage_bucket, payload, created_at, updated_at)
-        VALUES ($1,'pbk','call','recording','recorded',$2,$3,$4,$5,$5)`,
-      [row.id, row.key, bucket, message.payload, row.createdAt]);
+        (id, workspace_id, channel, direction, status, storage_path, storage_bucket, payload, created_at, updated_at, recording_url)
+        VALUES ($1,'pbk','call','recording','recorded',$2,$3,$4,$5,$5,$6)`,
+      [row.id, row.key, bucket, message.payload, row.createdAt, row === rollback ? 'https://recording-fixture.invalid/audio' : '']);
     }
     const staleId = 'fixture-retention-stale-cache';
     const staleKey = 'fixture/retention-stale-cache.txt';
@@ -383,7 +384,8 @@ async function exerciseRetentionRoute({ http, put, assertBytes, ageObject }) {
     };
     const decision = async id => (await pool.query(`SELECT a.status, g.consumed_at FROM public.approvals a
       JOIN public.pbk_recording_retention_approvals g ON g.approval_id = a.id WHERE a.id = $1`, [id])).rows[0];
-    const pointer = async id => (await pool.query('SELECT storage_path, payload FROM public.unified_messages WHERE id = $1', [id])).rows[0];
+    const pointer = async id => (await pool.query(`SELECT storage_path, storage_bucket, recording_url, payload, updated_at
+      FROM public.unified_messages WHERE id = $1`, [id])).rows[0];
     const run = (status, days, approvalId) => request(`${retention}/run`, status, { dryRun: false, days, approvalId });
     const remove = id => bridge.fetch(new URL(`/api/recordings/${id}`, bridge.origin), {
       method: 'DELETE', headers: { authorization: `Bearer ${bridge.apiKey}` },
@@ -489,6 +491,52 @@ async function exerciseRetentionRoute({ http, put, assertBytes, ageObject }) {
       await request(`/api/approvals/${next.approvalId}/approve`, 200, {});
       assert.equal((await run(200, 2, next.approvalId)).run.deletedCount, 1);
       assert.equal(deleted.filter(item => item.path === interrupted.key).length, 1, 'unknown deletion must not replay');
+
+      // A sequence witness survives rollback and proves the fault ran after the in-transaction confirmation.
+      await pool.query(`CREATE SEQUENCE public.fixture_retention_pointer_refusals;
+        CREATE FUNCTION public.fixture_reject_retention_pointer() RETURNS trigger LANGUAGE plpgsql AS $$
+        BEGIN
+          IF EXISTS (SELECT 1 FROM public.pbk_recording_retention_attempts
+                     WHERE message_id = OLD.id AND outcome = 'confirmed') THEN
+            PERFORM nextval('public.fixture_retention_pointer_refusals');
+            RAISE EXCEPTION 'Synthetic pointer update rejection';
+          END IF;
+          RETURN NEW;
+        END;
+        $$;
+        CREATE TRIGGER zz_fixture_reject_retention_pointer
+          BEFORE UPDATE OF storage_path ON public.unified_messages FOR EACH ROW
+          WHEN (OLD.id = 'fixture-retention-pointer-rollback' AND OLD.storage_path <> '' AND NEW.storage_path = '')
+          EXECUTE FUNCTION public.fixture_reject_retention_pointer();`);
+      const beforePointer = await pointer(rollback.id);
+      const queuedRollback = await run(202, 1);
+      assert.equal(queuedRollback.candidateCount, 1);
+      await request(`/api/approvals/${queuedRollback.approvalId}/approve`, 200, {});
+      const rolledBack = await run(200, 1, queuedRollback.approvalId);
+      assert.equal(rolledBack.run.status, 'pending');
+      assert.equal(rolledBack.run.deletedCount, 0);
+      assert.equal(rolledBack.run.deletions[0].messageId, rollback.id);
+      const { rows: witnesses } = await pool.query('SELECT last_value::text, is_called FROM public.fixture_retention_pointer_refusals');
+      assert.deepEqual(witnesses, [{ last_value: '1', is_called: true }], 'the pointer write failed after the outcome was set to confirmed');
+      const rollbackDeletion = deleted.find(item => item.path === rollback.key);
+      assert.equal(JSON.parse(rollbackDeletion.result.body)[0].version, rollbackDeletion.versionId);
+      const { rows: attempts } = await pool.query(`SELECT bucket, storage_key, object_version, outcome, finished_at
+        FROM public.pbk_recording_retention_attempts
+        WHERE approval_id = $1 AND message_id = $2`, [queuedRollback.approvalId, rollback.id]);
+      assert.deepEqual(attempts, [{ bucket, storage_key: rollback.key, object_version: rollbackDeletion.versionId,
+        outcome: 'pending', finished_at: null }]);
+      assert.deepEqual(await pointer(rollback.id), beforePointer);
+      assert.ok((await decision(queuedRollback.approvalId)).consumed_at instanceof Date);
+      const rollbackReadback = await http('GET', `object/info/authenticated/${bucket}/${rollback.key}`);
+      assert.equal(JSON.parse(rollbackReadback.body).code, 'NoSuchKey');
+      const rollbackReplay = await run(409, 1, queuedRollback.approvalId);
+      assert.equal(rollbackReplay.outcomes[0].outcome, 'pending');
+      const rollbackBlockedFetches = bridge.blockedNetwork.fetch || 0;
+      const rollbackManualDelete = await remove(rollback.id);
+      assert.equal(rollbackManualDelete.status, 409);
+      assert.equal((await rollbackManualDelete.json()).result, 'recording_storage_busy');
+      assert.equal(bridge.blockedNetwork.fetch || 0, rollbackBlockedFetches, 'the pending key must block independent writes before Storage I/O');
+      assert.equal(deleted.filter(item => item.path === rollback.key).length, 1, 'a pointer rollback must not replay the confirmed Storage deletion');
 
       const writerId = 'fixture-retention-writer';
       await put(retentionWriterFixtureKey, 'synthetic seed bytes');

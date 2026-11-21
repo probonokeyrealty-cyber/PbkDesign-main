@@ -23,16 +23,21 @@ export async function assertRecordingRetentionSchema(pool) {
       AND (SELECT count(*) = 2 FROM pg_catalog.pg_attribute
         WHERE attrelid = to_regclass('public.pbk_recording_storage_writes')
           AND attname IN ('rejected_at', 'rejection_code') AND NOT attisdropped)
-      AND (SELECT count(*) = 3
-        FROM (VALUES ('pbk_recording_storage_active_message', 'message_id'),
-          ('pbk_recording_storage_active_key', 'storage_key'),
-          ('pbk_recording_storage_active_archive', 'archive_key')) AS expected(index_name, key_name)
+      AND (SELECT count(*) = 4
+        FROM (VALUES
+          ('pbk_recording_storage_writes', 'pbk_recording_storage_active_message', 'message_id', '(rejected_at IS NULL)'),
+          ('pbk_recording_storage_writes', 'pbk_recording_storage_active_key', 'storage_key', '(rejected_at IS NULL)'),
+          ('pbk_recording_storage_writes', 'pbk_recording_storage_active_archive', 'archive_key', '(rejected_at IS NULL)'),
+          ('pbk_recording_retention_attempts', 'pbk_recording_retention_fenced_key', 'storage_key',
+            $predicate$(outcome = ANY (ARRAY['pending'::text, 'confirmed'::text]))$predicate$)
+        ) AS expected(table_name, index_name, key_name, predicate)
         JOIN pg_catalog.pg_index idx ON idx.indexrelid = to_regclass('public.' || expected.index_name)
         JOIN pg_catalog.pg_attribute col ON col.attrelid = idx.indrelid AND col.attname = expected.key_name
-        WHERE idx.indrelid = to_regclass('public.pbk_recording_storage_writes')
+        WHERE idx.indrelid = to_regclass('public.' || expected.table_name)
           AND idx.indisunique AND idx.indisvalid AND idx.indisready
           AND idx.indnatts = 1 AND idx.indkey[0] = col.attnum
-          AND pg_get_expr(idx.indpred, idx.indrelid) = '(rejected_at IS NULL)')
+          AND idx.indcollation[0] = col.attcollation
+          AND pg_get_expr(idx.indpred, idx.indrelid) = expected.predicate)
       AND has_schema_privilege('public', 'USAGE')
       AND COALESCE(has_function_privilege(
         to_regprocedure('public.pbk_recording_has_untyped_pointer(jsonb)'), 'EXECUTE'), false)

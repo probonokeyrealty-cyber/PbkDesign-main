@@ -177,7 +177,7 @@ test('unapproved v2 policy is not replaced with a pilot or legacy policy', async
   assert.equal(result.ready, false);
 });
 
-test('approval, auth, delivery and dispatch code remains unchanged outside reviewed read-only projections', () => {
+test('bridge code matches the reviewed release fingerprint outside the scoped read-only projections', () => {
   const marketProjection = [
     'publicMarketWorker: withSavedRaleighCleanup(',
     '            await (checkPublicMarketConnection ??= createPublicMarketConnectionCheck())(),',
@@ -197,11 +197,11 @@ test('approval, auth, delivery and dispatch code remains unchanged outside revie
   // Delivery confirmation is a metadata-only write and cannot start dispatch.
   // Telnyx receipt mapping and the scoped outbound media policy are covered by the
   // unified conversation bridge smoke test.
-  // e5e2bcb changes only the reviewed analytics import and read-only builders;
-  // approval/auth/delivery/dispatch code is byte-identical to 7faba2e.
-  // Keep the complete fingerprint guard, including the new analytics code.
+  // The Parcel Dialer release adds its router, staff permission checks and
+  // signed Twilio webhook paths. The phone-dialer suite exercises those
+  // boundaries. Keep the full bridge fingerprint, including this wiring.
   assert.equal(createHash('sha256').update(unchanged).digest('hex'),
-    '52d722131b681a359c0b5a16890393f2fc210a34b930998cfebd8d70fb7813f0');
+    '5755dab16877f62315bc99b3c36edf6d8679327777eb979ba4134416fab050b0');
 });
 
 test('production distribution includes reader and protocol, never the fixture signer', () => {

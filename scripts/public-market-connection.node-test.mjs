@@ -1,6 +1,53 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { createPublicMarketConnectionCheck } from './public-market-connection.mjs';
+import * as publicMarket from './public-market-connection.mjs';
+
+const { createPublicMarketConnectionCheck } = publicMarket;
+
+const savedJob = {
+  id: 'market-fictional-fixture',
+  approvalTaskId: 'admin-e2b-market-fictional-fixture',
+  provider: 'e2b',
+  source: 'public-market-brief',
+  market: 'Raleigh, NC',
+  status: 'complete',
+  consumed: true,
+  cleanupConfirmed: true,
+  completedAt: '2026-11-20T19:00:00.000Z',
+};
+const savedApproval = {
+  id: savedJob.approvalTaskId,
+  provider: 'e2b',
+  action: 'public_market_brief',
+  status: 'complete',
+};
+
+test('the saved Raleigh cleanup note does not change live readiness or enable execution', () => {
+  const readiness = Object.freeze({ state: 'connected_unverified', executionEnabled: false, note: 'Read-only checks passed.' });
+  const status = publicMarket.withSavedRaleighCleanup(readiness, [savedJob], [savedApproval]);
+  assert.deepEqual(status, {
+    ...readiness,
+    note: 'Saved Raleigh canary: sandbox cleanup confirmed. Execution is disabled.',
+  });
+  assert.equal(readiness.note, 'Read-only checks passed.');
+});
+
+test('only a consumed Raleigh run with confirmed cleanup and a completed matching approval is shown', () => {
+  const readiness = { state: 'connection_unverified', executionEnabled: false, note: 'Read-only checks unavailable.' };
+  const active = { ...readiness, executionEnabled: true };
+  assert.equal(publicMarket.withSavedRaleighCleanup(active, [savedJob], [savedApproval]), active);
+  assert.equal(publicMarket.withSavedRaleighCleanup(readiness), readiness);
+  for (const override of [
+    { market: 'Tampa, FL' }, { status: 'interrupted' }, { provider: 'browseros' },
+    { source: 'browseros' }, { consumed: false }, { cleanupConfirmed: 'true' },
+    { completedAt: 'invalid' }, { approvalTaskId: 'different-task' },
+  ]) {
+    assert.equal(publicMarket.withSavedRaleighCleanup(readiness, [{ ...savedJob, ...override }], [savedApproval]), readiness);
+  }
+  for (const override of [{ provider: 'browseros' }, { action: 'unrelated' }, { status: 'pending' }]) {
+    assert.equal(publicMarket.withSavedRaleighCleanup(readiness, [savedJob], [{ ...savedApproval, ...override }]), readiness);
+  }
+});
 
 const schema = {
   "type": "object",

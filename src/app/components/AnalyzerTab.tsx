@@ -203,7 +203,7 @@ export function AnalyzerTab({
             }}
           />
           <AnalyzerListingLookup
-            key={address}
+            key={JSON.stringify([leadId, address])}
             deal={deal}
             protectedFields={operatorFields.current}
             onFill={onDealChange}

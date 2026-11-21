@@ -146,6 +146,11 @@ jobs:
           node --test scripts/property-intelligence.node-test.mjs scripts/analyzer-intelligence.node-test.mjs scripts/lead-comps.node-test.mjs scripts/property-evidence.node-test.mjs
           node scripts/crm-property-evidence-browser-smoke.mjs
 
+      - name: Verify saved lead handoff and explicit Analyzer refresh
+        run: |
+          npm run test:leads-design-browser
+          PBK_ANALYZER_BUILD_DIR=dist node scripts/analyzer-address-autofill-browser-smoke.mjs
+
       - name: Run Chromium and WebKit qualification
         run: node scripts/ava-design-browser-smoke.mjs
 

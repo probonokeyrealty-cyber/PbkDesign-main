@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import vm from 'node:vm';
 import ts from 'typescript';
-import { intelligenceRequest, mergeAnalyzerIntelligence } from '../src/app/utils/analyzerIntelligence.mjs';
+import { intelligenceRequest } from '../src/app/utils/analyzerIntelligence.mjs';
 
 const source = readFileSync(new URL('../src/app/utils/analyzerStorage.ts', import.meta.url), 'utf8');
 const { outputText } = ts.transpileModule(source, {
@@ -225,8 +225,8 @@ function actions() {
     draftScope: ref('sample-scope'), getAnalyzerDraftIdentity: () => 'sample-scope',
     analysisRequestVersion: ref(0), isFreshAnalyzerDraft: () => false, deal: sample,
     getAnalyzeReadiness: () => ({ ready: true, successMessage: 'Ready' }),
-    intelligenceRequest, mergeAnalyzerIntelligence,
-    fetchPropertyIntelligenceRequest: async input => ({ok:true,address:input.address,patch:{deal:{}},records:{status:'unavailable'},listing:{cache:{hit:false}},sales:{status:'unavailable'},saved:false}),
+    intelligenceRequest,
+    fetchPropertyIntelligenceRequest: async () => assert.fail('Analyze must not request property enrichment'),
     syncDealAnalysis: deal => new Promise((resolve, reject) => analyses.push({ deal, resolve, reject })),
     calculateVerdict: () => 'green', buildAgentDealContext: () => ({}),
     currentDeal: ref(sample), activeSelectedPath: 'cash', savePending: ref(false),
@@ -346,23 +346,17 @@ test('A queued snapshot still reports approval and newly added unsaved fields', 
   assert.match(statuses.at(-1), /Newer edits remain/);
 });
 
+test('Analyze reports missing inputs without refreshing the property or writing to CRM', async () => {
+  const { context, analyses, patches, statuses } = actions();
+  context.getAnalyzeReadiness = () => ({ ready: false, message: 'Add list price to finish the analysis.' });
+  await context.handleAnalyzeDeal();
+  assert.deepEqual(analyses, []);
+  assert.deepEqual(patches, []);
+  assert.equal(context.currentDeal.current, sample);
+  assert.deepEqual(statuses, ['Add list price to finish the analysis.']);
+});
+
 for (const obsolete of ['unmounted', 'scope', 'edited', 'newer-analysis']) {
-  test(`An ${obsolete} enrichment cannot start analysis or issue a lead PATCH`, async () => {
-    const {context,analyses,patches}=actions();
-    let release;
-    context.fetchPropertyIntelligenceRequest=()=>new Promise(resolve=>{release=resolve;});
-    const pending=context.handleAnalyzeDeal();
-    assert.equal(typeof release,'function');
-    if (obsolete==='unmounted') context.mounted.current=false;
-    if (obsolete==='scope') context.getAnalyzerDraftIdentity=()=>'other-scope';
-    if (obsolete==='edited') context.currentDeal.current={...sample,notes:'Newer draft during lookup'};
-    if (obsolete==='newer-analysis') context.analysisRequestVersion.current++;
-    const before=context.currentDeal.current;
-    release({ok:true,address:sample.address,patch:{deal:{}},records:{status:'unavailable'},listing:{cache:{hit:false}},sales:{status:'unavailable'},saved:false});
-    await pending;
-    assert.deepEqual(analyses,[]);assert.deepEqual(patches,[]);
-    assert.equal(context.currentDeal.current,before);
-  });
   test(`An ${obsolete} analysis cannot replace notes/comps or issue a lead PATCH`, async () => {
     const { context, analyses, patches } = actions();
     const pending = context.handleAnalyzeDeal();

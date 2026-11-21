@@ -93,7 +93,7 @@ export function LeadComps({ address, leadId = '', savedSales, onRefresh, refresh
         {leadId && <div className="pbk-comps-selection">
           <span>{selected.length}/3 selected{selected.length ? ' · replaces saved comp set' : ''}</span>
           <button type="button" className="pbk-btn pbk-btn-primary pbk-btn-sm" disabled={!selected.length || saving} onClick={() => void saveSelection()}>{saving ? 'Saving...' : 'Save selected comps'}</button>
-          <Link className="pbk-btn pbk-btn-ghost pbk-btn-sm" to={`/deal/${encodeURIComponent(leadId)}`}>Open analyzer</Link>
+          <Link className="pbk-btn pbk-btn-ghost pbk-btn-sm" to={`/deal/${encodeURIComponent(leadId)}`}>Open Analyzer</Link>
           {saveStatus && <p role="status">{saveStatus}</p>}
         </div>}
       </>}

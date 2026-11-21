@@ -291,7 +291,6 @@ export function DealAnalyzerCommandHeader({
 }
 
 export function DealAnalyzerMobileRail({
-  deal,
   selectedPath,
   analyzeStatus,
   onOpenSnapshot,
@@ -301,7 +300,6 @@ export function DealAnalyzerMobileRail({
   onTabChange,
 }: Pick<
   DealAnalyzerChromeProps,
-  | 'deal'
   | 'selectedPath'
   | 'analyzeStatus'
   | 'onOpenSnapshot'
@@ -319,7 +317,7 @@ export function DealAnalyzerMobileRail({
         </button>
         <button type="button" aria-label="Analyze deal" className="is-primary" onClick={onAnalyze}>
           <BarChart3 size={16} />
-          <span>{deal.isAnalyzed ? 'Refresh' : 'Analyze'}</span>
+          <span>Analyze</span>
         </button>
         <button type="button" aria-label="Save deal" onClick={onSaveDeal}>
           <Save size={16} />

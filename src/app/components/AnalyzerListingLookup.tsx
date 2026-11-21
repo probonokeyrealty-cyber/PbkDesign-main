@@ -78,12 +78,15 @@ export function AnalyzerListingLookup({
   const [filledCount, setFilledCount] = useState(0);
   const [records, setRecords] = useState<AttomPreviewResult | null>(null);
   const [capturedListing, setCapturedListing] = useState<PropertyListingSnapshot | null>(null);
-  const storedListingSnapshot = deal.listingSnapshot;
-  const savedListing = useMemo(
-    () => readPropertyEvidence({ listingSnapshot: storedListingSnapshot }, address).listing,
-    [storedListingSnapshot, address]
+  const { listingSnapshot, propertyRecordSnapshot } = deal;
+  const { listing: savedListing, records: savedRecords } = useMemo(
+    () => readPropertyEvidence({ listingSnapshot, propertyRecordSnapshot }, address),
+    [listingSnapshot, propertyRecordSnapshot, address]
   );
   const photoEvidence = capturedListing?.address === address ? capturedListing : savedListing;
+  const recordFacts = savedRecords?.facts ?? (records?.status === 'matched' ? records.profile : null);
+  const recordLabel = records?.status === 'matched' ? 'Matched parcel'
+    : savedRecords ? 'Saved record' : records?.status.replaceAll('_', ' ');
   const current = useRef({ deal, onFill, protectedFields });
   current.current = { deal, onFill, protectedFields };
   const mounted = useRef(true);
@@ -138,8 +141,8 @@ export function AnalyzerListingLookup({
   return (
     <div className="pbk-analyzer-listing">
       <p className="pbk-analyzer-lookup-hint">
-        Refresh or Analyze to gather records, photos and suggested sales. Linked leads save evidence to
-        the CRM; unlinked addresses stay in your draft. Existing entries are preserved.
+        Analysis uses the data in this deal. Refresh property intelligence to update records, photos
+        and sale candidates.
       </p>
       <button
         type="button"
@@ -209,51 +212,48 @@ export function AnalyzerListingLookup({
           </div>
         )}
       </div>
-      {records && (
+      {recordLabel && (
         <details className="pbk-analyzer-records">
-          <summary>
-            ATTOM public records ·{' '}
-            {records.status === 'matched' ? 'Matched parcel' : records.status.replaceAll('_', ' ')}
-          </summary>
-          {records.status === 'matched' ? (
+          <summary>ATTOM public records · {recordLabel}</summary>
+          {recordFacts ? (
             <>
-              <p>{records.profile.address}</p>
+              <p>{recordFacts.address}</p>
               <dl>
                 <div>
                   <dt>Parcel / APN</dt>
-                  <dd>{records.profile.apn || 'Unavailable'}</dd>
+                  <dd>{recordFacts.apn || 'Unavailable'}</dd>
                 </div>
                 <div>
                   <dt>Property type</dt>
-                  <dd>{records.profile.propertyType || 'Unavailable'}</dd>
+                  <dd>{recordFacts.propertyType || 'Unavailable'}</dd>
                 </div>
                 <div>
                   <dt>Lot size</dt>
-                  <dd>{records.profile.lotSqft?.toLocaleString('en-US') ?? 'Unavailable'} sq ft</dd>
+                  <dd>{recordFacts.lotSqft?.toLocaleString('en-US') ?? 'Unavailable'} sq ft</dd>
                 </div>
                 <div>
                   <dt>Recorded sale</dt>
                   <dd>
-                    {records.profile.recordedSaleAmount
-                      ? formatCurrency(records.profile.recordedSaleAmount)
+                    {recordFacts.recordedSaleAmount
+                      ? formatCurrency(recordFacts.recordedSaleAmount)
                       : 'Unavailable'}
                   </dd>
                 </div>
                 <div>
                   <dt>Sale date</dt>
-                  <dd>{records.profile.recordedSaleDate || 'Unavailable'}</dd>
+                  <dd>{recordFacts.recordedSaleDate || 'Unavailable'}</dd>
                 </div>
                 <div>
                   <dt>Annual tax</dt>
                   <dd>
-                    {records.profile.taxAmount !== null
-                      ? formatCurrency(records.profile.taxAmount)
+                    {recordFacts.taxAmount !== null
+                      ? formatCurrency(recordFacts.taxAmount)
                       : 'Unavailable'}
                   </dd>
                 </div>
                 <div>
                   <dt>Tax year</dt>
-                  <dd>{records.profile.taxYear ?? 'Unavailable'}</dd>
+                  <dd>{recordFacts.taxYear ?? 'Unavailable'}</dd>
                 </div>
               </dl>
               <p>

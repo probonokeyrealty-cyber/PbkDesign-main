@@ -12037,6 +12037,10 @@ html[data-theme='light']
   font-family: var(--font-mono);
 }
 
+html[data-theme='light'] .pbk-analyzer-records summary {
+  color: var(--text-primary);
+}
+
 .pbk-analyzer-records dl > div {
   display: flex;
   flex-wrap: wrap;

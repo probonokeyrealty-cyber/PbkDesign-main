@@ -152,6 +152,10 @@ Object.assign(runtime, {
   markTelnyxSellerTranscriptVersion: () => ++session.sellerTranscriptVersion,
   normalizeDeepgramLiveSentiment: () => ({ pbkScore: null }),
   isWeakTelnyxSellerUtterance: () => false,
+  extractLikelyCallerNameOnlyUtterance: noop, isAvaLiveAuthorityQuestion: noop,
+  isAffirmativeAvaAuthorityAnswer: noop, shouldSkipTelnyxLiveAckOnlyReply: noop,
+  isTelnyxLiveAudioCheckUtterance: noop, isTelnyxLiveGreetingOnlyUtterance: noop,
+  expandAvaLiveOptionLetterAnswer: noop,
   syncTelnyxSessionToRedis: async () => {}, getCallById: () => null,
   scheduleTelnyxAvaReplyForTranscript: (item) => scheduled.push(item),
 });
@@ -183,6 +187,17 @@ const beforeFinal = sent.length;
 runtime.receiveSpeech({ type: 'Results', transcript: 'Wait a moment', is_final: true, speech_final: true });
 assert.equal(sent.length, beforeFinal + 1, 'A nonempty final transcript must interrupt without a speech-start event');
 assert.equal(scheduled.at(-1).transcript, 'Wait a moment', 'Final transcript reply scheduling must remain intact');
+
+const committedVersion = session.sellerTranscriptVersion;
+const scheduledBeforeFragments = scheduled.length;
+runtime.isWeakTelnyxSellerUtterance = (text) => /^yeah\.?$/i.test(text);
+runtime.receiveSpeech({ type: 'Results', transcript: 'an incomplete guess', is_final: false });
+runtime.receiveSpeech({ type: 'Results', transcript: 'Yeah.', is_final: true, speech_final: true });
+assert.equal(session.sellerTranscriptVersion, committedVersion, 'Interim and weak final fragments must preserve the committed reply version');
+assert.equal(scheduled.length, scheduledBeforeFragments, 'Fragments must not replace the pending reply');
+runtime.receiveSpeech({ type: 'Results', transcript: 'Stop contacting me.', is_final: true, speech_final: true });
+assert.equal(session.sellerTranscriptVersion, committedVersion + 1, 'A committed stop-contact turn must supersede speech in progress');
+assert.equal(scheduled.at(-1).transcript, 'Stop contacting me.');
 
 locks.set(session.callId, activeLock);
 delete session.lastTelnyxMediaClearAt;

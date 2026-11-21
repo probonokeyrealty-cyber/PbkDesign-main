@@ -206,8 +206,9 @@ test('bridge code matches the reviewed release fingerprint outside the scoped re
   // Deepgram opens with the announced Telnyx codec and waits for audio signal before fallback.
   // Database disconnects after Ava sends phone audio are handled in the detached reply task.
   // Phone turn latency persistence remains best effort during a database disconnect.
+  // Interim transcripts and weak acknowledgments cannot replace a committed Ava reply.
   assert.equal(createHash('sha256').update(unchanged).digest('hex'),
-    '9900c975a515046d2ff792fdf5a9696e470fe6ac3928f2c11fcb7b882d6d88b3');
+    '5f302e4e9fa4e5be352df0ec99e158275a5075ae581f89af37cb29da905c4349');
 });
 
 test('production distribution includes reader and protocol, never the fixture signer', () => {

@@ -72734,8 +72734,20 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
       console.log(`[AudioPath] Deepgram ${session.lastDeepgramEvent} for ${session.callId || session.streamId || session.id}: "${transcript}"`);
     }
     clearNoTranscriptFallbackTimer();
-    const turnVersion = markTelnyxSellerTranscriptVersion();
-    if (normalized.speechFinal) clearPendingTelnyxFinalOnlyReply();
+    const actionableTranscript = !isWeakTelnyxSellerUtterance(transcript);
+    const committedTranscript = Boolean(normalized.isFinal || normalized.speechFinal);
+    const callerNameOnly = committedTranscript ? extractLikelyCallerNameOnlyUtterance(transcript) : '';
+    if (callerNameOnly) {
+      session.callerProvidedName = callerNameOnly;
+      session.callerNameCapturedAt = isoNow();
+    }
+    const confirmsAuthority = isAvaLiveAuthorityQuestion(session.lastAvaReplySpoken || session.lastAvaSpokenPreview || '') &&
+      isAffirmativeAvaAuthorityAnswer(transcript);
+    const replyWorthy = committedTranscript && !callerNameOnly && !shouldSkipTelnyxLiveAckOnlyReply(session, transcript) &&
+      (actionableTranscript || confirmsAuthority || isTelnyxLiveAudioCheckUtterance(transcript) ||
+        isTelnyxLiveGreetingOnlyUtterance(transcript) || Boolean(expandAvaLiveOptionLetterAnswer(session, transcript)));
+    // Only a turn that can drive or interrupt a reply supersedes the one already in flight.
+    const turnVersion = replyWorthy ? markTelnyxSellerTranscriptVersion() : Number(session.sellerTranscriptVersion || 0);
     const sentiment = normalizeDeepgramLiveSentiment(data);
     if (sentiment.pbkScore !== null) session.sentiment = sentiment;
     const item = {
@@ -72750,9 +72762,7 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
       capturedAt: isoNow(),
     };
     session.transcript.push(item);
-    const actionableTranscript = !isWeakTelnyxSellerUtterance(transcript);
-    const committedTranscript = Boolean(normalized.isFinal || normalized.speechFinal);
-    if (committedTranscript) noteTelnyxCallerSpeechDuringAva();
+    if (replyWorthy) noteTelnyxCallerSpeechDuringAva();
     recordCallTrace('deepgram_transcript', {
       ...session,
       status: session.lastDeepgramEvent,
@@ -72852,7 +72862,7 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
         stage: 'handleTelnyxDeepgramMessage',
       });
     }
-    scheduleTelnyxAvaReplyForTranscript(item);
+    if (replyWorthy) scheduleTelnyxAvaReplyForTranscript(item);
   };
 
   const flushPendingTelnyxMediaFrames = () => {

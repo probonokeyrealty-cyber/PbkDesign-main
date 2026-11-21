@@ -67,6 +67,7 @@ const shellHistoryPaths = new Set([
   '/analytics',
   '/settings',
   '/property-log',
+  '/dialer',
   '/campaigns',
   '/agent',
   '/agent-console',

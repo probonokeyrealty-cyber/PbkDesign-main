@@ -42,6 +42,7 @@ const VALID_SHELL_PATHS = new Set([
   '/skill-studio',
   '/analytics',
   '/campaigns',
+  '/dialer',
   '/ava-chat',
   '/settings',
   '/property-log',

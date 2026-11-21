@@ -11,6 +11,7 @@ import {
   Menu,
   Megaphone,
   Mic2,
+  PhoneCall,
   Settings as SettingsIcon,
   Sparkles,
   Users,
@@ -28,6 +29,7 @@ export const SHELL_NAV_ITEMS: Array<{ to: string; label: string; icon: typeof La
   { to: '/skills', label: 'Skill Studio', icon: Sparkles },
   { to: '/analytics', label: 'Analytics', icon: BarChart3 },
   { to: '/campaigns', label: 'Campaigns', icon: Megaphone },
+  { to: '/dialer', label: 'Dialer', icon: PhoneCall },
   { to: '/ava-chat', label: 'Ava Chat', icon: Mic2 },
   { to: '/settings', label: 'Settings', icon: SettingsIcon },
 ];

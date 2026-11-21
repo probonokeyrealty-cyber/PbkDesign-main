@@ -1,5 +1,6 @@
 import { Component, useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
-import { useLocation, useParams } from 'react-router';
+import { ArrowLeft } from 'lucide-react';
+import { Link, useLocation, useParams } from 'react-router';
 import App from '../App';
 import type { DealData, PBKPath } from '../types';
 import {
@@ -17,6 +18,7 @@ import { readPropertyEvidence } from '../utils/propertyEvidence';
 import { samePropertyAddress } from '../utils/analyzerIntelligence.mjs';
 import { savedLeadComps } from '../utils/leadComps.mjs';
 import { latestCallModeNote } from '../utils/analyzerLeadPersistence.mjs';
+import { readLeadEvidenceTarget } from '../utils/avaBrowserCommand.mjs';
 
 type BridgeRecord = Record<string, unknown>;
 
@@ -420,6 +422,23 @@ export function DealView() {
 function DealViewContent() {
   const { id: leadId = '' } = useParams();
   const location = useLocation();
+  const entry = location.state?.leadAnalyzerOrigin;
+  const origin = entry?.leadId === leadId ? entry : null;
+  const backToLead = leadId ? (
+    <Link
+      className="pbk-btn pbk-btn-ghost pbk-btn-sm min-h-11"
+      to={{
+        pathname: `/leads/${encodeURIComponent(leadId)}`,
+        search: typeof origin?.search === 'string' && origin.search.startsWith('?') ? origin.search : '',
+        hash: readLeadEvidenceTarget(location.hash) ? location.hash : '',
+      }}
+      state={origin ? { leadReturn: origin.leadReturn, fleetReturn: origin.fleetReturn } : null}
+      replace
+    >
+      <ArrowLeft size={16} aria-hidden="true" />
+      Back to lead
+    </Link>
+  ) : null;
   const draftIdentity = location.pathname + location.search;
   const [loading, setLoading] = useState(Boolean(leadId));
   const [error, setError] = useState('');
@@ -511,6 +530,7 @@ function DealViewContent() {
           >
             Retry lead load
           </button>
+          <div className="mt-3">{backToLead}</div>
         </div>
       </div>
     );
@@ -519,7 +539,7 @@ function DealViewContent() {
   return (
     <div className="h-full min-h-[680px]">
       <DealViewErrorBoundary key={draftIdentity}>
-        <App engineOnly key={draftIdentity} />
+        <App engineOnly key={draftIdentity} backToLead={backToLead} />
       </DealViewErrorBoundary>
     </div>
   );

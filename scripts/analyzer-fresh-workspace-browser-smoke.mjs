@@ -104,8 +104,10 @@ async function verify(engine, width) {
 
     const workspace = await context.newPage();
     await workspace.goto(base + '/leads/' + savedLead.id);
+    await workspace.getByRole('tab', { name: 'Photos', exact: true }).click();
     const link = workspace.getByRole('link', { name: 'Open in fresh Analyzer', exact: true });
     await expect(link).toBeVisible();
+    await expect(link).toHaveAttribute('href', /#lead-photos$/);
     assert.equal(await link.getAttribute('target'), '_blank');
     assert.match(await link.getAttribute('rel'), /noopener/);
     await link.focus();
@@ -221,6 +223,9 @@ async function verify(engine, width) {
     await failed.getByRole('button', { name: 'Retry lead load' }).click();
     await ready(failed);
     await expect(beds(failed)).toHaveValue('6');
+    await failed.getByRole('link', { name: 'Back to lead', exact: true }).click();
+    await expect(failed).toHaveURL(base + '/leads/' + savedLead.id + '#lead-photos');
+    await expect(failed.getByRole('tab', { name: 'Photos', exact: true })).toHaveAttribute('aria-selected', 'true');
     assert.deepEqual(await snapshot(original), changedOriginal);
     assert.equal(before.compose, changedOriginal.compose);
     assert.equal(originalDeal.notes, (await deal(original)).notes);

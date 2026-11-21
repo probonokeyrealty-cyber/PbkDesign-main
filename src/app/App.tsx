@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef, type ReactNode } from 'react';
 import { intelligenceRequest, propertyContextFields, resetChangedProperty } from './utils/analyzerIntelligence.mjs';
 import { buildAnalyzerLeadPatch } from './utils/analyzerLeadPersistence.mjs';
 import { TopBar } from './components/TopBar';
@@ -192,6 +192,7 @@ const BRANDING_STORAGE_KEY = 'pbk-branding';
 
 type AppProps = {
   engineOnly?: boolean;
+  backToLead?: ReactNode;
 };
 
 function getInitialDarkMode() {
@@ -207,7 +208,7 @@ function getInitialDarkMode() {
   return true;
 }
 
-export default function App({ engineOnly = false }: AppProps) {
+export default function App({ engineOnly = false, backToLead }: AppProps) {
   const [deal, setDeal] = useState<DealData>(() => {
     const saved = readAnalyzerDeal(initialDealData);
     return { ...saved, selectedPath: normalizeSelectedPath(saved) };
@@ -1385,6 +1386,7 @@ export default function App({ engineOnly = false }: AppProps) {
         {/* Main Content */}
         <div className="relative flex-1 min-w-0 flex flex-col overflow-hidden">
           <DealAnalyzerCommandHeader
+            backToLead={backToLead}
             deal={activeDeal}
             selectedPath={activeSelectedPath}
             activeTab={activeTab}

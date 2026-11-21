@@ -62,16 +62,40 @@ test('live handler uses only live state and bucket for real multipart upload', a
     body.set('rights', 'PBK-owned QA');
     body.set('alt', 'QA image');
     body.set('buyerVisible', 'true');
-    const response = await createPortalHandler(profile)(
-      new Request('https://qa-provider.example/functions/v1/' + profile.functionName, {
-        method: 'POST',
-        headers: { Origin: profile.staffOrigin, Authorization: 'Bearer ' + token },
-        body,
-      })
-    );
+    const handler = createPortalHandler(profile);
+    const send = () =>
+      handler(
+        new Request('https://qa-provider.example/functions/v1/' + profile.functionName, {
+          method: 'POST',
+          headers: { Origin: profile.staffOrigin, Authorization: 'Bearer ' + token },
+          body,
+        })
+      );
+    body.set('uploadRequestId', 'c32f6539-0556-4654-8bee-ac8f7ebc4742');
+    const response = await send();
     const result = await response.json();
     assert.equal(response.status, 200, JSON.stringify(result));
     assert.equal(result.property.assets.length, 1);
+    assert.equal(result.property.revision, property.revision + 1);
+    const retry = await send();
+    assert.equal(retry.status, 200);
+    assert.deepEqual(await retry.json(), result);
+    state.properties[property.id].revision++;
+    assert.equal((await send()).status, 409, 'A replay cannot silently rebase intervening edits');
+    state.properties[property.id].revision--;
+    body.set('alt', 'Changed description');
+    assert.equal((await send()).status, 409);
+    body.set('alt', 'QA image');
+    body.set(
+      'file',
+      new Blob([Uint8Array.from([137, 80, 78, 71, 13, 10, 26, 10, 1])], { type: 'image/png' }),
+      'qa.png'
+    );
+    assert.equal((await send()).status, 409);
+    assert.equal(
+      routes.filter((p) => p.startsWith('/storage/v1/object/' + profile.bucket + '/')).length,
+      1
+    );
     assert(routes.every((p) => !p.includes('staging')));
     assert(routes.some((p) => p.startsWith('/storage/v1/object/' + profile.bucket + '/')));
     assert.equal(Object.keys(state.pendingUploads).length, 0);

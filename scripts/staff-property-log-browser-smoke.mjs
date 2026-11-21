@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { mkdir, readFile } from 'node:fs/promises';
 import { chromium, expect } from '@playwright/test';
+import AxeBuilder from '@axe-core/playwright';
 import { preview } from 'vite';
 
 // Built staff shell with isolated Auth/runtime fixtures; never contacts a real account.
@@ -11,18 +12,61 @@ try {
   await mkdir('output/playwright', { recursive: true });
   for (const width of [390, 1440]) {
     for (const role of ['reviewer', 'editor', 'investor']) {
-      const page = await browser.newPage({ viewport: { width, height: 1000 } });
+      const context = await browser.newContext({ viewport: { width, height: 1000 } });
+      const page = await context.newPage();
       const commands = [];
       const errors = [];
+      const uploads = [];
+      const requestIds = new Map();
+      const property = {
+        id: 'fixture-property',
+        revision: 1,
+        status: 'Draft',
+        draft: { title: 'Fictional review property', address: '123 Example Avenue', checks: {} },
+        assets: [],
+      };
       page.on('pageerror', (e) => errors.push(e.message));
       await page.addInitScript(() => {
         window.PBK = {
           openclaw: { getConfig: () => ({ endpoint: location.origin, apiKey: 'fixture-only' }) },
         };
       });
-      await page.route('**/*', async (route) => {
+      await context.route('**/*', async (route) => {
         const url = new URL(route.request().url());
         if (url.pathname === '/functions/v1/pbk-investor-portal') {
+          if (route.request().headers()['content-type']?.startsWith('multipart/form-data')) {
+            const form = await new Response(route.request().postDataBuffer(), {
+              headers: { 'Content-Type': route.request().headers()['content-type'] },
+            }).formData();
+            const title = form.get('title');
+            uploads.push(title);
+            assert.equal(form.get('id'), property.id);
+            const requestId = form.get('uploadRequestId');
+            assert.match(requestId, /^[0-9a-f-]{36}$/);
+            if (requestIds.has(title)) assert.equal(requestId, requestIds.get(title));
+            requestIds.set(title, requestId);
+            assert.equal(form.get('buyerVisible'), 'true');
+            assert.equal(form.get('rights'), 'PBK-owned synthetic fixture');
+            if (title !== 'packet.pdf') assert.ok(form.get('alt'));
+            const previous = property.assets.find((asset) => asset.uploadRequestId === requestId);
+            if (previous) {
+              assert.equal(form.get('revision'), String(property.revision - 1));
+              return route.fulfill({ json: { property } });
+            }
+            assert.equal(form.get('revision'), String(property.revision));
+            const interrupt =
+              title === 'exterior.png' && uploads.filter((name) => name === title).length === 1;
+            if (interrupt && width === 390) return route.abort('connectionreset');
+            property.assets.push({
+              id: String(property.revision++),
+              uploadRequestId: requestId,
+              title,
+              kind: title === 'packet.pdf' ? 'packet' : 'photo',
+              rights: form.get('rights'),
+            });
+            if (interrupt) return route.abort('connectionreset');
+            return route.fulfill({ json: { property } });
+          }
           const { command, payload } = route.request().postDataJSON();
           commands.push(command);
           if (command === 'authPassword' && payload.password !== 'fixture-only-password')
@@ -42,7 +86,7 @@ try {
             verifyRecovery: { token: 'fixture-only-staff', expiresIn: 3600 },
             authPassword: { token: 'fixture-only-staff', expiresIn: 3600 },
             session: { member: { id: 'fixture-staff', email: 'staff@example.invalid', role } },
-            list: { properties: [] },
+            list: { properties: [property] },
             inquiries: { inquiries: [] },
             saved: { ids: [] },
             logout: { signedOut: true },
@@ -105,6 +149,63 @@ try {
         ).toBeVisible();
         await expect(page.getByRole('button', { name: 'Add property', exact: true })).toBeVisible();
         assert.ok(commands.includes('list'));
+        if (role === 'reviewer') {
+          await page.getByRole('button', { name: 'Open draft', exact: true }).click();
+          const panel = page.getByRole('region', { name: 'Packet files' });
+          await expect(panel).toContainText('123 Example Avenue');
+          const png = Buffer.from(
+            'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/ZuoAAAAASUVORK5CYII=',
+            'base64'
+          );
+          await panel.getByLabel('Choose packet files').setInputFiles([
+            { name: 'packet.pdf', mimeType: 'application/pdf', buffer: Buffer.from('%PDF-1.4') },
+            { name: 'exterior.png', mimeType: 'image/png', buffer: png },
+            { name: 'interior.png', mimeType: 'image/png', buffer: png },
+          ]);
+          const upload = panel.getByRole('button', { name: 'Upload private files' });
+          await expect(upload).toBeDisabled();
+          await expect(page.getByRole('button', { name: 'Preview as investor' })).toBeDisabled();
+          for (const file of ['packet.pdf', 'exterior.png', 'interior.png']) {
+            const row = panel.getByRole('group', { name: file, exact: true });
+            await row
+              .getByLabel('Rights basis and rights holder')
+              .fill('PBK-owned synthetic fixture');
+            if (file.endsWith('.png')) await row.getByLabel('Photo alt text').fill(file);
+          }
+          await upload.click();
+          await expect(panel).toContainText('Upload could not be confirmed');
+          assert.deepEqual(uploads, ['packet.pdf', 'exterior.png']);
+          await upload.click();
+          await expect(panel.getByText('Rights recorded', { exact: true })).toHaveCount(3);
+          assert.deepEqual(uploads, ['packet.pdf', 'exterior.png', 'exterior.png', 'interior.png']);
+          assert.equal(commands.includes('release'), false);
+          await expect(
+            page.getByRole('button', { name: 'Release reviewed version' })
+          ).toBeDisabled();
+          await expect(page.getByRole('button', { name: 'Preview as investor' })).toBeEnabled();
+          await panel.screenshot({
+            path: `output/playwright/staff-packet-files-${width}.png`,
+          });
+          await panel.getByLabel('Choose packet files').setInputFiles({
+            name: 'unsupported.txt',
+            mimeType: 'text/plain',
+            buffer: Buffer.from('unsupported'),
+          });
+          await expect(panel).toContainText('Choose a PDF, JPG, PNG or WebP');
+          await expect(upload).toBeDisabled();
+          const { violations } = await new AxeBuilder({ page })
+            .include('.portal-packet-files')
+            .analyze();
+          assert.deepEqual(
+            violations.map(({ id }) => id),
+            []
+          );
+          await panel.getByRole('button', { name: 'Remove from queue' }).click();
+          await expect(panel.getByRole('group', { name: 'unsupported.txt' })).toHaveCount(0);
+          await page.getByRole('button', { name: 'Back to property log' }).click();
+          await page.getByRole('button', { name: 'Open draft', exact: true }).click();
+          await expect(panel.getByText('Rights recorded', { exact: true })).toHaveCount(3);
+        }
         await page.screenshot({
           path: `output/playwright/staff-property-log-${role}-${width}.png`,
           fullPage: true,
@@ -115,7 +216,7 @@ try {
         false
       );
       assert.deepEqual(errors, []);
-      await page.close();
+      await context.close();
       console.log(`staff-property-log: ${role} ${width}px passed (isolated fixture)`);
     }
   }

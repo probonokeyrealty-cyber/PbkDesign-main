@@ -8,7 +8,7 @@ test('session reset erases previous editor, attachment and confirmation', () => 
     draft: { internalNotes: 'PRIVATE' },
     editing: true,
     dirty: true,
-    file: { name: 'private' },
+    packetFiles: [{ file: { name: 'private' }, rights: 'private' }],
     confirmation: { command: 'release' },
     member: { role: 'reviewer' },
   };
@@ -18,7 +18,7 @@ test('session reset erases previous editor, attachment and confirmation', () => 
     draft: { title: '', checks: {} },
     editing: false,
     dirty: false,
-    file: null,
+    packetFiles: [],
     confirmation: null,
     member: null,
   });

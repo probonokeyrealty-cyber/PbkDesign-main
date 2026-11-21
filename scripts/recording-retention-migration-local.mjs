@@ -60,6 +60,9 @@ test('startup requires an intact pending-and-confirmed retention fence', async (
           WHERE outcome IN ('pending', 'confirmed')`,
         `CREATE UNIQUE INDEX pbk_recording_retention_fenced_key ON public.pbk_recording_retention_attempts (storage_key COLLATE "POSIX")
           WHERE outcome IN ('pending', 'confirmed')`,
+        `ALTER TABLE public.pbk_recording_retention_attempts ALTER COLUMN storage_key TYPE text COLLATE pg_catalog."POSIX";
+          CREATE UNIQUE INDEX pbk_recording_retention_fenced_key ON public.pbk_recording_retention_attempts (storage_key)
+            WHERE outcome IN ('pending', 'confirmed')`,
       ]) {
         await client.query('BEGIN');
         try {

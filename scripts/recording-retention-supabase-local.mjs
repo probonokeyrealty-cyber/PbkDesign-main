@@ -537,6 +537,25 @@ async function exerciseRetentionRoute({ http, put, assertBytes, ageObject }) {
       assert.equal((await rollbackManualDelete.json()).result, 'recording_storage_busy');
       assert.equal(bridge.blockedNetwork.fetch || 0, rollbackBlockedFetches, 'the pending key must block independent writes before Storage I/O');
       assert.equal(deleted.filter(item => item.path === rollback.key).length, 1, 'a pointer rollback must not replay the confirmed Storage deletion');
+      const fenceProbe = await pool.connect();
+      try {
+        await fenceProbe.query('BEGIN');
+        // Different approval and message IDs leave the key as the only conflict.
+        const tryReservation = (sourceApproval, sourceMessage, newKey = null) => fenceProbe.query(`
+          INSERT INTO public.pbk_recording_retention_attempts
+            (approval_id, message_id, bucket, storage_key, object_version, row_version)
+          SELECT $1, $2, bucket, COALESCE($3::text, storage_key), object_version, row_version
+          FROM public.pbk_recording_retention_attempts WHERE approval_id = $4 AND message_id = $5
+          ON CONFLICT DO NOTHING RETURNING storage_key`,
+        [next.approvalId, 'fixture-retention-cross-message', newKey, sourceApproval, sourceMessage]);
+        assert.equal((await tryReservation(queuedRollback.approvalId, rollback.id)).rowCount, 0, 'a pending key must be fenced across messages');
+        assert.equal((await tryReservation(approvalId, target.id)).rowCount, 0, 'a confirmed key must be fenced across messages');
+        const distinctKey = 'fixture/retention-pointer-rollback-other.txt';
+        assert.deepEqual((await tryReservation(queuedRollback.approvalId, rollback.id, distinctKey)).rows,
+          [{ storage_key: distinctKey }], 'an otherwise identical reservation must succeed for an unfenced key');
+      } finally {
+        try { await fenceProbe.query('ROLLBACK'); } finally { fenceProbe.release(); }
+      }
 
       const writerId = 'fixture-retention-writer';
       await put(retentionWriterFixtureKey, 'synthetic seed bytes');

@@ -37,6 +37,8 @@ export async function assertRecordingRetentionSchema(pool) {
           AND idx.indisunique AND idx.indisvalid AND idx.indisready
           AND idx.indnatts = 1 AND idx.indkey[0] = col.attnum
           AND idx.indcollation[0] = col.attcollation
+          AND (expected.index_name <> 'pbk_recording_retention_fenced_key'
+            OR idx.indcollation[0] = 'pg_catalog."C"'::regcollation)
           AND pg_get_expr(idx.indpred, idx.indrelid) = expected.predicate)
       AND has_schema_privilege('public', 'USAGE')
       AND COALESCE(has_function_privilege(

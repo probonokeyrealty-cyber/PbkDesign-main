@@ -1,4 +1,5 @@
 import { execFileSync } from 'node:child_process';
+import { isClosedDealStage, normalizeDealStage, recordedDealRevenue, summarizeRecordedRevenue } from '../src/app/utils/analyticsEvidence.mjs';
 import { createNeonMailRouter } from './neon-auth-mail.mjs';
 import { createComposioResearchDiscovery } from './composio-research-discovery.mjs';
 import { createPublicMarketConnectionCheck, withSavedRaleighCleanup } from './public-market-connection.mjs';
@@ -44641,11 +44642,8 @@ function buildAnalyticsSnapshot(range = '30d') {
 const ANALYTICS_STAGE_ORDER = ['contacted', 'qualified', 'offer_sent', 'closed'];
 
 function normalizeAnalyticsStageKey(value = '') {
-  const raw = String(value || '')
-    .trim()
-    .toLowerCase()
-    .replace(/[\s-]+/g, '_');
-  if (/closed|won|signed|funded/.test(raw)) return 'closed';
+  const raw = normalizeDealStage(value);
+  if (isClosedDealStage(raw)) return 'closed';
   if (/offer|proposal|contract|loi/.test(raw)) return 'offer_sent';
   if (/qualif|warm|appointment|bant|negotiat/.test(raw)) return 'qualified';
   if (/contact|callback|replied|new|cold|lead|property_data|import/.test(raw)) return 'contacted';
@@ -44678,25 +44676,7 @@ function getAnalyticsLeadStage(lead = {}) {
 }
 
 function getAnalyticsLeadRevenue(lead = {}) {
-  const raw = lead.raw || {};
-  const property = lead.property || raw.property || {};
-  const deal = lead.deal || raw.deal || raw.analysis || raw.analyzer || {};
-  return toMoneyNumber(
-    lead.revenue ??
-      lead.estimatedProfit ??
-      lead.estimated_profit ??
-      lead.assignmentFee ??
-      lead.assignment_fee ??
-      deal.revenue ??
-      deal.estimatedProfit ??
-      deal.estimated_profit ??
-      deal.assignmentFee ??
-      deal.assignment_fee ??
-      property.estimatedProfit ??
-      property.estimated_profit ??
-      0,
-    0
-  );
+  return recordedDealRevenue({ ...lead, stage: getAnalyticsLeadStage(lead) });
 }
 
 function normalizeAnalyticsLead(lead = {}) {
@@ -44706,12 +44686,13 @@ function normalizeAnalyticsLead(lead = {}) {
   const id = String(lead.id || lead.leadId || lead.lead_id || raw.id || raw.leadId || '').trim();
   const stage = getAnalyticsLeadStage(lead);
   return {
-    id: id || `lead-${Math.abs(hashString(JSON.stringify(lead))).toString(16)}`,
+    id,
     name: lead.leadName || lead.lead_name || seller.name || raw.leadName || 'Unknown seller',
     address: lead.address || property.address || raw.address || '',
     stage,
     stageLabel: analyticsStageLabel(stage),
     revenue: getAnalyticsLeadRevenue(lead),
+    revenueBasis: getAnalyticsLeadRevenue(lead) === null ? 'unavailable' : 'recorded',
     updatedAt: lead.updatedAt || lead.updated_at || raw.updatedAt || raw.updated_at || lead.createdAt || lead.created_at || '',
   };
 }
@@ -44724,30 +44705,38 @@ function sortAnalyticsStages(stages = []) {
   });
 }
 
-function buildLeadStageFallback({ warning = '' } = {}) {
+function groupAnalyticsLeads(leads = []) {
   const groups = new Map();
-  for (const lead of Array.isArray(state.leadImports) ? state.leadImports : []) {
+  for (const lead of leads) {
     const normalized = normalizeAnalyticsLead(lead);
     if (!groups.has(normalized.stage)) {
       groups.set(normalized.stage, {
         stage: normalized.stage,
         label: normalized.stageLabel,
         total: 0,
-        revenue: 0,
+        records: [],
         leads: [],
       });
     }
     const group = groups.get(normalized.stage);
     group.total += 1;
-    group.revenue += normalized.revenue;
+    group.records.push(normalized);
     if (group.leads.length < 20) group.leads.push(normalized);
   }
+  return sortAnalyticsStages(Array.from(groups.values()).map(({ records, ...group }) => ({
+    ...group,
+    ...(isClosedDealStage(group.stage) ? summarizeRecordedRevenue(records)
+      : { revenue: null, revenueBasis: 'unavailable' }),
+  })));
+}
+
+function buildLeadStageFallback({ warning = '' } = {}) {
   return {
     ok: true,
     result: 'local_view_only',
     source: 'bridge-state',
     generatedAt: isoNow(),
-    stages: sortAnalyticsStages(Array.from(groups.values())),
+    stages: groupAnalyticsLeads(Array.isArray(state.leadImports) ? state.leadImports : []),
     warning,
   };
 }
@@ -44766,61 +44755,31 @@ async function buildLeadStageAnalytics({ limit = 500 } = {}) {
       warning: result.ok ? 'Postgres lead_profiles is empty; showing bridge-state leads.' : `Postgres lead_profiles unavailable (${result.error || result.reason}); showing bridge-state leads.`,
     });
   }
-  const groups = new Map();
-  for (const row of result.rows) {
-    const normalized = normalizeAnalyticsLead(row);
-    if (!groups.has(normalized.stage)) {
-      groups.set(normalized.stage, {
-        stage: normalized.stage,
-        label: normalized.stageLabel,
-        total: 0,
-        revenue: 0,
-        leads: [],
-      });
-    }
-    const group = groups.get(normalized.stage);
-    group.total += 1;
-    group.revenue += normalized.revenue;
-    if (group.leads.length < 20) group.leads.push(normalized);
-  }
   return {
     ok: true,
     result: 'live',
     source: 'postgres:lead_profiles',
     generatedAt: isoNow(),
-    stages: sortAnalyticsStages(Array.from(groups.values())),
+    stages: groupAnalyticsLeads(result.rows),
   };
 }
 
 function isClosedAnalyticsDeal(item = {}) {
-  return /closed|won|signed|funded|complete/i.test(String(item.status || item.stage || item.result || ''));
+  return isClosedDealStage(item.status || item.stage);
 }
 
 function getAnalyticsDealRevenue(item = {}) {
-  const payload = item.payload || item.raw || item.result || {};
-  return toMoneyNumber(
-    item.revenue ??
-      item.amount ??
-      item.estimatedProfit ??
-      item.estimated_profit ??
-      item.profit ??
-      item.assignmentFee ??
-      item.assignment_fee ??
-      payload.revenue ??
-      payload.amount ??
-      payload.estimatedProfit ??
-      payload.estimated_profit ??
-      payload.profit ??
-      payload.assignmentFee ??
-      payload.assignment_fee ??
-      0,
-    0
-  );
+  return recordedDealRevenue({ ...item, stage: item.status || item.stage });
+}
+
+function getAnalyticsCreationTimestamp(item = {}) {
+  const timestamp = Date.parse(item.createdAt || item.created_at || '');
+  return Number.isFinite(timestamp) ? timestamp : 0;
 }
 
 function normalizeAnalyticsDeal(item = {}) {
   const lead = normalizeAnalyticsLead({
-    id: item.leadId || item.lead_id || item.lead?.id || item.id,
+    id: item.leadId || item.lead_id || item.lead?.id || '',
     leadName: item.leadName || item.lead_name || item.lead?.leadName || item.lead?.lead_name,
     address: item.address || item.lead?.address,
     stage: 'closed',
@@ -44830,9 +44789,10 @@ function normalizeAnalyticsDeal(item = {}) {
   });
   return {
     id: String(item.id || item.contractId || item.contract_id || item.leadId || item.lead_id || lead.id).trim(),
-    day: new Date(getRecordTimestamp(item) || Date.now()).toISOString().slice(0, 10),
+    day: new Date(getAnalyticsCreationTimestamp(item)).toISOString().slice(0, 10),
     status: item.status || '',
     revenue: lead.revenue,
+    revenueBasis: lead.revenueBasis,
     lead,
   };
 }
@@ -44840,14 +44800,16 @@ function normalizeAnalyticsDeal(item = {}) {
 function buildDealTimelineFromItems(items = [], { days = 30, startAt = null, source = 'bridge-state', warning = '' } = {}) {
   const startMs = startAt ? Date.parse(startAt) : Date.now() - Math.max(1, Number(days || 30)) * 24 * 60 * 60 * 1000;
   const groups = new Map();
+  const records = [];
   for (const item of Array.isArray(items) ? items : []) {
-    const ts = getRecordTimestamp(item);
-    if (!ts || ts < startMs || !isClosedAnalyticsDeal(item)) continue;
+    const ts = getAnalyticsCreationTimestamp(item);
+    if (!ts || ts < startMs || ts > Date.now() || !isClosedAnalyticsDeal(item)) continue;
     const deal = normalizeAnalyticsDeal(item);
-    if (!groups.has(deal.day)) groups.set(deal.day, { day: deal.day, count: 0, revenue: 0, leads: [] });
+    records.push(deal.lead);
+    if (!groups.has(deal.day)) groups.set(deal.day, { day: deal.day, count: 0, records: [], leads: [] });
     const group = groups.get(deal.day);
     group.count += 1;
-    group.revenue += deal.revenue;
+    group.records.push(deal.lead);
     if (group.leads.length < 20) group.leads.push(deal.lead);
   }
   return {
@@ -44856,7 +44818,12 @@ function buildDealTimelineFromItems(items = [], { days = 30, startAt = null, sou
     source,
     generatedAt: isoNow(),
     ...(startAt ? { range: 'ytd' } : {}),
-    days: Array.from(groups.values()).sort((left, right) => String(left.day).localeCompare(String(right.day))),
+    reportingPeriod: startAt ? `ytd:${new Date(startAt).getUTCFullYear()}` : `rolling:${days}`,
+    dateBasis: 'record_created',
+    financialEvidence: { version: 1, revenueCoverage: summarizeRecordedRevenue(records).revenueCoverage },
+    days: Array.from(groups.values()).map(({ records: dayRecords, ...day }) => ({
+      ...day, ...summarizeRecordedRevenue(dayRecords),
+    })).sort((left, right) => String(left.day).localeCompare(String(right.day))),
     warning,
   };
 }
@@ -44867,7 +44834,7 @@ async function buildDealTimelineAnalytics({ days = 30, range = '' } = {}) {
   const result = await queryPgRows(
     `SELECT
        c.id,
-       c.lead_id AS "leadId",
+       l.id AS "leadId",
        c.status,
        c.amount::float AS amount,
        c.payload,
@@ -44879,6 +44846,7 @@ async function buildDealTimelineAnalytics({ days = 30, range = '' } = {}) {
      LEFT JOIN public.lead_profiles l ON l.id = c.lead_id
      WHERE COALESCE(c.workspace_id, 'pbk') = 'pbk'
        AND c.created_at >= COALESCE($2::timestamptz, NOW() - ($1::int * INTERVAL '1 day'))
+       AND c.created_at <= NOW()
      ORDER BY c.created_at ASC`,
     [rangeDays, startAt]
   );
@@ -44926,19 +44894,23 @@ async function buildAiObservabilityMetrics({ days = 30, range = '' } = {}) {
       [rangeDays, startAt]
     ),
     queryPgRows(
-      `SELECT
-         COUNT(*)::int AS tool_calls,
-         COALESCE(SUM(
-           CASE
-             WHEN context->>'costUsd' ~ '^-?[0-9]+(\\.[0-9]+)?$' THEN (context->>'costUsd')::numeric
-             WHEN context->>'cost_usd' ~ '^-?[0-9]+(\\.[0-9]+)?$' THEN (context->>'cost_usd')::numeric
-             WHEN context->>'estimatedCostUsd' ~ '^-?[0-9]+(\\.[0-9]+)?$' THEN (context->>'estimatedCostUsd')::numeric
-             WHEN context->>'aiSpendUsd' ~ '^-?[0-9]+(\\.[0-9]+)?$' THEN (context->>'aiSpendUsd')::numeric
-             ELSE 0
-           END
-         ), 0)::float AS ai_spend_usd
-       FROM public.pbk_tool_usage
-       WHERE created_at >= COALESCE($2::timestamptz, NOW() - ($1::int * INTERVAL '1 day'))`,
+      `WITH inputs AS (
+         SELECT COALESCE(context->>'costUsd', context->>'cost_usd', context->>'aiSpendUsd') AS reported,
+           COALESCE(context->>'estimatedCostUsd', context->>'estimated_cost_usd') AS estimated,
+           COALESCE(context->>'costBasis', context->>'cost_basis', 'recorded') AS basis
+         FROM public.pbk_tool_usage
+         WHERE created_at >= COALESCE($2::timestamptz, NOW() - ($1::int * INTERVAL '1 day'))
+       ), costs AS (
+         SELECT CASE WHEN basis = 'recorded' AND reported ~ '^[0-9]+([.][0-9]+)?$' THEN reported::numeric END AS recorded,
+           CASE WHEN basis IN ('recorded', 'estimated') AND estimated ~ '^[0-9]+([.][0-9]+)?$' THEN estimated::numeric
+             WHEN basis = 'estimated' AND estimated IS NULL AND reported ~ '^[0-9]+([.][0-9]+)?$' THEN reported::numeric END AS estimated
+         FROM inputs
+       ) SELECT COUNT(*)::int AS tool_calls,
+         COUNT(recorded)::int AS recorded_records,
+         COUNT(*) FILTER (WHERE recorded IS NULL AND estimated IS NOT NULL)::int AS estimated_records,
+         CASE WHEN COUNT(*) = 0 THEN 0 ELSE SUM(recorded) END::float AS ai_spend_usd,
+         SUM(estimated) FILTER (WHERE recorded IS NULL)::float AS estimated_ai_spend_usd
+       FROM costs`,
       [rangeDays, startAt]
     ),
   ]);
@@ -44946,6 +44918,15 @@ async function buildAiObservabilityMetrics({ days = 30, range = '' } = {}) {
   const toolUsage = state.status?.toolUsage || {};
   const qaTotal = toNumber(qa.rows?.[0]?.total, 0);
   const qaRetries = toNumber(qa.rows?.[0]?.retries, 0);
+  const costRow = usage.rows?.[0];
+  const costEvidence = usage.ok && costRow ? {
+    version: 1,
+    totalRecords: toNumber(costRow.tool_calls, -1),
+    recordedRecords: toNumber(costRow.recorded_records, -1),
+    estimatedRecords: toNumber(costRow.estimated_records, -1),
+    missingRecords: toNumber(costRow.tool_calls, -1) - toNumber(costRow.recorded_records, -1)
+      - toNumber(costRow.estimated_records, -1),
+  } : null;
   return {
     ok: true,
     result: postgresOk ? 'live' : 'local_view_only',
@@ -44953,12 +44934,15 @@ async function buildAiObservabilityMetrics({ days = 30, range = '' } = {}) {
     generatedAt: isoNow(),
     ...(startAt ? { range: 'ytd' } : {}),
     days: rangeDays,
+    reportingPeriod: startAt ? `ytd:${new Date(startAt).getUTCFullYear()}` : `rolling:${rangeDays}`,
     metrics: {
       p95LatencyMs: toNumber(latency.rows?.[0]?.p95_latency_ms, 0),
       qaRetryRate: qaTotal ? Number((qaRetries / qaTotal).toFixed(4)) : 0,
       safetyBlocks: toNumber(safety.rows?.[0]?.safety_blocks, toNumber(toolUsage.safetyBlocks || toolUsage.safety_block || 0, 0)),
       toolCalls: toNumber(usage.rows?.[0]?.tool_calls, Object.values(toolUsage).reduce((sum, value) => sum + toNumber(value, 0), 0)),
-      aiSpendUsd: Number(toNumber(usage.rows?.[0]?.ai_spend_usd, 0).toFixed(4)),
+      aiSpendUsd: usage.ok && costRow?.ai_spend_usd != null ? toNumber(costRow.ai_spend_usd, NaN) : null,
+      estimatedAiSpendUsd: usage.ok && costRow?.estimated_ai_spend_usd != null ? toNumber(costRow.estimated_ai_spend_usd, NaN) : null,
+      costEvidence,
     },
     warning: [latency, qa, safety, usage].every((item) => item.ok)
       ? ''

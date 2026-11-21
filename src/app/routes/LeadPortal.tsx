@@ -132,10 +132,14 @@ export function LeadPortal() {
   const location = useLocation();
   const portalLocationRef = useRef(location);
   portalLocationRef.current = location;
-  const returnContext = readLeadQueueReturn(location.state?.leadReturn);
+  const requestedReturn = readLeadQueueReturn(location.state?.leadReturn);
+  const returnContext = requestedReturn?.path === '/analytics' && requestedReturn.leadId !== leadId
+    ? null : requestedReturn;
   const fleetReturn = readFleetReturn(location.state?.fleetReturn, leadId);
   const backLabel = fleetReturn
     ? 'Fleet'
+    : returnContext?.path === '/analytics'
+      ? 'Analytics'
     : returnContext && returnContext.path !== '/leads'
       ? 'Today'
       : 'Leads';

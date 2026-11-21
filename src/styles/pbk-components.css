@@ -6032,6 +6032,49 @@
   }
 }
 
+.pbk-analytics-evidence {
+  border-block: 1px solid var(--border-dim);
+  margin-block: var(--s-3);
+  color: var(--text-secondary);
+  font-family: var(--font-ui);
+  font-size: 12px;
+}
+.pbk-analytics-evidence summary {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  min-height: 44px;
+  cursor: pointer;
+  padding: var(--s-2) var(--s-3);
+  flex-wrap: wrap;
+}
+.pbk-analytics-evidence summary strong {
+  color: var(--sky);
+  margin-inline-start: auto;
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+.pbk-analytics-evidence summary:focus-visible {
+  outline: 2px solid var(--sky);
+  outline-offset: 2px;
+}
+.pbk-analytics-evidence dl {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 190px), 1fr));
+  gap: var(--s-3);
+  padding-inline: var(--s-3);
+}
+.pbk-analytics-evidence dt { color: var(--text-muted); }
+.pbk-analytics-evidence dd { margin: 4px 0 0; overflow-wrap: anywhere; }
+.pbk-analytics-evidence p { padding-inline: var(--s-3); }
+.pbk-analytics-stat .l,
+.pbk-analytics-stat .delta,
+.pbk-analytics-roi-card .l,
+.pbk-analytics-drill-meta { overflow-wrap: anywhere; white-space: normal; }
+.pbk-analytics-stat,
+.pbk-analytics-roi-card .roi-cell { min-width: 0; }
+.pbk-analytics-drill-row { min-height: 44px; }
+
 /* ============================================================
    UNIFIED INBOX COCKPIT
    Prototype-inspired approvals and message stream, bridge-backed.

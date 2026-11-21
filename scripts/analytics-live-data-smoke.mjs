@@ -39,7 +39,9 @@ for (const endpoint of [
 
 assert(runtimeBridgeSource.includes('fetchSkillOutcomesRequest'), 'runtimeBridge should expose a read helper for /api/skills/outcomes.');
 assert(/split\('\?'\)\[0\]/.test(runtimeBridgeSource), 'Auth-optional runtime path matching should ignore query strings.');
-assert(/"test:analytics-live-data":\s*"node \.\/scripts\/analytics-live-data-smoke\.mjs"/.test(packageSource), 'package.json should expose the analytics live-data smoke test.');
+const packageScripts = JSON.parse(packageSource).scripts;
+assert(packageScripts['test:analytics-live-data'].includes('node ./scripts/analytics-live-data-smoke.mjs'), 'package.json should expose the analytics live-data smoke test.');
+assert(packageScripts['test:analytics-live-data'].includes('npm run test:analytics-evidence'), 'Analytics smoke must include financial evidence regressions.');
 assert(/"test:founder"[\s\S]*npm run test:analytics-live-data/.test(packageSource), 'test:founder should include the analytics live-data smoke test.');
 
 const analyticsLogic = await import(pathToFileURL(path.resolve(root, 'src/app/routes/analyticsRuntimeLogic.js')).href);
@@ -53,9 +55,14 @@ const normalizedAnalytics = analyticsLogic.buildAnalyticsViewModel({
     ],
   },
   timelineResponse: {
+    result: 'live', reportingPeriod: 'rolling:30', dateBasis: 'closed_at',
+    financialEvidence: { version: 1, revenueCoverage: { version: 1, totalRecords: 3, recordedRecords: 3, missingRecords: 0 } },
     days: [
-      { day: '2026-06-01', count: 1, revenue: 12000, leads: [{ id: 'deal-1', name: 'Deal Seller', address: '3 Live Way', revenue: 12000 }] },
-      { day: '2026-06-02', count: 2, revenue: 38000 },
+      { day: '2026-06-01', count: 1, revenue: 12000, revenueBasis: 'recorded',
+        revenueCoverage: { version: 1, totalRecords: 1, recordedRecords: 1, missingRecords: 0 },
+        leads: [{ id: 'deal-1', name: 'Deal Seller', address: '3 Live Way', revenue: 12000, stage: 'closed', revenueBasis: 'recorded' }] },
+      { day: '2026-06-02', count: 2, revenue: 38000, revenueBasis: 'recorded',
+        revenueCoverage: { version: 1, totalRecords: 2, recordedRecords: 2, missingRecords: 0 } },
     ],
   },
   aiMetricsResponse: { metrics: { p95LatencyMs: 1480, qaRetryRate: 0.0125, safetyBlocks: 4 } },
@@ -72,8 +79,9 @@ const roi = analyticsLogic.computeAnalyticsRoi({
   closed: 2,
   aiSpend: 20,
   revenue: 1000,
+  eligible: true,
 });
-assert.equal(roi.costPerContactedLead, 2);
+assert.equal(roi.costPerContactedLead, null, 'The global funnel is not a period-matched cost cohort.');
 assert.equal(roi.roiMultiple, 50);
 
 const csv = analyticsLogic.buildAnalyticsCsv(normalizedAnalytics);

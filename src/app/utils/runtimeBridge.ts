@@ -827,7 +827,8 @@ export type AnalyticsLead = {
   address?: string;
   stage?: string;
   stageLabel?: string;
-  revenue?: number;
+  revenue?: number | null;
+  revenueBasis?: string;
   updatedAt?: string;
 };
 
@@ -840,14 +841,19 @@ export type LeadStagesResponse = {
     stage: string;
     label?: string;
     total?: number;
-    revenue?: number;
+    revenue?: number | null;
+    revenueBasis?: string;
+    revenueCoverage?: Record<string, unknown>;
     leads?: AnalyticsLead[];
   }>;
   warning?: string;
 };
 
 export type DealTimelineResponse = {
+  dateBasis?: string;
   ok: boolean;
+  reportingPeriod?: string;
+  financialEvidence?: Record<string, unknown>;
   range?: 'ytd';
   result?: string;
   source?: string;
@@ -855,7 +861,9 @@ export type DealTimelineResponse = {
   days?: Array<{
     day: string;
     count?: number;
-    revenue?: number;
+    revenue?: number | null;
+    revenueBasis?: string;
+    revenueCoverage?: Record<string, unknown>;
     leads?: AnalyticsLead[];
   }>;
   warning?: string;
@@ -863,6 +871,7 @@ export type DealTimelineResponse = {
 
 export type AiMetricsResponse = {
   ok: boolean;
+  reportingPeriod?: string;
   range?: 'ytd';
   result?: string;
   source?: string;

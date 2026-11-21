@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate } from 'react-router';
+import { useLocation, useNavigate } from 'react-router';
+import { readLeadQueueReturn } from '../utils/leadQueueReturn';
 import { ArrowRight, ChevronDown, Database, Download, RefreshCw, X } from 'lucide-react';
 import { PbkDataSource } from '../../components/pbk/index';
 import {
@@ -12,7 +13,7 @@ import {
   type CampaignDrilldownRow,
 } from '../utils/runtimeBridge';
 import { showUiToast } from '../utils/uiFeedback';
-import { buildAnalyticsCsv, buildAnalyticsViewModel } from './analyticsRuntimeLogic.js';
+import { buildAnalyticsCsv, buildAnalyticsViewModel, confirmAnalyticsPeriod, readCampaignAttributionCost } from './analyticsRuntimeLogic.js';
 
 type AnalyticsViewModel = ReturnType<typeof buildAnalyticsViewModel>;
 const ANALYTICS_RANGES = [
@@ -26,6 +27,9 @@ const ANALYTICS_RANGE_KEY = 'pbk-analytics-range';
 
 function readAnalyticsRange() {
   try {
+    const requested = new URLSearchParams(window.location.search).get('range');
+    const fromQuery = ANALYTICS_RANGES.find(({ id }) => id === requested);
+    if (fromQuery) return fromQuery;
     const stored = window.localStorage.getItem(ANALYTICS_RANGE_KEY);
     return ANALYTICS_RANGES.find(({ id }) => id === stored) || ANALYTICS_RANGES[1];
   } catch {
@@ -35,15 +39,16 @@ function readAnalyticsRange() {
 
 type AnalyticsLeadItem = AnalyticsLead & {
   name?: string;
-  revenue?: number;
+  revenue?: number | null;
 };
 type AnalyticsStats = {
   leadsTracked: number;
   closedDeals: number;
-  closedRate: number;
-  totalRevenue: number;
-  roiMultiple: number;
-  aiSpend: number;
+  totalRevenue: number | null;
+  roiMultiple: number | null;
+  aiSpend: number | null;
+  evidenceStatus: string;
+  creationCohort: boolean;
   generatedAt: string;
 };
 type CampaignAttributionRow = {
@@ -54,7 +59,10 @@ type CampaignAttributionRow = {
   opened: number;
   replied: number;
   connected: number;
-  cost: number;
+  recordedCost: number;
+  estimatedCost: number;
+  recordedCostRows: number;
+  estimatedCostRows: number;
 };
 
 interface DrillDownPanelProps {
@@ -65,14 +73,17 @@ interface DrillDownPanelProps {
   canExport: boolean;
   onClose: () => void;
   onExport: () => void;
+  onInspectLead: (lead: AnalyticsLeadItem) => void;
 }
 
-function money(value: number) {
+function money(value: number | null | undefined) {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return '-';
   return new Intl.NumberFormat('en-US', {
     style: 'currency',
     currency: 'USD',
-    maximumFractionDigits: 0,
-  }).format(value || 0);
+    minimumFractionDigits: 0,
+    maximumFractionDigits: value > 0 && value < 1 ? 4 : 2,
+  }).format(value);
 }
 
 function shortNumber(value: number) {
@@ -117,29 +128,16 @@ function formatGeneratedAt(value: string) {
 }
 
 function buildAnalyticsStats(model: AnalyticsViewModel): AnalyticsStats {
-  const leadUniverse = Math.max(0, ...model.funnel.map((stage) => stage.total));
-  const closedFromFunnel = model.funnel
-    .filter((stage) => /closed|won|signed|funded/i.test(`${stage.stage} ${stage.label}`))
-    .reduce((sum, stage) => sum + stage.total, 0);
-  const closedFromTimeline = model.dailyDeals.reduce((sum, day) => sum + day.count, 0);
-  const closedDeals = closedFromFunnel || closedFromTimeline;
-  const totalRevenue = model.dailyDeals.reduce((sum, day) => sum + day.revenue, 0);
   return {
-    leadsTracked: leadUniverse,
-    closedDeals,
-    closedRate: leadUniverse ? (closedDeals / leadUniverse) * 100 : 0,
-    totalRevenue,
+    leadsTracked: model.financial.rosterLeads,
+    closedDeals: model.financial.closedDeals,
+    totalRevenue: model.financial.revenue,
     roiMultiple: model.roi.roiMultiple,
     aiSpend: model.roi.aiSpend,
+    evidenceStatus: model.financial.status,
+    creationCohort: model.financial.dateBasis !== 'closed_at',
     generatedAt: model.generatedAt,
   };
-}
-
-function campaignRowCost(row: CampaignDrilldownRow) {
-  const channel = String(row.channel || '').toLowerCase();
-  if (channel === 'sms') return 0.021;
-  if (channel === 'call') return 0.014;
-  return 0.01;
 }
 
 function addCampaignAttributionRow(
@@ -158,14 +156,24 @@ function addCampaignAttributionRow(
       opened: 0,
       replied: 0,
       connected: 0,
-      cost: 0,
+      recordedCost: 0,
+      estimatedCost: 0,
+      recordedCostRows: 0,
+      estimatedCostRows: 0,
     } satisfies CampaignAttributionRow);
   current.leads += 1;
   current.sent += row.sent ? 1 : 0;
   current.opened += row.opened ? 1 : 0;
   current.replied += row.replied ? 1 : 0;
   current.connected += row.connected ? 1 : 0;
-  current.cost += campaignRowCost(row);
+  const cost = readCampaignAttributionCost(row);
+  if (cost.amount !== null && cost.basis === 'recorded') {
+    current.recordedCost += cost.amount;
+    current.recordedCostRows++;
+  } else if (cost.amount !== null && cost.basis === 'estimated') {
+    current.estimatedCost += cost.amount;
+    current.estimatedCostRows++;
+  }
   grouped.set(id, current);
 }
 
@@ -226,7 +234,9 @@ function CampaignAttributionList({
                 <strong title={row.label}>{row.label}</strong>
                 <span>
                   {shortNumber(row.sent)} sent - {shortNumber(row.replied)} replies -{' '}
-                  {money(row.cost)} spend
+                  {row.recordedCostRows === row.leads ? `Recorded cost ${money(row.recordedCost)}`
+                    : row.estimatedCostRows === row.leads ? `Estimated cost ${money(row.estimatedCost)}`
+                      : row.recordedCostRows + row.estimatedCostRows > 0 ? 'Cost incomplete' : 'Cost not reported'}
                 </span>
               </div>
               <div className="rate">{formatPercent(replyRate)}</div>
@@ -360,30 +370,55 @@ function AnalyticsStatRibbon({
   return (
     <section className="pbk-analytics-grid" aria-label="Key metrics">
       <div className="pbk-analytics-stat">
-        <div className="l">Leads tracked</div>
+        <div className="l">Roster leads</div>
         <div className="v">{available ? shortNumber(stats.leadsTracked) : '-'}</div>
-        <div className="delta">Largest funnel stage</div>
+        <div className="delta">Returned funnel snapshot</div>
       </div>
       <div className="pbk-analytics-stat">
-        <div className="l">Closed deals</div>
+        <div className="l">Closed records</div>
         <div className="v">{available ? shortNumber(stats.closedDeals) : '-'}</div>
         <div className="delta">
-          {available ? `${formatPercent(stats.closedRate)} close rate` : 'Acquisition funnel'}
+          {stats.creationCohort ? `Created: ${range.caption.toLowerCase()}` : range.caption}
         </div>
       </div>
       <div className="pbk-analytics-stat">
-        <div className="l">Deal revenue</div>
+        <div className="l">Recorded revenue</div>
         <div className="v sky">{available ? money(stats.totalRevenue) : '-'}</div>
-        <div className="delta">{range.caption}</div>
+        <div className="delta">{stats.creationCohort ? 'Contract creation cohort' : range.caption}</div>
       </div>
       <div className="pbk-analytics-stat">
-        <div className="l">AI ROI</div>
-        <div className="v">{available && stats.roiMultiple ? `${stats.roiMultiple}x` : '-'}</div>
+        <div className="l">Revenue / tool cost</div>
+        <div className="v">{available && stats.roiMultiple !== null ? `${stats.roiMultiple}x` : '-'}</div>
         <div className="delta">
-          {available ? `${money(stats.aiSpend)} tracked spend` : range.caption}
+          {available && stats.roiMultiple !== null ? `${money(stats.aiSpend)} recorded tool cost`
+            : available ? stats.evidenceStatus : 'Evidence incomplete'}
         </div>
       </div>
     </section>
+  );
+}
+
+function AnalyticsEvidence({ model, ready }: { model: AnalyticsViewModel; ready: boolean }) {
+  const facts = model.financial;
+  return (
+    <details className="pbk-analytics-evidence">
+      <summary>
+        <span>Reporting evidence</span>
+        <strong>{ready ? facts.status : 'Not current'}</strong>
+        <ChevronDown size={14} aria-hidden="true" />
+      </summary>
+      <dl>
+        <div><dt>Revenue records</dt><dd>{facts.revenueCoverage
+          ? `${facts.revenueCoverage.recordedRecords} / ${facts.revenueCoverage.totalRecords}` : 'Not reported'}</dd></div>
+        <div><dt>Tool cost records</dt><dd>{facts.costEvidence
+          ? `${facts.costEvidence.recordedRecords} / ${facts.costEvidence.totalRecords}` : 'Not reported'}</dd></div>
+        <div><dt>Reporting period</dt><dd>{facts.reportingPeriod || 'Unconfirmed'}</dd></div>
+        <div><dt>Date basis</dt><dd>{facts.dateBasis === 'record_created' ? 'Contract creation date; not closing date'
+          : facts.dateBasis === 'closed_at' ? 'Recorded closing date' : 'Unconfirmed'}</dd></div>
+        <div><dt>Source</dt><dd>{model.source}</dd></div>
+      </dl>
+      <p>Recorded entries, not verified payment receipts. Purchase prices and projected profit are excluded.</p>
+    </details>
   );
 }
 
@@ -470,6 +505,7 @@ function AnalyticsFunnelStep({
       className="pbk-analytics-funnel-step"
       onClick={(event) => onOpen(event.currentTarget)}
       aria-label={`Open ${stage.label} drill-down`}
+      data-analytics-slice={`stage:${stage.stage}`}
       aria-describedby={`analytics-stage-count-${index}`}
     >
       <span className="fs-label">
@@ -508,6 +544,7 @@ function AnalyticsDailyBar({
       className="pbk-analytics-daily-bar"
       onClick={(event) => onOpen(event.currentTarget)}
       aria-label={`Open daily deals for ${dayLabel(day.day)}: ${shortNumber(day.count)} closed, ${money(day.revenue)} revenue`}
+      data-analytics-slice={`day:${day.day}`}
     >
       <span className="bar-track" aria-hidden="true">
         <span className="bar-fill" style={{ height: `${height}%` }} />
@@ -536,8 +573,8 @@ function DrillDownPanel({
   canExport,
   onClose,
   onExport,
+  onInspectLead,
 }: DrillDownPanelProps) {
-  const navigate = useNavigate();
   const dialogRef = useRef<HTMLDialogElement>(null);
 
   useEffect(() => {
@@ -585,17 +622,16 @@ function DrillDownPanel({
               key={item.id}
               type="button"
               className="pbk-analytics-drill-row"
-              onClick={() => {
-                onClose();
-                navigate(`/leads/${encodeURIComponent(item.id)}`);
-              }}
+              disabled={!item.id}
+              data-analytics-lead-id={item.id}
+              onClick={() => onInspectLead(item)}
             >
               <span className="pbk-analytics-drill-record">
                 <strong>{item.name || 'Unknown seller'}</strong>
                 <span>{item.address || 'Address pending'}</span>
                 <span>{item.stageLabel || item.stage || 'Lead'}</span>
               </span>
-              <span className="pbk-analytics-drill-revenue">{money(item.revenue || 0)}</span>
+              <span className="pbk-analytics-drill-revenue">{money(item.revenue)}</span>
               <ArrowRight size={16} aria-hidden="true" />
             </button>
           ))
@@ -624,6 +660,9 @@ function DrillDownPanel({
 const EMPTY_ANALYTICS = buildAnalyticsViewModel();
 
 export function Analytics() {
+  const navigate = useNavigate();
+  const location = useLocation();
+  const restoredFocus = useRef('');
   const [range, setRange] = useState(readAnalyticsRange);
   const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading');
   const [error, setError] = useState('');
@@ -671,6 +710,9 @@ export function Analytics() {
       ) {
         throw new Error('The bridge did not confirm the year-to-date range.');
       }
+      if (!confirmAnalyticsPeriod(timelineResponse, aiMetricsResponse, period)) {
+        throw new Error('The bridge did not confirm the selected reporting period.');
+      }
       setSnapshot({
         range: range.id,
         model: buildAnalyticsViewModel({ stagesResponse, timelineResponse, aiMetricsResponse }),
@@ -695,6 +737,7 @@ export function Analytics() {
     setStatus('loading');
     setError('');
     setRange(nextRange);
+    navigate(`/analytics?range=${nextRange.id}`, { replace: true, state: null });
     try {
       window.localStorage.setItem(ANALYTICS_RANGE_KEY, nextRange.id);
     } catch {
@@ -711,6 +754,32 @@ export function Analytics() {
     [model.funnel]
   );
   const stats = useMemo(() => buildAnalyticsStats(model), [model]);
+
+  useEffect(() => {
+    const origin = readLeadQueueReturn(location.state?.queueReturn);
+    if (status !== 'ready' || origin?.path !== '/analytics' || restoredFocus.current === location.key) return;
+    const slice = new URLSearchParams(origin.search).get('focus');
+    const target = Array.from(document.querySelectorAll<HTMLButtonElement>('[data-analytics-slice]'))
+      .find(button => button.dataset.analyticsSlice === slice);
+    if (!target) return;
+    const frame = requestAnimationFrame(() => {
+      window.scrollTo({ top: origin.scrollY });
+      target.focus({ preventScroll: true });
+      restoredFocus.current = location.key;
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [status, current, location.key, location.state]);
+
+  const inspectLead = (lead: AnalyticsLeadItem) => {
+    if (!lead.id) return;
+    const query = new URLSearchParams({ range: range.id });
+    const slice = drillTrigger.current?.dataset.analyticsSlice;
+    if (slice) query.set('focus', slice);
+    closeDrillDown();
+    navigate(`/leads/${encodeURIComponent(lead.id)}`, { state: { leadReturn: {
+      path: '/analytics', search: `?${query}`, scrollY: window.scrollY, leadId: lead.id,
+    } } });
+  };
 
   const exportAnalytics = useCallback(() => {
     downloadCsv(
@@ -738,7 +807,7 @@ export function Analytics() {
       open: true,
       title: stage.label,
       items: stage.leads,
-      meta: `${shortNumber(stage.total)} total - ${stage.leads.length} rows returned - Revenue ${money(stage.revenue)}`,
+      meta: `${shortNumber(stage.total)} total - ${stage.leads.length} rows returned - Recorded revenue ${money(stage.revenue)}`,
     });
   };
 
@@ -746,9 +815,9 @@ export function Analytics() {
     drillTrigger.current = trigger;
     setDrillDownPanel({
       open: true,
-      title: `Deals closed - ${dayLabel(day.day)}`,
+      title: `Closed records - ${dayLabel(day.day)}`,
       items: day.leads,
-      meta: `${shortNumber(day.count)} closed - ${day.leads.length} rows returned - Revenue ${money(day.revenue)}`,
+      meta: `${shortNumber(day.count)} closed - ${day.leads.length} rows returned - Recorded revenue ${money(day.revenue)}`,
     });
   };
 
@@ -787,7 +856,8 @@ export function Analytics() {
           </section>
         )}
 
-        <AnalyticsStatRibbon stats={stats} available={Boolean(current)} range={range} />
+        <AnalyticsStatRibbon stats={stats} available={Boolean(current) && status === 'ready'} range={range} />
+        <AnalyticsEvidence model={model} ready={Boolean(current) && status === 'ready'} />
 
         <section className="pbk-analytics-body">
           <div className="pbk-analytics-card">
@@ -823,15 +893,16 @@ export function Analytics() {
           <div className="pbk-analytics-card pbk-analytics-deal-card">
             <div className="pbk-analytics-card-head">
               <div>
-                <h2>Daily closed deals</h2>
-                <p>Closed deals and revenue by day (UTC)</p>
+                <h2>Daily closed records</h2>
+                <p>{model.financial.dateBasis === 'closed_at' ? 'Recorded closing dates (UTC)'
+                  : 'Contract creation dates (UTC); not closing dates'}</p>
               </div>
               <span className="tf">{range.caption}</span>
             </div>
             <div
               className="pbk-analytics-daily-bars"
               role="region"
-              aria-label="Daily closed deals chart"
+              aria-label="Daily closed records chart"
               tabIndex={model.dailyDeals.length ? 0 : undefined}
             >
               {model.dailyDeals.length ? (
@@ -857,34 +928,34 @@ export function Analytics() {
           <div className="pbk-analytics-card pbk-analytics-roi-card">
             <div className="pbk-analytics-card-head">
               <div>
-                <h2>Cost and AI ROI</h2>
-                <p>Period spend and revenue; lead counts from the current funnel.</p>
+                <h2>Revenue and tool cost</h2>
+                <p>Recorded values for the selected period.</p>
               </div>
               <span className="tf">{range.caption}</span>
             </div>
             <div className="roi-grid">
               <div className="roi-cell">
-                <div className="l">Cost per contacted lead</div>
-                <div className="v">{current ? money(model.roi.costPerContactedLead) : '-'}</div>
-                <div className="sub">AI spend divided by contacted stages</div>
+                <div className="l">Recorded tool cost</div>
+                <div className="v">{current && status === 'ready' ? money(model.financial.aiSpend) : '-'}</div>
+                <div className="sub">Tool usage records; not provider invoices</div>
               </div>
               <div className="roi-cell">
-                <div className="l">Cost per qualified lead</div>
-                <div className="v">{current ? money(model.roi.costPerQualifiedLead) : '-'}</div>
-                <div className="sub">Qualified, offer, and closed stages</div>
+                <div className="l">Estimated tool cost</div>
+                <div className="v">{current && status === 'ready' ? money(model.financial.estimatedAiSpend) : '-'}</div>
+                <div className="sub">Excluded from the recorded-cost ratio</div>
               </div>
               <div className="roi-cell">
-                <div className="l">ROI on AI spend</div>
+                <div className="l">Revenue / tool cost</div>
                 <div className="v lime">
-                  {model.roi.roiMultiple ? `${model.roi.roiMultiple}x` : '-'}
+                  {current && status === 'ready' && model.roi.roiMultiple !== null ? `${model.roi.roiMultiple}x` : '-'}
                 </div>
                 <div className="sub">
-                  {current ? `${money(model.roi.revenue)} revenue` : 'Revenue / AI spend'}
+                  {current && status === 'ready' ? model.financial.status : 'Evidence incomplete'}
                 </div>
               </div>
               <div className="roi-cell">
-                <div className="l">Cost per closed deal</div>
-                <div className="v">{current ? money(model.roi.costPerClosedDeal) : '-'}</div>
+                <div className="l">Tool cost per closed deal</div>
+                <div className="v">{current && status === 'ready' ? money(model.roi.costPerClosedDeal) : '-'}</div>
                 <div className="sub">
                   {current ? `${shortNumber(stats.closedDeals)} closed deals` : 'Current funnel'}
                 </div>
@@ -892,8 +963,7 @@ export function Analytics() {
             </div>
             {current && (
               <div className="roi-formula">
-                {money(model.roi.aiSpend)} AI spend - {shortNumber(stats.leadsTracked)} tracked
-                leads - {money(model.roi.revenue)} revenue
+                {money(model.financial.revenue)} recorded revenue / {money(model.financial.aiSpend)} recorded tool cost
               </div>
             )}
             <PbkDataSource endpoint="GET /api/observability/ai-metrics" status="ships" />
@@ -935,6 +1005,7 @@ export function Analytics() {
         </details>
 
         <DrillDownPanel
+        onInspectLead={inspectLead}
           open={drillDownPanel.open}
           title={drillDownPanel.title}
           meta={drillDownPanel.meta}

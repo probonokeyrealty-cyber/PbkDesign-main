@@ -125,6 +125,9 @@
 }
 .pbk-lead-portal .pbk-portal-sections a:hover,
 .pbk-lead-portal .pbk-portal-sections a:focus-visible { color: var(--sky); border-bottom-color: var(--sky); }
+.pbk-portal-evidence-links { display: flex; flex-wrap: wrap; border-inline-start: 1px solid var(--border-dim); }
+.pbk-lead-portal .pbk-portal-evidence-links a { color: var(--sky); }
+.pbk-portal-evidence-links a { text-align: center; }
 .pbk-lead-portal .pbk-portal-next-step {
   padding: 16px; border: 1px solid var(--sky-dim); background: var(--sky-glow); gap: 12px;
 }
@@ -136,6 +139,15 @@
 .pbk-lead-portal #lead-property { scroll-margin-block-start: 80px; }
 @media (min-width: 1100px) {
   .pbk-faster-triage.has-review { grid-template-columns: minmax(0, 1.55fr) minmax(320px, 1fr); }
+}
+@media (max-width: 720px) {
+  .pbk-portal-evidence-links {
+    display: grid;
+    flex: 1 0 100%;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    border-inline-start: 0;
+    border-block-start: 1px solid var(--border-dim);
+  }
 }
 @media (max-width: 600px) {
   .pbk-today-start-row { grid-template-columns: minmax(0, 1fr) minmax(0, 46%); }

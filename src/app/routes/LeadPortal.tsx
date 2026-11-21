@@ -130,6 +130,8 @@ export function LeadPortal() {
   const { leadId = '' } = useParams();
   const navigate = useNavigate();
   const location = useLocation();
+  const portalLocationRef = useRef(location);
+  portalLocationRef.current = location;
   const returnContext = readLeadQueueReturn(location.state?.leadReturn);
   const fleetReturn = readFleetReturn(location.state?.fleetReturn, leadId);
   const backLabel = fleetReturn
@@ -298,21 +300,22 @@ export function LeadPortal() {
       if (fullResponse.ok === false) {
         throw new Error(String(fullResponse.error || 'The bridge did not return this lead.'));
       }
-      if (requestId !== requestSequence.current) return;
+      if (requestId !== requestSequence.current || currentLeadIdRef.current !== leadId) return;
       const canonicalLead = unwrapLead(fullResponse);
       const canonicalLeadId = String(canonicalLead.leadId || canonicalLead.id || leadId).trim();
       if (canonicalLeadId && canonicalLeadId !== leadId) {
-        navigate(`/leads/${encodeURIComponent(canonicalLeadId)}${location.hash}`, {
-          replace: true,
-          state: location.state,
-        });
+        const { search, hash, state } = portalLocationRef.current;
+        navigate(
+          { pathname: `/leads/${encodeURIComponent(canonicalLeadId)}`, search, hash },
+          { replace: true, state }
+        );
         return;
       }
       const conversationResponse = await fetchConversationsRequest({
         leadId: canonicalLeadId || leadId,
         limit: 2,
       }).catch(() => null);
-      if (requestId !== requestSequence.current) return;
+      if (requestId !== requestSequence.current || currentLeadIdRef.current !== leadId) return;
       setLeadPayload(fullResponse);
       const selectedThread =
         conversationResponse?.items?.find(
@@ -333,7 +336,7 @@ export function LeadPortal() {
     } finally {
       if (requestId === requestSequence.current) setLoading(false);
     }
-  }, [leadId, loadTimeline, navigate, location.state, location.hash]);
+  }, [leadId, loadTimeline, navigate]);
 
   useEffect(() => {
     actionSequence.current += 1;
@@ -773,6 +776,24 @@ export function LeadPortal() {
         <a href="#lead-timeline" onClick={event => jumpToSection(event, 'lead-timeline')}>Timeline</a>
         <a href="#lead-numbers" onClick={event => jumpToSection(event, 'lead-numbers')}>Numbers</a>
         <a href="#lead-property" onClick={event => jumpToSection(event, 'lead-property')}>Property</a>
+        {lead.id === leadId && (
+          <div className="pbk-portal-evidence-links" role="group" aria-label="Saved property evidence">
+            {[
+              ['Property record', '#lead-record'],
+              ['Saved comps', '#lead-comps'],
+              ['Property photos', '#lead-photos'],
+            ].map(([label, hash]) => (
+              <Link
+                key={hash}
+                to={{ pathname: `/leads/${encodeURIComponent(leadId)}`, search: location.search, hash }}
+                state={location.state}
+                preventScrollReset
+              >
+                {label}
+              </Link>
+            ))}
+          </div>
+        )}
       </nav>
 
         <section id="lead-next-step" className="pbk-portal-next-step" aria-labelledby="lead-next-step-heading" data-next-step-state={nextStep.state}>
@@ -809,7 +830,16 @@ export function LeadPortal() {
         </div>
       </div>
 
-      <LeadPortalProperty key={`${lead.id || leadId}:${lead.address}:${lead.city}:${lead.state}:${lead.zip}:${propertyTab || 'overview'}`} initialTab={propertyTab} lead={lead} onEdit={startEdit} onSaved={refreshSavedProperty} />
+      {(!lead.id || lead.id === leadId) && (
+        <LeadPortalProperty
+          key={`${lead.id || leadId}:${lead.address}:${lead.city}:${lead.state}:${lead.zip}`}
+          entryKey={location.key}
+          initialTab={propertyTab}
+          lead={lead}
+          onEdit={startEdit}
+          onSaved={refreshSavedProperty}
+        />
+      )}
 
       <details className="pbk-portal-source-details">
         <summary>Data sources</summary>

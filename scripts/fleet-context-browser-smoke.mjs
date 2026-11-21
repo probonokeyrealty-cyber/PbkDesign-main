@@ -333,11 +333,16 @@ async function verify(engine, width) {
     });
     await expect.poll(() => Boolean(pendingLeadRead)).toBe(true);
     await expect(page.getByRole('button', { name: 'Inspect agent', exact: true })).toBeDisabled();
+    const savedEvidence = page.getByRole('group', { name: 'Saved property evidence', exact: true });
+    await expect(savedEvidence).toHaveCount(0);
+    await expect(page.getByRole('region', { name: 'Property', exact: true })).toHaveCount(0);
     delayedLead = '';
     await pendingLeadRead.fulfill(apiFixture('/api/leads/sample-48'));
     await expect(
       page.getByRole('heading', { name: 'Sample 48', level: 1, exact: true })
     ).toBeVisible();
+    await expect(savedEvidence.getByRole('link', { name: 'Saved comps', exact: true }))
+      .toHaveAttribute('href', '/leads/sample-48#lead-comps');
     await page.goto(`${origin}/leads/sample-47`);
     await expect(
       page.getByRole('heading', { name: 'Sample 47', level: 1, exact: true })

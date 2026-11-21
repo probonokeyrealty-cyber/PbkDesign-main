@@ -25,6 +25,7 @@ import { analyzerPropertyPreview } from './analyzer-property-preview.mjs';
 import { createPropertyIntelligence } from './property-intelligence.mjs';
 import { lookupAttomRecentSales } from './attom-recent-sales.mjs';
 import { lookupAddressSuggestions } from './address-suggestions.mjs';
+import { createPhoneDialerRouter, createPhoneDialerRuntime } from './phone-dialer-routes.mjs';
 import { applyAgentVersionRollback, buildAgentRegistrySnapshot, buildAgentVersionSnapshot, buildDefaultAgentRegistry, buildStableAgentFleetMeasurement, findAgentsByCapability, invokeRegisteredAgent, mergeAgentRegistryRecords, normalizeAgentRegistryId, normalizeAgentRegistryRecord, validateAgentVersionSnapshot } from './agent-registry.mjs';
 import { buildAgentExecutionEvidence, collectAgentFleetEvidence, isNonOperationalAgentEvidence, isAgentHandlerCompletion } from './agent-fleet-measurement.mjs';
 import { getAgentLatencyPolicy } from './agent-latency-policy.mjs';
@@ -912,6 +913,7 @@ const PUBLIC_PATHS = new Set([
   '/automations',
   '/analytics',
   '/campaigns',
+  '/dialer',
   '/campaign-detail',
   '/brain',
   '/research',
@@ -930,6 +932,7 @@ const PUBLIC_PATHS = new Set([
   // Provider webhooks cannot attach the PBK bridge bearer token. Keep these
   // open while each handler validates and maps only the expected payload shape.
   '/api/webhooks/telnyx',
+  '/api/webhooks/twilio/voice-status',
   '/api/webhooks/telnyx/inbound',
   '/webhooks/telnyx/inbound',
   '/api/webhooks/telnyx/recording',
@@ -3833,6 +3836,7 @@ function getTeamPermissions() {
     canDeleteData: false,
     canChangeGuardrails: false,
     canManageSkills: /^(1|true|yes|on)$/i.test(String(process.env.PBK_TEAM_CAN_MANAGE_SKILLS || '').trim()),
+    canManagePhoneNumbers: /^(1|true|yes|on)$/i.test(String(process.env.PBK_TEAM_CAN_MANAGE_PHONE_NUMBERS || '').trim()),
     canToggleKillSwitch: false,
   };
 }
@@ -3911,6 +3915,15 @@ function authorizeDirectTeamBridgeRequest({
   }
   if (/^\/api\/approvals\/[^/]+\/outlook-delivery(?:\/receipt)?$/.test(normalizedPath) && permissions.canApproveProviderActions !== true) {
     return deny('canApproveProviderActions', 'check Outlook delivery');
+  }
+
+  const phoneNumberRoute = /^\/api\/phone-numbers\/.+/.test(normalizedPath);
+  if (phoneNumberRoute && permissions.canManagePhoneNumbers !== true) {
+    return deny('canManagePhoneNumbers', 'manage PBK phone numbers');
+  }
+  const dialerCallRoute = normalizedMethod !== 'GET' && /^\/api\/dialer\/call/.test(normalizedPath);
+  if (dialerCallRoute && permissions.canPlaceCalls !== true) {
+    return deny('canPlaceCalls', 'place calls');
   }
 
   const killSwitchTool = /^(?:pbk_kill_switch|killswitch|togglekillswitch)$/i.test(toolName);
@@ -62990,7 +63003,7 @@ function getResponseCorsHeaders(response) {
   );
 }
 
-const COMMAND_CENTER_APP_PATHS = new Set(['/app', '/command-center', '/dashboard', '/settings', '/inbox', '/leads', '/pipeline', '/deal', '/deals', '/deals/analyzer', '/analyzer', '/agents', '/agent', '/agent-console', '/fleet', '/agent-fleet', '/ava-chat', '/skills', '/skill-studio', '/calls', '/live-calls', '/contracts', '/automations', '/analytics', '/campaigns', '/campaign-detail', '/brain', '/research', '/memory', '/integrations', '/lead-detail', '/activity-log', '/recordings', '/approvals', '/approval']);
+const COMMAND_CENTER_APP_PATHS = new Set(['/app', '/command-center', '/dashboard', '/settings', '/inbox', '/leads', '/pipeline', '/deal', '/deals', '/deals/analyzer', '/analyzer', '/agents', '/agent', '/agent-console', '/fleet', '/agent-fleet', '/ava-chat', '/skills', '/skill-studio', '/calls', '/live-calls', '/contracts', '/automations', '/analytics', '/campaigns', '/dialer', '/campaign-detail', '/brain', '/research', '/memory', '/integrations', '/lead-detail', '/activity-log', '/recordings', '/approvals', '/approval']);
 const COMMAND_CENTER_APP_PREFIXES = ['/deal/', '/deals/', '/leads/', '/inbox/', '/skills/', '/skill-studio/', '/campaigns/'];
 const RENDER_STATIC_ASSET_PREFIXES = ['/assets/'];
 const RENDER_STATIC_CONTENT_TYPES = new Map([
@@ -73153,6 +73166,30 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
 }
 
 const neonAuthMailRouter = createNeonMailRouter();
+let phoneDialerRouter = null;
+function getPhoneDialerRouter() {
+  if (phoneDialerRouter) return phoneDialerRouter;
+  const runtime = createPhoneDialerRuntime({
+    env: process.env,
+    isHosted: IS_HOSTED,
+    getState: () => state,
+    persistState: (next) => persistState(next),
+    isPhoneDnc: (phone) => Boolean(findDncEntryByPhone(phone)),
+    defaultCallerId: getEffectiveTelnyxFromNumber(),
+    logActivity: (entry) => addActivity(state, makeActivity({ actor: 'PBK dialer', ...entry })),
+  });
+  phoneDialerRouter = createPhoneDialerRouter({
+    runtime,
+    json,
+    readBody,
+    readRawBodyBuffer,
+    getState: () => state,
+    getTeamPermissions,
+    createApproval: (params) => toolHandlers.createApproval(params),
+  });
+  return phoneDialerRouter;
+}
+
 const server = createServer(async (request, response) => {
   response.pbkAcceptsGzip = /\bgzip\b/i.test(String(request.headers['accept-encoding'] || ''));
   response.pbkCorsHeaders = buildBridgeCorsHeaders(request);
@@ -73241,6 +73278,8 @@ const server = createServer(async (request, response) => {
     }
 
     if (maybeServeRenderCommandCenter(request, response, pathname)) return;
+
+    if (await getPhoneDialerRouter()(request, response, pathname, url)) return;
 
     if (request.method === 'GET' && matchesPath(pathname, ['/', '/health', '/status', '/api/health', '/api/status'])) {
       const runtimeMeta = getRuntimeMeta();

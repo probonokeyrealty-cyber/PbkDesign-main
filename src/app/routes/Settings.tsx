@@ -12,6 +12,7 @@ import {
   ShieldCheck,
 } from 'lucide-react';
 import { PbkDataSource } from '../../components/pbk/index';
+import { PhoneNumbersPanel } from '../components/PhoneNumbersPanel';
 import { useRuntimeSnapshot } from '../hooks/useRuntimeSnapshot';
 import { lastCompletedPublicMarketRun, readSavedRaleighReceipt } from '../utils/publicMarketStatus';
 import type { SavedRaleighReceipt } from '../utils/publicMarketStatus';
@@ -1033,6 +1034,7 @@ export function Settings() {
             ))}
           </div>
         </section>
+        <PhoneNumbersPanel />
         <section
           className="pbk-settings-band pbk-settings-admin-card"
           aria-labelledby="settings-admin-title"

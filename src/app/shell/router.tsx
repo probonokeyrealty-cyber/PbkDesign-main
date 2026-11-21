@@ -66,6 +66,11 @@ const Campaigns = lazy(() =>
     default: module.Campaigns,
   }))
 );
+const ParcelDialer = lazy(() =>
+  loadCurrentRoute(() => import('../routes/ParcelDialer')).then((module) => ({
+    default: module.ParcelDialer,
+  }))
+);
 const AvaChat = lazy(() =>
   loadCurrentRoute(() => import('../routes/AvaChat')).then((module) => ({
     default: module.AvaChat,
@@ -106,6 +111,7 @@ const router = createBrowserRouter(
         { path: 'skill-studio', element: <SkillStudio /> },
         { path: 'analytics', element: <Analytics /> },
         { path: 'campaigns', element: <Campaigns /> },
+        { path: 'dialer', element: <ParcelDialer /> },
         { path: 'agent', element: <AvaChat /> },
         { path: 'agent-console', element: <AvaChat /> },
         { path: 'ava-chat', element: <AvaChat /> },

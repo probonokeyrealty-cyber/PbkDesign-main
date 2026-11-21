@@ -417,6 +417,10 @@ async function exerciseRetentionRoute({ http, put, assertBytes, ageObject }) {
       [`/${bucket}//${target.key.replace('/', '//')}/`]);
       assert.equal((await run(409, 60)).result, 'retention_plan_changed');
       await pool.query("DELETE FROM public.unified_messages WHERE id = 'retention-legacy-alias'");
+      await pool.query(`UPDATE public.unified_messages SET payload = jsonb_set(payload, '{recordingStoragePath}', to_jsonb($2::text))
+        WHERE id = $1`, [target.id, replacement.key]);
+      assert.equal((await run(409, 60)).result, 'retention_plan_changed', 'one approval cannot clear distinct pointers on the same row');
+      await pool.query("UPDATE public.unified_messages SET payload = payload - 'recordingStoragePath' WHERE id = $1", [target.id]);
       const queued = await run(202, 60);
       assert.equal(queued.candidateCount, 1, 'retention must find recordings that are not in the dashboard cache');
       const { approvalId } = queued;
@@ -628,7 +632,7 @@ async function exerciseRetentionRoute({ http, put, assertBytes, ageObject }) {
       const unverifiedBefore = await pointer(unverified.id);
       const queuedUnverified = await run(202, 1);
       assert.equal(queuedUnverified.candidateCount, 1);
-      await request(`/api/approvals/${queuedUnverified.approvalId}/approve`, 200, {});
+      await approveRetention(queuedUnverified.approvalId);
       const unverifiedRun = await run(200, 1, queuedUnverified.approvalId);
       assert.equal(unverifiedRun.run.status, 'pending');
       assert.equal(unverifiedRun.run.deletedCount, 0);

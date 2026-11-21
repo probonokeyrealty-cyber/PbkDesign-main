@@ -177,7 +177,7 @@ test('unapproved v2 policy is not replaced with a pilot or legacy policy', async
   assert.equal(result.ready, false);
 });
 
-test('approval, auth, delivery and dispatch code remains unchanged outside reviewed read-only projections', () => {
+test('bridge code matches the reviewed release fingerprint outside the scoped read-only projections', () => {
   const marketProjection = [
     'publicMarketWorker: withSavedRaleighCleanup(',
     '            await (checkPublicMarketConnection ??= createPublicMarketConnectionCheck())(),',
@@ -205,8 +205,11 @@ test('approval, auth, delivery and dispatch code remains unchanged outside revie
   // The isolated retention suite covers pointer types, startup proof and upload rejection.
   // Pin the synced bridge, including the reviewed read-only Analytics changes.
   // The retention repair binds founder authority, durable discovery and confirmed inbox writes.
+  // The Parcel Dialer release adds its router, staff permission checks and
+  // signed Twilio webhook paths. Main also separates Telnyx voice and SMS
+  // senders. The Postgres regression suite covers checked-out client errors.
   assert.equal(createHash('sha256').update(unchanged).digest('hex'),
-    '8678d6f234ebd6f579c06e93312590dfe5c6c04c84dd7812d660838050e97046');
+    '4acc7d3f63a7d629f6f47c1b124c3356f1929c834adae14b04ec51de73ac6cb0');
 });
 
 test('production distribution includes reader and protocol, never the fixture signer', () => {

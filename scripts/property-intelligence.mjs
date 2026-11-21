@@ -13,9 +13,26 @@ const belongs = (snapshot, address) => sameAttomAddress({ street: snapshot?.addr
 const occupied = comp => Object.values(object(comp)).some(v => typeof v === 'number' ? v !== 0 : typeof v === 'string' ? v.trim() : Boolean(v));
 const validTime = v => typeof v === 'string' && Number.isFinite(Date.parse(v));
 const scalarKey = value => typeof value === 'string' || typeof value === 'number' ? String(value).trim().toUpperCase().replace(/[^A-Z0-9]/g, '') : '';
-const parcelConflict = (a, b) => ['attomId', 'apn', 'fips'].some(key => scalarKey(a?.[key]) && scalarKey(b?.[key]) && scalarKey(a[key]) !== scalarKey(b[key]));
+const parcelKeys = ['attomId', 'apn', 'fips'];
+const parcelConflict = (a, b) => parcelKeys.some(key => scalarKey(a?.[key]) && scalarKey(b?.[key]) && scalarKey(a[key]) !== scalarKey(b[key]));
 const matchedProfile = (result, address) => result?.status === 'matched' && belongs(result.profile, address);
 const definedFacts = profile => Object.fromEntries(Object.entries(profile).filter(([, value]) => value != null));
+const currentRecord = (lead, address) => {
+  const snapshot = lead?.deal?.propertyRecordSnapshot;
+  return belongs(snapshot, address) ? snapshot : null;
+};
+
+const mortgageAndTaxFields = [
+  'originalMortgageAmount', 'originalMortgageLender', 'originalMortgageDocumentNumber',
+  'secondOriginalMortgageAmount', 'secondOriginalMortgageLender', 'secondOriginalMortgageDocumentNumber',
+  'taxDelinquentYear', 'assessedImprovementValue', 'assessmentMarketTotalValue',
+  'assessmentMarketLandValue', 'assessmentMarketImprovementValue',
+];
+
+function missingMortgageAndTaxFields(profile, savedRecord) {
+  const savedFacts = parcelConflict(savedRecord?.facts, profile) ? null : savedRecord?.facts;
+  return mortgageAndTaxFields.filter(key => profile[key] == null && (savedFacts?.[key] == null || savedFacts[key] === ''));
+}
 
 function hasCorePropertyFacts(profile) {
   return Boolean(profile.propertyType) &&
@@ -112,7 +129,7 @@ async function loadCompPhotos(result, address, listing, now, reviewedCandidates 
 
 export function propertyIntelligencePatch(lead, address, evidence, now = new Date().toISOString()) {
   const deal = { ...object(lead?.deal) }, analyzer = { ...object(lead?.analyzer) };
-  const oldRecord = belongs(deal.propertyRecordSnapshot, address) ? deal.propertyRecordSnapshot : undefined;
+  const oldRecord = currentRecord(lead, address);
   const profile = evidence.records?.status === 'matched' ? evidence.records.profile : null;
   if (profile && sameAttomAddress({ street: profile.address }, address)) {
     const facts = { ...object(oldRecord?.facts) }, fieldRetrievedAt = { ...object(oldRecord?.fieldRetrievedAt) };
@@ -176,7 +193,7 @@ export function createPropertyIntelligence({ getLead, saveLead, listing, records
     catch { return unavailable; }
   };
 
-  async function lookupAttom(address, radius) {
+  async function lookupAttom(address, radius, savedRecord) {
     const readRecords = () => read(() => records(address));
     const readSales = () => read(() => sales({ ...address, radius }));
     if (!mcpRecords) {
@@ -186,17 +203,24 @@ export function createPropertyIntelligence({ getLead, saveLead, listing, records
 
     const mcp = await read(() => mcpRecords(address, { radius }));
     const matched = matchedProfile(mcp, address);
+    const needsCoreRecords = !matched || !hasCorePropertyFacts(mcp.profile);
+    // A linked lead without a snapshot passes null. Unlinked drafts pass undefined.
+    const needsMortgageAndTax = !needsCoreRecords && savedRecord !== undefined &&
+      missingMortgageAndTaxFields(mcp.profile, savedRecord).length > 0;
     const mcpSales = matched && mcp.sales?.status === 'matched' ? mcp.sales : null;
     const hasRequestedSales = mcpSales?.sales?.length > 0 && mcpSales.radiusMiles >= radius;
     const [rest, fallbackSales] = await Promise.all([
-      matched && hasCorePropertyFacts(mcp.profile) ? null : readRecords(),
+      needsCoreRecords || needsMortgageAndTax ? readRecords() : null,
       hasRequestedSales ? null : readSales(),
     ]);
-    const result = combinedRecords(rest, mcp, address, now());
-    if (result.accepted && hasRequestedSales) return { records: result.records, sales: mcpSales };
+    const result = combinedRecords(needsCoreRecords ? rest : null, mcp, address, now());
+    // A supplemental mismatch has no bearing on core facts or comps already matched by MCP.
+    const supplementalProfile = needsMortgageAndTax && matchedProfile(rest, address) && !parcelConflict(rest.profile, mcp.profile)
+      ? rest.profile : null;
+    if (result.accepted && hasRequestedSales) return { records: result.records, sales: mcpSales, supplementalProfile };
     // A conflicting parcel also invalidates its comp set, even if the radius was adequate.
     const restSales = hasRequestedSales ? await readSales() : fallbackSales;
-    return { records: result.records, sales: restSales?.status !== 'matched' && result.accepted && mcpSales ? mcpSales : restSales };
+    return { records: result.records, sales: restSales?.status !== 'matched' && result.accepted && mcpSales ? mcpSales : restSales, supplementalProfile };
   }
 
   return async function enrich(input = {}) {
@@ -219,18 +243,34 @@ export function createPropertyIntelligence({ getLead, saveLead, listing, records
       Array.isArray(priorSales.selectedIds) && priorSales.selectedIds.includes(sale?.id) &&
       parseAttomAddress({ street: sale?.address }) && attomStreetKey(sale.address.split(',')[0]) !== attomStreetKey(address.street)
     ).slice(0, 20) : [];
-    const key = `${attomStreetKey(address.street)}|${address.city.toUpperCase()}|${address.state}|${address.zip.slice(0, 5)}|${radius}|${JSON.stringify(reviewedCandidates.map(s => s.address))}`;
+    const savedRecord = currentRecord(initial, address);
+    const savedCoverage = initial && mcpRecords ? {
+      missing: missingMortgageAndTaxFields({}, savedRecord),
+      parcel: parcelKeys.map(key => scalarKey(savedRecord?.facts?.[key])),
+    } : null;
+    const key = JSON.stringify([
+      attomStreetKey(address.street), address.city.toUpperCase(), address.state, address.zip.slice(0, 5),
+      radius, reviewedCandidates.map(s => s.address), savedCoverage,
+    ]);
     if (!pending.has(key)) {
       const work = Promise.all([
         read(() => listing({ address: label(address), queueBrowserResearch: false, source: 'property-intelligence' }), { cache: { hit: false }, propertyData: null }),
-        lookupAttom(address, radius),
+        lookupAttom(address, radius, savedCoverage ? savedRecord : undefined),
       ]).then(async ([listingResult, attom]) => {
-        return { listing: listingResult, records: attom.records, sales: await loadCompPhotos(attom.sales, address, listing, now(), reviewedCandidates) };
+        return { ...attom, listing: listingResult, sales: await loadCompPhotos(attom.sales, address, listing, now(), reviewedCandidates) };
       }).finally(() => pending.delete(key));
       pending.set(key, work);
     }
-    const evidence = await pending.get(key);
+    const { supplementalProfile, ...evidence } = await pending.get(key);
     const current = await check();
+    const latestRecord = currentRecord(current, address);
+    if (supplementalProfile && !parcelConflict(latestRecord?.facts, supplementalProfile)) {
+      const missingFields = missingMortgageAndTaxFields(evidence.records.profile, latestRecord);
+      const newFacts = Object.fromEntries(missingFields
+        .filter(key => supplementalProfile[key] != null)
+        .map(key => [key, supplementalProfile[key]]));
+      evidence.records = { ...evidence.records, profile: { ...evidence.records.profile, ...newFacts } };
+    }
     const patch = propertyIntelligencePatch(current, address, evidence, now());
     if (leadId) await saveLead(leadId, patch);
     return { ok: true, address: label(address), ...evidence, patch, ...(leadId ? { leadId } : {}), saved: Boolean(leadId) };

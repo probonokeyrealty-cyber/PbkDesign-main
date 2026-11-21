@@ -25,6 +25,7 @@ import { analyzerPropertyPreview } from './analyzer-property-preview.mjs';
 import { createPropertyIntelligence } from './property-intelligence.mjs';
 import { lookupAttomRecentSales } from './attom-recent-sales.mjs';
 import { lookupAddressSuggestions } from './address-suggestions.mjs';
+import { createPhoneDialerRouter, createPhoneDialerRuntime } from './phone-dialer-routes.mjs';
 import { applyAgentVersionRollback, buildAgentRegistrySnapshot, buildAgentVersionSnapshot, buildDefaultAgentRegistry, buildStableAgentFleetMeasurement, findAgentsByCapability, invokeRegisteredAgent, mergeAgentRegistryRecords, normalizeAgentRegistryId, normalizeAgentRegistryRecord, validateAgentVersionSnapshot } from './agent-registry.mjs';
 import { buildAgentExecutionEvidence, collectAgentFleetEvidence, isNonOperationalAgentEvidence, isAgentHandlerCompletion } from './agent-fleet-measurement.mjs';
 import { getAgentLatencyPolicy } from './agent-latency-policy.mjs';
@@ -109,6 +110,7 @@ import { buildLeadCommitEnvelope } from './lead-field-provenance.mjs';
 import { loadBatchReviewRoster } from './batch-review-roster.mjs';
 import { loadAppliedBatchLeads, runBatchApply } from './batch-apply.mjs';
 import { dispatchTelnyxWithBatchPhoneGuard, ensureBatchPhoneSchema, setWorkspacePhoneDnc } from './batch-phone-dispatch.mjs';
+import { getTelnyxSmsDefault, isTelnyxSmsSenderHeld } from './telnyx-sender-routing.mjs';
 import { isDeepSpecConfigured, readDeepSpecConfig, requestSpeculativeChatCompletion } from './deepspec-speculative-client.mjs';
 import { buildInvokeRateLimitIdentity, createInvokeRateLimiter } from './invoke-rate-limit.mjs';
 import { ClosingStateMachine, Phase } from './ava-state-machine.mjs';
@@ -449,6 +451,8 @@ const TELNYX_API_KEY = String(process.env.PBK_TELNYX_API_KEY || process.env.TELN
 const TELNYX_PUBLIC_KEY = String(process.env.PBK_TELNYX_PUBLIC_KEY || process.env.TELNYX_PUBLIC_KEY || '').trim();
 const TELNYX_CONNECTION_ID = String(process.env.PBK_TELNYX_CONNECTION_ID || '').trim();
 const TELNYX_FROM_NUMBER = String(process.env.PBK_TELNYX_FROM_NUMBER || '').trim();
+const TELNYX_SMS_FROM_NUMBER = process.env.PBK_TELNYX_SMS_FROM_NUMBER;
+const TELNYX_SMS_HOLD_NUMBERS = process.env.PBK_TELNYX_SMS_HOLD_NUMBERS;
 const TELNYX_MESSAGING_PROFILE_ID = String(process.env.PBK_TELNYX_MESSAGING_PROFILE_ID || '').trim();
 const TELNYX_WEBHOOK_URL = String(process.env.PBK_TELNYX_WEBHOOK_URL || (PUBLIC_BASE_URL ? `${PUBLIC_BASE_URL}/api/webhooks/telnyx` : ''))
   .trim()
@@ -923,6 +927,7 @@ const PUBLIC_PATHS = new Set([
   '/automations',
   '/analytics',
   '/campaigns',
+  '/dialer',
   '/campaign-detail',
   '/brain',
   '/research',
@@ -941,6 +946,8 @@ const PUBLIC_PATHS = new Set([
   // Provider webhooks cannot attach the PBK bridge bearer token. Keep these
   // open while each handler validates and maps only the expected payload shape.
   '/api/webhooks/telnyx',
+  '/api/webhooks/twilio/voice-status',
+  '/api/webhooks/twilio/voice',
   '/api/webhooks/telnyx/inbound',
   '/webhooks/telnyx/inbound',
   '/api/webhooks/telnyx/recording',
@@ -2504,10 +2511,11 @@ function buildAdminPersistenceStatus() {
 function getTelnyxProviderMeta() {
   const effectiveFromNumber = getEffectiveTelnyxFromNumber();
   const fromNumberConfigured = Boolean(effectiveFromNumber);
+  const smsFromNumberConfigured = Boolean(getTelnyxSmsDefault(TELNYX_SMS_FROM_NUMBER, effectiveFromNumber));
   const webhookConfigured = Boolean(TELNYX_WEBHOOK_URL);
   const publicKeyConfigured = Boolean(TELNYX_PUBLIC_KEY);
-  const messagingReady = Boolean(TELNYX_API_KEY && fromNumberConfigured);
-  const voiceReady = Boolean(messagingReady && TELNYX_CONNECTION_ID);
+  const messagingReady = Boolean(TELNYX_API_KEY && smsFromNumberConfigured);
+  const voiceReady = Boolean(TELNYX_API_KEY && fromNumberConfigured && TELNYX_CONNECTION_ID);
 
   const messagingMissing = [];
   const voiceMissing = [];
@@ -2517,8 +2525,10 @@ function getTelnyxProviderMeta() {
     voiceMissing.push('PBK_TELNYX_API_KEY');
   }
   if (!fromNumberConfigured) {
-    messagingMissing.push('PBK_TELNYX_FROM_NUMBER');
     voiceMissing.push('PBK_TELNYX_FROM_NUMBER');
+  }
+  if (!smsFromNumberConfigured) {
+    messagingMissing.push(TELNYX_SMS_FROM_NUMBER?.trim() ? 'PBK_TELNYX_SMS_FROM_NUMBER' : 'PBK_TELNYX_FROM_NUMBER');
   }
   if (!TELNYX_CONNECTION_ID) {
     voiceMissing.push('PBK_TELNYX_CONNECTION_ID');
@@ -3855,6 +3865,7 @@ function getTeamPermissions() {
     canDeleteData: false,
     canChangeGuardrails: false,
     canManageSkills: /^(1|true|yes|on)$/i.test(String(process.env.PBK_TEAM_CAN_MANAGE_SKILLS || '').trim()),
+    canManagePhoneNumbers: /^(1|true|yes|on)$/i.test(String(process.env.PBK_TEAM_CAN_MANAGE_PHONE_NUMBERS || '').trim()),
     canToggleKillSwitch: false,
   };
 }
@@ -3933,6 +3944,15 @@ function authorizeDirectTeamBridgeRequest({
   }
   if (/^\/api\/approvals\/[^/]+\/outlook-delivery(?:\/receipt)?$/.test(normalizedPath) && permissions.canApproveProviderActions !== true) {
     return deny('canApproveProviderActions', 'check Outlook delivery');
+  }
+
+  const phoneNumberRoute = /^\/api\/phone-numbers\/.+/.test(normalizedPath);
+  if (phoneNumberRoute && permissions.canManagePhoneNumbers !== true) {
+    return deny('canManagePhoneNumbers', 'manage PBK phone numbers');
+  }
+  const dialerCallRoute = normalizedMethod !== 'GET' && /^\/api\/dialer\/call/.test(normalizedPath);
+  if (dialerCallRoute && permissions.canPlaceCalls !== true) {
+    return deny('canPlaceCalls', 'place calls');
   }
 
   const killSwitchTool = /^(?:pbk_kill_switch|killswitch|togglekillswitch)$/i.test(toolName);
@@ -6993,6 +7013,13 @@ function getPgPool() {
     // Disable cert validation for managed-DB hostnames; keep it on for localhost.
     ssl: /(localhost|127\.0\.0\.1)/.test(DATABASE_URL) ? false : { rejectUnauthorized: false },
   });
+  // pg-pool handles errors on idle clients. While a client is checked out,
+  // a disconnect between queries would otherwise emit an unhandled error.
+  const onCheckedOutClientError = (error) => {
+    console.warn('[pbk-local-openclaw] checked-out pg client disconnected:', error?.message || error);
+  };
+  __pgPool.on('acquire', (client) => client.on('error', onCheckedOutClientError));
+  __pgPool.on('release', (_error, client) => client.removeListener('error', onCheckedOutClientError));
   const rawConnect = __pgPool.connect.bind(__pgPool);
   // Retry only checkout failures: after dispatch, even ECONNRESET may hide a commit.
   const acquire = (deadlineAt) =>
@@ -37755,8 +37782,10 @@ function decodeTelnyxClientState(value = '') {
   }
 }
 
-function getTelnyxFromNumber(params = {}) {
-  return normalizePhone(params.from || params.fromNumber || params.selectedFromNumber || params.selected_from_number || getEffectiveTelnyxFromNumber());
+function getTelnyxFromNumber(params = {}, { sms = false } = {}) {
+  const voiceDefault = getEffectiveTelnyxFromNumber();
+  const senderDefault = sms ? getTelnyxSmsDefault(TELNYX_SMS_FROM_NUMBER, voiceDefault) : voiceDefault;
+  return normalizePhone(params.from || params.fromNumber || params.selectedFromNumber || params.selected_from_number || senderDefault);
 }
 
 function shouldStreamTelnyxOutboundCall(fromNumber, params = {}) {
@@ -37801,6 +37830,9 @@ function extractTelnyxError(body) {
 }
 
 async function fireTelnyxRequest(method, endpoint, payload, options = {}) {
+  if (method === 'POST' && endpoint === '/messages' && isTelnyxSmsSenderHeld(payload?.from, TELNYX_SMS_HOLD_NUMBERS)) {
+    return { ok: false, smsSenderHeld: true, error: 'Outbound SMS is on hold for this sender.' };
+  }
   if (!TELNYX_API_KEY) {
     return {
       ok: false,
@@ -38114,6 +38146,8 @@ async function buildTelnyxVoiceRoutingDiagnostic() {
     generatedAt: isoNow(),
     defaultNumber,
     expectedWebhookUrl,
+    smsDefaultNumber: getTelnyxFromNumber({}, { sms: true }),
+    smsHeldNumbers: numbers.filter((number) => isTelnyxSmsSenderHeld(number.phoneNumber || number.phone_number, TELNYX_SMS_HOLD_NUMBERS)).map((number) => number.phoneNumber || number.phone_number),
     expectedInboundWebhookUrls: expectedWebhookUrls,
     expectedMediaStreamUrl: redactGatewayUrl(expectedMediaStreamUrl),
     streamTrack: DEEPGRAM_STREAM_TRACK,
@@ -43433,7 +43467,7 @@ function resolveProviderActionReplayParams(toolName, params = {}) {
   const context = findLeadContext(params);
   if (['telnyx_sms', 'telnyx_call', 'send_verification_sms'].includes(toolName)) {
     resolved.phone = normalizePhone(params.phone || params.to || context.phone || inferSkipTraceContact(context).phone);
-    resolved.from = getTelnyxFromNumber(params);
+    resolved.from = getTelnyxFromNumber(params, { sms: toolName !== 'telnyx_call' });
   }
   if (toolName === 'telnyx_sms') resolved.body = String(params.body || params.message || '').trim();
   if (toolName === 'sendColdEmail') {
@@ -43463,7 +43497,7 @@ function buildProviderActionContextHash(toolName, params = {}) {
   // Approval-derived fallback context would change merely by creating this card.
   return hashProviderActionContext({
     toolName, lead, contracts, revision: process.env.RENDER_GIT_COMMIT || BUILD_REVISION,
-    senderPhone: getTelnyxFromNumber(params),
+    senderPhone: getTelnyxFromNumber(params, { sms: ['telnyx_sms', 'send_verification_sms'].includes(toolName) }),
     senderEmail: getSenderAddress('cold', params.fromEmail || params.senderEmail || ''),
   });
 }
@@ -50244,6 +50278,8 @@ async function readRecordingRetentionTarget(id, key, client = getPgPool()) {
     WHERE m.id = $1 AND m.workspace_id COLLATE "C" = 'pbk' AND m.channel = 'call' AND m.direction = 'recording'
       AND t.oid = 'public.unified_messages'::regclass AND t.relkind = 'r' AND t.relpersistence = 'p'
       AND NOT pg_catalog.row_security_active(t.oid)
+      AND NOT EXISTS (SELECT 1 FROM public.pbk_recording_storage_pointers(m.storage_path, m.payload) AS pointer
+        WHERE pointer COLLATE "C" NOT IN ($2, $3::text || '/' || $2))
       AND NOT EXISTS (SELECT 1 FROM ONLY public.unified_messages other
         WHERE public.pbk_recording_has_untyped_pointer(other.payload) OR (other.id <> m.id AND EXISTS (
           SELECT 1 FROM public.pbk_recording_storage_pointers(other.storage_path, other.payload) AS pointer
@@ -59725,7 +59761,7 @@ const toolHandlers = {
     const context = findLeadContext(params);
     const direction = params.direction || 'outbound';
     const phone = normalizePhone(params.phone || params.to || context.phone || inferSkipTraceContact(context).phone);
-    const fromNumber = getTelnyxFromNumber(params);
+    const fromNumber = getTelnyxFromNumber(params, { sms: true });
     const telnyxMeta = getTelnyxProviderMeta();
     const fromWebhook = Boolean(params._fromTelnyxWebhook);
     const dnc = direction === 'outbound' && !fromWebhook ? findDncEntryByPhone(phone) : null;
@@ -59797,6 +59833,9 @@ const toolHandlers = {
       if (TELNYX_MESSAGING_PROFILE_ID) requestPayload.messaging_profile_id = TELNYX_MESSAGING_PROFILE_ID;
 
       const telnyxResponse = await fireTelnyxRequest('POST', '/messages', requestPayload, { leadId: context.leadId });
+      if (telnyxResponse.smsSenderHeld) {
+        return { ok: false, blocked: true, result: 'sms_sender_held', error: telnyxResponse.error, providerAttempted: false };
+      }
       if (telnyxResponse.batchPhoneGuard) {
         return { ok: false, blocked: true, result: telnyxResponse.batchPhoneGuard, error: telnyxResponse.error, providerAttempted: false };
       }
@@ -63342,7 +63381,7 @@ function getResponseCorsHeaders(response) {
   );
 }
 
-const COMMAND_CENTER_APP_PATHS = new Set(['/app', '/command-center', '/dashboard', '/settings', '/inbox', '/leads', '/pipeline', '/deal', '/deals', '/deals/analyzer', '/analyzer', '/agents', '/agent', '/agent-console', '/fleet', '/agent-fleet', '/ava-chat', '/skills', '/skill-studio', '/calls', '/live-calls', '/contracts', '/automations', '/analytics', '/campaigns', '/campaign-detail', '/brain', '/research', '/memory', '/integrations', '/lead-detail', '/activity-log', '/recordings', '/approvals', '/approval']);
+const COMMAND_CENTER_APP_PATHS = new Set(['/app', '/command-center', '/dashboard', '/settings', '/inbox', '/leads', '/pipeline', '/deal', '/deals', '/deals/analyzer', '/analyzer', '/agents', '/agent', '/agent-console', '/fleet', '/agent-fleet', '/ava-chat', '/skills', '/skill-studio', '/calls', '/live-calls', '/contracts', '/automations', '/analytics', '/campaigns', '/dialer', '/campaign-detail', '/brain', '/research', '/memory', '/integrations', '/lead-detail', '/activity-log', '/recordings', '/approvals', '/approval']);
 const COMMAND_CENTER_APP_PREFIXES = ['/deal/', '/deals/', '/leads/', '/inbox/', '/skills/', '/skill-studio/', '/campaigns/'];
 const RENDER_STATIC_ASSET_PREFIXES = ['/assets/'];
 const RENDER_STATIC_CONTENT_TYPES = new Map([
@@ -73505,6 +73544,30 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
 }
 
 const neonAuthMailRouter = createNeonMailRouter();
+let phoneDialerRouter = null;
+function getPhoneDialerRouter() {
+  if (phoneDialerRouter) return phoneDialerRouter;
+  const runtime = createPhoneDialerRuntime({
+    env: process.env,
+    isHosted: IS_HOSTED,
+    getState: () => state,
+    persistState: (next) => persistState(next),
+    isPhoneDnc: (phone) => Boolean(findDncEntryByPhone(phone)),
+    defaultCallerId: getEffectiveTelnyxFromNumber(),
+    logActivity: (entry) => addActivity(state, makeActivity({ actor: 'PBK dialer', ...entry })),
+  });
+  phoneDialerRouter = createPhoneDialerRouter({
+    runtime,
+    json,
+    readBody,
+    readRawBodyBuffer,
+    getState: () => state,
+    getTeamPermissions,
+    createApproval: (params) => toolHandlers.createApproval(params),
+  });
+  return phoneDialerRouter;
+}
+
 const server = createServer(async (request, response) => {
   response.pbkAcceptsGzip = /\bgzip\b/i.test(String(request.headers['accept-encoding'] || ''));
   response.pbkCorsHeaders = buildBridgeCorsHeaders(request);
@@ -73593,6 +73656,8 @@ const server = createServer(async (request, response) => {
     }
 
     if (maybeServeRenderCommandCenter(request, response, pathname)) return;
+
+    if (await getPhoneDialerRouter()(request, response, pathname, url)) return;
 
     if (request.method === 'GET' && matchesPath(pathname, ['/', '/health', '/status', '/api/health', '/api/status'])) {
       const runtimeMeta = getRuntimeMeta();

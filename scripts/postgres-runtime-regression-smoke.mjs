@@ -391,6 +391,30 @@ test('client error event followed by callback releases only once', async (t) => 
   assert.equal(fixture.pool.totalCount, 0);
 });
 
+test('a checked-out client can disconnect between queries without crashing the bridge', async (t) => {
+  const fixture = runtime(t);
+  const client = await fixture.pool.connect();
+  // pg marks the broken client unqueryable before emitting the socket error.
+  client._queryable = false;
+  assert.doesNotThrow(() => client.emit('error', connectionError()));
+  client.release();
+  assert.equal(fixture.pool.totalCount, 0);
+  assert.equal((await fixture.pool.query('SELECT 1')).rows[0].ok, 1);
+  assert.equal(fixture.counters.connections, 2);
+});
+
+test('returning a healthy client leaves only the pool idle error handler attached', async (t) => {
+  const { pool } = runtime(t);
+  const client = await pool.connect();
+  assert.equal(client.listenerCount('error'), 1);
+  client.release();
+  assert.equal(client.listenerCount('error'), 1);
+  const reused = await pool.connect();
+  assert.equal(reused, client);
+  assert.equal(reused.listenerCount('error'), 1);
+  reused.release();
+});
+
 test('server statement timeout is not retried by pool or persistence layers', async (t) => {
   const fixture = runtime(t, { execute: () => { throw Object.assign(new Error('canceling statement due to statement timeout'), { code: '57014' }); } });
   const result = await fixture.context.queryPgRows('UPDATE isolated SET value = value + 1');

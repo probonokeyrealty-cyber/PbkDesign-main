@@ -102,6 +102,7 @@ import { buildLeadCommitEnvelope } from './lead-field-provenance.mjs';
 import { loadBatchReviewRoster } from './batch-review-roster.mjs';
 import { loadAppliedBatchLeads, runBatchApply } from './batch-apply.mjs';
 import { dispatchTelnyxWithBatchPhoneGuard, ensureBatchPhoneSchema, setWorkspacePhoneDnc } from './batch-phone-dispatch.mjs';
+import { getTelnyxSmsDefault, isTelnyxSmsSenderHeld } from './telnyx-sender-routing.mjs';
 import { isDeepSpecConfigured, readDeepSpecConfig, requestSpeculativeChatCompletion } from './deepspec-speculative-client.mjs';
 import { buildInvokeRateLimitIdentity, createInvokeRateLimiter } from './invoke-rate-limit.mjs';
 import { ClosingStateMachine, Phase } from './ava-state-machine.mjs';
@@ -442,6 +443,8 @@ const TELNYX_API_KEY = String(process.env.PBK_TELNYX_API_KEY || process.env.TELN
 const TELNYX_PUBLIC_KEY = String(process.env.PBK_TELNYX_PUBLIC_KEY || process.env.TELNYX_PUBLIC_KEY || '').trim();
 const TELNYX_CONNECTION_ID = String(process.env.PBK_TELNYX_CONNECTION_ID || '').trim();
 const TELNYX_FROM_NUMBER = String(process.env.PBK_TELNYX_FROM_NUMBER || '').trim();
+const TELNYX_SMS_FROM_NUMBER = process.env.PBK_TELNYX_SMS_FROM_NUMBER;
+const TELNYX_SMS_HOLD_NUMBERS = process.env.PBK_TELNYX_SMS_HOLD_NUMBERS;
 const TELNYX_MESSAGING_PROFILE_ID = String(process.env.PBK_TELNYX_MESSAGING_PROFILE_ID || '').trim();
 const TELNYX_WEBHOOK_URL = String(process.env.PBK_TELNYX_WEBHOOK_URL || (PUBLIC_BASE_URL ? `${PUBLIC_BASE_URL}/api/webhooks/telnyx` : ''))
   .trim()
@@ -2493,10 +2496,11 @@ function buildAdminPersistenceStatus() {
 function getTelnyxProviderMeta() {
   const effectiveFromNumber = getEffectiveTelnyxFromNumber();
   const fromNumberConfigured = Boolean(effectiveFromNumber);
+  const smsFromNumberConfigured = Boolean(getTelnyxSmsDefault(TELNYX_SMS_FROM_NUMBER, effectiveFromNumber));
   const webhookConfigured = Boolean(TELNYX_WEBHOOK_URL);
   const publicKeyConfigured = Boolean(TELNYX_PUBLIC_KEY);
-  const messagingReady = Boolean(TELNYX_API_KEY && fromNumberConfigured);
-  const voiceReady = Boolean(messagingReady && TELNYX_CONNECTION_ID);
+  const messagingReady = Boolean(TELNYX_API_KEY && smsFromNumberConfigured);
+  const voiceReady = Boolean(TELNYX_API_KEY && fromNumberConfigured && TELNYX_CONNECTION_ID);
 
   const messagingMissing = [];
   const voiceMissing = [];
@@ -2506,8 +2510,10 @@ function getTelnyxProviderMeta() {
     voiceMissing.push('PBK_TELNYX_API_KEY');
   }
   if (!fromNumberConfigured) {
-    messagingMissing.push('PBK_TELNYX_FROM_NUMBER');
     voiceMissing.push('PBK_TELNYX_FROM_NUMBER');
+  }
+  if (!smsFromNumberConfigured) {
+    messagingMissing.push(TELNYX_SMS_FROM_NUMBER?.trim() ? 'PBK_TELNYX_SMS_FROM_NUMBER' : 'PBK_TELNYX_FROM_NUMBER');
   }
   if (!TELNYX_CONNECTION_ID) {
     voiceMissing.push('PBK_TELNYX_CONNECTION_ID');
@@ -37730,8 +37736,10 @@ function decodeTelnyxClientState(value = '') {
   }
 }
 
-function getTelnyxFromNumber(params = {}) {
-  return normalizePhone(params.from || params.fromNumber || params.selectedFromNumber || params.selected_from_number || getEffectiveTelnyxFromNumber());
+function getTelnyxFromNumber(params = {}, { sms = false } = {}) {
+  const voiceDefault = getEffectiveTelnyxFromNumber();
+  const senderDefault = sms ? getTelnyxSmsDefault(TELNYX_SMS_FROM_NUMBER, voiceDefault) : voiceDefault;
+  return normalizePhone(params.from || params.fromNumber || params.selectedFromNumber || params.selected_from_number || senderDefault);
 }
 
 function shouldStreamTelnyxOutboundCall(fromNumber, params = {}) {
@@ -37776,6 +37784,9 @@ function extractTelnyxError(body) {
 }
 
 async function fireTelnyxRequest(method, endpoint, payload, options = {}) {
+  if (method === 'POST' && endpoint === '/messages' && isTelnyxSmsSenderHeld(payload?.from, TELNYX_SMS_HOLD_NUMBERS)) {
+    return { ok: false, smsSenderHeld: true, error: 'Outbound SMS is on hold for this sender.' };
+  }
   if (!TELNYX_API_KEY) {
     return {
       ok: false,
@@ -38089,6 +38100,8 @@ async function buildTelnyxVoiceRoutingDiagnostic() {
     generatedAt: isoNow(),
     defaultNumber,
     expectedWebhookUrl,
+    smsDefaultNumber: getTelnyxFromNumber({}, { sms: true }),
+    smsHeldNumbers: numbers.filter((number) => isTelnyxSmsSenderHeld(number.phoneNumber || number.phone_number, TELNYX_SMS_HOLD_NUMBERS)).map((number) => number.phoneNumber || number.phone_number),
     expectedInboundWebhookUrls: expectedWebhookUrls,
     expectedMediaStreamUrl: redactGatewayUrl(expectedMediaStreamUrl),
     streamTrack: DEEPGRAM_STREAM_TRACK,
@@ -43331,7 +43344,7 @@ function resolveProviderActionReplayParams(toolName, params = {}) {
   const context = findLeadContext(params);
   if (['telnyx_sms', 'telnyx_call', 'send_verification_sms'].includes(toolName)) {
     resolved.phone = normalizePhone(params.phone || params.to || context.phone || inferSkipTraceContact(context).phone);
-    resolved.from = getTelnyxFromNumber(params);
+    resolved.from = getTelnyxFromNumber(params, { sms: toolName !== 'telnyx_call' });
   }
   if (toolName === 'telnyx_sms') resolved.body = String(params.body || params.message || '').trim();
   if (toolName === 'sendColdEmail') {
@@ -43361,7 +43374,7 @@ function buildProviderActionContextHash(toolName, params = {}) {
   // Approval-derived fallback context would change merely by creating this card.
   return hashProviderActionContext({
     toolName, lead, contracts, revision: process.env.RENDER_GIT_COMMIT || BUILD_REVISION,
-    senderPhone: getTelnyxFromNumber(params),
+    senderPhone: getTelnyxFromNumber(params, { sms: ['telnyx_sms', 'send_verification_sms'].includes(toolName) }),
     senderEmail: getSenderAddress('cold', params.fromEmail || params.senderEmail || ''),
   });
 }
@@ -59386,7 +59399,7 @@ const toolHandlers = {
     const context = findLeadContext(params);
     const direction = params.direction || 'outbound';
     const phone = normalizePhone(params.phone || params.to || context.phone || inferSkipTraceContact(context).phone);
-    const fromNumber = getTelnyxFromNumber(params);
+    const fromNumber = getTelnyxFromNumber(params, { sms: true });
     const telnyxMeta = getTelnyxProviderMeta();
     const fromWebhook = Boolean(params._fromTelnyxWebhook);
     const dnc = direction === 'outbound' && !fromWebhook ? findDncEntryByPhone(phone) : null;
@@ -59458,6 +59471,9 @@ const toolHandlers = {
       if (TELNYX_MESSAGING_PROFILE_ID) requestPayload.messaging_profile_id = TELNYX_MESSAGING_PROFILE_ID;
 
       const telnyxResponse = await fireTelnyxRequest('POST', '/messages', requestPayload, { leadId: context.leadId });
+      if (telnyxResponse.smsSenderHeld) {
+        return { ok: false, blocked: true, result: 'sms_sender_held', error: telnyxResponse.error, providerAttempted: false };
+      }
       if (telnyxResponse.batchPhoneGuard) {
         return { ok: false, blocked: true, result: telnyxResponse.batchPhoneGuard, error: telnyxResponse.error, providerAttempted: false };
       }

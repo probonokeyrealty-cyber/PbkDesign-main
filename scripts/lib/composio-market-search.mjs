@@ -1,22 +1,36 @@
 import { connectComposioHttp, schemaFingerprint } from './composio-connection.mjs';
 import { normalizePublicEvidence } from './public-market-worker.mjs';
 const TOOL = 'COMPOSIO_SEARCH_WEB';
+const EXA_TOOL = 'EXA_ANSWER';
+const EXA_USER = 'pbk-public-market-research-staging';
+const EXA_SCHEMA_SHA256 = 'b013594caba3ca649fa9d041459e0729cdededeb07a9635a987ab57ebe41d47d';
 const API = 'https://backend.composio.dev/api/v3.1';
 // The reviewed REST catalog schema differs from the separately pinned MCP inputSchema.
 const REST_SCHEMA_SHA256 = 'cafda083ef8419a8de5b5f7fa078ff25f852a9a0a49e0bbaeb3447e6b5f42380';
 const only = (a, value) => Array.isArray(a) && a.length === 1 && a[0] === value;
 export function verifyMarketSearchSession(config, session) {
   const c = session?.config;
+  const exa = config.userId === EXA_USER;
+  const toolkit = exa ? 'exa' : 'composio_search';
+  const tool = exa ? EXA_TOOL : TOOL;
+  const accounts = c?.connected_accounts ?? {};
   return (
     session?.session_id === config.sessionId &&
     session.config_version === config.version &&
     session.mcp?.url === config.url &&
     c?.user_id === config.userId &&
-    only(c.toolkits?.enabled, 'composio_search') &&
-    only(Object.keys(c.tools ?? {}), 'composio_search') &&
-    only(c.tools?.composio_search?.enabled, TOOL) &&
-    only(c.preload?.tools, TOOL) &&
-    Object.keys(c.connected_accounts ?? {}).length === 0 &&
+    only(c.toolkits?.enabled, toolkit) &&
+    only(Object.keys(c.tools ?? {}), toolkit) &&
+    only(c.tools?.[toolkit]?.enabled, tool) &&
+    only(c.preload?.tools, tool) &&
+    (exa
+      ? /^ca_[A-Za-z0-9_-]{1,80}$/.test(config.exaAccountId ?? '') &&
+        only(session.tool_router_tools, EXA_TOOL) &&
+        only(Object.keys(accounts), 'exa') &&
+        only(accounts.exa, config.exaAccountId) &&
+        c.manage_connections?.enable_wait_for_connections === false &&
+        c.manage_connections?.enable_connection_removal === false
+      : Object.keys(accounts).length === 0) &&
     Object.keys(c.auth_configs ?? {}).length === 0 &&
     c.instant === false &&
     c.manage_connections?.enabled === false &&
@@ -97,9 +111,15 @@ export function createComposioMarketSearch({
     userId = env.PBK_COMPOSIO_MARKET_SEARCH_USER_ID,
     version = Number(env.PBK_COMPOSIO_MARKET_SEARCH_CONFIG_VERSION),
     hash = env.PBK_COMPOSIO_MARKET_SEARCH_SCHEMA_SHA256;
+  const exa = userId === EXA_USER;
+  const exaAccountId = env.PBK_COMPOSIO_MARKET_SEARCH_EXA_ACCOUNT_ID;
+  const tool = exa ? EXA_TOOL : TOOL;
   const configured = !!(
     key &&
     /^[a-f0-9]{64}$/.test(hash ?? '') &&
+    (exa
+      ? /^ca_[A-Za-z0-9_-]{1,80}$/.test(exaAccountId ?? '') && hash === EXA_SCHEMA_SHA256
+      : !exaAccountId) &&
     /^trs_[A-Za-z0-9_-]{1,80}$/.test(sessionId ?? '') &&
     typeof userId === 'string' &&
     userId.length > 0 &&
@@ -115,6 +135,7 @@ export function createComposioMarketSearch({
     sessionId,
     userId,
     version,
+    exaAccountId,
     url: `https://backend.composio.dev/tool_router/${sessionId}/mcp`,
   };
   const status = () => ({
@@ -135,7 +156,7 @@ export function createComposioMarketSearch({
     let client;
     try {
       const session = await verifyScope(config, signal, fetchImpl);
-      if (!session) throw Error('scope');
+      if (!session || (exa && !verifyMarketSearchSession(config, session))) throw Error('scope');
       client = await connect(config, signal);
       if (signal.aborted) throw Error('expired');
       let useRest = false;
@@ -143,7 +164,7 @@ export function createComposioMarketSearch({
       try {
         listing = await client.listTools({}, { signal, timeout: 20000 });
       } catch (error) {
-        if (error?.code !== -32601 || signal.aborted) throw error;
+        if (exa || error?.code !== -32601 || signal.aborted) throw error;
         useRest = true;
       }
       let data;
@@ -153,11 +174,12 @@ export function createComposioMarketSearch({
         if (
           listing?.tools?.length !== 1 ||
           listing.nextCursor ||
-          listing.tools[0].name !== TOOL ||
+          listing.tools[0].name !== tool ||
           schemaFingerprint(listing.tools[0].inputSchema) !== hash
         )
           throw Error('schema');
-        const result = await client.callTool({ name: TOOL, arguments: { query } }, undefined, {
+        const args = exa ? { query, model: 'exa', stream: false, text: false } : { query };
+        const result = await client.callTool({ name: tool, arguments: args }, undefined, {
           signal,
           timeout: 20000,
         });

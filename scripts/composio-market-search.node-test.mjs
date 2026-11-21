@@ -233,3 +233,127 @@ test('no-auth session must pin only public search, with every generic execution 
     assert.equal(verifyMarketSearchSession(config, m), mutate === null);
   }
 });
+
+const exaTool = 'EXA_ANSWER';
+const exaUser = 'pbk-public-market-research-staging';
+const exaAccount = 'ca_staging_exa';
+const exaSchema = {
+  "type": "object",
+  "properties": {
+    "text": {
+      "type": "boolean",
+      "description": "Set to `true` to include the full text content of the cited source documents in the `citations` part of the response. Defaults to `false`.",
+      "default": false
+    },
+    "model": {
+      "type": "string",
+      "enum": [
+        "exa",
+        "exa-pro"
+      ],
+      "description": "Specifies the search model to use. 'exa' uses a single, direct query. 'exa-pro' uses two expanded queries for potentially more comprehensive results. Allowed values are 'exa' or 'exa-pro'. Defaults to 'exa'.\nExamples:\n  \"exa\"\n  \"exa-pro\"",
+      "default": "exa"
+    },
+    "query": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The natural language question or search query for which an answer is sought. The query should be specific enough to guide the search effectively. Include concrete entities, dates, locations, or jurisdictions to avoid ambiguous results. For time-sensitive data, include explicit time framing (e.g., 'as of 2024') since results may reflect stale information.\nExample: \"What is the latest valuation of SpaceX?\""
+    },
+    "stream": {
+      "type": "boolean",
+      "description": "Set to `true` to receive the response as a stream of server-sent events (SSE). This is useful for displaying results incrementally. Defaults to `false`.",
+      "default": false
+    }
+  },
+  "required": [
+    "query"
+  ],
+  "additionalProperties": false,
+  "$schema": "http://json-schema.org/draft-07/schema#"
+};
+const exaEnv = {
+  ...env,
+  PBK_COMPOSIO_MARKET_SEARCH_USER_ID: exaUser,
+  PBK_COMPOSIO_MARKET_SEARCH_EXA_ACCOUNT_ID: exaAccount,
+  PBK_COMPOSIO_MARKET_SEARCH_SCHEMA_SHA256: schemaFingerprint(exaSchema),
+};
+const exaSession = {
+  ...metadata,
+  tool_router_tools: [exaTool],
+  config: {
+    ...metadata.config,
+    user_id: exaUser,
+    toolkits: { enabled: ['exa'] },
+    tools: { exa: { enabled: [exaTool] } },
+    preload: { tools: [exaTool] },
+    connected_accounts: { exa: [exaAccount] },
+    manage_connections: {
+      enabled: false,
+      enable_wait_for_connections: false,
+      enable_connection_removal: false,
+    },
+  },
+};
+function exaFixture(options = {}) {
+  const session = structuredClone(exaSession);
+  options.changeSession?.(session);
+  const calls = [];
+  const gets = [];
+  const adapter = createComposioMarketSearch({
+    env: { ...exaEnv, ...options.env },
+    fetchImpl: async (url, init) => {
+      gets.push([init.method, new URL(url).pathname]);
+      return Response.json(session);
+    },
+    connect: async () => ({
+      listTools: async () => {
+        if (options.missingList) throw Object.assign(Error('No listing'), { code: -32601 });
+        return options.manifest ?? { tools: [{ name: exaTool, inputSchema: exaSchema }] };
+      },
+      callTool: async (args) => {
+        calls.push(args);
+        return {
+          structuredContent: {
+            successful: true,
+            data: { answer: 'Raleigh public market summary.', citations: [{ url: 'https://example.org/source' }] },
+          },
+        };
+      },
+      close: async () => {},
+    }),
+  });
+  return { adapter, calls, gets };
+}
+test('staging Exa invokes one pinned action with the dedicated account and bounded defaults', async () => {
+  const { adapter, calls, gets } = exaFixture();
+  const result = await adapter.search('Public Raleigh market query');
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.citations, ['https://example.org/source']);
+  assert.deepEqual(gets, [['GET', '/api/v3.1/tool_router/session/trs_market']]);
+  assert.deepEqual(calls, [{
+    name: exaTool,
+    arguments: { query: 'Public Raleigh market query', model: 'exa', stream: false, text: false },
+  }]);
+});
+test('staging Exa fails closed for account, Instant, tool, or schema drift and never falls back', async () => {
+  for (const options of [
+    { env: { PBK_COMPOSIO_MARKET_SEARCH_EXA_ACCOUNT_ID: '' } },
+    { env: { PBK_COMPOSIO_MARKET_SEARCH_USER_ID: 'other-user' } },
+    { env: { PBK_COMPOSIO_MARKET_SEARCH_SCHEMA_SHA256: schemaFingerprint(schema) } },
+    { changeSession: (s) => (s.config.connected_accounts = {}) },
+    { changeSession: (s) => s.config.connected_accounts.exa.push('ca_other') },
+    { changeSession: (s) => (s.config.connected_accounts.exa = ['ca_other']) },
+    { changeSession: (s) => (s.config.instant = {}) },
+    { changeSession: (s) => (s.config.manage_connections.enable_connection_removal = true) },
+    { changeSession: (s) => s.tool_router_tools.push('EXA_CREATE_API_KEY') },
+    { changeSession: (s) => (s.config.auth_configs.exa = 'ac_other') },
+    { manifest: { tools: [{ name: exaTool, inputSchema: schema }] } },
+    { manifest: { tools: [{ name: tool, inputSchema: exaSchema }] } },
+    { missingList: true },
+  ]) {
+    const { adapter, calls, gets } = exaFixture(options);
+    assert.equal((await adapter.search('Public Raleigh market query')).ok, false);
+    assert.deepEqual(calls, []);
+    assert.ok(gets.every(([method]) => method === 'GET'));
+  }
+});

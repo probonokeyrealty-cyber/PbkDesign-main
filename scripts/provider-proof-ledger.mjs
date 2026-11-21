@@ -355,6 +355,73 @@ export function summarizeProviderProof({
   });
 }
 
+export function findTelnyxCallEventCompletion(call, events = []) {
+  if (call.direction !== 'outbound' || call.status !== 'ended' ||
+      !call.telnyxCallControlId || !call.telnyxCallLegId || !call.telnyxCallSessionId ||
+      !call.from || !call.to || !Array.isArray(events)) return null;
+  const matches = [];
+  for (const event of events) {
+    if (event?.type !== 'webhook' || event.name !== 'call.hangup' ||
+        event.leg_id !== call.telnyxCallLegId || event.application_session_id !== call.telnyxCallSessionId) continue;
+    let wrapper = event.payload;
+    if (typeof wrapper === 'string') {
+      try { wrapper = JSON.parse(wrapper); }
+      catch { continue; }
+    }
+    const payload = wrapper?.payload;
+    if (wrapper?.event_type !== 'call.hangup' || !wrapper.webhook_id ||
+        !Number.isFinite(Date.parse(wrapper.created_at)) ||
+        payload?.call_control_id !== call.telnyxCallControlId ||
+        payload.call_leg_id !== call.telnyxCallLegId ||
+        payload.call_session_id !== call.telnyxCallSessionId ||
+        payload.from !== call.from || payload.to !== call.to) continue;
+    matches.push({
+      callId: payload.call_control_id,
+      eventId: wrapper.webhook_id,
+      occurredAt: wrapper.created_at,
+      hangupCause: String(payload.hangup_cause || '').slice(0, 100),
+      source: 'telnyx_call_events',
+    });
+  }
+  return matches.length === 1 ? matches[0] : null;
+}
+
+// A hangup confirms the carrier's terminal receipt, regardless of whether a
+// human answered. It does not confirm successful contact or talk time.
+export function reconcileTelnyxCallProof(approval, completion) {
+  const metadata = approval?.metadata;
+  const earlier = metadata?.providerProof;
+  const attempt = earlier?.attempt;
+  const callId = completion?.callId;
+  if (!callId || !completion.eventId || !Number.isFinite(Date.parse(completion.occurredAt)) ||
+      approval.status !== 'approved' || !['telnyx_call', 'pbk_call_operator'].includes(metadata?.requestedTool) ||
+      metadata.providerActionResult?.callId !== callId || metadata.providerActionResult?.telnyxLive !== true ||
+      earlier?.provider !== 'telnyx' || !attempt?.providerAttemptId) return null;
+
+  const receiptId = `telnyx:call.hangup:${callId}`;
+  const receipts = earlier.receipts || [];
+  if (receipts.some((receipt) => receipt.receiptId === receiptId)) return earlier;
+  const receipt = {
+    ...normalizeProviderReceipt({
+      provider: 'telnyx',
+      receipt: {
+        eventType: 'call.hangup',
+        receiptId,
+        providerAttemptId: attempt.providerAttemptId,
+        providerMessageId: callId,
+        receivedAt: completion.occurredAt,
+      },
+      raw: {
+        eventId: completion.eventId,
+        hangupCause: completion.hangupCause || '',
+        source: completion.source || 'telnyx_signed_webhook',
+      },
+    }),
+    deliveryState: 'confirmed',
+  };
+  return summarizeProviderProof({ provider: 'telnyx', attempt, receipts: [...receipts, receipt] });
+}
+
 export function attachProviderProof(value, context = {}) {
   if (!value || typeof value !== 'object' || value.providerProof) {
     return value;

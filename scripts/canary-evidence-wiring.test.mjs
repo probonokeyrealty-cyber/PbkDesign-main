@@ -200,8 +200,9 @@ test('bridge code matches the reviewed release fingerprint outside the scoped re
   // The Parcel Dialer release adds its router, staff permission checks and
   // signed Twilio webhook paths. Main also separates Telnyx voice and SMS
   // senders. The Postgres regression suite covers checked-out client errors.
+  // Telnyx receipt tests cover verified hangups, carrier history and projection replay.
   assert.equal(createHash('sha256').update(unchanged).digest('hex'),
-    '517578117079c43d253883cfbacf56a1c63803e60a63e4c3f9900ac3116790d8');
+    '84b3859d1515d8decfdb2b3bb4679ddea69cd51e66fe2f058aa291d6d4c273d4');
 });
 
 test('production distribution includes reader and protocol, never the fixture signer', () => {

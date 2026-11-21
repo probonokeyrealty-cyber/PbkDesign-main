@@ -62,7 +62,7 @@ test('Denver map selection reuses the viewport locator and retries a timed-out c
       timeouts--;
       throw new DOMException('County read timed out', 'TimeoutError');
     }
-    return Response.json({ features: [row] });
+    return Response.json({ features: [params.get('returnGeometry') === 'false' ? { ...row, geometry: null } : row] });
   } });
 
   await source.inBounds(null);
@@ -70,8 +70,10 @@ test('Denver map selection reuses the viewport locator and retries a timed-out c
   timeouts = 1;
   const parcel = await source.getById(id);
   assert.equal(parcel.properties.verifiedAddressAlias, '123 sample st|80212');
+  assert.deepEqual(parcel.geometry, row.geometry);
   assert.equal(reads.length, 2);
   assert.ok(reads.every((params) => params.get('where').startsWith('SITUS_ADDR_NBR')));
+  assert.ok(reads.every((params) => params.get('returnGeometry') === 'false'));
 
   reads.length = 0;
   await source.getById(id);

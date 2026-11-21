@@ -229,7 +229,7 @@ test('bridge exact-ID patch never falls back to duplicate address, email or phon
 
 test('bridge exact persistence bypasses inbound placeholder phone coalescing', async () => {
   const bridge = readFileSync(new URL('./openclaw-local-server.mjs', import.meta.url), 'utf8');
-  const source = bridge.match(/async function persistLeadProfileRowToDb\(lead = \{\}, source = 'property-data', \{ exactIdentity = false \} = \{\}\) \{[\s\S]*?\r?\n\}/)[0];
+  const source = bridge.match(/async function persistLeadProfileRowToDb\(lead = \{\}, source = 'property-data', \{ exactIdentity = false, insertOnly = false \} = \{\}\) \{[\s\S]*?\r?\n\}/)[0];
   const queries = [];
   const context = vm.createContext({ normalizePhone: v => v, ensureLeadCommitEnvelope() {}, toNumber: v => Number(v) || 0,
     queryPgRows: async (sql, params) => { queries.push({ sql, params }); return { ok: true, rows: [{ id: 'lead-inbound-other', source: 'inbound-call' }] }; } });

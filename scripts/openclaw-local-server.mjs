@@ -39,6 +39,11 @@ import { withRuntimeEvidenceContext, getRuntimeEvidenceContext } from './runtime
 import { createBackgroundPersistence, createCoalescedPersistence } from './background-persistence.mjs';
 import { createProviderActionBinding, hashProviderActionContext, validateProviderActionAuthorization, validateNegotiationApproval } from './provider-action-authorization.mjs';
 import { authorizeQualificationRequest, executeReleaseQualification, isDirectQualificationFounder, readReleaseQualification } from './release-qualification.mjs';
+import {
+  checkRecordingRetentionDecision, eligibleDurableRecording, handleRecordingRetentionRequest,
+  recordingRetentionTargetMatches, takeClaimedRecordingRetentionExecution, validRecordingObjectVersion,
+  validRecordingRetentionStorageKey,
+} from './recording-retention-authorization.mjs';
 import { loadQualificationCiEvidence } from './release-qualification-ci.mjs';
 import { collectOperationalAudit } from './operational-audit-collector.mjs';
 import { executeOperationalAudit, readOperationalAudit, createOperationalAuditPool } from './operational-audit-store.mjs';
@@ -41798,6 +41803,45 @@ async function deleteSupabaseRecording(storagePath = '') {
   };
 }
 
+async function readSupabaseRecordingVersion(key, signal = AbortSignal.timeout(4_000)) {
+  const bucket = SUPABASE_CALL_RECORDINGS_BUCKET;
+  if (!getSupabaseStorageProviderMeta().ready || !validRecordingRetentionStorageKey(key)) return null;
+  const url = `${SUPABASE_URL}/storage/v1/object/info/authenticated/${encodeURIComponent(bucket)}/${encodePathSegments(key)}`;
+  const response = await fetch(url, {
+    method: 'GET', headers: getSupabaseStorageHeaders(''), cache: 'no-store', redirect: 'error', signal,
+  });
+  if (response.status === 404) return { missing: true };
+  if (response.status === 400) {
+    // The Storage REST API can wrap NoSuchKey (404) in a legacy HTTP 400 response.
+    const error = await response.json().catch(() => null);
+    return error?.code === 'NoSuchKey' && error.statusCode === '404' && error.error === 'not_found' ? { missing: true } : null;
+  }
+  if (response.status !== 200) return null;
+  const info = await response.json().catch(() => null);
+  if (info?.bucket_id !== bucket || info.name !== key || !validRecordingObjectVersion(info.version) ||
+    info.is_delete_marker || info.archived_at) return null;
+  return { version: info.version, modifiedAt: Date.parse(info.last_modified) };
+}
+
+async function deleteSupabaseRecordingVersion(key, versionId, signal) {
+  const pending = reason => ({ ok: false, deleted: false, tracking: 'pending', reason });
+  if (!validRecordingObjectVersion(versionId)) return pending('recording_storage_version_unverified');
+  const current = await readSupabaseRecordingVersion(key, signal);
+  if (current?.version !== versionId) return pending('recording_storage_version_changed');
+  const bucket = SUPABASE_CALL_RECORDINGS_BUCKET;
+  // Send only the structured version target. Unlike a key DELETE with a query
+  // parameter, older Storage APIs reject this body instead of ignoring the version.
+  const response = await fetch(`${SUPABASE_URL}/storage/v1/object/${encodeURIComponent(bucket)}`, {
+    method: 'DELETE', headers: getSupabaseStorageHeaders(), redirect: 'error', signal,
+    body: JSON.stringify({ prefixes: [{ path: key, versionId }] }),
+  });
+  const rows = response.status === 200 ? await response.json().catch(() => null) : null;
+  if (!Array.isArray(rows) || rows.length !== 1 || rows[0]?.name !== key ||
+    rows[0].bucket_id !== bucket || rows[0].version !== versionId) return pending('recording_storage_delete_unconfirmed');
+  if (!(await readSupabaseRecordingVersion(key, signal))?.missing) return pending('recording_storage_key_not_empty');
+  return { ok: true, deleted: true, status: response.status, bucket, storagePath: key };
+}
+
 let s3ArchiveClient = null;
 
 function getS3ArchiveClient() {
@@ -50121,29 +50165,114 @@ function getRecordingRetentionPolicy() {
   };
 }
 
-async function runRecordingRetentionCleanup({ dryRun = true, days = 0, actor = 'Retention worker' } = {}) {
+const primaryRetentionFields = [
+  'storagePath', 'storage_path', 'recordingStoragePath', 'recording_storage_path', 'storageBucket', 'storage_bucket',
+  'recordingUrl', 'recording_url', 'audioUrl', 'audio_url', 'playbackUrl', 'playback_url', 'url', 'downloadUrl', 'download_url',
+];
+
+function withoutRetentionPrimaryFields(record) {
+  return Object.fromEntries(Object.entries(record || {}).filter(([key]) => !primaryRetentionFields.includes(key)));
+}
+
+async function readRecordingRetentionTarget(id, key, client = getPgPool()) {
+  const bucket = SUPABASE_CALL_RECORDINGS_BUCKET;
+  const result = await client.query(`SELECT pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(
+      pg_catalog.to_jsonb(m)::text, 'UTF8')), 'hex') AS version, m.storage_path, m.storage_bucket, m.payload, m.created_at
+    FROM ONLY public.unified_messages m JOIN pg_catalog.pg_class t ON t.oid = m.tableoid
+    WHERE m.id = $1 AND m.workspace_id COLLATE "C" = 'pbk' AND m.channel = 'call' AND m.direction = 'recording'
+      AND t.oid = 'public.unified_messages'::regclass AND t.relkind = 'r' AND t.relpersistence = 'p'
+      AND NOT pg_catalog.row_security_active(t.oid)
+      AND NOT EXISTS (SELECT 1 FROM ONLY public.unified_messages other WHERE other.id <> m.id AND EXISTS (
+        SELECT 1 FROM unnest(ARRAY[other.storage_path, other.payload->>'storagePath', other.payload->>'storage_path',
+          other.payload->>'recordingStoragePath', other.payload->>'recording_storage_path'
+        ]) AS pointer WHERE ltrim(btrim(pointer), '/') IN ($2, $3::text || '/' || $2)
+      ))`, [id, key, bucket]);
+  const row = result.rows.length === 1 ? result.rows[0] : null;
+  if (!row?.version || getMessageRecordingPath(row) !== key ||
+      (row.storage_bucket || row.payload?.storageBucket || row.payload?.storage_bucket || bucket) !== bucket) return null;
+  return row;
+}
+
+async function withFencedRecordingStorageDelete(perform) {
+  const client = await getPgPool().connect();
+  let committing = false;
+  let discard = false;
+  try {
+    await client.query('BEGIN');
+    await client.query("SET LOCAL idle_in_transaction_session_timeout = '8s'");
+    // A new pointer in any workspace must not race the ownership check. Use
+    // NOWAIT and a bounded provider request rather than queuing a table lock.
+    await client.query('LOCK TABLE public.unified_messages IN SHARE ROW EXCLUSIVE MODE NOWAIT');
+    const result = await perform(client, AbortSignal.timeout(4_000));
+    committing = true;
+    await client.query('COMMIT');
+    return result;
+  } catch (error) {
+    if (committing) discard = true;
+    else {
+      try { await client.query('ROLLBACK'); }
+      catch { discard = true; }
+    }
+    throw error;
+  } finally {
+    client.release(discard);
+  }
+}
+
+async function runRecordingRetentionCleanup({ dryRun = true, days = 0, actor = 'Retention worker', execution } = {}) {
+  if (!dryRun && !takeClaimedRecordingRetentionExecution(execution)) {
+    return { ok: false, statusCode: 403, result: 'retention_approval_required', error: 'An approved recording retention batch is required.' };
+  }
   const policy = getRecordingRetentionPolicy();
-  const retentionDays = Math.max(1, Number(days || policy.days || RECORDING_RETENTION_DEFAULT_DAYS));
-  const cutoffMs = Date.now() - retentionDays * 24 * 60 * 60 * 1000;
-  const candidates = (state.messages || []).filter((message) => {
+  const retentionDays = dryRun ? Math.max(1, Number(days || policy.days || RECORDING_RETENTION_DEFAULT_DAYS)) : execution.plan.days;
+  const cutoffMs = dryRun ? Date.now() - retentionDays * 24 * 60 * 60 * 1000 : Date.parse(execution.plan.cutoffAt);
+  const candidates = dryRun ? (state.messages || []).filter((message) => {
     const storagePath = getMessageRecordingPath(message);
     if (!storagePath) return false;
     const created = Date.parse(message.createdAt || message.updatedAt || '');
     return Number.isFinite(created) && created < cutoffMs;
-  });
+  }) : execution.targets.map(target => state.messages.find(row => row.id === target.id)).filter(Boolean);
 
   const deletions = [];
   if (!dryRun) {
-    for (const message of candidates) {
-      const storagePath = getMessageRecordingPath(message);
-      const deletion = await deleteSupabaseRecording(storagePath);
-      deletions.push({ messageId: message.id, storagePath, ...deletion });
-      if (deletion.ok) {
-        message.retentionStatus = 'deleted';
-        message.deletedAt = isoNow();
-        message.storagePath = '';
-        message.recordingUrl = '';
-        message.updatedAt = isoNow();
+    for (const target of execution.targets) {
+      const { id: messageId, key: storagePath } = target;
+      const current = () => {
+        const matches = state.messages.filter(row => row.id === messageId);
+        return matches.length === 1 && recordingRetentionTargetMatches(target, matches[0], getMessageRecordingPath)
+          ? matches[0] : null;
+      };
+      const message = current();
+      if (!message) {
+        deletions.push({ messageId, ok: false, tracking: 'pending', reason: 'retention_target_changed' });
+        continue;
+      }
+      const deletedAt = isoNow();
+      const deletion = await withFencedRecordingStorageDelete(async (client, signal) => {
+        const row = await readRecordingRetentionTarget(messageId, storagePath, client);
+        if (row?.version !== target.storageVersion || current() !== message ||
+            state.messages.some(item => item !== message && getMessageRecordingPath(item) === storagePath)) {
+          return { ok: false, tracking: 'pending', reason: 'retention_target_changed' };
+        }
+        const ack = await deleteSupabaseRecordingVersion(storagePath, target.objectVersion, signal);
+        if (!ack.ok) return ack;
+        if (current() !== message) return { ok: false, tracking: 'pending', reason: 'retention_target_changed' };
+        const saved = await client.query(`UPDATE ONLY public.unified_messages SET storage_path = '',
+          storage_bucket = '', recording_url = '', updated_at = NOW(),
+          payload = (COALESCE(payload, '{}'::jsonb) - $2::text[]) ||
+            jsonb_build_object('retentionStatus', 'deleted', 'deletedAt', $3::text)
+          WHERE id = $1 AND workspace_id COLLATE "C" = 'pbk'`, [messageId, primaryRetentionFields, deletedAt]);
+        return saved.rowCount === 1 ? ack : { ok: false, tracking: 'pending', reason: 'retention_readback_unconfirmed' };
+      }).catch(() => ({ ok: false, tracking: 'pending', reason: 'recording_storage_delete_unconfirmed' }));
+      if (deletion.ok && current() === message) {
+        state.messages = state.messages.map(item => item !== message ? item : {
+          ...withoutRetentionPrimaryFields(message), storagePath: '', storageBucket: '', recordingUrl: '',
+          updatedAt: deletedAt, deletedAt, retentionStatus: 'deleted',
+          payload: { ...withoutRetentionPrimaryFields(message.payload), retentionStatus: 'deleted', deletedAt },
+        });
+        deletions.push({ messageId, storagePath, ...deletion, tracking: 'confirmed' });
+      } else {
+        deletions.push({ messageId, storagePath, ...deletion, ok: false, tracking: 'pending' });
       }
     }
   }
@@ -50151,11 +50280,12 @@ async function runRecordingRetentionCleanup({ dryRun = true, days = 0, actor = '
   const run = {
     id: `retention-${Date.now()}-${randomUUID().slice(0, 8)}`,
     result: dryRun ? 'local_view_only' : 'live',
-    status: dryRun ? 'dry-run' : 'complete',
+    status: dryRun ? 'dry-run' : deletions.some(item => !item.ok || item.tracking === 'pending') ? 'pending' : 'complete',
     dryRun: Boolean(dryRun),
     days: retentionDays,
     cutoffAt: new Date(cutoffMs).toISOString(),
-    candidateCount: candidates.length,
+    candidateCount: dryRun ? candidates.length : execution.plan.targetCount,
+    ...(dryRun ? {} : { approvalId: execution.id }),
     deletedCount: deletions.filter((item) => item.ok).length,
     candidates: candidates.map((message) => ({
       messageId: message.id,
@@ -50174,7 +50304,7 @@ async function runRecordingRetentionCleanup({ dryRun = true, days = 0, actor = '
     makeActivity({
       actor,
       category: 'RETENTION',
-      status: dryRun ? 'preview' : 'complete',
+      status: dryRun ? 'preview' : run.status,
       text: dryRun ? `Recording retention preview found ${candidates.length} expired file${candidates.length === 1 ? '' : 's'}.` : `Recording retention cleanup deleted ${run.deletedCount} expired file${run.deletedCount === 1 ? '' : 's'}.`,
       target: `${retentionDays}d policy`,
     })
@@ -50183,7 +50313,7 @@ async function runRecordingRetentionCleanup({ dryRun = true, days = 0, actor = '
   return {
     ok: true,
     result: run.result,
-    verbiage: dryRun ? 'Retention preview ready' : 'Retention cleanup completed',
+    verbiage: dryRun ? 'Retention preview ready' : run.status === 'pending' ? 'Retention cleanup needs review' : 'Retention cleanup completed',
     run,
     state: buildStateSnapshot(),
   };
@@ -61088,7 +61218,7 @@ async function handleManualLeadCreate(payload = {}) {
 
 const approvalDecisionLocks = new Map();
 
-async function handleEvent(eventType, payload = {}) {
+async function handleEvent(eventType, payload = {}, { directRetentionFounder = false } = {}) {
   const normalizedEvent = String(eventType || '')
     .trim()
     .toLowerCase();
@@ -61098,7 +61228,7 @@ async function handleEvent(eventType, payload = {}) {
   }
   const approvalId = String(payload.id || '');
   const previous = approvalDecisionLocks.get(approvalId) || Promise.resolve();
-  const current = previous.catch(() => {}).then(() => handleRuntimeEvent(normalizedEvent, payload));
+  const current = previous.catch(() => {}).then(() => handleRuntimeEvent(normalizedEvent, payload, directRetentionFounder));
   approvalDecisionLocks.set(approvalId, current);
   try {
     return await current;
@@ -61107,7 +61237,7 @@ async function handleEvent(eventType, payload = {}) {
   }
 }
 
-async function handleRuntimeEvent(normalizedEvent, payload) {
+async function handleRuntimeEvent(normalizedEvent, payload, directRetentionFounder = false) {
   if (normalizedEvent === 'lead-intake' || normalizedEvent === 'lead-import') {
     const fromN8nLeadIntake = payload?._source === 'n8n-lead-intake';
     const eventId = payload?.eventId || payload?.event_id || null;
@@ -61258,6 +61388,9 @@ async function handleRuntimeEvent(normalizedEvent, payload) {
         error: `Approval ${payload.id} was not found.`,
       };
     }
+
+    const retentionRestriction = checkRecordingRetentionDecision(approval, directRetentionFounder);
+    if (retentionRestriction) return retentionRestriction;
 
     // Replay short-circuit: if status/actor/actedAt already match incoming
     // payload, n8n is just retrying. No mutation, no extra activity entry.
@@ -79917,7 +80050,7 @@ const server = createServer(async (request, response) => {
         reviewReason: body.reviewReason || '',
         falsePositiveTag: body.falsePositiveTag || body.reviewReason || '',
         teamAuth: body.teamAuth || null,
-      });
+      }, { directRetentionFounder: !teamAuthPresented && isDirectQualificationFounder(request.headers, BRIDGE_API_KEY) });
       json(response, result.ok === false ? result.statusCode || 404 : 200, {
         ...result,
         state: buildStateSnapshot(),
@@ -79987,7 +80120,7 @@ const server = createServer(async (request, response) => {
         reviewReason: body.reviewReason || '',
         falsePositiveTag: body.falsePositiveTag || body.reviewReason || '',
         teamAuth: body.teamAuth || null,
-      });
+      }, { directRetentionFounder: !teamAuthPresented && isDirectQualificationFounder(request.headers, BRIDGE_API_KEY) });
       json(response, result.ok === false ? result.statusCode || 404 : 200, {
         ...result,
         state: buildStateSnapshot(),
@@ -80628,12 +80761,17 @@ const server = createServer(async (request, response) => {
 
     if (request.method === 'POST' && pathname === '/api/recordings/retention/run') {
       const body = await readBody(request);
-      const result = await runRecordingRetentionCleanup({
-        dryRun: body.dryRun ?? true,
-        days: Number(body.days || body.retentionDays || 0),
-        actor: body.actor || 'Retention worker',
+      const result = await handleRecordingRetentionRequest({
+        body, getPool: getPgPool, getMessages: () => state.messages || [], getPath: getMessageRecordingPath,
+        getPolicyDays: () => getRecordingRetentionPolicy().days, bucket: SUPABASE_CALL_RECORDINGS_BUCKET,
+        readObjectVersion: readSupabaseRecordingVersion,
+        async getStorageVersion({ id, key }, cutoffAt) {
+          const row = await readRecordingRetentionTarget(id, key);
+          return eligibleDurableRecording(row, cutoffAt) ? row.version : null;
+        },
+        requestApproval: params => toolHandlers.createApproval(params), run: runRecordingRetentionCleanup,
       });
-      json(response, 200, result);
+      json(response, result.statusCode || 200, result);
       return;
     }
 

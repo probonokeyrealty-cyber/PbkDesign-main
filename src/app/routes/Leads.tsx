@@ -1139,10 +1139,7 @@ export function Leads() {
   const [leadPage, setLeadPage] = useState(restoredQueue?.queue?.page || 0);
   const [leadActivityPage, setLeadActivityPage] = useState(0);
   const [leadQuery, setLeadQuery] = useState(
-    () =>
-      restoredQueue?.queue?.query ??
-      searchParams.get('search') ??
-      readAvaLeadSearch(location.state?.avaLeadSearch)
+    () => restoredQueue?.queue?.query ?? searchParams.get('search') ?? readAvaLeadSearch(location.state?.avaLeadSearch)
   );
   const [leadFilter, setLeadFilter] = useState<'all' | 'hot' | 'callable' | 'contract'>(
     restoredQueue?.queue?.filter || 'all'
@@ -1150,17 +1147,9 @@ export function Leads() {
   const leadReturnContext = (leadId: string, focus?: 'open'): LeadQueueReturn => ({
     path: '/leads',
     search: location.search,
-    scrollY:
-      rosterSurfaceRef.current?.closest<HTMLElement>('.pbk-shell-content')?.scrollTop ||
-      window.scrollY,
+    scrollY: rosterSurfaceRef.current?.closest<HTMLElement>('.pbk-shell-content')?.scrollTop || window.scrollY,
     leadId,
-    queue: {
-      query: leadQuery,
-      filter: leadFilter,
-      page: leadPage,
-      focus,
-      scrollTop: rosterListRef.current?.scrollTop,
-    },
+    queue: { query: leadQuery, filter: leadFilter, page: leadPage, focus, scrollTop: rosterListRef.current?.scrollTop },
   });
   const renderOpenLeadLink = (id: string, sellerName: string, address: string) => {
     const href = `/leads/${encodeURIComponent(id)}`;
@@ -1171,13 +1160,7 @@ export function Leads() {
         data-lead-workspace-id={id}
         aria-label={`Open lead ${sellerName} at ${address}`}
         onClick={(event) => {
-          if (
-            event.button !== 0 ||
-            event.metaKey ||
-            event.ctrlKey ||
-            event.shiftKey ||
-            event.altKey
-          )
+          if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey)
             return;
           event.preventDefault();
           navigate(href, { state: { leadReturn: leadReturnContext(id, 'open') } });
@@ -1320,12 +1303,10 @@ export function Leads() {
       const surface = rosterSurfaceRef.current;
       if (!surface || !restoredQueue) return;
       const queue = restoredQueue.queue;
-      const focusAttribute =
-        queue?.focus === 'open' ? 'data-lead-workspace-id' : 'data-lead-queue-id';
+      const focusAttribute = queue?.focus === 'open' ? 'data-lead-workspace-id' : 'data-lead-queue-id';
       const candidates = surface.querySelectorAll<HTMLElement>(`[${focusAttribute}]`);
       const target = Array.from(candidates).find(
-        (node) =>
-          node.getAttribute(focusAttribute) === restoredQueue.leadId && node.getClientRects().length
+        (node) => node.getAttribute(focusAttribute) === restoredQueue.leadId && node.getClientRects().length
       );
       if (target) target.focus({ preventScroll: true });
       const scrollPanel = surface.closest<HTMLElement>('.pbk-shell-content');
@@ -1340,10 +1321,7 @@ export function Leads() {
         const bounds = target.getBoundingClientRect();
         const listBounds = list?.getBoundingClientRect();
         const visibleTop = Math.max(80, listBounds?.top ?? 0);
-        const visibleBottom = Math.min(
-          window.innerHeight - 80,
-          listBounds?.bottom ?? window.innerHeight
-        );
+        const visibleBottom = Math.min(window.innerHeight - 80, listBounds?.bottom ?? window.innerHeight);
         if (bounds.top < visibleTop || bounds.bottom > visibleBottom)
           target.scrollIntoView({ block: 'center' });
       }
@@ -2067,11 +2045,7 @@ export function Leads() {
             </div>
           </div>
 
-          <div
-            className="pbk-leads-roster-list"
-            ref={rosterListRef}
-            aria-label="Seller roster results"
-          >
+          <div className="pbk-leads-roster-list" ref={rosterListRef} aria-label="Seller roster results">
             <div className="leads-mobile-cards">
               {visibleLeads.map((lead) => {
                 const id = getLeadId(lead);

@@ -290,7 +290,7 @@ export function ParcelDialer() {
               <dl className="pbk-dialer-kv">
                 <dt>CRM match</dt>
                 <dd>
-                  {selection.match.status === 'matched' && <span className="pbk-phone-tag good">exact · {selection.match.matchedOn.replace('_', ' ')}</span>}
+                  {selection.match.status === 'matched' && <span className="pbk-phone-tag good">{selection.match.matchedOn === 'verified_address_alias' ? 'verified address alias' : `exact · ${selection.match.matchedOn.replaceAll('_', ' ')}`}</span>}
                   {selection.match.status === 'ambiguous' && <span className="pbk-phone-tag bad">{selection.match.candidateCount} contacts · rejected</span>}
                   {selection.match.status === 'no_match' && <span className="pbk-phone-tag">no CRM contact</span>}
                 </dd>

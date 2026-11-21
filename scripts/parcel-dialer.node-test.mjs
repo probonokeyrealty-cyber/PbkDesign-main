@@ -3,9 +3,45 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { runInNewContext } from 'node:vm';
 import {
-  addressKey, buildFixtureParcels, computeTwilioSignature, createFixtureParcelSource, matchParcelToLeads,
+  addressKey, buildFixtureParcels, computeTwilioSignature, createDenverParcelSource, createFixtureParcelSource, matchParcelToLeads,
   resolveParcelSource, validateParcelFeature, verifyTwilioSignature,
 } from './parcel-dialer.mjs';
+
+test('Denver uses a unique county-verified directional alias and rejects conflicting leads', async () => {
+  const sample = {
+    type: 'Feature',
+    geometry: buildFixtureParcels()[0].geometry,
+    properties: {
+      SCHEDNUM: '1000000000001', SITUS_ADDR_NBR: '123', SITUS_STR_NAME_PRE_DIR: 'N',
+      SITUS_ADDRESS_LINE1: '123 N SAMPLE ST', SITUS_ZIP: '80212-0001', LAND_AREA: 4356,
+    },
+  };
+  const aliasAddress = '123 Sample Street, Denver, CO 80212';
+  const lead = { id: 'denver-sample', property: { address: aliasAddress, city: 'Denver', state: 'CO' } };
+  const competing = { ...sample, properties: { ...sample.properties, SCHEDNUM: '1000000000002', SITUS_STR_NAME_PRE_DIR: 'S', SITUS_ADDRESS_LINE1: '123 S SAMPLE ST' } };
+  let duplicate = false;
+  let truncated = false;
+  const source = createDenverParcelSource({ fetchImpl: async (url) => {
+    const params = new URL(url).searchParams;
+    assert.doesNotMatch(params.get('outFields'), /OWNER/);
+    const byId = params.get('where').startsWith('SCHEDNUM');
+    return Response.json({ features: !byId && duplicate ? [sample, competing] : [sample], properties: { exceededTransferLimit: !byId && truncated } });
+  } });
+  const feature = await source.getById(sample.properties.SCHEDNUM);
+  assert.equal(feature.properties.acres, 0.1);
+  assert.equal(feature.properties.situs.zip, '80212');
+  assert.equal(matchParcelToLeads(feature, [lead]).matchedOn, 'verified_address_alias');
+  const crossState = { ...lead, id: 'wrong-state', parcelId: feature.properties.parcelId, property: { ...lead.property, state: 'OH' } };
+  assert.equal(matchParcelToLeads(feature, [crossState]).status, 'no_match');
+  assert.equal((await source.findByAddress({ line1: '123 Sample Street', zip: '80212' })).length, 1);
+  duplicate = true;
+  assert.equal(matchParcelToLeads(await source.getById(sample.properties.SCHEDNUM), [lead]).status, 'no_match');
+  assert.equal((await source.findByAddress({ line1: '123 Sample Street', zip: '80212' })).length, 0);
+  duplicate = false;
+  truncated = true;
+  assert.equal(matchParcelToLeads(await source.getById(sample.properties.SCHEDNUM), [lead]).status, 'no_match');
+  assert.deepEqual(await source.inBounds([-110, 30, -100, 40]), []);
+});
 import { createPhoneDialerRouter, createPhoneDialerRuntime, resolvePhoneProviderMode } from './phone-dialer-routes.mjs';
 
 // ---------------------------------------------------------------------------

@@ -87,7 +87,8 @@ function mapCallStatus(status: unknown): LiveCallState['status'] {
     )
   )
     return 'connected';
-  if (/^(initiated|dialing|queued|ringing)$/.test(normalized)) return 'dialing';
+  if (/^(initiated|dialing|queued|ringing)$/.test(normalized))
+    return 'dialing';
   if (normalized === 'hold' || normalized === 'on-hold' || normalized === 'on_hold')
     return 'on-hold';
   if (normalized === 'ended' || normalized === 'completed' || normalized === 'failed')
@@ -414,14 +415,8 @@ function writeCommandWidgetPrefs(prefs: CommandWidgetPrefs) {
 
 function getCallId(call: Record<string, unknown>) {
   return String(
-    call.id ||
-      call.callId ||
-      call.call_id ||
-      call.telnyxCallControlId ||
-      call.telnyx_call_control_id ||
-      call.callControlId ||
-      call.call_control_id ||
-      ''
+    call.id || call.callId || call.call_id || call.telnyxCallControlId ||
+    call.telnyx_call_control_id || call.callControlId || call.call_control_id || ''
   );
 }
 
@@ -783,10 +778,7 @@ function buildBattlefieldItems(params: {
         source: 'snapshot.leadImports',
         reason: 'Lead score crossed the hot-lead threshold.',
         cta: 'Open lead',
-        targetPath:
-          lead.id || lead.leadId
-            ? `/leads/${encodeURIComponent(String(lead.id || lead.leadId))}`
-            : '/leads',
+        targetPath: lead.id || lead.leadId ? `/leads/${encodeURIComponent(String(lead.id || lead.leadId))}` : '/leads',
       });
     });
 
@@ -1792,9 +1784,7 @@ function FounderBattlefield({
     urgentCount ? `${urgentCount} high priority` : '',
     approvalCount ? `${approvalCount} ${approvalCount === 1 ? 'item' : 'items'} for review` : '',
     failedCount ? `${failedCount} failed ${failedCount === 1 ? 'follow-up' : 'follow-ups'}` : '',
-  ]
-    .filter(Boolean)
-    .join(' · ');
+  ].filter(Boolean).join(' · ');
   const bridgeTone = loading ? 'amber' : error ? 'crimson' : 'lime';
   const bridgeLabel = loading
     ? toOperatorCopy('dispatching')
@@ -1806,9 +1796,7 @@ function FounderBattlefield({
     <section className="pbk-triage-queue space-y-2" aria-labelledby="battlefield-title">
       <div className="pbk-battlefield">
         <div className="pbk-battlefield-left">
-          <h2 id="battlefield-title" className="pbk-battlefield-label">
-            Work queue
-          </h2>
+          <h2 id="battlefield-title" className="pbk-battlefield-label">Work queue</h2>
           {items.length > 0 && (
             <div className="pbk-battlefield-count">
               <em>{items.length}</em> {items.length === 1 ? 'work item' : 'work items'}
@@ -1817,29 +1805,14 @@ function FounderBattlefield({
           {sub && <div className="pbk-battlefield-sub">{sub}</div>}
         </div>
         <div className="pbk-battlefield-center" aria-label="Ranked work queue">
-          {notice && (
-            <p className="pbk-today-queue-notice" role="status">
-              {notice}
-            </p>
-          )}
+          {notice && <p className="pbk-today-queue-notice" role="status">{notice}</p>}
           {rows.map(({ item, lead, destination }, index) => {
             const reason = item.reason !== lead?.nextStep.text ? item.reason : '';
             const action = destination
-              ? lead
-                ? 'Open workspace'
-                : item.cta
-              : item.recordKind === 'lead'
-                ? 'Lead unavailable'
-                : 'Destination unavailable';
-            const accessibilityLabel = [
-              `${item.tag}: ${item.body}`,
-              lead?.leadId,
-              reason,
-              lead?.nextStep.text,
-              action,
-            ]
-              .filter(Boolean)
-              .join('. ');
+              ? lead ? 'Open workspace' : item.cta
+              : item.recordKind === 'lead' ? 'Lead unavailable' : 'Destination unavailable';
+            const accessibilityLabel = [`${item.tag}: ${item.body}`, lead?.leadId, reason, lead?.nextStep.text, action]
+              .filter(Boolean).join('. ');
             return (
               <button
                 key={item.id}
@@ -1858,20 +1831,9 @@ function FounderBattlefield({
                     <span className="pbk-bf-chip-tag">{item.tag}</span>
                     <span className="pbk-bf-chip-body">{item.body}</span>
                   </span>
-                  {lead && (
-                    <code className="pbk-triage-lead-id" data-triage-lead-id={lead.leadId}>
-                      {lead.leadId}
-                    </code>
-                  )}
+                  {lead && <code className="pbk-triage-lead-id" data-triage-lead-id={lead.leadId}>{lead.leadId}</code>}
                   {reason && <span className="pbk-bf-reason">{reason}</span>}
-                  {lead && (
-                    <span
-                      className="pbk-triage-next-step"
-                      data-next-step-state={lead.nextStep.state}
-                    >
-                      {lead.nextStep.text}
-                    </span>
-                  )}
+                  {lead && <span className="pbk-triage-next-step" data-next-step-state={lead.nextStep.state}>{lead.nextStep.text}</span>}
                   <span className="pbk-triage-destination">{action}</span>
                 </span>
                 <span className="pbk-bf-chip-meta">
@@ -1911,10 +1873,7 @@ function FounderBattlefield({
 export function CommandCenter() {
   const navigate = useNavigate();
   const location = useLocation();
-  const returnContext = useMemo(
-    () => readLeadQueueReturn(location.state?.queueReturn),
-    [location.state]
-  );
+  const returnContext = useMemo(() => readLeadQueueReturn(location.state?.queueReturn), [location.state]);
   const restoredReturn = useRef(false);
   const { snapshot, tooling, loading, error, refresh } = useRuntimeSnapshot(5000, true);
   const [actionStatus, setActionStatus] = useState<ActionStatus | null>(null);
@@ -2014,22 +1973,10 @@ export function CommandCenter() {
     () => getPageSlice(pendingApprovals, approvalPage, OPERATOR_LIST_PAGE_SIZE),
     [approvalPage, pendingApprovals]
   );
-  const outlookHistory = useMemo(
-    () =>
-      approvals
-        .map(readOutlookDelivery)
-        .filter(
-          (record): record is OutlookDelivery =>
-            record !== null && record.state !== 'pending' && record.state !== 'closed'
-        )
-        .sort(
-          (left, right) =>
-            Number(right.state === 'recovery') - Number(left.state === 'recovery') ||
-            right.at.localeCompare(left.at)
-        )
-        .slice(0, 5),
-    [approvals]
-  );
+  const outlookHistory = useMemo(() => approvals.map(readOutlookDelivery)
+    .filter((record): record is OutlookDelivery => record !== null && record.state !== 'pending' && record.state !== 'closed')
+    .sort((left, right) => Number(right.state === 'recovery') - Number(left.state === 'recovery') || right.at.localeCompare(left.at))
+    .slice(0, 5), [approvals]);
   const visibleAdminTasks = useMemo(
     () => getPageSlice(adminTasks, adminPage, OPERATOR_LIST_PAGE_SIZE),
     [adminPage, adminTasks]
@@ -2044,21 +1991,16 @@ export function CommandCenter() {
   );
   const reviewedCallId = openedReviewCall ? getCallId(openedReviewCall) : '';
   const qualityReviewCall: Record<string, unknown> | null = openedReviewCall
-    ? calls.find(
-        (call) => getCallId(call) === reviewedCallId && mapCallStatus(call.status) === 'ended'
-      ) || openedReviewCall
+    ? calls.find((call) => getCallId(call) === reviewedCallId && mapCallStatus(call.status) === 'ended')
+      || openedReviewCall
     : null;
   const reviewCallIds = getRuntimeCallIdentityCandidates(qualityReviewCall || undefined);
-  const qaRecord =
-    reviewCallIds.length && Array.isArray(snapshot?.callQaScores)
-      ? snapshot.callQaScores.find(
-          (record) =>
-            reviewCallIds.includes(String(record.callId || record.call_id || '').trim()) &&
-            typeof record.score === 'number' &&
-            record.score >= 0 &&
-            record.score <= 100
-        )
-      : undefined;
+  const qaRecord = reviewCallIds.length && Array.isArray(snapshot?.callQaScores)
+    ? snapshot.callQaScores.find((record) =>
+      reviewCallIds.includes(String(record.callId || record.call_id || '').trim())
+      && typeof record.score === 'number' && record.score >= 0 && record.score <= 100
+    )
+    : undefined;
   const qaScore = typeof qaRecord?.score === 'number' ? qaRecord.score : undefined;
   const reviewLeadId = String(qualityReviewCall?.leadId || qualityReviewCall?.lead_id || '').trim();
   const messages = useMemo(
@@ -2116,28 +2058,23 @@ export function CommandCenter() {
   const liveCallActionStatus =
     actionStatus?.callId && actionStatus.callId === activeCall?.callId ? actionStatus : null;
   const completedCall = completedCallId
-    ? calls.find(
-        (call) => getCallId(call) === completedCallId && mapCallStatus(call.status) === 'ended'
-      )
+    ? calls.find((call) => getCallId(call) === completedCallId && mapCallStatus(call.status) === 'ended')
     : undefined;
   const showTodayCalls = isWidgetVisible('liveCall') && !error;
   const todayLiveCall = showTodayCalls && activeCall?.callId ? activeCall : undefined;
   const todayCompletedCall = showTodayCalls && !activeCall ? completedCall : undefined;
-  const callReviewed = Boolean(
-    todayCompletedCall && reviewedCallIds.has(getCallId(todayCompletedCall))
-  );
+  const callReviewed = Boolean(todayCompletedCall && reviewedCallIds.has(getCallId(todayCompletedCall)));
   const callIsStartAction = Boolean(todayLiveCall || (todayCompletedCall && !callReviewed));
   const todayCallLabel = todayLiveCall
     ? todayLiveCall.status === 'dialing'
       ? 'Dialing'
-      : todayLiveCall.status === 'on-hold'
-        ? 'Call on hold'
-        : 'Call connected'
+      : todayLiveCall.status === 'on-hold' ? 'Call on hold' : 'Call connected'
     : String(todayCompletedCall?.status || '').toLowerCase() === 'failed'
       ? 'Call failed'
       : 'Call ended';
-  const todayCaller =
-    todayLiveCall?.caller.name || todayCompletedCall?.leadName || 'Unknown caller';
+  const todayCaller = todayLiveCall?.caller.name
+    || todayCompletedCall?.leadName
+    || 'Unknown caller';
 
   const toggleWidget = (id: CommandWidgetId) => {
     const next = writeCommandWidgetPrefs({
@@ -2458,10 +2395,9 @@ export function CommandCenter() {
 
   useEffect(() => {
     const previousId = previousActiveCallIdRef.current;
-    if (
-      previousId &&
-      calls.some((call) => getCallId(call) === previousId && mapCallStatus(call.status) === 'ended')
-    ) {
+    if (previousId && calls.some(
+      (call) => getCallId(call) === previousId && mapCallStatus(call.status) === 'ended'
+    )) {
       setCompletedCallId(previousId);
       previousActiveCallIdRef.current = '';
     }
@@ -2530,24 +2466,20 @@ export function CommandCenter() {
   const hasApprovalReviewTarget = (approval: RuntimeRecord) =>
     Boolean(String(approval.id || '').trim()) &&
     !approvalRecordKeys(approval).some((key) => uncertainApprovalKeys.current.has(key));
-  const reviewableApprovalCount =
-    isWidgetVisible('approvals') && approvalsAvailable
-      ? pendingApprovals.filter(hasApprovalReviewTarget).length
-      : 0;
+  const reviewableApprovalCount = isWidgetVisible('approvals') && approvalsAvailable
+    ? pendingApprovals.filter(hasApprovalReviewTarget).length
+    : 0;
   const queueIsLoading = loading || !battlefieldSource;
-  const hasQueueData =
-    bridgeBattlefieldItems !== null || Boolean(battlefieldSource && snapshot && !error);
+  const hasQueueData = bridgeBattlefieldItems !== null || Boolean(battlefieldSource && snapshot && !error);
   const queueRows = (battlefieldSource ? battlefieldItems : []).map((item): TodayQueueRow => {
     const lead = resolveTriageLead(item, leadImports);
     const { targetPath } = item;
     let destination = lead?.href ?? null;
     if (item.recordKind !== 'lead') {
-      if (
-        targetPath === '/inbox' ||
-        (targetPath === '#approvals' && reviewableApprovalCount > 0) ||
-        (targetPath === '#live-call' && todayLiveCall) ||
-        (targetPath === '#admin-activity' && isWidgetVisible('adminActivity'))
-      ) {
+      if (targetPath === '/inbox' ||
+          (targetPath === '#approvals' && reviewableApprovalCount > 0) ||
+          (targetPath === '#live-call' && todayLiveCall) ||
+          (targetPath === '#admin-activity' && isWidgetVisible('adminActivity'))) {
         destination = targetPath;
       }
     }
@@ -2557,8 +2489,7 @@ export function CommandCenter() {
   const usingQueueFallback = hasQueueData && bridgeBattlefieldItems === null;
   let queueNotice = '';
   if (queueIsLoading && !hasAvailableWork) queueNotice = 'Loading work queue';
-  else if (!hasQueueData || (usingQueueFallback && !queueRows.length))
-    queueNotice = 'Work queue unavailable';
+  else if (!hasQueueData || (usingQueueFallback && !queueRows.length)) queueNotice = 'Work queue unavailable';
   else if (usingQueueFallback) queueNotice = 'Showing work from the latest workspace snapshot.';
   else if (!queueRows.length) queueNotice = 'No work items in this queue';
 
@@ -2577,9 +2508,7 @@ export function CommandCenter() {
     todayStart = {
       label: 'Go to work queue',
       href: '#battlefield-title',
-      note: usingQueueFallback
-        ? 'Work from your latest snapshot is available.'
-        : 'Choose a ranked item to start.',
+      note: usingQueueFallback ? 'Work from your latest snapshot is available.' : 'Choose a ranked item to start.',
     };
   }
   const isLoadingStart = queueIsLoading && !reviewableApprovalCount && !hasAvailableWork;
@@ -2691,24 +2620,15 @@ export function CommandCenter() {
   }, [approvals, adminTasks, leadImports, messages, calls]);
 
   useEffect(() => {
-    if (
-      restoredReturn.current ||
-      !returnContext ||
-      returnContext.path === '/leads' ||
-      loading ||
-      battlefieldQueueLoading
-    )
-      return;
+    if (restoredReturn.current || !returnContext || returnContext.path === '/leads' || loading || battlefieldQueueLoading) return;
     const frame = requestAnimationFrame(() => {
-      const target = Array.from(
-        document.querySelectorAll<HTMLButtonElement>('[data-today-queue-id]')
-      ).find((node) => node.dataset.todayQueueId === returnContext.leadId);
+      const target = Array.from(document.querySelectorAll<HTMLButtonElement>('[data-today-queue-id]'))
+        .find(node => node.dataset.todayQueueId === returnContext.leadId);
       target?.focus({ preventScroll: true });
       window.scrollTo(0, returnContext.scrollY);
       if (target) {
         const bounds = target.getBoundingClientRect();
-        if (bounds.top < 80 || bounds.bottom > window.innerHeight - 80)
-          target.scrollIntoView({ block: 'center' });
+        if (bounds.top < 80 || bounds.bottom > window.innerHeight - 80) target.scrollIntoView({ block: 'center' });
       }
       restoredReturn.current = true;
     });
@@ -2721,10 +2641,7 @@ export function CommandCenter() {
     const heading = section.querySelector<HTMLElement>('h2') || section;
     heading.tabIndex = -1;
     heading.focus({ preventScroll: true });
-    section.scrollIntoView({
-      block: 'start',
-      behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth',
-    });
+    section.scrollIntoView({ block: 'start', behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
   };
 
   const selectBattlefieldItem = (item: BattlefieldItem) => {
@@ -2732,21 +2649,9 @@ export function CommandCenter() {
       focusTodaySection(item.targetPath.slice(1));
       return;
     }
-    navigate(
-      item.targetPath,
-      /^\/leads(?:\/|\?)/.test(item.targetPath)
-        ? {
-            state: {
-              leadReturn: {
-                path: location.pathname,
-                search: location.search,
-                scrollY: window.scrollY,
-                leadId: item.id,
-              },
-            },
-          }
-        : undefined
-    );
+    navigate(item.targetPath, /^\/leads(?:\/|\?)/.test(item.targetPath) ? {
+      state: { leadReturn: { path: location.pathname, search: location.search, scrollY: window.scrollY, leadId: item.id } },
+    } : undefined);
   };
 
   const jumpToTodaySection = (event: React.MouseEvent<HTMLAnchorElement>, id: string) => {
@@ -2802,9 +2707,7 @@ export function CommandCenter() {
       async () => {
         const result = await controlRuntimeCall(callId, action);
         if (result.ok !== true) {
-          throw new Error(
-            friendlyRuntimeText(result.error, 'The bridge did not confirm the call action.')
-          );
+          throw new Error(friendlyRuntimeText(result.error, 'The bridge did not confirm the call action.'));
         }
         if (action === 'takeover') navigate(state.dealId ? `/deal/${state.dealId}` : '/deal');
       },
@@ -2893,11 +2796,7 @@ export function CommandCenter() {
         : status === 'needs-revision'
           ? 'Request revisions for'
           : 'Decline';
-    setDecisionProgress({
-      phase: 'review',
-      approvalId,
-      subject: `${actionLabel} ${type} / ${friendlyRuntimeLabel(approval.leadName || approval.address || 'PBK approval')}`,
-    });
+    setDecisionProgress({ phase: 'review', approvalId, subject: `${actionLabel} ${type} / ${friendlyRuntimeLabel(approval.leadName || approval.address || 'PBK approval')}` });
     setApprovalDecisionDraft({
       approvalId,
       status,
@@ -2912,7 +2811,7 @@ export function CommandCenter() {
   };
 
   const cancelApprovalDecision = () => {
-    setDecisionProgress((current) => ({ ...current, phase: 'cancelled' }));
+    setDecisionProgress(current => ({ ...current, phase: 'cancelled' }));
     approvalDialogRef.current?.close();
     setApprovalDecisionDraft(null);
     const trigger = approvalTriggerRef.current;
@@ -2930,7 +2829,7 @@ export function CommandCenter() {
       draft.resolutionKeys.some((key) => uncertainApprovalKeys.current.has(key))
     )
       return;
-    setDecisionProgress((current) => ({ ...current, phase: 'checking' }));
+    setDecisionProgress(current => ({ ...current, phase: 'checking' }));
     approvalDialogRef.current?.close();
     setApprovalDecisionDraft(null);
     approvalTriggerRef.current = null;
@@ -2945,11 +2844,11 @@ export function CommandCenter() {
         try {
           fresh = await fetchRuntimeState();
         } catch (error) {
-          setDecisionProgress((previous) => ({ ...previous, phase: 'changed' }));
+          setDecisionProgress(previous => ({ ...previous, phase: 'changed' }));
           throw error;
         }
         if (!Array.isArray(fresh?.approvals)) {
-          setDecisionProgress((current) => ({ ...current, phase: 'changed' }));
+          setDecisionProgress(current => ({ ...current, phase: 'changed' }));
           throw new Error('The approval queue could not be verified. No decision was submitted.');
         }
         const current = getPendingApprovals(fresh.approvals).find(
@@ -2964,27 +2863,22 @@ export function CommandCenter() {
           String(current.address || 'No address recorded') !== draft.address ||
           approvalRecipient(current) !== draft.recipient
         ) {
-          setDecisionProgress((previous) => ({ ...previous, phase: 'changed' }));
+          setDecisionProgress(previous => ({ ...previous, phase: 'changed' }));
           await refresh().catch(() => null);
           throw new Error('This request changed. Review the latest queue before deciding.');
         }
         try {
-          setDecisionProgress((previous) => ({ ...previous, phase: 'submitting' }));
+          setDecisionProgress(previous => ({ ...previous, phase: 'submitting' }));
           await updateApprovalDecision(draft.approvalId, draft.status);
         } catch {
-          setDecisionProgress((previous) => ({ ...previous, phase: 'unconfirmed' }));
+          setDecisionProgress(previous => ({ ...previous, phase: 'unconfirmed' }));
           draft.resolutionKeys.forEach((key) => uncertainApprovalKeys.current.add(key));
           await refresh().catch(() => null);
           throw new Error(
             'Decision not confirmed. Check the approval history before trying again.'
           );
         }
-        setDecisionProgress((previous) => ({
-          ...previous,
-          phase: 'recorded',
-          decision: draft.status,
-          acknowledgedAt: new Date().toISOString(),
-        }));
+        setDecisionProgress(previous => ({ ...previous, phase: 'recorded', decision: draft.status, acknowledgedAt: new Date().toISOString() }));
         setResolvedApprovalIds((current) => {
           const next = new Set(current);
           next.add(draft.approvalId);
@@ -2996,7 +2890,9 @@ export function CommandCenter() {
   };
 
   const isApprovalDecisionUnavailable = (approval: Record<string, unknown>) =>
-    !approvalsAvailable || Boolean(pendingAction) || !hasApprovalReviewTarget(approval);
+    !approvalsAvailable ||
+    Boolean(pendingAction) ||
+    !hasApprovalReviewTarget(approval);
   const isAdminDecisionPending = (taskId: string) => pendingAction.startsWith(`admin:${taskId}:`);
   const isApprovalDecisionPending = (approvalId: string) =>
     pendingAction.startsWith(`approval:${approvalId}:`);
@@ -3044,40 +2940,28 @@ export function CommandCenter() {
                 <p role="status">{todayStart.note}</p>
               </div>
               <Link
-                to={
-                  todayStart.href.startsWith('#')
-                    ? {
-                        pathname: location.pathname,
-                        search: location.search,
-                        hash: todayStart.href,
-                      }
-                    : todayStart.href
-                }
+                to={todayStart.href.startsWith('#')
+                  ? { pathname: location.pathname, search: location.search, hash: todayStart.href }
+                  : todayStart.href}
                 className="pbk-today-call-action"
                 data-today-primary={isLoadingStart ? undefined : ''}
-                onClick={
-                  todayStart.href.startsWith('#')
-                    ? (event) => jumpToTodaySection(event, todayStart.href.slice(1))
-                    : undefined
-                }
+                onClick={todayStart.href.startsWith('#')
+                  ? (event) => jumpToTodaySection(event, todayStart.href.slice(1))
+                  : undefined}
               >
                 {todayStart.label}
               </Link>
             </div>
           )}
           {(todayLiveCall || todayCompletedCall) && (
-            <section
-              aria-label="Call status"
-              className={`pbk-today-call${todayLiveCall ? ' is-live' : ''}`}
-            >
+            <section aria-label="Call status" className={`pbk-today-call${todayLiveCall ? ' is-live' : ''}`}>
               <div className="pbk-today-call-context">
-                {todayLiveCall ? (
-                  <Phone size={16} aria-hidden="true" />
-                ) : (
-                  <ClipboardCheck size={16} aria-hidden="true" />
-                )}
+                {todayLiveCall
+                  ? <Phone size={16} aria-hidden="true" />
+                  : <ClipboardCheck size={16} aria-hidden="true" />}
                 <div className="pbk-today-call-copy" role="status">
-                  <span>{todayCallLabel}</span> <strong>{todayCaller}</strong>
+                  <span>{todayCallLabel}</span>{' '}
+                  <strong>{todayCaller}</strong>
                 </div>
               </div>
               {todayLiveCall ? (
@@ -3089,18 +2973,16 @@ export function CommandCenter() {
                 >
                   Open call
                 </a>
-              ) : (
-                todayCompletedCall && (
-                  <button
-                    className="pbk-today-call-action"
-                    data-today-primary={callReviewed ? undefined : ''}
-                    type="button"
-                    aria-haspopup="dialog"
-                    onClick={() => setOpenedReviewCall(todayCompletedCall)}
-                  >
-                    {callReviewed ? 'View review' : 'Review call'}
-                  </button>
-                )
+              ) : todayCompletedCall && (
+                <button
+                  className="pbk-today-call-action"
+                  data-today-primary={callReviewed ? undefined : ''}
+                  type="button"
+                  aria-haspopup="dialog"
+                  onClick={() => setOpenedReviewCall(todayCompletedCall)}
+                >
+                  {callReviewed ? 'View review' : 'Review call'}
+                </button>
               )}
             </section>
           )}
@@ -3132,249 +3014,220 @@ export function CommandCenter() {
         )}
 
         <nav className="pbk-triage-sections" aria-label="Today sections">
-          <a
-            href="#battlefield-title"
-            onClick={(event) => jumpToTodaySection(event, 'battlefield-title')}
-          >
-            Work queue
-          </a>
-          {isWidgetVisible('approvals') && (
-            <a href="#approvals" onClick={(event) => jumpToTodaySection(event, 'approvals')}>
-              Review {approvalsAvailable ? `(${pendingApprovalCount})` : ''}
-            </a>
-          )}
-          {isWidgetVisible('activity') && (
-            <a
-              href="#recent-activity"
-              onClick={(event) => jumpToTodaySection(event, 'recent-activity')}
-            >
-              Activity
-            </a>
-          )}
+          <a href="#battlefield-title" onClick={event => jumpToTodaySection(event, 'battlefield-title')}>Work queue</a>
+          {isWidgetVisible('approvals') && <a href="#approvals" onClick={event => jumpToTodaySection(event, 'approvals')}>Review {approvalsAvailable ? `(${pendingApprovalCount})` : ''}</a>}
+          {isWidgetVisible('activity') && <a href="#recent-activity" onClick={event => jumpToTodaySection(event, 'recent-activity')}>Activity</a>}
         </nav>
         <div className={`pbk-faster-triage${isWidgetVisible('approvals') ? ' has-review' : ''}`}>
-          <FounderBattlefield
-            rows={queueRows}
-            notice={queueNotice}
-            loading={queueIsLoading}
-            error={error}
-            agentsReady={toolingCoreReady}
-            agentsTotal={toolingCoreTotal}
-            mode={approvalMode}
-            sourceLabel={battlefieldSource || 'Checking work queue'}
-            sourceNote={battlefieldSourceNote}
-            onSelect={selectBattlefieldItem}
-          />
-          {(isWidgetVisible('approvals') || isWidgetVisible('activity')) && (
-            <div
-              className={`pbk-today-review${isWidgetVisible('approvals') && isWidgetVisible('activity') ? ' is-split' : ''}`}
-            >
-              {isWidgetVisible('approvals') && (
-                <section
-                  id="approvals"
-                  aria-labelledby="pbk-review-heading"
-                  className="pbk-panel pbk-review-section"
-                >
-                  <div className="flex items-center justify-between gap-3">
-                    <div>
-                      <h2 id="pbk-review-heading" ref={reviewHeadingRef} tabIndex={-1}>
-                        Review
-                      </h2>
-                      <p className="pbk-review-subtitle">Approval queue</p>
-                    </div>
-                    {approvalsAvailable && (
-                      <span className="pbk-review-count">{pendingApprovalCount} pending</span>
-                    )}
+        <FounderBattlefield
+          rows={queueRows}
+          notice={queueNotice}
+          loading={queueIsLoading}
+          error={error}
+          agentsReady={toolingCoreReady}
+          agentsTotal={toolingCoreTotal}
+          mode={approvalMode}
+          sourceLabel={battlefieldSource || 'Checking work queue'}
+          sourceNote={battlefieldSourceNote}
+          onSelect={selectBattlefieldItem}
+        />
+        {(isWidgetVisible('approvals') || isWidgetVisible('activity')) && (
+          <div
+            className={`pbk-today-review${isWidgetVisible('approvals') && isWidgetVisible('activity') ? ' is-split' : ''}`}
+          >
+            {isWidgetVisible('approvals') && (
+              <section
+                id="approvals"
+                aria-labelledby="pbk-review-heading"
+                className="pbk-panel pbk-review-section"
+              >
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <h2 id="pbk-review-heading" ref={reviewHeadingRef} tabIndex={-1}>
+                      Review
+                    </h2>
+                    <p className="pbk-review-subtitle">Approval queue</p>
                   </div>
-                  <DecisionRail progress={decisionProgress} available={approvalsAvailable} />
-                  <div className="pbk-review-list">
-                    {visibleApprovals.map((approval) => (
-                      <div
-                        key={String(approval.id)}
-                        className={`pbk-command-approval-card ${
-                          String(approval.type || '')
-                            .toLowerCase()
-                            .includes('contract')
-                            ? 'contract'
-                            : ''
-                        }`}
-                        data-source="snapshot.approvals payload"
-                        data-approval-id={String(approval.id)}
-                      >
-                        <div className="pbk-review-row-meta">
-                          <span>{friendlyRuntimeLabel(approval.type || 'approval')}</span>
-                          {Boolean(approval.createdAt) && (
-                            <time
-                              dateTime={String(approval.createdAt)}
-                              title={formatActivityTitle(String(approval.createdAt))}
-                            >
-                              {formatRelative(String(approval.createdAt))}
-                            </time>
-                          )}
-                        </div>
-                        <div className="mt-2 text-sm font-semibold text-slate-100">
-                          {friendlyRuntimeLabel(
-                            approval.leadName || approval.address || 'PBK approval'
-                          )}
-                        </div>
-                        <div className="mt-1 text-xs text-slate-400">
-                          {String(approval.address || 'No address recorded')}
-                        </div>
-                        <div
-                          className="approval-preview"
-                          aria-label={`Approval payload preview for ${String(
-                            approval.leadName || approval.address || 'PBK approval'
-                          )}`}
-                        >
-                          {getApprovalPreview(approval)}
-                        </div>
-                        <OutlookDeliveryStatus record={readOutlookDelivery(approval)} />
-                        {approvalRecordKeys(approval).some((key) =>
-                          uncertainApprovalKeys.current.has(key)
-                        ) && (
-                          <p className="pbk-review-empty">
-                            Decision unconfirmed. Check the approval history before retrying.
-                          </p>
-                        )}
-                        <div className="mt-3 flex flex-wrap gap-2">
-                          <button
-                            type="button"
-                            data-approval-primary="true"
-                            disabled={Boolean(isApprovalDecisionUnavailable(approval))}
-                            onClick={(event) =>
-                              confirmApprovalDecision(approval, 'approved', event.currentTarget)
-                            }
-                            className="pbk-review-button pbk-review-button-primary"
-                          >
-                            {isApprovalDecisionPending(String(approval.id))
-                              ? 'Submitting…'
-                              : 'Review approval'}
-                          </button>
-                          <button
-                            type="button"
-                            data-approval-secondary="true"
-                            disabled={Boolean(isApprovalDecisionUnavailable(approval))}
-                            onClick={(event) => {
-                              confirmApprovalDecision(
-                                approval,
-                                getApprovalSecondaryStatus(approval),
-                                event.currentTarget
-                              );
-                            }}
-                            className="pbk-review-button"
-                          >
-                            {isApprovalDecisionPending(String(approval.id))
-                              ? '…'
-                              : String(approval.type || '').toLowerCase() === 'contract'
-                                ? 'Needs Revision'
-                                : 'Decline'}
-                          </button>
-                        </div>
-                      </div>
-                    ))}
-                    {(!approvalsAvailable || !pendingApprovals.length) && (
-                      <div className="pbk-review-empty" role="status">
-                        {loading
-                          ? 'Loading approval queue…'
-                          : !approvalsAvailable
-                            ? pendingApprovals.length
-                              ? 'Approval queue unavailable. Showing saved requests.'
-                              : 'Approval queue unavailable.'
-                            : 'No pending approvals right now.'}
-                      </div>
-                    )}
-                  </div>
-                  <CompactPager
-                    page={approvalPage}
-                    total={pendingApprovals.length}
-                    label="Approval board pages"
-                    itemLabel="reviews"
-                    onPageChange={setApprovalPage}
-                  />
-                  {outlookHistory.length > 0 && (
-                    <section className="mt-4" aria-label="Recent Outlook email approvals">
-                      <h3 className="text-sm font-semibold text-slate-200">
-                        Recent Outlook email approvals
-                      </h3>
-                      {outlookHistory.map((record) => (
-                        <OutlookDeliveryStatus
-                          key={record.id}
-                          record={record}
-                          showSubject
-                          showLead
-                        />
-                      ))}
-                    </section>
+                  {approvalsAvailable && (
+                    <span className="pbk-review-count">{pendingApprovalCount} pending</span>
                   )}
-                  <DataSourceCaption
-                    endpoint="snapshot.approvals payload + PUT /api/approvals/:id"
-                    note="preview uses message/body/text/content/payload/metadata fields"
-                  />
-                </section>
-              )}
-              {isWidgetVisible('activity') && (
-                <section
-                  id="recent-activity"
-                  className="pbk-panel pbk-today-activity"
-                  aria-labelledby="pbk-activity-heading"
-                >
-                  <h2 id="pbk-activity-heading" tabIndex={-1}>
-                    Recent activity
-                  </h2>
-                  <div className="mt-3">
-                    {visibleActivity.map((item, index) => {
-                      const occurredAt = String(item.at || item.createdAt || '');
-                      const message = String(item.text || 'Runtime event');
-                      const preview =
-                        message.length > 140 ? `${message.slice(0, 140).trimEnd()}…` : message;
-                      return (
-                        <details
-                          key={`${String(item.id || 'activity')}-${occurredAt}-${activityPage}-${index}`}
-                          className="pbk-today-activity-row"
-                        >
-                          <summary className="pbk-today-activity-summary">
-                            <span className="pbk-today-activity-meta">
-                              <strong>{String(item.actor || 'System')}</strong>
-                              <span>{friendlyRuntimeLabel(item.category || 'INFO')}</span>
-                            </span>
-                            <span className="pbk-today-activity-when">
-                              {occurredAt ? formatRelative(occurredAt) : 'Time unavailable'}
-                            </span>
-                            <ChevronDown size={16} aria-hidden="true" />
-                            <span className="pbk-today-activity-preview line-clamp-2">
-                              {preview}
-                            </span>
-                          </summary>
-                          <div className="pbk-today-activity-detail">
-                            <p>{message}</p>
-                            {occurredAt && (
-                              <time dateTime={occurredAt}>{formatActivityTitle(occurredAt)}</time>
-                            )}
-                          </div>
-                        </details>
-                      );
-                    })}
-                    {!visibleActivity.length && (
-                      <div className="rounded-xl border border-dashed border-slate-800 px-3 py-4 text-xs text-slate-500">
-                        No activity is on this page yet.
+                </div>
+                <DecisionRail progress={decisionProgress} available={approvalsAvailable} />
+                <div className="pbk-review-list">
+                  {visibleApprovals.map((approval) => (
+                    <div
+                      key={String(approval.id)}
+                      className={`pbk-command-approval-card ${
+                        String(approval.type || '')
+                          .toLowerCase()
+                          .includes('contract')
+                          ? 'contract'
+                          : ''
+                      }`}
+                      data-source="snapshot.approvals payload"
+                      data-approval-id={String(approval.id)}
+                    >
+                      <div className="pbk-review-row-meta">
+                        <span>{friendlyRuntimeLabel(approval.type || 'approval')}</span>
+                        {Boolean(approval.createdAt) && (
+                          <time
+                            dateTime={String(approval.createdAt)}
+                            title={formatActivityTitle(String(approval.createdAt))}
+                          >
+                            {formatRelative(String(approval.createdAt))}
+                          </time>
+                        )}
                       </div>
-                    )}
-                  </div>
-                  <CompactPager
-                    page={activityPage}
-                    total={activityItems.length}
-                    label="Activity feed pages"
-                    itemLabel="events"
-                    onPageChange={setActivityPage}
-                  />
-                  <DataSourceCaption
-                    endpoint="GET /api/intelligence/stream"
-                    note={`${intelligenceStreamSource}; snapshot.activity fallback`}
-                  />
-                </section>
-              )}
-            </div>
-          )}
+                      <div className="mt-2 text-sm font-semibold text-slate-100">
+                        {friendlyRuntimeLabel(
+                          approval.leadName || approval.address || 'PBK approval'
+                        )}
+                      </div>
+                      <div className="mt-1 text-xs text-slate-400">
+                        {String(approval.address || 'No address recorded')}
+                      </div>
+                      <div
+                        className="approval-preview"
+                        aria-label={`Approval payload preview for ${String(
+                          approval.leadName || approval.address || 'PBK approval'
+                        )}`}
+                      >
+                        {getApprovalPreview(approval)}
+                      </div>
+                      <OutlookDeliveryStatus record={readOutlookDelivery(approval)} />
+                      {approvalRecordKeys(approval).some((key) =>
+                        uncertainApprovalKeys.current.has(key)
+                      ) && (
+                        <p className="pbk-review-empty">
+                          Decision unconfirmed. Check the approval history before retrying.
+                        </p>
+                      )}
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          data-approval-primary="true"
+                          disabled={Boolean(isApprovalDecisionUnavailable(approval))}
+                          onClick={(event) =>
+                            confirmApprovalDecision(approval, 'approved', event.currentTarget)
+                          }
+                          className="pbk-review-button pbk-review-button-primary"
+                        >
+                          {isApprovalDecisionPending(String(approval.id))
+                            ? 'Submitting…'
+                            : 'Review approval'}
+                        </button>
+                        <button
+                          type="button"
+                          data-approval-secondary="true"
+                          disabled={Boolean(isApprovalDecisionUnavailable(approval))}
+                          onClick={(event) => {
+                            confirmApprovalDecision(
+                              approval,
+                              getApprovalSecondaryStatus(approval),
+                              event.currentTarget
+                            );
+                          }}
+                          className="pbk-review-button"
+                        >
+                          {isApprovalDecisionPending(String(approval.id))
+                            ? '…'
+                            : String(approval.type || '').toLowerCase() === 'contract'
+                              ? 'Needs Revision'
+                              : 'Decline'}
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                  {(!approvalsAvailable || !pendingApprovals.length) && (
+                    <div className="pbk-review-empty" role="status">
+                      {loading
+                        ? 'Loading approval queue…'
+                        : !approvalsAvailable
+                          ? pendingApprovals.length
+                            ? 'Approval queue unavailable. Showing saved requests.'
+                            : 'Approval queue unavailable.'
+                          : 'No pending approvals right now.'}
+                    </div>
+                  )}
+                </div>
+                <CompactPager
+                  page={approvalPage}
+                  total={pendingApprovals.length}
+                  label="Approval board pages"
+                  itemLabel="reviews"
+                  onPageChange={setApprovalPage}
+                />
+                {outlookHistory.length > 0 && (
+                  <section className="mt-4" aria-label="Recent Outlook email approvals">
+                    <h3 className="text-sm font-semibold text-slate-200">Recent Outlook email approvals</h3>
+                    {outlookHistory.map((record) => <OutlookDeliveryStatus key={record.id} record={record} showSubject showLead />)}
+                  </section>
+                )}
+                <DataSourceCaption
+                  endpoint="snapshot.approvals payload + PUT /api/approvals/:id"
+                  note="preview uses message/body/text/content/payload/metadata fields"
+                />
+              </section>
+            )}
+            {isWidgetVisible('activity') && (
+              <section
+                id="recent-activity"
+                className="pbk-panel pbk-today-activity"
+                aria-labelledby="pbk-activity-heading"
+              >
+                <h2 id="pbk-activity-heading" tabIndex={-1}>Recent activity</h2>
+                <div className="mt-3">
+                  {visibleActivity.map((item, index) => {
+                    const occurredAt = String(item.at || item.createdAt || '');
+                    const message = String(item.text || 'Runtime event');
+                    const preview = message.length > 140 ? `${message.slice(0, 140).trimEnd()}…` : message;
+                    return (
+                      <details
+                        key={`${String(item.id || 'activity')}-${occurredAt}-${activityPage}-${index}`}
+                        className="pbk-today-activity-row"
+                      >
+                        <summary className="pbk-today-activity-summary">
+                          <span className="pbk-today-activity-meta">
+                            <strong>{String(item.actor || 'System')}</strong>
+                            <span>{friendlyRuntimeLabel(item.category || 'INFO')}</span>
+                          </span>
+                          <span className="pbk-today-activity-when">
+                            {occurredAt ? formatRelative(occurredAt) : 'Time unavailable'}
+                          </span>
+                          <ChevronDown size={16} aria-hidden="true" />
+                          <span className="pbk-today-activity-preview line-clamp-2">
+                            {preview}
+                          </span>
+                        </summary>
+                        <div className="pbk-today-activity-detail">
+                          <p>{message}</p>
+                          {occurredAt && <time dateTime={occurredAt}>{formatActivityTitle(occurredAt)}</time>}
+                        </div>
+                      </details>
+                    );
+                  })}
+                  {!visibleActivity.length && (
+                    <div className="rounded-xl border border-dashed border-slate-800 px-3 py-4 text-xs text-slate-500">
+                      No activity is on this page yet.
+                    </div>
+                  )}
+                </div>
+                <CompactPager
+                  page={activityPage}
+                  total={activityItems.length}
+                  label="Activity feed pages"
+                  itemLabel="events"
+                  onPageChange={setActivityPage}
+                />
+                <DataSourceCaption
+                  endpoint="GET /api/intelligence/stream"
+                  note={`${intelligenceStreamSource}; snapshot.activity fallback`}
+                />
+              </section>
+            )}
+          </div>
+        )}
+
         </div>
 
         <div className="pbk-mission-actions" aria-label="Today quick actions">
@@ -3503,14 +3356,9 @@ export function CommandCenter() {
                 key={activeCall?.callId || 'idle'}
                 state={activeCall}
                 controlsBusy={Boolean(pendingAction)}
-                controlFeedback={
-                  liveCallActionStatus
-                    ? {
-                        ...liveCallActionStatus,
-                        text: friendlyRuntimeText(liveCallActionStatus.text),
-                      }
-                    : null
-                }
+                controlFeedback={liveCallActionStatus
+                  ? { ...liveCallActionStatus, text: friendlyRuntimeText(liveCallActionStatus.text) }
+                  : null}
                 onTakeOver={(state) => runLiveCallAction(state, 'takeover')}
                 onMute={(state) => runLiveCallAction(state, 'mute')}
                 onEnd={(state) => runLiveCallAction(state, 'end')}
@@ -3847,11 +3695,7 @@ export function CommandCenter() {
             <h3 id="approval-decision-title" className="mt-2 text-lg font-semibold text-slate-100">
               {approvalDecisionDraft.actionLabel} {approvalDecisionDraft.type}?
             </h3>
-            <DecisionRail
-              progress={decisionProgress}
-              available={approvalsAvailable}
-              showReceipt={false}
-            />
+            <DecisionRail progress={decisionProgress} available={approvalsAvailable} showReceipt={false} />
             <p className="mt-2 text-sm text-slate-400">{approvalDecisionDraft.leadName}</p>
             <div className="mt-4 pbk-review-evidence text-sm">
               {approvalDecisionDraft.address}

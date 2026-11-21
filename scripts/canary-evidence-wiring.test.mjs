@@ -188,8 +188,9 @@ test('approval, auth, delivery and dispatch code outside maturity remains byte-f
   // unified conversation bridge smoke test.
   // dc9bb20 and ff183d4 add tooling status; 82ae0a0 adds exact-version recording
   // retention, exercised by the disposable Postgres and Storage HTTP test.
+  // Synced main includes the Outlook receipt lookup from 15e6868.
   assert.equal(createHash('sha256').update(unchanged).digest('hex'),
-    '244522ab8f93f09cb06d5b0c5814ba13830d56e51c10cf3f9e96b5c19e0cc707');
+    '8325c80af3d75a18d4bc2bac6dda0167e781e05d7eb58d35ca03ad29e6678ae8');
 });
 
 test('production distribution includes reader and protocol, never the fixture signer', () => {

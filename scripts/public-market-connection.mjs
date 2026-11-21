@@ -20,6 +20,7 @@ function hasPinnedScope(session, { sessionId, userId, version }) {
   return session?.session_id === sessionId &&
     session.config_version === version &&
     session.mcp?.url === `${COMPOSIO}/tool_router/${sessionId}/mcp` &&
+    only(session.tool_router_tools, TOOL) &&
     scope?.user_id === userId &&
     only(scope.toolkits?.enabled, TOOLKIT) &&
     only(Object.keys(scope.tools ?? {}), TOOLKIT) &&
@@ -36,10 +37,8 @@ function hasPinnedScope(session, { sessionId, userId, version }) {
     scope.execute?.enable_multi_execute === false;
 }
 
-function hasPinnedTool(list, hash) {
-  const item = list?.items?.[0];
-  return list?.total_items === 1 && list.items?.length === 1 && !list.next_cursor &&
-    item?.slug === TOOL && item.toolkit?.slug === TOOLKIT && item.no_auth === true &&
+function hasPinnedTool(item, hash) {
+  return item?.slug === TOOL && item.toolkit?.slug === TOOLKIT && item.no_auth === true &&
     createHash('sha256').update(JSON.stringify(canonical(item.input_parameters ?? null))).digest('hex') === hash;
 }
 
@@ -114,8 +113,10 @@ export function createPublicMarketConnectionCheck({
         (async () => {
           const session = await readSmallJson(await get(sessionUrl, composioKey, signal));
           if (!hasPinnedScope(session, { sessionId, userId, version })) return false;
-          const listing = await readSmallJson(await get(`${sessionUrl}/tools?limit=2`, composioKey, signal));
-          return hasPinnedTool(listing, hash);
+          // The per-session REST listing can omit preloaded tools. Verify the
+          // exact advertised set above and pin the public tool's catalog schema.
+          const tool = await readSmallJson(await get(`${COMPOSIO}/api/v3.1/tools/${TOOL}`, composioKey, signal));
+          return hasPinnedTool(tool, hash);
         })(),
       ]);
       if (e2bOk && searchOk) {

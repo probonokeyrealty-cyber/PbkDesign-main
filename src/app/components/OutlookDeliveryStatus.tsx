@@ -1,6 +1,6 @@
 import { useState, type FormEvent } from 'react';
 import { normalizeOutlookReceiptUrl, type OutlookDelivery } from '../utils/outlookDelivery.mjs';
-import { confirmOutlookDeliveryRequest } from '../utils/runtimeBridge';
+import { confirmOutlookDeliveryRequest, findOutlookDeliveryReceipt } from '../utils/runtimeBridge';
 
 const deliveryCopy: Record<string, [string, string]> = {
   pending: ['Awaiting approval', 'Ava will send after approval.'],
@@ -53,10 +53,39 @@ function OutlookDeliveryCard({
   const [receipt, setReceipt] = useState('');
   const [matched, setMatched] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [searching, setSearching] = useState(false);
+  const [foundReceipt, setFoundReceipt] = useState('');
+  const [lookupError, setLookupError] = useState('');
   const [error, setError] = useState('');
   const record = initial.confirmation ? initial : confirmed || initial;
   const [label, detail] = deliveryCopy[record.state] || deliveryCopy.approved;
   const at = new Date(record.at);
+
+  async function lookupReceipt() {
+    setSearching(true);
+    setLookupError('');
+    setFoundReceipt('');
+    try {
+      const receiptUrl = await findOutlookDeliveryReceipt(record.id);
+      if (record.confirmation && record.confirmation.receiptUrl !== receiptUrl) {
+        setLookupError(
+          'Ava found a different receipt from the one saved here. Check the saved receipt before making any changes.'
+        );
+        return;
+      }
+      setFoundReceipt(receiptUrl);
+      if (record.canConfirm) {
+        setReceipt(receiptUrl);
+        setMatched(false);
+        setError('');
+        setEditing(true);
+      }
+    } catch (cause) {
+      setLookupError(cause instanceof Error ? cause.message : 'Ava could not check the PBK inbox.');
+    } finally {
+      setSearching(false);
+    }
+  }
 
   async function save(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -129,14 +158,50 @@ function OutlookDeliveryCard({
       {record.receiptId && (
         <p className="mt-1 break-all font-mono">Outlook receipt {record.receiptId}</p>
       )}
-      {record.canConfirm && !editing && (
-        <button
-          type="button"
-          className="mt-2 rounded-md border border-slate-600 px-2 py-1 text-sky-400"
-          onClick={() => setEditing(true)}
-        >
-          Confirm delivery
-        </button>
+      {(record.canConfirm || record.state === 'delivered') && !editing && (
+        <div className="mt-2 flex flex-wrap gap-2">
+          <button
+            type="button"
+            disabled={searching}
+            className="rounded-md border border-slate-600 px-2 py-1 text-sky-400 disabled:opacity-50"
+            onClick={lookupReceipt}
+          >
+            {searching ? 'Checking PBK inbox…' : 'Find inbox receipt'}
+          </button>
+          {record.canConfirm && (
+            <button
+              type="button"
+              disabled={searching}
+              className="rounded-md border border-slate-600 px-2 py-1 disabled:opacity-50"
+              onClick={() => setEditing(true)}
+            >
+              Enter receipt link
+            </button>
+          )}
+        </div>
+      )}
+      {lookupError && (
+        <p role="alert" className="mt-2 text-amber-300">
+          {lookupError}
+        </p>
+      )}
+      {foundReceipt && (
+        <p role="status" className="mt-2 text-slate-200">
+          Ava found the matching message in the PBK inbox.
+          {!record.confirmation && (
+            <>
+              {' '}
+              <a
+                href={foundReceipt}
+                target="_blank"
+                rel="noreferrer"
+                className="text-sky-400 underline"
+              >
+                Open matching receipt
+              </a>
+            </>
+          )}
+        </p>
       )}
       {record.canConfirm && editing && (
         <form className="mt-3 grid gap-2" onSubmit={save}>
@@ -180,6 +245,9 @@ function OutlookDeliveryCard({
               onClick={() => {
                 setEditing(false);
                 setError('');
+                setFoundReceipt('');
+                setReceipt('');
+                setMatched(false);
               }}
             >
               Cancel

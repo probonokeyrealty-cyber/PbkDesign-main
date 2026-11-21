@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { sendAvaOutlookMail } from './ava-outlook-mail.mjs';
+import * as outlook from './ava-outlook-mail.mjs';
 
 const sender = 'acquisition@example.com';
 const recipient = 'internal-test@example.net';
@@ -12,6 +13,41 @@ const env = {
   PBK_AVA_OUTLOOK_COMPOSIO_API_KEY: 'test-only',
 };
 const options = { env, sender, recipient, subject: 'Ava internal verification', text: 'Test message' };
+
+test('finds a unique inbox receipt and refuses to guess between duplicate matches', async () => {
+  const lookupEnv = {
+    ...env, PBK_AVA_RECEIPT_GMAIL_ACCOUNT_ID: 'receipt-account',
+    PBK_AVA_RECEIPT_GMAIL_USER_ID: 'receipt-user', PBK_AVA_RECEIPT_GMAIL_ADDRESS: 'pbk@gmail.com',
+  };
+  const recipient = 'pbk+qa@gmail.com';
+  const exact = {
+    messageId: '1234567890abcdef', threadId: '1234567890abcdef', labelIds: ['INBOX'],
+    messageTimestamp: '2026-11-20T22:54:00Z', sender: `Ava <${sender}>`, to: recipient,
+    subject: options.subject, messageText: options.text,
+  };
+  const wrong = { ...exact, messageId: '234567890abcdef1', messageText: 'Same subject, different message' };
+  const earlier = { ...exact, messageId: '34567890abcdef12', messageTimestamp: '2026-11-19T22:54:00Z' };
+  async function lookup(messages, mail = 'pbk@gmail.com', to = recipient, nextPageToken = null) {
+    return outlook.findAvaOutlookReceipt({
+      ...options, env: lookupEnv, recipient: to, sentAt: '2026-11-20T22:53:55Z',
+      fetchImpl: async (url, request) => {
+        const { connected_account_id, arguments: args } = JSON.parse(request.body);
+        assert.equal(connected_account_id, 'receipt-account');
+        if (url.endsWith('/GMAIL_GET_PROFILE')) return Response.json({ successful: true, data: { emailAddress: mail } });
+        assert.ok(url.endsWith('/GMAIL_FETCH_EMAILS'));
+        assert.ok(args.query.includes('to:pbk+qa@gmail.com'));
+        return Response.json({ successful: true, data: { messages, nextPageToken } });
+      },
+    });
+  }
+  const match = await lookup([wrong, earlier, exact]);
+  assert.equal(match.receiptUrl, 'https://mail.google.com/mail/u/?authuser=pbk%40gmail.com#all/1234567890abcdef');
+  assert.equal((await lookup([wrong, earlier])).status, 404);
+  assert.equal((await lookup([exact, { ...exact, messageId: '4567890abcdef123' }])).status, 409);
+  assert.equal((await lookup([exact], 'pbk@gmail.com', recipient, 'more')).status, 409);
+  assert.equal((await lookup([exact], 'other@gmail.com')).status, 503);
+  assert.equal((await lookup([exact], 'pbk@gmail.com', 'other@gmail.com')).status, 422);
+});
 
 test('uses the pinned mailbox and sends plain text to exactly one authorized recipient', async () => {
   const calls = [];

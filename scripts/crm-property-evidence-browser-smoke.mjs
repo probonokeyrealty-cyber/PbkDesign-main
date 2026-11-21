@@ -142,6 +142,10 @@ async function verify(engine, config, label) {
     await expect(brief.getByText('0 reviewed selections', { exact: true })).toBeVisible();
     await expect(brief.getByText('3 saved photos', { exact: true })).toBeVisible();
     await expect(brief.getByText('1 retained after a later refresh', { exact: true })).toBeVisible();
+    await brief.getByRole('button', { name: 'Compare saved comps', exact: true }).press('Enter');
+    await expect(workspace.getByRole('tab', { name: 'Comps', exact: true })).toBeFocused();
+    await expect(workspace.getByRole('tabpanel', { name: 'Comps', exact: true })).toBeVisible();
+    await tab('Overview');
     await brief.getByRole('button', { name: 'Review records', exact: true }).click();
     await expect(workspace.getByRole('tab', { name: 'Property record', exact: true })).toBeFocused();
     await tab('Overview');
@@ -285,7 +289,10 @@ async function verify(engine, config, label) {
     await tab('Property record');
     await expect(workspace.getByRole('tabpanel', {name:'Property record',exact:true}).locator('dd').filter({hasText:/^OTHER-LEAD-SAME-ADDRESS$/})).toBeVisible();
     await expect(workspace.locator('.pbk-attom-rows').getByText('2,100 sq ft', { exact: true })).toBeVisible();
-    await tab('Comps');
+    await tab('Overview');
+    await brief.getByRole('button', { name: 'Compare saved comps', exact: true }).click();
+    await expect(page).toHaveURL(`${origin}/leads/${other.id}`);
+    await expect(workspace.getByRole('tab', { name: 'Comps', exact: true })).toHaveAttribute('aria-selected', 'true');
     await expect(workspace.locator('td[data-label="Price"]').filter({hasText:/^\$520,000$/})).toBeVisible();
     await expect(workspace.locator('td[data-label="Price"]').filter({hasText:/^\$410,000$/})).toHaveCount(0);
     await tab('Property record');

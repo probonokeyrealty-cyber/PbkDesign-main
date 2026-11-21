@@ -78,17 +78,26 @@ html[data-theme='light'] .pbk-dialer-surface { background: var(--bg-void); color
     linear-gradient(to bottom, var(--border-dim) 1px, transparent 1px) 50% 50% / 24px 24px,
     var(--bg-console);
   overflow: hidden;
+  isolation: isolate;
 }
-.pbk-dialer-map svg { display: block; width: 100%; height: auto; aspect-ratio: 16 / 10; touch-action: manipulation; }
-.pbk-dialer-map path { fill: color-mix(in srgb, var(--sky) 10%, transparent); stroke: var(--sky-dim); stroke-width: 1; vector-effect: non-scaling-stroke; cursor: pointer; transition: fill var(--duration-fast) var(--ease-out); }
-.pbk-dialer-map path:hover { fill: var(--sky-glow-strong); }
-.pbk-dialer-map path[data-selected='true'] { fill: color-mix(in srgb, var(--sky) 30%, transparent); stroke: var(--sky); stroke-width: 2; }
+.pbk-dialer-map > svg { display: block; width: 100%; height: auto; aspect-ratio: 16 / 10; touch-action: manipulation; }
+.pbk-dialer-map > svg path { fill: color-mix(in srgb, var(--sky) 10%, transparent); stroke: var(--sky-dim); stroke-width: 1; vector-effect: non-scaling-stroke; cursor: pointer; transition: fill var(--duration-fast) var(--ease-out); }
+.pbk-dialer-map > svg path:hover { fill: var(--sky-glow-strong); }
+.pbk-dialer-map > svg path[data-selected='true'] { fill: color-mix(in srgb, var(--sky) 30%, transparent); stroke: var(--sky); stroke-width: 2; }
 .pbk-dialer-map path:focus-visible { outline: none; stroke: var(--sky-bright); stroke-width: 3; stroke-dasharray: 5 3; }
+.pbk-dialer-street-map { width: 100%; min-height: 300px; aspect-ratio: 16 / 10; background: var(--bg-console); }
+.pbk-dialer-street-map .leaflet-tile-pane { filter: brightness(.73) saturate(.72); }
+.pbk-dialer-street-map .pbk-street-parcel { stroke: var(--sky-deep); stroke-width: 2; fill: var(--sky); fill-opacity: .18; }
+.pbk-dialer-street-map .pbk-street-parcel:hover,
+.pbk-dialer-street-map .pbk-street-parcel[aria-pressed='true'] { stroke: var(--sky-bright); stroke-width: 3; fill-opacity: .45; }
+.pbk-dialer-street-map .pbk-street-parcel:focus-visible { stroke: var(--sky-bright); stroke-width: 3; stroke-dasharray: 5 3; }
+.pbk-dialer-map-area { position: absolute; z-index: 500; left: 10px; bottom: 24px; background: var(--bg-console); }
 .pbk-dialer-map-empty { padding: var(--s-8) var(--s-4); text-align: center; color: var(--text-tertiary); font-size: 13px; }
 .pbk-dialer-map-tools { position: absolute; right: 8px; top: 8px; display: flex; gap: 4px; }
 .pbk-dialer-compass { position: absolute; bottom: 8px; right: 8px; pointer-events: none; padding: 3px 6px; border: 1px solid var(--border-dim); border-radius: var(--radius-sm); background: var(--bg-console); color: var(--text-secondary); font: 11px var(--font-mono); }
 .pbk-dialer-legend { display: flex; flex-wrap: wrap; gap: 6px 14px; margin-top: 10px; font-size: 11px; color: var(--text-secondary); }
 .pbk-dialer-legend span { display: inline-flex; align-items: center; gap: 6px; }
+.pbk-dialer-legend a { color: var(--sky); text-decoration: underline; }
 .pbk-dialer-legend i { width: 10px; height: 10px; border-radius: 2px; border: 1px solid var(--sky-dim); background: var(--sky-glow); }
 .pbk-dialer-legend span:nth-child(2) i { border-color: var(--sky); background: var(--sky-glow-strong); }
 .pbk-dialer-steps { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; padding: 0; margin: 0; list-style: none; }

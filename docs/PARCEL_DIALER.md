@@ -5,6 +5,10 @@ Phase 1 adds two operator surfaces inside the existing PBK shell:
 - **Settings → Phone numbers**: owned Twilio and Telnyx lines, owned-number import, provider inventory search (local / toll-free), a priced purchase confirmation, approved voice-route commissioning with readback, and caller-ID enablement.
 - **Dialer** (left rail, `/dialer`): a map-first parcel view, parcel ID / address lookup, exact CRM match, a contact panel (contact, activity, dial eligibility), and manual one-at-a-time click-to-call from a commissioned Twilio line.
 
+The **Street map** layer uses OpenStreetMap tiles for street context. Pan and zoom, then use **Load parcels here** to query the configured boundary source for the visible area. Selecting a boundary by mouse or keyboard checks PBK's existing CRM records for an exact match without a separate skip-tracing service. Any available phone comes from the matched CRM record and is subject to PBK's existing eligibility checks. OpenStreetMap does not supply private owner contact details.
+
+Street tiles load on demand and show OpenStreetMap attribution. To use an approved alternative OSM-derived tile provider, set `VITE_PBK_DIALER_TILE_URL` to its HTTPS tile template at build time. Follow the provider's usage and attribution requirements. Parcel lookup, CRM matching, and approval requests remain on the PBK bridge.
+
 All provider calls run in the bridge (`scripts/phone-numbers.mjs`, `scripts/parcel-dialer.mjs`, routes in `scripts/phone-dialer-routes.mjs`). The browser never sees provider credentials, parcel-source keys or full contact phone numbers; it gets contacts' last four digits only.
 
 ## Safety invariants

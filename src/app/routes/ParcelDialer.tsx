@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState, type KeyboardEvent } from 'react';
 import { Link } from 'react-router';
 import { Check, Layers, Loader2, MapPin, Minus, PhoneCall, Plus, RefreshCw, Search, ShieldCheck } from 'lucide-react';
+import { ParcelStreetMap } from '../components/ParcelStreetMap';
 import {
   decideApproval, dialApprovedRequest, errorText, fetchDialerCalls, fetchDialerCoverage, fetchParcels, requestDialerCall, selectParcel,
   simulateDialerCallbacks, type DialerCall, type DialerCoverage, type DialerSelection, type OutboundLine, type ParcelFeature,
@@ -57,6 +58,8 @@ export function ParcelDialer() {
   const [request, setRequest] = useState<{ id: string; approvalId: string; toLast4: string; fromLast4: string; approvalStatus?: string } | null>(null);
   const [call, setCall] = useState<DialerCall | null>(null);
   const [zoom, setZoom] = useState(1);
+  const [showStreets, setShowStreets] = useState<boolean | null>(null);
+  const [mapNotice, setMapNotice] = useState('');
   const projection = useProjection(features);
 
   const load = useCallback(async () => {
@@ -114,6 +117,7 @@ export function ParcelDialer() {
 
   const situs = selection?.parcel.properties.situs;
   const contact = selection?.contact;
+  const streetMapEnabled = showStreets ?? (coverage?.status === 'licensed');
   const savedActivity = selection?.activity ?? [];
   const activity = call
     ? [{ id: call.id, at: call.createdAt, outcome: call.outcome, status: call.status, talkSeconds: call.talkSeconds },
@@ -150,7 +154,13 @@ export function ParcelDialer() {
         <section className="pbk-dialer-map-card" aria-label="Parcel map">
           <div className="pbk-dialer-section-head">
             <h2><Layers size={16} aria-hidden="true" /> Parcel map</h2>
-            {coverage && <span className="pbk-phone-tag sky">{features.length} loaded</span>}
+            <div className="pbk-phone-actions">
+              {coverage && <span className="pbk-phone-tag sky">{features.length} loaded</span>}
+              <button type="button" className="pbk-btn pbk-btn-ghost pbk-btn-sm" aria-pressed={streetMapEnabled}
+                onClick={() => setShowStreets(!streetMapEnabled)}>
+                Street map
+              </button>
+            </div>
           </div>
           <form className="pbk-phone-form" onSubmit={(e) => { e.preventDefault(); if (lookup.value.trim()) void choose(lookup.mode === 'parcel' ? { parcelId: lookup.value.trim() } : { address: lookup.value.trim() }); }}>
             <label>Lookup<select className="pbk-input" value={lookup.mode} onChange={(e) => setLookup({ mode: e.target.value as 'parcel' | 'address', value: '' })}><option value="parcel">Parcel ID</option><option value="address">Address</option></select></label>
@@ -158,7 +168,18 @@ export function ParcelDialer() {
             <button type="submit" className="pbk-btn pbk-btn-ghost pbk-btn-sm" disabled={Boolean(busy)}><Search size={13} /> Find</button>
           </form>
           <div className="pbk-dialer-map">
-            {projection && features.length ? (
+            {streetMapEnabled ? (
+              <ParcelStreetMap parcels={features} selected={selection?.parcel} busy={Boolean(busy)}
+                onSelect={(parcelId) => void choose({ parcelId })}
+                onLoadArea={coverage?.licensed ? (bounds) => {
+                  setMapNotice('');
+                  void act('map', async () => {
+                    const result = await fetchParcels(bounds);
+                    setFeatures(result.features);
+                    if (!result.features.length) setMapNotice('No parcel boundaries in this area.');
+                  });
+                } : undefined} />
+            ) : projection && features.length ? (
               <>
                 <svg viewBox={viewBox} role="group" aria-label={`${features.length} parcels. Select one to view its contact; selection never places a call.`}>
                   {features.map((f) => (
@@ -192,7 +213,9 @@ export function ParcelDialer() {
             <span><i aria-hidden="true" /> Available parcel</span>
             <span><i aria-hidden="true" /> Selected parcel</span>
             <span>Click or press Enter to select</span>
+            {streetMapEnabled && <a href="https://www.openstreetmap.org/fixthemap" target="_blank" rel="noopener noreferrer">Report a street map issue</a>}
           </div>
+          {mapNotice && <p className="pbk-phone-note" role="status">{mapNotice}</p>}
         </section>
 
         <aside className="pbk-dialer-side" aria-label="Selected parcel">
@@ -238,8 +261,9 @@ export function ParcelDialer() {
                   {selection.match.status === 'ambiguous' && <span className="pbk-phone-tag bad">{selection.match.candidateCount} contacts · rejected</span>}
                   {selection.match.status === 'no_match' && <span className="pbk-phone-tag">no CRM contact</span>}
                 </dd>
+                {!contact && <><dt>Next step</dt><dd>Review the parcel in CRM. A street or parcel match does not supply a phone number.</dd></>}
                 {contact && (<>
-                  <dt>Phone</dt><dd className="pbk-phone-num">{contact.phoneDisplay || 'none'}</dd>
+                  <dt>CRM phone</dt><dd className="pbk-phone-num">{contact.phoneDisplay || 'none'}</dd>
                   <dt>Status</dt><dd>{contact.status || '—'}{contact.synthetic ? ' · synthetic' : ''}</dd>
                   <dt>Lead</dt><dd>{contact.synthetic ? contact.id : <Link to={`/leads/${encodeURIComponent(contact.id)}`}>{contact.id}</Link>}</dd>
                 </>)}

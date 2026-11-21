@@ -15,6 +15,7 @@ const addressOf = v => {
 };
 const safeText = v => typeof v === 'string' && v.length > 0 && v.length <= 500 && !/[\x00-\x1f<>]/.test(v) && !/https?:\/\//i.test(v) ? v : null;
 const numeric = v => typeof v === 'number' && Number.isFinite(v) && v >= 0 && v <= 1e15;
+const positiveMeasurement = v => v > 0 ? v : undefined;
 const failureStatus = error => {
   const code = String(error?.code || error?.name || '');
   if (/not_configured/.test(code)) return 'not_configured';
@@ -89,6 +90,43 @@ function comparableSales(data, address, subjectId, radius, checkedAt) {
   return { status: 'matched', source: 'ATTOM', retrievedAt: checkedAt, windowStart, windowEnd, radiusMiles: coveredRadius, partial: true, sales };
 }
 
+function propertyProfile(identity, sections, address) {
+  const overview = sections.find(section => section.id === 'overview')?.facts ?? {};
+  const ownership = sections.find(section => section.id === 'ownership')?.facts;
+  const geography = sections.find(section => section.id === 'geography-context')?.facts;
+  const yearBuilt = overview['characteristics.yearBuilt'];
+  const tax = sections.find(section => section.id === 'tax-history')?.rows
+    .find(row => row.taxYear >= 1000 && row.tax !== undefined);
+  const transfer = sections.find(section => section.id === 'sales-history')?.rows
+    .find(row => row.recordedDate && row.price > 0);
+
+  return Object.fromEntries(Object.entries({
+    address: label(address),
+    attomId: String(identity.attomId),
+    apn: safeText(identity.identifiers?.apn),
+    fips: safeText(identity.identifiers?.fips),
+    propertyType: overview['summary.propertyType'] ?? overview['characteristics.propertyUse'],
+    beds: overview['characteristics.bedrooms'],
+    baths: overview['characteristics.bathrooms'],
+    livingSqft: positiveMeasurement(overview['characteristics.livingAreaSquareFeet']),
+    yearBuilt: yearBuilt >= 1000 ? yearBuilt : undefined,
+    lotSqft: positiveMeasurement(overview['characteristics.lotSquareFeet']),
+    lotAcres: positiveMeasurement(overview['characteristics.lotAcres']),
+    zoning: overview['characteristics.zoning'],
+    ownerName: overview['summary.ownerName'],
+    ownerMailingAddress: ownership?.mailingAddress,
+    subdivision: geography?.['summary.subdivision'],
+    assessedTotalValue: overview['summary.assessedValue'],
+    assessmentMarketTotalValue: overview['summary.assessorMarketValue'],
+    taxAmount: tax?.tax,
+    taxYear: tax?.taxYear,
+    recordedSaleAmount: transfer?.price,
+    recordedSaleDate: transfer?.recordedDate,
+    saleTransactionDate: transfer?.saleDate,
+    saleDocumentNumber: transfer?.documentNumber,
+  }).filter(([, value]) => value !== undefined));
+}
+
 export function createAttomMcpPropertyReader({ client, now = () => new Date().toISOString() }) {
   return async function read(addressInput, { radius = 1 } = {}) {
     const address = typeof addressInput === 'string' ? parseAttomAddress({ street: addressInput }) : parseAttomAddress(addressInput);
@@ -106,8 +144,7 @@ export function createAttomMcpPropertyReader({ client, now = () => new Date().to
     const seen = new Set();
     for (const r of payload.results) { if (!attomMcpDatasetDefinitions.some(d => d.id === r?.dataset) || seen.has(r.dataset)) return empty('ambiguous'); seen.add(r.dataset); }
     const sections = attomMcpDatasetDefinitions.map(d => { const r = payload.results.find(r => r.dataset === d.id); return projectAttomMcpSection(d.id, r?.data, r?.status || 'not_available', checkedAt); });
-    const identity = payload.property;
-    const profile = { address: label(address), attomId: String(identity.attomId), apn: safeText(identity.identifiers?.apn), fips: safeText(identity.identifiers?.fips) };
+    const profile = propertyProfile(payload.property, sections, address);
     const comp = payload.results.find(r => r.dataset === 'comparables' && r.status === 'ok');
     const sales = comp ? comparableSales(comp.data, address, profile.attomId, radius, checkedAt) : undefined;
     return { status: 'matched', profile, sections, ...(sales ? { sales } : {}) };

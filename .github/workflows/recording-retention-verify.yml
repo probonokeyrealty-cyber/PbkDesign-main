@@ -34,4 +34,4 @@ jobs:
           docker pull pgvector/pgvector:0.8.7-pg17
           docker pull supabase/storage-api:v1.98.5
       - name: Verify isolation, approvals, and exact-version readback
-        run: node --test --test-concurrency=1 scripts/bridge-smoke-isolation-smoke.mjs scripts/recording-retention-supabase-local.mjs
+        run: node --test --test-concurrency=1 scripts/bridge-smoke-isolation-smoke.mjs scripts/recording-retention-migration-local.mjs scripts/recording-retention-supabase-local.mjs

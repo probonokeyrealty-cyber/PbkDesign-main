@@ -31,6 +31,11 @@ Apply migrations:
 - Applied files and SHA-256 checksums are tracked in `public.pbk_schema_migrations`.
 - The runner uses an advisory lock and bounded lock/statement timeouts.
 
+Recording retention rollout:
+
+- Before releasing the updated bridge, apply `20261120016000_pbk_recording_retention_approvals.sql` to the canonical Render Postgres with the migration runner. The Render bridge verifies the schema and runtime-role access before opening its listener; it does not apply migrations on startup.
+- Resolve ambiguous legacy recording pointers before retention or recording storage writes. A rejected upload is released only after a recognized pre-write rejection and unchanged Storage readback. Ambiguous reservations remain locked; do not clear them or replay Storage writes without independent evidence.
+
 Verification:
 
 - `GET /health` should report `features.stateBackend = "postgres"`.

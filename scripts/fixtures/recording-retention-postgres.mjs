@@ -1,20 +1,23 @@
 import { execFile, spawn } from 'node:child_process';
 import { randomBytes, randomUUID } from 'node:crypto';
-import { readFile } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { promisify } from 'node:util';
+import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 
 const exec = promisify(execFile);
 const image = 'pgvector/pgvector:0.8.7-pg17';
 const leases = new WeakMap();
 const loopback = '127.0.0.1';
+const prereqs = ['20260430001000_pbk_operational_schema.sql', '20260430002000_pbk_brain_workflow_recordings.sql'];
+const recordingMigration = '20261120016000_pbk_recording_retention_approvals.sql';
+const migrationRunner = fileURLToPath(new URL('../apply-supabase-migrations.mjs', import.meta.url));
 export const getRetentionPostgresLease = binding => leases.get(binding);
 
-export async function withRetentionPostgres(run) {
+export async function withRetentionPostgres(run, { supabaseRoles = true } = {}) {
   const database = `pbk_retention_${randomUUID().replaceAll('-', '')}`;
   const password = randomBytes(32).toString('hex');
   const marker = randomBytes(16).toString('hex');
@@ -62,26 +65,41 @@ export async function withRetentionPostgres(run) {
       server.listen(0, loopback, resolve);
     });
     const url = `postgresql://${database}:${password}@${loopback}:${server.address().port}/${database}`;
-    pool = new pg.Pool({ connectionString: url, ssl: false, connectionTimeoutMillis: 5000, statement_timeout: 15000 });
+    pool = new pg.Pool({ connectionString: url, ssl: false,
+      connectionTimeoutMillis: process.platform === 'win32' ? 15_000 : 5000, statement_timeout: 15000 });
     const check = async client => {
-      const { rows } = await client.query("SELECT current_database() AS db, current_setting('pbk.fixture_marker', true) AS marker");
-      if (rows[0]?.db !== database || rows[0]?.marker !== marker) throw new Error('Disposable Postgres identity mismatch');
+      const { rows } = await client.query("SELECT current_database() AS db, current_user AS owner, current_setting('pbk.fixture_marker', true) AS marker");
+      if (rows[0]?.db !== database || rows[0]?.owner !== database || rows[0]?.marker !== marker) {
+        throw new Error('Disposable Postgres identity mismatch');
+      }
     };
     await check(pool);
-    await pool.query('CREATE ROLE anon NOLOGIN; CREATE ROLE authenticated NOLOGIN; CREATE ROLE service_role NOLOGIN BYPASSRLS;');
+    if (supabaseRoles) {
+      await pool.query('CREATE ROLE anon NOLOGIN; CREATE ROLE authenticated NOLOGIN; CREATE ROLE service_role NOLOGIN BYPASSRLS;');
+    }
     leases.set(binding, url);
-    return await run({ pool, binding, async applyRecordingSchema() {
-      const client = await pool.connect();
-      try {
-        await check(client);
-        for (const name of ['20260430001000_pbk_operational_schema.sql', '20260430002000_pbk_brain_workflow_recordings.sql',
-          '20261120016000_pbk_recording_retention_approvals.sql']) {
-          await client.query(await readFile(new URL(`../../supabase/migrations/${name}`, import.meta.url), 'utf8'));
-        }
-      } finally {
-        client.release();
-      }
-    } });
+    const apply = async migrations => {
+      await check(pool);
+      // The runner owns its advisory lock and transaction; don't hold either in the fixture.
+      return exec(process.execPath, [migrationRunner], {
+        env: {
+          ...env,
+          PBK_MIGRATION_DATABASE_URL: url,
+          PBK_MIGRATION_TARGET: 'local',
+          PBK_MIGRATION_EXPECT_HOST: loopback,
+          PBK_MIGRATION_ALLOWLIST: migrations.join(','),
+          PBK_MIGRATION_APPLY: 'true',
+        },
+        windowsHide: true,
+        timeout: 60_000,
+      });
+    };
+    return await run({
+      pool, binding,
+      applyRecordingSchema: () => apply([...prereqs, recordingMigration]),
+      applyRecordingPrerequisites: () => apply(prereqs),
+      applyRecordingMigration: () => apply([recordingMigration]),
+    });
   } finally {
     leases.delete(binding);
     try {

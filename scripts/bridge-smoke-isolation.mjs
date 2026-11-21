@@ -40,13 +40,14 @@ async function reservePortNumber() {
 }
 
 export async function startIsolatedBridge({ entry = defaultEntry, args = [], retentionPostgres, retentionStorage,
-  startupMs = 15000, lifetimeMs = 240000 } = {}) {
+  requireRecordingSchema = false, startupMs = 15000, lifetimeMs = 240000 } = {}) {
   if (typeof nodeModule.registerHooks !== 'function') throw new Error('Bridge smoke requires Node 22.15+ with synchronous module hooks and permissions');
   const retentionFixture = args.includes(retentionStorageFixtureFlag);
   const pgTarget = getRetentionPostgresLease(retentionPostgres);
   if ((retentionFixture || retentionPostgres !== undefined || retentionStorage !== undefined) &&
       (!pgTarget || entry !== defaultEntry || args.length !== 1 || args[0] !== retentionStorageFixtureFlag ||
         typeof retentionStorage !== 'function')) throw new Error('Recording retention requires an owned disposable fixture');
+  if (requireRecordingSchema && !retentionFixture) throw new Error('The Render startup check requires the disposable recording fixture');
   const teamPasscode = retentionFixture ? randomUUID() : undefined;
   const parent = await realpath(tmpdir());
   const stateDir = await mkdtemp(path.join(parent, prefix));
@@ -95,6 +96,10 @@ export async function startIsolatedBridge({ entry = defaultEntry, args = [], ret
     port = await reservePortNumber();
     const env = buildSmokeEnv(stateDir, port, apiKey, nonce);
     if (teamPasscode) env.PBK_TEAM_PASSCODE = teamPasscode;
+    if (requireRecordingSchema) {
+      env.RENDER = 'true';
+      env.RENDER_SERVICE_NAME = 'pbk-openclaw-bridge';
+    }
     child = spawn(process.execPath, [
       '--permission', '--no-experimental-sqlite', '--allow-fs-read=*', `--allow-fs-write=${stateDir}`,
       '--import', guardEntry, entry, ...args,

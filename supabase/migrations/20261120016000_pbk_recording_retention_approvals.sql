@@ -1,5 +1,3 @@
-BEGIN;
-
 CREATE TABLE public.pbk_recording_retention_approvals (
   approval_id text PRIMARY KEY REFERENCES public.approvals(id) ON DELETE RESTRICT,
   plan jsonb NOT NULL CHECK (jsonb_typeof(plan) = 'object'),
@@ -14,7 +12,6 @@ CREATE TABLE public.pbk_recording_retention_approvals (
 );
 
 ALTER TABLE public.pbk_recording_retention_approvals ENABLE ROW LEVEL SECURITY;
-REVOKE ALL ON public.pbk_recording_retention_approvals FROM PUBLIC, anon, authenticated, service_role;
 
 CREATE FUNCTION public.protect_recording_retention_consumption() RETURNS trigger
 LANGUAGE plpgsql SET search_path = pg_catalog AS $$
@@ -58,24 +55,28 @@ CREATE INDEX pbk_recording_retention_pending_message
 ON public.pbk_recording_retention_attempts (message_id) WHERE outcome = 'pending';
 
 ALTER TABLE public.pbk_recording_retention_attempts ENABLE ROW LEVEL SECURITY;
-REVOKE ALL ON public.pbk_recording_retention_attempts FROM PUBLIC, anon, authenticated, service_role;
-GRANT SELECT ON public.pbk_recording_retention_attempts TO service_role;
 
 CREATE TABLE public.pbk_recording_storage_writes (
   token uuid PRIMARY KEY,
-  message_id text NOT NULL UNIQUE,
+  message_id text NOT NULL,
   bucket text NOT NULL,
-  storage_key text COLLATE "C" UNIQUE,
+  storage_key text COLLATE "C",
   archive_bucket text COLLATE "C",
-  archive_key text COLLATE "C" UNIQUE,
+  archive_key text COLLATE "C",
   operation text NOT NULL CHECK (operation IN ('capture', 'delete')),
   started_at timestamptz NOT NULL DEFAULT statement_timestamp(),
-  CHECK ((archive_bucket IS NULL) = (archive_key IS NULL))
+  rejected_at timestamptz,
+  rejection_code text,
+  CHECK ((archive_bucket IS NULL) = (archive_key IS NULL)),
+  CHECK ((rejected_at IS NULL AND rejection_code IS NULL) OR
+    (rejected_at IS NOT NULL AND operation = 'capture' AND rejection_code IS NOT DISTINCT FROM 'InvalidMimeType'))
 );
 
+CREATE UNIQUE INDEX pbk_recording_storage_active_message ON public.pbk_recording_storage_writes (message_id) WHERE rejected_at IS NULL;
+CREATE UNIQUE INDEX pbk_recording_storage_active_key ON public.pbk_recording_storage_writes (storage_key) WHERE rejected_at IS NULL;
+CREATE UNIQUE INDEX pbk_recording_storage_active_archive ON public.pbk_recording_storage_writes (archive_key) WHERE rejected_at IS NULL;
+
 ALTER TABLE public.pbk_recording_storage_writes ENABLE ROW LEVEL SECURITY;
-REVOKE ALL ON public.pbk_recording_storage_writes FROM PUBLIC, anon, authenticated, service_role;
-GRANT SELECT ON public.pbk_recording_storage_writes TO service_role;
 
 CREATE FUNCTION public.protect_recording_retention_outcome() RETURNS trigger
 LANGUAGE plpgsql SET search_path = pg_catalog AS $$
@@ -100,23 +101,33 @@ $$;
 CREATE FUNCTION public.pbk_recording_storage_pointers(storage_path text, payload jsonb) RETURNS SETOF text
 LANGUAGE sql IMMUTABLE SET search_path = pg_catalog AS $$
   SELECT DISTINCT pointer COLLATE "C" FROM unnest(ARRAY[
-    storage_path, payload->>'storagePath', payload->>'storage_path',
-    payload->>'recordingStoragePath', payload->>'recording_storage_path'
+    to_jsonb(storage_path), payload->'storagePath', payload->'storage_path',
+    payload->'recordingStoragePath', payload->'recording_storage_path'
   ]) AS raw(value)
-  CROSS JOIN LATERAL (SELECT trim(both '/' FROM regexp_replace(public.pbk_trim_recording_path(raw.value), '/+', '/', 'g')) AS pointer) cleaned
-  WHERE pointer <> '';
+  CROSS JOIN LATERAL (SELECT trim(both '/' FROM regexp_replace(public.pbk_trim_recording_path(raw.value #>> '{}'), '/+', '/', 'g')) AS pointer) cleaned
+  WHERE jsonb_typeof(raw.value) = 'string' AND pointer <> '';
+$$;
+
+CREATE FUNCTION public.pbk_recording_has_untyped_pointer(payload jsonb) RETURNS boolean
+LANGUAGE sql IMMUTABLE SET search_path = pg_catalog AS $$
+  SELECT EXISTS (SELECT 1 FROM unnest(ARRAY[
+    payload->'storagePath', payload->'storage_path', payload->'recordingStoragePath', payload->'recording_storage_path',
+    payload->'s3Key',
+    payload#>'{s3Archive,key}', payload#>'{s3Archive,storagePath}', payload#>'{s3Archive,s3Key}',
+    payload#>'{s3_archive,key}', payload#>'{s3_archive,storagePath}', payload#>'{s3_archive,s3Key}'
+  ]) AS raw(value) WHERE jsonb_typeof(raw.value) NOT IN ('string', 'null'));
 $$;
 
 CREATE FUNCTION public.pbk_recording_archive_pointers(payload jsonb) RETURNS SETOF text
 LANGUAGE sql IMMUTABLE SET search_path = pg_catalog AS $$
   SELECT DISTINCT pointer COLLATE "C" FROM (
-    SELECT unnest(ARRAY[a->>'key', a->>'storagePath', a->>'s3Key']) AS raw
+    SELECT unnest(ARRAY[a->'key', a->'storagePath', a->'s3Key']) AS raw
     FROM unnest(ARRAY[payload->'s3Archive', payload->'s3_archive']) AS a
-    UNION ALL SELECT payload->>'s3Key'
+    UNION ALL SELECT payload->'s3Key'
   ) AS paths
-  CROSS JOIN LATERAL (SELECT ltrim(regexp_replace(translate(public.pbk_trim_recording_path(raw), chr(92), '/'),
+  CROSS JOIN LATERAL (SELECT ltrim(regexp_replace(translate(public.pbk_trim_recording_path(raw #>> '{}'), chr(92), '/'),
     '/+', '/', 'g'), '/') AS pointer) cleaned
-  WHERE pointer <> '';
+  WHERE jsonb_typeof(raw) = 'string' AND pointer <> '';
 $$;
 
 CREATE FUNCTION public.protect_recording_retention_pointer() RETURNS trigger
@@ -132,6 +143,9 @@ DECLARE
   message_id_key text;
 BEGIN
   IF TG_OP <> 'DELETE' THEN
+    IF public.pbk_recording_has_untyped_pointer(NEW.payload) THEN
+      RAISE EXCEPTION 'Recording pointers must be strings' USING ERRCODE = '23514';
+    END IF;
     incoming := ARRAY(SELECT public.pbk_recording_storage_pointers(NEW.storage_path, NEW.payload));
     archive_keys := ARRAY(SELECT public.pbk_recording_archive_pointers(NEW.payload));
     message_ids := array_append(message_ids, NEW.id);
@@ -148,7 +162,7 @@ BEGIN
     END IF;
   END LOOP;
   IF cardinality(pointers) = 0 AND cardinality(archive_keys) = 0 AND NOT EXISTS (
-    SELECT 1 FROM public.pbk_recording_storage_writes WHERE message_id = ANY(message_ids)
+    SELECT 1 FROM public.pbk_recording_storage_writes WHERE rejected_at IS NULL AND message_id = ANY(message_ids)
   ) THEN
     RETURN CASE WHEN TG_OP = 'DELETE' THEN OLD ELSE NEW END;
   END IF;
@@ -174,7 +188,7 @@ BEGIN
   END LOOP;
   IF EXISTS (
     SELECT 1 FROM public.pbk_recording_storage_writes w
-    WHERE (w.message_id = ANY(message_ids) OR w.archive_key = ANY(archive_keys) OR (w.storage_key = ANY(keys)
+    WHERE w.rejected_at IS NULL AND (w.message_id = ANY(message_ids) OR w.archive_key = ANY(archive_keys) OR (w.storage_key = ANY(keys)
       AND (w.storage_key = ANY(pointers) OR (w.bucket || '/' || w.storage_key) = ANY(pointers))))
       AND w.token::text COLLATE "C" IS DISTINCT FROM current_setting('pbk.recording_storage_write', true) COLLATE "C"
   ) THEN
@@ -191,8 +205,6 @@ BEGIN
   RETURN CASE WHEN TG_OP = 'DELETE' THEN OLD ELSE NEW END;
 END;
 $$;
-REVOKE ALL ON FUNCTION public.protect_recording_retention_pointer() FROM PUBLIC, anon, authenticated, service_role;
-
 CREATE TRIGGER protect_recording_retention_pointer
 BEFORE INSERT OR UPDATE OR DELETE ON public.unified_messages
 FOR EACH ROW EXECUTE FUNCTION public.protect_recording_retention_pointer();
@@ -205,16 +217,34 @@ BEGIN
     OR row_security_active('public.pbk_recording_retention_attempts'::regclass)
     OR row_security_active('public.pbk_recording_storage_writes'::regclass)
     OR EXISTS (SELECT 1 FROM public.pbk_recording_retention_attempts WHERE outcome = 'pending')
-    OR EXISTS (SELECT 1 FROM public.pbk_recording_storage_writes) THEN
+    OR EXISTS (SELECT 1 FROM public.pbk_recording_storage_writes WHERE rejected_at IS NULL) THEN
     RAISE EXCEPTION 'Cannot truncate messages while recording retention is pending or unverified' USING ERRCODE = '23514';
   END IF;
   RETURN NULL;
 END;
 $$;
-REVOKE ALL ON FUNCTION public.protect_recording_retention_truncate() FROM PUBLIC, anon, authenticated, service_role;
-
 CREATE TRIGGER protect_recording_retention_truncate
 BEFORE TRUNCATE ON public.unified_messages
 FOR EACH STATEMENT EXECUTE FUNCTION public.protect_recording_retention_truncate();
 
-COMMIT;
+REVOKE ALL ON TABLE public.pbk_recording_retention_approvals, public.pbk_recording_retention_attempts,
+  public.pbk_recording_storage_writes FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.protect_recording_retention_pointer(),
+  public.protect_recording_retention_truncate() FROM PUBLIC;
+
+-- These roles are optional on a plain PostgreSQL target.
+DO $$
+DECLARE
+  role_name text;
+BEGIN
+  FOR role_name IN SELECT rolname FROM pg_catalog.pg_roles WHERE rolname IN ('anon', 'authenticated', 'service_role') LOOP
+    EXECUTE pg_catalog.format('REVOKE ALL ON TABLE public.pbk_recording_retention_approvals,
+      public.pbk_recording_retention_attempts, public.pbk_recording_storage_writes FROM %I', role_name);
+    EXECUTE pg_catalog.format('REVOKE ALL ON FUNCTION public.protect_recording_retention_pointer(),
+      public.protect_recording_retention_truncate() FROM %I', role_name);
+    IF role_name = 'service_role' THEN
+      GRANT SELECT ON TABLE public.pbk_recording_retention_attempts, public.pbk_recording_storage_writes TO service_role;
+    END IF;
+  END LOOP;
+END;
+$$;

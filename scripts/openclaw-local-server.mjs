@@ -41,10 +41,11 @@ import { createProviderActionBinding, hashProviderActionContext, validateProvide
 import { authorizeQualificationRequest, executeReleaseQualification, isDirectQualificationFounder, readReleaseQualification } from './release-qualification.mjs';
 import {
   checkRecordingRetentionDecision, claimRecordingRetentionFounderDecision, eligibleDurableRecording,
-  handleRecordingRetentionRequest, isRecordingRetentionApproval,
+  handleRecordingRetentionRequest, hasUntypedRecordingPointer, isRecordingRetentionApproval,
   recordingRetentionTargetMatches, takeClaimedRecordingRetentionExecution, validRecordingObjectVersion,
   validRecordingRetentionStorageKey,
 } from './recording-retention-authorization.mjs';
+import { assertRecordingRetentionSchema } from './recording-retention-schema.mjs';
 import { loadQualificationCiEvidence } from './release-qualification-ci.mjs';
 import { collectOperationalAudit } from './operational-audit-collector.mjs';
 import { executeOperationalAudit, readOperationalAudit, createOperationalAuditPool } from './operational-audit-store.mjs';
@@ -41662,15 +41663,17 @@ function encodePathSegments(value = '') {
 }
 
 function normalizeStoragePath(value = '') {
-  const trimmed = String(value || '').trim().split('/').filter(Boolean).join('/');
+  if (typeof value !== 'string') return '';
+  const trimmed = value.trim().split('/').filter(Boolean).join('/');
   const bucketPrefix = `${SUPABASE_CALL_RECORDINGS_BUCKET}/`;
   const key = trimmed.startsWith(bucketPrefix) ? trimmed.slice(bucketPrefix.length) : trimmed;
   return key === key.trim() && !key.startsWith(bucketPrefix) && validRecordingRetentionStorageKey(key) ? key : '';
 }
 
 function buildRecordingStoragePath(params = {}) {
+  if (hasUntypedRecordingPointer(params, true)) return '';
   const explicit = params.storagePath || params.storage_path || params.recordingStoragePath || params.path || '';
-  if (String(explicit).trim()) return normalizeStoragePath(explicit);
+  if (typeof explicit !== 'string' || explicit.trim()) return normalizeStoragePath(explicit);
   const context = findLeadContext(params);
   const leadKey = slugify(context.leadId || context.leadName || context.address || 'lead') || 'lead';
   const messageKey = slugify(params.messageId || params.id || params.callId || randomUUID()) || randomUUID();
@@ -41783,6 +41786,7 @@ async function uploadSupabaseRecording({ messageId, storagePath, contentType = '
     : null;
   const guard = await reserveRecordingStorageWrite({ messageId, key: normalizedPath, operation: 'capture', archive });
   if (!guard.ok) return guard;
+  const before = await readSupabaseRecordingVersion(normalizedPath, AbortSignal.timeout(1500), true).catch(() => null);
   const response = await fetch(`${SUPABASE_URL}/storage/v1/object/${encodeURIComponent(SUPABASE_CALL_RECORDINGS_BUCKET)}/${encodePathSegments(normalizedPath)}`, {
     method: 'PUT',
     redirect: 'error',
@@ -41796,11 +41800,18 @@ async function uploadSupabaseRecording({ messageId, storagePath, contentType = '
   if (!response) return recordingStorageWritePending();
   const responseText = await response.text().catch(() => '');
   if (!response.ok) {
-    return {
-      ok: false,
-      status: response.status,
-      error: responseText || `Supabase recording upload failed with ${response.status}.`,
-    };
+    const failure = safeJsonParse(responseText, null);
+    // Storage validates bucket MIME policy before beginning the upload.
+    if ([400, 415].includes(response.status) && failure?.code === 'InvalidMimeType' &&
+        failure.statusCode === '415' && before) {
+      const after = await readSupabaseRecordingVersion(normalizedPath, AbortSignal.timeout(4_000), true).catch(() => null);
+      if (after && (before.missing ? after.missing : before.version === after.version) &&
+          await recordRejectedRecordingUpload(guard.token, normalizedPath)) {
+        return { ok: false, statusCode: 415, result: 'recording_storage_upload_rejected',
+          error: 'The recording content type is not accepted by Storage.' };
+      }
+    }
+    return recordingStorageWritePending();
   }
   const result = {
     ok: true,
@@ -41848,18 +41859,19 @@ async function deleteSupabaseRecording(storagePath = '') {
   };
 }
 
-async function readSupabaseRecordingVersion(key, signal = AbortSignal.timeout(4_000)) {
+async function readSupabaseRecordingVersion(key, signal = AbortSignal.timeout(4_000), requireMissingProof = false) {
   const bucket = SUPABASE_CALL_RECORDINGS_BUCKET;
   if (!getSupabaseStorageProviderMeta().ready || !validRecordingRetentionStorageKey(key)) return null;
   const url = `${SUPABASE_URL}/storage/v1/object/info/authenticated/${encodeURIComponent(bucket)}/${encodePathSegments(key)}`;
   const response = await fetch(url, {
     method: 'GET', headers: getSupabaseStorageHeaders(''), cache: 'no-store', redirect: 'error', signal,
   });
-  if (response.status === 404) return { missing: true };
-  if (response.status === 400) {
-    // The Storage REST API can wrap NoSuchKey (404) in a legacy HTTP 400 response.
+  if (response.status === 404 && !requireMissingProof) return { missing: true };
+  if ([400, 404].includes(response.status)) {
+    // Storage can wrap NoSuchKey (404) in a legacy HTTP 400 response.
     const error = await response.json().catch(() => null);
-    return error?.code === 'NoSuchKey' && error.statusCode === '404' && error.error === 'not_found' ? { missing: true } : null;
+    return error?.code === 'NoSuchKey' && error.statusCode === '404' &&
+      ['not_found', 'NoSuchKey'].includes(error.error) ? { missing: true } : null;
   }
   if (response.status !== 200) return null;
   const info = await response.json().catch(() => null);
@@ -42094,7 +42106,8 @@ async function deleteS3RecordingArchive(key = '') {
 
 function getMessageS3Archive(message = {}) {
   const archive = message.s3Archive || message.payload?.s3Archive || message.payload?.s3_archive || {};
-  const key = normalizeS3Key(archive.key || archive.storagePath || archive.s3Key || message.s3Key || '');
+  const pointer = archive.key || archive.storagePath || archive.s3Key || message.s3Key || '';
+  const key = typeof pointer === 'string' ? normalizeS3Key(pointer) : '';
   return key ? { ...archive, key, bucket: archive.bucket || S3_RECORDINGS_BUCKET } : null;
 }
 
@@ -50233,10 +50246,11 @@ async function readRecordingRetentionTarget(id, key, client = getPgPool()) {
     WHERE m.id = $1 AND m.workspace_id COLLATE "C" = 'pbk' AND m.channel = 'call' AND m.direction = 'recording'
       AND t.oid = 'public.unified_messages'::regclass AND t.relkind = 'r' AND t.relpersistence = 'p'
       AND NOT pg_catalog.row_security_active(t.oid)
-      AND NOT EXISTS (SELECT 1 FROM ONLY public.unified_messages other WHERE other.id <> m.id AND EXISTS (
-        SELECT 1 FROM public.pbk_recording_storage_pointers(other.storage_path, other.payload) AS pointer
-        WHERE pointer COLLATE "C" IN ($2, $3::text || '/' || $2)
-      ))`, [id, key, bucket]);
+      AND NOT EXISTS (SELECT 1 FROM ONLY public.unified_messages other
+        WHERE public.pbk_recording_has_untyped_pointer(other.payload) OR (other.id <> m.id AND EXISTS (
+          SELECT 1 FROM public.pbk_recording_storage_pointers(other.storage_path, other.payload) AS pointer
+          WHERE pointer COLLATE "C" IN ($2, $3::text || '/' || $2)
+        )))`, [id, key, bucket]);
   const row = result.rows.length === 1 ? result.rows[0] : null;
   if (!row?.version || getMessageRecordingPath(row) !== key ||
       (row.storage_bucket || row.payload?.storageBucket || row.payload?.storage_bucket || bucket) !== bucket) return null;
@@ -50290,8 +50304,11 @@ async function reserveRecordingStorageWrite({ messageId, key, operation, archive
       if (!await lockRecordingStorageTarget(client, id, key, archive?.key || null)) return false;
       // Read the pointer table in the reservation transaction so TRUNCATE
       // and retention cannot cross a newly committed write intent.
-      const stored = await client.query('SELECT storage_path, storage_bucket, payload FROM ONLY public.unified_messages WHERE id = $1', [id]);
+      const stored = await client.query(`SELECT storage_path, storage_bucket, payload,
+        public.pbk_recording_has_untyped_pointer(payload) AS untyped_pointer
+        FROM ONLY public.unified_messages WHERE id = $1`, [id]);
       const current = stored.rows[0];
+      if (current?.untyped_pointer) return false;
       const storedArchive = getMessageS3Archive(current);
       const storedBucket = current?.storage_bucket || current?.payload?.storageBucket ||
         current?.payload?.storage_bucket || SUPABASE_CALL_RECORDINGS_BUCKET;
@@ -50307,6 +50324,9 @@ async function reserveRecordingStorageWrite({ messageId, key, operation, archive
           AND NOT EXISTS (SELECT 1 FROM ONLY public.pbk_recording_retention_attempts
             WHERE (storage_key = $3 AND outcome IN ('pending', 'confirmed'))
                OR (message_id = $2 AND outcome = 'pending'))
+          AND (($3::text IS NULL AND $7::text IS NULL) OR NOT EXISTS (
+            SELECT 1 FROM ONLY public.unified_messages m WHERE public.pbk_recording_has_untyped_pointer(m.payload)
+          ))
           AND ($3::text IS NULL OR NOT EXISTS (
             SELECT 1 FROM ONLY public.unified_messages m WHERE m.id <> $2 AND EXISTS (
               SELECT 1 FROM public.pbk_recording_storage_pointers(m.storage_path, m.payload) AS pointer
@@ -50332,7 +50352,7 @@ async function reserveRecordingStorageWrite({ messageId, key, operation, archive
 
 async function writeRecordingPointer(token, sql, params) {
   return withRecordingRetentionTransaction(async client => {
-    const reservation = await client.query('SELECT token FROM ONLY public.pbk_recording_storage_writes WHERE token = $1 FOR UPDATE', [token]);
+    const reservation = await client.query('SELECT token FROM ONLY public.pbk_recording_storage_writes WHERE token = $1 AND rejected_at IS NULL FOR UPDATE', [token]);
     if (reservation.rowCount !== 1) throw new Error('Recording storage reservation is no longer held');
     await client.query("SELECT pg_catalog.set_config('pbk.recording_storage_write', $1, true)", [token]);
     return client.query(sql, params);
@@ -50341,8 +50361,22 @@ async function writeRecordingPointer(token, sql, params) {
 
 async function completeRecordingStorageWrite(token) {
   try {
-    const result = await getPgPool().query('DELETE FROM ONLY public.pbk_recording_storage_writes WHERE token = $1', [token]);
+    const result = await getPgPool().query('DELETE FROM ONLY public.pbk_recording_storage_writes WHERE token = $1 AND rejected_at IS NULL', [token]);
     return result.rowCount === 1;
+  } catch {
+    return false;
+  }
+}
+
+async function recordRejectedRecordingUpload(token, key) {
+  try {
+    return await withRecordingRetentionTransaction(async client => {
+      const result = await client.query(`UPDATE ONLY public.pbk_recording_storage_writes
+        SET rejected_at = statement_timestamp(), rejection_code = 'InvalidMimeType'
+        WHERE token = $1 AND storage_key = $2 AND bucket = $3 AND operation = 'capture' AND rejected_at IS NULL`,
+      [token, key, SUPABASE_CALL_RECORDINGS_BUCKET]);
+      return result.rowCount === 1;
+    });
   } catch {
     return false;
   }
@@ -50381,7 +50415,7 @@ async function reserveRecordingRetentionTarget(approvalId, target, stillCurrent)
       WHERE approval_id = $1 AND consumed_at IS NOT NULL AND founder_proof IS NOT NULL
         AND NOT pg_catalog.row_security_active('public.pbk_recording_storage_writes'::regclass)
         AND NOT EXISTS (SELECT 1 FROM ONLY public.pbk_recording_storage_writes
-          WHERE storage_key = $4 OR message_id = $2)
+          WHERE rejected_at IS NULL AND (storage_key = $4 OR message_id = $2))
       ON CONFLICT DO NOTHING RETURNING message_id`, [approvalId, target.id, SUPABASE_CALL_RECORDINGS_BUCKET,
       target.key, target.objectVersion, target.storageVersion]);
     return result.rowCount === 1;
@@ -83594,6 +83628,13 @@ function startAgentRegistryHealthScheduler() {
   interval.unref?.();
 }
 
+if (process.env.RENDER === 'true' && process.env.RENDER_SERVICE_NAME === 'pbk-openclaw-bridge') {
+  try {
+    await assertRecordingRetentionSchema(getPgPool());
+  } catch {
+    throw new Error('The Render bridge cannot start until the recording retention migration and runtime-role access are verified.');
+  }
+}
 wireRuntimeCoverageLifecycle(server);
 server.listen(PORT, HOST, () => {
   startPostgresKeepAlive();

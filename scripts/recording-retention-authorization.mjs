@@ -17,6 +17,15 @@ export function validRecordingRetentionStorageKey(key) {
   return typeof key === 'string' && Buffer.byteLength(key) <= 1024 && !/[\\\x00-\x1f\x7f]/u.test(key) &&
     key.split('/').every(part => part && part !== '.' && part !== '..');
 }
+
+export function hasUntypedRecordingPointer(record = {}, captureRequest = false) {
+  const fields = ['storagePath', 'storage_path', 'recordingStoragePath', 'recording_storage_path', 's3Key'];
+  const untyped = value => value != null && typeof value !== 'string';
+  return (captureRequest && untyped(record.path)) || [record, record.payload].some(value =>
+    value != null && (fields.some(field => untyped(value[field])) ||
+      [value.s3Archive, value.s3_archive].some(archive => archive != null &&
+        ['key', 'storagePath', 's3Key'].some(field => untyped(archive[field])))));
+}
 const block = (statusCode, result, error) => ({ ok: false, statusCode, result, error });
 const unavailable = () => block(503, 'retention_approval_unavailable', 'Recording retention approval could not be confirmed. No storage deletion was started.');
 const changed = () => block(409, 'retention_plan_changed', 'The recording list, storage versions, or retention days could not be verified. Review the batch and request a new approval.');
@@ -85,7 +94,7 @@ async function buildPlan(messages, days, cutoffAt, bucket, getPath, getStorageVe
        OR message_id = ANY($2::text[]) AND outcome = 'pending'
     UNION ALL
     SELECT storage_key, 'pending', message_id FROM ONLY ${storageWrites}
-    WHERE storage_key = ANY($1::text[]) OR message_id = ANY($2::text[])`,
+    WHERE rejected_at IS NULL AND (storage_key = ANY($1::text[]) OR message_id = ANY($2::text[]))`,
   [[...new Set(candidates.map(getPath).filter(Boolean))], candidates.map(row => row.id)]);
   const fencedKeys = new Map(fenced.rows.filter(row => row.storage_key).map(row => [row.storage_key, row.outcome]));
   const fencedIds = new Set(fenced.rows.map(row => row.message_id).filter(Boolean));

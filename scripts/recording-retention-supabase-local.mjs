@@ -11,6 +11,7 @@ import { promisify } from 'node:util';
 import vm from 'node:vm';
 import ts from 'typescript';
 import { validRecordingObjectVersion, validRecordingRetentionStorageKey } from './recording-retention-authorization.mjs';
+import { assertRecordingRetentionSchema } from './recording-retention-schema.mjs';
 import { withRetentionPostgres } from './fixtures/recording-retention-postgres.mjs';
 import { startIsolatedBridge } from './bridge-smoke-isolation.mjs';
 import { isRetentionStorageRequest, retentionStorageBucket, retentionStorageFixtureFlag, retentionStorageOrigin, retentionWriterFixtureKey }
@@ -133,7 +134,7 @@ test('real Supabase Storage and Postgres prove recording retention from approval
 
     const bridge = ts.createSourceFile('bridge.mjs', readFileSync(new URL('./openclaw-local-server.mjs', import.meta.url), 'utf8'),
       ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
-    let race, deleteCount = 0, deleteReply, infoReply;
+    let race, deleteCount = 0, deleteReply, infoReply, infoOverride;
     const context = vm.createContext({
       AbortSignal, SUPABASE_CALL_RECORDINGS_BUCKET: bucket, SUPABASE_URL: storageOrigin,
       validRecordingRetentionStorageKey, validRecordingObjectVersion, encodePathSegments: encode,
@@ -145,6 +146,7 @@ test('real Supabase Storage and Postgres prove recording retention from approval
           deleteCount++;
           await race?.();
         }
+        if (options.method === 'GET' && infoOverride) return new Response(infoOverride, { status: 404 });
         const result = await http(options.method, url.slice(`${storageOrigin}/storage/v1/`.length), options.body);
         if (options.method === 'DELETE') deleteReply = result;
         else infoReply = result;
@@ -162,6 +164,10 @@ test('real Supabase Storage and Postgres prove recording retention from approval
     };
 
     const key = 'fixture/recording.txt';
+    infoOverride = '{}';
+    assert.equal(await context.readSupabaseRecordingVersion(key, undefined, true), null,
+      'an unclassified 404 cannot release a capture reservation');
+    infoOverride = undefined;
     await put(key, 'first synthetic recording');
     const first = await versionOf(key);
     await put(key, 'replacement before execution', true);
@@ -226,16 +232,14 @@ async function exerciseRetentionRoute({ http, put, assertBytes, ageObject }) {
   }
   await withRetentionPostgres(async ({ pool, binding, applyRecordingSchema }) => {
     let injectOverwrite = false;
-    let unrelatedWrite;
-    let pendingBeforeDelete;
-    let duplicateWrite;
-    let referenceRemoval;
-    let tableRemoval;
+    let overlapProof;
+    let overlapError;
     let duringCapture;
     let duringManualDelete;
     const deleted = [];
-    const start = () => startIsolatedBridge({
+    const start = ({ requireRecordingSchema = false } = {}) => startIsolatedBridge({
       args: [retentionStorageFixtureFlag], retentionPostgres: binding, startupMs: process.platform === 'win32' ? 90_000 : 55_000,
+      requireRecordingSchema,
       async retentionStorage({ url, method, body }) {
         if (url === `${retentionStorageOrigin}/storage/v1/${object}/${retentionWriterFixtureKey}`) {
           if (method === 'PUT') await duringCapture?.();
@@ -245,41 +249,13 @@ async function exerciseRetentionRoute({ http, put, assertBytes, ageObject }) {
         if (method === 'DELETE') {
           const [{ path, versionId }] = JSON.parse(body).prefixes;
           if (path === target.key) {
-            pendingBeforeDelete = (await pool.query(`SELECT outcome, object_version
-              FROM public.pbk_recording_retention_attempts WHERE message_id = $1`, [target.id])).rows[0];
             try {
-              await pool.query(`INSERT INTO public.unified_messages (id, workspace_id, channel, direction, payload)
-                VALUES ('retention-duplicate-pointer-fixture', 'pbk', 'call', 'recording', $1)`,
-              [JSON.stringify({ storage_path: ` \t/${bucket}//${path.replace('/', '//')}/ \n` })]);
-              duplicateWrite = 'committed';
+              const result = await pool.query('SELECT public.fixture_retention_overlap($1, $2) AS proof',
+                [target.id, JSON.stringify({ storage_path: ` \t/${bucket}//${path.replace('/', '//')}/ \n` })]);
+              overlapProof = result.rows[0].proof;
             } catch (error) {
-              duplicateWrite = error.code;
-            }
-            try {
-              await pool.query('DELETE FROM public.unified_messages WHERE id = $1', [target.id]);
-              referenceRemoval = 'committed';
-            } catch (error) {
-              referenceRemoval = error.code;
-            }
-            try {
-              await pool.query('TRUNCATE public.unified_messages');
-              tableRemoval = 'committed';
-            } catch (error) {
-              tableRemoval = error.code;
-            }
-            const writer = await pool.connect();
-            try {
-              await writer.query('BEGIN');
-              await writer.query("SET LOCAL lock_timeout = '250ms'");
-              await writer.query(`INSERT INTO public.unified_messages (id, workspace_id, channel, direction)
-                VALUES ('unrelated-retention-fixture', 'pbk', 'sms', 'inbound')`);
-              await writer.query('COMMIT');
-              unrelatedWrite = 'committed';
-            } catch (error) {
-              await writer.query('ROLLBACK');
-              unrelatedWrite = error.code;
-            } finally {
-              writer.release();
+              overlapError = error.code || error.message;
+              throw error;
             }
           }
           if (injectOverwrite && path === replacement.key) {
@@ -315,7 +291,61 @@ async function exerciseRetentionRoute({ http, put, assertBytes, ageObject }) {
     };
     const bootstrap = await launch();
     await bootstrap.stop();
+    await assert.rejects(assertRecordingRetentionSchema(pool), /schema or runtime-role access is incomplete/);
+    await assert.rejects(start({ requireRecordingSchema: true }), /Render bridge cannot start until the recording retention migration/);
     await applyRecordingSchema();
+    await assertRecordingRetentionSchema(pool);
+    const readinessClient = await pool.connect();
+    try {
+      await readinessClient.query('BEGIN');
+      await readinessClient.query('SET LOCAL ROLE anon');
+      await assert.rejects(assertRecordingRetentionSchema(readinessClient), /schema or runtime-role access is incomplete/);
+      await readinessClient.query('ROLLBACK');
+      await readinessClient.query('BEGIN');
+      await readinessClient.query('DROP INDEX public.pbk_recording_storage_active_key');
+      await assert.rejects(assertRecordingRetentionSchema(readinessClient), /schema or runtime-role access is incomplete/);
+    } finally {
+      await readinessClient.query('ROLLBACK');
+      readinessClient.release();
+    }
+    const pointerTypes = await pool.query(`SELECT public.pbk_recording_has_untyped_pointer($1::jsonb) AS ambiguous,
+      ARRAY(SELECT public.pbk_recording_storage_pointers(NULL, $1::jsonb)) AS pointers`,
+    [JSON.stringify({ storagePath: [target.key] })]);
+    assert.deepEqual(pointerTypes.rows, [{ ambiguous: true, pointers: [] }]);
+    // One disposable DB round trip keeps the lock probes inside the production Storage deadline.
+    await pool.query(`CREATE FUNCTION public.fixture_retention_overlap(target_id text, alias_payload jsonb)
+      RETURNS jsonb LANGUAGE plpgsql SET lock_timeout = '250ms' AS $$
+      DECLARE
+        pending jsonb;
+        duplicate_write text := 'committed';
+        reference_removal text := 'committed';
+        table_removal text := 'committed';
+        unrelated_write text := 'committed';
+      BEGIN
+        SELECT jsonb_build_object('outcome', outcome, 'object_version', object_version) INTO pending
+        FROM public.pbk_recording_retention_attempts WHERE message_id = target_id;
+        BEGIN
+          INSERT INTO public.unified_messages (id, workspace_id, channel, direction, payload)
+            VALUES ('retention-duplicate-pointer-fixture', 'pbk', 'call', 'recording', alias_payload);
+        EXCEPTION WHEN OTHERS THEN duplicate_write := SQLSTATE;
+        END;
+        BEGIN
+          DELETE FROM public.unified_messages WHERE id = target_id;
+        EXCEPTION WHEN OTHERS THEN reference_removal := SQLSTATE;
+        END;
+        BEGIN
+          TRUNCATE public.unified_messages;
+        EXCEPTION WHEN OTHERS THEN table_removal := SQLSTATE;
+        END;
+        BEGIN
+          INSERT INTO public.unified_messages (id, workspace_id, channel, direction)
+            VALUES ('unrelated-retention-fixture', 'pbk', 'sms', 'inbound');
+        EXCEPTION WHEN OTHERS THEN unrelated_write := SQLSTATE;
+        END;
+        RETURN jsonb_build_object('pending', pending, 'duplicateWrite', duplicate_write, 'referenceRemoval', reference_removal,
+          'tableRemoval', table_removal, 'unrelatedWrite', unrelated_write);
+      END;
+      $$`);
     const messages = [];
     const archive = { key: 'fixture/preserved-archive.wav', bucket: 'fixture-archive' };
     for (const [row] of fixtures) {
@@ -389,14 +419,11 @@ async function exerciseRetentionRoute({ http, put, assertBytes, ageObject }) {
       assert.equal(deleted.length, 0, 'approving must not dispatch deletion');
       const complete = await run(200, 60, approvalId);
       assert.equal(complete.run.status, 'complete', JSON.stringify({ deletions: complete.run.deletions,
-        providerStatuses: deleted.map(item => item.result.status), blockedNetwork: bridge.blockedNetwork,
+        providerStatuses: deleted.map(item => item.result.status), blockedNetwork: bridge.blockedNetwork, overlapProof, overlapError,
         attempts: (await pool.query('SELECT message_id, outcome FROM public.pbk_recording_retention_attempts')).rows }));
       assert.equal(complete.run.deletedCount, 1);
-      assert.equal(unrelatedWrite, 'committed', 'retention must not block an unrelated writer while waiting for Storage');
-      assert.equal(duplicateWrite, '23514', 'a new same-key alias must not be written while retention is pending');
-      assert.equal(referenceRemoval, '23514', 'the approved row must remain stable while retention is pending');
-      assert.equal(tableRemoval, '23514', 'truncate must respect a committed retention reservation');
-      assert.deepEqual(pendingBeforeDelete, { outcome: 'pending', object_version: deleted[0].versionId });
+      assert.deepEqual(overlapProof, { unrelatedWrite: 'committed', duplicateWrite: '23514', referenceRemoval: '23514',
+        tableRemoval: '23514', pending: { outcome: 'pending', object_version: deleted[0].versionId } });
       assert.equal(complete.run.deletions[0].tracking, 'confirmed');
       assert.ok((await decision(approvalId)).consumed_at instanceof Date);
       const durable = await pointer(target.id);
@@ -470,11 +497,32 @@ async function exerciseRetentionRoute({ http, put, assertBytes, ageObject }) {
         contentType: 'text/plain', audioBase64: Buffer.from(bytes).toString('base64'),
       });
       const writerLease = async () => (await pool.query(`SELECT storage_key, operation
-        FROM public.pbk_recording_storage_writes WHERE message_id = $1`, [writerId])).rows[0];
+        FROM public.pbk_recording_storage_writes WHERE message_id = $1 AND rejected_at IS NULL`, [writerId])).rows[0];
       const firstCapture = await capture(200, 'synthetic writer first');
       assert.equal(firstCapture.storagePath, retentionWriterFixtureKey);
       assert.equal((await pointer(writerId)).storage_path, retentionWriterFixtureKey);
       assert.equal(await writerLease(), undefined);
+      duringCapture = async () => { throw new Error('Invalid pointer request reached Storage'); };
+      for (const malformed of [{ storage_path: 0 }, { payload: { s3Archive: { key: false } } }]) {
+        await request('/api/recordings/capture', 400, {
+          messageId: writerId, storagePath: retentionWriterFixtureKey, contentType: 'text/plain',
+          audioBase64: Buffer.from('synthetic writer second').toString('base64'), ...malformed,
+        });
+      }
+      duringCapture = undefined;
+      assert.equal(await writerLease(), undefined);
+      const setMimeTypes = async types => {
+        const result = await http('PUT', `bucket/${bucket}`, JSON.stringify({ allowed_mime_types: types }));
+        assert.equal(result.status, 200, result.body);
+      };
+      await setMimeTypes(['audio/wav']);
+      const denied = await capture(415, 'synthetic writer second');
+      assert.equal(denied.result, 'recording_storage_upload_rejected');
+      assert.equal(await writerLease(), undefined, 'a proven rejection must release the active reservation');
+      assert.equal((await pool.query(`SELECT rejection_code FROM public.pbk_recording_storage_writes
+        WHERE message_id = $1 AND rejected_at IS NOT NULL`, [writerId])).rows[0]?.rejection_code, 'InvalidMimeType');
+      await assertBytes(retentionWriterFixtureKey, 'synthetic writer first');
+      await setMimeTypes(['text/plain']);
       await pool.query("UPDATE public.unified_messages SET storage_bucket = 'other-fixture-bucket' WHERE id = $1", [writerId]);
       assert.equal((await remove(writerId)).status, 409, 'a stale configured bucket cannot authorize deletion');
       await assertBytes(retentionWriterFixtureKey, 'synthetic writer first');
@@ -500,6 +548,11 @@ async function exerciseRetentionRoute({ http, put, assertBytes, ageObject }) {
       assert.equal(await writerLease(), undefined);
       const missingWriter = await http('GET', `object/info/authenticated/${bucket}/${retentionWriterFixtureKey}`);
       assert.equal(JSON.parse(missingWriter.body).code, 'NoSuchKey');
+      duringCapture = async () => { throw new Error('Synthetic transport interruption'); };
+      assert.equal((await capture(503, 'synthetic writer first')).result, 'recording_storage_write_pending');
+      duringCapture = undefined;
+      assert.equal((await capture(409, 'synthetic writer second')).result, 'recording_storage_busy');
+      assert.deepEqual(await writerLease(), { storage_key: retentionWriterFixtureKey, operation: 'capture' });
       const archiveGuard = randomUUID();
       await pool.query(`INSERT INTO public.pbk_recording_storage_writes
         (token, message_id, bucket, archive_bucket, archive_key, operation)

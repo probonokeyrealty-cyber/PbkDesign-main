@@ -38408,6 +38408,17 @@ function decodeG711FrameToLinear16(frame, codec = DEEPGRAM_STREAM_CODEC) {
   return output;
 }
 
+function hasTelnyxG711AudioSignal(frame, codec) {
+  if (!frame.length || (codec !== 'PCMU' && codec !== 'PCMA')) return false;
+  const decode = codec === 'PCMA' ? decodeAlawByteToLinear16 : decodeMulawByteToLinear16;
+  const requiredSamples = Math.ceil(frame.length / 10);
+  let signalSamples = 0;
+  for (const byte of frame) {
+    if (Math.abs(decode(byte)) >= 256 && ++signalSamples >= requiredSamples) return true;
+  }
+  return false;
+}
+
 function getTelnyxDeepgramLiveModel() {
   return String(process.env.PBK_DEEPGRAM_TELNYX_LIVE_MODEL || process.env.DEEPGRAM_TELNYX_LIVE_MODEL || 'nova-2-phonecall').trim();
 }
@@ -71534,6 +71545,7 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
     deepgramFallbackReason: '',
     replayedFrameCount: 0,
     replayedAudioBytes: 0,
+    deepgramSignalFrames: 0,
     transcript: [],
     sentiment: null,
     leadId: '',
@@ -73121,6 +73133,8 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
 
   const scheduleNoTranscriptFallback = () => {
     if (finalized || session.deepgramFallbackActive || session.transcript.length > 0 || noTranscriptFallbackTimer) return;
+    // Telnyx delivers silence before the caller speaks. Wait for signal before replacing a healthy socket.
+    if (session.deepgramSignalFrames < 5) return;
     noTranscriptFallbackTimer = setTimeout(() => {
       if (!finalized && !session.deepgramFallbackActive && session.transcript.length === 0 && session.audioBytes > 0) {
         void rotateTelnyxDeepgramToLinear16Fallback('no-transcript-after-telnyx-audio');
@@ -73259,6 +73273,9 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
       const frame = Buffer.from(String(event.media.payload), 'base64');
       session.frameCount += 1;
       session.audioBytes += frame.length;
+      if (hasTelnyxG711AudioSignal(frame, session.telnyxMediaCodec || DEEPGRAM_STREAM_CODEC)) {
+        session.deepgramSignalFrames += 1;
+      }
       session.lastFrameBytes = frame.length;
       if (!session.firstFrameBytes) session.firstFrameBytes = frame.length;
       if (!session.firstAudioAt) session.firstAudioAt = isoNow();

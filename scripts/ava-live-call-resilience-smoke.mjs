@@ -92,6 +92,7 @@ locks.set(session.callId, activeLock);
 const noop = () => {};
 const runtime = vm.createContext({
   session, Buffer, WebSocket: { OPEN: 1 }, finalized: false,
+  DEEPGRAM_STREAM_CODEC: 'PCMU',
   ELEVENLABS_TELNYX_TTS_STALE_MS: 12000, telnyxAvaTurnLocksByCallId: locks,
   isoNow: () => new Date(clock + 20).toISOString(),
   isCurrentTelnyxMediaSession: () => true,
@@ -100,6 +101,7 @@ const runtime = vm.createContext({
   recordCallTrace: noop, rememberTelnyxMediaFrame: noop,
   sendOrBufferTelnyxMediaFrame: (frame) => forwarded.push(frame), scheduleNoTranscriptFallback: noop,
 });
+vm.runInContext(sourceBetween('function decodeMulawByteToLinear16(', 'function getTelnyxDeepgramLiveModel('), runtime);
 vm.runInContext(sourceBetween('function sendTelnyxMediaClearCommand(', 'async function sendElevenLabsTtsToTelnyxMediaStream('), runtime);
 vm.runInContext(`function receiveMedia(event) {
 ${sourceBetween("    if (event.event === 'media' && event.media?.payload) {", "    if (event.event === 'stop')", 'async function handleTelnyxDeepgramMediaSocket(')}
@@ -117,6 +119,27 @@ for (const reason of ['ava_reply_sending', 'ava_speaking', 'ava_reply_attempted'
 }
 assert.equal(session.audioBytes, 6 * 160, 'Silence must still flow through the audio path');
 assert.equal(forwarded.length, 6, 'Silence frames must still be forwarded for transcription');
+
+const fallbackTimers = [];
+Object.assign(runtime, {
+  console: { log: noop }, state: {}, addActivity: noop, makeActivity: noop,
+  persistStateInBackground: noop, syncTelnyxSessionToRedis: async () => {},
+  DEEPGRAM_STREAM_CODEC: 'PCMU', TELNYX_DEEPGRAM_NO_TRANSCRIPT_FALLBACK_MS: 4500,
+  setTimeout: (callback, delay) => fallbackTimers.push({ callback, delay }),
+  rotateTelnyxDeepgramToLinear16Fallback: noop,
+});
+vm.runInContext('let noTranscriptFallbackTimer = null;\n' +
+  sourceBetween('  const scheduleNoTranscriptFallback =', '  liveTelnyxMessageHandler = (raw) =>', 'async function handleTelnyxDeepgramMediaSocket(') +
+  '\nglobalThis.scheduleNoTranscriptFallback = scheduleNoTranscriptFallback;', runtime);
+session.deepgramSignalFrames = 0;
+const receiveMulaw = (byte) => runtime.receiveMedia({
+  event: 'media', media: { payload: Buffer.alloc(160, byte).toString('base64') },
+});
+for (let frame = 0; frame < 300; frame++) receiveMulaw(frame % 2 ? 0xff : 0x7f);
+assert.equal(fallbackTimers.length, 0, 'Silent G.711 media must not start the Deepgram fallback timer');
+for (let frame = 0; frame < 5; frame++) receiveMulaw(0xa5);
+assert.equal(fallbackTimers.length, 1, 'Sustained audio signal must start the Deepgram fallback timer');
+assert.equal(fallbackTimers[0].delay, 4500);
 
 const scheduled = [];
 Object.assign(runtime, {

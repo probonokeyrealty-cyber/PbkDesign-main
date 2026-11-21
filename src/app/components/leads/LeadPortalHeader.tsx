@@ -150,7 +150,7 @@ export function LeadPortalHeader({
         </button>
         <button type="button" onClick={onRefresh} disabled={loading}>
           <RefreshCw size={16} className={loading ? 'animate-spin' : ''} />
-          Refresh
+          Refresh lead
         </button>
         <button
           type="button"

@@ -13,7 +13,7 @@ import ts from 'typescript';
 import { validRecordingObjectVersion, validRecordingRetentionStorageKey } from './recording-retention-authorization.mjs';
 import { withRetentionPostgres } from './fixtures/recording-retention-postgres.mjs';
 import { startIsolatedBridge } from './bridge-smoke-isolation.mjs';
-import { isRetentionStorageRequest, retentionStorageBucket, retentionStorageFixtureFlag, retentionStorageOrigin }
+import { isRetentionStorageRequest, retentionStorageBucket, retentionStorageFixtureFlag, retentionStorageOrigin, retentionWriterFixtureKey }
   from './fixtures/recording-retention-storage-contract.mjs';
 
 const image = 'supabase/storage-api:v1.98.5';
@@ -59,7 +59,7 @@ const requestScript = `
   })();
 `;
 
-test('real Supabase Storage and Postgres prove recording retention from approval through readback', { timeout: 250_000 }, async () => {
+test('real Supabase Storage and Postgres prove recording retention from approval through readback', { timeout: 420_000 }, async () => {
   const name = `pbk-retention-${randomUUID()}`;
   const host = process.platform === 'win32' ? 'npipe:////./pipe/dockerDesktopLinuxEngine' : 'unix:///var/run/docker.sock';
   const env = Object.fromEntries(['PATH', 'SystemRoot', 'WINDIR'].flatMap(key => process.env[key] ? [[key, process.env[key]]] : []));
@@ -112,10 +112,11 @@ test('real Supabase Storage and Postgres prove recording retention from approval
         if (error) finish({ error: 'closed' });
       });
     });
-    for (let attempt = 0; ; attempt++) {
+    const storageReadyBy = Date.now() + 60_000;
+    for (;;) {
       const response = await http('GET', 'status').catch(() => null);
       if (response?.status === 200) break;
-      if (attempt === 40) assert.fail(`Storage did not start: ${(await docker('logs', '--tail', '12', storage)).slice(-2400)}`);
+      if (Date.now() >= storageReadyBy) assert.fail(`Storage did not start: ${(await docker('logs', '--tail', '12', storage)).slice(-2400)}`);
       await delay(300);
     }
     const created = await http('POST', 'bucket', JSON.stringify({ id: bucket, name: bucket, public: false }));
@@ -230,10 +231,17 @@ async function exerciseRetentionRoute({ http, put, assertBytes, ageObject }) {
     let duplicateWrite;
     let referenceRemoval;
     let tableRemoval;
+    let duringCapture;
+    let duringManualDelete;
     const deleted = [];
     const start = () => startIsolatedBridge({
-      args: [retentionStorageFixtureFlag], retentionPostgres: binding, startupMs: 55_000,
+      args: [retentionStorageFixtureFlag], retentionPostgres: binding, startupMs: process.platform === 'win32' ? 90_000 : 55_000,
       async retentionStorage({ url, method, body }) {
+        if (url === `${retentionStorageOrigin}/storage/v1/${object}/${retentionWriterFixtureKey}`) {
+          if (method === 'PUT') await duringCapture?.();
+          if (method === 'DELETE') await duringManualDelete?.();
+          return http(method, `${object}/${retentionWriterFixtureKey}`, body, 'text/plain');
+        }
         if (method === 'DELETE') {
           const [{ path, versionId }] = JSON.parse(body).prefixes;
           if (path === target.key) {
@@ -242,7 +250,7 @@ async function exerciseRetentionRoute({ http, put, assertBytes, ageObject }) {
             try {
               await pool.query(`INSERT INTO public.unified_messages (id, workspace_id, channel, direction, payload)
                 VALUES ('retention-duplicate-pointer-fixture', 'pbk', 'call', 'recording', $1)`,
-              [JSON.stringify({ storage_path: ` \t/${bucket}/${path} \n` })]);
+              [JSON.stringify({ storage_path: ` \t/${bucket}//${path.replace('/', '//')}/ \n` })]);
               duplicateWrite = 'committed';
             } catch (error) {
               duplicateWrite = error.code;
@@ -320,6 +328,17 @@ async function exerciseRetentionRoute({ http, put, assertBytes, ageObject }) {
         VALUES ($1,'pbk','call','recording','recorded',$2,$3,$4,$5,$5)`,
       [row.id, row.key, bucket, message.payload, row.createdAt]);
     }
+    const staleId = 'fixture-retention-stale-cache';
+    const staleKey = 'fixture/retention-stale-cache.txt';
+    const ambiguousId = 'fixture-retention-ambiguous-archive';
+    const ambiguous = { s3Archive: { key: '/ fixture/ambiguous-archive.wav', bucket: 'fixture-archive' } };
+    messages.push({ id: staleId, workspaceId: 'pbk', channel: 'call', direction: 'recording', createdAt: new Date().toISOString() });
+    messages.push({ id: ambiguousId, workspaceId: 'pbk', channel: 'call', direction: 'recording',
+      createdAt: new Date().toISOString(), payload: ambiguous });
+    await pool.query(`INSERT INTO public.unified_messages (id, workspace_id, channel, direction, storage_path, storage_bucket)
+      VALUES ($1,'pbk','call','recording',$2,$3)`, [staleId, staleKey, bucket]);
+    await pool.query(`INSERT INTO public.unified_messages (id, workspace_id, channel, direction, payload)
+      VALUES ($1,'pbk','call','recording',$2)`, [ambiguousId, ambiguous]);
     await pool.query("UPDATE public.bridge_state SET data = jsonb_set(data, '{messages}', $1) WHERE id = 'singleton'", [JSON.stringify(messages)]);
     let bridge = await launch();
     const retention = '/api/recordings/retention';
@@ -336,10 +355,22 @@ async function exerciseRetentionRoute({ http, put, assertBytes, ageObject }) {
       JOIN public.pbk_recording_retention_approvals g ON g.approval_id = a.id WHERE a.id = $1`, [id])).rows[0];
     const pointer = async id => (await pool.query('SELECT storage_path, payload FROM public.unified_messages WHERE id = $1', [id])).rows[0];
     const run = (status, days, approvalId) => request(`${retention}/run`, status, { dryRun: false, days, approvalId });
+    const remove = id => bridge.fetch(new URL(`/api/recordings/${id}`, bridge.origin), {
+      method: 'DELETE', headers: { authorization: `Bearer ${bridge.apiKey}` },
+    });
     try {
       assert.equal((await request('/health', 200)).features.stateBackend, 'postgres');
+      assert.equal((await remove(staleId)).status, 409, 'a pointerless cache cannot delete a newer durable recording');
+      assert.equal((await pointer(staleId)).storage_path, staleKey);
+      assert.equal((await remove(ambiguousId)).status, 400, 'manual deletion must reject an unstable archive key before I/O');
+      assert.deepEqual((await pointer(ambiguousId)).payload, ambiguous);
       assert.equal((await request(`${retention}/preview?days=60`, 200)).run.candidateCount, 1);
       await request(`${retention}/run`, 401, { dryRun: false, days: 60 }, {});
+      await pool.query(`INSERT INTO public.unified_messages (id, workspace_id, channel, direction, storage_path)
+        VALUES ('retention-legacy-alias', 'pbk', 'call', 'recording', $1)`,
+      [`/${bucket}//${target.key.replace('/', '//')}/`]);
+      assert.equal((await run(409, 60)).result, 'retention_plan_changed');
+      await pool.query("DELETE FROM public.unified_messages WHERE id = 'retention-legacy-alias'");
       const queued = await run(202, 60);
       assert.equal(queued.candidateCount, 1);
       const { approvalId } = queued;
@@ -358,7 +389,8 @@ async function exerciseRetentionRoute({ http, put, assertBytes, ageObject }) {
       assert.equal(deleted.length, 0, 'approving must not dispatch deletion');
       const complete = await run(200, 60, approvalId);
       assert.equal(complete.run.status, 'complete', JSON.stringify({ deletions: complete.run.deletions,
-        providerStatuses: deleted.map(item => item.result.status) }));
+        providerStatuses: deleted.map(item => item.result.status), blockedNetwork: bridge.blockedNetwork,
+        attempts: (await pool.query('SELECT message_id, outcome FROM public.pbk_recording_retention_attempts')).rows }));
       assert.equal(complete.run.deletedCount, 1);
       assert.equal(unrelatedWrite, 'committed', 'retention must not block an unrelated writer while waiting for Storage');
       assert.equal(duplicateWrite, '23514', 'a new same-key alias must not be written while retention is pending');
@@ -388,6 +420,16 @@ async function exerciseRetentionRoute({ http, put, assertBytes, ageObject }) {
       assert.equal(held.run.deletedCount, 0);
       assert.equal(deleted.length, 2);
       assert.deepEqual(JSON.parse(deleted[1].result.body), []);
+      await assertBytes(replacement.key, 'replacement bytes');
+      const blockedFetches = bridge.blockedNetwork.fetch || 0;
+      const blockedDelete = await remove(replacement.id);
+      assert.equal(blockedDelete.status, 409, await blockedDelete.text());
+      const blockedCapture = await request('/api/recordings/capture', 409, {
+        messageId: replacement.id, storagePath: replacement.key.replace('/', '//'),
+        audioBase64: Buffer.from('must not write this audio').toString('base64'),
+      });
+      assert.equal(blockedCapture.result, 'recording_storage_busy');
+      assert.equal(bridge.blockedNetwork.fetch || 0, blockedFetches, 'blocked write must not reach the Storage transport');
       await assertBytes(replacement.key, 'replacement bytes');
       assert.equal((await pointer(replacement.id)).storage_path, replacement.key);
       assert.equal((await run(409, 30, racing.approvalId)).result, 'retention_approval_consumed');
@@ -420,6 +462,55 @@ async function exerciseRetentionRoute({ http, put, assertBytes, ageObject }) {
       await request(`/api/approvals/${next.approvalId}/approve`, 200, {});
       assert.equal((await run(200, 2, next.approvalId)).run.deletedCount, 1);
       assert.equal(deleted.filter(item => item.path === interrupted.key).length, 1, 'unknown deletion must not replay');
+
+      const writerId = 'fixture-retention-writer';
+      await put(retentionWriterFixtureKey, 'synthetic seed bytes');
+      const capture = (status, bytes) => request('/api/recordings/capture', status, {
+        messageId: writerId, storagePath: `//${bucket}//${retentionWriterFixtureKey.replace('/', '///')}/`,
+        contentType: 'text/plain', audioBase64: Buffer.from(bytes).toString('base64'),
+      });
+      const writerLease = async () => (await pool.query(`SELECT storage_key, operation
+        FROM public.pbk_recording_storage_writes WHERE message_id = $1`, [writerId])).rows[0];
+      const firstCapture = await capture(200, 'synthetic writer first');
+      assert.equal(firstCapture.storagePath, retentionWriterFixtureKey);
+      assert.equal((await pointer(writerId)).storage_path, retentionWriterFixtureKey);
+      assert.equal(await writerLease(), undefined);
+      await pool.query("UPDATE public.unified_messages SET storage_bucket = 'other-fixture-bucket' WHERE id = $1", [writerId]);
+      assert.equal((await remove(writerId)).status, 409, 'a stale configured bucket cannot authorize deletion');
+      await assertBytes(retentionWriterFixtureKey, 'synthetic writer first');
+      await pool.query('UPDATE public.unified_messages SET storage_bucket = $2 WHERE id = $1', [writerId, bucket]);
+      let captureOverlap;
+      duringCapture = async () => {
+        const meta = await request('/api/recordings', 503, { messageId: writerId, storagePath: retentionWriterFixtureKey });
+        captureOverlap = { ...await writerLease(), deleteStatus: (await remove(writerId)).status, metaResult: meta.result };
+      };
+      await capture(200, 'synthetic writer second');
+      duringCapture = undefined;
+      assert.deepEqual(captureOverlap, { storage_key: retentionWriterFixtureKey, operation: 'capture',
+        deleteStatus: 409, metaResult: 'recording_storage_write_pending' });
+      await assertBytes(retentionWriterFixtureKey, 'synthetic writer second');
+      let deleteOverlap;
+      duringManualDelete = async () => {
+        deleteOverlap = { ...await writerLease(), captureResult: (await capture(409, 'synthetic writer first')).result };
+      };
+      const removed = await remove(writerId);
+      assert.equal(removed.status, 200, await removed.text());
+      assert.deepEqual(deleteOverlap, { storage_key: retentionWriterFixtureKey, operation: 'delete', captureResult: 'recording_storage_busy' });
+      assert.equal(await pointer(writerId), undefined);
+      assert.equal(await writerLease(), undefined);
+      const missingWriter = await http('GET', `object/info/authenticated/${bucket}/${retentionWriterFixtureKey}`);
+      assert.equal(JSON.parse(missingWriter.body).code, 'NoSuchKey');
+      const archiveGuard = randomUUID();
+      await pool.query(`INSERT INTO public.pbk_recording_storage_writes
+        (token, message_id, bucket, archive_bucket, archive_key, operation)
+        VALUES ($1, 'fixture-archive-owner', $2, 'fixture-archive', 'fixture/isolated-archive.wav', 'delete')`, [archiveGuard, bucket]);
+      try {
+        await assert.rejects(pool.query(`INSERT INTO public.unified_messages (id, workspace_id, channel, direction, payload)
+          VALUES ('fixture-archive-alias', 'pbk', 'call', 'recording', $1)`,
+        [JSON.stringify({ s3Archive: { key: '/fixture//isolated-archive.wav' } })]), { code: '23514' });
+      } finally {
+        await pool.query('DELETE FROM public.pbk_recording_storage_writes WHERE token = $1', [archiveGuard]);
+      }
       console.log('HTTP retention: pending/team blocked; founder approval consumed once; durable row and Storage agree; racing replacement preserved');
     } finally {
       await bridge.stop();

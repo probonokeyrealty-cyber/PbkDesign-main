@@ -115,6 +115,7 @@ async function verify(engine, config, label) {
       if (path === '/api/leads') return send({ ok: true, leads: [fixture, other] });
       if (path === `/api/leads/${fixture.id}/full`) { canonicalReads.push(fixture.id); return send({ ok: true, lead: fixture }); }
       if (path === `/api/leads/${other.id}/full`) { canonicalReads.push(other.id); return send({ ok: true, lead: other }); }
+      if (path === '/api/leads/fixture-alias/full') return send({ ok: true, lead: other });
       if (path === '/state') return send({ leadImports: [fixture, other] });
       return send({ ok: true, items: [] });
     });
@@ -302,15 +303,47 @@ async function verify(engine, config, label) {
     const savedPhoto = () => workspace.getByRole('tabpanel', { name: 'Photos', exact: true })
       .getByRole('img', { name: 'Listing photo 1', exact: true });
 
-    for (const [current, price, absentPrice, photoUrl] of [
-      [fixture, '$410,000', '$520,000', photos[1]],
-      [other, '$520,000', '$410,000', otherPhoto],
+    for (const [current, price, absentPrice, photoUrl, parcel, absentParcel] of [
+      [fixture, '$410,000', '$520,000', photos[1], 'FIXTURE-24', 'OTHER-LEAD-SAME-ADDRESS'],
+      [other, '$520,000', '$410,000', otherPhoto, 'OTHER-LEAD-SAME-ADDRESS', 'FIXTURE-24'],
     ]) {
       const leadUrl = `${origin}/leads/${current.id}`;
       const chatUrl = `${origin}/ava-chat?leadId=${current.id}`;
       await page.getByRole('button', { name: 'Back to leads', exact: true }).click();
       await page.getByRole('link', { name: `Open lead ${current.seller.name} at ${structuredAddress.street}`, exact: true }).click();
       await expect(page).toHaveURL(leadUrl);
+      const sections = page.getByRole('navigation', { name: 'Lead workspace sections', exact: true });
+      await expect(sections).toBeVisible();
+      const readsBeforeShortcuts = canonicalReads.length;
+      for (const [text, hash, selectedTab] of [
+        ['Property record', 'record', 'Property record'],
+        ['Saved comps', 'comps', 'Comps'],
+        ['Property photos', 'photos', 'Photos'],
+      ]) {
+        const link = sections.getByRole('link', { name: text, exact: true });
+        await expect(link).toHaveAttribute('href', `/leads/${current.id}#lead-${hash}`);
+        assert.ok((await link.boundingBox()).height >= 44, 'Workspace shortcuts have 44px targets');
+        await link.press('Enter');
+        await expect(page).toHaveURL(`${leadUrl}#lead-${hash}`);
+        await expect(workspace.getByRole('tab', { name: selectedTab, exact: true })).toHaveAttribute('aria-selected', 'true');
+        await expect(workspace.getByRole('heading', { name: 'Property', exact: true })).toBeFocused();
+        const panel = workspace.getByRole('tabpanel', { name: selectedTab, exact: true });
+        if (hash === 'record') {
+          await expect(panel.getByText(parcel, { exact: true }).first()).toBeVisible();
+          await expect(panel.getByText(absentParcel, { exact: true })).toHaveCount(0);
+        } else if (hash === 'comps') {
+          await expect(panel.getByText(price, { exact: true }).first()).toBeVisible();
+          await expect(panel.getByText(absentPrice, { exact: true })).toHaveCount(0);
+        } else {
+          await expect(savedPhoto()).toHaveAttribute('src', photoUrl);
+        }
+      }
+      await page.goBack();
+      await expect(page).toHaveURL(`${leadUrl}#lead-comps`);
+      await expect(workspace.getByRole('tab', { name: 'Comps', exact: true })).toHaveAttribute('aria-selected', 'true');
+      assert.equal(canonicalReads.length, readsBeforeShortcuts, 'Shortcuts only select the saved view');
+      assert.equal(mutations.length, beforeSwitch, 'Shortcuts never refresh or save');
+      await noOverflow();
       await page.getByRole('link', { name: 'Ask Ava about this lead' }).click();
       await expect(page).toHaveURL(chatUrl);
       await speak('Show saved comps');
@@ -329,6 +362,10 @@ async function verify(engine, config, label) {
       assert.equal(mutations.length, beforeSwitch, 'Spoken Photos must not refresh or save');
     }
 
+    const beforeLeadRefresh = canonicalReads.length;
+    await page.getByRole('button', { name: 'Refresh lead', exact: true }).click();
+    await expect.poll(() => canonicalReads.length).toBe(beforeLeadRefresh + 1);
+    assert.equal(mutations.length, beforeSwitch, 'Refresh lead is a saved-data read');
     expectedRefreshLead = other;
     await workspace.getByRole('tabpanel', { name: 'Photos', exact: true })
       .getByRole('button', { name: 'Refresh property intelligence', exact: true }).click();
@@ -337,9 +374,14 @@ async function verify(engine, config, label) {
       address, leadId: other.id, expectedPropertyAddress: structuredAddress, radiusMiles: 1,
     } }], 'Only Refresh sends one enrichment request for the currently open lead');
     await expect(savedPhoto()).toHaveAttribute('src', otherPhoto);
+    await page.goto(`${origin}/leads/fixture-alias?source=fixture#lead-record`);
+    await expect(page).toHaveURL(`${origin}/leads/${other.id}?source=fixture#lead-record`);
+    await expect(workspace.getByRole('tab', { name: 'Property record', exact: true })).toHaveAttribute('aria-selected', 'true');
+    await expect(workspace.getByRole('tabpanel', { name: 'Property record', exact: true }).getByText('OTHER-LEAD-SAME-ADDRESS', { exact: true }).first()).toBeVisible();
+    assert.equal(mutations.length, beforeSwitch + 1, 'Alias navigation must not refresh or save');
     assert.deepEqual(providerReads, [], 'Only explicit unified refresh may access providers');
     assert.deepEqual(unexpectedWrites, []); assert.deepEqual(errors, []); await noOverflow();
-    console.log(label + ': saved evidence, Ava voice lead switching and explicit refresh passed');
+    console.log(label + ': saved evidence shortcuts, exact-lead Ava voice commands and explicit refresh passed');
   } finally { await browser.close(); }
 }
 try {

@@ -157,7 +157,8 @@ if (retentionFixture) {
   process.env.PBK_EMOTIONAL_LEARNING_AUTO_IMPROVE = 'false';
   const rejectFetch = globalThis.fetch;
   globalThis.fetch = async (target, options = {}) => {
-    const request = { url: String(target), method: options.method, body: options.body };
+    const request = { url: String(target), method: options.method,
+      body: options.method === 'PUT' && Buffer.isBuffer(options.body) ? options.body.toString('utf8') : options.body };
     if (options.redirect !== 'error' || !isRetentionStorageRequest(request)) return rejectFetch();
     const signal = options.signal ?? AbortSignal.timeout(4_000);
     signal.throwIfAborted();
@@ -167,7 +168,7 @@ if (retentionFixture) {
         process.off('message', onMessage);
         signal.removeEventListener('abort', onAbort);
         if (error || !result) reject(error || new Error('Disposable Storage transport failed'));
-        else resolve(new Response(result.body, { status: result.status }));
+        else resolve(new Response([204, 205, 304].includes(result.status) ? null : result.body, { status: result.status }));
       }
       function onAbort() { finish(signal.reason); }
       function onMessage(message) {

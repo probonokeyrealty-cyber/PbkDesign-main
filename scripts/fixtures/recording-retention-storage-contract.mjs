@@ -4,9 +4,11 @@ export const retentionStorageOrigin = 'https://retention-storage.invalid';
 export const retentionStorageBucket = 'retention-fixture';
 export const retentionStorageFixtureFlag = '--recording-retention-storage-fixture';
 const prefix = `/storage/v1/object`;
+export const retentionWriterFixtureKey = 'fixture/retention-writer.txt';
 const fixtureKeys = new Set([
   'fixture/retention-approved.txt', 'fixture/retention-race.txt',
   'fixture/retention-interrupted.txt', 'fixture/retention-later.txt',
+  retentionWriterFixtureKey,
 ]);
 
 export function isRetentionStorageRequest({ url, method, body } = {}) {
@@ -15,6 +17,9 @@ export function isRetentionStorageRequest({ url, method, body } = {}) {
     const info = `${retentionStorageOrigin}${prefix}/info/authenticated/${retentionStorageBucket}/`;
     return !body && url.startsWith(info) && fixtureKeys.has(url.slice(info.length));
   }
+  const writer = `${retentionStorageOrigin}${prefix}/${retentionStorageBucket}/${retentionWriterFixtureKey}`;
+  if (url === writer && method === 'PUT') return body === 'synthetic writer first' || body === 'synthetic writer second';
+  if (url === writer && method === 'DELETE') return body === undefined;
   if (method !== 'DELETE' || url !== `${retentionStorageOrigin}${prefix}/${retentionStorageBucket}` ||
       typeof body !== 'string' || body.length > 512) return false;
   try {

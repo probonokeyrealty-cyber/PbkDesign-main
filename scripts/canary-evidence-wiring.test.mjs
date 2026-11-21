@@ -190,8 +190,9 @@ test('approval, auth, delivery and dispatch code outside maturity remains byte-f
   // retention, exercised by the disposable Postgres and Storage HTTP test.
   // Synced main includes the Outlook receipt lookup from 15e6868.
   // Retention hardening adds durable founder proof and per-key deletion intent.
+  // The recording writer guard shares the canonical Storage key with retention.
   assert.equal(createHash('sha256').update(unchanged).digest('hex'),
-    'cdf9318008b64910651b91799a7b0419e40025fe2b74faf4c90771929d228a28');
+    '0a456d5a77073542048e9ffb85a20e0bf999ce1a1bb19f0ef82f1c140a35ceb9');
 });
 
 test('production distribution includes reader and protocol, never the fixture signer', () => {

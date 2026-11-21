@@ -130,6 +130,11 @@ jobs:
       - name: Install Playwright browsers
         run: npx playwright install --with-deps chromium webkit
 
+      - name: Verify private Property Log and investor packets
+        run: |
+          node scripts/staff-property-log-browser-smoke.mjs
+          npm run test:investor-packet-browser
+
       - name: Verify Today starting actions and lead handoff
         run: |
           node --test scripts/lead-triage.node-test.mjs

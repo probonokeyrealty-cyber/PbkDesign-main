@@ -34,16 +34,21 @@ function ZillowLink({ href }: { href: string }) {
 
 export function LeadPortalProperty({
   lead,
+  entryKey,
   initialTab = 'overview',
   onEdit,
   onSaved,
 }: {
   lead: LeadPortalModel;
+  entryKey: string;
   initialTab?: 'overview' | PropertyEvidenceTab;
   onEdit: () => void;
   onSaved: (leadId: string) => Promise<void>;
 }) {
-  const [tab, setTab] = useState<string>(initialTab);
+  const [selection, setSelection] = useState<{ entryKey: string; tab: string } | null>(null);
+  // Each workspace shortcut starts on its linked tab. In-card tabs keep their own choice for that visit.
+  const tab = selection?.entryKey === entryKey ? selection.tab : initialTab;
+  const setTab = (tab: string) => setSelection({ entryKey, tab });
   const [refreshing, setRefreshing] = useState(false);
   const [compSaving, setCompSaving] = useState(false);
   const [refreshStatus, setRefreshStatus] = useState('');

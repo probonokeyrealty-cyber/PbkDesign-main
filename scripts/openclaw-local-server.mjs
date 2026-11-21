@@ -12355,9 +12355,12 @@ async function persistEmailLogRecord(record = {}) {
   }
 }
 
-async function persistUnifiedMessageRecord(message = {}) {
+async function persistUnifiedMessageRecord(message = {}, recordingStorageWriteToken = null) {
   const pool = getPgPool();
   if (!pool || !message.id) return false;
+  const write = (sql, params) => recordingStorageWriteToken
+    ? writeRecordingPointer(recordingStorageWriteToken, sql, params)
+    : pool.query(sql, params);
   const payload = {
     ...(message.payload && typeof message.payload === 'object' ? message.payload : {}),
     leadName: message.leadName || '',
@@ -12426,7 +12429,7 @@ async function persistUnifiedMessageRecord(message = {}) {
       payload = EXCLUDED.payload,
       updated_at = EXCLUDED.updated_at`;
   try {
-    await pool.query(fullSql, [...baseValues, ...recordingValues]);
+    await write(fullSql, [...baseValues, ...recordingValues]);
     await projectLiveConversationRecord({
       record: message,
       projector: projectMessageEvent,
@@ -12444,22 +12447,22 @@ async function persistUnifiedMessageRecord(message = {}) {
       if (/violates foreign key constraint/i.test(messageText)) {
         retryValues[1] = null;
         try {
-          await pool.query(fullSql, [...retryValues, ...recordingValues]);
+          await write(fullSql, [...retryValues, ...recordingValues]);
         } catch (retryError) {
           if (!/column .* does not exist/i.test(String(retryError?.message || retryError || ''))) {
             throw retryError;
           }
-          await pool.query(baseSql, retryValues);
+          await write(baseSql, retryValues);
         }
       } else {
         try {
-          await pool.query(baseSql, retryValues);
+          await write(baseSql, retryValues);
         } catch (retryError) {
           if (!/violates foreign key constraint/i.test(String(retryError?.message || retryError || ''))) {
             throw retryError;
           }
           retryValues[1] = null;
-          await pool.query(baseSql, retryValues);
+          await write(baseSql, retryValues);
         }
       }
       await projectLiveConversationRecord({
@@ -41659,21 +41662,20 @@ function encodePathSegments(value = '') {
 }
 
 function normalizeStoragePath(value = '') {
-  const trimmed = String(value || '')
-    .trim()
-    .replace(/^\/+/g, '');
+  const trimmed = String(value || '').trim().split('/').filter(Boolean).join('/');
   const bucketPrefix = `${SUPABASE_CALL_RECORDINGS_BUCKET}/`;
-  return trimmed.startsWith(bucketPrefix) ? trimmed.slice(bucketPrefix.length) : trimmed;
+  const key = trimmed.startsWith(bucketPrefix) ? trimmed.slice(bucketPrefix.length) : trimmed;
+  return key === key.trim() && !key.startsWith(bucketPrefix) && validRecordingRetentionStorageKey(key) ? key : '';
 }
 
 function buildRecordingStoragePath(params = {}) {
-  const explicit = normalizeStoragePath(params.storagePath || params.storage_path || params.recordingStoragePath || params.path || '');
-  if (explicit) return explicit;
+  const explicit = params.storagePath || params.storage_path || params.recordingStoragePath || params.path || '';
+  if (String(explicit).trim()) return normalizeStoragePath(explicit);
   const context = findLeadContext(params);
   const leadKey = slugify(context.leadId || context.leadName || context.address || 'lead') || 'lead';
   const messageKey = slugify(params.messageId || params.id || params.callId || randomUUID()) || randomUUID();
   const extension = String(params.extension || params.ext || 'mp3').replace(/^\./, '') || 'mp3';
-  return `${leadKey}/${messageKey}.${extension}`;
+  return normalizeStoragePath(`${leadKey}/${messageKey}.${extension}`);
 }
 
 function findMessageById(messageId = '') {
@@ -41692,8 +41694,14 @@ async function deleteUnifiedMessageRecordFromDb(message = {}, fallbackId = '') {
   return queryPgRows('DELETE FROM public.unified_messages WHERE id = $1', [id]);
 }
 
+function getMessageRecordingPointer(message = {}) {
+  return message.storagePath || message.storage_path || message.recordingStoragePath || message.recording_storage_path ||
+    message.payload?.storagePath || message.payload?.storage_path || message.payload?.recordingStoragePath ||
+    message.payload?.recording_storage_path || '';
+}
+
 function getMessageRecordingPath(message = {}) {
-  return normalizeStoragePath(message.storagePath || message.storage_path || message.recordingStoragePath || message.recording_storage_path || message.payload?.storagePath || message.payload?.storage_path || '');
+  return normalizeStoragePath(getMessageRecordingPointer(message));
 }
 
 function isMetadataOnlySmokeRecording(message = {}) {
@@ -41755,7 +41763,9 @@ async function createSupabaseRecordingSignedUrl(storagePath, expiresIn = SUPABAS
   };
 }
 
-async function uploadSupabaseRecording({ storagePath, contentType = 'audio/mpeg', bytes }) {
+const recordingUploadReservations = new WeakMap();
+
+async function uploadSupabaseRecording({ messageId, storagePath, contentType = 'audio/mpeg', bytes, includeArchive = false }) {
   const meta = getSupabaseStorageProviderMeta();
   if (!meta.ready) {
     return {
@@ -41766,16 +41776,24 @@ async function uploadSupabaseRecording({ storagePath, contentType = 'audio/mpeg'
     };
   }
   const normalizedPath = normalizeStoragePath(storagePath);
-  if (!normalizedPath) return { ok: false, error: 'Recording storage_path is missing.' };
+  if (!normalizedPath) return { ok: false, statusCode: 400, error: 'Recording storage_path is invalid.' };
   if (!bytes?.length) return { ok: false, error: 'Recording bytes are missing.' };
+  const archive = includeArchive && getS3ArchiveProviderMeta().ready
+    ? { key: buildS3RecordingKey(normalizedPath), bucket: S3_RECORDINGS_BUCKET }
+    : null;
+  const guard = await reserveRecordingStorageWrite({ messageId, key: normalizedPath, operation: 'capture', archive });
+  if (!guard.ok) return guard;
   const response = await fetch(`${SUPABASE_URL}/storage/v1/object/${encodeURIComponent(SUPABASE_CALL_RECORDINGS_BUCKET)}/${encodePathSegments(normalizedPath)}`, {
     method: 'PUT',
+    redirect: 'error',
+    signal: AbortSignal.timeout(60_000),
     headers: {
       ...getSupabaseStorageHeaders(contentType),
       'x-upsert': 'true',
     },
     body: bytes,
-  });
+  }).catch(() => null);
+  if (!response) return recordingStorageWritePending();
   const responseText = await response.text().catch(() => '');
   if (!response.ok) {
     return {
@@ -41784,12 +41802,14 @@ async function uploadSupabaseRecording({ storagePath, contentType = 'audio/mpeg'
       error: responseText || `Supabase recording upload failed with ${response.status}.`,
     };
   }
-  return {
+  const result = {
     ok: true,
     bucket: SUPABASE_CALL_RECORDINGS_BUCKET,
     storagePath: normalizedPath,
     response: responseText ? safeJsonParse(responseText, responseText) : {},
   };
+  recordingUploadReservations.set(result, guard.token);
+  return result;
 }
 
 async function deleteSupabaseRecording(storagePath = '') {
@@ -41802,10 +41822,14 @@ async function deleteSupabaseRecording(storagePath = '') {
       error: `Supabase Storage is not configured (${meta.missing.join(', ') || 'missing credentials'}).`,
     };
   }
-  const normalizedPath = normalizeStoragePath(storagePath);
-  if (!normalizedPath) return { ok: false, error: 'Recording storage_path is missing.' };
+  if (!validRecordingRetentionStorageKey(storagePath) || normalizeStoragePath(storagePath) !== storagePath) {
+    return { ok: false, error: 'Recording storage_path is not canonical.' };
+  }
+  const normalizedPath = storagePath;
   const response = await fetch(`${SUPABASE_URL}/storage/v1/object/${encodeURIComponent(SUPABASE_CALL_RECORDINGS_BUCKET)}/${encodePathSegments(normalizedPath)}`, {
     method: 'DELETE',
+    redirect: 'error',
+    signal: AbortSignal.timeout(60_000),
     headers: getSupabaseStorageHeaders(''),
   });
   const responseText = await response.text().catch(() => '');
@@ -42045,23 +42069,23 @@ async function createS3RecordingSignedUrl(key = '', expiresIn = S3_RECORDING_SIG
 
 async function deleteS3RecordingArchive(key = '') {
   const client = getS3ArchiveClient();
-  const normalizedKey = normalizeS3Key(key);
-  if (!client || !normalizedKey) return { ok: true, skipped: true, reason: !client ? 's3_not_ready' : 'missing_s3_key' };
+  if (!client || !key) return { ok: true, skipped: true, reason: !client ? 's3_not_ready' : 'missing_s3_key' };
+  if (normalizeS3Key(key) !== key) return { ok: false, error: 'Recording archive key is not canonical.' };
   try {
-    await client.send(new DeleteObjectCommand({ Bucket: S3_RECORDINGS_BUCKET, Key: normalizedKey }));
+    await client.send(new DeleteObjectCommand({ Bucket: S3_RECORDINGS_BUCKET, Key: key }));
     return {
       ok: true,
       provider: 's3',
       deleted: true,
       bucket: S3_RECORDINGS_BUCKET,
-      key: normalizedKey,
+      key,
     };
   } catch (error) {
     return {
       ok: false,
       provider: 's3',
       bucket: S3_RECORDINGS_BUCKET,
-      key: normalizedKey,
+      key,
       error: error?.message || 'S3 recording archive delete failed.',
       code: error?.name || '',
     };
@@ -42146,6 +42170,7 @@ async function captureRecordingFromPayload(input = {}) {
     address: params.address || existingCall?.address || '',
     extension: params.extension || (/wav/i.test(params.contentType) ? 'wav' : 'mp3'),
   });
+  if (!storagePath) return { ok: false, statusCode: 400, error: 'Recording storage_path is invalid.' };
 
   let bytes = null;
   let download = null;
@@ -42170,11 +42195,11 @@ async function captureRecordingFromPayload(input = {}) {
     };
   }
 
-  const upload = await uploadSupabaseRecording({ storagePath, contentType, bytes });
+  const upload = await uploadSupabaseRecording({ messageId, storagePath, contentType, bytes, includeArchive: true });
   if (upload.ok === false) {
     return {
       ...upload,
-      result: 'provider_missing',
+      result: upload.result || 'provider_missing',
       callId: params.callId,
       messageId,
       storagePath,
@@ -42277,8 +42302,8 @@ async function captureRecordingFromPayload(input = {}) {
     },
     updatedAt: isoNow(),
   };
-  upsertMessage(state, message);
-  await persistUnifiedMessageRecord(message);
+  const captured = await persistRecordingCapture(message, upload, getS3ArchiveProviderMeta().ready && !s3Archive.ok);
+  if (!captured.ok) return captured;
   if (deepgramSummary?.transcript) {
     void publishPbkEvent(
       EventTypes.CALL_COMPLETED,
@@ -50241,15 +50266,122 @@ async function withRecordingRetentionTransaction(perform) {
   }
 }
 
+function recordingStorageWritePending() {
+  return { ok: false, statusCode: 503, result: 'recording_storage_write_pending',
+    error: 'The recording change could not be confirmed. Review it before trying again.' };
+}
+
+async function lockRecordingStorageTarget(client, messageId, key, archiveKey = null) {
+  const result = await client.query(`SELECT pg_try_advisory_xact_lock(hashtextextended($1, 300502))
+    AND CASE WHEN $2::text IS NULL THEN true ELSE pg_try_advisory_xact_lock(hashtextextended($2, 300501)) END
+    AND CASE WHEN $3::text IS NULL THEN true ELSE pg_try_advisory_xact_lock(hashtextextended($3, 300503)) END AS owned`,
+  [messageId, key || null, archiveKey]);
+  return result.rows[0]?.owned === true;
+}
+
+async function reserveRecordingStorageWrite({ messageId, key, operation, archive = null }) {
+  const id = messageId;
+  if (typeof id !== 'string' || !id.trim()) {
+    return { ok: false, statusCode: 400, result: 'recording_target_invalid', error: 'A recording ID is required.' };
+  }
+  const token = randomUUID();
+  try {
+    const reserved = await withRecordingRetentionTransaction(async client => {
+      if (!await lockRecordingStorageTarget(client, id, key, archive?.key || null)) return false;
+      // Read the pointer table in the reservation transaction so TRUNCATE
+      // and retention cannot cross a newly committed write intent.
+      const stored = await client.query('SELECT storage_path, storage_bucket, payload FROM ONLY public.unified_messages WHERE id = $1', [id]);
+      const current = stored.rows[0];
+      const storedArchive = getMessageS3Archive(current);
+      const storedBucket = current?.storage_bucket || current?.payload?.storageBucket ||
+        current?.payload?.storage_bucket || SUPABASE_CALL_RECORDINGS_BUCKET;
+      if (operation === 'delete' && (!current || (getMessageRecordingPointer(current) && !getMessageRecordingPath(current)) ||
+          getMessageRecordingPath(current) !== key || (key && storedBucket !== SUPABASE_CALL_RECORDINGS_BUCKET) ||
+          storedArchive?.key !== archive?.key ||
+          storedArchive?.bucket !== archive?.bucket)) return false;
+      const result = await client.query(`INSERT INTO public.pbk_recording_storage_writes
+          (token, message_id, storage_key, operation, bucket, archive_bucket, archive_key)
+        SELECT $1, $2, $3, $4, $5, $6, $7
+        WHERE NOT pg_catalog.row_security_active('public.pbk_recording_retention_attempts'::regclass)
+          AND NOT pg_catalog.row_security_active('public.unified_messages'::regclass)
+          AND NOT EXISTS (SELECT 1 FROM ONLY public.pbk_recording_retention_attempts
+            WHERE (storage_key = $3 AND outcome IN ('pending', 'confirmed'))
+               OR (message_id = $2 AND outcome = 'pending'))
+          AND ($3::text IS NULL OR NOT EXISTS (
+            SELECT 1 FROM ONLY public.unified_messages m WHERE m.id <> $2 AND EXISTS (
+              SELECT 1 FROM public.pbk_recording_storage_pointers(m.storage_path, m.payload) AS pointer
+              WHERE pointer COLLATE "C" IN ($3, $5 || '/' || $3)
+            )
+          ))
+          AND ($7::text IS NULL OR NOT EXISTS (
+            SELECT 1 FROM ONLY public.unified_messages m WHERE m.id <> $2 AND EXISTS (
+              SELECT 1 FROM public.pbk_recording_archive_pointers(m.payload) AS pointer WHERE pointer COLLATE "C" = $7
+            )
+          ))
+        ON CONFLICT DO NOTHING RETURNING token`, [token, id, key || null, operation, SUPABASE_CALL_RECORDINGS_BUCKET,
+        archive?.bucket || null, archive?.key || null]);
+      return result.rowCount === 1;
+    });
+    return reserved ? { ok: true, token } : { ok: false, statusCode: 409, result: 'recording_storage_busy',
+      error: 'This recording is protected, already being changed, or no longer matches its stored pointer.' };
+  } catch {
+    return { ok: false, statusCode: 503, result: 'recording_storage_guard_unavailable',
+      error: 'The recording guard could not be confirmed. No storage write was started.' };
+  }
+}
+
+async function writeRecordingPointer(token, sql, params) {
+  return withRecordingRetentionTransaction(async client => {
+    const reservation = await client.query('SELECT token FROM ONLY public.pbk_recording_storage_writes WHERE token = $1 FOR UPDATE', [token]);
+    if (reservation.rowCount !== 1) throw new Error('Recording storage reservation is no longer held');
+    await client.query("SELECT pg_catalog.set_config('pbk.recording_storage_write', $1, true)", [token]);
+    return client.query(sql, params);
+  });
+}
+
+async function completeRecordingStorageWrite(token) {
+  try {
+    const result = await getPgPool().query('DELETE FROM ONLY public.pbk_recording_storage_writes WHERE token = $1', [token]);
+    return result.rowCount === 1;
+  } catch {
+    return false;
+  }
+}
+
+async function persistRecordingCapture(message, upload, holdWrite = false) {
+  const token = upload?.ok ? recordingUploadReservations.get(upload) : null;
+  if (upload?.ok) {
+    if (!token) return recordingStorageWritePending();
+    // A successful capture has one authoritative primary pointer. Do not
+    // reintroduce stale aliases from provider metadata or the previous row.
+    message.payload = { ...message.payload };
+    for (const alias of ['storage_path', 'recordingStoragePath', 'recording_storage_path']) {
+      delete message[alias];
+      delete message.payload[alias];
+    }
+  }
+  const saved = await persistUnifiedMessageRecord(message, token);
+  if (upload?.ok) {
+    if (!saved || holdWrite || !await completeRecordingStorageWrite(token)) return recordingStorageWritePending();
+  } else if (getPgPool() && !saved) {
+    return recordingStorageWritePending();
+  }
+  upsertMessage(state, message);
+  return { ok: true };
+}
+
 async function reserveRecordingRetentionTarget(approvalId, target, stillCurrent) {
   return withRecordingRetentionTransaction(async client => {
-    const lock = await client.query('SELECT pg_try_advisory_xact_lock(hashtextextended($1, 300501)) AS owned', [target.key]);
-    const row = lock.rows[0]?.owned ? await readRecordingRetentionTarget(target.id, target.key, client) : null;
+    if (!await lockRecordingStorageTarget(client, target.id, target.key)) return false;
+    const row = await readRecordingRetentionTarget(target.id, target.key, client);
     if (row?.version !== target.storageVersion || !stillCurrent()) return false;
     const result = await client.query(`INSERT INTO public.pbk_recording_retention_attempts
         (approval_id, message_id, bucket, storage_key, object_version, row_version)
       SELECT approval_id, $2, $3, $4, $5, $6 FROM ONLY public.pbk_recording_retention_approvals
       WHERE approval_id = $1 AND consumed_at IS NOT NULL AND founder_proof IS NOT NULL
+        AND NOT pg_catalog.row_security_active('public.pbk_recording_storage_writes'::regclass)
+        AND NOT EXISTS (SELECT 1 FROM ONLY public.pbk_recording_storage_writes
+          WHERE storage_key = $4 OR message_id = $2)
       ON CONFLICT DO NOTHING RETURNING message_id`, [approvalId, target.id, SUPABASE_CALL_RECORDINGS_BUCKET,
       target.key, target.objectVersion, target.storageVersion]);
     return result.rowCount === 1;
@@ -80635,12 +80767,13 @@ const server = createServer(async (request, response) => {
       });
       const audioBytes = createSilentWavBuffer(toNumber(body.durationSeconds || body.duration_seconds, 0.6));
       const upload = await uploadSupabaseRecording({
+        messageId,
         storagePath,
         contentType: 'audio/wav',
         bytes: audioBytes,
       });
       if (upload.ok === false) {
-        json(response, 501, {
+        json(response, upload.statusCode || 501, {
           ...upload,
           messageId,
           storagePath,
@@ -80684,8 +80817,11 @@ const server = createServer(async (request, response) => {
         },
         updatedAt: isoNow(),
       };
-      upsertMessage(state, message);
-      await persistUnifiedMessageRecord(message);
+      const captured = await persistRecordingCapture(message, upload);
+      if (!captured.ok) {
+        json(response, captured.statusCode, captured);
+        return;
+      }
       addActivity(
         state,
         makeActivity({
@@ -80875,7 +81011,7 @@ const server = createServer(async (request, response) => {
     if (request.method === 'POST' && pathname === '/api/recordings/capture') {
       const body = await readBody(request);
       const result = await captureRecordingFromPayload(body);
-      json(response, result.ok ? 200 : 501, {
+      json(response, result.ok ? 200 : result.statusCode || 501, {
         ...result,
         state: buildStateSnapshot(),
       });
@@ -80897,19 +81033,58 @@ const server = createServer(async (request, response) => {
         return;
       }
       const storagePath = getMessageRecordingPath(existing);
+      const s3Archive = getMessageS3Archive(existing);
+      if ((getMessageRecordingPointer(existing) && !storagePath) ||
+          (s3Archive?.key && normalizeS3Key(s3Archive.key) !== s3Archive.key)) {
+        json(response, 400, { ok: false, error: 'Recording storage pointer is invalid.' });
+        return;
+      }
+      const durableId = existing.id || existing.messageId || existing.callId || messageId;
+      const write = getPgPool() || storagePath || s3Archive?.key
+        ? await reserveRecordingStorageWrite({ messageId: durableId, key: storagePath, operation: 'delete', archive: s3Archive })
+        : null;
+      if (write && !write.ok) {
+        json(response, write.statusCode, write);
+        return;
+      }
+      if (write && ((storagePath && !getSupabaseStorageProviderMeta().ready) ||
+          (s3Archive?.key && (!getS3ArchiveProviderMeta().ready || s3Archive.bucket !== S3_RECORDINGS_BUCKET)))) {
+        await completeRecordingStorageWrite(write.token);
+        json(response, 503, { ok: false, result: 'recording_storage_provider_unavailable',
+          error: 'The recording storage could not be verified. No storage write was started.' });
+        return;
+      }
       const storageDelete = storagePath
         ? await deleteSupabaseRecording(storagePath).catch((error) => ({
             ok: false,
             error: error?.message || String(error),
           }))
         : { ok: true, skipped: true, reason: 'no_storage_path' };
-      const s3Archive = getMessageS3Archive(existing);
+      if (!storageDelete.ok) {
+        const pending = recordingStorageWritePending();
+        json(response, pending.statusCode, pending);
+        return;
+      }
       const s3Delete = s3Archive?.key
         ? await deleteS3RecordingArchive(s3Archive.key).catch((error) => ({
             ok: false,
             error: error?.message || String(error),
           }))
         : { ok: true, skipped: true, reason: 'no_s3_archive_key' };
+      if (!s3Delete.ok || (s3Archive?.key && s3Delete.skipped)) {
+        const pending = recordingStorageWritePending();
+        json(response, pending.statusCode, pending);
+        return;
+      }
+      const dbDelete = write
+        ? await writeRecordingPointer(write.token, 'DELETE FROM ONLY public.unified_messages WHERE id = $1 RETURNING id', [durableId])
+          .then(result => ({ ok: true, rows: result.rows }), () => ({ ok: false }))
+        : await deleteUnifiedMessageRecordFromDb(existing, messageId);
+      if ((getPgPool() && !dbDelete.ok) || (write && (dbDelete.rows.length !== 1 || !await completeRecordingStorageWrite(write.token)))) {
+        const pending = recordingStorageWritePending();
+        json(response, pending.statusCode, pending);
+        return;
+      }
       const identifiers = uniqueLeadLookupValues([existing.id, existing.messageId, existing.callId, existing.recordingMessageId, existing.telnyxCallControlId, existing.telnyxCallSessionId, messageId]);
       state.messages = (state.messages || []).filter((message) => {
         const candidates = [message?.id, message?.messageId, message?.callId, message?.recordingMessageId, message?.telnyxCallControlId, message?.telnyxCallSessionId].map((value) => String(value || '').trim()).filter(Boolean);
@@ -80927,7 +81102,6 @@ const server = createServer(async (request, response) => {
           updatedAt: isoNow(),
         };
       });
-      const dbDelete = await deleteUnifiedMessageRecordFromDb(existing, messageId);
       addActivity(
         state,
         makeActivity({
@@ -81040,17 +81214,22 @@ const server = createServer(async (request, response) => {
         .toLowerCase();
       const existing = findMessageById(messageId);
       const storagePath = buildRecordingStoragePath({ ...body, messageId });
+      if (!storagePath) {
+        json(response, 400, { ok: false, error: 'Recording storage_path is invalid.' });
+        return;
+      }
       const contentType = body.contentType || body.audioContentType || 'audio/mpeg';
       let upload = null;
       if (body.audioBase64) {
         const base64 = String(body.audioBase64).replace(/^data:[^;]+;base64,/i, '');
         upload = await uploadSupabaseRecording({
+          messageId,
           storagePath,
           contentType,
           bytes: Buffer.from(base64, 'base64'),
         });
         if (upload.ok === false) {
-          json(response, 501, { ...upload, messageId, storagePath });
+          json(response, upload.statusCode || 501, { ...upload, messageId, storagePath });
           return;
         }
       }
@@ -81101,8 +81280,11 @@ const server = createServer(async (request, response) => {
         },
         updatedAt: isoNow(),
       };
-      upsertMessage(state, message);
-      await persistUnifiedMessageRecord(message);
+      const captured = await persistRecordingCapture(message, upload);
+      if (!captured.ok) {
+        json(response, captured.statusCode, captured);
+        return;
+      }
       const recordingActivityId = `activity-recording-${messageId}`;
       if (!state.activity.some((entry) => entry.id === recordingActivityId)) {
         addActivity(
@@ -82637,7 +82819,7 @@ const server = createServer(async (request, response) => {
       }
       const body = telnyxRequest.payload || {};
       const result = await captureRecordingFromPayload(body);
-      json(response, result.ok ? 200 : 501, {
+      json(response, result.ok ? 200 : result.statusCode || 501, {
         ok: Boolean(result.ok),
         mappedEvent: 'recording-capture',
         result,

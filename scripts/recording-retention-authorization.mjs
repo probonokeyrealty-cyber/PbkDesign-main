@@ -8,6 +8,7 @@ const action = 'delete_recordings_retention';
 const origin = 'recording-retention-route';
 const grants = 'public.pbk_recording_retention_approvals';
 const attempts = 'public.pbk_recording_retention_attempts';
+const storageWrites = 'public.pbk_recording_storage_writes';
 const claimedExecutions = new WeakSet();
 const validId = id => typeof id === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u.test(id);
 export const validRecordingObjectVersion = validId;
@@ -79,10 +80,15 @@ async function buildPlan(messages, days, cutoffAt, bucket, getPath, getStorageVe
   const cutoff = Date.parse(cutoffAt);
   const candidates = messages.filter(row => workspaceOf(row) === 'pbk' && row.channel === 'call' &&
     row.direction === 'recording' && row.retentionStatus !== 'deleted' && Date.parse(row.createdAt || row.updatedAt || '') < cutoff);
-  const fenced = await pool.query(`SELECT storage_key, outcome FROM ONLY ${attempts}
-    WHERE storage_key = ANY($1::text[]) AND outcome IN ('pending', 'confirmed')`,
-  [[...new Set(candidates.map(getPath).filter(Boolean))]]);
-  const fencedKeys = new Map(fenced.rows.map(row => [row.storage_key, row.outcome]));
+  const fenced = await pool.query(`SELECT storage_key, outcome, CASE WHEN outcome = 'pending' THEN message_id END AS message_id FROM ONLY ${attempts}
+    WHERE storage_key = ANY($1::text[]) AND outcome IN ('pending', 'confirmed')
+       OR message_id = ANY($2::text[]) AND outcome = 'pending'
+    UNION ALL
+    SELECT storage_key, 'pending', message_id FROM ONLY ${storageWrites}
+    WHERE storage_key = ANY($1::text[]) OR message_id = ANY($2::text[])`,
+  [[...new Set(candidates.map(getPath).filter(Boolean))], candidates.map(row => row.id)]);
+  const fencedKeys = new Map(fenced.rows.filter(row => row.storage_key).map(row => [row.storage_key, row.outcome]));
+  const fencedIds = new Set(fenced.rows.map(row => row.message_id).filter(Boolean));
   const blocked = new Set();
   const targets = [];
   const ids = new Set();
@@ -90,8 +96,8 @@ async function buildPlan(messages, days, cutoffAt, bucket, getPath, getStorageVe
   for (const row of candidates) {
     const key = getPath(row);
     if (!key) continue;
-    if (fencedKeys.has(key)) {
-      if (fencedKeys.get(key) === 'pending') blocked.add(key);
+    if (fencedKeys.has(key) || fencedIds.has(row.id)) {
+      if (fencedKeys.get(key) === 'pending' || fencedIds.has(row.id)) blocked.add(key);
       continue;
     }
     const recordedBucket = row.storageBucket || row.storage_bucket || row.payload?.storageBucket || row.payload?.storage_bucket || bucket;

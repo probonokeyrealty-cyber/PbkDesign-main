@@ -170,7 +170,7 @@ async function verify(browserType, viewport, device = {}) {
     await expect(page.getByRole('heading', { name: 'Fixture North', exact: true })).toBeVisible();
     await expect(page.getByRole('navigation', { name: 'Lead workspace sections' })).toBeVisible();
     const propertyPanel = page.getByRole('region', { name: 'Property', exact: true });
-    await page.getByRole('navigation', { name: 'Lead workspace sections' }).getByRole('link', { name: 'Property' }).click();
+    await page.getByRole('navigation', { name: 'Lead workspace sections' }).getByRole('link', { name: 'Property', exact: true }).click();
     await expect(propertyPanel.getByRole('heading', { name: 'Property', exact: true })).toBeFocused();
     const overviewTab = propertyPanel.getByRole('tab', { name: 'Overview', exact: true });
     const recordTab = propertyPanel.getByRole('tab', { name: 'Property record', exact: true });

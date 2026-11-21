@@ -6,6 +6,8 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import * as nodeModule from 'node:module';
+import { getRetentionPostgresLease } from './fixtures/recording-retention-postgres.mjs';
+import { isRetentionStorageRequest, retentionStorageFixtureFlag } from './fixtures/recording-retention-storage-contract.mjs';
 
 const defaultEntry = fileURLToPath(new URL('./openclaw-local-server.mjs', import.meta.url));
 const guardEntry = new URL('./bridge-smoke-guard.mjs', import.meta.url).href;
@@ -37,8 +39,15 @@ async function reservePortNumber() {
   return port;
 }
 
-export async function startIsolatedBridge({ entry = defaultEntry, args = [], startupMs = 15000, lifetimeMs = 240000 } = {}) {
+export async function startIsolatedBridge({ entry = defaultEntry, args = [], retentionPostgres, retentionStorage,
+  startupMs = 15000, lifetimeMs = 240000 } = {}) {
   if (typeof nodeModule.registerHooks !== 'function') throw new Error('Bridge smoke requires Node 22.15+ with synchronous module hooks and permissions');
+  const retentionFixture = args.includes(retentionStorageFixtureFlag);
+  const pgTarget = getRetentionPostgresLease(retentionPostgres);
+  if ((retentionFixture || retentionPostgres !== undefined || retentionStorage !== undefined) &&
+      (!pgTarget || entry !== defaultEntry || args.length !== 1 || args[0] !== retentionStorageFixtureFlag ||
+        typeof retentionStorage !== 'function')) throw new Error('Recording retention requires an owned disposable fixture');
+  const teamPasscode = retentionFixture ? randomUUID() : undefined;
   const parent = await realpath(tmpdir());
   const stateDir = await mkdtemp(path.join(parent, prefix));
   let port;
@@ -84,20 +93,36 @@ export async function startIsolatedBridge({ entry = defaultEntry, args = [], sta
   process.once('exit', onExit);
   try {
     port = await reservePortNumber();
+    const env = buildSmokeEnv(stateDir, port, apiKey, nonce);
+    if (teamPasscode) env.PBK_TEAM_PASSCODE = teamPasscode;
     child = spawn(process.execPath, [
       '--permission', '--no-experimental-sqlite', '--allow-fs-read=*', `--allow-fs-write=${stateDir}`,
       '--import', guardEntry, entry, ...args,
-    ], { cwd: stateDir, env: buildSmokeEnv(stateDir, port, apiKey, nonce), stdio: ['ignore', 'ignore', 'pipe', 'ipc'] });
+    ], { cwd: stateDir, env, stdio: ['ignore', 'ignore', 'pipe', 'ipc'] });
     closed = new Promise(resolve => { child.once('close', resolve); child.once('error', resolve); });
     child.once('exit', invalidate);
     child.once('error', invalidate);
-    child.stderr.on('data', chunk => { stderr = (stderr + chunk).slice(-6000); });
+    const secrets = pgTarget ? [pgTarget, new URL(pgTarget).password, teamPasscode, apiKey, nonce] : [];
+    child.stderr.on('data', chunk => {
+      stderr = secrets.reduce((log, secret) => log.replaceAll(secret, '[redacted]'), stderr + chunk).slice(-6000);
+    });
     await new Promise((resolve, reject) => {
       startupTimer = setTimeout(() => reject(new Error(`Isolated bridge startup timed out (${startupMs}ms): ${stderr || '(no child stderr)'}`)), startupMs);
       child.once('error', reject);
       child.once('close', code => reject(new Error(`Isolated bridge exited during startup (${code}): ${stderr}`)));
+      let sentPgTarget = false;
       child.on('message', message => {
         if (message?.nonce !== nonce) return;
+        if (message.type === 'smoke-request-postgres' && retentionFixture && !sentPgTarget && !requests.signal.aborted) {
+          sentPgTarget = true;
+          child.send({ type: 'smoke-postgres-target', nonce, url: pgTarget }, error => { if (error) reject(error); });
+        }
+        if (message.type === 'smoke-retention-storage' && retentionFixture && !requests.signal.aborted &&
+            typeof message.id === 'string' && isRetentionStorageRequest(message)) {
+          void Promise.resolve().then(() => retentionStorage(message)).catch(() => null).then(result => {
+            if (child.connected) child.send({ type: 'smoke-retention-storage-result', nonce, id: message.id, result }, () => {});
+          });
+        }
         if (message.type === 'smoke-network-blocked') blockedNetwork[message.api] = (blockedNetwork[message.api] || 0) + 1;
         if (message.type === 'smoke-listening' && message.port === port && message.host === '127.0.0.1') resolve();
       });
@@ -108,7 +133,7 @@ export async function startIsolatedBridge({ entry = defaultEntry, args = [], sta
     lifetimeTimer.unref();
     const origin = `http://127.0.0.1:${port}`;
     return {
-      origin, apiKey, stateDir, blockedNetwork, stop,
+      origin, apiKey, stateDir, blockedNetwork, stop, ...(teamPasscode ? { teamPasscode } : {}),
       fetch: async (target, options = {}) => {
         if (!active || child.exitCode !== null || child.signalCode !== null) throw new Error(`Isolated bridge is stopped (exit=${child.exitCode}, signal=${child.signalCode}): ${stderr || '(no child stderr)'}`);
         if (new URL(target).origin !== origin) throw new Error('Smoke request origin is not the isolated child');

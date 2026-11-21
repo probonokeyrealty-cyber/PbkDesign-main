@@ -1,0 +1,37 @@
+name: Recording Retention Verify
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - .github/workflows/recording-retention-verify.yml
+      - scripts/recording-retention-*
+      - scripts/fixtures/recording-retention-*
+      - scripts/openclaw-local-server.mjs
+      - scripts/bridge-smoke-*.mjs
+      - supabase/migrations/*_pbk_recording_retention_approvals.sql
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  disposable-retention:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Pull disposable fixtures
+        run: |
+          docker pull postgres:16-alpine
+          docker pull pgvector/pgvector:0.8.7-pg17
+          docker pull supabase/storage-api:v1.98.5
+      - name: Verify isolation, approvals, and exact-version readback
+        run: node --test --test-concurrency=1 scripts/bridge-smoke-isolation-smoke.mjs scripts/recording-retention-supabase-local.mjs

@@ -388,7 +388,7 @@ export function matchParcelToLeads(feature, leads = []) {
   const alias = denver ? feature.properties.verifiedAddressAlias : '';
   const byId = new Map();
   for (const lead of leads) {
-    const id = lead.id || lead.leadId;
+    const id = lead.leadId || lead.id;
     if (!id) continue;
     const address = leadAddressKey(lead);
     const state = String(lead.property?.state || lead.state || '').trim().toUpperCase();
@@ -445,6 +445,8 @@ export function createParcelDialer({
   phoneNumbers,
   twilio,
   listLeads,
+  loadParcelLeads,
+  saveParcelLead,
   isDnc,
   readStore,
   writeStore,
@@ -469,11 +471,20 @@ export function createParcelDialer({
     return mock ? [...crm, ...buildFixtureContacts()] : crm;
   };
 
+  const pendingLeadSaves = new Map();
+
+  function hasVerifiedSitus(feature) {
+    const { situs } = feature.properties;
+    return parcelSource.kind === 'licensed' && typeof saveParcelLead === 'function' &&
+      Boolean(situs?.line1?.trim() && situs.city?.trim() && /^[A-Z]{2}$/i.test(situs.state || '') && /^\d{5}(?:-\d{4})?$/.test(situs.zip || ''));
+  }
+
   function leadSummary(lead) {
     if (!lead) return null;
     const phone = normalizeE164(lead.seller?.phone || lead.phone || '');
     return {
       id: lead.id || lead.leadId,
+      crmLeadId: lead.leadId || lead.id,
       name: lead.seller?.name || lead.leadName || lead.name || 'Unnamed contact',
       address: lead.property?.address || lead.address || '',
       status: lead.status || lead.stage || '',
@@ -561,11 +572,19 @@ export function createParcelDialer({
     async selectParcel({ parcelId = '', address = '', canPlaceCalls = false, lineId = '' }) {
       const resolved = await resolveParcel({ parcelId, address });
       if (resolved.status !== 'found') return { ok: false, lookup: resolved.status, error: resolved.error || (resolved.status === 'ambiguous' ? 'More than one parcel matches that address. Use the parcel ID.' : 'No parcel found.') };
-      const match = matchParcelToLeads(resolved.feature, await allLeads());
+      const feature = resolved.feature;
+      const durable = hasVerifiedSitus(feature) && loadParcelLeads ? await loadParcelLeads(feature) : [];
+      const hot = await allLeads();
+      const match = matchParcelToLeads(feature, [...durable, ...hot]);
       const elig = await eligibility(match, { canPlaceCalls, lineId });
+      if (match.lead && !hot.includes(match.lead)) {
+        elig.eligible = false;
+        elig.reasons.push({ code: 'crm_contact_unavailable', message: 'Open the CRM lead to review contact details before calling.' });
+      }
       return {
         ok: true,
         parcel: resolved.feature,
+        createLeadAvailable: hasVerifiedSitus(resolved.feature) && match.status === 'no_match',
         match: { status: match.status, candidateCount: match.candidateCount, matchedOn: match.matchedOn || '' },
         contact: leadSummary(match.lead),
         activity: match.lead ? activityFor(match.lead.id || match.lead.leadId) : [],
@@ -576,6 +595,37 @@ export function createParcelDialer({
     },
 
     outboundLines,
+
+    async createLead({ parcelId, actor }) {
+      if (parcelSource.kind !== 'licensed' || typeof saveParcelLead !== 'function') {
+        return { ok: false, code: 'parcel_unverified', error: 'Lead creation requires a verified parcel source.' };
+      }
+      const key = normalizeParcelId(parcelId);
+      if (!key) return { ok: false, code: 'parcel_required', error: 'Select a parcel first.' };
+      const pending = pendingLeadSaves.get(key);
+      if (pending) return { ...await pending, created: false };
+      const save = (async () => {
+        const resolved = await resolveParcel({ parcelId: key });
+        if (resolved.status !== 'found' || normalizeParcelId(resolved.feature.properties.parcelId) !== key || !hasVerifiedSitus(resolved.feature)) {
+          return { ok: false, code: 'parcel_unverified', error: 'The parcel address could not be verified. Select the parcel again.' };
+        }
+        const feature = resolved.feature;
+        const durable = loadParcelLeads ? await loadParcelLeads(feature) : [];
+        const match = matchParcelToLeads(feature, [...durable, ...(await allLeads())]);
+        if (match.status === 'ambiguous') {
+          return { ok: false, code: 'ambiguous_match', error: 'Multiple CRM leads match. Resolve the duplicates in Leads first.' };
+        }
+        const existing = match.lead;
+        if (existing && !String(existing.eventId || '').startsWith('parcel-dialer:')) {
+          return { ok: true, leadId: existing.leadId || existing.id, created: false };
+        }
+        // Canonical save also rechecks current CRM state and completes any prior interrupted save.
+        return saveParcelLead(feature, durable, actor);
+      })();
+      pendingLeadSaves.set(key, save);
+      try { return await save; }
+      finally { pendingLeadSaves.delete(key); }
+    },
 
     async requestCall({ parcelId, leadId, lineId, canPlaceCalls, actor = 'staff' }) {
       const resolved = await resolveParcel({ parcelId });

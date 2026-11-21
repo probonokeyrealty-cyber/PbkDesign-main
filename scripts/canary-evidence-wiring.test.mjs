@@ -202,8 +202,9 @@ test('bridge code matches the reviewed release fingerprint outside the scoped re
   // senders. The Postgres regression suite covers checked-out client errors.
   // Telnyx receipt tests cover verified hangups, carrier history and projection replay.
   // Ava's turn contract handles corrected asking prices and stop-contact requests.
+  // Parcel lead creation rechecks the CRM before using the canonical save path.
   assert.equal(createHash('sha256').update(unchanged).digest('hex'),
-    '9d2b75f8b48124dd9dca03d955773d9373b0524c01d6a9387fec41ad025afdf9');
+    '8401dd1dc797e0d8f60e5b30105dd4b0a879428d285232e77c535fbf3e9c9035');
 });
 
 test('production distribution includes reader and protocol, never the fixture signer', () => {

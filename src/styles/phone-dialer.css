@@ -113,6 +113,8 @@ html[data-theme='light'] .pbk-dialer-surface { background: var(--bg-void); color
 .pbk-parcel-facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(95px, 100%), 1fr)); gap: 8px; margin: 12px 0 0; }
 .pbk-parcel-facts > div { min-width: 0; padding: 8px 10px; border: 1px solid var(--border-dim); border-radius: var(--radius); }
 .pbk-parcel-facts dt { color: var(--text-secondary); font-size: 11px; }
+.pbk-parcel-lead-dialog .pbk-dialer-kv dd { overflow-wrap: anywhere; }
+.pbk-parcel-quick-view [role="status"] a { color: var(--sky); text-decoration: underline; }
 .pbk-parcel-facts dd { margin: 4px 0 0; color: var(--text-primary); font: 12px var(--font-mono); overflow-wrap: anywhere; }
 .pbk-virtual-phone { scroll-margin-top: 85px; }
 .pbk-virtual-phone-display {

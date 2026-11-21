@@ -80,6 +80,7 @@ import {
   buildAvaLiveCockpitSnapshot,
   buildAvaLiveSkillOutcomeDraft,
   buildAvaLiveTurnContract,
+  classifyAvaLiveObjectionV2,
   compileAvaLiveSkillAction,
   isAvaLiveReplyAlignedWithContract,
   renderAvaLiveContractReply,
@@ -70287,6 +70288,17 @@ function hasAvaLiveAuthorityEvidence(session = {}, contextCall = null, reply = {
 }
 
 function guardTelnyxLiveSpokenReply(reply = {}, { session = {}, contextCall = null, transcript = '', pathDecision = {}, callerRoleDecision = {}, masterProbe = {} } = {}) {
+  const intent = classifyAvaLiveObjectionV2(transcript).intent;
+  if (intent === 'stop_contact') {
+    return { text: renderAvaLiveContractReply({ intent }), guard: { result: 'stop_contact_boundary' } };
+  }
+  const activeTurnContract = reply.turnContract || session.avaLiveTurnContract || null;
+  const targetPrice = activeTurnContract?.knownFacts?.sellerTargetPrice;
+  if (intent === 'already_gave_price' && reply.replyMode === 'fast_local_price_recall' &&
+      activeTurnContract?.intent === intent && /^\$?\s*\d[\d,]*(?:\.\d+)?\s*(?:k|m|thousand|grand|million)?$/i.test(targetPrice || '')) {
+    // Acknowledge the caller's figure without treating it as a PBK offer.
+    return { text: renderAvaLiveContractReply({ intent, knownFacts: { sellerTargetPrice: targetPrice } }), guard: { result: 'known_price_recall' } };
+  }
   const ownerSafe = stripUnconfirmedAvaLiveLeadName(
     enforceAvaOwnerSafeReply(reply.text || '', {
       session,
@@ -70300,7 +70312,6 @@ function guardTelnyxLiveSpokenReply(reply = {}, { session = {}, contextCall = nu
     }),
     { session, contextCall }
   );
-  const activeTurnContract = reply.turnContract || session.avaLiveTurnContract || null;
   const guard = guardAvaResponse({
     answer: ownerSafe,
     transcript,
@@ -70608,9 +70619,7 @@ function buildFastTelnyxLiveAvaReplyText({ session = {}, transcript = '', contex
   if (/\b(hear me|can you hear|you hear|hello\??|are you there)\b/i.test(lower)) {
     return withSafeActiveHook(`${opener}yes, I can hear you clearly. Thanks for staying with me. Let me pull this up the right way: what property address should I use today?`);
   }
-  if (/\b(stop calling|do not call|don't call|remove me|unsubscribe)\b/i.test(lower)) {
-    return withSafeActiveHook('I hear you. I can make sure we stop calling, and I will keep this simple. Is this the number you want removed from our follow-up list?', { stopContact: true });
-  }
+  if (turnContract.intent === 'stop_contact') return contractReply;
   if (authorityConfirmedByAnswer) {
     applyAvaAuthorityConfirmation(session, latestTranscript);
     return withSafeActiveHook(`${opener}Perfect, thank you. What property address should I use, and what are you hoping to do with it?`, {
@@ -70967,6 +70976,15 @@ async function buildTelnyxLiveAvaReplyInsight({ session = {}, transcript = '', c
 }
 
 async function buildTelnyxLiveAvaReply({ session = {}, transcript = '', contextCall = null } = {}) {
+  if (classifyAvaLiveObjectionV2(transcript).intent === 'stop_contact') {
+    const turnContract = buildAvaLiveTurnContract({ session, transcript, contextCall });
+    return {
+      text: renderAvaLiveContractReply(turnContract),
+      replyMode: 'fast_local_stop_contact',
+      turnContract,
+      strategist: { ok: true, skipped: true, result: 'stop_contact_boundary' },
+    };
+  }
   const repairReply = buildTelnyxLiveConversationalRepairReply({
     session,
     transcript,
@@ -71092,7 +71110,11 @@ async function buildTelnyxLiveAvaReply({ session = {}, transcript = '', contextC
     });
   }
 
-  const nonRepeatingFallback = avoidRepeatedAvaLiveReply(session, normalizedFallback, normalizedFallback);
+  const turnContract = session.avaLiveTurnContract;
+  const recallKnownPrice = turnContract?.intent === 'already_gave_price' && turnContract.knownFacts?.sellerTargetPrice;
+  const nonRepeatingFallback = recallKnownPrice
+    ? { text: renderAvaLiveContractReply(turnContract), adjusted: false }
+    : avoidRepeatedAvaLiveReply(session, normalizedFallback, normalizedFallback);
   const fastLocalReply = {
     text: nonRepeatingFallback.text,
     replyMode: 'fast_local',
@@ -71115,7 +71137,10 @@ async function buildTelnyxLiveAvaReply({ session = {}, transcript = '', contextC
       timeoutMs: inlineStrategistFallback?.timeoutMs || strategistTimeoutMs,
     },
   };
-  if (session.lastFastLocalReplyMode) fastLocalReply.replyMode = session.lastFastLocalReplyMode;
+  if (recallKnownPrice) {
+    fastLocalReply.replyMode = 'fast_local_price_recall';
+    fastLocalReply.turnContract = turnContract;
+  } else if (session.lastFastLocalReplyMode) fastLocalReply.replyMode = session.lastFastLocalReplyMode;
   return fastLocalReply;
 }
 

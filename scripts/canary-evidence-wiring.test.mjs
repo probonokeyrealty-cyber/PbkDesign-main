@@ -201,8 +201,9 @@ test('bridge code matches the reviewed release fingerprint outside the scoped re
   // signed Twilio webhook paths. Main also separates Telnyx voice and SMS
   // senders. The Postgres regression suite covers checked-out client errors.
   // Telnyx receipt tests cover verified hangups, carrier history and projection replay.
+  // Ava's turn contract handles corrected asking prices and stop-contact requests.
   assert.equal(createHash('sha256').update(unchanged).digest('hex'),
-    'c759c37d06ac4bfad2300861622e38aa38052e3c78997a5c3784c45a6c941878');
+    '9d2b75f8b48124dd9dca03d955773d9373b0524c01d6a9387fec41ad025afdf9');
 });
 
 test('production distribution includes reader and protocol, never the fixture signer', () => {

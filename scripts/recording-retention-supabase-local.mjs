@@ -370,13 +370,17 @@ async function exerciseRetentionRoute({ http, put, assertBytes, ageObject }) {
     const staleKey = 'fixture/retention-stale-cache.txt';
     const ambiguousId = 'fixture-retention-ambiguous-archive';
     const ambiguous = { s3Archive: { key: '/ fixture/ambiguous-archive.wav', bucket: 'fixture-archive' } };
-    messages.push({ id: staleId, workspaceId: 'pbk', channel: 'call', direction: 'recording', createdAt: new Date().toISOString() });
+    messages.push({ id: staleId, workspaceId: 'pbk', channel: 'sms', direction: 'inbound', createdAt: new Date().toISOString() });
     messages.push({ id: ambiguousId, workspaceId: 'pbk', channel: 'call', direction: 'recording',
       createdAt: new Date().toISOString(), payload: ambiguous });
     await pool.query(`INSERT INTO public.unified_messages (id, workspace_id, channel, direction, storage_path, storage_bucket)
       VALUES ($1,'pbk','call','recording',$2,$3)`, [staleId, staleKey, bucket]);
     await pool.query(`INSERT INTO public.unified_messages (id, workspace_id, channel, direction, payload)
       VALUES ($1,'pbk','call','recording',$2)`, [ambiguousId, ambiguous]);
+    const plainInboxId = 'fixture-plain-inbox';
+    messages.push({ id: plainInboxId, workspaceId: 'pbk', channel: 'sms', direction: 'inbound', createdAt: new Date().toISOString() });
+    await pool.query(`INSERT INTO public.unified_messages (id, workspace_id, channel, direction)
+      VALUES ($1,'pbk','sms','inbound')`, [plainInboxId]);
     await pool.query("UPDATE public.bridge_state SET data = jsonb_set(data, '{messages}', $1) WHERE id = 'singleton'", [JSON.stringify(messages)]);
     let bridge = await launch();
     const retention = '/api/recordings/retention';
@@ -399,14 +403,23 @@ async function exerciseRetentionRoute({ http, put, assertBytes, ageObject }) {
       JOIN public.pbk_recording_retention_approvals g ON g.approval_id = a.id WHERE a.id = $1`, [id])).rows[0];
     const pointer = async id => (await pool.query(`SELECT storage_path, storage_bucket, recording_url, payload, updated_at
       FROM public.unified_messages WHERE id = $1`, [id])).rows[0];
-    const run = (status, days, approvalId) => request(`${retention}/run`, status, { dryRun: false, days, approvalId });
+    const run = (status, days, approvalId, scanAfter) => request(`${retention}/run`, status, { dryRun: false, days, approvalId, scanAfter });
     const remove = id => bridge.fetch(new URL(`/api/recordings/${id}`, bridge.origin), {
+      method: 'DELETE', headers: { authorization: `Bearer ${bridge.apiKey}` },
+    });
+    const removeInbox = id => bridge.fetch(new URL(`/api/messages/${id}`, bridge.origin), {
       method: 'DELETE', headers: { authorization: `Bearer ${bridge.apiKey}` },
     });
     try {
       assert.equal((await request('/health', 200)).features.stateBackend, 'postgres');
       assert.equal((await remove(staleId)).status, 409, 'a pointerless cache cannot delete a newer durable recording');
       assert.equal((await pointer(staleId)).storage_path, staleKey);
+      const staleInbox = await removeInbox(staleId);
+      assert.equal(staleInbox.status, 409, 'Inbox deletion must use the durable recording pointer, not the cache');
+      assert.equal((await staleInbox.json()).result, 'inbox_recording_requires_guarded_delete');
+      assert.equal((await pointer(staleId)).storage_path, staleKey);
+      assert.equal((await removeInbox(plainInboxId)).status, 200, 'ordinary messages remain deletable');
+      assert.equal(await pointer(plainInboxId), undefined);
       assert.equal((await remove(ambiguousId)).status, 400, 'manual deletion must reject an unstable archive key before I/O');
       assert.deepEqual((await pointer(ambiguousId)).payload, ambiguous);
       assert.equal((await request(`${retention}/preview?days=60`, 200)).run.candidateCount, 0,
@@ -415,15 +428,31 @@ async function exerciseRetentionRoute({ http, put, assertBytes, ageObject }) {
       await pool.query(`INSERT INTO public.unified_messages (id, workspace_id, channel, direction, storage_path)
         VALUES ('retention-legacy-alias', 'pbk', 'call', 'recording', $1)`,
       [`/${bucket}//${target.key.replace('/', '//')}/`]);
-      assert.equal((await run(409, 60)).result, 'retention_plan_changed');
+      assert.equal((await run(200, 60)).result, 'retention_candidates_pending');
       await pool.query("DELETE FROM public.unified_messages WHERE id = 'retention-legacy-alias'");
       await pool.query(`UPDATE public.unified_messages SET payload = jsonb_set(payload, '{recordingStoragePath}', to_jsonb($2::text))
         WHERE id = $1`, [target.id, replacement.key]);
-      assert.equal((await run(409, 60)).result, 'retention_plan_changed', 'one approval cannot clear distinct pointers on the same row');
+      assert.equal((await run(200, 60)).result, 'retention_candidates_pending', 'one approval cannot clear distinct pointers on the same row');
       await pool.query("UPDATE public.unified_messages SET payload = payload - 'recordingStoragePath' WHERE id = $1", [target.id]);
-      const queued = await run(202, 60);
+      const missingId = 'fixture-retention-missing';
+      const missingKey = 'fixture/retention-missing.txt';
+      await pool.query(`INSERT INTO public.unified_messages (id, workspace_id, channel, direction, storage_path, storage_bucket, created_at)
+        VALUES ($1, 'pbk', 'call', 'recording', $2, $3, $4)`,
+      [missingId, missingKey, bucket, new Date(Date.now() - 100 * 86_400_000).toISOString()]);
+      await pool.query(`INSERT INTO public.unified_messages (id, workspace_id, channel, direction, storage_path, storage_bucket, created_at)
+        SELECT 'fixture-retention-scan-' || lpad(n::text, 2, '0'), 'pbk', 'call', 'recording',
+          'fixture/blocked-' || n::text || '.txt', 'another-fixture-bucket', $1::timestamptz
+        FROM generate_series(1, 50) AS n`, [new Date(Date.now() - 110 * 86_400_000).toISOString()]);
+      const blockedPage = await run(200, 60);
+      assert.equal(blockedPage.result, 'retention_candidates_pending');
+      assert.equal(blockedPage.blockedCandidateCount, 50);
+      assert.equal(blockedPage.moreCandidates, true);
+      assert.equal(blockedPage.nextScanAfter.id, 'fixture-retention-scan-50');
+      const queued = await run(202, 60, undefined, blockedPage.nextScanAfter);
       assert.equal(queued.candidateCount, 1, 'retention must find recordings that are not in the dashboard cache');
+      assert.deepEqual(queued.blockedCandidates, [{ messageId: missingId, reason: 'storage_object_missing' }]);
       const { approvalId } = queued;
+      await run(400, 60, approvalId, blockedPage.nextScanAfter);
       assert.deepEqual(await decision(approvalId), { status: 'pending', consumed_at: null });
       assert.equal((await run(403, 60, approvalId)).result, 'retention_approval_required');
       assert.equal(deleted.length, 0);
@@ -464,6 +493,11 @@ async function exerciseRetentionRoute({ http, put, assertBytes, ageObject }) {
         providerStatuses: deleted.map(item => item.result.status), blockedNetwork: bridge.blockedNetwork, overlapProof, overlapError,
         attempts: (await pool.query('SELECT message_id, outcome FROM public.pbk_recording_retention_attempts')).rows }));
       assert.equal(complete.run.deletedCount, 1);
+      assert.deepEqual(complete.run.blockedCandidates, queued.blockedCandidates);
+      assert.equal((await pointer(missingId)).storage_path, missingKey);
+      assert.equal(deleted.some(item => item.path === missingKey), false);
+      await pool.query('DELETE FROM public.unified_messages WHERE id = $1', [missingId]);
+      await pool.query("DELETE FROM public.unified_messages WHERE id LIKE 'fixture-retention-scan-%'");
       assert.deepEqual(overlapProof, { unrelatedWrite: 'committed', duplicateWrite: '23514', referenceRemoval: '23514',
         tableRemoval: '23514', pending: { outcome: 'pending', object_version: deleted[0].versionId } });
       assert.equal(complete.run.deletions[0].tracking, 'confirmed');
@@ -653,6 +687,11 @@ async function exerciseRetentionRoute({ http, put, assertBytes, ageObject }) {
       assert.equal(firstCapture.storagePath, retentionWriterFixtureKey);
       assert.equal((await pointer(writerId)).storage_path, retentionWriterFixtureKey);
       assert.equal(await writerLease(), undefined);
+      const inboxWriter = await removeInbox(writerId);
+      assert.equal(inboxWriter.status, 409, 'an unfenced recording needs the guarded recording-delete route');
+      assert.equal((await inboxWriter.json()).result, 'inbox_recording_requires_guarded_delete');
+      assert.equal((await pointer(writerId)).storage_path, retentionWriterFixtureKey);
+      await assertBytes(retentionWriterFixtureKey, 'synthetic writer first');
       duringCapture = async () => { throw new Error('Invalid pointer request reached Storage'); };
       for (const malformed of [{ storage_path: 0 }, { payload: { s3Archive: { key: false } } }]) {
         await request('/api/recordings/capture', 400, {

@@ -50534,7 +50534,7 @@ async function runRecordingRetentionCleanup({ dryRun = true, days = 0, actor = '
     cutoffAt: new Date(cutoffMs).toISOString(),
     candidateCount: dryRun ? candidates.length : execution.plan.targetCount,
     ...(dryRun ? {} : { approvalId: execution.id, blockedCandidateCount: execution.blockedCandidateCount,
-      moreCandidates: execution.moreCandidates }),
+      blockedCandidates: execution.blockedCandidates, moreCandidates: execution.moreCandidates, nextScanAfter: execution.nextScanAfter }),
     deletedCount: deletions.filter((item) => item.ok).length,
     candidates: candidates.map((message) => ({
       messageId: message.id,
@@ -80838,8 +80838,28 @@ const server = createServer(async (request, response) => {
         return;
       }
       const durableId = String(existing.id || existing.messageId || existing.callId || id).trim();
-      const dbDelete = await queryPgRows('DELETE FROM ONLY public.unified_messages WHERE id = $1 RETURNING id', [durableId]);
-      if (dbDelete.rows.length !== 1 && (IS_HOSTED || dbDelete.reason !== 'no_database')) {
+      // Inspect the locked durable row before removing the retention inventory pointer.
+      const dbDelete = await queryPgRows(`WITH target AS MATERIALIZED (
+        SELECT m.id, (m.direction = 'recording' OR NULLIF(btrim(m.recording_url), '') IS NOT NULL
+          OR public.pbk_recording_has_untyped_pointer(m.payload)
+          OR EXISTS (SELECT 1 FROM public.pbk_recording_storage_pointers(m.storage_path, m.payload))
+          OR EXISTS (SELECT 1 FROM public.pbk_recording_archive_pointers(m.payload))) AS protected
+        FROM ONLY public.unified_messages m WHERE m.id = $1 FOR UPDATE
+      ), deleted AS (
+        DELETE FROM ONLY public.unified_messages m USING target t
+        WHERE m.id = t.id AND t.protected IS FALSE RETURNING m.id
+      ) SELECT t.protected, d.id FROM target t LEFT JOIN deleted d USING (id)`, [durableId]);
+      const localOnly = !IS_HOSTED && dbDelete.reason === 'no_database';
+      const result = dbDelete.rows[0];
+      if (result?.protected || (localOnly && (existing.direction === 'recording' || hasUntypedRecordingPointer(existing) ||
+          getMessageRecordingPointer(existing) || getMessageRecordingUrl(existing) || getMessageS3Archive(existing)?.key))) {
+        json(response, 409, {
+          ok: false, result: 'inbox_recording_requires_guarded_delete', deleted: false, messageId: id,
+          error: 'Use the recording deletion workflow to remove this item without leaving storage behind.',
+        });
+        return;
+      }
+      if (!result?.id && !localOnly) {
         json(response, ['23514', '55P03'].includes(dbDelete.code) ? 409 : 503, {
           ok: false,
           result: 'inbox_delete_failed',

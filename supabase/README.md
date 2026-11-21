@@ -37,7 +37,8 @@ Recording retention rollout:
 - Set `PBK_RECORDING_RETENTION_FOUNDER_KEY` in the bridge's private server environment and give it only to the founder. Use a high-entropy secret separate from `PBK_BRIDGE_API_KEY`. Never put it in provider settings, browser builds, or proxies.
 - Direct retention decisions (`POST /api/approvals/:id/:decision` or `PUT /api/approvals/:id`) require both `Authorization: Bearer <PBK_BRIDGE_API_KEY>` and `x-pbk-recording-retention-founder-key`. The retention run verifies the durable grant using the server's founder key; the run request does not send that key. Missing or reused configuration blocks decisions and new grant consumption. Re-request unconsumed approvals signed with the old bridge key or before a founder key rotation.
 - Resolve ambiguous legacy recording pointers before retention or recording storage writes. A rejected upload is released only after a recognized pre-write rejection and unchanged Storage readback. Ambiguous reservations remain locked; do not clear them or replay Storage writes without independent evidence.
-- Live retention selects up to 25 eligible recordings from Postgres, oldest first. A response with `moreCandidates: true` means another batch needs its own approval; quarantined rows do not count toward that batch. The dashboard-only dry run is not a full inventory.
+- Live retention checks at most 50 candidates and selects up to 25 verified recordings from Postgres, oldest first. It reports unverifiable rows without deleting them. When `moreCandidates` is true, use the returned `nextScanAfter` as `scanAfter` on a new queue request, never on execution of an existing approval. Start a fresh scan without a cursor to recheck older blocked rows. The dashboard-only dry run is not a full inventory.
+- Use the guarded recording deletion route for recording-backed Inbox items. Generic Inbox deletion does not remove recording rows or their Storage pointers.
 
 Verification:
 

@@ -209,7 +209,7 @@ test('bridge code matches the reviewed release fingerprint outside the scoped re
   // signed Twilio webhook paths. Main also separates Telnyx voice and SMS
   // senders. The Postgres regression suite covers checked-out client errors.
   assert.equal(createHash('sha256').update(unchanged).digest('hex'),
-    '4acc7d3f63a7d629f6f47c1b124c3356f1929c834adae14b04ec51de73ac6cb0');
+    '03bc1bc5f99797c45b0a49893b652dd4df5300693a05372d15bc1323ec924690');
 });
 
 test('production distribution includes reader and protocol, never the fixture signer', () => {

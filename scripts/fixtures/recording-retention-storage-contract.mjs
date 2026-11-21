@@ -10,6 +10,7 @@ const fixtureKeys = new Set([
   'fixture/retention-interrupted.txt', 'fixture/retention-later.txt',
   'fixture/retention-pointer-rollback.txt',
   'fixture/retention-unverified-readback.txt',
+  'fixture/retention-missing.txt',
   retentionWriterFixtureKey,
 ]);
 

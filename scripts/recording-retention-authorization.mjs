@@ -10,6 +10,7 @@ const grants = 'public.pbk_recording_retention_approvals';
 const attempts = 'public.pbk_recording_retention_attempts';
 const storageWrites = 'public.pbk_recording_storage_writes';
 const batchSize = 25;
+const scanLimit = 50;
 const claimedExecutions = new WeakSet();
 const validId = id => typeof id === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u.test(id);
 export const validRecordingObjectVersion = validId;
@@ -77,8 +78,31 @@ export function takeClaimedRecordingRetentionExecution(execution) {
   return claimedExecutions.delete(execution);
 }
 
-async function buildPlan(days, cutoffAt, bucket, getPath, getStorageVersion, readObjectVersion, pool) {
-  const cutoff = Date.parse(cutoffAt);
+function validScanAfter(value) {
+  return value && typeof value === 'object' && !Array.isArray(value) &&
+    typeof value.createdAt === 'string' && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/u.test(value.createdAt) &&
+    Number.isFinite(Date.parse(value.createdAt)) && typeof value.id === 'string' && value.id.length > 0 &&
+    Buffer.byteLength(value.id) <= 512 && !value.id.includes('\0');
+}
+
+async function verifyCandidate(row, bucket, cutoffAt, getPath, getStorageVersion, readObjectVersion) {
+  const key = getPath(row);
+  const recordedBucket = row.storage_bucket || row.payload?.storageBucket || row.payload?.storage_bucket || bucket;
+  if (recordedBucket !== bucket || !row.id?.trim() || hasUntypedRecordingPointer(row) || !validRecordingRetentionStorageKey(key)) {
+    return { reason: 'recording_pointer_unverified' };
+  }
+  const target = { id: row.id, key, createdAt: row.created_at };
+  const storageVersion = await getStorageVersion(target, cutoffAt);
+  if (typeof storageVersion !== 'string' || !/^[a-f0-9]{64}$/u.test(storageVersion)) return { reason: 'recording_pointer_unverified' };
+  const object = await readObjectVersion(key);
+  if (object?.missing) return { reason: 'storage_object_missing' };
+  if (!validRecordingObjectVersion(object?.version) || !Number.isFinite(object.modifiedAt) || object.modifiedAt >= Date.parse(cutoffAt)) {
+    return { reason: 'storage_version_unverified' };
+  }
+  return { target: Object.freeze({ ...target, storageVersion, objectVersion: object.version }) };
+}
+
+async function buildPlan(days, cutoffAt, bucket, getPath, getStorageVersion, readObjectVersion, pool, scanAfter) {
   // The dashboard cache is not a retention inventory. Read the oldest durable
   // candidates in a bounded batch; quarantined rows must not starve later work.
   const { rows: [source] } = await pool.query(`WITH classified AS MATERIALIZED (
@@ -94,43 +118,51 @@ async function buildPlan(days, cutoffAt, bucket, getPath, getStorageVersion, rea
     WHERE m.workspace_id COLLATE "C" = 'pbk' AND m.channel = 'call' AND m.direction = 'recording'
       AND m.created_at < $1::timestamptz AND (cardinality(p.keys) > 0 OR public.pbk_recording_has_untyped_pointer(m.payload))
   ), page AS (
-    SELECT * FROM classified WHERE NOT pending AND NOT retired ORDER BY created_at, id COLLATE "C" LIMIT $2
+    SELECT *, to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS cursor_at
+    FROM classified WHERE NOT pending AND NOT retired
+      AND ($3::timestamptz IS NULL OR (created_at, id COLLATE "C") > ($3::timestamptz, $4::text COLLATE "C"))
+    ORDER BY created_at, id COLLATE "C" LIMIT $2
   )
   SELECT NOT (pg_catalog.row_security_active('public.unified_messages'::regclass)
     OR pg_catalog.row_security_active('${attempts}'::regclass)
     OR pg_catalog.row_security_active('${storageWrites}'::regclass)) AS readable,
     (SELECT count(*) FROM classified WHERE pending) AS blocked_count,
     COALESCE((SELECT jsonb_agg(page ORDER BY created_at, id COLLATE "C") FROM page), '[]'::jsonb) AS candidates`,
-  [cutoffAt, batchSize + 1]);
+  [cutoffAt, scanLimit + 1, scanAfter?.createdAt ?? null, scanAfter?.id ?? null]);
   if (source?.readable !== true) return null;
-  const moreCandidates = source.candidates.length > batchSize;
   const targets = [];
-  const keys = new Set();
-  for (const row of source.candidates.slice(0, batchSize)) {
-    const key = getPath(row);
-    const recordedBucket = row.storage_bucket || row.payload?.storageBucket || row.payload?.storage_bucket || bucket;
-    if (recordedBucket !== bucket || !row.id?.trim() || keys.has(key) || hasUntypedRecordingPointer(row) ||
-      !validRecordingRetentionStorageKey(key)) return null;
-    keys.add(key);
-    const target = { id: row.id, key, createdAt: row.created_at };
-    const storageVersion = await getStorageVersion(target, cutoffAt);
-    if (typeof storageVersion !== 'string' || !/^[a-f0-9]{64}$/u.test(storageVersion)) return null;
-    const object = await readObjectVersion(key);
-    if (!validRecordingObjectVersion(object?.version) || !Number.isFinite(object.modifiedAt) || object.modifiedAt >= cutoff) return null;
-    targets.push(Object.freeze({ ...target, storageVersion, objectVersion: object.version }));
+  const blockedCandidates = [];
+  let examined = 0;
+  for (const row of source.candidates.slice(0, scanLimit)) {
+    const proof = await verifyCandidate(row, bucket, cutoffAt, getPath, getStorageVersion, readObjectVersion);
+    examined++;
+    if (proof.target) targets.push(proof.target);
+    else blockedCandidates.push({ messageId: row.id, reason: proof.reason });
+    if (targets.length === batchSize) break;
   }
+  const moreCandidates = source.candidates.length > examined;
+  const last = source.candidates[examined - 1];
+  if (new Set(targets.map(target => target.key)).size !== targets.length) return null;
   targets.sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
   return {
     targets: Object.freeze(targets),
-    plan: Object.freeze({ days, cutoffAt, targetCount: targets.length, targetHash: hashProviderActionContext({ bucket, targets }) }),
-    blockedCandidateCount: Number(source.blocked_count),
+    plan: Object.freeze({ days, cutoffAt, targetCount: targets.length, targetHash: hashProviderActionContext({ bucket, targets }),
+      ...(scanAfter ? { scanAfter } : {}) }),
+    blockedCandidateCount: Number(source.blocked_count) + blockedCandidates.length,
+    blockedCandidates,
     moreCandidates,
+    nextScanAfter: moreCandidates && last ? { createdAt: last.cursor_at, id: last.id } : null,
   };
 }
 
 function matchesPlan(left, right) {
   return Boolean(left && right && left.days === right.days && left.cutoffAt === right.cutoffAt &&
-    left.targetCount === right.targetCount && left.targetHash === right.targetHash);
+    left.targetCount === right.targetCount && left.targetHash === right.targetHash &&
+    left.scanAfter?.createdAt === right.scanAfter?.createdAt && left.scanAfter?.id === right.scanAfter?.id);
+}
+
+function scanReport({ blockedCandidateCount, blockedCandidates, moreCandidates, nextScanAfter }) {
+  return { blockedCandidateCount, blockedCandidates, moreCandidates, nextScanAfter };
 }
 
 export async function handleRecordingRetentionRequest({
@@ -152,17 +184,22 @@ export async function handleRecordingRetentionRequest({
 
   const id = body.approvalId ?? body.approval_id;
   if (id !== undefined && !validId(id)) return block(403, 'retention_approval_required', 'A valid recording retention approval is required.');
+  const requestedScanAfter = body.scanAfter;
+  if (requestedScanAfter !== undefined && (id || !validScanAfter(requestedScanAfter))) {
+    return block(400, 'invalid_retention_request', 'A scan cursor can only be used to request a new approval.');
+  }
+  const scanAfter = requestedScanAfter && { createdAt: requestedScanAfter.createdAt, id: requestedScanAfter.id };
   const pool = getPool();
   if (!pool) return unavailable();
   if (!id) {
     const timestamp = now();
     try {
-      const batch = await buildPlan(days, new Date(timestamp - days * dayMs).toISOString(), bucket, getPath, getStorageVersion, readObjectVersion, pool);
+      const batch = await buildPlan(days, new Date(timestamp - days * dayMs).toISOString(), bucket, getPath, getStorageVersion, readObjectVersion, pool, scanAfter);
       if (!batch) return changed();
       const { blockedCandidateCount } = batch;
       if (!batch.targets.length) return {
         ok: true, result: blockedCandidateCount ? 'retention_candidates_pending' : 'no_retention_candidates',
-        blockedCandidateCount, deletedCount: 0,
+        ...scanReport(batch), deletedCount: 0,
       };
       const approvalId = randomUUID();
       const expiresAt = new Date(timestamp + dayMs).toISOString();
@@ -181,7 +218,7 @@ export async function handleRecordingRetentionRequest({
         ON CONFLICT (approval_id) DO NOTHING`, [approvalId, JSON.stringify(batch.plan), expiresAt, type, action, origin]);
       if (grant.rowCount !== 1) return unavailable();
       return { ok: true, statusCode: 202, result: 'queued_for_approval', approvalId, expiresAt,
-        days, cutoffAt: batch.plan.cutoffAt, candidateCount: batch.plan.targetCount, blockedCandidateCount, moreCandidates: batch.moreCandidates };
+        days, cutoffAt: batch.plan.cutoffAt, candidateCount: batch.plan.targetCount, ...scanReport(batch) };
     } catch {
       return unavailable();
     }
@@ -208,7 +245,7 @@ export async function handleRecordingRetentionRequest({
       !timingSafeEqual(Buffer.from(grant.founder_proof, 'hex'), Buffer.from(proof, 'hex'))) {
       return block(403, 'retention_approval_required', 'The exact batch requires a direct founder decision.');
     }
-    const batch = await buildPlan(days, grant.plan.cutoffAt, bucket, getPath, getStorageVersion, readObjectVersion, pool);
+    const batch = await buildPlan(days, grant.plan.cutoffAt, bucket, getPath, getStorageVersion, readObjectVersion, pool, grant.plan.scanAfter);
     if (!matchesPlan(batch?.plan, grant.plan)) return changed();
     // The approval row and one-use claim are checked together. Uncertain
     // claims are not retried and no mutable bridge approval can authorize I/O.
@@ -226,7 +263,7 @@ export async function handleRecordingRetentionRequest({
         AND g.expires_at > statement_timestamp()
       RETURNING g.approval_id`, [id, JSON.stringify(batch.plan), type, action, origin, proof]);
     if (claim.rowCount !== 1) return block(403, 'retention_approval_required', 'The exact batch must be approved, unexpired and unused.');
-    const latest = await buildPlan(days, grant.plan.cutoffAt, bucket, getPath, getStorageVersion, readObjectVersion, pool);
+    const latest = await buildPlan(days, grant.plan.cutoffAt, bucket, getPath, getStorageVersion, readObjectVersion, pool, grant.plan.scanAfter);
     if (!matchesPlan(latest?.plan, batch.plan)) return changed();
     execution = Object.freeze({ id, ...latest });
     claimedExecutions.add(execution);

@@ -1,7 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import { createNeonMailRouter } from './neon-auth-mail.mjs';
 import { createComposioResearchDiscovery } from './composio-research-discovery.mjs';
-import { createPublicMarketConnectionCheck } from './public-market-connection.mjs';
+import { createPublicMarketConnectionCheck, withSavedRaleighCleanup } from './public-market-connection.mjs';
 import { findAvaOutlookReceipt, sendAvaOutlookMail } from './ava-outlook-mail.mjs';
 import { normalizeOutlookReceiptUrl, readOutlookDelivery } from '../src/app/utils/outlookDelivery.mjs';
 import { createServer, globalAgent as httpGlobalAgent } from 'node:http';
@@ -76574,7 +76574,11 @@ const server = createServer(async (request, response) => {
         ok: true,
         tooling: {
           ...await buildToolingStatus(),
-          publicMarketWorker: await (checkPublicMarketConnection ??= createPublicMarketConnectionCheck())(),
+          publicMarketWorker: withSavedRaleighCleanup(
+            await (checkPublicMarketConnection ??= createPublicMarketConnectionCheck())(),
+            state.browserResearchJobs,
+            state.adminTasks,
+          ),
         },
       });
       return;

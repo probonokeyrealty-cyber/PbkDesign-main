@@ -58,6 +58,24 @@ function hasActiveAccount(item, { userId, accountId }) {
     item.connected_account.status === 'ACTIVE';
 }
 
+export function withSavedRaleighCleanup(readiness, jobs = [], tasks = []) {
+  if (readiness.executionEnabled !== false) return readiness;
+  const completedApprovals = new Set(tasks.filter((task) =>
+    task?.provider === 'e2b' && task.action === 'public_market_brief' && task.status === 'complete' &&
+    typeof task.id === 'string' && task.id.length > 0).map((task) => task.id));
+  const hasReceipt = jobs.some((job) =>
+    job?.provider === 'e2b' && job.source === 'public-market-brief' && job.market === 'Raleigh, NC' &&
+    job.status === 'complete' && job.consumed === true && job.cleanupConfirmed === true &&
+    typeof job.completedAt === 'string' && Number.isFinite(Date.parse(job.completedAt)) &&
+    completedApprovals.has(job.approvalTaskId));
+  if (!hasReceipt) return readiness;
+  const note = 'Saved Raleigh canary: sandbox cleanup confirmed. Execution is disabled.';
+  return {
+    ...readiness,
+    note: readiness.state === 'connected_unverified' || !readiness.note ? note : `${note} ${readiness.note}`,
+  };
+}
+
 async function readSmallJson(response) {
   if (!response.ok || !response.body) {
     await response.body?.cancel();

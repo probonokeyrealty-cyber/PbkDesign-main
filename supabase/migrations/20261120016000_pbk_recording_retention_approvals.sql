@@ -1,3 +1,27 @@
+-- PL/pgSQL trigger fields resolve at execution. Check the trigger and runtime
+-- retention target/readback columns before installing any retention objects.
+DO $$
+DECLARE
+  missing_columns text;
+BEGIN
+  SELECT pg_catalog.string_agg(required.column_name, ', ' ORDER BY required.column_name)
+  INTO missing_columns
+  FROM pg_catalog.unnest(ARRAY[
+    'id', 'payload', 'storage_path', 'storage_bucket', 'workspace_id', 'channel',
+    'direction', 'created_at', 'recording_url', 'updated_at'
+  ]) AS required(column_name)
+  WHERE NOT EXISTS (
+    SELECT 1 FROM pg_catalog.pg_attribute
+    WHERE attrelid = pg_catalog.to_regclass('public.unified_messages')
+      AND attname = required.column_name AND attnum > 0 AND NOT attisdropped
+  );
+  IF missing_columns IS NOT NULL THEN
+    RAISE EXCEPTION 'Recording retention requires public.unified_messages columns: %', missing_columns
+      USING ERRCODE = '42703';
+  END IF;
+END;
+$$;
+
 CREATE TABLE public.pbk_recording_retention_approvals (
   approval_id text PRIMARY KEY REFERENCES public.approvals(id) ON DELETE RESTRICT,
   plan jsonb NOT NULL CHECK (jsonb_typeof(plan) = 'object'),

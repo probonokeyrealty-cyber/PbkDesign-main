@@ -40,7 +40,7 @@ async function reservePortNumber() {
 }
 
 export async function startIsolatedBridge({ entry = defaultEntry, args = [], retentionPostgres, retentionStorage,
-  requireRecordingSchema = false, startupMs = 15000, lifetimeMs = 240000 } = {}) {
+  retentionFounderKeyMode, requireRecordingSchema = false, startupMs = 15000, lifetimeMs = 240000 } = {}) {
   if (typeof nodeModule.registerHooks !== 'function') throw new Error('Bridge smoke requires Node 22.15+ with synchronous module hooks and permissions');
   const retentionFixture = args.includes(retentionStorageFixtureFlag);
   const pgTarget = getRetentionPostgresLease(retentionPostgres);
@@ -48,11 +48,16 @@ export async function startIsolatedBridge({ entry = defaultEntry, args = [], ret
       (!pgTarget || entry !== defaultEntry || args.length !== 1 || args[0] !== retentionStorageFixtureFlag ||
         typeof retentionStorage !== 'function')) throw new Error('Recording retention requires an owned disposable fixture');
   if (requireRecordingSchema && !retentionFixture) throw new Error('The Render startup check requires the disposable recording fixture');
+  if (retentionFounderKeyMode !== undefined && (!retentionFixture || !['distinct', 'missing', 'shared'].includes(retentionFounderKeyMode))) {
+    throw new Error('Recording retention founder key modes require the disposable recording fixture');
+  }
   const teamPasscode = retentionFixture ? randomUUID() : undefined;
   const parent = await realpath(tmpdir());
   const stateDir = await mkdtemp(path.join(parent, prefix));
   let port;
   const apiKey = randomUUID();
+  const retentionFounderKey = retentionFounderKeyMode === 'distinct' ? randomUUID()
+    : retentionFounderKeyMode === 'shared' ? apiKey : undefined;
   const nonce = randomUUID();
   let child, closed, stopPromise, startupTimer, lifetimeTimer;
   let stderr = '';
@@ -96,6 +101,7 @@ export async function startIsolatedBridge({ entry = defaultEntry, args = [], ret
     port = await reservePortNumber();
     const env = buildSmokeEnv(stateDir, port, apiKey, nonce);
     if (teamPasscode) env.PBK_TEAM_PASSCODE = teamPasscode;
+    if (retentionFounderKey) env.PBK_RECORDING_RETENTION_FOUNDER_KEY = retentionFounderKey;
     if (requireRecordingSchema) {
       env.RENDER = 'true';
       env.RENDER_SERVICE_NAME = 'pbk-openclaw-bridge';
@@ -107,7 +113,7 @@ export async function startIsolatedBridge({ entry = defaultEntry, args = [], ret
     closed = new Promise(resolve => { child.once('close', resolve); child.once('error', resolve); });
     child.once('exit', invalidate);
     child.once('error', invalidate);
-    const secrets = pgTarget ? [pgTarget, new URL(pgTarget).password, teamPasscode, apiKey, nonce] : [];
+    const secrets = pgTarget ? [pgTarget, new URL(pgTarget).password, teamPasscode, apiKey, nonce, retentionFounderKey].filter(Boolean) : [];
     child.stderr.on('data', chunk => {
       stderr = secrets.reduce((log, secret) => log.replaceAll(secret, '[redacted]'), stderr + chunk).slice(-6000);
     });
@@ -138,7 +144,7 @@ export async function startIsolatedBridge({ entry = defaultEntry, args = [], ret
     lifetimeTimer.unref();
     const origin = `http://127.0.0.1:${port}`;
     return {
-      origin, apiKey, stateDir, blockedNetwork, stop, ...(teamPasscode ? { teamPasscode } : {}),
+      origin, apiKey, stateDir, blockedNetwork, stop, ...(retentionFixture ? { teamPasscode, retentionFounderKey } : {}),
       fetch: async (target, options = {}) => {
         if (!active || child.exitCode !== null || child.signalCode !== null) throw new Error(`Isolated bridge is stopped (exit=${child.exitCode}, signal=${child.signalCode}): ${stderr || '(no child stderr)'}`);
         if (new URL(target).origin !== origin) throw new Error('Smoke request origin is not the isolated child');

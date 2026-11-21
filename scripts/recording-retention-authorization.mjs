@@ -1,4 +1,4 @@
-import { createHmac, randomUUID } from 'node:crypto';
+import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 import { hashProviderActionContext } from './provider-action-authorization.mjs';
 
 
@@ -9,6 +9,7 @@ const origin = 'recording-retention-route';
 const grants = 'public.pbk_recording_retention_approvals';
 const attempts = 'public.pbk_recording_retention_attempts';
 const storageWrites = 'public.pbk_recording_storage_writes';
+const batchSize = 25;
 const claimedExecutions = new WeakSet();
 const validId = id => typeof id === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u.test(id);
 export const validRecordingObjectVersion = validId;
@@ -72,49 +73,46 @@ export function eligibleDurableRecording(row, cutoffAt) {
   return Number.isFinite(created) && created < Date.parse(cutoffAt);
 }
 
-function workspaceOf(row) {
-  return row.workspaceId || row.workspace_id || row.tenantId || row.tenant_id || 'pbk';
-}
-
-export function recordingRetentionTargetMatches(target, row, getPath) {
-  return row?.id === target.id && workspaceOf(row) === 'pbk' &&
-    getPath(row) === target.key && hashProviderActionContext(row) === target.version;
-}
-
 export function takeClaimedRecordingRetentionExecution(execution) {
   return claimedExecutions.delete(execution);
 }
 
-async function buildPlan(messages, days, cutoffAt, bucket, getPath, getStorageVersion, readObjectVersion, pool) {
+async function buildPlan(days, cutoffAt, bucket, getPath, getStorageVersion, readObjectVersion, pool) {
   const cutoff = Date.parse(cutoffAt);
-  const candidates = messages.filter(row => workspaceOf(row) === 'pbk' && row.channel === 'call' &&
-    row.direction === 'recording' && row.retentionStatus !== 'deleted' && Date.parse(row.createdAt || row.updatedAt || '') < cutoff);
-  const fenced = await pool.query(`SELECT storage_key, outcome, CASE WHEN outcome = 'pending' THEN message_id END AS message_id FROM ONLY ${attempts}
-    WHERE storage_key = ANY($1::text[]) AND outcome IN ('pending', 'confirmed')
-       OR message_id = ANY($2::text[]) AND outcome = 'pending'
-    UNION ALL
-    SELECT storage_key, 'pending', message_id FROM ONLY ${storageWrites}
-    WHERE rejected_at IS NULL AND (storage_key = ANY($1::text[]) OR message_id = ANY($2::text[]))`,
-  [[...new Set(candidates.map(getPath).filter(Boolean))], candidates.map(row => row.id)]);
-  const fencedKeys = new Map(fenced.rows.filter(row => row.storage_key).map(row => [row.storage_key, row.outcome]));
-  const fencedIds = new Set(fenced.rows.map(row => row.message_id).filter(Boolean));
-  const blocked = new Set();
+  // The dashboard cache is not a retention inventory. Read the oldest durable
+  // candidates in a bounded batch; quarantined rows must not starve later work.
+  const { rows: [source] } = await pool.query(`WITH classified AS MATERIALIZED (
+    SELECT m.id, m.created_at, m.storage_path, m.storage_bucket, m.payload,
+      EXISTS (SELECT 1 FROM ONLY ${attempts} a WHERE a.outcome = 'pending'
+        AND (a.message_id = m.id OR a.storage_key = ANY(p.keys) OR a.bucket || '/' || a.storage_key = ANY(p.keys)))
+      OR EXISTS (SELECT 1 FROM ONLY ${storageWrites} w WHERE w.rejected_at IS NULL
+        AND (w.message_id = m.id OR w.storage_key = ANY(p.keys) OR w.bucket || '/' || w.storage_key = ANY(p.keys))) AS pending,
+      EXISTS (SELECT 1 FROM ONLY ${attempts} a WHERE a.outcome = 'confirmed'
+        AND (a.storage_key = ANY(p.keys) OR a.bucket || '/' || a.storage_key = ANY(p.keys))) AS retired
+    FROM ONLY public.unified_messages m
+    CROSS JOIN LATERAL (SELECT ARRAY(SELECT public.pbk_recording_storage_pointers(m.storage_path, m.payload)) COLLATE "C" AS keys) p
+    WHERE m.workspace_id COLLATE "C" = 'pbk' AND m.channel = 'call' AND m.direction = 'recording'
+      AND m.created_at < $1::timestamptz AND (cardinality(p.keys) > 0 OR public.pbk_recording_has_untyped_pointer(m.payload))
+  ), page AS (
+    SELECT * FROM classified WHERE NOT pending AND NOT retired ORDER BY created_at, id COLLATE "C" LIMIT $2
+  )
+  SELECT NOT (pg_catalog.row_security_active('public.unified_messages'::regclass)
+    OR pg_catalog.row_security_active('${attempts}'::regclass)
+    OR pg_catalog.row_security_active('${storageWrites}'::regclass)) AS readable,
+    (SELECT count(*) FROM classified WHERE pending) AS blocked_count,
+    COALESCE((SELECT jsonb_agg(page ORDER BY created_at, id COLLATE "C") FROM page), '[]'::jsonb) AS candidates`,
+  [cutoffAt, batchSize + 1]);
+  if (source?.readable !== true) return null;
+  const moreCandidates = source.candidates.length > batchSize;
   const targets = [];
-  const ids = new Set();
   const keys = new Set();
-  for (const row of candidates) {
+  for (const row of source.candidates.slice(0, batchSize)) {
     const key = getPath(row);
-    if (!key) continue;
-    if (fencedKeys.has(key) || fencedIds.has(row.id)) {
-      if (fencedKeys.get(key) === 'pending' || fencedIds.has(row.id)) blocked.add(key);
-      continue;
-    }
-    const recordedBucket = row.storageBucket || row.storage_bucket || row.payload?.storageBucket || row.payload?.storage_bucket || bucket;
-    if (recordedBucket !== bucket || typeof row.id !== 'string' || !row.id.trim() || ids.has(row.id) || keys.has(key) ||
+    const recordedBucket = row.storage_bucket || row.payload?.storageBucket || row.payload?.storage_bucket || bucket;
+    if (recordedBucket !== bucket || !row.id?.trim() || keys.has(key) || hasUntypedRecordingPointer(row) ||
       !validRecordingRetentionStorageKey(key)) return null;
-    ids.add(row.id);
     keys.add(key);
-    const target = { id: row.id, key, version: hashProviderActionContext(row) };
+    const target = { id: row.id, key, createdAt: row.created_at };
     const storageVersion = await getStorageVersion(target, cutoffAt);
     if (typeof storageVersion !== 'string' || !/^[a-f0-9]{64}$/u.test(storageVersion)) return null;
     const object = await readObjectVersion(key);
@@ -125,7 +123,8 @@ async function buildPlan(messages, days, cutoffAt, bucket, getPath, getStorageVe
   return {
     targets: Object.freeze(targets),
     plan: Object.freeze({ days, cutoffAt, targetCount: targets.length, targetHash: hashProviderActionContext({ bucket, targets }) }),
-    blockedCandidateCount: blocked.size,
+    blockedCandidateCount: Number(source.blocked_count),
+    moreCandidates,
   };
 }
 
@@ -135,7 +134,7 @@ function matchesPlan(left, right) {
 }
 
 export async function handleRecordingRetentionRequest({
-  body, getPool, getMessages, getPath, getPolicyDays, getStorageVersion, readObjectVersion, bucket, requestApproval, run,
+  body, getPool, getPath, getPolicyDays, getStorageVersion, readObjectVersion, bucket, requestApproval, run,
   founderProofKey, now = Date.now,
 }) {
   if (body?.dryRun !== undefined && typeof body.dryRun !== 'boolean') {
@@ -158,7 +157,7 @@ export async function handleRecordingRetentionRequest({
   if (!id) {
     const timestamp = now();
     try {
-      const batch = await buildPlan(getMessages(), days, new Date(timestamp - days * dayMs).toISOString(), bucket, getPath, getStorageVersion, readObjectVersion, pool);
+      const batch = await buildPlan(days, new Date(timestamp - days * dayMs).toISOString(), bucket, getPath, getStorageVersion, readObjectVersion, pool);
       if (!batch) return changed();
       const { blockedCandidateCount } = batch;
       if (!batch.targets.length) return {
@@ -182,7 +181,7 @@ export async function handleRecordingRetentionRequest({
         ON CONFLICT (approval_id) DO NOTHING`, [approvalId, JSON.stringify(batch.plan), expiresAt, type, action, origin]);
       if (grant.rowCount !== 1) return unavailable();
       return { ok: true, statusCode: 202, result: 'queued_for_approval', approvalId, expiresAt,
-        days, cutoffAt: batch.plan.cutoffAt, candidateCount: batch.plan.targetCount, blockedCandidateCount };
+        days, cutoffAt: batch.plan.cutoffAt, candidateCount: batch.plan.targetCount, blockedCandidateCount, moreCandidates: batch.moreCandidates };
     } catch {
       return unavailable();
     }
@@ -205,8 +204,11 @@ export async function handleRecordingRetentionRequest({
     if (!grant.active) return block(403, 'retention_approval_expired', 'The recording retention approval expired.');
     const approvedAt = grant.founder_approved_at?.toISOString();
     const proof = approvedAt && founderProofKey ? signFounderDecision(founderProofKey, id, grant.plan, approvedAt) : null;
-    if (!proof || grant.founder_proof !== proof) return block(403, 'retention_approval_required', 'The exact batch requires a direct founder decision.');
-    const batch = await buildPlan(getMessages(), days, grant.plan.cutoffAt, bucket, getPath, getStorageVersion, readObjectVersion, pool);
+    if (!proof || typeof grant.founder_proof !== 'string' || !/^[a-f0-9]{64}$/u.test(grant.founder_proof) ||
+      !timingSafeEqual(Buffer.from(grant.founder_proof, 'hex'), Buffer.from(proof, 'hex'))) {
+      return block(403, 'retention_approval_required', 'The exact batch requires a direct founder decision.');
+    }
+    const batch = await buildPlan(days, grant.plan.cutoffAt, bucket, getPath, getStorageVersion, readObjectVersion, pool);
     if (!matchesPlan(batch?.plan, grant.plan)) return changed();
     // The approval row and one-use claim are checked together. Uncertain
     // claims are not retried and no mutable bridge approval can authorize I/O.
@@ -224,7 +226,7 @@ export async function handleRecordingRetentionRequest({
         AND g.expires_at > statement_timestamp()
       RETURNING g.approval_id`, [id, JSON.stringify(batch.plan), type, action, origin, proof]);
     if (claim.rowCount !== 1) return block(403, 'retention_approval_required', 'The exact batch must be approved, unexpired and unused.');
-    const latest = await buildPlan(getMessages(), days, grant.plan.cutoffAt, bucket, getPath, getStorageVersion, readObjectVersion, pool);
+    const latest = await buildPlan(days, grant.plan.cutoffAt, bucket, getPath, getStorageVersion, readObjectVersion, pool);
     if (!matchesPlan(latest?.plan, batch.plan)) return changed();
     execution = Object.freeze({ id, ...latest });
     claimedExecutions.add(execution);

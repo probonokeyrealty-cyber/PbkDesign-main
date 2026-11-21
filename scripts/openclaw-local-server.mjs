@@ -43,7 +43,7 @@ import { authorizeQualificationRequest, executeReleaseQualification, isDirectQua
 import {
   checkRecordingRetentionDecision, claimRecordingRetentionFounderDecision, eligibleDurableRecording,
   handleRecordingRetentionRequest, hasUntypedRecordingPointer, isRecordingRetentionApproval,
-  recordingRetentionTargetMatches, takeClaimedRecordingRetentionExecution, validRecordingObjectVersion,
+  takeClaimedRecordingRetentionExecution, validRecordingObjectVersion,
   validRecordingRetentionStorageKey,
 } from './recording-retention-authorization.mjs';
 import { assertRecordingRetentionSchema } from './recording-retention-schema.mjs';
@@ -844,6 +844,10 @@ const OPENCLAW_GATEWAY_HEARTBEAT_MAX_AGE_MS = Math.max(OPENCLAW_GATEWAY_HEARTBEA
 // Bearer token required on mutating endpoints when set. Local dev can stay open,
 // but hosted production must fail closed if the key is accidentally missing.
 const BRIDGE_API_KEY = String(process.env.PBK_BRIDGE_API_KEY || '').trim();
+const RECORDING_RETENTION_FOUNDER_KEY = (() => {
+  const key = String(process.env.PBK_RECORDING_RETENTION_FOUNDER_KEY || '').trim();
+  return BRIDGE_API_KEY && key && !recordingRetentionSecretMatches(key, BRIDGE_API_KEY) ? key : '';
+})();
 const DESKTOP_SIDECAR_TOKEN = String(process.env.PBK_SIDECAR_TOKEN || '').trim();
 const ALLOW_UNAUTHENTICATED_HOSTED_BRIDGE = /^(1|true|yes|on)$/i.test(String(process.env.PBK_ALLOW_UNAUTHENTICATED_HOSTED_BRIDGE || '').trim());
 const HOSTED_BRIDGE_AUTH_MISCONFIGURED = Boolean(IS_HOSTED && !BRIDGE_API_KEY && !ALLOW_UNAUTHENTICATED_HOSTED_BRIDGE);
@@ -3706,6 +3710,17 @@ function safeCompareString(left = '', right = '') {
   const rightBuffer = Buffer.from(String(right || ''));
   if (!leftBuffer.length || leftBuffer.length !== rightBuffer.length) return false;
   return timingSafeEqual(leftBuffer, rightBuffer);
+}
+
+function recordingRetentionSecretMatches(expected, supplied) {
+  if (typeof supplied !== 'string') return false;
+  return timingSafeEqual(createHash('sha256').update(expected).digest(), createHash('sha256').update(supplied).digest());
+}
+
+function hasDirectRecordingRetentionFounderAuth(headers) {
+  return Boolean(RECORDING_RETENTION_FOUNDER_KEY
+    && isDirectQualificationFounder(headers, BRIDGE_API_KEY)
+    && recordingRetentionSecretMatches(RECORDING_RETENTION_FOUNDER_KEY, headers['x-pbk-recording-retention-founder-key']));
 }
 
 function verifyExternalWebhookRequest(request) {
@@ -41787,7 +41802,7 @@ async function uploadSupabaseRecording({ messageId, storagePath, contentType = '
     : null;
   const guard = await reserveRecordingStorageWrite({ messageId, key: normalizedPath, operation: 'capture', archive });
   if (!guard.ok) return guard;
-  const before = await readSupabaseRecordingVersion(normalizedPath, AbortSignal.timeout(1500), true).catch(() => null);
+  const before = await readSupabaseRecordingVersion(normalizedPath, AbortSignal.timeout(1500)).catch(() => null);
   const response = await fetch(`${SUPABASE_URL}/storage/v1/object/${encodeURIComponent(SUPABASE_CALL_RECORDINGS_BUCKET)}/${encodePathSegments(normalizedPath)}`, {
     method: 'PUT',
     redirect: 'error',
@@ -41805,7 +41820,7 @@ async function uploadSupabaseRecording({ messageId, storagePath, contentType = '
     // Storage validates bucket MIME policy before beginning the upload.
     if ([400, 415].includes(response.status) && failure?.code === 'InvalidMimeType' &&
         failure.statusCode === '415' && before) {
-      const after = await readSupabaseRecordingVersion(normalizedPath, AbortSignal.timeout(4_000), true).catch(() => null);
+      const after = await readSupabaseRecordingVersion(normalizedPath, AbortSignal.timeout(4_000)).catch(() => null);
       if (after && (before.missing ? after.missing : before.version === after.version) &&
           await recordRejectedRecordingUpload(guard.token, normalizedPath)) {
         return { ok: false, statusCode: 415, result: 'recording_storage_upload_rejected',
@@ -41860,14 +41875,13 @@ async function deleteSupabaseRecording(storagePath = '') {
   };
 }
 
-async function readSupabaseRecordingVersion(key, signal = AbortSignal.timeout(4_000), requireMissingProof = false) {
+async function readSupabaseRecordingVersion(key, signal = AbortSignal.timeout(4_000)) {
   const bucket = SUPABASE_CALL_RECORDINGS_BUCKET;
   if (!getSupabaseStorageProviderMeta().ready || !validRecordingRetentionStorageKey(key)) return null;
   const url = `${SUPABASE_URL}/storage/v1/object/info/authenticated/${encodeURIComponent(bucket)}/${encodePathSegments(key)}`;
   const response = await fetch(url, {
     method: 'GET', headers: getSupabaseStorageHeaders(''), cache: 'no-store', redirect: 'error', signal,
   });
-  if (response.status === 404 && !requireMissingProof) return { missing: true };
   if ([400, 404].includes(response.status)) {
     // Storage can wrap NoSuchKey (404) in a legacy HTTP 400 response.
     const error = await response.json().catch(() => null);
@@ -50388,11 +50402,11 @@ async function persistRecordingCapture(message, upload, holdWrite = false) {
   return { ok: true };
 }
 
-async function reserveRecordingRetentionTarget(approvalId, target, stillCurrent) {
+async function reserveRecordingRetentionTarget(approvalId, target) {
   return withRecordingRetentionTransaction(async client => {
     if (!await lockRecordingStorageTarget(client, target.id, target.key)) return false;
     const row = await readRecordingRetentionTarget(target.id, target.key, client);
-    if (row?.version !== target.storageVersion || !stillCurrent()) return false;
+    if (row?.version !== target.storageVersion) return false;
     const result = await client.query(`INSERT INTO public.pbk_recording_retention_attempts
         (approval_id, message_id, bucket, storage_key, object_version, row_version)
       SELECT approval_id, $2, $3, $4, $5, $6 FROM ONLY public.pbk_recording_retention_approvals
@@ -50438,34 +50452,21 @@ async function runRecordingRetentionCleanup({ dryRun = true, days = 0, actor = '
     if (!storagePath) return false;
     const created = Date.parse(message.createdAt || message.updatedAt || '');
     return Number.isFinite(created) && created < cutoffMs;
-  }) : execution.targets.map(target => state.messages.find(row => row.id === target.id)).filter(Boolean);
+  }) : execution.targets.map(target => ({ id: target.id, storagePath: target.key, createdAt: target.createdAt }));
 
   const deletions = [];
   if (!dryRun) {
     for (const target of execution.targets) {
       const { id: messageId, key: storagePath } = target;
-      const current = () => {
-        const matches = state.messages.filter(row => row.id === messageId);
-        return matches.length === 1 && recordingRetentionTargetMatches(target, matches[0], getMessageRecordingPath)
-          ? matches[0] : null;
-      };
-      const message = current();
-      if (!message) {
-        deletions.push({ messageId, ok: false, tracking: 'pending', reason: 'retention_target_changed' });
-        continue;
-      }
       const deletedAt = isoNow();
       const deletion = await (async () => {
-        const reserved = await reserveRecordingRetentionTarget(execution.id, target, () =>
-          current() === message && !state.messages.some(item => item !== message && getMessageRecordingPath(item) === storagePath));
+        const reserved = await reserveRecordingRetentionTarget(execution.id, target);
         if (!reserved) {
           return { ok: false, tracking: 'pending', reason: 'retention_target_changed' };
         }
         // The committed intent fences this key while the provider call runs.
         // Any ambiguous response leaves it quarantined; never replay a DELETE.
-        const ack = current() === message
-          ? await deleteSupabaseRecordingVersion(storagePath, target.objectVersion, AbortSignal.timeout(4_000))
-          : { ok: false, tracking: 'pending', reason: 'retention_target_changed', notDispatched: true };
+        const ack = await deleteSupabaseRecordingVersion(storagePath, target.objectVersion, AbortSignal.timeout(4_000));
         if (ack.notDispatched) {
           await getPgPool().query(`UPDATE ONLY public.pbk_recording_retention_attempts
             SET outcome = 'not_dispatched', finished_at = NOW()
@@ -50475,11 +50476,11 @@ async function runRecordingRetentionCleanup({ dryRun = true, days = 0, actor = '
         const saved = await finalizeRecordingRetentionTarget(execution.id, target, deletedAt);
         return saved ? ack : { ok: false, tracking: 'pending', reason: 'retention_readback_unconfirmed' };
       })().catch(() => ({ ok: false, tracking: 'pending', reason: 'recording_storage_delete_unconfirmed' }));
-      if (deletion.ok && current() === message) {
-        state.messages = state.messages.map(item => item !== message ? item : {
-          ...withoutRetentionPrimaryFields(message), storagePath: '', storageBucket: '', recordingUrl: '',
+      if (deletion.ok) {
+        state.messages = state.messages.map(item => item.id !== messageId || getMessageRecordingPath(item) !== storagePath ? item : {
+          ...withoutRetentionPrimaryFields(item), storagePath: '', storageBucket: '', recordingUrl: '',
           updatedAt: deletedAt, deletedAt, retentionStatus: 'deleted',
-          payload: { ...withoutRetentionPrimaryFields(message.payload), retentionStatus: 'deleted', deletedAt },
+          payload: { ...withoutRetentionPrimaryFields(item.payload), retentionStatus: 'deleted', deletedAt },
         });
         deletions.push({ messageId, storagePath, ...deletion, tracking: 'confirmed' });
       } else {
@@ -50496,7 +50497,8 @@ async function runRecordingRetentionCleanup({ dryRun = true, days = 0, actor = '
     days: retentionDays,
     cutoffAt: new Date(cutoffMs).toISOString(),
     candidateCount: dryRun ? candidates.length : execution.plan.targetCount,
-    ...(dryRun ? {} : { approvalId: execution.id, blockedCandidateCount: execution.blockedCandidateCount }),
+    ...(dryRun ? {} : { approvalId: execution.id, blockedCandidateCount: execution.blockedCandidateCount,
+      moreCandidates: execution.moreCandidates }),
     deletedCount: deletions.filter((item) => item.ok).length,
     candidates: candidates.map((message) => ({
       messageId: message.id,
@@ -61621,7 +61623,7 @@ async function handleRuntimeEvent(normalizedEvent, payload, directRetentionFound
     if (retentionFounderDecision) {
       const claimed = await claimRecordingRetentionFounderDecision(getPgPool(), {
         id: approval.id, actor: incomingActor, actedAt: incomingActedAt, directFounder: directRetentionFounder,
-        founderProofKey: BRIDGE_API_KEY,
+        founderProofKey: RECORDING_RETENTION_FOUNDER_KEY,
       });
       if (!claimed) return {
         ok: false, statusCode: 409, error: 'The durable retention request is not pending, current, and ready for a founder decision.',
@@ -80275,7 +80277,7 @@ const server = createServer(async (request, response) => {
         reviewReason: body.reviewReason || '',
         falsePositiveTag: body.falsePositiveTag || body.reviewReason || '',
         teamAuth: body.teamAuth || null,
-      }, { directRetentionFounder: !teamAuthPresented && isDirectQualificationFounder(request.headers, BRIDGE_API_KEY) });
+      }, { directRetentionFounder: !teamAuthPresented && hasDirectRecordingRetentionFounderAuth(request.headers) });
       json(response, result.ok === false ? result.statusCode || 404 : 200, {
         ...result,
         state: buildStateSnapshot(),
@@ -80358,7 +80360,7 @@ const server = createServer(async (request, response) => {
         reviewReason: body.reviewReason || '',
         falsePositiveTag: body.falsePositiveTag || body.reviewReason || '',
         teamAuth: body.teamAuth || null,
-      }, { directRetentionFounder: !teamAuthPresented && isDirectQualificationFounder(request.headers, BRIDGE_API_KEY) });
+      }, { directRetentionFounder: !teamAuthPresented && hasDirectRecordingRetentionFounderAuth(request.headers) });
       json(response, result.ok === false ? result.statusCode || 404 : 200, {
         ...result,
         state: buildStateSnapshot(),
@@ -80701,21 +80703,40 @@ const server = createServer(async (request, response) => {
         return;
       }
       const archivedAt = body.archivedAt || body.archived_at || isoNow();
+      const archiveMetadata = {
+        archived: true,
+        archivedAt,
+        archivedBy: body.actor || 'PBK Command Center',
+        archiveReason: body.reason || body.archiveReason || 'operator_archive',
+      };
       const message = {
         ...existing,
         status: 'archived',
         archivedAt,
         updatedAt: isoNow(),
-        payload: {
-          ...(existing.payload || {}),
-          archived: true,
-          archivedAt,
-          archivedBy: body.actor || 'PBK Command Center',
-          archiveReason: body.reason || body.archiveReason || 'operator_archive',
-        },
+        payload: { ...(existing.payload || {}), ...archiveMetadata },
       };
+      // Archive metadata only; never write a recording pointer back from the cache.
+      const dbArchive = await queryPgRows(
+        `UPDATE ONLY public.unified_messages
+         SET status = 'archived', payload = payload || $2::jsonb, updated_at = $3
+         WHERE id = $1 RETURNING id`,
+        [message.id, JSON.stringify(archiveMetadata), message.updatedAt]
+      );
+      if (dbArchive.rows.length !== 1 && (IS_HOSTED || dbArchive.reason !== 'no_database')) {
+        json(response, ['23514', '55P03'].includes(dbArchive.code) ? 409 : 503, {
+          ok: false,
+          result: 'inbox_archive_failed',
+          archived: false,
+          messageId: id,
+          error: 'The inbox archive could not be confirmed.',
+        });
+        return;
+      }
+      if (dbArchive.ok) {
+        await projectLiveConversationRecord({ record: message, projector: projectMessageEvent, source: 'persistUnifiedMessageRecord' });
+      }
       upsertMessage(state, message);
-      await persistUnifiedMessageRecord(message);
       addActivity(
         state,
         makeActivity({
@@ -80751,12 +80772,23 @@ const server = createServer(async (request, response) => {
         });
         return;
       }
+      const durableId = String(existing.id || existing.messageId || existing.callId || id).trim();
+      const dbDelete = await queryPgRows('DELETE FROM ONLY public.unified_messages WHERE id = $1 RETURNING id', [durableId]);
+      if (dbDelete.rows.length !== 1 && (IS_HOSTED || dbDelete.reason !== 'no_database')) {
+        json(response, ['23514', '55P03'].includes(dbDelete.code) ? 409 : 503, {
+          ok: false,
+          result: 'inbox_delete_failed',
+          deleted: false,
+          messageId: id,
+          error: 'The inbox deletion could not be confirmed.',
+        });
+        return;
+      }
       const messageIdentifiers = uniqueLeadLookupValues([existing.id, existing.messageId, existing.callId, existing.telnyxCallControlId, existing.telnyxCallSessionId, id]);
       state.messages = (state.messages || []).filter((message) => {
         const candidates = [message?.id, message?.messageId, message?.callId, message?.telnyxCallControlId, message?.telnyxCallSessionId].map((value) => String(value || '').trim()).filter(Boolean);
         return !candidates.some((value) => messageIdentifiers.includes(value));
       });
-      const dbDelete = await deleteUnifiedMessageRecordFromDb(existing, id);
       addActivity(
         state,
         makeActivity({
@@ -81004,9 +81036,9 @@ const server = createServer(async (request, response) => {
     if (request.method === 'POST' && pathname === '/api/recordings/retention/run') {
       const body = await readBody(request);
       const result = await handleRecordingRetentionRequest({
-        body, getPool: getPgPool, getMessages: () => state.messages || [], getPath: getMessageRecordingPath,
+        body, getPool: getPgPool, getPath: getMessageRecordingPath,
         getPolicyDays: () => getRecordingRetentionPolicy().days, bucket: SUPABASE_CALL_RECORDINGS_BUCKET,
-        readObjectVersion: readSupabaseRecordingVersion, founderProofKey: BRIDGE_API_KEY,
+        readObjectVersion: readSupabaseRecordingVersion, founderProofKey: RECORDING_RETENTION_FOUNDER_KEY,
         async getStorageVersion({ id, key }, cutoffAt) {
           const row = await readRecordingRetentionTarget(id, key);
           return eligibleDurableRecording(row, cutoffAt) ? row.version : null;

@@ -204,8 +204,9 @@ test('approval, auth, delivery and dispatch code remains unchanged outside revie
   // The recording writer guard shares the canonical Storage key with retention.
   // The isolated retention suite covers pointer types, startup proof and upload rejection.
   // Pin the synced bridge, including the reviewed read-only Analytics changes.
+  // The retention repair binds founder authority, durable discovery and confirmed inbox writes.
   assert.equal(createHash('sha256').update(unchanged).digest('hex'),
-    '76448c51d37a559e5d023ad1060c44f156c293c392817a78926aaa19e41cb13a');
+    '8678d6f234ebd6f579c06e93312590dfe5c6c04c84dd7812d660838050e97046');
 });
 
 test('production distribution includes reader and protocol, never the fixture signer', () => {

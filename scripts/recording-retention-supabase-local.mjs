@@ -12,6 +12,7 @@ import vm from 'node:vm';
 import ts from 'typescript';
 import { validRecordingObjectVersion, validRecordingRetentionStorageKey } from './recording-retention-authorization.mjs';
 import { assertRecordingRetentionSchema } from './recording-retention-schema.mjs';
+import { hashProviderActionContext } from './provider-action-authorization.mjs';
 import { withRetentionPostgres } from './fixtures/recording-retention-postgres.mjs';
 import { startIsolatedBridge } from './bridge-smoke-isolation.mjs';
 import { isRetentionStorageRequest, retentionStorageBucket, retentionStorageFixtureFlag, retentionStorageOrigin, retentionWriterFixtureKey }
@@ -225,6 +226,7 @@ async function exerciseRetentionRoute({ http, put, assertBytes, ageObject }) {
   const interrupted = { id: 'fixture-retention-interrupted', key: 'fixture/retention-interrupted.txt', text: 'recording with interrupted readback' };
   const later = { id: 'fixture-retention-later', key: 'fixture/retention-later.txt', text: 'independent recording' };
   const rollback = { id: 'fixture-retention-pointer-rollback', key: 'fixture/retention-pointer-rollback.txt', text: 'recording with a rejected pointer update' };
+  const unverified = { id: 'fixture-retention-unverified-readback', key: 'fixture/retention-unverified-readback.txt' };
   const fixtures = [[target, 90], [replacement, 45], [interrupted, 15], [later, 5], [rollback, 1.5]];
   for (const [row, days] of fixtures) {
     row.createdAt = new Date(Date.now() - days * 86_400_000).toISOString();
@@ -237,10 +239,11 @@ async function exerciseRetentionRoute({ http, put, assertBytes, ageObject }) {
     let overlapError;
     let duringCapture;
     let duringManualDelete;
+    let hideUnverifiedReadback = false;
     const deleted = [];
-    const start = ({ requireRecordingSchema = false } = {}) => startIsolatedBridge({
+    const start = ({ requireRecordingSchema = false, retentionFounderKeyMode = 'distinct' } = {}) => startIsolatedBridge({
       args: [retentionStorageFixtureFlag], retentionPostgres: binding, startupMs: process.platform === 'win32' ? 90_000 : 55_000,
-      requireRecordingSchema,
+      requireRecordingSchema, retentionFounderKeyMode,
       async retentionStorage({ url, method, body }) {
         if (url === `${retentionStorageOrigin}/storage/v1/${object}/${retentionWriterFixtureKey}`) {
           if (method === 'PUT') await duringCapture?.();
@@ -265,14 +268,18 @@ async function exerciseRetentionRoute({ http, put, assertBytes, ageObject }) {
           }
           const result = await http(method, url.slice(`${retentionStorageOrigin}/storage/v1/`.length), body);
           deleted.push({ path, versionId, result });
+          if (path === unverified.key) hideUnverifiedReadback = true;
           if (path === interrupted.key) return { status: 503, body: '{}' };
           return result;
+        }
+        if (hideUnverifiedReadback && method === 'GET' && url.endsWith(`/${unverified.key}`)) {
+          return { status: 404, body: '{"error":"Route not found"}' };
         }
         return http(method, url.slice(`${retentionStorageOrigin}/storage/v1/`.length), body);
       },
     });
-    const launch = async () => {
-      const child = await start();
+    const launch = async options => {
+      const child = await start(options);
       try {
         for (let attempt = 0; ; attempt++) {
           const health = await (await child.fetch(new URL('/health', child.origin))).json();
@@ -353,7 +360,7 @@ async function exerciseRetentionRoute({ http, put, assertBytes, ageObject }) {
       const message = { id: row.id, channel: 'call', direction: 'recording', status: 'recorded', workspaceId: 'pbk',
         createdAt: row.createdAt, updatedAt: row.createdAt, storagePath: row.key, storageBucket: bucket,
         payload: { storagePath: row.key, s3Archive: archive } };
-      messages.push(message);
+      if (row !== target) messages.push(message);
       await pool.query(`INSERT INTO public.unified_messages
         (id, workspace_id, channel, direction, status, storage_path, storage_bucket, payload, created_at, updated_at, recording_url)
         VALUES ($1,'pbk','call','recording','recorded',$2,$3,$4,$5,$5,$6)`,
@@ -373,15 +380,21 @@ async function exerciseRetentionRoute({ http, put, assertBytes, ageObject }) {
     await pool.query("UPDATE public.bridge_state SET data = jsonb_set(data, '{messages}', $1) WHERE id = 'singleton'", [JSON.stringify(messages)]);
     let bridge = await launch();
     const retention = '/api/recordings/retention';
-    const request = async (path, status, body, auth = { authorization: `Bearer ${bridge.apiKey}` }) => {
-      const response = await bridge.fetch(new URL(path, bridge.origin), {
-        method: body === undefined ? 'GET' : 'POST',
-        headers: { 'content-type': 'application/json', ...auth }, body: body === undefined ? undefined : JSON.stringify(body),
+    const request = async (path, status, body, auth, { child = bridge, method = body === undefined ? 'GET' : 'POST' } = {}) => {
+      const response = await child.fetch(new URL(path, child.origin), {
+        method,
+        headers: { 'content-type': 'application/json', ...(auth ?? { authorization: `Bearer ${child.apiKey}` }) },
+        body: body === undefined ? undefined : JSON.stringify(body),
       });
       const data = await response.json();
       assert.equal(response.status, status, JSON.stringify({ path, result: data.result, code: data.code, error: data.error }));
       return data;
     };
+    const founderHeader = 'x-pbk-recording-retention-founder-key';
+    const founderAuth = (child = bridge, key = child.retentionFounderKey) => ({
+      authorization: `Bearer ${child.apiKey}`, [founderHeader]: key,
+    });
+    const approveRetention = (id, body = {}) => request(`/api/approvals/${id}/approve`, 200, body, founderAuth());
     const decision = async id => (await pool.query(`SELECT a.status, g.consumed_at FROM public.approvals a
       JOIN public.pbk_recording_retention_approvals g ON g.approval_id = a.id WHERE a.id = $1`, [id])).rows[0];
     const pointer = async id => (await pool.query(`SELECT storage_path, storage_bucket, recording_url, payload, updated_at
@@ -396,7 +409,8 @@ async function exerciseRetentionRoute({ http, put, assertBytes, ageObject }) {
       assert.equal((await pointer(staleId)).storage_path, staleKey);
       assert.equal((await remove(ambiguousId)).status, 400, 'manual deletion must reject an unstable archive key before I/O');
       assert.deepEqual((await pointer(ambiguousId)).payload, ambiguous);
-      assert.equal((await request(`${retention}/preview?days=60`, 200)).run.candidateCount, 1);
+      assert.equal((await request(`${retention}/preview?days=60`, 200)).run.candidateCount, 0,
+        'the old recording is outside the dashboard cache');
       await request(`${retention}/run`, 401, { dryRun: false, days: 60 }, {});
       await pool.query(`INSERT INTO public.unified_messages (id, workspace_id, channel, direction, storage_path)
         VALUES ('retention-legacy-alias', 'pbk', 'call', 'recording', $1)`,
@@ -404,7 +418,7 @@ async function exerciseRetentionRoute({ http, put, assertBytes, ageObject }) {
       assert.equal((await run(409, 60)).result, 'retention_plan_changed');
       await pool.query("DELETE FROM public.unified_messages WHERE id = 'retention-legacy-alias'");
       const queued = await run(202, 60);
-      assert.equal(queued.candidateCount, 1);
+      assert.equal(queued.candidateCount, 1, 'retention must find recordings that are not in the dashboard cache');
       const { approvalId } = queued;
       assert.deepEqual(await decision(approvalId), { status: 'pending', consumed_at: null });
       assert.equal((await run(403, 60, approvalId)).result, 'retention_approval_required');
@@ -413,10 +427,32 @@ async function exerciseRetentionRoute({ http, put, assertBytes, ageObject }) {
 
       const team = await request('/api/auth/team', 200, { passcode: bridge.teamPasscode, actor: 'Synthetic operator' }, {});
       const approve = `/api/approvals/${approvalId}/approve`;
-      await request(approve, 403, {}, { 'x-pbk-team-token': team.token });
+      const updateApproval = `/api/approvals/${approvalId}`;
+      const approveBody = { status: 'approved' };
+      const putDecision = { method: 'PUT' };
+      await request(approve, 403, {}, { 'x-pbk-team-token': team.token, [founderHeader]: bridge.retentionFounderKey });
+      await request(approve, 401, {}, { [founderHeader]: bridge.retentionFounderKey });
+      assert.equal((await request(approve, 403, {})).result, 'retention_founder_required');
+      assert.equal((await request(approve, 403, {}, founderAuth(bridge, randomUUID()))).result, 'retention_founder_required');
+      assert.equal((await request(approve, 403, {}, { ...founderAuth(), 'x-pbk-netlify-proxy': '1' })).result,
+        'retention_founder_required');
+      assert.equal((await request(updateApproval, 403, approveBody, undefined, putDecision)).result, 'retention_founder_required');
+      assert.equal((await request(updateApproval, 403, approveBody, founderAuth(bridge, bridge.apiKey), putDecision)).result,
+        'retention_founder_required');
       assert.deepEqual(await decision(approvalId), { status: 'pending', consumed_at: null });
-      const approved = await request(approve, 200, { actor: 'Synthetic founder' });
+      const approved = await approveRetention(approvalId, { actor: 'Synthetic founder' });
       assert.equal(approved.approval.status, 'approved');
+      for (const retentionFounderKeyMode of ['missing', 'shared']) {
+        const child = await launch({ retentionFounderKeyMode });
+        try {
+          const denied = await request(approve, 403, {}, founderAuth(child, child.apiKey), { child });
+          assert.equal(denied.result, 'retention_founder_required', retentionFounderKeyMode);
+          const blocked = await request(`${retention}/run`, 403, { dryRun: false, days: 60, approvalId }, undefined, { child });
+          assert.equal(blocked.result, 'retention_approval_required', retentionFounderKeyMode);
+        } finally {
+          await child.stop();
+        }
+      }
       assert.deepEqual(await decision(approvalId), { status: 'approved', consumed_at: null });
       assert.equal(deleted.length, 0, 'approving must not dispatch deletion');
       const complete = await run(200, 60, approvalId);
@@ -442,7 +478,7 @@ async function exerciseRetentionRoute({ http, put, assertBytes, ageObject }) {
 
       const racing = await run(202, 30);
       assert.equal(racing.candidateCount, 1);
-      await request(`/api/approvals/${racing.approvalId}/approve`, 200, { actor: 'Synthetic founder' });
+      await request(`/api/approvals/${racing.approvalId}`, 200, { ...approveBody, actor: 'Synthetic founder' }, founderAuth(), putDecision);
       injectOverwrite = true;
       const held = await run(200, 30, racing.approvalId);
       assert.equal(held.run.status, 'pending');
@@ -463,13 +499,17 @@ async function exerciseRetentionRoute({ http, put, assertBytes, ageObject }) {
       assert.equal((await pointer(replacement.id)).storage_path, replacement.key);
       assert.equal((await run(409, 30, racing.approvalId)).result, 'retention_approval_consumed');
       assert.equal(deleted.length, 2);
-      const proof = await pool.query('SELECT founder_approved_at, founder_proof FROM public.pbk_recording_retention_approvals WHERE approval_id = $1', [approvalId]);
-      assert.ok(proof.rows[0].founder_approved_at instanceof Date, 'the decision must leave durable founder proof');
-      assert.match(proof.rows[0].founder_proof, /^[a-f0-9]{64}$/);
+      const { rows: [proof] } = await pool.query(`SELECT plan, founder_approved_at, founder_proof
+        FROM public.pbk_recording_retention_approvals WHERE approval_id = $1`, [approvalId]);
+      assert.ok(proof.founder_approved_at instanceof Date, 'the decision must leave durable founder proof');
+      const expectedProof = createHmac('sha256', bridge.retentionFounderKey).update(JSON.stringify([
+        'pbk-recording-retention-founder-v1', approvalId, hashProviderActionContext(proof.plan), proof.founder_approved_at.toISOString(),
+      ])).digest('hex');
+      assert.ok(proof.founder_proof === expectedProof, 'durable proof must use the separate founder key');
 
       const cut = await run(202, 10);
       assert.equal(cut.candidateCount, 1);
-      await request(`/api/approvals/${cut.approvalId}/approve`, 200, {});
+      await approveRetention(cut.approvalId);
       assert.equal((await run(200, 10, cut.approvalId)).run.status, 'pending');
       assert.equal((await pointer(interrupted.id)).storage_path, interrupted.key);
       const interruptedReadback = await http('GET', `object/info/authenticated/${bucket}/${interrupted.key}`);
@@ -488,7 +528,7 @@ async function exerciseRetentionRoute({ http, put, assertBytes, ageObject }) {
       const next = await run(202, 2);
       assert.equal(next.candidateCount, 1);
       assert.equal(next.blockedCandidateCount, 2);
-      await request(`/api/approvals/${next.approvalId}/approve`, 200, {});
+      await approveRetention(next.approvalId);
       assert.equal((await run(200, 2, next.approvalId)).run.deletedCount, 1);
       assert.equal(deleted.filter(item => item.path === interrupted.key).length, 1, 'unknown deletion must not replay');
 
@@ -511,7 +551,7 @@ async function exerciseRetentionRoute({ http, put, assertBytes, ageObject }) {
       const beforePointer = await pointer(rollback.id);
       const queuedRollback = await run(202, 1);
       assert.equal(queuedRollback.candidateCount, 1);
-      await request(`/api/approvals/${queuedRollback.approvalId}/approve`, 200, {});
+      await approveRetention(queuedRollback.approvalId);
       const rolledBack = await run(200, 1, queuedRollback.approvalId);
       assert.equal(rolledBack.run.status, 'pending');
       assert.equal(rolledBack.run.deletedCount, 0);
@@ -537,6 +577,28 @@ async function exerciseRetentionRoute({ http, put, assertBytes, ageObject }) {
       assert.equal((await rollbackManualDelete.json()).result, 'recording_storage_busy');
       assert.equal(bridge.blockedNetwork.fetch || 0, rollbackBlockedFetches, 'the pending key must block independent writes before Storage I/O');
       assert.equal(deleted.filter(item => item.path === rollback.key).length, 1, 'a pointer rollback must not replay the confirmed Storage deletion');
+      const cachedInboxMessage = async () => (await request('/api/messages', 200)).messages.find(item => item.id === rollback.id);
+      const durableInboxMessage = async () => (await pool.query('SELECT * FROM public.unified_messages WHERE id = $1', [rollback.id])).rows[0];
+      const savedInboxMessage = async () => (await pool.query(`SELECT message FROM public.bridge_state,
+        jsonb_array_elements(data->'messages') AS items(message)
+        WHERE id = 'singleton' AND message->>'id' = $1`, [rollback.id])).rows[0]?.message;
+      const cachedBefore = await cachedInboxMessage();
+      const durableBefore = await durableInboxMessage();
+      const savedBefore = await savedInboxMessage();
+      assert.equal(cachedBefore.status, 'recorded');
+      assert.equal(durableBefore.status, 'recorded');
+      assert.equal(savedBefore.status, 'recorded');
+      for (const [method, suffix, flag] of [['PATCH', '/archive', 'archived'], ['DELETE', '', 'deleted']]) {
+        const inboxResponse = await bridge.fetch(new URL(`/api/messages/${rollback.id}${suffix}`, bridge.origin), {
+          method, headers: { authorization: `Bearer ${bridge.apiKey}`, 'content-type': 'application/json' },
+          body: method === 'PATCH' ? '{}' : undefined,
+        });
+        const inboxResult = await inboxResponse.json();
+        assert.deepEqual({ status: inboxResponse.status, ok: inboxResult.ok, changed: inboxResult[flag],
+          durable: await durableInboxMessage(), cached: await cachedInboxMessage(), saved: await savedInboxMessage() },
+        { status: 409, ok: false, changed: false, durable: durableBefore, cached: cachedBefore, saved: savedBefore },
+        `generic Inbox ${method} must leave both records and the cache unchanged when retention is pending`);
+      }
       const fenceProbe = await pool.connect();
       try {
         await fenceProbe.query('BEGIN');
@@ -556,6 +618,24 @@ async function exerciseRetentionRoute({ http, put, assertBytes, ageObject }) {
       } finally {
         try { await fenceProbe.query('ROLLBACK'); } finally { fenceProbe.release(); }
       }
+
+      await put(unverified.key, 'synthetic unverified readback');
+      const unverifiedCreatedAt = new Date(Date.now() - 1.25 * 86_400_000).toISOString();
+      await ageObject(unverified.key, unverifiedCreatedAt);
+      await pool.query(`INSERT INTO public.unified_messages
+        (id, workspace_id, channel, direction, storage_path, storage_bucket, created_at)
+        VALUES ($1,'pbk','call','recording',$2,$3,$4)`, [unverified.id, unverified.key, bucket, unverifiedCreatedAt]);
+      const unverifiedBefore = await pointer(unverified.id);
+      const queuedUnverified = await run(202, 1);
+      assert.equal(queuedUnverified.candidateCount, 1);
+      await request(`/api/approvals/${queuedUnverified.approvalId}/approve`, 200, {});
+      const unverifiedRun = await run(200, 1, queuedUnverified.approvalId);
+      assert.equal(unverifiedRun.run.status, 'pending');
+      assert.equal(unverifiedRun.run.deletedCount, 0);
+      assert.deepEqual(await pointer(unverified.id), unverifiedBefore, 'an unclassified 404 cannot clear the recording pointer');
+      const unverifiedDelete = deleted.find(item => item.path === unverified.key);
+      assert.equal(JSON.parse(unverifiedDelete.result.body)[0].version, unverifiedDelete.versionId);
+      assert.equal((await run(409, 1, queuedUnverified.approvalId)).outcomes[0].outcome, 'pending');
 
       const writerId = 'fixture-retention-writer';
       await put(retentionWriterFixtureKey, 'synthetic seed bytes');

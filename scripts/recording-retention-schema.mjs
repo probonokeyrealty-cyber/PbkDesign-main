@@ -16,6 +16,12 @@ export async function assertRecordingRetentionSchema(pool) {
         AND NOT row_security_active(r.oid)
         AND has_table_privilege(r.oid, p.privilege))
         FROM relations r CROSS JOIN LATERAL unnest(r.privileges) AS p(privilege)), false)
+      -- Keep the trigger and retention target/readback columns in sync with the migration preflight.
+      AND (SELECT count(*) = 10 FROM pg_catalog.pg_attribute
+        WHERE attrelid = to_regclass('public.unified_messages')
+          AND attname IN ('id', 'payload', 'storage_path', 'storage_bucket', 'workspace_id', 'channel',
+            'direction', 'created_at', 'recording_url', 'updated_at')
+          AND attnum > 0 AND NOT attisdropped)
       AND (SELECT count(*) = 2 FROM pg_catalog.pg_trigger
         WHERE tgrelid = to_regclass('public.unified_messages')
           AND tgname IN ('protect_recording_retention_pointer', 'protect_recording_retention_truncate')

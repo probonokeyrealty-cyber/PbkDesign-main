@@ -34,7 +34,10 @@ Apply migrations:
 Recording retention rollout:
 
 - Before releasing the updated bridge, apply `20261120016000_pbk_recording_retention_approvals.sql` to the canonical Render Postgres with the migration runner. The Render bridge verifies the schema and runtime-role access before opening its listener; it does not apply migrations on startup.
+- Set `PBK_RECORDING_RETENTION_FOUNDER_KEY` in the bridge's private server environment and give it only to the founder. Use a high-entropy secret separate from `PBK_BRIDGE_API_KEY`. Never put it in provider settings, browser builds, or proxies.
+- Direct retention decisions (`POST /api/approvals/:id/:decision` or `PUT /api/approvals/:id`) require both `Authorization: Bearer <PBK_BRIDGE_API_KEY>` and `x-pbk-recording-retention-founder-key`. The retention run verifies the durable grant using the server's founder key; the run request does not send that key. Missing or reused configuration blocks decisions and new grant consumption. Re-request unconsumed approvals signed with the old bridge key or before a founder key rotation.
 - Resolve ambiguous legacy recording pointers before retention or recording storage writes. A rejected upload is released only after a recognized pre-write rejection and unchanged Storage readback. Ambiguous reservations remain locked; do not clear them or replay Storage writes without independent evidence.
+- Live retention selects up to 25 eligible recordings from Postgres, oldest first. A response with `moreCandidates: true` means another batch needs its own approval; quarantined rows do not count toward that batch. The dashboard-only dry run is not a full inventory.
 
 Verification:
 

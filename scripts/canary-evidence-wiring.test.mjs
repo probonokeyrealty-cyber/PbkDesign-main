@@ -192,8 +192,13 @@ test('approval, auth, delivery and dispatch code outside maturity remains byte-f
   // Retention hardening adds durable founder proof and per-key deletion intent.
   // The recording writer guard shares the canonical Storage key with retention.
   // The isolated retention suite covers pointer types, startup proof and upload rejection.
-  assert.equal(createHash('sha256').update(unchanged).digest('hex'),
-    '8a2da4b2e816388ce2ea43e6e6b5ee30aac391a817f81ae2babf69f29c5d597c');
+  // GitHub's combined PR checkout includes the read-only Analytics change in e5e2bcb.
+  // The import selects a reviewed snapshot; it does not exclude any bytes from the hash.
+  const includesMainAnalytics = source.includes("from '../src/app/utils/analyticsEvidence.mjs';");
+  const expectedChecksum = includesMainAnalytics
+    ? '76448c51d37a559e5d023ad1060c44f156c293c392817a78926aaa19e41cb13a'
+    : '8a2da4b2e816388ce2ea43e6e6b5ee30aac391a817f81ae2babf69f29c5d597c';
+  assert.equal(createHash('sha256').update(unchanged).digest('hex'), expectedChecksum);
 });
 
 test('production distribution includes reader and protocol, never the fixture signer', () => {

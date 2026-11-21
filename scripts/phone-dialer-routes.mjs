@@ -20,6 +20,8 @@ export function createPhoneDialerRuntime({
   persistState,
   createApproval,
   isPhoneDnc,
+  loadParcelLeads,
+  saveParcelLead,
   defaultCallerId = '',
   logActivity = () => {},
   fetchImpl = globalThis.fetch,
@@ -90,6 +92,8 @@ export function createPhoneDialerRuntime({
     phoneNumbers,
     twilio: adapters.twilio,
     listLeads: listCrmLeads,
+    loadParcelLeads,
+    saveParcelLead,
     isDnc: async (phone) => Boolean(await isPhoneDnc(phone)),
     readStore: dialerStore,
     writeStore: async (next) => { getState().parcelDialer = next; await persist(); },
@@ -252,6 +256,11 @@ export function createPhoneDialerRouter({ runtime, json, readBody, readRawBodyBu
         json(response, result.ok ? 200 : 404, result);
         return true;
       }
+      if (pathname === '/api/dialer/leads' && method === 'POST') {
+        const result = await dialer.createLead({ parcelId: body.parcelId, actor: ctx.actor });
+        json(response, result.ok ? (result.created ? 201 : 200) : 409, result);
+        return true;
+      }
       if (pathname === '/api/dialer/calls' && method === 'GET') {
         json(response, 200, { ok: true, calls: dialer.listCalls() });
         return true;
@@ -291,7 +300,7 @@ export function createPhoneDialerRouter({ runtime, json, readBody, readRawBodyBu
         return true;
       }
     } catch (error) {
-      json(response, error?.code === 'not_configured' ? 503 : 502, { ok: false, code: error?.code || 'provider_error', error: String(error?.message || 'Provider request failed.').slice(0, 240) });
+      json(response, error?.status === 503 || error?.code === 'not_configured' ? 503 : 502, { ok: false, code: error?.code || 'provider_error', error: String(error?.message || 'Provider request failed.').slice(0, 240) });
       return true;
     }
     return false;

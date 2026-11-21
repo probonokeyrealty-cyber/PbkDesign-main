@@ -26,6 +26,7 @@ import { createPropertyIntelligence } from './property-intelligence.mjs';
 import { lookupAttomRecentSales } from './attom-recent-sales.mjs';
 import { lookupAddressSuggestions } from './address-suggestions.mjs';
 import { createPhoneDialerRouter, createPhoneDialerRuntime } from './phone-dialer-routes.mjs';
+import { matchParcelToLeads, normalizeParcelId } from './parcel-dialer.mjs';
 import { applyAgentVersionRollback, buildAgentRegistrySnapshot, buildAgentVersionSnapshot, buildDefaultAgentRegistry, buildStableAgentFleetMeasurement, findAgentsByCapability, invokeRegisteredAgent, mergeAgentRegistryRecords, normalizeAgentRegistryId, normalizeAgentRegistryRecord, validateAgentVersionSnapshot } from './agent-registry.mjs';
 import { buildAgentExecutionEvidence, collectAgentFleetEvidence, isNonOperationalAgentEvidence, isAgentHandlerCompletion } from './agent-fleet-measurement.mjs';
 import { getAgentLatencyPolicy } from './agent-latency-policy.mjs';
@@ -37310,7 +37311,7 @@ async function persistPropertyCacheRowToDb(item = {}, source = 'property-data') 
   );
 }
 
-async function persistLeadProfileRowToDb(lead = {}, source = 'property-data', { exactIdentity = false } = {}) {
+async function persistLeadProfileRowToDb(lead = {}, source = 'property-data', { exactIdentity = false, insertOnly = false } = {}) {
   const property = lead.property || {};
   const seller = lead.seller || {};
   let leadId = String(lead.leadId || lead.id || '').trim();
@@ -37374,7 +37375,7 @@ async function persistLeadProfileRowToDb(lead = {}, source = 'property-data', { 
        $20, $21, $22::jsonb, $23::jsonb, $24::jsonb,
        $25::jsonb, $26::jsonb, $27::jsonb, NOW(), NOW()
      )
-     ON CONFLICT (id) DO UPDATE SET
+     ON CONFLICT (id) ${insertOnly ? 'DO NOTHING' : `DO UPDATE SET
        external_id = EXCLUDED.external_id,
        source = EXCLUDED.source,
        status = EXCLUDED.status,
@@ -37399,7 +37400,7 @@ async function persistLeadProfileRowToDb(lead = {}, source = 'property-data', { 
        field_provenance = EXCLUDED.field_provenance,
        projection_proof = EXCLUDED.projection_proof,
        raw = EXCLUDED.raw,
-       updated_at = NOW()`,
+       updated_at = NOW()`}`,
     [
       leadId,
       lead.externalId || lead.external_id || leadId,
@@ -61033,16 +61034,84 @@ function findDuplicateLeadImport(leadImport = {}) {
   });
 }
 
-async function handleManualLeadCreate(payload = {}) {
+function parcelLeadFromProfileRow(row) {
+  return {
+    ...plainRecord(row.raw), id: row.id, leadId: row.id, source: row.source, stage: row.stage,
+    status: row.status, phone: row.phone, address: row.address, leadName: row.lead_name,
+    city: row.city, state: row.state, zip: row.postal_code,
+  };
+}
+
+async function loadParcelLeadCandidates(feature) {
+  if (!IS_HOSTED && !getPgPool()) return [];
+  const { parcelId, situs } = feature.properties;
+  const result = await queryPgRows(
+    `SELECT id, raw, source, status, stage, phone, address, lead_name, city, state, postal_code
+      FROM public.lead_profiles
+      WHERE COALESCE(workspace_id, 'pbk') = 'pbk'
+        AND (
+          left(postal_code, 5) = $1 OR left(raw #>> '{property,zip}', 5) = $1
+          OR raw->>'zip' = $1
+          OR right(rtrim(address), 5) = $1 OR right(rtrim(address), 10) LIKE $1 || '-____'
+          OR regexp_replace(upper(COALESCE(NULLIF(raw->>'parcelId', ''), NULLIF(raw #>> '{property,parcelId}', ''),
+            NULLIF(raw #>> '{property,apn}', ''), raw->>'apn', '')), '[^A-Z0-9]', '', 'g') = $2
+        )`,
+    [situs.zip.slice(0, 5), normalizeParcelId(parcelId)]
+  );
+  if (!result.ok) {
+    throw Object.assign(new Error('The CRM could not check for existing leads. Try again shortly.'), { code: 'lead_roster_unavailable', status: 503 });
+  }
+  return result.rows.map(parcelLeadFromProfileRow);
+}
+
+async function persistVerifiedParcelProfile(lead) {
+  if (!IS_HOSTED && !getPgPool()) return;
+  const saved = await persistLeadProfileRowToDb(lead, 'parcel-dialer', { exactIdentity: true, insertOnly: true });
+  if (!saved.ok) {
+    throw Object.assign(new Error('Could not finish saving the lead. Try again to complete the same record.'), { code: 'lead_save_unavailable', status: 503 });
+  }
+}
+
+async function saveVerifiedParcelLead(feature, durableCandidates, actor) {
+  const { parcelId, situs, county, acres, source, jurisdiction } = feature.properties;
+  const eventId = `parcel-dialer:${JSON.stringify([jurisdiction || [situs.state, county || situs.city], normalizeParcelId(parcelId)])}`;
+  // Keep the check and the canonical in-memory insert in the same event-loop turn.
+  const match = matchParcelToLeads(feature, [...durableCandidates, ...(state.leads || []), ...state.leadImports]);
+  if (match.status === 'ambiguous') {
+    return { ok: false, code: 'ambiguous_match', error: 'Multiple CRM leads match. Resolve the duplicates in Leads first.' };
+  }
+  if (match.lead && (match.lead.eventId !== eventId || durableCandidates.some(lead => lead.leadId === match.lead.leadId && lead.eventId === eventId))) {
+    return { ok: true, leadId: match.lead.leadId || match.lead.id, created: false };
+  }
+  const address = `${situs.line1}, ${situs.city}, ${situs.state} ${situs.zip}`;
+  const id = 'lead-parcel-' + createHash('sha256').update(eventId).digest('hex');
+  const result = await handleManualLeadCreate({
+    id,
+    eventId,
+    source: 'parcel-dialer',
+    actor,
+    property: { address, city: situs.city, state: situs.state, zip: situs.zip },
+  }, {
+    parcelId, line1: situs.line1, county, parcelSource: source, jurisdiction,
+    ...(Number.isFinite(acres) && acres > 0 ? { acres } : {}),
+  });
+  return { ok: true, leadId: result.leadId, created: !result.replayed };
+}
+
+async function handleManualLeadCreate(payload = {}, verifiedParcel = null) {
   const eventId = payload?.eventId || payload?.event_id || payload?.idempotencyKey || null;
   if (eventId) {
     const prior = (state.leadImports || []).find((item) => item && item.eventId === eventId);
     if (prior) {
       // A prior attempt may have reached memory but failed its durable write.
       await persistState(state);
-      void persistLeadProfileRowToDb(prior, 'manual-lead-replay').catch((error) => {
-        console.warn('[pbk-local-openclaw] manual lead replay projection failed:', error?.message || 'unknown error');
-      });
+      if (verifiedParcel) {
+        await persistVerifiedParcelProfile(prior);
+      } else {
+        void persistLeadProfileRowToDb(prior, 'manual-lead-replay').catch((error) => {
+          console.warn('[pbk-local-openclaw] manual lead replay projection failed:', error?.message || 'unknown error');
+        });
+      }
       return {
         ok: true,
         replayed: true,
@@ -61064,6 +61133,10 @@ async function handleManualLeadCreate(payload = {}) {
     stage: payload.stage || payload.status || 'new',
   });
   if (eventId) leadImport.eventId = eventId;
+  if (verifiedParcel) {
+    Object.assign(leadImport.property, verifiedParcel);
+    Object.assign(leadImport.leadProfile.property, verifiedParcel);
+  }
   if (payload.source === 'analyzer-save' && findDuplicateLeadImport(leadImport)) {
     return { ok: false, result: 'analyzer_lead_match_requires_review',
       error: 'A matching CRM lead already exists. Open it from Leads before syncing this address.' };
@@ -61074,7 +61147,7 @@ async function handleManualLeadCreate(payload = {}) {
     patch: buildLeadCommitPatch(leadImport),
   });
 
-  const patched = payload.source === 'analyzer-save' ? null : patchLeadImport(
+  const patched = verifiedParcel || payload.source === 'analyzer-save' ? null : patchLeadImport(
     state,
     {
       leadId: leadImport.leadId,
@@ -61085,7 +61158,7 @@ async function handleManualLeadCreate(payload = {}) {
     },
     leadImport
   );
-  const existingDuplicate = patched ? null : findDuplicateLeadImport(leadImport);
+  const existingDuplicate = patched || verifiedParcel ? null : findDuplicateLeadImport(leadImport);
   const duplicate = Boolean(patched || existingDuplicate);
   const savedLead = patched || existingDuplicate || leadImport;
   if (!patched && !existingDuplicate) addLeadImport(state, leadImport);
@@ -61130,12 +61203,18 @@ async function handleManualLeadCreate(payload = {}) {
     queued: true,
     result: 'lead_profile_projection_queued',
   };
-  void persistLeadProfileRowToDb(savedLead, 'manual-lead-create').catch((error) => {
-    console.warn(
-      '[pbk-local-openclaw] manual lead profile projection failed:',
-      error?.message || String(error || 'unknown error')
-    );
-  });
+  if (verifiedParcel) {
+    await persistVerifiedParcelProfile(savedLead);
+    profilePersistence.queued = false;
+    profilePersistence.result = 'parcel_lead_saved';
+  } else {
+    void persistLeadProfileRowToDb(savedLead, 'manual-lead-create').catch((error) => {
+      console.warn(
+        '[pbk-local-openclaw] manual lead profile projection failed:',
+        error?.message || String(error || 'unknown error')
+      );
+    });
+  }
 
   return {
     ok: true,
@@ -73350,6 +73429,8 @@ function getPhoneDialerRouter() {
     getState: () => state,
     persistState: (next) => persistState(next),
     isPhoneDnc: (phone) => Boolean(findDncEntryByPhone(phone)),
+    loadParcelLeads: loadParcelLeadCandidates,
+    saveParcelLead: saveVerifiedParcelLead,
     defaultCallerId: getEffectiveTelnyxFromNumber(),
     logActivity: (entry) => addActivity(state, makeActivity({ actor: 'PBK dialer', ...entry })),
   });
@@ -81603,7 +81684,18 @@ const server = createServer(async (request, response) => {
         });
         return;
       }
-      const exactLead = (state.leadImports || []).find((item) => (item.leadId || item.id) === leadId);
+      let exactLead = (state.leadImports || []).find((item) => (item.leadId || item.id) === leadId);
+      if (!exactLead && (IS_HOSTED || getPgPool())) {
+        const profile = await queryPgRows(
+          "SELECT id, raw, source, status, stage, phone, address, lead_name, city, state, postal_code FROM public.lead_profiles WHERE COALESCE(workspace_id, 'pbk') = 'pbk' AND id = $1",
+          [leadId]
+        );
+        if (!profile.ok) {
+          json(response, 503, { ok: false, code: 'lead_roster_unavailable', error: 'The saved lead record is unavailable. Try again shortly.' });
+          return;
+        }
+        if (profile.rows[0]) exactLead = parcelLeadFromProfileRow(profile.rows[0]);
+      }
       const full = exactLead ? buildLeadFullView(exactLead) : null;
       if (!full) {
         json(response, 404, {

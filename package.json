@@ -10,6 +10,7 @@
     "typecheck": "tsc --noEmit",
     "prebuild": "node ./scripts/sync-master-template.mjs",
     "build": "vite build",
+    "build:netlify-production": "node scripts/staff-netlify-build.mjs",
     "build:investor-staging": "vite build --config vite.investor-staging.config.ts",
     "build:investor-live": "vite build --config vite.investor-live.config.ts",
     "test:investor-packet-browser": "npm run build:investor-live && node scripts/investor-packet-browser-smoke.mjs",

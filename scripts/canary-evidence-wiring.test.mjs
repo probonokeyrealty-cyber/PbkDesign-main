@@ -213,8 +213,9 @@ test('bridge code matches the reviewed release fingerprint outside the scoped re
   // Ava's turn contract handles corrected asking prices and stop-contact requests.
   // Parcel lead creation rechecks the CRM before using the canonical save path.
   // Deepgram opens with the announced Telnyx codec and waits for audio signal before fallback.
+  // Database disconnects after Ava sends phone audio are handled in the detached reply task.
   assert.equal(createHash('sha256').update(unchanged).digest('hex'),
-    '1bb75a8fd16fb78f03b68d7fa22ed1dc574bbd36ffa0d0898435323fa4e788e6');
+    '7d0c8c71fc094c04d3e14a9cfedf253288ac4b6a23b51c66f4a2650053ee1c07');
 });
 
 test('production distribution includes reader and protocol, never the fixture signer', () => {

@@ -73020,7 +73020,9 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
         updatedAt: isoNow(),
       });
     }
-    await persistState(state);
+    await persistState(state).catch((error) => {
+      console.warn('[pbk-local-openclaw] Ava phone reply state persist failed:', error?.message || error);
+    });
     const phoneOps = bindAgentTimingToParams({ agentName: 'Ava', toolName: 'phone_reply',
       sessionId: session.callId, success: speakResult.ok === true,
       metadata: { source: 'ava-phone-turn', fullReplySpokenVerified: false,

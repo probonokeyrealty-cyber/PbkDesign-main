@@ -208,4 +208,14 @@ ${sourceBetween('    const speakResult = await sendAvaPhoneReplyAudio(session, s
 })()`, runtime);
 assert.equal(audioOptions.replyStartedAt, clock, 'TTS must receive the defined reply-start timestamp');
 
+const persistenceWarnings = [];
+runtime.console.warn = (...message) => persistenceWarnings.push(message);
+runtime.persistState = async () => { throw new Error('postgres_state_persist_required'); };
+const beforePhoneOps = source.lastIndexOf('    await persistState(state)', source.indexOf("    const phoneOps = bindAgentTimingToParams({ agentName: 'Ava', toolName: 'phone_reply'"));
+const phoneOpsStart = source.indexOf('    const phoneOps =', beforePhoneOps);
+assert.ok(beforePhoneOps >= 0 && phoneOpsStart > beforePhoneOps);
+await assert.doesNotReject(vm.runInContext(`(async () => { ${source.slice(beforePhoneOps, phoneOpsStart)} })()`, runtime),
+  'A database disconnect after Ava sends audio must not reject the detached reply task');
+assert.equal(persistenceWarnings.length, 1, 'A failed post-reply write still produces a warning');
+
 console.log(`Ava live-call resilience smoke passed (${checks.length} structural checks; silence, speech/final barge-in, session guards, and reply timing).`);

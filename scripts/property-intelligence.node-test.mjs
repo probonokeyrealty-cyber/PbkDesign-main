@@ -69,6 +69,18 @@ const cachedListing = (boundAddress = compAddress) => ({ cache: { hit: true }, p
   capturedAt: captured, photoUrls: [compPhoto, compPhoto, 'javascript:bad', 'https://example.invalid/photo.jpg'], sourceLinks: ['https://www.realtor.com/comp', 'https://evil.invalid/comp'],
 } } });
 
+test('a cache entry for a different address cannot replace the lead photos during refresh', async () => {
+  const s = setup({ listing: async () => cachedListing(compAddress) });
+  const current = {
+    source: 'apify-for-sale', address, retrievedAt: '2026-11-01T00:00:00Z',
+    photoUrls: ['https://ap.rdcpix.com/saved-subject.jpg'], sourceLinks: [], facts: {}, askingPrice: null,
+  };
+  s.leads[0].deal.listingSnapshot = current;
+  await s.enrich({ address, leadId: 'one', expectedPropertyAddress });
+  assert.deepEqual(s.leads[0].deal.listingSnapshot, current);
+  assert.equal(s.leads[1].deal.listingSnapshot, undefined);
+});
+
 test('explicit refresh attaches sanitized comp-owned cache evidence without subject photos', async () => {
   const calls = [];
   const s = setup({ listing: async params => { calls.push(params); return cachedListing(params.address); } });
@@ -239,7 +251,7 @@ test('async canonical reads recheck address after providers and preserve manual 
 });
 
 test('actual cache capture time survives reads and invalid capture time uses valid fallback', async () => {
-  const response = { cache: { hit: true }, propertyData: { source: 'apify-for-sale', updatedAt: '2026-11-02T00:00:00Z', data: { capturedAt: '2026-11-01T00:00:00Z', listingFacts: { beds: 3 } } } };
+  const response = { cache: { hit: true }, propertyData: { address, source: 'apify-for-sale', updatedAt: '2026-11-02T00:00:00Z', data: { capturedAt: '2026-11-01T00:00:00Z', listingFacts: { beds: 3 } } } };
   const s = setup({ listing: async () => response });
   assert.equal((await s.enrich({ address })).patch.deal.listingSnapshot.retrievedAt, '2026-11-01T00:00:00Z');
   response.propertyData.data.capturedAt = 'invalid';

@@ -10,6 +10,7 @@ interface ParcelStreetMapProps {
   parcels: ParcelFeature[];
   selected?: ParcelFeature;
   busy: boolean;
+  fitParcels: boolean;
   onSelect: (parcelId: string) => void;
   onLoadArea?: (bounds: number[]) => void;
 }
@@ -21,9 +22,10 @@ function toMapCoordinates(parcel: ParcelFeature): LatLngTuple[][][] {
   return areas.map((area) => area.map((ring) => ring.map(([lng, lat]) => [lat, lng])));
 }
 
-export function ParcelStreetMap({ parcels, selected, busy, onSelect, onLoadArea }: ParcelStreetMapProps) {
+export function ParcelStreetMap({ parcels, selected, busy, fitParcels, onSelect, onLoadArea }: ParcelStreetMapProps) {
   const container = useRef<HTMLDivElement>(null);
   const instance = useRef<LeafletMap | null>(null);
+  const fitted = useRef(false);
   const focusAfterSelection = useRef('');
   const selectionHandler = useRef({ busy, onSelect });
   const [areaReady, setAreaReady] = useState(false);
@@ -49,18 +51,22 @@ export function ParcelStreetMap({ parcels, selected, busy, onSelect, onLoadArea 
       resize.disconnect();
       field.remove();
       instance.current = null;
+      fitted.current = false;
     };
   }, []);
 
   useEffect(() => {
     const field = instance.current;
-    if (!field) return;
+    if (!field || (!fitParcels && fitted.current)) return;
     const bounds = latLngBounds([]);
     for (const parcel of parcels) {
       for (const area of toMapCoordinates(parcel)) bounds.extend(latLngBounds(area.flat()));
     }
-    if (bounds.isValid()) field.fitBounds(bounds, { padding: [20, 20], maxZoom: 17, animate: false });
-  }, [parcels]);
+    if (bounds.isValid()) {
+      field.fitBounds(bounds, { padding: [20, 20], maxZoom: 17, animate: false });
+      fitted.current = true;
+    }
+  }, [parcels, fitParcels]);
 
   useEffect(() => {
     const field = instance.current;

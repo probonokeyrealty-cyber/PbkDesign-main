@@ -60,6 +60,7 @@ export function ParcelDialer() {
   const [zoom, setZoom] = useState(1);
   const [showStreets, setShowStreets] = useState<boolean | null>(null);
   const [mapNotice, setMapNotice] = useState('');
+  const [areaScoped, setAreaScoped] = useState(false);
   const projection = useProjection(features);
 
   const load = useCallback(async () => {
@@ -69,6 +70,8 @@ export function ParcelDialer() {
       setCoverage(cov.coverage);
       setLines(cov.lines);
       setCanPlaceCalls(cov.canPlaceCalls);
+      setAreaScoped(false);
+      setMapNotice('');
       setFeatures(parcels.features);
       setLineId((current) => current || cov.lines.find((l) => l.commissioned && l.callerIdEnabled)?.id || '');
     } catch (err) {
@@ -169,12 +172,13 @@ export function ParcelDialer() {
           </form>
           <div className="pbk-dialer-map">
             {streetMapEnabled ? (
-              <ParcelStreetMap parcels={features} selected={selection?.parcel} busy={Boolean(busy)}
+              <ParcelStreetMap parcels={features} selected={selection?.parcel} busy={Boolean(busy)} fitParcels={!areaScoped}
                 onSelect={(parcelId) => void choose({ parcelId })}
                 onLoadArea={coverage?.licensed ? (bounds) => {
                   setMapNotice('');
                   void act('map', async () => {
                     const result = await fetchParcels(bounds);
+                    setAreaScoped(true);
                     setFeatures(result.features);
                     if (!result.features.length) setMapNotice('No parcel boundaries in this area.');
                   });

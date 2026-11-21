@@ -1,35 +1,84 @@
 import assert from 'node:assert/strict';
-import { createHash } from 'node:crypto';
 import test from 'node:test';
 import { createPublicMarketConnectionCheck } from './public-market-connection.mjs';
 
-const schema = { properties: { query: { type: 'string' } }, required: ['query'], type: 'object' };
+const schema = {
+  "type": "object",
+  "title": "AnswerRequest",
+  "required": [
+    "query"
+  ],
+  "properties": {
+    "text": {
+      "type": "boolean",
+      "title": "Text",
+      "default": false,
+      "description": "Set to `true` to include the full text content of the cited source documents in the `citations` part of the response. Defaults to `false`."
+    },
+    "model": {
+      "enum": [
+        "exa",
+        "exa-pro"
+      ],
+      "type": "string",
+      "title": "Model",
+      "default": "exa",
+      "examples": [
+        "exa",
+        "exa-pro"
+      ],
+      "description": "Specifies the search model to use. 'exa' uses a single, direct query. 'exa-pro' uses two expanded queries for potentially more comprehensive results. Allowed values are 'exa' or 'exa-pro'. Defaults to 'exa'."
+    },
+    "query": {
+      "type": "string",
+      "title": "Query",
+      "examples": [
+        "What is the latest valuation of SpaceX?"
+      ],
+      "minLength": 1,
+      "description": "The natural language question or search query for which an answer is sought. The query should be specific enough to guide the search effectively. Include concrete entities, dates, locations, or jurisdictions to avoid ambiguous results. For time-sensitive data, include explicit time framing (e.g., 'as of 2024') since results may reflect stale information."
+    },
+    "stream": {
+      "type": "boolean",
+      "title": "Stream",
+      "default": false,
+      "description": "Set to `true` to receive the response as a stream of server-sent events (SSE). This is useful for displaying results incrementally. Defaults to `false`."
+    }
+  },
+  "description": "Request model for generating an answer based on a query."
+};
+const schemaHash = '216c1a2a2d9c9b653a3a308d5c815478be079ed11d8b20f6530b923ffe20ecaa';
+const user = 'pbk-public-market-research-production';
+const account = 'ca_production_exa_fixture';
 const env = {
   PBK_E2B_MARKET_CONNECTION_CHECK_ENABLED: 'true',
   PBK_E2B_MARKET_WORKER_API_KEY: 'e2b-test-fixture',
   PBK_COMPOSIO_MARKET_SEARCH_API_KEY: 'composio-test-fixture',
   PBK_COMPOSIO_MARKET_SEARCH_SESSION_ID: 'trs_production_fixture',
-  PBK_COMPOSIO_MARKET_SEARCH_USER_ID: 'pbk-production-public-market',
+  PBK_COMPOSIO_MARKET_SEARCH_USER_ID: user,
+  PBK_COMPOSIO_MARKET_SEARCH_EXA_ACCOUNT_ID: account,
   PBK_COMPOSIO_MARKET_SEARCH_CONFIG_VERSION: '1',
-  PBK_COMPOSIO_MARKET_SEARCH_SCHEMA_SHA256: createHash('sha256').update(JSON.stringify(schema)).digest('hex'),
+  PBK_COMPOSIO_MARKET_SEARCH_SCHEMA_SHA256: schemaHash,
 };
 const sessionUrl = 'https://backend.composio.dev/api/v3.1/tool_router/session/trs_production_fixture';
-const toolUrl = 'https://backend.composio.dev/api/v3.1/tools/COMPOSIO_SEARCH_WEB';
+const toolUrl = 'https://backend.composio.dev/api/v3.1/tools/EXA_ANSWER';
+const toolsUrl = sessionUrl + '/tools?limit=2';
+const toolkitsUrl = sessionUrl + '/toolkits?limit=2';
 const inventoryUrl = 'https://api.e2b.app/v2/sandboxes?limit=1';
 const session = {
   session_id: 'trs_production_fixture',
   config_version: 1,
   mcp: { url: 'https://backend.composio.dev/tool_router/trs_production_fixture/mcp' },
-  tool_router_tools: ['COMPOSIO_SEARCH_WEB'],
+  tool_router_tools: ['EXA_ANSWER'],
   config: {
-    user_id: 'pbk-production-public-market',
-    toolkits: { enabled: ['composio_search'] },
-    tools: { composio_search: { enabled: ['COMPOSIO_SEARCH_WEB'] } },
-    preload: { tools: ['COMPOSIO_SEARCH_WEB'] },
-    connected_accounts: {},
+    user_id: user,
+    toolkits: { enabled: ['exa'] },
+    tools: { exa: { enabled: ['EXA_ANSWER'] } },
+    preload: { tools: ['EXA_ANSWER'] },
+    connected_accounts: { exa: [account] },
     auth_configs: {},
     instant: false,
-    manage_connections: { enabled: false },
+    manage_connections: { enabled: false, enable_wait_for_connections: false, enable_connection_removal: false },
     workbench: { enable: false },
     proxy_execute: { enable: false },
     search: { enable: false },
@@ -38,16 +87,22 @@ const session = {
   },
 };
 const tool = {
-  slug: 'COMPOSIO_SEARCH_WEB',
-  toolkit: { slug: 'composio_search' },
-  no_auth: true,
-  input_parameters: { type: 'object', required: ['query'], properties: { query: { type: 'string' } } },
+  slug: 'EXA_ANSWER',
+  toolkit: { slug: 'exa' },
+  no_auth: false,
+  is_deprecated: false,
+  input_parameters: schema,
 };
+const scopedTool = { ...tool, toolkit: { slug: 'EXA' } };
+const toolkit = { slug: 'exa', enabled: true, connected_account: { id: account, user_id: user, status: 'ACTIVE' } };
+const page = (item) => ({ items: [item], total_items: 1, next_cursor: null });
 
 function providerFixture(respond = (url) => {
   if (url === inventoryUrl) return Response.json([{ sandboxID: 'not-for-settings' }]);
   if (url === sessionUrl) return Response.json(session);
   if (url === toolUrl) return Response.json(tool);
+  if (url === toolsUrl) return Response.json(page(scopedTool));
+  if (url === toolkitsUrl) return Response.json(page(toolkit));
   throw new Error('Unexpected provider call');
 }) {
   const calls = [];
@@ -66,6 +121,11 @@ test('disabled and incomplete configurations make no requests', async () => {
   const incomplete = { ...env, PBK_E2B_MARKET_WORKER_API_KEY: '' };
   assert.equal((await createPublicMarketConnectionCheck({ env: incomplete, request })()).state, 'configuration_missing');
   assert.equal((await createPublicMarketConnectionCheck({ env: { ...env, PBK_BRIDGE_API_KEY: env.PBK_COMPOSIO_MARKET_SEARCH_API_KEY }, request })()).state, 'configuration_missing');
+  for (const overrides of [
+    { PBK_COMPOSIO_MARKET_SEARCH_EXA_ACCOUNT_ID: '' },
+    { PBK_COMPOSIO_MARKET_SEARCH_USER_ID: 'pbk-public-market-research-staging' },
+    { PBK_COMPOSIO_MARKET_SEARCH_SCHEMA_SHA256: '0'.repeat(64) },
+  ]) assert.equal((await createPublicMarketConnectionCheck({ env: { ...env, ...overrides }, request })()).state, 'configuration_missing');
   assert.deepEqual(calls, []);
 });
 
@@ -81,7 +141,7 @@ test('only reads provider metadata, coalesces refreshes, and never claims execut
   assert.equal(status.ready, false);
   assert.equal(status.executionEnabled, false);
   assert.equal(status.lastSuccessAt, null);
-  assert.deepEqual(calls.map(({ url }) => url).sort(), [inventoryUrl, sessionUrl, toolUrl].sort());
+  assert.deepEqual(calls.map(({ url }) => url).sort(), [inventoryUrl, sessionUrl, toolUrl, toolsUrl, toolkitsUrl].sort());
   for (const { url, options } of calls) {
     assert.equal(options.method, 'GET');
     assert.equal(options.redirect, 'error');
@@ -92,16 +152,30 @@ test('only reads provider metadata, coalesces refreshes, and never claims execut
   assert.doesNotMatch(JSON.stringify(status), /not-for-settings|test-fixture|trs_production/);
 });
 
-test('fails closed on revoked keys, scope drift, or schema drift', async () => {
-  for (const failure of ['credential', 'scope', 'schema', 'extra-tools']) {
+test('fails closed on revoked keys, Instant, account, scope or schema drift', async () => {
+  for (const failure of ['credential', 'scope', 'schema', 'extra-tools', 'instant', 'wrong-account', 'inactive-account', 'account-owner', 'scoped-schema', 'cursor']) {
     const { request } = providerFixture((url) => {
       if (url === inventoryUrl) return failure === 'credential' ? new Response(null, { status: 401 }) : Response.json([]);
       if (url === sessionUrl) return Response.json(failure === 'scope' ? {
         ...session, config: { ...session.config, workbench: { enable: true } },
       } : failure === 'extra-tools' ? {
-        ...session, tool_router_tools: ['COMPOSIO_SEARCH_WEB', 'COMPOSIO_EXECUTE_MULTI'],
+        ...session, tool_router_tools: ['EXA_ANSWER', 'COMPOSIO_EXECUTE_MULTI'],
+      } : failure === 'instant' ? {
+        ...session, config: { ...session.config, instant: {} },
+      } : failure === 'wrong-account' ? {
+        ...session, config: { ...session.config, connected_accounts: { exa: ['ca_wrong'] } },
       } : session);
       if (url === toolUrl) return Response.json(failure === 'schema' ? { ...tool, input_parameters: {} } : tool);
+      if (url === toolsUrl) return Response.json(failure === 'cursor' ? { ...page(scopedTool), next_cursor: 'more' }
+        : page(failure === 'scoped-schema' ? { ...scopedTool, input_parameters: {} } : scopedTool));
+      if (url === toolkitsUrl) return Response.json(page({
+        ...toolkit,
+        connected_account: {
+          ...toolkit.connected_account,
+          status: failure === 'inactive-account' ? 'EXPIRED' : 'ACTIVE',
+          user_id: failure === 'account-owner' ? 'another-user' : user,
+        },
+      }));
       throw new Error('Unexpected provider call');
     });
     const result = await createPublicMarketConnectionCheck({ env, request })();
@@ -117,6 +191,8 @@ test('expires older connection proof instead of masking a later failure', async 
     if (url === inventoryUrl) return new Response(null, { status: revoked ? 401 : 200 });
     if (url === sessionUrl) return Response.json(session);
     if (url === toolUrl) return Response.json(tool);
+    if (url === toolsUrl) return Response.json(page(scopedTool));
+    if (url === toolkitsUrl) return Response.json(page(toolkit));
     throw new Error('Unexpected provider call');
   });
   const check = createPublicMarketConnectionCheck({ env, request, now: () => clock });

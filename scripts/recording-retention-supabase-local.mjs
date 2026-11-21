@@ -23,7 +23,7 @@ const bucket = retentionStorageBucket;
 const object = `object/${bucket}`;
 const encode = key => key.split('/').map(encodeURIComponent).join('/');
 
-test('fixture Storage transport allows only its two synthetic keys and exact versions', () => {
+test('fixture Storage transport allows only its synthetic keys and exact versions', () => {
   const request = { url: `${retentionStorageOrigin}/storage/v1/object/${bucket}`, method: 'DELETE' };
   const path = 'fixture/retention-approved.txt';
   const versionId = randomUUID();
@@ -215,25 +215,72 @@ test('real Supabase Storage and Postgres prove recording retention from approval
 async function exerciseRetentionRoute({ http, put, assertBytes, ageObject }) {
   const target = { id: 'fixture-retention-approved', key: 'fixture/retention-approved.txt', text: 'recording approved for cleanup' };
   const replacement = { id: 'fixture-retention-race', key: 'fixture/retention-race.txt', text: 'recording about to be replaced' };
-  for (const [row, days] of [[target, 90], [replacement, 45]]) {
+  const interrupted = { id: 'fixture-retention-interrupted', key: 'fixture/retention-interrupted.txt', text: 'recording with interrupted readback' };
+  const later = { id: 'fixture-retention-later', key: 'fixture/retention-later.txt', text: 'independent recording' };
+  const fixtures = [[target, 90], [replacement, 45], [interrupted, 15], [later, 5]];
+  for (const [row, days] of fixtures) {
     row.createdAt = new Date(Date.now() - days * 86_400_000).toISOString();
     await put(row.key, row.text);
     await ageObject(row.key, row.createdAt);
   }
   await withRetentionPostgres(async ({ pool, binding, applyRecordingSchema }) => {
     let injectOverwrite = false;
+    let unrelatedWrite;
+    let pendingBeforeDelete;
+    let duplicateWrite;
+    let referenceRemoval;
+    let tableRemoval;
     const deleted = [];
     const start = () => startIsolatedBridge({
       args: [retentionStorageFixtureFlag], retentionPostgres: binding, startupMs: 55_000,
       async retentionStorage({ url, method, body }) {
         if (method === 'DELETE') {
           const [{ path, versionId }] = JSON.parse(body).prefixes;
+          if (path === target.key) {
+            pendingBeforeDelete = (await pool.query(`SELECT outcome, object_version
+              FROM public.pbk_recording_retention_attempts WHERE message_id = $1`, [target.id])).rows[0];
+            try {
+              await pool.query(`INSERT INTO public.unified_messages (id, workspace_id, channel, direction, payload)
+                VALUES ('retention-duplicate-pointer-fixture', 'pbk', 'call', 'recording', $1)`,
+              [JSON.stringify({ storage_path: ` \t/${bucket}/${path} \n` })]);
+              duplicateWrite = 'committed';
+            } catch (error) {
+              duplicateWrite = error.code;
+            }
+            try {
+              await pool.query('DELETE FROM public.unified_messages WHERE id = $1', [target.id]);
+              referenceRemoval = 'committed';
+            } catch (error) {
+              referenceRemoval = error.code;
+            }
+            try {
+              await pool.query('TRUNCATE public.unified_messages');
+              tableRemoval = 'committed';
+            } catch (error) {
+              tableRemoval = error.code;
+            }
+            const writer = await pool.connect();
+            try {
+              await writer.query('BEGIN');
+              await writer.query("SET LOCAL lock_timeout = '250ms'");
+              await writer.query(`INSERT INTO public.unified_messages (id, workspace_id, channel, direction)
+                VALUES ('unrelated-retention-fixture', 'pbk', 'sms', 'inbound')`);
+              await writer.query('COMMIT');
+              unrelatedWrite = 'committed';
+            } catch (error) {
+              await writer.query('ROLLBACK');
+              unrelatedWrite = error.code;
+            } finally {
+              writer.release();
+            }
+          }
           if (injectOverwrite && path === replacement.key) {
             injectOverwrite = false;
             await put(path, 'replacement bytes', true);
           }
           const result = await http(method, url.slice(`${retentionStorageOrigin}/storage/v1/`.length), body);
           deleted.push({ path, versionId, result });
+          if (path === interrupted.key) return { status: 503, body: '{}' };
           return result;
         }
         return http(method, url.slice(`${retentionStorageOrigin}/storage/v1/`.length), body);
@@ -263,7 +310,7 @@ async function exerciseRetentionRoute({ http, put, assertBytes, ageObject }) {
     await applyRecordingSchema();
     const messages = [];
     const archive = { key: 'fixture/preserved-archive.wav', bucket: 'fixture-archive' };
-    for (const row of [target, replacement]) {
+    for (const [row] of fixtures) {
       const message = { id: row.id, channel: 'call', direction: 'recording', status: 'recorded', workspaceId: 'pbk',
         createdAt: row.createdAt, updatedAt: row.createdAt, storagePath: row.key, storageBucket: bucket,
         payload: { storagePath: row.key, s3Archive: archive } };
@@ -274,10 +321,9 @@ async function exerciseRetentionRoute({ http, put, assertBytes, ageObject }) {
       [row.id, row.key, bucket, message.payload, row.createdAt]);
     }
     await pool.query("UPDATE public.bridge_state SET data = jsonb_set(data, '{messages}', $1) WHERE id = 'singleton'", [JSON.stringify(messages)]);
-    const bridge = await launch();
+    let bridge = await launch();
     const retention = '/api/recordings/retention';
-    const founder = { authorization: `Bearer ${bridge.apiKey}` };
-    const request = async (path, status, body, auth = founder) => {
+    const request = async (path, status, body, auth = { authorization: `Bearer ${bridge.apiKey}` }) => {
       const response = await bridge.fetch(new URL(path, bridge.origin), {
         method: body === undefined ? 'GET' : 'POST',
         headers: { 'content-type': 'application/json', ...auth }, body: body === undefined ? undefined : JSON.stringify(body),
@@ -314,6 +360,11 @@ async function exerciseRetentionRoute({ http, put, assertBytes, ageObject }) {
       assert.equal(complete.run.status, 'complete', JSON.stringify({ deletions: complete.run.deletions,
         providerStatuses: deleted.map(item => item.result.status) }));
       assert.equal(complete.run.deletedCount, 1);
+      assert.equal(unrelatedWrite, 'committed', 'retention must not block an unrelated writer while waiting for Storage');
+      assert.equal(duplicateWrite, '23514', 'a new same-key alias must not be written while retention is pending');
+      assert.equal(referenceRemoval, '23514', 'the approved row must remain stable while retention is pending');
+      assert.equal(tableRemoval, '23514', 'truncate must respect a committed retention reservation');
+      assert.deepEqual(pendingBeforeDelete, { outcome: 'pending', object_version: deleted[0].versionId });
       assert.equal(complete.run.deletions[0].tracking, 'confirmed');
       assert.ok((await decision(approvalId)).consumed_at instanceof Date);
       const durable = await pointer(target.id);
@@ -325,6 +376,8 @@ async function exerciseRetentionRoute({ http, put, assertBytes, ageObject }) {
       assert.equal(JSON.parse(missing.body).code, 'NoSuchKey');
       assert.equal((await run(409, 60, approvalId)).result, 'retention_approval_consumed');
       assert.equal(deleted.length, 1);
+      await assert.rejects(pool.query('UPDATE public.unified_messages SET storage_path = $2 WHERE id = $1', [target.id, target.key]),
+        { code: '23514' }, 'a stale pointer must not be restored after confirmed cleanup');
 
       const racing = await run(202, 30);
       assert.equal(racing.candidateCount, 1);
@@ -339,6 +392,34 @@ async function exerciseRetentionRoute({ http, put, assertBytes, ageObject }) {
       assert.equal((await pointer(replacement.id)).storage_path, replacement.key);
       assert.equal((await run(409, 30, racing.approvalId)).result, 'retention_approval_consumed');
       assert.equal(deleted.length, 2);
+      const proof = await pool.query('SELECT founder_approved_at, founder_proof FROM public.pbk_recording_retention_approvals WHERE approval_id = $1', [approvalId]);
+      assert.ok(proof.rows[0].founder_approved_at instanceof Date, 'the decision must leave durable founder proof');
+      assert.match(proof.rows[0].founder_proof, /^[a-f0-9]{64}$/);
+
+      const cut = await run(202, 10);
+      assert.equal(cut.candidateCount, 1);
+      await request(`/api/approvals/${cut.approvalId}/approve`, 200, {});
+      assert.equal((await run(200, 10, cut.approvalId)).run.status, 'pending');
+      assert.equal((await pointer(interrupted.id)).storage_path, interrupted.key);
+      const interruptedReadback = await http('GET', `object/info/authenticated/${bucket}/${interrupted.key}`);
+      assert.equal(JSON.parse(interruptedReadback.body).code, 'NoSuchKey');
+      await bridge.stop();
+      bridge = await launch();
+      const replay = await run(409, 10, cut.approvalId);
+      assert.equal(replay.outcomes[0].outcome, 'pending');
+      const unsigned = await run(202, 2);
+      const decidedAt = new Date().toISOString();
+      await pool.query("UPDATE public.approvals SET status = 'approved', decided_at = $2 WHERE id = $1", [unsigned.approvalId, decidedAt]);
+      await pool.query(`UPDATE public.pbk_recording_retention_approvals SET founder_approved_at = $2, founder_proof = $3
+        WHERE approval_id = $1`, [unsigned.approvalId, decidedAt, randomBytes(32).toString('hex')]);
+      assert.equal((await run(403, 2, unsigned.approvalId)).result, 'retention_approval_required');
+      await assertBytes(later.key, later.text);
+      const next = await run(202, 2);
+      assert.equal(next.candidateCount, 1);
+      assert.equal(next.blockedCandidateCount, 2);
+      await request(`/api/approvals/${next.approvalId}/approve`, 200, {});
+      assert.equal((await run(200, 2, next.approvalId)).run.deletedCount, 1);
+      assert.equal(deleted.filter(item => item.path === interrupted.key).length, 1, 'unknown deletion must not replay');
       console.log('HTTP retention: pending/team blocked; founder approval consumed once; durable row and Storage agree; racing replacement preserved');
     } finally {
       await bridge.stop();

@@ -4,22 +4,22 @@ import { createServer } from 'vite';
 import { mkdirSync } from 'node:fs';
 
 process.env.PBK_DEV_BRIDGE_URL = 'http://127.0.0.1:1';
-const server = await createServer({ server: { host: '127.0.0.1', port: 0 } });
+const server = await createServer({ server: { host: '127.0.0.1', port: 0, watch: null } });
 await server.listen();
 const origin = 'http://127.0.0.1:' + server.httpServer.address().port;
 const leads = Array.from({ length: 24 }, (_, i) => ({
   id: 'queue-demo-' + i, leadId: 'queue-demo-' + i,
   seller: { name: 'Queue Sample ' + i }, score: 90,
   property: { address: i + ' Demo Street', city: 'Example City', state: 'CA', zip: '90210', arv: 310000 },
-  ...(i === 12 ? { analyzer: { recordedSales: {
-    provider: 'ATTOM', address: { street: '12 Demo Street', city: 'Example City', state: 'CA', zip: '90210' },
+  ...([12, 13].includes(i) ? { analyzer: { recordedSales: {
+    provider: 'ATTOM', address: { street: `${i} Demo Street`, city: 'Example City', state: 'CA', zip: '90210' },
     windowStart: '2026-05-01', windowEnd: '2026-11-20', radiusMiles: 1,
-    sales: [{ id: 'saved-comp-12', address: '16 Example Court', soldDate: '2026-09-01', price: 289000 }],
+    sales: [{ id: `saved-comp-${i}`, address: `${i + 4} Example Court`, soldDate: '2026-09-01', price: 289000 }],
   } } } : {}),
 }));
 const browser = await chromium.launch();
 try {
-  for (const width of [1440, 390]) {
+  for (const width of [1440, 390, 320]) {
     const page = await browser.newPage({ viewport: { width, height: 900 } });
     const writes = [];
     const evidenceRefreshes = [];
@@ -48,14 +48,14 @@ try {
       await expect(page).toHaveURL(origin + '/leads');
       const avaSearch = page.getByRole('searchbox', { name: /Search leads/ });
       await expect(avaSearch).toHaveValue('Queue Sample 12');
-      await expect(page.getByRole('button', { name: /^Open lead Queue Sample 12 at / }).filter({ visible: true })).toBeVisible();
-      await expect(page.getByRole('button', { name: /^Open lead Queue Sample 13 at / }).filter({ visible: true })).toHaveCount(0);
+      await expect(page.getByRole('button', { name: /^Preview lead Queue Sample 12 at / })).toBeVisible();
+      await expect(page.getByRole('button', { name: /^Preview lead Queue Sample 13 at / })).toHaveCount(0);
       await page.goBack();
       await expect(page).toHaveURL(origin + '/ava-chat');
       await page.goForward();
       await expect(avaSearch).toHaveValue('Queue Sample 12');
       const currentLeadChat = origin + '/ava-chat?leadId=queue-demo-12';
-      await page.getByRole('button', { name: /^Open lead Queue Sample 12 at / }).filter({ visible: true }).click();
+      await page.getByRole('button', { name: /^Preview lead Queue Sample 12 at / }).click();
       await page.getByRole('button', { name: 'Open lead', exact: true }).click();
       await page.getByRole('link', { name: 'Ask Ava about this lead' }).click();
       await expect(page).toHaveURL(currentLeadChat);
@@ -84,7 +84,6 @@ try {
         await expect(page).toHaveURL(origin + '/leads/queue-demo-12' + hash);
         await expect(page.getByRole('tab', { name: tab, exact: true })).toHaveAttribute('aria-selected', 'true');
       }
-      assert.deepEqual(evidenceRefreshes, []);
       await page.goto(origin + '/leads?search=Initial');
       const search = page.getByRole('searchbox', { name: /Search leads/ });
       await search.fill('Queue Sample');
@@ -93,7 +92,7 @@ try {
       await expect(page.getByText('0 matching leads', { exact: true })).toBeVisible();
       await page.getByRole('button', { name: 'Hot 80+', exact: true }).click();
       await page.getByRole('button', { name: 'Next leads page', exact: true }).click();
-      const selected = page.getByRole('button', { name: /^Open lead Queue Sample 12 at / }).filter({ visible: true });
+      const selected = page.getByRole('button', { name: /^Preview lead Queue Sample 12 at / });
       const queueUrl = page.url();
       await selected.click();
       await expect(page).toHaveURL(queueUrl);
@@ -107,6 +106,34 @@ try {
       await expect(selected).toHaveAttribute('aria-pressed', 'true');
       await expect(selected).toBeFocused();
       await expect(selected).toBeInViewport();
+      const directLink = page.getByRole('link', { name: 'Open lead Queue Sample 13 at 13 Demo Street', exact: true });
+      await expect(directLink).toHaveText('Open lead');
+      await expect(directLink).toHaveAttribute('href', '/leads/queue-demo-13');
+      if (width <= 720) {
+        assert.ok((await directLink.boundingBox())?.height >= 44);
+        const rowAddress = page.getByRole('button', { name: 'Preview lead Queue Sample 13 at 13 Demo Street' })
+          .getByText('13 Demo Street', { exact: true });
+        assert.ok(await rowAddress.evaluate(node => node.scrollWidth <= node.clientWidth));
+      }
+      await directLink.scrollIntoViewIfNeeded();
+      await directLink.focus();
+      const rosterList = page.locator('.pbk-leads-roster-list');
+      const rosterScroll = await rosterList.evaluate(node => node.scrollTop);
+      assert.ok(rosterScroll > 0, 'The roster needs a scrolled position to test restoration');
+      await directLink.press('Enter');
+      await expect(page).toHaveURL(origin + '/leads/queue-demo-13');
+      await expect(page.getByRole('heading', { name: 'Queue Sample 13', exact: true })).toBeVisible();
+      await expect(page.getByText('13 Demo Street', { exact: false }).first()).toBeVisible();
+      await page.getByRole('tab', { name: 'Comps', exact: true }).click();
+      await expect(page.getByRole('rowheader', { name: /17 Example Court/ })).toBeVisible();
+      await expect(page.getByRole('rowheader', { name: /16 Example Court/ })).toHaveCount(0);
+      await page.getByRole('button', { name: 'Back to leads', exact: true }).click();
+      await expect(search).toHaveValue('Queue Sample');
+      await expect(page.getByRole('button', { name: 'Hot 80+', exact: true })).toHaveAttribute('aria-pressed', 'true');
+      await expect(page.getByText('Page 2 of 3', { exact: false })).toBeVisible();
+      await expect(directLink).toBeFocused();
+      await expect(directLink).toBeInViewport();
+      await expect.poll(() => rosterList.evaluate(node => node.scrollTop)).toBe(rosterScroll);
       assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
       if (process.env.PBK_QUEUE_SCREENSHOTS === '1') {
         mkdirSync('.pbk-local/queue-return', { recursive: true });
@@ -133,7 +160,8 @@ try {
       await page.getByRole('button', { name: 'Back to leads', exact: true }).click();
       await expect(page).toHaveURL(origin + '/leads');
       assert.deepEqual(writes, []);
-      console.log(width + 'px: Ava saved evidence, Leads context, Today return and focus passed; zero writes');
+      assert.deepEqual(evidenceRefreshes, []);
+      console.log(width + 'px: Ava saved evidence, Leads navigation and return, Today return, zero property refreshes and zero writes');
     } catch (error) {
       console.error((await page.locator('body').innerText()).slice(-2200));
       throw error;

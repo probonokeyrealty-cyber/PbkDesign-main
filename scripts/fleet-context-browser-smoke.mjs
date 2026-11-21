@@ -112,19 +112,6 @@ function apiFixture(path, mode = 'normal') {
     '/api/conversations': {
       items: [{ id: 'wrong-thread', leadId: 'another-seller', title: 'Wrong seller' }],
     },
-    '/api/property-data': {
-      cache: { hit: true },
-      propertyData: {
-        source: 'apify-for-sale',
-        data: {
-          priceBasis: 'asking_price',
-          askingPriceUsd: 1980000,
-          listingFacts: { beds: 3, baths: 2, sqft: 2100 },
-          sourceLinks: [],
-          photoUrls: [],
-        },
-      },
-    },
     '/api/founder/work-queue': {
       items: [
         {
@@ -155,6 +142,8 @@ async function verify(engine, width) {
     const page = await browser.newPage({ viewport: { width, height: 900 } });
     const writes = [],
       errors = [];
+    const propertyRefreshes = [];
+    const draftAddress = '47 Fictional Way, Example City, CA 90210';
     const pendingPreviews = [];
     let delayedLead = '';
     let pendingLeadRead;
@@ -185,6 +174,24 @@ async function verify(engine, width) {
       if (path === '/api/property-data/address-suggestions' && request.method() === 'POST') {
         return route.fulfill({ json: { status: 'unavailable', suggestions: [] } });
       }
+      if (path === '/api/property-data/enrich' && request.method() === 'POST') {
+        const body = request.postDataJSON();
+        propertyRefreshes.push(body);
+        if (body.address !== draftAddress || body.leadId || body.expectedPropertyAddress) {
+          return route.fulfill({ status: 400, json: { ok: false, error: 'Expected the unlinked fixture draft' } });
+        }
+        return route.fulfill({ json: {
+          ok: true, address: draftAddress, saved: false, patch: {},
+          records: { status: 'unavailable' }, sales: { status: 'unavailable' },
+          listing: { cache: { hit: true }, propertyData: {
+            source: 'apify-for-sale',
+            data: {
+              priceBasis: 'asking_price', askingPriceUsd: 1980000,
+              listingFacts: { beds: 3, baths: 2, sqft: 2100 }, sourceLinks: [], photoUrls: [],
+            },
+          } },
+        } });
+      }
       if (path === '/invoke' && request.postDataJSON()?.toolName === 'previewAgentDealContext') {
         pendingPreviews.push({ route, params: request.postDataJSON().params });
         return;
@@ -205,7 +212,7 @@ async function verify(engine, width) {
     const arv = page.locator('#deal-arv');
     const compA = page.getByRole('spinbutton', { name: 'Comp A sold price' });
     const compB = page.getByRole('spinbutton', { name: 'Comp B sold price' });
-    await address.fill('47 Fictional Way, Example City, CA 90210');
+    await address.fill(draftAddress);
     await beds.fill('7');
     await arv.fill('2100000');
     await compA.fill('2200000');
@@ -214,11 +221,16 @@ async function verify(engine, width) {
     const listPrice = page.getByRole('spinbutton', { name: 'List price in dollars' });
     const baths = page.getByRole('spinbutton', { name: 'Bathrooms', exact: true });
     const sqft = page.getByRole('spinbutton', { name: 'Square footage', exact: true });
+    await listPrice.fill('1700000');
+    await baths.fill('4');
+    await sqft.fill('2200');
     const factsBefore = await Promise.all([listPrice, baths, sqft].map(field => field.inputValue()));
-    await page.getByRole('button', { name: 'Find listing photos', exact: true }).click();
-    await expect(page.getByRole('region', { name: /Property details/i })
-      .getByText('No saved Apify photos for this address.', { exact: true })).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Fill empty fields', exact: true })).toHaveCount(0);
+    const property = page.getByRole('region', { name: /Property details/i });
+    assert.deepEqual(propertyRefreshes, [], 'Editing the Analyzer must not trigger a property refresh');
+    await property.getByRole('button', { name: 'Refresh property intelligence', exact: true }).click();
+    await expect(property.getByText(/Listing asking price/)).toContainText('$1,980,000');
+    assert.deepEqual(propertyRefreshes, [{ address: draftAddress }]);
+    await expect(property.getByRole('button', { name: 'Fill empty fields', exact: true })).toBeDisabled();
     for (const [index, field] of [listPrice, baths, sqft].entries()) {
       await expect(field).toHaveValue(factsBefore[index]);
     }
@@ -354,7 +366,7 @@ async function verify(engine, width) {
     await page.getByRole('button', { name: 'Hot 80+', exact: true }).click();
     await page.getByRole('button', { name: 'Next leads page', exact: true }).click();
     const queueLead = page
-      .getByRole('button', { name: /^Open lead Sample 12 at / })
+      .getByRole('button', { name: /^Preview lead Sample 12 at / })
       .filter({ visible: true });
     await queueLead.click();
     const queueUrl = page.url();
@@ -375,14 +387,25 @@ async function verify(engine, width) {
     await expect(queueLead).toBeInViewport();
     await queueLead.click();
     await page.getByRole('button', { name: 'Open lead', exact: true }).click();
+    await expect(page.getByRole('heading', { name: 'Sample 12', level: 1, exact: true })).toBeVisible();
     await page.goBack();
     await expect(rosterSearch).toHaveValue('Sample');
-    await page.goto(`${origin}/fleet`);
+    const isSampleZeroAudit = (response) => {
+      const url = new URL(response.url());
+      return url.pathname === '/api/qa/audit/latest' && url.searchParams.get('leadId') === 'sample-0';
+    };
+    const [initialAudit] = await Promise.all([
+      page.waitForResponse(isSampleZeroAudit),
+      page.goto(`${origin}/fleet`),
+    ]);
+    assert.equal(await initialAudit.finished(), null);
     await expect(picker).toHaveValue('sample-0');
     await search.fill('Fictional');
     await openWorkspace.click();
     await expect(page).toHaveURL(`${origin}/leads/sample-0`);
-    await page.goBack();
+    await expect(page.getByRole('heading', { name: 'Sample 0', level: 1, exact: true })).toBeVisible();
+    const [returnAudit] = await Promise.all([page.waitForResponse(isSampleZeroAudit), page.goBack()]);
+    assert.equal(await returnAudit.finished(), null);
     await expect(page).toHaveURL(/leadId=sample-0/);
     await expect(search).toHaveValue('Fictional');
     await page.goto(`${origin}/fleet?leadId=sample-64&agent=rex`);
@@ -449,7 +472,7 @@ async function verify(engine, width) {
     await expect(picker).toHaveValue('');
     mode = 'normal';
     await page.goto(`${origin}/analyzer`);
-    await expect(address).toHaveValue('47 Fictional Way, Example City, CA 90210');
+    await expect(address).toHaveValue(draftAddress);
     await expect(beds).toHaveValue('7');
     for (const [index, field] of [listPrice, baths, sqft].entries()) {
       await expect(field).toHaveValue(factsBefore[index]);
@@ -457,6 +480,7 @@ async function verify(engine, width) {
     await expect(arv).toHaveValue('2500000');
     await expect(compA).toHaveValue('2200000');
     await expect(compB).toHaveValue('2800000');
+    assert.deepEqual(propertyRefreshes, [{ address: draftAddress }], 'Fleet navigation must not refresh property intelligence');
     assert.deepEqual(writes, [], 'Navigation must never write business data');
     assert.deepEqual(errors, []);
     console.log(

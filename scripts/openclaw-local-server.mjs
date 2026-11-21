@@ -40,7 +40,8 @@ import { createBackgroundPersistence, createCoalescedPersistence } from './backg
 import { createProviderActionBinding, hashProviderActionContext, validateProviderActionAuthorization, validateNegotiationApproval } from './provider-action-authorization.mjs';
 import { authorizeQualificationRequest, executeReleaseQualification, isDirectQualificationFounder, readReleaseQualification } from './release-qualification.mjs';
 import {
-  checkRecordingRetentionDecision, eligibleDurableRecording, handleRecordingRetentionRequest,
+  checkRecordingRetentionDecision, claimRecordingRetentionFounderDecision, eligibleDurableRecording,
+  handleRecordingRetentionRequest, isRecordingRetentionApproval,
   recordingRetentionTargetMatches, takeClaimedRecordingRetentionExecution, validRecordingObjectVersion,
   validRecordingRetentionStorageKey,
 } from './recording-retention-authorization.mjs';
@@ -41846,8 +41847,13 @@ async function readSupabaseRecordingVersion(key, signal = AbortSignal.timeout(4_
 async function deleteSupabaseRecordingVersion(key, versionId, signal) {
   const pending = reason => ({ ok: false, deleted: false, tracking: 'pending', reason });
   if (!validRecordingObjectVersion(versionId)) return pending('recording_storage_version_unverified');
-  const current = await readSupabaseRecordingVersion(key, signal);
-  if (current?.version !== versionId) return pending('recording_storage_version_changed');
+  let current;
+  try {
+    current = await readSupabaseRecordingVersion(key, signal);
+  } catch {
+    return { ...pending('recording_storage_version_unverified'), notDispatched: true };
+  }
+  if (current?.version !== versionId) return { ...pending('recording_storage_version_changed'), notDispatched: true };
   const bucket = SUPABASE_CALL_RECORDINGS_BUCKET;
   // Send only the structured version target. Unlike a key DELETE with a query
   // parameter, older Storage APIs reject this body instead of ignoring the version.
@@ -50203,9 +50209,8 @@ async function readRecordingRetentionTarget(id, key, client = getPgPool()) {
       AND t.oid = 'public.unified_messages'::regclass AND t.relkind = 'r' AND t.relpersistence = 'p'
       AND NOT pg_catalog.row_security_active(t.oid)
       AND NOT EXISTS (SELECT 1 FROM ONLY public.unified_messages other WHERE other.id <> m.id AND EXISTS (
-        SELECT 1 FROM unnest(ARRAY[other.storage_path, other.payload->>'storagePath', other.payload->>'storage_path',
-          other.payload->>'recordingStoragePath', other.payload->>'recording_storage_path'
-        ]) AS pointer WHERE ltrim(btrim(pointer), '/') IN ($2, $3::text || '/' || $2)
+        SELECT 1 FROM public.pbk_recording_storage_pointers(other.storage_path, other.payload) AS pointer
+        WHERE pointer COLLATE "C" IN ($2, $3::text || '/' || $2)
       ))`, [id, key, bucket]);
   const row = result.rows.length === 1 ? result.rows[0] : null;
   if (!row?.version || getMessageRecordingPath(row) !== key ||
@@ -50213,17 +50218,14 @@ async function readRecordingRetentionTarget(id, key, client = getPgPool()) {
   return row;
 }
 
-async function withFencedRecordingStorageDelete(perform) {
+async function withRecordingRetentionTransaction(perform) {
   const client = await getPgPool().connect();
   let committing = false;
   let discard = false;
   try {
-    await client.query('BEGIN');
-    await client.query("SET LOCAL idle_in_transaction_session_timeout = '8s'");
-    // A new pointer in any workspace must not race the ownership check. Use
-    // NOWAIT and a bounded provider request rather than queuing a table lock.
-    await client.query('LOCK TABLE public.unified_messages IN SHARE ROW EXCLUSIVE MODE NOWAIT');
-    const result = await perform(client, AbortSignal.timeout(4_000));
+    await client.query('BEGIN ISOLATION LEVEL READ COMMITTED');
+    await client.query("SET LOCAL synchronous_commit = 'on'");
+    const result = await perform(client);
     committing = true;
     await client.query('COMMIT');
     return result;
@@ -50237,6 +50239,41 @@ async function withFencedRecordingStorageDelete(perform) {
   } finally {
     client.release(discard);
   }
+}
+
+async function reserveRecordingRetentionTarget(approvalId, target, stillCurrent) {
+  return withRecordingRetentionTransaction(async client => {
+    const lock = await client.query('SELECT pg_try_advisory_xact_lock(hashtextextended($1, 300501)) AS owned', [target.key]);
+    const row = lock.rows[0]?.owned ? await readRecordingRetentionTarget(target.id, target.key, client) : null;
+    if (row?.version !== target.storageVersion || !stillCurrent()) return false;
+    const result = await client.query(`INSERT INTO public.pbk_recording_retention_attempts
+        (approval_id, message_id, bucket, storage_key, object_version, row_version)
+      SELECT approval_id, $2, $3, $4, $5, $6 FROM ONLY public.pbk_recording_retention_approvals
+      WHERE approval_id = $1 AND consumed_at IS NOT NULL AND founder_proof IS NOT NULL
+      ON CONFLICT DO NOTHING RETURNING message_id`, [approvalId, target.id, SUPABASE_CALL_RECORDINGS_BUCKET,
+      target.key, target.objectVersion, target.storageVersion]);
+    return result.rowCount === 1;
+  });
+}
+
+async function finalizeRecordingRetentionTarget(approvalId, target, deletedAt) {
+  return withRecordingRetentionTransaction(async client => {
+    // Both writes commit together; the pointer trigger sees the confirmed
+    // outcome within this transaction and permits removal, not reassignment.
+    const attempt = await client.query(`UPDATE ONLY public.pbk_recording_retention_attempts
+      SET outcome = 'confirmed', finished_at = NOW()
+      WHERE approval_id = $1 AND message_id = $2 AND object_version = $3 AND outcome = 'pending'
+      RETURNING row_version`, [approvalId, target.id, target.objectVersion]);
+    if (attempt.rowCount !== 1) return false;
+    const saved = await client.query(`UPDATE ONLY public.unified_messages m SET storage_path = '', storage_bucket = '', recording_url = '',
+      updated_at = NOW(), payload = (COALESCE(m.payload, '{}'::jsonb) - $4::text[]) ||
+        jsonb_build_object('retentionStatus', 'deleted', 'deletedAt', $3::text)
+      WHERE m.id = $1 AND m.workspace_id COLLATE "C" = 'pbk'
+        AND pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(pg_catalog.to_jsonb(m)::text, 'UTF8')), 'hex') = $2
+      RETURNING m.id`, [target.id, attempt.rows[0].row_version, deletedAt, primaryRetentionFields]);
+    if (saved.rowCount !== 1) throw new Error('Recording retention pointer changed before readback');
+    return true;
+  });
 }
 
 async function runRecordingRetentionCleanup({ dryRun = true, days = 0, actor = 'Retention worker', execution } = {}) {
@@ -50268,22 +50305,26 @@ async function runRecordingRetentionCleanup({ dryRun = true, days = 0, actor = '
         continue;
       }
       const deletedAt = isoNow();
-      const deletion = await withFencedRecordingStorageDelete(async (client, signal) => {
-        const row = await readRecordingRetentionTarget(messageId, storagePath, client);
-        if (row?.version !== target.storageVersion || current() !== message ||
-            state.messages.some(item => item !== message && getMessageRecordingPath(item) === storagePath)) {
+      const deletion = await (async () => {
+        const reserved = await reserveRecordingRetentionTarget(execution.id, target, () =>
+          current() === message && !state.messages.some(item => item !== message && getMessageRecordingPath(item) === storagePath));
+        if (!reserved) {
           return { ok: false, tracking: 'pending', reason: 'retention_target_changed' };
         }
-        const ack = await deleteSupabaseRecordingVersion(storagePath, target.objectVersion, signal);
+        // The committed intent fences this key while the provider call runs.
+        // Any ambiguous response leaves it quarantined; never replay a DELETE.
+        const ack = current() === message
+          ? await deleteSupabaseRecordingVersion(storagePath, target.objectVersion, AbortSignal.timeout(4_000))
+          : { ok: false, tracking: 'pending', reason: 'retention_target_changed', notDispatched: true };
+        if (ack.notDispatched) {
+          await getPgPool().query(`UPDATE ONLY public.pbk_recording_retention_attempts
+            SET outcome = 'not_dispatched', finished_at = NOW()
+            WHERE approval_id = $1 AND message_id = $2 AND outcome = 'pending'`, [execution.id, messageId]);
+        }
         if (!ack.ok) return ack;
-        if (current() !== message) return { ok: false, tracking: 'pending', reason: 'retention_target_changed' };
-        const saved = await client.query(`UPDATE ONLY public.unified_messages SET storage_path = '',
-          storage_bucket = '', recording_url = '', updated_at = NOW(),
-          payload = (COALESCE(payload, '{}'::jsonb) - $2::text[]) ||
-            jsonb_build_object('retentionStatus', 'deleted', 'deletedAt', $3::text)
-          WHERE id = $1 AND workspace_id COLLATE "C" = 'pbk'`, [messageId, primaryRetentionFields, deletedAt]);
-        return saved.rowCount === 1 ? ack : { ok: false, tracking: 'pending', reason: 'retention_readback_unconfirmed' };
-      }).catch(() => ({ ok: false, tracking: 'pending', reason: 'recording_storage_delete_unconfirmed' }));
+        const saved = await finalizeRecordingRetentionTarget(execution.id, target, deletedAt);
+        return saved ? ack : { ok: false, tracking: 'pending', reason: 'retention_readback_unconfirmed' };
+      })().catch(() => ({ ok: false, tracking: 'pending', reason: 'recording_storage_delete_unconfirmed' }));
       if (deletion.ok && current() === message) {
         state.messages = state.messages.map(item => item !== message ? item : {
           ...withoutRetentionPrimaryFields(message), storagePath: '', storageBucket: '', recordingUrl: '',
@@ -50305,7 +50346,7 @@ async function runRecordingRetentionCleanup({ dryRun = true, days = 0, actor = '
     days: retentionDays,
     cutoffAt: new Date(cutoffMs).toISOString(),
     candidateCount: dryRun ? candidates.length : execution.plan.targetCount,
-    ...(dryRun ? {} : { approvalId: execution.id }),
+    ...(dryRun ? {} : { approvalId: execution.id, blockedCandidateCount: execution.blockedCandidateCount }),
     deletedCount: deletions.filter((item) => item.ok).length,
     candidates: candidates.map((message) => ({
       messageId: message.id,
@@ -61421,11 +61462,21 @@ async function handleRuntimeEvent(normalizedEvent, payload, directRetentionFound
       return { ok: false, statusCode: 400, error: 'Unsupported approval decision.' };
     }
     const incomingActor = payload.actor || approval.actor || 'n8n';
-    const incomingActedAt = payload.actedAt || approval.actedAt || isoNow();
     const currentStatus = normalizeApprovalDecisionStatus(approval.status || 'pending');
+    const retentionFounderDecision = isRecordingRetentionApproval(approval) &&
+      currentStatus === 'pending' && incomingStatus === 'approved';
+    const incomingActedAt = retentionFounderDecision ? isoNow() : payload.actedAt || approval.actedAt || isoNow();
     const slackNeedsRevision = payload.source === 'slack-interaction' && incomingStatus === 'needs_revision';
     let localClaim = false;
-    if (currentStatus === 'pending') {
+    if (retentionFounderDecision) {
+      const claimed = await claimRecordingRetentionFounderDecision(getPgPool(), {
+        id: approval.id, actor: incomingActor, actedAt: incomingActedAt, directFounder: directRetentionFounder,
+        founderProofKey: BRIDGE_API_KEY,
+      });
+      if (!claimed) return {
+        ok: false, statusCode: 409, error: 'The durable retention request is not pending, current, and ready for a founder decision.',
+      };
+    } else if (currentStatus === 'pending') {
       const claim = await claimPendingApprovalDecision(approval, {
         status: incomingStatus,
         actor: incomingActor,
@@ -80797,7 +80848,7 @@ const server = createServer(async (request, response) => {
       const result = await handleRecordingRetentionRequest({
         body, getPool: getPgPool, getMessages: () => state.messages || [], getPath: getMessageRecordingPath,
         getPolicyDays: () => getRecordingRetentionPolicy().days, bucket: SUPABASE_CALL_RECORDINGS_BUCKET,
-        readObjectVersion: readSupabaseRecordingVersion,
+        readObjectVersion: readSupabaseRecordingVersion, founderProofKey: BRIDGE_API_KEY,
         async getStorageVersion({ id, key }, cutoffAt) {
           const row = await readRecordingRetentionTarget(id, key);
           return eligibleDurableRecording(row, cutoffAt) ? row.version : null;

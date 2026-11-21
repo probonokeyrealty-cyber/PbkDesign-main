@@ -4,7 +4,10 @@ export const retentionStorageOrigin = 'https://retention-storage.invalid';
 export const retentionStorageBucket = 'retention-fixture';
 export const retentionStorageFixtureFlag = '--recording-retention-storage-fixture';
 const prefix = `/storage/v1/object`;
-const fixtureKeys = new Set(['fixture/retention-approved.txt', 'fixture/retention-race.txt']);
+const fixtureKeys = new Set([
+  'fixture/retention-approved.txt', 'fixture/retention-race.txt',
+  'fixture/retention-interrupted.txt', 'fixture/retention-later.txt',
+]);
 
 export function isRetentionStorageRequest({ url, method, body } = {}) {
   if (typeof url !== 'string' || !url.startsWith(`${retentionStorageOrigin}/`)) return false;

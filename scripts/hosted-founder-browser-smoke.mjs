@@ -136,7 +136,7 @@ export async function runHostedFounderBrowserSmoke() {
       for (const [path, heading] of pages) {
         await page.goto(origin + path, { waitUntil: 'load' });
         await expect(page.getByRole('heading', { name: heading, exact: true }).first()).toBeVisible();
-        if (path === '/leads') await expect(page.getByRole('button', { name: /Open lead Fictional Seller/ }).first()).toBeVisible();
+        if (path === '/leads') await expect(page.getByRole('link', { name: /Open lead Fictional Seller/ }).first()).toBeVisible();
         if (path === '/analyzer') await expect(page.getByRole('combobox', { name: 'Address', exact: true })).toBeVisible();
         await page.waitForLoadState('networkidle');
         const overflow = await page.evaluate(() => document.documentElement.scrollWidth - innerWidth);

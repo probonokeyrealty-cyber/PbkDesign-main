@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHmac, randomUUID } from 'node:crypto';
 import { hashProviderActionContext } from './provider-action-authorization.mjs';
 
 
@@ -7,6 +7,7 @@ const type = 'recording-retention';
 const action = 'delete_recordings_retention';
 const origin = 'recording-retention-route';
 const grants = 'public.pbk_recording_retention_approvals';
+const attempts = 'public.pbk_recording_retention_attempts';
 const claimedExecutions = new WeakSet();
 const validId = id => typeof id === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u.test(id);
 export const validRecordingObjectVersion = validId;
@@ -19,9 +20,41 @@ const block = (statusCode, result, error) => ({ ok: false, statusCode, result, e
 const unavailable = () => block(503, 'retention_approval_unavailable', 'Recording retention approval could not be confirmed. No storage deletion was started.');
 const changed = () => block(409, 'retention_plan_changed', 'The recording list, storage versions, or retention days could not be verified. Review the batch and request a new approval.');
 
+export function isRecordingRetentionApproval(approval) {
+  return String(approval?.type || '').trim().toLowerCase() === type;
+}
+
 export function checkRecordingRetentionDecision(approval, directFounder) {
-  if (approval?.type !== type || directFounder === true) return null;
+  if (!isRecordingRetentionApproval(approval) || directFounder === true) return null;
   return block(403, 'retention_founder_required', 'Decide recording retention approvals through the direct founder API.');
+}
+
+function signFounderDecision(key, id, plan, actedAt) {
+  return createHmac('sha256', key)
+    .update(JSON.stringify(['pbk-recording-retention-founder-v1', id, hashProviderActionContext(plan), actedAt]))
+    .digest('hex');
+}
+
+export async function claimRecordingRetentionFounderDecision(pool, { id, actor, actedAt, directFounder, founderProofKey }) {
+  if (directFounder !== true || !validId(id) || !pool || !founderProofKey) return false;
+  const lookup = await pool.query(`SELECT plan FROM ONLY ${grants} WHERE approval_id = $1`, [id]);
+  const plan = lookup.rows[0]?.plan;
+  if (!plan) return false;
+  const proof = signFounderDecision(founderProofKey, id, plan, actedAt);
+  const result = await pool.query(`WITH decided AS (
+    UPDATE ONLY public.approvals a SET status = 'approved', decided_at = $3::text::timestamptz, updated_at = NOW(),
+      payload = a.payload || jsonb_build_object('status', 'approved', 'actor', $2::text, 'actedAt', $3::text)
+    FROM ${grants} g, pg_catalog.set_config('synchronous_commit', 'on', true)
+    WHERE g.approval_id = a.id AND a.id = $1 AND a.workspace_id COLLATE "C" = 'pbk'
+      AND a.status = 'pending' AND a.type = $4 AND a.payload->>'approvalAction' = $5
+      AND a.payload->>'source' = $6 AND a.payload#>'{metadata,recordingRetention}' = g.plan
+      AND g.plan = $7::jsonb
+      AND g.founder_approved_at IS NULL AND g.consumed_at IS NULL AND g.expires_at > statement_timestamp()
+    RETURNING a.id, a.decided_at
+  )
+  UPDATE ${grants} g SET founder_approved_at = d.decided_at, founder_proof = $8
+  FROM decided d WHERE g.approval_id = d.id RETURNING g.approval_id`, [id, actor, actedAt, type, action, origin, JSON.stringify(plan), proof]);
+  return result.rowCount === 1;
 }
 
 export function eligibleDurableRecording(row, cutoffAt) {
@@ -42,16 +75,25 @@ export function takeClaimedRecordingRetentionExecution(execution) {
   return claimedExecutions.delete(execution);
 }
 
-async function buildPlan(messages, days, cutoffAt, bucket, getPath, getStorageVersion, readObjectVersion) {
+async function buildPlan(messages, days, cutoffAt, bucket, getPath, getStorageVersion, readObjectVersion, pool) {
   const cutoff = Date.parse(cutoffAt);
+  const candidates = messages.filter(row => workspaceOf(row) === 'pbk' && row.channel === 'call' &&
+    row.direction === 'recording' && row.retentionStatus !== 'deleted' && Date.parse(row.createdAt || row.updatedAt || '') < cutoff);
+  const fenced = await pool.query(`SELECT storage_key, outcome FROM ONLY ${attempts}
+    WHERE storage_key = ANY($1::text[]) AND outcome IN ('pending', 'confirmed')`,
+  [[...new Set(candidates.map(getPath).filter(Boolean))]]);
+  const fencedKeys = new Map(fenced.rows.map(row => [row.storage_key, row.outcome]));
+  const blocked = new Set();
   const targets = [];
   const ids = new Set();
   const keys = new Set();
-  for (const row of [...messages]) {
-    if (workspaceOf(row) !== 'pbk' || row.channel !== 'call' || row.direction !== 'recording') continue;
+  for (const row of candidates) {
     const key = getPath(row);
-    const timestamp = Date.parse(row.createdAt || row.updatedAt || '');
-    if (!key || row.retentionStatus === 'deleted' || !Number.isFinite(timestamp) || timestamp >= cutoff) continue;
+    if (!key) continue;
+    if (fencedKeys.has(key)) {
+      if (fencedKeys.get(key) === 'pending') blocked.add(key);
+      continue;
+    }
     const recordedBucket = row.storageBucket || row.storage_bucket || row.payload?.storageBucket || row.payload?.storage_bucket || bucket;
     if (recordedBucket !== bucket || typeof row.id !== 'string' || !row.id.trim() || ids.has(row.id) || keys.has(key) ||
       !validRecordingRetentionStorageKey(key)) return null;
@@ -68,6 +110,7 @@ async function buildPlan(messages, days, cutoffAt, bucket, getPath, getStorageVe
   return {
     targets: Object.freeze(targets),
     plan: Object.freeze({ days, cutoffAt, targetCount: targets.length, targetHash: hashProviderActionContext({ bucket, targets }) }),
+    blockedCandidateCount: blocked.size,
   };
 }
 
@@ -77,7 +120,8 @@ function matchesPlan(left, right) {
 }
 
 export async function handleRecordingRetentionRequest({
-  body, getPool, getMessages, getPath, getPolicyDays, getStorageVersion, readObjectVersion, bucket, requestApproval, run, now = Date.now,
+  body, getPool, getMessages, getPath, getPolicyDays, getStorageVersion, readObjectVersion, bucket, requestApproval, run,
+  founderProofKey, now = Date.now,
 }) {
   if (body?.dryRun !== undefined && typeof body.dryRun !== 'boolean') {
     return block(400, 'invalid_retention_request', 'dryRun must be a boolean.');
@@ -99,9 +143,13 @@ export async function handleRecordingRetentionRequest({
   if (!id) {
     const timestamp = now();
     try {
-      const batch = await buildPlan(getMessages(), days, new Date(timestamp - days * dayMs).toISOString(), bucket, getPath, getStorageVersion, readObjectVersion);
+      const batch = await buildPlan(getMessages(), days, new Date(timestamp - days * dayMs).toISOString(), bucket, getPath, getStorageVersion, readObjectVersion, pool);
       if (!batch) return changed();
-      if (!batch.targets.length) return { ok: true, result: 'no_retention_candidates', deletedCount: 0 };
+      const { blockedCandidateCount } = batch;
+      if (!batch.targets.length) return {
+        ok: true, result: blockedCandidateCount ? 'retention_candidates_pending' : 'no_retention_candidates',
+        blockedCandidateCount, deletedCount: 0,
+      };
       const approvalId = randomUUID();
       const expiresAt = new Date(timestamp + dayMs).toISOString();
       const requested = await requestApproval({
@@ -119,7 +167,7 @@ export async function handleRecordingRetentionRequest({
         ON CONFLICT (approval_id) DO NOTHING`, [approvalId, JSON.stringify(batch.plan), expiresAt, type, action, origin]);
       if (grant.rowCount !== 1) return unavailable();
       return { ok: true, statusCode: 202, result: 'queued_for_approval', approvalId, expiresAt,
-        days, cutoffAt: batch.plan.cutoffAt, candidateCount: batch.plan.targetCount };
+        days, cutoffAt: batch.plan.cutoffAt, candidateCount: batch.plan.targetCount, blockedCandidateCount };
     } catch {
       return unavailable();
     }
@@ -127,18 +175,28 @@ export async function handleRecordingRetentionRequest({
 
   let execution;
   try {
-    const lookup = await pool.query(`SELECT plan, consumed_at, expires_at > statement_timestamp() AS active
+    const lookup = await pool.query(`SELECT plan, founder_approved_at, founder_proof, consumed_at, expires_at > statement_timestamp() AS active
       FROM ONLY ${grants} WHERE approval_id = $1`, [id]);
     const grant = lookup.rows[0];
     if (!grant) return block(403, 'retention_approval_required', 'Request a recording retention approval for this batch first.');
-    if (grant.consumed_at) return block(409, 'retention_approval_consumed', 'This approval already started a cleanup. Review its outcome before requesting another approval.');
+    if (grant.consumed_at) {
+      const saved = await pool.query(`SELECT message_id AS "messageId", outcome, started_at AS "startedAt",
+        finished_at AS "finishedAt" FROM ONLY ${attempts} WHERE approval_id = $1 ORDER BY message_id`, [id]);
+      return {
+        ...block(409, 'retention_approval_consumed', 'This approval already started a cleanup. Review its outcome before requesting another approval.'),
+        outcomes: saved.rows, notStartedCount: Math.max(0, grant.plan.targetCount - saved.rows.length),
+      };
+    }
     if (!grant.active) return block(403, 'retention_approval_expired', 'The recording retention approval expired.');
-    const batch = await buildPlan(getMessages(), days, grant.plan.cutoffAt, bucket, getPath, getStorageVersion, readObjectVersion);
+    const approvedAt = grant.founder_approved_at?.toISOString();
+    const proof = approvedAt && founderProofKey ? signFounderDecision(founderProofKey, id, grant.plan, approvedAt) : null;
+    if (!proof || grant.founder_proof !== proof) return block(403, 'retention_approval_required', 'The exact batch requires a direct founder decision.');
+    const batch = await buildPlan(getMessages(), days, grant.plan.cutoffAt, bucket, getPath, getStorageVersion, readObjectVersion, pool);
     if (!matchesPlan(batch?.plan, grant.plan)) return changed();
     // The approval row and one-use claim are checked together. Uncertain
     // claims are not retried and no mutable bridge approval can authorize I/O.
     const claim = await pool.query(`WITH approved AS MATERIALIZED (
-        SELECT a.id FROM ONLY public.approvals a WHERE a.id = $1 AND a.workspace_id = 'pbk'
+        SELECT a.id, a.decided_at FROM ONLY public.approvals a WHERE a.id = $1 AND a.workspace_id COLLATE "C" = 'pbk'
           AND a.type = $3 AND a.status = 'approved' AND a.decided_at IS NOT NULL
           AND a.payload->>'approvalAction' = $4 AND a.payload->>'source' = $5
           AND a.payload#>'{metadata,recordingRetention}' = $2::jsonb
@@ -147,10 +205,11 @@ export async function handleRecordingRetentionRequest({
       UPDATE ${grants} g SET consumed_at = statement_timestamp()
       FROM approved a, pg_catalog.set_config('synchronous_commit', 'on', true)
       WHERE g.approval_id = a.id AND g.plan = $2::jsonb AND g.consumed_at IS NULL
+        AND g.founder_approved_at = a.decided_at AND g.founder_proof = $6
         AND g.expires_at > statement_timestamp()
-      RETURNING g.approval_id`, [id, JSON.stringify(batch.plan), type, action, origin]);
+      RETURNING g.approval_id`, [id, JSON.stringify(batch.plan), type, action, origin, proof]);
     if (claim.rowCount !== 1) return block(403, 'retention_approval_required', 'The exact batch must be approved, unexpired and unused.');
-    const latest = await buildPlan(getMessages(), days, grant.plan.cutoffAt, bucket, getPath, getStorageVersion, readObjectVersion);
+    const latest = await buildPlan(getMessages(), days, grant.plan.cutoffAt, bucket, getPath, getStorageVersion, readObjectVersion, pool);
     if (!matchesPlan(latest?.plan, batch.plan)) return changed();
     execution = Object.freeze({ id, ...latest });
     claimedExecutions.add(execution);

@@ -189,8 +189,9 @@ test('approval, auth, delivery and dispatch code outside maturity remains byte-f
   // dc9bb20 and ff183d4 add tooling status; 82ae0a0 adds exact-version recording
   // retention, exercised by the disposable Postgres and Storage HTTP test.
   // Synced main includes the Outlook receipt lookup from 15e6868.
+  // Retention hardening adds durable founder proof and per-key deletion intent.
   assert.equal(createHash('sha256').update(unchanged).digest('hex'),
-    '8325c80af3d75a18d4bc2bac6dda0167e781e05d7eb58d35ca03ad29e6678ae8');
+    'cdf9318008b64910651b91799a7b0419e40025fe2b74faf4c90771929d228a28');
 });
 
 test('production distribution includes reader and protocol, never the fixture signer', () => {

@@ -13592,11 +13592,9 @@ async function recordEventDeadLetter(record = {}) {
 async function recordPbkTurnLatency(record = {}) {
   state.status = state.status && typeof state.status === 'object' ? state.status : {};
   recordAvaResponseLatencyStatus(state.status, record);
+  persistStateInBackground('PBK turn latency status');
   const pool = getPgPool();
-  if (!pool) {
-    await persistState(state);
-    return { ok: false, reason: 'postgres_unavailable', statusUpdated: true };
-  }
+  if (!pool) return { ok: false, reason: 'postgres_unavailable', statusUpdated: true };
   try {
     await pool.query(
       `INSERT INTO public.pbk_turn_latency (
@@ -13607,11 +13605,9 @@ async function recordPbkTurnLatency(record = {}) {
       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb,$12,$13)`,
       [record.id || `pbk-turn-latency-${Date.now()}-${Math.abs(hashString(`${record.callId || record.call_id || ''}\n${record.createdAt || record.created_at || ''}`))}`, normalizeTenantId(record.tenantId || record.tenant_id || 'pbk'), String(record.callId || record.call_id || '').trim(), String(record.leadId || record.lead_id || '').trim(), record.speechFinalToReplyStartMs === undefined && record.speech_final_to_reply_start_ms === undefined ? null : Math.max(0, Math.round(toNumber(record.speechFinalToReplyStartMs ?? record.speech_final_to_reply_start_ms, 0))), record.turnCompletionMs === undefined && record.turn_completion_ms === undefined ? null : Math.max(0, Math.round(toNumber(record.turnCompletionMs ?? record.turn_completion_ms, 0))), record.transcriptToTtsMs === undefined && record.transcript_to_tts_ms === undefined ? null : Math.max(0, Math.round(toNumber(record.transcriptToTtsMs ?? record.transcript_to_tts_ms, 0))), String(record.replyMode || record.reply_mode || '').slice(0, 80), String(record.provider || '').slice(0, 80), record.ok === undefined ? null : Boolean(record.ok), JSON.stringify(record.labels && typeof record.labels === 'object' ? record.labels : {}), String(record.source || 'pbk-bridge').slice(0, 120), record.createdAt || record.created_at || isoNow()]
     );
-    await persistState(state);
     return { ok: true, statusUpdated: true };
   } catch (error) {
     console.warn('[pbk-local-openclaw] PBK turn latency persistence skipped:', error?.message || error);
-    await persistState(state);
     return { ok: false, error: error?.message || String(error), statusUpdated: true };
   }
 }

@@ -218,4 +218,13 @@ await assert.doesNotReject(vm.runInContext(`(async () => { ${source.slice(before
   'A database disconnect after Ava sends audio must not reject the detached reply task');
 assert.equal(persistenceWarnings.length, 1, 'A failed post-reply write still produces a warning');
 
+const latencyStatusSaves = [];
+runtime.recordAvaResponseLatencyStatus = noop;
+runtime.getPgPool = () => null;
+runtime.persistStateInBackground = (context) => latencyStatusSaves.push(context);
+vm.runInContext(sourceBetween('async function recordPbkTurnLatency(', 'async function publishPbkEvent('), runtime);
+const unavailableLatency = await runtime.recordPbkTurnLatency();
+assert.equal(unavailableLatency.reason, 'postgres_unavailable');
+assert.deepEqual(latencyStatusSaves, ['PBK turn latency status']);
+
 console.log(`Ava live-call resilience smoke passed (${checks.length} structural checks; silence, speech/final barge-in, session guards, and reply timing).`);

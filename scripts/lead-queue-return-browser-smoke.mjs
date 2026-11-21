@@ -124,7 +124,9 @@ try {
       await expect(page).toHaveURL(origin + '/leads/queue-demo-13');
       await expect(page.getByRole('heading', { name: 'Queue Sample 13', exact: true })).toBeVisible();
       await expect(page.getByText('13 Demo Street', { exact: false }).first()).toBeVisible();
-      await page.getByRole('tab', { name: 'Comps', exact: true }).click();
+      await page.getByRole('navigation', { name: 'Lead workspace sections', exact: true })
+        .getByRole('link', { name: 'Saved comps', exact: true }).click();
+      await expect(page).toHaveURL(origin + '/leads/queue-demo-13#lead-comps');
       await expect(page.getByRole('rowheader', { name: /17 Example Court/ })).toBeVisible();
       await expect(page.getByRole('rowheader', { name: /16 Example Court/ })).toHaveCount(0);
       await page.getByRole('button', { name: 'Back to leads', exact: true }).click();

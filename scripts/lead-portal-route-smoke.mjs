@@ -109,7 +109,8 @@ assert(
 );
 assert(
   portal.includes('canonicalLeadId') &&
-    /navigate\(`\/leads\/\$\{encodeURIComponent\(canonicalLeadId\)\}\$\{location\.hash\}`/.test(portal),
+    /const \{ search, hash, state \} = portalLocationRef\.current/.test(portal) &&
+    /navigate\(\s*\{ pathname: `\/leads\/\$\{encodeURIComponent\(canonicalLeadId\)\}`, search, hash \}/.test(portal),
   'Alias lead URLs must preserve the requested evidence section when they normalize.'
 );
 assert(

@@ -2,10 +2,15 @@ import { createHash } from 'node:crypto';
 
 const COMPOSIO = 'https://backend.composio.dev';
 const E2B_INVENTORY = 'https://api.e2b.app/v2/sandboxes?limit=1';
-const TOOLKIT = 'composio_search';
-const TOOL = 'COMPOSIO_SEARCH_WEB';
+const TOOLKIT = 'exa';
+const TOOL = 'EXA_ANSWER';
+const PRODUCTION_USER = 'pbk-public-market-research-production';
+const EXA_REST_SCHEMA_SHA256 = '216c1a2a2d9c9b653a3a308d5c815478be079ed11d8b20f6530b923ffe20ecaa';
 const only = (values, value) => Array.isArray(values) && values.length === 1 && values[0] === value;
 const empty = (value) => value == null || (typeof value === 'object' && !Object.keys(value).length);
+const single = (page) =>
+  Array.isArray(page?.items) && page.items.length === 1 && page.total_items === 1 && !page.next_cursor
+    ? page.items[0] : null;
 
 function canonical(value) {
   if (Array.isArray(value)) return value.map(canonical);
@@ -15,7 +20,7 @@ function canonical(value) {
   return value;
 }
 
-function hasPinnedScope(session, { sessionId, userId, version }) {
+function hasPinnedScope(session, { sessionId, userId, version, accountId }) {
   const scope = session?.config;
   return session?.session_id === sessionId &&
     session.config_version === version &&
@@ -26,10 +31,13 @@ function hasPinnedScope(session, { sessionId, userId, version }) {
     only(Object.keys(scope.tools ?? {}), TOOLKIT) &&
     only(scope.tools?.[TOOLKIT]?.enabled, TOOL) &&
     only(scope.preload?.tools, TOOL) &&
-    empty(scope.connected_accounts) &&
+    only(Object.keys(scope.connected_accounts ?? {}), TOOLKIT) &&
+    only(scope.connected_accounts?.[TOOLKIT], accountId) &&
     empty(scope.auth_configs) &&
     scope.instant === false &&
     scope.manage_connections?.enabled === false &&
+    scope.manage_connections?.enable_wait_for_connections === false &&
+    scope.manage_connections?.enable_connection_removal === false &&
     scope.workbench?.enable === false &&
     scope.proxy_execute?.enable === false &&
     scope.search?.enable === false &&
@@ -37,9 +45,17 @@ function hasPinnedScope(session, { sessionId, userId, version }) {
     scope.execute?.enable_multi_execute === false;
 }
 
-function hasPinnedTool(item, hash) {
-  return item?.slug === TOOL && item.toolkit?.slug === TOOLKIT && item.no_auth === true &&
+function hasPinnedTool(item, hash, toolkitSlug) {
+  return item?.slug === TOOL && item.toolkit?.slug === toolkitSlug &&
+    item.no_auth === false && item.is_deprecated === false &&
     createHash('sha256').update(JSON.stringify(canonical(item.input_parameters ?? null))).digest('hex') === hash;
+}
+
+function hasActiveAccount(item, { userId, accountId }) {
+  return item?.slug === TOOLKIT && item.enabled === true &&
+    item.connected_account?.id === accountId &&
+    item.connected_account.user_id === userId &&
+    item.connected_account.status === 'ACTIVE';
 }
 
 async function readSmallJson(response) {
@@ -68,6 +84,7 @@ export function createPublicMarketConnectionCheck({
   const composioKey = env.PBK_COMPOSIO_MARKET_SEARCH_API_KEY?.trim();
   const sessionId = env.PBK_COMPOSIO_MARKET_SEARCH_SESSION_ID?.trim();
   const userId = env.PBK_COMPOSIO_MARKET_SEARCH_USER_ID?.trim();
+  const accountId = env.PBK_COMPOSIO_MARKET_SEARCH_EXA_ACCOUNT_ID?.trim();
   const version = Number(env.PBK_COMPOSIO_MARKET_SEARCH_CONFIG_VERSION);
   const hash = env.PBK_COMPOSIO_MARKET_SEARCH_SCHEMA_SHA256?.trim();
   const configured = Boolean(
@@ -75,9 +92,10 @@ export function createPublicMarketConnectionCheck({
     ![env.PBK_BRIDGE_API_KEY, env.PBK_COMPOSIO_INBOUND_TOKEN, env.PBK_AVA_OUTLOOK_COMPOSIO_API_KEY]
       .some((other) => other && [e2bKey, composioKey].includes(other.trim())) &&
     /^trs_[A-Za-z0-9_-]{1,80}$/.test(sessionId ?? '') &&
-    userId && userId.length <= 100 &&
+    userId === PRODUCTION_USER &&
+    /^ca_[A-Za-z0-9_-]{1,80}$/.test(accountId ?? '') &&
     Number.isSafeInteger(version) && version > 0 &&
-    /^[a-f0-9]{64}$/.test(hash ?? '')
+    hash === EXA_REST_SCHEMA_SHA256
   );
 
   const status = (state, note) => ({
@@ -112,15 +130,19 @@ export function createPublicMarketConnectionCheck({
         }),
         (async () => {
           const session = await readSmallJson(await get(sessionUrl, composioKey, signal));
-          if (!hasPinnedScope(session, { sessionId, userId, version })) return false;
-          // The per-session REST listing can omit preloaded tools. Verify the
-          // exact advertised set above and pin the public tool's catalog schema.
-          const tool = await readSmallJson(await get(`${COMPOSIO}/api/v3.1/tools/${TOOL}`, composioKey, signal));
-          return hasPinnedTool(tool, hash);
+          if (!hasPinnedScope(session, { sessionId, userId, version, accountId })) return false;
+          const [catalog, tools, toolkits] = await Promise.all([
+            `${COMPOSIO}/api/v3.1/tools/${TOOL}`,
+            sessionUrl + '/tools?limit=2',
+            sessionUrl + '/toolkits?limit=2',
+          ].map(async (url) => readSmallJson(await get(url, composioKey, signal))));
+          // Composio capitalizes the toolkit slug only in the session tool listing.
+          return hasPinnedTool(catalog, hash, TOOLKIT) && hasPinnedTool(single(tools), hash, 'EXA') &&
+            hasActiveAccount(single(toolkits), { userId, accountId });
         })(),
       ]);
       if (e2bOk && searchOk) {
-        return status('connected_unverified', 'E2B and the pinned Composio session passed read-only checks. No job was run.');
+        return status('connected_unverified', 'E2B and the dedicated Exa connection passed read-only checks. No job was run.');
       }
     } catch {
       // Never return provider errors, credentials, or inventory to Settings.

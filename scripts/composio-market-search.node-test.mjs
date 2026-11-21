@@ -35,6 +35,108 @@ const metadata = {
     execute: { enable_multi_execute: false },
   },
 };
+const restSchema = {
+  type: 'object',
+  title: 'SearchRequest',
+  required: ['query'],
+  properties: {
+    query: {
+      type: 'string',
+      title: 'Query',
+      examples: ['Coffee'],
+      description:
+        "The search query for the Composio Exa API. Must be non-empty; using any other parameter name (e.g., 'q') causes an invalid-request error. Include qualifiers (year, region, platform, intent) for better results \u2014 broad queries return generic content; excessive site: or quoted-term filters can return zero results. Add disambiguating terms (city, role, domain) when searching for people or organizations with common names.",
+    },
+  },
+};
+function restFallback({
+  listCode = -32601,
+  changeSession,
+  changeCatalog,
+  execute = () =>
+    Response.json({
+      result_type: 'completed',
+      error: null,
+      data: { answer: 'Public market summary.', citations: [{ url: 'https://example.org/report' }] },
+    }),
+} = {}) {
+  const session = { ...structuredClone(metadata), tool_router_tools: [tool] };
+  const catalog = {
+    slug: tool,
+    toolkit: { slug: 'composio_search' },
+    no_auth: true,
+    input_parameters: structuredClone(restSchema),
+  };
+  changeSession?.(session);
+  changeCatalog?.(catalog);
+  const calls = [];
+  let closed = 0;
+  const adapter = createComposioMarketSearch({
+    env,
+    connect: async () => ({
+      listTools: async () => { throw Object.assign(Error('RPC failed'), { code: listCode }); },
+      callTool: async () => { calls.push(['MCP execution']); },
+      close: async () => { closed++; },
+    }),
+    fetchImpl: async (url, init) => {
+      assert.equal(new URL(url).origin, 'https://backend.composio.dev');
+      assert.equal(init.redirect, 'error');
+      assert.equal(init.headers['x-api-key'], env.PBK_COMPOSIO_MARKET_SEARCH_API_KEY);
+      const path = new URL(url).pathname;
+      calls.push([init.method, path, init.body ? JSON.parse(init.body) : null]);
+      if (path === '/api/v3.1/tool_router/session/trs_market') return Response.json(session);
+      if (path === '/api/v3.1/tools/COMPOSIO_SEARCH_WEB') return Response.json(catalog);
+      if (path === '/api/v3.1/tool_router/session/trs_market/execute') return execute();
+      assert.fail('Unexpected provider endpoint');
+    },
+  });
+  return { adapter, calls, closes: () => closed };
+}
+test('missing MCP list supports one exact session execution with the independently pinned catalog schema', async () => {
+  const { adapter, calls, closes } = restFallback();
+  const r = await adapter.search('Market query');
+  assert.equal(r.ok, true);
+  assert.deepEqual(r.citations, ['https://example.org/report']);
+  assert.deepEqual(calls, [
+    ['GET', '/api/v3.1/tool_router/session/trs_market', null],
+    ['GET', '/api/v3.1/tools/COMPOSIO_SEARCH_WEB', null],
+    ['POST', '/api/v3.1/tool_router/session/trs_market/execute', {
+      tool_slug: tool, arguments: { query: 'Market query' },
+    }],
+  ]);
+  assert.equal(closes(), 1);
+});
+test('REST fallback denies unpinned catalog, extra tools/accounts and unrelated list failures', async () => {
+  for (const options of [
+    { listCode: -32000 },
+    { changeSession: (m) => m.tool_router_tools.push('OTHER') },
+    { changeSession: (m) => delete m.tool_router_tools },
+    { changeSession: (m) => (m.config.tools.extra = { enabled: ['OTHER'] }) },
+    { changeSession: (m) => (m.config.connected_accounts.e2b = ['other']) },
+    { changeCatalog: (m) => (m.input_parameters = schema) },
+    { changeCatalog: (m) => (m.no_auth = false) },
+    { changeCatalog: (m) => (m.toolkit.slug = 'other') },
+    { changeCatalog: (m) => (m.slug = 'OTHER') },
+  ]) {
+    const { adapter, calls } = restFallback(options);
+    assert.equal((await adapter.search('Market query')).ok, false);
+    assert.ok(calls.length > 0);
+    assert.ok(calls.every(([method]) => method === 'GET'));
+  }
+});
+test('REST execution is not retried after HTTP failure, rejection, or incomplete results', async () => {
+  for (const execute of [
+    () => new Response(null, { status: 502 }),
+    () => { throw Error('connection lost'); },
+    () => Response.json({ result_type: 'input_required', data: { citations: [] } }),
+    () => Response.json({ result_type: 'completed', error: 'failed', data: { citations: [] } }),
+  ]) {
+    const { adapter, calls } = restFallback({ execute });
+    assert.equal((await adapter.search('Market query')).ok, false);
+    assert.equal(calls.filter(([method]) => method === 'POST').length, 1);
+    assert.equal(calls.some(([method]) => method === 'MCP execution'), false);
+  }
+});
 test('market search is default-off and status never connects', async () => {
   let calls = 0;
   const search = createComposioMarketSearch({

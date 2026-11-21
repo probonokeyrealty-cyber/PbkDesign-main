@@ -1,6 +1,9 @@
 import { connectComposioHttp, schemaFingerprint } from './composio-connection.mjs';
 import { normalizePublicEvidence } from './public-market-worker.mjs';
 const TOOL = 'COMPOSIO_SEARCH_WEB';
+const API = 'https://backend.composio.dev/api/v3.1';
+// The reviewed REST catalog schema differs from the separately pinned MCP inputSchema.
+const REST_SCHEMA_SHA256 = 'cafda083ef8419a8de5b5f7fa078ff25f852a9a0a49e0bbaeb3447e6b5f42380';
 const only = (a, value) => Array.isArray(a) && a.length === 1 && a[0] === value;
 export function verifyMarketSearchSession(config, session) {
   const c = session?.config;
@@ -10,6 +13,7 @@ export function verifyMarketSearchSession(config, session) {
     session.mcp?.url === config.url &&
     c?.user_id === config.userId &&
     only(c.toolkits?.enabled, 'composio_search') &&
+    only(Object.keys(c.tools ?? {}), 'composio_search') &&
     only(c.tools?.composio_search?.enabled, TOOL) &&
     only(c.preload?.tools, TOOL) &&
     Object.keys(c.connected_accounts ?? {}).length === 0 &&
@@ -23,18 +27,25 @@ export function verifyMarketSearchSession(config, session) {
     c.execute?.enable_multi_execute === false
   );
 }
-async function verify(config, signal) {
-  const r = await fetch(
-    'https://backend.composio.dev/api/v3.1/tool_router/session/' +
-      encodeURIComponent(config.sessionId),
-    { headers: { 'x-api-key': config.key }, redirect: 'error', signal }
-  );
+const sessionPath = (config) => '/tool_router/session/' + encodeURIComponent(config.sessionId);
+async function readProviderJson(fetchImpl, path, config, signal, body) {
+  const r = await fetchImpl(API + path, {
+    method: body ? 'POST' : 'GET',
+    headers: {
+      'x-api-key': config.key,
+      ...(body && { 'Content-Type': 'application/json' }),
+    },
+    body: body && JSON.stringify(body),
+    cache: 'no-store',
+    redirect: 'error',
+    signal,
+  });
   if (!r.ok) {
     await r.body?.cancel();
-    return false;
+    throw Error('provider_http');
   }
   let bytes = 0;
-  const body = r.body.pipeThrough(
+  const stream = r.body.pipeThrough(
     new TransformStream({
       transform(chunk, c) {
         bytes += chunk.length;
@@ -46,12 +57,39 @@ async function verify(config, signal) {
       },
     })
   );
-  return verifyMarketSearchSession(config, await new Response(body).json());
+  return new Response(stream).json();
+}
+async function verify(config, signal, fetchImpl) {
+  const session = await readProviderJson(fetchImpl, sessionPath(config), config, signal);
+  return verifyMarketSearchSession(config, session) ? session : null;
+}
+async function executeWithRest(fetchImpl, config, signal, session, query) {
+  if (!verifyMarketSearchSession(config, session) || !only(session.tool_router_tools, TOOL))
+    throw Error('scope');
+  const catalog = await readProviderJson(fetchImpl, '/tools/' + TOOL, config, signal);
+  if (
+    catalog?.slug !== TOOL ||
+    catalog.toolkit?.slug !== 'composio_search' ||
+    catalog.no_auth !== true ||
+    schemaFingerprint(catalog.input_parameters) !== REST_SCHEMA_SHA256
+  )
+    throw Error('schema');
+  signal.throwIfAborted();
+  const result = await readProviderJson(fetchImpl, sessionPath(config) + '/execute', config, signal, {
+    tool_slug: TOOL,
+    arguments: { query },
+  });
+  if (!result || result.error || (result.result_type !== undefined && result.result_type !== 'completed'))
+    throw Error('provider');
+  if (Object.hasOwn(result, 'successful')) return result;
+  if (Object.hasOwn(result.data ?? {}, 'successful')) return result.data;
+  return { successful: true, data: result.data };
 }
 export function createComposioMarketSearch({
   env = process.env,
   connect = connectComposioHttp,
   verify: verifyScope = verify,
+  fetchImpl = globalThis.fetch,
 } = {}) {
   const enabled = env.PBK_COMPOSIO_MARKET_SEARCH_ENABLED === 'true';
   const key = String(env.PBK_COMPOSIO_MARKET_SEARCH_API_KEY ?? '').trim(),
@@ -96,33 +134,47 @@ export function createComposioMarketSearch({
     const signal = AbortSignal.timeout(20000);
     let client;
     try {
-      if (!(await verifyScope(config, signal))) throw Error('scope');
+      const session = await verifyScope(config, signal, fetchImpl);
+      if (!session) throw Error('scope');
       client = await connect(config, signal);
       if (signal.aborted) throw Error('expired');
-      const listing = await client.listTools({}, { signal, timeout: 20000 });
-      if (
-        listing.tools?.length !== 1 ||
-        listing.nextCursor ||
-        listing.tools[0].name !== TOOL ||
-        schemaFingerprint(listing.tools[0].inputSchema) !== hash
-      )
-        throw Error('schema');
-      const result = await client.callTool({ name: TOOL, arguments: { query } }, undefined, {
-        signal,
-        timeout: 20000,
-      });
-      if (result.isError || signal.aborted) throw Error('provider');
-      let data = result.structuredContent;
-      if (!data) {
-        const text =
-          result.content
-            ?.filter((c) => c.type === 'text')
-            .map((c) => c.text)
-            .join('') ?? '';
-        if (text.length > 2000000) throw Error('limit');
-        data = JSON.parse(text);
+      let useRest = false;
+      let listing;
+      try {
+        listing = await client.listTools({}, { signal, timeout: 20000 });
+      } catch (error) {
+        if (error?.code !== -32601 || signal.aborted) throw error;
+        useRest = true;
       }
-      if (data?.successful !== true || !Array.isArray(data.data?.citations)) throw Error('result');
+      let data;
+      if (useRest) {
+        data = await executeWithRest(fetchImpl, config, signal, session, query);
+      } else {
+        if (
+          listing?.tools?.length !== 1 ||
+          listing.nextCursor ||
+          listing.tools[0].name !== TOOL ||
+          schemaFingerprint(listing.tools[0].inputSchema) !== hash
+        )
+          throw Error('schema');
+        const result = await client.callTool({ name: TOOL, arguments: { query } }, undefined, {
+          signal,
+          timeout: 20000,
+        });
+        if (result.isError || signal.aborted) throw Error('provider');
+        data = result.structuredContent;
+        if (!data) {
+          const text =
+            result.content
+              ?.filter((c) => c.type === 'text')
+              .map((c) => c.text)
+              .join('') ?? '';
+          if (text.length > 2000000) throw Error('limit');
+          data = JSON.parse(text);
+        }
+      }
+      if (signal.aborted || data?.successful !== true || !Array.isArray(data.data?.citations))
+        throw Error('result');
       const evidence = normalizePublicEvidence({
         ok: true,
         live: true,

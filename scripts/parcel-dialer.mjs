@@ -216,7 +216,8 @@ export function createDenverParcelSource({ fetchImpl = globalThis.fetch, now = D
   const parcelHints = new Map();
   const read = async (path, parameters) => {
     const url = `${DENVER_PARCEL_LAYER}${path}?${new URLSearchParams(parameters)}`;
-    for (const [attempt, timeout] of [2400, 3400].entries()) {
+    // Leave room for a slow but healthy county response on the second attempt.
+    for (const [attempt, timeout] of [2400, 7100].entries()) {
       let response;
       let body;
       try {
@@ -272,10 +273,10 @@ export function createDenverParcelSource({ fetchImpl = globalThis.fetch, now = D
       if (!/^\d{13}$/.test(id)) return null;
       const hint = parcelHints.get(id);
       if (hint && hint.expiresAt > now()) {
-        const candidates = await addressRows(hint.house, hint.zip);
+        const candidates = await addressRows(hint.house, hint.zip, false);
         const matches = candidates.features?.filter((row) => normalizeParcelId(row.properties?.SCHEDNUM) === id) || [];
         if (complete(candidates) && matches.length === 1) {
-          const feature = withVerifiedAlias(matches[0], candidates);
+          const feature = withVerifiedAlias({ ...matches[0], geometry: hint.geometry }, candidates);
           if (feature) return feature;
         }
         parcelHints.delete(id);
@@ -319,7 +320,7 @@ export function createDenverParcelSource({ fetchImpl = globalThis.fetch, now = D
         const house = String(row.properties?.SITUS_ADDR_NBR || '');
         if (/^\d+$/.test(house)) {
           parcelHints.delete(parcelId);
-          parcelHints.set(parcelId, { house, zip: situs.zip, expiresAt: now() + DENVER_HINT_TTL_MS });
+          parcelHints.set(parcelId, { house, zip: situs.zip, geometry: feature.geometry, expiresAt: now() + DENVER_HINT_TTL_MS });
           if (parcelHints.size > DENVER_HINT_LIMIT) parcelHints.delete(parcelHints.keys().next().value);
         }
         return [feature];

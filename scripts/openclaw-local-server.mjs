@@ -26,6 +26,7 @@ import { createPropertyIntelligence } from './property-intelligence.mjs';
 import { lookupAttomRecentSales } from './attom-recent-sales.mjs';
 import { lookupAddressSuggestions } from './address-suggestions.mjs';
 import { createPhoneDialerRouter, createPhoneDialerRuntime } from './phone-dialer-routes.mjs';
+import { createClaudeProspectingReview, createProspectingBrief, prospectingOrderMessages } from './parcel-prospecting-brief.mjs';
 import { matchParcelToLeads, normalizeParcelId } from './parcel-dialer.mjs';
 import { applyAgentVersionRollback, buildAgentRegistrySnapshot, buildAgentVersionSnapshot, buildDefaultAgentRegistry, buildStableAgentFleetMeasurement, findAgentsByCapability, invokeRegisteredAgent, mergeAgentRegistryRecords, normalizeAgentRegistryId, normalizeAgentRegistryRecord, validateAgentVersionSnapshot } from './agent-registry.mjs';
 import { buildAgentExecutionEvidence, collectAgentFleetEvidence, isNonOperationalAgentEvidence, isAgentHandlerCompletion } from './agent-fleet-measurement.mjs';
@@ -73831,6 +73832,20 @@ function getPhoneDialerRouter() {
     getState: () => state,
     getTeamPermissions,
     createApproval: (params) => toolHandlers.createApproval(params),
+    prepareProspectingBrief: createProspectingBrief({
+      prioritize: getDeepSeekProviderMeta().ready ? async (input, deadlineAt) => {
+        const response = await runDeepSeekChatCompletion(prospectingOrderMessages(input), {
+          model: getDeepSeekProviderMeta().liveModel, responseFormat: 'json', thinkingMode: 'disabled',
+          deadlineAt, speculative: false, source: 'parcel-prospecting',
+        });
+        if (!response.ok) console.warn('[parcel-prospecting] DeepSeek ranking unavailable:', response.result);
+        return response.ok ? response.answer : '';
+      } : undefined,
+      review: createClaudeProspectingReview({
+        apiKey: process.env.PBK_ANTHROPIC_API_KEY || process.env.ANTHROPIC_API_KEY,
+        model: process.env.PBK_PROSPECTING_CLAUDE_MODEL || undefined,
+      }),
+    }),
   });
   return phoneDialerRouter;
 }

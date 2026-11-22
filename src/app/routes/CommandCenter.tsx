@@ -2538,7 +2538,7 @@ export function CommandCenter() {
     },
     {
       label: 'Prospect parcels',
-      description: 'Find properties on the map and review your shortlist.',
+      description: 'Review parcels, CRM matches, and suggested checks.',
       count: 'Open',
       tone: 'sky',
       targetPath: '/dialer#prospecting-list',

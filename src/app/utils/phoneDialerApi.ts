@@ -102,6 +102,16 @@ export const fetchParcels = (bbox?: number[]) =>
   bridgeRequest<{ ok: boolean; features: ParcelFeature[] }>({ path: `/api/dialer/parcels${bbox ? `?bbox=${bbox.join(',')}` : ''}` });
 export const selectParcel = (body: { parcelId?: string; address?: string; lineId?: string }) =>
   bridgeRequest<DialerSelection>({ method: 'POST', path: '/api/dialer/select', body });
+export type ParcelBrief = {
+  ok: true;
+  parcelId: string;
+  facts: { match: DialerSelection['match']['status']; hasLotSize: boolean; outreachHeld: boolean; phoneMissing: boolean };
+  providers: Record<'deepSeek' | 'claude', 'used' | 'unavailable' | 'unconfigured'>;
+  steps: Array<{ id: string; title: string; detail: string }>;
+};
+
+export const prepareParcelBrief = (parcelId: string) =>
+  bridgeRequest<ParcelBrief>({ method: 'POST', path: '/api/dialer/prospecting-brief', body: { parcelId } });
 export const createLeadFromParcel = (parcelId: string) =>
   bridgeRequest<{ ok: boolean; leadId: string; created: boolean }>({ method: 'POST', path: '/api/dialer/leads', body: { parcelId } });
 export const requestDialerCall = (body: { parcelId: string; leadId: string; lineId: string }) =>

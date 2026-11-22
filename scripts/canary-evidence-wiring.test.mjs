@@ -217,8 +217,9 @@ test('bridge code matches the reviewed release fingerprint outside the scoped re
   // Phone turn latency persistence remains best effort during a database disconnect.
   // Interim transcripts and weak acknowledgments cannot replace a committed Ava reply.
   // Bridge snapshots avoid deep copies and respect dashboard backpressure.
+  // Prospecting advice only ranks checks derived from verified parcel and CRM evidence.
   assert.equal(createHash('sha256').update(unchanged).digest('hex'),
-    'e6c4a79a55a137ddeaf4982fcbd8252d5278582ae5ae8e685c7e6c373e83276e');
+    '557fa405f67684f98a0a03bdda7045fbf97d9b31f058dd74a56e5d058f794e08');
 });
 
 test('production distribution includes reader and protocol, never the fixture signer', () => {

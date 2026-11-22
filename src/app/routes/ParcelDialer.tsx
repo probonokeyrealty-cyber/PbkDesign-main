@@ -1,14 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import { Link, useLocation } from 'react-router';
 import { ArrowDownRight, Check, Layers, Loader2, MapPin, Minus, PhoneCall, Plus, RefreshCw, Search } from 'lucide-react';
+import { ParcelProspectingBrief } from '../components/ParcelProspectingBrief';
 import { ParcelProspectingList } from '../components/ParcelProspectingList';
 import { parcelProspect, prospectLimit, readParcelProspects, saveParcelProspects, type ParcelProspect } from '../utils/parcelProspecting';
 import { ParcelStreetMap } from '../components/ParcelStreetMap';
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogTitle, DialogTrigger } from '../components/ui/dialog';
 import { ParcelPhoneKeypad } from '../components/ParcelPhoneKeypad';
 import {
-  createLeadFromParcel, decideApproval, dialApprovedRequest, errorText, fetchDialerCalls, fetchDialerCoverage, fetchParcels, requestDialerCall, selectParcel,
-  simulateDialerCallbacks, type DialerCall, type DialerCoverage, type DialerSelection, type OutboundLine, type ParcelFeature,
+  createLeadFromParcel, decideApproval, dialApprovedRequest, errorText, fetchDialerCalls, fetchDialerCoverage, fetchParcels, prepareParcelBrief, requestDialerCall, selectParcel,
+  simulateDialerCallbacks, type DialerCall, type DialerCoverage, type DialerSelection, type OutboundLine, type ParcelBrief, type ParcelFeature,
 } from '../utils/phoneDialerApi';
 import '../../styles/phone-dialer.css';
 
@@ -52,6 +53,8 @@ export function ParcelDialer() {
   const { hash } = useLocation();
   const [prospects, setProspects] = useState(readParcelProspects);
   const [prospectNotice, setProspectNotice] = useState('');
+  const [prospectBrief, setProspectBrief] = useState<ParcelBrief | null>(null);
+  const [briefError, setBriefError] = useState('');
   const [coverage, setCoverage] = useState<DialerCoverage | null>(null);
   const [lines, setLines] = useState<OutboundLine[]>([]);
   const [canPlaceCalls, setCanPlaceCalls] = useState(false);
@@ -101,6 +104,8 @@ export function ParcelDialer() {
     setRequest(null);
     setCall(null);
     setSelection(null);
+    setProspectBrief(null);
+    setBriefError('');
     setSavedLead(null);
     setLeadReviewOpen(false);
     setQuickParcel(preview);
@@ -155,7 +160,7 @@ export function ParcelDialer() {
   };
 
   const onPolygonKey = (event: KeyboardEvent<SVGPathElement>, parcelId: string) => {
-    if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); void chooseFromMap(parcelId); }
+    if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); if (!busy) void chooseFromMap(parcelId); }
   };
 
   const act = async (key: string, fn: () => Promise<void>) => {
@@ -163,6 +168,18 @@ export function ParcelDialer() {
     setError('');
     try { await fn(); } catch (err) { setError(errorText(err)); } finally { setBusy(''); }
   };
+
+  const loadProspectingBrief = () => act('brief', async () => {
+    setBriefError('');
+    setProspectBrief(null);
+    try {
+      const result = await prepareParcelBrief(selectedId);
+      if (result.parcelId !== selectedId) throw new Error('The parcel changed. Select it again to prepare a brief.');
+      setProspectBrief(result);
+    } catch (err) {
+      setBriefError(errorText(err));
+    }
+  });
 
   const viewBox = useMemo(() => {
     const w = VIEW_W / zoom;
@@ -182,6 +199,7 @@ export function ParcelDialer() {
     try {
       const result = await createLeadFromParcel(selectedId);
       setSavedLead(result);
+      setProspectBrief(null);
       setLeadReviewOpen(false);
     } catch (err) {
       setLeadSaveError(errorText(err));
@@ -358,6 +376,11 @@ export function ParcelDialer() {
               <Link to={`/leads/${encodeURIComponent(savedLead.leadId)}`}>Open lead</Link>
             </p>}
           </section>
+          {canShortlist && (
+            <ParcelProspectingBrief brief={prospectBrief?.parcelId === selectedId ? prospectBrief : null}
+              loading={busy === 'brief'} disabled={Boolean(busy)} error={briefError}
+              onPrepare={() => void loadProspectingBrief()} />
+          )}
           <ParcelProspectingList items={activeProspects} selectedId={selectedId} disabled={Boolean(busy)}
             onReview={(item) => void reviewProspect(item)}
             onToggle={(item) => updateProspects(prospects.map(row => row === item ? { ...row, reviewed: !row.reviewed } : row))}

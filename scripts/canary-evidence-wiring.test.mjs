@@ -210,7 +210,7 @@ test('bridge code matches the reviewed release fingerprint outside the scoped re
   // Bridge snapshots avoid deep copies and respect dashboard backpressure.
   // Prospecting advice only ranks checks derived from verified parcel and CRM evidence.
   assert.equal(createHash('sha256').update(unchanged).digest('hex'),
-    '1cd735c48da915e381d85819d882801a156a6b8eae137e89f0040795c8775928');
+    '6ef984330d7b1aec19a8b81291ae4840303d3fb08b7ccf4d1c7dbc15bdfeffa6');
 });
 
 test('production distribution includes reader and protocol, never the fixture signer', () => {

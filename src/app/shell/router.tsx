@@ -1,5 +1,5 @@
 import { lazy } from 'react';
-import { createBrowserRouter, Navigate, RouterProvider } from 'react-router';
+import { createBrowserRouter, Navigate, RouterProvider, useLocation } from 'react-router';
 import { ParadiseLayout } from './ParadiseLayout';
 import { NotFound } from '../routes/NotFound';
 import { loadCurrentRoute } from '../utils/deployVersion';
@@ -89,6 +89,11 @@ const shellBasename =
     ? '/index.shell.html'
     : undefined;
 
+function ProspectingEvidenceRedirect() {
+  const { hash } = useLocation();
+  return <Navigate to={{ pathname: '/prospecting', search: '?view=evidence', hash }} replace />;
+}
+
 const router = createBrowserRouter(
   [
     {
@@ -118,7 +123,7 @@ const router = createBrowserRouter(
         { path: 'campaigns', element: <Campaigns /> },
         { path: 'dialer', element: <ParcelDialer /> },
         { path: 'prospecting', element: <Prospecting /> },
-        { path: 'dialer/van-nuys-demo', element: <Navigate to="/prospecting?view=evidence" replace /> },
+        { path: 'dialer/van-nuys-demo', element: <ProspectingEvidenceRedirect /> },
         { path: 'agent', element: <AvaChat /> },
         { path: 'agent-console', element: <AvaChat /> },
         { path: 'ava-chat', element: <AvaChat /> },

@@ -37,7 +37,11 @@ html[data-theme='light'] .pbk-van-nuys {
 .pbk-van-nuys h2 { font-size: 1.45rem; }
 .pbk-van-nuys h3 { font-size: 1.125rem; }
 .pbk-van-nuys p { color: var(--van-muted); }
-.pbk-van-nuys :is(a, summary):focus-visible { outline: 3px solid var(--van-sky); outline-offset: 3px; }
+.pbk-van-nuys :is(a, summary, h2):focus-visible { outline: 3px solid var(--van-sky); outline-offset: 3px; }
+.pbk-van-jump { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 0 1rem; }
+.pbk-van-jump a { display: inline-flex; align-items: center; gap: .35rem; min-height: 44px; color: var(--van-sky); font-weight: 600; text-decoration: underline; text-underline-offset: .2em; }
+.pbk-van-jump svg { flex: none; }
+.pbk-van-body h2[tabindex] { scroll-margin-block-start: 1rem; }
 
 .pbk-van-brief {
   display: grid;

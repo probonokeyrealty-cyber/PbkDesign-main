@@ -12,11 +12,20 @@ test('Prospecting is a top-level staff tab with the Van Nuys evidence available 
   assert.match(read('src/app/shell/Sidebar.tsx'), /to: '\/prospecting', label: 'Prospecting'/);
   const router = read('src/app/shell/router.tsx');
   assert.match(router, /path: 'prospecting', element: <Prospecting \/>/);
-  assert.match(router, /path: 'dialer\/van-nuys-demo', element: <Navigate to="\/prospecting\?view=evidence" replace \/>/);
+  assert.match(router, /path: 'dialer\/van-nuys-demo', element: <ProspectingEvidenceRedirect \/>/);
+  assert.match(router, /pathname: '\/prospecting', search: '\?view=evidence', hash/);
   assert.match(read('src/app/routes/ParcelDialer.tsx'), /to="\/prospecting"/);
   const config = read('netlify.toml');
   assert.match(config, /from = "\/prospecting"\r?\nto = "\/index.shell.html"\r?\nstatus = 200/);
   assert.match(config, /from = "\/dialer\/van-nuys-demo"\r?\nto = "\/index.shell.html"\r?\nstatus = 200/);
+});
+
+test('Van Nuys jump links point to keyboard-focusable headings on the same page', () => {
+  const route = read('src/app/routes/VanNuysDemo.tsx');
+  const nav = route.match(/<nav [^>]*aria-label="Jump to saved evidence or receipt"[^>]*>([\s\S]*?)<\/nav>/)?.[1] ?? '';
+  const targets = [...nav.matchAll(/href="#([^"]+)"/g)].map((match) => match[1]);
+  assert.deepEqual(targets, ['van-evidence-title', 'van-receipt-title']);
+  for (const target of targets) assert.ok(route.includes(`<h2 id="${target}" tabIndex={-1}>`));
 });
 
 test('every export preserves the run ID and Rex-verified shortlist from staging', async () => {

@@ -40,11 +40,7 @@ const Settings = lazy(() =>
     default: module.Settings,
   }))
 );
-const PropertyLog = lazy(() =>
-  loadCurrentRoute(() => import('../routes/PropertyLog')).then((module) => ({
-    default: module.PropertyLog,
-  }))
-);
+const PropertyLog = lazy(() => loadCurrentRoute(() => import('../routes/PropertyLog')).then(module=>({default:module.PropertyLog})));
 const AgentFleet = lazy(() =>
   loadCurrentRoute(() => import('../routes/AgentFleet')).then((module) => ({
     default: module.AgentFleet,
@@ -122,10 +118,7 @@ const router = createBrowserRouter(
         { path: 'campaigns', element: <Campaigns /> },
         { path: 'dialer', element: <ParcelDialer /> },
         { path: 'prospecting', element: <Prospecting /> },
-        {
-          path: 'dialer/van-nuys-demo',
-          element: <Navigate to="/prospecting?view=evidence" replace />,
-        },
+        { path: 'dialer/van-nuys-demo', element: <Navigate to="/prospecting?view=evidence" replace /> },
         { path: 'agent', element: <AvaChat /> },
         { path: 'agent-console', element: <AvaChat /> },
         { path: 'ava-chat', element: <AvaChat /> },

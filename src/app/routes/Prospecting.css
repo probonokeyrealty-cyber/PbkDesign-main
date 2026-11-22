@@ -46,29 +46,10 @@
   color: var(--text-secondary);
 }
 
-.pbk-prospecting-parcels {
-  display: grid;
-  gap: 0.5rem;
-  padding: 0;
-  list-style: none;
-}
-.pbk-prospecting-parcels li {
-  display: grid;
-  gap: 0.55rem;
-  padding: 0.875rem 0;
-  border-top: 1px solid var(--border);
-}
-.pbk-prospecting-parcels button,
-.pbk-prospecting-parcels a {
-  width: fit-content;
-  min-height: 44px;
-}
-.pbk-prospecting-parcels a {
-  display: inline-flex;
-  align-items: center;
-  color: var(--sky);
-  text-decoration: underline;
-}
+.pbk-prospecting-parcels { display: grid; gap: .5rem; padding: 0; list-style: none; }
+.pbk-prospecting-parcels li { display: grid; gap: .55rem; padding: .875rem 0; border-top: 1px solid var(--border); }
+.pbk-prospecting-parcels button, .pbk-prospecting-parcels a { width: fit-content; min-height: 44px; }
+.pbk-prospecting-parcels a { display: inline-flex; align-items: center; color: var(--sky); text-decoration: underline; }
 .pbk-prospecting-parcels li[data-map-selected='true'] h3 {
   color: var(--sky);
 }
@@ -119,18 +100,8 @@
   color: #102a40;
   border-color: #103d5c;
 }
-.pbk-prospecting-form .pbk-prospecting-check {
-  display: flex;
-  align-items: center;
-  gap: 0.65rem;
-  min-height: 44px;
-}
-.pbk-prospecting-check input[type='checkbox'] {
-  width: 1.15rem;
-  min-height: 0;
-  height: 1.15rem;
-  accent-color: var(--sky-deep);
-}
+.pbk-prospecting-form .pbk-prospecting-check { display: flex; align-items: center; gap: .65rem; min-height: 44px; }
+.pbk-prospecting-check input[type='checkbox'] { width: 1.15rem; min-height: 0; height: 1.15rem; accent-color: var(--sky-deep); }
 .pbk-prospecting .pbk-prospecting-tabs button[data-state='active'] {
   color: var(--text-primary);
   background: var(--bg-panel-elevated);

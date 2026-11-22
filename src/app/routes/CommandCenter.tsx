@@ -6,6 +6,7 @@ import {
   ClipboardCheck,
   Inbox as InboxIcon,
   Loader2,
+  MapPin,
   Phone,
   Users,
 } from 'lucide-react';
@@ -2534,6 +2535,14 @@ export function CommandCenter() {
       tone: 'lime',
       targetPath: '/leads',
       icon: Users,
+    },
+    {
+      label: 'Prospect parcels',
+      description: 'Find properties on the map and review your shortlist.',
+      count: 'Open',
+      tone: 'sky',
+      targetPath: '/dialer#prospecting-list',
+      icon: MapPin,
     },
     {
       label: 'Reply inbox',

@@ -78,6 +78,11 @@ html[data-theme='light'] .pbk-dialer-surface { background: var(--bg-void); color
 .pbk-dialer-map-results button:focus-visible { outline: 2px solid var(--sky); outline-offset: -2px; }
 .pbk-dialer-legend a { color: var(--sky); overflow-wrap: anywhere; text-decoration: underline; }
 #pbk-parcel-quick-heading { scroll-margin-top: 5rem; }
+.pbk-van-nuys-dialer-details .pbk-parcel-quick-view { margin: 0; }
+#van-nuys-dialer-property { scroll-margin-top: 5rem; overflow-wrap: anywhere; }
+@media (max-width: 720px) {
+  .pbk-van-nuys-dialer-grid .pbk-van-nuys-dialer-details { grid-row: 1; }
+}
 .pbk-dialer-map-card, .pbk-dialer-side {
   border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--bg-panel); padding: var(--s-4); min-width: 0;
 }

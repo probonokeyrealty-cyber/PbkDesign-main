@@ -374,7 +374,7 @@ export function ParcelDialer() {
             <strong>{contact?.name || 'Parcel contact'}</strong>
             <span className="pbk-phone-num">{contact?.phoneDisplay || 'No number loaded'}</span>
             {contact && !contact.synthetic && (
-              <Link className="pbk-parcel-phone-link" to={`/inbox?lead=${encodeURIComponent(contact.crmLeadId || contact.id)}`}>Open seller conversation</Link>
+              <Link className="pbk-parcel-phone-link" to={`/inbox/conversations?lead=${encodeURIComponent(contact.crmLeadId || contact.id)}`}>Open seller conversation</Link>
             )}
           </div>
           <ol className="pbk-dialer-steps" aria-label="Call progress">

@@ -338,11 +338,17 @@ export function ParcelDialer() {
             ) : (
               <div className="pbk-dialer-map-empty">{coverage?.status === 'unconfigured' ? 'No licensed parcel source is configured. Lookups are unavailable.' : coverage ? 'No parcels in coverage.' : 'Loading parcels…'}</div>
             )}
+            {streetMapEnabled && property && (
+              <div className="pbk-dialer-fullscreen-selection" aria-live="polite">
+                <strong>{situs?.line1}</strong>
+                <span>{property.parcelId}{selection?.match.status === 'matched' ? ' · CRM match' : ''}</span>
+              </div>
+            )}
           </div>
           <div className="pbk-dialer-legend">
             <span><i aria-hidden="true" /> Available parcel</span>
             <span><i aria-hidden="true" /> Selected parcel</span>
-            {property ? <a href="#pbk-parcel-quick-heading">Inspect {situs?.line1 || 'selected parcel'}</a> : <span>Select a parcel to inspect</span>}
+            {property && panel === 'parcel' ? <a href="#pbk-parcel-quick-heading">Inspect {situs?.line1 || 'selected parcel'}</a> : <span>Select a parcel to inspect</span>}
           </div>
           {mapNotice && <p className="pbk-phone-note" role="status">{mapNotice}</p>}
         </section>

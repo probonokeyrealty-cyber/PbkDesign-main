@@ -48,13 +48,13 @@ const LIFECYCLE_STEPS = [
 ];
 
 const STATE_LABELS: Record<string, string> = {
-  candidate: 'Candidate',
+  candidate: 'Draft',
   needs_review: 'Needs review',
   test_ready: 'Test ready',
   testing: 'Testing',
   failed: 'Failed',
   ready_for_approval: 'Ready for approval',
-  approved_inactive: 'Ready to use',
+  approved_inactive: 'Approved for rollout',
   canary: 'Small test',
   active: 'Live',
   paused: 'Paused',
@@ -80,10 +80,11 @@ const STATE_STEP: Record<string, number> = {
 const SKILL_WIZARD_STEPS = ['Situation', 'Ava reply', 'Next question', 'Preview'] as const;
 
 const AGENT_RESPONSIBILITY_COPY: Record<string, string> = {
-  ava: 'Ava uses this live in seller chat, calls, and next-best-question coaching.',
-  rex: 'Rex uses this for deal strategy, research memory, and revenue reasoning.',
-  'nurture-agent': 'Nurture uses this for follow-up timing, SMS/email drafts, and reply recovery.',
-  max: 'Max uses this before offer recap, contract readiness, and handoff checks.',
+  ava: 'Ava can use this kind of guidance in seller chats, calls, and follow-up questions.',
+  rex: 'Rex can use this kind of guidance when researching deals and reviewing strategies.',
+  'nurture-agent':
+    'Nurture can use this kind of guidance to time follow-ups and draft seller texts or emails.',
+  max: 'Max can use this kind of guidance to review offers and check what is needed before a contract.',
 };
 
 const SKILL_TRIGGER_OPTIONS = [
@@ -1299,8 +1300,11 @@ export function SkillStudio() {
     <div className="pbk-skill-studio">
       <header className="pbk-skill-studio-header">
         <div>
-          <span className="pbk-eyebrow">Ava learning</span>
           <h1 className="pbk-display">Skill Studio</h1>
+          <p className="pbk-workspace-purpose">
+            Draft and test seller talking points and deal procedures. Review the results before
+            putting a skill into use.
+          </p>
         </div>
         <div className="pbk-skill-studio-header-actions">
           <button
@@ -1330,7 +1334,7 @@ export function SkillStudio() {
           <strong>{status?.candidates || 0}</strong>
         </div>
         <div>
-          <span>Ready to test</span>
+          <span>Approved for rollout</span>
           <strong>{status?.approvedInactive || 0}</strong>
         </div>
         <div>
@@ -1342,7 +1346,7 @@ export function SkillStudio() {
           <strong>{status?.active || 0}</strong>
         </div>
         <div className={status?.outbox?.deadLettered ? 'warning' : ''}>
-          <span>Sync health</span>
+          <span>Waiting to sync</span>
           <strong>{status?.outbox?.pending || 0}</strong>
           <small>learning records</small>
         </div>
@@ -1369,7 +1373,6 @@ export function SkillStudio() {
         <section className="pbk-skill-training-queue" aria-label="Today's Training Queue">
           <div className="pbk-skill-training-queue-head">
             <div>
-              <span>Today's Training Queue</span>
               <h2>Review these first</h2>
             </div>
           </div>
@@ -1410,7 +1413,7 @@ export function SkillStudio() {
             <input
               value={search}
               onChange={(event) => setSearch(event.target.value)}
-              placeholder="Search Ava skills or replies"
+              placeholder="Search talking points or procedures"
               aria-label="Search skill repository"
               ref={repositorySearchRef}
             />
@@ -1520,7 +1523,11 @@ export function SkillStudio() {
             ) : (
               <div className="pbk-skill-empty">
                 <Search size={18} />
-                No Ava skills match this view.
+                {items.length
+                  ? 'No skills match. Clear your search or choose another filter.'
+                  : error
+                    ? 'Couldn’t load the skill list. Choose Refresh to try again.'
+                    : 'No skills are listed yet. Choose Teach Ava to start a draft.'}
               </div>
             )}
           </div>
@@ -1848,7 +1855,8 @@ export function SkillStudio() {
               <Sparkles size={26} />
               <h2>Select a skill version</h2>
               <p>
-                Choose an exact version from the repository to inspect its lifecycle and controls.
+                Choose a saved version to read the instructions, test a seller scenario, or review
+                its approval status.
               </p>
             </div>
           )}

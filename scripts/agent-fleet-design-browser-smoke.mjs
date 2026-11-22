@@ -187,8 +187,8 @@ async function verify(engine, viewport, device = {}) {
     await expect(roster.getByRole('button', { name: 'Inspect Rex', exact: true })).toContainText(
       'Needs attention'
     );
-    await expect(roster.getByText('Measurement unavailable', { exact: true })).toBeVisible();
-    await expect(roster.getByText('Measured ready', { exact: true })).toHaveCount(0);
+    await expect(roster.getByText('Readiness data unavailable', { exact: true })).toBeVisible();
+    await expect(roster.getByText('Readiness verified', { exact: true })).toHaveCount(0);
     const detail = page.getByRole('region', { name: 'Selected agent' });
     await roster.getByRole('button', { name: 'Inspect Rex', exact: true }).click();
     await expect(detail.getByRole('heading', { name: 'Rex', exact: true })).toBeInViewport();
@@ -212,7 +212,7 @@ async function verify(engine, viewport, device = {}) {
     await expect(
       evidence.getByText('Latency: 7 samples; 2.5s budget', { exact: true })
     ).toBeVisible();
-    await expect(evidence.getByText('Not measured ready', { exact: true })).toBeVisible();
+    await expect(evidence.getByText('Readiness needs attention', { exact: true })).toBeVisible();
     await expect(evidence).toContainText('dataFreshness not ready');
     await expect(evidence).toContainText('fleetReadiness not ready');
     await expect(evidence.getByText('Tools and health clear', { exact: true })).toHaveCount(0);
@@ -355,7 +355,7 @@ async function verify(engine, viewport, device = {}) {
     await expect(evidence).toContainText('GET /api/agents/health (measurement)');
     await expect(evidence.locator(`span[title="${measurement.generatedAt}"]`)).toBeVisible();
     await expect(evidence.locator(`strong[title="${failureAt}"]`)).toBeVisible();
-    await expect(roster.getByText('Measured ready', { exact: true })).toHaveCount(0);
+    await expect(roster.getByText('Readiness verified', { exact: true })).toHaveCount(0);
     for (const status of ['401', '403']) {
       measurementMode = status;
       await page.reload({ waitUntil: 'domcontentloaded' });
@@ -363,12 +363,12 @@ async function verify(engine, viewport, device = {}) {
       await expect(warning).toBeVisible();
       await expect(warning).toContainText('readiness is unverified');
       await expect(roster.getByRole('button', { name: 'Inspect Ava', exact: true })).toContainText(
-        'Measurement unavailable'
+        'Readiness data unavailable'
       );
-      await expect(roster.getByText('Measured ready', { exact: true })).toHaveCount(0);
+      await expect(roster.getByText('Readiness verified', { exact: true })).toHaveCount(0);
       await detail.getByText('Health evidence', { exact: true }).click();
       await expect(evidence).toContainText('Measurement evidence unavailable');
-      await expect(evidence.getByText('Capability pending proof', { exact: true })).toBeVisible();
+      await expect(evidence.getByText('Readiness check pending', { exact: true })).toBeVisible();
       if (process.env.PBK_FLEET_SCREENSHOTS === '1' && status === '401') {
         await warning.scrollIntoViewIfNeeded();
         await page.screenshot({

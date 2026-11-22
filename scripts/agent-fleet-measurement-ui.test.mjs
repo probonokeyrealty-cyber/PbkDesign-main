@@ -91,7 +91,7 @@ test('Ava failure-only measurement overrides healthy heartbeats and probe latenc
   assert.equal(result.lastFailureLabel, '30m ago');
   assert.equal(result.latencyLabel, '6.5s p95');
   assert.equal(result.latencyDetail, '7 samples; 2.5s budget');
-  assert.equal(result.capabilityLabel, 'Not measured ready');
+  assert.equal(result.capabilityLabel, 'Readiness needs attention');
   assert.match(result.readinessDetail, /dataFreshness not ready/);
   assert.match(result.readinessDetail, /fleetReadiness not ready/);
   assert.equal(fleet.getAgentHealthState(agent(), { ready: true }), 'degraded');
@@ -147,7 +147,7 @@ test('only a canonical ready measurement with no blockers gets the ready badge',
     metrics: { lastSuccessAt: heartbeatAt },
   });
   assert.equal(fleet.getAgentHealthState(agent(ready), { ready: true }), 'ready');
-  assert.equal(fleet.getAgentCapabilityLabel(agent(ready)), 'Measured ready');
+  assert.equal(fleet.getAgentCapabilityLabel(agent(ready)), 'Readiness verified');
   for (const gap of [
     measurement(),
     measurement({ ready: true }),

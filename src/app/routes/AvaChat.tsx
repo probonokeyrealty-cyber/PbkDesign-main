@@ -51,7 +51,11 @@ import {
 } from '../utils/runtimeBridge';
 import { showUiToast } from '../utils/uiFeedback';
 import { getApprovalResolutionKeys } from './inboxRuntimeLogic.js';
-import { createAvaAudioPlayer, createAvaReplySpeech, type AvaVoiceProgress } from '../utils/avaReplySpeech';
+import {
+  createAvaAudioPlayer,
+  createAvaReplySpeech,
+  type AvaVoiceProgress,
+} from '../utils/avaReplySpeech';
 import { resolveAvaChatScope, type AvaChatScope } from '../utils/avaChatScope.mjs';
 import { resolveAvaBrowserCommand } from '../utils/avaBrowserCommand.mjs';
 
@@ -155,7 +159,7 @@ const PBK_COMPANION_ACTIONS: CompanionAction[] = [
   {
     id: 'send-sms',
     label: 'Draft Text',
-    description: 'Write a seller text for review.',
+    description: 'Draft a seller text. Sending requires approval.',
     prompt: 'Draft a concise SMS to this seller using the current PBK context.',
     action: 'send_sms',
     icon: MessageSquare,
@@ -164,7 +168,7 @@ const PBK_COMPANION_ACTIONS: CompanionAction[] = [
   {
     id: 'send-email',
     label: 'Draft Email',
-    description: 'Write a seller email for review.',
+    description: 'Draft a seller email. Sending requires approval.',
     prompt: 'Draft a seller email using the current PBK context and keep it ready to review.',
     action: 'send_email',
     icon: Mail,
@@ -173,7 +177,7 @@ const PBK_COMPANION_ACTIONS: CompanionAction[] = [
   {
     id: 'call-seller',
     label: 'Prep Call',
-    description: 'Prepare the call and best opener.',
+    description: 'Review the lead and prepare an opening line for the call.',
     prompt: 'Prepare a call to this seller and show the best opening line before dialing.',
     action: 'operator_command',
     icon: Phone,
@@ -182,7 +186,7 @@ const PBK_COMPANION_ACTIONS: CompanionAction[] = [
   {
     id: 'open-lead',
     label: 'Find Lead',
-    description: 'Find the seller record, timeline, and latest context.',
+    description: 'Find a lead and review the latest seller activity.',
     prompt: 'Open the current seller lead and summarize the latest timeline context.',
     action: 'search_leads',
     icon: Search,
@@ -200,7 +204,7 @@ const PBK_COMPANION_ACTIONS: CompanionAction[] = [
   {
     id: 'analyze-deal',
     label: 'Analyze Deal',
-    description: 'Hydrate ARV, repairs, MAO, path, and next script.',
+    description: 'Review estimated resale value, repairs, and maximum offer.',
     prompt: 'Analyze this deal and tell me the MAO, offer path, and next seller question.',
     action: 'analyze_deal',
     icon: Sparkles,
@@ -227,7 +231,7 @@ const PBK_COMPANION_ACTIONS: CompanionAction[] = [
   {
     id: 'schedule-follow-up',
     label: 'Schedule Follow-up',
-    description: 'Turn the next step into a seller timeline event.',
+    description: 'Request approval to schedule the next seller follow-up.',
     prompt: 'Schedule the next follow-up for this seller and explain the recommended timing.',
     action: 'schedule_follow_up',
     icon: CalendarClock,
@@ -245,7 +249,7 @@ const PBK_COMPANION_ACTIONS: CompanionAction[] = [
   {
     id: 'review-with-qa',
     label: 'Review Call',
-    description: 'Inspect a bad call, missed objection, or stale control.',
+    description: 'Review what the seller said and what to ask next.',
     prompt:
       'Review the latest seller interaction for missed context, repetition, and the next fix.',
     action: 'review_call',
@@ -1103,11 +1107,20 @@ export function AvaChat() {
     return (
       <section className="pbk-ava-chat-surface h-full min-w-0 bg-[var(--ava-bg)] text-[var(--ava-text)]">
         <div className="mx-auto w-full max-w-4xl px-3 py-5 sm:px-6 lg:px-8">
-          <div role="alert" className="flex items-start gap-3 rounded-lg border border-[var(--ava-warning-border)] bg-[var(--ava-warning-soft)] p-3 text-sm">
-            <AlertTriangle size={18} className="mt-0.5 shrink-0 text-[var(--ava-warning)]" aria-hidden="true" />
+          <div
+            role="alert"
+            className="flex items-start gap-3 rounded-lg border border-[var(--ava-warning-border)] bg-[var(--ava-warning-soft)] p-3 text-sm"
+          >
+            <AlertTriangle
+              size={18}
+              className="mt-0.5 shrink-0 text-[var(--ava-warning)]"
+              aria-hidden="true"
+            />
             <div className="min-w-0">
               <p className="font-semibold">This link has invalid lead context.</p>
-              <Link className="pbk-ava-evidence-link mt-2" to="/ava-chat">Open general Ava chat</Link>
+              <Link className="pbk-ava-evidence-link mt-2" to="/ava-chat">
+                Open general Ava chat
+              </Link>
             </div>
           </div>
         </div>
@@ -1146,7 +1159,10 @@ function AvaChatSession({ scope }: { scope: AvaChatScope }) {
   const contextRef = useRef<HTMLDialogElement | null>(null);
   const [decidingApprovalId, setDecidingApprovalId] = useState('');
   const [operatorMemory, setOperatorMemory] = useState<OperatorMemory | null>(null);
-  const [writableStorage, setWritableStorage] = useState<Record<keyof AvaChatScope['storageKeys'], boolean> | null>(null);
+  const [writableStorage, setWritableStorage] = useState<Record<
+    keyof AvaChatScope['storageKeys'],
+    boolean
+  > | null>(null);
   const [storageUnavailable, setStorageUnavailable] = useState(false);
   const [resolvedApprovalIds, setResolvedApprovalIds] = useState<Set<string>>(() => new Set());
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
@@ -1161,15 +1177,24 @@ function AvaChatSession({ scope }: { scope: AvaChatScope }) {
   const voiceMountedRef = useRef(true);
   const voiceSettingRef = useRef(0);
   const [voiceEnabled, setVoiceEnabled] = useState(false);
-  const [voiceProgress, setVoiceProgress] = useState<AvaVoiceProgress>({ state: 'idle', spokenCharacters: 0, queuedCharacters: 0 });
+  const [voiceProgress, setVoiceProgress] = useState<AvaVoiceProgress>({
+    state: 'idle',
+    spokenCharacters: 0,
+    queuedCharacters: 0,
+  });
   const [voiceError, setVoiceError] = useState('');
   const voiceBusy = voiceProgress.state === 'preparing' || voiceProgress.state === 'speaking';
 
   const getVoicePlayer = useCallback(() => {
-    voicePlayerRef.current ??= createAvaAudioPlayer((text, signal) => bridgeBlobRequest({
-      method: 'POST', path: '/api/voice/tts', accept: 'audio/mpeg', signal,
-      body: { text, source: 'ava-chat-stream-speech', noLeadCapture: true },
-    }));
+    voicePlayerRef.current ??= createAvaAudioPlayer((text, signal) =>
+      bridgeBlobRequest({
+        method: 'POST',
+        path: '/api/voice/tts',
+        accept: 'audio/mpeg',
+        signal,
+        body: { text, source: 'ava-chat-stream-speech', noLeadCapture: true },
+      })
+    );
     return voicePlayerRef.current;
   }, []);
 
@@ -1178,26 +1203,41 @@ function AvaChatSession({ scope }: { scope: AvaChatScope }) {
     replySpeechRef.current = null;
   }, []);
 
-  const setVoiceOutput = useCallback((enabled: boolean) => {
-    stopReplySpeech();
-    const setting = ++voiceSettingRef.current;
-    voiceEnabledRef.current = enabled;
-    setVoiceEnabled(enabled);
-    setVoiceError('');
-    if (enabled) void getVoicePlayer().prepare().catch(() => {
-      if (!voiceMountedRef.current || setting !== voiceSettingRef.current) return;
-      voiceEnabledRef.current = false;
-      setVoiceEnabled(false);
-      setVoiceError('Voice playback is unavailable. Ava\'s text is still available.');
-    });
-  }, [getVoicePlayer, stopReplySpeech]);
+  const setVoiceOutput = useCallback(
+    (enabled: boolean) => {
+      stopReplySpeech();
+      const setting = ++voiceSettingRef.current;
+      voiceEnabledRef.current = enabled;
+      setVoiceEnabled(enabled);
+      setVoiceError('');
+      if (enabled)
+        void getVoicePlayer()
+          .prepare()
+          .catch(() => {
+            if (!voiceMountedRef.current || setting !== voiceSettingRef.current) return;
+            voiceEnabledRef.current = false;
+            setVoiceEnabled(false);
+            setVoiceError("Voice playback is unavailable. Ava's text is still available.");
+          });
+    },
+    [getVoicePlayer, stopReplySpeech]
+  );
 
   const beginReplySpeech = useCallback(() => {
-    const queue = createAvaReplySpeech(getVoicePlayer().play,
-      progress => { if (voiceMountedRef.current && replySpeechRef.current === queue) setVoiceProgress(progress); },
-      error => { if (voiceMountedRef.current && replySpeechRef.current === queue) setVoiceError(error.code === 'reply_changed'
-        ? 'Ava revised this reply. Voice stopped; the final text is available.'
-        : 'Voice playback failed. Ava\'s text is still available.'); });
+    const queue = createAvaReplySpeech(
+      getVoicePlayer().play,
+      (progress) => {
+        if (voiceMountedRef.current && replySpeechRef.current === queue) setVoiceProgress(progress);
+      },
+      (error) => {
+        if (voiceMountedRef.current && replySpeechRef.current === queue)
+          setVoiceError(
+            error.code === 'reply_changed'
+              ? 'Ava revised this reply. Voice stopped; the final text is available.'
+              : "Voice playback failed. Ava's text is still available."
+          );
+      }
+    );
     replySpeechRef.current = queue;
     setVoiceProgress({ state: 'idle', spokenCharacters: 0, queuedCharacters: 0 });
     return queue;
@@ -1284,7 +1324,8 @@ function AvaChatSession({ scope }: { scope: AvaChatScope }) {
     const query = searchQuery.trim().toLowerCase();
     return assistantExchanges.filter((exchange) => {
       if (historyFilter === 'active' && exchange.status !== 'pending') return false;
-      if (historyFilter === 'failed' && !['failed', 'cancelled'].includes(exchange.status)) return false;
+      if (historyFilter === 'failed' && !['failed', 'cancelled'].includes(exchange.status))
+        return false;
       if (historyFilter === 'completed' && exchange.status !== 'completed') return false;
       if (!query) return true;
       return [
@@ -1424,7 +1465,11 @@ function AvaChatSession({ scope }: { scope: AvaChatScope }) {
         recognition.onend = null;
         recognition.onerror = null;
         recognition.onresult = null;
-        try { recognition.stop(); } catch { /* Recognition may already have ended. */ }
+        try {
+          recognition.stop();
+        } catch {
+          /* Recognition may already have ended. */
+        }
       }
       assistantRequestRef.current?.abort();
       assistantRequestRef.current = null;
@@ -1446,7 +1491,7 @@ function AvaChatSession({ scope }: { scope: AvaChatScope }) {
     }
 
     try {
-      const parsed = rawMemory ? JSON.parse(rawMemory) as OperatorMemory : null;
+      const parsed = rawMemory ? (JSON.parse(rawMemory) as OperatorMemory) : null;
       if (parsed?.draft && ACTIONS.some((item) => item.id === parsed.action)) {
         setOperatorMemory(parsed);
       }
@@ -1458,46 +1503,47 @@ function AvaChatSession({ scope }: { scope: AvaChatScope }) {
     if (storedSessionId) setAssistantSessionId(storedSessionId);
     try {
       const parsed = rawExchanges ? JSON.parse(rawExchanges) : null;
-      if (Array.isArray(parsed)) setAssistantExchanges(
-        parsed
-          .filter((item) => item?.status === 'completed')
-          .map(
-            (item): AvaAssistantExchange => ({
-              id: String(item?.id || createAvaAssistantExchangeId()),
-              request: String(item?.request || '').slice(0, 1200),
-              answer: String(item?.answer || ''),
-              status: 'completed',
-              createdAt: String(item?.createdAt || item?.updatedAt || new Date().toISOString()),
-              updatedAt: String(item?.updatedAt || item?.createdAt || new Date().toISOString()),
-              suggestions: normalizeAssistantSuggestions(item?.suggestions),
-              usedIntent: String(item?.usedIntent || ''),
-              assistantAction: String(item?.assistantAction || ''),
-              activeLeadId: String(item?.activeLeadId || ''),
-              toolResult: asRecord(item?.toolResult),
-              warning: String(item?.warning || ''),
-              mission:
-                item?.mission && typeof item.mission === 'object' && !Array.isArray(item.mission)
-                  ? (item.mission as Record<string, unknown>)
-                  : null,
-              trace:
-                item?.trace && typeof item.trace === 'object' && !Array.isArray(item.trace)
-                  ? (item.trace as Record<string, unknown>)
-                  : null,
-              controlEnvelope:
-                item?.controlEnvelope &&
-                typeof item.controlEnvelope === 'object' &&
-                !Array.isArray(item.controlEnvelope)
-                  ? (item.controlEnvelope as Record<string, unknown>)
-                  : null,
-              deepSeekDecision: normalizeAvaDeepSeekDecision(item?.deepSeekDecision) as Record<
-                string,
-                unknown
-              > | null,
-            })
-          )
-          .filter((item) => item.request && item.answer)
-          .slice(-30)
-      );
+      if (Array.isArray(parsed))
+        setAssistantExchanges(
+          parsed
+            .filter((item) => item?.status === 'completed')
+            .map(
+              (item): AvaAssistantExchange => ({
+                id: String(item?.id || createAvaAssistantExchangeId()),
+                request: String(item?.request || '').slice(0, 1200),
+                answer: String(item?.answer || ''),
+                status: 'completed',
+                createdAt: String(item?.createdAt || item?.updatedAt || new Date().toISOString()),
+                updatedAt: String(item?.updatedAt || item?.createdAt || new Date().toISOString()),
+                suggestions: normalizeAssistantSuggestions(item?.suggestions),
+                usedIntent: String(item?.usedIntent || ''),
+                assistantAction: String(item?.assistantAction || ''),
+                activeLeadId: String(item?.activeLeadId || ''),
+                toolResult: asRecord(item?.toolResult),
+                warning: String(item?.warning || ''),
+                mission:
+                  item?.mission && typeof item.mission === 'object' && !Array.isArray(item.mission)
+                    ? (item.mission as Record<string, unknown>)
+                    : null,
+                trace:
+                  item?.trace && typeof item.trace === 'object' && !Array.isArray(item.trace)
+                    ? (item.trace as Record<string, unknown>)
+                    : null,
+                controlEnvelope:
+                  item?.controlEnvelope &&
+                  typeof item.controlEnvelope === 'object' &&
+                  !Array.isArray(item.controlEnvelope)
+                    ? (item.controlEnvelope as Record<string, unknown>)
+                    : null,
+                deepSeekDecision: normalizeAvaDeepSeekDecision(item?.deepSeekDecision) as Record<
+                  string,
+                  unknown
+                > | null,
+              })
+            )
+            .filter((item) => item.request && item.answer)
+            .slice(-30)
+        );
     } catch {
       if (!writeAvaChatStorage(exchangesKey, null)) setStorageUnavailable(true);
     }
@@ -1513,7 +1559,9 @@ function AvaChatSession({ scope }: { scope: AvaChatScope }) {
 
   useEffect(() => {
     if (!writableStorage?.assistantExchanges) return;
-    const completed = assistantExchanges.filter((exchange) => exchange.status === 'completed').slice(-30);
+    const completed = assistantExchanges
+      .filter((exchange) => exchange.status === 'completed')
+      .slice(-30);
     if (!writeAvaChatStorage(exchangesKey, JSON.stringify(completed))) setStorageUnavailable(true);
   }, [assistantExchanges, exchangesKey, writableStorage]);
 
@@ -1527,7 +1575,10 @@ function AvaChatSession({ scope }: { scope: AvaChatScope }) {
       updatedAt: new Date().toISOString(),
     };
     setOperatorMemory(nextMemory);
-    if (writableStorage.operatorMemory && !writeAvaChatStorage(operatorMemoryKey, JSON.stringify(nextMemory))) {
+    if (
+      writableStorage.operatorMemory &&
+      !writeAvaChatStorage(operatorMemoryKey, JSON.stringify(nextMemory))
+    ) {
       setStorageUnavailable(true);
     }
   }, [action, draft, operatorMemoryKey, writableStorage]);
@@ -1541,7 +1592,11 @@ function AvaChatSession({ scope }: { scope: AvaChatScope }) {
   const stopListening = useCallback(() => {
     const recognition = recognitionRef.current;
     recognitionRef.current = null;
-    try { recognition?.stop(); } catch { /* Recognition may already have ended. */ }
+    try {
+      recognition?.stop();
+    } catch {
+      /* Recognition may already have ended. */
+    }
     setListening(false);
   }, []);
 
@@ -1595,45 +1650,63 @@ function AvaChatSession({ scope }: { scope: AvaChatScope }) {
           if (voiceEnabledRef.current) replySpeech = beginReplySpeech();
           const now = new Date().toISOString();
           pendingExchange = {
-            id: createAvaAssistantExchangeId(), request: command, answer: '', status: 'pending',
-            createdAt: now, updatedAt: now, suggestions: [],
+            id: createAvaAssistantExchangeId(),
+            request: command,
+            answer: '',
+            status: 'pending',
+            createdAt: now,
+            updatedAt: now,
+            suggestions: [],
           };
           const exchangeId = pendingExchange.id;
           setAssistantExchanges((current) => [...current, pendingExchange!].slice(-30));
           setDraft('');
           setTranscript(command);
-          const response = await streamAvaAssistantChatRequest({
-            message: command,
-            sessionId: assistantSessionId || undefined,
-            historyMode: 'completed-only',
-            source: 'ava-chat-page',
-            leadId: linkedLeadId || undefined,
-            action: nextAction,
-            selectedAction: action,
-            requiresApproval: nextRequiresApproval,
-            messages: buildAssistantRequestMessages(assistantExchanges, command),
-            context: {
-              path: typeof window === 'undefined' ? '' : window.location.pathname,
-              search: typeof window === 'undefined' ? '' : window.location.search,
+          const response = await streamAvaAssistantChatRequest(
+            {
+              message: command,
+              sessionId: assistantSessionId || undefined,
+              historyMode: 'completed-only',
+              source: 'ava-chat-page',
+              leadId: linkedLeadId || undefined,
+              action: nextAction,
+              selectedAction: action,
+              requiresApproval: nextRequiresApproval,
+              messages: buildAssistantRequestMessages(assistantExchanges, command),
+              context: {
+                path: typeof window === 'undefined' ? '' : window.location.pathname,
+                search: typeof window === 'undefined' ? '' : window.location.search,
+              },
             },
-          }, {
-            signal: assistantController.signal,
-            onAnswer: (text) => {
-              if (assistantRequestRef.current !== assistantController || assistantController.signal.aborted) return;
-              replySpeech?.update(text);
-              setAssistantExchanges((current) => current.map((exchange) => exchange.id === exchangeId
-                ? { ...exchange, answer: text, updatedAt: new Date().toISOString() }
-                : exchange));
-            },
-          });
+            {
+              signal: assistantController.signal,
+              onAnswer: (text) => {
+                if (
+                  assistantRequestRef.current !== assistantController ||
+                  assistantController.signal.aborted
+                )
+                  return;
+                replySpeech?.update(text);
+                setAssistantExchanges((current) =>
+                  current.map((exchange) =>
+                    exchange.id === exchangeId
+                      ? { ...exchange, answer: text, updatedAt: new Date().toISOString() }
+                      : exchange
+                  )
+                );
+              },
+            }
+          );
           if (assistantRequestRef.current !== assistantController) return;
           if (response.ok === false) replySpeech?.stop();
           else replySpeech?.finish(String(response.answer || response.result || '').trim());
           if (response.sessionId) setAssistantSessionId(response.sessionId);
           setAssistantExchanges((current) =>
-            current.map((exchange) => exchange.id === exchangeId
-              ? buildAssistantExchange(command, response, exchange)
-              : exchange)
+            current.map((exchange) =>
+              exchange.id === exchangeId
+                ? buildAssistantExchange(command, response, exchange)
+                : exchange
+            )
           );
           if (response.ok === false || response.warning) {
             showUiToast({
@@ -1662,27 +1735,32 @@ function AvaChatSession({ scope }: { scope: AvaChatScope }) {
         if (useAssistantChat && assistantRequestRef.current !== assistantController) return;
         const cancelled = Boolean(assistantController?.signal.aborted);
         const rejectedDuringStartup =
-          !cancelled && err instanceof RuntimeBridgeError &&
-          err.status === 503 && err.code === 'state_bootstrap_unavailable';
+          !cancelled &&
+          err instanceof RuntimeBridgeError &&
+          err.status === 503 &&
+          err.code === 'state_bootstrap_unavailable';
         const message = err instanceof Error ? err.message : 'Ava could not start that request.';
         if (!cancelled) setSubmitError(message);
         if (useAssistantChat && pendingExchange) {
           if (rejectedDuringStartup) setDraft((current) => current || command);
           const exchangeId = pendingExchange.id;
           setAssistantExchanges((current) =>
-            current.map((exchange): AvaAssistantExchange => exchange.id === exchangeId
-              ? {
-                ...exchange,
-                status: cancelled ? 'cancelled' : 'failed',
-                interrupted: !cancelled && !rejectedDuringStartup,
-                updatedAt: new Date().toISOString(),
-                warning: cancelled
-                  ? 'Response stopped. This reply is incomplete.'
-                  : rejectedDuringStartup
-                    ? 'Request wasn’t started.'
-                    : `Response interrupted. ${message}`,
-              }
-              : exchange)
+            current.map(
+              (exchange): AvaAssistantExchange =>
+                exchange.id === exchangeId
+                  ? {
+                      ...exchange,
+                      status: cancelled ? 'cancelled' : 'failed',
+                      interrupted: !cancelled && !rejectedDuringStartup,
+                      updatedAt: new Date().toISOString(),
+                      warning: cancelled
+                        ? 'Response stopped. This reply is incomplete.'
+                        : rejectedDuringStartup
+                          ? 'Request wasn’t started.'
+                          : `Response interrupted. ${message}`,
+                    }
+                  : exchange
+            )
           );
         }
         if (!useAssistantChat) {
@@ -1789,8 +1867,9 @@ function AvaChatSession({ scope }: { scope: AvaChatScope }) {
     setSubmitError('');
     setTranscript('');
     let recognition;
-    try { recognition = new SpeechRecognition(); }
-    catch {
+    try {
+      recognition = new SpeechRecognition();
+    } catch {
       setSubmitError('The microphone could not start. You can type your request.');
       return;
     }
@@ -1804,10 +1883,12 @@ function AvaChatSession({ scope }: { scope: AvaChatScope }) {
     recognition.interimResults = true;
     recognition.lang = 'en-US';
     recognition.onend = () => {
-      if (finish()) setSubmitError('No speech was captured. Try the microphone again or type your request.');
+      if (finish())
+        setSubmitError('No speech was captured. Try the microphone again or type your request.');
     };
     recognition.onerror = () => {
-      if (finish()) setSubmitError('Voice capture stopped. Try the microphone again or type your request.');
+      if (finish())
+        setSubmitError('Voice capture stopped. Try the microphone again or type your request.');
     };
     recognition.onresult = (event) => {
       if (!voiceMountedRef.current || recognitionRef.current !== recognition) return;
@@ -1817,8 +1898,12 @@ function AvaChatSession({ scope }: { scope: AvaChatScope }) {
         .join(' ')
         .trim();
       setTranscript(text);
-      if (!text || !results.every(result => result.isFinal) || !finish()) return;
-      try { recognition.stop(); } catch { /* Capture may already have ended. */ }
+      if (!text || !results.every((result) => result.isFinal) || !finish()) return;
+      try {
+        recognition.stop();
+      } catch {
+        /* Capture may already have ended. */
+      }
       if (resolveAvaBrowserCommand(text, linkedLeadId)?.path) {
         void submitCommand(text);
       } else {
@@ -1828,10 +1913,15 @@ function AvaChatSession({ scope }: { scope: AvaChatScope }) {
     };
     const previous = recognitionRef.current;
     recognitionRef.current = recognition;
-    try { previous?.stop(); } catch { /* A previous capture may already have ended. */ }
+    try {
+      previous?.stop();
+    } catch {
+      /* A previous capture may already have ended. */
+    }
     setListening(true);
-    try { recognition.start(); }
-    catch {
+    try {
+      recognition.start();
+    } catch {
       if (finish()) setSubmitError('The microphone could not start. You can type your request.');
     }
   };
@@ -1900,7 +1990,7 @@ function AvaChatSession({ scope }: { scope: AvaChatScope }) {
                   >
                     <CircleAlert size={18} className="mt-0.5 shrink-0 text-[var(--ava-danger)]" />
                     <div className="min-w-0">
-                      <div className="font-semibold">Some live context is delayed</div>
+                      <div className="font-semibold">Some recent lead activity may be missing</div>
                       <p className="mt-1 break-words text-[var(--ava-text-muted)]">
                         {connectionError}
                       </p>
@@ -1946,12 +2036,16 @@ function AvaChatSession({ scope }: { scope: AvaChatScope }) {
                   />
                 ) : (
                   <WelcomeState
+                    linkedToLead={Boolean(linkedLeadId)}
                     operatorMemory={operatorMemory}
                     onResumeOperatorMemory={resumeOperatorMemory}
                   />
                 )}
 
-                {submitting && !assistantExchanges.some((exchange) => exchange.status === 'pending') && <AvaThinkingBubble />}
+                {submitting &&
+                  !assistantExchanges.some((exchange) => exchange.status === 'pending') && (
+                    <AvaThinkingBubble />
+                  )}
               </div>
             </div>
 
@@ -1974,10 +2068,14 @@ function AvaChatSession({ scope }: { scope: AvaChatScope }) {
               onStartListening={startListening}
               onStopListening={stopListening}
               onSubmit={() => void submitCommand()}
-              onStopResponse={assistantRequestRef.current || voiceBusy ? () => {
-                assistantRequestRef.current?.abort();
-                stopReplySpeech();
-              } : undefined}
+              onStopResponse={
+                assistantRequestRef.current || voiceBusy
+                  ? () => {
+                      assistantRequestRef.current?.abort();
+                      stopReplySpeech();
+                    }
+                  : undefined
+              }
               onSelectCompanionAction={selectCompanionAction}
             />
           </div>
@@ -2047,7 +2145,7 @@ function AvaIdentityBar({
   onOpenContext: () => void;
 }) {
   const stateLabel = {
-    ready: 'Ready when you are',
+    ready: 'Ready for your request',
     listening: 'Listening',
     thinking: 'Thinking',
     working: 'Working on your request',
@@ -2120,7 +2218,11 @@ function AvaIdentityBar({
           role="status"
           className="flex min-w-0 basis-full items-start gap-2 rounded-lg border border-[var(--ava-warning-border)] bg-[var(--ava-warning-soft)] p-2 text-xs"
         >
-          <AlertTriangle size={16} className="shrink-0 text-[var(--ava-warning)]" aria-hidden="true" />
+          <AlertTriangle
+            size={16}
+            className="shrink-0 text-[var(--ava-warning)]"
+            aria-hidden="true"
+          />
           <span className="min-w-0">
             Some chat details could not be restored or saved in this browser. Keep this chat open.
           </span>
@@ -2231,7 +2333,12 @@ function AssistantExchange({
   const failed = exchange.status === 'failed' || exchange.status === 'cancelled';
   const pending = exchange.status === 'pending';
   return (
-    <article className="space-y-3 [overflow-wrap:anywhere]" data-exchange-id={exchange.id} data-status={exchange.status} aria-busy={pending}>
+    <article
+      className="space-y-3 [overflow-wrap:anywhere]"
+      data-exchange-id={exchange.id}
+      data-status={exchange.status}
+      aria-busy={pending}
+    >
       <div className="flex justify-end">
         <div className="max-w-[88%] sm:max-w-[72%]">
           <div className="rounded-[16px_16px_4px_16px] border border-[var(--ava-user-border)] bg-[var(--ava-user-bubble)] px-4 py-3 text-sm leading-6 shadow-sm">
@@ -2266,7 +2373,9 @@ function AssistantExchange({
                 {exchange.warning}
               </p>
             )}
-            <p className="whitespace-pre-wrap break-words">{exchange.answer || (pending ? 'I am checking that now.' : '')}</p>
+            <p className="whitespace-pre-wrap break-words">
+              {exchange.answer || (pending ? 'I am checking that now.' : '')}
+            </p>
             {exchange.activeLeadId && (
               <Link
                 className="pbk-ava-evidence-link mt-1"
@@ -2296,11 +2405,29 @@ function AssistantExchange({
             <span
               className={[
                 'inline-flex items-center gap-1.5 font-semibold',
-                failed ? 'text-[var(--ava-danger)]' : pending ? 'text-[var(--ava-text-muted)]' : 'text-[var(--ava-success)]',
+                failed
+                  ? 'text-[var(--ava-danger)]'
+                  : pending
+                    ? 'text-[var(--ava-text-muted)]'
+                    : 'text-[var(--ava-success)]',
               ].join(' ')}
             >
-              {failed ? <AlertTriangle size={14} /> : pending ? <Loader2 size={14} className="animate-spin" /> : <CheckCircle2 size={14} />}
-              {exchange.status === 'cancelled' ? 'Cancelled' : exchange.interrupted ? 'Interrupted' : failed ? 'Needs review' : pending ? 'Responding' : 'Answered'}
+              {failed ? (
+                <AlertTriangle size={14} />
+              ) : pending ? (
+                <Loader2 size={14} className="animate-spin" />
+              ) : (
+                <CheckCircle2 size={14} />
+              )}
+              {exchange.status === 'cancelled'
+                ? 'Cancelled'
+                : exchange.interrupted
+                  ? 'Interrupted'
+                  : failed
+                    ? 'Needs review'
+                    : pending
+                      ? 'Responding'
+                      : 'Answered'}
             </span>
             <button
               type="button"
@@ -2624,9 +2751,15 @@ function AvaComposer({
               <span className="break-words">{submitError}</span>
             </div>
           )}
-          {voiceError && <p role="status" className="mb-2 text-xs text-[var(--ava-danger)]">{voiceError}</p>}
+          {voiceError && (
+            <p role="status" className="mb-2 text-xs text-[var(--ava-danger)]">
+              {voiceError}
+            </p>
+          )}
           {voiceDraft && draft.trim() && (
-            <p role="status" className="mb-2 text-xs text-[var(--ava-text-muted)]">Voice draft ready. Review it, then send.</p>
+            <p role="status" className="mb-2 text-xs text-[var(--ava-text-muted)]">
+              Voice draft ready. Review it, then send.
+            </p>
           )}
           <label className="sr-only" htmlFor="ava-command-input">
             Ask Ava anything
@@ -2723,7 +2856,13 @@ function AvaComposer({
                 data-ava-queued-characters={voiceProgress.queuedCharacters}
                 className="min-w-0 flex-1 break-words text-xs leading-4 text-[var(--ava-text-muted)] sm:flex-none"
               >
-                {voiceProgress.state === 'speaking' ? 'Speaking' : voiceProgress.state === 'preparing' ? 'Preparing voice...' : voiceEnabled ? 'Voice on' : ''}
+                {voiceProgress.state === 'speaking'
+                  ? 'Speaking'
+                  : voiceProgress.state === 'preparing'
+                    ? 'Preparing voice...'
+                    : voiceEnabled
+                      ? 'Voice on'
+                      : ''}
               </span>
 
               <div className="hidden min-h-11 min-w-0 flex-1 items-center gap-2 rounded-lg border border-[var(--ava-border)] bg-[var(--ava-panel)] px-3 text-xs font-semibold text-[var(--ava-text-muted)] sm:flex sm:flex-none">
@@ -2751,10 +2890,18 @@ function AvaComposer({
                 aria-label={onStopResponse ? 'Stop Ava response' : 'Send to Ava'}
                 title={onStopResponse ? 'Stop Ava response' : 'Send to Ava'}
               >
-                {onStopResponse ? <Square size={17} aria-hidden="true" /> : <>
-                  {submitting ? <Loader2 className="animate-spin" size={17} /> : <Send size={17} />}
-                  <span className="hidden sm:inline">{submitting ? 'Sending' : 'Send'}</span>
-                </>}
+                {onStopResponse ? (
+                  <Square size={17} aria-hidden="true" />
+                ) : (
+                  <>
+                    {submitting ? (
+                      <Loader2 className="animate-spin" size={17} />
+                    ) : (
+                      <Send size={17} />
+                    )}
+                    <span className="hidden sm:inline">{submitting ? 'Sending' : 'Send'}</span>
+                  </>
+                )}
               </PbkButton>
             </div>
           </div>
@@ -2797,7 +2944,7 @@ function AvaContextRail({
   return (
     <aside className={`min-h-0 overflow-y-auto bg-[var(--ava-bg)] p-4 ${className}`}>
       <div className="space-y-3">
-        <ContextPanel title="Recent ask" icon={<Clock3 size={16} />}>
+        <ContextPanel title="Saved chat draft" icon={<Clock3 size={16} />}>
           {operatorMemory ? (
             <button
               type="button"
@@ -2846,13 +2993,13 @@ function AvaContextRail({
               <ContextRow label="How Ava handles it">
                 <span>Chat workspace</span>
               </ContextRow>
-              <ContextRow label="Safety">
+              <ContextRow label="Approval">
                 <span
                   className={
-                    requiresApproval ? 'text-[var(--ava-warning)]' : 'text-[var(--ava-success)]'
+                    requiresApproval ? 'text-[var(--ava-warning)]' : 'text-[var(--ava-text-muted)]'
                   }
                 >
-                  {requiresApproval ? 'Approval requested' : 'Low-risk request'}
+                  {requiresApproval ? 'Needs approval' : 'Checked when you send'}
                 </span>
               </ContextRow>
             </ContextPanel>
@@ -2981,9 +3128,11 @@ function AvaPresenceOrb({
 }
 
 function WelcomeState({
+  linkedToLead,
   operatorMemory,
   onResumeOperatorMemory,
 }: {
+  linkedToLead: boolean;
   operatorMemory: OperatorMemory | null;
   onResumeOperatorMemory: () => void;
 }) {
@@ -2998,9 +3147,13 @@ function WelcomeState({
               <span className="text-[var(--ava-text-faint)]">PBK assistant</span>
             </div>
             <p className="text-sm leading-6 text-[var(--ava-text-muted)]">
-              Tell me what you need in plain English. I can find seller context, analyze a deal,
-              draft a follow-up, prep approvals, summarize calls, or help you decide what to say
-              next.
+              {linkedToLead
+                ? 'Ask about this lead, open saved comps or photos, or draft a seller follow-up.'
+                : 'Find a lead, review a deal, or prepare for your next seller call.'}
+            </p>
+            <p className="mt-2 text-xs leading-5 text-[var(--ava-text-muted)]">
+              Start with a shortcut below or type your own request. Calls and outgoing messages
+              require approval.
             </p>
           </div>
         </div>

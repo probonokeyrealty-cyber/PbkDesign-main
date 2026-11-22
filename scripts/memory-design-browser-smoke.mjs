@@ -100,7 +100,7 @@ async function verify(engine, viewport, device = {}) {
     await page.getByRole('button', { name: /All memories/ }).click();
     await search.fill('no source recorded');
     const unlinked = recent.getByRole('article', { name: 'No source recorded' });
-    await expect(unlinked.getByText('Source needs review', { exact: true })).toBeVisible();
+    await expect(unlinked.getByText('No source on file', { exact: true })).toBeVisible();
     await expect(unlinked.getByRole('link', { name: 'Open source record' })).toHaveCount(0);
     await search.fill('call asking price');
     const card = recent.getByRole('article', { name: 'Call asking price' });
@@ -113,10 +113,10 @@ async function verify(engine, viewport, device = {}) {
     await expect(pinned.getByRole('article', { name: 'Call asking price' })).toBeVisible();
     await pinned.getByRole('button', { name: 'Unpin', exact: true }).click();
     await expect(pinned).toHaveCount(0);
-    await card.getByRole('button', { name: 'Correct memory', exact: true }).click();
-    await expect(card.getByText('Correction queued', { exact: true })).toBeVisible();
-    await card.getByRole('button', { name: 'Forget', exact: true }).click();
-    await expect(card.getByText('Forget request recorded', { exact: true })).toBeVisible();
+    await card.getByRole('button', { name: 'Request correction', exact: true }).click();
+    await expect(card.getByText('Correction requested', { exact: true })).toBeVisible();
+    await card.getByRole('button', { name: 'Request removal', exact: true }).click();
+    await expect(card.getByText('Removal request recorded', { exact: true })).toBeVisible();
     await expect(card.getByText('$240,000', { exact: true })).toBeVisible();
     assert.deepEqual(
       requests.map(({ eventId, action }) => [eventId, action]),

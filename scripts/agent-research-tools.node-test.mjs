@@ -322,7 +322,7 @@ test('inspection provides local time, timezone and exact original timestamp with
   await expect(page.locator('time')).toContainText('Nov 19, 2026');
   await expect(page.locator('time')).toContainText('4:00 AM PST');
   await expect(page.locator('.pbk-agent-research-state')).toHaveAttribute('data-tone', 'matched');
-  await expect(page.getByText('Review the read-only preview below. Running research is not available here.', { exact: true })).toBeVisible();
+  await expect(page.getByText('Open the preview to see what the tool can review. Start a research request in Brain.', { exact: true })).toBeVisible();
   assert.equal((await page.evaluate(() => window.invokes)).length, 1);
 });
 

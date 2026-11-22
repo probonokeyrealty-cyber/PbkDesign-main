@@ -44,12 +44,13 @@ const STATUS_LABELS: Record<CatalogStatus, string> = {
 };
 
 const STATUS_GUIDANCE: Record<CatalogStatus, string> = {
-  matched: 'Review the read-only preview below. Running research is not available here.',
+  matched: 'Open the preview to see what the tool can review. Start a research request in Brain.',
   not_configured:
     'An administrator needs to configure research access. Local PBK options remain available below.',
   disabled:
     'An administrator needs to enable catalog inspection. Local PBK options remain available below.',
-  authorization_failed: 'An administrator needs to review research access before another inspection.',
+  authorization_failed:
+    'An administrator needs to review research access before another inspection.',
   rate_limited: 'Wait a moment, then choose Find research tools to try again.',
   timed_out: 'The inspection took too long. Choose Find research tools to try again.',
   unavailable:
@@ -228,8 +229,7 @@ export function AgentResearchTools({
           <span className="pbk-agent-research-badge">Read-only inspection</span>
         </div>
         <p>
-          Inspect advisory research options for {agentName}. Ava supervises PBK work; Rex research
-          stays in Brain. Use the existing call and message controls for follow-up.
+          Check which research tools are listed for {agentName}. Open Brain to ask Rex for research.
         </p>
         <button
           type="button"
@@ -250,7 +250,10 @@ export function AgentResearchTools({
             <p className="pbk-agent-research-mono">
               {checkedAt ? (
                 <>
-                  Checked <time dateTime={checkedAt} title={checkedAt}>{checkedLabel}</time>
+                  Checked{' '}
+                  <time dateTime={checkedAt} title={checkedAt}>
+                    {checkedLabel}
+                  </time>
                 </>
               ) : (
                 'Never checked'
@@ -258,7 +261,8 @@ export function AgentResearchTools({
             </p>
             <p className="pbk-agent-research-guidance">{guidance}</p>
             <p className="pbk-agent-research-boundary">
-              Catalog metadata only. Account access, agent readiness and execution are unverified.
+              This list shows available tool descriptions. Connection and permission still need to
+              be verified.
             </p>
           </section>
           {result && (

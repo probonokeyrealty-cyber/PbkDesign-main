@@ -160,7 +160,7 @@ assert.match(
 );
 assert.match(
   agentFleet,
-  /Measured ready/,
+  /Readiness verified/,
   'Agent Fleet must explicitly label canonical measured readiness.'
 );
 assert.doesNotMatch(

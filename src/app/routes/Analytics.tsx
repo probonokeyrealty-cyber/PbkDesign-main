@@ -13,7 +13,12 @@ import {
   type CampaignDrilldownRow,
 } from '../utils/runtimeBridge';
 import { showUiToast } from '../utils/uiFeedback';
-import { buildAnalyticsCsv, buildAnalyticsViewModel, confirmAnalyticsPeriod, readCampaignAttributionCost } from './analyticsRuntimeLogic.js';
+import {
+  buildAnalyticsCsv,
+  buildAnalyticsViewModel,
+  confirmAnalyticsPeriod,
+  readCampaignAttributionCost,
+} from './analyticsRuntimeLogic.js';
 
 type AnalyticsViewModel = ReturnType<typeof buildAnalyticsViewModel>;
 const ANALYTICS_RANGES = [
@@ -234,9 +239,13 @@ function CampaignAttributionList({
                 <strong title={row.label}>{row.label}</strong>
                 <span>
                   {shortNumber(row.sent)} sent - {shortNumber(row.replied)} replies -{' '}
-                  {row.recordedCostRows === row.leads ? `Recorded cost ${money(row.recordedCost)}`
-                    : row.estimatedCostRows === row.leads ? `Estimated cost ${money(row.estimatedCost)}`
-                      : row.recordedCostRows + row.estimatedCostRows > 0 ? 'Cost incomplete' : 'Cost not reported'}
+                  {row.recordedCostRows === row.leads
+                    ? `Recorded cost ${money(row.recordedCost)}`
+                    : row.estimatedCostRows === row.leads
+                      ? `Estimated cost ${money(row.estimatedCost)}`
+                      : row.recordedCostRows + row.estimatedCostRows > 0
+                        ? 'Cost incomplete'
+                        : 'Cost not reported'}
                 </span>
               </div>
               <div className="rate">{formatPercent(replyRate)}</div>
@@ -384,14 +393,21 @@ function AnalyticsStatRibbon({
       <div className="pbk-analytics-stat">
         <div className="l">Recorded revenue</div>
         <div className="v sky">{available ? money(stats.totalRevenue) : '-'}</div>
-        <div className="delta">{stats.creationCohort ? 'Contract creation cohort' : range.caption}</div>
+        <div className="delta">
+          {stats.creationCohort ? 'Contract creation cohort' : range.caption}
+        </div>
       </div>
       <div className="pbk-analytics-stat">
         <div className="l">Revenue / tool cost</div>
-        <div className="v">{available && stats.roiMultiple !== null ? `${stats.roiMultiple}x` : '-'}</div>
+        <div className="v">
+          {available && stats.roiMultiple !== null ? `${stats.roiMultiple}x` : '-'}
+        </div>
         <div className="delta">
-          {available && stats.roiMultiple !== null ? `${money(stats.aiSpend)} recorded tool cost`
-            : available ? stats.evidenceStatus : 'Evidence incomplete'}
+          {available && stats.roiMultiple !== null
+            ? `${money(stats.aiSpend)} recorded tool cost`
+            : available
+              ? stats.evidenceStatus
+              : 'Evidence incomplete'}
         </div>
       </div>
     </section>
@@ -408,16 +424,45 @@ function AnalyticsEvidence({ model, ready }: { model: AnalyticsViewModel; ready:
         <ChevronDown size={14} aria-hidden="true" />
       </summary>
       <dl>
-        <div><dt>Revenue records</dt><dd>{facts.revenueCoverage
-          ? `${facts.revenueCoverage.recordedRecords} / ${facts.revenueCoverage.totalRecords}` : 'Not reported'}</dd></div>
-        <div><dt>Tool cost records</dt><dd>{facts.costEvidence
-          ? `${facts.costEvidence.recordedRecords} / ${facts.costEvidence.totalRecords}` : 'Not reported'}</dd></div>
-        <div><dt>Reporting period</dt><dd>{facts.reportingPeriod || 'Unconfirmed'}</dd></div>
-        <div><dt>Date basis</dt><dd>{facts.dateBasis === 'record_created' ? 'Contract creation date; not closing date'
-          : facts.dateBasis === 'closed_at' ? 'Recorded closing date' : 'Unconfirmed'}</dd></div>
-        <div><dt>Source</dt><dd>{model.source}</dd></div>
+        <div>
+          <dt>Revenue records</dt>
+          <dd>
+            {facts.revenueCoverage
+              ? `${facts.revenueCoverage.recordedRecords} / ${facts.revenueCoverage.totalRecords}`
+              : 'Not reported'}
+          </dd>
+        </div>
+        <div>
+          <dt>Tool cost records</dt>
+          <dd>
+            {facts.costEvidence
+              ? `${facts.costEvidence.recordedRecords} / ${facts.costEvidence.totalRecords}`
+              : 'Not reported'}
+          </dd>
+        </div>
+        <div>
+          <dt>Reporting period</dt>
+          <dd>{facts.reportingPeriod || 'Unconfirmed'}</dd>
+        </div>
+        <div>
+          <dt>Date basis</dt>
+          <dd>
+            {facts.dateBasis === 'record_created'
+              ? 'Contract creation date; not closing date'
+              : facts.dateBasis === 'closed_at'
+                ? 'Recorded closing date'
+                : 'Unconfirmed'}
+          </dd>
+        </div>
+        <div>
+          <dt>Source</dt>
+          <dd>{model.source}</dd>
+        </div>
       </dl>
-      <p>Recorded entries, not verified payment receipts. Purchase prices and projected profit are excluded.</p>
+      <p>
+        Recorded entries, not verified payment receipts. Purchase prices and projected profit are
+        excluded.
+      </p>
     </details>
   );
 }
@@ -556,11 +601,28 @@ function AnalyticsDailyBar({
   );
 }
 
+const AI_METRIC_COPY: Record<string, { label: string; detail: string }> = {
+  'P95 answer latency': {
+    label: 'Response time',
+    detail: 'Time within which 95% of measured replies arrived.',
+  },
+  'QA retries': {
+    label: 'Responses retried',
+    detail: 'Share of quality checks that requested another attempt.',
+  },
+  'Safety blocks': {
+    label: 'Actions stopped',
+    detail: 'Actions stopped by safety checks.',
+  },
+};
+
 function AnalyticsMetricTile({ metric }: { metric: AnalyticsViewModel['aiMetrics'][number] }) {
+  const copy = AI_METRIC_COPY[metric.label];
   return (
     <div className="pbk-analytics-metric">
-      <dt className="l">{metric.label}</dt>
+      <dt className="l">{copy?.label || metric.label}</dt>
       <dd className="v">{metric.value}</dd>
+      {copy && <dd className="pbk-workspace-purpose">{copy.detail}</dd>}
     </div>
   );
 }
@@ -757,10 +819,16 @@ export function Analytics() {
 
   useEffect(() => {
     const origin = readLeadQueueReturn(location.state?.queueReturn);
-    if (status !== 'ready' || origin?.path !== '/analytics' || restoredFocus.current === location.key) return;
+    if (
+      status !== 'ready' ||
+      origin?.path !== '/analytics' ||
+      restoredFocus.current === location.key
+    )
+      return;
     const slice = new URLSearchParams(origin.search).get('focus');
-    const target = Array.from(document.querySelectorAll<HTMLButtonElement>('[data-analytics-slice]'))
-      .find(button => button.dataset.analyticsSlice === slice);
+    const target = Array.from(
+      document.querySelectorAll<HTMLButtonElement>('[data-analytics-slice]')
+    ).find((button) => button.dataset.analyticsSlice === slice);
     if (!target) return;
     const frame = requestAnimationFrame(() => {
       window.scrollTo({ top: origin.scrollY });
@@ -776,9 +844,16 @@ export function Analytics() {
     const slice = drillTrigger.current?.dataset.analyticsSlice;
     if (slice) query.set('focus', slice);
     closeDrillDown();
-    navigate(`/leads/${encodeURIComponent(lead.id)}`, { state: { leadReturn: {
-      path: '/analytics', search: `?${query}`, scrollY: window.scrollY, leadId: lead.id,
-    } } });
+    navigate(`/leads/${encodeURIComponent(lead.id)}`, {
+      state: {
+        leadReturn: {
+          path: '/analytics',
+          search: `?${query}`,
+          scrollY: window.scrollY,
+          leadId: lead.id,
+        },
+      },
+    });
   };
 
   const exportAnalytics = useCallback(() => {
@@ -856,7 +931,11 @@ export function Analytics() {
           </section>
         )}
 
-        <AnalyticsStatRibbon stats={stats} available={Boolean(current) && status === 'ready'} range={range} />
+        <AnalyticsStatRibbon
+          stats={stats}
+          available={Boolean(current) && status === 'ready'}
+          range={range}
+        />
         <AnalyticsEvidence model={model} ready={Boolean(current) && status === 'ready'} />
 
         <section className="pbk-analytics-body">
@@ -894,8 +973,11 @@ export function Analytics() {
             <div className="pbk-analytics-card-head">
               <div>
                 <h2>Daily closed records</h2>
-                <p>{model.financial.dateBasis === 'closed_at' ? 'Recorded closing dates (UTC)'
-                  : 'Contract creation dates (UTC); not closing dates'}</p>
+                <p>
+                  {model.financial.dateBasis === 'closed_at'
+                    ? 'Recorded closing dates (UTC)'
+                    : 'Contract creation dates (UTC); not closing dates'}
+                </p>
               </div>
               <span className="tf">{range.caption}</span>
             </div>
@@ -936,18 +1018,24 @@ export function Analytics() {
             <div className="roi-grid">
               <div className="roi-cell">
                 <div className="l">Recorded tool cost</div>
-                <div className="v">{current && status === 'ready' ? money(model.financial.aiSpend) : '-'}</div>
+                <div className="v">
+                  {current && status === 'ready' ? money(model.financial.aiSpend) : '-'}
+                </div>
                 <div className="sub">Tool usage records; not provider invoices</div>
               </div>
               <div className="roi-cell">
                 <div className="l">Estimated tool cost</div>
-                <div className="v">{current && status === 'ready' ? money(model.financial.estimatedAiSpend) : '-'}</div>
+                <div className="v">
+                  {current && status === 'ready' ? money(model.financial.estimatedAiSpend) : '-'}
+                </div>
                 <div className="sub">Excluded from the recorded-cost ratio</div>
               </div>
               <div className="roi-cell">
                 <div className="l">Revenue / tool cost</div>
                 <div className="v lime">
-                  {current && status === 'ready' && model.roi.roiMultiple !== null ? `${model.roi.roiMultiple}x` : '-'}
+                  {current && status === 'ready' && model.roi.roiMultiple !== null
+                    ? `${model.roi.roiMultiple}x`
+                    : '-'}
                 </div>
                 <div className="sub">
                   {current && status === 'ready' ? model.financial.status : 'Evidence incomplete'}
@@ -955,7 +1043,9 @@ export function Analytics() {
               </div>
               <div className="roi-cell">
                 <div className="l">Tool cost per closed deal</div>
-                <div className="v">{current && status === 'ready' ? money(model.roi.costPerClosedDeal) : '-'}</div>
+                <div className="v">
+                  {current && status === 'ready' ? money(model.roi.costPerClosedDeal) : '-'}
+                </div>
                 <div className="sub">
                   {current ? `${shortNumber(stats.closedDeals)} closed deals` : 'Current funnel'}
                 </div>
@@ -963,7 +1053,8 @@ export function Analytics() {
             </div>
             {current && (
               <div className="roi-formula">
-                {money(model.financial.revenue)} recorded revenue / {money(model.financial.aiSpend)} recorded tool cost
+                {money(model.financial.revenue)} recorded revenue / {money(model.financial.aiSpend)}{' '}
+                recorded tool cost
               </div>
             )}
             <PbkDataSource endpoint="GET /api/observability/ai-metrics" status="ships" />
@@ -973,6 +1064,9 @@ export function Analytics() {
             <div className="pbk-analytics-card-head">
               <div>
                 <h2>AI performance</h2>
+                <p className="pbk-workspace-purpose">
+                  Review response speed, retries, and safety checks for the selected period.
+                </p>
               </div>
               <span className="tf">{range.caption}</span>
             </div>
@@ -1005,7 +1099,7 @@ export function Analytics() {
         </details>
 
         <DrillDownPanel
-        onInspectLead={inspectLead}
+          onInspectLead={inspectLead}
           open={drillDownPanel.open}
           title={drillDownPanel.title}
           meta={drillDownPanel.meta}

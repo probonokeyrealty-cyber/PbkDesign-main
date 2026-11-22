@@ -3,7 +3,8 @@ import type { ParcelBrief } from '../utils/phoneDialerApi';
 
 const matchLabels = { matched: 'Exact CRM match', no_match: 'No CRM match', ambiguous: 'Multiple CRM matches' };
 
-export function ParcelProspectingBrief({ brief, loading, disabled, error, onPrepare }: {
+export function ParcelProspectingBrief({ parcelLabel, brief, loading, disabled, error, onPrepare }: {
+  parcelLabel: string;
   brief: ParcelBrief | null;
   loading: boolean;
   disabled: boolean;
@@ -13,7 +14,10 @@ export function ParcelProspectingBrief({ brief, loading, disabled, error, onPrep
   return (
     <section className="pbk-parcel-quick-view pbk-prospecting-brief" aria-labelledby="pbk-prospecting-brief-heading">
       <div className="pbk-dialer-section-head">
-        <h2 id="pbk-prospecting-brief-heading"><ClipboardList size={16} aria-hidden="true" /> Prospecting brief</h2>
+        <div>
+          <h2 id="pbk-prospecting-brief-heading"><ClipboardList size={16} aria-hidden="true" /> Prospecting brief</h2>
+          <p className="pbk-prospecting-brief-parcel">{parcelLabel}</p>
+        </div>
         <button type="button" className="pbk-btn pbk-btn-ghost pbk-btn-sm" disabled={disabled} onClick={onPrepare}>
           {loading && <Loader2 size={14} className="animate-spin" aria-hidden="true" />}
           {loading ? 'Preparing…' : brief ? 'Refresh brief' : 'Prepare brief'}
@@ -30,7 +34,7 @@ export function ParcelProspectingBrief({ brief, loading, disabled, error, onPrep
           </div>
           <ol className="pbk-prospecting-checks">
             {brief.steps.map(step => (
-              <li key={step.id}><strong>{step.title}</strong><p>{step.detail}</p></li>
+              <li key={step.id} data-outreach-hold={step.id === 'hold-outreach'}><strong>{step.title}</strong><p>{step.detail}</p></li>
             ))}
           </ol>
           <p className="pbk-phone-note" role="status">

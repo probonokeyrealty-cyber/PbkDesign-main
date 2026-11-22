@@ -1,11 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import { Link, useLocation } from 'react-router';
 import { ArrowDownRight, Check, ClipboardList, Layers, ListChecks, Loader2, MapPin, Minus, PhoneCall, Plus, RefreshCw, Search } from 'lucide-react';
 import { ParcelProspectingBrief } from '../components/ParcelProspectingBrief';
 import { ParcelProspectingList } from '../components/ParcelProspectingList';
 import { SavedEvidenceMark } from '../components/SavedEvidenceMark';
+import { mapboxPublicToken } from '../utils/mapboxConfig';
 import { parcelProspect, prospectLimit, readParcelProspects, saveParcelProspects, type ParcelProspect } from '../utils/parcelProspecting';
-import { ParcelStreetMap } from '../components/ParcelStreetMap';
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogTitle, DialogTrigger } from '../components/ui/dialog';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs';
 import { ParcelPhoneKeypad } from '../components/ParcelPhoneKeypad';
@@ -16,6 +16,7 @@ import {
 import '../../styles/phone-dialer.css';
 
 type DialerPanel = 'parcel' | 'brief' | 'shortlist';
+const ParcelStreetMap = lazy(() => import('../components/ParcelStreetMap').then(({ ParcelStreetMap }) => ({ default: ParcelStreetMap })));
 
 const VIEW_W = 1000;
 const VIEW_H = 625;
@@ -79,6 +80,11 @@ export function ParcelDialer() {
   const [call, setCall] = useState<DialerCall | null>(null);
   const [zoom, setZoom] = useState(1);
   const [showStreets, setShowStreets] = useState<boolean | null>(null);
+  const [streetMapUnavailable, setStreetMapUnavailable] = useState(false);
+  const useBoundaryView = useCallback(() => {
+    setStreetMapUnavailable(true);
+    setShowStreets(false);
+  }, []);
   const [mapNotice, setMapNotice] = useState('');
   const [areaScoped, setAreaScoped] = useState(false);
   const projection = useProjection(features);
@@ -218,7 +224,7 @@ export function ParcelDialer() {
       setLeadSaveError(errorText(err));
     }
   });
-  const streetMapEnabled = showStreets ?? (coverage?.status === 'licensed');
+  const streetMapEnabled = showStreets ?? Boolean(mapboxPublicToken);
   const savedActivity = selection?.activity ?? [];
   const activity = call
     ? [{ id: call.id, at: call.createdAt, outcome: call.outcome, status: call.status, talkSeconds: call.talkSeconds },
@@ -264,12 +270,15 @@ export function ParcelDialer() {
       <div className="pbk-dialer-grid">
         <section className="pbk-dialer-map-card" aria-label="Parcel map">
           <div className="pbk-dialer-section-head">
-            <h2><Layers size={16} aria-hidden="true" /> Parcel map</h2>
+            <h2><Layers size={16} aria-hidden="true" /> Explore parcels</h2>
             <div className="pbk-phone-actions">
               {coverage && <span className="pbk-phone-tag sky">{features.length} loaded</span>}
               <button type="button" className="pbk-btn pbk-btn-ghost pbk-btn-sm" aria-pressed={streetMapEnabled}
-                onClick={() => setShowStreets(!streetMapEnabled)}>
-                Street map
+                onClick={() => {
+                  setStreetMapUnavailable(false);
+                  setShowStreets(!streetMapEnabled);
+                }}>
+                Mapbox streets
               </button>
             </div>
           </div>
@@ -283,9 +292,12 @@ export function ParcelDialer() {
             <label className="pbk-dialer-lookup-value">{lookup.mode === 'parcel' ? 'Parcel ID' : 'Street, city, ST ZIP'}<input className="pbk-input" value={lookup.value} onChange={(e) => setLookup((l) => ({ ...l, value: e.target.value }))} /></label>
             <button type="submit" className="pbk-btn pbk-btn-ghost pbk-btn-sm" disabled={Boolean(busy) || !lookup.value.trim()}><Search size={15} aria-hidden="true" /> Find</button>
           </form>
-          <div className="pbk-dialer-map">
+          {streetMapUnavailable && <p role="status">Street map unavailable. Parcel boundaries and lookup are still available.</p>}
+          <div className="pbk-dialer-map" data-streets={streetMapEnabled}>
             {streetMapEnabled ? (
+              <Suspense fallback={<p className="pbk-dialer-map-empty" role="status">Loading street map…</p>}>
               <ParcelStreetMap parcels={features} selected={quickParcel ?? undefined} busy={Boolean(busy)} fitParcels={!areaScoped}
+                onUnavailable={useBoundaryView}
                 onSelect={(parcelId) => void chooseFromMap(parcelId)}
                 onLoadArea={coverage?.licensed ? (bounds) => {
                   setMapNotice('');
@@ -296,6 +308,7 @@ export function ParcelDialer() {
                     if (!result.features.length) setMapNotice('No parcel boundaries in this area.');
                   });
                 } : undefined} />
+              </Suspense>
             ) : projection && features.length ? (
               <>
                 <svg viewBox={viewBox} role="group" aria-label={`${features.length} parcels. Select one to view its contact; selection never places a call.`}>
@@ -325,14 +338,39 @@ export function ParcelDialer() {
             ) : (
               <div className="pbk-dialer-map-empty">{coverage?.status === 'unconfigured' ? 'No licensed parcel source is configured. Lookups are unavailable.' : coverage ? 'No parcels in coverage.' : 'Loading parcels…'}</div>
             )}
+            {streetMapEnabled && property && (
+              <div className="pbk-dialer-fullscreen-selection" aria-live="polite">
+                <strong>{situs?.line1}</strong>
+                <span>{property.parcelId}{selection?.match.status === 'matched' ? ' · CRM match' : ''}</span>
+              </div>
+            )}
           </div>
           <div className="pbk-dialer-legend">
             <span><i aria-hidden="true" /> Available parcel</span>
             <span><i aria-hidden="true" /> Selected parcel</span>
-            <span>Click or press Enter to select</span>
-            {streetMapEnabled && <a href="https://www.openstreetmap.org/fixthemap" target="_blank" rel="noopener noreferrer">Report a street map issue</a>}
+            {property && panel === 'parcel' ? <a href="#pbk-parcel-quick-heading">Inspect {situs?.line1 || 'selected parcel'}</a> : <span>Select a parcel to inspect</span>}
           </div>
           {mapNotice && <p className="pbk-phone-note" role="status">{mapNotice}</p>}
+        </section>
+        <div className="pbk-dialer-inspector">
+          {features.length > 0 && (
+            <details className="pbk-dialer-map-card pbk-dialer-map-results">
+              <summary>Loaded parcels <span>{features.length}</span></summary>
+              <ul aria-label="Loaded parcels">
+                {features.map(({ properties: parcel }) => (
+                  <li key={parcel.parcelId}>
+                    <button type="button" disabled={Boolean(busy)}
+                      aria-pressed={parcel.parcelId === previewId}
+                      onClick={() => void chooseFromMap(parcel.parcelId)}>
+                      <strong>{parcel.situs.line1}</strong>
+                      <span>{parcel.situs.city} · {parcel.parcelId}</span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </details>
+          )}
+          <section className="pbk-dialer-map-card" aria-label="Parcel inspector">
           <Tabs className="pbk-parcel-workspace" value={panel} onValueChange={value => setPanel(value as DialerPanel)}>
             <TabsList className="pbk-parcel-workspace-tabs" aria-label="Parcel workspace views">
               <TabsTrigger value="parcel"><MapPin aria-hidden="true" /> Property</TabsTrigger>
@@ -567,6 +605,7 @@ export function ParcelDialer() {
             </div>
           )}
         </aside>
+        </div>
       </div>
     </div>
   );

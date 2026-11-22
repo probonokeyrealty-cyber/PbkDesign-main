@@ -66,6 +66,18 @@ html[data-theme='light'] .pbk-dialer-surface { background: var(--bg-void); color
 .pbk-dialer-reference a:focus-visible { outline: 2px solid var(--text-primary); outline-offset: 3px; }
 .pbk-dialer-reference span { color: var(--text-secondary); font-size: 14px; }
 .pbk-dialer-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(300px, 360px); gap: var(--s-4); align-items: start; }
+.pbk-dialer-inspector { display: grid; gap: var(--s-4); min-width: 0; }
+.pbk-dialer-inspector .pbk-parcel-workspace { margin-top: 0; }
+.pbk-dialer-map-results summary { min-height: 44px; align-content: center; cursor: pointer; font-weight: 600; }
+.pbk-dialer-map-results summary span { margin-inline-start: .5rem; color: var(--sky); font-family: var(--font-mono); }
+.pbk-dialer-map-results ul { list-style: none; margin: .5rem 0 0; padding: 0; max-height: 18rem; overflow: auto; }
+.pbk-dialer-map-results li + li { border-top: 1px solid var(--border-dim); }
+.pbk-dialer-map-results button { display: grid; text-align: left; width: 100%; min-height: 44px; padding: .5rem; overflow-wrap: anywhere; }
+.pbk-dialer-map-results button span { color: var(--text-secondary); font-size: .75rem; }
+.pbk-dialer-map-results button:is(:hover, [aria-pressed='true']) { background: var(--sky-glow); }
+.pbk-dialer-map-results button:focus-visible { outline: 2px solid var(--sky); outline-offset: -2px; }
+.pbk-dialer-legend a { color: var(--sky); overflow-wrap: anywhere; text-decoration: underline; }
+#pbk-parcel-quick-heading { scroll-margin-top: 5rem; }
 .pbk-dialer-map-card, .pbk-dialer-side {
   border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--bg-panel); padding: var(--s-4); min-width: 0;
 }
@@ -98,13 +110,25 @@ html[data-theme='light'] .pbk-dialer-surface { background: var(--bg-void); color
 .pbk-dialer-map > svg path[data-selected='true'] { fill: color-mix(in srgb, var(--sky) 30%, transparent); stroke: var(--sky); stroke-width: 2; }
 .pbk-dialer-map path:focus-visible { outline: none; stroke: var(--sky-bright); stroke-width: 3; stroke-dasharray: 5 3; }
 .pbk-dialer-street-map { width: 100%; min-height: 300px; aspect-ratio: 16 / 10; }
-.pbk-dialer .pbk-dialer-street-map.leaflet-container { background: var(--bg-console); }
-.pbk-dialer-street-map .leaflet-tile-pane { filter: brightness(.73) saturate(.72); }
-.pbk-dialer-street-map .pbk-street-parcel { stroke: var(--sky-deep); stroke-width: 2; fill: var(--sky); fill-opacity: .18; }
+.pbk-dialer-map[data-streets='true'] .pbk-dialer-street-map { height: clamp(380px, 65dvh, 820px); aspect-ratio: auto; }
+@media (max-width: 720px) {
+  .pbk-dialer-map[data-streets='true'] .pbk-dialer-street-map { height: clamp(300px, 48dvh, 470px); }
+}
+.pbk-dialer-map[data-streets='true']:fullscreen .pbk-dialer-street-map { height: 100%; }
+.pbk-dialer-fullscreen-selection { display: none; }
+.pbk-dialer-map:fullscreen .pbk-dialer-fullscreen-selection {
+  position: absolute; inset: 12px 68px auto 12px; z-index: 1; display: grid; width: fit-content;
+  max-width: calc(100% - 80px); gap: .25rem; padding: .65rem .8rem; overflow-wrap: anywhere;
+  background: var(--bg-panel); color: var(--text-primary); border: 1px solid var(--border);
+  border-radius: var(--radius); pointer-events: none;
+}
+.pbk-dialer-fullscreen-selection span { color: var(--text-secondary); font-family: var(--font-mono); }
+.pbk-dialer .pbk-dialer-street-map { background: var(--bg-console); color: var(--bg-void); }
+.pbk-dialer-street-map .pbk-street-parcel { width: 24px; height: 24px; border: 2px solid var(--sky-deep); border-radius: 50%; background: var(--sky); cursor: pointer; }
 .pbk-dialer-street-map .pbk-street-parcel:hover,
-.pbk-dialer-street-map .pbk-street-parcel[aria-pressed='true'] { stroke: var(--sky-bright); stroke-width: 3; fill-opacity: .45; }
-.pbk-dialer-street-map .pbk-street-parcel:focus-visible { stroke: var(--sky-bright); stroke-width: 3; stroke-dasharray: 5 3; }
-.pbk-dialer-map-area { position: absolute; z-index: 500; left: 10px; bottom: 24px; background: var(--bg-console); }
+.pbk-dialer-street-map .pbk-street-parcel[aria-pressed='true'] { z-index: 1; background: var(--sky-bright); }
+.pbk-dialer-street-map .pbk-street-parcel:focus-visible { z-index: 1; outline: 2px solid var(--sky-deep); outline-offset: 2px; }
+.pbk-dialer-map-area { position: absolute; z-index: 1; left: 10px; bottom: 28px; background: var(--bg-console); }
 .pbk-dialer-map-empty { padding: var(--s-8) var(--s-4); text-align: center; color: var(--text-tertiary); font-size: 13px; }
 .pbk-dialer-map-tools { position: absolute; right: 8px; top: 8px; display: flex; gap: 4px; }
 .pbk-dialer-compass { position: absolute; bottom: 8px; right: 8px; pointer-events: none; padding: 3px 6px; border: 1px solid var(--border-dim); border-radius: var(--radius-sm); background: var(--bg-console); color: var(--text-secondary); font: 11px var(--font-mono); }

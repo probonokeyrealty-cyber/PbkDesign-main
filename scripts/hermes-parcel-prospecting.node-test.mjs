@@ -47,6 +47,21 @@ function fixture(prioritize, { cityUnavailable = false, exportFeatures = [] } = 
   return { agent, approvals, leads, calls };
 }
 
+test('live status reads only the approval bound to the requested Van Nuys parcel', async () => {
+  const { agent, approvals, calls } = fixture();
+  const { approvalId } = await agent.requestApproval('2201000001');
+  const countyCalls = calls.length;
+  assert.deepEqual(agent.approvalStatus('2201000001', approvalId), { ok: true, status: 'pending' });
+  approvals[0].status = 'approved';
+  assert.deepEqual(agent.approvalStatus('2201000001', approvalId), { ok: true, status: 'approved' });
+  assert.throws(() => agent.approvalStatus('2201000002', approvalId), { status: 404 });
+  approvals[0].status = 'rejected';
+  assert.deepEqual(agent.approvalStatus('2201000001', approvalId), { ok: true, status: 'rejected' });
+  delete approvals[0].metadata.parcelBinding;
+  assert.throws(() => agent.approvalStatus('2201000001', approvalId), { status: 404 });
+  assert.equal(calls.length, countyCalls);
+});
+
 test('city query outage uses the official export only for the certified Van Nuys boundary', async () => {
   const { agent, calls } = fixture(undefined, {
     cityUnavailable: true,

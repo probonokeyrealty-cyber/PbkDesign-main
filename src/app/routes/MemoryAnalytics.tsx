@@ -284,8 +284,7 @@ function MemoryHero({
         <div>
           <h1 className="pbk-display">Memory</h1>
           <p className="pbk-workspace-purpose">
-            Review saved seller details and coaching notes. Check the source before using a fact in
-            a deal.
+            Review saved seller details and coaching notes. Check the source before using a fact in a deal.
           </p>
         </div>
         <div className="pbk-memory-hero-actions">
@@ -496,11 +495,7 @@ function MemoryControlPanel({
     { value: 'stale', label: 'May be out of date', count: hygiene.stale.length },
     { value: 'needs_source', label: 'Needs source', count: hygiene.needsSource.length },
     { value: 'contradictions', label: 'Possible conflicts', count: hygiene.contradictions.length },
-    {
-      value: 'compliance',
-      label: 'Do not contact and compliance',
-      count: hygiene.compliance.length,
-    },
+    { value: 'compliance', label: 'Do not contact and compliance', count: hygiene.compliance.length },
     { value: 'sensitive', label: 'Sensitive data', count: hygiene.sensitive.length },
     { value: 'stop_using', label: 'Stop using', count: hygiene.stopUsing.length },
   ];
@@ -829,8 +824,7 @@ export function MemoryAnalytics() {
           setHiddenMemoryIds((current) => [...new Set([...current, eventKey])]);
           setPinnedMemoryIds((current) => current.filter((id) => id !== eventKey));
         } else if (action === 'correct' || action === 'forget') {
-          const receipt =
-            action === 'correct' ? 'Correction requested' : 'Removal request recorded';
+          const receipt = action === 'correct' ? 'Correction requested' : 'Removal request recorded';
           setCurationReceipts((current) => new Map(current).set(eventKey, receipt));
           void loadMemoryAnalytics();
           return;

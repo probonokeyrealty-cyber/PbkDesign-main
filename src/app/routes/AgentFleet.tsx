@@ -743,14 +743,10 @@ function getAgentHealthState(agent: FleetAgent, healthProbe?: AgentHealthProbe) 
 
 function getAgentCapabilityLabel(agent: FleetAgent) {
   if (agent.capability) {
-    return getAgentHealthState(agent) === 'ready'
-      ? 'Readiness verified'
-      : 'Readiness needs attention';
+    return getAgentHealthState(agent) === 'ready' ? 'Readiness verified' : 'Readiness needs attention';
   }
   if (agent.lastError) return agent.lastError;
-  return isRegistryBackedSource(agent.registrySource)
-    ? 'Readiness check pending'
-    : 'Directory only';
+  return isRegistryBackedSource(agent.registrySource) ? 'Readiness check pending' : 'Directory only';
 }
 
 function getAgentHealthFacts({
@@ -2267,9 +2263,7 @@ export function AgentFleet() {
                 <div className="pbk-dp-context-badges">
                   {activeAgent.metadata.approvalGated && <span>Actions require approval</span>}
                   {activeAgent.metadata.suggestOnly && <span>Suggestions only</span>}
-                  {activeAgent.metadata.orchestrationRole === 'supervisor' && (
-                    <span>Coordinates agents</span>
-                  )}
+                  {activeAgent.metadata.orchestrationRole === 'supervisor' && <span>Coordinates agents</span>}
                 </div>
               </div>
 

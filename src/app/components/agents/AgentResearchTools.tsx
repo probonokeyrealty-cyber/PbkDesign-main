@@ -49,8 +49,7 @@ const STATUS_GUIDANCE: Record<CatalogStatus, string> = {
     'An administrator needs to configure research access. Local PBK options remain available below.',
   disabled:
     'An administrator needs to enable catalog inspection. Local PBK options remain available below.',
-  authorization_failed:
-    'An administrator needs to review research access before another inspection.',
+  authorization_failed: 'An administrator needs to review research access before another inspection.',
   rate_limited: 'Wait a moment, then choose Find research tools to try again.',
   timed_out: 'The inspection took too long. Choose Find research tools to try again.',
   unavailable:
@@ -228,9 +227,7 @@ export function AgentResearchTools({
           <span className="pbk-agent-research-eyebrow">Agent research</span>
           <span className="pbk-agent-research-badge">Read-only inspection</span>
         </div>
-        <p>
-          Check which research tools are listed for {agentName}. Open Brain to ask Rex for research.
-        </p>
+        <p>Check which research tools are listed for {agentName}. Open Brain to ask Rex for research.</p>
         <button
           type="button"
           className="pbk-btn pbk-btn-ghost"
@@ -250,10 +247,7 @@ export function AgentResearchTools({
             <p className="pbk-agent-research-mono">
               {checkedAt ? (
                 <>
-                  Checked{' '}
-                  <time dateTime={checkedAt} title={checkedAt}>
-                    {checkedLabel}
-                  </time>
+                  Checked <time dateTime={checkedAt} title={checkedAt}>{checkedLabel}</time>
                 </>
               ) : (
                 'Never checked'
@@ -261,8 +255,7 @@ export function AgentResearchTools({
             </p>
             <p className="pbk-agent-research-guidance">{guidance}</p>
             <p className="pbk-agent-research-boundary">
-              This list shows available tool descriptions. Connection and permission still need to
-              be verified.
+              This list shows available tool descriptions. Connection and permission still need to be verified.
             </p>
           </section>
           {result && (

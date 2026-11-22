@@ -107,6 +107,11 @@ html[data-theme='light'] .pbk-dialer-surface { background: var(--bg-void); color
 .pbk-dialer-steps li[aria-current='step'] span { border-color: var(--sky-dim); background: var(--sky-glow); }
 .pbk-dialer-steps li[data-complete='true'] { color: var(--text-primary); border-color: var(--sky-dim); }
 .pbk-parcel-quick-view { display: grid; gap: 10px; margin-top: var(--s-4); padding: var(--s-4); min-width: 0; border: 1px solid var(--border-dim); border-radius: var(--radius-lg); background: var(--bg-console); }
+.pbk-prospecting-checks { display: grid; gap: 8px; padding-inline-start: 24px; margin: 0; }
+.pbk-prospecting-checks li { padding: 8px; border-bottom: 1px solid var(--border-dim); }
+.pbk-prospecting-checks li:last-child { border-bottom: 0; }
+.pbk-prospecting-checks strong { color: var(--text-primary); font-size: 13px; }
+.pbk-prospecting-brief .pbk-dialer-section-head { flex-wrap: wrap; }
 .pbk-prospecting-items { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
 .pbk-prospecting-items > li { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; padding: 8px; border: 1px solid var(--border-dim); border-radius: var(--radius); }
 .pbk-prospecting-items > li > div:first-child { min-width: 0; display: grid; justify-items: start; }

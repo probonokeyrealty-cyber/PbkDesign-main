@@ -93,7 +93,7 @@ import { createPhoneDialerRouter, createPhoneDialerRuntime, resolvePhoneProvider
 // ---------------------------------------------------------------------------
 // Harness: mock-mode runtime over an in-memory bridge state + approval queue.
 // ---------------------------------------------------------------------------
-function harness({ dnc = [], leads = [], env = {}, state: sharedState, fetchImpl, loadParcelLeads, saveParcelLead } = {}) {
+function harness({ dnc = [], leads = [], env = {}, state: sharedState, fetchImpl, loadParcelLeads, saveParcelLead, prepareProspectingBrief } = {}) {
   const state = sharedState || { approvals: [], leadImports: leads, activity: [] };
   const runtime = createPhoneDialerRuntime({
     env: { PBK_PHONE_PROVIDER_MODE: 'mock', ...env },
@@ -118,6 +118,7 @@ function harness({ dnc = [], leads = [], env = {}, state: sharedState, fetchImpl
     getState: () => state,
     getTeamPermissions: () => ({ canPlaceCalls: true, canManagePhoneNumbers: false, canApproveProviderActions: true }),
     createApproval,
+    prepareProspectingBrief,
   });
   const call = async (method, path, body, { team = false, headers = {}, raw } = {}) => {
     const url = new URL(path, 'http://localhost');
@@ -455,4 +456,23 @@ test('only a verified unmatched parcel can be saved, and concurrent retries reus
   assert.equal(durableOnly.created, false);
   assert.equal(saves, 1);
   assert.equal(h.state.approvals.length, 0);
+});
+
+test('prospecting brief resolves its own evidence and never creates a call, approval, or lead', async () => {
+  const h = harness({
+    prepareProspectingBrief: async (selected, deadlineAt) => {
+      assert.equal(selected.parcel.properties.parcelId, 'FX-01-001-00');
+      assert.equal(selected.match.status, 'matched');
+      assert.ok(deadlineAt > Date.now());
+      return { ok: true, parcelId: selected.parcel.properties.parcelId };
+    },
+  });
+  const route = '/api/dialer/prospecting-brief';
+  assert.equal((await h.call('POST', route, {})).status, 400);
+  assert.equal((await h.call('POST', route, { parcelId: 'missing' })).status, 404);
+  const result = await h.call('POST', route, { parcelId: 'FX-01-001-00', match: { status: 'ambiguous' } }, { team: true });
+  assert.equal(result.status, 200);
+  assert.equal(h.state.approvals.length, 0);
+  assert.equal(h.state.leadImports.length, 0);
+  assert.deepEqual(h.runtime.dialer.listCalls(), []);
 });

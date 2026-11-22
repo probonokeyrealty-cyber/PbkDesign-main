@@ -286,6 +286,7 @@ COPY scripts/attom-recent-sales.mjs ./scripts/attom-recent-sales.mjs
 COPY scripts/address-suggestions.mjs ./scripts/address-suggestions.mjs
 COPY scripts/phone-numbers.mjs ./scripts/phone-numbers.mjs
 COPY scripts/parcel-dialer.mjs ./scripts/parcel-dialer.mjs
+COPY scripts/parcel-prospecting-brief.mjs ./scripts/parcel-prospecting-brief.mjs
 COPY scripts/phone-dialer-routes.mjs ./scripts/phone-dialer-routes.mjs
 COPY scripts/openclaw-local-server.mjs ./scripts/openclaw-local-server.mjs
 COPY scripts/ava-team-chat-permissions.mjs ./scripts/ava-team-chat-permissions.mjs

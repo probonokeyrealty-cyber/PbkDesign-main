@@ -10,7 +10,7 @@ const records = [
   { AIN: '2201000003', SitusAddress: '104 TEST AVE', SitusCity: 'LOS ANGELES CA', SitusZIP: '91405', UseDescription: 'Single', SQFTmain1: 5000, CENTER_LAT: 34.3, CENTER_LON: -118.45 },
 ];
 
-function fixture(prioritize) {
+function fixture(prioritize, { cityUnavailable = false, exportFeatures = [] } = {}) {
   const approvals = [];
   const leads = [];
   const calls = [];
@@ -18,7 +18,13 @@ function fixture(prioritize) {
     fetchImpl: async (value) => {
       const url = new URL(value);
       calls.push(url);
-      if (url.href.startsWith(CITY_BOUNDARY)) return Response.json({ features: [{ geometry: { rings: boundary } }] });
+      if (url.href.startsWith(CITY_BOUNDARY)) {
+        return cityUnavailable ? new Response(null, { status: 503 }) :
+          Response.json({ features: [{ geometry: { rings: boundary } }] });
+      }
+      if (url.hostname === 'hub.arcgis.com') {
+        return Response.json({ type: 'FeatureCollection', features: exportFeatures });
+      }
       assert.ok(url.href.startsWith(COUNTY_PARCELS));
       const ain = url.searchParams.get('where').match(/AIN = '(\d+)'/)?.[1];
       return Response.json({ features: records.filter(row => !ain || row.AIN === ain).map(attributes => ({ attributes })) });
@@ -40,6 +46,29 @@ function fixture(prioritize) {
   });
   return { agent, approvals, leads, calls };
 }
+
+test('city query outage uses the official export only for the certified Van Nuys boundary', async () => {
+  const { agent, calls } = fixture(undefined, {
+    cityUnavailable: true,
+    exportFeatures: [
+      { properties: { NAME: 'NORTH HOLLYWOOD NC' }, geometry: { type: 'Polygon', coordinates: boundary } },
+      { properties: { NAME: 'VAN NUYS NC' }, geometry: { type: 'Polygon', coordinates: boundary } },
+    ],
+  });
+  const result = await agent.match('2201000001');
+  assert.equal(result.record.parcelId, '2201000001');
+  await assert.rejects(agent.match('2201000003'), { status: 409 });
+  assert.equal(calls.filter(url => url.hostname === 'hub.arcgis.com').length, 1);
+});
+
+test('city query outage fails closed when the export lacks the exact certified boundary', async () => {
+  const { agent, calls } = fixture(undefined, {
+    cityUnavailable: true,
+    exportFeatures: [{ properties: { NAME: 'WEST VAN NUYS NC' }, geometry: { type: 'Polygon', coordinates: boundary } }],
+  });
+  await assert.rejects(agent.match('2201000001'), { status: 503 });
+  assert.equal(calls.some(url => url.href.startsWith(COUNTY_PARCELS)), false);
+});
 
 test('county evidence stays within the certified boundary and Hermes receives anonymized rows', async () => {
   const { agent, calls, leads, approvals } = fixture((evidence) => {

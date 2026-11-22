@@ -3,6 +3,10 @@ import { matchParcelToLeads } from './parcel-dialer.mjs';
 
 export const COUNTY_PARCELS = 'https://dpw.gis.lacounty.gov/dpw/rest/services/GIS_Web_Services/MapServer/2';
 export const CITY_BOUNDARY = 'https://maps.lacity.org/arcgis/rest/services/Mapping/Boundaries/MapServer/5';
+// Official LA GeoHub export of the Bureau of Engineering's certified council boundaries.
+const cityBoundaryExport = 'https://hub.arcgis.com/api/v3/datasets/9c8639737e3a457a8c0f6a93f9c36974_18/downloads/data?format=geojson&spatialRefId=4326&where=1%3D1';
+const boundaryName = 'VAN NUYS NC';
+const boundaryCacheMs = 15 * 60 * 1000;
 const source = 'LA County Assessor · Parcel Boundaries';
 const approvalType = 'prospecting-lead';
 const sampleSize = 120;
@@ -34,6 +38,13 @@ function insideBoundary(rings, x, y) {
   }, inside), false);
 }
 
+function validCityRings(rings) {
+  return Array.isArray(rings) && rings.length > 0 && rings.every(ring =>
+    Array.isArray(ring) && ring.length >= 4 && ring.every(point =>
+      Array.isArray(point) && Number.isFinite(point[0]) && Number.isFinite(point[1]) &&
+      point[0] >= -119 && point[0] <= -118 && point[1] >= 34 && point[1] <= 35));
+}
+
 function countyRecord(attributes, rings) {
   const parcelId = String(attributes.AIN || '');
   const zip = String(attributes.SitusZIP || '').match(/^\d{5}/)?.[0];
@@ -59,18 +70,43 @@ export function createHermesParcelProspecting({
   sign, prioritize, now = Date.now,
 }) {
   const inFlight = new Map();
+  let cachedBoundary;
+
+  async function certifiedCityRings() {
+    if (cachedBoundary && cachedBoundary.expiresAt > now()) return cachedBoundary.rings;
+    return once('city-boundary', async () => {
+      const city = await query(fetchImpl, CITY_BOUNDARY, {
+        where: `NAME = '${boundaryName}'`, outFields: 'NAME', outSR: 4326, returnGeometry: true,
+      }).catch(() => null);
+      let rings = city?.features.length === 1 && city.features[0]?.geometry?.rings;
+      if (!validCityRings(rings)) {
+        try {
+          const response = await fetchImpl(cityBoundaryExport, {
+            redirect: 'error', signal: AbortSignal.timeout(7000),
+          });
+          if (response.ok) {
+            const exported = await response.json();
+            const candidates = exported.type === 'FeatureCollection' && Array.isArray(exported.features)
+              ? exported.features.filter(feature => feature?.properties?.NAME === boundaryName)
+              : [];
+            const geometry = candidates.length === 1 && candidates[0]?.geometry;
+            if (geometry?.type === 'Polygon') rings = geometry.coordinates;
+            if (geometry?.type === 'MultiPolygon' && Array.isArray(geometry.coordinates)) {
+              rings = geometry.coordinates.flat();
+            }
+          }
+        } catch {
+          // Require a verified boundary before querying or saving a parcel.
+        }
+      }
+      if (!validCityRings(rings)) fail(503, 'Could not verify the certified Van Nuys boundary. Try again.');
+      cachedBoundary = { rings, expiresAt: now() + boundaryCacheMs };
+      return rings;
+    });
+  }
 
   async function countySearch({ parcelId, minSqft = 0, singleFamily = false }) {
-    const city = await query(fetchImpl, CITY_BOUNDARY, {
-      where: "NAME = 'VAN NUYS NC'", outFields: 'NAME', outSR: 4326, returnGeometry: true,
-    });
-    const rings = city.features.length === 1 && city.features[0]?.geometry?.rings;
-    if (!Array.isArray(rings) || !rings.length || rings.some(ring =>
-      !Array.isArray(ring) || ring.length < 4 || ring.some(point =>
-        !Array.isArray(point) || !Number.isFinite(point[0]) || !Number.isFinite(point[1]) ||
-        point[0] < -119 || point[0] > -118 || point[1] < 34 || point[1] > 35))) {
-      fail(503, 'Could not verify the certified Van Nuys boundary.');
-    }
+    const rings = await certifiedCityRings();
     const points = rings.flat();
     const xs = points.map(([x]) => x);
     const ys = points.map(([, y]) => y);

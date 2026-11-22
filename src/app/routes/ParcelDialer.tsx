@@ -228,6 +228,7 @@ export function ParcelDialer() {
         <div>
           <h1>Parcel <em>dialer</em></h1>
           <p>Find the property, verify the contact, and request approval for one call.</p>
+          <Link className="pbk-btn pbk-btn-ghost pbk-btn-sm" to="/dialer/van-nuys-demo">View Van Nuys evidence demo</Link>
         </div>
         <div className="pbk-dialer-coverage" aria-live="polite">
           {coverage ? (

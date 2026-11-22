@@ -1,0 +1,59 @@
+%PDF-1.4
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [5 0 R] /Count 1 >>
+endobj
+3 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Courier >>
+endobj
+4 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>
+endobj
+5 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /Body 3 0 R /Heading 4 0 R >> >> /Contents 6 0 R >>
+endobj
+6 0 obj
+<< /Length 2455 >>
+stream
+BT 0.08 0.19 0.28 rg /Heading 19 Tf 54 730 Td (Van Nuys dry run receipt) Tj ET
+BT 0.12 0.16 0.20 rg /Body 9 Tf 54 700 Td (Run ID: hermes-dry-dec31223-4f0d-42f7-8ffe-82bdc37d7951) Tj ET
+BT 0.12 0.16 0.20 rg /Body 9 Tf 54 687 Td (Fixture reads: 1) Tj ET
+BT 0.12 0.16 0.20 rg /Body 9 Tf 54 674 Td (Staging fixture only. No live scraping, CRM writes, or outreach.) Tj ET
+BT 0.08 0.19 0.28 rg /Heading 11 Tf 54 652 Td (Recheck outcomes) Tj ET
+BT 0.08 0.19 0.28 rg /Heading 11 Tf 54 635 Td (1. Stale evidence | 220 Synthetic Fixture Way) Tj ET
+BT 0.12 0.16 0.20 rg /Body 9 Tf 54 618 Td (First attempt: Held. Observation has expired based on its original capture time.) Tj ET
+BT 0.12 0.16 0.20 rg /Body 9 Tf 54 605 Td (Recheck: Rex verified; Ava added to fits. Captured 2026-11-21T18:59:50Z. Freshness is) Tj ET
+BT 0.12 0.16 0.20 rg /Body 9 Tf 54 592 Td (measured from the original capture, not retrieval.) Tj ET
+BT 0.08 0.19 0.28 rg /Heading 11 Tf 54 570 Td (2. Wrong saved-search revision | 230 Synthetic Fixture Way) Tj ET
+BT 0.12 0.16 0.20 rg /Body 9 Tf 54 553 Td (First attempt: Held. Observation is not bound to the selected source and search) Tj ET
+BT 0.12 0.16 0.20 rg /Body 9 Tf 54 540 Td (revision.) Tj ET
+BT 0.12 0.16 0.20 rg /Body 9 Tf 54 527 Td (Recheck: Rex verified; Ava added to fits. Captured 2026-11-21T18:59:50Z. Snapshot) Tj ET
+BT 0.12 0.16 0.20 rg /Body 9 Tf 54 514 Td (revision 1; saved revision 1.) Tj ET
+BT 0.08 0.19 0.28 rg /Heading 11 Tf 54 492 Td (3. Outside-market evidence | 240 Synthetic Fixture Way) Tj ET
+BT 0.12 0.16 0.20 rg /Body 9 Tf 54 475 Td (First attempt: Held. Current evidence does not satisfy the requirement to be inside) Tj ET
+BT 0.12 0.16 0.20 rg /Body 9 Tf 54 462 Td (the reviewed boundary \(Van Nuys\).) Tj ET
+BT 0.12 0.16 0.20 rg /Body 9 Tf 54 449 Td (Recheck: Rex verified; Ava added to fits. Captured 2026-11-21T18:59:50Z. Snapshot) Tj ET
+BT 0.12 0.16 0.20 rg /Body 9 Tf 54 436 Td (reports inside for Van Nuys \(fixture-boundaries, v1\).) Tj ET
+BT 0.08 0.19 0.28 rg /Heading 11 Tf 54 414 Td (Final shortlist: 4 verified, 0 held back) Tj ET
+BT 0.12 0.16 0.20 rg /Body 9 Tf 54 397 Td (- 220 Synthetic Fixture Way | Rex verified) Tj ET
+BT 0.12 0.16 0.20 rg /Body 9 Tf 54 384 Td (- 230 Synthetic Fixture Way | Rex verified) Tj ET
+BT 0.12 0.16 0.20 rg /Body 9 Tf 54 371 Td (- 240 Synthetic Fixture Way | Rex verified) Tj ET
+BT 0.12 0.16 0.20 rg /Body 9 Tf 54 358 Td (- 210 Synthetic Fixture Way | Rex verified) Tj ET
+endstream
+endobj
+xref
+0 7
+0000000000 65535 f 
+0000000009 00000 n 
+0000000058 00000 n 
+0000000115 00000 n 
+0000000183 00000 n 
+0000000258 00000 n 
+0000000401 00000 n 
+trailer
+<< /Size 7 /Root 1 0 R >>
+startxref
+2907
+%%EOF

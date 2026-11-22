@@ -1,0 +1,66 @@
+{
+  "schema_version": 1,
+  "run_id": "hermes-dry-dec31223-4f0d-42f7-8ffe-82bdc37d7951",
+  "mode": "staging_fixture",
+  "fixture_reads": 1,
+  "rechecks": [
+    {
+      "label": "Stale evidence",
+      "property": "220 Synthetic Fixture Way",
+      "first_attempt": {
+        "status": "held",
+        "reason": "Observation has expired based on its original capture time."
+      },
+      "recheck": {
+        "status": "verified",
+        "captured_at": "2026-11-21T18:59:50Z",
+        "evidence": "Freshness is measured from the original capture, not retrieval."
+      }
+    },
+    {
+      "label": "Wrong saved-search revision",
+      "property": "230 Synthetic Fixture Way",
+      "first_attempt": {
+        "status": "held",
+        "reason": "Observation is not bound to the selected source and search revision."
+      },
+      "recheck": {
+        "status": "verified",
+        "captured_at": "2026-11-21T18:59:50Z",
+        "evidence": "Snapshot revision 1; saved revision 1."
+      }
+    },
+    {
+      "label": "Outside-market evidence",
+      "property": "240 Synthetic Fixture Way",
+      "first_attempt": {
+        "status": "held",
+        "reason": "Current evidence does not satisfy the requirement to be inside the reviewed boundary (Van Nuys)."
+      },
+      "recheck": {
+        "status": "verified",
+        "captured_at": "2026-11-21T18:59:50Z",
+        "evidence": "Snapshot reports inside for Van Nuys (fixture-boundaries, v1)."
+      }
+    }
+  ],
+  "fits": [
+    {
+      "property": "220 Synthetic Fixture Way",
+      "verification": "Rex verified"
+    },
+    {
+      "property": "230 Synthetic Fixture Way",
+      "verification": "Rex verified"
+    },
+    {
+      "property": "240 Synthetic Fixture Way",
+      "verification": "Rex verified"
+    },
+    {
+      "property": "210 Synthetic Fixture Way",
+      "verification": "Rex verified"
+    }
+  ],
+  "held_count": 0
+}

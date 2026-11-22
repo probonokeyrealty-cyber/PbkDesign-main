@@ -71,6 +71,11 @@ const ParcelDialer = lazy(() =>
     default: module.ParcelDialer,
   }))
 );
+const VanNuysDemo = lazy(() =>
+  loadCurrentRoute(() => import('../routes/VanNuysDemo')).then((module) => ({
+    default: module.VanNuysDemo,
+  }))
+);
 const AvaChat = lazy(() =>
   loadCurrentRoute(() => import('../routes/AvaChat')).then((module) => ({
     default: module.AvaChat,
@@ -112,6 +117,7 @@ const router = createBrowserRouter(
         { path: 'analytics', element: <Analytics /> },
         { path: 'campaigns', element: <Campaigns /> },
         { path: 'dialer', element: <ParcelDialer /> },
+        { path: 'dialer/van-nuys-demo', element: <VanNuysDemo /> },
         { path: 'agent', element: <AvaChat /> },
         { path: 'agent-console', element: <AvaChat /> },
         { path: 'ava-chat', element: <AvaChat /> },

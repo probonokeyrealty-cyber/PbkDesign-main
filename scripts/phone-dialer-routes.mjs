@@ -113,7 +113,7 @@ function sessionContext(request, getTeamPermissions) {
   return { role: 'admin', actor: 'PBK founder', permissions: ALL_PERMISSIONS };
 }
 
-export function createPhoneDialerRouter({ runtime, json, readBody, readRawBodyBuffer, getState, getTeamPermissions, createApproval }) {
+export function createPhoneDialerRouter({ runtime, json, readBody, readRawBodyBuffer, getState, getTeamPermissions, createApproval, prepareProspectingBrief }) {
   const { phoneNumbers, dialer } = runtime;
   const findApproval = (id) => (getState().approvals || []).find((a) => a.id === id) || null;
   const match = (pathname, re) => pathname.match(re);
@@ -254,6 +254,20 @@ export function createPhoneDialerRouter({ runtime, json, readBody, readRawBodyBu
         const result = await dialer.selectParcel({ parcelId: body.parcelId, address: body.address, lineId: body.lineId, canPlaceCalls: ctx.permissions.canPlaceCalls === true });
         if (result.pendingRequest) result.pendingRequest.approvalStatus = String(findApproval(result.pendingRequest.approvalId)?.status || 'pending');
         json(response, result.ok ? 200 : 404, result);
+        return true;
+      }
+      if (pathname === '/api/dialer/prospecting-brief' && method === 'POST' && prepareProspectingBrief) {
+        if (typeof body.parcelId !== 'string' || !body.parcelId.trim() || body.parcelId.length > 80) {
+          json(response, 400, { ok: false, error: 'Select a verified parcel first.' });
+          return true;
+        }
+        const deadlineAt = Date.now() + 15_000;
+        const result = await dialer.selectParcel({ parcelId: body.parcelId, canPlaceCalls: ctx.permissions.canPlaceCalls === true });
+        if (!result.ok) {
+          json(response, 404, result);
+        } else {
+          json(response, 200, await prepareProspectingBrief(result, deadlineAt));
+        }
         return true;
       }
       if (pathname === '/api/dialer/leads' && method === 'POST') {

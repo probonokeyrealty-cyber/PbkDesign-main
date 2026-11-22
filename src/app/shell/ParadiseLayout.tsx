@@ -43,6 +43,7 @@ const VALID_SHELL_PATHS = new Set([
   '/analytics',
   '/campaigns',
   '/dialer',
+  '/dialer/van-nuys-demo',
   '/ava-chat',
   '/settings',
   '/property-log',

@@ -3,6 +3,7 @@ import { Link, useLocation } from 'react-router';
 import { ArrowDownRight, Check, ClipboardList, Layers, ListChecks, Loader2, MapPin, Minus, PhoneCall, Plus, RefreshCw, Search } from 'lucide-react';
 import { ParcelProspectingBrief } from '../components/ParcelProspectingBrief';
 import { ParcelProspectingList } from '../components/ParcelProspectingList';
+import { SavedEvidenceMark } from '../components/SavedEvidenceMark';
 import { parcelProspect, prospectLimit, readParcelProspects, saveParcelProspects, type ParcelProspect } from '../utils/parcelProspecting';
 import { ParcelStreetMap } from '../components/ParcelStreetMap';
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogTitle, DialogTrigger } from '../components/ui/dialog';
@@ -252,6 +253,11 @@ export function ParcelDialer() {
           <button type="button" className="pbk-btn pbk-btn-ghost pbk-btn-sm" onClick={() => void load()} aria-label="Refresh dialer"><RefreshCw size={13} /></button>
         </div>
       </header>
+
+      <div className="pbk-dialer-reference">
+        <Link to="/dialer/van-nuys-demo"><SavedEvidenceMark size={18} /> View Van Nuys evidence demo</Link>
+        <span>Read-only reference. Nothing runs.</span>
+      </div>
 
       {coverage?.note && <p className="pbk-phone-note">{coverage.note}</p>}
       {error && <div className="pbk-phone-error" role="alert">{error}</div>}

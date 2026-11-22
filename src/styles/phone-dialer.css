@@ -60,6 +60,11 @@ html[data-theme='light'] .pbk-dialer-surface { background: var(--bg-void); color
 .pbk-dialer-head h1 { font-family: var(--font-display); font-weight: 500; font-size: clamp(29px, 4vw, 46px); line-height: 1.05; color: var(--text-primary); margin: 0; }
 .pbk-dialer-head h1 em { color: var(--sky); }
 .pbk-dialer-head p { color: var(--text-secondary); font-size: 13px; margin: 8px 0 0; }
+.pbk-dialer-reference { display: flex; align-items: center; flex-wrap: wrap; column-gap: 12px; border-bottom: 1px solid var(--border); padding-bottom: 4px; }
+.pbk-dialer-reference a { display: inline-flex; align-items: center; gap: 8px; min-height: 44px; color: var(--text-primary); font-size: 15px; font-weight: 600; text-decoration: underline; text-underline-offset: 3px; }
+.pbk-dialer-reference a svg { flex: none; color: var(--sky); }
+.pbk-dialer-reference a:focus-visible { outline: 2px solid var(--text-primary); outline-offset: 3px; }
+.pbk-dialer-reference span { color: var(--text-secondary); font-size: 14px; }
 .pbk-dialer-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(300px, 360px); gap: var(--s-4); align-items: start; }
 .pbk-dialer-map-card, .pbk-dialer-side {
   border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--bg-panel); padding: var(--s-4); min-width: 0;

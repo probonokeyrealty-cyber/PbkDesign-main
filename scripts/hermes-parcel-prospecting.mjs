@@ -199,6 +199,19 @@ export function createHermesParcelProspecting({
       return { ok: true, record, match: publicMatch(match) };
     },
 
+    approvalStatus(parcelId, approvalId) {
+      if (typeof parcelId !== 'string' || !/^\d{10}$/.test(parcelId) ||
+          typeof approvalId !== 'string' || !approvalId || approvalId.length > 128) {
+        fail(400, 'Select a valid parcel and approval.');
+      }
+      const approval = approvals().find(item => item.id === approvalId &&
+        item.type === approvalType && item.source === 'hermes-prospecting' &&
+        item.metadata?.parcelId === parcelId && typeof item.metadata.parcelBinding === 'string' &&
+        item.metadata.parcelBinding.length > 0);
+      if (!approval) fail(404, 'The approval for this parcel could not be found.');
+      return { ok: true, status: approval.status };
+    },
+
     async requestApproval(parcelId) {
       const record = await exactRecord(parcelId);
       return once(`approval:${parcelId}`, async () => {

@@ -73573,15 +73573,20 @@ const hermesParcels = createHermesParcelProspecting({
   },
 });
 
-async function handleHermesParcelRequest(request, response, pathname) {
-  if (!/^\/api\/prospecting\/parcels\/(?:search|match|approval|save)$/.test(pathname)) return false;
-  if (request.method !== 'POST') {
+async function handleHermesParcelRequest(request, response, { pathname, searchParams }) {
+  if (!/^\/api\/prospecting\/parcels\/(?:search|match|approval|approval-status|save)$/.test(pathname)) return false;
+  const action = pathname.split('/').at(-1);
+  if (request.method !== (action === 'approval-status' ? 'GET' : 'POST')) {
     json(response, 405, { ok: false, error: 'Method not allowed.' });
     return true;
   }
   try {
+    if (action === 'approval-status') {
+      response.setHeader('Cache-Control', 'no-store');
+      json(response, 200, hermesParcels.approvalStatus(searchParams.get('parcelId'), searchParams.get('approvalId')));
+      return true;
+    }
     const body = await readBody(request);
-    const action = pathname.split('/').at(-1);
     const result = action === 'search' ? await hermesParcels.discover(body)
       : action === 'match' ? await hermesParcels.match(body.parcelId)
       : action === 'approval' ? await hermesParcels.requestApproval(body.parcelId)
@@ -73722,7 +73727,7 @@ const server = createServer(async (request, response) => {
 
     if (maybeServeRenderCommandCenter(request, response, pathname)) return;
 
-    if (await handleHermesParcelRequest(request, response, pathname)) return;
+    if (await handleHermesParcelRequest(request, response, url)) return;
     if (await getPhoneDialerRouter()(request, response, pathname, url)) return;
 
     if (request.method === 'GET' && matchesPath(pathname, ['/', '/health', '/status', '/api/health', '/api/status'])) {

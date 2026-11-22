@@ -5,7 +5,10 @@ import { ParcelProspectingBrief } from '../components/ParcelProspectingBrief';
 import { ParcelProspectingList } from '../components/ParcelProspectingList';
 import { SavedEvidenceMark } from '../components/SavedEvidenceMark';
 import { mapboxPublicToken } from '../utils/mapboxConfig';
-import { matchProspectingParcel, requestProspectingParcelApproval, saveApprovedProspectingParcel, type ProspectingMatch, type ProspectingParcel } from '../utils/prospectingParcelApi';
+import {
+  getProspectingParcelApprovalStatus, matchProspectingParcel, requestProspectingParcelApproval,
+  saveApprovedProspectingParcel, type ProspectingApprovalStatus, type ProspectingMatch, type ProspectingParcel,
+} from '../utils/prospectingParcelApi';
 import { parcelProspect, prospectLimit, readParcelProspects, saveParcelProspects, type ParcelProspect } from '../utils/parcelProspecting';
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogTitle, DialogTrigger } from '../components/ui/dialog';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs';
@@ -63,6 +66,16 @@ export function ParcelDialer() {
 
 const emptyParcels: ParcelFeature[] = [];
 
+const parcelApprovalLabels = {
+  checking: 'Checking Inbox approval…',
+  pending: 'Awaiting Inbox approval.',
+  approved: 'Approved in Inbox. Ready to save.',
+  rejected: 'Declined in Inbox.',
+  needs_revision: 'Inbox requested a revision.',
+  cancelled: 'Approval was cancelled.',
+  unavailable: 'Inbox status unavailable. Checking again…',
+};
+
 function VanNuysCreateLead({
   parcel,
   onMatch,
@@ -72,11 +85,53 @@ function VanNuysCreateLead({
 }) {
   const [open, setOpen] = useState(false);
   const [approvalId, setApprovalId] = useState('');
+  const [approvalStatus, setApprovalStatus] = useState<ProspectingApprovalStatus | 'checking' | 'unavailable'>('checking');
   const [busy, setBusy] = useState<'approval' | 'save' | null>(null);
   const [error, setError] = useState('');
+  const approved = approvalStatus === 'approved';
+  const canRequestAgain = approvalStatus === 'rejected' || approvalStatus === 'needs_revision' || approvalStatus === 'cancelled';
+
+  useEffect(() => {
+    if (!open || !approvalId) return;
+    let disposed = false;
+    let inFlight = false;
+    let timer: number | undefined;
+
+    async function refresh() {
+      if (disposed || inFlight || document.hidden) return;
+      window.clearTimeout(timer);
+      inFlight = true;
+      try {
+        const { status } = await getProspectingParcelApprovalStatus(parcel.parcelId, approvalId);
+        if (!disposed) {
+          setApprovalStatus(Object.hasOwn(parcelApprovalLabels, status) ? status : 'unavailable');
+        }
+      } catch {
+        if (!disposed) setApprovalStatus('unavailable');
+      } finally {
+        inFlight = false;
+        if (!disposed) timer = window.setTimeout(refresh, 4_000);
+      }
+    }
+
+    const refreshVisible = () => {
+      if (document.hidden) return;
+      setApprovalStatus('checking');
+      void refresh();
+    };
+    void refresh();
+    document.addEventListener('visibilitychange', refreshVisible);
+    window.addEventListener('focus', refreshVisible);
+    return () => {
+      disposed = true;
+      window.clearTimeout(timer);
+      document.removeEventListener('visibilitychange', refreshVisible);
+      window.removeEventListener('focus', refreshVisible);
+    };
+  }, [approvalId, open, parcel.parcelId]);
 
   async function submit(action: 'approval' | 'save') {
-    if (busy) return;
+    if (busy || (action === 'save' && !approved)) return;
     setBusy(action);
     setError('');
     try {
@@ -85,6 +140,7 @@ function VanNuysCreateLead({
         if (response.match) {
           onMatch(response.match);
         } else if (response.approvalId) {
+          setApprovalStatus('checking');
           setApprovalId(response.approvalId);
         } else {
           throw new Error('The lead approval could not be recorded.');
@@ -96,6 +152,7 @@ function VanNuysCreateLead({
       }
     } catch (reason) {
       setError(errorText(reason));
+      if (action === 'save') setApprovalStatus('checking');
     } finally {
       setBusy(null);
     }
@@ -107,6 +164,7 @@ function VanNuysCreateLead({
       onOpenChange={(next) => {
         if (busy) return;
         setOpen(next);
+        if (next) setApprovalStatus('checking');
         setError('');
       }}
     >
@@ -139,13 +197,12 @@ function VanNuysCreateLead({
           <dd>Los Angeles</dd>
         </dl>
         {approvalId && (
-          <p role="status">
-            Approval requested.{' '}
+          <div>
+            <p role="status">{parcelApprovalLabels[approvalStatus]}</p>
             <Link to="/inbox" target="_blank" rel="noopener" className="underline">
               Review in Inbox
             </Link>
-            , then return to save the approved lead.
-          </p>
+          </div>
         )}
         {error && (
           <p className="pbk-phone-error" role="alert">
@@ -158,7 +215,7 @@ function VanNuysCreateLead({
               Close
             </button>
           </DialogClose>
-          {approvalId && error && (
+          {approvalId && canRequestAgain && (
             <button
               type="button"
               className="pbk-btn pbk-btn-ghost"
@@ -171,7 +228,7 @@ function VanNuysCreateLead({
           <button
             type="button"
             className="pbk-btn pbk-btn-primary"
-            disabled={Boolean(busy)}
+            disabled={Boolean(busy) || Boolean(approvalId && !approved)}
             onClick={() => void submit(approvalId ? 'save' : 'approval')}
           >
             {busy === 'save'

@@ -79,3 +79,17 @@ and check the concurrent n8n and Slack notification calls with their
 approval row write before the state snapshot. Both smokes passed locally.
 In-memory variants confirmed the tests still reject changed timeouts, loss of
 concurrent execution, and omission of the durable write.
+
+## Sync with main
+
+PR #97 added a staff read of the decision on an exact parcel approval and
+updated the fingerprint on `main` to
+`8e44fa430013f7677fcca62d3bbd6c56c1219c148b751b551643df5e72b88adf`.
+PR #96 adopts that existing fingerprint unchanged from
+`b62eb6513a4f3c2b7479852dd469a4b0614040e4`. The digest above records
+the earlier revision reviewed for this PR.
+
+The merged notification smoke preserves the checked skip result from
+`main` and checks both bounded calls inside the concurrent notification
+branch. The durable approval write check continues to cover the current
+handler signature.

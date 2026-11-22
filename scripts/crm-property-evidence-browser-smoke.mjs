@@ -101,9 +101,20 @@ async function verify(engine, config, label) {
         }
         // Only canonical full-lead reload contains authoritative new snapshots.
         return send({ ok: true, saved: true, leadId: expectedRefreshLead.id, address, patch: {},
-          records: mode === 'partial' ? { status: 'unavailable' } : { status: 'matched', profile: fixture.deal.propertyRecordSnapshot.facts },
-          listing: { cache: { hit: mode !== 'partial' }, propertyData: null },
-          sales: mode === 'partial' ? { status: 'timed_out' } : { status: 'matched', source: 'ATTOM', ...fixture.analyzer.recordedSales },
+          records: mode === 'empty' ? { status: 'unavailable' } : {
+            status: 'matched', profile: fixture.deal.propertyRecordSnapshot.facts,
+            ...(mode === 'partial' ? { partial: true, sections: [
+              savedDatasets[0],
+              projectAttomMcpSection('ownership', undefined, 'timed_out', captured),
+              projectAttomMcpSection('foreclosure-history', [], 'ok', captured),
+              savedDatasets[3],
+            ] } : {}),
+          },
+          listing: mode === 'success' ? {
+            cache: { hit: true }, propertyData: { source: 'apify-for-sale', data: { photoUrls: [photos[1]] } },
+          } : { cache: { hit: false }, propertyData: null },
+          sales: mode === 'partial' ? { status: 'timed_out' } : mode === 'empty' ? { status: 'matched', sales: [] } :
+            { status: 'matched', source: 'ATTOM', ...fixture.analyzer.recordedSales },
         });
       }
       if (path === '/api/leads/' + fixture.id && request.method() === 'PATCH') {
@@ -137,6 +148,7 @@ async function verify(engine, config, label) {
       return send({ ok: true, items: [] });
     });
     const workspace = page.getByRole('region', { name: 'Property', exact: true });
+    const refreshResult = workspace.getByRole('region', { name: 'Property refresh result' });
     const tab = name => workspace.getByRole('tab', { name, exact: true }).click();
     const noOverflow = async () => assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), label + ' horizontal overflow');
     const assertSaved = async () => {
@@ -243,9 +255,13 @@ async function verify(engine, config, label) {
     await edit.getByRole('button', { name: 'Cancel', exact: true }).click();
     assert.deepEqual(providerReads, [], 'Tabs, radius, sort and address edits must not read providers');
     assert.deepEqual(mutations, [], 'Passive browsing and cancelled edits must not persist');
+    await expect(refreshResult).toHaveCount(0);
     let fullReadCount = canonicalReads.length;
     await workspace.getByRole('button', { name: 'Refresh property intelligence with selected radius', exact: true }).click();
-    await expect(workspace.getByText('Property intelligence saved. Review suggested sales before underwriting.', { exact: true })).toBeVisible();
+    await expect(refreshResult.getByRole('status')).toHaveText('Property refresh complete');
+    await expect(refreshResult.getByRole('list', { name: 'Updated' })).toContainText('Property record · 1 saved field changed.');
+    await expect(refreshResult.getByRole('list', { name: 'Updated' })).toContainText('Listing photos · 1 photo saved from cache.');
+    await expect(refreshResult.getByRole('list', { name: 'Updated' })).toContainText('Comparable sales · 4 sales now on file.');
     assert.equal(mutations.length, 1); assert.equal(mutations[0].body.radiusMiles, 2);
     assert.ok(canonicalReads.length > fullReadCount, 'Refresh reloads canonical saved lead');
     await assertSaved();
@@ -390,7 +406,20 @@ async function verify(engine, config, label) {
     assert.deepEqual(fixture, beforeFailure); await assertSaved();
     mode = 'partial';
     await workspace.locator('.pbk-property-header').getByRole('button', { name: 'Refresh property intelligence', exact: true }).click();
-    await expect(workspace.getByText('Property intelligence refreshed. Some sources were unavailable; previously saved evidence is retained.', { exact: true })).toBeVisible();
+    await expect(refreshResult.getByRole('status')).toHaveText('Property refresh finished with gaps');
+    const kept = refreshResult.getByRole('list', { name: 'Kept on file' });
+    await expect(kept).toContainText('Property record checked · saved values stayed the same. ATTOM returned data for 1 of 4 sections.');
+    await expect(kept).toContainText('Ownership · Previous evidence kept.');
+    await expect(kept).toContainText('1 reviewed comp kept.');
+    await expect(kept).toContainText('1 listing photo kept.');
+    const gaps = refreshResult.getByRole('list', { name: 'Unavailable or incomplete' });
+    await expect(gaps).toContainText('Foreclosure records · No records returned.');
+    await expect(gaps).toContainText('Permit records · Outside account access.');
+    await expect(gaps).toContainText('ATTOM comparable sales · Timed out.');
+    await expect(gaps).toContainText('Listing photos · No matching photos returned from the listing cache.');
+    await expect(refreshResult.getByRole('list', { name: 'Updated' })).toHaveCount(0);
+    await noOverflow();
+    await refreshResult.screenshot({ path: `output/property-refresh-${label}.png` });
     await assertSaved();
     assert.deepEqual(fixture, beforeFailure, 'Partial failure retains snapshots, timestamps and reviewed comps');
     fixture.deal.propertyRecordSnapshot.facts.taxAmount = 2600;
@@ -502,9 +531,11 @@ async function verify(engine, config, label) {
     await expect.poll(() => canonicalReads.length).toBe(beforeLeadRefresh + 1);
     assert.equal(mutations.length, beforeSwitch, 'Refresh lead is a saved-data read');
     expectedRefreshLead = other;
+    mode = 'empty';
     await workspace.getByRole('tabpanel', { name: 'Photos', exact: true })
       .getByRole('button', { name: 'Refresh property intelligence', exact: true }).click();
-    await expect(workspace.getByText('Property intelligence refreshed. Some sources were unavailable; previously saved evidence is retained.', { exact: true })).toBeVisible();
+    await expect(refreshResult.getByRole('status')).toHaveText('Property refresh finished with gaps');
+    await expect(gaps).toContainText('ATTOM comparable sales · No usable sales returned.');
     assert.deepEqual(mutations.slice(beforeSwitch), [{ path: '/api/property-data/enrich', body: {
       address, leadId: other.id, expectedPropertyAddress: structuredAddress, radiusMiles: 1,
     } }], 'Only Refresh sends one enrichment request for the currently open lead');

@@ -1,4 +1,4 @@
-import { ArrowLeft, CheckCircle2, Download, ScanSearch, ShieldCheck, Workflow } from 'lucide-react';
+import { ArrowDown, ArrowLeft, CheckCircle2, Download, ScanSearch, ShieldCheck, Workflow } from 'lucide-react';
 import { Link } from 'react-router';
 import { SavedEvidenceMark } from '../components/SavedEvidenceMark';
 import receipt from '../../assets/van-nuys/receipt.json';
@@ -38,6 +38,10 @@ export function VanNuysDemo() {
           <div><dt>Evidence rechecks</dt><dd>{receipt.rechecks.length}</dd></div>
           <div><dt>Still held</dt><dd>{receipt.held_count}</dd></div>
         </dl>
+        <nav className="pbk-van-jump" aria-label="Jump to saved evidence or receipt">
+          <a href="#van-evidence-title"><ArrowDown size={16} aria-hidden="true" /> Rex&apos;s checks</a>
+          <a href="#van-receipt-title"><ArrowDown size={16} aria-hidden="true" /> Receipt &amp; downloads</a>
+        </nav>
       </header>
 
       <ul className="pbk-van-handoff" aria-label="Agent handoff">
@@ -48,7 +52,7 @@ export function VanNuysDemo() {
 
       <div className="pbk-van-body">
         <section aria-labelledby="van-evidence-title">
-          <h2 id="van-evidence-title">What Rex checked</h2>
+          <h2 id="van-evidence-title" tabIndex={-1}>What Rex checked</h2>
           <p>Each first attempt stayed held. Ava added a listing only after Rex verified it.</p>
           <ol className="pbk-van-checks">
             {receipt.rechecks.map((item, index) => (
@@ -67,7 +71,7 @@ export function VanNuysDemo() {
 
         <section className="pbk-van-receipt" aria-labelledby="van-receipt-title">
           <p className="pbk-van-kicker pbk-van-seal"><SavedEvidenceMark size={18} /> Saved fictional run</p>
-          <h2 id="van-receipt-title">Run receipt</h2>
+          <h2 id="van-receipt-title" tabIndex={-1}>Run receipt</h2>
           <p>Opening this page or downloading the receipt does not start a new run.</p>
           <p className="pbk-van-id"><span>Run ID</span><code>{receipt.run_id}</code></p>
           <div className="pbk-van-downloads" aria-label="Receipt downloads" role="group">

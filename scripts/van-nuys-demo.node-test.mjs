@@ -14,6 +14,14 @@ test('Van Nuys is a staff-shell page linked from the existing Dialer', () => {
   assert.match(read('netlify.toml'), /from = "\/dialer\/van-nuys-demo"\r?\nto = "\/index.shell.html"\r?\nstatus = 200/);
 });
 
+test('Van Nuys jump links point to keyboard-focusable headings on the same page', () => {
+  const route = read('src/app/routes/VanNuysDemo.tsx');
+  const nav = route.match(/<nav [^>]*aria-label="Jump to saved evidence or receipt"[^>]*>([\s\S]*?)<\/nav>/)?.[1] ?? '';
+  const targets = [...nav.matchAll(/href="#([^"]+)"/g)].map((match) => match[1]);
+  assert.deepEqual(targets, ['van-evidence-title', 'van-receipt-title']);
+  for (const target of targets) assert.ok(route.includes(`<h2 id="${target}" tabIndex={-1}>`));
+});
+
 test('every export preserves the run ID and Rex-verified shortlist from staging', async () => {
   const saved = JSON.parse(read(receipt + '.json'));
   assert.equal(saved.run_id, 'hermes-dry-dec31223-4f0d-42f7-8ffe-82bdc37d7951');

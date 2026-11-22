@@ -117,6 +117,7 @@ test('the bridge saves to the exact lead and preserves concurrent versions and o
     const second = await create('brief-fixture-2', 'Decision Brief QA Two');
     assert.notEqual(first, second);
     const path = `/api/leads/${first}`;
+    assert.equal((await request('/api/leads', 'POST', { deal: { investorDecisionScenarios: [draft] } })).status, 400);
     const save = (scenario, expectedPropertyAddress = address) =>
       request(path, 'PATCH', {
         expectedPropertyAddress,
@@ -150,12 +151,12 @@ test('the bridge saves to the exact lead and preserves concurrent versions and o
 
 test('the production save path can write to a cold profile without changing another lead or other profile fields', async () => {
   const source = ts.createSourceFile('bridge.mjs', readFileSync(new URL('./openclaw-local-server.mjs', import.meta.url), 'utf8'), ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
-  const functions = new Set(['loadExactLeadProfile', 'parcelLeadFromProfileRow', 'saveInvestorDecisionScenario']);
+  const functions = new Set(['loadExactLeadProfile', 'loadLeadForFullView', 'parcelLeadFromProfileRow', 'saveInvestorDecisionScenario']);
   const statements = source.statements.filter((statement) =>
     ts.isFunctionDeclaration(statement) && functions.has(statement.name?.text) ||
     ts.isVariableStatement(statement) && statement.declarationList.declarations.some((d) => d.name.getText(source) === 'investorScenarioSaves')
   );
-  assert.equal(statements.length, 4);
+  assert.equal(statements.length, 5);
   const address = { street: '26 PBK Test Lane', city: 'Orlando', state: 'FL', zip: '32801' };
   const db = new PGlite();
   const state = { leadImports: [] };
@@ -163,7 +164,7 @@ test('the production save path can write to a cold profile without changing anot
   let failWrite = false;
   let writes = 0;
   const context = vm.createContext({
-    state, address, draft, DATABASE_URL: 'embedded-fixture',
+    state, address, draft, DATABASE_URL: 'embedded-fixture', IS_HOSTED: true,
     normalizeDecisionScenario, addDecisionScenario, readDecisionScenarios,
     isoNow: () => '2026-11-22T01:00:00.000Z',
     plainRecord: (value) => value ?? {},
@@ -200,6 +201,13 @@ test('the production save path can write to a cold profile without changing anot
     assert.deepEqual(after[0].raw, {
       ...before[0].raw, deal: { ...before[0].raw.deal, investorDecisionScenarios: [normalize(draft)] },
     });
+    const reopen = () => vm.runInContext('loadLeadForFullView("exact")', context);
+    assert.deepEqual(Array.from((await reopen()).lead.deal.investorDecisionScenarios), [normalize(draft)]);
+    state.leadImports = [{ id: 'exact', deal: { mao: 173000 }, property: { address: address.street } }];
+    const restored = (await reopen()).lead;
+    assert.deepEqual(Array.from(restored.deal.investorDecisionScenarios), [normalize(draft)]);
+    assert.equal(restored.deal.mao, 173000, 'only the scenario field comes from the durable profile');
+    assert.equal(restored.property.address, address.street);
   } finally {
     await db.close();
   }

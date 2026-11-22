@@ -15103,6 +15103,9 @@ function patchLeadImport(stateRef, matcher = {}, patch = {}) {
     },
     updatedAt: isoNow(),
   };
+  if (current.deal?.investorDecisionScenarios) {
+    next.deal = { ...next.deal, investorDecisionScenarios: current.deal.investorDecisionScenarios };
+  }
   const patchEnvelope = patch.leadCommitEnvelope || patch.lead_commit_envelope;
   if (patchEnvelope?.schema === 'pbk.lead.commit_envelope.v1') {
     ensureLeadCommitEnvelope(next, patch.source || current.source || current.leadSource || 'lead-import-patch');
@@ -61034,6 +61037,17 @@ function loadExactLeadProfile(leadId) {
   );
 }
 
+async function loadLeadForFullView(leadId) {
+  const profile = IS_HOSTED || getPgPool() ? await loadExactLeadProfile(leadId) : null;
+  const hot = (state.leadImports || []).find((item) => (item.leadId || item.id) === leadId);
+  const row = profile?.rows[0];
+  if (!hot) return { lead: row ? parcelLeadFromProfileRow(row) : null, unavailable: profile?.ok === false };
+  const scenarios = row?.raw?.deal?.investorDecisionScenarios;
+  if (!row || (scenarios === undefined && !hot.deal?.investorDecisionScenarios)) return { lead: hot };
+  // The durable profile owns scenarios even if a restart restored an older hot snapshot.
+  return { lead: { ...hot, deal: { ...hot.deal, investorDecisionScenarios: scenarios } } };
+}
+
 async function saveInvestorDecisionScenario(leadId, address, input) {
   const scenario = normalizeDecisionScenario(input, isoNow());
   if (!scenario || !address) return { status: 400, error: 'Enter a scenario name and valid inputs.' };
@@ -81818,14 +81832,10 @@ const server = createServer(async (request, response) => {
         });
         return;
       }
-      let exactLead = (state.leadImports || []).find((item) => (item.leadId || item.id) === leadId);
-      if (!exactLead && (IS_HOSTED || getPgPool())) {
-        const profile = await loadExactLeadProfile(leadId);
-        if (!profile.ok) {
-          json(response, 503, { ok: false, code: 'lead_roster_unavailable', error: 'The saved lead record is unavailable. Try again shortly.' });
-          return;
-        }
-        if (profile.rows[0]) exactLead = parcelLeadFromProfileRow(profile.rows[0]);
+      const { lead: exactLead, unavailable } = await loadLeadForFullView(leadId);
+      if (unavailable) {
+        json(response, 503, { ok: false, code: 'lead_roster_unavailable', error: 'The saved lead record is unavailable. Try again shortly.' });
+        return;
       }
       const full = exactLead ? buildLeadFullView(exactLead) : null;
       if (!full) {
@@ -82582,6 +82592,10 @@ const server = createServer(async (request, response) => {
 
     if (request.method === 'POST' && matchesPath(pathname, ['/api/leads', '/api/leads/import'])) {
       const body = await readBody(request);
+      if (Object.hasOwn(plainRecord(body.deal), 'investorDecisionScenarios')) {
+        json(response, 400, { ok: false, error: 'Save scenarios through the Investor tab.' });
+        return;
+      }
       const result = await handleManualLeadCreate(body);
       json(response, result.ok === false ? 404 : 200, {
         ...result,

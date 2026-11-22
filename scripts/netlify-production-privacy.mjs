@@ -11,6 +11,8 @@ export async function checkProductionPrivacy(fetchImpl = globalThis.fetch) {
       const response = await fetchImpl(`${origin}${path}`, {
         method: 'GET',
         credentials: 'omit',
+        // Each check must open a fresh connection, including after a long production build.
+        headers: { Connection: 'close' },
         redirect: 'manual',
         cache: 'no-store',
         signal: AbortSignal.timeout(10_000),

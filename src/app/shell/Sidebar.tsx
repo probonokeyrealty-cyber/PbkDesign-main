@@ -12,6 +12,7 @@ import {
   Megaphone,
   Mic2,
   PhoneCall,
+  ScanSearch,
   Settings as SettingsIcon,
   Sparkles,
   Users,
@@ -21,6 +22,7 @@ import {
 export const SHELL_NAV_ITEMS: Array<{ to: string; label: string; icon: typeof LayoutDashboard }> = [
   { to: '/', label: 'Command Center', icon: LayoutDashboard },
   { to: '/leads', label: 'Leads', icon: Users },
+  { to: '/prospecting', label: 'Prospecting', icon: ScanSearch },
   { to: '/deal', label: 'Deal', icon: Briefcase },
   { to: '/property-log', label: 'Property log', icon: ClipboardCheck },
   { to: '/inbox', label: 'Inbox', icon: InboxIcon },

@@ -240,6 +240,8 @@ COPY scripts/public-market-connection.mjs ./scripts/public-market-connection.mjs
 COPY scripts/ava-outlook-mail.mjs ./scripts/ava-outlook-mail.mjs
 COPY src/app/utils/outlookDelivery.mjs ./src/app/utils/outlookDelivery.mjs
 COPY src/app/utils/analyticsEvidence.mjs ./src/app/utils/analyticsEvidence.mjs
+COPY src/app/utils/investorDecisionBrief.mjs ./src/app/utils/investorDecisionBrief.mjs
+COPY src/app/utils/leadComps.mjs ./src/app/utils/leadComps.mjs
 COPY scripts/rex-research-memory.mjs ./scripts/rex-research-memory.mjs
 COPY scripts/vector-embedding.mjs ./scripts/vector-embedding.mjs
 COPY scripts/skill-governance-schema.mjs ./scripts/skill-governance-schema.mjs
@@ -287,6 +289,7 @@ COPY scripts/address-suggestions.mjs ./scripts/address-suggestions.mjs
 COPY scripts/phone-numbers.mjs ./scripts/phone-numbers.mjs
 COPY scripts/parcel-dialer.mjs ./scripts/parcel-dialer.mjs
 COPY scripts/parcel-prospecting-brief.mjs ./scripts/parcel-prospecting-brief.mjs
+COPY scripts/hermes-parcel-prospecting.mjs ./scripts/hermes-parcel-prospecting.mjs
 COPY scripts/phone-dialer-routes.mjs ./scripts/phone-dialer-routes.mjs
 COPY scripts/openclaw-local-server.mjs ./scripts/openclaw-local-server.mjs
 COPY scripts/ava-team-chat-permissions.mjs ./scripts/ava-team-chat-permissions.mjs

@@ -7,6 +7,7 @@ import { LeadListingPhotos } from '../AnalyzerListingLookup';
 import type { LeadPortalModel } from './leadPortalModel';
 import { formatLeadValue } from './leadPortalModel';
 import { LeadComps } from './LeadComps';
+import { LeadInvestorWorkspace } from './LeadInvestorWorkspace';
 import { PropertyEvidenceBrief, type PropertyEvidenceTab } from './PropertyEvidenceBrief';
 import { listingSources, readPropertyEvidence } from '../../utils/propertyEvidence';
 import { formatCurrency } from '../../utils/formatting';
@@ -33,7 +34,7 @@ function ZillowLink({ href }: { href: string }) {
   );
 }
 
-export type LeadPropertyTab = 'overview' | PropertyEvidenceTab;
+export type LeadPropertyTab = 'overview' | PropertyEvidenceTab | 'investor';
 
 export function LeadPortalProperty({
   lead,
@@ -194,6 +195,7 @@ export function LeadPortalProperty({
           </Tabs.Trigger>
           <Tabs.Trigger ref={photoTabRef} value="photos">Photos</Tabs.Trigger>
           <Tabs.Trigger ref={compTabRef} value="comps">Comps</Tabs.Trigger>
+          <Tabs.Trigger value="investor">Investor</Tabs.Trigger>
         </Tabs.List>
         <Tabs.Content value="overview" className="pbk-property-tab-panel">
           <PropertyEvidenceBrief records={evidence.records} listing={evidence.listing} sales={savedSales} onOpen={openEvidenceTab} />
@@ -325,6 +327,25 @@ export function LeadPortalProperty({
             snapshot={evidence.listing}
             onRefresh={refresh}
             refreshing={busy}
+          />
+        </Tabs.Content>
+        <Tabs.Content
+          value="investor"
+          forceMount
+          hidden={tab !== 'investor'}
+          tabIndex={tab === 'investor' ? 0 : -1}
+          className="pbk-property-tab-panel"
+        >
+          <LeadInvestorWorkspace
+            key={identity}
+            lead={lead}
+            address={address}
+            canSaveScenario={hasLookupAddress(address)}
+            evidence={evidence}
+            sales={savedSales}
+            analyzerLink={analyzerLink}
+            onOpen={openEvidenceTab}
+            onSaved={onSaved}
           />
         </Tabs.Content>
       </Tabs.Root>

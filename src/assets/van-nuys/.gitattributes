@@ -1,0 +1,4 @@
+receipt.csv -text whitespace=cr-at-eol
+receipt.json -text
+receipt.txt -text
+receipt.pdf binary

@@ -25,6 +25,7 @@ test('accepts only anonymous 401 responses from every protected production route
     assert.equal(options.redirect, 'manual');
     assert.equal(new Headers(options.headers).has('authorization'), false);
     assert.equal(new Headers(options.headers).has('cookie'), false);
+    assert.equal(new Headers(options.headers).get('connection'), 'close');
     assert.ok(options.signal instanceof AbortSignal);
   }
 });

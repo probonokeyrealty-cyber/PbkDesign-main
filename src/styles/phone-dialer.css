@@ -60,7 +60,29 @@ html[data-theme='light'] .pbk-dialer-surface { background: var(--bg-void); color
 .pbk-dialer-head h1 { font-family: var(--font-display); font-weight: 500; font-size: clamp(29px, 4vw, 46px); line-height: 1.05; color: var(--text-primary); margin: 0; }
 .pbk-dialer-head h1 em { color: var(--sky); }
 .pbk-dialer-head p { color: var(--text-secondary); font-size: 13px; margin: 8px 0 0; }
+.pbk-dialer-reference { display: flex; align-items: center; flex-wrap: wrap; column-gap: 12px; border-bottom: 1px solid var(--border); padding-bottom: 4px; }
+.pbk-dialer-reference a { display: inline-flex; align-items: center; gap: 8px; min-height: 44px; color: var(--text-primary); font-size: 15px; font-weight: 600; text-decoration: underline; text-underline-offset: 3px; }
+.pbk-dialer-reference a svg { flex: none; color: var(--sky); }
+.pbk-dialer-reference a:focus-visible { outline: 2px solid var(--text-primary); outline-offset: 3px; }
+.pbk-dialer-reference span { color: var(--text-secondary); font-size: 14px; }
 .pbk-dialer-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(300px, 360px); gap: var(--s-4); align-items: start; }
+.pbk-dialer-inspector { display: grid; gap: var(--s-4); min-width: 0; }
+.pbk-dialer-inspector .pbk-parcel-workspace { margin-top: 0; }
+.pbk-dialer-map-results summary { min-height: 44px; align-content: center; cursor: pointer; font-weight: 600; }
+.pbk-dialer-map-results summary span { margin-inline-start: .5rem; color: var(--sky); font-family: var(--font-mono); }
+.pbk-dialer-map-results ul { list-style: none; margin: .5rem 0 0; padding: 0; max-height: 18rem; overflow: auto; }
+.pbk-dialer-map-results li + li { border-top: 1px solid var(--border-dim); }
+.pbk-dialer-map-results button { display: grid; text-align: left; width: 100%; min-height: 44px; padding: .5rem; overflow-wrap: anywhere; }
+.pbk-dialer-map-results button span { color: var(--text-secondary); font-size: .75rem; }
+.pbk-dialer-map-results button:is(:hover, [aria-pressed='true']) { background: var(--sky-glow); }
+.pbk-dialer-map-results button:focus-visible { outline: 2px solid var(--sky); outline-offset: -2px; }
+.pbk-dialer-legend a { color: var(--sky); overflow-wrap: anywhere; text-decoration: underline; }
+#pbk-parcel-quick-heading { scroll-margin-top: 5rem; }
+.pbk-van-nuys-dialer-details .pbk-parcel-quick-view { margin: 0; }
+#van-nuys-dialer-property { scroll-margin-top: 5rem; overflow-wrap: anywhere; }
+@media (max-width: 720px) {
+  .pbk-van-nuys-dialer-grid .pbk-van-nuys-dialer-details { grid-row: 1; }
+}
 .pbk-dialer-map-card, .pbk-dialer-side {
   border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--bg-panel); padding: var(--s-4); min-width: 0;
 }
@@ -69,6 +91,13 @@ html[data-theme='light'] .pbk-dialer-surface { background: var(--bg-void); color
 .pbk-dialer-section-head h2 { display: flex; align-items: center; gap: 8px; margin: 0; font-size: 15px; font-weight: 600; }
 .pbk-dialer-section-head h2 svg { color: var(--sky); }
 .pbk-dialer-map-card .pbk-phone-form { margin-top: var(--s-3); }
+.pbk-dialer-lookup {
+  display: grid; align-items: end; grid-template-columns: minmax(116px, .7fr) minmax(0, 2fr) auto;
+  gap: var(--s-2); padding: var(--s-3); border: 1px solid var(--border-dim);
+  border-radius: var(--radius); background: var(--bg-console);
+}
+.pbk-dialer-lookup-value, .pbk-dialer-lookup .pbk-input { min-width: 0; width: 100%; }
+.pbk-dialer-lookup .pbk-btn { min-height: 36px; justify-content: center; }
 .pbk-dialer-coverage { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: 12px; color: var(--text-secondary); overflow-wrap: anywhere; min-width: 0; }
 .pbk-dialer-map {
   position: relative; margin-top: var(--s-3); border: 1px solid var(--border-dim); border-radius: var(--radius);
@@ -85,13 +114,26 @@ html[data-theme='light'] .pbk-dialer-surface { background: var(--bg-void); color
 .pbk-dialer-map > svg path:hover { fill: var(--sky-glow-strong); }
 .pbk-dialer-map > svg path[data-selected='true'] { fill: color-mix(in srgb, var(--sky) 30%, transparent); stroke: var(--sky); stroke-width: 2; }
 .pbk-dialer-map path:focus-visible { outline: none; stroke: var(--sky-bright); stroke-width: 3; stroke-dasharray: 5 3; }
-.pbk-dialer-street-map { width: 100%; min-height: 300px; aspect-ratio: 16 / 10; background: var(--bg-console); }
-.pbk-dialer-street-map .leaflet-tile-pane { filter: brightness(.73) saturate(.72); }
-.pbk-dialer-street-map .pbk-street-parcel { stroke: var(--sky-deep); stroke-width: 2; fill: var(--sky); fill-opacity: .18; }
+.pbk-dialer-street-map { width: 100%; min-height: 300px; aspect-ratio: 16 / 10; }
+.pbk-dialer-map[data-streets='true'] .pbk-dialer-street-map { height: clamp(380px, 65dvh, 820px); aspect-ratio: auto; }
+@media (max-width: 720px) {
+  .pbk-dialer-map[data-streets='true'] .pbk-dialer-street-map { height: clamp(300px, 48dvh, 470px); }
+}
+.pbk-dialer-map[data-streets='true']:fullscreen .pbk-dialer-street-map { height: 100%; }
+.pbk-dialer-fullscreen-selection { display: none; }
+.pbk-dialer-map:fullscreen .pbk-dialer-fullscreen-selection {
+  position: absolute; inset: 12px 68px auto 12px; z-index: 1; display: grid; width: fit-content;
+  max-width: calc(100% - 80px); gap: .25rem; padding: .65rem .8rem; overflow-wrap: anywhere;
+  background: var(--bg-panel); color: var(--text-primary); border: 1px solid var(--border);
+  border-radius: var(--radius); pointer-events: none;
+}
+.pbk-dialer-fullscreen-selection span { color: var(--text-secondary); font-family: var(--font-mono); }
+.pbk-dialer .pbk-dialer-street-map { background: var(--bg-console); color: var(--bg-void); }
+.pbk-dialer-street-map .pbk-street-parcel { width: 24px; height: 24px; border: 2px solid var(--sky-deep); border-radius: 50%; background: var(--sky); cursor: pointer; }
 .pbk-dialer-street-map .pbk-street-parcel:hover,
-.pbk-dialer-street-map .pbk-street-parcel[aria-pressed='true'] { stroke: var(--sky-bright); stroke-width: 3; fill-opacity: .45; }
-.pbk-dialer-street-map .pbk-street-parcel:focus-visible { stroke: var(--sky-bright); stroke-width: 3; stroke-dasharray: 5 3; }
-.pbk-dialer-map-area { position: absolute; z-index: 500; left: 10px; bottom: 24px; background: var(--bg-console); }
+.pbk-dialer-street-map .pbk-street-parcel[aria-pressed='true'] { z-index: 1; background: var(--sky-bright); }
+.pbk-dialer-street-map .pbk-street-parcel:focus-visible { z-index: 1; outline: 2px solid var(--sky-deep); outline-offset: 2px; }
+.pbk-dialer-map-area { position: absolute; z-index: 1; left: 10px; bottom: 28px; background: var(--bg-console); }
 .pbk-dialer-map-empty { padding: var(--s-8) var(--s-4); text-align: center; color: var(--text-tertiary); font-size: 13px; }
 .pbk-dialer-map-tools { position: absolute; right: 8px; top: 8px; display: flex; gap: 4px; }
 .pbk-dialer-compass { position: absolute; bottom: 8px; right: 8px; pointer-events: none; padding: 3px 6px; border: 1px solid var(--border-dim); border-radius: var(--radius-sm); background: var(--bg-console); color: var(--text-secondary); font: 11px var(--font-mono); }
@@ -107,9 +149,32 @@ html[data-theme='light'] .pbk-dialer-surface { background: var(--bg-void); color
 .pbk-dialer-steps li[aria-current='step'] span { border-color: var(--sky-dim); background: var(--sky-glow); }
 .pbk-dialer-steps li[data-complete='true'] { color: var(--text-primary); border-color: var(--sky-dim); }
 .pbk-parcel-quick-view { display: grid; gap: 10px; margin-top: var(--s-4); padding: var(--s-4); min-width: 0; border: 1px solid var(--border-dim); border-radius: var(--radius-lg); background: var(--bg-console); }
-.pbk-prospecting-checks { display: grid; gap: 8px; padding-inline-start: 24px; margin: 0; }
-.pbk-prospecting-checks li { padding: 8px; border-bottom: 1px solid var(--border-dim); }
-.pbk-prospecting-checks li:last-child { border-bottom: 0; }
+.pbk-parcel-workspace { margin-top: var(--s-4); gap: var(--s-2); min-width: 0; }
+.pbk-parcel-workspace .pbk-parcel-workspace-tabs {
+  display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); align-items: stretch;
+  width: 100%; height: auto; gap: 4px; padding: 4px; border: 1px solid var(--border-dim);
+  border-radius: var(--radius-lg); background: var(--bg-console);
+}
+.pbk-parcel-workspace-tabs [role="tab"] {
+  min-width: 0; min-height: 38px; height: auto; padding-inline: 6px;
+  gap: 6px; color: var(--text-secondary); font-size: 13px; white-space: normal;
+  border-radius: var(--radius);
+}
+.pbk-parcel-workspace-tabs [role="tab"][data-state="active"] {
+  background: var(--sky-glow); border-color: var(--sky-dim); color: var(--sky-bright);
+}
+.pbk-parcel-workspace-tabs [role="tab"]:focus-visible {
+  outline: 2px solid var(--sky-bright); outline-offset: 1px;
+}
+.pbk-parcel-tab-count { padding: 2px 5px; border-radius: var(--radius-sm); background: var(--sky-glow); color: var(--sky-bright); font: 11px var(--font-mono); }
+.pbk-parcel-workspace [role="tabpanel"] > .pbk-parcel-quick-view { margin-top: 0; }
+.pbk-parcel-workspace :is(#prospecting-list, #pbk-parcel-quick-heading) { scroll-margin-top: 85px; }
+.pbk-parcel-match { display: inline-flex; margin-top: var(--s-2); }
+.pbk-prospecting-checks { display: grid; gap: var(--s-2); padding: 0; margin: 0; list-style-position: inside; }
+.pbk-prospecting-checks li { padding: var(--s-3); border: 1px solid var(--border-dim); border-radius: var(--radius); }
+.pbk-prospecting-checks li::marker { color: var(--sky); font: 12px var(--font-mono); }
+.pbk-prospecting-checks li[data-outreach-hold="true"] { border-inline-start: 2px solid var(--crimson); }
+.pbk-prospecting-brief-parcel { font-weight: 600; }
 .pbk-prospecting-checks strong { color: var(--text-primary); font-size: 13px; }
 .pbk-prospecting-brief .pbk-dialer-section-head { flex-wrap: wrap; }
 .pbk-prospecting-items { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
@@ -160,6 +225,10 @@ html[data-theme='light'] .pbk-dialer-surface { background: var(--bg-void); color
 }
 @media (max-width: 480px) {
   .pbk-dialer { padding: var(--s-3); }
+  .pbk-dialer-lookup { grid-template-columns: minmax(0, 1fr) auto; }
+  .pbk-dialer-lookup > label:first-child { grid-column: 1 / -1; }
+  .pbk-parcel-workspace-tabs [role="tab"] { gap: 4px; min-height: 44px; padding-inline: 4px; }
+  .pbk-parcel-workspace-tabs [role="tab"] svg { display: none; }
   .pbk-phone-form > * { flex: 1 1 100%; }
   .pbk-phone-actions .pbk-btn { flex: 1 1 auto; }
   .pbk-dialer .pbk-btn { min-height: 44px; }

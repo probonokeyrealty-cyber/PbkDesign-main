@@ -1,5 +1,5 @@
 import { lazy } from 'react';
-import { createBrowserRouter, RouterProvider } from 'react-router';
+import { createBrowserRouter, Navigate, RouterProvider, useLocation } from 'react-router';
 import { ParadiseLayout } from './ParadiseLayout';
 import { NotFound } from '../routes/NotFound';
 import { loadCurrentRoute } from '../utils/deployVersion';
@@ -71,6 +71,11 @@ const ParcelDialer = lazy(() =>
     default: module.ParcelDialer,
   }))
 );
+const Prospecting = lazy(() =>
+  loadCurrentRoute(() => import('../routes/Prospecting')).then((module) => ({
+    default: module.Prospecting,
+  }))
+);
 const AvaChat = lazy(() =>
   loadCurrentRoute(() => import('../routes/AvaChat')).then((module) => ({
     default: module.AvaChat,
@@ -83,6 +88,11 @@ const shellBasename =
     window.location.pathname.includes('/index.shell.html/'))
     ? '/index.shell.html'
     : undefined;
+
+function ProspectingEvidenceRedirect() {
+  const { hash } = useLocation();
+  return <Navigate to={{ pathname: '/prospecting', search: '?view=evidence', hash }} replace />;
+}
 
 const router = createBrowserRouter(
   [
@@ -112,6 +122,8 @@ const router = createBrowserRouter(
         { path: 'analytics', element: <Analytics /> },
         { path: 'campaigns', element: <Campaigns /> },
         { path: 'dialer', element: <ParcelDialer /> },
+        { path: 'prospecting', element: <Prospecting /> },
+        { path: 'dialer/van-nuys-demo', element: <ProspectingEvidenceRedirect /> },
         { path: 'agent', element: <AvaChat /> },
         { path: 'agent-console', element: <AvaChat /> },
         { path: 'ava-chat', element: <AvaChat /> },

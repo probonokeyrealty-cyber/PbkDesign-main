@@ -1,11 +1,12 @@
 import assert from 'node:assert/strict';
 import { chromium, devices, expect, webkit } from '@playwright/test';
-import { createServer } from 'vite';
-import { mkdirSync } from 'node:fs';
+import { preview } from 'vite';
+import { mkdirSync, readFileSync } from 'node:fs';
 
 process.env.PBK_DEV_BRIDGE_URL = 'http://127.0.0.1:1';
-const server = await createServer({ server: { host: '127.0.0.1', port: 0 } });
-await server.listen();
+// Release Qualification builds dist before running the browser fixtures.
+const shell = readFileSync(new URL('../dist/index.shell.html', import.meta.url), 'utf8');
+const server = await preview({ preview: { host: '127.0.0.1', port: 0, strictPort: true } });
 const origin = `http://127.0.0.1:${server.httpServer.address().port}`;
 const seller = {
   id: 'qa-sms',
@@ -20,8 +21,15 @@ const second = { ...seller, id: 'qa-other', message: 'Please confirm the propert
 
 async function verify(browserType, viewport, device = {}) {
   const browser = await browserType.launch();
+  const releaseResponse = Promise.withResolvers();
   try {
     const page = await browser.newPage({ ...device, viewport });
+    await page.addInitScript(() => {
+      localStorage.setItem('pbk:local:openclaw-config', JSON.stringify({
+        endpoint: location.origin,
+        apiKey: 'sample-only',
+      }));
+    });
     await page.clock.install();
     await page.routeWebSocket('**/*', (socket) => socket.close());
     const requests = [];
@@ -31,13 +39,16 @@ async function verify(browserType, viewport, device = {}) {
     let changed = false;
     let preflightOffline = false;
     let offlineReads = 0;
-    let release;
-    let respond;
-    const responseHeld = new Promise((resolve) => { respond = resolve; });
-    const releaseResponse = new Promise((resolve) => { release = resolve; });
     await page.route('**/*', async (route) => {
       const request = route.request();
       const url = new URL(request.url());
+      if (url.origin !== origin) {
+        if (request.method() !== 'GET') unexpectedWrites.push(url.pathname);
+        return route.abort();
+      }
+      if (url.pathname === '/command-center' && request.isNavigationRequest()) {
+        return route.fulfill({ contentType: 'text/html', body: shell });
+      }
       if (url.pathname === '/state' && request.method() === 'GET') {
         if (unavailable || preflightOffline) {
           offlineReads++;
@@ -57,8 +68,7 @@ async function verify(browserType, viewport, device = {}) {
         if (url.pathname.endsWith('qa-other')) {
           return route.fulfill({ status: 502, json: { error: 'Fixture lost the response' } });
         }
-        respond();
-        await releaseResponse;
+        await releaseResponse.promise;
         resolved = true;
         return route.fulfill({ json: { ok: true, approval: { ...seller, status: 'approved' } } });
       }
@@ -67,7 +77,7 @@ async function verify(browserType, viewport, device = {}) {
           json: { items: [{ id: 'receipt', actor: 'Ava', text: 'Drafted a follow-up', category: 'draft' }] },
         });
       }
-      if (url.origin !== origin || /^\/(api\/|health$|events$|invoke$)/.test(url.pathname)) {
+      if (/^\/(api\/|health$|events$|invoke$|status$|metrics$)/.test(url.pathname)) {
         if (request.method() !== 'GET' && !/\/(auth\/|state\/stream\/session)/.test(url.pathname)) {
           unexpectedWrites.push(url.pathname);
         }
@@ -76,7 +86,7 @@ async function verify(browserType, viewport, device = {}) {
       return route.continue();
     });
 
-    await page.goto(`${origin}/command-center`);
+    await page.goto(`${origin}/command-center`, { waitUntil: 'domcontentloaded' });
     await expect(page.getByRole('heading', { name: 'Today.', exact: true })).toBeVisible();
     const review = page.getByRole('region', { name: 'Review', exact: true });
     const rail = review.getByRole('list', { name: 'Decision Rail', exact: true });
@@ -86,7 +96,7 @@ async function verify(browserType, viewport, device = {}) {
     await expect(review.getByText('Approval queue unavailable.')).toBeVisible();
     await expect(review.getByText('No pending approvals right now.')).toHaveCount(0);
     unavailable = false;
-    await page.reload();
+    await page.reload({ waitUntil: 'domcontentloaded' });
     await expect(page.getByRole('region', { name: 'Recent activity', exact: true })).toBeVisible();
     await expect(page.getByText('Drafted a follow-up')).toBeVisible();
     const row = review.locator('[data-approval-id="qa-sms"]');
@@ -148,13 +158,16 @@ async function verify(browserType, viewport, device = {}) {
     await approve.click();
     const confirm = dialog.getByRole('button', { name: 'Confirm decision' });
     await confirm.evaluate((button) => { button.click(); button.click(); });
-    await responseHeld;
+    await expect.poll(() => requests, {
+      message: 'The double click must submit exactly one approval request',
+      timeout: 10000,
+    }).toMatchObject([{ path: '/api/approvals/qa-sms', status: 'approved' }]);
     await expect(rail.locator('[aria-current="step"]')).toContainText('Review');
     await expect(review.getByRole('region', { name: 'Decision receipt' })).toHaveCount(0);
     await expect(review.locator('[data-approval-id="qa-other"]').getByRole('button', {
       name: 'Review approval',
     })).toBeDisabled();
-    release();
+    releaseResponse.resolve();
     await expect(row).toHaveCount(0);
     await expect(review.locator('[data-approval-id="qa-other"]')).toBeVisible();
     await expect(page.getByRole('status').filter({
@@ -204,6 +217,7 @@ async function verify(browserType, viewport, device = {}) {
     ), true, 'Today and Review must not overflow');
     console.log(`${browserType.name()} ${viewport.width}px: polling outage/recovery, failed preflight, keyboard cancel, duplicate, changed/unknown decisions, and layout passed.`);
   } finally {
+    releaseResponse.resolve();
     await browser.close();
   }
 }

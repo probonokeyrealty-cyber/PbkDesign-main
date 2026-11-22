@@ -73,7 +73,7 @@ assert(
   'h-full max-h-full',
   'pbk-ava-slash-panel',
   'pbk-ava-bubble-system',
-  'Tell me what you need in plain English',
+  'Ask about this lead, open saved comps or photos, or draft a seller follow-up.',
   'Ava starter prompts',
   'Draft Text',
   'Prep Call',

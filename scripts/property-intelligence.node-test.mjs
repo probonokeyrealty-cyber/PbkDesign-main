@@ -229,11 +229,12 @@ test('bridge exact-ID patch never falls back to duplicate address, email or phon
 
 test('bridge exact persistence bypasses inbound placeholder phone coalescing', async () => {
   const bridge = readFileSync(new URL('./openclaw-local-server.mjs', import.meta.url), 'utf8');
-  const source = bridge.match(/async function persistLeadProfileRowToDb\(lead = \{\}, source = 'property-data', \{ exactIdentity = false, insertOnly = false \} = \{\}\) \{[\s\S]*?\r?\n\}/)[0];
+  const match = bridge.match(/^async function persistLeadProfileRowToDb\([^\r\n]*\) \{\r?\n[\s\S]*?^\}/m);
+  assert.ok(match, 'Find the lead profile persistence function in the bridge');
   const queries = [];
   const context = vm.createContext({ normalizePhone: v => v, ensureLeadCommitEnvelope() {}, toNumber: v => Number(v) || 0,
     queryPgRows: async (sql, params) => { queries.push({ sql, params }); return { ok: true, rows: [{ id: 'lead-inbound-other', source: 'inbound-call' }] }; } });
-  const save = vm.runInContext(`(${source})`, context);
+  const save = vm.runInContext(`(${match[0]})`, context);
   const result = await save({ leadId: 'two', seller: { phone: 'same' } }, 'property-intelligence', { exactIdentity: true });
   assert.equal(result.leadId, 'two'); assert.equal(queries.length, 1); assert.equal(queries[0].params[0], 'two');
   assert.match(queries[0].sql, /INSERT INTO public.lead_profiles/);

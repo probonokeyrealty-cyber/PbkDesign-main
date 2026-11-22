@@ -44,7 +44,7 @@ const STATUS_LABELS: Record<CatalogStatus, string> = {
 };
 
 const STATUS_GUIDANCE: Record<CatalogStatus, string> = {
-  matched: 'Review the read-only preview below. Running research is not available here.',
+  matched: 'Open the preview to see what the tool can review. Start a research request in Brain.',
   not_configured:
     'An administrator needs to configure research access. Local PBK options remain available below.',
   disabled:
@@ -227,10 +227,7 @@ export function AgentResearchTools({
           <span className="pbk-agent-research-eyebrow">Agent research</span>
           <span className="pbk-agent-research-badge">Read-only inspection</span>
         </div>
-        <p>
-          Inspect advisory research options for {agentName}. Ava supervises PBK work; Rex research
-          stays in Brain. Use the existing call and message controls for follow-up.
-        </p>
+        <p>Check which research tools are listed for {agentName}. Open Brain to ask Rex for research.</p>
         <button
           type="button"
           className="pbk-btn pbk-btn-ghost"
@@ -258,7 +255,7 @@ export function AgentResearchTools({
             </p>
             <p className="pbk-agent-research-guidance">{guidance}</p>
             <p className="pbk-agent-research-boundary">
-              Catalog metadata only. Account access, agent readiness and execution are unverified.
+              This list shows available tool descriptions. Connection and permission still need to be verified.
             </p>
           </section>
           {result && (

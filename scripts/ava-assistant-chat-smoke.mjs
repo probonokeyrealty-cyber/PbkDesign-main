@@ -596,7 +596,7 @@ assert(
   avaChatRoute.includes('PBK_COMPANION_ACTIONS') &&
     avaChatRoute.includes('pbk-ava-slash-panel') &&
     avaChatRoute.includes('pbk-ava-bubble-system') &&
-    avaChatRoute.includes('Tell me what you need in plain English') &&
+    avaChatRoute.includes('Find a lead, review a deal, or prepare for your next seller call.') &&
     avaChatRoute.includes('Draft Text') &&
     avaChatRoute.includes('Draft Email') &&
     avaChatRoute.includes('Prep Call') &&

@@ -59665,7 +59665,7 @@ const toolHandlers = {
         requestPayload.stream_track = params.streamTrack || DEEPGRAM_STREAM_TRACK;
         requestPayload.stream_codec = params.streamCodec || DEEPGRAM_STREAM_CODEC;
         Object.assign(requestPayload, getTelnyxBidirectionalMediaParams());
-        if (TELNYX_STREAM_ESTABLISH_BEFORE_ORIGINATE) requestPayload.stream_establish_before_call_originate = true;
+        if (params.streamEstablishBeforeCallOriginate === true || (TELNYX_STREAM_ESTABLISH_BEFORE_ORIGINATE && params.streamEstablishBeforeCallOriginate !== false)) requestPayload.stream_establish_before_call_originate = true;
         if (TELNYX_MEDIA_STREAM_TOKEN) requestPayload.stream_auth_token = TELNYX_MEDIA_STREAM_TOKEN;
       }
 

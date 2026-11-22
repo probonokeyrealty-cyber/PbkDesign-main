@@ -61,6 +61,26 @@ const checks = [
   },
 ];
 
+const streamTimingAssignment = source.match(
+  /^\s*if \(.*\) requestPayload\.stream_establish_before_call_originate = true;$/m,
+)?.[0];
+assert.ok(streamTimingAssignment, 'The outbound dial command configures stream timing');
+for (const [defaultTiming, perCallTiming, expected] of [
+  [true, undefined, true],
+  [false, undefined, undefined],
+  [true, false, undefined],
+  [false, true, true],
+  [true, 'false', true],
+]) {
+  const requestPayload = {};
+  vm.runInNewContext(streamTimingAssignment, {
+    TELNYX_STREAM_ESTABLISH_BEFORE_ORIGINATE: defaultTiming,
+    params: { streamEstablishBeforeCallOriginate: perCallTiming },
+    requestPayload,
+  });
+  assert.equal(requestPayload.stream_establish_before_call_originate, expected);
+}
+
 const failed = checks.filter((check) => !check.pass);
 
 if (failed.length) {

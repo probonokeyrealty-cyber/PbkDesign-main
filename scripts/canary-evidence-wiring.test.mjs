@@ -218,7 +218,7 @@ test('bridge code matches the reviewed release fingerprint outside the scoped re
   // Interim transcripts and weak acknowledgments cannot replace a committed Ava reply.
   // Bridge snapshots avoid deep copies and respect dashboard backpressure.
   assert.equal(createHash('sha256').update(unchanged).digest('hex'),
-    '6fe6299c18b79764f15369e0b5b0c00d723b5d41537533e925206531bb08b8b2');
+    'e6c4a79a55a137ddeaf4982fcbd8252d5278582ae5ae8e685c7e6c373e83276e');
 });
 
 test('production distribution includes reader and protocol, never the fixture signer', () => {

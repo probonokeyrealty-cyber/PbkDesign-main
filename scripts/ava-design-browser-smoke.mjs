@@ -203,7 +203,7 @@ async function verify(engine, viewport, device = {}) {
     await openContext.click();
     const context = page.getByRole('dialog', { name: 'Ava context' });
     await expect(context).toBeVisible();
-    await expect(context.getByRole('heading', { name: 'Recent ask' })).toBeVisible();
+    await expect(context.getByRole('heading', { name: 'Saved chat draft' })).toBeVisible();
     await context.getByRole('button', { name: 'Close Ava context' }).click();
     await expect(context).toBeHidden();
     await expect(openContext).toBeFocused();

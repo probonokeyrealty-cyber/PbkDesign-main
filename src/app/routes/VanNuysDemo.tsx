@@ -1,5 +1,6 @@
-import { ArrowDown, ArrowLeft, CheckCircle2, Download, ScanSearch, ShieldCheck, Workflow } from 'lucide-react';
-import { Link } from 'react-router';
+import { ArrowDown, CheckCircle2, Download, ScanSearch, ShieldCheck, Workflow } from 'lucide-react';
+import { useEffect } from 'react';
+import { useLocation } from 'react-router';
 import { SavedEvidenceMark } from '../components/SavedEvidenceMark';
 import receipt from '../../assets/van-nuys/receipt.json';
 import receiptJson from '../../assets/van-nuys/receipt.json?raw';
@@ -23,13 +24,19 @@ const agents = [
 ];
 
 export function VanNuysDemo() {
+  const { hash } = useLocation();
+  useEffect(() => {
+    if (hash === '#van-evidence-title' || hash === '#van-receipt-title') {
+      document.getElementById(hash.slice(1))?.scrollIntoView();
+    }
+  }, [hash]);
+
   return (
     <div className="pbk-van-nuys">
-      <Link to="/dialer#prospecting-list" className="pbk-van-back"><ArrowLeft size={18} aria-hidden="true" /> Back to Dialer</Link>
       <header className="pbk-van-brief">
         <div>
-          <p className="pbk-van-kicker pbk-van-seal"><SavedEvidenceMark size={18} /> Prospecting / Read-only demo</p>
-          <h1>Van Nuys evidence review</h1>
+          <p className="pbk-van-kicker pbk-van-seal"><SavedEvidenceMark size={18} /> Sample evidence</p>
+          <h2>Van Nuys evidence review</h2>
           <p>See why three listings were held and what Rex verified before Ava added them to the shortlist.</p>
           <p className="pbk-van-scope">Fictional listings. No live feed in this demo, no CRM writes, and no outreach.</p>
         </div>
@@ -72,7 +79,6 @@ export function VanNuysDemo() {
         <section className="pbk-van-receipt" aria-labelledby="van-receipt-title">
           <p className="pbk-van-kicker pbk-van-seal"><SavedEvidenceMark size={18} /> Saved fictional run</p>
           <h2 id="van-receipt-title" tabIndex={-1}>Run receipt</h2>
-          <p>Opening this page or downloading the receipt does not start a new run.</p>
           <p className="pbk-van-id"><span>Run ID</span><code>{receipt.run_id}</code></p>
           <div className="pbk-van-downloads" aria-label="Receipt downloads" role="group">
             {exports.map(([label, extension, href]) => (

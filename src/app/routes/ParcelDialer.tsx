@@ -255,8 +255,7 @@ export function ParcelDialer() {
       </header>
 
       <div className="pbk-dialer-reference">
-        <Link to="/dialer/van-nuys-demo"><SavedEvidenceMark size={18} /> View Van Nuys evidence demo</Link>
-        <span>Read-only reference. Nothing runs.</span>
+        <Link to="/prospecting"><SavedEvidenceMark size={18} /> Open Prospecting research</Link>
       </div>
 
       {coverage?.note && <p className="pbk-phone-note">{coverage.note}</p>}

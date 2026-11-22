@@ -33,12 +33,11 @@ html[data-theme='light'] .pbk-van-nuys {
 .pbk-van-nuys :is(h1, h2, h3, p, dl, dd, ol, ul) { margin: 0; }
 .pbk-van-nuys :is(ol, ul) { padding: 0; list-style: none; }
 .pbk-van-nuys :is(h1, h2, h3) { line-height: 1.2; color: var(--van-ink); font-weight: 700; }
-.pbk-van-nuys h1 { font-size: clamp(1.85rem, 4vw, 3.25rem); text-wrap: balance; }
+.pbk-van-nuys .pbk-van-brief h2 { font: 600 clamp(1.65rem, 3vw, 2.6rem)/1.1 var(--font-display); text-wrap: balance; }
 .pbk-van-nuys h2 { font-size: 1.45rem; }
 .pbk-van-nuys h3 { font-size: 1.125rem; }
 .pbk-van-nuys p { color: var(--van-muted); }
 .pbk-van-nuys :is(a, summary, h2):focus-visible { outline: 3px solid var(--van-sky); outline-offset: 3px; }
-.pbk-van-back { display: inline-flex; width: fit-content; gap: .5rem; align-items: center; min-height: 44px; color: var(--van-sky); text-decoration: underline; }
 .pbk-van-jump { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 0 1rem; }
 .pbk-van-jump a { display: inline-flex; align-items: center; gap: .35rem; min-height: 44px; color: var(--van-sky); font-weight: 600; text-decoration: underline; text-underline-offset: .2em; }
 .pbk-van-jump svg { flex: none; }

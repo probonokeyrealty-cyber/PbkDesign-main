@@ -20,6 +20,7 @@ const savedDatasets = [
 ];
 const sale = { id: 'sale-fixture', address: '86 Sample Cedar Drive, Example City, CA 90210', soldDate: '2026-11-12', price: 400000, distanceMiles: 0.5, beds: 3, baths: 2, sqft: 1600, pricePerSqft: 250, propertyType: 'Single family' };
 sale.photoEvidence = { source: 'apify-for-sale', address: sale.address, retrievedAt: captured, photoUrls: ['https://ap.rdcpix.com/comp-fixture-front.jpg'], sourceLinks: [] };
+const otherSale = { ...sale, id: 'other-sale', address: '59 Sample Fir Court, Example City, CA 90210', price: 520000, pricePerSqft: 325, photoEvidence: undefined };
 const alternateSales = [2,3,4].map(n => ({...sale,id:`sale-${n}`,address:`${86+n} Sample Cedar Drive, Example City, CA 90210`,price:400000+n*10000,photoEvidence:n===2?{...sale.photoEvidence,address:sale.address}:undefined}));
 const lead = { id: 'crm-evidence-fixture', leadId: 'crm-evidence-fixture', seller: { name: 'Fixture Seller' },
   property: { address: structuredAddress.street, city: structuredAddress.city, state: structuredAddress.state, zip: structuredAddress.zip, askingPrice: 450000, beds: 3, baths: 2, sqft: 1800, yearBuilt: 1995 },
@@ -41,8 +42,13 @@ async function verify(engine, config, label) {
   other.seller.name = 'Other Fixture Seller';
   other.deal.propertyRecordSnapshot.facts.apn = 'OTHER-LEAD-SAME-ADDRESS';
   other.deal.propertyRecordSnapshot.facts.livingSqft = 2100;
-  other.deal.propertyRecordSnapshot.sections = [projectAttomMcpSection('ownership', { names: ['Other lead owner only'] }, 'ok', captured)];
-  other.analyzer.recordedSales.sales = [{ ...sale, id: 'other-sale', price: 520000 }];
+  other.deal.propertyRecordSnapshot.sections = [
+    projectAttomMcpSection('ownership', { names: ['Other lead owner only'] }, 'ok', captured),
+    projectAttomMcpSection('valuation', { valuation: { value: 490000, estimatedDate: '2026-10-01' } }, 'ok', captured),
+  ];
+  other.analyzer.recordedSales = {
+    ...other.analyzer.recordedSales, review: 'operator-selected', selectedIds: [otherSale.id], sales: [otherSale],
+  };
   other.deal.listingSnapshot.photoUrls = [otherPhoto];
   let mode = 'success';
   let expectedRefreshLead = fixture;
@@ -270,6 +276,56 @@ async function verify(engine, config, label) {
     await expect(brief.getByText('1 reviewed selection', { exact: true })).toBeVisible();
     await expect(brief.getByText('1 saved photo', { exact: true })).toBeVisible();
     assert.equal(mutations.length, 2, 'Viewing updated brief must not save or refresh');
+    await page.getByRole('link', { name: 'Investor analysis', exact: true }).click();
+    const investor = workspace.getByRole('tabpanel', { name: 'Investor', exact: true });
+    await expect(page).toHaveURL(`${origin}/leads/${fixture.id}#lead-investor`);
+    await expect(investor.getByText('$375,000', { exact: true })).toBeVisible();
+    await expect(investor.getByText(sale.address, { exact: true })).toBeVisible();
+    await expect(investor.getByText('$410,000', { exact: true })).toBeVisible();
+    await expect(investor.getByText(otherSale.address, { exact: true })).toHaveCount(0);
+    await expect(investor.locator('.pbk-investor-hero img')).toHaveAttribute('src', photos[1]);
+    const strategy = investor.getByLabel('Choose a strategy');
+    await expect(strategy.locator('option')).toHaveCount(12);
+    await strategy.selectOption('wholesale');
+    await investor.getByLabel('Purchase price', { exact: true }).fill('100000');
+    await investor.getByLabel('Expected assignment fee').fill('5000');
+    await investor.getByLabel('Total assignment expenses').fill('6000');
+    await expect(investor.getByText('-$1,000', { exact: true })).toBeVisible();
+    await expect(investor.getByText('$105,000', { exact: true })).toBeVisible();
+    await investor.getByRole('button', { name: 'Open saved comps' }).click();
+    await expect(workspace.getByRole('tab', { name: 'Comps', exact: true })).toBeFocused();
+    await tab('Investor');
+    await expect(investor.getByText('-$1,000', { exact: true })).toBeVisible();
+    await noOverflow();
+    await investor.locator('.pbk-investor-hero').evaluate(hero => {
+      hero.style.scrollMarginTop = '116px';
+      hero.scrollIntoView({ block: 'start' });
+    });
+    await page.screenshot({ path: `output/lead-investor-${label}.png` });
+    await strategy.selectOption('owner-financing');
+    for (const [name, amount] of [
+      ['Purchase price', '150000'],
+      ['Monthly gross rent', '1600'],
+      ['Vacancy or revenue loss (%)', '0'],
+      ['Monthly operating expenses', '200'],
+      ['Monthly capital reserves', '50'],
+      ['Down payment to seller', '30000'],
+      ['Seller note interest rate (%)', '0'],
+      ['Seller note amortization (months)', '120'],
+      ['Months until balloon (0 for none)', '60'],
+    ]) await investor.getByLabel(name, { exact: true }).fill(amount);
+    await expect(investor.getByText('$60,000', { exact: true })).toBeVisible();
+    await expect(investor.locator('.pbk-investor-outcomes').getByText('$350', { exact: true })).toBeVisible();
+    await expect(investor.getByRole('region', { name: 'Scenario sensitivity' })).toBeVisible();
+    const openAnalyzer = investor.getByRole('link', { name: 'Open Analyzer' });
+    await expect(openAnalyzer).toHaveAttribute('href', `/deal/${fixture.id}#lead-investor`);
+    await openAnalyzer.click();
+    await expect(page).toHaveURL(`${origin}/deal/${fixture.id}#lead-investor`);
+    await page.getByRole('link', { name: 'Back to lead', exact: true }).click();
+    await expect(page).toHaveURL(`${origin}/leads/${fixture.id}#lead-investor`);
+    await expect(investor.getByText('$410,000', { exact: true })).toBeVisible();
+    assert.equal(mutations.length, 2, 'Investor examples and navigation must not write or refresh');
+    assert.deepEqual(providerReads, [], 'Investor views use saved evidence only');
     await tab('Comps');
     mode = 'failure';
     const beforeFailure = structuredClone(fixture);
@@ -283,14 +339,14 @@ async function verify(engine, config, label) {
     assert.deepEqual(fixture, beforeFailure, 'Partial failure retains snapshots, timestamps and reviewed comps');
     const beforeSwitch = mutations.length;
     await page.goto(origin + '/leads/' + other.id); await expect(workspace).toBeVisible();
-    await expect(brief.getByText('1 populated dataset', { exact: true })).toBeVisible();
+    await expect(brief.getByText('2 populated datasets', { exact: true })).toBeVisible();
     await expect(brief.getByText('1 saved sale candidate', { exact: true })).toBeVisible();
-    await expect(brief.getByText('0 reviewed selections', { exact: true })).toBeVisible();
+    await expect(brief.getByText('1 reviewed selection', { exact: true })).toBeVisible();
     await tab('Property record');
     await expect(workspace.getByRole('tabpanel', {name:'Property record',exact:true}).locator('dd').filter({hasText:/^OTHER-LEAD-SAME-ADDRESS$/})).toBeVisible();
     await expect(workspace.locator('.pbk-attom-rows').getByText('2,100 sq ft', { exact: true })).toBeVisible();
     await tab('Overview');
-    await brief.getByRole('button', { name: 'Compare saved comps', exact: true }).click();
+    await brief.getByRole('button', { name: 'Review comps', exact: true }).click();
     await expect(page).toHaveURL(`${origin}/leads/${other.id}`);
     await expect(workspace.getByRole('tab', { name: 'Comps', exact: true })).toHaveAttribute('aria-selected', 'true');
     await expect(workspace.locator('td[data-label="Price"]').filter({hasText:/^\$520,000$/})).toBeVisible();
@@ -300,6 +356,16 @@ async function verify(engine, config, label) {
     await otherDatasets.getByRole('searchbox',{name:'Search saved datasets',exact:true}).fill('Ownership');
     await expect(otherDatasets.getByText('Other lead owner only',{exact:true})).toBeVisible();
     await expect(otherDatasets.getByText('Owner fixture alpha',{exact:true})).toHaveCount(0);
+    await tab('Investor');
+    await expect(investor.getByLabel('Choose a strategy')).toHaveValue('fix-flip');
+    await expect(investor.getByLabel('Purchase price', { exact: true })).toHaveValue('');
+    await expect(investor.getByText('$490,000', { exact: true })).toBeVisible();
+    await expect(investor.getByText(otherSale.address, { exact: true })).toBeVisible();
+    await expect(investor.getByText('$520,000', { exact: true })).toBeVisible();
+    await expect(investor.getByText('$375,000', { exact: true })).toHaveCount(0);
+    await expect(investor.getByText('$410,000', { exact: true })).toHaveCount(0);
+    await expect(investor.locator('.pbk-investor-hero img')).toHaveAttribute('src', otherPhoto);
+    await noOverflow();
     assert.equal(mutations.length, beforeSwitch, 'Switching duplicate-address leads must not save');
 
     async function speak(command) {
@@ -388,7 +454,7 @@ async function verify(engine, config, label) {
     assert.equal(mutations.length, beforeSwitch + 1, 'Alias navigation must not refresh or save');
     assert.deepEqual(providerReads, [], 'Only explicit unified refresh may access providers');
     assert.deepEqual(unexpectedWrites, []); assert.deepEqual(errors, []); await noOverflow();
-    console.log(label + ': saved evidence shortcuts, exact-lead Ava voice commands and explicit refresh passed');
+    console.log(label + ': Investor scenarios, saved evidence shortcuts, exact-lead Ava voice commands and explicit refresh passed');
   } finally { await browser.close(); }
 }
 try {

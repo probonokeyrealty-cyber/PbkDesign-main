@@ -108,11 +108,17 @@ assert(
   ),
   'Approval webhook fanout must have a bounded timeout.'
 );
+const approvalNotificationTasks = bridge.match(
+  /^[ \t]*const \[fanout, slack\] = (?:notify \? )?await Promise\.all\(\[([\s\S]*?)^[ \t]*\]\)/m
+)?.[1] ?? '';
 assert(
-  /const \[fanout, slack\] = await Promise\.all\(\[[\s\S]*approval webhook fanout[\s\S]*postSlackApproval\(approval\)[\s\S]*approval Slack fanout/.test(
-    bridge
-  ),
-  'Approval creation must bound n8n and Slack fanout so UI actions do not time out.'
+  /^[ \t]*withTimeout\(\s*fireWebhook\(APPROVAL_WEBHOOK_URL, approval\),\s*3000,\s*'approval webhook fanout'\s*\)/m.test(
+    approvalNotificationTasks
+  ) &&
+    /^[ \t]*withTimeout\(\s*postSlackApproval\(approval\),\s*3500,\s*'approval Slack fanout'\s*\)/m.test(
+      approvalNotificationTasks
+    ),
+  'Approval creation must run n8n and Slack fanout concurrently with bounded timeouts when notifications are enabled.'
 );
 assert(
   /if \(sendingRef\.current \|\| !canSend\) return;/.test(composer) &&

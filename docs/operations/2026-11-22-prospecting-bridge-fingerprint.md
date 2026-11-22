@@ -49,8 +49,8 @@ revisions and had identical source.
 | `3dc70bad65f231505a44b425fe55c1d6380b0e4b` | 3,526,626 | `6ef984330d7b1aec19a8b81291ae4840303d3fb08b7ccf4d1c7dbc15bdfeffa6` |
 | `d4cc86c22e6222e4762a34fa2679dc72e2f7b477` | 3,529,357 | `8330fbb688a4d8567c2e6e2cd4aa2f8a111b1e2735ab1c3d7771dc5ae1360dcb` |
 
-The fix updates the expected digest and its comment. The bridge source,
-projection, and behavioral assertions retain their reviewed versions.
+The fingerprint change updates the expected digest and its comment. The
+bridge source and fingerprint projection retain their reviewed versions.
 
 ## Local verification
 
@@ -64,3 +64,18 @@ standard Node VM Modules warning remained enabled.
 - The release qualification, operational audit, and backlog reconciliation
   bridge smokes passed in serial isolated runs. The Render Docker import check
   also passed.
+
+## Approval smoke assertions
+
+The first Founder Verify on the refresh passed all 92 Jest suites, then
+stopped at the Manual UX Gap smoke. Its source matcher expected unconditional
+approval notifications. The Postgres No Fallback smoke also failed locally
+because its method locator expected the old single-parameter signature.
+[First CI run](https://github.com/probonokeyrealty-cyber/PbkDesign-main/actions/runs/45074850331)
+
+The independently reviewed smoke updates locate the existing approval handler
+and check the concurrent n8n and Slack notification calls with their
+3,000 ms and 3,500 ms timeouts. The Postgres smoke still requires the durable
+approval row write before the state snapshot. Both smokes passed locally.
+In-memory variants confirmed the tests still reject changed timeouts, loss of
+concurrent execution, and omission of the durable write.

@@ -57,7 +57,7 @@ assert(
     /postgres:approvals\+bridge-state/.test(bridge),
   'Approval board create/read paths must use normalized Postgres approval rows instead of relying only on the large bridge_state snapshot.'
 );
-const createApprovalStart = bridge.indexOf('async createApproval(params = {})');
+const createApprovalStart = bridge.indexOf('\n  async createApproval(');
 const createApprovalEnd = bridge.indexOf('\n\n  async createApprovalTask', createApprovalStart);
 assert(createApprovalStart >= 0 && createApprovalEnd > createApprovalStart, 'createApproval handler must be present.');
 const createApprovalSource = bridge.slice(createApprovalStart, createApprovalEnd);

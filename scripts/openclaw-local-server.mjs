@@ -73481,8 +73481,10 @@ function getPhoneDialerRouter() {
     prepareProspectingBrief: createProspectingBrief({
       prioritize: getDeepSeekProviderMeta().ready ? async (input, deadlineAt) => {
         const response = await runDeepSeekChatCompletion(prospectingOrderMessages(input), {
-          responseFormat: 'json', thinkingMode: 'enabled', deadlineAt, speculative: false, source: 'parcel-prospecting',
+          model: getDeepSeekProviderMeta().liveModel, responseFormat: 'json', thinkingMode: 'disabled',
+          deadlineAt, speculative: false, source: 'parcel-prospecting',
         });
+        if (!response.ok) console.warn('[parcel-prospecting] DeepSeek ranking unavailable:', response.result);
         return response.ok ? response.answer : '';
       } : undefined,
       review: createClaudeProspectingReview({

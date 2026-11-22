@@ -2,7 +2,13 @@ import { lazy, Suspense, useCallback, useState, type FormEvent } from 'react';
 import { Link } from 'react-router';
 import { bridgeRequest } from '../../utils/runtimeBridge';
 import { mapboxPublicToken } from '../../utils/mapboxConfig';
-import { matchProspectingParcel, type ProspectingMatch as Match, type ProspectingParcel as Parcel } from '../../utils/prospectingParcelApi';
+import {
+  matchProspectingParcel,
+  requestProspectingParcelApproval,
+  saveApprovedProspectingParcel,
+  type ProspectingMatch as Match,
+  type ProspectingParcel as Parcel,
+} from '../../utils/prospectingParcelApi';
 
 const ProspectingMap = lazy(() => import('./ProspectingMap'));
 
@@ -15,13 +21,6 @@ type SearchResult = {
 };
 
 type Review = { parcelId: string; match: Match; approvalId?: string; savedLeadId?: string };
-
-function request<T>(
-  action: 'search' | 'approval' | 'save',
-  body: Record<string, unknown>
-) {
-  return bridgeRequest<T>({ method: 'POST', path: `/api/prospecting/parcels/${action}`, body });
-}
 
 export function FindProperties() {
   const [minimum, setMinimum] = useState('');
@@ -56,7 +55,13 @@ export function FindProperties() {
       setResult(null);
       setReview(null);
       setSelectedPin(null);
-      setResult(await request<SearchResult>('search', { minSqft: Number(minimum), singleFamily }));
+      setResult(
+        await bridgeRequest<SearchResult>({
+          method: 'POST',
+          path: '/api/prospecting/parcels/search',
+          body: { minSqft: Number(minimum), singleFamily },
+        })
+      );
     });
   }
 
@@ -70,9 +75,7 @@ export function FindProperties() {
 
   function queueApproval(current: Review) {
     void run('Requesting approval…', async () => {
-      const response = await request<{ approvalId?: string; match?: Match }>('approval', {
-        parcelId: current.parcelId,
-      });
+      const response = await requestProspectingParcelApproval(current.parcelId);
       setReview({
         ...current,
         match: response.match || current.match,
@@ -82,11 +85,10 @@ export function FindProperties() {
   }
 
   function save(current: Review) {
+    const approvalId = current.approvalId;
+    if (!approvalId) return;
     void run('Checking approval and saving…', async () => {
-      const response = await request<{ leadId: string }>('save', {
-        parcelId: current.parcelId,
-        approvalId: current.approvalId,
-      });
+      const response = await saveApprovedProspectingParcel(current.parcelId, approvalId);
       setReview({ ...current, savedLeadId: response.leadId });
     });
   }
@@ -205,8 +207,10 @@ export function FindProperties() {
                         .filter(Boolean)
                         .join(' · ')}
                     </p>
-                    <Link to={'/dialer?vanNuysParcel=' + encodeURIComponent(parcel.parcelId)}
-                      aria-label={'Open in Mapbox Dialer, ' + parcel.line1}>
+                    <Link
+                      to={'/dialer?vanNuysParcel=' + encodeURIComponent(parcel.parcelId)}
+                      aria-label={'Open in Mapbox Dialer, ' + parcel.line1}
+                    >
                       Open in Mapbox Dialer
                     </Link>
                     {!selected && (

@@ -189,6 +189,14 @@ html[data-theme='light'] .pbk-dialer-surface { background: var(--bg-void); color
 .pbk-parcel-facts > div { min-width: 0; padding: 8px 10px; border: 1px solid var(--border-dim); border-radius: var(--radius); }
 .pbk-parcel-facts dt { color: var(--text-secondary); font-size: 11px; }
 .pbk-parcel-lead-dialog .pbk-dialer-kv dd { overflow-wrap: anywhere; }
+.pbk-van-nuys-lead-dialog[data-slot='dialog-content'] {
+  background: var(--bg-panel);
+  color: var(--text-primary);
+  border-color: var(--border);
+  max-height: calc(100dvh - 2rem);
+  overflow-y: auto;
+}
+.pbk-van-nuys-lead-dialog [data-slot='dialog-description'] { color: var(--text-secondary); }
 .pbk-parcel-quick-view [role="status"] a { color: var(--sky); text-decoration: underline; }
 .pbk-parcel-facts dd { margin: 4px 0 0; color: var(--text-primary); font: 12px var(--font-mono); overflow-wrap: anywhere; }
 .pbk-virtual-phone { scroll-margin-top: 85px; }

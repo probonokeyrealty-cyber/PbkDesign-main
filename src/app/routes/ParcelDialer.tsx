@@ -5,7 +5,7 @@ import { ParcelProspectingBrief } from '../components/ParcelProspectingBrief';
 import { ParcelProspectingList } from '../components/ParcelProspectingList';
 import { SavedEvidenceMark } from '../components/SavedEvidenceMark';
 import { mapboxPublicToken } from '../utils/mapboxConfig';
-import { matchProspectingParcel } from '../utils/prospectingParcelApi';
+import { matchProspectingParcel, requestProspectingParcelApproval, saveApprovedProspectingParcel, type ProspectingMatch, type ProspectingParcel } from '../utils/prospectingParcelApi';
 import { parcelProspect, prospectLimit, readParcelProspects, saveParcelProspects, type ParcelProspect } from '../utils/parcelProspecting';
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogTitle, DialogTrigger } from '../components/ui/dialog';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs';
@@ -62,6 +62,131 @@ export function ParcelDialer() {
 }
 
 const emptyParcels: ParcelFeature[] = [];
+
+function VanNuysCreateLead({
+  parcel,
+  onMatch,
+}: {
+  parcel: ProspectingParcel;
+  onMatch: (match: ProspectingMatch) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [approvalId, setApprovalId] = useState('');
+  const [busy, setBusy] = useState<'approval' | 'save' | null>(null);
+  const [error, setError] = useState('');
+
+  async function submit(action: 'approval' | 'save') {
+    if (busy) return;
+    setBusy(action);
+    setError('');
+    try {
+      if (action === 'approval') {
+        const response = await requestProspectingParcelApproval(parcel.parcelId);
+        if (response.match) {
+          onMatch(response.match);
+        } else if (response.approvalId) {
+          setApprovalId(response.approvalId);
+        } else {
+          throw new Error('The lead approval could not be recorded.');
+        }
+      } else {
+        const { leadId } = await saveApprovedProspectingParcel(parcel.parcelId, approvalId);
+        if (!leadId) throw new Error('The CRM did not confirm the saved lead.');
+        onMatch({ status: 'matched', leadId });
+      }
+    } catch (reason) {
+      setError(errorText(reason));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  return (
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        if (busy) return;
+        setOpen(next);
+        setError('');
+      }}
+    >
+      <div>
+        <DialogTrigger asChild>
+          <button type="button" className="pbk-btn pbk-btn-primary pbk-btn-sm">
+            <Plus size={14} aria-hidden="true" /> Create lead
+          </button>
+        </DialogTrigger>
+      </div>
+      <DialogContent
+        className="pbk-parcel-lead-dialog pbk-van-nuys-lead-dialog"
+        onEscapeKeyDown={(event) => {
+          if (busy) event.preventDefault();
+        }}
+      >
+        <DialogTitle>Create lead from parcel</DialogTitle>
+        <DialogDescription>
+          Review the verified property details before requesting approval. Seller contact fields
+          will be blank.
+        </DialogDescription>
+        <dl className="pbk-dialer-kv">
+          <dt>Address</dt>
+          <dd>
+            {parcel.line1}, {parcel.city}, CA {parcel.zip}
+          </dd>
+          <dt>Parcel ID</dt>
+          <dd>{parcel.parcelId}</dd>
+          <dt>County</dt>
+          <dd>Los Angeles</dd>
+        </dl>
+        {approvalId && (
+          <p role="status">
+            Approval requested.{' '}
+            <Link to="/inbox" target="_blank" rel="noopener" className="underline">
+              Review in Inbox
+            </Link>
+            , then return to save the approved lead.
+          </p>
+        )}
+        {error && (
+          <p className="pbk-phone-error" role="alert">
+            {error}
+          </p>
+        )}
+        <DialogFooter>
+          <DialogClose asChild>
+            <button type="button" className="pbk-btn pbk-btn-ghost" disabled={Boolean(busy)}>
+              Close
+            </button>
+          </DialogClose>
+          {approvalId && error && (
+            <button
+              type="button"
+              className="pbk-btn pbk-btn-ghost"
+              disabled={Boolean(busy)}
+              onClick={() => void submit('approval')}
+            >
+              Request lead approval again
+            </button>
+          )}
+          <button
+            type="button"
+            className="pbk-btn pbk-btn-primary"
+            disabled={Boolean(busy)}
+            onClick={() => void submit(approvalId ? 'save' : 'approval')}
+          >
+            {busy === 'save'
+              ? 'Checking approval and saving…'
+              : busy === 'approval'
+                ? 'Requesting approval…'
+                : approvalId
+                  ? 'Save approved lead'
+                  : 'Request lead approval'}
+          </button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
 
 function VanNuysParcelDialer({ parcelId }: { parcelId: string }) {
   const validId = /^\d{10}$/.test(parcelId);
@@ -143,6 +268,12 @@ function VanNuysParcelDialer({ parcelId }: { parcelId: string }) {
                 <div><dt>Building area</dt><dd>{parcel.sqft ? parcel.sqft.toLocaleString() + ' sq ft' : 'Unavailable'}</dd></div>
               </dl>
               {leadId && <Link className="pbk-btn pbk-btn-ghost" to={'/leads/' + encodeURIComponent(leadId)}>Open matching lead</Link>}
+              {status === 'no_match' && (
+                <VanNuysCreateLead parcel={parcel} onMatch={(match) => {
+                  setResult((current) => current && { ...current, match });
+                  requestAnimationFrame(showProperty);
+                }} />
+              )}
             </div>
           </section>
         </div>

@@ -221,6 +221,7 @@ export function LeadPortal() {
     const canonicalId = String(canonical.leadId || canonical.id || '').trim();
     if (canonicalId !== savedLeadId) throw new Error('The bridge returned a different lead. Reopen this workspace to reload.');
     setLeadPayload(response);
+    return canonical;
   };
 
   useEffect(() => {

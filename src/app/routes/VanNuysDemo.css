@@ -83,10 +83,16 @@ html[data-theme='light'] .pbk-van-nuys {
 .pbk-van-attempts time { font-variant-numeric: tabular-nums; }
 
 .pbk-van-receipt { padding: 1rem; }
-.pbk-van-id { display: grid; gap: .2rem; padding: .55rem .65rem; border-radius: .35rem; background: var(--van-deep); }
+.pbk-van-id { display: grid; grid-template-columns: minmax(0, 1fr); gap: .25rem; padding: .65rem .75rem; border-radius: .35rem; background: var(--van-deep); }
 .pbk-van-id span { font-weight: 700; }
-.pbk-van-id code { color: var(--van-sky); overflow-wrap: anywhere; font-size: .9375rem; }
-.pbk-van-downloads { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .5rem; margin: .2rem 0 .55rem; }
+.pbk-van-id code {
+  color: var(--van-sky);
+  font: 500 1rem/1.5 var(--font-mono, monospace);
+  white-space: normal;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+.pbk-van-downloads { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .625rem; margin: .2rem 0 .55rem; }
 .pbk-van-downloads a { display: flex; gap: .45rem; align-items: center; justify-content: center; min-height: 44px; border: 1px solid var(--van-line); border-radius: .35rem; color: var(--van-ink); text-decoration: none; background: var(--van-deep); }
 .pbk-van-downloads a:hover { border-color: var(--van-sky); color: var(--van-sky); }
 .pbk-van-fits li { display: flex; align-items: flex-start; gap: .55rem; border-top: 1px solid var(--van-line); padding-top: .55rem; }
@@ -97,4 +103,5 @@ html[data-theme='light'] .pbk-van-nuys {
 }
 @media (max-width: 36rem) {
   .pbk-van-handoff { grid-template-columns: minmax(0, 1fr); }
+  .pbk-van-downloads a { min-height: 48px; }
 }

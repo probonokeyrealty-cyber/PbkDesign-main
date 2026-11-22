@@ -37424,7 +37424,9 @@ async function persistLeadProfileRowToDb(lead = {}, source = 'property-data', { 
        lead_commit_envelope = EXCLUDED.lead_commit_envelope,
        field_provenance = EXCLUDED.field_provenance,
        projection_proof = EXCLUDED.projection_proof,
-       raw = EXCLUDED.raw,
+       raw = CASE WHEN lead_profiles.raw #> '{deal,investorDecisionScenarios}' IS NULL THEN EXCLUDED.raw
+         ELSE jsonb_set(EXCLUDED.raw, '{deal}', COALESCE(NULLIF(EXCLUDED.raw->'deal', 'null'::jsonb), '{}'::jsonb)
+           || jsonb_build_object('investorDecisionScenarios', lead_profiles.raw #> '{deal,investorDecisionScenarios}')) END,
        updated_at = NOW()`}`,
     [
       leadId,
@@ -61025,30 +61027,76 @@ async function loadExactPropertyLead(leadId) {
 
 const investorScenarioSaves = new Map();
 
+function loadExactLeadProfile(leadId) {
+  return queryPgRows(
+    "SELECT id, raw, source, status, stage, phone, address, lead_name, city, state, postal_code FROM public.lead_profiles WHERE COALESCE(workspace_id, 'pbk') = 'pbk' AND id = $1",
+    [leadId]
+  );
+}
+
 async function saveInvestorDecisionScenario(leadId, address, input) {
   const scenario = normalizeDecisionScenario(input, isoNow());
   if (!scenario || !address) return { status: 400, error: 'Enter a scenario name and valid inputs.' };
   const prior = investorScenarioSaves.get(leadId) || Promise.resolve();
   const save = prior.catch(() => {}).then(async () => {
-    const existing = await loadExactPropertyLead(leadId);
+    const unavailable = { status: 503, error: 'The scenario could not be saved. Retry shortly.' };
+    const hotLead = () => (state.leadImports || []).find(item => (item.leadId || item.id) === leadId);
+    let profile = DATABASE_URL ? await loadExactLeadProfile(leadId) : null;
+    if (profile && !profile.ok) return unavailable;
+    let row = profile?.rows[0];
+    const existing = row ? parcelLeadFromProfileRow(row) : hotLead();
     if (!existing) return { status: 404, error: 'Lead not found.' };
-    const p = existing.property || {};
-    if (!sameAttomAddress(address, {
-      street: p.address || existing.address, city: p.city || existing.city,
-      state: p.state || existing.state, zip: p.zip || p.zipCode || existing.zip || existing.zipCode,
-    })) return { status: 409, error: 'The lead property changed. Reopen the lead before saving.' };
-
-    const current = readDecisionScenarios(existing.deal?.investorDecisionScenarios);
+    const addressMatches = (lead) => {
+      const p = lead.property || {};
+      return sameAttomAddress(address, {
+        street: p.address || lead.address, city: p.city || lead.city,
+        state: p.state || lead.state, zip: p.zip || p.zipCode || lead.zip || lead.zipCode,
+      });
+    };
+    const changed = { status: 409, error: 'The lead property changed. Reopen the lead before saving.' };
+    if (!addressMatches(existing)) return changed;
+    if (DATABASE_URL && !row) {
+      const inserted = await persistLeadProfileRowToDb({ ...existing }, existing.source || 'lead-investor-scenario', {
+        exactIdentity: true, insertOnly: true,
+      });
+      if (!inserted.ok) return unavailable;
+      profile = await loadExactLeadProfile(leadId);
+      row = profile.rows[0];
+      if (!profile.ok || !row) return unavailable;
+      if (!addressMatches(parcelLeadFromProfileRow(row))) return changed;
+    }
+    const current = readDecisionScenarios((row ? row.raw?.deal : existing.deal)?.investorDecisionScenarios);
     const next = addDecisionScenario(current, scenario);
     if (!next) return { status: 409, error: 'This lead has reached its saved scenario limit.' };
-    const updated = next === current ? existing : patchLeadImport(state, { leadId }, {
-      deal: { ...(existing.deal || {}), investorDecisionScenarios: next },
-    });
-    if (!updated) return { status: 404, error: 'Lead not found.' };
-    const persisted = await persistLeadProfileRowToDb(updated, updated.source || 'lead-investor-scenario', { exactIdentity: true });
-    if (DATABASE_URL && !persisted.ok) return { status: 503, error: 'The scenario could not be saved. Retry shortly.' };
-    await persistState(state);
-    return { status: 200, scenario: next.find((item) => item.id === scenario.id) };
+    const result = { status: 200, scenario: next.find((item) => item.id === scenario.id) };
+    if (row && next !== current) {
+      const persisted = await queryPgRows(
+        `UPDATE public.lead_profiles
+           SET raw = jsonb_set(COALESCE(raw, '{}'::jsonb), '{deal}',
+                 COALESCE(NULLIF(raw->'deal', 'null'::jsonb), '{}'::jsonb) || jsonb_build_object('investorDecisionScenarios', $2::jsonb)),
+               updated_at = NOW()
+         WHERE COALESCE(workspace_id, 'pbk') = 'pbk' AND id = $1
+           AND raw IS NOT DISTINCT FROM $3::jsonb
+           AND (address, city, state, postal_code) IS NOT DISTINCT FROM ($4, $5, $6, $7)
+         RETURNING id`,
+        [leadId, JSON.stringify(next), row.raw == null ? null : JSON.stringify(row.raw), row.address, row.city, row.state, row.postal_code]
+      );
+      if (!persisted.ok) return unavailable;
+      if (!persisted.rows.length) return { status: 409, error: 'The lead changed while saving. Reopen it before trying again.' };
+    }
+    const hot = hotLead();
+    if (hot && addressMatches(hot) && JSON.stringify(hot.deal?.investorDecisionScenarios) !== JSON.stringify(next)) {
+      const updated = { ...hot, deal: { ...(hot.deal || {}), investorDecisionScenarios: next } };
+      state.leadImports[state.leadImports.indexOf(hot)] = updated;
+      try {
+        await persistState(state);
+      } catch {
+        const index = state.leadImports.indexOf(updated);
+        if (!row && index >= 0) state.leadImports[index] = hot;
+        if (!row) return unavailable;
+      }
+    }
+    return result;
   });
   investorScenarioSaves.set(leadId, save);
   try {
@@ -81772,10 +81820,7 @@ const server = createServer(async (request, response) => {
       }
       let exactLead = (state.leadImports || []).find((item) => (item.leadId || item.id) === leadId);
       if (!exactLead && (IS_HOSTED || getPgPool())) {
-        const profile = await queryPgRows(
-          "SELECT id, raw, source, status, stage, phone, address, lead_name, city, state, postal_code FROM public.lead_profiles WHERE COALESCE(workspace_id, 'pbk') = 'pbk' AND id = $1",
-          [leadId]
-        );
+        const profile = await loadExactLeadProfile(leadId);
         if (!profile.ok) {
           json(response, 503, { ok: false, code: 'lead_roster_unavailable', error: 'The saved lead record is unavailable. Try again shortly.' });
           return;
@@ -81946,6 +81991,10 @@ const server = createServer(async (request, response) => {
         body.deal && typeof body.deal === 'object' && !Array.isArray(body.deal)
           ? body.deal
           : {};
+      if (Object.hasOwn(dealPatch, 'investorDecisionScenarios')) {
+        json(response, 400, { ok: false, error: 'Save scenarios through the Investor tab.' });
+        return;
+      }
       const agentDealContextPatch =
         body.agentDealContext &&
         typeof body.agentDealContext === 'object' &&

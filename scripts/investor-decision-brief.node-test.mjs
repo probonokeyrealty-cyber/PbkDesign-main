@@ -1,11 +1,16 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
+import vm from 'node:vm';
+import { PGlite } from '@electric-sql/pglite';
+import ts from 'typescript';
 import { startIsolatedBridge } from './bridge-smoke-isolation.mjs';
 import {
   calculateFlipDecision,
   decisionEvidenceVersion,
   normalizeDecisionScenario,
   addDecisionScenario,
+  readDecisionScenarios,
 } from '../src/app/utils/investorDecisionBrief.mjs';
 
 const inputs = {
@@ -118,6 +123,7 @@ test('the bridge saves to the exact lead and preserves concurrent versions and o
         investorDecisionScenario: scenario,
       });
     assert.equal((await save(draft, { ...address, street: '27 PBK Test Lane' })).status, 409);
+    assert.equal((await request(path, 'PATCH', { deal: { investorDecisionScenarios: [draft] } })).status, 400);
     const alternate = {
       ...draft,
       id: '7b7d6c8b-7333-413f-8213-40cf530988bd',
@@ -139,5 +145,62 @@ test('the bridge saves to the exact lead and preserves concurrent versions and o
     assert.equal(other.deal?.investorDecisionScenarios, undefined);
   } finally {
     await bridge.stop();
+  }
+});
+
+test('the production save path can write to a cold profile without changing another lead or other profile fields', async () => {
+  const source = ts.createSourceFile('bridge.mjs', readFileSync(new URL('./openclaw-local-server.mjs', import.meta.url), 'utf8'), ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
+  const functions = new Set(['loadExactLeadProfile', 'parcelLeadFromProfileRow', 'saveInvestorDecisionScenario']);
+  const statements = source.statements.filter((statement) =>
+    ts.isFunctionDeclaration(statement) && functions.has(statement.name?.text) ||
+    ts.isVariableStatement(statement) && statement.declarationList.declarations.some((d) => d.name.getText(source) === 'investorScenarioSaves')
+  );
+  assert.equal(statements.length, 4);
+  const address = { street: '26 PBK Test Lane', city: 'Orlando', state: 'FL', zip: '32801' };
+  const db = new PGlite();
+  const state = { leadImports: [] };
+  const getRows = async () => (await db.query('SELECT id, phone, raw FROM lead_profiles ORDER BY id')).rows;
+  let failWrite = false;
+  let writes = 0;
+  const context = vm.createContext({
+    state, address, draft, DATABASE_URL: 'embedded-fixture',
+    normalizeDecisionScenario, addDecisionScenario, readDecisionScenarios,
+    isoNow: () => '2026-11-22T01:00:00.000Z',
+    plainRecord: (value) => value ?? {},
+    sameAttomAddress: (a, b) => ['street', 'city', 'state', 'zip'].every((key) => a[key] === b[key]),
+    queryPgRows: async (sql, params) => {
+      if (sql.startsWith('UPDATE')) {
+        writes += 1;
+        if (failWrite) return { ok: false, rows: [] };
+      }
+      return { ok: true, ...(await db.query(sql, params)) };
+    },
+  });
+  try {
+    await db.exec(`CREATE TABLE lead_profiles(id text PRIMARY KEY, workspace_id text, source text,
+      status text, stage text, phone text, address text, lead_name text, city text, state text,
+      postal_code text, raw jsonb, updated_at timestamptz);
+      INSERT INTO lead_profiles(id, workspace_id, phone, address, city, state, postal_code, raw) VALUES
+        ('exact', 'pbk', '5550101', '26 PBK Test Lane', 'Orlando', 'FL', '32801', '{"deal":{"mao":171000},"other":true}'),
+        ('other', 'pbk', '5550102', '26 PBK Test Lane', 'Orlando', 'FL', '32801', '{"deal":{"mao":172000}}');`);
+    vm.runInContext(statements.map((statement) => statement.getText(source)).join('\n'), context);
+    const save = () => vm.runInContext('saveInvestorDecisionScenario("exact", address, draft)', context);
+    const before = await getRows();
+    failWrite = true;
+    assert.equal((await save()).status, 503);
+    assert.deepEqual(await getRows(), before);
+    assert.equal(state.leadImports.length, 0);
+    failWrite = false;
+    assert.equal((await save()).status, 200);
+    assert.equal((await save()).status, 200);
+    assert.equal(writes, 2, 'replaying a successful save does not write again');
+    const after = await getRows();
+    assert.deepEqual(after[1], before[1]);
+    assert.equal(after[0].phone, before[0].phone);
+    assert.deepEqual(after[0].raw, {
+      ...before[0].raw, deal: { ...before[0].raw.deal, investorDecisionScenarios: [normalize(draft)] },
+    });
+  } finally {
+    await db.close();
   }
 });

@@ -799,6 +799,7 @@ export function LeadPortal() {
               ['Property record', '#lead-record'],
               ['Saved comps', '#lead-comps'],
               ['Property photos', '#lead-photos'],
+              ['Investor analysis', '#lead-investor'],
             ].map(([label, hash]) => (
               <Link
                 key={hash}

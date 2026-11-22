@@ -26,6 +26,7 @@ const VALID_SHELL_PATHS = new Set([
   '/command-center',
   '/dashboard',
   '/leads',
+  '/prospecting',
   '/deal',
   '/deals',
   '/deals/analyzer',

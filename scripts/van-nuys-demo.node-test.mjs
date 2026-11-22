@@ -8,10 +8,15 @@ const file = (path) => new URL('../' + path, import.meta.url);
 const read = (path) => readFileSync(file(path), 'utf8');
 const receipt = 'src/assets/van-nuys/receipt';
 
-test('Van Nuys is a staff-shell page linked from the existing Dialer', () => {
-  assert.match(read('src/app/shell/router.tsx'), /path: 'dialer\/van-nuys-demo', element: <VanNuysDemo \/>/);
-  assert.match(read('src/app/routes/ParcelDialer.tsx'), /to="\/dialer\/van-nuys-demo"/);
-  assert.match(read('netlify.toml'), /from = "\/dialer\/van-nuys-demo"\r?\nto = "\/index.shell.html"\r?\nstatus = 200/);
+test('Prospecting is a top-level staff tab with the Van Nuys evidence available from old and new links', () => {
+  assert.match(read('src/app/shell/Sidebar.tsx'), /to: '\/prospecting', label: 'Prospecting'/);
+  const router = read('src/app/shell/router.tsx');
+  assert.match(router, /path: 'prospecting', element: <Prospecting \/>/);
+  assert.match(router, /path: 'dialer\/van-nuys-demo', element: <Navigate to="\/prospecting\?view=evidence" replace \/>/);
+  assert.match(read('src/app/routes/ParcelDialer.tsx'), /to="\/prospecting"/);
+  const config = read('netlify.toml');
+  assert.match(config, /from = "\/prospecting"\r?\nto = "\/index.shell.html"\r?\nstatus = 200/);
+  assert.match(config, /from = "\/dialer\/van-nuys-demo"\r?\nto = "\/index.shell.html"\r?\nstatus = 200/);
 });
 
 test('every export preserves the run ID and Rex-verified shortlist from staging', async () => {

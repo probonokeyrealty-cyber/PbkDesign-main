@@ -232,6 +232,12 @@ timeout = 15
     Cache-Control = "no-cache, must-revalidate"
 
 [[headers]]
+  for = "/prospecting"
+  [headers.values]
+    Cache-Control = "no-cache, must-revalidate"
+    X-Robots-Tag = "noindex, nofollow"
+
+[[headers]]
   for = "/dialer/van-nuys-demo"
   [headers.values]
     Cache-Control = "no-cache, must-revalidate"
@@ -414,6 +420,12 @@ force = true
 
 [[redirects]]
 from = "/dialer"
+to = "/index.shell.html"
+status = 200
+force = true
+
+[[redirects]]
+from = "/prospecting"
 to = "/index.shell.html"
 status = 200
 force = true

@@ -1,5 +1,5 @@
 import { lazy } from 'react';
-import { createBrowserRouter, RouterProvider } from 'react-router';
+import { createBrowserRouter, Navigate, RouterProvider } from 'react-router';
 import { ParadiseLayout } from './ParadiseLayout';
 import { NotFound } from '../routes/NotFound';
 import { loadCurrentRoute } from '../utils/deployVersion';
@@ -40,7 +40,11 @@ const Settings = lazy(() =>
     default: module.Settings,
   }))
 );
-const PropertyLog = lazy(() => loadCurrentRoute(() => import('../routes/PropertyLog')).then(module=>({default:module.PropertyLog})));
+const PropertyLog = lazy(() =>
+  loadCurrentRoute(() => import('../routes/PropertyLog')).then((module) => ({
+    default: module.PropertyLog,
+  }))
+);
 const AgentFleet = lazy(() =>
   loadCurrentRoute(() => import('../routes/AgentFleet')).then((module) => ({
     default: module.AgentFleet,
@@ -71,9 +75,9 @@ const ParcelDialer = lazy(() =>
     default: module.ParcelDialer,
   }))
 );
-const VanNuysDemo = lazy(() =>
-  loadCurrentRoute(() => import('../routes/VanNuysDemo')).then((module) => ({
-    default: module.VanNuysDemo,
+const Prospecting = lazy(() =>
+  loadCurrentRoute(() => import('../routes/Prospecting')).then((module) => ({
+    default: module.Prospecting,
   }))
 );
 const AvaChat = lazy(() =>
@@ -117,7 +121,11 @@ const router = createBrowserRouter(
         { path: 'analytics', element: <Analytics /> },
         { path: 'campaigns', element: <Campaigns /> },
         { path: 'dialer', element: <ParcelDialer /> },
-        { path: 'dialer/van-nuys-demo', element: <VanNuysDemo /> },
+        { path: 'prospecting', element: <Prospecting /> },
+        {
+          path: 'dialer/van-nuys-demo',
+          element: <Navigate to="/prospecting?view=evidence" replace />,
+        },
         { path: 'agent', element: <AvaChat /> },
         { path: 'agent-console', element: <AvaChat /> },
         { path: 'ava-chat', element: <AvaChat /> },

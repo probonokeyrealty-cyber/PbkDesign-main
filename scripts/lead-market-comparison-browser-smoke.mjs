@@ -1,0 +1,152 @@
+import assert from 'node:assert/strict';
+import { existsSync, readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+import { chromium, expect } from '@playwright/test';
+import { preview } from 'vite';
+
+const outDir = resolve(process.env.PBK_MARKET_TEST_OUT_DIR || 'dist');
+const shell = readFileSync(resolve(outDir, 'index.shell.html'), 'utf8');
+const qaEntry = resolve(outDir, 'market-comparison-qa.html');
+const { portalEnvironment } = JSON.parse(readFileSync(resolve(outDir, 'pbk-build-manifest.json'), 'utf8'));
+assert.equal(portalEnvironment, 'live');
+assert.equal(existsSync(qaEntry), false, 'The offline QA page must not be shipped.');
+process.env.PBK_DEV_BRIDGE_URL = 'http://127.0.0.1:1';
+const server = await preview({ build: { outDir }, preview: { host: '127.0.0.1', port: 0 } });
+const origin = `http://127.0.0.1:${server.httpServer.address().port}`;
+const captured = '2026-11-17T12:00:00Z';
+
+function lead(id, { zip = '90210', price = 640000, listingAddress, observed = captured, type = 'Single family', listingBeds = 3 } = {}) {
+  const address = `24 Sample Oak Lane, Example City, CA ${zip}`;
+  return {
+    id, leadId: id, seller: { name: 'Fictional Market QA' },
+    property: { address: '24 Sample Oak Lane', city: 'Example City', state: 'CA', zip, askingPrice: 999999, beds: 8, sqft: 2000, propertyType: type },
+    deal: {
+      listingSnapshot: { source: 'apify-for-sale', address: listingAddress ?? address, retrievedAt: observed, askingPrice: price, facts: { beds: listingBeds, sqft: 1600, dom: 34 } },
+      propertyRecordSnapshot: { source: 'attom', address, retrievedAt: captured, facts: { address, apn: 'FICTIONAL-PARCEL', propertyType: type, livingSqft: 1700, recordedSaleAmount: 470000, recordedSaleDate: '2020-06-12' } },
+    },
+  };
+}
+const fixtures = [
+  lead('market-comparison-fit'),
+  lead('market-comparison-other-zip', { zip: '91401', price: 555000 }),
+  lead('market-comparison-wrong-property', { listingAddress: '99 Other Road, Example City, CA 90210', price: 880000 }),
+  lead('market-comparison-old', { observed: '2025-11-17T12:00:00Z', price: 590000 }),
+  lead('market-comparison-condo', { type: 'Condominium' }),
+  lead('market-comparison-other-beds', { listingBeds: 2 }),
+];
+
+let browser;
+try {
+  browser = await chromium.launch({ channel: 'chrome' });
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, serviceWorkers: 'block' });
+  const forbidden = [];
+  await page.addInitScript(() => {
+    const config = { endpoint: location.origin, apiKey: 'local-fixture' };
+    localStorage.setItem('pbk:local:openclaw-config', JSON.stringify(config));
+    localStorage.setItem('pbk:prefs:v1', JSON.stringify({ theme: 'dark', tourCompleted: true }));
+    window.PBK = { openclaw: { getConfig: () => config } };
+  });
+  await page.routeWebSocket('**/*', socket => socket.close());
+  await page.route('**/*', async route => {
+    const request = route.request();
+    const url = new URL(request.url());
+    const bridgePath = url.searchParams.get('path') || url.pathname;
+    // The shell tries to negotiate a read stream on boot. No session is created.
+    if (url.origin === origin && url.pathname === '/api/state/stream/session' && request.method() === 'POST') {
+      return route.fulfill({ json: { ok: false } });
+    }
+    const providerRead = /(?:^|\/)(?:property-data|salestrend|market-comparison|attom)(?:\/|$)/i.test(bridgePath)
+      || /(^|\.)attom(?:data)?\.com$/i.test(url.hostname);
+    if (request.method() !== 'GET' || providerRead) {
+      forbidden.push(`${request.method()} ${bridgePath}`);
+      return route.abort();
+    }
+    if (url.origin !== origin) return route.abort();
+    if (request.isNavigationRequest() && url.pathname.startsWith('/leads/')) return route.fulfill({ contentType: 'text/html', body: shell });
+    const send = json => route.fulfill({ json });
+    if (url.pathname === '/api/auth/team/status') return send({ ok: true, configured: false, authRequired: false });
+    if (url.pathname === '/api/leads') return send({ ok: true, leads: fixtures });
+    const match = fixtures.find(entry => url.pathname === `/api/leads/${entry.id}/full`);
+    if (match) return send({ ok: true, lead: match });
+    if (url.pathname === '/state') return send({ leadImports: fixtures });
+    if (url.pathname.startsWith('/api/')) return send({ ok: false, items: [] });
+    return route.continue();
+  });
+
+  const workspace = page.getByRole('region', { name: 'Property', exact: true });
+  const market = workspace.getByRole('tab', { name: 'Market Comparison', exact: true });
+  const panel = workspace.getByRole('tabpanel', { name: 'Market Comparison', exact: true });
+  const row = name => panel.getByRole('article', { name, exact: true });
+  async function open(id) {
+    await page.goto(`${origin}/leads/${id}#lead-investor`);
+    await expect(workspace.getByRole('tab', { name: 'Investor', exact: true })).toHaveAttribute('aria-selected', 'true');
+    const requests = [];
+    const track = request => {
+      if (['fetch', 'xhr', 'eventsource'].includes(request.resourceType())) requests.push(request.method());
+    };
+    page.on('request', track);
+    try {
+      await market.click({ timeout: 5000 });
+      await expect(panel.getByRole('heading', { name: 'House vs. ZIP' })).toBeVisible();
+      await expect(panel.getByText('Fictional ZIP benchmarks', { exact: true })).toBeVisible();
+      assert.deepEqual(requests, [], 'Opening Market Comparison must not request data.');
+    } finally {
+      page.off('request', track);
+    }
+  }
+
+  await open(fixtures[0].id);
+  {
+    const tabs = await workspace.getByRole('tab').allTextContents();
+    assert.equal(tabs[tabs.indexOf('Investor') + 1], 'Market Comparison');
+    await expect(row('Asking price')).toContainText('$640,000');
+    await expect(row('Asking price')).toContainText('$695,000');
+    await expect(row('Asking price').getByText('Saved house', { exact: true })).toBeVisible();
+    await expect(row('Asking price').getByText('Fictional ZIP median', { exact: true })).toBeVisible();
+    await expect(row('Asking price')).toContainText('7.9% below');
+    await expect(row('Asking price per sq ft')).toContainText('$400');
+    await expect(row('Active days listed')).toContainText('7 days more');
+    await expect(row('Three-bedroom asking rent')).toContainText('No saved subject asking rent');
+    await expect(row('Three-bedroom asking rent')).toContainText('$3,200');
+    await expect(panel.getByText('$999,999', { exact: true })).toHaveCount(0);
+    await expect(panel.getByText('$470,000', { exact: true })).toBeVisible();
+    await expect(workspace.getByRole('button', { name: /refresh property intelligence|edit lead/i })).toHaveCount(0);
+    await expect(workspace.getByRole('link', { name: 'Open on Zillow' })).toHaveCount(0);
+    const details = panel.getByText('Sources and limits', { exact: true });
+    await details.focus();
+    await details.press('Enter');
+    assert.equal(await details.evaluate(summary => summary.parentElement.open), true);
+    assert.ok(await page.evaluate(() => innerWidth === 390 && document.documentElement.scrollWidth <= innerWidth + 1));
+    assert.equal(await panel.locator('.pbk-market-grid').evaluate(grid => getComputedStyle(grid).gridTemplateColumns.split(' ').length), 1);
+    if (process.env.PBK_MARKET_SCREENSHOT) {
+      await panel.getByRole('heading', { name: 'House vs. ZIP' }).scrollIntoViewIfNeeded();
+      await page.screenshot({ path: process.env.PBK_MARKET_SCREENSHOT, fullPage: true });
+    }
+
+    await open(fixtures[1].id);
+    await expect(row('Asking price')).toContainText('$555,000');
+    await expect(panel.getByText('No fictional cohort matches this ZIP and property type.')).toBeVisible();
+    await expect(panel.getByText('$695,000', { exact: true })).toHaveCount(0);
+
+    await open(fixtures[2].id);
+    await expect(row('Asking price')).toContainText('Not captured');
+    await expect(panel.getByText('$880,000', { exact: true })).toHaveCount(0);
+
+    await open(fixtures[3].id);
+    await expect(row('Asking price')).toContainText('$590,000');
+    await expect(panel.getByText('The saved listing was captured outside the fictional benchmark window.')).toBeVisible();
+    await expect(panel.getByText(/% (above|below) fictional/)).toHaveCount(0);
+
+    await open(fixtures[4].id);
+    await expect(panel.getByText('No fictional cohort matches this ZIP and property type.')).toBeVisible();
+
+    await open(fixtures[5].id);
+    await expect(row('Three-bedroom asking rent')).toContainText('Unavailable');
+    await expect(row('Three-bedroom asking rent')).not.toContainText('$3,200');
+  }
+  assert.deepEqual(forbidden, []);
+  console.log(`Chrome 390px: ${portalEnvironment} profile, no provider lookups or mutations`);
+} finally {
+  await browser?.close();
+  await new Promise(resolve => server.httpServer.close(resolve));
+}

@@ -31,7 +31,7 @@ type MemoryViewModel = ReturnType<typeof buildMemoryAnalyticsViewModel>;
 type SkillMetric = MemoryViewModel['skills'][number];
 type ExperimentMetric = MemoryViewModel['experiments'][number];
 type MemoryEventMetric = MemoryViewModel['events'][number];
-type CurationReceipt = 'Correction queued' | 'Forget request recorded';
+type CurationReceipt = 'Correction requested' | 'Removal request recorded';
 type MemoryStats = {
   activeSkills: number;
   totalUsage: number;
@@ -156,7 +156,7 @@ function getMemorySourceHref(event: MemoryEventMetric) {
 function MemorySourceLink({ event }: { event: MemoryEventMetric }) {
   const href = getMemorySourceHref(event);
   const label = event.source || 'Open source record';
-  if (!href) return <span>{event.source || 'Source needs review'}</span>;
+  if (!href) return <span>{event.source || 'No source on file'}</span>;
   const content = (
     <>
       <ExternalLink size={13} aria-hidden="true" />
@@ -282,8 +282,10 @@ function MemoryHero({
     <section className="pbk-memory-hero">
       <div className="pbk-memory-hero-top">
         <div>
-          <div className="pbk-eyebrow">Ava learning</div>
           <h1 className="pbk-display">Memory</h1>
+          <p className="pbk-workspace-purpose">
+            Review saved seller details and coaching notes. Check the source before using a fact in a deal.
+          </p>
         </div>
         <div className="pbk-memory-hero-actions">
           <button
@@ -421,7 +423,7 @@ function MemoryEventCard({
     event.type === 'memory_curation' &&
     Array.isArray(event.metadata.deleteIds) &&
     event.metadata.deleteIds.length > 0
-      ? 'Forget request recorded'
+      ? 'Removal request recorded'
       : event.title;
   return (
     <article className="pbk-memory-event" aria-label={title} aria-busy={busy}>
@@ -449,7 +451,7 @@ function MemoryEventCard({
         </button>
         <button type="button" onClick={onCorrect} disabled={busy}>
           <Sparkles size={13} />
-          Correct memory
+          Request correction
         </button>
         <Link to={`/ava-chat?prompt=${correctionPrompt}`}>Ask Ava</Link>
         <button type="button" onClick={onHide} disabled={busy}>
@@ -460,10 +462,10 @@ function MemoryEventCard({
           type="button"
           onClick={onForget}
           disabled={busy}
-          title="Record a forget request for review"
+          title="Send this record for removal review"
         >
           <Trash2 size={13} />
-          Forget
+          Request removal
         </button>
       </div>
     </article>
@@ -490,10 +492,10 @@ function MemoryControlPanel({
   const filters = [
     { value: 'all', label: 'All memories', count: visibleCount },
     { value: 'low_confidence', label: 'Low confidence', count: hygiene.lowConfidence.length },
-    { value: 'stale', label: 'Stale facts', count: hygiene.stale.length },
+    { value: 'stale', label: 'May be out of date', count: hygiene.stale.length },
     { value: 'needs_source', label: 'Needs source', count: hygiene.needsSource.length },
     { value: 'contradictions', label: 'Possible conflicts', count: hygiene.contradictions.length },
-    { value: 'compliance', label: 'DNC and compliance', count: hygiene.compliance.length },
+    { value: 'compliance', label: 'Do not contact and compliance', count: hygiene.compliance.length },
     { value: 'sensitive', label: 'Sensitive data', count: hygiene.sensitive.length },
     { value: 'stop_using', label: 'Stop using', count: hygiene.stopUsing.length },
   ];
@@ -501,8 +503,7 @@ function MemoryControlPanel({
     <section className="pbk-memory-control-panel" aria-label="Memory control center">
       <div className="pbk-memory-control-head">
         <div>
-          <span>Memory control center</span>
-          <h2>Memory records</h2>
+          <h2>Saved records</h2>
         </div>
         <small>{pinnedCount} pinned memories</small>
       </div>
@@ -513,7 +514,7 @@ function MemoryControlPanel({
           type="search"
           value={search}
           onChange={(event) => onSearch(event.target.value)}
-          placeholder="Search seller facts, sources, calls, skills, or lead ids"
+          placeholder="Search seller details, calls, or sources"
         />
       </label>
       <div className="pbk-memory-filter-row">
@@ -531,7 +532,7 @@ function MemoryControlPanel({
         ))}
       </div>
       <details className="pbk-memory-hygiene-details">
-        <summary className="pbk-memory-hygiene-title">Memory hygiene</summary>
+        <summary className="pbk-memory-hygiene-title">Records to review</summary>
         <div className="pbk-memory-hygiene">
           <article>
             <AlertTriangle size={15} />
@@ -823,7 +824,7 @@ export function MemoryAnalytics() {
           setHiddenMemoryIds((current) => [...new Set([...current, eventKey])]);
           setPinnedMemoryIds((current) => current.filter((id) => id !== eventKey));
         } else if (action === 'correct' || action === 'forget') {
-          const receipt = action === 'correct' ? 'Correction queued' : 'Forget request recorded';
+          const receipt = action === 'correct' ? 'Correction requested' : 'Removal request recorded';
           setCurationReceipts((current) => new Map(current).set(eventKey, receipt));
           void loadMemoryAnalytics();
           return;
@@ -836,7 +837,7 @@ export function MemoryAnalytics() {
               : action === 'unpin'
                 ? 'Memory unpinned'
                 : 'Memory hidden',
-          desc: 'Ava memory curation was recorded through the bridge.',
+          desc: 'Your change was saved.',
         });
       } catch (curationError) {
         showUiToast({
@@ -939,8 +940,12 @@ export function MemoryAnalytics() {
               <div className="pbk-memory-empty">
                 <Database size={18} />
                 {status === 'loading'
-                  ? 'Loading recent learning...'
-                  : 'No memories match this view. Clear the search or switch filters.'}
+                  ? 'Loading saved records…'
+                  : status === 'error'
+                    ? 'Couldn’t load saved records. Choose Refresh memory to try again.'
+                    : memorySearch.trim() || memoryFilter !== 'all'
+                      ? 'No records match. Clear your search or choose another filter.'
+                      : 'No seller details or coaching notes are saved yet.'}
               </div>
             )}
             <CompactPager

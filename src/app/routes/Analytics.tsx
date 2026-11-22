@@ -556,11 +556,28 @@ function AnalyticsDailyBar({
   );
 }
 
+const AI_METRIC_COPY: Record<string, { label: string; detail: string }> = {
+  'P95 answer latency': {
+    label: 'Response time',
+    detail: 'Time within which 95% of measured replies arrived.',
+  },
+  'QA retries': {
+    label: 'Responses retried',
+    detail: 'Share of quality checks that requested another attempt.',
+  },
+  'Safety blocks': {
+    label: 'Actions stopped',
+    detail: 'Actions stopped by safety checks.',
+  },
+};
+
 function AnalyticsMetricTile({ metric }: { metric: AnalyticsViewModel['aiMetrics'][number] }) {
+  const copy = AI_METRIC_COPY[metric.label];
   return (
     <div className="pbk-analytics-metric">
-      <dt className="l">{metric.label}</dt>
+      <dt className="l">{copy?.label || metric.label}</dt>
       <dd className="v">{metric.value}</dd>
+      {copy && <dd className="pbk-workspace-purpose">{copy.detail}</dd>}
     </div>
   );
 }
@@ -973,6 +990,9 @@ export function Analytics() {
             <div className="pbk-analytics-card-head">
               <div>
                 <h2>AI performance</h2>
+                <p className="pbk-workspace-purpose">
+                  Review response speed, retries, and safety checks for the selected period.
+                </p>
               </div>
               <span className="tf">{range.caption}</span>
             </div>

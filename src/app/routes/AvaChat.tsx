@@ -155,7 +155,7 @@ const PBK_COMPANION_ACTIONS: CompanionAction[] = [
   {
     id: 'send-sms',
     label: 'Draft Text',
-    description: 'Write a seller text for review.',
+    description: 'Draft a seller text. Sending requires approval.',
     prompt: 'Draft a concise SMS to this seller using the current PBK context.',
     action: 'send_sms',
     icon: MessageSquare,
@@ -164,7 +164,7 @@ const PBK_COMPANION_ACTIONS: CompanionAction[] = [
   {
     id: 'send-email',
     label: 'Draft Email',
-    description: 'Write a seller email for review.',
+    description: 'Draft a seller email. Sending requires approval.',
     prompt: 'Draft a seller email using the current PBK context and keep it ready to review.',
     action: 'send_email',
     icon: Mail,
@@ -173,7 +173,7 @@ const PBK_COMPANION_ACTIONS: CompanionAction[] = [
   {
     id: 'call-seller',
     label: 'Prep Call',
-    description: 'Prepare the call and best opener.',
+    description: 'Review the lead and prepare an opening line for the call.',
     prompt: 'Prepare a call to this seller and show the best opening line before dialing.',
     action: 'operator_command',
     icon: Phone,
@@ -182,7 +182,7 @@ const PBK_COMPANION_ACTIONS: CompanionAction[] = [
   {
     id: 'open-lead',
     label: 'Find Lead',
-    description: 'Find the seller record, timeline, and latest context.',
+    description: 'Find a lead and review the latest seller activity.',
     prompt: 'Open the current seller lead and summarize the latest timeline context.',
     action: 'search_leads',
     icon: Search,
@@ -200,7 +200,7 @@ const PBK_COMPANION_ACTIONS: CompanionAction[] = [
   {
     id: 'analyze-deal',
     label: 'Analyze Deal',
-    description: 'Hydrate ARV, repairs, MAO, path, and next script.',
+    description: 'Review estimated resale value, repairs, and maximum offer.',
     prompt: 'Analyze this deal and tell me the MAO, offer path, and next seller question.',
     action: 'analyze_deal',
     icon: Sparkles,
@@ -227,7 +227,7 @@ const PBK_COMPANION_ACTIONS: CompanionAction[] = [
   {
     id: 'schedule-follow-up',
     label: 'Schedule Follow-up',
-    description: 'Turn the next step into a seller timeline event.',
+    description: 'Request approval to schedule the next seller follow-up.',
     prompt: 'Schedule the next follow-up for this seller and explain the recommended timing.',
     action: 'schedule_follow_up',
     icon: CalendarClock,
@@ -245,7 +245,7 @@ const PBK_COMPANION_ACTIONS: CompanionAction[] = [
   {
     id: 'review-with-qa',
     label: 'Review Call',
-    description: 'Inspect a bad call, missed objection, or stale control.',
+    description: 'Review what the seller said and what to ask next.',
     prompt:
       'Review the latest seller interaction for missed context, repetition, and the next fix.',
     action: 'review_call',
@@ -1900,7 +1900,7 @@ function AvaChatSession({ scope }: { scope: AvaChatScope }) {
                   >
                     <CircleAlert size={18} className="mt-0.5 shrink-0 text-[var(--ava-danger)]" />
                     <div className="min-w-0">
-                      <div className="font-semibold">Some live context is delayed</div>
+                      <div className="font-semibold">Some recent lead activity may be missing</div>
                       <p className="mt-1 break-words text-[var(--ava-text-muted)]">
                         {connectionError}
                       </p>
@@ -1946,6 +1946,7 @@ function AvaChatSession({ scope }: { scope: AvaChatScope }) {
                   />
                 ) : (
                   <WelcomeState
+                    linkedToLead={Boolean(linkedLeadId)}
                     operatorMemory={operatorMemory}
                     onResumeOperatorMemory={resumeOperatorMemory}
                   />
@@ -2047,7 +2048,7 @@ function AvaIdentityBar({
   onOpenContext: () => void;
 }) {
   const stateLabel = {
-    ready: 'Ready when you are',
+    ready: 'Ready for your request',
     listening: 'Listening',
     thinking: 'Thinking',
     working: 'Working on your request',
@@ -2797,7 +2798,7 @@ function AvaContextRail({
   return (
     <aside className={`min-h-0 overflow-y-auto bg-[var(--ava-bg)] p-4 ${className}`}>
       <div className="space-y-3">
-        <ContextPanel title="Recent ask" icon={<Clock3 size={16} />}>
+        <ContextPanel title="Saved chat draft" icon={<Clock3 size={16} />}>
           {operatorMemory ? (
             <button
               type="button"
@@ -2846,13 +2847,13 @@ function AvaContextRail({
               <ContextRow label="How Ava handles it">
                 <span>Chat workspace</span>
               </ContextRow>
-              <ContextRow label="Safety">
+              <ContextRow label="Approval">
                 <span
                   className={
-                    requiresApproval ? 'text-[var(--ava-warning)]' : 'text-[var(--ava-success)]'
+                    requiresApproval ? 'text-[var(--ava-warning)]' : 'text-[var(--ava-text-muted)]'
                   }
                 >
-                  {requiresApproval ? 'Approval requested' : 'Low-risk request'}
+                  {requiresApproval ? 'Needs approval' : 'Checked when you send'}
                 </span>
               </ContextRow>
             </ContextPanel>
@@ -2981,9 +2982,11 @@ function AvaPresenceOrb({
 }
 
 function WelcomeState({
+  linkedToLead,
   operatorMemory,
   onResumeOperatorMemory,
 }: {
+  linkedToLead: boolean;
   operatorMemory: OperatorMemory | null;
   onResumeOperatorMemory: () => void;
 }) {
@@ -2998,9 +3001,12 @@ function WelcomeState({
               <span className="text-[var(--ava-text-faint)]">PBK assistant</span>
             </div>
             <p className="text-sm leading-6 text-[var(--ava-text-muted)]">
-              Tell me what you need in plain English. I can find seller context, analyze a deal,
-              draft a follow-up, prep approvals, summarize calls, or help you decide what to say
-              next.
+              {linkedToLead
+                ? 'Ask about this lead, open saved comps or photos, or draft a seller follow-up.'
+                : 'Find a lead, review a deal, or prepare for your next seller call.'}
+            </p>
+            <p className="mt-2 text-xs leading-5 text-[var(--ava-text-muted)]">
+              Start with a shortcut below or type your own request. Calls and outgoing messages require approval.
             </p>
           </div>
         </div>

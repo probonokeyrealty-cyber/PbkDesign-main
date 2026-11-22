@@ -743,10 +743,10 @@ function getAgentHealthState(agent: FleetAgent, healthProbe?: AgentHealthProbe) 
 
 function getAgentCapabilityLabel(agent: FleetAgent) {
   if (agent.capability) {
-    return getAgentHealthState(agent) === 'ready' ? 'Measured ready' : 'Not measured ready';
+    return getAgentHealthState(agent) === 'ready' ? 'Readiness verified' : 'Readiness needs attention';
   }
   if (agent.lastError) return agent.lastError;
-  return isRegistryBackedSource(agent.registrySource) ? 'Capability pending proof' : 'Catalog only';
+  return isRegistryBackedSource(agent.registrySource) ? 'Readiness check pending' : 'Directory only';
 }
 
 function getAgentHealthFacts({
@@ -905,18 +905,20 @@ function AgentFleetHero({
     <section className="pbk-fleet-hero">
       <div className="pbk-fleet-hero-top">
         <div>
-          <div className="pbk-eyebrow">PBK operations</div>
           <h1 className="pbk-display">Agent Fleet</h1>
+          <p className="pbk-workspace-purpose">
+            Choose an agent to see what it can help with, review its work, or open a lead.
+          </p>
         </div>
         <div className="pbk-fleet-bridge-card">
           <span className={bridgeConnected ? 'live' : bridgeConnected === false ? 'warn' : ''} />
           <strong>{bridgeLabel}</strong>
           <small>
             {pendingTransferCount
-              ? `${pendingTransferCount} learning transfer retries`
+              ? `${pendingTransferCount} skill transfers to retry`
               : registryBacked
                 ? `${active} active · ${standby} standby · ${inactive} inactive`
-                : 'Catalog only · live status unavailable'}
+                : 'Agent directory available · live status unavailable'}
           </small>
         </div>
       </div>
@@ -931,12 +933,12 @@ function AgentFleetHero({
           <div className="pbk-stat-value">{countSkills(agents)}</div>
         </div>
         <div className="pbk-stat">
-          <div className="pbk-stat-label">Lead context</div>
+          <div className="pbk-stat-label">Leads available</div>
           <div className="pbk-stat-value">{leadCount}</div>
           <div className="pbk-stat-label">{leadContextSource}</div>
         </div>
         <div className="pbk-stat">
-          <div className="pbk-stat-label">Calls in snapshot</div>
+          <div className="pbk-stat-label">Calls shown</div>
           <div className="pbk-stat-value">{callCount}</div>
         </div>
       </div>
@@ -1004,21 +1006,21 @@ function AgentFleetCard({
         <span className={`pbk-agent-activity ${activityState}`}>
           <strong>{getAgentSummary(agent, lastOutcome, bridgeWorker)}</strong>
           <span>
-            {ready ? 'Learning connected' : 'Learning status pending'} -{' '}
-            {agent.metadata.orchestrationRole || 'worker'}
+            {ready ? 'Learning connected' : 'Learning status pending'}
+            {agent.metadata.orchestrationRole === 'supervisor' && ' · Coordinates agents'}
           </span>
         </span>
 
         <span className="pbk-agent-health-strip" data-source={agent.measurementSource}>
           <span className={`pbk-agent-health-state ${healthState}`}>
             {healthState === 'ready'
-              ? 'Measured ready'
+              ? 'Readiness verified'
               : healthState === 'degraded'
                 ? 'Needs attention'
-                : 'Measurement unavailable'}
+                : 'Readiness data unavailable'}
           </span>
           {healthProbe?.missingTools?.length ? (
-            <span>{healthProbe.missingTools.length} tool gaps</span>
+            <span>{healthProbe.missingTools.length} tools missing</span>
           ) : null}
         </span>
       </button>
@@ -2259,9 +2261,9 @@ export function AgentFleet() {
                   {activeAgent.description}
                 </p>
                 <div className="pbk-dp-context-badges">
-                  {activeAgent.metadata.approvalGated && <span>approval-gated</span>}
-                  {activeAgent.metadata.suggestOnly && <span>suggest-only</span>}
-                  <span>{activeAgent.metadata.orchestrationRole || 'worker'}</span>
+                  {activeAgent.metadata.approvalGated && <span>Actions require approval</span>}
+                  {activeAgent.metadata.suggestOnly && <span>Suggestions only</span>}
+                  {activeAgent.metadata.orchestrationRole === 'supervisor' && <span>Coordinates agents</span>}
                 </div>
               </div>
 

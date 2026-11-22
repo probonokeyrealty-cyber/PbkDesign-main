@@ -6,6 +6,14 @@
  * Do NOT use shadcn/ui defaults — use these instead.
  */
 
+.pbk-workspace-purpose {
+  margin: 6px 0 0;
+  max-inline-size: 54ch;
+  color: var(--text-secondary);
+  font: 400 13px/1.5 var(--font-ui);
+  overflow-wrap: anywhere;
+}
+
 /* ============================================================
    BUTTONS
    5 variants. Use class="pbk-btn pbk-btn-{variant}".

@@ -375,32 +375,52 @@ function leadParcelId(lead = {}) {
   return normalizeParcelId(lead.parcelId || lead.property?.parcelId || lead.property?.apn || lead.apn || '');
 }
 
-function leadAddressKey(lead = {}) {
+function leadSitus(lead = {}) {
   const p = lead.property || {};
   const parsed = parseAddressQuery(p.address || lead.address || lead.propertyAddress || '');
-  return addressKey({ line1: p.line1 || parsed.line1, zip: p.zip || lead.zip || parsed.zip });
+  return { line1: p.line1 || parsed.line1, zip: p.zip || lead.zip || parsed.zip };
+}
+
+function splitUnit(line = '') {
+  return normalizeAddressLine(String(line).replace(/\s*(?:#|\bAPT\s+|\bUNIT\s+|\bSTE\s+)\s*([\w-]+)$/i, ' unit $1')).split(' unit ');
 }
 
 export function matchParcelToLeads(feature, leads = []) {
   const pid = normalizeParcelId(feature?.properties?.parcelId);
   const akey = addressKey(feature?.properties?.situs || {});
   const denver = feature?.properties?.jurisdiction === '08031';
+  const losAngeles = feature?.properties?.jurisdiction === '06037';
   const alias = denver ? feature.properties.verifiedAddressAlias : '';
   const byId = new Map();
+  let possibleMatch = false;
   for (const lead of leads) {
     const id = lead.leadId || lead.id;
     if (!id) continue;
-    const address = leadAddressKey(lead);
+    const leadSitusAddress = leadSitus(lead);
+    const address = addressKey(leadSitusAddress);
     const state = String(lead.property?.state || lead.state || '').trim().toUpperCase();
     const city = String(lead.property?.city || lead.city || '').trim().toLowerCase();
     const denverIdentity = state === 'CO' && city === 'denver';
     const county = String(lead.property?.county || lead.county || '').trim().toLowerCase();
-    const byParcel = pid && leadParcelId(lead) === pid && (!denver || (denverIdentity && /^denver(?: county)?$/.test(county)));
-    const byAddress = akey && address === akey && (!denver || !state || state === 'CO');
+    const byParcel = pid && leadParcelId(lead) === pid && (!denver || (denverIdentity && /^denver(?: county)?$/.test(county))) &&
+      (!losAngeles || (state === 'CA' && /^los angeles(?: county)?$/.test(county)));
+    let byAddress = akey && address === akey && (!denver || !state || state === 'CO');
+    if (losAngeles) {
+      const [street, unit] = splitUnit(feature.properties.situs.line1);
+      const [leadStreet, leadUnit] = splitUnit(leadSitusAddress.line1);
+      const sameStreet = street === leadStreet && akey?.split('|')[1] === address?.split('|')[1];
+      const conflictingId = leadParcelId(lead) && leadParcelId(lead) !== pid;
+      byAddress = sameStreet && unit === leadUnit && (!state || state === 'CA') && !conflictingId;
+      if (!byParcel && (!state || state === 'CA') && (
+        (pid && leadParcelId(lead) === pid && !county) ||
+        (sameStreet && (unit === leadUnit || !unit || !leadUnit) && (!byAddress || unit !== leadUnit))
+      )) possibleMatch = true;
+    }
     const byAlias = alias && denverIdentity && address === alias;
     if (byParcel || byAddress || byAlias) byId.set(id, { lead, mode: byParcel ? 'parcel_id' : byAddress ? 'address' : 'verified_address_alias' });
   }
   const candidates = [...byId.values()];
+  if (possibleMatch) return { status: 'ambiguous', lead: null, candidateCount: Math.max(1, candidates.length) };
   if (candidates.length === 0) return { status: 'no_match', lead: null, candidateCount: 0 };
   if (candidates.length > 1) return { status: 'ambiguous', lead: null, candidateCount: candidates.length };
   return { status: 'matched', lead: candidates[0].lead, candidateCount: 1, matchedOn: candidates[0].mode };

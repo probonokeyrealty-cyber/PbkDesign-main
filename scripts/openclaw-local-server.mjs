@@ -27,6 +27,7 @@ import { lookupAttomRecentSales } from './attom-recent-sales.mjs';
 import { lookupAddressSuggestions } from './address-suggestions.mjs';
 import { createPhoneDialerRouter, createPhoneDialerRuntime } from './phone-dialer-routes.mjs';
 import { createClaudeProspectingReview, createProspectingBrief, prospectingOrderMessages } from './parcel-prospecting-brief.mjs';
+import { createHermesParcelProspecting } from './hermes-parcel-prospecting.mjs';
 import { matchParcelToLeads, normalizeParcelId } from './parcel-dialer.mjs';
 import { applyAgentVersionRollback, buildAgentRegistrySnapshot, buildAgentVersionSnapshot, buildDefaultAgentRegistry, buildStableAgentFleetMeasurement, findAgentsByCapability, invokeRegisteredAgent, mergeAgentRegistryRecords, normalizeAgentRegistryId, normalizeAgentRegistryRecord, validateAgentVersionSnapshot } from './agent-registry.mjs';
 import { buildAgentExecutionEvidence, collectAgentFleetEvidence, isNonOperationalAgentEvidence, isAgentHandlerCompletion } from './agent-fleet-measurement.mjs';
@@ -58080,7 +58081,7 @@ const toolHandlers = {
     };
   },
 
-  async createApproval(params = {}) {
+  async createApproval(params = {}, { notify = true } = {}) {
     recordToolUse('createApproval');
     const approval = {
       id: params.id || randomUUID(),
@@ -58162,7 +58163,7 @@ const toolHandlers = {
       projector: projectApprovalEvent,
       source: 'approval-created',
     });
-    const [fanout, slack] = await Promise.all([
+    const [fanout, slack] = notify ? await Promise.all([
       withTimeout(
         fireWebhook(APPROVAL_WEBHOOK_URL, approval),
         3000,
@@ -58178,7 +58179,7 @@ const toolHandlers = {
         result: 'slack_fanout_timeout',
         error: error?.message || 'Approval Slack fanout timed out.',
       })),
-    ]);
+    ]) : [{ ok: false, skipped: true }, { ok: false, skipped: true }];
     let approvalFanoutActivityRecorded = false;
     if (fanout.ok) {
       addActivity(
@@ -61096,7 +61097,7 @@ async function persistVerifiedParcelProfile(lead) {
   }
 }
 
-async function saveVerifiedParcelLead(feature, durableCandidates, actor) {
+async function saveVerifiedParcelLead(feature, durableCandidates, actor, { prospecting = false } = {}) {
   const { parcelId, situs, county, acres, source, jurisdiction } = feature.properties;
   const eventId = `parcel-dialer:${JSON.stringify([jurisdiction || [situs.state, county || situs.city], normalizeParcelId(parcelId)])}`;
   // Keep the check and the canonical in-memory insert in the same event-loop turn.
@@ -61112,17 +61113,17 @@ async function saveVerifiedParcelLead(feature, durableCandidates, actor) {
   const result = await handleManualLeadCreate({
     id,
     eventId,
-    source: 'parcel-dialer',
+    source: prospecting ? 'hermes-prospecting' : 'parcel-dialer',
     actor,
     property: { address, city: situs.city, state: situs.state, zip: situs.zip },
   }, {
     parcelId, line1: situs.line1, county, parcelSource: source, jurisdiction,
     ...(Number.isFinite(acres) && acres > 0 ? { acres } : {}),
-  });
+  }, { queueAnalyzer: !prospecting });
   return { ok: true, leadId: result.leadId, created: !result.replayed };
 }
 
-async function handleManualLeadCreate(payload = {}, verifiedParcel = null) {
+async function handleManualLeadCreate(payload = {}, verifiedParcel = null, { queueAnalyzer = true } = {}) {
   const eventId = payload?.eventId || payload?.event_id || payload?.idempotencyKey || null;
   if (eventId) {
     const prior = (state.leadImports || []).find((item) => item && item.eventId === eventId);
@@ -61204,7 +61205,7 @@ async function handleManualLeadCreate(payload = {}, verifiedParcel = null) {
   );
 
   let queuedAnalyzer = null;
-  if (savedLead.property?.address) {
+  if (queueAnalyzer && savedLead.property?.address) {
     queuedAnalyzer = {
       id: randomUUID(),
       leadId: savedLead.leadId,
@@ -73456,6 +73457,44 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
 }
 
 const neonAuthMailRouter = createNeonMailRouter();
+const hermesParcels = createHermesParcelProspecting({
+  loadLeads: loadParcelLeadCandidates,
+  localLeads: () => [...(state.leads || []), ...(state.leadImports || [])],
+  saveLead: (feature, candidates, actor) => saveVerifiedParcelLead(feature, candidates, actor, { prospecting: true }),
+  approvals: () => state.approvals || [],
+  sign: (payload) => BRIDGE_API_KEY ? signTeamSessionPayload(`hermes-prospecting:${payload}`) : null,
+  createApproval: (params) => toolHandlers.createApproval(params, { notify: false }),
+  prioritize: async (evidence) => {
+    if (!HERMES_ENABLED || !HERMES_SUGGEST_ONLY || !getDeepSeekProviderMeta().ready) return null;
+    const result = await runDeepSeekChatCompletion([
+      { role: 'system', content: 'You are Hermes, PBK\'s advisory analyst. Order anonymized parcel rows by usefulness for property review. Prefer complete assessor facts and explain no financial or owner inference. Return JSON with an order array containing each input index exactly once.' },
+      { role: 'user', content: JSON.stringify(evidence) },
+    ], { model: getDeepSeekProviderMeta().liveModel, responseFormat: 'json', thinkingMode: 'disabled',
+      deadlineAt: Date.now() + 4500, speculative: false, source: 'hermes-parcel-prospecting' });
+    return result.ok ? extractJsonObjectFromText(result.answer)?.order : null;
+  },
+});
+
+async function handleHermesParcelRequest(request, response, pathname) {
+  if (!/^\/api\/prospecting\/parcels\/(?:search|match|approval|save)$/.test(pathname)) return false;
+  if (request.method !== 'POST') {
+    json(response, 405, { ok: false, error: 'Method not allowed.' });
+    return true;
+  }
+  try {
+    const body = await readBody(request);
+    const action = pathname.split('/').at(-1);
+    const result = action === 'search' ? await hermesParcels.discover(body)
+      : action === 'match' ? await hermesParcels.match(body.parcelId)
+      : action === 'approval' ? await hermesParcels.requestApproval(body.parcelId)
+      : await hermesParcels.save(body.parcelId, body.approvalId, request.pbkTeamAuth?.actor || 'PBK operator');
+    json(response, result.ok === false ? 409 : 200, result);
+  } catch (error) {
+    json(response, error.status || 503, { ok: false, error: error.status ? error.message : 'Prospecting could not complete this request.' });
+  }
+  return true;
+}
+
 let phoneDialerRouter = null;
 function getPhoneDialerRouter() {
   if (phoneDialerRouter) return phoneDialerRouter;
@@ -73585,6 +73624,7 @@ const server = createServer(async (request, response) => {
 
     if (maybeServeRenderCommandCenter(request, response, pathname)) return;
 
+    if (await handleHermesParcelRequest(request, response, pathname)) return;
     if (await getPhoneDialerRouter()(request, response, pathname, url)) return;
 
     if (request.method === 'GET' && matchesPath(pathname, ['/', '/health', '/status', '/api/health', '/api/status'])) {

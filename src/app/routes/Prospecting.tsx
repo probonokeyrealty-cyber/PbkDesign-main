@@ -4,6 +4,7 @@ import { useSearchParams } from 'react-router';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs';
 import { webSearchRequest } from '../utils/runtimeBridge';
 import { VanNuysDemo } from './VanNuysDemo';
+import { FindProperties } from '../components/prospecting/FindProperties';
 import './Prospecting.css';
 
 type ResearchBrief = {
@@ -42,7 +43,9 @@ function readSources(values: unknown): ResearchBrief['sources'] {
 
 export function Prospecting() {
   const [params, setParams] = useSearchParams();
-  const view = params.get('view') === 'evidence' ? 'evidence' : 'research';
+  const requestedView = params.get('view');
+  const view =
+    requestedView === 'evidence' || requestedView === 'research' ? requestedView : 'properties';
   const [market, setMarket] = useState('');
   const [question, setQuestion] = useState('');
   const [brief, setBrief] = useState<ResearchBrief | null>(null);
@@ -93,15 +96,16 @@ export function Prospecting() {
         </div>
         <div>
           <h1>Prospecting</h1>
-          <p>Research a market with Rex and review the evidence behind the brief.</p>
+          <p>Find parcel candidates with Hermes and research the market with Rex.</p>
         </div>
       </header>
 
       <Tabs
         value={view}
-        onValueChange={(next) => setParams(next === 'evidence' ? { view: next } : {})}
+        onValueChange={(next) => setParams(next === 'properties' ? {} : { view: next })}
       >
         <TabsList aria-label="Prospecting views" className="pbk-prospecting-tabs">
+          <TabsTrigger value="properties">Find Properties</TabsTrigger>
           <TabsTrigger value="research">
             <ScanSearch aria-hidden="true" /> Research
           </TabsTrigger>
@@ -109,6 +113,10 @@ export function Prospecting() {
             <BookOpen aria-hidden="true" /> Saved evidence
           </TabsTrigger>
         </TabsList>
+
+        <TabsContent value="properties">
+          <FindProperties />
+        </TabsContent>
 
         <TabsContent value="research">
           <div className="pbk-prospecting-workspace">

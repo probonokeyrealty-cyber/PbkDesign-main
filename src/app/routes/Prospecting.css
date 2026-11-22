@@ -32,7 +32,7 @@
 }
 .pbk-prospecting .pbk-prospecting-tabs {
   display: inline-grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   width: min(100%, 24rem);
   height: auto;
   background: var(--bg-console);
@@ -40,9 +40,96 @@
   border-radius: var(--radius-lg);
 }
 .pbk-prospecting .pbk-prospecting-tabs button {
+  white-space: normal;
   min-height: 44px;
   min-width: 0;
   color: var(--text-secondary);
+}
+
+.pbk-prospecting-parcels {
+  display: grid;
+  gap: 0.5rem;
+  padding: 0;
+  list-style: none;
+}
+.pbk-prospecting-parcels li {
+  display: grid;
+  gap: 0.55rem;
+  padding: 0.875rem 0;
+  border-top: 1px solid var(--border);
+}
+.pbk-prospecting-parcels button,
+.pbk-prospecting-parcels a {
+  width: fit-content;
+  min-height: 44px;
+}
+.pbk-prospecting-parcels a {
+  display: inline-flex;
+  align-items: center;
+  color: var(--sky);
+  text-decoration: underline;
+}
+.pbk-prospecting-parcels li[data-map-selected='true'] h3 {
+  color: var(--sky);
+}
+.pbk-prospecting-parcels h3 {
+  scroll-margin-block: 5rem;
+}
+.pbk-prospecting-map {
+  display: grid;
+  gap: 0.6rem;
+  min-width: 0;
+}
+.pbk-prospecting-map-heading p {
+  font-size: 0.875rem;
+}
+.pbk-prospecting-map-frame {
+  position: relative;
+  overflow: hidden;
+  background: var(--bg-console);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+}
+.pbk-prospecting-map-canvas {
+  height: clamp(17rem, 40vw, 27rem);
+  color: #142638;
+}
+.pbk-prospecting-map-frame > [role='status'] {
+  position: absolute;
+  inset: 0.7rem auto auto 0.7rem;
+  background: var(--bg-console);
+}
+.pbk-prospecting-map-pin {
+  display: grid;
+  place-items: center;
+  width: 2rem;
+  height: 2rem;
+  border: 2px solid #fff;
+  border-radius: 50%;
+  background: #103d5c;
+  color: #fff;
+  box-shadow: 0 2px 8px #071a2b66;
+  cursor: pointer;
+  font: 700 0.75rem var(--font-mono);
+}
+.pbk-prospecting-map-pin[aria-current='true'],
+.pbk-prospecting-map-pin:focus-visible {
+  z-index: 1;
+  background: #b9f0ff;
+  color: #102a40;
+  border-color: #103d5c;
+}
+.pbk-prospecting-form .pbk-prospecting-check {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  min-height: 44px;
+}
+.pbk-prospecting-check input[type='checkbox'] {
+  width: 1.15rem;
+  min-height: 0;
+  height: 1.15rem;
+  accent-color: var(--sky-deep);
 }
 .pbk-prospecting .pbk-prospecting-tabs button[data-state='active'] {
   color: var(--text-primary);

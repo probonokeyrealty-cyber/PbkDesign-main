@@ -23,6 +23,7 @@ import { getSignedUrl as getS3SignedUrl } from '@aws-sdk/s3-request-presigner';
 import { lookupAttomPropertyPreview, sameAttomAddress } from './attom-property-preview.mjs';
 import { analyzerPropertyPreview } from './analyzer-property-preview.mjs';
 import { createPropertyIntelligence } from './property-intelligence.mjs';
+import { addDecisionScenario, normalizeDecisionScenario, readDecisionScenarios } from '../src/app/utils/investorDecisionBrief.mjs';
 import { lookupAttomRecentSales } from './attom-recent-sales.mjs';
 import { lookupAddressSuggestions } from './address-suggestions.mjs';
 import { createPhoneDialerRouter, createPhoneDialerRuntime } from './phone-dialer-routes.mjs';
@@ -61022,6 +61023,41 @@ async function loadExactPropertyLead(leadId) {
   return durable;
 }
 
+const investorScenarioSaves = new Map();
+
+async function saveInvestorDecisionScenario(leadId, address, input) {
+  const scenario = normalizeDecisionScenario(input, isoNow());
+  if (!scenario || !address) return { status: 400, error: 'Enter a scenario name and valid inputs.' };
+  const prior = investorScenarioSaves.get(leadId) || Promise.resolve();
+  const save = prior.catch(() => {}).then(async () => {
+    const existing = await loadExactPropertyLead(leadId);
+    if (!existing) return { status: 404, error: 'Lead not found.' };
+    const p = existing.property || {};
+    if (!sameAttomAddress(address, {
+      street: p.address || existing.address, city: p.city || existing.city,
+      state: p.state || existing.state, zip: p.zip || p.zipCode || existing.zip || existing.zipCode,
+    })) return { status: 409, error: 'The lead property changed. Reopen the lead before saving.' };
+
+    const current = readDecisionScenarios(existing.deal?.investorDecisionScenarios);
+    const next = addDecisionScenario(current, scenario);
+    if (!next) return { status: 409, error: 'This lead has reached its saved scenario limit.' };
+    const updated = next === current ? existing : patchLeadImport(state, { leadId }, {
+      deal: { ...(existing.deal || {}), investorDecisionScenarios: next },
+    });
+    if (!updated) return { status: 404, error: 'Lead not found.' };
+    const persisted = await persistLeadProfileRowToDb(updated, updated.source || 'lead-investor-scenario', { exactIdentity: true });
+    if (DATABASE_URL && !persisted.ok) return { status: 503, error: 'The scenario could not be saved. Retry shortly.' };
+    await persistState(state);
+    return { status: 200, scenario: next.find((item) => item.id === scenario.id) };
+  });
+  investorScenarioSaves.set(leadId, save);
+  try {
+    return await save;
+  } finally {
+    if (investorScenarioSaves.get(leadId) === save) investorScenarioSaves.delete(leadId);
+  }
+}
+
 const enrichPropertyIntelligence = createPropertyIntelligence({
   getLead: loadExactPropertyLead,
   listing: params => toolHandlers.getPropertyData(params),
@@ -81846,6 +81882,18 @@ const server = createServer(async (request, response) => {
 
     if (leadPatchMatch && request.method === 'PATCH') {
       const body = await readBody(request);
+      if (Object.hasOwn(body, 'investorDecisionScenario')) {
+        let leadId;
+        try { leadId = decodeURIComponent(leadPatchMatch.groups.id); } catch {
+          json(response, 400, { ok: false, error: 'Invalid lead ID.' });
+          return;
+        }
+        const { status, scenario, error } = await saveInvestorDecisionScenario(
+          leadId, body.expectedPropertyAddress, body.investorDecisionScenario
+        );
+        json(response, status, { ok: status === 200, scenario, error });
+        return;
+      }
       let existing = findLeadImportByLookup(leadPatchMatch.groups.id);
       if (body.expectedPropertyAddress) {
         let exactId;

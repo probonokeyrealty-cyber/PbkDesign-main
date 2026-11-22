@@ -11,7 +11,9 @@ import {
 import { attomMcpDatasetDefinitions, type AttomMcpSection } from '../../utils/attomMcpSections.mjs';
 import { reviewedCompIds } from '../../utils/leadComps.mjs';
 import type { readPropertyEvidence } from '../../utils/propertyEvidence';
-import type { RecentSalesResult } from '../../utils/runtimeBridge';
+import type { AttomPreviewAddress, RecentSalesResult } from '../../utils/runtimeBridge';
+import { decisionEvidenceVersion } from '../../utils/investorDecisionBrief.mjs';
+import { LeadDealDecisionBrief } from './LeadDealDecisionBrief';
 import type { LeadPortalModel } from './leadPortalModel';
 import { calculateScenario, scenarioFields, type ScenarioInputs } from './investorScenario';
 import { investorGlossary, strategyGuides, type InvestorStrategy } from './investorStrategies';
@@ -224,16 +226,22 @@ function StrategyScenario({
 
 export function LeadInvestorWorkspace({
   lead,
+  address,
+  canSaveScenario,
   evidence,
   sales,
   analyzerLink,
   onOpen,
+  onSaved,
 }: {
   lead: LeadPortalModel;
+  address: AttomPreviewAddress;
+  canSaveScenario: boolean;
   evidence: Evidence;
   sales: RecentSalesResult | null;
   analyzerLink: Pick<LinkProps, 'to' | 'state'>;
   onOpen: (tab: 'record' | 'comps' | 'photos') => void;
+  onSaved: (leadId: string) => Promise<void>;
 }) {
   const [strategyId, setStrategyId] = useState<InvestorStrategy['id']>('fix-flip');
   const [inputs, setInputs] = useState<Partial<Record<InvestorStrategy['id'], ScenarioInputs>>>({});
@@ -263,6 +271,7 @@ export function LeadInvestorWorkspace({
       .filter((sale) => sale.id === id && positive(sale.price) !== null)
       .slice(0, 1)
   );
+  const evidenceVersion = decisionEvidenceVersion({ address, records }, sales, selectedSales);
   const photo = listing?.photoUrls[0];
   const missing = sections.filter((item) => item.status !== 'ok' || item.refreshStatus);
   const setValue = (key: keyof ScenarioInputs, value: string) =>
@@ -272,6 +281,20 @@ export function LeadInvestorWorkspace({
     }));
   return (
     <div className="pbk-investor-workspace" aria-label="Investor workspace">
+      <LeadDealDecisionBrief
+        lead={lead}
+        address={address}
+        canSave={canSaveScenario}
+        evidenceVersion={evidenceVersion}
+        selectedSales={selectedSales}
+        estimate={{ value, rent }}
+        estimateDate={{
+          value: valuation?.retrievedAt,
+          rent: standaloneRent !== null ? rental?.retrievedAt : valuation?.retrievedAt,
+        }}
+        onOpenComps={() => onOpen('comps')}
+        onSaved={onSaved}
+      />
       <header className="pbk-investor-hero" data-photo={Boolean(photo)}>
         {photo && (
           <img src={photo} alt="" referrerPolicy="no-referrer" decoding="async" loading="lazy" />

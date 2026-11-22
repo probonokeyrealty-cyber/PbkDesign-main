@@ -2,6 +2,176 @@
   flex-wrap: wrap;
 }
 
+.pbk-decision-brief {
+  border-color: color-mix(in srgb, var(--sky) 28%, var(--border-dim));
+  background: linear-gradient(145deg, var(--sky-glow), transparent 40%), var(--bg-panel);
+}
+
+.pbk-decision-brief h3 {
+  margin: 0;
+  font: 550 clamp(24px, 3vw, 32px)/1.2 var(--font-display);
+}
+
+.pbk-decision-brief fieldset {
+  min-width: 0;
+  margin: 14px 0 0;
+  padding: 0;
+  border: 0;
+}
+
+.pbk-decision-summary,
+.pbk-decision-value-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin-block: 12px;
+}
+
+.pbk-decision-summary > section,
+.pbk-decision-value-grid > div {
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid var(--border-dim);
+  border-radius: var(--radius);
+  background: var(--bg-panel-elevated);
+  overflow-wrap: anywhere;
+}
+
+.pbk-decision-brief .pbk-decision-summary h5,
+.pbk-decision-brief .pbk-decision-value-grid h5 {
+  margin-block: 0 8px;
+  color: var(--sky);
+}
+
+.pbk-decision-summary dl {
+  display: grid;
+  gap: 7px;
+  margin: 0 0 8px;
+}
+
+.pbk-decision-summary dd,
+.pbk-decision-value-grid strong {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.pbk-decision-summary dd {
+  margin-top: 3px;
+  font-size: clamp(14px, 1.6vw, 19px);
+  font-weight: 600;
+}
+
+.pbk-decision-summary dd[data-loss='true'],
+.pbk-investor-workspace .pbk-decision-caution {
+  color: var(--amber);
+}
+
+.pbk-decision-summary ul {
+  margin: 0;
+  padding-inline-start: 18px;
+  color: var(--text-secondary);
+  line-height: 1.55;
+}
+
+.pbk-decision-detail {
+  min-width: 0;
+  margin-bottom: 8px;
+  padding-inline: 12px;
+  padding-bottom: 4px;
+  border: 1px solid var(--border-dim);
+  border-radius: var(--radius);
+  background: var(--bg-panel);
+}
+
+.pbk-decision-detail[open] {
+  padding-bottom: 12px;
+}
+
+.pbk-decision-detail summary {
+  min-height: 44px;
+  padding-block: 12px;
+  cursor: pointer;
+}
+
+.pbk-decision-detail summary:focus-visible {
+  outline: 2px solid var(--sky);
+  outline-offset: 2px;
+}
+
+.pbk-decision-brief select,
+.pbk-decision-comp input {
+  min-width: 0;
+  width: 100%;
+  min-height: 44px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-panel);
+  color: var(--text-primary);
+  font: 500 16px/1.25 var(--font-ui);
+}
+
+.pbk-decision-brief select:focus-visible,
+.pbk-decision-comp input:focus-visible {
+  outline: 2px solid var(--sky);
+  outline-offset: 2px;
+}
+
+.pbk-decision-comp-picker,
+.pbk-decision-comp label {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  margin-block: 7px;
+}
+
+.pbk-decision-comp-picker {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 220px);
+  align-items: center;
+  overflow-wrap: anywhere;
+}
+
+.pbk-decision-comp {
+  margin-top: 9px;
+  padding-top: 9px;
+  border-top: 1px solid var(--border);
+}
+
+.pbk-decision-check {
+  padding: 10px;
+  border: 1px solid var(--border-dim);
+  border-radius: var(--radius);
+}
+
+.pbk-decision-check label.pbk-decision-verified {
+  display: flex;
+  align-items: center;
+}
+
+.pbk-decision-verified input[type='checkbox'] {
+  width: 18px;
+  min-height: 18px;
+  accent-color: var(--sky);
+}
+
+.pbk-decision-check button {
+  justify-self: start;
+}
+
+@media (max-width: 860px) {
+  .pbk-decision-summary,
+  .pbk-decision-value-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 480px) {
+  .pbk-decision-brief .pbk-investor-fields,
+  .pbk-decision-comp-picker {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
 .pbk-investor-workspace {
   display: grid;
   gap: 16px;

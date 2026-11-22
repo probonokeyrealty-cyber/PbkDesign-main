@@ -240,6 +240,8 @@ COPY scripts/public-market-connection.mjs ./scripts/public-market-connection.mjs
 COPY scripts/ava-outlook-mail.mjs ./scripts/ava-outlook-mail.mjs
 COPY src/app/utils/outlookDelivery.mjs ./src/app/utils/outlookDelivery.mjs
 COPY src/app/utils/analyticsEvidence.mjs ./src/app/utils/analyticsEvidence.mjs
+COPY src/app/utils/investorDecisionBrief.mjs ./src/app/utils/investorDecisionBrief.mjs
+COPY src/app/utils/leadComps.mjs ./src/app/utils/leadComps.mjs
 COPY scripts/rex-research-memory.mjs ./scripts/rex-research-memory.mjs
 COPY scripts/vector-embedding.mjs ./scripts/vector-embedding.mjs
 COPY scripts/skill-governance-schema.mjs ./scripts/skill-governance-schema.mjs

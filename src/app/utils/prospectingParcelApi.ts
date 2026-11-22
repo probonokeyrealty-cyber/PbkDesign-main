@@ -19,12 +19,7 @@ export type ProspectingMatch = {
   leadId: string | null;
 };
 
-export type ProspectingApprovalStatus =
-  | 'pending'
-  | 'approved'
-  | 'rejected'
-  | 'needs_revision'
-  | 'cancelled';
+export type ProspectingApprovalStatus = 'pending' | 'approved' | 'rejected' | 'needs_revision' | 'cancelled';
 
 export function matchProspectingParcel(parcelId: string) {
   return bridgeRequest<{ record: ProspectingParcel; match: ProspectingMatch }>({

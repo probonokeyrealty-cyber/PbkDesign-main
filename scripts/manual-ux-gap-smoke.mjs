@@ -108,11 +108,18 @@ assert(
   ),
   'Approval webhook fanout must have a bounded timeout.'
 );
+const [, approvalNotificationTasks = '', disabledNotifications] = bridge.match(
+  /^[ \t]*const \[fanout, slack\] = notify \? await Promise\.all\(\[([\s\S]*?)^[ \t]*\]\)([^\r\n]*)/m
+) ?? [];
 assert(
-  /const \[fanout, slack\] = notify \? await Promise\.all\(\[[\s\S]*?withTimeout\(\s*fireWebhook\(APPROVAL_WEBHOOK_URL, approval\),\s*3000,\s*'approval webhook fanout'\s*\)[\s\S]*?withTimeout\(postSlackApproval\(approval\),\s*3500,\s*'approval Slack fanout'\)[\s\S]*?\]\) : \[\{ ok: false, skipped: true \}, \{ ok: false, skipped: true \}\]/.test(
-    bridge
-  ),
-  'Approval creation must bound n8n and Slack fanout so UI actions do not time out.'
+  /^[ \t]*withTimeout\(\s*fireWebhook\(APPROVAL_WEBHOOK_URL, approval\),\s*3000,\s*'approval webhook fanout'\s*\)/m.test(
+    approvalNotificationTasks
+  ) &&
+    /^[ \t]*withTimeout\(\s*postSlackApproval\(approval\),\s*3500,\s*'approval Slack fanout'\s*\)/m.test(
+      approvalNotificationTasks
+    ) &&
+    disabledNotifications === ' : [{ ok: false, skipped: true }, { ok: false, skipped: true }];',
+  'Approval creation must bound concurrent n8n and Slack fanout and skip both when notifications are disabled.'
 );
 assert(
   /if \(sendingRef\.current \|\| !canSend\) return;/.test(composer) &&

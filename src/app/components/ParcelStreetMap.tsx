@@ -8,6 +8,7 @@ import 'mapbox-gl/mapbox-gl.css';
 interface ParcelStreetMapProps {
   parcels: ParcelFeature[];
   selected?: ParcelFeature;
+  selectedPoint?: { parcelId: string; address: string; coordinates: [number, number] };
   busy: boolean;
   fitParcels: boolean;
   onSelect: (parcelId: string) => void;
@@ -30,6 +31,7 @@ function parcelBounds({ geometry }: ParcelFeature) {
 export function ParcelStreetMap({
   parcels,
   selected,
+  selectedPoint,
   busy,
   fitParcels,
   onSelect,
@@ -60,8 +62,8 @@ export function ParcelStreetMap({
         container: container.current,
         accessToken: mapboxPublicToken,
         style: mapboxStreetStyle,
-        center: [-98, 39],
-        zoom: 4,
+        center: selectedPoint?.coordinates ?? [-98, 39],
+        zoom: selectedPoint ? 17 : 4,
         scrollZoom: false,
         dragRotate: false,
         pitchWithRotate: false,
@@ -132,7 +134,7 @@ export function ParcelStreetMap({
       instance.current = null;
       fittedParcels.current = null;
     };
-  }, [onUnavailable]);
+  }, [onUnavailable, selectedPoint]);
 
   useEffect(() => {
     const field = instance.current;
@@ -160,30 +162,34 @@ export function ParcelStreetMap({
     const bounds = new mapboxgl.LngLatBounds();
     const previousFocus = focusedParcel.current;
     focusedParcel.current = '';
-    const markers = visible.flatMap((parcel) => {
-      const extent = parcelBounds(parcel);
-      if (extent.isEmpty()) return [];
-      const { parcelId, situs } = parcel.properties;
-      const active = parcelId === selectedId;
-      if (parcels.includes(parcel)) bounds.extend(extent);
+    const addMarker = (parcelId: string, address: string, position: mapboxgl.LngLatLike, active: boolean) => {
       const button = document.createElement('button');
       button.type = 'button';
       button.className = 'pbk-street-parcel';
       button.dataset.parcelId = parcelId;
       button.setAttribute('role', 'button');
-      button.setAttribute('aria-label', 'Parcel ' + parcelId + ', ' + situs.line1);
+      button.setAttribute('aria-label', 'Parcel ' + parcelId + ', ' + address);
       button.setAttribute('aria-pressed', String(active));
       button.addEventListener('click', (event) => {
         event.stopPropagation();
         if (selection.current.busy) return;
         selection.current.onSelect(parcelId);
       });
-      const marker = new mapboxgl.Marker({ element: button })
-        .setLngLat(extent.getCenter())
-        .addTo(field);
+      const marker = new mapboxgl.Marker({ element: button }).setLngLat(position).addTo(field);
       if (previousFocus === parcelId) button.focus({ preventScroll: true });
-      return [marker];
+      return marker;
+    };
+
+    const markers = visible.flatMap((parcel) => {
+      const extent = parcelBounds(parcel);
+      if (extent.isEmpty()) return [];
+      const { parcelId, situs } = parcel.properties;
+      if (parcels.includes(parcel)) bounds.extend(extent);
+      return [addMarker(parcelId, situs.line1, extent.getCenter(), parcelId === selectedId)];
     });
+    if (selectedPoint) {
+      markers.push(addMarker(selectedPoint.parcelId, selectedPoint.address, selectedPoint.coordinates, true));
+    }
     if (
       !bounds.isEmpty() &&
       (!fittedParcels.current || (fitParcels && fittedParcels.current !== parcels))
@@ -205,7 +211,7 @@ export function ParcelStreetMap({
         marker.remove();
       });
     };
-  }, [parcels, selected, ready, fitParcels]);
+  }, [parcels, selected, selectedPoint, ready, fitParcels]);
 
   return (
     <>
@@ -213,7 +219,7 @@ export function ParcelStreetMap({
         ref={container}
         className="pbk-dialer-street-map"
         role="group"
-        aria-label="Mapbox streets and interactive parcel boundaries"
+        aria-label={selectedPoint ? 'Mapbox streets and selected parcel center' : 'Mapbox streets and interactive parcel boundaries'}
         aria-busy={!ready}
       />
       {onLoadArea && (

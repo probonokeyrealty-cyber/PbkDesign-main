@@ -5,6 +5,7 @@ import { ParcelProspectingBrief } from '../components/ParcelProspectingBrief';
 import { ParcelProspectingList } from '../components/ParcelProspectingList';
 import { SavedEvidenceMark } from '../components/SavedEvidenceMark';
 import { mapboxPublicToken } from '../utils/mapboxConfig';
+import { matchProspectingParcel } from '../utils/prospectingParcelApi';
 import { parcelProspect, prospectLimit, readParcelProspects, saveParcelProspects, type ParcelProspect } from '../utils/parcelProspecting';
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogTitle, DialogTrigger } from '../components/ui/dialog';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs';
@@ -55,6 +56,102 @@ function coverageTone(status = '') {
 }
 
 export function ParcelDialer() {
+  const { search } = useLocation();
+  const parcelId = new URLSearchParams(search).get('vanNuysParcel');
+  return parcelId === null ? <RegularParcelDialer /> : <VanNuysParcelDialer key={parcelId} parcelId={parcelId} />;
+}
+
+const emptyParcels: ParcelFeature[] = [];
+
+function VanNuysParcelDialer({ parcelId }: { parcelId: string }) {
+  const validId = /^\d{10}$/.test(parcelId);
+  const [result, setResult] = useState<Awaited<ReturnType<typeof matchProspectingParcel>> | null>(null);
+  const [error, setError] = useState('');
+  const [mapUnavailable, setMapUnavailable] = useState(false);
+  const heading = useRef<HTMLHeadingElement>(null);
+  const showProperty = useCallback(() => heading.current?.focus(), []);
+  const handleMapUnavailable = useCallback(() => setMapUnavailable(true), []);
+
+  useEffect(() => {
+    if (!validId) return;
+    let active = true;
+    void matchProspectingParcel(parcelId).then((response) => {
+      if (!active) return;
+      if (response.record?.parcelId !== parcelId) {
+        setError('The county could not verify this Van Nuys parcel.');
+        return;
+      }
+      setResult(response);
+    }).catch((reason) => {
+      if (active) setError(errorText(reason));
+    });
+    return () => { active = false; };
+  }, [parcelId, validId]);
+
+  const parcel = result?.record;
+  const point = useMemo(() => {
+    const { longitude, latitude } = parcel ?? {};
+    if (!parcel || typeof longitude !== 'number' || !Number.isFinite(longitude) ||
+        typeof latitude !== 'number' || !Number.isFinite(latitude) ||
+        Math.abs(longitude) > 180 || Math.abs(latitude) > 85) return undefined;
+    return { parcelId: parcel.parcelId, address: parcel.line1, coordinates: [longitude, latitude] as [number, number] };
+  }, [parcel]);
+  const status = result?.match.status;
+  const leadId = status === 'matched' ? result?.match.leadId : null;
+
+  return (
+    <div className="pbk-dialer pbk-dialer-surface">
+      <header className="pbk-dialer-head">
+        <div>
+          <h1>Parcel <em>dialer</em></h1>
+          <p>Van Nuys parcel from Prospecting</p>
+        </div>
+        <Link to="/dialer" className="pbk-btn pbk-btn-ghost">Open Dialer workspace</Link>
+      </header>
+      <div className="pbk-dialer-reference">
+        <Link to="/prospecting">Back to Prospecting</Link>
+      </div>
+      {!validId && <p className="pbk-phone-error" role="alert">Select a valid LA County parcel from Prospecting.</p>}
+      {error && <p className="pbk-phone-error" role="alert">{error}</p>}
+      {validId && !result && !error && <p role="status">Verifying the parcel and checking CRM…</p>}
+      {parcel && (
+        <div className="pbk-dialer-grid pbk-van-nuys-dialer-grid">
+          <section className="pbk-dialer-map-card" aria-label="Parcel map">
+            <div className="pbk-dialer-section-head">
+              <h2><Layers size={16} aria-hidden="true" /> Selected parcel on Mapbox</h2>
+            </div>
+            {point && mapboxPublicToken && !mapUnavailable ? (
+              <div className="pbk-dialer-map" data-streets="true">
+                <Suspense fallback={<p className="pbk-dialer-map-empty" role="status">Loading street map…</p>}>
+                  <ParcelStreetMap parcels={emptyParcels} selectedPoint={point} busy={false} fitParcels={false}
+                    onSelect={showProperty} onUnavailable={handleMapUnavailable} />
+                </Suspense>
+              </div>
+            ) : <p className="pbk-phone-note">Map preview unavailable. The verified parcel and CRM result are still available.</p>}
+            {point && <p className="pbk-phone-note">Pin shows the LA County Assessor’s recorded parcel center.</p>}
+          </section>
+          <section className="pbk-dialer-map-card pbk-van-nuys-dialer-details" aria-labelledby="van-nuys-dialer-property">
+            <div className="pbk-parcel-quick-view">
+              <h2 id="van-nuys-dialer-property" ref={heading} tabIndex={-1}>{parcel.line1}</h2>
+              <p>{parcel.city}, CA {parcel.zip}</p>
+              <p role="status" className={`pbk-phone-tag pbk-parcel-match ${status === 'matched' ? 'good' : status === 'ambiguous' ? 'warn' : ''}`}>
+                {status === 'matched' ? 'Exact CRM match' : status === 'ambiguous' ? 'Multiple CRM matches' : 'No CRM match'}
+              </p>
+              <dl className="pbk-parcel-facts">
+                <div><dt>Parcel ID</dt><dd>{parcel.parcelId}</dd></div>
+                <div><dt>County</dt><dd>Los Angeles</dd></div>
+                <div><dt>Building area</dt><dd>{parcel.sqft ? parcel.sqft.toLocaleString() + ' sq ft' : 'Unavailable'}</dd></div>
+              </dl>
+              {leadId && <Link className="pbk-btn pbk-btn-ghost" to={'/leads/' + encodeURIComponent(leadId)}>Open matching lead</Link>}
+            </div>
+          </section>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function RegularParcelDialer() {
   const { hash } = useLocation();
   const [panel, setPanel] = useState<DialerPanel>(() => hash === '#prospecting-list' ? 'shortlist' : 'parcel');
   const [prospects, setProspects] = useState(readParcelProspects);

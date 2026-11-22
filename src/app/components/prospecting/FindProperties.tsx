@@ -2,22 +2,9 @@ import { lazy, Suspense, useCallback, useState, type FormEvent } from 'react';
 import { Link } from 'react-router';
 import { bridgeRequest } from '../../utils/runtimeBridge';
 import { mapboxPublicToken } from '../../utils/mapboxConfig';
+import { matchProspectingParcel, type ProspectingMatch as Match, type ProspectingParcel as Parcel } from '../../utils/prospectingParcelApi';
 
 const ProspectingMap = lazy(() => import('./ProspectingMap'));
-
-type Parcel = {
-  parcelId: string;
-  line1: string;
-  city: string;
-  zip: string;
-  longitude?: number;
-  latitude?: number;
-  use: string | null;
-  sqft: number | null;
-  units: number | null;
-  yearBuilt: number | null;
-  rollYear: number | null;
-};
 
 type SearchResult = {
   records: Parcel[];
@@ -27,11 +14,10 @@ type SearchResult = {
   truncated: boolean;
 };
 
-type Match = { status: 'matched' | 'ambiguous' | 'no_match'; leadId: string | null };
 type Review = { parcelId: string; match: Match; approvalId?: string; savedLeadId?: string };
 
 function request<T>(
-  action: 'search' | 'match' | 'approval' | 'save',
+  action: 'search' | 'approval' | 'save',
   body: Record<string, unknown>
 ) {
   return bridgeRequest<T>({ method: 'POST', path: `/api/prospecting/parcels/${action}`, body });
@@ -77,7 +63,7 @@ export function FindProperties() {
   function checkMatch(parcelId: string) {
     setSelectedPin(parcelId);
     void run('Checking CRM…', async () => {
-      const response = await request<{ match: Match }>('match', { parcelId });
+      const response = await matchProspectingParcel(parcelId);
       setReview({ parcelId, match: response.match });
     });
   }
@@ -219,6 +205,10 @@ export function FindProperties() {
                         .filter(Boolean)
                         .join(' · ')}
                     </p>
+                    <Link to={'/dialer?vanNuysParcel=' + encodeURIComponent(parcel.parcelId)}
+                      aria-label={'Open in Mapbox Dialer, ' + parcel.line1}>
+                      Open in Mapbox Dialer
+                    </Link>
                     {!selected && (
                       <button
                         type="button"

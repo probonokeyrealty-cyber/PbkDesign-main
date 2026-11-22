@@ -107,6 +107,11 @@ html[data-theme='light'] .pbk-dialer-surface { background: var(--bg-void); color
 .pbk-dialer-steps li[aria-current='step'] span { border-color: var(--sky-dim); background: var(--sky-glow); }
 .pbk-dialer-steps li[data-complete='true'] { color: var(--text-primary); border-color: var(--sky-dim); }
 .pbk-parcel-quick-view { display: grid; gap: 10px; margin-top: var(--s-4); padding: var(--s-4); min-width: 0; border: 1px solid var(--border-dim); border-radius: var(--radius-lg); background: var(--bg-console); }
+.pbk-prospecting-items { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.pbk-prospecting-items > li { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; padding: 8px; border: 1px solid var(--border-dim); border-radius: var(--radius); }
+.pbk-prospecting-items > li > div:first-child { min-width: 0; display: grid; justify-items: start; }
+.pbk-prospecting-parcel.pbk-btn { text-align: left; white-space: normal; overflow-wrap: anywhere; }
+.pbk-prospecting-parcel[aria-current] { color: var(--sky); }
 .pbk-parcel-quick-view h3 { margin: 0; color: var(--text-primary); font: 500 21px var(--font-display); overflow-wrap: anywhere; }
 .pbk-parcel-quick-view p { margin: 4px 0 0; color: var(--text-secondary); font-size: 13px; overflow-wrap: anywhere; }
 .pbk-parcel-phone-link { display: inline-flex; align-items: center; gap: 5px; color: var(--sky); font-size: 12px; text-decoration: underline; }

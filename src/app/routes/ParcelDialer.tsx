@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
-import { Link } from 'react-router';
+import { Link, useLocation } from 'react-router';
 import { ArrowDownRight, Check, Layers, Loader2, MapPin, Minus, PhoneCall, Plus, RefreshCw, Search } from 'lucide-react';
+import { ParcelProspectingList } from '../components/ParcelProspectingList';
+import { parcelProspect, prospectLimit, readParcelProspects, saveParcelProspects, type ParcelProspect } from '../utils/parcelProspecting';
 import { ParcelStreetMap } from '../components/ParcelStreetMap';
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogTitle, DialogTrigger } from '../components/ui/dialog';
 import { ParcelPhoneKeypad } from '../components/ParcelPhoneKeypad';
@@ -47,6 +49,9 @@ function coverageTone(status = '') {
 }
 
 export function ParcelDialer() {
+  const { hash } = useLocation();
+  const [prospects, setProspects] = useState(readParcelProspects);
+  const [prospectNotice, setProspectNotice] = useState('');
   const [coverage, setCoverage] = useState<DialerCoverage | null>(null);
   const [lines, setLines] = useState<OutboundLine[]>([]);
   const [canPlaceCalls, setCanPlaceCalls] = useState(false);
@@ -112,7 +117,37 @@ export function ParcelDialer() {
     }
   }, [lineId]);
 
+  useEffect(() => {
+    if (hash !== '#prospecting-list') return;
+    const shortlist = document.getElementById('prospecting-list');
+    shortlist?.focus();
+  }, [hash]);
+
   const selectedId = selection?.parcel.properties.parcelId || '';
+  const source = coverage?.licensed ? coverage.source : '';
+  const activeProspects = prospects.filter(item => item.source === source);
+  const isShortlisted = activeProspects.some(item => item.parcelId === selectedId);
+  const canShortlist = Boolean(source && selection?.ok && selectedId);
+
+  const updateProspects = (items: ParcelProspect[]) => {
+    setProspects(items);
+    setProspectNotice(saveParcelProspects(items) ? '' : 'This browser could not retain the shortlist after you leave.');
+  };
+
+  const addProspect = () => {
+    if (!canShortlist || !selection || isShortlisted) return;
+    if (prospects.length >= prospectLimit) {
+      setProspectNotice('Shortlist is full. Remove a parcel before adding another.');
+      return;
+    }
+    updateProspects([...prospects, parcelProspect(selection.parcel, source)]);
+  };
+
+  const reviewProspect = async (item: ParcelProspect) => {
+    setLookup({ mode: 'parcel', value: item.parcelId });
+    await choose({ parcelId: item.parcelId });
+    document.getElementById('pbk-parcel-quick-heading')?.focus();
+  };
   const reselect = (nextLine = lineId) => selectedId && choose({ parcelId: selectedId }, nextLine, quickParcel);
   const chooseFromMap = (parcelId: string) => {
     const parcel = features.find((feature) => feature.properties.parcelId === parcelId);
@@ -260,7 +295,7 @@ export function ParcelDialer() {
           {mapNotice && <p className="pbk-phone-note" role="status">{mapNotice}</p>}
           <section className="pbk-parcel-quick-view" aria-labelledby="pbk-parcel-quick-heading">
             <div className="pbk-dialer-section-head">
-              <h2 id="pbk-parcel-quick-heading"><MapPin size={16} aria-hidden="true" /> Property quick view</h2>
+              <h2 id="pbk-parcel-quick-heading" tabIndex={-1}><MapPin size={16} aria-hidden="true" /> Property quick view</h2>
               {property && <a className="pbk-parcel-phone-link" href="#pbk-virtual-phone">Virtual phone <ArrowDownRight size={13} aria-hidden="true" /></a>}
             </div>
             <div aria-live="polite">
@@ -276,6 +311,15 @@ export function ParcelDialer() {
                 </>
               ) : <p>Select a parcel on the map or look up an address.</p>}
             </div>
+            {canShortlist && (
+              <div>
+                <button type="button" className="pbk-btn pbk-btn-ghost pbk-btn-sm" disabled={Boolean(busy) || isShortlisted} onClick={addProspect}>
+                  {isShortlisted ? <Check size={14} aria-hidden="true" /> : <Plus size={14} aria-hidden="true" />}
+                  {isShortlisted ? 'On shortlist' : 'Add to shortlist'}
+                </button>
+              </div>
+            )}
+            {prospectNotice && <p role="status">{prospectNotice}</p>}
             {canCreateLead && (
               <Dialog open={leadReviewOpen} onOpenChange={(open) => {
                 if (!savingLead) {
@@ -314,6 +358,11 @@ export function ParcelDialer() {
               <Link to={`/leads/${encodeURIComponent(savedLead.leadId)}`}>Open lead</Link>
             </p>}
           </section>
+          <ParcelProspectingList items={activeProspects} selectedId={selectedId} disabled={Boolean(busy)}
+            onReview={(item) => void reviewProspect(item)}
+            onToggle={(item) => updateProspects(prospects.map(row => row === item ? { ...row, reviewed: !row.reviewed } : row))}
+            onRemove={(item) => updateProspects(prospects.filter(row => row !== item))}
+          />
         </section>
 
         <aside className="pbk-dialer-side pbk-virtual-phone" id="pbk-virtual-phone" aria-labelledby="pbk-virtual-phone-heading">
@@ -324,6 +373,9 @@ export function ParcelDialer() {
             <span className={`pbk-phone-tag ${approved ? 'good' : request ? 'warn' : 'sky'}`}>{phoneStatus}</span>
             <strong>{contact?.name || 'Parcel contact'}</strong>
             <span className="pbk-phone-num">{contact?.phoneDisplay || 'No number loaded'}</span>
+            {contact && !contact.synthetic && (
+              <Link className="pbk-parcel-phone-link" to={`/inbox?lead=${encodeURIComponent(contact.crmLeadId || contact.id)}`}>Open seller conversation</Link>
+            )}
           </div>
           <ol className="pbk-dialer-steps" aria-label="Call progress">
             {steps.map((step, index) => (

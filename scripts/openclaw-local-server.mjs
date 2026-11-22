@@ -1051,8 +1051,10 @@ const SHOULD_RESET = IS_RESET;
 const TOOL_NAMES = ['analyzeDeal', 'getPropertyData', 'cachePropertyData', 'scrape_property', 'import_leads', 'classifyParticipant', 'getParticipantProfile', 'getBrainEmailContext', 'pbk_retrieve_closing_intelligence', 'retrieveClosingIntelligence', 'pbk_ava_conversation_intelligence', 'getAvaConversationIntelligence', 'getProsodyAdvice', 'retrieveSimilarDeals', 'recallConversationMemory', 'upsertCallEmbeddingFromTranscript', 'scoreCallQuality', 'recordSkillOutcome', 'runRexSkillAutopilot', 'runAutonomousRexGoalDiscovery', 'handleRexLeadImported', 'runCoworkerHeartbeat', 'runYouTubeTrainingPipeline', 'runYouTubeTrainingEvalSuite', 'generateSyntheticEdgeCases', 'trainEmotionWorldModel', 'selectContextAwareScript', 'recordContextAwareScriptOutcome', 'validateProviderActionSafety', 'runAvaCanonicalEvalSuite', 'getObservabilityStatus', 'getSnnWorkerStatus', 'previewAgentDealContext', 'pbk_transfer_agent_skill', 'humanHandoff', 'webSearch', 'getReplyTemplates', 'getAdminPersistenceStatus', 'getDocuSignProviderStatus', 'inspectStreakPipeline', 'getStreakBootstrapPlan', 'bootstrapStreakPipeline', 'routeAdminCommand', 'admin_check_health', 'admin_restart_openclaw', 'admin_run_away_worker', 'admin_update_env_var', 'createApproval', 'createApprovalTask', 'handleReplyIntent', 'updateCRM', 'ingestResearchDoc', 'createBrainBlogPost', 'trainBrainBlogPost', 'harvestBrainBlog', 'recordMarketIntel', 'planLeadNurture', 'consultNurtureAgent', 'startNurtureSequence', 'processDueNurtureSteps', 'simulateDealConfidence', 'matchBuyers', 'runSystemAudit', 'getBrainState', 'checkDNC', 'sendColdEmail', 'scheduleAppointment', 'telnyx_call', 'telnyx_sms', 'send_verification_sms', 'routeInboundCall', 'runAvaMemoryLearning', 'addPbkMemory', 'recallPbkMemory', 'rememberPersonalFact', 'getPersonalContext', 'avaAskStrategist', 'askStrategist', 'pbk_teach_ava', 'recordRepairs', 'pbkRecordRepairs', 'sendNegotiationApproval', 'pbkSendNegotiationApproval', 'avaOverrideOffer', 'pbk_test_skill', 'pbk_script_test', 'scriptTest', 'pbk_outcome_analyzer', 'outcomeAnalyzer', 'pbk_suggestion_engine', 'suggestionEngine', 'pbk_knowledge_verifier', 'knowledgeVerifier', 'pbk_learn', 'pbk_learn_from_chat', 'recordPbkFeedback', 'detectPbkIntent', 'recordPbkKnowledge', 'queryPbkKnowledge', 'runPbkAgentPipeline', 'getReadableSummary', 'openAiWebSearch', 'pbk_send_update', 'pbk_call_operator', 'pbk_kill_switch', 'pbk_send_slack_reply', 'generatePersona', 'scoreAgentLikability', 'prepare_and_send_contract', 'sendDocuSign', 'sendContract', 'skipTrace', 'detectYelling', 'slackNotify', 'sendSellerDocs', 'prepareContract', 'contractLawyerReview', 'reloadContractTemplates', 'requestAdminAction', 'launchBrowserResearch', 'runAgentCommand', 'executeLocalCommand'];
 
 const runtimeBrowserSockets = new Set();
+const pendingRuntimeSnapshotSockets = new Set();
 const runtimeBrowserSessions = new Map();
 let runtimeBroadcastTimer = null;
+let runtimeBroadcastRetryTimer = null;
 const runtimeWebSocketStats = {
   lastOpenAt: '',
   lastMessageAt: '',
@@ -1063,7 +1065,7 @@ const runtimeWebSocketStats = {
 function sendRuntimeSocketMessage(socket, payload = {}) {
   if (!socket || socket.readyState !== 1) return false;
   try {
-    socket.send(JSON.stringify(payload));
+    socket.send(typeof payload === 'string' ? payload : JSON.stringify(payload));
     return true;
   } catch {
     return false;
@@ -1104,18 +1106,27 @@ function createRuntimeBrowserSession(request, body = {}) {
   };
 }
 
-function broadcastRuntimeState(reason = 'state') {
-  if (!runtimeBrowserSockets.size) return;
-  const payload = {
-    type: 'state',
-    reason,
-    at: isoNow(),
-    snapshot: buildStateSnapshot(),
-  };
-  for (const socket of runtimeBrowserSockets) {
-    if (!sendRuntimeSocketMessage(socket, payload)) {
+function broadcastRuntimeState(reason = 'state', sockets = runtimeBrowserSockets) {
+  let encoded;
+  for (const socket of sockets) {
+    if (socket.readyState !== 1 || !runtimeBrowserSockets.has(socket)) {
+      pendingRuntimeSnapshotSockets.delete(socket);
       runtimeBrowserSockets.delete(socket);
+      continue;
     }
+    if (socket.bufferedAmount > 0) {
+      pendingRuntimeSnapshotSockets.add(socket);
+      continue;
+    }
+    pendingRuntimeSnapshotSockets.delete(socket);
+    encoded ??= JSON.stringify({ type: 'state', reason, at: isoNow(), snapshot: buildStateSnapshot() });
+    if (!sendRuntimeSocketMessage(socket, encoded)) runtimeBrowserSockets.delete(socket);
+  }
+  if (pendingRuntimeSnapshotSockets.size && !runtimeBroadcastRetryTimer) {
+    runtimeBroadcastRetryTimer = setTimeout(() => {
+      runtimeBroadcastRetryTimer = null;
+      broadcastRuntimeState('state', pendingRuntimeSnapshotSockets);
+    }, 250);
   }
 }
 
@@ -3216,15 +3227,31 @@ function jsonStringify(value) {
 function sanitizeJsonForPostgres(value) {
   if (typeof value === 'string') return value.replace(/\u0000/g, '');
   if (typeof value === 'bigint') return value.toString();
-  if (Array.isArray(value)) return value.map((item) => sanitizeJsonForPostgres(item));
+  if (Array.isArray(value)) {
+    let sanitized = value;
+    for (let index = 0; index < value.length; index += 1) {
+      const item = sanitizeJsonForPostgres(value[index]);
+      if (item === value[index]) continue;
+      if (sanitized === value) sanitized = value.slice();
+      sanitized[index] = item;
+    }
+    return sanitized;
+  }
   if (value instanceof Date) return value.toISOString();
   if (value && typeof value === 'object') {
-    return Object.fromEntries(
-      Object.entries(value).map(([key, nested]) => [
-        key.replace(/\u0000/g, ''),
-        sanitizeJsonForPostgres(nested),
-      ])
-    );
+    const keys = Object.keys(value);
+    if (keys.some((key) => key.includes('\u0000'))) {
+      return Object.fromEntries(keys.map((key) => [key.replace(/\u0000/g, ''), sanitizeJsonForPostgres(value[key])]));
+    }
+    const prototype = Object.getPrototypeOf(value);
+    let sanitized = prototype === Object.prototype || prototype === null ? value : { ...value };
+    for (const key of keys) {
+      const nested = sanitizeJsonForPostgres(value[key]);
+      if (nested === value[key]) continue;
+      if (sanitized === value) sanitized = { ...value };
+      Object.defineProperty(sanitized, key, { value: nested, enumerable: true, configurable: true, writable: true });
+    }
+    return sanitized;
   }
   return value;
 }
@@ -73680,7 +73707,6 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
             target: session.callId || session.streamId || session.id,
           })
         );
-        persistStateInBackground('Telnyx audio heartbeat');
       }
       sendOrBufferTelnyxMediaFrame(frame);
       scheduleNoTranscriptFallback();

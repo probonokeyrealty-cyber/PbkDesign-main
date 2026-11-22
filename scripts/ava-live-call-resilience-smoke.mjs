@@ -242,4 +242,34 @@ const unavailableLatency = await runtime.recordPbkTurnLatency();
 assert.equal(unavailableLatency.reason, 'postgres_unavailable');
 assert.deepEqual(latencyStatusSaves, ['PBK turn latency status']);
 
+const snapshots = [];
+const fastSocket = { readyState: 1, bufferedAmount: 0, send: (data) => snapshots.push(data) };
+const slowSnapshots = [];
+const slowSocket = { readyState: 1, bufferedAmount: 1024, send: (data) => slowSnapshots.push(data) };
+let retrySnapshot;
+let snapshotId = 'fixture';
+const broadcastRuntime = vm.createContext({
+  runtimeBrowserSockets: new Set([fastSocket, slowSocket]), isoNow: () => new Date(clock).toISOString(),
+  pendingRuntimeSnapshotSockets: new Set(), runtimeBroadcastRetryTimer: null,
+  buildStateSnapshot: () => ({ approvals: [{ id: snapshotId }] }),
+  setTimeout: (callback) => { retrySnapshot = callback; return 1; },
+});
+vm.runInContext(sourceBetween('function sendRuntimeSocketMessage(', 'function pruneRuntimeBrowserSessions('), broadcastRuntime);
+vm.runInContext(sourceBetween('function broadcastRuntimeState(', 'function scheduleRuntimeStateBroadcast('), broadcastRuntime);
+broadcastRuntime.broadcastRuntimeState('test');
+assert.equal(JSON.parse(snapshots[0]).snapshot.approvals[0].id, 'fixture');
+assert.equal(snapshots.length, 1);
+assert.equal(slowSnapshots.length, 0, 'A slow dashboard must not queue another snapshot');
+slowSocket.bufferedAmount = 0;
+snapshotId = 'latest';
+retrySnapshot();
+assert.equal(JSON.parse(slowSnapshots[0]).snapshot.approvals[0].id, 'latest');
+assert.equal(snapshots.length, 1, 'Slow-client retries must not duplicate sends to ready dashboards');
+
+const dbJsonRuntime = vm.createContext({});
+vm.runInContext(sourceBetween('function sanitizeJsonForPostgres(', 'function sleep('), dbJsonRuntime);
+const stateFixture = vm.runInContext('({calls:[{id:"fixture",transcript:"hello"}]})', dbJsonRuntime);
+assert.equal(dbJsonRuntime.sanitizeJsonForPostgres(stateFixture), stateFixture, 'Clean snapshots must not be deep copied');
+assert.equal(dbJsonRuntime.postgresJsonStringify({ 'n\u0000ote': 'a\u0000b', total: 2n }), '{"note":"ab","total":"2"}');
+
 console.log(`Ava live-call resilience smoke passed (${checks.length} structural checks; silence, speech/final barge-in, session guards, and reply timing).`);

@@ -109,7 +109,7 @@ assert(
   'Approval webhook fanout must have a bounded timeout.'
 );
 assert(
-  /const \[fanout, slack\] = await Promise\.all\(\[[\s\S]*approval webhook fanout[\s\S]*postSlackApproval\(approval\)[\s\S]*approval Slack fanout/.test(
+  /const \[fanout, slack\] = notify \? await Promise\.all\(\[[\s\S]*?withTimeout\(\s*fireWebhook\(APPROVAL_WEBHOOK_URL, approval\),\s*3000,\s*'approval webhook fanout'\s*\)[\s\S]*?withTimeout\(postSlackApproval\(approval\),\s*3500,\s*'approval Slack fanout'\)[\s\S]*?\]\) : \[\{ ok: false, skipped: true \}, \{ ok: false, skipped: true \}\]/.test(
     bridge
   ),
   'Approval creation must bound n8n and Slack fanout so UI actions do not time out.'

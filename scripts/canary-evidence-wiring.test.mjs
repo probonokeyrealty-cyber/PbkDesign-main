@@ -208,9 +208,9 @@ test('bridge code matches the reviewed release fingerprint outside the scoped re
   // Phone turn latency persistence remains best effort during a database disconnect.
   // Interim transcripts and weak acknowledgments cannot replace a committed Ava reply.
   // Bridge snapshots avoid deep copies and respect dashboard backpressure.
-  // Prospecting advice only ranks checks derived from verified parcel and CRM evidence.
+  // Hermes uses verified parcel evidence and exposes only the status of its bound approval.
   assert.equal(createHash('sha256').update(unchanged).digest('hex'),
-    '6ef984330d7b1aec19a8b81291ae4840303d3fb08b7ccf4d1c7dbc15bdfeffa6');
+    '8e44fa430013f7677fcca62d3bbd6c56c1219c148b751b551643df5e72b88adf');
 });
 
 test('production distribution includes reader and protocol, never the fixture signer', () => {

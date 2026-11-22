@@ -19,6 +19,8 @@ export type ProspectingMatch = {
   leadId: string | null;
 };
 
+export type ProspectingApprovalStatus = 'pending' | 'approved' | 'rejected' | 'needs_revision' | 'cancelled';
+
 export function matchProspectingParcel(parcelId: string) {
   return bridgeRequest<{ record: ProspectingParcel; match: ProspectingMatch }>({
     method: 'POST',
@@ -40,5 +42,12 @@ export function saveApprovedProspectingParcel(parcelId: string, approvalId: stri
     method: 'POST',
     path: '/api/prospecting/parcels/save',
     body: { parcelId, approvalId },
+  });
+}
+
+export function getProspectingParcelApprovalStatus(parcelId: string, approvalId: string) {
+  const query = new URLSearchParams({ parcelId, approvalId });
+  return bridgeRequest<{ status: ProspectingApprovalStatus }>({
+    path: '/api/prospecting/parcels/approval-status?' + query,
   });
 }

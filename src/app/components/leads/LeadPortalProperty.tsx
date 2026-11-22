@@ -339,10 +339,13 @@ export function LeadPortalProperty({
           <LeadInvestorWorkspace
             key={identity}
             lead={lead}
+            address={address}
+            canSaveScenario={hasLookupAddress(address)}
             evidence={evidence}
             sales={savedSales}
             analyzerLink={analyzerLink}
             onOpen={openEvidenceTab}
+            onSaved={onSaved}
           />
         </Tabs.Content>
       </Tabs.Root>

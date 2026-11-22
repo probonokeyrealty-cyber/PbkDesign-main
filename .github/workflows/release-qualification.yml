@@ -143,7 +143,7 @@ jobs:
 
       - name: Verify comp evidence and explicit CRM comparison
         run: |
-          node --test scripts/property-intelligence.node-test.mjs scripts/analyzer-intelligence.node-test.mjs scripts/lead-comps.node-test.mjs scripts/property-evidence.node-test.mjs
+          node --test scripts/property-intelligence.node-test.mjs scripts/analyzer-intelligence.node-test.mjs scripts/lead-comps.node-test.mjs scripts/property-evidence.node-test.mjs scripts/investor-decision-brief.node-test.mjs
           node scripts/crm-property-evidence-browser-smoke.mjs
 
       - name: Verify saved lead handoff and explicit Analyzer refresh

@@ -3,6 +3,7 @@ import { chromium, webkit, devices, expect } from '@playwright/test';
 import { preview } from 'vite';
 import { readFileSync } from 'node:fs';
 import { projectAttomMcpSection } from '../src/app/utils/attomMcpSections.mjs';
+import { addDecisionScenario, normalizeDecisionScenario } from '../src/app/utils/investorDecisionBrief.mjs';
 process.env.PBK_DEV_BRIDGE_URL = 'http://127.0.0.1:1';
 const server = await preview({ build: { outDir: 'dist' }, preview: { host: '127.0.0.1', port: 0 } });
 const origin = 'http://127.0.0.1:' + server.httpServer.address().port;
@@ -36,7 +37,7 @@ lead.deal.propertyRecordSnapshot.sections = savedDatasets;
 async function verify(engine, config, label) {
   const browser = await engine.launch();
   const page = await browser.newPage(config);
-  const mutations = [], providerReads = [], canonicalReads = [], errors = [], unexpectedWrites = [];
+  const mutations = [], scenarioWrites = [], providerReads = [], canonicalReads = [], errors = [], unexpectedWrites = [];
   const fixture = structuredClone(lead), other = structuredClone(lead);
   other.id = other.leadId = 'crm-evidence-other';
   other.seller.name = 'Other Fixture Seller';
@@ -106,7 +107,17 @@ async function verify(engine, config, label) {
         });
       }
       if (path === '/api/leads/' + fixture.id && request.method() === 'PATCH') {
-        const body = request.postDataJSON(); mutations.push({ path, body });
+        const body = request.postDataJSON();
+        if (body.investorDecisionScenario) {
+          assert.deepEqual(body.expectedPropertyAddress, structuredAddress);
+          assert.deepEqual(Object.keys(body).sort(), ['expectedPropertyAddress', 'investorDecisionScenario']);
+          const scenario = normalizeDecisionScenario(body.investorDecisionScenario, captured);
+          assert.ok(scenario);
+          scenarioWrites.push({ path, scenario });
+          fixture.deal.investorDecisionScenarios = addDecisionScenario(fixture.deal.investorDecisionScenarios ?? [], scenario);
+          return send({ ok: true, scenario });
+        }
+        mutations.push({ path, body });
         assert.equal(body.actionSource, 'lead-comps-reviewed');
         assert.deepEqual(body.expectedPropertyAddress, structuredAddress);
         assert.deepEqual(body.analyzer.recordedSales.selectedIds, [sale.id]);
@@ -326,6 +337,51 @@ async function verify(engine, config, label) {
     await expect(investor.getByText('$410,000', { exact: true })).toBeVisible();
     assert.equal(mutations.length, 2, 'Investor examples and navigation must not write or refresh');
     assert.deepEqual(providerReads, [], 'Investor views use saved evidence only');
+    const decision = investor.getByRole('region', { name: 'Deal Decision Brief', exact: true });
+    await decision.getByText('Scenario assumptions', { exact: true }).click();
+    for (const [field, value] of [
+      ['After-repair value ($)', '300000'], ['Rehab including contingency ($)', '30000'],
+      ['Acquisition closing costs ($)', '5000'], ['Monthly holding costs ($)', '1000'],
+      ['Holding period (months)', '6'], ['Selling costs (% of resale)', '6'], ['Minimum profit target ($)', '25000'],
+    ]) await decision.getByRole('spinbutton', { name: field, exact: true }).fill(value);
+    await expect(decision.getByText('$216,000', { exact: true })).toBeVisible();
+    await expect(decision.getByText('$174,800', { exact: true })).toBeVisible();
+    await expect(decision.getByText('-$250,200', { exact: true })).toBeVisible();
+    await decision.getByText('Value evidence and comparable sales', { exact: true }).click();
+    await decision.getByRole('combobox', { name: new RegExp(sale.address) }).selectOption('arv');
+    await decision.getByRole('textbox', { name: 'Condition notes' }).fill('Renovated');
+    await decision.getByRole('textbox', { name: 'Why it fits' }).fill('Similar floor plan');
+    await decision.getByRole('textbox', { name: 'Lease comparable', exact: true }).fill('Nearby lease fixture');
+    await decision.getByRole('spinbutton', { name: 'Monthly lease rent ($)', exact: true }).fill('1900');
+    await decision.getByLabel('Lease date', { exact: true }).fill('2026-11-01');
+    await decision.getByRole('textbox', { name: 'Lease source', exact: true }).fill('Fixture lease');
+    await decision.getByRole('button', { name: 'Add lease comp', exact: true }).click();
+    await expect(decision.getByText('Nearby lease fixture', { exact: true })).toBeVisible();
+    await decision.getByText(/^Verification checklist/).click();
+    await decision.getByRole('textbox', { name: 'Source or document reference' }).first().fill('Fixture bid');
+    await decision.getByRole('textbox', { name: 'Owner', exact: true }).first().fill('QA operator');
+    await decision.getByLabel('Due date', { exact: true }).first().fill('2026-12-01');
+    await decision.getByRole('checkbox', { name: 'Verified', exact: true }).first().check();
+    await noOverflow();
+    assert.equal(scenarioWrites.length, 0, 'Editing decision assumptions never saves or refreshes');
+    await decision.getByRole('textbox', { name: 'Scenario name', exact: true }).fill('Fixture flip');
+    await decision.getByRole('button', { name: 'Save scenario to lead', exact: true }).click();
+    await expect(decision.getByText('Scenario saved to this lead.', { exact: true })).toBeVisible();
+    assert.equal(scenarioWrites.length, 1);
+    assert.equal(scenarioWrites[0].scenario.comps[0].saleId, sale.id);
+    assert.equal(scenarioWrites[0].scenario.comps[1].basis, 'rent');
+    assert.equal(scenarioWrites[0].scenario.checks[0].verified, true);
+    assert.equal(mutations.length, 2, 'Saving a scenario must not trigger property enrichment');
+    const scenarioId = scenarioWrites[0].scenario.id;
+    await page.reload();
+    await expect(decision.getByRole('combobox', { name: 'Saved scenarios', exact: true })).toHaveValue(scenarioId);
+    await expect(decision.getByText('$174,800', { exact: true })).toBeVisible();
+    await expect(decision.getByText(/Saved property evidence changed/)).toHaveCount(0);
+    await decision.evaluate(element => {
+      element.style.scrollMarginTop = '116px';
+      element.scrollIntoView({ block: 'start' });
+    });
+    await page.screenshot({ path: `output/lead-decision-brief-${label}.png` });
     await tab('Comps');
     mode = 'failure';
     const beforeFailure = structuredClone(fixture);
@@ -337,6 +393,11 @@ async function verify(engine, config, label) {
     await expect(workspace.getByText('Property intelligence refreshed. Some sources were unavailable; previously saved evidence is retained.', { exact: true })).toBeVisible();
     await assertSaved();
     assert.deepEqual(fixture, beforeFailure, 'Partial failure retains snapshots, timestamps and reviewed comps');
+    fixture.deal.propertyRecordSnapshot.facts.taxAmount = 2600;
+    await page.reload();
+    await expect(decision.getByRole('combobox', { name: 'Saved scenarios', exact: true })).toHaveValue(scenarioId);
+    await expect(decision.getByText(/Saved property evidence changed/)).toBeVisible();
+    await expect(decision.getByText('$174,800', { exact: true })).toBeVisible();
     const beforeSwitch = mutations.length;
     await page.goto(origin + '/leads/' + other.id); await expect(workspace).toBeVisible();
     await expect(brief.getByText('2 populated datasets', { exact: true })).toBeVisible();
@@ -357,6 +418,7 @@ async function verify(engine, config, label) {
     await expect(otherDatasets.getByText('Other lead owner only',{exact:true})).toBeVisible();
     await expect(otherDatasets.getByText('Owner fixture alpha',{exact:true})).toHaveCount(0);
     await tab('Investor');
+    await expect(decision.getByRole('combobox', { name: 'Saved scenarios', exact: true }).locator('option')).toHaveCount(1);
     await expect(investor.getByLabel('Choose a strategy')).toHaveValue('fix-flip');
     await expect(investor.getByLabel('Purchase price', { exact: true })).toHaveValue('');
     await expect(investor.getByText('$490,000', { exact: true })).toBeVisible();
@@ -454,7 +516,7 @@ async function verify(engine, config, label) {
     assert.equal(mutations.length, beforeSwitch + 1, 'Alias navigation must not refresh or save');
     assert.deepEqual(providerReads, [], 'Only explicit unified refresh may access providers');
     assert.deepEqual(unexpectedWrites, []); assert.deepEqual(errors, []); await noOverflow();
-    console.log(label + ': Investor scenarios, saved evidence shortcuts, exact-lead Ava voice commands and explicit refresh passed');
+    console.log(label + ': Deal Decision Brief, exact-lead scenario save, stale evidence, and explicit refresh passed');
   } finally { await browser.close(); }
 }
 try {

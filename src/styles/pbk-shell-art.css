@@ -47,6 +47,92 @@ html[data-theme='light'] .pbk-team-access-shell::before {
   opacity: 0.58;
 }
 
+.pbk-leads-hero-top {
+  --pbk-workspace-art: url('/assets/pbk-leads-survey-stakes.webp');
+  --pbk-art-end: 34%;
+  --pbk-art-mobile-height: 58px;
+}
+
+.pbk-analyzer-command-main {
+  --pbk-workspace-art: url('/assets/pbk-analyzer-stone-section.webp');
+  --pbk-art-end: 54%;
+  --pbk-art-mobile-height: 104px;
+}
+
+.pbk-inbox-hero-top {
+  --pbk-workspace-art: url('/assets/pbk-inbox-folded-vellum.webp');
+  --pbk-art-end: 47%;
+  --pbk-art-mobile-height: 58px;
+}
+
+.pbk-fleet-hero-top {
+  --pbk-workspace-art: url('/assets/pbk-fleet-optical-survey.webp');
+  --pbk-art-end: 25%;
+  --pbk-art-mobile-height: 76px;
+}
+
+:is(.pbk-leads-hero-top, .pbk-analyzer-command-main, .pbk-inbox-hero-top, .pbk-fleet-hero-top) {
+  position: relative;
+  isolation: isolate;
+}
+
+:is(
+  .pbk-leads-hero-top,
+  .pbk-analyzer-command-main,
+  .pbk-inbox-hero-top,
+  .pbk-fleet-hero-top
+)::before {
+  content: '';
+  position: absolute;
+  z-index: -1;
+  inset: 0 var(--pbk-art-end) 0 auto;
+  width: min(315px, calc(73% - var(--pbk-art-end)));
+  pointer-events: none;
+  background: var(--pbk-workspace-art) right center / auto max(100%, 105px) no-repeat;
+  mask-image: linear-gradient(90deg, transparent, #000 40%, #000 88%, transparent);
+  opacity: 0.78;
+}
+
+/* The other workspace headings sit on graphite in both themes. */
+html[data-theme='light'] .pbk-analyzer-command-main::before {
+  filter: invert(1) grayscale(0.72);
+  mix-blend-mode: multiply;
+  opacity: 0.48;
+}
+
+@media (max-width: 1024px) {
+  :is(
+    .pbk-leads-hero-top,
+    .pbk-analyzer-command-main,
+    .pbk-inbox-hero-top,
+    .pbk-fleet-hero-top
+  )::before {
+    opacity: 0.56;
+  }
+}
+
+@media (max-width: 860px) {
+  :is(
+    .pbk-leads-hero-top,
+    .pbk-analyzer-command-main,
+    .pbk-inbox-hero-top,
+    .pbk-fleet-hero-top
+  )::before {
+    inset: 0 0 auto 42%;
+    width: auto;
+    height: min(100%, var(--pbk-art-mobile-height));
+    background-size: auto 96px;
+    mask-image:
+      linear-gradient(90deg, transparent, #000 50%, #000 88%, transparent),
+      linear-gradient(#000 60%, transparent);
+    mask-composite: intersect;
+  }
+
+  html[data-theme='light'] .pbk-analyzer-command-main::before {
+    opacity: 0.32;
+  }
+}
+
 @media (max-width: 720px) {
   .pbk-today-header {
     padding: var(--s-4);
@@ -76,7 +162,13 @@ html[data-theme='light'] .pbk-team-access-shell::before {
 
 @media (forced-colors: active) {
   .pbk-today-header::before,
-  .pbk-team-access-shell::before {
+  .pbk-team-access-shell::before,
+  :is(
+    .pbk-leads-hero-top,
+    .pbk-analyzer-command-main,
+    .pbk-inbox-hero-top,
+    .pbk-fleet-hero-top
+  )::before {
     display: none;
   }
 

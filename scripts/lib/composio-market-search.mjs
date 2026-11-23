@@ -143,8 +143,9 @@ export function createComposioMarketSearch({
     configured,
     state: !enabled ? 'disabled' : !configured ? 'configuration_missing' : 'unverified',
   });
-  async function search(query) {
+  async function search(query, { requireExa = false, onDispatch } = {}) {
     if (!enabled || !configured) return { ok: false, live: false, result: status().state };
+    if (requireExa && !exa) return { ok: false, live: false, result: 'public_search_denied' };
     if (
       typeof query !== 'string' ||
       !query.trim() ||
@@ -179,6 +180,8 @@ export function createComposioMarketSearch({
         )
           throw Error('schema');
         const args = exa ? { query, model: 'exa', stream: false, text: false } : { query };
+        signal.throwIfAborted();
+        onDispatch?.();
         const result = await client.callTool({ name: tool, arguments: args }, undefined, {
           signal,
           timeout: 20000,
@@ -203,7 +206,11 @@ export function createComposioMarketSearch({
         answer: data.data.answer,
         citations: data.data.citations.map((c) => c?.url),
       });
-      return { ok: true, live: true, ...evidence };
+      const responseId = data.data.requestId;
+      return {
+        ok: true, live: true, ...evidence,
+        ...(exa && typeof responseId === 'string' && /^[A-Za-z0-9_-]{1,200}$/.test(responseId) && { responseId }),
+      };
     } catch {
       return { ok: false, live: false, result: 'public_search_unavailable' };
     } finally {

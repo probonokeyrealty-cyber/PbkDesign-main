@@ -1,6 +1,8 @@
 import { createHash, randomUUID } from 'node:crypto';
+import { createComposioMarketSearch } from './lib/composio-market-search.mjs';
 
 const TASK_TYPE = 'ava_rex_research';
+const STAGING_RESEARCH_SERVICE = 'srv-dbvk7tv40ujc73e0d8gg';
 const REQUEST_ID = /^[a-zA-Z0-9_-]{8,120}$/;
 const PROVIDER_RESPONSE_ID = /^[a-zA-Z0-9_-]{1,200}$/;
 const US_REGIONS = new Set('AL AK AZ AR CA CO CT DE DC FL GA HI ID IL IN IA KS KY LA ME MD MA MI MN MS MO MT NE NV NH NJ NM NY NC ND OH OK OR PA RI SC SD TN TX UT VT VA WA WV WI WY'.split(' '));
@@ -95,6 +97,25 @@ export async function readRexHandoff({ owner, requestId, leadId, store, readVers
   return view(store, record, readVersion, now);
 }
 
+export async function runRexWebResearch({
+  market, id, searchOpenAi, renderServiceId = process.env.RENDER_SERVICE_ID, stagingSearch,
+  recordDispatch = workId => console.info('[pbk-rex-search-dispatch]', JSON.stringify({ workId, provider: 'exa' })),
+}) {
+  const primary = await searchOpenAi(market, id);
+  // This code denotes a local readiness check, before any OpenAI request is sent.
+  if (renderServiceId !== STAGING_RESEARCH_SERVICE ||
+      primary?.result !== 'provider_missing' || primary.provider?.configured !== false) return primary;
+  const publicMarket = parseRexResearch(`Ask Rex to research ${market}`);
+  if (!publicMarket) return { ok: false, result: 'invalid_market' };
+  let dispatched = false;
+  const output = await (stagingSearch ?? createComposioMarketSearch()).search(
+    `Summarize current public housing market conditions for ${publicMarket} in at most 180 words. Cite key facts and state what remains uncertain.`,
+    { requireExa: true, onDispatch: () => { dispatched = true; recordDispatch(id); } },
+  );
+  if (output.ok && output.live) return { ...output, result: 'live' };
+  return dispatched ? { ok: false, result: 'reconciliation_required' } : output;
+}
+
 export async function runRexHandoff({ owner, requestId, market, leadId = '', store, readVersion, research, now = Date.now, leaseMs = 45_000 }) {
   const id = taskId({ owner, requestId });
   if (!id) return { status: 'invalid' };
@@ -115,7 +136,7 @@ export async function runRexHandoff({ owner, requestId, market, leadId = '', sto
 
   let result;
   try {
-    const output = await research(market, id);
+    const output = await runRexWebResearch({ market, id, searchOpenAi: research });
     const evidence = output?.ok === true ? citedEvidence(output) : null;
     if (evidence && output.result === 'live' && isProviderResponseId(output.responseId)) {
       const receipt = { version: 1, responseId: output.responseId, completedAt: new Date(now()).toISOString() };

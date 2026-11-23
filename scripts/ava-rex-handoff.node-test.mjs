@@ -8,7 +8,8 @@ import { isAbsolute, join, relative } from 'node:path';
 import { test } from 'node:test';
 import pg from 'pg';
 import { buildAgentRuntimeSmokeEnv } from './agent-runtime-smoke-isolation.mjs';
-import { runRexHandoff, readRexHandoff, rexLeadVersion, parseRexResearch, postgresRexHandoffStore } from './ava-rex-handoff.mjs';
+import * as handoff from './ava-rex-handoff.mjs';
+const { runRexHandoff, readRexHandoff, rexLeadVersion, parseRexResearch, postgresRexHandoffStore } = handoff;
 
 const request = { owner: 'operator', requestId: 'request-1', market: 'Tampa, FL', leadId: 'lead-1' };
 const evidence = { ok: true, result: 'live', responseId: 'resp_rex_fixture', answer: 'Check recorded sales.', citations: ['County data - https://example.com/sales'] };
@@ -61,6 +62,63 @@ test('one invocation across concurrent requests and status reads', async () => {
   assert.equal((await runRexHandoff({ ...input, market: 'Orlando, FL' })).status, 'conflict');
   assert.equal((await readRexHandoff({ ...input, owner: 'other' })).status, 'missing');
   assert.equal((await readRexHandoff({ ...input, leadId: 'another-lead' })).status, 'missing');
+});
+
+test('the isolated staging provider proves completion once and leaves a safe status readback', async () => {
+  const { input } = fixture();
+  let searches = 0;
+  const dispatches = [];
+  const research = (market, id) => handoff.runRexWebResearch({
+    market, id, renderServiceId: 'srv-dbvk7tv40ujc73e0d8gg',
+    searchOpenAi: async () => ({ ok: false, result: 'provider_missing', provider: { configured: false } }),
+    stagingSearch: {
+      search: async (query, { onDispatch, requireExa }) => {
+        assert.equal(requireExa, true);
+        assert.match(query, /Tampa, FL/);
+        assert.doesNotMatch(query, /lead-1|request-1/);
+        searches++;
+        onDispatch();
+        return { ok: true, live: true, answer: evidence.answer,
+          citations: ['https://example.com/sales'], responseId: 'exa_rex_fixture' };
+      },
+    },
+    recordDispatch: id => dispatches.push(id),
+  });
+  const options = { ...input, research };
+  const completed = await runRexHandoff(options);
+  assert.equal(completed.status, 'complete');
+  assert.deepEqual(await runRexHandoff(options), completed);
+  assert.deepEqual(await readRexHandoff(options), completed);
+  assert.equal(searches, 1);
+  assert.deepEqual(dispatches, [completed.id]);
+});
+
+test('Rex keeps OpenAI outside the isolated fallback lane and never retries an attempted search', async () => {
+  const stagingId = 'srv-dbvk7tv40ujc73e0d8gg';
+  const options = {
+    market: 'Tampa, FL', id: 'test-rex-id',
+    recordDispatch: () => {},
+    stagingSearch: { search: () => assert.fail('the staging tool must not run') },
+    searchOpenAi: async () => ({ ok: false, result: 'reconciliation_required' }),
+  };
+  const missing = { ok: false, result: 'provider_missing', provider: { configured: false } };
+  assert.equal(await handoff.runRexWebResearch({ ...options,
+    renderServiceId: 'other-service', searchOpenAi: async () => missing }), missing);
+  assert.deepEqual(await handoff.runRexWebResearch({ ...options,
+    renderServiceId: stagingId }), { ok: false, result: 'reconciliation_required' });
+  const disabled = { ...missing, provider: { configured: true } };
+  assert.equal(await handoff.runRexWebResearch({ ...options,
+    renderServiceId: stagingId, searchOpenAi: async () => disabled }), disabled);
+  const noOpenAi = { ...options, renderServiceId: stagingId, searchOpenAi: async () => missing };
+  for (const attempted of [false, true]) {
+    const outcome = await handoff.runRexWebResearch({ ...noOpenAi,
+      stagingSearch: { search: async (_query, { onDispatch }) => {
+        if (attempted) onDispatch();
+        return { ok: false, result: 'public_search_unavailable' };
+      } },
+    });
+    assert.equal(outcome.result, attempted ? 'reconciliation_required' : 'public_search_unavailable');
+  }
 });
 
 test('a cited response without a provider completion reference cannot be verified', async () => {

@@ -181,6 +181,9 @@ test('search executes only its pinned tool, exposes bounded public answer/links 
     verify: async () => true,
     connect: async () => client,
   });
+  const denied = await search.search('Public market query', { requireExa: true });
+  assert.equal(denied.result, 'public_search_denied');
+  assert.equal(calls.length, 0);
   const r = await search.search('Public market query');
   assert.equal(r.ok, true);
   assert.equal(r.live, true);
@@ -315,7 +318,7 @@ function exaFixture(options = {}) {
         return {
           structuredContent: {
             successful: true,
-            data: { answer: 'Raleigh public market summary.', citations: [{ url: 'https://example.org/source' }] },
+            data: { answer: 'Raleigh public market summary.', citations: [{ url: 'https://example.org/source' }], requestId: 'exa_fixture_reference' },
           },
         };
       },
@@ -326,8 +329,14 @@ function exaFixture(options = {}) {
 }
 test('staging Exa invokes one pinned action with the dedicated account and bounded defaults', async () => {
   const { adapter, calls, gets } = exaFixture();
-  const result = await adapter.search('Public Raleigh market query');
+  const dispatches = [];
+  const result = await adapter.search('Public Raleigh market query', {
+    requireExa: true,
+    onDispatch: () => dispatches.push('attempted'),
+  });
   assert.equal(result.ok, true);
+  assert.equal(result.responseId, 'exa_fixture_reference');
+  assert.deepEqual(dispatches, ['attempted']);
   assert.deepEqual(result.citations, ['https://example.org/source']);
   assert.deepEqual(gets, [['GET', '/api/v3.1/tool_router/session/trs_market']]);
   assert.deepEqual(calls, [{

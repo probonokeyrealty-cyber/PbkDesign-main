@@ -218,8 +218,9 @@ test('bridge code matches the reviewed release fingerprint outside the scoped re
   // Interim transcripts and weak acknowledgments cannot replace a committed Ava reply.
   // Bridge snapshots avoid deep copies and respect dashboard backpressure.
   // Hermes uses verified parcel evidence and exposes only the status of its bound approval.
+  // Ava records first content for final-only replies after verified transport completion.
   assert.equal(createHash('sha256').update(unchanged).digest('hex'),
-    '4d68113ac4ee67ae453a938a3aa66cd283c9257266305f90fabdbd8f757b44bf');
+    '7bb70c4f41d963041a2d2dfef6bcdd283103053aaa7843edac10a11cefae1dc8');
 });
 
 test('production distribution includes reader and protocol, never the fixture signer', () => {

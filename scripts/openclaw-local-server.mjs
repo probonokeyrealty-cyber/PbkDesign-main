@@ -103,7 +103,7 @@ import { SYNTHETIC_EDGE_CASE_SOURCE, buildSyntheticEdgeCaseObjections } from './
 import { getObservabilityStatus as getPbkObservabilityStatus, incrementObservabilityCounter, initializeObservability, recordEventBusBacklogMetric, recordGuardrailViolationMetric, recordLatencyMetric, withObservabilitySpan } from './observability.mjs';
 import { recordAvaResponseLatencyStatus } from './ava-latency-status.mjs';
 import { readPhoneTtsAudio, summarizePhoneTurnTiming } from './ava-phone-latency.mjs';
-import { appendAssistantMessage, buildAssistantPrompt, createAssistantSessionId, detectAssistantIntent, findAssistantLeadMatch, normalizeAssistantSession, planAssistantIntent, sanitizeAssistantTurn } from './ava-assistant-chat.mjs';
+import { appendAssistantMessage, buildAssistantPrompt, createAssistantSessionId, detectAssistantIntent, findAssistantLeadMatch, findAssistantStreetLeads, normalizeAssistantSession, planAssistantIntent, sanitizeAssistantTurn } from './ava-assistant-chat.mjs';
 import { runAvaMissionController } from './ava-mission-controller.mjs';
 import { buildLeadCommitEnvelope } from './lead-field-provenance.mjs';
 import { loadBatchReviewRoster } from './batch-review-roster.mjs';
@@ -16144,11 +16144,16 @@ function searchLeadImports(params = {}) {
     .split(/\s+/)
     .map((item) => item.trim())
     .filter((item) => item.length >= 2);
-  const leads = (state.leadImports || []).filter((lead) => {
+  const candidates = params.exactStreet === true
+    ? findAssistantStreetLeads(query, state.leadImports || []).filter((lead) => (
+      !params.leadId || [lead.id, lead.leadId, lead.lead_id].some((id) => id === params.leadId)
+    ))
+    : state.leadImports || [];
+  const leads = candidates.filter((lead) => {
     const leadStatus = String(lead.status || lead.stage || lead.pipelineStatus || '').toLowerCase();
     const score = toNumber(lead.motivationScore ?? lead.score ?? lead.leadScore ?? lead.aiScore, 0);
     const haystack = [lead.id, lead.leadId, lead.importId, lead.seller?.name, lead.leadName, lead.name, lead.seller?.phone, lead.phone, lead.seller?.email, lead.email, lead.property?.address, lead.address, lead.propertyAddress, lead.property_address, lead.status, lead.stage, lead.tags].flat().filter(Boolean).join(' ').toLowerCase();
-    const queryMatch = !tokens.length || tokens.every((token) => haystack.includes(token));
+    const queryMatch = params.exactStreet === true || !tokens.length || tokens.every((token) => haystack.includes(token));
     const statusMatch = !status || leadStatus === status || leadStatus.includes(status);
     const scoreMatch = minScoreNumber === null || score >= minScoreNumber;
     return queryMatch && statusMatch && scoreMatch;
@@ -66021,7 +66026,18 @@ async function handleInternalAvaAssistantChatRequest(request) {
     const providerAugmentation = toolResult?.providerAugmentation || {};
     answer = [`Full PBK intelligence check is synced across ${coverage.used || 10}/${coverage.total || 10} layers.`, providerAugmentation.ready !== undefined ? `Provider readiness: ${providerAugmentation.ready || 0}/${providerAugmentation.configured || 0} configured external providers ready; PBK fallback is active.` : '', nextAction.action ? `Next action: ${String(nextAction.action).replace(/^consider_tool:/, 'consider ')}` : '', nextAction.reason ? `Why: ${String(nextAction.reason).slice(0, 260)}` : '', 'Messages, desktop actions, and contracts still wait for approval before anything changes.'].filter(Boolean).join(' ');
   } else if (assistantPlan.toolPlan?.toolName === 'findLead') {
-    const lead = requestTiming.measureSync('lead_lookup', () => findInternalAssistantLead(assistantPlan.toolPlan.params?.query || ''));
+    const { query = '', exactStreet } = assistantPlan.toolPlan.params || {};
+    const linkedLeadId = String(body.leadId || body.lead_id || '').trim();
+    const streetLookup = exactStreet
+      ? await requestTiming.measure('lead_lookup', () => toolHandlers.search_leads({
+        query, exactStreet: true, leadId: linkedLeadId, limit: 2,
+      }))
+      : null;
+    const ambiguousStreet = (streetLookup?.count ?? 0) > 1;
+    const scopedStreetMiss = Boolean(linkedLeadId && streetLookup?.count === 0);
+    const lead = streetLookup
+      ? (streetLookup.count === 1 ? streetLookup.leads[0] : null)
+      : requestTiming.measureSync('lead_lookup', () => findInternalAssistantLead(query));
     const leadName = String(lead?.leadName || lead?.name || '').trim();
     const displayName = leadName && !/^unknown\s+seller$/i.test(leadName) ? leadName : 'a matching lead';
     const foundLeadId = getInternalAssistantLeadId(lead);
@@ -66054,10 +66070,18 @@ async function handleInternalAvaAssistantChatRequest(request) {
         : pendingAssistantAction
           ? `I found ${displayName}${lead.address ? ` at ${lead.address}` : ''}. Confirm this is the right seller and I will continue the request.`
           : `I found ${displayName}${lead.address ? ` at ${lead.address}` : ''}. I can open the profile, summarize the latest timeline, or prepare the next seller step.`
-      : `I could not find a lead matching "${assistantPlan.toolPlan.params?.query || ''}" in the current Command Center snapshot.`;
+      : scopedStreetMiss
+        ? 'That street address does not match the lead linked to this chat. Open general Ava Chat to search other leads.'
+        : ambiguousStreet
+          ? `I found multiple leads at the street address "${query}" in the current Command Center snapshot. Open Leads to choose the right record.`
+          : `I could not find a lead matching "${query}" in the current Command Center snapshot.`;
+    let lookupResult = 'lead_not_found';
+    if (lead) lookupResult = 'lead_found';
+    else if (scopedStreetMiss) lookupResult = 'lead_outside_chat_scope';
+    else if (ambiguousStreet) lookupResult = 'lead_ambiguous';
     toolResult = {
       ok: Boolean(lead),
-      result: lead ? 'lead_found' : 'lead_not_found',
+      result: lookupResult,
       lead: lead || null,
       activeLeadId: foundLeadId || '',
       pendingAction: pendingAssistantAction,

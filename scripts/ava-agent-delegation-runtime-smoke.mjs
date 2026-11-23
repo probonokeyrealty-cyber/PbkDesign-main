@@ -137,7 +137,11 @@ async function main() {
       approvalAction: 'sendColdEmail', metadata: { executionParams: { provider: 'outlook' } },
     }],
     appointments: [],
-    leadImports: [{ id: 'lead-morgan', leadName: 'Morgan Test', address: '12 Test Street', email: 'test@example.net' }],
+    leadImports: [
+      { id: 'lead-morgan', leadName: 'Morgan Test', address: '12 Test Street', email: 'test@example.net' },
+      { id: 'lead-other', leadName: 'Other Seller', address: '42 Example Avenue Apt 2A' },
+      { id: 'lead-duplicate', leadName: 'Second Example Record', address: '42 Example Ave #2B' },
+    ],
     calls: [
       { id: 'call-other', leadId: 'lead-other', leadName: 'Other Seller', status: 'ended',
         createdAt: '2026-11-20T10:01:00Z', transcript: [{ text: 'Other seller private note' }] },
@@ -189,6 +193,40 @@ async function main() {
 
   try {
     await waitForBridge(baseUrl);
+
+    for (const [street, result, leadId] of [
+      ['12 Test St', 'lead_found', 'lead-morgan'],
+      ['13 Test St', 'lead_not_found', ''],
+      ['42 Example Ave', 'lead_ambiguous', ''],
+      ['42 Example Ave Apt 2B', 'lead_found', 'lead-duplicate'],
+      ['42 Example Ave Apt 2C', 'lead_not_found', ''],
+    ]) {
+      const lookup = await requestJson(baseUrl, '/api/assistant/chat', {
+        method: 'POST',
+        body: {
+          sessionId: 'ava-street-lookup-' + street.replace(/[^a-z0-9]+/gi, '-'),
+          message: `Look up ${street} in the CRM and tell me whether an existing lead matches. Read only.`,
+        },
+      });
+      assert.equal(lookup.status, 200);
+      assert.equal(lookup.json.toolPlan?.toolName, 'findLead');
+      assert.equal(lookup.json.toolResult?.result, result);
+      assert.equal(lookup.json.toolResult?.activeLeadId, leadId);
+      assert.equal(lookup.json.toolPlan?.providerWrite, false);
+    }
+
+    const linkedLookup = await requestJson(baseUrl, '/api/assistant/chat', {
+      method: 'POST',
+      body: {
+        sessionId: 'ava-linked-address-lookup',
+        leadId: 'lead-other',
+        message: 'Look up 12 Test St in the CRM. Read only.',
+      },
+    });
+    assert.equal(linkedLookup.status, 200);
+    assert.equal(linkedLookup.json.toolResult?.result, 'lead_outside_chat_scope');
+    assert.equal(linkedLookup.json.toolResult?.lead, null);
+    assert.equal(linkedLookup.json.activeLeadId, 'lead-other');
 
     const readOnlyDelegation = await requestJson(baseUrl, '/api/assistant/chat', {
       method: 'POST',

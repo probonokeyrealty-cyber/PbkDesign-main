@@ -8,6 +8,7 @@ import {
   buildAssistantPrompt,
   createAssistantSessionId,
   detectAssistantIntent,
+  findAssistantStreetLeads,
   planAssistantIntent,
 } from './ava-assistant-chat.mjs';
 
@@ -61,6 +62,42 @@ assert.equal(
 const callIntent = detectAssistantIntent('Call 614-555-0199 for me now.');
 assert.equal(callIntent.intent, 'call', 'Assistant should detect call requests.');
 assert.equal(callIntent.phone, '6145550199', 'Assistant should normalize phone numbers.');
+
+const addressLookup = detectAssistantIntent(
+  'Look up 123 Example Ave in the CRM and tell me whether an existing lead matches. Read only.'
+);
+assert.equal(addressLookup.intent, 'lead_lookup');
+const addressLookupPlan = planAssistantIntent(addressLookup, { publicMode: false, authenticated: true });
+assert.deepEqual(addressLookupPlan.toolPlan, {
+  toolName: 'findLead',
+  params: { query: '123 Example Ave', exactStreet: true },
+  providerWrite: false,
+});
+assert.equal(planAssistantIntent(addressLookup, { publicMode: true }).toolPlan, null);
+const exactAddressLead = { leadId: 'lead-123', propertyAddress: '123 Example Avenue, Los Angeles, CA' };
+assert.deepEqual(findAssistantStreetLeads(addressLookup.query, [
+  { leadId: 'lead-1123', address: '1123 Example Ave' },
+  { leadId: 'lead-124', address: '124 Example Ave' },
+  { leadId: 'lead-123-st', address: '123 Example Street' },
+  exactAddressLead,
+  exactAddressLead,
+]), [exactAddressLead]);
+assert.equal(
+  detectAssistantIntent('Look up 123 Example Ave in the CRM and send an email to the seller.').intent,
+  'seller_message',
+  'Adding a send request must still enter the existing approval-aware path.'
+);
+
+const unitLookup = detectAssistantIntent('Look up 123 Example Ave, apartment 2B in the CRM.');
+assert.equal(unitLookup.query, '123 Example Ave Unit 2B', 'The lookup must retain the apartment number.');
+const unitLeads = [
+  { leadId: 'unit-2a', address: '123 Example Avenue Apt 2A, Los Angeles, CA' },
+  { leadId: 'unit-2b', address: '123 Example Ave #2B, Los Angeles, CA' },
+  { leadId: 'unknown-unit', address: '123 Example Ave, Los Angeles, CA' },
+];
+assert.deepEqual(findAssistantStreetLeads(unitLookup.query, unitLeads), [unitLeads[1]]);
+assert.deepEqual(findAssistantStreetLeads('123 Example Ave Unit 2C', unitLeads), []);
+assert.deepEqual(findAssistantStreetLeads('123 Example Ave', unitLeads), unitLeads);
 
 const phoneLookupIntent = detectAssistantIntent('+1 (657) 500-1765');
 assert.equal(

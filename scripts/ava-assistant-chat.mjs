@@ -862,7 +862,7 @@ export function detectAssistantIntent(message = '') {
 
   if (
     address &&
-    /^(?:please\s+|can you\s+)?(?:find|look\s?up|search(?: for)?|check|pull up)\s+(?:the\s+)?(?:property\s+(?:at\s+)?)?["']?\d/i.test(text) &&
+    /^(?:please\s+|(?:can|could|would) you\s+)?(?:find|look\s?up|search(?: for)?|check(?:\s+(?:if|whether))?|pull up)\s+(?:the\s+)?(?:property\s+(?:at\s+)?)?["']?\d/i.test(text) &&
     /\b(?:in|against)\s+(?:our\s+|the\s+)?(?:CRM|Command Center)\b/i.test(text)
   ) {
     const unit = extractStreetUnit(text, address);

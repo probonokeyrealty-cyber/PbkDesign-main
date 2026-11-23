@@ -53,6 +53,14 @@ export function getTrustedAgentTimingProof(params) {
 export function registeredAgentTimingChannel(agent, localHandlers) {
   if (!agent || /^https?:\/\//i.test(agent.endpoint || '') || typeof localHandlers?.[agent.id] !== 'function') return 'unknown';
   if (['rex', 'max', 'hermes', 'script-rotator'].includes(agent.id)) return 'research';
-  if (['bant-enforcer', 'qa-agent', 'call-analyzer', 'prosody-tuner'].includes(agent.id)) return 'provider';
+  // The provider timing policy also covers completed non-generative internal work.
+  if ([
+    'bant-enforcer',
+    'qa-agent',
+    'call-analyzer',
+    'prosody-tuner',
+    'nurture-agent',
+    'research-orchestrator',
+  ].includes(agent.id)) return 'provider';
   return 'unknown';
 }

@@ -3,6 +3,9 @@ import { test } from '@jest/globals';
 import { AGENT_LATENCY_PILOT_V2, getAgentLatencyPolicy } from './agent-latency-policy.mjs';
 import { withRuntimeEvidenceContext } from './runtime-evidence-context.mjs';
 import { controlledExecution } from './controlled-execution-scope.mjs';
+import { collectAgentFleetEvidence, isAgentHandlerCompletion } from './agent-fleet-measurement.mjs';
+import { verifyAgentTimingProof } from './agent-timing-proof.mjs';
+import { evaluateStoppingAgent } from './research-additives.mjs';
 
 let adapters = {};
 try { adapters = await import('./agent-timing-adapters.mjs'); }
@@ -71,11 +74,41 @@ test('phone absent callbacks/media stay absent and the turn cannot be completed 
 test('registry classification is fixed to actual local handlers; ambiguous/remote routes remain unknown', () => {
   for (const [id, expected] of [['rex', 'research'], ['max', 'research'], ['script-rotator', 'research'],
     ['hermes', 'research'], ['bant-enforcer', 'provider'], ['qa-agent', 'provider'], ['call-analyzer', 'provider'],
-    ['prosody-tuner', 'provider'], ['research-orchestrator', 'unknown'], ['nurture-agent', 'unknown'],
+    ['prosody-tuner', 'provider'], ['research-orchestrator', 'provider'], ['nurture-agent', 'provider'],
     ['ava', 'unknown'], ['new-agent', 'unknown']]) {
     const localHandlers = { [id]: () => {} };
     assert.equal(api('registeredAgentTimingChannel')({ id, endpoint: 'local' }, localHandlers), expected);
     assert.equal(api('registeredAgentTimingChannel')({ id, endpoint: 'https://fixture.invalid' }, localHandlers), 'unknown');
     assert.equal(api('registeredAgentTimingChannel')({ id, endpoint: 'local' }, {}), 'unknown');
   }
+});
+
+test.each([
+  ['nurture-agent', {
+    ok: true,
+    result: 'recommendation',
+    lead: { id: 'fixture-lead' },
+    recommendation: { channel: 'email', urgency: 'later', reason: 'Follow up when the lead is ready.' },
+  }],
+  ['research-orchestrator', evaluateStoppingAgent({ uncertainty: 0.4 })],
+])('completed local %s advice records a verified completion timing without measuring generated text', async (agentId, output) => {
+  await withRuntimeEvidenceContext('registered_business', () => {
+    const localHandlers = { [agentId]: () => output };
+    const channel = api('registeredAgentTimingChannel')({ id: agentId, endpoint: 'local' }, localHandlers);
+    const { handle, advance } = turn(channel, { agentId });
+    advance(100);
+    const params = api('bindAgentTimingToParams')({}, handle, {
+      successful: isAgentHandlerCompletion(agentId, output) && api('agentTimingResultSucceeded')(output),
+    });
+    const proof = api('getTrustedAgentTimingProof')(params);
+    assert.deepEqual(proof?.timings, { completionMs: 100 });
+    assert.equal(proof.outputCodePoints, null);
+    assert.equal(verifyAgentTimingProof(proof, { secret, revision, policy, agentId,
+      runId: 'local-run', now: START + 100 }).verified, true);
+    const evidence = collectAgentFleetEvidence({
+      agentTasks: [{ id: 'local-run', agentId, status: 'complete', metadata: { timingProof: proof } }],
+    }, { now: START + 100, secret, revision, policy, requireTimingV2: true });
+    assert.equal(evidence.lastActions[agentId].status, 'success');
+    assert.deepEqual(evidence.latencySamples[agentId], [100]);
+  });
 });

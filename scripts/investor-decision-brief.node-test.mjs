@@ -186,6 +186,10 @@ test('the production save path can write to a cold profile without changing anot
         ('other', 'pbk', '5550102', '26 PBK Test Lane', 'Orlando', 'FL', '32801', '{"deal":{"mao":172000}}');`);
     vm.runInContext(statements.map((statement) => statement.getText(source)).join('\n'), context);
     const save = () => vm.runInContext('saveInvestorDecisionScenario("exact", address, draft)', context);
+    const review = () => vm.runInContext('loadLeadForFullView("exact", { reviewOnly: true })', context);
+    const legacyReview = await review();
+    assert.equal(legacyReview.lead.leadId, 'exact');
+    assert.equal(legacyReview.contactRestricted, false);
     const before = await getRows();
     failWrite = true;
     assert.equal((await save()).status, 503);
@@ -208,6 +212,9 @@ test('the production save path can write to a cold profile without changing anot
     assert.deepEqual(Array.from(restored.deal.investorDecisionScenarios), [normalize(draft)]);
     assert.equal(restored.deal.mao, 173000, 'only the scenario field comes from the durable profile');
     assert.equal(restored.property.address, address.street);
+    await db.exec("ALTER TABLE lead_profiles ADD COLUMN dnc boolean; UPDATE lead_profiles SET dnc = true WHERE id = 'exact';");
+    assert.equal((await review()).contactRestricted, true, 'the review honors a durable DNC flag');
+    assert.equal(writes, 2, 'the review does not write the profile');
   } finally {
     await db.close();
   }

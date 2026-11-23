@@ -61370,15 +61370,19 @@ async function loadExactPropertyLead(leadId) {
 
 const investorScenarioSaves = new Map();
 
-function loadExactLeadProfile(leadId) {
+function loadExactLeadProfile(leadId, { includeContactRestriction = false } = {}) {
+  // Legacy profiles can lack the normalized DNC column. Project it only for review.
+  const contactRestriction = includeContactRestriction ? ", to_jsonb(lead_profiles)->'dnc' AS dnc" : '';
   return queryPgRows(
-    "SELECT id, raw, source, status, stage, phone, address, lead_name, city, state, postal_code, dnc FROM public.lead_profiles WHERE COALESCE(workspace_id, 'pbk') = 'pbk' AND id = $1",
+    `SELECT id, raw, source, status, stage, phone, address, lead_name, city, state, postal_code${contactRestriction} FROM public.lead_profiles WHERE COALESCE(workspace_id, 'pbk') = 'pbk' AND id = $1`,
     [leadId]
   );
 }
 
 async function loadLeadForFullView(leadId, { reviewOnly = false } = {}) {
-  const profile = IS_HOSTED || getPgPool() ? await loadExactLeadProfile(leadId) : null;
+  const profile = IS_HOSTED || getPgPool()
+    ? await loadExactLeadProfile(leadId, { includeContactRestriction: reviewOnly })
+    : null;
   const hot = (state.leadImports || []).find((item) => (item.leadId || item.id) === leadId);
   const row = profile?.rows[0];
   if (reviewOnly) {

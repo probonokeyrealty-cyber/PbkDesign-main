@@ -37,6 +37,10 @@ const pbkBuildId =
 const portalEnvironment = process.env.PBK_PORTAL_ENV || (process.env.NODE_ENV === 'production' ? 'live' : 'staging')
 if (!['live', 'staging'].includes(portalEnvironment)) throw Error('Invalid PBK portal environment')
 
+const stagingMarketIndicators =
+  process.env.CONTEXT === 'deploy-preview' && process.env.HEAD === 'codex/house-zip-staging-indicators'
+const marketQa91411 = stagingMarketIndicators && process.env.REVIEW_ID === '111'
+
 function figmaAssetResolver() {
   return {
     name: 'figma-asset-resolver',
@@ -128,9 +132,7 @@ export default defineConfig({
   define: {
     __PBK_BUILD_ID__: JSON.stringify(pbkBuildId),
     __PBK_PORTAL_ENV__: JSON.stringify(portalEnvironment),
-    'import.meta.env.PBK_MARKET_STAGING_INDICATORS': JSON.stringify(
-      process.env.CONTEXT === 'deploy-preview' && process.env.HEAD === 'codex/house-zip-staging-indicators',
-    ),
+    'import.meta.env.PBK_MARKET_STAGING_INDICATORS': JSON.stringify(stagingMarketIndicators),
   },
   plugins: [
     figmaAssetResolver(),
@@ -209,6 +211,9 @@ export default defineConfig({
         analyzer: path.resolve(__dirname, 'analyzer.html'),
         shell: path.resolve(__dirname, 'index.shell.html'),
         investor: path.resolve(__dirname, 'investor-portal.html'),
+        ...(marketQa91411 && {
+          marketQa91411: path.resolve(__dirname, 'market-comparison-91411-qa.html'),
+        }),
       },
       output: {
         manualChunks(id) {

@@ -7,10 +7,14 @@ import { preview } from 'vite';
 const outDir = resolve(process.env.PBK_MARKET_TEST_OUT_DIR || 'dist');
 const shell = readFileSync(resolve(outDir, 'index.shell.html'), 'utf8');
 const qaEntry = resolve(outDir, 'market-comparison-qa.html');
+const qa91411Path = '/market-comparison-91411-qa.html';
+const expectQa91411 = process.env.PBK_MARKET_TEST_91411_QA === '1';
 const { portalEnvironment } = JSON.parse(readFileSync(resolve(outDir, 'pbk-build-manifest.json'), 'utf8'));
 const expectStagingIndicators = process.env.PBK_MARKET_TEST_STAGING_INDICATORS === '1';
 assert.equal(portalEnvironment, 'live');
 assert.equal(existsSync(qaEntry), false, 'The offline QA page must not be shipped.');
+assert.equal(existsSync(resolve(outDir, qa91411Path.slice(1))), expectQa91411,
+  'The 91411 fixture must only be built for Preview #111.');
 const server = await preview({
   configFile: false,
   build: { outDir },
@@ -45,6 +49,43 @@ const fixtures = [
 let browser;
 try {
   browser = await chromium.launch({ channel: 'chrome' });
+  if (expectQa91411) {
+    const qa = await browser.newPage({ viewport: { width: 390, height: 844 }, serviceWorkers: 'block' });
+    const forbiddenQa = [];
+    await qa.route('**/*', route => {
+      const request = route.request();
+      const url = new URL(request.url());
+      if (url.origin !== origin || request.method() !== 'GET' ||
+          !['document', 'script', 'stylesheet', 'font', 'image'].includes(request.resourceType())) {
+        forbiddenQa.push(`${request.method()} ${url.pathname}`);
+        return route.abort();
+      }
+      return route.continue();
+    });
+    await qa.routeWebSocket('**/*', socket => {
+      forbiddenQa.push('WebSocket');
+      socket.close();
+    });
+    await qa.goto(origin + qa91411Path);
+    await expect(qa.getByRole('heading', { name: '91411 Market Comparison QA' })).toBeVisible();
+    await expect(qa.getByText(/Fictional property. Read-only./)).toBeVisible();
+    const income = qa.getByRole('region', { name: 'Census ZCTA 91411 income', exact: true });
+    const county = qa.getByRole('region', { name: 'Los Angeles County unemployment', exact: true });
+    await expect(income.getByText('$74,617', { exact: true })).toBeVisible();
+    await expect(income.getByText('90% range: $68,141 to $81,093', { exact: true })).toBeVisible();
+    await expect(county.getByText('5.0%', { exact: true })).toBeVisible();
+    await expect(county).toContainText('FIPS 06037');
+    await expect(county).toContainText('December 2025');
+    assert.ok(await county.evaluate(card =>
+      innerWidth === 390 && document.documentElement.scrollWidth <= innerWidth
+      && card.scrollWidth <= card.clientWidth
+      && card.previousElementSibling.scrollWidth <= card.previousElementSibling.clientWidth
+      && card.getBoundingClientRect().top >= card.previousElementSibling.getBoundingClientRect().bottom
+    ));
+    assert.deepEqual(forbiddenQa, [], 'The standalone QA fixture must not request any API or external asset.');
+    console.log('Preview #111 fixture: separate ZIP and county charts at 390px; static requests only');
+    await qa.close();
+  }
   const page = await browser.newPage({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, serviceWorkers: 'block' });
   const forbidden = [];
   await page.addInitScript(() => {

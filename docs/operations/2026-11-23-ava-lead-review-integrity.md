@@ -18,3 +18,16 @@ The wiring suite reproduced the digest mismatch with the existing pin. The indep
 Release Qualification reproduced a failure when the shared profile read selected a normalized DNC column absent from the cold profile fixture. The corrective commit `0027d301d5fda1c3adfac53f3129f5413d05aa29` restores the original full profile and investor save projections. Only the review checks for the optional DNC field through a JSONB projection on the exact workspace-scoped row.
 
 The independent review reproduced the prior digest `ab96f0c7a03d6e492d39d81b7514e8b28d06998e179237ebb19020622f0929d8` and computed the corrected digest `b45ad034c38768862f21236a3d097a43b1f156c8306986f10518c677a9731977` using the same test normalization. The embedded Postgres regression covers profiles with and without the column and confirms the investor save remains exact and replay-safe. The correction changes no write, approval, dispatch, or authentication path.
+
+
+## Main branch integration
+
+The PR branch integrates main commit `90318ac9e351c2419870a072593e9cc95d72e9a5` with pilot head `06d97cc88463ac72bf477404bc3892057a09c128` in `5149eaf02da17407b52490f2cd9dd89b88453c44`. The bridge combined cleanly. The integrity test was the only textual conflict, and the test reproduced the expected fingerprint mismatch before the pin was updated.
+
+| Reviewed commit | Normalized canary wiring digest |
+| --- | --- |
+| Main | `466ebe8a5c1d08ee351352841b81908a777f9609fff45fd103372947624355e1` |
+| Pilot | `b45ad034c38768862f21236a3d097a43b1f156c8306986f10518c677a9731977` |
+| Combined | `6026802ba37965e2c49e49f078d1de29e5569e557ce374d95da6ed9f9464ebe9` |
+
+The independent review reproduced both prior pins and the combined digest using the existing normalization and exclusions. Main's intake path records internal Rex and Hermes consultations with provider writes blocked and keeps their lead details out of public liveness. The pilot's exact-lead GET reads saved evidence and honors contact restrictions. The integration keeps the existing authentication, approval, and dispatch paths and Ava's JSON default.

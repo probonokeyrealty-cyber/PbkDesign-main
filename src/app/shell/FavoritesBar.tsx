@@ -9,6 +9,7 @@ const FAVORITES_KEY = 'pbk:favorites:v1';
 const PAGE_LABELS: Record<string, string> = {
   '/': 'Command Center',
   '/leads': 'Leads',
+  '/prospecting': 'Prospecting',
   '/deal': 'Deal',
   '/deals': 'Deals',
   '/analyzer': 'Analyzer',

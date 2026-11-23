@@ -1,126 +1,243 @@
 import { useEffect, useRef, useState } from 'react';
-import { latLngBounds, map, polygon, tileLayer, type LatLngTuple, type Map as LeafletMap } from 'leaflet';
+import type { FeatureCollection } from 'geojson';
+import mapboxgl, { type GeoJSONSource } from 'mapbox-gl';
 import type { ParcelFeature } from '../utils/phoneDialerApi';
-import 'leaflet/dist/leaflet.css';
-
-const streetTiles = 'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
-const attribution = '© <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> contributors';
+import { mapboxPublicToken, mapboxStreetStyle } from '../utils/mapboxConfig';
+import 'mapbox-gl/mapbox-gl.css';
 
 interface ParcelStreetMapProps {
   parcels: ParcelFeature[];
   selected?: ParcelFeature;
+  selectedPoint?: { parcelId: string; address: string; coordinates: [number, number] };
   busy: boolean;
   fitParcels: boolean;
   onSelect: (parcelId: string) => void;
   onLoadArea?: (bounds: number[]) => void;
+  onUnavailable: () => void;
 }
 
-function toMapCoordinates(parcel: ParcelFeature): LatLngTuple[][][] {
-  const areas = parcel.geometry.type === 'Polygon'
-    ? [parcel.geometry.coordinates as number[][][]]
-    : parcel.geometry.coordinates as number[][][][];
-  return areas.map((area) => area.map((ring) => ring.map(([lng, lat]) => [lat, lng])));
+function parcelBounds({ geometry }: ParcelFeature) {
+  const bounds = new mapboxgl.LngLatBounds();
+  const polygons =
+    geometry.type === 'Polygon'
+      ? [geometry.coordinates as number[][][]]
+      : (geometry.coordinates as number[][][][]);
+  for (const polygon of polygons) {
+    for (const [lng, lat] of polygon[0] ?? []) bounds.extend([lng, lat]);
+  }
+  return bounds;
 }
 
-export function ParcelStreetMap({ parcels, selected, busy, fitParcels, onSelect, onLoadArea }: ParcelStreetMapProps) {
+export function ParcelStreetMap({
+  parcels,
+  selected,
+  selectedPoint,
+  busy,
+  fitParcels,
+  onSelect,
+  onLoadArea,
+  onUnavailable,
+}: ParcelStreetMapProps) {
   const container = useRef<HTMLDivElement>(null);
-  const instance = useRef<LeafletMap | null>(null);
-  const fitted = useRef(false);
-  const focusAfterSelection = useRef('');
-  const selectionHandler = useRef({ busy, onSelect });
+  const instance = useRef<mapboxgl.Map | null>(null);
+  const fittedParcels = useRef<ParcelFeature[] | null>(null);
+  const focusedParcel = useRef('');
+  const selection = useRef({ busy, onSelect });
+  const [ready, setReady] = useState(false);
   const [areaReady, setAreaReady] = useState(false);
 
   useEffect(() => {
-    selectionHandler.current = { busy, onSelect };
+    selection.current = { busy, onSelect };
   }, [busy, onSelect]);
 
   useEffect(() => {
     if (!container.current) return;
-    const field = map(container.current, { scrollWheelZoom: false, worldCopyJump: true }).setView([39, -98], 4);
-    field.attributionControl.setPrefix(false);
-    field.on('zoomend', () => setAreaReady(field.getZoom() >= 11));
-    tileLayer(import.meta.env.VITE_PBK_DIALER_TILE_URL || streetTiles, {
-      attribution,
-      maxZoom: 19,
-      referrerPolicy: 'strict-origin-when-cross-origin',
-    }).addTo(field);
+    if (!mapboxPublicToken) {
+      onUnavailable();
+      return;
+    }
+    let field: mapboxgl.Map;
+    try {
+      field = new mapboxgl.Map({
+        container: container.current,
+        accessToken: mapboxPublicToken,
+        style: mapboxStreetStyle,
+        center: selectedPoint?.coordinates ?? [-98, 39],
+        zoom: selectedPoint ? 17 : 4,
+        scrollZoom: false,
+        dragRotate: false,
+        pitchWithRotate: false,
+        cooperativeGestures: true,
+        renderWorldCopies: false,
+        performanceMetricsCollection: false,
+      });
+    } catch {
+      onUnavailable();
+      return;
+    }
     instance.current = field;
-    const resize = new ResizeObserver(() => field.invalidateSize({ pan: false }));
+    field.addControl(new mapboxgl.NavigationControl({ showCompass: false }));
+    field.addControl(
+      new mapboxgl.FullscreenControl({ container: container.current.parentElement ?? undefined })
+    );
+    field.touchZoomRotate.disableRotation();
+    const timeout = window.setTimeout(onUnavailable, 15_000);
+    field.on('error', ({ error }) => {
+      if ('status' in error && (error.status === 401 || error.status === 403)) onUnavailable();
+    });
+    field.on('zoomend', () => setAreaReady(field.getZoom() >= 11));
+    field.once('load', () => {
+      window.clearTimeout(timeout);
+      const accents = getComputedStyle(field.getContainer());
+      const sky = accents.getPropertyValue('--sky-deep').trim();
+      const selectedSky = accents.getPropertyValue('--sky-bright').trim();
+      field.addSource('parcel-boundaries', {
+        type: 'geojson',
+        data: { type: 'FeatureCollection', features: [] },
+      });
+      field.addLayer({
+        id: 'parcel-fill',
+        type: 'fill',
+        source: 'parcel-boundaries',
+        paint: {
+          'fill-color': ['case', ['get', 'selected'], selectedSky, sky],
+          'fill-opacity': ['case', ['get', 'selected'], 0.48, 0.2],
+        },
+      });
+      field.addLayer({
+        id: 'parcel-outline',
+        type: 'line',
+        source: 'parcel-boundaries',
+        paint: {
+          'line-color': sky,
+          'line-width': ['case', ['get', 'selected'], 3, 2],
+        },
+      });
+      field.on('click', 'parcel-fill', (event) => {
+        const id = event.features?.[0]?.properties?.parcelId;
+        if (typeof id === 'string' && !selection.current.busy) selection.current.onSelect(id);
+      });
+      field.on('mouseenter', 'parcel-fill', () => {
+        field.getCanvas().style.cursor = 'pointer';
+      });
+      field.on('mouseleave', 'parcel-fill', () => {
+        field.getCanvas().style.cursor = '';
+      });
+      setReady(true);
+    });
+    const resize = new ResizeObserver(() => field.resize());
     resize.observe(container.current);
     return () => {
+      window.clearTimeout(timeout);
       resize.disconnect();
       field.remove();
       instance.current = null;
-      fitted.current = false;
+      fittedParcels.current = null;
     };
-  }, []);
+  }, [onUnavailable, selectedPoint]);
 
   useEffect(() => {
     const field = instance.current;
-    if (!field || (!fitParcels && fitted.current)) return;
-    const bounds = latLngBounds([]);
-    for (const parcel of parcels) {
-      for (const area of toMapCoordinates(parcel)) bounds.extend(latLngBounds(area.flat()));
-    }
-    if (bounds.isValid()) {
-      field.fitBounds(bounds, { padding: [20, 20], maxZoom: 17, animate: false });
-      fitted.current = true;
-    }
-  }, [parcels, fitParcels]);
-
-  useEffect(() => {
-    const field = instance.current;
-    if (!field) return;
+    if (!ready || !field) return;
+    const source = field.getSource<GeoJSONSource>('parcel-boundaries');
+    if (!source) return;
     const selectedId = selected?.properties.parcelId;
-    const visibleParcels = selected && !parcels.some((parcel) => parcel.properties.parcelId === selectedId)
-      ? [...parcels, selected]
-      : parcels;
-    const shapes = visibleParcels.map((parcel) => {
-      const { parcelId, situs } = parcel.properties;
-      const active = parcelId === selectedId;
-      const shape = polygon(toMapCoordinates(parcel), { className: 'pbk-street-parcel' }).addTo(field);
-      const element = shape.getElement();
-      const item = element instanceof SVGElement ? element : null;
-      if (item) {
-        item.setAttribute('role', 'button');
-        item.setAttribute('tabindex', '0');
-        item.setAttribute('aria-label', `Parcel ${parcelId}, ${situs.line1}`);
-        item.setAttribute('aria-pressed', String(active));
-        if (active && focusAfterSelection.current === parcelId) {
-          item.focus({ preventScroll: true });
-          focusAfterSelection.current = '';
-        }
-      }
-      const select = () => {
-        if (!selectionHandler.current.busy) selectionHandler.current.onSelect(parcelId);
-      };
-      shape.on('click', select);
-      item?.addEventListener('keydown', (event) => {
-        if ((event.key !== 'Enter' && event.key !== ' ') || selectionHandler.current.busy) return;
-        event.preventDefault();
+    const visible =
+      selected && !parcels.some((parcel) => parcel.properties.parcelId === selectedId)
+        ? [...parcels, selected]
+        : parcels;
+    const data: FeatureCollection = {
+      type: 'FeatureCollection',
+      features: visible.map(({ geometry, properties }) => ({
+        type: 'Feature',
+        geometry:
+          geometry.type === 'Polygon'
+            ? { type: 'Polygon', coordinates: geometry.coordinates as number[][][] }
+            : { type: 'MultiPolygon', coordinates: geometry.coordinates as number[][][][] },
+        properties: { parcelId: properties.parcelId, selected: properties.parcelId === selectedId },
+      })),
+    };
+    source.setData(data);
+
+    const bounds = new mapboxgl.LngLatBounds();
+    const previousFocus = focusedParcel.current;
+    focusedParcel.current = '';
+    const addMarker = (parcelId: string, address: string, position: mapboxgl.LngLatLike, active: boolean) => {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'pbk-street-parcel';
+      button.dataset.parcelId = parcelId;
+      button.setAttribute('role', 'button');
+      button.setAttribute('aria-label', 'Parcel ' + parcelId + ', ' + address);
+      button.setAttribute('aria-pressed', String(active));
+      button.addEventListener('click', (event) => {
         event.stopPropagation();
-        focusAfterSelection.current = parcelId;
-        select();
+        if (selection.current.busy) return;
+        selection.current.onSelect(parcelId);
       });
-      if (active && !field.getBounds().contains(shape.getBounds().getCenter())) {
-        field.fitBounds(shape.getBounds(), { padding: [32, 32], maxZoom: 17, animate: false });
-      }
-      return shape;
+      const marker = new mapboxgl.Marker({ element: button }).setLngLat(position).addTo(field);
+      if (previousFocus === parcelId) button.focus({ preventScroll: true });
+      return marker;
+    };
+
+    const markers = visible.flatMap((parcel) => {
+      const extent = parcelBounds(parcel);
+      if (extent.isEmpty()) return [];
+      const { parcelId, situs } = parcel.properties;
+      if (parcels.includes(parcel)) bounds.extend(extent);
+      return [addMarker(parcelId, situs.line1, extent.getCenter(), parcelId === selectedId)];
     });
-    return () => { shapes.forEach((shape) => shape.remove()); };
-  }, [parcels, selected]);
+    if (selectedPoint) {
+      markers.push(addMarker(selectedPoint.parcelId, selectedPoint.address, selectedPoint.coordinates, true));
+    }
+    if (
+      !bounds.isEmpty() &&
+      (!fittedParcels.current || (fitParcels && fittedParcels.current !== parcels))
+    ) {
+      field.fitBounds(bounds, { padding: 32, maxZoom: 17, duration: 0 });
+      fittedParcels.current = parcels;
+    }
+    if (selected) {
+      const extent = parcelBounds(selected);
+      if (!extent.isEmpty() && !field.getBounds().contains(extent.getCenter())) {
+        field.fitBounds(extent, { padding: 40, maxZoom: 17, duration: 0 });
+      }
+    }
+    return () => {
+      markers.forEach((marker) => {
+        const button = marker.getElement();
+        if (document.activeElement === button)
+          focusedParcel.current = button.dataset.parcelId ?? '';
+        marker.remove();
+      });
+    };
+  }, [parcels, selected, selectedPoint, ready, fitParcels]);
 
   return (
     <>
-      <div ref={container} className="pbk-dialer-street-map" role="group" aria-label="OpenStreetMap streets and interactive parcel boundaries" />
+      <div
+        ref={container}
+        className="pbk-dialer-street-map"
+        role="group"
+        aria-label={selectedPoint ? 'Mapbox streets and selected parcel center' : 'Mapbox streets and interactive parcel boundaries'}
+        aria-busy={!ready}
+      />
       {onLoadArea && (
-        <button type="button" className="pbk-btn pbk-btn-ghost pbk-dialer-map-area" disabled={busy || !areaReady}
+        <button
+          type="button"
+          className="pbk-btn pbk-btn-ghost pbk-dialer-map-area"
+          disabled={busy || !areaReady || !ready}
           onClick={() => {
-            const field = instance.current;
-            if (!field) return;
-            const bounds = field.getBounds();
-            onLoadArea([bounds.getWest(), bounds.getSouth(), bounds.getEast(), bounds.getNorth()]);
-          }}>
+            const bounds = instance.current?.getBounds();
+            if (bounds)
+              onLoadArea([
+                Math.max(-180, bounds.getWest()),
+                bounds.getSouth(),
+                Math.min(180, bounds.getEast()),
+                bounds.getNorth(),
+              ]);
+          }}
+        >
           {areaReady ? 'Load parcels here' : 'Zoom in to load parcels'}
         </button>
       )}

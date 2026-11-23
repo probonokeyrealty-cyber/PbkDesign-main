@@ -2,12 +2,18 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import * as Tabs from '@radix-ui/react-tabs';
 import type { LinkProps } from 'react-router';
 import { Building2, ExternalLink, FileSearch, Pencil, RefreshCw } from 'lucide-react';
-import { fetchPropertyIntelligenceRequest, type RecentSalesResult } from '../../utils/runtimeBridge';
+import {
+  fetchPropertyIntelligenceRequest,
+  type RecentSalesResult,
+} from '../../utils/runtimeBridge';
 import { LeadListingPhotos } from '../AnalyzerListingLookup';
 import type { LeadPortalModel } from './leadPortalModel';
 import { formatLeadValue } from './leadPortalModel';
 import { LeadComps } from './LeadComps';
+import { LeadInvestorWorkspace } from './LeadInvestorWorkspace';
+import { LeadMarketComparison } from './LeadMarketComparison';
 import { PropertyEvidenceBrief, type PropertyEvidenceTab } from './PropertyEvidenceBrief';
+import { describePropertyRefresh, PropertyRefreshResult } from './PropertyRefreshResult';
 import { listingSources, readPropertyEvidence } from '../../utils/propertyEvidence';
 import { formatCurrency } from '../../utils/formatting';
 import {
@@ -33,7 +39,41 @@ function ZillowLink({ href }: { href: string }) {
   );
 }
 
-export type LeadPropertyTab = 'overview' | PropertyEvidenceTab;
+export type LeadPropertyTab = 'overview' | PropertyEvidenceTab | 'investor' | 'market-comparison';
+
+function readSavedSales(
+  raw: Record<string, unknown>,
+  savedAddress: { street: string; city: string; state: string; zip: string }
+): RecentSalesResult | null {
+  const analyzer =
+    raw.analyzer && typeof raw.analyzer === 'object'
+      ? (raw.analyzer as Record<string, unknown>)
+      : {};
+  const research =
+    analyzer.recordedSales && typeof analyzer.recordedSales === 'object'
+      ? (analyzer.recordedSales as Record<string, unknown>)
+      : null;
+  const researchAddress =
+    research?.address && typeof research.address === 'object'
+      ? (research.address as Record<string, unknown>)
+      : {};
+  const normalize = (value: unknown) =>
+    String(value ?? '')
+      .trim()
+      .toLowerCase()
+      .replace(/[.,]/g, '')
+      .replace(/\s+/g, ' ');
+  return research &&
+    (research.source === 'ATTOM' || research.provider === 'ATTOM') &&
+    ['street', 'city', 'state', 'zip'].every(
+      (key) =>
+        normalize(researchAddress[key]) ===
+        normalize(savedAddress[key as keyof typeof savedAddress])
+    ) &&
+    Array.isArray(research.sales)
+    ? ({ ...research, source: 'ATTOM', status: 'matched' } as RecentSalesResult)
+    : null;
+}
 
 export function LeadPortalProperty({
   lead,
@@ -48,15 +88,23 @@ export function LeadPortalProperty({
   onTabChange: (tab: LeadPropertyTab) => void;
   analyzerLink: Pick<LinkProps, 'to' | 'state'>;
   onEdit: () => void;
-  onSaved: (leadId: string) => Promise<void>;
+  onSaved: (leadId: string) => Promise<Record<string, unknown> | undefined>;
 }) {
   const [refreshing, setRefreshing] = useState(false);
   const [compSaving, setCompSaving] = useState(false);
   const [refreshStatus, setRefreshStatus] = useState('');
+  const [refreshResult, setRefreshResult] = useState<ReturnType<
+    typeof describePropertyRefresh
+  > | null>(null);
   const pending = useRef(false);
   const compSavePending = useRef(false);
   const mounted = useRef(true);
-  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
   const recordTabRef = useRef<HTMLButtonElement>(null);
   const photoTabRef = useRef<HTMLButtonElement>(null);
   const compTabRef = useRef<HTMLButtonElement>(null);
@@ -70,36 +118,73 @@ export function LeadPortalProperty({
   const address = { street: lead.address, city: lead.city, state: lead.state, zip: lead.zip };
   const fullAddress = propertyAddressLabel(address);
   const evidence = readPropertyEvidence(lead.raw.deal, fullAddress);
+  const showPropertyActions = tab !== 'market-comparison';
   const identity = `${lead.id}:${fullAddress}`;
   const currentIdentity = useRef(identity);
   currentIdentity.current = identity;
-  const savedSales = useMemo<RecentSalesResult | null>(() => {
-    const analyzer = lead.raw.analyzer && typeof lead.raw.analyzer === 'object' ? lead.raw.analyzer as Record<string, unknown> : {};
-    const research = analyzer.recordedSales && typeof analyzer.recordedSales === 'object' ? analyzer.recordedSales as Record<string, unknown> : null;
-    const researchAddress = research?.address && typeof research.address === 'object' ? research.address as Record<string, unknown> : {};
-    const savedAddress = {street:lead.address,city:lead.city,state:lead.state,zip:lead.zip};
-    const normalize = (value: unknown) => String(value ?? '').trim().toLowerCase().replace(/[.,]/g, '').replace(/\s+/g, ' ');
-    return research && (research.source === 'ATTOM' || research.provider === 'ATTOM') && ['street', 'city', 'state', 'zip'].every(key => normalize(researchAddress[key]) === normalize(savedAddress[key as keyof typeof savedAddress])) && Array.isArray(research.sales)
-      ? { ...research, source: 'ATTOM', status: 'matched' } as RecentSalesResult : null;
-  }, [lead.raw,lead.address,lead.city,lead.state,lead.zip]);
+  const savedSales = useMemo(
+    () =>
+      readSavedSales(lead.raw, {
+        street: lead.address,
+        city: lead.city,
+        state: lead.state,
+        zip: lead.zip,
+      }),
+    [lead.raw, lead.address, lead.city, lead.state, lead.zip]
+  );
+  const reloadSavedLead = async (id: string) => {
+    await onSaved(id);
+  };
   async function refreshIntelligence(radiusMiles = 1) {
-    if (pending.current || compSavePending.current || !lead.id || !hasLookupAddress(address)) return;
+    if (pending.current || compSavePending.current || !lead.id || !hasLookupAddress(address))
+      return;
     const requestedIdentity = identity;
     pending.current = true;
-    setRefreshing(true); setRefreshStatus('');
+    setRefreshing(true);
+    setRefreshStatus('');
+    setRefreshResult(null);
     const active = () => mounted.current && currentIdentity.current === requestedIdentity;
+    let saved = false;
     try {
-      const response = await fetchPropertyIntelligenceRequest({ address: fullAddress, leadId: lead.id, expectedPropertyAddress: address, radiusMiles });
+      const response = await fetchPropertyIntelligenceRequest({
+        address: fullAddress,
+        leadId: lead.id,
+        expectedPropertyAddress: address,
+        radiusMiles,
+      });
       if (!active()) return;
-      if (!response.ok || !response.saved) throw new Error('Property intelligence was not saved. Refresh again when the bridge is available.');
-      await onSaved(lead.id);
-      if (active()) setRefreshStatus(
-        response.records.status === 'matched' && !response.records.partial && response.sales.status === 'matched'
-          ? 'Property intelligence saved. Review suggested sales before underwriting.'
-          : 'Property intelligence refreshed. Some sources were unavailable; previously saved evidence is retained.'
+      if (!response.ok || !response.saved) {
+        throw new Error(
+          'Property intelligence was not saved. Refresh again when the bridge is available.'
+        );
+      }
+      if (response.leadId && response.leadId !== lead.id) {
+        throw new Error('Saved lead could not be verified.');
+      }
+      saved = true;
+      const canonical = await onSaved(lead.id);
+      if (!active()) return;
+      if (!canonical) throw new Error('Saved lead could not be verified.');
+      setRefreshResult(
+        describePropertyRefresh(
+          response,
+          { ...evidence, sales: savedSales },
+          {
+            ...readPropertyEvidence(canonical.deal, fullAddress),
+            sales: readSavedSales(canonical, address),
+          }
+        )
       );
     } catch (error) {
-      if (active()) setRefreshStatus(error instanceof Error ? error.message : 'Unable to refresh property intelligence. Saved evidence is retained.');
+      if (active()) {
+        setRefreshStatus(
+          saved
+            ? 'The refresh saved, but this view could not reload the lead. Use Refresh lead to reopen saved data.'
+            : error instanceof Error
+              ? error.message
+              : 'Unable to refresh property intelligence. Saved evidence is retained.'
+        );
+      }
     } finally {
       pending.current = false;
       if (active()) setRefreshing(false);
@@ -132,18 +217,34 @@ export function LeadPortalProperty({
             {formatLeadValue(lead.stage)} / {formatLeadValue(lead.propertyType)}
           </p>
         </div>
-        <div className="pbk-property-actions">
-          <button type="button" className="pbk-btn pbk-btn-primary pbk-btn-sm" disabled={busy || !hasLookupAddress(address)} onClick={() => void refresh()}>
-            <RefreshCw size={14} aria-hidden className={refreshing ? 'animate-spin' : undefined} />
-            {refreshing ? 'Refreshing property intelligence...' : 'Refresh property intelligence'}
-          </button>
-          <button type="button" className="pbk-btn pbk-btn-ghost pbk-btn-sm" onClick={onEdit}>
-            <Pencil size={14} aria-hidden /> Edit lead
-          </button>
-          {zillowHref && <ZillowLink href={zillowHref} />}
-        </div>
+        {showPropertyActions && (
+          <div className="pbk-property-actions">
+            <button
+              type="button"
+              className="pbk-btn pbk-btn-primary pbk-btn-sm"
+              disabled={busy || !hasLookupAddress(address)}
+              onClick={() => void refresh()}
+            >
+              <RefreshCw
+                size={14}
+                aria-hidden
+                className={refreshing ? 'animate-spin' : undefined}
+              />
+              {refreshing ? 'Refreshing property intelligence...' : 'Refresh property intelligence'}
+            </button>
+            <button type="button" className="pbk-btn pbk-btn-ghost pbk-btn-sm" onClick={onEdit}>
+              <Pencil size={14} aria-hidden /> Edit lead
+            </button>
+            {zillowHref && <ZillowLink href={zillowHref} />}
+          </div>
+        )}
       </header>
-      {refreshStatus && <p className="pbk-property-evidence-note" role="status">{refreshStatus}</p>}
+      {showPropertyActions && refreshResult && <PropertyRefreshResult result={refreshResult} />}
+      {showPropertyActions && refreshStatus && (
+        <p className="pbk-property-evidence-note" role="status">
+          {refreshStatus}
+        </p>
+      )}
       <dl className="pbk-property-key-facts" aria-label="Key facts from the saved lead">
         <div>
           <dt>Beds / baths</dt>
@@ -162,41 +263,62 @@ export function LeadPortalProperty({
           <dd>{lead.yearBuilt ?? 'Not captured'}</dd>
         </div>
       </dl>
-      <div className="pbk-property-next-step" role="group" aria-label="Property evidence next step">
-        <FileSearch size={18} aria-hidden="true" />
-        <div>
-          <h3>{missing.length ? 'Address incomplete' : 'Property record review'}</h3>
-          <p>
-            {missing.length
-              ? `Missing ${missing.join(', ')}`
-              : 'Saved facts and provider records stay separate'}
-          </p>
-        </div>
-        <button
-          type="button"
-          className="pbk-btn pbk-btn-ghost pbk-btn-sm"
-          onClick={() => {
-            if (missing.length) onEdit();
-            else {
-              onTabChange('record');
-              recordTabRef.current?.focus();
-            }
-          }}
+      {showPropertyActions && (
+        <div
+          className="pbk-property-next-step"
+          role="group"
+          aria-label="Property evidence next step"
         >
-          {missing.length ? 'Complete address' : 'Review property record'}
-        </button>
-      </div>
-      <Tabs.Root value={tab} onValueChange={next => onTabChange(next as LeadPropertyTab)} activationMode="manual">
+          <FileSearch size={18} aria-hidden="true" />
+          <div>
+            <h3>{missing.length ? 'Address incomplete' : 'Property record review'}</h3>
+            <p>
+              {missing.length
+                ? `Missing ${missing.join(', ')}`
+                : 'Saved facts and provider records stay separate'}
+            </p>
+          </div>
+          <button
+            type="button"
+            className="pbk-btn pbk-btn-ghost pbk-btn-sm"
+            onClick={() => {
+              if (missing.length) onEdit();
+              else {
+                onTabChange('record');
+                recordTabRef.current?.focus();
+              }
+            }}
+          >
+            {missing.length ? 'Complete address' : 'Review property record'}
+          </button>
+        </div>
+      )}
+      <Tabs.Root
+        value={tab}
+        onValueChange={(next) => onTabChange(next as LeadPropertyTab)}
+        activationMode="manual"
+      >
         <Tabs.List aria-label="Property workspace sections" className="pbk-property-tabs">
           <Tabs.Trigger value="overview">Overview</Tabs.Trigger>
           <Tabs.Trigger ref={recordTabRef} value="record">
             Property record
           </Tabs.Trigger>
-          <Tabs.Trigger ref={photoTabRef} value="photos">Photos</Tabs.Trigger>
-          <Tabs.Trigger ref={compTabRef} value="comps">Comps</Tabs.Trigger>
+          <Tabs.Trigger ref={photoTabRef} value="photos">
+            Photos
+          </Tabs.Trigger>
+          <Tabs.Trigger ref={compTabRef} value="comps">
+            Comps
+          </Tabs.Trigger>
+          <Tabs.Trigger value="investor">Investor</Tabs.Trigger>
+          <Tabs.Trigger value="market-comparison">Market Comparison</Tabs.Trigger>
         </Tabs.List>
         <Tabs.Content value="overview" className="pbk-property-tab-panel">
-          <PropertyEvidenceBrief records={evidence.records} listing={evidence.listing} sales={savedSales} onOpen={openEvidenceTab} />
+          <PropertyEvidenceBrief
+            records={evidence.records}
+            listing={evidence.listing}
+            sales={savedSales}
+            onOpen={openEvidenceTab}
+          />
           <div className="pbk-property-evidence-grid">
             <div className="pbk-property-gallery">
               <LeadListingPhotos
@@ -316,7 +438,19 @@ export function LeadPortalProperty({
           />
         </Tabs.Content>
         <Tabs.Content value="comps" className="pbk-property-tab-panel">
-          <LeadComps address={address} leadId={lead.id} savedSales={savedSales} analyzerLink={analyzerLink} onRefresh={refreshIntelligence} refreshing={refreshing} onSaved={onSaved} onSavingChange={saving => { compSavePending.current = saving; setCompSaving(saving); }} />
+          <LeadComps
+            address={address}
+            leadId={lead.id}
+            savedSales={savedSales}
+            analyzerLink={analyzerLink}
+            onRefresh={refreshIntelligence}
+            refreshing={refreshing}
+            onSaved={reloadSavedLead}
+            onSavingChange={(saving) => {
+              compSavePending.current = saving;
+              setCompSaving(saving);
+            }}
+          />
         </Tabs.Content>
         <Tabs.Content value="photos" className="pbk-property-tab-panel">
           <LeadListingPhotos
@@ -326,6 +460,28 @@ export function LeadPortalProperty({
             onRefresh={refresh}
             refreshing={busy}
           />
+        </Tabs.Content>
+        <Tabs.Content
+          value="investor"
+          forceMount
+          hidden={tab !== 'investor'}
+          tabIndex={tab === 'investor' ? 0 : -1}
+          className="pbk-property-tab-panel"
+        >
+          <LeadInvestorWorkspace
+            key={identity}
+            lead={lead}
+            address={address}
+            canSaveScenario={hasLookupAddress(address)}
+            evidence={evidence}
+            sales={savedSales}
+            analyzerLink={analyzerLink}
+            onOpen={openEvidenceTab}
+            onSaved={reloadSavedLead}
+          />
+        </Tabs.Content>
+        <Tabs.Content value="market-comparison" className="pbk-property-tab-panel">
+          <LeadMarketComparison lead={lead} evidence={evidence} />
         </Tabs.Content>
       </Tabs.Root>
     </section>

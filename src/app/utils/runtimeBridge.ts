@@ -3277,7 +3277,9 @@ export async function recallConversationMemoryRequest(body: Record<string, unkno
 }
 
 export async function webSearchRequest(body: Record<string, unknown>) {
-  const result = await bridgeRequest<Record<string, unknown> & SearchCognitionResult>({
+  const result = await bridgeRequest<
+    SearchCognitionResult & { ok?: boolean; answer?: string; live?: boolean; citations?: unknown }
+  >({
     method: 'POST',
     path: '/api/brain/web-search',
     body,

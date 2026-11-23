@@ -1,0 +1,23 @@
+Van Nuys dry run receipt
+Run ID: hermes-dry-dec31223-4f0d-42f7-8ffe-82bdc37d7951
+Fixture reads: 1
+Staging fixture only. No live scraping, CRM writes, or outreach.
+
+Recheck outcomes
+1. Stale evidence | 220 Synthetic Fixture Way
+First attempt: Held. Observation has expired based on its original capture time.
+Recheck: Rex verified; Ava added to fits. Captured 2026-11-21T18:59:50Z. Freshness is measured from the original capture, not retrieval.
+
+2. Wrong saved-search revision | 230 Synthetic Fixture Way
+First attempt: Held. Observation is not bound to the selected source and search revision.
+Recheck: Rex verified; Ava added to fits. Captured 2026-11-21T18:59:50Z. Snapshot revision 1; saved revision 1.
+
+3. Outside-market evidence | 240 Synthetic Fixture Way
+First attempt: Held. Current evidence does not satisfy the requirement to be inside the reviewed boundary (Van Nuys).
+Recheck: Rex verified; Ava added to fits. Captured 2026-11-21T18:59:50Z. Snapshot reports inside for Van Nuys (fixture-boundaries, v1).
+
+Final shortlist: 4 verified, 0 held back
+- 220 Synthetic Fixture Way | Rex verified
+- 230 Synthetic Fixture Way | Rex verified
+- 240 Synthetic Fixture Way | Rex verified
+- 210 Synthetic Fixture Way | Rex verified

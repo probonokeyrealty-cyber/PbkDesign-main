@@ -1,17 +1,26 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import { Link, useLocation } from 'react-router';
-import { ArrowDownRight, Check, Layers, Loader2, MapPin, Minus, PhoneCall, Plus, RefreshCw, Search } from 'lucide-react';
+import { ArrowDownRight, Check, ClipboardList, Layers, ListChecks, Loader2, MapPin, Minus, PhoneCall, Plus, RefreshCw, Search } from 'lucide-react';
 import { ParcelProspectingBrief } from '../components/ParcelProspectingBrief';
 import { ParcelProspectingList } from '../components/ParcelProspectingList';
+import { SavedEvidenceMark } from '../components/SavedEvidenceMark';
+import { mapboxPublicToken } from '../utils/mapboxConfig';
+import {
+  getProspectingParcelApprovalStatus, matchProspectingParcel, requestProspectingParcelApproval,
+  saveApprovedProspectingParcel, type ProspectingApprovalStatus, type ProspectingMatch, type ProspectingParcel,
+} from '../utils/prospectingParcelApi';
 import { parcelProspect, prospectLimit, readParcelProspects, saveParcelProspects, type ParcelProspect } from '../utils/parcelProspecting';
-import { ParcelStreetMap } from '../components/ParcelStreetMap';
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogTitle, DialogTrigger } from '../components/ui/dialog';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs';
 import { ParcelPhoneKeypad } from '../components/ParcelPhoneKeypad';
 import {
   createLeadFromParcel, decideApproval, dialApprovedRequest, errorText, fetchDialerCalls, fetchDialerCoverage, fetchParcels, prepareParcelBrief, requestDialerCall, selectParcel,
   simulateDialerCallbacks, type DialerCall, type DialerCoverage, type DialerSelection, type OutboundLine, type ParcelBrief, type ParcelFeature,
 } from '../utils/phoneDialerApi';
 import '../../styles/phone-dialer.css';
+
+type DialerPanel = 'parcel' | 'brief' | 'shortlist';
+const ParcelStreetMap = lazy(() => import('../components/ParcelStreetMap').then(({ ParcelStreetMap }) => ({ default: ParcelStreetMap })));
 
 const VIEW_W = 1000;
 const VIEW_H = 625;
@@ -50,7 +59,289 @@ function coverageTone(status = '') {
 }
 
 export function ParcelDialer() {
+  const { search } = useLocation();
+  const parcelId = new URLSearchParams(search).get('vanNuysParcel');
+  return parcelId === null ? <RegularParcelDialer /> : <VanNuysParcelDialer key={parcelId} parcelId={parcelId} />;
+}
+
+const emptyParcels: ParcelFeature[] = [];
+
+const parcelApprovalLabels = {
+  checking: 'Checking Inbox approval…',
+  pending: 'Awaiting Inbox approval.',
+  approved: 'Approved in Inbox. Ready to save.',
+  rejected: 'Declined in Inbox.',
+  needs_revision: 'Inbox requested a revision.',
+  cancelled: 'Approval was cancelled.',
+  unavailable: 'Inbox status unavailable. Checking again…',
+};
+
+function VanNuysCreateLead({
+  parcel,
+  onMatch,
+}: {
+  parcel: ProspectingParcel;
+  onMatch: (match: ProspectingMatch) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [approvalId, setApprovalId] = useState('');
+  const [approvalStatus, setApprovalStatus] = useState<ProspectingApprovalStatus | 'checking' | 'unavailable'>('checking');
+  const [busy, setBusy] = useState<'approval' | 'save' | null>(null);
+  const [error, setError] = useState('');
+  const approved = approvalStatus === 'approved';
+  const canRequestAgain = approvalStatus === 'rejected' || approvalStatus === 'needs_revision' || approvalStatus === 'cancelled';
+
+  useEffect(() => {
+    if (!open || !approvalId) return;
+    let disposed = false;
+    let inFlight = false;
+    let timer: number | undefined;
+
+    async function refresh() {
+      if (disposed || inFlight || document.hidden) return;
+      window.clearTimeout(timer);
+      inFlight = true;
+      try {
+        const { status } = await getProspectingParcelApprovalStatus(parcel.parcelId, approvalId);
+        if (!disposed) {
+          setApprovalStatus(Object.hasOwn(parcelApprovalLabels, status) ? status : 'unavailable');
+        }
+      } catch {
+        if (!disposed) setApprovalStatus('unavailable');
+      } finally {
+        inFlight = false;
+        if (!disposed) timer = window.setTimeout(refresh, 4_000);
+      }
+    }
+
+    const refreshVisible = () => {
+      if (document.hidden) return;
+      setApprovalStatus('checking');
+      void refresh();
+    };
+    void refresh();
+    document.addEventListener('visibilitychange', refreshVisible);
+    window.addEventListener('focus', refreshVisible);
+    return () => {
+      disposed = true;
+      window.clearTimeout(timer);
+      document.removeEventListener('visibilitychange', refreshVisible);
+      window.removeEventListener('focus', refreshVisible);
+    };
+  }, [approvalId, open, parcel.parcelId]);
+
+  async function submit(action: 'approval' | 'save') {
+    if (busy || (action === 'save' && !approved)) return;
+    setBusy(action);
+    setError('');
+    try {
+      if (action === 'approval') {
+        const response = await requestProspectingParcelApproval(parcel.parcelId);
+        if (response.match) {
+          onMatch(response.match);
+        } else if (response.approvalId) {
+          setApprovalStatus('checking');
+          setApprovalId(response.approvalId);
+        } else {
+          throw new Error('The lead approval could not be recorded.');
+        }
+      } else {
+        const { leadId } = await saveApprovedProspectingParcel(parcel.parcelId, approvalId);
+        if (!leadId) throw new Error('The CRM did not confirm the saved lead.');
+        onMatch({ status: 'matched', leadId });
+      }
+    } catch (reason) {
+      setError(errorText(reason));
+      if (action === 'save') setApprovalStatus('checking');
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  return (
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        if (busy) return;
+        setOpen(next);
+        if (next) setApprovalStatus('checking');
+        setError('');
+      }}
+    >
+      <div>
+        <DialogTrigger asChild>
+          <button type="button" className="pbk-btn pbk-btn-primary pbk-btn-sm">
+            <Plus size={14} aria-hidden="true" /> Create lead
+          </button>
+        </DialogTrigger>
+      </div>
+      <DialogContent
+        className="pbk-parcel-lead-dialog pbk-van-nuys-lead-dialog"
+        onEscapeKeyDown={(event) => {
+          if (busy) event.preventDefault();
+        }}
+      >
+        <DialogTitle>Create lead from parcel</DialogTitle>
+        <DialogDescription>
+          Review the verified property details before requesting approval. Seller contact fields
+          will be blank.
+        </DialogDescription>
+        <dl className="pbk-dialer-kv">
+          <dt>Address</dt>
+          <dd>
+            {parcel.line1}, {parcel.city}, CA {parcel.zip}
+          </dd>
+          <dt>Parcel ID</dt>
+          <dd>{parcel.parcelId}</dd>
+          <dt>County</dt>
+          <dd>Los Angeles</dd>
+        </dl>
+        {approvalId && (
+          <div>
+            <p role="status">{parcelApprovalLabels[approvalStatus]}</p>
+            <Link to="/inbox" target="_blank" rel="noopener" className="underline">
+              Review in Inbox
+            </Link>
+          </div>
+        )}
+        {error && (
+          <p className="pbk-phone-error" role="alert">
+            {error}
+          </p>
+        )}
+        <DialogFooter>
+          <DialogClose asChild>
+            <button type="button" className="pbk-btn pbk-btn-ghost" disabled={Boolean(busy)}>
+              Close
+            </button>
+          </DialogClose>
+          {approvalId && canRequestAgain && (
+            <button
+              type="button"
+              className="pbk-btn pbk-btn-ghost"
+              disabled={Boolean(busy)}
+              onClick={() => void submit('approval')}
+            >
+              Request lead approval again
+            </button>
+          )}
+          <button
+            type="button"
+            className="pbk-btn pbk-btn-primary"
+            disabled={Boolean(busy) || Boolean(approvalId && !approved)}
+            onClick={() => void submit(approvalId ? 'save' : 'approval')}
+          >
+            {busy === 'save'
+              ? 'Checking approval and saving…'
+              : busy === 'approval'
+                ? 'Requesting approval…'
+                : approvalId
+                  ? 'Save approved lead'
+                  : 'Request lead approval'}
+          </button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function VanNuysParcelDialer({ parcelId }: { parcelId: string }) {
+  const validId = /^\d{10}$/.test(parcelId);
+  const [result, setResult] = useState<Awaited<ReturnType<typeof matchProspectingParcel>> | null>(null);
+  const [error, setError] = useState('');
+  const [mapUnavailable, setMapUnavailable] = useState(false);
+  const heading = useRef<HTMLHeadingElement>(null);
+  const showProperty = useCallback(() => heading.current?.focus(), []);
+  const handleMapUnavailable = useCallback(() => setMapUnavailable(true), []);
+
+  useEffect(() => {
+    if (!validId) return;
+    let active = true;
+    void matchProspectingParcel(parcelId).then((response) => {
+      if (!active) return;
+      if (response.record?.parcelId !== parcelId) {
+        setError('The county could not verify this Van Nuys parcel.');
+        return;
+      }
+      setResult(response);
+    }).catch((reason) => {
+      if (active) setError(errorText(reason));
+    });
+    return () => { active = false; };
+  }, [parcelId, validId]);
+
+  const parcel = result?.record;
+  const point = useMemo(() => {
+    const { longitude, latitude } = parcel ?? {};
+    if (!parcel || typeof longitude !== 'number' || !Number.isFinite(longitude) ||
+        typeof latitude !== 'number' || !Number.isFinite(latitude) ||
+        Math.abs(longitude) > 180 || Math.abs(latitude) > 85) return undefined;
+    return { parcelId: parcel.parcelId, address: parcel.line1, coordinates: [longitude, latitude] as [number, number] };
+  }, [parcel]);
+  const status = result?.match.status;
+  const leadId = status === 'matched' ? result?.match.leadId : null;
+
+  return (
+    <div className="pbk-dialer pbk-dialer-surface">
+      <header className="pbk-dialer-head">
+        <div>
+          <h1>Parcel <em>dialer</em></h1>
+          <p>Van Nuys parcel from Prospecting</p>
+        </div>
+        <Link to="/dialer" className="pbk-btn pbk-btn-ghost">Open Dialer workspace</Link>
+      </header>
+      <div className="pbk-dialer-reference">
+        <Link to="/prospecting">Back to Prospecting</Link>
+      </div>
+      {!validId && <p className="pbk-phone-error" role="alert">Select a valid LA County parcel from Prospecting.</p>}
+      {error && <p className="pbk-phone-error" role="alert">{error}</p>}
+      {validId && !result && !error && <p role="status">Verifying the parcel and checking CRM…</p>}
+      {parcel && (
+        <div className="pbk-dialer-grid pbk-van-nuys-dialer-grid">
+          <section className="pbk-dialer-map-card" aria-label="Parcel map">
+            <div className="pbk-dialer-section-head">
+              <h2><Layers size={16} aria-hidden="true" /> Selected parcel on Mapbox</h2>
+            </div>
+            {point && mapboxPublicToken && !mapUnavailable ? (
+              <div className="pbk-dialer-map" data-streets="true">
+                <Suspense fallback={<p className="pbk-dialer-map-empty" role="status">Loading street map…</p>}>
+                  <ParcelStreetMap parcels={emptyParcels} selectedPoint={point} busy={false} fitParcels={false}
+                    onSelect={showProperty} onUnavailable={handleMapUnavailable} />
+                </Suspense>
+              </div>
+            ) : <p className="pbk-phone-note">Map preview unavailable. The verified parcel and CRM result are still available.</p>}
+            {point && <p className="pbk-phone-note">Pin shows the LA County Assessor’s recorded parcel center.</p>}
+          </section>
+          <section className="pbk-dialer-map-card pbk-van-nuys-dialer-details" aria-labelledby="van-nuys-dialer-property">
+            <div className="pbk-parcel-quick-view">
+              <h2 id="van-nuys-dialer-property" ref={heading} tabIndex={-1}>{parcel.line1}</h2>
+              <p>{parcel.city}, CA {parcel.zip}</p>
+              <p role="status" className={`pbk-phone-tag pbk-parcel-match ${status === 'matched' ? 'good' : status === 'ambiguous' ? 'warn' : ''}`}>
+                {status === 'matched' ? 'Exact CRM match' : status === 'ambiguous' ? 'Multiple CRM matches' : 'No CRM match'}
+              </p>
+              <dl className="pbk-parcel-facts">
+                <div><dt>Parcel ID</dt><dd>{parcel.parcelId}</dd></div>
+                <div><dt>County</dt><dd>Los Angeles</dd></div>
+                <div><dt>Building area</dt><dd>{parcel.sqft ? parcel.sqft.toLocaleString() + ' sq ft' : 'Unavailable'}</dd></div>
+              </dl>
+              {leadId && <Link className="pbk-btn pbk-btn-ghost" to={'/leads/' + encodeURIComponent(leadId)}>Open matching lead</Link>}
+              {status === 'no_match' && (
+                <VanNuysCreateLead parcel={parcel} onMatch={(match) => {
+                  setResult((current) => current && { ...current, match });
+                  requestAnimationFrame(showProperty);
+                }} />
+              )}
+            </div>
+          </section>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function RegularParcelDialer() {
   const { hash } = useLocation();
+  const [panel, setPanel] = useState<DialerPanel>(() => hash === '#prospecting-list' ? 'shortlist' : 'parcel');
   const [prospects, setProspects] = useState(readParcelProspects);
   const [prospectNotice, setProspectNotice] = useState('');
   const [prospectBrief, setProspectBrief] = useState<ParcelBrief | null>(null);
@@ -74,6 +365,11 @@ export function ParcelDialer() {
   const [call, setCall] = useState<DialerCall | null>(null);
   const [zoom, setZoom] = useState(1);
   const [showStreets, setShowStreets] = useState<boolean | null>(null);
+  const [streetMapUnavailable, setStreetMapUnavailable] = useState(false);
+  const useBoundaryView = useCallback(() => {
+    setStreetMapUnavailable(true);
+    setShowStreets(false);
+  }, []);
   const [mapNotice, setMapNotice] = useState('');
   const [areaScoped, setAreaScoped] = useState(false);
   const projection = useProjection(features);
@@ -124,14 +420,17 @@ export function ParcelDialer() {
 
   useEffect(() => {
     if (hash !== '#prospecting-list') return;
-    const shortlist = document.getElementById('prospecting-list');
-    shortlist?.focus();
+    setPanel('shortlist');
+    const frame = requestAnimationFrame(() => document.getElementById('prospecting-list')?.focus());
+    return () => cancelAnimationFrame(frame);
   }, [hash]);
 
   const selectedId = selection?.parcel.properties.parcelId || '';
   const source = coverage?.licensed ? coverage.source : '';
   const activeProspects = prospects.filter(item => item.source === source);
-  const isShortlisted = activeProspects.some(item => item.parcelId === selectedId);
+  const pendingProspects = activeProspects.filter(item => !item.reviewed).length;
+  const currentProspect = activeProspects.find(item => item.parcelId === selectedId);
+  const isShortlisted = Boolean(currentProspect);
   const canShortlist = Boolean(source && selection?.ok && selectedId);
 
   const updateProspects = (items: ParcelProspect[]) => {
@@ -148,13 +447,18 @@ export function ParcelDialer() {
     updateProspects([...prospects, parcelProspect(selection.parcel, source)]);
   };
 
+  const toggleProspect = (item: ParcelProspect) =>
+    updateProspects(prospects.map(row => row === item ? { ...row, reviewed: !row.reviewed } : row));
+
   const reviewProspect = async (item: ParcelProspect) => {
+    setPanel('parcel');
     setLookup({ mode: 'parcel', value: item.parcelId });
     await choose({ parcelId: item.parcelId });
     document.getElementById('pbk-parcel-quick-heading')?.focus();
   };
   const reselect = (nextLine = lineId) => selectedId && choose({ parcelId: selectedId }, nextLine, quickParcel);
   const chooseFromMap = (parcelId: string) => {
+    setPanel('parcel');
     const parcel = features.find((feature) => feature.properties.parcelId === parcelId);
     return choose({ parcelId }, lineId, parcel ?? null);
   };
@@ -205,7 +509,7 @@ export function ParcelDialer() {
       setLeadSaveError(errorText(err));
     }
   });
-  const streetMapEnabled = showStreets ?? (coverage?.status === 'licensed');
+  const streetMapEnabled = showStreets ?? Boolean(mapboxPublicToken);
   const savedActivity = selection?.activity ?? [];
   const activity = call
     ? [{ id: call.id, at: call.createdAt, outcome: call.outcome, status: call.status, talkSeconds: call.talkSeconds },
@@ -227,7 +531,7 @@ export function ParcelDialer() {
       <header className="pbk-dialer-head">
         <div>
           <h1>Parcel <em>dialer</em></h1>
-          <p>Find the property, verify the contact, and request approval for one call.</p>
+          <p>Find properties, review CRM matches, and prepare your next step.</p>
         </div>
         <div className="pbk-dialer-coverage" aria-live="polite">
           {coverage ? (
@@ -241,29 +545,44 @@ export function ParcelDialer() {
         </div>
       </header>
 
+      <div className="pbk-dialer-reference">
+        <Link to="/prospecting"><SavedEvidenceMark size={18} /> Open Prospecting research</Link>
+      </div>
+
       {coverage?.note && <p className="pbk-phone-note">{coverage.note}</p>}
       {error && <div className="pbk-phone-error" role="alert">{error}</div>}
 
       <div className="pbk-dialer-grid">
         <section className="pbk-dialer-map-card" aria-label="Parcel map">
           <div className="pbk-dialer-section-head">
-            <h2><Layers size={16} aria-hidden="true" /> Parcel map</h2>
+            <h2><Layers size={16} aria-hidden="true" /> Explore parcels</h2>
             <div className="pbk-phone-actions">
               {coverage && <span className="pbk-phone-tag sky">{features.length} loaded</span>}
               <button type="button" className="pbk-btn pbk-btn-ghost pbk-btn-sm" aria-pressed={streetMapEnabled}
-                onClick={() => setShowStreets(!streetMapEnabled)}>
-                Street map
+                onClick={() => {
+                  setStreetMapUnavailable(false);
+                  setShowStreets(!streetMapEnabled);
+                }}>
+                Mapbox streets
               </button>
             </div>
           </div>
-          <form className="pbk-phone-form" onSubmit={(e) => { e.preventDefault(); if (!busy && lookup.value.trim()) void choose(lookup.mode === 'parcel' ? { parcelId: lookup.value.trim() } : { address: lookup.value.trim() }); }}>
+          <form className="pbk-phone-form pbk-dialer-lookup" onSubmit={(e) => {
+            e.preventDefault();
+            if (busy || !lookup.value.trim()) return;
+            setPanel('parcel');
+            void choose(lookup.mode === 'parcel' ? { parcelId: lookup.value.trim() } : { address: lookup.value.trim() });
+          }}>
             <label>Lookup<select className="pbk-input" value={lookup.mode} onChange={(e) => setLookup({ mode: e.target.value as 'parcel' | 'address', value: '' })}><option value="parcel">Parcel ID</option><option value="address">Address</option></select></label>
-            <label style={{ flex: '1 1 220px' }}>{lookup.mode === 'parcel' ? 'Parcel ID' : 'Street, city, ST ZIP'}<input className="pbk-input" value={lookup.value} onChange={(e) => setLookup((l) => ({ ...l, value: e.target.value }))} /></label>
-            <button type="submit" className="pbk-btn pbk-btn-ghost pbk-btn-sm" disabled={Boolean(busy)}><Search size={13} /> Find</button>
+            <label className="pbk-dialer-lookup-value">{lookup.mode === 'parcel' ? 'Parcel ID' : 'Street, city, ST ZIP'}<input className="pbk-input" value={lookup.value} onChange={(e) => setLookup((l) => ({ ...l, value: e.target.value }))} /></label>
+            <button type="submit" className="pbk-btn pbk-btn-ghost pbk-btn-sm" disabled={Boolean(busy) || !lookup.value.trim()}><Search size={15} aria-hidden="true" /> Find</button>
           </form>
-          <div className="pbk-dialer-map">
+          {streetMapUnavailable && <p role="status">Street map unavailable. Parcel boundaries and lookup are still available.</p>}
+          <div className="pbk-dialer-map" data-streets={streetMapEnabled}>
             {streetMapEnabled ? (
+              <Suspense fallback={<p className="pbk-dialer-map-empty" role="status">Loading street map…</p>}>
               <ParcelStreetMap parcels={features} selected={quickParcel ?? undefined} busy={Boolean(busy)} fitParcels={!areaScoped}
+                onUnavailable={useBoundaryView}
                 onSelect={(parcelId) => void chooseFromMap(parcelId)}
                 onLoadArea={coverage?.licensed ? (bounds) => {
                   setMapNotice('');
@@ -274,6 +593,7 @@ export function ParcelDialer() {
                     if (!result.features.length) setMapNotice('No parcel boundaries in this area.');
                   });
                 } : undefined} />
+              </Suspense>
             ) : projection && features.length ? (
               <>
                 <svg viewBox={viewBox} role="group" aria-label={`${features.length} parcels. Select one to view its contact; selection never places a call.`}>
@@ -303,89 +623,143 @@ export function ParcelDialer() {
             ) : (
               <div className="pbk-dialer-map-empty">{coverage?.status === 'unconfigured' ? 'No licensed parcel source is configured. Lookups are unavailable.' : coverage ? 'No parcels in coverage.' : 'Loading parcels…'}</div>
             )}
+            {streetMapEnabled && property && (
+              <div className="pbk-dialer-fullscreen-selection" aria-live="polite">
+                <strong>{situs?.line1}</strong>
+                <span>{property.parcelId}{selection?.match.status === 'matched' ? ' · CRM match' : ''}</span>
+              </div>
+            )}
           </div>
           <div className="pbk-dialer-legend">
             <span><i aria-hidden="true" /> Available parcel</span>
             <span><i aria-hidden="true" /> Selected parcel</span>
-            <span>Click or press Enter to select</span>
-            {streetMapEnabled && <a href="https://www.openstreetmap.org/fixthemap" target="_blank" rel="noopener noreferrer">Report a street map issue</a>}
+            {property && panel === 'parcel' ? <a href="#pbk-parcel-quick-heading">Inspect {situs?.line1 || 'selected parcel'}</a> : <span>Select a parcel to inspect</span>}
           </div>
           {mapNotice && <p className="pbk-phone-note" role="status">{mapNotice}</p>}
-          <section className="pbk-parcel-quick-view" aria-labelledby="pbk-parcel-quick-heading">
-            <div className="pbk-dialer-section-head">
-              <h2 id="pbk-parcel-quick-heading" tabIndex={-1}><MapPin size={16} aria-hidden="true" /> Property quick view</h2>
-              {property && <a className="pbk-parcel-phone-link" href="#pbk-virtual-phone">Virtual phone <ArrowDownRight size={13} aria-hidden="true" /></a>}
-            </div>
-            <div aria-live="polite">
-              {property && situs ? (
-                <>
-                  <h3>{situs.line1}</h3>
-                  <p>{[situs.city, situs.state].filter(Boolean).join(', ')} {situs.zip}</p>
-                  <dl className="pbk-parcel-facts">
-                    <div><dt>Parcel ID</dt><dd>{property.parcelId}</dd></div>
-                    <div><dt>County</dt><dd>{property.county || 'Unavailable'}</dd></div>
-                    <div><dt>Lot size</dt><dd>{typeof property.acres === 'number' && Number.isFinite(property.acres) && property.acres > 0 ? `${property.acres.toLocaleString(undefined, { maximumFractionDigits: 4 })} acres` : 'Unavailable'}</dd></div>
-                  </dl>
-                </>
-              ) : <p>Select a parcel on the map or look up an address.</p>}
-            </div>
-            {canShortlist && (
-              <div>
-                <button type="button" className="pbk-btn pbk-btn-ghost pbk-btn-sm" disabled={Boolean(busy) || isShortlisted} onClick={addProspect}>
-                  {isShortlisted ? <Check size={14} aria-hidden="true" /> : <Plus size={14} aria-hidden="true" />}
-                  {isShortlisted ? 'On shortlist' : 'Add to shortlist'}
-                </button>
-              </div>
-            )}
-            {prospectNotice && <p role="status">{prospectNotice}</p>}
-            {canCreateLead && (
-              <Dialog open={leadReviewOpen} onOpenChange={(open) => {
-                if (!savingLead) {
-                  setLeadReviewOpen(open);
-                  setLeadSaveError('');
-                }
-              }}>
-                <div>
-                  <DialogTrigger asChild>
-                    <button type="button" className="pbk-btn pbk-btn-primary pbk-btn-sm" disabled={Boolean(busy)}>
-                      <Plus size={14} aria-hidden="true" /> Create lead
+        </section>
+        <div className="pbk-dialer-inspector">
+          {features.length > 0 && (
+            <details className="pbk-dialer-map-card pbk-dialer-map-results">
+              <summary>Loaded parcels <span>{features.length}</span></summary>
+              <ul aria-label="Loaded parcels">
+                {features.map(({ properties: parcel }) => (
+                  <li key={parcel.parcelId}>
+                    <button type="button" disabled={Boolean(busy)}
+                      aria-pressed={parcel.parcelId === previewId}
+                      onClick={() => void chooseFromMap(parcel.parcelId)}>
+                      <strong>{parcel.situs.line1}</strong>
+                      <span>{parcel.situs.city} · {parcel.parcelId}</span>
                     </button>
-                  </DialogTrigger>
-                </div>
-                <DialogContent className="pbk-parcel-lead-dialog" onEscapeKeyDown={(event) => { if (savingLead) event.preventDefault(); }}>
-                  <DialogTitle>Create lead from parcel</DialogTitle>
-                  <DialogDescription>Save the verified property details to CRM. Seller contact fields will be blank.</DialogDescription>
-                  <dl className="pbk-dialer-kv">
-                    <dt>Address</dt><dd>{situs?.line1}, {situs?.city}, {situs?.state} {situs?.zip}</dd>
-                    <dt>Parcel ID</dt><dd>{selectedId}</dd>
-                    {property?.county && <><dt>County</dt><dd>{property.county}</dd></>}
-                    {Boolean(property?.acres && property.acres > 0) && <><dt>Lot size</dt><dd>{property?.acres} acres</dd></>}
-                  </dl>
-                  {leadSaveError && <p role="alert">{leadSaveError}</p>}
-                  <DialogFooter>
-                    <DialogClose asChild><button type="button" className="pbk-btn pbk-btn-ghost" disabled={savingLead}>Cancel</button></DialogClose>
-                    <button type="button" className="pbk-btn pbk-btn-primary" disabled={savingLead} onClick={() => void saveLead()}>
-                      {savingLead ? 'Saving lead…' : 'Save lead'}
-                    </button>
-                  </DialogFooter>
-                </DialogContent>
-              </Dialog>
-            )}
-            {savedLead && <p tabIndex={-1} ref={savedLeadStatus} role="status">
-              {savedLead.created ? 'Lead saved.' : 'A matching lead already exists.'}{' '}
-              <Link to={`/leads/${encodeURIComponent(savedLead.leadId)}`}>Open lead</Link>
-            </p>}
-          </section>
-          {canShortlist && (
-            <ParcelProspectingBrief brief={prospectBrief?.parcelId === selectedId ? prospectBrief : null}
-              loading={busy === 'brief'} disabled={Boolean(busy)} error={briefError}
-              onPrepare={() => void loadProspectingBrief()} />
+                  </li>
+                ))}
+              </ul>
+            </details>
           )}
-          <ParcelProspectingList items={activeProspects} selectedId={selectedId} disabled={Boolean(busy)}
-            onReview={(item) => void reviewProspect(item)}
-            onToggle={(item) => updateProspects(prospects.map(row => row === item ? { ...row, reviewed: !row.reviewed } : row))}
-            onRemove={(item) => updateProspects(prospects.filter(row => row !== item))}
-          />
+          <section className="pbk-dialer-map-card" aria-label="Parcel inspector">
+          <Tabs className="pbk-parcel-workspace" value={panel} onValueChange={value => setPanel(value as DialerPanel)}>
+            <TabsList className="pbk-parcel-workspace-tabs" aria-label="Parcel workspace views">
+              <TabsTrigger value="parcel"><MapPin aria-hidden="true" /> Property</TabsTrigger>
+              <TabsTrigger value="brief"><ClipboardList aria-hidden="true" /> Brief</TabsTrigger>
+              <TabsTrigger value="shortlist">
+                <ListChecks aria-hidden="true" /> Shortlist
+                {pendingProspects > 0 && <span className="pbk-parcel-tab-count" aria-label={`${pendingProspects} to review`}>{pendingProspects}</span>}
+              </TabsTrigger>
+            </TabsList>
+            <TabsContent value="parcel">
+              <section className="pbk-parcel-quick-view" aria-labelledby="pbk-parcel-quick-heading">
+                <div className="pbk-dialer-section-head">
+                  <h2 id="pbk-parcel-quick-heading" tabIndex={-1}><MapPin size={16} aria-hidden="true" /> Property quick view</h2>
+                  {property && <a className="pbk-parcel-phone-link" href="#pbk-virtual-phone">Virtual phone <ArrowDownRight size={13} aria-hidden="true" /></a>}
+                </div>
+                <div aria-live="polite">
+                  {busy === 'select' && <p role="status">Checking parcel and CRM match…</p>}
+                  {property && situs ? (
+                    <>
+                      <h3>{situs.line1}</h3>
+                      <p>{[situs.city, situs.state].filter(Boolean).join(', ')} {situs.zip}</p>
+                      {selection && <span className={`pbk-phone-tag pbk-parcel-match ${selection.match.status === 'matched' ? 'good' : selection.match.status === 'ambiguous' ? 'warn' : ''}`}>
+                        {selection.match.status === 'matched' ? 'Exact CRM match' : selection.match.status === 'ambiguous' ? 'Multiple CRM matches' : 'No CRM match'}
+                      </span>}
+                      <dl className="pbk-parcel-facts">
+                        <div><dt>Parcel ID</dt><dd>{property.parcelId}</dd></div>
+                        <div><dt>County</dt><dd>{property.county || 'Unavailable'}</dd></div>
+                        <div><dt>Lot size</dt><dd>{typeof property.acres === 'number' && Number.isFinite(property.acres) && property.acres > 0 ? `${property.acres.toLocaleString(undefined, { maximumFractionDigits: 4 })} acres` : 'Unavailable'}</dd></div>
+                      </dl>
+                    </>
+                  ) : <p>Select a parcel on the map or look up an address.</p>}
+                </div>
+                {canShortlist && (
+                  <div className="pbk-phone-actions">
+                    <button type="button" className="pbk-btn pbk-btn-ghost pbk-btn-sm" disabled={Boolean(busy) || isShortlisted} onClick={addProspect}>
+                      {isShortlisted ? <Check size={14} aria-hidden="true" /> : <Plus size={14} aria-hidden="true" />}
+                      {isShortlisted ? 'On shortlist' : 'Add to shortlist'}
+                    </button>
+                    {currentProspect && (
+                      <button type="button" className="pbk-btn pbk-btn-ghost pbk-btn-sm" disabled={Boolean(busy)}
+                        onClick={() => toggleProspect(currentProspect)}>{currentProspect.reviewed ? 'Reopen review' : 'Mark reviewed'}</button>
+                    )}
+                  </div>
+                )}
+                {prospectNotice && <p role="status">{prospectNotice}</p>}
+                {canCreateLead && (
+                  <Dialog open={leadReviewOpen} onOpenChange={(open) => {
+                    if (!savingLead) {
+                      setLeadReviewOpen(open);
+                      setLeadSaveError('');
+                    }
+                  }}>
+                    <div>
+                      <DialogTrigger asChild>
+                        <button type="button" className="pbk-btn pbk-btn-primary pbk-btn-sm" disabled={Boolean(busy)}>
+                          <Plus size={14} aria-hidden="true" /> Create lead
+                        </button>
+                      </DialogTrigger>
+                    </div>
+                    <DialogContent className="pbk-parcel-lead-dialog" onEscapeKeyDown={(event) => { if (savingLead) event.preventDefault(); }}>
+                      <DialogTitle>Create lead from parcel</DialogTitle>
+                      <DialogDescription>Save the verified property details to CRM. Seller contact fields will be blank.</DialogDescription>
+                      <dl className="pbk-dialer-kv">
+                        <dt>Address</dt><dd>{situs?.line1}, {situs?.city}, {situs?.state} {situs?.zip}</dd>
+                        <dt>Parcel ID</dt><dd>{selectedId}</dd>
+                        {property?.county && <><dt>County</dt><dd>{property.county}</dd></>}
+                        {Boolean(property?.acres && property.acres > 0) && <><dt>Lot size</dt><dd>{property?.acres} acres</dd></>}
+                      </dl>
+                      {leadSaveError && <p role="alert">{leadSaveError}</p>}
+                      <DialogFooter>
+                        <DialogClose asChild><button type="button" className="pbk-btn pbk-btn-ghost" disabled={savingLead}>Cancel</button></DialogClose>
+                        <button type="button" className="pbk-btn pbk-btn-primary" disabled={savingLead} onClick={() => void saveLead()}>
+                          {savingLead ? 'Saving lead…' : 'Save lead'}
+                        </button>
+                      </DialogFooter>
+                    </DialogContent>
+                  </Dialog>
+                )}
+                {savedLead && <p tabIndex={-1} ref={savedLeadStatus} role="status">
+                  {savedLead.created ? 'Lead saved.' : 'A matching lead already exists.'}{' '}
+                  <Link to={`/leads/${encodeURIComponent(savedLead.leadId)}`}>Open lead</Link>
+                </p>}
+              </section>
+            </TabsContent>
+            <TabsContent value="brief">
+              {canShortlist ? (
+                <ParcelProspectingBrief parcelLabel={situs?.line1 || selectedId} brief={prospectBrief?.parcelId === selectedId ? prospectBrief : null}
+                  loading={busy === 'brief'} disabled={Boolean(busy)} error={briefError}
+                  onPrepare={() => void loadProspectingBrief()} />
+              ) : (
+                <section className="pbk-parcel-quick-view" aria-labelledby="pbk-prospecting-brief-empty">
+                  <div className="pbk-dialer-section-head"><h2 id="pbk-prospecting-brief-empty"><ClipboardList size={16} aria-hidden="true" /> Prospecting brief</h2></div>
+                  <p>Select a verified parcel on the map to prepare its brief.</p>
+                </section>
+              )}
+            </TabsContent>
+            <TabsContent value="shortlist">
+              <ParcelProspectingList items={activeProspects} selectedId={selectedId} disabled={Boolean(busy)}
+                onReview={(item) => void reviewProspect(item)}
+                onToggle={toggleProspect}
+                onRemove={(item) => updateProspects(prospects.filter(row => row !== item))}
+              />
+            </TabsContent>
+          </Tabs>
         </section>
 
         <aside className="pbk-dialer-side pbk-virtual-phone" id="pbk-virtual-phone" aria-labelledby="pbk-virtual-phone-heading">
@@ -516,6 +890,7 @@ export function ParcelDialer() {
             </div>
           )}
         </aside>
+        </div>
       </div>
     </div>
   );

@@ -65,7 +65,7 @@ function extract(name) {
 }
 
 function chatFixture({ answer = 'Actual answer', cancel = false, source = 'forged-diagnostic', failTool = false,
-  delivery, policyReady = true, streaming = true, toolOutcome } = {}) {
+  delivery, policyReady = true, streaming = true, emitPreview = true, toolOutcome } = {}) {
   let clock = 0;
   const ops = [], previews = [];
   const controller = new AbortController();
@@ -93,7 +93,7 @@ function chatFixture({ answer = 'Actual answer', cancel = false, source = 'forge
     isPublicAvaBrainAnswerSafe: () => true,
     runInternalAvaDeepSeekChat: async ({ stream }) => {
       clock = 80;
-      if (stream) await stream.onAnswer('Actual prefix');
+      if (stream && emitPreview) await stream.onAnswer('Actual prefix');
       if (cancel) controller.abort();
       clock = 160;
       return { ok: true, answer, toolResult: toolOutcome || { ok: !failTool } };
@@ -104,7 +104,7 @@ function chatFixture({ answer = 'Actual answer', cancel = false, source = 'forge
     summarizeProviderActionResult: value => value,
   });
   for (const name of ['recordAvaAssistantPlanOps', 'handleInternalAvaAssistantChatRequest']) vm.runInContext(extract(name), context);
-  return { ops, previews, run: () => context.handleInternalAvaAssistantChatRequest(streaming ? {
+  return { ops, previews, advance: ms => { clock += ms; }, run: () => context.handleInternalAvaAssistantChatRequest(streaming ? {
     avaStream: { signal: controller.signal, onAnswer: async text => { previews.push(text); } },
   } : {}) };
 }
@@ -152,7 +152,38 @@ test.each([true, false])('actual chat waits for private delivery outcome before 
   await Promise.resolve();
   assert.equal(fixture.ops.length, 1);
   assert.equal(Boolean(fixture.ops[0].proof), delivered);
+  if (delivered) assert.equal(fixture.ops[0].proof.timings.firstTokenMs, 80);
 });
+
+test.each([['JSON', false], ['final-only stream', true]])(
+  'actual %s chat records first content at verified final delivery when there was no preview',
+  async (_transport, streaming) => {
+    const request = new EventEmitter();
+    const response = new EventEmitter();
+    response.statusCode = 200;
+    response.write = () => true;
+    const deliveries = new WeakMap();
+    const context = vm.createContext({ chatTimingDeliveries: deliveries });
+    vm.runInContext(extract('observeAvaChatDelivery'), context);
+    context.observeAvaChatDelivery(request, response, streaming);
+    const delivery = deliveries.get(request);
+    const fixture = chatFixture({ delivery, streaming, emitPreview: false, answer: 'Fictional staff reply.' });
+    const result = await fixture.run();
+    assert.deepEqual(fixture.previews, []);
+    assert.equal(fixture.ops.length, 0);
+
+    fixture.advance(45);
+    if (streaming) response.write(`event: done\ndata: ${JSON.stringify(result.body)}\n\n`);
+    response.emit('finish');
+    await delivery;
+    await Promise.resolve();
+
+    assert.equal(fixture.ops.length, 1);
+    const proof = fixture.ops[0].proof;
+    assert.equal(proof.channel, 'chat');
+    assert.deepEqual(proof.timings, { firstTokenMs: 215, completionMs: 215 });
+  },
+);
 
 test.each(['done', 'partial', 'error', 'aborted'])('actual delivery observer retains transport semantics and rejects %s incompletion', async mode => {
   const request = new EventEmitter();

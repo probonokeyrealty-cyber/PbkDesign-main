@@ -26,7 +26,9 @@ const command = {
 };
 
 async function verify(engine, viewport, device = {}) {
-  const browser = await engine.launch();
+  const browser = await engine.launch(
+    engine === chromium && process.argv.includes('--chrome') ? { channel: 'chrome' } : {}
+  );
   const streams = new Map();
   const routedStreams = [];
   const observedResponses = new Set();
@@ -94,11 +96,15 @@ async function verify(engine, viewport, device = {}) {
     });
     const chatRequests = [];
     const decisions = [];
+    const enrichmentRequests = [];
     let pending = true;
     await page.route('**/*', (route) => {
       const req = route.request();
       const url = new URL(req.url());
       const path = url.pathname;
+      if (req.method() === 'POST' && path.includes('/property-data/')) {
+        enrichmentRequests.push(path);
+      }
       if (path === '/ava-chat') {
         return route.fulfill({ contentType: 'text/html', body: shellHtml });
       }
@@ -328,8 +334,32 @@ async function verify(engine, viewport, device = {}) {
     if (process.env.PBK_AVA_SCREENSHOTS === '1') {
       await page.screenshot({ path: `.pbk-local/ava-chat-${engine.name()}-${viewport.width}.png` });
     }
+
+    const freshLeadId = 'qa-ava-saved-evidence';
+    await page.goto(`${origin}/ava-chat?leadId=${freshLeadId}`);
+    await expect(page.getByRole('heading', { name: 'Work on this lead' })).toBeInViewport({ ratio: 1 });
+    await expect(page.getByRole('button', { name: 'Send to Ava' })).toBeInViewport({ ratio: 1 });
+    await expect(page.getByRole('button', { name: 'Speak to Ava' })).toBeInViewport({ ratio: 1 });
+    if (process.env.PBK_AVA_SCREENSHOTS === '1') {
+      await page.screenshot({ path: `.pbk-local/ava-welcome-${engine.name()}-${viewport.width}.png` });
+    }
+    await page.getByRole('link', { name: /^Open saved comps/ }).click();
+    await expect(page).toHaveURL(`${origin}/leads/${freshLeadId}#lead-comps`);
+    await page.goBack();
+    await page.getByRole('link', { name: /^Open property photos/ }).click();
+    await expect(page).toHaveURL(`${origin}/leads/${freshLeadId}#lead-photos`);
+    await page.goBack();
+    await page.getByRole('button', { name: /^Draft Text/ }).click();
+    await expect(composer).toHaveValue('Draft a concise SMS to this seller using the current PBK context.');
+    await expect(composer).toBeFocused();
+    assert.equal(chatRequests.length, 7, 'Choosing a starter prompt must only fill the draft');
+    assert.deepEqual(enrichmentRequests, [], 'The chat must not refresh saved property evidence');
+    assert.ok(await page.evaluate(() =>
+      document.querySelector('.pbk-ava-chat-thread').scrollWidth <=
+        document.querySelector('.pbk-ava-chat-thread').clientWidth + 1
+    ), 'The welcome cards must fit in the conversation panel');
     console.log(
-      `Ava streaming, Stop, interruption, JSON fallback, history, mission and approval: ${engine.name()} ${viewport.width}px`
+      `Ava prompts, saved lead links, streaming, history, mission and approval: ${engine.name()} ${viewport.width}px`
     );
   } catch (error) {
     console.error('Ava fixture transport failure:', JSON.stringify({

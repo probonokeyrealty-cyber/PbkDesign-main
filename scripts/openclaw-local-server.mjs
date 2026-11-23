@@ -61922,6 +61922,38 @@ async function handleEvent(eventType, payload = {}, { directRetentionFounder = f
   }
 }
 
+async function persistLeadIntakeState(lead, triage) {
+  try {
+    await persistState(state);
+  } catch (error) {
+    const failure = error?.details?.lastStateDbPersist;
+    const leadId = lead.leadId || lead.id;
+    if (error?.code !== 'postgres_state_persist_required' || !leadId || !lead.eventId || failure?.phase !== 'query') throw error;
+
+    // The snapshot query can lose its response during a disconnect. Confirm the
+    // exact intake and its triage on Postgres before acknowledging instead of
+    // replaying a possibly committed snapshot write.
+    const leadBinding = JSON.stringify([{ leadId, eventId: lead.eventId }]);
+    const triageBinding = triage?.id ? JSON.stringify([{ id: triage.id, correlationId: leadId }]) : null;
+    const deadlineAt = Date.now() + 5000;
+    for (const delay of [0, 250, 750]) {
+      if (Date.now() + delay >= deadlineAt) break;
+      if (delay) await sleep(delay);
+      const proof = await queryPgRows(
+        `SELECT COALESCE(data->'leadImports' @> $1::jsonb, false)
+            AND ($2::jsonb IS NULL OR COALESCE(data->'agentTasks' @> $2::jsonb, false)) AS confirmed
+           FROM public.bridge_state WHERE id = 'singleton'`,
+        [leadBinding, triageBinding]
+      );
+      if (proof.ok && proof.rows[0]?.confirmed === true) return;
+    }
+    throw Object.assign(new Error('Lead intake persistence could not be confirmed. Retry with the same event ID.'), {
+      code: 'lead_intake_persistence_unconfirmed',
+      statusCode: 503,
+    });
+  }
+}
+
 async function handleRuntimeEvent(normalizedEvent, payload, { directRetentionFounder = false, telnyxCompletion = null } = {}) {
   if (normalizedEvent === 'lead-intake' || normalizedEvent === 'lead-import') {
     const fromN8nLeadIntake = payload?._source === 'n8n-lead-intake';
@@ -61933,7 +61965,7 @@ async function handleRuntimeEvent(normalizedEvent, payload, { directRetentionFou
       const prior = state.leadImports.find((item) => item && item.eventId === eventId);
       if (prior) {
         const leadTriage = findAvaLeadTriage(prior);
-        if (leadTriage) await persistState(state);
+        if (leadTriage) await persistLeadIntakeState(prior, leadTriage);
         return {
           ok: true,
           replayed: true,
@@ -62045,7 +62077,7 @@ async function handleRuntimeEvent(normalizedEvent, payload, { directRetentionFou
     }
 
     const leadTriage = duplicate ? findAvaLeadTriage(savedLead) : await recordAvaLeadTriage(savedLead, 'lead-intake');
-    await persistState(state);
+    await persistLeadIntakeState(savedLead, leadTriage);
     const profilePersistence = {
       ok: true,
       queued: true,

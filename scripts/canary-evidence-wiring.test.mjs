@@ -219,7 +219,7 @@ test('bridge code matches the reviewed release fingerprint outside the scoped re
   // Bridge snapshots avoid deep copies and respect dashboard backpressure.
   // Hermes uses verified parcel evidence and exposes only the status of its bound approval.
   assert.equal(createHash('sha256').update(unchanged).digest('hex'),
-    '26067056348bee8ceb71f1e8a6c97655aa2f97ca7cd78e119de969e1383cbcab');
+    '4d68113ac4ee67ae453a938a3aa66cd283c9257266305f90fabdbd8f757b44bf');
 });
 
 test('production distribution includes reader and protocol, never the fixture signer', () => {

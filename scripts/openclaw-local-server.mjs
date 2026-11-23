@@ -82313,6 +82313,13 @@ function startAgentRegistryHealthScheduler() {
 }
 
 server.listen(PORT, HOST, () => {
+  // Temporary verification for the isolated Render staging service only.
+  if (process.env.RENDER_SERVICE_ID === 'srv-dbvk7tv40ujc73e0d8gg') {
+    setTimeout(() => {
+      process.env.PBK_STAGE_PROOF_LOCAL_PORT = String(PORT);
+      void import('./ava-triage-staging-proof.cjs');
+    }, 10000).unref();
+  }
   startPostgresKeepAlive();
   startContractTemplateWatcher();
   refreshContextAwareScriptCatalog()

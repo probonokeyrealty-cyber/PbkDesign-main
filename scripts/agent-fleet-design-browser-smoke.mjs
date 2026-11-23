@@ -68,7 +68,9 @@ const readyMeasurement = {
 };
 
 async function verify(engine, viewport, device = {}) {
-  const browser = await engine.launch();
+  const browser = await engine.launch(
+    engine === chromium && process.env.PBK_FLEET_CHROME === '1' ? { channel: 'chrome' } : {}
+  );
   try {
     const page = await browser.newPage({ ...device, viewport });
     await page.addInitScript(() => {
@@ -79,6 +81,8 @@ async function verify(engine, viewport, device = {}) {
     const requests = [];
     let measurementMode = 'failure';
     let catalogMode = 'matched';
+    let fixtureLeads = [lead];
+    let callResult = { result: 'queued_for_approval', approval: { id: 'qa-call-approval' } };
     await page.route('**/*', (route) => {
       const req = route.request();
       const url = new URL(req.url());
@@ -133,8 +137,8 @@ async function verify(engine, viewport, device = {}) {
           ],
         },
         '/api/qa/audit/latest': { audits: [] },
-        '/api/leads': { leads: [lead] },
-        '/state': { calls: [], leadImports: [lead] },
+        '/api/leads': { leads: fixtureLeads },
+        '/state': { calls: [], leadImports: fixtureLeads },
       };
       if (fixture[path] && req.method() === 'GET')
         return route.fulfill({ json: { ok: true, ...fixture[path] } });
@@ -161,7 +165,7 @@ async function verify(engine, viewport, device = {}) {
             recommendedAction: 'review_lead',
           },
           pbk_test_skill: { result: 'Fixture skill test result' },
-          telnyx_call: { status: 'approval_required', approvalId: 'qa-call-approval' },
+          telnyx_call: callResult,
         };
         return responses[toolName]
           ? route.fulfill({ json: { ok: true, result: responses[toolName] } })
@@ -272,6 +276,17 @@ async function verify(engine, viewport, device = {}) {
       'href',
       '/ava-chat?leadId=qa-fleet-lead'
     );
+    const workflow = detail.getByRole('region', { name: 'Deal context preview' });
+    await expect(workflow.getByRole('heading', { level: 4 })).toHaveText([
+      'Select a lead',
+      'Review the deal',
+      'Request approval',
+    ]);
+    if (process.env.PBK_FLEET_SCREENSHOTS === '1') {
+      await workflow.screenshot({
+        path: `output/playwright/fleet-workflow-${engine.name()}-${viewport.width}.png`,
+      });
+    }
     await detail.getByRole('button', { name: 'Preview Ava' }).click();
     await expect(detail.getByText('Fixture read-only preview')).toBeVisible();
     await expect(detail.getByText('0% confidence', { exact: true })).toHaveCount(0);
@@ -284,7 +299,7 @@ async function verify(engine, viewport, device = {}) {
     }
 
     await detail.getByRole('button', { name: 'Request call', exact: true }).click();
-    await expect(page.getByText('Call queued for approval', { exact: true })).toBeVisible();
+    await expect(workflow.getByText('Call queued for approval.', { exact: false })).toBeVisible();
     assert.equal(requests[1].params.forceApproval, true);
     assert.equal(requests[1].params.requestApproval, true);
     const skill = detail.locator('.fleet-skill-card').filter({ hasText: 'Tactical Empathy' });
@@ -379,6 +394,39 @@ async function verify(engine, viewport, device = {}) {
     console.log(
       `Newer snapshot provenance and visible 401/403 fail-closed warnings: ${engine.name()} ${viewport.width}px`
     );
+
+    callResult = { status: 'approval_failed' };
+    await workflow.getByRole('button', { name: 'Request call', exact: true }).click();
+    const unconfirmed = workflow.getByText('Could not confirm the request was queued.', {
+      exact: false,
+    });
+    await expect(unconfirmed).toBeVisible();
+    await expect(workflow.getByText('Call queued for approval.', { exact: false })).toHaveCount(0);
+    await roster.getByRole('button', { name: 'Inspect Rex', exact: true }).click();
+    await expect(unconfirmed).toHaveCount(0);
+    await roster.getByRole('button', { name: 'Inspect Ava', exact: true }).click();
+    await expect(unconfirmed).toBeVisible();
+
+    callResult = { ok: false, error: 'Fixture call request failed' };
+    await workflow.getByRole('button', { name: 'Request call', exact: true }).click();
+    await expect(page.getByText('Call request failed', { exact: true })).toBeVisible();
+    await expect(unconfirmed).toBeVisible();
+
+    const countBeforeHandoff = requests.length;
+    await workflow.getByRole('link', { name: 'Open Inbox approvals' }).click();
+    await expect(page).toHaveURL(/\/inbox#inbox-approvals$/);
+    await expect(page.getByRole('region', { name: 'Needs your review' })).toBeFocused();
+
+    fixtureLeads = [];
+    await page.goto(`${origin}/fleet`, { waitUntil: 'domcontentloaded' });
+    await expect(workflow.getByText('No CRM leads are loaded.', { exact: false })).toBeVisible();
+    await expect(workflow.getByRole('button', { name: 'Preview Ava' })).toBeDisabled();
+    await expect(workflow.getByRole('button', { name: 'Request call' })).toBeDisabled();
+    await expect(workflow.getByRole('link', { name: 'Open general Ava Chat' })).toHaveAttribute(
+      'href',
+      '/ava-chat'
+    );
+    assert.equal(requests.length, countBeforeHandoff, 'Navigation and empty context do not invoke tools');
   } finally {
     await browser.close();
   }

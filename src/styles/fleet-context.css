@@ -66,6 +66,53 @@
 .pbk-fleet-workspace-link {
   margin-inline-end: 16px;
 }
+.pbk-fleet-workflow {
+  margin: 12px 0 0;
+  padding-inline-start: 2rem;
+  list-style: decimal;
+}
+.pbk-fleet-workflow > li {
+  min-width: 0;
+  border-block-start: 1px solid var(--border-dim, #35424b);
+  padding: 12px 0;
+}
+.pbk-fleet-workflow > li:last-child {
+  padding-block-end: 0;
+}
+.pbk-fleet-workflow > li::marker {
+  color: var(--sky, #7bc7ed);
+  font-weight: 650;
+}
+.pbk-fleet-workflow h4 {
+  color: var(--text-primary, #dce5eb);
+  font-size: 14px;
+  font-weight: 650;
+}
+.pbk-fleet-workflow-hint {
+  margin: 4px 0 0;
+  color: var(--text-secondary, #a1afb9);
+  font-size: 13px;
+}
+.pbk-fleet-workflow-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  margin-block-start: 8px;
+}
+.pbk-fleet-workflow-actions > button {
+  min-height: 44px;
+  max-width: 100%;
+  white-space: normal;
+}
+.pbk-fleet-workflow-actions .pbk-fleet-workspace-link {
+  margin-inline-end: 0;
+}
+.pbk-fleet-call-feedback p {
+  margin: 8px 0 0;
+  font-size: 13px;
+  color: var(--amber, #f1c577);
+}
 @media (max-width: 720px) {
   .pbk-context-strip {
     align-items: flex-start;

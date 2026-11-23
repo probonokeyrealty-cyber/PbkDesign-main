@@ -15,8 +15,8 @@ const wireControls = section('../index.html', 'function wireRecordingsControls()
 const fixtureRoute = section('../scripts/openclaw-local-server.mjs',
   "if (request.method === 'POST' && pathname === '/api/recordings/fixture')", '\n    if (request.method');
 
-function beginRecordingControl(label, lookupResult) {
-  const requests = [], feedback = [], transcripts = [], downloads = [], playback = [];
+function beginRecordingControl(label, lookupResult, playAudio = () => {}) {
+  const requests = [], feedback = [], transcripts = [], downloads = [], playback = [], pauses = [];
   let recording = { id: 'recording-1', name: 'First call', transcript: 'A saved transcript.' };
   const listeners = {};
   const page = {
@@ -41,7 +41,8 @@ function beginRecordingControl(label, lookupResult) {
     normalizeControlText: text => text.toLowerCase(),
     Audio: class {
       addEventListener() {}
-      play() { playback.push(this.src); }
+      play() { playback.push(this.src); return playAudio(); }
+      pause() { pauses.push(this.src); }
     },
     async requestOpenClawApi(path, options) {
       requests.push({ path, method: options?.method || 'GET' });
@@ -57,8 +58,15 @@ function beginRecordingControl(label, lookupResult) {
       body: { appendChild() {} },
     },
   });
-  listeners.click({ target: button });
-  return { requests, feedback, transcripts, downloads, playback, select: next => { recording = next; } };
+  const click = () => listeners.click({ target: button });
+  click();
+  return {
+    requests, feedback, transcripts, downloads, playback, pauses, click,
+    select(next) {
+      recording = next;
+      listeners['pbk:recording-selection-rendered']?.();
+    },
+  };
 }
 
 test.each(['download', 'play'])('%s does not create a fixture when recording lookup fails', async (label) => {
@@ -80,6 +88,43 @@ test('failed download uses the clicked call filename and transcript after switch
   await setImmediate();
   expect(result.transcripts).toEqual([{ filename: 'first-call.txt', text: 'A saved transcript.' }]);
   expect(result.requests).toHaveLength(1);
+});
+
+test('switching calls prevents a pending Play lookup from starting the previous audio', async () => {
+  const lookup = Promise.withResolvers();
+  const result = beginRecordingControl('play', () => lookup.promise);
+  result.select({ id: 'recording-2', name: 'Second call' });
+  lookup.resolve({ signedUrl: 'https://example.invalid/first.wav' });
+  await setImmediate();
+  expect(result.playback).toEqual([]);
+  expect(result.feedback).toEqual([]);
+});
+
+test('an older Play lookup cannot override a newer request after switching away and back', async () => {
+  const earlier = Promise.withResolvers(), newer = Promise.withResolvers();
+  let lookups = 0;
+  const result = beginRecordingControl('play', () => (++lookups === 1 ? earlier : newer).promise);
+  result.select({ id: 'recording-2', name: 'Second call' });
+  result.select({ id: 'recording-1', name: 'First call' });
+  result.click();
+  newer.resolve({ signedUrl: 'https://example.invalid/current.wav' });
+  await setImmediate();
+  earlier.resolve({ signedUrl: 'https://example.invalid/stale.wav' });
+  await setImmediate();
+  expect(result.playback).toEqual(['https://example.invalid/current.wav']);
+});
+
+test('switching calls cancels media startup before a pending play promise resolves', async () => {
+  const media = Promise.withResolvers();
+  const url = 'https://example.invalid/first.wav';
+  const result = beginRecordingControl('play', () => ({ signedUrl: url }), () => media.promise);
+  await setImmediate();
+  expect(result.playback).toEqual([url]);
+  result.select({ id: 'recording-2', name: 'Second call' });
+  expect(result.pauses).toEqual([url]);
+  media.resolve();
+  await setImmediate();
+  expect(result.feedback).toEqual([]);
 });
 
 test.each(['download', 'play'])('%s still uses the signed URL from a successful lookup', async (label) => {

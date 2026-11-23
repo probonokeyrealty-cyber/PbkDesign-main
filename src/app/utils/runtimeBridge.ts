@@ -3317,6 +3317,29 @@ export async function fetchLeadFullRequest(leadId: string) {
   });
 }
 
+export type AvaLeadReview = {
+  leadId: string;
+  reviewedAt: string;
+  writeMode: 'read_only';
+  evidence: {
+    property: { recorded: boolean };
+    contact: { status: 'restricted' | 'recorded' | 'needs_review' };
+    qualification: { missing: string[] };
+    underwriting: { recorded: boolean; recordedAt: string | null };
+  };
+  nextStep: { code: string; title: string; detail: string };
+};
+
+export async function fetchAvaLeadReviewRequest(leadId: string) {
+  const { ok, review } = await bridgeRequest<{ ok?: boolean; review?: AvaLeadReview }>({
+    path: `/api/leads/${encodeURIComponent(leadId)}/full?review=ava`,
+  });
+  if (ok !== true || review?.leadId !== leadId || review.writeMode !== 'read_only') {
+    throw new Error('No review was returned for this lead. Try again.');
+  }
+  return review;
+}
+
 export async function fetchLeadLastCallRequest(leadId: string) {
   return bridgeRequest<Record<string, unknown>>({
     path: `/api/leads/${encodeURIComponent(leadId)}/last-call`,

@@ -8,6 +8,7 @@ import { readStoredNextStep } from '../utils/leadTriage';
 import '../../styles/fleet-context.css';
 import '../../styles/faster-triage.css';
 import { PbkDataSource } from '../../components/pbk/index';
+import { AvaLeadReviewCard } from '../components/leads/AvaLeadReviewCard';
 import { LeadPortalContactability } from '../components/leads/LeadPortalContactability';
 import { LeadPortalDealContext } from '../components/leads/LeadPortalDealContext';
 import { LeadPortalHeader } from '../components/leads/LeadPortalHeader';
@@ -844,6 +845,7 @@ export function LeadPortal() {
           <LeadPortalOverview lead={lead} />
         </div>
         <div className="pbk-portal-context-column">
+          {!loading && lead.id === leadId && <AvaLeadReviewCard key={leadId} leadId={leadId} />}
           <LeadPortalDealContext lead={lead} />
           <LeadPortalContactability lead={lead} />
         </div>

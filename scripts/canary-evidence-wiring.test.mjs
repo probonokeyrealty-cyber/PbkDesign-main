@@ -222,8 +222,10 @@ test('bridge code matches the reviewed release fingerprint outside the scoped re
   // The isolated intake test checks replay, contact restrictions, and absence of provider writes.
   // Specialist handoffs persist separately and their lead-level details stay out of public liveness.
   // Lead intake confirms the committed event and triage after an ambiguous snapshot write.
+  // The exact-lead review reads saved evidence and treats saved restrictions conservatively.
+  // See docs/operations/2026-11-23-ava-lead-review-integrity.md for the independent review.
   assert.equal(createHash('sha256').update(unchanged).digest('hex'),
-    '64c18ace38e736b8eb693e1a6dfb9f66541f394d75ba6aa10299ab1dca199bde');
+    '3d61fefc3226cd9b8eaa9f8c0363049582133cc48cf4237c196c3eb9d5602e7f');
 });
 
 test('production distribution includes reader and protocol, never the fixture signer', () => {

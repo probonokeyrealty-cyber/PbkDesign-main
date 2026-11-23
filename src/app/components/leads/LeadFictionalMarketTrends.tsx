@@ -1,4 +1,5 @@
 import { useEffect, useId, useRef, useState } from 'react';
+import '../../../styles/lead-fictional-market-trends.css';
 
 const areas = [
   { name: 'ZIP', color: 'var(--sky, #82d9f9)', dash: undefined },

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { chromium, expect } from '@playwright/test';
 import { preview } from 'vite';
@@ -12,6 +12,13 @@ const expectQa91411 = process.env.PBK_MARKET_TEST_91411_QA === '1';
 const { portalEnvironment } = JSON.parse(readFileSync(resolve(outDir, 'pbk-build-manifest.json'), 'utf8'));
 const expectStagingIndicators = process.env.PBK_MARKET_TEST_STAGING_INDICATORS === '1';
 assert.equal(portalEnvironment, 'live');
+const trendAssets = readdirSync(resolve(outDir, 'assets')).filter(name =>
+  /^LeadFictionalMarketTrends-.*\.(js|css)$/.test(name)
+);
+assert.equal(trendAssets.some(name => name.endsWith('.js')), expectStagingIndicators,
+  'The chart and its fictional data must only be bundled for the staging preview.');
+assert.equal(trendAssets.some(name => name.endsWith('.css')), expectStagingIndicators,
+  'Chart styles must only be bundled for the staging preview.');
 assert.equal(existsSync(qaEntry), false, 'The offline QA page must not be shipped.');
 assert.equal(existsSync(resolve(outDir, qa91411Path.slice(1))), expectQa91411,
   'The 91411 fixture must only be built for Preview #111.');

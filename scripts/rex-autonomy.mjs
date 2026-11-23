@@ -277,6 +277,12 @@ function extractMotivationScore(payload = {}) {
   )));
 }
 
+export function classifyRexLeadPriority(motivationScore, options = {}) {
+  if (motivationScore >= numberOr(options.hotLeadThreshold, 80)) return 'high';
+  if (motivationScore >= numberOr(options.reviewThreshold, 65)) return 'review';
+  return 'routine';
+}
+
 export function selectRexProactiveLeadAction(payload = {}, options = {}) {
   const motivationScore = extractMotivationScore(payload);
   const leadId = String(payload.leadId || payload.lead_id || payload.id || '').trim();
@@ -307,10 +313,11 @@ export function selectRexProactiveLeadAction(payload = {}, options = {}) {
   if (!insideCallingWindow) {
     return { ...base, action: 'schedule_for_calling_window', reason: 'Lead is hot but outside permissible calling hours.' };
   }
-  if (motivationScore >= numberOr(options.hotLeadThreshold, 80)) {
+  const priority = classifyRexLeadPriority(motivationScore, options);
+  if (priority === 'high') {
     return { ...base, action: 'queue_call', reason: `Motivation score ${motivationScore} exceeds hot-lead threshold.` };
   }
-  if (motivationScore >= numberOr(options.reviewThreshold, 65)) {
+  if (priority === 'review') {
     return { ...base, action: 'create_rex_decision', reason: `Motivation score ${motivationScore} should be reviewed for follow-up.` };
   }
   return { ...base, action: 'observe', approvalRequired: false, reason: `Motivation score ${motivationScore} is below proactive threshold.` };

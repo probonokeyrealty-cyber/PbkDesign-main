@@ -15,14 +15,20 @@ const wireControls = section('../index.html', 'function wireRecordingsControls()
 const fixtureRoute = section('../scripts/openclaw-local-server.mjs',
   "if (request.method === 'POST' && pathname === '/api/recordings/fixture')", '\n    if (request.method');
 
-async function clickRecordingControl(label, lookupResult) {
+function beginRecordingControl(label, lookupResult) {
   const requests = [], feedback = [], transcripts = [], downloads = [], playback = [];
-  const active = { dataset: { messageId: 'recording-1' }, querySelector: () => null };
+  let recording = { id: 'recording-1', name: 'First call', transcript: 'A saved transcript.' };
   const listeners = {};
   const page = {
     dataset: {},
-    querySelector: selector => selector === '.rec-item.active' ? active : null,
-    querySelectorAll: selector => selector === '.rec-line' ? [{ textContent: 'A saved transcript.' }] : [],
+    querySelector(selector) {
+      if (selector === '.rec-item.active') {
+        return { dataset: { messageId: recording.id }, querySelector: () => ({ textContent: recording.name }) };
+      }
+      if (selector === '.rec-item.active .who') return { textContent: recording.name };
+      return null;
+    },
+    querySelectorAll: selector => selector === '.rec-line' ? [{ textContent: recording.transcript }] : [],
     addEventListener: (event, fn) => { listeners[event] = fn; },
   };
   const button = {
@@ -42,7 +48,7 @@ async function clickRecordingControl(label, lookupResult) {
       if (path === '/api/recordings/fixture') throw new Error('Unexpected fixture creation');
       return lookupResult();
     },
-    downloadTextFile: (_name, text) => { transcripts.push(text); },
+    downloadTextFile: (filename, text) => { transcripts.push({ filename, text }); },
     showLocalViewToast() {},
     toastOutcome: notice => { feedback.push(notice); },
     toast: notice => { feedback.push(notice); },
@@ -52,22 +58,34 @@ async function clickRecordingControl(label, lookupResult) {
     },
   });
   listeners.click({ target: button });
-  await setImmediate();
-  return { requests, feedback, transcripts, downloads, playback };
+  return { requests, feedback, transcripts, downloads, playback, select: next => { recording = next; } };
 }
 
 test.each(['download', 'play'])('%s does not create a fixture when recording lookup fails', async (label) => {
-  const result = await clickRecordingControl(label, () => { throw new Error('Lookup failed'); });
+  const result = beginRecordingControl(label, () => { throw new Error('Lookup failed'); });
+  await setImmediate();
   expect(result.requests).toEqual([{ path: '/api/recordings/recording-1?expiresIn=3600', method: 'GET' }]);
   expect(result.downloads).toEqual([]);
   expect(result.playback).toEqual([]);
   expect(result.feedback.some(item => item.title === 'Recording unavailable')).toBe(true);
-  if (label === 'download') expect(result.transcripts).toEqual(['A saved transcript.']);
+  expect(result.transcripts).toEqual(label === 'download' ? [{ filename: 'first-call.txt', text: 'A saved transcript.' }] : []);
+});
+
+test('failed download uses the clicked call filename and transcript after switching calls', async () => {
+  const lookup = Promise.withResolvers();
+  const result = beginRecordingControl('download', () => lookup.promise);
+  expect(result.requests).toEqual([{ path: '/api/recordings/recording-1?expiresIn=3600', method: 'GET' }]);
+  result.select({ id: 'recording-2', name: 'Second call', transcript: 'Another call transcript.' });
+  lookup.reject(new Error('The first recording is unavailable'));
+  await setImmediate();
+  expect(result.transcripts).toEqual([{ filename: 'first-call.txt', text: 'A saved transcript.' }]);
+  expect(result.requests).toHaveLength(1);
 });
 
 test.each(['download', 'play'])('%s still uses the signed URL from a successful lookup', async (label) => {
   const url = 'https://example.invalid/recordings/fixture-test.wav';
-  const result = await clickRecordingControl(label, () => ({ signedUrl: url }));
+  const result = beginRecordingControl(label, () => ({ signedUrl: url }));
+  await setImmediate();
   expect(result.requests).toHaveLength(1);
   expect(result.transcripts).toEqual([]);
   expect(label === 'play' ? result.playback : result.downloads).toEqual([url]);

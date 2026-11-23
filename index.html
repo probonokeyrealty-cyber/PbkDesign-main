@@ -30288,11 +30288,12 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       if (elapsed) elapsed.textContent = `${mins}:${secs}`;
     };
 
-    const exportActiveRecording = (format = 'txt') => {
-      const name = page.querySelector('.rec-item.active .who')?.textContent?.trim() || page.querySelector('.rec-player-head .who')?.textContent?.trim() || 'PBK recording';
+    const snapshotRecordingTranscript = (name) => {
       const transcript = Array.from(page.querySelectorAll('.rec-line')).map((line) => line.textContent.replace(/\s+/g, ' ').trim()).join('\n');
-      downloadTextFile(`${name.toLowerCase().replace(/[^a-z0-9]+/g, '-') || 'pbk-recording'}.${format}`, transcript || `${name}\nNo transcript loaded.`, 'text/plain');
-      showLocalViewToast('Transcript export ready', 'No audio URL is attached yet, so PBK exported the visible transcript package.');
+      return {
+        filename: `${name.toLowerCase().replace(/[^a-z0-9]+/g, '-') || 'pbk-recording'}.txt`,
+        text: transcript || `${name}\nNo transcript loaded.`,
+      };
     };
 
     const fetchSignedRecording = (context) =>
@@ -30328,6 +30329,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
 
       if (label === 'bulk export' || label === 'download recording' || label === 'download') {
         const context = getActiveRecordingContext();
+        const transcript = snapshotRecordingTranscript(context.leadName);
         fetchSignedRecording(context)
           .then((payload) => {
             const url = payload?.signedUrl || payload?.url || payload?.signed?.signedUrl || '';
@@ -30342,7 +30344,8 @@ Authority close: "What matters most to your seller: number, timeline, or certain
             toastOutcome({ outcome: 'live', title: 'Recording download ready', desc: 'PBK fetched a secure signed Supabase URL.' });
           })
           .catch(() => {
-            exportActiveRecording('txt');
+            downloadTextFile(transcript.filename, transcript.text, 'text/plain');
+            showLocalViewToast('Transcript export ready', 'No audio URL is attached yet, so PBK exported the selected call transcript.');
             toastOutcome({ outcome: 'provider_missing', title: 'Recording unavailable', desc: 'A transcript export was offered instead of audio.' });
           });
         return;

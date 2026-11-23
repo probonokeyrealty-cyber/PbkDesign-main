@@ -35,7 +35,9 @@ lead.deal.propertyRecordSnapshot.sections = savedDatasets;
 
 // Intercept every API and remote image request; these checks never touch real leads or providers.
 async function verify(engine, config, label) {
-  const browser = await engine.launch();
+  const browser = await engine.launch(
+    process.argv.includes('--chrome') ? { channel: 'chrome' } : {}
+  );
   const page = await browser.newPage(config);
   const mutations = [], scenarioWrites = [], providerReads = [], canonicalReads = [], errors = [], unexpectedWrites = [];
   const fixture = structuredClone(lead), other = structuredClone(lead);
@@ -510,9 +512,23 @@ async function verify(engine, config, label) {
       await noOverflow();
       await page.getByRole('link', { name: 'Ask Ava about this lead' }).click();
       await expect(page).toHaveURL(chatUrl);
-      await speak('Show saved comps');
+
+      await page.getByRole('link', { name: /^Open saved comps/ }).click();
       await expect(page).toHaveURL(`${leadUrl}#lead-comps`);
       const comps = workspace.getByRole('tabpanel', { name: 'Comps', exact: true });
+      await expect(comps.getByText(price, { exact: true }).first()).toBeVisible();
+      await expect(comps.getByText(absentPrice, { exact: true })).toHaveCount(0);
+      await page.goBack();
+      await page.getByRole('link', { name: /^Open property photos/ }).click();
+      await expect(page).toHaveURL(`${leadUrl}#lead-photos`);
+      await expect(savedPhoto()).toHaveAttribute('src', photoUrl);
+      await expect.poll(() => savedPhoto().evaluate(image => image.complete && image.naturalWidth > 0)).toBe(true);
+      assert.equal(mutations.length, beforeSwitch, 'Ava evidence links must not refresh or save');
+
+      await page.goBack();
+      await expect(page).toHaveURL(chatUrl);
+      await speak('Show saved comps');
+      await expect(page).toHaveURL(`${leadUrl}#lead-comps`);
       await expect(comps.getByText(price, { exact: true }).first()).toBeVisible();
       await expect(comps.getByText(absentPrice, { exact: true })).toHaveCount(0);
       assert.equal(mutations.length, beforeSwitch, 'Spoken Comps must not refresh or save');
@@ -547,11 +563,12 @@ async function verify(engine, config, label) {
     assert.equal(mutations.length, beforeSwitch + 1, 'Alias navigation must not refresh or save');
     assert.deepEqual(providerReads, [], 'Only explicit unified refresh may access providers');
     assert.deepEqual(unexpectedWrites, []); assert.deepEqual(errors, []); await noOverflow();
-    console.log(label + ': Deal Decision Brief, exact-lead scenario save, stale evidence, and explicit refresh passed');
+    console.log(label + ': Ava saved comps and photos, exact-lead scenarios, and explicit refresh passed');
   } finally { await browser.close(); }
 }
 try {
   await verify(chromium, { viewport: { width: 1440, height: 1000 } }, 'desktop');
-  await verify(webkit, { ...devices['iPhone 13'], viewport: { width: 390, height: 844 } }, 'mobile-webkit');
+  const chrome = process.argv.includes('--chrome');
+  await verify(chrome ? chromium : webkit, { ...devices['iPhone 13'], viewport: { width: 390, height: 844 } }, chrome ? 'mobile-chrome' : 'mobile-webkit');
   await verify(chromium, { viewport: { width: 320, height: 800 }, isMobile: true }, 'narrow');
 } finally { await new Promise(resolve => server.httpServer.close(resolve)); }

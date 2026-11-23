@@ -73,7 +73,7 @@ assert(
   'h-full max-h-full',
   'pbk-ava-slash-panel',
   'pbk-ava-bubble-system',
-  'Ask about this lead, open saved comps or photos, or draft a seller follow-up.',
+  'Open saved property evidence, review the numbers, or prepare for the next seller conversation.',
   'Ava starter prompts',
   'Draft Text',
   'Prep Call',

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
   AlertTriangle,
+  ArrowUpRight,
   BrainCircuit,
   Bot,
   CalendarClock,
@@ -155,7 +156,7 @@ const PBK_COMPANION_ACTIONS: CompanionAction[] = [
   {
     id: 'send-sms',
     label: 'Draft Text',
-    description: 'Draft a seller text. Sending requires approval.',
+    description: 'Write a text to review before sending.',
     prompt: 'Draft a concise SMS to this seller using the current PBK context.',
     action: 'send_sms',
     icon: MessageSquare,
@@ -164,7 +165,7 @@ const PBK_COMPANION_ACTIONS: CompanionAction[] = [
   {
     id: 'send-email',
     label: 'Draft Email',
-    description: 'Draft a seller email. Sending requires approval.',
+    description: 'Write an email to review before sending.',
     prompt: 'Draft a seller email using the current PBK context and keep it ready to review.',
     action: 'send_email',
     icon: Mail,
@@ -173,7 +174,7 @@ const PBK_COMPANION_ACTIONS: CompanionAction[] = [
   {
     id: 'call-seller',
     label: 'Prep Call',
-    description: 'Review the lead and prepare an opening line for the call.',
+    description: 'Review the lead and plan what to say.',
     prompt: 'Prepare a call to this seller and show the best opening line before dialing.',
     action: 'operator_command',
     icon: Phone,
@@ -182,7 +183,7 @@ const PBK_COMPANION_ACTIONS: CompanionAction[] = [
   {
     id: 'open-lead',
     label: 'Find Lead',
-    description: 'Find a lead and review the latest seller activity.',
+    description: 'Look up a lead and review recent activity.',
     prompt: 'Open the current seller lead and summarize the latest timeline context.',
     action: 'search_leads',
     icon: Search,
@@ -190,8 +191,8 @@ const PBK_COMPANION_ACTIONS: CompanionAction[] = [
   },
   {
     id: 'open-page',
-    label: 'Go to page',
-    description: 'Open a page, search leads, or say “Show saved comps” in a lead’s chat.',
+    label: 'Open Leads',
+    description: 'Open the Leads workspace.',
     prompt: 'Open Leads',
     action: 'operator_command',
     icon: ExternalLink,
@@ -200,7 +201,7 @@ const PBK_COMPANION_ACTIONS: CompanionAction[] = [
   {
     id: 'analyze-deal',
     label: 'Analyze Deal',
-    description: 'Review estimated resale value, repairs, and maximum offer.',
+    description: 'Review resale value, repairs, and the offer limit.',
     prompt: 'Analyze this deal and tell me the MAO, offer path, and next seller question.',
     action: 'analyze_deal',
     icon: Sparkles,
@@ -1535,8 +1536,8 @@ function AvaChatSession({ scope }: { scope: AvaChatScope }) {
   useEffect(() => {
     const timeline = timelineRef.current;
     if (!timeline || searchQuery || historyFilter !== 'all') return;
-    timeline.scrollTop = timeline.scrollHeight;
-  }, [assistantExchanges, conversationCount, historyFilter, searchQuery]);
+    timeline.scrollTop = conversationItems.length > 0 ? timeline.scrollHeight : 0;
+  }, [assistantExchanges, conversationItems.length, historyFilter, searchQuery]);
 
   const stopListening = useCallback(() => {
     const recognition = recognitionRef.current;
@@ -1946,9 +1947,10 @@ function AvaChatSession({ scope }: { scope: AvaChatScope }) {
                   />
                 ) : (
                   <WelcomeState
-                    linkedToLead={Boolean(linkedLeadId)}
+                    linkedLeadId={linkedLeadId}
                     operatorMemory={operatorMemory}
                     onResumeOperatorMemory={resumeOperatorMemory}
+                    onSelectCompanionAction={selectCompanionAction}
                   />
                 )}
 
@@ -1980,6 +1982,7 @@ function AvaChatSession({ scope }: { scope: AvaChatScope }) {
                 stopReplySpeech();
               } : undefined}
               onSelectCompanionAction={selectCompanionAction}
+              showStarterPrompts={conversationCount > 0}
             />
           </div>
         </div>
@@ -2577,6 +2580,7 @@ function AvaComposer({
   onSubmit,
   onStopResponse,
   onSelectCompanionAction,
+  showStarterPrompts,
 }: {
   draft: string;
   setDraft: (value: string) => void;
@@ -2598,6 +2602,7 @@ function AvaComposer({
   onSubmit: () => void;
   onStopResponse?: () => void;
   onSelectCompanionAction: (item: CompanionAction) => void;
+  showStarterPrompts: boolean;
 }) {
   const actionConfig = ACTIONS.find((item) => item.id === action) || ACTIONS[0];
   const slashQuery = draft.trimStart().startsWith('/')
@@ -2614,7 +2619,7 @@ function AvaComposer({
   return (
     <div className="pbk-ava-chat-composer border-t border-[var(--ava-border)] bg-[var(--ava-bg)] px-2 pt-2 sm:px-5 sm:pb-4 sm:pt-3">
       <div className="mx-auto w-full max-w-4xl">
-        <div className="rounded-lg border border-[var(--ava-border-bright)] bg-[var(--ava-panel-elevated)] p-2">
+        <div className="pbk-ava-composer-card rounded-xl border border-[var(--ava-border-bright)] bg-[var(--ava-panel-elevated)] p-2">
           {submitError && (
             <div
               role="alert"
@@ -2632,7 +2637,7 @@ function AvaComposer({
           <label className="sr-only" htmlFor="ava-command-input">
             Ask Ava anything
           </label>
-          <div className="pbk-ava-chat-action-rail" aria-label="Ava starter prompts">
+          {showStarterPrompts && <div className="pbk-ava-chat-action-rail" aria-label="Ava starter prompts">
             {PBK_COMPANION_ACTIONS.slice(0, 5).map((item) => {
               const QuickIcon = item.icon;
               return (
@@ -2642,7 +2647,7 @@ function AvaComposer({
                 </button>
               );
             })}
-          </div>
+          </div>}
           <textarea
             id="ava-command-input"
             ref={textareaRef}
@@ -2659,7 +2664,7 @@ function AvaComposer({
             }}
             rows={2}
             className="max-h-36 min-h-14 w-full resize-y bg-transparent px-3 py-2 text-[16px] leading-6 text-[var(--ava-text)] outline-none placeholder:text-[var(--ava-text-faint)] sm:text-sm"
-            placeholder="Ask Ava anything..."
+            placeholder="Ask about a lead or type a request…"
           />
           {slashCommandsVisible && (
             <div className="pbk-ava-slash-panel" role="listbox" aria-label="Ava shortcuts">
@@ -2676,7 +2681,7 @@ function AvaComposer({
                     >
                       <Icon size={16} />
                       <span>
-                        <strong>/{item.id.replace(/-/g, '')}</strong>
+                    <strong>{item.label}</strong>
                         <small>{item.description}</small>
                       </span>
                     </button>
@@ -2730,18 +2735,14 @@ function AvaComposer({
               <div className="hidden min-h-11 min-w-0 flex-1 items-center gap-2 rounded-lg border border-[var(--ava-border)] bg-[var(--ava-panel)] px-3 text-xs font-semibold text-[var(--ava-text-muted)] sm:flex sm:flex-none">
                 <ShieldCheck size={15} className="text-[var(--ava-sky)]" />
                 <span className="truncate">
-                  {requiresApproval ? 'Ava will ask before protected actions' : actionConfig.label}
+                  {requiresApproval ? 'Ava will ask for approval' : actionConfig.label}
                 </span>
               </div>
             </div>
 
             <div className="pbk-ava-chat-submit-actions flex w-full min-w-0 items-center justify-end gap-2 sm:w-auto">
               <span className="hidden max-w-48 truncate text-xs text-[var(--ava-text-faint)] lg:block">
-                {listening
-                  ? transcript || 'Listening...'
-                  : requiresApproval
-                    ? 'Review before sending'
-                    : 'Ready'}
+                {listening ? transcript || 'Listening…' : ''}
               </span>
               <PbkButton
                 type="button"
@@ -2761,7 +2762,7 @@ function AvaComposer({
           </div>
         </div>
         <p className="pbk-ava-chat-mobile-note mt-1.5 text-center text-[10px] text-[var(--ava-text-faint)]">
-          Ava can make mistakes. Review important actions before sending.
+          Calls and outgoing messages require approval.
         </p>
       </div>
     </div>
@@ -2982,52 +2983,75 @@ function AvaPresenceOrb({
 }
 
 function WelcomeState({
-  linkedToLead,
+  linkedLeadId,
   operatorMemory,
   onResumeOperatorMemory,
+  onSelectCompanionAction,
 }: {
-  linkedToLead: boolean;
+  linkedLeadId: string;
   operatorMemory: OperatorMemory | null;
   onResumeOperatorMemory: () => void;
+  onSelectCompanionAction: (item: CompanionAction) => void;
 }) {
+  const prompts = PBK_COMPANION_ACTIONS.slice(0, 6).filter(
+    (item) => !linkedLeadId || (item.id !== 'open-lead' && item.id !== 'open-page')
+  );
+  const compsPath = resolveAvaBrowserCommand('Show saved comps', linkedLeadId)?.path;
+  const photosPath = resolveAvaBrowserCommand('Open property photos', linkedLeadId)?.path;
+
   return (
-    <div className="flex min-h-[340px] items-end py-8">
-      <div className="max-w-2xl">
-        <div className="flex items-start gap-3">
-          <AvaPresenceOrb state="ready" compact />
-          <div className="rounded-[4px_18px_18px_18px] border border-[var(--ava-border)] bg-[var(--ava-panel)] p-4 text-left shadow-sm">
-            <div className="mb-1 flex items-center gap-2 text-xs font-semibold text-[var(--ava-text)]">
-              <span>Ava</span>
-              <span className="text-[var(--ava-text-faint)]">PBK assistant</span>
-            </div>
-            <p className="text-sm leading-6 text-[var(--ava-text-muted)]">
-              {linkedToLead
-                ? 'Ask about this lead, open saved comps or photos, or draft a seller follow-up.'
-                : 'Find a lead, review a deal, or prepare for your next seller call.'}
-            </p>
-            <p className="mt-2 text-xs leading-5 text-[var(--ava-text-muted)]">
-              Start with a shortcut below or type your own request. Calls and outgoing messages require approval.
-            </p>
-          </div>
+    <section className="pbk-ava-welcome" aria-labelledby="ava-welcome-title">
+      <div className="pbk-ava-welcome-intro">
+        <AvaPresenceOrb state="ready" compact />
+        <div>
+          <h2 id="ava-welcome-title">{linkedLeadId ? 'Work on this lead' : 'What are you working on?'}</h2>
+          <p>{linkedLeadId
+            ? 'Open saved property evidence, review the numbers, or prepare for the next seller conversation.'
+            : 'Look up a seller, review a deal, or start a draft. You can also type your own request.'}</p>
         </div>
-        {operatorMemory && (
-          <button
-            type="button"
-            className="ml-[52px] mt-4 flex max-w-md items-start gap-3 rounded-xl border border-[var(--ava-border)] bg-[var(--ava-panel)] p-3 text-left text-xs text-[var(--ava-text-muted)] transition hover:border-[var(--ava-sky)] hover:text-[var(--ava-text)]"
-            onClick={onResumeOperatorMemory}
-          >
-            <Clock3 size={16} className="mt-0.5 shrink-0 text-[var(--ava-sky)]" />
-            <span className="min-w-0">
-              <span className="block font-semibold text-[var(--ava-text)]">Resume last ask</span>
-              <span className="mt-1 block truncate">{operatorMemory.draft}</span>
-              <span className="mt-1 block text-[10px] uppercase text-[var(--ava-text-faint)]">
-                {formatRelative(operatorMemory.updatedAt)}
-              </span>
-            </span>
-          </button>
-        )}
       </div>
-    </div>
+      <div className="pbk-ava-welcome-actions" aria-label="Ava starter prompts">
+        {compsPath && (
+          <Link className="pbk-ava-welcome-action" to={compsPath}>
+            <FileText size={17} aria-hidden="true" />
+            <span><strong>Open saved comps</strong><small>Review comparable sales for this lead.</small></span>
+            <ArrowUpRight size={15} aria-hidden="true" />
+          </Link>
+        )}
+        {photosPath && (
+          <Link className="pbk-ava-welcome-action" to={photosPath}>
+            <Camera size={17} aria-hidden="true" />
+            <span><strong>Open property photos</strong><small>See the photos already saved to this lead.</small></span>
+            <ArrowUpRight size={15} aria-hidden="true" />
+          </Link>
+        )}
+        {prompts.map((item) => {
+          const Icon = item.icon;
+          return (
+            <button key={item.id} type="button" className="pbk-ava-welcome-action" onClick={() => onSelectCompanionAction(item)}>
+              <Icon size={17} aria-hidden="true" />
+              <span><strong>{item.label}</strong><small>{item.description}</small></span>
+            </button>
+          );
+        })}
+      </div>
+      {operatorMemory && (
+        <button
+          type="button"
+          className="mt-4 flex w-full min-w-0 items-start gap-3 rounded-xl border border-[var(--ava-border)] bg-[var(--ava-panel)] p-3 text-left text-xs text-[var(--ava-text-muted)] transition hover:border-[var(--ava-sky)] hover:text-[var(--ava-text)]"
+          onClick={onResumeOperatorMemory}
+        >
+          <Clock3 size={16} className="mt-0.5 shrink-0 text-[var(--ava-sky)]" />
+          <span className="min-w-0">
+            <span className="block font-semibold text-[var(--ava-text)]">Resume last ask</span>
+            <span className="mt-1 block truncate">{operatorMemory.draft}</span>
+            <span className="mt-1 block text-[10px] uppercase text-[var(--ava-text-faint)]">
+              {formatRelative(operatorMemory.updatedAt)}
+            </span>
+          </span>
+        </button>
+      )}
+    </section>
   );
 }
 

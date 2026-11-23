@@ -130,6 +130,16 @@ try {
     await expect(panel.getByText('No fictional cohort matches this ZIP and property type.')).toBeVisible();
     await expect(panel.getByText('$695,000', { exact: true })).toHaveCount(0);
     const publicContext = panel.getByRole('region', { name: 'Public housing context' });
+    const evidenceSection = panel.getByRole('region', { name: 'Saved property evidence' });
+    await expect(evidenceSection.getByText('Fictional ZIP benchmarks', { exact: true })).toBeVisible();
+    assert.ok(
+      await panel.evaluate(element => {
+        const publicData = element.querySelector('[aria-label="Public housing context"]');
+        const evidence = element.querySelector('[aria-label="Saved property evidence"]');
+        return publicData && evidence &&
+          Boolean(publicData.compareDocumentPosition(evidence) & Node.DOCUMENT_POSITION_FOLLOWING);
+      })
+    );
     await expect(publicContext.getByText('Census ZCTA 91401', { exact: true })).toBeVisible();
     await expect(publicContext.getByText('$1,881', { exact: true })).toBeVisible();
     await expect(publicContext.getByText('$1,047,700', { exact: true })).toBeVisible();
@@ -161,7 +171,17 @@ try {
     await publicContext.getByRole('textbox', { name: 'Comparison ZIP' }).fill('00000');
     await publicContext.getByRole('button', { name: 'Compare', exact: true }).click();
     await expect(publicContext.getByText('No public housing observations are available for 00000.', { exact: true })).toBeVisible();
+    await expect(mixedYears).toHaveCount(0);
+    await publicContext.getByRole('textbox', { name: 'Comparison ZIP' }).fill('01001');
+    await publicContext.getByRole('button', { name: 'Compare', exact: true }).press('Enter');
+    await expect(comparison).toBeVisible();
+    await expect(publicContext.getByText('No public housing observations are available for 00000.', { exact: true })).toHaveCount(0);
+    await publicContext.getByRole('textbox', { name: 'Comparison ZIP' }).fill('91401');
+    await publicContext.getByRole('button', { name: 'Compare', exact: true }).press('Enter');
+    await expect(publicContext.getByText('Choose a ZIP other than the saved lead ZIP.', { exact: true })).toBeVisible();
     await expect(comparison).toHaveCount(0);
+    await expect(publicContext.getByRole('region', { name: 'Comparison with 91401' })).toHaveCount(0);
+    await expect(publicContext.getByText('$1,838 to $1,924', { exact: true })).toBeVisible();
     assert.ok(await publicContext.evaluate(element => {
       return innerWidth === 390 && document.documentElement.scrollWidth <= 390
         && element.scrollWidth <= element.clientWidth;
@@ -189,9 +209,19 @@ try {
     await open(fixtures[7].id);
     await expect(publicContext.getByText('Census ZCTA 00601', { exact: true })).toBeVisible();
     await expect(publicContext.getByText('$427', { exact: true })).toBeVisible();
+
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await open(fixtures[1].id);
+    await expect(publicContext.getByText('Census ZCTA 91401', { exact: true })).toBeVisible();
+    assert.ok(await publicContext.evaluate(element => {
+      const summary = element.querySelector('.pbk-market-summary');
+      return innerWidth === 1280 && document.documentElement.scrollWidth <= innerWidth
+        && element.scrollWidth <= element.clientWidth
+        && getComputedStyle(summary).gridTemplateColumns.split(' ').length === 2;
+    }));
   }
   assert.deepEqual(forbidden, []);
-  console.log(`Chrome 390px: ${portalEnvironment} profile, no provider lookups or mutations`);
+  console.log(`Chrome 390px and 1280px: ${portalEnvironment} profile, no provider lookups or mutations`);
 } finally {
   await browser?.close();
   await new Promise(resolve => server.httpServer.close(resolve));

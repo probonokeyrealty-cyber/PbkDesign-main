@@ -27,14 +27,18 @@ export default function LeadPublicHousingContext({ zip }: { zip: string }) {
   const available = row.filter((value) => value !== null).length;
   return (
     <section aria-label="Public housing context" className="pbk-market-public">
-      <header>
-        <span className="pbk-market-badge">Public data snapshot</span>
-        <h4>Public housing context</h4>
+      <header className="pbk-market-section-header">
+        <div className="pbk-market-section-heading">
+          <div>
+            <span className="pbk-market-badge">Public data snapshot</span>
+            <h4>Public housing context</h4>
+          </div>
+          <strong className="pbk-market-availability">{available} of 3 measures available</strong>
+        </div>
         <p>
           These area statistics are separate from the saved house facts and fictional benchmarks.
           They are not current listings, comparable sales, or a valuation.
         </p>
-        <strong>{available} of 3 measures available</strong>
       </header>
       <div className="pbk-market-summary">
         <section className="pbk-market-metric" aria-label="Census survey">
@@ -94,8 +98,8 @@ export default function LeadPublicHousingContext({ zip }: { zip: string }) {
           <small>This product uses FHFA data but is neither endorsed nor certified by FHFA.</small>
         </section>
       </div>
-      <CensusEstimateDetails row={row} />
       <ComparePublicHousing key={zip} zip={zip} row={row} lookup={(code) => housingByCode[code]} />
+      <CensusEstimateDetails row={row} />
     </section>
   );
 }

@@ -189,7 +189,7 @@ export function ComparePublicHousing({
   }
 
   return (
-    <details className="pbk-market-sources">
+    <details className="pbk-market-sources pbk-market-compare">
       <summary>Compare another ZIP</summary>
       <p>
         Use the same Census survey vintage for both codes. Each chart has its own dollar scale. A
@@ -203,12 +203,15 @@ export function ComparePublicHousing({
           onChange={(event) => setEntered(event.target.value)}
           inputMode="numeric"
           autoComplete="off"
+          placeholder="e.g. 01001"
         />
         <button type="submit" className="pbk-btn pbk-btn-primary">
           Compare
         </button>
       </form>
-      <p role="status">{message}</p>
+      <p className="pbk-market-feedback" role="status">
+        {message}
+      </p>
       {peer && (
         <section
           aria-label={`Comparison with ${peer.code}`}

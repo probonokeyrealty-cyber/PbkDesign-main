@@ -31,6 +31,15 @@ Apply migrations:
 - Applied files and SHA-256 checksums are tracked in `public.pbk_schema_migrations`.
 - The runner uses an advisory lock and bounded lock/statement timeouts.
 
+Recording retention rollout:
+
+- Before releasing the updated bridge, apply `20261120016000_pbk_recording_retention_approvals.sql` to the canonical Render Postgres with the migration runner. The Render bridge verifies the schema and runtime-role access before opening its listener; it does not apply migrations on startup.
+- Set `PBK_RECORDING_RETENTION_FOUNDER_KEY` in the bridge's private server environment and give it only to the founder. Use a high-entropy secret separate from `PBK_BRIDGE_API_KEY`. Never put it in provider settings, browser builds, or proxies.
+- Direct retention decisions (`POST /api/approvals/:id/:decision` or `PUT /api/approvals/:id`) require both `Authorization: Bearer <PBK_BRIDGE_API_KEY>` and `x-pbk-recording-retention-founder-key`. The retention run verifies the durable grant using the server's founder key; the run request does not send that key. Missing or reused configuration blocks decisions and new grant consumption. Re-request unconsumed approvals signed with the old bridge key or before a founder key rotation.
+- Resolve ambiguous legacy recording pointers before retention or recording storage writes. A rejected upload is released only after a recognized pre-write rejection and unchanged Storage readback. Ambiguous reservations remain locked; do not clear them or replay Storage writes without independent evidence.
+- Live retention checks at most 50 candidates and selects up to 25 verified recordings from Postgres, oldest first. It reports unverifiable rows without deleting them. When `moreCandidates` is true, use the returned `nextScanAfter` as `scanAfter` on a new queue request, never on execution of an existing approval. Start a fresh scan without a cursor to recheck older blocked rows. The dashboard-only dry run is not a full inventory.
+- Use the guarded recording deletion route for recording-backed Inbox items. Generic Inbox deletion does not remove recording rows or their Storage pointers.
+
 Verification:
 
 - `GET /health` should report `features.stateBackend = "postgres"`.

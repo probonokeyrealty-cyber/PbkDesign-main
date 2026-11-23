@@ -292,6 +292,8 @@ COPY scripts/parcel-prospecting-brief.mjs ./scripts/parcel-prospecting-brief.mjs
 COPY scripts/hermes-parcel-prospecting.mjs ./scripts/hermes-parcel-prospecting.mjs
 COPY scripts/phone-dialer-routes.mjs ./scripts/phone-dialer-routes.mjs
 COPY scripts/openclaw-local-server.mjs ./scripts/openclaw-local-server.mjs
+COPY scripts/recording-retention-authorization.mjs ./scripts/recording-retention-authorization.mjs
+COPY scripts/recording-retention-schema.mjs ./scripts/recording-retention-schema.mjs
 COPY scripts/ava-team-chat-permissions.mjs ./scripts/ava-team-chat-permissions.mjs
 COPY scripts/neon-auth-mail.mjs ./scripts/neon-auth-mail.mjs
 COPY scripts/neon-auth-microsoft.mjs ./scripts/neon-auth-microsoft.mjs

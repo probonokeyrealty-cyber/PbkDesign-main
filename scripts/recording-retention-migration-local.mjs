@@ -1,0 +1,175 @@
+import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
+import { readFile } from 'node:fs/promises';
+import test from 'node:test';
+import { withRetentionPostgres } from './fixtures/recording-retention-postgres.mjs';
+import { assertRecordingRetentionSchema } from './recording-retention-schema.mjs';
+
+const migration = '20261120016000_pbk_recording_retention_approvals.sql';
+const roles = ['anon', 'authenticated', 'service_role'];
+const tables = ['pbk_recording_retention_approvals', 'pbk_recording_retention_attempts', 'pbk_recording_storage_writes'];
+const functions = ['protect_recording_retention_pointer', 'protect_recording_retention_truncate'];
+const retentionMessageColumns = [
+  'id', 'payload', 'storage_path', 'storage_bucket', 'workspace_id', 'channel',
+  'direction', 'created_at', 'recording_url', 'updated_at',
+];
+
+async function assertRecorded(pool) {
+  const sql = await readFile(new URL(`../supabase/migrations/${migration}`, import.meta.url), 'utf8');
+  const { rows } = await pool.query(`SELECT checksum_sha256, migration_target
+    FROM public.pbk_schema_migrations WHERE migration_name = $1`, [migration]);
+  assert.deepEqual(rows, [{ checksum_sha256: createHash('sha256').update(sql).digest('hex'), migration_target: 'local' }]);
+}
+
+async function assertPrivileges(pool, role, expectedReads) {
+  const { rows } = await pool.query(`SELECT name,
+    has_table_privilege($1, 'public.' || name, 'SELECT') AS can_read,
+    has_table_privilege($1, 'public.' || name, 'INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER, MAINTAIN') AS can_other
+    FROM unnest($2::text[]) AS t(name)`, [role, tables]);
+  assert.deepEqual(rows, tables.map(name => ({ name, can_read: expectedReads.includes(name), can_other: false })), role);
+
+  const { rows: execute } = await pool.query(`SELECT name,
+    has_function_privilege($1, 'public.' || name || '()', 'EXECUTE') AS can_execute
+    FROM unnest($2::text[]) AS f(name)`, [role, functions]);
+  assert.deepEqual(execute, functions.map(name => ({ name, can_execute: false })), role);
+}
+
+test('the real runner applies recording retention with no Supabase roles and revokes PUBLIC', async () => {
+  await withRetentionPostgres(async ({ pool, applyRecordingPrerequisites, applyRecordingMigration }) => {
+    const { rows } = await pool.query('SELECT rolname FROM pg_catalog.pg_roles WHERE rolname = ANY($1::text[])', [roles]);
+    assert.deepEqual(rows, []);
+    await applyRecordingPrerequisites();
+    await pool.query(`CREATE ROLE fixture_reader NOLOGIN;
+      ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO PUBLIC;`);
+
+    await applyRecordingMigration();
+    await assertRecorded(pool);
+    await assertPrivileges(pool, 'fixture_reader', []);
+  }, { supabaseRoles: false });
+});
+
+test('the real runner rejects each missing unified_messages retention column before installing triggers', async () => {
+  await withRetentionPostgres(async ({ pool, applyRecordingPrerequisites, applyRecordingMigration }) => {
+    await applyRecordingPrerequisites();
+    for (const column of retentionMessageColumns) {
+      await pool.query(`ALTER TABLE public.unified_messages RENAME COLUMN ${column} TO fixture_missing_column`);
+      try {
+        await assert.rejects(applyRecordingMigration, error => {
+          assert.match(error.stderr, /Recording retention requires public\.unified_messages columns/);
+          assert.match(error.stderr, new RegExp(`\\b${column}\\b`));
+          return true;
+        }, `Migration accepted a missing ${column}`);
+        const { rows } = await pool.query(`SELECT
+          EXISTS (SELECT 1 FROM pg_catalog.pg_trigger WHERE tgrelid = 'public.unified_messages'::regclass
+            AND tgname = ANY($1::text[])) AS triggers_installed,
+          EXISTS (SELECT 1 FROM public.pbk_schema_migrations WHERE migration_name = $2) AS migration_recorded`,
+        [functions, migration]);
+        assert.deepEqual(rows, [{ triggers_installed: false, migration_recorded: false }]);
+      } finally {
+        await pool.query(`ALTER TABLE public.unified_messages RENAME COLUMN fixture_missing_column TO ${column}`);
+      }
+    }
+    await applyRecordingMigration();
+    await assertRecorded(pool);
+    await assertRecordingRetentionSchema(pool);
+  }, { supabaseRoles: false });
+});
+
+test('startup rejects each missing unified_messages retention column with the triggers intact', async t => {
+  await withRetentionPostgres(async ({ pool, applyRecordingSchema }) => {
+    await applyRecordingSchema();
+    await assertRecordingRetentionSchema(pool);
+    const client = await pool.connect();
+    try {
+      for (const column of retentionMessageColumns) {
+        await t.test(column, async () => {
+          await client.query('BEGIN');
+          try {
+            await client.query(`ALTER TABLE public.unified_messages DROP COLUMN ${column}`);
+            const { rows } = await client.query(`SELECT tgname FROM pg_catalog.pg_trigger
+              WHERE tgrelid = 'public.unified_messages'::regclass AND tgname = ANY($1::text[]) ORDER BY tgname`, [functions]);
+            assert.deepEqual(rows.map(row => row.tgname), functions);
+            await assert.rejects(assertRecordingRetentionSchema(client), /schema or runtime-role access is incomplete/);
+          } finally {
+            await client.query('ROLLBACK');
+          }
+        });
+      }
+      await assertRecordingRetentionSchema(client);
+    } finally {
+      client.release();
+    }
+  }, { supabaseRoles: false });
+});
+
+test('startup requires an intact pending-and-confirmed retention fence', async () => {
+  await withRetentionPostgres(async ({ pool, applyRecordingSchema }) => {
+    await applyRecordingSchema();
+    await assertRecordingRetentionSchema(pool);
+    const client = await pool.connect();
+    try {
+      for (const replacement of [
+        null,
+        `CREATE INDEX pbk_recording_retention_fenced_key ON public.pbk_recording_retention_attempts (storage_key)
+          WHERE outcome IN ('pending', 'confirmed')`,
+        `CREATE UNIQUE INDEX pbk_recording_retention_fenced_key ON public.pbk_recording_retention_attempts (storage_key)
+          WHERE outcome = 'pending'`,
+        `CREATE UNIQUE INDEX pbk_recording_retention_fenced_key ON public.pbk_recording_retention_attempts (message_id)
+          WHERE outcome IN ('pending', 'confirmed')`,
+        `CREATE UNIQUE INDEX pbk_recording_retention_fenced_key ON public.pbk_recording_retention_attempts (storage_key COLLATE "POSIX")
+          WHERE outcome IN ('pending', 'confirmed')`,
+        `ALTER TABLE public.pbk_recording_retention_attempts ALTER COLUMN storage_key TYPE text COLLATE pg_catalog."POSIX";
+          CREATE UNIQUE INDEX pbk_recording_retention_fenced_key ON public.pbk_recording_retention_attempts (storage_key)
+            WHERE outcome IN ('pending', 'confirmed')`,
+      ]) {
+        await client.query('BEGIN');
+        try {
+          await client.query('DROP INDEX public.pbk_recording_retention_fenced_key');
+          if (replacement) await client.query(replacement);
+          await assert.rejects(assertRecordingRetentionSchema(client), /schema or runtime-role access is incomplete/,
+            replacement || 'A missing retention fence must fail startup');
+        } finally {
+          await client.query('ROLLBACK');
+        }
+      }
+      await assertRecordingRetentionSchema(client);
+    } finally {
+      client.release();
+    }
+  }, { supabaseRoles: false });
+});
+
+test('the real runner rolls schema back on a bookkeeping failure and preserves Supabase privileges on retry', async () => {
+  await withRetentionPostgres(async ({ pool, applyRecordingPrerequisites, applyRecordingMigration }) => {
+    await applyRecordingPrerequisites();
+    await pool.query(`
+      ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO anon, authenticated, service_role;
+      ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT EXECUTE ON FUNCTIONS TO anon, authenticated, service_role;
+      ALTER TABLE public.pbk_schema_migrations ADD CONSTRAINT fixture_reject_retention_checksum
+        CHECK (migration_name <> '${migration}');`);
+
+    await assert.rejects(applyRecordingMigration, error => {
+      assert.match(error.stderr, /failed 20261120016000_pbk_recording_retention_approvals\.sql:.*fixture_reject_retention_checksum/);
+      return true;
+    });
+    const { rows } = await pool.query(`SELECT
+      EXISTS (SELECT 1 FROM unnest($1::text[]) AS t(name) WHERE to_regclass('public.' || name) IS NOT NULL) AS retention_tables,
+      EXISTS (SELECT 1 FROM unnest($2::text[]) AS f(name) WHERE to_regprocedure('public.' || name || '()') IS NOT NULL) AS retention_functions,
+      EXISTS (SELECT 1 FROM pg_catalog.pg_trigger WHERE tgrelid = 'public.unified_messages'::regclass
+        AND tgname = ANY($2::text[])) AS retention_triggers,
+      EXISTS (SELECT 1 FROM public.pbk_schema_migrations WHERE migration_name = $3) AS migration_recorded`,
+    [tables, functions, migration]);
+    assert.deepEqual(rows, [{
+      retention_tables: false, retention_functions: false, retention_triggers: false, migration_recorded: false,
+    }]);
+
+    await pool.query('ALTER TABLE public.pbk_schema_migrations DROP CONSTRAINT fixture_reject_retention_checksum');
+    await applyRecordingMigration();
+    await assertRecorded(pool);
+    for (const role of roles) {
+      await assertPrivileges(pool, role, role === 'service_role' ? tables.slice(1) : []);
+    }
+    const { stdout } = await applyRecordingMigration();
+    assert.ok(stdout.includes(`skip ${migration}`));
+  });
+});

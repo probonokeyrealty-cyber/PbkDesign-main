@@ -131,6 +131,7 @@ try {
     await expect(panel.getByText('$695,000', { exact: true })).toHaveCount(0);
     const publicContext = panel.getByRole('region', { name: 'Public housing context' });
     const evidenceSection = panel.getByRole('region', { name: 'Saved property evidence' });
+    await expect(publicContext.getByText('Census ZCTA 91401', { exact: true })).toBeVisible();
     await expect(evidenceSection.getByText('Fictional ZIP benchmarks', { exact: true })).toBeVisible();
     assert.ok(
       await panel.evaluate(element => {
@@ -140,7 +141,6 @@ try {
           Boolean(publicData.compareDocumentPosition(evidence) & Node.DOCUMENT_POSITION_FOLLOWING);
       })
     );
-    await expect(publicContext.getByText('Census ZCTA 91401', { exact: true })).toBeVisible();
     await expect(publicContext.getByText('$1,881', { exact: true })).toBeVisible();
     await expect(publicContext.getByText('$1,047,700', { exact: true })).toBeVisible();
     await expect(publicContext.getByText(/90% margin of error: \$43/)).toBeVisible();

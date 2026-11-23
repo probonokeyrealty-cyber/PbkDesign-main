@@ -82,6 +82,22 @@ try {
       && card.previousElementSibling.scrollWidth <= card.previousElementSibling.clientWidth
       && card.getBoundingClientRect().top >= card.previousElementSibling.getBoundingClientRect().bottom
     ));
+    const trends = qa.getByRole('region', { name: 'Market trends' });
+    await expect(trends.getByText('Fictional market data', { exact: true })).toBeVisible();
+    const month = trends.getByRole('slider', { name: 'Inspect month' });
+    await expect(month).toHaveAttribute('aria-valuetext', 'Oct 2026');
+    await trends.getByRole('button', { name: 'Inventory change' }).click();
+    await expect(trends.getByText('Year over year, %', { exact: true })).toBeVisible();
+    await trends.getByRole('button', { name: '6M' }).click();
+    await trends.getByText('View data table', { exact: true }).click();
+    await expect(trends.locator('tbody tr')).toHaveCount(6);
+    await expect(trends.locator('tbody tr[aria-current=true]')).toContainText('Oct 2026');
+    await trends.getByRole('button', { name: '2Y' }).click();
+    await month.press('Home');
+    for (let i = 0; i < 15; i++) await month.press('ArrowRight');
+    await expect(trends.locator('tbody tr[aria-current=true]')).toContainText('Unavailable');
+    await expect(trends.getByRole('link', { name: /Reventure research hub/ })).toHaveAttribute('href', 'https://blog.reventure.app/graph');
+
     assert.deepEqual(forbiddenQa, [], 'The standalone QA fixture must not request any API or external asset.');
     console.log('Preview #111 fixture: separate ZIP and county charts at 390px; static requests only');
     await qa.close();

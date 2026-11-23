@@ -4,6 +4,7 @@ import type { readPropertyEvidence } from '../../utils/propertyEvidence';
 import type { LeadPortalModel } from './leadPortalModel';
 import '../../../styles/lead-market-comparison.css';
 
+const LeadFictionalMarketTrends = lazy(() => import('./LeadFictionalMarketTrends'));
 const LeadPublicHousingContext = lazy(() => import('./LeadPublicHousingContext'));
 
 const zipFixture = {
@@ -294,6 +295,11 @@ export function LeadMarketComparison({
           )}
         </div>
       </section>
+      {import.meta.env.PBK_MARKET_STAGING_INDICATORS && (
+        <Suspense fallback={<p role="status">Loading fictional market trends…</p>}>
+          <LeadFictionalMarketTrends />
+        </Suspense>
+      )}
       <details className="pbk-market-sources">
         <summary>Sources and limits</summary>
         <p>

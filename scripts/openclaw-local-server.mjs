@@ -43672,6 +43672,8 @@ function recordAvaAssistantPlanOps({
       opsParams.success = false;
       opsParams.error = 'assistant_delivery_unverified';
     }
+    // A final-only reply first exposes content at delivery. Earlier previews keep their mark.
+    if (delivery && delivered === true) markAgentTimingFirstContent(timingTurn, answer);
     bindAgentTimingToParams(opsParams, timingTurn, { answer,
       successful: Boolean(delivered && toolOk && qaOk && !safetyBlocked && assistantAction !== 'approval_required'
         && (!toolResult || agentTimingResultSucceeded(toolResult))), signal });

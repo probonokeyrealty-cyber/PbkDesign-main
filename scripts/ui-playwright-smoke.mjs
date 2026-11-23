@@ -153,7 +153,7 @@ async function collectRouteState(page, route) {
       });
     }
   } else if (route.avaSendCheck) {
-    await page.locator('textarea[placeholder="Ask Ava anything..."]').waitFor({ timeout: 45_000 });
+    await page.getByRole('textbox', { name: 'Ask Ava anything', exact: true }).waitFor({ timeout: 45_000 });
   } else if (route.waitForText) {
     await page.getByText(route.waitForText, { exact: false }).first().waitFor({ timeout: 45_000 });
   } else {
@@ -164,7 +164,7 @@ async function collectRouteState(page, route) {
   await page.waitForTimeout(700);
 
   if (route.avaSendCheck) {
-    await page.locator('textarea[placeholder="Ask Ava anything..."]').fill('Mobile send layout check');
+    await page.getByRole('textbox', { name: 'Ask Ava anything', exact: true }).fill('Mobile send layout check');
   }
 
   return page.evaluate((config) => {

@@ -81,7 +81,7 @@ assert(
 );
 assert(
   /className="pbk-ava-chat-controls\b[^"\n]*\bw-full\b[^"\n]*\bmin-w-0\b/.test(avaChat) &&
-    /placeholder="Ask Ava anything\.\.\."/.test(avaChat),
+    /placeholder="Ask about a lead or type a request…"/.test(avaChat),
   'Ava Chat composer controls must stay compact and readable on narrow mobile screens.'
 );
 assert(

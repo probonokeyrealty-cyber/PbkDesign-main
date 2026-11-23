@@ -220,6 +220,7 @@ test('bridge code matches the reviewed release fingerprint outside the scoped re
   // Hermes uses verified parcel evidence and exposes only the status of its bound approval.
   // Ava intake records internal triage and reuses the BANT and Rex priority rules.
   // The isolated intake test checks replay, contact restrictions, and absence of provider writes.
+  // Specialist handoffs persist separately and their lead-level details stay out of public liveness.
   // The exact-lead review reads saved evidence and treats saved restrictions conservatively.
   // See docs/operations/2026-11-23-ava-lead-review-integrity.md for the independent review.
   assert.equal(createHash('sha256').update(unchanged).digest('hex'),

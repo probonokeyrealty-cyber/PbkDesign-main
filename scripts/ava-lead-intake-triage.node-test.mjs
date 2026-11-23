@@ -19,6 +19,7 @@ test('new intake records a reviewable Ava handoff without any outreach', async (
       leadId: 'qa-ava-triage-event',
       eventId: 'qa-ava-triage-event-1',
       property: { address: '123 Fixture Ave, Denver CO' },
+      seller: { notes: 'Synthetic intake note: executor is coordinating an estate sale.' },
       score: 88,
       source: 'triage-fixture',
     };
@@ -33,6 +34,7 @@ test('new intake records a reviewable Ava handoff without any outreach', async (
       address: '456 Fixture Ave, Denver CO',
       score: 98,
       dncStatus: 'do_not_contact',
+      sellerNotes: 'Executor asked us to stop calling.',
     });
     assert.ok(first.leadTriage?.id, 'Ava should triage intake without an operator prompt');
     assert.equal(replay.leadTriage?.id, first.leadTriage.id);
@@ -71,6 +73,20 @@ test('new intake records a reviewable Ava handoff without any outreach', async (
     assert.deepEqual(recorded.metadata.priority, { source: 'rex-autonomy', level: 'high', score: 88 });
     assert.match(recorded.summary, /prioritize/i);
     assert.match(recorded.summary, /confirm/i);
+    assert.match(recorded.summary, /decision-making authority/i);
+    const consultations = after.agentTasks.filter(task => task.taskType === 'lead_triage_consultation');
+    const handoffs = consultations.filter(task => task.correlationId === payload.leadId);
+    assert.equal(handoffs.length, 2);
+    assert.deepEqual(handoffs.map(task => task.toAgent).sort(), ['Hermes', 'Rex']);
+    assert.deepEqual(recorded.metadata.consultationIds.slice().sort(), handoffs.map(task => task.id).sort());
+    for (const task of consultations) {
+      assert.equal(task.fromAgent, 'Ava');
+      assert.equal(task.status, 'complete');
+      assert.equal(task.providerWrites, 'blocked');
+      assert.doesNotMatch(JSON.stringify(task), /Synthetic intake note|123 Fixture Ave/);
+    }
+    assert.deepEqual(consultations.filter(task => task.correlationId === importedLeadId).map(task => task.toAgent), ['Rex']);
+    assert.ok(!consultations.some(task => task.correlationId === 'qa-ava-triage-manual'));
     const leadDetail = await request(`/api/leads/${first.leadImport.leadId}/full`);
     assert.equal(leadDetail.activity.filter(item => item.source === 'ava-lead-intake-triage').length, 1);
     for (const key of ['calls', 'messages', 'contracts', 'approvals']) {

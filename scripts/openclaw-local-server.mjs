@@ -46500,14 +46500,21 @@ function getLocalAgentRegistryHandlers() {
         },
       };
     },
-    rex: async (payload = {}) =>
-      toolHandlers.getBrainState({
+    rex: (payload = {}) => {
+      if (payload.action === 'review_lead_triage') {
+        const { score } = payload;
+        if (!Number.isFinite(score) || score < 0 || score > 100) return { ok: false };
+        const level = classifyRexLeadPriority(score);
+        return { ok: true, priority: { source: 'rex-autonomy', level, score } };
+      }
+      return toolHandlers.getBrainState({
         ...payload,
         query: payload.query || payload.command || 'Rex, summarize PBK strategy and next best action.',
         agent: 'rex',
         requestedBy: payload.requestedBy || payload.actor || 'Agent Registry',
-      }),
-    hermes: async (payload = {}) => {
+      });
+    },
+    hermes: (payload = {}) => {
       if (payload.action === 'analyze_patterns') {
         const pattern = induceWorkflowMemoryCore({ transcript: payload.transcript });
         if (controlledExecution.getStore() && payload.stoppingResult?.result === 'halt')
@@ -61569,6 +61576,12 @@ function findAvaLeadTriage(lead) {
   return state.agentTasks.find((task) => task.id === leadTriageTaskId(leadId));
 }
 
+const HERMES_TRIAGE_REVIEW = {
+  probate_or_estate: 'Verify decision-making authority and any estate constraints during internal review.',
+  tenant_pressure: 'Verify occupancy and lease constraints during internal review.',
+  debt_deadline: 'Verify the reported deadline during internal review.',
+};
+
 async function recordAvaLeadTriage(lead, intake) {
   const leadId = String(lead.leadId || lead.id || '').trim();
   const record = state.leadImports.find((item) => (item.leadId || item.id) === leadId);
@@ -61582,9 +61595,42 @@ async function recordAvaLeadTriage(lead, intake) {
   const hasAddress = Boolean(address && !/^unknown(?: property| address)?$/i.test(address));
   const { blocked } = getConversationDncStatus({ runtimeLead: record, phone: record.seller?.phone });
   const score = record.score;
-  const priority = !blocked && hasAddress && Number.isFinite(score) && score >= 0 && score <= 100
-    ? { source: 'rex-autonomy', level: classifyRexLeadPriority(score), score }
-    : undefined;
+  const taskId = leadTriageTaskId(leadId);
+  const consultationIds = [];
+  const specialists = getLocalAgentRegistryHandlers();
+  const recordConsultation = (toAgent, summary, metadata) => {
+    const id = `${taskId}-${toAgent.toLowerCase()}`;
+    consultationIds.push(id);
+    void recordAgentHandoffTask({
+      id, fromAgent: 'Ava', toAgent, taskType: 'lead_triage_consultation',
+      status: 'complete', summary, correlationId: leadId, providerWrites: 'blocked',
+      metadata: { ...metadata, triageId: taskId },
+    });
+  };
+  let priority;
+  let patternAdvice;
+  if (!blocked && hasAddress) {
+    if (Number.isFinite(score) && score >= 0 && score <= 100) {
+      if (classifyRexLeadPriority(score) === 'routine') {
+        priority = { source: 'rex-autonomy', level: 'routine', score };
+      } else {
+        ({ priority } = specialists.rex({ action: 'review_lead_triage', score }));
+        recordConsultation('Rex', 'Ranked the lead for internal review based on its saved score.', {
+          source: 'saved_lead_score', priority,
+        });
+      }
+    }
+    const notes = String(record.seller?.notes || '').slice(0, 4000);
+    const signal = notes.match(/\b(?:probate|executor|estate sale|tenant|renter|evict\w*|foreclosure|auction)\b/i)?.[0];
+    if (signal) {
+      const { pattern } = specialists.hermes({ action: 'analyze_patterns', transcript: signal });
+      const trigger = pattern?.workflow?.trigger;
+      patternAdvice = HERMES_TRIAGE_REVIEW[trigger];
+      if (patternAdvice) {
+        recordConsultation('Hermes', patternAdvice, { source: 'saved_intake_note', pattern: trigger });
+      }
+    }
+  }
   let summary;
   if (blocked) {
     summary = 'Do not contact this lead. Review the saved contact restriction.';
@@ -61595,9 +61641,10 @@ async function recordAvaLeadTriage(lead, intake) {
         ? 'Review the saved qualification and analyzer results before preparing an offer.'
         : `Confirm missing seller qualification details: ${qualification.missing.join(', ')}.`;
     summary = priority?.level === 'high' ? `Prioritize internal review. ${nextStep}` : nextStep;
+    if (patternAdvice) summary += ` ${patternAdvice}`;
   }
   const task = recordAgentHandoffTask({
-    id: leadTriageTaskId(leadId),
+    id: taskId,
     fromAgent: 'Ava',
     toAgent: 'PBK operator',
     taskType: 'lead_intake_triage',
@@ -61610,6 +61657,7 @@ async function recordAvaLeadTriage(lead, intake) {
       crm: { source: 'bridge_state.leadImports', result: 'canonical_lead_found', leadId, hasAddress },
       qualification: { source: 'bant-enforcer', missing: qualification.missing },
       contactRestricted: blocked,
+      consultationIds,
       ...(priority && { priority }),
     },
   });
@@ -74273,7 +74321,12 @@ const server = createServer(async (request, response) => {
           blockers: commandCenterHealth.ready ? [] : [runtimeStateBootstrap.error || commandCenterHealth.status],
           sloBurned: false,
         },
-        agentOrchestration: commandCenterHealth.agentOrchestration,
+        agentOrchestration: {
+          ...commandCenterHealth.agentOrchestration,
+          recentTasks: commandCenterHealth.agentOrchestration.recentTasks.filter(
+            (task) => !['lead_intake_triage', 'lead_triage_consultation'].includes(task.taskType)
+          ),
+        },
         tools: state.status.tools,
         toolUsage: state.status.toolUsage,
         n8n: state.status.n8n,

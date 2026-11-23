@@ -158,6 +158,72 @@
   text-decoration: underline;
 }
 
+.pbk-market-detail-grid,
+.pbk-market-comparison-result {
+  display: grid;
+  gap: 12px;
+  margin-block-end: 12px;
+}
+.pbk-market-compare-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px 10px;
+  align-items: end;
+}
+.pbk-market-compare-form label {
+  grid-column: 1 / -1;
+}
+.pbk-market-compare-form input {
+  width: 100%;
+  min-width: 0;
+  min-height: 44px;
+  padding-inline: 10px;
+  border: 1px solid var(--border-dim);
+  border-radius: var(--radius-lg);
+  color: var(--text-primary);
+  background: var(--bg-console);
+}
+.pbk-market-compare-form button {
+  min-height: 44px;
+}
+.pbk-market-compare-form + p:not(:empty) {
+  margin-block-start: 8px;
+}
+.pbk-market-range-row > div:first-child {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 8px;
+}
+.pbk-market-range-row small {
+  flex-basis: 100%;
+}
+.pbk-market-range-track {
+  position: relative;
+  height: 12px;
+  margin-block-start: 6px;
+  overflow: hidden;
+  border-radius: 20px;
+  background: var(--bg-console);
+}
+.pbk-market-range-track span,
+.pbk-market-range-track i {
+  position: absolute;
+  inset-block-start: 50%;
+}
+.pbk-market-range-track span {
+  height: 4px;
+  transform: translateY(-50%);
+  background: var(--sky);
+}
+.pbk-market-range-track i {
+  width: 8px;
+  height: 8px;
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
+  background: var(--text-primary);
+}
+
 .pbk-market-sources {
   padding-block: 0;
 }

@@ -1,19 +1,15 @@
 import { formatCurrency } from '../../utils/formatting';
 import snapshot from '../../data/public-zip-housing.json?raw';
-
-type SurveyEstimate = readonly [estimate: number, marginOfError: number];
-type HousingRow = readonly [
-  grossRent: SurveyEstimate | null,
-  homeValue: SurveyEstimate | null,
-  annualHpiChange: readonly [year: number, basisPoints: number] | null,
-];
+import {
+  CensusEstimateDetails,
+  ComparePublicHousing,
+  DescribeIndex,
+  formatIndexChange,
+  type HousingRow,
+  type SurveyEstimate,
+} from './PublicHousingInsights';
 
 const housingByCode: Partial<Record<string, HousingRow>> = JSON.parse(snapshot);
-const formatChange = new Intl.NumberFormat('en-US', {
-  style: 'percent',
-  signDisplay: 'exceptZero',
-  maximumFractionDigits: 2,
-});
 
 function SurveyEstimateLabel({ estimate }: { estimate: SurveyEstimate | null }) {
   if (!estimate) return <>Unavailable</>;
@@ -26,7 +22,9 @@ function SurveyEstimateLabel({ estimate }: { estimate: SurveyEstimate | null }) 
 }
 
 export default function LeadPublicHousingContext({ zip }: { zip: string }) {
-  const [grossRent, homeValue, hpiChange] = housingByCode[zip] ?? [null, null, null];
+  const row: HousingRow = housingByCode[zip] ?? [null, null, null];
+  const [grossRent, homeValue, hpiChange] = row;
+  const available = row.filter((value) => value !== null).length;
   return (
     <section aria-label="Public housing context" className="pbk-market-public">
       <header>
@@ -36,6 +34,7 @@ export default function LeadPublicHousingContext({ zip }: { zip: string }) {
           These area statistics are separate from the saved house facts and fictional benchmarks.
           They are not current listings, comparable sales, or a valuation.
         </p>
+        <strong>{available} of 3 measures available</strong>
       </header>
       <div className="pbk-market-summary">
         <section className="pbk-market-metric" aria-label="Census survey">
@@ -74,13 +73,14 @@ export default function LeadPublicHousingContext({ zip }: { zip: string }) {
           <dl>
             <div>
               <dt>Annual house price index change{hpiChange && ` (${hpiChange[0]})`}</dt>
-              <dd>{hpiChange ? formatChange.format(hpiChange[1] / 10000) : 'Unavailable'}</dd>
+              <dd>{hpiChange ? formatIndexChange(hpiChange[1]) : 'Unavailable'}</dd>
             </div>
           </dl>
           <p>
             Developmental all-transactions index. Measures area price change, not a price or dollar
             estimate.
           </p>
+          <DescribeIndex change={hpiChange} />
           <small>
             <a
               href="https://www.fhfa.gov/data/hpi/datasets?data=annual-house-price-indexes-zip5"
@@ -94,6 +94,8 @@ export default function LeadPublicHousingContext({ zip }: { zip: string }) {
           <small>This product uses FHFA data but is neither endorsed nor certified by FHFA.</small>
         </section>
       </div>
+      <CensusEstimateDetails row={row} />
+      <ComparePublicHousing key={zip} zip={zip} row={row} lookup={(code) => housingByCode[code]} />
     </section>
   );
 }

@@ -1,7 +1,10 @@
+import { lazy, Suspense } from 'react';
 import { formatCurrency } from '../../utils/formatting';
 import type { readPropertyEvidence } from '../../utils/propertyEvidence';
 import type { LeadPortalModel } from './leadPortalModel';
 import '../../../styles/lead-market-comparison.css';
+
+const LeadPublicHousingContext = lazy(() => import('./LeadPublicHousingContext'));
 
 const zipFixture = {
   zip: '90210',
@@ -143,8 +146,8 @@ export function LeadMarketComparison({
           <span className="pbk-market-badge">Fictional ZIP benchmarks</span>
           <h3>House vs. ZIP</h3>
           <p>
-            Saved property evidence alongside example market numbers. The ZIP figures are not real
-            market data and do not establish value, equity, or ARV.
+            Saved property evidence alongside fictional examples. Public housing statistics are
+            shown separately below.
           </p>
         </div>
       </header>
@@ -259,12 +262,19 @@ export function LeadMarketComparison({
           </section>
         )}
       </div>
+      {zip ? (
+        <Suspense fallback={<p role="status">Loading public housing snapshot...</p>}>
+          <LeadPublicHousingContext zip={zip} />
+        </Suspense>
+      ) : (
+        <p className="pbk-market-notice">Public housing context requires a saved five-digit ZIP.</p>
+      )}
       <details className="pbk-market-sources">
         <summary>Sources and limits</summary>
         <p>
           This read-only staff view uses saved listing and parcel snapshots for the current address.
-          ZIP benchmarks are fictional examples, not estimates of the real ZIP. No data is fetched,
-          saved, or published by this tab.
+          The fictional benchmarks are examples, not estimates of the real ZIP. Public context is
+          bundled with the app. This tab does not call providers, update leads, or publish data.
         </p>
       </details>
     </div>

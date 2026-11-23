@@ -33,6 +33,8 @@ const fixtures = [
   lead('market-comparison-old', { observed: '2025-11-17T12:00:00Z', price: 590000 }),
   lead('market-comparison-condo', { type: 'Condominium' }),
   lead('market-comparison-other-beds', { listingBeds: 2 }),
+  lead('market-comparison-missing-public', { zip: '00000' }),
+  lead('market-comparison-leading-zero', { zip: '00601' }),
 ];
 
 let browser;
@@ -127,6 +129,43 @@ try {
     await expect(row('Asking price')).toContainText('$555,000');
     await expect(panel.getByText('No fictional cohort matches this ZIP and property type.')).toBeVisible();
     await expect(panel.getByText('$695,000', { exact: true })).toHaveCount(0);
+    const publicContext = panel.getByRole('region', { name: 'Public housing context' });
+    await expect(publicContext.getByText('Census ZCTA 91401', { exact: true })).toBeVisible();
+    await expect(publicContext.getByText('$1,881', { exact: true })).toBeVisible();
+    await expect(publicContext.getByText('$1,047,700', { exact: true })).toBeVisible();
+    await expect(publicContext.getByText(/90% margin of error: \$43/)).toBeVisible();
+    await expect(publicContext.getByText('FHFA ZIP 91401', { exact: true })).toBeVisible();
+    await expect(publicContext.getByText('Annual house price index change (2025)', { exact: true })).toBeVisible();
+    await expect(publicContext.getByText('-0.26%', { exact: true })).toBeVisible();
+    await expect(publicContext.getByText('3 of 3 measures available', { exact: true })).toBeVisible();
+    await expect(publicContext.getByText(/The FHFA index fell in 2025/)).toBeVisible();
+    await publicContext.getByText('Read the Census estimates', { exact: true }).click();
+    await expect(publicContext.getByText('$1,838 to $1,924', { exact: true })).toBeVisible();
+    await expect(publicContext.getByText('Margin is 2.3% of the estimate.', { exact: true })).toBeVisible();
+
+    await publicContext.getByText('Compare another ZIP', { exact: true }).click();
+    await publicContext.getByRole('textbox', { name: 'Comparison ZIP' }).fill('01001');
+    await publicContext.getByRole('button', { name: 'Compare', exact: true }).click();
+    const comparison = publicContext.getByRole('region', { name: 'Comparison with 01001' });
+    await expect(comparison.getByText('ZCTA 01001', { exact: true }).first()).toBeVisible();
+    await expect(comparison.getByText('$1,248 to $1,388', { exact: true })).toBeVisible();
+    await expect(comparison.getByText(/not a statistical significance test/).first()).toBeVisible();
+    await publicContext.getByRole('textbox', { name: 'Comparison ZIP' }).fill('02838');
+    await publicContext.getByRole('button', { name: 'Compare', exact: true }).click();
+    const mixedYears = publicContext.getByRole('region', { name: 'Comparison with 02838' });
+    await expect(mixedYears.getByText('ZIP 02838 · 2024', { exact: true })).toBeVisible();
+    await expect(mixedYears.getByText('-8.33%', { exact: true })).toBeVisible();
+    await expect(mixedYears.getByText(/Different observation years/)).toBeVisible();
+    await expect(mixedYears.getByText(/intervals overlap/).first()).toBeVisible();
+    assert.ok(await mixedYears.evaluate(element => element.scrollWidth <= element.clientWidth));
+    await publicContext.getByRole('textbox', { name: 'Comparison ZIP' }).fill('00000');
+    await publicContext.getByRole('button', { name: 'Compare', exact: true }).click();
+    await expect(publicContext.getByText('No public housing observations are available for 00000.', { exact: true })).toBeVisible();
+    await expect(comparison).toHaveCount(0);
+    assert.ok(await publicContext.evaluate(element => {
+      return innerWidth === 390 && document.documentElement.scrollWidth <= 390
+        && element.scrollWidth <= element.clientWidth;
+    }));
 
     await open(fixtures[2].id);
     await expect(row('Asking price')).toContainText('Not captured');
@@ -143,6 +182,13 @@ try {
     await open(fixtures[5].id);
     await expect(row('Three-bedroom asking rent')).toContainText('Unavailable');
     await expect(row('Three-bedroom asking rent')).not.toContainText('$3,200');
+
+    await open(fixtures[6].id);
+    await expect(publicContext.getByText('0 of 3 measures available', { exact: true })).toBeVisible();
+    await expect(publicContext.getByText('Unavailable', { exact: true })).toHaveCount(3);
+    await open(fixtures[7].id);
+    await expect(publicContext.getByText('Census ZCTA 00601', { exact: true })).toBeVisible();
+    await expect(publicContext.getByText('$427', { exact: true })).toBeVisible();
   }
   assert.deepEqual(forbidden, []);
   console.log(`Chrome 390px: ${portalEnvironment} profile, no provider lookups or mutations`);

@@ -376,6 +376,42 @@ test('invalid retry configuration cannot skip SQL and report persistence success
   assert.equal(failedPersist.counters.queries, 1);
 });
 
+test('lead intake confirms an ambiguous snapshot commit without repeating the write', async (t) => {
+  for (const committed of [true, false]) {
+    let reads = 0;
+    const fixture = runtime(t, {
+      execute(sql, values) {
+        assert.match(sql, /FROM public\.bridge_state/);
+        assert.deepEqual(Array.from(values), [
+          JSON.stringify([{ leadId: 'lead-sample', eventId: 'event-sample' }]),
+          JSON.stringify([{ id: 'triage-sample', correlationId: 'lead-sample' }]),
+        ]);
+        reads += 1;
+        if (committed && reads === 1) throw connectionError();
+        return { rows: [{ confirmed: committed }], rowCount: 1 };
+      },
+    });
+    let writes = 0;
+    fixture.context.state = {};
+    fixture.context.sleep = async () => {};
+    fixture.context.persistState = async () => {
+      writes += 1;
+      throw Object.assign(new Error('postgres_state_persist_required'), {
+        code: 'postgres_state_persist_required',
+        details: { lastStateDbPersist: { code: 'Error', error: 'Connection terminated unexpectedly', phase: 'query' } },
+      });
+    };
+    load(fixture.context, ['persistLeadIntakeState']);
+    const result = fixture.context.persistLeadIntakeState(
+      { leadId: 'lead-sample', eventId: 'event-sample' }, { id: 'triage-sample' }
+    );
+    if (committed) await result;
+    else await assert.rejects(result, { statusCode: 503, code: 'lead_intake_persistence_unconfirmed' });
+    assert.equal(writes, 1);
+    assert.equal(reads, committed ? 2 : 3);
+  }
+});
+
 test('retry counts are finite integers for malformed and fractional settings', (t) => {
   const { context } = runtime(t);
   for (const [value, expected] of [['NaN', 5], ['Infinity', 5], ['2.9', 2], ['0', 1], ['-1', 1], ['99', 8]]) {

@@ -128,6 +128,9 @@ export default defineConfig({
   define: {
     __PBK_BUILD_ID__: JSON.stringify(pbkBuildId),
     __PBK_PORTAL_ENV__: JSON.stringify(portalEnvironment),
+    'import.meta.env.PBK_MARKET_STAGING_INDICATORS': JSON.stringify(
+      process.env.CONTEXT === 'deploy-preview' && process.env.HEAD === 'codex/house-zip-staging-indicators',
+    ),
   },
   plugins: [
     figmaAssetResolver(),

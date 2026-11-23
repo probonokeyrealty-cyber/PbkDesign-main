@@ -224,6 +224,103 @@
 .pbk-market-public .pbk-market-summary > .pbk-market-metric dd {
   font-size: clamp(1rem, 1.8vw, 1.32rem);
 }
+.pbk-market-house-reference {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 5px 14px;
+  padding: 12px 14px;
+  border: 1px solid var(--border-dim);
+  border-inline-start: 3px solid var(--sky);
+  border-radius: var(--radius-lg);
+  background: var(--bg-panel);
+  font-size: 0.875rem;
+}
+.pbk-market-house-reference > div {
+  display: grid;
+  gap: 3px;
+}
+.pbk-market-house-reference > div:nth-child(2) {
+  text-align: end;
+  font-variant-numeric: tabular-nums;
+}
+.pbk-market-house-reference > small {
+  grid-column: 1 / -1;
+}
+.pbk-market-source-grid {
+  grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+  align-items: start;
+}
+.pbk-market-census-charts {
+  display: grid;
+  gap: 8px;
+}
+.pbk-market-public .pbk-market-census-charts > div {
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--border-dim);
+  border-radius: var(--radius-lg);
+  background: var(--bg-console);
+}
+.pbk-market-census-charts dt {
+  color: var(--text-primary);
+  font-weight: 650;
+}
+.pbk-market-chart-key {
+  padding-inline-start: 8px;
+  border-inline-start: 2px solid var(--market-line);
+}
+.pbk-market-snapshot-chart {
+  display: grid;
+  gap: 4px;
+  margin-block-start: 10px;
+}
+.pbk-market-snapshot-axis {
+  position: relative;
+  height: 8px;
+  margin-inline: 5px;
+  border-radius: 999px;
+  background: var(--bg-panel);
+}
+.pbk-market-snapshot-band,
+.pbk-market-snapshot-point {
+  position: absolute;
+  inset-block-start: 50%;
+}
+.pbk-market-snapshot-band {
+  height: 8px;
+  transform: translateY(-50%);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--sky) 52%, var(--bg-panel));
+}
+.pbk-market-snapshot-point {
+  box-sizing: border-box;
+  width: 10px;
+  height: 10px;
+  transform: translate(-50%, -50%);
+  border: 2px solid var(--sky);
+  border-radius: 50%;
+  background: var(--bg-console);
+}
+.pbk-market-snapshot-scale {
+  display: flex;
+  justify-content: space-between;
+  gap: 4px 8px;
+  color: var(--text-secondary);
+  font-size: 0.7rem;
+}
+.pbk-market-rate-meter {
+  display: block;
+  width: 100%;
+  height: 12px;
+  margin-block-start: 10px;
+}
+.pbk-market-rate-meter::-webkit-meter-bar {
+  background: var(--bg-panel);
+  border: 0;
+}
+.pbk-market-rate-meter::-webkit-meter-optimum-value {
+  background: var(--sky);
+}
 .pbk-market-public dd small {
   display: block;
   font: 400 0.8125rem/1.4 var(--font-ui);
@@ -372,5 +469,14 @@
     width: 36px;
     height: 36px;
     padding: 6px;
+  }
+}
+
+@media (max-width: 360px) {
+  .pbk-market-house-reference {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .pbk-market-house-reference > div:nth-child(2) {
+    text-align: start;
   }
 }

@@ -8,10 +8,14 @@ const outDir = resolve(process.env.PBK_MARKET_TEST_OUT_DIR || 'dist');
 const shell = readFileSync(resolve(outDir, 'index.shell.html'), 'utf8');
 const qaEntry = resolve(outDir, 'market-comparison-qa.html');
 const { portalEnvironment } = JSON.parse(readFileSync(resolve(outDir, 'pbk-build-manifest.json'), 'utf8'));
+const expectStagingIndicators = process.env.PBK_MARKET_TEST_STAGING_INDICATORS === '1';
 assert.equal(portalEnvironment, 'live');
 assert.equal(existsSync(qaEntry), false, 'The offline QA page must not be shipped.');
-process.env.PBK_DEV_BRIDGE_URL = 'http://127.0.0.1:1';
-const server = await preview({ build: { outDir }, preview: { host: '127.0.0.1', port: 0 } });
+const server = await preview({
+  configFile: false,
+  build: { outDir },
+  preview: { host: '127.0.0.1', port: 0 },
+});
 const origin = `http://127.0.0.1:${server.httpServer.address().port}`;
 const captured = '2026-11-17T12:00:00Z';
 
@@ -35,6 +39,7 @@ const fixtures = [
   lead('market-comparison-other-beds', { listingBeds: 2 }),
   lead('market-comparison-missing-public', { zip: '00000' }),
   lead('market-comparison-leading-zero', { zip: '00601' }),
+  lead('market-comparison-staging-indicators', { zip: '91411' }),
 ];
 
 let browser;
@@ -143,6 +148,18 @@ try {
     );
     await expect(publicContext.getByText('$1,881', { exact: true })).toBeVisible();
     await expect(publicContext.getByText('$1,047,700', { exact: true })).toBeVisible();
+    const savedListing = publicContext.getByRole('complementary', { name: 'Saved listing reference' });
+    const censusSurvey = publicContext.getByRole('region', { name: 'Census survey' });
+    await expect(savedListing).toContainText('$555,000');
+    await expect(savedListing).toContainText('Captured Nov 17, 2026');
+    await expect(censusSurvey.getByText('$555,000', { exact: true })).toHaveCount(0);
+    await expect(censusSurvey.locator('.pbk-market-snapshot-band')).toHaveCount(2);
+    await expect(censusSurvey.locator('.pbk-market-snapshot-point')).toHaveCount(2);
+    await expect(censusSurvey.getByText('90% range: $1,838 to $1,924', { exact: true })).toBeVisible();
+    if (process.env.PBK_MARKET_CHART_SCREENSHOT) {
+      await censusSurvey.scrollIntoViewIfNeeded();
+      await censusSurvey.screenshot({ path: process.env.PBK_MARKET_CHART_SCREENSHOT });
+    }
     await expect(publicContext.getByText(/90% margin of error: \$43/)).toBeVisible();
     await expect(publicContext.getByText('FHFA ZIP 91401', { exact: true })).toBeVisible();
     await expect(publicContext.getByText('Annual house price index change (2025)', { exact: true })).toBeVisible();
@@ -206,9 +223,41 @@ try {
     await open(fixtures[6].id);
     await expect(publicContext.getByText('0 of 3 measures available', { exact: true })).toBeVisible();
     await expect(publicContext.getByText('Unavailable', { exact: true })).toHaveCount(3);
+    await expect(censusSurvey.locator('.pbk-market-snapshot-chart')).toHaveCount(0);
     await open(fixtures[7].id);
     await expect(publicContext.getByText('Census ZCTA 00601', { exact: true })).toBeVisible();
     await expect(publicContext.getByText('$427', { exact: true })).toBeVisible();
+
+    const indicators = panel.getByRole('region', { name: 'Staging market indicators', exact: true });
+    await expect(indicators).toHaveCount(0);
+    await open(fixtures[8].id);
+    if (expectStagingIndicators) {
+      const income = indicators.getByRole('region', { name: 'Census ZCTA 91411 income', exact: true });
+      const unemployment = indicators.getByRole('region', { name: 'Los Angeles County unemployment', exact: true });
+      await expect(income.getByText('$74,617', { exact: true })).toBeVisible();
+      await expect(income.getByText('90% range: $68,141 to $81,093', { exact: true })).toBeVisible();
+      await expect(income).toContainText('2024 dollars');
+      await expect(income.locator('.pbk-market-snapshot-band')).toBeVisible();
+      await expect(unemployment.getByText('5.0%', { exact: true })).toBeVisible();
+      await expect(unemployment).toContainText('December 2025');
+      await expect(unemployment).toContainText('Not seasonally adjusted');
+      await expect(unemployment).toContainText('FIPS 06037');
+      await expect(unemployment.getByRole('meter')).toHaveAttribute('value', '5');
+      await expect(unemployment).toContainText('not a ZIP or property-level rate');
+      assert.ok(await indicators.evaluate(section => {
+        const cards = Array.from(section.querySelectorAll('section[aria-label]'));
+        return innerWidth === 390 && document.documentElement.scrollWidth <= innerWidth
+          && cards.length === 2 && cards.every(card => card.scrollWidth <= card.clientWidth)
+          && cards[1].getBoundingClientRect().top >= cards[0].getBoundingClientRect().bottom;
+      }));
+      if (process.env.PBK_MARKET_INDICATOR_SCREENSHOT) {
+        await indicators.screenshot({ path: process.env.PBK_MARKET_INDICATOR_SCREENSHOT });
+      }
+      await open(fixtures[7].id);
+      await expect(indicators).toHaveCount(0);
+    } else {
+      await expect(indicators).toHaveCount(0);
+    }
 
     await page.setViewportSize({ width: 1280, height: 900 });
     await open(fixtures[1].id);
@@ -221,7 +270,7 @@ try {
     }));
   }
   assert.deepEqual(forbidden, []);
-  console.log(`Chrome 390px and 1280px: ${portalEnvironment} profile, no provider lookups or mutations`);
+  console.log(`Chrome 390px and 1280px: staging indicators ${expectStagingIndicators ? 'visible only for ZCTA 91411' : 'disabled'}, no provider lookups or mutations`);
 } finally {
   await browser?.close();
   await new Promise(resolve => server.httpServer.close(resolve));

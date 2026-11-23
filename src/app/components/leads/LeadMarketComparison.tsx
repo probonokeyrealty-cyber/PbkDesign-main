@@ -156,7 +156,18 @@ export function LeadMarketComparison({
       </header>
       {zip ? (
         <Suspense fallback={<p role="status">Loading public housing snapshot...</p>}>
-          <LeadPublicHousingContext zip={zip} />
+          <LeadPublicHousingContext
+            zip={zip}
+            savedAsk={
+              listing && askingPrice !== null
+                ? {
+                    amount: askingPrice,
+                    capturedAt: listing.retrievedAt,
+                    date: dateLabel(listing.retrievedAt),
+                  }
+                : null
+            }
+          />
         </Suspense>
       ) : (
         <p className="pbk-market-notice">Public housing context requires a saved five-digit ZIP.</p>

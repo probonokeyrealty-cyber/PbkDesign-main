@@ -39,6 +39,35 @@ function surveyBounds([estimate, margin]: SurveyEstimate) {
   return [Math.max(0, estimate - margin), estimate + margin] as const;
 }
 
+export function CensusSnapshotChart({ estimate }: { estimate: SurveyEstimate }) {
+  const [low, high] = surveyBounds(estimate);
+  const step = 10 ** Math.floor(Math.log10(high)) / 2;
+  const max = Math.ceil(high / step) * step;
+  const position = (amount: number) => `${(amount / max) * 100}%`;
+
+  return (
+    <span className="pbk-market-snapshot-chart">
+      <span className="pbk-market-snapshot-axis" aria-hidden="true">
+        <span
+          className="pbk-market-snapshot-band"
+          style={{ insetInlineStart: position(low), width: position(high - low) }}
+        />
+        <span
+          className="pbk-market-snapshot-point"
+          style={{ insetInlineStart: position(estimate[0]) }}
+        />
+      </span>
+      <span className="pbk-market-snapshot-scale" aria-hidden="true">
+        <span>{formatCurrency(0)}</span>
+        <span>{formatCurrency(max)}</span>
+      </span>
+      <small>
+        90% range: {formatCurrency(low)} to {formatCurrency(high)}
+      </small>
+    </span>
+  );
+}
+
 export function DescribeIndex({ change }: { change: AnnualIndexChange | null }) {
   if (!change) return <p>No usable annual ZIP5 change was published in this snapshot.</p>;
   const [year, basisPoints] = change;

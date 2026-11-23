@@ -225,7 +225,7 @@ test('bridge code matches the reviewed release fingerprint outside the scoped re
   // The exact-lead review reads saved evidence and treats saved restrictions conservatively.
   // See docs/operations/2026-11-23-ava-lead-review-integrity.md for the independent review.
   assert.equal(createHash('sha256').update(unchanged).digest('hex'),
-    '6026802ba37965e2c49e49f078d1de29e5569e557ce374d95da6ed9f9464ebe9');
+    'bb914c03b56182b5fb03889c0ed25ead61147238d2dc32e81d0b3de3ff2df53e');
 });
 
 test('production distribution includes reader and protocol, never the fixture signer', () => {

@@ -31,3 +31,16 @@ The PR branch integrates main commit `90318ac9e351c2419870a072593e9cc95d72e9a5` 
 | Combined | `6026802ba37965e2c49e49f078d1de29e5569e557ce374d95da6ed9f9464ebe9` |
 
 The independent review reproduced both prior pins and the combined digest using the existing normalization and exclusions. Main's intake path records internal Rex and Hermes consultations with provider writes blocked and keeps their lead details out of public liveness. The pilot's exact-lead GET reads saved evidence and honors contact restrictions. The integration keeps the existing authentication, approval, and dispatch paths and Ava's JSON default.
+
+
+## Durable intake integration
+
+The second integration `136547968d4226b727c0258175323f22bb92fb6b` combines main `91c91729db49afa4ce9c424c02bae9812aca0eb1` and the previously verified PR head `bcb015c36be85c174c707b7472510c26a54154a9`. Again, the bridge merged cleanly and the wiring test reproduced the fingerprint mismatch before the pin changed.
+
+| Reviewed commit | Normalized canary wiring digest |
+| --- | --- |
+| Main | `89acf2ab83e37ddab107c119b5867adfd7c1ceb0679b176687a7788dab38283c` |
+| Previous PR head | `6026802ba37965e2c49e49f078d1de29e5569e557ce374d95da6ed9f9464ebe9` |
+| Combined | `bb914c03b56182b5fb03889c0ed25ead61147238d2dc32e81d0b3de3ff2df53e` |
+
+Independent review reproduced both parent pins and the combined digest. Main's recovery path reads an exact lead event and linked triage after a lost Postgres acknowledgment. It preserves the existing write retry policy and returns 503 when it cannot confirm the commit. The intake regression and the pilot's read-only route and tests are preserved. The integration changes no authentication, contact, provider approval or dispatch controls, or JSON chat default.

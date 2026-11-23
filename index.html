@@ -30295,23 +30295,8 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       showLocalViewToast('Transcript export ready', 'No audio URL is attached yet, so PBK exported the visible transcript package.');
     };
 
-    const fetchSignedRecording = async (context) => {
-      try {
-        return await requestOpenClawApi(`/api/recordings/${encodeURIComponent(context.messageId)}?expiresIn=3600`, { timeout: 10000 });
-      } catch (error) {
-        const fixture = await requestOpenClawApi('/api/recordings/fixture', {
-          method: 'POST',
-          body: {
-            messageId: context.messageId,
-            leadName: context.leadName,
-            address: context.address,
-            actor: 'Command Center'
-          },
-          timeout: 15000
-        });
-        return fixture?.signed || fixture;
-      }
-    };
+    const fetchSignedRecording = (context) =>
+      requestOpenClawApi(`/api/recordings/${encodeURIComponent(context.messageId)}?expiresIn=3600`, { timeout: 10000 });
 
     page.addEventListener('click', (event) => {
       const button = event.target.closest('button');
@@ -30356,9 +30341,9 @@ Authority close: "What matters most to your seller: number, timeline, or certain
             link.remove();
             toastOutcome({ outcome: 'live', title: 'Recording download ready', desc: 'PBK fetched a secure signed Supabase URL.' });
           })
-          .catch((error) => {
+          .catch(() => {
             exportActiveRecording('txt');
-            toastOutcome({ outcome: 'provider_missing', title: 'Audio unavailable', desc: error?.message || 'No recording object is attached, so PBK exported the transcript instead.' });
+            toastOutcome({ outcome: 'provider_missing', title: 'Recording unavailable', desc: 'A transcript export was offered instead of audio.' });
           });
         return;
       }
@@ -30478,7 +30463,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
           .catch((error) => {
             state.playing = false;
             button.classList.remove('active');
-            toast({ type: 'warning', title: 'Recording not playable yet', desc: error?.message || 'PBK could not fetch a signed recording URL.' });
+            toast({ type: 'warning', title: 'Recording unavailable', desc: error?.message || 'PBK could not fetch a signed recording URL.' });
           });
         return;
       }

@@ -81356,6 +81356,21 @@ const server = createServer(async (request, response) => {
     }
 
     if (request.method === 'POST' && pathname === '/api/recordings/fixture') {
+      const isFixtureLoopback = host => ['localhost', '127.0.0.1', '::1', '[::1]'].includes(host);
+      const isLocalFixtureUrl = (value, protocols) => {
+        try {
+          const target = new URL(value);
+          return protocols.includes(target.protocol) && isFixtureLoopback(target.hostname) && !target.search;
+        } catch {
+          return false;
+        }
+      };
+      if (IS_HOSTED || IS_LAN || !isFixtureLoopback(HOST) || process.env.PBK_ENABLE_LOCAL_RECORDING_FIXTURES !== '1' ||
+          !isLocalFixtureUrl(SUPABASE_URL, ['http:', 'https:']) ||
+          !isLocalFixtureUrl(DATABASE_URL, ['postgres:', 'postgresql:'])) {
+        json(response, 404, { ok: false, result: 'recording_fixture_disabled', error: 'Recording fixtures are available only in an explicitly enabled local sandbox.' });
+        return;
+      }
       const body = await readBody(request);
       const messageId = body.messageId || body.id || 'pbk-recording-fixture';
       const storagePath = buildRecordingStoragePath({

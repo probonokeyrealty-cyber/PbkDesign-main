@@ -1482,6 +1482,9 @@ export function AgentFleet() {
   const [previewLoading, setPreviewLoading] = useState(false);
   const [previewError, setPreviewError] = useState('');
   const [callActionPending, setCallActionPending] = useState(false);
+  const [callRequestFeedback, setCallRequestFeedback] = useState<
+    Record<string, 'queued' | 'unconfirmed'>
+  >({});
   const [deployActionPending, setDeployActionPending] = useState(false);
   const [deployStatus, setDeployStatus] = useState('');
   const [transferStatus, setTransferStatus] = useState('');
@@ -1825,6 +1828,8 @@ export function AgentFleet() {
     (activeAgent.id === 'ava' && snnStatus.ava) || (activeAgent.id === 'rex' && snnStatus.rex);
   const activeActivityState = getAgentActivityState(activeAgent, activeBridgeWorker);
   const activeAgentCanCall = isCallingCapableAgent(activeAgent);
+  const callRequestKey = JSON.stringify([activeAgent.id, selectedLeadCanonicalId]);
+  const callFeedback = callRequestFeedback[callRequestKey];
   const latestQaAudit = qaAudits[0] || null;
 
   useEffect(() => {
@@ -1978,6 +1983,8 @@ export function AgentFleet() {
       return;
     }
     setCallActionPending(true);
+    const updateFeedback = (feedback: 'queued' | 'unconfirmed') =>
+      setCallRequestFeedback((current) => ({ ...current, [callRequestKey]: feedback }));
     try {
       const response = await startLeadCallRequest({
         leadId: selectedLeadCanonicalId,
@@ -1991,19 +1998,12 @@ export function AgentFleet() {
         forceApproval: true,
         requestApproval: true,
       });
-      const status = String(
-        response.status || response.result || response.outcome || ''
-      ).toLowerCase();
-      const approvalQueued =
-        status.includes('approval') || Boolean(response.approvalId || response.approval_id);
-      showUiToast({
-        tone: approvalQueued ? 'info' : 'success',
-        title: approvalQueued ? 'Call queued for approval' : 'Call approval requested',
-        desc: approvalQueued
-          ? `${getLeadOptionName(selectedLead)} needs approval before Telnyx dials.`
-          : `${getLeadOptionName(selectedLead)} is waiting for approval before Telnyx dials.`,
-      });
+      const queued = [response.result, response.outcome, response.status].some((value) =>
+        ['queued_for_approval', 'approval_required'].includes(String(value || '').toLowerCase())
+      );
+      updateFeedback(queued ? 'queued' : 'unconfirmed');
     } catch (error) {
+      updateFeedback('unconfirmed');
       showUiToast({
         tone: 'error',
         title: 'Call request failed',
@@ -2285,17 +2285,16 @@ export function AgentFleet() {
                 ))}
               </div>
 
-              <AgentResearchTools
-                key={JSON.stringify([activeAgent.id, selectedLeadCanonicalId])}
-                agentId={activeAgent.id}
-                agentName={activeAgent.name}
-                leadId={selectedLeadCanonicalId || undefined}
-              />
-
-              <div className="border-b border-slate-800 px-4 py-4">
-                <div className="grid gap-3 lg:grid-cols-[1fr_auto] lg:items-end">
-                  <div>
-                    <h3 className="pbk-fleet-preview-title">Deal context preview</h3>
+              <section
+                className="border-b border-slate-800 px-4 py-4"
+                aria-labelledby="fleet-deal-workflow"
+              >
+                <h3 id="fleet-deal-workflow" className="pbk-fleet-preview-title">
+                  Deal context preview
+                </h3>
+                <ol className="pbk-fleet-workflow">
+                  <li>
+                    <h4>Select a lead</h4>
                     <label className="pbk-fleet-context-search">
                       Search leads
                       <input
@@ -2338,210 +2337,256 @@ export function AgentFleet() {
                       </select>
                       <ChevronDown size={15} aria-hidden="true" />
                     </div>
-                  </div>
-                  <div className="flex flex-wrap gap-2 lg:justify-end">
-                    <button
-                      type="button"
-                      className="btn-secondary flex min-h-10 items-center justify-center gap-2"
-                      disabled={
-                        !selectedLead ||
-                        !selectedLeadCanonicalId ||
-                        !activeAgentCanCall ||
-                        callActionPending
-                      }
-                      onClick={handleCallSelectedLead}
-                      title={
-                        activeAgentCanCall
-                          ? 'Request approval before Telnyx dials this lead'
-                          : 'Only Ava, Max, and Nurture Agent can initiate seller calls'
-                      }
-                    >
-                      {callActionPending ? (
-                        <Loader2 size={14} className="animate-spin" />
-                      ) : (
-                        <Phone size={14} />
-                      )}
-                      {callActionPending ? 'Requesting...' : 'Request call'}
-                    </button>
-                    <button
-                      type="button"
-                      className="btn-primary flex min-h-10 items-center justify-center gap-2"
-                      disabled={!selectedLead || !selectedLeadCanonicalId || previewLoading}
-                      onClick={handlePreviewAgentDealContext}
-                    >
-                      {previewLoading ? <Loader2 size={14} className="animate-spin" /> : null}
-                      {previewLoading ? 'Previewing...' : `Preview ${activeAgent.name}`}
-                    </button>
-                  </div>
-                </div>
-                {workspaceReturn && (
-                  <Link
-                    ref={workspaceLinkRef}
-                    className="pbk-fleet-ava-link pbk-fleet-workspace-link"
-                    to={`/leads/${encodeURIComponent(selectedLeadCanonicalId)}`}
-                    onClick={(event) => {
-                      if (
-                        event.button !== 0 ||
-                        event.metaKey ||
-                        event.ctrlKey ||
-                        event.shiftKey ||
-                        event.altKey
-                      )
-                        return;
-                      event.preventDefault();
-                      const context = {
-                        ...workspaceReturn,
-                        scrollY:
-                          event.currentTarget.closest<HTMLElement>('.pbk-shell-content')
-                            ?.scrollTop ?? window.scrollY,
-                      };
-                      navigate(fleetHref(selectedLeadCanonicalId, activeAgentId), {
-                        replace: true,
-                        state: { fleetEntry: context },
-                      });
-                      navigate(`/leads/${encodeURIComponent(selectedLeadCanonicalId)}`, {
-                        state: { fleetReturn: context },
-                      });
-                    }}
-                  >
-                    <ArrowLeft size={15} aria-hidden="true" /> Open lead workspace
-                  </Link>
-                )}
-                <Link
-                  className="pbk-fleet-ava-link"
-                  to={
-                    selectedLeadCanonicalId
-                      ? `/ava-chat?leadId=${encodeURIComponent(selectedLeadCanonicalId)}`
-                      : '/ava-chat'
-                  }
-                >
-                  <MessageSquare size={15} aria-hidden="true" />
-                  Open Ava Chat
-                </Link>
-                {previewError && (
-                  <div className="mt-4 flex flex-col gap-3 rounded-2xl border border-rose-400/30 bg-rose-500/10 p-4 text-sm text-rose-100 sm:flex-row sm:items-start sm:justify-between">
-                    <div className="flex min-w-0 gap-2">
-                      <AlertCircle size={16} className="mt-0.5 shrink-0 text-rose-300" />
-                      <div>
-                        <div className="font-semibold">Preview failed</div>
-                        <div className="mt-1 text-xs leading-relaxed text-rose-100/80">
-                          {previewError}
-                        </div>
-                      </div>
-                    </div>
-                    <div className="flex shrink-0 gap-2">
+                    {!selectedLeadCanonicalId && (
+                      <p className="pbk-fleet-workflow-hint">
+                        {leadsLoading
+                          ? 'Loading leads for this workspace.'
+                          : leadOptions.length
+                            ? 'Choose a CRM lead to enable the deal preview and lead-specific chat.'
+                            : 'No CRM leads are loaded. Check Leads for the record you want to review.'}
+                      </p>
+                    )}
+                  </li>
+                  <li>
+                    <h4>Review the deal</h4>
+                    <p className="pbk-fleet-workflow-hint">
+                      {selectedLeadCanonicalId
+                        ? 'The preview is read-only. Ava Chat opens with this lead selected.'
+                        : 'Select a lead for a read-only preview. General Ava Chat opens without a lead.'}
+                    </p>
+                    <div className="pbk-fleet-workflow-actions">
                       <button
                         type="button"
-                        className="rounded-full border border-rose-300/40 px-3 py-1.5 text-xs font-semibold text-rose-50 transition hover:bg-rose-300/10"
-                        onClick={() => void handlePreviewAgentDealContext()}
+                        className="btn-primary flex min-h-10 items-center justify-center gap-2"
+                        disabled={!selectedLead || !selectedLeadCanonicalId || previewLoading}
+                        onClick={handlePreviewAgentDealContext}
                       >
-                        Retry preview
+                        {previewLoading ? <Loader2 size={14} className="animate-spin" /> : null}
+                        {previewLoading ? 'Previewing...' : `Preview ${activeAgent.name}`}
                       </button>
+                      {workspaceReturn && (
+                        <Link
+                          ref={workspaceLinkRef}
+                          className="pbk-fleet-ava-link pbk-fleet-workspace-link"
+                          to={`/leads/${encodeURIComponent(selectedLeadCanonicalId)}`}
+                          onClick={(event) => {
+                            if (
+                              event.button !== 0 ||
+                              event.metaKey ||
+                              event.ctrlKey ||
+                              event.shiftKey ||
+                              event.altKey
+                            )
+                              return;
+                            event.preventDefault();
+                            const context = {
+                              ...workspaceReturn,
+                              scrollY:
+                                event.currentTarget.closest<HTMLElement>('.pbk-shell-content')
+                                  ?.scrollTop ?? window.scrollY,
+                            };
+                            navigate(fleetHref(selectedLeadCanonicalId, activeAgentId), {
+                              replace: true,
+                              state: { fleetEntry: context },
+                            });
+                            navigate(`/leads/${encodeURIComponent(selectedLeadCanonicalId)}`, {
+                              state: { fleetReturn: context },
+                            });
+                          }}
+                        >
+                          <ArrowLeft size={15} aria-hidden="true" /> Open lead workspace
+                        </Link>
+                      )}
+                      <Link
+                        className="pbk-fleet-ava-link"
+                        to={
+                          selectedLeadCanonicalId
+                            ? `/ava-chat?leadId=${encodeURIComponent(selectedLeadCanonicalId)}`
+                            : '/ava-chat'
+                        }
+                      >
+                        <MessageSquare size={15} aria-hidden="true" />
+                        {selectedLeadCanonicalId ? 'Open Ava Chat' : 'Open general Ava Chat'}
+                      </Link>
+                    </div>
+                    {previewError && (
+                      <div className="mt-4 flex flex-col gap-3 rounded-2xl border border-rose-400/30 bg-rose-500/10 p-4 text-sm text-rose-100 sm:flex-row sm:items-start sm:justify-between">
+                        <div className="flex min-w-0 gap-2">
+                          <AlertCircle size={16} className="mt-0.5 shrink-0 text-rose-300" />
+                          <div>
+                            <div className="font-semibold">Preview failed</div>
+                            <div className="mt-1 text-xs leading-relaxed text-rose-100/80">
+                              {previewError}
+                            </div>
+                          </div>
+                        </div>
+                        <div className="flex shrink-0 gap-2">
+                          <button
+                            type="button"
+                            className="rounded-full border border-rose-300/40 px-3 py-1.5 text-xs font-semibold text-rose-50 transition hover:bg-rose-300/10"
+                            onClick={() => void handlePreviewAgentDealContext()}
+                          >
+                            Retry preview
+                          </button>
+                          <button
+                            type="button"
+                            className="rounded-full border border-slate-700 px-3 py-1.5 text-xs font-semibold text-slate-300 transition hover:border-slate-500"
+                            onClick={() => setPreviewError('')}
+                          >
+                            Dismiss
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                    {dealPreview && (
+                      <div className="mt-3 border-t border-[var(--border-dim)] pt-3">
+                        <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                          <div>
+                            <div className="text-xs font-semibold text-[var(--sky)]">
+                              Read-only preview
+                            </div>
+                            <h3 className="mt-1 text-sm font-semibold text-slate-100">
+                              {formatAgentPreviewAction(dealPreview.recommendedAction)}
+                            </h3>
+                            <p className="mt-1 text-xs leading-relaxed text-slate-400">
+                              {dealPreview.summary}
+                            </p>
+                          </div>
+                          {Number.isFinite(dealPreview.confidence) && (
+                            <span className="text-xs text-[var(--text-secondary)]">
+                              {Math.round(Number(dealPreview.confidence))}% confidence
+                            </span>
+                          )}
+                        </div>
+                        <div className="mt-3 grid gap-2 md:grid-cols-3">
+                          <div className="rounded-xl bg-slate-950/70 px-3 py-2">
+                            <div className="text-[10px] uppercase tracking-wide text-slate-500">
+                              Lead qualification
+                            </div>
+                            <div className="text-xs text-slate-300">
+                              {dealPreview.bant?.complete
+                                ? 'Complete'
+                                : `Missing ${dealPreview.bant?.missing?.join(', ') || 'fields'}`}
+                            </div>
+                          </div>
+                          <div className="rounded-xl bg-slate-950/70 px-3 py-2">
+                            <div className="text-[10px] uppercase tracking-wide text-slate-500">
+                              Analyzer
+                            </div>
+                            <div className="text-xs text-slate-300">
+                              {dealPreview.analyzer?.found
+                                ? `Max offer ${dealPreview.analyzer.mao || '-'}`
+                                : 'Numbers not found'}
+                            </div>
+                          </div>
+                          <div className="rounded-xl bg-slate-950/70 px-3 py-2">
+                            <div className="text-[10px] uppercase tracking-wide text-slate-500">
+                              Safety
+                            </div>
+                            <div className="text-xs text-slate-300">
+                              {dealPreview.requiredApprovals?.length
+                                ? `Approval needed: ${dealPreview.requiredApprovals.join(', ')}`
+                                : 'No provider write'}
+                            </div>
+                          </div>
+                        </div>
+                        <div className="mt-3 flex flex-col gap-2 rounded-xl border border-slate-800 bg-slate-950/70 px-3 py-2 text-xs text-slate-300 sm:flex-row sm:items-center sm:justify-between">
+                          <div className="flex min-w-0 items-center gap-2">
+                            {qaAuditLoading ? (
+                              <Loader2 size={13} className="shrink-0 animate-spin text-sky-300" />
+                            ) : latestQaAudit?.passed ? (
+                              <Check size={13} className="shrink-0 text-lime-300" />
+                            ) : latestQaAudit ? (
+                              <AlertCircle size={13} className="shrink-0 text-amber-300" />
+                            ) : (
+                              <AlertCircle size={13} className="shrink-0 text-slate-500" />
+                            )}
+                            <div className="min-w-0">
+                              <div className="truncate font-semibold text-slate-100">
+                                QA proof{' '}
+                                {latestQaAudit
+                                  ? latestQaAudit.skipped
+                                    ? 'skipped'
+                                    : latestQaAudit.passed
+                                      ? 'passed'
+                                      : 'needs review'
+                                  : 'not recorded yet'}
+                              </div>
+                              <div className="truncate text-slate-500">
+                                {latestQaAudit
+                                  ? `${latestQaAudit.toolName || 'tool'} - ${latestQaAudit.reason || 'validated'}`
+                                  : qaAuditStatus}
+                              </div>
+                            </div>
+                          </div>
+                          <span className="shrink-0 rounded-full border border-slate-700 px-2 py-1 text-[10px] uppercase tracking-wide text-slate-500">
+                            {latestQaAudit?.source || qaAuditStatus}
+                          </span>
+                        </div>
+                        {dealPreview.reasoning?.length ? (
+                          <ul className="mt-3 space-y-1 text-xs text-slate-500">
+                            {dealPreview.reasoning.slice(0, 5).map((reason) => (
+                              <li key={reason}>- {reason}</li>
+                            ))}
+                          </ul>
+                        ) : null}
+                      </div>
+                    )}
+                  </li>
+                  <li>
+                    <h4>Request approval</h4>
+                    <p className="pbk-fleet-workflow-hint">
+                      {activeAgentCanCall
+                        ? 'Request a call for this lead, then review it in Inbox before dialing.'
+                        : 'Ava, Max, and Nurture Agent can request seller calls. Review pending requests in Inbox.'}
+                    </p>
+                    <div className="pbk-fleet-workflow-actions">
                       <button
                         type="button"
-                        className="rounded-full border border-slate-700 px-3 py-1.5 text-xs font-semibold text-slate-300 transition hover:border-slate-500"
-                        onClick={() => setPreviewError('')}
+                        className="btn-secondary flex min-h-10 items-center justify-center gap-2"
+                        disabled={
+                          !selectedLead ||
+                          !selectedLeadCanonicalId ||
+                          !activeAgentCanCall ||
+                          callActionPending
+                        }
+                        onClick={handleCallSelectedLead}
+                        title={
+                          activeAgentCanCall
+                            ? 'Request approval before Telnyx dials this lead'
+                            : 'Only Ava, Max, and Nurture Agent can initiate seller calls'
+                        }
                       >
-                        Dismiss
-                      </button>
-                    </div>
-                  </div>
-                )}
-                {dealPreview && (
-                  <div className="mt-3 border-t border-[var(--border-dim)] pt-3">
-                    <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
-                      <div>
-                        <div className="text-xs font-semibold text-[var(--sky)]">
-                          Read-only preview
-                        </div>
-                        <h3 className="mt-1 text-sm font-semibold text-slate-100">
-                          {formatAgentPreviewAction(dealPreview.recommendedAction)}
-                        </h3>
-                        <p className="mt-1 text-xs leading-relaxed text-slate-400">
-                          {dealPreview.summary}
-                        </p>
-                      </div>
-                      {Number.isFinite(dealPreview.confidence) && (
-                        <span className="text-xs text-[var(--text-secondary)]">
-                          {Math.round(Number(dealPreview.confidence))}% confidence
-                        </span>
-                      )}
-                    </div>
-                    <div className="mt-3 grid gap-2 md:grid-cols-3">
-                      <div className="rounded-xl bg-slate-950/70 px-3 py-2">
-                        <div className="text-[10px] uppercase tracking-wide text-slate-500">
-                          Lead qualification
-                        </div>
-                        <div className="text-xs text-slate-300">
-                          {dealPreview.bant?.complete
-                            ? 'Complete'
-                            : `Missing ${dealPreview.bant?.missing?.join(', ') || 'fields'}`}
-                        </div>
-                      </div>
-                      <div className="rounded-xl bg-slate-950/70 px-3 py-2">
-                        <div className="text-[10px] uppercase tracking-wide text-slate-500">
-                          Analyzer
-                        </div>
-                        <div className="text-xs text-slate-300">
-                          {dealPreview.analyzer?.found
-                            ? `Max offer ${dealPreview.analyzer.mao || '-'}`
-                            : 'Numbers not found'}
-                        </div>
-                      </div>
-                      <div className="rounded-xl bg-slate-950/70 px-3 py-2">
-                        <div className="text-[10px] uppercase tracking-wide text-slate-500">
-                          Safety
-                        </div>
-                        <div className="text-xs text-slate-300">
-                          {dealPreview.requiredApprovals?.length
-                            ? `Approval needed: ${dealPreview.requiredApprovals.join(', ')}`
-                            : 'No provider write'}
-                        </div>
-                      </div>
-                    </div>
-                    <div className="mt-3 flex flex-col gap-2 rounded-xl border border-slate-800 bg-slate-950/70 px-3 py-2 text-xs text-slate-300 sm:flex-row sm:items-center sm:justify-between">
-                      <div className="flex min-w-0 items-center gap-2">
-                        {qaAuditLoading ? (
-                          <Loader2 size={13} className="shrink-0 animate-spin text-sky-300" />
-                        ) : latestQaAudit?.passed ? (
-                          <Check size={13} className="shrink-0 text-lime-300" />
-                        ) : latestQaAudit ? (
-                          <AlertCircle size={13} className="shrink-0 text-amber-300" />
+                        {callActionPending ? (
+                          <Loader2 size={14} className="animate-spin" />
                         ) : (
-                          <AlertCircle size={13} className="shrink-0 text-slate-500" />
+                          <Phone size={14} />
                         )}
-                        <div className="min-w-0">
-                          <div className="truncate font-semibold text-slate-100">
-                            QA proof{' '}
-                            {latestQaAudit
-                              ? latestQaAudit.skipped
-                                ? 'skipped'
-                                : latestQaAudit.passed
-                                  ? 'passed'
-                                  : 'needs review'
-                              : 'not recorded yet'}
-                          </div>
-                          <div className="truncate text-slate-500">
-                            {latestQaAudit
-                              ? `${latestQaAudit.toolName || 'tool'} - ${latestQaAudit.reason || 'validated'}`
-                              : qaAuditStatus}
-                          </div>
-                        </div>
-                      </div>
-                      <span className="shrink-0 rounded-full border border-slate-700 px-2 py-1 text-[10px] uppercase tracking-wide text-slate-500">
-                        {latestQaAudit?.source || qaAuditStatus}
-                      </span>
+                        {callActionPending ? 'Requesting...' : 'Request call'}
+                      </button>
+                      <Link className="pbk-fleet-ava-link" to="/inbox#inbox-approvals">
+                        Open Inbox approvals
+                      </Link>
                     </div>
-                    {dealPreview.reasoning?.length ? (
-                      <ul className="mt-3 space-y-1 text-xs text-slate-500">
-                        {dealPreview.reasoning.slice(0, 5).map((reason) => (
-                          <li key={reason}>- {reason}</li>
-                        ))}
-                      </ul>
-                    ) : null}
-                  </div>
-                )}
-              </div>
+                    <div className="pbk-fleet-call-feedback" role="status">
+                      {!callActionPending && callFeedback && (
+                        <p>
+                          {callFeedback === 'queued'
+                            ? 'Call queued for approval. Open Inbox to review the request.'
+                            : 'Could not confirm the request was queued. Check Inbox before trying again.'}
+                        </p>
+                      )}
+                    </div>
+                  </li>
+                </ol>
+              </section>
+
+              <AgentResearchTools
+                key={JSON.stringify([activeAgent.id, selectedLeadCanonicalId])}
+                agentId={activeAgent.id}
+                agentName={activeAgent.name}
+                leadId={selectedLeadCanonicalId || undefined}
+              />
 
               <section className="pbk-agent-deploy-card" aria-label="Deployment">
                 <div>

@@ -1,5 +1,5 @@
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate } from 'react-router';
+import { useLocation, useNavigate } from 'react-router';
 import {
   AlertCircle,
   CheckCircle2,
@@ -1324,6 +1324,17 @@ function ApprovalDecisionConfirm({
 
 export function Inbox() {
   const navigate = useNavigate();
+  const { hash } = useLocation();
+  const approvalSectionRef = useRef<HTMLElement>(null);
+
+  useEffect(() => {
+    if (hash !== '#inbox-approvals') return;
+    const frame = requestAnimationFrame(() => {
+      approvalSectionRef.current?.focus({ preventScroll: true });
+      approvalSectionRef.current?.scrollIntoView({ block: 'start' });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [hash]);
   const { snapshot, loading, error, refresh } = useRuntimeSnapshot();
   const [pendingAction, setPendingAction] = useState('');
   const approvalInFlight = useRef(false);
@@ -1690,9 +1701,11 @@ export function Inbox() {
           />
 
           <section
+            ref={approvalSectionRef}
             id="inbox-approvals"
             className="pbk-inbox-card"
             aria-labelledby="inbox-review-heading"
+            tabIndex={-1}
           >
             <div className="pbk-inbox-card-head">
               <div>

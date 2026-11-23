@@ -221,8 +221,9 @@ test('bridge code matches the reviewed release fingerprint outside the scoped re
   // Ava intake records internal triage and reuses the BANT and Rex priority rules.
   // The isolated intake test checks replay, contact restrictions, and absence of provider writes.
   // Specialist handoffs persist separately and their lead-level details stay out of public liveness.
+  // Lead intake confirms the committed event and triage after an ambiguous snapshot write.
   assert.equal(createHash('sha256').update(unchanged).digest('hex'),
-    '466ebe8a5c1d08ee351352841b81908a777f9609fff45fd103372947624355e1');
+    '89acf2ab83e37ddab107c119b5867adfd7c1ceb0679b176687a7788dab38283c');
 });
 
 test('production distribution includes reader and protocol, never the fixture signer', () => {

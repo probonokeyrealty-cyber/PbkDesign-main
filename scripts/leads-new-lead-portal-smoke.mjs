@@ -33,7 +33,7 @@ assert(
   'Leads page must unwrap POST /api/leads leadImport responses before selecting or rendering the new lead.',
 );
 assert(
-  /setLeadRoster\(\(current\) => upsertVisibleLead\(current, lead\)\)/.test(leads),
+  /setLeadRoster\(\(current\) => upsertVisibleLead\(current \?\? \[\], lead\)\)/.test(leads),
   'Newly created leads must be optimistically inserted into the visible roster before the bridge roster refresh returns.',
 );
 assert(

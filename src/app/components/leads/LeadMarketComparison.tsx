@@ -143,125 +143,17 @@ export function LeadMarketComparison({
           <path d="M4 22 14 13l10 9v13H5V22m6 13v-7h6v7M28 14h14v22H28m0-15h14m-14 7h14m-7-14v22" />
         </svg>
         <div>
-          <span className="pbk-market-badge">Fictional ZIP benchmarks</span>
+          <span className="pbk-market-badge">Market comparison</span>
           <h3>House vs. ZIP</h3>
           <p>
-            Saved property evidence alongside fictional examples. Public housing statistics are
-            shown separately below.
+            Compare public housing estimates by ZIP, then review what was saved for this property.
           </p>
+          <div className="pbk-market-context">
+            <strong>{zip ? `ZIP ${zip}` : 'ZIP not captured'}</strong>
+            <span>Read-only snapshot</span>
+          </div>
         </div>
       </header>
-      <div className="pbk-market-context">
-        <strong>
-          {zip ? `ZIP ${zip}` : 'ZIP not captured'}
-          {cohort ? ' / Single-family cohort' : ''}
-        </strong>
-        {cohort && (
-          <span>
-            Fictional benchmark period: {dateLabel(cohort.start)} to {dateLabel(cohort.end)}
-          </span>
-        )}
-        {listing && (
-          <span>
-            Saved listing captured{' '}
-            <time dateTime={listing.retrievedAt}>{dateLabel(listing.retrievedAt)}</time>
-          </span>
-        )}
-      </div>
-
-      {!listing && (
-        <p className="pbk-market-notice">
-          No saved listing evidence matches this address. Lead estimates are not used as listing
-          facts.
-        </p>
-      )}
-      {!cohort && (
-        <p className="pbk-market-notice">No fictional cohort matches this ZIP and property type.</p>
-      )}
-      {cohort && listing && !inWindow && (
-        <p className="pbk-market-notice">
-          The saved listing was captured outside the fictional benchmark window. Differences are
-          withheld.
-        </p>
-      )}
-
-      <div className="pbk-market-grid">
-        <Metric
-          name="Asking price"
-          subject={askingPrice}
-          benchmark={cohort?.askingPrice ?? null}
-          format={formatCurrency}
-          compare={inWindow}
-          note={listingNote}
-        />
-        <Metric
-          name="Asking price per sq ft"
-          subject={pricePerArea}
-          benchmark={cohort?.askingPerSqft ?? null}
-          format={formatCurrency}
-          compare={inWindow}
-          note={
-            cohort
-              ? `Fictional sample: ${cohort.areaCount} listings with usable area.`
-              : 'Saved asking price divided by saved listing area.'
-          }
-        />
-        <Metric
-          name="Active days listed"
-          subject={listing?.facts.dom ?? null}
-          benchmark={cohort?.activeDays ?? null}
-          format={formatDays}
-          compare={inWindow}
-          unit="days"
-          note={listingNote}
-        />
-        <Metric
-          name="Three-bedroom asking rent"
-          subject={null}
-          benchmark={rentalMatch?.threeBedroomRent ?? null}
-          format={formatCurrency}
-          note={
-            rentalMatch
-              ? `No saved subject asking rent. Fictional sample: ${rentalMatch.rentalCount} three-bedroom listings.`
-              : 'No saved subject asking rent or matched three-bedroom benchmark.'
-          }
-        />
-      </div>
-
-      <div className="pbk-market-summary">
-        <section className="pbk-market-metric" aria-label="Saved recorded sale">
-          <h4>Saved recorded sale</h4>
-          <p>
-            {recordedPrice !== null && recordedDate ? (
-              <>
-                <strong>{formatCurrency(recordedPrice)}</strong> on{' '}
-                <time dateTime={recordedDate}>{dateLabel(recordedDate)}</time>
-              </>
-            ) : (
-              'No dated sale recorded in saved property evidence.'
-            )}
-          </p>
-          <small>
-            County record via ATTOM when available. A prior sale is not compared with current asks.
-          </small>
-        </section>
-        {cohort && (
-          <section className="pbk-market-metric" aria-label="Fictional ZIP activity">
-            <h4>Fictional ZIP activity</h4>
-            <dl>
-              <div>
-                <dt>Active inventory at window end</dt>
-                <dd>{cohort.activeInventory}</dd>
-              </div>
-              <div>
-                <dt>Closed sales in the window</dt>
-                <dd>{cohort.closedSales}</dd>
-              </div>
-            </dl>
-            <small>ZIP context only. These are not house-level observations.</small>
-          </section>
-        )}
-      </div>
       {zip ? (
         <Suspense fallback={<p role="status">Loading public housing snapshot...</p>}>
           <LeadPublicHousingContext zip={zip} />
@@ -269,6 +161,128 @@ export function LeadMarketComparison({
       ) : (
         <p className="pbk-market-notice">Public housing context requires a saved five-digit ZIP.</p>
       )}
+
+      <section className="pbk-market-evidence" aria-label="Saved property evidence">
+        <header className="pbk-market-section-header">
+          <span className="pbk-market-badge pbk-market-badge-example">
+            Fictional ZIP benchmarks
+          </span>
+          <h4>Saved property evidence</h4>
+          <p>Saved house facts are separate from the fictional ZIP examples below.</p>
+        </header>
+        {(cohort || listing) && (
+          <div className="pbk-market-context">
+            {cohort && (
+              <span>
+                Fictional benchmark period: {dateLabel(cohort.start)} to {dateLabel(cohort.end)}
+              </span>
+            )}
+            {listing && (
+              <span>
+                Saved listing captured{' '}
+                <time dateTime={listing.retrievedAt}>{dateLabel(listing.retrievedAt)}</time>
+              </span>
+            )}
+          </div>
+        )}
+
+        {!listing && (
+          <p className="pbk-market-notice">
+            No saved listing evidence matches this address. Lead estimates are not used as listing
+            facts.
+          </p>
+        )}
+        {!cohort && (
+          <p className="pbk-market-notice">
+            No fictional cohort matches this ZIP and property type.
+          </p>
+        )}
+        {cohort && listing && !inWindow && (
+          <p className="pbk-market-notice">
+            The saved listing was captured outside the fictional benchmark window. Differences are
+            withheld.
+          </p>
+        )}
+
+        <div className="pbk-market-grid">
+          <Metric
+            name="Asking price"
+            subject={askingPrice}
+            benchmark={cohort?.askingPrice ?? null}
+            format={formatCurrency}
+            compare={inWindow}
+            note={listingNote}
+          />
+          <Metric
+            name="Asking price per sq ft"
+            subject={pricePerArea}
+            benchmark={cohort?.askingPerSqft ?? null}
+            format={formatCurrency}
+            compare={inWindow}
+            note={
+              cohort
+                ? `Fictional sample: ${cohort.areaCount} listings with usable area.`
+                : 'Saved asking price divided by saved listing area.'
+            }
+          />
+          <Metric
+            name="Active days listed"
+            subject={listing?.facts.dom ?? null}
+            benchmark={cohort?.activeDays ?? null}
+            format={formatDays}
+            compare={inWindow}
+            unit="days"
+            note={listingNote}
+          />
+          <Metric
+            name="Three-bedroom asking rent"
+            subject={null}
+            benchmark={rentalMatch?.threeBedroomRent ?? null}
+            format={formatCurrency}
+            note={
+              rentalMatch
+                ? `No saved subject asking rent. Fictional sample: ${rentalMatch.rentalCount} three-bedroom listings.`
+                : 'No saved subject asking rent or matched three-bedroom benchmark.'
+            }
+          />
+        </div>
+
+        <div className="pbk-market-summary">
+          <section className="pbk-market-metric" aria-label="Saved recorded sale">
+            <h4>Saved recorded sale</h4>
+            <p>
+              {recordedPrice !== null && recordedDate ? (
+                <>
+                  <strong>{formatCurrency(recordedPrice)}</strong> on{' '}
+                  <time dateTime={recordedDate}>{dateLabel(recordedDate)}</time>
+                </>
+              ) : (
+                'No dated sale recorded in saved property evidence.'
+              )}
+            </p>
+            <small>
+              County record via ATTOM when available. A prior sale is not compared with current
+              asks.
+            </small>
+          </section>
+          {cohort && (
+            <section className="pbk-market-metric" aria-label="Fictional ZIP activity">
+              <h4>Fictional ZIP activity</h4>
+              <dl>
+                <div>
+                  <dt>Active inventory at window end</dt>
+                  <dd>{cohort.activeInventory}</dd>
+                </div>
+                <div>
+                  <dt>Closed sales in the window</dt>
+                  <dd>{cohort.closedSales}</dd>
+                </div>
+              </dl>
+              <small>ZIP context only. These are not house-level observations.</small>
+            </section>
+          )}
+        </div>
+      </section>
       <details className="pbk-market-sources">
         <summary>Sources and limits</summary>
         <p>

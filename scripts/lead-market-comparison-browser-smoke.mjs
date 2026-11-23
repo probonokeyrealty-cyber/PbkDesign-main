@@ -110,7 +110,9 @@ try {
       return route.abort();
     }
     if (url.origin !== origin) return route.abort();
-    if (request.isNavigationRequest() && url.pathname.startsWith('/leads/')) return route.fulfill({ contentType: 'text/html', body: shell });
+    if (request.isNavigationRequest() && (url.pathname === '/leads' || url.pathname.startsWith('/leads/'))) {
+      return route.fulfill({ contentType: 'text/html', body: shell });
+    }
     const send = json => route.fulfill({ json });
     if (url.pathname === '/api/auth/team/status') return send({ ok: true, configured: false, authRequired: false });
     if (url.pathname === '/api/leads') return send({ ok: true, leads: fixtures });
@@ -120,6 +122,25 @@ try {
     if (url.pathname.startsWith('/api/')) return send({ ok: false, items: [] });
     return route.continue();
   });
+
+  await page.goto(origin + '/leads');
+  await expect(page.getByRole('heading', { name: 'Seller leads.' })).toBeVisible();
+  const qaLink = page.getByRole('link', { name: '91411 QA fixture (read-only)', exact: true });
+  if (expectQa91411) {
+    await expect(qaLink).toBeVisible();
+    await expect(qaLink).toHaveAttribute('href', qa91411Path);
+    assert.ok(await qaLink.evaluate(link => {
+      const bounds = link.getBoundingClientRect();
+      return innerWidth === 390 && bounds.left >= 0 && bounds.right <= innerWidth;
+    }), 'The link must fit within the 390px viewport.');
+    await qaLink.click();
+    await expect(page).toHaveURL(origin + qa91411Path);
+    await expect(page.getByRole('heading', { name: '91411 Market Comparison QA' })).toBeVisible();
+    await expect(page.getByRole('region', { name: 'Census ZCTA 91411 income' })).toBeVisible();
+    await expect(page.getByRole('region', { name: 'Los Angeles County unemployment' })).toBeVisible();
+  } else {
+    await expect(qaLink).toHaveCount(0);
+  }
 
   const workspace = page.getByRole('region', { name: 'Property', exact: true });
   const market = workspace.getByRole('tab', { name: 'Market Comparison', exact: true });

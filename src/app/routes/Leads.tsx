@@ -1027,6 +1027,11 @@ function LeadsHero({
             <RefreshCw size={15} className={loading ? 'animate-spin' : ''} />
             {loading ? 'Refreshing' : 'Refresh leads'}
           </button>
+          {import.meta.env.PBK_MARKET_91411_QA_PATH && (
+            <a className="pbk-leads-refresh" href={import.meta.env.PBK_MARKET_91411_QA_PATH}>
+              91411 QA fixture (read-only)
+            </a>
+          )}
         </div>
       </div>
       <LeadsStatRibbon stats={stats} sourceLabel={rosterSourceLabel} />

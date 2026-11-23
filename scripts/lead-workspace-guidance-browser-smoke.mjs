@@ -13,6 +13,8 @@ async function verify(browserType, width) {
   const page = await browser.newPage({ viewport: { width, height: 900 } });
   const writes = [], lookups = [], errors = [];
   let consent = 'no consent', dnc = 'blocked', zip = '';
+  let reviewMode = 'mismatched';
+  let reviewReads = 0;
   const lead = () => ({
     id: 'guidance-demo', leadId: 'guidance-demo', seller: { name: 'Guidance Sample' },
     property: { address: '14 Demo Oak Way', city: 'Example City', state: 'CA', zip, sqft: 1480 },
@@ -27,6 +29,16 @@ async function verify(browserType, width) {
     if (path === '/api/property-data/attom-preview') lookups.push(path);
     if (path === '/api/state/stream/session') return route.fulfill({ json: { ok: false } });
     if (request.method() !== 'GET') { writes.push(path); return route.abort(); }
+    if (url.searchParams.get('review') === 'ava') {
+      assert.equal(path, '/api/leads/guidance-demo/full');
+      reviewReads += 1;
+      return route.fulfill({ json: { ok: true, review: {
+        leadId: reviewMode === 'mismatched' ? 'different-fixture' : 'guidance-demo',
+        writeMode: 'read_only', reviewedAt: '2026-11-23T12:00:00Z',
+        nextStep: { code: 'hold_contact', title: 'Hold outreach', detail: 'Review the saved contact restriction.' },
+        evidence: { property: { recorded: true }, contact: { status: 'restricted' }, qualification: { missing: ['authority'] }, underwriting: { recorded: false, recordedAt: null } },
+      } } });
+    }
     return route.fulfill({ json: path === '/api/auth/team/status' ? { ok: true, configured: false, authRequired: false }
       : path.startsWith('/api/leads/guidance-demo') ? { ok: true, lead: lead() }
         : path === '/api/leads' ? { ok: true, leads: [lead()] }
@@ -38,6 +50,21 @@ async function verify(browserType, width) {
     await expect(contact).toBeVisible();
     await expect(contact.locator('.pbk-lead-portal-compliance > .clear')).toHaveCount(0);
     await expect(contact.getByText('Contact blocked', { exact: true })).toBeVisible();
+    const review = page.getByRole('region', { name: 'Ava lead review' });
+    assert.equal(reviewReads, 0, 'Opening a lead leaves the run under operator control');
+    await review.getByRole('button', { name: 'Run read-only review' }).click();
+    await expect(review.getByRole('alert')).toBeVisible();
+    await expect(review.getByText('Hold outreach', { exact: true })).toHaveCount(0);
+    reviewMode = 'exact';
+    await review.getByRole('button', { name: 'Retry review' }).click();
+    await expect(review.getByText('Hold outreach', { exact: true })).toBeVisible();
+    await expect(review.getByText('Missing authority', { exact: true })).toBeVisible();
+    assert.equal(reviewReads, 2);
+    assert.ok(await review.evaluate((element) => element.scrollWidth <= element.clientWidth));
+    if (process.env.PBK_GUIDANCE_SHOTS === '1') {
+      mkdirSync('.pbk-local', { recursive: true });
+      await review.screenshot({ path: `.pbk-local/ava-lead-review-${browserType.name()}-${width}.png` });
+    }
     const property = page.getByRole('region', { name: 'Property', exact: true });
     await expect(property.getByText('Missing ZIP', { exact: true })).toBeVisible();
     await property.getByRole('button', { name: 'Complete address', exact: true }).click();
@@ -66,7 +93,8 @@ async function verify(browserType, width) {
     const tab = property.getByRole('tab', { name: 'Property record', exact: true });
     await expect(tab).toHaveAttribute('aria-selected', 'true');
     await expect(tab).toBeFocused();
-    await expect(property.getByRole('button', { name: 'Look up property', exact: true })).toBeEnabled();
+    await expect(property.getByRole('tabpanel', { name: 'Property record' })
+      .getByRole('button', { name: 'Refresh property intelligence', exact: true })).toBeEnabled();
     await expect(property.getByText('1,480 sq ft', { exact: true })).toBeVisible();
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
     assert.deepEqual(writes, []);
@@ -77,7 +105,7 @@ async function verify(browserType, width) {
       await property.scrollIntoViewIfNeeded();
       await page.screenshot({ path: `.pbk-local/lead-guidance-${browserType.name()}-${width}.png`, scale: 'css' });
     }
-    console.log(`${browserType.name()} ${width}px: address guidance, edit Cancel, conservative consent labels, record focus, zero writes/lookups passed`);
+    console.log(`${browserType.name()} ${width}px: exact-lead review, retry, address guidance, consent labels, and zero writes/lookups passed`);
   } finally { await browser.close(); }
 }
 try {

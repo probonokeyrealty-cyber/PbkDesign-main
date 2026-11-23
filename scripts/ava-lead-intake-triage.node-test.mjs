@@ -76,6 +76,47 @@ test('new intake records a reviewable Ava handoff without any outreach', async (
     for (const key of ['calls', 'messages', 'contracts', 'approvals']) {
       assert.equal(after[key]?.length, before[key]?.length, key);
     }
+
+    const networkBeforeReview = { ...bridge.blockedNetwork };
+    const readReview = (leadId) => request(`/api/leads/${encodeURIComponent(leadId)}/full?review=ava`);
+    const intakeId = first.leadImport.leadId;
+    const review = (await readReview(intakeId)).review;
+    assert.equal(review.leadId, intakeId);
+    assert.equal(review.writeMode, 'read_only');
+    assert.equal(review.evidence.contact.status, 'needs_review');
+    assert.equal(review.nextStep.code, 'review_contact');
+    assert.deepEqual(review.evidence.property, { recorded: true });
+    assert.ok(review.evidence.qualification.missing.includes('authority'));
+    assert.deepEqual(review.evidence.underwriting, { recorded: false, recordedAt: null });
+    const blocked = (await readReview(manual.leadTriage.correlationId)).review;
+    assert.equal(blocked.evidence.contact.status, 'restricted');
+    assert.equal(blocked.nextStep.code, 'hold_contact');
+    const nonId = await bridge.fetch(`${bridge.origin}/api/leads/${encodeURIComponent(payload.property.address)}/full?review=ava`, {
+      headers: { Authorization: `Bearer ${bridge.apiKey}` },
+    });
+    assert.equal(nonId.status, 404, 'An address must never resolve the review identity');
+    const anonymous = await bridge.fetch(`${bridge.origin}/api/leads/${intakeId}/full?review=ava`);
+    assert.equal(anonymous.status, 401, 'The review uses the staff lead access boundary');
+    const repeated = (await readReview(intakeId)).review;
+    assert.deepEqual(repeated.evidence, review.evidence);
+    assert.deepEqual(repeated.nextStep, review.nextStep);
+    assert.deepEqual(bridge.blockedNetwork, networkBeforeReview, 'Review requires no outbound network calls');
+    const reviewedState = await request('/state');
+    for (const key of ['leadImports', 'calls', 'messages', 'contracts', 'approvals', 'agentTasks', 'analyzerRuns', 'activity']) {
+      assert.deepEqual(reviewedState[key], after[key], `Review writes no ${key}`);
+    }
+
+    for (const [id, compliance] of [
+      ['requested', { dncStatus: 'requested', tcpaConsent: 'yes' }],
+      ['revoked', { dncStatus: 'clear', tcpaConsent: 'yes', consentStatus: 'revoked' }],
+    ]) {
+      const fixture = await request('/api/leads', {
+        leadId: `qa-ava-review-${id}`, address: `${id === 'requested' ? 101 : 202} Fictional Way, Denver CO`, compliance,
+      });
+      const restricted = (await readReview(fixture.leadTriage.correlationId)).review;
+      assert.equal(restricted.evidence.contact.status, 'restricted', id);
+      assert.equal(restricted.nextStep.code, 'hold_contact', id);
+    }
   } finally {
     await bridge.stop();
   }

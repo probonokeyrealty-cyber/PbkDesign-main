@@ -61372,15 +61372,23 @@ const investorScenarioSaves = new Map();
 
 function loadExactLeadProfile(leadId) {
   return queryPgRows(
-    "SELECT id, raw, source, status, stage, phone, address, lead_name, city, state, postal_code FROM public.lead_profiles WHERE COALESCE(workspace_id, 'pbk') = 'pbk' AND id = $1",
+    "SELECT id, raw, source, status, stage, phone, address, lead_name, city, state, postal_code, dnc FROM public.lead_profiles WHERE COALESCE(workspace_id, 'pbk') = 'pbk' AND id = $1",
     [leadId]
   );
 }
 
-async function loadLeadForFullView(leadId) {
+async function loadLeadForFullView(leadId, { reviewOnly = false } = {}) {
   const profile = IS_HOSTED || getPgPool() ? await loadExactLeadProfile(leadId) : null;
   const hot = (state.leadImports || []).find((item) => (item.leadId || item.id) === leadId);
   const row = profile?.rows[0];
+  if (reviewOnly) {
+    if (profile?.ok === false) return { lead: null, unavailable: true };
+    // The profile owns saved review evidence. Honor a restriction in either record.
+    return {
+      lead: row ? parcelLeadFromProfileRow(row) : hot,
+      contactRestricted: row?.dnc === true || Boolean(hot && getAvaReviewContactStatus(hot) === 'restricted'),
+    };
+  }
   if (!hot) return { lead: row ? parcelLeadFromProfileRow(row) : null, unavailable: profile?.ok === false };
   const scenarios = row?.raw?.deal?.investorDecisionScenarios;
   if (!row || (scenarios === undefined && !hot.deal?.investorDecisionScenarios)) return { lead: hot };
@@ -61489,6 +61497,62 @@ function reviewBantQualification(payload = {}) {
     missing,
     complete: missing.length === 0,
     nextMissing: missing[0] || '',
+  };
+}
+
+function getAvaReviewContactStatus(lead) {
+  const { blocked } = getConversationDncStatus({
+    runtimeLead: lead,
+    phone: lead.seller?.phone || lead.phone,
+    leadSummary: lead,
+  });
+  const normalizeStatus = (value) => String(value ?? '').trim().toLowerCase().replace(/[\s-]+/g, '_');
+  const dncStatuses = [lead.compliance?.dncStatus, lead.dncStatus].map(normalizeStatus).filter(Boolean);
+  const consentStatuses = [lead.compliance?.tcpaConsent, lead.compliance?.consentStatus, lead.tcpaConsent, lead.consentStatus]
+    .map(normalizeStatus).filter(Boolean);
+  const restriction = dncStatuses.some((status) => ['dnc', 'blocked', 'do_not_contact', 'do_not_call', 'opted_out', 'revoked', 'requested'].includes(status))
+    || consentStatuses.some((status) => ['opted_out', 'revoked'].includes(status));
+  if (blocked || restriction) return 'restricted';
+  return dncStatuses.length && dncStatuses.every((status) => status === 'clear')
+    && consentStatuses.length && consentStatuses.every((status) => status === 'yes') ? 'recorded' : 'needs_review';
+}
+
+function buildAvaLeadReview(lead, leadId, contactRestricted) {
+  const address = String(lead.property?.address || lead.address || '').trim();
+  const addressRecorded = Boolean(address && !/^unknown(?: property| address)?$/i.test(address));
+  const contact = contactRestricted ? 'restricted' : getAvaReviewContactStatus(lead);
+  const bant = normalizeBantInfo(lead.bant || lead.metadata?.bant, getLeadOwnedCallContext(lead, leadId).bant);
+  const missing = getMissingBantFields(bant);
+  const [analysis] = sortNewest((state.analyzerRuns || []).filter((run) => run.leadId === leadId));
+  const underwritingRecorded = [analysis?.arv ?? analysis?.analysis?.arv, analysis?.mao ?? analysis?.analysis?.mao]
+    .every((value) => Number.isFinite(value) && value > 0);
+
+  let nextStep;
+  if (contact === 'restricted') {
+    nextStep = { code: 'hold_contact', title: 'Hold outreach', detail: 'Review the saved contact restriction.' };
+  } else if (!addressRecorded) {
+    nextStep = { code: 'confirm_property', title: 'Confirm the property', detail: 'Verify the address before using property or deal evidence.' };
+  } else if (contact === 'needs_review') {
+    nextStep = { code: 'review_contact', title: 'Review contact records', detail: 'Verify consent and do-not-contact status before proposing outreach.' };
+  } else if (missing.length) {
+    nextStep = { code: 'review_qualification', title: 'Complete qualification', detail: 'Check the saved lead and call notes for missing qualification details.' };
+  } else if (!underwritingRecorded) {
+    nextStep = { code: 'review_underwriting', title: 'Review underwriting', detail: 'Open the Analyzer and verify the assumptions for this lead.' };
+  } else {
+    nextStep = { code: 'review_offer', title: 'Review the saved numbers', detail: 'Check the analysis date and inputs before preparing an offer for approval.' };
+  }
+
+  return {
+    leadId,
+    reviewedAt: isoNow(),
+    writeMode: 'read_only',
+    evidence: {
+      property: { recorded: addressRecorded },
+      contact: { status: contact },
+      qualification: { missing },
+      underwriting: { recorded: underwritingRecorded, recordedAt: underwritingRecorded ? getItemTimestamp(analysis) || null : null },
+    },
+    nextStep,
   };
 }
 
@@ -82404,12 +82468,26 @@ const server = createServer(async (request, response) => {
     const leadFullMatch = matchPath(pathname, '/api/leads/:id/full');
     if (leadFullMatch && request.method === 'GET') {
       response.setHeader('Cache-Control', 'no-store');
+      const reviewOnly = url.searchParams.get('review') === 'ava';
       let leadId;
       try {
         leadId = decodeURIComponent(leadFullMatch.groups.id);
         if (!leadId.trim() || leadId !== leadId.trim()) throw new Error('Invalid lead ID');
       } catch {
         json(response, 400, { ok: false, error: 'Invalid lead ID.' });
+        return;
+      }
+      if (reviewOnly) {
+        const { lead: exactLead, unavailable, contactRestricted } = await loadLeadForFullView(leadId, { reviewOnly });
+        if (unavailable) {
+          json(response, 503, { ok: false, code: 'lead_roster_unavailable', error: 'The saved lead record is unavailable. Try again shortly.' });
+          return;
+        }
+        if (!exactLead || (exactLead.leadId || exactLead.id) !== leadId) {
+          json(response, 404, { ok: false, error: 'Lead not found.' });
+          return;
+        }
+        json(response, 200, { ok: true, review: buildAvaLeadReview(exactLead, leadId, contactRestricted) });
         return;
       }
       let durableBatchLead;

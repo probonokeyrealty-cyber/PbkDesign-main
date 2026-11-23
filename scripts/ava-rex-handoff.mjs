@@ -2,6 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 
 const TASK_TYPE = 'ava_rex_research';
 const REQUEST_ID = /^[a-zA-Z0-9_-]{8,120}$/;
+const PROVIDER_RESPONSE_ID = /^[a-zA-Z0-9_-]{1,200}$/;
 const US_REGIONS = new Set('AL AK AZ AR CA CO CT DE DC FL GA HI ID IL IN IA KS KY LA ME MD MA MI MN MS MO MT NE NV NH NJ NM NY NC ND OH OK OR PA RI SC SD TN TX UT VT VA WA WV WI WY'.split(' '));
 
 function canonical(value) {
@@ -55,16 +56,33 @@ function citedEvidence(output) {
   return answer && citations.length ? { answer, citations } : null;
 }
 
+function isProviderResponseId(value) {
+  return typeof value === 'string' && PROVIDER_RESPONSE_ID.test(value);
+}
+
+function receiptDigest({ id, requestId, leadId, binding, version, token, answer, citations }, { responseId, completedAt }) {
+  return digest([id, requestId, leadId, binding, version, token, answer, citations, responseId, completedAt]);
+}
+
 async function view(store, record, readVersion, now) {
   if (!record) return { status: 'missing' };
   if (record.status === 'running' && now() >= record.expiresAt) {
     await store.finish(record.id, record.token, { status: 'reconciliation_required' });
     record = await store.read(record.id);
   }
-  const { id, leadId, status, version, answer, citations, requestId, failureReason } = record;
+  const { id, leadId, status, version, answer, citations, requestId, failureReason, receipt } = record;
   if (status === 'complete') {
     if (leadId && (await readVersion(leadId)) !== version) return { id, leadId, requestId, status: 'stale' };
-    return { id, leadId, requestId, status, answer, citations };
+    if (receipt?.version === 1 && isProviderResponseId(receipt.responseId) &&
+        Number.isFinite(Date.parse(receipt.completedAt)) && receipt.digest === receiptDigest(record, receipt)) {
+      return { id, leadId, requestId, status, answer, citations, verifiedAt: receipt.completedAt };
+    }
+  }
+  if (status === 'complete' || status === 'unverified') {
+    return {
+      id, leadId, requestId, status: 'unverified',
+      answer: 'I could not verify the saved research result for this request.',
+    };
   }
   return { id, leadId, requestId, status, ...(failureReason ? { failureReason } : {}) };
 }
@@ -99,8 +117,15 @@ export async function runRexHandoff({ owner, requestId, market, leadId = '', sto
   try {
     const output = await research(market, id);
     const evidence = output?.ok === true ? citedEvidence(output) : null;
-    result = output?.result === 'reconciliation_required' ? { status: 'reconciliation_required' }
-      : evidence ? { status: 'complete', ...evidence } : { status: 'failed' };
+    if (evidence && output.result === 'live' && isProviderResponseId(output.responseId)) {
+      const receipt = { version: 1, responseId: output.responseId, completedAt: new Date(now()).toISOString() };
+      receipt.digest = receiptDigest({ id, requestId, leadId, binding, version, token, ...evidence }, receipt);
+      result = { status: 'complete', ...evidence, receipt };
+    } else if (output?.result === 'reconciliation_required') {
+      result = { status: 'reconciliation_required' };
+    } else {
+      result = { status: evidence ? 'unverified' : 'failed' };
+    }
     if (result.status === 'failed' && output?.result === 'provider_quota_exhausted') {
       result.failureReason = 'provider_quota_exhausted';
     }
@@ -154,15 +179,31 @@ export function postgresRexHandoffStore(pool) {
       }
     },
     async finish(id, token, { status, ...result }) {
-      const { rowCount } = await pool.query(
-        `UPDATE public.pbk_tasks
-         SET status = $3, metadata = metadata || $4::jsonb, updated_at = NOW()
-         WHERE id = $1 AND tenant_id = 'pbk' AND task_type = $5
-           AND status = 'running' AND metadata->>'token' = $2
-           AND ($3 = 'reconciliation_required' OR (metadata->>'expiresAt')::bigint > EXTRACT(EPOCH FROM clock_timestamp()) * 1000)`,
-        [id, token, status, JSON.stringify(result), TASK_TYPE]
-      );
-      return rowCount === 1;
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+        // Check the deadline only after waiting for any concurrent row writer.
+        await client.query(
+          `SELECT id FROM public.pbk_tasks
+           WHERE id = $1 AND tenant_id = 'pbk' AND task_type = $2 FOR UPDATE`,
+          [id, TASK_TYPE]
+        );
+        const { rowCount } = await client.query(
+          `UPDATE public.pbk_tasks
+           SET status = $3, metadata = metadata || $4::jsonb, updated_at = clock_timestamp()
+           WHERE id = $1 AND tenant_id = 'pbk' AND task_type = $5
+             AND status = 'running' AND metadata->>'token' = $2
+             AND ($3 = 'reconciliation_required' OR (metadata->>'expiresAt')::bigint > EXTRACT(EPOCH FROM clock_timestamp()) * 1000)`,
+          [id, token, status, JSON.stringify(result), TASK_TYPE]
+        );
+        await client.query('COMMIT');
+        return rowCount === 1;
+      } catch (error) {
+        await client.query('ROLLBACK').catch(() => {});
+        throw error;
+      } finally {
+        client.release();
+      }
     },
   };
 }

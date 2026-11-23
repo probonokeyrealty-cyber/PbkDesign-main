@@ -294,24 +294,32 @@ test('Rex requests start only on submit and status checks hide stale sources at 
   assert.match(submitted.researchRequestId, /^ava-/);
   await page.evaluate(() => window.fixture.streams[0].resolve({
     ok: true, answer: 'Public market evidence.', activeLeadId: 'sample-a',
-    rexHandoff: { status: 'complete', citations: ['https://example.com/county-data'] },
+    rexHandoff: { status: 'complete', id: 'rex-handoff-example', verifiedAt: '2026-11-22T15:00:00.000Z', citations: ['https://example.com/county-data'] },
   }));
-  await expect(page.getByText('Research complete', { exact: true })).toBeVisible();
+  await expect(page.getByText('Verified research result', { exact: true })).toBeVisible();
+  await expect(page.getByText('rex-handoff-example', { exact: true })).toBeVisible();
   await expect(page.getByRole('link', { name: /Source 1/ })).toHaveAttribute('href', 'https://example.com/county-data');
   await page.reload();
   await expect(page.getByText('Saved request', { exact: true })).toBeVisible();
+  await expect(page.getByText('rex-handoff-example', { exact: true })).toBeVisible();
   await expect(page.getByText('Public market evidence.')).toHaveCount(0);
   await assertNoActions(page);
   await page.getByRole('button', { name: 'Check research status' }).click();
   const lookup = await page.evaluate(() => window.fixture.streams[0].payload);
   assert.deepEqual(lookup, { message: '', rexStatusOnly: true, researchRequestId: submitted.researchRequestId, leadId: 'sample-a' });
   await page.evaluate(() => window.fixture.streams[0].resolve({
+    ok: false, answer: 'Try checking again.', activeLeadId: 'sample-a', rexHandoff: { status: 'unavailable' },
+  }));
+  await expect(page.getByText('Status unavailable', { exact: true })).toBeVisible();
+  await expect(page.getByText('rex-handoff-example', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Check research status' }).click();
+  await page.evaluate(() => window.fixture.streams[1].resolve({
     ok: false, answer: 'The linked record changed.', activeLeadId: 'sample-a', rexHandoff: { status: 'stale' },
   }));
   await expect(page.getByText('Research stale', { exact: true })).toBeVisible();
   await expect(page.getByRole('link', { name: /Source 1/ })).toHaveCount(0);
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
-  await assertNoActions(page, 1);
+  await assertNoActions(page, 2);
   assert.deepEqual(errors, []);
 });
 

@@ -11,7 +11,7 @@ import { buildAgentRuntimeSmokeEnv } from './agent-runtime-smoke-isolation.mjs';
 import { runRexHandoff, readRexHandoff, rexLeadVersion, parseRexResearch, postgresRexHandoffStore } from './ava-rex-handoff.mjs';
 
 const request = { owner: 'operator', requestId: 'request-1', market: 'Tampa, FL', leadId: 'lead-1' };
-const evidence = { ok: true, answer: 'Check recorded sales.', citations: ['County data - https://example.com/sales'] };
+const evidence = { ok: true, result: 'live', responseId: 'resp_rex_fixture', answer: 'Check recorded sales.', citations: ['County data - https://example.com/sales'] };
 
 function fixture() {
   const records = new Map();
@@ -54,10 +54,45 @@ test('one invocation across concurrent requests and status reads', async () => {
   const completed = await first;
   assert.equal(completed.status, 'complete');
   assert.equal(completed.id, duplicate.id);
+  assert.match(completed.verifiedAt, /^\d{4}-\d{2}-\d{2}T/);
+  assert.deepEqual(await readRexHandoff(input), completed);
+  assert.equal(JSON.stringify(completed).includes(evidence.responseId), false);
   assert.equal((await runRexHandoff(input)).id, completed.id);
   assert.equal((await runRexHandoff({ ...input, market: 'Orlando, FL' })).status, 'conflict');
   assert.equal((await readRexHandoff({ ...input, owner: 'other' })).status, 'missing');
   assert.equal((await readRexHandoff({ ...input, leadId: 'another-lead' })).status, 'missing');
+});
+
+test('a cited response without a provider completion reference cannot be verified', async () => {
+  const { input, context } = fixture();
+  context.run = async () => ({ ...evidence, responseId: '' });
+  const result = await runRexHandoff(input);
+  assert.equal(result.status, 'unverified');
+  assert.equal(result.answer, 'I could not verify the saved research result for this request.');
+  assert.equal(result.verifiedAt, undefined);
+  assert.deepEqual(await readRexHandoff(input), result);
+});
+
+test('readback rejects evidence changed after the completion was saved', async () => {
+  const { input, records } = fixture();
+  const result = await runRexHandoff(input);
+  records.get(result.id).citations = ['https://example.com/replaced'];
+  const readback = await readRexHandoff(input);
+  assert.equal(readback.status, 'unverified');
+  assert.equal(readback.citations, undefined);
+  assert.equal(readback.verifiedAt, undefined);
+});
+
+test('readback rejects a receipt moved to a different request or lead', async () => {
+  const { input, records } = fixture();
+  const completed = await runRexHandoff(input);
+  const record = records.get(completed.id);
+  for (const change of [{ requestId: 'other-request' }, { leadId: '' }]) {
+    records.set(completed.id, { ...record, ...change });
+    const readback = await readRexHandoff({ ...input, leadId: change.leadId ?? input.leadId });
+    assert.equal(readback.status, 'unverified');
+    assert.equal(readback.citations, undefined);
+  }
 });
 
 test('failure and ambiguous transport have distinct durable outcomes', async () => {
@@ -141,6 +176,33 @@ test('Postgres preserves an unconfirmed claim across bridge instances and reject
     const complete = await runRexHandoff({ ...first, market: 'Orlando, FL', requestId: 'request-4', research: async () => evidence });
     assert.equal(complete.status, 'complete');
     assert.equal((await readRexHandoff({ ...second, requestId: 'request-4', readVersion: async () => 'v2' })).status, 'stale');
+
+    const store = postgresRexHandoffStore(pool);
+    const id = 'locked-rex-fixture';
+    const token = 'locked-worker';
+    const expiresAt = Date.now() + 1500;
+    assert.equal(await store.claim({ id, token, expiresAt, binding: id }), true);
+    const lock = await other.connect();
+    let late;
+    try {
+      await lock.query('BEGIN');
+      await lock.query('SELECT id FROM public.pbk_tasks WHERE id = $1 FOR UPDATE', [id]);
+      late = store.finish(id, token, { status: 'complete', answer: 'Late result' });
+      let waiting = false;
+      while (!waiting && Date.now() < expiresAt) {
+        const { rows: sessions } = await other.query(`SELECT 1 FROM pg_stat_activity
+          WHERE pid <> pg_backend_pid() AND wait_event_type = 'Lock' AND query LIKE '%public.pbk_tasks%'`);
+        waiting = sessions.length > 0;
+        if (!waiting) await new Promise(resolve => setTimeout(resolve, 15));
+      }
+      assert.equal(waiting, true, 'Completion must reach the locked SQL row before the lease expires');
+      await new Promise(resolve => setTimeout(resolve, Math.max(0, expiresAt - Date.now()) + 30));
+    } finally {
+      await lock.query('COMMIT');
+      lock.release();
+    }
+    assert.equal(await late, false, 'Lease must be checked again after waiting for the row lock');
+    assert.equal((await store.read(id)).answer, undefined);
   } finally {
     await Promise.all([pool.end(), other.end()]);
   }
@@ -169,7 +231,7 @@ test('Ava chat starts one cited Rex request through the bridge and rereads its r
       res.writeHead(429).end(JSON.stringify({ error: { type: 'insufficient_quota', code: 'credit_balance_exhausted' } }));
       return;
     }
-    res.end(JSON.stringify({ status: 'completed', output: [
+    res.end(JSON.stringify({ id: evidence.responseId, status: 'completed', output: [
       { type: 'web_search_call', status: 'completed' },
       { type: 'message', content: [{ type: 'output_text', text: evidence.answer,
         annotations: [{ type: 'url_citation', url: 'https://example.com/county-data' }] }] },
@@ -226,6 +288,7 @@ test('Ava chat starts one cited Rex request through the bridge and rereads its r
     assert.equal(calls.length, 0);
     const completed = await chat(request);
     assert.equal(completed.rexHandoff.status, 'complete');
+    assert.match(completed.rexHandoff.verifiedAt, /^\d{4}-\d{2}-\d{2}T/);
     assert.deepEqual(completed.rexHandoff.citations, ['https://example.com/county-data']);
     assert.deepEqual((await chat(status)).rexHandoff, completed.rexHandoff);
     assert.deepEqual((await chat(request)).rexHandoff, completed.rexHandoff);

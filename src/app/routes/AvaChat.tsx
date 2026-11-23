@@ -603,6 +603,7 @@ function buildAssistantExchange(
     deepSeekDecision: getAssistantDeepSeekDecision(response),
     rexHandoff: response.rexHandoff && {
       ...response.rexHandoff,
+      id: response.rexHandoff.id || pendingExchange?.rexHandoff?.id,
       requestId: response.rexHandoff.requestId || pendingExchange?.rexHandoff?.requestId,
     },
   };
@@ -1479,7 +1480,11 @@ function AvaChatSession({ scope }: { scope: AvaChatScope }) {
               activeLeadId: String(item?.activeLeadId || ''),
               toolResult: asRecord(item?.toolResult),
               warning: String(item?.warning || ''),
-              rexHandoff: item?.rexHandoff ? { status: 'saved', requestId: item.rexHandoff.requestId } : undefined,
+              rexHandoff: item?.rexHandoff ? {
+                status: 'saved',
+                id: typeof item.rexHandoff.id === 'string' ? item.rexHandoff.id : undefined,
+                requestId: item.rexHandoff.requestId,
+              } : undefined,
               mission:
                 item?.mission && typeof item.mission === 'object' && !Array.isArray(item.mission)
                   ? (item.mission as Record<string, unknown>)
@@ -1520,7 +1525,7 @@ function AvaChatSession({ scope }: { scope: AvaChatScope }) {
     if (!writableStorage?.assistantExchanges) return;
     const completed = assistantExchanges.filter((exchange) => exchange.status === 'completed' || exchange.rexHandoff)
       .slice(-30).map(exchange => exchange.rexHandoff
-        ? { ...exchange, answer: '', warning: '', rexHandoff: { status: 'saved', requestId: exchange.rexHandoff.requestId } }
+        ? { ...exchange, answer: '', warning: '', rexHandoff: { status: 'saved', id: exchange.rexHandoff.id, requestId: exchange.rexHandoff.requestId } }
         : exchange);
     if (!writeAvaChatStorage(exchangesKey, JSON.stringify(completed))) setStorageUnavailable(true);
   }, [assistantExchanges, exchangesKey, writableStorage]);
@@ -2252,10 +2257,15 @@ function AssistantExchange({
   const [checkingResearch, setCheckingResearch] = useState(false);
   const [researchCheckError, setResearchCheckError] = useState('');
   const research = exchange.rexHandoff;
+  const verifiedResearch = research?.status === 'complete' && Boolean(
+    research.id && research.verifiedAt && Number.isFinite(Date.parse(research.verifiedAt))
+  );
   const failed = exchange.status === 'failed' || exchange.status === 'cancelled';
   const pending = exchange.status === 'pending';
   const researchStatus = research && ({
-    saved: 'Saved request', running: 'Research in progress', complete: 'Research complete',
+    saved: 'Saved request', running: 'Research in progress',
+    complete: verifiedResearch ? 'Verified research result' : 'Verification unavailable',
+    unverified: 'Verification unavailable',
     stale: 'Research stale', reconciliation_required: 'Outcome unconfirmed', unavailable: 'Status unavailable',
   }[research.status] || 'Research needs review');
   return (
@@ -2294,11 +2304,15 @@ function AssistantExchange({
                 {exchange.warning}
               </p>
             )}
-            <p className="whitespace-pre-wrap break-words">{exchange.answer || (pending ? 'I am checking that now.' : '')}</p>
-            {research?.status === 'reconciliation_required' && research.id && (
+            <p className="whitespace-pre-wrap break-words">
+              {research?.status === 'complete' && !verifiedResearch
+                ? 'I could not verify the saved research result for this request.'
+                : exchange.answer || (pending ? 'I am checking that now.' : '')}
+            </p>
+            {research?.id && (
               <p className="mt-2 text-xs text-[var(--ava-text-muted)]">Request reference <code>{research.id}</code></p>
             )}
-            {research?.citations?.length ? (
+            {verifiedResearch && research?.citations?.length ? (
               <ul className="mt-2 space-y-1" aria-label="Rex research sources">
                 {research.citations.map((source, index) => (
                   <li key={source}>
@@ -2339,10 +2353,10 @@ function AssistantExchange({
             <span
               className={[
                 'inline-flex items-center gap-1.5 font-semibold',
-                failed ? 'text-[var(--ava-danger)]' : pending || (research && research.status !== 'complete') ? 'text-[var(--ava-text-muted)]' : 'text-[var(--ava-success)]',
+                failed ? 'text-[var(--ava-danger)]' : pending || (research && !verifiedResearch) ? 'text-[var(--ava-text-muted)]' : 'text-[var(--ava-success)]',
               ].join(' ')}
             >
-              {failed ? <AlertTriangle size={14} /> : pending ? <Loader2 size={14} className="animate-spin" /> : !research || research.status === 'complete' ? <CheckCircle2 size={14} /> : null}
+              {failed ? <AlertTriangle size={14} /> : pending ? <Loader2 size={14} className="animate-spin" /> : !research || verifiedResearch ? <CheckCircle2 size={14} /> : null}
               {researchStatus || (exchange.status === 'cancelled' ? 'Cancelled' : exchange.interrupted ? 'Interrupted' : failed ? 'Needs review' : pending ? 'Responding' : 'Answered')}
             </span>
             <button

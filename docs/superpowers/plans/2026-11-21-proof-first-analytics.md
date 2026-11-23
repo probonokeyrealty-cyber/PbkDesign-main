@@ -1,6 +1,6 @@
 # Proof-First Analytics Implementation Plan
 
-> **For agentic workers:** REQUIRED WORKFLOW: Use superpowers:subagent-driven-development to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **REQUIRED WORKFLOW:** Use `superpowers:subagent-driven-development` to implement this plan task-by-task, with independent review before proceeding. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Correct analytics evidence end to end and polish its existing lead inspection workflow locally.
 
@@ -61,7 +61,7 @@
 
 ## Local Execution Rulings
 
-- Execute directly in this session under the founder's explicit instruction to build locally; do not introduce another planning-approval round.
+- Use the required subagent-driven workflow within the founder-approved local scope; do not introduce another planning-approval round for already approved work.
 - Keep artifacts in the already isolated export. Its parent worktree is dirty, so never use implicit git staging or commit from this export.
 - No commits are made in this task; local-only review is the requested delivery.
 - Contract dates are creation-cohort evidence, not closing dates. Label that basis and withhold a closing-period revenue/cost ratio until actual comparable closing-date evidence exists. Recorded entries are not independently verified payments.

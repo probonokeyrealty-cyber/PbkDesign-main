@@ -1163,16 +1163,47 @@ assert(
   'Approval outcome recovery must also retry the approval.decided timeline event.'
 );
 
-assert(
-  /lead_id = COALESCE\(EXCLUDED\.lead_id, unified_messages\.lead_id\)/.test(
-    bridge
-  ) &&
-    /if \(\/violates foreign key constraint\/i\.test\(messageText\)\)/.test(
-      bridge
-    ) &&
-    /await pool\.query\(baseSql, retryValues\)/.test(bridge),
-  'Unified message fallback must preserve or later heal lead association while tolerating stale schemas.'
-);
+const bridgeAst = ts.createSourceFile('bridge.mjs', bridge, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
+const messageWriter = bridgeAst.statements.find(node => ts.isFunctionDeclaration(node) &&
+  node.name?.text === 'persistUnifiedMessageRecord');
+assert(messageWriter, 'Unified message persistence must be available to the bridge.');
+
+const schemaError = 'column "storage_path" does not exist';
+const leadError = 'insert or update violates foreign key constraint';
+for (const { token, errors, attempts } of [
+  { token: null, errors: [schemaError], attempts: [[23, 'lead-fixture'], [18, 'lead-fixture']] },
+  { token: null, errors: [schemaError, leadError], attempts: [[23, 'lead-fixture'], [18, 'lead-fixture'], [18, null]] },
+  { token: 'test-reservation', errors: [leadError, schemaError], attempts: [[23, 'lead-fixture'], [23, null], [18, null]] },
+]) {
+  const message = { id: 'message-fixture', leadId: 'lead-fixture' };
+  const projected = [];
+  const writes = [];
+  const write = async (usedToken, sql, params) => {
+    const failure = errors[writes.length];
+    writes.push({ usedToken, sql, params: [...params] });
+    if (failure) throw new Error(failure);
+  };
+  const persist = runInNewContext(`${messageWriter.getText(bridgeAst)}\npersistUnifiedMessageRecord`, {
+    getPgPool: () => ({ query: (sql, params) => write(null, sql, params) }),
+    writeRecordingPointer: write,
+    isoNow: () => '2026-11-20T00:00:00Z',
+    projectMessageEvent: () => {},
+    projectLiveConversationRecord: async ({ record }) => { projected.push({ record, after: writes.length }); },
+    console: { warn: () => {} },
+  });
+  const persisted = await persist(message, token);
+  assert(persisted && writes.length === attempts.length, 'Unified message fallback must complete with bounded retries.');
+  for (const [index, [paramCount, leadId]] of attempts.entries()) {
+    const { usedToken, sql, params } = writes[index];
+    assert(usedToken === token, 'Every retry must retain its recording storage reservation, when present.');
+    assert(params.length === paramCount && params[1] === leadId,
+      'A stale schema must not clear lead association unless the foreign key also fails.');
+    assert(/lead_id\s*=\s*COALESCE\(\s*EXCLUDED\.lead_id\s*,\s*unified_messages\.lead_id\s*\)/i.test(sql),
+      'Each upsert must retain an existing lead association on a null retry and accept a valid lead later.');
+  }
+  assert(projected.length === 1 && projected[0].after === attempts.length && projected[0].record.leadId === message.leadId,
+    'Project only after persistence succeeds, using the original lead association.');
+}
 
 assert(
   /msg-recording-\$\{Math\.abs\(/.test(bridge) &&

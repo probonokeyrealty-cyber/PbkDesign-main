@@ -529,6 +529,38 @@ function getLeadIdentity(lead = {}) {
   };
 }
 
+const streetSuffixes = {
+  street: 'st', avenue: 'ave', boulevard: 'blvd', road: 'rd', lane: 'ln', drive: 'dr',
+  court: 'ct', circle: 'cir', place: 'pl', trail: 'trl',
+};
+
+function extractStreetUnit(value, street) {
+  if (!street) return '';
+  const tail = value.slice(value.indexOf(street) + street.length);
+  return tail.match(/^[.,\s]*(?:(?:apartment|apt|unit|suite|ste)\.?\s*#?\s*|#\s*)([a-z0-9]+(?:-[a-z0-9]+)?)\b/i)?.[1] || '';
+}
+
+function normalizedAssistantStreet(street) {
+  return normalizeComparableText(street)
+    .replace(/ [a-z]+$/, (suffix) => streetSuffixes[suffix.trim()] ? ' ' + streetSuffixes[suffix.trim()] : suffix);
+}
+
+export function findAssistantStreetLeads(query, leads) {
+  const queryStreet = extractAddress(query);
+  const street = normalizedAssistantStreet(queryStreet);
+  if (!street) return [];
+  const unit = extractStreetUnit(query, queryStreet).toLowerCase();
+  const matches = new Map();
+  for (const lead of leads) {
+    const { leadId, address } = getLeadIdentity(lead);
+    const candidateStreet = extractAddress(address);
+    if (!leadId || normalizedAssistantStreet(candidateStreet) !== street) continue;
+    if (unit && extractStreetUnit(address, candidateStreet).toLowerCase() !== unit) continue;
+    matches.set(leadId, lead);
+  }
+  return [...matches.values()];
+}
+
 export function findAssistantLeadMatch(query = '', leads = [], { threshold = 0.3 } = {}) {
   const safeQuery = stripLeadQuery(query) || cleanText(query, 160);
   if (!safeQuery || !Array.isArray(leads) || !leads.length) return null;
@@ -826,6 +858,16 @@ export function detectAssistantIntent(message = '') {
     )
   ) {
     return { intent: 'summary', message: text, classifierSource: 'regex' };
+  }
+
+  if (
+    address &&
+    /^(?:please\s+|can you\s+)?(?:find|look\s?up|search(?: for)?|check|pull up)\s+(?:the\s+)?(?:property\s+(?:at\s+)?)?["']?\d/i.test(text) &&
+    /\b(?:in|against)\s+(?:our\s+|the\s+)?(?:CRM|Command Center)\b/i.test(text)
+  ) {
+    const unit = extractStreetUnit(text, address);
+    const query = unit ? `${address} Unit ${unit}` : address;
+    return { intent: 'lead_lookup', message: text, query, exactStreet: true, classifierSource: 'regex' };
   }
 
   const leadQuery = extractLeadQuery(text);
@@ -1767,7 +1809,7 @@ export function planAssistantIntent(detected = {}, options = {}) {
       suggestions,
       toolPlan: {
         toolName: 'findLead',
-        params: { query: detected.query },
+        params: { query: detected.query, ...(detected.exactStreet ? { exactStreet: true } : {}) },
         providerWrite: false,
       },
       usedIntent: intent,

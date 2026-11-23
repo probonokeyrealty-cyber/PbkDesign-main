@@ -11,6 +11,10 @@ import fs from 'node:fs';
 import fsPromises from 'node:fs/promises';
 import * as nodeModule from 'node:module';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { randomUUID } from 'node:crypto';
+import { isRetentionStorageRequest, retentionStorageBucket, retentionStorageFixtureFlag, retentionStorageOrigin }
+  from './fixtures/recording-retention-storage-contract.mjs';
 
 const root = process.env.PBK_OPENCLAW_STATE_DIR;
 const nonce = process.env.PBK_SMOKE_ISOLATION_NONCE;
@@ -45,7 +49,9 @@ const blocked = api => () => {
   throw error;
 };
 globalThis.fetch = async () => blocked('fetch')();
-net.Socket.prototype.connect = blocked('tcp');
+const originalConnect = net.Socket.prototype.connect;
+const blockedTcp = blocked('tcp');
+net.Socket.prototype.connect = blockedTcp;
 tls.connect = blocked('tls');
 http.request = blocked('http');
 http.get = blocked('http');
@@ -99,3 +105,78 @@ nodeModule.registerHooks({
       ? { url: pdfFixture, shortCircuit: true } : nextResolve(specifier, context);
   },
 });
+
+const args = process.argv.slice(2);
+const retentionFixture = args.includes(retentionStorageFixtureFlag);
+if (retentionFixture) {
+  const entry = fileURLToPath(new URL('./openclaw-local-server.mjs', import.meta.url));
+  if (process.argv[1] !== entry || args.length !== 1 || !process.env.PBK_TEAM_PASSCODE) {
+    throw new Error('Recording retention requires the isolated bridge entrypoint');
+  }
+  const pgTarget = await new Promise((resolve, reject) => {
+    process.once('message', message => {
+      if (message?.type !== 'smoke-postgres-target' || message.nonce !== nonce || typeof message.url !== 'string') {
+        reject(new Error('Invalid disposable Postgres smoke lease'));
+      } else resolve(message.url);
+    });
+    process.send({ type: 'smoke-request-postgres', nonce }, error => { if (error) reject(error); });
+  });
+  const match = /^postgresql:\/\/(pbk_retention_[a-f0-9]{32}):[a-f0-9]{64}@127\.0\.0\.1:([1-9][0-9]{0,4})\/\1$/.exec(pgTarget ?? '');
+  const port = Number(match?.[2]);
+  if (!match || match[0] !== pgTarget || port > 65535 || port === Number(process.env.PBK_OPENCLAW_PORT)) {
+    throw new Error('Invalid disposable Postgres smoke configuration');
+  }
+  // Only the real, non-TLS pg connection's synchronous connect call may use this socket.
+  const { Connection } = nodeModule.createRequire(import.meta.url)('pg');
+  const pgConnect = Connection.prototype.connect;
+  const pgSockets = new WeakSet();
+  net.Socket.prototype.connect = function (...values) {
+    if (!pgSockets.has(this) || values.length !== 2 || values[0] !== port || values[1] !== '127.0.0.1') {
+      return blockedTcp();
+    }
+    return originalConnect.apply(this, values);
+  };
+  Connection.prototype.connect = function (...values) {
+    if (this.ssl !== false || Object.getPrototypeOf(this.stream) !== net.Socket.prototype) return blockedTcp();
+    pgSockets.add(this.stream);
+    try {
+      return pgConnect.apply(this, values);
+    } finally {
+      pgSockets.delete(this.stream);
+    }
+  };
+  process.env.DATABASE_URL = pgTarget;
+}
+
+if (retentionFixture) {
+  process.env.PBK_SUPABASE_URL = retentionStorageOrigin;
+  process.env.PBK_SUPABASE_SERVICE_ROLE_KEY = randomUUID();
+  process.env.PBK_CALL_RECORDINGS_BUCKET = retentionStorageBucket;
+  process.env.PBK_TEAM_CAN_APPROVE_PROVIDER_ACTIONS = 'false';
+  process.env.PBK_AGENT_REGISTRY_HEALTH_ENABLED = 'false';
+  process.env.PBK_EMOTIONAL_LEARNING_AUTO_IMPROVE = 'false';
+  const rejectFetch = globalThis.fetch;
+  globalThis.fetch = async (target, options = {}) => {
+    const request = { url: String(target), method: options.method,
+      body: options.method === 'PUT' && Buffer.isBuffer(options.body) ? options.body.toString('utf8') : options.body };
+    if (options.redirect !== 'error' || !isRetentionStorageRequest(request)) return rejectFetch();
+    const signal = options.signal ?? AbortSignal.timeout(4_000);
+    signal.throwIfAborted();
+    return new Promise((resolve, reject) => {
+      const id = randomUUID();
+      function finish(error, result) {
+        process.off('message', onMessage);
+        signal.removeEventListener('abort', onAbort);
+        if (error || !result) reject(error || new Error('Disposable Storage transport failed'));
+        else resolve(new Response([204, 205, 304].includes(result.status) ? null : result.body, { status: result.status }));
+      }
+      function onAbort() { finish(signal.reason); }
+      function onMessage(message) {
+        if (message?.type === 'smoke-retention-storage-result' && message.nonce === nonce && message.id === id) finish(null, message.result);
+      }
+      process.on('message', onMessage);
+      signal.addEventListener('abort', onAbort, { once: true });
+      process.send({ type: 'smoke-retention-storage', nonce, id, ...request }, error => { if (error) finish(error); });
+    });
+  };
+}

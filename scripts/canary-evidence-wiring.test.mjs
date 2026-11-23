@@ -197,10 +197,19 @@ test('bridge code matches the reviewed release fingerprint outside the scoped re
   // Delivery confirmation is a metadata-only write and cannot start dispatch.
   // Telnyx receipt mapping and the scoped outbound media policy are covered by the
   // unified conversation bridge smoke test.
+  // dc9bb20 and ff183d4 add tooling status; 82ae0a0 adds exact-version recording
+  // retention, exercised by the disposable Postgres and Storage HTTP test.
+  // Synced main includes the Outlook receipt lookup from 15e6868.
+  // Retention hardening adds durable founder proof and per-key deletion intent.
+  // The recording writer guard shares the canonical Storage key with retention.
+  // The isolated retention suite covers pointer types, startup proof and upload rejection.
+  // Pin the synced bridge, including the reviewed read-only Analytics changes.
+  // The retention repair binds founder authority, durable discovery and confirmed inbox writes.
   // The Parcel Dialer release adds its router, staff permission checks and
   // signed Twilio webhook paths. Main also separates Telnyx voice and SMS
   // senders. The Postgres regression suite covers checked-out client errors.
   // Telnyx receipt tests cover verified hangups, carrier history and projection replay.
+  // Generic Inbox deletion preserves recording pointers; retention scans continue past blocked rows.
   // Ava's turn contract handles corrected asking prices and stop-contact requests.
   // Parcel lead creation rechecks the CRM before using the canonical save path.
   // Deepgram opens with the announced Telnyx codec and waits for audio signal before fallback.
@@ -210,7 +219,7 @@ test('bridge code matches the reviewed release fingerprint outside the scoped re
   // Bridge snapshots avoid deep copies and respect dashboard backpressure.
   // Hermes uses verified parcel evidence and exposes only the status of its bound approval.
   assert.equal(createHash('sha256').update(unchanged).digest('hex'),
-    '8e44fa430013f7677fcca62d3bbd6c56c1219c148b751b551643df5e72b88adf');
+    '4d68113ac4ee67ae453a938a3aa66cd283c9257266305f90fabdbd8f757b44bf');
 });
 
 test('production distribution includes reader and protocol, never the fixture signer', () => {

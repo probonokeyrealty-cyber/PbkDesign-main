@@ -88,6 +88,16 @@ assert.equal(
   'Adding a send request must still enter the existing approval-aware path.'
 );
 
+for (const message of [
+  'Can you check if 123 Example Ave is in the CRM? Read only.',
+  'Could you check whether 123 Example Ave is in our CRM?',
+]) {
+  const question = detectAssistantIntent(message);
+  assert.equal(question.intent, 'lead_lookup', message);
+  assert.equal(question.query, '123 Example Ave', message);
+  assert.equal(question.exactStreet, true, message);
+}
+
 const unitLookup = detectAssistantIntent('Look up 123 Example Ave, apartment 2B in the CRM.');
 assert.equal(unitLookup.query, '123 Example Ave Unit 2B', 'The lookup must retain the apartment number.');
 const unitLeads = [

@@ -205,7 +205,7 @@ async function main() {
         method: 'POST',
         body: {
           sessionId: 'ava-street-lookup-' + street.replace(/[^a-z0-9]+/gi, '-'),
-          message: `Look up ${street} in the CRM and tell me whether an existing lead matches. Read only.`,
+          message: `Can you check if ${street} is in the CRM? Read only.`,
         },
       });
       assert.equal(lookup.status, 200);

@@ -70,7 +70,7 @@ import { streamAvaChatResponse } from './ava-chat-events.mjs';
 import { getAvaChatRequiredPermissions } from './ava-team-chat-permissions.mjs';
 import { EventTypes, getDefaultEventBus, getEventBusStatus, publishEvent as publishEventBusEvent } from './event-bus/streams.mjs';
 import { createRuntimeCoverageSampler } from './runtime-coverage-sampler.mjs';
-import { buildRexKpiSnapshot, proposeAutonomousRexGoals, selectRexProactiveLeadAction } from './rex-autonomy.mjs';
+import { buildRexKpiSnapshot, classifyRexLeadPriority, proposeAutonomousRexGoals, selectRexProactiveLeadAction } from './rex-autonomy.mjs';
 import { recordScriptOutcomeStats, selectContextAwareScript } from './context-aware-script-rotator.mjs';
 import { findTelnyxCallEventCompletion, reconcileTelnyxCallProof } from './provider-proof-ledger.mjs';
 import {
@@ -46500,14 +46500,21 @@ function getLocalAgentRegistryHandlers() {
         },
       };
     },
-    rex: async (payload = {}) =>
-      toolHandlers.getBrainState({
+    rex: (payload = {}) => {
+      if (payload.action === 'review_lead_triage') {
+        const { score } = payload;
+        if (!Number.isFinite(score) || score < 0 || score > 100) return { ok: false };
+        const level = classifyRexLeadPriority(score);
+        return { ok: true, priority: { source: 'rex-autonomy', level, score } };
+      }
+      return toolHandlers.getBrainState({
         ...payload,
         query: payload.query || payload.command || 'Rex, summarize PBK strategy and next best action.',
         agent: 'rex',
         requestedBy: payload.requestedBy || payload.actor || 'Agent Registry',
-      }),
-    hermes: async (payload = {}) => {
+      });
+    },
+    hermes: (payload = {}) => {
       if (payload.action === 'analyze_patterns') {
         const pattern = induceWorkflowMemoryCore({ transcript: payload.transcript });
         if (controlledExecution.getStore() && payload.stoppingResult?.result === 'halt')
@@ -46558,18 +46565,7 @@ function getLocalAgentRegistryHandlers() {
       }
       return result;
     },
-    'bant-enforcer': async (payload = {}) => {
-      const bant = normalizeBantInfo(payload.bant || {}, payload, extractBantFromTranscript(payload.transcript || payload.query || '', payload.bant || {}));
-      const missing = getMissingBantFields(bant);
-      return {
-        ok: true,
-        result: 'bant_enforcer_status',
-        bant,
-        missing,
-        complete: missing.length === 0,
-        nextMissing: missing[0] || '',
-      };
-    },
+    'bant-enforcer': async (payload = {}) => reviewBantQualification(payload),
     'qa-agent': async (payload = {}) => {
       if (payload.toolName && payload.result) {
         return validateToolResultWithQa(payload.toolName, payload.params || {}, payload.result, 'agent-registry');
@@ -57262,6 +57258,7 @@ const toolHandlers = {
     const propertyCache = Array.isArray(params.propertyCache) ? params.propertyCache : [];
     let importedCount = 0;
     let updatedCount = 0;
+    let triagedCount = 0;
     let cachedCount = 0;
     let supabaseLeadUpserts = 0;
     let supabaseCacheUpserts = 0;
@@ -57292,6 +57289,8 @@ const toolHandlers = {
         addLeadImport(state, normalized);
         importedCount += 1;
         imported.push(normalized.leadId);
+        const triage = await recordAvaLeadTriage(normalized, 'bulk-lead-import');
+        if (triage) triagedCount += 1;
       }
 
       const propertyData = payload.propertyData || payload.property_data || null;
@@ -57359,6 +57358,7 @@ const toolHandlers = {
       source,
       importedCount,
       updatedCount,
+      triagedCount,
       cachedCount,
       imported,
       updated,
@@ -61483,6 +61483,124 @@ const enrichPropertyIntelligence = createPropertyIntelligence({
   },
 });
 
+function reviewBantQualification(payload = {}) {
+  const bant = normalizeBantInfo(
+    payload.bant || {}, payload,
+    extractBantFromTranscript(payload.transcript || payload.query || '', payload.bant || {})
+  );
+  const missing = getMissingBantFields(bant);
+  return {
+    ok: true,
+    result: 'bant_enforcer_status',
+    bant,
+    missing,
+    complete: missing.length === 0,
+    nextMissing: missing[0] || '',
+  };
+}
+
+function leadTriageTaskId(leadId) {
+  return `ava-lead-triage-${createHash('sha256').update(leadId).digest('hex')}`;
+}
+
+function findAvaLeadTriage(lead) {
+  const leadId = String(lead.leadId || lead.id || '').trim();
+  return state.agentTasks.find((task) => task.id === leadTriageTaskId(leadId));
+}
+
+const HERMES_TRIAGE_REVIEW = {
+  probate_or_estate: 'Verify decision-making authority and any estate constraints during internal review.',
+  tenant_pressure: 'Verify occupancy and lease constraints during internal review.',
+  debt_deadline: 'Verify the reported deadline during internal review.',
+};
+
+async function recordAvaLeadTriage(lead, intake) {
+  const leadId = String(lead.leadId || lead.id || '').trim();
+  const record = state.leadImports.find((item) => (item.leadId || item.id) === leadId);
+  if (!record) return undefined;
+  const previous = findAvaLeadTriage(record);
+  if (previous) return previous;
+
+  // Use the same deterministic qualification logic as the registered BANT specialist.
+  const qualification = reviewBantQualification({ bant: record.bant || record.metadata?.bant });
+  const address = String(record.property?.address || '').trim();
+  const hasAddress = Boolean(address && !/^unknown(?: property| address)?$/i.test(address));
+  const { blocked } = getConversationDncStatus({ runtimeLead: record, phone: record.seller?.phone });
+  const score = record.score;
+  const taskId = leadTriageTaskId(leadId);
+  const consultationIds = [];
+  const specialists = getLocalAgentRegistryHandlers();
+  const recordConsultation = (toAgent, summary, metadata) => {
+    const id = `${taskId}-${toAgent.toLowerCase()}`;
+    consultationIds.push(id);
+    void recordAgentHandoffTask({
+      id, fromAgent: 'Ava', toAgent, taskType: 'lead_triage_consultation',
+      status: 'complete', summary, correlationId: leadId, providerWrites: 'blocked',
+      metadata: { ...metadata, triageId: taskId },
+    });
+  };
+  let priority;
+  let patternAdvice;
+  if (!blocked && hasAddress) {
+    if (Number.isFinite(score) && score >= 0 && score <= 100) {
+      if (classifyRexLeadPriority(score) === 'routine') {
+        priority = { source: 'rex-autonomy', level: 'routine', score };
+      } else {
+        ({ priority } = specialists.rex({ action: 'review_lead_triage', score }));
+        recordConsultation('Rex', 'Ranked the lead for internal review based on its saved score.', {
+          source: 'saved_lead_score', priority,
+        });
+      }
+    }
+    const notes = String(record.seller?.notes || '').slice(0, 4000);
+    const signal = notes.match(/\b(?:probate|executor|estate sale|tenant|renter|evict\w*|foreclosure|auction)\b/i)?.[0];
+    if (signal) {
+      const { pattern } = specialists.hermes({ action: 'analyze_patterns', transcript: signal });
+      const trigger = pattern?.workflow?.trigger;
+      patternAdvice = HERMES_TRIAGE_REVIEW[trigger];
+      if (patternAdvice) {
+        recordConsultation('Hermes', patternAdvice, { source: 'saved_intake_note', pattern: trigger });
+      }
+    }
+  }
+  let summary;
+  if (blocked) {
+    summary = 'Do not contact this lead. Review the saved contact restriction.';
+  } else {
+    const nextStep = !hasAddress
+      ? 'Confirm the property address before running the analyzer.'
+      : qualification.complete
+        ? 'Review the saved qualification and analyzer results before preparing an offer.'
+        : `Confirm missing seller qualification details: ${qualification.missing.join(', ')}.`;
+    summary = priority?.level === 'high' ? `Prioritize internal review. ${nextStep}` : nextStep;
+    if (patternAdvice) summary += ` ${patternAdvice}`;
+  }
+  const task = recordAgentHandoffTask({
+    id: taskId,
+    fromAgent: 'Ava',
+    toAgent: 'PBK operator',
+    taskType: 'lead_intake_triage',
+    status: 'complete',
+    summary,
+    correlationId: leadId,
+    providerWrites: 'blocked',
+    metadata: {
+      source: intake,
+      crm: { source: 'bridge_state.leadImports', result: 'canonical_lead_found', leadId, hasAddress },
+      qualification: { source: 'bant-enforcer', missing: qualification.missing },
+      contactRestricted: blocked,
+      consultationIds,
+      ...(priority && { priority }),
+    },
+  });
+  addActivity(state, {
+    ...makeActivity({ actor: 'Ava', category: 'CRM', text: summary, source: 'ava-lead-intake-triage' }),
+    leadId,
+    action: 'lead_intake_triage',
+  });
+  return task;
+}
+
 function findDuplicateLeadImport(leadImport = {}) {
   const leadAddressKey = slugify(leadImport.property?.address || leadImport.address || '');
   const leadPhoneKey = normalizePhone(leadImport.seller?.phone || leadImport.phone || '');
@@ -61589,6 +61707,7 @@ async function handleManualLeadCreate(payload = {}, verifiedParcel = null, { que
         leadId: prior.leadId || prior.id,
         leadImport: prior,
         lead: prior,
+        leadTriage: findAvaLeadTriage(prior),
         eventId,
       };
     }
@@ -61665,6 +61784,7 @@ async function handleManualLeadCreate(payload = {}, verifiedParcel = null, { que
     addAnalyzerRun(state, queuedAnalyzer);
   }
 
+  const leadTriage = duplicate ? findAvaLeadTriage(savedLead) : await recordAvaLeadTriage(savedLead, 'manual-lead-create');
   await persistState(state);
 
   const profilePersistence = {
@@ -61693,6 +61813,7 @@ async function handleManualLeadCreate(payload = {}, verifiedParcel = null, { que
     leadImport: savedLead,
     lead: savedLead,
     duplicate,
+    leadTriage,
     queuedAnalyzer,
     profilePersistence,
   };
@@ -61811,10 +61932,13 @@ async function handleRuntimeEvent(normalizedEvent, payload, { directRetentionFou
     if (eventId) {
       const prior = state.leadImports.find((item) => item && item.eventId === eventId);
       if (prior) {
+        const leadTriage = findAvaLeadTriage(prior);
+        if (leadTriage) await persistState(state);
         return {
           ok: true,
           replayed: true,
           leadImport: prior,
+          leadTriage,
           eventId,
         };
       }
@@ -61920,6 +62044,7 @@ async function handleRuntimeEvent(normalizedEvent, payload, { directRetentionFou
       );
     }
 
+    const leadTriage = duplicate ? findAvaLeadTriage(savedLead) : await recordAvaLeadTriage(savedLead, 'lead-intake');
     await persistState(state);
     const profilePersistence = {
       ok: true,
@@ -61939,6 +62064,7 @@ async function handleRuntimeEvent(normalizedEvent, payload, { directRetentionFou
       ok: true,
       leadImport: savedLead,
       duplicate: Boolean(duplicate),
+      leadTriage,
       queuedAnalyzer,
       profilePersistence,
     };
@@ -74127,7 +74253,12 @@ const server = createServer(async (request, response) => {
           blockers: commandCenterHealth.ready ? [] : [runtimeStateBootstrap.error || commandCenterHealth.status],
           sloBurned: false,
         },
-        agentOrchestration: commandCenterHealth.agentOrchestration,
+        agentOrchestration: {
+          ...commandCenterHealth.agentOrchestration,
+          recentTasks: commandCenterHealth.agentOrchestration.recentTasks.filter(
+            (task) => !['lead_intake_triage', 'lead_triage_consultation'].includes(task.taskType)
+          ),
+        },
         tools: state.status.tools,
         toolUsage: state.status.toolUsage,
         n8n: state.status.n8n,

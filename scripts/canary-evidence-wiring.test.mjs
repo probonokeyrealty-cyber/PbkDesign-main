@@ -218,8 +218,11 @@ test('bridge code matches the reviewed release fingerprint outside the scoped re
   // Interim transcripts and weak acknowledgments cannot replace a committed Ava reply.
   // Bridge snapshots avoid deep copies and respect dashboard backpressure.
   // Hermes uses verified parcel evidence and exposes only the status of its bound approval.
+  // Ava intake records internal triage and reuses the BANT and Rex priority rules.
+  // The isolated intake test checks replay, contact restrictions, and absence of provider writes.
+  // Specialist handoffs persist separately and their lead-level details stay out of public liveness.
   assert.equal(createHash('sha256').update(unchanged).digest('hex'),
-    '4d68113ac4ee67ae453a938a3aa66cd283c9257266305f90fabdbd8f757b44bf');
+    '999aba1ad4546c219554ac6918e4d60a8455b99057146ddff88245cc800e96a8');
 });
 
 test('production distribution includes reader and protocol, never the fixture signer', () => {

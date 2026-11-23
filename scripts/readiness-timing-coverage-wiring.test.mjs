@@ -379,7 +379,9 @@ test.each(['organic', 'controlled', 'failed', 'partial', 'cancelled', 'provider'
     buildAgentExecutionEvidence, isAgentHandlerCompletion, isoNow: () => new Date(NOW + elapsed).toISOString(),
     persistState: async () => {}, state: {},
   });
-  for (const name of ['getLocalAgentRegistryHandlers', 'invokeAgentFromRegistry']) vm.runInContext(extract(name), context);
+  for (const name of ['reviewBantQualification', 'getLocalAgentRegistryHandlers', 'invokeAgentFromRegistry']) {
+    vm.runInContext(extract(name), context);
+  }
   const run = () => context.invokeAgentFromRegistry({ agentId, payload: {
     query: 'local fixture', metadata: { channel: 'phone', outputCodePoints: 1, timingProof: { signature: 'forged' } },
   } });

@@ -225,9 +225,9 @@ test('bridge code matches the reviewed release fingerprint outside the scoped re
   // The exact-lead review reads saved evidence and treats saved restrictions conservatively.
   // See docs/operations/2026-11-23-ava-lead-review-integrity.md for the independent review.
   // The staff review projects saved decision codes and verified consultation records
-  // from the exact lead's Ava triage. It cannot enqueue work or dispatch outreach.
+  // from the exact lead's Ava triage. A direct record read skips review generation.
   assert.equal(createHash('sha256').update(unchanged).digest('hex'),
-    'a213894b48abc47bf8c675381220db30a416b343148584e7f7b823664cccaee9');
+    '83a7ab84f2f365ab30c932543573a934f1a457fba322fabc118d778c8eb925e9');
 });
 
 test('production distribution includes reader and protocol, never the fixture signer', () => {

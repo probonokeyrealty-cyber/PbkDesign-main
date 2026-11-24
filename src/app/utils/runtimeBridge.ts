@@ -3319,17 +3319,19 @@ export async function fetchLeadFullRequest(leadId: string) {
 
 type ConsultationSkipReason = 'contact_restricted' | 'property_address_missing';
 
+export type AvaConsultationRecord = {
+  id: string;
+  specialist: 'Rex' | 'Hermes';
+  status: 'complete';
+  summary: string;
+  createdAt: string;
+};
+
 export type AvaLeadReview = {
   leadId: string;
   reviewedAt: string;
   writeMode: 'read_only';
-  consultationRecords?: Array<{
-    id: string;
-    specialist: 'Rex' | 'Hermes';
-    status: 'complete';
-    summary: string;
-    createdAt: string;
-  }>;
+  consultationRecords?: AvaConsultationRecord[];
   consultationDecisions?: {
     version: 1;
     rex: ConsultationSkipReason | 'elevated_score' | 'score_below_threshold' | 'score_unavailable';
@@ -3352,6 +3354,18 @@ export async function fetchAvaLeadReviewRequest(leadId: string) {
     throw new Error('No review was returned for this lead. Try again.');
   }
   return review;
+}
+
+export async function fetchAvaConsultationRequest(leadId: string, consultationId: string) {
+  const { ok, leadId: savedLeadId, consultation } = await bridgeRequest<{
+    ok?: boolean; leadId?: string; consultation?: AvaConsultationRecord;
+  }>({
+    path: `/api/leads/${encodeURIComponent(leadId)}/full?consultation=${encodeURIComponent(consultationId)}`,
+  });
+  if (ok !== true || savedLeadId !== leadId || consultation?.id !== consultationId) {
+    throw new Error('No consultation was returned for this lead.');
+  }
+  return consultation;
 }
 
 export async function fetchLeadLastCallRequest(leadId: string) {

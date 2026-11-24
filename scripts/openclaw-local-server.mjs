@@ -61614,7 +61614,7 @@ async function loadAvaConsultationEvidence(leadId) {
       && task.status === 'complete' && task.providerWrites === 'blocked')
       .map(({ id, toAgent, status, summary, createdAt }) => ({ id, specialist: toAgent, status, summary, createdAt }))
     : [];
-  return { consultationDecisions, consultationRecords };
+  return { consultationDecisions, consultationRecords, recordsAvailable };
 }
 
 const HERMES_TRIAGE_REVIEW = {
@@ -82624,6 +82624,7 @@ const server = createServer(async (request, response) => {
     if (leadFullMatch && request.method === 'GET') {
       response.setHeader('Cache-Control', 'no-store');
       const reviewOnly = url.searchParams.get('review') === 'ava';
+      const consultationId = url.searchParams.get('consultation');
       let leadId;
       try {
         leadId = decodeURIComponent(leadFullMatch.groups.id);
@@ -82632,8 +82633,12 @@ const server = createServer(async (request, response) => {
         json(response, 400, { ok: false, error: 'Invalid lead ID.' });
         return;
       }
-      if (reviewOnly) {
-        const { lead: exactLead, unavailable, contactRestricted } = await loadLeadForFullView(leadId, { reviewOnly });
+      if (consultationId !== null && !/^(?:ava-lead-triage-[a-f0-9]{64})-(?:rex|hermes)$/.test(consultationId)) {
+        json(response, 404, { ok: false, error: 'Saved consultation not found.' });
+        return;
+      }
+      if (reviewOnly || consultationId !== null) {
+        const { lead: exactLead, unavailable, contactRestricted } = await loadLeadForFullView(leadId, { reviewOnly: true });
         if (unavailable) {
           json(response, 503, { ok: false, code: 'lead_roster_unavailable', error: 'The saved lead record is unavailable. Try again shortly.' });
           return;
@@ -82642,10 +82647,24 @@ const server = createServer(async (request, response) => {
           json(response, 404, { ok: false, error: 'Lead not found.' });
           return;
         }
-        const consultationEvidence = await loadAvaConsultationEvidence(leadId);
+        const { consultationDecisions, consultationRecords, recordsAvailable } = await loadAvaConsultationEvidence(leadId);
+        if (consultationId !== null) {
+          if (!recordsAvailable) {
+            json(response, 503, { ok: false, error: 'Saved consultation is temporarily unavailable.' });
+            return;
+          }
+          const consultation = consultationRecords.find((record) => record.id === consultationId);
+          if (!consultation) {
+            json(response, 404, { ok: false, error: 'Saved consultation not found.' });
+            return;
+          }
+          json(response, 200, { ok: true, leadId, consultation });
+          return;
+        }
         json(response, 200, { ok: true, review: {
           ...buildAvaLeadReview(exactLead, leadId, contactRestricted),
-          ...consultationEvidence,
+          consultationDecisions,
+          consultationRecords,
         } });
         return;
       }

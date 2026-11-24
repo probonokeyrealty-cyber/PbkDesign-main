@@ -1,5 +1,10 @@
-import { useId, useState, type FormEvent } from 'react';
+import { lazy, Suspense, useId, useRef, useState, type FormEvent } from 'react';
 import { formatCurrency } from '../../utils/formatting';
+import { VAN_NUYS_ZCTA } from './marketStagingData';
+
+const VanNuysMarketMap = import.meta.env.PBK_MARKET_STAGING_INDICATORS
+  ? lazy(() => import('./VanNuysMarketMap'))
+  : null;
 
 export type SurveyEstimate = readonly [estimate: number, marginOfError: number];
 export type AnnualIndexChange = readonly [year: number, basisPoints: number];
@@ -37,6 +42,35 @@ const surveyMetrics = [
 
 function surveyBounds([estimate, margin]: SurveyEstimate) {
   return [Math.max(0, estimate - margin), estimate + margin] as const;
+}
+
+export function CensusSnapshotChart({ estimate }: { estimate: SurveyEstimate }) {
+  const [low, high] = surveyBounds(estimate);
+  const step = 10 ** Math.floor(Math.log10(high)) / 2;
+  const max = Math.ceil(high / step) * step;
+  const position = (amount: number) => `${(amount / max) * 100}%`;
+
+  return (
+    <span className="pbk-market-snapshot-chart">
+      <span className="pbk-market-snapshot-axis" aria-hidden="true">
+        <span
+          className="pbk-market-snapshot-band"
+          style={{ insetInlineStart: position(low), width: position(high - low) }}
+        />
+        <span
+          className="pbk-market-snapshot-point"
+          style={{ insetInlineStart: position(estimate[0]) }}
+        />
+      </span>
+      <span className="pbk-market-snapshot-scale" aria-hidden="true">
+        <span>{formatCurrency(0)}</span>
+        <span>{formatCurrency(max)}</span>
+      </span>
+      <small>
+        90% range: {formatCurrency(low)} to {formatCurrency(high)}
+      </small>
+    </span>
+  );
 }
 
 export function DescribeIndex({ change }: { change: AnnualIndexChange | null }) {
@@ -169,13 +203,17 @@ export function ComparePublicHousing({
   lookup: (code: string) => HousingRow | undefined;
 }) {
   const fieldId = useId();
+  const comparison = useRef<HTMLDetailsElement>(null);
   const [entered, setEntered] = useState('');
   const [peer, setPeer] = useState<{ code: string; row: HousingRow } | null>(null);
   const [message, setMessage] = useState('');
 
   function compare(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const code = entered.trim();
+    selectPeer(entered.trim());
+  }
+
+  function selectPeer(code: string) {
     const failure = (text: string) => {
       setPeer(null);
       setMessage(text);
@@ -189,74 +227,89 @@ export function ComparePublicHousing({
   }
 
   return (
-    <details className="pbk-market-sources pbk-market-compare">
-      <summary>Compare another ZIP</summary>
-      <p>
-        Use the same Census survey vintage for both codes. Each chart has its own dollar scale. A
-        dot marks the estimate and a band shows the 90% confidence interval.
-      </p>
-      <form className="pbk-market-compare-form" onSubmit={compare}>
-        <label htmlFor={fieldId}>Comparison ZIP</label>
-        <input
-          id={fieldId}
-          value={entered}
-          onChange={(event) => setEntered(event.target.value)}
-          inputMode="numeric"
-          autoComplete="off"
-          placeholder="e.g. 01001"
-        />
-        <button type="submit" className="pbk-btn pbk-btn-primary">
-          Compare
-        </button>
-      </form>
-      <p className="pbk-market-feedback" role="status">
-        {message}
-      </p>
-      {peer && (
-        <section
-          aria-label={`Comparison with ${peer.code}`}
-          className="pbk-market-comparison-result"
-        >
-          <div className="pbk-market-summary">
-            <SurveyComparison
-              label={surveyMetrics[0].name}
-              zip={zip}
-              peer={peer.code}
-              original={row[0]}
-              other={peer.row[0]}
-            />
-            <SurveyComparison
-              label={surveyMetrics[1].name}
-              zip={zip}
-              peer={peer.code}
-              original={row[1]}
-              other={peer.row[1]}
-            />
-          </div>
-          <section className="pbk-market-metric" aria-label="FHFA annual index comparison">
-            <h4>FHFA annual index changes</h4>
-            <dl>
-              {(
-                [
-                  [zip, row[2]],
-                  [peer.code, peer.row[2]],
-                ] as const
-              ).map(([code, score]) => (
-                <div key={code}>
-                  <dt>
-                    ZIP {code}
-                    {score && ` · ${score[0]}`}
-                  </dt>
-                  <dd>{score ? formatIndexChange(score[1]) : 'No usable annual change'}</dd>
-                </div>
-              ))}
-            </dl>
-            {row[2] && peer.row[2] && row[2][0] !== peer.row[2][0] && (
-              <small>Different observation years; not a like-for-like comparison.</small>
-            )}
-          </section>
-        </section>
+    <>
+      {VanNuysMarketMap && zip === VAN_NUYS_ZCTA && (
+        <Suspense fallback={<p role="status">Loading market map...</p>}>
+          <VanNuysMarketMap
+            lookup={lookup}
+            selected={peer?.code ?? ''}
+            onSelect={(code) => {
+              setEntered(code);
+              selectPeer(code);
+              if (comparison.current) comparison.current.open = true;
+            }}
+          />
+        </Suspense>
       )}
-    </details>
+      <details ref={comparison} className="pbk-market-sources pbk-market-compare">
+        <summary>Compare another ZIP</summary>
+        <p>
+          Use the same Census survey vintage for both codes. Each chart has its own dollar scale. A
+          dot marks the estimate and a band shows the 90% confidence interval.
+        </p>
+        <form className="pbk-market-compare-form" onSubmit={compare}>
+          <label htmlFor={fieldId}>Comparison ZIP</label>
+          <input
+            id={fieldId}
+            value={entered}
+            onChange={(event) => setEntered(event.target.value)}
+            inputMode="numeric"
+            autoComplete="off"
+            placeholder="e.g. 01001"
+          />
+          <button type="submit" className="pbk-btn pbk-btn-primary">
+            Compare
+          </button>
+        </form>
+        <p className="pbk-market-feedback" role="status">
+          {message}
+        </p>
+        {peer && (
+          <section
+            aria-label={`Comparison with ${peer.code}`}
+            className="pbk-market-comparison-result"
+          >
+            <div className="pbk-market-summary">
+              <SurveyComparison
+                label={surveyMetrics[0].name}
+                zip={zip}
+                peer={peer.code}
+                original={row[0]}
+                other={peer.row[0]}
+              />
+              <SurveyComparison
+                label={surveyMetrics[1].name}
+                zip={zip}
+                peer={peer.code}
+                original={row[1]}
+                other={peer.row[1]}
+              />
+            </div>
+            <section className="pbk-market-metric" aria-label="FHFA annual index comparison">
+              <h4>FHFA annual index changes</h4>
+              <dl>
+                {(
+                  [
+                    [zip, row[2]],
+                    [peer.code, peer.row[2]],
+                  ] as const
+                ).map(([code, score]) => (
+                  <div key={code}>
+                    <dt>
+                      ZIP {code}
+                      {score && ` · ${score[0]}`}
+                    </dt>
+                    <dd>{score ? formatIndexChange(score[1]) : 'No usable annual change'}</dd>
+                  </div>
+                ))}
+              </dl>
+              {row[2] && peer.row[2] && row[2][0] !== peer.row[2][0] && (
+                <small>Different observation years; not a like-for-like comparison.</small>
+              )}
+            </section>
+          </section>
+        )}
+      </details>
+    </>
   );
 }

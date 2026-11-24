@@ -1,9 +1,16 @@
 import { lazy, Suspense } from 'react';
 import { formatCurrency } from '../../utils/formatting';
 import type { readPropertyEvidence } from '../../utils/propertyEvidence';
+import type { InvestorEvidenceDestination } from './LeadInvestorEvidenceChecklist';
 import type { LeadPortalModel } from './leadPortalModel';
 import '../../../styles/lead-market-comparison.css';
 
+const LeadFictionalMarketTrends = import.meta.env.PBK_MARKET_STAGING_INDICATORS
+  ? lazy(() => import('./LeadFictionalMarketTrends'))
+  : null;
+const LeadInvestorEvidenceChecklist = import.meta.env.PBK_MARKET_STAGING_INDICATORS
+  ? lazy(() => import('./LeadInvestorEvidenceChecklist'))
+  : null;
 const LeadPublicHousingContext = lazy(() => import('./LeadPublicHousingContext'));
 
 const zipFixture = {
@@ -99,9 +106,11 @@ function Metric({
 export function LeadMarketComparison({
   lead,
   evidence,
+  onOpenEvidence,
 }: {
   lead: Pick<LeadPortalModel, 'zip' | 'propertyType'>;
   evidence: ReturnType<typeof readPropertyEvidence>;
+  onOpenEvidence?: (destination: InvestorEvidenceDestination) => void;
 }) {
   const { listing, records } = evidence;
   const zip = /^(\d{5})(?:-\d{4})?$/.exec(lead.zip.trim())?.[1];
@@ -154,9 +163,25 @@ export function LeadMarketComparison({
           </div>
         </div>
       </header>
+      {LeadInvestorEvidenceChecklist && (
+        <Suspense fallback={<p role="status">Loading investor evidence checklist…</p>}>
+          <LeadInvestorEvidenceChecklist evidence={evidence} onOpen={onOpenEvidence} />
+        </Suspense>
+      )}
       {zip ? (
         <Suspense fallback={<p role="status">Loading public housing snapshot...</p>}>
-          <LeadPublicHousingContext zip={zip} />
+          <LeadPublicHousingContext
+            zip={zip}
+            savedAsk={
+              listing && askingPrice !== null
+                ? {
+                    amount: askingPrice,
+                    capturedAt: listing.retrievedAt,
+                    date: dateLabel(listing.retrievedAt),
+                  }
+                : null
+            }
+          />
         </Suspense>
       ) : (
         <p className="pbk-market-notice">Public housing context requires a saved five-digit ZIP.</p>
@@ -283,6 +308,11 @@ export function LeadMarketComparison({
           )}
         </div>
       </section>
+      {LeadFictionalMarketTrends && (
+        <Suspense fallback={<p role="status">Loading fictional market trends…</p>}>
+          <LeadFictionalMarketTrends />
+        </Suspense>
+      )}
       <details className="pbk-market-sources">
         <summary>Sources and limits</summary>
         <p>

@@ -142,8 +142,10 @@ assert(
 );
 
 assert(
-  /useParams/.test(dealView) && /fetchLeadFullRequest\(leadId\)/.test(dealView),
-  'The /deal/:id route should fetch the canonical lead before mounting the analyzer.'
+  /useParams/.test(dealView) &&
+    /await fetchLeadFullRequest\(\s*leadId,\s*\{\s*signal,\s*retryLeadReadDuringRestart:\s*true,?\s*\}\s*\)/.test(dealView) &&
+    /controller\.abort\(\)/.test(dealView),
+  'The /deal/:id route should fetch the canonical lead with cancellable recovery before mounting the analyzer.'
 );
 assert(
   /buildAnalyzerDealFromLead/.test(dealView) &&

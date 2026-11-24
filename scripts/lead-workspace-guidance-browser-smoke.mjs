@@ -11,6 +11,8 @@ const origin = 'http://127.0.0.1:' + server.httpServer.address().port;
 async function verify(browserType, width) {
   const browser = await browserType.launch();
   const context = await browser.newContext({ viewport: { width, height: 900 } });
+  const verifyClipboard = browserType.name() === 'chromium';
+  if (verifyClipboard) await context.grantPermissions(['clipboard-read', 'clipboard-write'], { origin });
   const page = await context.newPage();
   const writes = [], lookups = [], errors = [];
   let consent = 'no consent', dnc = 'blocked', zip = '';
@@ -78,6 +80,7 @@ async function verify(browserType, width) {
     assert.equal(reviewReads, 2);
     await expect(review.getByText('Reasons weren’t recorded at intake.', { exact: true })).toBeVisible();
     await expect(review.getByRole('link')).toHaveCount(0);
+    await expect(review.getByRole('button', { name: 'Copy link', exact: false })).toHaveCount(0);
     reviewMode = 'legacy-records';
     await review.getByRole('button', { name: 'Run review again' }).click();
     await expect(review.getByRole('link')).toHaveCount(2);
@@ -88,10 +91,20 @@ async function verify(browserType, width) {
     await expect(review.getByText('Consulted because intake flagged a tenancy issue.', { exact: true })).toBeVisible();
     const reviewReadsBeforeLinks = reviewReads;
     for (const { id, specialist, summary } of consultationRecords) {
-      const [destination] = await Promise.all([
-        context.waitForEvent('page'),
-        review.getByRole('link', { name: `View saved ${specialist} consultation` }).click(),
-      ]);
+      const link = review.getByRole('link', { name: `View saved ${specialist} consultation` });
+      const copyButton = review.getByRole('button', { name: `Copy link to saved ${specialist} consultation` });
+      await expect(copyButton).toBeVisible();
+      let destination;
+      if (verifyClipboard) {
+        const expected = new URL(await link.getAttribute('href'), origin).href;
+        await copyButton.click();
+        await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe(expected);
+        const copied = await page.evaluate(() => navigator.clipboard.readText());
+        destination = await context.newPage();
+        await destination.goto(copied);
+      } else {
+        [destination] = await Promise.all([context.waitForEvent('page'), link.click()]);
+      }
       const record = destination.getByRole('article', { name: `${specialist} consultation record` });
       await expect(record).toContainText(summary);
       assert.equal(new URL(destination.url()).pathname, `/leads/guidance-demo/consultations/${id}`);

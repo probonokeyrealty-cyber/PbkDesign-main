@@ -164,7 +164,7 @@ async function verify(type, width) {
     assert.deepEqual(await page.locator('[data-today-queue-id]').evaluateAll(nodes => nodes.map(n => n.dataset.todayQueueId)), sampleLeads.map((_, i) => `sample-queue-${i}`));
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, 'Long queue IDs and text must wrap');
     const loadedFonts = await page.evaluate(async () => {
-      const families = ['Geist', 'Fraunces', 'PBK JetBrains Mono NF'];
+      const families = ['PBK Plus Jakarta Sans', 'Fraunces', 'PBK JetBrains Mono NF'];
       const result = [];
       for (const family of families) result.push((await document.fonts.load(`14px "${family}"`)).length);
       return result;

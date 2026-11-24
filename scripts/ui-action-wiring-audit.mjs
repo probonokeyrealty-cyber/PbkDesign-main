@@ -402,24 +402,28 @@ if (mutationSuccessGuardMissing) {
   });
 }
 
-const sellerDocIdentityMissing =
-  !/fetchSenderIdentitiesRequest/.test(pathDeliverables) ||
-  !/SenderIdentitySelect/.test(pathDeliverables) ||
-  !/senderIdentityId:\s*senderIdentityId \|\| undefined/.test(pathDeliverables) ||
-  !/documentSet:\s*editableDocuments/.test(pathDeliverables) ||
-  !/sellerEmail[\s\S]{0,240}includes\('@'\)/.test(reactApp) ||
-  !/sendSellerDocsRequest\(\{[\s\S]*senderIdentityId:\s*senderIdentityId\?\.trim\(\) \|\| undefined/.test(reactApp) ||
-  !/documentSet:\s*documentSet \|\| generatedDocuments/.test(reactApp) ||
-  !/response\?\.senderIdentity/.test(reactApp) ||
-  !/const senderIdentityId = String\(params\.senderIdentityId/.test(bridge) ||
-  !/store\.getSenderIdentity\(senderIdentityId/.test(bridge) ||
-  !/senderIdentity\.channel !== 'email'/.test(bridge) ||
-  !/rankEligibleSenderIdentities\(\[senderIdentity\]\)/.test(bridge);
-if (sellerDocIdentityMissing) {
+const sellerDocHandler = bridge.match(/^  async sendSellerDocs\(params = \{\}\) \{[\s\S]*?(?=^  async )/m)?.[0] || '';
+const outlookMail = readFileSync(resolve(root, 'scripts/ava-outlook-mail.mjs'), 'utf8');
+const selectedSenderWired =
+  /<select\s+value=\{fromEmail\}/.test(pathDeliverables) &&
+  /onEmailDocuments\(\{[^}]*\bfromEmail,\s*documentSet:\s*editableDocuments/.test(pathDeliverables) &&
+  /sellerEmail[\s\S]{0,240}includes\('@'\)/.test(reactApp) &&
+  /sendSellerDocsRequest\(\{[^}]*email:\s*sellerEmail,[^}]*fromEmail:\s*fromEmail\?\.trim\(\) \|\| undefined,[^}]*documentSet:\s*documentSet \|\| generatedDocuments/.test(reactApp) &&
+  /const selectedFromEmail = String\(\s*senderIdentity\?\.address \|\|\s*params\.fromEmail/.test(sellerDocHandler) &&
+  /const from = selectedFromEmail \|\| String\(process\.env\.PBK_AVA_OUTLOOK_SENDER/.test(sellerDocHandler) &&
+  /await sendAvaOutlookMail\(\{\s*sender: from,\s*recipient: recipientEmail,/.test(sellerDocHandler);
+const connectedSenderVerified =
+  /store\.getSenderIdentity\(senderIdentityId/.test(sellerDocHandler) &&
+  /senderIdentity\.channel !== 'email'/.test(sellerDocHandler) &&
+  /rankEligibleSenderIdentities\(\[senderIdentity\]\)/.test(sellerDocHandler) &&
+  /from !== allowedSender && !alternate/.test(outlookMail) &&
+  /await execute\('OUTLOOK_GET_PROFILE'[\s\S]*mailbox\.toLowerCase\(\) !== allowedSender[\s\S]*await execute\('OUTLOOK_SEND_DRAFT'/.test(outlookMail) &&
+  /checked\?\.data\?\.from\?\.emailAddress\?\.address\?\.toLowerCase\(\) !== from[\s\S]*return \{ \.\.\.failed\('outlook_sender_unverified'[\s\S]*await execute\('OUTLOOK_SEND_DRAFT'/.test(outlookMail);
+if (!selectedSenderWired || !connectedSenderVerified) {
   fail.push({
-    name: 'Seller document email must use a validated connected sender identity',
+    name: 'Seller document email must use a verified Outlook sender',
     details: [
-      'PathDeliverables should load email sender identities, pass senderIdentityId with the PDF email request, and the bridge should validate the selected identity before using it as From.',
+      'Preserve the selected From address in the PDF email request and verify the connected mailbox and any alternate From address before sending.',
     ],
   });
 }
@@ -785,8 +789,8 @@ const report = {
       count: 2,
     },
     {
-      name: 'Seller document email uses validated sender identity',
-      ok: !sellerDocIdentityMissing,
+      name: 'Seller document email uses a verified Outlook sender',
+      ok: selectedSenderWired && connectedSenderVerified,
       count: 1,
     },
     {

@@ -4,7 +4,7 @@ import { Clipboard, Copy, Eye, FilePlus, FileText, Printer, Send } from 'lucide-
 import { PBKBranding, buildDocumentSet, getPdfReadiness } from '../utils/pbk';
 import { DocumentPdfPanel } from './DocumentPdfPanel';
 const documentEmailSenders = [
-  'acquistion@probonokeyrealty.com',
+  'acquisition@probonokeyrealty.com',
   'info@probonokeyrealty.com',
   'team@probonokeyrealty.com',
 ];

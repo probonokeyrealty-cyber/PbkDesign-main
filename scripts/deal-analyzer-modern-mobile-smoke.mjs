@@ -398,11 +398,15 @@ assert(
     /lastAnalyzerRunId/.test(bridgeServer),
   'Bridge analyzeDeal should sync successful analyzer runs back to the matching lead profile.'
 );
+const sellerDocsStart = bridgeServer.indexOf('  async sendSellerDocs(params = {}) {');
+const sellerDocsEnd = bridgeServer.indexOf('  async prepareContract(params = {}) {', sellerDocsStart);
+assert(sellerDocsStart >= 0 && sellerDocsEnd > sellerDocsStart, 'Seller document handler must exist.');
+const sellerDocsHandler = bridgeServer.slice(sellerDocsStart, sellerDocsEnd);
 assert(
-  /A valid seller email is required before sending seller documents/.test(bridgeServer) &&
-    /getSenderAddress\(senderProfile, selectedFromEmail\)/.test(bridgeServer) &&
-    /fromEmail: from/.test(bridgeServer),
-  'Seller document delivery should validate recipient email and preserve the chosen sender address.'
+  /result: 'missing_recipient_email'[\s\S]*await sendAvaOutlookMail\(\{\s*sender: from,\s*recipient: recipientEmail,/.test(sellerDocsHandler) &&
+    /const from = selectedFromEmail \|\| String\(process\.env\.PBK_AVA_OUTLOOK_SENDER/.test(sellerDocsHandler) &&
+    /fromEmail: from/.test(sellerDocsHandler),
+  'Outlook seller document delivery should validate the recipient and use the selected sender.'
 );
 assert(
   /latestAnalyzerRun/.test(bridgeServer) &&

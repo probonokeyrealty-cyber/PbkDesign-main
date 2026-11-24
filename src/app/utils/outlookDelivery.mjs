@@ -36,10 +36,15 @@ export function readOutlookDelivery(approval) {
   const provider =
     params?.provider || approval?.provider || result?.provider || result?.callProvider;
   const action = approval?.approvalAction || metadata?.requestedTool || approval?.action;
+  const documentEmail =
+    action === 'sendSellerDocs' &&
+    (String(provider || '').toLowerCase() === 'outlook' ||
+      approval?.source === 'seller_docs_manual' ||
+      params?.source === 'seller_docs_manual');
   if (
     !approval?.id ||
-    String(provider || '').toLowerCase() !== 'outlook' ||
-    action !== 'sendColdEmail'
+    (!documentEmail &&
+      (String(provider || '').toLowerCase() !== 'outlook' || action !== 'sendColdEmail'))
   )
     return null;
 
@@ -55,7 +60,7 @@ export function readOutlookDelivery(approval) {
   } else if (
     dispatch === 'reconciliation_required' ||
     result?.reconciliationRequired ||
-    result?.result === 'provider_delivery_unknown'
+    ['provider_delivery_unknown', 'outlook_send_unknown'].includes(result?.result)
   ) {
     state = 'recovery';
   } else if (dispatch === 'dispatching') {
@@ -71,11 +76,18 @@ export function readOutlookDelivery(approval) {
     state = 'accepted';
   } else if (approval.status !== 'approved') {
     state = approval.status === 'pending' || !approval.status ? 'pending' : 'closed';
+  } else if (documentEmail) {
+    state = 'recovery';
   }
 
   return {
     id: String(approval.id),
-    subject: typeof params?.subject === 'string' ? params.subject : '',
+    subject:
+      typeof params?.subject === 'string' && params.subject
+        ? params.subject
+        : documentEmail
+          ? `Your property at ${params?.address || approval.address || 'PBK'} - ${params?.selectedDocuments?.length > 1 ? 'seller packet' : 'document package'}`
+          : '',
     leadName: typeof approval.leadName === 'string' ? approval.leadName : '',
     at: String(
       metadata?.providerActionDispatch?.reconciliationRequiredAt ||

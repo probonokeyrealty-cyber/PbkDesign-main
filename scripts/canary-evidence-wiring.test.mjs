@@ -226,10 +226,10 @@ test('bridge code matches the reviewed release fingerprint outside the scoped re
   // See docs/operations/2026-11-23-ava-lead-review-integrity.md for the independent review.
   // The staff review projects saved decision codes and verified consultation records
   // from the exact lead's Ava triage. A direct record read skips review generation.
-  // Sender routing keeps the permission checks and sender-specific request keys.
-  // The shared approval guard runs before the manual outbox reaches the provider circuit.
+  // Outbound sender selection checks channel permissions and keys delivery by sender
+  // and document content. Manual routes return approval outcomes before provider dispatch.
   assert.equal(createHash('sha256').update(unchanged).digest('hex'),
-    '4729db156d930e81847f10ff5009550ccbe32e696e50e973c5767f4fe454db51');
+    '28fa15352f4d5b9ffdb18472ed09de64bf146ddec636a3f42f5a04eb427e410e');
 });
 
 test('production distribution includes reader and protocol, never the fixture signer', () => {

@@ -58,16 +58,19 @@ function assertManualRouteStructured(label, result) {
   }
 }
 
-function assertPendingProviderApproval(label, response, toolName) {
-  assertManualRouteStructured(label, response);
-  assert.equal(response.json?.result, 'queued_for_approval', label);
-  assert.equal(response.status, 202, label);
-  assert.equal(response.json?.providerAttempted, false, label);
-  assert.equal(response.json?.approval?.status, 'pending', label);
-  assert.equal(response.json?.approval?.approvalAction, toolName, label);
-  assert.ok(response.json?.approval?.metadata?.actionBinding?.hash, label);
-  assert.equal(response.json?.outbox?.status, 'queued', label);
-  assert.equal(response.json?.outbox?.retryable, false, label);
+function assertPendingApproval(label, result, toolName, { usesOutbox = true } = {}) {
+  assertManualRouteStructured(label, result);
+  assert.equal(result.status, 202, `${label} must return HTTP 202 for pending approval.`);
+  assert.equal(result.json?.result, 'queued_for_approval', `${label} must require approval before provider delivery.`);
+  assert.ok(result.json?.approval?.id, `${label} must return a durable approval ID.`);
+  assert.equal(result.json.approval.status, 'pending', `${label} must wait for an approval decision.`);
+  assert.equal(result.json.approval.approvalAction, toolName, `${label} must queue the requested tool.`);
+  assert.ok(result.json.approval.metadata?.actionBinding?.hash, `${label} must bind the exact provider action.`);
+  if (usesOutbox) {
+    assert.equal(result.json.outbox?.status, 'queued', `${label} must keep the outbox queued.`);
+    assert.equal(result.json.outbox.retryable, false, `${label} must not offer a delivery retry while approval is pending.`);
+    assert.equal(result.json.providerAttempted, false, `${label} must skip the provider while approval is pending.`);
+  }
 }
 
 async function main() {
@@ -145,7 +148,7 @@ async function main() {
       manualSend: true,
       source: 'lead_portal_manual',
     });
-    assertPendingProviderApproval('manual SMS', sms, 'telnyx_sms');
+    assertPendingApproval('manual SMS', sms, 'telnyx_sms');
 
     const email = await requestJson(baseUrl, '/api/lead/send-message', {
       leadId,
@@ -157,7 +160,7 @@ async function main() {
       manualSend: true,
       source: 'lead_portal_manual',
     });
-    assertPendingProviderApproval('manual email', email, 'sendColdEmail');
+    assertPendingApproval('manual email', email, 'sendColdEmail');
 
     const immediateEmail = await requestJson(baseUrl, '/api/messages', {
       leadId,
@@ -169,7 +172,7 @@ async function main() {
       manualSend: true,
       source: 'unified_inbox_manual',
     });
-    assertPendingProviderApproval('immediate /api/messages email', immediateEmail, 'sendColdEmail');
+    assertPendingApproval('immediate /api/messages email', immediateEmail, 'sendColdEmail');
 
     const immediateSms = await requestJson(baseUrl, '/api/messages', {
       leadId,
@@ -180,36 +183,20 @@ async function main() {
       manualSend: true,
       source: 'unified_inbox_manual',
     });
-    assertPendingProviderApproval('immediate /api/messages SMS', immediateSms, 'telnyx_sms');
+    assertPendingApproval('immediate /api/messages SMS', immediateSms, 'telnyx_sms');
 
     const call = await requestJson(baseUrl, '/api/calls', {
       leadId,
       phone: '+16145550177',
+      fromNumber: '+16145550188',
       leadName: 'Manual Actions Smoke Seller',
       manual: true,
       manualSend: true,
       source: 'call_floor_manual',
-      fromNumber: '+16145550198',
-      nowLocalHour: 11,
     });
-    assertPendingProviderApproval('manual call', call, 'telnyx_call');
-    assert.equal(call.json.approval.metadata.executionParams.from, '+16145550198');
-
-    const directEmail = await requestJson(baseUrl, '/api/cold-email/send', {
-      leadId,
-      email: 'manual.actions@example.com',
-      fromEmail: 'fictional.sender@example.net',
-      subject: 'Direct email approval smoke',
-      body: 'Fictional email for approval testing.',
-      manual: true,
-      manualSend: true,
-      source: 'lead_portal_manual',
-    });
-    assert.equal(directEmail.status, 202);
-    assert.equal(directEmail.json?.result, 'queued_for_approval');
-    assert.equal(directEmail.json?.providerAttempted, false);
-    assert.equal(directEmail.json?.approval?.status, 'pending');
-    assert.equal(directEmail.json?.approval?.metadata?.executionParams?.fromEmail, 'fictional.sender@example.net');
+    assertPendingApproval('manual call', call, 'telnyx_call');
+    assert.equal(call.json.approval.metadata?.executionParams?.fromNumber, '+16145550188',
+      'The pending call approval must retain the selected sender.');
 
     const nurture = await requestJson(baseUrl, '/api/leads/nurture', {
       leadId,
@@ -237,7 +224,21 @@ async function main() {
       manualSend: true,
       source: 'seller_docs_manual',
     });
-    assertPendingProviderApproval('manual seller documents', sellerDocs, 'sendSellerDocs');
+    assertPendingApproval('manual seller documents', sellerDocs, 'sendSellerDocs');
+
+    const coldEmail = await requestJson(baseUrl, '/api/cold-email/send', {
+      leadId,
+      email: 'manual.actions@example.com',
+      subject: 'Manual cold email route smoke',
+      fromEmail: 'fictional.sender@example.net',
+      message: 'Manual cold email route smoke.',
+      manual: true,
+      manualSend: true,
+      source: 'leads_page_manual',
+    });
+    assertPendingApproval('manual cold email', coldEmail, 'sendColdEmail', { usesOutbox: false });
+    assert.equal(coldEmail.json.approval.metadata?.executionParams?.fromEmail, 'fictional.sender@example.net',
+      'The pending email approval must retain the selected sender.');
 
     console.log(
       JSON.stringify(
@@ -255,6 +256,7 @@ async function main() {
             call: call.status,
             nurture: nurture.status,
             sellerDocs: sellerDocs.status,
+            coldEmail: coldEmail.status,
           },
         },
         null,

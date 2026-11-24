@@ -1554,17 +1554,15 @@ export async function runIsolatedBridgeSmoke() {
     assert(recordingSave?.ok === true, 'Recording metadata endpoint did not save.');
     assert([200, 501].includes(recordingLookupResponse.status), `Recording signed URL endpoint returned ${recordingLookupResponse.status}.`);
     assert(recordingLookup?.messageId === 'smoke-recording-msg-1', 'Recording signed URL endpoint did not echo the messageId.');
-    const sellerDocsManualProviderMissing =
-      sellerDocsResponse.status === 409 &&
-      sellerDocs?.retryable === true &&
-      sellerDocs?.outbox?.status === 'failed' &&
-      !sellerDocs?.approval;
     assert(
-      sellerDocs?.ok === true || sellerDocsManualProviderMissing,
-      'Seller document endpoint must either send successfully or expose a retryable manual provider failure.'
+      sellerDocsResponse.status === 202 && sellerDocs?.ok === true &&
+      isQueuedForApprovalPayload(sellerDocs) && approvalIdFrom(sellerDocs) && sellerDocs?.approval?.status === 'pending',
+      'Seller document endpoint must return a pending approval before delivery.'
     );
-    assert(sellerDocsResponse.status !== 202, 'Manual seller document endpoint must not approval-gate.');
-    assert(sellerDocsResponse.status !== 502, 'Manual seller document endpoint must not surface provider failure as bridge 502.');
+    assert(
+      sellerDocs?.providerAttempted === false && sellerDocs?.outbox?.status === 'queued',
+      'Seller document endpoint must leave delivery queued while approval is pending.'
+    );
     assert(typeof browserResearch?.answer === 'string', 'Browser research endpoint did not return a response.');
     assert(adminRequest?.ok === true, 'Admin request endpoint did not succeed.');
     assert(adminApproval?.ok === true, 'Admin approval endpoint did not succeed.');

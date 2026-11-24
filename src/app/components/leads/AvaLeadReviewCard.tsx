@@ -2,7 +2,6 @@ import { useState } from 'react';
 import { Link, useHref } from 'react-router';
 import { ClipboardCheck, Copy, RefreshCw } from 'lucide-react';
 import { copyToClipboard } from '../../utils/fileExport';
-import { showUiToast } from '../../utils/uiFeedback';
 import { fetchAvaLeadReviewRequest, type AvaLeadReview } from '../../utils/runtimeBridge';
 
 const CONTACT_LABELS = {
@@ -30,12 +29,12 @@ function ConsultationLinks({ leadId, recordId, specialist }: {
 }) {
   const path = `/leads/${encodeURIComponent(leadId)}/consultations/${encodeURIComponent(recordId)}`;
   const href = useHref(path);
+  const [copyStatus, setCopyStatus] = useState<string>();
 
   async function copyLink() {
+    setCopyStatus(undefined);
     const copied = await copyToClipboard(new URL(href, window.location.href).href);
-    showUiToast(copied
-      ? { tone: 'success', title: `${specialist} consultation link copied` }
-      : { tone: 'error', title: `Could not copy the ${specialist} consultation link` });
+    setCopyStatus(copied ? 'Link copied' : 'Could not copy link');
   }
 
   return (
@@ -57,6 +56,7 @@ function ConsultationLinks({ leadId, recordId, specialist }: {
         <Copy size={15} aria-hidden="true" />
         Copy link
       </button>
+      <span role="status" className="text-xs text-[var(--text-secondary)]">{copyStatus}</span>
     </dd>
   );
 }

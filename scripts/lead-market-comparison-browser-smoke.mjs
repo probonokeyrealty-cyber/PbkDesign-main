@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { chromium, expect } from '@playwright/test';
 import { preview } from 'vite';
@@ -12,6 +12,13 @@ const expectQa91411 = process.env.PBK_MARKET_TEST_91411_QA === '1';
 const { portalEnvironment } = JSON.parse(readFileSync(resolve(outDir, 'pbk-build-manifest.json'), 'utf8'));
 const expectStagingIndicators = process.env.PBK_MARKET_TEST_STAGING_INDICATORS === '1';
 assert.equal(portalEnvironment, 'live');
+const trendAssets = readdirSync(resolve(outDir, 'assets')).filter(name =>
+  /^LeadFictionalMarketTrends-.*\.(js|css)$/.test(name)
+);
+assert.equal(trendAssets.some(name => name.endsWith('.js')), expectStagingIndicators,
+  'The chart and its fictional data must only be bundled for the staging preview.');
+assert.equal(trendAssets.some(name => name.endsWith('.css')), expectStagingIndicators,
+  'Chart styles must only be bundled for the staging preview.');
 assert.equal(existsSync(qaEntry), false, 'The offline QA page must not be shipped.');
 assert.equal(existsSync(resolve(outDir, qa91411Path.slice(1))), expectQa91411,
   'The 91411 fixture must only be built for Preview #111.');
@@ -125,6 +132,22 @@ try {
       && card.previousElementSibling.scrollWidth <= card.previousElementSibling.clientWidth
       && card.getBoundingClientRect().top >= card.previousElementSibling.getBoundingClientRect().bottom
     ));
+    const trends = qa.getByRole('region', { name: 'Market trends' });
+    await expect(trends.getByText('Fictional market data', { exact: true })).toBeVisible();
+    const month = trends.getByRole('slider', { name: 'Inspect month' });
+    await expect(month).toHaveAttribute('aria-valuetext', 'Oct 2026');
+    await trends.getByRole('button', { name: 'Inventory change' }).click();
+    await expect(trends.getByText('Year over year, %', { exact: true })).toBeVisible();
+    await trends.getByRole('button', { name: '6M' }).click();
+    await trends.getByText('View data table', { exact: true }).click();
+    await expect(trends.locator('tbody tr')).toHaveCount(6);
+    await expect(trends.locator('tbody tr[aria-current=true]')).toContainText('Oct 2026');
+    await trends.getByRole('button', { name: '2Y' }).click();
+    await month.press('Home');
+    for (let i = 0; i < 15; i++) await month.press('ArrowRight');
+    await expect(trends.locator('tbody tr[aria-current=true]')).toContainText('Unavailable');
+    await expect(trends.getByRole('link', { name: /Reventure research hub/ })).toHaveAttribute('href', 'https://blog.reventure.app/graph');
+
     assert.deepEqual(forbiddenQa, [], 'The standalone QA fixture must not request any API or external asset.');
     console.log('Preview #111 fixture: separate ZIP and county charts at 390px; static requests only');
     await qa.close();

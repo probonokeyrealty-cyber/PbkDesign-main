@@ -69,3 +69,35 @@ test('historical seller PDF approvals can reconcile a missing outcome and displa
   assert.equal(updated.state, 'delivered');
   assert.equal(updated.canConfirm, false);
 });
+
+test('an explicitly reconciled unsent PDF is terminal and distinct from provider failures', () => {
+  const pdf = { ...approval, approvalAction: 'sendSellerDocs' };
+  const metadata = {
+    ...approval.metadata,
+    providerActionDispatch: { status: 'completed' },
+    providerActionResult: { ok: false, result: 'outlook_not_sent', deliveryStatus: 'not_sent' },
+    outlookDeliveryReconciliation: { status: 'unsent' },
+  };
+
+  const closed = readOutlookDelivery({ ...pdf, metadata });
+  assert.equal(closed.state, 'unsent');
+  assert.equal(closed.canConfirm, false);
+
+  const failed = readOutlookDelivery({ ...pdf, metadata: {
+    ...metadata, providerActionResult: { ok: false, result: 'outlook_send_rejected' },
+  } });
+  assert.equal(failed.state, 'failed');
+
+  const unresolved = readOutlookDelivery({ ...pdf, metadata: {
+    ...metadata, providerActionDispatch: { status: 'reconciliation_required' },
+  } });
+  assert.equal(unresolved.state, 'recovery');
+
+  const delivered = readOutlookDelivery({ ...pdf, metadata: {
+    ...metadata, outlookDeliveryConfirmation: {
+      receiptUrl: 'https://outlook.office365.com/mail/deeplink/read/AAMkAGI2TAAA_test==',
+      confirmedAt: '2026-11-24T10:00:00Z', confirmedBy: 'PBK operator',
+    },
+  } });
+  assert.equal(delivered.state, 'delivered');
+});

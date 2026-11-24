@@ -65,6 +65,14 @@ export function readOutlookDelivery(approval) {
     state = 'recovery';
   } else if (dispatch === 'dispatching') {
     state = 'dispatching';
+  } else if (
+    documentEmail &&
+    dispatch === 'completed' &&
+    result?.ok === false &&
+    result.result === 'outlook_not_sent' &&
+    metadata?.outlookDeliveryReconciliation?.status === 'unsent'
+  ) {
+    state = 'unsent';
   } else if (result?.ok === false) {
     state = 'failed';
   } else if (result?.deliveryStatus === 'delivered') {

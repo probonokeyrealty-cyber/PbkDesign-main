@@ -16,6 +16,7 @@ const deliveryCopy: Record<string, [string, string]> = {
     'Send failed',
     'Check the Outlook connection and lead email before requesting a new approval.',
   ],
+  unsent: ['Unsent', 'Reconciliation is complete. This email was never sent.'],
   closed: ['Approval closed', 'This approval did not dispatch an email.'],
 };
 

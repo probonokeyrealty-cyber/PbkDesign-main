@@ -3,7 +3,7 @@ export type OutlookDelivery = {
   subject: string;
   leadName: string;
   at: string;
-  state: 'pending' | 'approved' | 'dispatching' | 'accepted' | 'delivered' | 'recovery' | 'failed' | 'closed';
+  state: 'pending' | 'approved' | 'dispatching' | 'accepted' | 'delivered' | 'recovery' | 'failed' | 'unsent' | 'closed';
   receiptId: string;
   confirmation: { receiptUrl: string; confirmedAt: string; confirmedBy: string } | null;
   canConfirm: boolean;

@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { Link } from 'react-router';
 import { ClipboardCheck, RefreshCw } from 'lucide-react';
 import { fetchAvaLeadReviewRequest, type AvaLeadReview } from '../../utils/runtimeBridge';
 
@@ -127,14 +128,14 @@ export function AvaLeadReviewCard({ leadId }: { leadId: string }) {
                         {reason && <dd>{CONSULTATION_REASONS[reason] || 'Reason unavailable.'}</dd>}
                         {record && (
                           <dd>
-                            <a
+                            <Link
                               className="inline-flex min-h-11 items-center text-[var(--sky)] underline underline-offset-4"
-                              href={`/leads/${encodeURIComponent(leadId)}/consultations/${encodeURIComponent(record.id)}`}
+                              to={`/leads/${encodeURIComponent(leadId)}/consultations/${encodeURIComponent(record.id)}`}
                               target="_blank"
                               rel="noopener noreferrer"
                             >
                               View saved {specialist} consultation
-                            </a>
+                            </Link>
                           </dd>
                         )}
                       </div>

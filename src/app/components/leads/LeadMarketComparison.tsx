@@ -2,6 +2,7 @@ import { lazy, Suspense } from 'react';
 import { formatCurrency } from '../../utils/formatting';
 import type { readPropertyEvidence } from '../../utils/propertyEvidence';
 import type { InvestorEvidenceDestination } from './LeadInvestorEvidenceChecklist';
+import { VAN_NUYS_ZCTA } from './marketStagingData';
 import type { LeadPortalModel } from './leadPortalModel';
 import '../../../styles/lead-market-comparison.css';
 
@@ -10,6 +11,9 @@ const LeadFictionalMarketTrends = import.meta.env.PBK_MARKET_STAGING_INDICATORS
   : null;
 const LeadInvestorEvidenceChecklist = import.meta.env.PBK_MARKET_STAGING_INDICATORS
   ? lazy(() => import('./LeadInvestorEvidenceChecklist'))
+  : null;
+const LeadPublicMarketPilot = import.meta.env.PBK_MARKET_91411_PILOT
+  ? lazy(() => import('./LeadPublicMarketPilot'))
   : null;
 const LeadPublicHousingContext = lazy(() => import('./LeadPublicHousingContext'));
 
@@ -114,6 +118,7 @@ export function LeadMarketComparison({
 }) {
   const { listing, records } = evidence;
   const zip = /^(\d{5})(?:-\d{4})?$/.exec(lead.zip.trim())?.[1];
+  const PublicMarketPilot = zip === VAN_NUYS_ZCTA ? LeadPublicMarketPilot : null;
   const savedType = records?.facts.propertyType;
   const leadType = lead.propertyType.trim();
   const typeMatches =
@@ -185,6 +190,12 @@ export function LeadMarketComparison({
         </Suspense>
       ) : (
         <p className="pbk-market-notice">Public housing context requires a saved five-digit ZIP.</p>
+      )}
+
+      {PublicMarketPilot && (
+        <Suspense fallback={<p role="status">Loading public-data pilot…</p>}>
+          <PublicMarketPilot />
+        </Suspense>
       )}
 
       <section className="pbk-market-evidence" aria-label="Saved property evidence">
@@ -272,41 +283,45 @@ export function LeadMarketComparison({
           />
         </div>
 
-        <div className="pbk-market-summary">
-          <section className="pbk-market-metric" aria-label="Saved recorded sale">
-            <h4>Saved recorded sale</h4>
-            <p>
-              {recordedPrice !== null && recordedDate ? (
-                <>
-                  <strong>{formatCurrency(recordedPrice)}</strong> on{' '}
-                  <time dateTime={recordedDate}>{dateLabel(recordedDate)}</time>
-                </>
-              ) : (
-                'No dated sale recorded in saved property evidence.'
-              )}
-            </p>
-            <small>
-              County record via ATTOM when available. A prior sale is not compared with current
-              asks.
-            </small>
-          </section>
-          {cohort && (
-            <section className="pbk-market-metric" aria-label="Fictional ZIP activity">
-              <h4>Fictional ZIP activity</h4>
-              <dl>
-                <div>
-                  <dt>Active inventory at window end</dt>
-                  <dd>{cohort.activeInventory}</dd>
-                </div>
-                <div>
-                  <dt>Closed sales in the window</dt>
-                  <dd>{cohort.closedSales}</dd>
-                </div>
-              </dl>
-              <small>ZIP context only. These are not house-level observations.</small>
-            </section>
-          )}
-        </div>
+        {(!PublicMarketPilot || cohort) && (
+          <div className="pbk-market-summary">
+            {!PublicMarketPilot && (
+              <section className="pbk-market-metric" aria-label="Saved recorded sale">
+                <h4>Saved recorded sale</h4>
+                <p>
+                  {recordedPrice !== null && recordedDate ? (
+                    <>
+                      <strong>{formatCurrency(recordedPrice)}</strong> on{' '}
+                      <time dateTime={recordedDate}>{dateLabel(recordedDate)}</time>
+                    </>
+                  ) : (
+                    'No dated sale recorded in saved property evidence.'
+                  )}
+                </p>
+                <small>
+                  County record via ATTOM when available. A prior sale is not compared with current
+                  asks.
+                </small>
+              </section>
+            )}
+            {cohort && (
+              <section className="pbk-market-metric" aria-label="Fictional ZIP activity">
+                <h4>Fictional ZIP activity</h4>
+                <dl>
+                  <div>
+                    <dt>Active inventory at window end</dt>
+                    <dd>{cohort.activeInventory}</dd>
+                  </div>
+                  <div>
+                    <dt>Closed sales in the window</dt>
+                    <dd>{cohort.closedSales}</dd>
+                  </div>
+                </dl>
+                <small>ZIP context only. These are not house-level observations.</small>
+              </section>
+            )}
+          </div>
+        )}
       </section>
       {LeadFictionalMarketTrends && (
         <Suspense fallback={<p role="status">Loading fictional market trends…</p>}>

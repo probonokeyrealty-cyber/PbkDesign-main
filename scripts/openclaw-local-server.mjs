@@ -61576,6 +61576,26 @@ function findAvaLeadTriage(lead) {
   return state.agentTasks.find((task) => task.id === leadTriageTaskId(leadId));
 }
 
+async function loadAvaConsultationDecisions(leadId) {
+  const saved = findAvaLeadTriage({ leadId });
+  let reasons = saved?.metadata?.consultationDecisions;
+  if (!saved && getPgPool()) {
+    const result = await queryPgRows(
+      `SELECT metadata->'consultationDecisions' AS reasons FROM public.pbk_tasks
+        WHERE id = $1 AND correlation_id = $2 AND tenant_id = 'pbk' AND task_type = 'lead_intake_triage'`,
+      [leadTriageTaskId(leadId), leadId]
+    );
+    if (!result.ok) return undefined;
+    reasons = result.rows[0]?.reasons;
+  }
+  if (reasons?.version !== 1) return null;
+  const { rex, hermes } = reasons;
+  const shared = ['contact_restricted', 'property_address_missing'];
+  if (![...shared, 'elevated_score', 'score_below_threshold', 'score_unavailable'].includes(rex)
+    || ![...shared, 'no_recognized_signal', ...Object.keys(HERMES_TRIAGE_REVIEW)].includes(hermes)) return null;
+  return { version: 1, rex, hermes };
+}
+
 const HERMES_TRIAGE_REVIEW = {
   probate_or_estate: 'Verify decision-making authority and any estate constraints during internal review.',
   tenant_pressure: 'Verify occupancy and lease constraints during internal review.',
@@ -61609,12 +61629,20 @@ async function recordAvaLeadTriage(lead, intake) {
   };
   let priority;
   let patternAdvice;
+  const blockedReason = blocked ? 'contact_restricted' : !hasAddress ? 'property_address_missing' : null;
+  const consultationDecisions = {
+    version: 1,
+    rex: blockedReason || 'score_unavailable',
+    hermes: blockedReason || 'no_recognized_signal',
+  };
   if (!blocked && hasAddress) {
     if (Number.isFinite(score) && score >= 0 && score <= 100) {
       if (classifyRexLeadPriority(score) === 'routine') {
         priority = { source: 'rex-autonomy', level: 'routine', score };
+        consultationDecisions.rex = 'score_below_threshold';
       } else {
         ({ priority } = specialists.rex({ action: 'review_lead_triage', score }));
+        consultationDecisions.rex = 'elevated_score';
         recordConsultation('Rex', 'Ranked the lead for internal review based on its saved score.', {
           source: 'saved_lead_score', priority,
         });
@@ -61627,6 +61655,7 @@ async function recordAvaLeadTriage(lead, intake) {
       const trigger = pattern?.workflow?.trigger;
       patternAdvice = HERMES_TRIAGE_REVIEW[trigger];
       if (patternAdvice) {
+        consultationDecisions.hermes = trigger;
         recordConsultation('Hermes', patternAdvice, { source: 'saved_intake_note', pattern: trigger });
       }
     }
@@ -61658,6 +61687,7 @@ async function recordAvaLeadTriage(lead, intake) {
       qualification: { source: 'bant-enforcer', missing: qualification.missing },
       contactRestricted: blocked,
       consultationIds,
+      consultationDecisions,
       ...(priority && { priority }),
     },
   });
@@ -82591,7 +82621,11 @@ const server = createServer(async (request, response) => {
           json(response, 404, { ok: false, error: 'Lead not found.' });
           return;
         }
-        json(response, 200, { ok: true, review: buildAvaLeadReview(exactLead, leadId, contactRestricted) });
+        const consultationDecisions = await loadAvaConsultationDecisions(leadId);
+        json(response, 200, { ok: true, review: {
+          ...buildAvaLeadReview(exactLead, leadId, contactRestricted),
+          consultationDecisions,
+        } });
         return;
       }
       let durableBatchLead;

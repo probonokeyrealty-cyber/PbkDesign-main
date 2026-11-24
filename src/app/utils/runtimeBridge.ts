@@ -3317,10 +3317,17 @@ export async function fetchLeadFullRequest(leadId: string) {
   });
 }
 
+type ConsultationSkipReason = 'contact_restricted' | 'property_address_missing';
+
 export type AvaLeadReview = {
   leadId: string;
   reviewedAt: string;
   writeMode: 'read_only';
+  consultationDecisions?: {
+    version: 1;
+    rex: ConsultationSkipReason | 'elevated_score' | 'score_below_threshold' | 'score_unavailable';
+    hermes: ConsultationSkipReason | 'no_recognized_signal' | 'probate_or_estate' | 'tenant_pressure' | 'debt_deadline';
+  } | null;
   evidence: {
     property: { recorded: boolean };
     contact: { status: 'restricted' | 'recorded' | 'needs_review' };

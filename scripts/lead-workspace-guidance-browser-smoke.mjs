@@ -35,6 +35,7 @@ async function verify(browserType, width) {
       return route.fulfill({ json: { ok: true, review: {
         leadId: reviewMode === 'mismatched' ? 'different-fixture' : 'guidance-demo',
         writeMode: 'read_only', reviewedAt: '2026-11-23T12:00:00Z',
+        consultationDecisions: reviewMode === 'fresh-reasons' ? { version: 1, rex: 'score_unavailable', hermes: 'tenant_pressure' } : null,
         nextStep: { code: 'hold_contact', title: 'Hold outreach', detail: 'Review the saved contact restriction.' },
         evidence: { property: { recorded: true }, contact: { status: 'restricted' }, qualification: { missing: ['authority'] }, underwriting: { recorded: false, recordedAt: null } },
       } } });
@@ -60,6 +61,11 @@ async function verify(browserType, width) {
     await expect(review.getByText('Hold outreach', { exact: true })).toBeVisible();
     await expect(review.getByText('Missing authority', { exact: true })).toBeVisible();
     assert.equal(reviewReads, 2);
+    await expect(review.getByText('Reasons weren’t recorded at intake.', { exact: true })).toBeVisible();
+    reviewMode = 'fresh-reasons';
+    await review.getByRole('button', { name: 'Run review again' }).click();
+    await expect(review.getByText('Skipped because no lead score was available.', { exact: true })).toBeVisible();
+    await expect(review.getByText('Consulted because intake flagged a tenancy issue.', { exact: true })).toBeVisible();
     assert.ok(await review.evaluate((element) => element.scrollWidth <= element.clientWidth));
     if (process.env.PBK_GUIDANCE_SHOTS === '1') {
       mkdirSync('.pbk-local', { recursive: true });

@@ -905,7 +905,14 @@ export function LeadPortal() {
           <LeadPortalOverview lead={lead} />
         </div>
         <div className="pbk-portal-context-column">
-          {!loading && lead.id === leadId && <AvaLeadReviewCard key={leadId} leadId={leadId} />}
+          {!loading && lead.id === leadId && (
+            <AvaLeadReviewCard
+              key={leadId}
+              leadId={leadId}
+              analyzerLink={analyzerLink}
+              onJumpToSection={jumpToSection}
+            />
+          )}
           <LeadPortalDealContext lead={lead} />
           <LeadPortalContactability lead={lead} />
         </div>

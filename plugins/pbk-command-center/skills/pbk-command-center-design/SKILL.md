@@ -23,7 +23,7 @@ Before touching PBK UI, review these repo files:
 
 - `../../../index.html`
 - `../../../index.before-figma.html`
-- `../../../public/legacy/PBK_Command_Center v5.html`
+- `../../../../docs/reference/legacy-command-center-v5.html`
 - `../../../src/imports/PBK_Command_Center_v5.html`
 - `../../../src/imports/PBK_Command_Center_v5-1.html`
 - `../../../src/imports/pasted_text/figma-pbk-migration.md`

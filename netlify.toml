@@ -112,6 +112,12 @@ timeout = 15
     Cache-Control = "no-cache, must-revalidate"
 
 [[headers]]
+  for = "/legacy-command-center.html"
+  [headers.values]
+    Cache-Control = "no-store"
+    X-Robots-Tag = "noindex, nofollow"
+
+[[headers]]
   for = "/analyzer.html"
   [headers.values]
     Cache-Control = "no-cache, must-revalidate"
@@ -498,8 +504,9 @@ force = true
 
 [[redirects]]
 from = "/brain"
-to = "/index.html"
+to = "/index.shell.html"
 status = 200
+force = true
 
 [[redirects]]
 from = "/brain/*"

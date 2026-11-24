@@ -522,7 +522,7 @@ function Ensure-RunnerPrerequisites {
       Destination = Join-Path $HOME "PBK_Master_Deal_Package.html"
     },
     @{
-      Source = Join-Path $RepoPath "public\legacy\PBK_Command_Center v5.html"
+      Source = Join-Path $RepoPath "docs\reference\legacy-command-center-v5.html"
       Destination = Join-Path $HOME "PBK_Command_Center v5.html"
     }
   )

@@ -9,9 +9,11 @@ const rootDir = process.cwd();
 const distDir = path.join(rootDir, 'dist');
 const shellEntry = path.join(distDir, 'index.shell.html');
 const routes = [
-  '/dashboard',
-  '/inbox/conversations',
-  '/leads/lead-inbound-16575001765',
+  { path: '/dashboard' },
+  { path: '/inbox/conversations' },
+  { path: '/leads/lead-inbound-16575001765' },
+  { path: '/index.html', canonical: '/command-center', heading: '#today-heading' },
+  { path: '/brain', canonical: '/memory', heading: 'h1.pbk-display' },
 ];
 
 const mimeTypes = new Map([
@@ -96,6 +98,7 @@ const address = server.address();
 if (!address || typeof address === 'string') {
   throw new Error('Unable to start production shell smoke server.');
 }
+const origin = `http://127.0.0.1:${address.port}`;
 
 const missingChunkResponse = await fetch(
   `http://127.0.0.1:${address.port}/assets/__stale_missing_chunk__.js`,
@@ -121,9 +124,18 @@ const browser = await puppeteer.launch({
 });
 
 try {
-  for (const route of routes) {
+  for (const { path: route, canonical, heading } of routes) {
     const page = await browser.newPage();
     const pageErrors = [];
+    await page.setRequestInterception(true);
+    page.on('request', (request) => {
+      const url = new URL(request.url());
+      if (url.origin === origin || url.protocol === 'data:' || url.protocol === 'blob:') {
+        void request.continue();
+      } else {
+        void request.abort();
+      }
+    });
     page.on('pageerror', (error) => pageErrors.push(error.stack || error.message));
     page.on('requestfailed', (request) => {
       const url = request.url();
@@ -132,7 +144,7 @@ try {
       }
     });
 
-    await page.setViewport({ width: 320, height: 800, isMobile: true, hasTouch: true });
+    await page.setViewport({ width: canonical ? 390 : 320, height: 800, isMobile: true, hasTouch: true });
     await page.goto(`http://127.0.0.1:${address.port}${route}`, {
       waitUntil: 'domcontentloaded',
       timeout: 30_000,
@@ -141,6 +153,12 @@ try {
       () => Boolean(document.querySelector('#root')?.textContent?.trim()),
       { timeout: 15_000 }
     );
+    if (canonical) {
+      await page.waitForFunction((pathname) => location.pathname === pathname, { timeout: 15_000 }, canonical);
+      await page.waitForSelector(heading, { visible: true, timeout: 15_000 });
+      assert(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1),
+        `${canonical} must fit in a 390px viewport.`);
+    }
 
     const renderedText = await page.$eval('#root', (root) => root.textContent?.trim() || '');
     if (!renderedText) {

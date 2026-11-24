@@ -20,8 +20,16 @@ Outer chrome of the Paradise UI. Wraps the engine; never modifies it.
 
 ## Entry points
 
-- `index.html` + `src/main.tsx` — **engine-only** mount (`<App />`). Untouched. Live deploy still uses this.
+- `analyzer.html` + `src/main.tsx` — **engine-only** mount (`<App />`).
+- Repository `index.html` — original console source, not the default build entry.
 - `index.shell.html` + `src/main.shell.tsx` — **shell mount** (`<ParadiseRouter />`). Open `http://localhost:5173/index.shell.html` after `npm run dev`.
+
+The default build puts PBK Center at both `/index.html` and `/index.shell.html`.
+The archived design reference is not published. To test or deliberately release the
+original console, set `PBK_INCLUDE_LEGACY_SHELL=true` in that build or dev process.
+Its separate entry is `/legacy-command-center.html` (for example,
+`/legacy-command-center.html#recordings`). The flag does not alter staff access
+or bridge permissions, and it does not change which shell opens by default.
 
 ## Sacred ground (do not touch)
 

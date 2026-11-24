@@ -44,7 +44,11 @@ const Settings = lazy(() =>
     default: module.Settings,
   }))
 );
-const PropertyLog = lazy(() => loadCurrentRoute(() => import('../routes/PropertyLog')).then(module=>({default:module.PropertyLog})));
+const PropertyLog = lazy(() =>
+  loadCurrentRoute(() => import('../routes/PropertyLog')).then((module) => ({
+    default: module.PropertyLog,
+  }))
+);
 const AgentFleet = lazy(() =>
   loadCurrentRoute(() => import('../routes/AgentFleet')).then((module) => ({
     default: module.AgentFleet,
@@ -105,6 +109,8 @@ const router = createBrowserRouter(
       Component: ParadiseLayout,
       children: [
         { index: true, element: <CommandCenter /> },
+        { path: 'index', element: <Navigate to="/command-center" replace /> },
+        { path: 'index.html', element: <Navigate to="/command-center" replace /> },
         { path: 'command-center', element: <CommandCenter /> },
         { path: 'dashboard', element: <CommandCenter /> },
         { path: 'leads', element: <Leads /> },
@@ -122,6 +128,7 @@ const router = createBrowserRouter(
         { path: 'agent-fleet', element: <AgentFleet /> },
         { path: 'agents', element: <AgentFleet /> },
         { path: 'memory', element: <MemoryAnalytics /> },
+        { path: 'brain', element: <Navigate to="/memory" replace /> },
         { path: 'skills', element: <SkillStudio /> },
         { path: 'skill-studio', element: <SkillStudio /> },
         { path: 'analytics', element: <Analytics /> },

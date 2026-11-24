@@ -41,6 +41,9 @@ const stagingMarketIndicators =
   process.env.CONTEXT === 'deploy-preview' && process.env.HEAD === 'codex/house-zip-staging-indicators'
 const marketQa91411 = stagingMarketIndicators && process.env.REVIEW_ID === '111'
 const marketQa91411Page = 'market-comparison-91411-qa.html'
+const includeLegacyShell = process.env.PBK_INCLUDE_LEGACY_SHELL === 'true'
+const modernShellEntry = 'index.shell.html'
+const legacyShellEntry = 'legacy-command-center.html'
 
 function figmaAssetResolver() {
   return {
@@ -56,6 +59,8 @@ function figmaAssetResolver() {
 
 const shellHistoryPaths = new Set([
   '/',
+  '/index',
+  '/index.html',
   '/dashboard',
   '/command-center',
   '/leads',
@@ -67,12 +72,15 @@ const shellHistoryPaths = new Set([
   '/agent-fleet',
   '/agents',
   '/memory',
+  '/brain',
   '/skills',
   '/skill-studio',
   '/analytics',
   '/settings',
   '/property-log',
   '/dialer',
+  '/dialer/van-nuys-demo',
+  '/prospecting',
   '/campaigns',
   '/agent',
   '/agent-console',
@@ -95,17 +103,54 @@ function shouldServeShellHistory(url = '') {
 }
 
 function shellHistoryFallback() {
+  const shellUrl = (url: string) => {
+    const query = url.indexOf('?')
+    return `/${modernShellEntry}${query < 0 ? '' : url.slice(query)}`
+  }
+
   return {
     name: 'pbk-shell-history-fallback',
     configureServer(server) {
       server.middlewares.use((req, _res, next) => {
-        if (shouldServeShellHistory(req.url)) {
-          req.url = '/index.shell.html'
-        }
+        const url = req.url || ''
+        const query = url.indexOf('?')
+        const pathname = query < 0 ? url : url.slice(0, query)
+        const suffix = query < 0 ? '' : url.slice(query)
+        if (pathname === `/${legacyShellEntry}` && includeLegacyShell) {
+          req.url = `/index.html${suffix}`
+        } else if (shouldServeShellHistory(url)) req.url = shellUrl(url)
+        next()
+      })
+    },
+    configurePreviewServer(server) {
+      server.middlewares.use((req, _res, next) => {
+        if (shouldServeShellHistory(req.url)) req.url = shellUrl(req.url || '')
         next()
       })
     },
   }
+}
+
+function isolateCommandCenterShells() {
+  return {
+    name: 'pbk-command-center-shells',
+    generateBundle: {
+      order: 'post' as const,
+      handler(_options, bundle) {
+        const shell = bundle[modernShellEntry]
+        if (!shell || shell.type !== 'asset') this.error('Modern PBK Center entry was not built')
+
+        if (includeLegacyShell) {
+          const legacy = bundle['index.html']
+          if (!legacy || legacy.type !== 'asset') this.error('Opt-in legacy Command Center entry was not built')
+          delete bundle['index.html']
+          this.emitFile({ type: 'asset', fileName: legacyShellEntry, source: legacy.source })
+        }
+
+        this.emitFile({ type: 'asset', fileName: 'index.html', source: shell.source })
+      },
+    },
+  } satisfies import('vite').Plugin
 }
 
 function pbkBuildManifest() {
@@ -130,6 +175,7 @@ function pbkBuildManifest() {
 }
 
 export default defineConfig({
+  appType: 'mpa',
   define: {
     __PBK_BUILD_ID__: JSON.stringify(pbkBuildId),
     __PBK_PORTAL_ENV__: JSON.stringify(portalEnvironment),
@@ -141,6 +187,7 @@ export default defineConfig({
   plugins: [
     figmaAssetResolver(),
     shellHistoryFallback(),
+    isolateCommandCenterShells(),
     pbkBuildManifest(),
     // The React and Tailwind plugins are both required for Make, even if
     // Tailwind is not being actively used – do not remove them
@@ -205,13 +252,11 @@ export default defineConfig({
   },
 
   // Multi-page build:
-  //   - index.html       → Paradise design (vanilla, the new Command Center)
-  //   - analyzer.html    → Engine: React deal analyzer (mounts <App />)
-  //   - index.shell.html → Paradise React shell (mounts <ParadiseRouter />)
+  // The React shell owns index.html. Legacy builds publish to a separate entry.
   build: {
     rollupOptions: {
       input: {
-        main: path.resolve(__dirname, 'index.html'),
+        ...(includeLegacyShell && { legacy: path.resolve(__dirname, 'index.html') }),
         analyzer: path.resolve(__dirname, 'analyzer.html'),
         shell: path.resolve(__dirname, 'index.shell.html'),
         investor: path.resolve(__dirname, 'investor-portal.html'),

@@ -1,11 +1,13 @@
 ## PBK Implementation Rules
 
 ### Product Scope
+
 - Build PBK Wholesale Paradise as an operations-complete platform first.
 - Do not treat the React shell as a separate product or a redesign target.
 - Extend existing runtime surfaces before inventing parallel systems.
 
 ### UI/UX Constraints
+
 - Extend, do not replace.
 - Never redesign the overall PBK Command Center.
 - Read `DESIGN.md` and `PBK_DESIGN.md` before making frontend or UI changes.
@@ -19,13 +21,14 @@
 - Small changes are expected and encouraged, as long as they are implemented inside the existing PBK command-center language.
 
 ### Design Source Of Truth
+
 - Treat `DESIGN.md`, `PBK_DESIGN.md`, and the GitHub repo itself as the source of truth for PBK visual direction.
 - Before changing PBK UI, review and align to these in-repo design references:
   - `DESIGN.md`
   - `PBK_DESIGN.md`
   - `index.html`
   - `index.before-figma.html`
-  - `public/legacy/PBK_Command_Center v5.html`
+  - `docs/reference/legacy-command-center-v5.html` (design reference only)
   - `src/imports/PBK_Command_Center_v5.html`
   - `src/imports/PBK_Command_Center_v5-1.html`
   - `src/imports/pasted_text/figma-pbk-migration.md`
@@ -38,6 +41,7 @@
 - BrowserOS, MCP, observability, or any other new system must inherit the PBK command-center design, not redefine it.
 
 ### Feature Placement
+
 - Tooling status belongs in Settings and runtime summary cards.
 - Browser research belongs in the Brain lane, not a separate app.
 - Context7 is invisible unless the user explicitly asks for documentation status.
@@ -45,21 +49,25 @@
 - Approval-backed infra actions must appear in the existing approval/admin queue patterns.
 
 ### Browser Research Rules
+
 - BrowserOS integration is an extension of Rex and the Brain.
 - Register BrowserOS through the MCP registry and surface its readiness through the existing tooling cards.
 - Any BrowserOS trigger inside PBK should launch from a Brain action, modal, chip, or inline runtime card, not a separate navigation product.
 
 ### Local Verification Note
+
 - If `@browser-use` fails before attaching, check `%LOCALAPPDATA%\\Temp\\package.json`.
 - A Temp-wide `"type": "module"` can break the Browser Use node-repl kernel because its generated kernel file still expects CommonJS `require(...)`.
 - Use `npm run doctor:browser-use` before assuming the PBK frontend is at fault.
 
 ### Implementation Bias
+
 - Prefer shared bridge-backed runtime adapters over duplicate client logic.
 - Keep analyzer math and operational state in the bridge.
 - Any new ops feature must work in both the legacy engine and the React shell unless explicitly deferred.
 
 ### Memory Scope
+
 - Supermemory or any external memory layer must be scoped only to PBK Wholesale Paradise.
 - Do not store general coding work, personal assistant memory, or non-PBK project memory in PBK namespaces.
 - Store anonymized summaries, patterns, and lessons. Do not store seller contact info, exact addresses, filled contracts, API keys, webhook URLs, or DocuSign payloads.

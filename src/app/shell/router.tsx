@@ -17,9 +17,7 @@ const BatchReview = lazy(() =>
     default: module.BatchReview,
   }))
 );
-const AvaConsultation = lazy(() =>
-  loadCurrentRoute(() => import('../routes/AvaConsultation')),
-);
+const AvaConsultation = lazy(() => loadCurrentRoute(() => import('../routes/AvaConsultation')));
 
 const LeadPortal = lazy(() =>
   loadCurrentRoute(() => import('../routes/LeadPortal')).then((module) => ({
@@ -102,6 +100,16 @@ function ProspectingEvidenceRedirect() {
   return <Navigate to={{ pathname: '/prospecting', search: '?view=evidence', hash }} replace />;
 }
 
+function IndexAlias() {
+  const { hash } = useLocation();
+  return (
+    <Navigate
+      to={hash === '#recordings' ? '/inbox/conversations?filter=call' : '/command-center'}
+      replace
+    />
+  );
+}
+
 const router = createBrowserRouter(
   [
     {
@@ -109,8 +117,8 @@ const router = createBrowserRouter(
       Component: ParadiseLayout,
       children: [
         { index: true, element: <CommandCenter /> },
-        { path: 'index', element: <Navigate to="/command-center" replace /> },
-        { path: 'index.html', element: <Navigate to="/command-center" replace /> },
+        { path: 'index', element: <IndexAlias /> },
+        { path: 'index.html', element: <IndexAlias /> },
         { path: 'command-center', element: <CommandCenter /> },
         { path: 'dashboard', element: <CommandCenter /> },
         { path: 'leads', element: <Leads /> },

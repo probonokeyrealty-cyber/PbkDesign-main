@@ -13,6 +13,12 @@ const routes = [
   { path: '/inbox/conversations' },
   { path: '/leads/lead-inbound-16575001765' },
   { path: '/index.html', canonical: '/command-center', heading: '#today-heading' },
+  {
+    path: '/index.html#recordings',
+    canonical: '/inbox/conversations?filter=call',
+    heading: '.pbk-conversation-thread-rail h1',
+    activeFilter: 'Calls',
+  },
   { path: '/brain', canonical: '/memory', heading: 'h1.pbk-display' },
 ];
 
@@ -124,7 +130,7 @@ const browser = await puppeteer.launch({
 });
 
 try {
-  for (const { path: route, canonical, heading } of routes) {
+  for (const { path: route, canonical, heading, activeFilter } of routes) {
     const page = await browser.newPage();
     const pageErrors = [];
     await page.setRequestInterception(true);
@@ -154,8 +160,16 @@ try {
       { timeout: 15_000 }
     );
     if (canonical) {
-      await page.waitForFunction((pathname) => location.pathname === pathname, { timeout: 15_000 }, canonical);
+      await page.waitForFunction(
+        (target) => location.pathname + location.search === target,
+        { timeout: 15_000 },
+        canonical
+      );
       await page.waitForSelector(heading, { visible: true, timeout: 15_000 });
+      if (activeFilter) {
+        const label = await page.$eval('.pbk-conversation-thread-rail [aria-pressed="true"]', (button) => button.textContent.trim());
+        assert.equal(label, activeFilter, `${route} must activate the Calls filter.`);
+      }
       assert(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1),
         `${canonical} must fit in a 390px viewport.`);
     }

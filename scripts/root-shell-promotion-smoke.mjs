@@ -9,16 +9,26 @@ const mainShell = readFileSync(resolve(root, 'src/main.shell.tsx'), 'utf8');
 const viteConfig = readFileSync(resolve(root, 'vite.config.ts'), 'utf8');
 const buildDir = resolve(root, process.argv[2] || 'dist');
 const includesLegacy = process.env.PBK_INCLUDE_LEGACY_SHELL === 'true';
+const redirectBlocks = netlifyConfig.split('[[redirects]]').slice(1);
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
 }
 
+function redirectIndex(path) {
+  return redirectBlocks.findIndex((block) => block.match(/^from\s*=\s*"([^"]+)"/m)?.[1] === path);
+}
+
 function redirectTargetsShell(path) {
-  return netlifyConfig.split('[[redirects]]').slice(1).some((block) =>
-    block.match(/^from\s*=\s*"([^"]+)"/m)?.[1] === path &&
-      /^to\s*=\s*"\/index\.shell\.html"/m.test(block) &&
-      /^status\s*=\s*200$/m.test(block)
+  const block = redirectBlocks[redirectIndex(path)] || '';
+  return /^to\s*=\s*"\/index\.shell\.html"/m.test(block) && /^status\s*=\s*200$/m.test(block);
+}
+
+for (const alias of ['/', '/index', '/index.html', '/brain']) {
+  const index = redirectIndex(alias);
+  assert(
+    redirectTargetsShell(alias) && index < redirectIndex('/*') && /^force\s*=\s*true$/m.test(redirectBlocks[index]),
+    `Netlify must force ${alias} to the modern shell before the generic fallback.`
   );
 }
 

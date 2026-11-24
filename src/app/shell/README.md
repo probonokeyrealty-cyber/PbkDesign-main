@@ -25,6 +25,7 @@ Outer chrome of the Paradise UI. Wraps the engine; never modifies it.
 - `index.shell.html` + `src/main.shell.tsx` — **shell mount** (`<ParadiseRouter />`). Open `http://localhost:5173/index.shell.html` after `npm run dev`.
 
 The default build puts PBK Center at both `/index.html` and `/index.shell.html`.
+Old `/index.html#recordings` bookmarks open the Calls filter in modern Inbox.
 The archived design reference is not published. To test or deliberately release the
 original console, set `PBK_INCLUDE_LEGACY_SHELL=true` in that build or dev process.
 Its separate entry is `/legacy-command-center.html` (for example,

@@ -293,6 +293,18 @@ status = 200
 force = true
 
 [[redirects]]
+from = "/index"
+to = "/index.shell.html"
+status = 200
+force = true
+
+[[redirects]]
+from = "/index.html"
+to = "/index.shell.html"
+status = 200
+force = true
+
+[[redirects]]
 from = "/"
 to = "/index.shell.html"
 status = 200

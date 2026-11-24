@@ -23,6 +23,7 @@ async function verify(browserType, width) {
   const writes = [], lookups = [], errors = [];
   let consent = 'no consent', dnc = 'blocked', zip = '';
   let reviewMode = 'mismatched';
+  let nextStep = { code: 'hold_contact', title: 'Hold outreach', detail: 'Review the saved contact restriction.' };
   let reviewReads = 0;
   const consultationReads = [];
   const consultationRecords = [
@@ -59,7 +60,7 @@ async function verify(browserType, width) {
         writeMode: 'read_only', reviewedAt: '2026-11-23T12:00:00Z',
         consultationDecisions: reviewMode === 'fresh-reasons' ? { version: 1, rex: 'elevated_score', hermes: 'tenant_pressure' } : null,
         consultationRecords: ['fresh-reasons', 'legacy-records'].includes(reviewMode) ? consultationRecords : [],
-        nextStep: { code: 'hold_contact', title: 'Hold outreach', detail: 'Review the saved contact restriction.' },
+        nextStep,
         evidence: { property: { recorded: true }, contact: { status: 'restricted' }, qualification: { missing: ['authority'] }, underwriting: { recorded: false, recordedAt: null } },
       } } });
     }
@@ -86,12 +87,18 @@ async function verify(browserType, width) {
     await expect(review.getByText('Missing authority', { exact: true })).toBeVisible();
     assert.equal(reviewReads, 2);
     await expect(review.getByText('Reasons weren’t recorded at intake.', { exact: true })).toBeVisible();
-    await expect(review.getByRole('link')).toHaveCount(0);
+    await expect(review.getByText('Your next step', { exact: true })).toBeVisible();
+    const restrictionLink = review.getByRole('link', { name: 'View contact restriction' });
+    await expect(restrictionLink).toHaveAttribute('href', '#lead-contactability');
+    await restrictionLink.press('Enter');
+    await expect(contact.getByRole('heading', { name: 'Contactability' })).toBeFocused();
+    assert.equal(reviewReads, 2, 'Following the handoff does not rerun Ava');
+    await expect(review.getByRole('link')).toHaveCount(1);
     await expect(copyAll).toHaveCount(0);
     await expect(review.getByRole('button', { name: 'Copy link', exact: false })).toHaveCount(0);
     reviewMode = 'legacy-records';
     await review.getByRole('button', { name: 'Run review again' }).click();
-    await expect(review.getByRole('link')).toHaveCount(2);
+    await expect(review.getByRole('link', { name: /^View saved .* consultation$/ })).toHaveCount(2);
     await expect(review.getByText('Reasons weren’t recorded at intake.', { exact: true })).toBeVisible();
     reviewMode = 'fresh-reasons';
     await review.getByRole('button', { name: 'Run review again' }).click();
@@ -145,6 +152,27 @@ async function verify(browserType, width) {
       mkdirSync('.pbk-local', { recursive: true });
       await review.screenshot({ path: `.pbk-local/ava-lead-review-${browserType.name()}-${width}.png` });
     }
+    for (const [code, name, destination, heading] of [
+      ['review_contact', 'Check consent and DNC', '#lead-contactability', 'Contactability'],
+      ['confirm_property', 'Open property details', '#lead-property', 'Property'],
+      ['review_qualification', 'Review seller timeline', '#lead-timeline', 'Seller timeline'],
+      ['review_offer', 'Open saved underwriting', '#lead-numbers', 'Underwriting'],
+      ['review_underwriting', 'Open Analyzer', `/deal/${leadId}`],
+    ]) {
+      nextStep = { code, title: 'Review lead evidence', detail: 'Check the saved evidence.' };
+      await review.getByRole('button', { name: 'Run review again' }).click();
+      const handoff = review.getByRole('link', { name, exact: true });
+      await expect(handoff).toHaveAttribute('href', destination);
+      if (heading) {
+        await handoff.press('Enter');
+        await expect(page.getByRole('heading', { name: heading, exact: true })).toBeFocused();
+      }
+    }
+    nextStep = { code: 'future_review_step', title: 'Review additional evidence', detail: 'Check the saved evidence.' };
+    reviewMode = 'exact';
+    await review.getByRole('button', { name: 'Run review again' }).click();
+    await expect(review.getByText(nextStep.title, { exact: true })).toBeVisible();
+    await expect(review.getByRole('link')).toHaveCount(0);
     const property = page.getByRole('region', { name: 'Property', exact: true });
     await expect(property.getByText('Missing ZIP', { exact: true })).toBeVisible();
     await property.getByRole('button', { name: 'Complete address', exact: true }).click();

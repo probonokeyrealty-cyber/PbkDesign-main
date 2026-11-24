@@ -1,6 +1,6 @@
-import { useState } from 'react';
-import { Link, useHref } from 'react-router';
-import { ClipboardCheck, Copy, RefreshCw } from 'lucide-react';
+import { useState, type MouseEvent } from 'react';
+import { Link, useHref, type LinkProps } from 'react-router';
+import { ArrowRight, ClipboardCheck, Copy, RefreshCw } from 'lucide-react';
 import { copyToClipboard } from '../../utils/fileExport';
 import { fetchAvaLeadReviewRequest, type AvaLeadReview } from '../../utils/runtimeBridge';
 
@@ -9,6 +9,14 @@ const CONTACT_LABELS = {
   recorded: 'Consent and DNC status on file',
   needs_review: 'Needs verification',
 } as const;
+
+const REVIEW_SECTIONS: Readonly<Record<string, { id: string; label: string }>> = {
+  hold_contact: { id: 'lead-contactability', label: 'View contact restriction' },
+  review_contact: { id: 'lead-contactability', label: 'Check consent and DNC' },
+  confirm_property: { id: 'lead-property', label: 'Open property details' },
+  review_qualification: { id: 'lead-timeline', label: 'Review seller timeline' },
+  review_offer: { id: 'lead-numbers', label: 'Open saved underwriting' },
+};
 
 const CONSULTATION_REASONS = {
   contact_restricted: 'Skipped because the lead had a contact restriction.',
@@ -62,7 +70,15 @@ function ConsultationLinks({ path, specialist }: { path: string; specialist: 'Re
   );
 }
 
-export function AvaLeadReviewCard({ leadId }: { leadId: string }) {
+export function AvaLeadReviewCard({
+  leadId,
+  analyzerLink,
+  onJumpToSection,
+}: {
+  leadId: string;
+  analyzerLink: Pick<LinkProps, 'to' | 'state'>;
+  onJumpToSection: (event: MouseEvent<HTMLAnchorElement>, sectionId: string) => void;
+}) {
   const [review, setReview] = useState<AvaLeadReview>();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(false);
@@ -85,6 +101,11 @@ export function AvaLeadReviewCard({ leadId }: { leadId: string }) {
   }
 
   const evidence = review?.evidence;
+  const nextStepCode = review?.nextStep.code;
+  const reviewSection =
+    nextStepCode && Object.hasOwn(REVIEW_SECTIONS, nextStepCode)
+      ? REVIEW_SECTIONS[nextStepCode]
+      : undefined;
   const decisions = review?.consultationDecisions;
   const consultationRecords = review?.consultationRecords ?? [];
   const specialists = (['Rex', 'Hermes'] as const).map((specialist) => ({
@@ -141,12 +162,29 @@ export function AvaLeadReviewCard({ leadId }: { leadId: string }) {
         {review && evidence && (
           <>
             <div
-              className="pbk-contact-record-status"
+              className="pbk-contact-record-status [overflow-wrap:anywhere]"
               data-blocked={evidence.contact.status === 'restricted'}
             >
+              <span>Your next step</span>
               <strong>{review.nextStep.title}</strong>
               <span>{review.nextStep.detail}</span>
             </div>
+            {reviewSection && (
+              <a
+                href={`#${reviewSection.id}`}
+                className="pbk-btn pbk-btn-ghost mt-2 min-h-11"
+                onClick={(event) => onJumpToSection(event, reviewSection.id)}
+              >
+                {reviewSection.label}
+                <ArrowRight size={15} aria-hidden="true" />
+              </a>
+            )}
+            {nextStepCode === 'review_underwriting' && (
+              <Link {...analyzerLink} className="pbk-btn pbk-btn-ghost mt-2 min-h-11">
+                Open Analyzer
+                <ArrowRight size={15} aria-hidden="true" />
+              </Link>
+            )}
             <dl className="grid gap-2 text-sm [overflow-wrap:anywhere]">
               <div>
                 <dt className="text-[var(--text-secondary)]">CRM property address</dt>

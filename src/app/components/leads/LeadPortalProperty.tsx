@@ -108,9 +108,10 @@ export function LeadPortalProperty({
   const recordTabRef = useRef<HTMLButtonElement>(null);
   const photoTabRef = useRef<HTMLButtonElement>(null);
   const compTabRef = useRef<HTMLButtonElement>(null);
-  function openEvidenceTab(next: PropertyEvidenceTab) {
+  const investorTabRef = useRef<HTMLButtonElement>(null);
+  function openEvidenceTab(next: PropertyEvidenceTab | 'investor') {
     onTabChange(next);
-    ({ record: recordTabRef, photos: photoTabRef, comps: compTabRef })[next].current?.focus();
+    ({ record: recordTabRef, photos: photoTabRef, comps: compTabRef, investor: investorTabRef })[next].current?.focus();
   }
   const locality = [lead.city, [lead.state, lead.zip].filter(Boolean).join(' ')]
     .filter(Boolean)
@@ -309,7 +310,7 @@ export function LeadPortalProperty({
           <Tabs.Trigger ref={compTabRef} value="comps">
             Comps
           </Tabs.Trigger>
-          <Tabs.Trigger value="investor">Investor</Tabs.Trigger>
+          <Tabs.Trigger ref={investorTabRef} value="investor">Investor</Tabs.Trigger>
           <Tabs.Trigger value="market-comparison">Market Comparison</Tabs.Trigger>
         </Tabs.List>
         <Tabs.Content value="overview" className="pbk-property-tab-panel">
@@ -481,7 +482,7 @@ export function LeadPortalProperty({
           />
         </Tabs.Content>
         <Tabs.Content value="market-comparison" className="pbk-property-tab-panel">
-          <LeadMarketComparison lead={lead} evidence={evidence} />
+          <LeadMarketComparison lead={lead} evidence={evidence} onOpenEvidence={openEvidenceTab} />
         </Tabs.Content>
       </Tabs.Root>
     </section>

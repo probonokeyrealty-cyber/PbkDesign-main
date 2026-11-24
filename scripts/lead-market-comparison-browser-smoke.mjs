@@ -11,6 +11,14 @@ const qa91411Path = '/market-comparison-91411-qa.html';
 const expectQa91411 = process.env.PBK_MARKET_TEST_91411_QA === '1';
 const { portalEnvironment } = JSON.parse(readFileSync(resolve(outDir, 'pbk-build-manifest.json'), 'utf8'));
 const expectStagingIndicators = process.env.PBK_MARKET_TEST_STAGING_INDICATORS === '1';
+const evidenceAssets = readdirSync(resolve(outDir, 'assets')).filter(name =>
+  /^LeadInvestorEvidenceChecklist-.*\.(js|css)$/.test(name)
+);
+for (const extension of ['.js', '.css']) {
+  assert.equal(evidenceAssets.some(name => name.endsWith(extension)), expectStagingIndicators,
+    'The investor evidence checklist must only be bundled for the staging preview.');
+}
+
 assert.equal(portalEnvironment, 'live');
 const assetNames = readdirSync(resolve(outDir, 'assets'));
 assert.equal(assetNames.some(name => /^VanNuysMarketMap-.*\.js$/.test(name)), expectStagingIndicators,
@@ -83,6 +91,15 @@ try {
     await qa.goto(origin + qa91411Path);
     await expect(qa.getByRole('heading', { name: '91411 Market Comparison QA' })).toBeVisible();
     await expect(qa.getByText(/Fictional property. Read-only./)).toBeVisible();
+    const checklist = qa.getByRole('region', { name: 'Investor evidence checklist' });
+    await expect(checklist).toBeVisible();
+    await expect(checklist.getByText('Parcel record missing', { exact: true })).toBeVisible();
+    await expect(checklist.getByRole('button', { name: 'Open Investor' })).toHaveCount(0);
+    await expect(checklist.getByRole('link', { name: 'Reventure research hub' }))
+      .toHaveAttribute('href', 'https://blog.reventure.app/graph');
+    await checklist.getByText('Costs, financing and downside', { exact: true }).press('Enter');
+    await expect(checklist.getByText(/contractor bid/)).toBeVisible();
+    assert.ok(await checklist.evaluate(card => card.scrollWidth <= card.clientWidth));
     const income = qa.getByRole('region', { name: 'Census ZCTA 91411 income', exact: true });
     const county = qa.getByRole('region', { name: 'Los Angeles County unemployment', exact: true });
     await expect(income.getByText('$74,617', { exact: true })).toBeVisible();
@@ -220,7 +237,11 @@ try {
     await expect(workspace.getByRole('tab', { name: 'Investor', exact: true })).toHaveAttribute('aria-selected', 'true');
     const requests = [];
     const track = request => {
-      if (['fetch', 'xhr', 'eventsource'].includes(request.resourceType())) requests.push(request.method());
+      const url = new URL(request.url());
+      const method = request.method();
+      // The shell may finish its mocked, read-only boot handshake after the tab is clicked.
+      if (url.origin === origin && url.pathname === '/api/state/stream/session' && method === 'POST') return;
+      if (['fetch', 'xhr', 'eventsource'].includes(request.resourceType())) requests.push(`${method} ${url.pathname}`);
     };
     page.on('request', track);
     try {
@@ -234,6 +255,21 @@ try {
   }
 
   await open(fixtures[0].id);
+  const checklist = panel.getByRole('region', { name: 'Investor evidence checklist' });
+  if (expectStagingIndicators) {
+    await expect(checklist.getByText('Listing price and size saved', { exact: true })).toBeVisible();
+    await expect(checklist.getByText('Parcel ID saved', { exact: true })).toBeVisible();
+    await checklist.getByRole('button', { name: 'Open Investor' }).click();
+    await expect(workspace.getByRole('tab', { name: 'Investor', exact: true })).toBeFocused();
+    await expect(workspace.getByRole('tab', { name: 'Investor', exact: true })).toHaveAttribute('aria-selected', 'true');
+    await market.click();
+    await checklist.getByRole('button', { name: 'Open Comps' }).click();
+    await expect(workspace.getByRole('tab', { name: 'Comps', exact: true })).toHaveAttribute('aria-selected', 'true');
+    await market.click();
+  } else {
+    await expect(checklist).toHaveCount(0);
+  }
+
   {
     const tabs = await workspace.getByRole('tab').allTextContents();
     assert.equal(tabs[tabs.indexOf('Investor') + 1], 'Market Comparison');
@@ -336,6 +372,11 @@ try {
     }));
 
     await open(fixtures[2].id);
+    if (expectStagingIndicators) {
+      await expect(checklist.getByText('Matching listing missing', { exact: true })).toBeVisible();
+      await expect(checklist.getByText('Parcel ID saved', { exact: true })).toBeVisible();
+    }
+
     await expect(row('Asking price')).toContainText('Not captured');
     await expect(panel.getByText('$880,000', { exact: true })).toHaveCount(0);
 
@@ -393,7 +434,22 @@ try {
       await expect(marketMap).toHaveCount(0);
     }
 
+    if (expectStagingIndicators) {
+      await page.setViewportSize({ width: 320, height: 760 });
+      await expect(checklist).toBeVisible();
+      assert.ok(await checklist.evaluate(card =>
+        innerWidth === 320 && card.scrollWidth <= card.clientWidth
+        && document.documentElement.scrollWidth <= innerWidth + 1
+      ), 'Evidence checklist must fit the narrow mobile viewport.');
+    }
     await page.setViewportSize({ width: 1280, height: 900 });
+    if (expectStagingIndicators) {
+      await expect(checklist).toBeVisible();
+      assert.equal(await checklist.locator('dl').evaluate(list =>
+        getComputedStyle(list).gridTemplateColumns.split(' ').filter(track => parseFloat(track) > 0).length
+      ), 2);
+    }
+
     await open(fixtures[1].id);
     await expect(publicContext.getByText('Census ZCTA 91401', { exact: true })).toBeVisible();
     assert.ok(await publicContext.evaluate(element => {

@@ -1,0 +1,32 @@
+.pbk-market-checklist {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+  padding: var(--market-inset);
+  border: 1px solid var(--market-line);
+  border-radius: var(--radius-lg);
+  background: var(--bg-panel);
+  overflow-wrap: anywhere;
+}
+.pbk-market-checklist-snapshots {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr));
+  gap: 8px;
+  margin: 0;
+}
+.pbk-market-checklist-snapshots > div {
+  padding: 10px 12px;
+  border: 1px solid var(--border-dim);
+  border-radius: var(--radius-sm);
+  background: var(--bg-console);
+}
+.pbk-market-checklist dt { font-size: .875rem; font-weight: 650; }
+.pbk-market-checklist dd { margin: 3px 0 0; color: var(--text-secondary); font-size: .8125rem; }
+.pbk-market-checklist-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.pbk-market-checklist a { display: inline-flex; align-items: center; min-height: 44px; color: var(--sky); text-decoration: underline; }
+.pbk-market-checklist-actions button { min-height: 44px; }
+.pbk-market-checklist :is(a, button, summary):focus-visible { outline: 2px solid var(--sky); outline-offset: 2px; }
+.pbk-market-checklist-details { display: grid; gap: 6px; }
+.pbk-market-checklist-details .pbk-market-sources { padding: 0 12px; }
+.pbk-market-checklist-details summary { min-height: 44px; padding-block: 11px; }
+.pbk-market-checklist-details p:last-child { margin-block-end: 12px; }

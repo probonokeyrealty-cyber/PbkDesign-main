@@ -112,15 +112,19 @@ export function AvaLeadReviewCard({ leadId }: { leadId: string }) {
             </dl>
             <div className="mt-3 space-y-2 text-sm [overflow-wrap:anywhere]">
               <h3 className="font-semibold">Specialist decisions at intake</h3>
-              {decisions?.version === 1 ? (
+              {decisions?.version !== 1 && (
+                <p>{decisions === null ? 'Reasons weren’t recorded at intake.' : 'Intake reasons are unavailable.'}</p>
+              )}
+              {(decisions?.version === 1 || consultationRecords.length > 0) && (
                 <dl className="grid gap-2">
                   {(['Rex', 'Hermes'] as const).map((specialist) => {
-                    const reason = specialist === 'Rex' ? decisions.rex : decisions.hermes;
+                    const reason = specialist === 'Rex' ? decisions?.rex : decisions?.hermes;
                     const record = consultationRecords.find((item) => item.specialist === specialist);
+                    if (!reason && !record) return null;
                     return (
                       <div key={specialist}>
                         <dt className="text-[var(--text-secondary)]">{specialist}</dt>
-                        <dd>{CONSULTATION_REASONS[reason] || 'Reason unavailable.'}</dd>
+                        {reason && <dd>{CONSULTATION_REASONS[reason] || 'Reason unavailable.'}</dd>}
                         {record && (
                           <dd>
                             <a className="inline-flex min-h-11 items-center text-[var(--sky)] underline underline-offset-4" href={`#${record.id}`}>
@@ -132,8 +136,6 @@ export function AvaLeadReviewCard({ leadId }: { leadId: string }) {
                     );
                   })}
                 </dl>
-              ) : (
-                <p>{decisions === null ? 'Reasons weren’t recorded at intake.' : 'Intake reasons are unavailable.'}</p>
               )}
               {consultationRecords.map((record) => (
                 <article

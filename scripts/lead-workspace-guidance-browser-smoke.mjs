@@ -36,7 +36,7 @@ async function verify(browserType, width) {
         leadId: reviewMode === 'mismatched' ? 'different-fixture' : 'guidance-demo',
         writeMode: 'read_only', reviewedAt: '2026-11-23T12:00:00Z',
         consultationDecisions: reviewMode === 'fresh-reasons' ? { version: 1, rex: 'elevated_score', hermes: 'tenant_pressure' } : null,
-        consultationRecords: reviewMode === 'fresh-reasons' ? [
+        consultationRecords: ['fresh-reasons', 'legacy-records'].includes(reviewMode) ? [
           { id: 'fixture-rex-task', specialist: 'Rex', status: 'complete', summary: 'Ranked for internal review.', createdAt: '2026-11-23T12:00:00Z' },
           { id: 'fixture-hermes-task', specialist: 'Hermes', status: 'complete', summary: 'Verify occupancy and lease constraints.', createdAt: '2026-11-23T12:00:00Z' },
         ] : [],
@@ -67,6 +67,10 @@ async function verify(browserType, width) {
     assert.equal(reviewReads, 2);
     await expect(review.getByText('Reasons weren’t recorded at intake.', { exact: true })).toBeVisible();
     await expect(review.getByRole('link')).toHaveCount(0);
+    reviewMode = 'legacy-records';
+    await review.getByRole('button', { name: 'Run review again' }).click();
+    await expect(review.getByRole('link')).toHaveCount(2);
+    await expect(review.getByText('Reasons weren’t recorded at intake.', { exact: true })).toBeVisible();
     reviewMode = 'fresh-reasons';
     await review.getByRole('button', { name: 'Run review again' }).click();
     await expect(review.getByText('Consulted because the lead score met the review threshold.', { exact: true })).toBeVisible();

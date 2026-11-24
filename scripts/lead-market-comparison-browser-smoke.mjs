@@ -123,7 +123,16 @@ try {
     await expect(map.getByText('Census ZCTA 91406', { exact: true })).toBeVisible();
     await expect(map.getByText('90% confidence range: $1,850 to $1,962', { exact: true })).toBeVisible();
     await qa.touchscreen.tap(x, y);
-    await expect(qa.getByRole('region', { name: 'Comparison with 91406', exact: true })).toBeVisible();
+    const nearby = qa.getByRole('region', { name: 'Comparison with 91406', exact: true });
+    await expect(nearby).toBeVisible();
+    const selection = map.getByRole('status', { name: 'Map selection' });
+    await expect(selection).toContainText('Saved lead area');
+    await expect(selection).toContainText('ZCTA 91411');
+    await expect(selection).toContainText('Comparison area');
+    await expect(selection).toContainText('ZCTA 91406');
+    await map.getByRole('button', { name: 'View comparison' }).tap();
+    await expect(nearby).toBeFocused();
+    await expect(nearby).toBeInViewport();
     await map.getByRole('button', { name: 'Home value', exact: true }).click();
     await expect(map.getByText('Median owner-reported home value', { exact: true })).toBeVisible();
     await expect(mapSurface.locator('[data-area-code="91401"]')).toHaveAttribute('fill', '#2b91ae');
@@ -137,6 +146,7 @@ try {
     await expect(map.getByText(/Los Angeles County.*06037/)).toBeVisible();
     await expect(map.getByText(/5\.0%.*December 2025/)).toBeVisible();
     await expect(map.getByRole('button', { name: /^Compare ZCTA / })).toHaveCount(0);
+    await expect(selection).toContainText('ZCTA 91401');
     await expect(peer).toBeVisible();
     await map.getByRole('button', { name: 'Gross rent', exact: true }).click();
     await expect(mapSurface).toBeVisible();
@@ -427,6 +437,37 @@ try {
       if (process.env.PBK_MARKET_INDICATOR_SCREENSHOT) {
         await indicators.screenshot({ path: process.env.PBK_MARKET_INDICATOR_SCREENSHOT });
       }
+      const savedHouse = panel.getByRole('complementary', { name: 'Saved listing reference' });
+      await expect(savedHouse).toContainText('$640,000');
+      const savedHouseBefore = await savedHouse.innerText();
+      const info = marketMap.getByRole('status', { name: 'Map selection' });
+      const mapView = marketMap.getByRole('img', { name: 'Van Nuys market boundaries' });
+      await mapView.scrollIntoViewIfNeeded();
+      const point = await mapView.locator('[data-zcta="91406"]').boundingBox();
+      assert.ok(point, 'The neighbor must be tappable from the lead profile.');
+      await page.touchscreen.tap(point.x + point.width / 2, point.y + point.height / 2);
+      await expect(info).toContainText('ZCTA 91411');
+      await expect(info).toContainText('ZCTA 91406');
+      const jump = marketMap.getByRole('button', { name: 'View comparison' });
+      if (process.env.PBK_MARKET_SELECTION_SCREENSHOT) {
+        await marketMap.locator('.pbk-market-map-selection').screenshot({
+          path: process.env.PBK_MARKET_SELECTION_SCREENSHOT,
+        });
+      }
+      await jump.tap();
+      const result = panel.getByRole('region', { name: 'Comparison with 91406', exact: true });
+      await expect(result).toBeFocused();
+      await expect(result).toBeInViewport();
+      await expect(result.getByText('ZCTA 91411', { exact: true }).first()).toBeVisible();
+      await expect(result.getByText('ZCTA 91406', { exact: true }).first()).toBeVisible();
+      assert.equal(await savedHouse.innerText(), savedHouseBefore);
+      assert.ok(await marketMap.evaluate(el => el.scrollWidth <= el.clientWidth));
+      await panel.getByRole('textbox', { name: 'Comparison ZIP' }).fill('00000');
+      await panel.getByRole('button', { name: 'Compare', exact: true }).tap();
+      await expect(info).toContainText('None selected');
+      await expect(jump).toHaveCount(0);
+      await expect(result).toHaveCount(0);
+      assert.equal(await savedHouse.innerText(), savedHouseBefore);
       await open(fixtures[7].id);
       await expect(indicators).toHaveCount(0);
     } else {

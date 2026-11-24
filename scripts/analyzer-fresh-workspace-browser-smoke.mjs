@@ -54,7 +54,7 @@ async function verify(engine, width) {
   try {
     const context = await browser.newContext({ viewport: { width, height: 900 }, serviceWorkers: 'block', colorScheme: 'dark' });
     let wrongId = false, unavailable = false, verifierDown = false;
-    const writes = [], errors = [], reads = [];
+    const writes = [], errors = [], reads = [], invalidLeadReads = [];
     context.on('page', page => {
       page.on('pageerror', error => errors.push(error.message));
       page.on('console', message => { if (message.type() === 'error' && message.text().includes('DealView')) console.error(message.text()); });
@@ -74,6 +74,10 @@ async function verify(engine, width) {
       if (url.pathname === '/api/auth/team') return route.fulfill({ json: { ok: true, ...session } });
       if (url.pathname === '/api/state/stream/session') return route.fulfill({ json: { ok: false } });
       if (req.method() !== 'GET') { writes.push(req.method() + ' ' + url.pathname); return route.abort(); }
+      if (url.pathname === '/api/leads/undefined/full') {
+        invalidLeadReads.push(url.pathname);
+        return route.fulfill({ status: 404, json: { ok: false } });
+      }
       if (url.pathname === `/api/leads/${savedLead.id}/full`) {
         reads.push(url.pathname);
         return route.fulfill({ status: unavailable ? 503 : 200, json: unavailable ? { ok: false } : {
@@ -226,6 +230,11 @@ async function verify(engine, width) {
     await failed.getByRole('link', { name: 'Back to lead', exact: true }).click();
     await expect(failed).toHaveURL(base + '/leads/' + savedLead.id + '#lead-photos');
     await expect(failed.getByRole('tab', { name: 'Photos', exact: true })).toHaveAttribute('aria-selected', 'true');
+    const invalid = await context.newPage();
+    await invalid.goto(base + '/deal/undefined');
+    await expect(invalid).toHaveURL(base + '/leads', { timeout: 5000 });
+    assert.deepEqual(invalidLeadReads, [], 'A missing lead ID must not reach the bridge');
+    await invalid.close();
     assert.deepEqual(await snapshot(original), changedOriginal);
     assert.equal(before.compose, changedOriginal.compose);
     assert.equal(originalDeal.notes, (await deal(original)).notes);

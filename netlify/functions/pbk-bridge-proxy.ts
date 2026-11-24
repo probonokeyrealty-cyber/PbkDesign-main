@@ -230,23 +230,26 @@ function authorizeTeamRequest({
     return deny('canSendContracts', 'send or modify contracts');
   }
 
+  const leadMessageWrite = normalizedMethod === 'POST' && normalizedPath === '/api/lead/send-message';
+  const leadEmailWrite = leadMessageWrite && String(body.channel || '').trim().toLowerCase() === 'email';
   const smsTool = /^(?:telnyx_sms|send_verification_sms)$/i.test(toolName);
   const smsRoute =
     normalizedMethod !== 'GET'
     && /(?:\/api\/messages|\/api\/conversation|\/api\/conversations|\/api\/sms|\/api\/inbox)/.test(normalizedPath)
     && /sms|message|conversation|inbox/.test(normalizedPath);
   const assistantSmsIntent = chatPermissions.has('canSendSms');
-  if ((smsTool || smsRoute || assistantSmsIntent) && permissions.canSendSms !== true) {
+  if ((smsTool || smsRoute || (leadMessageWrite && !leadEmailWrite) || assistantSmsIntent) && permissions.canSendSms !== true) {
     return deny('canSendSms', 'send SMS messages');
   }
 
-  const emailTool = /^(?:sendcoldemail|pbk_send_update)$/i.test(toolName);
+  const emailTool = /^(?:sendcoldemail|sendsellerdocs|pbk_send_update)$/i.test(toolName);
   const emailRoute =
     normalizedMethod !== 'GET'
     && /(?:\/api\/cold-email|\/api\/messages|\/api\/conversation|\/api\/conversations|\/api\/email|\/api\/inbox)/.test(normalizedPath)
     && /email|mail|message|conversation|inbox/.test(normalizedPath);
   const assistantEmailIntent = chatPermissions.has('canSendEmail');
-  if ((emailTool || emailRoute || assistantEmailIntent) && permissions.canSendEmail !== true) {
+  if ((emailTool || emailRoute || leadEmailWrite ||
+      (normalizedMethod === 'POST' && normalizedPath === '/api/send-seller-docs') || assistantEmailIntent) && permissions.canSendEmail !== true) {
     return deny('canSendEmail', 'send emails');
   }
 

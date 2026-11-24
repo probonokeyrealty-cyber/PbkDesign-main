@@ -1562,9 +1562,10 @@ function bridgeResponseError(
 ) {
   const record = parsed && typeof parsed === 'object' ? (parsed as Record<string, unknown>) : null;
   if (response.status === 503 && record?.result === 'state_bootstrap_unavailable') {
-    const message = record.code === 'hosted_postgres_not_configured'
-      ? 'Command Center storage is unavailable. Your request hasn’t started. Try again once service is restored.'
-      : 'Command Center is restoring saved data. Your request hasn’t started. Try again in a moment.';
+    const message =
+      record.code === 'hosted_postgres_not_configured'
+        ? 'Command Center storage is unavailable. Your request hasn’t started. Try again once service is restored.'
+        : 'Command Center is restoring saved data. Your request hasn’t started. Try again in a moment.';
     return new RuntimeBridgeError(message, 503, 'state_bootstrap_unavailable');
   }
   const privateSiteRejected =
@@ -1739,7 +1740,11 @@ export async function bridgeRequest<T = unknown>({
   const headers = buildHeaders(body !== undefined && method !== 'GET');
   if (directPropertyUrl) {
     if (!headers['X-PBK-Team-Token']) {
-      throw new RuntimeBridgeError('Your PBK team session is missing or expired. Sign in again.', 401, 'missing_team_session');
+      throw new RuntimeBridgeError(
+        'Your PBK team session is missing or expired. Sign in again.',
+        401,
+        'missing_team_session'
+      );
     }
     // Full property reads can exceed the Netlify synchronous proxy deadline.
     // The existing Render CORS/team-auth boundary handles this explicit POST.
@@ -1750,8 +1755,11 @@ export async function bridgeRequest<T = unknown>({
   const requestUrl = directPropertyUrl || configuredUrl;
 
   const timeoutController = new AbortController();
-  const requestTimeoutMs = fullPropertyRead ? 210_000 : /^\/api\/(?:v1\/)?assistant\/chat$/.test(path)
-    ? 45_000 : BRIDGE_REQUEST_TIMEOUT_MS;
+  const requestTimeoutMs = fullPropertyRead
+    ? 210_000
+    : /^\/api\/(?:v1\/)?assistant\/chat$/.test(path)
+      ? 45_000
+      : BRIDGE_REQUEST_TIMEOUT_MS;
   const timeoutId = setTimeout(() => timeoutController.abort(), requestTimeoutMs);
   const init = {
     method,
@@ -1783,9 +1791,14 @@ export async function bridgeRequest<T = unknown>({
   }
 
   if (!response.ok && !(method === 'GET' && acceptErrorResponse?.(parsed, response.status))) {
-    const record = parsed && typeof parsed === 'object' ? parsed as Record<string, unknown> : null;
+    const record =
+      parsed && typeof parsed === 'object' ? (parsed as Record<string, unknown>) : null;
     if (directPropertyUrl && response.status === 401 && !record?.code) {
-      parsed = { ...record, error: extractBridgeErrorMessage(parsed, response.status), code: 'invalid_team_session' };
+      parsed = {
+        ...record,
+        error: extractBridgeErrorMessage(parsed, response.status),
+        code: 'invalid_team_session',
+      };
     }
     throw bridgeResponseError(response, parsed, requestUrl, init.headers['X-PBK-Team-Token']);
   }
@@ -1965,7 +1978,7 @@ export async function startLeadCallRequest(body: Record<string, unknown>) {
   const manual = body.manual === false ? false : true;
   const manualSend = body.manualSend === false ? false : true;
   const manualOneToOne = manual && manualSend;
-  return invokeRuntimeTool<Record<string, unknown>>('telnyx_call', {
+  const params = {
     ...body,
     manual,
     manualSend,
@@ -1974,7 +1987,16 @@ export async function startLeadCallRequest(body: Record<string, unknown>) {
       typeof body.requestApproval === 'boolean' ? body.requestApproval : !manualOneToOne,
     requestedBy: body.requestedBy || body.requested_by || body.actor || 'PBK operator',
     source: body.source || 'command_center_manual',
+  };
+  if (!manualOneToOne || params.forceApproval || params.requestApproval) {
+    return invokeRuntimeTool<Record<string, unknown>>('telnyx_call', params);
+  }
+  const response = await bridgeRequest<Record<string, unknown>>({
+    method: 'POST',
+    path: '/api/calls',
+    body: params,
   });
+  return assertBridgeMutationSucceeded(response, 'Call request');
 }
 
 export type AttomPreviewAddress = { street: string; city: string; state: string; zip: string };
@@ -2031,7 +2053,12 @@ export type AttomPropertyFacts = AttomExtraPropertyFacts & {
 };
 
 export type AttomPreviewResult =
-  | { status: 'matched'; profile: AttomPropertyFacts; sections?: AttomMcpSection[]; partial?: boolean }
+  | {
+      status: 'matched';
+      profile: AttomPropertyFacts;
+      sections?: AttomMcpSection[];
+      partial?: boolean;
+    }
   | {
       status:
         | 'invalid_address'
@@ -2055,23 +2082,60 @@ export function fetchAttomPropertyPreview(address: AttomPreviewAddress) {
 }
 
 export type RecordedSale = {
-  id: string; address: string; soldDate: string; price: number; distanceMiles: number;
-  beds: number | null; baths: number | null; sqft: number | null;
-  pricePerSqft: number | null; propertyType: string | null;
-  photoEvidence?: { source: 'apify-for-sale'; address: string; retrievedAt: string; photoUrls: string[]; sourceLinks: string[] };
+  id: string;
+  address: string;
+  soldDate: string;
+  price: number;
+  distanceMiles: number;
+  beds: number | null;
+  baths: number | null;
+  sqft: number | null;
+  pricePerSqft: number | null;
+  propertyType: string | null;
+  photoEvidence?: {
+    source: 'apify-for-sale';
+    address: string;
+    retrievedAt: string;
+    photoUrls: string[];
+    sourceLinks: string[];
+  };
 };
-export type AddressSuggestionResult = { status: string; suggestions?: { id: string; label: string }[]; address?: AttomPreviewAddress };
-export function fetchAddressSuggestions(input: { query?: string; placeId?: string; sessionToken: string }) {
-  return bridgeRequest<AddressSuggestionResult>({ method: 'POST', path: '/api/property-data/address-suggestions', body: input, keepalive: false });
+export type AddressSuggestionResult = {
+  status: string;
+  suggestions?: { id: string; label: string }[];
+  address?: AttomPreviewAddress;
+};
+export function fetchAddressSuggestions(input: {
+  query?: string;
+  placeId?: string;
+  sessionToken: string;
+}) {
+  return bridgeRequest<AddressSuggestionResult>({
+    method: 'POST',
+    path: '/api/property-data/address-suggestions',
+    body: input,
+    keepalive: false,
+  });
 }
 export type RecentSalesResult = {
-  status: string; source?: string; retrievedAt?: string; windowStart?: string;
-  windowEnd?: string; radiusMiles?: number; partial?: boolean; sales?: RecordedSale[];
-  review?: string; selectedIds?: string[];
+  status: string;
+  source?: string;
+  retrievedAt?: string;
+  windowStart?: string;
+  windowEnd?: string;
+  radiusMiles?: number;
+  partial?: boolean;
+  sales?: RecordedSale[];
+  review?: string;
+  selectedIds?: string[];
 };
 export function fetchAttomRecentSales(address: AttomPreviewAddress, radius = 1) {
-  return bridgeRequest<RecentSalesResult>({ method: 'POST', path: '/api/property-data/attom-sales',
-    body: { ...address, radius }, keepalive: false });
+  return bridgeRequest<RecentSalesResult>({
+    method: 'POST',
+    path: '/api/property-data/attom-sales',
+    body: { ...address, radius },
+    keepalive: false,
+  });
 }
 
 export type PropertyIntelligenceResult = {
@@ -2091,8 +2155,12 @@ export function fetchPropertyIntelligenceRequest(input: {
   expectedPropertyAddress?: AttomPreviewAddress;
   radiusMiles?: number;
 }) {
-  return bridgeRequest<PropertyIntelligenceResult>({ method: 'POST',
-    path: '/api/property-data/enrich', body: input, keepalive: false });
+  return bridgeRequest<PropertyIntelligenceResult>({
+    method: 'POST',
+    path: '/api/property-data/enrich',
+    body: input,
+    keepalive: false,
+  });
 }
 
 export async function fetchApifyListingRequest(address: string, includeRecords = false) {
@@ -2340,7 +2408,7 @@ export async function sendAvaAssistantChatRequest(body: {
 
 export async function streamAvaAssistantChatRequest(
   body: Parameters<typeof sendAvaAssistantChatRequest>[0],
-  { onAnswer, signal }: AvaChatStreamOptions = {},
+  { onAnswer, signal }: AvaChatStreamOptions = {}
 ) {
   signal?.throwIfAborted();
   const path = '/api/assistant/chat';
@@ -2349,7 +2417,11 @@ export async function streamAvaAssistantChatRequest(
   const headers = buildRuntimeHeaders({ json: true, accept: 'text/event-stream' });
   if (directRenderUrl) {
     if (!headers['X-PBK-Team-Token']) {
-      throw new RuntimeBridgeError('Your PBK team session is missing or expired. Sign in again.', 401, 'missing_team_session');
+      throw new RuntimeBridgeError(
+        'Your PBK team session is missing or expired. Sign in again.',
+        401,
+        'missing_team_session'
+      );
     }
     // Netlify cannot carry long chat streams. Render already accepts team auth.
     delete headers.Authorization;
@@ -2365,23 +2437,35 @@ export async function streamAvaAssistantChatRequest(
   try {
     // POSTs are never replayed, including when the proxy is unavailable.
     const response = await fetch(requestUrl, {
-      method: 'POST', headers, body: JSON.stringify({ ...body, stream: true }),
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ ...body, stream: true }),
       signal: controller.signal,
     });
     if (!response.ok) {
       const text = await response.text();
       let parsed: unknown = text;
-      try { parsed = JSON.parse(text); } catch { /* Preserve non-JSON site/auth errors. */ }
-      const record = parsed && typeof parsed === 'object' ? parsed as Record<string, unknown> : null;
+      try {
+        parsed = JSON.parse(text);
+      } catch {
+        /* Preserve non-JSON site/auth errors. */
+      }
+      const record =
+        parsed && typeof parsed === 'object' ? (parsed as Record<string, unknown>) : null;
       if (directRenderUrl && response.status === 401 && !record?.code) {
-        parsed = { ...record, error: extractBridgeErrorMessage(parsed, response.status), code: 'invalid_team_session' };
+        parsed = {
+          ...record,
+          error: extractBridgeErrorMessage(parsed, response.status),
+          code: 'invalid_team_session',
+        };
       }
       throw bridgeResponseError(response, parsed, requestUrl, headers['X-PBK-Team-Token']);
     }
     return await readAvaChatResponse(response, { onAnswer, signal: controller.signal });
   } catch (error) {
     if (signal?.aborted) throw new DOMException('The operation was aborted.', 'AbortError');
-    if (controller.signal.aborted) throw new Error(`PBK bridge request timed out after ${timeoutMs / 1000} seconds.`);
+    if (controller.signal.aborted)
+      throw new Error(`PBK bridge request timed out after ${timeoutMs / 1000} seconds.`);
     throw error;
   } finally {
     clearTimeout(timeoutId);
@@ -3319,21 +3403,28 @@ export async function fetchLeadFullRequest(leadId: string) {
 
 type ConsultationSkipReason = 'contact_restricted' | 'property_address_missing';
 
+export type AvaConsultationRecord = {
+  id: string;
+  specialist: 'Rex' | 'Hermes';
+  status: 'complete';
+  summary: string;
+  createdAt: string;
+};
+
 export type AvaLeadReview = {
   leadId: string;
   reviewedAt: string;
   writeMode: 'read_only';
-  consultationRecords?: Array<{
-    id: string;
-    specialist: 'Rex' | 'Hermes';
-    status: 'complete';
-    summary: string;
-    createdAt: string;
-  }>;
+  consultationRecords?: AvaConsultationRecord[];
   consultationDecisions?: {
     version: 1;
     rex: ConsultationSkipReason | 'elevated_score' | 'score_below_threshold' | 'score_unavailable';
-    hermes: ConsultationSkipReason | 'no_recognized_signal' | 'probate_or_estate' | 'tenant_pressure' | 'debt_deadline';
+    hermes:
+      | ConsultationSkipReason
+      | 'no_recognized_signal'
+      | 'probate_or_estate'
+      | 'tenant_pressure'
+      | 'debt_deadline';
   } | null;
   evidence: {
     property: { recorded: boolean };
@@ -3352,6 +3443,18 @@ export async function fetchAvaLeadReviewRequest(leadId: string) {
     throw new Error('No review was returned for this lead. Try again.');
   }
   return review;
+}
+
+export async function fetchAvaConsultationRequest(leadId: string, consultationId: string) {
+  const { ok, leadId: savedLeadId, consultation } = await bridgeRequest<{
+    ok?: boolean; leadId?: string; consultation?: AvaConsultationRecord;
+  }>({
+    path: `/api/leads/${encodeURIComponent(leadId)}/full?consultation=${encodeURIComponent(consultationId)}`,
+  });
+  if (ok !== true || savedLeadId !== leadId || consultation?.id !== consultationId) {
+    throw new Error('No consultation was returned for this lead.');
+  }
+  return consultation;
 }
 
 export async function fetchLeadLastCallRequest(leadId: string) {

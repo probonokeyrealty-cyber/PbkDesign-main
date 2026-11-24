@@ -1,5 +1,5 @@
 import { Suspense, useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
-import { Outlet, useLocation, useNavigate } from 'react-router';
+import { matchPath, Outlet, useLocation, useNavigate } from 'react-router';
 import { ErrorBoundary } from '../components/ErrorBoundary';
 import { SessionTimeoutWarning } from '../components/SessionTimeoutWarning';
 import { ShortcutCheatSheet } from '../components/ShortcutCheatSheet';
@@ -211,13 +211,16 @@ export function ParadiseLayout() {
   }, [location.pathname, navigate]);
 
   useEffect(() => {
-    const path = `${location.pathname}${location.search || ''}`;
-    const savedPath = isValidShellPath(path) ? path : '/';
-    savePbkPrefs({ lastPage: savedPath });
-    setPrefs((current) => ({ ...current, lastPage: savedPath }));
+    const consultation = matchPath('/leads/:leadId/consultations/:consultationId', location.pathname);
+    if (!consultation) {
+      const path = `${location.pathname}${location.search || ''}`;
+      const savedPath = isValidShellPath(path) ? path : '/';
+      savePbkPrefs({ lastPage: savedPath });
+      setPrefs((current) => ({ ...current, lastPage: savedPath }));
+    }
     const routeTitle =
-      location.pathname === '/'
-        ? 'Command Center'
+      consultation ? 'Saved consultation'
+        : location.pathname === '/' ? 'Command Center'
         : location.pathname
             .split('/')
             .filter(Boolean)

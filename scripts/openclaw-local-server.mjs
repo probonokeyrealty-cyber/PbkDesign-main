@@ -3,7 +3,7 @@ import { isClosedDealStage, normalizeDealStage, recordedDealRevenue, summarizeRe
 import { createNeonMailRouter } from './neon-auth-mail.mjs';
 import { createComposioResearchDiscovery } from './composio-research-discovery.mjs';
 import { createPublicMarketConnectionCheck, withSavedRaleighCleanup } from './public-market-connection.mjs';
-import { findAvaOutlookReceipt, sendAvaOutlookMail } from './ava-outlook-mail.mjs';
+import { findAvaOutlookReceipt, sendAvaOutlookMail, verifyOutlookDocumentReceipt } from './ava-outlook-mail.mjs';
 import { normalizeOutlookReceiptUrl, readOutlookDelivery } from '../src/app/utils/outlookDelivery.mjs';
 import { createServer, globalAgent as httpGlobalAgent } from 'node:http';
 import { globalAgent as httpsGlobalAgent } from 'node:https';
@@ -43,6 +43,7 @@ import { createAgentTimingTurn, markAgentTimingFirstContent, bindAgentTimingToPa
   getTrustedAgentTimingProof, registeredAgentTimingChannel, agentTimingResultSucceeded } from './agent-timing-adapters.mjs';
 import { withRuntimeEvidenceContext, getRuntimeEvidenceContext } from './runtime-evidence-context.mjs';
 import { createBackgroundPersistence, createCoalescedPersistence } from './background-persistence.mjs';
+import { isRetryablePostgresSnapshotError, writePostgresStateSnapshot } from './postgres-state-snapshot.mjs';
 import { createProviderActionBinding, hashProviderActionContext, validateProviderActionAuthorization, validateNegotiationApproval } from './provider-action-authorization.mjs';
 import { authorizeQualificationRequest, executeReleaseQualification, isDirectQualificationFounder, readReleaseQualification } from './release-qualification.mjs';
 import {
@@ -3946,21 +3947,24 @@ function authorizeDirectTeamBridgeRequest({
     return deny('canSendContracts', 'send or modify contracts');
   }
 
+  const leadMessageWrite = normalizedMethod === 'POST' && normalizedPath === '/api/lead/send-message';
+  const leadEmailWrite = leadMessageWrite && String(body.channel || '').trim().toLowerCase() === 'email';
   const smsTool = /^(?:telnyx_sms|send_verification_sms)$/i.test(toolName);
   const smsRoute =
     normalizedMethod !== 'GET' &&
     /(?:\/api\/messages|\/api\/conversation|\/api\/conversations|\/api\/sms|\/api\/inbox)/.test(normalizedPath) &&
     /sms|message|conversation|inbox/.test(normalizedPath);
-  if ((smsTool || smsRoute || chatPermissions.has('canSendSms')) && permissions.canSendSms !== true) {
+  if ((smsTool || smsRoute || (leadMessageWrite && !leadEmailWrite) || chatPermissions.has('canSendSms')) && permissions.canSendSms !== true) {
     return deny('canSendSms', 'send SMS messages');
   }
 
-  const emailTool = /^(?:sendcoldemail|pbk_send_update)$/i.test(toolName);
+  const emailTool = /^(?:sendcoldemail|sendsellerdocs|pbk_send_update)$/i.test(toolName);
   const emailRoute =
     normalizedMethod !== 'GET' &&
     /(?:\/api\/cold-email|\/api\/messages|\/api\/conversation|\/api\/conversations|\/api\/email|\/api\/inbox)/.test(normalizedPath) &&
     /email|message|conversation|inbox/.test(normalizedPath);
-  if ((emailTool || emailRoute || chatPermissions.has('canSendEmail')) && permissions.canSendEmail !== true) {
+  if ((emailTool || emailRoute || leadEmailWrite ||
+      (normalizedMethod === 'POST' && normalizedPath === '/api/send-seller-docs') || chatPermissions.has('canSendEmail')) && permissions.canSendEmail !== true) {
     return deny('canSendEmail', 'send emails');
   }
 
@@ -11879,16 +11883,6 @@ function buildStatePersistenceDiagnostics(nextState = {}, serialized = '', error
   };
 }
 
-function isTransientPostgresStatePersistError(error = null) {
-  if (error?.postgresRetryHandled || error?.executionOutcome === 'unknown' || isBoundedPostgresOperationTimeout(error)) return false;
-  const code = String(error?.code || error?.name || '').trim();
-  const message = String(error?.message || error || '');
-  return (
-    ['57P01', '57P02', '57P03', '53300', '08000', '08001', '08003', '08004', '08006', '08007', '08P01', 'ECONNRESET', 'ETIMEDOUT', 'EPIPE'].includes(code) ||
-    /not yet accepting connections|terminating connection|connection terminated|connection ended unexpectedly|timeout|too many connections/i.test(message)
-  );
-}
-
 function getStatePersistRetryAttempts() {
   const fallback = IS_HOSTED ? 5 : 1;
   const configured = Number(process.env.PBK_STATE_PERSIST_RETRY_ATTEMPTS || fallback);
@@ -11896,8 +11890,9 @@ function getStatePersistRetryAttempts() {
 }
 
 function getStatePersistRetryDelayMs(attempt = 1) {
-  const configured = Number(process.env.PBK_STATE_PERSIST_RETRY_BASE_MS || 250);
-  const base = Number.isFinite(configured) ? Math.max(50, Math.min(1000, configured)) : 250;
+  const fallback = IS_HOSTED ? 500 : 250;
+  const configured = Number(process.env.PBK_STATE_PERSIST_RETRY_BASE_MS || fallback);
+  const base = Number.isFinite(configured) ? Math.max(50, Math.min(1000, configured)) : fallback;
   const safeAttempt = Number.isFinite(Number(attempt)) ? Math.max(1, Math.min(8, Math.trunc(Number(attempt)))) : 1;
   return Math.min(3000, base * 2 ** (safeAttempt - 1));
 }
@@ -11916,20 +11911,11 @@ async function writeStateToDb(nextState) {
   const maxAttempts = getStatePersistRetryAttempts();
   try {
     serialized = postgresJsonStringify(nextState);
-    for (attempt = 1; attempt <= maxAttempts; attempt += 1) {
-      try {
-        await pool.query(
-          `INSERT INTO bridge_state (id, data, updated_at)
-           VALUES ('singleton', $1::jsonb, NOW())
-           ON CONFLICT (id) DO UPDATE SET data = EXCLUDED.data, updated_at = NOW()`,
-          [serialized]
-        );
-        break;
-      } catch (error) {
-        if (attempt >= maxAttempts || !isTransientPostgresStatePersistError(error)) throw error;
-        await sleep(getStatePersistRetryDelayMs(attempt));
-      }
-    }
+    await writePostgresStateSnapshot(pool, serialized, {
+      maxAttempts,
+      delay: (retryAttempt) => sleep(getStatePersistRetryDelayMs(retryAttempt)),
+      onAttempt: (currentAttempt) => { attempt = currentAttempt; },
+    });
     await persistActivityLogRecords(nextState.activity || []);
     markPostgresHealth(true);
     lastStateDbPersist = buildStatePersistenceDiagnostics(nextState, serialized, null, 'query');
@@ -11947,7 +11933,7 @@ async function writeStateToDb(nextState) {
       serialized ? 'query' : 'serialize'
     );
     lastStateDbPersist.retryAttempts = attempt || 1;
-    lastStateDbPersist.retryable = isTransientPostgresStatePersistError(error);
+    lastStateDbPersist.retryable = isRetryablePostgresSnapshotError(error);
     markPostgresHealth(false, error?.message || error);
     if (!stateDbPersistWarned) {
       console.warn('[pbk-local-openclaw] postgres state persist unavailable; hosted state requires Postgres:', error?.message || error);
@@ -15781,17 +15767,34 @@ async function confirmOutlookDelivery(approvalId, receiptUrl, actor) {
   if (record.confirmation?.receiptUrl === receiptUrl) return { status: 200, record };
   if (!record.canConfirm) return { status: 409, error: 'This Outlook approval cannot accept a new delivery confirmation.' };
 
-  const confirmation = { receiptUrl, confirmedAt: isoNow(), confirmedBy: actor };
   const previousMetadata = approval.metadata;
+  const documentEmail = (previousMetadata.requestedTool || approval.approvalAction) === 'sendSellerDocs';
+  const confirmation = { receiptUrl, confirmedAt: isoNow(), confirmedBy: actor };
   const metadata = { ...previousMetadata, outlookDeliveryConfirmation: confirmation };
+  if (documentEmail) {
+    const params = previousMetadata.executionParams || {};
+    const proof = await verifyOutlookDocumentReceipt({
+      receiptUrl, subject: record.subject, sender: params.fromEmail || approval.providerSender,
+      recipient: params.email || approval.email,
+      approvedAt: approval.actedAt || approval.decidedAt,
+    });
+    if (proof.status !== 200) return proof;
+    metadata.providerActionAttemptedAt ||= proof.sentAt;
+    metadata.providerActionResult = {
+      ...previousMetadata.providerActionResult,
+      ok: true, result: 'live', provider: 'Outlook', deliveryStatus: 'delivered',
+      messageId: proof.messageId, reconciliationRequired: false,
+    };
+    confirmation.sentAt = proof.sentAt;
+  }
   if (useDatabase) {
     const updated = await queryPgRows(
       `UPDATE public.approvals
-          SET payload = jsonb_set(payload, '{metadata,outlookDeliveryConfirmation}', $4::jsonb), updated_at = NOW()
+          SET payload = jsonb_set(payload, '{metadata}', $4::jsonb), updated_at = NOW()
         WHERE id = $1 AND workspace_id = $2 AND status = 'approved'
           AND payload->'metadata' = $3::jsonb
         RETURNING id`,
-      [approvalId, 'pbk', JSON.stringify(approval.metadata), JSON.stringify(confirmation)]
+      [approvalId, 'pbk', JSON.stringify(approval.metadata), JSON.stringify(metadata)]
     );
     if (!updated.ok) return unavailable;
     if (!updated.rows.length) return { status: 409, error: 'The approval changed. Refresh it before confirming delivery.' };
@@ -15800,6 +15803,11 @@ async function confirmOutlookDelivery(approvalId, receiptUrl, actor) {
   const updatedApproval = { ...approval, metadata };
   if (cached) Object.assign(cached, updatedApproval);
   else addApproval(state, updatedApproval);
+  if (documentEmail && useDatabase) {
+    clearBridgeReadCache('outlook_document_delivery');
+    persistStateInBackground('outlook-document-delivery');
+    return { status: 200, record: readOutlookDelivery(updatedApproval) };
+  }
   try {
     await persistState(state);
   } catch {
@@ -43562,10 +43570,10 @@ function summarizeProviderActionResult(result = {}) {
     error: result.error || '',
     status: result.status || '',
     reconciliationRequired: Boolean(result.reconciliationRequired),
-    ...(result.provider === 'Outlook' ? {
-      provider: result.provider,
-      providerRequestId: result.delivery?.providerRequestId || '',
-      deliveryStatus: result.delivery?.deliveryStatus || result.message?.status || '',
+    ...(result.provider === 'Outlook' || result.email?.provider === 'outlook' ? {
+      provider: 'Outlook',
+      providerRequestId: result.email?.providerRequestId || result.delivery?.providerRequestId || '',
+      deliveryStatus: result.email?.deliveryStatus || result.delivery?.deliveryStatus || result.message?.status || '',
       messageId: result.message?.id || '',
     } : {}),
     callId: result.call?.id || result.callId || '',
@@ -44402,27 +44410,34 @@ async function invokeToolWithOperatingGuard(toolName, params = {}) {
 
 async function executeRouteToolHandler(toolName, params = {}, source = 'http-route') {
   const startedAt = Date.now();
+  return (await prepareRouteToolGuard(toolName, params, startedAt)) ||
+    executePermittedRouteTool(toolName, params, source, startedAt);
+}
+
+async function prepareRouteToolGuard(toolName, params, startedAt) {
   const guarded = await enforceOperatingModeForTool(toolName, params);
-  if (guarded) {
-    if (guarded.ok === false) {
-      productionReadinessMonitor.recordFailure(toolName, guarded.result || guarded.reason || 'guarded');
-    }
-    productionReadinessMonitor.recordLatency(toolName, Date.now() - startedAt);
-    return {
-      result: guarded,
-      guarded,
-      qaValidation: {
+  if (!guarded) return null;
+  if (guarded.ok === false) {
+    productionReadinessMonitor.recordFailure(toolName, guarded.result || guarded.reason || 'guarded');
+  }
+  productionReadinessMonitor.recordLatency(toolName, Date.now() - startedAt);
+  return {
+    result: guarded,
+    guarded,
+    qaValidation: {
+      ok: true,
+      skipped: true,
+      qa: {
         ok: true,
         skipped: true,
-        qa: {
-          ok: true,
-          skipped: true,
-          reason: guarded.result || guarded.reason || 'approval_or_guard_required',
-        },
+        reason: guarded.result || guarded.reason || 'approval_or_guard_required',
       },
-      safetyValidation: null,
-    };
-  }
+    },
+    safetyValidation: null,
+  };
+}
+
+async function executePermittedRouteTool(toolName, params, source, startedAt) {
   const result = await executeToolHandlerWithQa(toolName, params, source);
   const failed =
     result?.result?.ok === false ||
@@ -44530,7 +44545,7 @@ function messageProviderMatchesManualProviderRecord(message = {}, toolName = '')
   const provider = normalizeProviderRecordText(message.provider);
   if (toolName === 'telnyx_sms' || toolName === 'telnyx_call') return provider === 'telnyx';
   if (toolName === 'sendColdEmail') return ['instantly', 'resend'].includes(provider);
-  if (toolName === 'sendSellerDocs') return ['resend', 'instantly'].includes(provider);
+  if (toolName === 'sendSellerDocs') return provider === 'outlook';
   return Boolean(provider);
 }
 
@@ -44596,6 +44611,7 @@ async function executeManualProviderRouteWithOutbox({
         body: messageBody,
         subject,
         requestedBy,
+        sender: params.senderIdentityId || params.fromEmail || params.from || params.fromNumber,
       })
   ).trim();
   const replay = idempotencyKey ? productionIdempotencyStore.get(idempotencyKey) : null;
@@ -44617,19 +44633,41 @@ async function executeManualProviderRouteWithOutbox({
     queuedAt,
   });
 
+  const routeParams = { ...params, idempotencyKey, outboxId: idempotencyKey, manualSendOutbox: queuedOutbox };
+  const startedAt = Date.now();
+  const guardedRoute = await prepareRouteToolGuard(toolName, routeParams, startedAt);
+  if (guardedRoute) {
+    const response = buildRouteToolResponse(guardedRoute);
+    const awaitingApproval = response.result === 'queued_for_approval';
+    const status = awaitingApproval ? 'queued' : 'blocked';
+    const outbox = {
+      ...queuedOutbox,
+      ok: awaitingApproval,
+      result: awaitingApproval ? 'manual_send_outbox_queued' : 'manual_send_outbox_blocked',
+      status,
+      timelineStatus: status,
+      error: awaitingApproval ? '' : response.message || response.error || '',
+    };
+    return {
+      ok: response.ok !== false,
+      statusCode: getRouteToolStatusCode(guardedRoute),
+      response: {
+        ...response,
+        providerAttempted: false,
+        outbox,
+        idempotencyKey,
+        idempotentReplay: false,
+        retryable: false,
+      },
+      outbox,
+      idempotencyKey,
+      idempotentReplay: false,
+    };
+  }
+
   const circuit = await providerCircuitBreaker.execute(
     provider,
-    () =>
-      executeRouteToolHandler(
-        toolName,
-        {
-          ...params,
-          idempotencyKey,
-          outboxId: idempotencyKey,
-          manualSendOutbox: queuedOutbox,
-        },
-        source
-      ),
+    () => executePermittedRouteTool(toolName, routeParams, source, startedAt),
     () => queuedOutbox
   );
 
@@ -44717,7 +44755,9 @@ async function executeManualProviderRouteWithOutbox({
     idempotencyKey,
     idempotentReplay: false,
   };
-  if (deliveryLive && idempotencyKey) productionIdempotencyStore.set(idempotencyKey, envelope);
+  if ((deliveryLive || routeResponse.result === 'outlook_send_unknown') && idempotencyKey) {
+    productionIdempotencyStore.set(idempotencyKey, envelope);
+  }
   return envelope;
 }
 
@@ -60703,7 +60743,7 @@ const toolHandlers = {
         params.instantlySender ||
         ''
     ).trim();
-    const from = getSenderAddress(senderProfile, selectedFromEmail);
+    const from = selectedFromEmail || String(process.env.PBK_AVA_OUTLOOK_SENDER || '').trim();
     const subject = params.subject || `Your property at ${context.address || 'PBK'} - ${documents.length > 1 ? 'seller packet' : 'document package'}`;
 
     if (!documents.length) {
@@ -60732,21 +60772,20 @@ const toolHandlers = {
       );
     }
 
-    const html = `
-      <div style="font-family:Inter,Arial,sans-serif;color:#0f172a;line-height:1.6">
-        <p>Hi ${escapeHtml(context.leadName || 'there')},</p>
-        <p>Attached is the information package we discussed for <strong>${escapeHtml(context.address || 'your property')}</strong>.</p>
-        <p>You will find ${documents.map((item) => escapeHtml(item.title)).join(', ')} attached for review. Reply directly to this email if you want us to adjust timing, offer structure, or contract terms.</p>
-        <p>Thanks,<br/>${escapeHtml(String(from).split('@')[0] || 'PBK')}<br/>Probono Key Realty</p>
-      </div>
-    `;
-
-    const emailResult = await sendTransactionalEmail({
-      from,
-      to: recipientEmail,
+    const emailResult = await sendAvaOutlookMail({
+      sender: from,
+      recipient: recipientEmail,
       subject,
-      html,
-      text: `Hi ${context.leadName || 'there'}, attached is the PBK document package for ${context.address || 'your property'}.`,
+      text: [
+        `Hi ${context.leadName || 'there'},`,
+        `Attached is the PBK document package for ${context.address || 'your property'}.`,
+        'Reply to this email if you have any questions.',
+        'Probono Key Realty',
+      ].join('\n\n'),
+      alternateSenders: [
+        'info@probonokeyrealty.com',
+        'team@probonokeyrealty.com',
+      ],
       attachments,
     });
 
@@ -60759,9 +60798,9 @@ const toolHandlers = {
       senderIdentityId: senderIdentity?.id || '',
       fromEmail: from,
       documents: documents.map((item) => item.type),
-      status: emailResult.ok ? 'sent' : 'failed',
+      status: emailResult.ok ? 'sent' : emailResult.result === 'outlook_send_unknown' ? 'unknown' : 'failed',
       subject,
-      provider: emailResult.provider || 'resend',
+      provider: 'outlook',
     });
 
     addDocumentDelivery(state, delivery);
@@ -60793,7 +60832,9 @@ const toolHandlers = {
     docsActivity.address = context.address;
     docsActivity.deliveryId = delivery.id;
     addActivity(state, docsActivity);
-    await persistState(state);
+    // The approval dispatcher commits the Outlook outcome to its durable lease.
+    // A snapshot failure here would discard the provider receipt after sending.
+    if (!params.approvalId || !getPgPool()) await persistState(state);
 
     return {
       ok: Boolean(emailResult.ok),
@@ -61614,7 +61655,7 @@ async function loadAvaConsultationEvidence(leadId) {
       && task.status === 'complete' && task.providerWrites === 'blocked')
       .map(({ id, toAgent, status, summary, createdAt }) => ({ id, specialist: toAgent, status, summary, createdAt }))
     : [];
-  return { consultationDecisions, consultationRecords };
+  return { consultationDecisions, consultationRecords, recordsAvailable };
 }
 
 const HERMES_TRIAGE_REVIEW = {
@@ -62753,7 +62794,14 @@ async function handleRuntimeEvent(normalizedEvent, payload, { directRetentionFou
                   ? 'provider_error'
                   : 'provider_completed'),
             };
-            await persistState(state);
+            if (toolName === 'sendSellerDocs' && getPgPool()) {
+              const saved = await persistApprovalRecordToPg(approval);
+              if (!saved.ok || !saved.rows.length) {
+                console.warn('[pbk-local-openclaw] Outlook document approval outcome remains in the durable dispatch lease.');
+              }
+            } else {
+              await persistState(state);
+            }
             const completedCall = getCallById(approval.metadata.providerActionResult.callId);
             await reconcileTelnyxCallCompletion(completedCall, { projectUnbound: false });
           }
@@ -78665,6 +78713,7 @@ const server = createServer(async (request, response) => {
         ...body,
         ...context,
         email: recipient,
+        provider: 'outlook',
         manual: body.manual === false ? false : true,
         manualSend: body.manualSend === false ? false : true,
         requestedBy: body.requestedBy || body.requested_by || body.actor || 'PBK operator',
@@ -78672,13 +78721,13 @@ const server = createServer(async (request, response) => {
       };
       const send = await executeManualProviderRouteWithOutbox({
         toolName: 'sendSellerDocs',
-        provider: 'resend',
+        provider: 'outlook',
         channel: 'email',
         params: manualBody,
         source: 'seller-docs-route',
         leadId: context.leadId,
         recipient,
-        messageBody: String(body.message || body.body || body.notes || '').trim(),
+        messageBody: JSON.stringify(normalizeDocumentItems(manualBody)),
         subject: body.subject || '',
         requestedBy: manualBody.requestedBy,
       });
@@ -78688,7 +78737,7 @@ const server = createServer(async (request, response) => {
         verbiage:
           send.outbox.status === 'sent'
             ? 'Seller documents sent or prepared.'
-            : send.outbox.error || 'Seller document provider is not configured.',
+            : send.outbox.error || send.response.message || 'Seller document provider is not configured.',
       });
       return;
     }
@@ -81460,7 +81509,7 @@ const server = createServer(async (request, response) => {
           verbiage:
             send.outbox.status === 'sent'
               ? 'Email sent or prepared.'
-              : send.outbox.error || 'Provider key missing.',
+              : send.outbox.error || send.response.message || 'Provider key missing.',
         });
         return;
       }
@@ -81488,7 +81537,7 @@ const server = createServer(async (request, response) => {
         verbiage:
           send.outbox.status === 'sent'
             ? 'SMS sent or queued through Telnyx.'
-            : send.outbox.error || 'SMS was recorded without claiming carrier delivery.',
+            : send.outbox.error || send.response.message || 'SMS was recorded without claiming carrier delivery.',
       });
       return;
     }
@@ -82624,6 +82673,7 @@ const server = createServer(async (request, response) => {
     if (leadFullMatch && request.method === 'GET') {
       response.setHeader('Cache-Control', 'no-store');
       const reviewOnly = url.searchParams.get('review') === 'ava';
+      const consultationId = url.searchParams.get('consultation');
       let leadId;
       try {
         leadId = decodeURIComponent(leadFullMatch.groups.id);
@@ -82632,8 +82682,12 @@ const server = createServer(async (request, response) => {
         json(response, 400, { ok: false, error: 'Invalid lead ID.' });
         return;
       }
-      if (reviewOnly) {
-        const { lead: exactLead, unavailable, contactRestricted } = await loadLeadForFullView(leadId, { reviewOnly });
+      if (consultationId !== null && !/^(?:ava-lead-triage-[a-f0-9]{64})-(?:rex|hermes)$/.test(consultationId)) {
+        json(response, 404, { ok: false, error: 'Saved consultation not found.' });
+        return;
+      }
+      if (reviewOnly || consultationId !== null) {
+        const { lead: exactLead, unavailable, contactRestricted } = await loadLeadForFullView(leadId, { reviewOnly: true });
         if (unavailable) {
           json(response, 503, { ok: false, code: 'lead_roster_unavailable', error: 'The saved lead record is unavailable. Try again shortly.' });
           return;
@@ -82642,10 +82696,24 @@ const server = createServer(async (request, response) => {
           json(response, 404, { ok: false, error: 'Lead not found.' });
           return;
         }
-        const consultationEvidence = await loadAvaConsultationEvidence(leadId);
+        const { consultationDecisions, consultationRecords, recordsAvailable } = await loadAvaConsultationEvidence(leadId);
+        if (consultationId !== null) {
+          if (!recordsAvailable) {
+            json(response, 503, { ok: false, error: 'Saved consultation is temporarily unavailable.' });
+            return;
+          }
+          const consultation = consultationRecords.find((record) => record.id === consultationId);
+          if (!consultation) {
+            json(response, 404, { ok: false, error: 'Saved consultation not found.' });
+            return;
+          }
+          json(response, 200, { ok: true, leadId, consultation });
+          return;
+        }
         json(response, 200, { ok: true, review: {
           ...buildAvaLeadReview(exactLead, leadId, contactRestricted),
-          ...consultationEvidence,
+          consultationDecisions,
+          consultationRecords,
         } });
         return;
       }
@@ -83291,7 +83359,7 @@ const server = createServer(async (request, response) => {
           verbiage:
             send.outbox.status === 'sent'
               ? 'SMS sent or queued through Telnyx.'
-              : send.outbox.error || 'SMS was recorded without claiming carrier delivery.',
+              : send.outbox.error || send.response.message || 'SMS was recorded without claiming carrier delivery.',
         });
         return;
       }
@@ -83326,7 +83394,7 @@ const server = createServer(async (request, response) => {
         verbiage:
           send.outbox.status === 'sent'
             ? 'Email sent or prepared.'
-            : send.outbox.error || 'Provider key missing.',
+            : send.outbox.error || send.response.message || 'Provider key missing.',
       });
       return;
     }

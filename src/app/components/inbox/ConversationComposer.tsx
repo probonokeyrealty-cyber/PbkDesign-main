@@ -30,6 +30,7 @@ import {
   type ManualSendOutbox,
   type ReplyTemplateRecord,
 } from '../../utils/runtimeBridge';
+import { fetchPhoneInventory } from '../../utils/phoneDialerApi';
 import { showUiToast } from '../../utils/uiFeedback';
 import {
   getSenderRestrictionReason,
@@ -347,7 +348,11 @@ export function ConversationComposer({
     setNotice(null);
     setRecommendationGuard('');
     try {
-      let inventory = await fetchSenderIdentitiesRequest({ channel });
+      const [initialInventory, phoneInventory] = await Promise.all([
+        fetchSenderIdentitiesRequest({ channel }),
+        channel === 'sms' ? fetchPhoneInventory() : Promise.resolve(null),
+      ]);
+      let inventory = initialInventory;
       if (!(inventory.items || []).length && !senderSyncAttempted.current) {
         senderSyncAttempted.current = true;
         const sync = await syncSenderIdentitiesRequest();
@@ -365,12 +370,22 @@ export function ConversationComposer({
       }
       const recommendation = await fetchSenderRecommendationRequest(thread.id, channel);
       if (requestId !== senderRequestSequence.current) return;
-      const identities = inventory.items || [];
+      const numbers = new Set(
+        phoneInventory?.lines
+          .filter((line) => line.provider === 'telnyx' && line.sms?.sendingAllowed)
+          .map((line) => line.phoneNumber)
+      );
+      const identities = (inventory.items || []).filter(
+        (identity) =>
+          channel !== 'sms' || numbers.has(identity.normalizedAddress || identity.address)
+      );
       const recommended = recommendation.recommended || null;
       setSenderIdentities(identities);
       setRecommendedId(recommended?.id || '');
       if (!recommended) {
         setRecommendationGuard(explainRecommendationGuard(recommendation.reasonCodes || []));
+      } else if (channel === 'sms' && !identities.length) {
+        setRecommendationGuard('No Telnyx numbers are enabled for outbound SMS.');
       } else if (recommendation.reasonCodes?.includes('approval_required')) {
         setNotice({
           tone: 'warning',

@@ -107,6 +107,16 @@ test('new intake records a reviewable Ava handoff without any outreach', async (
       id: task.id, specialist: task.toAgent, status: task.status, summary: task.summary, createdAt: task.createdAt,
     })));
     assert.deepEqual((await readReview(manual.leadId)).review.consultationRecords, []);
+    for (const record of review.consultationRecords) {
+      const lookup = `/api/leads/${payload.leadId}/full?consultation=${record.id}`;
+      assert.deepEqual(await request(lookup), { ok: true, leadId: payload.leadId, consultation: record });
+      assert.equal((await bridge.fetch(bridge.origin + lookup)).status, 401);
+      const wrongLeadPath = `/api/leads/${manual.leadId}/full?consultation=${record.id}`;
+      const wrongLead = await bridge.fetch(bridge.origin + wrongLeadPath, {
+        headers: { Authorization: `Bearer ${bridge.apiKey}` },
+      });
+      assert.equal(wrongLead.status, 404);
+    }
     assert.doesNotMatch(JSON.stringify(review), /Synthetic intake note|executor is coordinating/);
     assert.equal(review.evidence.contact.status, 'needs_review');
     assert.equal(review.nextStep.code, 'review_contact');

@@ -1,5 +1,7 @@
 import { useState } from 'react';
-import { ClipboardCheck, RefreshCw } from 'lucide-react';
+import { Link, useHref } from 'react-router';
+import { ClipboardCheck, Copy, RefreshCw } from 'lucide-react';
+import { copyToClipboard } from '../../utils/fileExport';
 import { fetchAvaLeadReviewRequest, type AvaLeadReview } from '../../utils/runtimeBridge';
 
 const CONTACT_LABELS = {
@@ -20,14 +22,58 @@ const CONSULTATION_REASONS = {
   debt_deadline: 'Consulted because intake flagged a possible debt deadline.',
 } as const;
 
+function consultationPath(directory: string, recordId: string) {
+  return `${directory.replace(/\/$/, '')}/${encodeURIComponent(recordId)}`;
+}
+
+function ConsultationLinks({ path, specialist }: { path: string; specialist: 'Rex' | 'Hermes' }) {
+  const href = useHref(path);
+  const [copyStatus, setCopyStatus] = useState<string>();
+
+  async function copyLink() {
+    setCopyStatus(undefined);
+    const copied = await copyToClipboard(new URL(href, window.location.href).href);
+    setCopyStatus(copied ? 'Link copied' : 'Could not copy link');
+  }
+
+  return (
+    <dd className="flex flex-wrap items-center gap-x-3 gap-y-1">
+      <Link
+        className="inline-flex min-h-11 items-center text-[var(--sky)] underline underline-offset-4"
+        to={path}
+        target="_blank"
+        rel="noopener noreferrer"
+      >
+        View saved {specialist} consultation
+      </Link>
+      <button
+        type="button"
+        className="pbk-btn pbk-btn-ghost min-h-11"
+        aria-label={`Copy link to saved ${specialist} consultation`}
+        onClick={copyLink}
+      >
+        <Copy size={15} aria-hidden="true" />
+        Copy link
+      </button>
+      <span role="status" className="text-xs text-[var(--text-secondary)]">
+        {copyStatus}
+      </span>
+    </dd>
+  );
+}
+
 export function AvaLeadReviewCard({ leadId }: { leadId: string }) {
   const [review, setReview] = useState<AvaLeadReview>();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(false);
+  const [copyAllStatus, setCopyAllStatus] = useState<string>();
+  const consultationDirectory = `/leads/${encodeURIComponent(leadId)}/consultations`;
+  const consultationHref = useHref(consultationDirectory);
 
   async function runReview() {
     setReview(undefined);
     setError(false);
+    setCopyAllStatus(undefined);
     setLoading(true);
     try {
       setReview(await fetchAvaLeadReviewRequest(leadId));
@@ -41,9 +87,29 @@ export function AvaLeadReviewCard({ leadId }: { leadId: string }) {
   const evidence = review?.evidence;
   const decisions = review?.consultationDecisions;
   const consultationRecords = review?.consultationRecords ?? [];
+  const specialists = (['Rex', 'Hermes'] as const).map((specialist) => ({
+    specialist,
+    reason: specialist === 'Rex' ? decisions?.rex : decisions?.hermes,
+    record: consultationRecords.find((item) => item.specialist === specialist),
+  }));
   const analysisDate = evidence?.underwriting.recordedAt
     ? new Date(evidence.underwriting.recordedAt)
     : null;
+
+  async function copyAllLinks() {
+    setCopyAllStatus(undefined);
+    const lines = specialists.flatMap(({ specialist, record }) => {
+      if (!record) return [];
+      const savedAt = new Date(record.createdAt);
+      const timestamp = Number.isFinite(savedAt.getTime())
+        ? savedAt.toISOString()
+        : 'Timestamp unavailable';
+      const url = new URL(consultationPath(consultationHref, record.id), window.location.href);
+      return `${specialist} consultation (${timestamp}) — ${url.href}`;
+    });
+    const copied = await copyToClipboard(lines.join('\n'));
+    setCopyAllStatus(copied ? 'Links copied' : 'Could not copy links');
+  }
 
   return (
     <section className="pbk-lead-portal-card space-y-3" aria-labelledby="ava-lead-review-heading">
@@ -111,47 +177,51 @@ export function AvaLeadReviewCard({ leadId }: { leadId: string }) {
               </div>
             </dl>
             <div className="mt-3 space-y-2 text-sm [overflow-wrap:anywhere]">
-              <h3 className="font-semibold">Specialist decisions at intake</h3>
+              <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
+                <h3 className="font-semibold">Specialist decisions at intake</h3>
+                {specialists.some(({ record }) => record) && (
+                  <button
+                    type="button"
+                    className="pbk-btn pbk-btn-ghost min-h-11"
+                    onClick={copyAllLinks}
+                  >
+                    <Copy size={15} aria-hidden="true" />
+                    Copy all links
+                  </button>
+                )}
+              </div>
+              <span
+                role="status"
+                className="block text-xs text-[var(--text-secondary)] empty:hidden"
+              >
+                {copyAllStatus}
+              </span>
               {decisions?.version !== 1 && (
-                <p>{decisions === null ? 'Reasons weren’t recorded at intake.' : 'Intake reasons are unavailable.'}</p>
+                <p>
+                  {decisions === null
+                    ? 'Reasons weren’t recorded at intake.'
+                    : 'Intake reasons are unavailable.'}
+                </p>
               )}
               {(decisions?.version === 1 || consultationRecords.length > 0) && (
                 <dl className="grid gap-2">
-                  {(['Rex', 'Hermes'] as const).map((specialist) => {
-                    const reason = specialist === 'Rex' ? decisions?.rex : decisions?.hermes;
-                    const record = consultationRecords.find((item) => item.specialist === specialist);
+                  {specialists.map(({ specialist, reason, record }) => {
                     if (!reason && !record) return null;
                     return (
                       <div key={specialist}>
                         <dt className="text-[var(--text-secondary)]">{specialist}</dt>
                         {reason && <dd>{CONSULTATION_REASONS[reason] || 'Reason unavailable.'}</dd>}
                         {record && (
-                          <dd>
-                            <a className="inline-flex min-h-11 items-center text-[var(--sky)] underline underline-offset-4" href={`#${record.id}`}>
-                              View saved {specialist} consultation
-                            </a>
-                          </dd>
+                          <ConsultationLinks
+                            path={consultationPath(consultationDirectory, record.id)}
+                            specialist={specialist}
+                          />
                         )}
                       </div>
                     );
                   })}
                 </dl>
               )}
-              {consultationRecords.map((record) => (
-                <article
-                  key={record.id}
-                  id={record.id}
-                  aria-labelledby={`${record.id}-heading`}
-                  tabIndex={-1}
-                  className="scroll-mt-24 rounded-lg border border-[var(--border)] p-3 target:border-[var(--sky)]"
-                >
-                  <h4 id={`${record.id}-heading`} className="font-semibold">{record.specialist} consultation record</h4>
-                  <p>{record.summary}</p>
-                  <time dateTime={record.createdAt} className="text-[var(--text-secondary)]">
-                    {new Date(record.createdAt).toLocaleString()}
-                  </time>
-                </article>
-              ))}
             </div>
           </>
         )}

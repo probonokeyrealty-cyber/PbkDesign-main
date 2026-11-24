@@ -7,55 +7,75 @@ process.env.PBK_DEV_BRIDGE_URL = 'http://127.0.0.1:1';
 const server = await createServer({ server: { host: '127.0.0.1', port: 0 } });
 await server.listen();
 const origin = 'http://127.0.0.1:' + server.httpServer.address().port;
+const leadId = 'pbk-qa-ava-specialist-links-mwu2qwk1';
+const leadPath = `/leads/${leadId}`;
+const leadApiPath = `/api${leadPath}`;
+const consultationId = 'ava-lead-triage-e758b87bf1e7255a4205b140330da8581a3f98511dfd0545c61c524bba1e3255';
 
 async function verify(browserType, width) {
-  const browser = await browserType.launch();
-  const page = await browser.newPage({ viewport: { width, height: 900 } });
+  const verifyClipboard = browserType.name() === 'chromium';
+  const browser = await browserType.launch(verifyClipboard && process.env.PBK_GUIDANCE_CHROME === '1'
+    ? { channel: 'chrome' }
+    : {});
+  const context = await browser.newContext({ viewport: { width, height: 900 } });
+  if (verifyClipboard) await context.grantPermissions(['clipboard-read', 'clipboard-write'], { origin });
+  const page = await context.newPage();
   const writes = [], lookups = [], errors = [];
   let consent = 'no consent', dnc = 'blocked', zip = '';
   let reviewMode = 'mismatched';
   let reviewReads = 0;
+  const consultationReads = [];
+  const consultationRecords = [
+    { id: `${consultationId}-rex`, specialist: 'Rex', status: 'complete', summary: 'Ranked the lead for internal review based on its saved score.', createdAt: '2026-11-24T02:27:28.514Z' },
+    { id: `${consultationId}-hermes`, specialist: 'Hermes', status: 'complete', summary: 'Verify decision-making authority and any estate constraints during internal review.', createdAt: '2026-11-24T02:27:28.516Z' },
+  ];
   const lead = () => ({
-    id: 'guidance-demo', leadId: 'guidance-demo', seller: { name: 'Guidance Sample' },
+    id: leadId, leadId, seller: { name: 'Guidance Sample' },
     property: { address: '14 Demo Oak Way', city: 'Example City', state: 'CA', zip, sqft: 1480 },
     compliance: { tcpaConsent: consent, dncStatus: dnc },
   });
   page.on('pageerror', error => errors.push(error.message));
-  await page.routeWebSocket('**/*', socket => socket.close());
-  await page.route('**/*', route => {
+  await context.routeWebSocket('**/*', socket => socket.close());
+  await context.route('**/*', route => {
     const request = route.request(), url = new URL(request.url()), path = url.pathname;
     if (url.origin !== origin) return route.abort();
     if (!/^\/(?:api(?:\/|$)|\.netlify\/functions\/|state$|status$|health$|events$|invoke$|metrics$)/.test(path)) return route.continue();
     if (path === '/api/property-data/attom-preview') lookups.push(path);
     if (path === '/api/state/stream/session') return route.fulfill({ json: { ok: false } });
     if (request.method() !== 'GET') { writes.push(path); return route.abort(); }
+    if (url.searchParams.has('consultation')) {
+      assert.equal(path, `${leadApiPath}/full`);
+      assert.equal(url.searchParams.has('review'), false);
+      const id = url.searchParams.get('consultation');
+      consultationReads.push(id);
+      const consultation = consultationRecords.find((record) => record.id === id);
+      return route.fulfill({ json: { ok: true, leadId, consultation } });
+    }
     if (url.searchParams.get('review') === 'ava') {
-      assert.equal(path, '/api/leads/guidance-demo/full');
+      assert.equal(path, `${leadApiPath}/full`);
       reviewReads += 1;
       return route.fulfill({ json: { ok: true, review: {
-        leadId: reviewMode === 'mismatched' ? 'different-fixture' : 'guidance-demo',
+        leadId: reviewMode === 'mismatched' ? 'different-fixture' : leadId,
         writeMode: 'read_only', reviewedAt: '2026-11-23T12:00:00Z',
         consultationDecisions: reviewMode === 'fresh-reasons' ? { version: 1, rex: 'elevated_score', hermes: 'tenant_pressure' } : null,
-        consultationRecords: ['fresh-reasons', 'legacy-records'].includes(reviewMode) ? [
-          { id: 'fixture-rex-task', specialist: 'Rex', status: 'complete', summary: 'Ranked for internal review.', createdAt: '2026-11-23T12:00:00Z' },
-          { id: 'fixture-hermes-task', specialist: 'Hermes', status: 'complete', summary: 'Verify occupancy and lease constraints.', createdAt: '2026-11-23T12:00:00Z' },
-        ] : [],
+        consultationRecords: ['fresh-reasons', 'legacy-records'].includes(reviewMode) ? consultationRecords : [],
         nextStep: { code: 'hold_contact', title: 'Hold outreach', detail: 'Review the saved contact restriction.' },
         evidence: { property: { recorded: true }, contact: { status: 'restricted' }, qualification: { missing: ['authority'] }, underwriting: { recorded: false, recordedAt: null } },
       } } });
     }
     return route.fulfill({ json: path === '/api/auth/team/status' ? { ok: true, configured: false, authRequired: false }
-      : path.startsWith('/api/leads/guidance-demo') ? { ok: true, lead: lead() }
+      : path.startsWith(leadApiPath) ? { ok: true, lead: lead() }
         : path === '/api/leads' ? { ok: true, leads: [lead()] }
           : path === '/state' ? { leadImports: [lead()] } : { ok: true, items: [] } });
   });
   try {
-    await page.goto(origin + '/leads/guidance-demo');
+    await page.goto(origin + leadPath, { waitUntil: 'domcontentloaded' });
     const contact = page.locator('.pbk-lead-portal-card').filter({ has: page.getByRole('heading', { name: 'Contactability', exact: true }) });
-    await expect(contact).toBeVisible();
+    await expect(contact).toBeVisible({ timeout: 20000 });
     await expect(contact.locator('.pbk-lead-portal-compliance > .clear')).toHaveCount(0);
     await expect(contact.getByText('Contact blocked', { exact: true })).toBeVisible();
     const review = page.getByRole('region', { name: 'Ava lead review' });
+    const copyAll = review.getByRole('button', { name: 'Copy all links', exact: true });
     assert.equal(reviewReads, 0, 'Opening a lead leaves the run under operator control');
     await review.getByRole('button', { name: 'Run read-only review' }).click();
     await expect(review.getByRole('alert')).toBeVisible();
@@ -67,6 +87,8 @@ async function verify(browserType, width) {
     assert.equal(reviewReads, 2);
     await expect(review.getByText('Reasons weren’t recorded at intake.', { exact: true })).toBeVisible();
     await expect(review.getByRole('link')).toHaveCount(0);
+    await expect(copyAll).toHaveCount(0);
+    await expect(review.getByRole('button', { name: 'Copy link', exact: false })).toHaveCount(0);
     reviewMode = 'legacy-records';
     await review.getByRole('button', { name: 'Run review again' }).click();
     await expect(review.getByRole('link')).toHaveCount(2);
@@ -75,14 +97,48 @@ async function verify(browserType, width) {
     await review.getByRole('button', { name: 'Run review again' }).click();
     await expect(review.getByText('Consulted because the lead score met the review threshold.', { exact: true })).toBeVisible();
     await expect(review.getByText('Consulted because intake flagged a tenancy issue.', { exact: true })).toBeVisible();
-    for (const [specialist, summary] of [['Rex', 'Ranked for internal review.'], ['Hermes', 'Verify occupancy and lease constraints.']]) {
-      const id = `fixture-${specialist.toLowerCase()}-task`;
-      await review.getByRole('link', { name: `View saved ${specialist} consultation` }).click();
-      assert.equal(new URL(page.url()).hash, `#${id}`);
-      const record = review.getByRole('article', { name: `${specialist} consultation record` });
-      await expect(record).toHaveAttribute('id', id);
+    const reviewReadsBeforeLinks = reviewReads;
+    for (const { id, specialist, summary } of consultationRecords) {
+      const link = review.getByRole('link', { name: `View saved ${specialist} consultation` });
+      const copyButton = review.getByRole('button', { name: `Copy link to saved ${specialist} consultation` });
+      await expect(copyButton).toBeVisible();
+      let destination;
+      if (verifyClipboard) {
+        const expected = new URL(await link.getAttribute('href'), origin).href;
+        await copyButton.click();
+        await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe(expected);
+        const copied = await page.evaluate(() => navigator.clipboard.readText());
+        destination = await context.newPage();
+        await destination.goto(copied);
+      } else {
+        [destination] = await Promise.all([context.waitForEvent('page'), link.click()]);
+      }
+      const record = destination.getByRole('article', { name: `${specialist} consultation record` });
       await expect(record).toContainText(summary);
-      await expect(record).toBeInViewport();
+      assert.equal(new URL(destination.url()).pathname, `${leadPath}/consultations/${id}`);
+      await expect(destination.getByRole('region', { name: 'Ava lead review' })).toHaveCount(0);
+      assert.ok(await destination.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
+      await destination.close();
+    }
+    assert.equal(reviewReads, reviewReadsBeforeLinks);
+    assert.deepEqual(consultationReads, consultationRecords.map((record) => record.id));
+    await expect(copyAll).toBeVisible();
+    if (verifyClipboard) {
+      const expectedLines = consultationRecords.map(({ id, specialist, createdAt }) =>
+        `${specialist} consultation (${new Date(createdAt).toISOString()}) — ${origin}${leadPath}/consultations/${id}`);
+      await copyAll.click();
+      await expect(review.getByText('Links copied', { exact: true })).toBeVisible();
+      const readClipboardLines = async () => (await page.evaluate(() => navigator.clipboard.readText())).split(/\r?\n/);
+      await expect.poll(readClipboardLines).toEqual(expectedLines);
+      const lines = await readClipboardLines();
+      for (const [index, { specialist, summary }] of consultationRecords.entries()) {
+        const destination = await context.newPage();
+        await destination.goto(lines[index].split(' — ').at(-1));
+        await expect(destination.getByRole('article', { name: `${specialist} consultation record` })).toContainText(summary);
+        await destination.close();
+      }
+      assert.equal(reviewReads, reviewReadsBeforeLinks);
+      assert.deepEqual(consultationReads, [...consultationRecords, ...consultationRecords].map((record) => record.id));
     }
     assert.ok(await review.evaluate((element) => element.scrollWidth <= element.clientWidth));
     if (process.env.PBK_GUIDANCE_SHOTS === '1') {
@@ -129,7 +185,8 @@ async function verify(browserType, width) {
       await property.scrollIntoViewIfNeeded();
       await page.screenshot({ path: `.pbk-local/lead-guidance-${browserType.name()}-${width}.png`, scale: 'css' });
     }
-    console.log(`${browserType.name()} ${width}px: exact-lead review, retry, address guidance, consent labels, and zero writes/lookups passed`);
+    const browserName = verifyClipboard && process.env.PBK_GUIDANCE_CHROME === '1' ? 'Chrome' : browserType.name();
+    console.log(`${browserName} ${width}px: lead review, consultation links, address guidance, consent labels, and zero writes/lookups passed`);
   } finally { await browser.close(); }
 }
 try {

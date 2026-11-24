@@ -222,6 +222,7 @@ export function deriveManualSendIdempotencyKey({
   body = '',
   subject = '',
   requestedBy = '',
+  sender = '',
 } = {}) {
   const normalizedChannel = normalizeCode(channel || 'message') || 'message';
   const normalizedRecipient = normalizeRecipient(normalizedChannel, recipient);
@@ -232,6 +233,7 @@ export function deriveManualSendIdempotencyKey({
     subject: clean(subject).toLowerCase(),
     body: clean(body),
     requestedBy: clean(requestedBy).toLowerCase(),
+    ...(clean(sender) ? { sender: clean(sender).toLowerCase() } : {}),
   });
   return `manual-send:${normalizedChannel}:${stableHash(payload)}`;
 }

@@ -8,6 +8,7 @@ const bridge = readFileSync(resolve(root, 'scripts/openclaw-local-server.mjs'), 
   '\n'
 );
 const renderYaml = readFileSync(resolve(root, 'render.yaml'), 'utf8').replace(/\r\n/g, '\n');
+const snapshotWriter = readFileSync(resolve(root, 'scripts/postgres-state-snapshot.mjs'), 'utf8');
 
 assert(
   /const PG_TRANSIENT_GRACE_MS = 0;/.test(bridge),
@@ -31,24 +32,28 @@ assert(
   'The bridge must actively keep the Postgres pool warm and update health from a direct keepalive query.'
 );
 assert(
-  /function isTransientPostgresStatePersistError/.test(bridge) &&
-    /57P01[\s\S]*57P02[\s\S]*57P03/.test(bridge) &&
-    /function getStatePersistRetryAttempts/.test(bridge) &&
+  /function getStatePersistRetryAttempts/.test(bridge) &&
     /IS_HOSTED \? 5 : 1/.test(bridge) &&
     /PBK_STATE_PERSIST_RETRY_ATTEMPTS/.test(bridge) &&
-    /await sleep\(getStatePersistRetryDelayMs\(attempt\)\)/.test(bridge),
-  'Hosted Postgres state persistence must retry transient connection-startup failures before failing closed.'
+    /await writePostgresStateSnapshot\(pool, serialized, \{\s*maxAttempts,\s*delay: \(retryAttempt\) => sleep\(getStatePersistRetryDelayMs\(retryAttempt\)\)/.test(bridge) &&
+    /if \(attempt === maxAttempts \|\| !isRetryablePostgresSnapshotError\(error\)\) throw error;/.test(snapshotWriter),
+  'Hosted snapshot writes must use the dedicated, bounded retry helper.'
+);
+assert(
+  /if \(version === undefined\) \{\s*const current = await pool\.query\("SELECT xmin::text AS version/.test(snapshotWriter) &&
+    /ON CONFLICT \(id\) DO NOTHING/.test(snapshotWriter) &&
+    /WHERE id = 'singleton' AND xmin::text = \$2`\s*,\s*\[serialized, version\]/.test(snapshotWriter) &&
+    /SELECT data = \$1::jsonb AS matches[\s\S]*if \(existing\.rows\[0\]\?\.matches\) return attempt;[\s\S]*PBK_POSTGRES_SNAPSHOT_CONFLICT/.test(snapshotWriter),
+  'The snapshot helper must retry the same row version and recognize a committed payload without replacing a concurrent write.'
 );
 const queryPgRowsSource = bridge.match(/async function queryPgRows\(sql = '', params = \[\]\) \{[\s\S]*?\n\}/)?.[0] || '';
-const statePersistRetrySource = bridge.match(/function isTransientPostgresStatePersistError\(error = null\) \{[\s\S]*?\n\}/)?.[0] || '';
 assert(
   (queryPgRowsSource.match(/await pool\.query\s*\(/g) || []).length === 1 &&
-    !/\b(?:for|while)\s*\(|getStatePersistRetryAttempts|withPostgresConnectionRetry|await sleep/.test(queryPgRowsSource) &&
+    !/\b(?:for|while)\s*\(|getStatePersistRetryAttempts|withPostgresConnectionRetry|writePostgresStateSnapshot|await sleep/.test(queryPgRowsSource) &&
     /retryAttempts: 1/.test(queryPgRowsSource) &&
     /retryable: false/.test(queryPgRowsSource) &&
-    /executionOutcome: error\?\.executionOutcome \|\| 'unknown'/.test(queryPgRowsSource) &&
-    /if \(error\?\.postgresRetryHandled \|\| error\?\.executionOutcome === 'unknown' \|\| isBoundedPostgresOperationTimeout\(error\)\) return false/.test(statePersistRetrySource),
-  'Postgres reads/writes must use the pool acquisition retry budget only; callers must not replay submitted or timed-out SQL.'
+    /executionOutcome: error\?\.executionOutcome \|\| 'unknown'/.test(queryPgRowsSource),
+  'General Postgres callers must not replay submitted or timed-out SQL.'
 );
 assert(
   /async function persistApprovalRecordToPg\(approval = \{\}\)/.test(bridge) &&

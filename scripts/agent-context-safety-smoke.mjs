@@ -64,9 +64,15 @@ assert(
   'The appointments HTTP route must use the shared approval and QA guard.'
 );
 
+const outboxStart = bridge.indexOf('async function executeManualProviderRouteWithOutbox(');
+const outboxEnd = bridge.indexOf('\nasync function ', outboxStart + 1);
+const manualOutbox = bridge.slice(outboxStart, outboxEnd);
 assert(
-  /async function executeManualProviderRouteWithOutbox[\s\S]*providerCircuitBreaker\.execute[\s\S]*executeRouteToolHandler\(\s*toolName[\s\S]*buildRouteToolResponse\(routeTool\)/.test(bridge),
-  'Manual provider outbox wrapper must delegate to the shared approval, safety, QA, and response guard.'
+  outboxStart >= 0 && outboxEnd > outboxStart &&
+    /await prepareRouteToolGuard\(toolName, routeParams, startedAt\);\s*if \(guardedRoute\) \{[\s\S]*return \{[\s\S]*providerCircuitBreaker\.execute\(\s*provider,\s*\(\) => executePermittedRouteTool\(toolName, routeParams, source, startedAt\)/.test(manualOutbox) &&
+    /async function prepareRouteToolGuard\(toolName, params, startedAt\) \{\s*const guarded = await enforceOperatingModeForTool\(toolName, params\)/.test(bridge) &&
+    /async function executePermittedRouteTool\(toolName, params, source, startedAt\) \{\s*const result = await executeToolHandlerWithQa\(toolName, params, source\)/.test(bridge),
+  'Manual provider outbox must return approval and safety outcomes before the provider circuit can run the QA-checked tool.'
 );
 
 for (const [toolName, routeName] of [

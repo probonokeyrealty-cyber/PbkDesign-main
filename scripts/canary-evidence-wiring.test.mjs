@@ -225,9 +225,12 @@ test('bridge code matches the reviewed release fingerprint outside the scoped re
   // The exact-lead review reads saved evidence and treats saved restrictions conservatively.
   // See docs/operations/2026-11-23-ava-lead-review-integrity.md for the independent review.
   // The staff review projects saved decision codes and verified consultation records
-  // from the exact lead's Ava triage. It cannot enqueue work or dispatch outreach.
+  // from the exact lead's Ava triage. A direct record read skips review generation.
+  // Outbound sender selection checks channel permissions and keys delivery by sender
+  // and document content. Manual routes return approval outcomes before provider dispatch.
+  // Snapshot recovery retries the same Postgres row version and reconciles an ambiguous commit.
   assert.equal(createHash('sha256').update(unchanged).digest('hex'),
-    'a213894b48abc47bf8c675381220db30a416b343148584e7f7b823664cccaee9');
+    'a28ab44f4c4acd0fde19d50ef9e2206d41ef6d52fccece646274e3662a97564d');
 });
 
 test('production distribution includes reader and protocol, never the fixture signer', () => {

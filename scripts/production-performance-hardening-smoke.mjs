@@ -97,6 +97,19 @@ const secondKey = deriveManualSendIdempotencyKey({
 assert.equal(firstKey, secondKey);
 assert.match(firstKey, /^manual-send:sms:/);
 
+const senderRequest = {
+  channel: 'sms',
+  leadId: 'lead-123',
+  recipient: '+16145550142',
+  body: 'Can we talk today?',
+  requestedBy: 'operator',
+};
+assert.notEqual(
+  deriveManualSendIdempotencyKey({ ...senderRequest, sender: '+16145550198' }),
+  deriveManualSendIdempotencyKey({ ...senderRequest, sender: '+16145550199' }),
+  'Changing the selected sender must produce a separate request key.'
+);
+
 const failedOutbox = buildManualSendOutboxEnvelope({
   channel: 'sms',
   provider: 'telnyx',

@@ -24,6 +24,10 @@ const key = 'pbk:prod:analyzer:current-deal';
 const expect = playwrightExpect.configure({ timeout: 30000 });
 const savedLead = { ...structuredClone(sampleLeads[0]),
   property: { ...sampleLeads[0].property, beds: 6, baths: 8, sqft: 9138 },
+  analyzer: { recordedSales: {
+    address: { street: '88 Sample Oak Dr', city: 'Example City', state: 'CA', zip: '90210' },
+    review: 'operator-selected', selectedIds: ['SYN-COMP'],
+  } },
   deal: { notes: 'Saved manual sample notes, unchanged.', comps: {
     A: { address: '12 Fixture Avenue', price: 400000, date: '2026-10-26', link: '' },
     B: { address: '', price: 0, date: '', link: '' },
@@ -54,7 +58,8 @@ async function verify(engine, width) {
   try {
     const context = await browser.newContext({ viewport: { width, height: 900 }, serviceWorkers: 'block', colorScheme: 'dark' });
     let wrongId = false, unavailable = false, verifierDown = false;
-    const writes = [], errors = [], reads = [], invalidLeadReads = [];
+    let rolloutReads = null;
+    const writes = [], providerReads = [], errors = [], reads = [], invalidLeadReads = [];
     context.on('page', page => {
       page.on('pageerror', error => errors.push(error.message));
       page.on('console', message => { if (message.type() === 'error' && message.text().includes('DealView')) console.error(message.text()); });
@@ -67,6 +72,10 @@ async function verify(engine, width) {
     }, { session, base });
     await context.route('**/*', async route => {
       const req = route.request(), url = new URL(req.url());
+      if (/attomdata\.com$/i.test(url.hostname) || /\/api\/property-data\/(?:enrich|attom-)/i.test(url.pathname)) {
+        providerReads.push(req.method() + ' ' + url.pathname);
+        return route.abort();
+      }
       if (url.origin !== base) return route.abort();
       if (url.pathname === '/api/auth/team/status') return route.fulfill({ json: { ok: true, configured: true, authRequired: true } });
       if (url.pathname === '/api/auth/team/verify') return route.fulfill({ status: verifierDown ? 503 : 200,
@@ -80,6 +89,11 @@ async function verify(engine, width) {
       }
       if (url.pathname === `/api/leads/${savedLead.id}/full`) {
         reads.push(url.pathname);
+        if (rolloutReads && new URL(req.frame().url()).pathname.startsWith('/deal/')) {
+          const status = rolloutReads.length < 3 ? 502 : 200;
+          rolloutReads.push(status);
+          if (status === 502) return route.fulfill({ status, json: { ok: false, code: 'team_auth_verification_unavailable' } });
+        }
         return route.fulfill({ status: unavailable ? 503 : 200, json: unavailable ? { ok: false } : {
           ok: true, lead: wrongId ? { ...savedLead, id: savedLead.id + '0' } : savedLead,
         } });
@@ -239,6 +253,35 @@ async function verify(engine, width) {
     assert.equal(before.compose, changedOriginal.compose);
     assert.equal(originalDeal.notes, (await deal(original)).notes);
     assert.equal(originalLead, JSON.stringify(savedLead));
+
+    // The existing quick retries are exhausted before the bridge comes back.
+    // Enter through the regular lead button and keep the exact saved evidence.
+    rolloutReads = [];
+    await workspace.getByRole('button', { name: 'Open Analyzer', exact: true }).click();
+    await expect(workspace.getByText('Loading seller deal', { exact: true })).toBeVisible();
+    await ready(workspace);
+    assert.deepEqual(rolloutReads, [502, 502, 502, 200]);
+    rolloutReads = null;
+    const recovered = await deal(workspace);
+    assert.equal(recovered.leadId, savedLead.id);
+    assert.equal(recovered.sqft, savedLead.property.sqft);
+    assert.deepEqual(recovered.recordedSales.selectedIds, ['SYN-COMP']);
+    assert.equal(recovered.comps.A.price, savedLead.deal.comps.A.price);
+    await expect(workspace.getByRole('button', { name: 'Retry lead load' })).toHaveCount(0);
+
+    await workspace.getByRole('link', { name: 'Back to lead', exact: true }).click();
+    await workspace.clock.install();
+    rolloutReads = [];
+    await workspace.getByRole('button', { name: 'Open Analyzer', exact: true }).click();
+    await expect.poll(() => rolloutReads.length).toBe(3);
+    await workspace.getByRole('link', { name: 'Back to lead', exact: true }).click();
+    await expect(workspace).toHaveURL(base + '/leads/' + savedLead.id + '#lead-photos');
+    await expect(workspace.getByRole('button', { name: 'Open Analyzer', exact: true })).toBeEnabled();
+    const readsAfterReturn = reads.length;
+    await workspace.clock.fastForward(4_000);
+    assert.equal(reads.length, readsAfterReturn, 'Leaving Analyzer cancels its pending retry');
+    rolloutReads = null;
+    assert.deepEqual(providerReads, [], 'Opening Analyzer never requests property data from a provider');
     assert.deepEqual(writes, [], 'No lead, provider, approval or send requests');
     assert.deepEqual(errors, []);
     assert(reads.length >= 4);
@@ -248,7 +291,7 @@ async function verify(engine, width) {
     mkdirSync('.pbk-local/fresh-analyzer', { recursive: true });
     await workspace.screenshot({ path: `.pbk-local/fresh-analyzer/workspace-${engine.name()}-${width}.png` });
     await fresh.screenshot({ path: `.pbk-local/fresh-analyzer/analyzer-${engine.name()}-${width}.png` });
-    console.log(`${engine.name()} ${width}px: fresh link, exact saved ID, notes/comps, overlap, reload, recovery, clear and errors passed; zero writes`);
+    console.log(`${engine.name()} ${width}px: fresh draft, exact saved evidence, automatic 502 recovery and cancellation passed; zero writes or provider requests`);
   } finally { await browser.close(); }
 }
 

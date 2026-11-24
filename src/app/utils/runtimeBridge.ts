@@ -1210,6 +1210,8 @@ type BridgeRequestOptions = {
   path: string;
   body?: unknown;
   keepalive?: boolean;
+  signal?: AbortSignal;
+  retryLeadReadDuringRestart?: boolean;
   acceptErrorResponse?: (payload: unknown, status: number) => boolean;
 };
 
@@ -1614,7 +1616,15 @@ function canRecoverRuntimeRead(method = 'GET', path = '') {
   );
 }
 
-async function fetchRuntimeResponse(requestUrl: string, init: RequestInit, path: string) {
+const LEAD_READ_RESTART_DELAYS_MS = [250, 500, 3_000, 6_000, 10_000, 15_000];
+const LEAD_READ_RESTART_DEADLINE_MS = 45_000;
+
+async function fetchRuntimeResponse(
+  requestUrl: string,
+  init: RequestInit,
+  path: string,
+  retryLeadReadDuringRestart = false
+) {
   const safeRead = canRecoverRuntimeRead(init.method, path);
   const requestToken = new Headers(init.headers).get('X-PBK-Team-Token') || '';
   for (let attempt = 0; ; attempt++) {
@@ -1640,10 +1650,14 @@ async function fetchRuntimeResponse(requestUrl: string, init: RequestInit, path:
     } catch (error) {
       failure = error;
     }
+    const retryDelay =
+      retryLeadReadDuringRestart && response?.status === 502
+        ? LEAD_READ_RESTART_DELAYS_MS[attempt]
+        : [250, 500][attempt];
     // Only known reads may be replayed, with the original deadline and authority.
     if (
       !safeRead ||
-      attempt >= 2 ||
+      retryDelay === undefined ||
       init.signal?.aborted ||
       (getRuntimeTeamSession()?.token || '') !== requestToken
     ) {
@@ -1655,13 +1669,10 @@ async function fetchRuntimeResponse(requestUrl: string, init: RequestInit, path:
         clearTimeout(timer);
         reject(new DOMException('The operation was aborted.', 'AbortError'));
       };
-      const timer = setTimeout(
-        () => {
-          init.signal?.removeEventListener('abort', abort);
-          resolve();
-        },
-        250 * (attempt + 1)
-      );
+      const timer = setTimeout(() => {
+        init.signal?.removeEventListener('abort', abort);
+        resolve();
+      }, retryDelay);
       init.signal?.addEventListener('abort', abort, { once: true });
       if (init.signal?.aborted) abort();
     });
@@ -1678,7 +1689,7 @@ export async function bridgeBlobRequest({
   body,
   accept = 'application/octet-stream',
   signal,
-}: BridgeRequestOptions & { accept?: string; signal?: AbortSignal }): Promise<Blob> {
+}: BridgeRequestOptions & { accept?: string }): Promise<Blob> {
   assertRuntimeAuthConfigured(path);
   const serializedBody = body !== undefined && method !== 'GET' ? JSON.stringify(body) : undefined;
   const requestUrl = buildUrl(path);
@@ -1729,6 +1740,8 @@ export async function bridgeRequest<T = unknown>({
   path,
   body,
   keepalive,
+  signal,
+  retryLeadReadDuringRestart = false,
   acceptErrorResponse,
 }: BridgeRequestOptions): Promise<T> {
   const serializedBody = body !== undefined && method !== 'GET' ? JSON.stringify(body) : undefined;
@@ -1755,11 +1768,18 @@ export async function bridgeRequest<T = unknown>({
   const requestUrl = directPropertyUrl || configuredUrl;
 
   const timeoutController = new AbortController();
+  const onAbort = () => timeoutController.abort();
+  signal?.addEventListener('abort', onAbort, { once: true });
+  if (signal?.aborted) onAbort();
+  const waitForLeadReadRestart =
+    retryLeadReadDuringRestart && method === 'GET' && /^\/api\/leads\/[^/?]+\/full$/.test(path);
   const requestTimeoutMs = fullPropertyRead
     ? 210_000
-    : /^\/api\/(?:v1\/)?assistant\/chat$/.test(path)
-      ? 45_000
-      : BRIDGE_REQUEST_TIMEOUT_MS;
+    : waitForLeadReadRestart
+      ? LEAD_READ_RESTART_DEADLINE_MS
+      : /^\/api\/(?:v1\/)?assistant\/chat$/.test(path)
+        ? 45_000
+        : BRIDGE_REQUEST_TIMEOUT_MS;
   const timeoutId = setTimeout(() => timeoutController.abort(), requestTimeoutMs);
   const init = {
     method,
@@ -1771,7 +1791,7 @@ export async function bridgeRequest<T = unknown>({
   let response: Response;
   let parsed: unknown;
   try {
-    response = await fetchRuntimeResponse(requestUrl, init, path);
+    response = await fetchRuntimeResponse(requestUrl, init, path, waitForLeadReadRestart);
     const text = await response.text();
     parsed = text;
     try {
@@ -1781,6 +1801,7 @@ export async function bridgeRequest<T = unknown>({
     }
   } catch (error) {
     if (timeoutController.signal.aborted) {
+      if (signal?.aborted) throw new DOMException('The operation was aborted.', 'AbortError');
       throw new Error(
         `PBK bridge request timed out after ${Math.round(requestTimeoutMs / 1000)} seconds.`
       );
@@ -1788,6 +1809,7 @@ export async function bridgeRequest<T = unknown>({
     throw error;
   } finally {
     clearTimeout(timeoutId);
+    signal?.removeEventListener('abort', onAbort);
   }
 
   if (!response.ok && !(method === 'GET' && acceptErrorResponse?.(parsed, response.status))) {
@@ -3395,9 +3417,14 @@ export async function sendSellerDocsRequest(body: Record<string, unknown>) {
   return assertBridgeMutationSucceeded(response, 'Seller document send');
 }
 
-export async function fetchLeadFullRequest(leadId: string) {
+export async function fetchLeadFullRequest(
+  leadId: string,
+  options?: Pick<BridgeRequestOptions, 'signal' | 'retryLeadReadDuringRestart'>
+) {
   return bridgeRequest<Record<string, unknown>>({
     path: `/api/leads/${encodeURIComponent(leadId)}/full`,
+    signal: options?.signal,
+    retryLeadReadDuringRestart: options?.retryLeadReadDuringRestart,
   });
 }
 
@@ -3446,8 +3473,14 @@ export async function fetchAvaLeadReviewRequest(leadId: string) {
 }
 
 export async function fetchAvaConsultationRequest(leadId: string, consultationId: string) {
-  const { ok, leadId: savedLeadId, consultation } = await bridgeRequest<{
-    ok?: boolean; leadId?: string; consultation?: AvaConsultationRecord;
+  const {
+    ok,
+    leadId: savedLeadId,
+    consultation,
+  } = await bridgeRequest<{
+    ok?: boolean;
+    leadId?: string;
+    consultation?: AvaConsultationRecord;
   }>({
     path: `/api/leads/${encodeURIComponent(leadId)}/full?consultation=${encodeURIComponent(consultationId)}`,
   });

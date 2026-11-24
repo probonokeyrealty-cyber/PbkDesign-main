@@ -486,35 +486,41 @@ function DealViewContent() {
   const currentIdentity = useRef(draftIdentity);
   currentIdentity.current = draftIdentity;
 
-  const loadLead = useCallback(async () => {
-    if (!leadId) return;
-    const version = ++requestVersion.current;
-    const isCurrent = () =>
-      currentIdentity.current === draftIdentity && requestVersion.current === version;
-    setLoading(true);
-    setError('');
-    try {
-      const response = await fetchLeadFullRequest(leadId);
-      if (!isCurrent()) return;
-      if (response.ok === false || !hasDealLeadPayload(response)) {
-        throw new Error(
-          firstText(response.error, response.message, response.verbiage) ||
-            'The live seller record is not ready yet.'
-        );
+  const loadLead = useCallback(
+    async (signal: AbortSignal) => {
+      if (!leadId) return;
+      const version = ++requestVersion.current;
+      const isCurrent = () =>
+        currentIdentity.current === draftIdentity && requestVersion.current === version;
+      setLoading(true);
+      setError('');
+      try {
+        const response = await fetchLeadFullRequest(leadId, {
+          signal,
+          retryLeadReadDuringRestart: true,
+        });
+        if (!isCurrent()) return;
+        if (response.ok === false || !hasDealLeadPayload(response)) {
+          throw new Error(
+            firstText(response.error, response.message, response.verbiage) ||
+              'The live seller record is not ready yet.'
+          );
+        }
+        const returnedLead = record(response.lead || response.profile || response);
+        if (firstText(returnedLead.leadId, returnedLead.id) !== leadId) {
+          throw new Error('The returned seller record did not match the requested lead.');
+        }
+        await hydrateAnalyzerFromLead(response, leadId, isCurrent);
+        if (!isCurrent()) return;
+        setLoadedIdentity(draftIdentity);
+      } catch (nextError) {
+        if (isCurrent()) setError(friendlyDealLoadError(nextError));
+      } finally {
+        if (isCurrent()) setLoading(false);
       }
-      const returnedLead = record(response.lead || response.profile || response);
-      if (firstText(returnedLead.leadId, returnedLead.id) !== leadId) {
-        throw new Error('The returned seller record did not match the requested lead.');
-      }
-      await hydrateAnalyzerFromLead(response, leadId, isCurrent);
-      if (!isCurrent()) return;
-      setLoadedIdentity(draftIdentity);
-    } catch (nextError) {
-      if (isCurrent()) setError(friendlyDealLoadError(nextError));
-    } finally {
-      if (isCurrent()) setLoading(false);
-    }
-  }, [leadId, draftIdentity]);
+    },
+    [leadId, draftIdentity]
+  );
 
   useEffect(() => {
     if (!leadId) {
@@ -522,10 +528,12 @@ function DealViewContent() {
       setError('');
       return;
     }
-    void loadLead();
+    const controller = new AbortController();
+    void loadLead(controller.signal);
     const version = requestVersion.current;
     return () => {
       requestVersion.current = version + 1;
+      controller.abort();
     };
   }, [leadId, loadLead, retryToken]);
 
@@ -546,7 +554,8 @@ function DealViewContent() {
           <div className="mx-auto h-8 w-8 animate-spin rounded-full border-2 border-sky-400 border-t-transparent" />
           <h2 className="mt-4 text-lg font-semibold">Loading seller deal</h2>
           <p className="mt-1 text-sm text-slate-400">
-            Pulling seller details and underwriting context into the analyzer.
+            Loading the saved property details and comps. Analyzer will retry a brief connection
+            interruption.
           </p>
         </div>
       </div>

@@ -96,25 +96,30 @@ const netlifyDocumentsPdfFunction = existsSync(netlifyDocumentsPdfFunctionPath)
 const netlifyBridgeProxyFunction = existsSync(netlifyBridgeProxyFunctionPath)
   ? readFileSync(netlifyBridgeProxyFunctionPath, 'utf8')
   : '';
-const netlifyApiProxyIndex = netlifyConfig.lastIndexOf('from = "/api/*"');
-const netlifyBrainCleanIndex = netlifyConfig.lastIndexOf('from = "/brain"');
-const netlifyBrainProxyIndex = netlifyConfig.lastIndexOf('from = "/brain/*"');
-const netlifySpaFallbackIndex = netlifyConfig.lastIndexOf('from = "/*"');
-const netlifySpaFallbackBlock =
-  netlifySpaFallbackIndex >= 0 ? netlifyConfig.slice(netlifySpaFallbackIndex) : '';
-const netlifySpaFallbackOrdered =
-  /from\s*=\s*"\/\*"/.test(netlifySpaFallbackBlock) &&
-  /to\s*=\s*"\/index\.shell\.html"/.test(netlifySpaFallbackBlock) &&
-  /status\s*=\s*200/.test(netlifySpaFallbackBlock) &&
-  netlifyApiProxyIndex >= 0 &&
-  netlifySpaFallbackIndex > netlifyApiProxyIndex;
-const netlifyBrainCleanRouteOrdered =
-  netlifyBrainCleanIndex >= 0 &&
-  netlifyBrainProxyIndex >= 0 &&
+const netlifyRedirects = netlifyConfig
+  .split(/^(?=[ \t]*\[{1,2}[\w.-]+\]{1,2}[ \t]*\r?$)/m)
+  .filter((block) => /^[ \t]*\[\[redirects\]\][ \t]*\r?$/m.test(block));
+const redirectIndex = (from) => netlifyRedirects.findIndex(
+  (block) => block.match(/^[ \t]*from[ \t]*=[ \t]*"([^"\r\n]+)"[ \t]*\r?$/m)?.[1] === from
+);
+const netlifyApiProxyIndex = redirectIndex('/api/*');
+const netlifyBrainCleanIndex = redirectIndex('/brain');
+const netlifyBrainProxyIndex = redirectIndex('/brain/*');
+const netlifySpaFallbackIndex = redirectIndex('/*');
+function rewritesTo(index, target, force = false) {
+  const block = netlifyRedirects[index] || '';
+  return block.match(/^[ \t]*to[ \t]*=[ \t]*"([^"\r\n]+)"[ \t]*\r?$/m)?.[1] === target &&
+    /^[ \t]*status[ \t]*=[ \t]*200[ \t]*\r?$/m.test(block) &&
+    (!force || /^[ \t]*force[ \t]*=[ \t]*true[ \t]*\r?$/m.test(block));
+}
+const netlifyCleanRoutesOrdered =
+  rewritesTo(netlifyBrainCleanIndex, '/index.shell.html', true) &&
+  rewritesTo(netlifyBrainProxyIndex, '/.netlify/functions/pbk-bridge-proxy?path=/brain/:splat', true) &&
+  rewritesTo(netlifyApiProxyIndex, '/.netlify/functions/pbk-bridge-proxy?path=/api/:splat', true) &&
+  rewritesTo(netlifySpaFallbackIndex, '/index.shell.html') &&
   netlifyBrainCleanIndex < netlifyBrainProxyIndex &&
-  /from\s*=\s*"\/brain"[\s\S]*?to\s*=\s*"\/index\.html"[\s\S]*?status\s*=\s*200/.test(
-    netlifyConfig.slice(netlifyBrainCleanIndex, netlifyBrainProxyIndex)
-  );
+  netlifyBrainProxyIndex < netlifySpaFallbackIndex &&
+  netlifyApiProxyIndex < netlifySpaFallbackIndex;
 const cleanPathRouterWired =
   /const\s+cleanPagePathAliases\s*=/.test(index) &&
   /['"]\/settings['"]\s*:\s*['"]settings['"]/.test(index) &&
@@ -1876,7 +1881,7 @@ const checks = [
   },
   {
     name: 'Netlify hosted app preserves direct clean links without stealing API rewrites',
-    ok: netlifySpaFallbackOrdered && netlifyBrainCleanRouteOrdered,
+    ok: netlifyCleanRoutesOrdered,
   },
   {
     name: 'Direct Netlify clean links open the intended Command Center page',

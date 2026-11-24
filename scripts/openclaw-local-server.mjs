@@ -43,6 +43,7 @@ import { createAgentTimingTurn, markAgentTimingFirstContent, bindAgentTimingToPa
   getTrustedAgentTimingProof, registeredAgentTimingChannel, agentTimingResultSucceeded } from './agent-timing-adapters.mjs';
 import { withRuntimeEvidenceContext, getRuntimeEvidenceContext } from './runtime-evidence-context.mjs';
 import { createBackgroundPersistence, createCoalescedPersistence } from './background-persistence.mjs';
+import { isRetryablePostgresSnapshotError, writePostgresStateSnapshot } from './postgres-state-snapshot.mjs';
 import { createProviderActionBinding, hashProviderActionContext, validateProviderActionAuthorization, validateNegotiationApproval } from './provider-action-authorization.mjs';
 import { authorizeQualificationRequest, executeReleaseQualification, isDirectQualificationFounder, readReleaseQualification } from './release-qualification.mjs';
 import {
@@ -11882,16 +11883,6 @@ function buildStatePersistenceDiagnostics(nextState = {}, serialized = '', error
   };
 }
 
-function isTransientPostgresStatePersistError(error = null) {
-  if (error?.postgresRetryHandled || error?.executionOutcome === 'unknown' || isBoundedPostgresOperationTimeout(error)) return false;
-  const code = String(error?.code || error?.name || '').trim();
-  const message = String(error?.message || error || '');
-  return (
-    ['57P01', '57P02', '57P03', '53300', '08000', '08001', '08003', '08004', '08006', '08007', '08P01', 'ECONNRESET', 'ETIMEDOUT', 'EPIPE'].includes(code) ||
-    /not yet accepting connections|terminating connection|connection terminated|connection ended unexpectedly|timeout|too many connections/i.test(message)
-  );
-}
-
 function getStatePersistRetryAttempts() {
   const fallback = IS_HOSTED ? 5 : 1;
   const configured = Number(process.env.PBK_STATE_PERSIST_RETRY_ATTEMPTS || fallback);
@@ -11899,8 +11890,9 @@ function getStatePersistRetryAttempts() {
 }
 
 function getStatePersistRetryDelayMs(attempt = 1) {
-  const configured = Number(process.env.PBK_STATE_PERSIST_RETRY_BASE_MS || 250);
-  const base = Number.isFinite(configured) ? Math.max(50, Math.min(1000, configured)) : 250;
+  const fallback = IS_HOSTED ? 500 : 250;
+  const configured = Number(process.env.PBK_STATE_PERSIST_RETRY_BASE_MS || fallback);
+  const base = Number.isFinite(configured) ? Math.max(50, Math.min(1000, configured)) : fallback;
   const safeAttempt = Number.isFinite(Number(attempt)) ? Math.max(1, Math.min(8, Math.trunc(Number(attempt)))) : 1;
   return Math.min(3000, base * 2 ** (safeAttempt - 1));
 }
@@ -11919,20 +11911,11 @@ async function writeStateToDb(nextState) {
   const maxAttempts = getStatePersistRetryAttempts();
   try {
     serialized = postgresJsonStringify(nextState);
-    for (attempt = 1; attempt <= maxAttempts; attempt += 1) {
-      try {
-        await pool.query(
-          `INSERT INTO bridge_state (id, data, updated_at)
-           VALUES ('singleton', $1::jsonb, NOW())
-           ON CONFLICT (id) DO UPDATE SET data = EXCLUDED.data, updated_at = NOW()`,
-          [serialized]
-        );
-        break;
-      } catch (error) {
-        if (attempt >= maxAttempts || !isTransientPostgresStatePersistError(error)) throw error;
-        await sleep(getStatePersistRetryDelayMs(attempt));
-      }
-    }
+    await writePostgresStateSnapshot(pool, serialized, {
+      maxAttempts,
+      delay: (retryAttempt) => sleep(getStatePersistRetryDelayMs(retryAttempt)),
+      onAttempt: (currentAttempt) => { attempt = currentAttempt; },
+    });
     await persistActivityLogRecords(nextState.activity || []);
     markPostgresHealth(true);
     lastStateDbPersist = buildStatePersistenceDiagnostics(nextState, serialized, null, 'query');
@@ -11950,7 +11933,7 @@ async function writeStateToDb(nextState) {
       serialized ? 'query' : 'serialize'
     );
     lastStateDbPersist.retryAttempts = attempt || 1;
-    lastStateDbPersist.retryable = isTransientPostgresStatePersistError(error);
+    lastStateDbPersist.retryable = isRetryablePostgresSnapshotError(error);
     markPostgresHealth(false, error?.message || error);
     if (!stateDbPersistWarned) {
       console.warn('[pbk-local-openclaw] postgres state persist unavailable; hosted state requires Postgres:', error?.message || error);

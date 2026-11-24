@@ -169,6 +169,7 @@ COPY scripts/controlled-execution-scope.mjs ./scripts/controlled-execution-scope
 COPY scripts/controlled-agent-storage.mjs ./scripts/controlled-agent-storage.mjs
 COPY scripts/controlled-agent-workflow.mjs ./scripts/controlled-agent-workflow.mjs
 COPY scripts/background-persistence.mjs ./scripts/background-persistence.mjs
+COPY scripts/postgres-state-snapshot.mjs ./scripts/postgres-state-snapshot.mjs
 COPY scripts/pool-schema-initializer.mjs ./scripts/pool-schema-initializer.mjs
 COPY scripts/ava-accounting-status.mjs ./scripts/ava-accounting-status.mjs
 COPY scripts/ava-decision-messages.mjs ./scripts/ava-decision-messages.mjs

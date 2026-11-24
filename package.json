@@ -352,7 +352,8 @@
     "prepare": "node ./.husky/install.mjs",
     "test:ava-gemini-live-router": "node ./scripts/ava-gemini-live-router-smoke.mjs",
     "test:ava-chat-scope": "node --test ./scripts/ava-chat-scope.node-test.mjs",
-    "test:ava-chat-scope-ui": "node --test ./scripts/ava-chat-scope-browser.node-test.mjs"
+    "test:ava-chat-scope-ui": "node --test ./scripts/ava-chat-scope-browser.node-test.mjs",
+    "build:composio-staging": "node scripts/build-composio-staging.mjs"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1056.0",

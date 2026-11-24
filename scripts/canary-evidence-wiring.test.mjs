@@ -229,7 +229,7 @@ test('bridge code matches the reviewed release fingerprint outside the scoped re
   // Outbound sender selection checks channel permissions and keys delivery by sender
   // and document content. Manual routes return approval outcomes before provider dispatch.
   assert.equal(createHash('sha256').update(unchanged).digest('hex'),
-    '089b7fc00bfa9876db502e9423bb7bf66090e4e18a992e1ec4ad7c6ad8fcdb95');
+    '28fa15352f4d5b9ffdb18472ed09de64bf146ddec636a3f42f5a04eb427e410e');
 });
 
 test('production distribution includes reader and protocol, never the fixture signer', () => {

@@ -3,7 +3,7 @@ import { isClosedDealStage, normalizeDealStage, recordedDealRevenue, summarizeRe
 import { createNeonMailRouter } from './neon-auth-mail.mjs';
 import { createComposioResearchDiscovery } from './composio-research-discovery.mjs';
 import { createPublicMarketConnectionCheck, withSavedRaleighCleanup } from './public-market-connection.mjs';
-import { findAvaOutlookReceipt, sendAvaOutlookMail } from './ava-outlook-mail.mjs';
+import { findAvaOutlookReceipt, sendAvaOutlookMail, verifyOutlookDocumentReceipt } from './ava-outlook-mail.mjs';
 import { normalizeOutlookReceiptUrl, readOutlookDelivery } from '../src/app/utils/outlookDelivery.mjs';
 import { createServer, globalAgent as httpGlobalAgent } from 'node:http';
 import { globalAgent as httpsGlobalAgent } from 'node:https';
@@ -15784,17 +15784,34 @@ async function confirmOutlookDelivery(approvalId, receiptUrl, actor) {
   if (record.confirmation?.receiptUrl === receiptUrl) return { status: 200, record };
   if (!record.canConfirm) return { status: 409, error: 'This Outlook approval cannot accept a new delivery confirmation.' };
 
-  const confirmation = { receiptUrl, confirmedAt: isoNow(), confirmedBy: actor };
   const previousMetadata = approval.metadata;
+  const documentEmail = (previousMetadata.requestedTool || approval.approvalAction) === 'sendSellerDocs';
+  const confirmation = { receiptUrl, confirmedAt: isoNow(), confirmedBy: actor };
   const metadata = { ...previousMetadata, outlookDeliveryConfirmation: confirmation };
+  if (documentEmail) {
+    const params = previousMetadata.executionParams || {};
+    const proof = await verifyOutlookDocumentReceipt({
+      receiptUrl, subject: record.subject, sender: params.fromEmail || approval.providerSender,
+      recipient: params.email || approval.email,
+      approvedAt: approval.actedAt || approval.decidedAt,
+    });
+    if (proof.status !== 200) return proof;
+    metadata.providerActionAttemptedAt ||= proof.sentAt;
+    metadata.providerActionResult = {
+      ...previousMetadata.providerActionResult,
+      ok: true, result: 'live', provider: 'Outlook', deliveryStatus: 'delivered',
+      messageId: proof.messageId, reconciliationRequired: false,
+    };
+    confirmation.sentAt = proof.sentAt;
+  }
   if (useDatabase) {
     const updated = await queryPgRows(
       `UPDATE public.approvals
-          SET payload = jsonb_set(payload, '{metadata,outlookDeliveryConfirmation}', $4::jsonb), updated_at = NOW()
+          SET payload = jsonb_set(payload, '{metadata}', $4::jsonb), updated_at = NOW()
         WHERE id = $1 AND workspace_id = $2 AND status = 'approved'
           AND payload->'metadata' = $3::jsonb
         RETURNING id`,
-      [approvalId, 'pbk', JSON.stringify(approval.metadata), JSON.stringify(confirmation)]
+      [approvalId, 'pbk', JSON.stringify(approval.metadata), JSON.stringify(metadata)]
     );
     if (!updated.ok) return unavailable;
     if (!updated.rows.length) return { status: 409, error: 'The approval changed. Refresh it before confirming delivery.' };
@@ -15803,6 +15820,11 @@ async function confirmOutlookDelivery(approvalId, receiptUrl, actor) {
   const updatedApproval = { ...approval, metadata };
   if (cached) Object.assign(cached, updatedApproval);
   else addApproval(state, updatedApproval);
+  if (documentEmail && useDatabase) {
+    clearBridgeReadCache('outlook_document_delivery');
+    persistStateInBackground('outlook-document-delivery');
+    return { status: 200, record: readOutlookDelivery(updatedApproval) };
+  }
   try {
     await persistState(state);
   } catch {
@@ -43565,10 +43587,10 @@ function summarizeProviderActionResult(result = {}) {
     error: result.error || '',
     status: result.status || '',
     reconciliationRequired: Boolean(result.reconciliationRequired),
-    ...(result.provider === 'Outlook' ? {
-      provider: result.provider,
-      providerRequestId: result.delivery?.providerRequestId || '',
-      deliveryStatus: result.delivery?.deliveryStatus || result.message?.status || '',
+    ...(result.provider === 'Outlook' || result.email?.provider === 'outlook' ? {
+      provider: 'Outlook',
+      providerRequestId: result.email?.providerRequestId || result.delivery?.providerRequestId || '',
+      deliveryStatus: result.email?.deliveryStatus || result.delivery?.deliveryStatus || result.message?.status || '',
       messageId: result.message?.id || '',
     } : {}),
     callId: result.call?.id || result.callId || '',
@@ -60827,7 +60849,9 @@ const toolHandlers = {
     docsActivity.address = context.address;
     docsActivity.deliveryId = delivery.id;
     addActivity(state, docsActivity);
-    await persistState(state);
+    // The approval dispatcher commits the Outlook outcome to its durable lease.
+    // A snapshot failure here would discard the provider receipt after sending.
+    if (!params.approvalId || !getPgPool()) await persistState(state);
 
     return {
       ok: Boolean(emailResult.ok),
@@ -62787,7 +62811,14 @@ async function handleRuntimeEvent(normalizedEvent, payload, { directRetentionFou
                   ? 'provider_error'
                   : 'provider_completed'),
             };
-            await persistState(state);
+            if (toolName === 'sendSellerDocs' && getPgPool()) {
+              const saved = await persistApprovalRecordToPg(approval);
+              if (!saved.ok || !saved.rows.length) {
+                console.warn('[pbk-local-openclaw] Outlook document approval outcome remains in the durable dispatch lease.');
+              }
+            } else {
+              await persistState(state);
+            }
             const completedCall = getCallById(approval.metadata.providerActionResult.callId);
             await reconcileTelnyxCallCompletion(completedCall, { projectUnbound: false });
           }
@@ -78699,6 +78730,7 @@ const server = createServer(async (request, response) => {
         ...body,
         ...context,
         email: recipient,
+        provider: 'outlook',
         manual: body.manual === false ? false : true,
         manualSend: body.manualSend === false ? false : true,
         requestedBy: body.requestedBy || body.requested_by || body.actor || 'PBK operator',

@@ -203,3 +203,33 @@ test('reports an Exchange Send As denial for a verified alternate From draft', a
   assert.equal(result.result, 'outlook_send_as_denied');
   assert.equal(result.draftId, 'draft');
 });
+
+test('PDF receipt reconciliation calls only Outlook reads and checks the attachment and envelope', async () => {
+  const options = {
+    env, sender, recipient, subject: 'PDF verification',
+    receiptUrl: 'https://outlook.office365.com/mail/deeplink/read/fixture-receipt',
+    approvedAt: '2026-11-24T09:55:21Z',
+  };
+  async function verify(overrides = {}) {
+    const calls = [];
+    const result = await outlook.verifyOutlookDocumentReceipt({ ...options, fetchImpl: async (url, request) => {
+      const tool = url.split('/').at(-1);
+      calls.push(tool);
+      if (tool === 'OUTLOOK_GET_PROFILE') return Response.json({ successful: true, data: { mail: sender } });
+      assert.equal(tool, 'OUTLOOK_GET_MESSAGE');
+      assert.equal(JSON.parse(request.body).arguments.message_id, 'fixture-receipt');
+      return Response.json({ successful: true, data: {
+        id: 'fixture-receipt', subject: options.subject, isDraft: false, hasAttachments: true,
+        from: { emailAddress: { address: sender } }, toRecipients: [{ emailAddress: { address: recipient } }],
+        sentDateTime: '2026-11-24T09:55:38Z', internetMessageId: '<confirmed-pdf@example.com>', ...overrides,
+      } });
+    } });
+    assert.deepEqual(calls, ['OUTLOOK_GET_PROFILE', 'OUTLOOK_GET_MESSAGE']);
+    return result;
+  }
+  assert.deepEqual(await verify(), { status: 200, sentAt: '2026-11-24T09:55:38Z', messageId: '<confirmed-pdf@example.com>' });
+  assert.equal((await verify({ isDraft: true })).status, 422);
+  assert.equal((await verify({ hasAttachments: false })).status, 422);
+  assert.equal((await verify({ toRecipients: [{ emailAddress: { address: 'another@example.com' } }] })).status, 422);
+  assert.equal((await verify({ sentDateTime: '2026-11-23T09:55:38Z' })).status, 422);
+});

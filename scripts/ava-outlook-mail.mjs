@@ -96,6 +96,49 @@ export async function findAvaOutlookReceipt({
   }
 }
 
+export async function verifyOutlookDocumentReceipt({
+  env = process.env, fetchImpl = globalThis.fetch, receiptUrl, sender, recipient, subject, approvedAt,
+} = {}) {
+  const apiKey = env.PBK_AVA_OUTLOOK_COMPOSIO_API_KEY?.trim();
+  const accountId = env.PBK_AVA_OUTLOOK_ACCOUNT_ID?.trim();
+  const userId = env.PBK_AVA_OUTLOOK_USER_ID?.trim();
+  const mailbox = env.PBK_AVA_OUTLOOK_SENDER?.trim().toLowerCase();
+  const start = Date.parse(approvedAt);
+  const unavailable = { status: 503, error: 'Outlook did not verify the document receipt.' };
+  const mismatch = { status: 422, error: 'The Outlook receipt does not match this approved PDF send.' };
+  if (!apiKey || !accountId || !userId || !mailbox) return unavailable;
+  try {
+    const messageId = decodeURIComponent(new URL(receiptUrl).pathname.replace(/\/$/, '').split('/').at(-1));
+    const read = async (tool, args) => {
+      const response = await fetchImpl(TOOL_URL + tool, {
+        method: 'POST', redirect: 'error', signal: AbortSignal.timeout(8000),
+        headers: { 'x-api-key': apiKey, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ connected_account_id: accountId, user_id: userId, version: VERSION, arguments: args }),
+      });
+      const value = response.ok ? await response.json() : null;
+      return value?.successful === true && !value.error ? value.data : null;
+    };
+    const profile = await read('OUTLOOK_GET_PROFILE', { user_id: 'me', select: ['mail', 'userPrincipalName'] });
+    if (receiptAddress(profile?.mail || profile?.userPrincipalName) !== mailbox) return unavailable;
+    const message = await read('OUTLOOK_GET_MESSAGE', {
+      user_id: 'me', message_id: messageId,
+      select: ['id', 'subject', 'from', 'toRecipients', 'isDraft', 'hasAttachments', 'sentDateTime', 'internetMessageId'],
+    });
+    if (!message) return unavailable;
+    const sent = Date.parse(message.sentDateTime);
+    if (message.id !== messageId || message.isDraft !== false || message.hasAttachments !== true ||
+        message.subject !== subject || !sender || !recipient ||
+        receiptAddress(message.from?.emailAddress?.address) !== receiptAddress(sender) ||
+        message.toRecipients?.length !== 1 ||
+        receiptAddress(message.toRecipients[0]?.emailAddress?.address) !== receiptAddress(recipient) ||
+        !Number.isFinite(start) || !Number.isFinite(sent) || sent < start - RECEIPT_CLOCK_SKEW_MS ||
+        sent > start + RECEIPT_WINDOW_MS) return mismatch;
+    return { status: 200, sentAt: message.sentDateTime, messageId: message.internetMessageId || messageId };
+  } catch {
+    return unavailable;
+  }
+}
+
 export async function sendAvaOutlookMail({
   env = process.env, fetchImpl = globalThis.fetch, sender, recipient, subject, text, attachments = [], alternateSenders = [],
 } = {}) {

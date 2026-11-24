@@ -47,3 +47,25 @@ test('operator-confirmed receipt shows delivery while preserving the original di
   assert.equal(normalizeOutlookReceiptUrl('https://mail.google.com.evil.test/mail/u/0/#inbox/1234567890abcdef'), '');
   assert.equal(normalizeOutlookReceiptUrl('https://mail.google.com/mail/u/0/#inbox'), '');
 });
+
+test('historical seller PDF approvals can reconcile a missing outcome and display delivery', () => {
+  const legacy = { ...approval, approvalAction: 'sendSellerDocs', provider: 'system',
+    metadata: { requestedTool: 'sendSellerDocs', executionParams: {
+      source: 'seller_docs_manual', address: 'PBK QA Fixture', selectedDocuments: ['seller'],
+    } },
+  };
+  const pending = readOutlookDelivery({ ...legacy, status: 'pending' });
+  assert.equal(pending.canConfirm, false);
+  const record = readOutlookDelivery(legacy);
+  assert.equal(record.state, 'recovery');
+  assert.equal(record.canConfirm, true);
+  assert.equal(record.subject, 'Your property at PBK QA Fixture - document package');
+  const updated = readOutlookDelivery({ ...legacy, metadata: { ...legacy.metadata,
+    outlookDeliveryConfirmation: {
+      receiptUrl: 'https://outlook.office365.com/mail/deeplink/read/AAMkAGI2TAAA_test==',
+      confirmedAt: '2026-11-24T10:00:00Z', confirmedBy: 'PBK operator',
+    },
+  } });
+  assert.equal(updated.state, 'delivered');
+  assert.equal(updated.canConfirm, false);
+});

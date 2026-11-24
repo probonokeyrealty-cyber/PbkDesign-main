@@ -100,7 +100,7 @@
     "test:operational-audit-bridge": "node ./scripts/operational-audit-bridge-smoke.mjs",
     "test:backlog-reconciliation-bridge": "node ./scripts/backlog-reconciliation-bridge-smoke.mjs",
     "pretest:production-hardening": "npm run test:launch-safety && npm run test:release-qualification-bridge && npm run test:operational-audit-bridge && npm run test:backlog-reconciliation-bridge",
-    "test:bridge": "npm run test:bridge-isolation && node --test ./scripts/public-market-connection.node-test.mjs ./scripts/ava-lead-intake-triage.node-test.mjs ./scripts/postgres-state-snapshot.node-test.mjs && node ./scripts/openclaw-smoke.mjs",
+    "test:bridge": "npm run test:bridge-isolation && node --test ./scripts/public-market-connection.node-test.mjs ./scripts/ava-lead-intake-triage.node-test.mjs && node ./scripts/openclaw-smoke.mjs && node --test ./scripts/postgres-state-snapshot.node-test.mjs",
     "test:behavior": "node ./scripts/behavior-tests.mjs",
     "test:skill-governance-bridge": "node ./scripts/skill-governance-bridge-smoke.mjs",
     "test:skill-studio-ui": "node ./scripts/skill-studio-ui-smoke.mjs",

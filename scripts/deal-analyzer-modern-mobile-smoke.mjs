@@ -398,54 +398,16 @@ assert(
     /lastAnalyzerRunId/.test(bridgeServer),
   'Bridge analyzeDeal should sync successful analyzer runs back to the matching lead profile.'
 );
-// Exercise the actual seller-document handler without starting the bridge or sending mail.
-const sellerDocsMethod = bridgeServer.match(/^  async sendSellerDocs\(params = \{\}\) \{[\s\S]*?^  \},/m)?.[0];
-assert(sellerDocsMethod, 'Seller document delivery handler must exist.');
-const selectedSender = 'selected@example.com';
-const sellerRecipient = 'seller@example.com';
-const pdfAttachment = { filename: 'sample.pdf', content: 'sample-pdf' };
-const outlookRequests = [];
-const deliveries = [];
-const sellerDocsRuntime = vm.createContext({
-  state: {},
-  process: { env: { PBK_AVA_OUTLOOK_SENDER: 'default@example.com' } },
-  recordToolUse: () => {},
-  findLeadContext: () => ({ leadId: 'sample-lead' }),
-  normalizeDocumentItems: () => [{ type: 'offer' }],
-  inferSenderProfile: () => 'warm',
-  buildPdfAttachment: async () => pdfAttachment,
-  sendAvaOutlookMail: async (request) => {
-    outlookRequests.push(request);
-    return { ok: true };
-  },
-  createDocumentDeliveryRecord: (fields) => ({ id: 'sample-delivery', ...fields }),
-  addDocumentDelivery: (_state, delivery) => deliveries.push(delivery),
-  createMessageRecord: (fields) => fields,
-  upsertMessage: () => {},
-  makeActivity: (fields) => fields,
-  addActivity: () => {},
-  persistState: async () => {},
-});
-const sellerDocsHandler = vm.runInContext(`({${sellerDocsMethod}})`, sellerDocsRuntime, { timeout: 1000 });
-
-for (const email of ['', 'not-an-email']) {
-  const rejected = await sellerDocsHandler.sendSellerDocs({ email, fromEmail: selectedSender });
-  strictAssert.equal(rejected.ok, false);
-  strictAssert.equal(rejected.result, 'missing_recipient_email');
-  strictAssert.equal(rejected.error, 'A valid seller email is required before sending seller documents.');
-}
-strictAssert.equal(outlookRequests.length, 0, 'Invalid recipients must not reach Outlook.');
-strictAssert.equal(deliveries.length, 0, 'Invalid recipients must not create a delivery.');
-
-const sentSellerDocs = await sellerDocsHandler.sendSellerDocs({ email: sellerRecipient, fromEmail: selectedSender });
-strictAssert.equal(sentSellerDocs.ok, true);
-strictAssert.equal(outlookRequests.length, 1);
-strictAssert.equal(outlookRequests[0].recipient, sellerRecipient);
-strictAssert.equal(outlookRequests[0].sender, selectedSender, 'The chosen sender must override the default Outlook sender.');
-strictAssert.deepEqual(Array.from(outlookRequests[0].attachments), [pdfAttachment]);
-strictAssert.equal(deliveries.length, 1);
-strictAssert.equal(deliveries[0].provider, 'outlook');
-strictAssert.equal(deliveries[0].fromEmail, selectedSender, 'The delivery record must preserve the chosen sender.');
+const sellerDocsStart = bridgeServer.indexOf('  async sendSellerDocs(params = {}) {');
+const sellerDocsEnd = bridgeServer.indexOf('  async prepareContract(params = {}) {', sellerDocsStart);
+assert(sellerDocsStart >= 0 && sellerDocsEnd > sellerDocsStart, 'Seller document handler must exist.');
+const sellerDocsHandler = bridgeServer.slice(sellerDocsStart, sellerDocsEnd);
+assert(
+  /result: 'missing_recipient_email'[\s\S]*await sendAvaOutlookMail\(\{\s*sender: from,\s*recipient: recipientEmail,/.test(sellerDocsHandler) &&
+    /const from = selectedFromEmail \|\| String\(process\.env\.PBK_AVA_OUTLOOK_SENDER/.test(sellerDocsHandler) &&
+    /fromEmail: from/.test(sellerDocsHandler),
+  'Outlook seller document delivery should validate the recipient and use the selected sender.'
+);
 assert(
   /latestAnalyzerRun/.test(bridgeServer) &&
     /analyzerAmount/.test(bridgeServer) &&
@@ -583,5 +545,52 @@ assert(
     'node --test ./scripts/analyzer-storage.node-test.mjs ./scripts/analyzer-browseros-mobile.node-test.mjs ./scripts/operator-session-browseros.node-test.mjs',
   'The Analyzer draft gate must run isolated storage, Analyzer safety, and operator-session safety tests without live access.'
 );
+
+// Exercise the actual seller-document handler without starting the bridge or sending mail.
+const selectedSender = 'selected@example.com';
+const sellerRecipient = 'seller@example.com';
+const pdfAttachment = { filename: 'sample.pdf', content: 'sample-pdf' };
+const outlookRequests = [];
+const deliveries = [];
+const sellerDocsRuntime = vm.createContext({
+  state: {},
+  process: { env: { PBK_AVA_OUTLOOK_SENDER: 'default@example.com' } },
+  recordToolUse: () => {},
+  findLeadContext: () => ({ leadId: 'sample-lead' }),
+  normalizeDocumentItems: () => [{ type: 'offer' }],
+  inferSenderProfile: () => 'warm',
+  buildPdfAttachment: async () => pdfAttachment,
+  sendAvaOutlookMail: async (request) => {
+    outlookRequests.push(request);
+    return { ok: true };
+  },
+  createDocumentDeliveryRecord: (fields) => ({ id: 'sample-delivery', ...fields }),
+  addDocumentDelivery: (_state, delivery) => deliveries.push(delivery),
+  createMessageRecord: (fields) => fields,
+  upsertMessage: () => {},
+  makeActivity: (fields) => fields,
+  addActivity: () => {},
+  persistState: async () => {},
+});
+const sellerDocsFixture = vm.runInContext(`({${sellerDocsHandler}})`, sellerDocsRuntime, { timeout: 1000 });
+
+for (const email of ['', 'not-an-email']) {
+  const rejected = await sellerDocsFixture.sendSellerDocs({ email, fromEmail: selectedSender });
+  strictAssert.equal(rejected.ok, false);
+  strictAssert.equal(rejected.result, 'missing_recipient_email');
+  strictAssert.equal(rejected.error, 'A valid seller email is required before sending seller documents.');
+}
+strictAssert.equal(outlookRequests.length, 0, 'Invalid recipients must not reach Outlook.');
+strictAssert.equal(deliveries.length, 0, 'Invalid recipients must not create a delivery.');
+
+const sentSellerDocs = await sellerDocsFixture.sendSellerDocs({ email: sellerRecipient, fromEmail: selectedSender });
+strictAssert.equal(sentSellerDocs.ok, true);
+strictAssert.equal(outlookRequests.length, 1);
+strictAssert.equal(outlookRequests[0].recipient, sellerRecipient);
+strictAssert.equal(outlookRequests[0].sender, selectedSender, 'The chosen sender must override the default Outlook sender.');
+strictAssert.deepEqual(Array.from(outlookRequests[0].attachments), [pdfAttachment]);
+strictAssert.equal(deliveries.length, 1);
+strictAssert.equal(deliveries[0].provider, 'outlook');
+strictAssert.equal(deliveries[0].fromEmail, selectedSender, 'The delivery record must preserve the chosen sender.');
 
 console.log('[deal-analyzer-modern-mobile-smoke] ok');

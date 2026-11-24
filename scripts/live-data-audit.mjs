@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { checkNetlifyCommandCenterRouting } from './netlify-routing-audit.mjs';
 
 const root = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const indexPath = resolve(root, 'index.html');
@@ -96,30 +97,7 @@ const netlifyDocumentsPdfFunction = existsSync(netlifyDocumentsPdfFunctionPath)
 const netlifyBridgeProxyFunction = existsSync(netlifyBridgeProxyFunctionPath)
   ? readFileSync(netlifyBridgeProxyFunctionPath, 'utf8')
   : '';
-const netlifyRedirects = netlifyConfig
-  .split(/^(?=[ \t]*\[{1,2}[\w.-]+\]{1,2}[ \t]*\r?$)/m)
-  .filter((block) => /^[ \t]*\[\[redirects\]\][ \t]*\r?$/m.test(block));
-const redirectIndex = (from) => netlifyRedirects.findIndex(
-  (block) => block.match(/^[ \t]*from[ \t]*=[ \t]*"([^"\r\n]+)"[ \t]*\r?$/m)?.[1] === from
-);
-const netlifyApiProxyIndex = redirectIndex('/api/*');
-const netlifyBrainCleanIndex = redirectIndex('/brain');
-const netlifyBrainProxyIndex = redirectIndex('/brain/*');
-const netlifySpaFallbackIndex = redirectIndex('/*');
-function rewritesTo(index, target, force = false) {
-  const block = netlifyRedirects[index] || '';
-  return block.match(/^[ \t]*to[ \t]*=[ \t]*"([^"\r\n]+)"[ \t]*\r?$/m)?.[1] === target &&
-    /^[ \t]*status[ \t]*=[ \t]*200[ \t]*\r?$/m.test(block) &&
-    (!force || /^[ \t]*force[ \t]*=[ \t]*true[ \t]*\r?$/m.test(block));
-}
-const netlifyCleanRoutesOrdered =
-  rewritesTo(netlifyBrainCleanIndex, '/index.shell.html', true) &&
-  rewritesTo(netlifyBrainProxyIndex, '/.netlify/functions/pbk-bridge-proxy?path=/brain/:splat', true) &&
-  rewritesTo(netlifyApiProxyIndex, '/.netlify/functions/pbk-bridge-proxy?path=/api/:splat', true) &&
-  rewritesTo(netlifySpaFallbackIndex, '/index.shell.html') &&
-  netlifyBrainCleanIndex < netlifyBrainProxyIndex &&
-  netlifyBrainProxyIndex < netlifySpaFallbackIndex &&
-  netlifyApiProxyIndex < netlifySpaFallbackIndex;
+const netlifyCleanRoutesOrdered = Object.values(checkNetlifyCommandCenterRouting(netlifyConfig)).every(Boolean);
 const cleanPathRouterWired =
   /const\s+cleanPagePathAliases\s*=/.test(index) &&
   /['"]\/settings['"]\s*:\s*['"]settings['"]/.test(index) &&

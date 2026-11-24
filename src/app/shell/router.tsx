@@ -17,6 +17,10 @@ const BatchReview = lazy(() =>
     default: module.BatchReview,
   }))
 );
+const AvaConsultation = lazy(() =>
+  loadCurrentRoute(() => import('../routes/AvaConsultation')),
+);
+
 const LeadPortal = lazy(() =>
   loadCurrentRoute(() => import('../routes/LeadPortal')).then((module) => ({
     default: module.LeadPortal,
@@ -106,6 +110,7 @@ const router = createBrowserRouter(
         { path: 'leads', element: <Leads /> },
         { path: 'leads/batch-review', element: <BatchReview /> },
         { path: 'leads/:leadId', element: <LeadPortal /> },
+        { path: 'leads/:leadId/consultations/:consultationId', element: <AvaConsultation /> },
         { path: 'deal', element: <DealView /> },
         { path: 'deal/:id', element: <DealView /> },
         { path: 'deals', element: <DealView /> },

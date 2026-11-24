@@ -127,7 +127,12 @@ export function AvaLeadReviewCard({ leadId }: { leadId: string }) {
                         {reason && <dd>{CONSULTATION_REASONS[reason] || 'Reason unavailable.'}</dd>}
                         {record && (
                           <dd>
-                            <a className="inline-flex min-h-11 items-center text-[var(--sky)] underline underline-offset-4" href={`#${record.id}`}>
+                            <a
+                              className="inline-flex min-h-11 items-center text-[var(--sky)] underline underline-offset-4"
+                              href={`/leads/${encodeURIComponent(leadId)}/consultations/${encodeURIComponent(record.id)}`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                            >
                               View saved {specialist} consultation
                             </a>
                           </dd>
@@ -137,21 +142,6 @@ export function AvaLeadReviewCard({ leadId }: { leadId: string }) {
                   })}
                 </dl>
               )}
-              {consultationRecords.map((record) => (
-                <article
-                  key={record.id}
-                  id={record.id}
-                  aria-labelledby={`${record.id}-heading`}
-                  tabIndex={-1}
-                  className="scroll-mt-24 rounded-lg border border-[var(--border)] p-3 target:border-[var(--sky)]"
-                >
-                  <h4 id={`${record.id}-heading`} className="font-semibold">{record.specialist} consultation record</h4>
-                  <p>{record.summary}</p>
-                  <time dateTime={record.createdAt} className="text-[var(--text-secondary)]">
-                    {new Date(record.createdAt).toLocaleString()}
-                  </time>
-                </article>
-              ))}
             </div>
           </>
         )}

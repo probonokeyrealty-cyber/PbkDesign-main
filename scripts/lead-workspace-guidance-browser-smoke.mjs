@@ -10,25 +10,39 @@ const origin = 'http://127.0.0.1:' + server.httpServer.address().port;
 
 async function verify(browserType, width) {
   const browser = await browserType.launch();
-  const page = await browser.newPage({ viewport: { width, height: 900 } });
+  const context = await browser.newContext({ viewport: { width, height: 900 } });
+  const page = await context.newPage();
   const writes = [], lookups = [], errors = [];
   let consent = 'no consent', dnc = 'blocked', zip = '';
   let reviewMode = 'mismatched';
   let reviewReads = 0;
+  const consultationReads = [];
+  const consultationRecords = [
+    { id: 'fixture-rex-task', specialist: 'Rex', status: 'complete', summary: 'Ranked for internal review.', createdAt: '2026-11-23T12:00:00Z' },
+    { id: 'fixture-hermes-task', specialist: 'Hermes', status: 'complete', summary: 'Verify occupancy and lease constraints.', createdAt: '2026-11-23T12:00:00Z' },
+  ];
   const lead = () => ({
     id: 'guidance-demo', leadId: 'guidance-demo', seller: { name: 'Guidance Sample' },
     property: { address: '14 Demo Oak Way', city: 'Example City', state: 'CA', zip, sqft: 1480 },
     compliance: { tcpaConsent: consent, dncStatus: dnc },
   });
   page.on('pageerror', error => errors.push(error.message));
-  await page.routeWebSocket('**/*', socket => socket.close());
-  await page.route('**/*', route => {
+  await context.routeWebSocket('**/*', socket => socket.close());
+  await context.route('**/*', route => {
     const request = route.request(), url = new URL(request.url()), path = url.pathname;
     if (url.origin !== origin) return route.abort();
     if (!/^\/(?:api(?:\/|$)|\.netlify\/functions\/|state$|status$|health$|events$|invoke$|metrics$)/.test(path)) return route.continue();
     if (path === '/api/property-data/attom-preview') lookups.push(path);
     if (path === '/api/state/stream/session') return route.fulfill({ json: { ok: false } });
     if (request.method() !== 'GET') { writes.push(path); return route.abort(); }
+    if (url.searchParams.has('consultation')) {
+      assert.equal(path, '/api/leads/guidance-demo/full');
+      assert.equal(url.searchParams.has('review'), false);
+      const id = url.searchParams.get('consultation');
+      consultationReads.push(id);
+      const consultation = consultationRecords.find((record) => record.id === id);
+      return route.fulfill({ json: { ok: true, leadId: 'guidance-demo', consultation } });
+    }
     if (url.searchParams.get('review') === 'ava') {
       assert.equal(path, '/api/leads/guidance-demo/full');
       reviewReads += 1;
@@ -36,10 +50,7 @@ async function verify(browserType, width) {
         leadId: reviewMode === 'mismatched' ? 'different-fixture' : 'guidance-demo',
         writeMode: 'read_only', reviewedAt: '2026-11-23T12:00:00Z',
         consultationDecisions: reviewMode === 'fresh-reasons' ? { version: 1, rex: 'elevated_score', hermes: 'tenant_pressure' } : null,
-        consultationRecords: ['fresh-reasons', 'legacy-records'].includes(reviewMode) ? [
-          { id: 'fixture-rex-task', specialist: 'Rex', status: 'complete', summary: 'Ranked for internal review.', createdAt: '2026-11-23T12:00:00Z' },
-          { id: 'fixture-hermes-task', specialist: 'Hermes', status: 'complete', summary: 'Verify occupancy and lease constraints.', createdAt: '2026-11-23T12:00:00Z' },
-        ] : [],
+        consultationRecords: ['fresh-reasons', 'legacy-records'].includes(reviewMode) ? consultationRecords : [],
         nextStep: { code: 'hold_contact', title: 'Hold outreach', detail: 'Review the saved contact restriction.' },
         evidence: { property: { recorded: true }, contact: { status: 'restricted' }, qualification: { missing: ['authority'] }, underwriting: { recorded: false, recordedAt: null } },
       } } });
@@ -75,15 +86,21 @@ async function verify(browserType, width) {
     await review.getByRole('button', { name: 'Run review again' }).click();
     await expect(review.getByText('Consulted because the lead score met the review threshold.', { exact: true })).toBeVisible();
     await expect(review.getByText('Consulted because intake flagged a tenancy issue.', { exact: true })).toBeVisible();
-    for (const [specialist, summary] of [['Rex', 'Ranked for internal review.'], ['Hermes', 'Verify occupancy and lease constraints.']]) {
-      const id = `fixture-${specialist.toLowerCase()}-task`;
-      await review.getByRole('link', { name: `View saved ${specialist} consultation` }).click();
-      assert.equal(new URL(page.url()).hash, `#${id}`);
-      const record = review.getByRole('article', { name: `${specialist} consultation record` });
-      await expect(record).toHaveAttribute('id', id);
+    const reviewReadsBeforeLinks = reviewReads;
+    for (const { id, specialist, summary } of consultationRecords) {
+      const [destination] = await Promise.all([
+        context.waitForEvent('page'),
+        review.getByRole('link', { name: `View saved ${specialist} consultation` }).click(),
+      ]);
+      const record = destination.getByRole('article', { name: `${specialist} consultation record` });
       await expect(record).toContainText(summary);
-      await expect(record).toBeInViewport();
+      assert.equal(new URL(destination.url()).pathname, `/leads/guidance-demo/consultations/${id}`);
+      await expect(destination.getByRole('region', { name: 'Ava lead review' })).toHaveCount(0);
+      assert.ok(await destination.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
+      await destination.close();
     }
+    assert.equal(reviewReads, reviewReadsBeforeLinks);
+    assert.deepEqual(consultationReads, consultationRecords.map((record) => record.id));
     assert.ok(await review.evaluate((element) => element.scrollWidth <= element.clientWidth));
     if (process.env.PBK_GUIDANCE_SHOTS === '1') {
       mkdirSync('.pbk-local', { recursive: true });

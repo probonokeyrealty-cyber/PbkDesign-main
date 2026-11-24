@@ -61576,24 +61576,45 @@ function findAvaLeadTriage(lead) {
   return state.agentTasks.find((task) => task.id === leadTriageTaskId(leadId));
 }
 
-async function loadAvaConsultationDecisions(leadId) {
-  const saved = findAvaLeadTriage({ leadId });
-  let reasons = saved?.metadata?.consultationDecisions;
-  if (!saved && getPgPool()) {
+async function loadAvaConsultationEvidence(leadId) {
+  const triageId = leadTriageTaskId(leadId);
+  const specialistIds = [`${triageId}-rex`, `${triageId}-hermes`];
+  let tasks = state.agentTasks.filter((task) =>
+    task.tenantId === 'pbk' && task.correlationId === leadId && task.fromAgent === 'Ava'
+      && (task.id === triageId || specialistIds.includes(task.id)));
+  let recordsAvailable = true;
+  if (getPgPool()) {
     const result = await queryPgRows(
-      `SELECT metadata->'consultationDecisions' AS reasons FROM public.pbk_tasks
-        WHERE id = $1 AND correlation_id = $2 AND tenant_id = 'pbk' AND task_type = 'lead_intake_triage'`,
-      [leadTriageTaskId(leadId), leadId]
+      `SELECT id, task_type AS "taskType", to_agent AS "toAgent", status, summary,
+              provider_writes AS "providerWrites", created_at AS "createdAt",
+              jsonb_build_object('consultationDecisions', metadata->'consultationDecisions',
+                'consultationIds', metadata->'consultationIds', 'triageId', metadata->'triageId') AS metadata
+         FROM public.pbk_tasks
+        WHERE tenant_id = 'pbk' AND correlation_id = $1 AND from_agent = 'Ava'
+          AND id = ANY($2::text[])`,
+      [leadId, [triageId, ...specialistIds]]
     );
-    if (!result.ok) return undefined;
-    reasons = result.rows[0]?.reasons;
+    recordsAvailable = result.ok;
+    if (result.ok) tasks = result.rows;
   }
-  if (reasons?.version !== 1) return null;
-  const { rex, hermes } = reasons;
+  const triage = tasks.find((task) => task.id === triageId && task.taskType === 'lead_intake_triage');
+  const reasons = triage?.metadata?.consultationDecisions;
+  const { rex, hermes } = reasons || {};
   const shared = ['contact_restricted', 'property_address_missing'];
-  if (![...shared, 'elevated_score', 'score_below_threshold', 'score_unavailable'].includes(rex)
-    || ![...shared, 'no_recognized_signal', ...Object.keys(HERMES_TRIAGE_REVIEW)].includes(hermes)) return null;
-  return { version: 1, rex, hermes };
+  const validReasons = reasons?.version === 1
+    && [...shared, 'elevated_score', 'score_below_threshold', 'score_unavailable'].includes(rex)
+    && [...shared, 'no_recognized_signal', ...Object.keys(HERMES_TRIAGE_REVIEW)].includes(hermes);
+  const consultationDecisions = validReasons ? { version: 1, rex, hermes } : recordsAvailable ? null : undefined;
+  const linkedIds = triage?.metadata?.consultationIds;
+  const consultationRecords = recordsAvailable && Array.isArray(linkedIds)
+    ? tasks.filter((task) =>
+      specialistIds.includes(task.id) && linkedIds.includes(task.id)
+      && task.taskType === 'lead_triage_consultation' && task.metadata?.triageId === triageId
+      && ['Rex', 'Hermes'].includes(task.toAgent) && task.id === `${triageId}-${task.toAgent.toLowerCase()}`
+      && task.status === 'complete' && task.providerWrites === 'blocked')
+      .map(({ id, toAgent, status, summary, createdAt }) => ({ id, specialist: toAgent, status, summary, createdAt }))
+    : [];
+  return { consultationDecisions, consultationRecords };
 }
 
 const HERMES_TRIAGE_REVIEW = {
@@ -82621,10 +82642,10 @@ const server = createServer(async (request, response) => {
           json(response, 404, { ok: false, error: 'Lead not found.' });
           return;
         }
-        const consultationDecisions = await loadAvaConsultationDecisions(leadId);
+        const consultationEvidence = await loadAvaConsultationEvidence(leadId);
         json(response, 200, { ok: true, review: {
           ...buildAvaLeadReview(exactLead, leadId, contactRestricted),
-          consultationDecisions,
+          ...consultationEvidence,
         } });
         return;
       }

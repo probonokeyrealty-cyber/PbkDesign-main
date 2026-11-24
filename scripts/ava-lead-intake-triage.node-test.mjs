@@ -27,7 +27,7 @@ test('new intake records a reviewable Ava handoff without any outreach', async (
     const replay = await request('/events', { eventType: 'lead-intake', payload });
     await request('/events', {
       eventType: 'lead-intake',
-      payload: { ...payload, eventId: 'qa-ava-triage-event-2' },
+      payload: { ...payload, eventId: 'qa-ava-triage-event-2', score: 30, seller: { notes: 'Routine update.' } },
     });
     const manual = await request('/api/leads', {
       leadId: 'qa-ava-triage-manual',
@@ -38,6 +38,9 @@ test('new intake records a reviewable Ava handoff without any outreach', async (
     });
     assert.ok(first.leadTriage?.id, 'Ava should triage intake without an operator prompt');
     assert.equal(replay.leadTriage?.id, first.leadTriage.id);
+    const reasons = { version: 1, rex: 'elevated_score', hermes: 'probate_or_estate' };
+    assert.deepEqual(first.leadTriage.metadata.consultationDecisions, reasons);
+    assert.deepEqual(replay.leadTriage.metadata.consultationDecisions, reasons);
     assert.ok(manual.leadTriage?.id, 'Staff-created CRM leads should also receive triage');
     assert.match(manual.leadTriage.summary, /do not contact/i);
     assert.equal(manual.leadTriage.metadata.priority, undefined);
@@ -99,6 +102,8 @@ test('new intake records a reviewable Ava handoff without any outreach', async (
     const review = (await readReview(intakeId)).review;
     assert.equal(review.leadId, intakeId);
     assert.equal(review.writeMode, 'read_only');
+    assert.deepEqual(review.consultationDecisions, reasons, 'Review preserves the reasons recorded at intake');
+    assert.doesNotMatch(JSON.stringify(review), /Synthetic intake note|executor is coordinating/);
     assert.equal(review.evidence.contact.status, 'needs_review');
     assert.equal(review.nextStep.code, 'review_contact');
     assert.deepEqual(review.evidence.property, { recorded: true });
@@ -107,12 +112,19 @@ test('new intake records a reviewable Ava handoff without any outreach', async (
     const blocked = (await readReview(manual.leadTriage.correlationId)).review;
     assert.equal(blocked.evidence.contact.status, 'restricted');
     assert.equal(blocked.nextStep.code, 'hold_contact');
+    assert.deepEqual(blocked.consultationDecisions, { version: 1, rex: 'contact_restricted', hermes: 'contact_restricted' });
+    assert.deepEqual((await readReview(importedLeadId)).review.consultationDecisions, {
+      version: 1, rex: 'elevated_score', hermes: 'no_recognized_signal',
+    });
     const nonId = await bridge.fetch(`${bridge.origin}/api/leads/${encodeURIComponent(payload.property.address)}/full?review=ava`, {
       headers: { Authorization: `Bearer ${bridge.apiKey}` },
     });
     assert.equal(nonId.status, 404, 'An address must never resolve the review identity');
     const anonymous = await bridge.fetch(`${bridge.origin}/api/leads/${intakeId}/full?review=ava`);
     assert.equal(anonymous.status, 401, 'The review uses the staff lead access boundary');
+    const publicHealth = await bridge.fetch(`${bridge.origin}/health`);
+    assert.equal(publicHealth.status, 200);
+    assert.doesNotMatch(await publicHealth.text(), /consultationDecisions/);
     const repeated = (await readReview(intakeId)).review;
     assert.deepEqual(repeated.evidence, review.evidence);
     assert.deepEqual(repeated.nextStep, review.nextStep);
@@ -133,6 +145,12 @@ test('new intake records a reviewable Ava handoff without any outreach', async (
       assert.equal(restricted.evidence.contact.status, 'restricted', id);
       assert.equal(restricted.nextStep.code, 'hold_contact', id);
     }
+    const unscored = await request('/api/leads', {
+      leadId: 'qa-ava-unscored-notes', address: '303 Fictional Way, Denver CO', sellerNotes: 'Synthetic tenant signal.',
+    });
+    assert.deepEqual(unscored.leadTriage.metadata.consultationDecisions, {
+      version: 1, rex: 'score_unavailable', hermes: 'tenant_pressure',
+    });
   } finally {
     await bridge.stop();
   }

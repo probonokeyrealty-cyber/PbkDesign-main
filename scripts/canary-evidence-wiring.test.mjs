@@ -224,8 +224,9 @@ test('bridge code matches the reviewed release fingerprint outside the scoped re
   // Lead intake confirms the committed event and triage after an ambiguous snapshot write.
   // The exact-lead review reads saved evidence and treats saved restrictions conservatively.
   // See docs/operations/2026-11-23-ava-lead-review-integrity.md for the independent review.
+  // The staff review projects only saved, allowlisted specialist decision codes.
   assert.equal(createHash('sha256').update(unchanged).digest('hex'),
-    '3d61fefc3226cd9b8eaa9f8c0363049582133cc48cf4237c196c3eb9d5602e7f');
+    '6c758a8989f2f608b7c71daaefa86bdcb9c52dfc399a392a5e0353580eeb6e9c');
 });
 
 test('production distribution includes reader and protocol, never the fixture signer', () => {

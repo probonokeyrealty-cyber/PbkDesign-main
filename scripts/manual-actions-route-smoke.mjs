@@ -216,6 +216,7 @@ async function main() {
       leadName: 'Manual Actions Smoke Seller',
       email: 'manual.actions@example.com',
       address: '177 Manual Action Ave, Columbus OH',
+      fromEmail: 'documents.sender@example.net',
       selectedDocuments: ['seller'],
       documentSet: {
         seller: 'This clean seller document should be attached as a PDF without internal renderer errors.',
@@ -225,6 +226,8 @@ async function main() {
       source: 'seller_docs_manual',
     });
     assertPendingApproval('manual seller documents', sellerDocs, 'sendSellerDocs');
+    assert.equal(sellerDocs.json.approval.metadata?.executionParams?.fromEmail, 'documents.sender@example.net',
+      'The pending document approval must retain the selected Outlook sender.');
 
     const coldEmail = await requestJson(baseUrl, '/api/cold-email/send', {
       leadId,

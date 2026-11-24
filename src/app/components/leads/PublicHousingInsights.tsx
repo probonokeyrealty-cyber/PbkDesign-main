@@ -2,7 +2,9 @@ import { lazy, Suspense, useId, useRef, useState, type FormEvent } from 'react';
 import { formatCurrency } from '../../utils/formatting';
 import { VAN_NUYS_ZCTA } from './marketStagingData';
 
-const VanNuysMarketMap = lazy(() => import('./VanNuysMarketMap'));
+const VanNuysMarketMap = import.meta.env.PBK_MARKET_STAGING_INDICATORS
+  ? lazy(() => import('./VanNuysMarketMap'))
+  : null;
 
 export type SurveyEstimate = readonly [estimate: number, marginOfError: number];
 export type AnnualIndexChange = readonly [year: number, basisPoints: number];
@@ -226,7 +228,7 @@ export function ComparePublicHousing({
 
   return (
     <>
-      {import.meta.env.PBK_MARKET_STAGING_INDICATORS && zip === VAN_NUYS_ZCTA && (
+      {VanNuysMarketMap && zip === VAN_NUYS_ZCTA && (
         <Suspense fallback={<p role="status">Loading market map...</p>}>
           <VanNuysMarketMap
             lookup={lookup}

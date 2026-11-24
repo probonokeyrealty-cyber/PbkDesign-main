@@ -12,7 +12,10 @@ const expectQa91411 = process.env.PBK_MARKET_TEST_91411_QA === '1';
 const { portalEnvironment } = JSON.parse(readFileSync(resolve(outDir, 'pbk-build-manifest.json'), 'utf8'));
 const expectStagingIndicators = process.env.PBK_MARKET_TEST_STAGING_INDICATORS === '1';
 assert.equal(portalEnvironment, 'live');
-const trendAssets = readdirSync(resolve(outDir, 'assets')).filter(name =>
+const assetNames = readdirSync(resolve(outDir, 'assets'));
+assert.equal(assetNames.some(name => /^VanNuysMarketMap-.*\.js$/.test(name)), expectStagingIndicators,
+  'The map and its boundaries must only be bundled for the staging preview.');
+const trendAssets = assetNames.filter(name =>
   /^LeadFictionalMarketTrends-.*\.(js|css)$/.test(name)
 );
 assert.equal(trendAssets.some(name => name.endsWith('.js')), expectStagingIndicators,

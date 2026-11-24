@@ -96,6 +96,39 @@ const dncAction = selectRexProactiveLeadAction({
 
 assert.equal(dncAction.action, 'do_not_call', 'DNC leads must never be queued.');
 
+const imported = { leadId: 'lead-sample', phone: '+15555550123' };
+for (const [score, hour, expected] of [
+  [64, 11, 'observe'],
+  [64, 22, 'observe'],
+  [65, 22, 'create_rex_decision'],
+  [80, 7, 'schedule_for_calling_window'],
+  [80, 8, 'queue_call'],
+  [80, 19, 'queue_call'],
+  [80, 20, 'schedule_for_calling_window'],
+]) {
+  const decision = selectRexProactiveLeadAction({ ...imported, score }, { nowLocalHour: hour });
+  assert.equal(decision.action, expected, `Score ${score} at hour ${hour}`);
+  assert.equal(decision.providerWritesBlocked, true);
+  assert.equal(decision.approvalRequired, expected !== 'observe');
+}
+for (const leadId of ['', ' ', 'undefined', 'null', {}]) {
+  assert.equal(
+    selectRexProactiveLeadAction({ ...imported, leadId, score: 95 }, { nowLocalHour: 11 }).action,
+    'needs_lead_identity',
+    'A lead without a usable ID cannot create follow-up work.'
+  );
+}
+for (const nowLocalHour of [undefined, null, '', false, -1, 24, 'unknown']) {
+  const decision = selectRexProactiveLeadAction({ ...imported, score: 95 }, { nowLocalHour });
+  assert.equal(decision.action, 'needs_calling_time_review');
+  assert.equal(decision.providerWritesBlocked, true);
+}
+assert.equal(
+  selectRexProactiveLeadAction({ ...imported, score: 95, dnc: true }, { nowLocalHour: 22 }).action,
+  'do_not_call',
+  'DNC still blocks an after-hours task.'
+);
+
 const bridgeSource = readFileSync(new URL('./openclaw-local-server.mjs', import.meta.url), 'utf8');
 assert.match(
   bridgeSource,

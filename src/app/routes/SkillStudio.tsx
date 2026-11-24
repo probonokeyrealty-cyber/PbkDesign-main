@@ -82,7 +82,8 @@ const SKILL_WIZARD_STEPS = ['Situation', 'Ava reply', 'Next question', 'Preview'
 const AGENT_RESPONSIBILITY_COPY: Record<string, string> = {
   ava: 'Ava can use this kind of guidance in seller chats, calls, and follow-up questions.',
   rex: 'Rex can use this kind of guidance when researching deals and reviewing strategies.',
-  'nurture-agent': 'Nurture can use this kind of guidance to time follow-ups and draft seller texts or emails.',
+  'nurture-agent':
+    'Nurture can use this kind of guidance to time follow-ups and draft seller texts or emails.',
   max: 'Max can use this kind of guidance to review offers and check what is needed before a contract.',
 };
 
@@ -1301,7 +1302,8 @@ export function SkillStudio() {
         <div>
           <h1 className="pbk-display">Skill Studio</h1>
           <p className="pbk-workspace-purpose">
-            Draft and test seller talking points and deal procedures. Review the results before putting a skill into use.
+            Draft and test seller talking points and deal procedures. Review the results before
+            putting a skill into use.
           </p>
         </div>
         <div className="pbk-skill-studio-header-actions">
@@ -1853,7 +1855,8 @@ export function SkillStudio() {
               <Sparkles size={26} />
               <h2>Select a skill version</h2>
               <p>
-                Choose a saved version to read the instructions, test a seller scenario, or review its approval status.
+                Choose a saved version to read the instructions, test a seller scenario, or review
+                its approval status.
               </p>
             </div>
           )}
@@ -1964,8 +1967,16 @@ export function SkillStudio() {
                 <dd>{status?.snapshot?.available ? 'Validated' : 'Unavailable'}</dd>
               </div>
               <div>
-                <dt>Sync</dt>
-                <dd>{status?.outbox?.deadLettered ? 'Needs attention' : 'Healthy'}</dd>
+                <dt>Analytics mirror</dt>
+                <dd>
+                  {!status?.outbox
+                    ? 'Unavailable'
+                    : status.outbox.deadLettered
+                      ? 'Needs attention'
+                      : status.outbox.pending
+                        ? 'Pending'
+                        : 'Up to date'}
+                </dd>
               </div>
             </dl>
           </section>

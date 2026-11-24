@@ -106,7 +106,7 @@
     "test:skill-studio-ui": "node ./scripts/skill-studio-ui-smoke.mjs",
     "test:skill-studio-design-browser": "node ./scripts/skill-studio-design-browser-smoke.mjs",
     "test:skill-youtube-ingest": "node ./scripts/skill-youtube-ingest-smoke.mjs",
-    "test:skill-governance": "node --experimental-vm-modules ./node_modules/jest/bin/jest.js --config ./jest.config.mjs --runTestsByPath scripts/skill-governance-schema.test.mjs scripts/skill-governance-store.test.mjs scripts/skill-runtime-snapshot.test.mjs --runInBand && npm run test:skill-youtube-ingest && npm run test:skill-governance-bridge && npm run test:skill-studio-ui",
+    "test:skill-governance": "node --experimental-vm-modules ./node_modules/jest/bin/jest.js --config ./jest.config.mjs --runTestsByPath scripts/skill-governance-schema.test.mjs scripts/skill-governance-store.test.mjs scripts/skill-runtime-snapshot.test.mjs --runInBand && node --test ./scripts/skill-projection-worker.node-test.mjs && npm run test:skill-youtube-ingest && npm run test:skill-governance-bridge && npm run test:skill-studio-ui",
     "test:e2e": "node ./scripts/openclaw-e2e.mjs",
     "test:e2e:browseros": "node ./scripts/browseros-e2e.mjs",
     "test:hosted": "node ./scripts/openclaw-hosted-smoke.mjs",

@@ -7,6 +7,7 @@ import {
   ChevronDown,
   ChevronUp,
   Clock3,
+  Download,
   FileSignature,
   Lightbulb,
   Loader2,
@@ -32,6 +33,7 @@ import {
   type ConversationThread,
 } from '../../utils/runtimeBridge';
 import { showUiToast, toastUndo } from '../../utils/uiFeedback';
+import { downloadTextFile } from '../../utils/fileExport';
 import { groupConversationEventsByDay } from '../../routes/conversationRuntimeLogic.js';
 import {
   DropdownMenu,
@@ -161,6 +163,33 @@ function getTranscriptSegments(event: ConversationEvent) {
     .filter((entry) => entry.text);
 }
 
+function getCallTranscript(event: ConversationEvent, isTranscriptEvent: boolean) {
+  const payload = record(event.payload);
+  const transcript = payload.transcript;
+  const saved = Array.isArray(transcript)
+    ? transcript
+        .map((entry) => {
+          if (typeof entry === 'string') return entry.trim();
+          const turn = record(entry);
+          const content = text(turn.text || turn.body || turn.content || turn.transcript);
+          const speaker = text(turn.speaker);
+          return content && speaker ? `${speaker}: ${content}` : content;
+        })
+        .filter(Boolean)
+        .join('\n')
+    : typeof transcript === 'string'
+      ? transcript.trim()
+      : '';
+  return (
+    text(payload.transcriptText || payload.transcript_text) ||
+    saved ||
+    (isTranscriptEvent ? text(event.body) : '') ||
+    getTranscriptSegments(event)
+      .map((segment) => segment.text)
+      .join('\n')
+  );
+}
+
 function formatCallDuration(seconds: unknown) {
   const duration = Math.max(0, Number(seconds || 0));
   if (!Number.isFinite(duration) || duration <= 0) return 'Duration pending';
@@ -221,15 +250,37 @@ function ConversationEventRow({
   const [confirmSpam, setConfirmSpam] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [actionPending, setActionPending] = useState(false);
-  const recordingUrl = getRecordingUrl(event);
+  const [failedRecordingUrl, setFailedRecordingUrl] = useState<string | null>(null);
+  const sourceUrl = getRecordingUrl(event);
+  const recordingUnavailable = sourceUrl === failedRecordingUrl;
+  const recordingUrl = recordingUnavailable ? '' : sourceUrl;
   const transcriptSegments = getTranscriptSegments(event);
+  const transcript =
+    kind === 'transcript' || kind === 'call' ? getCallTranscript(event, kind === 'transcript') : '';
+  const showRecordingActions =
+    kind === 'transcript' ||
+    (kind === 'call' &&
+      (transcript || /(?:^|[._-])(?:completed|recording)$/.test(event.eventType.toLowerCase())));
   const body = text(event.body || event.subject, 'Activity recorded');
   const callPresentation = kind === 'call' ? getCallPresentation(event) : null;
 
   const seekRecording = (seconds: number) => {
     if (!audioRef.current || !Number.isFinite(seconds)) return;
     audioRef.current.currentTime = Math.max(0, seconds);
-    void audioRef.current.play();
+    void audioRef.current.play().catch((error: unknown) => {
+      if (error instanceof DOMException && error.name === 'NotSupportedError') {
+        setFailedRecordingUrl(sourceUrl);
+      }
+    });
+  };
+
+  const exportTranscript = () => {
+    try {
+      const id = event.id.replace(/[^a-z0-9_-]/gi, '-');
+      downloadTextFile(transcript, `call-${id}.txt`);
+    } catch {
+      showUiToast({ tone: 'error', title: 'Transcript download failed' });
+    }
   };
 
   const clearLongPress = () => {
@@ -539,8 +590,36 @@ function ConversationEventRow({
             {text(event.status, 'recorded').replace(/_/g, ' ')}
           </span>
         </div>
+        {showRecordingActions && (
+          <div className="flex flex-wrap items-center gap-2">
+            {!recordingUrl && (
+              <button
+                type="button"
+                className="pbk-btn pbk-btn-ghost"
+                aria-label="Play recording"
+                onClick={() => setFailedRecordingUrl(sourceUrl)}
+              >
+                <Play size={14} aria-hidden="true" />
+                Play
+              </button>
+            )}
+            {transcript && (
+              <button type="button" className="pbk-btn pbk-btn-ghost" onClick={exportTranscript}>
+                <Download size={14} aria-hidden="true" />
+                Download transcript (.txt)
+              </button>
+            )}
+          </div>
+        )}
+        {recordingUnavailable && <p role="status">Recording unavailable</p>}
         {recordingUrl && (
-          <audio ref={audioRef} controls preload="metadata" src={recordingUrl}>
+          <audio
+            ref={audioRef}
+            controls
+            preload="metadata"
+            src={recordingUrl}
+            onError={() => setFailedRecordingUrl(sourceUrl)}
+          >
             Your browser does not support audio playback.
           </audio>
         )}

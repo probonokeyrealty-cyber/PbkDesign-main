@@ -57,6 +57,9 @@ const MemoryAnalytics = lazy(() =>
     default: module.MemoryAnalytics,
   }))
 );
+const Brain = lazy(() =>
+  loadCurrentRoute(() => import('../routes/Brain')).then((module) => ({ default: module.Brain }))
+);
 const SkillStudio = lazy(() =>
   loadCurrentRoute(() => import('../routes/SkillStudio')).then((module) => ({
     default: module.SkillStudio,
@@ -136,7 +139,7 @@ const router = createBrowserRouter(
         { path: 'agent-fleet', element: <AgentFleet /> },
         { path: 'agents', element: <AgentFleet /> },
         { path: 'memory', element: <MemoryAnalytics /> },
-        { path: 'brain', element: <Navigate to="/memory" replace /> },
+        { path: 'brain', element: <Brain /> },
         { path: 'skills', element: <SkillStudio /> },
         { path: 'skill-studio', element: <SkillStudio /> },
         { path: 'analytics', element: <Analytics /> },

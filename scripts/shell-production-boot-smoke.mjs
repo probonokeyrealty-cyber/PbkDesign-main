@@ -19,8 +19,46 @@ const routes = [
     heading: '.pbk-conversation-thread-rail h1',
     activeFilter: 'Calls',
   },
-  { path: '/brain', canonical: '/memory', heading: 'h1.pbk-display' },
+  { path: '/brain' },
 ];
+
+const smokeThread = {
+  id: 'smoke-calls',
+  title: 'Recording smoke contact',
+  channels: ['call'],
+};
+const smokeTranscript = 'Seller: Friday works for a follow-up.';
+
+async function verifyRecordingFallback(page) {
+  const thread = '::-p-text(Recording smoke contact)';
+  await page.waitForSelector(thread, { visible: true, timeout: 8000 });
+  await page.click(thread);
+  const play = 'button[aria-label="Play recording"]';
+  await page.waitForSelector(play, { visible: true, timeout: 8000 });
+  await page.click(play);
+  await page.waitForSelector('::-p-text(Recording unavailable)', { visible: true });
+  assert.equal(await page.$('audio'), null, 'A call without audio must not create a player.');
+  await page.click('::-p-text(Download transcript (.txt))');
+  const download = await page.evaluate(() => window.__smokeTranscriptDownload);
+  assert.deepEqual(download, { filename: 'call-smoke-call.txt', text: smokeTranscript });
+  assert(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1),
+    'The recording fallback must fit in a 390px viewport.');
+}
+
+async function verifyAskRex(page, queries) {
+  const question = 'What should I review before a follow-up?';
+  await page.waitForSelector('textarea[aria-label="Ask Rex"]', { visible: true, timeout: 8000 });
+  assert.equal(new URL(page.url()).pathname, '/brain');
+  await page.type('textarea[aria-label="Ask Rex"]', question);
+  await page.click('button[aria-label="Send to Rex"]');
+  await page.waitForSelector('::-p-text(Review the latest notes before calling.)', { visible: true });
+  await page.waitForSelector('::-p-text(PBK research fixture)', { visible: true });
+  assert.equal(queries.length, 1);
+  assert.equal(queries[0].query, question);
+  assert.equal(queries[0].readOnly, true);
+  assert(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1),
+    'Ask Rex must fit in a 390px viewport.');
+}
 
 const mimeTypes = new Map([
   ['.css', 'text/css; charset=utf-8'],
@@ -130,12 +168,63 @@ const browser = await puppeteer.launch({
 });
 
 try {
+  const featureFailures = [];
   for (const { path: route, canonical, heading, activeFilter } of routes) {
     const page = await browser.newPage();
     const pageErrors = [];
+    const queries = [];
+    const checkRecordings = route === '/index.html#recordings';
+    const checkBrain = route === '/brain';
+    if (checkRecordings || checkBrain) {
+      await page.evaluateOnNewDocument((expectedOrigin) => {
+        if (location.origin !== expectedOrigin) return;
+        localStorage.setItem('pbk-openclaw-config', JSON.stringify({
+          endpoint: location.origin, apiKey: 'fixture-only',
+        }));
+        const click = HTMLAnchorElement.prototype.click;
+        HTMLAnchorElement.prototype.click = function () {
+          if (!this.download.endsWith('.txt') || !this.href.startsWith('blob:')) {
+            return click.call(this);
+          }
+          const filename = this.download;
+          window.__smokeTranscriptDownload = fetch(this.href)
+            .then(response => response.text())
+            .then(text => ({ filename, text }));
+        };
+      }, origin);
+    }
     await page.setRequestInterception(true);
     page.on('request', (request) => {
       const url = new URL(request.url());
+      if (url.origin === origin && (checkRecordings || checkBrain)) {
+        const fixtures = {
+          '/api/conversations': { result: 'postgres', items: [smokeThread] },
+          '/api/conversations/smoke-calls': { result: 'postgres', thread: smokeThread },
+          '/api/conversations/smoke-calls/timeline': {
+            result: 'postgres',
+            items: [{
+              id: 'smoke-call', threadId: smokeThread.id, channel: 'call',
+              eventType: 'call.transcript', body: smokeTranscript, occurredAt: '2026-11-01T12:00:00Z',
+            }],
+          },
+        };
+        if (request.method() === 'GET' && Object.hasOwn(fixtures, url.pathname)) {
+          void request.respond({ contentType: 'application/json', body: JSON.stringify(fixtures[url.pathname]) });
+          return;
+        }
+        if (checkBrain && url.pathname === '/api/brain/query' && request.method() === 'POST') {
+          queries.push(JSON.parse(request.postData()));
+          void request.respond({
+            contentType: 'application/json',
+            body: JSON.stringify({ ok: true, answer: 'Review the latest notes before calling.', citations: ['PBK research fixture'] }),
+          });
+          return;
+        }
+        if (url.pathname.startsWith('/api/') || url.pathname === '/state' || request.method() !== 'GET') {
+          void request.respond({ contentType: 'application/json', body: '{}' });
+          return;
+        }
+      }
       if (url.origin === origin || url.protocol === 'data:' || url.protocol === 'blob:') {
         void request.continue();
       } else {
@@ -150,7 +239,7 @@ try {
       }
     });
 
-    await page.setViewport({ width: canonical ? 390 : 320, height: 800, isMobile: true, hasTouch: true });
+    await page.setViewport({ width: canonical || checkBrain ? 390 : 320, height: 800, isMobile: true, hasTouch: true });
     await page.goto(`http://127.0.0.1:${address.port}${route}`, {
       waitUntil: 'domcontentloaded',
       timeout: 30_000,
@@ -174,6 +263,18 @@ try {
         `${canonical} must fit in a 390px viewport.`);
     }
 
+    try {
+      if (checkRecordings) {
+        await verifyRecordingFallback(page);
+        console.log('[shell-production-boot] No-audio Play and transcript export passed');
+      }
+      if (checkBrain) {
+        await verifyAskRex(page, queries);
+        console.log('[shell-production-boot] Ask Rex query and citation passed');
+      }
+    } catch (error) {
+      featureFailures.push(new Error(`${route}: ${error.message}`));
+    }
     const renderedText = await page.$eval('#root', (root) => root.textContent?.trim() || '');
     if (!renderedText) {
       throw new Error(`${route} mounted an empty React root.`);
@@ -185,9 +286,11 @@ try {
     console.log(`[shell-production-boot] ${route}: rendered`);
     await page.close();
   }
+  if (featureFailures.length) throw new AggregateError(featureFailures, 'Shell workflow regressions');
 } finally {
   await browser.close();
-  await new Promise((resolve, reject) =>
-    server.close((error) => (error ? reject(error) : resolve()))
-  );
+  await new Promise((resolve, reject) => {
+    server.close((error) => (error ? reject(error) : resolve()));
+    server.closeAllConnections();
+  });
 }

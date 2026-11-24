@@ -228,8 +228,7 @@ test('bridge code matches the reviewed release fingerprint outside the scoped re
   // from the exact lead's Ava triage. A direct record read skips review generation.
   // Outbound sender selection checks channel permissions and keys delivery by sender
   // and document content. Manual routes return approval outcomes before provider dispatch.
-  // Postgres snapshot recovery compares the same row version on retry
-  // and recognizes a matching committed payload after a lost response.
+  // Snapshot recovery retries the same Postgres row version and reconciles an ambiguous commit.
   assert.equal(createHash('sha256').update(unchanged).digest('hex'),
     'a28ab44f4c4acd0fde19d50ef9e2206d41ef6d52fccece646274e3662a97564d');
 });

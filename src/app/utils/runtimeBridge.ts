@@ -3323,6 +3323,13 @@ export type AvaLeadReview = {
   leadId: string;
   reviewedAt: string;
   writeMode: 'read_only';
+  consultationRecords?: Array<{
+    id: string;
+    specialist: 'Rex' | 'Hermes';
+    status: 'complete';
+    summary: string;
+    createdAt: string;
+  }>;
   consultationDecisions?: {
     version: 1;
     rex: ConsultationSkipReason | 'elevated_score' | 'score_below_threshold' | 'score_unavailable';

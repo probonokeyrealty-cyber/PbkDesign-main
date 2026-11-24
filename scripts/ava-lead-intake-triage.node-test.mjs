@@ -103,6 +103,10 @@ test('new intake records a reviewable Ava handoff without any outreach', async (
     assert.equal(review.leadId, intakeId);
     assert.equal(review.writeMode, 'read_only');
     assert.deepEqual(review.consultationDecisions, reasons, 'Review preserves the reasons recorded at intake');
+    assert.deepEqual(review.consultationRecords, handoffs.map((task) => ({
+      id: task.id, specialist: task.toAgent, status: task.status, summary: task.summary, createdAt: task.createdAt,
+    })));
+    assert.deepEqual((await readReview(manual.leadId)).review.consultationRecords, []);
     assert.doesNotMatch(JSON.stringify(review), /Synthetic intake note|executor is coordinating/);
     assert.equal(review.evidence.contact.status, 'needs_review');
     assert.equal(review.nextStep.code, 'review_contact');

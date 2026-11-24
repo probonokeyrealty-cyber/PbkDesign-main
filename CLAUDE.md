@@ -11,7 +11,7 @@
 - Read `DESIGN.md` and `PBK_DESIGN.md` before making frontend or UI changes.
 - All new features must reuse the existing design language:
   - existing CSS variables and color system
-  - Fraunces, Geist, and JetBrains Mono typography
+  - Fraunces, Plus Jakarta Sans, and JetBrains Mono Nerd Font typography
   - existing panel, card, button, chip, and rail patterns
 - If a feature needs top-level navigation, add it through the existing left-rail pattern.
 - Prefer modals, drawers, collapsible panels, inline cards, or route-level sections inside the current app structure over brand-new page systems.
@@ -32,7 +32,7 @@
 - Use those files to preserve:
   - the dark Bloomberg-style control-room atmosphere
   - dense operator-first information layout
-  - Fraunces / Geist / JetBrains Mono hierarchy
+  - Fraunces / Plus Jakarta Sans / JetBrains Mono Nerd Font hierarchy
   - PBK sky-blue, amber, and graphite accent system
   - high-impact modern polish without introducing a new product aesthetic
 - BrowserOS, MCP, observability, or any other new system must inherit the PBK command-center design, not redefine it.

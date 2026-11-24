@@ -1,6 +1,7 @@
 import { createRoot } from 'react-dom/client';
 import { LeadMarketComparison } from './app/components/leads/LeadMarketComparison';
 import { readPropertyEvidence } from './app/utils/propertyEvidence';
+import './styles/fonts.css';
 import './styles/pbk-tokens.css';
 
 const fixtureAddress = 'Fictional QA property, Van Nuys, CA 91411';

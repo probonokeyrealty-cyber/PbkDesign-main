@@ -27,8 +27,8 @@ Core traits:
 - Warm amber approval states.
 - Graphite/dark-panel surfaces.
 - Expressive Fraunces headings.
-- Geist UI copy.
-- JetBrains Mono operational data.
+- Plus Jakarta Sans UI copy.
+- JetBrains Mono Nerd Font operational data.
 
 ## Tokens
 
@@ -62,8 +62,8 @@ Operational accents:
 Typography:
 
 - `--font-display`: Fraunces.
-- `--font-ui`: Geist.
-- `--font-mono`: JetBrains Mono.
+- `--font-ui`: Plus Jakarta Sans.
+- `--font-mono`: JetBrains Mono Nerd Font.
 
 Layout:
 

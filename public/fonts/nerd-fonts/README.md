@@ -6,5 +6,5 @@ Source: https://github.com/ryanoasis/nerd-fonts/tree/v3.5.1/patched-fonts/JetBra
 
 Distributed under the accompanying SIL Open Font License (OFL.txt).
 Converted losslessly from the release TTFs to WOFF2 with FontTools; all glyphs retained.
-Self-hosted only; no operating-system installation. Fraunces and Geist stay unchanged.
+Self-hosted as the Command Center's operational typeface. No operating-system installation is required.
 Nerd Font typography does not replace Lucide button icons or accessible labels.

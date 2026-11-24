@@ -106,6 +106,8 @@ try {
     const pilot = qa.getByRole('region', { name: '91411 public-data pilot', exact: true });
     if (expectPilot91411) {
       await expect(pilot.getByText('$4,120', { exact: true })).toBeVisible();
+      assert.ok(await pilot.evaluate(el => el.previousElementSibling?.matches('.pbk-market-hero')),
+        'The pilot should follow the House vs. ZIP introduction.');
       await expect(pilot.getByText('FY 2027', { exact: true })).toBeVisible();
       await expect(pilot.getByText('36', { exact: true })).toBeVisible();
       await expect(pilot.getByText('October 2026', { exact: true })).toBeVisible();

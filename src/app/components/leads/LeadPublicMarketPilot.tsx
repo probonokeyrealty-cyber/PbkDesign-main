@@ -86,7 +86,7 @@ export default function LeadPublicMarketPilot() {
 
       <aside className="pbk-market-notice" aria-label="Closed sales and signed leases">
         <strong>Awaiting data rights</strong>
-        <p>Closed sales and signed lease amounts will be available here once PBK confirms display and retention rights.</p>
+        <p>PBK must confirm display and retention rights before showing closed sales and signed lease amounts.</p>
       </aside>
     </section>
   );

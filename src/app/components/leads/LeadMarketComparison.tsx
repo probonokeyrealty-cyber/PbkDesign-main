@@ -168,6 +168,11 @@ export function LeadMarketComparison({
           </div>
         </div>
       </header>
+      {PublicMarketPilot && (
+        <Suspense fallback={<p role="status">Loading public-data pilot…</p>}>
+          <PublicMarketPilot />
+        </Suspense>
+      )}
       {LeadInvestorEvidenceChecklist && (
         <Suspense fallback={<p role="status">Loading investor evidence checklist…</p>}>
           <LeadInvestorEvidenceChecklist evidence={evidence} onOpen={onOpenEvidence} />
@@ -190,12 +195,6 @@ export function LeadMarketComparison({
         </Suspense>
       ) : (
         <p className="pbk-market-notice">Public housing context requires a saved five-digit ZIP.</p>
-      )}
-
-      {PublicMarketPilot && (
-        <Suspense fallback={<p role="status">Loading public-data pilot…</p>}>
-          <PublicMarketPilot />
-        </Suspense>
       )}
 
       <section className="pbk-market-evidence" aria-label="Saved property evidence">

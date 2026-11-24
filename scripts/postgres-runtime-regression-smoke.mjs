@@ -7,6 +7,7 @@ import ts from 'typescript';
 import Pool from 'pg-pool';
 import { withPgTransaction } from './skill-governance-store.mjs';
 import { createCoalescedPersistence } from './background-persistence.mjs';
+import { isRetryablePostgresSnapshotError, writePostgresStateSnapshot } from './postgres-state-snapshot.mjs';
 
 // Run with node --test. Extract only database helpers; no bridge startup, .env, or sockets.
 const source = readFileSync(new URL('./openclaw-local-server.mjs', import.meta.url), 'utf8');
@@ -94,12 +95,13 @@ function runtime(t, {
     stateDbPersistWarned: false, activityLogPersistenceWarned: false,
     runtimeStateProvenance: {}, lastStateDbPersist: {},
     postgresJsonStringify: JSON.stringify, ensureActivityLogSchema: async () => {},
+    isRetryablePostgresSnapshotError, writePostgresStateSnapshot,
   });
   vm.runInContext(pgConstants, context);
   load(context, ['markPostgresHealth', 'isBoundedPostgresOperationTimeout', 'isPostgresPoolPressureError',
     'isTransientPostgresConnectionError', 'getPostgresOperationTimeoutMs', 'createPostgresDeadlineError',
     'withPostgresOperationDeadline', 'withPostgresConnectionRetry', 'getPgPool',
-    'isTransientPostgresStatePersistError', 'getStatePersistRetryAttempts',
+    'getStatePersistRetryAttempts',
     'getStatePersistRetryDelayMs', 'queryPgRows']);
   context.getPostgresHealthMeta = () => context.postgresHealth;
   t.after(async () => {
@@ -341,15 +343,16 @@ test('recoverable acquisition failures retry before exactly one write', async (t
   assert.equal(fixture.context.postgresHealth.ready, true);
 });
 
-test('state persistence does not multiply acquisition retries or replay ambiguous writes', async (t) => {
+test('snapshot persistence stops at its outer retry limit while Postgres is unavailable', async (t) => {
   for (const options of [{ connectError: connectionError }, { execute: () => { throw connectionError(); } }]) {
-    const fixture = runtime(t, options);
+    const fixture = runtime(t, { ...options, env: { PBK_STATE_PERSIST_RETRY_ATTEMPTS: '2' } });
     load(fixture.context, ['persistActivityLogRecords', 'buildStatePersistenceDiagnostics', 'persistStateToDb']);
     assert.equal(await fixture.context.persistStateToDb({ status: {}, activity: [] }), false);
     assert.equal(fixture.context.lastStateDbPersist.ok, false);
-    assert.equal(fixture.context.lastStateDbPersist.retryable, false);
-    assert.equal(fixture.counters.connections, options.connectError ? 3 : 1);
-    assert.equal(fixture.counters.queries, options.connectError ? 0 : 1);
+    assert.equal(fixture.context.lastStateDbPersist.retryable, true);
+    assert.equal(fixture.context.lastStateDbPersist.retryAttempts, 2);
+    assert.equal(fixture.counters.connections, options.connectError ? 6 : 2);
+    assert.equal(fixture.counters.queries, options.connectError ? 0 : 2);
   }
 });
 
@@ -360,9 +363,9 @@ test('invalid retry configuration cannot skip SQL and report persistence success
   } });
   load(fixture.context, ['persistActivityLogRecords', 'buildStatePersistenceDiagnostics', 'persistStateToDb']);
   assert.equal(fixture.context.getStatePersistRetryAttempts(), 5);
-  assert.equal(fixture.context.getStatePersistRetryDelayMs('invalid'), 250);
+  assert.equal(fixture.context.getStatePersistRetryDelayMs('invalid'), 500);
   assert.equal(await fixture.context.persistStateToDb({ status: {}, activity: [] }), true);
-  assert.equal(fixture.counters.queries, 1);
+  assert.equal(fixture.counters.queries, 2);
   assert.equal(fixture.context.lastStateDbPersist.ok, true);
   const failed = runtime(t, { connectError: connectionError, env: { PBK_PG_QUERY_RETRY_ATTEMPTS: 'invalid' } });
   await assert.rejects(failed.pool.query('SELECT 1'), { code: 'ECONNRESET' });
@@ -370,10 +373,11 @@ test('invalid retry configuration cannot skip SQL and report persistence success
   const failedPersist = runtime(t, {
     execute: () => { throw connectionError(); }, env: { PBK_STATE_PERSIST_RETRY_ATTEMPTS: 'invalid' },
   });
+  failedPersist.context.sleep = async () => {};
   load(failedPersist.context, ['persistActivityLogRecords', 'buildStatePersistenceDiagnostics', 'persistStateToDb']);
   assert.equal(await failedPersist.context.persistStateToDb({ status: {}, activity: [] }), false);
   assert.equal(failedPersist.context.lastStateDbPersist.ok, false);
-  assert.equal(failedPersist.counters.queries, 1);
+  assert.equal(failedPersist.counters.queries, 5);
 });
 
 test('lead intake confirms an ambiguous snapshot commit without repeating the write', async (t) => {

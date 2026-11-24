@@ -64,6 +64,18 @@ function isQueuedForApproval(result) {
     result?.json?.outcome === 'queued_for_approval';
 }
 
+function assertPendingApproval(label, result) {
+  assertManualRouteStructured(label, result);
+  assert.equal(result.status, 202, `${label} must return HTTP 202 for pending approval.`);
+  assert.equal(result.json?.result, 'queued_for_approval', `${label} must require approval before provider delivery.`);
+  assert.ok(result.json?.approval?.id, `${label} must return a durable approval ID.`);
+  assert.equal(result.json.approval.status, 'pending', `${label} must wait for an approval decision.`);
+  if (result.json.outbox) {
+    assert.equal(result.json.outbox.status, 'queued', `${label} must keep the outbox queued.`);
+    assert.equal(result.json.providerAttempted, false, `${label} must skip the provider while approval is pending.`);
+  }
+}
+
 async function main() {
   const bridgeSource = await readFile(join(repoRoot, 'scripts/openclaw-local-server.mjs'), 'utf8');
   assert.doesNotMatch(
@@ -198,13 +210,15 @@ async function main() {
     const call = await requestJson(baseUrl, '/api/calls', {
       leadId,
       phone: '+16145550177',
+      fromNumber: '+16145550188',
       leadName: 'Manual Actions Smoke Seller',
       manual: true,
       manualSend: true,
       source: 'call_floor_manual',
     });
-    assertManualRouteStructured('manual call', call);
-    assert.equal(isQueuedForApproval(call), false, 'A manual call uses its operator request without a separate approval.');
+    assertPendingApproval('manual call', call);
+    assert.equal(call.json.approval.metadata?.executionParams?.fromNumber, '+16145550188',
+      'The pending call approval must retain the selected sender.');
 
     const nurture = await requestJson(baseUrl, '/api/leads/nurture', {
       leadId,
@@ -232,12 +246,18 @@ async function main() {
       manualSend: true,
       source: 'seller_docs_manual',
     });
-    assertManualRouteStructured('manual seller documents', sellerDocs);
-    assert.equal(isQueuedForApproval(sellerDocs), false, 'Manual document email should go directly to delivery.');
-    assert.ok(
-      sellerDocs.json?.outbox || sellerDocs.json?.delivery || sellerDocs.json?.result,
-      'manual seller documents should return delivery or outbox state.'
-    );
+    assertPendingApproval('manual seller documents', sellerDocs);
+
+    const coldEmail = await requestJson(baseUrl, '/api/cold-email/send', {
+      leadId,
+      email: 'manual.actions@example.com',
+      subject: 'Manual cold email route smoke',
+      message: 'Manual cold email route smoke.',
+      manual: true,
+      manualSend: true,
+      source: 'leads_page_manual',
+    });
+    assertPendingApproval('manual cold email', coldEmail);
 
     console.log(
       JSON.stringify(
@@ -255,6 +275,7 @@ async function main() {
             call: call.status,
             nurture: nurture.status,
             sellerDocs: sellerDocs.status,
+            coldEmail: coldEmail.status,
           },
         },
         null,

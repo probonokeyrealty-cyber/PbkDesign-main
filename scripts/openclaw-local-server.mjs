@@ -43951,7 +43951,7 @@ function normalizeApprovalCreationResult(result = {}) {
   };
 }
 
-async function enforceOperatingModeForTool(toolName, params = {}, { operatorRoute = false } = {}) {
+async function enforceOperatingModeForTool(toolName, params = {}) {
   if (!OPERATING_MODE_GATED_TOOLS.has(toolName)) return null;
   if (isProfileOnlyCrmUpdate(toolName, params)) return null;
   if (isDirectProtectedEnvUpdate(toolName, params)) return null;
@@ -44046,15 +44046,6 @@ async function enforceOperatingModeForTool(toolName, params = {}, { operatorRout
   const providerWriteRequiresApproval = Boolean(
     safetyValidation?.providerWrite === true && safetyValidation?.approvalRequired !== false
   );
-  if (
-    operatorRoute &&
-    ['telnyx_call', 'sendColdEmail', 'sendSellerDocs'].includes(toolName) &&
-    isTrustedManualOperatorAction(params) &&
-    !forceApproval &&
-    !safetyReviewRequired
-  ) {
-    return null;
-  }
   if (
     isTrustedManualConversationProviderSend(toolName, params) &&
     !forceApproval &&
@@ -44412,29 +44403,36 @@ async function invokeToolWithOperatingGuard(toolName, params = {}) {
   return result;
 }
 
-async function executeRouteToolHandler(toolName, params = {}, source = 'http-route', options = {}) {
+async function executeRouteToolHandler(toolName, params = {}, source = 'http-route') {
   const startedAt = Date.now();
-  const guarded = await enforceOperatingModeForTool(toolName, params, options);
-  if (guarded) {
-    if (guarded.ok === false) {
-      productionReadinessMonitor.recordFailure(toolName, guarded.result || guarded.reason || 'guarded');
-    }
-    productionReadinessMonitor.recordLatency(toolName, Date.now() - startedAt);
-    return {
-      result: guarded,
-      guarded,
-      qaValidation: {
+  return (await prepareRouteToolGuard(toolName, params, startedAt)) ||
+    executePermittedRouteTool(toolName, params, source, startedAt);
+}
+
+async function prepareRouteToolGuard(toolName, params, startedAt) {
+  const guarded = await enforceOperatingModeForTool(toolName, params);
+  if (!guarded) return null;
+  if (guarded.ok === false) {
+    productionReadinessMonitor.recordFailure(toolName, guarded.result || guarded.reason || 'guarded');
+  }
+  productionReadinessMonitor.recordLatency(toolName, Date.now() - startedAt);
+  return {
+    result: guarded,
+    guarded,
+    qaValidation: {
+      ok: true,
+      skipped: true,
+      qa: {
         ok: true,
         skipped: true,
-        qa: {
-          ok: true,
-          skipped: true,
-          reason: guarded.result || guarded.reason || 'approval_or_guard_required',
-        },
+        reason: guarded.result || guarded.reason || 'approval_or_guard_required',
       },
-      safetyValidation: null,
-    };
-  }
+    },
+    safetyValidation: null,
+  };
+}
+
+async function executePermittedRouteTool(toolName, params, source, startedAt) {
   const result = await executeToolHandlerWithQa(toolName, params, source);
   const failed =
     result?.result?.ok === false ||
@@ -44630,26 +44628,41 @@ async function executeManualProviderRouteWithOutbox({
     queuedAt,
   });
 
+  const routeParams = { ...params, idempotencyKey, outboxId: idempotencyKey, manualSendOutbox: queuedOutbox };
+  const startedAt = Date.now();
+  const guardedRoute = await prepareRouteToolGuard(toolName, routeParams, startedAt);
+  if (guardedRoute) {
+    const response = buildRouteToolResponse(guardedRoute);
+    const awaitingApproval = response.result === 'queued_for_approval';
+    const status = awaitingApproval ? 'queued' : 'blocked';
+    const outbox = {
+      ...queuedOutbox,
+      ok: awaitingApproval,
+      result: awaitingApproval ? 'manual_send_outbox_queued' : 'manual_send_outbox_blocked',
+      status,
+      timelineStatus: status,
+      error: awaitingApproval ? '' : response.message || response.error || '',
+    };
+    return {
+      ok: response.ok !== false,
+      statusCode: getRouteToolStatusCode(guardedRoute),
+      response: {
+        ...response,
+        providerAttempted: false,
+        outbox,
+        idempotencyKey,
+        idempotentReplay: false,
+        retryable: false,
+      },
+      outbox,
+      idempotencyKey,
+      idempotentReplay: false,
+    };
+  }
+
   const circuit = await providerCircuitBreaker.execute(
     provider,
-    () =>
-      executeRouteToolHandler(
-        toolName,
-        {
-          ...params,
-          idempotencyKey,
-          outboxId: idempotencyKey,
-          manualSendOutbox: queuedOutbox,
-        },
-        source,
-        { operatorRoute: [
-          'calls-route',
-          'messages-route',
-          'seller-docs-route',
-          'lead-send-message',
-          'unified-conversation-send',
-        ].includes(source) }
-      ),
+    () => executePermittedRouteTool(toolName, routeParams, source, startedAt),
     () => queuedOutbox
   );
 
@@ -78708,16 +78721,14 @@ const server = createServer(async (request, response) => {
         verbiage:
           send.outbox.status === 'sent'
             ? 'Seller documents sent or prepared.'
-            : send.outbox.error || 'Seller document provider is not configured.',
+            : send.outbox.error || send.response.message || 'Seller document provider is not configured.',
       });
       return;
     }
 
     if (request.method === 'POST' && pathname === '/api/cold-email/send') {
       const body = await readBody(request);
-      const routeTool = await executeRouteToolHandler('sendColdEmail', body, 'cold-email-route', {
-        operatorRoute: true,
-      });
+      const routeTool = await executeRouteToolHandler('sendColdEmail', body, 'cold-email-route');
       json(response, getRouteToolStatusCode(routeTool), buildRouteToolResponse(routeTool));
       return;
     }
@@ -81482,7 +81493,7 @@ const server = createServer(async (request, response) => {
           verbiage:
             send.outbox.status === 'sent'
               ? 'Email sent or prepared.'
-              : send.outbox.error || 'Provider key missing.',
+              : send.outbox.error || send.response.message || 'Provider key missing.',
         });
         return;
       }
@@ -81510,7 +81521,7 @@ const server = createServer(async (request, response) => {
         verbiage:
           send.outbox.status === 'sent'
             ? 'SMS sent or queued through Telnyx.'
-            : send.outbox.error || 'SMS was recorded without claiming carrier delivery.',
+            : send.outbox.error || send.response.message || 'SMS was recorded without claiming carrier delivery.',
       });
       return;
     }
@@ -83332,7 +83343,7 @@ const server = createServer(async (request, response) => {
           verbiage:
             send.outbox.status === 'sent'
               ? 'SMS sent or queued through Telnyx.'
-              : send.outbox.error || 'SMS was recorded without claiming carrier delivery.',
+              : send.outbox.error || send.response.message || 'SMS was recorded without claiming carrier delivery.',
         });
         return;
       }
@@ -83367,7 +83378,7 @@ const server = createServer(async (request, response) => {
         verbiage:
           send.outbox.status === 'sent'
             ? 'Email sent or prepared.'
-            : send.outbox.error || 'Provider key missing.',
+            : send.outbox.error || send.response.message || 'Provider key missing.',
       });
       return;
     }

@@ -43956,7 +43956,7 @@ function normalizeApprovalCreationResult(result = {}) {
   };
 }
 
-async function enforceOperatingModeForTool(toolName, params = {}) {
+async function enforceOperatingModeForTool(toolName, params = {}, { staffManualCall = false } = {}) {
   if (!OPERATING_MODE_GATED_TOOLS.has(toolName)) return null;
   if (isProfileOnlyCrmUpdate(toolName, params)) return null;
   if (isDirectProtectedEnvUpdate(toolName, params)) return null;
@@ -44051,6 +44051,15 @@ async function enforceOperatingModeForTool(toolName, params = {}) {
   const providerWriteRequiresApproval = Boolean(
     safetyValidation?.providerWrite === true && safetyValidation?.approvalRequired !== false
   );
+  if (
+    staffManualCall &&
+    toolName === 'telnyx_call' &&
+    !forceApproval &&
+    !safetyReviewRequired &&
+    safetyValidation?.result === 'safety_passed'
+  ) {
+    return null;
+  }
   if (
     isTrustedManualConversationProviderSend(toolName, params) &&
     !forceApproval &&
@@ -44414,8 +44423,8 @@ async function executeRouteToolHandler(toolName, params = {}, source = 'http-rou
     executePermittedRouteTool(toolName, params, source, startedAt);
 }
 
-async function prepareRouteToolGuard(toolName, params, startedAt) {
-  const guarded = await enforceOperatingModeForTool(toolName, params);
+async function prepareRouteToolGuard(toolName, params, startedAt, options) {
+  const guarded = await enforceOperatingModeForTool(toolName, params, options);
   if (!guarded) return null;
   if (guarded.ok === false) {
     productionReadinessMonitor.recordFailure(toolName, guarded.result || guarded.reason || 'guarded');
@@ -44600,6 +44609,7 @@ async function executeManualProviderRouteWithOutbox({
   messageBody = '',
   subject = '',
   requestedBy = '',
+  staffManualCall = false,
 } = {}) {
   const idempotencyKey = String(
     params.idempotencyKey ||
@@ -44635,7 +44645,7 @@ async function executeManualProviderRouteWithOutbox({
 
   const routeParams = { ...params, idempotencyKey, outboxId: idempotencyKey, manualSendOutbox: queuedOutbox };
   const startedAt = Date.now();
-  const guardedRoute = await prepareRouteToolGuard(toolName, routeParams, startedAt);
+  const guardedRoute = await prepareRouteToolGuard(toolName, routeParams, startedAt, { staffManualCall });
   if (guardedRoute) {
     const response = buildRouteToolResponse(guardedRoute);
     const awaitingApproval = response.result === 'queued_for_approval';
@@ -81296,12 +81306,57 @@ const server = createServer(async (request, response) => {
 
     if (request.method === 'POST' && pathname === '/api/calls') {
       const body = await readBody(request);
+      const staffSession = TEAM_PASSCODE && verifyTeamSessionToken(request.headers['x-pbk-team-token']);
+      const staffManualCall = staffSession?.ok === true &&
+        body.manual === true && body.manualSend === true &&
+        body.forceApproval === false && body.requestApproval === false &&
+        !body.force_approval && !body.request_approval && !body.approvalId && !body.approval_id &&
+        ['call_floor_manual', 'lead_portal_manual', 'leads_page_manual', 'command_center_manual'].includes(body.source);
+      let callParams = body;
+      if (staffManualCall) {
+        if (!getTeamPermissions().canPlaceCalls) {
+          json(response, 403, { ok: false, result: 'team_permission_denied', permission: 'canPlaceCalls' });
+          return;
+        }
+        const leadId = typeof body.leadId === 'string' ? body.leadId.trim() : '';
+        const phone = typeof body.phone === 'string' ? normalizePhone(body.phone) : '';
+        if (!leadId || !phone || Array.isArray(body.to)) {
+          json(response, 400, { ok: false, result: 'saved_lead_call_required', error: 'Choose one saved lead with a phone number.' });
+          return;
+        }
+        const { lead, unavailable, contactRestricted } = await loadLeadForFullView(leadId, { reviewOnly: true });
+        if (unavailable) {
+          json(response, 503, { ok: false, result: 'saved_lead_unavailable', error: 'The saved lead could not be verified.' });
+          return;
+        }
+        if (!lead || phone !== normalizePhone(lead.seller?.phone || lead.phone)) {
+          json(response, 409, { ok: false, result: 'saved_phone_mismatch', error: 'Reopen the saved lead and select its current phone number.' });
+          return;
+        }
+        const fromNumber = normalizePhone(body.fromNumber || body.from);
+        const requestKey = typeof body.idempotencyKey === 'string' ? body.idempotencyKey.trim().slice(0, 128) : '';
+        const idempotencyKey = `staff-call-${hashProviderActionContext({
+          requestKey: requestKey || randomUUID(), leadId, phone, fromNumber, actor: staffSession.actor,
+        })}`;
+        callParams = {
+          leadId, phone, fromNumber,
+          source: body.source,
+          actor: staffSession.actor,
+          requestedBy: staffSession.actor,
+          manual: true,
+          manualSend: true,
+          dnc: contactRestricted || getAvaReviewContactStatus(lead) === 'restricted' || body.dnc === true,
+          tcpaConsent: lead.compliance?.tcpaConsent ?? lead.compliance?.consentStatus ?? lead.tcpaConsent ?? lead.consentStatus,
+          idempotencyKey,
+          commandId: idempotencyKey,
+        };
+      }
       const manualCallBody = {
-        ...body,
-        manual: body.manual === false ? false : true,
-        manualSend: body.manualSend === false ? false : true,
-        requestedBy: body.requestedBy || body.requested_by || body.actor || 'PBK operator',
-        source: body.source || 'command_center_manual',
+        ...callParams,
+        manual: callParams.manual === false ? false : true,
+        manualSend: callParams.manualSend === false ? false : true,
+        requestedBy: callParams.requestedBy || callParams.requested_by || callParams.actor || 'PBK operator',
+        source: callParams.source || 'command_center_manual',
       };
       const call = await executeManualProviderRouteWithOutbox({
         toolName: 'telnyx_call',
@@ -81309,9 +81364,10 @@ const server = createServer(async (request, response) => {
         channel: 'call',
         params: manualCallBody,
         source: 'calls-route',
-        leadId: body.leadId || body.lead_id || body.id || '',
-        recipient: body.phone || body.to || body.number || '',
-        messageBody: body.reason || body.notes || 'manual call',
+        staffManualCall,
+        leadId: callParams.leadId || callParams.lead_id || callParams.id || '',
+        recipient: callParams.phone || callParams.to || callParams.number || '',
+        messageBody: callParams.reason || callParams.notes || 'manual call',
         requestedBy: manualCallBody.requestedBy,
       });
       json(response, call.statusCode, call.response);

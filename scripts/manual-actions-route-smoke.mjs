@@ -4,11 +4,13 @@ import { tmpdir } from 'node:os';
 import { isAbsolute, join, relative } from 'node:path';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
+import { randomUUID } from 'node:crypto';
 import { buildAgentRuntimeSmokeEnv } from './agent-runtime-smoke-isolation.mjs';
 
 const repoRoot = process.cwd();
 const port = String(19100 + Math.floor(Math.random() * 2500));
-const apiKey = 'manual-actions-route-smoke-key';
+const apiKey = randomUUID();
+const teamPasscode = randomUUID();
 
 async function waitForBridge(baseUrl, timeoutMs = 30_000) {
   const startedAt = Date.now();
@@ -27,13 +29,14 @@ async function waitForBridge(baseUrl, timeoutMs = 30_000) {
   throw new Error('OpenClaw bridge did not become ready for manual action route smoke.');
 }
 
-async function requestJson(baseUrl, path, body) {
+async function requestJson(baseUrl, path, body, headers = {}) {
   const response = await fetch(`${baseUrl}${path}`, {
     method: 'POST',
     signal: AbortSignal.timeout(15000),
     headers: {
       Authorization: `Bearer ${apiKey}`,
       'Content-Type': 'application/json',
+      ...headers,
     },
     body: JSON.stringify(body),
   });
@@ -97,7 +100,7 @@ async function main() {
       HOST: '127.0.0.1',
       PBK_OPENCLAW_STATE_DIR: stateDir,
       PBK_BRIDGE_API_KEY: apiKey,
-      PBK_TEAM_PASSCODE: 'pbkway',
+      PBK_TEAM_PASSCODE: teamPasscode,
       PBK_SUPABASE_ENABLED: '0',
       PBK_DISABLE_POSTGRES: '1',
       PBK_ALLOW_UNAUTHENTICATED_HOSTED_BRIDGE: '1',
@@ -115,6 +118,12 @@ async function main() {
 
   try {
     await waitForBridge(baseUrl);
+    const session = await requestJson(baseUrl, '/api/auth/team', { passcode: teamPasscode, actor: 'Fictional staff reviewer' });
+    assert.equal(session.status, 200, 'Fictional staff sign-in should succeed.');
+    assert.ok(session.json.token, 'Fictional staff sign-in must return a session token.');
+    assert.equal(session.json.permissions?.canPlaceCalls, true);
+    const staffHeaders = { 'X-PBK-Team-Token': session.json.token };
+
     const lead = await requestJson(baseUrl, '/api/leads', {
       name: 'Manual Actions Smoke Seller',
       phone: '+16145550177',
@@ -147,7 +156,7 @@ async function main() {
       manual: true,
       manualSend: true,
       source: 'lead_portal_manual',
-    });
+    }, staffHeaders);
     assertPendingApproval('manual SMS', sms, 'telnyx_sms');
 
     const email = await requestJson(baseUrl, '/api/lead/send-message', {
@@ -159,7 +168,7 @@ async function main() {
       manual: true,
       manualSend: true,
       source: 'lead_portal_manual',
-    });
+    }, staffHeaders);
     assertPendingApproval('manual email', email, 'sendColdEmail');
 
     const immediateEmail = await requestJson(baseUrl, '/api/messages', {
@@ -171,7 +180,7 @@ async function main() {
       manual: true,
       manualSend: true,
       source: 'unified_inbox_manual',
-    });
+    }, staffHeaders);
     assertPendingApproval('immediate /api/messages email', immediateEmail, 'sendColdEmail');
 
     const immediateSms = await requestJson(baseUrl, '/api/messages', {
@@ -182,10 +191,10 @@ async function main() {
       manual: true,
       manualSend: true,
       source: 'unified_inbox_manual',
-    });
+    }, staffHeaders);
     assertPendingApproval('immediate /api/messages SMS', immediateSms, 'telnyx_sms');
 
-    const call = await requestJson(baseUrl, '/api/calls', {
+    const callRequest = {
       leadId,
       phone: '+16145550177',
       fromNumber: '+16145550188',
@@ -193,10 +202,38 @@ async function main() {
       manual: true,
       manualSend: true,
       source: 'call_floor_manual',
-    });
-    assertPendingApproval('manual call', call, 'telnyx_call');
+      forceApproval: false,
+      requestApproval: false,
+      idempotencyKey: randomUUID(),
+    };
+    const call = await requestJson(baseUrl, '/api/calls', callRequest);
+    assertPendingApproval('manual call without staff session', call, 'telnyx_call');
     assert.equal(call.json.approval.metadata?.executionParams?.fromNumber, '+16145550188',
       'The pending call approval must retain the selected sender.');
+
+    const directCall = await requestJson(baseUrl, '/api/calls', callRequest, staffHeaders);
+    assert.equal(directCall.json.result, 'provider_missing', JSON.stringify(directCall));
+    assert.equal(directCall.status, 409);
+    assert.equal(directCall.json.approval, undefined, 'The signed-in staff call must skip the extra approval.');
+    assert.ok(directCall.json.idempotencyKey, 'The direct call must have a request identity.');
+    assert.equal(directCall.json.telnyx?.live, false);
+    const repeatedCall = await requestJson(baseUrl, '/api/calls', callRequest, staffHeaders);
+    assert.equal(repeatedCall.json.idempotencyKey, directCall.json.idempotencyKey, 'A retransmission must retain the same request identity.');
+
+    const mismatchedCall = await requestJson(baseUrl, '/api/calls', {
+      ...callRequest,
+      phone: '+16145550199',
+    }, staffHeaders);
+    assert.equal(mismatchedCall.status, 409);
+    assert.equal(mismatchedCall.json.result, 'saved_phone_mismatch');
+
+    const approvalCall = await requestJson(baseUrl, '/api/calls', {
+      ...callRequest,
+      forceApproval: true,
+      requestApproval: true,
+      idempotencyKey: randomUUID(),
+    }, staffHeaders);
+    assertPendingApproval('staff call requesting approval', approvalCall, 'telnyx_call');
 
     const nurture = await requestJson(baseUrl, '/api/leads/nurture', {
       leadId,
@@ -243,6 +280,15 @@ async function main() {
     assert.equal(coldEmail.json.approval.metadata?.executionParams?.fromEmail, 'fictional.sender@example.net',
       'The pending email approval must retain the selected sender.');
 
+    const dnc = await requestJson(baseUrl, '/api/dnc', { phone: callRequest.phone, reason: 'Fictional opt-out' });
+    assert.equal(dnc.status, 200);
+    const restrictedCall = await requestJson(baseUrl, '/api/calls', {
+      ...callRequest,
+      idempotencyKey: randomUUID(),
+    }, staffHeaders);
+    assert.equal(restrictedCall.json.result, 'safety_blocked');
+    assert.equal(restrictedCall.json.providerAttempted, false);
+
     console.log(
       JSON.stringify(
         {
@@ -257,6 +303,10 @@ async function main() {
             immediateEmail: immediateEmail.status,
             immediateSms: immediateSms.status,
             call: call.status,
+            directCall: directCall.status,
+            mismatchedCall: mismatchedCall.status,
+            approvalCall: approvalCall.status,
+            restrictedCall: restrictedCall.status,
             nurture: nurture.status,
             sellerDocs: sellerDocs.status,
             coldEmail: coldEmail.status,

@@ -229,8 +229,9 @@ test('bridge code matches the reviewed release fingerprint outside the scoped re
   // Outbound sender selection checks channel permissions and keys delivery by sender
   // and document content. Manual routes return approval outcomes before provider dispatch.
   // Snapshot recovery retries the same Postgres row version and reconciles an ambiguous commit.
+  // A direct staff call binds a verified session to the exact saved recipient.
   assert.equal(createHash('sha256').update(unchanged).digest('hex'),
-    'a28ab44f4c4acd0fde19d50ef9e2206d41ef6d52fccece646274e3662a97564d');
+    'e738c3efa848b9fe452fa2619004edb46bb363cc4ac2861b0669e8c709a75fe4');
 });
 
 test('production distribution includes reader and protocol, never the fixture signer', () => {

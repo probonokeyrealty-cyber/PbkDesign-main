@@ -286,6 +286,7 @@ export function ShellTopbar({
                      text-sm text-slate-100 placeholder-slate-500
                      focus:outline-none focus:border-slate-600"
           role="combobox"
+          aria-label="Search workspace"
           aria-autocomplete="list"
           aria-expanded={searchOpen && Boolean(query.trim())}
           aria-controls="pbk-global-search-results"

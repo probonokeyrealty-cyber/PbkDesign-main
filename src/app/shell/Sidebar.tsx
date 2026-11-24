@@ -11,6 +11,8 @@ import {
   Menu,
   Megaphone,
   Mic2,
+  PanelLeftClose,
+  PanelLeftOpen,
   PhoneCall,
   ScanSearch,
   Settings as SettingsIcon,
@@ -76,7 +78,7 @@ export function Sidebar({
   onToggleRail,
 }: SidebarProps) {
   return (
-    <aside className="pbk-shell-sidebar hidden h-full bg-slate-950 border-r border-slate-800 md:flex md:flex-col">
+    <aside data-collapsed={collapsed} className="pbk-shell-sidebar hidden h-full bg-slate-950 border-r border-slate-800 md:flex md:flex-col">
       <div className="pbk-shell-sidebar-head h-14 flex items-center justify-between gap-2 px-4 border-b border-slate-800">
         <div className="pbk-shell-brand min-w-0">
           <span className="pbk-shell-brand-mark">PBK</span>
@@ -91,11 +93,11 @@ export function Sidebar({
           aria-label={collapsed ? 'Expand navigation rail' : 'Collapse navigation rail'}
           title={`Collapse/expand rail ([) - ${prefsSource}`}
         >
-          [
+          {collapsed ? <PanelLeftOpen size={17} aria-hidden="true" /> : <PanelLeftClose size={17} aria-hidden="true" />}
         </button>
       </div>
 
-      <nav className="pbk-shell-nav flex-1 py-3">
+      <nav className="pbk-shell-nav flex-1 py-3" aria-label="Workspace pages">
         {SHELL_NAV_ITEMS.map(({ to, label, icon: Icon }) => {
           const showBadge = to === '/inbox' && pendingApprovals > 0;
           return (
@@ -103,6 +105,7 @@ export function Sidebar({
               key={to}
               to={to}
               end={to === '/'}
+              aria-label={showBadge ? `${label}, ${pendingApprovals} pending approvals` : label}
               className={({ isActive }) =>
                 [
                   'pbk-shell-nav-link flex items-center gap-3 px-4 py-2.5 text-sm transition-colors',
@@ -115,7 +118,7 @@ export function Sidebar({
               title={collapsed ? label : undefined}
             >
               <span className="relative grid place-items-center">
-                <Icon size={16} />
+                <Icon size={16} aria-hidden="true" />
                 {showBadge && collapsed && (
                   <span className="absolute -right-2 -top-2 min-w-4 rounded-full bg-amber-300 px-1 text-center text-[10px] font-bold leading-4 text-slate-950">
                     {pendingApprovals > 9 ? '9+' : pendingApprovals}

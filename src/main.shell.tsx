@@ -3,6 +3,7 @@ import { ParadiseRouter } from './app/shell/router';
 import { installPbkDeployGuard } from './app/utils/deployVersion';
 import { hydratePbkPrefsBeforeRender } from './app/utils/uiPrefs';
 import './styles/index.css';
+import './styles/command-center-polish.css';
 
 /**
  * main.shell.tsx — parallel entry that mounts the Paradise shell.

@@ -336,6 +336,9 @@ export function ParadiseLayout() {
           prefs.railCollapsed ? 'md:grid-cols-[72px_1fr]' : 'md:grid-cols-[240px_1fr]',
         ].join(' ')}
       >
+        <a className="pbk-shell-skip" href="#pbk-workspace-main">
+          Skip to workspace
+        </a>
         <Sidebar
           collapsed={prefs.railCollapsed}
           pendingApprovals={pendingApprovalCount}
@@ -357,6 +360,8 @@ export function ParadiseLayout() {
           />
           <FavoritesBar snapshot={snapshot} refresh={refresh} />
           <main
+            id="pbk-workspace-main"
+            tabIndex={-1}
             className={[
               'pbk-shell-content relative overflow-auto bg-slate-900',
               isFullHeightChatRoute ? 'pbk-shell-content-chat' : '',

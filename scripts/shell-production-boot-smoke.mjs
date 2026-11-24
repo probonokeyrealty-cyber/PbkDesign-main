@@ -28,21 +28,53 @@ const smokeThread = {
   channels: ['call'],
 };
 const smokeTranscript = 'Seller: Friday works for a follow-up.';
+const deepgramTranscript = 'Seller: Please call me on Monday.';
+const recordingMessageId = 'smoke-recording-message';
+const mediaPath = '/smoke-signed-recording.mp3';
+
+async function recordingRow(page, body) {
+  const handle = await page.waitForFunction(
+    (expected) => [...document.querySelectorAll('article.pbk-conversation-event-row')]
+      .find((row) => row.textContent.includes(expected)),
+    { timeout: 8000 },
+    body,
+  );
+  return handle.asElement();
+}
+
+async function verifyTranscriptDownload(page, row, filename, text) {
+  await row.$eval('::-p-aria([name="Download transcript (.txt)"][role="button"])', (button) => button.click());
+  const download = await page.evaluate(() => window.__smokeTranscriptDownload);
+  assert.deepEqual(download, { filename, text });
+}
 
 async function verifyRecordingFallback(page) {
   const thread = '::-p-text(Recording smoke contact)';
   await page.waitForSelector(thread, { visible: true, timeout: 8000 });
   await page.click(thread);
-  const play = 'button[aria-label="Play recording"]';
-  await page.waitForSelector(play, { visible: true, timeout: 8000 });
-  await page.click(play);
-  await page.waitForSelector('::-p-text(Recording unavailable)', { visible: true });
-  assert.equal(await page.$('audio'), null, 'A call without audio must not create a player.');
-  await page.click('::-p-text(Download transcript (.txt))');
-  const download = await page.evaluate(() => window.__smokeTranscriptDownload);
-  assert.deepEqual(download, { filename: 'call-smoke-call.txt', text: smokeTranscript });
+  const row = await recordingRow(page, smokeTranscript);
+  await row.$eval('button[aria-label="Play recording"]', (button) => button.click());
+  const status = await row.waitForSelector('p[role="status"]', { timeout: 8000 });
+  assert.equal(await status.evaluate((element) => element.textContent), 'Recording unavailable');
+  assert.equal(await row.$('audio'), null, 'A call without audio must not create a player.');
+  await verifyTranscriptDownload(page, row, 'call-smoke-call.txt', smokeTranscript);
   assert(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1),
     'The recording fallback must fit in a 390px viewport.');
+}
+
+async function verifyPointerRecording(page, signRequests, origin) {
+  const row = await recordingRow(page, 'Captured recording fixture');
+  await row.$eval('button[aria-label="Play recording"]', (button) => button.click());
+  const expectedUrl = origin + mediaPath;
+  await page.waitForFunction(
+    (url) => window.__smokePlayedRecordings.includes(url),
+    { timeout: 8000 },
+    expectedUrl,
+  );
+  assert.deepEqual(signRequests, [`/api/recordings/${recordingMessageId}`]);
+  assert.equal(await row.$eval('audio', (element) => element.src), expectedUrl);
+  assert.equal(await row.$('::-p-text(Recording unavailable)'), null);
+  await verifyTranscriptDownload(page, row, 'call-smoke-pointer-event.txt', deepgramTranscript);
 }
 
 async function verifyAskRex(page, queries) {
@@ -173,6 +205,7 @@ try {
     const page = await browser.newPage();
     const pageErrors = [];
     const queries = [];
+    const signRequests = [];
     const checkRecordings = route === '/index.html#recordings';
     const checkBrain = route === '/brain';
     if (checkRecordings || checkBrain) {
@@ -181,6 +214,11 @@ try {
         localStorage.setItem('pbk-openclaw-config', JSON.stringify({
           endpoint: location.origin, apiKey: 'fixture-only',
         }));
+        window.__smokePlayedRecordings = [];
+        HTMLMediaElement.prototype.play = function () {
+          window.__smokePlayedRecordings.push(this.src);
+          return Promise.resolve();
+        };
         const click = HTMLAnchorElement.prototype.click;
         HTMLAnchorElement.prototype.click = function () {
           if (!this.download.endsWith('.txt') || !this.href.startsWith('blob:')) {
@@ -202,14 +240,34 @@ try {
           '/api/conversations/smoke-calls': { result: 'postgres', thread: smokeThread },
           '/api/conversations/smoke-calls/timeline': {
             result: 'postgres',
-            items: [{
-              id: 'smoke-call', threadId: smokeThread.id, channel: 'call',
-              eventType: 'call.transcript', body: smokeTranscript, occurredAt: '2026-11-01T12:00:00Z',
-            }],
+            items: [
+              {
+                id: 'smoke-call', threadId: smokeThread.id, channel: 'call',
+                eventType: 'call.transcript', body: smokeTranscript, occurredAt: '2026-11-01T12:00:00Z',
+                payload: { transcript: [{ text: 'Earlier words, not the selected chunk.' }] },
+              },
+              {
+                id: 'smoke-pointer-event', threadId: smokeThread.id, channel: 'call',
+                eventType: 'call.recording', body: 'Captured recording fixture', occurredAt: '2026-11-01T12:05:00Z',
+                sourceTable: 'unified_messages', sourceId: recordingMessageId,
+                payload: {
+                  storagePath: 'fixture/audio.mp3',
+                  deepgram: { ok: true, summary: { transcript: deepgramTranscript } },
+                },
+              },
+            ],
           },
         };
         if (request.method() === 'GET' && Object.hasOwn(fixtures, url.pathname)) {
           void request.respond({ contentType: 'application/json', body: JSON.stringify(fixtures[url.pathname]) });
+          return;
+        }
+        if (checkRecordings && request.method() === 'GET' && url.pathname.startsWith('/api/recordings/')) {
+          signRequests.push(url.pathname);
+          void request.respond({
+            contentType: 'application/json',
+            body: JSON.stringify({ ok: true, signedUrl: origin + mediaPath }),
+          });
           return;
         }
         if (checkBrain && url.pathname === '/api/brain/query' && request.method() === 'POST') {
@@ -263,17 +321,19 @@ try {
         `${canonical} must fit in a 390px viewport.`);
     }
 
-    try {
-      if (checkRecordings) {
-        await verifyRecordingFallback(page);
-        console.log('[shell-production-boot] No-audio Play and transcript export passed');
+    const featureChecks = checkRecordings
+      ? [
+          ['No-audio Play and transcript export', () => verifyRecordingFallback(page)],
+          ['Signed recording Play and Deepgram export', () => verifyPointerRecording(page, signRequests, origin)],
+        ]
+      : checkBrain ? [['Ask Rex query and citation', () => verifyAskRex(page, queries)]] : [];
+    for (const [label, verify] of featureChecks) {
+      try {
+        await verify();
+        console.log(`[shell-production-boot] ${label} passed`);
+      } catch (error) {
+        featureFailures.push(new Error(`${route}: ${label}: ${error.message}`));
       }
-      if (checkBrain) {
-        await verifyAskRex(page, queries);
-        console.log('[shell-production-boot] Ask Rex query and citation passed');
-      }
-    } catch (error) {
-      featureFailures.push(new Error(`${route}: ${error.message}`));
     }
     const renderedText = await page.$eval('#root', (root) => root.textContent?.trim() || '');
     if (!renderedText) {

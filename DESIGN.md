@@ -52,11 +52,11 @@ Do not introduce a new palette unless the change first updates this file and exp
 
 ## Typography
 
-Use the existing font hierarchy:
+Use the self-hosted hierarchy in `src/styles/fonts.css`:
 
-- Display: `var(--font-display)` for PBK logo, major page titles, names, and expressive emphasis.
-- UI: `var(--font-ui)` for normal product copy and readable controls.
-- Mono: `var(--font-mono)` for data, stats, provider statuses, timestamps, IDs, prices, and operational labels.
+- Display: Fraunces, via `var(--font-display)`, for the PBK logo, major page titles, names, and expressive emphasis.
+- UI: Plus Jakarta Sans, via `var(--font-ui)`, for product copy and controls.
+- Mono: JetBrains Mono Nerd Font, via `var(--font-mono)`, for data, stats, provider statuses, timestamps, IDs, prices, and operational labels.
 
 PBK style uses italic display emphasis inside titles, especially for key nouns:
 

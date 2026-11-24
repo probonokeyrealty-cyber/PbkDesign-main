@@ -1,8 +1,7 @@
 # PBK Core Typography
 
-Existing PBK typefaces, self-hosted for the triage routes and isolated/offline previews.
-Geist (variable, normal) and Fraunces (variable, normal), distributed under their accompanying OFL licenses.
+PBK typefaces are self-hosted and distributed under their accompanying OFL licenses.
+The Command Center uses Fraunces (variable, normal) and Plus Jakarta Sans (variable, normal).
 
-Upstream source: https://github.com/google/fonts/tree/main/ofl/geist and https://github.com/google/fonts/tree/main/ofl/fraunces
-
-WOFF2 conversion uses FontTools and retains glyphs and variation axes. Existing family names and PBK font tokens are unchanged.
+- Fraunces and the existing Geist assets originated at https://github.com/google/fonts/tree/main/ofl/fraunces and https://github.com/google/fonts/tree/main/ofl/geist.
+- Plus Jakarta Sans is the WOFF2 published by PBK's Webflow site. The upstream license is at https://github.com/google/fonts/tree/main/ofl/plusjakartasans.

@@ -38,7 +38,9 @@ const portalEnvironment = process.env.PBK_PORTAL_ENV || (process.env.NODE_ENV ==
 if (!['live', 'staging'].includes(portalEnvironment)) throw Error('Invalid PBK portal environment')
 
 const marketPilot91411 =
-  process.env.CONTEXT === 'deploy-preview' && process.env.HEAD === 'codex/house-zip-91411-pilot'
+  process.env.CONTEXT === 'deploy-preview' &&
+  process.env.REVIEW_ID === '116' &&
+  process.env.HEAD === 'codex/house-zip-91411-pilot'
 const legacyMarketPreview =
   process.env.CONTEXT === 'deploy-preview' && process.env.HEAD === 'codex/house-zip-staging-indicators'
 const stagingMarketIndicators = marketPilot91411 || legacyMarketPreview

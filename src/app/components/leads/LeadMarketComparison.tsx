@@ -175,7 +175,10 @@ export function LeadMarketComparison({
       )}
       {LeadInvestorEvidenceChecklist && (
         <Suspense fallback={<p role="status">Loading investor evidence checklist…</p>}>
-          <LeadInvestorEvidenceChecklist evidence={evidence} onOpen={onOpenEvidence} />
+          <LeadInvestorEvidenceChecklist
+            evidence={evidence}
+            onOpen={PublicMarketPilot ? undefined : onOpenEvidence}
+          />
         </Suspense>
       )}
       {zip ? (

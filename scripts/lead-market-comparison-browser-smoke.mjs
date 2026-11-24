@@ -437,6 +437,9 @@ try {
       await expect(pilot).toBeVisible();
       await expect(panel.getByRole('region', { name: 'Saved recorded sale', exact: true })).toHaveCount(0);
       await expect(panel.getByText('$470,000', { exact: true })).toHaveCount(0);
+      await expect(checklist).toBeVisible();
+      await expect(checklist.getByRole('button', { name: 'Open Comps', exact: true })).toHaveCount(0);
+      await expect(checklist.getByRole('button', { name: 'Open Investor', exact: true })).toHaveCount(0);
     } else {
       await expect(pilot).toHaveCount(0);
     }

@@ -22266,6 +22266,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       const button = event.currentTarget;
       await deleteRuntimeRecording(button.dataset.recordingDeleteActive || '', button.dataset.recordingId || '');
     });
+    page.dispatchEvent(new Event('pbk:recording-selection-rendered'));
   }
 
   function getInitial(value = '') {
@@ -30261,6 +30262,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     const speeds = [1, 1.25, 1.5, 2];
     const audio = new Audio();
     audio.preload = 'metadata';
+    let playbackRequest = null;
 
     const getActiveRecordingContext = () => {
       const item = page.querySelector('.rec-item.active') || page.querySelector('.rec-item');
@@ -30288,30 +30290,30 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       if (elapsed) elapsed.textContent = `${mins}:${secs}`;
     };
 
-    const exportActiveRecording = (format = 'txt') => {
-      const name = page.querySelector('.rec-item.active .who')?.textContent?.trim() || page.querySelector('.rec-player-head .who')?.textContent?.trim() || 'PBK recording';
+    const snapshotRecordingTranscript = (name) => {
       const transcript = Array.from(page.querySelectorAll('.rec-line')).map((line) => line.textContent.replace(/\s+/g, ' ').trim()).join('\n');
-      downloadTextFile(`${name.toLowerCase().replace(/[^a-z0-9]+/g, '-') || 'pbk-recording'}.${format}`, transcript || `${name}\nNo transcript loaded.`, 'text/plain');
-      showLocalViewToast('Transcript export ready', 'No audio URL is attached yet, so PBK exported the visible transcript package.');
+      return {
+        filename: `${name.toLowerCase().replace(/[^a-z0-9]+/g, '-') || 'pbk-recording'}.txt`,
+        text: transcript || `${name}\nNo transcript loaded.`,
+      };
     };
 
-    const fetchSignedRecording = async (context) => {
-      try {
-        return await requestOpenClawApi(`/api/recordings/${encodeURIComponent(context.messageId)}?expiresIn=3600`, { timeout: 10000 });
-      } catch (error) {
-        const fixture = await requestOpenClawApi('/api/recordings/fixture', {
-          method: 'POST',
-          body: {
-            messageId: context.messageId,
-            leadName: context.leadName,
-            address: context.address,
-            actor: 'Command Center'
-          },
-          timeout: 15000
-        });
-        return fixture?.signed || fixture;
-      }
+    const fetchSignedRecording = (context) =>
+      requestOpenClawApi(`/api/recordings/${encodeURIComponent(context.messageId)}?expiresIn=3600`, { timeout: 10000 });
+
+    const ownsPlayback = (request) => request && playbackRequest === request
+      && request.messageId === getActiveRecordingContext().messageId;
+
+    const stopPlayback = () => {
+      playbackRequest = null;
+      audio.pause();
+      state.playing = false;
+      page.querySelector('.pc-btn.play')?.classList.remove('active');
     };
+
+    page.addEventListener('pbk:recording-selection-rendered', () => {
+      if (playbackRequest && !ownsPlayback(playbackRequest)) stopPlayback();
+    });
 
     page.addEventListener('click', (event) => {
       const button = event.target.closest('button');
@@ -30343,6 +30345,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
 
       if (label === 'bulk export' || label === 'download recording' || label === 'download') {
         const context = getActiveRecordingContext();
+        const transcript = snapshotRecordingTranscript(context.leadName);
         fetchSignedRecording(context)
           .then((payload) => {
             const url = payload?.signedUrl || payload?.url || payload?.signed?.signedUrl || '';
@@ -30356,9 +30359,10 @@ Authority close: "What matters most to your seller: number, timeline, or certain
             link.remove();
             toastOutcome({ outcome: 'live', title: 'Recording download ready', desc: 'PBK fetched a secure signed Supabase URL.' });
           })
-          .catch((error) => {
-            exportActiveRecording('txt');
-            toastOutcome({ outcome: 'provider_missing', title: 'Audio unavailable', desc: error?.message || 'No recording object is attached, so PBK exported the transcript instead.' });
+          .catch(() => {
+            downloadTextFile(transcript.filename, transcript.text, 'text/plain');
+            showLocalViewToast('Transcript export ready', 'No audio URL is attached yet, so PBK exported the selected call transcript.');
+            toastOutcome({ outcome: 'provider_missing', title: 'Recording unavailable', desc: 'A transcript export was offered instead of audio.' });
           });
         return;
       }
@@ -30458,27 +30462,29 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       if (button.classList.contains('play')) {
         const context = getActiveRecordingContext();
         if (state.playing) {
-          audio.pause();
-          state.playing = false;
-          button.classList.remove('active');
+          stopPlayback();
           toast({ type: 'info', title: 'Playback paused', desc: 'Secure recording playback paused.' });
           return;
         }
+        const request = { messageId: context.messageId };
+        playbackRequest = request;
         fetchSignedRecording(context)
           .then(async (payload) => {
+            if (!ownsPlayback(request)) return;
             const url = payload?.signedUrl || payload?.url || payload?.signed?.signedUrl || '';
             if (!url) throw new Error(payload?.error || 'No signed recording URL was returned.');
             audio.src = url;
             audio.playbackRate = state.speed;
             await audio.play();
+            if (!ownsPlayback(request)) return;
             state.playing = true;
             button.classList.add('active');
             toast({ type: 'success', title: 'Playback started', desc: 'Streaming from a short-lived Supabase signed URL.' });
           })
           .catch((error) => {
-            state.playing = false;
-            button.classList.remove('active');
-            toast({ type: 'warning', title: 'Recording not playable yet', desc: error?.message || 'PBK could not fetch a signed recording URL.' });
+            if (!ownsPlayback(request)) return;
+            stopPlayback();
+            toast({ type: 'warning', title: 'Recording unavailable', desc: error?.message || 'PBK could not fetch a signed recording URL.' });
           });
         return;
       }
@@ -30497,6 +30503,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       paintScrubber();
     });
     audio.addEventListener('ended', () => {
+      if (state.playing) playbackRequest = null;
       state.playing = false;
       page.querySelector('.pc-btn.play')?.classList.remove('active');
     });

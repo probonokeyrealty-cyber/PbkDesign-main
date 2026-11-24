@@ -204,6 +204,7 @@ async function main() {
       source: 'call_floor_manual',
     });
     assertManualRouteStructured('manual call', call);
+    assert.equal(isQueuedForApproval(call), false, 'A manual call uses its operator request without a separate approval.');
 
     const nurture = await requestJson(baseUrl, '/api/leads/nurture', {
       leadId,
@@ -232,6 +233,7 @@ async function main() {
       source: 'seller_docs_manual',
     });
     assertManualRouteStructured('manual seller documents', sellerDocs);
+    assert.equal(isQueuedForApproval(sellerDocs), false, 'Manual document email should go directly to delivery.');
     assert.ok(
       sellerDocs.json?.outbox || sellerDocs.json?.delivery || sellerDocs.json?.result,
       'manual seller documents should return delivery or outbox state.'

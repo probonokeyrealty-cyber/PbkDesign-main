@@ -3946,21 +3946,24 @@ function authorizeDirectTeamBridgeRequest({
     return deny('canSendContracts', 'send or modify contracts');
   }
 
+  const leadMessageWrite = normalizedMethod === 'POST' && normalizedPath === '/api/lead/send-message';
+  const leadEmailWrite = leadMessageWrite && String(body.channel || '').trim().toLowerCase() === 'email';
   const smsTool = /^(?:telnyx_sms|send_verification_sms)$/i.test(toolName);
   const smsRoute =
     normalizedMethod !== 'GET' &&
     /(?:\/api\/messages|\/api\/conversation|\/api\/conversations|\/api\/sms|\/api\/inbox)/.test(normalizedPath) &&
     /sms|message|conversation|inbox/.test(normalizedPath);
-  if ((smsTool || smsRoute || chatPermissions.has('canSendSms')) && permissions.canSendSms !== true) {
+  if ((smsTool || smsRoute || (leadMessageWrite && !leadEmailWrite) || chatPermissions.has('canSendSms')) && permissions.canSendSms !== true) {
     return deny('canSendSms', 'send SMS messages');
   }
 
-  const emailTool = /^(?:sendcoldemail|pbk_send_update)$/i.test(toolName);
+  const emailTool = /^(?:sendcoldemail|sendsellerdocs|pbk_send_update)$/i.test(toolName);
   const emailRoute =
     normalizedMethod !== 'GET' &&
     /(?:\/api\/cold-email|\/api\/messages|\/api\/conversation|\/api\/conversations|\/api\/email|\/api\/inbox)/.test(normalizedPath) &&
     /email|message|conversation|inbox/.test(normalizedPath);
-  if ((emailTool || emailRoute || chatPermissions.has('canSendEmail')) && permissions.canSendEmail !== true) {
+  if ((emailTool || emailRoute || leadEmailWrite ||
+      (normalizedMethod === 'POST' && normalizedPath === '/api/send-seller-docs') || chatPermissions.has('canSendEmail')) && permissions.canSendEmail !== true) {
     return deny('canSendEmail', 'send emails');
   }
 
@@ -43948,7 +43951,7 @@ function normalizeApprovalCreationResult(result = {}) {
   };
 }
 
-async function enforceOperatingModeForTool(toolName, params = {}) {
+async function enforceOperatingModeForTool(toolName, params = {}, { operatorRoute = false } = {}) {
   if (!OPERATING_MODE_GATED_TOOLS.has(toolName)) return null;
   if (isProfileOnlyCrmUpdate(toolName, params)) return null;
   if (isDirectProtectedEnvUpdate(toolName, params)) return null;
@@ -44043,6 +44046,15 @@ async function enforceOperatingModeForTool(toolName, params = {}) {
   const providerWriteRequiresApproval = Boolean(
     safetyValidation?.providerWrite === true && safetyValidation?.approvalRequired !== false
   );
+  if (
+    operatorRoute &&
+    ['telnyx_call', 'sendColdEmail', 'sendSellerDocs'].includes(toolName) &&
+    isTrustedManualOperatorAction(params) &&
+    !forceApproval &&
+    !safetyReviewRequired
+  ) {
+    return null;
+  }
   if (
     isTrustedManualConversationProviderSend(toolName, params) &&
     !forceApproval &&
@@ -44400,9 +44412,9 @@ async function invokeToolWithOperatingGuard(toolName, params = {}) {
   return result;
 }
 
-async function executeRouteToolHandler(toolName, params = {}, source = 'http-route') {
+async function executeRouteToolHandler(toolName, params = {}, source = 'http-route', options = {}) {
   const startedAt = Date.now();
-  const guarded = await enforceOperatingModeForTool(toolName, params);
+  const guarded = await enforceOperatingModeForTool(toolName, params, options);
   if (guarded) {
     if (guarded.ok === false) {
       productionReadinessMonitor.recordFailure(toolName, guarded.result || guarded.reason || 'guarded');
@@ -44596,6 +44608,7 @@ async function executeManualProviderRouteWithOutbox({
         body: messageBody,
         subject,
         requestedBy,
+        sender: params.senderIdentityId || params.fromEmail || params.from || params.fromNumber,
       })
   ).trim();
   const replay = idempotencyKey ? productionIdempotencyStore.get(idempotencyKey) : null;
@@ -44628,7 +44641,14 @@ async function executeManualProviderRouteWithOutbox({
           outboxId: idempotencyKey,
           manualSendOutbox: queuedOutbox,
         },
-        source
+        source,
+        { operatorRoute: [
+          'calls-route',
+          'messages-route',
+          'seller-docs-route',
+          'lead-send-message',
+          'unified-conversation-send',
+        ].includes(source) }
       ),
     () => queuedOutbox
   );
@@ -78678,7 +78698,7 @@ const server = createServer(async (request, response) => {
         source: 'seller-docs-route',
         leadId: context.leadId,
         recipient,
-        messageBody: String(body.message || body.body || body.notes || '').trim(),
+        messageBody: JSON.stringify(normalizeDocumentItems(manualBody)),
         subject: body.subject || '',
         requestedBy: manualBody.requestedBy,
       });
@@ -78695,7 +78715,9 @@ const server = createServer(async (request, response) => {
 
     if (request.method === 'POST' && pathname === '/api/cold-email/send') {
       const body = await readBody(request);
-      const routeTool = await executeRouteToolHandler('sendColdEmail', body, 'cold-email-route');
+      const routeTool = await executeRouteToolHandler('sendColdEmail', body, 'cold-email-route', {
+        operatorRoute: true,
+      });
       json(response, getRouteToolStatusCode(routeTool), buildRouteToolResponse(routeTool));
       return;
     }

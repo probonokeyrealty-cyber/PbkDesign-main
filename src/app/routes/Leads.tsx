@@ -24,6 +24,10 @@ import { PbkDataSource } from '../../components/pbk/index';
 import { CompactPager, getPageSlice, OPERATOR_LIST_PAGE_SIZE } from '../components/CompactPager';
 import { AttomPropertyPreview } from '../components/leads/AttomPropertyPreview';
 import { useRuntimeSnapshot } from '../hooks/useRuntimeSnapshot';
+import {
+  OutboundTelnyxLinePicker,
+  useOutboundTelnyxLines,
+} from '../components/inbox/OutboundTelnyxLinePicker';
 import { ANALYZER_CURRENT_DEAL_KEY, readAnalyzerStorage } from '../utils/analyzerStorage';
 import {
   createLeadRequest,
@@ -1144,7 +1148,10 @@ export function Leads() {
   const [leadPage, setLeadPage] = useState(restoredQueue?.queue?.page || 0);
   const [leadActivityPage, setLeadActivityPage] = useState(0);
   const [leadQuery, setLeadQuery] = useState(
-    () => restoredQueue?.queue?.query ?? searchParams.get('search') ?? readAvaLeadSearch(location.state?.avaLeadSearch)
+    () =>
+      restoredQueue?.queue?.query ??
+      searchParams.get('search') ??
+      readAvaLeadSearch(location.state?.avaLeadSearch)
   );
   const [leadFilter, setLeadFilter] = useState<'all' | 'hot' | 'callable' | 'contract'>(
     restoredQueue?.queue?.filter || 'all'
@@ -1152,9 +1159,17 @@ export function Leads() {
   const leadReturnContext = (leadId: string, focus?: 'open'): LeadQueueReturn => ({
     path: '/leads',
     search: location.search,
-    scrollY: rosterSurfaceRef.current?.closest<HTMLElement>('.pbk-shell-content')?.scrollTop || window.scrollY,
+    scrollY:
+      rosterSurfaceRef.current?.closest<HTMLElement>('.pbk-shell-content')?.scrollTop ||
+      window.scrollY,
     leadId,
-    queue: { query: leadQuery, filter: leadFilter, page: leadPage, focus, scrollTop: rosterListRef.current?.scrollTop },
+    queue: {
+      query: leadQuery,
+      filter: leadFilter,
+      page: leadPage,
+      focus,
+      scrollTop: rosterListRef.current?.scrollTop,
+    },
   });
   const renderOpenLeadLink = (id: string, sellerName: string, address: string) => {
     const href = `/leads/${encodeURIComponent(id)}`;
@@ -1165,7 +1180,13 @@ export function Leads() {
         data-lead-workspace-id={id}
         aria-label={`Open lead ${sellerName} at ${address}`}
         onClick={(event) => {
-          if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey)
+          if (
+            event.button !== 0 ||
+            event.metaKey ||
+            event.ctrlKey ||
+            event.shiftKey ||
+            event.altKey
+          )
             return;
           event.preventDefault();
           navigate(href, { state: { leadReturn: leadReturnContext(id, 'open') } });
@@ -1308,10 +1329,12 @@ export function Leads() {
       const surface = rosterSurfaceRef.current;
       if (!surface || !restoredQueue) return;
       const queue = restoredQueue.queue;
-      const focusAttribute = queue?.focus === 'open' ? 'data-lead-workspace-id' : 'data-lead-queue-id';
+      const focusAttribute =
+        queue?.focus === 'open' ? 'data-lead-workspace-id' : 'data-lead-queue-id';
       const candidates = surface.querySelectorAll<HTMLElement>(`[${focusAttribute}]`);
       const target = Array.from(candidates).find(
-        (node) => node.getAttribute(focusAttribute) === restoredQueue.leadId && node.getClientRects().length
+        (node) =>
+          node.getAttribute(focusAttribute) === restoredQueue.leadId && node.getClientRects().length
       );
       if (target) target.focus({ preventScroll: true });
       const scrollPanel = surface.closest<HTMLElement>('.pbk-shell-content');
@@ -1326,7 +1349,10 @@ export function Leads() {
         const bounds = target.getBoundingClientRect();
         const listBounds = list?.getBoundingClientRect();
         const visibleTop = Math.max(80, listBounds?.top ?? 0);
-        const visibleBottom = Math.min(window.innerHeight - 80, listBounds?.bottom ?? window.innerHeight);
+        const visibleBottom = Math.min(
+          window.innerHeight - 80,
+          listBounds?.bottom ?? window.innerHeight
+        );
         if (bounds.top < visibleTop || bounds.bottom > visibleBottom)
           target.scrollIntoView({ block: 'center' });
       }
@@ -1664,44 +1690,14 @@ export function Leads() {
       showUiToast({ tone: 'error', title: 'Call blocked', desc: validation });
       return;
     }
-    if (!beginLeadAction(`call:${leadId}`)) return;
-    try {
-      const response = await startLeadCallRequest({
-        leadId,
-        leadName: getSellerName(lead),
-        phone: getLeadPhone(lead),
-        email: getLeadEmail(lead),
-        address: getLeadAddress(lead),
-        actor: 'PBK operator',
-        requestedBy: 'PBK operator',
-        source: 'leads_page_manual',
-        manual: true,
-        manualSend: true,
-      });
-      const status = String(
-        response.status || response.result || response.outcome || response.action || ''
-      ).toLowerCase();
-      const approvalQueued =
-        status.includes('approval') || Boolean(response.approvalId || response.approval_id);
-      showUiToast({
-        tone: approvalQueued ? 'info' : 'success',
-        title: approvalQueued ? 'Call needs review' : 'Calling seller',
-        desc: approvalQueued
-          ? `${getSellerName(lead)} needs approval before Ava places the call.`
-          : `${getSellerName(lead)} was handed to Ava for the call.`,
-      });
-      await Promise.all([refresh().catch(() => null), loadLeadRoster()]);
-    } catch (nextError) {
-      showUiToast({
-        tone: 'error',
-        title: 'Call request failed',
-        desc:
-          nextError instanceof Error ? nextError.message : 'Ava could not start that call request.',
-        critical: true,
-      });
-    } finally {
-      endLeadAction();
-    }
+    setOutboundLine('');
+    setLeadCallConfirmDraft({
+      lead,
+      leadId,
+      sellerName: getSellerName(lead),
+      phone: getLeadPhone(lead),
+      address: getLeadAddress(lead),
+    });
   };
 
   const openQuickSms = (lead: BridgeRecord) => {
@@ -1714,6 +1710,7 @@ export function Leads() {
       });
       return;
     }
+    setOutboundLine('');
     setQuickSmsDraft({
       lead,
       leadId: getLeadId(lead),
@@ -1723,8 +1720,12 @@ export function Leads() {
     });
   };
 
+  const senderChannel = leadCallConfirmDraft ? 'call' : quickSmsDraft ? 'sms' : '';
+  const sender = useOutboundTelnyxLines(senderChannel);
+  const { number: outboundLine, select: setOutboundLine, loading: senderLinesLoading } = sender;
+
   const sendQuickSms = async () => {
-    if (!quickSmsDraft || !quickSmsDraft.body.trim()) return;
+    if (!quickSmsDraft || !quickSmsDraft.body.trim() || !outboundLine || senderLinesLoading) return;
     const { lead, leadId } = quickSmsDraft;
     if (!beginLeadAction(`sms:${leadId}`)) return;
     try {
@@ -1735,6 +1736,7 @@ export function Leads() {
         email: getLeadEmail(lead),
         address: getLeadAddress(lead),
         channel: 'sms',
+        fromNumber: outboundLine,
         message: quickSmsDraft.body.trim(),
         body: quickSmsDraft.body.trim(),
         actor: 'PBK operator',
@@ -1815,7 +1817,7 @@ export function Leads() {
   };
 
   const executeLeadCall = async () => {
-    if (!leadCallConfirmDraft) return;
+    if (!leadCallConfirmDraft || !outboundLine || senderLinesLoading) return;
     const { lead } = leadCallConfirmDraft;
     setLeadCallConfirmDraft(null);
     const leadId = getLeadId(lead);
@@ -1827,6 +1829,7 @@ export function Leads() {
         phone: getLeadPhone(lead),
         email: getLeadEmail(lead),
         address: getLeadAddress(lead),
+        fromNumber: outboundLine,
         source: 'leads_page_manual',
         manual: true,
         manualSend: true,
@@ -2050,7 +2053,11 @@ export function Leads() {
             </div>
           </div>
 
-          <div className="pbk-leads-roster-list" ref={rosterListRef} aria-label="Seller roster results">
+          <div
+            className="pbk-leads-roster-list"
+            ref={rosterListRef}
+            aria-label="Seller roster results"
+          >
             <div className="leads-mobile-cards">
               {visibleLeads.map((lead) => {
                 const id = getLeadId(lead);
@@ -3584,6 +3591,7 @@ export function Leads() {
                   autoFocus
                 />
               </label>
+              <OutboundTelnyxLinePicker sender={sender} channel="sms" className={inputClass} />
               <p className="mt-2 text-xs text-slate-500">
                 Ava will send this as a direct seller text. If it cannot send, you will see the
                 reason immediately and can retry.
@@ -3600,7 +3608,7 @@ export function Leads() {
                 </button>
                 <button
                   type="button"
-                  disabled={isLeadActionBusy || !quickSmsDraft.body.trim()}
+                  disabled={isLeadActionBusy || !quickSmsDraft.body.trim() || !outboundLine}
                   onClick={() => void sendQuickSms()}
                   className="inline-flex items-center justify-center gap-2 rounded-full bg-sky-400 px-4 py-2 text-sm font-bold text-slate-950 transition hover:bg-sky-300 disabled:cursor-wait disabled:opacity-60"
                 >
@@ -3639,6 +3647,7 @@ export function Leads() {
               <div className="mt-1">{leadCallConfirmDraft.address}</div>
               <div className="mt-2 text-xs text-slate-400">{leadCallConfirmDraft.phone}</div>
             </div>
+            <OutboundTelnyxLinePicker sender={sender} channel="call" className={inputClass} />
             <div className="mt-5 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
               <button
                 type="button"
@@ -3649,7 +3658,7 @@ export function Leads() {
               </button>
               <button
                 type="button"
-                disabled={isLeadActionBusy}
+                disabled={isLeadActionBusy || !outboundLine}
                 onClick={() => {
                   void executeLeadCall();
                 }}

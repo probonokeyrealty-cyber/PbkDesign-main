@@ -285,11 +285,17 @@ export function classifyRexLeadPriority(motivationScore, options = {}) {
 
 export function selectRexProactiveLeadAction(payload = {}, options = {}) {
   const motivationScore = extractMotivationScore(payload);
-  const leadId = String(payload.leadId || payload.lead_id || payload.id || '').trim();
+  const rawLeadId = payload.leadId || payload.lead_id || payload.id;
+  const leadId = typeof rawLeadId === 'string' ? rawLeadId.trim() : '';
   const phone = String(payload.phone || payload.phoneNumber || payload.phone_number || '').trim();
   const dnc = Boolean(payload.dnc || payload.doNotCall || payload.do_not_call || payload.isDnc || payload.is_dnc);
-  const nowLocalHour = Number.isFinite(Number(options.nowLocalHour)) ? Number(options.nowLocalHour) : new Date().getHours();
-  const insideCallingWindow = nowLocalHour >= numberOr(options.callStartHour, 8) && nowLocalHour < numberOr(options.callEndHour, 20);
+  const rawHour = options.nowLocalHour;
+  const nowLocalHour = typeof rawHour === 'number' || (typeof rawHour === 'string' && rawHour.trim())
+    ? Number(rawHour)
+    : NaN;
+  const localHourKnown = Number.isFinite(nowLocalHour) && nowLocalHour >= 0 && nowLocalHour < 24;
+  const insideCallingWindow = localHourKnown &&
+    nowLocalHour >= numberOr(options.callStartHour, 8) && nowLocalHour < numberOr(options.callEndHour, 20);
   const base = {
     leadId,
     phone,
@@ -299,6 +305,7 @@ export function selectRexProactiveLeadAction(payload = {}, options = {}) {
     reason: '',
     metadata: {
       source: 'rex-autonomy',
+      localHourKnown,
       insideCallingWindow,
       dnc,
     },
@@ -307,15 +314,21 @@ export function selectRexProactiveLeadAction(payload = {}, options = {}) {
   if (dnc) {
     return { ...base, action: 'do_not_call', reason: 'Lead is marked DNC.' };
   }
+  if (!leadId || /^(?:undefined|null)$/i.test(leadId)) {
+    return { ...base, leadId: '', action: 'needs_lead_identity', reason: 'Link the lead to a saved record before creating follow-up work.' };
+  }
   if (!phone) {
     return { ...base, action: 'needs_phone', reason: 'Lead has no callable phone number.' };
   }
-  if (!insideCallingWindow) {
-    return { ...base, action: 'schedule_for_calling_window', reason: 'Lead is hot but outside permissible calling hours.' };
-  }
   const priority = classifyRexLeadPriority(motivationScore, options);
   if (priority === 'high') {
-    return { ...base, action: 'queue_call', reason: `Motivation score ${motivationScore} exceeds hot-lead threshold.` };
+    if (!localHourKnown) {
+      return { ...base, action: 'needs_calling_time_review', reason: 'Confirm the lead’s local calling time before queuing a call.' };
+    }
+    if (!insideCallingWindow) {
+      return { ...base, action: 'schedule_for_calling_window', reason: 'High-priority lead is outside the calling window.' };
+    }
+    return { ...base, action: 'queue_call', reason: `Motivation score ${motivationScore} meets the hot-lead threshold.` };
   }
   if (priority === 'review') {
     return { ...base, action: 'create_rex_decision', reason: `Motivation score ${motivationScore} should be reviewed for follow-up.` };

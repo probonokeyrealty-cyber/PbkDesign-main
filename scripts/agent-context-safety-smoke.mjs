@@ -64,9 +64,13 @@ assert(
   'The appointments HTTP route must use the shared approval and QA guard.'
 );
 
+const manualOutboxRoute = bridge.slice(
+  bridge.indexOf('async function executeManualProviderRouteWithOutbox('),
+  bridge.indexOf('async function personalizeNurtureMessageWithStrategist(')
+);
 assert(
-  /async function executeManualProviderRouteWithOutbox[\s\S]*providerCircuitBreaker\.execute[\s\S]*executeRouteToolHandler\(\s*toolName[\s\S]*buildRouteToolResponse\(routeTool\)/.test(bridge),
-  'Manual provider outbox wrapper must delegate to the shared approval, safety, QA, and response guard.'
+  /await guardRouteToolHandler\(toolName, executionParams, startedAt\)[\s\S]*if \(guarded\)[\s\S]*buildRouteToolResponse\(guarded\)[\s\S]*return \{[\s\S]*providerCircuitBreaker\.execute[\s\S]*runRouteToolHandler\(\s*toolName/.test(manualOutboxRoute),
+  'Manual provider routes must return approval or safety results before the provider circuit runs.'
 );
 
 for (const [toolName, routeName] of [

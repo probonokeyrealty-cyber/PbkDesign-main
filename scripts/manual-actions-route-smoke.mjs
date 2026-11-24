@@ -58,10 +58,16 @@ function assertManualRouteStructured(label, result) {
   }
 }
 
-function isQueuedForApproval(result) {
-  return result?.status === 202 ||
-    result?.json?.result === 'queued_for_approval' ||
-    result?.json?.outcome === 'queued_for_approval';
+function assertPendingProviderApproval(label, response, toolName) {
+  assertManualRouteStructured(label, response);
+  assert.equal(response.json?.result, 'queued_for_approval', label);
+  assert.equal(response.status, 202, label);
+  assert.equal(response.json?.providerAttempted, false, label);
+  assert.equal(response.json?.approval?.status, 'pending', label);
+  assert.equal(response.json?.approval?.approvalAction, toolName, label);
+  assert.ok(response.json?.approval?.metadata?.actionBinding?.hash, label);
+  assert.equal(response.json?.outbox?.status, 'queued', label);
+  assert.equal(response.json?.outbox?.retryable, false, label);
 }
 
 async function main() {
@@ -139,8 +145,7 @@ async function main() {
       manualSend: true,
       source: 'lead_portal_manual',
     });
-    assertManualRouteStructured('manual SMS', sms);
-    assert.ok([200, 202, 207, 400, 409, 502, 503].includes(sms.status), 'manual SMS should return a structured bridge status.');
+    assertPendingProviderApproval('manual SMS', sms, 'telnyx_sms');
 
     const email = await requestJson(baseUrl, '/api/lead/send-message', {
       leadId,
@@ -152,7 +157,7 @@ async function main() {
       manualSend: true,
       source: 'lead_portal_manual',
     });
-    assertManualRouteStructured('manual email', email);
+    assertPendingProviderApproval('manual email', email, 'sendColdEmail');
 
     const immediateEmail = await requestJson(baseUrl, '/api/messages', {
       leadId,
@@ -164,19 +169,7 @@ async function main() {
       manualSend: true,
       source: 'unified_inbox_manual',
     });
-    assertManualRouteStructured('immediate /api/messages email', immediateEmail);
-    if (!isQueuedForApproval(immediateEmail)) {
-      assert.notEqual(
-        immediateEmail.json?.provider,
-        'Telnyx',
-        'Immediate /api/messages email must route through email delivery, not Telnyx SMS.'
-      );
-      assert.equal(
-        immediateEmail.json?.message?.channel,
-        'email',
-        'Immediate /api/messages email should persist as an email message when it executes immediately.'
-      );
-    }
+    assertPendingProviderApproval('immediate /api/messages email', immediateEmail, 'sendColdEmail');
 
     const immediateSms = await requestJson(baseUrl, '/api/messages', {
       leadId,
@@ -187,13 +180,7 @@ async function main() {
       manualSend: true,
       source: 'unified_inbox_manual',
     });
-    assertManualRouteStructured('immediate /api/messages SMS', immediateSms);
-    if (!isQueuedForApproval(immediateSms)) {
-      assert.ok(
-        immediateSms.json?.telnyx || immediateSms.json?.message?.channel === 'sms',
-        'Immediate /api/messages SMS should stay on the Telnyx/SMS path when it executes immediately.'
-      );
-    }
+    assertPendingProviderApproval('immediate /api/messages SMS', immediateSms, 'telnyx_sms');
 
     const call = await requestJson(baseUrl, '/api/calls', {
       leadId,
@@ -202,9 +189,27 @@ async function main() {
       manual: true,
       manualSend: true,
       source: 'call_floor_manual',
+      fromNumber: '+16145550198',
+      nowLocalHour: 11,
     });
-    assertManualRouteStructured('manual call', call);
-    assert.equal(isQueuedForApproval(call), false, 'A manual call uses its operator request without a separate approval.');
+    assertPendingProviderApproval('manual call', call, 'telnyx_call');
+    assert.equal(call.json.approval.metadata.executionParams.from, '+16145550198');
+
+    const directEmail = await requestJson(baseUrl, '/api/cold-email/send', {
+      leadId,
+      email: 'manual.actions@example.com',
+      fromEmail: 'fictional.sender@example.net',
+      subject: 'Direct email approval smoke',
+      body: 'Fictional email for approval testing.',
+      manual: true,
+      manualSend: true,
+      source: 'lead_portal_manual',
+    });
+    assert.equal(directEmail.status, 202);
+    assert.equal(directEmail.json?.result, 'queued_for_approval');
+    assert.equal(directEmail.json?.providerAttempted, false);
+    assert.equal(directEmail.json?.approval?.status, 'pending');
+    assert.equal(directEmail.json?.approval?.metadata?.executionParams?.fromEmail, 'fictional.sender@example.net');
 
     const nurture = await requestJson(baseUrl, '/api/leads/nurture', {
       leadId,
@@ -232,12 +237,7 @@ async function main() {
       manualSend: true,
       source: 'seller_docs_manual',
     });
-    assertManualRouteStructured('manual seller documents', sellerDocs);
-    assert.equal(isQueuedForApproval(sellerDocs), false, 'Manual document email should go directly to delivery.');
-    assert.ok(
-      sellerDocs.json?.outbox || sellerDocs.json?.delivery || sellerDocs.json?.result,
-      'manual seller documents should return delivery or outbox state.'
-    );
+    assertPendingProviderApproval('manual seller documents', sellerDocs, 'sendSellerDocs');
 
     console.log(
       JSON.stringify(
@@ -245,7 +245,7 @@ async function main() {
           ok: true,
           result: 'manual_actions_offline_routes_verified',
           providerDeliveryVerified: false,
-          note: 'Provider credentials and outbound network are disabled; these checks prove local save/read and failure routing, not real delivery.',
+          note: 'Provider credentials and outbound network are disabled; these checks prove local save/read and approval routing.',
           statuses: {
             lead: lead.status,
             sms: sms.status,

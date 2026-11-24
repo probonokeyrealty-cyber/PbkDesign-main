@@ -115,10 +115,12 @@ export default function VanNuysMarketMap({
   lookup,
   selected,
   onSelect,
+  onViewComparison,
 }: {
   lookup: Lookup;
   selected: string;
   onSelect: (code: string) => void;
+  onViewComparison: () => void;
 }) {
   const [layer, setLayer] = useState<Layer>('rent');
   const [hovered, setHovered] = useState('');
@@ -129,12 +131,9 @@ export default function VanNuysMarketMap({
   return (
     <section className="pbk-market-map" aria-label="Van Nuys market map">
       <header className="pbk-market-section-header">
-        <span className="pbk-market-badge">Van Nuys pilot · bundled public data</span>
+        <span className="pbk-market-badge">Van Nuys pilot · Read-only</span>
         <h4>Market Map</h4>
-        <p>
-          Pick a neighbor to compare with the saved lead area. The saved property stays pinned
-          above.
-        </p>
+        <p>Tap a Census area on the map or choose one from the list. Your saved house stays pinned.</p>
       </header>
       <div className="pbk-market-map-layers" role="group" aria-label="Map layer">
         {(
@@ -217,6 +216,25 @@ export default function VanNuysMarketMap({
           </>
         )}
       </svg>
+      <div className="pbk-market-map-selection">
+        <div role="status" aria-label="Map selection" aria-atomic="true">
+          <dl>
+            <div>
+              <dt>Saved lead area</dt>
+              <dd>ZCTA {VAN_NUYS_ZCTA}</dd>
+            </div>
+            <div>
+              <dt>Comparison area</dt>
+              <dd>{selected ? `ZCTA ${selected}` : 'None selected'}</dd>
+            </div>
+          </dl>
+        </div>
+        {selected && (
+          <button type="button" onClick={onViewComparison}>
+            View comparison <span aria-hidden="true">↓</span>
+          </button>
+        )}
+      </div>
       {isCounty ? (
         <div className="pbk-market-map-caption">
           <strong>
@@ -234,7 +252,7 @@ export default function VanNuysMarketMap({
           <strong>{metrics[layer].label}</strong>
           <Legend metric={layer} />
           <small>
-            Solid cream outline: saved ZCTA {VAN_NUYS_ZCTA}. Dashed outline: comparison.
+            Solid outline: saved lead area. Dashed outline: comparison area when shown on the map.
           </small>
           <Readout code={readCode} metric={layer} lookup={lookup} />
           <div className="pbk-market-map-areas" role="group" aria-label="Compare areas">

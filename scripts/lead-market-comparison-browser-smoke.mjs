@@ -50,7 +50,11 @@ let browser;
 try {
   browser = await chromium.launch({ channel: 'chrome' });
   if (expectQa91411) {
-    const qa = await browser.newPage({ viewport: { width: 390, height: 844 }, serviceWorkers: 'block' });
+    const qa = await browser.newPage({
+      viewport: { width: 390, height: 844 },
+      hasTouch: true,
+      serviceWorkers: 'block',
+    });
     const forbiddenQa = [];
     await qa.route('**/*', route => {
       const request = route.request();
@@ -76,6 +80,45 @@ try {
     await expect(county.getByText('5.0%', { exact: true })).toBeVisible();
     await expect(county).toContainText('FIPS 06037');
     await expect(county).toContainText('December 2025');
+    const map = qa.getByRole('region', { name: 'Van Nuys market map', exact: true });
+    await expect(map.getByRole('heading', { name: 'Market Map', exact: true })).toBeVisible();
+    await expect(map.getByRole('button', { name: 'Gross rent', exact: true })).toHaveAttribute('aria-pressed', 'true');
+    const mapSurface = map.getByRole('img', { name: 'Van Nuys market boundaries', exact: true });
+    await expect(mapSurface.locator('[data-area-code="91401"]')).toHaveAttribute('fill', '#80c2d4');
+    const neighborLabel = map.locator('[data-zcta="91406"]');
+    await expect(neighborLabel).toBeVisible({ timeout: 12000 });
+    await mapSurface.scrollIntoViewIfNeeded();
+    const bounds = await neighborLabel.boundingBox();
+    assert.ok(bounds, 'Census interior point must be visible over the map.');
+    const x = bounds.x + bounds.width / 2;
+    const y = bounds.y + bounds.height / 2;
+    await qa.mouse.move(x, y);
+    await expect(map.getByText('Census ZCTA 91406', { exact: true })).toBeVisible();
+    await expect(map.getByText('90% confidence range: $1,850 to $1,962', { exact: true })).toBeVisible();
+    await qa.touchscreen.tap(x, y);
+    await expect(qa.getByRole('region', { name: 'Comparison with 91406', exact: true })).toBeVisible();
+    await map.getByRole('button', { name: 'Home value', exact: true }).click();
+    await expect(map.getByText('Median owner-reported home value', { exact: true })).toBeVisible();
+    await expect(mapSurface.locator('[data-area-code="91401"]')).toHaveAttribute('fill', '#2b91ae');
+    await map.getByRole('button', { name: /^Compare ZCTA 91401/ }).press('Enter');
+    const peer = qa.getByRole('region', { name: 'Comparison with 91401', exact: true });
+    await expect(peer.getByText('ZCTA 91411', { exact: true }).first()).toBeVisible();
+    await expect(peer.getByText('ZCTA 91401', { exact: true }).first()).toBeVisible();
+    await expect(qa.getByRole('complementary', { name: 'Saved listing reference' })).toContainText('$640,000');
+    await map.getByRole('button', { name: 'County unemployment', exact: true }).click();
+    await expect(map.getByRole('img', { name: 'Los Angeles County boundary', exact: true })).toBeVisible();
+    await expect(map.getByText(/Los Angeles County.*06037/)).toBeVisible();
+    await expect(map.getByText(/5\.0%.*December 2025/)).toBeVisible();
+    await expect(map.getByRole('button', { name: /^Compare ZCTA / })).toHaveCount(0);
+    await expect(peer).toBeVisible();
+    await map.getByRole('button', { name: 'Gross rent', exact: true }).click();
+    await expect(mapSurface).toBeVisible();
+    await expect(map.getByRole('button', { name: /^Compare ZCTA 91401/ })).toHaveAttribute('aria-pressed', 'true');
+    assert.ok(await map.evaluate(el => el.scrollWidth <= el.clientWidth));
+    if (process.env.PBK_MARKET_MAP_SCREENSHOT) {
+      await map.evaluate(el => el.scrollIntoView({ block: 'start' }));
+      await qa.screenshot({ path: process.env.PBK_MARKET_MAP_SCREENSHOT });
+    }
     assert.ok(await county.evaluate(card =>
       innerWidth === 390 && document.documentElement.scrollWidth <= innerWidth
       && card.scrollWidth <= card.clientWidth
@@ -291,7 +334,9 @@ try {
     await expect(publicContext.getByText('$427', { exact: true })).toBeVisible();
 
     const indicators = panel.getByRole('region', { name: 'Staging market indicators', exact: true });
+    const marketMap = panel.getByRole('region', { name: 'Van Nuys market map', exact: true });
     await expect(indicators).toHaveCount(0);
+    await expect(marketMap).toHaveCount(0);
     await open(fixtures[8].id);
     if (expectStagingIndicators) {
       const income = indicators.getByRole('region', { name: 'Census ZCTA 91411 income', exact: true });
@@ -319,6 +364,7 @@ try {
       await expect(indicators).toHaveCount(0);
     } else {
       await expect(indicators).toHaveCount(0);
+      await expect(marketMap).toHaveCount(0);
     }
 
     await page.setViewportSize({ width: 1280, height: 900 });

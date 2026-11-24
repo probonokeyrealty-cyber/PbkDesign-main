@@ -1,5 +1,6 @@
 import { formatCurrency } from '../../utils/formatting';
 import snapshot from '../../data/public-zip-housing.json?raw';
+import { LA_COUNTY_UNEMPLOYMENT, VAN_NUYS_ZCTA } from './marketStagingData';
 import {
   CensusEstimateDetails,
   CensusSnapshotChart,
@@ -11,9 +12,7 @@ import {
 } from './PublicHousingInsights';
 
 const housingByCode: Partial<Record<string, HousingRow>> = JSON.parse(snapshot);
-const stagingZcta = '91411';
 const stagingIncome: SurveyEstimate = [74617, 6476];
-const stagingUnemployment = { rate: 5, month: '2025-12', label: 'December 2025' };
 
 function SurveyEstimateLabel({ estimate }: { estimate: SurveyEstimate | null }) {
   if (!estimate) return <>Unavailable</>;
@@ -27,11 +26,11 @@ function SurveyEstimateLabel({ estimate }: { estimate: SurveyEstimate | null }) 
 }
 
 function StagingMarketIndicators() {
-  const { rate, month, label } = stagingUnemployment;
+  const { rate, month, label, fips } = LA_COUNTY_UNEMPLOYMENT;
   return (
     <section aria-label="Staging market indicators" className="pbk-market-summary">
       <section className="pbk-market-metric" aria-label="Census ZCTA 91411 income">
-        <span className="pbk-market-badge">ZIP context · Census ZCTA {stagingZcta}</span>
+        <span className="pbk-market-badge">ZIP context · Census ZCTA {VAN_NUYS_ZCTA}</span>
         <h4>Median annual household income</h4>
         <p>
           ACS 2020-2024 five-year estimate, in 2024 dollars. ZCTA is a Census geography, not a
@@ -56,7 +55,7 @@ function StagingMarketIndicators() {
         </small>
       </section>
       <section className="pbk-market-metric" aria-label="Los Angeles County unemployment">
-        <span className="pbk-market-badge">County context · FIPS 06037</span>
+        <span className="pbk-market-badge">County context · FIPS {fips}</span>
         <h4>Los Angeles County unemployment</h4>
         <p>
           <time dateTime={month}>{label}</time> · Not seasonally adjusted
@@ -195,7 +194,7 @@ export default function LeadPublicHousingContext({
           <small>This product uses FHFA data but is neither endorsed nor certified by FHFA.</small>
         </section>
       </div>
-      {import.meta.env.PBK_MARKET_STAGING_INDICATORS && zip === stagingZcta && (
+      {import.meta.env.PBK_MARKET_STAGING_INDICATORS && zip === VAN_NUYS_ZCTA && (
         <StagingMarketIndicators />
       )}
       <ComparePublicHousing key={zip} zip={zip} row={row} lookup={(code) => housingByCode[code]} />

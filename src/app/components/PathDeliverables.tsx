@@ -2,12 +2,12 @@ import { ChangeEvent, useEffect, useMemo, useState } from 'react';
 import { DealData, PBKPath, QuickDocumentType } from '../types';
 import { Clipboard, Copy, Eye, FilePlus, FileText, Printer, Send } from 'lucide-react';
 import { PBKBranding, buildDocumentSet, getPdfReadiness } from '../utils/pbk';
-import {
-  fetchSenderIdentitiesRequest,
-  type CommunicationSenderIdentity,
-} from '../utils/runtimeBridge';
 import { DocumentPdfPanel } from './DocumentPdfPanel';
-import { SenderIdentitySelect } from './inbox/SenderIdentitySelect';
+const documentEmailSenders = [
+  'acquisition@probonokeyrealty.com',
+  'info@probonokeyrealty.com',
+  'team@probonokeyrealty.com',
+];
 
 interface PathDeliverablesProps {
   deal: DealData;
@@ -97,71 +97,12 @@ export function PathDeliverables({
     'seller',
     'loi',
   ]);
-  const [senderProfile, setSenderProfile] = useState<'warm' | 'cold'>('warm');
-  const [fromEmail, setFromEmail] = useState('');
-  const [senderIdentities, setSenderIdentities] = useState<CommunicationSenderIdentity[]>([]);
-  const [senderIdentityId, setSenderIdentityId] = useState('');
-  const [senderIdentitiesLoading, setSenderIdentitiesLoading] = useState(false);
-  const [senderIdentityError, setSenderIdentityError] = useState('');
+  const [fromEmail, setFromEmail] = useState(documentEmailSenders[0]);
   const readiness = getPdfReadiness(documentDeal);
-  const selectedSenderIdentity =
-    senderIdentities.find((identity) => identity.id === senderIdentityId) || null;
-  const eligibleSenderIdentities = useMemo(
-    () =>
-      senderIdentities.filter(
-        (identity) =>
-          String(identity.lifecycleStatus || '').toLowerCase() === 'active' &&
-          !/(blocked|error|failed|retired|disabled|quarantined)/i.test(
-            String(identity.healthStatus || '')
-          )
-      ),
-    [senderIdentities]
-  );
-  const recommendedSenderIdentity =
-    eligibleSenderIdentities.find((identity) => identity.isWorkspaceDefault) ||
-    eligibleSenderIdentities[0] ||
-    null;
 
   useEffect(() => {
     setEditableDocuments(generatedDocuments);
   }, [generatedDocuments]);
-
-  useEffect(() => {
-    let cancelled = false;
-    setSenderIdentitiesLoading(true);
-    fetchSenderIdentitiesRequest({ channel: 'email' })
-      .then((response) => {
-        if (cancelled) return;
-        const items = Array.isArray(response.items) ? response.items : [];
-        setSenderIdentities(items);
-        setSenderIdentityError('');
-        setSenderIdentityId((current) => {
-          if (current && items.some((identity) => identity.id === current)) return current;
-          const usable = items.filter(
-            (identity) =>
-              String(identity.lifecycleStatus || '').toLowerCase() === 'active' &&
-              !/(blocked|error|failed|retired|disabled|quarantined)/i.test(
-                String(identity.healthStatus || '')
-              )
-          );
-          const workspaceDefault = usable.find((identity) => identity.isWorkspaceDefault);
-          return workspaceDefault?.id || usable[0]?.id || '';
-        });
-      })
-      .catch((error) => {
-        if (cancelled) return;
-        setSenderIdentities([]);
-        setSenderIdentityError(
-          error instanceof Error ? error.message : 'Unable to load sender identities.'
-        );
-      })
-      .finally(() => {
-        if (!cancelled) setSenderIdentitiesLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
 
   const handleDocumentEdit = (documentType: QuickDocumentType, value: string) => {
     setEditableDocuments((prev) => ({
@@ -339,70 +280,21 @@ export function PathDeliverables({
               ))}
             </div>
 
-            <div className="mt-3 grid grid-cols-2 gap-2">
-              <button
-                type="button"
-                onClick={() => setSenderProfile('warm')}
-                className={`rounded-xl border px-3 py-2 text-[11px] font-semibold transition-all ${
-                  senderProfile === 'warm'
-                    ? 'border-blue-500 bg-blue-50 text-blue-700 dark:border-blue-400 dark:bg-blue-950/40 dark:text-blue-300'
-                    : 'border-gray-200 bg-gray-50 text-gray-600 dark:border-slate-700 dark:bg-slate-900 dark:text-gray-300'
-                }`}
-              >
-                Main Business Email
-              </button>
-              <button
-                type="button"
-                onClick={() => setSenderProfile('cold')}
-                className={`rounded-xl border px-3 py-2 text-[11px] font-semibold transition-all ${
-                  senderProfile === 'cold'
-                    ? 'border-blue-500 bg-blue-50 text-blue-700 dark:border-blue-400 dark:bg-blue-950/40 dark:text-blue-300'
-                    : 'border-gray-200 bg-gray-50 text-gray-600 dark:border-slate-700 dark:bg-slate-900 dark:text-gray-300'
-                }`}
-              >
-                Cold Campaign Sender
-              </button>
-            </div>
-
-            {(senderIdentitiesLoading || senderIdentities.length > 0) && (
-              <div className="mt-3">
-                <SenderIdentitySelect
-                  identities={senderIdentities}
-                  selectedId={senderIdentityId}
-                  recommendedId={recommendedSenderIdentity?.id || ''}
-                  loading={senderIdentitiesLoading}
-                  onChange={(identityId) => {
-                    setSenderIdentityId(identityId);
-                    const identity = senderIdentities.find((item) => item.id === identityId);
-                    if (identity?.address) setFromEmail(identity.address);
-                  }}
-                />
-              </div>
-            )}
-
             <label className="mt-3 block">
               <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-gray-500 dark:text-gray-400">
-                {selectedSenderIdentity ? 'Selected from email' : 'Fallback from email'}
+                From email
               </span>
-              <input
-                type="email"
-                value={selectedSenderIdentity?.address || fromEmail}
+              <select
+                value={fromEmail}
                 onChange={(event) => setFromEmail(event.target.value)}
-                disabled={Boolean(selectedSenderIdentity)}
-                placeholder={
-                  senderProfile === 'cold'
-                    ? 'Optional cold sender override'
-                    : 'Optional warm sender override'
-                }
-                className="mt-1 w-full rounded-xl border border-gray-200 bg-white px-3 py-2.5 text-[12px] text-gray-900 outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-100 disabled:cursor-not-allowed disabled:bg-gray-100 disabled:text-gray-500 dark:border-slate-700 dark:bg-slate-950 dark:text-gray-100 dark:disabled:bg-slate-900 dark:disabled:text-slate-500 dark:focus:border-blue-400 dark:focus:ring-blue-900/40"
-              />
-              <span className="mt-1 block text-[10.5px] leading-4 text-gray-500 dark:text-gray-400">
-                {selectedSenderIdentity
-                  ? `${selectedSenderIdentity.provider} identity selected from the connected sender inventory.`
-                  : senderIdentityError
-                    ? `Sender inventory unavailable: ${senderIdentityError}. The profile fallback will be used.`
-                    : 'Leave blank to use the selected sender profile default.'}
-              </span>
+                className="mt-1 w-full rounded-xl border border-gray-200 bg-white px-3 py-2.5 text-[12px] text-gray-900 outline-none focus:border-blue-400 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100"
+              >
+                {documentEmailSenders.map((address) => (
+                  <option key={address} value={address}>
+                    {address}
+                  </option>
+                ))}
+              </select>
             </label>
 
             <button
@@ -410,9 +302,8 @@ export function PathDeliverables({
               onClick={() =>
                 onEmailDocuments({
                   selectedDocuments,
-                  senderProfile,
-                  fromEmail: fromEmail.trim() || undefined,
-                  senderIdentityId: senderIdentityId || undefined,
+                  senderProfile: 'warm',
+                  fromEmail,
                   documentSet: editableDocuments,
                 })
               }

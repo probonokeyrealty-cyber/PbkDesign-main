@@ -44540,7 +44540,7 @@ function messageProviderMatchesManualProviderRecord(message = {}, toolName = '')
   const provider = normalizeProviderRecordText(message.provider);
   if (toolName === 'telnyx_sms' || toolName === 'telnyx_call') return provider === 'telnyx';
   if (toolName === 'sendColdEmail') return ['instantly', 'resend'].includes(provider);
-  if (toolName === 'sendSellerDocs') return ['resend', 'instantly'].includes(provider);
+  if (toolName === 'sendSellerDocs') return provider === 'outlook';
   return Boolean(provider);
 }
 
@@ -44750,7 +44750,9 @@ async function executeManualProviderRouteWithOutbox({
     idempotencyKey,
     idempotentReplay: false,
   };
-  if (deliveryLive && idempotencyKey) productionIdempotencyStore.set(idempotencyKey, envelope);
+  if ((deliveryLive || routeResponse.result === 'outlook_send_unknown') && idempotencyKey) {
+    productionIdempotencyStore.set(idempotencyKey, envelope);
+  }
   return envelope;
 }
 
@@ -60736,7 +60738,7 @@ const toolHandlers = {
         params.instantlySender ||
         ''
     ).trim();
-    const from = getSenderAddress(senderProfile, selectedFromEmail);
+    const from = selectedFromEmail || String(process.env.PBK_AVA_OUTLOOK_SENDER || '').trim();
     const subject = params.subject || `Your property at ${context.address || 'PBK'} - ${documents.length > 1 ? 'seller packet' : 'document package'}`;
 
     if (!documents.length) {
@@ -60765,21 +60767,20 @@ const toolHandlers = {
       );
     }
 
-    const html = `
-      <div style="font-family:Inter,Arial,sans-serif;color:#0f172a;line-height:1.6">
-        <p>Hi ${escapeHtml(context.leadName || 'there')},</p>
-        <p>Attached is the information package we discussed for <strong>${escapeHtml(context.address || 'your property')}</strong>.</p>
-        <p>You will find ${documents.map((item) => escapeHtml(item.title)).join(', ')} attached for review. Reply directly to this email if you want us to adjust timing, offer structure, or contract terms.</p>
-        <p>Thanks,<br/>${escapeHtml(String(from).split('@')[0] || 'PBK')}<br/>Probono Key Realty</p>
-      </div>
-    `;
-
-    const emailResult = await sendTransactionalEmail({
-      from,
-      to: recipientEmail,
+    const emailResult = await sendAvaOutlookMail({
+      sender: from,
+      recipient: recipientEmail,
       subject,
-      html,
-      text: `Hi ${context.leadName || 'there'}, attached is the PBK document package for ${context.address || 'your property'}.`,
+      text: [
+        `Hi ${context.leadName || 'there'},`,
+        `Attached is the PBK document package for ${context.address || 'your property'}.`,
+        'Reply to this email if you have any questions.',
+        'Probono Key Realty',
+      ].join('\n\n'),
+      alternateSenders: [
+        'info@probonokeyrealty.com',
+        'team@probonokeyrealty.com',
+      ],
       attachments,
     });
 
@@ -60792,9 +60793,9 @@ const toolHandlers = {
       senderIdentityId: senderIdentity?.id || '',
       fromEmail: from,
       documents: documents.map((item) => item.type),
-      status: emailResult.ok ? 'sent' : 'failed',
+      status: emailResult.ok ? 'sent' : emailResult.result === 'outlook_send_unknown' ? 'unknown' : 'failed',
       subject,
-      provider: emailResult.provider || 'resend',
+      provider: 'outlook',
     });
 
     addDocumentDelivery(state, delivery);
@@ -78705,7 +78706,7 @@ const server = createServer(async (request, response) => {
       };
       const send = await executeManualProviderRouteWithOutbox({
         toolName: 'sendSellerDocs',
-        provider: 'resend',
+        provider: 'outlook',
         channel: 'email',
         params: manualBody,
         source: 'seller-docs-route',

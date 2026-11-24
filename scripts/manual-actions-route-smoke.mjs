@@ -58,20 +58,17 @@ function assertManualRouteStructured(label, result) {
   }
 }
 
-function isQueuedForApproval(result) {
-  return result?.status === 202 ||
-    result?.json?.result === 'queued_for_approval' ||
-    result?.json?.outcome === 'queued_for_approval';
-}
-
-function assertPendingApproval(label, result) {
+function assertPendingApproval(label, result, toolName, { usesOutbox = true } = {}) {
   assertManualRouteStructured(label, result);
   assert.equal(result.status, 202, `${label} must return HTTP 202 for pending approval.`);
   assert.equal(result.json?.result, 'queued_for_approval', `${label} must require approval before provider delivery.`);
   assert.ok(result.json?.approval?.id, `${label} must return a durable approval ID.`);
   assert.equal(result.json.approval.status, 'pending', `${label} must wait for an approval decision.`);
-  if (result.json.outbox) {
-    assert.equal(result.json.outbox.status, 'queued', `${label} must keep the outbox queued.`);
+  assert.equal(result.json.approval.approvalAction, toolName, `${label} must queue the requested tool.`);
+  assert.ok(result.json.approval.metadata?.actionBinding?.hash, `${label} must bind the exact provider action.`);
+  if (usesOutbox) {
+    assert.equal(result.json.outbox?.status, 'queued', `${label} must keep the outbox queued.`);
+    assert.equal(result.json.outbox.retryable, false, `${label} must not offer a delivery retry while approval is pending.`);
     assert.equal(result.json.providerAttempted, false, `${label} must skip the provider while approval is pending.`);
   }
 }
@@ -151,8 +148,7 @@ async function main() {
       manualSend: true,
       source: 'lead_portal_manual',
     });
-    assertManualRouteStructured('manual SMS', sms);
-    assert.ok([200, 202, 207, 400, 409, 502, 503].includes(sms.status), 'manual SMS should return a structured bridge status.');
+    assertPendingApproval('manual SMS', sms, 'telnyx_sms');
 
     const email = await requestJson(baseUrl, '/api/lead/send-message', {
       leadId,
@@ -164,7 +160,7 @@ async function main() {
       manualSend: true,
       source: 'lead_portal_manual',
     });
-    assertManualRouteStructured('manual email', email);
+    assertPendingApproval('manual email', email, 'sendColdEmail');
 
     const immediateEmail = await requestJson(baseUrl, '/api/messages', {
       leadId,
@@ -176,19 +172,7 @@ async function main() {
       manualSend: true,
       source: 'unified_inbox_manual',
     });
-    assertManualRouteStructured('immediate /api/messages email', immediateEmail);
-    if (!isQueuedForApproval(immediateEmail)) {
-      assert.notEqual(
-        immediateEmail.json?.provider,
-        'Telnyx',
-        'Immediate /api/messages email must route through email delivery, not Telnyx SMS.'
-      );
-      assert.equal(
-        immediateEmail.json?.message?.channel,
-        'email',
-        'Immediate /api/messages email should persist as an email message when it executes immediately.'
-      );
-    }
+    assertPendingApproval('immediate /api/messages email', immediateEmail, 'sendColdEmail');
 
     const immediateSms = await requestJson(baseUrl, '/api/messages', {
       leadId,
@@ -199,13 +183,7 @@ async function main() {
       manualSend: true,
       source: 'unified_inbox_manual',
     });
-    assertManualRouteStructured('immediate /api/messages SMS', immediateSms);
-    if (!isQueuedForApproval(immediateSms)) {
-      assert.ok(
-        immediateSms.json?.telnyx || immediateSms.json?.message?.channel === 'sms',
-        'Immediate /api/messages SMS should stay on the Telnyx/SMS path when it executes immediately.'
-      );
-    }
+    assertPendingApproval('immediate /api/messages SMS', immediateSms, 'telnyx_sms');
 
     const call = await requestJson(baseUrl, '/api/calls', {
       leadId,
@@ -216,7 +194,7 @@ async function main() {
       manualSend: true,
       source: 'call_floor_manual',
     });
-    assertPendingApproval('manual call', call);
+    assertPendingApproval('manual call', call, 'telnyx_call');
     assert.equal(call.json.approval.metadata?.executionParams?.fromNumber, '+16145550188',
       'The pending call approval must retain the selected sender.');
 
@@ -238,6 +216,7 @@ async function main() {
       leadName: 'Manual Actions Smoke Seller',
       email: 'manual.actions@example.com',
       address: '177 Manual Action Ave, Columbus OH',
+      fromEmail: 'documents.sender@example.net',
       selectedDocuments: ['seller'],
       documentSet: {
         seller: 'This clean seller document should be attached as a PDF without internal renderer errors.',
@@ -246,18 +225,23 @@ async function main() {
       manualSend: true,
       source: 'seller_docs_manual',
     });
-    assertPendingApproval('manual seller documents', sellerDocs);
+    assertPendingApproval('manual seller documents', sellerDocs, 'sendSellerDocs');
+    assert.equal(sellerDocs.json.approval.metadata?.executionParams?.fromEmail, 'documents.sender@example.net',
+      'The pending document approval must retain the selected Outlook sender.');
 
     const coldEmail = await requestJson(baseUrl, '/api/cold-email/send', {
       leadId,
       email: 'manual.actions@example.com',
       subject: 'Manual cold email route smoke',
+      fromEmail: 'fictional.sender@example.net',
       message: 'Manual cold email route smoke.',
       manual: true,
       manualSend: true,
       source: 'leads_page_manual',
     });
-    assertPendingApproval('manual cold email', coldEmail);
+    assertPendingApproval('manual cold email', coldEmail, 'sendColdEmail', { usesOutbox: false });
+    assert.equal(coldEmail.json.approval.metadata?.executionParams?.fromEmail, 'fictional.sender@example.net',
+      'The pending email approval must retain the selected sender.');
 
     console.log(
       JSON.stringify(
@@ -265,7 +249,7 @@ async function main() {
           ok: true,
           result: 'manual_actions_offline_routes_verified',
           providerDeliveryVerified: false,
-          note: 'Provider credentials and outbound network are disabled; these checks prove local save/read and failure routing, not real delivery.',
+          note: 'Provider credentials and outbound network are disabled; these checks prove local save/read and approval routing.',
           statuses: {
             lead: lead.status,
             sms: sms.status,

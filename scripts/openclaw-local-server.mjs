@@ -202,6 +202,7 @@ import {
   classifyAvaConversationalIntent,
 } from './ava-intent-router.mjs';
 import { ensureSkillGovernanceSchema } from './skill-governance-schema.mjs';
+import { startSkillProjectionWorker } from './skill-projection-worker.mjs';
 import { acceptGhlStageEvent, buildGhlPipelineView, persistGhlStage, readGhlPipelineConfig } from './ghl-pipeline-sync.mjs';
 import {
   activateSkillVersion,
@@ -225,6 +226,7 @@ import {
   normalizeSkillAudioTranscriptUrl,
   parseYouTubeSkillProposals,
 } from './skill-youtube-ingest.mjs';
+import { fetchComposioYouTubeTranscript } from './composio-youtube-transcript.mjs';
 import { DEEPGRAM_SAMPLE_URL, createDeepgramLiveConnection, getDeepgramProviderMeta, sendDeepgramAudio, sendDeepgramControl, transcribeDeepgramFile, transcribeDeepgramUrl } from './pbk-deepgram-client.mjs';
 import { validateToolCallWithQa } from './qa-agent.mjs';
 import {
@@ -42842,8 +42844,9 @@ function classifyRemoteIngestKind(url = '', contentType = '', fallback = '') {
 function extractYouTubeVideoId(value = '') {
   try {
     const parsed = new URL(String(value || '').trim());
-    if (/youtu\.be$/i.test(parsed.hostname)) return parsed.pathname.replace(/^\/+/, '').split('/')[0] || '';
-    if (/youtube\.com$/i.test(parsed.hostname) || /youtube\.com$/i.test(parsed.hostname.replace(/^www\./, ''))) {
+    if (!/^https?:$/.test(parsed.protocol)) return '';
+    if (/^(?:www\.)?youtu\.be$/i.test(parsed.hostname)) return parsed.pathname.replace(/^\/+/, '').split('/')[0] || '';
+    if (/(?:^|\.)youtube\.com$/i.test(parsed.hostname)) {
       return parsed.searchParams.get('v') || parsed.pathname.match(/\/(?:shorts|embed|live)\/([^/?#]+)/)?.[1] || '';
     }
   } catch {}
@@ -42864,7 +42867,7 @@ async function fetchYouTubeTitle(url = '') {
   }
 }
 
-async function fetchYouTubeTranscript(url = '') {
+async function fetchDirectYouTubeTranscript(url = '') {
   const videoId = extractYouTubeVideoId(url);
   if (!videoId) return { ok: false, transcript: '', error: 'YouTube video ID was not found.' };
   try {
@@ -42888,6 +42891,7 @@ async function fetchYouTubeTranscript(url = '') {
       transcript,
       segmentCount: Array.isArray(segments) ? segments.length : 0,
       videoId,
+      error: transcript ? '' : 'No transcripts are available for this video.',
     };
   } catch (error) {
     return {
@@ -42897,6 +42901,13 @@ async function fetchYouTubeTranscript(url = '') {
       error: error?.message || 'YouTube transcript unavailable.',
     };
   }
+}
+
+async function fetchYouTubeTranscript(url = '', { minChars = 1 } = {}) {
+  const direct = await fetchDirectYouTubeTranscript(url);
+  if (direct.transcript.length >= minChars) return direct;
+
+  return (await fetchComposioYouTubeTranscript(direct.videoId, { minChars })) || direct;
 }
 
 function extractHtmlTitle(html = '') {
@@ -42938,7 +42949,7 @@ async function fetchRemoteIngestContent(url = '', params = {}) {
         title: params.title || title || `YouTube video ${youtubeId}`,
         text: transcript.transcript,
         summary: transcript.transcript.slice(0, 2400),
-        parser: 'youtube-transcript',
+        parser: transcript.source || 'youtube-transcript',
         metadata: { youtubeId, segmentCount: transcript.segmentCount || 0 },
       };
     }
@@ -76654,7 +76665,7 @@ const server = createServer(async (request, response) => {
             segmentCount: 0,
             source: manualTranscriptResult.source,
           }
-        : await fetchYouTubeTranscript(sourceUrl);
+        : await fetchYouTubeTranscript(sourceUrl, { minChars: 400 });
 
       if (
         (!transcriptResult.ok || String(transcriptResult.transcript || '').length < 400) &&
@@ -84843,6 +84854,15 @@ wireRuntimeCoverageLifecycle(server);
 server.listen(PORT, HOST, () => {
   startRexLeadImportDelivery();
   startPostgresKeepAlive();
+  if (process.env.PBK_SKILL_PROJECTION_ENABLED === 'true' && STATE_BACKEND === 'postgres') {
+    const stopSkillProjection = startSkillProjectionWorker({
+      pool: getPgPool(),
+      url: SUPABASE_URL,
+      key: SUPABASE_SERVICE_ROLE_KEY,
+      onError: (message) => console.warn('[pbk-skill-projection]', message),
+    });
+    server.once('close', stopSkillProjection);
+  }
   startContractTemplateWatcher();
   refreshContextAwareScriptCatalog()
     .then((result) => {

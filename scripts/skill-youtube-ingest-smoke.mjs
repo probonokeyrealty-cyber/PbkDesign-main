@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { fetchComposioYouTubeTranscript } from './composio-youtube-transcript.mjs';
 import {
   buildArticleSkillExtractionPrompt,
   buildArticleSkillProvenance,
@@ -121,5 +122,59 @@ assert.equal(articleProvenance.targetAgent, 'ava');
 assert.equal(articleProvenance.textSource, 'operator_pasted_article');
 assert.match(articleProvenance.textHash, /^[a-f0-9]{64}$/);
 assert(!('createdAt' in articleProvenance), 'Stable article provenance must not include volatile timestamps.');
+
+const videoId = 'jNQXAC9IVRw';
+const env = {
+  COMPOSIO_API_KEY: 'fixture-credential',
+  PBK_COMPOSIO_YOUTUBE_ACCOUNT_ID: 'fixture-account',
+  PBK_COMPOSIO_YOUTUBE_ENABLED: 'true',
+  PBK_COMPOSIO_YOUTUBE_MAX_COST_USD: '0.01',
+};
+const fetchImpl = async (url, request) => {
+  assert.match(url, /\/tools\/execute\/GETANYAPI_YOUTUBE_VIDEO_TRANSCRIPT$/);
+  assert.equal(request.redirect, 'error');
+  const body = JSON.parse(request.body);
+  assert.equal(body.connected_account_id, 'fixture-account');
+  assert.equal(body.arguments.id, videoId);
+  assert.equal(body.arguments.max_cost_usd, '0.01');
+  assert.match(body.arguments.idempotency_key, /^pbk-youtube-transcript-[a-f0-9]{64}$/);
+  return Response.json({
+    successful: true,
+    data: { output: { found: true, data: { segments: [{ text: 'One caption.' }, { text: 'Two captions.' }] } } },
+  });
+};
+assert.deepEqual(await fetchComposioYouTubeTranscript(videoId, { env, fetchImpl }), {
+  ok: true,
+  videoId,
+  transcript: 'One caption. Two captions.',
+  segmentCount: 2,
+  source: 'composio_getanyapi',
+});
+assert.equal(await fetchComposioYouTubeTranscript(videoId, { env, fetchImpl, minChars: 400 }), null);
+const longTranscript = 'A captioned training passage with enough detail. '.repeat(12).trim();
+const longResult = await fetchComposioYouTubeTranscript(videoId, {
+  env,
+  minChars: 400,
+  fetchImpl: async () => Response.json({
+    successful: true,
+    data: { output: { found: true, data: { transcript: longTranscript } } },
+  }),
+});
+assert.equal(longResult.transcript, longTranscript);
+assert.equal(buildYouTubeSkillProvenance({
+  videoId,
+  transcript: longResult.transcript,
+  transcriptSource: longResult.source,
+}).transcriptSource, 'composio_getanyapi');
+assert.equal(await fetchComposioYouTubeTranscript(videoId, {
+  env,
+  fetchImpl: async () => Response.json({ successful: true, data: { output: { found: false } } }),
+}), null);
+let disabledCalls = 0;
+assert.equal(await fetchComposioYouTubeTranscript(videoId, {
+  env: { ...env, PBK_COMPOSIO_YOUTUBE_ENABLED: 'false' },
+  fetchImpl: async () => { disabledCalls += 1; },
+}), null);
+assert.equal(disabledCalls, 0);
 
 console.log('skill-youtube-ingest-smoke: ok');

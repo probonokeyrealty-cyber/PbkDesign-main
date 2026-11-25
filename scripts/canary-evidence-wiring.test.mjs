@@ -238,8 +238,10 @@ test('bridge code matches the reviewed release fingerprint outside the scoped re
   // eligibility, same-ID replay, and the provider approval gate.
   // Ava's focused phone replies and fact parsing use the reviewed turn contract.
   // Fictional bridge fixtures cover stop-contact, the spoken guard, and helper authority.
+  // The opt-in skill worker mirrors verified lifecycle events to Supabase.
+  // Skill governance tests cover projection delivery and the transcript fallback.
   assert.equal(createHash('sha256').update(unchanged).digest('hex'),
-    '1b7e1a39256053977b633eedd0759f929149549c4816c2f3707b3edd27a703f4');
+    'a6d3ec8b5f180603572752bbfb79e0aa40efd688d6d1c5f6ba4297ef06cf74d2');
 });
 
 test('production distribution includes reader and protocol, never the fixture signer', () => {

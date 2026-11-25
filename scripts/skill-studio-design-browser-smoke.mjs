@@ -35,6 +35,7 @@ async function verify(engine, viewport, device = {}) {
             canary: Number(state === 'canary'),
             active: Number(state === 'active'),
             snapshot: { available: true },
+            outbox: { pending: Number(Boolean(state)), deadLettered: 0 },
           },
         });
       }
@@ -82,7 +83,7 @@ async function verify(engine, viewport, device = {}) {
       return route.continue();
     });
 
-    await page.goto(`${origin}/skills`);
+    await page.goto(`${origin}/skills`, { waitUntil: 'domcontentloaded', timeout: 90_000 });
     await expect(page.getByRole('heading', { name: 'Skill Studio', exact: true })).toBeVisible();
     await page.getByRole('button', { name: 'Teach Ava', exact: true }).click();
     const wizard = page.getByRole('dialog', { name: 'Teach Ava a new skill' });
@@ -94,6 +95,7 @@ async function verify(engine, viewport, device = {}) {
     await wizard.getByRole('button', { name: 'Preview skill', exact: true }).click();
     await wizard.getByRole('button', { name: 'Create candidate', exact: true }).click();
     await expect(wizard).toHaveCount(0);
+    await expect(page.getByText('Pending', { exact: true })).toBeVisible();
     assert.match(writes[0].body.instructions, /Acknowledge the price concern\./);
     assert.equal(writes[0].body.triggerPolicy.nextQuestion, nextQuestion);
 

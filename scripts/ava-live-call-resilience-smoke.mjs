@@ -277,6 +277,7 @@ const voicemailCases = [
   ['Your call is being forwarded to an automated voice messaging system.'],
   ['Your call has been forwarded to an automatic voice message system.'],
   ['The mailbox is full and cannot accept any messages at this time.'],
+  ["Hi, this is Jamie. I can't come to the phone right now.", "Please leave a message."],
   ["Hi, you've reached the Rivera household.", 'Please leave a message after the beep.'],
   ["Hi, you've reached the Rivera household. Please leave a message."],
   ['The person you’re trying to reach', 'is not available.'],
@@ -307,6 +308,40 @@ for (const fragments of voicemailCases) {
 }
 assert.equal(scheduled.length, scheduledBeforeVoicemail, 'Voicemail must never schedule a seller question');
 assert.ok(canceledFinalOnlyRetries >= voicemailCases.length, 'Voicemail cancels pending final-only replies');
+
+const dialogueSession = { callId: 'fictional-ambiguous', transcript: [] };
+runtime.session = dialogueSession;
+runtime.getCallById = () => ({ id: dialogueSession.callId, direction: 'outbound' });
+committedSpeech('Please leave a message.');
+assert.notEqual(dialogueSession.outboundVoicemailDetected, true, 'A bare message request can come from a live caller');
+committedSpeech('Please stop calling. Do not contact me again.');
+assert.equal(scheduled.at(-1)?.transcript, 'Please stop calling. Do not contact me again.');
+
+const completedVoicemailSession = {
+  callId: 'fictional-confirmed-voicemail', transcript: [], outboundVoicemailDetected: true,
+};
+runtime.session = completedVoicemailSession;
+runtime.getCallById = () => ({ id: completedVoicemailSession.callId, direction: 'outbound' });
+const beforeLatchedOptOut = scheduled.length;
+committedSpeech('Please do not contact me again.');
+assert.equal(completedVoicemailSession.transcript.at(-1).stopContact, true, 'Retain an opt-out even after voicemail identification');
+assert.equal(completedVoicemailSession.transcript.at(-1).speaker, 'Caller');
+assert.equal(scheduled.length, beforeLatchedOptOut, 'Keep confirmed voicemail silent');
+const finalizationIntent = sourceBetween('    const stopContactTurn = session.outboundVoicemailDetected', '    if (classification) {');
+const stopContactEvidence = vm.runInNewContext(finalizationIntent + '\n({intentTranscript, classification});', {
+  session: completedVoicemailSession,
+  finalTranscriptItems: completedVoicemailSession.transcript,
+});
+assert.equal(stopContactEvidence.intentTranscript, 'Please do not contact me again.');
+assert.equal(stopContactEvidence.classification.intent, 'stop_contact', 'Keep the explicit opt-out out of generic follow-up triage');
+
+const replacedSession = { callId: 'fictional-superseded-stream', transcript: [], avaReplySuppressed: true };
+runtime.session = replacedSession;
+let staleCallWrites = 0;
+runtime.getCallById = () => ({ id: replacedSession.callId, direction: 'outbound' });
+runtime.upsertCall = () => { staleCallWrites += 1; };
+committedSpeech('Your call has been forwarded to voicemail.');
+assert.equal(staleCallWrites, 0, 'A late transcript from a replaced stream cannot suppress the active call');
 
 runtime.upsertCall = noop;
 runtime.session = { callId: 'fictional-seller', transcript: [], sellerTranscriptVersion: 0 };
@@ -358,6 +393,21 @@ assert.ok(prefixTimer.delay > 950 && prefixTimer.delay < 5000, 'Allow time for a
 assert.equal(releasedTurns.length, 0, 'Withhold the reply while a split greeting could still be completed');
 prefixTimer.callback();
 assert.equal(releasedTurns.at(-1)?.finalOnlyFallback, true, 'Release an ambiguous turn if no further evidence arrives');
+const spokenOpenings = [];
+const openingSession = { callId: 'fictional-ambiguous', sellerTranscriptVersion: 3 };
+const openingRuntime = vm.createContext({
+  session: openingSession, item: releasedTurns.at(-1), PBK_TELNYX_BRIDGE_AVA_REPLY_ENABLED: true,
+  withRuntimeEvidenceContext: (_label, run) => run(),
+  isCurrentTelnyxMediaSession: () => true, isTelnyxCallStillSpeakable: () => true, getCallById: () => null,
+  getActiveTelnyxAvaTurnLock: () => null, PBK_TELNYX_BRIDGE_AVA_REPLY_FORCE: false,
+  sendAvaPhoneReplyAudio: async (_session, text, options) => { spokenOpenings.push({ text, options }); },
+});
+const openingReply = sourceBetween('  const maybeSpeakTelnyxAvaReply = async', "    const timingTurn = createBridgeAgentTimingTurn('phone');");
+await vm.runInContext(openingReply + '\n}); }; maybeSpeakTelnyxAvaReply(item);', openingRuntime);
+assert.equal(spokenOpenings.at(-1)?.text, 'I am here if now is a good time.');
+assert.equal(spokenOpenings.at(-1)?.options.replyTurnVersion, 3);
+await vm.runInContext('maybeSpeakTelnyxAvaReply(item);', openingRuntime);
+assert.equal(spokenOpenings.length, 1, 'Avoid repeated remarks when the answer remains ambiguous');
 
 const voicemailAudio = vm.createContext({});
 vm.runInContext(sourceBetween('async function sendAvaPhoneReplyAudio(', 'async function speakAvaPhoneReplyByCallId('), voicemailAudio);
@@ -366,6 +416,30 @@ const skippedVoicemailAudio = await voicemailAudio.sendAvaPhoneReplyAudio(
   'What is the property address?'
 );
 assert.equal(skippedVoicemailAudio.result, 'voicemail_detected', 'Detected voicemail must exit before any TTS or phone fallback');
+const pendingFallbackSession = { callId: 'fictional-pending-audio' };
+Object.assign(voicemailAudio, {
+  sanitizeAvaSpokenOutput: (text) => text,
+  sendElevenLabsTtsToTelnyxMediaStream: async () => ({ ok: false }),
+  isTelnyxTtsReplyStale: runtime.isTelnyxTtsReplyStale,
+  speakTelnyxCall: async () => {
+    pendingFallbackSession.outboundVoicemailDetected = true;
+    return { ok: true };
+  },
+});
+const lateFallback = await voicemailAudio.sendAvaPhoneReplyAudio(pendingFallbackSession, 'What is the property address?');
+assert.equal(lateFallback.ok, false, 'A late provider result after voicemail detection cannot be recorded as a seller reply');
+assert.equal(lateFallback.result, 'voicemail_detected');
+voicemailAudio.speakTelnyxCall = async () => {
+  runtime.isCurrentTelnyxMediaSession = () => false;
+  return { ok: true };
+};
+const replacedFallback = await voicemailAudio.sendAvaPhoneReplyAudio(
+  { callId: 'fictional-replaced-audio' },
+  'What is the property address?'
+);
+assert.equal(replacedFallback.ok, false);
+assert.equal(replacedFallback.result, 'not_current_media_session');
+runtime.isCurrentTelnyxMediaSession = () => true;
 
 let audioOptions;
 runtime.sendAvaPhoneReplyAudio = async (_session, _text, options) => { audioOptions = options; return { ok: true }; };

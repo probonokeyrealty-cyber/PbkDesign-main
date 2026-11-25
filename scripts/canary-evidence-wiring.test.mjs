@@ -243,8 +243,9 @@ test('bridge code matches the reviewed release fingerprint outside the scoped re
   // The Skill Manager grant binds to one signed, unexpired team session.
   // Ava price triage reads recent Analyzer evidence for the exact lead without tool writes.
   // Detected outbound voicemail stays out of seller replies and live qualification.
+  // Ambiguous greetings allow only a neutral acknowledgement, and explicit opt-outs stay in intent evidence.
   assert.equal(createHash('sha256').update(unchanged).digest('hex'),
-    '8a8c96abb598ff540d01bebcca32b42ed0761fe7c52fdcef526b19ad1b6ca171');
+    'b8c504b86037d12b918608330da43834ad869c0251a621ba77eb767110f8724e');
 });
 
 test('production distribution includes reader and protocol, never the fixture signer', () => {

@@ -2016,7 +2016,7 @@ export async function startLeadCallRequest(body: Record<string, unknown>) {
   const response = await bridgeRequest<Record<string, unknown>>({
     method: 'POST',
     path: '/api/calls',
-    body: params,
+    body: { ...params, idempotencyKey: body.idempotencyKey || crypto.randomUUID() },
   });
   return assertBridgeMutationSucceeded(response, 'Call request');
 }
@@ -3507,11 +3507,18 @@ export type HighLevelTaskReview = {
 );
 
 export async function fetchHighLevelLeadTasks(leadId: string) {
-  const { ok, taskReview } = await bridgeRequest<{ ok?: boolean; taskReview?: HighLevelTaskReview }>({
+  const { ok, taskReview } = await bridgeRequest<{
+    ok?: boolean;
+    taskReview?: HighLevelTaskReview;
+  }>({
     path: `/api/leads/${encodeURIComponent(leadId)}/full?tasks=highlevel`,
   });
-  if (ok !== true || taskReview?.leadId !== leadId || taskReview.source !== 'highlevel' ||
-      taskReview.writeMode !== 'read_only') {
+  if (
+    ok !== true ||
+    taskReview?.leadId !== leadId ||
+    taskReview.source !== 'highlevel' ||
+    taskReview.writeMode !== 'read_only'
+  ) {
     throw new Error('Could not read tasks for this lead.');
   }
   return taskReview;

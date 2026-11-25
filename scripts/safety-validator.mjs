@@ -161,7 +161,7 @@ function hasAffirmativeConsent(params = {}) {
 }
 
 function normalizeConsentStatus(value = '') {
-  return String(value || '')
+  return String(value ?? '')
     .trim()
     .toLowerCase()
     .replace(/[\s-]+/g, '_');
@@ -169,7 +169,7 @@ function normalizeConsentStatus(value = '') {
 
 function hasReviewableConsentStatus(value = '') {
   return ['unknown', 'needs_review', 'pending', 'not_verified', 'unverified'].includes(
-    normalizeConsentStatus(value || 'unknown') || 'unknown'
+    normalizeConsentStatus(value) || 'unknown'
   );
 }
 

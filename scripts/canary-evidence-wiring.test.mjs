@@ -233,10 +233,11 @@ test('bridge code matches the reviewed release fingerprint outside the scoped re
   // The isolated bridge test verifies staff auth and the unconfigured no-network path.
   // Website inquiry updates use a dedicated webhook secret, an exact lead link,
   // and a Postgres transaction. Staff selections stay in the lead profile.
+  // Direct staff calls verify the saved recipient and preserve request contact restrictions.
   // Saved lead intake commits the Rex event with the lead. Delivery tests cover
   // eligibility, same-ID replay, and the provider approval gate.
   assert.equal(createHash('sha256').update(unchanged).digest('hex'),
-    'd3b8d2956fe5021f535a726e499d92809f9605b292c8e3a6dfade594aae073cc');
+    'dfdf847ebcb050a05d358e6500675c3babcc47a93e4121fccc974a6c0d0897b5');
 });
 
 test('production distribution includes reader and protocol, never the fixture signer', () => {

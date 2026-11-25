@@ -2016,7 +2016,7 @@ export async function startLeadCallRequest(body: Record<string, unknown>) {
   const response = await bridgeRequest<Record<string, unknown>>({
     method: 'POST',
     path: '/api/calls',
-    body: params,
+    body: { ...params, idempotencyKey: body.idempotencyKey || crypto.randomUUID() },
   });
   return assertBridgeMutationSucceeded(response, 'Call request');
 }
@@ -3488,6 +3488,33 @@ export async function fetchAvaConsultationRequest(leadId: string, consultationId
     throw new Error('No consultation was returned for this lead.');
   }
   return consultation;
+}
+
+export type HighLevelTask = {
+  id: string;
+  title: string;
+  dueAt: string | null;
+  assigned: boolean;
+};
+
+export type HighLevelTaskReview = {
+  leadId: string;
+  source: 'highlevel';
+  writeMode: 'read_only';
+} & (
+  | { status: 'ready'; checkedAt: string; contactUrl: string; tasks: HighLevelTask[] }
+  | { status: 'unmatched' | 'not_configured' | 'unavailable' }
+);
+
+export async function fetchHighLevelLeadTasks(leadId: string) {
+  const { ok, taskReview } = await bridgeRequest<{ ok?: boolean; taskReview?: HighLevelTaskReview }>({
+    path: `/api/leads/${encodeURIComponent(leadId)}/full?tasks=highlevel`,
+  });
+  if (ok !== true || taskReview?.leadId !== leadId || taskReview.source !== 'highlevel' ||
+      taskReview.writeMode !== 'read_only') {
+    throw new Error('Could not read tasks for this lead.');
+  }
+  return taskReview;
 }
 
 export async function fetchLeadLastCallRequest(leadId: string) {

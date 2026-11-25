@@ -3,6 +3,7 @@ import { isDeepStrictEqual } from 'node:util';
 import { applyReviewedBatch, MAX_BATCH_BYTES, parseBatchFile } from '../src/app/utils/batchReview.ts';
 import { loadBatchReviewRoster } from './batch-review-roster.mjs';
 import { registerBatchPhonePlanInTransaction, withBatchPhoneTransaction } from './batch-phone-dispatch.mjs';
+import { buildRexLeadImportEvent, rexLeadImportEventInsert } from './rex-lead-import-events.mjs';
 
 const workspace = 'pbk';
 const record = (value) => value && typeof value === 'object' && !Array.isArray(value) ? value : {};
@@ -132,12 +133,12 @@ async function writeProfiles(client, writes) {
   if (inserts.rows.length + updates.rows.length !== writes.length) throw new Error('Lead projection incomplete.');
 }
 
-export async function loadAppliedBatchLeads(query, leadId = '') {
+export async function loadAppliedBatchLeads(query, leadId = '', { includeGhl = false } = {}) {
   const exact = Boolean(leadId);
   const result = await query(`
     SELECT id, raw, source, status, stage, updated_at, phone, address, lead_name
     FROM public.lead_profiles WHERE COALESCE(workspace_id, 'pbk') = 'pbk'
-      AND (source = 'batch-review' OR raw ? 'batchReviewId')
+      AND (source = 'batch-review' OR raw ? 'batchReviewId'${includeGhl ? " OR raw ? 'ghlPipeline'" : ''})
       ${exact ? 'AND id = $1' : ''}
     ORDER BY id LIMIT ${exact ? '1' : '10001'}
   `, exact ? [leadId] : []);
@@ -206,7 +207,22 @@ export async function runBatchApply({ pool, body, enabled, secret, getBridgeLead
       if (safety.dnc !== plan.phoneSummary.dnc || safety.candidates !== plan.phoneSummary.candidates) {
         throw Object.assign(new Error('Batch phone safety changed during registration.'), { code: 'batch_safety_changed' });
       }
-      await writeProfiles(client, buildWrites(plan, snapshot, fingerprint.slice(0, 32)));
+      const writes = buildWrites(plan, snapshot, fingerprint.slice(0, 32));
+      const existingLeadIds = new Set(snapshot.roster.map(idOf));
+      const events = [];
+      for (const row of writes) {
+        if (existingLeadIds.has(row.id)) continue;
+        const event = buildRexLeadImportEvent(row, {
+          source: 'batch-review', phone: row.phone, dnc: row.dnc,
+          score: row.raw.motivationScore ?? row.raw.score,
+        });
+        if (event) {
+          row.raw.rexImportEventId = event.id;
+          events.push(event);
+        }
+      }
+      await writeProfiles(client, writes);
+      if (events.length) await client.query(rexLeadImportEventInsert('$1'), [JSON.stringify(events)]);
       return { status: 200, body: { ...result, registeredPhoneCount } };
     });
   } catch (error) {

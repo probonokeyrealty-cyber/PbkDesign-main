@@ -229,8 +229,17 @@ test('bridge code matches the reviewed release fingerprint outside the scoped re
   // Outbound sender selection checks channel permissions and keys delivery by sender
   // and document content. Manual routes return approval outcomes before provider dispatch.
   // Snapshot recovery retries the same Postgres row version and reconciles an ambiguous commit.
+  // The staff lead route reads open HighLevel tasks for an exact server-configured contact.
+  // The isolated bridge test verifies staff auth and the unconfigured no-network path.
+  // Website inquiry updates use a dedicated webhook secret, an exact lead link,
+  // and a Postgres transaction. Staff selections stay in the lead profile.
+  // Direct staff calls verify the saved recipient and preserve request contact restrictions.
+  // Saved lead intake commits the Rex event with the lead. Delivery tests cover
+  // eligibility, same-ID replay, and the provider approval gate.
+  // The opt-in skill worker mirrors verified lifecycle events to Supabase.
+  // Skill governance tests cover projection delivery and the transcript fallback.
   assert.equal(createHash('sha256').update(unchanged).digest('hex'),
-    'a28ab44f4c4acd0fde19d50ef9e2206d41ef6d52fccece646274e3662a97564d');
+    '5543cb2fdffb98e22f4f5572b01d429485543cf7dfd79f13345ff75f9a3cb1eb');
 });
 
 test('production distribution includes reader and protocol, never the fixture signer', () => {

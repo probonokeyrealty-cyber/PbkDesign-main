@@ -1,6 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import { isClosedDealStage, normalizeDealStage, recordedDealRevenue, summarizeRecordedRevenue } from '../src/app/utils/analyticsEvidence.mjs';
 import { createNeonMailRouter } from './neon-auth-mail.mjs';
+import { readHighLevelLeadTasks } from './highlevel-lead-tasks.mjs';
 import { createComposioResearchDiscovery } from './composio-research-discovery.mjs';
 import { createPublicMarketConnectionCheck, withSavedRaleighCleanup } from './public-market-connection.mjs';
 import { findAvaOutlookReceipt, sendAvaOutlookMail, verifyOutlookDocumentReceipt } from './ava-outlook-mail.mjs';
@@ -44,6 +45,7 @@ import { createAgentTimingTurn, markAgentTimingFirstContent, bindAgentTimingToPa
 import { withRuntimeEvidenceContext, getRuntimeEvidenceContext } from './runtime-evidence-context.mjs';
 import { createBackgroundPersistence, createCoalescedPersistence } from './background-persistence.mjs';
 import { isRetryablePostgresSnapshotError, writePostgresStateSnapshot } from './postgres-state-snapshot.mjs';
+import { buildRexLeadImportEvent, drainRexLeadImportEvent, ensureRexLeadImportEventSchema, getRexLeadImportHour } from './rex-lead-import-events.mjs';
 import { createProviderActionBinding, hashProviderActionContext, validateProviderActionAuthorization, validateNegotiationApproval } from './provider-action-authorization.mjs';
 import { authorizeQualificationRequest, executeReleaseQualification, isDirectQualificationFounder, readReleaseQualification } from './release-qualification.mjs';
 import {
@@ -198,6 +200,7 @@ import {
 } from './ava-intent-router.mjs';
 import { ensureSkillGovernanceSchema } from './skill-governance-schema.mjs';
 import { startSkillProjectionWorker } from './skill-projection-worker.mjs';
+import { acceptGhlStageEvent, buildGhlPipelineView, persistGhlStage, readGhlPipelineConfig } from './ghl-pipeline-sync.mjs';
 import {
   activateSkillVersion,
   approveSkillVersion,
@@ -973,6 +976,7 @@ const PUBLIC_PATHS = new Set([
   '/api/webhooks/docusign',
   '/api/webhooks/external-events',
   '/api/v1/webhooks/external-events',
+  '/api/webhooks/ghl/pipeline',
   // Public website Ava is intentionally limited to FAQ/research answers and
   // lead capture. It never invokes provider-write or admin tools.
   '/api/public/ava-chat',
@@ -8077,6 +8081,7 @@ async function ensurePbkOperationalTables(pool) {
   await ensureConversationSchema(pool);
   await ensureProviderActionDispatchSchemaCore(pool);
   await ensureBatchPhoneSchema(pool);
+  await ensureRexLeadImportEventSchema(pool);
   await ensureNurtureSchema(pool).catch((error) => {
     console.warn('[postgres] nurture schema ensure skipped', error?.message || error);
   });
@@ -11900,6 +11905,7 @@ function getStatePersistRetryDelayMs(attempt = 1) {
 }
 
 const stateDbWriteQueue = createCoalescedPersistence({ persist: writeStateToDb });
+let savedRexLeadImportEvents = [];
 
 function persistStateToDb(nextState) {
   return stateDbWriteQueue.schedule(nextState);
@@ -11912,12 +11918,18 @@ async function writeStateToDb(nextState) {
   let attempt = 0;
   const maxAttempts = getStatePersistRetryAttempts();
   try {
+    const rexLeadImports = [...(nextState.rexLeadImportEvents || [])];
     serialized = postgresJsonStringify(nextState);
     await writePostgresStateSnapshot(pool, serialized, {
       maxAttempts,
+      rexLeadImports,
       delay: (retryAttempt) => sleep(getStatePersistRetryDelayMs(retryAttempt)),
       onAttempt: (currentAttempt) => { attempt = currentAttempt; },
     });
+    if (rexLeadImports.length) {
+      const committed = new Set(rexLeadImports.map(({ id }) => id));
+      nextState.rexLeadImportEvents = nextState.rexLeadImportEvents.filter(({ id }) => !committed.has(id));
+    }
     await persistActivityLogRecords(nextState.activity || []);
     markPostgresHealth(true);
     lastStateDbPersist = buildStatePersistenceDiagnostics(nextState, serialized, null, 'query');
@@ -11996,7 +12008,9 @@ async function persistState(nextState, { allowBootstrap = false } = {}) {
     throw error;
   }
   await ensureRuntimeDir();
+  const rexLeadImports = [...(nextState.rexLeadImportEvents || [])];
   await writeFile(STATE_FILE, jsonStringify(nextState), 'utf8');
+  savedRexLeadImportEvents = rexLeadImports;
   runtimeStateProvenance.source = 'local-bridge-state';
   runtimeStateProvenance.loadedFrom ||= runtimeStateProvenance.source;
   runtimeStateProvenance.fallbackReason = '';
@@ -23292,6 +23306,70 @@ async function runAutonomousRexGoalDiscoveryRecord(params = {}) {
   };
 }
 
+function queueRexLeadImport(lead, input, source) {
+  if (controlledExecution.getStore()) return;
+  const phone = normalizePhone(lead.seller?.phone || lead.phone);
+  const event = buildRexLeadImportEvent(lead, {
+    source,
+    phone: /^\+[1-9]\d{7,14}$/.test(phone) ? phone : '',
+    score: input.motivationScore ?? input.motivation_score ?? input.leadScore ?? input.lead_score ?? lead.score,
+    nowLocalHour: getRexLeadImportHour(input),
+    dnc: [input.dnc, input.doNotCall, input.do_not_call, input.isDnc, input.is_dnc]
+      .some(value => /^(true|1|yes)$/i.test(String(value ?? '').trim()))
+      || getAvaReviewContactStatus(lead) === 'restricted',
+  });
+  if (!event) return;
+  lead.rexImportEventId = event.id;
+  const pending = (state.rexLeadImportEvents ??= []);
+  if (!pending.some(({ id }) => id === event.id)) pending.push(event);
+}
+
+async function deliverRexLeadImport({ id, leadId, phone, score, nowLocalHour, dnc, source }) {
+  const lead = state.leadImports.find((item) => (item.leadId || item.id) === leadId);
+  const currentPhone = lead ? normalizePhone(lead.seller?.phone || lead.phone) : phone;
+  const result = await handleRexLeadImportedRecord({
+    eventId: id, leadId, phone: currentPhone === phone ? phone : '',
+    score, nowLocalHour, source,
+    dnc: dnc || Boolean(phone && findDncEntryByPhone(phone)) || (lead && getAvaReviewContactStatus(lead) === 'restricted'),
+  });
+  return { action: result.action.action, taskId: result.task?.id || null, providerWritesBlocked: true };
+}
+
+function startRexLeadImportDelivery() {
+  let running = false;
+  if (!DATABASE_URL) savedRexLeadImportEvents = [...(state.rexLeadImportEvents || [])];
+  const timer = setInterval(async () => {
+    if (running || !runtimeStateBootstrap.ready) return;
+    const pool = getPgPool();
+    const event = savedRexLeadImportEvents[0];
+    if (!pool && !event) return;
+    running = true;
+    try {
+      if (pool) {
+        for (let count = 0; count < 10; count++) {
+          const delivery = await drainRexLeadImportEvent(pool, deliverRexLeadImport);
+          if (!delivery) break;
+          console.info('[pbk-local-openclaw] Rex lead import processed:', JSON.stringify(delivery));
+        }
+      } else {
+        await deliverRexLeadImport(event);
+        state.rexLeadImportEvents = state.rexLeadImportEvents.filter(({ id }) => id !== event.id);
+        try {
+          await persistState(state);
+        } catch (error) {
+          state.rexLeadImportEvents.unshift(event);
+          throw error;
+        }
+      }
+    } catch {
+      console.warn('[pbk-local-openclaw] Rex lead import delivery deferred for retry.');
+    } finally {
+      running = false;
+    }
+  }, 1500);
+  timer.unref?.();
+}
+
 async function handleRexLeadImportedRecord(params = {}) {
   const idempotencyKey = String(
     params.idempotencyKey || params.idempotency_key || params.eventId || params.event_id || ''
@@ -23319,6 +23397,7 @@ async function handleRexLeadImportedRecord(params = {}) {
       providerWrites: 'blocked',
       metadata: {
         ...action,
+        importEventId: params.eventId || params.event_id || '',
         lead: {
           leadId: action.leadId,
           phone: action.phone,
@@ -37447,8 +37526,8 @@ async function persistLeadProfileRowToDb(lead = {}, source = 'property-data', { 
      ON CONFLICT (id) ${insertOnly ? 'DO NOTHING' : `DO UPDATE SET
        external_id = EXCLUDED.external_id,
        source = EXCLUDED.source,
-       status = EXCLUDED.status,
-       stage = EXCLUDED.stage,
+       status = CASE WHEN lead_profiles.raw ? 'ghlPipeline' THEN lead_profiles.status ELSE EXCLUDED.status END,
+       stage = CASE WHEN lead_profiles.raw ? 'ghlPipeline' THEN lead_profiles.stage ELSE EXCLUDED.stage END,
        temperature = EXCLUDED.temperature,
        lead_name = EXCLUDED.lead_name,
        email = EXCLUDED.email,
@@ -37468,9 +37547,14 @@ async function persistLeadProfileRowToDb(lead = {}, source = 'property-data', { 
        lead_commit_envelope = EXCLUDED.lead_commit_envelope,
        field_provenance = EXCLUDED.field_provenance,
        projection_proof = EXCLUDED.projection_proof,
-       raw = CASE WHEN lead_profiles.raw #> '{deal,investorDecisionScenarios}' IS NULL THEN EXCLUDED.raw
+       raw = (CASE WHEN lead_profiles.raw #> '{deal,investorDecisionScenarios}' IS NULL THEN EXCLUDED.raw
          ELSE jsonb_set(EXCLUDED.raw, '{deal}', COALESCE(NULLIF(EXCLUDED.raw->'deal', 'null'::jsonb), '{}'::jsonb)
-           || jsonb_build_object('investorDecisionScenarios', lead_profiles.raw #> '{deal,investorDecisionScenarios}')) END,
+           || jsonb_build_object('investorDecisionScenarios', lead_profiles.raw #> '{deal,investorDecisionScenarios}')) END)
+         || CASE WHEN lead_profiles.raw ? 'ghlPipeline' THEN jsonb_build_object(
+           'ghlPipeline', lead_profiles.raw->'ghlPipeline', 'stage', lead_profiles.stage, 'status', lead_profiles.status,
+           'assignment', COALESCE(NULLIF(EXCLUDED.raw->'assignment', 'null'::jsonb), '{}'::jsonb)
+             || jsonb_build_object('stage', lead_profiles.stage)
+         ) ELSE '{}'::jsonb END,
        updated_at = NOW()`}`,
     [
       leadId,
@@ -43967,7 +44051,7 @@ function normalizeApprovalCreationResult(result = {}) {
   };
 }
 
-async function enforceOperatingModeForTool(toolName, params = {}) {
+async function enforceOperatingModeForTool(toolName, params = {}, { staffManualCall = false } = {}) {
   if (!OPERATING_MODE_GATED_TOOLS.has(toolName)) return null;
   if (isProfileOnlyCrmUpdate(toolName, params)) return null;
   if (isDirectProtectedEnvUpdate(toolName, params)) return null;
@@ -44062,6 +44146,15 @@ async function enforceOperatingModeForTool(toolName, params = {}) {
   const providerWriteRequiresApproval = Boolean(
     safetyValidation?.providerWrite === true && safetyValidation?.approvalRequired !== false
   );
+  if (
+    staffManualCall &&
+    toolName === 'telnyx_call' &&
+    !forceApproval &&
+    !safetyReviewRequired &&
+    safetyValidation?.result === 'safety_passed'
+  ) {
+    return null;
+  }
   if (
     isTrustedManualConversationProviderSend(toolName, params) &&
     !forceApproval &&
@@ -44425,8 +44518,8 @@ async function executeRouteToolHandler(toolName, params = {}, source = 'http-rou
     executePermittedRouteTool(toolName, params, source, startedAt);
 }
 
-async function prepareRouteToolGuard(toolName, params, startedAt) {
-  const guarded = await enforceOperatingModeForTool(toolName, params);
+async function prepareRouteToolGuard(toolName, params, startedAt, options) {
+  const guarded = await enforceOperatingModeForTool(toolName, params, options);
   if (!guarded) return null;
   if (guarded.ok === false) {
     productionReadinessMonitor.recordFailure(toolName, guarded.result || guarded.reason || 'guarded');
@@ -44611,6 +44704,7 @@ async function executeManualProviderRouteWithOutbox({
   messageBody = '',
   subject = '',
   requestedBy = '',
+  staffManualCall = false,
 } = {}) {
   const idempotencyKey = String(
     params.idempotencyKey ||
@@ -44646,7 +44740,7 @@ async function executeManualProviderRouteWithOutbox({
 
   const routeParams = { ...params, idempotencyKey, outboxId: idempotencyKey, manualSendOutbox: queuedOutbox };
   const startedAt = Date.now();
-  const guardedRoute = await prepareRouteToolGuard(toolName, routeParams, startedAt);
+  const guardedRoute = await prepareRouteToolGuard(toolName, routeParams, startedAt, { staffManualCall });
   if (guardedRoute) {
     const response = buildRouteToolResponse(guardedRoute);
     const awaitingApproval = response.result === 'queued_for_approval';
@@ -57337,6 +57431,7 @@ const toolHandlers = {
         updatedCount += 1;
         updated.push(existing.leadId);
       } else {
+        queueRexLeadImport(normalized, payload, 'bulk-lead-import');
         addLeadImport(state, normalized);
         importedCount += 1;
         imported.push(normalized.leadId);
@@ -61442,8 +61537,12 @@ async function loadLeadForFullView(leadId, { reviewOnly = false } = {}) {
   const profile = IS_HOSTED || getPgPool()
     ? await loadExactLeadProfile(leadId, { includeContactRestriction: reviewOnly })
     : null;
-  const hot = (state.leadImports || []).find((item) => (item.leadId || item.id) === leadId);
+  let hot = (state.leadImports || []).find((item) => (item.leadId || item.id) === leadId);
   const row = profile?.rows[0];
+  if (hot && row?.raw?.ghlPipeline) {
+    hot = { ...hot, status: row.status, stage: row.stage, ghlPipeline: row.raw.ghlPipeline,
+      assignment: { ...hot.assignment, stage: row.stage } };
+  }
   if (reviewOnly) {
     if (profile?.ok === false) return { lead: null, unavailable: true };
     // The profile owns saved review evidence. Honor a restriction in either record.
@@ -61920,7 +62019,10 @@ async function handleManualLeadCreate(payload = {}, verifiedParcel = null, { que
   const existingDuplicate = patched || verifiedParcel ? null : findDuplicateLeadImport(leadImport);
   const duplicate = Boolean(patched || existingDuplicate);
   const savedLead = patched || existingDuplicate || leadImport;
-  if (!patched && !existingDuplicate) addLeadImport(state, leadImport);
+  if (!patched && !existingDuplicate) {
+    queueRexLeadImport(leadImport, payload, 'manual-lead-create');
+    addLeadImport(state, leadImport);
+  }
 
   addActivity(
     state,
@@ -62104,7 +62206,9 @@ async function persistLeadIntakeState(lead, triage) {
     // The snapshot query can lose its response during a disconnect. Confirm the
     // exact intake and its triage on Postgres before acknowledging instead of
     // replaying a possibly committed snapshot write.
-    const leadBinding = JSON.stringify([{ leadId, eventId: lead.eventId }]);
+    const leadBinding = JSON.stringify([{ leadId, eventId: lead.eventId,
+      ...(lead.rexImportEventId ? { rexImportEventId: lead.rexImportEventId } : {}),
+    }]);
     const triageBinding = triage?.id ? JSON.stringify([{ id: triage.id, correlationId: leadId }]) : null;
     const deadlineAt = Date.now() + 5000;
     for (const delay of [0, 250, 750]) {
@@ -62206,6 +62310,7 @@ async function handleRuntimeEvent(normalizedEvent, payload, { directRetentionFou
           }
         ) || duplicate;
     } else {
+      queueRexLeadImport(leadImport, payload, 'lead-intake');
       addLeadImport(state, leadImport);
     }
 
@@ -81307,12 +81412,61 @@ const server = createServer(async (request, response) => {
 
     if (request.method === 'POST' && pathname === '/api/calls') {
       const body = await readBody(request);
+      const staffSession = TEAM_PASSCODE && verifyTeamSessionToken(request.headers['x-pbk-team-token']);
+      const staffManualCall = staffSession?.ok === true &&
+        body.manual === true && body.manualSend === true &&
+        body.forceApproval === false && body.requestApproval === false &&
+        !body.force_approval && !body.request_approval && !body.approvalId && !body.approval_id &&
+        ['call_floor_manual', 'lead_portal_manual', 'leads_page_manual', 'command_center_manual'].includes(body.source);
+      let callParams = body;
+      if (staffManualCall) {
+        if (!getTeamPermissions().canPlaceCalls) {
+          json(response, 403, { ok: false, result: 'team_permission_denied', permission: 'canPlaceCalls' });
+          return;
+        }
+        const leadId = typeof body.leadId === 'string' ? body.leadId.trim() : '';
+        const phone = typeof body.phone === 'string' ? normalizePhone(body.phone) : '';
+        if (!leadId || !phone || Array.isArray(body.to)) {
+          json(response, 400, { ok: false, result: 'saved_lead_call_required', error: 'Choose one saved lead with a phone number.' });
+          return;
+        }
+        const { lead, unavailable, contactRestricted } = await loadLeadForFullView(leadId, { reviewOnly: true });
+        if (unavailable) {
+          json(response, 503, { ok: false, result: 'saved_lead_unavailable', error: 'The saved lead could not be verified.' });
+          return;
+        }
+        if (!lead || phone !== normalizePhone(lead.seller?.phone || lead.phone)) {
+          json(response, 409, { ok: false, result: 'saved_phone_mismatch', error: 'Reopen the saved lead and select its current phone number.' });
+          return;
+        }
+        const fromNumber = normalizePhone(body.fromNumber || body.from);
+        const requestKey = typeof body.idempotencyKey === 'string' ? body.idempotencyKey.trim().slice(0, 128) : '';
+        const idempotencyKey = `staff-call-${hashProviderActionContext({
+          requestKey: requestKey || randomUUID(), leadId, phone, fromNumber, actor: staffSession.actor,
+        })}`;
+        // Request flags can add a contact restriction, but cannot clear saved restrictions.
+        const { violations: requestedRestrictions } = validateProviderActionSafetyCore('telnyx_call', body);
+        const savedConsent = lead.compliance?.tcpaConsent ?? lead.compliance?.consentStatus ?? lead.tcpaConsent ?? lead.consentStatus;
+        callParams = {
+          leadId, phone, fromNumber,
+          source: body.source,
+          actor: staffSession.actor,
+          requestedBy: staffSession.actor,
+          manual: true,
+          manualSend: true,
+          dnc: contactRestricted || getAvaReviewContactStatus(lead) === 'restricted'
+            || requestedRestrictions.some(({ code }) => code === 'dnc_block'),
+          tcpaConsent: requestedRestrictions.some(({ code }) => code === 'tcpa_consent_missing') ? false : savedConsent,
+          idempotencyKey,
+          commandId: idempotencyKey,
+        };
+      }
       const manualCallBody = {
-        ...body,
-        manual: body.manual === false ? false : true,
-        manualSend: body.manualSend === false ? false : true,
-        requestedBy: body.requestedBy || body.requested_by || body.actor || 'PBK operator',
-        source: body.source || 'command_center_manual',
+        ...callParams,
+        manual: callParams.manual === false ? false : true,
+        manualSend: callParams.manualSend === false ? false : true,
+        requestedBy: callParams.requestedBy || callParams.requested_by || callParams.actor || 'PBK operator',
+        source: callParams.source || 'command_center_manual',
       };
       const call = await executeManualProviderRouteWithOutbox({
         toolName: 'telnyx_call',
@@ -81320,9 +81474,10 @@ const server = createServer(async (request, response) => {
         channel: 'call',
         params: manualCallBody,
         source: 'calls-route',
-        leadId: body.leadId || body.lead_id || body.id || '',
-        recipient: body.phone || body.to || body.number || '',
-        messageBody: body.reason || body.notes || 'manual call',
+        staffManualCall,
+        leadId: callParams.leadId || callParams.lead_id || callParams.id || '',
+        recipient: callParams.phone || callParams.to || callParams.number || '',
+        messageBody: callParams.reason || callParams.notes || 'manual call',
         requestedBy: manualCallBody.requestedBy,
       });
       json(response, call.statusCode, call.response);
@@ -82684,6 +82839,7 @@ const server = createServer(async (request, response) => {
     if (leadFullMatch && request.method === 'GET') {
       response.setHeader('Cache-Control', 'no-store');
       const reviewOnly = url.searchParams.get('review') === 'ava';
+      const highLevelTasksOnly = url.searchParams.get('tasks') === 'highlevel';
       const consultationId = url.searchParams.get('consultation');
       let leadId;
       try {
@@ -82697,7 +82853,7 @@ const server = createServer(async (request, response) => {
         json(response, 404, { ok: false, error: 'Saved consultation not found.' });
         return;
       }
-      if (reviewOnly || consultationId !== null) {
+      if (reviewOnly || highLevelTasksOnly || consultationId !== null) {
         const { lead: exactLead, unavailable, contactRestricted } = await loadLeadForFullView(leadId, { reviewOnly: true });
         if (unavailable) {
           json(response, 503, { ok: false, code: 'lead_roster_unavailable', error: 'The saved lead record is unavailable. Try again shortly.' });
@@ -82705,6 +82861,10 @@ const server = createServer(async (request, response) => {
         }
         if (!exactLead || (exactLead.leadId || exactLead.id) !== leadId) {
           json(response, 404, { ok: false, error: 'Lead not found.' });
+          return;
+        }
+        if (highLevelTasksOnly && !reviewOnly && consultationId === null) {
+          json(response, 200, { ok: true, taskReview: await readHighLevelLeadTasks(leadId) });
           return;
         }
         const { consultationDecisions, consultationRecords, recordsAvailable } = await loadAvaConsultationEvidence(leadId);
@@ -82730,7 +82890,7 @@ const server = createServer(async (request, response) => {
       }
       let durableBatchLead;
       try {
-        if (IS_HOSTED || getPgPool()) [durableBatchLead] = await loadAppliedBatchLeads(queryPgRows, leadId);
+        if (IS_HOSTED || getPgPool()) [durableBatchLead] = await loadAppliedBatchLeads(queryPgRows, leadId, { includeGhl: true });
       } catch {
         response.setHeader('Retry-After', '1');
         json(response, 503, { ok: false, code: 'lead_roster_unavailable', error: 'The saved lead record is unavailable. Try again shortly.' });
@@ -82750,6 +82910,7 @@ const server = createServer(async (request, response) => {
         const callContext = getLeadOwnedCallContext(durableBatchLead, leadId);
         json(response, 200, {
           ok: true, lead: { ...durableBatchLead, ...history, callContext, call_context: callContext }, ...history,
+          ghlPipeline: buildGhlPipelineView(durableBatchLead.ghlPipeline, readGhlPipelineConfig(process.env.PBK_GHL_PIPELINE_CONFIG)),
           outlookDelivery: await loadOutlookDeliveryForLead(leadId),
         });
         return;
@@ -82767,7 +82928,11 @@ const server = createServer(async (request, response) => {
         });
         return;
       }
-      json(response, 200, { ...full, outlookDelivery: await loadOutlookDeliveryForLead(leadId) });
+      json(response, 200, {
+        ...full,
+        ghlPipeline: buildGhlPipelineView(exactLead.ghlPipeline, readGhlPipelineConfig(process.env.PBK_GHL_PIPELINE_CONFIG)),
+        outlookDelivery: await loadOutlookDeliveryForLead(leadId),
+      });
       return;
     }
 
@@ -82859,6 +83024,29 @@ const server = createServer(async (request, response) => {
 
     if (leadPatchMatch && request.method === 'PATCH') {
       const body = await readBody(request);
+      if (Object.hasOwn(body, 'ghlNextStageId')) {
+        const config = readGhlPipelineConfig(process.env.PBK_GHL_PIPELINE_CONFIG);
+        const stage = config?.stages.find((item) => item.id === body.ghlNextStageId);
+        let leadId;
+        try { leadId = decodeURIComponent(leadPatchMatch.groups.id); } catch { leadId = ''; }
+        if (!leadId || !stage || typeof body.ghlExpectedOccurredAt !== 'string') {
+          json(response, 422, { ok: false, error: 'Select an available GoHighLevel stage.' });
+          return;
+        }
+        const saved = await queryPgRows(
+          `UPDATE public.lead_profiles
+             SET raw = jsonb_set(raw, '{ghlPipeline,nextStageId}', to_jsonb($2::text)), updated_at = NOW()
+           WHERE COALESCE(workspace_id, 'pbk') = 'pbk' AND id = $1 AND raw #>> '{ghlPipeline,pipelineId}' = $3
+             AND raw #>> '{ghlPipeline,locationId}' = $4 AND raw #>> '{ghlPipeline,occurredAt}' = $5
+             AND raw #>> '{ghlPipeline,stageId}' <> $2
+           RETURNING id`,
+          [leadId, stage.id, config.pipelineId, config.locationId, body.ghlExpectedOccurredAt]);
+        const ok = saved.ok && Boolean(saved.rows.length);
+        json(response, ok ? 200 : saved.ok ? 409 : 503, {
+          ok, error: ok ? undefined : 'Refresh the lead before selecting its next stage.',
+        });
+        return;
+      }
       if (Object.hasOwn(body, 'investorDecisionScenario')) {
         let leadId;
         try { leadId = decodeURIComponent(leadPatchMatch.groups.id); } catch {
@@ -83270,7 +83458,7 @@ const server = createServer(async (request, response) => {
       response.setHeader('Cache-Control', 'no-store');
       let batchLeads;
       try {
-        batchLeads = !IS_HOSTED && !getPgPool() ? [] : await loadAppliedBatchLeads(queryPgRows);
+        batchLeads = !IS_HOSTED && !getPgPool() ? [] : await loadAppliedBatchLeads(queryPgRows, '', { includeGhl: true });
       } catch {
         response.setHeader('Retry-After', '1');
         json(response, 503, {
@@ -83535,6 +83723,31 @@ const server = createServer(async (request, response) => {
         'appointments-route'
       );
       json(response, getRouteToolStatusCode(routeTool, { failureStatus: 400 }), buildRouteToolResponse(routeTool));
+      return;
+    }
+
+    if (request.method === 'POST' && pathname === '/api/webhooks/ghl/pipeline') {
+      const secret = String(process.env.PBK_GHL_PIPELINE_WEBHOOK_SECRET || '').trim();
+      if (secret.length < 32 || !safeCompareString(request.headers['x-pbk-ghl-webhook-secret'], secret)) {
+        json(response, 401, { ok: false, error: 'GoHighLevel webhook authentication failed.' });
+        return;
+      }
+      const config = readGhlPipelineConfig(process.env.PBK_GHL_PIPELINE_CONFIG);
+      const pool = getPgPool();
+      const result = await acceptGhlStageEvent(await readBody(request), pool ? config : null, async (event) => {
+        const outcome = await persistGhlStage(pool, event);
+        if (outcome === 'updated') {
+          const lead = (state.leadImports || []).find((item) => (item.leadId || item.id) === event.leadId);
+          if (lead && (!lead.ghlPipeline?.occurredAt || lead.ghlPipeline.occurredAt < event.occurredAt)) {
+            lead.stage = event.pbkStage;
+            lead.status = event.pbkStage;
+            lead.assignment = { ...lead.assignment, stage: event.pbkStage };
+            lead.ghlPipeline = { occurredAt: event.occurredAt };
+          }
+        }
+        return outcome;
+      });
+      json(response, result.status, { ok: result.ok, result: result.result });
       return;
     }
 
@@ -84620,6 +84833,7 @@ if (process.env.RENDER === 'true' && process.env.RENDER_SERVICE_NAME === 'pbk-op
 }
 wireRuntimeCoverageLifecycle(server);
 server.listen(PORT, HOST, () => {
+  startRexLeadImportDelivery();
   startPostgresKeepAlive();
   if (process.env.PBK_SKILL_PROJECTION_ENABLED === 'true' && STATE_BACKEND === 'postgres') {
     const stopSkillProjection = startSkillProjectionWorker({

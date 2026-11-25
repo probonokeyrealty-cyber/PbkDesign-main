@@ -179,6 +179,7 @@ COPY scripts/ava-chat-events.mjs ./scripts/ava-chat-events.mjs
 COPY scripts/ava-request-timing.mjs ./scripts/ava-request-timing.mjs
 COPY scripts/ava-latency-benchmark.mjs ./scripts/ava-latency-benchmark.mjs
 COPY scripts/rex-autonomy.mjs ./scripts/rex-autonomy.mjs
+COPY scripts/rex-lead-import-events.mjs ./scripts/rex-lead-import-events.mjs
 COPY scripts/context-aware-script-rotator.mjs ./scripts/context-aware-script-rotator.mjs
 COPY scripts/ava-governed-skill-router.mjs ./scripts/ava-governed-skill-router.mjs
 COPY scripts/ava-emotional-script-library.mjs ./scripts/ava-emotional-script-library.mjs
@@ -203,6 +204,7 @@ COPY scripts/slack-mention-router.mjs ./scripts/slack-mention-router.mjs
 COPY scripts/youtube-training.mjs ./scripts/youtube-training.mjs
 COPY scripts/composio-youtube-transcript.mjs ./scripts/composio-youtube-transcript.mjs
 COPY scripts/skill-projection-worker.mjs ./scripts/skill-projection-worker.mjs
+COPY scripts/ghl-pipeline-sync.mjs ./scripts/ghl-pipeline-sync.mjs
 COPY scripts/ava-assistant-chat.mjs ./scripts/ava-assistant-chat.mjs
 COPY scripts/lead-raw-proof-job.mjs ./scripts/lead-raw-proof-job.mjs
 COPY scripts/lead-field-provenance.mjs ./scripts/lead-field-provenance.mjs
@@ -295,6 +297,7 @@ COPY scripts/parcel-prospecting-brief.mjs ./scripts/parcel-prospecting-brief.mjs
 COPY scripts/hermes-parcel-prospecting.mjs ./scripts/hermes-parcel-prospecting.mjs
 COPY scripts/phone-dialer-routes.mjs ./scripts/phone-dialer-routes.mjs
 COPY scripts/openclaw-local-server.mjs ./scripts/openclaw-local-server.mjs
+COPY scripts/highlevel-lead-tasks.mjs ./scripts/highlevel-lead-tasks.mjs
 COPY scripts/recording-retention-authorization.mjs ./scripts/recording-retention-authorization.mjs
 COPY scripts/recording-retention-schema.mjs ./scripts/recording-retention-schema.mjs
 COPY scripts/ava-team-chat-permissions.mjs ./scripts/ava-team-chat-permissions.mjs

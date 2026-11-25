@@ -33,6 +33,9 @@ const fixtures = new Map([
   ['/api/skills/governance/status', () => ({ ok: true, candidates: 0, approvedInactive: 0, canary: 0, active: 0, snapshot: { available: false } })],
   ['/api/skills/governance/repository', () => ({ ok: true, items: [] })],
   ['/api/communication-identities', () => ({ ok: true, items: [sampleSender] })],
+  ['/api/phone-numbers', () => ({ ok: true, mode: 'mock', lines: [], orders: [],
+    providers: { twilio: { configured: false, mock: true }, telnyx: { configured: false, mock: true } },
+    purchasesEnabled: false, canManage: false })],
   ['/api/replies/templates', () => ({ ok: true, templates: [] })],
 ]);
 for (const lead of sampleLeads) {
@@ -144,6 +147,10 @@ export async function runHostedFounderBrowserSmoke() {
         visited.push(path);
       }
       assert.deepEqual([...new Set(missing)], [], 'Every API read, asset and document must have an explicit fixture');
+      const phoneInventory = await page.evaluate(async () => (await fetch('/api/phone-numbers')).json());
+      assert.deepEqual(phoneInventory, { ok: true, mode: 'mock', lines: [], orders: [],
+        providers: { twilio: { configured: false, mock: true }, telnyx: { configured: false, mock: true } },
+        purchasesEnabled: false, canManage: false }, 'The phone fixture must not enable provider calls or purchases');
       // Prove that fetches to another origin and write-shaped requests cannot escape,
       // even when initiated by a page rather than by the Node test runner.
       const blocked = await page.evaluate(async () => ({

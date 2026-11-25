@@ -109,7 +109,7 @@ test('The browser policy blocks real origins, mutations, redirects and non-stati
     assert.equal(classifyHostedSmokeRequest('GET', target), 'blocked-external');
   }
   for (const method of ['POST', 'PUT', 'PATCH', 'DELETE']) {
-    for (const path of ['/invoke', '/events', '/reset', '/api/leads/sample', '/assets/module.js', '/api/conversations/not-a-sample/sender-recommendation', '/api/conversations/sample-thread/sender-recommendation?unexpected=1', '/api/communication-identities/sync', '/api/conversations/sample-thread/messages']) {
+    for (const path of ['/invoke', '/events', '/reset', '/api/leads/sample', '/assets/module.js', '/api/conversations/not-a-sample/sender-recommendation', '/api/conversations/sample-thread/sender-recommendation?unexpected=1', '/api/communication-identities/sync', '/api/conversations/sample-thread/messages', '/api/phone-numbers', '/api/phone-numbers/import', '/api/phone-numbers/search', '/api/phone-numbers/orders', '/api/phone-numbers/orders/sample/execute']) {
       assert.equal(classifyHostedSmokeRequest(method, origin + path), 'blocked-write');
     }
   }
@@ -118,6 +118,11 @@ test('The browser policy blocks real origins, mutations, redirects and non-stati
   assert.equal(classifyHostedSmokeRequest('PUT', origin + '/api/conversations/sample-thread/sender-recommendation'), 'blocked-write');
   assert.equal(classifyHostedSmokeRequest('GET', origin + '/state'), 'fixture');
   assert.equal(classifyHostedSmokeRequest('GET', origin + '/brain/state'), 'fixture');
+  for (const method of ['GET', 'HEAD']) {
+    assert.equal(classifyHostedSmokeRequest(method, origin + '/api/phone-numbers'), 'fixture');
+    assert.equal(classifyHostedSmokeRequest(method, 'https://provider.invalid/api/phone-numbers'), 'blocked-external');
+    assert.equal(classifyHostedSmokeRequest(method, origin + '/api/phone-numbers/not-fixtured'), 'blocked-read');
+  }
   for (const path of ['/api/anything', '/api/leads-typo', '/api/leads/not-a-sample/full', '/api/conversations/not-a-sample/timeline', '/brain/anything', '/.netlify/functions/unexpected']) {
     assert.equal(classifyHostedSmokeRequest('GET', origin + path), 'blocked-read');
     assert.equal(classifyHostedSmokeRequest('HEAD', origin + path), 'blocked-read');

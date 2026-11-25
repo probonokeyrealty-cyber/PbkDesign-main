@@ -21,8 +21,11 @@ async function verify(browserType, width) {
   if (verifyClipboard) await context.grantPermissions(['clipboard-read', 'clipboard-write'], { origin });
   const page = await context.newPage();
   const writes = [], lookups = [], errors = [];
+  const pipelineWrites = [];
+  let ghlPipeline = null;
   let consent = 'no consent', dnc = 'blocked', zip = '';
   let reviewMode = 'mismatched';
+  let taskReviewStatus = 'unmatched';
   let nextStep = { code: 'hold_contact', title: 'Hold outreach', detail: 'Review the saved contact restriction.' };
   let reviewReads = 0;
   const consultationReads = [];
@@ -43,7 +46,24 @@ async function verify(browserType, width) {
     if (!/^\/(?:api(?:\/|$)|\.netlify\/functions\/|state$|status$|health$|events$|invoke$|metrics$)/.test(path)) return route.continue();
     if (path === '/api/property-data/attom-preview') lookups.push(path);
     if (path === '/api/state/stream/session') return route.fulfill({ json: { ok: false } });
+    if (ghlPipeline && path === leadApiPath && request.method() === 'PATCH') {
+      const body = request.postDataJSON();
+      pipelineWrites.push(body);
+      ghlPipeline.nextStageId = body.ghlNextStageId;
+      return route.fulfill({ json: { ok: true } });
+    }
     if (request.method() !== 'GET') { writes.push(path); return route.abort(); }
+    if (url.searchParams.get('tasks') === 'highlevel') {
+      assert.equal(path, `${leadApiPath}/full`);
+      return route.fulfill({ json: { ok: true, taskReview: {
+        leadId, source: 'highlevel', writeMode: 'read_only', status: taskReviewStatus,
+        ...(taskReviewStatus === 'ready' ? {
+          checkedAt: '2026-11-24T12:00:00Z',
+          contactUrl: 'https://app.gohighlevel.com/v2/location/test-location/contacts/detail/test-contact',
+          tasks: [{ id: 'test-task', title: 'Confirm underwriting inputs', dueAt: null, assigned: true }],
+        } : {}),
+      } } });
+    }
     if (url.searchParams.has('consultation')) {
       assert.equal(path, `${leadApiPath}/full`);
       assert.equal(url.searchParams.has('review'), false);
@@ -65,7 +85,7 @@ async function verify(browserType, width) {
       } } });
     }
     return route.fulfill({ json: path === '/api/auth/team/status' ? { ok: true, configured: false, authRequired: false }
-      : path.startsWith(leadApiPath) ? { ok: true, lead: lead() }
+      : path.startsWith(leadApiPath) ? { ok: true, lead: lead(), ghlPipeline }
         : path === '/api/leads' ? { ok: true, leads: [lead()] }
           : path === '/state' ? { leadImports: [lead()] } : { ok: true, items: [] } });
   });
@@ -208,13 +228,56 @@ async function verify(browserType, width) {
     assert.deepEqual(writes, []);
     assert.deepEqual(lookups, []);
     assert.deepEqual(errors, []);
+    ghlPipeline = {
+      name: 'PBK Wholesale Readiness',
+      currentStageId: 'research', currentStageLabel: 'Research',
+      occurredAt: '2026-11-24T10:00:00.000Z', nextStageId: '',
+      stages: [{ id: 'research', label: 'Research' }, { id: 'owner', label: 'Owner Review' },
+        { id: 'next', label: 'Next Step Review', avaNextStepCode: 'review_qualification' }],
+    };
+    await page.reload({ waitUntil: 'domcontentloaded', timeout: 90_000 });
+    const stageSelect = page.getByLabel('Next GoHighLevel stage for review');
+    await expect(page.getByText('PBK Wholesale Readiness', { exact: true })).toBeVisible();
+    await stageSelect.selectOption('owner');
+    await page.getByRole('button', { name: 'Save next stage' }).click();
+    await expect(page.getByText('Next stage saved in Command Center.')).toBeVisible();
+    await page.reload({ waitUntil: 'domcontentloaded', timeout: 90_000 });
+    await expect(stageSelect).toHaveValue('owner');
+    nextStep = { code: 'review_qualification', title: 'Review qualification', detail: 'Check the lead.' };
+    await review.getByRole('button', { name: 'Run read-only review' }).click();
+    await review.getByRole('link', { name: 'Choose Next Step Review for review' }).click();
+    await expect(stageSelect).toHaveValue('next');
+    assert.equal(pipelineWrites.length, 1, 'Ava suggestion requires the operator to save it');
+    await page.getByRole('button', { name: 'Save next stage' }).click();
+    await expect(page.getByText('Next stage saved in Command Center.')).toBeVisible();
+    assert.deepEqual(pipelineWrites, ['owner', 'next'].map((id) =>
+      ({ ghlNextStageId: id, ghlExpectedOccurredAt: ghlPipeline.occurredAt })));
+    assert.deepEqual(writes, []);
+    assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
     if (process.env.PBK_GUIDANCE_SHOTS === '1') {
       mkdirSync('.pbk-local', { recursive: true });
       await property.scrollIntoViewIfNeeded();
       await page.screenshot({ path: `.pbk-local/lead-guidance-${browserType.name()}-${width}.png`, scale: 'css' });
     }
+    const tasks = page.getByRole('region', { name: 'GoHighLevel tasks', exact: true });
+    await tasks.getByRole('button', { name: 'Check open tasks' }).click();
+    await expect(tasks.getByText('This lead has no verified GoHighLevel contact match.')).toBeVisible();
+    await expect(tasks.getByRole('link')).toHaveCount(0);
+    taskReviewStatus = 'ready';
+    await tasks.getByRole('button', { name: 'Refresh tasks' }).click();
+    await expect(tasks.getByText('Confirm underwriting inputs', { exact: true })).toBeVisible();
+    await expect(tasks.getByRole('link', { name: 'Open contact in GoHighLevel' }))
+      .toHaveAttribute('href', 'https://app.gohighlevel.com/v2/location/test-location/contacts/detail/test-contact');
+    assert.ok(await tasks.evaluate(element => element.scrollWidth <= element.clientWidth));
+    await tasks.getByRole('link', { name: 'Draft a plan with Ava' }).click();
+    await expect(page).toHaveURL(new RegExp(`/ava-chat\\?leadId=${leadId}$`));
+    await expect(page.getByPlaceholder('Ask about a lead or type a request…'))
+      .toHaveValue(/Keep this read-only.+Confirm underwriting inputs/);
+    assert.deepEqual(writes, []);
+    assert.deepEqual(lookups, []);
+    assert.deepEqual(errors, []);
     const browserName = verifyClipboard && process.env.PBK_GUIDANCE_CHROME === '1' ? 'Chrome' : browserType.name();
-    console.log(`${browserName} ${width}px: lead review, consultation links, address guidance, consent labels, and zero writes/lookups passed`);
+    console.log(`${browserName} ${width}px: lead review, consultation links, address guidance, consent, CRM task handoff, and pipeline selections passed`);
   } finally { await browser.close(); }
 }
 try {

@@ -74,10 +74,14 @@ export function AvaLeadReviewCard({
   leadId,
   analyzerLink,
   onJumpToSection,
+  pipelineStages,
+  onSuggestPipelineStage,
 }: {
   leadId: string;
   analyzerLink: Pick<LinkProps, 'to' | 'state'>;
   onJumpToSection: (event: MouseEvent<HTMLAnchorElement>, sectionId: string) => void;
+  pipelineStages?: { id: string; label: string; avaNextStepCode?: string }[];
+  onSuggestPipelineStage?: (stageId: string) => void;
 }) {
   const [review, setReview] = useState<AvaLeadReview>();
   const [loading, setLoading] = useState(false);
@@ -102,6 +106,9 @@ export function AvaLeadReviewCard({
 
   const evidence = review?.evidence;
   const nextStepCode = review?.nextStep.code;
+  const pipelineStage = nextStepCode
+    ? pipelineStages?.find((stage) => stage.avaNextStepCode === nextStepCode)
+    : undefined;
   const reviewSection =
     nextStepCode && Object.hasOwn(REVIEW_SECTIONS, nextStepCode)
       ? REVIEW_SECTIONS[nextStepCode]
@@ -177,6 +184,18 @@ export function AvaLeadReviewCard({
               >
                 {reviewSection.label}
                 <ArrowRight size={15} aria-hidden="true" />
+              </a>
+            )}
+            {pipelineStage && onSuggestPipelineStage && (
+              <a
+                href="#lead-next-step"
+                className="pbk-btn pbk-btn-ghost mt-2 min-h-11"
+                onClick={(event) => {
+                  onSuggestPipelineStage(pipelineStage.id);
+                  onJumpToSection(event, 'lead-next-step');
+                }}
+              >
+                Choose {pipelineStage.label} for review
               </a>
             )}
             {nextStepCode === 'review_underwriting' && (

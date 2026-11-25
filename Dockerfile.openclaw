@@ -179,6 +179,7 @@ COPY scripts/ava-chat-events.mjs ./scripts/ava-chat-events.mjs
 COPY scripts/ava-request-timing.mjs ./scripts/ava-request-timing.mjs
 COPY scripts/ava-latency-benchmark.mjs ./scripts/ava-latency-benchmark.mjs
 COPY scripts/rex-autonomy.mjs ./scripts/rex-autonomy.mjs
+COPY scripts/rex-lead-import-events.mjs ./scripts/rex-lead-import-events.mjs
 COPY scripts/context-aware-script-rotator.mjs ./scripts/context-aware-script-rotator.mjs
 COPY scripts/ava-governed-skill-router.mjs ./scripts/ava-governed-skill-router.mjs
 COPY scripts/ava-emotional-script-library.mjs ./scripts/ava-emotional-script-library.mjs

@@ -35,14 +35,14 @@ assert(
   /function getStatePersistRetryAttempts/.test(bridge) &&
     /IS_HOSTED \? 5 : 1/.test(bridge) &&
     /PBK_STATE_PERSIST_RETRY_ATTEMPTS/.test(bridge) &&
-    /await writePostgresStateSnapshot\(pool, serialized, \{\s*maxAttempts,\s*delay: \(retryAttempt\) => sleep\(getStatePersistRetryDelayMs\(retryAttempt\)\)/.test(bridge) &&
+    /await writePostgresStateSnapshot\(pool, serialized, \{\s*maxAttempts,\s*rexLeadImports,\s*delay: \(retryAttempt\) => sleep\(getStatePersistRetryDelayMs\(retryAttempt\)\)/.test(bridge) &&
     /if \(attempt === maxAttempts \|\| !isRetryablePostgresSnapshotError\(error\)\) throw error;/.test(snapshotWriter),
   'Hosted snapshot writes must use the dedicated, bounded retry helper.'
 );
 assert(
   /if \(version === undefined\) \{\s*const current = await pool\.query\("SELECT xmin::text AS version/.test(snapshotWriter) &&
     /ON CONFLICT \(id\) DO NOTHING/.test(snapshotWriter) &&
-    /WHERE id = 'singleton' AND xmin::text = \$2`\s*,\s*\[serialized, version\]/.test(snapshotWriter) &&
+    /WHERE id = 'singleton' AND xmin::text = \$2`;\s*const params = version === null \? \[serialized\] : \[serialized, version\];/.test(snapshotWriter) &&
     /SELECT data = \$1::jsonb AS matches[\s\S]*if \(existing\.rows\[0\]\?\.matches\) return attempt;[\s\S]*PBK_POSTGRES_SNAPSHOT_CONFLICT/.test(snapshotWriter),
   'The snapshot helper must retry the same row version and recognize a committed payload without replacing a concurrent write.'
 );

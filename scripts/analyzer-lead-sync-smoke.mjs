@@ -90,7 +90,7 @@ assert(
 );
 
 assert(
-  /if \(duplicate\) \{[\s\S]*patchLeadImport\([\s\S]*lead-intake-refresh[\s\S]*\} else \{\s*addLeadImport\(state, leadImport\);/.test(openclawServer),
+  /if \(duplicate\) \{[\s\S]*patchLeadImport\([\s\S]*lead-intake-refresh[\s\S]*\} else \{\s*queueRexLeadImport\(leadImport, payload, 'lead-intake'\);\s*addLeadImport\(state, leadImport\);/.test(openclawServer),
   'Duplicate lead intake refreshes must patch the existing lead so a fresh LeadCommitEnvelope is saved.'
 );
 

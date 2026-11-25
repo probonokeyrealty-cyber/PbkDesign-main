@@ -234,8 +234,10 @@ test('bridge code matches the reviewed release fingerprint outside the scoped re
   // Website inquiry updates use a dedicated webhook secret, an exact lead link,
   // and a Postgres transaction. Staff selections stay in the lead profile.
   // Direct staff calls verify the saved recipient and preserve request contact restrictions.
+  // Saved lead intake commits the Rex event with the lead. Delivery tests cover
+  // eligibility, same-ID replay, and the provider approval gate.
   assert.equal(createHash('sha256').update(unchanged).digest('hex'),
-    '5e4f013f8c2aa08b317f3e6cc65d0ade4622498643e0ca1cb4d0d9496aac6675');
+    'dfdf847ebcb050a05d358e6500675c3babcc47a93e4121fccc974a6c0d0897b5');
 });
 
 test('production distribution includes reader and protocol, never the fixture signer', () => {

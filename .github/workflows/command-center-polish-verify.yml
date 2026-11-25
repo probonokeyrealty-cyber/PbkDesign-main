@@ -9,6 +9,8 @@ on:
       - 'index.shell.html'
       - 'vite.config.ts'
       - 'scripts/command-center-polish*'
+      - 'scripts/operator-session-browseros-live.mjs'
+      - 'scripts/operator-session-browseros.node-test.mjs'
       - 'scripts/fixtures/command-center-polish-preview.mjs'
       - 'scripts/fixtures/faster-triage-fixture.mjs'
       - '.github/workflows/command-center-polish-verify.yml'
@@ -33,6 +35,8 @@ jobs:
       - run: npm ci
       - name: Verify shell contracts and sample isolation
         run: node --test scripts/command-center-polish.node-test.mjs scripts/command-center-polish-fixture.node-test.mjs
+      - name: Verify offline recovery runner safeguards
+        run: node --test scripts/operator-session-browseros.node-test.mjs
       - name: Build local frontend assets
         run: npm run build
       - name: Install disposable desktop and mobile browsers

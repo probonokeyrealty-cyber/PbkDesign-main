@@ -4,6 +4,7 @@ import { mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { dirname, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium, expect } from '@playwright/test';
+import puppeteer from 'puppeteer-core';
 import { parseOptions as parseAnalyzerOptions, requestDisposition as analyzerDisposition } from './analyzer-browseros-mobile-live.mjs';
 import { fixtureResponse, sampleApproval } from './fixtures/faster-triage-fixture.mjs';
 
@@ -14,16 +15,26 @@ const shellPaths = new Set(['/command-center', '/inbox']);
 
 export function parseOptions(argv) {
   assert.ok(!argv.includes('--desktop'), 'This runner always checks both desktop and mobile.');
-  const parsed = parseAnalyzerOptions(argv);
+  const forwarded = [];
+  let sourceTargetId;
+  for (let index = 0; index < argv.length; index++) {
+    if (argv[index] !== '--source-target-id') { forwarded.push(argv[index]); continue; }
+    assert.equal(sourceTargetId, undefined, 'duplicate --source-target-id');
+    sourceTargetId = argv[++index];
+    assert.match(sourceTargetId || '', /^[a-f0-9]{32}$/i, 'A valid --source-target-id is required');
+  }
+  const parsed = parseAnalyzerOptions(forwarded);
   if (parsed.help) return parsed;
+  assert.ok(sourceTargetId, 'An explicit --source-target-id is required');
   const { base, cdpUrl, revision, dist } = parsed;
-  return { base, cdpUrl, revision, dist, output: argv.includes('--output-dir') ? parsed.output
+  return { base, cdpUrl, revision, dist, sourceTargetId, output: argv.includes('--output-dir') ? parsed.output
     : resolve(dirname(fileURLToPath(import.meta.url)), '../.pbk-local/operator-session-' + Date.now()) };
 }
 
 export function requestDisposition(method, target, base, staticPaths = new Set()) {
   let url;
   try { url = new URL(target); } catch { return 'deny-read'; }
+  if (url.origin !== base) return 'deny-external';
   if (url.origin === base && !url.username && !url.password && !url.search && !url.hash
       && ['GET', 'HEAD'].includes(method) && shellPaths.has(url.pathname)) return 'live';
   return analyzerDisposition(method, target, base, staticPaths);
@@ -135,15 +146,41 @@ function loadPins(options) {
   return pins;
 }
 
-async function fingerprintSource(page, base) {
+export async function selectSourcePage(browser, options) {
+  for (const page of await browser.pages()) {
+    if (page.url() !== options.base + '/leads') continue;
+    const session = await page.target().createCDPSession();
+    try {
+      const { targetInfo } = await session.send('Target.getTargetInfo');
+      if (targetInfo.targetId === options.sourceTargetId) return page;
+    } finally { await session.detach(); }
+  }
+  throw Error('The explicitly selected unlocked PBK /leads source tab is required');
+}
+
+export async function readSourceCookies(page, base) {
+  const session = await page.target().createCDPSession();
+  try {
+    const { cookies } = await session.send('Network.getCookies', { urls: [base + '/'] });
+    return cookies.map(({ name, value, domain, path, expires, httpOnly, secure, sameSite }) =>
+      ({ name, value, domain, path, expires, httpOnly, secure, sameSite: sameSite || 'Lax' }));
+  } finally { await session.detach(); }
+}
+
+export async function fingerprintSource(page, base) {
   return page.evaluate(async base => {
     if (location.origin !== base) throw Error('Source tab moved; preservation cannot be verified');
-    const result = {};
+    const result = {}, entries = [];
+    // Capture every raw value before hashing yields to another tab's storage events.
     for (const [scope, storage] of [['local', localStorage], ['session', sessionStorage]]) {
-      for (const key of Object.keys(storage).filter(k => /draft|analyzer|compose/i.test(k)).sort()) {
-        const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(storage.getItem(key) || ''));
-        result[scope + ':' + key] = Array.from(new Uint8Array(digest), b => b.toString(16).padStart(2, '0')).join('');
+      for (const key of Object.keys(storage).filter(k => !k.startsWith('pbk:deploy-refresh:') &&
+        (k === 'pbk-deal-data' || /draft|analyzer|compose|notes|comps/i.test(k))).sort()) {
+        entries.push([scope + ':' + key, storage.getItem(key) || '']);
       }
+    }
+    for (const [key, raw] of entries) {
+      const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(raw));
+      result[key] = Array.from(new Uint8Array(digest), b => b.toString(16).padStart(2, '0')).join('');
     }
     return result;
   }, base);
@@ -278,7 +315,7 @@ async function proveCompose(page, context, state, options, name, proof) {
 
 async function analyzerReady(page) {
   await expect(page.getByRole('combobox', { name: 'Address', exact: true })).toBeVisible();
-  await page.waitForFunction(() => Boolean(window.PBKAnalyzer?.getState));
+  await page.waitForFunction(() => Boolean(window.PBKAnalyzer?.getState), null, { polling: 250 });
 }
 
 async function proveAnalyzer(page, context, state, options, name, proof) {
@@ -329,13 +366,11 @@ async function runOperatorSessionProof(options) {
   const report = { ok: false, revision: options.revision, verificationMode: 'live_assets_and_auth_sample_business_state',
     productionBusinessActionsVerified: false, approvalDecisionExecutionAttempted: false, modes: [] };
   mkdirSync(options.output, { recursive: true });
-  let source, before;
+  let source, before, sourceBrowser, qaBrowser;
   try {
-    const browser = await chromium.connectOverCDP(options.cdpUrl);
-    source = browser.contexts().flatMap(context => context.pages()).find(page => {
-      try { return new URL(page.url()).origin === options.base; } catch { return false; }
-    });
-    assert.ok(source, 'An already unlocked PBK source tab is required');
+    sourceBrowser = await puppeteer.connect({ browserURL: options.cdpUrl, defaultViewport: null,
+      protocolTimeout: 30000, targetFilter: target => target.type() === 'browser' || target.url() === options.base + '/leads' });
+    source = await selectSourcePage(sourceBrowser, options);
     before = await fingerprintSource(source, options.base);
     const manifest = await source.evaluate(async () => {
       const response = await fetch('/pbk-build-manifest.json', { cache: 'no-store' });
@@ -348,11 +383,12 @@ async function runOperatorSessionProof(options) {
       if (!value?.token || Date.parse(value.expiresAt) <= Date.now()) throw Error('A valid PBK session is required');
       return raw;
     }, authKey);
-    const cookies = await source.context().cookies(options.base);
+    const cookies = await readSourceCookies(source, options.base);
     assert.ok(cookies.length, 'Private-site cookie missing');
+    qaBrowser = await chromium.launch({ headless: true });
     for (const width of [1440, 390]) {
       const name = width < 720 ? 'mobile' : 'desktop';
-      const context = await browser.newContext({ viewport: { width, height: 900 }, isMobile: width < 720,
+      const context = await qaBrowser.newContext({ viewport: { width, height: 900 }, isMobile: width < 720,
         hasTouch: width < 720, serviceWorkers: 'block' });
       try {
         await context.addCookies(cookies);
@@ -363,8 +399,11 @@ async function runOperatorSessionProof(options) {
         const proof = observeContextAssets(context, pins, options.base, error => state.errors.push(error.message));
         try {
           const page = await context.newPage();
+          await page.bringToFront();
           page.setDefaultTimeout(30000);
           await page.goto(options.base + '/command-center');
+          assert.deepEqual(await page.evaluate(() => Object.keys(localStorage).filter(key =>
+            key === 'pbk:compose:draft' || key === 'pbk:prod:analyzer:current-deal')), [], 'QA storage must not contain any working draft');
           await proveApprovals(page);
           await proveCompose(page, context, state, options, name, proof);
           await proveAnalyzer(page, context, state, options, name, proof);
@@ -380,6 +419,8 @@ async function runOperatorSessionProof(options) {
           await page.evaluate(() => window.scrollTo(0, 0));
           await page.screenshot({ path: resolve(options.output, name + '.png'), animations: 'disabled', timeout: 15000 });
           const loaded = await proof.verifyAll();
+          const finalBuild = await page.evaluate(async () => (await (await fetch('/pbk-build-manifest.json', { cache: 'no-store' })).json()).buildId);
+          assert.equal(finalBuild, options.revision, 'Production changed during the QA pass');
           report.modes.push({ name, viewport, approvalReviewCancel: true, composeReload: true, verifierRecovery: true,
             expiryLocksWorkspace: true, crossTabRecovery: true, analyzerReloadAndSecondTab: true,
             notesRepairsCompsArvPreserved: true, liveAuthVerifications: state.authVerified, injectedAuthFailures: state.authFailures,
@@ -392,6 +433,7 @@ async function runOperatorSessionProof(options) {
   } catch (error) {
     report.error = error instanceof Error ? error.message : 'Operator QA failed';
   } finally {
+    if (qaBrowser) await qaBrowser.close().catch(() => {});
     if (source && before) {
       try {
         const after = await fingerprintSource(source, options.base);
@@ -400,6 +442,7 @@ async function runOperatorSessionProof(options) {
         if (!report.originalDraftsUnchanged) { report.ok = false; report.error = 'Original draft fingerprints changed'; }
       } catch { report.ok = false; report.error = 'Original draft preservation could not be verified'; }
     }
+    if (sourceBrowser) sourceBrowser.disconnect();
     writeFileSync(resolve(options.output, 'report.json'), JSON.stringify(report, null, 2));
   }
   return report;
@@ -409,7 +452,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   try {
     const options = parseOptions(process.argv.slice(2));
     if (options.help) console.log('Manual desktop/mobile QA; no deployments, business writes or provider calls.\n' +
-      '--run-live --cdp-url LOOPBACK_HTTP_ORIGIN --expected-build FULL_SHA --asset-dir MATCHING_DIST\n' +
+      '--run-live --cdp-url LOOPBACK_HTTP_ORIGIN --source-target-id SOURCE_TARGET_ID --expected-build FULL_SHA --asset-dir MATCHING_DIST\n' +
       'Optional: --base-url PRIVATE_PBK_ORIGIN --output-dir IGNORED_ARTIFACT_DIRECTORY');
     else {
       const report = await runOperatorSessionProof(options);

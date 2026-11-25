@@ -162,6 +162,9 @@ export async function readSourceCookies(page, base) {
   const session = await page.target().createCDPSession();
   try {
     const { cookies } = await session.send('Network.getCookies', { urls: [base + '/'] });
+    // A lossy CDP-to-Playwright conversion must never broaden cookie scope.
+    assert.ok(cookies.every(cookie => !cookie.partitionKey && !cookie.partitionKeyOpaque),
+      'Partitioned source cookies cannot be reused safely; sign in to a separate QA profile');
     return cookies.map(({ name, value, domain, path, expires, httpOnly, secure, sameSite }) =>
       ({ name, value, domain, path, expires, httpOnly, secure, sameSite: sameSite || 'Lax' }));
   } finally { await session.detach(); }

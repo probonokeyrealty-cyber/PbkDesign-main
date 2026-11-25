@@ -326,6 +326,20 @@ test('cookie reuse is page-scoped, read-only and always detached', async () => {
   assert.equal(detached, true);
 });
 
+test('cookie reuse rejects partitioned cookies instead of silently unpartitioning them', async () => {
+  for (const partition of [{ partitionKey: { topLevelSite: base, hasCrossSiteAncestor: false } },
+    { partitionKeyOpaque: true }]) {
+    let detached = false;
+    const ordinary = { name: 'sample', value: 'ordinary-sample', domain: 'pbkcenter.netlify.app', path: '/' };
+    const page = { target: () => ({ createCDPSession: async () => ({
+      send: async () => ({ cookies: [ordinary, { ...ordinary, value: 'partitioned-sample', ...partition }] }),
+      detach: async () => { detached = true; },
+    }) }) };
+    await assert.rejects(readSourceCookies(page, base), /Partitioned source cookies cannot be reused safely/);
+    assert.equal(detached, true);
+  }
+});
+
 test('draft fingerprints snapshot raw values before async hashing and ignore deployment bookkeeping', async () => {
   const data = {
     'pbk-deal-data': 'legacy sample', 'pbk:compose:draft': ' {"body":"sample"} ',

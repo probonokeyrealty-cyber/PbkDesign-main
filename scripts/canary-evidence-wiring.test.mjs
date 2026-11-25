@@ -229,9 +229,11 @@ test('bridge code matches the reviewed release fingerprint outside the scoped re
   // Outbound sender selection checks channel permissions and keys delivery by sender
   // and document content. Manual routes return approval outcomes before provider dispatch.
   // Snapshot recovery retries the same Postgres row version and reconciles an ambiguous commit.
+  // The staff lead route reads open HighLevel tasks for an exact server-configured contact.
+  // The isolated bridge test verifies staff auth and the unconfigured no-network path.
   // A direct staff call binds a verified session to the exact saved recipient.
   assert.equal(createHash('sha256').update(unchanged).digest('hex'),
-    'e738c3efa848b9fe452fa2619004edb46bb363cc4ac2861b0669e8c709a75fe4');
+    '1c556db5f367412dc9374bb5aa91f88e76f5a9343a1640c11e4db5b04c29dc75');
 });
 
 test('production distribution includes reader and protocol, never the fixture signer', () => {

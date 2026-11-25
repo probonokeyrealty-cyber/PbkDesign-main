@@ -11,7 +11,7 @@ export function LeadPortalContactability({ lead }: { lead: LeadPortalModel }) {
   const summary = blocked ? 'Contact blocked' : consented && clear ? 'Records on file' : 'Contact records need review';
 
   return (
-    <section className="pbk-lead-portal-card" aria-label="Contactability">
+    <section id="lead-contactability" className="pbk-lead-portal-card" aria-label="Contactability">
       <header>
         <div>
           <span className="pbk-kicker">Reachability &amp; safety</span>

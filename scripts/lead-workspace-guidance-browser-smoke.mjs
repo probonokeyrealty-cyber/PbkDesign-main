@@ -23,6 +23,8 @@ async function verify(browserType, width) {
   const writes = [], lookups = [], errors = [];
   let consent = 'no consent', dnc = 'blocked', zip = '';
   let reviewMode = 'mismatched';
+  let taskReviewStatus = 'unmatched';
+  let nextStep = { code: 'hold_contact', title: 'Hold outreach', detail: 'Review the saved contact restriction.' };
   let reviewReads = 0;
   const consultationReads = [];
   const consultationRecords = [
@@ -43,6 +45,17 @@ async function verify(browserType, width) {
     if (path === '/api/property-data/attom-preview') lookups.push(path);
     if (path === '/api/state/stream/session') return route.fulfill({ json: { ok: false } });
     if (request.method() !== 'GET') { writes.push(path); return route.abort(); }
+    if (url.searchParams.get('tasks') === 'highlevel') {
+      assert.equal(path, `${leadApiPath}/full`);
+      return route.fulfill({ json: { ok: true, taskReview: {
+        leadId, source: 'highlevel', writeMode: 'read_only', status: taskReviewStatus,
+        ...(taskReviewStatus === 'ready' ? {
+          checkedAt: '2026-11-24T12:00:00Z',
+          contactUrl: 'https://app.gohighlevel.com/v2/location/test-location/contacts/detail/test-contact',
+          tasks: [{ id: 'test-task', title: 'Confirm underwriting inputs', dueAt: null, assigned: true }],
+        } : {}),
+      } } });
+    }
     if (url.searchParams.has('consultation')) {
       assert.equal(path, `${leadApiPath}/full`);
       assert.equal(url.searchParams.has('review'), false);
@@ -59,7 +72,7 @@ async function verify(browserType, width) {
         writeMode: 'read_only', reviewedAt: '2026-11-23T12:00:00Z',
         consultationDecisions: reviewMode === 'fresh-reasons' ? { version: 1, rex: 'elevated_score', hermes: 'tenant_pressure' } : null,
         consultationRecords: ['fresh-reasons', 'legacy-records'].includes(reviewMode) ? consultationRecords : [],
-        nextStep: { code: 'hold_contact', title: 'Hold outreach', detail: 'Review the saved contact restriction.' },
+        nextStep,
         evidence: { property: { recorded: true }, contact: { status: 'restricted' }, qualification: { missing: ['authority'] }, underwriting: { recorded: false, recordedAt: null } },
       } } });
     }
@@ -86,12 +99,18 @@ async function verify(browserType, width) {
     await expect(review.getByText('Missing authority', { exact: true })).toBeVisible();
     assert.equal(reviewReads, 2);
     await expect(review.getByText('Reasons weren’t recorded at intake.', { exact: true })).toBeVisible();
-    await expect(review.getByRole('link')).toHaveCount(0);
+    await expect(review.getByText('Your next step', { exact: true })).toBeVisible();
+    const restrictionLink = review.getByRole('link', { name: 'View contact restriction' });
+    await expect(restrictionLink).toHaveAttribute('href', '#lead-contactability');
+    await restrictionLink.press('Enter');
+    await expect(contact.getByRole('heading', { name: 'Contactability' })).toBeFocused();
+    assert.equal(reviewReads, 2, 'Following the handoff does not rerun Ava');
+    await expect(review.getByRole('link')).toHaveCount(1);
     await expect(copyAll).toHaveCount(0);
     await expect(review.getByRole('button', { name: 'Copy link', exact: false })).toHaveCount(0);
     reviewMode = 'legacy-records';
     await review.getByRole('button', { name: 'Run review again' }).click();
-    await expect(review.getByRole('link')).toHaveCount(2);
+    await expect(review.getByRole('link', { name: /^View saved .* consultation$/ })).toHaveCount(2);
     await expect(review.getByText('Reasons weren’t recorded at intake.', { exact: true })).toBeVisible();
     reviewMode = 'fresh-reasons';
     await review.getByRole('button', { name: 'Run review again' }).click();
@@ -145,6 +164,27 @@ async function verify(browserType, width) {
       mkdirSync('.pbk-local', { recursive: true });
       await review.screenshot({ path: `.pbk-local/ava-lead-review-${browserType.name()}-${width}.png` });
     }
+    for (const [code, name, destination, heading] of [
+      ['review_contact', 'Check consent and DNC', '#lead-contactability', 'Contactability'],
+      ['confirm_property', 'Open property details', '#lead-property', 'Property'],
+      ['review_qualification', 'Review seller timeline', '#lead-timeline', 'Seller timeline'],
+      ['review_offer', 'Open saved underwriting', '#lead-numbers', 'Underwriting'],
+      ['review_underwriting', 'Open Analyzer', `/deal/${leadId}`],
+    ]) {
+      nextStep = { code, title: 'Review lead evidence', detail: 'Check the saved evidence.' };
+      await review.getByRole('button', { name: 'Run review again' }).click();
+      const handoff = review.getByRole('link', { name, exact: true });
+      await expect(handoff).toHaveAttribute('href', destination);
+      if (heading) {
+        await handoff.press('Enter');
+        await expect(page.getByRole('heading', { name: heading, exact: true })).toBeFocused();
+      }
+    }
+    nextStep = { code: 'future_review_step', title: 'Review additional evidence', detail: 'Check the saved evidence.' };
+    reviewMode = 'exact';
+    await review.getByRole('button', { name: 'Run review again' }).click();
+    await expect(review.getByText(nextStep.title, { exact: true })).toBeVisible();
+    await expect(review.getByRole('link')).toHaveCount(0);
     const property = page.getByRole('region', { name: 'Property', exact: true });
     await expect(property.getByText('Missing ZIP', { exact: true })).toBeVisible();
     await property.getByRole('button', { name: 'Complete address', exact: true }).click();
@@ -177,16 +217,30 @@ async function verify(browserType, width) {
       .getByRole('button', { name: 'Refresh property intelligence', exact: true })).toBeEnabled();
     await expect(property.getByText('1,480 sq ft', { exact: true })).toBeVisible();
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
-    assert.deepEqual(writes, []);
-    assert.deepEqual(lookups, []);
-    assert.deepEqual(errors, []);
     if (process.env.PBK_GUIDANCE_SHOTS === '1') {
       mkdirSync('.pbk-local', { recursive: true });
       await property.scrollIntoViewIfNeeded();
       await page.screenshot({ path: `.pbk-local/lead-guidance-${browserType.name()}-${width}.png`, scale: 'css' });
     }
+    const tasks = page.getByRole('region', { name: 'GoHighLevel tasks', exact: true });
+    await tasks.getByRole('button', { name: 'Check open tasks' }).click();
+    await expect(tasks.getByText('This lead has no verified GoHighLevel contact match.')).toBeVisible();
+    await expect(tasks.getByRole('link')).toHaveCount(0);
+    taskReviewStatus = 'ready';
+    await tasks.getByRole('button', { name: 'Refresh tasks' }).click();
+    await expect(tasks.getByText('Confirm underwriting inputs', { exact: true })).toBeVisible();
+    await expect(tasks.getByRole('link', { name: 'Open contact in GoHighLevel' }))
+      .toHaveAttribute('href', 'https://app.gohighlevel.com/v2/location/test-location/contacts/detail/test-contact');
+    assert.ok(await tasks.evaluate(element => element.scrollWidth <= element.clientWidth));
+    await tasks.getByRole('link', { name: 'Draft a plan with Ava' }).click();
+    await expect(page).toHaveURL(new RegExp(`/ava-chat\\?leadId=${leadId}$`));
+    await expect(page.getByPlaceholder('Ask about a lead or type a request…'))
+      .toHaveValue(/Keep this read-only.+Confirm underwriting inputs/);
+    assert.deepEqual(writes, []);
+    assert.deepEqual(lookups, []);
+    assert.deepEqual(errors, []);
     const browserName = verifyClipboard && process.env.PBK_GUIDANCE_CHROME === '1' ? 'Chrome' : browserType.name();
-    console.log(`${browserName} ${width}px: lead review, consultation links, address guidance, consent labels, and zero writes/lookups passed`);
+    console.log(`${browserName} ${width}px: lead review, consultation links, address guidance, consent, CRM task handoff, and zero writes/lookups passed`);
   } finally { await browser.close(); }
 }
 try {

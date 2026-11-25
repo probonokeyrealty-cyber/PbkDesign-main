@@ -14,6 +14,7 @@ import '../../styles/faster-triage.css';
 import { PbkDataSource } from '../../components/pbk/index';
 import { AvaLeadReviewCard } from '../components/leads/AvaLeadReviewCard';
 import { LeadPortalContactability } from '../components/leads/LeadPortalContactability';
+import { LeadPortalHighLevelTasks } from '../components/leads/LeadPortalHighLevelTasks';
 import { LeadPortalDealContext } from '../components/leads/LeadPortalDealContext';
 import { LeadPortalHeader } from '../components/leads/LeadPortalHeader';
 import { LeadPortalOverview } from '../components/leads/LeadPortalOverview';
@@ -905,9 +906,17 @@ export function LeadPortal() {
           <LeadPortalOverview lead={lead} />
         </div>
         <div className="pbk-portal-context-column">
-          {!loading && lead.id === leadId && <AvaLeadReviewCard key={leadId} leadId={leadId} />}
+          {!loading && lead.id === leadId && (
+            <AvaLeadReviewCard
+              key={leadId}
+              leadId={leadId}
+              analyzerLink={analyzerLink}
+              onJumpToSection={jumpToSection}
+            />
+          )}
           <LeadPortalDealContext lead={lead} />
           <LeadPortalContactability lead={lead} />
+          {!loading && lead.id === leadId && <LeadPortalHighLevelTasks key={leadId} leadId={leadId} />}
         </div>
       </div>
 

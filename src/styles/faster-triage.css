@@ -103,6 +103,7 @@
 .pbk-lead-portal .pbk-portal-next-step p { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.5; }
 .pbk-lead-portal #lead-next-step,
 .pbk-lead-portal #lead-timeline,
+.pbk-lead-portal #lead-contactability,
 .pbk-lead-portal #lead-numbers,
 .pbk-lead-portal #lead-property { scroll-margin-block-start: 80px; }
 @media (min-width: 1100px) {

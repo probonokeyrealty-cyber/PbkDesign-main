@@ -1474,12 +1474,13 @@ const checks = [
       /seller:\s*\{[\s\S]*name:\s*leadName \|\|/.test(bridge),
   },
   {
-    name: 'After-hours voicemail is opt-in and still streams caller audio when enabled',
+    name: 'After-hours callers keep Ava assistance without advertising unconsented voicemail',
     ok:
       /PBK_INBOUND_AFTER_HOURS_VOICEMAIL_ENABLED/.test(bridge) &&
       /INBOUND_AFTER_HOURS_VOICEMAIL_ENABLED && options\.forceAfterHours !== false/.test(bridge) &&
       /route === 'after_hours_voicemail'[\s\S]*action:\s*'streaming_start'/.test(bridge) &&
-      /streamRequired = \['ava_qualify', 'after_hours_voicemail'\]/.test(bridge),
+      /continuing with Ava without recorded voicemail/.test(bridge) &&
+      /streamRequired = route === 'ava_qualify'/.test(bridge),
   },
   {
     name: 'Telnyx Deepgram live socket uses phone-safe model and captures 400 bodies',
@@ -1644,15 +1645,14 @@ const checks = [
       /user_goals/.test(bridge),
   },
   {
-    name: 'Normal inbound Ava calls request Telnyx audio recording once before route branching',
+    name: 'Inbound recording fails closed until a verified call-scoped consent flow exists',
     ok:
       /PBK_TELNYX_RECORD_INBOUND_CALLS/.test(bridge) &&
       /async function maybeRecordInboundTelnyxCall/.test(bridge) &&
       /inbound_recording_start/.test(bridge) &&
+      /recording_consent_required/.test(bridge) &&
       /action:\s*'record',\s*result:\s*await maybeRecordInboundTelnyxCall/.test(bridge) &&
-      !/after_hours_voicemail'[\s\S]{0,1400}action:\s*'record',\s*result:\s*await recordTelnyxCall/.test(
-        bridge
-      ),
+      !/\/actions\/record_start/.test(bridge),
   },
   {
     name: 'Inbound lead context never falls back to another seller when phone or lead id is explicit',

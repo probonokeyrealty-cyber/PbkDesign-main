@@ -240,8 +240,9 @@ test('bridge code matches the reviewed release fingerprint outside the scoped re
   // Fictional bridge fixtures cover stop-contact, the spoken guard, and helper authority.
   // The opt-in skill worker mirrors verified lifecycle events to Supabase.
   // Skill governance tests cover projection delivery and the transcript fallback.
+  // The Skill Manager grant binds to one signed, unexpired team session.
   assert.equal(createHash('sha256').update(unchanged).digest('hex'),
-    'a6d3ec8b5f180603572752bbfb79e0aa40efd688d6d1c5f6ba4297ef06cf74d2');
+    '875b3bdbe0fc4b5da187f6c92905144c29182eb9b7bb2977fd365ab172b8b67b');
 });
 
 test('production distribution includes reader and protocol, never the fixture signer', () => {

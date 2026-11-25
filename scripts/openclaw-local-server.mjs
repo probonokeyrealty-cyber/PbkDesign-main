@@ -713,6 +713,7 @@ const HERMES_SUGGEST_ONLY = !/^(0|false|no|off)$/i.test(String(process.env.PBK_H
 const HERMES_TIMEOUT_MS = Math.max(1000, Math.min(60000, Number(process.env.PBK_HERMES_TIMEOUT_MS || 8000)));
 const PROTECTED_OPS_PASSCODE = String(process.env.PBK_PROTECTED_OPS_PASSCODE || '').trim();
 const TEAM_PASSCODE = String(process.env.PBK_TEAM_PASSCODE || '').trim();
+const SKILL_MANAGER_SESSION_SHA256 = String(process.env.PBK_SKILL_MANAGER_SESSION_SHA256 || '').trim().toLowerCase();
 const TEAM_SESSION_TTL_MS = Math.max(5 * 60 * 1000, Number(process.env.PBK_TEAM_SESSION_TTL_MS || 8 * 60 * 60 * 1000));
 const TEAM_APPROVAL_LIMIT = Math.max(1, Number(process.env.PBK_TEAM_APPROVAL_LIMIT || 150000));
 const OPERATOR_PHONE = normalizePhone(process.env.PBK_OPERATOR_PHONE || HUMAN_AGENT_PHONE || '');
@@ -3849,6 +3850,8 @@ function verifyTeamSessionToken(token = '') {
     role: decoded.role || 'team',
     actor: decoded.actor || 'PBK team',
     expiresAt: new Date(Number(decoded.expiresAt)).toISOString(),
+    canManageSkills: /^[a-f0-9]{64}$/.test(SKILL_MANAGER_SESSION_SHA256) &&
+      safeCompareString(createHash('sha256').update(value).digest('hex'), SKILL_MANAGER_SESSION_SHA256),
   };
 }
 
@@ -3893,7 +3896,7 @@ function getTeamAuthMeta(request = {}, body = {}) {
   };
 }
 
-function getTeamPermissions() {
+function getTeamPermissions(teamAuth = {}) {
   return {
     canViewLeads: true,
     canCreateCampaignDrafts: true,
@@ -3907,7 +3910,8 @@ function getTeamPermissions() {
     canDeleteLeads: !/^(0|false|no|off)$/i.test(String(process.env.PBK_TEAM_CAN_DELETE_LEADS || 'true').trim()),
     canDeleteData: false,
     canChangeGuardrails: false,
-    canManageSkills: /^(1|true|yes|on)$/i.test(String(process.env.PBK_TEAM_CAN_MANAGE_SKILLS || '').trim()),
+    canManageSkills: teamAuth.canManageSkills === true ||
+      /^(1|true|yes|on)$/i.test(String(process.env.PBK_TEAM_CAN_MANAGE_SKILLS || '').trim()),
     canManagePhoneNumbers: /^(1|true|yes|on)$/i.test(String(process.env.PBK_TEAM_CAN_MANAGE_PHONE_NUMBERS || '').trim()),
     canToggleKillSwitch: false,
   };
@@ -74531,7 +74535,7 @@ const server = createServer(async (request, response) => {
           method: request.method,
           pathname,
           body: authBody,
-          permissions: getTeamPermissions(),
+          permissions: getTeamPermissions(teamAuth),
         });
         if (!authorization.ok) {
           json(response, authorization.statusCode || 403, {
@@ -77938,7 +77942,7 @@ const server = createServer(async (request, response) => {
         role: teamAuth.role,
         actor: teamAuth.actor,
         expiresAt: teamAuth.expiresAt,
-        permissions: getTeamPermissions(),
+        permissions: getTeamPermissions(teamAuth),
       });
       return;
     }

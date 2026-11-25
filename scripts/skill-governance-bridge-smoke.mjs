@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { startIsolatedBridge } from './bridge-smoke-isolation.mjs';
 
 const bridge = readFileSync(
   resolve(process.cwd(), 'scripts/openclaw-local-server.mjs'),
@@ -101,4 +102,29 @@ assert(
   'Article ingestion must fail clearly when URL/text content is unavailable or too short.'
 );
 
+const isolated = await startIsolatedBridge({ skillManagerSessionFixture: true });
+try {
+  const { selected, ordinary, expired } = isolated.skillManagerSessions;
+  const post = (path, token) => isolated.fetch(isolated.origin + path, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-PBK-Team-Token': token },
+    body: '{}',
+  });
+  for (const [token, canManage] of [[ordinary, false], [selected, true]]) {
+    const response = await post('/api/auth/team/verify', token);
+    assert.equal(response.status, 200);
+    assert.equal((await response.json()).permissions.canManageSkills, canManage);
+  }
+  for (const token of [expired, selected + 'invalid']) {
+    assert.equal((await post('/api/auth/team/verify', token)).status, 401);
+  }
+  const denied = await post('/api/skills/candidates', ordinary);
+  assert.equal(denied.status, 403);
+  assert.equal((await denied.json()).permission, 'canManageSkills');
+  const allowed = await post('/api/skills/candidates', selected);
+  assert.equal(allowed.status, 400);
+  assert.equal((await allowed.json()).result, 'skill_candidate_fields_required');
+} finally {
+  await isolated.stop();
+}
 console.log('skill-governance-bridge-smoke: ok');

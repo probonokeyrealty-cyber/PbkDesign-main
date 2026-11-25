@@ -35435,6 +35435,7 @@ function createCallRecord(params = {}) {
     mediaStreamStatus: params.mediaStreamStatus || params.media_stream_status || '',
     mediaStreamError: params.mediaStreamError || params.media_stream_error || '',
     mediaStreamUpdatedAt: params.mediaStreamUpdatedAt || params.media_stream_updated_at || '',
+    ...(params.outboundVoicemailDetected === true ? { outboundVoicemailDetected: true } : {}),
     outboundAvaGreetingSpoken: Boolean(params.outboundAvaGreetingSpoken || params.outbound_ava_greeting_spoken),
     outboundAvaGreetingAt: params.outboundAvaGreetingAt || params.outbound_ava_greeting_at || '',
     outboundAvaGreetingError: params.outboundAvaGreetingError || params.outbound_ava_greeting_error || '',
@@ -63584,9 +63585,9 @@ async function handleRuntimeEvent(normalizedEvent, payload, { directRetentionFou
     if (completion) call.verifiedTelnyxCompletion = completion;
     upsertCall(state, call);
     let outboundGreetingResult = null;
-    const shouldPlayOutboundGreeting = /^(live|answered)$/i.test(String(nextStatus || '')) && String(call.direction || '').toLowerCase() === 'outbound' && String(call.provider || '').toLowerCase() === 'telnyx' && Boolean(call.telnyxCallControlId) && !call.outboundAvaGreetingSpoken;
+    const shouldPlayOutboundGreeting = /^(live|answered)$/i.test(String(nextStatus || '')) && String(call.direction || '').toLowerCase() === 'outbound' && String(call.provider || '').toLowerCase() === 'telnyx' && Boolean(call.telnyxCallControlId) && !call.outboundAvaGreetingSpoken && !call.outboundVoicemailDetected;
     if (shouldPlayOutboundGreeting) {
-      const greeting = String(payload.greeting || payload.outboundGreeting || '').trim() || 'Hi, this is Ava with Probono Key Realty. Thanks for picking up. I am here about the property. If you can hear me, tell me the property address and what you are hoping to do next.';
+      const greeting = 'Hi, this is Ava with Probono Key Realty. I am calling about the property.';
       outboundGreetingResult = await speakAvaPhoneReplyByCallId(call.telnyxCallControlId, greeting);
       call.outboundAvaGreetingSpoken = Boolean(outboundGreetingResult.ok);
       call.outboundAvaGreetingAt = isoNow();
@@ -64476,6 +64477,7 @@ function sendTelnyxMediaClearCommand(session = {}, reason = 'caller_barge_in') {
 }
 
 function isTelnyxTtsReplyStale(session = {}, options = {}) {
+  if (session.outboundVoicemailDetected) return { stale: true, result: 'voicemail_detected' };
   if (!isCurrentTelnyxMediaSession(session)) {
     return {
       stale: true,
@@ -64707,6 +64709,7 @@ async function sendElevenLabsTtsToTelnyxMediaStream(session = {}, text = '', opt
 }
 
 async function sendAvaPhoneReplyAudio(session = {}, text = '', options = {}) {
+  if (session.outboundVoicemailDetected) return { ok: false, skipped: true, result: 'voicemail_detected' };
   const safeText = sanitizeAvaSpokenOutput(text, 'I hear you. Let me slow this down so I can help the right way. What matters most right now: speed, certainty, or price?');
   let mediaResult = null;
   try {
@@ -71131,6 +71134,33 @@ function normalizeTelnyxRepairTranscript(transcript = '') {
     .trim();
 }
 
+function classifyTelnyxOutboundVoicemailGreeting(transcript, previousPrefix = '') {
+  const clean = normalizeTelnyxRepairTranscript(String(transcript || '').replace(/\u2019/g, "'"));
+  const greeting = previousPrefix ? [previousPrefix, clean].join(' ') : clean;
+  const recordingPrompt = /(?:leave|record) (?:a|your) (?:voice )?message/;
+  const customGreeting = /^(?:(?:hi|hello) )?you(?:'ve| have) reached\b/;
+  if (
+    /^(?:(?:your )?call )?(?:(?:has been|is being|was) )?(?:forwarded|sent) to (?:an? )?(?:automated |automatic )?(?:voice ?mail|voice messag(?:e|ing) system)\b/.test(clean) ||
+    /^you(?:'ve| have) reached (?:the )?(?:voice ?mail|mailbox)\b/.test(clean) ||
+    /^the person you(?:'re| are| re) trying to reach (?:is not available|is unavailable|cannot be reached)\b/.test(greeting) ||
+    /^(?:the |this )?mailbox is full\b/.test(clean) ||
+    /^(?:at|after) the (?:tone|beep)$/.test(clean) ||
+    /\b(?:at|after) the (?:tone|beep) (?:please )?(?:leave|record) (?:a|your) (?:voice )?message\b/.test(clean) ||
+    /\b(?:leave|record) (?:a|your) (?:voice )?message (?:at|after) the (?:tone|beep)\b/.test(clean) ||
+    (customGreeting.test(greeting) && recordingPrompt.test(clean))
+  ) return { detected: true };
+  if (/^(?:please )?(?:leave|record) (?:a|your) (?:voice )?message$/.test(clean)) {
+    return { promptOnly: true };
+  }
+
+  // Hold only recognizable openings while waiting for the rest of a split greeting.
+  if (/^the person you(?:'re| are| re) trying to reach$/.test(clean) ||
+      (customGreeting.test(clean) && clean.split(' ').length <= 9 && !/[.!?].+\w/.test(transcript))) {
+    return { prefix: clean };
+  }
+  return {};
+}
+
 function isTelnyxLiveAudioCheckUtterance(transcript = '') {
   const clean = normalizeTelnyxRepairTranscript(transcript);
   if (!clean) return false;
@@ -72776,7 +72806,7 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
       });
     }
 
-    if (transcriptText) {
+    if (transcriptText && !session.outboundVoicemailDetected) {
       const classification = classifyPbkIntent(transcriptText);
       await recordPbkIntentEvent(
         {
@@ -73000,7 +73030,7 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
         return;
       }
       void maybeSpeakTelnyxAvaReply(pending);
-    }, TELNYX_BRIDGE_AVA_FINAL_ONLY_REPLY_DELAY_MS);
+    }, item.possibleVoicemailPrefix ? 2200 : TELNYX_BRIDGE_AVA_FINAL_ONLY_REPLY_DELAY_MS);
   };
 
   const queueTelnyxAvaReplyRetry = (item = {}, delayMs = TELNYX_BRIDGE_AVA_REPLY_RETRY_BUFFER_MS, reason = 'reply_retry') => {
@@ -73064,6 +73094,7 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
       return;
     }
     if (!session.callId || !(item.speechFinal || item.finalOnlyFallback)) return;
+    if (session.outboundVoicemailDetected) return;
     const timingTurn = createBridgeAgentTimingTurn('phone');
     const replyTurnVersion = Number(item.turnVersion || session.sellerTranscriptVersion || 0);
     const expandedOptionAnswer = expandAvaLiveOptionLetterAnswer(session, item.transcript || '');
@@ -73715,8 +73746,65 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
       console.log(`[AudioPath] Deepgram ${session.lastDeepgramEvent} for ${session.callId || session.streamId || session.id}: "${transcript}"`);
     }
     clearNoTranscriptFallbackTimer();
-    const actionableTranscript = !isWeakTelnyxSellerUtterance(transcript);
     const committedTranscript = Boolean(normalized.isFinal || normalized.speechFinal);
+    const contextCall = getCallById(session.callId);
+    if (contextCall?.outboundVoicemailDetected) session.outboundVoicemailDetected = true;
+    const item = {
+      transcript,
+      confidence: normalized.confidence,
+      isFinal: normalized.isFinal,
+      speechFinal: normalized.speechFinal,
+      start: data.start ?? null,
+      duration: data.duration ?? null,
+      capturedAt: isoNow(),
+    };
+    if (committedTranscript && String(contextCall?.direction || '').toLowerCase() === 'outbound' && !session.outboundVoicemailDetected) {
+      const recentPrefix = session.outboundVoicemailPrefix;
+      const now = Date.now();
+      let greeting = classifyTelnyxOutboundVoicemailGreeting(
+        transcript,
+        recentPrefix && now - recentPrefix.at < 5000 ? recentPrefix.text : ''
+      );
+      if ((greeting.detected || greeting.prefix || greeting.promptOnly) &&
+          classifyAvaLiveObjectionV2(transcript).intent === 'stop_contact') {
+        greeting = {};
+      }
+      const detected = greeting.detected || (greeting.promptOnly && !session.lastAvaReplySpoken);
+      session.outboundVoicemailPrefix = greeting.prefix ? { text: greeting.prefix, at: now } : null;
+      if (detected || greeting.prefix) {
+        clearPendingTelnyxFinalOnlyReply();
+        item.turnVersion = markTelnyxSellerTranscriptVersion();
+        noteTelnyxCallerSpeechDuringAva();
+      }
+      if (greeting.prefix) {
+        // A live caller may use the same opening. Give a recording time to finish
+        // before releasing the held turn through the existing final-only timer.
+        scheduleTelnyxAvaReplyForTranscript({ ...item, isFinal: true, speechFinal: false, possibleVoicemailPrefix: true });
+      }
+      if (detected) {
+        session.outboundVoicemailDetected = true;
+        upsertCall(state, { ...contextCall, outboundVoicemailDetected: true });
+        persistStateInBackground('Outbound voicemail detected');
+        recordCallTrace('ava_phone_reply_skipped', {
+          ...session,
+          status: 'skipped',
+          result: 'voicemail_detected',
+          stage: 'handleTelnyxDeepgramMessage',
+        });
+      }
+    }
+    if (session.outboundVoicemailDetected || (committedTranscript && session.outboundVoicemailPrefix)) {
+      if (committedTranscript) {
+        session.transcript.push({
+          ...item,
+          ...(session.outboundVoicemailDetected ? { speaker: 'Voicemail' } : {}),
+          ignoredForPathLock: true,
+        });
+        void syncTelnyxSessionToRedis(session, 'active', { force: true });
+      }
+      return;
+    }
+    const actionableTranscript = !isWeakTelnyxSellerUtterance(transcript);
     const callerNameOnly = committedTranscript ? extractLikelyCallerNameOnlyUtterance(transcript) : '';
     if (callerNameOnly) {
       session.callerProvidedName = callerNameOnly;
@@ -73731,17 +73819,8 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
     const turnVersion = replyWorthy ? markTelnyxSellerTranscriptVersion() : Number(session.sellerTranscriptVersion || 0);
     const sentiment = normalizeDeepgramLiveSentiment(data);
     if (sentiment.pbkScore !== null) session.sentiment = sentiment;
-    const item = {
-      transcript,
-      confidence: normalized.confidence,
-      isFinal: normalized.isFinal,
-      speechFinal: normalized.speechFinal,
-      turnVersion,
-      start: data.start ?? null,
-      duration: data.duration ?? null,
-      sentiment,
-      capturedAt: isoNow(),
-    };
+    item.turnVersion = turnVersion;
+    item.sentiment = sentiment;
     session.transcript.push(item);
     if (replyWorthy) noteTelnyxCallerSpeechDuringAva();
     recordCallTrace('deepgram_transcript', {
@@ -73756,7 +73835,6 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
     void syncTelnyxSessionToRedis(session, 'active', {
       force: normalized.isFinal || normalized.speechFinal,
     });
-    const contextCall = getCallById(session.callId);
     if (contextCall && actionableTranscript && committedTranscript) {
       applyAvaLiveTurnFacts(session, transcript, '');
       const liveBant = normalizeBantInfo(contextCall.bant || {}, session.bantStatus?.known || {}, deriveLiveBantFactsFromSession(session), extractBantFromTranscript(transcript, normalizeBantInfo(contextCall.bant || {}, session.bantStatus?.known || {}, session.bant || {})));
@@ -74193,6 +74271,7 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
             }
             return;
           }
+          if (existingSession.outboundVoicemailDetected) session.outboundVoicemailDetected = true;
           existingSession.avaReplySuppressed = true;
           existingSession.supersededByStreamId = session.streamId || session.id;
           existingSession.supersededAt = isoNow();
@@ -74208,6 +74287,7 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
       }
       const contextCall = getCallById(session.callId);
       if (contextCall) {
+        if (contextCall.outboundVoicemailDetected) session.outboundVoicemailDetected = true;
         session.leadId = session.leadId || contextCall.leadId || '';
         session.leadName = getSpokenLeadName(session.leadName || contextCall.leadName || '');
         session.address = session.address || contextCall.address || '';

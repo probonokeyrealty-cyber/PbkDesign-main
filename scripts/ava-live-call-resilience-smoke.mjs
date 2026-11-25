@@ -3,6 +3,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
+import { classifyAvaLiveObjectionV2 } from './ava-live-turn-contract.mjs';
 import { summarizePhoneTurnTiming } from './ava-phone-latency.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -180,6 +181,8 @@ Object.assign(runtime, {
   scheduleTelnyxAvaReplyForTranscript: (item) => scheduled.push(item),
 });
 vm.runInContext(sourceBetween('function normalizeDeepgramLiveTranscript(', 'const browserVoiceSessions'), runtime);
+vm.runInContext(sourceBetween('function normalizeTelnyxRepairTranscript(', 'function isTelnyxLiveAudioCheckUtterance('), runtime);
+runtime.clearPendingTelnyxFinalOnlyReply = noop;
 vm.runInContext(sourceBetween('  const noteTelnyxCallerSpeechDuringAva =', '  const flushPendingTelnyxMediaFrames =') +
   '\nglobalThis.receiveSpeech = handleTelnyxDeepgramMessage;', runtime);
 runtime.receiveSpeech({ type: 'Metadata' });
@@ -231,6 +234,138 @@ runtime.isCurrentTelnyxMediaSession = () => true;
 runtime.finalized = true;
 runtime.receiveSpeech({ type: 'SpeechStarted' });
 assert.equal(sent.length, beforeSuppressed, 'Suppressed, replaced, or finalized sessions must not clear playback');
+
+Object.assign(runtime, {
+  normalizeBantInfo: () => ({}), deriveLiveBantFactsFromSession: noop, extractBantFromTranscript: noop,
+  inferAvaDealPathDecision: () => ({}), applyAvaPathDecisionToSession: noop, getMissingBantFields: () => [],
+  upsertCall: noop, recordBantSessionForLiveCall: async () => {}, scheduleRuntimeStateBroadcast: noop,
+  classifyAvaLiveObjectionV2,
+});
+const outboundGreeting = sourceBetween('    if (shouldPlayOutboundGreeting) {', '      call.outboundAvaGreetingSpoken');
+let greetingSpoken;
+await vm.runInNewContext(
+  '(async () => { let outboundGreetingResult; ' + outboundGreeting + ' } })()',
+  {
+    shouldPlayOutboundGreeting: true,
+    payload: { greeting: 'What repairs does it need?' },
+    call: { telnyxCallControlId: 'fictional-call' },
+    speakAvaPhoneReplyByCallId: (_id, text) => { greetingSpoken = text; return { ok: true }; },
+  }
+);
+assert.equal(greetingSpoken, 'Hi, this is Ava with Probono Key Realty. I am calling about the property.',
+  'The carrier answer event cannot verify a human picked up, so use an introduction without questions');
+
+runtime.finalized = false;
+const scheduledBeforeVoicemail = scheduled.length;
+let canceledFinalOnlyRetries = 0;
+let heldVoicemailPrefix;
+runtime.clearPendingTelnyxFinalOnlyReply = () => {
+  canceledFinalOnlyRetries += 1;
+  heldVoicemailPrefix = undefined;
+};
+runtime.scheduleTelnyxAvaReplyForTranscript = (item) => {
+  if (item.possibleVoicemailPrefix) {
+    assert.equal(item.speechFinal, false);
+    heldVoicemailPrefix = item;
+  } else {
+    scheduled.push(item);
+  }
+};
+const voicemailCases = [
+  ['Has been forwarded to voice mail.', 'The person you are trying to reach is unavailable.', 'Please record your message.'],
+  ['At the tone,', 'please leave your message.'],
+  ['Your call is being forwarded to an automated voice messaging system.'],
+  ['Your call has been forwarded to an automatic voice message system.'],
+  ['The mailbox is full and cannot accept any messages at this time.'],
+  ["Hi, you've reached the Rivera household.", 'Please leave a message after the beep.'],
+  ["Hi, you've reached the Rivera household. Please leave a message."],
+  ['The person you’re trying to reach', 'is not available.'],
+];
+const committedSpeech = (transcript) =>
+  runtime.receiveSpeech({ type: 'Results', transcript, is_final: true, speech_final: true });
+for (const fragments of voicemailCases) {
+  const voicemailSession = { callId: 'fictional-voicemail', transcript: [], sellerTranscriptVersion: 1 };
+  runtime.session = voicemailSession;
+  let savedCall = { id: voicemailSession.callId, direction: 'Outbound' };
+  runtime.getCallById = () => savedCall;
+  runtime.upsertCall = (_state, call) => { savedCall = call; };
+  let sellerFacts = 0;
+  runtime.applyAvaLiveTurnFacts = () => { sellerFacts += 1; };
+  for (const fragment of fragments) committedSpeech(fragment);
+  assert.equal(voicemailSession.outboundVoicemailDetected, true, fragments.join(' '));
+  assert.equal(heldVoicemailPrefix, undefined, 'The completed voicemail greeting cancels the held turn');
+  assert.equal(savedCall.outboundVoicemailDetected, true, 'The call must retain voicemail detection');
+  assert.equal(sellerFacts, 0, 'Carrier speech must stay out of seller facts');
+  committedSpeech('Thank you for calling.');
+  assert.equal(sellerFacts, 0, 'Later voicemail fragments must stay out of seller facts');
+  assert.equal(runtime.isTelnyxTtsReplyStale(voicemailSession, { replyTurnVersion: 1 }).result,
+    'voicemail_detected', 'A reply already in flight must be dropped');
+  assert.equal(voicemailSession.transcript.at(-1).speaker, 'Voicemail');
+  runtime.session = { callId: savedCall.id, transcript: [] };
+  committedSpeech('Thank you for calling.');
+  assert.equal(runtime.session.outboundVoicemailDetected, true, 'A replacement stream restores detection from the saved call');
+}
+assert.equal(scheduled.length, scheduledBeforeVoicemail, 'Voicemail must never schedule a seller question');
+assert.ok(canceledFinalOnlyRetries >= voicemailCases.length, 'Voicemail cancels pending final-only replies');
+
+runtime.upsertCall = noop;
+runtime.session = { callId: 'fictional-seller', transcript: [], sellerTranscriptVersion: 0 };
+runtime.getCallById = () => ({ direction: 'outbound' });
+runtime.receiveSpeech({ type: 'Results', transcript: 'Your call has been forwarded to voicemail.' });
+assert.equal(runtime.session.outboundVoicemailDetected, undefined, 'An interim ASR guess cannot latch voicemail');
+committedSpeech('I heard your voicemail. I own the house.');
+assert.equal(scheduled.at(-1).transcript, 'I heard your voicemail. I own the house.');
+committedSpeech('Please stop calling. Do not leave me a voicemail.');
+assert.equal(scheduled.at(-1).transcript, 'Please stop calling. Do not leave me a voicemail.');
+committedSpeech('Do not call me again. Please leave a message after the beep.');
+assert.equal(scheduled.at(-1).transcript, 'Do not call me again. Please leave a message after the beep.');
+committedSpeech("I'm the owner, but please leave a message.");
+assert.equal(scheduled.at(-1).transcript, "I'm the owner, but please leave a message.");
+assert.notEqual(runtime.session.outboundVoicemailDetected, true);
+committedSpeech("Hi, you've reached Maria.");
+assert.equal(heldVoicemailPrefix?.transcript, "Hi, you've reached Maria.", 'An ambiguous personal greeting has a bounded fallback');
+committedSpeech("The person you're trying to reach");
+committedSpeech('is my sister. I can help with the property.');
+assert.equal(scheduled.at(-1).transcript, 'is my sister. I can help with the property.');
+assert.notEqual(runtime.session.outboundVoicemailDetected, true, 'An ambiguous prefix must resolve as live when the next fragment differs');
+runtime.session.lastAvaReplySpoken = 'What is the property address?';
+committedSpeech('Please leave a message.');
+assert.notEqual(runtime.session.outboundVoicemailDetected, true, 'A request to leave a message during a live dialogue is ambiguous');
+committedSpeech('Please stop calling.');
+assert.equal(scheduled.at(-1).transcript, 'Please stop calling.');
+runtime.getCallById = () => ({ direction: 'inbound' });
+committedSpeech('Please leave a message.');
+assert.equal(scheduled.at(-1).transcript, 'Please leave a message.');
+assert.notEqual(runtime.session.outboundVoicemailDetected, true, 'Inbound calls retain their existing behavior');
+runtime.session = session;
+
+let prefixTimer;
+const releasedTurns = [];
+const replyScheduler = vm.createContext({
+  session: { sellerTranscriptVersion: 3 }, finalized: false, telnyxPendingFinalReplyItem: null,
+  telnyxFinalOnlyReplyTimer: null, TELNYX_BRIDGE_AVA_FINAL_ONLY_REPLY_DELAY_MS: 950,
+  setTimeout: (callback, delay) => { prefixTimer = { callback, delay }; return 1; },
+  clearTimeout: () => { prefixTimer = undefined; },
+  maybeSpeakTelnyxAvaReply: (item) => releasedTurns.push(item),
+});
+vm.runInContext(sourceBetween('  const clearPendingTelnyxFinalOnlyReply =', '  const queueTelnyxAvaReplyRetry =') +
+  '\nglobalThis.scheduleReply = scheduleTelnyxAvaReplyForTranscript;', replyScheduler);
+replyScheduler.scheduleReply({
+  transcript: "Hello, you've reached Morgan.", turnVersion: 3,
+  isFinal: true, speechFinal: false, possibleVoicemailPrefix: true,
+});
+assert.ok(prefixTimer.delay > 950 && prefixTimer.delay < 5000, 'Allow time for a split greeting while keeping live callers moving');
+assert.equal(releasedTurns.length, 0, 'Withhold the reply while a split greeting could still be completed');
+prefixTimer.callback();
+assert.equal(releasedTurns.at(-1)?.finalOnlyFallback, true, 'Release an ambiguous turn if no further evidence arrives');
+
+const voicemailAudio = vm.createContext({});
+vm.runInContext(sourceBetween('async function sendAvaPhoneReplyAudio(', 'async function speakAvaPhoneReplyByCallId('), voicemailAudio);
+const skippedVoicemailAudio = await voicemailAudio.sendAvaPhoneReplyAudio(
+  { outboundVoicemailDetected: true },
+  'What is the property address?'
+);
+assert.equal(skippedVoicemailAudio.result, 'voicemail_detected', 'Detected voicemail must exit before any TTS or phone fallback');
 
 let audioOptions;
 runtime.sendAvaPhoneReplyAudio = async (_session, _text, options) => { audioOptions = options; return { ok: true }; };
@@ -292,4 +427,4 @@ const stateFixture = vm.runInContext('({calls:[{id:"fixture",transcript:"hello"}
 assert.equal(dbJsonRuntime.sanitizeJsonForPostgres(stateFixture), stateFixture, 'Clean snapshots must not be deep copied');
 assert.equal(dbJsonRuntime.postgresJsonStringify({ 'n\u0000ote': 'a\u0000b', total: 2n }), '{"note":"ab","total":"2"}');
 
-console.log(`Ava live-call resilience smoke passed (${checks.length} structural checks; silence, speech/final barge-in, session guards, and reply timing).`);
+console.log(`Ava live-call resilience smoke passed (${checks.length} structural checks; silence, speech/final barge-in, session guards, fictional voicemail, and reply timing).`);

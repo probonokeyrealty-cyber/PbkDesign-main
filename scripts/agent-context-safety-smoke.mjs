@@ -69,8 +69,8 @@ const outboxEnd = bridge.indexOf('\nasync function ', outboxStart + 1);
 const manualOutbox = bridge.slice(outboxStart, outboxEnd);
 assert(
   outboxStart >= 0 && outboxEnd > outboxStart &&
-    /await prepareRouteToolGuard\(toolName, routeParams, startedAt\);\s*if \(guardedRoute\) \{[\s\S]*return \{[\s\S]*providerCircuitBreaker\.execute\(\s*provider,\s*\(\) => executePermittedRouteTool\(toolName, routeParams, source, startedAt\)/.test(manualOutbox) &&
-    /async function prepareRouteToolGuard\(toolName, params, startedAt\) \{\s*const guarded = await enforceOperatingModeForTool\(toolName, params\)/.test(bridge) &&
+    /await prepareRouteToolGuard\(toolName, routeParams, startedAt, \{ staffManualCall \}\);\s*if \(guardedRoute\) \{[\s\S]*return \{[\s\S]*providerCircuitBreaker\.execute\(\s*provider,\s*\(\) => executePermittedRouteTool\(toolName, routeParams, source, startedAt\)/.test(manualOutbox) &&
+    /async function prepareRouteToolGuard\(toolName, params, startedAt, options\) \{\s*const guarded = await enforceOperatingModeForTool\(toolName, params, options\)/.test(bridge) &&
     /async function executePermittedRouteTool\(toolName, params, source, startedAt\) \{\s*const result = await executeToolHandlerWithQa\(toolName, params, source\)/.test(bridge),
   'Manual provider outbox must return approval and safety outcomes before the provider circuit can run the QA-checked tool.'
 );

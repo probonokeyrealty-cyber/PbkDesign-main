@@ -2016,7 +2016,7 @@ export async function startLeadCallRequest(body: Record<string, unknown>) {
   const response = await bridgeRequest<Record<string, unknown>>({
     method: 'POST',
     path: '/api/calls',
-    body: params,
+    body: { ...params, idempotencyKey: body.idempotencyKey || crypto.randomUUID() },
   });
   return assertBridgeMutationSucceeded(response, 'Call request');
 }

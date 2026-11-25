@@ -141,8 +141,10 @@ function extractPain(text = '') {
 const OUT_OF_POCKET_COST = /\b(?:out[- ]of[- ]pocket|upfront (?:costs?|fees?|payment)|closing costs?|(?:pay|paying) no money)\b/i;
 const COST_CONCERN = /\b(?:no|don['’]t|won['’]t|can['’]t|cannot|not|avoid|worried|concerned|afford|which|what|how much|do i|will i|would i|have to)\b/i;
 const STATED_OWNER = /\b(?:i (?:am|own)|i['’]m)\s+(?:(?:also|actually)\s+)?(?:the (?:home)?owner|the seller|(?:the|this|that|my) (?:house|home|property))\b|\bi own it\b/i;
-const STATED_HELPER = /\b(?:i am|i['’]m|im)\s+(?:(?:just|only)\s+)?helping\b(?:[.!? ,]*$|\s+(?:with (?:it|the (?:sale|property))|(?:the (?:home)?owner|my [a-z]+)(?:\s+(?:with (?:it|the sale)|sell(?:ing)?(?:\s+(?:it|the (?:house|home|property)))?))?[.!? ,]*$))/i;
-const UNCERTAIN_PROPERTY = /\b(?:property|house|home)\b.{0,35}\b(?:might be|could be|maybe|i think)\s+(?:in|at|near)\b|\b(?:not sure|don['’]t know)\b.{0,35}\b(?:which (?:property|house|home)|where (?:it|the (?:house|home|property)) is|the address)\b|\b(?:the )?address\b.{0,25}\b(?:might be|could be|maybe|i think)\b/i;
+const HELPER_INTRO = /\b(?:i am|i['’]m|im)\s+(?:(?:just|only)\s+)?helping\b(.*)/i;
+const SALE_HELP = /^(?:with (?:it|the (?:sale|property))\b|(?:the (?:home)?owner|my [a-z]+)(?:[.!?,]*$|\s+(?:with (?:it|the sale)|sell(?:ing)?)\b))/i;
+const UNCERTAIN_PROPERTY = /\b(?:property|house|home|address)\b.{0,35}\b(?:might be|could be|maybe|i think)\s+(?:in|at|near)\b|\b(?:not sure|don['’]t know)\b.{0,35}\b(?:which (?:property|house|home)|where (?:it|the (?:house|home|property)) is|the address)\b|\b(?:maybe|i think|i guess)\s+(?:the (?:property|house|home|address)|it)\s+is\s+(?:in|at|near)\b/i;
+const UNCERTAIN_STREET_ADDRESS = /\b(?:might be|could be|maybe|i think|i guess|not sure)\b/i;
 
 // Conversation cues adapted from the downloaded PBK sales training timeline.
 // https://miro.com/app/board/uXjVESuOPu0=/
@@ -168,12 +170,21 @@ export function isAvaFocusedCoachingIntent(intent = '') {
   return Object.hasOwn(MIRO_COACHING, intent);
 }
 
-function hasCostConcern(text = '') {
+export function hasAvaCostConcern(text = '') {
   return OUT_OF_POCKET_COST.test(text) && COST_CONCERN.test(text);
 }
 
 function isStatedHelper(text = '') {
-  return !STATED_OWNER.test(text) && STATED_HELPER.test(text);
+  if (STATED_OWNER.test(text)) return false;
+  const helperDetail = text.match(HELPER_INTRO)?.[1]?.trim();
+  return helperDetail !== undefined && (/^[.!?,]*$/.test(helperDetail) || SALE_HELP.test(helperDetail));
+}
+
+function hasUncertainProperty(text = '') {
+  if (UNCERTAIN_PROPERTY.test(text)) return true;
+  return text.split(/[.!?;]+/).some(
+    (clause) => UNCERTAIN_STREET_ADDRESS.test(clause) && Boolean(extractFullAddress(clause))
+  );
 }
 
 function inferAuthority(text = '') {
@@ -200,12 +211,12 @@ export function updateAvaLiveFactLedger(ledger = {}, transcript = '', context = 
   };
   const text = clean(transcript);
   const contextCall = context.contextCall || {};
-  const uncertainProperty = UNCERTAIN_PROPERTY.test(text);
+  const uncertainProperty = hasUncertainProperty(text);
   const fullAddress = clean(contextCall.address || context.address || (!uncertainProperty && extractFullAddress(text)));
   if (fullAddress) next.fullAddress = fullAddress;
   const partialAddress = uncertainProperty ? '' : extractPartialAddress(text);
   if (partialAddress && !next.fullAddress) next.partialAddress = partialAddress;
-  const money = hasCostConcern(text) ? '' : extractMoney(text);
+  const money = hasAvaCostConcern(text) ? '' : extractMoney(text);
   if (money) next.sellerTargetPrice = money;
   const authority = inferAuthority(text);
   if (authority) next.authority = authority;
@@ -254,7 +265,10 @@ export function classifyAvaLiveObjectionV2(transcript = '', context = {}) {
   } else if (/\b(i already told you|already told you|you asked that already|you keep asking|keep asking|asked that|repeating|stop repeating|same thing)\b/.test(text)) {
     intent = 'repeat_complaint';
     objection = 'repeat_complaint';
-  } else if (hasCostConcern(text)) {
+  } else if (/\b(scam|legit|real company|proof|trust|how do i know|who are you)\b/.test(text)) {
+    intent = 'trust_scam';
+    objection = 'trust_scam';
+  } else if (hasAvaCostConcern(text)) {
     intent = 'cost_concern';
     objection = 'cost_concern';
   } else if (/\b(how much|what'?s the offer|what is the offer|what can you pay|give me (?:a )?number|make (?:me )?(?:an? )?offer)\b/.test(text)) {
@@ -265,12 +279,6 @@ export function classifyAvaLiveObjectionV2(transcript = '', context = {}) {
       ? 'competing_offer'
       : 'price_too_low';
     objection = intent;
-  } else if (/\b(think about it|need to think|not sure|maybe|sleep on it)\b/.test(text)) {
-    intent = 'need_to_think';
-    objection = 'need_to_think';
-  } else if (/\b(scam|legit|real company|proof|trust|how do i know|who are you)\b/.test(text)) {
-    intent = 'trust_scam';
-    objection = 'trust_scam';
   } else if (/\b(probate|estate|inherited|passed away|executor)\b/.test(text)) {
     intent = 'probate_legal';
     objection = 'probate_legal';
@@ -281,15 +289,18 @@ export function classifyAvaLiveObjectionV2(transcript = '', context = {}) {
     intent = 'caller_is_agent';
   } else if (isStatedHelper(text)) {
     intent = 'caller_is_helper';
-  } else if (UNCERTAIN_PROPERTY.test(text)) {
+  } else if (hasUncertainProperty(text)) {
     intent = 'uncertain_property';
+  } else if (/\b(think about it|need to think|not sure|maybe|sleep on it)\b/.test(text)) {
+    intent = 'need_to_think';
+    objection = 'need_to_think';
   } else if (/\b(max(?:imum)? net|highest net|top dollar|most money)\b/.test(text)) {
     intent = 'seller_wants_max_net';
   } else if (/\b(speed|fast|quick|asap|soon|timeline|close quickly|close by|by (?:monday|tuesday|wednesday|thursday|friday|saturday|sunday))\b/.test(text)) {
     intent = 'seller_wants_speed';
   }
 
-  const money = hasCostConcern(text) ? '' : extractMoney(transcript);
+  const money = hasAvaCostConcern(text) ? '' : extractMoney(transcript);
   if (money) signals.push(`money:${money}`);
   if (context?.ledger?.sellerTargetPrice) signals.push('target_price_known');
   if (context?.ledger?.fullAddress) signals.push('full_address_known');

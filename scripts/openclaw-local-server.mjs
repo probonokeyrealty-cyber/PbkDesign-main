@@ -96,6 +96,7 @@ import {
   buildAvaLiveTurnContract,
   classifyAvaLiveObjectionV2,
   compileAvaLiveSkillAction,
+  hasAvaCostConcern,
   isAvaFocusedCoachingIntent,
   isAvaLiveReplyAlignedWithContract,
   renderAvaLiveContractReply,
@@ -24963,8 +24964,7 @@ function isAvaLiveRepeatComplaint(transcript = '') {
 
 function isAvaLiveSellerMoneyContext(transcript = '') {
   const clean = normalizeTelnyxRepairTranscript(transcript);
-  if (!clean || !extractAvaLiveMoneyAmount(clean)) return false;
-  if (classifyAvaLiveObjectionV2(clean).intent === 'cost_concern') return false;
+  if (!clean || hasAvaCostConcern(clean) || !extractAvaLiveMoneyAmount(clean)) return false;
   const hasMoneyLanguage =
     isAvaLiveNetNumberAnswer(clean) ||
     isAvaLiveOfferRequest(clean) ||
@@ -24981,7 +24981,7 @@ function rememberAvaLiveSellerMoney(session = {}, transcript = '', supportTransc
   if (!session.bant || typeof session.bant !== 'object') session.bant = {};
   const current = normalizeTelnyxRepairTranscript(transcript);
   const support = normalizeTelnyxRepairTranscript(supportTranscript);
-  if (classifyAvaLiveObjectionV2(current).intent === 'cost_concern') return '';
+  if (hasAvaCostConcern(current)) return '';
   const combined = [current, support].filter(Boolean).join(' ');
   const money = isAvaLiveSellerMoneyContext(current)
     ? extractAvaLiveMoneyAmount(current)
@@ -71360,6 +71360,9 @@ function guardTelnyxLiveSpokenReply(reply = {}, { session = {}, contextCall = nu
       ...(Array.isArray(session.askedLiveQuestions) ? session.askedLiveQuestions : []),
     ].filter(Boolean),
   });
+  if (focusedReply && guard.repeatedQuestionBlocked) {
+    guard.answer = compileAvaLiveSkillAction(activeTurnContract).acknowledgement;
+  }
   const guardedText = guard.answer || ownerSafe;
   if (guard.result !== 'passed') {
     recordCallTrace('ava_live_spoken_guard', {

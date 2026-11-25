@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 
+import { guardAvaResponse } from './ava-response-guard.mjs';
+
 import {
   AVA_LIVE_TURN_CONTRACT_REVISION,
   applyAvaLiveTurnContractToSession,
@@ -367,10 +369,32 @@ const uncertainAddress = buildAvaLiveTurnContract({ transcript: 'The property mi
 assert.equal(uncertainAddress.knownFacts.fullAddress, '');
 
 assert.notEqual(buildAvaLiveTurnContract({ transcript: 'The house needs work, I think.' }).intent, 'uncertain_property');
+assert.equal(
+  buildAvaLiveTurnContract({ transcript: 'The address is 17 Willow Lane. I think I need a few weeks.' }).knownFacts.fullAddress,
+  '17 Willow Lane'
+);
 
 // Exercise the real phone reply entry point without opening a socket, calling a
 // provider, or loading production credentials. The default path is unavailable
 // in this harness so accidentally falling through to it fails the test.
+for (const transcript of [
+  "I'm not sure which property you mean.",
+  'Maybe the house is at 17 Willow Lane.',
+  'It could be 17 Willow Lane.',
+]) {
+  const contract = buildAvaLiveTurnContract({ transcript });
+  assert.equal(contract.nextBestQuestionCategory, 'property_clarification', transcript);
+  assert.equal(contract.knownFacts.fullAddress, '', transcript);
+}
+assert.equal(
+  buildAvaLiveTurnContract({ transcript: 'I’m helping the homeowner with the sale because they asked me to.' })
+    .nextBestQuestionCategory,
+  'decision_maker'
+);
+assert.equal(
+  buildAvaLiveTurnContract({ transcript: "I'm worried this is a scam. Do I have to pay closing costs?" }).intent,
+  'trust_scam'
+);
 const entryStart = bridge.indexOf('async function buildTelnyxLiveAvaReply(');
 assert(entryStart >= 0);
 const boundaryEnd = bridge.indexOf('  const repairReply =', entryStart);
@@ -385,6 +409,24 @@ const buildPhoneReply = vm.runInNewContext(
     renderAvaLiveContractReply,
   }
 );
+const guardStart = bridge.indexOf('function guardTelnyxLiveSpokenReply(');
+const guardEnd = bridge.indexOf('function chooseMissingBantFieldForTurn(', guardStart);
+assert(guardStart >= 0 && guardEnd > guardStart);
+const guardPhoneReply = vm.runInNewContext(
+  '(' + bridge.slice(guardStart, guardEnd) + ')',
+  {
+    classifyAvaLiveObjectionV2,
+    isAvaFocusedCoachingIntent,
+    renderAvaLiveContractReply,
+    compileAvaLiveSkillAction,
+    guardAvaResponse,
+    stripUnconfirmedAvaLiveLeadName: (text) => text,
+    enforceAvaOwnerSafeReply: () => 'Is speed, certainty, or price most important?',
+    hasAvaLiveAuthorityEvidence: () => false,
+    resolveAvaLiveMao: () => 0,
+    recordCallTrace: () => {},
+  }
+);
 const fictionalSession = {};
 for (const { transcript, category, expected } of coachingExamples) {
   const reply = await buildPhoneReply({ transcript, session: fictionalSession });
@@ -393,6 +435,20 @@ for (const { transcript, category, expected } of coachingExamples) {
   assert.equal(fictionalSession.avaLiveTurnContract.nextBestQuestionCategory, category);
   assert.match(reply.text, expected);
   assert.equal((reply.text.match(/\?/g) || []).length, 1);
+  const spoken = guardPhoneReply(reply, {
+    transcript,
+    session: fictionalSession,
+    pathDecision: { selectedPath: 'creative' },
+  });
+  assert.equal(spoken.guard.result, 'passed');
+  assert.equal(spoken.text, reply.text);
+  const repeated = guardPhoneReply(reply, {
+    transcript,
+    session: { ...fictionalSession, lastAvaReplySpoken: spoken.text },
+  });
+  assert.equal(repeated.guard.repeatedQuestionBlocked, true);
+  assert.equal(repeated.text, compileAvaLiveSkillAction(reply.turnContract).acknowledgement);
+  assert.doesNotMatch(repeated.text, /speed,|certainty,|\?/i);
 }
 const optOutReply = await buildPhoneReply({
   transcript: "Don't call again. I won't pay any upfront fees.",

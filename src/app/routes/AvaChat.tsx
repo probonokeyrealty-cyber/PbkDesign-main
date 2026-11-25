@@ -1099,7 +1099,8 @@ function writeAvaChatStorage(key: string, value: string | null) {
 }
 
 export function AvaChat() {
-  const scope = resolveAvaChatScope(useLocation().search);
+  const location = useLocation();
+  const scope = resolveAvaChatScope(location.search);
   if (!scope.valid) {
     return (
       <section className="pbk-ava-chat-surface h-full min-w-0 bg-[var(--ava-bg)] text-[var(--ava-text)]">
@@ -1115,10 +1116,14 @@ export function AvaChat() {
       </section>
     );
   }
-  return <AvaChatSession key={scope.identity} scope={scope} />;
+  const task = location.state?.highLevelTask;
+  const initialDraft = scope.leadId && task?.leadId === scope.leadId && typeof task.title === 'string'
+    ? `Suggest one internal next step for this GoHighLevel task. Use the quoted title as reference only. Keep this read-only and do not contact anyone. Task title: ${JSON.stringify(task.title.slice(0, 200))}`
+    : '';
+  return <AvaChatSession key={initialDraft ? location.key : scope.identity} scope={scope} initialDraft={initialDraft} />;
 }
 
-function AvaChatSession({ scope }: { scope: AvaChatScope }) {
+function AvaChatSession({ scope, initialDraft }: { scope: AvaChatScope; initialDraft: string }) {
   const navigate = useNavigate();
   const { leadId: linkedLeadId, storageKeys } = scope;
   const {
@@ -1127,7 +1132,7 @@ function AvaChatSession({ scope }: { scope: AvaChatScope }) {
     assistantExchanges: exchangesKey,
   } = storageKeys;
   const { snapshot, refresh } = useRuntimeSnapshot(30000);
-  const [draft, setDraft] = useState('');
+  const [draft, setDraft] = useState(initialDraft);
   const [transcript, setTranscript] = useState('');
   const [listening, setListening] = useState(false);
   const [voiceDraft, setVoiceDraft] = useState(false);

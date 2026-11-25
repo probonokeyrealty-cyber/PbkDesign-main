@@ -354,8 +354,11 @@ test('draft fingerprints snapshot raw values before async hashing and ignore dep
 
 test('CI runs offline recovery contracts, never the authenticated live runner', () => {
   const workflow = parseYaml(readFileSync(new URL('../.github/workflows/command-center-polish-verify.yml', import.meta.url), 'utf8'));
-  for (const path of ['scripts/operator-session-browseros-live.mjs', 'scripts/operator-session-browseros.node-test.mjs']) {
-    assert.ok(workflow.on.pull_request.paths.includes(path));
+  for (const path of ['scripts/operator-session-browseros-live.mjs', 'scripts/operator-session-browseros.node-test.mjs',
+    'scripts/analyzer-browseros-mobile-live.mjs', 'scripts/analyzer-draft-recovery-browser-smoke.mjs',
+    'scripts/fixtures/analyzer-publication-trace.mjs', 'scripts/fixtures/analyzer-publication-timing.mjs',
+    'scripts/fixtures/analyzer-browser-warmup.mjs', '.github/workflows/release-qualification.yml']) {
+    assert.ok(workflow.on.pull_request.paths.includes(path), `Recovery contracts must run when ${path} changes`);
   }
   const commands = workflow.jobs['isolated-desktop-mobile'].steps.map(step => step.run || '').join('\n');
   assert.ok(commands.includes('node --test scripts/operator-session-browseros.node-test.mjs'));

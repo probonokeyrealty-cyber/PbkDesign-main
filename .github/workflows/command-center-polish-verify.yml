@@ -11,9 +11,15 @@ on:
       - 'scripts/command-center-polish*'
       - 'scripts/operator-session-browseros-live.mjs'
       - 'scripts/operator-session-browseros.node-test.mjs'
+      - 'scripts/analyzer-browseros-mobile-live.mjs'
+      - 'scripts/analyzer-draft-recovery-browser-smoke.mjs'
+      - 'scripts/fixtures/analyzer-publication-trace.mjs'
+      - 'scripts/fixtures/analyzer-publication-timing.mjs'
+      - 'scripts/fixtures/analyzer-browser-warmup.mjs'
       - 'scripts/fixtures/command-center-polish-preview.mjs'
       - 'scripts/fixtures/faster-triage-fixture.mjs'
       - '.github/workflows/command-center-polish-verify.yml'
+      - '.github/workflows/release-qualification.yml'
       - 'package*.json'
   workflow_dispatch:
 

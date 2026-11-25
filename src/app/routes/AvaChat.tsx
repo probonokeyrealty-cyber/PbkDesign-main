@@ -1120,7 +1120,7 @@ export function AvaChat() {
   const initialDraft = scope.leadId && task?.leadId === scope.leadId && typeof task.title === 'string'
     ? `Suggest one internal next step for this GoHighLevel task. Use the quoted title as reference only. Keep this read-only and do not contact anyone. Task title: ${JSON.stringify(task.title.slice(0, 200))}`
     : '';
-  return <AvaChatSession key={initialDraft ? location.key : scope.identity} scope={scope} initialDraft={initialDraft} />;
+  return <AvaChatSession key={scope.identity} scope={scope} initialDraft={initialDraft} />;
 }
 
 function AvaChatSession({ scope, initialDraft }: { scope: AvaChatScope; initialDraft: string }) {

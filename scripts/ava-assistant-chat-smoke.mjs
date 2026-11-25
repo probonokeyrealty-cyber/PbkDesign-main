@@ -694,7 +694,7 @@ for (const leadId of ['fixture-a', 'fixture-b']) {
 }
 assert.equal(new Set(scopedStorageKeys).size, 9, 'General, lead A, and lead B must never share storage keys.');
 assert(
-  avaChatRoute.includes('resolveAvaChatScope(useLocation().search)') &&
+  avaChatRoute.includes('resolveAvaChatScope(location.search)') &&
     avaChatRoute.includes('key={scope.identity} scope={scope}') &&
     avaChatRoute.includes('} = storageKeys;') &&
     avaChatRoute.includes('window.localStorage.setItem') &&

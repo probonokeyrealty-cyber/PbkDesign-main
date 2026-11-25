@@ -1,0 +1,41 @@
+name: Command Center Polish Verify
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'public/fonts/**'
+      - 'index.shell.html'
+      - 'vite.config.ts'
+      - 'scripts/command-center-polish*'
+      - 'scripts/fixtures/command-center-polish-preview.mjs'
+      - 'scripts/fixtures/faster-triage-fixture.mjs'
+      - '.github/workflows/command-center-polish-verify.yml'
+      - 'package*.json'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  isolated-desktop-mobile:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Verify shell contracts and sample isolation
+        run: node --test scripts/command-center-polish.node-test.mjs scripts/command-center-polish-fixture.node-test.mjs
+      - name: Build local frontend assets
+        run: npm run build
+      - name: Install disposable desktop and mobile browsers
+        run: npx playwright install --with-deps chromium webkit
+      - name: Run sample-only desktop and mobile regressions
+        run: node --test scripts/command-center-polish-browser.node-test.mjs

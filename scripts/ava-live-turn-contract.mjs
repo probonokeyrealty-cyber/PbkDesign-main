@@ -1,6 +1,6 @@
 import { detectAvaEmotionalPhase } from './ava-emotional-script-library.mjs';
 
-export const AVA_LIVE_TURN_CONTRACT_REVISION = '2026-06-13-a-plus-turn-contract-v1';
+export const AVA_LIVE_TURN_CONTRACT_REVISION = '2026-06-13-a-plus-turn-contract-v2';
 
 function clean(value = '') {
   return String(value || '').replace(/\s+/g, ' ').trim();
@@ -138,9 +138,48 @@ function extractPain(text = '') {
   return '';
 }
 
+const OUT_OF_POCKET_COST = /\b(?:out[- ]of[- ]pocket|upfront (?:costs?|fees?|payment)|closing costs?|(?:pay|paying) no money)\b/i;
+const COST_CONCERN = /\b(?:no|don['’]t|won['’]t|can['’]t|cannot|not|avoid|worried|concerned|afford|which|what|how much|do i|will i|would i|have to)\b/i;
+const STATED_OWNER = /\b(?:i (?:am|own)|i['’]m)\s+(?:(?:also|actually)\s+)?(?:the (?:home)?owner|the seller|(?:the|this|that|my) (?:house|home|property))\b|\bi own it\b/i;
+const STATED_HELPER = /\b(?:i am|i['’]m|im)\s+(?:(?:just|only)\s+)?helping\b(?:[.!? ,]*$|\s+(?:with (?:it|the (?:sale|property))|(?:the (?:home)?owner|my [a-z]+)(?:\s+(?:with (?:it|the sale)|sell(?:ing)?(?:\s+(?:it|the (?:house|home|property)))?))?[.!? ,]*$))/i;
+const UNCERTAIN_PROPERTY = /\b(?:property|house|home)\b.{0,35}\b(?:might be|could be|maybe|i think)\s+(?:in|at|near)\b|\b(?:not sure|don['’]t know)\b.{0,35}\b(?:which (?:property|house|home)|where (?:it|the (?:house|home|property)) is|the address)\b|\b(?:the )?address\b.{0,25}\b(?:might be|could be|maybe|i think)\b/i;
+
+// Conversation cues adapted from the downloaded PBK sales training timeline.
+// https://miro.com/app/board/uXjVESuOPu0=/
+const MIRO_COACHING = Object.freeze({
+  cost_concern: {
+    category: 'out_of_pocket_cost',
+    acknowledgement: 'I hear that paying out of pocket is a concern.',
+    question: 'Which cost are you worried about?',
+  },
+  caller_is_helper: {
+    category: 'decision_maker',
+    acknowledgement: 'Thanks for letting me know you’re helping.',
+    question: 'Who will make the final decision about selling?',
+  },
+  uncertain_property: {
+    category: 'property_clarification',
+    acknowledgement: 'I want to make sure I heard you correctly.',
+    question: 'Which property are you referring to?',
+  },
+});
+
+export function isAvaFocusedCoachingIntent(intent = '') {
+  return Object.hasOwn(MIRO_COACHING, intent);
+}
+
+function hasCostConcern(text = '') {
+  return OUT_OF_POCKET_COST.test(text) && COST_CONCERN.test(text);
+}
+
+function isStatedHelper(text = '') {
+  return !STATED_OWNER.test(text) && STATED_HELPER.test(text);
+}
+
 function inferAuthority(text = '') {
   const value = lower(text);
   if (/\b(agent|realtor|broker|representing|my client)\b/.test(value)) return 'agent';
+  if (isStatedHelper(value)) return 'helper_or_stakeholder';
   if (/\b(i am|i'm|im)\s+(?:the\s+)?(?:owner|seller)\b|\bi own\b|\bmy (?:house|property)\b|\bowner\b|\bseller\b/.test(value)) return 'owner';
   if (/\b(spouse|wife|husband|partner|executor|attorney|lawyer|trustee|heir)\b/.test(value)) return 'helper_or_stakeholder';
   return '';
@@ -161,11 +200,12 @@ export function updateAvaLiveFactLedger(ledger = {}, transcript = '', context = 
   };
   const text = clean(transcript);
   const contextCall = context.contextCall || {};
-  const fullAddress = clean(contextCall.address || context.address || extractFullAddress(text));
+  const uncertainProperty = UNCERTAIN_PROPERTY.test(text);
+  const fullAddress = clean(contextCall.address || context.address || (!uncertainProperty && extractFullAddress(text)));
   if (fullAddress) next.fullAddress = fullAddress;
-  const partialAddress = extractPartialAddress(text);
+  const partialAddress = uncertainProperty ? '' : extractPartialAddress(text);
   if (partialAddress && !next.fullAddress) next.partialAddress = partialAddress;
-  const money = extractMoney(text);
+  const money = hasCostConcern(text) ? '' : extractMoney(text);
   if (money) next.sellerTargetPrice = money;
   const authority = inferAuthority(text);
   if (authority) next.authority = authority;
@@ -214,6 +254,9 @@ export function classifyAvaLiveObjectionV2(transcript = '', context = {}) {
   } else if (/\b(i already told you|already told you|you asked that already|you keep asking|keep asking|asked that|repeating|stop repeating|same thing)\b/.test(text)) {
     intent = 'repeat_complaint';
     objection = 'repeat_complaint';
+  } else if (hasCostConcern(text)) {
+    intent = 'cost_concern';
+    objection = 'cost_concern';
   } else if (/\b(how much|what'?s the offer|what is the offer|what can you pay|give me (?:a )?number|make (?:me )?(?:an? )?offer)\b/.test(text)) {
     intent = 'make_offer';
     objection = 'offer_request';
@@ -236,13 +279,17 @@ export function classifyAvaLiveObjectionV2(transcript = '', context = {}) {
     objection = 'decision_maker';
   } else if (/\b(agent|realtor|broker|my client|listing)\b/.test(text)) {
     intent = 'caller_is_agent';
+  } else if (isStatedHelper(text)) {
+    intent = 'caller_is_helper';
+  } else if (UNCERTAIN_PROPERTY.test(text)) {
+    intent = 'uncertain_property';
   } else if (/\b(max(?:imum)? net|highest net|top dollar|most money)\b/.test(text)) {
     intent = 'seller_wants_max_net';
   } else if (/\b(speed|fast|quick|asap|soon|timeline|close quickly|close by|by (?:monday|tuesday|wednesday|thursday|friday|saturday|sunday))\b/.test(text)) {
     intent = 'seller_wants_speed';
   }
 
-  const money = extractMoney(transcript);
+  const money = hasCostConcern(text) ? '' : extractMoney(transcript);
   if (money) signals.push(`money:${money}`);
   if (context?.ledger?.sellerTargetPrice) signals.push('target_price_known');
   if (context?.ledger?.fullAddress) signals.push('full_address_known');
@@ -420,14 +467,15 @@ export function buildAvaLiveTurnContract(params = {}) {
   const missingFacts = missingFactsFor(knownFacts);
   const activeSkill = normalizeActiveSkill(params);
   const forbiddenRepeats = collectForbiddenRepeats(session, knownFacts);
+  const coaching = isAvaFocusedCoachingIntent(classification.intent) ? MIRO_COACHING[classification.intent] : null;
   const nextBestQuestionCategory = normalizeQuestionCategory(
-    chooseNextQuestionCategory({
+    coaching?.category || chooseNextQuestionCategory({
       intent: classification.intent,
       missingFacts,
       forbiddenRepeats,
     })
   );
-  const nextBestQuestion = buildQuestion(nextBestQuestionCategory, knownFacts);
+  const nextBestQuestion = coaching?.question || buildQuestion(nextBestQuestionCategory, knownFacts);
   const phase = params.phase || inferPhase(knownFacts, classification.objection, classification.intent);
   const emotionalPhase =
     params.emotionalPhase ||
@@ -458,6 +506,7 @@ export function buildAvaLiveTurnContract(params = {}) {
     activeSkill,
     nextBestQuestion,
     nextBestQuestionCategory,
+    ...(coaching ? { coachingSource: 'pbk-sales-training-timeline' } : {}),
     forbiddenRepeats,
     handoffNeeded: ['stop_contact', 'probate_legal', 'contract_request', 'legal_review'].includes(classification.intent),
     allowedTools,
@@ -472,6 +521,7 @@ export function buildAvaLiveTurnContract(params = {}) {
 }
 
 function buildAcknowledgement(contract = {}) {
+  if (isAvaFocusedCoachingIntent(contract.intent)) return MIRO_COACHING[contract.intent].acknowledgement;
   const facts = contract.knownFacts || {};
   switch (contract.intent) {
     case 'already_gave_price':
@@ -548,7 +598,7 @@ export function compileAvaLiveSkillAction(contract = {}) {
 
 export function renderAvaLiveContractReply(contract = {}) {
   if (contract.intent === 'stop_contact') return buildAcknowledgement(contract);
-  if (contract.intent !== 'already_gave_price' || !contract.knownFacts?.sellerTargetPrice) {
+  if (!isAvaFocusedCoachingIntent(contract.intent) && (contract.intent !== 'already_gave_price' || !contract.knownFacts?.sellerTargetPrice)) {
     const emotionalReply = renderEmotionalSkillReply(contract);
     if (emotionalReply) return emotionalReply;
   }
@@ -609,6 +659,9 @@ export function isAvaLiveReplyAlignedWithContract(reply = '', contract = {}) {
   const text = clean(reply);
   if (!text) return false;
   if (contract.intent === 'stop_contact') return text === buildAcknowledgement(contract);
+  // Keep the approved acknowledgement and single question together. A rewrite
+  // can otherwise add a second ask, change the topic, or promise cost terms.
+  if (isAvaFocusedCoachingIntent(contract.intent)) return text === renderAvaLiveContractReply(contract);
   const category = normalizeQuestionCategory(contract.nextBestQuestionCategory || '');
   if (category && !textAsksQuestionCategory(text, category)) return false;
   for (const forbidden of contract.forbiddenRepeats || []) {

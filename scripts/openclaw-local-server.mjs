@@ -96,6 +96,7 @@ import {
   buildAvaLiveTurnContract,
   classifyAvaLiveObjectionV2,
   compileAvaLiveSkillAction,
+  isAvaFocusedCoachingIntent,
   isAvaLiveReplyAlignedWithContract,
   renderAvaLiveContractReply,
 } from './ava-live-turn-contract.mjs';
@@ -24963,6 +24964,7 @@ function isAvaLiveRepeatComplaint(transcript = '') {
 function isAvaLiveSellerMoneyContext(transcript = '') {
   const clean = normalizeTelnyxRepairTranscript(transcript);
   if (!clean || !extractAvaLiveMoneyAmount(clean)) return false;
+  if (classifyAvaLiveObjectionV2(clean).intent === 'cost_concern') return false;
   const hasMoneyLanguage =
     isAvaLiveNetNumberAnswer(clean) ||
     isAvaLiveOfferRequest(clean) ||
@@ -24979,6 +24981,7 @@ function rememberAvaLiveSellerMoney(session = {}, transcript = '', supportTransc
   if (!session.bant || typeof session.bant !== 'object') session.bant = {};
   const current = normalizeTelnyxRepairTranscript(transcript);
   const support = normalizeTelnyxRepairTranscript(supportTranscript);
+  if (classifyAvaLiveObjectionV2(current).intent === 'cost_concern') return '';
   const combined = [current, support].filter(Boolean).join(' ');
   const money = isAvaLiveSellerMoneyContext(current)
     ? extractAvaLiveMoneyAmount(current)
@@ -71314,6 +71317,9 @@ function guardTelnyxLiveSpokenReply(reply = {}, { session = {}, contextCall = nu
     return { text: renderAvaLiveContractReply({ intent }), guard: { result: 'stop_contact_boundary' } };
   }
   const activeTurnContract = reply.turnContract || session.avaLiveTurnContract || null;
+  const focusedReply = isAvaFocusedCoachingIntent(intent) && activeTurnContract?.intent === intent
+    ? renderAvaLiveContractReply(activeTurnContract)
+    : '';
   const targetPrice = activeTurnContract?.knownFacts?.sellerTargetPrice;
   if (intent === 'already_gave_price' && reply.replyMode === 'fast_local_price_recall' &&
       activeTurnContract?.intent === intent && /^\$?\s*\d[\d,]*(?:\.\d+)?\s*(?:k|m|thousand|grand|million)?$/i.test(targetPrice || '')) {
@@ -71321,7 +71327,9 @@ function guardTelnyxLiveSpokenReply(reply = {}, { session = {}, contextCall = nu
     return { text: renderAvaLiveContractReply({ intent, knownFacts: { sellerTargetPrice: targetPrice } }), guard: { result: 'known_price_recall' } };
   }
   const ownerSafe = stripUnconfirmedAvaLiveLeadName(
-    enforceAvaOwnerSafeReply(reply.text || '', {
+    // These questions only clarify a caller fact and make no deal-path claim.
+    // Run the response guard below without replacing them with a deal pitch.
+    focusedReply || enforceAvaOwnerSafeReply(reply.text || '', {
       session,
       contextCall,
       transcript,
@@ -71997,13 +72005,16 @@ async function buildTelnyxLiveAvaReplyInsight({ session = {}, transcript = '', c
 }
 
 async function buildTelnyxLiveAvaReply({ session = {}, transcript = '', contextCall = null } = {}) {
-  if (classifyAvaLiveObjectionV2(transcript).intent === 'stop_contact') {
+  const intent = classifyAvaLiveObjectionV2(transcript).intent;
+  if (intent === 'stop_contact' || isAvaFocusedCoachingIntent(intent)) {
     const turnContract = buildAvaLiveTurnContract({ session, transcript, contextCall });
+    const stopContact = intent === 'stop_contact';
+    if (!stopContact) applyAvaLiveTurnContractToSession(session, turnContract, { recordQuestion: true });
     return {
       text: renderAvaLiveContractReply(turnContract),
-      replyMode: 'fast_local_stop_contact',
+      replyMode: stopContact ? 'fast_local_stop_contact' : 'fast_local_turn_contract',
       turnContract,
-      strategist: { ok: true, skipped: true, result: 'stop_contact_boundary' },
+      strategist: { ok: true, skipped: true, result: stopContact ? 'stop_contact_boundary' : 'focused_coaching' },
     };
   }
   const repairReply = buildTelnyxLiveConversationalRepairReply({

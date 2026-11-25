@@ -1,11 +1,14 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import vm from 'node:vm';
 
 import {
   AVA_LIVE_TURN_CONTRACT_REVISION,
+  applyAvaLiveTurnContractToSession,
   buildAvaLiveTurnContract,
   classifyAvaLiveObjectionV2,
   compileAvaLiveSkillAction,
+  isAvaFocusedCoachingIntent,
   isAvaLiveReplyAlignedWithContract,
   renderAvaLiveContractReply,
   updateAvaLiveFactLedger,
@@ -302,6 +305,101 @@ assert.match(
   /key:\s*PBK_DEEPSEEK_LIVE_RETRY_ATTEMPTS[\s\S]*?value:\s*1/,
   'Render must allow one fast V4 Flash retry before falling back to the turn contract.'
 );
+
+const coachingExamples = [
+  {
+    transcript: "I don't want to pay anything out of pocket.",
+    category: 'out_of_pocket_cost',
+    expected: /out of pocket.*which cost/i,
+  },
+  {
+    transcript: "I'm just helping the homeowner with the sale.",
+    category: 'decision_maker',
+    expected: /helping.*who will make the final decision/i,
+  },
+  {
+    transcript: 'The property might be in Riverton.',
+    category: 'property_clarification',
+    expected: /want to make sure.*which property/i,
+  },
+];
+for (const { transcript, category, expected } of coachingExamples) {
+  const contract = buildAvaLiveTurnContract({
+    transcript,
+    activeSkill: {
+      id: 'fictional-generic-emotional-skill',
+      emotionalScript: true,
+      response: 'I understand. Tell me about the roof.',
+      nextQuestion: 'Is speed, certainty, or price most important?',
+    },
+  });
+  const reply = renderAvaLiveContractReply(contract);
+  assert.equal(contract.nextBestQuestionCategory, category, transcript);
+  assert.equal(contract.coachingSource, 'pbk-sales-training-timeline');
+  assert.match(reply, expected);
+  assert.equal((reply.match(/\?/g) || []).length, 1);
+  assert(isAvaLiveReplyAlignedWithContract(reply, contract));
+  assert(!isAvaLiveReplyAlignedWithContract(`${reply} What shape is the roof in?`, contract));
+  assert(!isAvaLiveReplyAlignedWithContract(`Tell me about the roof. ${reply}`, contract));
+  assert(!isAvaLiveReplyAlignedWithContract(contract.nextBestQuestion, contract));
+}
+
+const concernedAboutFee = buildAvaLiveTurnContract({
+  transcript: "I can't afford the $4,000 in closing costs.",
+  ledger: { sellerTargetPrice: '250k' },
+});
+assert.equal(concernedAboutFee.nextBestQuestionCategory, 'out_of_pocket_cost');
+assert.equal(concernedAboutFee.knownFacts.sellerTargetPrice, '250k');
+assert(!isAvaLiveReplyAlignedWithContract(
+  `You won't pay anything out of pocket. ${concernedAboutFee.nextBestQuestion}`,
+  concernedAboutFee
+));
+const decision = buildAvaLiveTurnContract({ transcript: "I'm helping the owner sell it." });
+assert.equal(decision.knownFacts.authority, 'helper_or_stakeholder');
+const owner = buildAvaLiveTurnContract({ transcript: "I'm the owner and I'm helping my brother move." });
+assert.notEqual(owner.nextBestQuestionCategory, 'decision_maker');
+const optOutAndCost = buildAvaLiveTurnContract({
+  transcript: "Don't call me again. I'm not paying any upfront fees.",
+});
+assert.equal(optOutAndCost.intent, 'stop_contact');
+assert(!renderAvaLiveContractReply(optOutAndCost).includes('?'));
+const uncertainAddress = buildAvaLiveTurnContract({ transcript: 'The property might be at 17 Willow Lane.' });
+assert.equal(uncertainAddress.knownFacts.fullAddress, '');
+
+assert.notEqual(buildAvaLiveTurnContract({ transcript: 'The house needs work, I think.' }).intent, 'uncertain_property');
+
+// Exercise the real phone reply entry point without opening a socket, calling a
+// provider, or loading production credentials. The default path is unavailable
+// in this harness so accidentally falling through to it fails the test.
+const entryStart = bridge.indexOf('async function buildTelnyxLiveAvaReply(');
+assert(entryStart >= 0);
+const boundaryEnd = bridge.indexOf('  const repairReply =', entryStart);
+assert(boundaryEnd > entryStart);
+const buildPhoneReply = vm.runInNewContext(
+  '(' + bridge.slice(entryStart, boundaryEnd) + 'throw new Error("Unexpected phone reply fallback"); })',
+  {
+    classifyAvaLiveObjectionV2,
+    buildAvaLiveTurnContract,
+    applyAvaLiveTurnContractToSession,
+    isAvaFocusedCoachingIntent,
+    renderAvaLiveContractReply,
+  }
+);
+const fictionalSession = {};
+for (const { transcript, category, expected } of coachingExamples) {
+  const reply = await buildPhoneReply({ transcript, session: fictionalSession });
+  assert.equal(reply.replyMode, 'fast_local_turn_contract');
+  assert.equal(reply.turnContract.nextBestQuestionCategory, category);
+  assert.equal(fictionalSession.avaLiveTurnContract.nextBestQuestionCategory, category);
+  assert.match(reply.text, expected);
+  assert.equal((reply.text.match(/\?/g) || []).length, 1);
+}
+const optOutReply = await buildPhoneReply({
+  transcript: "Don't call again. I won't pay any upfront fees.",
+  session: fictionalSession,
+});
+assert.equal(optOutReply.replyMode, 'fast_local_stop_contact');
+assert(!optOutReply.text.includes('?'));
 
 console.log(
   JSON.stringify(

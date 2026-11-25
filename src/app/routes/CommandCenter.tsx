@@ -3,6 +3,7 @@ import {
   AlertCircle,
   Bot,
   CheckCircle2,
+  ChevronDown,
   ClipboardCheck,
   Inbox as InboxIcon,
   Loader2,
@@ -3024,6 +3025,7 @@ export function CommandCenter() {
         <nav className="pbk-triage-sections" aria-label="Today sections">
           <a href="#battlefield-title" onClick={event => jumpToTodaySection(event, 'battlefield-title')}>Work queue</a>
           {isWidgetVisible('approvals') && <a href="#approvals" onClick={event => jumpToTodaySection(event, 'approvals')}>Review {approvalsAvailable ? `(${pendingApprovalCount})` : ''}</a>}
+          {isWidgetVisible('activity') && <a href="#recent-activity" onClick={event => jumpToTodaySection(event, 'recent-activity')}>Activity</a>}
         </nav>
         <div className={`pbk-faster-triage${isWidgetVisible('approvals') ? ' has-review' : ''}`}>
         <FounderBattlefield
@@ -3178,38 +3180,41 @@ export function CommandCenter() {
             )}
             {isWidgetVisible('activity') && (
               <section
+                id="recent-activity"
                 className="pbk-panel pbk-today-activity"
                 aria-labelledby="pbk-activity-heading"
               >
-                <h2 id="pbk-activity-heading">Recent activity</h2>
-                <div className="mt-3 space-y-2">
-                  {visibleActivity.map((item, index) => (
-                    <div
-                      key={`${String(item.id || item.at || item.createdAt || 'activity')}-${index}`}
-                      className="pbk-today-activity-row"
-                    >
-                      <div className="flex items-center justify-between gap-3">
-                        <div className="text-xs font-medium text-slate-100">
-                          {String(item.actor || 'System')}
-                        </div>
-                        <div
-                          className="text-[10px] text-slate-500"
-                          title={formatActivityTitle(String(item.at || item.createdAt || ''))}
-                        >
-                          {formatRelative(String(item.at || item.createdAt || ''))}
-                        </div>
-                      </div>
-                      <div
-                        className="mt-2 line-clamp-2 max-w-full text-xs text-slate-300"
-                        title={String(item.text || 'Runtime event')}
+                <h2 id="pbk-activity-heading" tabIndex={-1}>Recent activity</h2>
+                <div className="mt-3">
+                  {visibleActivity.map((item, index) => {
+                    const occurredAt = String(item.at || item.createdAt || '');
+                    const message = String(item.text || 'Runtime event');
+                    const preview = message.length > 140 ? `${message.slice(0, 140).trimEnd()}…` : message;
+                    return (
+                      <details
+                        key={`${String(item.id || 'activity')}-${occurredAt}-${activityPage}-${index}`}
+                        className="pbk-today-activity-row"
                       >
-                        {String(item.text || 'Runtime event')}
-                      </div>
-                      <div className="mt-1 text-[11px] text-slate-500 uppercase tracking-[0.12em]">
-                        {friendlyRuntimeLabel(item.category || 'INFO')}
-                      </div>
-                    </div>
-                  ))}
+                        <summary className="pbk-today-activity-summary">
+                          <span className="pbk-today-activity-meta">
+                            <strong>{String(item.actor || 'System')}</strong>
+                            <span>{friendlyRuntimeLabel(item.category || 'INFO')}</span>
+                          </span>
+                          <span className="pbk-today-activity-when">
+                            {occurredAt ? formatRelative(occurredAt) : 'Time unavailable'}
+                          </span>
+                          <ChevronDown size={16} aria-hidden="true" />
+                          <span className="pbk-today-activity-preview line-clamp-2">
+                            {preview}
+                          </span>
+                        </summary>
+                        <div className="pbk-today-activity-detail">
+                          <p>{message}</p>
+                          {occurredAt && <time dateTime={occurredAt}>{formatActivityTitle(occurredAt)}</time>}
+                        </div>
+                      </details>
+                    );
+                  })}
                   {!visibleActivity.length && (
                     <div className="rounded-xl border border-dashed border-slate-800 px-3 py-4 text-xs text-slate-500">
                       No activity is on this page yet.

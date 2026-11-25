@@ -44,7 +44,7 @@
   color: var(--text-secondary);
   font: 500 13px/1.5 var(--font-ui);
 }
-.pbk-triage-queue #battlefield-title, .pbk-faster-triage #approvals { scroll-margin-block-start: 80px; }
+.pbk-triage-queue #battlefield-title, .pbk-faster-triage :is(#approvals, #recent-activity) { scroll-margin-block-start: 80px; }
 .pbk-faster-triage > .pbk-today-review { display: contents; }
 .pbk-faster-triage .pbk-today-activity { grid-column: 1 / -1; }
 .pbk-faster-triage > *, .pbk-triage-queue * { min-width: 0; }

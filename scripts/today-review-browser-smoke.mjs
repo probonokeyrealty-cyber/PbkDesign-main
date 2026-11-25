@@ -17,6 +17,20 @@ const seller = {
   createdAt: new Date().toISOString(),
 };
 const second = { ...seller, id: 'qa-other', message: 'Please confirm the property address.' };
+const activityEvent = {
+  id: 'receipt',
+  actor: 'Ava',
+  text: 'Drafted a follow-up',
+  category: 'draft',
+  at: new Date().toISOString(),
+};
+const longActivityEvent = {
+  ...activityEvent,
+  id: 'long-receipt',
+  actor: 'Hermes',
+  category: 'review',
+  text: `Reviewed the sample lead. The intake and parcel record agree. The operator can check the saved evidence using reference ${'sample-reference-'.repeat(8)}. Final review detail.`,
+};
 
 async function verify(browserType, viewport, device = {}) {
   const browser = await browserType.launch();
@@ -48,7 +62,7 @@ async function verify(browserType, viewport, device = {}) {
             approvals: resolved
               ? [{ ...second, message: changed ? 'Updated draft with different details.' : second.message }]
               : [seller, second],
-            activity: [{ id: 'receipt', actor: 'Ava', text: 'Drafted a follow-up', category: 'draft' }],
+            activity: [activityEvent, longActivityEvent],
           },
         });
       }
@@ -64,7 +78,7 @@ async function verify(browserType, viewport, device = {}) {
       }
       if (url.pathname === '/api/intelligence/stream') {
         return route.fulfill({
-          json: { items: [{ id: 'receipt', actor: 'Ava', text: 'Drafted a follow-up', category: 'draft' }] },
+          json: { items: [activityEvent, longActivityEvent] },
         });
       }
       if (url.origin !== origin || /^\/(api\/|health$|events$|invoke$)/.test(url.pathname)) {
@@ -76,7 +90,7 @@ async function verify(browserType, viewport, device = {}) {
       return route.continue();
     });
 
-    await page.goto(`${origin}/command-center`);
+    await page.goto(`${origin}/command-center`, { waitUntil: 'domcontentloaded', timeout: 90000 });
     await expect(page.getByRole('heading', { name: 'Today.', exact: true })).toBeVisible();
     const review = page.getByRole('region', { name: 'Review', exact: true });
     const rail = review.getByRole('list', { name: 'Decision Rail', exact: true });
@@ -87,8 +101,31 @@ async function verify(browserType, viewport, device = {}) {
     await expect(review.getByText('No pending approvals right now.')).toHaveCount(0);
     unavailable = false;
     await page.reload();
-    await expect(page.getByRole('region', { name: 'Recent activity', exact: true })).toBeVisible();
-    await expect(page.getByText('Drafted a follow-up')).toBeVisible();
+    const activity = page.getByRole('region', { name: 'Recent activity', exact: true });
+    await expect(activity).toBeVisible();
+    const activityShortcut = page.getByRole('navigation', { name: 'Today sections' })
+      .getByRole('link', { name: 'Activity', exact: true });
+    await activityShortcut.focus();
+    await page.keyboard.press('Enter');
+    await expect(activity.getByRole('heading', { name: 'Recent activity' })).toBeFocused();
+    const entry = activity.locator('details').filter({ hasText: 'Hermes' });
+    const summary = entry.locator('summary');
+    const detail = entry.locator('.pbk-today-activity-detail');
+    await expect(detail).toBeHidden();
+    await expect(summary).toContainText('The intake and parcel record agree.');
+    await summary.focus();
+    await page.keyboard.press('Enter');
+    await expect(detail).toBeVisible();
+    await expect(detail.getByText(longActivityEvent.text, { exact: true })).toBeVisible();
+    await expect(detail.locator('time')).toHaveAttribute('datetime', longActivityEvent.at);
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+    if (process.env.PBK_TODAY_REVIEW_SCREENSHOTS === '1') {
+      mkdirSync('.pbk-local', { recursive: true });
+      await activity.screenshot({ path: `.pbk-local/today-activity-${browserType.name()}-${viewport.width}.png` });
+    }
+    await page.keyboard.press('Enter');
+    await expect(detail).toBeHidden();
+    assert.deepEqual(unexpectedWrites, [], 'Activity navigation and disclosure are read-only');
     const row = review.locator('[data-approval-id="qa-sms"]');
     const approve = row.getByRole('button', { name: 'Review approval' });
     await expect(row.getByText(seller.message)).toBeVisible();
@@ -202,7 +239,7 @@ async function verify(browserType, viewport, device = {}) {
       document.querySelector('.pbk-today-review').scrollWidth <=
         document.querySelector('.pbk-today-review').clientWidth
     ), true, 'Today and Review must not overflow');
-    console.log(`${browserType.name()} ${viewport.width}px: polling outage/recovery, failed preflight, keyboard cancel, duplicate, changed/unknown decisions, and layout passed.`);
+    console.log(`${browserType.name()} ${viewport.width}px: activity navigation and disclosure, polling outage/recovery, failed preflight, keyboard cancel, duplicate, changed/unknown decisions, and layout passed.`);
   } finally {
     await browser.close();
   }

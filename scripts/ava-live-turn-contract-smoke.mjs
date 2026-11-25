@@ -352,12 +352,23 @@ const concernedAboutFee = buildAvaLiveTurnContract({
 });
 assert.equal(concernedAboutFee.nextBestQuestionCategory, 'out_of_pocket_cost');
 assert.equal(concernedAboutFee.knownFacts.sellerTargetPrice, '250k');
+assert.equal(buildAvaLiveTurnContract({
+  transcript: "I want 250k and I won't pay $4,000 in closing costs.",
+}).knownFacts.sellerTargetPrice, '250k');
+assert.notEqual(buildAvaLiveTurnContract({
+  transcript: "I can cover closing costs, but I don't live nearby.",
+}).intent, 'cost_concern');
 assert(!isAvaLiveReplyAlignedWithContract(
   `You won't pay anything out of pocket. ${concernedAboutFee.nextBestQuestion}`,
   concernedAboutFee
 ));
 const decision = buildAvaLiveTurnContract({ transcript: "I'm helping the owner sell it." });
 assert.equal(decision.knownFacts.authority, 'helper_or_stakeholder');
+for (const transcript of ["I'm not the owner, and I'm helping the seller.", "I'm helping my wife sell the house."]) {
+  const contract = buildAvaLiveTurnContract({ transcript });
+  assert.equal(contract.intent, 'caller_is_helper', transcript);
+  assert.equal(contract.knownFacts.authority, 'helper_or_stakeholder', transcript);
+}
 const owner = buildAvaLiveTurnContract({ transcript: "I'm the owner and I'm helping my brother move." });
 assert.notEqual(owner.nextBestQuestionCategory, 'decision_maker');
 const optOutAndCost = buildAvaLiveTurnContract({

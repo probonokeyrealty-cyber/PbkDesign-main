@@ -96,10 +96,10 @@ import {
   buildAvaLiveTurnContract,
   classifyAvaLiveObjectionV2,
   compileAvaLiveSkillAction,
-  hasAvaCostConcern,
   isAvaFocusedCoachingIntent,
   isAvaLiveReplyAlignedWithContract,
   renderAvaLiveContractReply,
+  withoutAvaCostClauses,
 } from './ava-live-turn-contract.mjs';
 import {
   buildPBKIntelligenceContext,
@@ -24964,7 +24964,7 @@ function isAvaLiveRepeatComplaint(transcript = '') {
 
 function isAvaLiveSellerMoneyContext(transcript = '') {
   const clean = normalizeTelnyxRepairTranscript(transcript);
-  if (!clean || hasAvaCostConcern(clean) || !extractAvaLiveMoneyAmount(clean)) return false;
+  if (!clean || !extractAvaLiveMoneyAmount(clean)) return false;
   const hasMoneyLanguage =
     isAvaLiveNetNumberAnswer(clean) ||
     isAvaLiveOfferRequest(clean) ||
@@ -24979,9 +24979,8 @@ function isAvaLiveSellerMoneyContext(transcript = '') {
 function rememberAvaLiveSellerMoney(session = {}, transcript = '', supportTranscript = '') {
   if (!session || typeof session !== 'object') return '';
   if (!session.bant || typeof session.bant !== 'object') session.bant = {};
-  const current = normalizeTelnyxRepairTranscript(transcript);
-  const support = normalizeTelnyxRepairTranscript(supportTranscript);
-  if (hasAvaCostConcern(current)) return '';
+  const current = normalizeTelnyxRepairTranscript(withoutAvaCostClauses(transcript));
+  const support = normalizeTelnyxRepairTranscript(withoutAvaCostClauses(supportTranscript));
   const combined = [current, support].filter(Boolean).join(' ');
   const money = isAvaLiveSellerMoneyContext(current)
     ? extractAvaLiveMoneyAmount(current)
@@ -70805,7 +70804,7 @@ function classifyAvaLiveSellerIntent(transcript = '', session = {}) {
   else if (/\btimeline|days?|weeks?|months?|asap|soon|fast|quick\b/i.test(clean)) intent = 'timeline_or_speed';
   else if (/\brepairs?|condition|roof|hvac|foundation|tenant|vacant|occupied\b/i.test(clean)) intent = 'condition_signal';
   else if (isTelnyxLiveAckOnlyUtterance(clean)) intent = isAvaLiveAuthorityQuestion(lastReply) ? 'authority_confirmation' : 'acknowledgement';
-  const money = extractAvaLiveMoneyAmount(transcript);
+  const money = extractAvaLiveMoneyAmount(withoutAvaCostClauses(transcript));
   if (money) signals.push(`money:${money}`);
   if (hasStrongAvaOwnerRoleAssertion(clean)) signals.push('owner_language');
   if (PBK_AGENT_ROLE_RE.test(clean)) signals.push('agent_language');

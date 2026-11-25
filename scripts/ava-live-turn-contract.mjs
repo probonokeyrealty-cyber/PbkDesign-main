@@ -142,9 +142,11 @@ const OUT_OF_POCKET_COST = /\b(?:out[- ]of[- ]pocket|upfront (?:costs?|fees?|pay
 const COST_CONCERN = /\b(?:no|don['’]t|won['’]t|can['’]t|cannot|not|avoid|worried|concerned|afford|which|what|how much|do i|will i|would i|have to)\b/i;
 const STATED_OWNER = /\b(?:i (?:am|own)|i['’]m)\s+(?:(?:also|actually)\s+)?(?:the (?:home)?owner|the seller|(?:the|this|that|my) (?:house|home|property))\b|\bi own it\b/i;
 const HELPER_INTRO = /\b(?:i am|i['’]m|im)\s+(?:(?:just|only)\s+)?helping\b(.*)/i;
-const SALE_HELP = /^(?:with (?:it|the (?:sale|property))\b|(?:the (?:home)?owner|my [a-z]+)(?:[.!?,]*$|\s+(?:with (?:it|the sale)|sell(?:ing)?)\b))/i;
+const SALE_HELP = /^(?:with (?:it|the (?:sale|property))\b|(?:the (?:home)?owner|the seller|my [a-z]+)(?:[.!?,]*$|\s+(?:with (?:it|the sale)|sell(?:ing)?)\b))/i;
 const UNCERTAIN_PROPERTY = /\b(?:property|house|home|address)\b.{0,35}\b(?:might be|could be|maybe|i think)\s+(?:in|at|near)\b|\b(?:not sure|don['’]t know)\b.{0,35}\b(?:which (?:property|house|home)|where (?:it|the (?:house|home|property)) is|the address)\b|\b(?:maybe|i think|i guess)\s+(?:the (?:property|house|home|address)|it)\s+is\s+(?:in|at|near)\b/i;
 const UNCERTAIN_STREET_ADDRESS = /\b(?:might be|could be|maybe|i think|i guess|not sure)\b/i;
+const NON_OWNER = /\b(?:i am|i['’]m|im)\s+not\s+(?:the\s+)?(?:owner|homeowner|seller)\b/i;
+const CLAUSE_BOUNDARY = /[.!?;]+\s+|\s+(?:and|but)\s+/i;
 
 // Conversation cues adapted from the downloaded PBK sales training timeline.
 // https://miro.com/app/board/uXjVESuOPu0=/
@@ -170,8 +172,16 @@ export function isAvaFocusedCoachingIntent(intent = '') {
   return Object.hasOwn(MIRO_COACHING, intent);
 }
 
-export function hasAvaCostConcern(text = '') {
-  return OUT_OF_POCKET_COST.test(text) && COST_CONCERN.test(text);
+function hasAvaCostConcern(text = '') {
+  return OUT_OF_POCKET_COST.test(text) && text.split(CLAUSE_BOUNDARY).some(
+    (clause) => OUT_OF_POCKET_COST.test(clause) && COST_CONCERN.test(clause)
+  );
+}
+
+export function withoutAvaCostClauses(transcript = '') {
+  const text = clean(transcript);
+  if (!OUT_OF_POCKET_COST.test(text)) return text;
+  return text.split(CLAUSE_BOUNDARY).filter((clause) => !OUT_OF_POCKET_COST.test(clause)).join(' ');
 }
 
 function isStatedHelper(text = '') {
@@ -191,6 +201,7 @@ function inferAuthority(text = '') {
   const value = lower(text);
   if (/\b(agent|realtor|broker|representing|my client)\b/.test(value)) return 'agent';
   if (isStatedHelper(value)) return 'helper_or_stakeholder';
+  if (NON_OWNER.test(value)) return '';
   if (/\b(i am|i'm|im)\s+(?:the\s+)?(?:owner|seller)\b|\bi own\b|\bmy (?:house|property)\b|\bowner\b|\bseller\b/.test(value)) return 'owner';
   if (/\b(spouse|wife|husband|partner|executor|attorney|lawyer|trustee|heir)\b/.test(value)) return 'helper_or_stakeholder';
   return '';
@@ -216,7 +227,7 @@ export function updateAvaLiveFactLedger(ledger = {}, transcript = '', context = 
   if (fullAddress) next.fullAddress = fullAddress;
   const partialAddress = uncertainProperty ? '' : extractPartialAddress(text);
   if (partialAddress && !next.fullAddress) next.partialAddress = partialAddress;
-  const money = hasAvaCostConcern(text) ? '' : extractMoney(text);
+  const money = extractMoney(withoutAvaCostClauses(text));
   if (money) next.sellerTargetPrice = money;
   const authority = inferAuthority(text);
   if (authority) next.authority = authority;
@@ -282,13 +293,13 @@ export function classifyAvaLiveObjectionV2(transcript = '', context = {}) {
   } else if (/\b(probate|estate|inherited|passed away|executor)\b/.test(text)) {
     intent = 'probate_legal';
     objection = 'probate_legal';
+  } else if (isStatedHelper(text) && !/\b(agent|realtor|broker|my client)\b/.test(text)) {
+    intent = 'caller_is_helper';
   } else if (/\b(spouse|wife|husband|partner|attorney|lawyer|heir|co-owner|co owner)\b/.test(text)) {
     intent = 'spouse_partner';
     objection = 'decision_maker';
   } else if (/\b(agent|realtor|broker|my client|listing)\b/.test(text)) {
     intent = 'caller_is_agent';
-  } else if (isStatedHelper(text)) {
-    intent = 'caller_is_helper';
   } else if (hasUncertainProperty(text)) {
     intent = 'uncertain_property';
   } else if (/\b(think about it|need to think|not sure|maybe|sleep on it)\b/.test(text)) {
@@ -300,7 +311,7 @@ export function classifyAvaLiveObjectionV2(transcript = '', context = {}) {
     intent = 'seller_wants_speed';
   }
 
-  const money = hasAvaCostConcern(text) ? '' : extractMoney(transcript);
+  const money = extractMoney(withoutAvaCostClauses(transcript));
   if (money) signals.push(`money:${money}`);
   if (context?.ledger?.sellerTargetPrice) signals.push('target_price_known');
   if (context?.ledger?.fullAddress) signals.push('full_address_known');

@@ -64,6 +64,7 @@ test('a saved intake has one durable Rex event and queues only eligible Ava task
     await request('/api/leads', input('2', { score: 30 }));
     await request('/api/leads', input('3', { dncStatus: 'requested' }));
     await request('/api/leads', input('4', { nowLocalHour: undefined }));
+    await request('/api/leads', input('7', { dnc: false, doNotCall: true }));
     await request('/events', { eventType: 'lead-intake', payload: input('5', { nowLocalHour: 21 }) });
     await request('/api/leads/import/property-data', { leads: [input('6', { score: 74 })] });
 

@@ -23312,7 +23312,8 @@ function queueRexLeadImport(lead, input, source) {
     phone: /^\+[1-9]\d{7,14}$/.test(phone) ? phone : '',
     score: input.motivationScore ?? input.motivation_score ?? input.leadScore ?? input.lead_score ?? lead.score,
     nowLocalHour: getRexLeadImportHour(input),
-    dnc: /^(true|1|yes)$/i.test(String(input.dnc ?? input.doNotCall ?? input.do_not_call ?? input.isDnc ?? input.is_dnc ?? ''))
+    dnc: [input.dnc, input.doNotCall, input.do_not_call, input.isDnc, input.is_dnc]
+      .some(value => /^(true|1|yes)$/i.test(String(value ?? '').trim()))
       || getAvaReviewContactStatus(lead) === 'restricted',
   });
   if (!event) return;

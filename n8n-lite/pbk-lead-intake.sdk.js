@@ -44,7 +44,7 @@ const lead = {
   timeZone: source.timeZone ?? source.timezone ?? source.leadTimezone,
   compliance: source.compliance,
   dncStatus: source.dncStatus,
-  dnc: source.dnc ?? source.doNotCall ?? source.do_not_call,
+  dnc: [source.dnc, source.doNotCall, source.do_not_call, source.isDnc, source.is_dnc].some(value => /^(true|1|yes)$/i.test(String(value ?? '').trim())),
   source: source.source || 'manual-webhook',
   seller: {
     name: source?.seller?.name || source.name || 'Unknown seller',

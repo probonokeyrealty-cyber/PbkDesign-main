@@ -236,10 +236,12 @@ test('bridge code matches the reviewed release fingerprint outside the scoped re
   // Direct staff calls verify the saved recipient and preserve request contact restrictions.
   // Saved lead intake commits the Rex event with the lead. Delivery tests cover
   // eligibility, same-ID replay, and the provider approval gate.
+  // Ava's focused phone replies and fact parsing use the reviewed turn contract.
+  // Fictional bridge fixtures cover stop-contact, the spoken guard, and helper authority.
   // The opt-in skill worker mirrors verified lifecycle events to Supabase.
   // Skill governance tests cover projection delivery and the transcript fallback.
   assert.equal(createHash('sha256').update(unchanged).digest('hex'),
-    '5543cb2fdffb98e22f4f5572b01d429485543cf7dfd79f13345ff75f9a3cb1eb');
+    'a6d3ec8b5f180603572752bbfb79e0aa40efd688d6d1c5f6ba4297ef06cf74d2');
 });
 
 test('production distribution includes reader and protocol, never the fixture signer', () => {

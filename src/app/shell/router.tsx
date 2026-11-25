@@ -17,9 +17,7 @@ const BatchReview = lazy(() =>
     default: module.BatchReview,
   }))
 );
-const AvaConsultation = lazy(() =>
-  loadCurrentRoute(() => import('../routes/AvaConsultation')),
-);
+const AvaConsultation = lazy(() => loadCurrentRoute(() => import('../routes/AvaConsultation')));
 
 const LeadPortal = lazy(() =>
   loadCurrentRoute(() => import('../routes/LeadPortal')).then((module) => ({
@@ -44,7 +42,11 @@ const Settings = lazy(() =>
     default: module.Settings,
   }))
 );
-const PropertyLog = lazy(() => loadCurrentRoute(() => import('../routes/PropertyLog')).then(module=>({default:module.PropertyLog})));
+const PropertyLog = lazy(() =>
+  loadCurrentRoute(() => import('../routes/PropertyLog')).then((module) => ({
+    default: module.PropertyLog,
+  }))
+);
 const AgentFleet = lazy(() =>
   loadCurrentRoute(() => import('../routes/AgentFleet')).then((module) => ({
     default: module.AgentFleet,
@@ -54,6 +56,9 @@ const MemoryAnalytics = lazy(() =>
   loadCurrentRoute(() => import('../routes/MemoryAnalytics')).then((module) => ({
     default: module.MemoryAnalytics,
   }))
+);
+const Brain = lazy(() =>
+  loadCurrentRoute(() => import('../routes/Brain')).then((module) => ({ default: module.Brain }))
 );
 const SkillStudio = lazy(() =>
   loadCurrentRoute(() => import('../routes/SkillStudio')).then((module) => ({
@@ -98,6 +103,16 @@ function ProspectingEvidenceRedirect() {
   return <Navigate to={{ pathname: '/prospecting', search: '?view=evidence', hash }} replace />;
 }
 
+function IndexAlias() {
+  const { hash } = useLocation();
+  return (
+    <Navigate
+      to={hash === '#recordings' ? '/inbox/conversations?filter=call' : '/command-center'}
+      replace
+    />
+  );
+}
+
 const router = createBrowserRouter(
   [
     {
@@ -105,6 +120,8 @@ const router = createBrowserRouter(
       Component: ParadiseLayout,
       children: [
         { index: true, element: <CommandCenter /> },
+        { path: 'index', element: <IndexAlias /> },
+        { path: 'index.html', element: <IndexAlias /> },
         { path: 'command-center', element: <CommandCenter /> },
         { path: 'dashboard', element: <CommandCenter /> },
         { path: 'leads', element: <Leads /> },
@@ -122,6 +139,7 @@ const router = createBrowserRouter(
         { path: 'agent-fleet', element: <AgentFleet /> },
         { path: 'agents', element: <AgentFleet /> },
         { path: 'memory', element: <MemoryAnalytics /> },
+        { path: 'brain', element: <Brain /> },
         { path: 'skills', element: <SkillStudio /> },
         { path: 'skill-studio', element: <SkillStudio /> },
         { path: 'analytics', element: <Analytics /> },

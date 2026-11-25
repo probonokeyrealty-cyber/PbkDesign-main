@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 const root = process.cwd();
@@ -7,17 +7,29 @@ const shellHtml = readFileSync(resolve(root, 'index.shell.html'), 'utf8');
 const legacyHtml = readFileSync(resolve(root, 'index.html'), 'utf8');
 const mainShell = readFileSync(resolve(root, 'src/main.shell.tsx'), 'utf8');
 const viteConfig = readFileSync(resolve(root, 'vite.config.ts'), 'utf8');
+const buildDir = resolve(root, process.argv[2] || 'dist');
+const includesLegacy = process.env.PBK_INCLUDE_LEGACY_SHELL === 'true';
+const redirectBlocks = netlifyConfig.split('[[redirects]]').slice(1);
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
 }
 
+function redirectIndex(path) {
+  return redirectBlocks.findIndex((block) => block.match(/^from\s*=\s*"([^"]+)"/m)?.[1] === path);
+}
+
 function redirectTargetsShell(path) {
-  const escaped = path.replace(/\//g, '\\/');
-  const pattern = new RegExp(
-    `from\\s*=\\s*"${escaped}"[\\s\\S]*?to\\s*=\\s*"\\/index\\.shell\\.html"[\\s\\S]*?status\\s*=\\s*200`
+  const block = redirectBlocks[redirectIndex(path)] || '';
+  return /^to\s*=\s*"\/index\.shell\.html"/m.test(block) && /^status\s*=\s*200$/m.test(block);
+}
+
+for (const alias of ['/', '/index', '/index.html', '/brain']) {
+  const index = redirectIndex(alias);
+  assert(
+    redirectTargetsShell(alias) && index < redirectIndex('/*') && /^force\s*=\s*true$/m.test(redirectBlocks[index]),
+    `Netlify must force ${alias} to the modern shell before the generic fallback.`
   );
-  return pattern.test(netlifyConfig);
 }
 
 assert(
@@ -39,6 +51,7 @@ assert(
   '/fleet',
   '/agent-fleet',
   '/memory',
+  '/brain',
   '/skills',
   '/skills/*',
   '/skill-studio',
@@ -89,7 +102,26 @@ assert(
 );
 assert(
   /PBK Wholesale Paradise/.test(legacyHtml),
-  'legacy index.html must remain available as the fallback dashboard artifact.'
+  'The original Command Center source must remain available for explicit legacy tests.'
+);
+assert(
+  readFileSync(resolve(buildDir, 'index.html'), 'utf8') ===
+    readFileSync(resolve(buildDir, 'index.shell.html'), 'utf8'),
+  'The built default index.html must contain only the modern shell.'
+);
+const legacyEntry = resolve(buildDir, 'legacy-command-center.html');
+assert(
+  existsSync(legacyEntry) === includesLegacy,
+  'The separate legacy entry must exist only for an explicitly enabled build.'
+);
+if (includesLegacy) {
+  assert(/PBK Wholesale Paradise/.test(readFileSync(legacyEntry, 'utf8')), 'The opt-in entry must contain the legacy shell.');
+}
+const archiveDir = resolve(buildDir, 'legacy');
+assert(
+  !existsSync(archiveDir) || readdirSync(archiveDir, { recursive: true, withFileTypes: true })
+    .every((entry) => entry.isDirectory()),
+  'Historical design references must not be published.'
 );
 assert(
   !/Production deploy continues to use `index\.html`/.test(mainShell),

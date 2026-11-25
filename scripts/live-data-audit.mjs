@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { checkNetlifyCommandCenterRouting } from './netlify-routing-audit.mjs';
 
 const root = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const indexPath = resolve(root, 'index.html');
@@ -96,25 +97,7 @@ const netlifyDocumentsPdfFunction = existsSync(netlifyDocumentsPdfFunctionPath)
 const netlifyBridgeProxyFunction = existsSync(netlifyBridgeProxyFunctionPath)
   ? readFileSync(netlifyBridgeProxyFunctionPath, 'utf8')
   : '';
-const netlifyApiProxyIndex = netlifyConfig.lastIndexOf('from = "/api/*"');
-const netlifyBrainCleanIndex = netlifyConfig.lastIndexOf('from = "/brain"');
-const netlifyBrainProxyIndex = netlifyConfig.lastIndexOf('from = "/brain/*"');
-const netlifySpaFallbackIndex = netlifyConfig.lastIndexOf('from = "/*"');
-const netlifySpaFallbackBlock =
-  netlifySpaFallbackIndex >= 0 ? netlifyConfig.slice(netlifySpaFallbackIndex) : '';
-const netlifySpaFallbackOrdered =
-  /from\s*=\s*"\/\*"/.test(netlifySpaFallbackBlock) &&
-  /to\s*=\s*"\/index\.shell\.html"/.test(netlifySpaFallbackBlock) &&
-  /status\s*=\s*200/.test(netlifySpaFallbackBlock) &&
-  netlifyApiProxyIndex >= 0 &&
-  netlifySpaFallbackIndex > netlifyApiProxyIndex;
-const netlifyBrainCleanRouteOrdered =
-  netlifyBrainCleanIndex >= 0 &&
-  netlifyBrainProxyIndex >= 0 &&
-  netlifyBrainCleanIndex < netlifyBrainProxyIndex &&
-  /from\s*=\s*"\/brain"[\s\S]*?to\s*=\s*"\/index\.html"[\s\S]*?status\s*=\s*200/.test(
-    netlifyConfig.slice(netlifyBrainCleanIndex, netlifyBrainProxyIndex)
-  );
+const netlifyCleanRoutesOrdered = Object.values(checkNetlifyCommandCenterRouting(netlifyConfig)).every(Boolean);
 const cleanPathRouterWired =
   /const\s+cleanPagePathAliases\s*=/.test(index) &&
   /['"]\/settings['"]\s*:\s*['"]settings['"]/.test(index) &&
@@ -1876,7 +1859,7 @@ const checks = [
   },
   {
     name: 'Netlify hosted app preserves direct clean links without stealing API rewrites',
-    ok: netlifySpaFallbackOrdered && netlifyBrainCleanRouteOrdered,
+    ok: netlifyCleanRoutesOrdered,
   },
   {
     name: 'Direct Netlify clean links open the intended Command Center page',

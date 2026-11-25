@@ -25,7 +25,7 @@ timeout = 15
     Referrer-Policy = "strict-origin-when-cross-origin"
     Permissions-Policy = "camera=(), microphone=(self), geolocation=()"
     Strict-Transport-Security = "max-age=63072000; includeSubDomains; preload"
-    Content-Security-Policy = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; img-src 'self' data: blob: https:; font-src 'self' data: https://fonts.gstatic.com; connect-src 'self' https://pbk-openclaw-bridge.onrender.com wss://pbk-openclaw-bridge.onrender.com https://api.mapbox.com https://events.mapbox.com https://*.tiles.mapbox.com; worker-src 'self' blob:; frame-src 'self' blob:; frame-ancestors 'none'"
+    Content-Security-Policy = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; img-src 'self' data: blob: https:; font-src 'self' data: https://fonts.gstatic.com; connect-src 'self' https://pbk-openclaw-bridge.onrender.com wss://pbk-openclaw-bridge.onrender.com https://api.mapbox.com https://events.mapbox.com https://*.tiles.mapbox.com; media-src 'self' https://asumndiooctluuecydhj.supabase.co/storage/v1/object/sign/; worker-src 'self' blob:; frame-src 'self' blob:; frame-ancestors 'none'"
 
 [[headers]]
   for = "/assets/*"
@@ -110,6 +110,12 @@ timeout = 15
   for = "/index.html"
   [headers.values]
     Cache-Control = "no-cache, must-revalidate"
+
+[[headers]]
+  for = "/legacy-command-center.html"
+  [headers.values]
+    Cache-Control = "no-store"
+    X-Robots-Tag = "noindex, nofollow"
 
 [[headers]]
   for = "/analyzer.html"
@@ -282,6 +288,18 @@ status = 404
 
 [[redirects]]
 from = "/index.shell.html/*"
+to = "/index.shell.html"
+status = 200
+force = true
+
+[[redirects]]
+from = "/index"
+to = "/index.shell.html"
+status = 200
+force = true
+
+[[redirects]]
+from = "/index.html"
 to = "/index.shell.html"
 status = 200
 force = true
@@ -498,8 +516,9 @@ force = true
 
 [[redirects]]
 from = "/brain"
-to = "/index.html"
+to = "/index.shell.html"
 status = 200
+force = true
 
 [[redirects]]
 from = "/brain/*"

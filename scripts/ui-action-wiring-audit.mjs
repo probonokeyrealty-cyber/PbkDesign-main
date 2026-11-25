@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { checkNetlifyCommandCenterRouting } from './netlify-routing-audit.mjs';
 
 const root = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const index = readFileSync(resolve(root, 'index.html'), 'utf8');
@@ -185,31 +186,21 @@ if (missingRoutes.length) {
   });
 }
 
-const netlifyApiProxyIndex = netlifyConfig.lastIndexOf('from = "/api/*"');
-const netlifyBrainCleanIndex = netlifyConfig.lastIndexOf('from = "/brain"');
-const netlifyBrainProxyIndex = netlifyConfig.lastIndexOf('from = "/brain/*"');
-const netlifySpaFallbackIndex = netlifyConfig.lastIndexOf('from = "/*"');
-const netlifySpaFallbackBlock = netlifySpaFallbackIndex >= 0 ? netlifyConfig.slice(netlifySpaFallbackIndex) : '';
-const netlifySpaFallbackConfigured = /from\s*=\s*"\/\*"/.test(netlifySpaFallbackBlock)
-  && /to\s*=\s*"\/index\.shell\.html"/.test(netlifySpaFallbackBlock)
-  && /status\s*=\s*200/.test(netlifySpaFallbackBlock);
-const netlifyBrainCleanRouteOrdered = netlifyBrainCleanIndex >= 0
-  && netlifyBrainProxyIndex >= 0
-  && netlifyBrainCleanIndex < netlifyBrainProxyIndex
-  && /from\s*=\s*"\/brain"[\s\S]*?to\s*=\s*"\/index\.html"[\s\S]*?status\s*=\s*200/.test(netlifyConfig.slice(netlifyBrainCleanIndex, netlifyBrainProxyIndex));
-const netlifySpaFallbackOrdered = netlifySpaFallbackConfigured
-  && netlifyApiProxyIndex >= 0
-  && netlifySpaFallbackIndex > netlifyApiProxyIndex;
-if (!netlifySpaFallbackOrdered || !netlifyBrainCleanRouteOrdered) {
+const netlifyRouting = checkNetlifyCommandCenterRouting(netlifyConfig);
+const netlifyCleanRoutesOrdered = Object.values(netlifyRouting).every(Boolean);
+if (!netlifyCleanRoutesOrdered) {
   fail.push({
     name: 'Netlify SPA fallback must protect direct Command Center links after API rewrites',
     details: [
-      ...(!netlifySpaFallbackOrdered ? ['netlify.toml needs from="/*" -> /index.shell.html after /api/* so shared clean URLs render the modern app without stealing API calls.'] : []),
-      ...(!netlifyBrainCleanRouteOrdered ? ['netlify.toml needs exact from="/brain" -> /index.html before /brain/* proxy so the Brain page is not treated as a protected API call.'] : []),
+      ...(!netlifyRouting.brain ? ['Force /brain to /index.shell.html before /brain/*.'] : []),
+      ...(!netlifyRouting.brainApi ? ['Keep the forced /brain/* bridge rewrite, including its path, before /*.'] : []),
+      ...(!netlifyRouting.api ? ['Keep the forced /api/* bridge rewrite, including its path, before /*.'] : []),
+      ...(!netlifyRouting.fallback ? ['Rewrite /* to /index.shell.html with status 200.'] : []),
     ],
   });
 }
 
+const netlifyApiProxyIndex = netlifyConfig.lastIndexOf('from = "/api/*"');
 const netlifyShellRouteIndex = netlifyConfig.lastIndexOf('from = "/index.shell.html/*"');
 const netlifyShellRouteBlock = netlifyShellRouteIndex >= 0 ? netlifyConfig.slice(netlifyShellRouteIndex) : '';
 const netlifyModernShellRouted = /from\s*=\s*"\/index\.shell\.html\/\*"/.test(netlifyShellRouteBlock)
@@ -805,8 +796,8 @@ const report = {
     },
     {
       name: 'Netlify direct app links fall back to the SPA shell',
-      ok: netlifySpaFallbackOrdered && netlifyBrainCleanRouteOrdered,
-      count: [netlifySpaFallbackConfigured, netlifyBrainCleanRouteOrdered].filter(Boolean).length,
+      ok: netlifyCleanRoutesOrdered,
+      count: Object.values(netlifyRouting).filter(Boolean).length,
     },
     {
       name: 'Page navigation targets exist',

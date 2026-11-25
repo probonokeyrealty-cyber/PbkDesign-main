@@ -100,7 +100,9 @@ export function UnifiedInbox() {
     message: string;
   } | null>(null);
   const [search, setSearch] = useState('');
-  const [activeFilter, setActiveFilter] = useState<ConversationFilter>('all');
+  const [activeFilter, setActiveFilter] = useState<ConversationFilter>(() =>
+    searchParams.get('filter') === 'call' ? 'call' : 'all'
+  );
   const [compactViewport, setCompactViewport] = useState(
     () => typeof window !== 'undefined' && window.innerWidth <= 760
   );

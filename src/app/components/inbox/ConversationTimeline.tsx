@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router';
 import {
   AlertCircle,
@@ -7,6 +7,7 @@ import {
   ChevronDown,
   ChevronUp,
   Clock3,
+  Download,
   FileSignature,
   Lightbulb,
   Loader2,
@@ -25,6 +26,7 @@ import {
   UserRound,
 } from 'lucide-react';
 import {
+  bridgeRequest,
   patchConversationEventRequest,
   reportConversationEventSpamRequest,
   restoreConversationEventRequest,
@@ -32,6 +34,7 @@ import {
   type ConversationThread,
 } from '../../utils/runtimeBridge';
 import { showUiToast, toastUndo } from '../../utils/uiFeedback';
+import { downloadTextFile } from '../../utils/fileExport';
 import { groupConversationEventsByDay } from '../../routes/conversationRuntimeLogic.js';
 import {
   DropdownMenu,
@@ -161,6 +164,35 @@ function getTranscriptSegments(event: ConversationEvent) {
     .filter((entry) => entry.text);
 }
 
+function getCallTranscript(event: ConversationEvent, isTranscriptEvent: boolean) {
+  const payload = record(event.payload);
+  const deepgram = record(record(payload.deepgram).summary).transcript;
+  const transcript = payload.transcript;
+  const saved = Array.isArray(transcript)
+    ? transcript
+        .map((entry) => {
+          if (typeof entry === 'string') return entry.trim();
+          const turn = record(entry);
+          const content = text(turn.text || turn.body || turn.content || turn.transcript);
+          const speaker = text(turn.speaker);
+          return content && speaker ? `${speaker}: ${content}` : content;
+        })
+        .filter(Boolean)
+        .join('\n')
+    : typeof transcript === 'string'
+      ? transcript.trim()
+      : '';
+  return (
+    (isTranscriptEvent ? text(event.body) : '') ||
+    (typeof deepgram === 'string' ? deepgram.trim() : '') ||
+    text(payload.transcriptText || payload.transcript_text) ||
+    saved ||
+    getTranscriptSegments(event)
+      .map((segment) => segment.text)
+      .join('\n')
+  );
+}
+
 function formatCallDuration(seconds: unknown) {
   const duration = Math.max(0, Number(seconds || 0));
   if (!Number.isFinite(duration) || duration <= 0) return 'Duration pending';
@@ -203,12 +235,31 @@ function getCallPresentation(event: ConversationEvent) {
   };
 }
 
+type RecordingPlayback =
+  | { key: string; status: 'loading' | 'unavailable' }
+  | { key: string; status: 'ready'; url: string };
+
+type RecordingOwner = { stop: () => void };
+type TimelinePlayback = { active: RecordingOwner | null };
+
+function playAudio(audio: HTMLAudioElement, onUnavailable: () => void) {
+  void audio.play().catch((error: unknown) => {
+    if (error instanceof DOMException && ['AbortError', 'NotAllowedError'].includes(error.name)) {
+      // Autoplay policy can still require a click on the native player after signing.
+      return;
+    }
+    onUnavailable();
+  });
+}
+
 function ConversationEventRow({
   event,
   onEventChanged,
+  timelinePlayback,
 }: {
-  event: ConversationEvent;
+  event: ConversationEvent & { sourceId?: string };
   onEventChanged: () => void;
+  timelinePlayback: TimelinePlayback;
 }) {
   const audioRef = useRef<HTMLAudioElement>(null);
   const longPressTimerRef = useRef<number | null>(null);
@@ -221,15 +272,131 @@ function ConversationEventRow({
   const [confirmSpam, setConfirmSpam] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [actionPending, setActionPending] = useState(false);
-  const recordingUrl = getRecordingUrl(event);
+  const [playback, setPlayback] = useState<RecordingPlayback | null>(null);
+  const pendingLookup = useRef<symbol | null>(null);
+  const sourceUrl = getRecordingUrl(event);
+  const payload = record(event.payload);
+  const storagePath = text(payload.storagePath || payload.storage_path || payload.recordingPath);
+  const archiveKey = text(record(payload.s3Archive).key);
+  const messageId = text(payload.recordingMessageId || event.sourceId);
+  const signPath =
+    messageId && (storagePath || archiveKey)
+      ? `/api/recordings/${encodeURIComponent(messageId)}?expiresIn=3600${storagePath ? '' : '&source=s3'}`
+      : '';
+  const recordingKey = JSON.stringify([
+    event.threadId,
+    event.id,
+    sourceUrl,
+    signPath,
+    storagePath,
+    archiveKey,
+  ]);
+  const owner = useMemo<RecordingOwner>(
+    () => ({
+      stop() {
+        pendingLookup.current = null;
+        audioRef.current?.pause();
+        setPlayback((current) =>
+          current?.key === recordingKey && current.status === 'loading' ? null : current
+        );
+      },
+    }),
+    [recordingKey]
+  );
+  const claimPlayback = () => {
+    const previous = timelinePlayback.active;
+    if (previous === owner) return;
+    timelinePlayback.active = owner;
+    previous?.stop();
+  };
+  const activePlayback = playback?.key === recordingKey ? playback : null;
+  const readyPlayback = activePlayback?.status === 'ready' ? activePlayback : null;
+  const recordingUnavailable = activePlayback?.status === 'unavailable';
+  const loadingRecording = activePlayback?.status === 'loading';
+  const recordingUrl = readyPlayback?.url || (activePlayback ? '' : sourceUrl);
   const transcriptSegments = getTranscriptSegments(event);
+  const transcript =
+    kind === 'transcript' || kind === 'call' ? getCallTranscript(event, kind === 'transcript') : '';
+  const showRecordingActions =
+    kind === 'transcript' ||
+    (kind === 'call' &&
+      (transcript || /(?:^|[._-])(?:completed|recording)$/.test(event.eventType.toLowerCase())));
   const body = text(event.body || event.subject, 'Activity recorded');
   const callPresentation = kind === 'call' ? getCallPresentation(event) : null;
 
+  useLayoutEffect(
+    () => () => {
+      pendingLookup.current = null;
+      if (timelinePlayback.active === owner) timelinePlayback.active = null;
+    },
+    [owner, timelinePlayback]
+  );
+
+  useLayoutEffect(() => {
+    const audio = audioRef.current;
+    return () => audio?.pause();
+  }, [recordingKey, recordingUrl]);
+
+  useEffect(() => {
+    const audio = audioRef.current;
+    if (!readyPlayback || !audio || timelinePlayback.active !== owner) return;
+    playAudio(audio, () => {
+      if (audioRef.current === audio)
+        setPlayback({ key: readyPlayback.key, status: 'unavailable' });
+    });
+  }, [owner, readyPlayback, timelinePlayback]);
+
+  const openRecording = async () => {
+    if (pendingLookup.current) return;
+    claimPlayback();
+    if (!signPath) {
+      setPlayback(
+        sourceUrl
+          ? { key: recordingKey, status: 'ready', url: sourceUrl }
+          : { key: recordingKey, status: 'unavailable' }
+      );
+      return;
+    }
+
+    const lookup = Symbol();
+    pendingLookup.current = lookup;
+    setPlayback({ key: recordingKey, status: 'loading' });
+    try {
+      const response = await bridgeRequest<{ ok?: boolean; signedUrl?: string; url?: string }>({
+        path: signPath,
+      });
+      if (pendingLookup.current !== lookup || timelinePlayback.active !== owner) return;
+      const url = text(response?.signedUrl || response?.url);
+      if (response?.ok === false || !/^https?:\/\//i.test(url)) {
+        setPlayback({ key: recordingKey, status: 'unavailable' });
+        return;
+      }
+      setPlayback({ key: recordingKey, status: 'ready', url });
+    } catch {
+      if (pendingLookup.current === lookup)
+        setPlayback({ key: recordingKey, status: 'unavailable' });
+    } finally {
+      if (pendingLookup.current === lookup) pendingLookup.current = null;
+    }
+  };
+
   const seekRecording = (seconds: number) => {
-    if (!audioRef.current || !Number.isFinite(seconds)) return;
-    audioRef.current.currentTime = Math.max(0, seconds);
-    void audioRef.current.play();
+    const audio = audioRef.current;
+    if (!audio || !Number.isFinite(seconds)) return;
+    claimPlayback();
+    audio.currentTime = Math.max(0, seconds);
+    playAudio(audio, () => {
+      if (audioRef.current === audio) setPlayback({ key: recordingKey, status: 'unavailable' });
+    });
+  };
+
+  const exportTranscript = () => {
+    try {
+      const id = event.id.replace(/[^a-z0-9_-]/gi, '-');
+      downloadTextFile(transcript, `call-${id}.txt`);
+    } catch {
+      showUiToast({ tone: 'error', title: 'Transcript download failed' });
+    }
   };
 
   const clearLongPress = () => {
@@ -539,8 +706,41 @@ function ConversationEventRow({
             {text(event.status, 'recorded').replace(/_/g, ' ')}
           </span>
         </div>
+        {showRecordingActions && (
+          <div className="flex flex-wrap items-center gap-2">
+            {!recordingUrl && (
+              <button
+                type="button"
+                className="pbk-btn pbk-btn-ghost"
+                aria-label="Play recording"
+                disabled={loadingRecording}
+                onClick={() => void openRecording()}
+              >
+                <Play size={14} aria-hidden="true" />
+                {loadingRecording ? 'Loading recording...' : 'Play'}
+              </button>
+            )}
+            {transcript && (
+              <button type="button" className="pbk-btn pbk-btn-ghost" onClick={exportTranscript}>
+                <Download size={14} aria-hidden="true" />
+                Download transcript (.txt)
+              </button>
+            )}
+          </div>
+        )}
+        {recordingUnavailable && <p role="status">Recording unavailable</p>}
         {recordingUrl && (
-          <audio ref={audioRef} controls preload="metadata" src={recordingUrl}>
+          <audio
+            key={recordingKey}
+            ref={audioRef}
+            controls
+            preload={readyPlayback ? 'none' : 'metadata'}
+            src={recordingUrl}
+            onPlay={(event) => {
+              if (!event.currentTarget.paused) claimPlayback();
+            }}
+            onError={() => setPlayback({ key: recordingKey, status: 'unavailable' })}
+          >
             Your browser does not support audio playback.
           </audio>
         )}
@@ -565,6 +765,7 @@ export function ConversationTimeline({
   onEventChanged,
 }: ConversationTimelineProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
+  const timelinePlayback = useRef<TimelinePlayback>({ active: null }).current;
   const atBottomRef = useRef(true);
   const previousThreadIdRef = useRef('');
   const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
@@ -741,6 +942,7 @@ export function ConversationTimeline({
                   key={event.id}
                   event={event}
                   onEventChanged={onEventChanged}
+                  timelinePlayback={timelinePlayback}
                 />
               ))}
             </div>

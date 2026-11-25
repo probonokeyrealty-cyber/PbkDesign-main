@@ -9,10 +9,161 @@ const rootDir = process.cwd();
 const distDir = path.join(rootDir, 'dist');
 const shellEntry = path.join(distDir, 'index.shell.html');
 const routes = [
-  '/dashboard',
-  '/inbox/conversations',
-  '/leads/lead-inbound-16575001765',
+  { path: '/dashboard' },
+  { path: '/inbox/conversations' },
+  { path: '/leads/lead-inbound-16575001765' },
+  { path: '/index.html', canonical: '/command-center', heading: '#today-heading' },
+  {
+    path: '/index.html#recordings',
+    canonical: '/inbox/conversations?filter=call',
+    heading: '.pbk-conversation-thread-rail h1',
+    activeFilter: 'Calls',
+  },
+  { path: '/brain' },
 ];
+
+const smokeThread = {
+  id: 'smoke-calls',
+  title: 'Recording smoke contact',
+  channels: ['call'],
+};
+const smokeTranscript = 'Seller: Friday works for a follow-up.';
+const deepgramTranscript = 'Seller: Please call me on Monday.';
+const recordingMessageId = 'smoke-recording-message';
+const mediaPath = '/smoke-signed-recording.mp3';
+const slowRecordingId = 'smoke-slow-message';
+const slowMediaPath = '/smoke-slow-recording.mp3';
+const trustedStorage = 'https://asumndiooctluuecydhj.supabase.co/storage/v1/object/sign/';
+const cspProbePath = '/__smoke_recording_media_policy';
+
+async function recordingRow(page, body) {
+  const handle = await page.waitForFunction(
+    (expected) => [...document.querySelectorAll('article.pbk-conversation-event-row')]
+      .find((row) => row.textContent.includes(expected)),
+    { timeout: 8000 },
+    body,
+  );
+  return handle.asElement();
+}
+
+async function verifyTranscriptDownload(page, row, filename, text) {
+  await row.$eval('::-p-aria([name="Download transcript (.txt)"][role="button"])', (button) => button.click());
+  const download = await page.evaluate(() => window.__smokeTranscriptDownload);
+  assert.deepEqual(download, { filename, text });
+}
+
+async function verifyRecordingFallback(page) {
+  const thread = '::-p-text(Recording smoke contact)';
+  await page.waitForSelector(thread, { visible: true, timeout: 8000 });
+  await page.click(thread);
+  const row = await recordingRow(page, smokeTranscript);
+  await row.$eval('button[aria-label="Play recording"]', (button) => button.click());
+  const status = await row.waitForSelector('p[role="status"]', { timeout: 8000 });
+  assert.equal(await status.evaluate((element) => element.textContent), 'Recording unavailable');
+  assert.equal(await row.$('audio'), null, 'A call without audio must not create a player.');
+  await verifyTranscriptDownload(page, row, 'call-smoke-call.txt', smokeTranscript);
+  assert(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1),
+    'The recording fallback must fit in a 390px viewport.');
+}
+
+async function verifyPointerRecording(page, signRequests, origin) {
+  const slowRow = await recordingRow(page, 'Earlier recording fixture');
+  const slowLookup = page.waitForRequest(
+    (request) => new URL(request.url()).pathname === `/api/recordings/${slowRecordingId}`,
+    { timeout: 8000 },
+  );
+  await slowRow.$eval('button[aria-label="Play recording"]', (button) => button.click());
+  const delayedRequest = await slowLookup;
+
+  const row = await recordingRow(page, 'Captured recording fixture');
+  await row.$eval('button[aria-label="Play recording"]', (button) => button.click());
+  const expectedUrl = origin + mediaPath;
+  await page.waitForFunction(
+    (url) => window.__smokePlayedRecordings.includes(url),
+    { timeout: 8000 },
+    expectedUrl,
+  );
+  assert.deepEqual(signRequests, [`/api/recordings/${slowRecordingId}`, `/api/recordings/${recordingMessageId}`]);
+  assert.equal(await row.$eval('audio', (element) => element.src), expectedUrl);
+  assert.equal(await row.$('::-p-text(Recording unavailable)'), null);
+  await verifyTranscriptDownload(page, row, 'call-smoke-pointer-event.txt', deepgramTranscript);
+
+  const slowResponse = page.waitForResponse(
+    (response) => response.url() === delayedRequest.url(),
+    { timeout: 8000 },
+  );
+  await delayedRequest.respond({
+    contentType: 'application/json',
+    body: JSON.stringify({ ok: true, signedUrl: origin + slowMediaPath }),
+  });
+  await (await slowResponse).json();
+  await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  assert.deepEqual(await page.evaluate(() => window.__smokePlayedRecordings), [expectedUrl],
+    'An earlier Play lookup must not start after a later Play wins.');
+  assert.equal(await slowRow.$eval('button[aria-label="Play recording"]', (button) => button.disabled), false);
+}
+
+async function verifyRecordingMediaPolicy(browser, origin) {
+  const page = await browser.newPage();
+  const trustedUrl = trustedStorage + 'call_recordings/fixture.mp3?token=fixture';
+  const blockedUrls = [
+    'https://asumndiooctluuecydhj.supabase.co/rest/v1/fixture.mp3',
+    'https://other-project.supabase.co/storage/v1/object/sign/call_recordings/fixture.mp3',
+    'https://untrusted.example/fixture.mp3',
+  ];
+  const allowed = [];
+  try {
+    await page.setRequestInterception(true);
+    page.on('request', (request) => {
+      const url = request.url();
+      if (url === trustedUrl) {
+        allowed.push(url);
+        void request.respond({ status: 404, body: '' });
+      } else if (url.startsWith(origin + '/')) {
+        void request.continue();
+      } else {
+        void request.abort();
+      }
+    });
+    await page.goto(origin + cspProbePath, { waitUntil: 'domcontentloaded' });
+    const violations = await page.evaluate(async (urls) => {
+      const violations = [];
+      document.addEventListener('securitypolicyviolation', (event) => {
+        if (event.effectiveDirective === 'media-src') violations.push(new URL(event.blockedURI).origin + new URL(event.blockedURI).pathname);
+      });
+      await Promise.all(urls.map((url) => new Promise((resolve) => {
+        const audio = document.createElement('audio');
+        audio.addEventListener('error', resolve, { once: true });
+        document.body.append(audio);
+        audio.src = url;
+        audio.load();
+      })));
+      await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      return violations;
+    }, [trustedUrl, ...blockedUrls]);
+    assert.deepEqual(allowed, [trustedUrl], 'Netlify CSP must allow signed media from PBK storage.');
+    assert.deepEqual(violations.map((url) => new URL(url).origin).sort(),
+      blockedUrls.map((url) => new URL(url).origin).sort(),
+      'Netlify CSP must block unrelated paths and untrusted media origins.');
+  } finally {
+    await page.close();
+  }
+}
+
+async function verifyAskRex(page, queries) {
+  const question = 'What should I review before a follow-up?';
+  await page.waitForSelector('textarea[aria-label="Ask Rex"]', { visible: true, timeout: 8000 });
+  assert.equal(new URL(page.url()).pathname, '/brain');
+  await page.type('textarea[aria-label="Ask Rex"]', question);
+  await page.click('button[aria-label="Send to Rex"]');
+  await page.waitForSelector('::-p-text(Review the latest notes before calling.)', { visible: true });
+  await page.waitForSelector('::-p-text(PBK research fixture)', { visible: true });
+  assert.equal(queries.length, 1);
+  assert.equal(queries[0].query, question);
+  assert.equal(queries[0].readOnly, true);
+  assert(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1),
+    'Ask Rex must fit in a 390px viewport.');
+}
 
 const mimeTypes = new Map([
   ['.css', 'text/css; charset=utf-8'],
@@ -70,10 +221,19 @@ function sendNotFound(response) {
 }
 
 await access(shellEntry);
+const netlify = await readFile(path.join(rootDir, 'netlify.toml'), 'utf8');
+const globalHeaders = netlify.split('[[headers]]').find((block) => /^\s*for = "\/\*"/.test(block));
+const netlifyCsp = globalHeaders?.match(/^\s*Content-Security-Policy = "([^"]+)"/m)?.[1];
+assert(netlifyCsp, 'Missing Netlify CSP for the staff shell.');
 
 const server = createServer(async (request, response) => {
   try {
     const pathname = decodeURIComponent(new URL(request.url || '/', 'http://127.0.0.1').pathname);
+    if (pathname === cspProbePath) {
+      response.writeHead(200, { 'Content-Type': 'text/html', 'Content-Security-Policy': netlifyCsp });
+      response.end('<!doctype html><title>Netlify media policy fixture</title><body></body>');
+      return;
+    }
     const requested = safeDistPath(request.url || '/');
     const requestedStat = await stat(requested).catch(() => null);
     if (requestedStat?.isFile()) {
@@ -96,6 +256,7 @@ const address = server.address();
 if (!address || typeof address === 'string') {
   throw new Error('Unable to start production shell smoke server.');
 }
+const origin = `http://127.0.0.1:${address.port}`;
 
 const missingChunkResponse = await fetch(
   `http://127.0.0.1:${address.port}/assets/__stale_missing_chunk__.js`,
@@ -121,9 +282,102 @@ const browser = await puppeteer.launch({
 });
 
 try {
-  for (const route of routes) {
+  const featureFailures = [];
+  for (const { path: route, canonical, heading, activeFilter } of routes) {
     const page = await browser.newPage();
     const pageErrors = [];
+    const queries = [];
+    const signRequests = [];
+    const checkRecordings = route === '/index.html#recordings';
+    const checkBrain = route === '/brain';
+    if (checkRecordings || checkBrain) {
+      await page.evaluateOnNewDocument((expectedOrigin) => {
+        if (location.origin !== expectedOrigin) return;
+        localStorage.setItem('pbk-openclaw-config', JSON.stringify({
+          endpoint: location.origin, apiKey: 'fixture-only',
+        }));
+        window.__smokePlayedRecordings = [];
+        HTMLMediaElement.prototype.play = function () {
+          window.__smokePlayedRecordings.push(this.src);
+          return Promise.resolve();
+        };
+        const click = HTMLAnchorElement.prototype.click;
+        HTMLAnchorElement.prototype.click = function () {
+          if (!this.download.endsWith('.txt') || !this.href.startsWith('blob:')) {
+            return click.call(this);
+          }
+          const filename = this.download;
+          window.__smokeTranscriptDownload = fetch(this.href)
+            .then(response => response.text())
+            .then(text => ({ filename, text }));
+        };
+      }, origin);
+    }
+    await page.setRequestInterception(true);
+    page.on('request', (request) => {
+      const url = new URL(request.url());
+      if (url.origin === origin && (checkRecordings || checkBrain)) {
+        const fixtures = {
+          '/api/conversations': { result: 'postgres', items: [smokeThread] },
+          '/api/conversations/smoke-calls': { result: 'postgres', thread: smokeThread },
+          '/api/conversations/smoke-calls/timeline': {
+            result: 'postgres',
+            items: [
+              {
+                id: 'smoke-call', threadId: smokeThread.id, channel: 'call',
+                eventType: 'call.transcript', body: smokeTranscript, occurredAt: '2026-11-01T12:00:00Z',
+                payload: { transcript: [{ text: 'Earlier words, not the selected chunk.' }] },
+              },
+              {
+                id: 'smoke-slow-event', threadId: smokeThread.id, channel: 'call',
+                eventType: 'call.recording', body: 'Earlier recording fixture', occurredAt: '2026-11-01T12:04:00Z',
+                sourceTable: 'unified_messages', sourceId: slowRecordingId,
+                payload: { storagePath: 'fixture/slow.mp3' },
+              },
+              {
+                id: 'smoke-pointer-event', threadId: smokeThread.id, channel: 'call',
+                eventType: 'call.recording', body: 'Captured recording fixture', occurredAt: '2026-11-01T12:05:00Z',
+                sourceTable: 'unified_messages', sourceId: recordingMessageId,
+                payload: {
+                  storagePath: 'fixture/audio.mp3',
+                  deepgram: { ok: true, summary: { transcript: deepgramTranscript } },
+                },
+              },
+            ],
+          },
+        };
+        if (request.method() === 'GET' && Object.hasOwn(fixtures, url.pathname)) {
+          void request.respond({ contentType: 'application/json', body: JSON.stringify(fixtures[url.pathname]) });
+          return;
+        }
+        if (checkRecordings && request.method() === 'GET' && url.pathname.startsWith('/api/recordings/')) {
+          signRequests.push(url.pathname);
+          if (url.pathname === `/api/recordings/${slowRecordingId}`) return;
+          void request.respond({
+            contentType: 'application/json',
+            body: JSON.stringify({ ok: true, signedUrl: origin + mediaPath }),
+          });
+          return;
+        }
+        if (checkBrain && url.pathname === '/api/brain/query' && request.method() === 'POST') {
+          queries.push(JSON.parse(request.postData()));
+          void request.respond({
+            contentType: 'application/json',
+            body: JSON.stringify({ ok: true, answer: 'Review the latest notes before calling.', citations: ['PBK research fixture'] }),
+          });
+          return;
+        }
+        if (url.pathname.startsWith('/api/') || url.pathname === '/state' || request.method() !== 'GET') {
+          void request.respond({ contentType: 'application/json', body: '{}' });
+          return;
+        }
+      }
+      if (url.origin === origin || url.protocol === 'data:' || url.protocol === 'blob:') {
+        void request.continue();
+      } else {
+        void request.abort();
+      }
+    });
     page.on('pageerror', (error) => pageErrors.push(error.stack || error.message));
     page.on('requestfailed', (request) => {
       const url = request.url();
@@ -132,7 +386,7 @@ try {
       }
     });
 
-    await page.setViewport({ width: 320, height: 800, isMobile: true, hasTouch: true });
+    await page.setViewport({ width: canonical || checkBrain ? 390 : 320, height: 800, isMobile: true, hasTouch: true });
     await page.goto(`http://127.0.0.1:${address.port}${route}`, {
       waitUntil: 'domcontentloaded',
       timeout: 30_000,
@@ -141,7 +395,35 @@ try {
       () => Boolean(document.querySelector('#root')?.textContent?.trim()),
       { timeout: 15_000 }
     );
+    if (canonical) {
+      await page.waitForFunction(
+        (target) => location.pathname + location.search === target,
+        { timeout: 15_000 },
+        canonical
+      );
+      await page.waitForSelector(heading, { visible: true, timeout: 15_000 });
+      if (activeFilter) {
+        const label = await page.$eval('.pbk-conversation-thread-rail [aria-pressed="true"]', (button) => button.textContent.trim());
+        assert.equal(label, activeFilter, `${route} must activate the Calls filter.`);
+      }
+      assert(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1),
+        `${canonical} must fit in a 390px viewport.`);
+    }
 
+    const featureChecks = checkRecordings
+      ? [
+          ['No-audio Play and transcript export', () => verifyRecordingFallback(page)],
+          ['Signed recording Play and Deepgram export', () => verifyPointerRecording(page, signRequests, origin)],
+        ]
+      : checkBrain ? [['Ask Rex query and citation', () => verifyAskRex(page, queries)]] : [];
+    for (const [label, verify] of featureChecks) {
+      try {
+        await verify();
+        console.log(`[shell-production-boot] ${label} passed`);
+      } catch (error) {
+        featureFailures.push(new Error(`${route}: ${label}: ${error.message}`));
+      }
+    }
     const renderedText = await page.$eval('#root', (root) => root.textContent?.trim() || '');
     if (!renderedText) {
       throw new Error(`${route} mounted an empty React root.`);
@@ -153,9 +435,17 @@ try {
     console.log(`[shell-production-boot] ${route}: rendered`);
     await page.close();
   }
+  try {
+    await verifyRecordingMediaPolicy(browser, origin);
+    console.log('[shell-production-boot] Netlify trusted storage media policy passed');
+  } catch (error) {
+    featureFailures.push(new Error(`Netlify media policy: ${error.message}`));
+  }
+  if (featureFailures.length) throw new AggregateError(featureFailures, 'Shell workflow regressions');
 } finally {
   await browser.close();
-  await new Promise((resolve, reject) =>
-    server.close((error) => (error ? reject(error) : resolve()))
-  );
+  await new Promise((resolve, reject) => {
+    server.close((error) => (error ? reject(error) : resolve()));
+    server.closeAllConnections();
+  });
 }

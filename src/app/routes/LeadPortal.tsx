@@ -13,6 +13,7 @@ import '../../styles/fleet-context.css';
 import '../../styles/faster-triage.css';
 import { PbkDataSource } from '../../components/pbk/index';
 import { AvaLeadReviewCard } from '../components/leads/AvaLeadReviewCard';
+import { GhlLeadPipeline, type GhlPipeline } from '../components/leads/GhlLeadPipeline';
 import { LeadPortalContactability } from '../components/leads/LeadPortalContactability';
 import { LeadPortalDealContext } from '../components/leads/LeadPortalDealContext';
 import { LeadPortalHeader } from '../components/leads/LeadPortalHeader';
@@ -175,6 +176,11 @@ export function LeadPortal() {
   const actionSequence = useRef(0);
   const editRequestHandled = useRef('');
   const [leadPayload, setLeadPayload] = useState<BridgeRecord | null>(null);
+  const [avaPipelineSuggestion, setAvaPipelineSuggestion] = useState<{
+    key: string;
+    stageId: string;
+    revision: number;
+  }>();
   const [thread, setThread] = useState<ConversationThread | null>(null);
   const [events, setEvents] = useState<ConversationEvent[]>([]);
   const [timelineCursor, setTimelineCursor] = useState<string | null>(null);
@@ -218,6 +224,9 @@ export function LeadPortal() {
     },
   };
   const nextStep = readStoredNextStep(lead?.id === leadId ? leadPayload : null);
+  const ghlPipeline = lead?.id === leadId ? (leadPayload?.ghlPipeline as GhlPipeline | undefined) : undefined;
+  const ghlPipelineKey = ghlPipeline ? `${leadId}:${ghlPipeline.occurredAt}` : '';
+  const currentAvaPipelineSuggestion = avaPipelineSuggestion?.key === ghlPipelineKey ? avaPipelineSuggestion : undefined;
   const focusSection = useCallback((id: string, smooth: boolean) => {
     const section = workspaceRootRef.current?.querySelector<HTMLElement>(`#${id}`);
     if (!section) return;
@@ -877,6 +886,15 @@ export function LeadPortal() {
         <div>
           <h2 id="lead-next-step-heading">Next step</h2>
           <p>{nextStep.text}</p>
+          {ghlPipeline && (
+            <GhlLeadPipeline
+              key={ghlPipelineKey}
+              leadId={leadId}
+              pipeline={ghlPipeline}
+              suggestedStageId={currentAvaPipelineSuggestion?.stageId ?? ''}
+              suggestionRevision={currentAvaPipelineSuggestion?.revision ?? 0}
+            />
+          )}
         </div>
       </section>
 
@@ -911,6 +929,12 @@ export function LeadPortal() {
               leadId={leadId}
               analyzerLink={analyzerLink}
               onJumpToSection={jumpToSection}
+              pipelineStages={ghlPipeline?.stages.filter((stage) => stage.id !== ghlPipeline.currentStageId)}
+              onSuggestPipelineStage={(stageId) => setAvaPipelineSuggestion((prior) => ({
+                key: ghlPipelineKey,
+                stageId,
+                revision: (prior?.revision ?? 0) + 1,
+              }))}
             />
           )}
           <LeadPortalDealContext lead={lead} />

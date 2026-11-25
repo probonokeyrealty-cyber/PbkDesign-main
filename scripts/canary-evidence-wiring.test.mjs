@@ -242,9 +242,11 @@ test('bridge code matches the reviewed release fingerprint outside the scoped re
   // Skill governance tests cover projection delivery and the transcript fallback.
   // The Skill Manager grant binds to one signed, unexpired team session.
   // Ava price triage reads recent Analyzer evidence for the exact lead without tool writes.
+  // Detected outbound voicemail stays out of seller replies and live qualification.
+  // Ambiguous greetings allow only a neutral acknowledgement, and explicit opt-outs stay in intent evidence.
   // A query that times out during checkout discards the late client before dispatching SQL.
   assert.equal(createHash('sha256').update(unchanged).digest('hex'),
-    '1215804588b30be4b984d8f8ff1eb88a7d1f5ec9b684a22f24932bd38bd226d0');
+    '34e1518c09a9016e35440f4bcc9d56625f5dc4cbb4f6078df2830a95f6441692');
 });
 
 test('production distribution includes reader and protocol, never the fixture signer', () => {

@@ -45,6 +45,7 @@ import { createAgentTimingTurn, markAgentTimingFirstContent, bindAgentTimingToPa
 import { withRuntimeEvidenceContext, getRuntimeEvidenceContext } from './runtime-evidence-context.mjs';
 import { createBackgroundPersistence, createCoalescedPersistence } from './background-persistence.mjs';
 import { isRetryablePostgresSnapshotError, writePostgresStateSnapshot } from './postgres-state-snapshot.mjs';
+import { buildRexLeadImportEvent, drainRexLeadImportEvent, ensureRexLeadImportEventSchema, getRexLeadImportHour } from './rex-lead-import-events.mjs';
 import { createProviderActionBinding, hashProviderActionContext, validateProviderActionAuthorization, validateNegotiationApproval } from './provider-action-authorization.mjs';
 import { authorizeQualificationRequest, executeReleaseQualification, isDirectQualificationFounder, readReleaseQualification } from './release-qualification.mjs';
 import {
@@ -8078,6 +8079,7 @@ async function ensurePbkOperationalTables(pool) {
   await ensureConversationSchema(pool);
   await ensureProviderActionDispatchSchemaCore(pool);
   await ensureBatchPhoneSchema(pool);
+  await ensureRexLeadImportEventSchema(pool);
   await ensureNurtureSchema(pool).catch((error) => {
     console.warn('[postgres] nurture schema ensure skipped', error?.message || error);
   });
@@ -11901,6 +11903,7 @@ function getStatePersistRetryDelayMs(attempt = 1) {
 }
 
 const stateDbWriteQueue = createCoalescedPersistence({ persist: writeStateToDb });
+let savedRexLeadImportEvents = [];
 
 function persistStateToDb(nextState) {
   return stateDbWriteQueue.schedule(nextState);
@@ -11913,12 +11916,18 @@ async function writeStateToDb(nextState) {
   let attempt = 0;
   const maxAttempts = getStatePersistRetryAttempts();
   try {
+    const rexLeadImports = [...(nextState.rexLeadImportEvents || [])];
     serialized = postgresJsonStringify(nextState);
     await writePostgresStateSnapshot(pool, serialized, {
       maxAttempts,
+      rexLeadImports,
       delay: (retryAttempt) => sleep(getStatePersistRetryDelayMs(retryAttempt)),
       onAttempt: (currentAttempt) => { attempt = currentAttempt; },
     });
+    if (rexLeadImports.length) {
+      const committed = new Set(rexLeadImports.map(({ id }) => id));
+      nextState.rexLeadImportEvents = nextState.rexLeadImportEvents.filter(({ id }) => !committed.has(id));
+    }
     await persistActivityLogRecords(nextState.activity || []);
     markPostgresHealth(true);
     lastStateDbPersist = buildStatePersistenceDiagnostics(nextState, serialized, null, 'query');
@@ -11997,7 +12006,9 @@ async function persistState(nextState, { allowBootstrap = false } = {}) {
     throw error;
   }
   await ensureRuntimeDir();
+  const rexLeadImports = [...(nextState.rexLeadImportEvents || [])];
   await writeFile(STATE_FILE, jsonStringify(nextState), 'utf8');
+  savedRexLeadImportEvents = rexLeadImports;
   runtimeStateProvenance.source = 'local-bridge-state';
   runtimeStateProvenance.loadedFrom ||= runtimeStateProvenance.source;
   runtimeStateProvenance.fallbackReason = '';
@@ -23293,6 +23304,69 @@ async function runAutonomousRexGoalDiscoveryRecord(params = {}) {
   };
 }
 
+function queueRexLeadImport(lead, input, source) {
+  if (controlledExecution.getStore()) return;
+  const phone = normalizePhone(lead.seller?.phone || lead.phone);
+  const event = buildRexLeadImportEvent(lead, {
+    source,
+    phone: /^\+[1-9]\d{7,14}$/.test(phone) ? phone : '',
+    score: input.motivationScore ?? input.motivation_score ?? input.leadScore ?? input.lead_score ?? lead.score,
+    nowLocalHour: getRexLeadImportHour(input),
+    dnc: /^(true|1|yes)$/i.test(String(input.dnc ?? input.doNotCall ?? input.do_not_call ?? input.isDnc ?? input.is_dnc ?? ''))
+      || getAvaReviewContactStatus(lead) === 'restricted',
+  });
+  if (!event) return;
+  lead.rexImportEventId = event.id;
+  const pending = (state.rexLeadImportEvents ??= []);
+  if (!pending.some(({ id }) => id === event.id)) pending.push(event);
+}
+
+async function deliverRexLeadImport({ id, leadId, phone, score, nowLocalHour, dnc, source }) {
+  const lead = state.leadImports.find((item) => (item.leadId || item.id) === leadId);
+  const currentPhone = lead ? normalizePhone(lead.seller?.phone || lead.phone) : phone;
+  const result = await handleRexLeadImportedRecord({
+    eventId: id, leadId, phone: currentPhone === phone ? phone : '',
+    score, nowLocalHour, source,
+    dnc: dnc || Boolean(phone && findDncEntryByPhone(phone)) || (lead && getAvaReviewContactStatus(lead) === 'restricted'),
+  });
+  return { action: result.action.action, taskId: result.task?.id || null, providerWritesBlocked: true };
+}
+
+function startRexLeadImportDelivery() {
+  let running = false;
+  if (!DATABASE_URL) savedRexLeadImportEvents = [...(state.rexLeadImportEvents || [])];
+  const timer = setInterval(async () => {
+    if (running || !runtimeStateBootstrap.ready) return;
+    const pool = getPgPool();
+    const event = savedRexLeadImportEvents[0];
+    if (!pool && !event) return;
+    running = true;
+    try {
+      if (pool) {
+        for (let count = 0; count < 10; count++) {
+          const delivery = await drainRexLeadImportEvent(pool, deliverRexLeadImport);
+          if (!delivery) break;
+          console.info('[pbk-local-openclaw] Rex lead import processed:', JSON.stringify(delivery));
+        }
+      } else {
+        await deliverRexLeadImport(event);
+        state.rexLeadImportEvents = state.rexLeadImportEvents.filter(({ id }) => id !== event.id);
+        try {
+          await persistState(state);
+        } catch (error) {
+          state.rexLeadImportEvents.unshift(event);
+          throw error;
+        }
+      }
+    } catch {
+      console.warn('[pbk-local-openclaw] Rex lead import delivery deferred for retry.');
+    } finally {
+      running = false;
+    }
+  }, 1500);
+  timer.unref?.();
+}
+
 async function handleRexLeadImportedRecord(params = {}) {
   const idempotencyKey = String(
     params.idempotencyKey || params.idempotency_key || params.eventId || params.event_id || ''
@@ -23320,6 +23394,7 @@ async function handleRexLeadImportedRecord(params = {}) {
       providerWrites: 'blocked',
       metadata: {
         ...action,
+        importEventId: params.eventId || params.event_id || '',
         lead: {
           leadId: action.leadId,
           phone: action.phone,
@@ -57334,6 +57409,7 @@ const toolHandlers = {
         updatedCount += 1;
         updated.push(existing.leadId);
       } else {
+        queueRexLeadImport(normalized, payload, 'bulk-lead-import');
         addLeadImport(state, normalized);
         importedCount += 1;
         imported.push(normalized.leadId);
@@ -61921,7 +61997,10 @@ async function handleManualLeadCreate(payload = {}, verifiedParcel = null, { que
   const existingDuplicate = patched || verifiedParcel ? null : findDuplicateLeadImport(leadImport);
   const duplicate = Boolean(patched || existingDuplicate);
   const savedLead = patched || existingDuplicate || leadImport;
-  if (!patched && !existingDuplicate) addLeadImport(state, leadImport);
+  if (!patched && !existingDuplicate) {
+    queueRexLeadImport(leadImport, payload, 'manual-lead-create');
+    addLeadImport(state, leadImport);
+  }
 
   addActivity(
     state,
@@ -62105,7 +62184,9 @@ async function persistLeadIntakeState(lead, triage) {
     // The snapshot query can lose its response during a disconnect. Confirm the
     // exact intake and its triage on Postgres before acknowledging instead of
     // replaying a possibly committed snapshot write.
-    const leadBinding = JSON.stringify([{ leadId, eventId: lead.eventId }]);
+    const leadBinding = JSON.stringify([{ leadId, eventId: lead.eventId,
+      ...(lead.rexImportEventId ? { rexImportEventId: lead.rexImportEventId } : {}),
+    }]);
     const triageBinding = triage?.id ? JSON.stringify([{ id: triage.id, correlationId: leadId }]) : null;
     const deadlineAt = Date.now() + 5000;
     for (const delay of [0, 250, 750]) {
@@ -62207,6 +62288,7 @@ async function handleRuntimeEvent(normalizedEvent, payload, { directRetentionFou
           }
         ) || duplicate;
     } else {
+      queueRexLeadImport(leadImport, payload, 'lead-intake');
       addLeadImport(state, leadImport);
     }
 
@@ -84679,6 +84761,7 @@ if (process.env.RENDER === 'true' && process.env.RENDER_SERVICE_NAME === 'pbk-op
 }
 wireRuntimeCoverageLifecycle(server);
 server.listen(PORT, HOST, () => {
+  startRexLeadImportDelivery();
   startPostgresKeepAlive();
   startContractTemplateWatcher();
   refreshContextAwareScriptCatalog()

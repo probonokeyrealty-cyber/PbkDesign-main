@@ -38,6 +38,13 @@ const normalizeLeadPayload = node({
 const source = input.body ?? input;
 const lead = {
   leadId: source.leadId || source.id || \`lead-\${Date.now()}\`,
+  eventId: source.eventId ?? source.event_id ?? source.idempotencyKey,
+  score: source.motivationScore ?? source.motivation_score ?? source.leadScore ?? source.score,
+  nowLocalHour: source.nowLocalHour ?? source.now_local_hour,
+  timeZone: source.timeZone ?? source.timezone ?? source.leadTimezone,
+  compliance: source.compliance,
+  dncStatus: source.dncStatus,
+  dnc: source.dnc ?? source.doNotCall ?? source.do_not_call,
   source: source.source || 'manual-webhook',
   seller: {
     name: source?.seller?.name || source.name || 'Unknown seller',

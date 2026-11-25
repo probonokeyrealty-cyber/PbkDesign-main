@@ -3,6 +3,7 @@ import { test } from 'node:test';
 import { PGlite } from '@electric-sql/pglite';
 import { ensureBatchPhoneSchema, dispatchTelnyxWithBatchPhoneGuard } from './batch-phone-dispatch.mjs';
 import { loadAppliedBatchLeads, runBatchApply } from './batch-apply.mjs';
+import { ensureRexLeadImportEventSchema } from './rex-lead-import-events.mjs';
 
 test('real batch contract keeps preview read-only and commits the exact confirmed lead and phone plan together', async () => {
   const db = await PGlite.create();
@@ -10,6 +11,7 @@ test('real batch contract keeps preview read-only and commits the exact confirme
   const pool = { query, connect: async () => ({ query, release() {} }) };
   try {
     await ensureBatchPhoneSchema(pool);
+    await ensureRexLeadImportEventSchema(pool);
     await query(`CREATE TABLE public.bridge_state(id text PRIMARY KEY, data jsonb);
       CREATE TABLE public.lead_profiles (
         id text PRIMARY KEY, workspace_id text, source text, address text, city text, state text,
@@ -38,6 +40,7 @@ test('real batch contract keeps preview read-only and commits the exact confirme
     assert.deepEqual(preview.body.phoneSummary, { numbers: 2, candidates: 1, dnc: 1, held: 0, shared: 2 });
     assert.equal(await count('lead_profiles'), 1);
     assert.equal(await count('pbk_batch_phone_contacts'), 0);
+    assert.equal(await count('pbk_rex_lead_import_events'), 0);
     assert.deepEqual(await published(), []);
     const confirm = { ...base, mode: 'apply', confirmed: true, reviewToken: preview.body.reviewToken };
     assert.equal((await execute(confirm, false)).status, 403);
@@ -57,6 +60,7 @@ test('real batch contract keeps preview read-only and commits the exact confirme
     assert.equal(applied.body.registeredPhoneCount, 2);
     assert.equal(await count('lead_profiles'), 3);
     assert.equal((await execute(fresh)).status, 409);
+    assert.equal(await count('pbk_rex_lead_import_events'), 2);
     const { rows } = await query(`SELECT id, city, lead_name, raw, phone FROM public.lead_profiles ORDER BY address`, []);
     assert.equal(rows[0].lead_name, 'Manual Owner');
     assert.equal(rows[0].city, 'Austin');

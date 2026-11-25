@@ -1,3 +1,5 @@
+import { rexLeadImportEventInsert } from './rex-lead-import-events.mjs';
+
 export function isRetryablePostgresSnapshotError(error) {
   const code = String(error?.code || '').toUpperCase();
   const message = String(error?.message || error || '');
@@ -13,6 +15,7 @@ export async function writePostgresStateSnapshot(pool, serialized, {
   maxAttempts,
   delay,
   onAttempt = () => {},
+  rexLeadImports = [],
 }) {
   let version;
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
@@ -22,18 +25,18 @@ export async function writePostgresStateSnapshot(pool, serialized, {
         const current = await pool.query("SELECT xmin::text AS version FROM bridge_state WHERE id = 'singleton'");
         version = current.rows[0]?.version ?? null;
       }
-      const result = version === null
-        ? await pool.query(
-          `INSERT INTO bridge_state (id, data, updated_at)
+      const snapshotSql = version === null
+        ? `INSERT INTO bridge_state (id, data, updated_at)
            VALUES ('singleton', $1::jsonb, NOW())
-           ON CONFLICT (id) DO NOTHING`,
-          [serialized],
-        )
-        : await pool.query(
-          `UPDATE bridge_state SET data = $1::jsonb, updated_at = NOW()
-           WHERE id = 'singleton' AND xmin::text = $2`,
-          [serialized, version],
-        );
+           ON CONFLICT (id) DO NOTHING`
+        : `UPDATE bridge_state SET data = $1::jsonb, updated_at = NOW()
+           WHERE id = 'singleton' AND xmin::text = $2`;
+      const params = version === null ? [serialized] : [serialized, version];
+      const result = rexLeadImports.length
+        ? await pool.query(`WITH saved AS (${snapshotSql} RETURNING id), queued AS (
+            ${rexLeadImportEventInsert('$' + (params.length + 1), 'WHERE EXISTS (SELECT 1 FROM saved)')}
+          ) SELECT id FROM saved`, [...params, JSON.stringify(rexLeadImports)])
+        : await pool.query(snapshotSql, params);
 
       if (result.rowCount === 1) return attempt;
       const existing = await pool.query(

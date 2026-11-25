@@ -12,24 +12,18 @@
       "name": "Lead Intake Webhook",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2,
-      "position": [
-        -640,
-        -40
-      ]
+      "position": [-640, -40]
     },
     {
       "parameters": {
         "mode": "runOnceForAllItems",
-        "jsCode": "const input = $input.first().json;\nconst source = input.body ?? input;\nconst lead = {\n  leadId: source.leadId || source.id || `lead-${Date.now()}`,\n  source: source.source || 'manual-webhook',\n  seller: {\n    name: source?.seller?.name || source.name || 'Unknown seller',\n    phone: source?.seller?.phone || source.phone || '',\n    email: source?.seller?.email || source.email || ''\n  },\n  property: {\n    address: source?.property?.address || source.address || '',\n    city: source?.property?.city || source.city || '',\n    state: source?.property?.state || source.state || ''\n  },\n  tags: Array.isArray(source.tags) ? source.tags : []\n};\nreturn [{\n  json: {\n    ...lead,\n    bridgeEvent: {\n      eventType: 'lead-intake',\n      payload: {\n        ...lead,\n        _source: 'n8n-lead-intake'\n      }\n    }\n  }\n}];"
+        "jsCode": "const input = $input.first().json;\nconst source = input.body ?? input;\nconst lead = {\n  leadId: source.leadId || source.id || `lead-${Date.now()}`,\n  eventId: source.eventId ?? source.event_id ?? source.idempotencyKey,\r\n  score: source.motivationScore ?? source.motivation_score ?? source.leadScore ?? source.score,\r\n  nowLocalHour: source.nowLocalHour ?? source.now_local_hour,\r\n  timeZone: source.timeZone ?? source.timezone ?? source.leadTimezone,\r\n  compliance: source.compliance,\r\n  dncStatus: source.dncStatus,\r\n  dnc: source.dnc ?? source.doNotCall ?? source.do_not_call,\r\n  source: source.source || 'manual-webhook',\n  seller: {\n    name: source?.seller?.name || source.name || 'Unknown seller',\n    phone: source?.seller?.phone || source.phone || '',\n    email: source?.seller?.email || source.email || ''\n  },\n  property: {\n    address: source?.property?.address || source.address || '',\n    city: source?.property?.city || source.city || '',\n    state: source?.property?.state || source.state || ''\n  },\n  tags: Array.isArray(source.tags) ? source.tags : []\n};\nreturn [{\n  json: {\n    ...lead,\n    bridgeEvent: {\n      eventType: 'lead-intake',\n      payload: {\n        ...lead,\n        _source: 'n8n-lead-intake'\n      }\n    }\n  }\n}];"
       },
       "id": "CodeNormalizeLead",
       "name": "Normalize Lead Payload",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [
-        -380,
-        -40
-      ]
+      "position": [-380, -40]
     },
     {
       "parameters": {
@@ -47,10 +41,7 @@
       "name": "Push To OpenClaw",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [
-        -100,
-        -40
-      ]
+      "position": [-100, -40]
     },
     {
       "parameters": {
@@ -61,10 +52,7 @@
       "name": "Respond To Lead Intake",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
-      "position": [
-        160,
-        -40
-      ]
+      "position": [160, -40]
     }
   ],
   "connections": {

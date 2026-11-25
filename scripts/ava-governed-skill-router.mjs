@@ -1,9 +1,42 @@
+import { classifyAvaLiveObjectionV2, hasUncertainProperty } from './ava-live-turn-contract.mjs';
+
 function normalize(value = '') {
   return String(value || '')
     .trim()
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '_')
     .replace(/^_+|_+$/g, '');
+}
+
+const SAVED_ANALYZER_EVIDENCE = 'fresh_saved_analyzer';
+const SAVED_ANALYZER_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+
+export function readGovernedAnalyzerEvidence({
+  leadId = '',
+  leads = [],
+  runs = [],
+  isContactRestricted = () => false,
+  now = Date.now(),
+} = {}) {
+  if (!leadId) return null;
+  const matches = leads.filter((lead) => (lead.leadId || lead.id) === leadId);
+  if (matches.length !== 1 || isContactRestricted(matches[0])) return null;
+  const lead = matches[0];
+  const address = normalize(lead.property?.address || lead.address);
+  if (!/^\d+[a-z]?_[a-z]/.test(address) || !/_[a-z]{2}(?:_\d{5}(?:_\d{4})?)?$/.test(address)) return null;
+  const run = runs.filter((item) => item.leadId === leadId)
+    .sort((left, right) => Date.parse(right.createdAt) - Date.parse(left.createdAt))[0];
+  if (!run || run.status !== 'complete' || normalize(run.address) !== address) return null;
+  const age = now - Date.parse(run.createdAt);
+  if (!Number.isFinite(age) || age < 0 || age > SAVED_ANALYZER_MAX_AGE_MS) return null;
+  if (!Number.isFinite(run.targetOffer) || run.targetOffer <= 0
+      || !Number.isFinite(run.repairsMid) || run.repairsMid < 0) return null;
+  return {
+    leadId,
+    recordedAt: run.createdAt,
+    targetOffer: run.targetOffer,
+    repairEstimate: run.repairsMid,
+  };
 }
 
 function list(value) {
@@ -184,8 +217,10 @@ function outcomeConfidenceBoost(skill = {}) {
 function scoreSkill(skill = {}, context = {}) {
   const policy =
     skill.triggerPolicy && typeof skill.triggerPolicy === 'object' ? skill.triggerPolicy : {};
-  const transcript = String(context.transcript || context.query || context.text || '');
-  const lastObjection = normalize(context.lastObjection || context.objection || '');
+  const requiresAnalyzer = policy.requiredEvidence === SAVED_ANALYZER_EVIDENCE;
+  const transcript = String(requiresAnalyzer ? context.sellerLine || '' : context.transcript || context.query || context.text || '');
+  const turn = requiresAnalyzer ? classifyAvaLiveObjectionV2(transcript) : null;
+  const lastObjection = normalize(turn?.objection || context.lastObjection || context.objection || '');
   const emotion = normalize(context.emotion || context.sellerEmotion || '');
   const emotionalPhase = normalize(context.emotionalPhase || context.emotionPhase || '');
   const stage = normalize(context.stage || context.leadStage || '');
@@ -215,7 +250,14 @@ function scoreSkill(skill = {}, context = {}) {
     'blockedEmotionPhases',
     'doNotUseEmotionalPhases',
   ]);
+  const evidenceBlocked = requiresAnalyzer && (
+    !context.savedAnalyzer || context.savedAnalyzer.leadId !== context.leadId ||
+    !['price_too_low', 'competing_offer'].includes(turn?.objection) ||
+    hasUncertainProperty(transcript.toLowerCase()) ||
+    /\b(?:legal advice|tax advice|tax and legal advice|legal and tax advice)\b/i.test(transcript)
+  );
   if (
+    evidenceBlocked ||
     (emotion && blockedEmotions.includes(emotion)) ||
     (intent && blockedIntents.includes(intent)) ||
     (lastObjection && blockedObjections.includes(lastObjection)) ||
@@ -358,8 +400,9 @@ export function buildGovernedSkillNextMove(selection = {}) {
       category: skill.category || skill.triggerPolicy?.category || '',
       emotionalScript: skill.emotionalScript === true,
       risk: skill.risk || '',
-      response: skill.response || '',
-      nextQuestion: skill.nextQuestion || '',
+      response: skill.response || skill.triggerPolicy?.response || '',
+      nextQuestion: skill.nextQuestion || skill.triggerPolicy?.nextQuestion || '',
+      ...(selection.savedAnalyzer ? { savedAnalyzer: selection.savedAnalyzer } : {}),
       action,
       reasonCodes: Array.isArray(selection.reasonCodes) ? selection.reasonCodes : [],
       toolAllowlist: Array.isArray(skill.toolAllowlist) ? skill.toolAllowlist : [],
@@ -425,6 +468,9 @@ export function selectGovernedAvaSkill(params = {}) {
     score: selected?.score || 0,
     reasonCodes: [...new Set(reasonCodes)],
     matchedTriggers: selected?.matchedTriggers || [],
+    ...(selected?.skill.triggerPolicy?.requiredEvidence === SAVED_ANALYZER_EVIDENCE
+      ? { savedAnalyzer: params.savedAnalyzer }
+      : {}),
     candidates: scored.slice(0, 8).map((candidate) => ({
       id: candidate.id,
       versionId: candidate.versionId,

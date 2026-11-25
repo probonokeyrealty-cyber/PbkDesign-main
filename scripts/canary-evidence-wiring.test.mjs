@@ -241,8 +241,9 @@ test('bridge code matches the reviewed release fingerprint outside the scoped re
   // The opt-in skill worker mirrors verified lifecycle events to Supabase.
   // Skill governance tests cover projection delivery and the transcript fallback.
   // The Skill Manager grant binds to one signed, unexpired team session.
+  // Ava price triage reads recent Analyzer evidence for the exact lead without tool writes.
   assert.equal(createHash('sha256').update(unchanged).digest('hex'),
-    '875b3bdbe0fc4b5da187f6c92905144c29182eb9b7bb2977fd365ab172b8b67b');
+    'a23b58844f62533ca738a151b24bd3da2fef737e623e7880052d3b12f15a56f4');
 });
 
 test('production distribution includes reader and protocol, never the fixture signer', () => {

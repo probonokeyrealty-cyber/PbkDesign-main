@@ -51,6 +51,10 @@ export function shouldPreferAvaLiveGovernedSkillReply(move = {}) {
 
 export function buildAvaLiveGovernedSkillReply(move = {}, context = {}) {
   if (!shouldPreferAvaLiveGovernedSkillReply(move)) return '';
+  if (move.governedSkill?.savedAnalyzer) {
+    const { response, nextQuestion } = move.governedSkill;
+    return response && nextQuestion ? ensureQuestion(response, nextQuestion) : '';
+  }
   const haystack = skillHaystack(move, context);
   const transcript = lower(context.transcript || '');
   const fallbackQuestion = clean(context.fallbackQuestion || context.fallback || '');

@@ -200,7 +200,7 @@ export function callerDisclaimsAvaOwnerRole(transcript = '') {
   return NON_OWNER.test(transcript) || isStatedHelper(transcript);
 }
 
-function hasUncertainProperty(text = '') {
+export function hasUncertainProperty(text = '') {
   if (UNCERTAIN_PROPERTY.test(text)) return true;
   return text.split(/[.!?;]+/).some(
     (clause) => UNCERTAIN_STREET_ADDRESS.test(clause) && Boolean(extractFullAddress(clause))

@@ -4,8 +4,10 @@ import { resolve } from 'node:path';
 import {
   buildGovernedSkillNextMove,
   isGovernedSkillToolAllowed,
+  readGovernedAnalyzerEvidence,
   selectGovernedAvaSkill,
 } from './ava-governed-skill-router.mjs';
+import { buildAvaLiveGovernedSkillReply } from './ava-live-skill-fallback.mjs';
 
 const skills = [
   {
@@ -46,6 +48,80 @@ const skills = [
     triggerPolicy: { keywords: ['price'] },
   },
 ];
+
+const priceEvidenceSkill = {
+  ...skills[1],
+  name: 'Evidence-backed price objection triage',
+  triggerPolicy: {
+    triggerType: 'price_objection',
+    objections: ['price_too_low', 'competing_offer'],
+    requiredEvidence: 'fresh_saved_analyzer',
+    doNotUseIntents: ['stop_contact', 'legal_review'],
+    doNotUseObjections: ['stop_contact', 'legal_review'],
+    response: 'I hear you. We can compare the terms and see what matters most.',
+    nextQuestion: 'What matters most to you in that comparison?',
+  },
+  toolAllowlist: [],
+};
+const evidence = {
+  leadId: 'fixture-lead',
+  recordedAt: '2026-11-25T17:00:00.000Z',
+  targetOffer: 125000,
+  repairEstimate: 18000,
+};
+const address = '123 Fixture Avenue, Denver, CO 80202';
+const savedLead = { leadId: evidence.leadId, property: { address } };
+const savedRun = {
+  leadId: evidence.leadId,
+  address,
+  status: 'complete',
+  createdAt: evidence.recordedAt,
+  targetOffer: evidence.targetOffer,
+  repairsMid: evidence.repairEstimate,
+};
+const readAnalyzer = (lead = savedLead, run = savedRun, isContactRestricted) =>
+  readGovernedAnalyzerEvidence({
+    leadId: evidence.leadId, leads: [lead], runs: [run],
+    now: Date.parse('2026-11-25T18:00:00.000Z'), isContactRestricted,
+  });
+const fresh = readAnalyzer();
+const stale = readAnalyzer(savedLead, { ...savedRun, createdAt: '2026-11-24T17:59:59.000Z' });
+const unresolved = readAnalyzer({ ...savedLead, property: { address: 'Unknown address' } });
+assert.deepEqual(fresh, evidence);
+assert.equal(stale, null);
+assert.equal(unresolved, null);
+assert.equal(readAnalyzer(savedLead, { ...savedRun, leadId: 'different-lead' }), null);
+assert.equal(readAnalyzer(savedLead, { ...savedRun, address: '456 Fixture Avenue, Denver, CO 80202' }), null);
+assert.equal(readAnalyzer(savedLead, savedRun, () => true), null);
+assert.equal(readAnalyzer(savedLead, { ...savedRun, createdAt: '2026-11-25T18:00:01.000Z' }), null);
+const priceEvidenceScenarios = [
+  ['confirmed competing offer', 'Your offer is too low. Another buyer offered more. Can you do better?', fresh, true],
+  ['stale Analyzer result', 'Your price is too low. Can you confirm the property details, repairs, closing timing and offer assumptions?', stale, false],
+  ['unresolved property identity', 'Your price is too low. Can you confirm the property details, repairs, closing timing and offer assumptions?', unresolved, false],
+  ['stop contact', 'Your price was too low. Stop calling me and remove me from your list.', fresh, false],
+  ['legal or tax advice', 'Your price is too low. Give me tax and legal advice before I make an offer.', fresh, false],
+  ['higher offer request', 'I need a higher price. Can you revise your offer today?', fresh, true],
+];
+const priceEvidenceResults = priceEvidenceScenarios.map(([name, sellerLine, savedAnalyzer, expected]) => {
+  const result = selectGovernedAvaSkill({
+    skills: [priceEvidenceSkill],
+    transcript: sellerLine,
+    sellerLine,
+    leadId: evidence.leadId,
+    savedAnalyzer,
+  });
+  return { name, sellerLine, matched: Boolean(result.selectedSkill), expected, result };
+});
+for (const { name, sellerLine, matched, expected, result } of priceEvidenceResults) {
+  assert.equal(matched, expected, name);
+  if (expected) {
+    assert.deepEqual(result.savedAnalyzer, evidence);
+    assert.equal(isGovernedSkillToolAllowed(result, 'analyze_deal'), false);
+    const reply = buildAvaLiveGovernedSkillReply(buildGovernedSkillNextMove(result), { transcript: sellerLine });
+    assert.equal(reply, `${priceEvidenceSkill.triggerPolicy.response} ${priceEvidenceSkill.triggerPolicy.nextQuestion}`, name);
+  }
+}
+console.log(JSON.stringify(priceEvidenceResults.map(({ name, matched, expected }) => ({ name, matched, expected }))));
 
 const trust = selectGovernedAvaSkill({
   skills,

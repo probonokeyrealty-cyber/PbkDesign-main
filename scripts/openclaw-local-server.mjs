@@ -79,6 +79,7 @@ import { findTelnyxCallEventCompletion, reconcileTelnyxCallProof } from './provi
 import {
   buildGovernedSkillNextMove,
   isGovernedSkillToolAllowed,
+  readGovernedAnalyzerEvidence,
   selectGovernedAvaSkill,
 } from './ava-governed-skill-router.mjs';
 import {
@@ -23948,9 +23949,20 @@ function buildAvaScriptRotationSnapshot(params = {}) {
     }))
     .filter((skill) => skill.name)
     .sort((left, right) => Number(right.confidence || 0) - Number(left.confidence || 0));
+  const leadId = String(params.leadId || params.lead_id || params.session?.leadId || '').trim();
+  const savedAnalyzer = bridgeSkills.some((skill) => skill.triggerPolicy.requiredEvidence === 'fresh_saved_analyzer')
+    ? readGovernedAnalyzerEvidence({
+      leadId,
+      leads: state.leadImports || [],
+      runs: state.analyzerRuns || [],
+      isContactRestricted: (lead) => getAvaReviewContactStatus(lead) === 'restricted',
+    })
+    : null;
   const governedSkillSelection = selectGovernedAvaSkill({
     skills: bridgeSkills,
     transcript: query,
+    sellerLine: params.transcript || '',
+    savedAnalyzer,
     lastObjection:
       params.lastObjection ||
       params.last_objection ||
@@ -23973,7 +23985,7 @@ function buildAvaScriptRotationSnapshot(params = {}) {
       '',
     intent: params.intent || params.sellerIntent || '',
     workspaceId: params.workspaceId || params.workspace_id || 'pbk',
-    leadId: params.leadId || params.lead_id || params.session?.leadId || '',
+    leadId,
     callId: params.callId || params.call_id || params.session?.callId || '',
     campaignId: params.campaignId || params.campaign_id || params.session?.campaignId || '',
     sessionId: params.sessionId || params.session_id || params.session?.sessionId || '',

@@ -142,11 +142,13 @@ const OUT_OF_POCKET_COST = /\b(?:out[- ]of[- ]pocket|upfront (?:costs?|fees?|pay
 const COST_CONCERN = /\b(?:no|don['’]t|won['’]t|can['’]t|cannot|not|avoid|worried|concerned|afford|which|what|how much|do i|will i|would i|have to)\b/i;
 const STATED_OWNER = /\b(?:i (?:am|own)|i['’]m)\s+(?:(?:also|actually)\s+)?(?:the (?:home)?owner|the seller|(?:the|this|that|my) (?:house|home|property))\b|\bi own it\b/i;
 const HELPER_INTRO = /\b(?:i am|i['’]m|im)\s+(?:(?:just|only)\s+)?helping\b(.*)/i;
-const SALE_HELP = /^(?:with (?:it|the (?:sale|property))\b|(?:the (?:property owner|(?:home)?owner|seller)|my [a-z]+)(?:[.!?,]*$|\s+(?:with (?:it|the sale)|sell(?:ing)?)\b))/i;
+const SALE_HELP = /^(?:with (?:it|paperwork|the (?:sale|property|paperwork))\b|(?:the (?:property owner|(?:home)?owner|seller)|my [a-z]+)(?:[.!?,]*$|\s+(?:with (?:it|paperwork|the (?:sale|paperwork))|sell(?:ing)?)\b))/i;
 const UNCERTAIN_PROPERTY = /\b(?:property|house|home|address)\b.{0,35}\b(?:might be|could be|maybe|i think)\s+(?:in|at|near)\b|\b(?:not sure|don['’]t know)\b.{0,35}\b(?:which (?:property|house|home)|where (?:it|the (?:house|home|property)) is|the address)\b|\b(?:maybe|i think|i guess)\s+(?:the (?:property|house|home|address)|it)\s+is\s+(?:in|at|near)\b/i;
 const UNCERTAIN_STREET_ADDRESS = /\b(?:might be|could be|maybe|i think|i guess|not sure)\b/i;
 const NON_OWNER = /\b(?:i am|i['’]m|im)\s+not\s+(?:the\s+)?(?:property owner|owner|homeowner|seller)\b/i;
 const CLAUSE_BOUNDARY = /[.!?;]+\s+|\s+(?:and|but)\s+/i;
+const NET_PRICE_QUALIFIER = /\b(?:after|net of)\s+(?:(?:any|all|the)\s+)?(?:closing costs?|upfront (?:costs?|fees?))\b/gi;
+const COST_REFERENCE = /\bto (?:cover|pay for)\s+(?:them|it|those|that)\b/i;
 
 // Conversation cues adapted from the downloaded PBK sales training timeline.
 // https://miro.com/app/board/uXjVESuOPu0=/
@@ -181,7 +183,11 @@ function hasAvaCostConcern(text = '') {
 export function withoutAvaCostClauses(transcript = '') {
   const text = clean(transcript);
   if (!OUT_OF_POCKET_COST.test(text)) return text;
-  return text.split(CLAUSE_BOUNDARY).filter((clause) => !OUT_OF_POCKET_COST.test(clause)).join(' ');
+  const clauses = text.split(CLAUSE_BOUNDARY).map((clause) => clause.replace(NET_PRICE_QUALIFIER, '').trim());
+  return clauses.filter((clause, index) => {
+    if (OUT_OF_POCKET_COST.test(clause)) return false;
+    return !(COST_REFERENCE.test(clause) && OUT_OF_POCKET_COST.test(clauses[index - 1] || ''));
+  }).join(' ');
 }
 
 function isStatedHelper(text = '') {

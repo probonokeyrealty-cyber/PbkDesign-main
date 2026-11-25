@@ -420,7 +420,7 @@ const isOwner = evaluateBridgeFunction('hasStrongAvaOwnerRoleAssertion', {
   isAvaLiveAddressMetaQuestion: () => false,
 });
 assert(isOwner("I'm the property owner."));
-for (const transcript of ["I'm just helping the property owner sell it.", "I'm not the property owner."]) {
+for (const transcript of ["I'm just helping the property owner sell it.", "I'm helping the owner with paperwork.", "I'm not the property owner."]) {
   assert(!isOwner(transcript), transcript);
 }
 const extractBant = evaluateBridgeFunction('extractBantFromTranscript', {
@@ -431,6 +431,9 @@ const extractBant = evaluateBridgeFunction('extractBantFromTranscript', {
   isOperationalCallTranscriptNoise: () => false,
 });
 assert(!extractBant("I don't have $4,000 I need for closing costs.").budget);
+assert(!extractBant("I can't afford closing costs. I need $4,000 to cover them.").budget);
+assert.equal(extractBant("I want $250,000 after closing costs.").budget, '250,000');
+assert.equal(buildAvaLiveTurnContract({ transcript: 'I want 250k, after closing costs.' }).knownFacts.sellerTargetPrice, '250k');
 assert.equal(extractBant("I want $250,000 and I won't pay $4,000 in closing costs.").budget, '250,000');
 const hasAuthority = evaluateBridgeFunction('hasAvaLiveAuthorityEvidence', {
   normalizeBantValue: (text) => text,

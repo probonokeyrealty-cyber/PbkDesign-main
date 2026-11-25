@@ -163,13 +163,16 @@ async function verify(type, width) {
     await expect(page.locator('[data-today-queue-id="sample-queue-3"]')).toContainText('Next step unavailable');
     assert.deepEqual(await page.locator('[data-today-queue-id]').evaluateAll(nodes => nodes.map(n => n.dataset.todayQueueId)), sampleLeads.map((_, i) => `sample-queue-${i}`));
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, 'Long queue IDs and text must wrap');
-    const loadedFonts = await page.evaluate(async () => {
+    const missingFonts = await page.evaluate(async () => {
       const families = ['PBK Plus Jakarta Sans', 'Fraunces', 'PBK JetBrains Mono NF'];
-      const result = [];
-      for (const family of families) result.push((await document.fonts.load(`14px "${family}"`)).length);
-      return result;
+      const missing = [];
+      for (const family of families) {
+        const faces = await document.fonts.load(`14px "${family}"`);
+        if (faces.length === 0) missing.push(family);
+      }
+      return missing;
     });
-    assert(loadedFonts.every(count => count > 0), 'PBK display, UI and mono fonts must load from local assets');
+    assert.deepEqual(missingFonts, [], 'The Command Center typefaces must load from the local fixture');
     mkdirSync('output/faster-triage', { recursive: true });
     await page.screenshot({ path: `output/faster-triage/today-${type.name()}-${width}.png` });
     const sections = page.getByRole('navigation', { name: 'Today sections', exact: true });

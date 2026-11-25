@@ -1,6 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import { isClosedDealStage, normalizeDealStage, recordedDealRevenue, summarizeRecordedRevenue } from '../src/app/utils/analyticsEvidence.mjs';
 import { createNeonMailRouter } from './neon-auth-mail.mjs';
+import { readHighLevelLeadTasks } from './highlevel-lead-tasks.mjs';
 import { createComposioResearchDiscovery } from './composio-research-discovery.mjs';
 import { createPublicMarketConnectionCheck, withSavedRaleighCleanup } from './public-market-connection.mjs';
 import { findAvaOutlookReceipt, sendAvaOutlookMail, verifyOutlookDocumentReceipt } from './ava-outlook-mail.mjs';
@@ -82673,6 +82674,7 @@ const server = createServer(async (request, response) => {
     if (leadFullMatch && request.method === 'GET') {
       response.setHeader('Cache-Control', 'no-store');
       const reviewOnly = url.searchParams.get('review') === 'ava';
+      const highLevelTasksOnly = url.searchParams.get('tasks') === 'highlevel';
       const consultationId = url.searchParams.get('consultation');
       let leadId;
       try {
@@ -82686,7 +82688,7 @@ const server = createServer(async (request, response) => {
         json(response, 404, { ok: false, error: 'Saved consultation not found.' });
         return;
       }
-      if (reviewOnly || consultationId !== null) {
+      if (reviewOnly || highLevelTasksOnly || consultationId !== null) {
         const { lead: exactLead, unavailable, contactRestricted } = await loadLeadForFullView(leadId, { reviewOnly: true });
         if (unavailable) {
           json(response, 503, { ok: false, code: 'lead_roster_unavailable', error: 'The saved lead record is unavailable. Try again shortly.' });
@@ -82694,6 +82696,10 @@ const server = createServer(async (request, response) => {
         }
         if (!exactLead || (exactLead.leadId || exactLead.id) !== leadId) {
           json(response, 404, { ok: false, error: 'Lead not found.' });
+          return;
+        }
+        if (highLevelTasksOnly && !reviewOnly && consultationId === null) {
+          json(response, 200, { ok: true, taskReview: await readHighLevelLeadTasks(leadId) });
           return;
         }
         const { consultationDecisions, consultationRecords, recordsAvailable } = await loadAvaConsultationEvidence(leadId);

@@ -136,6 +136,11 @@ test('new intake records a reviewable Ava handoff without any outreach', async (
     assert.equal(nonId.status, 404, 'An address must never resolve the review identity');
     const anonymous = await bridge.fetch(`${bridge.origin}/api/leads/${intakeId}/full?review=ava`);
     assert.equal(anonymous.status, 401, 'The review uses the staff lead access boundary');
+    const taskPath = `/api/leads/${intakeId}/full?tasks=highlevel`;
+    assert.equal((await bridge.fetch(bridge.origin + taskPath)).status, 401);
+    assert.deepEqual((await request(taskPath)).taskReview, {
+      leadId: intakeId, source: 'highlevel', writeMode: 'read_only', status: 'not_configured',
+    });
     const publicHealth = await bridge.fetch(`${bridge.origin}/health`);
     assert.equal(publicHealth.status, 200);
     assert.doesNotMatch(await publicHealth.text(), /consultationDecisions/);

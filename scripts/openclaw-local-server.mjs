@@ -94,6 +94,7 @@ import {
   buildAvaLiveCockpitSnapshot,
   buildAvaLiveSkillOutcomeDraft,
   buildAvaLiveTurnContract,
+  callerDisclaimsAvaOwnerRole,
   classifyAvaLiveObjectionV2,
   compileAvaLiveSkillAction,
   isAvaFocusedCoachingIntent,
@@ -5229,13 +5230,15 @@ function extractBantFromTranscript(transcript = '', existing = {}) {
   if (isOperationalCallTranscriptNoise(text)) return normalizeBantInfo(existing);
   const lower = text.toLowerCase();
   const extracted = normalizeBantInfo(existing);
-  const moneyMatch = text.match(/\b(?:want|need|asking|happy with|walk away(?: with)?|take|number(?: is)?|price(?: is)?)\s*(?:around|about|roughly|at least|near)?\s*\$?\s*([0-9][0-9,]{3,}(?:\.\d+)?\s*(?:k|thousand|grand)?)/i);
-  const trailingIntentMoneyMatch = text.match(/\$\s*([0-9][0-9,]{3,}(?:\.\d+)?\s*(?:k|thousand|grand)?).{0,50}\b(?:would work|works|happy|take|asking|want|need|net)\b/i);
+  const priceText = withoutAvaCostClauses(text);
+  const moneyMatch = priceText.match(/\b(?:want|need|asking|happy with|walk away(?: with)?|take|number(?: is)?|price(?: is)?)\s*(?:around|about|roughly|at least|near)?\s*\$?\s*([0-9][0-9,]{3,}(?:\.\d+)?\s*(?:k|thousand|grand)?)/i);
+  const trailingIntentMoneyMatch = priceText.match(/\$\s*([0-9][0-9,]{3,}(?:\.\d+)?\s*(?:k|thousand|grand)?).{0,50}\b(?:would work|works|happy|take|asking|want|need|net)\b/i);
   if (!extracted.budget && (moneyMatch || trailingIntentMoneyMatch)) {
     extracted.budget = (moneyMatch?.[1] || trailingIntentMoneyMatch?.[1] || '').trim();
   }
   const authorityEvidencePattern = /\b(?:i\s+own|i'?m\s+the\s+owner|my\s+(?:house|home|property)|(?:my|the)\s+(?:wife|husband|spouse|partner|attorney|lawyer|executor|co-?owner|client)|decision\s+maker|make\s+the\s+decision|authorized\s+to\s+(?:sell|sign)|power\s+of\s+attorney)\b/i;
-  if (!extracted.authority && (hasStrongAvaOwnerRoleAssertion(text) || authorityEvidencePattern.test(text))) {
+  if (!extracted.authority && !callerDisclaimsAvaOwnerRole(text) &&
+      (hasStrongAvaOwnerRoleAssertion(text) || authorityEvidencePattern.test(text))) {
     extracted.authority = text.match(/.{0,40}\b(owner|i\s+own|my\s+house|my\s+home|my\s+property|wife|husband|spouse|partner|attorney|lawyer|executor|co-?owner|decision\s+maker|make\s+the\s+decision|my\s+client|authorized|power\s+of\s+attorney)\b.{0,60}/i)?.[0]?.trim() || 'decision authority mentioned';
   }
   if (!extracted.need && /\b(probate|estate|divorce|relocat|foreclos|tax|vacant|repair|tenant|downsiz|behind|inherited|condition)\b/i.test(text)) {
@@ -17477,6 +17480,7 @@ function isAvaLiveAddressMetaQuestion(transcript = '') {
 }
 
 function hasStrongAvaOwnerRoleAssertion(transcript = '') {
+  if (callerDisclaimsAvaOwnerRole(transcript)) return false;
   const clean = normalizeTelnyxRepairTranscript(transcript);
   if (!clean || isAvaLiveAddressMetaQuestion(clean)) return false;
   return /\b(i\s+(?:own|own\s+it|own\s+the\s+(?:house|home|property|place)|am\s+the\s+owner)|i'?m\s+(?:the\s+)?(?:property\s+)?owner|(?:i\s+am|i'?m)\s+(?:the\s+)?(?:seller|homeowner)|we\s+own|my\s+(?:house|home|place)\b|our\s+(?:house|home|place)\b|i\s+inherited|we\s+inherited|owner\s+of\s+the\s+(?:house|home|property)|(?:on|yeah\s+on)\s+(?:the\s+)?property\s+owner|(?:the\s+)?property\s+owner\b)\b/i.test(clean);
@@ -71301,6 +71305,8 @@ function resolveAvaLiveMao(session = {}, contextCall = null, reply = {}) {
 }
 
 function hasAvaLiveAuthorityEvidence(session = {}, contextCall = null, reply = {}) {
+  const role = reply.turnContract?.knownFacts?.authority || session.avaLiveTurnContract?.knownFacts?.authority;
+  if (role === 'helper_or_stakeholder') return false;
   return Boolean(
     session.authorityConfirmed ||
       session.decisionMakerConfirmed ||

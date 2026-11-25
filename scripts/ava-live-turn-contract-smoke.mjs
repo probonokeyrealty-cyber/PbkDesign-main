@@ -8,12 +8,14 @@ import {
   AVA_LIVE_TURN_CONTRACT_REVISION,
   applyAvaLiveTurnContractToSession,
   buildAvaLiveTurnContract,
+  callerDisclaimsAvaOwnerRole,
   classifyAvaLiveObjectionV2,
   compileAvaLiveSkillAction,
   isAvaFocusedCoachingIntent,
   isAvaLiveReplyAlignedWithContract,
   renderAvaLiveContractReply,
   updateAvaLiveFactLedger,
+  withoutAvaCostClauses,
 } from './ava-live-turn-contract.mjs';
 
 assert.match(
@@ -406,6 +408,38 @@ assert.equal(
   buildAvaLiveTurnContract({ transcript: "I'm worried this is a scam. Do I have to pay closing costs?" }).intent,
   'trust_scam'
 );
+const evaluateBridgeFunction = (name, bindings = {}) => {
+  const start = bridge.indexOf('function ' + name + '(');
+  const end = bridge.indexOf('\n}', start) + 2;
+  assert(start >= 0 && end > start);
+  return vm.runInNewContext('(' + bridge.slice(start, end) + ')', bindings);
+};
+const isOwner = evaluateBridgeFunction('hasStrongAvaOwnerRoleAssertion', {
+  callerDisclaimsAvaOwnerRole,
+  normalizeTelnyxRepairTranscript: (text) => text.toLowerCase(),
+  isAvaLiveAddressMetaQuestion: () => false,
+});
+assert(isOwner("I'm the property owner."));
+for (const transcript of ["I'm just helping the property owner sell it.", "I'm not the property owner."]) {
+  assert(!isOwner(transcript), transcript);
+}
+const extractBant = evaluateBridgeFunction('extractBantFromTranscript', {
+  callerDisclaimsAvaOwnerRole,
+  withoutAvaCostClauses,
+  hasStrongAvaOwnerRoleAssertion: isOwner,
+  normalizeBantInfo: (value) => ({ ...value }),
+  isOperationalCallTranscriptNoise: () => false,
+});
+assert(!extractBant("I don't have $4,000 I need for closing costs.").budget);
+assert.equal(extractBant("I want $250,000 and I won't pay $4,000 in closing costs.").budget, '250,000');
+const hasAuthority = evaluateBridgeFunction('hasAvaLiveAuthorityEvidence', {
+  normalizeBantValue: (text) => text,
+});
+assert(!hasAuthority({ bant: { authority: 'mentioned the owner' } }, null, {
+  turnContract: buildAvaLiveTurnContract({ transcript: "I'm just helping the property owner sell it." }),
+}));
+assert(hasAuthority({ authorityConfirmed: true }));
+
 const entryStart = bridge.indexOf('async function buildTelnyxLiveAvaReply(');
 assert(entryStart >= 0);
 const boundaryEnd = bridge.indexOf('  const repairReply =', entryStart);

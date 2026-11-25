@@ -142,10 +142,10 @@ const OUT_OF_POCKET_COST = /\b(?:out[- ]of[- ]pocket|upfront (?:costs?|fees?|pay
 const COST_CONCERN = /\b(?:no|don['’]t|won['’]t|can['’]t|cannot|not|avoid|worried|concerned|afford|which|what|how much|do i|will i|would i|have to)\b/i;
 const STATED_OWNER = /\b(?:i (?:am|own)|i['’]m)\s+(?:(?:also|actually)\s+)?(?:the (?:home)?owner|the seller|(?:the|this|that|my) (?:house|home|property))\b|\bi own it\b/i;
 const HELPER_INTRO = /\b(?:i am|i['’]m|im)\s+(?:(?:just|only)\s+)?helping\b(.*)/i;
-const SALE_HELP = /^(?:with (?:it|the (?:sale|property))\b|(?:the (?:home)?owner|the seller|my [a-z]+)(?:[.!?,]*$|\s+(?:with (?:it|the sale)|sell(?:ing)?)\b))/i;
+const SALE_HELP = /^(?:with (?:it|the (?:sale|property))\b|(?:the (?:property owner|(?:home)?owner|seller)|my [a-z]+)(?:[.!?,]*$|\s+(?:with (?:it|the sale)|sell(?:ing)?)\b))/i;
 const UNCERTAIN_PROPERTY = /\b(?:property|house|home|address)\b.{0,35}\b(?:might be|could be|maybe|i think)\s+(?:in|at|near)\b|\b(?:not sure|don['’]t know)\b.{0,35}\b(?:which (?:property|house|home)|where (?:it|the (?:house|home|property)) is|the address)\b|\b(?:maybe|i think|i guess)\s+(?:the (?:property|house|home|address)|it)\s+is\s+(?:in|at|near)\b/i;
 const UNCERTAIN_STREET_ADDRESS = /\b(?:might be|could be|maybe|i think|i guess|not sure)\b/i;
-const NON_OWNER = /\b(?:i am|i['’]m|im)\s+not\s+(?:the\s+)?(?:owner|homeowner|seller)\b/i;
+const NON_OWNER = /\b(?:i am|i['’]m|im)\s+not\s+(?:the\s+)?(?:property owner|owner|homeowner|seller)\b/i;
 const CLAUSE_BOUNDARY = /[.!?;]+\s+|\s+(?:and|but)\s+/i;
 
 // Conversation cues adapted from the downloaded PBK sales training timeline.
@@ -188,6 +188,10 @@ function isStatedHelper(text = '') {
   if (STATED_OWNER.test(text)) return false;
   const helperDetail = text.match(HELPER_INTRO)?.[1]?.trim();
   return helperDetail !== undefined && (/^[.!?,]*$/.test(helperDetail) || SALE_HELP.test(helperDetail));
+}
+
+export function callerDisclaimsAvaOwnerRole(transcript = '') {
+  return NON_OWNER.test(transcript) || isStatedHelper(transcript);
 }
 
 function hasUncertainProperty(text = '') {

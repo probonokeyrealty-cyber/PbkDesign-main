@@ -4,6 +4,8 @@ import { EventEmitter } from 'node:events';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { readFileSync } from 'node:fs';
+import { runInNewContext } from 'node:vm';
+import { createHash, webcrypto } from 'node:crypto';
 import { parse as parseYaml } from 'yaml';
 import ts from 'typescript';
 import { analyzerPublicationTrace } from './fixtures/analyzer-publication-trace.mjs';
@@ -11,11 +13,12 @@ import * as publicationDiagnostics from './fixtures/analyzer-publication-trace.m
 import { verifyAnalyzerPublicationGuards } from './fixtures/analyzer-publication-timing.mjs';
 import { createServer } from 'vite';
 import { warmAnalyzerBrowserFixture, analyzerBrowserFixtureOptions } from './fixtures/analyzer-browser-warmup.mjs';
-import { parseOptions, requestDisposition, observeLoadedAssets, observeContextAssets, forwardLiveRequest, sharedAnalyzerMatches, sampleResponse } from './operator-session-browseros-live.mjs';
+import { parseOptions, requestDisposition, observeLoadedAssets, observeContextAssets, forwardLiveRequest, sharedAnalyzerMatches, sampleResponse, selectSourcePage, readSourceCookies, fingerprintSource } from './operator-session-browseros-live.mjs';
 
 const base = 'https://pbkcenter.netlify.app';
 const revision = 'a'.repeat(40);
-const args = ['--run-live', '--cdp-url', 'http://127.0.0.1:9100', '--expected-build', revision];
+const sourceTargetId = 'b'.repeat(32);
+const args = ['--run-live', '--cdp-url', 'http://127.0.0.1:9100', '--expected-build', revision, '--source-target-id', sourceTargetId];
 const pins = new Map([
   ['/assets/shell-pinned.js', Buffer.from('sample shell')],
   ['/assets/Inbox-pinned.js', Buffer.from('sample inbox')],
@@ -243,6 +246,12 @@ test('import/help are inert and live execution needs explicit opt-in and a pinne
   assert.throws(() => parseOptions(['--run-live', '--cdp-url', args[2]]), /expected-build/);
   assert.equal(parseOptions(args).revision, revision);
   assert.equal(parseOptions(args).base, base);
+  assert.equal(parseOptions(args).sourceTargetId, sourceTargetId);
+  assert.throws(() => parseOptions(args.slice(0, -2)), /source-target-id/);
+  assert.throws(() => parseOptions([...args, '--source-target-id', sourceTargetId]), /duplicate/);
+  for (const value of ['', '23', 'https://example.com', '--run-live']) {
+    assert.throws(() => parseOptions([...args.slice(0, -1), value]), /source-target-id/);
+  }
 });
 
 test('reject remote CDP, credentials, foreign sites and duplicate flags', () => {
@@ -276,6 +285,98 @@ test('all business mutations and direct-provider requests are blocked', () => {
   }
   assert.equal(requestDisposition('GET', 'https://provider.invalid/state', base, paths), 'deny-external');
   assert.equal(requestDisposition('POST', 'https://provider.invalid/api/auth/team/verify', base, paths), 'deny-external');
+  assert.equal(requestDisposition('GET', 'https://fonts.googleapis.com/css2?family=Geist', base, paths), 'deny-external');
+  assert.equal(requestDisposition('GET', 'https://fonts.gstatic.com/sample.woff2', base, paths), 'deny-external');
+});
+
+function sourcePage(id, calls, url = base + '/leads') {
+  return { url: () => url, target: () => ({ createCDPSession: async () => ({
+    send: async (method, params) => {
+      calls.push([id, method, params]);
+      if (method === 'Target.getTargetInfo') return { targetInfo: { targetId: id } };
+      assert.equal(method, 'Network.getCookies');
+      return { cookies: [{ name: 'sample', value: 'sample-only', domain: 'pbkcenter.netlify.app',
+        path: '/', expires: -1, httpOnly: true, secure: true }] };
+    },
+    detach: async () => { calls.push([id, 'detach']); },
+  }) }) };
+}
+
+test('source selection is explicit even when multiple PBK tabs are open', async () => {
+  const calls = [];
+  const other = sourcePage('c'.repeat(32), calls), selected = sourcePage(sourceTargetId, calls);
+  const foreign = sourcePage(sourceTargetId, calls, 'https://foreign.invalid/leads');
+  const options = { base, sourceTargetId };
+  assert.equal(await selectSourcePage({ pages: async () => [foreign, other, selected] }, options), selected);
+  assert.equal(calls.filter(call => call[1] === 'detach').length, 2);
+  assert.ok(calls.every(call => ['Target.getTargetInfo', 'detach'].includes(call[1])));
+  await assert.rejects(selectSourcePage({ pages: async () => [foreign, other] }, options), /explicitly selected/);
+});
+
+test('cookie reuse is page-scoped, read-only and always detached', async () => {
+  const calls = [];
+  const cookies = await readSourceCookies(sourcePage(sourceTargetId, calls), base);
+  assert.deepEqual(calls, [[sourceTargetId, 'Network.getCookies', { urls: [base + '/'] }], [sourceTargetId, 'detach']]);
+  assert.equal(cookies[0].sameSite, 'Lax');
+  let detached = false;
+  const page = { target: () => ({ createCDPSession: async () => ({
+    send: async () => { throw Error('unavailable'); }, detach: async () => { detached = true; },
+  }) }) };
+  await assert.rejects(readSourceCookies(page, base), /unavailable/);
+  assert.equal(detached, true);
+});
+
+test('cookie reuse rejects partitioned cookies instead of silently unpartitioning them', async () => {
+  for (const partition of [{ partitionKey: { topLevelSite: base, hasCrossSiteAncestor: false } },
+    { partitionKeyOpaque: true }]) {
+    let detached = false;
+    const ordinary = { name: 'sample', value: 'ordinary-sample', domain: 'pbkcenter.netlify.app', path: '/' };
+    const page = { target: () => ({ createCDPSession: async () => ({
+      send: async () => ({ cookies: [ordinary, { ...ordinary, value: 'partitioned-sample', ...partition }] }),
+      detach: async () => { detached = true; },
+    }) }) };
+    await assert.rejects(readSourceCookies(page, base), /Partitioned source cookies cannot be reused safely/);
+    assert.equal(detached, true);
+  }
+});
+
+test('draft fingerprints snapshot raw values before async hashing and ignore deployment bookkeeping', async () => {
+  const data = {
+    'pbk-deal-data': 'legacy sample', 'pbk:compose:draft': ' {"body":"sample"} ',
+    'pbk:prod:analyzer:current-deal': 'sample analyzer', 'manual-notes': 'sample notes',
+    'saved-comps': 'sample comp', 'pbk:deploy-refresh:/analyzer': 'bookkeeping',
+    'pbk:team-session:v1': 'not a draft',
+  };
+  const storage = values => Object.defineProperty({ ...values }, 'getItem', { value(key) { return this[key] ?? null; } });
+  const local = storage(data), session = storage({ 'session-draft': 'sample session draft' });
+  let changed = false;
+  const page = { evaluate: async (fn, origin) => runInNewContext(`(${fn.toString()})(origin)`, {
+    origin, location: { origin: base }, localStorage: local, sessionStorage: session, TextEncoder,
+    crypto: { subtle: { digest: async (...args) => {
+      if (!changed) { changed = true; local['manual-notes'] = 'later sample'; session['session-draft'] = 'later session'; }
+      return webcrypto.subtle.digest(...args);
+    } } },
+  }) };
+  const hashes = await fingerprintSource(page, base);
+  const expected = Object.fromEntries(Object.entries(data).filter(([key]) => !key.startsWith('pbk:deploy-refresh:') && !key.includes('team-session'))
+    .map(([key, value]) => ['local:' + key, createHash('sha256').update(value).digest('hex')]));
+  expected['session:session-draft'] = createHash('sha256').update('sample session draft').digest('hex');
+  assert.deepEqual({ ...hashes }, expected);
+  assert.ok(!JSON.stringify(hashes).includes('sample notes'));
+  await assert.rejects(fingerprintSource(page, 'https://foreign.invalid'), /Source tab moved/);
+});
+
+test('CI runs offline recovery contracts, never the authenticated live runner', () => {
+  const workflow = parseYaml(readFileSync(new URL('../.github/workflows/command-center-polish-verify.yml', import.meta.url), 'utf8'));
+  for (const path of ['scripts/operator-session-browseros-live.mjs', 'scripts/operator-session-browseros.node-test.mjs',
+    'scripts/analyzer-browseros-mobile-live.mjs', 'scripts/analyzer-draft-recovery-browser-smoke.mjs',
+    'scripts/fixtures/analyzer-publication-trace.mjs', 'scripts/fixtures/analyzer-publication-timing.mjs',
+    'scripts/fixtures/analyzer-browser-warmup.mjs', '.github/workflows/release-qualification.yml']) {
+    assert.ok(workflow.on.pull_request.paths.includes(path), `Recovery contracts must run when ${path} changes`);
+  }
+  const commands = workflow.jobs['isolated-desktop-mobile'].steps.map(step => step.run || '').join('\n');
+  assert.ok(commands.includes('node --test scripts/operator-session-browseros.node-test.mjs'));
+  assert.ok(!commands.includes('--run-live'));
 });
 
 test('shell/asset allowlist is exact and cannot carry query overrides or credentials', () => {

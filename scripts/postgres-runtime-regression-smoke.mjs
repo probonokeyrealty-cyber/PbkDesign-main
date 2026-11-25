@@ -259,6 +259,34 @@ test('timed-out queued acquisition is released when its holder returns the clien
   assert.equal(counters.releases, 2);
 });
 
+test('a query deadline that wins before checkout still discards the late client', async (t) => {
+  const { context, pool, counters } = runtime(t, { env: { PBK_PG_CONNECTION_TIMEOUT_MS: '3000' } });
+  const holder = await pool.connect();
+  let now = 100;
+  context.Date = { now: () => now };
+  const deadlines = [];
+  context.setTimeout = (onDeadline) => deadlines.push(onDeadline);
+  context.clearTimeout = () => {};
+
+  const query = pool.query('UPDATE isolated SET value = value + 1');
+  assert.equal(pool.waitingCount, 1);
+  assert.equal(deadlines.length, 2);
+  // Let the query timer win while the wall clock is still short of the checkout deadline.
+  now = 1099;
+  deadlines[1]();
+  await assert.rejects(query, {
+    code: 'PBK_POSTGRES_OPERATION_TIMEOUT', executionOutcome: 'not_submitted',
+  });
+  holder.release();
+  await new Promise(setImmediate);
+
+  assert.equal(pool.waitingCount, 0);
+  assert.equal(counters.queries, 0);
+  assert.equal(counters.releases, 2);
+  assert.equal(counters.discarded, 1);
+  assert.equal(pool.totalCount, 0);
+});
+
 test('retry backoff shares the operation deadline and cannot launch a late retry', async (t) => {
   const fixture = runtime(t, { connectError: connectionError, env: { PBK_PG_QUERY_RETRY_BASE_DELAY_MS: '1000' } });
   await assert.rejects(fixture.pool.query('SELECT 1'), {

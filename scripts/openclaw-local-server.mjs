@@ -7092,11 +7092,12 @@ function getPgPool() {
     const [text, values] = args;
     const deadlineAt = Date.now() + getPostgresOperationTimeoutMs();
     let submitted = false;
+    let timedOut = false;
     let finishQuery = null;
     const rawQuery = async () => {
       if (text === undefined || text === null) throw new TypeError('A query is required');
       const client = await acquire(deadlineAt);
-      if (Date.now() >= deadlineAt) {
+      if (timedOut || Date.now() >= deadlineAt) {
         client.release(true);
         throw createPostgresDeadlineError('pg query', 'not_submitted');
       }
@@ -7125,7 +7126,10 @@ function getPgPool() {
       deadlineAt,
       getExecutionOutcome: () => submitted ? 'unknown' : 'not_submitted',
       // Destroying the client releases pool capacity, but cannot prove a rollback.
-      onTimeout: (error) => finishQuery?.(error),
+      onTimeout: (error) => {
+        timedOut = true;
+        finishQuery?.(error);
+      },
     }).catch((error) => {
       if (!error || typeof error !== 'object') error = new Error(String(error));
       error.executionOutcome ||= submitted ? 'unknown' : 'not_submitted';

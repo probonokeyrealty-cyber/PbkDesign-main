@@ -244,8 +244,9 @@ test('bridge code matches the reviewed release fingerprint outside the scoped re
   // Ava price triage reads recent Analyzer evidence for the exact lead without tool writes.
   // Detected outbound voicemail stays out of seller replies and live qualification.
   // Ambiguous greetings allow only a neutral acknowledgement, and explicit opt-outs stay in intent evidence.
+  // A query that times out during checkout discards the late client before dispatching SQL.
   assert.equal(createHash('sha256').update(unchanged).digest('hex'),
-    'b8c504b86037d12b918608330da43834ad869c0251a621ba77eb767110f8724e');
+    '34e1518c09a9016e35440f4bcc9d56625f5dc4cbb4f6078df2830a95f6441692');
 });
 
 test('production distribution includes reader and protocol, never the fixture signer', () => {

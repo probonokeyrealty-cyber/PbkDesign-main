@@ -6,6 +6,8 @@ on:
     paths:
       - 'src/**'
       - 'public/fonts/**'
+      - 'index.shell.html'
+      - 'vite.config.ts'
       - 'scripts/command-center-polish*'
       - 'scripts/fixtures/command-center-polish-preview.mjs'
       - 'scripts/fixtures/faster-triage-fixture.mjs'

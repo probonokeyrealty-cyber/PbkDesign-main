@@ -9,6 +9,20 @@ after(async () => { await server.close(); });
 const output = 'output/command-center-polish';
 await mkdir(output, { recursive: true });
 
+function expectWorkspaceLead(page, leadId, timeout = 10000) {
+  return expect(page.getByRole('region', { name: 'Workspace lead context', exact: true }).locator('code'))
+    .toHaveText(leadId, { timeout });
+}
+
+test('lead identity assertion rejects IDs sharing the requested prefix', async () => {
+  const browser = await chromium.launch();
+  try {
+    const page = await browser.newPage();
+    await page.setContent('<section aria-label="Workspace lead context"><code>SYN-L-22910</code></section>');
+    await assert.rejects(() => expectWorkspaceLead(page, 'SYN-L-2291', 250));
+  } finally { await browser.close(); }
+});
+
 for (const [engine, width, theme, collapsed] of [
   [chromium, 1440, 'dark', false],
   [chromium, 1440, 'light', true],
@@ -17,9 +31,11 @@ for (const [engine, width, theme, collapsed] of [
 ]) {
   test(`shared shell polish: ${engine.name()} ${width} ${theme}`, { timeout: 300000 }, async () => {
     const browser = await engine.launch();
-    const context = await browser.newContext({ viewport: { width, height: 1000 }, reducedMotion: 'reduce' });
+    const context = await browser.newContext({ viewport: { width, height: 1000 }, reducedMotion: 'reduce', serviceWorkers: 'block' });
     const writes = [];
     const errors = [];
+    const railPreferences = [];
+    let expectedRailPreference = null;
     let activeRoute = '/settings';
     try {
       await context.addInitScript(({ theme, collapsed }) => {
@@ -32,6 +48,16 @@ for (const [engine, width, theme, collapsed] of [
         const request = route.request();
         const url = new URL(request.url());
         if (url.origin !== origin) return route.abort();
+        // Only the two explicit rail clicks may update fictional UI preferences.
+        if (request.method() === 'PATCH' && url.pathname === '/api/settings' && expectedRailPreference !== null) {
+          let body;
+          try { body = request.postDataJSON(); } catch { body = null; }
+          if (body?.actor === 'ParadiseLayout' && Object.keys(body).sort().join(',') === 'actor,ui' &&
+            Object.keys(body.ui || {}).join(',') === 'railCollapsed' && body.ui.railCollapsed === expectedRailPreference) {
+            railPreferences.push(body.ui.railCollapsed);
+            return route.fulfill({ json: { ok: true } });
+          }
+        }
         if (request.method() !== 'GET' && url.pathname !== '/api/state/stream/session') {
           writes.push(`${request.method()} ${url.pathname}`);
           return route.abort();
@@ -71,9 +97,16 @@ for (const [engine, width, theme, collapsed] of [
         const rail = await page.locator('.pbk-shell-sidebar').boundingBox();
         const control = await toggle.boundingBox();
         assert.ok(control.x >= rail.x && control.x + control.width <= rail.x + rail.width, 'Rail control stays inside expanded and collapsed navigation');
+        for (const [index, next] of [!collapsed, collapsed].entries()) {
+          expectedRailPreference = next;
+          await page.getByRole('button', { name: next ? 'Collapse navigation rail' : 'Expand navigation rail', exact: true }).click();
+          await expect(page.locator('.pbk-shell-sidebar')).toHaveAttribute('data-collapsed', String(next));
+          await expect.poll(() => railPreferences.length).toBe(index + 1);
+          expectedRailPreference = null;
+        }
       }
       for (const [route, key] of [
-        ['/command-center', 'today'], ['/leads', 'leads'], ['/leads/SYN-L-2291', 'workspace'],
+        ['/', 'today'], ['/leads', 'leads'], ['/leads/SYN-L-2291', 'workspace'],
         ['/fleet', 'fleet'], ['/inbox', 'inbox'], ['/analytics', 'analytics'],
         ['/ava-chat', 'ava'], ['/analyzer', 'analyzer'],
       ]) {
@@ -81,7 +114,19 @@ for (const [engine, width, theme, collapsed] of [
         // Settle the previous page before this presentation test forces a full navigation.
         await page.waitForLoadState('networkidle', { timeout: 60000 });
         activeRoute = route;
-        await page.goto(origin + route, { waitUntil: 'domcontentloaded' });
+        if (key === 'workspace' || key === 'analyzer') {
+          await page.goto(origin + route, { waitUntil: 'domcontentloaded' });
+        } else if (width > 767) {
+          await page.getByRole('navigation', { name: 'Workspace pages', exact: true }).locator(`a[href="${route}"]`).click();
+        } else if (['/', '/leads', '/inbox', '/ava-chat'].includes(route)) {
+          await page.getByRole('navigation', { name: 'Mobile shell navigation', exact: true }).locator(`a[href="${route}"]`).click();
+        } else {
+          await page.getByRole('button', { name: 'More - open all dashboard pages' }).click();
+          const menu = page.getByRole('dialog', { name: 'All dashboard pages' });
+          await menu.locator(`a[href="${route}"]`).click();
+          await expect(menu).toHaveCount(0);
+        }
+        await expect(page).toHaveURL(origin + route);
         await expect(page.locator('.pbk-shell-frame')).toBeVisible();
         const loaded = route === '/analyzer'
           ? page.locator('.pbk-analyzer-main')
@@ -90,7 +135,7 @@ for (const [engine, width, theme, collapsed] of [
         const headings = { today: 'Today.', leads: 'Seller leads.', fleet: 'Agent Fleet', inbox: 'Inbox.',
           analytics: 'Analytics', ava: 'Ava Chat' };
         if (headings[key]) await expect(page.locator('.pbk-shell-content h1').first()).toHaveText(headings[key]);
-        if (key === 'workspace') await expect(page.locator('.pbk-shell-content')).toContainText('SYN-L-2291');
+        if (key === 'workspace') await expectWorkspaceLead(page, 'SYN-L-2291');
         await expect(page.locator('.page-switch-skeleton')).toHaveCount(0);
         await expect(page.locator('.pbk-shell-content')).not.toContainText('Something went wrong');
         const font = await page.locator('.pbk-shell-frame').evaluate(node => getComputedStyle(node).getPropertyValue('--font-mono'));

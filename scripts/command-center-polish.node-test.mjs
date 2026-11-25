@@ -29,3 +29,12 @@ test('shared typography uses bundled fonts before route-specific styles', async 
   const entry = await read('src/main.shell.tsx');
   assert.ok(entry.includes("import './styles/command-center-polish.css'"));
 });
+
+test('polish CI covers shell entry and build configuration changes without deployment', async () => {
+  const workflow = await read('.github/workflows/command-center-polish-verify.yml');
+  for (const path of ['index.shell.html', 'vite.config.ts']) {
+    assert.ok(workflow.includes(`'${path}'`), `${path} changes must trigger regression coverage`);
+  }
+  assert.ok(workflow.includes('contents: read'));
+  assert.ok(!/^\s*run:.*\b(?:deploy|publish)\b/m.test(workflow));
+});

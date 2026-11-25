@@ -94,10 +94,13 @@ import {
   buildAvaLiveCockpitSnapshot,
   buildAvaLiveSkillOutcomeDraft,
   buildAvaLiveTurnContract,
+  callerDisclaimsAvaOwnerRole,
   classifyAvaLiveObjectionV2,
   compileAvaLiveSkillAction,
+  isAvaFocusedCoachingIntent,
   isAvaLiveReplyAlignedWithContract,
   renderAvaLiveContractReply,
+  withoutAvaCostClauses,
 } from './ava-live-turn-contract.mjs';
 import {
   buildPBKIntelligenceContext,
@@ -5227,13 +5230,15 @@ function extractBantFromTranscript(transcript = '', existing = {}) {
   if (isOperationalCallTranscriptNoise(text)) return normalizeBantInfo(existing);
   const lower = text.toLowerCase();
   const extracted = normalizeBantInfo(existing);
-  const moneyMatch = text.match(/\b(?:want|need|asking|happy with|walk away(?: with)?|take|number(?: is)?|price(?: is)?)\s*(?:around|about|roughly|at least|near)?\s*\$?\s*([0-9][0-9,]{3,}(?:\.\d+)?\s*(?:k|thousand|grand)?)/i);
-  const trailingIntentMoneyMatch = text.match(/\$\s*([0-9][0-9,]{3,}(?:\.\d+)?\s*(?:k|thousand|grand)?).{0,50}\b(?:would work|works|happy|take|asking|want|need|net)\b/i);
+  const priceText = withoutAvaCostClauses(text);
+  const moneyMatch = priceText.match(/\b(?:want|need|asking|happy with|walk away(?: with)?|take|number(?: is)?|price(?: is)?)\s*(?:around|about|roughly|at least|near)?\s*\$?\s*([0-9][0-9,]{3,}(?:\.\d+)?\s*(?:k|thousand|grand)?)/i);
+  const trailingIntentMoneyMatch = priceText.match(/\$\s*([0-9][0-9,]{3,}(?:\.\d+)?\s*(?:k|thousand|grand)?).{0,50}\b(?:would work|works|happy|take|asking|want|need|net)\b/i);
   if (!extracted.budget && (moneyMatch || trailingIntentMoneyMatch)) {
     extracted.budget = (moneyMatch?.[1] || trailingIntentMoneyMatch?.[1] || '').trim();
   }
   const authorityEvidencePattern = /\b(?:i\s+own|i'?m\s+the\s+owner|my\s+(?:house|home|property)|(?:my|the)\s+(?:wife|husband|spouse|partner|attorney|lawyer|executor|co-?owner|client)|decision\s+maker|make\s+the\s+decision|authorized\s+to\s+(?:sell|sign)|power\s+of\s+attorney)\b/i;
-  if (!extracted.authority && (hasStrongAvaOwnerRoleAssertion(text) || authorityEvidencePattern.test(text))) {
+  if (!extracted.authority && !callerDisclaimsAvaOwnerRole(text) &&
+      (hasStrongAvaOwnerRoleAssertion(text) || authorityEvidencePattern.test(text))) {
     extracted.authority = text.match(/.{0,40}\b(owner|i\s+own|my\s+house|my\s+home|my\s+property|wife|husband|spouse|partner|attorney|lawyer|executor|co-?owner|decision\s+maker|make\s+the\s+decision|my\s+client|authorized|power\s+of\s+attorney)\b.{0,60}/i)?.[0]?.trim() || 'decision authority mentioned';
   }
   if (!extracted.need && /\b(probate|estate|divorce|relocat|foreclos|tax|vacant|repair|tenant|downsiz|behind|inherited|condition)\b/i.test(text)) {
@@ -17475,6 +17480,7 @@ function isAvaLiveAddressMetaQuestion(transcript = '') {
 }
 
 function hasStrongAvaOwnerRoleAssertion(transcript = '') {
+  if (callerDisclaimsAvaOwnerRole(transcript)) return false;
   const clean = normalizeTelnyxRepairTranscript(transcript);
   if (!clean || isAvaLiveAddressMetaQuestion(clean)) return false;
   return /\b(i\s+(?:own|own\s+it|own\s+the\s+(?:house|home|property|place)|am\s+the\s+owner)|i'?m\s+(?:the\s+)?(?:property\s+)?owner|(?:i\s+am|i'?m)\s+(?:the\s+)?(?:seller|homeowner)|we\s+own|my\s+(?:house|home|place)\b|our\s+(?:house|home|place)\b|i\s+inherited|we\s+inherited|owner\s+of\s+the\s+(?:house|home|property)|(?:on|yeah\s+on)\s+(?:the\s+)?property\s+owner|(?:the\s+)?property\s+owner\b)\b/i.test(clean);
@@ -24977,8 +24983,8 @@ function isAvaLiveSellerMoneyContext(transcript = '') {
 function rememberAvaLiveSellerMoney(session = {}, transcript = '', supportTranscript = '') {
   if (!session || typeof session !== 'object') return '';
   if (!session.bant || typeof session.bant !== 'object') session.bant = {};
-  const current = normalizeTelnyxRepairTranscript(transcript);
-  const support = normalizeTelnyxRepairTranscript(supportTranscript);
+  const current = normalizeTelnyxRepairTranscript(withoutAvaCostClauses(transcript));
+  const support = normalizeTelnyxRepairTranscript(withoutAvaCostClauses(supportTranscript));
   const combined = [current, support].filter(Boolean).join(' ');
   const money = isAvaLiveSellerMoneyContext(current)
     ? extractAvaLiveMoneyAmount(current)
@@ -70802,7 +70808,7 @@ function classifyAvaLiveSellerIntent(transcript = '', session = {}) {
   else if (/\btimeline|days?|weeks?|months?|asap|soon|fast|quick\b/i.test(clean)) intent = 'timeline_or_speed';
   else if (/\brepairs?|condition|roof|hvac|foundation|tenant|vacant|occupied\b/i.test(clean)) intent = 'condition_signal';
   else if (isTelnyxLiveAckOnlyUtterance(clean)) intent = isAvaLiveAuthorityQuestion(lastReply) ? 'authority_confirmation' : 'acknowledgement';
-  const money = extractAvaLiveMoneyAmount(transcript);
+  const money = extractAvaLiveMoneyAmount(withoutAvaCostClauses(transcript));
   if (money) signals.push(`money:${money}`);
   if (hasStrongAvaOwnerRoleAssertion(clean)) signals.push('owner_language');
   if (PBK_AGENT_ROLE_RE.test(clean)) signals.push('agent_language');
@@ -71299,6 +71305,8 @@ function resolveAvaLiveMao(session = {}, contextCall = null, reply = {}) {
 }
 
 function hasAvaLiveAuthorityEvidence(session = {}, contextCall = null, reply = {}) {
+  const role = reply.turnContract?.knownFacts?.authority || session.avaLiveTurnContract?.knownFacts?.authority;
+  if (role === 'helper_or_stakeholder') return false;
   return Boolean(
     session.authorityConfirmed ||
       session.decisionMakerConfirmed ||
@@ -71314,6 +71322,9 @@ function guardTelnyxLiveSpokenReply(reply = {}, { session = {}, contextCall = nu
     return { text: renderAvaLiveContractReply({ intent }), guard: { result: 'stop_contact_boundary' } };
   }
   const activeTurnContract = reply.turnContract || session.avaLiveTurnContract || null;
+  const focusedReply = isAvaFocusedCoachingIntent(intent) && activeTurnContract?.intent === intent
+    ? renderAvaLiveContractReply(activeTurnContract)
+    : '';
   const targetPrice = activeTurnContract?.knownFacts?.sellerTargetPrice;
   if (intent === 'already_gave_price' && reply.replyMode === 'fast_local_price_recall' &&
       activeTurnContract?.intent === intent && /^\$?\s*\d[\d,]*(?:\.\d+)?\s*(?:k|m|thousand|grand|million)?$/i.test(targetPrice || '')) {
@@ -71321,7 +71332,9 @@ function guardTelnyxLiveSpokenReply(reply = {}, { session = {}, contextCall = nu
     return { text: renderAvaLiveContractReply({ intent, knownFacts: { sellerTargetPrice: targetPrice } }), guard: { result: 'known_price_recall' } };
   }
   const ownerSafe = stripUnconfirmedAvaLiveLeadName(
-    enforceAvaOwnerSafeReply(reply.text || '', {
+    // These questions only clarify a caller fact and make no deal-path claim.
+    // Run the response guard below without replacing them with a deal pitch.
+    focusedReply || enforceAvaOwnerSafeReply(reply.text || '', {
       session,
       contextCall,
       transcript,
@@ -71352,6 +71365,9 @@ function guardTelnyxLiveSpokenReply(reply = {}, { session = {}, contextCall = nu
       ...(Array.isArray(session.askedLiveQuestions) ? session.askedLiveQuestions : []),
     ].filter(Boolean),
   });
+  if (focusedReply && guard.repeatedQuestionBlocked) {
+    guard.answer = compileAvaLiveSkillAction(activeTurnContract).acknowledgement;
+  }
   const guardedText = guard.answer || ownerSafe;
   if (guard.result !== 'passed') {
     recordCallTrace('ava_live_spoken_guard', {
@@ -71997,13 +72013,16 @@ async function buildTelnyxLiveAvaReplyInsight({ session = {}, transcript = '', c
 }
 
 async function buildTelnyxLiveAvaReply({ session = {}, transcript = '', contextCall = null } = {}) {
-  if (classifyAvaLiveObjectionV2(transcript).intent === 'stop_contact') {
+  const intent = classifyAvaLiveObjectionV2(transcript).intent;
+  if (intent === 'stop_contact' || isAvaFocusedCoachingIntent(intent)) {
     const turnContract = buildAvaLiveTurnContract({ session, transcript, contextCall });
+    const stopContact = intent === 'stop_contact';
+    if (!stopContact) applyAvaLiveTurnContractToSession(session, turnContract, { recordQuestion: true });
     return {
       text: renderAvaLiveContractReply(turnContract),
-      replyMode: 'fast_local_stop_contact',
+      replyMode: stopContact ? 'fast_local_stop_contact' : 'fast_local_turn_contract',
       turnContract,
-      strategist: { ok: true, skipped: true, result: 'stop_contact_boundary' },
+      strategist: { ok: true, skipped: true, result: stopContact ? 'stop_contact_boundary' : 'focused_coaching' },
     };
   }
   const repairReply = buildTelnyxLiveConversationalRepairReply({

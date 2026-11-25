@@ -231,9 +231,11 @@ test('bridge code matches the reviewed release fingerprint outside the scoped re
   // Snapshot recovery retries the same Postgres row version and reconciles an ambiguous commit.
   // The staff lead route reads open HighLevel tasks for an exact server-configured contact.
   // The isolated bridge test verifies staff auth and the unconfigured no-network path.
-  // A direct staff call binds a verified session to the exact saved recipient.
+  // Website inquiry updates use a dedicated webhook secret, an exact lead link,
+  // and a Postgres transaction. Staff selections stay in the lead profile.
+  // Direct staff calls verify the saved recipient and preserve request contact restrictions.
   assert.equal(createHash('sha256').update(unchanged).digest('hex'),
-    '1c556db5f367412dc9374bb5aa91f88e76f5a9343a1640c11e4db5b04c29dc75');
+    '5e4f013f8c2aa08b317f3e6cc65d0ade4622498643e0ca1cb4d0d9496aac6675');
 });
 
 test('production distribution includes reader and protocol, never the fixture signer', () => {

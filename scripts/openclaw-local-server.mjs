@@ -198,6 +198,7 @@ import {
   classifyAvaConversationalIntent,
 } from './ava-intent-router.mjs';
 import { ensureSkillGovernanceSchema } from './skill-governance-schema.mjs';
+import { acceptGhlStageEvent, buildGhlPipelineView, persistGhlStage, readGhlPipelineConfig } from './ghl-pipeline-sync.mjs';
 import {
   activateSkillVersion,
   approveSkillVersion,
@@ -972,6 +973,7 @@ const PUBLIC_PATHS = new Set([
   '/api/webhooks/docusign',
   '/api/webhooks/external-events',
   '/api/v1/webhooks/external-events',
+  '/api/webhooks/ghl/pipeline',
   // Public website Ava is intentionally limited to FAQ/research answers and
   // lead capture. It never invokes provider-write or admin tools.
   '/api/public/ava-chat',
@@ -37446,8 +37448,8 @@ async function persistLeadProfileRowToDb(lead = {}, source = 'property-data', { 
      ON CONFLICT (id) ${insertOnly ? 'DO NOTHING' : `DO UPDATE SET
        external_id = EXCLUDED.external_id,
        source = EXCLUDED.source,
-       status = EXCLUDED.status,
-       stage = EXCLUDED.stage,
+       status = CASE WHEN lead_profiles.raw ? 'ghlPipeline' THEN lead_profiles.status ELSE EXCLUDED.status END,
+       stage = CASE WHEN lead_profiles.raw ? 'ghlPipeline' THEN lead_profiles.stage ELSE EXCLUDED.stage END,
        temperature = EXCLUDED.temperature,
        lead_name = EXCLUDED.lead_name,
        email = EXCLUDED.email,
@@ -37467,9 +37469,14 @@ async function persistLeadProfileRowToDb(lead = {}, source = 'property-data', { 
        lead_commit_envelope = EXCLUDED.lead_commit_envelope,
        field_provenance = EXCLUDED.field_provenance,
        projection_proof = EXCLUDED.projection_proof,
-       raw = CASE WHEN lead_profiles.raw #> '{deal,investorDecisionScenarios}' IS NULL THEN EXCLUDED.raw
+       raw = (CASE WHEN lead_profiles.raw #> '{deal,investorDecisionScenarios}' IS NULL THEN EXCLUDED.raw
          ELSE jsonb_set(EXCLUDED.raw, '{deal}', COALESCE(NULLIF(EXCLUDED.raw->'deal', 'null'::jsonb), '{}'::jsonb)
-           || jsonb_build_object('investorDecisionScenarios', lead_profiles.raw #> '{deal,investorDecisionScenarios}')) END,
+           || jsonb_build_object('investorDecisionScenarios', lead_profiles.raw #> '{deal,investorDecisionScenarios}')) END)
+         || CASE WHEN lead_profiles.raw ? 'ghlPipeline' THEN jsonb_build_object(
+           'ghlPipeline', lead_profiles.raw->'ghlPipeline', 'stage', lead_profiles.stage, 'status', lead_profiles.status,
+           'assignment', COALESCE(NULLIF(EXCLUDED.raw->'assignment', 'null'::jsonb), '{}'::jsonb)
+             || jsonb_build_object('stage', lead_profiles.stage)
+         ) ELSE '{}'::jsonb END,
        updated_at = NOW()`}`,
     [
       leadId,
@@ -61442,8 +61449,12 @@ async function loadLeadForFullView(leadId, { reviewOnly = false } = {}) {
   const profile = IS_HOSTED || getPgPool()
     ? await loadExactLeadProfile(leadId, { includeContactRestriction: reviewOnly })
     : null;
-  const hot = (state.leadImports || []).find((item) => (item.leadId || item.id) === leadId);
+  let hot = (state.leadImports || []).find((item) => (item.leadId || item.id) === leadId);
   const row = profile?.rows[0];
+  if (hot && row?.raw?.ghlPipeline) {
+    hot = { ...hot, status: row.status, stage: row.stage, ghlPipeline: row.raw.ghlPipeline,
+      assignment: { ...hot.assignment, stage: row.stage } };
+  }
   if (reviewOnly) {
     if (profile?.ok === false) return { lead: null, unavailable: true };
     // The profile owns saved review evidence. Honor a restriction in either record.
@@ -81339,6 +81350,9 @@ const server = createServer(async (request, response) => {
         const idempotencyKey = `staff-call-${hashProviderActionContext({
           requestKey: requestKey || randomUUID(), leadId, phone, fromNumber, actor: staffSession.actor,
         })}`;
+        // Request flags can add a contact restriction, but cannot clear saved restrictions.
+        const { violations: requestedRestrictions } = validateProviderActionSafetyCore('telnyx_call', body);
+        const savedConsent = lead.compliance?.tcpaConsent ?? lead.compliance?.consentStatus ?? lead.tcpaConsent ?? lead.consentStatus;
         callParams = {
           leadId, phone, fromNumber,
           source: body.source,
@@ -81346,8 +81360,9 @@ const server = createServer(async (request, response) => {
           requestedBy: staffSession.actor,
           manual: true,
           manualSend: true,
-          dnc: contactRestricted || getAvaReviewContactStatus(lead) === 'restricted' || body.dnc === true,
-          tcpaConsent: lead.compliance?.tcpaConsent ?? lead.compliance?.consentStatus ?? lead.tcpaConsent ?? lead.consentStatus,
+          dnc: contactRestricted || getAvaReviewContactStatus(lead) === 'restricted'
+            || requestedRestrictions.some(({ code }) => code === 'dnc_block'),
+          tcpaConsent: requestedRestrictions.some(({ code }) => code === 'tcpa_consent_missing') ? false : savedConsent,
           idempotencyKey,
           commandId: idempotencyKey,
         };
@@ -82781,7 +82796,7 @@ const server = createServer(async (request, response) => {
       }
       let durableBatchLead;
       try {
-        if (IS_HOSTED || getPgPool()) [durableBatchLead] = await loadAppliedBatchLeads(queryPgRows, leadId);
+        if (IS_HOSTED || getPgPool()) [durableBatchLead] = await loadAppliedBatchLeads(queryPgRows, leadId, { includeGhl: true });
       } catch {
         response.setHeader('Retry-After', '1');
         json(response, 503, { ok: false, code: 'lead_roster_unavailable', error: 'The saved lead record is unavailable. Try again shortly.' });
@@ -82801,6 +82816,7 @@ const server = createServer(async (request, response) => {
         const callContext = getLeadOwnedCallContext(durableBatchLead, leadId);
         json(response, 200, {
           ok: true, lead: { ...durableBatchLead, ...history, callContext, call_context: callContext }, ...history,
+          ghlPipeline: buildGhlPipelineView(durableBatchLead.ghlPipeline, readGhlPipelineConfig(process.env.PBK_GHL_PIPELINE_CONFIG)),
           outlookDelivery: await loadOutlookDeliveryForLead(leadId),
         });
         return;
@@ -82818,7 +82834,11 @@ const server = createServer(async (request, response) => {
         });
         return;
       }
-      json(response, 200, { ...full, outlookDelivery: await loadOutlookDeliveryForLead(leadId) });
+      json(response, 200, {
+        ...full,
+        ghlPipeline: buildGhlPipelineView(exactLead.ghlPipeline, readGhlPipelineConfig(process.env.PBK_GHL_PIPELINE_CONFIG)),
+        outlookDelivery: await loadOutlookDeliveryForLead(leadId),
+      });
       return;
     }
 
@@ -82910,6 +82930,29 @@ const server = createServer(async (request, response) => {
 
     if (leadPatchMatch && request.method === 'PATCH') {
       const body = await readBody(request);
+      if (Object.hasOwn(body, 'ghlNextStageId')) {
+        const config = readGhlPipelineConfig(process.env.PBK_GHL_PIPELINE_CONFIG);
+        const stage = config?.stages.find((item) => item.id === body.ghlNextStageId);
+        let leadId;
+        try { leadId = decodeURIComponent(leadPatchMatch.groups.id); } catch { leadId = ''; }
+        if (!leadId || !stage || typeof body.ghlExpectedOccurredAt !== 'string') {
+          json(response, 422, { ok: false, error: 'Select an available GoHighLevel stage.' });
+          return;
+        }
+        const saved = await queryPgRows(
+          `UPDATE public.lead_profiles
+             SET raw = jsonb_set(raw, '{ghlPipeline,nextStageId}', to_jsonb($2::text)), updated_at = NOW()
+           WHERE COALESCE(workspace_id, 'pbk') = 'pbk' AND id = $1 AND raw #>> '{ghlPipeline,pipelineId}' = $3
+             AND raw #>> '{ghlPipeline,locationId}' = $4 AND raw #>> '{ghlPipeline,occurredAt}' = $5
+             AND raw #>> '{ghlPipeline,stageId}' <> $2
+           RETURNING id`,
+          [leadId, stage.id, config.pipelineId, config.locationId, body.ghlExpectedOccurredAt]);
+        const ok = saved.ok && Boolean(saved.rows.length);
+        json(response, ok ? 200 : saved.ok ? 409 : 503, {
+          ok, error: ok ? undefined : 'Refresh the lead before selecting its next stage.',
+        });
+        return;
+      }
       if (Object.hasOwn(body, 'investorDecisionScenario')) {
         let leadId;
         try { leadId = decodeURIComponent(leadPatchMatch.groups.id); } catch {
@@ -83321,7 +83364,7 @@ const server = createServer(async (request, response) => {
       response.setHeader('Cache-Control', 'no-store');
       let batchLeads;
       try {
-        batchLeads = !IS_HOSTED && !getPgPool() ? [] : await loadAppliedBatchLeads(queryPgRows);
+        batchLeads = !IS_HOSTED && !getPgPool() ? [] : await loadAppliedBatchLeads(queryPgRows, '', { includeGhl: true });
       } catch {
         response.setHeader('Retry-After', '1');
         json(response, 503, {
@@ -83586,6 +83629,31 @@ const server = createServer(async (request, response) => {
         'appointments-route'
       );
       json(response, getRouteToolStatusCode(routeTool, { failureStatus: 400 }), buildRouteToolResponse(routeTool));
+      return;
+    }
+
+    if (request.method === 'POST' && pathname === '/api/webhooks/ghl/pipeline') {
+      const secret = String(process.env.PBK_GHL_PIPELINE_WEBHOOK_SECRET || '').trim();
+      if (secret.length < 32 || !safeCompareString(request.headers['x-pbk-ghl-webhook-secret'], secret)) {
+        json(response, 401, { ok: false, error: 'GoHighLevel webhook authentication failed.' });
+        return;
+      }
+      const config = readGhlPipelineConfig(process.env.PBK_GHL_PIPELINE_CONFIG);
+      const pool = getPgPool();
+      const result = await acceptGhlStageEvent(await readBody(request), pool ? config : null, async (event) => {
+        const outcome = await persistGhlStage(pool, event);
+        if (outcome === 'updated') {
+          const lead = (state.leadImports || []).find((item) => (item.leadId || item.id) === event.leadId);
+          if (lead && (!lead.ghlPipeline?.occurredAt || lead.ghlPipeline.occurredAt < event.occurredAt)) {
+            lead.stage = event.pbkStage;
+            lead.status = event.pbkStage;
+            lead.assignment = { ...lead.assignment, stage: event.pbkStage };
+            lead.ghlPipeline = { occurredAt: event.occurredAt };
+          }
+        }
+        return outcome;
+      });
+      json(response, result.status, { ok: result.ok, result: result.result });
       return;
     }
 

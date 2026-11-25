@@ -227,6 +227,16 @@ async function main() {
     assert.equal(mismatchedCall.status, 409);
     assert.equal(mismatchedCall.json.result, 'saved_phone_mismatch');
 
+    for (const restriction of [{ doNotCall: true }, { consentStatus: 'denied' }, { tcpaConsent: false }]) {
+      const restrictedRequest = await requestJson(baseUrl, '/api/calls', {
+        ...callRequest,
+        ...restriction,
+        idempotencyKey: randomUUID(),
+      }, staffHeaders);
+      assert.equal(restrictedRequest.json.result, 'safety_blocked', `A staff call must preserve ${JSON.stringify(restriction)}.`);
+      assert.equal(restrictedRequest.json.providerAttempted, false);
+    }
+
     const approvalCall = await requestJson(baseUrl, '/api/calls', {
       ...callRequest,
       forceApproval: true,

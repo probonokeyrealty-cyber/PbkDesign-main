@@ -2,7 +2,7 @@ import { lazy, Suspense, useId, useRef, useState, type FormEvent } from 'react';
 import { formatCurrency } from '../../utils/formatting';
 import { VAN_NUYS_ZCTA } from './marketStagingData';
 
-const VanNuysMarketMap = import.meta.env.PBK_MARKET_STAGING_INDICATORS
+const VanNuysMarketMap = import.meta.env.PBK_VAN_NUYS_MARKET_MAP
   ? lazy(() => import('./VanNuysMarketMap'))
   : null;
 

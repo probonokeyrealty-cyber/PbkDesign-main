@@ -39,6 +39,12 @@ if (!['live', 'staging'].includes(portalEnvironment)) throw Error('Invalid PBK p
 
 const stagingMarketIndicators =
   process.env.CONTEXT === 'deploy-preview' && process.env.HEAD === 'codex/house-zip-staging-indicators'
+const staffMarketMap =
+  process.env.SITE_ID === '87711eb9-2a9f-40b4-92c6-0f8075151ff0' &&
+  portalEnvironment === 'live' &&
+  (process.env.CONTEXT === 'production' ||
+    (process.env.CONTEXT === 'deploy-preview' &&
+      process.env.HEAD === 'codex/van-nuys-market-map-release'))
 const marketQa91411 = stagingMarketIndicators && process.env.REVIEW_ID === '111'
 const marketQa91411Page = 'market-comparison-91411-qa.html'
 
@@ -134,6 +140,7 @@ export default defineConfig({
     __PBK_BUILD_ID__: JSON.stringify(pbkBuildId),
     __PBK_PORTAL_ENV__: JSON.stringify(portalEnvironment),
     'import.meta.env.PBK_MARKET_STAGING_INDICATORS': JSON.stringify(stagingMarketIndicators),
+    'import.meta.env.PBK_VAN_NUYS_MARKET_MAP': JSON.stringify(stagingMarketIndicators || staffMarketMap),
     'import.meta.env.PBK_MARKET_91411_QA_PATH': JSON.stringify(
       marketQa91411 ? `/${marketQa91411Page}` : '',
     ),

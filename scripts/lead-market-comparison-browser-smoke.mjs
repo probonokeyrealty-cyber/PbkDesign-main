@@ -11,6 +11,7 @@ const qa91411Path = '/market-comparison-91411-qa.html';
 const expectQa91411 = process.env.PBK_MARKET_TEST_91411_QA === '1';
 const { portalEnvironment } = JSON.parse(readFileSync(resolve(outDir, 'pbk-build-manifest.json'), 'utf8'));
 const expectStagingIndicators = process.env.PBK_MARKET_TEST_STAGING_INDICATORS === '1';
+const expectVanNuysMap = expectStagingIndicators || process.env.PBK_MARKET_TEST_VAN_NUYS_MAP === '1';
 const evidenceAssets = readdirSync(resolve(outDir, 'assets')).filter(name =>
   /^LeadInvestorEvidenceChecklist-.*\.(js|css)$/.test(name)
 );
@@ -21,8 +22,8 @@ for (const extension of ['.js', '.css']) {
 
 assert.equal(portalEnvironment, 'live');
 const assetNames = readdirSync(resolve(outDir, 'assets'));
-assert.equal(assetNames.some(name => /^VanNuysMarketMap-.*\.js$/.test(name)), expectStagingIndicators,
-  'The map and its boundaries must only be bundled for the staging preview.');
+assert.equal(assetNames.some(name => /^VanNuysMarketMap-.*\.js$/.test(name)), expectVanNuysMap,
+  'The map and its boundaries must only be bundled for the staff site release or its allowed previews.');
 const trendAssets = assetNames.filter(name =>
   /^LeadFictionalMarketTrends-.*\.(js|css)$/.test(name)
 );
@@ -437,6 +438,10 @@ try {
       if (process.env.PBK_MARKET_INDICATOR_SCREENSHOT) {
         await indicators.screenshot({ path: process.env.PBK_MARKET_INDICATOR_SCREENSHOT });
       }
+    } else {
+      await expect(indicators).toHaveCount(0);
+    }
+    if (expectVanNuysMap) {
       const savedHouse = panel.getByRole('complementary', { name: 'Saved listing reference' });
       await expect(savedHouse).toContainText('$640,000');
       const savedHouseBefore = await savedHouse.innerText();
@@ -470,8 +475,8 @@ try {
       assert.equal(await savedHouse.innerText(), savedHouseBefore);
       await open(fixtures[7].id);
       await expect(indicators).toHaveCount(0);
+      await expect(marketMap).toHaveCount(0);
     } else {
-      await expect(indicators).toHaveCount(0);
       await expect(marketMap).toHaveCount(0);
     }
 
@@ -501,7 +506,7 @@ try {
     }));
   }
   assert.deepEqual(forbidden, []);
-  console.log(`Chrome 390px and 1280px: staging indicators ${expectStagingIndicators ? 'visible only for ZCTA 91411' : 'disabled'}, no provider lookups or mutations`);
+  console.log(`Chrome 390px and 1280px: Van Nuys Market Map ${expectVanNuysMap ? 'enabled' : 'disabled'}, staging indicators ${expectStagingIndicators ? 'enabled' : 'disabled'}, no provider lookups or mutations`);
 } finally {
   await browser?.close();
   await new Promise(resolve => server.httpServer.close(resolve));

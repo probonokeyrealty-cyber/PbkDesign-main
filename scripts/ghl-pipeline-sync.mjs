@@ -47,17 +47,48 @@ export function buildGhlPipelineView(link, config) {
   };
 }
 
-export async function acceptGhlStageEvent(input, config, write) {
+export async function readGhlOpportunityStage(opportunityId, {
+  token = process.env.PBK_GHL_PIPELINE_READ_TOKEN,
+  fetchOpportunity = fetch,
+} = {}) {
+  if (!token) return null;
+  try {
+    const response = await fetchOpportunity(
+      `https://services.leadconnectorhq.com/opportunities/${encodeURIComponent(opportunityId)}`,
+      {
+        headers: { Authorization: `Bearer ${token}`, Version: '2021-07-28', Accept: 'application/json' },
+        signal: AbortSignal.timeout(4500),
+        redirect: 'error',
+      },
+    );
+    if (!response.ok) return null;
+    const { opportunity } = await response.json();
+    return opportunity ?? null;
+  } catch {
+    return null;
+  }
+}
+
+export async function acceptGhlStageEvent(input, config, write, readOpportunity = readGhlOpportunityStage) {
   if (!config) return { status: 503, ok: false, result: 'pipeline_unavailable' };
-  const { leadId, opportunityId, locationId, pipelineId, stageId, occurredAt } = input || {};
+  const { leadId, opportunityId, locationId, pipelineId } = input || {};
+  const invalid = { status: 422, ok: false, result: 'invalid_pipeline_event' };
+  if (typeof leadId !== 'string' || !IDENTIFIER.test(leadId) || typeof opportunityId !== 'string' ||
+      !IDENTIFIER.test(opportunityId) || locationId !== config.locationId || pipelineId !== config.pipelineId) return invalid;
+
+  let { stageId, occurredAt } = input;
+  if (stageId === undefined && occurredAt === undefined) {
+    const opportunity = await readOpportunity(opportunityId);
+    if (!opportunity) return { status: 503, ok: false, result: 'opportunity_lookup_unavailable' };
+    if (opportunity.id !== opportunityId || opportunity.locationId !== locationId ||
+        opportunity.pipelineId !== pipelineId) return invalid;
+    stageId = opportunity.pipelineStageId;
+    occurredAt = opportunity.lastStageChangeAt;
+  }
   const date = typeof occurredAt === 'string' && /^\d{4}-\d\d-\d\dT.+(?:Z|[+-]\d\d:\d\d)$/.test(occurredAt)
     ? Date.parse(occurredAt) : NaN;
   const stage = config.stages.find((item) => item.id === stageId);
-  if (typeof leadId !== 'string' || !IDENTIFIER.test(leadId) || typeof opportunityId !== 'string' ||
-      !IDENTIFIER.test(opportunityId) || !Number.isFinite(date) || date > Date.now() + 300_000 ||
-      locationId !== config.locationId || pipelineId !== config.pipelineId || !stage) {
-    return { status: 422, ok: false, result: 'invalid_pipeline_event' };
-  }
+  if (!Number.isFinite(date) || date > Date.now() + 300_000 || !stage) return invalid;
   const result = await write({
     leadId, opportunityId, locationId, pipelineId, stageId, occurredAt: new Date(date).toISOString(),
     stageLabel: stage.label, pbkStage: stage.pbkStage,

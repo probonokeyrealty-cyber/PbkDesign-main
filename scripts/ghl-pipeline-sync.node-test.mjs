@@ -31,6 +31,34 @@ test('keeps the official stage order and maps an Ava recommendation to the same 
   assert.equal(view.nextStageId, 'research');
 });
 
+test('looks up an identifier-only event and requires the returned opportunity to match', async () => {
+  const { stageId, occurredAt, ...notification } = input;
+  const returnedOpportunity = {
+    id: input.opportunityId,
+    locationId: input.locationId,
+    pipelineId: input.pipelineId,
+    pipelineStageId: stageId,
+    lastStageChangeAt: occurredAt,
+  };
+  const writes = [];
+  const write = async (event) => { writes.push(event); return 'updated'; };
+  const read = async (id) => {
+    assert.equal(id, input.opportunityId);
+    return returnedOpportunity;
+  };
+  assert.equal((await acceptGhlStageEvent(notification, config, write, read)).result, 'updated');
+  assert.equal(writes[0].stageId, stageId);
+  assert.equal(writes[0].occurredAt, occurredAt);
+  assert.equal((await acceptGhlStageEvent({ ...notification, pipelineId: 'other' },
+    config, assert.fail, assert.fail)).status, 422);
+  assert.equal((await acceptGhlStageEvent({ ...notification, stageId },
+    config, assert.fail, assert.fail)).status, 422);
+  assert.equal((await acceptGhlStageEvent(notification, config, assert.fail,
+    async () => ({ ...returnedOpportunity, pipelineId: 'other' }))).status, 422);
+  assert.equal((await acceptGhlStageEvent(notification, config, assert.fail,
+    async () => null)).status, 503);
+});
+
 test('serializes stage changes, retains unrelated profile data and rejects old events', {
   skip: process.env.PBK_TEST_GHL_POSTGRES !== '1',
 }, async () => {

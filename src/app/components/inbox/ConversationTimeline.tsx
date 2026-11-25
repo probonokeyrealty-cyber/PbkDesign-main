@@ -239,6 +239,9 @@ type RecordingPlayback =
   | { key: string; status: 'loading' | 'unavailable' }
   | { key: string; status: 'ready'; url: string };
 
+type RecordingOwner = { stop: () => void };
+type TimelinePlayback = { active: RecordingOwner | null };
+
 function playAudio(audio: HTMLAudioElement, onUnavailable: () => void) {
   void audio.play().catch((error: unknown) => {
     if (error instanceof DOMException && ['AbortError', 'NotAllowedError'].includes(error.name)) {
@@ -252,9 +255,11 @@ function playAudio(audio: HTMLAudioElement, onUnavailable: () => void) {
 function ConversationEventRow({
   event,
   onEventChanged,
+  timelinePlayback,
 }: {
   event: ConversationEvent & { sourceId?: string };
   onEventChanged: () => void;
+  timelinePlayback: TimelinePlayback;
 }) {
   const audioRef = useRef<HTMLAudioElement>(null);
   const longPressTimerRef = useRef<number | null>(null);
@@ -286,6 +291,24 @@ function ConversationEventRow({
     storagePath,
     archiveKey,
   ]);
+  const owner = useMemo<RecordingOwner>(
+    () => ({
+      stop() {
+        pendingLookup.current = null;
+        audioRef.current?.pause();
+        setPlayback((current) =>
+          current?.key === recordingKey && current.status === 'loading' ? null : current
+        );
+      },
+    }),
+    [recordingKey]
+  );
+  const claimPlayback = () => {
+    const previous = timelinePlayback.active;
+    if (previous === owner) return;
+    timelinePlayback.active = owner;
+    previous?.stop();
+  };
   const activePlayback = playback?.key === recordingKey ? playback : null;
   const readyPlayback = activePlayback?.status === 'ready' ? activePlayback : null;
   const recordingUnavailable = activePlayback?.status === 'unavailable';
@@ -304,8 +327,9 @@ function ConversationEventRow({
   useLayoutEffect(
     () => () => {
       pendingLookup.current = null;
+      if (timelinePlayback.active === owner) timelinePlayback.active = null;
     },
-    [recordingKey]
+    [owner, timelinePlayback]
   );
 
   useLayoutEffect(() => {
@@ -315,15 +339,16 @@ function ConversationEventRow({
 
   useEffect(() => {
     const audio = audioRef.current;
-    if (!readyPlayback || !audio) return;
+    if (!readyPlayback || !audio || timelinePlayback.active !== owner) return;
     playAudio(audio, () => {
       if (audioRef.current === audio)
         setPlayback({ key: readyPlayback.key, status: 'unavailable' });
     });
-  }, [readyPlayback]);
+  }, [owner, readyPlayback, timelinePlayback]);
 
   const openRecording = async () => {
     if (pendingLookup.current) return;
+    claimPlayback();
     if (!signPath) {
       setPlayback(
         sourceUrl
@@ -340,7 +365,7 @@ function ConversationEventRow({
       const response = await bridgeRequest<{ ok?: boolean; signedUrl?: string; url?: string }>({
         path: signPath,
       });
-      if (pendingLookup.current !== lookup) return;
+      if (pendingLookup.current !== lookup || timelinePlayback.active !== owner) return;
       const url = text(response?.signedUrl || response?.url);
       if (response?.ok === false || !/^https?:\/\//i.test(url)) {
         setPlayback({ key: recordingKey, status: 'unavailable' });
@@ -358,6 +383,7 @@ function ConversationEventRow({
   const seekRecording = (seconds: number) => {
     const audio = audioRef.current;
     if (!audio || !Number.isFinite(seconds)) return;
+    claimPlayback();
     audio.currentTime = Math.max(0, seconds);
     playAudio(audio, () => {
       if (audioRef.current === audio) setPlayback({ key: recordingKey, status: 'unavailable' });
@@ -710,6 +736,9 @@ function ConversationEventRow({
             controls
             preload={readyPlayback ? 'none' : 'metadata'}
             src={recordingUrl}
+            onPlay={(event) => {
+              if (!event.currentTarget.paused) claimPlayback();
+            }}
             onError={() => setPlayback({ key: recordingKey, status: 'unavailable' })}
           >
             Your browser does not support audio playback.
@@ -736,6 +765,7 @@ export function ConversationTimeline({
   onEventChanged,
 }: ConversationTimelineProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
+  const timelinePlayback = useRef<TimelinePlayback>({ active: null }).current;
   const atBottomRef = useRef(true);
   const previousThreadIdRef = useRef('');
   const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
@@ -912,6 +942,7 @@ export function ConversationTimeline({
                   key={event.id}
                   event={event}
                   onEventChanged={onEventChanged}
+                  timelinePlayback={timelinePlayback}
                 />
               ))}
             </div>

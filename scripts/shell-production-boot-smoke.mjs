@@ -31,6 +31,10 @@ const smokeTranscript = 'Seller: Friday works for a follow-up.';
 const deepgramTranscript = 'Seller: Please call me on Monday.';
 const recordingMessageId = 'smoke-recording-message';
 const mediaPath = '/smoke-signed-recording.mp3';
+const slowRecordingId = 'smoke-slow-message';
+const slowMediaPath = '/smoke-slow-recording.mp3';
+const trustedStorage = 'https://asumndiooctluuecydhj.supabase.co/storage/v1/object/sign/';
+const cspProbePath = '/__smoke_recording_media_policy';
 
 async function recordingRow(page, body) {
   const handle = await page.waitForFunction(
@@ -63,6 +67,14 @@ async function verifyRecordingFallback(page) {
 }
 
 async function verifyPointerRecording(page, signRequests, origin) {
+  const slowRow = await recordingRow(page, 'Earlier recording fixture');
+  const slowLookup = page.waitForRequest(
+    (request) => new URL(request.url()).pathname === `/api/recordings/${slowRecordingId}`,
+    { timeout: 8000 },
+  );
+  await slowRow.$eval('button[aria-label="Play recording"]', (button) => button.click());
+  const delayedRequest = await slowLookup;
+
   const row = await recordingRow(page, 'Captured recording fixture');
   await row.$eval('button[aria-label="Play recording"]', (button) => button.click());
   const expectedUrl = origin + mediaPath;
@@ -71,10 +83,71 @@ async function verifyPointerRecording(page, signRequests, origin) {
     { timeout: 8000 },
     expectedUrl,
   );
-  assert.deepEqual(signRequests, [`/api/recordings/${recordingMessageId}`]);
+  assert.deepEqual(signRequests, [`/api/recordings/${slowRecordingId}`, `/api/recordings/${recordingMessageId}`]);
   assert.equal(await row.$eval('audio', (element) => element.src), expectedUrl);
   assert.equal(await row.$('::-p-text(Recording unavailable)'), null);
   await verifyTranscriptDownload(page, row, 'call-smoke-pointer-event.txt', deepgramTranscript);
+
+  const slowResponse = page.waitForResponse(
+    (response) => response.url() === delayedRequest.url(),
+    { timeout: 8000 },
+  );
+  await delayedRequest.respond({
+    contentType: 'application/json',
+    body: JSON.stringify({ ok: true, signedUrl: origin + slowMediaPath }),
+  });
+  await (await slowResponse).json();
+  await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  assert.deepEqual(await page.evaluate(() => window.__smokePlayedRecordings), [expectedUrl],
+    'An earlier Play lookup must not start after a later Play wins.');
+  assert.equal(await slowRow.$eval('button[aria-label="Play recording"]', (button) => button.disabled), false);
+}
+
+async function verifyRecordingMediaPolicy(browser, origin) {
+  const page = await browser.newPage();
+  const trustedUrl = trustedStorage + 'call_recordings/fixture.mp3?token=fixture';
+  const blockedUrls = [
+    'https://asumndiooctluuecydhj.supabase.co/rest/v1/fixture.mp3',
+    'https://other-project.supabase.co/storage/v1/object/sign/call_recordings/fixture.mp3',
+    'https://untrusted.example/fixture.mp3',
+  ];
+  const allowed = [];
+  try {
+    await page.setRequestInterception(true);
+    page.on('request', (request) => {
+      const url = request.url();
+      if (url === trustedUrl) {
+        allowed.push(url);
+        void request.respond({ status: 404, body: '' });
+      } else if (url.startsWith(origin + '/')) {
+        void request.continue();
+      } else {
+        void request.abort();
+      }
+    });
+    await page.goto(origin + cspProbePath, { waitUntil: 'domcontentloaded' });
+    const violations = await page.evaluate(async (urls) => {
+      const violations = [];
+      document.addEventListener('securitypolicyviolation', (event) => {
+        if (event.effectiveDirective === 'media-src') violations.push(new URL(event.blockedURI).origin + new URL(event.blockedURI).pathname);
+      });
+      await Promise.all(urls.map((url) => new Promise((resolve) => {
+        const audio = document.createElement('audio');
+        audio.addEventListener('error', resolve, { once: true });
+        document.body.append(audio);
+        audio.src = url;
+        audio.load();
+      })));
+      await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      return violations;
+    }, [trustedUrl, ...blockedUrls]);
+    assert.deepEqual(allowed, [trustedUrl], 'Netlify CSP must allow signed media from PBK storage.');
+    assert.deepEqual(violations.map((url) => new URL(url).origin).sort(),
+      blockedUrls.map((url) => new URL(url).origin).sort(),
+      'Netlify CSP must block unrelated paths and untrusted media origins.');
+  } finally {
+    await page.close();
+  }
 }
 
 async function verifyAskRex(page, queries) {
@@ -148,10 +221,19 @@ function sendNotFound(response) {
 }
 
 await access(shellEntry);
+const netlify = await readFile(path.join(rootDir, 'netlify.toml'), 'utf8');
+const globalHeaders = netlify.split('[[headers]]').find((block) => /^\s*for = "\/\*"/.test(block));
+const netlifyCsp = globalHeaders?.match(/^\s*Content-Security-Policy = "([^"]+)"/m)?.[1];
+assert(netlifyCsp, 'Missing Netlify CSP for the staff shell.');
 
 const server = createServer(async (request, response) => {
   try {
     const pathname = decodeURIComponent(new URL(request.url || '/', 'http://127.0.0.1').pathname);
+    if (pathname === cspProbePath) {
+      response.writeHead(200, { 'Content-Type': 'text/html', 'Content-Security-Policy': netlifyCsp });
+      response.end('<!doctype html><title>Netlify media policy fixture</title><body></body>');
+      return;
+    }
     const requested = safeDistPath(request.url || '/');
     const requestedStat = await stat(requested).catch(() => null);
     if (requestedStat?.isFile()) {
@@ -247,6 +329,12 @@ try {
                 payload: { transcript: [{ text: 'Earlier words, not the selected chunk.' }] },
               },
               {
+                id: 'smoke-slow-event', threadId: smokeThread.id, channel: 'call',
+                eventType: 'call.recording', body: 'Earlier recording fixture', occurredAt: '2026-11-01T12:04:00Z',
+                sourceTable: 'unified_messages', sourceId: slowRecordingId,
+                payload: { storagePath: 'fixture/slow.mp3' },
+              },
+              {
                 id: 'smoke-pointer-event', threadId: smokeThread.id, channel: 'call',
                 eventType: 'call.recording', body: 'Captured recording fixture', occurredAt: '2026-11-01T12:05:00Z',
                 sourceTable: 'unified_messages', sourceId: recordingMessageId,
@@ -264,6 +352,7 @@ try {
         }
         if (checkRecordings && request.method() === 'GET' && url.pathname.startsWith('/api/recordings/')) {
           signRequests.push(url.pathname);
+          if (url.pathname === `/api/recordings/${slowRecordingId}`) return;
           void request.respond({
             contentType: 'application/json',
             body: JSON.stringify({ ok: true, signedUrl: origin + mediaPath }),
@@ -345,6 +434,12 @@ try {
 
     console.log(`[shell-production-boot] ${route}: rendered`);
     await page.close();
+  }
+  try {
+    await verifyRecordingMediaPolicy(browser, origin);
+    console.log('[shell-production-boot] Netlify trusted storage media policy passed');
+  } catch (error) {
+    featureFailures.push(new Error(`Netlify media policy: ${error.message}`));
   }
   if (featureFailures.length) throw new AggregateError(featureFailures, 'Shell workflow regressions');
 } finally {

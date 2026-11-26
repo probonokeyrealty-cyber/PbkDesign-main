@@ -4,6 +4,10 @@ import { createNeonMailRouter } from './neon-auth-mail.mjs';
 import { readHighLevelLeadTasks } from './highlevel-lead-tasks.mjs';
 import { createComposioResearchDiscovery } from './composio-research-discovery.mjs';
 import { createPublicMarketConnectionCheck, withSavedRaleighCleanup } from './public-market-connection.mjs';
+import { createComposioMarketSearch } from './lib/composio-market-search.mjs';
+import { createPublicMarketWorker, isPublicMarketStaging } from './lib/public-market-worker.mjs';
+import { createPublicMarketController, recoverPublicMarketJob } from './lib/public-market-controller.mjs';
+import { createPublicMarketClaims } from './lib/public-market-claims.mjs';
 import { findAvaOutlookReceipt, sendAvaOutlookMail, verifyOutlookDocumentReceipt } from './ava-outlook-mail.mjs';
 import { normalizeOutlookReceiptUrl, readOutlookDelivery } from '../src/app/utils/outlookDelivery.mjs';
 import { createServer, globalAgent as httpGlobalAgent } from 'node:http';
@@ -13085,7 +13089,7 @@ function hydrateState(raw = {}) {
     contracts: trimArray(raw.contracts || defaults.contracts, LIMITS.contracts),
     documentDeliveries: trimArray(raw.documentDeliveries || defaults.documentDeliveries, LIMITS.documentDeliveries),
     attachments: trimArray(raw.attachments || defaults.attachments, LIMITS.attachments),
-    browserResearchJobs: trimArray(raw.browserResearchJobs || defaults.browserResearchJobs, LIMITS.browserResearchJobs),
+    browserResearchJobs: trimArray(raw.browserResearchJobs || defaults.browserResearchJobs, LIMITS.browserResearchJobs).map(recoverPublicMarketJob),
     campaigns: trimArray(raw.campaigns || defaults.campaigns, LIMITS.campaigns),
     campaignLeads: trimArray(raw.campaignLeads || defaults.campaignLeads, LIMITS.campaignLeads),
     campaignEvents: trimArray(raw.campaignEvents || defaults.campaignEvents, LIMITS.campaignEvents),
@@ -15195,7 +15199,83 @@ function addLeadStageTransition(stateRef, transition) {
   updateDerivedStatus(stateRef);
 }
 
+const publicMarketApproval = Symbol('public-market-approval');
+const isPublicMarketTask = (task) => task?.provider === 'e2b' || task?.action === 'public_market_brief' ||
+  String(task?.id || '').startsWith('admin-e2b-market-');
+const publicMarketSmoke = process.env.NODE_ENV === 'test' && !IS_HOSTED && Boolean(process.env.PBK_SMOKE_ISOLATION_NONCE);
+const publicMarketEnv = publicMarketSmoke ? { ...process.env, RENDER: 'true' } : process.env;
+function publicMarketStaging() {
+  if (!isPublicMarketStaging(publicMarketEnv)) return false;
+  if (publicMarketSmoke) return true;
+  try {
+    return new URL(DATABASE_URL).pathname === '/pbk_composio_staging' &&
+      process.env.PBK_COMPOSIO_MARKET_SEARCH_USER_ID === 'pbk-public-market-research-staging';
+  } catch { return false; }
+}
+
+let publicMarketRuntime;
+function getPublicMarketRuntime() {
+  if (!publicMarketStaging()) return null;
+  if (publicMarketRuntime) return publicMarketRuntime;
+  const search = createComposioMarketSearch();
+  const worker = createPublicMarketWorker({ env: publicMarketEnv, search: (query) => search.search(query) });
+  const controller = createPublicMarketController({
+    signingKey: BRIDGE_API_KEY,
+    approvalCapability: publicMarketApproval,
+    worker,
+    getJob: findBrowserResearchJob,
+    claimJob: createPublicMarketClaims({ getPool: getPgPool,
+      testDirectory: publicMarketSmoke ? RUNTIME_DIR : null }).claim,
+    saveJob: async (job) => { upsertBrowserResearchJob(state, job); await persistState(state); },
+    onComplete: async (taskId, jobId, result) => {
+      const task = state.adminTasks.find((item) => item.id === taskId);
+      if (!task || task.status !== 'executing') return;
+      const statusBefore = task.status;
+      task.status = result.ok ? 'complete' : 'warning';
+      task.updatedAt = isoNow();
+      recordAdminExecution(task, {
+        ok: result.ok, result: result.result, jobId, provider: 'e2b', action: task.action,
+        live: true, simulated: false, executedAt: isoNow(),
+        details: result.ok ? 'Public brief saved and sandbox cleanup confirmed.' : 'Public brief failed; inspect its saved receipt.',
+      }, { statusBefore, statusAfter: task.status, requestedBy: 'Rex' });
+      await persistState(state);
+    },
+  });
+  publicMarketRuntime = { controller, worker, search };
+  return publicMarketRuntime;
+}
+
+async function preparePublicMarket(params, capability) {
+  const runtime = controlledExecution.getStore() ? null : getPublicMarketRuntime();
+  if (!runtime) return { ok: false, result: 'public_market_staging_only' };
+  const prepared = await runtime.controller.prepare(params, capability);
+  if (!prepared.ok) return prepared;
+  prepared.task[publicMarketApproval] = true;
+  addAdminTask(state, prepared.task);
+  await persistState(state);
+  const { signature: _signature, ...payload } = prepared.task.payload;
+  return { ...prepared, task: { ...prepared.task, payload } };
+}
+
+async function routePublicMarketPreparation(params, command) {
+  const match = /^(?:(rex|ava|hermes)[,:]?\s+)?prepare\s+cloud\s+market\s+brief\s+for\s+(.+)$/i.exec(command);
+  if (!match && params.cloudResearchOperation === undefined) return null;
+  const allowed = new Set(['command', 'text', 'agentId', 'agent', 'cloudResearchOperation', 'market']);
+  const result = Object.keys(params).some((key) => !allowed.has(key)) ||
+    (params.cloudResearchOperation !== undefined && params.cloudResearchOperation !== 'prepare-market-brief')
+    ? { ok: false, result: 'public_market_request_denied' }
+    : await preparePublicMarket({
+      agentId: String(params.agentId || params.agent || match?.[1] || 'rex').toLowerCase(),
+      market: params.market ?? match?.[2],
+    });
+  return { command, ok: result.ok, routedTo: 'tool_first:public_market_prepare', response: {
+    ...result, answer: result.ok ? `The public brief for ${result.job.market} is awaiting protected approval. No providers have run.` : 'This public market request is not available.',
+  } };
+}
+
 function addAdminTask(stateRef, task) {
+  if (isPublicMarketTask(task) && (task[publicMarketApproval] !== true || stateRef.adminTasks.some((item) => item.id === task.id)))
+    throw new Error('public_market_approval_denied');
   stateRef.adminTasks.unshift(task);
   limitStateArrays(stateRef);
   updateDerivedStatus(stateRef);
@@ -36718,6 +36798,7 @@ function createAdminTaskRecord(params = {}) {
 }
 
 async function executeAdminTask(task, overrides = {}) {
+  if (isPublicMarketTask(task)) return { ok: false, live: false, result: 'public_market_approval_denied' };
   const payload = {
     ...(task.payload || {}),
     ...(overrides.payload || {}),
@@ -50381,6 +50462,9 @@ function findBrowserResearchJob(jobId = '') {
 
 async function updateBrowserResearchJobFromPayload(payload = {}) {
   const jobId = String(payload.jobId || payload.id || payload.job_id || '').trim();
+  if (jobId.startsWith('market-') || findBrowserResearchJob(jobId)?.provider === 'e2b' ||
+    payload.provider === 'e2b' || payload.source === 'public-market-brief')
+    return { ok: false, result: 'public_market_callback_denied' };
   if (!jobId) {
     return {
       ok: false,
@@ -61146,6 +61230,8 @@ const toolHandlers = {
       detected,
     });
 
+    if (isPublicMarketTask(params) || isPublicMarketTask(task)) return { ok: false, result: 'public_market_approval_denied' };
+
     addAdminTask(state, task);
     addAdminAudit(state, {
       id: `audit-${task.id}`,
@@ -61185,6 +61271,8 @@ const toolHandlers = {
   async runAgentCommand(params = {}) {
     recordToolUse('runAgentCommand');
     const command = String(params.command || params.text || '').trim();
+    const publicMarket = await routePublicMarketPreparation(params, command);
+    if (publicMarket) return publicMarket;
     const fastIntentResult = controlledExecution.getStore() ? null : await routeFastCommandIntent(command, params);
     if (fastIntentResult) {
       return {
@@ -77859,7 +77947,7 @@ const server = createServer(async (request, response) => {
         ok: true,
         tooling: {
           ...await buildToolingStatus(),
-          publicMarketWorker: withSavedRaleighCleanup(
+          publicMarketWorker: getPublicMarketRuntime()?.worker.status() ?? withSavedRaleighCleanup(
             await (checkPublicMarketConnection ??= createPublicMarketConnectionCheck())(),
             state.browserResearchJobs,
             state.adminTasks,
@@ -81045,6 +81133,27 @@ const server = createServer(async (request, response) => {
       return;
     }
 
+    if (pathname === '/api/admin/public-market/benchmark' && ['GET', 'POST'].includes(request.method)) {
+      const runtime = getPublicMarketRuntime();
+      if (!runtime || !isDirectQualificationFounder(request.headers, BRIDGE_API_KEY)) {
+        json(response, 403, { ok: false, result: 'public_market_approval_denied' });
+        return;
+      }
+      if (request.method === 'GET') {
+        json(response, 200, { ok: true, worker: runtime.worker.status(), search: runtime.search.status() });
+        return;
+      }
+      const body = await readBody(request);
+      if (!body || Object.keys(body).sort().join(',') !== 'benchmarkArm,market' ||
+        !['standard', 'batched'].includes(body.benchmarkArm)) {
+        json(response, 400, { ok: false, result: 'public_market_request_denied' });
+        return;
+      }
+      const prepared = await preparePublicMarket({ agentId: 'rex', ...body }, publicMarketApproval);
+      json(response, prepared.ok ? 201 : 409, prepared);
+      return;
+    }
+
     const adminTaskMatch = matchPath(pathname, '/api/admin/tasks/:id');
     if (adminTaskMatch && request.method === 'PUT') {
       const body = await readBody(request);
@@ -81054,6 +81163,25 @@ const server = createServer(async (request, response) => {
           ok: false,
           error: `Admin task ${adminTaskMatch.groups.id} was not found.`,
         });
+        return;
+      }
+
+      if (isPublicMarketTask(task)) {
+        const runtime = getPublicMarketRuntime();
+        if (!runtime || !isDirectQualificationFounder(request.headers, BRIDGE_API_KEY) ||
+          task.status !== 'pending' || !body || Object.keys(body).join(',') !== 'status' || body.status !== 'approved') {
+          json(response, 403, { ok: false, execution: { ok: false, result: 'public_market_approval_denied' } });
+          return;
+        }
+        task.status = 'approved';
+        const started = await runtime.controller.start(task, publicMarketApproval);
+        task.status = started.ok ? 'executing' : 'warning';
+        task.updatedAt = isoNow();
+        const execution = { ok: started.ok, result: started.result, jobId: started.jobId,
+          provider: 'e2b', action: 'public_market_brief', live: started.ok, simulated: false };
+        recordAdminExecution(task, execution, { statusBefore: 'pending', statusAfter: task.status, requestedBy: 'staging-operator' });
+        await persistState(state);
+        json(response, started.ok ? 202 : 409, { ok: started.ok, status: task.status, execution });
         return;
       }
 

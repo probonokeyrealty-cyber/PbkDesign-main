@@ -295,6 +295,11 @@ COPY scripts/parcel-prospecting-brief.mjs ./scripts/parcel-prospecting-brief.mjs
 COPY scripts/hermes-parcel-prospecting.mjs ./scripts/hermes-parcel-prospecting.mjs
 COPY scripts/phone-dialer-routes.mjs ./scripts/phone-dialer-routes.mjs
 COPY scripts/openclaw-local-server.mjs ./scripts/openclaw-local-server.mjs
+COPY scripts/lib/composio-market-search.mjs ./scripts/lib/composio-market-search.mjs
+COPY scripts/lib/public-market-claims.mjs ./scripts/lib/public-market-claims.mjs
+COPY scripts/lib/public-market-controller.mjs ./scripts/lib/public-market-controller.mjs
+COPY scripts/lib/public-market-mcp.mjs ./scripts/lib/public-market-mcp.mjs
+COPY scripts/lib/public-market-worker.mjs ./scripts/lib/public-market-worker.mjs
 COPY scripts/highlevel-lead-tasks.mjs ./scripts/highlevel-lead-tasks.mjs
 COPY scripts/recording-retention-authorization.mjs ./scripts/recording-retention-authorization.mjs
 COPY scripts/recording-retention-schema.mjs ./scripts/recording-retention-schema.mjs

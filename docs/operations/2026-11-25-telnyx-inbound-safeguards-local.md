@@ -38,6 +38,25 @@ lead data, saved notes/comps, browser drafts or approval records changed.
   described as a completed transfer.
 - Existing approval, DNC and provider dispatch gates are not relaxed.
 
+## Independent Review Follow-Up
+
+- Controlled-timing regressions reproduced a hangup being overwritten by delayed
+  transfer registration, plus loss of transcript/summary updates that arrived
+  during that request. Inbound routing now rechecks the exact call at asynchronous
+  control boundaries, stops after a terminal event, and preserves current call
+  metadata when registering. A call with the same phone but a different ID is not
+  used as terminal evidence.
+- Constructor-shaped callback tests also ensure provisional lead IDs, provider
+  defaults and blank scripts cannot replace resolved identity or routing context.
+- When fallback media fails, caller copy now states the connection is unavailable
+  instead of offering assistance that cannot hear the caller. Operator alerts
+  report the failure and no second assistant is started on the failed stream.
+- A separate reviewer found no actionable issues in the recording-consent,
+  source-audit/fingerprint or test-isolation scope at `add5265c`.
+- The reviewer confirmed the follow-up metadata correction against the real call
+  constructor: resolved identity/provider/prompt remain intact in returned,
+  stored and projected records while transcript/summary enrichment survives.
+
 ## Verification
 
 The new regression file extracts real bridge functions into a VM. All provider,
@@ -53,6 +72,14 @@ destinations, rejected/skipped/accepted transfers, fallback media failure,
 after-hours behavior, exact lead/call identity and preservation of sample lead
 data, notes, draft and saved comp. Tests first reproduced the unsafe behavior
 before the local fixes.
+
+Focused verification after the review fixes: 26 inbound safety regressions,
+17 adjacent call-receipt/sender/voice regressions and 35 targeted Jest tests
+passed. One database-only Jest test was skipped. The 124 source-audit checks
+and bridge syntax check passed. AST comparison confirms that only
+`handleAvaInboundRoute` changed among bridge declarations after `add5265c`.
+These are isolated local results, not proof of new hosted behavior or a full
+unit-suite run.
 
 Production remains unchanged until a separately authorized release. Do not
 remove SMS holds, invent transfer destinations or enable recording to test this.

@@ -248,8 +248,9 @@ test('bridge code matches the reviewed release fingerprint outside the scoped re
   // Reviewed Telnyx safeguards block recording without a verified consent flow and
   // keep Ava available for missing/rejected transfers. The isolated inbound safety suite covers both.
   // Only their seven declarations differ from 2d324e68; all other bridge declarations are identical.
+  // Independent review adds exact-call terminal checks and preserves concurrent transcript updates.
   assert.equal(createHash('sha256').update(unchanged).digest('hex'),
-    '027b81dad951af3a2b338620569f9a794b8b3dc6fab77b1dd7c539bac4ab3514');
+    '8919cb920dea05ec803c627a5a5943e032485a499a6c7c76de8d5b1179815194');
 });
 
 test('production distribution includes reader and protocol, never the fixture signer', () => {

@@ -22,14 +22,17 @@ const sampleLead = {
 const inbound = { call_control_id: sampleCall, from: '+12025550101', to: '+12025550102' };
 
 function fixture({ recordingEnabled = false, human = '', underwriting = '', transferOk = true,
-  transferSkipped = false, streamOk = true, lead = sampleLead } = {}) {
+  transferSkipped = false, streamOk = true, streamSkipped = false, lead = sampleLead,
+  initialCalls = [], onTransfer, onAnswer, onStream } = {}) {
   const dispatches = [];
   const spoken = [];
   const streams = [];
   const notifications = [];
   const traces = [];
   const tasks = [];
-  const state = { calls: [], inboundCallRoutes: [], leads: [structuredClone(lead)],
+  const projections = [];
+  const assistants = [];
+  const state = { calls: structuredClone(initialCalls), inboundCallRoutes: [], leads: [structuredClone(lead)],
     drafts: { analyzer: { notes: 'Original sample draft', comps: [{ id: 'sample-comp' }] } } };
   const preserved = JSON.stringify({ leads: state.leads, drafts: state.drafts });
   const context = vm.createContext({
@@ -43,8 +46,10 @@ function fixture({ recordingEnabled = false, human = '', underwriting = '', tran
     DEEPGRAM_STREAM_TRACK: 'inbound_track', DEEPGRAM_STREAM_CODEC: 'PCMU',
     SLACK_UPDATES_CHANNEL_ID: '', SLACK_APPROVAL_CHANNEL_ID: '',
     normalizeConversationPhone,
+    toNumber: (value, fallback = 0) => Number.isFinite(Number(value)) ? Number(value) : fallback,
     fireTelnyxRequest: async (method, endpoint, payload) => {
       dispatches.push({ method, endpoint, payload });
+      if (endpoint.endsWith('/transfer')) await onTransfer?.(state);
       return endpoint.endsWith('/transfer')
         ? { ok: transferOk, skipped: transferSkipped, error: transferOk ? '' : 'Sample provider rejection' }
         : { ok: true };
@@ -59,30 +64,32 @@ function fixture({ recordingEnabled = false, human = '', underwriting = '', tran
     isInboundAfterHours: () => false,
     buildAvaInboundPromptContext: ({ route }) => `Sample prompt: ${route}`,
     slugify: value => value, randomUUID: () => 'sample-id', isoNow: () => '2026-11-25T20:30:00Z',
-    createCallRecord: value => ({ ...value }), upsertCall: (target, call) => {
+    upsertCall: (target, call) => {
       const index = target.calls.findIndex(item => item.id === call.id);
       if (index < 0) target.calls.push({ ...call });
       else target.calls[index] = { ...target.calls[index], ...call };
     },
-    answerTelnyxCall: async () => ({ ok: true }),
+    answerTelnyxCall: async () => { await onAnswer?.(state); return { ok: true }; },
     speakTelnyxCall: async (id, text) => { spoken.push({ id, text }); return { ok: true }; },
     speakAvaPhoneReplyByCallId: async (id, text) => { spoken.push({ id, text }); return { ok: true }; },
     startTelnyxMediaStream: async (id, details) => {
-      streams.push({ id, ...details }); return { ok: streamOk };
+      await onStream?.(state);
+      streams.push({ id, ...details }); return { ok: streamOk, skipped: streamSkipped };
     },
-    startTelnyxAiAssistant: async () => ({ ok: true, skipped: true }),
+    startTelnyxAiAssistant: async id => { assistants.push(id); return { ok: true, skipped: true }; },
     persistInboundCallRoute: async () => {}, addActivity() {}, makeActivity: value => value,
-    addAdminAudit() {}, persistState: async () => {}, projectLiveConversationRecord: async () => {},
+    addAdminAudit() {}, persistState: async () => {},
+    projectLiveConversationRecord: async value => { projections.push(value); },
     projectCallEvent() {},
     toolHandlers: { slackNotify: async value => { notifications.push(value); return { ok: true }; } },
     findLeadContext: () => structuredClone(lead), normalizeAgentName: value => value,
     recordAgentHandoffTask: async value => { tasks.push(value); return value; },
   });
-  for (const name of ['normalizePhone', 'normalizeTelnyxTransferTarget', 'transferTelnyxCall', 'recordTelnyxCall', 'maybeRecordInboundTelnyxCall',
+  for (const name of ['normalizePhone', 'createCallRecord', 'normalizeTelnyxTransferTarget', 'transferTelnyxCall', 'recordTelnyxCall', 'maybeRecordInboundTelnyxCall',
     'handleAvaInboundRoute', 'requestHumanHandoffRecord']) {
     vm.runInContext(functionSource(name, ['recordTelnyxCall', 'normalizeTelnyxTransferTarget'].includes(name)), context);
   }
-  return { context, dispatches, spoken, streams, notifications, traces, tasks, state,
+  return { context, dispatches, spoken, streams, notifications, traces, tasks, projections, assistants, state,
     assertPreserved() { assert.equal(JSON.stringify({ leads: state.leads, drafts: state.drafts }), preserved); } };
 }
 
@@ -177,6 +184,10 @@ test('failed fallback media is not promoted to a live route just because answer 
   const result = await f.context.handleAvaInboundRoute(inbound);
   assert.equal(result.route, 'ava_qualify');
   assert.equal(result.result, 'provider_missing');
+  assert.doesNotMatch(f.spoken.map(item => item.text).join(' '), /can keep helping|what can I help|help.*here/i);
+  assert.match(f.spoken.map(item => item.text).join(' '), /trouble|unavailable|try.*again/i);
+  assert.equal(f.assistants.length, 0);
+  assert.doesNotMatch(JSON.stringify(f.notifications), /continuing with Ava/);
 });
 
 test('after hours cannot advertise a recorded voicemail without a consent flow', async () => {
@@ -234,4 +245,107 @@ test('malformed numeric destinations fail closed in routing and the shared trans
     assert.equal(transfer.ok, false, target);
     assert.equal(f.dispatches.length, 0, target);
   }
+});
+
+const terminalSample = () => ({
+  id: sampleCall, telnyxCallControlId: sampleCall, leadId: sampleLead.leadId,
+  status: 'ended', endedAt: '2026-11-25T20:31:00Z',
+  transcript: [{ speaker: 'Seller', text: 'Sample final words' }],
+  summary: 'Sample final summary', providerReceiptId: 'sample-terminal-receipt',
+  verifiedTelnyxCompletion: { callId: sampleCall, eventId: 'sample-hangup' },
+});
+
+for (const transferOk of [true, false]) {
+  test(`hangup during ${transferOk ? 'accepted' : 'rejected'} transfer cannot reopen or overwrite the call`, async () => {
+    const terminal = terminalSample();
+    const f = fixture({ human: '+12025550103', transferOk,
+      lead: { ...sampleLead, motivationScore: 9 },
+      onTransfer: state => { state.calls = [structuredClone(terminal)]; } });
+    const result = await f.context.handleAvaInboundRoute(inbound);
+    assert.equal(result.result, 'call_already_ended');
+    assert.deepEqual(f.state.calls[0], terminal);
+    assert.equal(f.streams.length, 0);
+    assert.equal(f.spoken.length, 0);
+    assert.equal(f.projections.length, 0);
+    f.assertPreserved();
+  });
+}
+
+test('an intervening active-call transcript and saved summary survive transfer registration', async () => {
+  const current = { ...terminalSample(), status: 'live', endedAt: '', verifiedTelnyxCompletion: undefined };
+  const f = fixture({ human: '+12025550103', lead: { ...sampleLead, motivationScore: 9 },
+    onTransfer: state => { state.calls = [structuredClone(current)]; } });
+  const result = await f.context.handleAvaInboundRoute(inbound);
+  assert.deepEqual(result.call.transcript, current.transcript);
+  assert.equal(result.call.summary, current.summary);
+  assert.deepEqual(f.state.calls[0].transcript, current.transcript);
+  f.assertPreserved();
+});
+
+test('constructor-shaped callback defaults cannot replace the resolved lead, provider or routing prompt', async () => {
+  let f;
+  f = fixture({ human: '+12025550103',
+    lead: { ...sampleLead, leadId: 'canonical-profile-id', motivationScore: 9 },
+    onAnswer: state => {
+      const callback = f.context.createCallRecord({ id: sampleCall, strictLeadContext: true,
+        leadId: 'pre-resolution-id', phone: inbound.from, telnyxCallControlId: sampleCall });
+      state.calls = [{ ...callback, transcript: [{ text: 'Sample callback words' }], summary: 'Saved callback summary' }];
+    } });
+  const result = await f.context.handleAvaInboundRoute(inbound);
+  for (const call of [result.call, f.state.calls[0], f.projections[0].record]) {
+    assert.equal(call.leadId, 'canonical-profile-id');
+    assert.equal(call.provider, 'Telnyx');
+    assert.equal(call.script, 'Sample prompt: transfer_jordan');
+    assert.equal(call.summary, 'Saved callback summary');
+    assert.equal(call.transcript[0].text, 'Sample callback words');
+  }
+  f.assertPreserved();
+});
+
+for (const boundary of ['answer', 'stream']) {
+  test(`hangup during ${boundary} prevents later fallback speech and started projection`, async () => {
+    const terminal = terminalSample();
+    const f = fixture({ lead: { ...sampleLead, motivationScore: 9 },
+      [boundary === 'answer' ? 'onAnswer' : 'onStream']: state => { state.calls = [structuredClone(terminal)]; } });
+    const result = await f.context.handleAvaInboundRoute(inbound);
+    assert.equal(result.result, 'call_already_ended');
+    assert.deepEqual(f.state.calls[0], terminal);
+    assert.equal(f.spoken.length, 0);
+    assert.equal(f.projections.length, 0);
+    if (boundary === 'answer') assert.equal(f.streams.length, 0);
+    f.assertPreserved();
+  });
+}
+
+test('an already-ended exact call is not registered, answered or projected again', async () => {
+  const terminal = terminalSample();
+  const f = fixture({ initialCalls: [terminal],
+    onAnswer: () => { throw Error('Ended call must not be answered again'); } });
+  const result = await f.context.handleAvaInboundRoute(inbound);
+  assert.equal(result.result, 'call_already_ended');
+  assert.deepEqual(f.state.calls, [terminal]);
+  assert.equal(f.dispatches.length, 0);
+  assert.equal(f.streams.length, 0);
+  assert.equal(f.projections.length, 0);
+  f.assertPreserved();
+});
+
+test('a terminal call sharing the phone but not the exact ID cannot block another call', async () => {
+  const other = { ...terminalSample(), id: 'v3:other-sample',
+    telnyxCallControlId: 'v3:other-sample', phone: inbound.from };
+  const f = fixture({ initialCalls: [other] });
+  const result = await f.context.handleAvaInboundRoute(inbound);
+  assert.equal(result.result, 'live');
+  assert.equal(result.call.id, sampleCall);
+  assert.deepEqual(f.state.calls[0], other);
+  assert.equal(f.streams.length, 1);
+  f.assertPreserved();
+});
+
+test('a skipped fallback stream is unavailable even if its wrapper reports ok', async () => {
+  const f = fixture({ streamSkipped: true, lead: { ...sampleLead, motivationScore: 9 } });
+  const result = await f.context.handleAvaInboundRoute(inbound);
+  assert.equal(result.result, 'provider_missing');
+  assert.equal(f.assistants.length, 0);
+  assert.doesNotMatch(f.spoken.map(item => item.text).join(' '), /can keep helping|what can I help/i);
 });

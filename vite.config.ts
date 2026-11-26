@@ -37,9 +37,14 @@ const pbkBuildId =
 const portalEnvironment = process.env.PBK_PORTAL_ENV || (process.env.NODE_ENV === 'production' ? 'live' : 'staging')
 if (!['live', 'staging'].includes(portalEnvironment)) throw Error('Invalid PBK portal environment')
 
-const stagingMarketIndicators =
+const marketPilot91411 =
+  process.env.CONTEXT === 'deploy-preview' &&
+  process.env.REVIEW_ID === '116' &&
+  process.env.HEAD === 'codex/house-zip-91411-pilot'
+const legacyMarketPreview =
   process.env.CONTEXT === 'deploy-preview' && process.env.HEAD === 'codex/house-zip-staging-indicators'
-const marketQa91411 = stagingMarketIndicators && process.env.REVIEW_ID === '111'
+const stagingMarketIndicators = marketPilot91411 || legacyMarketPreview
+const marketQa91411 = marketPilot91411 || (legacyMarketPreview && process.env.REVIEW_ID === '111')
 const marketQa91411Page = 'market-comparison-91411-qa.html'
 const includeLegacyShell = process.env.PBK_INCLUDE_LEGACY_SHELL === 'true'
 const modernShellEntry = 'index.shell.html'
@@ -180,6 +185,7 @@ export default defineConfig({
     __PBK_BUILD_ID__: JSON.stringify(pbkBuildId),
     __PBK_PORTAL_ENV__: JSON.stringify(portalEnvironment),
     'import.meta.env.PBK_MARKET_STAGING_INDICATORS': JSON.stringify(stagingMarketIndicators),
+    'import.meta.env.PBK_MARKET_91411_PILOT': JSON.stringify(marketPilot91411),
     'import.meta.env.PBK_MARKET_91411_QA_PATH': JSON.stringify(
       marketQa91411 ? `/${marketQa91411Page}` : '',
     ),

@@ -10,6 +10,7 @@ const qaEntry = resolve(outDir, 'market-comparison-qa.html');
 const qa91411Path = '/market-comparison-91411-qa.html';
 const expectQa91411 = process.env.PBK_MARKET_TEST_91411_QA === '1';
 const { portalEnvironment } = JSON.parse(readFileSync(resolve(outDir, 'pbk-build-manifest.json'), 'utf8'));
+const expectPilot91411 = process.env.PBK_MARKET_TEST_91411_PILOT === '1';
 const expectStagingIndicators = process.env.PBK_MARKET_TEST_STAGING_INDICATORS === '1';
 const evidenceAssets = readdirSync(resolve(outDir, 'assets')).filter(name =>
   /^LeadInvestorEvidenceChecklist-.*\.(js|css)$/.test(name)
@@ -21,6 +22,8 @@ for (const extension of ['.js', '.css']) {
 
 assert.equal(portalEnvironment, 'live');
 const assetNames = readdirSync(resolve(outDir, 'assets'));
+assert.equal(assetNames.some(name => /^LeadPublicMarketPilot-.*\.js$/.test(name)), expectPilot91411,
+  'The public pilot must be bundled only for the pilot deploy preview.');
 assert.equal(assetNames.some(name => /^VanNuysMarketMap-.*\.js$/.test(name)), expectStagingIndicators,
   'The map and its boundaries must only be bundled for the staging preview.');
 const trendAssets = assetNames.filter(name =>
@@ -32,7 +35,7 @@ assert.equal(trendAssets.some(name => name.endsWith('.css')), expectStagingIndic
   'Chart styles must only be bundled for the staging preview.');
 assert.equal(existsSync(qaEntry), false, 'The offline QA page must not be shipped.');
 assert.equal(existsSync(resolve(outDir, qa91411Path.slice(1))), expectQa91411,
-  'The 91411 fixture must only be built for Preview #111.');
+  'The 91411 fixture must only be built for the approved deploy previews.');
 const server = await preview({
   configFile: false,
   build: { outDir },
@@ -100,6 +103,29 @@ try {
     await checklist.getByText('Costs, financing and downside', { exact: true }).press('Enter');
     await expect(checklist.getByText(/contractor bid/)).toBeVisible();
     assert.ok(await checklist.evaluate(card => card.scrollWidth <= card.clientWidth));
+    const pilot = qa.getByRole('region', { name: '91411 public-data pilot', exact: true });
+    if (expectPilot91411) {
+      await expect(pilot.getByText('$4,120', { exact: true })).toBeVisible();
+      assert.ok(await pilot.evaluate(el => el.previousElementSibling?.matches('.pbk-market-hero')),
+        'The pilot should follow the House vs. ZIP introduction.');
+      await expect(pilot.getByText('FY 2027', { exact: true })).toBeVisible();
+      await expect(pilot.getByText('36', { exact: true })).toBeVisible();
+      await expect(pilot.getByText('October 2026', { exact: true })).toBeVisible();
+      await expect(pilot.getByText('Awaiting data rights', { exact: true })).toBeVisible();
+      await expect(pilot.getByRole('link', { name: 'Reventure research hub' }))
+        .toHaveAttribute('href', 'https://blog.reventure.app/graph');
+      await expect(pilot.getByRole('link', { name: 'HUD ZIP rent table' }))
+        .toHaveAttribute('href', /huduser\.gov.*0603799999$/);
+      for (const width of [390, 1440]) {
+        await qa.setViewportSize({ width, height: 900 });
+        assert.ok(await pilot.evaluate(card =>
+          card.scrollWidth <= card.clientWidth && document.documentElement.scrollWidth <= innerWidth
+        ), 'The pilot must fit desktop and mobile widths.');
+      }
+      await qa.setViewportSize({ width: 390, height: 844 });
+    } else {
+      await expect(pilot).toHaveCount(0);
+    }
     const income = qa.getByRole('region', { name: 'Census ZCTA 91411 income', exact: true });
     const county = qa.getByRole('region', { name: 'Los Angeles County unemployment', exact: true });
     await expect(income.getByText('$74,617', { exact: true })).toBeVisible();
@@ -169,7 +195,7 @@ try {
     await expect(trends.getByRole('link', { name: /Reventure research hub/ })).toHaveAttribute('href', 'https://blog.reventure.app/graph');
 
     assert.deepEqual(forbiddenQa, [], 'The standalone QA fixture must not request any API or external asset.');
-    console.log('Preview #111 fixture: separate ZIP and county charts at 390px; static requests only');
+    console.log('91411 preview fixture: separate ZIP and county charts at 390px; static requests only');
     await qa.close();
   }
   const page = await browser.newPage({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, serviceWorkers: 'block' });
@@ -404,7 +430,19 @@ try {
     const marketMap = panel.getByRole('region', { name: 'Van Nuys market map', exact: true });
     await expect(indicators).toHaveCount(0);
     await expect(marketMap).toHaveCount(0);
+    const pilot = panel.getByRole('region', { name: '91411 public-data pilot', exact: true });
+    await expect(pilot).toHaveCount(0);
     await open(fixtures[8].id);
+    if (expectPilot91411) {
+      await expect(pilot).toBeVisible();
+      await expect(panel.getByRole('region', { name: 'Saved recorded sale', exact: true })).toHaveCount(0);
+      await expect(panel.getByText('$470,000', { exact: true })).toHaveCount(0);
+      await expect(checklist).toBeVisible();
+      await expect(checklist.getByRole('button', { name: 'Open Comps', exact: true })).toHaveCount(0);
+      await expect(checklist.getByRole('button', { name: 'Open Investor', exact: true })).toHaveCount(0);
+    } else {
+      await expect(pilot).toHaveCount(0);
+    }
     if (expectStagingIndicators) {
       const income = indicators.getByRole('region', { name: 'Census ZCTA 91411 income', exact: true });
       const unemployment = indicators.getByRole('region', { name: 'Los Angeles County unemployment', exact: true });

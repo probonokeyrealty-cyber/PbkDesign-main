@@ -1,0 +1,178 @@
+.pbk-today-header {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  padding: var(--s-5) var(--s-6);
+  border: 1px solid var(--border-dim);
+  border-radius: var(--radius-xl);
+  background: var(--bg-panel);
+}
+
+.pbk-today-header::before {
+  content: '';
+  position: absolute;
+  z-index: -1;
+  inset: 0;
+  pointer-events: none;
+  background: url('/assets/pbk-today-parcel-survey.webp') right 49% / min(76%, 850px) auto no-repeat;
+  mask-image: linear-gradient(90deg, transparent 31%, #000 80%);
+  opacity: 0.85;
+}
+
+html[data-theme='light'] .pbk-today-header::before {
+  filter: invert(0.2) grayscale(0.35);
+  opacity: 0.62;
+}
+
+.pbk-team-access-shell {
+  grid-template-columns: minmax(0, 360px) minmax(0, 430px);
+  justify-content: center;
+  gap: clamp(16px, 4vw, 56px);
+}
+
+.pbk-team-access-shell::before {
+  content: '';
+  width: 100%;
+  aspect-ratio: 1;
+  background: url('/assets/pbk-access-threshold.webp') center / cover no-repeat;
+  mask-image: radial-gradient(ellipse, #000 27%, transparent 74%);
+}
+
+.pbk-team-access-panel {
+  background: var(--bg-panel);
+}
+
+html[data-theme='light'] .pbk-team-access-shell::before {
+  filter: invert(1) grayscale(0.55);
+  opacity: 0.58;
+}
+
+.pbk-leads-hero-top {
+  --pbk-workspace-art: url('/assets/pbk-leads-survey-stakes.webp');
+  --pbk-art-end: 34%;
+  --pbk-art-mobile-height: 58px;
+}
+
+.pbk-analyzer-command-main {
+  --pbk-workspace-art: url('/assets/pbk-analyzer-stone-section.webp');
+  --pbk-art-end: 54%;
+  --pbk-art-mobile-height: 104px;
+}
+
+.pbk-inbox-hero-top {
+  --pbk-workspace-art: url('/assets/pbk-inbox-folded-vellum.webp');
+  --pbk-art-end: 47%;
+  --pbk-art-mobile-height: 58px;
+}
+
+.pbk-fleet-hero-top {
+  --pbk-workspace-art: url('/assets/pbk-fleet-optical-survey.webp');
+  --pbk-art-end: 25%;
+  --pbk-art-mobile-height: 76px;
+}
+
+:is(.pbk-leads-hero-top, .pbk-analyzer-command-main, .pbk-inbox-hero-top, .pbk-fleet-hero-top) {
+  position: relative;
+  isolation: isolate;
+}
+
+:is(
+  .pbk-leads-hero-top,
+  .pbk-analyzer-command-main,
+  .pbk-inbox-hero-top,
+  .pbk-fleet-hero-top
+)::before {
+  content: '';
+  position: absolute;
+  z-index: -1;
+  inset: 0 var(--pbk-art-end) 0 auto;
+  width: min(315px, calc(73% - var(--pbk-art-end)));
+  pointer-events: none;
+  background: var(--pbk-workspace-art) right center / auto max(100%, 105px) no-repeat;
+  mask-image: linear-gradient(90deg, transparent, #000 40%, #000 88%, transparent);
+  opacity: 0.78;
+}
+
+/* The other workspace headings sit on graphite in both themes. */
+html[data-theme='light'] .pbk-analyzer-command-main::before {
+  filter: invert(1) grayscale(0.72);
+  mix-blend-mode: multiply;
+  opacity: 0.48;
+}
+
+@media (max-width: 1024px) {
+  :is(
+    .pbk-leads-hero-top,
+    .pbk-analyzer-command-main,
+    .pbk-inbox-hero-top,
+    .pbk-fleet-hero-top
+  )::before {
+    opacity: 0.56;
+  }
+}
+
+@media (max-width: 860px) {
+  :is(
+    .pbk-leads-hero-top,
+    .pbk-analyzer-command-main,
+    .pbk-inbox-hero-top,
+    .pbk-fleet-hero-top
+  )::before {
+    inset: 0 0 auto 42%;
+    width: auto;
+    height: min(100%, var(--pbk-art-mobile-height));
+    background-size: auto 96px;
+    mask-image:
+      linear-gradient(90deg, transparent, #000 50%, #000 88%, transparent),
+      linear-gradient(#000 60%, transparent);
+    mask-composite: intersect;
+  }
+
+  html[data-theme='light'] .pbk-analyzer-command-main::before {
+    opacity: 0.32;
+  }
+}
+
+@media (max-width: 720px) {
+  .pbk-today-header {
+    padding: var(--s-4);
+  }
+
+  .pbk-today-header::before {
+    background-position: right 45%;
+    background-size: auto 155%;
+    mask-image: linear-gradient(90deg, transparent 34%, #000 92%);
+    opacity: 0.62;
+  }
+
+  .pbk-team-access-shell {
+    grid-template-columns: minmax(0, 430px);
+    align-content: center;
+    gap: 4px;
+    padding: 16px;
+  }
+
+  .pbk-team-access-shell::before {
+    aspect-ratio: auto;
+    height: clamp(70px, 15dvh, 124px);
+    background-size: min(100%, 270px) auto;
+    mask-image: radial-gradient(ellipse at center, #000 15%, transparent 71%);
+  }
+}
+
+@media (forced-colors: active) {
+  .pbk-today-header::before,
+  .pbk-team-access-shell::before,
+  :is(
+    .pbk-leads-hero-top,
+    .pbk-analyzer-command-main,
+    .pbk-inbox-hero-top,
+    .pbk-fleet-hero-top
+  )::before {
+    display: none;
+  }
+
+  .pbk-team-access-shell {
+    grid-template-columns: minmax(0, 430px);
+  }
+}

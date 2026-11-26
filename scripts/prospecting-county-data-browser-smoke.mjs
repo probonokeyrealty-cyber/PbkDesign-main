@@ -3,6 +3,21 @@ import { chromium, expect } from '@playwright/test';
 import { createServer } from 'vite';
 
 const check = expect.configure({ timeout: 15_000 });
+const parcelHeader = 'AIN,Property Location\n';
+const oversizedPrefix = Buffer.from(parcelHeader + '0123456789,');
+const rejectedCsvs = [
+  {
+    name: 'oversized.csv',
+    buffer: Buffer.concat([oversizedPrefix, Buffer.alloc(8 * 1024 * 1024 - oversizedPrefix.length, 120), Buffer.from('\n')]),
+    error: 'Choose a CSV extract of 8 MB or less.',
+  },
+  {
+    name: 'too-many-parcels.csv',
+    buffer: Buffer.from(parcelHeader + Array.from({ length: 25_001 }, (_, i) =>
+      String(i + 1).padStart(10, '0') + ',Synthetic Test Lane\n').join('')),
+    error: 'Choose a CSV extract with no more than 25,000 records.',
+  },
+];
 process.env.PBK_DEV_BRIDGE_URL = 'http://127.0.0.1:1';
 const server = await createServer({
   envDir: false,
@@ -103,6 +118,21 @@ try {
       await countyTab.click();
       await check(preview).toBeVisible();
       await check(parcels).toHaveCount(0);
+
+      const filePicker = preview.getByLabel('Assessor CSV extract');
+      const clearFile = preview.getByRole('button', { name: 'Clear local file' });
+      for (const { name, buffer, error } of rejectedCsvs) {
+        await filePicker.setInputFiles({ name, mimeType: 'text/csv', buffer });
+        await check(preview.getByRole('alert')).toHaveText(error);
+        await check(clearFile).toBeVisible();
+        await clearFile.click();
+        await check(filePicker).toHaveValue('');
+        await check(filePicker).toBeFocused();
+        await check(preview.getByRole('alert')).toHaveCount(0);
+        await check(clearFile).toHaveCount(0);
+        await check(parcels).toHaveCount(0);
+        await check(shortlist).toHaveCount(0);
+      }
       console.log('County Data browser checks passed at ' + width + 'px.');
     } finally {
       await context.close();

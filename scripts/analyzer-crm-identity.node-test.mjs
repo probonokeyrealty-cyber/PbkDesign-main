@@ -33,11 +33,30 @@ test('analyzer create refuses a duplicate before mutating or binding another sel
   assert.equal(existing.property.address, '10 Other Street');
 });
 
-test('retry of a confirmed creation returns the original canonical id without another write', async () => {
+test('retry repairs persistence for the same lead without creating or queuing another', async () => {
   const existing = { leadId: 'created-id', eventId: 'same-save' };
-  const context = vm.createContext({ state: { leadImports: [existing] }, persistState: async () => {}, persistLeadProfileRowToDb: async () => {} });
+  const state = { leadImports: [existing] };
+  const triage = { leadId: existing.leadId, status: 'saved' };
+  const persisted = [], projected = [];
+  const context = vm.createContext({
+    state,
+    persistState: async (snapshot) => { persisted.push(snapshot); },
+    persistLeadProfileRowToDb: async (lead, reason) => { projected.push([lead, reason]); },
+    findAvaLeadTriage: (lead) => {
+      assert.strictEqual(lead, existing);
+      return triage;
+    },
+    normalizeLeadIntake: () => { assert.fail('Replay must not normalize a new lead'); },
+    queueRexLeadImport: () => { assert.fail('Replay must not queue a new import'); },
+  });
   const handler = vm.runInContext(`(${source})`, context);
   const result = await handler({ source: 'analyzer-save', eventId: 'same-save' });
+  assert.equal(result.ok, true);
   assert.equal(result.replayed, true);
   assert.equal(result.leadId, 'created-id');
+  assert.strictEqual(result.lead, existing);
+  assert.strictEqual(result.leadTriage, triage);
+  assert.deepEqual(state.leadImports, [existing]);
+  assert.deepEqual(persisted, [state]);
+  assert.deepEqual(projected, [[existing, 'manual-lead-replay']]);
 });

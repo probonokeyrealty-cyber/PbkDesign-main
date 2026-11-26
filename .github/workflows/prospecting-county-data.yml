@@ -11,6 +11,7 @@ on:
       - 'src/app/components/prospecting/ProspectingCountyData.*'
       - 'src/app/routes/Prospecting.*'
       - 'src/app/utils/prospectingCount*.json'
+      - 'src/app/utils/prospectingCountyData.d.mts'
       - 'src/app/utils/prospectingCountyData.mjs'
 
 permissions:

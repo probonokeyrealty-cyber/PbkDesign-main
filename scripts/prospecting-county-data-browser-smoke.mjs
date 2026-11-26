@@ -60,22 +60,42 @@ try {
       await check(county.getByRole('link', { name: 'Monthly Parcels' })).toHaveAttribute('href', /egis-lacounty\.hub\.arcgis\.com/);
       await preview.getByLabel('Assessor CSV extract').setInputFiles({
         name: 'county-fixture.csv', mimeType: 'text/csv',
-        buffer: Buffer.from('AIN,Property Location,Roll Year,Owner Name\n0123456789,"14 Sample Lane, Van Nuys, CA",2025,Private Name\n'),
+        buffer: Buffer.from('AIN,Property Location,Roll Year,Use Type,Owner Name\n' +
+          '0123456789,"14 Sample Lane, Van Nuys, CA",2025,Residential,Private Name\n' +
+          '0123456790,"15 Sample Lane, Van Nuys, CA",2024,Commercial,Private Name\n'),
       });
       const parcels = preview.getByRole('searchbox', { name: 'Search local parcels' });
+      const results = preview.getByRole('list', { name: 'Local parcel results' });
+      const shortlist = preview.getByRole('region', { name: 'Local shortlist' });
+      await preview.getByLabel('Property use').selectOption('Residential');
+      await check(results).toContainText('14 Sample Lane');
+      await check(results).not.toContainText('15 Sample Lane');
+      await preview.getByLabel('Roll year').selectOption('2024');
+      await check(preview.getByText('No matching parcels.')).toBeVisible();
+      await preview.getByLabel('Roll year').selectOption('2025');
       await parcels.fill('0123-456-789');
-      await check(preview.getByRole('list', { name: 'Local parcel results' })).toContainText('14 Sample Lane');
+      await check(results).toContainText('14 Sample Lane');
       await check(preview.getByText('Private Name', { exact: true })).toHaveCount(0);
+      await check(preview.getByText('Parcel matches are not contact permission.')).toBeVisible();
+      const bookmark = preview.getByRole('button', { name: 'Shortlist AIN 0123456789' });
+      await bookmark.click();
+      await check(bookmark).toHaveAttribute('aria-pressed', 'true');
+      await check(shortlist).toContainText('14 Sample Lane');
+      await shortlist.getByRole('button', { name: 'Remove AIN 0123456789' }).click();
+      await check(bookmark).toHaveAttribute('aria-pressed', 'false');
+      await bookmark.click();
       await search.fill('22071');
       await check(county.getByRole('heading', { name: 'Orleans Parish, LA' })).toBeVisible();
       await check(county.getByText('Source review required')).toBeVisible();
       await check(preview).toHaveCount(0);
+      await check(shortlist).toHaveCount(0);
       await county.getByRole('button', { name: 'Copy Rex research brief' }).click();
       await check(county.getByText('Brief copied for Brain.')).toBeVisible();
       assert.match(await page.evaluate(() => navigator.clipboard.readText()), /Orleans Parish, LA \(FIPS 22071\)/);
       await search.fill('06037');
       await check(preview).toBeVisible();
       await check(parcels).toHaveCount(0);
+      await check(shortlist).toHaveCount(0);
       assert.equal(await county.evaluate(pane => document.documentElement.scrollWidth > innerWidth + 1
         || pane.scrollWidth > pane.clientWidth + 1), false, 'County Data overflows at ' + width + 'px');
       await page.getByRole('tab', { name: 'Research', exact: true }).click();

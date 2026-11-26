@@ -1,5 +1,5 @@
-import { useRef, useState } from 'react';
-import { ClipboardList, ExternalLink, FileText, Search, X } from 'lucide-react';
+import { useMemo, useRef, useState } from 'react';
+import { Bookmark, ClipboardList, ExternalLink, FileText, Search, X } from 'lucide-react';
 import {
   COUNTY_CSV_MAX_BYTES,
   COUNTY_DIRECTORY_URL,
@@ -9,6 +9,7 @@ import {
   makeCountyResearchBrief,
   parseCountyParcelCsv,
   searchCountyParcels,
+  type Parcel,
 } from '../../utils/prospectingCountyData.mjs';
 import './ProspectingCountyData.css';
 
@@ -17,6 +18,20 @@ type FileState =
   | { status: 'idle' | 'reading' }
   | { status: 'error'; error: string }
   | { status: 'ready'; filename: string; rows: ReturnType<typeof parseCountyParcelCsv> };
+const shortlistLimit = 50;
+
+function ParcelIdentity({ row }: { row: Parcel }) {
+  return (
+    <div className="pbk-county-parcel-identity">
+      <strong>{row.address}</strong>
+      <span className="pbk-prospect-id">
+        AIN {row.ain}
+        {row.rollYear ? ' | Roll ' + row.rollYear : ''}
+      </span>
+      {row.use && <small>{row.use}</small>}
+    </div>
+  );
+}
 
 function CountyParcelPreview({ county }: { county: County }) {
   const inputId = 'pbk-county-csv';
@@ -24,9 +39,18 @@ function CountyParcelPreview({ county }: { county: County }) {
   const readId = useRef(0);
   const [file, setFile] = useState<FileState>({ status: 'idle' });
   const [query, setQuery] = useState('');
+  const [use, setUse] = useState('');
+  const [rollYear, setRollYear] = useState('');
+  const [shortlist, setShortlist] = useState<Parcel[]>([]);
+  const resetReview = () => {
+    setQuery('');
+    setUse('');
+    setRollYear('');
+    setShortlist([]);
+  };
   const read = async (selected: File) => {
     const id = ++readId.current;
-    setQuery('');
+    resetReview();
     if (!/\.csv$/i.test(selected.name) || selected.size > COUNTY_CSV_MAX_BYTES) {
       setFile({ status: 'error', error: 'Choose a CSV extract of 8 MB or less.' });
       return;
@@ -52,12 +76,26 @@ function CountyParcelPreview({ county }: { county: County }) {
     ++readId.current;
     if (input.current) input.current.value = '';
     setFile({ status: 'idle' });
-    setQuery('');
+    resetReview();
   };
+  const options = useMemo(() => {
+    if (file.status !== 'ready') return { uses: [], years: [] };
+    return {
+      uses: [...new Set(file.rows.map((row) => row.use).filter(Boolean))].sort(),
+      years: [...new Set(file.rows.map((row) => row.rollYear).filter(Boolean))].sort().reverse(),
+    };
+  }, [file]);
+  const canSearch = query.trim() ? query.trim().length >= 3 : Boolean(use || rollYear);
   const results =
-    file.status === 'ready' && query.trim().length >= 3
-      ? searchCountyParcels(file.rows, query)
+    file.status === 'ready' && canSearch
+      ? searchCountyParcels(file.rows, query, { use, rollYear })
       : null;
+  const toggleParcel = (row: Parcel) =>
+    setShortlist((items) => {
+      if (items.some((item) => item.ain === row.ain))
+        return items.filter((item) => item.ain !== row.ain);
+      return items.length < shortlistLimit ? [...items, row] : items;
+    });
   return (
     <section className="pbk-county-preview" aria-labelledby="pbk-county-parcel-heading">
       <header className="pbk-prospect-section-head">
@@ -103,17 +141,42 @@ function CountyParcelPreview({ county }: { county: County }) {
               <X size={16} aria-hidden="true" />
             </button>
           </div>
-          <label className="pbk-prospect-search">
-            <Search size={16} aria-hidden="true" />
-            <input
-              aria-label="Search local parcels"
-              type="search"
-              maxLength={120}
-              value={query}
-              placeholder="AIN or property address"
-              onChange={(event) => setQuery(event.target.value)}
-            />
-          </label>
+          <div className="pbk-county-criteria">
+            <label className="pbk-prospect-search">
+              <Search size={16} aria-hidden="true" />
+              <input
+                aria-label="Search local parcels"
+                type="search"
+                maxLength={120}
+                value={query}
+                placeholder="AIN or property address"
+                onChange={(event) => setQuery(event.target.value)}
+              />
+            </label>
+            {options.uses.length > 0 && (
+              <label>
+                Property use
+                <select value={use} onChange={(event) => setUse(event.target.value)}>
+                  <option value="">All uses</option>
+                  {options.uses.map((option) => (
+                    <option key={option}>{option}</option>
+                  ))}
+                </select>
+              </label>
+            )}
+            {options.years.length > 0 && (
+              <label>
+                Roll year
+                <select value={rollYear} onChange={(event) => setRollYear(event.target.value)}>
+                  <option value="">All years</option>
+                  {options.years.map((option) => (
+                    <option key={option}>{option}</option>
+                  ))}
+                </select>
+              </label>
+            )}
+          </div>
+          <p className="pbk-county-unreviewed">Parcel matches are not contact permission.</p>
           {results && (
             <>
               <p role="status">
@@ -125,20 +188,61 @@ function CountyParcelPreview({ county }: { county: County }) {
               </p>
               {results.items.length > 0 && (
                 <ul className="pbk-county-parcels" aria-label="Local parcel results">
-                  {results.items.map((row, index) => (
-                    <li key={row.ain + ':' + index}>
-                      <strong>{row.address}</strong>
-                      <span className="pbk-prospect-id">
-                        AIN {row.ain}
-                        {row.rollYear ? ' · Roll ' + row.rollYear : ''}
-                      </span>
-                      {row.use && <small>{row.use}</small>}
-                    </li>
-                  ))}
+                  {results.items.map((row, index) => {
+                    const selected = shortlist.some((item) => item.ain === row.ain);
+                    return (
+                      <li key={row.ain + ':' + index}>
+                        <ParcelIdentity row={row} />
+                        <button
+                          type="button"
+                          className="pbk-prospect-icon"
+                          aria-label={'Shortlist AIN ' + row.ain}
+                          title="Toggle shortlist"
+                          aria-pressed={selected}
+                          disabled={!selected && shortlist.length >= shortlistLimit}
+                          onClick={() => toggleParcel(row)}
+                        >
+                          <Bookmark
+                            size={17}
+                            fill={selected ? 'currentColor' : 'none'}
+                            aria-hidden="true"
+                          />
+                        </button>
+                      </li>
+                    );
+                  })}
                 </ul>
               )}
             </>
           )}
+          <section className="pbk-county-shortlist" aria-labelledby="pbk-county-shortlist-heading">
+            <header className="pbk-prospect-section-head">
+              <h3 id="pbk-county-shortlist-heading">Local shortlist</h3>
+              <span role="status">
+                {shortlist.length} / {shortlistLimit} parcels
+              </span>
+            </header>
+            {shortlist.length ? (
+              <ul className="pbk-county-parcels" aria-label="Shortlisted parcels">
+                {shortlist.map((row) => (
+                  <li key={row.ain}>
+                    <ParcelIdentity row={row} />
+                    <button
+                      type="button"
+                      className="pbk-prospect-icon"
+                      aria-label={'Remove AIN ' + row.ain}
+                      title="Remove from shortlist"
+                      onClick={() => toggleParcel(row)}
+                    >
+                      <X size={16} aria-hidden="true" />
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <small>No shortlisted parcels.</small>
+            )}
+          </section>
         </>
       )}
     </section>
@@ -255,11 +359,14 @@ export function ProspectingCountyData() {
       <div className="pbk-prospect-inspector pbk-county-inspector">
         {county ? (
           <>
-            <header>
-              <h2>
-                {county.name}, {county.state}
-              </h2>
-              <span className="pbk-prospect-id">FIPS {county.fips}</span>
+            <header className="pbk-prospect-section-head">
+              <div>
+                <h2>
+                  {county.name}, {county.state}
+                </h2>
+                <span className="pbk-prospect-id">FIPS {county.fips}</span>
+              </div>
+              <span className="pbk-county-access">Read-only</span>
             </header>
             <div className="pbk-prospect-section-head">
               <h3>County sources</h3>
@@ -268,24 +375,27 @@ export function ProspectingCountyData() {
               </span>
             </div>
             {source ? (
-              <ul className="pbk-county-sources" aria-label="Published county sources">
-                {source.links.map((link) => (
-                  <li key={link.href}>
-                    <div className="pbk-prospect-section-head">
-                      <a
-                        className="pbk-county-text-link"
-                        href={link.href}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                      >
-                        {link.label} <ExternalLink size={13} aria-hidden="true" />
-                      </a>
-                      <span className="pbk-prospect-id">{link.type}</span>
-                    </div>
-                    <small>{link.detail}</small>
-                  </li>
-                ))}
-              </ul>
+              <details className="pbk-county-source-details" open>
+                <summary>{source.publisher}</summary>
+                <ul className="pbk-county-sources" aria-label="Published county sources">
+                  {source.links.map((link) => (
+                    <li key={link.href}>
+                      <div className="pbk-prospect-section-head">
+                        <a
+                          className="pbk-county-text-link"
+                          href={link.href}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                        >
+                          {link.label} <ExternalLink size={13} aria-hidden="true" />
+                        </a>
+                        <span className="pbk-prospect-id">{link.type}</span>
+                      </div>
+                      <small>{link.detail}</small>
+                    </li>
+                  ))}
+                </ul>
+              </details>
             ) : (
               <p>No reviewed parcel source. Automated access is off.</p>
             )}

@@ -99,6 +99,14 @@
 .pbk-county-data button:is(:hover, [aria-pressed='true']) {
   border-color: var(--sky);
 }
+.pbk-county-data button[aria-pressed='true'] {
+  background: var(--sky-glow);
+  color: var(--sky);
+}
+.pbk-county-data button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
 .pbk-county-data .pbk-prospect-button {
   width: fit-content;
   text-align: start;
@@ -114,5 +122,39 @@
 }
 .pbk-county-data .pbk-county-parcels > li {
   display: grid;
-  gap: 0.25rem;
+  grid-template-columns: minmax(0, 1fr) 44px;
+  align-items: center;
+  gap: 0.5rem 0.75rem;
+}
+.pbk-county-source-details summary {
+  display: list-item;
+  padding-block: 0.6rem;
+  cursor: pointer;
+}
+.pbk-county-data summary:focus-visible {
+  outline: 2px solid var(--sky);
+  outline-offset: 2px;
+}
+.pbk-county-access {
+  color: var(--sky);
+  font: 500 0.75rem/1.4 var(--font-mono);
+}
+.pbk-county-criteria {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.65rem;
+}
+.pbk-county-criteria .pbk-prospect-search {
+  grid-column: 1 / -1;
+}
+.pbk-county-shortlist,
+.pbk-county-parcel-identity {
+  display: grid;
+  min-width: 0;
+  gap: 0.35rem;
+}
+.pbk-county-shortlist {
+  border-top: 1px solid var(--border);
+  margin-top: 0.35rem;
+  padding-top: 0.75rem;
 }

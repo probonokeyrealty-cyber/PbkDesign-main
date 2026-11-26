@@ -29,4 +29,8 @@ export function findCounties(query: string, state?: string): SearchResult<County
 export function getCountySource(fips: string): CountySource | null;
 export function makeCountyResearchBrief(county: County): string;
 export function parseCountyParcelCsv(input: string, fips: string): Parcel[];
-export function searchCountyParcels(rows: Parcel[], query: string): SearchResult<Parcel>;
+export function searchCountyParcels(
+  rows: Parcel[],
+  query: string,
+  filters?: { use?: string; rollYear?: string }
+): SearchResult<Parcel>;

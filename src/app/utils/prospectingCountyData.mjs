@@ -167,18 +167,19 @@ export function parseCountyParcelCsv(input, fips) {
   return rows;
 }
 
-/** @param {Parcel[]} rows @param {string} query */
-export function searchCountyParcels(rows, query) {
+/** @param {Parcel[]} rows @param {string} query @param {{ use?: string, rollYear?: string }} [filters] */
+export function searchCountyParcels(rows, query, { use = '', rollYear = '' } = {}) {
   const text = normalize(query);
-  if (text.length < 3) return { items: [], total: 0 };
+  if ((!text && !use && !rollYear) || (text && text.length < 3)) return { items: [], total: 0 };
   const number = text.replace(/ /g, '');
   const exact = parcelNumber(query);
-  const hits = rows.filter((row) =>
-    exact
-      ? row.ain === exact
-      : /^\d+$/.test(number)
-        ? row.ain.startsWith(number) || normalize(row.address).includes(text)
-        : normalize(row.address).includes(text)
-  );
+  const hits = rows.filter((row) => {
+    if ((use && row.use !== use) || (rollYear && row.rollYear !== rollYear)) return false;
+    if (!text) return true;
+    if (exact) return row.ain === exact;
+    return (
+      (/^\d+$/.test(number) && row.ain.startsWith(number)) || normalize(row.address).includes(text)
+    );
+  });
   return { items: hits.slice(0, parcelPageSize), total: hits.length };
 }

@@ -177,6 +177,7 @@
     "test:composio-research-ui": "node --test ./scripts/agent-research-tools.node-test.mjs",
     "test:lead-property-workspaces-browser": "node ./scripts/lead-property-workspaces-browser-smoke.mjs",
     "test:crm-property-evidence": "node --test scripts/property-evidence.node-test.mjs && node scripts/crm-property-evidence-browser-smoke.mjs",
+    "test:property-intelligence-browser": "node scripts/property-intelligence-browser-smoke.mjs",
     "test:property-photo-quality": "node --test scripts/property-photo-quality.node-test.mjs && node scripts/property-photo-quality-browser-smoke.mjs",
     "test:property-photo-viewer": "node scripts/property-photo-quality-browser-smoke.mjs --viewer",
     "test:property-photo-swipe": "node scripts/property-photo-quality-browser-smoke.mjs --viewer --swipe",

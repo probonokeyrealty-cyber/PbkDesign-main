@@ -1,0 +1,295 @@
+/* Operational hierarchy shared by Today and the seller roster. */
+.pbk-today-overview,
+.pbk-leads-surface .pbk-leads-hero {
+  min-width: 0;
+  border: 1px solid var(--border-dim);
+  border-radius: var(--radius-xl);
+  background:
+    radial-gradient(ellipse at 100% 0%, var(--sky-glow), transparent 60%),
+    var(--bg-console);
+  padding: clamp(14px, 2.5vw, 26px);
+}
+
+.pbk-today-overview {
+  display: grid;
+  gap: 16px;
+  align-items: center;
+  border-block-start-color: var(--sky-dim);
+}
+
+.pbk-command-surface .pbk-today-overview .pbk-today-header .pbk-display,
+.pbk-leads-surface .pbk-leads-hero .pbk-display {
+  margin-block: 4px 6px;
+  font-size: clamp(28px, 3vw, 32px);
+  letter-spacing: -0.045em;
+  line-height: 1;
+}
+
+.pbk-command-surface .pbk-today-overview .pbk-command-hero-top {
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.pbk-today-overview .pbk-today-start {
+  min-width: 0;
+}
+
+.pbk-today-overview .pbk-today-call {
+  border-radius: var(--radius-lg);
+  background: var(--bg-panel);
+}
+
+.pbk-today-overview .pbk-today-call.is-live {
+  background: color-mix(in srgb, var(--sky-glow) 65%, var(--bg-panel));
+}
+
+.pbk-command-surface .pbk-triage-queue > .pbk-battlefield {
+  padding: clamp(12px, 2vw, 20px);
+  border: 1px solid var(--border-dim);
+  border-block-start-color: var(--sky-dim);
+  border-radius: var(--radius-xl);
+  background: var(--bg-panel);
+}
+
+.pbk-command-surface .pbk-triage-queue .pbk-battlefield-left {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  column-gap: 12px;
+}
+
+.pbk-command-surface .pbk-triage-queue .pbk-battlefield-label {
+  margin-block-end: 2px;
+  font: 500 25px/1.15 Fraunces, Georgia, serif;
+}
+
+.pbk-command-surface .pbk-triage-queue .pbk-battlefield-sub {
+  flex-basis: 100%;
+  margin-top: 2px;
+}
+
+.pbk-command-surface .pbk-triage-queue .pbk-bf-chip {
+  min-height: 0;
+  border-radius: var(--radius-lg);
+  transition: background-color var(--duration-normal), border-color var(--duration-fast);
+}
+
+.pbk-command-surface .pbk-triage-queue .pbk-bf-chip:is(.urgent, .hot) {
+  border-inline-start: 2px solid var(--amber);
+}
+
+.pbk-command-surface .pbk-triage-queue .pbk-bf-chip-meta {
+  max-width: 128px;
+  gap: 4px;
+}
+
+.pbk-triage-next-step[data-next-step-state='recorded'] {
+  display: grid;
+  gap: 2px;
+  max-width: 64ch;
+  padding: 6px 8px;
+  border-inline-start: 2px solid var(--sky-dim);
+  border-radius: var(--radius-sm);
+  background: var(--sky-glow);
+  color: var(--text-primary);
+}
+
+.pbk-triage-next-step[data-next-step-state='recorded'] > span {
+  color: var(--text-secondary);
+  font: 650 10px/1.2 var(--font-mono);
+  letter-spacing: .045em;
+  text-transform: uppercase;
+}
+
+.pbk-command-surface .pbk-triage-destination {
+  display: inline-flex;
+  align-items: center;
+  justify-content: end;
+  gap: 5px;
+  margin-block-start: 4px;
+  text-align: end;
+}
+
+.pbk-triage-destination svg {
+  flex: none;
+  transition: transform var(--duration-fast) var(--ease-out);
+}
+
+.pbk-bf-chip:enabled:is(:hover, :focus-visible) .pbk-triage-destination svg {
+  transform: translate(2px, -2px);
+}
+
+.pbk-leads-surface .pbk-leads-hero > .pbk-leads-grid {
+  margin-block: 14px 8px;
+  border: 1px solid var(--border-dim);
+  border-radius: var(--radius-lg);
+  background: color-mix(in srgb, var(--bg-panel) 84%, transparent);
+}
+
+.pbk-leads-surface .pbk-leads-hero .pbk-leads-stat:last-child {
+  border-inline-end: 0;
+}
+
+.pbk-leads-surface .pbk-leads-search {
+  background: var(--bg-panel);
+  color: var(--text-secondary);
+}
+
+.pbk-leads-surface .pbk-leads-smart-filters button {
+  min-height: 36px;
+}
+
+.pbk-leads-surface .pbk-lead-ledger-row {
+  border-inline-start: 2px solid transparent;
+}
+
+.pbk-leads-surface .pbk-lead-ledger-row[data-selected='true'] {
+  border-inline-start-color: var(--sky);
+  background: var(--sky-glow);
+}
+
+.pbk-lead-workflow-context {
+  min-width: 0;
+  display: grid;
+  gap: 7px;
+}
+
+.pbk-lead-workflow-context.is-preview {
+  padding: 11px 12px;
+  border: 1px solid var(--border-dim);
+  border-radius: var(--radius-lg);
+  background: var(--bg-console);
+}
+
+.pbk-lead-workflow-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px 8px;
+  min-width: 0;
+}
+
+.pbk-lead-workflow-stage,
+.pbk-lead-workflow-contact {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  max-width: 100%;
+  border: 1px solid var(--border-dim);
+  border-radius: var(--radius-sm);
+  padding: 4px 7px;
+  background: var(--bg-console);
+  color: var(--text-primary);
+  font: 600 11px/1.3 var(--font-ui);
+  overflow-wrap: anywhere;
+}
+
+.pbk-lead-workflow-stage[data-stage-source='ghl'] {
+  border-color: var(--sky-dim);
+  background: var(--sky-glow);
+}
+
+.pbk-lead-workflow-origin,
+.pbk-lead-workflow-time {
+  color: var(--text-secondary);
+  font: 500 10px/1.5 var(--font-mono);
+}
+
+.pbk-lead-workflow-origin {
+  border-inline-end: 1px solid var(--sky-dim);
+  padding-inline-end: 6px;
+}
+
+.pbk-lead-workflow-contact[data-contact-status='blocked'] {
+  border-color: color-mix(in srgb, var(--crimson) 45%, var(--border-dim));
+  background: var(--crimson-glow);
+}
+
+.pbk-lead-workflow-contact[data-contact-status='review'] {
+  border-color: color-mix(in srgb, var(--amber) 45%, var(--border-dim));
+  background: var(--amber-glow);
+}
+
+.pbk-lead-workflow-contact[data-contact-status='recorded'] {
+  border-color: color-mix(in srgb, var(--lime) 42%, var(--border-dim));
+  background: var(--lime-glow);
+}
+
+.pbk-leads-surface .pbk-lead-workflow-next {
+  display: flex;
+  flex-wrap: wrap;
+  column-gap: 7px;
+  margin: 0;
+  color: var(--text-primary);
+  font: 500 12px/1.45 var(--font-ui);
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.pbk-lead-workflow-next-label {
+  color: var(--text-secondary);
+  font-weight: 650;
+  white-space: nowrap;
+}
+
+.pbk-lead-ledger-actions {
+  padding-block-start: 4px;
+  border-block-start: 1px solid var(--border-dim);
+}
+
+.pbk-leads-surface .pbk-lead-mobile-summary .pbk-lead-workflow-context {
+  margin-block-start: 9px;
+}
+
+.pbk-leads-surface .pbk-lead-workspace-link {
+  min-height: 44px;
+}
+
+.pbk-leads-surface :is(.pbk-leads-smart-filters button, .pbk-lead-quick-actions button):focus-visible {
+  outline: 2px solid var(--sky);
+  outline-offset: 2px;
+}
+
+@media (min-width: 1100px) {
+  .pbk-today-overview {
+    grid-template-columns: minmax(0, 1fr) minmax(300px, .85fr);
+  }
+}
+
+@media (max-width: 600px) {
+  .pbk-command-surface .pbk-triage-queue .pbk-bf-chip-meta {
+    align-items: center;
+    max-width: none;
+  }
+
+  .pbk-command-surface .pbk-triage-destination {
+    justify-content: start;
+    margin-block-start: 0;
+    text-align: start;
+  }
+
+  .pbk-leads-surface .pbk-lead-mobile-summary {
+    grid-column: 1 / -1;
+  }
+
+  .pbk-leads-surface .pbk-lead-mobile-select {
+    min-height: 44px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pbk-command-surface .pbk-triage-queue .pbk-bf-chip,
+  .pbk-triage-destination svg {
+    transition: none;
+  }
+
+  .pbk-bf-chip:enabled:is(:hover, :focus-visible) .pbk-triage-destination svg {
+    transform: none;
+  }
+
+  .pbk-today-overview .animate-pulse,
+  .pbk-leads-surface .pbk-leads-hero .animate-spin {
+    animation: none;
+  }
+}

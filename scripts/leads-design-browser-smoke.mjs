@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict';
-import { chromium, devices, expect, webkit } from '@playwright/test';
+import { chromium, devices, expect as baseExpect, webkit } from '@playwright/test';
 import { createServer } from 'vite';
 
 process.env.PBK_DEV_BRIDGE_URL = 'http://127.0.0.1:1';
 const server = await createServer({ server: { host: '127.0.0.1', port: 0, watch: null } });
 await server.listen();
+const expect = baseExpect.configure({ timeout: 20_000 });
 const origin = `http://127.0.0.1:${server.httpServer.address().port}`;
 const property = {
   address: '123 Fixture Avenue', city: 'Example City', state: 'CA', zip: '90210',
@@ -33,10 +34,13 @@ const leadA = {
   property, assignment: { stage: 'negotiating', assignedAgent: 'Fixture Agent' },
   analyzer: savedSelection('north-comp', '12 North Fixture Avenue', 250000),
   bant: { nextStep: 'Confirm the closing date' }, updatedAt: '2026-06-08T15:00:00Z',
+  ghlPipeline: { stageLabel: 'Setter', occurredAt: '2026-11-20T12:00:00Z' },
+  compliance: { dncStatus: 'clear', tcpaConsent: 'yes' },
 };
 const leadB = {
   ...leadA, id: 'fixture-south', leadId: 'fixture-south',
   seller: { name: 'Fixture South', email: 'south@example.invalid' },
+  ghlPipeline: undefined, compliance: { dncStatus: 'blocked', tcpaConsent: 'unknown' },
   analyzer: savedSelection('south-comp', '97 South Fixture Avenue', 310000),
   deal: { propertyRecordSnapshot: {
     source: 'attom', address: propertyAddress, retrievedAt: savedAt,
@@ -140,6 +144,14 @@ async function verify(browserType, viewport, device = {}) {
     const south = roster.getByRole('button', { name: /^Preview lead Fixture South/ });
     await expect(north).toBeVisible();
     await expect(south).toBeVisible();
+    const northRow = north.locator('xpath=ancestor::*[contains(@class,"lead-mobile-card") or contains(@class,"pbk-lead-ledger-row")][1]');
+    const southRow = south.locator('xpath=ancestor::*[contains(@class,"lead-mobile-card") or contains(@class,"pbk-lead-ledger-row")][1]');
+    await expect(northRow.locator('[data-stage-source="ghl"]')).toContainText('Setter');
+    await expect(northRow.locator('time[title="GoHighLevel stage change"]')).toHaveAttribute('datetime', savedAt);
+    await expect(northRow.getByText('Consent on file', { exact: true })).toBeVisible();
+    await expect(northRow.getByText('Confirm the closing date', { exact: true })).toBeVisible();
+    await expect(southRow.getByText('Contact blocked', { exact: true })).toBeVisible();
+    await expect(southRow.locator('[data-stage-source="ghl"]')).toHaveCount(0);
     const search = roster.getByRole('searchbox', { name: 'Search leads' });
     await search.fill('Fixture South');
     await expect(north).toHaveCount(0);

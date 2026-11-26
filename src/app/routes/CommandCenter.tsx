@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertCircle,
+  ArrowUpRight,
   Bot,
   CheckCircle2,
   ClipboardCheck,
@@ -1833,13 +1834,21 @@ function FounderBattlefield({
                   </span>
                   {lead && <code className="pbk-triage-lead-id" data-triage-lead-id={lead.leadId}>{lead.leadId}</code>}
                   {reason && <span className="pbk-bf-reason">{reason}</span>}
-                  {lead && <span className="pbk-triage-next-step" data-next-step-state={lead.nextStep.state}>{lead.nextStep.text}</span>}
-                  <span className="pbk-triage-destination">{action}</span>
+                  {lead && (
+                    <span className="pbk-triage-next-step" data-next-step-state={lead.nextStep.state}>
+                      {lead.nextStep.state === 'recorded' && <span>Next step</span>}
+                      {lead.nextStep.text}
+                    </span>
+                  )}
                 </span>
                 <span className="pbk-bf-chip-meta">
                   <span className="pbk-bf-score">{item.score}</span>
                   <span className="pbk-bf-source">{friendlyBattlefieldSource(item.source)}</span>
                   <span className="pbk-bf-chip-when">{item.when}</span>
+                  <span className="pbk-triage-destination">
+                    {action}
+                    {destination && <ArrowUpRight size={13} aria-hidden="true" />}
+                  </span>
                 </span>
               </button>
             );
@@ -2912,89 +2921,91 @@ export function CommandCenter() {
   return (
     <div className="pbk-command-surface min-h-full space-y-6 bg-[var(--bg-void)] p-4 text-[var(--text-primary)] md:p-6">
       <div className="mx-auto max-w-screen-2xl space-y-6">
-        <section className="pbk-today-header" aria-labelledby="today-heading">
-          <div className="pbk-command-hero-top">
-            <div>
-              <div className="pbk-eyebrow">{heroTimeLabel}</div>
-              <h1 id="today-heading" className="pbk-display">
-                Today.
-              </h1>
-              <p>
-                {approvalsAvailable
-                  ? `${pendingApprovalCount} awaiting approval · ${unreadMessageCount} replies waiting`
-                  : loading
-                    ? 'Updating the workspace'
-                    : 'Approval status unavailable'}
-              </p>
+        <div className="pbk-today-overview">
+          <section className="pbk-today-header" aria-labelledby="today-heading">
+            <div className="pbk-command-hero-top">
+              <div>
+                <div className="pbk-eyebrow">{heroTimeLabel}</div>
+                <h1 id="today-heading" className="pbk-display">
+                  Today.
+                </h1>
+                <p>
+                  {approvalsAvailable
+                    ? `${pendingApprovalCount} awaiting approval · ${unreadMessageCount} replies waiting`
+                    : loading
+                      ? 'Updating the workspace'
+                      : 'Approval status unavailable'}
+                </p>
+              </div>
+              <div className="pbk-hero-sync" aria-live="polite">
+                <span
+                  aria-hidden="true"
+                  className={[
+                    'h-2 w-2 rounded-full',
+                    loading ? 'bg-sky-400 animate-pulse' : error ? 'bg-amber-400' : 'bg-emerald-400',
+                  ].join(' ')}
+                />
+                {loading ? 'Updating workspace' : error ? 'Connection needs attention' : 'Connected'}
+              </div>
             </div>
-            <div className="pbk-hero-sync" aria-live="polite">
-              <span
-                aria-hidden="true"
-                className={[
-                  'h-2 w-2 rounded-full',
-                  loading ? 'bg-sky-400 animate-pulse' : error ? 'bg-amber-400' : 'bg-emerald-400',
-                ].join(' ')}
-              />
-              {loading ? 'Updating workspace' : error ? 'Connection needs attention' : 'Connected'}
-            </div>
-          </div>
-        </section>
+          </section>
 
-        <section className="pbk-today-start" aria-label="Start here">
-          {!callIsStartAction && (
-            <div className="pbk-today-call pbk-today-start-row">
-              <div className="pbk-today-call-copy">
-                <strong>Start here</strong>
-                <p role="status">{todayStart.note}</p>
-              </div>
-              <Link
-                to={todayStart.href.startsWith('#')
-                  ? { pathname: location.pathname, search: location.search, hash: todayStart.href }
-                  : todayStart.href}
-                className="pbk-today-call-action"
-                data-today-primary={isLoadingStart ? undefined : ''}
-                onClick={todayStart.href.startsWith('#')
-                  ? (event) => jumpToTodaySection(event, todayStart.href.slice(1))
-                  : undefined}
-              >
-                {todayStart.label}
-              </Link>
-            </div>
-          )}
-          {(todayLiveCall || todayCompletedCall) && (
-            <section aria-label="Call status" className={`pbk-today-call${todayLiveCall ? ' is-live' : ''}`}>
-              <div className="pbk-today-call-context">
-                {todayLiveCall
-                  ? <Phone size={16} aria-hidden="true" />
-                  : <ClipboardCheck size={16} aria-hidden="true" />}
-                <div className="pbk-today-call-copy" role="status">
-                  <span>{todayCallLabel}</span>{' '}
-                  <strong>{todayCaller}</strong>
+          <section className="pbk-today-start" aria-label="Start here">
+            {!callIsStartAction && (
+              <div className="pbk-today-call pbk-today-start-row">
+                <div className="pbk-today-call-copy">
+                  <strong>Start here</strong>
+                  <p role="status">{todayStart.note}</p>
                 </div>
+                <Link
+                  to={todayStart.href.startsWith('#')
+                    ? { pathname: location.pathname, search: location.search, hash: todayStart.href }
+                    : todayStart.href}
+                  className="pbk-today-call-action"
+                  data-today-primary={isLoadingStart ? undefined : ''}
+                  onClick={todayStart.href.startsWith('#')
+                    ? (event) => jumpToTodaySection(event, todayStart.href.slice(1))
+                    : undefined}
+                >
+                  {todayStart.label}
+                </Link>
               </div>
-              {todayLiveCall ? (
-                <a
-                  className="pbk-today-call-action"
-                  data-today-primary=""
-                  href="#live-call"
-                  onClick={(event) => jumpToTodaySection(event, 'live-call')}
-                >
-                  Open call
-                </a>
-              ) : todayCompletedCall && (
-                <button
-                  className="pbk-today-call-action"
-                  data-today-primary={callReviewed ? undefined : ''}
-                  type="button"
-                  aria-haspopup="dialog"
-                  onClick={() => setOpenedReviewCall(todayCompletedCall)}
-                >
-                  {callReviewed ? 'View review' : 'Review call'}
-                </button>
-              )}
-            </section>
-          )}
-        </section>
+            )}
+            {(todayLiveCall || todayCompletedCall) && (
+              <section aria-label="Call status" className={`pbk-today-call${todayLiveCall ? ' is-live' : ''}`}>
+                <div className="pbk-today-call-context">
+                  {todayLiveCall
+                    ? <Phone size={16} aria-hidden="true" />
+                    : <ClipboardCheck size={16} aria-hidden="true" />}
+                  <div className="pbk-today-call-copy" role="status">
+                    <span>{todayCallLabel}</span>{' '}
+                    <strong>{todayCaller}</strong>
+                  </div>
+                </div>
+                {todayLiveCall ? (
+                  <a
+                    className="pbk-today-call-action"
+                    data-today-primary=""
+                    href="#live-call"
+                    onClick={(event) => jumpToTodaySection(event, 'live-call')}
+                  >
+                    Open call
+                  </a>
+                ) : todayCompletedCall && (
+                  <button
+                    className="pbk-today-call-action"
+                    data-today-primary={callReviewed ? undefined : ''}
+                    type="button"
+                    aria-haspopup="dialog"
+                    onClick={() => setOpenedReviewCall(todayCompletedCall)}
+                  >
+                    {callReviewed ? 'View review' : 'Review call'}
+                  </button>
+                )}
+              </section>
+            )}
+          </section>
+        </div>
 
         {actionStatus && !(liveCallActionStatus && isWidgetVisible('liveCall')) && (
           <div

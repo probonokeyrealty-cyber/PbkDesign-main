@@ -1,8 +1,11 @@
 import { connectComposioHttp, schemaFingerprint } from './public-market-mcp.mjs';
-import { normalizePublicEvidence } from './public-market-worker.mjs';
+import { setTimeout as delay } from 'node:timers/promises';
+import { MOCK_EXA_MARKET, mockExaCacheEnabled, mockExaCacheRequested, normalizePublicEvidence, publicMarketQuery } from './public-market-worker.mjs';
 const TOOL = 'COMPOSIO_SEARCH_WEB';
 const EXA_TOOL = 'EXA_ANSWER';
 const EXA_USER = 'pbk-public-market-research-staging';
+const MOCK_CACHE_TTL_MS = 360_000;
+const MOCK_RESPONSE_MS = 250;
 const EXA_SCHEMA_SHA256 = 'b013594caba3ca649fa9d041459e0729cdededeb07a9635a987ab57ebe41d47d';
 const API = 'https://backend.composio.dev/api/v3.1';
 // The reviewed REST catalog schema differs from the separately pinned MCP inputSchema.
@@ -113,6 +116,13 @@ export function createComposioMarketSearch({
     version = Number(env.PBK_COMPOSIO_MARKET_SEARCH_CONFIG_VERSION),
     hash = env.PBK_COMPOSIO_MARKET_SEARCH_SCHEMA_SHA256;
   const exa = userId === EXA_USER;
+  const mockExaCache = exa && mockExaCacheEnabled(env);
+  let mockMissStarted = false;
+  let mockEntry, expiry;
+  const clearMockEntry = () => {
+    mockEntry = undefined;
+    clearTimeout(expiry);
+  };
   const exaAccountId = env.PBK_COMPOSIO_MARKET_SEARCH_EXA_ACCOUNT_ID;
   const tool = exa ? EXA_TOOL : TOOL;
   const configured = !!(
@@ -142,10 +152,14 @@ export function createComposioMarketSearch({
   const status = () => ({
     enabled,
     configured,
+    ...(mockExaCache && { mockExaCache: true }),
     state: !enabled ? 'disabled' : !configured ? 'configuration_missing' : 'unverified',
   });
-  async function search(query) {
+  async function search(query, { mockCacheProbe = false } = {}) {
     if (!enabled || !configured) return { ok: false, live: false, result: status().state };
+    if ((mockExaCacheRequested(env) || mockCacheProbe) &&
+      !(mockExaCache && mockCacheProbe === true && query === publicMarketQuery(MOCK_EXA_MARKET)))
+      return { ok: false, live: false, result: 'public_market_mock_probe_denied' };
     if (
       typeof query !== 'string' ||
       !query.trim() ||
@@ -187,6 +201,30 @@ export function createComposioMarketSearch({
         )
           throw Error('schema');
         finishChecks();
+        if (mockExaCache) {
+          signal.throwIfAborted();
+          if (mockMissStarted) {
+            const entry = mockEntry;
+            clearMockEntry();
+            if (!entry || monotonicNow() - entry.created >= MOCK_CACHE_TTL_MS) throw Error('mock_cache_empty');
+            Object.assign(searchTiming, { cacheStatus: 'hit', mockResponseMs: null, fetchedAt: entry.fetchedAt });
+            return { ok: true, live: false, simulated: true, ...entry.evidence, ...metrics };
+          }
+          mockMissStarted = true;
+          const started = monotonicNow();
+          // The artificial delay is measured separately; real Exa is unreachable in this branch.
+          await delay(MOCK_RESPONSE_MS, undefined, { signal });
+          const evidence = normalizePublicEvidence({
+            ok: true, live: false, simulated: true,
+            answer: 'Simulated Tampa market evidence for a staging cache timing test. Not market data.',
+            citations: ['https://example.org/pbk-qa/tampa-mock'],
+          }, { allowSimulated: true });
+          const fetchedAt = new Date().toISOString();
+          mockEntry = { created: monotonicNow(), fetchedAt, evidence };
+          expiry = setTimeout(clearMockEntry, MOCK_CACHE_TTL_MS).unref();
+          Object.assign(searchTiming, { cacheStatus: 'miss', mockResponseMs: Math.round(monotonicNow() - started), fetchedAt });
+          return { ok: true, live: false, simulated: true, ...evidence, ...metrics };
+        }
         const args = exa ? { query, model: 'exa', stream: false, text: false } : { query };
         const queryBegan = searchTiming ? monotonicNow() : null;
         let result;

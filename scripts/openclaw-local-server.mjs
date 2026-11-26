@@ -15218,7 +15218,7 @@ function getPublicMarketRuntime() {
   if (!publicMarketStaging()) return null;
   if (publicMarketRuntime) return publicMarketRuntime;
   const search = createComposioMarketSearch();
-  const worker = createPublicMarketWorker({ env: publicMarketEnv, search: (query) => search.search(query) });
+  const worker = createPublicMarketWorker({ env: publicMarketEnv, search: search.search });
   const controller = createPublicMarketController({
     signingKey: BRIDGE_API_KEY,
     approvalCapability: publicMarketApproval,
@@ -15235,7 +15235,7 @@ function getPublicMarketRuntime() {
       task.updatedAt = isoNow();
       recordAdminExecution(task, {
         ok: result.ok, result: result.result, jobId, provider: 'e2b', action: task.action,
-        live: true, simulated: false, executedAt: isoNow(),
+        live: true, simulated: result.executionMetrics?.searchTiming?.mode === 'mock', executedAt: isoNow(),
         details: result.ok ? 'Public brief saved and sandbox cleanup confirmed.' : 'Public brief failed; inspect its saved receipt.',
       }, { statusBefore, statusAfter: task.status, requestedBy: 'Rex' });
       await persistState(state);

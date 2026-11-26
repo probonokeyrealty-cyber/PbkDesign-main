@@ -47,6 +47,23 @@ still includes response handling and MCP close; the two sub-timings do not
 replace that total. Only the durations are added to the receipt, not query
 contents, session metadata, or credentials.
 
+## Mock Tampa cache probe
+
+`PBK_EXA_MOCK_CACHE_PROBE=true` is opt-in for the dedicated staging service
+at exactly 10%. While active, only the protected Tampa, FL `batched`
+benchmark can prepare and run; a sealed task cannot switch modes. Before
+approving each task, require both `search.mockExaCache` and
+`worker.mockExaCache` in the protected benchmark status. Keep the normal
+five-minute safety interval between two separately approved jobs.
+
+Both jobs verify Composio session/account scope and the MCP schema. The first
+job stores a synthetic response after a fixed 250 ms delay; the second consumes
+the same entry and timestamp. The entry expires in six minutes and cannot be
+repopulated in that process. `exaQueryMs` is null for both jobs. Compare
+`mockResponseMs`, `stagesMs.search`, and `totalMs`; this does not measure live Exa
+latency. Verify each sandbox is gone independently. Remove the flag and restore
+the previous staging deploy when finished; leave the audit receipts intact.
+
 ## Startup preload check
 
 On the configured staging service only, the listener starts an asynchronous

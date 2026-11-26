@@ -96,6 +96,31 @@ test('only the internal approval capability can start the exact unmodified task'
   assert.equal((await f.controller.start(p.task, f.capability)).ok, false);
   assert.equal(f.runs(), 1);
 });
+test('mock cache tasks require protected benchmark preparation and cannot run after the mode changes', async () => {
+  let mock = true;
+  let runs = 0;
+  const f = fixture({ worker: {
+    status: () => ({ enabled: true, fastPathPercent: 10, mockExaCache: mock }),
+    armFor: () => 'batched',
+    run: async () => { runs++; return { ok: false }; },
+  } });
+  const request = { agentId: 'rex', market: 'Tampa, FL' };
+  assert.equal((await f.controller.prepare(request)).ok, false);
+  assert.equal((await f.controller.prepare({ ...request, benchmarkArm: 'batched' })).ok, false);
+  const p = await f.controller.prepare({ ...request, benchmarkArm: 'batched' }, f.capability);
+  assert.equal(p.task.status, 'pending');
+  assert.match(p.task.costEstimate, /No live Exa calls/);
+  assert.equal((await f.controller.start(p.task, f.capability)).ok, false);
+  p.task.status = 'approved';
+  mock = false;
+  assert.equal((await f.controller.start(p.task, f.capability)).ok, false);
+  assert.equal(runs, 0);
+  mock = true;
+  const started = await f.controller.start(p.task, f.capability);
+  assert.equal(started.ok, true);
+  await started.completion;
+  assert.equal(runs, 1);
+});
 test('durable consumed state prevents replay after a controller restart and persistence failure prevents all provider calls', async () => {
   const f = fixture();
   const p = await f.controller.prepare({ agentId: 'rex', market: 'Tampa, FL' });

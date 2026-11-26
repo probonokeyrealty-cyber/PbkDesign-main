@@ -55,6 +55,36 @@ const canary = {
 };
 const sampled = { ...request, jobId: 'market-12345678-1234-4123-8123-000000000013' };
 
+test('mock cache evidence is labeled and keeps its timestamp only in the Tampa staging cohort', async () => {
+  const f = fixture();
+  const write = f.sandbox.files.write;
+  f.sandbox.files.write = async (entries) => {
+    for (const { path, data } of entries) await write(path, data);
+  };
+  const fetchedAt = '2026-11-26T20:00:00.000Z';
+  let searches = 0;
+  const search = async (_query, options) => {
+    searches++;
+    assert.deepEqual(options, { mockCacheProbe: true });
+    return {
+      ...evidence, live: false, simulated: true,
+      searchTiming: { sessionChecksMs: 60, exaQueryMs: null, mockResponseMs: null,
+        cacheStatus: 'hit', fetchedAt },
+    };
+  };
+  const mockEnv = { ...canary, PBK_EXA_MOCK_CACHE_PROBE: 'true' };
+  const worker = createPublicMarketWorker({ env: mockEnv, createSandbox: f.createSandbox, search });
+  assert.equal((await worker.run({ ...sampled, market: 'Raleigh, NC' })).ok, false);
+  assert.equal((await worker.run(request)).ok, false);
+  assert.equal(searches, 0);
+  const result = await worker.run(sampled);
+  assert.equal(result.ok, true);
+  assert.equal(result.cleanupConfirmed, true);
+  assert.equal(result.brief.capturedAt, fetchedAt);
+  assert.equal(result.brief.simulated, true);
+  assert.equal(result.executionMetrics.searchTiming.cacheStatus, 'hit');
+});
+
 test('market labels and evidence exclude lead/code/secret input and unsafe citations', () => {
   assert.equal(normalizeMarket(' Tampa, FL '), 'Tampa, FL');
   for (const value of [

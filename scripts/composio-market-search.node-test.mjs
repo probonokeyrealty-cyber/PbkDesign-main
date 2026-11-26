@@ -331,7 +331,7 @@ function exaFixture(options = {}) {
       };
     },
   });
-  return { adapter, calls, gets };
+  return { adapter, calls, gets, session, advance: (ms) => { elapsed += ms; } };
 }
 test('staging Exa invokes one pinned action with the dedicated account and bounded defaults', async () => {
   const { adapter, calls, gets } = exaFixture();
@@ -344,6 +344,56 @@ test('staging Exa invokes one pinned action with the dedicated account and bound
     name: exaTool,
     arguments: { query: 'Public Raleigh market query', model: 'exa', stream: false, text: false },
   }]);
+});
+const mockCacheEnv = {
+  RENDER: 'true',
+  RENDER_SERVICE_ID: 'srv-dbvk7tv40ujc73e0d8gg',
+  PBK_E2B_MARKET_FAST_PATH_PERCENT: '10',
+  PBK_EXA_MOCK_CACHE_PROBE: 'true',
+};
+const tampaQuery = 'Public residential real estate market conditions for Tampa, FL. Use public sources for inventory, sold-price trends and days on market. State source dates and uncertainty; do not use personal or CRM information.';
+test('mock cache uses a single synthetic miss and hit, with fresh session and schema checks', async () => {
+  const f = exaFixture({ env: mockCacheEnv, queryFails: true });
+  const probe = { mockCacheProbe: true };
+  assert.equal(f.adapter.status().mockExaCache, true);
+  const miss = await f.adapter.search(tampaQuery, probe);
+  assert.equal(miss.ok, true);
+  assert.equal(miss.live, false);
+  assert.equal(miss.searchTiming.cacheStatus, 'miss');
+  assert.equal(miss.searchTiming.sessionChecksMs, 60);
+  assert.equal(miss.searchTiming.exaQueryMs, null);
+  assert.match(miss.answer, /simulated/i);
+  f.advance(305_000);
+  const hit = await f.adapter.search(tampaQuery, probe);
+  assert.equal(hit.ok, true);
+  assert.equal(hit.searchTiming.cacheStatus, 'hit');
+  assert.equal(hit.searchTiming.sessionChecksMs, 60);
+  assert.equal(hit.searchTiming.exaQueryMs, null);
+  assert.equal(hit.searchTiming.fetchedAt, miss.searchTiming.fetchedAt);
+  assert.equal(hit.answer, miss.answer);
+  assert.equal((await f.adapter.search(tampaQuery, probe)).ok, false);
+  assert.equal(f.gets.length, 3);
+  assert.deepEqual(f.calls, []);
+});
+test('mock cache fails closed on expiration, session drift, and ineligible traffic', async () => {
+  const probe = { mockCacheProbe: true };
+  const options = { env: mockCacheEnv };
+  const f = exaFixture(options);
+  assert.equal((await f.adapter.search(tampaQuery)).ok, false);
+  assert.equal((await f.adapter.search('Unrelated market', probe)).ok, false);
+  assert.equal((await f.adapter.search(tampaQuery, probe)).ok, true);
+  f.session.config.connected_accounts.exa = ['ca_other'];
+  assert.equal((await f.adapter.search(tampaQuery, probe)).ok, false);
+  f.session.config.connected_accounts.exa = [exaAccount];
+  options.manifest = { tools: [{ name: exaTool, inputSchema: schema }] };
+  assert.equal((await f.adapter.search(tampaQuery, probe)).ok, false);
+  delete options.manifest;
+  f.advance(360_000);
+  assert.equal((await f.adapter.search(tampaQuery, probe)).ok, false);
+  assert.deepEqual(f.calls, []);
+  const outside = exaFixture({ env: { ...mockCacheEnv, RENDER_SERVICE_ID: 'another-service' } });
+  assert.equal((await outside.adapter.search(tampaQuery, probe)).ok, false);
+  assert.deepEqual(outside.calls, []);
 });
 test('staging Exa timings distinguish a blocked query from a failed call', async () => {
   const rejected = exaFixture({ missingList: true });

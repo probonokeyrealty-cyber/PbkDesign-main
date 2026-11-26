@@ -7,6 +7,9 @@ const INPUT = '/home/user/pbk-public-market-input.json';
 const PROGRAM = '/home/user/pbk-public-market-worker.mjs';
 const STAGING_SERVICE = 'srv-dbvk7tv40ujc73e0d8gg';
 const MAX_FAST_PATH_PERCENT = 10;
+export const MOCK_EXA_MARKET = 'Tampa, FL';
+export const publicMarketQuery = (market) =>
+  `Public residential real estate market conditions for ${market}. Use public sources for inventory, sold-price trends and days on market. State source dates and uncertainty; do not use personal or CRM information.`;
 const SECRET =
   /(?:\b(?:ak_|sk-|e2b_|gh[pousr]_|github_pat_|xox[baprs]-)[A-Za-z0-9_-]{12,}|\b(?:AKIA|ASIA)[A-Z0-9]{16}\b|\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+|\bBearer\s+\S+|-----BEGIN [A-Z ]*PRIVATE KEY-----)/i;
 export function normalizeMarket(value) {
@@ -22,10 +25,10 @@ export function normalizeMarket(value) {
 export const evidenceDigest = (value) =>
   createHash('sha256').update(JSON.stringify(value)).digest('hex');
 
-export function normalizePublicEvidence(value) {
+export function normalizePublicEvidence(value, { allowSimulated = false } = {}) {
   if (
     value?.ok !== true ||
-    value?.live !== true ||
+    !(allowSimulated ? value?.simulated === true && value.live === false : value?.live === true && value.simulated !== true) ||
     typeof value.answer !== 'string' ||
     !value.answer.trim() ||
     value.answer.length > 8000 ||
@@ -81,6 +84,9 @@ export function isPublicMarketStaging(env = process.env) {
   return env.RENDER === 'true' && env.RENDER_SERVICE_ID === STAGING_SERVICE;
 }
 
+export const mockExaCacheRequested = (env) => env.PBK_EXA_MOCK_CACHE_PROBE === 'true';
+export const mockExaCacheEnabled = (env) => mockExaCacheRequested(env) && fastPathPercent(env) === 10;
+
 function fastPathPercent(env) {
   if (!isPublicMarketStaging(env)) return 0;
   const raw = env.PBK_E2B_MARKET_FAST_PATH_PERCENT;
@@ -108,6 +114,7 @@ export function createPublicMarketWorker({
   const enabled = env.PBK_E2B_MARKET_WORKER_ENABLED === 'true';
   const key = String(env.PBK_E2B_MARKET_WORKER_API_KEY ?? '').trim();
   const percent = enabled && key ? fastPathPercent(env) : 0;
+  const mockExaCache = mockExaCacheEnabled(env);
   const armFor = (jobId) => percent > 0 && selectsFastPath(jobId, percent) ? 'batched' : 'standard';
   const workerInstanceId = randomUUID();
   let sandboxSdk;
@@ -148,6 +155,7 @@ export function createPublicMarketWorker({
       enabled,
       configured: enabled && !!key,
       fastPathPercent: percent,
+      ...(mockExaCache && { mockExaCache: true }),
       sdkPreload: { ...sdkPreload },
       ready: phase === 'verified' && lastSuccess !== null && now() - lastSuccess < 120000,
       state: phase,
@@ -172,9 +180,11 @@ export function createPublicMarketWorker({
     } catch {
       return { ok: false, result: 'public_market_request_denied' };
     }
+    const batched = armFor(request.jobId) === 'batched';
+    if (mockExaCacheRequested(env) && !(mockExaCache && batched && market === MOCK_EXA_MARKET))
+      return { ok: false, result: 'public_market_mock_probe_denied' };
     busy = true;
     phase = 'running';
-    const batched = armFor(request.jobId) === 'batched';
     const began = performance.now();
     const stagesMs = {};
     let searchTiming;
@@ -196,9 +206,7 @@ export function createPublicMarketWorker({
       const searchResult = await measure('search', () =>
         bounded(
           Promise.resolve().then(() =>
-            search(
-              `Public residential real estate market conditions for ${market}. Use public sources for inventory, sold-price trends and days on market. State source dates and uncertainty; do not use personal or CRM information.`
-            )
+            search(publicMarketQuery(market), mockExaCache ? { mockCacheProbe: true } : undefined)
           ),
           deadlines.search,
           'search_timeout'
@@ -209,12 +217,24 @@ export function createPublicMarketWorker({
       if (isDuration(reported?.sessionChecksMs) && (reported.exaQueryMs === null || isDuration(reported.exaQueryMs))) {
         searchTiming = { sessionChecksMs: reported.sessionChecksMs, exaQueryMs: reported.exaQueryMs };
       }
-      const evidence = normalizePublicEvidence(searchResult);
+      if (mockExaCache) {
+        const fetched = Date.parse(reported?.fetchedAt);
+        if (!searchTiming || reported.exaQueryMs !== null ||
+          !(reported.cacheStatus === 'miss' && isDuration(reported.mockResponseMs) ||
+            reported.cacheStatus === 'hit' && reported.mockResponseMs === null) ||
+          !Number.isFinite(fetched) || new Date(fetched).toISOString() !== reported.fetchedAt)
+          throw Error('public_market_mock_timing_unavailable');
+        Object.assign(searchTiming, {
+          mode: 'mock', cacheStatus: reported.cacheStatus,
+          mockResponseMs: reported.mockResponseMs, fetchedAt: reported.fetchedAt,
+        });
+      }
+      const evidence = normalizePublicEvidence(searchResult, { allowSimulated: mockExaCache });
       const payload = {
         jobId: request.jobId,
         market,
         ...evidence,
-        capturedAt: new Date(now()).toISOString(),
+        capturedAt: mockExaCache ? searchTiming.fetchedAt : new Date(now()).toISOString(),
       };
       const input = JSON.stringify(payload);
       if (Buffer.byteLength(input) > 16000) throw Error('input_limit');
@@ -325,6 +345,7 @@ export function createPublicMarketWorker({
         sourceCount: output.sourceCount,
         limitations: output.limitations,
         evidenceDigest: output.evidenceDigest,
+        ...(mockExaCache && { simulated: true }),
       };
       result = 'public_market_brief_ready';
     } catch {

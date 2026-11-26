@@ -1,5 +1,5 @@
 import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
-import { normalizeMarket } from './public-market-worker.mjs';
+import { MOCK_EXA_MARKET, normalizeMarket } from './public-market-worker.mjs';
 
 export function recoverPublicMarketJob(job) {
   if (job?.provider !== 'e2b' || job.status !== 'running') return job;
@@ -69,6 +69,9 @@ export function createPublicMarketController({
     } catch {
       return { ok: false, result: 'public_market_request_denied' };
     }
+    const mock = worker.status().mockExaCache === true;
+    if (mock && (market !== MOCK_EXA_MARKET || benchmarkArm !== 'batched'))
+      return { ok: false, result: 'public_market_mock_probe_denied' };
     let id = randomUUID();
     // Select a matching UUID before persisting a single request; never override the rollout hash.
     if (benchmarkArm !== undefined) {
@@ -88,9 +91,12 @@ export function createPublicMarketController({
       requestedBy: 'Rex',
       createdAt: at,
       updatedAt: at,
-      summary: `Prepare a public market brief for ${market} in one temporary network-disabled worker (maximum 60 seconds).`,
-      costEstimate:
-        'One sandbox up to 60 seconds plus one public search. A five-minute safety interval applies between starts.',
+      summary: mock
+        ? `Test the simulated ${market} Exa cache in one temporary network-disabled worker.`
+        : `Prepare a public market brief for ${market} in one temporary network-disabled worker (maximum 60 seconds).`,
+      costEstimate: mock
+        ? 'One sandbox up to 60 seconds. No live Exa calls. A five-minute safety interval applies between starts.'
+        : 'One sandbox up to 60 seconds plus one public search. A five-minute safety interval applies between starts.',
       payload: { jobId: `market-${id}`, market, ...(benchmarkArm ? { benchmarkArm } : {}) },
     };
     task.payload.signature = signature(task);
@@ -139,6 +145,10 @@ export function createPublicMarketController({
       return { ok: false, result: 'public_market_approval_denied' };
     if (activeJob) return { ok: false, result: 'public_market_worker_busy' };
     const status = worker.status();
+    const mockTask = task.summary === `Test the simulated ${MOCK_EXA_MARKET} Exa cache in one temporary network-disabled worker.`;
+    if (mockTask !== (status.mockExaCache === true) ||
+      (mockTask && (job.market !== MOCK_EXA_MARKET || task.payload.benchmarkArm !== 'batched')))
+      return { ok: false, result: 'public_market_mock_probe_denied' };
     if (!status.enabled || ['disabled', 'configuration_missing'].includes(status.state))
       return { ok: false, result: status.state || 'disabled' };
     if (task.payload.benchmarkArm && (status.fastPathPercent !== 10 ||

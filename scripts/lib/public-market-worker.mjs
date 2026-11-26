@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { isIP } from 'node:net';
 import { buildPublicMarketBrief } from '../fixtures/public-market-program.mjs';
@@ -75,8 +75,7 @@ async function bounded(promise, ms, code) {
     clearTimeout(timer);
   }
 }
-const sdkCreate = async (template, options) =>
-  (await import('e2b')).Sandbox.create(template, options);
+const loadE2b = () => import('e2b');
 
 export function isPublicMarketStaging(env = process.env) {
   return env.RENDER === 'true' && env.RENDER_SERVICE_ID === STAGING_SERVICE;
@@ -101,7 +100,8 @@ function selectsFastPath(jobId, percent) {
 export function createPublicMarketWorker({
   env = process.env,
   search,
-  createSandbox = sdkCreate,
+  createSandbox,
+  loadSandboxSdk = loadE2b,
   now = Date.now,
   deadlines = { search: 20000, create: 20000, command: 15000, cleanup: 10000 },
 } = {}) {
@@ -109,6 +109,8 @@ export function createPublicMarketWorker({
   const key = String(env.PBK_E2B_MARKET_WORKER_API_KEY ?? '').trim();
   const percent = enabled && key ? fastPathPercent(env) : 0;
   const armFor = (jobId) => percent > 0 && selectsFastPath(jobId, percent) ? 'batched' : 'standard';
+  const workerInstanceId = randomUUID();
+  let sandboxSdk;
   let busy = false,
     lastSuccess = null,
     phase = !enabled ? 'disabled' : !key ? 'configuration_missing' : 'unverified',
@@ -148,6 +150,7 @@ export function createPublicMarketWorker({
     const batched = armFor(request.jobId) === 'batched';
     const began = performance.now();
     const stagesMs = {};
+    let provisioning = null;
     let uploadRequests = 0;
     async function measure(stage, action) {
       const started = performance.now();
@@ -187,8 +190,24 @@ export function createPublicMarketWorker({
         new URL('../fixtures/public-market-program.mjs', import.meta.url),
         'utf8'
       );
-      const creating = Promise.resolve().then(() =>
-        createSandbox('base', {
+      let provisionExpired = false;
+      const creating = Promise.resolve().then(async () => {
+        const timing = provisioning = {
+          sdkState: createSandbox ? 'injected' : sandboxSdk ? 'warm' : 'cold',
+          sdkLoadMs: sandboxSdk && !createSandbox ? 0 : null,
+          createMs: null,
+        };
+        if (!createSandbox && !sandboxSdk) {
+          const started = performance.now();
+          try {
+            sandboxSdk = (await loadSandboxSdk()).Sandbox;
+          } finally {
+            timing.sdkLoadMs = Math.round(performance.now() - started);
+          }
+        }
+        // If the SDK loaded after the provisioning deadline, don't issue a late create.
+        if (provisionExpired) throw Error('creation_unknown');
+        const options = {
           apiKey: key,
           timeoutMs: 60000,
           requestTimeoutMs: 15000,
@@ -198,13 +217,20 @@ export function createPublicMarketWorker({
           idempotencyKey: request.jobId,
           metadata: { pbkWorkload: 'public-market-brief', jobId: request.jobId },
           envs: {},
-        })
-      );
+        };
+        const started = performance.now();
+        try {
+          return await (createSandbox ? createSandbox('base', options) : sandboxSdk.create('base', options));
+        } finally {
+          timing.createMs = Math.round(performance.now() - started);
+        }
+      });
       try {
         sandbox = await measure('provision', () =>
           bounded(creating, deadlines.create, 'creation_unknown')
         );
       } catch {
+        provisionExpired = true;
         blockedUntil = now() + 80000;
         result = 'public_market_creation_unknown';
         // A late create response still owns a sandbox and must attempt cleanup.
@@ -298,6 +324,8 @@ export function createPublicMarketWorker({
     }
     const executionMetrics = {
       arm: batched ? 'batched' : 'standard',
+      workerInstanceId,
+      provisioning: provisioning ? { ...provisioning } : null,
       uploadRequests,
       stagesMs,
       totalMs: Math.round(performance.now() - began),

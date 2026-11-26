@@ -108,6 +108,9 @@ test('a fixed network-disabled worker returns only bound public evidence and alw
   const result = await w.run(request);
   assert.equal(result.ok, true);
   assert.equal(result.cleanupConfirmed, true);
+  assert.equal(result.executionMetrics.provisioning.sdkState, 'injected');
+  assert.equal(result.executionMetrics.provisioning.sdkLoadMs, null);
+  assert.ok(Number.isInteger(result.executionMetrics.provisioning.createMs));
   assert.match(query, /Tampa, FL/);
   assert.doesNotMatch(query, /seller|leadId/);
   const create = f.calls.find((x) => x.template);
@@ -144,6 +147,56 @@ test('invalid caller overrides and absent live public evidence never create a sa
     assert.equal((await w.run({ ...request, ...patch })).ok, false);
   assert.equal((await w.run(request)).ok, false);
   assert.equal(f.calls.length, 0);
+});
+
+test('records SDK load and create separately across cold and warm jobs in one worker', async () => {
+  const f = fixture();
+  let loads = 0;
+  const worker = createPublicMarketWorker({
+    env: config,
+    search: async () => evidence,
+    loadSandboxSdk: async () => {
+      loads++;
+      return { Sandbox: { create: f.createSandbox } };
+    },
+  });
+  worker.status();
+  assert.equal(loads, 0);
+  const cold = await worker.run(request);
+  const warm = await worker.run(sampled);
+  assert.equal(cold.ok, true);
+  assert.equal(warm.ok, true);
+  assert.equal(loads, 1);
+  assert.equal(f.calls.filter((call) => call.template).length, 2);
+  assert.equal(f.calls.filter((call) => call.kill).length, 2);
+  const a = cold.executionMetrics;
+  const b = warm.executionMetrics;
+  assert.match(a.workerInstanceId, /^[a-f0-9-]{36}$/);
+  assert.equal(a.workerInstanceId, b.workerInstanceId);
+  assert.equal(a.provisioning.sdkState, 'cold');
+  assert.ok(Number.isInteger(a.provisioning.sdkLoadMs));
+  assert.ok(Number.isInteger(a.provisioning.createMs));
+  assert.equal(b.provisioning.sdkState, 'warm');
+  assert.equal(b.provisioning.sdkLoadMs, 0);
+  assert.ok(Number.isInteger(b.provisioning.createMs));
+});
+
+test('does not create a sandbox if SDK loading outlasts the provisioning deadline', async () => {
+  const f = fixture();
+  let resolveSdk;
+  const worker = createPublicMarketWorker({
+    env: config,
+    search: async () => evidence,
+    loadSandboxSdk: () => new Promise((resolve) => { resolveSdk = resolve; }),
+    deadlines: { search: 100, create: 5, command: 10, cleanup: 10 },
+  });
+  const result = await worker.run(request);
+  assert.equal(result.result, 'public_market_creation_unknown');
+  assert.deepEqual(result.executionMetrics.provisioning, { sdkState: 'cold', sdkLoadMs: null, createMs: null });
+  resolveSdk({ Sandbox: { create: f.createSandbox } });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(f.calls, []);
+  assert.equal(result.executionMetrics.provisioning.sdkLoadMs, null);
 });
 
 test('the staging canary batches only its stable cohort and keeps the same evidence and cleanup', async () => {

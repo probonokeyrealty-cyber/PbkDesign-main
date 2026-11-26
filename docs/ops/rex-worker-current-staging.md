@@ -39,6 +39,16 @@ making provider requests. Require a configured search and worker, with 10% set.
    each saved `executionMetrics` receipt. Compare two uploads vs. one, and do
    not infer a p95 or a reliable speedup from one pair.
 
+## Cold versus warm SDK check
+
+Use the same approved benchmark arm and market for both jobs. The first job
+on a new staging worker should report `provisioning.sdkState: cold`; after the
+five-minute lease, require `warm` with the same `workerInstanceId`. Warm here
+means the SDK is loaded, not that a sandbox is reused. Each job creates and
+destroys its own sandbox. `sdkLoadMs` and `createMs` are subdivisions of the
+existing `stagesMs.provision` value, not additional time. An unfinished or
+unattempted substep reports `null`; a cached SDK reports `sdkLoadMs: 0`.
+
 To return to standard only, set the staging percentage to `0` and redeploy
 the same commit. To disable the worker rather than just batching, set
 `PBK_E2B_MARKET_WORKER_ENABLED=false`. Preserve the permanent claims and saved

@@ -124,6 +124,10 @@ async function exercise(enabled, canary = false) {
       assert.equal(finished.executionMetrics.arm, canary ? 'batched' : 'standard');
       assert.equal(finished.executionMetrics.uploadRequests, canary ? 1 : 2);
       assert.ok(Number.isInteger(finished.executionMetrics.totalMs));
+      assert.match(finished.executionMetrics.workerInstanceId, /^[a-f0-9-]{36}$/);
+      assert.equal(finished.executionMetrics.provisioning.sdkState, 'cold');
+      assert.ok(Number.isInteger(finished.executionMetrics.provisioning.sdkLoadMs));
+      assert.ok(Number.isInteger(finished.executionMetrics.provisioning.createMs));
       const replay = await approve(again.result.response.task.id, { status: 'approved' });
       assert.equal(replay.execution.ok, false);
     }

@@ -245,8 +245,12 @@ test('bridge code matches the reviewed release fingerprint outside the scoped re
   // Detected outbound voicemail stays out of seller replies and live qualification.
   // Ambiguous greetings allow only a neutral acknowledgement, and explicit opt-outs stay in intent evidence.
   // A query that times out during checkout discards the late client before dispatching SQL.
+  // Reviewed Telnyx safeguards block recording without a verified consent flow and
+  // keep Ava available for missing/rejected transfers. The isolated inbound safety suite covers both.
+  // Only their seven declarations differ from 2d324e68; all other bridge declarations are identical.
+  // Independent review adds exact-call terminal checks and preserves concurrent transcript updates.
   assert.equal(createHash('sha256').update(unchanged).digest('hex'),
-    '34e1518c09a9016e35440f4bcc9d56625f5dc4cbb4f6078df2830a95f6441692');
+    '8919cb920dea05ec803c627a5a5943e032485a499a6c7c76de8d5b1179815194');
 });
 
 test('production distribution includes reader and protocol, never the fixture signer', () => {

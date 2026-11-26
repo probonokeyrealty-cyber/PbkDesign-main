@@ -287,7 +287,7 @@
     "test:lead-field-provenance": "node ./scripts/lead-field-provenance-smoke.mjs",
     "test:ava-call-learning-backfill": "node ./scripts/ava-call-learning-backfill-smoke.mjs",
     "test:call-outcome-learning-loop": "node ./scripts/call-outcome-learning-loop-smoke.mjs",
-    "test:ava-live-call-resilience": "node ./scripts/ava-live-call-resilience-smoke.mjs",
+    "test:ava-live-call-resilience": "node ./scripts/ava-live-call-resilience-smoke.mjs && node --test ./scripts/telnyx-inbound-safety.node-test.mjs",
     "test:redis-recovery": "node ./scripts/redis-recovery-smoke.mjs",
     "test:runtime-recovery": "node --test ./scripts/postgres-runtime-regression-smoke.mjs ./scripts/agent-registry-bootstrap-smoke.mjs && node ./scripts/runtime-bootstrap-recovery-smoke.mjs && node ./scripts/redis-recovery-smoke.mjs && node --unhandled-rejections=strict ./scripts/redis-command-deadline-smoke.mjs",
     "test:analyzer-lead-sync": "node ./scripts/analyzer-lead-sync-smoke.mjs",

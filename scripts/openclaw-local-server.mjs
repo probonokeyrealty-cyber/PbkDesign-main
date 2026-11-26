@@ -802,7 +802,7 @@ const SUPABASE_URL = String(process.env.PBK_SUPABASE_URL || process.env.SUPABASE
   .replace(/\/+$/g, '');
 const SUPABASE_SERVICE_ROLE_KEY = String(process.env.PBK_SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY || '').trim();
 const SUPABASE_CALL_RECORDINGS_BUCKET = String(process.env.PBK_CALL_RECORDINGS_BUCKET || 'call_recordings').trim();
-const PBK_TELNYX_RECORD_INBOUND_CALLS = !/^(0|false|no|off)$/i.test(String(process.env.PBK_TELNYX_RECORD_INBOUND_CALLS || 'true').trim());
+const PBK_TELNYX_RECORD_INBOUND_CALLS = /^(1|true|yes|on)$/i.test(String(process.env.PBK_TELNYX_RECORD_INBOUND_CALLS || 'false').trim());
 const SUPABASE_ATTACHMENTS_BUCKET = String(process.env.PBK_ATTACHMENTS_BUCKET || 'attachments').trim();
 const AWS_REGION = String(process.env.PBK_AWS_REGION || process.env.AWS_REGION || process.env.AWS_DEFAULT_REGION || 'us-east-2').trim();
 const AWS_ACCESS_KEY_ID = String(process.env.PBK_AWS_ACCESS_KEY_ID || process.env.AWS_ACCESS_KEY_ID || '').trim();
@@ -27308,15 +27308,16 @@ async function requestHumanHandoffRecord(params = {}) {
   const reason = String(params.reason || params.notes || 'Ava requested human handoff.').trim();
   const transcript = String(params.transcript || params.text || '').trim();
   const callControlId = String(params.callControlId || params.call_control_id || params.telnyxCallControlId || params.callId || '').trim();
-  const targetPhone = normalizePhone(params.to || params.targetPhone || HUMAN_AGENT_PHONE || '');
+  const targetPhone = normalizeTelnyxTransferTarget(params.to || params.targetPhone || HUMAN_AGENT_PHONE || '');
+  const transferRequested = Boolean(callControlId && targetPhone && params.transfer !== false);
   const task = await recordAgentHandoffTask({
     fromAgent: normalizeAgentName(params.agentName || params.agent || 'Ava'),
     toAgent: params.toAgent || 'Human Operator',
     taskType: 'human_handoff',
-    status: callControlId && targetPhone ? 'ready' : 'queued',
+    status: transferRequested ? 'ready' : 'queued',
     summary: `Human handoff requested: ${reason}`,
     correlationId: callControlId || params.callId || context.leadId || '',
-    providerWrites: callControlId && targetPhone ? 'requested' : 'blocked',
+    providerWrites: transferRequested ? 'requested' : 'blocked',
     metadata: {
       reason,
       transcriptSnippet: transcript.slice(-700),
@@ -27333,11 +27334,12 @@ async function requestHumanHandoffRecord(params = {}) {
     result: 'not_attempted',
     error: 'No active Telnyx call_control_id and human phone were provided.',
   };
-  if (callControlId && targetPhone && params.transfer !== false) {
-    const speak = await speakAvaPhoneReplyByCallId(callControlId, 'I want to make sure you get the best help. Let me bring in my manager for you now.');
+  if (transferRequested) {
+    const speak = await speakAvaPhoneReplyByCallId(callControlId, 'Let me check whether a manager can join.');
     transfer = await transferTelnyxCall(callControlId, targetPhone);
     transfer.preTransferSpeak = speak;
   }
+  const transferAccepted = transfer.ok === true && !transfer.skipped;
   const slack = await toolHandlers.slackNotify({
     channel: params.channel || SLACK_UPDATES_CHANNEL_ID || SLACK_APPROVAL_CHANNEL_ID || '',
     text: `Human handoff requested for ${context.leadName || context.address || callControlId || 'seller call'}: ${reason}${transcript ? `\nLast words: ${transcript.slice(-300)}` : ''}`,
@@ -27348,7 +27350,7 @@ async function requestHumanHandoffRecord(params = {}) {
     makeActivity({
       actor: params.agentName || 'Ava',
       category: 'CALL',
-      status: transfer.ok ? 'transferred' : 'queued',
+      status: transferAccepted ? 'transferring' : 'queued',
       text: `Human handoff requested: ${reason}`,
       target: context.leadName || context.address || callControlId || 'seller call',
     })
@@ -27356,11 +27358,13 @@ async function requestHumanHandoffRecord(params = {}) {
   await persistState(state);
   return {
     ok: true,
-    result: transfer.ok ? 'live_transfer' : 'handoff_queued',
+    result: transferAccepted ? 'live_transfer' : 'handoff_queued',
     task,
     transfer,
     slack,
-    phrase: 'I want to make sure you get the best help. Let me bring in my manager - one moment.',
+    phrase: transferAccepted
+      ? 'The connection to a manager has been requested. Please hold.'
+      : "I can't connect a manager right now. I can keep helping you here.",
   };
 }
 
@@ -38445,20 +38449,17 @@ function getTelnyxBidirectionalMediaParams() {
   return { stream_bidirectional_mode: 'mp3' };
 }
 
+function normalizeTelnyxTransferTarget(value = '') {
+  const target = normalizeConversationPhone(value);
+  return /^\+[1-9]\d{7,14}$/.test(target) ? target : '';
+}
+
 async function transferTelnyxCall(callControlId = '', to = '') {
-  const target = normalizePhone(to);
+  const target = normalizeTelnyxTransferTarget(to);
   if (!callControlId) return { ok: false, skipped: true, error: 'Missing Telnyx call_control_id.' };
   if (!target) return { ok: false, skipped: true, error: 'Missing transfer target phone number.' };
   return fireTelnyxRequest('POST', `/calls/${encodeURIComponent(callControlId)}/actions/transfer`, {
     to: target,
-  });
-}
-
-async function recordTelnyxCall(callControlId = '') {
-  if (!callControlId) return { ok: false, skipped: true, error: 'Missing Telnyx call_control_id.' };
-  return fireTelnyxRequest('POST', `/calls/${encodeURIComponent(callControlId)}/actions/record_start`, {
-    format: 'mp3',
-    channels: 'single',
   });
 }
 
@@ -38492,15 +38493,18 @@ async function maybeRecordInboundTelnyxCall(callControlId = '', context = {}) {
       error: 'Missing Telnyx call_control_id.',
     };
   }
-  const result = await recordTelnyxCall(callControlId);
+  // No verified call-scoped consent flow exists. An env flag or webhook field is not consent.
   recordCallTrace('inbound_recording_start', {
     ...traceBase,
-    result: result?.ok ? 'recording_requested' : result?.result || 'recording_request_failed',
-    status: result?.ok ? 'recording' : 'warning',
-    providerStatus: result?.status || 0,
-    error: result?.error || '',
+    result: 'recording_consent_required',
+    status: 'blocked',
   });
-  return result;
+  return {
+    ok: false,
+    skipped: true,
+    result: 'recording_consent_required',
+    error: 'Automatic inbound recording is blocked until a call-scoped recording consent flow is verified.',
+  };
 }
 
 function buildTelnyxDeepgramLiveOptions(codec = DEEPGRAM_STREAM_CODEC) {
@@ -39402,6 +39406,24 @@ async function handleAvaInboundRoute(body = {}, options = {}) {
   recordToolUse('routeInboundCall');
   const parsed = parseTelnyxCallPayload(body);
   const callControlId = parsed.callControlId || body.call_control_id || body.callControlId || '';
+  const actions = [];
+  const currentCall = () => callControlId
+    ? state.calls.find(call => call.id === callControlId || call.telnyxCallControlId === callControlId)
+    : null;
+  const endedCallResponse = () => {
+    const call = currentCall();
+    if (!call || !(call.verifiedTelnyxCompletion || call.endedAt || call.ended_at
+      || /^(ended|hangup|hungup|complete|completed|failed|busy|no[-_]?answer|cancelled|canceled)$/i.test(String(call.status || '')))) return null;
+    recordCallTrace('inbound_route_skipped', {
+      callId: callControlId, result: 'call_already_ended', stage: 'handleAvaInboundRoute',
+    });
+    return {
+      ok: true, result: 'call_already_ended', route: 'ended',
+      reason: 'The call has ended; no further inbound actions were started.', call, actions,
+    };
+  };
+  let ended = endedCallResponse();
+  if (ended) return ended;
   recordCallTrace('inbound_payload_parsed', {
     callId: callControlId,
     phone: parsed.from || body.from || body.phone || '',
@@ -39423,6 +39445,8 @@ async function handleAvaInboundRoute(body = {}, options = {}) {
   });
   let lead = await findInboundLeadContext(parsed.from || body.from || body.phone || '');
   lead = await ensureInboundLeadProfileContext(lead, parsed, { callControlId });
+  ended = endedCallResponse();
+  if (ended) return ended;
   const spokenLeadName = getSpokenLeadName(lead.leadName);
   const inboundDiagnostic = {
     callControlId,
@@ -39463,6 +39487,18 @@ async function handleAvaInboundRoute(body = {}, options = {}) {
     route = 'transfer_jordan';
     reason = 'High-motivation returning lead routed directly to Jordan.';
   }
+  const requestedRoute = route;
+  const transferTarget = normalizeTelnyxTransferTarget(route === 'transfer_underwriting' ? UNDERWRITING_AGENT_PHONE : HUMAN_AGENT_PHONE);
+  let fallbackNotice = '';
+  if (route.startsWith('transfer_') && !transferTarget) {
+    route = 'ava_qualify';
+    reason = 'Human transfer destination is unavailable; continuing with Ava without transferring.';
+    fallbackNotice = "I can't connect you to a team member right now. I can keep helping you here. What can I help you with?";
+  } else if (route === 'after_hours_voicemail') {
+    route = 'ava_qualify';
+    reason = `After-hours recording is unavailable in ${INBOUND_TIMEZONE}; continuing with Ava without recorded voicemail.`;
+    fallbackNotice = "You've reached Probono Key Realty after hours. I can't take a recorded voicemail, but I can help with your property inquiry here. What can I help you with?";
+  }
   recordCallTrace('inbound_route_selected', {
     callId: callControlId,
     phone: parsed.from || '',
@@ -39476,7 +39512,7 @@ async function handleAvaInboundRoute(body = {}, options = {}) {
     stage: 'handleAvaInboundRoute',
   });
 
-  const promptContext = buildAvaInboundPromptContext({
+  let promptContext = buildAvaInboundPromptContext({
     lead,
     route,
     from: parsed.from,
@@ -39508,7 +39544,7 @@ async function handleAvaInboundRoute(body = {}, options = {}) {
     to: parsed.to,
     direction: 'inbound',
     provider: 'Telnyx',
-    status: route.startsWith('transfer_') ? 'transferring' : route === 'after_hours_voicemail' ? 'voicemail' : 'live',
+    status: 'live',
     telnyxCallControlId: callControlId,
     telnyxCallLegId: parsed.callLegId,
     telnyxCallSessionId: parsed.callSessionId,
@@ -39516,22 +39552,41 @@ async function handleAvaInboundRoute(body = {}, options = {}) {
     participantRole: lead.found ? 'returning-seller' : 'new-caller',
     participantConfidence: lead.found ? 0.78 : 0.52,
   });
-  upsertCall(state, callRecord);
-  recordCallTrace('call_record_upserted', {
-    callId: callRecord.id || callControlId,
-    phone: parsed.from || '',
-    leadId: lead.leadId || '',
-    leadName: spokenLeadName || '',
-    address: lead.address || '',
-    source: lead.source || '',
-    route,
-    status: callRecord.status || '',
-    stage: 'upsertCall',
-  });
+  const preserveCallEnrichment = () => {
+    const saved = currentCall();
+    if (!saved) return;
+    // Callback defaults are not authoritative lead identity or routing instructions.
+    const resolved = Object.fromEntries([
+      'leadId', 'leadName', 'address', 'phone', 'from', 'to', 'direction', 'provider',
+      'status', 'script', 'participantRole', 'participantConfidence', 'telnyxCallControlId',
+    ].map(key => [key, callRecord[key]]));
+    Object.assign(callRecord, saved, resolved, {
+      id: saved.id || callRecord.id,
+      telnyxCallLegId: callRecord.telnyxCallLegId || saved.telnyxCallLegId || '',
+      telnyxCallSessionId: callRecord.telnyxCallSessionId || saved.telnyxCallSessionId || '',
+    });
+  };
+  const registerCall = () => {
+    preserveCallEnrichment();
+    upsertCall(state, callRecord);
+    recordCallTrace('call_record_upserted', {
+      callId: callRecord.id || callControlId,
+      phone: parsed.from || '',
+      leadId: lead.leadId || '',
+      leadName: spokenLeadName || '',
+      address: lead.address || '',
+      source: lead.source || '',
+      route,
+      status: callRecord.status || '',
+      stage: 'upsertCall',
+    });
+  };
+  if (!callControlId || !route.startsWith('transfer_')) registerCall();
 
-  const actions = [];
   if (callControlId) {
     actions.push({ action: 'answer', result: await answerTelnyxCall(callControlId) });
+    ended = endedCallResponse();
+    if (ended) return ended;
     actions.push({
       action: 'record',
       result: await maybeRecordInboundTelnyxCall(callControlId, {
@@ -39541,46 +39596,46 @@ async function handleAvaInboundRoute(body = {}, options = {}) {
         leadName: spokenLeadName,
       }),
     });
+    ended = endedCallResponse();
+    if (ended) return ended;
     if (route === 'transfer_jordan' || route === 'transfer_underwriting') {
-      const target = route === 'transfer_underwriting' ? UNDERWRITING_AGENT_PHONE : HUMAN_AGENT_PHONE;
-      actions.push({
-        action: 'speak',
-        result: await speakTelnyxCall(callControlId, route === 'transfer_underwriting' ? 'Thanks for calling. I am connecting you to underwriting now. Please hold.' : 'I see you are ready to move fast. I am connecting you to Jordan, our lead acquisition manager. Please hold.'),
+      const transfer = await transferTelnyxCall(callControlId, transferTarget);
+      actions.push({ action: 'transfer', result: transfer });
+      ended = endedCallResponse();
+      if (ended) return ended;
+      if (transfer.ok === true && !transfer.skipped) {
+        callRecord.status = 'transferring';
+      } else {
+        route = 'ava_qualify';
+        reason = 'Human transfer was not accepted; continuing with Ava without transferring.';
+        fallbackNotice = "I can't connect you to a team member right now. I can keep helping you here. What can I help you with?";
+        promptContext = buildAvaInboundPromptContext({ lead, route, from: parsed.from, to: parsed.to });
+        callRecord.script = promptContext;
+      }
+      registerCall();
+    }
+    if (route === 'ava_qualify') {
+      const stream = await startTelnyxMediaStream(callControlId, {
+        route,
+        leadId: lead.leadId,
+        leadName: spokenLeadName,
+        address: lead.address,
+        phone: parsed.from,
+        leadSource: lead.source,
+        streamTrack: DEEPGRAM_STREAM_TRACK,
+        streamCodec: DEEPGRAM_STREAM_CODEC,
       });
-      actions.push({ action: 'transfer', result: await transferTelnyxCall(callControlId, target) });
-    } else if (route === 'after_hours_voicemail') {
-      actions.push({
-        action: 'streaming_start',
-        result: await startTelnyxMediaStream(callControlId, {
-          route,
-          leadId: lead.leadId,
-          leadName: spokenLeadName,
-          address: lead.address,
-          phone: parsed.from,
-          leadSource: lead.source,
-          streamTrack: DEEPGRAM_STREAM_TRACK,
-          streamCodec: DEEPGRAM_STREAM_CODEC,
-        }),
-      });
-      actions.push({
-        action: 'speak',
-        result: await speakTelnyxCall(callControlId, 'You have reached Probono Key Realty after hours. Please leave your name, number, property address, and what you need help with. We will call you back first thing next business day.'),
-      });
-    } else {
-      actions.push({
-        action: 'streaming_start',
-        result: await startTelnyxMediaStream(callControlId, {
-          route,
-          leadId: lead.leadId,
-          leadName: spokenLeadName,
-          address: lead.address,
-          phone: parsed.from,
-          leadSource: lead.source,
-          streamTrack: DEEPGRAM_STREAM_TRACK,
-          streamCodec: DEEPGRAM_STREAM_CODEC,
-        }),
-      });
-      if (PBK_AVA_INBOUND_CALL_CONTROL_GREETING_ENABLED) {
+      actions.push({ action: 'streaming_start', result: stream });
+      ended = endedCallResponse();
+      if (ended) return ended;
+      const streamAccepted = stream.ok === true && !stream.skipped;
+      if (!streamAccepted) {
+        reason = 'Inbound audio assistance is unavailable; the caller was not transferred.';
+        fallbackNotice = "I'm having trouble with the call connection and can't continue right now. Please try calling again later.";
+      }
+      if (fallbackNotice) {
+        actions.push({ action: 'speak', result: await speakAvaPhoneReplyByCallId(callControlId, fallbackNotice) });
+      } else if (PBK_AVA_INBOUND_CALL_CONTROL_GREETING_ENABLED) {
         actions.push({
           action: 'speak',
           result: await speakAvaPhoneReplyByCallId(callControlId, lead.found && spokenLeadName ? `Hi ${spokenLeadName}, this is Ava with Probono Key Realty. I pulled up your file. What can I help you with today?` : 'Hi, this is Ava with Probono Key Realty. Thanks for calling. What property can I help you with today?'),
@@ -39604,21 +39659,28 @@ async function handleAvaInboundRoute(body = {}, options = {}) {
           stage: 'handleAvaInboundRoute',
         });
       }
-      actions.push({
-        action: 'start_ai_assistant',
-        result: await startTelnyxAiAssistant(callControlId, promptContext),
-      });
+      ended = endedCallResponse();
+      if (ended) return ended;
+      if (streamAccepted) {
+        actions.push({
+          action: 'start_ai_assistant',
+          result: await startTelnyxAiAssistant(callControlId, promptContext),
+        });
+      }
     }
   }
 
-  const liveAction = actions.some((item) => item.result?.ok);
+  const liveAction = actions.some((item) => item.result?.ok && !item.result?.skipped);
   const missingProvider = actions.some((item) => item.result?.skipped || item.result?.result === 'provider_missing');
   const streamingAction = actions.find((item) => item.action === 'streaming_start');
-  const streamRequired = ['ava_qualify', 'after_hours_voicemail'].includes(route) && Boolean(callControlId);
-  const streamFailed = streamRequired && (!streamingAction || !streamingAction.result?.ok);
+  const streamRequired = route === 'ava_qualify' && Boolean(callControlId);
+  const streamFailed = streamRequired && (!streamingAction || !streamingAction.result?.ok || Boolean(streamingAction.result.skipped));
   const result = streamFailed ? 'provider_missing' : liveAction ? 'live' : missingProvider ? 'provider_missing' : callControlId ? 'queued_for_approval' : 'local_view_only';
+  routeRecord.route = route;
+  routeRecord.reason = reason;
+  routeRecord.promptContext = promptContext;
   routeRecord.status = result;
-  routeRecord.payload = { ...routeRecord.payload, leadResolver: inboundDiagnostic, actions };
+  routeRecord.payload = { ...routeRecord.payload, leadResolver: inboundDiagnostic, requestedRoute, actions };
   recordCallTrace('inbound_actions_completed', {
     callId: callControlId,
     phone: parsed.from || '',
@@ -39668,13 +39730,18 @@ async function handleAvaInboundRoute(body = {}, options = {}) {
     },
     createdAt: isoNow(),
   });
-  if (['transfer_jordan', 'transfer_underwriting', 'after_hours_voicemail'].includes(route)) {
+  if (['transfer_jordan', 'transfer_underwriting', 'after_hours_voicemail'].includes(requestedRoute)) {
     await toolHandlers.slackNotify({
-      channel: route === 'after_hours_voicemail' ? '#voicemails' : '#alerts',
-      text: route === 'after_hours_voicemail' ? `After-hours voicemail flow started for ${parsed.from || 'unknown caller'}.` : `Inbound call routed to ${route === 'transfer_underwriting' ? 'underwriting' : 'Jordan'}: ${spokenLeadName || parsed.from || 'caller'}${lead.motivationScore ? ` - score ${lead.motivationScore}` : ''}.`,
+      channel: '#alerts',
+      text: streamFailed ? `Inbound assistance unavailable: ${reason}` : route === 'ava_qualify'
+        ? `Inbound call continuing with Ava: ${reason}`
+        : `Inbound transfer requested to ${route === 'transfer_underwriting' ? 'underwriting' : 'Jordan'}: ${spokenLeadName || parsed.from || 'caller'}${lead.motivationScore ? ` - score ${lead.motivationScore}` : ''}.`,
     });
   }
   await persistState(state);
+  ended = endedCallResponse();
+  if (ended) return ended;
+  preserveCallEnrichment();
   await projectLiveConversationRecord({
     record: callRecord,
     projector: projectCallEvent,

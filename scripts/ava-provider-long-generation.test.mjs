@@ -131,9 +131,9 @@ test('only existing allowed staff origins can send the existing team-session hea
 
 test('direct chat preserves the same restricted-operator permissions as the existing proxy', async () => {
   const context = vm.createContext({});
-  if (source.includes("import { getAvaChatRequiredPermissions }")) {
+  if (source.includes("from './ava-team-chat-permissions.mjs'")) {
     const helper = readFileSync(new URL('./ava-team-chat-permissions.mjs', import.meta.url), 'utf8');
-    vm.runInContext(helper.replace('export function', 'function'), context);
+    vm.runInContext(helper.replaceAll('export function', 'function'), context);
   }
   const start = source.indexOf('function authorizeDirectTeamBridgeRequest(');
   const finish = source.indexOf('\nfunction getTeamApprovalRestriction(', start);
@@ -146,16 +146,17 @@ test('direct chat preserves the same restricted-operator permissions as the exis
   ];
   for (const [permission, message] of cases) {
     const permissions = Object.fromEntries(cases.map(([key]) => [key, key !== permission]));
-    const body = { message };
-    const direct = context.authorizeDirectTeamBridgeRequest({ method: 'POST', pathname: '/api/assistant/chat', body, permissions });
-    assert.equal(direct.statusCode, 403, `${permission} must remain enforced before chat`);
-    assert.equal(direct.permission, permission);
     const proxy = createProxyFixture(async target => Response.json(new URL(target).pathname === '/api/auth/team/verify'
       ? { ok: true, permissions } : { ok: true }));
-    const response = await proxy({ httpMethod: 'POST', path: '/.netlify/functions/pbk-bridge-proxy',
-      queryStringParameters: { path: '/api/assistant/chat' }, headers: { 'x-pbk-team-token': 'fixture-team' }, body: JSON.stringify(body) });
-    assert.equal(response.statusCode, direct.statusCode);
-    assert.equal(JSON.parse(response.body).permission, direct.permission);
+    for (const body of [{ message }, { message: 'Review my last call.', messages: [{ role: 'user', content: message }] }]) {
+      const direct = context.authorizeDirectTeamBridgeRequest({ method: 'POST', pathname: '/api/assistant/chat', body, permissions });
+      assert.equal(direct.statusCode, 403, permission + ' must remain enforced before chat');
+      assert.equal(direct.permission, permission);
+      const response = await proxy({ httpMethod: 'POST', path: '/.netlify/functions/pbk-bridge-proxy',
+        queryStringParameters: { path: '/api/assistant/chat' }, headers: { 'x-pbk-team-token': 'fixture-team' }, body: JSON.stringify(body) });
+      assert.equal(response.statusCode, direct.statusCode);
+      assert.equal(JSON.parse(response.body).permission, direct.permission);
+    }
   }
   assert.equal(context.authorizeDirectTeamBridgeRequest({ method: 'POST', pathname: '/api/assistant/chat', body: { message: 'Explain clear spoken communication.' }, permissions: {} }).ok, true);
   assert.equal(context.authorizeDirectTeamBridgeRequest({ method: 'POST', pathname: '/api/assistant/chat', body: { message: 'Summarize the latest call recording.' }, permissions: {} }).ok, true);

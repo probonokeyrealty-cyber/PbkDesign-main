@@ -1,3 +1,4 @@
+import { readAvaChatCurrentRequest } from './ava-team-chat-permissions.mjs';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
@@ -81,7 +82,7 @@ function chatFixture({ answer = 'Actual answer', cancel = false, source = 'forge
     readBody: async () => ({ message: 'local question', source,
       metadata: { timingProof: { signature: 'forged' }, channel: 'phone', outputCodePoints: 1 } }),
     normalizeConversationMessages: () => [], sanitizePublicAvaChatTurn: content => ({ content }),
-    getLastUserMessage: (_, fallback) => fallback,
+    readAvaChatCurrentRequest,
     getPublicAvaAssistantSessionId: () => 'local-session', readPublicAvaAssistantSession: async () => ({ history: [] }),
     dropCurrentAssistantUserTurn: () => [], normalizeAssistantSession, mergeAssistantHistories: () => [],
     detectAssistantIntent: () => ({ intent: 'general' }), isAvaReadOnlyAuditRequest: () => false,

@@ -1,3 +1,4 @@
+import { readAvaChatCurrentRequest } from './ava-team-chat-permissions.mjs';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
@@ -37,7 +38,7 @@ function fixture({ abortRead = false, blockFinal = false, general = false, messa
     readBody: async () => ({ message: 'find absent fixture', sessionId: 'isolated', messages, historyMode }),
     normalizeConversationMessages: () => [],
     sanitizePublicAvaChatTurn: (content) => ({ content }),
-    getLastUserMessage: (_, fallback) => fallback,
+    readAvaChatCurrentRequest,
     getPublicAvaAssistantSessionId: () => 'isolated',
     readPublicAvaAssistantSession: async () => {
       clock += 1500;

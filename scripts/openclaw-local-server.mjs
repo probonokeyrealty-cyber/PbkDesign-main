@@ -70,7 +70,7 @@ import { buildAvaDecisionMessages, isAvaCompactDecisionSafe } from './ava-decisi
 import { joinAvaSpeechResponses, splitAvaSpeechText } from './ava-speech-chunks.mjs';
 import { createAvaDecisionPreview, readDeepSeekStream, sanitizeAvaStreamReply } from './ava-deepseek-stream.mjs';
 import { streamAvaChatResponse } from './ava-chat-events.mjs';
-import { getAvaChatRequiredPermissions } from './ava-team-chat-permissions.mjs';
+import { getAvaChatRequiredPermissions, readAvaChatCurrentRequest } from './ava-team-chat-permissions.mjs';
 import { EventTypes, getDefaultEventBus, getEventBusStatus, publishEvent as publishEventBusEvent } from './event-bus/streams.mjs';
 import { createRuntimeCoverageSampler } from './runtime-coverage-sampler.mjs';
 import { buildRexKpiSnapshot, classifyRexLeadPriority, proposeAutonomousRexGoals, selectRexProactiveLeadAction } from './rex-autonomy.mjs';
@@ -117,7 +117,7 @@ import { SYNTHETIC_EDGE_CASE_SOURCE, buildSyntheticEdgeCaseObjections } from './
 import { getObservabilityStatus as getPbkObservabilityStatus, incrementObservabilityCounter, initializeObservability, recordEventBusBacklogMetric, recordGuardrailViolationMetric, recordLatencyMetric, withObservabilitySpan } from './observability.mjs';
 import { recordAvaResponseLatencyStatus } from './ava-latency-status.mjs';
 import { readPhoneTtsAudio, summarizePhoneTurnTiming } from './ava-phone-latency.mjs';
-import { appendAssistantMessage, buildAssistantPrompt, createAssistantSessionId, detectAssistantIntent, findAssistantLeadMatch, findAssistantStreetLeads, normalizeAssistantSession, planAssistantIntent, sanitizeAssistantTurn } from './ava-assistant-chat.mjs';
+import { appendAssistantMessage, buildAssistantPrompt, createAssistantSessionId, detectAssistantIntent, findAssistantLeadMatch, findAssistantStreetLeads, normalizeAssistantSession, planAssistantIntent, sanitizeAssistantTurn, summarizeAvaTodayWorkQueue } from './ava-assistant-chat.mjs';
 import { runAvaMissionController } from './ava-mission-controller.mjs';
 import { buildLeadCommitEnvelope } from './lead-field-provenance.mjs';
 import { loadBatchReviewRoster } from './batch-review-roster.mjs';
@@ -66671,7 +66671,7 @@ async function handleInternalAvaAssistantChatRequest(request) {
   const timingTurn = createBridgeAgentTimingTurn('chat');
   const body = await requestTiming.measure('body_read', () => readBody(request));
   const messages = normalizeConversationMessages(body.messages, { assistantMaxChars: 256_000 });
-  const sanitizedInput = sanitizePublicAvaChatTurn(getLastUserMessage(messages, body.message || body.query || body.text || body.prompt || ''));
+  const sanitizedInput = sanitizePublicAvaChatTurn(readAvaChatCurrentRequest(body));
   const text = sanitizedInput.content;
   if (!text) {
     return {
@@ -66832,6 +66832,11 @@ async function handleInternalAvaAssistantChatRequest(request) {
       const mao = Number(toolResult?.analysis?.mao ?? toolResult?.mao ?? 0);
       const profit = Number(toolResult?.analysis?.profit ?? toolResult?.profit ?? 0);
       answer = [`I finished the deal math for ${assistantPlan.toolPlan.params.address}.`, arv ? `ARV ${currency(arv)}.` : '', mao ? `MAO ${currency(mao)}.` : '', profit ? `Estimated profit ${currency(profit)}.` : ''].filter(Boolean).join(' ');
+    }
+  } else if (assistantPlan.action === 'tool_plan' && assistantPlan.toolPlan?.toolName === 'getTodayWorkQueue') {
+    ({ answer, toolResult } = summarizeAvaTodayWorkQueue(buildFounderWorkQueueSnapshot()));
+    if (toolResult.openCommand) {
+      assistantPlan.suggestions = [...new Set([toolResult.openCommand, ...assistantPlan.suggestions])];
     }
   } else if (assistantPlan.action === 'tool_plan' && assistantPlan.toolPlan?.toolName === 'getApprovals') {
     answer = buildInternalAssistantApprovalAnswer();

@@ -688,6 +688,10 @@ function looksLikeReadOnlyAssistantAudit(text = '') {
 export function detectAssistantIntent(message = '') {
   const text = cleanText(message, 2400);
   const lower = text.toLowerCase();
+  const queueQuestion = lower.replace(/\u2019/g, "'").replace(/[.?!]+$/, '').trim();
+  if (/^(?:what should i (?:work on|do) (?:first )?today|(?:what is|what's) in (?:today's |the )?work queue|what needs my attention today|summarize (?:today's |the )?work queue)$/.test(queueQuestion)) {
+    return { intent: 'today_work_queue', message: text, classifierSource: 'regex', readOnly: true };
+  }
   const phone = extractPhone(text);
   const address = extractAddress(text);
   const localIntent = buildAssistantIntentFromClassifier(
@@ -878,6 +882,43 @@ export function detectAssistantIntent(message = '') {
   return { intent: 'general', message: text, classifierSource: 'regex' };
 }
 
+export function summarizeAvaTodayWorkQueue(snapshot) {
+  if (snapshot?.ok !== true || !Array.isArray(snapshot.items) ||
+      /(?:unavailable|pending)$/.test(String(snapshot.source || ''))) {
+    return {
+      answer: 'I could not read Today’s work queue. Open Work queue to check its connection status.',
+      toolResult: { ok: false, result: 'today_work_queue_unavailable' },
+    };
+  }
+  const approvals = snapshot.summary?.approvals || 0;
+  const priority = snapshot.items[0];
+  const nextSteps = new Map([
+    ['call', ['Open Live call', 'Open Live call to see what is happening.']],
+    ['message', ['Open Inbox', 'Open Inbox to review the message.']],
+    ['admin_task', ['Open Admin activity', 'Open Admin activity to review the task.']],
+    ['lead', ['Open Work queue', 'Open Work queue to review the highest-ranked lead.']],
+  ]);
+  const [openCommand, answer] = approvals > 0
+    ? ['Open Approvals', approvals === 1
+      ? 'One item needs your approval. Open Approvals to review it.'
+      : approvals + ' items need your approval. Open Approvals to review them.']
+    : nextSteps.get(priority?.recordKind) || (priority
+      ? ['Open Work queue', 'Open Work queue to review the highest-ranked item.']
+      : ['Open Leads', 'Today’s queue is empty. Open Leads to pick your next record.']);
+  return {
+    answer,
+    toolResult: {
+      ok: true,
+      result: 'today_work_queue_summary',
+      itemCount: snapshot.items.length,
+      pendingApprovals: approvals,
+      nextKind: approvals > 0 ? 'approval' : priority?.recordKind || null,
+      openCommand,
+      generatedAt: snapshot.generatedAt || null,
+    },
+  };
+}
+
 export function buildAssistantSuggestions(intent = 'general', { publicMode = true } = {}) {
   if (publicMode) {
     if (intent === 'analyze_deal')
@@ -888,6 +929,7 @@ export function buildAssistantSuggestions(intent = 'general', { publicMode = tru
   }
 
   if (intent === 'analyze_deal') return ['Share the address', 'Run deal math', 'Draft seller question'];
+  if (intent === 'today_work_queue') return ['Open Work queue', 'Open Approvals', 'Open Inbox'];
   if (intent === 'approvals')
     return ['Show what needs review', 'Summarize approvals', 'Find the related lead'];
   if (intent === 'call') return ['Prepare call request', 'Find the lead first', 'Write an opener'];
@@ -1000,7 +1042,7 @@ export function planAssistantIntent(detected = {}, options = {}) {
     };
   }
 
-  if (publicMode && ['approvals', 'lead_lookup', 'summary'].includes(intent)) {
+  if (publicMode && ['approvals', 'lead_lookup', 'summary', 'today_work_queue'].includes(intent)) {
     return {
       action: 'blocked_public_private_data',
       answer:
@@ -1208,6 +1250,7 @@ export function planAssistantIntent(detected = {}, options = {}) {
         '• Find leads by name, address, or phone, or ask me to review the latest call from the lead’s Ava Chat.',
         '• Give me a property address to run the deal math or ask for a contract draft.',
         '• Ask me to prepare a call, schedule a follow-up, or set up a nurture sequence. I can check the channel and timing for a seller message.',
+        '• Ask what you should work on today, or say “Open Work queue” to go straight to it.',
         '• Ask what’s waiting for approval or delegate a specific task to Rex, Max, or another registered PBK agent.',
         '',
         'Calls, sends, scheduling, and other provider actions go through the Command Center approval flow.',
@@ -1612,6 +1655,23 @@ export function planAssistantIntent(detected = {}, options = {}) {
         providerWrite: false,
         requiresBridgeConfirmation: true,
         retryable: true,
+      },
+      usedIntent: intent,
+    };
+  }
+
+  if (!publicMode && intent === 'today_work_queue') {
+    const linkedLead = Boolean(options.leadId || options.session?.leadId);
+    return {
+      action: linkedLead ? 'today_queue_requires_workspace' : 'tool_plan',
+      answer: linkedLead
+        ? 'Open Today to review the workspace queue. This chat is scoped to the current lead.'
+        : 'I will check Today’s ranked work queue.',
+      suggestions: linkedLead ? ['Open Work queue'] : suggestions,
+      toolPlan: linkedLead ? null : {
+        toolName: 'getTodayWorkQueue',
+        params: {},
+        providerWrite: false,
       },
       usedIntent: intent,
     };

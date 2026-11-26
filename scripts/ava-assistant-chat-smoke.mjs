@@ -10,7 +10,10 @@ import {
   detectAssistantIntent,
   findAssistantStreetLeads,
   planAssistantIntent,
+  summarizeAvaTodayWorkQueue,
 } from './ava-assistant-chat.mjs';
+
+import { getAvaChatRequiredPermissions, readAvaChatCurrentRequest } from './ava-team-chat-permissions.mjs';
 
 const root = process.cwd();
 const avaChatRoute = readFileSync(resolve(root, 'src/app/routes/AvaChat.tsx'), 'utf8');
@@ -48,6 +51,49 @@ assert.match(
   'Assistant history should explain when only the first part of a turn was retained.'
 );
 
+
+for (const command of ['What should I work on today?', 'What’s in today’s work queue?', 'Summarize the work queue']) {
+  const intent = detectAssistantIntent(command);
+  assert.equal(intent.intent, 'today_work_queue');
+  assert.equal(intent.readOnly, true);
+  const plan = planAssistantIntent(intent, { publicMode: false, authenticated: true });
+  assert.deepEqual(plan.toolPlan, { toolName: 'getTodayWorkQueue', params: {}, providerWrite: false });
+  assert.equal(planAssistantIntent(intent, { publicMode: true }).toolPlan, null);
+  assert.equal(planAssistantIntent(intent, { publicMode: false, authenticated: false }).toolPlan, null);
+  assert.equal(planAssistantIntent(intent, { publicMode: false, authenticated: true, leadId: 'fixture-lead' }).toolPlan, null);
+}
+assert.notEqual(detectAssistantIntent('Summarize the work queue and send all messages').intent, 'today_work_queue');
+const today = { ok: true, source: 'render-postgres', summary: { approvals: 2 }, items: [{ recordKind: 'call', body: 'Fictional private evidence' }] };
+const approvedQueue = summarizeAvaTodayWorkQueue(today);
+assert.equal(approvedQueue.toolResult.openCommand, 'Open Approvals');
+assert.match(approvedQueue.answer, /2 items need your approval/);
+assert.doesNotMatch(JSON.stringify(approvedQueue), /Fictional private evidence/);
+assert.equal(summarizeAvaTodayWorkQueue({ ...today, summary: { approvals: 0 } }).toolResult.openCommand, 'Open Live call');
+assert.equal(summarizeAvaTodayWorkQueue({ ...today, items: [], summary: {} }).toolResult.openCommand, 'Open Leads');
+assert.equal(summarizeAvaTodayWorkQueue({ ...today, source: 'render-postgres-unavailable' }).toolResult.ok, false);
+assert.match(bridge, /toolName === 'getTodayWorkQueue'\) \{\s*\(\{ answer, toolResult \} = summarizeAvaTodayWorkQueue\(buildFounderWorkQueueSnapshot\(\)\)\);/);
+
+
+const chatPath = '/api/assistant/chat';
+for (const [message, permission] of [['Call the seller', 'canPlaceCalls'], ['Send a text', 'canSendSms'], ['Send an email', 'canSendEmail']]) {
+  assert.equal(getAvaChatRequiredPermissions(chatPath, {
+    messages: [{ role: 'user', content: message }],
+  }).has(permission), true, permission + ' must apply to the latest conversation turn');
+}
+assert.equal(getAvaChatRequiredPermissions(chatPath, {
+  messages: [{ role: 'user', content: 'Send a text' }, { role: 'user', content: 'What should I work on today?' }],
+}).has('canSendSms'), false, 'Historical turns must not restrict a current read');
+assert.equal(getAvaChatRequiredPermissions(chatPath, {
+  query: 'Send an email',
+}).has('canSendEmail'), true, 'The query alias used by the bridge must honor permissions');
+
+const completedOnly = {
+  historyMode: 'completed-only',
+  message: 'What should I work on today?',
+  messages: [{ role: 'user', content: 'Send a text' }, { role: 'assistant', content: 'I prepared a draft.' }],
+};
+assert.equal(readAvaChatCurrentRequest(completedOnly), completedOnly.message);
+assert.equal(getAvaChatRequiredPermissions(chatPath, completedOnly).has('canSendSms'), false);
 const analyzeIntent = detectAssistantIntent('Analyze 202 Cherry Ln and tell me the MAO.');
 assert.equal(analyzeIntent.intent, 'analyze_deal', 'Assistant should detect deal-analysis requests.');
 assert.equal(analyzeIntent.address, '202 Cherry Ln', 'Assistant should extract a simple street address from analysis requests.');

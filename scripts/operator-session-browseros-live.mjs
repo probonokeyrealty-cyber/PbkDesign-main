@@ -4,7 +4,8 @@ import { mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { dirname, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium, expect } from '@playwright/test';
-import { parseOptions as parseAnalyzerOptions, requestDisposition as analyzerDisposition } from './analyzer-browseros-mobile-live.mjs';
+import { parseOptions as parseAnalyzerOptions, requestDisposition as analyzerDisposition, fingerprintDrafts } from './analyzer-browseros-mobile-live.mjs';
+import { connectReadOnlyPage } from './qa-readonly-page-cdp.mjs';
 import { fixtureResponse, sampleApproval } from './fixtures/faster-triage-fixture.mjs';
 
 const authKey = 'pbk:team-session:v1';
@@ -82,7 +83,11 @@ export function observeContextAssets(context, pins, base, onPageError = () => {}
   return {
     async verifyPage(page) {
       assert.ok(pages.has(page), 'QA page has no loaded-build observer');
-      return pages.get(page).proof.verify();
+      await page.waitForLoadState('networkidle');
+      const proof = pages.get(page).proof;
+      const loaded = await proof.verify();
+      proof.stop();
+      return loaded;
     },
     async verifyAll() {
       assert.ok(pages.size, 'No QA page evidence');
@@ -136,17 +141,7 @@ function loadPins(options) {
 }
 
 async function fingerprintSource(page, base) {
-  return page.evaluate(async base => {
-    if (location.origin !== base) throw Error('Source tab moved; preservation cannot be verified');
-    const result = {};
-    for (const [scope, storage] of [['local', localStorage], ['session', sessionStorage]]) {
-      for (const key of Object.keys(storage).filter(k => /draft|analyzer|compose/i.test(k)).sort()) {
-        const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(storage.getItem(key) || ''));
-        result[scope + ':' + key] = Array.from(new Uint8Array(digest), b => b.toString(16).padStart(2, '0')).join('');
-      }
-    }
-    return result;
-  }, base);
+  return fingerprintDrafts(page, base);
 }
 
 async function protect(context, options, pins) {
@@ -329,14 +324,24 @@ async function runOperatorSessionProof(options) {
   const report = { ok: false, revision: options.revision, verificationMode: 'live_assets_and_auth_sample_business_state',
     productionBusinessActionsVerified: false, approvalDecisionExecutionAttempted: false, modes: [] };
   mkdirSync(options.output, { recursive: true });
-  let source, before;
+  let source, qaBrowser;
+  const originals = new Map();
+  const connections = [];
   try {
-    const browser = await chromium.connectOverCDP(options.cdpUrl);
-    source = browser.contexts().flatMap(context => context.pages()).find(page => {
-      try { return new URL(page.url()).origin === options.base; } catch { return false; }
+    const targets = await fetch(options.cdpUrl + '/json/list', { signal: AbortSignal.timeout(20000) }).then(response => response.json());
+    const sourceTargets = targets.filter(target => {
+      try { return target.type === 'page' && new URL(target.url).origin === options.base; } catch { return false; }
     });
+    for (const target of sourceTargets) {
+      const page = await connectReadOnlyPage(target, options.cdpUrl);
+      connections.push(page);
+      originals.set(page, await fingerprintSource(page, options.base));
+      if (!source && await page.evaluate(key => {
+        try { const value = JSON.parse(localStorage.getItem(key) || 'null'); return Boolean(value?.token && Date.parse(value.expiresAt) > Date.now()); }
+        catch { return false; }
+      }, authKey)) source = page;
+    }
     assert.ok(source, 'An already unlocked PBK source tab is required');
-    before = await fingerprintSource(source, options.base);
     const manifest = await source.evaluate(async () => {
       const response = await fetch('/pbk-build-manifest.json', { cache: 'no-store' });
       if (!response.ok) throw Error('Private-site access must already be unlocked');
@@ -348,11 +353,13 @@ async function runOperatorSessionProof(options) {
       if (!value?.token || Date.parse(value.expiresAt) <= Date.now()) throw Error('A valid PBK session is required');
       return raw;
     }, authKey);
-    const cookies = await source.context().cookies(options.base);
+    const cookies = await source.cookies(options.base);
     assert.ok(cookies.length, 'Private-site cookie missing');
+    // A separate browser process cannot share the operator's draft storage.
+    qaBrowser = await chromium.launch({ headless: true });
     for (const width of [1440, 390]) {
       const name = width < 720 ? 'mobile' : 'desktop';
-      const context = await browser.newContext({ viewport: { width, height: 900 }, isMobile: width < 720,
+      const context = await qaBrowser.newContext({ viewport: { width, height: 900 }, isMobile: width < 720,
         hasTouch: width < 720, serviceWorkers: 'block' });
       try {
         await context.addCookies(cookies);
@@ -392,14 +399,21 @@ async function runOperatorSessionProof(options) {
   } catch (error) {
     report.error = error instanceof Error ? error.message : 'Operator QA failed';
   } finally {
-    if (source && before) {
+    if (qaBrowser) await qaBrowser.close();
+    if (originals.size) {
       try {
-        const after = await fingerprintSource(source, options.base);
-        report.originalDraftsUnchanged = JSON.stringify(before) === JSON.stringify(after);
-        report.sourceDraftEntriesChecked = Object.keys(before).length;
+        report.originalDraftsUnchanged = true;
+        report.sourceDraftEntriesChecked = 0;
+        for (const [page, before] of originals) {
+          const after = await fingerprintSource(page, options.base);
+          report.originalDraftsUnchanged &&= JSON.stringify(before) === JSON.stringify(after);
+          report.sourceDraftEntriesChecked += Object.keys(before).length;
+        }
+        report.originalTabsChecked = originals.size;
         if (!report.originalDraftsUnchanged) { report.ok = false; report.error = 'Original draft fingerprints changed'; }
       } catch { report.ok = false; report.error = 'Original draft preservation could not be verified'; }
     }
+    for (const connection of connections) connection.close();
     writeFileSync(resolve(options.output, 'report.json'), JSON.stringify(report, null, 2));
   }
   return report;

@@ -12,6 +12,7 @@ import { verifyAnalyzerPublicationGuards } from './fixtures/analyzer-publication
 import { createServer } from 'vite';
 import { warmAnalyzerBrowserFixture, analyzerBrowserFixtureOptions } from './fixtures/analyzer-browser-warmup.mjs';
 import { parseOptions, requestDisposition, observeLoadedAssets, observeContextAssets, forwardLiveRequest, sharedAnalyzerMatches, sampleResponse } from './operator-session-browseros-live.mjs';
+import { connectReadOnlyPage } from './qa-readonly-page-cdp.mjs';
 
 const base = 'https://pbkcenter.netlify.app';
 const revision = 'a'.repeat(40);
@@ -365,4 +366,106 @@ test('shared Analyzer completion requires the committed ARV and comp, not just a
   assert.equal(sharedAnalyzerMatches(encode({ arv: 500000 })), false);
   assert.equal(sharedAnalyzerMatches(encode({ arv: 600000, comps: { A: { price: 500000 } } })), false);
   assert.equal(sharedAnalyzerMatches(encode({ arv: 600000, comps: { A: { price: 600000 } } })), true);
+});
+
+test('verified helper assets are finalized before controlled page teardown', async () => {
+  const context = new EventEmitter(), helper = new EventEmitter();
+  let drained = false;
+  const [path, body] = pins.entries().next().value;
+  helper.waitForLoadState = async state => {
+    assert.equal(state, 'networkidle');
+    drained = true;
+    helper.emit('response', response(path, body));
+  };
+  const tracker = observeContextAssets(context, pins, base);
+  context.emit('page', helper);
+  helper.emit('response', response(path, body));
+  try {
+    await tracker.verifyPage(helper);
+    helper.emit('response', { ...response(path, body), body: async () => { throw Error('page closed'); } });
+    assert.equal((await tracker.verifyAll()).pages, 1);
+    assert.equal(drained, true);
+    assert.equal(helper.listenerCount('response'), 0);
+  } finally { tracker.stop(); }
+});
+
+test('a helper asset mismatch during network drain still fails closed', async () => {
+  const context = new EventEmitter(), helper = new EventEmitter();
+  const [path, body] = pins.entries().next().value;
+  helper.waitForLoadState = async () => helper.emit('response', response(path, Buffer.from('stale')));
+  const tracker = observeContextAssets(context, pins, base);
+  context.emit('page', helper);
+  helper.emit('response', response(path, body));
+  try { await assert.rejects(tracker.verifyPage(helper), /body mismatch/); }
+  finally { tracker.stop(); }
+});
+
+function mockSourceSocket(t) {
+  const sockets = [], requests = [];
+  class SampleSocket extends EventTarget {
+    constructor(url) {
+      super();
+      this.url = url;
+      sockets.push(this);
+      queueMicrotask(() => this.dispatchEvent(new Event('open')));
+    }
+    send(raw) {
+      const request = JSON.parse(raw);
+      requests.push(request);
+      const result = request.method === 'Network.getCookies'
+        ? { cookies: [{ name: 'sample', value: 'fictional-cookie', domain: 'pbkcenter.netlify.app', path: '/', expires: -1, httpOnly: true, secure: true }] }
+        : { result: { value: { sample: true } } };
+      queueMicrotask(() => this.dispatchEvent(new MessageEvent('message', { data: JSON.stringify({ id: request.id, result }) })));
+    }
+    close() { this.closed = true; this.dispatchEvent(new Event('close')); }
+  }
+  t.mock.method(globalThis, 'WebSocket', function (url) { return new SampleSocket(url); });
+  return { sockets, requests };
+}
+
+test('source attachment rejects non-loopback or non-page debugger targets before connecting', async t => {
+  const { sockets } = mockSourceSocket(t);
+  for (const [origin, target] of [
+    ['http://remote.invalid:9100', 'ws://remote.invalid:9100/devtools/page/sample'],
+    ['http://127.0.0.1:9100/private', 'ws://127.0.0.1:9100/devtools/page/sample'],
+    ['http://user:private@127.0.0.1:9100', 'ws://127.0.0.1:9100/devtools/page/sample'],
+    ['http://127.0.0.1:9100', 'ws://127.0.0.1:9101/devtools/page/sample'],
+    ['http://127.0.0.1:9100', 'ws://127.0.0.1:9100/devtools/browser/sample'],
+    ['http://127.0.0.1:9100', 'ws://127.0.0.1:9100/devtools/page/'],
+    ['http://127.0.0.1:9100', 'ws://127.0.0.1:9100/devtools/page/sample?private=value'],
+    ['http://127.0.0.1:9100', 'ws://user:private@127.0.0.1:9100/devtools/page/sample'],
+  ]) {
+    await assert.rejects(connectReadOnlyPage({ webSocketDebuggerUrl: target }, origin), error => {
+      assert.ok(!error.message.includes('private'));
+      return true;
+    });
+  }
+  assert.equal(sockets.length, 0);
+});
+
+test('source attachment reads only through controlled RPCs and closes its socket, not a tab', async t => {
+  const { sockets, requests } = mockSourceSocket(t);
+  const page = await connectReadOnlyPage({ url: base, webSocketDebuggerUrl: 'ws://127.0.0.1:9100/devtools/page/sample' }, 'http://127.0.0.1:9100');
+  try {
+    assert.equal(page.url(), base);
+    assert.deepEqual(await page.evaluate(() => ({ sample: true })), { sample: true });
+    const cookies = await page.cookies(base);
+    assert.equal(cookies[0].sameSite, 'Lax');
+    assert.deepEqual(requests.map(request => request.method), ['Runtime.evaluate', 'Network.getCookies']);
+    assert.equal(requests[0].params.returnByValue, true);
+    assert.deepEqual(requests[1].params.urls, [base]);
+  } finally { page.close(); }
+  assert.equal(sockets[0].closed, true);
+  assert.ok(!requests.some(request => /closeTarget|Browser.close|Storage|navigate/.test(request.method)));
+});
+
+test('operator session CI runs only offline contracts without production credentials or live opt-in', () => {
+  const raw = readFileSync(new URL('../.github/workflows/operator-session-verify.yml', import.meta.url), 'utf8');
+  const workflow = parseYaml(raw);
+  assert.deepEqual(workflow.permissions, { contents: 'read' });
+  assert.deepEqual(workflow.on.pull_request.branches, ['main']);
+  const steps = workflow.jobs['isolated-runner-contracts'].steps;
+  assert.ok(steps.some(step => step.run === 'node --test scripts/operator-session-browseros.node-test.mjs'));
+  assert.ok(steps.some(step => step.with?.['persist-credentials'] === false));
+  assert.ok(!/secrets\.|--run-live|netlify deploy|render deploy/.test(raw));
 });

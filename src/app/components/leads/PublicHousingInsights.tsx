@@ -2,7 +2,7 @@ import { lazy, Suspense, useId, useRef, useState, type FormEvent } from 'react';
 import { formatCurrency } from '../../utils/formatting';
 import { VAN_NUYS_ZCTA } from './marketStagingData';
 
-const VanNuysMarketMap = import.meta.env.PBK_MARKET_STAGING_INDICATORS
+const VanNuysMarketMap = import.meta.env.PBK_VAN_NUYS_MARKET_MAP
   ? lazy(() => import('./VanNuysMarketMap'))
   : null;
 
@@ -204,6 +204,7 @@ export function ComparePublicHousing({
 }) {
   const fieldId = useId();
   const comparison = useRef<HTMLDetailsElement>(null);
+  const result = useRef<HTMLElement>(null);
   const [entered, setEntered] = useState('');
   const [peer, setPeer] = useState<{ code: string; row: HousingRow } | null>(null);
   const [message, setMessage] = useState('');
@@ -238,6 +239,11 @@ export function ComparePublicHousing({
               selectPeer(code);
               if (comparison.current) comparison.current.open = true;
             }}
+            onViewComparison={() => {
+              if (comparison.current) comparison.current.open = true;
+              result.current?.focus({ preventScroll: true });
+              result.current?.scrollIntoView({ block: 'start' });
+            }}
           />
         </Suspense>
       )}
@@ -266,6 +272,8 @@ export function ComparePublicHousing({
         </p>
         {peer && (
           <section
+            ref={result}
+            tabIndex={-1}
             aria-label={`Comparison with ${peer.code}`}
             className="pbk-market-comparison-result"
           >

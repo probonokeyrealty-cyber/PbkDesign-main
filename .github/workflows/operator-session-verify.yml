@@ -29,4 +29,4 @@ jobs:
           cache: npm
       - run: npm ci
       - name: Verify isolated desktop and mobile runner boundaries
-        run: node --test scripts/operator-session-browseros.node-test.mjs
+        run: npm run test:analyzer-draft-storage

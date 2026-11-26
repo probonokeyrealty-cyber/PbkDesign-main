@@ -14,29 +14,61 @@ export async function connectReadOnlyPage(target, cdpOrigin) {
   const socket = new WebSocket(address);
   const pending = new Map();
   let sequence = 0;
-  socket.addEventListener('message', event => {
-    const message = JSON.parse(event.data);
+  let terminalError;
+  let handshake;
+  function stop(error) {
+    if (terminalError) return;
+    terminalError = error;
+    clearTimeout(handshake.timer);
+    handshake.reject(error);
+    for (const request of pending.values()) {
+      clearTimeout(request.timer);
+      request.reject(error);
+    }
+    pending.clear();
+    socket.removeEventListener('open', onOpen);
+    socket.removeEventListener('message', onMessage);
+    socket.removeEventListener('error', onError);
+    socket.removeEventListener('close', onClose);
+    try { socket.close(); } catch { /* Close only this client's transport. */ }
+  }
+  function onOpen() {
+    clearTimeout(handshake.timer);
+    handshake.resolve();
+  }
+  function onError() { stop(new Error('QA source connection failed')); }
+  function onClose() { stop(new Error('QA source connection closed')); }
+  function onMessage(event) {
+    let message;
+    try { message = JSON.parse(event.data); }
+    catch { stop(new Error('QA source response invalid')); return; }
+    if (!message || typeof message !== 'object') {
+      stop(new Error('QA source response invalid'));
+      return;
+    }
     const request = pending.get(message.id);
     if (!request) return;
     pending.delete(message.id);
     clearTimeout(request.timer);
     if (message.error) request.reject(new Error('Read-only browser request failed'));
     else request.resolve(message.result);
+  }
+  const ready = new Promise((resolve, reject) => {
+    handshake = { resolve, reject, timer: setTimeout(() => stop(new Error('QA source connection timed out')), 20000) };
   });
-  await new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error('QA source connection timed out')), 20000);
-    socket.addEventListener('open', () => { clearTimeout(timer); resolve(); }, { once: true });
-    socket.addEventListener('error', () => { clearTimeout(timer); reject(new Error('QA source connection failed')); }, { once: true });
-  });
+  socket.addEventListener('open', onOpen, { once: true });
+  socket.addEventListener('message', onMessage);
+  socket.addEventListener('error', onError);
+  socket.addEventListener('close', onClose);
+  await ready;
   const request = (method, params) => new Promise((resolve, reject) => {
+    if (terminalError) return reject(terminalError);
     assert.ok(['Runtime.evaluate', 'Network.getCookies'].includes(method));
     const id = ++sequence;
-    const timer = setTimeout(() => {
-      pending.delete(id);
-      reject(new Error('Read-only browser operation timed out'));
-    }, 30000);
+    const timer = setTimeout(() => stop(new Error('Read-only browser operation timed out')), 30000);
     pending.set(id, { resolve, reject, timer });
-    socket.send(JSON.stringify({ id, method, params }));
+    try { socket.send(JSON.stringify({ id, method, params })); }
+    catch { stop(new Error('Read-only browser request failed')); }
   });
   return {
     url: () => target.url,
@@ -61,6 +93,6 @@ export async function connectReadOnlyPage(target, cdpOrigin) {
         return item;
       });
     },
-    close: () => socket.close(),
+    close: () => stop(new Error('QA source connection closed')),
   };
 }

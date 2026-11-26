@@ -3,7 +3,10 @@ import test from 'node:test';
 import { EventEmitter } from 'node:events';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { readFileSync } from 'node:fs';
+import { readFileSync, mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
+import { chromium } from '@playwright/test';
 import { parse as parseYaml } from 'yaml';
 import ts from 'typescript';
 import { analyzerPublicationTrace } from './fixtures/analyzer-publication-trace.mjs';
@@ -11,7 +14,7 @@ import * as publicationDiagnostics from './fixtures/analyzer-publication-trace.m
 import { verifyAnalyzerPublicationGuards } from './fixtures/analyzer-publication-timing.mjs';
 import { createServer } from 'vite';
 import { warmAnalyzerBrowserFixture, analyzerBrowserFixtureOptions } from './fixtures/analyzer-browser-warmup.mjs';
-import { parseOptions, requestDisposition, observeLoadedAssets, observeContextAssets, forwardLiveRequest, sharedAnalyzerMatches, sampleResponse } from './operator-session-browseros-live.mjs';
+import { parseOptions, requestDisposition, observeLoadedAssets, observeContextAssets, forwardLiveRequest, sharedAnalyzerMatches, sampleResponse, runOperatorSessionProof } from './operator-session-browseros-live.mjs';
 import { connectReadOnlyPage } from './qa-readonly-page-cdp.mjs';
 
 const base = 'https://pbkcenter.netlify.app';
@@ -400,21 +403,23 @@ test('a helper asset mismatch during network drain still fails closed', async ()
   finally { tracker.stop(); }
 });
 
-function mockSourceSocket(t) {
+function mockSourceSocket(t, { autoOpen = true, respond = true, sendThrows = false, replyFor } = {}) {
   const sockets = [], requests = [];
   class SampleSocket extends EventTarget {
     constructor(url) {
       super();
       this.url = url;
       sockets.push(this);
-      queueMicrotask(() => this.dispatchEvent(new Event('open')));
+      if (autoOpen) queueMicrotask(() => this.dispatchEvent(new Event('open')));
     }
     send(raw) {
+      if (sendThrows) throw Error('private-sample-cookie');
       const request = JSON.parse(raw);
       requests.push(request);
-      const result = request.method === 'Network.getCookies'
+      if (!respond) return;
+      const result = replyFor?.(request) ?? (request.method === 'Network.getCookies'
         ? { cookies: [{ name: 'sample', value: 'fictional-cookie', domain: 'pbkcenter.netlify.app', path: '/', expires: -1, httpOnly: true, secure: true }] }
-        : { result: { value: { sample: true } } };
+        : { result: { value: { sample: true } } });
       queueMicrotask(() => this.dispatchEvent(new MessageEvent('message', { data: JSON.stringify({ id: request.id, result }) })));
     }
     close() { this.closed = true; this.dispatchEvent(new Event('close')); }
@@ -465,7 +470,138 @@ test('operator session CI runs only offline contracts without production credent
   assert.deepEqual(workflow.permissions, { contents: 'read' });
   assert.deepEqual(workflow.on.pull_request.branches, ['main']);
   const steps = workflow.jobs['isolated-runner-contracts'].steps;
-  assert.ok(steps.some(step => step.run === 'node --test scripts/operator-session-browseros.node-test.mjs'));
+  assert.ok(steps.some(step => step.run === 'npm run test:analyzer-draft-storage'));
   assert.ok(steps.some(step => step.with?.['persist-credentials'] === false));
   assert.ok(!/secrets\.|--run-live|netlify deploy|render deploy/.test(raw));
+});
+
+const sampleSourceTarget = { url: base, webSocketDebuggerUrl: 'ws://127.0.0.1:9100/devtools/page/sample' };
+const sampleCdpOrigin = 'http://127.0.0.1:9100';
+
+test('source handshake timeout closes only the client socket', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const { sockets } = mockSourceSocket(t, { autoOpen: false });
+  const connecting = connectReadOnlyPage(sampleSourceTarget, sampleCdpOrigin);
+  const failed = assert.rejects(connecting, /QA source connection timed out/);
+  t.mock.timers.tick(20000);
+  await failed;
+  assert.equal(sockets[0].closed, true);
+});
+
+test('source error and closure reject an unopened handshake without waiting', async t => {
+  for (const event of ['error', 'close']) await t.test(event, async t => {
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    const { sockets } = mockSourceSocket(t, { autoOpen: false });
+    let failure;
+    const connecting = connectReadOnlyPage(sampleSourceTarget, sampleCdpOrigin).catch(error => { failure = error; });
+    sockets[0].dispatchEvent(new Event(event));
+    try {
+      await new Promise(resolve => setImmediate(resolve));
+      assert.match(failure?.message ?? '', /QA source connection (?:failed|closed)/);
+      assert.equal(sockets[0].closed, true);
+    } finally {
+      t.mock.timers.tick(20000);
+      await connecting;
+    }
+  });
+});
+
+test('source closure settles pending reads immediately instead of waiting for a timeout', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const { sockets, requests } = mockSourceSocket(t, { respond: false });
+  const page = await connectReadOnlyPage(sampleSourceTarget, sampleCdpOrigin);
+  let failure;
+  const reading = page.evaluate(() => 'sample').catch(error => { failure = error; });
+  assert.equal(requests.length, 1);
+  sockets[0].close();
+  try {
+    await new Promise(resolve => setImmediate(resolve));
+    assert.match(failure?.message ?? '', /QA source connection closed/);
+  } finally {
+    t.mock.timers.tick(30000);
+    await reading;
+    page.close();
+  }
+});
+
+test('source send failures never expose raw transport details', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  mockSourceSocket(t, { sendThrows: true });
+  const page = await connectReadOnlyPage(sampleSourceTarget, sampleCdpOrigin);
+  try {
+    await assert.rejects(page.evaluate(() => 'sample'), error => {
+      assert.ok(!error.message.includes('private-sample-cookie'));
+      return true;
+    });
+  } finally {
+    page.close();
+    t.mock.timers.tick(30000);
+  }
+});
+
+test('malformed source frames reject pending reads with generic errors and prevent further sends', async t => {
+  const { sockets, requests } = mockSourceSocket(t, { respond: false });
+  const page = await connectReadOnlyPage(sampleSourceTarget, sampleCdpOrigin);
+  const failed = assert.rejects(page.evaluate(() => 'sample'), /QA source response invalid/);
+  sockets[0].dispatchEvent(new MessageEvent('message', { data: 'private-sample-malformed-frame' }));
+  await failed;
+  await assert.rejects(page.cookies(base), /QA source response invalid/);
+  assert.equal(requests.length, 1);
+  assert.equal(sockets[0].closed, true);
+});
+
+test('a source operation timeout settles all pending reads and closes the transport', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const { sockets, requests } = mockSourceSocket(t, { respond: false });
+  const page = await connectReadOnlyPage(sampleSourceTarget, sampleCdpOrigin);
+  const failed = [assert.rejects(page.evaluate(() => 'sample'), /Read-only browser operation timed out/),
+    assert.rejects(page.cookies(base), /Read-only browser operation timed out/)];
+  t.mock.timers.tick(30000);
+  await Promise.all(failed);
+  await assert.rejects(page.evaluate(() => 'sample'), /Read-only browser operation timed out/);
+  assert.equal(requests.length, 2);
+  assert.equal(sockets[0].closed, true);
+});
+
+test('QA browser cleanup failure cannot skip source draft audit or socket cleanup', async t => {
+  const directory = mkdtempSync(join(tmpdir(), 'pbk-operator-cleanup-sample-'));
+  t.after(() => {
+    assert.ok(resolve(directory).startsWith(resolve(tmpdir()) + '\\') || resolve(directory).startsWith(resolve(tmpdir()) + '/'));
+    assert.ok(directory.includes('pbk-operator-cleanup-sample-'));
+    rmSync(directory, { recursive: true });
+  });
+  mkdirSync(join(directory, 'assets'));
+  mkdirSync(join(directory, 'fonts'));
+  writeFileSync(join(directory, 'assets/sample.js'), 'sample');
+  writeFileSync(join(directory, 'pbk-build-manifest.json'), JSON.stringify({ buildId: revision }));
+  const auth = JSON.stringify({ token: 'fictional-auth-only', expiresAt: '2099-01-01T00:00:00Z' });
+  let fingerprints = 0;
+  const { sockets } = mockSourceSocket(t, { replyFor(request) {
+    if (request.method === 'Network.getCookies') return;
+    const expression = request.params.expression;
+    let value;
+    if (expression.includes('crypto.subtle.digest')) { fingerprints++; value = { 'local:pbk-deal-data': 'sample-fingerprint' }; }
+    else if (expression.includes('pbk-build-manifest.json')) value = { buildId: revision };
+    else if (expression.includes('return raw;')) value = auth;
+    else value = true;
+    return { result: { value } };
+  } });
+  t.mock.method(globalThis, 'fetch', async url => {
+    assert.equal(url, sampleCdpOrigin + '/json/list');
+    return { json: async () => [sampleSourceTarget, { ...sampleSourceTarget, webSocketDebuggerUrl: 'ws://127.0.0.1:9100/devtools/page/peer' }].map(target => ({ ...target, type: 'page' })) };
+  });
+  t.mock.method(chromium, 'launch', async () => ({
+    newContext: async () => { throw Error('sample context setup failed'); },
+    close: async () => { throw Error('private-sample-cleanup-detail'); },
+  }));
+  const report = await runOperatorSessionProof({ base, cdpUrl: sampleCdpOrigin, revision, dist: directory, output: join(directory, 'report') });
+  assert.equal(report.ok, false);
+  assert.deepEqual(report.cleanupErrors, ['QA browser cleanup failed']);
+  assert.equal(report.originalDraftsUnchanged, true);
+  assert.equal(report.originalTabsChecked, 2);
+  assert.equal(fingerprints, 4);
+  assert.ok(sockets.every(socket => socket.closed));
+  assert.ok(!JSON.stringify(report).includes('private-sample-cleanup-detail'));
+  assert.ok(!JSON.stringify(report).includes('fictional-auth-only'));
+  assert.equal(JSON.parse(readFileSync(join(directory, 'report/report.json'), 'utf8')).ok, false);
 });

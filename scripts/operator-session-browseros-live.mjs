@@ -319,7 +319,7 @@ async function proveAnalyzer(page, context, state, options, name, proof) {
   await check();
 }
 
-async function runOperatorSessionProof(options) {
+export async function runOperatorSessionProof(options) {
   const pins = loadPins(options);
   const report = { ok: false, revision: options.revision, verificationMode: 'live_assets_and_auth_sample_business_state',
     productionBusinessActionsVerified: false, approvalDecisionExecutionAttempted: false, modes: [] };
@@ -399,7 +399,15 @@ async function runOperatorSessionProof(options) {
   } catch (error) {
     report.error = error instanceof Error ? error.message : 'Operator QA failed';
   } finally {
-    if (qaBrowser) await qaBrowser.close();
+    const cleanupFailure = message => {
+      report.ok = false;
+      (report.cleanupErrors ??= []).push(message);
+      report.error ??= message;
+    };
+    if (qaBrowser) {
+      try { await qaBrowser.close(); }
+      catch { cleanupFailure('QA browser cleanup failed'); }
+    }
     if (originals.size) {
       try {
         report.originalDraftsUnchanged = true;
@@ -413,7 +421,10 @@ async function runOperatorSessionProof(options) {
         if (!report.originalDraftsUnchanged) { report.ok = false; report.error = 'Original draft fingerprints changed'; }
       } catch { report.ok = false; report.error = 'Original draft preservation could not be verified'; }
     }
-    for (const connection of connections) connection.close();
+    for (const connection of connections) {
+      try { connection.close(); }
+      catch { cleanupFailure('QA source transport cleanup failed'); }
+    }
     writeFileSync(resolve(options.output, 'report.json'), JSON.stringify(report, null, 2));
   }
   return report;

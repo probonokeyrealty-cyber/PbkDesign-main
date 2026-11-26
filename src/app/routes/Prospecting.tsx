@@ -1,11 +1,17 @@
-import { useState, type FormEvent } from 'react';
-import { BookOpen, ExternalLink, ScanSearch } from 'lucide-react';
+import { lazy, Suspense, useState, type FormEvent } from 'react';
+import { BookOpen, ExternalLink, Landmark, ScanSearch } from 'lucide-react';
 import { useSearchParams } from 'react-router';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs';
 import { webSearchRequest } from '../utils/runtimeBridge';
 import { VanNuysDemo } from './VanNuysDemo';
 import { FindProperties } from '../components/prospecting/FindProperties';
 import './Prospecting.css';
+
+const CountyData = lazy(() =>
+  import('../components/prospecting/ProspectingCountyData').then((module) => ({
+    default: module.ProspectingCountyData,
+  }))
+);
 
 type ResearchBrief = {
   market: string;
@@ -45,7 +51,9 @@ export function Prospecting() {
   const [params, setParams] = useSearchParams();
   const requestedView = params.get('view');
   const view =
-    requestedView === 'evidence' || requestedView === 'research' ? requestedView : 'properties';
+    requestedView === 'evidence' || requestedView === 'research' || requestedView === 'county'
+      ? requestedView
+      : 'properties';
   const [market, setMarket] = useState('');
   const [question, setQuestion] = useState('');
   const [brief, setBrief] = useState<ResearchBrief | null>(null);
@@ -112,10 +120,19 @@ export function Prospecting() {
           <TabsTrigger value="evidence">
             <BookOpen aria-hidden="true" /> Saved evidence
           </TabsTrigger>
+          <TabsTrigger value="county">
+            <Landmark aria-hidden="true" /> County data
+          </TabsTrigger>
         </TabsList>
 
         <TabsContent value="properties">
           <FindProperties />
+        </TabsContent>
+
+        <TabsContent value="county">
+          <Suspense fallback={<p role="status">Loading county directory...</p>}>
+            <CountyData />
+          </Suspense>
         </TabsContent>
 
         <TabsContent value="research">

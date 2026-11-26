@@ -1,0 +1,35 @@
+name: Prospecting County Data
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/prospecting-county-data.yml'
+      - 'scripts/*prospecting-county-directory*'
+      - 'scripts/prospecting-county-data-*'
+      - 'scripts/prospecting-county-data.*'
+      - 'src/app/components/prospecting/ProspectingCountyData.*'
+      - 'src/app/routes/Prospecting.*'
+      - 'src/app/utils/prospectingCount*.json'
+      - 'src/app/utils/prospectingCountyData.d.mts'
+      - 'src/app/utils/prospectingCountyData.mjs'
+
+permissions:
+  contents: read
+
+jobs:
+  county-data:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: node --test scripts/prospecting-county-data.node-test.mjs
+      - run: npx --no-install playwright install --with-deps chromium
+      - run: node scripts/prospecting-county-data-browser-smoke.mjs

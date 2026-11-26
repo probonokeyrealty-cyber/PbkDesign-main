@@ -1,0 +1,160 @@
+.pbk-county-data > div {
+  display: grid;
+  gap: 0.75rem;
+  min-width: 0;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 1rem;
+  overflow-wrap: anywhere;
+}
+.pbk-county-data h2 {
+  font: 600 1.25rem/1.25 var(--font-display);
+}
+.pbk-county-data h3 {
+  font-size: 0.95rem;
+  font-weight: 650;
+}
+.pbk-county-data :is(small, [role='status']) {
+  color: var(--text-secondary);
+}
+.pbk-county-data .pbk-prospect-section-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.25rem 0.75rem;
+}
+.pbk-county-data :is(h3, a, .pbk-prospect-button) {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+.pbk-county-data svg {
+  flex: none;
+}
+.pbk-county-data a {
+  color: var(--sky);
+  text-decoration: underline;
+  min-height: 36px;
+}
+.pbk-county-data :is(.pbk-prospect-id, .pbk-county-unreviewed) {
+  font: 500 0.75rem/1.4 var(--font-mono);
+}
+.pbk-county-data .pbk-prospect-id {
+  color: var(--text-secondary);
+}
+.pbk-county-data :is(.pbk-county-unreviewed, .pbk-prospect-warning) {
+  color: var(--amber);
+}
+.pbk-county-filters,
+.pbk-county-brief,
+.pbk-county-preview,
+.pbk-county-file {
+  display: grid;
+  gap: 0.65rem;
+  min-width: 0;
+}
+.pbk-county-data :is(input, select, textarea, button) {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  min-height: 44px;
+  padding: 0.5rem 0.65rem;
+  background: var(--bg-console);
+  color: var(--text-primary);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+.pbk-county-data .pbk-prospect-search {
+  position: relative;
+  display: block;
+}
+.pbk-county-data .pbk-prospect-search svg {
+  position: absolute;
+  inset: 14px auto auto 10px;
+  color: var(--text-secondary);
+}
+.pbk-county-data .pbk-prospect-search input {
+  padding-inline-start: 2rem;
+}
+.pbk-county-data :is(select, button) {
+  cursor: pointer;
+}
+.pbk-county-data select:focus-visible {
+  outline: 2px solid var(--sky);
+  outline-offset: 2px;
+}
+.pbk-county-data ul {
+  display: grid;
+  gap: 0.35rem;
+  padding: 0;
+  margin: 0;
+  list-style: none;
+}
+.pbk-county-data .pbk-prospect-row-choice {
+  display: grid;
+  text-align: start;
+}
+.pbk-county-data button:is(:hover, [aria-pressed='true']) {
+  border-color: var(--sky);
+}
+.pbk-county-data button[aria-pressed='true'] {
+  background: var(--sky-glow);
+  color: var(--sky);
+}
+.pbk-county-data button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+.pbk-county-data .pbk-prospect-button {
+  width: fit-content;
+  text-align: start;
+}
+.pbk-county-data .pbk-prospect-icon {
+  display: grid;
+  place-items: center;
+  width: 44px;
+}
+.pbk-county-data :is(.pbk-county-preview, .pbk-county-sources > li, .pbk-county-parcels > li) {
+  border-top: 1px solid var(--border);
+  padding-top: 0.75rem;
+}
+.pbk-county-data .pbk-county-parcels > li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 44px;
+  align-items: center;
+  gap: 0.5rem 0.75rem;
+}
+.pbk-county-source-details summary {
+  display: list-item;
+  padding-block: 0.6rem;
+  cursor: pointer;
+}
+.pbk-county-data summary:focus-visible {
+  outline: 2px solid var(--sky);
+  outline-offset: 2px;
+}
+.pbk-county-access {
+  color: var(--sky);
+  font: 500 0.75rem/1.4 var(--font-mono);
+}
+.pbk-county-criteria {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.65rem;
+}
+.pbk-county-criteria .pbk-prospect-search {
+  grid-column: 1 / -1;
+}
+.pbk-county-shortlist,
+.pbk-county-parcel-identity {
+  display: grid;
+  min-width: 0;
+  gap: 0.35rem;
+}
+.pbk-county-shortlist {
+  border-top: 1px solid var(--border);
+  margin-top: 0.35rem;
+  padding-top: 0.75rem;
+}

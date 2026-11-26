@@ -104,6 +104,7 @@ export function createComposioMarketSearch({
   connect = connectComposioHttp,
   verify: verifyScope = verify,
   fetchImpl = globalThis.fetch,
+  monotonicNow = () => performance.now(),
 } = {}) {
   const enabled = env.PBK_COMPOSIO_MARKET_SEARCH_ENABLED === 'true';
   const key = String(env.PBK_COMPOSIO_MARKET_SEARCH_API_KEY ?? '').trim(),
@@ -153,6 +154,13 @@ export function createComposioMarketSearch({
     )
       return { ok: false, live: false, result: 'public_search_denied' };
     const signal = AbortSignal.timeout(20000);
+    const searchTiming = exa ? { sessionChecksMs: null, exaQueryMs: null } : null;
+    const checksBegan = searchTiming ? monotonicNow() : null;
+    const finishChecks = () => {
+      if (searchTiming?.sessionChecksMs === null)
+        searchTiming.sessionChecksMs = Math.round(monotonicNow() - checksBegan);
+    };
+    const metrics = searchTiming ? { searchTiming } : {};
     let client;
     try {
       const session = await verifyScope(config, signal, fetchImpl);
@@ -178,11 +186,18 @@ export function createComposioMarketSearch({
           schemaFingerprint(listing.tools[0].inputSchema) !== hash
         )
           throw Error('schema');
+        finishChecks();
         const args = exa ? { query, model: 'exa', stream: false, text: false } : { query };
-        const result = await client.callTool({ name: tool, arguments: args }, undefined, {
-          signal,
-          timeout: 20000,
-        });
+        const queryBegan = searchTiming ? monotonicNow() : null;
+        let result;
+        try {
+          result = await client.callTool({ name: tool, arguments: args }, undefined, {
+            signal,
+            timeout: 20000,
+          });
+        } finally {
+          if (searchTiming) searchTiming.exaQueryMs = Math.round(monotonicNow() - queryBegan);
+        }
         if (result.isError || signal.aborted) throw Error('provider');
         data = result.structuredContent;
         if (!data) {
@@ -203,9 +218,10 @@ export function createComposioMarketSearch({
         answer: data.data.answer,
         citations: data.data.citations.map((c) => c?.url),
       });
-      return { ok: true, live: true, ...evidence };
+      return { ok: true, live: true, ...evidence, ...metrics };
     } catch {
-      return { ok: false, live: false, result: 'public_search_unavailable' };
+      finishChecks();
+      return { ok: false, live: false, result: 'public_search_unavailable', ...metrics };
     } finally {
       await client?.close().catch(() => {});
     }

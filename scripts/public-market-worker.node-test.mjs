@@ -149,6 +149,39 @@ test('invalid caller overrides and absent live public evidence never create a sa
   assert.equal(f.calls.length, 0);
 });
 
+test('records Exa timing in receipt metrics without including it in sandbox input', async () => {
+  const f = fixture();
+  let uploaded;
+  const write = f.sandbox.files.write;
+  f.sandbox.files.write = async (path, value) => {
+    if (path.endsWith('.json')) uploaded = JSON.parse(value);
+    await write(path, value);
+  };
+  const worker = createPublicMarketWorker({
+    env: config,
+    createSandbox: f.createSandbox,
+    search: async () => ({ ...evidence, searchTiming: { sessionChecksMs: 10, exaQueryMs: 20, ignored: 'extra' } }),
+  });
+  const result = await worker.run(request);
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.executionMetrics.searchTiming, { sessionChecksMs: 10, exaQueryMs: 20 });
+  assert.equal(uploaded.searchTiming, undefined);
+  assert.equal(result.brief.searchTiming, undefined);
+});
+
+test('preserves a blocked-query receipt without launching a sandbox', async () => {
+  const f = fixture();
+  const worker = createPublicMarketWorker({
+    env: config,
+    createSandbox: f.createSandbox,
+    search: async () => ({ ok: false, searchTiming: { sessionChecksMs: 10, exaQueryMs: null } }),
+  });
+  const result = await worker.run(request);
+  assert.equal(result.ok, false);
+  assert.deepEqual(result.executionMetrics.searchTiming, { sessionChecksMs: 10, exaQueryMs: null });
+  assert.deepEqual(f.calls, []);
+});
+
 test('records SDK load and create separately across cold and warm jobs in one worker', async () => {
   const f = fixture();
   let loads = 0;

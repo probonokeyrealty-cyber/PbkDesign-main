@@ -177,6 +177,7 @@ export function createPublicMarketWorker({
     const batched = armFor(request.jobId) === 'batched';
     const began = performance.now();
     const stagesMs = {};
+    let searchTiming;
     let provisioning = null;
     let uploadRequests = 0;
     async function measure(stage, action) {
@@ -192,19 +193,23 @@ export function createPublicMarketWorker({
       result = 'public_market_worker_unavailable',
       cleanupConfirmed = false;
     try {
-      const evidence = normalizePublicEvidence(
-        await measure('search', () =>
-          bounded(
-            Promise.resolve().then(() =>
-              search(
-                `Public residential real estate market conditions for ${market}. Use public sources for inventory, sold-price trends and days on market. State source dates and uncertainty; do not use personal or CRM information.`
-              )
-            ),
-            deadlines.search,
-            'search_timeout'
-          )
+      const searchResult = await measure('search', () =>
+        bounded(
+          Promise.resolve().then(() =>
+            search(
+              `Public residential real estate market conditions for ${market}. Use public sources for inventory, sold-price trends and days on market. State source dates and uncertainty; do not use personal or CRM information.`
+            )
+          ),
+          deadlines.search,
+          'search_timeout'
         )
       );
+      const reported = searchResult?.searchTiming;
+      const isDuration = (ms) => Number.isSafeInteger(ms) && ms >= 0;
+      if (isDuration(reported?.sessionChecksMs) && (reported.exaQueryMs === null || isDuration(reported.exaQueryMs))) {
+        searchTiming = { sessionChecksMs: reported.sessionChecksMs, exaQueryMs: reported.exaQueryMs };
+      }
+      const evidence = normalizePublicEvidence(searchResult);
       const payload = {
         jobId: request.jobId,
         market,
@@ -353,6 +358,7 @@ export function createPublicMarketWorker({
       arm: batched ? 'batched' : 'standard',
       workerInstanceId,
       provisioning: provisioning ? { ...provisioning } : null,
+      ...(searchTiming ? { searchTiming } : {}),
       uploadRequests,
       stagesMs,
       totalMs: Math.round(performance.now() - began),

@@ -299,28 +299,37 @@ function exaFixture(options = {}) {
   options.changeSession?.(session);
   const calls = [];
   const gets = [];
+  let elapsed = 0;
   const adapter = createComposioMarketSearch({
     env: { ...exaEnv, ...options.env },
+    monotonicNow: () => elapsed,
     fetchImpl: async (url, init) => {
+      elapsed += 10;
       gets.push([init.method, new URL(url).pathname]);
       return Response.json(session);
     },
-    connect: async () => ({
-      listTools: async () => {
-        if (options.missingList) throw Object.assign(Error('No listing'), { code: -32601 });
-        return options.manifest ?? { tools: [{ name: exaTool, inputSchema: exaSchema }] };
-      },
-      callTool: async (args) => {
-        calls.push(args);
-        return {
-          structuredContent: {
-            successful: true,
-            data: { answer: 'Raleigh public market summary.', citations: [{ url: 'https://example.org/source' }] },
-          },
-        };
-      },
-      close: async () => {},
-    }),
+    connect: async () => {
+      elapsed += 20;
+      return {
+        listTools: async () => {
+          elapsed += 30;
+          if (options.missingList) throw Object.assign(Error('No listing'), { code: -32601 });
+          return options.manifest ?? { tools: [{ name: exaTool, inputSchema: exaSchema }] };
+        },
+        callTool: async (args) => {
+          elapsed += 200;
+          calls.push(args);
+          if (options.queryFails) throw Error('synthetic query failure');
+          return {
+            structuredContent: {
+              successful: true,
+              data: { answer: 'Raleigh public market summary.', citations: [{ url: 'https://example.org/source' }] },
+            },
+          };
+        },
+        close: async () => { elapsed += 40; },
+      };
+    },
   });
   return { adapter, calls, gets };
 }
@@ -328,12 +337,26 @@ test('staging Exa invokes one pinned action with the dedicated account and bound
   const { adapter, calls, gets } = exaFixture();
   const result = await adapter.search('Public Raleigh market query');
   assert.equal(result.ok, true);
+  assert.deepEqual(result.searchTiming, { sessionChecksMs: 60, exaQueryMs: 200 });
   assert.deepEqual(result.citations, ['https://example.org/source']);
   assert.deepEqual(gets, [['GET', '/api/v3.1/tool_router/session/trs_market']]);
   assert.deepEqual(calls, [{
     name: exaTool,
     arguments: { query: 'Public Raleigh market query', model: 'exa', stream: false, text: false },
   }]);
+});
+test('staging Exa timings distinguish a blocked query from a failed call', async () => {
+  const rejected = exaFixture({ missingList: true });
+  const blocked = await rejected.adapter.search('Public Raleigh market query');
+  assert.equal(blocked.ok, false);
+  assert.deepEqual(blocked.searchTiming, { sessionChecksMs: 60, exaQueryMs: null });
+  assert.equal(rejected.calls.length, 0);
+
+  const failed = exaFixture({ queryFails: true });
+  const result = await failed.adapter.search('Public Raleigh market query');
+  assert.equal(result.ok, false);
+  assert.deepEqual(result.searchTiming, { sessionChecksMs: 60, exaQueryMs: 200 });
+  assert.equal(failed.calls.length, 1);
 });
 test('staging Exa fails closed for account, Instant, tool, or schema drift and never falls back', async () => {
   for (const options of [

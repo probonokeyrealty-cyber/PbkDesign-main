@@ -39,6 +39,14 @@ making provider requests. Require a configured search and worker, with 10% set.
    each saved `executionMetrics` receipt. Compare two uploads vs. one, and do
    not infer a p95 or a reliable speedup from one pair.
 
+For the pinned Exa path, `executionMetrics.searchTiming.sessionChecksMs`
+includes Composio session verification, MCP connection, and tool/schema
+validation. `exaQueryMs` measures the `EXA_ANSWER` tool call as seen by Rex
+(including transport), and is `null` if the call was blocked. `stagesMs.search`
+still includes response handling and MCP close; the two sub-timings do not
+replace that total. Only the durations are added to the receipt, not query
+contents, session metadata, or credentials.
+
 ## Startup preload check
 
 On the configured staging service only, the listener starts an asynchronous

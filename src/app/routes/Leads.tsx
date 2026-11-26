@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Link, useLocation, useNavigate, useSearchParams } from 'react-router';
 import { readLeadQueueReturn, type LeadQueueReturn } from '../utils/leadQueueReturn';
+import { readStoredNextStep } from '../utils/leadTriage';
 import { readAvaLeadSearch } from '../utils/avaBrowserCommand.mjs';
 import {
   AlertCircle,
@@ -809,13 +810,17 @@ function contractFormFromLead(
 }
 
 function unwrapLeadResponse(response: BridgeRecord): BridgeRecord {
-  return (
+  const lead = (
     response.lead && typeof response.lead === 'object'
       ? response.lead
       : response.leadImport && typeof response.leadImport === 'object'
         ? response.leadImport
         : response
   ) as BridgeRecord;
+  const pipeline = asBridgeRecord(response.ghlPipeline);
+  return lead !== response && typeof pipeline.currentStageId === 'string'
+    ? { ...lead, ghlPipeline: { ...asBridgeRecord(lead.ghlPipeline), ...pipeline } }
+    : lead;
 }
 
 function sameLeadRecord(left: BridgeRecord, right: BridgeRecord) {
@@ -1081,6 +1086,60 @@ function LeadsPipelineRail({
         onPageChange={onPageChange}
       />
     </section>
+  );
+}
+
+function LeadWorkflowContext({ lead, preview = false }: { lead: BridgeRecord; preview?: boolean }) {
+  const pipeline = asBridgeRecord(lead.ghlPipeline);
+  const ghlStage = pickFirstText(pipeline.currentStageLabel, pipeline.stageLabel);
+  const stage = ghlStage || text(
+    asBridgeRecord(lead.assignment).stage || lead.stage || lead.status,
+    'Stage not set'
+  ).replace(/[_-]+/g, ' ');
+  const stageDate = text(pipeline.occurredAt);
+  const hasStageDate = Boolean(ghlStage && Number.isFinite(Date.parse(stageDate)));
+  const nextStageId = text(pipeline.nextStageId);
+  const savedStage = nextStageId && Array.isArray(pipeline.stages)
+    ? pipeline.stages.map(asBridgeRecord).find((item) => item.id === nextStageId)
+    : undefined;
+  const storedNextStep = readStoredNextStep(lead);
+  const nextStep = text(savedStage?.label, storedNextStep.state === 'recorded' ? storedNextStep.text : '');
+  const compliance = asBridgeRecord(lead.compliance);
+  const dnc = [lead.dncStatus, compliance.dncStatus].map((value) =>
+    text(value).toLowerCase().replace(/[_-]+/g, ' ')
+  ).filter(Boolean);
+  const consent = [lead.tcpaConsent, compliance.tcpaConsent, compliance.consentStatus]
+    .map((value) => text(value).toLowerCase()).filter(Boolean);
+  const blocked = lead.dnc === true || compliance.dnc === true
+    || dnc.some((value) => ['blocked', 'dnc', 'do not call', 'do not contact', 'opted out', 'revoked', 'requested'].includes(value))
+    || consent.some((value) => ['no', 'opted_out', 'revoked'].includes(value));
+  const onFile = dnc.length > 0 && dnc.every((value) => value === 'clear')
+    && consent.length > 0 && consent.every((value) => value === 'yes');
+  const contactTone = blocked ? 'blocked' : onFile ? 'recorded' : 'review';
+
+  return (
+    <div className={`pbk-lead-workflow-context${preview ? ' is-preview' : ''}`}>
+      <div className="pbk-lead-workflow-line">
+        <span className="pbk-lead-workflow-stage" data-stage-source={ghlStage ? 'ghl' : 'pbk'}>
+          {ghlStage && <span className="pbk-lead-workflow-origin">GHL</span>}
+          {stage}
+        </span>
+        {hasStageDate && (
+          <time className="pbk-lead-workflow-time" dateTime={stageDate} title="GoHighLevel stage change">
+            {formatDate(stageDate)}
+          </time>
+        )}
+        <span className="pbk-lead-workflow-contact" data-contact-status={contactTone} title="Saved contact records">
+          {blocked ? 'Contact blocked' : onFile ? 'Consent on file' : 'Contact review'}
+        </span>
+      </div>
+      {(nextStep || preview) && (
+        <div className="pbk-lead-workflow-next">
+          <span className="pbk-lead-workflow-next-label">{savedStage ? 'Next stage' : 'Next step'}</span>
+          <span>{nextStep || storedNextStep.text}</span>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -2062,7 +2121,6 @@ export function Leads() {
               {visibleLeads.map((lead) => {
                 const id = getLeadId(lead);
                 const score = getLeadScore(lead);
-                const path = normalizePath(lead.selected_path || lead.selectedPath, lead);
                 const sellerName = getSellerName(lead);
                 const address = getLeadAddress(lead);
                 const isSelected = id === activeLeadId;
@@ -2109,10 +2167,7 @@ export function Leads() {
                           </span>
                         ))}
                       </span>
-                      <span className="mt-3 flex items-center justify-between gap-3 text-[11px] text-slate-500">
-                        <span>{text(lead.status || lead.stage, PATH_LABELS[path])}</span>
-                        <span>{formatDate(lead.updatedAt || lead.createdAt)}</span>
-                      </span>
+                      <LeadWorkflowContext lead={lead} />
                     </div>
                     <span className="flex flex-col items-end gap-2">
                       <span
@@ -2219,14 +2274,9 @@ export function Leads() {
                       </button>
                       {renderOpenLeadLink(id, sellerName, address)}
                     </div>
-                    <span className="flex flex-wrap items-center gap-2">
+                    <LeadWorkflowContext lead={lead} />
+                    <span className="pbk-lead-ledger-actions flex flex-wrap items-center gap-2">
                       <span className="pbk-lead-ledger-score">{getLeadScore(lead)} score</span>
-                      <span className="pbk-lead-ledger-stage">
-                        {text(
-                          lead.status || lead.stage || asBridgeRecord(lead.assignment).stage,
-                          'Stage not set'
-                        ).replace(/[_-]+/g, ' ')}
-                      </span>
                       <span className="rounded-full border border-slate-700 bg-slate-900 px-2.5 py-1 text-[10px] uppercase tracking-[0.14em] text-slate-300">
                         {PATH_LABELS[path]}
                       </span>
@@ -2316,6 +2366,7 @@ export function Leads() {
                     </span>
                   </div>
                 </div>
+                <LeadWorkflowContext lead={activeLead} preview />
                 <div className="flex flex-wrap gap-2">
                   <button
                     type="button"

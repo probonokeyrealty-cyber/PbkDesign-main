@@ -3,6 +3,7 @@
 @import './theme.css';
 @import './pbk-tokens.css';
 @import './pbk-components.css';
+@import './operator-workspace.css';
 
 /* Print styles */
 @media print {

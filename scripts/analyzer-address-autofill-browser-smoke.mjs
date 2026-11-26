@@ -10,6 +10,8 @@ const server = await preview({
 });
 const origin = `http://127.0.0.1:${server.httpServer.address().port}`;
 const full = '42 Fixture Avenue, Example City, CA 90210';
+const abandonedAddress = '99 Different Lane, Example City, CA 90210';
+const nextAddress = '45 Fresh Avenue, Example City, CA 90210';
 const draftKey = 'pbk:local:analyzer:current-deal';
 const storedDraft = page => page.evaluate(key => {
   const raw = localStorage.getItem(key);
@@ -25,6 +27,7 @@ try {
       const page = await browser.newPage({ viewport: { width, height: 960 } });
       const enrichments = [], unexpectedPropertyRequests = [], writes = [];
       let releaseLookup = () => {}, pauseLookup = true;
+      let releaseAbandonedLookup = () => {};
       await page.routeWebSocket('**/*', socket => socket.close());
       await page.addInitScript(() => {
         const config = { endpoint: location.origin, apiKey: 'local-fixture' };
@@ -41,6 +44,25 @@ try {
           assert.equal(req.method(), 'POST');
           const body = req.postDataJSON();
           enrichments.push(body);
+          if (body.address === abandonedAddress || body.address === nextAddress) {
+            assert.equal(body.leadId, undefined, 'A new address must not inherit the old lead ID');
+            assert.equal(body.expectedPropertyAddress, undefined);
+            if (body.address === abandonedAddress) {
+              await new Promise(resolve => { releaseAbandonedLookup = resolve; });
+            }
+            return route.fulfill({ json: {
+              ok: true,
+              address: body.address,
+              records: { status: 'unavailable' },
+              sales: { status: 'unavailable' },
+              saved: false,
+              patch: { deal: {}, analyzer: {} },
+              listing: { cache: { hit: true }, propertyData: { source: 'apify-for-sale', data: {
+                priceBasis: 'asking_price',
+                askingPriceUsd: body.address === abandonedAddress ? 475000 : 395000,
+              } } },
+            } });
+          }
           assert.equal(body.address, full);
           if (body.leadId) {
             assert.equal(body.leadId, 'qa-address-save');
@@ -134,6 +156,7 @@ try {
       assert.equal(sync.body.deal.beds, 7); assert.equal(sync.body.deal.arv, 600000);
       assert.equal(sync.body.deal.propertyRecordSnapshot.facts.apn, 'FIXTURE-42');
       assert.deepEqual(sync.body.deal.listingSnapshot.photoUrls, ['https://ap.rdcpix.com/fixture-front.jpg']);
+      await expect(page.locator('#analyzer-valuation').getByText(/Saved locally\. Ava queued approval for the CRM handoff/)).toBeVisible();
       await expect.poll(async () => (await storedDraft(page))?.leadId).toBe('qa-address-save');
       await page.getByRole('spinbutton', { name: 'Comp A sold price' }).fill('499999');
       await expect(arv).toHaveValue('499999');
@@ -172,12 +195,34 @@ try {
       assert.equal(writes.filter(write=>write.method==='PATCH').at(-1).body.deal.recordedSales.review,'suggested-unreviewed');
       assert.equal(writes.filter(write=>write.method==='PATCH').at(-1).body.deal.comps.B.price,460000,'Analyze must retain the auto-filled B slot in its final CRM patch');
       const beforeAddressChange = enrichments.length;
-      await address.fill('99 Different Lane, Example City, CA 90210');
+      const writesBeforeAddressChange = writes.length;
+      await address.fill(abandonedAddress);
       await expect(page.getByRole('textbox', { name: 'Comp A address' })).toHaveValue('');
       await expect(beds).toHaveValue('');
+      await page.getByText('CRM handoff · New lead', { exact: true }).click();
+      await expect(page.getByRole('textbox', { name: 'Seller name', exact: true })).toHaveValue('');
+      await expect(page.getByRole('textbox', { name: 'Seller phone', exact: true })).toHaveValue('');
       await page.waitForTimeout(900);
       assert.equal(enrichments.length,beforeAddressChange,'Changing a linked address clears inherited facts without a provider request');
       assert.equal(writes.filter(write=>write.method==='PATCH').at(-1).body.deal.comps.A.price,499999,'Changing the draft address leaves the saved lead unchanged');
+
+      await refresh.click();
+      await expect.poll(() => enrichments.length).toBe(beforeAddressChange + 1);
+      await address.fill(nextAddress);
+      await refresh.click();
+      await expect(price).toHaveValue('395000');
+      const staleResponse = page.waitForResponse(response =>
+        new URL(response.url()).pathname === '/api/property-data/enrich' &&
+        response.request().postDataJSON()?.address === abandonedAddress
+      );
+      releaseAbandonedLookup();
+      assert.equal(await (await staleResponse).finished(), null);
+      await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+      await expect(address).toHaveValue(nextAddress);
+      await expect(price).toHaveValue('395000');
+      assert.equal(enrichments.length, beforeAddressChange + 2, 'Only explicit refreshes fetch new property evidence');
+      assert.equal(writes.length, writesBeforeAddressChange, 'New-draft refreshes must not create or patch CRM records');
+      assert.deepEqual(unexpectedPropertyRequests, []);
       console.log(`Explicit property intelligence passed: ${width}px`);
     } finally { await browser.close(); }
   }

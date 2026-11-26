@@ -84950,6 +84950,8 @@ if (process.env.RENDER === 'true' && process.env.RENDER_SERVICE_NAME === 'pbk-op
 }
 wireRuntimeCoverageLifecycle(server);
 server.listen(PORT, HOST, () => {
+  const listenerReadyMs = performance.now();
+  void getPublicMarketRuntime()?.worker.preloadSdk(listenerReadyMs);
   startRexLeadImportDelivery();
   startPostgresKeepAlive();
   startContractTemplateWatcher();

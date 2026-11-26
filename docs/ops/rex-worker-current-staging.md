@@ -39,15 +39,21 @@ making provider requests. Require a configured search and worker, with 10% set.
    each saved `executionMetrics` receipt. Compare two uploads vs. one, and do
    not infer a p95 or a reliable speedup from one pair.
 
-## Cold versus warm SDK check
+## Startup preload check
 
-Use the same approved benchmark arm and market for both jobs. The first job
-on a new staging worker should report `provisioning.sdkState: cold`; after the
-five-minute lease, require `warm` with the same `workerInstanceId`. Warm here
-means the SDK is loaded, not that a sandbox is reused. Each job creates and
-destroys its own sandbox. `sdkLoadMs` and `createMs` are subdivisions of the
-existing `stagesMs.provision` value, not additional time. An unfinished or
-unattempted substep reports `null`; a cached SDK reports `sdkLoadMs: 0`.
+On the configured staging service only, the listener starts an asynchronous
+SDK import. It does not call search or create a sandbox, and does not gate
+listener readiness. The protected benchmark GET reports `worker.sdkPreload`:
+`listenerReadyMs`, `startedAtMs`, and `completedAtMs` use the Node process
+clock; `durationMs` measures the import. These timings exclude the Render build
+and are not part of any job receipt. If the import fails, a later approved job
+can still load it lazily.
+
+Before running the approved smoke test, verify `sdkPreload.state: ready` and
+zero active Rex sandboxes. Require `warm` and the same `workerInstanceId` in the
+job receipt. Warm means the SDK was loaded, not that a sandbox was reused.
+`sdkLoadMs` and `createMs` subdivide `stagesMs.provision`; an unfinished or
+unattempted substep is `null`, and a cached SDK reports `sdkLoadMs: 0`.
 
 To return to standard only, set the staging percentage to `0` and redeploy
 the same commit. To disable the worker rather than just batching, set

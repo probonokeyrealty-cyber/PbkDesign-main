@@ -34,10 +34,24 @@ async function exercise(enabled, canary = false) {
     body: JSON.stringify({ market: 'Tampa, FL', benchmarkArm: arm }),
   });
   try {
-    const status = await get('/api/admin/public-market/benchmark');
+    let status = await get('/api/admin/public-market/benchmark');
+    if (enabled) {
+      const deadline = Date.now() + 10000;
+      while (status.worker.sdkPreload.state === 'loading' && Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 30));
+        status = await get('/api/admin/public-market/benchmark');
+      }
+      const preload = status.worker.sdkPreload;
+      assert.equal(preload.state, 'ready');
+      assert.ok(preload.startedAtMs >= preload.listenerReadyMs);
+      assert.ok(preload.completedAtMs >= preload.startedAtMs);
+    } else {
+      assert.equal(status.worker.sdkPreload.state, 'not_started');
+    }
     assert.equal(status.worker.configured, enabled);
     assert.equal(status.worker.fastPathPercent, canary ? 10 : 0);
     const before = await get('/state');
+    assert.equal(before.browserResearchJobs.filter((job) => job.provider === 'e2b').length, 0);
     const prepared = await invoke({
       agentId: 'rex',
       command: 'rex prepare cloud market brief for Tampa, FL',
@@ -125,8 +139,9 @@ async function exercise(enabled, canary = false) {
       assert.equal(finished.executionMetrics.uploadRequests, canary ? 1 : 2);
       assert.ok(Number.isInteger(finished.executionMetrics.totalMs));
       assert.match(finished.executionMetrics.workerInstanceId, /^[a-f0-9-]{36}$/);
-      assert.equal(finished.executionMetrics.provisioning.sdkState, 'cold');
-      assert.ok(Number.isInteger(finished.executionMetrics.provisioning.sdkLoadMs));
+      assert.equal(finished.executionMetrics.workerInstanceId, status.worker.sdkPreload.workerInstanceId);
+      assert.equal(finished.executionMetrics.provisioning.sdkState, 'warm');
+      assert.equal(finished.executionMetrics.provisioning.sdkLoadMs, 0);
       assert.ok(Number.isInteger(finished.executionMetrics.provisioning.createMs));
       const replay = await approve(again.result.response.task.id, { status: 'approved' });
       assert.equal(replay.execution.ok, false);

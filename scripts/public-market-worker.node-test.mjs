@@ -181,6 +181,37 @@ test('records SDK load and create separately across cold and warm jobs in one wo
   assert.ok(Number.isInteger(b.provisioning.createMs));
 });
 
+test('only configured staging preloads once without searching or creating a sandbox', async () => {
+  const f = fixture();
+  let loads = 0;
+  let searches = 0;
+  const deps = {
+    search: async () => { searches++; return evidence; },
+    loadSandboxSdk: async () => { loads++; return { Sandbox: { create: f.createSandbox } }; },
+  };
+  for (const env of [{}, config, { ...canary, RENDER_SERVICE_ID: 'production' }]) {
+    await createPublicMarketWorker({ env, ...deps }).preloadSdk(0);
+  }
+  assert.equal(loads, 0);
+  const worker = createPublicMarketWorker({ env: canary, ...deps });
+  await Promise.all([worker.preloadSdk(0), worker.preloadSdk(0)]);
+  const startup = worker.status().sdkPreload;
+  assert.equal(startup.state, 'ready');
+  assert.equal(startup.listenerReadyMs, 0);
+  assert.ok(startup.completedAtMs >= startup.startedAtMs);
+  assert.ok(startup.durationMs >= 0);
+  assert.equal(loads, 1);
+  assert.equal(searches, 0);
+  assert.deepEqual(f.calls, []);
+  const result = await worker.run(request);
+  assert.equal(result.ok, true);
+  assert.equal(result.executionMetrics.workerInstanceId, startup.workerInstanceId);
+  assert.equal(result.executionMetrics.provisioning.sdkState, 'warm');
+  assert.equal(result.executionMetrics.provisioning.sdkLoadMs, 0);
+  assert.equal(loads, 1);
+  assert.equal(f.calls.filter((call) => call.template).length, 1);
+});
+
 test('does not create a sandbox if SDK loading outlasts the provisioning deadline', async () => {
   const f = fixture();
   let resolveSdk;
@@ -197,6 +228,28 @@ test('does not create a sandbox if SDK loading outlasts the provisioning deadlin
   await new Promise((resolve) => setImmediate(resolve));
   assert.deepEqual(f.calls, []);
   assert.equal(result.executionMetrics.provisioning.sdkLoadMs, null);
+});
+
+test('a failed startup import does not execute anything or block an approved lazy load', async () => {
+  const f = fixture();
+  let loads = 0;
+  const worker = createPublicMarketWorker({
+    env: canary,
+    search: async () => evidence,
+    loadSandboxSdk: async () => {
+      if (++loads === 1) throw Error('synthetic import failure');
+      return { Sandbox: { create: f.createSandbox } };
+    },
+  });
+  await worker.preloadSdk(0);
+  await worker.preloadSdk(0);
+  assert.equal(worker.status().sdkPreload.state, 'failed');
+  assert.equal(loads, 1);
+  assert.deepEqual(f.calls, []);
+  const result = await worker.run(request);
+  assert.equal(result.ok, true);
+  assert.equal(result.executionMetrics.provisioning.sdkState, 'cold');
+  assert.equal(loads, 2);
 });
 
 test('the staging canary batches only its stable cohort and keeps the same evidence and cleanup', async () => {

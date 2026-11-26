@@ -111,10 +111,36 @@ export function createPublicMarketWorker({
   const armFor = (jobId) => percent > 0 && selectsFastPath(jobId, percent) ? 'batched' : 'standard';
   const workerInstanceId = randomUUID();
   let sandboxSdk;
+  let sdkLoading;
+  let preloadOperation;
+  let sdkPreload = { state: 'not_started' };
   let busy = false,
     lastSuccess = null,
     phase = !enabled ? 'disabled' : !key ? 'configuration_missing' : 'unverified',
     blockedUntil = 0;
+  function getSandboxSdk() {
+    if (sandboxSdk) return Promise.resolve(sandboxSdk);
+    sdkLoading ??= Promise.resolve().then(loadSandboxSdk).then(({ Sandbox }) => {
+      if (typeof Sandbox?.create !== 'function') throw Error('sandbox_sdk_unavailable');
+      sandboxSdk = Sandbox;
+      return Sandbox;
+    }).finally(() => { sdkLoading = undefined; });
+    return sdkLoading;
+  }
+  function preloadSdk(listenerReadyMs) {
+    if (!enabled || !key || createSandbox || !isPublicMarketStaging(env)) return;
+    if (preloadOperation) return preloadOperation;
+    const began = performance.now();
+    sdkPreload = { state: 'loading', workerInstanceId, listenerReadyMs: Math.round(listenerReadyMs),
+      startedAtMs: Math.round(began) };
+    function finish(state) {
+      const ended = performance.now();
+      sdkPreload = { ...sdkPreload, state, completedAtMs: Math.round(ended), durationMs: Math.round(ended - began) };
+    }
+    // Import the module only. Sandbox creation still requires approved work.
+    preloadOperation = getSandboxSdk().then(() => finish('ready'), () => finish('failed'));
+    return preloadOperation;
+  }
   function status() {
     return {
       kind: 'public_market_worker',
@@ -122,6 +148,7 @@ export function createPublicMarketWorker({
       enabled,
       configured: enabled && !!key,
       fastPathPercent: percent,
+      sdkPreload: { ...sdkPreload },
       ready: phase === 'verified' && lastSuccess !== null && now() - lastSuccess < 120000,
       state: phase,
       lastSuccessAt: lastSuccess === null ? null : new Date(lastSuccess).toISOString(),
@@ -200,7 +227,7 @@ export function createPublicMarketWorker({
         if (!createSandbox && !sandboxSdk) {
           const started = performance.now();
           try {
-            sandboxSdk = (await loadSandboxSdk()).Sandbox;
+            await getSandboxSdk();
           } finally {
             timing.sdkLoadMs = Math.round(performance.now() - started);
           }
@@ -339,5 +366,5 @@ export function createPublicMarketWorker({
       executionMetrics,
     };
   }
-  return { run, status, armFor };
+  return { run, status, armFor, preloadSdk };
 }

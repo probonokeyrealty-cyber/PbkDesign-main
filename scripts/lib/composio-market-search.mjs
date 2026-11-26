@@ -168,8 +168,19 @@ export function createComposioMarketSearch({
     )
       return { ok: false, live: false, result: 'public_search_denied' };
     const signal = AbortSignal.timeout(20000);
-    const searchTiming = exa ? { sessionChecksMs: null, exaQueryMs: null } : null;
+    const searchTiming = exa ? {
+      sessionChecksMs: null, sessionLookupMs: null, mcpConnectMs: null, schemaValidationMs: null, exaQueryMs: null,
+    } : null;
     const checksBegan = searchTiming ? monotonicNow() : null;
+    const measureCheck = async (field, action) => {
+      if (!searchTiming) return action();
+      const began = monotonicNow();
+      try {
+        return await action();
+      } finally {
+        searchTiming[field] = Math.round(monotonicNow() - began);
+      }
+    };
     const finishChecks = () => {
       if (searchTiming?.sessionChecksMs === null)
         searchTiming.sessionChecksMs = Math.round(monotonicNow() - checksBegan);
@@ -177,22 +188,23 @@ export function createComposioMarketSearch({
     const metrics = searchTiming ? { searchTiming } : {};
     let client;
     try {
-      const session = await verifyScope(config, signal, fetchImpl);
-      if (!session || (exa && !verifyMarketSearchSession(config, session))) throw Error('scope');
-      client = await connect(config, signal);
-      if (signal.aborted) throw Error('expired');
-      let useRest = false;
-      let listing;
-      try {
-        listing = await client.listTools({}, { signal, timeout: 20000 });
-      } catch (error) {
-        if (exa || error?.code !== -32601 || signal.aborted) throw error;
-        useRest = true;
-      }
-      let data;
-      if (useRest) {
-        data = await executeWithRest(fetchImpl, config, signal, session, query);
-      } else {
+      const session = await measureCheck('sessionLookupMs', async () => {
+        const found = await verifyScope(config, signal, fetchImpl);
+        if (!found || (exa && !verifyMarketSearchSession(config, found))) throw Error('scope');
+        return found;
+      });
+      await measureCheck('mcpConnectMs', async () => {
+        client = await connect(config, signal);
+        if (signal.aborted) throw Error('expired');
+      });
+      const useRest = await measureCheck('schemaValidationMs', async () => {
+        let listing;
+        try {
+          listing = await client.listTools({}, { signal, timeout: 20000 });
+        } catch (error) {
+          if (exa || error?.code !== -32601 || signal.aborted) throw error;
+          return true;
+        }
         if (
           listing?.tools?.length !== 1 ||
           listing.nextCursor ||
@@ -200,6 +212,12 @@ export function createComposioMarketSearch({
           schemaFingerprint(listing.tools[0].inputSchema) !== hash
         )
           throw Error('schema');
+        return false;
+      });
+      let data;
+      if (useRest) {
+        data = await executeWithRest(fetchImpl, config, signal, session, query);
+      } else {
         finishChecks();
         if (mockExaCache) {
           signal.throwIfAborted();

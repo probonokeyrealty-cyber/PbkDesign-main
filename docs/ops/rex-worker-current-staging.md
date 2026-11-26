@@ -47,6 +47,12 @@ still includes response handling and MCP close; the two sub-timings do not
 replace that total. Only the durations are added to the receipt, not query
 contents, session metadata, or credentials.
 
+The aggregate session timer is retained. Its breakdown records
+`sessionLookupMs` (Composio lookup and scope check), `mcpConnectMs` (MCP
+connection and handshake), and `schemaValidationMs` (tool listing and pinned
+schema validation). Unattempted stages are null; a failed stage still records
+its elapsed time. The rounded subtimings may not sum exactly to the aggregate.
+
 ## Mock Tampa cache probe
 
 `PBK_EXA_MOCK_CACHE_PROBE=true` is opt-in for the dedicated staging service

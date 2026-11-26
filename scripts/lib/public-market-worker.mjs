@@ -216,6 +216,10 @@ export function createPublicMarketWorker({
       const isDuration = (ms) => Number.isSafeInteger(ms) && ms >= 0;
       if (isDuration(reported?.sessionChecksMs) && (reported.exaQueryMs === null || isDuration(reported.exaQueryMs))) {
         searchTiming = { sessionChecksMs: reported.sessionChecksMs, exaQueryMs: reported.exaQueryMs };
+        const subchecks = ['sessionLookupMs', 'mcpConnectMs', 'schemaValidationMs'];
+        if (subchecks.every((key) => reported[key] === null || isDuration(reported[key]))) {
+          for (const key of subchecks) searchTiming[key] = reported[key];
+        }
       }
       if (mockExaCache) {
         const fetched = Date.parse(reported?.fetchedAt);

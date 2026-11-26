@@ -190,11 +190,16 @@ test('records Exa timing in receipt metrics without including it in sandbox inpu
   const worker = createPublicMarketWorker({
     env: config,
     createSandbox: f.createSandbox,
-    search: async () => ({ ...evidence, searchTiming: { sessionChecksMs: 10, exaQueryMs: 20, ignored: 'extra' } }),
+    search: async () => ({
+      ...evidence, searchTiming: { sessionChecksMs: 10, sessionLookupMs: 2, mcpConnectMs: 3,
+        schemaValidationMs: 5, exaQueryMs: 20, ignored: 'extra' },
+    }),
   });
   const result = await worker.run(request);
   assert.equal(result.ok, true);
-  assert.deepEqual(result.executionMetrics.searchTiming, { sessionChecksMs: 10, exaQueryMs: 20 });
+  assert.deepEqual(result.executionMetrics.searchTiming, {
+    sessionChecksMs: 10, sessionLookupMs: 2, mcpConnectMs: 3, schemaValidationMs: 5, exaQueryMs: 20,
+  });
   assert.equal(uploaded.searchTiming, undefined);
   assert.equal(result.brief.searchTiming, undefined);
 });

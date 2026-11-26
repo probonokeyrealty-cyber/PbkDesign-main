@@ -310,6 +310,7 @@ function exaFixture(options = {}) {
     },
     connect: async () => {
       elapsed += 20;
+      if (options.connectFails) throw Error('synthetic connect failure');
       return {
         listTools: async () => {
           elapsed += 30;
@@ -333,11 +334,12 @@ function exaFixture(options = {}) {
   });
   return { adapter, calls, gets, session, advance: (ms) => { elapsed += ms; } };
 }
+const checks = { sessionLookupMs: 10, mcpConnectMs: 20, schemaValidationMs: 30, sessionChecksMs: 60 };
 test('staging Exa invokes one pinned action with the dedicated account and bounded defaults', async () => {
   const { adapter, calls, gets } = exaFixture();
   const result = await adapter.search('Public Raleigh market query');
   assert.equal(result.ok, true);
-  assert.deepEqual(result.searchTiming, { sessionChecksMs: 60, exaQueryMs: 200 });
+  assert.deepEqual(result.searchTiming, { ...checks, exaQueryMs: 200 });
   assert.deepEqual(result.citations, ['https://example.org/source']);
   assert.deepEqual(gets, [['GET', '/api/v3.1/tool_router/session/trs_market']]);
   assert.deepEqual(calls, [{
@@ -370,6 +372,10 @@ test('mock cache uses a single synthetic miss and hit, with fresh session and sc
   assert.equal(hit.searchTiming.sessionChecksMs, 60);
   assert.equal(hit.searchTiming.exaQueryMs, null);
   assert.equal(hit.searchTiming.fetchedAt, miss.searchTiming.fetchedAt);
+  for (const [metric, ms] of Object.entries(checks)) {
+    assert.equal(miss.searchTiming[metric], ms);
+    assert.equal(hit.searchTiming[metric], ms);
+  }
   assert.equal(hit.answer, miss.answer);
   assert.equal((await f.adapter.search(tampaQuery, probe)).ok, false);
   assert.equal(f.gets.length, 3);
@@ -399,14 +405,29 @@ test('staging Exa timings distinguish a blocked query from a failed call', async
   const rejected = exaFixture({ missingList: true });
   const blocked = await rejected.adapter.search('Public Raleigh market query');
   assert.equal(blocked.ok, false);
-  assert.deepEqual(blocked.searchTiming, { sessionChecksMs: 60, exaQueryMs: null });
+  assert.deepEqual(blocked.searchTiming, { ...checks, exaQueryMs: null });
   assert.equal(rejected.calls.length, 0);
 
   const failed = exaFixture({ queryFails: true });
   const result = await failed.adapter.search('Public Raleigh market query');
   assert.equal(result.ok, false);
-  assert.deepEqual(result.searchTiming, { sessionChecksMs: 60, exaQueryMs: 200 });
+  assert.deepEqual(result.searchTiming, { ...checks, exaQueryMs: 200 });
   assert.equal(failed.calls.length, 1);
+});
+test('early failures retain the attempted durations and leave unattempted checks null', async () => {
+  const probe = { mockCacheProbe: true };
+  for (const [options, mcpConnectMs, sessionChecksMs] of [
+    [{ changeSession: (s) => { s.config.instant = true; } }, null, 10],
+    [{ connectFails: true }, 20, 30],
+  ]) {
+    const f = exaFixture({ ...options, env: mockCacheEnv });
+    const result = await f.adapter.search(tampaQuery, probe);
+    assert.equal(result.ok, false);
+    assert.deepEqual(result.searchTiming, {
+      sessionChecksMs, sessionLookupMs: 10, mcpConnectMs, schemaValidationMs: null, exaQueryMs: null,
+    });
+    assert.deepEqual(f.calls, []);
+  }
 });
 test('staging Exa fails closed for account, Instant, tool, or schema drift and never falls back', async () => {
   for (const options of [

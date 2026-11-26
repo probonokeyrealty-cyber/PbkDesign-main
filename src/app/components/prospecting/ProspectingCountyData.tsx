@@ -74,7 +74,10 @@ function CountyParcelPreview({ county }: { county: County }) {
   };
   const clear = () => {
     ++readId.current;
-    if (input.current) input.current.value = '';
+    if (input.current) {
+      input.current.value = '';
+      input.current.focus();
+    }
     setFile({ status: 'idle' });
     resetReview();
   };
@@ -120,27 +123,30 @@ function CountyParcelPreview({ county }: { county: County }) {
       </label>
       <small id="pbk-county-file-limit">8 MB / 25,000 rows maximum. Stays in this tab.</small>
       {file.status === 'reading' && <p role="status">Reading CSV...</p>}
-      {file.status === 'error' && (
-        <p role="alert" className="pbk-prospect-warning">
-          {file.error}
-        </p>
-      )}
-      {file.status === 'ready' && (
-        <>
-          <div className="pbk-prospect-section-head">
+      {(file.status === 'error' || file.status === 'ready') && (
+        <div className="pbk-prospect-section-head">
+          {file.status === 'error' ? (
+            <p role="alert" className="pbk-prospect-warning">
+              {file.error}
+            </p>
+          ) : (
             <p role="status">
               {file.filename} · {file.rows.length.toLocaleString()} usable parcel rows
             </p>
-            <button
-              type="button"
-              className="pbk-prospect-icon"
-              onClick={clear}
-              title="Clear local file"
-              aria-label="Clear local file"
-            >
-              <X size={16} aria-hidden="true" />
-            </button>
-          </div>
+          )}
+          <button
+            type="button"
+            className="pbk-prospect-icon"
+            onClick={clear}
+            title="Clear local file"
+            aria-label="Clear local file"
+          >
+            <X size={16} aria-hidden="true" />
+          </button>
+        </div>
+      )}
+      {file.status === 'ready' && (
+        <>
           <div className="pbk-county-criteria">
             <label className="pbk-prospect-search">
               <Search size={16} aria-hidden="true" />

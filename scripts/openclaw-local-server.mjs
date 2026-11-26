@@ -117,7 +117,7 @@ import { SYNTHETIC_EDGE_CASE_SOURCE, buildSyntheticEdgeCaseObjections } from './
 import { getObservabilityStatus as getPbkObservabilityStatus, incrementObservabilityCounter, initializeObservability, recordEventBusBacklogMetric, recordGuardrailViolationMetric, recordLatencyMetric, withObservabilitySpan } from './observability.mjs';
 import { recordAvaResponseLatencyStatus } from './ava-latency-status.mjs';
 import { readPhoneTtsAudio, summarizePhoneTurnTiming } from './ava-phone-latency.mjs';
-import { appendAssistantMessage, buildAssistantPrompt, createAssistantSessionId, detectAssistantIntent, findAssistantLeadMatch, findAssistantStreetLeads, normalizeAssistantSession, planAssistantIntent, sanitizeAssistantTurn, summarizeAvaTodayWorkQueue } from './ava-assistant-chat.mjs';
+import { appendAssistantMessage, buildAssistantPrompt, createAssistantSessionId, detectAssistantIntent, findAssistantLeadMatch, findAssistantStreetLeads, normalizeAssistantSession, planAssistantIntent, readAvaSavedLeadReviewId, sanitizeAssistantTurn, summarizeAvaSavedLeadReview, summarizeAvaTodayWorkQueue } from './ava-assistant-chat.mjs';
 import { runAvaMissionController } from './ava-mission-controller.mjs';
 import { buildLeadCommitEnvelope } from './lead-field-provenance.mjs';
 import { loadBatchReviewRoster } from './batch-review-roster.mjs';
@@ -61773,6 +61773,13 @@ function getAvaReviewContactStatus(lead) {
     && consentStatuses.length && consentStatuses.every((status) => status === 'yes') ? 'recorded' : 'needs_review';
 }
 
+async function loadSavedLeadReviewProfile(leadId) {
+  const { lead, unavailable, contactRestricted } = await loadLeadForFullView(leadId, { reviewOnly: true });
+  if (unavailable) return { status: 503, error: 'The saved lead record is unavailable. Try again shortly.' };
+  if (!lead || (lead.leadId || lead.id) !== leadId) return { status: 404, error: 'Lead not found.' };
+  return { status: 200, lead, contactRestricted };
+}
+
 function buildAvaLeadReview(lead, leadId, contactRestricted) {
   const address = String(lead.property?.address || lead.address || '').trim();
   const addressRecorded = Boolean(address && !/^unknown(?: property| address)?$/i.test(address));
@@ -66691,10 +66698,17 @@ async function handleInternalAvaAssistantChatRequest(request) {
   );
   const completedHistorySnapshot = body.historyMode === 'completed-only' && Array.isArray(body.messages);
   const assistantIntent = detectAssistantIntent(text);
+  const savedLeadReview = assistantIntent.intent === 'saved_lead_review';
+  const selectedLeadId = readAvaSavedLeadReviewId(body.leadId || body.lead_id);
+  // The review reads its own canonical evidence. Keep generic roster matches and prior
+  // conversation context out of its mission traces, without changing stored chat history.
+  const reviewMissionContext = savedLeadReview ? { state: {}, assistantSession: { history: [] }, memories: [] } : {};
   const readOnlyAuditRequest = Boolean(assistantIntent.readOnly || isAvaReadOnlyAuditRequest(text));
   const assistantContextSession = {
     ...normalizeAssistantSession(priorAssistantSession),
-    leadId: body.leadId || body.lead_id || priorAssistantSession?.leadId || priorAssistantSession?.lead_id || '',
+    leadId: savedLeadReview
+      ? selectedLeadId
+      : body.leadId || body.lead_id || priorAssistantSession?.leadId || priorAssistantSession?.lead_id || '',
     // A hosted stream may finish after Stop; only the browser knows which replies it completed.
     history: completedHistorySnapshot
       ? requestedHistory
@@ -66703,7 +66717,7 @@ async function handleInternalAvaAssistantChatRequest(request) {
         requestedHistory
       ),
   };
-  const assistantMemories = getCleanAvaActiveMemories(12);
+  const assistantMemories = savedLeadReview ? [] : getCleanAvaActiveMemories(12);
   const initialMissionController = await requestTiming.measure('controller_intake', () => runAvaMissionController({
     controllerStage: 'intake',
     sessionId,
@@ -66722,6 +66736,7 @@ async function handleInternalAvaAssistantChatRequest(request) {
     toolResult: null,
     state,
     memories: assistantMemories,
+    ...reviewMissionContext,
   }));
   const assistantPlan = requestTiming.measureSync('intent_plan', () => planAssistantIntent(assistantIntent, {
     publicMode: false,
@@ -66729,6 +66744,7 @@ async function handleInternalAvaAssistantChatRequest(request) {
     outlookLeadEmailEnabled: OUTLOOK_LEAD_EMAIL_ENABLED,
     session: assistantContextSession,
     leadId: assistantContextSession.leadId,
+    selectedLeadId,
     leads: state.leadImports || [],
   }));
   let assistantSession = appendAssistantMessage(assistantContextSession, 'user', text, {
@@ -66760,6 +66776,7 @@ async function handleInternalAvaAssistantChatRequest(request) {
     additiveIntelligence,
     state,
     memories: assistantMemories,
+    ...reviewMissionContext,
   }));
   const controlGate = enforceAvaControlEnvelope(missionController, assistantPlan);
   request.avaStream?.signal.throwIfAborted();
@@ -66832,6 +66849,18 @@ async function handleInternalAvaAssistantChatRequest(request) {
       const mao = Number(toolResult?.analysis?.mao ?? toolResult?.mao ?? 0);
       const profit = Number(toolResult?.analysis?.profit ?? toolResult?.profit ?? 0);
       answer = [`I finished the deal math for ${assistantPlan.toolPlan.params.address}.`, arv ? `ARV ${currency(arv)}.` : '', mao ? `MAO ${currency(mao)}.` : '', profit ? `Estimated profit ${currency(profit)}.` : ''].filter(Boolean).join(' ');
+    }
+  } else if (assistantPlan.action === 'tool_plan' && assistantPlan.toolPlan?.toolName === 'getSavedLeadReview') {
+    const { leadId } = assistantPlan.toolPlan.params;
+    const profile = await requestTiming.measure('tool_execution', () => loadSavedLeadReviewProfile(leadId));
+    if (profile.status === 200) {
+      const review = buildAvaLeadReview(profile.lead, leadId, profile.contactRestricted);
+      ({ answer, toolResult } = summarizeAvaSavedLeadReview(review));
+    } else {
+      answer = profile.status === 404
+        ? 'I could not find that exact saved lead. Reopen it in Leads and try again.'
+        : 'I could not read the saved lead record. Try again shortly.';
+      toolResult = { ok: false, result: profile.status === 404 ? 'ava_lead_review_not_found' : 'ava_lead_review_unavailable' };
     }
   } else if (assistantPlan.action === 'tool_plan' && assistantPlan.toolPlan?.toolName === 'getTodayWorkQueue') {
     ({ answer, toolResult } = summarizeAvaTodayWorkQueue(buildFounderWorkQueueSnapshot()));
@@ -67109,6 +67138,7 @@ async function handleInternalAvaAssistantChatRequest(request) {
     additiveIntelligence,
     state,
     memories: assistantMemories,
+    ...reviewMissionContext,
   }));
   const finalControlGate = enforceAvaControlEnvelope(missionController, assistantPlan);
   const preserveReadOnlyAuditAnswer =
@@ -67145,6 +67175,7 @@ async function handleInternalAvaAssistantChatRequest(request) {
       additiveIntelligence,
       state,
       memories: assistantMemories,
+      ...reviewMissionContext,
     }));
   }
 
@@ -83077,13 +83108,9 @@ const server = createServer(async (request, response) => {
         return;
       }
       if (reviewOnly || highLevelTasksOnly || consultationId !== null) {
-        const { lead: exactLead, unavailable, contactRestricted } = await loadLeadForFullView(leadId, { reviewOnly: true });
-        if (unavailable) {
-          json(response, 503, { ok: false, code: 'lead_roster_unavailable', error: 'The saved lead record is unavailable. Try again shortly.' });
-          return;
-        }
-        if (!exactLead || (exactLead.leadId || exactLead.id) !== leadId) {
-          json(response, 404, { ok: false, error: 'Lead not found.' });
+        const { lead: exactLead, status, error, contactRestricted } = await loadSavedLeadReviewProfile(leadId);
+        if (status !== 200) {
+          json(response, status, { ok: false, ...(status === 503 ? { code: 'lead_roster_unavailable' } : {}), error });
           return;
         }
         if (highLevelTasksOnly && !reviewOnly && consultationId === null) {

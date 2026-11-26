@@ -153,6 +153,78 @@ test('new intake records a reviewable Ava handoff without any outreach', async (
       assert.deepEqual(reviewedState[key], after[key], `Review writes no ${key}`);
     }
 
+    const askAva = (message, leadId, sessionId = 'qa-ava-linked-lead-review') =>
+      request('/api/assistant/chat', { sessionId, message, leadId });
+    const leadChat = await askAva('Ava, please review this lead.', intakeId);
+    assert.equal(leadChat.toolResult?.result, 'ava_lead_review_summary');
+    assert.equal(leadChat.toolPlan?.providerWrite, false);
+    assert.equal(leadChat.toolResult?.leadId, intakeId);
+    assert.deepEqual(leadChat.toolResult?.evidence, review.evidence);
+    assert.deepEqual(leadChat.toolResult?.nextStep, review.nextStep);
+    assert.match(leadChat.answer, /verify consent and do-not-contact/i);
+    assert.doesNotMatch(JSON.stringify(leadChat.toolResult), /Synthetic intake note|123 Fixture Ave|executor is coordinating/);
+
+    // Reuse one chat session deliberately; today's explicitly selected lead wins.
+    const restrictedChat = await askAva('What should I do next for this lead?', manual.leadId);
+    assert.equal(restrictedChat.toolResult?.leadId, manual.leadId);
+    assert.deepEqual(restrictedChat.toolResult?.evidence, blocked.evidence);
+    assert.deepEqual(restrictedChat.toolResult?.nextStep, blocked.nextStep);
+    assert.match(restrictedChat.answer, /hold outreach/i);
+    assert.ok(restrictedChat.suggestions?.includes('Open current lead'));
+
+    const noSelection = await askAva('Review this lead');
+    assert.equal(noSelection.toolPlan, null, 'Do not reuse a previously linked lead when none is selected');
+    assert.match(noSelection.answer, /open.*lead/i);
+    assert.equal(noSelection.activeLeadId, '', 'Missing selection must not attach a past lead to the response');
+    assert.equal(noSelection.mission.leadId, '');
+    assert.equal(noSelection.controlEnvelope.leadId, '');
+    assert.doesNotMatch(noSelection.trace.workingMemory.brief, /456 Fixture Ave|Recent turns:|Known facts:/);
+    assert.deepEqual(noSelection.trace.workingMemory.memories, []);
+    const notFound = await askAva('Review this lead', 'qa-nonexistent-lead');
+    assert.equal(notFound.toolResult?.result, 'ava_lead_review_not_found');
+    const addressAsId = await askAva('Review this lead', payload.property.address);
+    assert.equal(addressAsId.toolPlan, null, 'Do not look up a lead review by fuzzy address');
+    assert.equal(addressAsId.activeLeadId, '');
+    assert.doesNotMatch(restrictedChat.trace.workingMemory.brief, /123 Fixture Ave|456 Fixture Ave|Recent turns:|Known facts:/);
+    const publicReview = await request('/api/public/ava-chat', {
+      sessionId: 'qa-public-lead-review', message: 'Review this lead', leadId: intakeId,
+    });
+    assert.equal(publicReview.assistantAction, 'blocked_public_private_data');
+    assert.equal(publicReview.toolPlan, null);
+    const anonymousReview = await bridge.fetch(bridge.origin + '/api/assistant/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message: 'Review this lead', leadId: intakeId }),
+    });
+    assert.equal(anonymousReview.status, 401);
+
+    const reading = await bridge.fetch(bridge.origin + '/api/assistant/chat', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer ' + bridge.apiKey, 'Content-Type': 'application/json', Accept: 'text/event-stream' },
+      body: JSON.stringify({ sessionId: 'qa-ava-stream-review', message: 'Review this lead', leadId: manual.leadId }),
+    });
+    assert.match(reading.headers.get('content-type') || '', /^text\/event-stream/);
+    const done = (await reading.text()).split(/\r?\n\r?\n/).find(event => event.startsWith('event: done'));
+    assert.ok(done, 'Stream completes with an authoritative review');
+    const streamed = JSON.parse(done.split(/\r?\n/).find(line => line.startsWith('data: ')).slice(6));
+    assert.equal(streamed.toolResult?.nextStep?.code, 'hold_contact');
+    assert.match(streamed.answer, /hold outreach/i);
+
+    const chatState = await request('/state');
+    for (const key of ['leadImports', 'calls', 'messages', 'contracts', 'approvals', 'analyzerRuns']) {
+      assert.deepEqual(chatState[key], reviewedState[key], 'Chat review writes no ' + key);
+    }
+    const savedActivityIds = new Set(reviewedState.activity.map(item => item.id));
+    assert.deepEqual(chatState.activity.filter(item => savedActivityIds.has(item.id)), reviewedState.activity);
+    assert.ok(chatState.activity.filter(item => !savedActivityIds.has(item.id)).every(item =>
+      item.source === 'runtime' && ['ASSISTANT', 'PUBLIC_CHAT'].includes(item.category) && !item.leadId
+    ), 'Chat adds only generic audit rows, not lead or provider activity');
+    const savedTaskIds = new Set(reviewedState.agentTasks.map(task => task.id));
+    assert.ok(chatState.agentTasks.filter(task => !savedTaskIds.has(task.id)).every(
+      task => task.taskType === 'agent_ops_measurement' && task.providerWrites === 'blocked'
+    ), 'Chat review only adds routine timing measurements, not business tasks');
+    assert.deepEqual(bridge.blockedNetwork, networkBeforeReview, 'Chat review requires no outbound network calls');
+
     for (const [id, compliance] of [
       ['requested', { dncStatus: 'requested', tcpaConsent: 'yes' }],
       ['revoked', { dncStatus: 'clear', tcpaConsent: 'yes', consentStatus: 'revoked' }],
@@ -163,6 +235,8 @@ test('new intake records a reviewable Ava handoff without any outreach', async (
       const restricted = (await readReview(fixture.leadTriage.correlationId)).review;
       assert.equal(restricted.evidence.contact.status, 'restricted', id);
       assert.equal(restricted.nextStep.code, 'hold_contact', id);
+      const chatRestriction = await askAva('What evidence is missing for this lead?', fixture.leadTriage.correlationId);
+      assert.equal(chatRestriction.toolResult?.nextStep?.code, 'hold_contact', id);
     }
     const unscored = await request('/api/leads', {
       leadId: 'qa-ava-unscored-notes', address: '303 Fictional Way, Denver CO', sellerNotes: 'Synthetic tenant signal.',

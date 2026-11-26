@@ -692,6 +692,10 @@ export function detectAssistantIntent(message = '') {
   if (/^(?:what should i (?:work on|do) (?:first )?today|(?:what is|what's) in (?:today's |the )?work queue|what needs my attention today|summarize (?:today's |the )?work queue)$/.test(queueQuestion)) {
     return { intent: 'today_work_queue', message: text, classifierSource: 'regex', readOnly: true };
   }
+  const leadReviewQuestion = queueQuestion.replace(/^(?:(?:hey )?ava,? )?(?:please )?/, '');
+  if (/^(?:review (?:this|the current) lead|what should i do next (?:for|with) this lead|(?:what evidence is missing|where are the evidence gaps) for this lead)$/.test(leadReviewQuestion)) {
+    return { intent: 'saved_lead_review', message: text, classifierSource: 'regex', readOnly: true };
+  }
   const phone = extractPhone(text);
   const address = extractAddress(text);
   const localIntent = buildAssistantIntentFromClassifier(
@@ -882,6 +886,30 @@ export function detectAssistantIntent(message = '') {
   return { intent: 'general', message: text, classifierSource: 'regex' };
 }
 
+export function readAvaSavedLeadReviewId(value) {
+  return typeof value === 'string' && /^[a-z\d_-][a-z\d_.:-]{0,255}$/i.test(value) ? value : '';
+}
+
+export function summarizeAvaSavedLeadReview(review) {
+  const { leadId, reviewedAt, writeMode, evidence, nextStep } = review;
+  const qualificationLabels = {
+    budget: 'budget', authority: 'decision-maker', need: 'motivation',
+    timeline: 'timeline', urgency: 'urgency',
+  };
+  const missing = evidence.qualification.missing.map((field) => qualificationLabels[field]).filter(Boolean);
+  const gaps = [
+    !evidence.property.recorded && 'property address',
+    missing.length && 'qualification (' + missing.join(', ') + ')',
+    !evidence.underwriting.recorded && 'underwriting',
+  ].filter(Boolean);
+  const answer = [
+    nextStep.title + '. ' + nextStep.detail,
+    gaps.length ? 'Still missing: ' + gaps.join('; ') + '.' : '',
+    'No lead data changed and no outreach was sent.',
+  ].filter(Boolean).join(' ');
+  return { answer, toolResult: { ok: true, result: 'ava_lead_review_summary', leadId, reviewedAt, writeMode, evidence, nextStep } };
+}
+
 export function summarizeAvaTodayWorkQueue(snapshot) {
   if (snapshot?.ok !== true || !Array.isArray(snapshot.items) ||
       /(?:unavailable|pending)$/.test(String(snapshot.source || ''))) {
@@ -930,6 +958,7 @@ export function buildAssistantSuggestions(intent = 'general', { publicMode = tru
 
   if (intent === 'analyze_deal') return ['Share the address', 'Run deal math', 'Draft seller question'];
   if (intent === 'today_work_queue') return ['Open Work queue', 'Open Approvals', 'Open Inbox'];
+  if (intent === 'saved_lead_review') return ['Open current lead', 'Open saved analysis'];
   if (intent === 'approvals')
     return ['Show what needs review', 'Summarize approvals', 'Find the related lead'];
   if (intent === 'call') return ['Prepare call request', 'Find the lead first', 'Write an opener'];
@@ -1042,7 +1071,7 @@ export function planAssistantIntent(detected = {}, options = {}) {
     };
   }
 
-  if (publicMode && ['approvals', 'lead_lookup', 'summary', 'today_work_queue'].includes(intent)) {
+  if (publicMode && ['approvals', 'lead_lookup', 'summary', 'today_work_queue', 'saved_lead_review'].includes(intent)) {
     return {
       action: 'blocked_public_private_data',
       answer:
@@ -1656,6 +1685,26 @@ export function planAssistantIntent(detected = {}, options = {}) {
         requiresBridgeConfirmation: true,
         retryable: true,
       },
+      usedIntent: intent,
+    };
+  }
+
+  if (!publicMode && intent === 'saved_lead_review') {
+    const leadId = readAvaSavedLeadReviewId(options.selectedLeadId);
+    if (!authenticated || !leadId) {
+      return {
+        action: 'saved_lead_review_requires_selection',
+        answer: 'Open the saved lead in Ava Chat, then ask me to review it.',
+        suggestions: ['Open Leads'],
+        toolPlan: null,
+        usedIntent: intent,
+      };
+    }
+    return {
+      action: 'tool_plan',
+      answer: 'I will check the saved evidence for this lead.',
+      suggestions,
+      toolPlan: { toolName: 'getSavedLeadReview', params: { leadId }, providerWrite: false },
       usedIntent: intent,
     };
   }

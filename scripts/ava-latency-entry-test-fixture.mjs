@@ -1,3 +1,4 @@
+import { readAvaSavedLeadReviewId } from './ava-assistant-chat.mjs';
 import { readAvaChatCurrentRequest } from './ava-team-chat-permissions.mjs';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -30,6 +31,7 @@ export function createLatencyEntryFixture({ secret = randomUUID(), onSessionWrit
     },
     normalizeConversationMessages: messages => messages || [],
     readAvaChatCurrentRequest,
+    readAvaSavedLeadReviewId,
     sanitizePublicAvaChatTurn: content => ({ content }),
     getPublicAvaAssistantSessionId: (_request, body) => body.sessionId || 'ordinary',
     readPublicAvaAssistantSession: async id => sessions.get(id) || {},

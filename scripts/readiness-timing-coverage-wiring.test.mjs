@@ -1,3 +1,4 @@
+import { readAvaSavedLeadReviewId } from './ava-assistant-chat.mjs';
 import { readAvaChatCurrentRequest } from './ava-team-chat-permissions.mjs';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -83,6 +84,7 @@ function chatFixture({ answer = 'Actual answer', cancel = false, source = 'forge
       metadata: { timingProof: { signature: 'forged' }, channel: 'phone', outputCodePoints: 1 } }),
     normalizeConversationMessages: () => [], sanitizePublicAvaChatTurn: content => ({ content }),
     readAvaChatCurrentRequest,
+    readAvaSavedLeadReviewId,
     getPublicAvaAssistantSessionId: () => 'local-session', readPublicAvaAssistantSession: async () => ({ history: [] }),
     dropCurrentAssistantUserTurn: () => [], normalizeAssistantSession, mergeAssistantHistories: () => [],
     detectAssistantIntent: () => ({ intent: 'general' }), isAvaReadOnlyAuditRequest: () => false,

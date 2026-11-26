@@ -1,0 +1,32 @@
+name: Operator Session Regression Verify
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'scripts/operator-session-browseros*'
+      - 'scripts/qa-readonly-page-cdp.mjs'
+      - 'scripts/analyzer-browseros-mobile-live.mjs'
+      - 'scripts/fixtures/analyzer-*'
+      - '.github/workflows/operator-session-verify.yml'
+      - 'package*.json'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  isolated-runner-contracts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Verify isolated desktop and mobile runner boundaries
+        run: npm run test:analyzer-draft-storage

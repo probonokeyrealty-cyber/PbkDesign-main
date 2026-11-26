@@ -1,3 +1,4 @@
+export function readTodaySectionTarget(hash: string): string;
 export function readAvaLeadSearch(value: unknown): string;
 export function readLeadEvidenceTarget(hash: string): {
   sectionId: 'lead-numbers' | 'lead-property';

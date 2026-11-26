@@ -2998,9 +2998,21 @@ function WelcomeState({
   onResumeOperatorMemory: () => void;
   onSelectCompanionAction: (item: CompanionAction) => void;
 }) {
-  const prompts = PBK_COMPANION_ACTIONS.slice(0, 6).filter(
-    (item) => !linkedLeadId || (item.id !== 'open-lead' && item.id !== 'open-page')
-  );
+  const workspacePrompts = PBK_COMPANION_ACTIONS.slice(0, 6);
+  const prompts: CompanionAction[] = linkedLeadId
+    ? [
+        {
+          id: 'review-saved-lead',
+          label: 'Review this lead',
+          description: 'Check saved evidence, contact restrictions, and the next step.',
+          prompt: 'Review this lead',
+          action: 'llm_query',
+          icon: FileText,
+          requiresApproval: false,
+        },
+        ...workspacePrompts.filter((item) => item.id !== 'open-lead' && item.id !== 'open-page'),
+      ]
+    : workspacePrompts;
   const compsPath = resolveAvaBrowserCommand('Show saved comps', linkedLeadId)?.path;
   const photosPath = resolveAvaBrowserCommand('Open property photos', linkedLeadId)?.path;
 

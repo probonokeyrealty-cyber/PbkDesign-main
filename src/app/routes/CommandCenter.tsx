@@ -16,6 +16,7 @@ import { DecisionRail, type DecisionProgress } from '../components/DecisionRail'
 import { OutlookDeliveryStatus } from '../components/OutlookDeliveryStatus';
 import { readOutlookDelivery, type OutlookDelivery } from '../utils/outlookDelivery.mjs';
 import '../../styles/decision-rail.css';
+import { readTodaySectionTarget } from '../utils/avaBrowserCommand.mjs';
 import { readLeadQueueReturn } from '../utils/leadQueueReturn';
 import { resolveTriageLead } from '../utils/leadTriage';
 import '../../styles/faster-triage.css';
@@ -2652,14 +2653,23 @@ export function CommandCenter() {
     return () => cancelAnimationFrame(frame);
   }, [returnContext, loading, battlefieldQueueLoading, battlefieldItems]);
 
-  const focusTodaySection = (id: string) => {
+  const focusTodaySection = useCallback((id: string) => {
     const section = document.getElementById(id);
     if (!section) return;
     const heading = section.querySelector<HTMLElement>('h2') || section;
     heading.tabIndex = -1;
     heading.focus({ preventScroll: true });
     section.scrollIntoView({ block: 'start', behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
-  };
+  }, []);
+
+  useEffect(() => {
+    const sectionId = readTodaySectionTarget(location.hash);
+    if (!sectionId || loading) return;
+    const frame = requestAnimationFrame(() => {
+      focusTodaySection(document.getElementById(sectionId) ? sectionId : 'today-heading');
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [location.hash, location.key, loading, focusTodaySection]);
 
   const selectBattlefieldItem = (item: BattlefieldItem) => {
     if (item.targetPath.startsWith('#')) {
@@ -3256,9 +3266,7 @@ export function CommandCenter() {
                 disabled={action.targetPath === '#approvals' && !isWidgetVisible('approvals')}
                 onClick={() => {
                   if (action.targetPath.startsWith('#')) {
-                    document
-                      .querySelector(action.targetPath)
-                      ?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                    focusTodaySection(action.targetPath.slice(1));
                     return;
                   }
                   navigate(action.targetPath);

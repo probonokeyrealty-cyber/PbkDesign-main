@@ -86,7 +86,13 @@ async function verify(browserType, viewport, device = {}) {
     await expect(review.getByText('Approval queue unavailable.')).toBeVisible();
     await expect(review.getByText('No pending approvals right now.')).toHaveCount(0);
     unavailable = false;
-    await page.reload();
+    await page.goto(origin + '/ava-chat');
+    const composer = page.locator('textarea').first();
+    await composer.fill('Open Approvals');
+    await page.getByRole('button', { name: 'Send to Ava' }).click();
+    await expect(page).toHaveURL(/\/command-center#approvals$/);
+    await expect(page.getByRole('heading', { name: 'Review', exact: true })).toBeFocused();
+    assert.equal(requests.length, 0, 'Opening approvals from Ava must not submit a decision');
     await expect(page.getByRole('region', { name: 'Recent activity', exact: true })).toBeVisible();
     await expect(page.getByText('Drafted a follow-up')).toBeVisible();
     const row = review.locator('[data-approval-id="qa-sms"]');

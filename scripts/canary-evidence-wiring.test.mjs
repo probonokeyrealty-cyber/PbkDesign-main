@@ -249,8 +249,10 @@ test('bridge code matches the reviewed release fingerprint outside the scoped re
   // keep Ava available for missing/rejected transfers. The isolated inbound safety suite covers both.
   // Only their seven declarations differ from 2d324e68; all other bridge declarations are identical.
   // Independent review adds exact-call terminal checks and preserves concurrent transcript updates.
+  // Staff Ava reads the existing Today queue and plans from the same turn used for permission checks.
+  // Ava Chat shares the staff portal's exact saved lead review and does not dispatch provider actions.
   assert.equal(createHash('sha256').update(unchanged).digest('hex'),
-    '8919cb920dea05ec803c627a5a5943e032485a499a6c7c76de8d5b1179815194');
+    '4d70b360b92cced0661cd357ccf97f179f53d1f80a9345445816178ef4c4c175');
 });
 
 test('production distribution includes reader and protocol, never the fixture signer', () => {

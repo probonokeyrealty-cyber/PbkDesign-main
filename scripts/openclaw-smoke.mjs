@@ -169,6 +169,22 @@ export async function runIsolatedBridgeSmoke() {
       /public chat.*will not start calls|will not start calls, texts/i.test(publicAvaAssistantChat?.answer || ''),
       'Public Ava assistant chat did not block provider-write call behavior.',
     );
+    const queueHeaders = { Authorization: 'Bearer ' + API_KEY, 'Content-Type': 'application/json' };
+    const queue = await fetch(BASE_URL + '/api/founder/work-queue', { headers: queueHeaders })
+      .then(response => response.json());
+    const avaQueue = await fetch(BASE_URL + '/api/assistant/chat', {
+      method: 'POST',
+      headers: queueHeaders,
+      body: JSON.stringify({ sessionId: 'smoke-ava-today-queue', message: 'What should I work on today?' }),
+    }).then(response => response.json());
+    assert(avaQueue?.ok === true && avaQueue?.toolResult?.result === 'today_work_queue_summary',
+      'Staff Ava must route work prioritization to the read-only Today queue.');
+    assert(avaQueue.toolResult.itemCount === queue.items.length &&
+      avaQueue.toolResult.pendingApprovals === queue.summary.approvals,
+      'Staff Ava must use the same ranked queue and approval counts as Today.');
+    assert(avaQueue.toolPlan?.providerWrite === false && avaQueue.trace?.controlEnvelope?.exactAction?.providerWrite === false,
+      'Staff Ava must keep Today recommendations read-only.');
+
     const internalAvaAssistantCall = await fetch(`${BASE_URL}/api/assistant/chat`, {
       method: 'POST',
       headers: {

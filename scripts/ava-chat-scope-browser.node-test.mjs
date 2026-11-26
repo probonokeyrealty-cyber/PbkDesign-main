@@ -254,6 +254,28 @@ async function speak(page, text) {
   }), text);
 }
 
+test('the saved-lead review starter sends only the selected lead on desktop and mobile', async t => {
+  for (const width of [1440, 390, 320]) {
+    const { page, errors } = await open(t, aUrl, {}, {}, {
+      viewport: { width, height: 800 }, isMobile: width < 500, hasTouch: width < 500,
+    });
+    await page.getByRole('button', { name: /Review this lead/ }).click();
+    await expect(composer(page)).toHaveValue('Review this lead');
+    await assertNoActions(page);
+    const payload = await submit(page);
+    assert.equal(payload.message, 'Review this lead');
+    assert.equal(payload.leadId, 'sample-a');
+    await page.evaluate(() => window.fixture.streams.at(-1).resolve({
+      ok: true, answer: 'Hold outreach. Review the saved contact restriction. No lead data changed and no outreach was sent.',
+      usedIntent: 'saved_lead_review',
+    }));
+    await expect(page.getByText(/^Hold outreach\./)).toBeVisible();
+    assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
+    await assertNoActions(page, 1);
+    assert.deepEqual(errors, []);
+  }
+});
+
 test('a spoken browser command opens its linked lead without a model or automation request', async t => {
   const { page, errors } = await open(t, aUrl, {}, { voice: true });
   await speak(page, 'Hey Ava, open the current lead.');

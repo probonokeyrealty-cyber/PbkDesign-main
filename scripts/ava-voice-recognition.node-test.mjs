@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 import { test } from 'node:test';
-import { resolveAvaBrowserCommand } from '../src/app/utils/avaBrowserCommand.mjs';
+import { readTodaySectionTarget, resolveAvaBrowserCommand } from '../src/app/utils/avaBrowserCommand.mjs';
 
 const source = readFileSync('src/app/routes/AvaChat.tsx', 'utf8').replace(/\r\n/g, '\n');
 const start = source.indexOf('  const startListening = () => {');
@@ -99,4 +99,40 @@ test('an explicit lead search keeps the term in navigation state, preserves case
   const f = fixture();
   f.callback({ results: [Object.assign([{ transcript: command }], { isFinal: true })] });
   assert.deepEqual(f.submitted, [command]);
+});
+
+test('Ava can open every labeled workspace in the staff navigation', () => {
+  const sidebar = readFileSync('src/app/shell/Sidebar.tsx', 'utf8');
+  const workspaceLinks = [...sidebar.matchAll(/\{ to: '([^']+)', label: '([^']+)', icon:/g)];
+  assert.ok(workspaceLinks.length >= 14);
+  const routeAliases = new Map([['/', '/command-center'], ['/fleet', '/agent-fleet']]);
+  for (const [, path, label] of workspaceLinks) {
+    assert.deepEqual(resolveAvaBrowserCommand('Open ' + label), { path: routeAliases.get(path) || path }, label);
+  }
+});
+
+test('Ava opens existing work controls without selecting, submitting, or saving an action', () => {
+  const paths = {
+    'Open Work queue': '/command-center#battlefield-title',
+    'Open Approvals': '/command-center#approvals',
+    'Open Recent activity': '/command-center#pbk-activity-heading',
+    'Open Live call': '/command-center#live-call',
+    'Open Admin tasks': '/command-center#admin-activity',
+    'Open call recordings': '/inbox/conversations?filter=call',
+    'Open batch review': '/leads/batch-review',
+    'Open new lead': '/leads?new=1',
+    'Open edit lead': '/leads/lead%3A42?edit=1',
+    'Open lead conversation': '/inbox/conversations?lead=lead%3A42',
+    'Open investor evidence': '/leads/lead%3A42#lead-investor',
+  };
+  for (const [command, path] of Object.entries(paths)) {
+    assert.deepEqual(resolveAvaBrowserCommand(command, 'lead:42'), { path }, command);
+  }
+  assert.deepEqual(resolveAvaBrowserCommand('Open edit lead'), { path: null });
+  assert.deepEqual(resolveAvaBrowserCommand('Open lead conversation', '../lead-42'), { path: null });
+  for (const text of ['Approve all requests', 'Start a call', 'Send a text', 'Run the campaign', 'Open Settings and change the guardrails']) {
+    assert.equal(resolveAvaBrowserCommand(text, 'lead:42'), null, text);
+  }
+  assert.equal(readTodaySectionTarget('#approvals'), 'approvals');
+  assert.equal(readTodaySectionTarget('#arbitrary-controlled-element'), '');
 });

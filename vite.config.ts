@@ -37,9 +37,15 @@ const pbkBuildId =
 const portalEnvironment = process.env.PBK_PORTAL_ENV || (process.env.NODE_ENV === 'production' ? 'live' : 'staging')
 if (!['live', 'staging'].includes(portalEnvironment)) throw Error('Invalid PBK portal environment')
 
+const marketPreviewBranch = process.env.HEAD
 const stagingMarketIndicators =
-  process.env.CONTEXT === 'deploy-preview' && process.env.HEAD === 'codex/house-zip-staging-indicators'
-const marketQa91411 = stagingMarketIndicators && process.env.REVIEW_ID === '111'
+  process.env.CONTEXT === 'deploy-preview' &&
+  (marketPreviewBranch === 'codex/house-zip-staging-indicators' ||
+    marketPreviewBranch === 'codex/van-nuys-market-map-preview')
+const marketQa91411 =
+  stagingMarketIndicators &&
+  marketPreviewBranch === 'codex/house-zip-staging-indicators' &&
+  process.env.REVIEW_ID === '111'
 const marketQa91411Page = 'market-comparison-91411-qa.html'
 const includeLegacyShell = process.env.PBK_INCLUDE_LEGACY_SHELL === 'true'
 const modernShellEntry = 'index.shell.html'

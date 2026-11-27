@@ -94,7 +94,7 @@
     "doctor:local-env": "node ./scripts/pbk-local-env-doctor.mjs",
     "doctor:openclaw": "node ./scripts/openclaw-doctor-status.mjs",
     "test:parity": "node ./scripts/parity-check.mjs",
-    "test:bridge-isolation": "node --test ./scripts/bridge-smoke-isolation-smoke.mjs",
+    "test:bridge-isolation": "node --test ./scripts/bridge-smoke-isolation-smoke.mjs ./scripts/redis-client-loading.node-test.mjs",
     "test:launch-safety": "node ./scripts/analyzer-input-safety-smoke.mjs && node ./scripts/approval-action-safety-smoke.mjs && node ./scripts/launch-readiness-safety-smoke.mjs",
     "test:release-qualification-bridge": "node ./scripts/release-qualification-bridge-smoke.mjs",
     "test:operational-audit-bridge": "node ./scripts/operational-audit-bridge-smoke.mjs",

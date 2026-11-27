@@ -58,7 +58,7 @@ assert(
 );
 
 assert(
-  /import \{ toOperatorCopy \} from '\.\.\/utils\/operatorCopy'/.test(commandCenter),
+  /import \{[^}]*\btoOperatorCopy\b[^}]*\} from '\.\.\/utils\/operatorCopy'/.test(commandCenter),
   'CommandCenter must import toOperatorCopy.'
 );
 

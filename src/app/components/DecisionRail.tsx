@@ -19,7 +19,7 @@ const notes: Record<DecisionPhase, string> = {
   cancelled: 'Review cancelled. Nothing submitted.',
   changed: 'Request not verified. Review the latest queue before deciding.',
   unconfirmed: 'Outcome unknown. Check approval history before retrying.',
-  recorded: 'The bridge acknowledged the decision. This is not proof of delivery.',
+  recorded: 'Decision recorded. Delivery has not been confirmed.',
 };
 
 export function DecisionRail({ progress, available, showReceipt = true }: {
@@ -54,7 +54,7 @@ export function DecisionRail({ progress, available, showReceipt = true }: {
       <p className="pbk-decision-note" role="status" aria-live="polite">{notes[phase]}</p>
       {showReceipt && hasReceipt && (
         <section className="pbk-decision-receipt" aria-label="Decision receipt">
-          <div className="pbk-decision-receipt-heading"><Check size={16} aria-hidden="true" /><strong>Decision recorded</strong><span>Bridge acknowledgement</span></div>
+          <div className="pbk-decision-receipt-heading"><Check size={16} aria-hidden="true" /><strong>Decision recorded</strong><span>Confirmation received</span></div>
           <dl>
             <div><dt>Request</dt><dd>{progress.approvalId}</dd></div>
             <div><dt>Decision</dt><dd>{progress.decision === 'approved' ? 'Approved' : progress.decision === 'rejected' ? 'Declined' : 'Revisions requested'}</dd></div>

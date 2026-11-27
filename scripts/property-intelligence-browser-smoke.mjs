@@ -137,12 +137,12 @@ try {
     await expect(page.getByRole('spinbutton', { name: 'Comp A sold price', exact: true })).toHaveValue('400000');
     await expect(page.getByRole('textbox', { name: 'Comp A address', exact: true })).toHaveValue('86 Sample Cedar Drive, Example City, CA 90210');
     await page.getByRole('spinbutton', { name: 'Bedrooms' }).fill('8');
-    await page.getByRole('button', { name: 'Save Deal', exact: true }).first().click();
+    await page.locator('#analyzer-valuation').getByRole('button', { name: 'Save deal', exact: true }).click();
     await expect.poll(() => currentLead.property.beds).toBe(8);
     await page.reload();
     await expect(page.getByRole('spinbutton', { name: 'Bedrooms' })).toHaveValue('8');
     await expect(page.getByRole('spinbutton', { name: 'Comp A sold price', exact: true })).toHaveValue('400000');
-    const callMode = page.getByRole('button', { name: 'Open Call Mode', exact: true });
+    const callMode = page.getByRole('button', { name: 'Open call prep', exact: true });
     if (await callMode.isVisible()) await callMode.click();
     else await page.getByRole('button', { name: 'Switch analyzer tab to Call Mode', exact: true }).click();
     const tabs = page.getByRole('tablist', { name: 'Call workbench views' });
@@ -160,7 +160,7 @@ try {
     await expect.poll(() => currentLead.activity?.some(row => row.text === 'Controlled QA notes: retain across call views.')).toBe(true);
     await page.reload();
     await expect(page.getByRole('combobox', { name: 'Address', exact: true })).toHaveValue(full);
-    const reopenCall = page.getByRole('button', { name: 'Open Call Mode', exact: true });
+    const reopenCall = page.getByRole('button', { name: 'Open call prep', exact: true });
     if (await reopenCall.isVisible()) await reopenCall.click();
     else await page.getByRole('button', { name: 'Switch analyzer tab to Call Mode', exact: true }).click();
     await expect(page.getByRole('textbox', { name: 'Call notes', exact: true })).toHaveValue('Controlled QA notes: retain across call views.');

@@ -924,11 +924,11 @@ export default function App({ engineOnly = false, backToLead }: AppProps) {
           (!snapshot.sellerPhone?.trim() && !snapshot.sellerEmail?.trim())
         ) {
           setAnalyzeStatus(
-            `${saved.address}: Saved locally. Add the seller name and a phone or email under CRM handoff, then Save Deal.`
+            `${saved.address}: Saved locally. Add the seller name and a phone or email under Lead details, then Save deal.`
           );
           return;
         }
-        setAnalyzeStatus(`${saved.address}: Creating CRM lead...`);
+        setAnalyzeStatus(`${saved.address}: Creating lead...`);
         requiresCreateIdentity = true;
         const created = await createLeadRequest({
           eventId: snapshot.crmCreateKey,
@@ -991,7 +991,7 @@ export default function App({ engineOnly = false, backToLead }: AppProps) {
       );
       setAnalyzeStatus(
         queued
-          ? `${saved.address}: Saved locally. Ava queued approval for the CRM handoff.${newerEdits ? ' Newer edits remain in your draft.' : ''}`
+          ? `${saved.address}: Saved locally. The lead update is waiting for approval.${newerEdits ? ' Newer edits remain in your draft.' : ''}`
           : newerEdits
             ? `${saved.address}: Earlier snapshot saved. Newer edits remain in your draft.`
             : `${saved.address}: Lead saved.`
@@ -1002,7 +1002,7 @@ export default function App({ engineOnly = false, backToLead }: AppProps) {
     } catch (error) {
       if (!operationIsCurrent()) return;
       setAnalyzeStatus(
-        `${savedLabel ? savedLabel + ': Saved locally. ' : ''}Lead not saved. Your local draft remains. CRM handoff pending. ${error instanceof Error ? error.message : 'Try again.'}`
+        `${savedLabel ? savedLabel + ': Saved locally. ' : ''}Lead not saved. Your local draft remains. Lead sync is not confirmed. ${error instanceof Error ? error.message : 'Try again.'}`
       );
       setActiveTab('analyzer');
     } finally {

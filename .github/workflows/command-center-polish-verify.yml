@@ -9,6 +9,7 @@ on:
       - 'index.shell.html'
       - 'vite.config.ts'
       - 'scripts/command-center-polish*'
+      - 'scripts/workflow-first*'
       - 'scripts/fixtures/command-center-polish-preview.mjs'
       - 'scripts/fixtures/faster-triage-fixture.mjs'
       - '.github/workflows/command-center-polish-verify.yml'
@@ -33,9 +34,13 @@ jobs:
       - run: npm ci
       - name: Verify shell contracts and sample isolation
         run: node --test scripts/command-center-polish.node-test.mjs scripts/command-center-polish-fixture.node-test.mjs
+      - name: Verify workflow-first wording contracts
+        run: node --test scripts/workflow-first-copy.node-test.mjs
       - name: Build local frontend assets
         run: npm run build
       - name: Install disposable desktop and mobile browsers
         run: npx playwright install --with-deps chromium webkit
       - name: Run sample-only desktop and mobile regressions
         run: node --test scripts/command-center-polish-browser.node-test.mjs
+      - name: Verify workflow-first desktop and mobile sample state
+        run: node scripts/workflow-first-browser-smoke.mjs

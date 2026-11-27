@@ -1195,7 +1195,7 @@ export function LeadPortal() {
                 <span>Compliance &amp; memory</span>
                 <strong>BANT+ call context</strong>
                 <small>
-                  Editable human fields that save into the bridge BANT object and Ava call metadata.
+                  Seller qualification and follow-up details.
                 </small>
               </div>
               <PortalField

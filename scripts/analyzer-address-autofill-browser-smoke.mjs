@@ -114,7 +114,7 @@ try {
       await page.getByText('ATTOM public records · Matched parcel', { exact: true }).click();
       await expect(page.getByText('FIXTURE-42', { exact: true })).toBeVisible();
       assert.deepEqual(writes, [], 'Unlinked explicit enrichment must not create a CRM lead or dispatch work');
-      await page.getByRole('button', { name: 'Save Deal', exact: true }).click();
+      await page.locator('#analyzer-valuation').getByRole('button', { name: 'Save deal', exact: true }).click();
       await expect(page.locator('#analyzer-valuation').getByText(/Add the seller name and a phone or email/)).toBeVisible();
       await expect.poll(async () => (await storedDraft(page))?.propertyRecordSnapshot?.facts?.apn).toBe('FIXTURE-42');
       assert.deepEqual(writes, [], 'Saving an unlinked address persists a draft without creating a lead');
@@ -124,10 +124,10 @@ try {
       await expect(price).toHaveValue('450000');
       await expect(page.getByRole('spinbutton', { name: 'Comp A sold price' })).toHaveValue('440000');
       assert.equal(enrichments.length, 1, 'Draft reload hydrates without provider requests');
-      await page.getByText('CRM handoff · New lead', { exact: true }).click();
+      await page.getByText('Lead details · New lead', { exact: true }).click();
       await page.getByRole('textbox', { name: 'Seller name', exact: true }).fill('Fixture Owner');
       await page.getByRole('textbox', { name: 'Seller phone', exact: true }).fill('2025550142');
-      await page.getByRole('button', { name: 'Save Deal', exact: true }).evaluate(button => { button.click(); button.click(); });
+      await page.locator('#analyzer-valuation').getByRole('button', { name: 'Save deal', exact: true }).evaluate(button => { button.click(); button.click(); });
       await expect.poll(() => writes.filter(write => write.path === '/api/leads').length).toBe(1);
       await expect.poll(() => writes.filter(write => write.method === 'PATCH').length).toBe(1);
       let sync = writes.find(write => write.method === 'PATCH');
@@ -145,7 +145,7 @@ try {
       assert.equal(enrichments[1].leadId, 'qa-address-save');
       assert.equal(writes.length, writeCount, 'Linked evidence is saved through enrich rather than duplicate client PATCH');
       await expect(page.getByRole('spinbutton', { name: 'Comp A sold price' })).toHaveValue('499999');
-      await page.getByRole('button', { name: 'Save Deal', exact: true }).click();
+      await page.locator('#analyzer-valuation').getByRole('button', { name: 'Save deal', exact: true }).click();
       await expect.poll(() => writes.filter(write => write.method === 'PATCH').length).toBe(2);
       sync = writes.filter(write => write.method === 'PATCH').at(-1);
       assert.deepEqual(sync.body.deal.listingSnapshot.photoUrls, ['https://ap.rdcpix.com/fixture-refresh.jpg']);

@@ -3,7 +3,7 @@ import { readFile } from 'node:fs/promises';
 import { resolve, extname, sep } from 'node:path';
 import { fixtureResponse } from './faster-triage-fixture.mjs';
 
-export async function createCommandCenterPreview({ root = resolve('dist') } = {}) {
+export async function createCommandCenterPreview({ root = resolve('dist'), port = 0 } = {}) {
   root = resolve(root);
   const types = { '.js': 'text/javascript', '.css': 'text/css', '.json': 'application/json',
     '.html': 'text/html', '.woff2': 'font/woff2', '.svg': 'image/svg+xml' };
@@ -42,7 +42,7 @@ export async function createCommandCenterPreview({ root = resolve('dist') } = {}
   });
   await new Promise((resolve, reject) => {
     server.once('error', reject);
-    server.listen(0, '127.0.0.1', resolve);
+    server.listen(port, '127.0.0.1', resolve);
   });
   return { origin: `http://127.0.0.1:${server.address().port}`,
     server: { close: () => new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve())) } };

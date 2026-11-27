@@ -268,7 +268,7 @@ async function verify(browserType, viewport, device = {}) {
     await expect(page.getByRole('heading', { name: 'Seller timeline' })).toBeFocused();
     assert(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth));
 
-    await page.getByRole('button', { name: 'Edit', exact: true }).click();
+    await page.getByLabel('Lead actions', { exact: true }).getByRole('button', { name: 'Edit lead', exact: true }).click();
     const edit = page.getByRole('dialog', { name: 'Edit complete seller profile' });
     await edit.getByLabel('Seller name', { exact: true }).fill('Fixture North Updated');
     await edit.getByRole('button', { name: 'Save seller profile' }).click();
@@ -288,7 +288,7 @@ async function verify(browserType, viewport, device = {}) {
     await expect(compAddress).toHaveValue('12 North Fixture Avenue');
     await analyzerRecord.click();
     await expect(page.getByText('001-02', { exact: true })).toBeVisible();
-    await page.getByText('CRM handoff · Linked lead', { exact: true }).click();
+    await page.getByText('Lead details · Linked lead', { exact: true }).click();
     await expect(page.getByText('Lead ID: fixture-north', { exact: true })).toBeVisible();
     await expect(page.getByLabel('Seller name', { exact: true })).toHaveValue('Fixture North Updated');
     assert.equal(enrichments.length, beforeAnalyzer, 'Opening North Analyzer must only read saved evidence');

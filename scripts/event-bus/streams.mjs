@@ -1,4 +1,4 @@
-import { createClient as createRedisClient } from 'redis';
+import { createRedisClient } from '../redis-client.mjs';
 import { EventTypes } from './event-types.mjs';
 
 const DEFAULT_STREAM = 'pbk:events';

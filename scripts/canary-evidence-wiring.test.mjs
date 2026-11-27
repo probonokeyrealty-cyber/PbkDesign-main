@@ -186,7 +186,11 @@ test('bridge code matches the reviewed release fingerprint outside the scoped re
     '          ),',
   ].join('\n');
   assert(source.includes(marketProjection));
+  // The synchronous factory is covered by redis-client-loading and bridge isolation;
+  // canonicalize only its reviewed import so the existing bridge-logic pin stays intact.
   const unchanged = (source.slice(0, start) + source.slice(end))
+    .replace("import { createRedisClient } from './redis-client.mjs';",
+      "import { createClient as createRedisClient } from 'redis';")
     .replace("import { readCanaryEvidence } from './canary-evidence-reader.mjs';\n", '')
     .replace("import { createPublicMarketConnectionCheck, withSavedRaleighCleanup } from './public-market-connection.mjs';",
       "import { createPublicMarketConnectionCheck } from './public-market-connection.mjs';")

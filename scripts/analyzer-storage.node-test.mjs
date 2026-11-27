@@ -342,7 +342,7 @@ test('A queued snapshot still reports approval and newly added unsaved fields', 
   const pending = context.handleSaveDeal();
   await flush();
   await pending;
-  assert.match(statuses.at(-1), /queued approval/);
+  assert.match(statuses.at(-1), /waiting for approval/);
   assert.match(statuses.at(-1), /Newer edits remain/);
 });
 

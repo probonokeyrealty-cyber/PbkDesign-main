@@ -125,3 +125,15 @@
   .pbk-triage-queue .pbk-bf-chip-meta { display: flex; flex-wrap: wrap; gap: 12px; max-width: none; }
   .pbk-lead-portal .pbk-portal-sections a { flex: 1 1 auto; padding-inline: 8px; font-size: 12px; }
 }
+
+.pbk-lead-portal .pbk-lead-portal-actions :is(button, a) {
+  min-height: 44px;
+  max-width: 100%;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.pbk-lead-portal .pbk-lead-portal-actions { align-items: stretch; }
+.pbk-lead-portal .pbk-lead-portal-actions :is(button, a):focus-visible {
+  outline: 2px solid var(--sky);
+  outline-offset: 3px;
+}

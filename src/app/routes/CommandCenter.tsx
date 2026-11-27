@@ -56,7 +56,7 @@ import {
   getApprovalResolutionKeys,
   getPendingApprovals,
 } from './inboxRuntimeLogic.js';
-import { toOperatorCopy } from '../utils/operatorCopy';
+import { getApprovalDecisionCopy, toOperatorCopy } from '../utils/operatorCopy';
 
 function formatRelative(value?: string) {
   if (!value) return 'just now';
@@ -153,8 +153,7 @@ function isRuntimeCallEligibleForLiveWidget(
 function formatRuntimeStatus(status: unknown) {
   const normalized = String(status || 'pending').toLowerCase();
   if (normalized === 'provider_missing') return 'Provider key missing';
-  if (normalized === 'queued') return 'Queued for worker';
-  if (normalized === 'queued_for_approval') return 'Queued for approval';
+  if (normalized === 'queued' || normalized === 'queued_for_approval') return toOperatorCopy(normalized);
   if (normalized === 'pending') return 'In progress';
   if (normalized === 'approved') return 'Approved';
   if (normalized === 'rejected') return 'Declined';
@@ -347,7 +346,7 @@ const COMMAND_WIDGETS: Array<{ id: CommandWidgetId; label: string }> = [
   { id: 'statusLegend', label: 'Status guide' },
   { id: 'tooling', label: 'Ava tools' },
   { id: 'activity', label: 'Activity feed' },
-  { id: 'approvals', label: 'Review board' },
+  { id: 'approvals', label: 'Approvals' },
 ];
 const CORE_COMMAND_WIDGETS = new Set<CommandWidgetId>(['adminActivity', 'activity', 'approvals']);
 const DEFAULT_COMMAND_WIDGETS = COMMAND_WIDGETS.reduce(
@@ -3752,7 +3751,7 @@ export function CommandCenter() {
                 onClick={executeApprovalDecision}
                 className="pbk-review-button pbk-review-button-primary"
               >
-                Confirm decision
+                {getApprovalDecisionCopy(approvalDecisionDraft.status)}
               </button>
             </div>
           </dialog>

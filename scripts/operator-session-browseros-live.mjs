@@ -192,7 +192,7 @@ async function proveApprovals(page) {
   const dialog = page.getByRole('dialog');
   await expect(dialog).toBeVisible();
   await expect(dialog.getByRole('list', { name: 'Decision Rail' }).getByRole('listitem')).toHaveCount(4);
-  await expect(dialog.getByRole('button', { name: 'Confirm decision', exact: true })).toBeVisible();
+  await expect(dialog.getByRole('button', { name: 'Approve request', exact: true })).toBeVisible();
   const box = await dialog.boundingBox();
   const width = await page.evaluate(() => innerWidth);
   assert.ok(box.x >= 0 && box.x + box.width <= width + 1, 'Approval dialog overflow');

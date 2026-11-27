@@ -152,7 +152,7 @@ export function AnalyzerTab({
           </h2>
           <div className="flex flex-wrap gap-2">
             <button type="button" onClick={onSaveDeal} className="pbk-btn pbk-btn-ghost pbk-btn-sm">
-              Save Deal
+              Save deal
             </button>
             <button
               type="button"
@@ -210,9 +210,9 @@ export function AnalyzerTab({
             onPhotoResult={setPhotoResult}
           />
           <details className="pbk-analyzer-records">
-            <summary>CRM handoff · {leadId ? 'Linked lead' : 'New lead'}</summary>
+            <summary>Lead details · {leadId ? 'Linked lead' : 'New lead'}</summary>
             <p className="mb-2">
-              Save Deal keeps a local copy and syncs to the team record. New leads need a seller
+              Save deal keeps a local copy and syncs to the team record. New leads need a seller
               name and a phone or email.
             </p>
             {leadId && <p className="mb-2">Lead ID: {leadId}</p>}

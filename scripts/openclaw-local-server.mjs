@@ -18,7 +18,7 @@ import chromium from '@sparticuz/chromium';
 import { WebSocket, WebSocketServer } from 'ws';
 import puppeteer from 'puppeteer-core';
 import pg from 'pg';
-import { createClient as createRedisClient } from 'redis';
+import { createRedisClient } from './redis-client.mjs';
 import { DeleteObjectCommand, GetObjectCommand, HeadBucketCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { getSignedUrl as getS3SignedUrl } from '@aws-sdk/s3-request-presigner';
 import { lookupAttomPropertyPreview, sameAttomAddress } from './attom-property-preview.mjs';

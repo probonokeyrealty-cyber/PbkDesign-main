@@ -476,14 +476,14 @@ async function verify(engine, viewport, device = {}) {
     await first.getByRole('spinbutton', { name: 'Bathrooms', exact: true }).fill('3');
     await expect.poll(async () => (await stored(first))?.baths).toBe(3);
     assert.equal((await stored(first)).notes, 'Manual sample notes', 'Reopening a saved lead must not replace its unsaved draft');
-    await first.getByRole('button', { name: /^Save(?: deal)?$/ }).filter({ visible: true }).click();
+    await first.locator('#analyzer-valuation').getByRole('button', { name: 'Save deal', exact: true }).click();
     await expect.poll(() => sampleSaves.length).toBe(1);
     await first.getByRole('spinbutton', { name: 'Bedrooms', exact: true }).fill('9');
     await expect.poll(async () => (await stored(first))?.beds).toBe(9);
     await pendingSave.fulfill({ json: { ok: true } });
     await expect(first.locator('#analyzer-valuation').getByText(/newer edits remain/i)).toBeVisible();
     assert.equal((await stored(first)).beds, 9, 'Acknowledging an older save must not replace subsequent edits');
-    await first.getByRole('button', { name: /^Save(?: deal)?$/ }).filter({ visible: true }).click();
+    await first.locator('#analyzer-valuation').getByRole('button', { name: 'Save deal', exact: true }).click();
     await expect.poll(() => sampleSaves.length).toBe(2);
     await first.evaluate(() => window.dispatchEvent(new CustomEvent('pbk:runtime-access-error', {
       detail: { code: 'team_session_rejected', sessionWasCurrent: true },

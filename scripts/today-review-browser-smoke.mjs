@@ -154,6 +154,8 @@ async function verify(browserType, viewport, device = {}) {
     assert(offlineReads > offlineReadsBeforePreflight, 'The preflight must actually reach the unavailable fixture');
     assert.equal(requests.length, 0, 'A failed preflight must not submit a decision');
     preflightOffline = false;
+    // Only outage polling needs a frozen clock; later requests keep their real deadlines.
+    await page.clock.resume();
 
     await approve.click();
     const confirm = dialog.getByRole('button', { name: 'Approve request', exact: true });
@@ -195,9 +197,14 @@ async function verify(browserType, viewport, device = {}) {
     assert.equal(requests.length, 1, 'A changed draft must not be approved');
 
     await other.getByRole('button', { name: 'Decline' }).click();
+    const ambiguousResponse = page.waitForResponse(response =>
+      new URL(response.url()).pathname === '/api/approvals/qa-other' && response.request().method() === 'PUT');
     await page.getByRole('dialog', { name: 'Decline SMS?' }).getByRole('button', {
       name: 'Decline request', exact: true,
     }).click();
+    const response = await ambiguousResponse;
+    assert.equal(response.status(), 502);
+    assert.equal(await response.finished(), null);
     await expect(other.getByText('Decision unconfirmed.')).toBeVisible();
     await expect(reviewOther).toBeDisabled();
     await expect(page.getByRole('region', { name: 'Start here', exact: true })
@@ -226,8 +233,10 @@ try {
     await server.environments.client.depsOptimizer?.scanProcessing;
     for (const dependency of server.environments.client.depsOptimizer?.metadata.depInfoList || []) await dependency.processing;
   }
-  await verify(chromium, { width: 1440, height: 900 });
-  await verify(chromium, { width: 390, height: 844 }, devices['Pixel 7']);
+  if (!process.argv.includes('--webkit-only')) {
+    await verify(chromium, { width: 1440, height: 900 });
+    await verify(chromium, { width: 390, height: 844 }, devices['Pixel 7']);
+  }
   await verify(webkit, { width: 390, height: 844 }, devices['iPhone 13']);
 } finally {
   await server.close();

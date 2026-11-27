@@ -8,6 +8,7 @@ import { verifyAnalyzerPublicationGuards } from './fixtures/analyzer-publication
 
 const chromiumOnly = process.argv.includes('--chromium-only');
 const webkitOnly = process.argv.includes('--webkit-only');
+const runtimePolling = process.argv.includes('--runtime-polling');
 assert.ok(!(chromiumOnly && webkitOnly), 'Choose only one browser filter');
 const stressPublication = process.argv.includes('--stress-publication');
 const controlledPublication = process.argv.includes('--controlled-publication');
@@ -65,9 +66,15 @@ async function verify(engine, viewport, device = {}) {
     let pendingSave;
     const sampleSaves = [];
     const mutations = [];
-    await context.routeWebSocket('**/*', socket => socket.close());
-    await context.addInitScript(({ key, authKey, auth, origin }) => {
+    const stateSockets = new Set();
+    await context.routeWebSocket('**/*', socket => {
+      if (!runtimePolling) return socket.close();
+      stateSockets.add(socket);
+      socket.onClose(() => stateSockets.delete(socket));
+    });
+    await context.addInitScript(({ key, authKey, auth, origin, runtimePolling }) => {
       if (location.origin !== origin) return;
+      window.__runtimePollingFixture = runtimePolling;
       if (!localStorage.getItem(authKey)) localStorage.setItem(authKey, JSON.stringify(auth));
       window.__draftWrites = [];
       window.__sharedDraftEvents = 0;
@@ -125,7 +132,7 @@ async function verify(engine, viewport, device = {}) {
         }
         return set.call(this, name, value);
       };
-    }, { key: draftKey, authKey: sessionKey, auth: session, origin: hosted });
+    }, { key: draftKey, authKey: sessionKey, auth: session, origin: hosted, runtimePolling });
     await context.route('**/*', async route => {
       const req = route.request(), url = new URL(req.url());
       if (url.origin !== hosted) return route.abort();
@@ -134,7 +141,8 @@ async function verify(engine, viewport, device = {}) {
         ? route.fulfill({ status: 503, json: { ok: false, error: 'Fixture verification unavailable' } })
         : route.fulfill({ json: { ok: true, ...session } });
       if (url.pathname === '/api/auth/team') return route.fulfill({ json: { ok: true, ...session } });
-      if (url.pathname === '/api/state/stream/session') return route.fulfill({ json: { ok: false } });
+      if (url.pathname === '/api/state/stream/session') return route.fulfill({ json: runtimePolling
+        ? { ok: true, session: { wsUrl: hosted.replace('https:', 'wss:') + '/ws/state' } } : { ok: false } });
       if (url.pathname === '/api/property-data/address-suggestions') return route.fulfill({ json: { status: 'unavailable', suggestions: [] } });
       if (url.pathname === '/api/leads/qa-draft' && req.method() === 'PATCH') {
         sampleSaves.push(req.postDataJSON());
@@ -427,6 +435,20 @@ async function verify(engine, viewport, device = {}) {
     }
     assert.equal((await stored(first)).beds, 6, 'A stale manual edit must not replace the newer shared draft');
     assert.equal((await stored(first)).comps.A.price, 600000);
+    if (runtimePolling) {
+      const originalDraft = await stored(first);
+      await first.evaluate(async () => {
+        await window.__runtimePollingRefresh();
+        window.dispatchEvent(new Event('online'));
+      });
+      const marker = 'sample-state-during-dirty-analyzer';
+      await expect.poll(() => stateSockets.size).toBeGreaterThan(0);
+      for (const socket of stateSockets) socket.send(JSON.stringify({ type: 'state', snapshot: {
+        status: { lastUpdatedAt: marker }, approvals: [], leadImports: [], calls: [],
+      } }));
+      await expect.poll(() => first.evaluate(() => window.__runtimePollingSnapshot?.status?.lastUpdatedAt)).toBe(marker);
+      assert.deepEqual(await stored(first), originalDraft, 'HTTP, stream and reconnect refreshes must preserve actual dirty Analyzer notes and saved comp');
+    }
     await second.reload();
     await ready(second);
     await expect(second.getByRole('spinbutton', { name: 'Bedrooms', exact: true })).toHaveValue('7');

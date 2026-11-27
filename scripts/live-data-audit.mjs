@@ -47,6 +47,8 @@ const emotionOnnxExporterPath = resolve(root, 'scripts/train_emotion_world_model
 const emotionRequirementsPath = resolve(root, 'requirements-emotion-world-model.txt');
 const index = readFileSync(indexPath, 'utf8');
 const bridge = readFileSync(bridgePath, 'utf8');
+const redisClientPath = resolve(root, 'scripts/redis-client.mjs');
+const redisClient = existsSync(redisClientPath) ? readFileSync(redisClientPath, 'utf8') : '';
 const heartbeatManager = readFileSync(heartbeatManagerPath, 'utf8');
 const widget = readFileSync(widgetPath, 'utf8');
 const pkg = readFileSync(packagePath, 'utf8');
@@ -1275,7 +1277,10 @@ const checks = [
   {
     name: 'Optional Redis shared state prepares bridge for multi-instance calls and singleton loops',
     ok:
-      /createClient as createRedisClient/.test(bridge) &&
+      /import \{ createRedisClient \} from '\.\/redis-client\.mjs'/.test(bridge) &&
+      /export function createRedisClient\(options\)/.test(redisClient) &&
+      /factory \|\|= require\('redis'\)\.createClient/.test(redisClient) &&
+      /return factory\(options\)/.test(redisClient) &&
       /PBK_REDIS_URL/.test(bridge) &&
       /function getSharedRedisClient/.test(bridge) &&
       /function syncTelnyxSessionToRedis/.test(bridge) &&

@@ -5,6 +5,7 @@ import { TeamAccessGate } from '../../src/app/components/TeamAccessGate';
 import { DealView } from '../../src/app/routes/DealView';
 import { ANALYZER_CURRENT_DEAL_KEY, writeAnalyzerStorage, commitAnalyzerDraft, writeAnalyzerSessionDeal } from '../../src/app/utils/analyzerStorage';
 import '../../src/styles/index.css';
+import { RuntimePollingProbe } from './runtime-polling-probe';
 
 const lead = new URL(location.href).searchParams.get('lead');
 // Available only in this isolated fixture to exercise transaction-boundary failures.
@@ -18,6 +19,7 @@ if (new URL(location.href).searchParams.has('sample') && !localStorage.getItem(A
 createRoot(document.getElementById('root')!).render(
   <MemoryRouter initialEntries={[lead ? `/deal/${encodeURIComponent(lead)}` : '/analyzer']}>
     <TeamAccessGate>
+      {Reflect.get(window, '__runtimePollingFixture') === true && <RuntimePollingProbe />}
       <Routes>
         <Route path="/analyzer" element={<DealView />} />
         <Route path="/deal/:id" element={<DealView />} />

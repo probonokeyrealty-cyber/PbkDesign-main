@@ -268,7 +268,7 @@ async function verify(browserType, viewport, device = {}) {
     await expect(page.getByRole('heading', { name: 'Seller timeline' })).toBeFocused();
     assert(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth));
 
-    await page.getByRole('button', { name: 'Edit lead', exact: true }).click();
+    await page.getByLabel('Lead actions', { exact: true }).getByRole('button', { name: 'Edit lead', exact: true }).click();
     const edit = page.getByRole('dialog', { name: 'Edit complete seller profile' });
     await edit.getByLabel('Seller name', { exact: true }).fill('Fixture North Updated');
     await edit.getByRole('button', { name: 'Save seller profile' }).click();

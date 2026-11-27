@@ -1,12 +1,16 @@
 # Workflow-First Wording Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+REQUIRED WORKFLOW: Use `superpowers:subagent-driven-development` with one focused implementation pass per task and review between tasks. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Make the approved daily workflow understandable without internal jargon.
 
 **Architecture:** Extend the existing operator-copy utility and existing React
 surfaces. Change presentation and labels only; retain all existing event handlers,
-draft storage and approval/provider boundaries. Execute natively in this session.
+draft storage and approval/provider boundaries.
+
+Execution record: the original local implementation preceded this header alignment;
+this required workflow governs future follow-up and does not retroactively claim
+subagent implementation occurred.
 
 **Tech Stack:** React, TypeScript, Vite, existing PBK CSS, Node tests, Playwright.
 

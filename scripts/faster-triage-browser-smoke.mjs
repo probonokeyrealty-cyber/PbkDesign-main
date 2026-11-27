@@ -192,7 +192,7 @@ async function verify(type, width) {
     await page.getByRole('link', { name: 'Numbers', exact: true }).click();
     await expect(page.locator('#lead-numbers')).toBeVisible();
     await expect(page.locator('#lead-numbers')).toContainText('$245,000');
-    await page.getByRole('button', { name: 'Edit', exact: true }).click();
+    await page.getByRole('button', { name: 'Edit lead', exact: true }).click();
     const edit = page.getByRole('dialog', { name: 'Edit complete seller profile', exact: true });
     await edit.getByLabel('Next step', { exact: true }).fill('Unsaved sample edit, never apply');
     await edit.getByRole('button', { name: 'Cancel', exact: true }).click();

@@ -1,7 +1,7 @@
 // Run with node --test; keep separate from Jest's *.test.mjs discovery.
 import assert from 'node:assert/strict';
-import { test } from 'node:test';
-import { mkdtemp, readFile, writeFile, rm, access } from 'node:fs/promises';
+import { test, after } from 'node:test';
+import { mkdtemp, readFile, writeFile, rm, access, realpath } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import path, { join } from 'node:path';
@@ -12,6 +12,23 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { readdir } from 'node:fs/promises';
 import dgram from 'node:dgram';
 import { buildSmokeEnv, startIsolatedBridge } from './bridge-smoke-isolation.mjs';
+
+// Cleanup assertions must observe this suite's roots, not concurrent smoke runs.
+const systemTemp = await realpath(tmpdir());
+const suiteTemp = await mkdtemp(join(systemTemp, 'pbk-smoke-isolation-suite-'));
+const tempKeys = ['TEMP', 'TMP', 'TMPDIR'];
+const previousTemp = Object.fromEntries(tempKeys.map(key => [key, process.env[key]]));
+for (const key of tempKeys) process.env[key] = suiteTemp;
+after(async () => {
+  for (const key of tempKeys) {
+    if (previousTemp[key] === undefined) delete process.env[key];
+    else process.env[key] = previousTemp[key];
+  }
+  const owned = await realpath(suiteTemp);
+  assert.equal(path.dirname(owned), systemTemp);
+  assert.ok(path.basename(owned).startsWith('pbk-smoke-isolation-suite-'));
+  await rm(owned, { recursive: true, force: true });
+});
 
 test('only OS necessities and fixture configuration reach the child', () => {
   const stateDir = join(tmpdir(), 'sample-only-state');
@@ -164,6 +181,9 @@ test('expired child authority cannot POST to a replacement listener on its old p
   const replacement = createServer((_req, res) => { requests++; res.end('working service'); });
   try {
     await delay(250);
+    await assert.rejects(harness.fetch(harness.origin + '/reset', { method: 'POST' }), /stopped/);
+    // Expiry invalidates authority immediately; process/port release can lag on Windows.
+    await harness.stop();
     await new Promise((resolve, reject) => {
       replacement.once('error', reject);
       replacement.listen(Number(new URL(harness.origin).port), '127.0.0.1', resolve);

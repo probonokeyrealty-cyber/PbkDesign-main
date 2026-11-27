@@ -30,6 +30,7 @@ import {
   updateApprovalDecision,
 } from '../utils/runtimeBridge';
 import { showUiToast } from '../utils/uiFeedback';
+import { getApprovalDecisionCopy } from '../utils/operatorCopy';
 import {
   buildComposeRequest,
   buildReplyDraftFromMessage,
@@ -1305,7 +1306,7 @@ function ApprovalDecisionConfirm({
         </div>
         <div className="modal-footer">
           <span className="text-xs text-slate-500">
-            This decision updates the approval board immediately.
+            This records your decision, not delivery confirmation.
           </span>
           <div className="flex gap-2">
             <button type="button" className="btn-secondary" onClick={onCancel}>
@@ -1313,7 +1314,7 @@ function ApprovalDecisionConfirm({
             </button>
             <button type="button" className="btn-primary" disabled={pending} onClick={onConfirm}>
               {pending ? <Loader2 size={14} className="animate-spin" /> : null}
-              {pending ? 'Sending...' : draft.actionLabel}
+              {pending ? 'Submitting decision...' : getApprovalDecisionCopy(draft.status)}
             </button>
           </div>
         </div>

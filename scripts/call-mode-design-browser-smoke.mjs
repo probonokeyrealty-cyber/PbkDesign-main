@@ -56,7 +56,7 @@ try {
       await page.goto(`${origin}/analyzer`, { waitUntil: 'commit' });
       page.setDefaultTimeout(45_000);
       await page.getByRole('button', {
-        name: width < 721 ? 'Open Call Mode' : 'Switch analyzer tab to Call Mode',
+        name: width < 721 ? 'Open call prep' : 'Switch analyzer tab to Call Mode',
         exact: true,
       }).click();
       await expect(page.getByRole('heading', { name: 'The call.', exact: true })).toBeVisible();

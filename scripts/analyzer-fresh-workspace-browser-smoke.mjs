@@ -137,7 +137,7 @@ async function verify(engine, width) {
     assert.equal(await fresh.evaluate(() => window.opener === null), true);
     await expect(beds(fresh)).toHaveValue('6');
     await expect(fresh.getByRole('spinbutton', { name: 'Square footage', exact: true })).toHaveValue('9138');
-    await expect(fresh.getByText('Fresh Analyzer / Tab-local draft', { exact: true })).toBeVisible();
+    await expect(fresh.getByText('Fresh Analyzer / Draft in this tab', { exact: true })).toBeVisible();
     assert.equal((await deal(fresh)).leadId, savedLead.id);
     assert.equal((await deal(fresh)).notes, savedLead.deal.notes);
     assert.equal((await deal(fresh)).comps.A.price, 400000);

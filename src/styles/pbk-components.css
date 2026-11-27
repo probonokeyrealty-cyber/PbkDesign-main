@@ -11325,6 +11325,21 @@ html[data-theme='light'] .pbk-ava-chat-surface {
   flex-wrap: wrap;
   justify-content: flex-end;
   gap: 8px;
+  align-items: stretch;
+  min-width: 0;
+}
+
+.pbk-analyzer-command-actions button,
+.pbk-analyzer-hero > div:first-child button {
+  min-height: 44px;
+  max-width: 100%;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.pbk-analyzer-command button:focus-visible,
+.pbk-analyzer-mobile-rail button:focus-visible {
+  outline: 2px solid var(--sky);
+  outline-offset: 3px;
 }
 
 .pbk-analyzer-ribbon {
@@ -11530,10 +11545,18 @@ html[data-theme='light'] .pbk-ava-chat-surface {
   gap: 8px;
 }
 
+@media (max-width: 360px) {
+  .pbk-analyzer-mobile-rail-actions {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
 .pbk-analyzer-mobile-rail button {
   display: inline-grid;
   min-width: 0;
-  min-height: 48px;
+  min-height: 64px;
+  padding: 7px 4px;
+  align-content: center;
   place-items: center;
   gap: 3px;
   border: 1px solid rgba(148, 163, 184, 0.14);
@@ -11553,9 +11576,12 @@ html[data-theme='light'] .pbk-ava-chat-surface {
 .pbk-analyzer-mobile-rail span {
   display: block;
   max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow: visible;
+  text-overflow: clip;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  line-height: 1.35;
+  text-align: center;
 }
 
 .pbk-analyzer-mobile-status {

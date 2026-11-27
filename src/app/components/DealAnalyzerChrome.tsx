@@ -141,7 +141,7 @@ export function DealAnalyzerCommandHeader({
         <div className="pbk-analyzer-title-block">
           <div className="flex flex-wrap items-center gap-2">
             {backToLead}
-            <span className="pbk-kicker">{freshDraft ? 'Fresh Analyzer / Tab-local draft' : workbench?.label || 'Deal Analyzer'}</span>
+            <span className="pbk-kicker">{freshDraft ? 'Fresh Analyzer / Draft in this tab' : workbench?.label || 'Deal Analyzer'}</span>
           </div>
           {workbench ? (
             <>
@@ -166,7 +166,7 @@ export function DealAnalyzerCommandHeader({
             onClick={onOpenSnapshot}
           >
             <PanelLeft size={14} />
-            Snapshot
+            Deal summary
           </button>
           <button
             type="button"
@@ -190,7 +190,7 @@ export function DealAnalyzerCommandHeader({
             onClick={onSaveDeal}
           >
             <Save size={14} />
-            Save
+            Save deal
           </button>
           <button type="button" className="pbk-btn pbk-btn-ghost pbk-btn-sm" onClick={onCreateLead}>
             <UserPlus size={14} />
@@ -316,9 +316,9 @@ export function DealAnalyzerMobileRail({
   return (
     <div className="pbk-analyzer-mobile-rail" aria-label="Deal analyzer mobile actions">
       <div className="pbk-analyzer-mobile-rail-actions">
-        <button type="button" aria-label="Open analyzer snapshot" onClick={onOpenSnapshot}>
+        <button type="button" aria-label="Open deal summary" onClick={onOpenSnapshot}>
           <PanelLeft size={16} />
-          <span>Snapshot</span>
+          <span>Summary</span>
         </button>
         <button type="button" aria-label="Analyze deal" className="is-primary" onClick={onAnalyze}>
           <BarChart3 size={16} />
@@ -326,11 +326,11 @@ export function DealAnalyzerMobileRail({
         </button>
         <button type="button" aria-label="Save deal" onClick={onSaveDeal}>
           <Save size={16} />
-          <span>Save</span>
+          <span>Save deal</span>
         </button>
-        <button type="button" aria-label="Open Call Mode" onClick={() => onTabChange('callmode')}>
+        <button type="button" aria-label="Open call prep" onClick={() => onTabChange('callmode')}>
           <PhoneCall size={16} />
-          <span>Call</span>
+          <span>Call prep</span>
         </button>
         <button type="button" aria-label="Open analyzer workflow" onClick={onOpenWorkflow}>
           <Workflow size={16} />

@@ -10,7 +10,18 @@ export const operatorStatusCopy: Record<string, string> = {
   reconciliation_required: 'Needs confirmation',
   delivered: 'Delivered',
   failed: 'Could not complete',
+  queued: 'Waiting to run',
+  queued_for_approval: 'Waiting for approval',
+  approved: 'Approved',
+  needs_revision: 'Changes requested',
 };
+
+export function getApprovalDecisionCopy(status: string): string {
+  if (status === 'approved') return 'Approve request';
+  if (status === 'rejected') return 'Decline request';
+  if (status === 'needs-revision') return 'Request changes';
+  return 'Review request';
+}
 
 function normalizeOperatorCopyKey(value: string) {
   return value

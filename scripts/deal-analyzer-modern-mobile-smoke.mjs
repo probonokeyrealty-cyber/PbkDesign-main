@@ -440,8 +440,8 @@ assert(
 );
 
 assert(
-  /Open analyzer snapshot/.test(chrome),
-  'Command chrome should expose the snapshot drawer accessibly.'
+  /Open deal summary/.test(chrome),
+  'Command chrome should expose the deal summary drawer accessibly.'
 );
 assert(
   /Open analyzer workflow/.test(chrome),

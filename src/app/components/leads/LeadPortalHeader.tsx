@@ -117,7 +117,7 @@ export function LeadPortalHeader({
         )}
         <button type="button" onClick={onEdit}>
           <Edit3 size={16} />
-          Edit
+          Edit lead
         </button>
         {!hasCallablePhone && (
           <button type="button" className="primary" onClick={onAddPhone || onEdit}>
@@ -131,12 +131,12 @@ export function LeadPortalHeader({
           disabled={!messageAvailable}
           title={
             messageAvailable
-              ? 'Open the canonical seller conversation'
-              : 'No canonical conversation thread exists yet'
+              ? 'Open this seller\'s conversation'
+              : 'No saved conversation for this seller yet'
           }
         >
           <MessageSquare size={16} />
-          Message
+          Open conversation
         </button>
         <button type="button" onClick={onCall} disabled={Boolean(pendingAction)}>
           <Phone size={16} />

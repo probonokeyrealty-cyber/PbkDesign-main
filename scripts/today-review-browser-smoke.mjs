@@ -2,11 +2,15 @@ import assert from 'node:assert/strict';
 import { chromium, devices, expect, webkit } from '@playwright/test';
 import { createServer } from 'vite';
 import { mkdirSync } from 'node:fs';
+import { createCommandCenterPreview } from './fixtures/command-center-polish-preview.mjs';
 
 process.env.PBK_DEV_BRIDGE_URL = 'http://127.0.0.1:1';
-const server = await createServer({ server: { host: '127.0.0.1', port: 0 } });
-await server.listen();
-const origin = `http://127.0.0.1:${server.httpServer.address().port}`;
+const builtPreview = process.argv.includes('--built') ? await createCommandCenterPreview() : null;
+const server = builtPreview?.server || await createServer({ cacheDir: `output/today-review/vite-cache-${process.pid}`,
+  optimizeDeps: { entries: ['index.shell.html'] },
+  server: { host: '127.0.0.1', port: 0 } });
+if (!builtPreview) await server.listen();
+const origin = builtPreview?.origin || `http://127.0.0.1:${server.httpServer.address().port}`;
 const seller = {
   id: 'qa-sms',
   type: 'SMS',
@@ -124,7 +128,7 @@ async function verify(browserType, viewport, device = {}) {
     await page.clock.fastForward(60_000);
     await expect.poll(async () => {
       await page.clock.fastForward(5_000);
-      return dialog.getByRole('button', { name: 'Confirm decision' }).isDisabled();
+      return dialog.getByRole('button', { name: 'Approve request', exact: true }).isDisabled();
     }, { timeout: 20000 }).toBe(true);
     assert(offlineReads > readsBeforePolling, 'Polling must actually read the unavailable fixture');
     await expect(review.getByText('Queue unavailable. No decision can be submitted.', { exact: true })).toBeVisible();
@@ -133,7 +137,7 @@ async function verify(browserType, viewport, device = {}) {
     await page.clock.fastForward(60_000);
     await expect.poll(async () => {
       await page.clock.fastForward(5_000);
-      return dialog.getByRole('button', { name: 'Confirm decision' }).isEnabled();
+      return dialog.getByRole('button', { name: 'Approve request', exact: true }).isEnabled();
     }, { timeout: 20000 }).toBe(true);
     await dialog.getByRole('button', { name: 'Cancel' }).click();
     await expect(dialog).toHaveCount(0);
@@ -141,7 +145,7 @@ async function verify(browserType, viewport, device = {}) {
     await approve.click();
     const offlineReadsBeforePreflight = offlineReads;
     preflightOffline = true;
-    await dialog.getByRole('button', { name: 'Confirm decision' }).click();
+    await dialog.getByRole('button', { name: 'Approve request', exact: true }).click();
     await expect.poll(async () => {
       await page.clock.fastForward(100);
       return (await rail.locator('[data-state="blocked"]').allTextContents()).join(' ');
@@ -152,7 +156,7 @@ async function verify(browserType, viewport, device = {}) {
     preflightOffline = false;
 
     await approve.click();
-    const confirm = dialog.getByRole('button', { name: 'Confirm decision' });
+    const confirm = dialog.getByRole('button', { name: 'Approve request', exact: true });
     await confirm.evaluate((button) => { button.click(); button.click(); });
     await responseHeld;
     await expect(rail.locator('[aria-current="step"]')).toContainText('Review');
@@ -182,7 +186,7 @@ async function verify(browserType, viewport, device = {}) {
     const reviewOther = other.getByRole('button', { name: 'Review approval' });
     await reviewOther.click();
     changed = true;
-    await dialog.getByRole('button', { name: 'Confirm decision' }).click();
+    await dialog.getByRole('button', { name: 'Approve request', exact: true }).click();
     await expect(page.getByRole('status').filter({ hasText: 'This request changed.' })).toBeVisible();
     await expect(other.getByText('Updated draft with different details.')).toBeVisible();
     await expect(rail.locator('[data-state="blocked"]')).toContainText('Evidence');
@@ -192,7 +196,7 @@ async function verify(browserType, viewport, device = {}) {
 
     await other.getByRole('button', { name: 'Decline' }).click();
     await page.getByRole('dialog', { name: 'Decline SMS?' }).getByRole('button', {
-      name: 'Confirm decision',
+      name: 'Decline request', exact: true,
     }).click();
     await expect(other.getByText('Decision unconfirmed.')).toBeVisible();
     await expect(reviewOther).toBeDisabled();
@@ -215,6 +219,13 @@ async function verify(browserType, viewport, device = {}) {
 }
 
 try {
+  if (!builtPreview) {
+    await server.transformRequest('/src/main.shell.tsx');
+    await server.transformRequest('/src/app/routes/CommandCenter.tsx');
+    await server.environments.client.waitForRequestsIdle();
+    await server.environments.client.depsOptimizer?.scanProcessing;
+    for (const dependency of server.environments.client.depsOptimizer?.metadata.depInfoList || []) await dependency.processing;
+  }
   await verify(chromium, { width: 1440, height: 900 });
   await verify(chromium, { width: 390, height: 844 }, devices['Pixel 7']);
   await verify(webkit, { width: 390, height: 844 }, devices['iPhone 13']);

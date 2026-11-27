@@ -18,10 +18,23 @@ test('disabled and memory event buses never load the Redis SDK', () => {
   run(`import assert from 'node:assert/strict';
     import { registerHooks } from 'node:module';
     registerHooks({resolve(s,c,next){if(s==='redis')throw Error('Disabled bus eagerly loaded Redis');return next(s,c);}});
+    process.env.PBK_REDIS_URL='redis://sample.invalid';
     const {createEventBus,publishEvent}=await import(${JSON.stringify(busUrl)});
     for(const mode of ['disabled','memory']){
       const bus=createEventBus({mode,redisUrl:'redis://sample.invalid'});
-      await publishEvent('lead.created',{leadId:'sample-only'},{bus});
+      const result=await publishEvent('lead.created',{leadId:'sample-only'},'sample-only',{bus});
+      if(mode==='disabled'){
+        assert.equal(result.result,'event_bus_disabled');
+        assert.equal(result.skipped,true);
+        assert.equal(bus.memoryQueue.length,0);
+      }else{
+        assert.equal(result.ok,true);
+        assert.equal(result.mode,'memory');
+        assert.equal(bus.memoryQueue.length,1);
+        assert.deepEqual(bus.memoryQueue[0].payload,{leadId:'sample-only'});
+        assert.equal(bus.memoryQueue[0].source,'sample-only');
+        assert.equal(bus.memoryQueue[0].id,result.eventId);
+      }
     }`);
 });
 

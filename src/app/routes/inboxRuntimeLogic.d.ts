@@ -34,6 +34,10 @@ export function normalizeComposeLead(record?: InboxRecord, index?: number): Comp
 export function normalizeComposeLeads(records?: InboxRecord[]): ComposeLeadMetric[];
 export function buildComposeRequest(draft?: InboxRecord, lead?: InboxRecord): ComposeRequest;
 export function isGenericApprovalCopy(value?: unknown): boolean;
+export function getApprovalDecisionFeedback(
+  status: string,
+  response?: InboxRecord
+): { tone: 'success' | 'warning'; text: string };
 export function getApprovalFriendlySummary(approval?: InboxRecord): string;
 export function getApprovalPreview(approval?: InboxRecord): string;
 export function isContractApproval(approval?: InboxRecord): boolean;

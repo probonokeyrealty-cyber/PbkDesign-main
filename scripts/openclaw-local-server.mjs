@@ -60235,6 +60235,7 @@ const toolHandlers = {
       };
     }
 
+    const simulated = direction === 'outbound' && !fromWebhook;
     const message = createMessageRecord({
       ...params,
       leadId: context.leadId,
@@ -60245,6 +60246,7 @@ const toolHandlers = {
       body: bodyText,
       from: fromNumber,
       provider: fromWebhook ? 'Telnyx' : 'Simulated',
+      ...(simulated ? { status: 'simulated' } : {}),
     });
     upsertMessage(state, message);
     await persistUnifiedMessageRecord(message);
@@ -60262,6 +60264,7 @@ const toolHandlers = {
     return {
       ok: true,
       message,
+      ...(simulated ? { result: 'simulated', status: 'simulated', providerAttempted: false } : {}),
       telnyx: {
         live: false,
         configured: telnyxMeta.messagingReady,
@@ -68884,7 +68887,7 @@ function classifyConversationSendResult(channel, result = {}) {
       : result.delivery?.ok === true && result.delivery?.live !== false;
   if (result.ok === false || !providerLive) {
     return {
-      status: 'failed',
+      status: channel === 'sms' && normalizedResult === 'simulated' ? 'simulated' : 'failed',
       httpStatus: 503,
       ok: false,
       result: normalizedResult || 'provider_not_live',

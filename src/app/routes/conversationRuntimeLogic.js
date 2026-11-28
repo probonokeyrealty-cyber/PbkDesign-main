@@ -57,6 +57,17 @@ function resolvedTimeZone(timeZone) {
   }
 }
 
+export function getConversationMessageStatus(message, fallback) {
+  const status = cleanText(message.status) || fallback;
+  // Older bridge snapshots used "sent" even when the SMS was only simulated.
+  if (status.toLowerCase() === 'sent' && cleanText(message.channel).toLowerCase() === 'sms' &&
+      cleanText(message.direction).toLowerCase() === 'outbound' &&
+      cleanText(message.provider).toLowerCase() === 'simulated') {
+    return 'simulated';
+  }
+  return status;
+}
+
 export function filterVisibleConversationEvents(events = [], { includeHidden = false } = {}) {
   return asArray(events)
     .filter((event) => includeHidden || !event?.hiddenAt)

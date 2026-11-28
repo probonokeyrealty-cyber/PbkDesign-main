@@ -1,14 +1,21 @@
 import assert from 'node:assert/strict';
-import { chromium, devices, expect, webkit } from '@playwright/test';
+import { chromium, devices, expect as browserExpect, webkit } from '@playwright/test';
 import { createServer } from 'vite';
 
+const expect = browserExpect.configure({ timeout: 20_000 });
 const hosted = process.env.PBK_INBOX_HOSTED_PROOF === '1';
 const server = hosted ? null : await createServer({ server: { host: '127.0.0.1', port: 0 } });
 await server?.listen();
 const origin = hosted
   ? 'https://pbk-openclaw-bridge.onrender.com'
   : `http://127.0.0.1:${server.httpServer.address().port}`;
-const lead = { id: 'qa-lead', name: 'Inbox QA Seller', phone: '+12025550142' };
+const lead = {
+  id: 'qa-lead',
+  name: 'PBK Fictional Test Lead',
+  phone: '+12135550146',
+  email: 'pbk-one-lead@example.invalid',
+  address: '100 Example Vista Blvd, Los Angeles, CA',
+};
 const thread = {
   id: 'qa-thread', leadId: lead.id, title: lead.name, unreadCount: 0,
   channels: ['sms'], phone: lead.phone, lastMessageAt: '2026-11-09T12:00:00Z',
@@ -27,10 +34,29 @@ const incomingMessage = {
   read: false, createdAt: '2026-11-09T12:00:00Z',
 };
 
+const inboundTimelineEvent = {
+  id: incomingMessage.id, threadId: thread.id, leadId: lead.id, eventType: 'message.sms',
+  channel: 'sms', direction: 'inbound', body: incomingMessage.body, occurredAt: incomingMessage.createdAt,
+};
+const smsTimeline = [
+  { id: 'qa-simulated', status: 'simulated', provider: 'Simulated', body: 'Offline simulated SMS' },
+  { id: 'qa-legacy-simulated', status: 'sent', provider: 'Simulated', body: 'Earlier simulated SMS' },
+  { id: 'qa-sent', status: 'sent', provider: 'Telnyx', body: 'Fixture live SMS' },
+].map((message) => ({
+  ...message,
+  threadId: thread.id,
+  leadId: lead.id,
+  eventType: 'message.sms',
+  channel: 'sms',
+  direction: 'outbound',
+  occurredAt: '2026-11-09T12:00:00Z',
+}));
+
 async function verify(engine, viewport, device = {}) {
   const browser = await engine.launch();
   try {
     const context = await browser.newContext({ ...device, viewport, serviceWorkers: 'block' });
+    context.setDefaultNavigationTimeout(60_000);
     const page = await context.newPage();
     await context.routeWebSocket('**/*', (socket) => socket.close());
     await context.addInitScript(() => {
@@ -55,6 +81,7 @@ async function verify(engine, viewport, device = {}) {
     const decisions = [];
     let resolved = false;
     let mismatchedThread = false;
+    let showSmsTimeline = false;
     let wrongThreadReads = 0;
     const wrongThread = { ...thread, id: 'qa-wrong-thread', leadId: 'qa-other-lead' };
     await context.route('**/*', (route) => {
@@ -77,17 +104,34 @@ async function verify(engine, viewport, device = {}) {
         return route.fulfill({ json: { ok: true, thread: wrongThread, items: [] } });
       }
       if (path === '/api/conversations/qa-thread') {
-        return route.fulfill({ json: { ok: true, thread, recipientSummary: { phone: lead.phone } } });
+        return route.fulfill({ json: { ok: true, thread, recipientSummary: { phone: lead.phone, email: lead.email } } });
       }
-      if (path.endsWith('/timeline')) return route.fulfill({ json: { ok: true, items: [] } });
+      if (path.endsWith('/timeline')) return route.fulfill({ json: { ok: true, items: showSmsTimeline ? smsTimeline : [inboundTimelineEvent] } });
       if (path === '/api/communication-identities') {
         return route.fulfill({ json: { ok: true, items: [sender] } });
       }
-      if (path.includes('recommend')) return route.fulfill({ json: { ok: true, recommended: sender } });
+      if (path === '/api/phone-numbers' && req.method() === 'GET') {
+        return route.fulfill({ json: {
+          ok: true, mode: 'mock',
+          lines: [{
+            id: 'qa-phone-line',
+            provider: 'telnyx',
+            phoneNumber: sender.address,
+            sms: { registrationStatus: 'registered', sendingAllowed: true },
+          }],
+        } });
+      }
+      if (path.endsWith('/sender-recommendation')) {
+        return route.fulfill({ json: { ok: true, recommended: sender } });
+      }
       if (path === '/api/approvals/qa-approval' && req.method() === 'PUT') {
         decisions.push(req.postDataJSON());
         resolved = true;
-        return route.fulfill({ json: { ok: true, approval: { ...approval, status: 'approved' } } });
+        return route.fulfill({ json: {
+          ok: true,
+          approval: { ...approval, status: 'approved' },
+          providerActionResult: { result: 'simulated', providerAttempted: false },
+        } });
       }
       if (req.method() === 'POST' && [
         '/api/lead/send-message', '/api/messages', '/api/conversations/qa-thread/messages',
@@ -95,6 +139,14 @@ async function verify(engine, viewport, device = {}) {
         const body = req.postDataJSON();
         sends.push({ path, body });
         if (path === '/api/messages') return route.fulfill({ json: { ok: true, result: 'scheduled' } });
+        if (body.body === 'Fixture draft awaiting approval') {
+          return route.fulfill({ status: 202, json: {
+            ok: true,
+            result: 'queued_for_approval',
+            approval: { id: 'qa-sms-approval', status: 'pending' },
+            providerAttempted: false,
+          } });
+        }
         if (body.body === 'Fixture confirmed draft') {
           return route.fulfill({ json: { ok: true, outbox: { status: 'sent', provider: 'Telnyx' } } });
         }
@@ -194,11 +246,12 @@ async function verify(engine, viewport, device = {}) {
     await doubleClick(confirmation.getByRole('button', { name: 'Approve', exact: true }));
     await expect(confirmation).toHaveCount(0);
     await expect(page.getByText(approval.message)).toHaveCount(0);
+    await expect(page.getByText('Approved. SMS simulated. No text was sent.', { exact: true })).toBeVisible();
     assert.equal(decisions.length, 1);
 
-    await page.getByRole('button', { name: 'Compose', exact: true }).first().click();
+    await page.getByRole('button', { name: 'Reply to ' + lead.name, exact: true }).click();
     const compose = page.getByRole('dialog', { name: 'Compose message' });
-    await compose.getByPlaceholder('Name or phone number').fill(lead.phone);
+    await expect(compose.getByPlaceholder('Name or phone number')).toHaveValue(lead.phone);
     await compose.getByPlaceholder('Write a seller-facing message...').fill('Fixture draft only');
     const send = compose.getByRole('button', { name: /^Send(?: SMS)?$/ });
     await expect(send).toBeEnabled();
@@ -231,6 +284,7 @@ async function verify(engine, viewport, device = {}) {
     await page.getByRole('button', { name: new RegExp(lead.name) }).first().click();
     const composer = page.getByRole('region', { name: 'Message composer' });
     await expect(composer).toBeVisible();
+    await expect(page.getByText(inboundTimelineEvent.body, { exact: true })).toBeVisible();
     await composer.locator('textarea').fill('Fixture conversation draft');
     const sendConversation = composer.getByRole('button', { name: 'Send message', exact: true });
     await expect(sendConversation).toBeEnabled();
@@ -249,6 +303,14 @@ async function verify(engine, viewport, device = {}) {
     await expect(composer.getByText(/does not confirm delivery/i)).toBeVisible();
     await expect(composer.locator('textarea')).toHaveValue('');
     assert.equal(sends.length, 4);
+    await composer.locator('textarea').fill('Fixture draft awaiting approval');
+    await expect(sendConversation).toBeEnabled();
+    await doubleClick(sendConversation);
+    await expect(composer.getByText('Awaiting approval', { exact: true })).toBeVisible();
+    await expect(sendConversation).toBeDisabled();
+    assert.equal(sends.length, 5);
+    assert.equal(sends.at(-1).body.senderIdentityId, sender.id);
+    assert.equal(decisions.length, 1, 'Queueing SMS must not submit an approval decision');
     const profile = page.getByRole('button', { name: 'Open seller profile', exact: true }).first();
     if (await profile.isVisible()) await profile.click();
     await expect(page.getByRole('link', { name: /open lead|lead portal/i }).first()).toHaveAttribute('href', '/leads/qa-lead');
@@ -257,9 +319,9 @@ async function verify(engine, viewport, device = {}) {
 
     mismatchedThread = true;
     await page.goto(`${origin}/leads/qa-lead`);
+    await expect(page.getByRole('heading', { name: 'Seller timeline' })).toBeVisible();
     const message = page.getByRole('button', { name: 'Message', exact: true });
     await expect(message).toBeDisabled();
-    await expect(page.getByRole('heading', { name: 'Seller timeline' })).toBeVisible();
     assert.equal(wrongThreadReads, 0, 'Lead Portal must not open a different lead’s timeline');
 
     await page.goto(`${origin}/inbox/conversations?lead=qa-lead`);
@@ -269,8 +331,14 @@ async function verify(engine, viewport, device = {}) {
     await expect(page.getByRole('region', { name: 'Message composer' })).toHaveCount(0);
 
     mismatchedThread = false;
+    showSmsTimeline = true;
     await page.goto(`${origin}/inbox/conversations?lead=qa-lead`);
     await expect(page).toHaveURL(/thread=qa-thread/);
+    for (const event of smsTimeline) {
+      const row = page.getByRole('article', { name: 'Outbound sms', exact: false }).filter({ hasText: event.body });
+      await expect(row.locator('.status')).toHaveText(event.provider === 'Simulated' ? 'Simulated' : 'sent');
+    }
+    await checkWidth();
     console.log(`${hosted ? 'Deployed' : 'Local'} Inbox and Lead Portal: exact lead match, approval deduplication, and send hold passed on ${engine.name()} ${viewport.width}px`);
   } finally {
     await browser.close();

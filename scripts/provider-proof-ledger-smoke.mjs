@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 
 import {
+  attachProviderProof,
   buildProviderAttempt,
   normalizeProviderReceipt,
   summarizeProviderProof,
@@ -35,5 +36,26 @@ const summary = summarizeProviderProof({
 
 assert.equal(summary.proofStatus, 'confirmed');
 assert.equal(summary.needsReconciliation, false);
+
+const simulation = {
+  ok: true,
+  result: 'simulated',
+  providerAttempted: false,
+  telnyx: { live: false, simulated: true },
+};
+for (const toolName of ['telnyx_sms', 'send_verification_sms']) {
+  const { providerProof } = attachProviderProof(
+    { providerActionResult: simulation },
+    { toolName, approvalId: 'fixture-simulated-sms', attemptToken: 'fixture-lease' }
+  );
+  assert.equal(providerProof.proofStatus, 'simulated', toolName);
+  assert.equal(providerProof.attempt, undefined, toolName);
+  assert.deepEqual(providerProof.receipts, [], toolName);
+}
+
+const inconsistent = attachProviderProof({
+  providerActionResult: { ...simulation, providerAttempted: true },
+}, { toolName: 'telnyx_sms', attemptToken: 'fixture-provider-attempt' });
+assert.notEqual(inconsistent.providerProof.proofStatus, 'simulated');
 
 console.log('provider proof ledger smoke passed');

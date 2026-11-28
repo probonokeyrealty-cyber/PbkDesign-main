@@ -431,8 +431,13 @@ export function attachProviderProof(value, context = {}) {
     value.providerActionResult && typeof value.providerActionResult === 'object'
       ? value.providerActionResult
       : {};
-  if (context.toolName === 'telnyx_sms' && providerActionResult.result === 'simulated' &&
-      providerActionResult.telnyx?.simulated === true) {
+  if (
+    ['telnyx_sms', 'send_verification_sms'].includes(context.toolName) &&
+    providerActionResult.result === 'simulated' &&
+    providerActionResult.providerAttempted === false &&
+    providerActionResult.telnyx?.live === false &&
+    providerActionResult.telnyx?.simulated === true
+  ) {
     return {
       ...value,
       providerProof: {

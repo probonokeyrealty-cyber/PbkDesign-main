@@ -251,8 +251,10 @@ test('bridge code matches the reviewed release fingerprint outside the scoped re
   // Independent review adds exact-call terminal checks and preserves concurrent transcript updates.
   // Staff Ava reads the existing Today queue and plans from the same turn used for permission checks.
   // Ava Chat shares the staff portal's exact saved lead review and does not dispatch provider actions.
+  // The reviewed outbound SMS simulation records no provider delivery.
+  // See docs/operations/2026-11-28-simulated-sms-bridge-integrity.md.
   assert.equal(createHash('sha256').update(unchanged).digest('hex'),
-    '4d70b360b92cced0661cd357ccf97f179f53d1f80a9345445816178ef4c4c175');
+    '0ae9561228c39cf4c3dbe344aca86f961706ce611cb17b7dd81787d828a84223');
 });
 
 test('production distribution includes reader and protocol, never the fixture signer', () => {

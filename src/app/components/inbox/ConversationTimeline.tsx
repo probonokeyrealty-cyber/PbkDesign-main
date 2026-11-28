@@ -35,7 +35,7 @@ import {
 } from '../../utils/runtimeBridge';
 import { showUiToast, toastUndo } from '../../utils/uiFeedback';
 import { downloadTextFile } from '../../utils/fileExport';
-import { groupConversationEventsByDay } from '../../routes/conversationRuntimeLogic.js';
+import { getConversationMessageStatus, groupConversationEventsByDay } from '../../routes/conversationRuntimeLogic.js';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -266,6 +266,7 @@ function ConversationEventRow({
   const kind = eventKind(event);
   const message = kind === 'sms' || kind === 'email';
   const outbound = text(event.direction).toLowerCase() === 'outbound';
+  const messageStatus = getConversationMessageStatus(event, outbound ? 'sent' : 'received');
   const spamEligible = message && !outbound;
   const [expanded, setExpanded] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -617,9 +618,9 @@ function ConversationEventRow({
         <div className="pbk-conversation-body">{body}</div>
         <div className="pbk-conversation-event-meta">
           <span>{formatTime(event.occurredAt)}</span>
-          <span>{text(event.provider, kind)}</span>
-          <span className={`status ${text(event.status).toLowerCase()}`}>
-            {text(event.status, outbound ? 'sent' : 'received').replace(/_/g, ' ')}
+          {messageStatus !== 'simulated' && <span>{text(event.provider, kind)}</span>}
+          <span className={`status ${messageStatus.toLowerCase()}`}>
+            {messageStatus === 'simulated' ? 'Simulated' : messageStatus.replace(/_/g, ' ')}
           </span>
           {deleteButton}
         </div>

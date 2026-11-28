@@ -17,6 +17,20 @@ async function loadHelper() {
 }
 
 describe('Inbox runtime logic', () => {
+  test.each([
+    ['approved', { providerActionResult: { result: 'simulated' } },
+      { tone: 'success', text: 'Approved. SMS simulated. No text was sent.' }],
+    ['approved', { providerActionResult: { reconciliationRequired: true } },
+      { tone: 'warning', text: 'Approved. Delivery is unconfirmed. Check the conversation before retrying.' }],
+    ['approved', { providerActionResult: { ok: false } },
+      { tone: 'warning', text: 'Approved. The provider action did not complete.' }],
+    ['approved', {}, { tone: 'success', text: 'Approved. Ava can continue.' }],
+    ['rejected', {}, { tone: 'success', text: 'Declined. The request will not run.' }],
+    ['needs-revision', {}, { tone: 'success', text: 'Revision requested.' }],
+  ])('reports the confirmed outcome for %s and %j', async (status, response, feedback) => {
+    const helper = await loadHelper();
+    expect(helper.getApprovalDecisionFeedback(status, response)).toEqual(feedback);
+  });
   test('counts unicode SMS segments with UCS-2 limits instead of 160-char ASCII math', async () => {
     const helper = await loadHelper();
     expect(helper).not.toBeNull();

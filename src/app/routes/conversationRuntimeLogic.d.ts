@@ -14,6 +14,10 @@ export type ConversationMobileState = 'threads' | 'conversation' | 'profile';
 
 export function normalizeConversationThreads(threads?: ConversationThread[]): ConversationThread[];
 export function sortConversationThreads(threads?: ConversationThread[]): ConversationThread[];
+export function getConversationMessageStatus(
+  message: { status?: unknown; channel?: unknown; direction?: unknown; provider?: unknown },
+  fallback: string
+): string;
 export function filterVisibleConversationEvents(
   events?: ConversationEvent[],
   options?: { includeHidden?: boolean }

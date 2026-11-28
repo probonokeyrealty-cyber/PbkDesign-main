@@ -81,6 +81,33 @@ function getApprovalFallbackSummary(approval, payload, metadata, contract) {
   return 'Ava has a workspace action ready for review.';
 }
 
+export function getApprovalDecisionFeedback(status, response = {}) {
+  if (status === 'rejected') {
+    return { tone: 'success', text: 'Declined. The request will not run.' };
+  }
+  if (status === 'needs-revision') {
+    return { tone: 'success', text: 'Revision requested.' };
+  }
+  if (status !== 'approved') {
+    return { tone: 'success', text: 'Decision recorded.' };
+  }
+
+  const outcome = objectValue(response.providerActionResult);
+  if (outcome.reconciliationRequired === true || outcome.result === 'provider_delivery_unknown') {
+    return {
+      tone: 'warning',
+      text: 'Approved. Delivery is unconfirmed. Check the conversation before retrying.',
+    };
+  }
+  if (outcome.ok === false) {
+    return { tone: 'warning', text: 'Approved. The provider action did not complete.' };
+  }
+  if (outcome.result === 'simulated') {
+    return { tone: 'success', text: 'Approved. SMS simulated. No text was sent.' };
+  }
+  return { tone: 'success', text: 'Approved. Ava can continue.' };
+}
+
 export function getApprovalFriendlySummary(approval = {}) {
   const payload = objectValue(approval.payload);
   const metadata = objectValue(approval.metadata);

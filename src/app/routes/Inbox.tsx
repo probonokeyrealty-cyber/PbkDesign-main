@@ -30,9 +30,11 @@ import {
   updateApprovalDecision,
 } from '../utils/runtimeBridge';
 import { showUiToast } from '../utils/uiFeedback';
+import { getConversationMessageStatus } from './conversationRuntimeLogic.js';
 import {
   buildComposeRequest,
   buildReplyDraftFromMessage,
+  getApprovalDecisionFeedback,
   getApprovalFriendlySummary,
   getApprovalPreview,
   getApprovalResolutionKeys,
@@ -75,7 +77,7 @@ type ApprovalDecisionDraft = {
 };
 
 type InboxActionStatus = {
-  tone: 'success' | 'error';
+  tone: 'success' | 'warning' | 'error';
   text: string;
 };
 type InboxStats = {
@@ -142,6 +144,7 @@ function formatRuntimeStatus(status: unknown) {
   if (normalized === 'queued_for_approval') return 'Queued for approval';
   if (normalized === 'scheduled') return 'Scheduled';
   if (normalized === 'sent') return 'Sent';
+  if (normalized === 'simulated') return 'Simulated';
   if (normalized === 'received' || normalized === 'unread' || normalized === 'new')
     return 'New reply';
   if (normalized === 'failed') return 'Delivery failed';
@@ -731,7 +734,7 @@ function InboxMessageRow({
         </div>
       </div>
       <div className="msg-meta">
-        <span>{formatRuntimeStatus(message.status)}</span>
+        <span>{formatRuntimeStatus(getConversationMessageStatus(message, 'sent'))}</span>
         {timestamp && (
           <span title={new Date(timestamp).toLocaleString()}>{formatRelativeTime(timestamp)}</span>
         )}
@@ -1505,7 +1508,7 @@ export function Inbox() {
     setPendingAction(key);
     setActionStatus(null);
     try {
-      await updateApprovalDecision(approvalId, status);
+      const response = await updateApprovalDecision(approvalId, status);
       setResolvedApprovalIds((current) => {
         const next = new Set(current);
         next.add(approvalId);
@@ -1513,10 +1516,7 @@ export function Inbox() {
         return next;
       });
       await refreshInbox();
-      setActionStatus({
-        tone: 'success',
-        text: status === 'approved' ? 'Approved. Ava can continue.' : 'Decision sent to Ava.',
-      });
+      setActionStatus(getApprovalDecisionFeedback(status, response));
       setApprovalFeedbackById((current) => ({
         ...current,
         [approvalId]: status === 'approved' ? 'Approved' : 'Decision sent',
@@ -1665,18 +1665,21 @@ export function Inbox() {
 
         {actionStatus && (
           <div
+            role="status"
             className={[
               'flex items-center justify-between gap-3 rounded-2xl px-4 py-3 text-sm',
               actionStatus.tone === 'error'
                 ? 'border border-rose-400/30 bg-rose-500/10 text-rose-100'
-                : 'border border-emerald-400/25 bg-emerald-500/10 text-emerald-100',
+                : actionStatus.tone === 'warning'
+                  ? 'border border-amber-400/30 bg-amber-500/10 text-amber-50'
+                  : 'border border-emerald-400/25 bg-emerald-500/10 text-emerald-100',
             ].join(' ')}
           >
             <span className="flex items-center gap-2">
-              {actionStatus.tone === 'error' ? (
-                <AlertCircle size={15} className="text-rose-300" />
-              ) : (
+              {actionStatus.tone === 'success' ? (
                 <CheckCircle2 size={15} className="text-emerald-300" />
+              ) : (
+                <AlertCircle size={15} />
               )}
               {actionStatus.text}
             </span>
